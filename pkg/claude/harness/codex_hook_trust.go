@@ -1,16 +1,11 @@
 package harness
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -24,135 +19,25 @@ type codexHookTrustEntry struct {
 	Hash string
 }
 
-// codexHookEventLabels mirrors codex_hooks::hook_event_key_label. Codex uses
-// these snake_case labels both in hook-state keys and in the normalized value
-// it hashes. Keep this explicit: a generic case converter is needlessly easy
-// to drift for names such as PreToolUse and SubagentStart.
-var codexHookEventLabels = map[string]string{
-	"PreToolUse":        "pre_tool_use",
-	"PermissionRequest": "permission_request",
-	"PostToolUse":       "post_tool_use",
-	"PreCompact":        "pre_compact",
-	"PostCompact":       "post_compact",
-	"SessionStart":      "session_start",
-	"UserPromptSubmit":  "user_prompt_submit",
-	"SubagentStart":     "subagent_start",
-	"SubagentStop":      "subagent_stop",
-	"Stop":              "stop",
-	"SessionEnd":        "session_end",
-}
-
-var (
-	codexVersionPattern = regexp.MustCompile(`\bcodex-cli\s+(\d+)\.(\d+)\.(\d+)\b`)
-	codexVersionOutput  = func() ([]byte, error) { return exec.Command("codex", "--version").Output() }
-)
-
-// AutoTrustSupported deliberately fails closed outside the Codex versions
-// whose private trust normalization tclaude has verified. Unsupported versions
-// keep the declarations installed but leave approval to Codex's own /hooks UI.
+// AutoTrustSupported only needs an installed Codex binary. The trust operation
+// asks that binary's hooks/list endpoint for each hook's authoritative key and
+// currentHash; tclaude no longer reproduces version-specific private internals.
 func (codexHookInstaller) AutoTrustSupported() (bool, string) {
-	out, err := codexVersionOutput()
-	if err != nil {
-		return false, fmt.Sprintf("could not verify Codex hook-trust compatibility: %v", err)
-	}
-	m := codexVersionPattern.FindSubmatch(out)
-	if len(m) != 4 {
-		return false, fmt.Sprintf("unrecognized Codex version output %q", strings.TrimSpace(string(out)))
-	}
-	major, _ := strconv.Atoi(string(m[1]))
-	minor, _ := strconv.Atoi(string(m[2]))
-	patch, _ := strconv.Atoi(string(m[3]))
-	legacyVerified := major == 0 && minor >= 139 &&
-		(minor < 144 || minor == 144 && patch <= 1)
-	// Re-verified against openai/codex rust-v0.147.0 at commit
-	// be6e8eac029b183056b7e4402879f15d2c85f61b. Its discovery path still
-	// builds the same normalized matcher-less command identity and feeds it
-	// through version_for_toml, so the hashes pinned below remain exact.
-	codex147Verified := major == 0 && minor == 147 && patch == 0
-	if !legacyVerified && !codex147Verified {
-		return false, fmt.Sprintf("Codex %s is outside tclaude's verified hook-trust versions (0.139.0–0.144.1 and 0.147.0)", strings.Join([]string{string(m[1]), string(m[2]), string(m[3])}, "."))
+	if _, err := exec.LookPath("codex"); err != nil {
+		return false, fmt.Sprintf("could not locate Codex for authoritative hook trust: %v", err)
 	}
 	return true, ""
 }
 
-// codexCommandHookHash reproduces Codex's command_hook_hash for the exact
-// matcher-less command hook tclaude installs. Codex 0.144.1 and 0.147.0 build a normalized
-// TOML identity, converts it to canonical JSON, then prefixes its SHA-256 with
-// "sha256:". The absent optional TOML fields disappear during conversion;
-// timeout and async are normalized to their effective defaults.
-//
-// Codex does not currently expose a supported CLI that installers can use to
-// approve a hook. If its private normalization changes, these records safely
-// become stale and Codex asks for review rather than executing changed code.
-func codexCommandHookHash(event, command string) (string, error) {
-	label, ok := codexHookEventLabels[event]
-	if !ok {
-		return "", fmt.Errorf("unknown Codex hook event %q", event)
-	}
-	identity := map[string]any{
-		"event_name": label,
-		"hooks": []any{map[string]any{
-			"async":   false,
-			"command": command,
-			"timeout": 600,
-			"type":    "command",
-		}},
-	}
-	// encoding/json sorts map keys, matching Codex's recursive canonical_json.
-	canonical, err := json.Marshal(identity)
-	if err != nil {
-		return "", fmt.Errorf("encode Codex hook identity: %w", err)
-	}
-	sum := sha256.Sum256(canonical)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+// codexTclaudeHookTrustEntries asks Codex to identify the tclaude handlers in
+// the final on-disk hooks.json. Codex owns both the persisted key and normalized
+// hash contract; tclaude filters the response to its exact source and command.
+func codexTclaudeHookTrustEntries(hooksPath, want string) ([]codexHookTrustEntry, error) {
+	return discoverCodexHookTrustEntries(hooksPath, want)
 }
 
-// codexTclaudeHookTrustEntries locates the installed tclaude handlers in the
-// final hooks.json shape. The positional group/handler suffix is part of
-// Codex's current persisted key, so derive it after the installer has preserved
-// and reassembled all co-resident user hooks.
-func codexTclaudeHookTrustEntries(
-	hooksPath string,
-	hooks map[string]json.RawMessage,
-	want string,
-) ([]codexHookTrustEntry, error) {
-	events := desiredCodexHookEvents()
-	entries := make([]codexHookTrustEntry, 0, len(events))
-	for _, event := range events {
-		groupsRaw, ok := hooks[event]
-		if !ok {
-			return nil, fmt.Errorf("codex hook event %s is missing after install", event)
-		}
-		var groups []codexMatcherGroup
-		if err := json.Unmarshal(groupsRaw, &groups); err != nil {
-			return nil, fmt.Errorf("parse Codex hook event %s for trust: %w", event, err)
-		}
-		found := false
-		for groupIndex, group := range groups {
-			for handlerIndex, hook := range group.Hooks {
-				if hook.Command != want {
-					continue
-				}
-				if found {
-					return nil, fmt.Errorf("multiple current tclaude hooks found for Codex event %s", event)
-				}
-				hash, err := codexCommandHookHash(event, want)
-				if err != nil {
-					return nil, err
-				}
-				entries = append(entries, codexHookTrustEntry{
-					Key:  fmt.Sprintf("%s:%s:%d:%d", hooksPath, codexHookEventLabels[event], groupIndex, handlerIndex),
-					Hash: hash,
-				})
-				found = true
-			}
-		}
-		if !found {
-			return nil, fmt.Errorf("current tclaude hook not found for Codex event %s", event)
-		}
-	}
+func sortCodexHookTrustEntries(entries []codexHookTrustEntry) {
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
-	return entries, nil
 }
 
 func (codexHookInstaller) InstallTrusted() error {
@@ -167,23 +52,24 @@ func (codexHookInstaller) InstallTrusted() error {
 		if err := validateTrustedCodexHookCommand(hookPlan.want); err != nil {
 			return err
 		}
-		entries, err := codexTclaudeHookTrustEntries(
-			hookPlan.path, hookPlan.hooks, hookPlan.want)
-		if err != nil {
-			return err
-		}
 		configPath, err := codexConfigTomlPath()
 		if err != nil {
 			return err
 		}
-		// Trust first. If the later atomic hooks.json write fails, the hash has
-		// no matching declaration and is inert; writing in the opposite order
-		// can leave Codex blocked on startup review.
-		if err := ensureCodexHookTrustInFile(configPath, entries); err != nil {
-			return fmt.Errorf("write Codex hook trust: %w", err)
+		if err := preflightCodexHookTrustFile(configPath, hookPlan.path); err != nil {
+			return fmt.Errorf("preflight Codex hook trust: %w", err)
 		}
 		if err := atomicWritePreservingMode(hookPlan.path, hookPlan.out, 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", hookPlan.path, err)
+		}
+		// Ask Codex only after the final declaration is on disk. A discovery or
+		// trust-write failure leaves the hook untrusted and therefore fail-closed.
+		entries, err := codexTclaudeHookTrustEntries(hookPlan.path, hookPlan.want)
+		if err != nil {
+			return err
+		}
+		if err := ensureCodexHookTrustInFile(configPath, entries); err != nil {
+			return fmt.Errorf("write Codex hook trust: %w", err)
 		}
 		return nil
 	})
@@ -195,7 +81,7 @@ func (codexHookInstaller) TrustInstalled() error {
 	}
 	return withCodexHooksInstallLock(func() error {
 		path := codexHooksPath()
-		hooks, _, err := readCodexHooks(path)
+		_, _, err := readCodexHooks(path)
 		if err != nil {
 			return err
 		}
@@ -203,7 +89,7 @@ func (codexHookInstaller) TrustInstalled() error {
 		if err := validateTrustedCodexHookCommand(want); err != nil {
 			return err
 		}
-		entries, err := codexTclaudeHookTrustEntries(path, hooks, want)
+		entries, err := codexTclaudeHookTrustEntries(path, want)
 		if err != nil {
 			return err
 		}
@@ -220,7 +106,7 @@ func (codexHookInstaller) Trusted() bool {
 		return false
 	}
 	path := codexHooksPath()
-	hooks, _, err := readCodexHooks(path)
+	_, _, err := readCodexHooks(path)
 	if err != nil {
 		return false
 	}
@@ -228,7 +114,7 @@ func (codexHookInstaller) Trusted() bool {
 	if validateTrustedCodexHookCommand(want) != nil {
 		return false
 	}
-	entries, err := codexTclaudeHookTrustEntries(path, hooks, want)
+	entries, err := codexTclaudeHookTrustEntries(path, want)
 	if err != nil {
 		return false
 	}
@@ -261,6 +147,18 @@ func ensureCodexHookTrustInFile(configPath string, entries []codexHookTrustEntry
 	return EditCodexConfigFile(configPath, 0o644, func(data []byte) (bool, []byte, error) {
 		return planCodexHookTrust(data, entries)
 	})
+}
+
+func preflightCodexHookTrustFile(configPath, hooksPath string) error {
+	data, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	const zeroHash = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	_, _, err = planCodexHookTrust(data, []codexHookTrustEntry{{
+		Key: hooksPath + ":tclaude_preflight:0:0", Hash: zeroHash,
+	}})
+	return err
 }
 
 func atomicWritePreservingMode(path string, data []byte, defaultPerm os.FileMode) error {

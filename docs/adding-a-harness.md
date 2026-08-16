@@ -360,8 +360,8 @@ no extra code.
 ```go
 TrustedHookInstaller interface {
     HookInstaller
-    AutoTrustSupported() (bool, string)  // does this build know the harness's trust-key contract?
-    InstallTrusted() error               // persist trust FIRST, then install declarations
+    AutoTrustSupported() (bool, string)  // can this environment attempt authoritative trust discovery?
+    InstallTrusted() error               // install, discover authoritative identity, then persist trust
     TrustInstalled() error               // trust the already-installed declarations
     Trusted() bool                       // do installed declarations match current trust?
 }

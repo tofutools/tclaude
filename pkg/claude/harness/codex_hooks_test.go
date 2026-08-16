@@ -2,6 +2,7 @@ package harness
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -13,17 +14,56 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/hookevents"
 )
 
+// testCodexHookEventLabels is only fixture data. Production trust discovery
+// gets Codex's key directly from hooks/list and does not reproduce this schema.
+var testCodexHookEventLabels = map[string]string{
+	"PreToolUse":        "pre_tool_use",
+	"PermissionRequest": "permission_request",
+	"PostToolUse":       "post_tool_use",
+	"PreCompact":        "pre_compact",
+	"PostCompact":       "post_compact",
+	"SessionStart":      "session_start",
+	"UserPromptSubmit":  "user_prompt_submit",
+	"SubagentStart":     "subagent_start",
+	"SubagentStop":      "subagent_stop",
+	"Stop":              "stop",
+	"SessionEnd":        "session_end",
+}
+
 // seedTclaudeOnPath retains the historical command seam while pinning the
 // portable command every installer now writes.
 func seedTclaudeOnPath(t *testing.T) {
 	t.Helper()
 	oldCommand := codexHookCommandString
-	oldVersion := codexVersionOutput
+	oldDiscovery := discoverCodexHookTrustEntries
 	codexHookCommandString = func() string { return "tclaude session hook-callback" }
-	codexVersionOutput = func() ([]byte, error) { return []byte("codex-cli 0.144.1\n"), nil }
+	discoverCodexHookTrustEntries = func(path, want string) ([]codexHookTrustEntry, error) {
+		hooks, _, err := readCodexHooks(path)
+		if err != nil {
+			return nil, err
+		}
+		var entries []codexHookTrustEntry
+		for eventIndex, event := range desiredCodexHookEvents() {
+			var groups []codexMatcherGroup
+			if err := json.Unmarshal(hooks[event], &groups); err != nil {
+				return nil, err
+			}
+			for groupIndex, group := range groups {
+				for handlerIndex, hook := range group.Hooks {
+					if hook.Command == want {
+						entries = append(entries, codexHookTrustEntry{
+							Key:  fmt.Sprintf("%s:%s:%d:%d", path, testCodexHookEventLabels[event], groupIndex, handlerIndex),
+							Hash: fmt.Sprintf("sha256:%064x", eventIndex+1),
+						})
+					}
+				}
+			}
+		}
+		return entries, nil
+	}
 	t.Cleanup(func() {
 		codexHookCommandString = oldCommand
-		codexVersionOutput = oldVersion
+		discoverCodexHookTrustEntries = oldDiscovery
 	})
 }
 
