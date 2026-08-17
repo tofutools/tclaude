@@ -288,6 +288,13 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "hook", "failed to encode hook response")
 		return
 	}
+	if req.Input.HookEventName == "PermissionRequest" {
+		// The event names the tool being gated, which is the whole condition
+		// auto-permit keys off. Answering happens here, on the host, because a
+		// sandboxed pane can reach neither tmux nor the database. See
+		// auto_permit.go.
+		maybeAnswerAutoPermit(row, req.Input.ToolName)
+	}
 	if req.Input.HookEventName == "UserPromptSubmit" {
 		if harnessName, cwd, ok := brokeredAutoNameTarget(row.ID, req.Input.ConvID); ok {
 			scheduleAutoName(req.Input.ConvID, harnessName, cwd, req.Input.Prompt)

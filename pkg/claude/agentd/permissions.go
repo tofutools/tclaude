@@ -12,6 +12,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // PermSlug describes one agent permission. Slugs are dotted strings that
@@ -561,6 +562,10 @@ var permissionRegistry = []PermSlug{
 		Slug:          PermHumanClipboard,
 		AutoGrantable: true,
 		Description:   "Copy text to the human's system clipboard via `tclaude agent clipboard` — the daemon runs the platform copy tool (wl-copy/xclip/xsel, pbcopy, clip.exe). An agent→human-machine surface like human.notify, but NOT default-granted and NOT owner-implied: it writes to the operator's real clipboard, so it needs an explicit grant or a per-call --ask-human popup approval.",
+	},
+	{
+		Slug:        session.PermAutoPermitEnterWorktree,
+		Description: "Let tclaude answer Claude Code's EnterWorktree safety check for this agent — the hardcoded confirmation that no allow-rule, auto-mode setting or PreToolUse hook can pre-approve, so an agent otherwise stalls on it until a human presses a key. The grant IS the operator's standing consent: the PermissionRequest hook presses the accept key in the agent's own pane and records the answer. NOT default-granted and NOT owner-implied — it answers a gate the harness deliberately reserves for a human. Narrow by construction: one slug per named prompt, never a blanket accept (that is what --dangerously-skip-permissions is for).",
 	},
 	{
 		Slug:        PermSettingsDefaultModel,

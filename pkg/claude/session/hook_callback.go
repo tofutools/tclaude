@@ -660,6 +660,25 @@ func runHookCallback() error {
 		return brokerHookEvent(input, os.Stdout)
 	}
 
+	// An ordinary launch applies its own hooks, but a permission prompt
+	// auto-permit can answer is a decision only the daemon can make and only
+	// the daemon can act on (see auto_permit.go). Hand that one event over the
+	// SAME broker every sandboxed launch already uses, and fall back to
+	// applying it here when the daemon does not take it — an unreachable
+	// daemon must cost the agent its auto-answer, never its status update.
+	//
+	// Not in task mode. brokerHookEvents() refuses to broker there on purpose,
+	// and the refusal is about applying the event, not only about carrying the
+	// signal file: a task hook applied host-side arrives without
+	// InTaskRunnerHook, which is what earns it the foreign-conv, conv-advance,
+	// enrollment and notification exemptions the runner depends on. Taking one
+	// event out of that carve-out would half-break the very thing the carve-out
+	// exists to keep whole.
+	if _, inTaskMode := taskSignalPath(); !inTaskMode &&
+		autoPermitNeedsDaemon(input) && brokerHookEventIfDelivered(input, os.Stdout) {
+		return nil
+	}
+
 	if err := DispatchHookEvent(context.Background(), input, envSessionID, LocalHookAmbient(), os.Stdout); err != nil {
 		return err
 	}
