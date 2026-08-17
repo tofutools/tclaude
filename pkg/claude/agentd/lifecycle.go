@@ -914,9 +914,24 @@ func lifecycleProbeMatchesTarget(probe lifecyclePaneProbe, target *lifecycleTarg
 // whether the answer is known at all. Bounded for the same reason as
 // probeLifecyclePane: the ladder's signal rungs poll it from a request
 // goroutine, and an unbounded call there is an unbounded request.
+//
+// A list-sessions failure that says NO SERVER EXISTS is a known all-offline
+// answer, not an unreadable probe. When the pane being stopped was the last
+// live session, its death takes the whole tmux server down with it (tmux's
+// default exit-empty on), and from that moment every pane probe and every
+// list-sessions errors — treating that as "unknown" left
+// waitForLifecycleTargetGone polling blind for the entire escalation deadline
+// and turned the fastest possible exit into the slowest observed stop (a
+// retire that stalled the full 10 s after the pane had died within 1 s).
+// liveTmuxSessionsWithTimeout already reads a dead server as the normal
+// all-offline state; this is the same call, made distinguishable from a
+// transient failure so the unknown contract stays intact for real faults.
 func lifecycleSessionAlive(tmuxSession string) (alive, known bool) {
 	out, err := tmuxOutputWithTimeout("list-sessions", "-F", "#{session_name}")
 	if err != nil {
+		if tmuxServerNotRunning(err) {
+			return false, true
+		}
 		return false, false
 	}
 	for _, name := range strings.Split(strings.TrimSpace(string(out)), "\n") {
@@ -925,6 +940,23 @@ func lifecycleSessionAlive(tmuxSession string) (alive, known bool) {
 		}
 	}
 	return false, true
+}
+
+// tmuxServerNotRunning reports whether a failed tmux invocation failed because
+// no tmux server exists at all — no socket, or a socket nothing is serving.
+// Message-matched because that is the only channel tmux reports it on, and the
+// spelling differs across versions: "error connecting to <socket> (No such
+// file or directory)" (observed on 3.x when the socket is gone) and "no server
+// running on <socket>" (when the socket file remains). A timeout is explicitly
+// NOT a dead server — a wedged server still owns live panes — and any other
+// failure keeps the unknown contract.
+func tmuxServerNotRunning(err error) bool {
+	if err == nil || errors.Is(err, errTmuxCommandTimeout) {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "no server running") ||
+		strings.Contains(msg, "error connecting to")
 }
 
 func scheduleUnknownIntentCleanup(target *lifecycleTarget, intentRef *db.SessionExitIntentRef) {
