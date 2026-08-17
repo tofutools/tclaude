@@ -39,14 +39,21 @@ import (
 // floor tclaude's outer wall is weaker than the harness's own default, which
 // is backwards.
 //
-// Two escape hatches, in increasing bluntness:
+// Three escape hatches, in increasing bluntness:
 //
-//   - An operator profile that authors an explicit write grant AT or BELOW one
-//     floor path drops that single entry. Most-specific-wins, and the operator
-//     has to name the surface, so a broad `~` or `~/.claude` write does not
-//     quietly undo the floor.
-//   - `harness_config: "write"` on any profile in the chain turns the whole
-//     floor off, restoring the pre-floor posture.
+//   - An operator profile that authors an explicit write grant naming EXACTLY
+//     one floor path drops that single entry. The operator has to name the
+//     surface, so a broad `~` or `~/.claude` write does not quietly undo the
+//     floor. A write grant strictly BELOW a floor path keeps the entry and
+//     reopens only the named descendant, because the narrower bind is rendered
+//     after the floor's read-only one.
+//   - `harness_config: "write"` turns the whole floor off, restoring the
+//     pre-floor posture. It composes strictest-wins across the profile chain,
+//     so an explicit `read` on any profile — including an included one —
+//     outranks it.
+//   - `--harness-config write` at spawn time overrides the composed chain
+//     value outright as a launch contract. Humans may set it; agents need the
+//     `sandbox.harness-config` permission, and lineage still applies.
 //
 // The floor covers only what tclaude itself enforces: tclaude-layer and
 // stacked. Under harness-builtin the harness's own policy governs, and under

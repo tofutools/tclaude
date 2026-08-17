@@ -137,3 +137,17 @@ func TestFlattenHarnessConfigMergesIncludes(t *testing.T) {
 		})
 	}
 }
+
+// The legacy-parent spawn branches skip containment entirely when a snapshot
+// adds no capabilities, so an axis absent from HasCapabilities is an axis with
+// no lineage check on that path. Lifting the floor hands back host writes.
+func TestHasCapabilitiesCountsALiftedHarnessConfigFloor(t *testing.T) {
+	floored := NewSnapshot(EffectiveProfile{}, nil)
+	assert.False(t, HasCapabilities(floored))
+
+	pinned := NewSnapshot(EffectiveProfile{HarnessConfig: HarnessConfigAccessRead}, nil)
+	assert.False(t, HasCapabilities(pinned), "pinning the floor is a restriction")
+
+	lifted := NewSnapshot(EffectiveProfile{HarnessConfig: HarnessConfigAccessWrite}, nil)
+	assert.True(t, HasCapabilities(lifted))
+}

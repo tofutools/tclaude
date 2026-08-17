@@ -409,11 +409,19 @@ func unixSocketRulesContained(parent, child UnixSocketRules) bool {
 // Mach service-registration authority. Deny and offline entries are
 // restrictions, and agent-owned directories are fresh private bindings rather
 // than capabilities inherited from the parent.
+//
+// Lifting the harness-config floor counts, because it hands back write access
+// to host paths the floor would otherwise pin read-only. Callers use this to
+// decide whether a launch under a pre-snapshot parent may skip containment
+// entirely, so an axis missing here is an axis with no lineage check at all.
 func HasCapabilities(snapshot Snapshot) bool {
 	for _, grant := range snapshot.Effective.Filesystem {
 		if grant.Access != AccessDeny {
 			return true
 		}
+	}
+	if !HarnessConfigFloorApplies(snapshot.Effective.HarnessConfig) {
+		return true
 	}
 	return len(snapshot.Effective.Environment) > 0 ||
 		snapshot.Effective.DarwinAllowMachRegister ||

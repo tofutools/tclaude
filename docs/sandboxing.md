@@ -298,8 +298,10 @@ trust-folder record. `/model` and directory trust for Claude Code land in
    it directly; an **agent** needs the `sandbox.harness-config` permission,
    which is not default-granted and which group ownership deliberately does not
    confer — lifting the floor lets the launched agent rewrite the policy that
-   confines it. It cannot be combined with `--omit-sandbox-profiles`, whose
-   snapshot records "no profile tier applied at all".
+   confines it. `write` cannot be combined with `--omit-sandbox-profiles`,
+   whose snapshot records "no profile tier applied at all"; `read` is accepted
+   there as the no-op it is, since the floor is already what an absent value
+   means.
 
    The slug gates *selection*, never enforcement. The floor is a mount frozen
    at launch, so no permission makes a running agent's config surface writable,

@@ -86,10 +86,14 @@ func applySpawnHarnessConfig(
 		}
 		return snapshot, nil
 	}
-	// A plain struct copy is enough: only a scalar changes, and the shared
-	// slices are never mutated here.
+	// A plain struct copy is enough: only scalars change, and the shared slices
+	// are never mutated here. Provenance is cleared alongside the value the way
+	// UnconfinedLaunchSnapshot does: it names the profile and scope a composed
+	// value came from, and this value came from the launch contract instead, so
+	// leaving it would make the recorded audit trail name an innocent profile.
 	updated := snapshot
 	updated.Effective.HarnessConfig = access
+	updated.Effective.Provenance.HarnessConfig = nil
 	revalidated, err := sandboxpolicy.RevalidateSnapshot(updated)
 	if err != nil {
 		return snapshot, &spawnFailure{
