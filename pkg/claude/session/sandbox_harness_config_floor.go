@@ -207,17 +207,6 @@ func canonicalHarnessConfigFloorPath(path string) (string, bool, error) {
 	return resolved, info.Mode()&os.ModeSymlink == 0, nil
 }
 
-func openCodeConfigRoot() (string, error) {
-	if root := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); root != "" {
-		return filepath.Join(root, "opencode"), nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve home directory for OpenCode config: %w", err)
-	}
-	return filepath.Join(home, ".config", "opencode"), nil
-}
-
 // harnessConfigFloorPaths resolves the floor for one launch and drops the
 // entries an operator explicitly reopened. It returns nil when the composed
 // posture opted the whole floor out, which is also what makes the frozen
