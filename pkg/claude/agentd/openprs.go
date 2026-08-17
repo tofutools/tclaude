@@ -79,6 +79,7 @@ type dashboardAuthoredOpenPR struct {
 	URL        string           `json:"url"`
 	Title      string           `json:"title"`
 	Repository string           `json:"repository"`
+	Local      bool             `json:"local,omitempty"`
 	Draft      bool             `json:"draft,omitempty"`
 	UpdatedAt  string           `json:"updated_at,omitempty"`
 	Checks     *prChecksSummary `json:"checks,omitempty"`
@@ -89,6 +90,14 @@ type dashboardAuthoredOpenPR struct {
 	// Items in the open list leave both empty.
 	State    string `json:"state,omitempty"`
 	ClosedAt string `json:"closed_at,omitempty"`
+}
+
+// locallyKnownPR is a PR candidate learned from an agent's branch/startup
+// links or an explicit presentation. Title is optional because branch-link
+// caches currently carry state and identity but not the PR title.
+type locallyKnownPR struct {
+	URL   string
+	Title string
 }
 
 type dashboardAuthoredOpenPRs struct {
@@ -670,6 +679,97 @@ func reconcileAuthoredOpenPRs(
 	view.Recent = filterRecentAuthoredPRs(view.Recent, view.RecentWindowDays, now)
 	sort.SliceStable(view.Recent, func(i, j int) bool {
 		return view.Recent[i].ClosedAt > view.Recent[j].ClosedAt
+	})
+	return view
+}
+
+// unionLocallyKnownOpenPRs adds open PRs learned from agent activity that the
+// authored-PR search has not indexed yet. It only projects already-loaded
+// snapshot caches; callers must not perform I/O to assemble its inputs.
+func unionLocallyKnownOpenPRs(
+	view dashboardAuthoredOpenPRs,
+	localPRs []locallyKnownPR,
+	states prStateIndex,
+	checks map[string]*prChecksSummary,
+) dashboardAuthoredOpenPRs {
+	if !view.Available {
+		return view
+	}
+
+	known := make(map[string]struct{}, len(view.Items)+len(view.Recent))
+	for _, list := range [][]dashboardAuthoredOpenPR{view.Items, view.Recent} {
+		for _, pr := range list {
+			if key := prStateKey(pr.URL); key != "" {
+				known[key] = struct{}{}
+			}
+		}
+	}
+
+	// Retain the first locally observed URL for deterministic output, but let a
+	// later source supply the title when the branch cache had none.
+	candidates := make(map[string]locallyKnownPR, len(localPRs))
+	order := make([]string, 0, len(localPRs))
+	for _, candidate := range localPRs {
+		ref, ok := githubPRRefFromURL(candidate.URL)
+		if !ok {
+			continue
+		}
+		key := "github:" + ref.key()
+		if _, exists := candidates[key]; !exists {
+			candidates[key] = candidate
+			order = append(order, key)
+			continue
+		}
+		if current := candidates[key]; truncateAuthoredPRTitle(current.Title) == "" &&
+			truncateAuthoredPRTitle(candidate.Title) != "" {
+			current.Title = candidate.Title
+			candidates[key] = current
+		}
+	}
+
+	for _, key := range order {
+		if _, exists := known[key]; exists {
+			continue
+		}
+		candidate := candidates[key]
+		ref, ok := githubPRRefFromURL(candidate.URL)
+		if !ok {
+			continue
+		}
+		observation, ok := states[key]
+		if !ok || (!strings.EqualFold(observation.state, "open") &&
+			!strings.EqualFold(observation.state, "draft")) {
+			continue
+		}
+
+		title := truncateAuthoredPRTitle(candidate.Title)
+		if title == "" {
+			title = ref.repo + "#" + strconv.Itoa(ref.number)
+		}
+		pr := dashboardAuthoredOpenPR{
+			Number: ref.number, Repository: ref.repo,
+			URL:   "https://github.com/" + ref.repo + "/pull/" + strconv.Itoa(ref.number),
+			Title: title, Local: true,
+			Draft: strings.EqualFold(observation.state, "draft"),
+		}
+		if !observation.updatedAt.IsZero() {
+			pr.UpdatedAt = observation.updatedAt.Format(time.RFC3339)
+		}
+		if summary := checks[key]; summary != nil {
+			copy := *summary
+			pr.Checks = &copy
+		}
+		view.Items = append(view.Items, pr)
+		view.Total++
+		known[key] = struct{}{}
+	}
+
+	sort.SliceStable(view.Items, func(i, j int) bool {
+		ri, rj := authoredOpenPRAttentionRank(view.Items[i]), authoredOpenPRAttentionRank(view.Items[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return view.Items[i].UpdatedAt > view.Items[j].UpdatedAt
 	})
 	return view
 }

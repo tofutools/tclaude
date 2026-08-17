@@ -130,6 +130,7 @@ function OpenPRRow({ pr, showFinalCI = false }) {
           ${terminal ? html`<span> · ${pr.state}${pr.closed_at ? ` ${new Date(pr.closed_at).toLocaleDateString()}` : ''}</span>` : null}
           ${!terminal && pr.agent_title ? html`<span> · ${pr.agent_title}</span>` : null}
           ${!terminal && !pr.agent_title ? html`<span> · no active agent</span>` : null}
+          ${!terminal && pr.local ? html`<span title="Known from local agent activity; not yet in GitHub's authored search"> · via agent</span>` : null}
           ${pr.draft && !terminal ? html`<span> · draft</span>` : null}
         </span>
       </span>

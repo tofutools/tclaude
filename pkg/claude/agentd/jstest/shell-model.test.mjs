@@ -64,6 +64,17 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   assert.deepEqual(authoredOpenPRsView({ authored_open_prs: prs }, 'unattached').items.map((pr) => pr.number), [2, 3, 4, 5]);
   assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).attention, 4);
   assert.equal(authoredOpenPRsView({ authored_open_prs: { ...prs, search_url: 'javascript:alert(1)' } }).searchURL, '');
+  const localPR = {
+    number: 6, url: 'https://github.com/acme/app/pull/6', local: true, agent_id: 'agt_2',
+  };
+  const withLocal = { ...prs, total: 6, items: [...prs.items, localPR] };
+  assert.equal(authoredOpenPRsView({ authored_open_prs: withLocal }).items.at(-1), localPR,
+    'a locally unioned row passes the normal open-PR URL filter');
+  assert.deepEqual(
+    authoredOpenPRsView({ authored_open_prs: withLocal }, 'unattached').items.map((pr) => pr.number),
+    [2, 3, 4, 5],
+    'an associated local row does not inflate the unattached count',
+  );
 
   // Recently closed PRs live in their own filter: they must not reach the open
   // list, the open count, or the attention/unattached tallies.
