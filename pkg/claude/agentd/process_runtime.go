@@ -405,10 +405,9 @@ func (m *processRunManager) liveClaim(runID string) (*processRunClaim, bool, err
 }
 
 // accountedCommands reports which of a run's durable commands a live owner has
-// taken responsibility for, and whether the run is claimed at all. It returns
-// an empty set rather than nil for an unclaimed run, so callers can union
-// snapshots without a nil check. See loadProcessRunView for why it is read on
-// both sides of the record.
+// taken responsibility for, and whether the run is claimed at all. It is a
+// test-observation helper; production views use snapshotRunView so the durable
+// record and this accounting cannot come from different claim lifetimes.
 func (m *processRunManager) accountedCommands(runID string) (map[string]struct{}, bool) {
 	m.mu.Lock()
 	claim, ok := m.claims[runID]
@@ -417,6 +416,40 @@ func (m *processRunManager) accountedCommands(runID string) (map[string]struct{}
 		return map[string]struct{}{}, false
 	}
 	return claim.accountedNodes(), true
+}
+
+// snapshotRunView reads one durable run and its in-memory ownership as a
+// single observation. The manager lock pins the claim's lifetime, while the
+// claim lock prevents a planning commit from making a command durable without
+// including it in the copied accounting set.
+//
+// Holding both locks across the SQLite read is intentional. Bracketing the
+// read with two independent accounting snapshots is not sufficient: a fast
+// claim can be acquired, commit and resolve a command, and be released wholly
+// between those snapshots, leaving the record read at the middle of that
+// interval looking falsely abandoned.
+func (m *processRunManager) snapshotRunView(runID string) (*db.ProcessRun, map[string]struct{}, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	claim, claimed := m.claims[runID]
+	if claimed {
+		claim.mu.Lock()
+		defer claim.mu.Unlock()
+	}
+
+	record, err := db.GetProcessRun(runID)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	accounted := make(map[string]struct{})
+	if claimed {
+		accounted = make(map[string]struct{}, len(claim.accounted))
+		for nodeID := range claim.accounted {
+			accounted[nodeID] = struct{}{}
+		}
+	}
+	return record, accounted, claimed, nil
 }
 
 func (m *processRunManager) begin(runID string, start processRunStart) (bool, error) {
@@ -1310,31 +1343,16 @@ func missingProcessProgramAuthorizations(tmpl *model.Template, authorized []stri
 	return missing
 }
 
-// loadProcessRunView brackets the record read with the owner's accounting.
-//
-// Neither order is safe on its own, and both failures point the same wrong way
-// — at an operator being told to reconcile work that is not theirs:
-//
-//   - accounting first, then the record, misses a command planned in between;
-//   - the record first, then accounting, misses a command whose owner released
-//     the claim after the read, having in fact resolved it.
-//
-// Reading it on both sides and taking the union is conservative in both
-// directions. A command counts as owned if EITHER snapshot saw its owner, so
-// the worst case is a moment of stale "executing", never a false invitation to
-// reconcile. Once the owner is genuinely gone, both snapshots agree.
+// loadProcessRunView reads the durable record and live-owner accounting under
+// one synchronization boundary. Neither source alone can distinguish an
+// executing command from an abandoned one.
 func loadProcessRunView(runID string) (processRunView, error) {
 	runID = strings.TrimSpace(runID)
-	before, claimedBefore := processRuns.accountedCommands(runID)
-	record, err := db.GetProcessRun(runID)
+	record, accounted, claimed, err := processRuns.snapshotRunView(runID)
 	if err != nil {
 		return processRunView{}, err
 	}
-	after, claimedAfter := processRuns.accountedCommands(runID)
-	for nodeID := range after {
-		before[nodeID] = struct{}{}
-	}
-	return processRunViewOf(record, before, claimedBefore || claimedAfter)
+	return processRunViewOf(record, accounted, claimed)
 }
 
 func processRunViewOf(record *db.ProcessRun, accounted map[string]struct{}, claimed bool) (processRunView, error) {
