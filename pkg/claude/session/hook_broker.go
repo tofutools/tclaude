@@ -175,6 +175,16 @@ type BrokeredHookResponse struct {
 // the interim behaviour it replaces, where a tclaude-layer launch dropped
 // every event unconditionally.
 func brokerHookEvent(input HookCallbackInput, stdout io.Writer) error {
+	brokerHookEventIfDelivered(input, stdout)
+	return nil
+}
+
+// brokerHookEventIfDelivered is brokerHookEvent with the one fact its callers
+// on the ORDINARY (unbrokered) path need: whether the daemon actually applied
+// the event. A launch that hands over a single event — rather than all of them
+// — must apply it itself when the daemon did not take it, or the event would be
+// lost outright. Every failure remains soft; only the answer changes.
+func brokerHookEventIfDelivered(input HookCallbackInput, stdout io.Writer) bool {
 	req := BrokeredHookRequest{
 		Input:             input,
 		ClaimedSessionID:  os.Getenv("TCLAUDE_SESSION_ID"),
@@ -184,7 +194,7 @@ func brokerHookEvent(input HookCallbackInput, stdout io.Writer) error {
 	body, err := json.Marshal(req)
 	if err != nil {
 		slog.Warn("hook broker: failed to encode event", "error", err, "module", "hooks")
-		return nil
+		return false
 	}
 	body = trimOversizedHookBody(req, body)
 
@@ -197,15 +207,25 @@ func brokerHookEvent(input HookCallbackInput, stdout io.Writer) error {
 		// whose recorded pid was reused. That does not self-correct: the
 		// agent silently loses ALL hook telemetry for its whole life, so
 		// the log has to be findable rather than blend into noise.
+		if !brokerHookEvents() {
+			// A launch that applies its own hooks and only hands over the
+			// events the daemon must act on (see autoPermitNeedsDaemon). It
+			// keeps its telemetry either way — the caller applies the event
+			// locally — so neither outcome is the loud, findable failure the
+			// always-brokered case below describes.
+			slog.Debug("hook broker: daemon did not take this event; applying it locally",
+				"event", input.HookEventName, "error", err, "module", "hooks")
+			return false
+		}
 		if errors.Is(err, errHookBrokerRefused) {
 			slog.Error("hook broker: agentd refused this session's hook events; "+
 				"the agent's status, ledgers and directory tracking will not update",
 				"event", input.HookEventName, "error", err, "module", "hooks")
-			return nil
+			return false
 		}
 		slog.Warn("hook broker: agentd unreachable, dropping event",
 			"event", input.HookEventName, "error", err, "module", "hooks")
-		return nil
+		return false
 	}
 	if resp.Stdout != "" {
 		if _, err := io.WriteString(stdout, resp.Stdout); err != nil {
@@ -217,7 +237,8 @@ func brokerHookEvent(input HookCallbackInput, stdout io.Writer) error {
 			}
 			slog.Warn("hook broker: failed to relay hook decision to stdout",
 				"error", err, "module", "hooks")
-			return nil
+			// The daemon DID apply the event; only the reply was lost.
+			return true
 		}
 	}
 	if resp.AckToken != "" {
@@ -230,7 +251,7 @@ func brokerHookEvent(input HookCallbackInput, stdout io.Writer) error {
 				"error", err, "module", "hooks")
 		}
 	}
-	return nil
+	return true
 }
 
 func acknowledgeBrokeredHook(token string, delivered bool) error {

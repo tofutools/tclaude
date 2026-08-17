@@ -5,59 +5,38 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 // The accept table is the whole of what auto-permit will answer. Pin its shape:
-// a slug per entry, compile-time keys, and no wildcard.
+// a slug per entry, compile-time keys, and no catch-all.
 func TestAutoPermitAccepts_Shape(t *testing.T) {
-	require.Contains(t, autoPermitAccepts, "EnterWorktree",
-		"the EnterWorktree safety check is the prompt this exists for")
-	for tool, accept := range autoPermitAccepts {
-		assert.NotEmptyf(t, accept.slug, "%s: needs a consenting slug", tool)
-		assert.NotEmptyf(t, accept.keys, "%s: needs accept keys", tool)
+	accept, ok := AutoPermitAcceptForTool("EnterWorktree")
+	require.True(t, ok, "the EnterWorktree safety check is the prompt this exists for")
+	assert.Equal(t, PermAutoPermitEnterWorktree, accept.Slug)
+	assert.Equal(t, []string{"Enter"}, accept.Keys)
+
+	for tool, a := range autoPermitAccepts {
+		assert.NotEmptyf(t, a.Slug, "%s: needs a consenting slug", tool)
+		assert.NotEmptyf(t, a.Keys, "%s: needs accept keys", tool)
 	}
-	assert.NotContains(t, autoPermitAccepts, "", "there is no catch-all entry")
-}
-
-// The decision gate: a prompt is answered only for a KNOWN tool, on an agent
-// the operator explicitly granted the matching slug, in a session with a pane.
-// Anything else is a silent no-op that leaves the prompt waiting for the human.
-func TestAutoPermitAcceptFor_RequiresGrant(t *testing.T) {
-	setupAutoPermitTestDB(t)
-	const conv = "conv-1"
-	seedAutoPermitAgent(t, conv)
-	state := &SessionState{ID: "sess-1", ConvID: conv, TmuxSession: "tcl-1"}
-
-	_, ok := autoPermitAcceptFor(state, "EnterWorktree")
-	assert.False(t, ok, "no grant, no answer — the default for every agent")
-
-	require.NoError(t, db.GrantAgentPermission(conv, PermAutoPermitEnterWorktree, "human"))
-
-	keys, ok := autoPermitAcceptFor(state, "EnterWorktree")
-	assert.True(t, ok, "the grant IS the operator's standing consent")
-	assert.Equal(t, []string{"Enter"}, keys)
-
-	_, ok = autoPermitAcceptFor(state, "Bash")
+	_, ok = AutoPermitAcceptForTool("")
+	assert.False(t, ok, "there is no catch-all entry")
+	_, ok = AutoPermitAcceptForTool("Bash")
 	assert.False(t, ok, "consent is per named prompt, never a blanket accept")
-
-	_, ok = autoPermitAcceptFor(&SessionState{ID: "sess-1", ConvID: conv}, "EnterWorktree")
-	assert.False(t, ok, "no pane, nothing to press")
-
-	_, ok = autoPermitAcceptFor(nil, "EnterWorktree")
-	assert.False(t, ok)
 }
 
-func setupAutoPermitTestDB(t *testing.T) {
-	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	db.ResetForTest()
-}
+// Which events an ordinary (unbrokered) launch hands to the daemon. Only a
+// permission prompt auto-permit knows how to answer — everything else keeps
+// applying in-process exactly as before.
+func TestAutoPermitNeedsDaemon(t *testing.T) {
+	assert.True(t, autoPermitNeedsDaemon(HookCallbackInput{
+		HookEventName: "PermissionRequest", ToolName: "EnterWorktree"}))
 
-// seedAutoPermitAgent enrolls conv as an agent, since a permission grant is
-// keyed on the stable agent id behind it.
-func seedAutoPermitAgent(t *testing.T, convID string) {
-	t.Helper()
-	_, _, err := db.EnsureAgentForConv(convID, "test")
-	require.NoError(t, err)
+	assert.False(t, autoPermitNeedsDaemon(HookCallbackInput{
+		HookEventName: "PermissionRequest", ToolName: "Bash"}),
+		"a prompt no condition names is not the daemon's business")
+	assert.False(t, autoPermitNeedsDaemon(HookCallbackInput{
+		HookEventName: "PreToolUse", ToolName: "EnterWorktree"}),
+		"only the prompt event, not every mention of the tool")
+	assert.False(t, autoPermitNeedsDaemon(HookCallbackInput{HookEventName: "Stop"}))
 }

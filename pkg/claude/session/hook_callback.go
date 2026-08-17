@@ -660,6 +660,16 @@ func runHookCallback() error {
 		return brokerHookEvent(input, os.Stdout)
 	}
 
+	// An ordinary launch applies its own hooks, but a permission prompt
+	// auto-permit can answer is a decision only the daemon can make and only
+	// the daemon can act on (see auto_permit.go). Hand that one event over the
+	// SAME broker every sandboxed launch already uses, and fall back to
+	// applying it here when the daemon does not take it — an unreachable
+	// daemon must cost the agent its auto-answer, never its status update.
+	if autoPermitNeedsDaemon(input) && brokerHookEventIfDelivered(input, os.Stdout) {
+		return nil
+	}
+
 	if err := DispatchHookEvent(context.Background(), input, envSessionID, LocalHookAmbient(), os.Stdout); err != nil {
 		return err
 	}
@@ -1410,11 +1420,6 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 		if state.StatusDetail == "" {
 			state.StatusDetail = "permission"
 		}
-		// The hook names the tool being gated, which is exactly the condition
-		// auto-permit keys off: when the operator has granted the matching
-		// slug, accept the prompt on their behalf. A no-op for every agent
-		// without a grant. See auto_permit.go.
-		maybeAutoPermit(state, input.ToolName)
 
 	case "PostCompact":
 		// A compaction just happened — zero the pre-compaction context_pct
