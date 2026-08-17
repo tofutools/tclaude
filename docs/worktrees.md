@@ -115,6 +115,15 @@ the worktree, not the original checkout. Sessions in different worktrees of
 the same repo run fully in parallel — separate checkouts, separate
 conversation histories, no shared working tree to trip over.
 
+!!! tip "Claude Code's own worktree prompt"
+    When an agent calls Claude Code's `EnterWorktree` tool for a worktree
+    outside the directory Claude Code manages itself, the confirmation is a
+    hardcoded safety check no allow-rule or hook can pre-approve — the agent
+    waits for a keystroke. An operator who wants that to run unattended can
+    pre-consent per agent with
+    [auto-permit](permissions-and-audit.md#auto-permit-pre-consenting-to-a-human-only-prompt):
+    `tclaude agent auto-permit on enter-worktree`.
+
 ## From the conversation browser
 
 In [conversation watch mode](conversations.md#watch-mode), `W` creates a

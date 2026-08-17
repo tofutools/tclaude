@@ -601,6 +601,12 @@ func runServe(p *serveParams) error {
 	// it clears. Shares the daemon-wide stop channel. See unread_reminder.go.
 	startUnreadReminderSweep(cronStop)
 
+	// Auto-permit sweep. Answers a NAMED, opted-in permission prompt for an
+	// agent whose operator pre-consented to it — off for every agent by
+	// default, and a no-op tick until someone opts in. Shares the daemon-wide
+	// stop channel. See auto_permit.go.
+	startAutoPermitSweep(cronStop)
+
 	// Long-horizon retired-agent cleanup (JOH-269). OPT-IN: when the human
 	// enables agent.retired_cleanup, permanently deletes agents/convs that
 	// have been retired longer than the configured window (~1 year by
@@ -1186,6 +1192,11 @@ func buildMux() http.Handler {
 	mux.HandleFunc("/v1/whoami/task", handleWhoamiTask)
 	mux.HandleFunc("/v1/whoami/prs", handleWhoamiPRs)
 	mux.HandleFunc("/v1/whoami/tags", handleWhoamiTags)
+	// Auto-permit: the per-agent opt-in set of named permission prompts the
+	// daemon may answer on the operator's behalf, plus the read-back of what
+	// it has answered. See auto_permit_handlers.go.
+	mux.HandleFunc("/v1/whoami/auto-permit", handleWhoamiAutoPermit)
+	mux.HandleFunc("GET /v1/auto-permit/log", handleAutoPermitLog)
 	mux.HandleFunc("/v1/lookup", handleLookup)
 	mux.HandleFunc("GET /v1/usage", handleUsage)
 	mux.HandleFunc("/v1/peers", handlePeers)

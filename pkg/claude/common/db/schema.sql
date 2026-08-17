@@ -1462,3 +1462,11 @@ CREATE TABLE trigger_dwell_states (
 
 CREATE INDEX idx_trigger_dwell_states_due ON trigger_dwell_states(result, true_since, fired_at);
 
+CREATE TABLE agent_auto_permit (
+			agent_id   TEXT NOT NULL REFERENCES agents(agent_id) ON DELETE CASCADE,
+			condition  TEXT NOT NULL,
+			granted_by TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY (agent_id, condition)
+		) STRICT;
+

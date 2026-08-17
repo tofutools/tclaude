@@ -299,15 +299,23 @@ func requireAgent(w http.ResponseWriter, r *http.Request) (string, bool) {
 // `agent.default_permissions` / `agent.permission_overrides`. Keep this
 // list in sync with the agent-coord skill / docs.
 const (
-	PermSelfRename                        = "self.rename"
-	PermSelfCompact                       = "self.compact"
-	PermSelfInterrupt                     = "self.interrupt"
-	PermSelfClone                         = "self.clone"
-	PermSelfRemoteControl                 = "self.remote-control"
-	PermSelfTask                          = "self.task"
-	PermSelfPR                            = "self.pr"
-	PermSelfTags                          = "self.tags"
-	PermSelfDirRepair                     = "self.dir-repair"
+	PermSelfRename        = "self.rename"
+	PermSelfCompact       = "self.compact"
+	PermSelfInterrupt     = "self.interrupt"
+	PermSelfClone         = "self.clone"
+	PermSelfRemoteControl = "self.remote-control"
+	PermSelfTask          = "self.task"
+	PermSelfPR            = "self.pr"
+	PermSelfTags          = "self.tags"
+	PermSelfDirRepair     = "self.dir-repair"
+	// PermSelfAutoPermit gates managing one's OWN auto-permit opt-ins: the
+	// named permission prompts the daemon may answer on the operator's
+	// behalf. Modelled on human.clipboard rather than the other self.*
+	// slugs — NOT default-granted and NOT owner-implied — because it
+	// consents to a gate the harness deliberately reserves for a human
+	// keystroke, so it takes an explicit grant (or a per-call --ask-human
+	// approval) every time.
+	PermSelfAutoPermit                    = "self.auto-permit"
 	PermAgentReincarnate                  = "agent.reincarnate"
 	PermAgentCompact                      = "agent.compact"
 	PermAgentInterrupt                    = "agent.interrupt"
@@ -318,6 +326,7 @@ const (
 	PermAgentTask                         = "agent.task"
 	PermAgentPR                           = "agent.pr"
 	PermAgentTags                         = "agent.tags"
+	PermAgentAutoPermit                   = "agent.auto-permit"
 	PermGroupsAdmin                       = "groups.admin"
 	PermGroupsCreate                      = "groups.create"
 	PermGroupsDelete                      = "groups.delete"
@@ -334,6 +343,7 @@ const (
 	PermGroupsMembersTask                 = "groups.members.task"
 	PermGroupsMembersPR                   = "groups.members.pr"
 	PermGroupsMembersTags                 = "groups.members.tags"
+	PermGroupsMembersAutoPermit           = "groups.members.auto-permit"
 	PermGroupsMembersSchedule             = "groups.members.schedule"
 	PermGroupsMembersDelete               = "groups.members.delete"
 	PermGroupsMembersPromote              = "groups.members.promote"

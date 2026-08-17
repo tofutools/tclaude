@@ -19,6 +19,7 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermGroupsMembersInterrupt, PermGroupsMembersRename,
 		PermGroupsMembersClone, PermGroupsMembersContextInfo,
 		PermGroupsMembersTask, PermGroupsMembersPR, PermGroupsMembersTags,
+		PermGroupsMembersAutoPermit,
 		PermGroupsMembersSchedule, PermGroupsMembersStop,
 		PermGroupsMembersResume, PermGroupsMembersDelete,
 		PermGroupsMembersPromote, PermGroupsMembersRetire,

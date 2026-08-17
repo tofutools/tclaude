@@ -122,6 +122,17 @@ type CCSim struct {
 	// against the failed branch. Off by default — most tests want the healthy
 	// pill.
 	rcFailed bool
+	// permissionPrompt models a permission dialog being up: the question
+	// Claude Code renders (e.g. EnterWorktree's "Enter the worktree at …?")
+	// with its Yes / "No, and tell Claude what to do differently" options.
+	// While it is set, RenderPane draws the dialog and Enter ACCEPTS it
+	// rather than submitting the input buffer — which is what lets a test
+	// observe the real effect of an auto-permit keystroke (was the dialog
+	// actually accepted?) instead of merely that a key reached the pane.
+	permissionPrompt string
+	// permissionAccepted counts dialogs accepted by an Enter. A counter, not
+	// a flag, so a test can pin that a prompt is answered exactly once.
+	permissionAccepted int
 }
 
 // rcDisconnectMenuOffset is how many Up presses move the disconnect-confirm
@@ -294,6 +305,29 @@ func (c *CCSim) Receive(text string) {
 		c.mu.Unlock()
 		return
 	}
+	if c.permissionPrompt != "" {
+		switch text {
+		case "Enter":
+			// The dialog opens with "Yes" highlighted, so a bare Enter accepts
+			// — the same keystroke the human presses.
+			c.permissionPrompt = ""
+			c.permissionAccepted++
+			c.mu.Unlock()
+			return
+		case "Escape":
+			// Rejects and dismisses, as the "(esc)" hint on the reject option
+			// advertises.
+			c.permissionPrompt = ""
+			c.buf.Reset()
+			c.ccArmed = false
+			c.mu.Unlock()
+			return
+		default:
+			// Typing does nothing while a dialog owns the keyboard.
+			c.mu.Unlock()
+			return
+		}
+	}
 	switch text {
 	case "Escape":
 		// Clears a half-typed line and dismisses a permission dialog, and
@@ -426,9 +460,49 @@ func (c *CCSim) SetRemoteControlFailed(failed bool) {
 // the disconnect-confirm menu quirk lives in the Receive state machine.
 func (c *CCSim) RenderPane() string {
 	c.mu.Lock()
-	on, failed, conv := c.remoteOn, c.rcFailed, c.ConvID
+	on, failed, conv, prompt := c.remoteOn, c.rcFailed, c.ConvID, c.permissionPrompt
 	c.mu.Unlock()
-	return renderCCFooter(on, failed, conv)
+	return renderCCPermissionDialog(prompt) + renderCCFooter(on, failed, conv)
+}
+
+// ShowPermissionPrompt puts a permission dialog up on the pane: RenderPane
+// draws `question` with Claude Code's Yes / "No, and tell Claude what to do
+// differently" options, and the next Enter accepts it. Models the class of
+// prompt no allow-rule can pre-approve (EnterWorktree's safety check), which is
+// what the auto-permit sweep exists to answer.
+func (c *CCSim) ShowPermissionPrompt(question string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.permissionPrompt = question
+}
+
+// PermissionPromptsAccepted reports how many dialogs an Enter has accepted.
+// Tests assert on THIS — the real outcome of the injected keystroke — not
+// merely that a key reached the pane.
+func (c *CCSim) PermissionPromptsAccepted() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.permissionAccepted
+}
+
+// PermissionPromptUp reports whether a dialog is still waiting for an answer.
+func (c *CCSim) PermissionPromptUp() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.permissionPrompt != ""
+}
+
+// renderCCPermissionDialog draws the dialog band above the footer, or nothing
+// when no dialog is up. The option labels are the real Claude Code strings —
+// the auto-permit condition patterns match against them, so a test that used
+// paraphrases would pass while production never fired.
+func renderCCPermissionDialog(question string) string {
+	if question == "" {
+		return ""
+	}
+	return question + "\n" +
+		"❯ 1. Yes\n" +
+		"  2. No, and tell Claude what to do differently (esc)\n\n"
 }
 
 // renderCCFooter builds the pane content RenderPane returns. Kept as a free
