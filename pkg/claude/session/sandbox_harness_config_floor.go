@@ -245,9 +245,14 @@ func canonicalHarnessConfigFloorPath(path string) (string, bool, error) {
 
 // harnessConfigFloorPaths resolves the floor for one launch and drops the
 // entries an operator explicitly reopened. It returns nil when the composed
-// posture opted the whole floor out, which is also what makes the frozen
-// contract self-describing: an empty list means "no floor was applied", never
-// "the floor was applied and happened to be empty".
+// posture opted the whole floor out.
+//
+// An empty list does NOT prove the floor was opted out. Entries also drop for
+// per-path reasons — a symlinked name, an absent file, an operator reopen or
+// deny — so a host that symlinks every catalog directory and has none of the
+// catalog files yields an empty list from a launch where the floor did apply.
+// Read Effective.HarnessConfig, not the length of this list, to tell the two
+// apart; that is what HasCapabilities and the lineage guard do.
 func harnessConfigFloorPaths(
 	harnessName string,
 	stateRoot string,
@@ -324,7 +329,15 @@ func harnessConfigFloorReopened(
 }
 
 // harnessConfigFloorFileExists reports whether a floor FILE entry is present on
-// the host. Lstat, not Stat: a dangling symlink is not something to bind.
+// the host.
+//
+// Lstat, not Stat. In the ordinary case the distinction is unreachable — a
+// symlinked final component was already dropped as unfloorable by
+// canonicalHarnessConfigFloorPath — but it decides the TOCTOU case. Swap the
+// name for a DANGLING symlink between that check and this one and Stat reports
+// "absent", silently dropping the entry and taking the floor off that path;
+// Lstat reports "present", so the entry survives to prepareHarnessConfigFloor,
+// which refuses the symlink outright. Fail closed, not open.
 func harnessConfigFloorFileExists(path string) (bool, error) {
 	if _, err := os.Lstat(path); err != nil {
 		if os.IsNotExist(err) {
@@ -344,7 +357,9 @@ func harnessConfigFloorFileExists(path string) (bool, error) {
 //
 // File entries are NOT created here — absent ones were dropped at derivation
 // time, for the reasons in harnessConfigFloorCatalog's resolve loop. A file
-// reaching this point is expected to exist already; it is only inspected.
+// reaching this point is only ever inspected, never created — and one that has
+// gone missing since is skipped rather than refused, matching what the mount
+// renderers do with an absent bind source.
 func prepareHarnessConfigFloor(paths []string, dirs map[string]bool) error {
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
@@ -383,12 +398,23 @@ func prepareHarnessConfigFloor(paths []string, dirs map[string]bool) error {
 			continue
 		}
 		// Never created, never truncated: an operator's real settings file is
-		// only ever inspected here. Absent means it was removed in the window
-		// since derivation, which is the same process microseconds earlier. The
-		// contract already names it, so the bind would fail anyway — reporting
-		// it here beats an opaque bwrap error.
+		// only ever inspected here.
+		//
+		// Absent means it was removed in the window since derivation — the same
+		// process microseconds earlier, so an editor that truncates-and-rewrites
+		// rather than renaming, or a concurrent setup run. Skip rather than
+		// refuse: the bwrap renderer already drops a mount whose source is
+		// missing (bwrapBindSourceExists), so erroring here would invent a hard
+		// launch failure for a condition the rest of the layer treats as
+		// benign. The outcome is exactly the posture an absent file gets at
+		// derivation — unfloored — reached by a different route.
 		info, err := os.Lstat(path)
 		if err != nil {
+			if os.IsNotExist(err) {
+				slog.Warn("harness config floor skips a file removed since derivation",
+					"path", path, "module", "sandbox")
+				continue
+			}
 			return fmt.Errorf("inspect harness config floor %q: %w", path, err)
 		}
 		if info.Mode()&os.ModeSymlink != 0 {

@@ -120,10 +120,31 @@ func TestHarnessConfigFloorNeverCreatesCopilotMCPConfig(t *testing.T) {
 			dirs[entry.Path] = true
 		}
 	}
+	// A positive anchor first: without it this case would pass just as happily
+	// against an empty Copilot catalog, asserting nothing.
+	require.Contains(t, paths, filepath.Join(stateRoot, "hooks"),
+		"the Copilot floor must be non-empty for the absence below to mean anything")
 	assert.NotContains(t, paths, mcp)
 
 	require.NoError(t, prepareHarnessConfigFloor(paths, dirs))
 	assert.NoFileExists(t, mcp)
+}
+
+// A file present at derivation and gone by preparation must not abort the
+// launch: the bwrap renderer already drops a mount whose source is missing, so
+// refusing here would invent a hard failure the rest of the layer does not have.
+func TestHarnessConfigFloorSkipsFileRemovedAfterDerivation(t *testing.T) {
+	home, cwd := claudeFloorFixture(t)
+	settings := filepath.Join(home, ".claude", "settings.json")
+	require.NoError(t, os.WriteFile(settings, []byte("{}\n"), 0o600))
+
+	spec := buildClaudeFloorSpec(t, cwd, sandboxpolicy.EffectiveProfile{})
+	require.Contains(t, spec.Contract.HarnessConfigFloor, settings)
+
+	// The window: an editor that truncates and rewrites, or a concurrent setup.
+	require.NoError(t, os.Remove(settings))
+	require.NoError(t, PrepareTclaudeLayerHarnessState(spec))
+	assert.NoFileExists(t, settings, "preparation must not resurrect it either")
 }
 
 // Materialization must never clobber a real settings file.

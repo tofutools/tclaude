@@ -27,11 +27,17 @@ type TclaudeLayerLaunchContract struct {
 	ReadOnlyStateDirs []string `json:"read_only_state_dirs,omitempty"`
 	// HarnessConfigFloor freezes the harness's own policy/code-execution
 	// surface as read-only. See sandbox_harness_config_floor.go for what is in
-	// it and why. An empty list means no floor was applied — either the
-	// composed profile opted out, or every entry was explicitly reopened.
+	// it and why.
+	//
+	// An empty list does NOT mean the floor was off. Entries drop for per-path
+	// reasons too — a symlinked name, an absent file, an operator reopen or
+	// deny — so a dotfiles-managed host can freeze a contract with this field
+	// absent from the JSON entirely while the floor did apply. Read
+	// Effective.HarnessConfig to tell the two apart; never infer it from the
+	// length of this list.
 	HarnessConfigFloor []string `json:"harness_config_floor,omitempty"`
 	// HarnessConfigFloorDirs names which floor entries are directories. The
-	// rest are files, and the two are materialized differently.
+	// rest are files. Directories are created when missing; files are not.
 	HarnessConfigFloorDirs []string                         `json:"harness_config_floor_dirs,omitempty"`
 	Environment            []sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
 	FinalHideDirs          []string                         `json:"final_hide_dirs,omitempty"`
