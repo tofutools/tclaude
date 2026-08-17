@@ -12,6 +12,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // PermSlug describes one agent permission. Slugs are dotted strings that
@@ -196,10 +197,6 @@ var permissionRegistry = []PermSlug{
 		Description: "Set ANOTHER agent's tags globally (tclaude agent tags set/add/rm --target). Group-scoped authority uses groups.members.tags.",
 	},
 	{
-		Slug: PermAgentAutoPermit, GroupSibling: PermGroupsMembersAutoPermit,
-		Description: "Manage ANOTHER agent's auto-permit opt-ins globally (tclaude agent auto-permit on/off --target) — the named permission prompts the daemon may answer on the operator's behalf. Group-scoped authority uses groups.members.auto-permit.",
-	},
-	{
 		Slug: PermGroupsMembersReincarnate, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},
 		Description: "Reincarnate another agent when all of its current active group memberships are covered.",
 	},
@@ -234,10 +231,6 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug: PermGroupsMembersTags, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},
 		Description: "Set another member's tags when its current active groups are covered.",
-	},
-	{
-		Slug: PermGroupsMembersAutoPermit, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},
-		Description: "Manage another member's auto-permit opt-ins when its current active groups are covered.",
 	},
 	{
 		Slug:        PermGroupsAdmin,
@@ -571,8 +564,8 @@ var permissionRegistry = []PermSlug{
 		Description:   "Copy text to the human's system clipboard via `tclaude agent clipboard` — the daemon runs the platform copy tool (wl-copy/xclip/xsel, pbcopy, clip.exe). An agent→human-machine surface like human.notify, but NOT default-granted and NOT owner-implied: it writes to the operator's real clipboard, so it needs an explicit grant or a per-call --ask-human popup approval.",
 	},
 	{
-		Slug:        PermSelfAutoPermit,
-		Description: "Manage own auto-permit opt-ins via `tclaude agent auto-permit on/off` — the named permission prompts the daemon answers on the operator's behalf (e.g. Claude Code's EnterWorktree safety check, which no allow-rule or hook can pre-approve). Modelled on human.clipboard rather than the other self.* slugs: NOT default-granted and NOT owner-implied, because it consents to a gate the harness deliberately reserves for a human keystroke, so it needs an explicit grant or a per-call --ask-human approval. Deliberately NOT auto-grantable either: the popup's one-click \"always allow\" is reserved for the two agent→human channels, and standing authority to pre-answer human-only prompts should be a deliberate grant, not a button pressed while unblocking an agent.",
+		Slug:        session.PermAutoPermitEnterWorktree,
+		Description: "Let tclaude answer Claude Code's EnterWorktree safety check for this agent — the hardcoded confirmation that no allow-rule, auto-mode setting or PreToolUse hook can pre-approve, so an agent otherwise stalls on it until a human presses a key. The grant IS the operator's standing consent: the PermissionRequest hook presses the accept key in the agent's own pane and records the answer. NOT default-granted and NOT owner-implied — it answers a gate the harness deliberately reserves for a human. Narrow by construction: one slug per named prompt, never a blanket accept (that is what --dangerously-skip-permissions is for).",
 	},
 	{
 		Slug:        PermSettingsDefaultModel,

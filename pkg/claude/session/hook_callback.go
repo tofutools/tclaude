@@ -1410,6 +1410,11 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 		if state.StatusDetail == "" {
 			state.StatusDetail = "permission"
 		}
+		// The hook names the tool being gated, which is exactly the condition
+		// auto-permit keys off: when the operator has granted the matching
+		// slug, accept the prompt on their behalf. A no-op for every agent
+		// without a grant. See auto_permit.go.
+		maybeAutoPermit(state, input.ToolName)
 
 	case "PostCompact":
 		// A compaction just happened — zero the pre-compaction context_pct

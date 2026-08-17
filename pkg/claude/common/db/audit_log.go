@@ -28,12 +28,6 @@ const (
 	AuditSourceHook      = "hook"      // harness lifecycle hook
 	AuditSourceReaper    = "reaper"    // steady-state liveness reconciliation
 	AuditSourceReconcile = "reconcile" // daemon-start reconciliation of a pre-existing corpse
-	// AuditSourceAutoPermit is the auto-permit sweep answering a named,
-	// opted-in permission prompt on the operator's behalf. Unlike the other
-	// sources it is not a command that arrived from anywhere — it is the
-	// daemon acting on standing consent — so it gets its own label rather
-	// than borrowing one that would misattribute it to a caller.
-	AuditSourceAutoPermit = "auto-permit"
 )
 
 // AuditLogEntry is one row of audit_log — the persistent trail of

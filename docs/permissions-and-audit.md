@@ -197,51 +197,27 @@ that describe a scope dimension offer a scoped variant of the same card.
 ## Auto-permit: pre-consenting to a human-only prompt
 
 A few harness prompts cannot be pre-allowed at all. Claude Code's
-`EnterWorktree` safety check is the clearest case: when the target worktree
-lives outside the directory Claude Code manages itself, the confirmation is a
-hardcoded gate that ignores allow-rules, the auto-mode classifier, and
-`PreToolUse` hook approvals alike. Only a keystroke clears it — so an agent
-stalls on an operation its operator is perfectly happy to have run unattended,
-with no configuration anywhere that expresses that consent.
+`EnterWorktree` safety check is the case: when the target worktree lives outside
+the directory Claude Code manages itself, the confirmation is a hardcoded gate
+that ignores allow-rules, the auto-mode classifier, and `PreToolUse` hook
+approvals alike. Only a keystroke clears it — so an agent stalls on an operation
+its operator is perfectly happy to have run unattended.
 
-**Auto-permit** is that configuration. Opt an agent into one *named* condition
-and the daemon presses the accept key when it sees exactly that dialog:
+The permission grant is the missing consent:
 
 ```bash
-tclaude agent auto-permit ls                          # the registry + what is on
-tclaude agent auto-permit on enter-worktree           # consent (self)
-tclaude agent auto-permit on enter-worktree --target reviewer
-tclaude agent auto-permit off enter-worktree          # withdraw
-tclaude agent auto-permit log                         # what was answered, and when
+tclaude agent permissions grant --target worker auto-permit.enter-worktree
 ```
 
-It is off for every agent by default, and deliberately narrow:
+From then on, when that agent hits the EnterWorktree prompt, the
+`PermissionRequest` hook — which already names the tool being gated — presses
+the accept key in the agent's own pane and records the answer to the audit trail
+(actor `system`, verb `auto-permit.answer`). Revoke with `permissions revoke`.
 
-- **Named conditions only.** The condition list is compile-time; there is no
-  wildcard. For blanket acceptance, `--dangerously-skip-permissions` already
-  exists and is the honest way to ask for it.
-- **The pane is the gate.** Status alone never licenses a keystroke. The daemon
-  reads the pane immediately before pressing, under the same lock the keystroke
-  is sent under, and presses only if that condition's dialog is live on screen.
-  A stale status, an already-answered prompt, or a *different* prompt that
-  arrived in the meantime all result in nothing being sent. If a future Claude
-  Code reworded the dialog, auto-permit would simply stop firing and the prompt
-  would wait for the human, as it does today.
-- **Every press is recorded.** Each auto-answer writes an audit row (actor
-  `system`, verb `auto-permit.answer`, source `auto-permit`) naming the
-  condition and the prompt, visible in the dashboard's **Audit** tab and via
-  `auto-permit log`.
-
-Consent is keyed to the stable agent id, so it survives a reincarnate or a
-`/clear` conv rotation.
-
-`self.auto-permit` is modelled on `human.clipboard` rather than on the other
-`self.*` slugs: **not** default-granted and **not** implied by group ownership,
-so it takes an explicit grant (or a per-call `--ask-human` approval). It is not
-auto-grantable from the approval popup either — standing authority to
-pre-answer human-only prompts should be a deliberate grant. Acting on another
-agent (`--target`) uses the usual manager pattern: `agent.auto-permit`, or the
-group-scoped `groups.members.auto-permit`.
+The design is deliberately narrow: **one slug per named prompt**, nothing
+wildcarded, and no auto-permit slug is default-granted or implied by group
+ownership. For blanket acceptance, `--dangerously-skip-permissions` already
+exists and is the honest way to ask for it.
 
 ## The audit trail
 

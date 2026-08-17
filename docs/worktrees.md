@@ -120,9 +120,8 @@ conversation histories, no shared working tree to trip over.
     outside the directory Claude Code manages itself, the confirmation is a
     hardcoded safety check no allow-rule or hook can pre-approve — the agent
     waits for a keystroke. An operator who wants that to run unattended can
-    pre-consent per agent with
-    [auto-permit](permissions-and-audit.md#auto-permit-pre-consenting-to-a-human-only-prompt):
-    `tclaude agent auto-permit on enter-worktree`.
+    grant the agent `auto-permit.enter-worktree`; see
+    [auto-permit](permissions-and-audit.md#auto-permit-pre-consenting-to-a-human-only-prompt).
 
 ## From the conversation browser
 
