@@ -194,31 +194,6 @@ the two agent-to-human channels, where "this agent may always reach me" is a
 sensible durable decision; no other slug gets an always-allow shortcut. Gates
 that describe a scope dimension offer a scoped variant of the same card.
 
-## Auto-permit: pre-consenting to a human-only prompt
-
-A few harness prompts cannot be pre-allowed at all. Claude Code's
-`EnterWorktree` safety check is the case: when the target worktree lives outside
-the directory Claude Code manages itself, the confirmation is a hardcoded gate
-that ignores allow-rules, the auto-mode classifier, and `PreToolUse` hook
-approvals alike. Only a keystroke clears it — so an agent stalls on an operation
-its operator is perfectly happy to have run unattended.
-
-The permission grant is the missing consent:
-
-```bash
-tclaude agent permissions grant --target worker auto-permit.enter-worktree
-```
-
-From then on, when that agent hits the EnterWorktree prompt, the
-`PermissionRequest` hook — which already names the tool being gated — presses
-the accept key in the agent's own pane and records the answer to the audit trail
-(actor `system`, verb `auto-permit.answer`). Revoke with `permissions revoke`.
-
-The design is deliberately narrow: **one slug per named prompt**, nothing
-wildcarded, and no auto-permit slug is default-granted or implied by group
-ownership. For blanket acceptance, `--dangerously-skip-permissions` already
-exists and is the honest way to ask for it.
-
 ## The audit trail
 
 The daemon records a symbolic `audit_log` row for every daemon-proxied
