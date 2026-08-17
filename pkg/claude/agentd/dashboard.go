@@ -3132,6 +3132,15 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			allPRCacheURLs = append(allPRCacheURLs, row.PRURL)
 		}
 	}
+	localPRs := make([]locallyKnownPR, 0, len(allPRCacheURLs))
+	for _, rawURL := range branchPRCacheURLs {
+		localPRs = append(localPRs, locallyKnownPR{URL: rawURL})
+	}
+	for _, rows := range presentedPRs {
+		for _, row := range rows {
+			localPRs = append(localPRs, locallyKnownPR{URL: row.PRURL, Title: row.Summary})
+		}
+	}
 	for _, list := range [][]dashboardAuthoredOpenPR{authoredOpenPRs.Items, authoredOpenPRs.Recent} {
 		for _, pr := range list {
 			allPRCacheURLs = append(allPRCacheURLs, pr.URL)
@@ -3755,7 +3764,12 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Links = links
 	out.Usage = usage
 	out.AuthoredOpenPRs = associateAuthoredOpenPRs(
-		reconcileAuthoredOpenPRs(authoredOpenPRs, freshPRStates, prChecks, time.Now()),
+		unionLocallyKnownOpenPRs(
+			reconcileAuthoredOpenPRs(authoredOpenPRs, freshPRStates, prChecks, time.Now()),
+			localPRs,
+			freshPRStates,
+			prChecks,
+		),
 		out.Agents,
 	)
 	// Costs-tab visibility: show when there is real pay-per-token spend to

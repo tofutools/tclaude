@@ -198,6 +198,104 @@ func TestReconcileAuthoredOpenPRsUsesTheSameStateAndChecksAsGroups(t *testing.T)
 	assert.Equal(t, got.Recent[0].Checks, links.BranchChecks)
 }
 
+func TestUnionLocallyKnownOpenPRsAddsOpenCandidates(t *testing.T) {
+	now := time.Date(2026, 8, 17, 10, 30, 0, 0, time.UTC)
+	const localURL = "https://github.com/acme/widgets/pull/42/files"
+	view := dashboardAuthoredOpenPRs{
+		Available: true,
+		Total:     1,
+		Items: []dashboardAuthoredOpenPR{{
+			Number: 7, URL: "https://github.com/acme/widgets/pull/7",
+			Title: "Already indexed", UpdatedAt: now.Add(time.Hour).Format(time.RFC3339),
+			Checks: &prChecksSummary{Total: 1, Passed: 1, State: "passing"},
+		}},
+		Recent: []dashboardAuthoredOpenPR{},
+	}
+	states := make(prStateIndex)
+	states.add(localURL, "open", now)
+	localChecks := &prChecksSummary{Total: 2, Failed: 1, Pending: 1, State: "failing"}
+
+	got := unionLocallyKnownOpenPRs(view, []locallyKnownPR{
+		{URL: localURL},
+		{URL: "https://github.com/acme/widgets/pull/42", Title: "  Fix the widget  "},
+	}, states, map[string]*prChecksSummary{prStateKey(localURL): localChecks})
+
+	assert.Equal(t, 2, got.Total)
+	require.Len(t, got.Items, 2)
+	local := got.Items[0]
+	assert.Equal(t, 42, local.Number, "failing local PR sorts ahead of a passing indexed PR")
+	assert.Equal(t, "https://github.com/acme/widgets/pull/42", local.URL)
+	assert.Equal(t, "acme/widgets", local.Repository)
+	assert.Equal(t, "Fix the widget", local.Title, "a later presented title enriches a branch-only candidate")
+	assert.Equal(t, now.Format(time.RFC3339), local.UpdatedAt)
+	assert.True(t, local.Local)
+	require.NotNil(t, local.Checks)
+	assert.NotSame(t, localChecks, local.Checks)
+	localChecks.State = "passing"
+	assert.Equal(t, "failing", local.Checks.State, "the snapshot must not share the cache pointer")
+}
+
+func TestUnionLocallyKnownOpenPRsDedupesCanonicalIdentity(t *testing.T) {
+	const canonical = "https://github.com/acme/widgets/pull/42"
+	view := dashboardAuthoredOpenPRs{
+		Available: true, Total: 1,
+		Items:  []dashboardAuthoredOpenPR{{Number: 42, URL: canonical, Title: "Indexed"}},
+		Recent: []dashboardAuthoredOpenPR{},
+	}
+	states := make(prStateIndex)
+	states.add(canonical, "open", time.Now())
+
+	got := unionLocallyKnownOpenPRs(view, []locallyKnownPR{{URL: canonical + "/files"}}, states, nil)
+	assert.Equal(t, 1, got.Total)
+	require.Len(t, got.Items, 1)
+	assert.False(t, got.Items[0].Local)
+}
+
+func TestUnionLocallyKnownOpenPRsRequiresAnOpenGitHubObservation(t *testing.T) {
+	const openURL = "https://github.com/acme/widgets/pull/42"
+	tests := []struct {
+		name      string
+		available bool
+		url       string
+		state     string
+	}{
+		{name: "terminal", available: true, url: openURL, state: "merged"},
+		{name: "no observation", available: true, url: openURL},
+		{name: "non GitHub", available: true, url: "https://example.com/acme/widgets/pull/42", state: "open"},
+		{name: "malformed", available: true, url: "https://github.com/acme/widgets/issues/42", state: "open"},
+		{name: "unavailable", url: openURL, state: "open"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view := dashboardAuthoredOpenPRs{
+				Available: tt.available, Items: []dashboardAuthoredOpenPR{}, Recent: []dashboardAuthoredOpenPR{},
+			}
+			states := make(prStateIndex)
+			if tt.state != "" {
+				states.add(tt.url, tt.state, time.Now())
+			}
+			got := unionLocallyKnownOpenPRs(view, []locallyKnownPR{{URL: tt.url}}, states, nil)
+			assert.Zero(t, got.Total)
+			assert.Empty(t, got.Items)
+		})
+	}
+}
+
+func TestUnionLocallyKnownOpenPRsMarksDraftAndFallsBackToIdentityTitle(t *testing.T) {
+	const prURL = "https://github.com/acme/widgets/pull/42"
+	states := make(prStateIndex)
+	states.add(prURL, "draft", time.Time{})
+	view := dashboardAuthoredOpenPRs{
+		Available: true, Items: []dashboardAuthoredOpenPR{}, Recent: []dashboardAuthoredOpenPR{},
+	}
+
+	got := unionLocallyKnownOpenPRs(view, []locallyKnownPR{{URL: prURL}}, states, nil)
+	require.Len(t, got.Items, 1)
+	assert.True(t, got.Items[0].Draft)
+	assert.Equal(t, "acme/widgets#42", got.Items[0].Title)
+	assert.Empty(t, got.Items[0].UpdatedAt)
+}
+
 func TestApplyAuthoredStatesExpiresAndReopensPresentedPRs(t *testing.T) {
 	setupTestDB(t)
 	const prURL = "https://github.com/acme/app/pull/12"
