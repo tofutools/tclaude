@@ -1,0 +1,91 @@
+# Known-vulnerability scan of the module, on pushes to main that touch code.
+#
+# Deliberately its own workflow rather than a job in release.yml, even though
+# release.yml is the other push-to-main flow: govulncheck reads a live database
+# (vuln.go.dev), so it can turn red on a commit that changed nothing relevant,
+# purely because an advisory was published since the last push. Every job in
+# release.yml feeds the tag/release gate, so a finding there would block cutting
+# a release.
+#
+# Not run on pull requests, on cost grounds only — PR CI is already the long
+# pole and this adds no per-PR signal worth that. Note what this does NOT mean:
+# a PR can absolutely turn the scan red without touching go.mod or go.sum, by
+# adding a call to an already-present-but-uncalled vulnerable symbol (see the
+# reachability note on the scan step). Reviewing dependency changes is not a
+# sufficient PR-side substitute; this post-merge run is the backstop that
+# catches it.
+#
+# Push-triggered only, which bounds what it can catch: a week with no pushes
+# gets no scans, so an advisory published during a quiet week goes unnoticed
+# until the next code push. A `schedule:` trigger is the fix and is a
+# deliberate follow-up — it means red runs with no commit to attribute them to,
+# which is an operator policy call.
+name: govulncheck
+
+on:
+  push:
+    branches: [main]
+    # Same doc-only exclusions as release.yml: these paths cannot change what
+    # the scan sees.
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Not cancel-in-progress, matching release.yml and the main-branch arm of
+  # ci.yml's conditional. This workflow only ever runs on main, and a cancelled
+  # run leaves that commit with no vulnerability verdict at all — neither pass
+  # nor fail. Two pushes in quick succession should both get an answer.
+  cancel-in-progress: false
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # go.mod pins the toolchain, which matters here beyond reproducibility:
+      # govulncheck reports stdlib advisories against the Go version it runs
+      # under, so scanning with `stable` would report against a toolchain we do
+      # not ship.
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # Pinned like golangci-lint in ci.yml, and for the same reason: a tool
+      # upgrade should be a reviewed commit, not a silent change in CI results.
+      # Pinning the binary does not stale the data — the advisory database is
+      # fetched fresh from vuln.go.dev on every run — but it does stale the
+      # analyzer, and nothing in this repo bumps it automatically (there is no
+      # dependabot config). Bump this by hand alongside the go.mod Go version.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+
+      # Scan roots are every non-test package in the module — deliberately wider
+      # than the two binaries we ship, and wider than the `. ./cmd/...` pattern
+      # the build uses (that one exists only to keep the scripts/ probe out of
+      # GOBIN; nothing is installed here). The trade-off is real and accepted:
+      # reachability rooted at all packages can flag a symbol reachable only
+      # from a library helper no shipped binary calls.
+      #
+      # Test files are excluded, which is govulncheck's default (`-test` opts
+      # in) and is left alone on purpose: test-only reachability is not in
+      # anything we ship, and this is the repo's first vulnerability scan —
+      # start at the tool's default boundary and widen if it proves too narrow.
+      #
+      # Default symbol-level analysis: a finding means a vulnerable symbol is
+      # actually reachable from this module's code, not merely that a module in
+      # the graph carries an advisory. That is what makes a red run worth acting
+      # on rather than muting.
+      - name: Scan for known vulnerabilities
+        run: govulncheck ./...
