@@ -21,7 +21,7 @@ import (
 // SIGKILLed the pane, costing the session its durable session.shutdown state.
 // Throughout both failure modes ctrl-c handling demonstrably keeps working.
 //
-// So the managed stop types nothing: it sends three C-c presses. The first is
+// So the managed stop types nothing: it sends a batch of C-c presses. The first is
 // spent cancelling whatever is in flight (a running turn, a permission
 // dialog, a half-typed line) or, on an idle pane, arms 1.0.78's "ctrl+c again
 // to exit"; the press after the arming one exits the CLI cleanly (status 0)
@@ -65,8 +65,8 @@ func TestCopilotSoftExit_SignalExitClosesAnIdlePane(t *testing.T) {
 
 // Scenario: the pane is parked on a permission dialog, which owns the
 // keyboard. The first press ABORTS the dialog — refusing the pending command
-// rather than approving it — the second arms, and the third exits. Three
-// presses is exactly enough; no kill is needed.
+// rather than approving it — the second arms, and the third exits (the
+// surplus fourth lands on a dead pane); no kill is needed.
 func TestCopilotSoftExit_SignalExitClosesAPaneHeldByAPermissionDialog(t *testing.T) {
 	f := newCopilotFlow(t)
 	f.HaveGroup("crew")
@@ -88,8 +88,11 @@ func TestCopilotSoftExit_SignalExitClosesAPaneHeldByAPermissionDialog(t *testing
 
 	f.AssertSoftStopped(f.AsHuman().Stop(resp.ConvID, false))
 
-	assert.Equal(t, 3, sim.Cancels(),
-		"press one aborts the dialog and ends its turn, press two arms, press three exits — one attempt is exactly enough")
+	cancels := sim.Cancels()
+	assert.GreaterOrEqual(t, cancels, 3,
+		"press one aborts the dialog and ends its turn, press two arms, press three exits — one attempt is enough (the surplus fourth press may land on the dead pane unrecorded)")
+	assert.LessOrEqual(t, cancels, 4,
+		"more presses than one batch means a retry fired against a pane the first attempt already closed")
 	assert.False(t, sim.IsAlive(),
 		"press one aborts the dialog, press two arms, press three exits")
 

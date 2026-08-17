@@ -82,14 +82,21 @@ func retireAgentConvWithPrecondition(
 			_ = db.RecordAgentRecoveryAudit(*recovery, db.AuditVerbAgentRecoveryCancelled, db.AgentExitActionRetire, time.Now())
 		}
 	}
+	// Lock order is load-bearing: cronAuthorityMu BEFORE the launch lock. The
+	// cron scheduler already holds cronAuthorityMu when a Replace-policy fire
+	// stops its prior worker (fireCronSpawn → stopOneConvAndWait), which
+	// acquires that worker's launch lock — so a retire that took the launch
+	// lock first and cronAuthorityMu second would be the AB-BA half of a
+	// deadlock whenever both target the same conversation. Every path that
+	// needs both must follow the cron scheduler's order.
+	cronAuthorityMu.Lock()
+	defer cronAuthorityMu.Unlock()
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
 	if requireOffline && pickAliveSession(convID) != nil {
 		return retireConvOutcome{}, nil, errRetireRequiresOffline
 	}
-	cronAuthorityMu.Lock()
-	defer cronAuthorityMu.Unlock()
 	var out retireConvOutcome
 	retired, err := db.RetireAgentAuthorizationByConv(convID, by, reason)
 	if err != nil {

@@ -805,6 +805,25 @@ func logSoftExitPaneState(target *lifecycleTarget, reason, phase string, attempt
 		"pane_screen", capturePaneScreenTail(target.paneID))
 }
 
+// logSoftExitBatchStart records that one soft-exit attempt (a "batch" — the
+// full signal-key sequence, or the typed exit command) is about to be sent
+// into the pane, and which attempt of the bounded ladder it is. Unlike the
+// Copilot-only screen captures (logSoftExitPaneState) this is cheap and runs
+// for every harness: when several agents stop in parallel these lines are what
+// lets an operator line up per-pane batch timings against how long each stop
+// actually took.
+func logSoftExitBatchStart(target *lifecycleTarget, reason string, attempt int, signalKeys []string) {
+	mode := "typed"
+	if len(signalKeys) > 0 {
+		mode = "signal"
+	}
+	slog.Info("soft-exit: sending exit batch",
+		"conv", short8(target.convID), "session", target.sessionID,
+		"tmux_session", target.tmuxSession, "pane_id", target.paneID,
+		"attempt", attempt, "max_attempts", softExitMaxAttempts,
+		"mode", mode, "keys", len(signalKeys), "reason", reason)
+}
+
 // sendSoftExitToTarget delivers one soft-exit attempt to the pane. A harness
 // with a keystroke-free signal exit (harness.Lifecycle.SignalExitKeys non-empty:
 // Copilot, Claude Code, Codex) gets those keys sent as signals — a typed slash
@@ -852,6 +871,7 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd string, prefixKeys []
 	signalKeys := h.SignalExitKeys()
 	copilot := h.Name == harness.CopilotName
 	logSoftExitPaneState(target, reason, "pre-send", 1)
+	logSoftExitBatchStart(target, reason, 1, signalKeys)
 	if err := sendSoftExitToTarget(target, signalKeys, exitCmd, prefixKeys); err != nil {
 		logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 		return false
@@ -1004,6 +1024,7 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, signalKeys []string, c
 				return
 			}
 			logSoftExitPaneState(target, reason, "pre-send", attempt)
+			logSoftExitBatchStart(target, reason, attempt, signalKeys)
 			if err := sendSoftExitToTarget(target, signalKeys, exitCmd, prefixKeys); err != nil {
 				logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 				// The first /exit was already delivered; a failed RE-send must
@@ -1127,10 +1148,13 @@ func injectSoftExit(convID, exitCmd, reason string, intentRef *db.SessionExitInt
 
 // softExitRetryDelay is how long the background soft-exit retry waits
 // before each re-check of a pane it asked to /exit. A package var so flow
-// tests can shrink it (SetSoftExitRetryDelayForTest); production keeps a
-// few seconds so a pane that's honouring /exit has time to close before
-// we bother re-injecting.
-var softExitRetryDelay = 4 * time.Second
+// tests can shrink it (SetSoftExitRetryDelayForTest); production keeps it
+// short — long enough for a pane that's honouring the exit to close before
+// we bother re-injecting, but tight enough that a batch whose press missed
+// the harness's re-press window (Claude Code's is ~0.8 s under load) gets
+// its next chance quickly instead of riding most of the way to the 10 s
+// escalation deadline.
+var softExitRetryDelay = 1500 * time.Millisecond
 
 // Unknown cleanup must remain available for the reaper to observe exits when
 // hooks and immediate probes are unavailable.
@@ -1139,10 +1163,14 @@ var unknownIntentCleanupDelay = 65 * time.Second
 // softExitMaxAttempts bounds the TOTAL number of soft-exit injections per
 // stop (the initial one + retries). The first retry recovers an /exit
 // lost to input-buffer junk (see injectSoftExit); the remaining margin
-// covers an unlucky pane that was mid-render. Capped so a pane that simply
-// will not exit isn't typed /exit forever — the escalation paths
-// (escalateShutdown) own the force-kill fallback.
-const softExitMaxAttempts = 3
+// covers an unlucky pane that was mid-render or whose signal-exit presses
+// missed the harness's re-press window. Sized so the batches keep coming for
+// the whole softExitEscalationDeadline (a batch is ~1.3 s of key spacing plus
+// softExitRetryDelay between batches, so attempts start roughly every 2.8 s),
+// and capped so a pane that simply will not exit isn't injected forever —
+// the retry engines stand down as soon as the pane dies or the stop settles,
+// and the escalation ladder owns the force-kill fallback.
+const softExitMaxAttempts = 5
 
 // scheduleSoftExitRetry backgrounds the re-injection of exitCmd into the
 // pane that injectSoftExit first targeted. It re-injects ONLY while that

@@ -14,7 +14,7 @@ import (
 
 // Flow coverage for the soft-exit re-injection retry (injectSoftExitTarget /
 // scheduleSoftExitRetryTarget). Claude Code's soft exit is the keystroke-free
-// signal sequence [Escape, C-c, C-c, C-c] (claudeLifecycle.SignalExitKeys,
+// signal sequence [Escape, C-c, C-c, C-c, C-c] (claudeLifecycle.SignalExitKeys,
 // TCL-1137): each attempt is one lock-held send, its leading Escape clears any
 // pending line or dialog, and the ctrl-c presses arm and quit. The daemon
 // backgrounds a bounded retry that re-sends the sequence while the SAME pane is
@@ -28,7 +28,7 @@ import (
 
 // countSoftExitAttempts returns how many soft-exit attempts the daemon made
 // into target's pane. These scenarios run Claude Code, whose soft exit is now
-// the keystroke-free signal sequence [Escape, C-c, C-c, C-c] (see
+// the keystroke-free signal sequence [Escape, C-c, C-c, C-c, C-c] (see
 // claudeLifecycle.SignalExitKeys), delivered as one lock-held send per attempt.
 // Every attempt leads with exactly one Escape, so counting Escape sends counts
 // the distinct attempts — the signal-exit analog of the old "count typed /exit"
@@ -102,12 +102,12 @@ func TestSoftExit_SignalExitClearsJunkBufferOnFirstAttempt(t *testing.T) {
 		"Escape must precede the first C-c so buffer junk is cleared before the quit presses")
 	// Pin the FULL dispatched sequence, not just its shape. The simulated pane
 	// (like the real CLI) dies on the second armed C-c, but the daemon must
-	// still dispatch all three presses from claudeLifecycle.SignalExitKeys —
+	// still dispatch all four presses from claudeLifecycle.SignalExitKeys —
 	// the third covers the mid-turn state where the first press is spent
-	// interrupting the turn. TmuxSim logs sends to a dead pane too, so a
-	// regression that drops the surplus press is caught here even though the
-	// pane never needed it.
-	assert.Equal(t, 3, countKeySends(f, target, "C-c"),
+	// interrupting the turn, the fourth is re-press-window margin. TmuxSim
+	// logs sends to a dead pane too, so a regression that drops the surplus
+	// presses is caught here even though the pane never needed them.
+	assert.Equal(t, 4, countKeySends(f, target, "C-c"),
 		"one signal-exit attempt must dispatch every C-c in SignalExitKeys, dead pane or not")
 }
 
@@ -149,9 +149,9 @@ func TestSoftExit_NoRetryWhenFirstExitSucceeds(t *testing.T) {
 // A soft stop starts the bounded re-injection ladder AND, since TCL-1001, an
 // escalation watchdog. In production the two are close: the ladder's attempts
 // land at ~softExitRetryDelay × softExitMaxAttempts (plus, since TCL-1137, each
-// signal-exit attempt's own lock-held key spacing — Claude Code's four-key
-// [Escape, C-c, C-c, C-c] adds 3×signalExitKeyGap ≈ 1 s per attempt), and
-// the watchdog's deadline is 10 s. The final retry can therefore land at or
+// signal-exit attempt's own lock-held key spacing — Claude Code's five-key
+// [Escape, C-c, C-c, C-c, C-c] adds 4×signalExitKeyGap ≈ 1.3 s per attempt),
+// and the watchdog's deadline is 10 s. The final retry can therefore land at or
 // just past the deadline, which is benign: a pane responsive enough to honour a
 // ctrl-c quits on the FIRST attempt (a signal is handled even when the keypress
 // reader is wedged — the whole premise of the signal exit), so the escalation
@@ -285,15 +285,15 @@ func TestSoftExit_BoundedRetriesForHungPane(t *testing.T) {
 	stop := f.AsHuman().Stop(conv, false)
 	f.AssertSoftStopped(stop)
 	awaitLadderThenRelease(t, releaseEscalation, func() bool {
-		return countSoftExitAttempts(f, target) == 3
-	}, "the bounded ladder never reached its third attempt")
+		return countSoftExitAttempts(f, target) == 5
+	}, "the bounded ladder never reached its fifth attempt")
 	agentd.WaitForBackgroundForTest()
 
-	// Bounded: 1 initial attempt + 2 retries (softExitMaxAttempts = 3) = 3
+	// Bounded: 1 initial attempt + 4 retries (softExitMaxAttempts = 5) = 5
 	// total. Guards against an unbounded re-injection loop into a wedged pane.
-	// Re-asserted after the drain: the wait above proves it REACHED 3, this
-	// proves nothing pushed it past 3 afterwards.
-	assert.Equal(t, 3, countSoftExitAttempts(f, target),
+	// Re-asserted after the drain: the wait above proves it REACHED 5, this
+	// proves nothing pushed it past 5 afterwards.
+	assert.Equal(t, 5, countSoftExitAttempts(f, target),
 		"soft-exit attempts must be capped (initial + retries), not infinite")
 	assert.False(t, f.World.Tmux.IsAlive(tmuxSes),
 		"a pane that ignored every bounded /exit must be escalated to a kill, not left running")
@@ -583,8 +583,8 @@ func TestSoftExit_RetryUnknownCleansWithoutSend(t *testing.T) {
 
 // Scenario: the same unknown probe, but on the LAST attempt — the ladder is
 // already at its bound, so the abort has nothing left to prevent and what is
-// pinned is that the final attempt still cleans up rather than re-injecting a
-// fourth time.
+// pinned is that the final attempt still cleans up rather than re-injecting
+// past the bound.
 func TestSoftExit_FinalUnknownCleansBounded(t *testing.T) {
 	f := newFlow(t)
 	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(5 * time.Millisecond))
@@ -595,7 +595,7 @@ func TestSoftExit_FinalUnknownCleansBounded(t *testing.T) {
 	cc := f.World.CCs.GetByConvID(conv)
 	require.NotNil(t, cc)
 	cc.SetSignalExitWedged(true)
-	faults := &retryProbeFaults{faultAt: 3}
+	faults := &retryProbeFaults{faultAt: 5}
 	cleanup := agentd.SetBeforeSoftExitTargetRetryProbeForTest(faults.hook(f.World.Tmux))
 	cleanupAfterBackgroundDrain(t, cleanup)
 	releaseEscalation := holdSoftExitEscalation(t)
@@ -603,11 +603,11 @@ func TestSoftExit_FinalUnknownCleansBounded(t *testing.T) {
 	f.AssertSoftStopped(stop)
 	awaitLadderThenRelease(t, releaseEscalation, func() bool {
 		return faults.taken(f.World.Tmux)
-	}, "attempt 3's probe never took the fault queued for it, so this scenario "+
+	}, "attempt 5's probe never took the fault queued for it, so this scenario "+
 		"is not measuring an unknown probe result")
 	agentd.WaitForBackgroundForTest()
-	assert.Equal(t, 2, countSoftExitAttempts(f, tmuxSes+":0.0"))
-	assert.Equal(t, []int{2, 3}, faults.attempts(),
+	assert.Equal(t, 4, countSoftExitAttempts(f, tmuxSes+":0.0"))
+	assert.Equal(t, []int{2, 3, 4, 5}, faults.attempts(),
 		"the ladder must reach its bound here; a shorter run means something aborted it early")
 }
 
@@ -650,7 +650,7 @@ func TestLifecycleStop_PaneGenerationBinding(t *testing.T) {
 		// re-injections are exhausted and the wedged pane is killed. The rows
 		// below drift their pane identity after delivery, which stands the
 		// ladder down (a successor is never ours to kill).
-		{name: "degraded soft control", slug: "degraded-soft", wantAction: "soft_stopped", wantSends: 3, wantKill: true},
+		{name: "degraded soft control", slug: "degraded-soft", wantAction: "soft_stopped", wantSends: 5, wantKill: true},
 		{name: "degraded generation appears after delivery", slug: "degraded-appears", afterGeneration: otherGeneration, wantAction: "soft_stopped", wantSends: 1},
 		{name: "bound generation disappears after delivery", slug: "bound-missing", bound: true, afterGeneration: "missing", wantAction: "soft_stopped", wantSends: 1},
 		{name: "bound generation mismatches after delivery", slug: "bound-mismatch", bound: true, afterGeneration: otherGeneration, wantAction: "soft_stopped", wantSends: 1},
@@ -734,7 +734,7 @@ func TestSoftExit_DeliveredIntentObserverWindow(t *testing.T) {
 		wantSends  int
 	}{
 		{name: "dual unknown after initial delivery", slug: "dual-unknown", dualFault: true, wantSends: 1},
-		{name: "final successful retry", slug: "final-retry", wantSends: 3},
+		{name: "final successful retry", slug: "final-retry", wantSends: 5},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -763,8 +763,8 @@ func TestSoftExit_DeliveredIntentObserverWindow(t *testing.T) {
 				}))
 			}
 
-			// The full-ladder row measures the observer window across all
-			// three attempts, so the watchdog's kill must not land inside it.
+			// The full-ladder row measures the observer window across every
+			// attempt, so the watchdog's kill must not land inside it.
 			var releaseEscalation func()
 			if tc.wantSends > 1 {
 				releaseEscalation = holdSoftExitEscalation(t)

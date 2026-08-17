@@ -167,7 +167,8 @@ func TestOpenCodeReincarnateSoftExitRetriesViaManagedAPIWithoutKeys(t *testing.T
 		case command := <-commands:
 			got = append(got, command)
 		default:
-			require.Equal(t, []string{"app.exit", "app.exit", "app.exit"}, got)
+			// One app.exit per bounded attempt (softExitMaxAttempts).
+			require.Equal(t, []string{"app.exit", "app.exit", "app.exit", "app.exit", "app.exit"}, got)
 			assert.Empty(t, f.World.Tmux.Sent(),
 				"OpenCode reincarnate exit retries must never use tmux send-keys")
 			return

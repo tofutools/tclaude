@@ -115,7 +115,7 @@ func (codexLifecycle) SoftExitPrefixKeys() []string { return nil }
 //     unreliable there — but the incremental-persistence structure leaves no
 //     shutdown-only write for ctrl-c to lose.)
 func (codexLifecycle) SignalExitKeys() []string {
-	return []string{"C-c", "C-c", "C-c"}
+	return []string{"C-c", "C-c", "C-c", "C-c"}
 }
 
 // codexConvStore assembles conversations from Codex's split storage model.
