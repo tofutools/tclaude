@@ -272,13 +272,19 @@ trust-folder record. `/model` and directory trust for Claude Code land in
 
 **Two escape hatches**, least blunt first:
 
-1. An explicit profile write row **at or below** one floored path drops that
+1. An explicit profile write row **at exactly one floored path** drops that
    single entry — `{"path": "~/.claude/plugins", "access": "write"}` reopens
-   plugin installs and nothing else. A broad `~` or `~/.claude` write does not
-   count: the operator has to name the surface. Rows are directories only, so
+   plugin installs and nothing else. A broader `~` or `~/.claude` write does
+   not count: the operator has to name the surface. A row *beneath* a floored
+   directory (`~/.claude/hooks/mine`) reopens only that path and leaves the
+   floor over the rest of the directory intact. Rows are directories only, so
    a floored *file* cannot be reopened this way.
-2. `"harness_config": "write"` on any profile in the chain turns the whole
-   floor off, restoring the pre-floor posture.
+2. `"harness_config": "write"` turns the whole floor off, restoring the
+   pre-floor posture — but only when nothing else in the chain pins it.
+   Composition is strictest-wins, so an explicit `"read"` in any included,
+   global, group, or explicit profile outranks a `"write"` anywhere else. That
+   asymmetry is deliberate: it lets an operator pin the floor globally and know
+   a per-spawn profile cannot quietly undo it.
 
 The floor applies where tclaude owns the wall — `tclaude-layer` and `stacked`.
 Under `harness-builtin` the harness's own policy governs and the axis is

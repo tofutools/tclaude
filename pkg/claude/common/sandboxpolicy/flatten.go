@@ -312,6 +312,12 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 		if filesystemRootRank(parts.filesystemRoot) > filesystemRootRank(out.filesystemRoot) {
 			out.filesystemRoot = parts.filesystemRoot
 		}
+		// Without this the strictest-wins rule below only ever sees the
+		// INCLUDING profile's own value: an include that pinned the floor to
+		// read would be dropped, and a parent write would silently disable it.
+		if HarnessConfigAccessRank(parts.harnessConfig) > HarnessConfigAccessRank(out.harnessConfig) {
+			out.harnessConfig = parts.harnessConfig
+		}
 		if parts.networkAccess != NetworkAccessInherit {
 			out.networkAccess = parts.networkAccess
 		}

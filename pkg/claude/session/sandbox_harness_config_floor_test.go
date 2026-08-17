@@ -277,3 +277,43 @@ func TestHarnessConfigFloorRefusesSymlinkSwappedAfterFreeze(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "symlink")
 }
+
+// A write row BENEATH a floored directory reopens only that path: the floor
+// stays on the rest of the directory, and the launch is not refused as a
+// contract conflict.
+func TestHarnessConfigFloorKeepsDirectoryForDescendantWriteGrant(t *testing.T) {
+	home, cwd := claudeFloorFixture(t)
+	hooks := filepath.Join(home, ".claude", "hooks")
+	mine := filepath.Join(hooks, "mine")
+	require.NoError(t, os.MkdirAll(mine, 0o700))
+
+	spec := buildClaudeFloorSpec(t, cwd, sandboxpolicy.EffectiveProfile{
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: mine, Access: sandboxpolicy.AccessWrite},
+		},
+	})
+	assert.Contains(t, spec.Contract.HarnessConfigFloor, hooks,
+		"naming one path inside a floored directory must not surrender the directory")
+	require.NoError(t, PrepareTclaudeLayerHarnessState(spec),
+		"a narrower reopen beneath the floor is intent, not a contract conflict")
+
+	dirAccess, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem, hooks)
+	require.True(t, covered)
+	assert.Equal(t, sandboxpolicy.AccessRead, dirAccess)
+	mineAccess, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem, mine)
+	require.True(t, covered)
+	assert.Equal(t, sandboxpolicy.AccessWrite, mineAccess)
+}
+
+// An ancestor write grant is the ordinary shape of an unrelated profile and
+// must never be read as surrendering a floored surface.
+func TestHarnessConfigFloorIgnoresAncestorWriteGrant(t *testing.T) {
+	home, cwd := claudeFloorFixture(t)
+	spec := buildClaudeFloorSpec(t, cwd, sandboxpolicy.EffectiveProfile{
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: home, Access: sandboxpolicy.AccessWrite},
+		},
+	})
+	assert.Contains(t, spec.Contract.HarnessConfigFloor,
+		filepath.Join(home, ".claude", "hooks"))
+}

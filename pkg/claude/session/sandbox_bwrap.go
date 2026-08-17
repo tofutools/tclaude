@@ -2879,6 +2879,15 @@ func appendTclaudeLayerContractRepairs(
 type tclaudeLayerHarnessStateRule struct {
 	Path   string
 	Access sandboxpolicy.Access
+	// AllowNarrowerWrite admits an operator write grant STRICTLY BELOW this
+	// rule instead of refusing the launch. Only the harness-config floor sets
+	// it: the floor is tclaude's own default rather than a functional
+	// requirement of the harness, so an operator naming a path inside a
+	// floored directory is expressing intent, not conflicting with the
+	// contract. The mount plan renders ancestors first, so the narrower RW
+	// bind lands on top of the RO one and the floor still covers everything
+	// the operator did not name.
+	AllowNarrowerWrite bool
 }
 
 func tclaudeLayerHarnessStateRules(
@@ -2891,6 +2900,11 @@ func tclaudeLayerHarnessStateRules(
 	appendRule := func(path string, access sandboxpolicy.Access) {
 		rules = append(rules, tclaudeLayerHarnessStateRule{Path: path, Access: access})
 	}
+	appendFloorRule := func(path string) {
+		rules = append(rules, tclaudeLayerHarnessStateRule{
+			Path: path, Access: sandboxpolicy.AccessRead, AllowNarrowerWrite: true,
+		})
+	}
 	appendRule(stateRoot, sandboxpolicy.AccessWrite)
 	for _, path := range contract.StateDirs {
 		appendRule(path, sandboxpolicy.AccessWrite)
@@ -2899,7 +2913,7 @@ func tclaudeLayerHarnessStateRules(
 		appendRule(path, sandboxpolicy.AccessRead)
 	}
 	for _, path := range contract.HarnessConfigFloor {
-		appendRule(path, sandboxpolicy.AccessRead)
+		appendFloorRule(path)
 	}
 	for _, bind := range contract.ReadOnlyBinds {
 		appendRule(bind.Source, sandboxpolicy.AccessRead)
@@ -2947,6 +2961,13 @@ func validateTclaudeLayerHarnessStateRules(
 			}
 		}
 		if matched == nil || grant.Access == matched.Access {
+			continue
+		}
+		if matched.AllowNarrowerWrite &&
+			grant.Access == sandboxpolicy.AccessWrite &&
+			filepath.Clean(grant.Path) != filepath.Clean(matched.Path) {
+			// A deliberate narrower reopen beneath the harness-config floor,
+			// not a conflict. The floor keeps the rest of the directory.
 			continue
 		}
 		return fmt.Errorf(

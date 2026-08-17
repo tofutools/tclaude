@@ -256,31 +256,31 @@ func harnessConfigFloorPaths(
 }
 
 // harnessConfigFloorReopened reports whether the operator explicitly took
-// responsibility for one floored path. Only a write grant AT or BELOW the path
-// counts: an ancestor grant such as a blanket `~` or state-root write is the
-// ordinary shape of an unrelated profile, and letting it silently disable the
-// floor would make the default meaningless for exactly the profiles that most
-// need it.
+// responsibility for one floored path, which drops that entry from the floor.
 //
-// A grant strictly BELOW the entry drops the whole entry rather than surviving
-// as a narrower reopen, which is more permissive than the mount plan alone
-// would require — a deeper RW bind lands on top of the RO one either way.
-// It is done for a concrete reason: validateTclaudeLayerHarnessStateRules
-// refuses a launch whose profile row disagrees with the contract access
-// covering it, so keeping the floor entry would turn
-// `{"path": "~/.claude/hooks/mine", "access": "write"}` into a launch refusal
-// instead of the narrow grant the operator asked for. Widening that validator
-// is the better long-term fix; until then the operator naming a path inside a
-// floored directory is treated as taking the directory.
+// Only a write grant at EXACTLY this path counts, and the two exclusions on
+// either side are what make the axis behave:
+//
+//   - An ANCESTOR grant does not count. A blanket `~` or state-root write is
+//     the ordinary shape of an unrelated profile, and letting it disable the
+//     floor would make the default meaningless for exactly the profiles that
+//     most need one.
+//   - A DESCENDANT grant does not count either. `~/.claude/hooks/mine` asks
+//     for one path, not for the directory, so the floor stays on the rest of
+//     `~/.claude/hooks` and the narrower RW bind lands on top of it — the
+//     mount plan renders ancestors first. tclaudeLayerHarnessStateRule's
+//     AllowNarrowerWrite is what keeps that from reading as a contract
+//     conflict and refusing the launch.
 func harnessConfigFloorReopened(
 	path string,
 	profileFilesystem []sandboxpolicy.FilesystemGrant,
 ) bool {
+	path = filepath.Clean(path)
 	for _, grant := range profileFilesystem {
 		if grant.Access != sandboxpolicy.AccessWrite {
 			continue
 		}
-		if sandboxpolicy.GuardContainsOrEqual(path, grant.Path) {
+		if filepath.Clean(grant.Path) == path {
 			return true
 		}
 	}

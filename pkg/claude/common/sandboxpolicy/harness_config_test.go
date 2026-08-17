@@ -98,3 +98,42 @@ func TestRequireContainedRefusesHarnessConfigWidening(t *testing.T) {
 	openParent.Effective.HarnessConfig = HarnessConfigAccessWrite
 	require.NoError(t, RequireContained(openParent, child))
 }
+
+// Includes compose strictest-wins too. Without merging each included profile's
+// value the including profile's own value is the only one ever considered, so
+// an include that pinned the floor would be silently dropped.
+func TestFlattenHarnessConfigMergesIncludes(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		included, parent HarnessConfigAccess
+		want             HarnessConfigAccess
+	}{
+		{name: "included read beats parent write",
+			included: HarnessConfigAccessRead, parent: HarnessConfigAccessWrite,
+			want: HarnessConfigAccessRead},
+		{name: "included read survives omitted parent",
+			included: HarnessConfigAccessRead, want: HarnessConfigAccessRead},
+		{name: "parent write survives omitted include",
+			parent: HarnessConfigAccessWrite, want: HarnessConfigAccessWrite},
+		{name: "included write survives omitted parent",
+			included: HarnessConfigAccessWrite, want: HarnessConfigAccessWrite},
+		{name: "parent read beats included write",
+			included: HarnessConfigAccessWrite, parent: HarnessConfigAccessRead,
+			want: HarnessConfigAccessRead},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := Profile{Name: "base", HarnessConfig: tc.included}
+			flattened, err := Flatten(
+				Profile{Name: "parent", HarnessConfig: tc.parent, Includes: []string{"base"}},
+				func(name string) (*Profile, error) {
+					if name == "base" {
+						return &base, nil
+					}
+					return nil, nil
+				},
+			)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, flattened.HarnessConfig)
+		})
+	}
+}
