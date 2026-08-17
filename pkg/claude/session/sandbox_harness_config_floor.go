@@ -329,9 +329,15 @@ func harnessConfigFloorReopened(
 }
 
 // harnessConfigFloorFileExists reports whether a floor FILE entry is present on
-// the host. Lstat is used for symmetry with the rest of this file rather than
-// for its symlink behavior: a symlinked final component never reaches here,
-// having already been dropped as unfloorable by canonicalHarnessConfigFloorPath.
+// the host.
+//
+// Lstat, not Stat. In the ordinary case the distinction is unreachable — a
+// symlinked final component was already dropped as unfloorable by
+// canonicalHarnessConfigFloorPath — but it decides the TOCTOU case. Swap the
+// name for a DANGLING symlink between that check and this one and Stat reports
+// "absent", silently dropping the entry and taking the floor off that path;
+// Lstat reports "present", so the entry survives to prepareHarnessConfigFloor,
+// which refuses the symlink outright. Fail closed, not open.
 func harnessConfigFloorFileExists(path string) (bool, error) {
 	if _, err := os.Lstat(path); err != nil {
 		if os.IsNotExist(err) {
@@ -351,7 +357,9 @@ func harnessConfigFloorFileExists(path string) (bool, error) {
 //
 // File entries are NOT created here — absent ones were dropped at derivation
 // time, for the reasons in harnessConfigFloorCatalog's resolve loop. A file
-// reaching this point is expected to exist already; it is only inspected.
+// reaching this point is only ever inspected, never created — and one that has
+// gone missing since is skipped rather than refused, matching what the mount
+// renderers do with an absent bind source.
 func prepareHarnessConfigFloor(paths []string, dirs map[string]bool) error {
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
