@@ -96,6 +96,12 @@ func TestAutoPermit_RevokedDuringSettleIsNotPressed(t *testing.T) {
 	// Stretch the settle wait so the revocation below is unambiguously inside
 	// it, rather than racing a 400 ms window on a loaded machine.
 	t.Cleanup(agentd.SetAutoPermitSettleDelayForTest(2 * time.Second))
+	// ...and wait for that stretched attempt to finish before returning. A
+	// press goroutine outliving its test would wake inside a LATER one, whose
+	// pane it has no business touching.
+	presses, restore := agentd.AutoPermitPressesForTest()
+	t.Cleanup(restore)
+
 	f := newFlow(t)
 	callerPID := layerProcTree(t)
 	haveLayerSession(t, f, autoPermitConv, autoPermitLabel, autoPermitTmux, brokerPanePID)
@@ -107,7 +113,52 @@ func TestAutoPermit_RevokedDuringSettleIsNotPressed(t *testing.T) {
 	_, err := db.RevokeAgentPermission(autoPermitConv, session.PermAutoPermitEnterWorktree)
 	require.NoError(t, err)
 
+	awaitAutoPermitAttempt(t, presses)
 	assertNoAutoPermitPress(t, f)
+}
+
+// Scenario: the same prompt reported twice — two hook registrations for one
+// event, a settings.json entry plus a plugin's. It is one dialog, so it gets one
+// accept key; a second would land in the composer after the dialog closed.
+func TestAutoPermit_DuplicateHookIsAnsweredOnce(t *testing.T) {
+	// Long enough that the second POST is unambiguously inside the first
+	// press's settle wait, which is the window the dedupe covers.
+	t.Cleanup(agentd.SetAutoPermitSettleDelayForTest(time.Second))
+	presses, restore := agentd.AutoPermitPressesForTest()
+	t.Cleanup(restore)
+
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, autoPermitConv, autoPermitLabel, autoPermitTmux, brokerPanePID)
+	require.NoError(t, db.GrantAgentPermission(autoPermitConv,
+		session.PermAutoPermitEnterWorktree, "human"))
+
+	for range 2 {
+		code, _ := postBrokeredHook(t, f, callerPID, enterWorktreeEvent())
+		require.Equal(t, http.StatusOK, code)
+	}
+
+	awaitAutoPermitAttempt(t, presses)
+	entries, err := db.ListAuditLog(db.AuditLogFilter{Verb: "auto-permit.answer"})
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "one prompt, one answer")
+	// Nothing else is pending behind it.
+	select {
+	case <-presses:
+		t.Fatal("the duplicate hook started a second press")
+	case <-time.After(500 * time.Millisecond):
+	}
+}
+
+// awaitAutoPermitAttempt blocks until a press attempt has run to a decision,
+// however it ended.
+func awaitAutoPermitAttempt(t *testing.T, presses <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-presses:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the auto-permit press attempt never finished")
+	}
 }
 
 // Scenario: the same prompt on an agent nobody granted the slug. The hook still

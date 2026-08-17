@@ -666,7 +666,16 @@ func runHookCallback() error {
 	// SAME broker every sandboxed launch already uses, and fall back to
 	// applying it here when the daemon does not take it — an unreachable
 	// daemon must cost the agent its auto-answer, never its status update.
-	if autoPermitNeedsDaemon(input) && brokerHookEventIfDelivered(input, os.Stdout) {
+	//
+	// Not in task mode. brokerHookEvents() refuses to broker there on purpose,
+	// and the refusal is about applying the event, not only about carrying the
+	// signal file: a task hook applied host-side arrives without
+	// InTaskRunnerHook, which is what earns it the foreign-conv, conv-advance,
+	// enrollment and notification exemptions the runner depends on. Taking one
+	// event out of that carve-out would half-break the very thing the carve-out
+	// exists to keep whole.
+	if _, inTaskMode := taskSignalPath(); !inTaskMode &&
+		autoPermitNeedsDaemon(input) && brokerHookEventIfDelivered(input, os.Stdout) {
 		return nil
 	}
 

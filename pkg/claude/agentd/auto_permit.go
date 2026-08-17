@@ -3,6 +3,7 @@ package agentd
 import (
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -36,18 +37,86 @@ import (
 // is not on screen yet; the press has to land after the harness resumes and
 // paints it.
 //
-// A package var, not a constant, so flow tests can drive both ends of the wait:
-// shrink it when they only care that the key arrives, and stretch it when they
-// need to act (revoke consent) while it is still pending.
-var autoPermitSettleDelay = 400 * time.Millisecond
+// autoPermitMaxAge is the other end of that window: a press is only meaningful
+// while the prompt it answers is still the thing on screen. The pane injection
+// lock waits up to paneInjectLockTimeout (a minute) behind whatever else is
+// injecting, so without a bound the accept key could land a minute late, into
+// whatever the pane has moved on to. Past this age the press is abandoned and
+// the prompt is simply left for the human — the outcome auto-permit was there
+// to improve, never a keystroke aimed at the wrong thing.
+const autoPermitMaxAge = 5 * time.Second
+
+// autoPermitState holds what tests adjust and observe. Guarded because the
+// press runs on its own goroutine: the settle wait is read there while a test's
+// cleanup restores it, which is a race even when the values never conflict.
+var autoPermitState = struct {
+	mu     sync.Mutex
+	settle time.Duration
+	// finished, when a test installed one, receives once per press attempt
+	// that ran to a decision. Without it a test can only sleep and hope; the
+	// goroutine outliving its test is how a stretched settle wait ends up
+	// pressing into the NEXT test's pane.
+	finished chan struct{}
+}{settle: 400 * time.Millisecond}
+
+func autoPermitSettle() time.Duration {
+	autoPermitState.mu.Lock()
+	defer autoPermitState.mu.Unlock()
+	return autoPermitState.settle
+}
+
+// autoPermitPressFinished signals a test waiter, if one is installed. Never
+// blocks: the channel is buffered and a full one means the test already has
+// more signals than it waited for.
+func autoPermitPressFinished() {
+	autoPermitState.mu.Lock()
+	ch := autoPermitState.finished
+	autoPermitState.mu.Unlock()
+	if ch == nil {
+		return
+	}
+	select {
+	case ch <- struct{}{}:
+	default:
+	}
+}
 
 // SetAutoPermitSettleDelayForTest overrides the settle wait and returns a
 // restore func for t.Cleanup.
 func SetAutoPermitSettleDelayForTest(d time.Duration) func() {
-	prev := autoPermitSettleDelay
-	autoPermitSettleDelay = d
-	return func() { autoPermitSettleDelay = prev }
+	autoPermitState.mu.Lock()
+	defer autoPermitState.mu.Unlock()
+	prev := autoPermitState.settle
+	autoPermitState.settle = d
+	return func() {
+		autoPermitState.mu.Lock()
+		defer autoPermitState.mu.Unlock()
+		autoPermitState.settle = prev
+	}
 }
+
+// AutoPermitPressesForTest installs a signal fired whenever a press attempt
+// finishes, however it ended. Returns the channel and a restore func for
+// t.Cleanup. A test that stretches the settle wait MUST drain this before
+// returning, so its goroutine cannot wake inside a later test.
+func AutoPermitPressesForTest() (<-chan struct{}, func()) {
+	ch := make(chan struct{}, 8)
+	autoPermitState.mu.Lock()
+	defer autoPermitState.mu.Unlock()
+	prev := autoPermitState.finished
+	autoPermitState.finished = ch
+	return ch, func() {
+		autoPermitState.mu.Lock()
+		defer autoPermitState.mu.Unlock()
+		autoPermitState.finished = prev
+	}
+}
+
+// autoPermitInFlight holds the convs with a press already pending, so a prompt
+// reported twice is answered once. Two hook registrations for the same event (a
+// settings.json entry plus a plugin's) deliver it twice; the second accept key
+// would land after the dialog closed, in the composer.
+var autoPermitInFlight sync.Map
 
 // maybeAnswerAutoPermit answers a just-raised permission prompt when the
 // operator granted this agent the slug for it. Called from the brokered-hook
@@ -74,24 +143,43 @@ func maybeAnswerAutoPermit(row *db.SessionRow, toolName string) {
 	if resolvePermission(row.ConvID, accept.Slug) != permAllow {
 		return
 	}
-	go pressAutoPermitAccept(row, accept.Slug, toolName, accept.Keys)
+	if _, pending := autoPermitInFlight.LoadOrStore(row.ConvID, struct{}{}); pending {
+		return
+	}
+	go pressAutoPermitAccept(row.ConvID, accept, toolName, time.Now())
 }
 
 // pressAutoPermitAccept sends the accept keys once the dialog has had time to
 // paint, under the pane injection lock every other keystroke path takes.
 //
-// The grant is re-read after the wait rather than trusted from before it: the
-// press is the act being authorized, and consent withdrawn in between must land
-// before the key does, not after.
-func pressAutoPermitAccept(row *db.SessionRow, slug, toolName string, keys []string) {
-	time.Sleep(autoPermitSettleDelay)
-	if resolvePermission(row.ConvID, slug) != permAllow {
+// Nothing captured at hook time is trusted at press time. The grant is re-read,
+// because the press is the act being authorized and consent withdrawn in
+// between must land before the key does. The pane is re-resolved through
+// aliveSessionForConv, the same way every other daemon injector does, because
+// the row's session may have exited while this waited — and a tmux name is
+// reusable, so a stale target can be a live pane belonging to someone else.
+func pressAutoPermitAccept(convID string, accept session.AutoPermitAccept, toolName string, raisedAt time.Time) {
+	defer autoPermitInFlight.Delete(convID)
+	defer autoPermitPressFinished()
+
+	time.Sleep(autoPermitSettle())
+	if resolvePermission(convID, accept.Slug) != permAllow {
 		slog.Info("auto-permit: consent was withdrawn before the keystroke; leaving the prompt",
-			"tool", toolName, "conv", row.ConvID, "module", "agentd")
+			"tool", toolName, "conv", convID, "module", "agentd")
 		return
 	}
-	tmuxSession, convID := row.TmuxSession, row.ConvID
-	target := tmuxSession + ":0.0"
+	row := aliveSessionForConv(convID)
+	if row == nil {
+		slog.Info("auto-permit: no live pane for the prompt; leaving it",
+			"tool", toolName, "conv", convID, "module", "agentd")
+		return
+	}
+	// Re-checked on the re-resolved row rather than carried over: this is the
+	// session the key would actually go to.
+	if !session.AutoPermitHarnessMatches(row.Harness, accept) {
+		return
+	}
+	target := row.TmuxSession + ":0.0"
 	mu := paneInjectLock(injectLockKey(target))
 	if err := acquirePaneInjectLock(mu); err != nil {
 		slog.Warn("auto-permit: could not take the pane lock", "error", err,
@@ -99,13 +187,20 @@ func pressAutoPermitAccept(row *db.SessionRow, slug, toolName string, keys []str
 		return
 	}
 	defer mu.Unlock()
+	// Checked after the lock, not before: waiting behind another injector is
+	// exactly how a press gets old.
+	if age := time.Since(raisedAt); age > autoPermitMaxAge {
+		slog.Warn("auto-permit: the prompt is too old to answer safely; leaving it",
+			"age", age, "tool", toolName, "conv", convID, "module", "agentd")
+		return
+	}
 	if err := paneinput.SendKeys(target, paneinput.Options{
 		Run:         runTmuxCommand,
 		LockTimeout: paneInjectLockTimeout,
 		LockID:      target,
-	}, keys...); err != nil {
+	}, accept.Keys...); err != nil {
 		slog.Warn("auto-permit: accept keystroke failed", "error", err,
-			"tool", toolName, "tmux", tmuxSession, "conv", convID, "module", "agentd")
+			"tool", toolName, "tmux", row.TmuxSession, "conv", convID, "module", "agentd")
 		return
 	}
 	slog.Info("auto-permit: answered a permission prompt on the operator's behalf",
@@ -115,10 +210,13 @@ func pressAutoPermitAccept(row *db.SessionRow, slug, toolName string, keys []str
 
 // recordAutoPermitAnswer writes the operator's record of what was approved for
 // them: an ordinary audit row, in the same trail and dashboard tab as every
-// other action taken against this agent. Written after the keystroke actually
-// went out, so the trail records what was answered rather than what was
-// intended — a decision that never became a press (consent withdrawn during the
-// settle, a dead pane) is a log line, not a claim that something was approved.
+// other action taken against this agent.
+//
+// Written after the keystroke actually went out, so a decision that never
+// became a press (consent withdrawn during the settle, a pane that exited) is a
+// log line rather than a claim that something was approved. What it records is
+// that the accept key was SENT for this prompt — the daemon does not read the
+// pane back, so it cannot attest to what the harness then did with it.
 func recordAutoPermitAnswer(row *db.SessionRow, toolName string) {
 	if _, err := db.InsertAuditLog(db.AuditLogEntry{
 		At:          time.Now(),
