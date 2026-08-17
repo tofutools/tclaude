@@ -68,7 +68,8 @@ func ValidateTclaudeLayerHarnessPosture(
 	return harness.ValidateCopilotTclaudeLayerInnerSandbox(state)
 }
 
-// copilotTclaudeLayerGrantSet resolves the Copilot baseline for one launch.
+// copilotTclaudeLayerBaselineInput assembles the launch's facts for
+// harness.CopilotSandboxBaseline.
 //
 // cwd is passed as the catalog's Workspace so the catalog can REFUSE a grant
 // that would cover the working directory. That is not a redundant check against
@@ -76,10 +77,10 @@ func ValidateTclaudeLayerHarnessPosture(
 // deliberately and scoped, while a catalog row covering it would mean an
 // environment variable had silently widened a Copilot state path over the
 // repository.
-func copilotTclaudeLayerGrantSet(
+func copilotTclaudeLayerBaselineInput(
 	input TclaudeLayerLaunchInput,
 	cwd string,
-) (harness.CopilotTclaudeLayerGrantSet, error) {
+) (harness.CopilotBaselineInput, error) {
 	environment := launchModelEnvironment(input.Environment)
 	getenv := func(name string) string { return environment[name] }
 
@@ -87,7 +88,7 @@ func copilotTclaudeLayerGrantSet(
 	if home == "" {
 		resolved, err := os.UserHomeDir()
 		if err != nil {
-			return harness.CopilotTclaudeLayerGrantSet{}, fmt.Errorf(
+			return harness.CopilotBaselineInput{}, fmt.Errorf(
 				"resolve home directory for the Copilot sandbox baseline: %w", err)
 		}
 		home = resolved
@@ -95,7 +96,8 @@ func copilotTclaudeLayerGrantSet(
 
 	sockets := make([]string, 0, 3)
 	for _, socket := range sandboxpolicy.AgentdSocketFloor() {
-		// Canonicalized the same way the OpenCode branch canonicalizes them, so
+		// Canonicalized the same way the OpenCode requirement producer
+		// canonicalizes them, so
 		// a symlinked home does not produce an endpoint the catalog dedupes
 		// against a different spelling than the launch actually binds.
 		if socket = CanonicalTclaudeLayerGeneratedPath(socket); socket != "" {
@@ -103,7 +105,7 @@ func copilotTclaudeLayerGrantSet(
 		}
 	}
 
-	baseline := harness.CopilotBaselineInput{
+	return harness.CopilotBaselineInput{
 		Home:              home,
 		Getenv:            getenv,
 		TempDir:           CopilotLaunchTempDir(environment),
@@ -111,8 +113,7 @@ func copilotTclaudeLayerGrantSet(
 		CopilotExecutable: copilotLaunchExecutable(environment),
 		TclaudeExecutable: copilotTclaudeExecutable(),
 		Workspace:         cwd,
-	}
-	return harness.CopilotTclaudeLayerGrants(baseline)
+	}, nil
 }
 
 // CopilotLaunchTempDir resolves the temp directory the LAUNCH will see, which

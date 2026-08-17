@@ -826,7 +826,7 @@ func TestBuildTclaudeLayerLaunchSpecRefusesOpenCodeBinSymlinkOutsideState(t *tes
 		HarnessName: harness.OpenCodeName,
 		Cwd:         cwd,
 	})
-	require.ErrorContains(t, err, "resolves outside state root")
+	require.ErrorContains(t, err, "is not below state root")
 }
 
 func TestValidateTclaudeLayerHarnessSupportsOpenCodeOnUnixSandboxHosts(t *testing.T) {
