@@ -362,18 +362,32 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		if grantErr != nil {
 			return TclaudeLayerLaunchSpec{}, grantErr
 		}
-		for _, grant := range grants.Grants {
+		if len(grants.Grants) != len(grants.Entries) {
+			return TclaudeLayerLaunchSpec{}, fmt.Errorf(
+				"copilot baseline translated %d entries into %d grants",
+				len(grants.Entries), len(grants.Grants))
+		}
+		for index, grant := range grants.Grants {
+			entry := grants.Entries[index]
 			switch grant.Access {
 			case sandboxpolicy.AccessWrite:
-				// StateRoot is already the primary writable harness-state
-				// directory. Keep StateDirs for the additional baseline paths;
-				// repeating the root there makes phase-0 normalization remove it
-				// from WriteDirs while preparation still expects an auxiliary
-				// contract row for it.
-				if filepath.Clean(grant.Path) != stateRoot {
-					stateDirs = append(stateDirs, grant.Path)
+				if entry.Kind == harness.CopilotNodeDirectory {
+					// StateRoot is already the primary writable harness-state
+					// directory. Keep StateDirs for the additional baseline paths;
+					// repeating the root there makes phase-0 normalization remove it
+					// from WriteDirs while preparation still expects an auxiliary
+					// contract row for it.
+					if filepath.Clean(grant.Path) != stateRoot {
+						stateDirs = append(stateDirs, grant.Path)
+					}
+					contractWriteDirs = append(contractWriteDirs, grant.Path)
+				} else if entry.Kind != harness.CopilotNodeSocket {
+					return TclaudeLayerLaunchSpec{}, fmt.Errorf(
+						"copilot baseline grant %q has writable unsupported node kind %q",
+						grant.Path, entry.Kind)
 				}
-				contractWriteDirs = append(contractWriteDirs, grant.Path)
+				// Socket nodes need writable access for connect(2), but are live
+				// endpoints rather than directories the launch may materialize.
 				launchWriteDirs = appendUniqueDir(launchWriteDirs, grant.Path)
 			case sandboxpolicy.AccessRead:
 				// The read-only rows are the two EXECUTABLES (the `copilot`
