@@ -240,14 +240,28 @@ bubblewrap and Seatbelt.
 
 | harness | floored |
 |---|---|
-| claude | `hooks/`, `skills/`, `agents/`, `commands/`, `output-styles/`, `plugins/`, `workflows/`, `routines/`, `rules/`, `settings.json`, `settings.local.json`, `CLAUDE.md`, `keybindings.json` |
+| claude | `hooks/`, `skills/`, `agents/`, `commands/`, `output-styles/`, `plugins/`, `workflows/`, `routines/`, `rules/`, `local/`, `cowork_plugins/`, `settings.json`, `settings.local.json`, `CLAUDE.md`, `keybindings.json` |
 | codex | `hooks/`, `prompts/`, `config.toml`, `hooks.json`, `AGENTS.md`, `tclaude-agent.config.toml` |
 | copilot | `hooks/`, `settings.json`, `config.json`, `mcp-config.json` |
-| opencode | `plugin/`, `command/`, `agent/`, `opencode.json`, `opencode.jsonc`, `config.json`, `AGENTS.md` (all under the XDG config root) |
+| opencode | nothing — its config tree is already bound read-only by OpenCode's own state layout, in both legacy-shared and private modes |
 
-Claude Code's own sandbox already deny-writes almost exactly its half of that
-table for its Bash tool; without the floor tclaude's outer wall was *weaker*
-than the harness's own default.
+Claude Code's own sandbox deny-writes a broadly similar set for its Bash tool;
+without the floor tclaude's outer wall was *weaker* than the harness's own
+default.
+
+Materialization writes only what is indistinguishable from absent: an empty
+directory, or `{}` for a JSON entry. An empty JSON file is **not** equivalent
+to a missing one — tclaude's own readers and Claude Code alike treat a missing
+file as `{}` but report an existing empty one as unparseable — so the seed
+matters. Existing content is never touched.
+
+**Symlinked entries are skipped**, with a warning naming the path. Dotfile
+managers commonly point `~/.claude/skills` at a repo, and there is no faithful
+way to floor that: binding the resolved target leaves the *name* an ordinary
+symlink inside the writable state root, which the agent can unlink and replace
+with a real directory of its own. Skipping is disclosed; flooring the target
+would be a false claim. Point the symlink the other way — make `~/.claude/hooks`
+the real directory — if you want it floored.
 
 **What it costs.** Unlike Claude Code's Bash-only deny list, a bubblewrap
 read-only bind blocks everyone inside the wall, the harness process included.
@@ -560,6 +574,15 @@ cannot `send-keys` at tclaude's tmux server.
 
 ### Honestly residual holes
 
+- **`~/.claude/.claude.json` stays writable, and it carries `mcpServers`.**
+  Under `tclaude-layer` the harness-config floor cannot cover it: Claude Code
+  writes that file continuously (project records, directory trust, history),
+  and `CLAUDE_CONFIG_DIR` puts it inside the same writable state root. An agent
+  that appends an `mcpServers` entry there gets that command executed by the
+  next tclaude-launched Claude pane — including a `harness-builtin` one with no
+  outer wall. This is the residual member of the same escalation family the
+  floor closes, and closing it needs a different mechanism than a read-only
+  bind.
 - **MCP bypasses both layers entirely.** MCP servers run in the harness host
   process over their own transport, outside the Bash sandbox and the permission
   rules. An agent that cannot see `~/.config/gh` may still file a GitHub issue

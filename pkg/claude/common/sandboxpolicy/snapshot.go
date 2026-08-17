@@ -694,8 +694,14 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	// SnapshotVersion must appear here: a structurally compatible predecessor
 	// left out of this list strands every live agent's resume on upgrade, which
 	// is the outcome the paragraphs above exist to avoid.
+	// v11 carries no harness_config, which decodes to the empty value that now
+	// MEANS the read-only floor. A resumed pre-floor agent therefore gains the
+	// floor rather than keeping its old writable config surface. That is the
+	// same fail-closed direction as the break-glass drop above — the upgrade
+	// strictly narrows what the agent may write, so it cannot widen anything a
+	// human already sanctioned, and no live agent is stranded.
 	// TestEverySnapshotVersionUpToCurrentIsAccepted pins that.
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, SnapshotVersion:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:

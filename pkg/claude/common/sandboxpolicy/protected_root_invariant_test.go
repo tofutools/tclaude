@@ -221,7 +221,18 @@ func TestNoProfileFieldCanCarryProtectedAccess(t *testing.T) {
 			// this rather than leaving it as a claim.
 			// FilesystemRoot is a closed posture enum; it names no path and can
 			// only remove ambient visibility by selecting a constructed root.
-			want: []string{"Name", "Filesystem", "FilesystemSpellings", "Environment", "AgentDirectories", "FilesystemRoot", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "Includes"},
+			//
+			// HarnessConfig (TCL-1202) is the same shape: a closed enum of "",
+			// "read" and "write", rejected by NormalizeHarnessConfigAccess
+			// otherwise. It names no host path, so it cannot carry access to
+			// one. The paths it *implies* are not operator input at all — they
+			// come from a closed per-harness catalog derived from the launch
+			// contract's own state root, and both the derivation
+			// (session.harnessConfigFloorPaths) and the materialization
+			// (session.prepareHarnessConfigFloor) check every entry against
+			// ProtectedPaths. Its only reachable effect is to REMOVE write
+			// access, never to add any.
+			want: []string{"Name", "Filesystem", "FilesystemSpellings", "Environment", "AgentDirectories", "FilesystemRoot", "HarnessConfig", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "Includes"},
 		},
 		{
 			name: "EffectiveProfile",
@@ -229,7 +240,8 @@ func TestNoProfileFieldCanCarryProtectedAccess(t *testing.T) {
 			// PreLaunch: see the Profile note above. It survives resolution so
 			// the launch path can run it, but it is never consulted by anything
 			// that renders access.
-			want: []string{"Filesystem", "MountAliases", "Environment", "AgentDirectories", "FilesystemRoot", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "AccessNotices", "Provenance"},
+			// HarnessConfig: see the Profile note above.
+			want: []string{"Filesystem", "MountAliases", "Environment", "AgentDirectories", "FilesystemRoot", "HarnessConfig", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "AccessNotices", "Provenance"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

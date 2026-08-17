@@ -1,6 +1,7 @@
 package session
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,9 +85,14 @@ func TestHarnessConfigFloorMaterializesMissingSurfaces(t *testing.T) {
 	info, err := os.Stat(hooks)
 	require.NoError(t, err)
 	assert.True(t, info.IsDir())
+	// NOT an empty file: every JSON reader in this repo treats a missing file
+	// as "{}" but hands an existing empty one to json.Unmarshal, which fails.
 	body, err := os.ReadFile(settings)
 	require.NoError(t, err)
-	assert.Empty(t, body, "an empty settings file is semantically identical to absent")
+	assert.JSONEq(t, "{}", string(body))
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(body, &parsed),
+		"a materialized settings file must parse for tclaude's own readers")
 }
 
 // Materialization must never clobber a real settings file.
@@ -172,6 +178,13 @@ func TestHarnessConfigFloorCatalogCoversEveryHarness(t *testing.T) {
 	for _, name := range []string{"XDG_CONFIG_HOME", "CODEX_HOME"} {
 		t.Setenv(name, "")
 	}
+	// OpenCode is deliberately empty: agentd's own state layout already binds
+	// its config tree read-only, so a catalog here would be redundant and
+	// would aim at the wrong root under private state.
+	openCode, err := harnessConfigFloorCatalog(
+		harness.OpenCodeName, filepath.Join(home, ".opencode"))
+	require.NoError(t, err)
+	assert.Empty(t, openCode)
 	for _, tc := range []struct {
 		harness string
 		root    string
@@ -183,10 +196,6 @@ func TestHarnessConfigFloorCatalogCoversEveryHarness(t *testing.T) {
 			filepath.Join(home, ".codex", "config.toml")},
 		{harness.CopilotName, filepath.Join(home, ".copilot"),
 			filepath.Join(home, ".copilot", "config.json")},
-		// OpenCode's config lives outside its state root, which is exactly why
-		// the floor is not modelled as a subtree of the state root.
-		{harness.OpenCodeName, filepath.Join(home, ".opencode"),
-			filepath.Join(home, ".config", "opencode", "plugin")},
 	} {
 		t.Run(tc.harness, func(t *testing.T) {
 			entries, err := harnessConfigFloorCatalog(tc.harness, tc.root)
@@ -217,4 +226,54 @@ func TestHarnessConfigFloorCoversCodexManagedProfile(t *testing.T) {
 	}
 	assert.Contains(t, paths,
 		filepath.Join(home, ".codex", harness.CodexAgentProfile+".config.toml"))
+}
+
+// A symlinked entry cannot be floored faithfully: binding the resolved target
+// leaves the NAME an ordinary symlink inside the writable state root, which
+// the agent can unlink and replace with a real directory. Skipping is the
+// disclosed outcome; silently flooring the target would be a false claim.
+func TestHarnessConfigFloorSkipsSymlinkedEntry(t *testing.T) {
+	home, cwd := claudeFloorFixture(t)
+	target := filepath.Join(home, "dotfiles", "skills")
+	link := filepath.Join(home, ".claude", "skills")
+	require.NoError(t, os.MkdirAll(target, 0o700))
+	require.NoError(t, os.Symlink(target, link))
+
+	spec := buildClaudeFloorSpec(t, cwd, sandboxpolicy.EffectiveProfile{})
+	assert.NotContains(t, spec.Contract.HarnessConfigFloor, link)
+	assert.NotContains(t, spec.Contract.HarnessConfigFloor, target,
+		"flooring the resolved target would leave the swappable name unprotected")
+	assert.Contains(t, spec.Contract.HarnessConfigFloor,
+		filepath.Join(home, ".claude", "hooks"),
+		"one unfloorable entry must not disarm the rest")
+	require.NoError(t, PrepareTclaudeLayerHarnessState(spec))
+}
+
+// Non-symlinked entries must keep their LITERAL name, so the bind becomes a
+// mountpoint the agent cannot unlink from inside the sandbox.
+func TestHarnessConfigFloorKeepsLiteralNames(t *testing.T) {
+	home, cwd := claudeFloorFixture(t)
+	spec := buildClaudeFloorSpec(t, cwd, sandboxpolicy.EffectiveProfile{})
+	for _, path := range spec.Contract.HarnessConfigFloor {
+		assert.Truef(t, sandboxpolicy.PathContainsOrEqual(
+			filepath.Join(home, ".claude"), path),
+			"floor path %q escaped the state root", path)
+	}
+}
+
+// A symlink swapped in after the spec was frozen must refuse rather than bind
+// through to whatever it now points at.
+func TestHarnessConfigFloorRefusesSymlinkSwappedAfterFreeze(t *testing.T) {
+	home, cwd := claudeFloorFixture(t)
+	hooks := filepath.Join(home, ".claude", "hooks")
+	spec := buildClaudeFloorSpec(t, cwd, sandboxpolicy.EffectiveProfile{})
+	require.Contains(t, spec.Contract.HarnessConfigFloor, hooks)
+
+	elsewhere := filepath.Join(home, "elsewhere")
+	require.NoError(t, os.MkdirAll(elsewhere, 0o700))
+	require.NoError(t, os.Symlink(elsewhere, hooks))
+
+	err := PrepareTclaudeLayerHarnessState(spec)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "symlink")
 }
