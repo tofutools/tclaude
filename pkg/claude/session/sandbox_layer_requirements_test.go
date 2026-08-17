@@ -25,7 +25,9 @@ func TestFoldTclaudeLayerRequirementsBuckets(t *testing.T) {
 			Access: harness.LayerPathWrite, MayCreate: true, PolicyGrant: true},
 		{Path: "/home/user/.cache/harness", Kind: harness.LayerPathDirectory,
 			Access: harness.LayerPathWrite, MayCreate: true, PolicyGrant: true},
-		// Same row twice: the fold deduplicates before preparation.
+		// Same row twice: rows are preserved (OpenCode's v3 consumers read
+		// StateDirs positionally); the write-set dedup happens in phase-0
+		// normalization.
 		{Path: "/home/user/.cache/harness", Kind: harness.LayerPathDirectory,
 			Access: harness.LayerPathWrite, MayCreate: true, PolicyGrant: true},
 		// Contract-only state (the OpenCode shape): no policy write grant.
@@ -46,8 +48,9 @@ func TestFoldTclaudeLayerRequirementsBuckets(t *testing.T) {
 
 	assert.Equal(t, []string{
 		"/home/user/.cache/harness",
+		"/home/user/.cache/harness",
 		"/home/user/.local/state/harness",
-	}, buckets.StateDirs, "state root and duplicates stay out of StateDirs")
+	}, buckets.StateDirs, "state root stays out of StateDirs; rows are otherwise preserved")
 	assert.Equal(t, []string{filepath.Join(stateRoot, "bin")}, buckets.ReadOnlyStateDirs)
 	assert.Equal(t, []string{
 		stateRoot,

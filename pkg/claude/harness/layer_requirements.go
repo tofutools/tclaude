@@ -125,10 +125,13 @@ func CopilotLayerPathRequirements(in CopilotBaselineInput) ([]LayerPathRequireme
 				"copilot baseline grant %q resolved unsupported access %q",
 				grant.Path, grant.Access))
 		}
-		// Directories are the only rows the launch may materialize. The
-		// executables must already exist, and a socket is a live endpoint
-		// bound by its owner, never created by launch preparation.
-		requirement.MayCreate = requirement.Kind == LayerPathDirectory
+		// Only writable directories may be materialized by launch
+		// preparation. The executables must already exist, a socket is a live
+		// endpoint bound by its owner, and a read-only directory row (none in
+		// today's catalog) would be an ordinary read grant rather than
+		// creatable state under the state root.
+		requirement.MayCreate = requirement.Kind == LayerPathDirectory &&
+			requirement.Access == LayerPathWrite
 		// Baseline rows are grants by design (see copilot_sandbox_grants.go):
 		// they compose into the launch policy filesystem, not only the
 		// contract's phase-0 write set.

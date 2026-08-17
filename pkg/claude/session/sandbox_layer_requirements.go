@@ -166,8 +166,14 @@ func foldTclaudeLayerRequirements(
 		switch {
 		case requirement.Kind == harness.LayerPathDirectory &&
 			requirement.Access == harness.LayerPathWrite && requirement.MayCreate:
+			// Plain append, not dedup: OpenCode's v3 contract consumers read
+			// StateDirs positionally (four XDG rows, config at index 2), and
+			// collapsing two legitimately-colliding XDG roots into one row
+			// would silently skip their fail-closed validation. Duplicates are
+			// harmless to preparation, and the write-set dedup that matters
+			// happens in phase-0 normalization.
 			if path != stateRoot {
-				out.StateDirs = appendUniqueDir(out.StateDirs, path)
+				out.StateDirs = append(out.StateDirs, path)
 			}
 			out.ContractWriteDirs = append(out.ContractWriteDirs, path)
 			if requirement.PolicyGrant {
