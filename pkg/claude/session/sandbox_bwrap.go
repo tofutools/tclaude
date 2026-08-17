@@ -21,15 +21,23 @@ import (
 // TclaudeLayerLaunchContract carries writable paths required by the launched
 // harness itself rather than granted by the operator's sandbox profile.
 type TclaudeLayerLaunchContract struct {
-	HarnessName       string                           `json:"harness_name"`
-	StateRoot         string                           `json:"state_root"`
-	StateDirs         []string                         `json:"state_dirs,omitempty"`
-	ReadOnlyStateDirs []string                         `json:"read_only_state_dirs,omitempty"`
-	Environment       []sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
-	FinalHideDirs     []string                         `json:"final_hide_dirs,omitempty"`
-	ReadOnlyBinds     []TclaudeLayerReadOnlyBind       `json:"read_only_binds,omitempty"`
-	WriteDirs         []string                         `json:"write_dirs"`
-	ProfileFilesystem []sandboxpolicy.FilesystemGrant  `json:"profile_filesystem"`
+	HarnessName       string   `json:"harness_name"`
+	StateRoot         string   `json:"state_root"`
+	StateDirs         []string `json:"state_dirs,omitempty"`
+	ReadOnlyStateDirs []string `json:"read_only_state_dirs,omitempty"`
+	// HarnessConfigFloor freezes the harness's own policy/code-execution
+	// surface as read-only. See sandbox_harness_config_floor.go for what is in
+	// it and why. An empty list means no floor was applied — either the
+	// composed profile opted out, or every entry was explicitly reopened.
+	HarnessConfigFloor []string `json:"harness_config_floor,omitempty"`
+	// HarnessConfigFloorDirs names which floor entries are directories. The
+	// rest are files, and the two are materialized differently.
+	HarnessConfigFloorDirs []string                         `json:"harness_config_floor_dirs,omitempty"`
+	Environment            []sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
+	FinalHideDirs          []string                         `json:"final_hide_dirs,omitempty"`
+	ReadOnlyBinds          []TclaudeLayerReadOnlyBind       `json:"read_only_binds,omitempty"`
+	WriteDirs              []string                         `json:"write_dirs"`
+	ProfileFilesystem      []sandboxpolicy.FilesystemGrant  `json:"profile_filesystem"`
 	// MaterializedUnixSocketPaths freezes the exact launch-time socket
 	// observation shared with disclosure. A non-nil empty list means the
 	// authored selectors materialized to no live sockets.
@@ -403,6 +411,25 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 			}
 		}
 	}
+	// The harness-config floor rides in as ordinary read grants so the same
+	// most-specific-wins ordering, constructed-root renderer, and Seatbelt
+	// translation govern it — there is no second enforcement path to keep in
+	// step. It is derived from the OPERATOR-AUTHORED rows (profileFilesystem),
+	// not the contract-flattened set, so a launch-contract write cannot read as
+	// an operator opting a surface back out.
+	floorEntries, err := harnessConfigFloorPaths(
+		input.HarnessName, stateRoot, effective.HarnessConfig, profileFilesystem)
+	if err != nil {
+		return TclaudeLayerLaunchSpec{}, err
+	}
+	var floorPaths, floorDirs []string
+	for _, entry := range floorEntries {
+		floorPaths = append(floorPaths, entry.Path)
+		if entry.IsDir {
+			floorDirs = append(floorDirs, entry.Path)
+		}
+		launchReadDirs = append(launchReadDirs, entry.Path)
+	}
 	// GrantsFromDirs flattens the launch-composed policy back into bare paths,
 	// which can only express same-path rules. Remapped grants are therefore
 	// carried around it and re-attached: they occupy their own sandbox paths, so
@@ -436,6 +463,8 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		StateRoot:              stateRoot,
 		StateDirs:              stateDirs,
 		ReadOnlyStateDirs:      readOnlyStateDirs,
+		HarnessConfigFloor:     floorPaths,
+		HarnessConfigFloorDirs: floorDirs,
 		Environment:            append([]sandboxpolicy.EnvironmentEntry(nil), input.Environment...),
 		FinalHideDirs:          append([]string(nil), input.FinalHideDirs...),
 		ReadOnlyBinds:          append([]TclaudeLayerReadOnlyBind(nil), input.ReadOnlyBinds...),
@@ -1801,6 +1830,24 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 				path)
 		}
 	}
+	floorDirs := make(map[string]bool, len(spec.Contract.HarnessConfigFloorDirs))
+	for _, path := range spec.Contract.HarnessConfigFloorDirs {
+		floorDirs[filepath.Clean(strings.TrimSpace(path))] = true
+	}
+	if err := prepareHarnessConfigFloor(spec.Contract.HarnessConfigFloor, floorDirs); err != nil {
+		return err
+	}
+	for _, path := range spec.Contract.HarnessConfigFloor {
+		// Same assertion the read-only state dirs carry: if the rendered
+		// contract does not actually make the path read-only, the floor is a
+		// claim rather than a boundary, and the launch must refuse instead.
+		access, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem, path)
+		if !covered || access != sandboxpolicy.AccessRead {
+			return fmt.Errorf(
+				"harness config floor path %q is not read-only in the rendered launch contract",
+				path)
+		}
+	}
 	if _, err := cleanTclaudeLayerAbsoluteDirs(
 		"daemon-final hide", spec.Contract.FinalHideDirs); err != nil {
 		return err
@@ -2839,7 +2886,8 @@ func tclaudeLayerHarnessStateRules(
 	stateRoot string,
 ) []tclaudeLayerHarnessStateRule {
 	rules := make([]tclaudeLayerHarnessStateRule, 0,
-		1+len(contract.StateDirs)+len(contract.ReadOnlyStateDirs)+2*len(contract.ReadOnlyBinds))
+		1+len(contract.StateDirs)+len(contract.ReadOnlyStateDirs)+
+			len(contract.HarnessConfigFloor)+2*len(contract.ReadOnlyBinds))
 	appendRule := func(path string, access sandboxpolicy.Access) {
 		rules = append(rules, tclaudeLayerHarnessStateRule{Path: path, Access: access})
 	}
@@ -2848,6 +2896,9 @@ func tclaudeLayerHarnessStateRules(
 		appendRule(path, sandboxpolicy.AccessWrite)
 	}
 	for _, path := range contract.ReadOnlyStateDirs {
+		appendRule(path, sandboxpolicy.AccessRead)
+	}
+	for _, path := range contract.HarnessConfigFloor {
 		appendRule(path, sandboxpolicy.AccessRead)
 	}
 	for _, bind := range contract.ReadOnlyBinds {

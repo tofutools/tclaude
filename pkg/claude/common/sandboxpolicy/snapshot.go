@@ -10,7 +10,11 @@ import (
 	"time"
 )
 
-// SnapshotVersion 11 adds the explicit filesystem-root posture. Version 10
+// SnapshotVersion 12 adds the harness-config access posture, whose omitted
+// value now MEANS the read-only floor rather than "no opinion". An older
+// binary must reject such a snapshot rather than read the absent field as its
+// own historical writable default, which would resume a floored agent
+// unfloored. Version 11 adds the explicit filesystem-root posture. Version 10
 // adds operator-authored pre-launch script blocks. An older
 // binary must REJECT such a snapshot rather than ignore the field: silently
 // dropping the blocks would start an agent whose environment was never
@@ -23,7 +27,7 @@ import (
 // bump preserved the fail-closed downgrade property, where an older binary
 // rejects a newer snapshot rather than ignoring a marker it does not
 // understand. Version 5 removed the retired read-baseline mechanism (TCL-623).
-const SnapshotVersion = 11
+const SnapshotVersion = 12
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -146,6 +150,14 @@ func RequireContained(parent, child Snapshot) error {
 	if parent.Effective.FilesystemRoot == FilesystemRootSeparate &&
 		child.Effective.FilesystemRoot != FilesystemRootSeparate {
 		return fmt.Errorf("separate filesystem root is not preserved from the parent snapshot")
+	}
+	// A floored parent may not spawn an unfloored child. Comparing the derived
+	// verdict rather than the raw mode is what makes an omitted child field
+	// inherit the floor instead of reading as a silent opt-out.
+	if HarnessConfigFloorApplies(parent.Effective.HarnessConfig) &&
+		!HarnessConfigFloorApplies(child.Effective.HarnessConfig) {
+		return fmt.Errorf(
+			"harness config write access is not present in the parent snapshot")
 	}
 	return nil
 }
@@ -492,6 +504,7 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.MountAliases = nil
 	effective.AgentDirectories = nil
 	effective.FilesystemRoot = FilesystemRootAutomatic
+	effective.HarnessConfig = HarnessConfigAccessDefault
 	effective.NetworkAccess = NetworkAccessInherit
 	effective.Network = nil
 	effective.UnixSockets = nil
@@ -500,6 +513,7 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.AccessNotices = nil
 	effective.Provenance.Filesystem = nil
 	effective.Provenance.FilesystemRoot = nil
+	effective.Provenance.HarnessConfig = nil
 	effective.Provenance.AgentDirectories = nil
 	effective.Provenance.Network = nil
 	effective.Provenance.UnixSockets = nil
@@ -528,6 +542,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		len(in.Effective.Environment) > 0 ||
 		len(in.Effective.AgentDirectories) > 0 ||
 		in.Effective.FilesystemRoot != FilesystemRootAutomatic ||
+		in.Effective.HarnessConfig != HarnessConfigAccessDefault ||
 		in.Effective.NetworkAccess != NetworkAccessInherit ||
 		in.Effective.Network != nil ||
 		in.Effective.UnixSockets != nil ||
@@ -543,6 +558,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		Filesystem:              in.Effective.Filesystem,
 		Environment:             in.Effective.Environment,
 		FilesystemRoot:          in.Effective.FilesystemRoot,
+		HarnessConfig:           in.Effective.HarnessConfig,
 		NetworkAccess:           in.Effective.NetworkAccess,
 		UnixSockets:             in.Effective.UnixSockets,
 		ResourceLimits:          in.Effective.ResourceLimits,
@@ -610,6 +626,9 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	}
 	if normalized.FilesystemRoot != in.Effective.FilesystemRoot {
 		return Snapshot{}, fmt.Errorf("effective sandbox filesystem root changed since resolution")
+	}
+	if normalized.HarnessConfig != in.Effective.HarnessConfig {
+		return Snapshot{}, fmt.Errorf("effective sandbox harness config access changed since resolution")
 	}
 	if !reflect.DeepEqual(normalized.Network, in.Effective.Network) {
 		return Snapshot{}, fmt.Errorf("effective sandbox network rules changed since resolution")
@@ -718,6 +737,7 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 		Environment:             append([]EnvironmentEntry{}, in.Environment...),
 		AgentDirectories:        append([]string{}, in.AgentDirectories...),
 		FilesystemRoot:          in.FilesystemRoot,
+		HarnessConfig:           in.HarnessConfig,
 		NetworkAccess:           in.NetworkAccess,
 		Network:                 cloneNetworkRulesPtr(in.Network),
 		UnixSockets:             cloneUnixSocketRulesPtr(in.UnixSockets),
@@ -731,6 +751,7 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 			Environment:      make(map[string]ProfileSource, len(in.Provenance.Environment)),
 			AgentDirectories: make(map[string][]ProfileSource, len(in.Provenance.AgentDirectories)),
 			FilesystemRoot:   nil,
+			HarnessConfig:    nil,
 			Network:          nil,
 			UnixSockets:      nil,
 			ResourceMemory:   nil,
@@ -749,6 +770,10 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	if in.Provenance.FilesystemRoot != nil {
 		source := cloneProfileSource(*in.Provenance.FilesystemRoot)
 		out.Provenance.FilesystemRoot = &source
+	}
+	if in.Provenance.HarnessConfig != nil {
+		source := cloneProfileSource(*in.Provenance.HarnessConfig)
+		out.Provenance.HarnessConfig = &source
 	}
 	if in.Provenance.Network != nil {
 		source := cloneProfileSource(*in.Provenance.Network)

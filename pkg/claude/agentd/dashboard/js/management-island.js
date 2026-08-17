@@ -1534,7 +1534,7 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
     const axes = sandboxAccessAxes(seed || {});
     const network = sandboxNetworkAuthoring(seed || {});
     const filesystem_spellings = clone(seed?.filesystem_spellings ?? null);
-    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, filesystem_root: seed?.filesystem_root || '', environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets, resource_limits: { memory: seed?.resource_limits?.memory || '', cpu: seed?.resource_limits?.cpu == null ? '' : String(seed.resource_limits.cpu) }, darwin_allow_mach_register: !!seed?.darwin_allow_mach_register, ...(seed?.pre_launch ? { pre_launch: sandboxPreLaunchEditorRows(seed.pre_launch) } : {}) };
+    return { id: seed?.id || 0, name: seed?.name || '', filesystem: sandboxFilesystemEditorRows(seed?.filesystem || [], filesystem_spellings), filesystem_spellings, filesystem_root: seed?.filesystem_root || '', harness_config: seed?.harness_config || '', environment: clone(seed?.environment || []), includes: clone(seed?.includes || []), agent_directories: clone(seed?.agent_directories || []), network_access: '', network, unix_sockets: axes.unix_sockets, resource_limits: { memory: seed?.resource_limits?.memory || '', cpu: seed?.resource_limits?.cpu == null ? '' : String(seed.resource_limits.cpu) }, darwin_allow_mach_register: !!seed?.darwin_allow_mach_register, ...(seed?.pre_launch ? { pre_launch: sandboxPreLaunchEditorRows(seed.pre_launch) } : {}) };
   }, [descriptor]);
   const initialFilesystemWire = sandboxFilesystemWire(baseline, baseline);
   const [draft, setDraft] = useState(() => clone(baseline)); const [advanced, setAdvanced] = useState(false); const [rawFS, setRawFS] = useState(() => JSON.stringify(initialFilesystemWire.filesystem, null, 2)); const [rawSpellings, setRawSpellings] = useState(() => JSON.stringify(initialFilesystemWire.filesystem_spellings, null, 2)); const [rawEnv, setRawEnv] = useState(() => JSON.stringify(baseline.environment, null, 2)); const [rawIncludes, setRawIncludes] = useState(() => JSON.stringify(baseline.includes, null, 2)); const [rawAgentDirs, setRawAgentDirs] = useState(() => JSON.stringify(baseline.agent_directories, null, 2)); const [rawNetwork, setRawNetwork] = useState(() => JSON.stringify(baseline.network, null, 2)); const [rawSockets, setRawSockets] = useState(() => JSON.stringify(baseline.unix_sockets, null, 2)); const [rawResources, setRawResources] = useState(() => JSON.stringify(sandboxResourceLimitsForWire(baseline.resource_limits), null, 2)); const [rawPreLaunch, setRawPreLaunch] = useState(() => JSON.stringify(sandboxPreLaunchForWire(baseline.pre_launch || []), null, 2));
@@ -1773,7 +1773,13 @@ function SandboxEditor({ descriptor, sandboxProfiles, state, actions, confirmDis
         <option value="">Automatic (from other rules)</option>
         <option value="inherit">Inherit host filesystem root</option>
         <option value="separate">Separate/minimal filesystem root</option>
+      </select></label>
+      <label>Harness config <select id="sandbox-profile-editor-harness-config" value=${draft.harness_config || ''} onChange=${(event) => setDraft((value) => ({ ...value, harness_config: event.currentTarget.value }))}>
+        <option value="">Default (read-only floor)</option>
+        <option value="read">Read-only (pinned)</option>
+        <option value="write">Writable (opt out of the floor)</option>
       </select></label></div>
+      <div class="sbx-resource-intro">The harness config floor binds the harness's own settings file and its hook/skill/agent/command directories read-only, so a confined agent cannot rewrite the policy that confines it or drop code that runs in your next unsandboxed session. It applies under tclaude-layer and stacked only. Writable restores the old posture; a single surface can also be reopened with an explicit write row at or below it.</div>
       <div class="sbx-resource-intro">A separate root exposes only the fixed read-only OS/runtime surface and the directory mounts in this policy. Network or Unix-socket restrictions can still require it even when “inherit” is selected. Explicit separation currently requires Linux tclaude-layer.</div>
       ${(globalFilesystem.length > 0 || globalConfigWarnings.length > 0) && html`<div class="sbx-global-filesystem">
         <div class="sbx-global-controls"><label class="sbx-global-toggle" title="These read-only rows come from Claude Code and Codex global sandbox config. They are launch context, not part of the named profile."><input id="sandbox-profile-editor-show-global-filesystem" type="checkbox" checked=${showGlobalFilesystem} onChange=${(event) => setShowGlobalFilesystem(event.currentTarget.checked)}/> Show inherited global config rules${globalFilesystem.length ? ` (${globalFilesystem.length})` : ''}</label>
@@ -1966,6 +1972,7 @@ function sandboxImportNetworkRows(profile) {
 function sandboxImportPolicyRows(profile) {
   const rows = [];
   if (profile.filesystem_root) rows.push({ kind: 'root', value: profile.filesystem_root === 'separate' ? 'separate/minimal filesystem root' : 'inherit host filesystem root' });
+  if (profile.harness_config) rows.push({ kind: 'harness-config', value: profile.harness_config === 'write' ? 'harness config writable (floor opted out)' : 'harness config read-only (floor pinned)' });
   for (const entry of profile.filesystem || []) rows.push({ kind: entry.access, value: entry.mount_path ? `${entry.path} → ${entry.mount_path}` : entry.path });
   for (const rule of profile.filesystem_spellings?.rules || []) {
     for (const spelling of rule.spellings || []) rows.push({ kind: 'alias', value: `${spelling} → ${rule.resolved_path}` });

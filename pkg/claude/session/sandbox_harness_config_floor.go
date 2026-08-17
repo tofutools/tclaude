@@ -1,0 +1,320 @@
+package session
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+)
+
+// The harness-config read-only floor.
+//
+// Under tclaude-layer the launch contract binds the harness's own state root
+// READ-WRITE, because that is where the harness keeps the state it must write:
+// transcripts, project records, todo lists, history, account/onboarding data.
+// The same directory also holds the harness's POLICY and PERSISTENT-CODE
+// surface — its settings file, its hook/skill/agent/command directories, its
+// memory file — and those are a different kind of thing.
+//
+// A confined agent that writes them escalates out of its own sandbox by
+// waiting:
+//
+//   - Claude Code's ~/.claude/settings.json carries the block
+//     `tclaude setup --install-sandbox-hardening` installs, which is what walls
+//     ~/.tclaude/data (operator token, remote-access CA) and ~/.claude/sessions
+//     (identity forgery) off from every harness-builtin launch and from the
+//     human's own ambient runs. Strip it and that wall is gone.
+//   - Codex's tclaude-agent.config.toml IS the managed profile that provides
+//     Codex's harness-builtin confinement. Rewrite it and the next
+//     harness-builtin Codex launch comes up unconfined.
+//   - A hook, skill, agent, or command dropped in any of these directories
+//     executes in the human's NEXT harness session, outside any sandbox.
+//
+// So these paths are floored read-only by default. Claude Code's own sandbox
+// already deny-writes almost exactly this set for its Bash tool; without the
+// floor tclaude's outer wall is weaker than the harness's own default, which
+// is backwards.
+//
+// Two escape hatches, in increasing bluntness:
+//
+//   - An operator profile that authors an explicit write grant AT or BELOW one
+//     floor path drops that single entry. Most-specific-wins, and the operator
+//     has to name the surface, so a broad `~` or `~/.claude` write does not
+//     quietly undo the floor.
+//   - `harness_config: "write"` on any profile in the chain turns the whole
+//     floor off, restoring the pre-floor posture.
+//
+// The floor covers only what tclaude itself enforces: tclaude-layer and
+// stacked. Under harness-builtin the harness's own policy governs, and under
+// resource-only/off nothing is enforced by design.
+//
+// Note the asymmetry with Claude Code's Bash-only deny list: a bubblewrap
+// read-only bind blocks EVERYONE inside the wall, the harness process
+// included. In-pane writes to a floored file therefore fail — Claude Code's
+// `/config` and user-scope `/permissions`, Codex's `/model` persistence,
+// Copilot's trust-folder record. That is the cost, and it is why the opt-out
+// exists.
+
+// harnessConfigFloorEntry is one floored path. Dir entries are materialized as
+// directories so an agent cannot create a missing surface and write into it;
+// file entries are materialized as empty files for the same reason (empty is
+// semantically identical to absent for every file in the catalog).
+type harnessConfigFloorEntry struct {
+	Path  string
+	IsDir bool
+}
+
+// harnessConfigFloorCatalog is the per-harness closed list, spelled relative to
+// the harness state root except where an absolute path is returned. Adding to
+// it narrows what an agent may write, so entries need to be surfaces the
+// harness reads as policy or executes as code — not merely state the operator
+// would rather keep tidy.
+func harnessConfigFloorCatalog(
+	harnessName string,
+	stateRoot string,
+) ([]harnessConfigFloorEntry, error) {
+	stateRoot = filepath.Clean(strings.TrimSpace(stateRoot))
+	if stateRoot == "." || !filepath.IsAbs(stateRoot) {
+		return nil, fmt.Errorf(
+			"harness config floor needs an absolute state root, got %q", stateRoot)
+	}
+	var dirs, files []string
+	under := func(names ...string) []string {
+		out := make([]string, 0, len(names))
+		for _, name := range names {
+			out = append(out, filepath.Join(stateRoot, name))
+		}
+		return out
+	}
+	switch harnessName {
+	case harness.DefaultName:
+		// CLAUDE_CONFIG_DIR is pinned to the state root for every tclaude
+		// launch (see ApplyClaudeConfigDirEnv), so the whole Claude Code config
+		// surface really does live here.
+		dirs = under("hooks", "skills", "agents", "commands", "output-styles",
+			"plugins", "workflows", "routines", "rules")
+		files = under("settings.json", "settings.local.json", "CLAUDE.md",
+			"keybindings.json")
+	case harness.CodexName:
+		dirs = under("hooks", "prompts")
+		files = under("config.toml", "hooks.json", "AGENTS.md")
+		// The setup-managed profile IS Codex's harness-builtin confinement.
+		// Per-launch tclaude-agent-<hex>.config.toml siblings are not floored:
+		// they are generated fresh per launch and swept afterwards, so they
+		// carry no authority into a future launch the way this one does.
+		files = append(files, filepath.Join(
+			stateRoot, harness.CodexAgentProfile+".config.toml"))
+	case harness.CopilotName:
+		dirs = under("hooks")
+		// config.json outranks settings.json for Copilot's sandbox key, so both
+		// have to be floored or the weaker one decides.
+		files = under(harness.CopilotSettingsFileName, "config.json",
+			"mcp-config.json")
+	case harness.OpenCodeName:
+		// OpenCode keeps no config under ~/.opencode: its global config and
+		// plugin/command/agent surfaces live in the XDG config root, which the
+		// contract also binds writable (see tclaudeLayerOpenCodeStateDirs).
+		configRoot, err := openCodeConfigRoot()
+		if err != nil {
+			return nil, err
+		}
+		for _, name := range []string{"plugin", "command", "agent"} {
+			dirs = append(dirs, filepath.Join(configRoot, name))
+		}
+		for _, name := range []string{
+			"opencode.json", "opencode.jsonc", "config.json", "AGENTS.md",
+		} {
+			files = append(files, filepath.Join(configRoot, name))
+		}
+	default:
+		return nil, fmt.Errorf(
+			"harness config floor has no catalog for harness %q", harnessName)
+	}
+	entries := make([]harnessConfigFloorEntry, 0, len(dirs)+len(files))
+	for _, path := range dirs {
+		entries = append(entries, harnessConfigFloorEntry{Path: path, IsDir: true})
+	}
+	for _, path := range files {
+		entries = append(entries, harnessConfigFloorEntry{Path: path})
+	}
+	for index := range entries {
+		canonical, err := canonicalHarnessConfigFloorPath(
+			entries[index].Path, entries[index].IsDir)
+		if err != nil {
+			return nil, fmt.Errorf(
+				"resolve harness config floor path %q: %w", entries[index].Path, err)
+		}
+		entries[index].Path = canonical
+	}
+	return entries, nil
+}
+
+// canonicalHarnessConfigFloorPath canonicalizes a floor entry the same way the
+// launch contract canonicalizes its state paths. File entries have to go
+// through their PARENT: canonicalTclaudeLayerStatePath refuses an existing
+// non-directory, and a settings file that already exists is the common case,
+// not an error.
+func canonicalHarnessConfigFloorPath(path string, isDir bool) (string, error) {
+	if isDir {
+		return canonicalTclaudeLayerStatePath(path)
+	}
+	parent, err := canonicalTclaudeLayerStatePath(filepath.Dir(path))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(parent, filepath.Base(path)), nil
+}
+
+func openCodeConfigRoot() (string, error) {
+	if root := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME")); root != "" {
+		return filepath.Join(root, "opencode"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory for OpenCode config: %w", err)
+	}
+	return filepath.Join(home, ".config", "opencode"), nil
+}
+
+// harnessConfigFloorPaths resolves the floor for one launch and drops the
+// entries an operator explicitly reopened. It returns nil when the composed
+// posture opted the whole floor out, which is also what makes the frozen
+// contract self-describing: an empty list means "no floor was applied", never
+// "the floor was applied and happened to be empty".
+func harnessConfigFloorPaths(
+	harnessName string,
+	stateRoot string,
+	access sandboxpolicy.HarnessConfigAccess,
+	profileFilesystem []sandboxpolicy.FilesystemGrant,
+) ([]harnessConfigFloorEntry, error) {
+	if !sandboxpolicy.HarnessConfigFloorApplies(access) {
+		return nil, nil
+	}
+	entries, err := harnessConfigFloorCatalog(harnessName, stateRoot)
+	if err != nil {
+		return nil, err
+	}
+	protectedRoots, err := sandboxpolicy.ProtectedPaths()
+	if err != nil {
+		return nil, fmt.Errorf("resolve protected paths for harness config floor: %w", err)
+	}
+	out := make([]harnessConfigFloorEntry, 0, len(entries))
+	for _, entry := range entries {
+		skip := false
+		for _, protected := range protectedRoots {
+			if sandboxpolicy.GuardContainsOrEqual(protected, entry.Path) {
+				// The protected wall already hides this more completely than a
+				// read-only bind would, and a contract path that intersects it
+				// is refused downstream. Nothing to add.
+				skip = true
+				break
+			}
+		}
+		if skip || harnessConfigFloorReopened(entry.Path, profileFilesystem) {
+			continue
+		}
+		// A profile deny is STRICTER than the floor, so the floor has nothing
+		// to add and must not materialize a host path the operator denied.
+		if access, covered := sandboxpolicy.EffectiveAccessAt(
+			profileFilesystem, entry.Path); covered && access == sandboxpolicy.AccessDeny {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+// harnessConfigFloorReopened reports whether the operator explicitly took
+// responsibility for one floored path. Only a write grant AT or BELOW the path
+// counts: an ancestor grant such as a blanket `~` or state-root write is the
+// ordinary shape of an unrelated profile, and letting it silently disable the
+// floor would make the default meaningless for exactly the profiles that most
+// need it.
+func harnessConfigFloorReopened(
+	path string,
+	profileFilesystem []sandboxpolicy.FilesystemGrant,
+) bool {
+	for _, grant := range profileFilesystem {
+		if grant.Access != sandboxpolicy.AccessWrite {
+			continue
+		}
+		if sandboxpolicy.GuardContainsOrEqual(path, grant.Path) {
+			return true
+		}
+	}
+	return false
+}
+
+// prepareHarnessConfigFloor materializes the floored paths before the outer
+// layer starts. Materializing rather than skipping missing paths is the whole
+// point: an absent ~/.claude/hooks under a writable state root is a directory
+// the agent can simply create and then write into, so a floor that only
+// covered what already existed would protect the hosts that need it least.
+//
+// Both shapes are semantically identical to absent for every entry in the
+// catalog — an empty directory, an empty settings/config file — so this cannot
+// change harness behavior for the human either.
+func prepareHarnessConfigFloor(paths []string, dirs map[string]bool) error {
+	protectedRoots, err := sandboxpolicy.ProtectedPaths()
+	if err != nil {
+		return fmt.Errorf("resolve protected paths for harness config floor: %w", err)
+	}
+	for _, path := range paths {
+		path = filepath.Clean(strings.TrimSpace(path))
+		if path == "." || !filepath.IsAbs(path) {
+			return fmt.Errorf("harness config floor path %q is not absolute", path)
+		}
+		for _, protected := range protectedRoots {
+			if sandboxpolicy.GuardContainsOrEqual(protected, path) {
+				return fmt.Errorf(
+					"harness config floor path %q is at or below protected root %q",
+					path, protected)
+			}
+		}
+		if dirs[path] {
+			if err := os.MkdirAll(path, 0o700); err != nil {
+				return fmt.Errorf("prepare harness config floor %q: %w", path, err)
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				return fmt.Errorf("inspect harness config floor %q: %w", path, err)
+			}
+			if !info.IsDir() {
+				return fmt.Errorf("harness config floor path %q is not a directory", path)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			return fmt.Errorf("prepare harness config floor parent of %q: %w", path, err)
+		}
+		// O_EXCL, and a pre-existing path is left exactly as it is: this must
+		// never truncate an operator's real settings file, and losing a race
+		// with the harness or another launch is not an error.
+		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			if err := file.Close(); err != nil {
+				return fmt.Errorf("prepare harness config floor %q: %w", path, err)
+			}
+			continue
+		}
+		if !os.IsExist(err) {
+			return fmt.Errorf("prepare harness config floor %q: %w", path, err)
+		}
+		info, err := os.Lstat(path)
+		if err != nil {
+			return fmt.Errorf("inspect harness config floor %q: %w", path, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf(
+				"harness config floor path %q is a symlink; refusing to bind it read-only", path)
+		}
+		if info.IsDir() {
+			return fmt.Errorf(
+				"harness config floor path %q is a directory but the catalog expects a file", path)
+		}
+	}
+	return nil
+}

@@ -212,6 +212,7 @@ func hypotheticalSandboxProfilePlan(body sandboxProfilePlanRequest) (sandboxProf
 		Environment:      append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.Effective.Environment...),
 		AgentDirectories: append([]string(nil), snapshot.Effective.AgentDirectories...),
 		FilesystemRoot:   snapshot.Effective.FilesystemRoot,
+		HarnessConfig:    snapshot.Effective.HarnessConfig,
 		NetworkAccess:    snapshot.Effective.NetworkAccess,
 		Network:          snapshot.Effective.Network,
 		UnixSockets:      snapshot.Effective.UnixSockets,
