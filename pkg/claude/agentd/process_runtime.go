@@ -405,10 +405,9 @@ func (m *processRunManager) liveClaim(runID string) (*processRunClaim, bool, err
 }
 
 // accountedCommands reports which of a run's durable commands a live owner has
-// taken responsibility for, and whether the run is claimed at all. It returns
-// an empty set rather than nil for an unclaimed run, so callers can union
-// snapshots without a nil check. See loadProcessRunView for why it is read on
-// both sides of the record.
+// taken responsibility for, and whether the run is claimed at all. It is a
+// test-observation helper; production views use snapshotRunView so the durable
+// record and this accounting cannot come from different claim lifetimes.
 func (m *processRunManager) accountedCommands(runID string) (map[string]struct{}, bool) {
 	m.mu.Lock()
 	claim, ok := m.claims[runID]
