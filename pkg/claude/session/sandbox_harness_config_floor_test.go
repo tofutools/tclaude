@@ -1,7 +1,6 @@
 package session
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -45,9 +44,12 @@ func buildClaudeFloorSpec(
 
 func TestHarnessConfigFloorAppliesByDefault(t *testing.T) {
 	home, cwd := claudeFloorFixture(t)
+	settings := filepath.Join(home, ".claude", "settings.json")
+	// A file entry is floored only when the host already has it, so the
+	// fixture has to write one for this case to cover a file at all.
+	require.NoError(t, os.WriteFile(settings, []byte("{}\n"), 0o600))
 	spec := buildClaudeFloorSpec(t, cwd, sandboxpolicy.EffectiveProfile{})
 
-	settings := filepath.Join(home, ".claude", "settings.json")
 	hooks := filepath.Join(home, ".claude", "hooks")
 	assert.Contains(t, spec.Contract.HarnessConfigFloor, settings)
 	assert.Contains(t, spec.Contract.HarnessConfigFloor, hooks)
@@ -71,28 +73,57 @@ func TestHarnessConfigFloorAppliesByDefault(t *testing.T) {
 	}
 }
 
-// A missing surface is the one that matters most: without materialization the
-// agent simply creates ~/.claude/hooks under the writable state root.
-func TestHarnessConfigFloorMaterializesMissingSurfaces(t *testing.T) {
+// A missing DIRECTORY is the case materialization exists for: without it the
+// agent simply creates ~/.claude/hooks under the writable state root. A missing
+// FILE is left alone, because inventing config content is not free — Copilot
+// rejects an empty mcp-config.json outright, and the file is written to the
+// real home directory, so a bad body breaks the harness outside tclaude too.
+func TestHarnessConfigFloorMaterializesMissingDirsButNotFiles(t *testing.T) {
 	home, cwd := claudeFloorFixture(t)
 	hooks := filepath.Join(home, ".claude", "hooks")
 	settings := filepath.Join(home, ".claude", "settings.json")
 	require.NoFileExists(t, settings)
 
 	spec := buildClaudeFloorSpec(t, cwd, sandboxpolicy.EffectiveProfile{})
+	assert.NotContains(t, spec.Contract.HarnessConfigFloor, settings,
+		"an absent file must not be floored, because flooring it means creating it")
+	assert.Contains(t, spec.Contract.HarnessConfigFloor, hooks)
+
 	require.NoError(t, PrepareTclaudeLayerHarnessState(spec))
 
 	info, err := os.Stat(hooks)
 	require.NoError(t, err)
 	assert.True(t, info.IsDir())
-	// NOT an empty file: every JSON reader in this repo treats a missing file
-	// as "{}" but hands an existing empty one to json.Unmarshal, which fails.
-	body, err := os.ReadFile(settings)
+	assert.NoFileExists(t, settings,
+		"the floor must never fabricate a config file in the operator's real home")
+}
+
+// The Copilot file that made this concrete: absent on a stock host, and an
+// empty JSON object fails its schema (`mcpServers: Required`), which a
+// read-only bind would then make unfixable from inside the sandbox.
+func TestHarnessConfigFloorNeverCreatesCopilotMCPConfig(t *testing.T) {
+	home, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
-	assert.JSONEq(t, "{}", string(body))
-	var parsed map[string]any
-	require.NoError(t, json.Unmarshal(body, &parsed),
-		"a materialized settings file must parse for tclaude's own readers")
+	t.Setenv("HOME", home)
+	stateRoot := filepath.Join(home, ".copilot")
+	require.NoError(t, os.MkdirAll(stateRoot, 0o700))
+	mcp := filepath.Join(stateRoot, "mcp-config.json")
+
+	entries, err := harnessConfigFloorPaths(
+		harness.CopilotName, stateRoot, sandboxpolicy.HarnessConfigAccessDefault, nil)
+	require.NoError(t, err)
+	paths := make([]string, 0, len(entries))
+	dirs := map[string]bool{}
+	for _, entry := range entries {
+		paths = append(paths, entry.Path)
+		if entry.IsDir {
+			dirs[entry.Path] = true
+		}
+	}
+	assert.NotContains(t, paths, mcp)
+
+	require.NoError(t, prepareHarnessConfigFloor(paths, dirs))
+	assert.NoFileExists(t, mcp)
 }
 
 // Materialization must never clobber a real settings file.
@@ -142,6 +173,8 @@ func TestHarnessConfigFloorExplicitWriteRowReopensOneEntry(t *testing.T) {
 // read as the operator taking responsibility for the config surface.
 func TestHarnessConfigFloorSurvivesBroadWriteGrant(t *testing.T) {
 	home, cwd := claudeFloorFixture(t)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(home, ".claude", "settings.json"), []byte("{}\n"), 0o600))
 	spec := buildClaudeFloorSpec(t, cwd, sandboxpolicy.EffectiveProfile{
 		Filesystem: []sandboxpolicy.FilesystemGrant{
 			{Path: filepath.Join(home, ".claude"), Access: sandboxpolicy.AccessWrite},
@@ -198,6 +231,9 @@ func TestHarnessConfigFloorCatalogCoversEveryHarness(t *testing.T) {
 			filepath.Join(home, ".copilot", "config.json")},
 	} {
 		t.Run(tc.harness, func(t *testing.T) {
+			// File entries are floored only when the host has them.
+			require.NoError(t, os.MkdirAll(filepath.Dir(tc.want), 0o700))
+			require.NoError(t, os.WriteFile(tc.want, nil, 0o600))
 			entries, err := harnessConfigFloorCatalog(tc.harness, tc.root)
 			require.NoError(t, err)
 			paths := make([]string, 0, len(entries))
@@ -218,6 +254,9 @@ func TestHarnessConfigFloorCoversCodexManagedProfile(t *testing.T) {
 	require.NoError(t, err)
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", "")
+	profile := filepath.Join(home, ".codex", harness.CodexAgentProfile+".config.toml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(profile), 0o700))
+	require.NoError(t, os.WriteFile(profile, nil, 0o600))
 	entries, err := harnessConfigFloorCatalog(harness.CodexName, filepath.Join(home, ".codex"))
 	require.NoError(t, err)
 	paths := make([]string, 0, len(entries))
