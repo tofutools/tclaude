@@ -100,7 +100,7 @@ function dockPill(e, text) {
     pill.classList.remove('show', 'clone');
     return;
   }
-  pill.textContent = text;
+  if (pill.textContent !== text) pill.textContent = text;
   pill.classList.remove('clone');
   pill.classList.add('show');
   pill.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 12}px)`;
@@ -126,9 +126,13 @@ function dockPillText(target) {
     : `→ ${verb} ${name} ${wizWord('(no group)', '(no party)')}`;
 }
 
-// clearDockHighlights strips the hover class from every box that carries it.
+let dockHighlight = null;
+
+// clearDockHighlights strips the one hover class this module owns without a
+// document query in the dragover hot path.
 function clearDockHighlights() {
-  $$('.dock-drop-over').forEach(el => el.classList.remove('dock-drop-over'));
+  dockHighlight?.classList.remove('dock-drop-over');
+  dockHighlight = null;
 }
 
 // endDockDrag is the single teardown for a dock drag: clear the active flag,
@@ -206,17 +210,18 @@ function bindDockDnd() {
   listen(document, 'dragover', (e) => {
     if (!dockDragActive) return;
     const target = dockTarget(e);
-    // Repaint highlights from scratch each move so a box we've left goes dark
-    // even if its dragleave was swallowed (Firefox occasionally drops the final
-    // dragleave). Cheap: at most a handful of group boxes carry the class.
-    clearDockHighlights();
     if (!target) {
+      clearDockHighlights();
       dockPill(e, null);
       return;
     }
     e.preventDefault(); // required for `drop` to fire on this element
     e.dataTransfer.dropEffect = 'copy';
-    target.box.classList.add('dock-drop-over');
+    if (dockHighlight !== target.box) {
+      clearDockHighlights();
+      target.box.classList.add('dock-drop-over');
+      dockHighlight = target.box;
+    }
     dockPill(e, dockPillText(target));
   });
 

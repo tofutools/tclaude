@@ -38,7 +38,7 @@
 // Keyed Preact ownership retains dock, row and header nodes across snapshot
 // publishes; the imported active flags only identify the reverse source.
 
-import { $, $$ } from './helpers.js';
+import { $ } from './helpers.js';
 import { toast } from './refresh.js';
 import { wizWord } from './slop.js';
 import { openProfileEditor } from './modal-profiles.js';
@@ -73,10 +73,13 @@ function dockUnder(e) {
   return e.target.closest(DOCK_TARGET_SEL);
 }
 
-// clearDockSaveHighlight strips the reverse-drop highlight from every box that
-// carries it (at most the dock panel or its tab).
+let dockSaveHighlight = null;
+
+// clearDockSaveHighlight strips the one reverse-drop highlight this module
+// owns without rescanning the whole document on every dragover.
 function clearDockSaveHighlight() {
-  $$('.dock-save-over').forEach(el => el.classList.remove('dock-save-over'));
+  dockSaveHighlight?.classList.remove('dock-save-over');
+  dockSaveHighlight = null;
 }
 
 // dockSavePill reuses the shared #dnd-pill hint chip. Null text hides it.
@@ -84,7 +87,7 @@ function dockSavePill(e, text) {
   const pill = $('#dnd-pill');
   if (!pill) return;
   if (!text) { pill.classList.remove('show', 'clone'); return; }
-  pill.textContent = text;
+  if (pill.textContent !== text) pill.textContent = text;
   pill.classList.remove('clone');
   pill.classList.add('show');
   // Offset from the cursor like the other DnD pills so it doesn't sit under the
@@ -126,14 +129,13 @@ function bindDockSaveDnd() {
 
   listen(document, 'dragover', (e) => {
     if (!reverseActive()) return;
-    // Repaint from scratch each move so a box we've left goes dark even if its
-    // dragleave was swallowed (Firefox occasionally drops the final dragleave).
-    // Cheap: at most one element carries the class.
-    clearDockSaveHighlight();
     const dock = dockUnder(e);
     // Off the dock: do NOT touch the pill — the source module (which ran just
     // before us) owns the hint for its own targets. Just leave.
-    if (!dock) return;
+    if (!dock) {
+      clearDockSaveHighlight();
+      return;
+    }
     e.preventDefault(); // required for `drop` to fire on this element
     // dropEffect MUST be compatible with the source's effectAllowed, or a strict
     // browser (Firefox) resolves the operation to `none` and never fires `drop`.
@@ -142,7 +144,11 @@ function bindDockSaveDnd() {
     // capture actually MOVES the row, but matching the flag is what keeps the
     // drop alive cross-browser.
     e.dataTransfer.dropEffect = groupReorderActive ? 'move' : 'copy';
-    dock.classList.add('dock-save-over');
+    if (dockSaveHighlight !== dock) {
+      clearDockSaveHighlight();
+      dock.classList.add('dock-save-over');
+      dockSaveHighlight = dock;
+    }
     dockSavePill(e, pillText());
   });
 
