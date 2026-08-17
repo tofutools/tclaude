@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -112,6 +113,45 @@ func TestPrepareTclaudeLayerHarnessStateAcceptsLegacyCopilotRootDuplicate(t *tes
 	spec.Contract.StateDirs = append([]string{spec.Contract.StateRoot}, spec.Contract.StateDirs...)
 
 	require.NoError(t, PrepareTclaudeLayerHarnessState(spec))
+}
+
+// TestPrepareTclaudeLayerHarnessStateDoesNotMaterializeAgentdSocket is the
+// production regression: the Copilot baseline marks agentd endpoints writable
+// because connecting needs read/write access, but they remain socket nodes and
+// must never be passed to the directory preparation loop.
+func TestPrepareTclaudeLayerHarnessStateDoesNotMaterializeAgentdSocket(t *testing.T) {
+	home, err := os.MkdirTemp("/tmp", "tcl-copilot-socket-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(home) })
+	if resolved, resolveErr := filepath.EvalSymlinks(home); resolveErr == nil {
+		home = resolved
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("TMUX_TMPDIR", filepath.Join(home, "tmux"))
+	t.Setenv("TMPDIR", filepath.Join(home, "tmp"))
+	workspace := filepath.Join(home, "workspace")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	socketPath := filepath.Join(home, ".tclaude", "api", "agentd.sock")
+	require.NoError(t, os.MkdirAll(filepath.Dir(socketPath), 0o700))
+	listener, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: harness.CopilotName,
+		Cwd:         workspace,
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, spec.Contract.StateDirs, socketPath)
+	assert.NotContains(t, spec.Contract.WriteDirs, socketPath)
+	access, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem, socketPath)
+	assert.True(t, covered)
+	assert.Equal(t, sandboxpolicy.AccessWrite, access)
+
+	require.NoError(t, PrepareTclaudeLayerHarnessState(spec))
+	info, err := os.Stat(socketPath)
+	require.NoError(t, err)
+	assert.NotZero(t, info.Mode()&os.ModeSocket, "preparation must preserve the live socket node")
 }
 
 // TestBuildTclaudeLayerLaunchSpecAllowsProfileWriteToCopilotPackageCache is the
