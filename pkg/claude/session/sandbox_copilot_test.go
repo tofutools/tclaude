@@ -91,8 +91,27 @@ func TestBuildTclaudeLayerLaunchSpecComposesCopilotBaseline(t *testing.T) {
 	// catalog granted. Two resolvers disagreeing here would produce a launch that
 	// creates one Copilot home and confines another.
 	assert.Equal(t, stateDir, spec.Contract.StateRoot)
-	assert.Contains(t, spec.Contract.StateDirs, stateDir,
-		"the state directory must be part of the launch contract, not only of the profile")
+	assert.NotContains(t, spec.Contract.StateDirs, stateDir,
+		"the primary state root must not be repeated among auxiliary state directories")
+	require.NoError(t, PrepareTclaudeLayerHarnessState(spec),
+		"a generated Copilot launch contract must be preparable")
+}
+
+// TestPrepareTclaudeLayerHarnessStateAcceptsLegacyCopilotRootDuplicate keeps
+// frozen specs generated before the duplicate was removed launchable. The
+// primary StateRoot is already writable by definition, even though phase-0
+// normalization omits its repeated spelling from WriteDirs.
+func TestPrepareTclaudeLayerHarnessStateAcceptsLegacyCopilotRootDuplicate(t *testing.T) {
+	_, workspace := copilotLaunchRoot(t)
+
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: harness.CopilotName,
+		Cwd:         workspace,
+	})
+	require.NoError(t, err)
+	spec.Contract.StateDirs = append([]string{spec.Contract.StateRoot}, spec.Contract.StateDirs...)
+
+	require.NoError(t, PrepareTclaudeLayerHarnessState(spec))
 }
 
 // TestBuildTclaudeLayerLaunchSpecAllowsProfileWriteToCopilotPackageCache is the

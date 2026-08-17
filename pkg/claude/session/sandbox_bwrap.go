@@ -365,7 +365,14 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		for _, grant := range grants.Grants {
 			switch grant.Access {
 			case sandboxpolicy.AccessWrite:
-				stateDirs = append(stateDirs, grant.Path)
+				// StateRoot is already the primary writable harness-state
+				// directory. Keep StateDirs for the additional baseline paths;
+				// repeating the root there makes phase-0 normalization remove it
+				// from WriteDirs while preparation still expects an auxiliary
+				// contract row for it.
+				if filepath.Clean(grant.Path) != stateRoot {
+					stateDirs = append(stateDirs, grant.Path)
+				}
 				contractWriteDirs = append(contractWriteDirs, grant.Path)
 				launchWriteDirs = appendUniqueDir(launchWriteDirs, grant.Path)
 			case sandboxpolicy.AccessRead:
@@ -1697,6 +1704,10 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 	if err := prepareTclaudeLayerProtectedMountpoints(protectedRoots); err != nil {
 		return err
 	}
+	resolvedStateRoot := filepath.Clean(spec.Contract.StateRoot)
+	if evaluated, err := filepath.EvalSymlinks(resolvedStateRoot); err == nil {
+		resolvedStateRoot = filepath.Clean(evaluated)
+	}
 	for index, path := range stateDirs {
 		path = filepath.Clean(strings.TrimSpace(path))
 		if path == "." || !filepath.IsAbs(path) {
@@ -1723,6 +1734,12 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 			resolved := path
 			if evaluated, err := filepath.EvalSymlinks(path); err == nil {
 				resolved = filepath.Clean(evaluated)
+			}
+			// Older frozen Copilot specs repeated StateRoot in StateDirs.
+			// StateRoot is inherently the first writable contract path, so that
+			// duplicate needs no separate WriteDirs entry.
+			if resolved == resolvedStateRoot {
+				continue
 			}
 			inWriteContract := false
 			for _, writeDir := range spec.Contract.WriteDirs {
