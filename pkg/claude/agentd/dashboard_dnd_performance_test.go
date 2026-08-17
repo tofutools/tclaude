@@ -39,4 +39,7 @@ func TestDashboardDnDHotPathAvoidsRedundantDOMWork(t *testing.T) {
 		!strings.Contains(sources["group"], "const byName = groupDragGroupsByName") {
 		t.Error("group drag does not retain its topology map for the gesture")
 	}
+	if strings.Contains(sources["group"], "const details = reorderTarget(e);\n    clearDropMarkers();") {
+		t.Error("group drag clears its cached hover marker before the idempotent marker update")
+	}
 }

@@ -416,9 +416,9 @@ function bindGroupReorder() {
       return;
     }
     const details = reorderTarget(e);
-    clearDropMarkers();
     if (!details) {
       groupCloneHoverPlan = null;
+      clearDropMarkers();
       reorderPill(e, null);
       return;
     }
@@ -436,6 +436,7 @@ function bindGroupReorder() {
       : null;
     if (!plan) {
       groupCloneHoverPlan = null;
+      clearDropMarkers();
       reorderPill(e, null);
       return;
     }
