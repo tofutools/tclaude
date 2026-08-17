@@ -285,6 +285,27 @@ trust-folder record. `/model` and directory trust for Claude Code land in
    global, group, or explicit profile outranks a `"write"` anywhere else. That
    asymmetry is deliberate: it lets an operator pin the floor globally and know
    a per-spawn profile cannot quietly undo it.
+3. `--harness-config read|write` at spawn time, for granting one agent the
+   posture without authoring a profile for it:
+
+   ```bash
+   tclaude agent spawn <group> --harness-config write
+   ```
+
+   Unlike the profile chain this is a launch contract, not a fourth scope: it
+   overrides the composed value outright, the same way `--omit-sandbox-profiles`
+   overrides the ambient tiers rather than merging with them. A human may set
+   it directly; an **agent** needs the `sandbox.harness-config` permission,
+   which is not default-granted and which group ownership deliberately does not
+   confer — lifting the floor lets the launched agent rewrite the policy that
+   confines it. It cannot be combined with `--omit-sandbox-profiles`, whose
+   snapshot records "no profile tier applied at all".
+
+   The slug gates *selection*, never enforcement. The floor is a mount frozen
+   at launch, so no permission makes a running agent's config surface writable,
+   and [lineage](#lineage-and-spawn-write-proofs) still refuses a child posture
+   wider than its recorded parent's — an agent holding the slug can pin the
+   floor on a child, but can only pass `write` down if it already has it.
 
 The floor applies where tclaude owns the wall — `tclaude-layer` and `stacked`.
 Under `harness-builtin` the harness's own policy governs and the axis is

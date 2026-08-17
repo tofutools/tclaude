@@ -500,6 +500,12 @@ var permissionRegistry = []PermSlug{
 		Description: "Create, edit and delete reusable spawn profiles — named, saved bundles of the spawn-agent dialog (harness/model/effort/role/… ) that pre-fill spawns and back a group's default spawn settings (JOH-210). Reads are open; writes rewrite shared spawn config, so not default-granted (effectively human-only).",
 	},
 	{
+		Slug: PermSandboxHarnessConfig,
+		Description: "Select the harness-config posture for a spawn (--harness-config), i.e. ask for the read-only floor over the harness's own settings, hook, skill and command surface to be lifted. " +
+			"Lifting it lets the launched agent rewrite the policy that confines it and drop code that runs in the human's next unsandboxed session, so group ownership does NOT confer it and it is not default-granted (effectively human-only). " +
+			"It gates selection only; sandbox lineage still refuses a child whose posture is wider than its recorded parent.",
+	},
+	{
 		Slug:        PermSandboxProfilesManage,
 		Description: "Read, create, edit, delete and assign sandbox profiles — operator policy that can add host filesystem access and launch environment to agents. This is intentionally separate from profiles.manage and is not default-granted (effectively human-only).",
 	},

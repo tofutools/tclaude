@@ -197,6 +197,13 @@ type SpawnRequest struct {
 	// Only a daemon-boundary-classified human may set it; agent callers may
 	// inherit the group's/global policy but cannot select an escalation.
 	SandboxProfile string `json:"sandbox_profile,omitempty"`
+	// HarnessConfig selects the harness-config posture for this launch: "read"
+	// pins the read-only floor over the harness's own settings/hook/skill
+	// surface, "write" lifts it. "" inherits the profile chain, whose own
+	// default is the floor. A human may set it outright; an agent needs
+	// sandbox.harness-config, and sandbox lineage still refuses a posture wider
+	// than the recorded parent's.
+	HarnessConfig string `json:"harness_config,omitempty"`
 	// OmitSandboxProfiles explicitly suppresses every tclaude sandbox-profile
 	// tier for this launch: global, group, and explicit. It is distinct from a
 	// blank SandboxProfile, which still inherits the ambient tiers, and is
@@ -735,6 +742,7 @@ type SpawnParams struct {
 	Profile                   string `long:"profile" short:"p" optional:"true" help:"RECOMMENDED: pre-fill the launch shape and identity from a spawn profile preconfigured by the operator (see 'tclaude agent profiles ls') — with a profile, usually no other launch flags are needed. Explicit flags override the profile; the profile overrides group/global/harness defaults"`
 	SandboxProfile            string `long:"sandbox-profile" optional:"true" help:"Human-only filesystem/environment sandbox profile for this spawn"`
 	OmitSandboxProfiles       bool   `long:"omit-sandbox-profiles" help:"Human-only: omit all global, group, and explicit tclaude sandbox-profile values for this launch; mutually exclusive with --sandbox-profile"`
+	HarnessConfig             string `long:"harness-config" optional:"true" help:"Harness-config posture for this spawn: read (pin the read-only floor over the harness's own settings.json, hooks, skills, agents and commands) | write (lift it, letting the agent edit that surface). Unset = the sandbox-profile chain, whose own default is the floor. Needs the sandbox.harness-config permission for an agent caller (not default-granted, not implied by group ownership); sandbox lineage still refuses a posture wider than the parent's"`
 	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" optional:"true" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`
 
 	Worktree     string `long:"worktree" short:"w" optional:"true" help:"Create (or reuse) a git worktree on this branch and spawn the agent into it. The worktree is created in the repo containing --cwd, unless --worktree-repo points elsewhere. Mirrors the dashboard spawn modal's worktree picker"`
@@ -1528,6 +1536,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		Profile:                strings.TrimSpace(p.Profile),
 		SandboxProfile:         strings.TrimSpace(p.SandboxProfile),
 		OmitSandboxProfiles:    p.OmitSandboxProfiles,
+		HarnessConfig:          strings.TrimSpace(p.HarnessConfig),
 		Name:                   name,
 		Role:                   merged.Role,
 		RoleRef:                merged.RoleRef,

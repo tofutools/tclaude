@@ -383,6 +383,15 @@ const (
 	// automatically an operator of the host's sandbox policy. Same reasoning as
 	// sandbox-profiles.manage below, which is likewise human-only.
 	PermAgentSandboxImplementation = "agent.sandbox-impl"
+	// Selecting the harness-config posture for a launch — i.e. asking for the
+	// read-only floor over the harness's own settings/hook/skill surface to be
+	// lifted. Same reasoning as agent.sandbox-impl above: lifting it lets the
+	// launched agent rewrite the policy that confines it and drop code that
+	// runs in the human's next unsandboxed session, so group ownership does not
+	// confer it and it is not default-granted. It gates SELECTION at spawn
+	// time, never enforcement: the floor is a mount frozen at launch, and
+	// sandbox lineage still refuses a child wider than its recorded parent.
+	PermSandboxHarnessConfig = "sandbox.harness-config"
 	// Sandbox-profile policy can grant host filesystem access and inject launch
 	// environment. Keep it separate from profiles.manage: permission to edit a
 	// spawn-dialog preset must not imply permission to widen a sandbox.
