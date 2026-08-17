@@ -74,6 +74,13 @@ let groupDragHandle = null;
 // the dragover pill + drop handler; dragover can't read the DataTransfer
 // payload (browsers gate getData to the drop event), so we stash it here.
 let groupDragName = null;
+// The snapshot topology and painted drop marker are gesture state. Rebuilding
+// the same name map and removing/re-adding the same classes on every dragover
+// needlessly invalidates the whole Groups tree while the pointer remains in
+// one target zone.
+let groupDragGroupsByName = null;
+let groupDropMarker = null;
+let groupDropMarkerClasses = '';
 // The last valid clone placement shown by dragover. Chrome on macOS can finish
 // a native copy without delivering a usable drop event to the document, so a
 // successful copy dragend needs enough immutable placement data to open the
@@ -107,8 +114,21 @@ function isCloneDrop(e, details) {
 // clearDropMarkers strips the insertion-line + nest-target classes from every
 // group.
 function clearDropMarkers() {
-  $$('.group-drop-before, .group-drop-after, .group-drop-into, .group-drop-clone').forEach(d =>
-    d.classList.remove('group-drop-before', 'group-drop-after', 'group-drop-into', 'group-drop-clone'));
+  if (groupDropMarker) {
+    groupDropMarker.classList.remove(
+      'group-drop-before', 'group-drop-after', 'group-drop-into', 'group-drop-clone');
+  }
+  groupDropMarker = null;
+  groupDropMarkerClasses = '';
+}
+
+function setDropMarker(details, marker, clone) {
+  const classes = `${marker}${clone ? ' group-drop-clone' : ''}`;
+  if (groupDropMarker === details && groupDropMarkerClasses === classes) return;
+  clearDropMarkers();
+  details.classList.add(...classes.split(' '));
+  groupDropMarker = details;
+  groupDropMarkerClasses = classes;
 }
 
 // snapshotGroupsByName returns a name→group map of the current snapshot's real
@@ -211,8 +231,8 @@ function reorderPill(e, text, clone = false) {
     pill.classList.remove('show', 'clone');
     return;
   }
-  pill.textContent = text;
-  pill.classList.toggle('clone', clone);
+  if (pill.textContent !== text) pill.textContent = text;
+  if (pill.classList.contains('clone') !== clone) pill.classList.toggle('clone', clone);
   pill.classList.add('show');
   pill.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 12}px)`;
 }
@@ -303,6 +323,7 @@ function endGroupDrag() {
   // misrouted even if a DOM call below were to throw.
   groupReorderActive = false;
   groupDragName = null;
+  groupDragGroupsByName = null;
   groupCloneHoverPlan = null;
   groupDragHandle?.removeEventListener('dragend', finishGroupDrag);
   groupDragHandle = null;
@@ -359,6 +380,7 @@ function bindGroupReorder() {
     if (!name) return;
     groupReorderActive = true;
     groupDragName = name;
+    groupDragGroupsByName = snapshotGroupsByName();
     groupCloneHoverPlan = null;
     groupDragHandle?.removeEventListener('dragend', finishGroupDrag);
     groupDragHandle = handle;
@@ -401,7 +423,7 @@ function bindGroupReorder() {
       return;
     }
     const targetName = details.getAttribute('data-group-key');
-    const byName = snapshotGroupsByName();
+    const byName = groupDragGroupsByName;
     const zone = dropZone(e, details);
     const clone = !!(e.ctrlKey || e.metaKey);
     // Reject up front (no preventDefault ⇒ no drop) a gesture that resolves to
@@ -420,21 +442,20 @@ function bindGroupReorder() {
     groupCloneHoverPlan = clone ? plan : null;
     e.preventDefault(); // required for `drop` to fire on this element
     e.dataTransfer.dropEffect = clone ? 'copy' : 'move';
-    details.classList.toggle('group-drop-clone', clone);
     if (zone === 'nest') {
       // A self-copy is always a sibling; nesting a group inside itself is
       // impossible, but cloning beside itself is the most direct gesture.
       if (clone && groupDragName === targetName) {
-        details.classList.add(plan.before ? 'group-drop-before' : 'group-drop-after');
+        setDropMarker(details, plan.before ? 'group-drop-before' : 'group-drop-after', true);
         reorderPill(e, `⧉ clone ${groupDragName} beside itself`, true);
       } else {
-        details.classList.add('group-drop-into');
+        setDropMarker(details, 'group-drop-into', clone);
         reorderPill(e, clone
           ? `⧉ clone ${groupDragName} in ${targetName}`
           : `⤵ nest ${groupDragName} in ${targetName}`, clone);
       }
     } else {
-      details.classList.add(plan.before ? 'group-drop-before' : 'group-drop-after');
+      setDropMarker(details, plan.before ? 'group-drop-before' : 'group-drop-after', clone);
       if (clone) {
         reorderPill(e, `⧉ clone ${groupDragName} beside ${targetName}`, true);
         return;

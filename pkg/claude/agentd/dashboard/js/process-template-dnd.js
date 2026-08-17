@@ -58,7 +58,7 @@ function dragPill(e, text) {
     pill.classList.remove('show', 'clone');
     return;
   }
-  pill.textContent = text;
+  if (pill.textContent !== text) pill.textContent = text;
   pill.classList.remove('clone');
   pill.classList.add('show');
   pill.style.transform = `translate(${e.clientX + 12}px, ${e.clientY + 12}px)`;

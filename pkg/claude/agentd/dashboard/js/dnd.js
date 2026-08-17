@@ -109,8 +109,13 @@ function updateDndPill(e, info) {
     pill.classList.remove('show', 'clone');
     return;
   }
-  pill.textContent = info.text;
-  pill.classList.toggle('clone', !!info.clone);
+  // dragover can fire far faster than the label changes. Replacing text on
+  // every event invalidates the fixed pill's subtree and can turn a cheap
+  // transform-only cursor follow into a full style/paint pass.
+  if (pill.textContent !== info.text) pill.textContent = info.text;
+  if (pill.classList.contains('clone') !== !!info.clone) {
+    pill.classList.toggle('clone', !!info.clone);
+  }
   pill.classList.add('show');
   // Offset slightly from the cursor so the pill doesn't sit on top
   // of the user's pointer. clientX/clientY on `dragover` events
