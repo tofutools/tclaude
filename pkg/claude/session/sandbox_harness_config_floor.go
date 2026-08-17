@@ -66,10 +66,10 @@ import (
 // Copilot's trust-folder record. That is the cost, and it is why the opt-out
 // exists.
 
-// harnessConfigFloorEntry is one floored path. Dir entries are materialized as
-// directories so an agent cannot create a missing surface and write into it;
-// file entries are materialized as empty files for the same reason (empty is
-// semantically identical to absent for every file in the catalog).
+// harnessConfigFloorEntry is one floored path. A missing DIR entry is created
+// so an agent cannot create the surface itself and write into it. A missing
+// FILE entry is dropped instead of being created: see the resolve loop in
+// harnessConfigFloorCatalog.
 type harnessConfigFloorEntry struct {
 	Path  string
 	IsDir bool
@@ -169,6 +169,34 @@ func harnessConfigFloorCatalog(
 				"path", canonical, "harness", harnessName, "module", "sandbox")
 			continue
 		}
+		if !entry.IsDir {
+			// A FILE the host does not have is left alone. Creating it would
+			// mean inventing config content, and no invented body is reliably
+			// equivalent to absent: Copilot's mcp-config.json requires an
+			// `mcpServers` key, so an empty object there is not an empty
+			// configuration but an invalid one, and the read-only bind then
+			// makes it unfixable. Worse, this file is written to the REAL home
+			// directory before the sandbox starts, so a bad body breaks the
+			// harness outside tclaude too.
+			//
+			// Directories keep being materialized: an empty directory has no
+			// schema to violate and is genuinely indistinguishable from absent,
+			// and the code-execution surfaces (hooks/, skills/, agents/) are
+			// where flooring actually earns its keep.
+			//
+			// The cost is real and accepted: an absent settings file can still
+			// be created and written from inside the sandbox, and is then live
+			// for the human's next unsandboxed session. Not full coverage, but
+			// the most that stays usable.
+			exists, err := harnessConfigFloorFileExists(canonical)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"resolve harness config floor path %q: %w", entry.Path, err)
+			}
+			if !exists {
+				continue
+			}
+		}
 		entry.Path = canonical
 		out = append(out, entry)
 	}
@@ -206,7 +234,8 @@ func canonicalHarnessConfigFloorPath(path string) (string, bool, error) {
 	info, err := os.Lstat(resolved)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Nothing there yet: materialization will create a real node.
+			// Nothing there yet. A dir entry gets created; a file entry is
+			// dropped by the caller.
 			return resolved, true, nil
 		}
 		return "", false, err
@@ -294,32 +323,28 @@ func harnessConfigFloorReopened(
 	return false
 }
 
-// harnessConfigFloorSeed is the body a materialized file entry gets. An empty
-// file is NOT equivalent to an absent one for JSON: every reader in this repo
-// (session.InstallHooks, agentd.writeUserDefaultModel, the dashboard's global
-// config reader) treats a missing file as "start from {}" but hands an
-// existing empty one to json.Unmarshal, which fails. Claude Code itself
-// reports an unparseable user settings file the same way. So JSON entries are
-// seeded with an empty object; TOML and Markdown are genuinely equivalent to
-// absent when empty.
-func harnessConfigFloorSeed(path string) []byte {
-	switch filepath.Ext(path) {
-	case ".json", ".jsonc":
-		return []byte("{}\n")
-	default:
-		return nil
+// harnessConfigFloorFileExists reports whether a floor FILE entry is present on
+// the host. Lstat, not Stat: a dangling symlink is not something to bind.
+func harnessConfigFloorFileExists(path string) (bool, error) {
+	if _, err := os.Lstat(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
 	}
+	return true, nil
 }
 
-// prepareHarnessConfigFloor materializes the floored paths before the outer
-// layer starts. Materializing rather than skipping missing paths is the whole
-// point: an absent ~/.claude/hooks under a writable state root is a directory
-// the agent can simply create and then write into, so a floor that only
-// covered what already existed would protect the hosts that need it least.
+// prepareHarnessConfigFloor materializes the floored DIRECTORIES before the
+// outer layer starts. An absent ~/.claude/hooks under a writable state root is
+// a directory the agent can simply create and then write into, so a floor that
+// only covered directories that already existed would protect the hosts that
+// need it least. An empty directory has no schema to violate, so creating one
+// is indistinguishable from absent for every harness.
 //
-// What is written is chosen to be indistinguishable from absent for the
-// harness and for tclaude's own readers: an empty directory, or the seed body
-// above.
+// File entries are NOT created here — absent ones were dropped at derivation
+// time, for the reasons in harnessConfigFloorCatalog's resolve loop. A file
+// reaching this point is expected to exist already; it is only inspected.
 func prepareHarnessConfigFloor(paths []string, dirs map[string]bool) error {
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
@@ -357,26 +382,11 @@ func prepareHarnessConfigFloor(paths []string, dirs map[string]bool) error {
 			}
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			return fmt.Errorf("prepare harness config floor parent of %q: %w", path, err)
-		}
-		// O_EXCL, and a pre-existing path is left exactly as it is: this must
-		// never truncate an operator's real settings file, and losing a race
-		// with the harness or another launch is not an error.
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err == nil {
-			if _, writeErr := file.Write(harnessConfigFloorSeed(path)); writeErr != nil {
-				_ = file.Close()
-				return fmt.Errorf("prepare harness config floor %q: %w", path, writeErr)
-			}
-			if err := file.Close(); err != nil {
-				return fmt.Errorf("prepare harness config floor %q: %w", path, err)
-			}
-			continue
-		}
-		if !os.IsExist(err) {
-			return fmt.Errorf("prepare harness config floor %q: %w", path, err)
-		}
+		// Never created, never truncated: an operator's real settings file is
+		// only ever inspected here. Absent means it was removed in the window
+		// since derivation, which is the same process microseconds earlier. The
+		// contract already names it, so the bind would fail anyway — reporting
+		// it here beats an opaque bwrap error.
 		info, err := os.Lstat(path)
 		if err != nil {
 			return fmt.Errorf("inspect harness config floor %q: %w", path, err)
