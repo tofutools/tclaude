@@ -1885,7 +1885,7 @@ func injectSoftExitTextSerializedBy(lockTarget, tmuxTarget, text string, prefixK
 // /exit injections ignored for the full 10 s escalation deadline while ctrl-c
 // handling demonstrably kept working), while the ctrl-c quit rides the
 // surviving signal path. The exact keys and press count are per harness (see
-// each Lifecycle.SignalExitKeys): Copilot and Codex send three C-c; Claude Code
+// each Lifecycle.SignalExitKeys): Copilot and Codex send four C-c; Claude Code
 // prefixes an Escape to clear a permission dialog or half-typed line first.
 //
 // The gap is signalExitKeyGap (330 ms), deliberately tighter than the typed

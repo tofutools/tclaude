@@ -88,8 +88,11 @@ func TestCopilotSoftExit_SignalExitClosesAPaneHeldByAPermissionDialog(t *testing
 
 	f.AssertSoftStopped(f.AsHuman().Stop(resp.ConvID, false))
 
-	assert.GreaterOrEqual(t, sim.Cancels(), 3,
+	cancels := sim.Cancels()
+	assert.GreaterOrEqual(t, cancels, 3,
 		"press one aborts the dialog and ends its turn, press two arms, press three exits — one attempt is enough (the surplus fourth press may land on the dead pane unrecorded)")
+	assert.LessOrEqual(t, cancels, 4,
+		"more presses than one batch means a retry fired against a pane the first attempt already closed")
 	assert.False(t, sim.IsAlive(),
 		"press one aborts the dialog, press two arms, press three exits")
 
