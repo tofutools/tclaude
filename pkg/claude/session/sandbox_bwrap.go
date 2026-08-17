@@ -307,101 +307,28 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 			"resolve tclaude-layer harness state root: %w", err)
 	}
 	contractWriteDirs := append(append([]string(nil), gitWriteDirs...), cwd)
-	var stateDirs []string
-	var readOnlyStateDirs []string
-	if input.HarnessName == harness.OpenCodeName {
-		if len(input.StateDirs) > 0 {
-			stateDirs = append([]string(nil), input.StateDirs...)
-		} else {
-			stateDirs, err = tclaudeLayerOpenCodeStateDirs()
-			if err != nil {
-				return TclaudeLayerLaunchSpec{}, err
-			}
-		}
-		contractWriteDirs = append(contractWriteDirs, stateDirs...)
-		if len(input.ReadOnlyBinds) == 0 {
-			// Legacy v2-compatible shape: ~/.opencode is mutable harness state,
-			// while its executable subtree is reopened read-only.
-			binState, stateErr := canonicalTclaudeLayerStatePath(
-				filepath.Join(stateRoot, "bin"))
-			if stateErr != nil {
-				return TclaudeLayerLaunchSpec{}, fmt.Errorf(
-					"resolve OpenCode executable state: %w", stateErr)
-			}
-			if !sandboxpolicy.PathContainsOrEqual(stateRoot, binState) {
-				return TclaudeLayerLaunchSpec{}, fmt.Errorf(
-					"OpenCode executable state %q resolves outside state root %q",
-					binState, stateRoot)
-			}
-			readOnlyStateDirs = []string{binState}
-			launchReadDirs = append(launchReadDirs, readOnlyStateDirs...)
-		}
-		// The executor's tool subprocesses are the managed agent. Keep their
-		// authenticated coordination path reachable even when /tmp or an
-		// authored Home deny hides the socket's ancestors.
-		for _, socket := range sandboxpolicy.AgentdSocketFloor() {
-			socket = CanonicalTclaudeLayerGeneratedPath(socket)
-			if socket != "" {
-				launchReadDirs = append(launchReadDirs, socket)
-			}
-		}
+	// Harness-required paths are declared, not wired: each harness's catalog
+	// (Copilot's TCL-975 baseline, OpenCode's state layout) resolves to typed
+	// requirement rows, and one shared fold translates every row into the
+	// contract buckets. Catalog refusals ride along unchanged — a
+	// COPILOT_HOME pointed at $HOME or an agentd socket inside
+	// ~/.tclaude/data fails the launch here rather than becoming a mount
+	// rule — and the fold's kind invariants guarantee a socket or file can
+	// never reach the buckets that directory preparation materializes.
+	requirements, err := tclaudeLayerHarnessRequirements(input, cwd, stateRoot)
+	if err != nil {
+		return TclaudeLayerLaunchSpec{}, err
 	}
-	if input.HarnessName == harness.CopilotName {
-		// Copilot's launch-required paths are not guessed here: they are the
-		// TCL-975 pre-approved catalog, translated into grants. Resolving them
-		// at this seam rather than in a Copilot-specific helper keeps ONE
-		// answer to "which directories does a confined Copilot launch need" —
-		// the catalog's — shared with Copilot's own policy consumer (TCL-977).
-		//
-		// The catalog's refusals ride along unchanged. A COPILOT_HOME pointed
-		// at $HOME, a COPILOT_CACHE_HOME landing on ~/.cache, an agentd socket
-		// path inside ~/.tclaude/data: each fails the launch here rather than
-		// becoming a mount rule, which is the whole reason the resolution lives
-		// in one validated place.
-		grants, grantErr := copilotTclaudeLayerGrantSet(input, cwd)
-		if grantErr != nil {
-			return TclaudeLayerLaunchSpec{}, grantErr
-		}
-		if len(grants.Grants) != len(grants.Entries) {
-			return TclaudeLayerLaunchSpec{}, fmt.Errorf(
-				"copilot baseline translated %d entries into %d grants",
-				len(grants.Entries), len(grants.Grants))
-		}
-		for index, grant := range grants.Grants {
-			entry := grants.Entries[index]
-			switch grant.Access {
-			case sandboxpolicy.AccessWrite:
-				if entry.Kind == harness.CopilotNodeDirectory {
-					// StateRoot is already the primary writable harness-state
-					// directory. Keep StateDirs for the additional baseline paths;
-					// repeating the root there makes phase-0 normalization remove it
-					// from WriteDirs while preparation still expects an auxiliary
-					// contract row for it.
-					if filepath.Clean(grant.Path) != stateRoot {
-						stateDirs = append(stateDirs, grant.Path)
-					}
-					contractWriteDirs = append(contractWriteDirs, grant.Path)
-				} else if entry.Kind != harness.CopilotNodeSocket {
-					return TclaudeLayerLaunchSpec{}, fmt.Errorf(
-						"copilot baseline grant %q has writable unsupported node kind %q",
-						grant.Path, entry.Kind)
-				}
-				// Socket nodes need writable access for connect(2), but are live
-				// endpoints rather than directories the launch may materialize.
-				launchWriteDirs = appendUniqueDir(launchWriteDirs, grant.Path)
-			case sandboxpolicy.AccessRead:
-				// The read-only rows are the two EXECUTABLES (the `copilot`
-				// launcher and the tclaude binary a hook callback runs). They
-				// are files, not directories, so they go to launchReadDirs
-				// only: naming a file as harness STATE would send it through
-				// the state-root preparation that mkdirs its targets.
-				launchReadDirs = append(launchReadDirs, grant.Path)
-			default:
-				return TclaudeLayerLaunchSpec{}, fmt.Errorf(
-					"copilot baseline grant %q resolved unsupported access %q",
-					grant.Path, grant.Access)
-			}
-		}
+	buckets, err := foldTclaudeLayerRequirements(stateRoot, requirements)
+	if err != nil {
+		return TclaudeLayerLaunchSpec{}, err
+	}
+	stateDirs := buckets.StateDirs
+	readOnlyStateDirs := buckets.ReadOnlyStateDirs
+	contractWriteDirs = append(contractWriteDirs, buckets.ContractWriteDirs...)
+	launchReadDirs = append(launchReadDirs, buckets.LaunchReadDirs...)
+	for _, dir := range buckets.LaunchWriteDirs {
+		launchWriteDirs = appendUniqueDir(launchWriteDirs, dir)
 	}
 	// GrantsFromDirs flattens the launch-composed policy back into bare paths,
 	// which can only express same-path rules. Remapped grants are therefore
@@ -1734,6 +1661,16 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 					path, protected)
 			}
 		}
+		// Guard before any mutation: a frozen spec whose state bucket names an
+		// existing non-directory (the TCL-1201 socket shape) is refused with a
+		// typed error rather than reaching mkdir. Stat (not Lstat) keeps a
+		// symlinked spelling of a real directory acceptable, as MkdirAll
+		// always treated it.
+		if info, statErr := os.Stat(path); statErr == nil && !info.IsDir() {
+			return fmt.Errorf(
+				"tclaude-layer harness state path %q exists and is not a directory; refusing to materialize a %s as harness state",
+				path, describeNonDirectoryMode(info.Mode()))
+		}
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			return fmt.Errorf("prepare tclaude-layer harness state %q: %w", path, err)
 		}
@@ -1790,6 +1727,11 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 					"tclaude-layer read-only harness state path %q is at or below protected root %q",
 					path, protected)
 			}
+		}
+		if info, statErr := os.Stat(path); statErr == nil && !info.IsDir() {
+			return fmt.Errorf(
+				"tclaude-layer read-only harness state path %q exists and is not a directory; refusing to materialize a %s as harness state",
+				path, describeNonDirectoryMode(info.Mode()))
 		}
 		if err := os.MkdirAll(path, 0o700); err != nil {
 			return fmt.Errorf("prepare tclaude-layer read-only harness state %q: %w", path, err)
