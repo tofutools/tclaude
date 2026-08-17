@@ -421,29 +421,6 @@ and rejects an explicit value. See the capability matrix on
     "your sandbox is weaker than it looks" warning. Grep for
     `normalizeLineageHarness` to find them all.
 
-### tclaude-layer path requirements
-
-If your harness runs under tclaude's own OS sandbox (the tclaude-layer),
-declare the filesystem resources a confined launch needs as
-`harness.LayerPathRequirement` rows: an absolute path, what it *is*
-(directory, file, or socket), the access mode, and whether launch preparation
-may create it (`MayCreate`, directories only). The declaration is dispatched
-per harness from `tclaudeLayerHarnessRequirements` in
-`pkg/claude/session/sandbox_layer_requirements.go`; one shared fold then
-normalizes, deduplicates, validates, and translates every row into the launch
-contract, so a socket or file can never reach directory materialization and
-equivalent resources are prepared identically across harnesses. Copilot's
-TCL-975 baseline catalog is the reference producer.
-
-Deliberately specialized exceptions that stay outside the shared fold, each
-for a topology or hardening reason: OpenCode's agentd-owned state layout and
-v4 unix-relay control socket (its tool executor is a separately managed
-server, not the pane), Claude Code's Darwin `/private/tmp/claude-<uid>`
-scratch root (a hardened resolver that must refuse symlinks, wrong owners,
-and non-0700 modes before returning an ordinary write path), daemon-final
-private write dirs (session isolation), and the protected-root and
-agentd-socket-floor invariants (fail-closed security floors).
-
 ## Wiring it up
 
 1. Add a `mynewharness.go` (and `mynewharness_*.go`) under
