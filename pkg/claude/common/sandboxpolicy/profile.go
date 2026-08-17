@@ -145,6 +145,33 @@ const (
 	FilesystemRootSeparate  FilesystemRootMode = "separate"
 )
 
+// HarnessConfigAccess is the operator-authored posture for the harness's OWN
+// configuration surface — the settings file, hook/skill/agent/command
+// directories, and memory file that live inside the harness state root the
+// launch contract binds writable.
+//
+// The zero value is not "no opinion": it means the default read-only floor
+// applies. That surface is the harness's policy and persistent-code-execution
+// authority, and a confined agent writing it escalates OUT of the sandbox —
+// into tclaude's own hardening block, into the next harness-builtin launch,
+// and into the human's next unsandboxed harness run. Explicit Write is the
+// operator's opt-out; explicit Read pins the floor so a later scope cannot
+// opt out beneath a decision already made.
+type HarnessConfigAccess string
+
+const (
+	// HarnessConfigAccessDefault applies the read-only floor. It is also what
+	// every profile authored before this axis existed resolves to, which is the
+	// deliberate behavior change: the floor is on unless asked otherwise.
+	HarnessConfigAccessDefault HarnessConfigAccess = ""
+	// HarnessConfigAccessRead pins the floor explicitly. Composition treats it
+	// as strictest, so it cannot be widened by another scope or include.
+	HarnessConfigAccessRead HarnessConfigAccess = "read"
+	// HarnessConfigAccessWrite is the operator opt-out: the harness config
+	// surface stays writable, exactly as it was before the floor existed.
+	HarnessConfigAccessWrite HarnessConfigAccess = "write"
+)
+
 // Profile is the harness-neutral, operator-authored capability bundle. It is
 // NetworkAccess is optional so existing profiles keep their harness's current
 // network behavior. Harness launch posture belongs to spawn profiles instead.
@@ -162,6 +189,7 @@ type Profile struct {
 	Environment             []EnvironmentEntry   `json:"environment,omitempty"`
 	AgentDirectories        []string             `json:"agent_directories,omitempty"`
 	FilesystemRoot          FilesystemRootMode   `json:"filesystem_root,omitempty"`
+	HarnessConfig           HarnessConfigAccess  `json:"harness_config,omitempty"`
 	NetworkAccess           NetworkAccess        `json:"network_access,omitempty"`
 	Network                 *NetworkRules        `json:"network,omitempty"`
 	UnixSockets             *UnixSocketRules     `json:"unix_sockets,omitempty"`
@@ -279,6 +307,10 @@ func normalize(in Profile, allowMissing, authoring bool) (Profile, []string, err
 	if err != nil {
 		return Profile{}, nil, err
 	}
+	harnessConfig, err := NormalizeHarnessConfigAccess(in.HarnessConfig)
+	if err != nil {
+		return Profile{}, nil, err
+	}
 	network, err := normalizeNetworkRules(in.Network)
 	if err != nil {
 		return Profile{}, nil, err
@@ -304,7 +336,8 @@ func normalize(in Profile, allowMissing, authoring bool) (Profile, []string, err
 	sort.Strings(missing)
 	return Profile{
 		Name: name, Filesystem: filesystem, FilesystemSpellings: filesystemSpellings,
-		Environment: environment, AgentDirectories: agentDirectories, FilesystemRoot: filesystemRoot, NetworkAccess: networkAccess,
+		Environment: environment, AgentDirectories: agentDirectories, FilesystemRoot: filesystemRoot,
+		HarnessConfig: harnessConfig, NetworkAccess: networkAccess,
 		Network: network, UnixSockets: unixSockets, ResourceLimits: resourceLimits,
 		DarwinAllowMachRegister: in.DarwinAllowMachRegister, PreLaunch: preLaunch,
 		Includes: includes,
@@ -319,6 +352,39 @@ func NormalizeFilesystemRootMode(in FilesystemRootMode) (FilesystemRootMode, err
 	default:
 		return "", fmt.Errorf("filesystem_root %q is invalid (want inherit, separate, or omitted for automatic)", in)
 	}
+}
+
+// NormalizeHarnessConfigAccess validates one authored harness-config posture.
+func NormalizeHarnessConfigAccess(in HarnessConfigAccess) (HarnessConfigAccess, error) {
+	switch in {
+	case HarnessConfigAccessDefault, HarnessConfigAccessRead, HarnessConfigAccessWrite:
+		return in, nil
+	default:
+		return "", fmt.Errorf(
+			"harness_config %q is invalid (want read, write, or omitted for the default read-only floor)", in)
+	}
+}
+
+// HarnessConfigAccessRank orders the axis for composition: strictest wins, and
+// the omitted default sits BELOW an explicit write so an operator opt-out is
+// reachable at all. An explicit read then outranks that opt-out, which is what
+// makes the floor pinnable from a global or group scope.
+func HarnessConfigAccessRank(mode HarnessConfigAccess) int {
+	switch mode {
+	case HarnessConfigAccessRead:
+		return 2
+	case HarnessConfigAccessWrite:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// HarnessConfigFloorApplies reports whether a composed posture keeps the
+// read-only floor. Consumers must ask this rather than comparing to Read: the
+// omitted default keeps the floor too, and that is the whole point.
+func HarnessConfigFloorApplies(mode HarnessConfigAccess) bool {
+	return mode != HarnessConfigAccessWrite
 }
 
 // NormalizeNetworkAccess validates one network posture without requiring a

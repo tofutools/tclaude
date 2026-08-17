@@ -48,6 +48,7 @@ type ResolutionProvenance struct {
 	Environment      map[string]ProfileSource   `json:"environment"`
 	AgentDirectories map[string][]ProfileSource `json:"agent_directories"`
 	FilesystemRoot   *ProfileSource             `json:"filesystem_root,omitempty"`
+	HarnessConfig    *ProfileSource             `json:"harness_config,omitempty"`
 	Network          *ProfileSource             `json:"network,omitempty"`
 	UnixSockets      *ProfileSource             `json:"unix_sockets,omitempty"`
 	ResourceMemory   *ProfileSource             `json:"resource_memory,omitempty"`
@@ -63,15 +64,16 @@ type EffectiveProfile struct {
 	// still contain symlinks. Modern registry profiles retain those spellings
 	// in non-authoritative metadata; legacy profiles may have already lost
 	// them. Omitempty keeps snapshots with no observable aliases byte-compatible.
-	MountAliases            []MountAlias       `json:"mount_aliases,omitempty"`
-	Environment             []EnvironmentEntry `json:"environment"`
-	AgentDirectories        []string           `json:"agent_directories"`
-	FilesystemRoot          FilesystemRootMode `json:"filesystem_root,omitempty"`
-	NetworkAccess           NetworkAccess      `json:"network_access,omitempty"`
-	Network                 *NetworkRules      `json:"network,omitempty"`
-	UnixSockets             *UnixSocketRules   `json:"unix_sockets,omitempty"`
-	ResourceLimits          ResourceLimits     `json:"resource_limits,omitempty"`
-	DarwinAllowMachRegister bool               `json:"darwin_allow_mach_register,omitempty"`
+	MountAliases            []MountAlias        `json:"mount_aliases,omitempty"`
+	Environment             []EnvironmentEntry  `json:"environment"`
+	AgentDirectories        []string            `json:"agent_directories"`
+	FilesystemRoot          FilesystemRootMode  `json:"filesystem_root,omitempty"`
+	HarnessConfig           HarnessConfigAccess `json:"harness_config,omitempty"`
+	NetworkAccess           NetworkAccess       `json:"network_access,omitempty"`
+	Network                 *NetworkRules       `json:"network,omitempty"`
+	UnixSockets             *UnixSocketRules    `json:"unix_sockets,omitempty"`
+	ResourceLimits          ResourceLimits      `json:"resource_limits,omitempty"`
+	DarwinAllowMachRegister bool                `json:"darwin_allow_mach_register,omitempty"`
 	// PreLaunch is composed across scopes in tier order (global, group,
 	// explicit): a later tier replaces a same-named block in place and appends
 	// new ones. Order is execution order, so it is never sorted.
@@ -130,6 +132,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	networkListContributors := []string{}
 	preLaunch := []PreLaunchBlock{}
 	filesystemRoot := FilesystemRootAutomatic
+	harnessConfig := HarnessConfigAccessDefault
 	engineSelections := []NetworkEngineSelection{}
 	socketListContributors := []string{}
 	observableFilesystemSpellings := []observableFilesystemSpelling{}
@@ -196,6 +199,14 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			filesystemRoot = normalized.FilesystemRoot
 			rootSource := source
 			result.Provenance.FilesystemRoot = &rootSource
+		}
+		// Strictest-wins rather than last-scope-wins: an explicit profile must
+		// not be able to opt out of a floor a global or group scope pinned,
+		// which is the same asymmetry the filesystem union already has.
+		if HarnessConfigAccessRank(normalized.HarnessConfig) > HarnessConfigAccessRank(harnessConfig) {
+			harnessConfig = normalized.HarnessConfig
+			configSource := source
+			result.Provenance.HarnessConfig = &configSource
 		}
 		for _, grant := range normalized.Filesystem {
 			guest := grant.GuestPath()
@@ -456,6 +467,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		result.PreLaunch = preLaunch
 	}
 	result.FilesystemRoot = filesystemRoot
+	result.HarnessConfig = harnessConfig
 	return result, nil
 }
 

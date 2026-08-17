@@ -1,0 +1,153 @@
+package sandboxpolicy
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestHarnessConfigFloorAppliesUnlessExplicitWrite(t *testing.T) {
+	assert.True(t, HarnessConfigFloorApplies(HarnessConfigAccessDefault),
+		"omitted means the floor applies, not 'no opinion'")
+	assert.True(t, HarnessConfigFloorApplies(HarnessConfigAccessRead))
+	assert.False(t, HarnessConfigFloorApplies(HarnessConfigAccessWrite))
+}
+
+func TestNormalizeHarnessConfigAccessRejectsUnknown(t *testing.T) {
+	for _, valid := range []HarnessConfigAccess{
+		HarnessConfigAccessDefault, HarnessConfigAccessRead, HarnessConfigAccessWrite,
+	} {
+		got, err := NormalizeHarnessConfigAccess(valid)
+		require.NoError(t, err)
+		assert.Equal(t, valid, got)
+	}
+	_, err := NormalizeHarnessConfigAccess("deny")
+	assert.Error(t, err)
+}
+
+// Strictest-wins across scopes: unlike environment (last-scope-wins), an
+// explicit profile must not be able to opt out of a floor a broader scope
+// pinned.
+func TestResolveHarnessConfigComposesStrictestWins(t *testing.T) {
+	for _, tc := range []struct {
+		name                    string
+		global, group, explicit HarnessConfigAccess
+		want                    HarnessConfigAccess
+		wantFloor               bool
+	}{
+		{name: "all omitted", want: HarnessConfigAccessDefault, wantFloor: true},
+		{name: "explicit opt-out", explicit: HarnessConfigAccessWrite,
+			want: HarnessConfigAccessWrite, wantFloor: false},
+		{name: "global opt-out", global: HarnessConfigAccessWrite,
+			want: HarnessConfigAccessWrite, wantFloor: false},
+		{name: "global pin beats explicit opt-out",
+			global: HarnessConfigAccessRead, explicit: HarnessConfigAccessWrite,
+			want: HarnessConfigAccessRead, wantFloor: true},
+		{name: "group pin beats explicit opt-out",
+			group: HarnessConfigAccessRead, explicit: HarnessConfigAccessWrite,
+			want: HarnessConfigAccessRead, wantFloor: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scopes := Scopes{}
+			if tc.global != "" {
+				scopes.Global = &Profile{Name: "global", HarnessConfig: tc.global}
+			}
+			if tc.group != "" {
+				scopes.Group = &Profile{Name: "group", HarnessConfig: tc.group}
+			}
+			if tc.explicit != "" {
+				scopes.Explicit = &Profile{Name: "explicit", HarnessConfig: tc.explicit}
+			}
+			effective, err := Resolve(scopes)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, effective.HarnessConfig)
+			assert.Equal(t, tc.wantFloor, HarnessConfigFloorApplies(effective.HarnessConfig))
+		})
+	}
+}
+
+func TestResolveHarnessConfigRecordsProvenance(t *testing.T) {
+	effective, err := Resolve(Scopes{
+		Global:   &Profile{Name: "base", HarnessConfig: HarnessConfigAccessWrite},
+		Explicit: &Profile{Name: "strict", HarnessConfig: HarnessConfigAccessRead},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, effective.Provenance.HarnessConfig)
+	assert.Equal(t, "strict", effective.Provenance.HarnessConfig.Profile)
+	assert.Equal(t, ScopeExplicit, effective.Provenance.HarnessConfig.Scope)
+}
+
+// A floored parent must not be able to mint an unfloored child, the same
+// widening rule every other axis has.
+func TestRequireContainedRefusesHarnessConfigWidening(t *testing.T) {
+	parent := EmptySnapshot()
+	child := EmptySnapshot()
+	child.Effective.HarnessConfig = HarnessConfigAccessWrite
+	err := RequireContained(parent, child)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "harness config write access")
+
+	// Narrowing is always fine.
+	narrowing := EmptySnapshot()
+	narrowing.Effective.HarnessConfig = HarnessConfigAccessRead
+	require.NoError(t, RequireContained(parent, narrowing))
+
+	// And an unfloored parent may still spawn an unfloored child.
+	openParent := EmptySnapshot()
+	openParent.Effective.HarnessConfig = HarnessConfigAccessWrite
+	require.NoError(t, RequireContained(openParent, child))
+}
+
+// Includes compose strictest-wins too. Without merging each included profile's
+// value the including profile's own value is the only one ever considered, so
+// an include that pinned the floor would be silently dropped.
+func TestFlattenHarnessConfigMergesIncludes(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		included, parent HarnessConfigAccess
+		want             HarnessConfigAccess
+	}{
+		{name: "included read beats parent write",
+			included: HarnessConfigAccessRead, parent: HarnessConfigAccessWrite,
+			want: HarnessConfigAccessRead},
+		{name: "included read survives omitted parent",
+			included: HarnessConfigAccessRead, want: HarnessConfigAccessRead},
+		{name: "parent write survives omitted include",
+			parent: HarnessConfigAccessWrite, want: HarnessConfigAccessWrite},
+		{name: "included write survives omitted parent",
+			included: HarnessConfigAccessWrite, want: HarnessConfigAccessWrite},
+		{name: "parent read beats included write",
+			included: HarnessConfigAccessWrite, parent: HarnessConfigAccessRead,
+			want: HarnessConfigAccessRead},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := Profile{Name: "base", HarnessConfig: tc.included}
+			flattened, err := Flatten(
+				Profile{Name: "parent", HarnessConfig: tc.parent, Includes: []string{"base"}},
+				func(name string) (*Profile, error) {
+					if name == "base" {
+						return &base, nil
+					}
+					return nil, nil
+				},
+			)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, flattened.HarnessConfig)
+		})
+	}
+}
+
+// The legacy-parent spawn branches skip containment entirely when a snapshot
+// adds no capabilities, so an axis absent from HasCapabilities is an axis with
+// no lineage check on that path. Lifting the floor hands back host writes.
+func TestHasCapabilitiesCountsALiftedHarnessConfigFloor(t *testing.T) {
+	floored := NewSnapshot(EffectiveProfile{}, nil)
+	assert.False(t, HasCapabilities(floored))
+
+	pinned := NewSnapshot(EffectiveProfile{HarnessConfig: HarnessConfigAccessRead}, nil)
+	assert.False(t, HasCapabilities(pinned), "pinning the floor is a restriction")
+
+	lifted := NewSnapshot(EffectiveProfile{HarnessConfig: HarnessConfigAccessWrite}, nil)
+	assert.True(t, HasCapabilities(lifted))
+}

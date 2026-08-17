@@ -92,7 +92,7 @@ const sandboxProfileMaxBodyBytes = 8 << 20
 
 const (
 	sandboxProfileExportFormat        = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion       = 14
+	sandboxProfileExportVersion       = 15
 	sandboxProfileExportVersionLegacy = 9
 )
 
@@ -109,6 +109,7 @@ type sandboxProfileJSON struct {
 	Environment             []sandboxpolicy.EnvironmentEntry   `json:"environment"`
 	AgentDirectories        []string                           `json:"agent_directories,omitempty"`
 	FilesystemRoot          sandboxpolicy.FilesystemRootMode   `json:"filesystem_root,omitempty"`
+	HarnessConfig           sandboxpolicy.HarnessConfigAccess  `json:"harness_config,omitempty"`
 	NetworkAccess           sandboxpolicy.NetworkAccess        `json:"network_access,omitempty"`
 	Network                 *sandboxpolicy.NetworkRules        `json:"network,omitempty"`
 	UnixSockets             *sandboxpolicy.UnixSocketRules     `json:"unix_sockets,omitempty"`
@@ -159,6 +160,7 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 		FilesystemSpellings: p.FilesystemSpellings,
 		Environment:         p.Environment, AgentDirectories: p.AgentDirectories,
 		FilesystemRoot: p.FilesystemRoot,
+		HarnessConfig:  p.HarnessConfig,
 		NetworkAccess:  sandboxpolicy.LegacyNetworkAccessForExport(p.Network, p.NetworkAccess),
 		Network:        p.Network, UnixSockets: p.UnixSockets, ResourceLimits: p.ResourceLimits,
 		DarwinAllowMachRegister: p.DarwinAllowMachRegister, PreLaunch: p.PreLaunch,
@@ -180,7 +182,8 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 	input := sandboxpolicy.Profile{
 		Name: body.Name, Filesystem: body.Filesystem,
 		FilesystemSpellings: body.FilesystemSpellings,
-		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, FilesystemRoot: body.FilesystemRoot, NetworkAccess: body.NetworkAccess,
+		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, FilesystemRoot: body.FilesystemRoot,
+		HarnessConfig: body.HarnessConfig, NetworkAccess: body.NetworkAccess,
 		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits,
 		DarwinAllowMachRegister: body.DarwinAllowMachRegister, PreLaunch: body.PreLaunch,
 		Includes: body.Includes,
@@ -201,6 +204,7 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 		FilesystemSpellings: normalized.FilesystemSpellings,
 		Environment:         normalized.Environment, AgentDirectories: normalized.AgentDirectories,
 		FilesystemRoot: normalized.FilesystemRoot,
+		HarnessConfig:  normalized.HarnessConfig,
 		NetworkAccess:  normalized.NetworkAccess, Network: normalized.Network,
 		UnixSockets: normalized.UnixSockets, ResourceLimits: normalized.ResourceLimits,
 		DarwinAllowMachRegister: normalized.DarwinAllowMachRegister, PreLaunch: normalized.PreLaunch,
@@ -212,7 +216,8 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 	normalized, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
 		Name: body.Name, Filesystem: body.Filesystem,
 		FilesystemSpellings: body.FilesystemSpellings,
-		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, FilesystemRoot: body.FilesystemRoot, NetworkAccess: body.NetworkAccess,
+		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, FilesystemRoot: body.FilesystemRoot,
+		HarnessConfig: body.HarnessConfig, NetworkAccess: body.NetworkAccess,
 		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits,
 		DarwinAllowMachRegister: body.DarwinAllowMachRegister, PreLaunch: body.PreLaunch,
 		Includes: body.Includes,
@@ -225,6 +230,7 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 		FilesystemSpellings: normalized.FilesystemSpellings,
 		Environment:         normalized.Environment, AgentDirectories: normalized.AgentDirectories,
 		FilesystemRoot: normalized.FilesystemRoot,
+		HarnessConfig:  normalized.HarnessConfig,
 		NetworkAccess:  normalized.NetworkAccess, Network: normalized.Network,
 		UnixSockets: normalized.UnixSockets, ResourceLimits: normalized.ResourceLimits,
 		DarwinAllowMachRegister: normalized.DarwinAllowMachRegister, PreLaunch: normalized.PreLaunch,
@@ -729,9 +735,15 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 	}
 	formatVersion := sandboxProfileExportVersionLegacy
 	for _, profile := range out {
-		if profile.FilesystemRoot != "" {
-			formatVersion = 14
+		if profile.HarnessConfig != "" {
+			formatVersion = 15
 			break
+		}
+		if profile.FilesystemRoot != "" {
+			if formatVersion < 14 {
+				formatVersion = 14
+			}
+			continue
 		}
 		if profile.Network != nil && profile.Network.Namespace != "" {
 			if formatVersion < 13 {
@@ -994,6 +1006,15 @@ func supportedSandboxProfileExport(format string, version int) bool {
 
 func validateSandboxProfileExportVersionContent(env sandboxProfileExportEnvelope) *spawnFailure {
 	for _, profile := range env.Profiles {
+		if env.FormatVersion < 15 && profile.HarnessConfig != "" {
+			return &spawnFailure{
+				Status: http.StatusBadRequest,
+				Kind:   "invalid_format",
+				Msg: fmt.Sprintf(
+					"sandbox profile %q contains a harness config access selection, which requires export format version 15",
+					profile.Name),
+			}
+		}
 		if env.FormatVersion < 14 && profile.FilesystemRoot != "" {
 			return &spawnFailure{
 				Status: http.StatusBadRequest,

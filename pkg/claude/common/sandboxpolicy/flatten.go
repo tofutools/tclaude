@@ -95,6 +95,7 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 		Environment:             make([]EnvironmentEntry, 0, len(parts.environment)),
 		AgentDirectories:        make([]string, 0, len(parts.agentDirectories)),
 		FilesystemRoot:          parts.filesystemRoot,
+		HarnessConfig:           parts.harnessConfig,
 		NetworkAccess:           parts.networkAccess,
 		ResourceLimits:          parts.resourceLimits,
 		DarwinAllowMachRegister: parts.darwinAllowMachRegister,
@@ -189,6 +190,7 @@ type flattenedParts struct {
 	environment             map[string]EnvironmentEntry
 	agentDirectories        map[string]struct{}
 	filesystemRoot          FilesystemRootMode
+	harnessConfig           HarnessConfigAccess
 	networkAccess           NetworkAccess
 	network                 NetworkRules
 	unixSockets             UnixSocketRules
@@ -310,6 +312,12 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 		if filesystemRootRank(parts.filesystemRoot) > filesystemRootRank(out.filesystemRoot) {
 			out.filesystemRoot = parts.filesystemRoot
 		}
+		// Without this the strictest-wins rule below only ever sees the
+		// INCLUDING profile's own value: an include that pinned the floor to
+		// read would be dropped, and a parent write would silently disable it.
+		if HarnessConfigAccessRank(parts.harnessConfig) > HarnessConfigAccessRank(out.harnessConfig) {
+			out.harnessConfig = parts.harnessConfig
+		}
 		if parts.networkAccess != NetworkAccessInherit {
 			out.networkAccess = parts.networkAccess
 		}
@@ -362,6 +370,12 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 	}
 	if filesystemRootRank(p.FilesystemRoot) > filesystemRootRank(out.filesystemRoot) {
 		out.filesystemRoot = p.FilesystemRoot
+	}
+	// Strictest-wins, exactly like the cross-scope rule: an include cannot opt
+	// a stricter parent out of the harness-config floor, and a parent cannot
+	// opt out of an include that pinned it.
+	if HarnessConfigAccessRank(p.HarnessConfig) > HarnessConfigAccessRank(out.harnessConfig) {
+		out.harnessConfig = p.HarnessConfig
 	}
 	if p.NetworkAccess != NetworkAccessInherit {
 		out.networkAccess = p.NetworkAccess

@@ -121,6 +121,9 @@ func DescribeTclaudeLayerPlan(
 	for _, path := range spec.Contract.ReadOnlyStateDirs {
 		add(1, "launch-contract", "harness-state-readonly", "ro", path, path)
 	}
+	for _, path := range spec.Contract.HarnessConfigFloor {
+		add(1, "launch-contract", "harness-config-floor", "ro", path, path)
+	}
 
 	for _, entry := range plan.Entries {
 		// Source is the host authority and Target is where it lands inside the

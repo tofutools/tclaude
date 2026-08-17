@@ -3603,6 +3603,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			"only the human operator may select or omit sandbox profiles; agents may only inherit existing policy")
 		return
 	}
+	if !validateSpawnHarnessConfig(w, r, body.HarnessConfig) {
+		return
+	}
 
 	// Spawn guardrails — runaway-prevention for an agent that the human
 	// granted `groups.members.spawn`. The group's hard member cap (binds the human
@@ -4494,6 +4497,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if policyErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", policyErr.Error())
 		return
+	}
+	if applied, fail := applySpawnHarnessConfig(effectiveSandbox, body.HarnessConfig); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	} else {
+		effectiveSandbox = applied
 	}
 	if spawnerConvID != "" {
 		parentSnapshot, err := db.AgentEffectiveSandboxConfigForConv(spawnerConvID)

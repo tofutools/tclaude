@@ -154,6 +154,11 @@ The axes:
   mount namespace) and `harness-builtin` refuse the launch with
   `unsupported_sandbox_profile_mount_path` rather than falling back to the
   host path.
+- **`harness_config`** — `read` | `write`, omitted meaning the default
+  read-only floor over the harness's own config surface. See
+  [The harness-config floor](#the-harness-config-floor) below. Composes
+  strictest-wins: an explicit `read` anywhere in the chain cannot be widened
+  back to `write` by a later scope or include.
 - **`environment`** — `{name, value}` pairs, non-secret. Reserved names are
   refused: `HOME`, `PATH`, `SHELL`, `TMPDIR`, `CLAUDE_CONFIG_DIR`,
   `XDG_CONFIG_HOME`, `TMUX` and friends, plus the `TCLAUDE_`, `CLAUDE_CODE_`,
@@ -207,6 +212,108 @@ protected root are refused alike, on every volume, including for paths that do
 not exist yet. `~/.codex` is not protected and must be reopened under a denied
 Home, which makes a strict-Home profile materially easier to run under Codex
 than under Claude Code.
+
+### The harness-config floor
+
+Under `tclaude-layer` the launch contract binds the harness's state root
+read-write — `~/.claude`, `$CODEX_HOME`/`~/.codex`, `$COPILOT_HOME`/`~/.copilot`,
+`~/.opencode` plus OpenCode's XDG roots — because that is where the harness
+keeps state it genuinely must write: transcripts, project records, todos,
+history, account/onboarding data. The same tree also holds the harness's
+**policy and persistent-code surface**, and writing that is an escape:
+
+- `~/.claude/settings.json` carries the block
+  `tclaude setup --install-sandbox-hardening` installs. Strip it and the wall
+  around `~/.tclaude/data` and `~/.claude/sessions` is gone for every
+  `harness-builtin` launch and for the human's own ambient `claude`.
+- `~/.codex/tclaude-agent.config.toml` *is* the managed profile that provides
+  Codex's `harness-builtin` confinement.
+- A hook, skill, agent, or command dropped under `~/.claude/hooks` (and
+  friends) runs in the human's **next, unsandboxed** session.
+
+So tclaude binds a closed per-harness catalog of those paths read-only by
+default, materializing missing ones first — an absent `~/.claude/hooks` under a
+writable state root is just a directory the agent can create. The floor is
+enforced by the ordinary read-grant path, so it appears in
+`sandbox-profiles plan` as `launch-contract / harness-config-floor` on both
+bubblewrap and Seatbelt.
+
+| harness | floored |
+|---|---|
+| claude | `hooks/`, `skills/`, `agents/`, `commands/`, `output-styles/`, `plugins/`, `workflows/`, `routines/`, `rules/`, `local/`, `cowork_plugins/`, `settings.json`, `settings.local.json`, `CLAUDE.md`, `keybindings.json` |
+| codex | `hooks/`, `prompts/`, `config.toml`, `hooks.json`, `AGENTS.md`, `tclaude-agent.config.toml` |
+| copilot | `hooks/`, `settings.json`, `config.json`, `mcp-config.json` |
+| opencode | nothing — its config tree is already bound read-only by OpenCode's own state layout, in both legacy-shared and private modes |
+
+Claude Code's own sandbox deny-writes a broadly similar set for its Bash tool;
+without the floor tclaude's outer wall was *weaker* than the harness's own
+default.
+
+Materialization writes only what is indistinguishable from absent: an empty
+directory, or `{}` for a JSON entry. An empty JSON file is **not** equivalent
+to a missing one — tclaude's own readers and Claude Code alike treat a missing
+file as `{}` but report an existing empty one as unparseable — so the seed
+matters. Existing content is never touched.
+
+**Symlinked entries are skipped**, with a warning naming the path. Dotfile
+managers commonly point `~/.claude/skills` at a repo, and there is no faithful
+way to floor that: binding the resolved target leaves the *name* an ordinary
+symlink inside the writable state root, which the agent can unlink and replace
+with a real directory of its own. Skipping is disclosed; flooring the target
+would be a false claim. Point the symlink the other way — make `~/.claude/hooks`
+the real directory — if you want it floored.
+
+**What it costs.** Unlike Claude Code's Bash-only deny list, a bubblewrap
+read-only bind blocks everyone inside the wall, the harness process included.
+In-pane writes to a floored file therefore fail: Claude Code's `/config` and
+user-scope `/permissions`, Codex's `/model` persistence, Copilot's
+trust-folder record. `/model` and directory trust for Claude Code land in
+`.claude.json`, which stays writable.
+
+**Two escape hatches**, least blunt first:
+
+1. An explicit profile write row **at exactly one floored path** drops that
+   single entry — `{"path": "~/.claude/plugins", "access": "write"}` reopens
+   plugin installs and nothing else. A broader `~` or `~/.claude` write does
+   not count: the operator has to name the surface. A row *beneath* a floored
+   directory (`~/.claude/hooks/mine`) reopens only that path and leaves the
+   floor over the rest of the directory intact. Rows are directories only, so
+   a floored *file* cannot be reopened this way.
+2. `"harness_config": "write"` turns the whole floor off, restoring the
+   pre-floor posture — but only when nothing else in the chain pins it.
+   Composition is strictest-wins, so an explicit `"read"` in any included,
+   global, group, or explicit profile outranks a `"write"` anywhere else. That
+   asymmetry is deliberate: it lets an operator pin the floor globally and know
+   a per-spawn profile cannot quietly undo it.
+3. `--harness-config read|write` at spawn time, for granting one agent the
+   posture without authoring a profile for it:
+
+   ```bash
+   tclaude agent spawn <group> --harness-config write
+   ```
+
+   Unlike the profile chain this is a launch contract, not a fourth scope: it
+   overrides the composed value outright, the same way `--omit-sandbox-profiles`
+   overrides the ambient tiers rather than merging with them. A human may set
+   it directly; an **agent** needs the `sandbox.harness-config` permission,
+   which is not default-granted and which group ownership deliberately does not
+   confer — lifting the floor lets the launched agent rewrite the policy that
+   confines it. `write` cannot be combined with `--omit-sandbox-profiles`,
+   whose snapshot records "no profile tier applied at all"; `read` is accepted
+   there as the no-op it is, since the floor is already what an absent value
+   means.
+
+   The slug gates *selection*, never enforcement. The floor is a mount frozen
+   at launch, so no permission makes a running agent's config surface writable,
+   and [lineage](#lineage-and-spawn-write-proofs) still refuses a child posture
+   wider than its recorded parent's — an agent holding the slug can pin the
+   floor on a child, but can only pass `write` down if it already has it.
+
+The floor applies where tclaude owns the wall — `tclaude-layer` and `stacked`.
+Under `harness-builtin` the harness's own policy governs and the axis is
+inert; under `resource-only`/`off` nothing is enforced by design. Lineage
+treats it like any other containment rule: a floored parent cannot spawn an
+unfloored child.
 
 ### Reference: scoping `playwright-cli` to one agent
 
@@ -496,6 +603,15 @@ cannot `send-keys` at tclaude's tmux server.
 
 ### Honestly residual holes
 
+- **`~/.claude/.claude.json` stays writable, and it carries `mcpServers`.**
+  Under `tclaude-layer` the harness-config floor cannot cover it: Claude Code
+  writes that file continuously (project records, directory trust, history),
+  and `CLAUDE_CONFIG_DIR` puts it inside the same writable state root. An agent
+  that appends an `mcpServers` entry there gets that command executed by the
+  next tclaude-launched Claude pane — including a `harness-builtin` one with no
+  outer wall. This is the residual member of the same escalation family the
+  floor closes, and closing it needs a different mechanism than a read-only
+  bind.
 - **MCP bypasses both layers entirely.** MCP servers run in the harness host
   process over their own transport, outside the Bash sandbox and the permission
   rules. An agent that cannot see `~/.config/gh` may still file a GitHub issue
@@ -759,6 +875,7 @@ is still open; what stands today is that stacked fails closed and says so.
 | Profile looks strict, nothing is denied | Claude Code sandbox `inherit`/`off` — the deny rows are emitted but the sandbox never engages |
 | Agent read a denied path with the `Read` tool | Expected under `deny ~` — that shape reaches layer 1 only |
 | Agent reached something the profile denied | Check MCP, which bypasses the sandbox |
+| `/config`, `/permissions`, or `/model` write fails in the pane | The harness-config floor — reopen the one path, or set `harness_config: "write"` |
 
 ## See also
 

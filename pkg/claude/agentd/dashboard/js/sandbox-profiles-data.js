@@ -56,6 +56,8 @@ export function sandboxProfileSummary(profile) {
   if (own.length) parts.push(`${own.length} agent dir${own.length === 1 ? '' : 's'}`);
   if (profile.filesystem_root === 'separate') parts.push('separate filesystem root');
   if (profile.filesystem_root === 'inherit') parts.push('inherit filesystem root');
+  if (profile.harness_config === 'write') parts.push('harness config writable');
+  if (profile.harness_config === 'read') parts.push('harness config read-only');
   if (pre.length) parts.push(`${pre.length} pre-launch script${pre.length === 1 ? '' : 's'}`);
   const limits = profile.resource_limits || {};
   if (limits.memory) parts.push(`memory ${limits.memory}`);

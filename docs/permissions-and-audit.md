@@ -86,7 +86,7 @@ the `groups.*` roster/settings/link/attachment/nest/archive/schedule slugs
 and the `groups.members.<verb>` manager slugs, plus unscoped `human.notify`
 and `process.runs.read`. Ownership never confers slugs that mutate shared
 configuration (`process.templates.manage`, `agent.sandbox-impl`,
-`human.clipboard`, and similar). `groups set-owner-scopes` can narrow what
+`sandbox.harness-config`, `human.clipboard`, and similar). `groups set-owner-scopes` can narrow what
 owning a particular group confers — it only takes reach away, never adds.
 
 ## Scoped grants
