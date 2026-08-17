@@ -41,14 +41,16 @@ import (
 // softExitEscalationDeadline is how long the pane has to close on its own
 // after the first soft-exit delivery before the ladder starts.
 //
-// It sits beyond the last bounded re-injection (softExitRetryDelay ×
-// softExitMaxAttempts ≈ 8 s) so a pane that honours the third attempt gets a
-// chance to act on it before anything is killed — though only about two
-// seconds of one, so a harness whose exit takes longer than that from its
-// final prompt will be escalated rather than waited for. That is the intended
-// trade: the deadline also has to stay far below retireWorktreeExitGrace
-// (60 s), which is what makes retire cleanup run at all, and a stop is a
-// request to end the session rather than to negotiate about it.
+// The bounded re-injections run on a tighter cadence than this deadline: a
+// batch is ~1.3 s of lock-held key spacing plus softExitRetryDelay (1.5 s)
+// between batches, so attempts start roughly every 2.8 s and the last one
+// that can matter lands around 8.4 s — a pane that honours it gets a short
+// window to act before the ladder starts, and a harness whose exit takes
+// longer than that from its final prompt will be escalated rather than
+// waited for. That is the intended trade: the deadline also has to stay far
+// below retireWorktreeExitGrace (60 s), which is what makes retire cleanup
+// run at all, and a stop is a request to end the session rather than to
+// negotiate about it.
 var softExitEscalationDeadline = 10 * time.Second
 
 // softExitEscalationSignalGrace is how long each signal step waits for the
