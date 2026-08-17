@@ -1,0 +1,73 @@
+# Known-vulnerability scan of the module, on every push to main.
+#
+# This is deliberately its own workflow rather than a job in release.yml, even
+# though release.yml is the other push-to-main flow. Two reasons:
+#
+#   - govulncheck reads a live database (vuln.go.dev). It can turn red on a
+#     commit that changed nothing relevant, purely because an advisory was
+#     published since the last push. That must not block cutting a release, and
+#     release.yml's jobs all feed the tag/release gate.
+#   - release.yml runs under `concurrency: group: release, cancel-in-progress:
+#     false`, so releases queue rather than cancel. A scan job there would
+#     serialize behind — and lengthen — that queue for no benefit.
+#
+# Not run on pull requests: a PR can only introduce a vulnerable dependency via
+# go.mod/go.sum, which is a reviewed change, and PR CI is already the long pole.
+# Post-merge is where the "an advisory landed since yesterday" signal lives, and
+# that signal has nothing to do with any particular PR.
+name: govulncheck
+
+on:
+  push:
+    branches: [main]
+    # Same doc-only exclusions as release.yml: these paths cannot change what
+    # the scan sees.
+    paths-ignore:
+      - 'docs/**'
+      - '*.md'
+      - 'mkdocs.yml'
+      - '.github/workflows/docs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  govulncheck:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      # go.mod pins the toolchain, which matters here beyond reproducibility:
+      # govulncheck reports stdlib advisories against the Go version it runs
+      # under, so scanning with `stable` would report against a toolchain we do
+      # not ship.
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # Pinned like golangci-lint in ci.yml, and for the same reason: a tool
+      # upgrade should be a reviewed commit, not a silent change in CI results.
+      # Pinning the binary does not stale the data — the advisory database is
+      # fetched fresh from vuln.go.dev on every run.
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.7.0
+
+      # `./...`, not the `. ./cmd/...` pattern the build uses. That pattern
+      # exists to keep the non-production probe under scripts/ out of GOBIN;
+      # nothing is being installed here, and a vulnerable dependency reached
+      # only from scripts/ is still worth seeing.
+      #
+      # Default (symbol-level) analysis: a finding means a vulnerable symbol is
+      # actually reachable from this module's code, not merely that a module in
+      # the graph has an advisory. That is what makes a red run worth acting on
+      # rather than muting.
+      - name: Scan for known vulnerabilities
+        run: govulncheck ./...
