@@ -7,7 +7,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -51,12 +53,61 @@ func TestAutoPermit_GrantedAgentIsAnswered(t *testing.T) {
 	// this hook, so the dialog is not painted yet.
 	f.AssertSentContains(autoPermitTmux+":0.0", "Enter", 3*time.Second)
 
-	entries, err := db.ListAuditLog(db.AuditLogFilter{Verb: "auto-permit.answer"})
-	require.NoError(t, err)
-	require.Len(t, entries, 1, "the operator must see what was approved for them")
+	// The row is written after the keystroke goes out, so poll rather than
+	// racing it.
+	var entries []db.AuditLogEntry
+	require.Eventually(t, func() bool {
+		var err error
+		entries, err = db.ListAuditLog(db.AuditLogFilter{Verb: "auto-permit.answer"})
+		return err == nil && len(entries) == 1
+	}, 3*time.Second, 20*time.Millisecond,
+		"the operator must see what was approved for them")
 	assert.Equal(t, db.AuditActorSystem, entries[0].ActorKind)
 	assert.Equal(t, autoPermitConv, entries[0].TargetConv)
 	assert.Equal(t, "EnterWorktree", entries[0].Detail)
+}
+
+// Scenario: the agent is running a DIFFERENT harness. A tool name only means
+// something inside the harness that defines it, and the accept keys are how
+// THAT harness draws its dialog — so a same-named prompt elsewhere is not this
+// condition, grant or no grant.
+func TestAutoPermit_OtherHarnessIsLeftAlone(t *testing.T) {
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, autoPermitConv, autoPermitLabel, autoPermitTmux, brokerPanePID)
+	require.NoError(t, db.GrantAgentPermission(autoPermitConv,
+		session.PermAutoPermitEnterWorktree, "human"))
+
+	row, err := db.LoadSession(autoPermitLabel)
+	require.NoError(t, err)
+	row.Harness = harness.CodexName
+	require.NoError(t, db.SaveSession(row))
+
+	code, _ := postBrokeredHook(t, f, callerPID, enterWorktreeEvent())
+	require.Equal(t, http.StatusOK, code)
+
+	assertNoAutoPermitPress(t, f)
+}
+
+// Scenario: consent is withdrawn between the prompt and the keystroke. The
+// press is the act being authorized, so the grant is re-read after the settle
+// wait and the revocation lands before the key does.
+func TestAutoPermit_RevokedDuringSettleIsNotPressed(t *testing.T) {
+	// Stretch the settle wait so the revocation below is unambiguously inside
+	// it, rather than racing a 400 ms window on a loaded machine.
+	t.Cleanup(agentd.SetAutoPermitSettleDelayForTest(2 * time.Second))
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, autoPermitConv, autoPermitLabel, autoPermitTmux, brokerPanePID)
+	require.NoError(t, db.GrantAgentPermission(autoPermitConv,
+		session.PermAutoPermitEnterWorktree, "human"))
+
+	code, _ := postBrokeredHook(t, f, callerPID, enterWorktreeEvent())
+	require.Equal(t, http.StatusOK, code)
+	_, err := db.RevokeAgentPermission(autoPermitConv, session.PermAutoPermitEnterWorktree)
+	require.NoError(t, err)
+
+	assertNoAutoPermitPress(t, f)
 }
 
 // Scenario: the same prompt on an agent nobody granted the slug. The hook still

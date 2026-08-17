@@ -1,5 +1,7 @@
 package session
 
+import "github.com/tofutools/tclaude/pkg/claude/harness"
+
 // auto_permit.go names the permission prompts a harness reserves for a human
 // keystroke, and which permission slug consents to each.
 //
@@ -26,10 +28,18 @@ package session
 // constant, and the hook path cannot import agentd.
 const PermAutoPermitEnterWorktree = "auto-permit.enter-worktree"
 
-// AutoPermitAccept describes how one gated tool is answered: the slug that
-// consents to it, and the tmux keys that accept its dialog.
+// AutoPermitAccept describes how one gated tool is answered: the harness whose
+// prompt it is, the slug that consents to it, and the tmux keys that accept its
+// dialog.
 type AutoPermitAccept struct {
-	Slug string
+	// Harness is the harness this prompt belongs to. A tool name is only
+	// meaningful inside the harness that defines it, and the accept keys are
+	// specific to how THAT harness draws its dialog, so the daemon requires
+	// the reporting session to be running it. Today every entry is Claude
+	// Code; another harness's prompt would be its own entry, with its own
+	// slug and its own keys.
+	Harness string
+	Slug    string
 	// Keys are compile-time constants; nothing a hook reports ever reaches
 	// send-keys.
 	//
@@ -43,7 +53,21 @@ type AutoPermitAccept struct {
 // autoPermitAccepts is the whole vocabulary of auto-permit: one entry per named
 // prompt, no wildcards. Widening it is a code change, reviewed as such.
 var autoPermitAccepts = map[string]AutoPermitAccept{
-	"EnterWorktree": {Slug: PermAutoPermitEnterWorktree, Keys: []string{"Enter"}},
+	"EnterWorktree": {
+		Harness: harness.DefaultName,
+		Slug:    PermAutoPermitEnterWorktree,
+		Keys:    []string{"Enter"},
+	},
+}
+
+// AutoPermitHarnessMatches reports whether a session's harness is the one an
+// accept entry describes. An empty session harness reads as the default, which
+// is how session rows that predate the harness column are stored.
+func AutoPermitHarnessMatches(sessionHarness string, accept AutoPermitAccept) bool {
+	if sessionHarness == "" {
+		sessionHarness = harness.DefaultName
+	}
+	return sessionHarness == accept.Harness
 }
 
 // AutoPermitAcceptForTool returns how a gated tool is answered, if it is one

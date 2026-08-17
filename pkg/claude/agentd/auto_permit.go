@@ -34,8 +34,20 @@ import (
 // autoPermitSettleDelay is how long the daemon waits before pressing. The
 // harness is still blocked on the hook that reported the prompt, so the dialog
 // is not on screen yet; the press has to land after the harness resumes and
-// paints it. A var so tests need not sleep.
+// paints it.
+//
+// A package var, not a constant, so flow tests can drive both ends of the wait:
+// shrink it when they only care that the key arrives, and stretch it when they
+// need to act (revoke consent) while it is still pending.
 var autoPermitSettleDelay = 400 * time.Millisecond
+
+// SetAutoPermitSettleDelayForTest overrides the settle wait and returns a
+// restore func for t.Cleanup.
+func SetAutoPermitSettleDelayForTest(d time.Duration) func() {
+	prev := autoPermitSettleDelay
+	autoPermitSettleDelay = d
+	return func() { autoPermitSettleDelay = prev }
+}
 
 // maybeAnswerAutoPermit answers a just-raised permission prompt when the
 // operator granted this agent the slug for it. Called from the brokered-hook
@@ -46,22 +58,39 @@ var autoPermitSettleDelay = 400 * time.Millisecond
 // default-granted nor owner-implied — so "no grant" is the answer for every
 // agent nobody consented for, and it is a silent no-op: the prompt simply waits
 // for the human, as it does today.
+//
+// The session's harness must be the one the entry describes. A tool name only
+// means anything inside the harness that defines it, and the accept keys are
+// specific to how that harness draws its dialog — so a same-named prompt from
+// another harness is not this condition and is never answered by it.
 func maybeAnswerAutoPermit(row *db.SessionRow, toolName string) {
 	accept, known := session.AutoPermitAcceptForTool(toolName)
 	if !known || row == nil || row.ConvID == "" || row.TmuxSession == "" {
 		return
 	}
+	if !session.AutoPermitHarnessMatches(row.Harness, accept) {
+		return
+	}
 	if resolvePermission(row.ConvID, accept.Slug) != permAllow {
 		return
 	}
-	recordAutoPermitAnswer(row, toolName)
-	go pressAutoPermitAccept(row.TmuxSession, row.ConvID, toolName, accept.Keys)
+	go pressAutoPermitAccept(row, accept.Slug, toolName, accept.Keys)
 }
 
 // pressAutoPermitAccept sends the accept keys once the dialog has had time to
 // paint, under the pane injection lock every other keystroke path takes.
-func pressAutoPermitAccept(tmuxSession, convID, toolName string, keys []string) {
+//
+// The grant is re-read after the wait rather than trusted from before it: the
+// press is the act being authorized, and consent withdrawn in between must land
+// before the key does, not after.
+func pressAutoPermitAccept(row *db.SessionRow, slug, toolName string, keys []string) {
 	time.Sleep(autoPermitSettleDelay)
+	if resolvePermission(row.ConvID, slug) != permAllow {
+		slog.Info("auto-permit: consent was withdrawn before the keystroke; leaving the prompt",
+			"tool", toolName, "conv", row.ConvID, "module", "agentd")
+		return
+	}
+	tmuxSession, convID := row.TmuxSession, row.ConvID
 	target := tmuxSession + ":0.0"
 	mu := paneInjectLock(injectLockKey(target))
 	if err := acquirePaneInjectLock(mu); err != nil {
@@ -81,13 +110,15 @@ func pressAutoPermitAccept(tmuxSession, convID, toolName string, keys []string) 
 	}
 	slog.Info("auto-permit: answered a permission prompt on the operator's behalf",
 		"tool", toolName, "conv", convID, "module", "agentd")
+	recordAutoPermitAnswer(row, toolName)
 }
 
 // recordAutoPermitAnswer writes the operator's record of what was approved for
 // them: an ordinary audit row, in the same trail and dashboard tab as every
-// other action taken against this agent. Written when the answer is DECIDED
-// rather than after the keystroke, so a press that fails still leaves the
-// decision visible (the failure itself is logged).
+// other action taken against this agent. Written after the keystroke actually
+// went out, so the trail records what was answered rather than what was
+// intended — a decision that never became a press (consent withdrawn during the
+// settle, a dead pane) is a log line, not a claim that something was approved.
 func recordAutoPermitAnswer(row *db.SessionRow, toolName string) {
 	if _, err := db.InsertAuditLog(db.AuditLogEntry{
 		At:          time.Now(),
