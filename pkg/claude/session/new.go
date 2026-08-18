@@ -1956,9 +1956,25 @@ func runNew(params *NewParams) error {
 	}
 	launchRowOwned := priorRow == nil
 	launchRowCommitted := false
+	// launchPaneCommand is assigned once the pane command is fully assembled,
+	// so the rollback below can report what this launch actually tried to run.
+	launchPaneCommand := ""
 	defer func() {
 		if launchRowCommitted || !launchRowOwned {
 			return
+		}
+		// Rolling the row back also destroys the exit audit's only anchor: a
+		// pane-died callback arriving afterwards cannot load the session and
+		// fails with "sql: no rows in result set", so neither the pane's output
+		// nor the command that produced it is recorded anywhere. Write the
+		// command here, where it is still known.
+		//
+		// Redacted: the command carries the whole forwarded environment, and
+		// output.log is not a place for the operator's API keys.
+		if launchPaneCommand != "" {
+			slog.Error("launch failed; rolling back its session row",
+				"session_id", sessionID, "tmux_session", tmuxSession,
+				"pane_command", RedactPaneCommand(launchPaneCommand))
 		}
 		// Generation-conditional: a concurrent same-label launch that re-wrote
 		// the row after us must keep it — only the exact row THIS launch wrote
@@ -2332,6 +2348,15 @@ func runNew(params *NewParams) error {
 		harnessCmd = guardHarnessCommandWithDirProof(
 			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "", proofWriteDirs, generatedWriteDirs)
 	}
+
+	// The command is now fully assembled — every wrapper layer applied. Hand it
+	// to the rollback above so a launch that fails from here on says what it
+	// tried to run, and emit it at debug for a launch that fails in a way the
+	// rollback never sees.
+	launchPaneCommand = harnessCmd
+	slog.Debug("launching managed pane",
+		"session_id", sessionID, "tmux_session", tmuxSession,
+		"pane_command", RedactPaneCommand(harnessCmd))
 
 	// Create the detached tmux session running the harness command. The
 	// managed Codex launch-profile path (when any) rides as an inert argv
