@@ -85,11 +85,6 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 			"could not resolve a session row for this caller; refusing to apply its statusline")
 		return
 	}
-	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
-		writeError(w, http.StatusTooManyRequests, "rate", "too many statusline renders")
-		return
-	}
-
 	body, err := io.ReadAll(io.LimitReader(r.Body, brokerMaxBody+1))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "body", "could not read request body")
@@ -117,6 +112,10 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 				"claimed session id does not match the session resolved for this caller")
 			return
 		}
+	}
+	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
+		writeError(w, http.StatusTooManyRequests, "rate", "too many statusline renders")
+		return
 	}
 	if !safeBrokeredConvID(req.RenderConvID) {
 		// Same reasoning as the hook endpoint: a conv-id is not merely
