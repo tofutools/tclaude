@@ -1,6 +1,8 @@
 package session
 
 import (
+	"os/exec"
+	"path/filepath"
 	"slices"
 
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -28,5 +30,13 @@ import (
 // hard-coded claude/node match missed), risking a false-positive reap of a
 // non-tmux row.
 func IsHarnessProcessName(name string) bool {
-	return name == "node" || slices.Contains(harness.SpawnBinaries(), name)
+	if name == "node" || slices.Contains(harness.SpawnBinaries(), name) {
+		return true
+	}
+	claudePath, err := exec.LookPath(harness.DefaultName)
+	if err != nil {
+		return false
+	}
+	resolved, err := filepath.EvalSymlinks(claudePath)
+	return err == nil && name == filepath.Base(resolved)
 }
