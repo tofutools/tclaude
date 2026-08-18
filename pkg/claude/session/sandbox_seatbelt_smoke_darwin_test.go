@@ -176,6 +176,26 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 
 	t.Setenv("HOME", smokeHome)
 	t.Setenv("TMUX_TMPDIR", tmuxBase)
+	const smokeLaunchGeneration = "darwin-seatbelt-smoke-generation"
+	fakeTmuxBin := filepath.Join(root, "host-bin")
+	require.NoError(t, os.MkdirAll(fakeTmuxBin, 0o755))
+	fakeTmux := filepath.Join(fakeTmuxBin, "tmux")
+	fakeTmuxScript := fmt.Sprintf(`#!/bin/sh
+case " $* " in
+  *" display-message "*)
+    printf '%%s|%%s|%%s|0|||%%s\n' %s '%%1' %s %s
+    ;;
+  *" list-sessions "*)
+    printf '%%s\n' %s
+    ;;
+  *) exit 1 ;;
+esac
+`, clcommon.ShellQuoteArg(darwinSmokeSessionID),
+		clcommon.ShellQuoteArg(strconv.Itoa(os.Getpid())),
+		clcommon.ShellQuoteArg(smokeLaunchGeneration),
+		clcommon.ShellQuoteArg(darwinSmokeSessionID))
+	require.NoError(t, os.WriteFile(fakeTmux, []byte(fakeTmuxScript), 0o755))
+	t.Setenv("PATH", fakeTmuxBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	tclaudeBinary := strings.TrimSpace(os.Getenv(darwinSmokeTclaudeBinaryEnv))
 	require.NotEmpty(t, tclaudeBinary,
 		"set TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY to the current built tclaude binary")
@@ -190,8 +210,10 @@ func TestTclaudeLayerDarwinSmoke(t *testing.T) {
 		ID:                    darwinSmokeSessionID,
 		PID:                   os.Getpid(),
 		ConvID:                darwinSmokeConvID,
+		TmuxSession:           darwinSmokeSessionID,
 		Harness:               harness.DefaultName,
 		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		ExitLaunchGeneration:  smokeLaunchGeneration,
 		Cwd:                   allowed,
 		Status:                StatusIdle,
 		CreatedAt:             now,
@@ -489,7 +511,8 @@ func runDarwinSeatbeltSmokeHelper(
 		darwinSmokeHelperPIDFileEnv+"="+helperPIDFile,
 		darwinSmokeHelperGateFDEnv+"=4",
 		HookBrokerEnvVar+"="+HookBrokerAgentd,
-		"TCLAUDE_SESSION_ID="+darwinSmokeSessionID,
+		agentipc.AgentHintEnvVar+"=1",
+		agentipc.SessionIDEnvVar+"="+darwinSmokeSessionID,
 	)
 	var output bytes.Buffer
 	cmd.Stdout = &output

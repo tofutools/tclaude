@@ -74,6 +74,11 @@ type tclaudeLayerSmokeMounts struct {
 
 const smokeConvID = "75000000-0000-4000-8000-000000000750"
 
+const (
+	tclaudeLayerSmokeSessionID        = "sandbox-v2-smoke"
+	tclaudeLayerSmokeLaunchGeneration = "linux-bwrap-smoke-generation"
+)
+
 func TestTclaudeLayerHostSmoke(t *testing.T) {
 	if os.Getenv("TCLAUDE_SANDBOX_V2_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_SANDBOX_V2_SMOKE=1 on an unsandboxed Linux host with bubblewrap")
@@ -120,6 +125,25 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	))
 	t.Setenv("HOME", smokeHome)
 	t.Setenv("TMUX_TMPDIR", tmuxBase)
+	fakeTmuxBin := filepath.Join(root, "host-bin")
+	require.NoError(t, os.MkdirAll(fakeTmuxBin, 0o755))
+	fakeTmux := filepath.Join(fakeTmuxBin, "tmux")
+	fakeTmuxScript := fmt.Sprintf(`#!/bin/sh
+case " $* " in
+  *" display-message "*)
+    printf '%%s|%%s|%%s|0|||%%s\n' %s '%%1' %s %s
+    ;;
+  *" list-sessions "*)
+    printf '%%s\n' %s
+    ;;
+  *) exit 1 ;;
+esac
+`, clcommon.ShellQuoteArg(tclaudeLayerSmokeSessionID),
+		clcommon.ShellQuoteArg(strconv.Itoa(os.Getpid())),
+		clcommon.ShellQuoteArg(tclaudeLayerSmokeLaunchGeneration),
+		clcommon.ShellQuoteArg(tclaudeLayerSmokeSessionID))
+	require.NoError(t, os.WriteFile(fakeTmux, []byte(fakeTmuxScript), 0o755))
+	t.Setenv("PATH", fakeTmuxBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	tclaudeBinary := strings.TrimSpace(os.Getenv(smokeTclaudeBinaryEnv))
 	require.NotEmpty(t, tclaudeBinary,
 		"set TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY to the current built tclaude binary")
@@ -131,11 +155,13 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	t.Cleanup(stopAgentd)
 	now := time.Now()
 	require.NoError(t, db.SaveSession(&db.SessionRow{
-		ID:                    "sandbox-v2-smoke",
+		ID:                    tclaudeLayerSmokeSessionID,
 		PID:                   os.Getpid(),
 		ConvID:                smokeConvID,
+		TmuxSession:           tclaudeLayerSmokeSessionID,
 		Harness:               harness.DefaultName,
 		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		ExitLaunchGeneration:  tclaudeLayerSmokeLaunchGeneration,
 		Cwd:                   allowed,
 		Status:                StatusWorking,
 		CreatedAt:             now,
@@ -162,8 +188,8 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 	// `go test` normally places its executable under /tmp, which this layer
 	// intentionally replaces with a fresh tmpfs. Copy the helper alongside the
 	// fixture so the sandbox can execute it through the read-only base root.
-	// Name the helper `claude`: the real agentd identity resolver recognizes
-	// that harness ancestor and resolves its PID through the sessions table.
+	// Keep the harness-shaped name so this smoke remains representative even
+	// though tclaude-layer identity is proved from the launch pane and generation.
 	helperBinary := filepath.Join(allowed, "claude")
 	copyTestBinary(t, os.Args[0], helperBinary)
 
@@ -348,6 +374,8 @@ func runTclaudeLayerHostNetworkConstructedRootHelper(
 			"-test.run=^TestTclaudeLayerHostNetworkConstructedRootHelper$")...)
 	cmd.Env = append(os.Environ(),
 		smokeHostNetworkHelperEnv+"=1",
+		agentipc.AgentHintEnvVar+"=1",
+		agentipc.SessionIDEnvVar+"="+tclaudeLayerSmokeSessionID,
 		smokeAllowedSocketEnv+"="+allowedSocket,
 		smokePeerSocketEnv+"="+peerSocket,
 		smokeRuntimeSocketEnv+"="+runtimeSocket,
@@ -489,6 +517,8 @@ func runTclaudeLayerSmokeHelper(
 		append(args, "--", helperBinary, "-test.run=^TestTclaudeLayerSmokeHelper$")...)
 	cmd.Env = append(os.Environ(),
 		tclaudeLayerSmokeHelperEnv+"=1",
+		agentipc.AgentHintEnvVar+"=1",
+		agentipc.SessionIDEnvVar+"="+tclaudeLayerSmokeSessionID,
 		smokeAllowedEnv+"="+allowed,
 		smokeOutsideEnv+"="+outside,
 		smokeAliasFileEnv+"="+aliasFile,

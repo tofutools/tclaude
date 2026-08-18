@@ -99,3 +99,34 @@ func TestAgentIdentityForPIDKeepsLegacyOutsideSandboxResolution(t *testing.T) {
 	assert.Equal(t, convID, gotConv)
 	assert.True(t, hasAncestor)
 }
+
+func TestAgentIdentityForPIDRejectsLayerRowWithoutProofClaim(t *testing.T) {
+	setupTestDB(t)
+
+	const (
+		callerPID = 5101
+		claudePID = 5100
+		panePID   = 5099
+		convID    = "layer-must-not-use-legacy"
+	)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "layer-row", PID: panePID, ConvID: convID,
+		TmuxSession: "tmux-layer", Harness: harness.DefaultName,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+	}))
+	fakeProcTree{
+		name: map[int]string{callerPID: "tclaude", claudePID: "claude", panePID: "bash"},
+		parent: map[int]int{
+			callerPID: claudePID, claudePID: panePID, panePID: 1,
+		},
+	}.install(t)
+
+	legacyConv, legacyAncestor := convIDForPID(callerPID)
+	assert.Equal(t, convID, legacyConv, "fixture must reach the compatibility resolver")
+	assert.True(t, legacyAncestor)
+
+	gotConv, hasAncestor := agentIdentityForPID(callerPID, "")
+	assert.Empty(t, gotConv)
+	assert.True(t, hasAncestor,
+		"a layer caller cannot omit its claim and inherit legacy PID authorization")
+}

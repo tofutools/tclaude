@@ -51,12 +51,10 @@ const brokerRatePerSecond = 20
 // is deliberately far larger than any real caller needs.
 const brokerPreIdentityRatePerSecond = 2000
 
-// brokerProofRatePerSecond is the hard ceiling on the exceptional live-tmux
-// proof used only when ordinary ancestry is missing or disagrees with the
-// request claim. Unlike the operator-controlled traffic ceiling, this is
-// always enforced: each admitted attempt may spawn a tmux subprocess. Normal
-// matching callbacks never consume it, and the headroom is well above the
-// final per-agent traffic ceiling.
+// brokerProofRatePerSecond is the hard ceiling on live-tmux identity proofs.
+// Unlike the operator-controlled traffic ceiling, this is always enforced:
+// each admitted attempt may spawn a tmux subprocess. The headroom is well
+// above ordinary agent CLI and broker traffic.
 const brokerProofRatePerSecond = 100
 
 // brokerPreIdentityKey is the shared pre-proof bucket for callers with no
