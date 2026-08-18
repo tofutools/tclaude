@@ -1973,7 +1973,7 @@ func runNew(params *NewParams) error {
 		// output.log is not a place for the operator's API keys.
 		if launchPaneCommand != "" {
 			if redacted, ok := RedactPaneCommand(
-				launchPaneCommand, envExports, authoredEnvValues(effectiveSandbox)); ok {
+				launchPaneCommand, envExports, authoredPaneCommandSecrets(effectiveSandbox)); ok {
 				slog.Error("launch failed; rolling back its session row",
 					"session_id", sessionID, "tmux_session", tmuxSession,
 					"pane_command", redacted)
@@ -2364,7 +2364,7 @@ func runNew(params *NewParams) error {
 	// rollback never sees.
 	launchPaneCommand = harnessCmd
 	if redacted, ok := RedactPaneCommand(
-		harnessCmd, envExports, authoredEnvValues(effectiveSandbox)); ok {
+		harnessCmd, envExports, authoredPaneCommandSecrets(effectiveSandbox)); ok {
 		slog.Debug("launching managed pane",
 			"session_id", sessionID, "tmux_session", tmuxSession,
 			"pane_command", redacted)
@@ -2906,28 +2906,43 @@ func sandboxSnapshotMaterializedUnixSocketPaths(
 	return &paths
 }
 
-// authoredEnvValues lists the sandbox profile's authored environment VALUES,
-// for RedactPaneCommand's fail-closed check.
+// authoredSecretMinLen is the shortest authored value used as a fail-closed
+// tripwire. At or below it a value is indistinguishable from ordinary command
+// text — a profile authoring NODE_ENV=production or TERM=xterm would match
+// somewhere in every launch and withhold the diagnostic forever. Short values
+// are covered by the marker below instead, which does not depend on length.
+const authoredSecretMinLen = 12
+
+// authoredPaneCommandSecrets describes the sandbox profile's authored
+// environment to RedactPaneCommand's fail-closed check.
 //
-// These are the operator's declared secrets, and they are the ones that reach
-// the pane command through more than one channel: besides the shared env-export
-// prefix, a Codex launch renders each of them again as a
-// shell_environment_policy.set override on its own argv (see
-// sandboxSnapshotEnvironment and the Codex spawner). Removing the prefix alone
-// therefore left them in the logged command.
+// These are the operator's declared secrets, and the ones that reach the pane
+// command through more than one channel: besides the shared env-export prefix,
+// a Codex launch renders each of them again as a shell_environment_policy.set
+// override on its own argv (see sandboxSnapshotEnvironment and the Codex
+// spawner). Removing the prefix alone left them in the logged command.
 //
-// Only the AUTHORED entries — values inherited from the operator's environment
-// are covered by removing the prefix, and cannot be checked this way because
-// HOME, PWD and friends are legitimate substrings of ordinary command text.
-func authoredEnvValues(snapshot *sandboxpolicy.Snapshot) []string {
+// Both halves are needed. A distinctive value catches a channel this code knows
+// nothing about. A marker catches the channel we DO know about regardless of
+// how short its value is, which is what keeps the length floor from opening a
+// hole: an authored 6-character token is still refused, by name.
+//
+// Only AUTHORED entries. Values inherited from the operator's environment are
+// covered by removing the prefix and cannot be checked this way, because HOME,
+// PWD and friends are legitimate substrings of ordinary command text.
+func authoredPaneCommandSecrets(snapshot *sandboxpolicy.Snapshot) PaneCommandSecrets {
 	if snapshot == nil {
-		return nil
+		return PaneCommandSecrets{}
 	}
-	values := make([]string, 0, len(snapshot.Effective.Environment))
+	var secrets PaneCommandSecrets
 	for _, entry := range snapshot.Effective.Environment {
-		values = append(values, entry.Value)
+		if len(entry.Value) > authoredSecretMinLen {
+			secrets.Values = append(secrets.Values, entry.Value)
+		}
+		secrets.Markers = append(secrets.Markers,
+			harness.CodexShellEnvironmentOverridePrefix+entry.Name+"=")
 	}
-	return values
+	return secrets
 }
 
 func sandboxSnapshotEnvironment(snapshot *sandboxpolicy.Snapshot) map[string]string {

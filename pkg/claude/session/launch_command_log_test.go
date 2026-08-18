@@ -8,6 +8,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // nestOnce re-encodes a string the way ShellQuoteArg does when the command
@@ -41,7 +43,7 @@ func TestRedactPaneCommandRemovesTheEnvironmentAtEveryNestingDepth(t *testing.T)
 	} {
 		command := "tclaude session resource-limit-exec --command '" + prefix + tail + "'"
 
-		got, ok := RedactPaneCommand(command, envExports, nil)
+		got, ok := RedactPaneCommand(command, envExports, PaneCommandSecrets{})
 
 		require.Truef(t, ok, "depth %d: the prefix must be locatable", depth)
 		assert.NotContainsf(t, got, "sk-do-not-log-me", "depth %d: a value survived", depth)
@@ -69,7 +71,7 @@ func TestRedactPaneCommandRemovesTheEnvironmentAtEveryNestingDepth(t *testing.T)
 // environment must report failure so the caller writes no command at all.
 func TestRedactPaneCommandFailsClosedWhenThePrefixIsNotFound(t *testing.T) {
 	got, ok := RedactPaneCommand(
-		"claude --resume abc", "export SECRET='never-appears-in-the-command'; ", nil)
+		"claude --resume abc", "export SECRET='never-appears-in-the-command'; ", PaneCommandSecrets{})
 
 	assert.False(t, ok, "an unlocatable prefix must not be reported as redacted")
 	assert.Empty(t, got, "no command may be returned when redaction could not be proved")
@@ -89,7 +91,7 @@ func TestRedactPaneCommandFailsClosedWhenAnOccurrenceWouldSurvive(t *testing.T) 
 		{"deeper copy first", nestOnce(envExports) + " && " + envExports + "claude"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := RedactPaneCommand(tc.command, envExports, nil)
+			got, ok := RedactPaneCommand(tc.command, envExports, PaneCommandSecrets{})
 
 			assert.False(t, ok, "a surviving occurrence must fail closed")
 			assert.Empty(t, got)
@@ -111,11 +113,11 @@ func TestRedactPaneCommandFailsClosedWhenASecretSurvivesOutsideThePrefix(t *test
 	command := envExports + `codex -c 'shell_environment_policy.set.ANTHROPIC_API_KEY="` + secret + `"'`
 
 	// Without the authored values, the second channel is invisible.
-	unaware, unawareOK := RedactPaneCommand(command, envExports, nil)
+	unaware, unawareOK := RedactPaneCommand(command, envExports, PaneCommandSecrets{})
 	require.True(t, unawareOK, "prefix removal alone reports success")
 	require.Contains(t, unaware, secret, "…while the secret is still there — the bug")
 
-	got, ok := RedactPaneCommand(command, envExports, []string{secret})
+	got, ok := RedactPaneCommand(command, envExports, PaneCommandSecrets{Values: []string{secret}})
 
 	assert.False(t, ok, "a secret surviving outside the prefix must fail closed")
 	assert.Empty(t, got)
@@ -127,7 +129,7 @@ func TestRedactPaneCommandFailsClosedWhenASurvivingSecretIsNested(t *testing.T) 
 	const envExports = "export K='v'; "
 	command := envExports + "sh -c '" + nestOnce("echo '"+secret+"'") + "'"
 
-	_, ok := RedactPaneCommand(command, envExports, []string{secret})
+	_, ok := RedactPaneCommand(command, envExports, PaneCommandSecrets{Values: []string{secret}})
 
 	assert.False(t, ok, "a nested surviving secret must fail closed")
 }
@@ -138,17 +140,61 @@ func TestRedactPaneCommandKeepsTheCommandWhenNoSecretSurvives(t *testing.T) {
 	const secret = "sk-only-in-the-prefix"
 	const envExports = "export ANTHROPIC_API_KEY='" + secret + "'; "
 
-	got, ok := RedactPaneCommand(envExports+"claude --model opus", envExports, []string{secret})
+	got, ok := RedactPaneCommand(envExports+"claude --model opus", envExports, PaneCommandSecrets{Values: []string{secret}})
 
 	require.True(t, ok)
 	assert.NotContains(t, got, secret)
 	assert.Contains(t, got, "claude --model opus")
 }
 
+// Scenario: an authored value too short to be a usable tripwire — the case the
+// length floor in authoredPaneCommandSecrets excludes from Values.
+//
+// Expected: still refused, via the marker. The floor exists because a value
+// like "production" or "xterm" matches ordinary command text and would withhold
+// every launch; it must not become a way for a short authored secret to reach
+// the log through Codex's second channel.
+func TestRedactPaneCommandFailsClosedOnAShortSecretViaItsMarker(t *testing.T) {
+	const secret = "hunter2" // below authoredSecretMinLen, so never a tripwire value
+	const envExports = "export PIN='" + secret + "'; "
+	command := envExports + `codex -c 'shell_environment_policy.set.PIN="` + secret + `"'`
+
+	// The floor genuinely excludes it, so Values alone cannot save us here.
+	require.LessOrEqual(t, len(secret), authoredSecretMinLen)
+	_, valuesOnlyOK := RedactPaneCommand(command, envExports, PaneCommandSecrets{})
+	require.True(t, valuesOnlyOK, "without the marker the short secret goes unnoticed")
+
+	_, ok := RedactPaneCommand(command, envExports, PaneCommandSecrets{
+		Markers: []string{harness.CodexShellEnvironmentOverridePrefix + "PIN="},
+	})
+
+	assert.False(t, ok, "the marker must refuse regardless of value length")
+}
+
+// The floor must actually be applied, and the marker must be emitted for every
+// authored entry — including the short ones excluded from Values.
+func TestAuthoredPaneCommandSecretsAppliesTheFloorAndAlwaysMarks(t *testing.T) {
+	secrets := authoredPaneCommandSecrets(&sandboxpolicy.Snapshot{
+		Effective: sandboxpolicy.EffectiveProfile{
+			Environment: []sandboxpolicy.EnvironmentEntry{
+				{Name: "NODE_ENV", Value: "production"},
+				{Name: "ANTHROPIC_API_KEY", Value: "sk-long-enough-to-be-distinctive"},
+			},
+		},
+	})
+
+	assert.NotContains(t, secrets.Values, "production",
+		"a short ordinary value must not become a tripwire that withholds every launch")
+	assert.Contains(t, secrets.Values, "sk-long-enough-to-be-distinctive")
+	assert.Contains(t, secrets.Markers, harness.CodexShellEnvironmentOverridePrefix+"NODE_ENV=",
+		"every authored entry needs a marker, especially the ones the floor excluded")
+	assert.Contains(t, secrets.Markers, harness.CodexShellEnvironmentOverridePrefix+"ANTHROPIC_API_KEY=")
+}
+
 // A launch that forwards no environment has nothing to remove, and its command
 // must still be loggable.
 func TestRedactPaneCommandPassesThroughWhenThereIsNoEnvironment(t *testing.T) {
-	got, ok := RedactPaneCommand("claude --resume abc", "", nil)
+	got, ok := RedactPaneCommand("claude --resume abc", "", PaneCommandSecrets{})
 
 	require.True(t, ok)
 	assert.Equal(t, "claude --resume abc", got)

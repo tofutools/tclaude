@@ -51,7 +51,23 @@ const maxShellQuoteNesting = 6
 // would withhold every command. And SpawnSpec.PreLaunchScript, operator-
 // authored shell from the profile's pre_launch blocks, is rendered verbatim and
 // is not scanned; an operator who exports a secret there is logging it.
-func RedactPaneCommand(command, envExports string, secretValues []string) (string, bool) {
+// PaneCommandSecrets is what RedactPaneCommand checks its output against.
+//
+// Two kinds, because a value alone is not always a usable tripwire. Values
+// catch a channel this code knows nothing about, but only when they are
+// distinctive enough not to collide with ordinary command text. Markers cover
+// the opposite case: an exact substring whose mere PRESENCE proves a value
+// channel is rendered, which works no matter how short the value is.
+type PaneCommandSecrets struct {
+	// Values are authored environment values long enough to be distinctive.
+	Values []string
+	// Markers are substrings that prove a known second channel rendered an
+	// authored value — e.g. Codex's shell_environment_policy.set.NAME= prefix.
+	// A marker must contain no quote, so re-quoting cannot disguise it.
+	Markers []string
+}
+
+func RedactPaneCommand(command, envExports string, secrets PaneCommandSecrets) (string, bool) {
 	redacted := command
 	if envExports != "" {
 		located := false
@@ -79,7 +95,7 @@ func RedactPaneCommand(command, envExports string, secretValues []string) (strin
 			form = nestShellQuoting(form)
 		}
 	}
-	for _, value := range secretValues {
+	for _, value := range secrets.Values {
 		if value == "" {
 			continue
 		}
@@ -89,6 +105,13 @@ func RedactPaneCommand(command, envExports string, secretValues []string) (strin
 				return "", false
 			}
 			form = nestShellQuoting(form)
+		}
+	}
+	// Markers need no nesting walk: they carry no quote, so no amount of
+	// re-quoting changes them.
+	for _, marker := range secrets.Markers {
+		if marker != "" && strings.Contains(redacted, marker) {
+			return "", false
 		}
 	}
 	return redacted, true
