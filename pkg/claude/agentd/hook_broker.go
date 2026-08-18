@@ -193,6 +193,11 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 			"could not resolve a session row for this caller; refusing to apply its hook")
 		return
 	}
+	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
+		writeError(w, http.StatusTooManyRequests, "rate", "too many hook events")
+		return
+	}
+
 	body, err := io.ReadAll(io.LimitReader(r.Body, brokerMaxBody+1))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "body", "could not read request body")
@@ -227,14 +232,6 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 				"claimed session id does not match the session resolved for this caller")
 			return
 		}
-	}
-	// Key the per-agent limiter after the startup repair. Before the launch
-	// row gains its pane pid, the ordinary walk can name a stale row; charging
-	// that row here could reject the real agent before the stronger pane proof
-	// gets a chance to repair its identity.
-	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
-		writeError(w, http.StatusTooManyRequests, "rate", "too many hook events")
-		return
 	}
 	if req.AckToken != "" {
 		if !resolveHookAck(row.ID, req.AckToken, !req.RelayFailed) {
