@@ -1211,8 +1211,8 @@ var (
 )
 
 const (
-	brokerStartupPaneProofAttempts = 11
-	brokerStartupPaneProofDelay    = 25 * time.Millisecond
+	brokerStartupPaneProofAttempts = 20
+	brokerStartupPaneProofDelay    = 50 * time.Millisecond
 )
 
 // harnessNameAt returns the harness runtime name of the process at pid — the
