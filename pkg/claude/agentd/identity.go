@@ -1438,7 +1438,7 @@ func claimedLivePaneSessionRow(callerPID int, claimedID string) (*db.SessionRow,
 		return nil, 0
 	}
 	identity, err := db.GetSessionExitLaunchIdentity(row.ID)
-	if err != nil || identity.Generation == "" {
+	if err != nil || identity.Generation == "" || identity.TmuxSession != row.TmuxSession {
 		return nil, 0
 	}
 	pane, err := brokerLivePaneProbe(row.TmuxSession)
