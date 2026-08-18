@@ -370,14 +370,10 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 		cc.Shutdown()
 		s.w.Tmux.MarkAlive(label)
 		code := 1
-		if settle := s.w.SpawnPaneStatusSettlesAfter; settle > 0 {
+		if reads := s.w.SpawnPaneStatusSettlesAfterReads; reads > 0 {
 			// Retain the corpse the way tmux first exposes one: dead pane, no
-			// status yet. The reap lands on its own a moment later.
-			s.w.Tmux.MarkPaneDead(label, nil, "")
-			go func() {
-				time.Sleep(settle)
-				s.w.Tmux.MarkPaneDead(label, &code, "")
-			}()
+			// status yet. The reap lands on a later read.
+			s.w.Tmux.MarkPaneDeadPendingReap(label, &code, "", reads)
 			return nil
 		}
 		s.w.Tmux.MarkPaneDead(label, &code, "")

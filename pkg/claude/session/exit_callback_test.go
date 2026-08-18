@@ -26,6 +26,7 @@ type exitCallbackTmux struct {
 	paneID               string
 	deadOutput           string
 	captureOutput        string
+	failCapture          bool
 	failSetHook          bool
 	failRemainOnExit     bool
 	noNativePaneDied     bool
@@ -61,6 +62,10 @@ func (f *exitCallbackTmux) Command(args ...string) *exec.Cmd {
 		return exec.Command("sh", "-c", "printf '%s' \"$1\"", "sh", out)
 	}
 	if len(args) > 0 && args[0] == "capture-pane" {
+		if f.failCapture {
+			// What a corpse reaped out from under the callback looks like.
+			return exec.Command("false")
+		}
 		return exec.Command("sh", "-c", "printf '%s' \"$1\"", "sh", f.captureOutput)
 	}
 	if len(args) > 0 && args[0] == "kill-pane" && f.failKillPaneCount > 0 {
@@ -451,6 +456,48 @@ func TestRunExitCallback_LogsStartupFailureWithUnknownStatusAndSilentPane(t *tes
 	got := logs.String()
 	assert.Contains(t, got, `"msg":"managed pane failed during startup"`)
 	assert.Contains(t, got, `"pane_output":"(the pane printed nothing before it died)"`)
+}
+
+// Scenario: the startup failure qualifies for capture, but the corpse is
+// reaped out from under the callback (by the daemon's reaper, or by
+// tmuxLaunchNameFree freeing the launch name) so capture-pane fails.
+//
+// Expected: the log says the pane could not be captured. Reusing the silent-
+// pane wording here would assert, as fact, that the harness printed nothing —
+// sending the operator after the launch wrapper for output that existed and
+// was merely unreadable by then. That is a worse failure than the missing log
+// line this path was built to prevent, because it is wrong rather than absent.
+func TestRunExitCallback_UnreadablePaneIsNotReportedAsSilent(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%33", deadOutput: "tmux-capture-fail|%33|1|||33333333333333333333333333333333",
+		failCapture: true,
+	}
+	setupExitCallbackTest(t, fake)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	const generation = "33333333333333333333333333333333"
+	const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-capture-fail", TmuxSession: "tmux-capture-fail", ConvID: "conv-capture-fail",
+		Status: StatusWorking, Created: time.Now(),
+	}, generation, db.SessionExitGateReleased))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-capture-fail", generation, hex.EncodeToString(hash[:]), "%33"))
+
+	require.NoError(t, runExitCallback(exitCallbackParams{
+		SessionID: "spwn-capture-fail", TmuxSession: "tmux-capture-fail", PaneID: "%33",
+		Generation: generation, Token: token,
+	}))
+
+	got := logs.String()
+	assert.Contains(t, got, `"msg":"managed pane failed during startup"`)
+	assert.Contains(t, got, "the pane could not be captured",
+		"an unreadable pane must not borrow the silent pane's wording")
+	assert.NotContains(t, got, "printed nothing before it died")
 }
 
 // Scenario: a pane exits 0 inside the startup window with no recorded

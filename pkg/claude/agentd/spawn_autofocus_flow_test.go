@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -84,7 +83,10 @@ func TestSpawn_DeadPaneWaitsForTmuxToAttachExitStatus(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	f.World.SpawnPaneDiesAtLaunch = true
-	f.World.SpawnPaneStatusSettlesAfter = 300 * time.Millisecond
+	// The status lands only on the second read of it, so the spawn path must
+	// actually re-read to see it. Counting reads rather than sleeping means a
+	// slow host cannot skip the pre-reap observation and pass vacuously.
+	f.World.SpawnPaneStatusSettlesAfterReads = 2
 
 	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker"})
 

@@ -3,7 +3,6 @@ package testharness
 import (
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -46,14 +45,15 @@ type World struct {
 	// /exit-s the predecessor), so the simulator has to be able to produce it.
 	SpawnPaneDiesAtLaunch bool
 
-	// SpawnPaneStatusSettlesAfter, when > 0 alongside SpawnPaneDiesAtLaunch,
-	// retains the corpse with NO exit status for that long before attaching
-	// one. Real tmux closes a pane's pty and reaps the pane's child as two
-	// separate events, so a fast-dying pane genuinely reports pane_dead=1 with
-	// neither pane_dead_status nor pane_dead_signal until the reap lands. A
-	// spawn that reads that first observation as final reports "unknown exit
-	// status" and discards the real code, which is what this models.
-	SpawnPaneStatusSettlesAfter time.Duration
+	// SpawnPaneStatusSettlesAfterReads, when > 0 alongside
+	// SpawnPaneDiesAtLaunch, retains the corpse with NO exit status until its
+	// dead-pane status has been read that many times. Real tmux closes a pane's
+	// pty and reaps the pane's child as two separate events, so a fast-dying
+	// pane genuinely reports pane_dead=1 with neither pane_dead_status nor
+	// pane_dead_signal until the reap lands. A spawn that reads that first
+	// observation as final reports "unknown exit status" and discards the real
+	// code, which is what this models.
+	SpawnPaneStatusSettlesAfterReads int
 
 	// SpawnInputUnreadyEnters, when > 0, is applied to every CCSim the
 	// simSpawner builds via CCSim.SetInputUnreadyForEnters: the pane buffers

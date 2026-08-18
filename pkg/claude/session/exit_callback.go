@@ -541,15 +541,33 @@ func runExitCallback(p exitCallbackParams) error {
 		// points at the launch wrapper rather than the harness — and an absent
 		// log line is indistinguishable from a capture that never ran, which is
 		// the confusion this whole path exists to prevent.
-		paneOutput := captureDeadPaneDiagnostic(p.PaneID)
-		if paneOutput == "" {
+		//
+		// Which is exactly why an unreadable pane must NOT borrow the empty
+		// pane's wording. A concurrent reaper (the daemon's, or
+		// tmuxLaunchNameFree freeing the launch name) can remove the corpse
+		// between the record above and this capture; asserting "printed
+		// nothing" there would send the operator hunting the launch wrapper
+		// for output that existed and was merely unreadable by then.
+		paneOutput, captureErr := captureDeadPaneDiagnostic(p.PaneID)
+		switch {
+		case captureErr != nil:
+			paneOutput = "(the pane could not be captured: " + captureErr.Error() + ")"
+		case paneOutput == "":
 			paneOutput = "(the pane printed nothing before it died)"
+		}
+		// tmux reports an exit code OR a signal, never both, so the other field
+		// being empty is normal. BOTH empty means tmux had not reaped the
+		// pane's child yet — say that in the word the audit row already uses,
+		// rather than emitting two blanks that read as "fields not populated".
+		exitCode, signal := exitCodeForLog(code), strings.ToUpper(p.Signal)
+		if exitCode == "" && signal == "" {
+			exitCode, signal = "unavailable", "unavailable"
 		}
 		slog.Error("managed pane failed during startup",
 			"session_id", p.SessionID, "tmux_session", p.TmuxSession,
 			"pane_id", p.PaneID, "event_id", result.EventID,
 			"startup_age", startupAge.String(),
-			"exit_code", exitCodeForLog(code), "signal", strings.ToUpper(p.Signal),
+			"exit_code", exitCode, "signal", signal,
 			"pane_output", paneOutput)
 	}
 	cleanupEvidence := PaneExitEvidence{
@@ -565,12 +583,19 @@ func runExitCallback(p exitCallbackParams) error {
 	return nil
 }
 
-func captureDeadPaneDiagnostic(paneID string) string {
+// captureDeadPaneDiagnostic copies the dying pane's bounded output tail.
+//
+// The error is returned rather than folded into an empty string because the
+// caller reports the two outcomes differently: "" with a nil error means the
+// pane genuinely printed nothing, which is evidence about the launch, while a
+// non-nil error means tmux could not be asked, which is evidence about
+// nothing. Collapsing them lets an unreadable pane masquerade as a silent one.
+func captureDeadPaneDiagnostic(paneID string) (string, error) {
 	out, err := clcommon.TmuxCommand("capture-pane", "-p", "-J", "-S", "-40", "-t", paneID).Output()
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return boundDeadPaneDiagnostic(out)
+	return boundDeadPaneDiagnostic(out), nil
 }
 
 func boundDeadPaneDiagnostic(out []byte) string {
