@@ -573,6 +573,30 @@ func TestBoundDeadPaneDiagnosticCapsLinesAndBytes(t *testing.T) {
 	assert.NotContains(t, got, "line-059-")
 }
 
+// Scenario: the real shape of a launch that dies before the harness draws
+// anything — the error on row 1 of a 50-row pane, blank padding below it, and
+// tmux's remain-on-exit banner on the last row.
+//
+// Expected: the error survives. Bounding over raw rows anchors a 40-line
+// window to the bottom of a taller pane, so the only line that explains the
+// failure is exactly the one dropped, leaving a banner that merely restates
+// the exit code. Verbatim from a `tclaude-layer` launch whose Logs tab showed
+// nothing but "Pane is dead (status 125, …)".
+func TestBoundDeadPaneDiagnosticKeepsTheErrorAboveBlankPadding(t *testing.T) {
+	const wantErr = "tclaude: terminal resize relay: start bubblewrap: " +
+		"fork/exec /usr/bin/bwrap: operation not permitted"
+	rows := make([]string, clcommon.CanonicalAgentPaneHeight)
+	rows[0] = wantErr
+	rows[len(rows)-1] = "Pane is dead (status 125, Tue Aug 18 11:44:11 2026)"
+
+	got := boundDeadPaneDiagnostic([]byte(strings.Join(rows, "\n")))
+
+	assert.Contains(t, got, wantErr,
+		"the line explaining the failure must not be padded out of the window")
+	assert.Contains(t, got, "Pane is dead (status 125",
+		"tmux's own banner is still part of the tail")
+}
+
 func TestParseDeadTmuxPaneAcceptsPortableSignalRepresentations(t *testing.T) {
 	const generation = "11111111111111111111111111111111"
 	for _, tc := range []struct {

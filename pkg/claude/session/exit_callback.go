@@ -601,6 +601,28 @@ func captureDeadPaneDiagnostic(paneID string) (string, error) {
 func boundDeadPaneDiagnostic(out []byte) string {
 	out = bytes.ReplaceAll(out, []byte{0}, nil)
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	// Bound over lines that carry text, not over raw rows.
+	//
+	// A managed pane is CanonicalAgentPaneHeight (50) rows, and a launch that
+	// dies before the harness draws anything leaves its error on row 1, blank
+	// padding below it, and tmux's own remain-on-exit "Pane is dead (status N)"
+	// banner on the last row. A 40-row tail of that is 39 blanks and the
+	// banner: the window is anchored to the bottom of a pane taller than the
+	// window, so the one line that explains the failure is exactly the line
+	// dropped, and what survives merely restates the exit code we already have.
+	//
+	// Observed for real on a `tclaude-layer` launch whose pane read
+	// "tclaude: terminal resize relay: start bubblewrap: fork/exec
+	// /usr/bin/bwrap: operation not permitted" while the log recorded only
+	// "Pane is dead (status 125, …)".
+	kept := lines[:0]
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	lines = kept
 	if len(lines) > 40 {
 		lines = lines[len(lines)-40:]
 	}
