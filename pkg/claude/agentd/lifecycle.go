@@ -7300,14 +7300,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				// cleanup; fail the spawn response instead of enrolling an offline
 				// actor and opening an attach command that can only close.
 				if s.TmuxSession != "" {
-					if evidence, inspectErr := session.InspectDeadTmuxSessionPane(s.TmuxSession); inspectErr == nil {
-						detail := "unknown exit status"
-						switch {
-						case evidence.Signal != "":
-							detail = "signal " + evidence.Signal
-						case evidence.ExitCode != nil:
-							detail = "exit code " + strconv.Itoa(*evidence.ExitCode)
-						}
+					if detail, paneID, inspected := startupCorpseExitDetail(s.TmuxSession); inspected {
+						// Before launchFailed, which rolls back the enrollment
+						// and takes the session row with it.
+						logStartupCorpseOutput(label, s.TmuxSession, paneID, detail)
 						return launchFailed(fmt.Errorf("managed pane exited during startup (%s); see the Logs tab for its output", detail))
 					}
 				}
@@ -7318,12 +7314,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				if exits, auditErr := db.ListAuditLog(db.AuditLogFilter{
 					Verb: db.AuditVerbAgentExit, SessionID: label, Limit: 1,
 				}); auditErr == nil && len(exits) == 1 && !exits[0].At.Before(launchedAt) {
-					detail := "unknown exit status"
-					switch {
-					case exits[0].Signal != "":
-						detail = "signal " + exits[0].Signal
-					case exits[0].ExitCode != nil:
-						detail = "exit code " + strconv.Itoa(*exits[0].ExitCode)
+					detail := deadPaneExitDetail(exits[0].ExitCode, exits[0].Signal)
+					if detail == "" {
+						detail = "unknown exit status"
 					}
 					return launchFailed(fmt.Errorf("managed pane exited during startup (%s); see the Logs tab for its output", detail))
 				}
@@ -7863,6 +7856,91 @@ func backfillPendingSpawnInline(g *db.AgentGroup, p spawnParams, label string, h
 		}
 		sleepSpawnPoll(deadline)
 	}
+}
+
+// spawnDeadPaneStatusGrace bounds how long startupCorpseExitDetail waits for
+// tmux to attach an exit status to a pane it has already marked dead, and
+// spawnDeadPaneStatusPoll is how often it re-reads within that grace. The
+// window only ever costs a launch that has ALREADY failed, so it is sized to
+// outlast tmux's own reap latency rather than to keep a spawn snappy.
+const (
+	spawnDeadPaneStatusGrace = 1500 * time.Millisecond
+	spawnDeadPaneStatusPoll  = 50 * time.Millisecond
+)
+
+// startupCorpseExitDetail renders the exit detail for a pane tmux has already
+// marked dead during a spawn's startup window.
+//
+// tmux closes the pane's pty and reaps the pane's child as two separate
+// events, so the first look at a fast-dying pane can report pane_dead=1 with
+// NEITHER pane_dead_status nor pane_dead_signal. Reporting "unknown exit
+// status" off that first look threw away the real code or signal that lands a
+// beat later — and left the operator with the least informative message
+// tclaude can produce for the failures that need it most. Re-read for a
+// bounded moment before settling for "unknown".
+//
+// inspected is false when the corpse can no longer be read, which means the
+// authenticated exit callback recorded and reaped it. Its durable audit row is
+// then the better evidence, so the caller falls through to that rather than
+// guessing from a pane that is gone.
+func startupCorpseExitDetail(tmuxSession string) (string, string, bool) {
+	evidence, err := session.InspectDeadTmuxSessionPane(tmuxSession)
+	if err != nil {
+		return "", "", false
+	}
+	for waited := time.Duration(0); ; waited += spawnDeadPaneStatusPoll {
+		if detail := deadPaneExitDetail(evidence.ExitCode, evidence.Signal); detail != "" {
+			return detail, evidence.PaneID, true
+		}
+		if waited >= spawnDeadPaneStatusGrace {
+			return "unknown exit status", evidence.PaneID, true
+		}
+		time.Sleep(spawnDeadPaneStatusPoll)
+		settled, settledErr := session.InspectDeadTmuxSessionPane(tmuxSession)
+		if settledErr != nil {
+			return "", "", false
+		}
+		evidence = settled
+	}
+}
+
+// logStartupCorpseOutput copies a dead startup pane's output into the log
+// before the caller fails the spawn.
+//
+// It cannot be left to the pane's own exit callback. Failing the spawn rolls
+// back the launch enrollment, and deleting the enrolled agent cascades to
+// `DELETE FROM sessions WHERE conv_id = ?` (DeleteAgentByConvID). A callback
+// that has not run by then loads no session and rejects with "sql: no rows in
+// result set" — so on exactly the launches this daemon reports as failed, the
+// pane output the operator is told to go read was the thing most likely to be
+// missing. Capture first, roll back second; a duplicate line when the callback
+// does win the race is a far better failure than no line at all.
+func logStartupCorpseOutput(label, tmuxSession, paneID, detail string) {
+	if paneID == "" {
+		return
+	}
+	output, err := session.CaptureDeadPaneDiagnostic(paneID)
+	switch {
+	case err != nil:
+		output = "(the pane could not be captured: " + err.Error() + ")"
+	case output == "":
+		output = "(the pane printed nothing before it died)"
+	}
+	slog.Error("spawn: managed pane died during startup",
+		"label", label, "tmux_session", tmuxSession, "pane_id", paneID,
+		"exit_detail", detail, "pane_output", output)
+}
+
+// deadPaneExitDetail renders tmux's mutually exclusive dead-pane exit
+// evidence, or "" when tmux has attached neither a status nor a signal yet.
+func deadPaneExitDetail(code *int, signal string) string {
+	switch {
+	case signal != "":
+		return "signal " + signal
+	case code != nil:
+		return "exit code " + strconv.Itoa(*code)
+	}
+	return ""
 }
 
 func sleepSpawnPoll(deadline time.Time) {

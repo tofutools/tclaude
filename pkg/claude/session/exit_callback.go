@@ -471,7 +471,30 @@ func exitCallbackCmd() *cobra.Command {
 	return cmd
 }
 
+// runExitCallback records one managed pane's exit, and — win or lose — leaves a
+// trace of having tried.
+//
+// A rejection used to return in silence. That is the worst possible outcome for
+// this particular function: it runs from a tmux `run-shell`, so its error text
+// reaches no terminal and no log, and a rejection also means no audit row, no
+// pane capture, and no corpse cleanup. The operator was left with a dead pane,
+// an empty Logs tab, and nothing anywhere saying the exit audit had run at all.
+// Reject as strictly as before, but say so.
 func runExitCallback(p exitCallbackParams) error {
+	err := applyExitCallback(p)
+	if err != nil && errors.Is(err, db.ErrExitCallbackRejected) {
+		// "by this callback": a replayed delivery is rejected here because the
+		// FIRST one already recorded the exit, so a flat "was not recorded"
+		// would read as lost evidence when nothing was lost.
+		slog.Warn("exit audit: callback rejected; managed pane exit was not recorded by this callback",
+			"session_id", p.SessionID, "tmux_session", p.TmuxSession,
+			"pane_id", p.PaneID, "hook_exit_code", p.ExitCode,
+			"hook_signal", p.Signal, "error", err)
+	}
+	return err
+}
+
+func applyExitCallback(p exitCallbackParams) error {
 	if !validCallbackPaneID(p.PaneID) || !validExitLaunchIdentifier(p.SessionID, 128) ||
 		!validExitLaunchIdentifier(p.TmuxSession, 64) ||
 		!validCallbackHex(p.Generation, 32) || !validCallbackHex(p.Token, 64) {
@@ -481,18 +504,51 @@ func runExitCallback(p exitCallbackParams) error {
 	if err != nil {
 		return fmt.Errorf("%w: verify dead pane: %v", db.ErrExitCallbackRejected, err)
 	}
+	// tmux expands #{pane_dead_status} / #{pane_dead_signal} into the hook
+	// command WHEN THE HOOK FIRES, but this process re-reads them a fork and an
+	// exec later. tmux closes the pane's pty and reaps the pane's child as two
+	// separate events, so a hook that fired between them carries no status while
+	// the re-read carries the real one. That is the reap landing late, not a
+	// forged callback — yet strict equality rejected it, and a rejection here
+	// costs the audit row, the pane capture, and the corpse cleanup all at once.
+	//
+	// Adopt tmux's settled answer in exactly that direction: the hook claimed
+	// nothing, and this process read the truth from tmux itself a moment later.
+	// It is not a weakening — authority still rests on the launch generation and
+	// the single-use token consumed below, the pane identity must still match,
+	// and a hook that claims a status tmux does not confirm is still refused.
+	if p.ExitCode == "" && p.Signal == "" &&
+		(reported.ExitCode != "" || reported.Signal != "") {
+		p.ExitCode, p.Signal = reported.ExitCode, reported.Signal
+	}
 	if reported.TmuxSession != p.TmuxSession || reported.PaneID != p.PaneID ||
 		reported.Generation != p.Generation ||
 		reported.ExitCode != p.ExitCode || !strings.EqualFold(reported.Signal, p.Signal) {
-		return fmt.Errorf("%w: tmux evidence mismatch", db.ErrExitCallbackRejected)
+		// Name tmux's side of the disagreement. The log's hook_* fields report
+		// what the hook claimed, which is the right answer for a field named
+		// after the hook — but on its own it leaves the reader unable to see
+		// WHAT it disagreed with. These values come from parseDeadTmuxPane, so
+		// they are already charset- and length-bounded.
+		return fmt.Errorf("%w: tmux evidence mismatch (tmux reports exit code %q signal %q)",
+			db.ErrExitCallbackRejected, reported.ExitCode, reported.Signal)
 	}
 	// A dead pane is the last place a successful tmux launch's harness error is
 	// visible (`claude: command not found`, expired auth, broken config, ...).
 	// Work out whether it falls in the startup window now, but do not copy pane
 	// contents until the authenticated record below has classified lifecycle
 	// exits. Expected stop/retire/reincarnate exits must never be captured.
+	//
+	// Only a literal 0 is a clean exit. tmux fills pane_dead_status /
+	// pane_dead_signal when it REAPS the pane's child, which is a separate
+	// event from closing the pane's pty — so a pane observed dead in between
+	// reports neither. Reading that unknown shape as success skipped the
+	// capture below, and it is precisely the shape a fast startup failure
+	// takes: the operator got "managed pane exited during startup (unknown
+	// exit status); see the Logs tab" pointing at a Logs tab this function had
+	// declined to write. The least evidence must not also mean the least
+	// diagnosis.
 	startupAge := time.Duration(-1)
-	failedStartup := p.Signal != "" || (p.ExitCode != "" && p.ExitCode != "0")
+	failedStartup := p.ExitCode != "0"
 	if row, loadErr := db.LoadSession(p.SessionID); failedStartup && loadErr == nil && row != nil && !row.CreatedAt.IsZero() {
 		startupAge = time.Since(row.CreatedAt)
 	}
@@ -525,15 +581,40 @@ func runExitCallback(p exitCallbackParams) error {
 			"pane_id", p.PaneID, "error", err)
 		return fmt.Errorf("record managed pane exit: %w", err)
 	}
-	startupDiagnostic := ""
 	if result.LifecycleAction == "" && startupAge >= 0 && startupAge <= spawnFailureDiagnosticWindow {
-		startupDiagnostic = captureDeadPaneDiagnostic(p.PaneID)
-	}
-	if startupDiagnostic != "" {
+		// Record the failure even when the pane printed nothing. Silence is
+		// itself a finding — the process died before writing a word, which
+		// points at the launch wrapper rather than the harness — and an absent
+		// log line is indistinguishable from a capture that never ran, which is
+		// the confusion this whole path exists to prevent.
+		//
+		// Which is exactly why an unreadable pane must NOT borrow the empty
+		// pane's wording. A concurrent reaper (the daemon's, or
+		// tmuxLaunchNameFree freeing the launch name) can remove the corpse
+		// between the record above and this capture; asserting "printed
+		// nothing" there would send the operator hunting the launch wrapper
+		// for output that existed and was merely unreadable by then.
+		paneOutput, captureErr := captureDeadPaneDiagnostic(p.PaneID)
+		switch {
+		case captureErr != nil:
+			paneOutput = "(the pane could not be captured: " + captureErr.Error() + ")"
+		case paneOutput == "":
+			paneOutput = "(the pane printed nothing before it died)"
+		}
+		// tmux reports an exit code OR a signal, never both, so the other field
+		// being empty is normal. BOTH empty means tmux had not reaped the
+		// pane's child yet — say that in the word the audit row already uses,
+		// rather than emitting two blanks that read as "fields not populated".
+		exitCode, signal := exitCodeForLog(code), strings.ToUpper(p.Signal)
+		if exitCode == "" && signal == "" {
+			exitCode, signal = "unavailable", "unavailable"
+		}
 		slog.Error("managed pane failed during startup",
 			"session_id", p.SessionID, "tmux_session", p.TmuxSession,
 			"pane_id", p.PaneID, "event_id", result.EventID,
-			"startup_age", startupAge.String(), "pane_output", startupDiagnostic)
+			"startup_age", startupAge.String(),
+			"exit_code", exitCode, "signal", signal,
+			"pane_output", paneOutput)
 	}
 	cleanupEvidence := PaneExitEvidence{
 		TmuxSession: reported.TmuxSession, PaneID: reported.PaneID,
@@ -548,17 +629,59 @@ func runExitCallback(p exitCallbackParams) error {
 	return nil
 }
 
-func captureDeadPaneDiagnostic(paneID string) string {
+// CaptureDeadPaneDiagnostic is captureDeadPaneDiagnostic for the daemon.
+//
+// agentd needs it because its own spawn-failure path can destroy this
+// callback's anchor before the callback runs: rolling back a failed spawn
+// deletes the enrolled agent, and that cascade removes the session row
+// (DeleteAgentByConvID). A pane-died callback arriving afterwards cannot load
+// the session and rejects with "sql: no rows in result set", so the pane's
+// output — the whole content of the "see the Logs tab" the spawn error points
+// at — is never copied. The daemon therefore captures it BEFORE it rolls back.
+func CaptureDeadPaneDiagnostic(paneID string) (string, error) {
+	return captureDeadPaneDiagnostic(paneID)
+}
+
+// captureDeadPaneDiagnostic copies the dying pane's bounded output tail.
+//
+// The error is returned rather than folded into an empty string because the
+// caller reports the two outcomes differently: "" with a nil error means the
+// pane genuinely printed nothing, which is evidence about the launch, while a
+// non-nil error means tmux could not be asked, which is evidence about
+// nothing. Collapsing them lets an unreadable pane masquerade as a silent one.
+func captureDeadPaneDiagnostic(paneID string) (string, error) {
 	out, err := clcommon.TmuxCommand("capture-pane", "-p", "-J", "-S", "-40", "-t", paneID).Output()
 	if err != nil {
-		return ""
+		return "", err
 	}
-	return boundDeadPaneDiagnostic(out)
+	return boundDeadPaneDiagnostic(out), nil
 }
 
 func boundDeadPaneDiagnostic(out []byte) string {
 	out = bytes.ReplaceAll(out, []byte{0}, nil)
 	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	// Bound over lines that carry text, not over raw rows.
+	//
+	// A managed pane is CanonicalAgentPaneHeight (50) rows, and a launch that
+	// dies before the harness draws anything leaves its error on row 1, blank
+	// padding below it, and tmux's own remain-on-exit "Pane is dead (status N)"
+	// banner on the last row. A 40-row tail of that is 39 blanks and the
+	// banner: the window is anchored to the bottom of a pane taller than the
+	// window, so the one line that explains the failure is exactly the line
+	// dropped, and what survives merely restates the exit code we already have.
+	//
+	// Observed for real on a `tclaude-layer` launch whose pane read
+	// "tclaude: terminal resize relay: start bubblewrap: fork/exec
+	// /usr/bin/bwrap: operation not permitted" while the log recorded only
+	// "Pane is dead (status 125, …)".
+	kept := lines[:0]
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	lines = kept
 	if len(lines) > 40 {
 		lines = lines[len(lines)-40:]
 	}

@@ -26,6 +26,7 @@ type exitCallbackTmux struct {
 	paneID               string
 	deadOutput           string
 	captureOutput        string
+	failCapture          bool
 	failSetHook          bool
 	failRemainOnExit     bool
 	noNativePaneDied     bool
@@ -61,6 +62,10 @@ func (f *exitCallbackTmux) Command(args ...string) *exec.Cmd {
 		return exec.Command("sh", "-c", "printf '%s' \"$1\"", "sh", out)
 	}
 	if len(args) > 0 && args[0] == "capture-pane" {
+		if f.failCapture {
+			// What a corpse reaped out from under the callback looks like.
+			return exec.Command("false")
+		}
 		return exec.Command("sh", "-c", "printf '%s' \"$1\"", "sh", f.captureOutput)
 	}
 	if len(args) > 0 && args[0] == "kill-pane" && f.failKillPaneCount > 0 {
@@ -411,6 +416,252 @@ func TestRunExitCallback_LogsBoundedStartupFailureOutput(t *testing.T) {
 	assert.Contains(t, got, `"pane_output":"fish: Unknown command: claude"`)
 }
 
+// Scenario: tmux marked the pane dead but had not yet reaped its child, so it
+// reports NEITHER pane_dead_status nor pane_dead_signal, and the pane died
+// before printing anything.
+//
+// Expected: the startup failure is still captured and logged. This is the
+// shape the spawn path renders as "unknown exit status ... see the Logs tab",
+// so it is precisely the shape that must not leave the Logs tab empty. An
+// empty pane is reported as such rather than silently dropping the record.
+func TestRunExitCallback_LogsStartupFailureWithUnknownStatusAndSilentPane(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%31", deadOutput: "tmux-unknown-exit|%31|1|||31313131313131313131313131313131",
+		captureOutput: "",
+	}
+	setupExitCallbackTest(t, fake)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	const generation = "31313131313131313131313131313131"
+	const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-unknown-exit", TmuxSession: "tmux-unknown-exit", ConvID: "conv-unknown-exit",
+		Status: StatusWorking, Created: time.Now(),
+	}, generation, db.SessionExitGateReleased))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-unknown-exit", generation, hex.EncodeToString(hash[:]), "%31"))
+
+	require.NoError(t, runExitCallback(exitCallbackParams{
+		SessionID: "spwn-unknown-exit", TmuxSession: "tmux-unknown-exit", PaneID: "%31",
+		Generation: generation, Token: token,
+	}))
+
+	assert.True(t, slices.ContainsFunc(fake.calls, func(call []string) bool {
+		return len(call) > 0 && call[0] == "capture-pane"
+	}), "a status-less startup death must still copy the pane into the logs")
+	got := logs.String()
+	assert.Contains(t, got, `"msg":"managed pane failed during startup"`)
+	assert.Contains(t, got, `"pane_output":"(the pane printed nothing before it died)"`)
+}
+
+// Scenario: the startup failure qualifies for capture, but the corpse is
+// reaped out from under the callback (by the daemon's reaper, or by
+// tmuxLaunchNameFree freeing the launch name) so capture-pane fails.
+//
+// Expected: the log says the pane could not be captured. Reusing the silent-
+// pane wording here would assert, as fact, that the harness printed nothing —
+// sending the operator after the launch wrapper for output that existed and
+// was merely unreadable by then. That is a worse failure than the missing log
+// line this path was built to prevent, because it is wrong rather than absent.
+func TestRunExitCallback_UnreadablePaneIsNotReportedAsSilent(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%33", deadOutput: "tmux-capture-fail|%33|1|||33333333333333333333333333333333",
+		failCapture: true,
+	}
+	setupExitCallbackTest(t, fake)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	const generation = "33333333333333333333333333333333"
+	const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-capture-fail", TmuxSession: "tmux-capture-fail", ConvID: "conv-capture-fail",
+		Status: StatusWorking, Created: time.Now(),
+	}, generation, db.SessionExitGateReleased))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-capture-fail", generation, hex.EncodeToString(hash[:]), "%33"))
+
+	require.NoError(t, runExitCallback(exitCallbackParams{
+		SessionID: "spwn-capture-fail", TmuxSession: "tmux-capture-fail", PaneID: "%33",
+		Generation: generation, Token: token,
+	}))
+
+	got := logs.String()
+	assert.Contains(t, got, `"msg":"managed pane failed during startup"`)
+	assert.Contains(t, got, "the pane could not be captured",
+		"an unreadable pane must not borrow the silent pane's wording")
+	assert.NotContains(t, got, "printed nothing before it died")
+}
+
+// Scenario: the pane-died hook fired between tmux closing the pane's pty and
+// reaping its child, so it expanded #{pane_dead_status} to nothing. By the time
+// this process re-reads the pane, tmux has settled on 125.
+//
+// Expected: recorded, captured, and cleaned up. Strict equality read the late
+// reap as a forged callback and rejected it, which cost the audit row, the pane
+// capture AND the corpse cleanup at once — leaving a dead pane, an empty Logs
+// tab, and a spawn error pointing at both.
+func TestRunExitCallback_AdoptsAStatusThatLandedAfterTheHookFired(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%34", deadOutput: "tmux-late-reap|%34|1|125||34343434343434343434343434343434",
+		captureOutput: "tclaude: terminal resize relay: start bubblewrap: " +
+			"fork/exec /usr/bin/bwrap: operation not permitted",
+	}
+	setupExitCallbackTest(t, fake)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	const generation = "34343434343434343434343434343434"
+	const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaae"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-late-reap", TmuxSession: "tmux-late-reap", ConvID: "conv-late-reap",
+		Status: StatusWorking, Created: time.Now(),
+	}, generation, db.SessionExitGateReleased))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-late-reap", generation, hex.EncodeToString(hash[:]), "%34"))
+
+	// Exactly what the hook expands to when it fires before the reap.
+	require.NoError(t, runExitCallback(exitCallbackParams{
+		SessionID: "spwn-late-reap", TmuxSession: "tmux-late-reap", PaneID: "%34",
+		Generation: generation, Token: token, ExitCode: "", Signal: "",
+	}))
+
+	// The headline symptom was a missing audit row, so assert the row itself
+	// rather than inferring it from a log line downstream of it.
+	exits, auditErr := db.ListAuditLog(db.AuditLogFilter{
+		Verb: db.AuditVerbAgentExit, SessionID: "spwn-late-reap", Limit: 2,
+	})
+	require.NoError(t, auditErr)
+	require.Len(t, exits, 1, "the late reap must still produce exactly one exit row")
+	require.NotNil(t, exits[0].ExitCode, "the row must carry tmux's settled status")
+	assert.Equal(t, 125, *exits[0].ExitCode)
+
+	got := logs.String()
+	assert.NotContains(t, got, "callback rejected")
+	assert.Contains(t, got, `"msg":"managed pane failed during startup"`)
+	assert.Contains(t, got, "operation not permitted",
+		"the pane's own error must reach the log")
+	assert.Contains(t, got, `"exit_code":"125"`, "the settled status is what gets recorded")
+	assert.True(t, slices.ContainsFunc(fake.calls, func(call []string) bool {
+		return len(call) > 0 && call[0] == "kill-pane"
+	}), "the corpse must still be cleaned up")
+}
+
+// Scenario: a callback claims an exit status tmux does not confirm.
+//
+// Expected: still refused, and now audible. Adopting a late-landing status must
+// only ever fill in a claim of NOTHING from tmux's own settled answer; it must
+// not let a caller assert an exit tmux never reported.
+func TestRunExitCallback_RejectsAClaimedStatusTmuxDoesNotConfirm(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%35", deadOutput: "tmux-forged|%35|1|125||35353535353535353535353535353535",
+		captureOutput: "private pane contents",
+	}
+	setupExitCallbackTest(t, fake)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	const generation = "35353535353535353535353535353535"
+	const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-forged", TmuxSession: "tmux-forged", ConvID: "conv-forged",
+		Status: StatusWorking, Created: time.Now(),
+	}, generation, db.SessionExitGateReleased))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-forged", generation, hex.EncodeToString(hash[:]), "%35"))
+
+	err := runExitCallback(exitCallbackParams{
+		SessionID: "spwn-forged", TmuxSession: "tmux-forged", PaneID: "%35",
+		Generation: generation, Token: token, ExitCode: "0",
+	})
+	require.ErrorIs(t, err, db.ErrExitCallbackRejected)
+	assert.Contains(t, logs.String(), "callback rejected",
+		"a rejection must never be silent again")
+	assert.Contains(t, logs.String(), `exit code \"125\"`,
+		"the rejection must name what tmux actually reported, not just that it disagreed")
+	for _, call := range fake.calls {
+		assert.NotEqual(t, "capture-pane", call[0], "a rejected callback captures nothing")
+	}
+}
+
+// Scenario: the exact inverse of the adopted shape — the caller claims an exit
+// status while tmux reports none at all.
+//
+// Expected: refused. Adoption fills a claim of NOTHING from tmux's own settled
+// answer; it must never let the claim become the authority when tmux is the
+// side that is silent. Without this, the sharper forgery goes unpinned.
+func TestRunExitCallback_RejectsAClaimedStatusWhenTmuxReportsNone(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%36", deadOutput: "tmux-silent|%36|1|||36363636363636363636363636363636",
+		captureOutput: "private pane contents",
+	}
+	setupExitCallbackTest(t, fake)
+
+	const generation = "36363636363636363636363636363636"
+	const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab0"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-silent", TmuxSession: "tmux-silent", ConvID: "conv-silent",
+		Status: StatusWorking, Created: time.Now(),
+	}, generation, db.SessionExitGateReleased))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-silent", generation, hex.EncodeToString(hash[:]), "%36"))
+
+	err := runExitCallback(exitCallbackParams{
+		SessionID: "spwn-silent", TmuxSession: "tmux-silent", PaneID: "%36",
+		Generation: generation, Token: token, ExitCode: "125",
+	})
+	require.ErrorIs(t, err, db.ErrExitCallbackRejected)
+	for _, call := range fake.calls {
+		assert.NotEqual(t, "capture-pane", call[0], "a rejected callback captures nothing")
+	}
+}
+
+// Scenario: a pane exits 0 inside the startup window with no recorded
+// lifecycle intent.
+//
+// Expected: no capture. Widening the predicate to reach the status-less case
+// must not turn a clean exit into a "failure" whose pane contents get copied
+// into the logs.
+func TestRunExitCallback_DoesNotCaptureCleanStartupExit(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%32", deadOutput: "tmux-clean-exit|%32|1|0||32323232323232323232323232323232",
+		captureOutput: "private pane contents",
+	}
+	setupExitCallbackTest(t, fake)
+
+	const generation = "32323232323232323232323232323232"
+	const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-clean-exit", TmuxSession: "tmux-clean-exit", ConvID: "conv-clean-exit",
+		Status: StatusWorking, Created: time.Now(),
+	}, generation, db.SessionExitGateReleased))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-clean-exit", generation, hex.EncodeToString(hash[:]), "%32"))
+
+	require.NoError(t, runExitCallback(exitCallbackParams{
+		SessionID: "spwn-clean-exit", TmuxSession: "tmux-clean-exit", PaneID: "%32",
+		Generation: generation, Token: token, ExitCode: "0",
+	}))
+	for _, call := range fake.calls {
+		assert.NotEqual(t, "capture-pane", call[0], "a clean exit must not copy pane contents")
+	}
+}
+
 func TestRunExitCallback_DoesNotCaptureExpectedStartupExit(t *testing.T) {
 	fake := &exitCallbackTmux{
 		paneID: "%30", deadOutput: "tmux-expected-exit|%30|1|1||30303030303030303030303030303030",
@@ -450,6 +701,30 @@ func TestBoundDeadPaneDiagnosticCapsLinesAndBytes(t *testing.T) {
 	assert.LessOrEqual(t, len(strings.Split(got, "\n")), 40)
 	assert.Contains(t, got, "line-099-")
 	assert.NotContains(t, got, "line-059-")
+}
+
+// Scenario: the real shape of a launch that dies before the harness draws
+// anything — the error on row 1 of a 50-row pane, blank padding below it, and
+// tmux's remain-on-exit banner on the last row.
+//
+// Expected: the error survives. Bounding over raw rows anchors a 40-line
+// window to the bottom of a taller pane, so the only line that explains the
+// failure is exactly the one dropped, leaving a banner that merely restates
+// the exit code. Verbatim from a `tclaude-layer` launch whose Logs tab showed
+// nothing but "Pane is dead (status 125, …)".
+func TestBoundDeadPaneDiagnosticKeepsTheErrorAboveBlankPadding(t *testing.T) {
+	const wantErr = "tclaude: terminal resize relay: start bubblewrap: " +
+		"fork/exec /usr/bin/bwrap: operation not permitted"
+	rows := make([]string, clcommon.CanonicalAgentPaneHeight)
+	rows[0] = wantErr
+	rows[len(rows)-1] = "Pane is dead (status 125, Tue Aug 18 11:44:11 2026)"
+
+	got := boundDeadPaneDiagnostic([]byte(strings.Join(rows, "\n")))
+
+	assert.Contains(t, got, wantErr,
+		"the line explaining the failure must not be padded out of the window")
+	assert.Contains(t, got, "Pane is dead (status 125",
+		"tmux's own banner is still part of the tail")
 }
 
 func TestParseDeadTmuxPaneAcceptsPortableSignalRepresentations(t *testing.T) {

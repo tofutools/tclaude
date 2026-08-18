@@ -244,6 +244,14 @@ func codexFastModeArgs(spec SpawnSpec) string {
 	return " -c " + clcommon.ShellQuoteArg(`service_tier="`+tier+`"`)
 }
 
+// CodexShellEnvironmentOverridePrefix is the `-c` key prefix under which a
+// Codex launch re-renders each authored sandbox-profile environment entry onto
+// its own argv. Exported because it is the second place an authored value
+// reaches the pane command, and the launch-command redactor has to recognise
+// that channel by name — a value short enough to look like ordinary command
+// text cannot be used as a tripwire, but this prefix always can.
+const CodexShellEnvironmentOverridePrefix = "shell_environment_policy.set."
+
 func codexShellEnvironmentArgs(environment map[string]string) string {
 	if len(environment) == 0 {
 		return ""
@@ -258,7 +266,7 @@ func codexShellEnvironmentArgs(environment map[string]string) string {
 	slices.Sort(names)
 	args := ""
 	for _, name := range names {
-		override := "shell_environment_policy.set." + name + "=" + codexTOMLString(environment[name])
+		override := CodexShellEnvironmentOverridePrefix + name + "=" + codexTOMLString(environment[name])
 		args += " -c " + clcommon.ShellQuoteArg(override)
 	}
 	return args

@@ -155,6 +155,21 @@ type tmuxSession struct {
 	// escalation ladder, whose last two rungs are unreachable — and so
 	// untestable — against a simulator where a tmux kill always works.
 	killResistant bool
+	// settleExitAfterReads models tmux's two-step pane death: the pane's pty
+	// closes (pane_dead=1) before its child is reaped (pane_dead_status /
+	// pane_dead_signal), so a fast-dying pane truthfully reports dead with NO
+	// status for a moment. While this counter is positive the dead-pane status
+	// formats answer empty; it decrements per read, and the pending evidence
+	// below is promoted when it reaches zero. Counting READS rather than
+	// sleeping keeps the window deterministic — a wall-clock settle lets a slow
+	// host skip the pre-reap observation entirely and pass vacuously.
+	settleExitAfterReads int
+	pendingExitStatus    string
+	pendingExitSignal    string
+	// deadOutput is what `capture-pane` renders once the pane is a
+	// remain-on-exit corpse — the dying screen real tmux keeps readable, and
+	// the only thing a startup-failure capture has to work with.
+	deadOutput string
 }
 
 // fakePaneBasePID keeps the sim's fake pane pids away from real, meaningful
@@ -561,7 +576,18 @@ func (t *TmuxSim) capturePane(args []string) *exec.Cmd {
 	name := t.resolveTarget(target, true)
 	t.mu.Lock()
 	s, ok := t.sessions[name]
+	deadOutput, dead := "", false
+	if ok {
+		deadOutput, dead = s.deadOutput, !t.sessionPaneAlive(s)
+	}
 	t.mu.Unlock()
+	// A remain-on-exit corpse still renders: real tmux keeps the dead pane's
+	// screen readable, which is the whole reason the startup-failure capture
+	// works at all. Without this the simulator could only ever model a capture
+	// that fails.
+	if dead && deadOutput != "" {
+		return exec.Command(echoBin, deadOutput)
+	}
 	if !ok || s.pane == nil || !s.pane.IsAlive() {
 		return exec.Command(falseBin)
 	}
@@ -574,6 +600,13 @@ func (t *TmuxSim) capturePane(args []string) *exec.Cmd {
 // displayMessage models the pane_pid and pane_current_path formats used by
 // production lifecycle code. A missing or no-longer-alive session exits
 // non-zero (falseBin), exactly like real tmux.
+// deadPaneStatusFormat reports whether a display-message format asks for the
+// pane's exit evidence — the two formats answered below that carry
+// pane_dead_status and pane_dead_signal.
+func deadPaneStatusFormat(format string) bool {
+	return strings.Contains(format, "#{pane_dead_status}")
+}
+
 func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 	target := ""
 	for i := 0; i+1 < len(args); i++ {
@@ -582,11 +615,20 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 		}
 	}
 	name := t.resolveTarget(target, true)
+	format := args[len(args)-1]
 	t.mu.Lock()
 	s, ok := t.sessions[name]
 	if !ok {
 		t.mu.Unlock()
 		return exec.Command(falseBin)
+	}
+	// Only a read of the dead-pane status itself advances the settle, so an
+	// unrelated probe cannot reap the pane on the caller's behalf.
+	if s.settleExitAfterReads > 0 && deadPaneStatusFormat(format) {
+		s.settleExitAfterReads--
+		if s.settleExitAfterReads == 0 {
+			s.exitStatus, s.exitSignal = s.pendingExitStatus, s.pendingExitSignal
+		}
 	}
 	dead := !t.sessionPaneAlive(s)
 	remainOnExit, cwd, paneID, panePID := s.remainOnExit, s.cwd, s.paneID, s.panePID
@@ -595,7 +637,6 @@ func (t *TmuxSim) displayMessage(args []string) *exec.Cmd {
 	if dead && !remainOnExit {
 		return exec.Command(falseBin)
 	}
-	format := args[len(args)-1]
 	if format == "#{pane_current_path}" {
 		return exec.Command(echoBin, cwd)
 	}
@@ -937,6 +978,38 @@ func (t *TmuxSim) MarkPaneDead(name string, exitCode *int, signal string) {
 		s.exitStatus = strconv.Itoa(*exitCode)
 	}
 	s.exitSignal = signal
+}
+
+// MarkPaneDeadPendingReap retains the corpse the way real tmux first exposes
+// one: pane_dead=1 with NO exit evidence, because tmux closes the pane's pty
+// before it reaps the pane's child. The supplied evidence is attached after
+// the dead-pane status has been read `reads` times, so a caller that treats
+// its first observation as final sees the pre-reap state and a caller that
+// re-reads sees the real code or signal.
+func (t *TmuxSim) MarkPaneDeadPendingReap(name string, exitCode *int, signal string, reads int) {
+	t.MarkPaneDead(name, nil, "")
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	s := t.sessions[name]
+	if s == nil || reads <= 0 {
+		return
+	}
+	s.settleExitAfterReads = reads
+	s.pendingExitStatus = ""
+	if exitCode != nil {
+		s.pendingExitStatus = strconv.Itoa(*exitCode)
+	}
+	s.pendingExitSignal = signal
+}
+
+// SetDeadPaneOutput gives a session's retained corpse a dying screen, so a
+// startup-failure capture has something faithful to read.
+func (t *TmuxSim) SetDeadPaneOutput(name, output string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if s := t.sessions[name]; s != nil {
+		s.deadOutput = output
+	}
 }
 
 // SetPaneExitGeneration binds retained-pane evidence to one simulated launch.

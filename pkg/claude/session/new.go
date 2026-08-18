@@ -1956,9 +1956,34 @@ func runNew(params *NewParams) error {
 	}
 	launchRowOwned := priorRow == nil
 	launchRowCommitted := false
+	// launchPaneCommand is assigned once the pane command is fully assembled,
+	// so the rollback below can report what this launch actually tried to run.
+	launchPaneCommand := ""
 	defer func() {
 		if launchRowCommitted || !launchRowOwned {
 			return
+		}
+		// Rolling the row back also destroys the exit audit's only anchor: a
+		// pane-died callback arriving afterwards cannot load the session and
+		// fails with "sql: no rows in result set", so neither the pane's output
+		// nor the command that produced it is recorded anywhere. Write the
+		// command here, where it is still known.
+		//
+		// Redacted: the command carries the whole forwarded environment, and
+		// output.log is not a place for the operator's API keys.
+		if launchPaneCommand != "" {
+			if redacted, ok := RedactPaneCommand(
+				launchPaneCommand, envExports, authoredPaneCommandSecrets(effectiveSandbox)); ok {
+				slog.Error("launch failed; rolling back its session row",
+					"session_id", sessionID, "tmux_session", tmuxSession,
+					"pane_command", redacted)
+			} else {
+				// Fail closed: without proof the environment was removed, the
+				// command cannot be written at all.
+				slog.Error("launch failed; rolling back its session row",
+					"session_id", sessionID, "tmux_session", tmuxSession,
+					"pane_command", "<withheld: environment prefix could not be located to redact>")
+			}
 		}
 		// Generation-conditional: a concurrent same-label launch that re-wrote
 		// the row after us must keep it — only the exact row THIS launch wrote
@@ -2331,6 +2356,22 @@ func runNew(params *NewParams) error {
 		proofWriteDirs = append(proofWriteDirs, sandboxProofDirs...)
 		harnessCmd = guardHarnessCommandWithDirProof(
 			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "", proofWriteDirs, generatedWriteDirs)
+	}
+
+	// The command is now fully assembled — every wrapper layer applied. Hand it
+	// to the rollback above so a launch that fails from here on says what it
+	// tried to run, and emit it at debug for a launch that fails in a way the
+	// rollback never sees.
+	launchPaneCommand = harnessCmd
+	if redacted, ok := RedactPaneCommand(
+		harnessCmd, envExports, authoredPaneCommandSecrets(effectiveSandbox)); ok {
+		slog.Debug("launching managed pane",
+			"session_id", sessionID, "tmux_session", tmuxSession,
+			"pane_command", redacted)
+	} else {
+		slog.Warn("launching managed pane; command withheld from the log",
+			"session_id", sessionID, "tmux_session", tmuxSession,
+			"reason", "environment prefix could not be located to redact")
 	}
 
 	// Create the detached tmux session running the harness command. The
@@ -2863,6 +2904,45 @@ func sandboxSnapshotMaterializedUnixSocketPaths(
 	}
 	paths := append([]string(nil), snapshot.UnixSocketMaterialization.Paths...)
 	return &paths
+}
+
+// authoredSecretMinLen is the shortest authored value used as a fail-closed
+// tripwire. At or below it a value is indistinguishable from ordinary command
+// text — a profile authoring NODE_ENV=production or TERM=xterm would match
+// somewhere in every launch and withhold the diagnostic forever. Short values
+// are covered by the marker below instead, which does not depend on length.
+const authoredSecretMinLen = 12
+
+// authoredPaneCommandSecrets describes the sandbox profile's authored
+// environment to RedactPaneCommand's fail-closed check.
+//
+// These are the operator's declared secrets, and the ones that reach the pane
+// command through more than one channel: besides the shared env-export prefix,
+// a Codex launch renders each of them again as a shell_environment_policy.set
+// override on its own argv (see sandboxSnapshotEnvironment and the Codex
+// spawner). Removing the prefix alone left them in the logged command.
+//
+// Both halves are needed. A distinctive value catches a channel this code knows
+// nothing about. A marker catches the channel we DO know about regardless of
+// how short its value is, which is what keeps the length floor from opening a
+// hole: an authored 6-character token is still refused, by name.
+//
+// Only AUTHORED entries. Values inherited from the operator's environment are
+// covered by removing the prefix and cannot be checked this way, because HOME,
+// PWD and friends are legitimate substrings of ordinary command text.
+func authoredPaneCommandSecrets(snapshot *sandboxpolicy.Snapshot) PaneCommandSecrets {
+	if snapshot == nil {
+		return PaneCommandSecrets{}
+	}
+	var secrets PaneCommandSecrets
+	for _, entry := range snapshot.Effective.Environment {
+		if len(entry.Value) > authoredSecretMinLen {
+			secrets.Values = append(secrets.Values, entry.Value)
+		}
+		secrets.Markers = append(secrets.Markers,
+			harness.CodexShellEnvironmentOverridePrefix+entry.Name+"=")
+	}
+	return secrets
 }
 
 func sandboxSnapshotEnvironment(snapshot *sandboxpolicy.Snapshot) map[string]string {

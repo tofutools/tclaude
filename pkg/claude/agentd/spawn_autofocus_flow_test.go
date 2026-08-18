@@ -1,7 +1,9 @@
 package agentd_test
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"net/http"
 	"testing"
 
@@ -68,6 +70,63 @@ func TestSpawn_DeadPaneFailsBeforeAutoFocus(t *testing.T) {
 	assert.Contains(t, string(spawn.Raw), "managed pane exited during startup")
 	assert.False(t, opened, "a session row without a live pane must not be auto-focused")
 	assert.Empty(t, spawn.FocusMode, "no attach mode was actually opened")
+}
+
+// Scenario: the pane dies at launch and tmux has marked it dead but has not
+// yet reaped its child, so the first observation carries neither
+// pane_dead_status nor pane_dead_signal. The real exit code lands shortly
+// after.
+//
+// Expected: the spawn failure names the real exit code. Reporting the first
+// look as "unknown exit status" threw away evidence that was about to arrive,
+// and left the operator with the least actionable message tclaude can produce
+// for exactly the failures that need one most.
+func TestSpawn_DeadPaneWaitsForTmuxToAttachExitStatus(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	f.World.SpawnPaneDiesAtLaunch = true
+	// The status lands only on the second read of it, so the spawn path must
+	// actually re-read to see it. Counting reads rather than sleeping means a
+	// slow host cannot skip the pre-reap observation and pass vacuously.
+	f.World.SpawnPaneStatusSettlesAfterReads = 2
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker"})
+
+	require.Equalf(t, http.StatusInternalServerError, spawn.Code, "spawn body=%s", spawn.Raw)
+	assert.Contains(t, string(spawn.Raw), "managed pane exited during startup (exit code 1)",
+		"the settled status must be reported, not the not-yet-reaped unknown")
+	assert.NotContains(t, string(spawn.Raw), "unknown exit status")
+}
+
+// Scenario: a dashboard spawn's pane dies at launch, and the daemon fails the
+// spawn — which rolls back the launch enrollment, and DeleteAgentByConvID
+// cascades to `DELETE FROM sessions WHERE conv_id = ?`.
+//
+// Expected: the pane's dying words reach the log anyway. The pane's own exit
+// callback cannot be relied on here: once the session row is gone it rejects
+// with "sql: no rows in result set", so on exactly the launches the daemon
+// reports as failed, the output its error tells the operator to go read was
+// the thing most likely to be missing. Capture before rolling back.
+func TestSpawn_DeadPaneOutputIsLoggedBeforeTheRollbackDeletesTheRow(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	f.World.SpawnPaneDiesAtLaunch = true
+	f.World.SpawnPaneDeathOutput = "tclaude: terminal resize relay: start bubblewrap: " +
+		"fork/exec /usr/bin/bwrap: operation not permitted"
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker"})
+	require.Equalf(t, http.StatusInternalServerError, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	got := logs.String()
+	assert.Contains(t, got, `"msg":"spawn: managed pane died during startup"`)
+	assert.Contains(t, got, "fork/exec /usr/bin/bwrap: operation not permitted",
+		"the pane's own error is the whole point of the capture")
+	assert.Contains(t, got, `"exit_detail":"exit code 1"`)
 }
 
 // Scenario: a human spawns with "auto focus" checked, but the host has
