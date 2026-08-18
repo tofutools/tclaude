@@ -45,8 +45,7 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := peerFromContext(r.Context())
-	callerClass := classify(p)
-	switch callerClass {
+	switch classify(p) {
 	case classAgent, classAgentUnknown:
 		// classAgentUnknown is accepted for the same reason the hook
 		// endpoint accepts it: a freshly spawned agent renders its status
@@ -111,8 +110,7 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 			return
 		}
-		row, _ = claimedLivePaneSessionRow(
-			p.PID, claimed, callerClass == classAgentUnknown)
+		row, _ = claimedLivePaneSessionRow(p.PID, claimed)
 		if row == nil {
 			brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
 			writeError(w, http.StatusForbidden, "auth",
@@ -124,8 +122,7 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 			return
 		}
-		if provedRow, _ := claimedLivePaneSessionRow(
-			p.PID, claimed, callerClass == classAgentUnknown); provedRow != nil {
+		if provedRow, _ := claimedLivePaneSessionRow(p.PID, claimed); provedRow != nil {
 			row = provedRow
 		} else {
 			slog.Warn("statusline broker: rejecting render whose claimed session id disagrees with the resolved row",

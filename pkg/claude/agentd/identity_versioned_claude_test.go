@@ -30,11 +30,13 @@ func TestVersionNamedClaudeResolvesThroughTclaudeLayerPane(t *testing.T) {
 		panePID     = 34660
 		label       = "spwn-versioned-claude"
 		convID      = "8b4bd152-5a56-48db-b474-7f49d8020e1e"
+		generation  = "ce54fd4146b5c9a15d76474729b00de7"
 	)
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: label, PID: panePID, ConvID: convID,
 		TmuxSession: "tmux-versioned-claude", Harness: harness.DefaultName,
 		Status: "idle", SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		ExitLaunchGeneration: generation,
 	}))
 	fakeProcTree{
 		name: map[int]string{
@@ -47,6 +49,13 @@ func TestVersionNamedClaudeResolvesThroughTclaudeLayerPane(t *testing.T) {
 			bwrapPID: launcherPID, launcherPID: panePID, panePID: 1,
 		},
 	}.install(t)
+	previousPaneProbe := brokerLivePaneProbe
+	brokerLivePaneProbe = func(string) (lifecyclePaneProbe, error) {
+		return lifecyclePaneProbe{
+			state: paneProbeLive, panePID: panePID, generation: generation,
+		}, nil
+	}
+	t.Cleanup(func() { brokerLivePaneProbe = previousPaneProbe })
 
 	assert.False(t, session.IsHarnessProcessName("2.1.234"),
 		"the fix must not turn a version pattern into a harness identity")
@@ -59,4 +68,26 @@ func TestVersionNamedClaudeResolvesThroughTclaudeLayerPane(t *testing.T) {
 	assert.Equal(t, label, row.ID)
 	assert.Zero(t, harnessPID,
 		"an unrecognised version-named process must not be promoted to harness pid")
+
+	brokerLivePaneProbe = func(string) (lifecyclePaneProbe, error) {
+		return lifecyclePaneProbe{
+			state: paneProbeLive, panePID: panePID, generation: "replacement-launch",
+		}, nil
+	}
+	staleConv, staleAncestor := convIDForPID(callerPID)
+	assert.Empty(t, staleConv)
+	assert.False(t, staleAncestor,
+		"a reused tmux name with another generation must not prove the historical row")
+	staleRow, _ := hookSessionRowForPID(callerPID)
+	assert.Nil(t, staleRow)
+
+	brokerLivePaneProbe = func(string) (lifecyclePaneProbe, error) {
+		return lifecyclePaneProbe{
+			state: paneProbeLive, panePID: 99999, generation: generation,
+		}, nil
+	}
+	reusedPIDConv, reusedPIDAncestor := convIDForPID(callerPID)
+	assert.Empty(t, reusedPIDConv)
+	assert.False(t, reusedPIDAncestor,
+		"the launch generation cannot authorize a caller outside the live pane ancestry")
 }

@@ -144,8 +144,7 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	const endpoint = "/v1/whoami/hook"
 
 	p := peerFromContext(r.Context())
-	callerClass := classify(p)
-	switch callerClass {
+	switch classify(p) {
 	case classAgent, classAgentUnknown:
 		// Both are fine here, and classAgentUnknown deliberately so: a
 		// brokered SessionStart is often the event that first establishes
@@ -212,8 +211,7 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 			return
 		}
-		row, harnessPID = claimedLivePaneSessionRow(
-			p.PID, claimed, callerClass == classAgentUnknown)
+		row, harnessPID = claimedLivePaneSessionRow(p.PID, claimed)
 		if row == nil {
 			// Only now is the request known to be genuinely unplaceable. A valid
 			// startup claim must not increment the refusal telemetry it repairs.
@@ -231,8 +229,7 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 			return
 		}
-		if provedRow, provedHarnessPID := claimedLivePaneSessionRow(
-			p.PID, claimed, callerClass == classAgentUnknown); provedRow != nil {
+		if provedRow, provedHarnessPID := claimedLivePaneSessionRow(p.PID, claimed); provedRow != nil {
 			row, harnessPID = provedRow, provedHarnessPID
 		} else {
 			slog.Warn("hook broker: rejecting event whose claimed session id disagrees with the resolved row",

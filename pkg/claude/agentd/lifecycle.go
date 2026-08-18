@@ -564,12 +564,8 @@ func captureLifecycleTarget(sess *db.SessionRow) (*lifecycleTarget, error) {
 // that conv. The loop's own deadline bounds the polling, not the subprocess
 // inside it — only this does that.
 func probeLifecyclePane(tmuxSession string) (lifecyclePaneProbe, error) {
-	return probeLifecyclePaneWithin(tmuxSession, tmuxCommandTimeout)
-}
-
-func probeLifecyclePaneWithin(tmuxSession string, timeout time.Duration) (lifecyclePaneProbe, error) {
 	format := "#{session_name}|#{pane_id}|#{pane_pid}|#{pane_dead}|#{pane_dead_status}|#{pane_dead_signal}|#{@tclaude_exit_generation}"
-	out, err := tmuxOutputWithin(timeout,
+	out, err := tmuxOutputWithTimeout(
 		"display-message", "-p", "-t", clcommon.ExactTarget(tmuxSession)+":", format)
 	if err != nil {
 		return lifecyclePaneProbe{state: paneProbeUnknown}, err

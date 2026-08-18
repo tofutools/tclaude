@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -71,18 +70,8 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 		"fixture must reproduce the startup callback resolving to the reused-pid row")
 
 	previousPaneProbe := brokerLivePaneProbe
-	probeCalls := 0
-	probeTimeout := false
-	brokerLivePaneProbe = func(tmux string, timeout time.Duration) (lifecyclePaneProbe, error) {
+	brokerLivePaneProbe = func(tmux string) (lifecyclePaneProbe, error) {
 		if tmux == "tmux-new" {
-			probeCalls++
-			if probeTimeout {
-				return lifecyclePaneProbe{state: paneProbeUnknown},
-					fmt.Errorf("%w after %s", errTmuxCommandTimeout, timeout)
-			}
-			if probeCalls == 1 {
-				return lifecyclePaneProbe{state: paneProbeUnknown}, nil
-			}
 			return lifecyclePaneProbe{
 				state: paneProbeLive, panePID: panePID, generation: generation,
 			}, nil
@@ -91,23 +80,8 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 	}
 	t.Cleanup(func() { brokerLivePaneProbe = previousPaneProbe })
 
-	withoutUnknownGrace, _ := claimedLivePaneSessionRow(callerPID, newLabel, false)
-	assert.Nil(t, withoutUnknownGrace,
-		"a caller that is not classified agent-unknown must not retry a transient pane proof")
-	assert.Equal(t, 1, probeCalls)
-	probeCalls = 0
-	probeTimeout = true
-
-	timedOut, _ := claimedLivePaneSessionRow(callerPID, newLabel, true)
-	assert.Nil(t, timedOut, "a timed-out tmux probe must not be retried")
-	assert.Equal(t, 1, probeCalls)
-	probeCalls = 0
-	probeTimeout = false
-
-	got, gotHarnessPID := claimedLivePaneSessionRow(callerPID, newLabel, true)
+	got, gotHarnessPID := claimedLivePaneSessionRow(callerPID, newLabel)
 	require.NotNil(t, got)
-	assert.GreaterOrEqual(t, probeCalls, 2,
-		"the startup proof must retry while tmux has not published the pane identity")
 	assert.Equal(t, newLabel, got.ID)
 	assert.Equal(t, harnessPID, gotHarnessPID,
 		"the repaired hook keeps the same harness-pid correction as ordinary resolution")
@@ -180,17 +154,17 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 	require.NotNil(t, persisted)
 	persisted.PID = panePID
 	require.NoError(t, db.SaveSession(persisted))
-	afterPID, _ := claimedLivePaneSessionRow(callerPID, newLabel, false)
+	afterPID, _ := claimedLivePaneSessionRow(callerPID, newLabel)
 	require.NotNil(t, afterPID,
 		"the generation-bound pane proof must remain available after the launch parent records its pid")
 	assert.Equal(t, newLabel, afterPID.ID)
 
-	brokerLivePaneProbe = func(string, time.Duration) (lifecyclePaneProbe, error) {
+	brokerLivePaneProbe = func(string) (lifecyclePaneProbe, error) {
 		return lifecyclePaneProbe{
 			state: paneProbeLive, panePID: panePID, generation: "later-reused-pane",
 		}, nil
 	}
-	stale, _ := claimedLivePaneSessionRow(callerPID, newLabel, false)
+	stale, _ := claimedLivePaneSessionRow(callerPID, newLabel)
 	assert.Nil(t, stale,
 		"a later pane reusing the tmux name must not prove a stale launch row")
 }
@@ -243,7 +217,7 @@ func TestClaimedLivePaneSessionRowRepairsSustainedHarnessPIDCollision(t *testing
 		"the stale harness-pid row must keep winning after the new pane pid is persisted")
 
 	previousPaneProbe := brokerLivePaneProbe
-	brokerLivePaneProbe = func(tmux string, _ time.Duration) (lifecyclePaneProbe, error) {
+	brokerLivePaneProbe = func(tmux string) (lifecyclePaneProbe, error) {
 		if tmux == "tmux-new" {
 			return lifecyclePaneProbe{
 				state: paneProbeLive, panePID: panePID, generation: generation,
@@ -253,7 +227,7 @@ func TestClaimedLivePaneSessionRowRepairsSustainedHarnessPIDCollision(t *testing
 	}
 	t.Cleanup(func() { brokerLivePaneProbe = previousPaneProbe })
 
-	got, gotHarnessPID := claimedLivePaneSessionRow(callerPID, newLabel, false)
+	got, gotHarnessPID := claimedLivePaneSessionRow(callerPID, newLabel)
 	require.NotNil(t, got)
 	assert.Equal(t, newLabel, got.ID)
 	assert.Equal(t, harnessPID, gotHarnessPID)
@@ -329,14 +303,14 @@ func TestClaimedLivePaneSessionRowRequiresTheClaimedPanesAncestry(t *testing.T) 
 	}.install(t)
 
 	previousPaneProbe := brokerLivePaneProbe
-	brokerLivePaneProbe = func(string, time.Duration) (lifecyclePaneProbe, error) {
+	brokerLivePaneProbe = func(string) (lifecyclePaneProbe, error) {
 		return lifecyclePaneProbe{
 			state: paneProbeLive, panePID: peerPanePID, generation: "peer-generation",
 		}, nil
 	}
 	t.Cleanup(func() { brokerLivePaneProbe = previousPaneProbe })
 
-	row, harnessPID := claimedLivePaneSessionRow(callerPID, peerLabel, false)
+	row, harnessPID := claimedLivePaneSessionRow(callerPID, peerLabel)
 	assert.Nil(t, row, "a live peer pane named by the request is not the caller's identity")
 	assert.Zero(t, harnessPID)
 }

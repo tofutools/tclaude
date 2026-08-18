@@ -33,14 +33,10 @@ func runTmuxCommand(args ...string) error {
 // returns its stdout. The read twin of runTmuxCommand, for the probes the
 // lifecycle paths make while a request is blocked on them.
 func tmuxOutputWithTimeout(args ...string) ([]byte, error) {
-	return tmuxOutputWithin(tmuxCommandTimeout, args...)
-}
-
-func tmuxOutputWithin(timeout time.Duration, args ...string) ([]byte, error) {
 	cmd := clcommon.TmuxCommand(args...)
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
-	if err := runCommandWithTimeout(cmd, timeout); err != nil {
+	if err := runCommandWithTimeout(cmd, tmuxCommandTimeout); err != nil {
 		return nil, err
 	}
 	return stdout.Bytes(), nil
