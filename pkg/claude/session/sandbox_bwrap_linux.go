@@ -34,25 +34,12 @@ const bwrapProbeTimeout = 5 * time.Second
 
 var (
 	lookPathBwrap = exec.LookPath
-	probeBwrap    = func(
+	probeBwrap = func(
 		binary string,
 		posture sandboxpolicy.NetworkPosture,
 		root sandboxpolicy.RootPosture,
 	) error {
-		args, err := tclaudeLayerProbeArgs(posture, root)
-		if err != nil {
-			return err
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), bwrapProbeTimeout)
-		defer cancel()
-		if err := exec.CommandContext(ctx, binary, args...).Run(); err != nil {
-			if ctx.Err() != nil {
-				return fmt.Errorf("bubblewrap capability probe timed out after %s: %w",
-					bwrapProbeTimeout, ctx.Err())
-			}
-			return err
-		}
-		return nil
+		return probeBwrapInLaunchContext(binary, posture, root)
 	}
 	probeTclaudeLayerPidfd = func() error {
 		fd, err := unix.PidfdOpen(os.Getpid(), 0)
@@ -62,6 +49,35 @@ var (
 		return unix.Close(fd)
 	}
 )
+
+// probeBwrapInProcess forks bubblewrap from THIS process and reports whether
+// the requested posture's namespaces could be built.
+//
+// It is the whole probe when the caller already stands where the launch will:
+// inside the tclaude-layer capability probe subcommand, which tmux forks from
+// its server. Everywhere else it is the fallback that
+// probeBwrapInLaunchContext degrades to. See TCL-1204 for why the distinction
+// decides whether a refusal is correct.
+func probeBwrapInProcess(
+	binary string,
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+) error {
+	args, err := tclaudeLayerProbeArgs(posture, root)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), bwrapProbeTimeout)
+	defer cancel()
+	if err := exec.CommandContext(ctx, binary, args...).Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("bubblewrap capability probe timed out after %s: %w",
+				bwrapProbeTimeout, ctx.Err())
+		}
+		return err
+	}
+	return nil
+}
 
 func tclaudeLayerProbeArgs(
 	posture sandboxpolicy.NetworkPosture,
