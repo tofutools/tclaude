@@ -311,6 +311,11 @@ func TestTclaudeLayerProbeCmdRejectsUnusableArguments(t *testing.T) {
 			args: []string{"--network-posture", "host-open", "--root-posture", "host-inherited"},
 			want: "--result is required",
 		},
+		{
+			name: "missing bwrap binary",
+			args: []string{"--network-posture", "host-open", "--root-posture", "host-inherited", "--result", "/tmp/x"},
+			want: "--bwrap is required",
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			cmd := tclaudeLayerProbeCmd()
@@ -319,6 +324,26 @@ func TestTclaudeLayerProbeCmdRejectsUnusableArguments(t *testing.T) {
 			assert.ErrorContains(t, cmd.Execute(), testCase.want)
 		})
 	}
+}
+
+// Every argument-validation refusal must leave NO verdict behind. Publishing
+// one would make the caller's malformed invocation look like the host refusing
+// the capability, and resolveBwrapServerBinary would refuse the launch for it.
+func TestTclaudeLayerProbeCmdPublishesNoVerdictForAMalformedInvocation(t *testing.T) {
+	resultPath := filepath.Join(t.TempDir(), "result")
+	cmd := tclaudeLayerProbeCmd()
+	cmd.SetArgs([]string{
+		"--network-posture", "host-open",
+		"--root-posture", "host-inherited",
+		"--result", resultPath,
+		// --bwrap deliberately absent: an empty program name execs, fails, and
+		// would otherwise be published as a capability refusal.
+	})
+	cmd.SilenceUsage, cmd.SilenceErrors = true, true
+
+	require.Error(t, cmd.Execute())
+	_, err := os.Stat(resultPath)
+	assert.ErrorIs(t, err, fs.ErrNotExist)
 }
 
 // The waiting side polls a filename. A verdict that appears under its final

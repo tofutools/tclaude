@@ -446,6 +446,14 @@ func tclaudeLayerProbeCmd() *cobra.Command {
 			if strings.TrimSpace(resultPath) == "" {
 				return errors.New("--result is required")
 			}
+			// A malformed invocation must produce NO VERDICT, not a refusal.
+			// Without this, an empty --bwrap reaches exec as an empty program
+			// name, fails, and gets published as `err exec: no command` — which
+			// resolveBwrapServerBinary would then turn into a refused launch,
+			// blaming the host for the caller's bug.
+			if strings.TrimSpace(binary) == "" {
+				return errors.New("--bwrap is required")
+			}
 			result := tclaudeLayerProbeResultOK
 			if err := probeBwrapInProcess(binary, posture, root); err != nil {
 				result = tclaudeLayerProbeResultPrefix + err.Error()
