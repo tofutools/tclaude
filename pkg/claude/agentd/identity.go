@@ -1383,31 +1383,6 @@ func legacyIdentityForPID(pid int) (convID string, hasAncestor, selectedLayer bo
 	return "", hasAncestor, false
 }
 
-// tclaudeLayerSessionConvByAncestor crosses only wrapper processes between a
-// harness and a sessions row that explicitly records tclaude-layer. The
-// implementation check is the trust boundary: harness-builtin launches retain
-// their exact/one-parent identity rule, while the outer layer can account for
-// its known bwrap -> sh ancestry without trusting caller-controlled env.
-func tclaudeLayerSessionConvByAncestor(pid int) string {
-	const maxWrapperHops = 16
-	// Same live-row preference as the row-returning twin below: a wrapped
-	// agent whose pid is shadowed by a dead row would otherwise be given
-	// the corpse's conv-id here too (TCL-761). The extra conv-id condition
-	// stays part of the candidate test, so a row that has not established
-	// one yet is skipped rather than returned as "".
-	accept := func(row *db.SessionRow) bool { return row.ConvID != "" && isTclaudeLayerRow(row) }
-	for range maxWrapperHops {
-		if pid <= 1 {
-			return ""
-		}
-		if row := preferLiveRowAtPID(pid, accept); row != nil {
-			return row.ConvID
-		}
-		pid = procParent(pid)
-	}
-	return ""
-}
-
 // hookSessionRowForPID resolves the sessions row a brokered hook callback
 // from pid belongs to, plus the harness pid the walk crossed to reach it.
 //
@@ -1568,9 +1543,9 @@ func preferLiveRowAtPID(hostPID int, accept func(*db.SessionRow) bool) *db.Sessi
 // promoting anyone else. A nil `replaces` allows every live replacement,
 // which is the row-returning callers' behaviour.
 //
-// sessionConvByPID needs it because its answer is the row's CONV-ID, not the
-// row: a repair that swaps a conv-id-bearing row for one that has none (or
-// the reverse) would change whether the caller resolves at all, in a
+// sessionConvRowByPID needs it because identity resolution ultimately uses
+// the row's CONV-ID: a repair that swaps a conv-id-bearing row for one that
+// has none (or the reverse) would change whether the caller resolves at all, in a
 // direction liveness says nothing about.
 func repairedRowAtPID(
 	hostPID int,
@@ -1632,10 +1607,10 @@ func isTclaudeLayerRow(row *db.SessionRow) bool {
 	return row != nil && row.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer)
 }
 
-// tclaudeLayerSessionRowByAncestor is tclaudeLayerSessionConvByAncestor
-// returning the row. The recorded-implementation check is the same trust
-// boundary: only a launch the daemon itself recorded as tclaude-layer may
-// have its bwrap -> sh wrapper hops crossed.
+// tclaudeLayerSessionRowByAncestor crosses wrapper processes to a sessions row
+// that explicitly records tclaude-layer. The recorded-implementation check is
+// the trust boundary: only a launch the daemon itself recorded as
+// tclaude-layer may have its bwrap -> sh wrapper hops crossed.
 //
 // This is the walk that actually carries a WRAPPED agent's brokered hooks,
 // so it needs the same live-row preference sessionRowByPID applies — a
@@ -1655,11 +1630,10 @@ func tclaudeLayerSessionRowByAncestor(pid int) *db.SessionRow {
 	return nil
 }
 
-// sessionConvByPID returns the conv-id of the sessions row recorded against
-// hostPID, or "" when none matches (or the match has no conv-id yet). The
-// sessions table is keyed by the tmux pane_pid recorded at spawn; convIDForPID
-// probes both the harness ancestor's own pid and its parent's because the
-// harness runs one hop below that pane_pid.
+// sessionConvRowByPID returns the sessions row recorded against hostPID. The
+// sessions table is keyed by the tmux pane_pid recorded at spawn;
+// legacyIdentityForPID probes both the harness ancestor's own pid and its
+// parent's because the harness runs one hop below that pane_pid.
 //
 // This is the general pid -> conv-id lookup behind DIRECT CLI identity, and it
 // takes the same dead-incumbent repair as sessionRowByPID (TCL-771). It was
@@ -1698,13 +1672,6 @@ func tclaudeLayerSessionRowByAncestor(pid int) *db.SessionRow {
 // host pids the daemon itself recorded is what a sandboxed caller cannot forge
 // either way. Residual limitation: a dead incumbent with no provably live
 // sibling still resolves as before.
-func sessionConvByPID(hostPID int) string {
-	if row := sessionConvRowByPID(hostPID); row != nil {
-		return row.ConvID
-	}
-	return ""
-}
-
 func sessionConvRowByPID(hostPID int) *db.SessionRow {
 	sameAnswerability := func(incumbent, candidate *db.SessionRow) bool {
 		return (incumbent.ConvID == "") == (candidate.ConvID == "")
@@ -1726,7 +1693,7 @@ func sessionConvRowByPID(hostPID int) *db.SessionRow {
 // endpoint closes that reuse window: the crashed server freed its port, so the
 // impostor cannot own it, while a live managed server always holds its own port
 // — the same proof every authenticated request to this runtime already
-// requires. (The parallel sessions.pid path in sessionConvByPID has the same
+// requires. (The parallel sessions.pid path in sessionConvRowByPID has the same
 // pre-existing property but no endpoint to prove against; it is intentionally
 // left unchanged here — see TCL-678.)
 func openCodeRuntimeConvByPID(hostPID int) string {
