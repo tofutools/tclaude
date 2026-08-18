@@ -131,6 +131,16 @@ func TestBrokerLimits_ShadowModeByDefault(t *testing.T) {
 		"an absent broker config must leave the limiter in shadow mode")
 }
 
+func TestBrokerIdentityProofLimitIsAlwaysEnforced(t *testing.T) {
+	t.Cleanup(ResetBrokerLimiterForTest())
+	key := brokerProofKeyForRow("spwn-proof")
+	for range brokerProofRatePerSecond {
+		assert.False(t, checkBrokerProofRate("/test", key).Reject)
+	}
+	assert.True(t, checkBrokerProofRate("/test", key).Reject,
+		"tmux proof work must be bounded even while ordinary limits are in shadow mode")
+}
+
 // The enforcement flag is cached, because reading a config file per
 // request at a statusline's cadence would make the limiter generate
 // exactly the I/O it exists to bound.

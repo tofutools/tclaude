@@ -68,17 +68,19 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Identity first, so the rate limit can be keyed on the agent rather
-	// than on anything the caller controls.
+	// Resolve the ordinary candidate before parsing, but keep it provisional
+	// until the request claim can be checked against the live pane. The shared
+	// guard bounds that pre-proof work; only the final row is charged below.
 	row, _ := hookSessionRowForPID(p.PID)
-	if row == nil {
-		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
+	preProofKey := brokerPreIdentityKey
+	if row != nil {
+		preProofKey = brokerPreIdentityKeyForRow(row.ID)
+	}
+	if checkBrokerRate(endpoint, preProofKey, brokerPreIdentityRatePerSecond).Reject {
+		if row == nil {
 			brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
-			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
-			return
 		}
-	} else if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
-		writeError(w, http.StatusTooManyRequests, "rate", "too many statusline renders")
+		writeError(w, http.StatusTooManyRequests, "rate", "too many requests before identity verification")
 		return
 	}
 
@@ -104,6 +106,10 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	}
 	claimed := strings.TrimSpace(req.ClaimedSessionID)
 	if row == nil {
+		if checkBrokerProofRate(endpoint, brokerProofKeyForRow("")).Reject {
+			writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
+			return
+		}
 		row, _ = claimedLivePaneSessionRow(p.PID, claimed)
 		if row == nil {
 			brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
@@ -111,13 +117,13 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 				"could not resolve a session row for this caller; refusing to apply its statusline")
 			return
 		}
-		if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
-			writeError(w, http.StatusTooManyRequests, "rate", "too many statusline renders")
+	} else if claimed != "" && claimed != row.ID {
+		if checkBrokerProofRate(endpoint, brokerProofKeyForRow(row.ID)).Reject {
+			writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 			return
 		}
-	} else if claimed != "" && claimed != row.ID {
-		if startupRow, _ := claimedLivePaneSessionRow(p.PID, claimed); startupRow != nil {
-			row = startupRow
+		if provedRow, _ := claimedLivePaneSessionRow(p.PID, claimed); provedRow != nil {
+			row = provedRow
 		} else {
 			slog.Warn("statusline broker: rejecting render whose claimed session id disagrees with the resolved row",
 				"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID, "module", "hooks")
@@ -126,6 +132,10 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 				"claimed session id does not match the session resolved for this caller")
 			return
 		}
+	}
+	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
+		writeError(w, http.StatusTooManyRequests, "rate", "too many statusline renders")
+		return
 	}
 	if !safeBrokeredConvID(req.RenderConvID) {
 		// Same reasoning as the hook endpoint: a conv-id is not merely

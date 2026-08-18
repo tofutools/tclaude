@@ -1411,11 +1411,12 @@ func hookSessionRowForPID(pid int) (*db.SessionRow, int) {
 	return nil, 0
 }
 
-// claimedLivePaneSessionRow repairs the launch-only gap between tmux creating
-// a pane and session new persisting that pane's pid on its already-created
-// row. During that gap a reused pid on one of the new pane's ancestors can
-// make hookSessionRowForPID return an older row; the new row still has pid 0,
-// so the ordinary candidate/liveness repair cannot see it yet.
+// claimedLivePaneSessionRow repairs broker identity when a reused pid makes
+// hookSessionRowForPID return an older row from the caller's ancestry. This
+// starts in the launch-only gap between tmux creating a pane and session new
+// persisting that pane's pid, but it can outlive the gap: the new row records
+// the pane pid while the stale row may match the nearer harness pid, causing
+// the ancestry walk to return early on every later callback.
 //
 // The claimed id remains a cross-check, not authority. It may select a row
 // only after tmux reports that row's live pane pid AND launch generation, the
@@ -1425,16 +1426,18 @@ func hookSessionRowForPID(pid int) (*db.SessionRow, int) {
 // tmux names are reusable, so pid ancestry alone could make a stale pid=0 row
 // appear to own a later pane that reused its name.
 //
-// Restricting this to tclaude-layer rows whose pid is still 0 keeps the
-// fallback confined to the brokered launch shape and exact launch phase that
-// have the race. Once a row has a pid, ordinary ancestry resolution owns it.
+// Restricting this to tclaude-layer rows keeps the proof on the brokered launch
+// shape. The row's recorded pid is deliberately not authority here: it may be
+// zero during startup, the pane pid after the parent finishes launch, or the
+// harness pid after a successful hook correction. The generation-bound live
+// pane and caller ancestry are the stable facts across all three states.
 func claimedLivePaneSessionRow(callerPID int, claimedID string) (*db.SessionRow, int) {
 	claimedID = strings.TrimSpace(claimedID)
 	if callerPID <= 1 || claimedID == "" {
 		return nil, 0
 	}
 	row, err := db.LoadSession(claimedID)
-	if err != nil || row == nil || row.PID != 0 || !isTclaudeLayerRow(row) || row.TmuxSession == "" {
+	if err != nil || row == nil || !isTclaudeLayerRow(row) || row.TmuxSession == "" {
 		return nil, 0
 	}
 	identity, err := db.GetSessionExitLaunchIdentity(row.ID)

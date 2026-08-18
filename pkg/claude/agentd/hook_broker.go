@@ -168,26 +168,21 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Identity first: the row comes from the caller's recorded host pids,
-	// never from the request, and it is also what the per-agent rate limit
-	// is keyed on — so one agent in excess cannot starve its peers. A
-	// caller-supplied TCLAUDE_SESSION_ID is accepted only as a
-	// cross-check, below.
+	// Resolve the ordinary candidate before parsing, but do not charge its
+	// per-agent bucket yet: a reused pid can make this row provisional until
+	// the request claim is checked against the live pane below. The shared,
+	// high-capacity guard bounds pre-proof body parsing; the final row is charged
+	// exactly once after identity settles.
 	row, harnessPID := hookSessionRowForPID(p.PID)
-	if row == nil {
-		// The claim may still be recoverable through the generation-bound live
-		// pane proof after the bounded body is parsed. Until then, use the
-		// shared pre-identity limiter so an unplaceable caller cannot make us
-		// parse bodies without a cap on request cadence.
-		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
-			// We cannot afford to parse the claim after the shared bucket is
-			// exhausted, so this remains an unplaceable refusal just as before.
+	preProofKey := brokerPreIdentityKey
+	if row != nil {
+		preProofKey = brokerPreIdentityKeyForRow(row.ID)
+	}
+	if checkBrokerRate(endpoint, preProofKey, brokerPreIdentityRatePerSecond).Reject {
+		if row == nil {
 			brokerRefusals.recordUnplaceable("hook: caller could not be placed")
-			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
-			return
 		}
-	} else if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
-		writeError(w, http.StatusTooManyRequests, "rate", "too many hook events")
+		writeError(w, http.StatusTooManyRequests, "rate", "too many requests before identity verification")
 		return
 	}
 
@@ -212,6 +207,10 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	}
 	claimed := strings.TrimSpace(req.ClaimedSessionID)
 	if row == nil {
+		if checkBrokerProofRate(endpoint, brokerProofKeyForRow("")).Reject {
+			writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
+			return
+		}
 		row, harnessPID = claimedLivePaneSessionRow(p.PID, claimed)
 		if row == nil {
 			// Only now is the request known to be genuinely unplaceable. A valid
@@ -221,20 +220,17 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 				"could not resolve a session row for this caller; refusing to apply its hook")
 			return
 		}
-		// The shared guard bounded work before identity was known. Once the
-		// stronger pane proof recovers the row, enforce the ordinary per-agent
-		// ceiling too so one starting agent cannot consume the shared allowance.
-		if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
-			writeError(w, http.StatusTooManyRequests, "rate", "too many hook events")
+	} else if claimed != "" && claimed != row.ID {
+		// A reused ancestor pid can resolve to an older row during the pid=0
+		// launch gap, or keep winning later when it matches the nearer harness
+		// process before the walk reaches this launch's recorded pane pid. Let
+		// tmux + the live process tree prove the claimed row directly.
+		if checkBrokerProofRate(endpoint, brokerProofKeyForRow(row.ID)).Reject {
+			writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 			return
 		}
-	} else if claimed != "" && claimed != row.ID {
-		// session new writes the row before starting tmux, then stamps its pane
-		// pid just after launch. In that narrow gap a reused ancestor pid can
-		// resolve to an older row because the new pid=0 row is not a candidate
-		// yet. Let tmux + the live process tree prove the claimed row directly.
-		if startupRow, startupHarnessPID := claimedLivePaneSessionRow(p.PID, claimed); startupRow != nil {
-			row, harnessPID = startupRow, startupHarnessPID
+		if provedRow, provedHarnessPID := claimedLivePaneSessionRow(p.PID, claimed); provedRow != nil {
+			row, harnessPID = provedRow, provedHarnessPID
 		} else {
 			slog.Warn("hook broker: rejecting event whose claimed session id disagrees with the resolved row",
 				"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID,
@@ -247,6 +243,10 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 				"claimed session id does not match the session resolved for this caller")
 			return
 		}
+	}
+	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
+		writeError(w, http.StatusTooManyRequests, "rate", "too many hook events")
+		return
 	}
 	if req.AckToken != "" {
 		if !resolveHookAck(row.ID, req.AckToken, !req.RelayFailed) {

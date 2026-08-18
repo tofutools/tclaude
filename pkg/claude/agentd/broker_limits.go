@@ -44,15 +44,45 @@ const brokerMaxBody = 10 << 20 // 10 MiB
 // bursting on top; this leaves generous headroom over that.
 const brokerRatePerSecond = 20
 
-// brokerPreIdentityRatePerSecond is the coarse backstop for requests
-// refused BEFORE identity resolves, where there is no row to key on. It
-// exists only so the resolve step itself cannot be hammered, so it is
-// deliberately far larger than any real caller needs.
+// brokerPreIdentityRatePerSecond is the coarse backstop before identity is
+// final. Even an ordinary ancestry result is provisional until a claimed-row
+// mismatch has had the chance to prove the current launch through tmux. It
+// exists only so bounded body parsing and that proof cannot be hammered, so it
+// is deliberately far larger than any real caller needs.
 const brokerPreIdentityRatePerSecond = 2000
 
-// brokerPreIdentityKey is the single bucket every unplaceable caller
-// shares. They are already 403s and cheap; nothing finer is warranted.
+// brokerProofRatePerSecond is the hard ceiling on the exceptional live-tmux
+// proof used only when ordinary ancestry is missing or disagrees with the
+// request claim. Unlike the operator-controlled traffic ceiling, this is
+// always enforced: each admitted attempt may spawn a tmux subprocess. Normal
+// matching callbacks never consume it, and the headroom is well above the
+// final per-agent traffic ceiling.
+const brokerProofRatePerSecond = 100
+
+// brokerPreIdentityKey is the shared pre-proof bucket for callers with no
+// provisional harness identity at all.
 const brokerPreIdentityKey = "\x00unplaced"
+
+// brokerPreIdentityKeyForRow isolates pre-proof work by the daemon-resolved
+// provisional row without charging that row's final per-agent quota. The row
+// may be corrected after the request claim is proved, but it is stable against
+// caller process churn; the NUL-prefixed namespace cannot collide with a real
+// session bucket.
+func brokerPreIdentityKeyForRow(rowID string) string {
+	if rowID == "" {
+		return brokerPreIdentityKey
+	}
+	return brokerPreIdentityKey + ":row:" + rowID
+}
+
+const brokerProofKey = "\x00identity-proof"
+
+func brokerProofKeyForRow(rowID string) string {
+	if rowID == "" {
+		return brokerProofKey
+	}
+	return brokerProofKey + ":row:" + rowID
+}
 
 // brokerLimiterPruneAfter is how long an idle bucket survives. Buckets
 // are tiny, but an agent-id-keyed map that never forgets is a slow leak
@@ -209,6 +239,24 @@ func checkBrokerRate(endpoint, key string, limit int) brokerRateVerdict {
 			"action", enforcementWord(enforced), "module", "hooks")
 	}
 	return brokerRateVerdict{Reject: enforced}
+}
+
+// checkBrokerProofRate is independent of broker.enforce_limits because it
+// bounds daemon work, not ordinary agent traffic. A shadow-only ceiling here
+// would still allow an unplaceable caller to spawn unbounded tmux probes.
+func checkBrokerProofRate(endpoint, key string) brokerRateVerdict {
+	over, count := defaultBrokerLimiter.observe(key, brokerProofRatePerSecond)
+	if !over {
+		return brokerRateVerdict{}
+	}
+	if log, suppressed := defaultBrokerLimiter.shouldLogExcess(key); log {
+		slog.Warn("broker: caller over the identity-proof request ceiling",
+			"endpoint", endpoint, "proof_bucket", key,
+			"requests_this_second", count, "limit_per_second", brokerProofRatePerSecond,
+			"excess_since_last_log", suppressed,
+			"action", "rejected", "module", "hooks")
+	}
+	return brokerRateVerdict{Reject: true}
 }
 
 // logBrokerBodyOverCap records an over-cap body.

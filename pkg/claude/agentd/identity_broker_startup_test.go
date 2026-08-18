@@ -26,6 +26,7 @@ import (
 // recover the new row without treating its caller-supplied id as authority.
 func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 	setupTestDB(t)
+	t.Cleanup(ResetBrokerLimiterForTest())
 
 	const (
 		callerPID  = 9101
@@ -153,12 +154,11 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 	require.NotNil(t, persisted)
 	persisted.PID = panePID
 	require.NoError(t, db.SaveSession(persisted))
-	closed, _ := claimedLivePaneSessionRow(callerPID, newLabel)
-	assert.Nil(t, closed,
-		"once the launch row has a pid, a request claim must no longer select it through the startup fallback")
+	afterPID, _ := claimedLivePaneSessionRow(callerPID, newLabel)
+	require.NotNil(t, afterPID,
+		"the generation-bound pane proof must remain available after the launch parent records its pid")
+	assert.Equal(t, newLabel, afterPID.ID)
 
-	persisted.PID = 0
-	require.NoError(t, db.SaveSession(persisted))
 	brokerLivePaneProbe = func(string) (lifecyclePaneProbe, error) {
 		return lifecyclePaneProbe{
 			state: paneProbeLive, panePID: panePID, generation: "later-reused-pane",
@@ -166,7 +166,119 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 	}
 	stale, _ := claimedLivePaneSessionRow(callerPID, newLabel)
 	assert.Nil(t, stale,
-		"a later pane reusing the tmux name must not prove a stale pid-zero launch row")
+		"a later pane reusing the tmux name must not prove a stale launch row")
+}
+
+// The launch parent eventually replaces pid=0 with the pane pid, but that does
+// not necessarily heal the collision. A stale row keyed by the newly reused
+// HARNESS pid wins at the first lookup in hookSessionRowForPID, before the walk
+// can reach the new row's pane pid. This is the sustained failure visible as a
+// stream of rejected SessionStart/tool/Stop hooks until stop+resume changes the
+// harness pid.
+func TestClaimedLivePaneSessionRowRepairsSustainedHarnessPIDCollision(t *testing.T) {
+	setupTestDB(t)
+	t.Cleanup(ResetBrokerLimiterForTest())
+
+	const (
+		callerPID  = 6101
+		harnessPID = 6090
+		bwrapPID   = 6080
+		panePID    = 6070
+		oldLabel   = "spwn-old-harness-pid"
+		newLabel   = "spwn-new-running"
+		generation = "launch-new-running"
+	)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: oldLabel, PID: harnessPID, ConvID: "old-conv", TmuxSession: "tmux-old",
+		Harness: harness.CopilotName, Status: "working",
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+	}))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: newLabel, PID: panePID, ConvID: "new-conv", TmuxSession: "tmux-new",
+		Harness: harness.CopilotName, Status: "idle",
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		ExitLaunchGeneration:  generation,
+	}))
+	fakeProcTree{
+		name: map[int]string{
+			callerPID: "tclaude", harnessPID: copilotSEAComm,
+			bwrapPID: "bwrap", panePID: "sh",
+		},
+		exe: map[int]string{harnessPID: harness.CopilotName},
+		parent: map[int]int{
+			callerPID: harnessPID, harnessPID: bwrapPID,
+			bwrapPID: panePID, panePID: 1,
+		},
+	}.install(t)
+
+	resolved, _ := hookSessionRowForPID(callerPID)
+	require.NotNil(t, resolved)
+	require.Equal(t, oldLabel, resolved.ID,
+		"the stale harness-pid row must keep winning after the new pane pid is persisted")
+
+	previousPaneProbe := brokerLivePaneProbe
+	brokerLivePaneProbe = func(tmux string) (lifecyclePaneProbe, error) {
+		if tmux == "tmux-new" {
+			return lifecyclePaneProbe{
+				state: paneProbeLive, panePID: panePID, generation: generation,
+			}, nil
+		}
+		return lifecyclePaneProbe{state: paneProbeUnknown}, nil
+	}
+	t.Cleanup(func() { brokerLivePaneProbe = previousPaneProbe })
+
+	got, gotHarnessPID := claimedLivePaneSessionRow(callerPID, newLabel)
+	require.NotNil(t, got)
+	assert.Equal(t, newLabel, got.ID)
+	assert.Equal(t, harnessPID, gotHarnessPID)
+
+	token, err := registerHookAck(newLabel, nil, nil)
+	require.NoError(t, err)
+	hookBody, err := json.Marshal(session.BrokeredHookRequest{
+		ClaimedSessionID: newLabel,
+		AckToken:         token,
+	})
+	require.NoError(t, err)
+	hookReq := httptest.NewRequest(http.MethodPost, "/v1/whoami/hook", bytes.NewReader(hookBody))
+	hookReq = hookReq.WithContext(context.WithValue(hookReq.Context(), peerKey{}, &peer{
+		PID: callerPID, ConvID: "old-conv", HasClaudeAncestor: true,
+	}))
+	hookRec := httptest.NewRecorder()
+	handleWhoamiHook(hookRec, hookReq)
+	assert.Equal(t, http.StatusOK, hookRec.Code, "sustained-collision hook response: %s", hookRec.Body.String())
+
+	renderBody, err := json.Marshal(statusbar.BrokeredRenderRequest{
+		ClaimedSessionID: newLabel,
+		RenderConvID:     "new-conv",
+	})
+	require.NoError(t, err)
+	renderReq := httptest.NewRequest(http.MethodPost, "/v1/whoami/statusline", bytes.NewReader(renderBody))
+	renderReq = renderReq.WithContext(context.WithValue(renderReq.Context(), peerKey{}, &peer{
+		PID: callerPID, ConvID: "old-conv", HasClaudeAncestor: true,
+	}))
+	renderRec := httptest.NewRecorder()
+	handleWhoamiStatusline(renderRec, renderReq)
+	assert.Equal(t, http.StatusOK, renderRec.Code,
+		"sustained-collision statusline response: %s", renderRec.Body.String())
+
+	defaultBrokerLimiter.mu.Lock()
+	defer defaultBrokerLimiter.mu.Unlock()
+	assert.NotContains(t, defaultBrokerLimiter.buckets, oldLabel,
+		"a proved request must never be charged to the provisional stale row")
+	provedBucket := defaultBrokerLimiter.buckets[newLabel]
+	require.NotNil(t, provedBucket)
+	assert.Equal(t, 2, provedBucket.count,
+		"hook and statusline must each charge the proved session exactly once")
+	assert.NotContains(t, defaultBrokerLimiter.buckets, brokerPreIdentityKey,
+		"a placed caller must not consume the global unplaceable bucket")
+	preProofBucket := defaultBrokerLimiter.buckets[brokerPreIdentityKeyForRow(oldLabel)]
+	require.NotNil(t, preProofBucket)
+	assert.Equal(t, 2, preProofBucket.count,
+		"the namespaced provisional-row bucket must bound both requests before identity is proved")
+	proofBucket := defaultBrokerLimiter.buckets[brokerProofKeyForRow(oldLabel)]
+	require.NotNil(t, proofBucket)
+	assert.Equal(t, 2, proofBucket.count,
+		"the hard proof bucket must count only the two exceptional tmux proofs")
 }
 
 func TestClaimedLivePaneSessionRowRequiresTheClaimedPanesAncestry(t *testing.T) {

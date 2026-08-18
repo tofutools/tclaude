@@ -60,7 +60,7 @@ smoke::apt_source_is_microsoft_only() {
 # Kept as a separate function so the shared self-test can prove the exact
 # command without touching the host's apt state.
 smoke::run_bounded_apt_update() {
-  sudo timeout --kill-after=10s 180s \
+  sudo -n timeout --kill-after=10s 180s \
     apt-get \
     -o Acquire::Retries=2 \
     -o Acquire::http::Timeout=15 \

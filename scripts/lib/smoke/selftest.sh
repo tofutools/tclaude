@@ -59,6 +59,7 @@ apt_update_argv="$work/apt-update.argv"
   smoke::run_bounded_apt_update
 )
 cat > "$work/apt-update.want" <<'EOF'
+-n
 timeout
 --kill-after=10s
 180s
