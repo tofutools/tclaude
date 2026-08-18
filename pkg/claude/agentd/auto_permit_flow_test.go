@@ -30,7 +30,7 @@ const (
 // safety check goes up — the prompt no allow-rule, auto-mode setting or
 // PreToolUse approval can clear.
 func enterWorktreeEvent() session.BrokeredHookRequest {
-	return session.BrokeredHookRequest{Input: session.HookCallbackInput{
+	return session.BrokeredHookRequest{ClaimedSessionID: autoPermitLabel, Input: session.HookCallbackInput{
 		ConvID: autoPermitConv, HookEventName: "PermissionRequest",
 		ToolName: "EnterWorktree",
 	}}
