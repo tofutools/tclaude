@@ -1436,7 +1436,13 @@ func hookSessionRowForPID(pid int) (*db.SessionRow, int) {
 // zero during startup, the pane pid after the parent finishes launch, or the
 // harness pid after a successful hook correction. The generation-bound live
 // pane and caller ancestry are the stable facts across all three states.
-func claimedLivePaneSessionRow(callerPID int, claimedID string) (*db.SessionRow, int) {
+func claimedLivePaneSessionRow(
+	callerPID int,
+	claimedID string,
+	retryUnknownStartup bool,
+) (*db.SessionRow, int) {
+	// The handlers set retryUnknownStartup only for classAgentUnknown. Known
+	// agents and non-agent callers must get the ordinary single proof attempt.
 	claimedID = strings.TrimSpace(claimedID)
 	if callerPID <= 1 || claimedID == "" {
 		return nil, 0
@@ -1463,7 +1469,7 @@ func claimedLivePaneSessionRow(callerPID int, claimedID string) (*db.SessionRow,
 		// briefly be absent even though the first Claude hook is already able to
 		// reach agentd; without this grace that one hook is lost, and an API
 		// failure can prevent the later hook that normally repairs its telemetry.
-		if row.PID != 0 || pane.state == paneProbeDead ||
+		if !retryUnknownStartup || row.PID != 0 || pane.state == paneProbeDead ||
 			(pane.generation != "" && pane.generation != identity.Generation) ||
 			attempt+1 == brokerStartupPaneProofAttempts {
 			return nil, 0

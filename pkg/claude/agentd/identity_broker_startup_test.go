@@ -85,7 +85,13 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 	}
 	t.Cleanup(func() { brokerLivePaneProbe = previousPaneProbe })
 
-	got, gotHarnessPID := claimedLivePaneSessionRow(callerPID, newLabel)
+	withoutUnknownGrace, _ := claimedLivePaneSessionRow(callerPID, newLabel, false)
+	assert.Nil(t, withoutUnknownGrace,
+		"a caller that is not classified agent-unknown must not retry a transient pane proof")
+	assert.Equal(t, 1, probeCalls)
+	probeCalls = 0
+
+	got, gotHarnessPID := claimedLivePaneSessionRow(callerPID, newLabel, true)
 	require.NotNil(t, got)
 	assert.GreaterOrEqual(t, probeCalls, 2,
 		"the startup proof must retry while tmux has not published the pane identity")
@@ -161,7 +167,7 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 	require.NotNil(t, persisted)
 	persisted.PID = panePID
 	require.NoError(t, db.SaveSession(persisted))
-	afterPID, _ := claimedLivePaneSessionRow(callerPID, newLabel)
+	afterPID, _ := claimedLivePaneSessionRow(callerPID, newLabel, false)
 	require.NotNil(t, afterPID,
 		"the generation-bound pane proof must remain available after the launch parent records its pid")
 	assert.Equal(t, newLabel, afterPID.ID)
@@ -171,7 +177,7 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 			state: paneProbeLive, panePID: panePID, generation: "later-reused-pane",
 		}, nil
 	}
-	stale, _ := claimedLivePaneSessionRow(callerPID, newLabel)
+	stale, _ := claimedLivePaneSessionRow(callerPID, newLabel, false)
 	assert.Nil(t, stale,
 		"a later pane reusing the tmux name must not prove a stale launch row")
 }
@@ -234,7 +240,7 @@ func TestClaimedLivePaneSessionRowRepairsSustainedHarnessPIDCollision(t *testing
 	}
 	t.Cleanup(func() { brokerLivePaneProbe = previousPaneProbe })
 
-	got, gotHarnessPID := claimedLivePaneSessionRow(callerPID, newLabel)
+	got, gotHarnessPID := claimedLivePaneSessionRow(callerPID, newLabel, false)
 	require.NotNil(t, got)
 	assert.Equal(t, newLabel, got.ID)
 	assert.Equal(t, harnessPID, gotHarnessPID)
@@ -317,7 +323,7 @@ func TestClaimedLivePaneSessionRowRequiresTheClaimedPanesAncestry(t *testing.T) 
 	}
 	t.Cleanup(func() { brokerLivePaneProbe = previousPaneProbe })
 
-	row, harnessPID := claimedLivePaneSessionRow(callerPID, peerLabel)
+	row, harnessPID := claimedLivePaneSessionRow(callerPID, peerLabel, false)
 	assert.Nil(t, row, "a live peer pane named by the request is not the caller's identity")
 	assert.Zero(t, harnessPID)
 }
