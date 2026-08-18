@@ -78,7 +78,7 @@ func TestAttachCallerIdentityAgentHintSkipsPersistentToken(t *testing.T) {
 	assert.Empty(t, req.Header.Get(HumanTokenHeader))
 }
 
-func TestAttachCallerIdentityDoesNotClaimAmbientSessionWithoutAgentHint(t *testing.T) {
+func TestAttachCallerIdentityClaimsDirectSessionWithoutAgentHint(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(HumanTokenEnvVar, "")
 	t.Setenv(agentipc.AgentHintEnvVar, "")
@@ -88,7 +88,8 @@ func TestAttachCallerIdentityDoesNotClaimAmbientSessionWithoutAgentHint(t *testi
 	require.NoError(t, err)
 	attachCallerIdentity(req)
 
-	assert.Empty(t, req.Header.Get(agentipc.SessionClaimHeader))
+	assert.Empty(t, req.Header.Get(agentipc.AgentHintHeader))
+	assert.Equal(t, "spwn-ambient", req.Header.Get(agentipc.SessionClaimHeader))
 }
 
 func TestAttachHumanTokenIgnoresUnavailableOrEmptyPersistentFile(t *testing.T) {

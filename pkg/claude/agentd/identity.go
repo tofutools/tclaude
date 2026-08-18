@@ -240,12 +240,9 @@ func withIdentity(h http.Handler) http.Handler {
 		if uconn, ok := r.Context().Value(unixConnKey{}).(*net.UnixConn); ok && uconn != nil {
 			if pid, err := peerPID(uconn); err == nil {
 				p.PID = pid
-				claimedID := ""
-				if strings.TrimSpace(r.Header.Get(agentipc.AgentHintHeader)) == "1" {
-					claimedID = strings.TrimSpace(r.Header.Get(agentipc.SessionClaimHeader))
-				}
+				claimedID := strings.TrimSpace(r.Header.Get(agentipc.SessionClaimHeader))
 				if claimedID != "" &&
-					checkBrokerProofRate(r.URL.Path, brokerProofKeyForRow(claimedID)).Reject {
+					checkBrokerProofRate(r.URL.Path, brokerProofKey).Reject {
 					writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 					return
 				}
