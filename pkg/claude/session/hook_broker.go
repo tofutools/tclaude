@@ -126,17 +126,15 @@ func databaseAbsentButDaemonReachable() bool {
 
 // BrokeredHookRequest is the body a sandboxed hook callback POSTs to
 // agentd. It carries the parsed event plus the launch-environment values
-// agentd cannot observe for itself; everything else about the caller's
-// identity agentd resolves server-side from recorded host pids.
+// agentd cannot observe for itself; agentd proves the selected session from
+// Unix peer credentials and the daemon-owned live-pane launch identity.
 type BrokeredHookRequest struct {
 	// Input is the harness's hook payload, already parsed.
 	Input HookCallbackInput `json:"input"`
 
-	// ClaimedSessionID is the caller's TCLAUDE_SESSION_ID. It is a
-	// CROSS-CHECK ONLY: agentd resolves the real session row from the
-	// caller's process ancestry and rejects the request if this disagrees.
-	// It is never the authority — see the note at the launch seam about
-	// TCLAUDE_SESSION_ID being caller-controlled compatibility state.
+	// ClaimedSessionID is the caller's TCLAUDE_SESSION_ID. It selects the row
+	// agentd proves against the Unix peer PID, live tmux pane, and daemon-owned
+	// launch generation. It is never authority by itself.
 	ClaimedSessionID string `json:"claimed_session_id,omitempty"`
 
 	// ExitGeneration is TCLAUDE_EXIT_GENERATION, the per-launch token that

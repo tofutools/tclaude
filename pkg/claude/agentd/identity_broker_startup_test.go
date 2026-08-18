@@ -24,7 +24,7 @@ import (
 // reused pane pid, so the ordinary ancestry resolver returns that row because
 // the real one is not a pid candidate yet. The live tmux pane proof must
 // recover the new row without treating its caller-supplied id as authority.
-func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
+func TestTclaudeLayerCallerProofRepairsStartupPIDGap(t *testing.T) {
 	setupTestDB(t)
 	t.Cleanup(ResetBrokerLimiterForTest())
 
@@ -80,8 +80,9 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 	}
 	t.Cleanup(func() { brokerLivePaneProbe = previousPaneProbe })
 
-	got, gotHarnessPID := claimedLivePaneSessionRow(callerPID, newLabel)
+	got, gotHarnessPID, layerClaim := proveTclaudeLayerCaller(callerPID, newLabel)
 	require.NotNil(t, got)
+	assert.True(t, layerClaim)
 	assert.Equal(t, newLabel, got.ID)
 	assert.Equal(t, harnessPID, gotHarnessPID,
 		"the repaired hook keeps the same harness-pid correction as ordinary resolution")
@@ -133,17 +134,13 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 	})
 	require.NoError(t, err)
 	hookReq = httptest.NewRequest(http.MethodPost, "/v1/whoami/hook", bytes.NewReader(hookBody))
-	hookReq = hookReq.WithContext(context.WithValue(hookReq.Context(), peerKey{}, &peer{
-		PID: callerPID, HasClaudeAncestor: true,
-	}))
+	hookReq = hookReq.WithContext(context.WithValue(hookReq.Context(), peerKey{}, &peer{PID: callerPID}))
 	hookRec = httptest.NewRecorder()
 	handleWhoamiHook(hookRec, hookReq)
 	assert.Equal(t, http.StatusOK, hookRec.Code, "nil-resolution hook response: %s", hookRec.Body.String())
 
 	renderReq = httptest.NewRequest(http.MethodPost, "/v1/whoami/statusline", bytes.NewReader(renderBody))
-	renderReq = renderReq.WithContext(context.WithValue(renderReq.Context(), peerKey{}, &peer{
-		PID: callerPID, HasClaudeAncestor: true,
-	}))
+	renderReq = renderReq.WithContext(context.WithValue(renderReq.Context(), peerKey{}, &peer{PID: callerPID}))
 	renderRec = httptest.NewRecorder()
 	handleWhoamiStatusline(renderRec, renderReq)
 	assert.Equal(t, http.StatusOK, renderRec.Code,
@@ -154,7 +151,7 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 	require.NotNil(t, persisted)
 	persisted.PID = panePID
 	require.NoError(t, db.SaveSession(persisted))
-	afterPID, _ := claimedLivePaneSessionRow(callerPID, newLabel)
+	afterPID, _, _ := proveTclaudeLayerCaller(callerPID, newLabel)
 	require.NotNil(t, afterPID,
 		"the generation-bound pane proof must remain available after the launch parent records its pid")
 	assert.Equal(t, newLabel, afterPID.ID)
@@ -164,9 +161,10 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 			state: paneProbeLive, panePID: panePID, generation: "later-reused-pane",
 		}, nil
 	}
-	stale, _ := claimedLivePaneSessionRow(callerPID, newLabel)
+	stale, _, staleLayerClaim := proveTclaudeLayerCaller(callerPID, newLabel)
 	assert.Nil(t, stale,
 		"a later pane reusing the tmux name must not prove a stale launch row")
+	assert.True(t, staleLayerClaim, "a failed layer proof must not fall back to legacy identity")
 }
 
 // The launch parent eventually replaces pid=0 with the pane pid, but that does
@@ -175,7 +173,7 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 // can reach the new row's pane pid. This is the sustained failure visible as a
 // stream of rejected SessionStart/tool/Stop hooks until stop+resume changes the
 // harness pid.
-func TestClaimedLivePaneSessionRowRepairsSustainedHarnessPIDCollision(t *testing.T) {
+func TestTclaudeLayerCallerProofRepairsSustainedHarnessPIDCollision(t *testing.T) {
 	setupTestDB(t)
 	t.Cleanup(ResetBrokerLimiterForTest())
 
@@ -227,8 +225,9 @@ func TestClaimedLivePaneSessionRowRepairsSustainedHarnessPIDCollision(t *testing
 	}
 	t.Cleanup(func() { brokerLivePaneProbe = previousPaneProbe })
 
-	got, gotHarnessPID := claimedLivePaneSessionRow(callerPID, newLabel)
+	got, gotHarnessPID, layerClaim := proveTclaudeLayerCaller(callerPID, newLabel)
 	require.NotNil(t, got)
+	assert.True(t, layerClaim)
 	assert.Equal(t, newLabel, got.ID)
 	assert.Equal(t, harnessPID, gotHarnessPID)
 
@@ -281,7 +280,7 @@ func TestClaimedLivePaneSessionRowRepairsSustainedHarnessPIDCollision(t *testing
 		"the hard proof bucket must count only the two exceptional tmux proofs")
 }
 
-func TestClaimedLivePaneSessionRowRequiresTheClaimedPanesAncestry(t *testing.T) {
+func TestTclaudeLayerCallerProofRequiresTheClaimedPanesAncestry(t *testing.T) {
 	setupTestDB(t)
 
 	const (
@@ -310,7 +309,8 @@ func TestClaimedLivePaneSessionRowRequiresTheClaimedPanesAncestry(t *testing.T) 
 	}
 	t.Cleanup(func() { brokerLivePaneProbe = previousPaneProbe })
 
-	row, harnessPID := claimedLivePaneSessionRow(callerPID, peerLabel)
+	row, harnessPID, layerClaim := proveTclaudeLayerCaller(callerPID, peerLabel)
 	assert.Nil(t, row, "a live peer pane named by the request is not the caller's identity")
 	assert.Zero(t, harnessPID)
+	assert.True(t, layerClaim, "a foreign layer claim must fail closed")
 }

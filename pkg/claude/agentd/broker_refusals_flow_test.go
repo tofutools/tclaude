@@ -146,12 +146,9 @@ func TestBrokerIdentity_LiveRowWinsAPidItSharesWithACorpse(t *testing.T) {
 		"the dead row must not record a hook it did not fire")
 }
 
-// TestBrokerIdentity_AllStaleRowsResolveExactlyAsBefore is the other side
-// of the ruling: liveness is a PREFERENCE among candidates, never a filter.
-// With no live candidate the resolver must land on the same row the plain
-// most-recently-updated query picks — resolving nothing, or resolving
-// differently, would be a new behaviour change smuggled in with the fix.
-func TestBrokerIdentity_AllStaleRowsResolveExactlyAsBefore(t *testing.T) {
+// A brokered layer callback can only originate below its live pane. Historical
+// PID matches are not authority after that pane is gone.
+func TestBrokerIdentity_AllStaleRowsFailClosed(t *testing.T) {
 	f := newFlow(t)
 	callerPID := pidReuseProcTree(t)
 	haveSharedPIDRows(t, f)
@@ -164,7 +161,8 @@ func TestBrokerIdentity_AllStaleRowsResolveExactlyAsBefore(t *testing.T) {
 	require.NotNil(t, baseline)
 	require.Equal(t, pidReuseDeadLabel, baseline.ID)
 
-	// Claiming the row the old rule picks is accepted...
+	// Even claiming the row the legacy resolver picks is refused because no
+	// live generation-bound pane can own the caller.
 	code, _ := postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
 		Input: session.HookCallbackInput{
 			ConvID:        pidReuseDeadConv,
@@ -173,11 +171,9 @@ func TestBrokerIdentity_AllStaleRowsResolveExactlyAsBefore(t *testing.T) {
 		},
 		ClaimedSessionID: baseline.ID,
 	})
-	assert.Equal(t, http.StatusOK, code,
-		"with nothing alive, resolution must be unchanged from FindSessionByPID")
+	assert.Equal(t, http.StatusForbidden, code)
 
-	// ...and claiming the other one is still refused. Together these pin
-	// WHICH row resolved, not merely that something did.
+	// Claiming the other stale row is refused too.
 	code, _ = postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
 		Input: session.HookCallbackInput{
 			ConvID:        pidReuseLiveConv,
@@ -328,14 +324,9 @@ func TestBrokerRefusals_UnplaceableIsCountedNotAttributed(t *testing.T) {
 		"the session the unplaceable caller claimed must not be badged for it")
 }
 
-// TestBrokerIdentity_ANamelessIncumbentIsNotDemoted guards the one case
-// where the preference could quietly become a re-ranking. A row with no
-// recorded tmux session — what auto-registration writes for a harness not
-// started under tmux — cannot be shown alive OR dead. Ranking it below an
-// older row that merely HAS a live name would resolve differently from
-// FindSessionByPID with no evidence that the older row is the right
-// answer, which is the invariant the ruling protects.
-func TestBrokerIdentity_ANamelessIncumbentIsNotDemoted(t *testing.T) {
+// A tclaude-layer row without its tmux launch identity cannot prove a brokered
+// caller, even if the legacy PID resolver would choose that row.
+func TestBrokerIdentity_ANamelessLayerRowFailsClosed(t *testing.T) {
 	f := newFlow(t)
 	callerPID := pidReuseProcTree(t)
 
@@ -366,18 +357,13 @@ func TestBrokerIdentity_ANamelessIncumbentIsNotDemoted(t *testing.T) {
 		},
 		ClaimedSessionID: pidReuseLiveLabel,
 	})
-	assert.Equal(t, http.StatusOK, code,
-		"an incumbent with no tmux name must keep the pid; absence of a name is not evidence of death")
+	assert.Equal(t, http.StatusForbidden, code)
 }
 
-// TestBrokerRefusals_BadgeSurvivesAConvWithSeveralRows pins the read path
-// against the shape that produces this condition in the first place. The
-// broker keys a refusal on the row its pid walk resolved; the dashboard
-// renders a conv from the row IT picked, preferring a live one. Those are
-// not the same row for a conv that has both — which is exactly the
-// multi-row conv pid reuse creates. Looking only at the rendered pick
-// would drop the badge in the headline case.
-func TestBrokerRefusals_BadgeSurvivesAConvWithSeveralRows(t *testing.T) {
+// A simulated caller below an offline historical pane has no trustworthy row
+// to badge. The refusal remains visible in the machine-level unplaceable
+// count; it must not be projected onto another live row for the same conv.
+func TestBrokerRefusals_OfflineHistoricalRowIsNotTrustedForBadge(t *testing.T) {
 	t.Cleanup(agentd.ResetBrokerRefusalsForTest())
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
@@ -406,8 +392,9 @@ func TestBrokerRefusals_BadgeSurvivesAConvWithSeveralRows(t *testing.T) {
 
 	row := findDashMember(snap, "refusalsquad", brokerLayerConv)
 	require.NotNil(t, row)
-	assert.Equal(t, 1, row.State.BrokerRefusals,
-		"the badge must survive the dashboard rendering the conv from a different row")
+	assert.Zero(t, row.State.BrokerRefusals,
+		"an unproved historical row must not badge a different live launch")
+	assert.Equal(t, 1, snap.BrokerRefusalsUnplaceable)
 }
 
 // TestBrokerRefusals_StatuslineRefusalsAreRecordedToo: the status line is

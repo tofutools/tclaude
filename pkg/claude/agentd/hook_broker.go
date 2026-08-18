@@ -30,8 +30,9 @@ import (
 //
 // Three properties make this safe to leave ungated by a permission slug:
 //
-//  1. The event is applied to the session row the DAEMON resolved from the
-//     caller's process ancestry. Nothing the caller sends selects a target.
+//  1. The caller's session id only selects a candidate row. The daemon applies
+//     the event only after the live pane's launch generation and host PID
+//     ancestry prove that candidate owns the Unix-socket caller.
 //  2. The effect is exactly what the same caller would have achieved by
 //     writing the database directly, which is what every harness-builtin
 //     agent does unmediated today. Brokering removes a capability (reaching
@@ -145,13 +146,13 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 
 	p := peerFromContext(r.Context())
 	switch classify(p) {
-	case classAgent, classAgentUnknown:
+	case classAgent, classAgentUnknown, classUnconfirmed:
 		// Both are fine here, and classAgentUnknown deliberately so: a
 		// brokered SessionStart is often the event that first establishes
-		// the conv-id, so demanding a resolved one would lock out the first
-		// hook of every agent. The session row below is resolved from
-		// recorded host pids either way — the conv-id is not what
-		// identifies the caller.
+		// the conv-id. classUnconfirmed is also provisional here: a
+		// version-named Claude process has no legacy harness-name match, but
+		// the generation-bound pane proof below can still authenticate it.
+		// No event is applied unless that proof or legacy identity succeeds.
 	case classUnidentified:
 		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
 			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
@@ -206,43 +207,48 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claimed := strings.TrimSpace(req.ClaimedSessionID)
-	if row == nil {
-		if checkBrokerProofRate(endpoint, brokerProofKeyForRow("")).Reject {
-			writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
-			return
-		}
-		row, harnessPID = claimedLivePaneSessionRow(p.PID, claimed)
-		if row == nil {
-			// Only now is the request known to be genuinely unplaceable. A valid
-			// startup claim must not increment the refusal telemetry it repairs.
-			brokerRefusals.recordUnplaceable("hook: caller could not be placed")
-			writeError(w, http.StatusForbidden, "auth",
-				"could not resolve a session row for this caller; refusing to apply its hook")
-			return
-		}
-	} else if claimed != "" && claimed != row.ID {
-		// A reused ancestor pid can resolve to an older row during the pid=0
-		// launch gap, or keep winning later when it matches the nearer harness
-		// process before the walk reaches this launch's recorded pane pid. Let
-		// tmux + the live process tree prove the claimed row directly.
-		if checkBrokerProofRate(endpoint, brokerProofKeyForRow(row.ID)).Reject {
-			writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
-			return
-		}
-		if provedRow, provedHarnessPID := claimedLivePaneSessionRow(p.PID, claimed); provedRow != nil {
-			row, harnessPID = provedRow, provedHarnessPID
+	proofKey := ""
+	if row != nil {
+		proofKey = row.ID
+	}
+	if checkBrokerProofRate(endpoint, brokerProofKeyForRow(proofKey)).Reject {
+		writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
+		return
+	}
+	provedRow, provedHarnessPID, layerClaim := proveTclaudeLayerCaller(p.PID, claimed)
+	switch {
+	case layerClaim && provedRow != nil:
+		row, harnessPID = provedRow, provedHarnessPID
+	case layerClaim:
+		if row != nil {
+			brokerRefusals.recordClaimMismatch(row.ID,
+				"hook: claimed tclaude-layer session failed live-pane proof")
 		} else {
-			slog.Warn("hook broker: rejecting event whose claimed session id disagrees with the resolved row",
-				"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID,
-				"event", req.Input.HookEventName, "module", "hooks")
-			// Identity DID resolve here, so the refusal is attributed to the
-			// row the DAEMON concluded — never to the claimed one, which is
-			// the caller's own string. See broker_refusals.go.
-			brokerRefusals.recordClaimMismatch(row.ID, "hook: claimed session id disagrees with the resolved row")
-			writeError(w, http.StatusForbidden, "auth",
-				"claimed session id does not match the session resolved for this caller")
-			return
+			brokerRefusals.recordUnplaceable("hook: tclaude-layer caller failed live-pane proof")
 		}
+		writeError(w, http.StatusForbidden, "auth", "claimed tclaude-layer session does not own this caller")
+		return
+	case row == nil:
+		brokerRefusals.recordUnplaceable("hook: caller could not be placed")
+		writeError(w, http.StatusForbidden, "auth",
+			"could not resolve a session row for this caller; refusing to apply its hook")
+		return
+	case isTclaudeLayerRow(row):
+		brokerRefusals.recordUnplaceable("hook: tclaude-layer callback omitted its session claim")
+		writeError(w, http.StatusForbidden, "auth",
+			"tclaude-layer hook callback requires a proved session claim")
+		return
+	case claimed != "" && claimed != row.ID:
+		slog.Warn("hook broker: rejecting event whose claimed session id disagrees with the resolved row",
+			"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID,
+			"event", req.Input.HookEventName, "module", "hooks")
+		// Identity DID resolve here, so the refusal is attributed to the
+		// row the DAEMON concluded — never to the claimed one, which is
+		// the caller's own string. See broker_refusals.go.
+		brokerRefusals.recordClaimMismatch(row.ID, "hook: claimed session id disagrees with the resolved row")
+		writeError(w, http.StatusForbidden, "auth",
+			"claimed session id does not match the session resolved for this caller")
+		return
 	}
 	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
 		writeError(w, http.StatusTooManyRequests, "rate", "too many hook events")

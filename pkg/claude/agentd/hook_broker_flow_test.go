@@ -78,17 +78,29 @@ func layerProcTree(t *testing.T) int {
 func haveLayerSession(t *testing.T, f *testharness.Flow, conv, label, tmux string, panePID int) {
 	t.Helper()
 	f.HaveAliveSession(conv, label, tmux, f.World.HomeDir)
+	generation := "test-layer-generation-" + label
 	row, err := db.LoadSession(label)
 	require.NoError(t, err, "LoadSession(%s)", label)
 	require.NotNil(t, row, "session row %s should exist", label)
 	row.PID = panePID
 	row.SandboxImplementation = "tclaude-layer"
+	row.ExitLaunchGeneration = generation
 	require.NoError(t, db.SaveSession(row), "record the layer launch")
+	f.World.Tmux.SetPaneIdentityForTest(tmux, "%1", panePID)
+	f.World.Tmux.SetPaneExitGeneration(tmux, generation)
 }
 
 // postBrokeredHook drives POST /v1/whoami/hook as a caller at callerPID.
 func postBrokeredHook(t *testing.T, f *testharness.Flow, callerPID int, body session.BrokeredHookRequest) (int, session.BrokeredHookResponse) {
 	t.Helper()
+	if body.ClaimedSessionID == "" {
+		switch callerPID {
+		case injHookPID:
+			body.ClaimedSessionID = injLabel
+		default:
+			body.ClaimedSessionID = brokerLayerLabel
+		}
+	}
 	req := testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/hook", body)
 	req = agentd.AsAgentPeerWithPID(req, "", callerPID)
 	rec := testharness.Serve(f.Mux, req)
@@ -415,7 +427,10 @@ func TestHookBroker_TranscriptPathIsScopedToTheCallersOwnRollout(t *testing.T) {
 		require.NotNil(t, row)
 		row.PID = brokerPanePID
 		row.SandboxImplementation = "tclaude-layer"
+		row.ExitLaunchGeneration = "test-layer-generation-" + brokerLayerLabel
 		require.NoError(t, db.SaveSession(row))
+		f.World.Tmux.SetPaneIdentityForTest("tmux-broker-layer", "%1", brokerPanePID)
+		f.World.Tmux.SetPaneExitGeneration("tmux-broker-layer", row.ExitLaunchGeneration)
 
 		t.Cleanup(agentd.SetProcTreeForTest(
 			map[int]string{
