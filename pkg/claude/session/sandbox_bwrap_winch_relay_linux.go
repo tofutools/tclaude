@@ -316,7 +316,7 @@ func runTclaudeLayerWinchRelay(
 	child.ExtraFiles = append(child.ExtraFiles, preservedFiles...)
 	if err := child.Start(); err != nil {
 		_ = statusW.Close()
-		return 125, fmt.Errorf("start bubblewrap: %w", err)
+		return 125, tclaudeLayerStartRefusal(argv[0], err)
 	}
 	_ = statusW.Close()
 	// Bubblewrap now owns duplicates of every preserved descriptor. Drop the

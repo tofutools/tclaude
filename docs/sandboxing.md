@@ -860,6 +860,43 @@ are guesses made from what an unprivileged daemon can read, not determinations:
 agentd cannot read `dmesg` or `aa-status`. The supported posture for these hosts
 is still open; what stands today is that stacked fails closed and says so.
 
+### Where the tclaude-layer capability probe runs
+
+`tclaude-layer` refuses rather than falling back, and that promise is only as
+good as the pre-flight probe behind it. On Linux the probe and the launch used
+to stand in different places, so on some hosts the probe could pass a launch
+that could not run.
+
+**The two places.** The probe is reached from `tclaude session new`: a child of
+`tclaude agentd` for a dashboard spawn, or of your shell for a CLI launch. The
+process that really execs `bwrap` is several hops away — tmux server → pane
+bootstrap shell → exit gate → `tclaude … tclaude-layer-winch-relay` → `bwrap` —
+and the tmux server inherits its confinement from whatever first auto-started
+it. Any per-process confinement that differs between the two (an AppArmor
+profile per binary, an SELinux domain, a seccomp filter, a differing
+`no_new_privs`) is invisible to a probe that never runs under it.
+
+**What tclaude does now.** When a tmux server is already running, the probe is
+executed *through* it — `tmux run-shell` forks the same `tclaude` capability
+probe from the server, one `sh` and one `tclaude` exec away from `bwrap`, the
+same hops the relay takes — so a profile transition keyed on either executable
+applies to the probe exactly as it will to the launch. A passing posture is
+remembered for the life of that tmux server (keyed on its pid, so a restart
+re-asks); a failing one is never remembered, so installing the missing
+capability takes effect on the next launch.
+
+When no tmux server is running yet, the probe runs in-process. That is not a
+weaker answer: this process is the one that will auto-start the server, so its
+confinement is the one the pane inherits.
+
+**The residual case still fails closed.** A confinement that changes between
+probe and launch, or a tmux server that restarts under a different profile,
+can still deny the exec. The relay reports that denial as a named refusal —
+`tclaude-layer requested — refused: the host denied this process permission to
+execute bubblewrap …` — instead of the bare `fork/exec …: operation not
+permitted` at exit 125 it used to print. The pane still dies rather than being
+refused pre-flight, but the evidence names the cause.
+
 ## Symptom → cause
 
 | Symptom | Likely cause |
@@ -872,6 +909,7 @@ is still open; what stands today is that stacked fails closed and says so.
 | `git add -A`: "can only add regular files" | Claude Code masks a denied path with a `/dev/null` device node — stage specific paths |
 | Launch refused, `…reopen_under_deny` | Claude Code not sandbox `on`, or Codex not Linux managed-profile with a verified probe |
 | `stacked` refused on Ubuntu 24.04+ | The `bwrap-userns-restrict` AppArmor policy denies nested bubblewrap |
+| Pane dies instantly, `refused: the host denied this process permission to execute bubblewrap` | The tmux server's confinement forbids the exec — see [where the probe runs](#where-the-tclaude-layer-capability-probe-runs) |
 | Profile looks strict, nothing is denied | Claude Code sandbox `inherit`/`off` — the deny rows are emitted but the sandbox never engages |
 | Agent read a denied path with the `Read` tool | Expected under `deny ~` — that shape reaches layer 1 only |
 | Agent reached something the profile denied | Check MCP, which bypasses the sandbox |
