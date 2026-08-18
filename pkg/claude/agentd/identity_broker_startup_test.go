@@ -112,6 +112,15 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 	renderRec := httptest.NewRecorder()
 	handleWhoamiStatusline(renderRec, renderReq)
 	assert.Equal(t, http.StatusOK, renderRec.Code, "statusline response: %s", renderRec.Body.String())
+
+	persisted, err := db.LoadSession(newLabel)
+	require.NoError(t, err)
+	require.NotNil(t, persisted)
+	persisted.PID = panePID
+	require.NoError(t, db.SaveSession(persisted))
+	closed, _ := claimedLivePaneSessionRow(callerPID, newLabel)
+	assert.Nil(t, closed,
+		"once the launch row has a pid, a request claim must no longer select it through the startup fallback")
 }
 
 func TestClaimedLivePaneSessionRowRequiresTheClaimedPanesAncestry(t *testing.T) {
