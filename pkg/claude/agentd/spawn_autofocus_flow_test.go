@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -68,6 +69,29 @@ func TestSpawn_DeadPaneFailsBeforeAutoFocus(t *testing.T) {
 	assert.Contains(t, string(spawn.Raw), "managed pane exited during startup")
 	assert.False(t, opened, "a session row without a live pane must not be auto-focused")
 	assert.Empty(t, spawn.FocusMode, "no attach mode was actually opened")
+}
+
+// Scenario: the pane dies at launch and tmux has marked it dead but has not
+// yet reaped its child, so the first observation carries neither
+// pane_dead_status nor pane_dead_signal. The real exit code lands shortly
+// after.
+//
+// Expected: the spawn failure names the real exit code. Reporting the first
+// look as "unknown exit status" threw away evidence that was about to arrive,
+// and left the operator with the least actionable message tclaude can produce
+// for exactly the failures that need one most.
+func TestSpawn_DeadPaneWaitsForTmuxToAttachExitStatus(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	f.World.SpawnPaneDiesAtLaunch = true
+	f.World.SpawnPaneStatusSettlesAfter = 300 * time.Millisecond
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker"})
+
+	require.Equalf(t, http.StatusInternalServerError, spawn.Code, "spawn body=%s", spawn.Raw)
+	assert.Contains(t, string(spawn.Raw), "managed pane exited during startup (exit code 1)",
+		"the settled status must be reported, not the not-yet-reaped unknown")
+	assert.NotContains(t, string(spawn.Raw), "unknown exit status")
 }
 
 // Scenario: a human spawns with "auto focus" checked, but the host has

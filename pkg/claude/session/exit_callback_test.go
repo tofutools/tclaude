@@ -411,6 +411,80 @@ func TestRunExitCallback_LogsBoundedStartupFailureOutput(t *testing.T) {
 	assert.Contains(t, got, `"pane_output":"fish: Unknown command: claude"`)
 }
 
+// Scenario: tmux marked the pane dead but had not yet reaped its child, so it
+// reports NEITHER pane_dead_status nor pane_dead_signal, and the pane died
+// before printing anything.
+//
+// Expected: the startup failure is still captured and logged. This is the
+// shape the spawn path renders as "unknown exit status ... see the Logs tab",
+// so it is precisely the shape that must not leave the Logs tab empty. An
+// empty pane is reported as such rather than silently dropping the record.
+func TestRunExitCallback_LogsStartupFailureWithUnknownStatusAndSilentPane(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%31", deadOutput: "tmux-unknown-exit|%31|1|||31313131313131313131313131313131",
+		captureOutput: "",
+	}
+	setupExitCallbackTest(t, fake)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	const generation = "31313131313131313131313131313131"
+	const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-unknown-exit", TmuxSession: "tmux-unknown-exit", ConvID: "conv-unknown-exit",
+		Status: StatusWorking, Created: time.Now(),
+	}, generation, db.SessionExitGateReleased))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-unknown-exit", generation, hex.EncodeToString(hash[:]), "%31"))
+
+	require.NoError(t, runExitCallback(exitCallbackParams{
+		SessionID: "spwn-unknown-exit", TmuxSession: "tmux-unknown-exit", PaneID: "%31",
+		Generation: generation, Token: token,
+	}))
+
+	assert.True(t, slices.ContainsFunc(fake.calls, func(call []string) bool {
+		return len(call) > 0 && call[0] == "capture-pane"
+	}), "a status-less startup death must still copy the pane into the logs")
+	got := logs.String()
+	assert.Contains(t, got, `"msg":"managed pane failed during startup"`)
+	assert.Contains(t, got, `"pane_output":"(the pane printed nothing before it died)"`)
+}
+
+// Scenario: a pane exits 0 inside the startup window with no recorded
+// lifecycle intent.
+//
+// Expected: no capture. Widening the predicate to reach the status-less case
+// must not turn a clean exit into a "failure" whose pane contents get copied
+// into the logs.
+func TestRunExitCallback_DoesNotCaptureCleanStartupExit(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%32", deadOutput: "tmux-clean-exit|%32|1|0||32323232323232323232323232323232",
+		captureOutput: "private pane contents",
+	}
+	setupExitCallbackTest(t, fake)
+
+	const generation = "32323232323232323232323232323232"
+	const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaac"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-clean-exit", TmuxSession: "tmux-clean-exit", ConvID: "conv-clean-exit",
+		Status: StatusWorking, Created: time.Now(),
+	}, generation, db.SessionExitGateReleased))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-clean-exit", generation, hex.EncodeToString(hash[:]), "%32"))
+
+	require.NoError(t, runExitCallback(exitCallbackParams{
+		SessionID: "spwn-clean-exit", TmuxSession: "tmux-clean-exit", PaneID: "%32",
+		Generation: generation, Token: token, ExitCode: "0",
+	}))
+	for _, call := range fake.calls {
+		assert.NotEqual(t, "capture-pane", call[0], "a clean exit must not copy pane contents")
+	}
+}
+
 func TestRunExitCallback_DoesNotCaptureExpectedStartupExit(t *testing.T) {
 	fake := &exitCallbackTmux{
 		paneID: "%30", deadOutput: "tmux-expected-exit|%30|1|1||30303030303030303030303030303030",

@@ -7300,14 +7300,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				// cleanup; fail the spawn response instead of enrolling an offline
 				// actor and opening an attach command that can only close.
 				if s.TmuxSession != "" {
-					if evidence, inspectErr := session.InspectDeadTmuxSessionPane(s.TmuxSession); inspectErr == nil {
-						detail := "unknown exit status"
-						switch {
-						case evidence.Signal != "":
-							detail = "signal " + evidence.Signal
-						case evidence.ExitCode != nil:
-							detail = "exit code " + strconv.Itoa(*evidence.ExitCode)
-						}
+					if detail, inspected := startupCorpseExitDetail(s.TmuxSession); inspected {
 						return launchFailed(fmt.Errorf("managed pane exited during startup (%s); see the Logs tab for its output", detail))
 					}
 				}
@@ -7318,12 +7311,9 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				if exits, auditErr := db.ListAuditLog(db.AuditLogFilter{
 					Verb: db.AuditVerbAgentExit, SessionID: label, Limit: 1,
 				}); auditErr == nil && len(exits) == 1 && !exits[0].At.Before(launchedAt) {
-					detail := "unknown exit status"
-					switch {
-					case exits[0].Signal != "":
-						detail = "signal " + exits[0].Signal
-					case exits[0].ExitCode != nil:
-						detail = "exit code " + strconv.Itoa(*exits[0].ExitCode)
+					detail := deadPaneExitDetail(exits[0].ExitCode, exits[0].Signal)
+					if detail == "" {
+						detail = "unknown exit status"
 					}
 					return launchFailed(fmt.Errorf("managed pane exited during startup (%s); see the Logs tab for its output", detail))
 				}
@@ -7863,6 +7853,64 @@ func backfillPendingSpawnInline(g *db.AgentGroup, p spawnParams, label string, h
 		}
 		sleepSpawnPoll(deadline)
 	}
+}
+
+// spawnDeadPaneStatusGrace bounds how long startupCorpseExitDetail waits for
+// tmux to attach an exit status to a pane it has already marked dead, and
+// spawnDeadPaneStatusPoll is how often it re-reads within that grace. The
+// window only ever costs a launch that has ALREADY failed, so it is sized to
+// outlast tmux's own reap latency rather than to keep a spawn snappy.
+const (
+	spawnDeadPaneStatusGrace = 1500 * time.Millisecond
+	spawnDeadPaneStatusPoll  = 50 * time.Millisecond
+)
+
+// startupCorpseExitDetail renders the exit detail for a pane tmux has already
+// marked dead during a spawn's startup window.
+//
+// tmux closes the pane's pty and reaps the pane's child as two separate
+// events, so the first look at a fast-dying pane can report pane_dead=1 with
+// NEITHER pane_dead_status nor pane_dead_signal. Reporting "unknown exit
+// status" off that first look threw away the real code or signal that lands a
+// beat later — and left the operator with the least informative message
+// tclaude can produce for the failures that need it most. Re-read for a
+// bounded moment before settling for "unknown".
+//
+// inspected is false when the corpse can no longer be read, which means the
+// authenticated exit callback recorded and reaped it. Its durable audit row is
+// then the better evidence, so the caller falls through to that rather than
+// guessing from a pane that is gone.
+func startupCorpseExitDetail(tmuxSession string) (string, bool) {
+	evidence, err := session.InspectDeadTmuxSessionPane(tmuxSession)
+	if err != nil {
+		return "", false
+	}
+	for waited := time.Duration(0); ; waited += spawnDeadPaneStatusPoll {
+		if detail := deadPaneExitDetail(evidence.ExitCode, evidence.Signal); detail != "" {
+			return detail, true
+		}
+		if waited >= spawnDeadPaneStatusGrace {
+			return "unknown exit status", true
+		}
+		time.Sleep(spawnDeadPaneStatusPoll)
+		settled, settledErr := session.InspectDeadTmuxSessionPane(tmuxSession)
+		if settledErr != nil {
+			return "", false
+		}
+		evidence = settled
+	}
+}
+
+// deadPaneExitDetail renders tmux's mutually exclusive dead-pane exit
+// evidence, or "" when tmux has attached neither a status nor a signal yet.
+func deadPaneExitDetail(code *int, signal string) string {
+	switch {
+	case signal != "":
+		return "signal " + signal
+	case code != nil:
+		return "exit code " + strconv.Itoa(*code)
+	}
+	return ""
 }
 
 func sleepSpawnPoll(deadline time.Time) {

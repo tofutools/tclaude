@@ -491,8 +491,18 @@ func runExitCallback(p exitCallbackParams) error {
 	// Work out whether it falls in the startup window now, but do not copy pane
 	// contents until the authenticated record below has classified lifecycle
 	// exits. Expected stop/retire/reincarnate exits must never be captured.
+	//
+	// Only a literal 0 is a clean exit. tmux fills pane_dead_status /
+	// pane_dead_signal when it REAPS the pane's child, which is a separate
+	// event from closing the pane's pty — so a pane observed dead in between
+	// reports neither. Reading that unknown shape as success skipped the
+	// capture below, and it is precisely the shape a fast startup failure
+	// takes: the operator got "managed pane exited during startup (unknown
+	// exit status); see the Logs tab" pointing at a Logs tab this function had
+	// declined to write. The least evidence must not also mean the least
+	// diagnosis.
 	startupAge := time.Duration(-1)
-	failedStartup := p.Signal != "" || (p.ExitCode != "" && p.ExitCode != "0")
+	failedStartup := p.ExitCode != "0"
 	if row, loadErr := db.LoadSession(p.SessionID); failedStartup && loadErr == nil && row != nil && !row.CreatedAt.IsZero() {
 		startupAge = time.Since(row.CreatedAt)
 	}
@@ -525,15 +535,22 @@ func runExitCallback(p exitCallbackParams) error {
 			"pane_id", p.PaneID, "error", err)
 		return fmt.Errorf("record managed pane exit: %w", err)
 	}
-	startupDiagnostic := ""
 	if result.LifecycleAction == "" && startupAge >= 0 && startupAge <= spawnFailureDiagnosticWindow {
-		startupDiagnostic = captureDeadPaneDiagnostic(p.PaneID)
-	}
-	if startupDiagnostic != "" {
+		// Record the failure even when the pane printed nothing. Silence is
+		// itself a finding — the process died before writing a word, which
+		// points at the launch wrapper rather than the harness — and an absent
+		// log line is indistinguishable from a capture that never ran, which is
+		// the confusion this whole path exists to prevent.
+		paneOutput := captureDeadPaneDiagnostic(p.PaneID)
+		if paneOutput == "" {
+			paneOutput = "(the pane printed nothing before it died)"
+		}
 		slog.Error("managed pane failed during startup",
 			"session_id", p.SessionID, "tmux_session", p.TmuxSession,
 			"pane_id", p.PaneID, "event_id", result.EventID,
-			"startup_age", startupAge.String(), "pane_output", startupDiagnostic)
+			"startup_age", startupAge.String(),
+			"exit_code", exitCodeForLog(code), "signal", strings.ToUpper(p.Signal),
+			"pane_output", paneOutput)
 	}
 	cleanupEvidence := PaneExitEvidence{
 		TmuxSession: reported.TmuxSession, PaneID: reported.PaneID,
