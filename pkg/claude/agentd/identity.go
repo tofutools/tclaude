@@ -3,6 +3,7 @@ package agentd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -1213,6 +1214,7 @@ var (
 const (
 	brokerStartupPaneProofAttempts = 20
 	brokerStartupPaneProofDelay    = 50 * time.Millisecond
+	brokerStartupPaneProofBudget   = time.Duration(brokerStartupPaneProofAttempts) * brokerStartupPaneProofDelay
 )
 
 // harnessNameAt returns the harness runtime name of the process at pid — the
@@ -1297,6 +1299,15 @@ func harnessNameAt(pid int, name string) string {
 // Callers use hasAncestor to distinguish "really the human" (no ancestor)
 // from "agent we can't identify" (ancestor present, conv-id unresolved).
 func convIDForPID(pid int) (convID string, hasAncestor bool) {
+	// A tclaude-layer pane is already a daemon-owned identity boundary. Resolve
+	// its descendants before looking for a harness-shaped process name: native
+	// Claude installs are launched through an exact, pre-resolved executable
+	// whose basename is the release (for example 2.1.234), not "claude". The
+	// live sessions row and kernel parent chain are stronger evidence than that
+	// mutable display name and remain stable across Claude auto-updates.
+	if id := tclaudeLayerSessionConvByAncestor(pid); id != "" {
+		return id, true
+	}
 	// Packaged OpenCode builds may expose their underlying `bun` process name
 	// on macOS. Cross that name-independent ancestry only for a runtime whose
 	// recorded contract is tclaude-layer; the helper retains the same bounded
@@ -1396,6 +1407,25 @@ func tclaudeLayerSessionConvByAncestor(pid int) string {
 // The harness pid is returned so the brokered ambient context can carry
 // the same pid correction FindClaudePID performs on the direct path.
 func hookSessionRowForPID(pid int) (*db.SessionRow, int) {
+	// The live, daemon-recorded tclaude-layer pane is sufficient authority for
+	// every descendant, even when the harness executable has no recognisable
+	// name. This is the row-returning twin of convIDForPID's early layer walk.
+	// A zero harness pid deliberately keeps the pane pid recorded at launch;
+	// there is no safe name-based correction to make for a version-named Claude
+	// process.
+	if row := tclaudeLayerSessionRowByAncestor(pid); row != nil {
+		cur := pid
+		for cur > 1 {
+			if harnessNameAt(cur, procName(cur)) != "" {
+				return row, cur
+			}
+			if cur == row.PID {
+				break
+			}
+			cur = procParent(cur)
+		}
+		return row, 0
+	}
 	cur := pid
 	for cur > 1 {
 		name := procName(cur)
@@ -1456,8 +1486,16 @@ func claimedLivePaneSessionRow(
 		return nil, 0
 	}
 	var pane lifecyclePaneProbe
+	deadline := time.Now().Add(brokerStartupPaneProofBudget)
 	for attempt := 0; attempt < brokerStartupPaneProofAttempts; attempt++ {
-		pane, err = brokerLivePaneProbe(row.TmuxSession)
+		probeTimeout := tmuxCommandTimeout
+		if retryUnknownStartup {
+			probeTimeout = time.Until(deadline)
+			if probeTimeout <= 0 {
+				return nil, 0
+			}
+		}
+		pane, err = brokerLivePaneProbe(row.TmuxSession, probeTimeout)
 		if err == nil && pane.state == paneProbeLive && pane.panePID > 1 &&
 			pane.generation == identity.Generation {
 			break
@@ -1469,9 +1507,12 @@ func claimedLivePaneSessionRow(
 		// briefly be absent even though the first Claude hook is already able to
 		// reach agentd; without this grace that one hook is lost, and an API
 		// failure can prevent the later hook that normally repairs its telemetry.
-		if !retryUnknownStartup || row.PID != 0 || pane.state == paneProbeDead ||
+		if !retryUnknownStartup || errors.Is(err, errTmuxCommandTimeout) || row.PID != 0 || pane.state == paneProbeDead ||
 			(pane.generation != "" && pane.generation != identity.Generation) ||
 			attempt+1 == brokerStartupPaneProofAttempts {
+			return nil, 0
+		}
+		if time.Until(deadline) <= brokerStartupPaneProofDelay {
 			return nil, 0
 		}
 		time.Sleep(brokerStartupPaneProofDelay)
@@ -1499,7 +1540,7 @@ func claimedLivePaneSessionRow(
 // Indirected so the startup-race regression can pin the kernel/tmux proof
 // without launching a real tmux server. Production uses the same bounded,
 // generation-bearing probe as lifecycle mutations.
-var brokerLivePaneProbe = probeLifecyclePane
+var brokerLivePaneProbe = probeLifecyclePaneWithin
 
 // sessionRowByPID resolves the session row recorded against a host pid,
 // preferring a candidate whose tmux session is still alive.
