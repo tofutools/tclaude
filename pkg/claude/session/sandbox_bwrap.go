@@ -731,8 +731,15 @@ type FilteredNetworkPrerequisite struct {
 }
 
 // ProbeFilteredNetworkPrerequisite checks the exact host building blocks named
-// by the filtered-network design. It is uncached so a resolved launch cannot
-// carry a stale answer after the operator installs or removes a prerequisite.
+// by the filtered-network design. Every prerequisite it names is re-read on
+// each call, so a resolved launch cannot carry a stale answer after the
+// operator installs or removes one.
+//
+// One qualification since TCL-1204: the bubblewrap namespace half of this
+// answer runs through the launch-context probe, which memoises a PASSING
+// posture for bwrapProbeMemoTTL within one tmux server's life. A negative is
+// never memoised, so installing a prerequisite still takes effect on the next
+// call; removing one can be reported as still-detected for up to that window.
 func ProbeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 	return probeFilteredNetworkPrerequisite()
 }

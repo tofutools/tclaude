@@ -870,32 +870,54 @@ that could not run.
 **The two places.** The probe is reached from `tclaude session new`: a child of
 `tclaude agentd` for a dashboard spawn, or of your shell for a CLI launch. The
 process that really execs `bwrap` is several hops away — tmux server → pane
-bootstrap shell → exit gate → `tclaude … tclaude-layer-winch-relay` → `bwrap` —
-and the tmux server inherits its confinement from whatever first auto-started
-it. Any per-process confinement that differs between the two (an AppArmor
-profile per binary, an SELinux domain, a seccomp filter, a differing
-`no_new_privs`) is invisible to a probe that never runs under it.
+bootstrap shell → dir-proof guard shell → exit-gate shell → (with authored
+resource limits) `session resource-limit-exec` → `tclaude …
+tclaude-layer-winch-relay` → `bwrap` — and the tmux server inherits its
+confinement from whatever first auto-started it. Any per-process confinement
+that differs between the two (an AppArmor profile per binary, an SELinux
+domain, a seccomp filter, a differing `no_new_privs`) is invisible to a probe
+that never runs under it.
 
 **What tclaude does now.** When a tmux server is already running, the probe is
-executed *through* it — `tmux run-shell` forks the same `tclaude` capability
-probe from the server, one `sh` and one `tclaude` exec away from `bwrap`, the
-same hops the relay takes — so a profile transition keyed on either executable
-applies to the probe exactly as it will to the launch. A passing posture is
-remembered for the life of that tmux server (keyed on its pid, so a restart
-re-asks); a failing one is never remembered, so installing the missing
-capability takes effect on the next launch.
+executed *through* it: `tmux run-shell` forks the same `tclaude` capability
+probe from the server, one `sh` and one `tclaude` exec away from `bwrap`, so a
+profile transition keyed on either executable applies to the probe exactly as
+it will to the launch. A passing posture is remembered briefly (keyed on the
+server pid, so a restart re-asks, and expiring on its own so a prerequisite you
+remove stops being reported as present); a failing one is never remembered, so
+installing the missing capability takes effect on the next launch.
 
-When no tmux server is running yet, the probe runs in-process. That is not a
-weaker answer: this process is the one that will auto-start the server, so its
-confinement is the one the pane inherits.
+The hops are close, not identical. The launch also crosses the guard and gate
+shells and, when the profile authors resource limits, a per-session cgroup that
+a tmux job does not join — so a confinement expressed as **cgroup policy** is
+not reproduced by this probe. What it reproduces is the per-process confinement
+inherited from the tmux server, which is the case observed.
 
-**The residual case still fails closed.** A confinement that changes between
-probe and launch, or a tmux server that restarts under a different profile,
-can still deny the exec. The relay reports that denial as a named refusal —
+When no tmux server is running yet, the probe runs in-process. That is usually
+exact rather than merely safe: this process is the one that will auto-start the
+server, so its confinement is the one the pane inherits. The exception is a
+profile that transitions on the tmux binary itself (`/usr/bin/tmux Px -> tmux`,
+or an SELinux `type_transition`), which puts the server in a domain the
+launching process is not in.
+
+**When the probe cannot reach the server, it says so.** If the round trip
+cannot be made — the staging path is unreachable because agentd runs under
+systemd `PrivateTmp=yes` while tmux does not, the confined server cannot write
+it, the job publishes nothing — tclaude falls back to probing in the preparing
+process and logs a warning naming the reason. Nothing is refused on a failed
+round trip, so without that line a permanently disabled probe would look
+exactly like the original bug. If you are debugging "why did it not refuse?",
+that warning is the first thing to grep for.
+
+**The residual cases still fail closed at the pane.** A confinement that changes
+between probe and launch, a tmux server that restarts under a different
+profile, or any of the fallbacks above can still leave the exec denied. The
+relay reports that denial as a named refusal —
 `tclaude-layer requested — refused: the host denied this process permission to
 execute bubblewrap …` — instead of the bare `fork/exec …: operation not
-permitted` at exit 125 it used to print. The pane still dies rather than being
-refused pre-flight, but the evidence names the cause.
+permitted` at exit 125 it used to print. Nothing runs unconfined; but the pane
+dies rather than being refused pre-flight, so this is evidence that names the
+cause, not a restored pre-flight contract.
 
 ## Symptom → cause
 

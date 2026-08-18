@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -122,6 +123,35 @@ func TestProbeBwrapInLaunchContextCachesPositivesPerTmuxServer(t *testing.T) {
 	assert.Equal(t, 3, calls)
 }
 
+// A tmux server can outlive any number of host changes, so the pid alone does
+// not bound a remembered yes. ProbeFilteredNetworkPrerequisite DISCLOSES this
+// answer: an operator who turns a prerequisite off must stop being told the
+// boundary is available, without having to restart tmux.
+func TestProbeBwrapInLaunchContextExpiresARememberedPass(t *testing.T) {
+	calls := 0
+	stubTmuxProbeContext(t,
+		func() (int, error) { return 4242, nil },
+		func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) (bool, error) {
+			calls++
+			return true, nil
+		},
+	)
+	now := time.Now()
+	bwrapProbeCache.now = func() time.Time { return now }
+
+	require.NoError(t, probeBwrapInLaunchContext("/usr/bin/bwrap",
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited))
+	now = now.Add(bwrapProbeMemoTTL - time.Second)
+	require.NoError(t, probeBwrapInLaunchContext("/usr/bin/bwrap",
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited))
+	assert.Equal(t, 1, calls, "inside the window the remembered pass answers")
+
+	now = now.Add(2 * time.Second)
+	require.NoError(t, probeBwrapInLaunchContext("/usr/bin/bwrap",
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited))
+	assert.Equal(t, 2, calls, "past the window the host is asked again")
+}
+
 // TCL-769: a caller that REFUSES on this predicate must never be answered from
 // cache, or an operator who has just fixed the host stays refused.
 func TestProbeBwrapInLaunchContextNeverCachesARefusal(t *testing.T) {
@@ -159,6 +189,61 @@ func TestParseTclaudeLayerProbeResult(t *testing.T) {
 		ran, verdict = parseTclaudeLayerProbeResult(raw)
 		assert.False(t, ran, "raw %q", raw)
 		assert.NoError(t, verdict)
+	}
+}
+
+// run-shell format-expands its command before any shell sees it, so `#` is
+// significant inside single quotes too. A checkout under a path containing one
+// would otherwise exec a mangled path and degrade silently.
+func TestTclaudeLayerProbeShellCommandEscapesTmuxFormatCharacters(t *testing.T) {
+	command := tclaudeLayerProbeShellCommand("/usr/bin/bwrap",
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited,
+		"/tmp/work#{pid}/result")
+
+	// `##` is tmux's escape for a literal `#`, so the expansion tmux performs on
+	// this string yields the path back unchanged instead of substituting the
+	// server pid into it.
+	assert.Contains(t, command, "'/tmp/work##{pid}/result'")
+	assert.Equal(t, "a##b####c", escapeTmuxFormat("a#b##c"))
+	// No odd-length run of '#' may survive: one of those is a live format
+	// introducer or alias.
+	for _, run := range regexp.MustCompile(`#+`).FindAllString(command, -1) {
+		assert.Zero(t, len(run)%2, "unescaped # run %q", run)
+	}
+}
+
+// The probe subcommand re-parses posture tokens on the far side of the round
+// trip. A posture added to tclaudeLayerProbeArgs but not here would make the
+// job error out — and an errored job is indistinguishable from a host with no
+// tmux server, so the fix would silently stop applying to that posture.
+func TestPostureTokensRoundTripThroughTheProbeSubcommand(t *testing.T) {
+	for _, posture := range []sandboxpolicy.NetworkPosture{
+		sandboxpolicy.NetworkHostOpen,
+		sandboxpolicy.NetworkIsolatedWithAgentd,
+		sandboxpolicy.NetworkFiltered,
+	} {
+		parsed, err := parseNetworkPostureToken(posture.String())
+		require.NoError(t, err, "network posture %s", posture)
+		assert.Equal(t, posture, parsed)
+	}
+	for _, root := range []sandboxpolicy.RootPosture{
+		sandboxpolicy.RootHostInherited,
+		sandboxpolicy.RootConstructed,
+	} {
+		parsed, err := parseRootPostureToken(root.String())
+		require.NoError(t, err, "root posture %s", root)
+		assert.Equal(t, root, parsed)
+	}
+
+	// Every posture tclaudeLayerProbeArgs accepts must also be nameable, or the
+	// round trip cannot ask for it.
+	for posture := sandboxpolicy.NetworkPosture(0); ; posture++ {
+		if _, err := tclaudeLayerProbeArgs(posture, sandboxpolicy.RootHostInherited); err != nil {
+			break
+		}
+		_, err := parseNetworkPostureToken(posture.String())
+		assert.NoError(t, err,
+			"probe args accept network posture %d but the subcommand cannot parse its token", int(posture))
 	}
 }
 
@@ -260,22 +345,42 @@ type probeJobTmux struct {
 	// produced nothing, as a killed or never-scheduled job would.
 	write string
 	// refuse makes tmux reject the job itself — no server, or a run-shell an
-	// old tmux does not know.
+	// old tmux does not know. The verdict, if any, is still published: a client
+	// that failed says nothing about what the job managed to write.
 	refuse bool
+	// writeAfter delays the write past run-shell's return, standing in for a
+	// tmux whose run-shell did not wait for its job.
+	writeAfter time.Duration
+	// argv records every tmux invocation, so the two tmux facts this design
+	// rides on — no -b, and a pid lookup that cannot start a server — are
+	// pinned rather than assumed.
+	argv [][]string
 }
 
 func (p *probeJobTmux) Command(args ...string) *exec.Cmd {
+	p.argv = append(p.argv, append([]string(nil), args...))
 	if len(args) == 2 && args[0] == "run-shell" {
 		p.commands = append(p.commands, args[1])
-		if p.refuse {
-			return exec.Command("/bin/false")
-		}
 		if p.write != "" {
-			if resultPath := probeResultPathFromCommand(args[1]); resultPath != "" {
+			resultPath := probeResultPathFromCommand(args[1])
+			switch {
+			case resultPath == "":
+			case p.writeAfter > 0:
+				go func() {
+					time.Sleep(p.writeAfter)
+					_ = os.WriteFile(resultPath, []byte(p.write), 0o600)
+				}()
+			default:
 				_ = os.WriteFile(resultPath, []byte(p.write), 0o600)
 			}
 		}
+		if p.refuse {
+			return exec.Command("/bin/false")
+		}
 		return exec.Command("/bin/true")
+	}
+	if len(args) == 3 && args[0] == "display-message" {
+		return exec.Command("/bin/echo", "4242")
 	}
 	return exec.Command("/bin/false")
 }
@@ -316,6 +421,51 @@ func TestProbeBwrapViaTmuxServerReportsNoVerdictWhenTmuxRefusesTheJob(t *testing
 	assert.NoError(t, verdict)
 	assert.Less(t, time.Since(start), tclaudeLayerProbeResultGrace,
 		"a refused job must not be waited on for a verdict it will never write")
+}
+
+// run-shell hands the JOB's exit status to its client, so a job that published
+// a refusal and then exited non-zero would have that refusal thrown away if the
+// client's fate decided. A genuine capability refusal must not be downgraded to
+// a fallback by anything except the absence of a verdict.
+func TestProbeBwrapViaTmuxServerKeepsAVerdictTheFailedClientAlreadyPublished(t *testing.T) {
+	swapTmux(t, &probeJobTmux{refuse: true, write: "err bwrap: Operation not permitted"})
+
+	ran, verdict := probeBwrapViaTmuxServer("/usr/bin/bwrap",
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
+	assert.True(t, ran, "the job published a verdict; the client's exit status is not the channel")
+	assert.ErrorContains(t, verdict, "Operation not permitted")
+}
+
+// The grace window's whole purpose: on a tmux whose run-shell does not wait,
+// the verdict lands after the client returns. Without the window it would look
+// identical to a host with no tmux server, and the fix would evaporate.
+func TestProbeBwrapViaTmuxServerWaitsOutAVerdictThatArrivesLate(t *testing.T) {
+	swapTmux(t, &probeJobTmux{write: "err denied late", writeAfter: 100 * time.Millisecond})
+
+	ran, verdict := probeBwrapViaTmuxServer("/usr/bin/bwrap",
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
+	assert.True(t, ran)
+	assert.ErrorContains(t, verdict, "denied late")
+}
+
+// The two tmux facts the design rides on, neither of which can be exercised
+// live here: the pid lookup must be a command that cannot START a server, and
+// run-shell must not carry -b, or it would not wait for its job.
+func TestTclaudeLayerProbeUsesTmuxCommandsThatCannotStartAServerOrDetach(t *testing.T) {
+	fake := &probeJobTmux{write: "ok"}
+	swapTmux(t, fake)
+
+	_, err := tmuxServerPID()
+	require.NoError(t, err, "the fake answers display-message; only the argv matters here")
+	_, _ = probeBwrapViaTmuxServer("/usr/bin/bwrap",
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
+
+	require.Len(t, fake.argv, 2)
+	assert.Equal(t, []string{"display-message", "-p", "#{pid}"}, fake.argv[0],
+		"new-session and start-server would auto-start a server; display-message must not")
+	assert.Equal(t, "run-shell", fake.argv[1][0])
+	assert.NotContains(t, fake.argv[1], "-b",
+		"-b would background the job, so run-shell would not wait for the verdict")
 }
 
 // A job that was waited on and wrote nothing is the ordinary broken case — a

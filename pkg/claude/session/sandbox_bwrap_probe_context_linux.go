@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,10 +48,18 @@ const (
 // takes — so a profile transition keyed on either binary applies to both.
 //
 // When the round trip cannot be made at all it degrades to the in-process
-// probe. That is not a silent fallback past a missing capability: it is the
-// case where there is no tmux server yet, so THIS process is the one that will
-// auto-start it and its confinement is the one the pane will inherit — the
-// in-process probe is then the faithful answer, not a weaker one.
+// probe, and never to a passed capability: only a verdict the job actually
+// wrote can refuse a launch.
+//
+// With no tmux server running, that degradation is usually exact rather than
+// merely safe — THIS process is the one that will auto-start the server, so its
+// confinement is the one the pane inherits. Usually, not always: a profile that
+// transitions on the tmux binary itself (AppArmor `/usr/bin/tmux Px -> tmux`,
+// an SELinux type_transition) puts the server in a domain this process is not
+// in, which is TCL-1204's own bug at the server-start edge. The relay refusal
+// is what catches that, and every other way the round trip can fail — each of
+// which is logged, because a silently disabled probe looks exactly like the
+// original bug.
 func probeBwrapInLaunchContext(
 	binary string,
 	posture sandboxpolicy.NetworkPosture,
@@ -58,6 +67,11 @@ func probeBwrapInLaunchContext(
 ) error {
 	serverPID, err := tmuxServerPID()
 	if err != nil {
+		// The ordinary case on a host with nothing running yet, so Debug: this
+		// is the branch whose in-process answer is faithful, not the one that
+		// loses the fix.
+		slog.Debug("tclaude-layer: no tmux server to probe from; "+
+			"the preparing process's confinement is the one its pane will inherit", "error", err)
 		return probeBwrapInProcess(binary, posture, root)
 	}
 	key := bwrapProbeKey{binary: binary, posture: posture, root: root}
@@ -100,25 +114,45 @@ type bwrapProbeKey struct {
 	root    sandboxpolicy.RootPosture
 }
 
-// bwrapProbeCache remembers only that a posture PASSED, and only for the life
-// of one tmux server.
+// bwrapProbeMemoTTL bounds how long a passing posture may be reused.
+//
+// The tmux server pid alone would not bound it at all: a server can outlive any
+// number of host changes. Callers on this predicate include
+// ProbeFilteredNetworkPrerequisite, whose answer is DISCLOSED — an operator who
+// turns a prerequisite off without restarting tmux must not keep being told the
+// filtered gateway is available. Short enough that such a change self-corrects
+// within one interaction; long enough that a burst of spawns pays for one round
+// trip rather than one each.
+const bwrapProbeMemoTTL = 30 * time.Second
+
+// bwrapProbeCache remembers only that a posture PASSED, and only briefly,
+// within the life of one tmux server.
 //
 // Positives only, deliberately. TCL-769 established that a caller which
 // REFUSES on this predicate must never be answered from cache, because an
 // operator who has just installed bubblewrap would be refused by a stale no.
-// A stale yes has no such failure mode here: it can only let a launch proceed
-// that then fails at the relay, where TCL-1204's other half now names the
-// denial as a refusal rather than an opaque exit 125.
+// A stale yes is bounded in both directions instead: by the TTL, and by the
+// relay, where TCL-1204's other half names a denial as a refusal rather than
+// an opaque exit 125.
 //
-// Keying on the server pid — rather than a clock — ties the answer to the
-// identity of the confinement it describes: a restarted server, which is the
-// event that can change that confinement, gets a fresh answer.
+// Keying on the server pid as well as the clock ties the answer to the identity
+// of the confinement it describes: a restarted server — the event that can
+// change that confinement wholesale — gets a fresh answer immediately rather
+// than after the TTL.
 var bwrapProbeCache = &bwrapProbeMemo{}
 
 type bwrapProbeMemo struct {
 	mu        sync.Mutex
+	now       func() time.Time
 	serverPID int
-	healthyOn map[bwrapProbeKey]struct{}
+	healthyOn map[bwrapProbeKey]time.Time
+}
+
+func (m *bwrapProbeMemo) clock() time.Time {
+	if m.now != nil {
+		return m.now()
+	}
+	return time.Now()
 }
 
 func (m *bwrapProbeMemo) healthy(serverPID int, key bwrapProbeKey) bool {
@@ -127,8 +161,8 @@ func (m *bwrapProbeMemo) healthy(serverPID int, key bwrapProbeKey) bool {
 	if m.serverPID != serverPID {
 		return false
 	}
-	_, ok := m.healthyOn[key]
-	return ok
+	recorded, ok := m.healthyOn[key]
+	return ok && m.clock().Sub(recorded) < bwrapProbeMemoTTL
 }
 
 func (m *bwrapProbeMemo) record(serverPID int, key bwrapProbeKey) {
@@ -139,14 +173,15 @@ func (m *bwrapProbeMemo) record(serverPID int, key bwrapProbeKey) {
 		// only ever accumulate within one server's lifetime, and there are a
 		// handful of postures.
 		m.serverPID = serverPID
-		m.healthyOn = map[bwrapProbeKey]struct{}{}
+		m.healthyOn = map[bwrapProbeKey]time.Time{}
 	}
-	m.healthyOn[key] = struct{}{}
+	m.healthyOn[key] = m.clock()
 }
 
 func (m *bwrapProbeMemo) reset() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.now = nil
 	m.serverPID = 0
 	m.healthyOn = nil
 }
@@ -170,6 +205,7 @@ var probeBwrapViaTmuxServer = func(
 	}
 	dir, err := os.MkdirTemp("", "tclaude-bwrap-probe-")
 	if err != nil {
+		noLaunchContextVerdict("probe staging directory unavailable", err)
 		return false, nil
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
@@ -177,19 +213,29 @@ var probeBwrapViaTmuxServer = func(
 
 	command := tclaudeLayerProbeShellCommand(binary, posture, root, resultPath)
 
-	// One deadline covers the whole round trip rather than one per step, so
-	// this path can never outlast the in-process probe it replaces. That budget
-	// exists for the reason bwrapProbeTimeout gives: a wedged namespace setup
-	// must cost one launch, not a poll loop.
-	deadline := time.Now().Add(bwrapProbeTimeout)
-	if err := runBoundedTmuxCommand(
-		clcommon.Default.Command("run-shell", command), deadline,
-	); err != nil {
-		// tmux refused the job outright — no server, an unknown command on an
-		// old tmux, a killed client. Nothing was measured.
-		return false, nil
-	}
+	// The round trip gets STRICTLY MORE than the probe it carries. The job runs
+	// probeBwrapInProcess, which spends bwrapProbeTimeout on the bwrap exec
+	// alone; giving the outer trip the same budget would make the job's own
+	// timeout verdict — a real refusal, on a host with a wedged LSM — forever
+	// unreachable, and would answer instead from the confinement TCL-1204 says
+	// is the wrong one. The overhead is for tmux job scheduling and one tclaude
+	// process start, not for the probe.
+	deadline := time.Now().Add(bwrapProbeTimeout + tclaudeLayerProbeRoundTripOverhead)
+	runErr := runBoundedTmuxCommand(clcommon.Default.Command("run-shell", command), deadline)
 
+	// Read the verdict BEFORE deciding what a failed client means. run-shell
+	// hands the job's exit status to its client, so a job that published a
+	// refusal and then exited non-zero for any reason at all would otherwise
+	// have that refusal discarded — a genuine capability refusal silently
+	// downgraded to a fallback. Whatever is on disk is the answer; the client's
+	// fate is not.
+	wait := earlierDeadline(time.Now().Add(tclaudeLayerProbeResultGrace), deadline)
+	if runErr != nil {
+		// The client failed or was killed. Anything the job was going to
+		// publish either already landed or is not coming within any budget
+		// worth spending, so read once and move on.
+		wait = time.Now()
+	}
 	// Without -b, run-shell waits for the job, so the verdict is normally on
 	// disk already and this returns on its first read. The grace window is here
 	// so the fix does not quietly evaporate into the in-process fallback on a
@@ -198,20 +244,41 @@ var probeBwrapViaTmuxServer = func(
 	//
 	// It is a short window rather than the rest of the budget because the two
 	// ways of reaching it are not equally likely. A run-shell that did NOT wait
-	// is the rare one; a job that ran, waited on, and wrote nothing — a
+	// is the rare one; a job that ran, was waited on, and wrote nothing — a
 	// mis-resolved tclaude path, a probe that died — is the ordinary one, and
 	// on that path every further millisecond is spent waiting for a file that
-	// will never appear. Clamped to the overall deadline so the round trip
-	// still cannot outlast the in-process probe it replaces.
-	raw, err := awaitTclaudeLayerProbeResult(
-		resultPath, earlierDeadline(time.Now().Add(tclaudeLayerProbeResultGrace), deadline))
+	// will never appear.
+	raw, err := awaitTclaudeLayerProbeResult(resultPath, wait)
 	if err != nil {
 		// Absent, unreadable, or written after we gave up — all of them mean
 		// the round trip produced no verdict, never that the capability is
 		// missing.
+		noLaunchContextVerdict("the tmux capability probe job published no verdict", errors.Join(runErr, err))
 		return false, nil
 	}
-	return parseTclaudeLayerProbeResult(raw)
+	ran, verdict = parseTclaudeLayerProbeResult(raw)
+	if !ran {
+		noLaunchContextVerdict("the tmux capability probe job published an unreadable verdict", nil)
+	}
+	return ran, verdict
+}
+
+// noLaunchContextVerdict records that this launch fell back to probing in the
+// PREPARING process's confinement instead of the pane's.
+//
+// TCL-1204 is only fixed while the round trip works, and every way it can stop
+// working is survivable by design — which is exactly why it needs to be
+// audible. A host with agentd under systemd `PrivateTmp=yes`, or one whose
+// confined tmux server cannot write the staging path, disables this silently
+// and permanently; without a line naming it, the only symptom is the original
+// bug coming back.
+//
+// Warn rather than Debug: a tmux server exists, so this is the abnormal branch.
+// The ordinary "no server yet" case never reaches here.
+func noLaunchContextVerdict(reason string, err error) {
+	slog.Warn("tclaude-layer: capability probe fell back to the preparing process's confinement; "+
+		"a launch this probe passes may still be denied in the pane",
+		"reason", reason, "error", err)
 }
 
 const (
@@ -222,6 +289,10 @@ const (
 	// tclaudeLayerProbeResultGrace is how long a verdict may still arrive after
 	// run-shell has returned. See the call site for why it is small.
 	tclaudeLayerProbeResultGrace = time.Second
+	// tclaudeLayerProbeRoundTripOverhead is the round trip's allowance ON TOP
+	// OF the probe budget it carries: tmux scheduling the job plus one tclaude
+	// process start. See the call site for why it must not be zero.
+	tclaudeLayerProbeRoundTripOverhead = 5 * time.Second
 )
 
 func earlierDeadline(a, b time.Time) time.Time {
@@ -253,21 +324,48 @@ func awaitTclaudeLayerProbeResult(path string, deadline time.Time) (string, erro
 // straight from the shell would re-open a narrower version of the same gap
 // TCL-1204 is about.
 //
+// The hops still are not identical, and the difference is worth naming: the
+// real launch also passes through the dir-proof guard and exit-gate shells and,
+// when the profile authors resource limits, `session resource-limit-exec`,
+// which puts the process in a per-session cgroup. A confinement expressed as a
+// cgroup policy is therefore NOT reproduced here. What this probe reproduces is
+// the per-process confinement inherited from the tmux server, which is what
+// TCL-1204 observed; the relay refusal remains the backstop for the rest.
+//
 // Every word is a compile-time constant, a path this process just created, or
 // a value the caller resolved from PATH — never operator text. Each is
 // shell-quoted regardless, because the string does reach a shell.
+//
+// TWO layers read this string, and shell quoting only answers to one of them:
+// `run-shell` puts the command through tmux's format expansion before any
+// shell sees it, and `#` is significant there even inside single quotes. See
+// escapeTmuxFormat.
 func tclaudeLayerProbeShellCommand(
 	binary string,
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
 	resultPath string,
 ) string {
-	return clcommon.ShellQuoteArg(clcommon.SelfTclaudePath()) +
-		" session " + tclaudeLayerProbeCommand +
-		" --bwrap " + clcommon.ShellQuoteArg(binary) +
-		" --network-posture " + clcommon.ShellQuoteArg(posture.String()) +
-		" --root-posture " + clcommon.ShellQuoteArg(root.String()) +
-		" --result " + clcommon.ShellQuoteArg(resultPath)
+	return escapeTmuxFormat(
+		clcommon.ShellQuoteArg(clcommon.SelfTclaudePath()) +
+			" session " + tclaudeLayerProbeCommand +
+			" --bwrap " + clcommon.ShellQuoteArg(binary) +
+			" --network-posture " + clcommon.ShellQuoteArg(posture.String()) +
+			" --root-posture " + clcommon.ShellQuoteArg(root.String()) +
+			" --result " + clcommon.ShellQuoteArg(resultPath))
+}
+
+// escapeTmuxFormat neutralises tmux's format layer, which expands `#{…}`, the
+// single-character aliases (`#H`, `#S`, `#W`, …) and `#,`/`#}` before the
+// command reaches a shell. Doubling `#` is tmux's own escape for a literal one.
+//
+// Nothing operator-authored reaches this string, so this is not a security
+// boundary — it is correctness. A checkout under a path containing `#`
+// (`/home/u/work#2/bin/tclaude`) would otherwise exec a mangled path, and the
+// probe would silently degrade to the wrong-confinement answer for a reason
+// nobody would think to look for.
+func escapeTmuxFormat(command string) string {
+	return strings.ReplaceAll(command, "#", "##")
 }
 
 // runBoundedTmuxCommand runs a tmux command and gives up on it at deadline,
@@ -294,6 +392,14 @@ func runBoundedTmuxCommand(cmd *exec.Cmd, deadline time.Time) error {
 	}
 }
 
+// parseTclaudeLayerProbeResult turns the job's published line back into a
+// verdict.
+//
+// A refusal crosses the process boundary as TEXT, so it comes back as a plain
+// error where the in-process path would have returned the *exec.ExitError
+// bubblewrap produced. Every caller of this predicate reports the message and
+// none inspects the type, so the two are interchangeable today; a caller that
+// starts matching on the type has to stop.
 func parseTclaudeLayerProbeResult(raw string) (ran bool, verdict error) {
 	result := strings.TrimSpace(raw)
 	switch {
@@ -309,15 +415,25 @@ func parseTclaudeLayerProbeResult(raw string) (ran bool, verdict error) {
 }
 
 // tclaudeLayerProbeCmd is the far side of the round trip: it runs where tmux
-// put it and records what it found. It exits 0 whether or not the capability is
-// present, because its exit status is not the channel — tmux's run-shell does
-// not hand a job's status back to the client. The result file is.
+// put it and records what it found. The result file is the channel, not the
+// exit status — the caller reads the file whatever the job's status was.
+//
+// It carries its OWN PersistentPreRunE, which replaces the root command's
+// (cobra runs the closest one only, and EnableTraverseRunHooks is off). The
+// root's relocates legacy state and rewrites config on the way in. Neither is
+// wanted here: a probe must not perform a config migration as a side effect of
+// a question nobody asked it to persist, and on a confined tmux server that
+// cannot write under the tclaude state root, a failing pre-run would abort
+// before the verdict was ever written — turning "this host denies the exec"
+// into "the round trip produced nothing", which falls back to the answer this
+// whole file exists to stop trusting.
 func tclaudeLayerProbeCmd() *cobra.Command {
 	var binary, networkPosture, rootPosture, resultPath string
 	cmd := &cobra.Command{
-		Use:    tclaudeLayerProbeCommand,
-		Short:  "Probe tclaude-layer host capability from the pane's confinement (internal)",
-		Hidden: true,
+		Use:               tclaudeLayerProbeCommand,
+		Short:             "Probe tclaude-layer host capability from the pane's confinement (internal)",
+		Hidden:            true,
+		PersistentPreRunE: func(*cobra.Command, []string) error { return nil },
 		RunE: func(_ *cobra.Command, _ []string) error {
 			posture, err := parseNetworkPostureToken(networkPosture)
 			if err != nil {
