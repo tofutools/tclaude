@@ -471,7 +471,27 @@ func exitCallbackCmd() *cobra.Command {
 	return cmd
 }
 
+// runExitCallback records one managed pane's exit, and — win or lose — leaves a
+// trace of having tried.
+//
+// A rejection used to return in silence. That is the worst possible outcome for
+// this particular function: it runs from a tmux `run-shell`, so its error text
+// reaches no terminal and no log, and a rejection also means no audit row, no
+// pane capture, and no corpse cleanup. The operator was left with a dead pane,
+// an empty Logs tab, and nothing anywhere saying the exit audit had run at all.
+// Reject as strictly as before, but say so.
 func runExitCallback(p exitCallbackParams) error {
+	err := applyExitCallback(p)
+	if err != nil && errors.Is(err, db.ErrExitCallbackRejected) {
+		slog.Warn("exit audit: callback rejected; managed pane exit was not recorded",
+			"session_id", p.SessionID, "tmux_session", p.TmuxSession,
+			"pane_id", p.PaneID, "hook_exit_code", p.ExitCode,
+			"hook_signal", p.Signal, "error", err)
+	}
+	return err
+}
+
+func applyExitCallback(p exitCallbackParams) error {
 	if !validCallbackPaneID(p.PaneID) || !validExitLaunchIdentifier(p.SessionID, 128) ||
 		!validExitLaunchIdentifier(p.TmuxSession, 64) ||
 		!validCallbackHex(p.Generation, 32) || !validCallbackHex(p.Token, 64) {
@@ -480,6 +500,23 @@ func runExitCallback(p exitCallbackParams) error {
 	reported, err := inspectDeadTmuxPane(p.PaneID)
 	if err != nil {
 		return fmt.Errorf("%w: verify dead pane: %v", db.ErrExitCallbackRejected, err)
+	}
+	// tmux expands #{pane_dead_status} / #{pane_dead_signal} into the hook
+	// command WHEN THE HOOK FIRES, but this process re-reads them a fork and an
+	// exec later. tmux closes the pane's pty and reaps the pane's child as two
+	// separate events, so a hook that fired between them carries no status while
+	// the re-read carries the real one. That is the reap landing late, not a
+	// forged callback — yet strict equality rejected it, and a rejection here
+	// costs the audit row, the pane capture, and the corpse cleanup all at once.
+	//
+	// Adopt tmux's settled answer in exactly that direction: the hook claimed
+	// nothing, and this process read the truth from tmux itself a moment later.
+	// It is not a weakening — authority still rests on the launch generation and
+	// the single-use token consumed below, the pane identity must still match,
+	// and a hook that claims a status tmux does not confirm is still refused.
+	if p.ExitCode == "" && p.Signal == "" &&
+		(reported.ExitCode != "" || reported.Signal != "") {
+		p.ExitCode, p.Signal = reported.ExitCode, reported.Signal
 	}
 	if reported.TmuxSession != p.TmuxSession || reported.PaneID != p.PaneID ||
 		reported.Generation != p.Generation ||

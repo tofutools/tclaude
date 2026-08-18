@@ -500,6 +500,91 @@ func TestRunExitCallback_UnreadablePaneIsNotReportedAsSilent(t *testing.T) {
 	assert.NotContains(t, got, "printed nothing before it died")
 }
 
+// Scenario: the pane-died hook fired between tmux closing the pane's pty and
+// reaping its child, so it expanded #{pane_dead_status} to nothing. By the time
+// this process re-reads the pane, tmux has settled on 125.
+//
+// Expected: recorded, captured, and cleaned up. Strict equality read the late
+// reap as a forged callback and rejected it, which cost the audit row, the pane
+// capture AND the corpse cleanup at once — leaving a dead pane, an empty Logs
+// tab, and a spawn error pointing at both.
+func TestRunExitCallback_AdoptsAStatusThatLandedAfterTheHookFired(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%34", deadOutput: "tmux-late-reap|%34|1|125||34343434343434343434343434343434",
+		captureOutput: "tclaude: terminal resize relay: start bubblewrap: " +
+			"fork/exec /usr/bin/bwrap: operation not permitted",
+	}
+	setupExitCallbackTest(t, fake)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	const generation = "34343434343434343434343434343434"
+	const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaae"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-late-reap", TmuxSession: "tmux-late-reap", ConvID: "conv-late-reap",
+		Status: StatusWorking, Created: time.Now(),
+	}, generation, db.SessionExitGateReleased))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-late-reap", generation, hex.EncodeToString(hash[:]), "%34"))
+
+	// Exactly what the hook expands to when it fires before the reap.
+	require.NoError(t, runExitCallback(exitCallbackParams{
+		SessionID: "spwn-late-reap", TmuxSession: "tmux-late-reap", PaneID: "%34",
+		Generation: generation, Token: token, ExitCode: "", Signal: "",
+	}))
+
+	got := logs.String()
+	assert.NotContains(t, got, "callback rejected")
+	assert.Contains(t, got, `"msg":"managed pane failed during startup"`)
+	assert.Contains(t, got, "operation not permitted",
+		"the pane's own error must reach the log")
+	assert.Contains(t, got, `"exit_code":"125"`, "the settled status is what gets recorded")
+	assert.True(t, slices.ContainsFunc(fake.calls, func(call []string) bool {
+		return len(call) > 0 && call[0] == "kill-pane"
+	}), "the corpse must still be cleaned up")
+}
+
+// Scenario: a callback claims an exit status tmux does not confirm.
+//
+// Expected: still refused, and now audible. Adopting a late-landing status must
+// only ever fill in a claim of NOTHING from tmux's own settled answer; it must
+// not let a caller assert an exit tmux never reported.
+func TestRunExitCallback_RejectsAClaimedStatusTmuxDoesNotConfirm(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%35", deadOutput: "tmux-forged|%35|1|125||35353535353535353535353535353535",
+		captureOutput: "private pane contents",
+	}
+	setupExitCallbackTest(t, fake)
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	const generation = "35353535353535353535353535353535"
+	const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-forged", TmuxSession: "tmux-forged", ConvID: "conv-forged",
+		Status: StatusWorking, Created: time.Now(),
+	}, generation, db.SessionExitGateReleased))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-forged", generation, hex.EncodeToString(hash[:]), "%35"))
+
+	err := runExitCallback(exitCallbackParams{
+		SessionID: "spwn-forged", TmuxSession: "tmux-forged", PaneID: "%35",
+		Generation: generation, Token: token, ExitCode: "0",
+	})
+	require.ErrorIs(t, err, db.ErrExitCallbackRejected)
+	assert.Contains(t, logs.String(), "callback rejected",
+		"a rejection must never be silent again")
+	for _, call := range fake.calls {
+		assert.NotEqual(t, "capture-pane", call[0], "a rejected callback captures nothing")
+	}
+}
+
 // Scenario: a pane exits 0 inside the startup window with no recorded
 // lifecycle intent.
 //
