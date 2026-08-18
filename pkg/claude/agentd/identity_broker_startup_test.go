@@ -34,6 +34,7 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 		panePID    = 9070
 		oldLabel   = "spwn-old-pid-owner"
 		newLabel   = "spwn-new-starting"
+		generation = "launch-new-starting"
 	)
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: oldLabel, PID: panePID, ConvID: "old-conv", TmuxSession: "tmux-old",
@@ -44,6 +45,7 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 		ID: newLabel, PID: 0, ConvID: "new-conv", TmuxSession: "tmux-new",
 		Harness: harness.CopilotName, Status: "idle",
 		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		ExitLaunchGeneration:  generation,
 	}))
 	// Make the old row unquestionably the ordinary resolver's incumbent.
 	stampSessionUpdatedAt(t, oldLabel, time.Now())
@@ -66,14 +68,16 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 	require.Equal(t, oldLabel, resolved.ID,
 		"fixture must reproduce the startup callback resolving to the reused-pid row")
 
-	previousPanePID := brokerLivePanePID
-	brokerLivePanePID = func(tmux string) int {
+	previousPaneProbe := brokerLivePaneProbe
+	brokerLivePaneProbe = func(tmux string) (lifecyclePaneProbe, error) {
 		if tmux == "tmux-new" {
-			return panePID
+			return lifecyclePaneProbe{
+				state: paneProbeLive, panePID: panePID, generation: generation,
+			}, nil
 		}
-		return 0
+		return lifecyclePaneProbe{state: paneProbeUnknown}, nil
 	}
-	t.Cleanup(func() { brokerLivePanePID = previousPanePID })
+	t.Cleanup(func() { brokerLivePaneProbe = previousPaneProbe })
 
 	got, gotHarnessPID := claimedLivePaneSessionRow(callerPID, newLabel)
 	require.NotNil(t, got)
@@ -113,6 +117,37 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 	handleWhoamiStatusline(renderRec, renderReq)
 	assert.Equal(t, http.StatusOK, renderRec.Code, "statusline response: %s", renderRec.Body.String())
 
+	// A reused pid is what turns this launch gap into a mismatch. Without that
+	// accident ordinary resolution finds no row, and both endpoints must still
+	// reach the same generation-bound live-pane proof.
+	require.NoError(t, db.DeleteSession(oldLabel))
+	none, _ := hookSessionRowForPID(callerPID)
+	require.Nil(t, none, "without the reused-pid row ordinary startup resolution has no candidate")
+
+	token, err = registerHookAck(newLabel, nil, nil)
+	require.NoError(t, err)
+	hookBody, err = json.Marshal(session.BrokeredHookRequest{
+		ClaimedSessionID: newLabel,
+		AckToken:         token,
+	})
+	require.NoError(t, err)
+	hookReq = httptest.NewRequest(http.MethodPost, "/v1/whoami/hook", bytes.NewReader(hookBody))
+	hookReq = hookReq.WithContext(context.WithValue(hookReq.Context(), peerKey{}, &peer{
+		PID: callerPID, HasClaudeAncestor: true,
+	}))
+	hookRec = httptest.NewRecorder()
+	handleWhoamiHook(hookRec, hookReq)
+	assert.Equal(t, http.StatusOK, hookRec.Code, "nil-resolution hook response: %s", hookRec.Body.String())
+
+	renderReq = httptest.NewRequest(http.MethodPost, "/v1/whoami/statusline", bytes.NewReader(renderBody))
+	renderReq = renderReq.WithContext(context.WithValue(renderReq.Context(), peerKey{}, &peer{
+		PID: callerPID, HasClaudeAncestor: true,
+	}))
+	renderRec = httptest.NewRecorder()
+	handleWhoamiStatusline(renderRec, renderReq)
+	assert.Equal(t, http.StatusOK, renderRec.Code,
+		"nil-resolution statusline response: %s", renderRec.Body.String())
+
 	persisted, err := db.LoadSession(newLabel)
 	require.NoError(t, err)
 	require.NotNil(t, persisted)
@@ -121,6 +156,17 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 	closed, _ := claimedLivePaneSessionRow(callerPID, newLabel)
 	assert.Nil(t, closed,
 		"once the launch row has a pid, a request claim must no longer select it through the startup fallback")
+
+	persisted.PID = 0
+	require.NoError(t, db.SaveSession(persisted))
+	brokerLivePaneProbe = func(string) (lifecyclePaneProbe, error) {
+		return lifecyclePaneProbe{
+			state: paneProbeLive, panePID: panePID, generation: "later-reused-pane",
+		}, nil
+	}
+	stale, _ := claimedLivePaneSessionRow(callerPID, newLabel)
+	assert.Nil(t, stale,
+		"a later pane reusing the tmux name must not prove a stale pid-zero launch row")
 }
 
 func TestClaimedLivePaneSessionRowRequiresTheClaimedPanesAncestry(t *testing.T) {
@@ -137,15 +183,20 @@ func TestClaimedLivePaneSessionRowRequiresTheClaimedPanesAncestry(t *testing.T) 
 		ID: peerLabel, PID: 0, ConvID: "peer-conv", TmuxSession: "tmux-peer",
 		Harness:               harness.CopilotName,
 		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		ExitLaunchGeneration:  "peer-generation",
 	}))
 	fakeProcTree{
 		name:   map[int]string{callerPID: "tclaude", copilotPID: "copilot", ownPanePID: "sh"},
 		parent: map[int]int{callerPID: copilotPID, copilotPID: ownPanePID, ownPanePID: 1},
 	}.install(t)
 
-	previousPanePID := brokerLivePanePID
-	brokerLivePanePID = func(string) int { return peerPanePID }
-	t.Cleanup(func() { brokerLivePanePID = previousPanePID })
+	previousPaneProbe := brokerLivePaneProbe
+	brokerLivePaneProbe = func(string) (lifecyclePaneProbe, error) {
+		return lifecyclePaneProbe{
+			state: paneProbeLive, panePID: peerPanePID, generation: "peer-generation",
+		}, nil
+	}
+	t.Cleanup(func() { brokerLivePaneProbe = previousPaneProbe })
 
 	row, harnessPID := claimedLivePaneSessionRow(callerPID, peerLabel)
 	assert.Nil(t, row, "a live peer pane named by the request is not the caller's identity")

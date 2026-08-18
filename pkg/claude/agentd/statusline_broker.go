@@ -72,20 +72,12 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	// than on anything the caller controls.
 	row, _ := hookSessionRowForPID(p.PID)
 	if row == nil {
-		// Before the rate check, for the reason spelled out at the same
-		// point in hook_broker.go: a throttled request is still a refused
-		// one, and this limiter's bucket is shared across every
-		// unplaceable caller.
-		brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
 		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
+			brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
 			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
 			return
 		}
-		writeError(w, http.StatusForbidden, "auth",
-			"could not resolve a session row for this caller; refusing to apply its statusline")
-		return
-	}
-	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
+	} else if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
 		writeError(w, http.StatusTooManyRequests, "rate", "too many statusline renders")
 		return
 	}
@@ -96,7 +88,11 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body) > brokerMaxBody {
-		logBrokerBodyOverCap(endpoint, row.ID, len(body))
+		resolvedID := ""
+		if row != nil {
+			resolvedID = row.ID
+		}
+		logBrokerBodyOverCap(endpoint, resolvedID, len(body))
 		writeError(w, http.StatusRequestEntityTooLarge, "body", "statusline payload too large")
 		return
 	}
@@ -106,7 +102,16 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "body", "malformed statusline payload")
 		return
 	}
-	if claimed := strings.TrimSpace(req.ClaimedSessionID); claimed != "" && claimed != row.ID {
+	claimed := strings.TrimSpace(req.ClaimedSessionID)
+	if row == nil {
+		row, _ = claimedLivePaneSessionRow(p.PID, claimed)
+		if row == nil {
+			brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
+			writeError(w, http.StatusForbidden, "auth",
+				"could not resolve a session row for this caller; refusing to apply its statusline")
+			return
+		}
+	} else if claimed != "" && claimed != row.ID {
 		if startupRow, _ := claimedLivePaneSessionRow(p.PID, claimed); startupRow != nil {
 			row = startupRow
 		} else {

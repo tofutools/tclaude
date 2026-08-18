@@ -1418,9 +1418,13 @@ func hookSessionRowForPID(pid int) (*db.SessionRow, int) {
 // so the ordinary candidate/liveness repair cannot see it yet.
 //
 // The claimed id remains a cross-check, not authority. It may select a row
-// only after tmux reports that row's live pane pid and the daemon's process
+// only after tmux reports that row's live pane pid AND launch generation, the
+// generation matches the row's daemon-owned launch identity, and the process
 // walk proves that exact pid is an ancestor of the socket caller. A caller
-// cannot manufacture either fact, and a dead/reused pane name resolves to 0.
+// cannot manufacture any of those facts. The generation check is essential:
+// tmux names are reusable, so pid ancestry alone could make a stale pid=0 row
+// appear to own a later pane that reused its name.
+//
 // Restricting this to tclaude-layer rows whose pid is still 0 keeps the
 // fallback confined to the brokered launch shape and exact launch phase that
 // have the race. Once a row has a pid, ordinary ancestry resolution owns it.
@@ -1433,10 +1437,16 @@ func claimedLivePaneSessionRow(callerPID int, claimedID string) (*db.SessionRow,
 	if err != nil || row == nil || row.PID != 0 || !isTclaudeLayerRow(row) || row.TmuxSession == "" {
 		return nil, 0
 	}
-	panePID := brokerLivePanePID(row.TmuxSession)
-	if panePID <= 1 {
+	identity, err := db.GetSessionExitLaunchIdentity(row.ID)
+	if err != nil || identity.Generation == "" {
 		return nil, 0
 	}
+	pane, err := brokerLivePaneProbe(row.TmuxSession)
+	if err != nil || pane.state != paneProbeLive || pane.panePID <= 1 ||
+		pane.generation == "" || pane.generation != identity.Generation {
+		return nil, 0
+	}
+	panePID := pane.panePID
 
 	const maxAncestorHops = 256
 	harnessPID := 0
@@ -1457,8 +1467,9 @@ func claimedLivePaneSessionRow(callerPID int, claimedID string) (*db.SessionRow,
 }
 
 // Indirected so the startup-race regression can pin the kernel/tmux proof
-// without launching a real tmux server. Production always uses livePanePID.
-var brokerLivePanePID = livePanePID
+// without launching a real tmux server. Production uses the same bounded,
+// generation-bearing probe as lifecycle mutations.
+var brokerLivePaneProbe = probeLifecyclePane
 
 // sessionRowByPID resolves the session row recorded against a host pid,
 // preferring a candidate whose tmux session is still alive.

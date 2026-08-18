@@ -175,25 +175,18 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	// cross-check, below.
 	row, harnessPID := hookSessionRowForPID(p.PID)
 	if row == nil {
-		// No row resolved, so there is nothing trustworthy to attribute
-		// this to — counted only. See broker_refusals.go.
-		//
-		// Recorded BEFORE the rate check, because a throttled request is
-		// still a refused one and the pre-identity limiter is a single
-		// shared bucket: leaving it after would let one noisy unplaceable
-		// caller suppress a genuinely starving agent's contribution to
-		// the only number the operator can see. Recording is a mutex and
-		// a few field writes — cheaper than the writeError below it.
-		brokerRefusals.recordUnplaceable("hook: caller could not be placed")
+		// The claim may still be recoverable through the generation-bound live
+		// pane proof after the bounded body is parsed. Until then, use the
+		// shared pre-identity limiter so an unplaceable caller cannot make us
+		// parse bodies without a cap on request cadence.
 		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
+			// We cannot afford to parse the claim after the shared bucket is
+			// exhausted, so this remains an unplaceable refusal just as before.
+			brokerRefusals.recordUnplaceable("hook: caller could not be placed")
 			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
 			return
 		}
-		writeError(w, http.StatusForbidden, "auth",
-			"could not resolve a session row for this caller; refusing to apply its hook")
-		return
-	}
-	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
+	} else if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
 		writeError(w, http.StatusTooManyRequests, "rate", "too many hook events")
 		return
 	}
@@ -204,7 +197,11 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body) > brokerMaxBody {
-		logBrokerBodyOverCap(endpoint, row.ID, len(body))
+		resolvedID := ""
+		if row != nil {
+			resolvedID = row.ID
+		}
+		logBrokerBodyOverCap(endpoint, resolvedID, len(body))
 		writeError(w, http.StatusRequestEntityTooLarge, "body", "hook payload too large")
 		return
 	}
@@ -213,7 +210,18 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "body", "malformed hook payload")
 		return
 	}
-	if claimed := strings.TrimSpace(req.ClaimedSessionID); claimed != "" && claimed != row.ID {
+	claimed := strings.TrimSpace(req.ClaimedSessionID)
+	if row == nil {
+		row, harnessPID = claimedLivePaneSessionRow(p.PID, claimed)
+		if row == nil {
+			// Only now is the request known to be genuinely unplaceable. A valid
+			// startup claim must not increment the refusal telemetry it repairs.
+			brokerRefusals.recordUnplaceable("hook: caller could not be placed")
+			writeError(w, http.StatusForbidden, "auth",
+				"could not resolve a session row for this caller; refusing to apply its hook")
+			return
+		}
+	} else if claimed != "" && claimed != row.ID {
 		// session new writes the row before starting tmux, then stamps its pane
 		// pid just after launch. In that narrow gap a reused ancestor pid can
 		// resolve to an older row because the new pid=0 row is not a candidate
