@@ -58,6 +58,9 @@ func statuslinePayload(convID, model, modelID, effort string, pct float64, tokIn
 // callerPID.
 func postBrokeredRender(t *testing.T, f *testharness.Flow, callerPID int, body statusbar.BrokeredRenderRequest) (int, statusbar.BrokeredRenderResponse) {
 	t.Helper()
+	if body.ClaimedSessionID == "" {
+		body.ClaimedSessionID = slLayerLabel
+	}
 	req := testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/statusline", body)
 	req = agentd.AsAgentPeerWithPID(req, "", callerPID)
 	rec := testharness.Serve(f.Mux, req)

@@ -66,6 +66,7 @@ func TestAttachCallerIdentityAgentHintSkipsPersistentToken(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv(HumanTokenEnvVar, "")
 	t.Setenv(agentipc.AgentHintEnvVar, "1")
+	t.Setenv(agentipc.SessionIDEnvVar, "spwn-managed-agent")
 	writePersistentHumanToken(t, "tclo_must_not_be_read")
 
 	req, err := http.NewRequest(http.MethodGet, "http://_/v1/whoami", nil)
@@ -73,7 +74,21 @@ func TestAttachCallerIdentityAgentHintSkipsPersistentToken(t *testing.T) {
 	attachCallerIdentity(req)
 
 	assert.Equal(t, "1", req.Header.Get(agentipc.AgentHintHeader))
+	assert.Equal(t, "spwn-managed-agent", req.Header.Get(agentipc.SessionClaimHeader))
 	assert.Empty(t, req.Header.Get(HumanTokenHeader))
+}
+
+func TestAttachCallerIdentityDoesNotClaimAmbientSessionWithoutAgentHint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv(HumanTokenEnvVar, "")
+	t.Setenv(agentipc.AgentHintEnvVar, "")
+	t.Setenv(agentipc.SessionIDEnvVar, "spwn-ambient")
+
+	req, err := http.NewRequest(http.MethodGet, "http://_/v1/whoami", nil)
+	require.NoError(t, err)
+	attachCallerIdentity(req)
+
+	assert.Empty(t, req.Header.Get(agentipc.SessionClaimHeader))
 }
 
 func TestAttachHumanTokenIgnoresUnavailableOrEmptyPersistentFile(t *testing.T) {

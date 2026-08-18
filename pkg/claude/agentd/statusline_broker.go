@@ -22,9 +22,9 @@ import (
 // The same three properties that make the hook endpoint safe without a
 // permission slug hold here, for the same reasons:
 //
-//  1. The row comes from the caller's process ancestry. Nothing in the
-//     request selects a target — the conversation it names is checked
-//     against the resolved row before anything is keyed by it.
+//  1. The request's session id only selects a candidate row. The daemon uses
+//     the live pane's launch generation and host PID ancestry to prove that
+//     candidate owns the Unix-socket caller before applying anything.
 //  2. The effect is what the caller would have achieved by writing the
 //     database directly, which every unsandboxed agent does unmediated.
 //  3. Brokering removes a capability rather than adding one.
@@ -46,12 +46,12 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	}
 	p := peerFromContext(r.Context())
 	switch classify(p) {
-	case classAgent, classAgentUnknown:
+	case classAgent, classAgentUnknown, classUnconfirmed:
 		// classAgentUnknown is accepted for the same reason the hook
 		// endpoint accepts it: a freshly spawned agent renders its status
-		// line before its first SessionStart hook has established a
-		// conv-id, and the row below is resolved from recorded host pids
-		// regardless.
+		// line before its first SessionStart hook has established a conv-id.
+		// classUnconfirmed is provisional until the generation-bound pane
+		// proof below authenticates a version-named sandboxed harness.
 	case classUnidentified:
 		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
 			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
@@ -105,33 +105,44 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	claimed := strings.TrimSpace(req.ClaimedSessionID)
-	if row == nil {
-		if checkBrokerProofRate(endpoint, brokerProofKeyForRow("")).Reject {
-			writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
-			return
-		}
-		row, _ = claimedLivePaneSessionRow(p.PID, claimed)
-		if row == nil {
-			brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
-			writeError(w, http.StatusForbidden, "auth",
-				"could not resolve a session row for this caller; refusing to apply its statusline")
-			return
-		}
-	} else if claimed != "" && claimed != row.ID {
-		if checkBrokerProofRate(endpoint, brokerProofKeyForRow(row.ID)).Reject {
-			writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
-			return
-		}
-		if provedRow, _ := claimedLivePaneSessionRow(p.PID, claimed); provedRow != nil {
-			row = provedRow
+	proofKey := ""
+	if row != nil {
+		proofKey = row.ID
+	}
+	if checkBrokerProofRate(endpoint, brokerProofKeyForRow(proofKey)).Reject {
+		writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
+		return
+	}
+	provedRow, _, layerClaim := proveTclaudeLayerCaller(p.PID, claimed)
+	switch {
+	case layerClaim && provedRow != nil:
+		row = provedRow
+	case layerClaim:
+		if row != nil {
+			brokerRefusals.recordClaimMismatch(row.ID,
+				"statusline: claimed tclaude-layer session failed live-pane proof")
 		} else {
-			slog.Warn("statusline broker: rejecting render whose claimed session id disagrees with the resolved row",
-				"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID, "module", "hooks")
-			brokerRefusals.recordClaimMismatch(row.ID, "statusline: claimed session id disagrees with the resolved row")
-			writeError(w, http.StatusForbidden, "auth",
-				"claimed session id does not match the session resolved for this caller")
-			return
+			brokerRefusals.recordUnplaceable("statusline: tclaude-layer caller failed live-pane proof")
 		}
+		writeError(w, http.StatusForbidden, "auth", "claimed tclaude-layer session does not own this caller")
+		return
+	case row == nil:
+		brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
+		writeError(w, http.StatusForbidden, "auth",
+			"could not resolve a session row for this caller; refusing to apply its statusline")
+		return
+	case isTclaudeLayerRow(row):
+		brokerRefusals.recordUnplaceable("statusline: tclaude-layer callback omitted its session claim")
+		writeError(w, http.StatusForbidden, "auth",
+			"tclaude-layer statusline requires a proved session claim")
+		return
+	case claimed != "" && claimed != row.ID:
+		slog.Warn("statusline broker: rejecting render whose claimed session id disagrees with the resolved row",
+			"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID, "module", "hooks")
+		brokerRefusals.recordClaimMismatch(row.ID, "statusline: claimed session id disagrees with the resolved row")
+		writeError(w, http.StatusForbidden, "auth",
+			"claimed session id does not match the session resolved for this caller")
+		return
 	}
 	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
 		writeError(w, http.StatusTooManyRequests, "rate", "too many statusline renders")

@@ -240,7 +240,11 @@ func withIdentity(h http.Handler) http.Handler {
 		if uconn, ok := r.Context().Value(unixConnKey{}).(*net.UnixConn); ok && uconn != nil {
 			if pid, err := peerPID(uconn); err == nil {
 				p.PID = pid
-				p.ConvID, p.HasClaudeAncestor = convIDForPID(pid)
+				claimedID := ""
+				if strings.TrimSpace(r.Header.Get(agentipc.AgentHintHeader)) == "1" {
+					claimedID = r.Header.Get(agentipc.SessionClaimHeader)
+				}
+				p.ConvID, p.HasClaudeAncestor = agentIdentityForPID(pid, claimedID)
 			}
 		}
 		p.HumanTokenValid = verifyHumanToken(r)
@@ -251,6 +255,21 @@ func withIdentity(h http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), peerKey{}, p)
 		h.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// agentIdentityForPID resolves one Unix-socket peer. A claimed tclaude-layer
+// row uses the stronger generation-bound pane proof; callers without such a
+// claim retain the legacy harness-name/session-file resolution used outside
+// tclaude's sandbox. A failed layer proof is agent-shaped but unresolved, so
+// it cannot fall through and authorize a different name-matched session.
+func agentIdentityForPID(pid int, claimedID string) (convID string, hasAncestor bool) {
+	if row, _, layerClaim := proveTclaudeLayerCaller(pid, claimedID); layerClaim {
+		if row != nil {
+			return row.ConvID, true
+		}
+		return "", true
+	}
+	return convIDForPID(pid)
 }
 
 // enrolledCallers remembers conv-ids already run through EnsureAgentForConv
@@ -1411,62 +1430,54 @@ func hookSessionRowForPID(pid int) (*db.SessionRow, int) {
 	return nil, 0
 }
 
-// claimedLivePaneSessionRow repairs broker identity when a reused pid makes
-// hookSessionRowForPID return an older row from the caller's ancestry. This
-// starts in the launch-only gap between tmux creating a pane and session new
-// persisting that pane's pid, but it can outlive the gap: the new row records
-// the pane pid while the stale row may match the nearer harness pid, causing
-// the ancestry walk to return early on every later callback.
+// proveTclaudeLayerCaller verifies that a Unix-socket caller belongs to the
+// claimed tclaude-layer session. The claim only selects a row. Authority comes
+// from three daemon/kernel facts: tmux reports the row's pane live, its random
+// launch generation matches the daemon-owned row, and the exact pane PID is an
+// ancestor of the socket peer PID.
 //
-// The claimed id remains a cross-check, not authority. It may select a row
-// only after tmux reports that row's live pane pid AND launch generation, the
-// generation matches the row's daemon-owned launch identity, and the process
-// walk proves that exact pid is an ancestor of the socket caller. A caller
-// cannot manufacture any of those facts. The generation check is essential:
-// tmux names are reusable, so pid ancestry alone could make a stale pid=0 row
-// appear to own a later pane that reused its name.
-//
-// Restricting this to tclaude-layer rows keeps the proof on the brokered launch
-// shape. The row's recorded pid is deliberately not authority here: it may be
-// zero during startup, the pane pid after the parent finishes launch, or the
-// harness pid after a successful hook correction. The generation-bound live
-// pane and caller ancestry are the stable facts across all three states.
-func claimedLivePaneSessionRow(callerPID int, claimedID string) (*db.SessionRow, int) {
+// layerClaim distinguishes "not a layer claim" (legacy identity may proceed)
+// from "claimed a layer row but failed proof" (must fail closed). The row's
+// recorded PID is deliberately irrelevant: it can be zero during startup, the
+// pane PID after launch, or a corrected harness PID after a hook.
+func proveTclaudeLayerCaller(callerPID int, claimedID string) (row *db.SessionRow, harnessPID int, layerClaim bool) {
 	claimedID = strings.TrimSpace(claimedID)
 	if callerPID <= 1 || claimedID == "" {
-		return nil, 0
+		return nil, 0, false
 	}
 	row, err := db.LoadSession(claimedID)
-	if err != nil || row == nil || !isTclaudeLayerRow(row) || row.TmuxSession == "" {
-		return nil, 0
+	if err != nil || row == nil || !isTclaudeLayerRow(row) {
+		return nil, 0, false
+	}
+	if row.TmuxSession == "" {
+		return nil, 0, true
 	}
 	identity, err := db.GetSessionExitLaunchIdentity(row.ID)
 	if err != nil || identity.Generation == "" || identity.TmuxSession != row.TmuxSession {
-		return nil, 0
+		return nil, 0, true
 	}
 	pane, err := brokerLivePaneProbe(row.TmuxSession)
 	if err != nil || pane.state != paneProbeLive || pane.panePID <= 1 ||
 		pane.generation == "" || pane.generation != identity.Generation {
-		return nil, 0
+		return nil, 0, true
 	}
 	panePID := pane.panePID
 
 	const maxAncestorHops = 256
-	harnessPID := 0
 	cur := callerPID
 	for range maxAncestorHops {
 		if cur <= 1 {
-			return nil, 0
+			return nil, 0, true
 		}
 		if cur == panePID {
-			return row, harnessPID
+			return row, harnessPID, true
 		}
 		if harnessPID == 0 && harnessNameAt(cur, procName(cur)) != "" {
 			harnessPID = cur
 		}
 		cur = procParent(cur)
 	}
-	return nil, 0
+	return nil, 0, true
 }
 
 // Indirected so the startup-race regression can pin the kernel/tmux proof

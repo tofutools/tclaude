@@ -318,6 +318,9 @@ const (
 func attachCallerIdentity(req *http.Request) {
 	if hasAgentHint() {
 		req.Header.Set(agentipc.AgentHintHeader, "1")
+		if sessionID := strings.TrimSpace(os.Getenv(agentipc.SessionIDEnvVar)); sessionID != "" {
+			req.Header.Set(agentipc.SessionClaimHeader, sessionID)
+		}
 	}
 	if tok := OperatorToken(); tok != "" {
 		req.Header.Set(HumanTokenHeader, tok)

@@ -90,9 +90,8 @@ func brokerRenders() bool {
 // rather than two that can disagree — and so a hostile pane cannot state
 // a context percentage its payload does not support.
 type BrokeredRenderRequest struct {
-	// ClaimedSessionID is the caller's TCLAUDE_SESSION_ID, a CROSS-CHECK
-	// ONLY. The daemon resolves the real row from process ancestry and
-	// refuses the request when the two disagree.
+	// ClaimedSessionID is the caller's TCLAUDE_SESSION_ID. It selects the row
+	// agentd proves against the socket peer PID and generation-bound live pane.
 	ClaimedSessionID string `json:"claimed_session_id,omitempty"`
 
 	// RenderConvID is Claude Code's session_id from the payload: the
