@@ -1972,7 +1972,8 @@ func runNew(params *NewParams) error {
 		// Redacted: the command carries the whole forwarded environment, and
 		// output.log is not a place for the operator's API keys.
 		if launchPaneCommand != "" {
-			if redacted, ok := RedactPaneCommand(launchPaneCommand, envExports); ok {
+			if redacted, ok := RedactPaneCommand(
+				launchPaneCommand, envExports, authoredEnvValues(effectiveSandbox)); ok {
 				slog.Error("launch failed; rolling back its session row",
 					"session_id", sessionID, "tmux_session", tmuxSession,
 					"pane_command", redacted)
@@ -2362,7 +2363,8 @@ func runNew(params *NewParams) error {
 	// tried to run, and emit it at debug for a launch that fails in a way the
 	// rollback never sees.
 	launchPaneCommand = harnessCmd
-	if redacted, ok := RedactPaneCommand(harnessCmd, envExports); ok {
+	if redacted, ok := RedactPaneCommand(
+		harnessCmd, envExports, authoredEnvValues(effectiveSandbox)); ok {
 		slog.Debug("launching managed pane",
 			"session_id", sessionID, "tmux_session", tmuxSession,
 			"pane_command", redacted)
@@ -2902,6 +2904,30 @@ func sandboxSnapshotMaterializedUnixSocketPaths(
 	}
 	paths := append([]string(nil), snapshot.UnixSocketMaterialization.Paths...)
 	return &paths
+}
+
+// authoredEnvValues lists the sandbox profile's authored environment VALUES,
+// for RedactPaneCommand's fail-closed check.
+//
+// These are the operator's declared secrets, and they are the ones that reach
+// the pane command through more than one channel: besides the shared env-export
+// prefix, a Codex launch renders each of them again as a
+// shell_environment_policy.set override on its own argv (see
+// sandboxSnapshotEnvironment and the Codex spawner). Removing the prefix alone
+// therefore left them in the logged command.
+//
+// Only the AUTHORED entries — values inherited from the operator's environment
+// are covered by removing the prefix, and cannot be checked this way because
+// HOME, PWD and friends are legitimate substrings of ordinary command text.
+func authoredEnvValues(snapshot *sandboxpolicy.Snapshot) []string {
+	if snapshot == nil {
+		return nil
+	}
+	values := make([]string, 0, len(snapshot.Effective.Environment))
+	for _, entry := range snapshot.Effective.Environment {
+		values = append(values, entry.Value)
+	}
+	return values
 }
 
 func sandboxSnapshotEnvironment(snapshot *sandboxpolicy.Snapshot) map[string]string {
