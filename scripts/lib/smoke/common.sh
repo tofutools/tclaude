@@ -52,6 +52,22 @@ smoke::apt_source_is_microsoft_only() {
   ' "$source_file"
 }
 
+# smoke::run_bounded_apt_update — keep an unreachable runner mirror from
+# occupying a smoke job until GitHub's six-hour ceiling. apt's transport
+# timeout bounds an individual dead connection; the outer timeout also covers
+# mirror-method stalls where apt keeps retrying or waiting without returning.
+#
+# Kept as a separate function so the shared self-test can prove the exact
+# command without touching the host's apt state.
+smoke::run_bounded_apt_update() {
+  sudo -n timeout --kill-after=10s 180s \
+    apt-get \
+    -o Acquire::Retries=2 \
+    -o Acquire::http::Timeout=15 \
+    -o Acquire::https::Timeout=15 \
+    update --quiet
+}
+
 # smoke::apt_update — update Ubuntu's package indexes without letting an
 # unrelated third-party source take the host prerequisite down. GitHub-hosted
 # Ubuntu images may carry Microsoft sources for preinstalled tools; those
@@ -75,7 +91,7 @@ smoke::apt_update() {
 
   if [[ -z "${GITHUB_ACTIONS:-}" ]]; then
     smoke::log "Not running under GitHub Actions; skipping Microsoft apt-source isolation"
-    if ! sudo apt-get update --quiet; then
+    if ! smoke::run_bounded_apt_update; then
       smoke::error "apt-get update failed outside GitHub Actions"
       return 1
     fi
@@ -178,8 +194,8 @@ smoke::apt_update() {
     smoke::log "Disabled $disabled_count unrelated Microsoft apt source file(s); Ubuntu source and package failures remain fatal"
   fi
   smoke::log "Updating apt indexes for host prerequisites"
-  if ! sudo apt-get update --quiet; then
-    smoke::error "apt-get update failed after Microsoft-source isolation; inspect the apt output above for the failing configured source"
+  if ! smoke::run_bounded_apt_update; then
+    smoke::error "apt-get update failed or exceeded its 180-second deadline after Microsoft-source isolation; inspect the apt output above for the failing configured source"
     return 1
   fi
 }

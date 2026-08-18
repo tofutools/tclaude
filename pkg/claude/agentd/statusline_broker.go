@@ -68,25 +68,19 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Identity first, so the rate limit can be keyed on the agent rather
-	// than on anything the caller controls.
+	// Resolve the ordinary candidate before parsing, but keep it provisional
+	// until the request claim can be checked against the live pane. The shared
+	// guard bounds that pre-proof work; only the final row is charged below.
 	row, _ := hookSessionRowForPID(p.PID)
-	if row == nil {
-		// Before the rate check, for the reason spelled out at the same
-		// point in hook_broker.go: a throttled request is still a refused
-		// one, and this limiter's bucket is shared across every
-		// unplaceable caller.
-		brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
-		if checkBrokerRate(endpoint, brokerPreIdentityKey, brokerPreIdentityRatePerSecond).Reject {
-			writeError(w, http.StatusTooManyRequests, "rate", "too many unplaceable requests")
-			return
-		}
-		writeError(w, http.StatusForbidden, "auth",
-			"could not resolve a session row for this caller; refusing to apply its statusline")
-		return
+	preProofKey := brokerPreIdentityKey
+	if row != nil {
+		preProofKey = brokerPreIdentityKeyForRow(row.ID)
 	}
-	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
-		writeError(w, http.StatusTooManyRequests, "rate", "too many statusline renders")
+	if checkBrokerRate(endpoint, preProofKey, brokerPreIdentityRatePerSecond).Reject {
+		if row == nil {
+			brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
+		}
+		writeError(w, http.StatusTooManyRequests, "rate", "too many requests before identity verification")
 		return
 	}
 
@@ -96,7 +90,11 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(body) > brokerMaxBody {
-		logBrokerBodyOverCap(endpoint, row.ID, len(body))
+		resolvedID := ""
+		if row != nil {
+			resolvedID = row.ID
+		}
+		logBrokerBodyOverCap(endpoint, resolvedID, len(body))
 		writeError(w, http.StatusRequestEntityTooLarge, "body", "statusline payload too large")
 		return
 	}
@@ -106,12 +104,37 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "body", "malformed statusline payload")
 		return
 	}
-	if claimed := strings.TrimSpace(req.ClaimedSessionID); claimed != "" && claimed != row.ID {
-		slog.Warn("statusline broker: rejecting render whose claimed session id disagrees with the resolved row",
-			"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID, "module", "hooks")
-		brokerRefusals.recordClaimMismatch(row.ID, "statusline: claimed session id disagrees with the resolved row")
-		writeError(w, http.StatusForbidden, "auth",
-			"claimed session id does not match the session resolved for this caller")
+	claimed := strings.TrimSpace(req.ClaimedSessionID)
+	if row == nil {
+		if checkBrokerProofRate(endpoint, brokerProofKeyForRow("")).Reject {
+			writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
+			return
+		}
+		row, _ = claimedLivePaneSessionRow(p.PID, claimed)
+		if row == nil {
+			brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
+			writeError(w, http.StatusForbidden, "auth",
+				"could not resolve a session row for this caller; refusing to apply its statusline")
+			return
+		}
+	} else if claimed != "" && claimed != row.ID {
+		if checkBrokerProofRate(endpoint, brokerProofKeyForRow(row.ID)).Reject {
+			writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
+			return
+		}
+		if provedRow, _ := claimedLivePaneSessionRow(p.PID, claimed); provedRow != nil {
+			row = provedRow
+		} else {
+			slog.Warn("statusline broker: rejecting render whose claimed session id disagrees with the resolved row",
+				"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID, "module", "hooks")
+			brokerRefusals.recordClaimMismatch(row.ID, "statusline: claimed session id disagrees with the resolved row")
+			writeError(w, http.StatusForbidden, "auth",
+				"claimed session id does not match the session resolved for this caller")
+			return
+		}
+	}
+	if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
+		writeError(w, http.StatusTooManyRequests, "rate", "too many statusline renders")
 		return
 	}
 	if !safeBrokeredConvID(req.RenderConvID) {

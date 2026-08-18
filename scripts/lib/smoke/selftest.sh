@@ -49,6 +49,36 @@ apt_source_classifier_test microsoft-non-http pass \
 apt_source_classifier_test mixed refuse \
   'Types: deb\nURIs: https://packages.microsoft.com/repos/azure-cli/ https://archive.ubuntu.com/ubuntu/\nSuites: noble\nComponents: main\n'
 
+# The runner mirror can stop producing output indefinitely while apt's own
+# retry machinery remains alive. Prove that every shared update goes through
+# both the transport limits and an outer deadline, without invoking sudo or apt
+# in this safe-to-run-anywhere self-test.
+apt_update_argv="$work/apt-update.argv"
+(
+  sudo() { printf '%s\n' "$@" > "$apt_update_argv"; }
+  smoke::run_bounded_apt_update
+)
+cat > "$work/apt-update.want" <<'EOF'
+-n
+timeout
+--kill-after=10s
+180s
+apt-get
+-o
+Acquire::Retries=2
+-o
+Acquire::http::Timeout=15
+-o
+Acquire::https::Timeout=15
+update
+--quiet
+EOF
+if ! cmp -s "$work/apt-update.want" "$apt_update_argv"; then
+  echo 'selftest FAIL: apt update is not bounded by the reviewed transport and outer timeouts'
+  diff -u "$work/apt-update.want" "$apt_update_argv" || true
+  failures=1
+fi
+
 # expect_verdict WANT(pass|refuse) CASE LOG_CONTENT TEST_NAME...
 expect_verdict() {
   local want="$1" name="$2" content="$3"

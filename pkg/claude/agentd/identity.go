@@ -1411,6 +1411,69 @@ func hookSessionRowForPID(pid int) (*db.SessionRow, int) {
 	return nil, 0
 }
 
+// claimedLivePaneSessionRow repairs broker identity when a reused pid makes
+// hookSessionRowForPID return an older row from the caller's ancestry. This
+// starts in the launch-only gap between tmux creating a pane and session new
+// persisting that pane's pid, but it can outlive the gap: the new row records
+// the pane pid while the stale row may match the nearer harness pid, causing
+// the ancestry walk to return early on every later callback.
+//
+// The claimed id remains a cross-check, not authority. It may select a row
+// only after tmux reports that row's live pane pid AND launch generation, the
+// generation matches the row's daemon-owned launch identity, and the process
+// walk proves that exact pid is an ancestor of the socket caller. A caller
+// cannot manufacture any of those facts. The generation check is essential:
+// tmux names are reusable, so pid ancestry alone could make a stale pid=0 row
+// appear to own a later pane that reused its name.
+//
+// Restricting this to tclaude-layer rows keeps the proof on the brokered launch
+// shape. The row's recorded pid is deliberately not authority here: it may be
+// zero during startup, the pane pid after the parent finishes launch, or the
+// harness pid after a successful hook correction. The generation-bound live
+// pane and caller ancestry are the stable facts across all three states.
+func claimedLivePaneSessionRow(callerPID int, claimedID string) (*db.SessionRow, int) {
+	claimedID = strings.TrimSpace(claimedID)
+	if callerPID <= 1 || claimedID == "" {
+		return nil, 0
+	}
+	row, err := db.LoadSession(claimedID)
+	if err != nil || row == nil || !isTclaudeLayerRow(row) || row.TmuxSession == "" {
+		return nil, 0
+	}
+	identity, err := db.GetSessionExitLaunchIdentity(row.ID)
+	if err != nil || identity.Generation == "" || identity.TmuxSession != row.TmuxSession {
+		return nil, 0
+	}
+	pane, err := brokerLivePaneProbe(row.TmuxSession)
+	if err != nil || pane.state != paneProbeLive || pane.panePID <= 1 ||
+		pane.generation == "" || pane.generation != identity.Generation {
+		return nil, 0
+	}
+	panePID := pane.panePID
+
+	const maxAncestorHops = 256
+	harnessPID := 0
+	cur := callerPID
+	for range maxAncestorHops {
+		if cur <= 1 {
+			return nil, 0
+		}
+		if cur == panePID {
+			return row, harnessPID
+		}
+		if harnessPID == 0 && harnessNameAt(cur, procName(cur)) != "" {
+			harnessPID = cur
+		}
+		cur = procParent(cur)
+	}
+	return nil, 0
+}
+
+// Indirected so the startup-race regression can pin the kernel/tmux proof
+// without launching a real tmux server. Production uses the same bounded,
+// generation-bearing probe as lifecycle mutations.
+var brokerLivePaneProbe = probeLifecyclePane
+
 // sessionRowByPID resolves the session row recorded against a host pid,
 // preferring a candidate whose tmux session is still alive.
 //
