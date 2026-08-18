@@ -55,6 +55,11 @@ type World struct {
 	// code, which is what this models.
 	SpawnPaneStatusSettlesAfterReads int
 
+	// SpawnPaneDeathOutput, alongside SpawnPaneDiesAtLaunch, is what the
+	// retained corpse's screen shows — the harness's own dying words, which the
+	// daemon must copy into the log before it rolls the failed spawn back.
+	SpawnPaneDeathOutput string
+
 	// SpawnInputUnreadyEnters, when > 0, is applied to every CCSim the
 	// simSpawner builds via CCSim.SetInputUnreadyForEnters: the pane buffers
 	// literal send-keys text but swallows that many Enters before it starts

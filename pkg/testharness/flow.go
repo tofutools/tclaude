@@ -369,6 +369,9 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	if s.w.SpawnPaneDiesAtLaunch {
 		cc.Shutdown()
 		s.w.Tmux.MarkAlive(label)
+		if s.w.SpawnPaneDeathOutput != "" {
+			s.w.Tmux.SetDeadPaneOutput(label, s.w.SpawnPaneDeathOutput)
+		}
 		code := 1
 		if reads := s.w.SpawnPaneStatusSettlesAfterReads; reads > 0 {
 			// Retain the corpse the way tmux first exposes one: dead pane, no

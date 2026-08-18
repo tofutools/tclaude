@@ -1,7 +1,9 @@
 package agentd_test
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"net/http"
 	"testing"
 
@@ -94,6 +96,37 @@ func TestSpawn_DeadPaneWaitsForTmuxToAttachExitStatus(t *testing.T) {
 	assert.Contains(t, string(spawn.Raw), "managed pane exited during startup (exit code 1)",
 		"the settled status must be reported, not the not-yet-reaped unknown")
 	assert.NotContains(t, string(spawn.Raw), "unknown exit status")
+}
+
+// Scenario: a dashboard spawn's pane dies at launch, and the daemon fails the
+// spawn — which rolls back the launch enrollment, and DeleteAgentByConvID
+// cascades to `DELETE FROM sessions WHERE conv_id = ?`.
+//
+// Expected: the pane's dying words reach the log anyway. The pane's own exit
+// callback cannot be relied on here: once the session row is gone it rejects
+// with "sql: no rows in result set", so on exactly the launches the daemon
+// reports as failed, the output its error tells the operator to go read was
+// the thing most likely to be missing. Capture before rolling back.
+func TestSpawn_DeadPaneOutputIsLoggedBeforeTheRollbackDeletesTheRow(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	f.World.SpawnPaneDiesAtLaunch = true
+	f.World.SpawnPaneDeathOutput = "tclaude: terminal resize relay: start bubblewrap: " +
+		"fork/exec /usr/bin/bwrap: operation not permitted"
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	spawn := f.AsHuman().SpawnWith("alpha", map[string]any{"name": "worker"})
+	require.Equalf(t, http.StatusInternalServerError, spawn.Code, "spawn body=%s", spawn.Raw)
+
+	got := logs.String()
+	assert.Contains(t, got, `"msg":"spawn: managed pane died during startup"`)
+	assert.Contains(t, got, "fork/exec /usr/bin/bwrap: operation not permitted",
+		"the pane's own error is the whole point of the capture")
+	assert.Contains(t, got, `"exit_detail":"exit code 1"`)
 }
 
 // Scenario: a human spawns with "auto focus" checked, but the host has

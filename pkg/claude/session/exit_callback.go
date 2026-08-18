@@ -629,6 +629,19 @@ func applyExitCallback(p exitCallbackParams) error {
 	return nil
 }
 
+// CaptureDeadPaneDiagnostic is captureDeadPaneDiagnostic for the daemon.
+//
+// agentd needs it because its own spawn-failure path can destroy this
+// callback's anchor before the callback runs: rolling back a failed spawn
+// deletes the enrolled agent, and that cascade removes the session row
+// (DeleteAgentByConvID). A pane-died callback arriving afterwards cannot load
+// the session and rejects with "sql: no rows in result set", so the pane's
+// output — the whole content of the "see the Logs tab" the spawn error points
+// at — is never copied. The daemon therefore captures it BEFORE it rolls back.
+func CaptureDeadPaneDiagnostic(paneID string) (string, error) {
+	return captureDeadPaneDiagnostic(paneID)
+}
+
 // captureDeadPaneDiagnostic copies the dying pane's bounded output tail.
 //
 // The error is returned rather than folded into an empty string because the

@@ -7300,7 +7300,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				// cleanup; fail the spawn response instead of enrolling an offline
 				// actor and opening an attach command that can only close.
 				if s.TmuxSession != "" {
-					if detail, inspected := startupCorpseExitDetail(s.TmuxSession); inspected {
+					if detail, paneID, inspected := startupCorpseExitDetail(s.TmuxSession); inspected {
+						// Before launchFailed, which rolls back the enrollment
+						// and takes the session row with it.
+						logStartupCorpseOutput(label, s.TmuxSession, paneID, detail)
 						return launchFailed(fmt.Errorf("managed pane exited during startup (%s); see the Logs tab for its output", detail))
 					}
 				}
@@ -7880,25 +7883,52 @@ const (
 // authenticated exit callback recorded and reaped it. Its durable audit row is
 // then the better evidence, so the caller falls through to that rather than
 // guessing from a pane that is gone.
-func startupCorpseExitDetail(tmuxSession string) (string, bool) {
+func startupCorpseExitDetail(tmuxSession string) (string, string, bool) {
 	evidence, err := session.InspectDeadTmuxSessionPane(tmuxSession)
 	if err != nil {
-		return "", false
+		return "", "", false
 	}
 	for waited := time.Duration(0); ; waited += spawnDeadPaneStatusPoll {
 		if detail := deadPaneExitDetail(evidence.ExitCode, evidence.Signal); detail != "" {
-			return detail, true
+			return detail, evidence.PaneID, true
 		}
 		if waited >= spawnDeadPaneStatusGrace {
-			return "unknown exit status", true
+			return "unknown exit status", evidence.PaneID, true
 		}
 		time.Sleep(spawnDeadPaneStatusPoll)
 		settled, settledErr := session.InspectDeadTmuxSessionPane(tmuxSession)
 		if settledErr != nil {
-			return "", false
+			return "", "", false
 		}
 		evidence = settled
 	}
+}
+
+// logStartupCorpseOutput copies a dead startup pane's output into the log
+// before the caller fails the spawn.
+//
+// It cannot be left to the pane's own exit callback. Failing the spawn rolls
+// back the launch enrollment, and deleting the enrolled agent cascades to
+// `DELETE FROM sessions WHERE conv_id = ?` (DeleteAgentByConvID). A callback
+// that has not run by then loads no session and rejects with "sql: no rows in
+// result set" — so on exactly the launches this daemon reports as failed, the
+// pane output the operator is told to go read was the thing most likely to be
+// missing. Capture first, roll back second; a duplicate line when the callback
+// does win the race is a far better failure than no line at all.
+func logStartupCorpseOutput(label, tmuxSession, paneID, detail string) {
+	if paneID == "" {
+		return
+	}
+	output, err := session.CaptureDeadPaneDiagnostic(paneID)
+	switch {
+	case err != nil:
+		output = "(the pane could not be captured: " + err.Error() + ")"
+	case output == "":
+		output = "(the pane printed nothing before it died)"
+	}
+	slog.Error("spawn: managed pane died during startup",
+		"label", label, "tmux_session", tmuxSession, "pane_id", paneID,
+		"exit_detail", detail, "pane_output", output)
 }
 
 // deadPaneExitDetail renders tmux's mutually exclusive dead-pane exit
