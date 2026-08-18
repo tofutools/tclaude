@@ -1972,9 +1972,17 @@ func runNew(params *NewParams) error {
 		// Redacted: the command carries the whole forwarded environment, and
 		// output.log is not a place for the operator's API keys.
 		if launchPaneCommand != "" {
-			slog.Error("launch failed; rolling back its session row",
-				"session_id", sessionID, "tmux_session", tmuxSession,
-				"pane_command", RedactPaneCommand(launchPaneCommand))
+			if redacted, ok := RedactPaneCommand(launchPaneCommand, envExports); ok {
+				slog.Error("launch failed; rolling back its session row",
+					"session_id", sessionID, "tmux_session", tmuxSession,
+					"pane_command", redacted)
+			} else {
+				// Fail closed: without proof the environment was removed, the
+				// command cannot be written at all.
+				slog.Error("launch failed; rolling back its session row",
+					"session_id", sessionID, "tmux_session", tmuxSession,
+					"pane_command", "<withheld: environment prefix could not be located to redact>")
+			}
 		}
 		// Generation-conditional: a concurrent same-label launch that re-wrote
 		// the row after us must keep it — only the exact row THIS launch wrote
@@ -2354,9 +2362,15 @@ func runNew(params *NewParams) error {
 	// tried to run, and emit it at debug for a launch that fails in a way the
 	// rollback never sees.
 	launchPaneCommand = harnessCmd
-	slog.Debug("launching managed pane",
-		"session_id", sessionID, "tmux_session", tmuxSession,
-		"pane_command", RedactPaneCommand(harnessCmd))
+	if redacted, ok := RedactPaneCommand(harnessCmd, envExports); ok {
+		slog.Debug("launching managed pane",
+			"session_id", sessionID, "tmux_session", tmuxSession,
+			"pane_command", redacted)
+	} else {
+		slog.Warn("launching managed pane; command withheld from the log",
+			"session_id", sessionID, "tmux_session", tmuxSession,
+			"reason", "environment prefix could not be located to redact")
+	}
 
 	// Create the detached tmux session running the harness command. The
 	// managed Codex launch-profile path (when any) rides as an inert argv

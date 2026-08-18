@@ -4,98 +4,58 @@ import (
 	"strings"
 )
 
-// redactedEnvValue replaces an environment value in a logged pane command.
-const redactedEnvValue = "<redacted>"
+// envRedactionPlaceholder stands in for the whole environment prefix.
+const envRedactionPlaceholder = "export <environment redacted>; "
 
-// RedactPaneCommand renders a pane command safe to write to the log.
+// maxShellQuoteNesting bounds how many times the environment prefix may have
+// been re-quoted on its way into the final pane command. Each wrapper layer
+// that embeds the harness command as a single-quoted argument (the resource
+// cgroup's --command, bubblewrap's `sh -c`, the exit gate) adds one level, and
+// each level rewrites every `'` as `'\''`. Four covers the deepest chain the
+// launch path builds, with room to spare.
+const maxShellQuoteNesting = 6
+
+// RedactPaneCommand removes the environment prefix from a pane command so the
+// command's SHAPE can be logged without its values.
 //
-// The command opens with clcommon.BuildEnvExports's `export K=V; …` prefix,
-// which forwards the operator's WHOLE environment plus the sandbox profile's
-// authored Environment entries — API keys and tokens among them. The command's
-// shape is what diagnoses a failed launch (which wrapper layers were applied,
-// which binary was invoked, with which flags); the values are never the answer
-// and must not reach ~/.tclaude/data/output.log. Names are kept, since "the
-// launch carried ANTHROPIC_API_KEY" is itself diagnostic.
+// The prefix is clcommon.BuildEnvExports's `export K=V; …`, which forwards the
+// operator's whole environment plus the sandbox profile's authored Environment
+// entries — API keys among them. The shape is what diagnoses a failed launch
+// (which wrapper layers applied, which binary ran, with which flags); the
+// values are never the answer and must not reach ~/.tclaude/data/output.log.
 //
-// Deliberately liberal: any `NAME=` preceded by `export ` is redacted, even
-// inside a quoted string that merely looks like one. Over-redaction costs a
-// reader nothing, while under-redaction writes a credential to disk.
+// It works by LOCATING the exact prefix the caller built rather than by parsing
+// shell syntax. An earlier version scanned for `export NAME=` and tried to skip
+// each value by reading its quoting; that silently under-redacted as soon as
+// the command was quoted twice, because an inner value then opens with the
+// four-byte sequence '\'' instead of a bare quote and the scanner mistook the
+// third byte for the closing quote. Locating a known string cannot make that
+// class of mistake: either the prefix is found and removed whole, or it is not.
 //
-// bubblewrap's own `--setenv` is not scanned because the single site that
-// emits one sets PATH (sandbox_bwrap.go). Add a case here alongside any
-// --setenv that could carry a secret.
-func RedactPaneCommand(command string) string {
-	const marker = "export "
-	var b strings.Builder
-	b.Grow(len(command))
-	rest := command
-	for {
-		idx := strings.Index(rest, marker)
-		if idx < 0 {
-			b.WriteString(rest)
-			return b.String()
-		}
-		b.WriteString(rest[:idx+len(marker)])
-		rest = rest[idx+len(marker):]
-		name, after, ok := splitEnvAssignmentName(rest)
-		if !ok {
-			// Not an assignment ("export" used as a bare word); resume scanning
-			// after the marker so a later one is still found.
-			continue
-		}
-		b.WriteString(name)
-		b.WriteString("=")
-		b.WriteString(redactedEnvValue)
-		rest = skipShellValue(after)
+// ok is false when the prefix cannot be located, and the caller must then log
+// NO command at all. Failing closed is the point: a redactor that cannot prove
+// it removed the environment has to be treated as having failed, not as having
+// found nothing to remove.
+func RedactPaneCommand(command, envExports string) (string, bool) {
+	if strings.TrimSpace(envExports) == "" {
+		// A launch with no environment prefix has nothing to hide.
+		return command, true
 	}
-}
-
-// splitEnvAssignmentName reads a shell variable name followed by '='. ok is
-// false when what follows the export marker is not an assignment at all.
-func splitEnvAssignmentName(s string) (name, rest string, ok bool) {
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c == '=' {
-			if i == 0 {
-				return "", s, false
+	form := envExports
+	for depth := 0; depth < maxShellQuoteNesting; depth++ {
+		if i := strings.Index(command, form); i >= 0 {
+			redacted := command[:i] + envRedactionPlaceholder + command[i+len(form):]
+			// The prefix can appear more than once (a wrapper that re-states
+			// the command). Removing one occurrence while leaving another would
+			// still write the values, so require that none survives.
+			if strings.Contains(redacted, form) {
+				return "", false
 			}
-			return s[:i], s[i+1:], true
+			return redacted, true
 		}
-		isAlpha := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_'
-		isDigit := c >= '0' && c <= '9'
-		if isAlpha || (isDigit && i > 0) {
-			continue
-		}
-		return "", s, false
+		// How ShellQuoteArg re-encodes the prefix when the command that carries
+		// it is itself embedded as a single-quoted argument.
+		form = strings.ReplaceAll(form, "'", `'\''`)
 	}
-	return "", s, false
-}
-
-// skipShellValue consumes one value as clcommon.ShellQuoteArg emits it: either
-// bare (no shell-special byte, so it ends at the first space or ';') or wrapped
-// in single quotes, where an embedded quote arrives as the four-byte sequence
-// '\'' — a closing quote, an escaped quote, and a reopening quote. Scanning
-// that sequence rather than stopping at the first quote is what keeps a value
-// containing an apostrophe from leaking its tail into the log.
-func skipShellValue(s string) string {
-	if s == "" || s[0] != '\'' {
-		if i := strings.IndexAny(s, " ;"); i >= 0 {
-			return s[i:]
-		}
-		return ""
-	}
-	i := 1
-	for i < len(s) {
-		if s[i] != '\'' {
-			i++
-			continue
-		}
-		if strings.HasPrefix(s[i:], `'\''`) {
-			i += 4
-			continue
-		}
-		return s[i+1:]
-	}
-	// Unterminated quote: the remainder is all value.
-	return ""
+	return "", false
 }
