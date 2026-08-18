@@ -221,6 +221,13 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 				"could not resolve a session row for this caller; refusing to apply its hook")
 			return
 		}
+		// The shared guard bounded work before identity was known. Once the
+		// stronger pane proof recovers the row, enforce the ordinary per-agent
+		// ceiling too so one starting agent cannot consume the shared allowance.
+		if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
+			writeError(w, http.StatusTooManyRequests, "rate", "too many hook events")
+			return
+		}
 	} else if claimed != "" && claimed != row.ID {
 		// session new writes the row before starting tmux, then stamps its pane
 		// pid just after launch. In that narrow gap a reused ancestor pid can

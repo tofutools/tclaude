@@ -111,6 +111,10 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 				"could not resolve a session row for this caller; refusing to apply its statusline")
 			return
 		}
+		if checkBrokerRate(endpoint, row.ID, brokerRatePerSecond).Reject {
+			writeError(w, http.StatusTooManyRequests, "rate", "too many statusline renders")
+			return
+		}
 	} else if claimed != "" && claimed != row.ID {
 		if startupRow, _ := claimedLivePaneSessionRow(p.PID, claimed); startupRow != nil {
 			row = startupRow
