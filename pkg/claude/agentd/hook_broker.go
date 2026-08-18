@@ -214,16 +214,24 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if claimed := strings.TrimSpace(req.ClaimedSessionID); claimed != "" && claimed != row.ID {
-		slog.Warn("hook broker: rejecting event whose claimed session id disagrees with the resolved row",
-			"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID,
-			"event", req.Input.HookEventName, "module", "hooks")
-		// Identity DID resolve here, so the refusal is attributed to the
-		// row the DAEMON concluded — never to the claimed one, which is
-		// the caller's own string. See broker_refusals.go.
-		brokerRefusals.recordClaimMismatch(row.ID, "hook: claimed session id disagrees with the resolved row")
-		writeError(w, http.StatusForbidden, "auth",
-			"claimed session id does not match the session resolved for this caller")
-		return
+		// session new writes the row before starting tmux, then stamps its pane
+		// pid just after launch. In that narrow gap a reused ancestor pid can
+		// resolve to an older row because the new pid=0 row is not a candidate
+		// yet. Let tmux + the live process tree prove the claimed row directly.
+		if startupRow, startupHarnessPID := claimedLivePaneSessionRow(p.PID, claimed); startupRow != nil {
+			row, harnessPID = startupRow, startupHarnessPID
+		} else {
+			slog.Warn("hook broker: rejecting event whose claimed session id disagrees with the resolved row",
+				"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID,
+				"event", req.Input.HookEventName, "module", "hooks")
+			// Identity DID resolve here, so the refusal is attributed to the
+			// row the DAEMON concluded — never to the claimed one, which is
+			// the caller's own string. See broker_refusals.go.
+			brokerRefusals.recordClaimMismatch(row.ID, "hook: claimed session id disagrees with the resolved row")
+			writeError(w, http.StatusForbidden, "auth",
+				"claimed session id does not match the session resolved for this caller")
+			return
+		}
 	}
 	if req.AckToken != "" {
 		if !resolveHookAck(row.ID, req.AckToken, !req.RelayFailed) {

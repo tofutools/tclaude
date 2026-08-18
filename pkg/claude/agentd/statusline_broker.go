@@ -107,12 +107,16 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if claimed := strings.TrimSpace(req.ClaimedSessionID); claimed != "" && claimed != row.ID {
-		slog.Warn("statusline broker: rejecting render whose claimed session id disagrees with the resolved row",
-			"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID, "module", "hooks")
-		brokerRefusals.recordClaimMismatch(row.ID, "statusline: claimed session id disagrees with the resolved row")
-		writeError(w, http.StatusForbidden, "auth",
-			"claimed session id does not match the session resolved for this caller")
-		return
+		if startupRow, _ := claimedLivePaneSessionRow(p.PID, claimed); startupRow != nil {
+			row = startupRow
+		} else {
+			slog.Warn("statusline broker: rejecting render whose claimed session id disagrees with the resolved row",
+				"caller_pid", p.PID, "claimed_session", claimed, "resolved_session", row.ID, "module", "hooks")
+			brokerRefusals.recordClaimMismatch(row.ID, "statusline: claimed session id disagrees with the resolved row")
+			writeError(w, http.StatusForbidden, "auth",
+				"claimed session id does not match the session resolved for this caller")
+			return
+		}
 	}
 	if !safeBrokeredConvID(req.RenderConvID) {
 		// Same reasoning as the hook endpoint: a conv-id is not merely

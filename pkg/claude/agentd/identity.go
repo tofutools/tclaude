@@ -1411,6 +1411,55 @@ func hookSessionRowForPID(pid int) (*db.SessionRow, int) {
 	return nil, 0
 }
 
+// claimedLivePaneSessionRow repairs the launch-only gap between tmux creating
+// a pane and session new persisting that pane's pid on its already-created
+// row. During that gap a reused pid on one of the new pane's ancestors can
+// make hookSessionRowForPID return an older row; the new row still has pid 0,
+// so the ordinary candidate/liveness repair cannot see it yet.
+//
+// The claimed id remains a cross-check, not authority. It may select a row
+// only after tmux reports that row's live pane pid and the daemon's process
+// walk proves that exact pid is an ancestor of the socket caller. A caller
+// cannot manufacture either fact, and a dead/reused pane name resolves to 0.
+// Restricting this to tclaude-layer rows whose pid is still 0 keeps the
+// fallback confined to the brokered launch shape and exact launch phase that
+// have the race. Once a row has a pid, ordinary ancestry resolution owns it.
+func claimedLivePaneSessionRow(callerPID int, claimedID string) (*db.SessionRow, int) {
+	claimedID = strings.TrimSpace(claimedID)
+	if callerPID <= 1 || claimedID == "" {
+		return nil, 0
+	}
+	row, err := db.LoadSession(claimedID)
+	if err != nil || row == nil || row.PID != 0 || !isTclaudeLayerRow(row) || row.TmuxSession == "" {
+		return nil, 0
+	}
+	panePID := brokerLivePanePID(row.TmuxSession)
+	if panePID <= 1 {
+		return nil, 0
+	}
+
+	const maxAncestorHops = 256
+	harnessPID := 0
+	cur := callerPID
+	for range maxAncestorHops {
+		if cur <= 1 {
+			return nil, 0
+		}
+		if cur == panePID {
+			return row, harnessPID
+		}
+		if harnessPID == 0 && harnessNameAt(cur, procName(cur)) != "" {
+			harnessPID = cur
+		}
+		cur = procParent(cur)
+	}
+	return nil, 0
+}
+
+// Indirected so the startup-race regression can pin the kernel/tmux proof
+// without launching a real tmux server. Production always uses livePanePID.
+var brokerLivePanePID = livePanePID
+
 // sessionRowByPID resolves the session row recorded against a host pid,
 // preferring a candidate whose tmux session is still alive.
 //
