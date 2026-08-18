@@ -670,12 +670,10 @@ initialSize:
 		_ = conn.WriteMessage(websocket.TextMessage, fmt.Appendf(nil, "Error: %v\r\n", err))
 		return
 	}
-	// Attach/detach/resize at INFO on purpose (TCL-1136): these are the
-	// events that permanently change a managed pane's size under tmux's
-	// `window-size latest`, and the size-drift investigation had no way to
-	// tell after the fact whether ANYTHING had ever attached. The size in the
-	// attach line is what the pane is being fitted to the moment the client
-	// arrives.
+	// Attach/detach at INFO on purpose (TCL-1136): the size-drift investigation
+	// had no way to tell after the fact whether ANYTHING had ever attached. The
+	// size in the attach line is what the pane is being fitted to the moment the
+	// client arrives; subsequent resize details remain available at DEBUG.
 	attachedAt := time.Now()
 	slog.Info("browser terminal attached",
 		"tmux_session", logSession, "path", r.URL.Path,
@@ -766,7 +764,7 @@ initialSize:
 					// stream); the hook fires only for APPLIED resizes.
 					if err := pty.Setsize(ptmx, size); err == nil {
 						winchProcessGroup(cmd.Process)
-						slog.Info("browser terminal resized",
+						slog.Debug("browser terminal resized",
 							"tmux_session", logSession, "path", r.URL.Path,
 							"size", fmt.Sprintf("%dx%d", size.Cols, size.Rows))
 						if hook != nil && hook.OnResize != nil {
