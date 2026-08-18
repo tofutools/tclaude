@@ -536,6 +536,16 @@ func TestRunExitCallback_AdoptsAStatusThatLandedAfterTheHookFired(t *testing.T) 
 		Generation: generation, Token: token, ExitCode: "", Signal: "",
 	}))
 
+	// The headline symptom was a missing audit row, so assert the row itself
+	// rather than inferring it from a log line downstream of it.
+	exits, auditErr := db.ListAuditLog(db.AuditLogFilter{
+		Verb: db.AuditVerbAgentExit, SessionID: "spwn-late-reap", Limit: 2,
+	})
+	require.NoError(t, auditErr)
+	require.Len(t, exits, 1, "the late reap must still produce exactly one exit row")
+	require.NotNil(t, exits[0].ExitCode, "the row must carry tmux's settled status")
+	assert.Equal(t, 125, *exits[0].ExitCode)
+
 	got := logs.String()
 	assert.NotContains(t, got, "callback rejected")
 	assert.Contains(t, got, `"msg":"managed pane failed during startup"`)
@@ -580,6 +590,41 @@ func TestRunExitCallback_RejectsAClaimedStatusTmuxDoesNotConfirm(t *testing.T) {
 	require.ErrorIs(t, err, db.ErrExitCallbackRejected)
 	assert.Contains(t, logs.String(), "callback rejected",
 		"a rejection must never be silent again")
+	assert.Contains(t, logs.String(), `exit code \"125\"`,
+		"the rejection must name what tmux actually reported, not just that it disagreed")
+	for _, call := range fake.calls {
+		assert.NotEqual(t, "capture-pane", call[0], "a rejected callback captures nothing")
+	}
+}
+
+// Scenario: the exact inverse of the adopted shape — the caller claims an exit
+// status while tmux reports none at all.
+//
+// Expected: refused. Adoption fills a claim of NOTHING from tmux's own settled
+// answer; it must never let the claim become the authority when tmux is the
+// side that is silent. Without this, the sharper forgery goes unpinned.
+func TestRunExitCallback_RejectsAClaimedStatusWhenTmuxReportsNone(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%36", deadOutput: "tmux-silent|%36|1|||36363636363636363636363636363636",
+		captureOutput: "private pane contents",
+	}
+	setupExitCallbackTest(t, fake)
+
+	const generation = "36363636363636363636363636363636"
+	const token = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab0"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-silent", TmuxSession: "tmux-silent", ConvID: "conv-silent",
+		Status: StatusWorking, Created: time.Now(),
+	}, generation, db.SessionExitGateReleased))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-silent", generation, hex.EncodeToString(hash[:]), "%36"))
+
+	err := runExitCallback(exitCallbackParams{
+		SessionID: "spwn-silent", TmuxSession: "tmux-silent", PaneID: "%36",
+		Generation: generation, Token: token, ExitCode: "125",
+	})
+	require.ErrorIs(t, err, db.ErrExitCallbackRejected)
 	for _, call := range fake.calls {
 		assert.NotEqual(t, "capture-pane", call[0], "a rejected callback captures nothing")
 	}

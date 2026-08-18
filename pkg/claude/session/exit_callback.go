@@ -483,7 +483,10 @@ func exitCallbackCmd() *cobra.Command {
 func runExitCallback(p exitCallbackParams) error {
 	err := applyExitCallback(p)
 	if err != nil && errors.Is(err, db.ErrExitCallbackRejected) {
-		slog.Warn("exit audit: callback rejected; managed pane exit was not recorded",
+		// "by this callback": a replayed delivery is rejected here because the
+		// FIRST one already recorded the exit, so a flat "was not recorded"
+		// would read as lost evidence when nothing was lost.
+		slog.Warn("exit audit: callback rejected; managed pane exit was not recorded by this callback",
 			"session_id", p.SessionID, "tmux_session", p.TmuxSession,
 			"pane_id", p.PaneID, "hook_exit_code", p.ExitCode,
 			"hook_signal", p.Signal, "error", err)
@@ -521,7 +524,13 @@ func applyExitCallback(p exitCallbackParams) error {
 	if reported.TmuxSession != p.TmuxSession || reported.PaneID != p.PaneID ||
 		reported.Generation != p.Generation ||
 		reported.ExitCode != p.ExitCode || !strings.EqualFold(reported.Signal, p.Signal) {
-		return fmt.Errorf("%w: tmux evidence mismatch", db.ErrExitCallbackRejected)
+		// Name tmux's side of the disagreement. The log's hook_* fields report
+		// what the hook claimed, which is the right answer for a field named
+		// after the hook — but on its own it leaves the reader unable to see
+		// WHAT it disagreed with. These values come from parseDeadTmuxPane, so
+		// they are already charset- and length-bounded.
+		return fmt.Errorf("%w: tmux evidence mismatch (tmux reports exit code %q signal %q)",
+			db.ErrExitCallbackRejected, reported.ExitCode, reported.Signal)
 	}
 	// A dead pane is the last place a successful tmux launch's harness error is
 	// visible (`claude: command not found`, expired auth, broken config, ...).
