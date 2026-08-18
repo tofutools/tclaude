@@ -276,6 +276,17 @@ func TestTclaudeLayerHostSmoke(t *testing.T) {
 		filepath.Join(aliasTools, "probe"), protectedFile, tmuxSocket, runtimeSocket,
 		strconv.Itoa(os.Getpid()), hostLoopback.Addr().String(), tclaudeBinary,
 		privateOwnFile, privateSibling, mounts)
+	brokered, err := db.LoadSession("sandbox-v2-smoke")
+	require.NoError(t, err)
+	require.NotNil(t, brokered)
+	assert.Equal(t, smokeConvID, brokered.ConvID,
+		"the brokered hook must stamp the host row instead of a phantom database")
+	telemetrySnapshot, err := db.GetContextSnapshot("sandbox-v2-smoke")
+	require.NoError(t, err)
+	assert.Equal(t, "Opus 5 isolated", telemetrySnapshot.Model,
+		"the brokered status line must update the host session row")
+	assert.Equal(t, "high", telemetrySnapshot.EffortLevel,
+		"the brokered status line must preserve Claude's live effort")
 
 	// Two launch-equivalent agents receive disjoint socket lists. Each can
 	// connect to its own bound endpoint while the sibling endpoint outside all
@@ -489,6 +500,8 @@ func runTclaudeLayerSmokeHelper(
 		append(args, "--", helperBinary, "-test.run=^TestTclaudeLayerSmokeHelper$")...)
 	cmd.Env = append(os.Environ(),
 		tclaudeLayerSmokeHelperEnv+"=1",
+		"TCLAUDE_SESSION_ID=sandbox-v2-smoke",
+		HookBrokerEnvVar+"="+HookBrokerAgentd,
 		smokeAllowedEnv+"="+allowed,
 		smokeOutsideEnv+"="+outside,
 		smokeAliasFileEnv+"="+aliasFile,
@@ -752,6 +765,24 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 	require.NoErrorf(t, err, "authenticated tclaude agent whoami inside namespace: %s", whoami)
 	assert.True(t, strings.HasPrefix(strings.TrimSpace(string(whoami)), "agt_"),
 		"agentd must resolve a stable managed identity through bwrap ancestry; got %q", whoami)
+
+	hookPayload := `{"session_id":"` + smokeConvID +
+		`","cwd":"` + allowed +
+		`","hook_event_name":"UserPromptSubmit","prompt":"bubblewrap broker smoke"}`
+	hook := exec.Command("tclaude", "session", "hook-callback")
+	hook.Stdin = strings.NewReader(hookPayload)
+	hookOutput, err := hook.CombinedOutput()
+	require.NoErrorf(t, err, "brokered hook callback through bubblewrap: %s", hookOutput)
+
+	statusPayload := `{"session_id":"` + smokeConvID +
+		`","model":{"id":"claude-opus-5","display_name":"Opus 5 isolated"},` +
+		`"workspace":{"current_dir":"` + allowed + `"},` +
+		`"context_window":{"used_percentage":42,"context_window_size":200000},` +
+		`"cost":{"total_cost_usd":1.25},"effort":{"level":"high"}}`
+	status := exec.Command("tclaude", "status-bar")
+	status.Stdin = strings.NewReader(statusPayload)
+	statusOutput, err := status.CombinedOutput()
+	require.NoErrorf(t, err, "brokered status line through bubblewrap: %s", statusOutput)
 }
 
 func runTclaudeLayerSocketVisibilityHelper(

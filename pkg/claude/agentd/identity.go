@@ -1210,6 +1210,11 @@ var (
 	procExeName = session.GetProcessExeName
 )
 
+const (
+	brokerStartupPaneProofAttempts = 11
+	brokerStartupPaneProofDelay    = 25 * time.Millisecond
+)
+
 // harnessNameAt returns the harness runtime name of the process at pid — the
 // name the walks below key their harness-specific branches on — or "" when
 // the process is not a harness runtime. name is the value the caller already
@@ -1444,10 +1449,26 @@ func claimedLivePaneSessionRow(callerPID int, claimedID string) (*db.SessionRow,
 	if err != nil || identity.Generation == "" || identity.TmuxSession != row.TmuxSession {
 		return nil, 0
 	}
-	pane, err := brokerLivePaneProbe(row.TmuxSession)
-	if err != nil || pane.state != paneProbeLive || pane.panePID <= 1 ||
-		pane.generation == "" || pane.generation != identity.Generation {
-		return nil, 0
+	var pane lifecyclePaneProbe
+	for attempt := 0; attempt < brokerStartupPaneProofAttempts; attempt++ {
+		pane, err = brokerLivePaneProbe(row.TmuxSession)
+		if err == nil && pane.state == paneProbeLive && pane.panePID > 1 &&
+			pane.generation == identity.Generation {
+			break
+		}
+		// Only a launch row whose pane pid has not been committed gets the
+		// bounded startup grace. A settled row, a dead pane, or a different
+		// non-empty generation is durable contrary evidence and fails closed
+		// immediately. During tmux startup the pane or its generation option can
+		// briefly be absent even though the first Claude hook is already able to
+		// reach agentd; without this grace that one hook is lost, and an API
+		// failure can prevent the later hook that normally repairs its telemetry.
+		if row.PID != 0 || pane.state == paneProbeDead ||
+			(pane.generation != "" && pane.generation != identity.Generation) ||
+			attempt+1 == brokerStartupPaneProofAttempts {
+			return nil, 0
+		}
+		time.Sleep(brokerStartupPaneProofDelay)
 	}
 	panePID := pane.panePID
 

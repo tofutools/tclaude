@@ -70,8 +70,13 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 		"fixture must reproduce the startup callback resolving to the reused-pid row")
 
 	previousPaneProbe := brokerLivePaneProbe
+	probeCalls := 0
 	brokerLivePaneProbe = func(tmux string) (lifecyclePaneProbe, error) {
 		if tmux == "tmux-new" {
+			probeCalls++
+			if probeCalls == 1 {
+				return lifecyclePaneProbe{state: paneProbeUnknown}, nil
+			}
 			return lifecyclePaneProbe{
 				state: paneProbeLive, panePID: panePID, generation: generation,
 			}, nil
@@ -82,6 +87,8 @@ func TestClaimedLivePaneSessionRowRepairsStartupPIDGap(t *testing.T) {
 
 	got, gotHarnessPID := claimedLivePaneSessionRow(callerPID, newLabel)
 	require.NotNil(t, got)
+	assert.GreaterOrEqual(t, probeCalls, 2,
+		"the startup proof must retry while tmux has not published the pane identity")
 	assert.Equal(t, newLabel, got.ID)
 	assert.Equal(t, harnessPID, gotHarnessPID,
 		"the repaired hook keeps the same harness-pid correction as ordinary resolution")
