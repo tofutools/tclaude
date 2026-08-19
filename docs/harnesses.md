@@ -251,7 +251,10 @@ status/SSE mapping is intentionally capability-gated and still partial.
 Liveness and status come from the managed server's event stream.
 
 **Models.** The catalog is fetched from OpenCode itself and cached with
-background refresh, so it may briefly report empty rather than guess.
+background refresh, so it may briefly report empty rather than guess. It is a
+suggestion list, not an allow-list: model fields also accept arbitrary IDs for
+user-configured local or network providers, with final resolution left to
+OpenCode.
 
 **Tool governance.** OpenCode gets an axis no other harness has:
 `--tools allow|ask|deny` applies one permission action uniformly to its

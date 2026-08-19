@@ -68,7 +68,7 @@ var resolveOpenCodeExecutable = OpenCodeExecutable
 var runOpenCodeModels = func(path string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), openCodeModelsExecTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, path, "models", "openai", "--verbose")
+	cmd := exec.CommandContext(ctx, path, "models", "--verbose")
 	// WaitDelay is load-bearing, not a nicety. Output() reads until the stdout
 	// pipe hits EOF, and cancelling the context only kills `opencode` itself —
 	// an inherited grandchild holding that pipe open keeps Output() parked long
@@ -89,18 +89,11 @@ var openCodeCatalogFlight singleflight.Group
 type openCodeModels struct{}
 
 func (openCodeModels) ValidateModel(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", nil
-	}
-	catalog := loadOpenCodeCatalog()
-	if catalog.err != nil {
-		return "", fmt.Errorf("read OpenCode model catalog: %w", catalog.err)
-	}
-	if !slices.Contains(catalog.models, value) {
-		return "", fmt.Errorf("unknown OpenCode OpenAI model %q (available: %v)", value, catalog.models)
-	}
-	return value, nil
+	// OpenCode owns a provider registry that can include user-configured local
+	// and network providers. Its discovered catalog is therefore a suggestion
+	// list, not an allow-list: accept values that this tclaude process has not
+	// seen and let OpenCode resolve them at use time.
+	return strings.TrimSpace(value), nil
 }
 
 func (openCodeModels) ValidateEffort(value string) (string, error) {
@@ -127,8 +120,8 @@ func (openCodeModels) ValidateEffort(value string) (string, error) {
 //
 // The cost of that: for the first poll or two of a daemon's life the OpenCode
 // model list is empty, and after an `opencode` upgrade it stays stale for up to
-// one TTL. Neither can mis-launch anything — ValidateModel/ValidateEffort below
-// REFUSE on this catalog and therefore still load it synchronously.
+// one TTL. Models are suggestions and ValidateModel deliberately accepts free
+// text; ValidateEffort still refuses unknown variants and loads synchronously.
 func (openCodeModels) Models() []string {
 	return slices.Clone(openCodeCatalogForDisclosure().models)
 }
@@ -175,8 +168,8 @@ func openCodeCatalogForDisclosure() openCodeCatalog {
 }
 
 // loadOpenCodeCatalog is the synchronous, authoritative read behind
-// ValidateModel/ValidateEffort. Those REFUSE a launch on this answer, so they
-// must not run on a stale or absent catalog the way the disclosure above may.
+// ValidateEffort. It refuses a launch on this answer, so it must not run on a
+// stale or absent catalog the way the disclosure above may.
 func loadOpenCodeCatalog() openCodeCatalog {
 	openCodeModelCache.Lock()
 	if !openCodeModelCache.value.at.IsZero() &&
@@ -222,7 +215,7 @@ func computeOpenCodeCatalog() openCodeCatalog {
 	}
 	models, efforts := parseOpenCodeModelsVerbose(string(output))
 	if len(models) == 0 {
-		err = fmt.Errorf("`opencode models openai --verbose` returned no models")
+		err = fmt.Errorf("`opencode models --verbose` returned no models")
 	}
 	return openCodeCatalog{
 		models: models, efforts: efforts, err: err, at: time.Now(),
@@ -241,7 +234,9 @@ func parseOpenCodeModelsVerbose(output string) ([]string, []string) {
 	variantDepth := 0
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if strings.HasPrefix(line, "openai/") && !strings.ContainsAny(line, " \t{}") {
+		provider, model, hasProvider := strings.Cut(line, "/")
+		if hasProvider && provider != "" && model != "" &&
+			!strings.ContainsAny(line, " \t{}\"") {
 			models = append(models, line)
 			continue
 		}

@@ -221,9 +221,15 @@ openai/gpt-b
       "reasoningEffort": "max"
     }
   }
+}
+ollama/llama3.2:latest
+{
+  "variants": {}
 }`
 	models, efforts := parseOpenCodeModelsVerbose(input)
-	if !reflect.DeepEqual(models, []string{"openai/gpt-a", "openai/gpt-b"}) {
+	if !reflect.DeepEqual(models, []string{
+		"openai/gpt-a", "openai/gpt-b", "ollama/llama3.2:latest",
+	}) {
 		t.Fatalf("models = %v", models)
 	}
 	if !reflect.DeepEqual(efforts, []string{"none", "high", "low", "max"}) {

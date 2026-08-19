@@ -11,9 +11,9 @@ import (
 )
 
 // The disclosure path (Models/EffortLevels, rebuilt on every 2s dashboard poll)
-// must never wait on the `opencode models` subprocess. The validation path
-// (ValidateModel/ValidateEffort) refuses launches and must still be
-// authoritative. These pin both halves by counting execs.
+// must never wait on the `opencode models` subprocess. Effort validation
+// refuses launches and must still be authoritative, while model validation
+// treats discovery as suggestions. These pin both halves by counting execs.
 
 const fakeOpenCodeModels = "openai/gpt-5\n" +
 	`  "variants": {` + "\n" +
@@ -85,21 +85,41 @@ func TestOpenCodeModels_DisclosureNeverBlocksOnTheSubprocess(t *testing.T) {
 	assert.Positive(t, calls.Load())
 }
 
-// Validation refuses launches, so it may not run on a catalog the disclosure
-// path has not loaded yet — it loads synchronously.
-func TestOpenCodeModels_ValidationLoadsSynchronously(t *testing.T) {
+func TestOpenCodeModels_ModelValidationAcceptsFreeTextWithoutCatalogRead(t *testing.T) {
+	calls := stubOpenCodeModels(t, func(string) ([]byte, error) {
+		return nil, assert.AnError
+	})
+
+	for _, test := range []struct {
+		input string
+		want  string
+	}{
+		{input: "  testmodel  ", want: "testmodel"},
+		{input: "local/llama", want: "local/llama"},
+		{input: "", want: ""},
+	} {
+		value, err := openCodeModels{}.ValidateModel(test.input)
+		require.NoError(t, err)
+		assert.Equal(t, test.want, value)
+	}
+	assert.Zero(t, calls.Load(), "model validation must not consult the suggestion catalog")
+}
+
+// Effort validation refuses launches, so it may not run on a catalog the
+// disclosure path has not loaded yet — it loads synchronously.
+func TestOpenCodeModels_EffortValidationLoadsSynchronously(t *testing.T) {
 	calls := stubOpenCodeModels(t, func(string) ([]byte, error) {
 		return []byte(fakeOpenCodeModels), nil
 	})
 
-	value, err := openCodeModels{}.ValidateModel("openai/gpt-5")
+	value, err := openCodeModels{}.ValidateEffort("high")
 	require.NoError(t, err)
-	assert.Equal(t, "openai/gpt-5", value)
+	assert.Equal(t, "high", value)
 	assert.Equal(t, int64(1), calls.Load(),
-		"validation executes rather than accepting an absent catalog")
+		"effort validation executes rather than accepting an absent catalog")
 
-	_, err = openCodeModels{}.ValidateModel("openai/not-a-model")
-	assert.Error(t, err, "an unknown model is still refused")
+	_, err = openCodeModels{}.ValidateEffort("not-an-effort")
+	assert.Error(t, err, "an unknown effort is still refused")
 }
 
 // A burst of polls arriving on a cold cache must start ONE subprocess, not one
@@ -145,8 +165,8 @@ func TestOpenCodeModels_ConcurrentPollsSingleFlight(t *testing.T) {
 }
 
 // The flight group — not the background flag — is what bounds subprocesses on
-// the REFUSAL path, where concurrent spawns each need an authoritative answer.
-func TestOpenCodeModels_ConcurrentValidationsForkOnce(t *testing.T) {
+// the effort-refusal path, where concurrent spawns need an authoritative answer.
+func TestOpenCodeModels_ConcurrentEffortValidationsForkOnce(t *testing.T) {
 	release := make(chan struct{})
 	calls := stubOpenCodeModels(t, func(string) ([]byte, error) {
 		<-release
@@ -159,7 +179,7 @@ func TestOpenCodeModels_ConcurrentValidationsForkOnce(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, results[i] = openCodeModels{}.ValidateModel("openai/gpt-5")
+			_, results[i] = openCodeModels{}.ValidateEffort("high")
 		}()
 	}
 	time.Sleep(50 * time.Millisecond) // let them all reach the exec
@@ -167,7 +187,7 @@ func TestOpenCodeModels_ConcurrentValidationsForkOnce(t *testing.T) {
 	wg.Wait()
 
 	assert.Equal(t, int64(1), calls.Load(),
-		"8 concurrent spawns validating a model must fork opencode once")
+		"8 concurrent spawns validating effort must fork opencode once")
 	for i, err := range results {
 		assert.NoError(t, err, "validator %d must still get an authoritative answer", i)
 	}
@@ -227,7 +247,7 @@ func TestOpenCodeModels_ServesStaleWhileRefreshing(t *testing.T) {
 		return []byte(fakeOpenCodeModels), nil
 	})
 
-	require.NoError(t, func() error { _, err := openCodeModels{}.ValidateModel("openai/gpt-5"); return err }())
+	require.NoError(t, func() error { _, err := openCodeModels{}.ValidateEffort("high"); return err }())
 	require.Equal(t, []string{"openai/gpt-5"}, openCodeModels{}.Models())
 
 	// Age the entry past its TTL and wedge the next exec.
