@@ -674,6 +674,122 @@ func TestResourceLimitExecFailsClosedAfterAttachFailure(t *testing.T) {
 	assert.ErrorContains(t, err, "attach workload")
 }
 
+// fakeSecurityLabel pins what /proc/self/attr/current reports, so a test can
+// exercise a confined launch on a host that runs the suite unconfined.
+func fakeSecurityLabel(t *testing.T, label string) {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(filepath.Join(resourceProcRoot, "self", "attr"), 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(resourceProcRoot, "self", "attr", "current"), []byte(label+"\n"), 0o644))
+}
+
+// attachDenied is the refusal the kernel returns for the cgroup.procs write, in
+// the shape os.WriteFile reports it.
+func attachDenied(dir string, errno syscall.Errno) error {
+	return &os.PathError{Op: "open", Path: filepath.Join(dir, "cgroup.procs"), Err: errno}
+}
+
+func TestResourceAttachDeniedHintNamesTheConfiningPolicy(t *testing.T) {
+	// Ownership and delegation are both correct here: the destination belongs to
+	// this uid and the launch runs inside the delegated subtree. Nothing tclaude
+	// can inspect explains the refusal, which is exactly what an LSM denial looks
+	// like from userspace.
+	delegation := fakeDerivedResourceCgroup(t,
+		"/user.slice/user@1000.service/app.slice/agent-sandbox.service/"+resourceSupervisorCgroup,
+		"cpu memory", "cpu memory")
+	require.NoError(t, os.WriteFile(filepath.Join(delegation, "cgroup.procs"), nil, 0o644))
+	dir := filepath.Join(delegation, "tclaude-confined")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.procs"), nil, 0o644))
+	fakeSecurityLabel(t, "agent (enforce)")
+
+	hint := resourceAttachDeniedHint(dir, attachDenied(dir, syscall.EACCES))
+	assert.Contains(t, hint, `"agent (enforce)"`,
+		"the profile that has to be widened is the one thing the operator needs named")
+	assert.Contains(t, hint, "AppArmor")
+	assert.Contains(t, hint, ".scope where the runtime now uses a .service",
+		"a path rule left behind by a renamed delegation node is how this policy goes stale")
+	assert.NotContains(t, hint, "Delegate=",
+		"a correctly delegated subtree must not be diagnosed as an undelegated one")
+}
+
+func TestResourceAttachDeniedHintFallsBackWithoutASecurityLabel(t *testing.T) {
+	delegation := fakeDerivedResourceCgroup(t,
+		"/user.slice/user@1000.service/app.slice/agent-sandbox.service/"+resourceSupervisorCgroup,
+		"cpu memory", "cpu memory")
+	require.NoError(t, os.WriteFile(filepath.Join(delegation, "cgroup.procs"), nil, 0o644))
+	dir := filepath.Join(delegation, "tclaude-unconfined")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.procs"), nil, 0o644))
+	fakeSecurityLabel(t, "unconfined")
+
+	hint := resourceAttachDeniedHint(dir, attachDenied(dir, syscall.EPERM))
+	assert.Contains(t, hint, "above the ownership bits",
+		"the refusal is still worth locating even when no policy can be named")
+	assert.NotContains(t, hint, `"unconfined"`,
+		"naming a label that mediates nothing sends the operator after the wrong policy")
+}
+
+func TestResourceAttachDeniedHintNamesTheCommonAncestor(t *testing.T) {
+	// A launch outside the delegated subtree is refused by cgroup v2's delegation
+	// containment rule on the common ancestor, with a destination it owns.
+	fakeDerivedResourceCgroup(t, "/user.slice/app.slice/other.service", "cpu memory", "cpu memory")
+	ancestor := filepath.Join(resourceCgroupRoot, "user.slice", "app.slice")
+	dir := filepath.Join(ancestor, "agent-sandbox.service", "tclaude-outside")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.procs"), nil, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(ancestor, "cgroup.procs"), nil, 0o644))
+	readOnlyCgroupNode(t, filepath.Join(ancestor, "cgroup.procs"))
+	fakeSecurityLabel(t, "agent (enforce)")
+
+	hint := resourceAttachDeniedHint(dir, attachDenied(dir, syscall.EACCES))
+	assert.Contains(t, hint, filepath.Join(ancestor, "cgroup.procs"),
+		"the node the kernel actually decided on is the one to name")
+	assert.Contains(t, hint, "outside the delegated subtree")
+	assert.NotContains(t, hint, "AppArmor",
+		"an established cause must win over the fallback that cannot establish one")
+}
+
+func TestResourceAttachDeniedHintReportsAnUndelegatedBoundary(t *testing.T) {
+	delegation := fakeDerivedResourceCgroup(t,
+		"/system.slice/tclaude-agentd.service/"+resourceSupervisorCgroup, "cpu memory", "cpu memory")
+	dir := filepath.Join(delegation, "tclaude-undelegated")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.procs"), nil, 0o644))
+	readOnlyCgroupNode(t, filepath.Join(dir, "cgroup.procs"))
+
+	hint := resourceAttachDeniedHint(dir, attachDenied(dir, syscall.EACCES))
+	assert.Contains(t, hint, "Delegate=cpu memory",
+		"a boundary this uid cannot write is the delegation missing, not a policy above it")
+	assert.NotContains(t, hint, "AppArmor")
+}
+
+func TestResourceAttachDeniedHintExplainsAReadOnlyHierarchy(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "tclaude-readonly")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+
+	hint := resourceAttachDeniedHint(dir, attachDenied(dir, syscall.EROFS))
+	assert.Contains(t, hint, "read-only in this launch's mount namespace")
+	assert.Contains(t, hint, "ProtectControlGroups=")
+
+	assert.Empty(t, resourceAttachDeniedHint(dir, attachDenied(dir, syscall.EISDIR)),
+		"a refusal with no delegation or policy reading behind it must not be diagnosed as one")
+}
+
+func TestResourceLimitExecAttachFailureCarriesTheDiagnosis(t *testing.T) {
+	delegation := fakeDerivedResourceCgroup(t,
+		"/system.slice/tclaude-agentd.service/"+resourceSupervisorCgroup, "cpu memory", "cpu memory")
+	dir := filepath.Join(delegation, "tclaude-runtime-failure")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.procs"), nil, 0o644))
+	readOnlyCgroupNode(t, filepath.Join(dir, "cgroup.procs"))
+
+	err := runResourceLimitExec(dir, "session-attach-denied", "exit 0", false, false, false)
+	require.ErrorContains(t, err, "attach workload")
+	assert.ErrorContains(t, err, "Delegate=cpu memory",
+		"the pane-side refusal is where an operator reads it, so the diagnosis has to reach the error")
+}
+
 func TestResourceLimitExecFailsClosedWhenOverrideDisclosureCannotPersist(t *testing.T) {
 	oldRoot := resourceCgroupRoot
 	resourceCgroupRoot = t.TempDir()

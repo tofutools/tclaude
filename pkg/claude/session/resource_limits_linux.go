@@ -194,6 +194,147 @@ func resourceDelegationDeniedHint(delegation string) string {
 		root, os.Geteuid(), resourceSupervisorCgroup)
 }
 
+// dacWritable reports whether the ordinary uid/gid/mode bits of path permit
+// this process to write it, and whether that could be established at all. It is
+// a discriminator rather than an authorization: a write those bits allow can
+// still be refused above them, and telling the two apart is the whole reason to
+// ask. Deliberately not access(2), which an LSM mediates the same way it
+// mediates the write, and so cannot distinguish anything.
+func dacWritable(path string) (bool, bool) {
+	var st syscall.Stat_t
+	if err := syscall.Stat(path, &st); err != nil {
+		return false, false
+	}
+	if os.Geteuid() == 0 {
+		return true, true
+	}
+	if uint32(os.Geteuid()) == st.Uid {
+		return st.Mode&0o200 != 0, true
+	}
+	if inEffectiveGroup(st.Gid) {
+		return st.Mode&0o020 != 0, true
+	}
+	return st.Mode&0o002 != 0, true
+}
+
+func inEffectiveGroup(gid uint32) bool {
+	if uint32(os.Getegid()) == gid {
+		return true
+	}
+	groups, err := os.Getgroups()
+	if err != nil {
+		return false
+	}
+	return containsInt(groups, int(gid))
+}
+
+func containsInt(values []int, wanted int) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+// commonCgroupAncestor returns the deepest cgroup that contains both paths.
+// cgroup v2 decides a migration on that node, so a diagnosis has to name it.
+func commonCgroupAncestor(src, dst string) string {
+	srcParts := strings.Split(filepath.Clean(src), string(filepath.Separator))
+	dstParts := strings.Split(filepath.Clean(dst), string(filepath.Separator))
+	shared := []string{}
+	for i := 0; i < len(srcParts) && i < len(dstParts); i++ {
+		if srcParts[i] != dstParts[i] {
+			break
+		}
+		shared = append(shared, srcParts[i])
+	}
+	return string(filepath.Separator) + filepath.Join(shared...)
+}
+
+// securityConfinementLabel names the LSM label this process runs under, or
+// returns empty when there is none worth naming. AppArmor reports a profile and
+// its mode ("agent (enforce)"); SELinux reports a context. Both are exactly the
+// identity whose policy has to be widened, so the label is quoted verbatim.
+func securityConfinementLabel() string {
+	raw, err := os.ReadFile(filepath.Join(resourceProcRoot, "self", "attr", "current"))
+	if err != nil {
+		return ""
+	}
+	label := strings.TrimSpace(strings.Trim(string(raw), "\x00"))
+	if name, _, _ := strings.Cut(label, " ("); name == "" || name == "unconfined" {
+		return ""
+	}
+	return label
+}
+
+// resourceAttachDeniedHint explains a refused move of the workload into its
+// prepared boundary. Three unrelated things refuse that write, the errno names
+// none of them, and no two of them share a fix:
+//
+//   - the boundary's own ownership, when the subtree was never delegated to
+//     this user — the same missing delegation a refused mkdir reports;
+//   - cgroup v2 delegation containment, which also requires write access to the
+//     cgroup.procs of the common ancestor of the mover's own cgroup and the
+//     destination, so a launch running outside the delegated subtree is refused
+//     with a destination it owns outright;
+//   - an LSM, which mediates this write above the mode bits entirely, and so
+//     refuses a destination that passes every check tclaude can make.
+//
+// The ladder is ordered so each step reports only what the steps before it have
+// ruled out, and stays silent when it has established nothing.
+func resourceAttachDeniedHint(cgroupDir string, err error) string {
+	if errors.Is(err, syscall.EROFS) {
+		return fmt.Sprintf("%s is read-only in this launch's mount namespace, so no cgroup under it can be joined however it is delegated; ProtectControlGroups= in the unit that starts the launch, or a sandbox that binds /sys read-only, is what makes it so",
+			resourceCgroupRoot)
+	}
+	if !errors.Is(err, os.ErrPermission) {
+		return ""
+	}
+	target := filepath.Join(cgroupDir, "cgroup.procs")
+	destWritable, destKnown := dacWritable(target)
+	if destKnown && !destWritable {
+		// A delegated subtree carries its ownership down to the cgroups created
+		// inside it, so a destination this uid cannot write is the delegation
+		// itself missing rather than anything specific to the attachment.
+		return resourceDelegationDeniedHint(filepath.Dir(cgroupDir))
+	}
+	if current, currentErr := currentCgroupDir(); currentErr == nil {
+		ancestor := filepath.Join(commonCgroupAncestor(current, cgroupDir), "cgroup.procs")
+		if writable, known := dacWritable(ancestor); known && !writable {
+			return fmt.Sprintf("cgroup v2 also requires write access to the cgroup.procs of the common ancestor of the mover's own cgroup and the destination, and uid %d cannot write %s; this launch runs in %s, outside the delegated subtree, so place the launch inside the delegation — the external tmux runtime, or agentd's own unit, is what puts it there — rather than widening the ancestor",
+				os.Geteuid(), ancestor, current)
+		}
+	}
+	mediator := "an LSM policy or a container runtime is mediating it"
+	if label := securityConfinementLabel(); label != "" {
+		mediator = fmt.Sprintf("this launch runs under the security label %q, whose LSM policy (AppArmor, SELinux) mediates this write", label)
+	}
+	// A destination whose ownership could not even be read is the same finding
+	// arrived at from the other side: the policy that refused the write can
+	// refuse the stat too, and either way nothing below it explains the refusal.
+	established := fmt.Sprintf("uid %d may write %s", os.Geteuid(), target)
+	if !destKnown {
+		established = fmt.Sprintf("the ownership of %s could not be read", target)
+	}
+	return fmt.Sprintf("%s and this launch is inside the delegated subtree, so the refusal came from above the ownership bits: %s. Grant write access to that path there, and note that a path-based policy stops matching when the delegation node is renamed — a rule written for one unit type, a .scope where the runtime now uses a .service, covers nothing",
+		established, mediator)
+}
+
+// attachWorkloadToResourceCgroup moves the gated workload into the prepared
+// boundary. The write is the launch's one and only use of that boundary, so a
+// refusal here is where the diagnosis has to be attached.
+func attachWorkloadToResourceCgroup(cgroupDir string, pid int) error {
+	err := os.WriteFile(filepath.Join(cgroupDir, "cgroup.procs"), []byte(strconv.Itoa(pid)), 0o644)
+	if err == nil {
+		return nil
+	}
+	if hint := resourceAttachDeniedHint(cgroupDir, err); hint != "" {
+		return fmt.Errorf("%w (%s)", err, hint)
+	}
+	return err
+}
+
 // resourceCgroupKillWait bounds how long a reclaim waits for the kernel to
 // finish killing a cgroup's members; resourceCgroupKillPoll is how often the
 // populated state is re-read while waiting. Both are variables so tests can
@@ -626,7 +767,7 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced,
 		}()
 	}
 	_ = gateRead.Close()
-	moveErr := os.WriteFile(filepath.Join(cgroupDir, "cgroup.procs"), []byte(strconv.Itoa(child.Process.Pid)), 0o644)
+	moveErr := attachWorkloadToResourceCgroup(cgroupDir, child.Process.Pid)
 	if moveErr == nil {
 		_, moveErr = io.WriteString(gateWrite, "go\n")
 	}
