@@ -14,11 +14,15 @@ const usageSilencedAnnotation = "tclaude.usage_silenced"
 // SilenceUsageOnError declares that this command's failures are read by someone
 // who did not choose its arguments, and returns it for chaining.
 //
-// That is the case for every argv tclaude renders for itself — a pane wrapper,
-// a launch helper, a probe. Their flags are the launch's choices, not an
-// operator's, and the pane they fail in is where the operator reads why the
-// launch died. A usage block there documents decisions nobody made and pushes
-// the one line that explains the failure out of view.
+// That is true of every argv tclaude renders for itself — pane wrappers, launch
+// helpers, probes. Their flags are the launch's choices, not an operator's, and
+// the pane they fail in is where the operator reads why the launch died. A usage
+// block there documents decisions nobody made and pushes the one line that
+// explains the failure out of view.
+//
+// Only `session resource-limit-exec` claims this so far. The other rendered-argv
+// commands have the same case for it and can be marked as their failures are
+// found worth reading; nothing here decides for them.
 func SilenceUsageOnError(cmd *cobra.Command) *cobra.Command {
 	if cmd.Annotations == nil {
 		cmd.Annotations = map[string]string{}

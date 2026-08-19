@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -20,6 +21,10 @@ func failingRoot(t *testing.T, args ...string) (*cobra.Command, *bytes.Buffer) {
 	root.AddCommand(&cobra.Command{Use: "typed", Short: "typed by a human", RunE: fail})
 	root.AddCommand(clcommon.SilenceUsageOnError(
 		&cobra.Command{Use: "rendered", Short: "argv tclaude writes for itself", RunE: fail}))
+	root.AddCommand(&cobra.Command{
+		Use:  "succeeds",
+		RunE: func(*cobra.Command, []string) error { return nil },
+	})
 	root.SetArgs(args)
 	stderr := &bytes.Buffer{}
 	// cobra's own writers are separate from the one execute prints through;
@@ -33,9 +38,34 @@ func TestExecuteKeepsTheUsageBlockForAnOrdinaryCommand(t *testing.T) {
 	root, stderr := failingRoot(t, "typed")
 
 	require.Error(t, execute(stderr, root))
-	assert.Contains(t, stderr.String(), "Usage:",
+	printed := stderr.String()
+	assert.Contains(t, printed, "Usage:",
 		"a command an operator typed is one they can be told how to type")
-	assert.Contains(t, stderr.String(), "Error: the launch died")
+	assert.Contains(t, printed, "Error: the launch died")
+	assert.Less(t, strings.Index(printed, "Usage:"), strings.Index(printed, "Error:"),
+		"boa's convention puts the usage block first, and panes and scripts read the tail")
+}
+
+// The rationale for an annotation over cobra's SilenceUsage is that the field is
+// true tree-wide under boa, so reading it would silence the invocations usage
+// exists for. These are those invocations: cobra attributes them to a command
+// that never opted out, which is what has to keep them printing.
+func TestExecuteKeepsTheUsageBlockForAMisspelledInvocation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"unknown command", []string{"nosuchcmd"}},
+		{"unknown flag", []string{"typed", "--nosuchflag"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root, stderr := failingRoot(t, tc.args...)
+
+			require.Error(t, execute(stderr, root))
+			assert.Contains(t, stderr.String(), "Usage:",
+				"an operator who mistyped the invocation is exactly who usage is for")
+		})
+	}
 }
 
 func TestExecuteSilencesTheUsageBlockForARenderedCommand(t *testing.T) {
@@ -50,8 +80,17 @@ func TestExecuteSilencesTheUsageBlockForARenderedCommand(t *testing.T) {
 }
 
 func TestExecuteReportsSuccessWithoutPrinting(t *testing.T) {
+	root, stderr := failingRoot(t, "succeeds")
+
+	require.NoError(t, execute(stderr, root))
+	assert.Empty(t, stderr.String(), "a command that worked has nothing to report")
+}
+
+func TestExecuteLeavesHelpToCobra(t *testing.T) {
 	root, stderr := failingRoot(t, "rendered", "--help")
 
 	require.NoError(t, execute(stderr, root))
+	assert.Contains(t, stderr.String(), "argv tclaude writes for itself",
+		"declining a usage block on failure does not decline the help someone asked for")
 	assert.NotContains(t, stderr.String(), "Error:")
 }

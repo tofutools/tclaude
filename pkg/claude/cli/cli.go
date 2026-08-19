@@ -52,18 +52,19 @@ func run(version string, newRoot func() *cobra.Command) int {
 // error, both on stderr — except that a command may decline the usage block via
 // clcommon.SilenceUsageOnError.
 //
-// This is boa.Execute plus that one exemption. boa prints usage for every
-// failure, which is the wrong answer for the argv tclaude renders for itself:
-// see SilenceUsageOnError for why. Silencing cobra's own printing first is what
-// leaves the decision here; it is also what boa does, and for the same reason.
+// This is boa.Execute plus that one exemption, and a nil guard boa does without.
+// boa prints usage for every failure, which is the wrong answer for the argv
+// tclaude renders for itself: see SilenceUsageOnError for why. Silencing cobra's
+// own printing first is what leaves the decision here; it is also what boa does,
+// and for the same reason.
 func execute(stderr io.Writer, cmd *cobra.Command) error {
 	cmd.SilenceErrors, cmd.SilenceUsage = true, true
 	executed, err := cmd.ExecuteC()
 	if err == nil {
 		return nil
 	}
-	// A failure before cobra could resolve a command has no usage to print and
-	// no command to ask; the error is the whole of what can be said.
+	// Defensive: cobra attributes every error to at least the root, so today
+	// there is always a command to ask and a usage block to print.
 	if executed != nil && !clcommon.UsageSilenced(executed) {
 		fmt.Fprintln(stderr, executed.UsageString())
 	}
