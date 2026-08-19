@@ -89,16 +89,39 @@ func TestValidateResourceLimitTarget(t *testing.T) {
 	require.NoError(t, ValidateResourceLimitTarget(ResourceLimits{}, ImplementationOff, "darwin"))
 }
 
-func TestResourceCgroupRequestedCoversLimitlessResourceOnly(t *testing.T) {
+func TestResourceCgroupRequiredCoversLimitlessResourceOnly(t *testing.T) {
 	limits := ResourceLimits{Memory: "1GiB"}
-	assert.True(t, ResourceCgroupRequested(limits, ImplementationHarnessBuiltin),
+	assert.True(t, ResourceCgroupRequired(limits, ImplementationHarnessBuiltin),
 		"an authored ceiling needs the cgroup under any implementation that may carry it")
-	assert.True(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationResourceOnly),
+	assert.True(t, ResourceCgroupRequired(ResourceLimits{}, ImplementationResourceOnly),
 		"resource-only is the cgroup; with no ceiling it is an accounting boundary, not a no-op")
-	assert.False(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationHarnessBuiltin),
+	assert.False(t, ResourceCgroupRequired(ResourceLimits{}, ImplementationHarnessBuiltin),
 		"an unauthored profile must keep the launch path it had before limits existed")
-	assert.False(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationOff))
-	assert.False(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationTclaudeLayer))
+	assert.False(t, ResourceCgroupRequired(ResourceLimits{}, ImplementationOff))
+	assert.False(t, ResourceCgroupRequired(ResourceLimits{}, ImplementationTclaudeLayer),
+		"the layer's own boundary is opportunistic; a host without one must still launch it")
+	assert.False(t, ResourceCgroupRequired(ResourceLimits{}, ImplementationStacked))
+}
+
+func TestResourceCgroupRequestedAddsTheOpportunisticLayerBoundary(t *testing.T) {
+	assert.True(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationTclaudeLayer, "linux"),
+		"tclaude already owns this workload's boundary, so the accounting is there for the taking")
+	assert.True(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationStacked, "linux"),
+		"stacked is the same outer layer with the harness's own sandbox kept inside it")
+	assert.False(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationTclaudeLayer, "darwin"),
+		"Seatbelt has no cgroup beneath it; trying would report a degradation every launch")
+	assert.True(t, ResourceCgroupRequested(ResourceLimits{Memory: "1GiB"}, ImplementationTclaudeLayer, "darwin"),
+		"a ceiling still asks for the boundary off Linux, so ValidateResourceLimitTarget can refuse it by name")
+	assert.False(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationHarnessBuiltin, "linux"),
+		"the harness's own sandbox is not a tclaude-owned boundary to hang counters on")
+	assert.False(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationOff, "linux"))
+	assert.True(t, ResourceCgroupRequested(ResourceLimits{}, ImplementationResourceOnly, "linux"))
+}
+
+func TestValidateResourceLimitTargetIgnoresTheOpportunisticBoundary(t *testing.T) {
+	require.NoError(t, ValidateResourceLimitTarget(ResourceLimits{}, ImplementationTclaudeLayer, "darwin"),
+		"a macOS Seatbelt launch asks for no cgroup and must not be refused for the one it cannot have")
+	require.NoError(t, ValidateResourceLimitTarget(ResourceLimits{}, ImplementationTclaudeLayer, "linux"))
 }
 
 func TestValidateResourceLimitTargetGuardsLimitlessResourceOnly(t *testing.T) {

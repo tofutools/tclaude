@@ -311,7 +311,11 @@ func preflightAssignedResourceCgroup(
 		}
 		limits = planned.Effective.ResourceLimits
 	}
-	if !sandboxpolicy.ResourceCgroupRequested(limits, normalized) {
+	// Only a boundary the relaunch would fail without. An implementation that
+	// merely asks for one opportunistically relaunches perfectly well on a host
+	// with no delegation — refusing the assignment there would deny the operator
+	// the confinement they came for over counters that are a bonus.
+	if !sandboxpolicy.ResourceCgroupRequired(limits, normalized) {
 		return nil
 	}
 	// A probe-only identity. The launch derives its cgroup name from the session
@@ -348,6 +352,11 @@ type sandboxImplementationAssignmentWire struct {
 	// cgroup at all, so a reader can tell an assignment that bought a boundary
 	// from one that only changed confinement.
 	ResourceCgroup bool `json:"resource_cgroup"`
+	// ResourceCgroupRequired separates a boundary the relaunch cannot proceed
+	// without — the one preflightAssignedResourceCgroup just proved this host
+	// can create — from one the launch merely attempts and discloses when it
+	// cannot. Only the first is a promise a reader may repeat.
+	ResourceCgroupRequired bool `json:"resource_cgroup_required,omitempty"`
 }
 
 // writeSandboxImplementationResponse renders the posture a relaunch would use.
@@ -383,6 +392,8 @@ func writeSandboxImplementationResponse(w http.ResponseWriter, convID, previous 
 		TemporarySandbox: posture.TemporaryHarnessBuiltinMode,
 		Online:           isConvOnline(convID),
 		ResourceCgroup: normErr == nil &&
-			sandboxpolicy.ResourceCgroupRequested(limits, implementation),
+			resourceCgroupRequested(limits, implementation),
+		ResourceCgroupRequired: normErr == nil &&
+			sandboxpolicy.ResourceCgroupRequired(limits, implementation),
 	})
 }

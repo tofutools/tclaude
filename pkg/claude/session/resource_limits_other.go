@@ -11,7 +11,9 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
-func wrapResourceLimitedCommand(string, sandboxpolicy.ResourceLimits, string, bool) (string, func(), error) {
+func wrapResourceLimitedCommand(
+	string, sandboxpolicy.ResourceLimits, sandboxpolicy.Implementation, string, bool,
+) (string, func(), error) {
 	return "", func() {}, fmt.Errorf("resource limits are Linux only")
 }
 
@@ -19,7 +21,9 @@ func PrepareResourceCgroup(string, sandboxpolicy.ResourceLimits) (string, func()
 	return "", func() {}, fmt.Errorf("resource limits are Linux only")
 }
 
-func wrapPreparedResourceCgroupCommand(string, string, string, bool, bool, bool) string { return "" }
+func wrapPreparedResourceCgroupCommand(string, string, string, bool, bool, bool, bool) string {
+	return ""
+}
 
 func WrapPreparedResourceCgroupCommand(string, string, string, bool) string { return "" }
 

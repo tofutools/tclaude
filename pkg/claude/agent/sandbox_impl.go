@@ -125,6 +125,10 @@ type sandboxImplResp struct {
 	TemporarySandbox bool   `json:"temporary_sandbox_active,omitempty"`
 	Online           bool   `json:"online"`
 	ResourceCgroup   bool   `json:"resource_cgroup"`
+	// ResourceCgroupRequired distinguishes a boundary the relaunch cannot
+	// proceed without — which the assignment probed — from one it merely
+	// attempts, which it did not.
+	ResourceCgroupRequired bool `json:"resource_cgroup_required,omitempty"`
 }
 
 // runSandboxImplShow reads one agent's durable posture and renders it.
@@ -223,7 +227,16 @@ func printSandboxImpl(resp *sandboxImplResp, asJSON bool, stdout, stderr io.Writ
 		fmt.Fprintln(stdout, line)
 	}
 	if resp.ResourceCgroup {
-		fmt.Fprintln(stdout, "  per-agent cgroup: yes (created by the next launch)")
+		// The assignment probes only a boundary the relaunch would fail without,
+		// so only there can this promise that the next launch gets one. What a
+		// launch merely attempts was not probed, and an undelegated host runs it
+		// anyway with a disclosure — so do not claim a boundary nothing proved.
+		line := "  per-agent cgroup: yes (attempted by the next launch; without a delegated " +
+			"cgroup v2 subtree it launches anyway and discloses the missing accounting)"
+		if resp.ResourceCgroupRequired {
+			line = "  per-agent cgroup: yes (created by the next launch)"
+		}
+		fmt.Fprintln(stdout, line)
 	}
 	if resp.TemporarySandbox {
 		fmt.Fprintln(stdout, "  note: the temporary dashboard sandbox unlock is active; it suspends this posture until restored")

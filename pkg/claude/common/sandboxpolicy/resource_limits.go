@@ -85,14 +85,40 @@ func NormalizeResourceLimits(in ResourceLimits) (ResourceLimits, error) {
 	return out, nil
 }
 
-// ResourceCgroupRequested reports whether a launch has to create the per-agent
-// cgroup. An authored ceiling requires one, and so does `resource-only` with no
-// ceiling at all: that spelling exists for the cgroup itself, so a limitless
-// resource-only launch is an accounting boundary — per-agent counters, OOM
-// attribution through memory.events, and a kill handle for the whole workload
-// tree — rather than the silent no-op it would otherwise be.
-func ResourceCgroupRequested(limits ResourceLimits, implementation Implementation) bool {
+// ResourceCgroupRequired reports whether a launch has to create the per-agent
+// cgroup, so that failing to create one fails the launch. An authored ceiling
+// requires one, and so does `resource-only` with no ceiling at all: that
+// spelling exists for the cgroup itself, so a limitless resource-only launch is
+// an accounting boundary — per-agent counters, OOM attribution through
+// memory.events, and a kill handle for the whole workload tree — rather than
+// the silent no-op it would otherwise be.
+func ResourceCgroupRequired(limits ResourceLimits, implementation Implementation) bool {
 	return limits.Enabled() || implementation == ImplementationResourceOnly
+}
+
+// ResourceCgroupRequested reports whether a launch tries to create the
+// per-agent cgroup at all.
+//
+// Beyond the required cases, a Linux launch that tclaude's own layer wraps
+// (`tclaude-layer`, and `stacked` on top of it) asks for one opportunistically.
+// tclaude already owns that workload's outer boundary and forks it itself, so
+// the same accounting a limitless `resource-only` launch is selected for —
+// memory.peak, cpu.stat, host-OOM attribution, one kill handle for everything
+// the agent started — is there for the taking. What differs is the answer when
+// the host cannot provide it: the confinement the operator chose the layer for
+// does not depend on the cgroup, so a missing delegation degrades to a notice
+// rather than refusing. ResourceCgroupRequired is the predicate that fails
+// closed; this one only decides whether to try.
+//
+// goos is the host the launch runs on, because there is nothing to try off
+// Linux: a macOS `tclaude-layer` launch is Seatbelt with no cgroup v2 anywhere
+// beneath it, and attempting one there would report a degradation on every
+// launch for a boundary that platform never had.
+func ResourceCgroupRequested(limits ResourceLimits, implementation Implementation, goos string) bool {
+	if ResourceCgroupRequired(limits, implementation) {
+		return true
+	}
+	return implementation.UsesTclaudeLayer() && goos == "linux"
 }
 
 // ValidateResourceLimitTarget checks the MVP's product compatibility boundary.
@@ -105,8 +131,13 @@ func ResourceCgroupRequested(limits ResourceLimits, implementation Implementatio
 // exists precisely to pair a cgroup with no access boundary at all. `off`
 // stays refused so that the spelling meaning "tclaude enforces nothing here"
 // keeps meaning exactly that.
+//
+// It judges only the cgroups a launch cannot proceed without. The opportunistic
+// boundary a `tclaude-layer` launch also asks for is not one of them: it has no
+// product compatibility boundary to check, because nothing is refused when it
+// is absent.
 func ValidateResourceLimitTarget(limits ResourceLimits, implementation Implementation, platform string) error {
-	if !ResourceCgroupRequested(limits, implementation) {
+	if !ResourceCgroupRequired(limits, implementation) {
 		return nil
 	}
 	if platform != "linux" {
