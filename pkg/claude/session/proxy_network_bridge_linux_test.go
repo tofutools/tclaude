@@ -770,6 +770,7 @@ func TestResolveTclaudeLayerForEngineProbesTheFloorItBuilds(t *testing.T) {
 		probeBwrap = previousProbe
 		probeTclaudeLayerPidfd = previousPidfd
 	})
+	stubTrustedExecutableWalk(t)
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeTclaudeLayerPidfd = func() error { return nil }
 	var probed []sandboxpolicy.NetworkPosture

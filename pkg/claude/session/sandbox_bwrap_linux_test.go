@@ -255,6 +255,7 @@ func TestResolveTclaudeLayerRefusesUnavailableUserNamespace(t *testing.T) {
 		lookPathBwrap = oldLookPath
 		probeBwrap = oldProbe
 	})
+	stubTrustedExecutableWalk(t)
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error {
 		return errors.New("operation not permitted")
@@ -273,6 +274,7 @@ func TestResolveTclaudeLayerRefusesUnavailableIsolatedNamespaces(t *testing.T) {
 		lookPathBwrap = oldLookPath
 		probeBwrap = oldProbe
 	})
+	stubTrustedExecutableWalk(t)
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	var probed []sandboxpolicy.NetworkPosture
 	probeBwrap = func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) error {
@@ -304,6 +306,7 @@ func TestResolveTclaudeLayerNamesFilteredNamespaceRequirement(t *testing.T) {
 		lookPathBwrap = oldLookPath
 		probeBwrap = oldProbe
 	})
+	stubTrustedExecutableWalk(t)
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error {
 		return errors.New("operation not permitted")
@@ -324,6 +327,7 @@ func TestResolveTclaudeLayerRefusesUnavailablePidfdRelay(t *testing.T) {
 		probeBwrap = oldProbe
 		probeTclaudeLayerPidfd = oldPidfdProbe
 	})
+	stubTrustedExecutableWalk(t)
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error { return nil }
 	probeTclaudeLayerPidfd = func() error { return syscall.ENOSYS }
@@ -343,6 +347,7 @@ func TestResolveTclaudeLayerServerDoesNotRequirePidfdRelay(t *testing.T) {
 		probeBwrap = oldProbe
 		probeTclaudeLayerPidfd = oldPidfdProbe
 	})
+	stubTrustedExecutableWalk(t)
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error { return nil }
 	probeTclaudeLayerPidfd = func() error { return syscall.ENOSYS }

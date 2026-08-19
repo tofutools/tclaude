@@ -6,9 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,14 +14,11 @@ import (
 )
 
 var (
-	filteredNetworkLookPath           = exec.LookPath
-	filteredNetworkEvalSymlinks       = filepath.EvalSymlinks
-	filteredNetworkLstat              = os.Lstat
-	validateFilteredNetworkExecutable = validateTrustedExecutable
-	inspectFilteredNetworkPasta       = inspectPastaCapabilities
-	filteredNetworkPastaCommand       = exec.CommandContext
-	filteredNetworkPastaProbeTimeout  = 5 * time.Second
-	filteredNetworkPastaHelpLimit     = 64 << 10
+	filteredNetworkLookPath          = exec.LookPath
+	inspectFilteredNetworkPasta      = inspectPastaCapabilities
+	filteredNetworkPastaCommand      = exec.CommandContext
+	filteredNetworkPastaProbeTimeout = 5 * time.Second
+	filteredNetworkPastaHelpLimit    = 64 << 10
 )
 
 type filteredNetworkExecutables struct {
@@ -77,18 +72,7 @@ func resolveFilteredNetworkExecutable(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	path, err = filteredNetworkEvalSymlinks(path)
-	if err != nil {
-		return "", fmt.Errorf("resolve %s executable: %w", name, err)
-	}
-	path = filepath.Clean(path)
-	if !filepath.IsAbs(path) {
-		return "", fmt.Errorf("%s resolved to non-absolute path %q", name, path)
-	}
-	if err := validateFilteredNetworkExecutable(path); err != nil {
-		return "", fmt.Errorf("%s executable %q is not trusted: %w", name, path, err)
-	}
-	return path, nil
+	return resolveTrustedExecutablePath(name, path)
 }
 
 func inspectPastaCapabilities(path string) error {
@@ -155,37 +139,6 @@ func validatePastaCapabilities(help string) error {
 	}
 	if len(missing) != 0 {
 		return fmt.Errorf("missing options: %s", strings.Join(missing, ", "))
-	}
-	return nil
-}
-
-// validateTrustedExecutable walks path and every parent directory up to the
-// filesystem root: no component may be group/world writable, the target must be
-// a regular executable, and every parent must be a directory.
-//
-// Ownership is deliberately not checked. These helpers are commonly installed
-// from a user-owned prefix (a local build, a per-user package manager), so the
-// walk rests on the writability bound alone — which means a helper owned by
-// another local user is accepted, and that owner can still swap the binary.
-func validateTrustedExecutable(path string) error {
-	for current := path; ; current = filepath.Dir(current) {
-		info, err := filteredNetworkLstat(current)
-		if err != nil {
-			return err
-		}
-		if info.Mode().Perm()&0o022 != 0 {
-			return fmt.Errorf("path component %q is group/world writable", current)
-		}
-		if current == path {
-			if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
-				return fmt.Errorf("path is not a regular executable")
-			}
-		} else if !info.IsDir() {
-			return fmt.Errorf("parent %q is not a directory", current)
-		}
-		if current == string(filepath.Separator) {
-			break
-		}
 	}
 	return nil
 }

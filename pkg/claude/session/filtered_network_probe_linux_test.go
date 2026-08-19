@@ -5,10 +5,8 @@ package session
 import (
 	"context"
 	"errors"
-	"io/fs"
 	"os/exec"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -46,17 +44,14 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	oldBwrapPath := lookPathBwrap
 	oldBwrapProbe := probeBwrap
 	oldFilteredPath := filteredNetworkLookPath
-	oldFilteredEval := filteredNetworkEvalSymlinks
-	oldFilteredValidate := validateFilteredNetworkExecutable
 	oldFilteredInspect := inspectFilteredNetworkPasta
 	t.Cleanup(func() {
 		lookPathBwrap = oldBwrapPath
 		probeBwrap = oldBwrapProbe
 		filteredNetworkLookPath = oldFilteredPath
-		filteredNetworkEvalSymlinks = oldFilteredEval
-		validateFilteredNetworkExecutable = oldFilteredValidate
 		inspectFilteredNetworkPasta = oldFilteredInspect
 	})
+	stubTrustedExecutableWalk(t)
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeBwrap = func(_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) error {
 		assert.Equal(t, sandboxpolicy.NetworkFiltered, posture)
@@ -65,8 +60,6 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	filteredNetworkLookPath = func(name string) (string, error) {
 		return "/usr/bin/" + name, nil
 	}
-	filteredNetworkEvalSymlinks = func(path string) (string, error) { return path, nil }
-	validateFilteredNetworkExecutable = func(string) error { return nil }
 	inspectFilteredNetworkPasta = func(string) error { return nil }
 
 	got := ProbeFilteredNetworkPrerequisite()
@@ -80,64 +73,6 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	assert.Contains(t, got.Detail, "gated launch boundary")
 	assert.Contains(t, got.LaunchWhy(true), "atomic nft policy")
 	assert.NotContains(t, got.LaunchWhy(true), "outbound remains open")
-}
-
-type fakeFilteredNetworkFileInfo struct {
-	name string
-	mode fs.FileMode
-	uid  uint32
-}
-
-func (f fakeFilteredNetworkFileInfo) Name() string       { return f.name }
-func (f fakeFilteredNetworkFileInfo) Size() int64        { return 0 }
-func (f fakeFilteredNetworkFileInfo) Mode() fs.FileMode  { return f.mode }
-func (f fakeFilteredNetworkFileInfo) ModTime() time.Time { return time.Time{} }
-func (f fakeFilteredNetworkFileInfo) IsDir() bool        { return f.mode.IsDir() }
-func (f fakeFilteredNetworkFileInfo) Sys() any           { return &syscall.Stat_t{Uid: f.uid} }
-
-func TestFilteredNetworkTrustWalkAcceptsNonRootOwnedExecutables(t *testing.T) {
-	const userPasta = "/home/agent/.local/bin/pasta"
-	tree := map[string]fakeFilteredNetworkFileInfo{
-		"/":                        {name: "/", mode: fs.ModeDir | 0o755},
-		"/home":                    {name: "home", mode: fs.ModeDir | 0o755},
-		"/home/agent":              {name: "agent", mode: fs.ModeDir | 0o755, uid: 1000},
-		"/home/agent/.local":       {name: ".local", mode: fs.ModeDir | 0o755, uid: 1000},
-		"/home/agent/.local/bin":   {name: "bin", mode: fs.ModeDir | 0o755, uid: 1000},
-		userPasta:                  {name: "pasta", mode: 0o755, uid: 1000},
-		"/usr":                     {name: "usr", mode: fs.ModeDir | 0o755},
-		"/usr/bin":                 {name: "bin", mode: fs.ModeDir | 0o755},
-		"/usr/bin/pasta":           {name: "pasta", mode: 0o755, uid: 1000},
-		"/usr/bin/nft":             {name: "nft", mode: 0o755, uid: 1000},
-		"/usr/local":               {name: "local", mode: fs.ModeDir | 0o777},
-		"/usr/local/bin":           {name: "bin", mode: fs.ModeDir | 0o755, uid: 1000},
-		"/usr/local/bin/pasta":     {name: "pasta", mode: 0o755, uid: 1000},
-		"/home/agent/.local/pasta": {name: "pasta", mode: 0o644, uid: 1000},
-	}
-	oldLstat := filteredNetworkLstat
-	t.Cleanup(func() { filteredNetworkLstat = oldLstat })
-	filteredNetworkLstat = func(path string) (fs.FileInfo, error) {
-		info, ok := tree[path]
-		if !ok {
-			return nil, fs.ErrNotExist
-		}
-		return info, nil
-	}
-
-	// Ownership is not part of the trust walk for any helper: a
-	// user-installed build is trusted wherever it lives.
-	require.NoError(t, validateTrustedExecutable(userPasta))
-	require.NoError(t, validateTrustedExecutable("/usr/bin/pasta"),
-		"a non-root-owned /usr/bin/pasta must still be trusted")
-	require.NoError(t, validateTrustedExecutable("/usr/bin/nft"),
-		"nft and nsenter are treated exactly like pasta")
-
-	// The rest of the trust walk still applies.
-	assert.ErrorContains(t,
-		validateTrustedExecutable("/usr/local/bin/pasta"),
-		`"/usr/local" is group/world writable`)
-	assert.ErrorContains(t,
-		validateTrustedExecutable("/home/agent/.local/pasta"),
-		"not a regular executable")
 }
 
 func TestFilteredNetworkPastaCapabilityProbeRequiresExactGatewayControls(t *testing.T) {
@@ -182,24 +117,19 @@ func TestFilteredNetworkPrerequisiteProbeRefusesOlderPasta(t *testing.T) {
 	oldBwrapPath := lookPathBwrap
 	oldBwrapProbe := probeBwrap
 	oldFilteredPath := filteredNetworkLookPath
-	oldFilteredEval := filteredNetworkEvalSymlinks
-	oldFilteredValidate := validateFilteredNetworkExecutable
 	oldFilteredInspect := inspectFilteredNetworkPasta
 	t.Cleanup(func() {
 		lookPathBwrap = oldBwrapPath
 		probeBwrap = oldBwrapProbe
 		filteredNetworkLookPath = oldFilteredPath
-		filteredNetworkEvalSymlinks = oldFilteredEval
-		validateFilteredNetworkExecutable = oldFilteredValidate
 		inspectFilteredNetworkPasta = oldFilteredInspect
 	})
+	stubTrustedExecutableWalk(t)
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error { return nil }
 	filteredNetworkLookPath = func(name string) (string, error) {
 		return "/usr/bin/" + name, nil
 	}
-	filteredNetworkEvalSymlinks = func(path string) (string, error) { return path, nil }
-	validateFilteredNetworkExecutable = func(string) error { return nil }
 	inspectFilteredNetworkPasta = func(string) error {
 		return errors.New("missing options: --map-host-loopback")
 	}
@@ -234,6 +164,7 @@ func TestFilteredNetworkPrerequisiteProbeReportsFirstMissingCapability(t *testin
 		probeBwrap = oldBwrapProbe
 		filteredNetworkLookPath = oldFilteredPath
 	})
+	stubTrustedExecutableWalk(t)
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error { return nil }
 	filteredNetworkLookPath = func(name string) (string, error) {
