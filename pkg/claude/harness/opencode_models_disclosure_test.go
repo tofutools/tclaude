@@ -94,7 +94,7 @@ func TestOpenCodeModels_ModelValidationAcceptsFreeTextWithoutCatalogRead(t *test
 		input string
 		want  string
 	}{
-		{input: "  testmodel  ", want: "testmodel"},
+		{input: "  custom/testmodel  ", want: "custom/testmodel"},
 		{input: "local/llama", want: "local/llama"},
 		{input: "", want: ""},
 	} {
@@ -103,6 +103,11 @@ func TestOpenCodeModels_ModelValidationAcceptsFreeTextWithoutCatalogRead(t *test
 		assert.Equal(t, test.want, value)
 	}
 	assert.Zero(t, calls.Load(), "model validation must not consult the suggestion catalog")
+
+	for _, malformed := range []string{"testmodel", "/model", "provider/"} {
+		_, err := openCodeModels{}.ValidateModel(malformed)
+		assert.Error(t, err, "model %q cannot be represented by OpenCode's prompt API", malformed)
+	}
 }
 
 // Effort validation refuses launches, so it may not run on a catalog the

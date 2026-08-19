@@ -89,11 +89,21 @@ var openCodeCatalogFlight singleflight.Group
 type openCodeModels struct{}
 
 func (openCodeModels) ValidateModel(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
 	// OpenCode owns a provider registry that can include user-configured local
 	// and network providers. Its discovered catalog is therefore a suggestion
-	// list, not an allow-list: accept values that this tclaude process has not
-	// seen and let OpenCode resolve them at use time.
-	return strings.TrimSpace(value), nil
+	// list, not an allow-list: accept provider/model values that this tclaude
+	// process has not seen and let OpenCode resolve them at use time. Retain the
+	// provider/model shape because OpenCode's managed prompt API takes those as
+	// two distinct fields; accepting a bare value would silently drop it there.
+	provider, model, ok := strings.Cut(value, "/")
+	if !ok || provider == "" || model == "" {
+		return "", fmt.Errorf("OpenCode model must use provider/model format, got %q", value)
+	}
+	return value, nil
 }
 
 func (openCodeModels) ValidateEffort(value string) (string, error) {
