@@ -156,9 +156,17 @@ func prepareServeSockets(required string, optional []string, warn func(string, e
 
 // listenUnixSockets binds required strictly and each optional endpoint on a
 // best-effort basis, mirroring prepareServeSockets. A required-socket failure
-// tears down everything already bound. An optional endpoint whose bind loses to
-// a live daemon (EADDRINUSE) is still fatal — that is a second runtime racing us
-// between prepare and bind, not a host that simply cannot host the alias.
+// tears down everything already bound. An optional endpoint stays fatal only
+// when a daemon is actually LIVE there, matching prepareServeSockets.
+//
+// Liveness is decided by dialling, never by the errno: AF_UNIX bind reports
+// EADDRINUSE for any pre-existing directory entry — a live socket, a socket left
+// behind by an abrupt exit, or an unrelated regular file all produce it. Reading
+// it as "a second daemon" would let a stray file in $HOME kill a daemon whose
+// canonical socket bound fine, which is the failure this split exists to remove.
+//
+// On success the returned paths begin with required, so callers may treat
+// index 0 as the canonical socket and the tail as the aliases that bound.
 func listenUnixSockets(required string, optional []string, warn func(string, error)) ([]net.Listener, []string, error) {
 	listeners := make([]net.Listener, 0, 1+len(optional))
 	createdPaths := make([]string, 0, 1+len(optional))
@@ -172,11 +180,12 @@ func listenUnixSockets(required string, optional []string, warn func(string, err
 		if err != nil {
 			return fmt.Errorf("listen %s: %w", path, err)
 		}
-		// Close+unlink a socket we could not lock down rather than recording it,
-		// so createdPaths stays exactly the set that is bound AND 0600.
+		// Drop a socket we could not lock down rather than recording it, so
+		// createdPaths stays exactly the set that is bound AND 0600. Close()
+		// unlinks the path Go itself created; removing it again here would risk
+		// unlinking the endpoint of whoever bound the name in between.
 		if err := os.Chmod(path, 0o600); err != nil {
 			_ = ln.Close()
-			removeSocketPaths([]string{path})
 			return fmt.Errorf("chmod socket %s: %w", path, err)
 		}
 		createdPaths = append(createdPaths, path)
@@ -188,7 +197,7 @@ func listenUnixSockets(required string, optional []string, warn func(string, err
 	}
 	for _, path := range optional {
 		if err := bind(path); err != nil {
-			if errors.Is(err, syscall.EADDRINUSE) {
+			if agentipc.SocketReachable(path) {
 				return fail(err)
 			}
 			warn(path, err)
@@ -317,10 +326,15 @@ func runServe(p *serveParams) error {
 		return err
 	}
 	defer releaseSingleton()
+	// Log each dropped alias as it happens, but hold the operator-facing line
+	// until the listening banner: these fire before the SQLite migration
+	// narration, which can run for minutes, and an indented sub-bullet stranded
+	// above unrelated output reads as belonging to whatever follows it.
+	var skippedLegacySocks []string
 	skipLegacySocket := func(path string, err error) {
 		slog.Warn("agentd: legacy compatibility socket unavailable; skipping",
 			"socket", path, "error", err)
-		fmt.Fprintf(out, "  legacy compatibility socket unavailable (skipped): %s\n", path)
+		skippedLegacySocks = appendSocketPath(skippedLegacySocks, path)
 	}
 	legacySockPaths, err := prepareServeSockets(sockPath, socketPaths[1:], skipLegacySocket)
 	if err != nil {
@@ -799,15 +813,18 @@ func runServe(p *serveParams) error {
 	// goroutines so the main goroutine is free for the tray loop
 	// (systray needs the main thread on every supported platform).
 	serveErrCh := make(chan error, len(listeners))
-	// Report what is actually bound, not what was attempted: an endpoint the
-	// host refused was already announced as skipped above.
+	// Report what is actually bound, not what was attempted. listenUnixSockets
+	// returns the canonical socket first, so the tail is exactly the aliases
+	// that came up.
 	boundLegacy := createdSocketPaths[1:]
-	slog.Info("agentd listening", "socket", sockPath, "legacy_sockets", boundLegacy, "popup", popupBaseURL)
+	slog.Info("agentd listening", "socket", sockPath, "legacy_sockets", boundLegacy,
+		"skipped_legacy_sockets", skippedLegacySocks, "popup", popupBaseURL)
 	fmt.Fprintf(out, "tclaude agentd listening on %s\n", sockPath)
 	for _, legacy := range boundLegacy {
-		if legacy != "" && filepath.Clean(legacy) != filepath.Clean(sockPath) {
-			fmt.Fprintf(out, "  legacy compatibility socket: %s\n", legacy)
-		}
+		fmt.Fprintf(out, "  legacy compatibility socket: %s\n", legacy)
+	}
+	for _, skipped := range skippedLegacySocks {
+		fmt.Fprintf(out, "  legacy compatibility socket unavailable (skipped): %s\n", skipped)
 	}
 	if popupBaseURL != "" {
 		dashLoc := "loopback"

@@ -101,6 +101,9 @@ func failOnWarn(t *testing.T) func(string, error) {
 // api/ socket is what agents actually dial, so an unbindable legacy alias must
 // cost a warning, not the daemon.
 func TestServeSocketsSkipUnbindableLegacyPaths(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the directory mode this test relies on to make a path unbindable")
+	}
 	dir := shortSocketDir(t)
 	required := filepath.Join(dir, "agentd.sock")
 	unwritable := filepath.Join(dir, "nowrite")
@@ -126,6 +129,50 @@ func TestServeSocketsSkipUnbindableLegacyPaths(t *testing.T) {
 	conn, dialErr := net.Dial("unix", required)
 	require.NoError(t, dialErr, "the canonical socket must be reachable")
 	require.NoError(t, conn.Close())
+}
+
+// AF_UNIX bind reports EADDRINUSE for ANY pre-existing directory entry, so the
+// errno cannot stand in for "a second daemon". Something landing at an alias
+// between the prepare pass and the bind pass — a dotfile manager or a home
+// restore recreating it — must still only cost the alias, since the canonical
+// socket agents dial is already up.
+func TestListenUnixSocketsSkipsDeadEntryAppearingAtLegacyPath(t *testing.T) {
+	dir := shortSocketDir(t)
+	required := filepath.Join(dir, "agentd.sock")
+	legacy := filepath.Join(dir, "legacy.sock")
+
+	for name, occupy := range map[string]func(t *testing.T){
+		"regular file": func(t *testing.T) {
+			require.NoError(t, os.WriteFile(legacy, []byte("not a socket"), 0o600))
+		},
+		"socket left by an abrupt exit": func(t *testing.T) {
+			ln, err := net.Listen("unix", filepath.Join(dir, "tmp.sock"))
+			require.NoError(t, err)
+			// Rename out from under Go so Close() cannot unlink it: a socket
+			// inode with nothing accepting on it, exactly what a killed daemon
+			// leaves behind.
+			require.NoError(t, os.Rename(filepath.Join(dir, "tmp.sock"), legacy))
+			require.NoError(t, ln.Close())
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Cleanup(func() { _ = os.Remove(legacy); _ = os.Remove(required) })
+			occupy(t)
+
+			var skipped []string
+			listeners, created, err := listenUnixSockets(required, []string{legacy},
+				func(path string, _ error) { skipped = append(skipped, path) })
+			require.NoError(t, err, "a dead entry at an alias must not fail startup")
+			t.Cleanup(func() { closeListeners(listeners) })
+			require.Len(t, listeners, 1, "the canonical socket is still bound")
+			assert.Equal(t, []string{required}, created)
+			assert.Equal(t, []string{legacy}, skipped)
+
+			conn, dialErr := net.Dial("unix", required)
+			require.NoError(t, dialErr, "the canonical socket must be reachable")
+			require.NoError(t, conn.Close())
+		})
+	}
 }
 
 // A live daemon on a legacy alias is a second runtime, not an unavailable
