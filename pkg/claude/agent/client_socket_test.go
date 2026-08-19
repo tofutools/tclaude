@@ -3,6 +3,7 @@ package agent
 import (
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -54,6 +55,39 @@ func TestDaemonUnreachableMsgNamesTheSocketOverride(t *testing.T) {
 		require.Contains(t, msg, "tclaude agentd serve --socket "+dead,
 			"starting a daemon on the pinned socket is the fix when nothing is live")
 	})
+}
+
+// The recovery command is meant to be pasted, so a socket path holding a space
+// or a metacharacter must survive the shell as ONE argument — otherwise the
+// command names a different socket than the one that failed.
+func TestDaemonUnreachableMsgQuotesTheRecoveryCommandPath(t *testing.T) {
+	for _, raw := range []string{
+		"/home/dev/my sockets/agentd.sock",
+		"/home/o'brien/.tclaude/api/agentd.sock",
+		// Inert payloads on purpose: if shellQuote regresses, this test executes
+		// whatever they expand to, so they must stay harmless.
+		"/tmp/a;echo INJECTED/agentd.sock",
+		"/tmp/$(echo INJECTED)/agentd.sock",
+		"/tmp/`echo INJECTED`/agentd.sock",
+		"/home/dev/plain.sock",
+	} {
+		t.Run(raw, func(t *testing.T) {
+			quoted := shellQuote(raw)
+			// Round-trip through a real shell: printf %s of the quoted form must
+			// yield exactly one argument, byte-identical to the original.
+			out, err := exec.Command("/bin/sh", "-c",
+				"set -- "+quoted+`; printf '%s|%s' "$#" "$1"`).Output()
+			require.NoError(t, err)
+			require.Equal(t, "1|"+raw, string(out))
+		})
+	}
+
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	spaced := filepath.Join(home, "my sockets", "agentd.sock")
+	t.Setenv(agentipc.SocketEnv, spaced)
+	require.Contains(t, daemonUnreachableMsg(), shellQuote(spaced),
+		"the message embeds the shell-safe form, not the bare path")
 }
 
 func TestRealDaemonAvailableFallsBackToLegacySocket(t *testing.T) {

@@ -130,7 +130,19 @@ func daemonUnreachableMsg() string {
 	}
 	return msg + fmt.Sprintf("\n\nStart it from a non-sandboxed shell with:"+
 		" tclaude agentd serve --socket %s\n"+
-		"or unset %s to use the default socket.", override, agentipc.SocketEnv)
+		"or unset %s to use the default socket.", shellQuote(override), agentipc.SocketEnv)
+}
+
+// shellQuote renders s so a POSIX shell reproduces it as a single argument.
+// The recovery command above is meant to be pasted, and a socket path holding a
+// space or a metacharacter would otherwise be re-split into several arguments —
+// silently naming a different socket than the one that failed. Paths needing
+// nothing are returned bare so the common case stays readable.
+func shellQuote(s string) string {
+	if s != "" && !strings.ContainsAny(s, " \t\n\v\r\"'\\$`&;|<>()*?[]{}!#~^") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // RequireDaemonOrExit writes a clear "daemon not running" message to
