@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 	"github.com/tofutools/tclaude/pkg/common"
 	"github.com/tofutools/tclaude/pkg/common/buildversion"
+	"golang.org/x/term"
 )
 
 // Main runs a tclaude binary end to end and never returns: it dispatches
@@ -31,7 +32,9 @@ func Main(version string, newRoot func() *cobra.Command) {
 	if handled, code := probehelper.Dispatch(os.Args); handled {
 		os.Exit(code)
 	}
-	fmt.Fprintln(os.Stderr, "Hello from tclaude! 👋")
+	if term.IsTerminal(int(os.Stderr.Fd())) {
+		fmt.Fprintln(os.Stderr, "Hello from tclaude! 👋")
+	}
 	common.SetupLogging(slog.LevelInfo)
 	exitCode := run(version, newRoot)
 	db.Close()
