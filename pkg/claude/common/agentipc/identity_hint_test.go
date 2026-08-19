@@ -42,6 +42,21 @@ func TestManagedAgentProcess(t *testing.T) {
 			env:  map[string]string{AgentHintEnvVar: "0"},
 			want: false,
 		},
+		{
+			name: "padded hint",
+			env:  map[string]string{AgentHintEnvVar: " 1 "},
+			want: true,
+			hint: true,
+		},
+		{
+			name: "whitespace-only signals are empty",
+			env: map[string]string{
+				SocketEnv:                 "   ",
+				CodexPermissionProfileEnv: "  ",
+				AgentHintEnvVar:           " ",
+			},
+			want: false,
+		},
 	}
 
 	for _, tc := range cases {

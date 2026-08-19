@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agent"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
@@ -238,6 +239,11 @@ func TestRuntimeReachesEnabledDaemonRegardlessOfClientConfigView(t *testing.T) {
 // config.Load() cannot be trusted. The runtime command must still reach an
 // enabled daemon rather than bailing on the unreadable local view.
 func TestRuntimeReachesEnabledDaemonWhenPrivateConfigIsUnreadable(t *testing.T) {
+	// This test asserts the OPERATOR side of that split: an unreadable config
+	// must surface as an error here. Clear the managed-agent signals, or a run
+	// from inside a managed pane inherits them and gets the agent's
+	// treat-it-as-absent behavior instead.
+	agentipctest.IsolateManagedAgentEnv(t)
 	t.Setenv("HOME", t.TempDir())
 	// The on-disk flag even says ENABLED, but the client cannot read it.
 	require.NoError(t, config.Save(&config.Config{Features: &config.FeaturesConfig{Processes: true}}))

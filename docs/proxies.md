@@ -36,7 +36,9 @@ agents cannot use. The command registers when either holds:
 
 A managed agent is recognised by any of `TCLAUDE_AGENTD_SOCKET`,
 `CODEX_PERMISSION_PROFILE=tclaude-agent`, or `TCLAUDE_AGENT_HINT=1` in its
-environment — the last being the only one a managed Claude Code pane carries.
+environment. Only the last is carried by every managed launch: the socket is
+pinned for sandboxed agents alone, so an unsandboxed managed pane has the hint
+and nothing else.
 The local config read cannot stand in for that test: a sandbox that denies
 `~/.tclaude/data` by mounting it empty makes an enabled config look exactly
 like an absent one, with no error to distinguish them.

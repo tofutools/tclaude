@@ -8,10 +8,14 @@ import (
 	"testing"
 )
 
-// socketEnv is duplicated here rather than importing the parent agentipc
+// These names are duplicated here rather than importing the parent agentipc
 // package: agentipc's own tests use this helper, so importing the parent would
 // create a test-time package cycle.
-const socketEnv = "TCLAUDE_AGENTD_SOCKET"
+const (
+	socketEnv                 = "TCLAUDE_AGENTD_SOCKET"
+	codexPermissionProfileEnv = "CODEX_PERMISSION_PROFILE"
+	agentHintEnv              = "TCLAUDE_AGENT_HINT"
+)
 
 // IsolateSocketEnv removes an inherited daemon-socket override for the life of
 // a test. Managed agent sessions export the real daemon address; tests that
@@ -20,6 +24,19 @@ const socketEnv = "TCLAUDE_AGENTD_SOCKET"
 func IsolateSocketEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv(socketEnv, "")
+}
+
+// IsolateManagedAgentEnv clears every signal agentipc.ManagedAgentProcess reads,
+// so a test asserting operator-process behavior gets it regardless of where the
+// suite runs. tclaude is routinely developed from inside a tclaude-managed pane,
+// which exports these; a test that only clears the ones it happens to know about
+// starts failing the day a signal is added. Tests ABOUT the detection itself
+// should keep setting each variable explicitly instead.
+func IsolateManagedAgentEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{socketEnv, codexPermissionProfileEnv, agentHintEnv} {
+		t.Setenv(name, "")
+	}
 }
 
 // maxSocketPathLen is a conservative bound for the length of a Unix socket path

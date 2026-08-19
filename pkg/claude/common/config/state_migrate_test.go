@@ -7,13 +7,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 )
 
 func TestRelocateLegacyStateMovesFilesAndDirectories(t *testing.T) {
-	t.Setenv("TCLAUDE_AGENTD_SOCKET", "")
-	t.Setenv(agentipc.CodexPermissionProfileEnv, "")
-	t.Setenv(agentipc.AgentHintEnvVar, "")
+	agentipctest.IsolateManagedAgentEnv(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	root := filepath.Join(home, ".tclaude")
@@ -31,9 +29,7 @@ func TestRelocateLegacyStateMovesFilesAndDirectories(t *testing.T) {
 }
 
 func TestRelocateLegacyStatePreservesAuthoritativeConflictWithoutBlocking(t *testing.T) {
-	t.Setenv("TCLAUDE_AGENTD_SOCKET", "")
-	t.Setenv(agentipc.CodexPermissionProfileEnv, "")
-	t.Setenv(agentipc.AgentHintEnvVar, "")
+	agentipctest.IsolateManagedAgentEnv(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	root := filepath.Join(home, ".tclaude")
@@ -47,9 +43,7 @@ func TestRelocateLegacyStatePreservesAuthoritativeConflictWithoutBlocking(t *tes
 }
 
 func TestRelocateLegacyStateQuarantinesRecreatedLogWithoutBlocking(t *testing.T) {
-	t.Setenv("TCLAUDE_AGENTD_SOCKET", "")
-	t.Setenv(agentipc.CodexPermissionProfileEnv, "")
-	t.Setenv(agentipc.AgentHintEnvVar, "")
+	agentipctest.IsolateManagedAgentEnv(t)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	root := filepath.Join(home, ".tclaude")

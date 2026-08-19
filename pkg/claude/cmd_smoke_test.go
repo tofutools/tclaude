@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
@@ -26,6 +27,11 @@ import (
 // subcommand's flag registration, so any duplicate-shorthand collision — or any
 // other construction-time panic — fails here instead of at the user's terminal.
 func TestCommandTreeConstructs(t *testing.T) {
+	// Building the tree probes proxy configuration. Keep that a local decision:
+	// without this the test asks the operator's live daemon whether the proxy is
+	// enabled, which is neither what it is testing nor safe to depend on.
+	agentipctest.IsolateManagedAgentEnv(t)
+	t.Setenv("HOME", t.TempDir())
 	defer func() {
 		if r := recover(); r != nil {
 			t.Fatalf("building the command tree panicked (duplicate flag shorthand?): %v", r)
@@ -37,8 +43,9 @@ func TestCommandTreeConstructs(t *testing.T) {
 }
 
 func TestProxyTreeRequiresSemanticProxyConfig(t *testing.T) {
-	t.Setenv("TCLAUDE_AGENTD_SOCKET", "")
-	t.Setenv("CODEX_PERMISSION_PROFILE", "")
+	// The subtree must be hidden because no policy exists, not because a
+	// HOME-derived socket path happened to be unreachable.
+	agentipctest.IsolateManagedAgentEnv(t)
 
 	hasProxy := func(root *cobra.Command) bool {
 		for _, child := range root.Commands() {

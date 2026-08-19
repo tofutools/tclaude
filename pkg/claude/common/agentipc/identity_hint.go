@@ -45,16 +45,22 @@ func HasAgentHint() bool {
 // instead.
 //
 // It ORs three signals because no single one covers every managed session:
-// sandboxed launches that allowlist the daemon socket pin SocketEnv; managed
-// Codex sessions predating that carry CodexPermissionProfileEnv; and every
-// agentd-managed launch carries AgentHintEnvVar — which is the only one of the
-// three a managed Claude Code pane has.
+// launches whose sandbox allowlists the daemon socket pin SocketEnv (see
+// session.ApplyAgentSocketEnv — that includes Claude panes, but only sandboxed
+// ones); managed Codex sessions predating that carry CodexPermissionProfileEnv;
+// and AgentHintEnvVar, the only one EVERY agentd-managed launch is guaranteed
+// to carry, and so the only signal an unsandboxed managed Claude pane has.
 //
 // All three are caller-controlled, so this is a UX signal only. It decides
 // which side of the sandbox boundary to ASK, never what the answer may be:
 // daemon authorization stays on Unix peer credentials and process ancestry.
+// Each signal is trimmed before it is judged, so all three agree on what an
+// empty value is. Note this is a presence test, not a validity test: an
+// unusable SocketEnv still means "managed", because a broken override does not
+// make the private config readable. ExplicitSocketPath, which decides where to
+// actually dial, is the one that insists on an absolute path.
 func ManagedAgentProcess() bool {
-	return os.Getenv(SocketEnv) != "" ||
-		os.Getenv(CodexPermissionProfileEnv) == ManagedCodexProfileName ||
+	return strings.TrimSpace(os.Getenv(SocketEnv)) != "" ||
+		strings.TrimSpace(os.Getenv(CodexPermissionProfileEnv)) == ManagedCodexProfileName ||
 		HasAgentHint()
 }
