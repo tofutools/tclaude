@@ -49,6 +49,30 @@ apt_source_classifier_test microsoft-non-http pass \
 apt_source_classifier_test mixed refuse \
   'Types: deb\nURIs: https://packages.microsoft.com/repos/azure-cli/ https://archive.ubuntu.com/ubuntu/\nSuites: noble\nComponents: main\n'
 
+# GitHub's generated mirror list currently prefers an intermittently
+# unreachable Azure endpoint. Prove that the workaround removes exactly that
+# runner-image entry while preserving the working fallbacks and lookalikes.
+cat > "$work/apt-mirrors.input" <<'EOF'
+http://azure.archive.ubuntu.com/ubuntu/	priority:1
+https://archive.ubuntu.com/ubuntu/	priority:2
+https://security.ubuntu.com/ubuntu/	priority:3
+https://azure.archive.ubuntu.com/ubuntu/	priority:4
+http://azure.archive.ubuntu.com/ubuntu/extra	priority:5
+EOF
+cat > "$work/apt-mirrors.want" <<'EOF'
+https://archive.ubuntu.com/ubuntu/	priority:2
+https://security.ubuntu.com/ubuntu/	priority:3
+https://azure.archive.ubuntu.com/ubuntu/	priority:4
+http://azure.archive.ubuntu.com/ubuntu/extra	priority:5
+EOF
+smoke::apt_mirror_list_without_unreachable_azure "$work/apt-mirrors.input" \
+  > "$work/apt-mirrors.got"
+if ! cmp -s "$work/apt-mirrors.want" "$work/apt-mirrors.got"; then
+  echo 'selftest FAIL: apt mirror isolation did not remove only the exact GitHub Azure mirror'
+  diff -u "$work/apt-mirrors.want" "$work/apt-mirrors.got" || true
+  failures=1
+fi
+
 # The runner mirror can stop producing output indefinitely while apt's own
 # retry machinery remains alive. Prove that every shared update goes through
 # both the transport limits and an outer deadline, without invoking sudo or apt
@@ -1070,4 +1094,4 @@ if [[ "$failures" -ne 0 ]]; then
   echo "smoke evidence selftest FAILED; refusing to trust any smoke result"
   exit 1
 fi
-echo "smoke evidence selftest: ok (evidence checker + manifest drift guards + per-flow harness declarations + shard-map union, derived-install-set, workflow-matrix and harness-coverage guards + fixture teardown)"
+echo "smoke evidence selftest: ok (apt-source guards + evidence checker + manifest drift guards + per-flow harness declarations + shard-map union, derived-install-set, workflow-matrix and harness-coverage guards + fixture teardown)"
