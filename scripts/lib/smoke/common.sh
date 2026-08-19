@@ -52,6 +52,23 @@ smoke::apt_source_is_microsoft_only() {
   ' "$source_file"
 }
 
+# smoke::apt_mirror_list_without_unreachable_azure FILE — copy a GitHub
+# runner mirror list to stdout while omitting only the exact Ubuntu archive
+# endpoint currently supplied as its priority-1 mirror. The runner's mirror
+# method falls back per index object, so one unreachable mirror can consume a
+# transport timeout for every Packages/Translation/Components object instead
+# of failing over once for the update as a whole.
+#
+# Keep this transformation separate from the privileged file replacement so
+# the shared self-test can prove its matching boundary without touching apt.
+smoke::apt_mirror_list_without_unreachable_azure() {
+  local mirror_file="$1"
+  awk '
+    $1 == "http://azure.archive.ubuntu.com/ubuntu/" { next }
+    { print }
+  ' "$mirror_file"
+}
+
 # smoke::run_bounded_apt_update — keep an unreachable runner mirror from
 # occupying a smoke job until GitHub's six-hour ceiling. apt's transport
 # timeout bounds an individual dead connection; the outer timeout also covers
@@ -83,6 +100,7 @@ smoke::run_bounded_apt_update() {
 # that runner is ephemeral and no restore is needed.
 smoke::apt_update() {
   local source_file source_name backup_file awk_status grep_status
+  local mirror_file mirror_backup filtered_mirror_file
   local disabled_count=0 mixed_count=0
   local backup_dir="${RUNNER_TEMP:-${TMPDIR:-/tmp}}/tclaude-disabled-apt-sources"
   local microsoft_list_re='^[[:space:]]*deb(-src)?[[:space:]].*packages[.]microsoft[.]com([/:[:space:]]|$)'
@@ -96,6 +114,45 @@ smoke::apt_update() {
       return 1
     fi
     return 0
+  fi
+
+  # GitHub's Ubuntu image routes the distro sources through a generated mirror
+  # list whose first choice is azure.archive.ubuntu.com. When that endpoint is
+  # unreachable, apt can fetch the InRelease files from archive.ubuntu.com and
+  # then spend minutes retrying the Azure endpoint separately for the package
+  # indexes. Remove only that image-provided entry on the ephemeral runner;
+  # archive.ubuntu.com and security.ubuntu.com remain configured fallbacks.
+  mirror_file=/etc/apt/apt-mirrors.txt
+  if [[ -f "$mirror_file" ]]; then
+    if [[ ! -d "$backup_dir" ]] && ! mkdir -p "$backup_dir"; then
+      smoke::error "could not create apt-source diagnostics directory: $backup_dir"
+      return 1
+    fi
+    mirror_backup="$backup_dir/apt-mirrors.txt.original"
+    filtered_mirror_file="$backup_dir/apt-mirrors.txt.filtered"
+    if ! smoke::apt_mirror_list_without_unreachable_azure "$mirror_file" > "$filtered_mirror_file"; then
+      smoke::error "could not inspect GitHub runner apt mirror list: $mirror_file"
+      return 1
+    fi
+    if ! cmp -s "$mirror_file" "$filtered_mirror_file"; then
+      if ! grep -Eq '^[[:space:]]*https?://' "$filtered_mirror_file"; then
+        smoke::error "refusing to remove the Azure apt mirror because no fallback mirror remains in: $mirror_file"
+        return 1
+      fi
+      if [[ -e "$mirror_backup" ]]; then
+        smoke::error "apt mirror-list diagnostics path already exists: $mirror_backup"
+        return 1
+      fi
+      smoke::log "Disabling unreachable GitHub runner apt mirror: http://azure.archive.ubuntu.com/ubuntu/"
+      if ! sudo cp -- "$mirror_file" "$mirror_backup"; then
+        smoke::error "could not save GitHub runner apt mirror list before editing: $mirror_file"
+        return 1
+      fi
+      if ! sudo cp -- "$filtered_mirror_file" "$mirror_file"; then
+        smoke::error "could not disable unreachable GitHub runner apt mirror: $mirror_file"
+        return 1
+      fi
+    fi
   fi
 
   if [[ -f /etc/apt/sources.list ]]; then
