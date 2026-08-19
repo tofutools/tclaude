@@ -165,12 +165,11 @@ and OpenCode** launches on Linux. OpenCode is supported for strict
 explicit-provider configurations only; its local and model-API presets are
 launch-refused under this engine because they name no explicit provider
 endpoint to check. If a prerequisite is missing before enforcement is selected
-— `bwrap`, `pasta`, or `nft` resolved through trust-walked paths (no
-group/world-writable path component; ownership is not checked, so a
-user-installed helper is accepted),
-pidfd support, the pasta feature probe — the filtered rules **widen to
-host-open with a persisted warning**; after enforcement is selected, failures
-are fail-closed.
+— `bwrap` on `PATH`, `pasta`, `nft`, or `nsenter` resolved through trust-walked
+paths (no group/world-writable path component, a regular executable target;
+ownership is not checked, so a user-installed helper is accepted), pidfd
+support, the pasta feature probe — the filtered rules **widen to host-open with
+a persisted warning**; after enforcement is selected, failures are fail-closed.
 
 ### The model-transport gate
 

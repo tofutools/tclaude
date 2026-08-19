@@ -160,11 +160,13 @@ func validatePastaCapabilities(help string) error {
 }
 
 // validateTrustedExecutable walks path and every parent directory up to the
-// filesystem root and refuses anything another local user could swap out from
-// under us. Ownership is deliberately not checked: these helpers are commonly
-// installed from a user-owned prefix (a local build, a per-user package
-// manager), so the trust walk rests on the group/world-writability bound
-// instead.
+// filesystem root: no component may be group/world writable, the target must be
+// a regular executable, and every parent must be a directory.
+//
+// Ownership is deliberately not checked. These helpers are commonly installed
+// from a user-owned prefix (a local build, a per-user package manager), so the
+// walk rests on the writability bound alone — which means a helper owned by
+// another local user is accepted, and that owner can still swap the binary.
 func validateTrustedExecutable(path string) error {
 	for current := path; ; current = filepath.Dir(current) {
 		info, err := filteredNetworkLstat(current)
