@@ -183,7 +183,11 @@ func resolveBwrapServerBinary(
 	// below then runs the resolved path, not the symlink chain that named it.
 	binary, err = resolveTrustedExecutablePath("bwrap", binary)
 	if err != nil {
-		return "", fmt.Errorf("tclaude-layer requires a trusted bubblewrap (`bwrap`): %w", err)
+		// "could not resolve a trusted", not "is not trusted": this also covers
+		// the binary vanishing between the PATH lookup and the walk, which is a
+		// missing bwrap rather than an untrusted one.
+		return "", fmt.Errorf(
+			"tclaude-layer could not resolve a trusted bubblewrap (`bwrap`): %w", err)
 	}
 	if err := probeBwrap(binary, posture, root); err != nil {
 		requiredNamespaces := "mount namespace and read-only remount support"

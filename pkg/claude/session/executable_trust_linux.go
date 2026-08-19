@@ -8,10 +8,14 @@ import (
 	"path/filepath"
 )
 
-// The trust walk applied to every host executable a tclaude-layer launch hands
-// control to: bubblewrap itself, and the filtered-network helpers (pasta, nft,
-// nsenter). A launch is only as trustworthy as the binaries it execs, so they
-// are canonicalized and walked before use rather than taken from PATH as-is.
+// The trust walk applied to the host executables a tclaude-layer launch
+// resolves from PATH to build and police its sandbox: bubblewrap itself, and
+// the filtered-network helpers (pasta, nft, nsenter). They are canonicalized
+// and walked before use rather than taken from PATH as-is.
+//
+// This is not a claim about everything a launch execs — the harness binary,
+// /bin/sh, tmux and tclaude's own subcommands run unwalked, and their
+// trustworthiness rests elsewhere.
 
 var (
 	trustWalkLstat                = os.Lstat

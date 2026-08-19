@@ -43,6 +43,7 @@ func TestResolveBwrapServerBinaryTrustWalksBwrapBeforeProbingIt(t *testing.T) {
 	tree := map[string]fakeTrustWalkFileInfo{
 		"/":              {name: "/", mode: fs.ModeDir | 0o755},
 		"/usr":           {name: "usr", mode: fs.ModeDir | 0o755},
+		"/usr/bin":       {name: "bin", mode: fs.ModeDir | 0o755},
 		"/usr/lib":       {name: "lib", mode: fs.ModeDir | 0o755},
 		"/usr/lib/bwrap": {name: "bwrap", mode: 0o755, uid: 1000},
 		"/opt":           {name: "opt", mode: fs.ModeDir | 0o777},
@@ -73,13 +74,18 @@ func TestResolveBwrapServerBinaryTrustWalksBwrapBeforeProbingIt(t *testing.T) {
 	}
 	_, err := resolveBwrapServerBinary(
 		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited)
-	require.ErrorContains(t, err, "requires a trusted bubblewrap")
+	require.ErrorContains(t, err, "could not resolve a trusted bubblewrap")
 	assert.ErrorContains(t, err, `"/opt" is group/world writable`)
 
 	// A trusted one resolves, and what gets probed — and returned for the
-	// launch to exec — is the path the walk actually described.
+	// launch to exec — is the path the walk actually described: the symlink
+	// target, not the PATH entry that named it.
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
-	trustWalkEvalSymlinks = func(string) (string, error) { return "/usr/lib/bwrap", nil }
+	trustWalkEvalSymlinks = func(path string) (string, error) {
+		assert.Equal(t, "/usr/bin/bwrap", path,
+			"the PATH lookup's result is what gets canonicalized")
+		return "/usr/lib/bwrap", nil
+	}
 	var probed string
 	probeBwrap = func(binary string, _ sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture) error {
 		probed = binary
