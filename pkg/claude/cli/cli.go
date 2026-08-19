@@ -31,6 +31,7 @@ func Main(version string, newRoot func() *cobra.Command) {
 	if handled, code := probehelper.Dispatch(os.Args); handled {
 		os.Exit(code)
 	}
+	fmt.Fprintln(os.Stderr, "Hello from tclaude! 👋")
 	common.SetupLogging(slog.LevelInfo)
 	exitCode := run(version, newRoot)
 	db.Close()
