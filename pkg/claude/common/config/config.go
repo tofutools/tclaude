@@ -18,11 +18,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/common"
 )
 
-const (
-	codexPermissionProfileEnv = "CODEX_PERMISSION_PROFILE"
-	managedCodexProfileName   = "tclaude-agent"
-)
-
 // Config represents the tclaude configuration file structure.
 type Config struct {
 	Notifications   *NotificationConfig    `json:"notifications,omitempty"`
@@ -2829,13 +2824,9 @@ func Load() (*Config, error) {
 }
 
 // privateConfigIntentionallyInaccessible reports whether this process is an
-// agent whose sandbox deliberately denies ~/.tclaude. New tclaude-spawned
-// sessions carry SocketEnv; CODEX_PERMISSION_PROFILE also covers already
-// running managed Codex sessions created before that environment variable was
-// added.
+// agent whose sandbox deliberately denies ~/.tclaude.
 func privateConfigIntentionallyInaccessible() bool {
-	return os.Getenv(agentipc.SocketEnv) != "" ||
-		os.Getenv(codexPermissionProfileEnv) == managedCodexProfileName
+	return agentipc.ManagedAgentProcess()
 }
 
 // NotificationsPresent reports whether the on-disk config file already

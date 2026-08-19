@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -43,6 +42,11 @@ const (
 // cannot read the private config tree, so it asks agentd for the same one-bit
 // capability projection; none of the allow-list or credential policy crosses
 // the sandbox boundary.
+//
+// The local read never distinguishes the two cases on its own: a sandbox that
+// denies ~/.tclaude/data by mounting it empty makes an enabled config look
+// exactly like an absent one, error-free. Only ManagedAgentProcess separates
+// "the operator has no policy" from "I am not allowed to see it".
 func Configured() bool {
 	cfg, err := config.Load()
 	if err == nil && cfg.GitProxyEnabled() {
@@ -51,9 +55,7 @@ func Configured() bool {
 	// Do not turn every ordinary host-side command construction into a daemon
 	// round trip. Only managed agents need the projection because only their
 	// private config view is deliberately reduced to defaults.
-	managedAgent := os.Getenv(agentipc.SocketEnv) != "" ||
-		os.Getenv("CODEX_PERMISSION_PROFILE") == "tclaude-agent"
-	if !managedAgent {
+	if !agentipc.ManagedAgentProcess() {
 		return false
 	}
 	var info struct {
