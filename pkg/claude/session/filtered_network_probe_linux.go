@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -19,7 +18,8 @@ import (
 var (
 	filteredNetworkLookPath           = exec.LookPath
 	filteredNetworkEvalSymlinks       = filepath.EvalSymlinks
-	validateFilteredNetworkExecutable = validateRootOwnedExecutable
+	filteredNetworkLstat              = os.Lstat
+	validateFilteredNetworkExecutable = validateTrustedExecutable
 	inspectFilteredNetworkPasta       = inspectPastaCapabilities
 	filteredNetworkPastaCommand       = exec.CommandContext
 	filteredNetworkPastaProbeTimeout  = 5 * time.Second
@@ -159,15 +159,17 @@ func validatePastaCapabilities(help string) error {
 	return nil
 }
 
-func validateRootOwnedExecutable(path string) error {
+// validateTrustedExecutable walks path and every parent directory up to the
+// filesystem root and refuses anything another local user could swap out from
+// under us. Ownership is deliberately not checked: these helpers are commonly
+// installed from a user-owned prefix (a local build, a per-user package
+// manager), so the trust walk rests on the group/world-writability bound
+// instead.
+func validateTrustedExecutable(path string) error {
 	for current := path; ; current = filepath.Dir(current) {
-		info, err := os.Lstat(current)
+		info, err := filteredNetworkLstat(current)
 		if err != nil {
 			return err
-		}
-		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || stat.Uid != 0 {
-			return fmt.Errorf("path component %q is not root-owned", current)
 		}
 		if info.Mode().Perm()&0o022 != 0 {
 			return fmt.Errorf("path component %q is group/world writable", current)
@@ -195,7 +197,7 @@ func probeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 	}
 	return FilteredNetworkPrerequisite{
 		Detected: true,
-		Detail: "bubblewrap user/network namespace execution passed; trusted root-owned pasta, nft, and nsenter executables " +
+		Detail: "bubblewrap user/network namespace execution passed; trusted pasta, nft, and nsenter executables " +
 			"were found; the base nft policy is installed from the supervisor via nsenter, and end-to-end gateway readiness is decided at the gated launch boundary",
 	}
 }
