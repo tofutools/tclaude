@@ -2429,12 +2429,12 @@ func stateForConvInSessionsBatched(
 		// and reconciles on the next refresh (the harness has no readback).
 		RemoteControl: pick.RemoteControl,
 	}
-	// resource-only requests the cgroup through the implementation alone, so this
-	// read must not require a launch snapshot to find the request: a direct
-	// `tclaude session new --sandbox-impl resource-only` and a CLI resume both
-	// record a row with no snapshot at all, and that is exactly the launch whose
-	// only purpose IS the cgroup. Both enforcement seams (session.newSession,
-	// prepareResourceCgroup) resolve it the same way.
+	// resource-only and tclaude-layer request the cgroup through the
+	// implementation alone, so this read must not require a launch snapshot to
+	// find the request: a direct `tclaude session new --sandbox-impl …` and a
+	// CLI resume both record a row with no snapshot at all, and a resource-only
+	// launch is one whose only purpose IS the cgroup. Both enforcement seams
+	// (session.newSession, prepareResourceCgroup) resolve it the same way.
 	var limits sandboxpolicy.ResourceLimits
 	if pick.EffectiveSandbox != nil {
 		out.SandboxAccessNotices = append([]sandboxpolicy.AccessNotice(nil),
@@ -2447,7 +2447,7 @@ func stateForConvInSessionsBatched(
 		// authored ceiling still requires the cgroup on its own.
 		implementation = sandboxpolicy.ImplementationHarnessBuiltin
 	}
-	out.ResourceCgroup = sandboxpolicy.ResourceCgroupRequested(limits, implementation)
+	out.ResourceCgroup = resourceCgroupRequested(limits, implementation)
 	out.ResourceMemoryLimit = limits.Memory
 	if limits.CPU != nil {
 		cpu := *limits.CPU

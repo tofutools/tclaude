@@ -6871,10 +6871,11 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
 			label, p.Cwd, p.Name, "", permissionJSON,
 			p.SandboxImplementation, sandboxSpec, resourceCgroupDir)
-		if err != nil && resourceCgroupDir != "" && p.AllowUnenforcedSandbox &&
-			errors.Is(err, errOpenCodeResourceCgroup) {
+		if err != nil && resourceCgroupDir != "" &&
+			errors.Is(err, errOpenCodeResourceCgroup) &&
+			degradeManagedServerResourceCgroup(
+				p.EffectiveSandbox, p.SandboxImplementation, p.AllowUnenforcedSandbox, err) {
 			resourceCleanup()
-			appendManagedServerResourceOverride(p.EffectiveSandbox, err)
 			resourceCgroupDir = ""
 			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
 				label, p.Cwd, p.Name, "", permissionJSON,
@@ -9955,10 +9956,11 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
 			a.ConvID, a.Cwd, "", a.ConvID, permissionJSON,
 			a.SandboxImplementation, sandboxSpec, resourceCgroupDir)
-		if err != nil && resourceCgroupDir != "" && a.AllowUnenforcedSandbox &&
-			errors.Is(err, errOpenCodeResourceCgroup) {
+		if err != nil && resourceCgroupDir != "" &&
+			errors.Is(err, errOpenCodeResourceCgroup) &&
+			degradeManagedServerResourceCgroup(
+				a.EffectiveSandbox, a.SandboxImplementation, a.AllowUnenforcedSandbox, err) {
 			resourceCleanup()
-			appendManagedServerResourceOverride(a.EffectiveSandbox, err)
 			resourceCgroupDir = ""
 			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
 				a.ConvID, a.Cwd, "", a.ConvID, permissionJSON,

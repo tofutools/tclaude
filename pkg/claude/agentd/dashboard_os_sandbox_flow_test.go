@@ -543,8 +543,12 @@ func TestDashboardSnapshot_ResourceOnlyReportsItsCgroupWithoutASnapshot(t *testi
 		"the cgroup request rides the implementation, not the snapshot")
 }
 
-// A launch with no budget and an ordinary implementation must report no cgroup,
-// so the tooltip stays silent rather than spending lines on an absent boundary.
+// A launch with no budget under an implementation that owns no boundary of its
+// own must report no cgroup, so the tooltip stays silent rather than spending
+// lines on an absent one. harness-builtin is that case: the wall belongs to the
+// harness, which gives tclaude nothing to hang per-agent counters on.
+// tclaude-layer is deliberately NOT this case any more — see
+// TestDashboardSnapshot_TclaudeLayerReportsItsOpportunisticCgroup.
 func TestDashboardSnapshot_NoResourceBudgetReportsNoCgroup(t *testing.T) {
 	const convID = "sbxg-1111-2222-3333-4444"
 
@@ -557,8 +561,9 @@ func TestDashboardSnapshot_NoResourceBudgetReportsNoCgroup(t *testing.T) {
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "spwn-sbxg", TmuxSession: "tmux-sbxg", ConvID: convID, Cwd: f.TestCwd("sbxg"),
 		Status: "running", Harness: "claude",
-		SandboxImplementation: "tclaude-layer", OSSandboxState: "on",
-		EffectiveSandbox: &snapshot,
+		SandboxImplementation: string(sandboxpolicy.ImplementationHarnessBuiltin),
+		OSSandboxState:        "on",
+		EffectiveSandbox:      &snapshot,
 	}), "stamp a launch with no resource budget at all")
 	f.HaveMember("plainbudget", convID)
 

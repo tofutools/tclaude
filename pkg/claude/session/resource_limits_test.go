@@ -37,20 +37,36 @@ func TestResourceCgroupFailureActionKeepsFreshLaunchesLoud(t *testing.T) {
 	ceiling := sandboxpolicy.ResourceLimits{Memory: "1GiB"}
 
 	assert.Equal(t, RefuseResourceCgroupFailure,
-		ResourceCgroupFailureAction(accounting, false, false),
+		ResourceCgroupFailureAction(accounting, sandboxpolicy.ImplementationResourceOnly, false, false),
 		"a fresh launch that asked for a boundary must be told the host cannot create one")
 	assert.Equal(t, DiscloseMissingResourceAccounting,
-		ResourceCgroupFailureAction(accounting, true, false),
+		ResourceCgroupFailureAction(accounting, sandboxpolicy.ImplementationResourceOnly, true, false),
 		"a continuation has no override, so refusing over counters would strand the agent")
 	assert.Equal(t, DiscloseMissingResourceAccounting,
-		ResourceCgroupFailureAction(accounting, false, true),
+		ResourceCgroupFailureAction(accounting, sandboxpolicy.ImplementationResourceOnly, false, true),
 		"with no ceiling the override has nothing to authorize; claiming it did would "+
 			"record the wrong reason and suppress the probe on every later launch")
 	assert.Equal(t, RefuseResourceCgroupFailure,
-		ResourceCgroupFailureAction(ceiling, true, false),
+		ResourceCgroupFailureAction(ceiling, sandboxpolicy.ImplementationTclaudeLayer, true, false),
 		"a ceiling fails closed on every path, resume included")
 	assert.Equal(t, DiscloseUnenforcedResourceOverride,
-		ResourceCgroupFailureAction(ceiling, true, true))
+		ResourceCgroupFailureAction(ceiling, sandboxpolicy.ImplementationTclaudeLayer, true, true))
+}
+
+func TestResourceCgroupFailureActionNeverRefusesAnOpportunisticBoundary(t *testing.T) {
+	accounting := sandboxpolicy.ResourceLimits{}
+	cpu := 1.5
+
+	assert.Equal(t, DiscloseMissingResourceAccounting,
+		ResourceCgroupFailureAction(accounting, sandboxpolicy.ImplementationTclaudeLayer, false, false),
+		"the confinement the operator chose the layer for is enforced either way, so a "+
+			"fresh launch has no posture decision a refusal could inform")
+	assert.Equal(t, DiscloseMissingResourceAccounting,
+		ResourceCgroupFailureAction(accounting, sandboxpolicy.ImplementationStacked, false, false))
+	assert.Equal(t, RefuseResourceCgroupFailure,
+		ResourceCgroupFailureAction(sandboxpolicy.ResourceLimits{CPU: &cpu},
+			sandboxpolicy.ImplementationTclaudeLayer, false, false),
+		"a ceiling under the same implementation still fails closed")
 }
 
 func TestLaunchIsSandboxContinuationCoversForksWithoutResume(t *testing.T) {

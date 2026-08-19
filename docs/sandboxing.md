@@ -42,7 +42,13 @@ same layer. The values:
   agentd-owned `opencode serve` executor; the attach pane stays outside.
   Requires `bwrap` and working unprivileged user namespaces on Linux; a missing
   capability refuses the launch — never a silent fallback — from whichever tier
-  selected the layer.
+  selected the layer. On Linux the layer also creates and joins a per-launch
+  cgroup even with no `resource_limits` authored: tclaude already owns and forks
+  this workload, so the same accounting `resource-only` gives (`memory.peak`,
+  `cpu.stat`, host-OOM attribution, one kill handle for the whole tree) comes
+  along. That boundary is a bonus, not the posture — a host with no delegated
+  cgroup gets a `resource_cgroup_unavailable` notice and the wall it asked for,
+  where `resource-only` refuses. An authored ceiling still fails closed.
 - **`stacked`** (experimental, Linux only, Claude Code and current-backend
   Codex) — both walls at once: tclaude's outer sandbox with the harness's real
   inner sandbox kept active (Claude Code forced `on` with
@@ -94,12 +100,12 @@ tclaude agent resume <agent>
 `tclaude agent sandbox-impl show|set` takes a positional selector (there is no
 self form and no `--target`), refuses while the agent is online, validates the
 assignment against the chain the *relaunch* will resolve, and probes cgroup
-creation for cgroup-needing implementations. It needs the `agent.sandbox-impl`
-permission, which group ownership deliberately does not confer and which is not
-granted by default. The dashboard equivalent is **🧩 sandbox implementation…**
-in the agent's row menu. A harness mode that was merely derived from the old
-implementation is not carried forward; the harness default is recorded instead
-unless `--sandbox` pins one.
+creation for implementations that cannot launch without one. It needs the
+`agent.sandbox-impl` permission, which group ownership deliberately does not
+confer and which is not granted by default. The dashboard equivalent is
+**🧩 sandbox implementation…** in the agent's row menu. A harness mode that was
+merely derived from the old implementation is not carried forward; the harness
+default is recorded instead unless `--sandbox` pins one.
 
 ## The harness's own mode: `--sandbox`
 
@@ -183,11 +189,12 @@ The axes:
 - **`resource_limits`** — `memory` → cgroup `memory.max`, `cpu` (cores ≥ 0.01)
   → `cpu.max` at a 100 ms period; Linux cgroup v2, whole workload tree,
   orthogonal to confinement, works with any non-`off` implementation. Both
-  blank means no cgroup probing at all, except under `resource-only`, which
-  always creates its cgroup. macOS, `off`, and hosts without delegated
-  controllers refuse by default; the dashboard's "allow launch without
-  enforcement" checkbox is the one operator escape hatch and records a visible
-  degradation notice.
+  blank means no cgroup probing at all, except under `resource-only` (which
+  always creates its cgroup) and under a Linux `tclaude-layer`/`stacked` launch
+  (which tries, and degrades to a notice if the host cannot). macOS, `off`, and
+  hosts without delegated controllers refuse an authored ceiling by default; the
+  dashboard's "allow launch without enforcement" checkbox is the one operator
+  escape hatch and records a visible degradation notice.
 - **`darwin_allow_mach_register`** — a Seatbelt `(allow mach-register)` opt-in
   for browser/XPC workloads on macOS.
 - **`pre_launch`** — named, ordered operator-authored shell fragments that run
@@ -870,8 +877,8 @@ that could not run.
 **The two places.** The probe is reached from `tclaude session new`: a child of
 `tclaude agentd` for a dashboard spawn, or of your shell for a CLI launch. The
 process that really execs `bwrap` is several hops away — tmux server → pane
-bootstrap shell → dir-proof guard shell → exit-gate shell → (with authored
-resource limits) `session resource-limit-exec` → `tclaude …
+bootstrap shell → dir-proof guard shell → exit-gate shell → (whenever the
+launch has a cgroup) `session resource-limit-exec` → `tclaude …
 tclaude-layer-winch-relay` → `bwrap` — and the tmux server inherits its
 confinement from whatever first auto-started it. Any per-process confinement
 that differs between the two (an AppArmor profile per binary, an SELinux
@@ -888,9 +895,9 @@ remove stops being reported as present); a failing one is never remembered, so
 installing the missing capability takes effect on the next launch.
 
 The hops are close, not identical. The launch also crosses the guard and gate
-shells and, when the profile authors resource limits, a per-session cgroup that
-a tmux job does not join — so a confinement expressed as **cgroup policy** is
-not reproduced by this probe. What it reproduces is the per-process confinement
+shells and, whenever the launch has one, a per-session cgroup that a tmux job
+does not join — so a confinement expressed as **cgroup policy** is not
+reproduced by this probe. What it reproduces is the per-process confinement
 inherited from the tmux server, which is the case observed.
 
 When no tmux server is running yet, the probe runs in-process. That is usually

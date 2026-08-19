@@ -2248,10 +2248,10 @@ func runNew(params *NewParams) error {
 			resourceCgroupCleanup()
 		}
 	}()
-	// resource-only requests the cgroup through the implementation alone, so this
-	// seam must not require a launch snapshot to find the request: a direct
-	// `tclaude session new --sandbox-impl resource-only` and a CLI resume both
-	// arrive with no snapshot at all.
+	// resource-only and tclaude-layer request the cgroup through the
+	// implementation alone, so this seam must not require a launch snapshot to
+	// find the request: a direct `tclaude session new --sandbox-impl
+	// resource-only` and a CLI resume both arrive with no snapshot at all.
 	var launchResourceLimits sandboxpolicy.ResourceLimits
 	var launchResourceNotices []sandboxpolicy.AccessNotice
 	if launchSandbox != nil {
@@ -2266,7 +2266,7 @@ func runNew(params *NewParams) error {
 			effectiveSandbox.Effective.AccessNotices = append(effectiveSandbox.Effective.AccessNotices, notice)
 		}
 	}
-	if sandboxpolicy.ResourceCgroupRequested(launchResourceLimits, sandboxImplementation) &&
+	if sandboxpolicy.ResourceCgroupRequested(launchResourceLimits, sandboxImplementation, runtime.GOOS) &&
 		!resourceLimitsAlreadyOverridden(launchResourceNotices) {
 		if err := sandboxpolicy.ValidateResourceLimitTarget(
 			launchResourceLimits, sandboxImplementation, runtime.GOOS,
@@ -2299,7 +2299,8 @@ func runNew(params *NewParams) error {
 			} else {
 				continuation := launchIsSandboxContinuation(params)
 				switch ResourceCgroupFailureAction(
-					launchResourceLimits, continuation, params.AllowUnenforcedSandbox) {
+					launchResourceLimits, sandboxImplementation,
+					continuation, params.AllowUnenforcedSandbox) {
 				case DiscloseMissingResourceAccounting:
 					slog.Warn("resource cgroup unavailable; launching without per-agent accounting",
 						"session_id", sessionID, "continuation", continuation, "error", resourceErr)

@@ -311,7 +311,11 @@ func preflightAssignedResourceCgroup(
 		}
 		limits = planned.Effective.ResourceLimits
 	}
-	if !sandboxpolicy.ResourceCgroupRequested(limits, normalized) {
+	// Only a boundary the relaunch would fail without. An implementation that
+	// merely asks for one opportunistically relaunches perfectly well on a host
+	// with no delegation — refusing the assignment there would deny the operator
+	// the confinement they came for over counters that are a bonus.
+	if !sandboxpolicy.ResourceCgroupRequired(limits, normalized) {
 		return nil
 	}
 	// A probe-only identity. The launch derives its cgroup name from the session
@@ -383,6 +387,6 @@ func writeSandboxImplementationResponse(w http.ResponseWriter, convID, previous 
 		TemporarySandbox: posture.TemporaryHarnessBuiltinMode,
 		Online:           isConvOnline(convID),
 		ResourceCgroup: normErr == nil &&
-			sandboxpolicy.ResourceCgroupRequested(limits, implementation),
+			resourceCgroupRequested(limits, implementation),
 	})
 }

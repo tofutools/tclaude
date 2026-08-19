@@ -39,7 +39,8 @@ const (
 	// covers every continuation of an existing agent — a resume, a reincarnation,
 	// a no-copy clone — none of which carries the dashboard's fresh-spawn
 	// override, so a refusal there would make an agent already recorded as
-	// resource-only permanently unlaunchable. A ceiling still fails closed.
+	// resource-only permanently unlaunchable. It also covers every launch whose
+	// cgroup was only opportunistic. A ceiling still fails closed.
 	DiscloseMissingResourceAccounting
 )
 
@@ -52,6 +53,7 @@ const (
 // distinction: a refusal is worth raising only where someone can act on it.
 func ResourceCgroupFailureAction(
 	limits sandboxpolicy.ResourceLimits,
+	implementation sandboxpolicy.Implementation,
 	continuation bool,
 	allowUnenforced bool,
 ) ResourceCgroupFailurePolicy {
@@ -60,7 +62,13 @@ func ResourceCgroupFailureAction(
 		// authorize here — and claiming it did would record the wrong reason AND
 		// make it sticky, since an override notice suppresses the probe on every
 		// later launch. Disclose the missing counters instead.
-		if continuation || allowUnenforced {
+		//
+		// A boundary that was never required — the one a tclaude-layer launch asks
+		// for opportunistically — takes the same disclosure unconditionally. Its
+		// confinement is enforced either way, so there is no posture an operator
+		// could be choosing here that a refusal would inform.
+		if continuation || allowUnenforced ||
+			!sandboxpolicy.ResourceCgroupRequired(limits, implementation) {
 			return DiscloseMissingResourceAccounting
 		}
 		return RefuseResourceCgroupFailure
