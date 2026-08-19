@@ -154,6 +154,10 @@ func resolveBwrapBinary(
 // syscalls, no child process). It deliberately does NOT run probeBwrap — that
 // exec is what makes the availability predicate too expensive for a polled
 // disclosure surface.
+//
+// It does not trust-walk the binary either, for the same reason it skips the
+// probe: this answers "installed", not "usable". An untrusted bwrap is refused
+// where it matters, at resolveBwrapServerBinary.
 func tclaudeLayerToolingPresence(interactive bool) error {
 	if _, err := lookPathBwrap("bwrap"); err != nil {
 		return fmt.Errorf("tclaude-layer requires bubblewrap (`bwrap`) on PATH: %w", err)
@@ -173,6 +177,17 @@ func resolveBwrapServerBinary(
 	binary, err := lookPathBwrap("bwrap")
 	if err != nil {
 		return "", fmt.Errorf("tclaude-layer requires bubblewrap (`bwrap`) on PATH: %w", err)
+	}
+	// bwrap builds the sandbox every other trusted executable runs inside, so it
+	// gets the same trust walk as the filtered-network helpers — and the probe
+	// below then runs the resolved path, not the symlink chain that named it.
+	binary, err = resolveTrustedExecutablePath("bwrap", binary)
+	if err != nil {
+		// "could not resolve a trusted", not "is not trusted": this also covers
+		// the binary vanishing between the PATH lookup and the walk, which is a
+		// missing bwrap rather than an untrusted one.
+		return "", fmt.Errorf(
+			"tclaude-layer could not resolve a trusted bubblewrap (`bwrap`): %w", err)
 	}
 	if err := probeBwrap(binary, posture, root); err != nil {
 		requiredNamespaces := "mount namespace and read-only remount support"

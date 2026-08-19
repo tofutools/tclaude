@@ -6,24 +6,19 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 var (
-	filteredNetworkLookPath           = exec.LookPath
-	filteredNetworkEvalSymlinks       = filepath.EvalSymlinks
-	validateFilteredNetworkExecutable = validateRootOwnedExecutable
-	inspectFilteredNetworkPasta       = inspectPastaCapabilities
-	filteredNetworkPastaCommand       = exec.CommandContext
-	filteredNetworkPastaProbeTimeout  = 5 * time.Second
-	filteredNetworkPastaHelpLimit     = 64 << 10
+	filteredNetworkLookPath          = exec.LookPath
+	inspectFilteredNetworkPasta      = inspectPastaCapabilities
+	filteredNetworkPastaCommand      = exec.CommandContext
+	filteredNetworkPastaProbeTimeout = 5 * time.Second
+	filteredNetworkPastaHelpLimit    = 64 << 10
 )
 
 type filteredNetworkExecutables struct {
@@ -77,18 +72,7 @@ func resolveFilteredNetworkExecutable(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	path, err = filteredNetworkEvalSymlinks(path)
-	if err != nil {
-		return "", fmt.Errorf("resolve %s executable: %w", name, err)
-	}
-	path = filepath.Clean(path)
-	if !filepath.IsAbs(path) {
-		return "", fmt.Errorf("%s resolved to non-absolute path %q", name, path)
-	}
-	if err := validateFilteredNetworkExecutable(path); err != nil {
-		return "", fmt.Errorf("%s executable %q is not trusted: %w", name, path, err)
-	}
-	return path, nil
+	return resolveTrustedExecutablePath(name, path)
 }
 
 func inspectPastaCapabilities(path string) error {
@@ -159,33 +143,6 @@ func validatePastaCapabilities(help string) error {
 	return nil
 }
 
-func validateRootOwnedExecutable(path string) error {
-	for current := path; ; current = filepath.Dir(current) {
-		info, err := os.Lstat(current)
-		if err != nil {
-			return err
-		}
-		stat, ok := info.Sys().(*syscall.Stat_t)
-		if !ok || stat.Uid != 0 {
-			return fmt.Errorf("path component %q is not root-owned", current)
-		}
-		if info.Mode().Perm()&0o022 != 0 {
-			return fmt.Errorf("path component %q is group/world writable", current)
-		}
-		if current == path {
-			if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
-				return fmt.Errorf("path is not a regular executable")
-			}
-		} else if !info.IsDir() {
-			return fmt.Errorf("parent %q is not a directory", current)
-		}
-		if current == string(filepath.Separator) {
-			break
-		}
-	}
-	return nil
-}
-
 func probeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 	if _, err := resolveBwrapServerBinary(
 		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed); err != nil {
@@ -195,7 +152,7 @@ func probeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 	}
 	return FilteredNetworkPrerequisite{
 		Detected: true,
-		Detail: "bubblewrap user/network namespace execution passed; trusted root-owned pasta, nft, and nsenter executables " +
+		Detail: "bubblewrap user/network namespace execution passed; trusted pasta, nft, and nsenter executables " +
 			"were found; the base nft policy is installed from the supervisor via nsenter, and end-to-end gateway readiness is decided at the gated launch boundary",
 	}
 }

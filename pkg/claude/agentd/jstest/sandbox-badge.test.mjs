@@ -196,11 +196,11 @@ const CASES = [
       sandbox_access_notices: [{
         class: 'degradation', axis: 'network', reason: 'filtered_prerequisite_probe',
         effect: 'launch_gated',
-        detail: 'filtered-network prerequisite probe: detected (bubblewrap user/network namespace execution passed; trusted root-owned pasta and nft executables were found; end-to-end gateway readiness is decided at the gated launch boundary); launch remains gated on atomic nft policy installation before the supervised pasta route becomes available',
+        detail: 'filtered-network prerequisite probe: detected (bubblewrap user/network namespace execution passed; trusted pasta, nft, and nsenter executables were found; end-to-end gateway readiness is decided at the gated launch boundary); launch remains gated on atomic nft policy installation before the supervised pasta route becomes available',
       }],
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nWarning: filtered-network prerequisite probe: detected (bubblewrap user/network namespace execution passed; trusted root-owned pasta and nft executables were found; end-to-end gateway readiness is decided at the gated launch boundary); launch remains gated on atomic nft policy installation before the supervised pasta route becomes available\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nWarning: filtered-network prerequisite probe: detected (bubblewrap user/network namespace execution passed; trusted pasta, nft, and nsenter executables were found; end-to-end gateway readiness is decided at the gated launch boundary); launch remains gated on atomic nft policy installation before the supervised pasta route becomes available\nClick to temporarily disable',
   },
   {
     name: 'an authored cgroup budget rides the badge as its own axis',

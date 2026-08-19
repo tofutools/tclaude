@@ -51,39 +51,6 @@ smoke::packet_floor_prereq_failed() {
   return 1
 }
 
-# smoke::packet_floor_trust_ancestry asserts the ancestry the production
-# executable trust walk requires, repairing it where a runner image ships it
-# wrong (TCL-858). A non-root-owned ancestor makes every trusted-executable
-# resolution fail, which surfaces far from its cause.
-#
-# The repair runs only under CI=true; see the comment at the branch.
-smoke::packet_floor_trust_ancestry() {
-  local component owner_uid chown_status repaired_uid
-  for component in / /usr /usr/lib; do
-    owner_uid="$(stat -L -c '%u' "$component")" || return 1
-    [[ "$owner_uid" == "0" ]] && continue
-    # The REPAIR is CI-only, deliberately. run.sh has a local escape hatch, and
-    # a developer who takes it must not have `sudo chown root /` run on their
-    # workstation because a runner image once shipped a wrong owner. Outside CI
-    # the mismatch is reported and the flow stops.
-    if [[ "${CI:-}" != "true" ]]; then
-      smoke::packet_floor_prereq_failed \
-        "path component $component is not root-owned (uid $owner_uid); the automatic repair is CI-only, so fix the ownership yourself or run this in CI"
-      return 1
-    fi
-    printf '::warning title=Untrusted runner image::TCL-858 trust-walk prerequisite detected: path component "%s" is not root-owned (uid %s); attempting non-recursive sudo chown root\n' \
-      "$component" "$owner_uid"
-    chown_status=0
-    sudo chown root "$component" || chown_status=$?
-    repaired_uid="$(stat -L -c '%u' "$component")" || repaired_uid=unknown
-    if [[ "$chown_status" != "0" || "$repaired_uid" != "0" ]]; then
-      smoke::packet_floor_prereq_failed \
-        "path component $component remains non-root-owned (uid $repaired_uid) after non-recursive repair (sudo exit $chown_status)"
-      return 1
-    fi
-  done
-}
-
 # smoke::packet_floor_install provisions the floor's prerequisites and puts the
 # trusted pasta first on PATH for this process and everything it launches.
 #
@@ -92,8 +59,6 @@ smoke::packet_floor_install() {
   local tmp="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
   local source_dir="$tmp/passt"
   local bin_dir="$SMOKE_PACKET_FLOOR_PREFIX/bin"
-
-  smoke::packet_floor_trust_ancestry || return 1
 
   if [[ ! -x "$bin_dir/pasta" ]]; then
     smoke::log "Installing packet-floor prerequisites (nftables, passt $SMOKE_PASST_TAG)"

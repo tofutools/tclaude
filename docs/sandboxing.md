@@ -42,7 +42,8 @@ same layer. The values:
   agentd-owned `opencode serve` executor; the attach pane stays outside.
   Requires `bwrap` and working unprivileged user namespaces on Linux; a missing
   capability refuses the launch — never a silent fallback — from whichever tier
-  selected the layer. On Linux the layer also creates and joins a per-launch
+  selected the layer. The `bwrap` found on `PATH` must also pass the trust walk
+  described under [An untrusted `bwrap`](#an-untrusted-bwrap). On Linux the layer also creates and joins a per-launch
   cgroup even with no `resource_limits` authored: tclaude already owns and forks
   this workload, so the same accounting `resource-only` gives (`memory.peak`,
   `cpu.stat`, host-OOM attribution, one kill handle for the whole tree) comes
@@ -869,6 +870,35 @@ are guesses made from what an unprivileged daemon can read, not determinations:
 agentd cannot read `dmesg` or `aa-status`. The supported posture for these hosts
 is still open; what stands today is that stacked fails closed and says so.
 
+### An untrusted `bwrap`
+
+**Symptom.** Every `tclaude-layer` launch refuses with `tclaude-layer could not
+resolve a trusted bubblewrap (bwrap)`, naming a path component and one of
+*group/world writable*, *not a regular executable*, or *is not a directory*.
+`bwrap` itself runs fine from a shell.
+
+**Cause.** tclaude resolves `bwrap` from `PATH`, follows it to its real path,
+and walks that path and every parent directory up to `/`. A launch is only as
+trustworthy as the binary that builds its sandbox, so a `bwrap` anyone can
+replace is refused rather than exec'd. The same walk applies to the
+filtered-network helpers (`pasta`, `nft`, `nsenter`) — see
+[network filtering](network-filtering.md).
+
+The walk requires that no component is group- or world-writable, that the
+target is a regular file with an execute bit, and that every parent is a
+directory. **Ownership is not checked**, so a `bwrap` you built and installed
+under your own prefix is fine; a world-writable directory anywhere above it is
+not.
+
+**Fix.** Tighten the offending component (`chmod go-w`), or install `bwrap`
+somewhere that already satisfies the walk. The refusal names the exact
+component, so there is no guessing.
+
+**Not the cause.** This is unrelated to unprivileged user namespaces: the walk
+runs before the capability probe, so a trust refusal means the probe never
+ran. A namespace failure reads *cannot create the bubblewrap … namespace*
+instead.
+
 ### Where the tclaude-layer capability probe runs
 
 `tclaude-layer` refuses rather than falling back, and that promise is only as
@@ -940,6 +970,7 @@ cause, not a restored pre-flight contract.
 | `git add -A`: "can only add regular files" | Claude Code masks a denied path with a `/dev/null` device node — stage specific paths |
 | Launch refused, `…reopen_under_deny` | Claude Code not sandbox `on`, or Codex not Linux managed-profile with a verified probe |
 | `stacked` refused on Ubuntu 24.04+ | The `bwrap-userns-restrict` AppArmor policy denies nested bubblewrap |
+| `could not resolve a trusted bubblewrap (bwrap)` | A group/world-writable component above `bwrap` — see [an untrusted `bwrap`](#an-untrusted-bwrap) |
 | Pane dies instantly, `refused: the host denied this process permission to execute bubblewrap` | The tmux server's confinement forbids the exec — see [where the probe runs](#where-the-tclaude-layer-capability-probe-runs) |
 | Profile looks strict, nothing is denied | Claude Code sandbox `inherit`/`off` — the deny rows are emitted but the sandbox never engages |
 | Agent read a denied path with the `Read` tool | Expected under `deny ~` — that shape reaches layer 1 only |

@@ -333,7 +333,8 @@ func awaitTclaudeLayerProbeResult(path string, deadline time.Time) (string, erro
 // TCL-1204 observed; the relay refusal remains the backstop for the rest.
 //
 // Every word is a compile-time constant, a path this process just created, or
-// a value the caller resolved from PATH — never operator text. Each is
+// a path the caller resolved from PATH and trust-walked — never operator text.
+// Each is
 // shell-quoted regardless, because the string does reach a shell.
 //
 // TWO layers read this string, and shell quoting only answers to one of them:

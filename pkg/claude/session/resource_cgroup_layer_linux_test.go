@@ -21,6 +21,7 @@ import (
 // not carry. A CI runner has neither.
 func stubTclaudeLayerTooling(t *testing.T) {
 	t.Helper()
+	stubTrustedExecutableWalk(t)
 	oldLookPath, oldProbe := lookPathBwrap, probeBwrap
 	t.Cleanup(func() { lookPathBwrap, probeBwrap = oldLookPath, oldProbe })
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
