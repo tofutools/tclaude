@@ -13,9 +13,12 @@ import (
 )
 
 // stubTclaudeLayerTooling makes the outer wall resolvable without depending on
-// the test host's unprivileged user namespaces. What these tests are about is
-// the cgroup the layer now also asks for, so the bubblewrap capability probe is
-// exactly the environmental dependency they must not carry.
+// what the test host happens to have installed. What these tests are about is
+// the cgroup the layer now also asks for, so the two things a tclaude-layer
+// launch needs before it can get that far — working unprivileged user
+// namespaces, and a harness entry point frozen before the launch enters its
+// filesystem namespace — are exactly the environmental dependencies they must
+// not carry. A CI runner has neither.
 func stubTclaudeLayerTooling(t *testing.T) {
 	t.Helper()
 	oldLookPath, oldProbe := lookPathBwrap, probeBwrap
@@ -24,6 +27,13 @@ func stubTclaudeLayerTooling(t *testing.T) {
 	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error {
 		return nil
 	}
+	// ResolveClaudeLaunchExecutable is a PATH lookup plus a regular-and-executable
+	// check, so a stub file satisfies it the same way stubTmuxOnPath satisfies
+	// the tmux lookup. Nothing here executes it.
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(dir, "claude"), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
 // The pane seam is where a tclaude-layer launch gets its boundary, and the
