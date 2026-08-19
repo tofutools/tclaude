@@ -6874,7 +6874,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		if err != nil && resourceCgroupDir != "" &&
 			errors.Is(err, errOpenCodeResourceCgroup) &&
 			degradeManagedServerResourceCgroup(
-				p.EffectiveSandbox, p.SandboxImplementation, p.AllowUnenforcedSandbox, err) {
+				p.EffectiveSandbox, p.SandboxImplementation, p.AllowUnenforcedSandbox, false, err) {
 			resourceCleanup()
 			resourceCgroupDir = ""
 			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(
@@ -9959,7 +9959,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		if err != nil && resourceCgroupDir != "" &&
 			errors.Is(err, errOpenCodeResourceCgroup) &&
 			degradeManagedServerResourceCgroup(
-				a.EffectiveSandbox, a.SandboxImplementation, a.AllowUnenforcedSandbox, err) {
+				a.EffectiveSandbox, a.SandboxImplementation, a.AllowUnenforcedSandbox, true, err) {
 			resourceCleanup()
 			resourceCgroupDir = ""
 			openCodeLaunch, err = startOpenCodeRuntimeForSpawn(

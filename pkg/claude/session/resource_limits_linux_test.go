@@ -181,7 +181,8 @@ func TestWrapResourceLimitedCommandRendersIndependentAxes(t *testing.T) {
 	current := fakeCurrentResourceCgroup(t, "cpu memory io", "")
 	cpu := 0.5
 	wrapped, cleanup, err := wrapResourceLimitedCommand(
-		"session-one", sandboxpolicy.ResourceLimits{Memory: "1.5GiB", CPU: &cpu}, "exec harness", true,
+		"session-one", sandboxpolicy.ResourceLimits{Memory: "1.5GiB", CPU: &cpu},
+		sandboxpolicy.ImplementationTclaudeLayer, "exec harness", true,
 	)
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
@@ -225,7 +226,8 @@ func TestWrapResourceLimitedCommandRendersIndependentAxes(t *testing.T) {
 func TestWrapResourceLimitedCommandRequiresOnlyConfiguredController(t *testing.T) {
 	current := fakeCurrentResourceCgroup(t, "memory", "memory")
 	wrapped, cleanup, err := wrapResourceLimitedCommand(
-		"memory-only", sandboxpolicy.ResourceLimits{Memory: "512MB"}, "harness", false,
+		"memory-only", sandboxpolicy.ResourceLimits{Memory: "512MB"},
+		sandboxpolicy.ImplementationTclaudeLayer, "harness", false,
 	)
 	require.NoError(t, err)
 	t.Cleanup(cleanup)
@@ -287,7 +289,8 @@ func TestWrapResourceLimitedCommandFailsWhenControllerIsNotDelegated(t *testing.
 	fakeCurrentResourceCgroup(t, "memory", "")
 	cpu := 1.0
 	_, _, err := wrapResourceLimitedCommand(
-		"cpu-missing", sandboxpolicy.ResourceLimits{CPU: &cpu}, "harness", false,
+		"cpu-missing", sandboxpolicy.ResourceLimits{CPU: &cpu},
+		sandboxpolicy.ImplementationTclaudeLayer, "harness", false,
 	)
 	assert.ErrorContains(t, err, "Delegate=cpu memory")
 }
@@ -516,7 +519,7 @@ func TestResourceLimitExecDoesNotAttributeASurvivedOOMToACleanExit(t *testing.T)
 	// accord — exactly the shape that used to be reported as an OOM death.
 	require.NoError(t, runResourceLimitExec(
 		dir, "session-oom-survivor",
-		"printf 'oom_kill 1\\n' > '"+events+"'; exit 0", false, false, false,
+		"printf 'oom_kill 1\\n' > '"+events+"'; exit 0", false, false, false, false,
 	))
 	assert.False(t, recorded,
 		"a workload that exited cleanly must not be recorded as killed by its ceiling")
@@ -554,7 +557,7 @@ func TestResourceLimitExecRecordsAKillRelayedByTheWrapperShell(t *testing.T) {
 	require.NoError(t, runResourceLimitExec(
 		dir, "session-oom-victim",
 		"printf 'oom_kill 1\\n' > '"+events+"'; /bin/sleep 30 & victim=$!; kill -KILL $victim; wait $victim",
-		false, false, false,
+		false, false, false, false,
 	))
 	assert.Equal(t, "session-oom-victim", recordedFor,
 		"a ceiling that actually killed the workload has to reach the session's exit reason")
@@ -657,7 +660,7 @@ func TestResourceLimitExecOperatorOverrideFallsBackAfterAttachFailure(t *testing
 	t.Cleanup(func() { recordResourceLimitRuntimeOverrideForExec = oldRecord })
 
 	require.NoError(t, runResourceLimitExec(
-		dir, "session-runtime-failure", "exit 0", true, false, false,
+		dir, "session-runtime-failure", "exit 0", true, false, false, false,
 	))
 	assert.True(t, recorded)
 }
@@ -670,7 +673,7 @@ func TestResourceLimitExecFailsClosedAfterAttachFailure(t *testing.T) {
 	require.NoError(t, os.Mkdir(dir, 0o755))
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "cgroup.procs"), 0o755))
 
-	err := runResourceLimitExec(dir, "session-runtime-failure", "exit 0", false, false, false)
+	err := runResourceLimitExec(dir, "session-runtime-failure", "exit 0", false, false, false, false)
 	assert.ErrorContains(t, err, "attach workload")
 }
 
@@ -687,7 +690,7 @@ func TestResourceLimitExecFailsClosedWhenOverrideDisclosureCannotPersist(t *test
 	}
 	t.Cleanup(func() { recordResourceLimitRuntimeOverrideForExec = oldRecord })
 
-	err := runResourceLimitExec(dir, "session-runtime-failure", "exit 0", true, false, false)
+	err := runResourceLimitExec(dir, "session-runtime-failure", "exit 0", true, false, false, false)
 	assert.ErrorContains(t, err, "required resource-limit override disclosure")
 }
 
@@ -935,7 +938,7 @@ func TestResourceLimitExecReapsSurvivingDescendantsBeforeRemovingTheBoundary(t *
 		return nil
 	})
 
-	require.NoError(t, runResourceLimitExec(dir, "session-stray-descendant", "exit 0", false, false, false))
+	require.NoError(t, runResourceLimitExec(dir, "session-stray-descendant", "exit 0", false, false, false, false))
 	assert.True(t, *killed, "pane exit must reap what outlived the workload")
 	assert.NoDirExists(t, dir, "the emptied boundary is removed with the pane")
 }
@@ -958,7 +961,7 @@ func TestResourceLimitExecPreservedBoundaryReapsMembersButLeavesDirectory(t *tes
 	})
 
 	require.NoError(t, runResourceLimitExec(
-		dir, "session-managed-retry", "exit 0", false, false, true))
+		dir, "session-managed-retry", "exit 0", false, false, true, false))
 	assert.True(t, *killed, "a failed managed-server attempt must reap its workload")
 	assert.DirExists(t, dir, "agentd's durable boundary must remain for the next attempt")
 	require.NoError(t, RemoveResourceCgroup(dir))
@@ -977,7 +980,7 @@ func TestResourceLimitExecSharedBoundaryLeavesTheServerAndItsDirAlone(t *testing
 		[]byte("populated 1\nfrozen 0\n"), 0o644))
 	killed := fakeResourceCgroupKill(t, func(string) error { return nil })
 
-	require.NoError(t, runResourceLimitExec(dir, "session-shared", "exit 0", false, true, false))
+	require.NoError(t, runResourceLimitExec(dir, "session-shared", "exit 0", false, true, false, false))
 	assert.False(t, *killed, "an attach client's exit must not kill the server sharing its boundary")
 	assert.DirExists(t, dir, "the server's boundary must survive the attach client")
 }
@@ -988,6 +991,10 @@ func TestWrapPreparedResourceCgroupCommandMarksManagedBoundaryShared(t *testing.
 		"agentd owns a managed server boundary across launch retries")
 	assert.NotContains(t, managed, "--shared-boundary",
 		"the managed server wrapper still owns and reaps its workload")
-	shared := wrapPreparedResourceCgroupCommand("s", "/sys/fs/cgroup/x/tclaude-a", "cmd", false, true, false)
+	assert.NotContains(t, managed, "--optional-boundary",
+		"an external-runtime managed boundary is proved reachable before it is used")
+	shared := wrapPreparedResourceCgroupCommand("s", "/sys/fs/cgroup/x/tclaude-a", "cmd", false, true, false, false)
 	assert.Contains(t, shared, "--shared-boundary")
+	optional := wrapPreparedResourceCgroupCommand("s", "/sys/fs/cgroup/x/tclaude-a", "cmd", false, false, false, true)
+	assert.Contains(t, optional, "--optional-boundary")
 }

@@ -111,6 +111,13 @@ func recordResourceLimitRuntimeOverride(sessionID string, cause error) error {
 
 var recordResourceLimitRuntimeOverrideForExec = recordResourceLimitRuntimeOverride
 
+// recordResourceCgroupUnavailableForExec is the pane wrapper's half of the
+// disclosure the launch seams make when a boundary nothing depended on could
+// not be had. A variable so a test can drive the wrapper without a database.
+var recordResourceCgroupUnavailableForExec = func(sessionID string, cause error) error {
+	return db.AppendSessionSandboxAccessNotice(sessionID, ResourceCgroupUnavailableNotice(cause))
+}
+
 const ResourceLimitOOMExitReason = "resource_limit_oom"
 
 // resourceLimitKilledExitCode is the status a shell reports for a command its

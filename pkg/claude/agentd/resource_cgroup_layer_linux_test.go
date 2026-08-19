@@ -87,7 +87,7 @@ func TestDegradeManagedServerResourceCgroupSeparatesBonusFromCeiling(t *testing.
 
 	opportunistic := &sandboxpolicy.Snapshot{}
 	assert.True(t, degradeManagedServerResourceCgroup(opportunistic,
-		string(sandboxpolicy.ImplementationTclaudeLayer), false, cause))
+		string(sandboxpolicy.ImplementationTclaudeLayer), false, false, cause))
 	require.Len(t, opportunistic.Effective.AccessNotices, 1)
 	assert.Equal(t, sandboxpolicy.AccessNoticeReasonResourceCgroupUnavailable,
 		opportunistic.Effective.AccessNotices[0].Reason,
@@ -98,19 +98,53 @@ func TestDegradeManagedServerResourceCgroupSeparatesBonusFromCeiling(t *testing.
 		ResourceLimits: sandboxpolicy.ResourceLimits{Memory: "512MB"},
 	}}
 	assert.False(t, degradeManagedServerResourceCgroup(capped,
-		string(sandboxpolicy.ImplementationTclaudeLayer), false, cause),
+		string(sandboxpolicy.ImplementationTclaudeLayer), false, false, cause),
 		"a ceiling the server would run without must fail the launch")
 	assert.Empty(t, capped.Effective.AccessNotices)
 
 	assert.True(t, degradeManagedServerResourceCgroup(capped,
-		string(sandboxpolicy.ImplementationTclaudeLayer), true, cause),
+		string(sandboxpolicy.ImplementationTclaudeLayer), true, false, cause),
 		"the dashboard override is what authorizes running a ceiling unenforced")
 	require.Len(t, capped.Effective.AccessNotices, 1)
 	assert.Equal(t, sandboxpolicy.AccessNoticeReasonOperatorUnenforcedLaunchOverride,
 		capped.Effective.AccessNotices[0].Reason)
 
 	assert.False(t, degradeManagedServerResourceCgroup(&sandboxpolicy.Snapshot{},
-		"not-an-implementation", false, cause),
+		"not-an-implementation", false, false, cause),
 		"an implementation this daemon cannot parse never reached a launch that asked "+
 			"for a boundary, so nothing here excuses the failure")
+}
+
+// The placement seam has to answer what the preparation seam one function above
+// answers, for the same launch — a limitless `resource-only` server included,
+// which is the case where the two used to disagree.
+func TestDegradeManagedServerResourceCgroupMatchesThePreparationPolicy(t *testing.T) {
+	cause := errors.New("clone3 refused the cgroup fd")
+
+	// A fresh limitless resource-only spawn fails closed here exactly as
+	// PrepareResourceCgroup's failure does: the operator is choosing the posture
+	// right now and can act on the refusal.
+	assert.False(t, degradeManagedServerResourceCgroup(&sandboxpolicy.Snapshot{},
+		string(sandboxpolicy.ImplementationResourceOnly), false, false, cause))
+
+	// Its resume does not, because a resume has no override to rescue it and a
+	// refusal would strand an agent already recorded as resource-only.
+	resumed := &sandboxpolicy.Snapshot{}
+	assert.True(t, degradeManagedServerResourceCgroup(resumed,
+		string(sandboxpolicy.ImplementationResourceOnly), false, true, cause),
+		"refusing a relaunch over counters would leave the agent unwakeable")
+	require.Len(t, resumed.Effective.AccessNotices, 1)
+	assert.Equal(t, sandboxpolicy.AccessNoticeReasonResourceCgroupUnavailable,
+		resumed.Effective.AccessNotices[0].Reason)
+
+	// And where no ceiling exists the override has nothing to authorize, so
+	// ticking the dashboard box must not buy the sticky notice that would
+	// suppress this conversation's boundary from here on.
+	authorized := &sandboxpolicy.Snapshot{}
+	assert.True(t, degradeManagedServerResourceCgroup(authorized,
+		string(sandboxpolicy.ImplementationResourceOnly), true, false, cause))
+	require.Len(t, authorized.Effective.AccessNotices, 1)
+	assert.Equal(t, sandboxpolicy.AccessNoticeReasonResourceCgroupUnavailable,
+		authorized.Effective.AccessNotices[0].Reason,
+		"an override notice here would retire the accounting on every later launch")
 }

@@ -326,8 +326,8 @@ func awaitTclaudeLayerProbeResult(path string, deadline time.Time) (string, erro
 //
 // The hops still are not identical, and the difference is worth naming: the
 // real launch also passes through the dir-proof guard and exit-gate shells and,
-// when the profile authors resource limits, `session resource-limit-exec`,
-// which puts the process in a per-session cgroup. A confinement expressed as a
+// whenever the launch has a cgroup at all, `session resource-limit-exec`, which
+// puts the process in that per-session cgroup. A confinement expressed as a
 // cgroup policy is therefore NOT reproduced here. What this probe reproduces is
 // the per-process confinement inherited from the tmux server, which is what
 // TCL-1204 observed; the relay refusal remains the backstop for the rest.

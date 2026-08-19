@@ -192,9 +192,11 @@ The axes:
   blank means no cgroup probing at all, except under `resource-only` (which
   always creates its cgroup) and under a Linux `tclaude-layer`/`stacked` launch
   (which tries, and degrades to a notice if the host cannot). macOS, `off`, and
-  hosts without delegated controllers refuse an authored ceiling by default; the
-  dashboard's "allow launch without enforcement" checkbox is the one operator
-  escape hatch and records a visible degradation notice.
+  hosts without delegated controllers refuse by default every cgroup a launch
+  cannot proceed without — an authored ceiling under any implementation, and
+  `resource-only` even with no ceiling; the dashboard's "allow launch without
+  enforcement" checkbox is the one operator escape hatch and records a visible
+  degradation notice. Only the opportunistic layer boundary degrades instead.
 - **`darwin_allow_mach_register`** — a Seatbelt `(allow mach-register)` opt-in
   for browser/XPC workloads on macOS.
 - **`pre_launch`** — named, ordered operator-authored shell fragments that run

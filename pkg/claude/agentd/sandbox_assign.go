@@ -352,6 +352,11 @@ type sandboxImplementationAssignmentWire struct {
 	// cgroup at all, so a reader can tell an assignment that bought a boundary
 	// from one that only changed confinement.
 	ResourceCgroup bool `json:"resource_cgroup"`
+	// ResourceCgroupRequired separates a boundary the relaunch cannot proceed
+	// without — the one preflightAssignedResourceCgroup just proved this host
+	// can create — from one the launch merely attempts and discloses when it
+	// cannot. Only the first is a promise a reader may repeat.
+	ResourceCgroupRequired bool `json:"resource_cgroup_required,omitempty"`
 }
 
 // writeSandboxImplementationResponse renders the posture a relaunch would use.
@@ -388,5 +393,7 @@ func writeSandboxImplementationResponse(w http.ResponseWriter, convID, previous 
 		Online:           isConvOnline(convID),
 		ResourceCgroup: normErr == nil &&
 			resourceCgroupRequested(limits, implementation),
+		ResourceCgroupRequired: normErr == nil &&
+			sandboxpolicy.ResourceCgroupRequired(limits, implementation),
 	})
 }

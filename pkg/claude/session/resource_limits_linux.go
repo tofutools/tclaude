@@ -194,6 +194,20 @@ func resourceDelegationDeniedHint(delegation string) string {
 		root, os.Geteuid(), resourceSupervisorCgroup)
 }
 
+// validatePreparedResourceCgroupDir checks that the path the wrapper was handed
+// is still the real directory a launch prepared, immediately before the
+// workload is committed to it.
+func validatePreparedResourceCgroupDir(dir string) error {
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return fmt.Errorf("resource-limit-exec cgroup is invalid: %w", err)
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return errors.New("resource-limit-exec cgroup is not a real directory")
+	}
+	return nil
+}
+
 // resourceCgroupKillWait bounds how long a reclaim waits for the kernel to
 // finish killing a cgroup's members; resourceCgroupKillPoll is how often the
 // populated state is re-read while waiting. Both are variables so tests can
@@ -291,6 +305,7 @@ func RemoveResourceCgroup(dir string) error {
 func wrapResourceLimitedCommand(
 	sessionID string,
 	limits sandboxpolicy.ResourceLimits,
+	implementation sandboxpolicy.Implementation,
 	command string,
 	allowUnenforced bool,
 ) (string, func(), error) {
@@ -298,7 +313,8 @@ func wrapResourceLimitedCommand(
 	if err != nil {
 		return "", func() {}, err
 	}
-	return wrapPreparedResourceCgroupCommand(sessionID, dir, command, allowUnenforced, false, false), cleanup, nil
+	return wrapPreparedResourceCgroupCommand(sessionID, dir, command, allowUnenforced, false, false,
+		!sandboxpolicy.ResourceCgroupRequired(limits, implementation)), cleanup, nil
 }
 
 // PrepareResourceCgroup creates and configures the shared workload boundary.
@@ -451,7 +467,16 @@ func PrepareResourceCgroup(sessionID string, limits sandboxpolicy.ResourceLimits
 // server owns and lives in: an attach pane. A shared wrapper must never reap
 // or remove the boundary at exit — its child's death says nothing about the
 // server's life, and reaping there kills the server through the shared cgroup.
-func wrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnenforced, shared, preserve bool) string {
+//
+// optional marks a boundary the launch wanted only for its counters, which is
+// what a tclaude-layer launch with no ceiling authored asks for. The wrapper
+// runs before the workload and can still fail to join a cgroup that was created
+// perfectly well — the delegated node the pane's tmux server lives in is not
+// necessarily an ancestor of the target, and cgroup v2 refuses a move across
+// that boundary. Killing the workload there would cost the operator the
+// confinement the launch is actually for, so an optional boundary releases the
+// workload with a disclosure instead.
+func wrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnenforced, shared, preserve, optional bool) string {
 	wrapper := clcommon.DetectAbsoluteCmd("session", "resource-limit-exec") +
 		" --cgroup-dir " + clcommon.ShellQuoteArg(dir) +
 		" --session-id " + clcommon.ShellQuoteArg(sessionID) +
@@ -465,6 +490,9 @@ func wrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnen
 	if preserve {
 		wrapper += " --preserve-boundary"
 	}
+	if optional {
+		wrapper += " --optional-boundary"
+	}
 	return wrapper
 }
 
@@ -474,8 +502,15 @@ func wrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnen
 // rather than by agentd itself. The wrapper must leave the boundary in place:
 // agentd can retry the server launch in that same boundary, and owns reaping
 // its members during managed-server teardown.
+//
+// The boundary is never optional here, whatever asked for it. This path exists
+// only under an explicitly configured --resource-delegation-dir, where
+// ValidateExternalTmuxServerCgroup has already proved the tmux server forking
+// this command lives inside that same delegated root — so the move the wrapper
+// performs is satisfied by construction, and a failure is a real defect in the
+// operator's delegation rather than the ordinary shape a degradation covers.
 func WrapPreparedResourceCgroupCommand(sessionID, dir, command string, allowUnenforced bool) string {
-	return wrapPreparedResourceCgroupCommand(sessionID, dir, command, allowUnenforced, false, true)
+	return wrapPreparedResourceCgroupCommand(sessionID, dir, command, allowUnenforced, false, true, false)
 }
 
 // ConfigureProcessResourceCgroup asks clone3 to place cmd in the prepared
@@ -544,13 +579,14 @@ func containsString(values []string, wanted string) bool {
 
 func resourceLimitExecCmd() *cobra.Command {
 	var cgroupDir, command, sessionID string
-	var allowUnenforced, sharedBoundary, preserveBoundary bool
+	var allowUnenforced, sharedBoundary, preserveBoundary, optionalBoundary bool
 	cmd := &cobra.Command{
 		Use:    "resource-limit-exec",
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runResourceLimitExec(cgroupDir, sessionID, command, allowUnenforced, sharedBoundary, preserveBoundary)
+			return runResourceLimitExec(cgroupDir, sessionID, command,
+				allowUnenforced, sharedBoundary, preserveBoundary, optionalBoundary)
 		},
 	}
 	cmd.Flags().StringVar(&cgroupDir, "cgroup-dir", "", "prepared cgroup directory")
@@ -559,24 +595,47 @@ func resourceLimitExecCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&allowUnenforced, "allow-unenforced", false, "operator authorized fallback without enforcement")
 	cmd.Flags().BoolVar(&sharedBoundary, "shared-boundary", false, "the boundary belongs to a managed server; never reap or remove it at exit")
 	cmd.Flags().BoolVar(&preserveBoundary, "preserve-boundary", false, "reap the workload but preserve the agentd-owned boundary for reuse")
+	cmd.Flags().BoolVar(&optionalBoundary, "optional-boundary", false, "the boundary carries no ceiling and the launch does not depend on it; disclose and run the workload rather than failing")
 	return cmd
 }
 
-func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced, sharedBoundary, preserveBoundary bool) error {
+// runWithoutResourceBoundary runs the harness with no cgroup at all, for a
+// boundary the launch wanted only for its counters. The disclosure is recorded
+// first, because exec replaces this process and nothing downstream would notice
+// the absence on its own — and everything the wrapper does after the workload
+// starts (reaping, OOM attribution, removal) needs a boundary this launch does
+// not have.
+func runWithoutResourceBoundary(sessionID, command string, cause error) error {
+	if err := recordResourceCgroupUnavailableForExec(sessionID, cause); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: record missing per-agent resource accounting: %v\n", err)
+	}
+	fmt.Fprintf(os.Stderr, "Warning: %v; launching without per-agent resource accounting\n", cause)
+	argv := append(clcommon.BootstrapShellArgv(), "-c", command)
+	return resourceLimitExecReplaceProcess(argv[0], argv, os.Environ())
+}
+
+// resourceLimitExecReplaceProcess is the exec that hands the pane straight to
+// the harness. Production never returns from it; the seam exists so a test can
+// drive the degradation without losing its own process.
+var resourceLimitExecReplaceProcess = syscall.Exec
+
+func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced, sharedBoundary, preserveBoundary, optionalBoundary bool) error {
 	if sharedBoundary && preserveBoundary {
 		return errors.New("resource-limit-exec boundary cannot be both shared and preserved")
 	}
 	cgroupDir = filepath.Clean(cgroupDir)
 	rel, err := filepath.Rel(resourceCgroupRoot, cgroupDir)
 	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) || !strings.HasPrefix(filepath.Base(cgroupDir), "tclaude-") || filepath.Base(cgroupDir) == resourceSupervisorCgroup {
+		// Never degraded: a path this shape did not come from a launch that
+		// prepared a boundary, so running the command anyway would honor an
+		// argument nothing in the launch path can produce.
 		return errors.New("resource-limit-exec received an invalid resource cgroup path")
 	}
-	info, err := os.Lstat(cgroupDir)
-	if err != nil {
-		return fmt.Errorf("resource-limit-exec cgroup is invalid: %w", err)
-	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("resource-limit-exec cgroup is not a real directory")
+	if boundaryErr := validatePreparedResourceCgroupDir(cgroupDir); boundaryErr != nil {
+		if !optionalBoundary {
+			return boundaryErr
+		}
+		return runWithoutResourceBoundary(sessionID, command, boundaryErr)
 	}
 	// Read the counter before the workload can contribute to it. A durable
 	// managed-server boundary is reused across relaunches, so a nonzero reading
@@ -630,13 +689,27 @@ func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced,
 	if moveErr == nil {
 		_, moveErr = io.WriteString(gateWrite, "go\n")
 	}
-	if moveErr != nil && allowUnenforced {
+	if moveErr != nil {
 		noticeErr := fmt.Errorf("attach workload to resource cgroup before release: %w", moveErr)
-		if persistErr := recordResourceLimitRuntimeOverrideForExec(sessionID, noticeErr); persistErr != nil {
-			moveErr = fmt.Errorf("record required resource-limit override disclosure: %w", persistErr)
-		} else {
-			fmt.Fprintf(os.Stderr, "Warning: %v; launching without configured resource-limit enforcement by operator approval\n", noticeErr)
+		// An optional boundary is answered first and without the override,
+		// exactly as ResourceCgroupFailureAction answers the creation failure:
+		// no ceiling is going unenforced, and the override notice is sticky —
+		// recording it here would suppress the boundary on every later launch
+		// over a decision the operator never made.
+		switch {
+		case optionalBoundary:
+			if persistErr := recordResourceCgroupUnavailableForExec(sessionID, noticeErr); persistErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: record missing per-agent resource accounting: %v\n", persistErr)
+			}
+			fmt.Fprintf(os.Stderr, "Warning: %v; launching without per-agent resource accounting\n", noticeErr)
 			_, moveErr = io.WriteString(gateWrite, "go\n")
+		case allowUnenforced:
+			if persistErr := recordResourceLimitRuntimeOverrideForExec(sessionID, noticeErr); persistErr != nil {
+				moveErr = fmt.Errorf("record required resource-limit override disclosure: %w", persistErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "Warning: %v; launching without configured resource-limit enforcement by operator approval\n", noticeErr)
+				_, moveErr = io.WriteString(gateWrite, "go\n")
+			}
 		}
 	}
 	_ = gateWrite.Close()

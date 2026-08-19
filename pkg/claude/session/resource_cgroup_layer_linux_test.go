@@ -3,6 +3,7 @@
 package session
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -87,4 +88,123 @@ func TestRunNewTclaudeLayerLaunchesWhenTheHostHasNoDelegation(t *testing.T) {
 	require.NotEmpty(t, rec.script, "the launch must still reach tmux")
 	assert.NotContains(t, rec.script, "resource-limit-exec", "there is no cgroup to join")
 	assert.Contains(t, logged.String(), "resource cgroup unavailable")
+}
+
+// The other half of "it only tries". A boundary can be created perfectly well
+// and still refuse the workload: cgroup v2 requires write access on the common
+// ancestor of the mover and the target, and the pane's tmux server is not
+// necessarily inside the delegated node the launch derived. Failing there would
+// kill the harness and cost the operator the bubblewrap wall — the exact
+// outcome the creation-side policy exists to prevent.
+func TestResourceLimitExecOptionalBoundaryRunsTheWorkloadAfterAttachFailure(t *testing.T) {
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	dir := filepath.Join(resourceCgroupRoot, "tclaude-optional-attach")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	// A directory at cgroup.procs deterministically makes the attachment write
+	// fail on an ordinary test filesystem.
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "cgroup.procs"), 0o755))
+	accounting := captureAccountingDisclosure(t)
+	overridden := captureOverrideDisclosure(t)
+
+	require.NoError(t, runResourceLimitExec(
+		dir, "session-optional-attach", "exit 0", false, false, false, true,
+	), "the workload must run; only its counters were lost")
+	assert.True(t, *accounting, "the counters the launch asked for and did not get must be disclosed")
+	assert.False(t, *overridden,
+		"no ceiling was authored, so the sticky operator override must not be recorded")
+}
+
+// The override is not merely unnecessary here, it is harmful: an override
+// notice suppresses the boundary on every LATER launch of this conversation, so
+// recording it for a bonus boundary would silently retire the accounting for
+// good. Accounting wins even when the operator did tick the dashboard box.
+func TestResourceLimitExecOptionalBoundaryOutranksTheOperatorOverride(t *testing.T) {
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	dir := filepath.Join(resourceCgroupRoot, "tclaude-optional-both")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "cgroup.procs"), 0o755))
+	accounting := captureAccountingDisclosure(t)
+	overridden := captureOverrideDisclosure(t)
+
+	require.NoError(t, runResourceLimitExec(
+		dir, "session-optional-both", "exit 0", true, false, false, true,
+	))
+	assert.True(t, *accounting)
+	assert.False(t, *overridden, "an override notice here would be sticky and wrong")
+}
+
+// A boundary that vanished between preparation and the pane takes the same
+// answer, and it has to be taken BEFORE the workload is forked — so this path
+// execs the harness directly rather than gating it on a cgroup that is gone.
+func TestResourceLimitExecOptionalBoundaryExecsWhenTheCgroupIsGone(t *testing.T) {
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+	dir := filepath.Join(resourceCgroupRoot, "tclaude-optional-gone")
+	accounting := captureAccountingDisclosure(t)
+	var execArgv []string
+	oldExec := resourceLimitExecReplaceProcess
+	resourceLimitExecReplaceProcess = func(_ string, argv []string, _ []string) error {
+		execArgv = argv
+		return nil
+	}
+	t.Cleanup(func() { resourceLimitExecReplaceProcess = oldExec })
+
+	require.NoError(t, runResourceLimitExec(
+		dir, "session-optional-gone", "exec harness", false, false, false, true,
+	))
+	assert.True(t, *accounting)
+	require.NotEmpty(t, execArgv)
+	assert.Equal(t, "exec harness", execArgv[len(execArgv)-1],
+		"the harness command still runs, just with no boundary around it")
+
+	// A required boundary in the same state still fails closed.
+	err := runResourceLimitExec(dir, "session-required-gone", "exec harness", false, false, false, false)
+	assert.ErrorContains(t, err, "cgroup is invalid")
+}
+
+// An argument shape no launch path can produce is a different matter: running
+// the command anyway would honor input the wrapper is supposed to reject.
+func TestResourceLimitExecOptionalBoundaryStillRefusesAnInvalidPath(t *testing.T) {
+	oldRoot := resourceCgroupRoot
+	resourceCgroupRoot = t.TempDir()
+	t.Cleanup(func() { resourceCgroupRoot = oldRoot })
+
+	err := runResourceLimitExec(
+		filepath.Join(resourceCgroupRoot, "not-a-tclaude-cgroup"),
+		"session-bad-path", "exec harness", false, false, false, true)
+	assert.ErrorContains(t, err, "invalid resource cgroup path")
+}
+
+// captureAccountingDisclosure swaps the accounting-unavailable recorder and
+// reports whether the wrapper reached it.
+func captureAccountingDisclosure(t *testing.T) *bool {
+	t.Helper()
+	recorded := false
+	previous := recordResourceCgroupUnavailableForExec
+	recordResourceCgroupUnavailableForExec = func(_ string, cause error) error {
+		recorded = true
+		assert.Error(t, cause)
+		return nil
+	}
+	t.Cleanup(func() { recordResourceCgroupUnavailableForExec = previous })
+	return &recorded
+}
+
+// captureOverrideDisclosure swaps the sticky operator-override recorder, so a
+// test can assert the wrapper did NOT reach it.
+func captureOverrideDisclosure(t *testing.T) *bool {
+	t.Helper()
+	recorded := false
+	previous := recordResourceLimitRuntimeOverrideForExec
+	recordResourceLimitRuntimeOverrideForExec = func(string, error) error {
+		recorded = true
+		return nil
+	}
+	t.Cleanup(func() { recordResourceLimitRuntimeOverrideForExec = previous })
+	return &recorded
 }

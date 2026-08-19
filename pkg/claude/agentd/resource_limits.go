@@ -85,33 +85,44 @@ func prepareManagedServerResourceCgroup(
 // goes with the answer. It reports true when the launch may retry outside the
 // boundary, and false when the boundary has to hold and the failure stands.
 //
-// The two disclosures are not interchangeable. A boundary that was never
-// required — the one a tclaude-layer server asks for opportunistically — costs
-// the operator counters they never authored, which is what the accounting
-// notice says. Recording the operator override there instead would name a
-// decision they did not make, and it is sticky: an override notice suppresses
-// the boundary on every later launch of this conversation.
+// Placement is the other way the boundary can be lost: the cgroup was created,
+// then the server could not be forked into it. That is the same loss as a
+// creation failure and it takes the same answer, so this defers to the same
+// ResourceCgroupFailureAction prepareManagedServerResourceCgroup consults —
+// including the resuming distinction, without which a relaunch could refuse
+// over counters that no fresh-spawn override can rescue.
+//
+// The two disclosures are not interchangeable. Where no ceiling is at stake the
+// operator override has nothing to authorize, and recording it anyway would
+// name a decision they did not make — and it is sticky: an override notice
+// suppresses the boundary on every later launch of this conversation.
 func degradeManagedServerResourceCgroup(
 	snapshot *sandboxpolicy.Snapshot,
 	rawImplementation string,
 	allowUnenforced bool,
+	resuming bool,
 	cause error,
 ) bool {
 	var limits sandboxpolicy.ResourceLimits
 	if snapshot != nil {
 		limits = snapshot.Effective.ResourceLimits
 	}
-	// An implementation string this daemon cannot parse never reached a launch
-	// that asked for a boundary, so only the override can excuse the failure.
 	implementation, err := sandboxpolicy.NormalizeImplementation(rawImplementation)
-	if err == nil && !sandboxpolicy.ResourceCgroupRequired(limits, implementation) {
+	if err != nil {
+		// Unreachable from a launch that got this far — the preparation seam
+		// normalized the same string — so fail closed rather than invent a
+		// posture for a value this daemon cannot read.
+		return false
+	}
+	switch session.ResourceCgroupFailureAction(limits, implementation, resuming, allowUnenforced) {
+	case session.DiscloseMissingResourceAccounting:
 		appendManagedServerAccountingUnavailable(snapshot, cause)
 		return true
-	}
-	if allowUnenforced {
+	case session.DiscloseUnenforcedResourceOverride:
 		appendManagedServerResourceOverride(snapshot, cause)
 		return true
 	}
+	// RefuseResourceCgroupFailure, and any policy value this seam does not know.
 	return false
 }
 
