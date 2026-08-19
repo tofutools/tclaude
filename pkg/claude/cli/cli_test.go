@@ -68,6 +68,23 @@ func TestExecuteKeepsTheUsageBlockForAMisspelledInvocation(t *testing.T) {
 	}
 }
 
+// A rendered command's own flags are silenced too, and deliberately. cobra
+// attributes a parse error to the command whose flags failed to parse, so an
+// unknown flag here reaches the same branch a RunE failure does — and it should:
+// tclaude wrote that argv, so a flag it got wrong is a tclaude bug, not a typo an
+// operator can be shown how to correct. What they can act on is the error naming
+// the flag; the usage block would only push it out of view, which is the whole
+// reason this command declined it. `--help` is unaffected, as TestExecuteLeaves-
+// HelpToCobra pins.
+func TestExecuteSilencesTheUsageBlockForARenderedCommandsOwnFlags(t *testing.T) {
+	root, stderr := failingRoot(t, "rendered", "--nosuchflag")
+
+	require.Error(t, execute(stderr, root))
+	assert.NotContains(t, stderr.String(), "Usage:")
+	assert.Contains(t, stderr.String(), "Error: unknown flag: --nosuchflag",
+		"the flag that was not understood is the actionable half, and all of it")
+}
+
 func TestExecuteSilencesTheUsageBlockForARenderedCommand(t *testing.T) {
 	root, stderr := failingRoot(t, "rendered")
 

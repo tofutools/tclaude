@@ -20,6 +20,12 @@ const usageSilencedAnnotation = "tclaude.usage_silenced"
 // block there documents decisions nobody made and pushes the one line that
 // explains the failure out of view.
 //
+// This covers every failure cobra attributes to the command, not only the ones
+// its RunE returns: a flag it could not parse is a flag tclaude rendered wrong,
+// which is a tclaude bug rather than a typo the reader can be shown how to
+// correct. `--help` is untouched — declining a usage block on failure does not
+// decline help someone asked for.
+//
 // Only `session resource-limit-exec` claims this so far. The other rendered-argv
 // commands have the same case for it and can be marked as their failures are
 // found worth reading; nothing here decides for them.
