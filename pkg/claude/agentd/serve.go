@@ -32,7 +32,7 @@ import (
 )
 
 type serveParams struct {
-	Socket                       string `long:"socket" short:"s" optional:"true" help:"Unix socket path (default ~/.tclaude-agentd.sock)"`
+	Socket                       string `long:"socket" short:"s" optional:"true" help:"Unix socket path. Default: bind the canonical agent-reachable ~/.tclaude/api/agentd.sock, plus the pre-split ~/.tclaude-agentd.sock and ~/.tclaude/agentd.sock so older clients and previously installed sandbox settings still reach a restarted daemon. Passing a path binds ONLY that socket, which sandboxed agents will not reach unless their sandbox settings allow it."`
 	NoTray                       bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts. Also settable via agent.disable_tray in config.json."`
 	AutoLaunchDashboard          bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
 	Slop                         bool   `long:"slop" help:"Open the auto-launched dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
@@ -89,6 +89,12 @@ func acquireAgentdSingletonLock() (func(), error) {
 	return func() { once.Do(func() { _ = lock.Unlock() }) }, nil
 }
 
+// errSocketInUse marks a path a live daemon is already serving. It stays fatal
+// even for a best-effort legacy endpoint: two daemons sharing an endpoint would
+// split agent traffic across two runtimes, which is a correctness problem rather
+// than an unavailable convenience.
+var errSocketInUse = errors.New("socket already in use")
+
 // prepareSocketPath creates the parent and removes a stale Unix socket without
 // ever clobbering a regular file or a live daemon endpoint.
 func prepareSocketPath(path string) error {
@@ -107,7 +113,7 @@ func prepareSocketPath(path string) error {
 	}
 	if c, derr := net.Dial("unix", path); derr == nil {
 		_ = c.Close()
-		return fmt.Errorf("agentd is already listening on %s", path)
+		return fmt.Errorf("agentd is already listening on %s: %w", path, errSocketInUse)
 	}
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove stale socket %s: %w", path, err)
@@ -121,24 +127,72 @@ func closeListeners(listeners []net.Listener) {
 	}
 }
 
-func listenUnixSockets(paths []string) ([]net.Listener, []string, error) {
-	listeners := make([]net.Listener, 0, len(paths))
-	createdPaths := make([]string, 0, len(paths))
-	for _, path := range paths {
+// prepareServeSockets prepares every endpoint agentd is about to bind and
+// reports which optional ones survived.
+//
+// required — the canonical api/ socket, or whatever --socket named — is the
+// daemon's reason to exist, so any problem with it fails startup. The retained
+// legacy endpoints are migration-window compatibility only, and one of them
+// (~/.tclaude-agentd.sock) sits in $HOME, which an operator may deliberately
+// keep unwritable by tclaude. Losing a compatibility alias must not cost the
+// operator a working daemon, so those failures warn and drop the path.
+func prepareServeSockets(required string, optional []string, warn func(string, error)) ([]string, error) {
+	if err := prepareSocketPath(required); err != nil {
+		return nil, err
+	}
+	kept := make([]string, 0, len(optional))
+	for _, path := range optional {
+		if err := prepareSocketPath(path); err != nil {
+			if errors.Is(err, errSocketInUse) {
+				return nil, err
+			}
+			warn(path, err)
+			continue
+		}
+		kept = append(kept, path)
+	}
+	return kept, nil
+}
+
+// listenUnixSockets binds required strictly and each optional endpoint on a
+// best-effort basis, mirroring prepareServeSockets. A required-socket failure
+// tears down everything already bound. An optional endpoint whose bind loses to
+// a live daemon (EADDRINUSE) is still fatal — that is a second runtime racing us
+// between prepare and bind, not a host that simply cannot host the alias.
+func listenUnixSockets(required string, optional []string, warn func(string, error)) ([]net.Listener, []string, error) {
+	listeners := make([]net.Listener, 0, 1+len(optional))
+	createdPaths := make([]string, 0, 1+len(optional))
+	fail := func(err error) ([]net.Listener, []string, error) {
+		closeListeners(listeners)
+		removeSocketPaths(createdPaths)
+		return nil, nil, err
+	}
+	bind := func(path string) error {
 		ln, err := net.Listen("unix", path)
 		if err != nil {
-			closeListeners(listeners)
-			removeSocketPaths(createdPaths)
-			return nil, nil, fmt.Errorf("listen %s: %w", path, err)
+			return fmt.Errorf("listen %s: %w", path, err)
 		}
-		createdPaths = append(createdPaths, path)
+		// Close+unlink a socket we could not lock down rather than recording it,
+		// so createdPaths stays exactly the set that is bound AND 0600.
 		if err := os.Chmod(path, 0o600); err != nil {
 			_ = ln.Close()
-			closeListeners(listeners)
-			removeSocketPaths(createdPaths)
-			return nil, nil, fmt.Errorf("chmod socket %s: %w", path, err)
+			removeSocketPaths([]string{path})
+			return fmt.Errorf("chmod socket %s: %w", path, err)
 		}
+		createdPaths = append(createdPaths, path)
 		listeners = append(listeners, ln)
+		return nil
+	}
+	if err := bind(required); err != nil {
+		return fail(err)
+	}
+	for _, path := range optional {
+		if err := bind(path); err != nil {
+			if errors.Is(err, syscall.EADDRINUSE) {
+				return fail(err)
+			}
+			warn(path, err)
+		}
 	}
 	return listeners, createdPaths, nil
 }
@@ -263,11 +317,14 @@ func runServe(p *serveParams) error {
 		return err
 	}
 	defer releaseSingleton()
-	legacySockPaths := socketPaths[1:]
-	for _, path := range socketPaths {
-		if err := prepareSocketPath(path); err != nil {
-			return err
-		}
+	skipLegacySocket := func(path string, err error) {
+		slog.Warn("agentd: legacy compatibility socket unavailable; skipping",
+			"socket", path, "error", err)
+		fmt.Fprintf(out, "  legacy compatibility socket unavailable (skipped): %s\n", path)
+	}
+	legacySockPaths, err := prepareServeSockets(sockPath, socketPaths[1:], skipLegacySocket)
+	if err != nil {
+		return err
 	}
 
 	// Relocate any pre-split daemon state into ~/.tclaude/data BEFORE opening
@@ -333,7 +390,7 @@ func runServe(p *serveParams) error {
 		slog.Warn("dashboard session: could not restore restart grace cookies", "error", err)
 	}
 
-	listeners, createdSocketPaths, err := listenUnixSockets(socketPaths)
+	listeners, createdSocketPaths, err := listenUnixSockets(sockPath, legacySockPaths, skipLegacySocket)
 	if err != nil {
 		return err
 	}
@@ -742,9 +799,12 @@ func runServe(p *serveParams) error {
 	// goroutines so the main goroutine is free for the tray loop
 	// (systray needs the main thread on every supported platform).
 	serveErrCh := make(chan error, len(listeners))
-	slog.Info("agentd listening", "socket", sockPath, "legacy_sockets", legacySockPaths, "popup", popupBaseURL)
+	// Report what is actually bound, not what was attempted: an endpoint the
+	// host refused was already announced as skipped above.
+	boundLegacy := createdSocketPaths[1:]
+	slog.Info("agentd listening", "socket", sockPath, "legacy_sockets", boundLegacy, "popup", popupBaseURL)
 	fmt.Fprintf(out, "tclaude agentd listening on %s\n", sockPath)
-	for _, legacy := range legacySockPaths {
+	for _, legacy := range boundLegacy {
 		if legacy != "" && filepath.Clean(legacy) != filepath.Clean(sockPath) {
 			fmt.Fprintf(out, "  legacy compatibility socket: %s\n", legacy)
 		}
