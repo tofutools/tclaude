@@ -7,6 +7,7 @@ import (
 	"os/exec"
 
 	"github.com/spf13/cobra"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
@@ -49,8 +50,10 @@ func ReadResourceCgroupOOMKills(string) ResourceCgroupOOMCount { return Resource
 func ResourceCgroupOOMDeath(string, ResourceCgroupOOMCount, error) bool { return false }
 
 func resourceLimitExecCmd() *cobra.Command {
-	return &cobra.Command{
+	// A rendered-argv command reports its failure and nothing else; see the Linux
+	// build's resourceLimitExecCmd.
+	return clcommon.SilenceUsageOnError(&cobra.Command{
 		Use: "resource-limit-exec", Hidden: true,
 		RunE: func(*cobra.Command, []string) error { return fmt.Errorf("resource limits are Linux only") },
-	}
+	})
 }

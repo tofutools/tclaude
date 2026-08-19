@@ -741,7 +741,9 @@ func resourceLimitExecCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&allowUnenforced, "allow-unenforced", false, "operator authorized fallback without enforcement")
 	cmd.Flags().BoolVar(&sharedBoundary, "shared-boundary", false, "the boundary belongs to a managed server; never reap or remove it at exit")
 	cmd.Flags().BoolVar(&preserveBoundary, "preserve-boundary", false, "reap the workload but preserve the agentd-owned boundary for reuse")
-	return cmd
+	// tclaude renders this argv itself, into a pane an operator then reads: what
+	// belongs there is why the launch died, not the flags the launch chose.
+	return clcommon.SilenceUsageOnError(cmd)
 }
 
 func runResourceLimitExec(cgroupDir, sessionID, command string, allowUnenforced, sharedBoundary, preserveBoundary bool) error {
