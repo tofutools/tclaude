@@ -728,6 +728,54 @@ func TestResourceAttachDeniedHintFallsBackWithoutASecurityLabel(t *testing.T) {
 		"the refusal is still worth locating even when no policy can be named")
 	assert.NotContains(t, hint, `"unconfined"`,
 		"naming a label that mediates nothing sends the operator after the wrong policy")
+
+	// A complain-mode profile logs what it would have refused and permits it, so
+	// it cannot be the cause of a denial either.
+	fakeSecurityLabel(t, "agent (complain)")
+	complain := resourceAttachDeniedHint(dir, attachDenied(dir, syscall.EPERM))
+	assert.NotContains(t, complain, "agent (complain)",
+		"widening a profile that is not enforcing anything is not the fix for this denial")
+	assert.Contains(t, complain, "above the ownership bits")
+}
+
+func TestResourceAttachDeniedHintDoesNotClaimUnreadableFactsAsCleared(t *testing.T) {
+	// The policy that refuses the write refuses the stat behind it just as
+	// readily, and a diagnosis that reports an unmade reading as a clean one
+	// asserts the operator's actual cause has been ruled out.
+	delegation := fakeDerivedResourceCgroup(t,
+		"/user.slice/user@1000.service/app.slice/agent-sandbox.service/"+resourceSupervisorCgroup,
+		"cpu memory", "cpu memory")
+	dir := filepath.Join(delegation, "tclaude-unreadable")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	fakeSecurityLabel(t, "agent (enforce)")
+
+	// Neither the destination nor the ancestor has a cgroup.procs to stat.
+	hint := resourceAttachDeniedHint(dir, attachDenied(dir, syscall.EACCES))
+	assert.Contains(t, hint, "cannot be narrowed down")
+	assert.Contains(t, hint, "either cgroup v2's rule",
+		"the containment rule is still a live candidate and has to stay named")
+	assert.Contains(t, hint, `"agent (enforce)"`, "so is the policy, so both get offered")
+	assert.NotContains(t, hint, "is satisfied",
+		"a reading that could not be taken must never be reported as one that came back clean")
+	assert.NotContains(t, hint, "may write")
+}
+
+func TestResourceAttachDeniedHintReportsABoundaryPreparedByAnotherIdentity(t *testing.T) {
+	// The delegation is intact and only the boundary inside it is not writable,
+	// which is what two identities preparing and joining one boundary produces.
+	delegation := fakeDerivedResourceCgroup(t,
+		"/system.slice/tclaude-agentd.service/"+resourceSupervisorCgroup, "cpu memory", "cpu memory")
+	require.NoError(t, os.WriteFile(filepath.Join(delegation, "cgroup.procs"), nil, 0o644))
+	dir := filepath.Join(delegation, "tclaude-foreign")
+	require.NoError(t, os.Mkdir(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "cgroup.procs"), nil, 0o644))
+	readOnlyCgroupNode(t, filepath.Join(dir, "cgroup.procs"))
+
+	hint := resourceAttachDeniedHint(dir, attachDenied(dir, syscall.EACCES))
+	assert.Contains(t, hint, "created by a different identity")
+	assert.Contains(t, hint, delegation)
+	assert.NotContains(t, hint, "Delegate=cpu memory",
+		"a delegated parent must not be reported as the node that needs delegating")
 }
 
 func TestResourceAttachDeniedHintNamesTheCommonAncestor(t *testing.T) {
@@ -745,7 +793,7 @@ func TestResourceAttachDeniedHintNamesTheCommonAncestor(t *testing.T) {
 	hint := resourceAttachDeniedHint(dir, attachDenied(dir, syscall.EACCES))
 	assert.Contains(t, hint, filepath.Join(ancestor, "cgroup.procs"),
 		"the node the kernel actually decided on is the one to name")
-	assert.Contains(t, hint, "outside the delegated subtree")
+	assert.Contains(t, hint, "place it inside the delegation instead")
 	assert.NotContains(t, hint, "AppArmor",
 		"an established cause must win over the fallback that cannot establish one")
 }
@@ -765,7 +813,9 @@ func TestResourceAttachDeniedHintReportsAnUndelegatedBoundary(t *testing.T) {
 }
 
 func TestResourceAttachDeniedHintExplainsAReadOnlyHierarchy(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "tclaude-readonly")
+	delegation := fakeDerivedResourceCgroup(t,
+		"/system.slice/tclaude-agentd.service/"+resourceSupervisorCgroup, "cpu memory", "cpu memory")
+	dir := filepath.Join(delegation, "tclaude-readonly")
 	require.NoError(t, os.Mkdir(dir, 0o755))
 
 	hint := resourceAttachDeniedHint(dir, attachDenied(dir, syscall.EROFS))

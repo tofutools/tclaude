@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -187,11 +188,19 @@ func delegationWriteRefused(err error) bool {
 func resourceDelegationDeniedHint(delegation string) string {
 	root := filepath.Clean(resourceCgroupRoot)
 	if filepath.Clean(delegation) != root {
-		return fmt.Sprintf("%s is not writable by uid %d; systemd's Delegate= is what chowns a delegated subtree to the service user, and under a cgroup namespace the kernel's nsdelegate additionally refuses writes outside the namespace root. Configure the unit that owns that node with Delegate=cpu memory (agentd's own unit also needs DelegateSubgroup=%s, which keeps the delegated node process-free), or point --resource-delegation-dir at a delegated root that this user can write",
-			delegation, os.Geteuid(), resourceSupervisorCgroup)
+		return undelegatedNodeHint(delegation)
 	}
 	return fmt.Sprintf("tclaude derived the delegated parent from /proc/self/cgroup and got %s, the root of the mounted hierarchy, which uid %d cannot write — what an agentd inside a container or an unshared cgroup namespace sees when the host hierarchy is mounted there. The kernel's nsdelegate then refuses writes to every cgroup outside the namespace root, so no other path under that mount would serve either. Run agentd outside that namespace as a systemd unit with Delegate=cpu memory, DelegateSubgroup=%s, and OOMPolicy=continue, or give the namespace a delegated, writable cgroup root",
 		root, os.Geteuid(), resourceSupervisorCgroup)
+}
+
+// undelegatedNodeHint explains a cgroup node this user cannot write. It is
+// stated of a named node rather than of the derivation that reached it, so the
+// pane side — which is handed its boundary rather than deriving one — can say
+// the same true thing about it.
+func undelegatedNodeHint(node string) string {
+	return fmt.Sprintf("%s is not writable by uid %d; systemd's Delegate= is what chowns a delegated subtree to the service user, and under a cgroup namespace the kernel's nsdelegate additionally refuses writes outside the namespace root. Configure the unit that owns that node with Delegate=cpu memory (agentd's own unit also needs DelegateSubgroup=%s, which keeps the delegated node process-free), or point --resource-delegation-dir at a delegated root that this user can write",
+		node, os.Geteuid(), resourceSupervisorCgroup)
 }
 
 // dacWritable reports whether the ordinary uid/gid/mode bits of path permit
@@ -200,6 +209,10 @@ func resourceDelegationDeniedHint(delegation string) string {
 // still be refused above them, and telling the two apart is the whole reason to
 // ask. Deliberately not access(2), which an LSM mediates the same way it
 // mediates the write, and so cannot distinguish anything.
+//
+// euid 0 is reported writable, which assumes the CAP_DAC_OVERRIDE that a root
+// launch ordinarily retains. A root that dropped it reads as a false negative
+// here, which costs a diagnosis rather than an enforcement decision.
 func dacWritable(path string) (bool, bool) {
 	var st syscall.Stat_t
 	if err := syscall.Stat(path, &st); err != nil {
@@ -225,20 +238,12 @@ func inEffectiveGroup(gid uint32) bool {
 	if err != nil {
 		return false
 	}
-	return containsInt(groups, int(gid))
-}
-
-func containsInt(values []int, wanted int) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(groups, int(gid))
 }
 
 // commonCgroupAncestor returns the deepest cgroup that contains both paths.
 // cgroup v2 decides a migration on that node, so a diagnosis has to name it.
+// Both callers pass absolute paths, which is what makes the result absolute.
 func commonCgroupAncestor(src, dst string) string {
 	srcParts := strings.Split(filepath.Clean(src), string(filepath.Separator))
 	dstParts := strings.Split(filepath.Clean(dst), string(filepath.Separator))
@@ -253,16 +258,23 @@ func commonCgroupAncestor(src, dst string) string {
 }
 
 // securityConfinementLabel names the LSM label this process runs under, or
-// returns empty when there is none worth naming. AppArmor reports a profile and
-// its mode ("agent (enforce)"); SELinux reports a context. Both are exactly the
-// identity whose policy has to be widened, so the label is quoted verbatim.
+// returns empty when there is none that could have refused anything. AppArmor
+// reports a profile and its mode ("agent (enforce)"); SELinux reports a context.
+// Either is exactly the identity whose policy has to be widened, so the label is
+// quoted verbatim.
+//
+// A profile AppArmor loaded in complain mode logs what it would have refused and
+// permits it, so it can never be the cause of a denial. Naming it would send an
+// operator to widen a policy that is not enforcing anything, which is worse than
+// naming nothing.
 func securityConfinementLabel() string {
 	raw, err := os.ReadFile(filepath.Join(resourceProcRoot, "self", "attr", "current"))
 	if err != nil {
 		return ""
 	}
-	label := strings.TrimSpace(strings.Trim(string(raw), "\x00"))
-	if name, _, _ := strings.Cut(label, " ("); name == "" || name == "unconfined" {
+	label := strings.Trim(string(raw), "\x00 \t\r\n")
+	name, mode, _ := strings.Cut(label, " (")
+	if name == "" || name == "unconfined" || mode == "complain)" {
 		return ""
 	}
 	return label
@@ -275,14 +287,18 @@ func securityConfinementLabel() string {
 //   - the boundary's own ownership, when the subtree was never delegated to
 //     this user — the same missing delegation a refused mkdir reports;
 //   - cgroup v2 delegation containment, which also requires write access to the
-//     cgroup.procs of the common ancestor of the mover's own cgroup and the
-//     destination, so a launch running outside the delegated subtree is refused
-//     with a destination it owns outright;
+//     cgroup.procs of the common ancestor of the destination and the cgroup the
+//     workload is moving out of, so a launch outside the delegated subtree is
+//     refused with a destination it owns outright;
 //   - an LSM, which mediates this write above the mode bits entirely, and so
 //     refuses a destination that passes every check tclaude can make.
 //
 // The ladder is ordered so each step reports only what the steps before it have
-// ruled out, and stays silent when it has established nothing.
+// ruled out, and stays silent when it has established nothing. A reading that
+// could not be taken is never treated as a reading that came back clean: the
+// same policy that refuses this write refuses the stat behind it just as
+// readily, and "I could not look" reported as "I looked and it was fine" is how
+// a diagnosis sends an operator after the wrong thing.
 func resourceAttachDeniedHint(cgroupDir string, err error) string {
 	if errors.Is(err, syscall.EROFS) {
 		return fmt.Sprintf("%s is read-only in this launch's mount namespace, so no cgroup under it can be joined however it is delegated; ProtectControlGroups= in the unit that starts the launch, or a sandbox that binds /sys read-only, is what makes it so",
@@ -294,31 +310,56 @@ func resourceAttachDeniedHint(cgroupDir string, err error) string {
 	target := filepath.Join(cgroupDir, "cgroup.procs")
 	destWritable, destKnown := dacWritable(target)
 	if destKnown && !destWritable {
+		delegation := filepath.Dir(cgroupDir)
+		if writable, known := dacWritable(filepath.Join(delegation, "cgroup.procs")); known && writable {
+			// The subtree is delegated to this user and only the boundary inside it
+			// is not, which is what two identities preparing and joining one
+			// boundary produces. Naming the delegation here would send the operator
+			// to widen a node that is already correct.
+			return fmt.Sprintf("%s is not writable by uid %d although its delegated parent %s is, so the boundary was created by a different identity than the one joining it; agentd prepares the cgroup and the pane joins it, so run both as the same user rather than widening the delegation",
+				target, os.Geteuid(), delegation)
+		}
 		// A delegated subtree carries its ownership down to the cgroups created
-		// inside it, so a destination this uid cannot write is the delegation
-		// itself missing rather than anything specific to the attachment.
-		return resourceDelegationDeniedHint(filepath.Dir(cgroupDir))
+		// inside it, so a boundary and a parent this uid cannot write is the
+		// delegation itself missing rather than anything specific to the attach.
+		return undelegatedNodeHint(delegation)
 	}
+	// The workload is this wrapper's own child and has not been moved yet, so the
+	// cgroup it is migrating out of is the one this launch is in.
+	containmentMeasured := false
+	unreadAncestor := "this launch's own cgroup, and with it the common ancestor the move is decided on"
 	if current, currentErr := currentCgroupDir(); currentErr == nil {
 		ancestor := filepath.Join(commonCgroupAncestor(current, cgroupDir), "cgroup.procs")
-		if writable, known := dacWritable(ancestor); known && !writable {
-			return fmt.Sprintf("cgroup v2 also requires write access to the cgroup.procs of the common ancestor of the mover's own cgroup and the destination, and uid %d cannot write %s; this launch runs in %s, outside the delegated subtree, so place the launch inside the delegation — the external tmux runtime, or agentd's own unit, is what puts it there — rather than widening the ancestor",
+		writable, known := dacWritable(ancestor)
+		if known && !writable {
+			return fmt.Sprintf("cgroup v2 also requires write access to the cgroup.procs of the common ancestor of the destination and the cgroup the workload is moving out of — this launch's own, since the workload is its child — and uid %d cannot write %s; this launch runs in %s, so place it inside the delegation instead — the external tmux runtime, or agentd's own unit, is what puts it there — rather than widening the ancestor",
 				os.Geteuid(), ancestor, current)
 		}
+		containmentMeasured = known
+		unreadAncestor = "the ownership of " + ancestor
 	}
-	mediator := "an LSM policy or a container runtime is mediating it"
+	mediator := "an LSM (AppArmor, SELinux) or a container runtime"
 	if label := securityConfinementLabel(); label != "" {
-		mediator = fmt.Sprintf("this launch runs under the security label %q, whose LSM policy (AppArmor, SELinux) mediates this write", label)
+		mediator = fmt.Sprintf("the LSM policy (AppArmor, SELinux) of the security label %q this launch runs under", label)
 	}
-	// A destination whose ownership could not even be read is the same finding
-	// arrived at from the other side: the policy that refused the write can
-	// refuse the stat too, and either way nothing below it explains the refusal.
-	established := fmt.Sprintf("uid %d may write %s", os.Geteuid(), target)
+	rename := "; note that a path-based policy stops matching when the delegation node is renamed — a rule written for one unit type, a .scope where the runtime now uses a .service, covers nothing"
+	unread := []string{}
 	if !destKnown {
-		established = fmt.Sprintf("the ownership of %s could not be read", target)
+		unread = append(unread, "the ownership of "+target)
 	}
-	return fmt.Sprintf("%s and this launch is inside the delegated subtree, so the refusal came from above the ownership bits: %s. Grant write access to that path there, and note that a path-based policy stops matching when the delegation node is renamed — a rule written for one unit type, a .scope where the runtime now uses a .service, covers nothing",
-		established, mediator)
+	if !containmentMeasured {
+		unread = append(unread, unreadAncestor)
+	}
+	if len(unread) > 0 {
+		return fmt.Sprintf("%s could not be read from here, so what refused the write cannot be narrowed down; it is either cgroup v2's rule that this move also needs write access to the common ancestor's cgroup.procs, or %s%s",
+			strings.Join(unread, " and "), mediator, rename)
+	}
+	// Everything below the policy layer has now been read and cleared: the
+	// destination is this uid's to write, and the containment rule the kernel
+	// decides the move on is satisfied — the early return above is the only way
+	// a measured ancestor fails it.
+	return fmt.Sprintf("uid %d may write %s, and cgroup v2's rule that the move also needs write access to the common ancestor's cgroup.procs is satisfied, so the refusal came from above the ownership bits: %s is what mediates this write. Grant write access to %s there%s",
+		os.Geteuid(), target, mediator, target, rename)
 }
 
 // attachWorkloadToResourceCgroup moves the gated workload into the prepared
