@@ -78,9 +78,15 @@ func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.want, bwrapFilesystemArgsWithin(got, root),
 				"the builder must preserve MountPlan order verbatim")
+			// The walking skeleton keeps the namespaces that cost capability:
+			// host IP networking and a readable host process table.
 			assert.NotContains(t, got, "--unshare-net")
 			assert.NotContains(t, got, "--unshare-pid")
-			assert.NotContains(t, got, "--unshare-ipc")
+			// It does not keep the two that cost nothing. Both close ambient
+			// channels no mount plan can reach, so this posture takes them
+			// exactly like the constructed-root ones do.
+			assert.Contains(t, got, "--unshare-ipc")
+			assert.Contains(t, got, "--unshare-cgroup-try")
 			assert.Equal(t, -1, indexOfBwrapTriplet(got, "--remount-ro", "/"),
 				"host-open already inherits a read-only host root")
 		})

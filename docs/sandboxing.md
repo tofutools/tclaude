@@ -33,8 +33,8 @@ same layer. The values:
   precedence chain and preserves each harness's historical behavior (for
   OpenCode, the command filter plus an explicit no-confinement warning).
 - **`tclaude-layer`** — tclaude wraps the tool-executing harness process in its
-  own wall: bubblewrap mount/PID (and optionally network) namespaces on Linux,
-  Seatbelt (`sandbox-exec`) on macOS. The harness's own OS sandbox is forced
+  own wall: bubblewrap mount/IPC/cgroup/PID (and optionally network) namespaces
+  on Linux, Seatbelt (`sandbox-exec`) on macOS. The harness's own OS sandbox is forced
   off inside it (Claude Code mode `off`, Codex `danger-full-access`; Copilot
   has no off-flag tclaude can set, so its configuration is verified instead and
   an unverifiable posture refuses). Supported for Claude Code, Codex, OpenCode,
@@ -649,6 +649,70 @@ fires wherever auto-approval pairs with an unprovable sandbox. The
 
 ## Deep dives
 
+### Namespaces every Linux posture takes
+
+Network and PID namespaces are posture-dependent — they cost real capability
+(no host IP, no host process table) and are paid only where a posture's claims
+need them. Two others are requested in every posture, including the
+walking-skeleton host-open one that keeps the host network namespace and the
+read-only host root. Only one of the two is *guaranteed*, and the difference
+matters:
+
+- **IPC.** This closes System V IPC *and* POSIX message queues. Neither is a
+  filesystem object: `shmget`/`semget`/`msgget` take integer keys, and
+  `mq_open` resolves its name against the IPC namespace's own internal mount
+  rather than any path — `/dev/mqueue` only makes queues browsable, it is not
+  what makes them work. Both are permission-checked by uid, so a sandboxed
+  process running as the invoking user would otherwise reach every segment,
+  semaphore, and message queue that user owns on the host, in either direction,
+  with nothing a mount plan could do about it. This is the one flag here that
+  an enforcement claim rests on, so it is a hard requirement: a kernel that
+  cannot build an IPC namespace refuses the launch.
+- **cgroup**, via `--unshare-cgroup-try`. An information boundary, not a
+  containment one, and a partial one — nothing claims otherwise. Escaping a
+  cgroup needs a writable `/sys/fs/cgroup`, which no posture provides, so
+  there is nothing here to contain. What it closes is `/proc/self/cgroup`
+  naming agentd's delegated node and the session inside it, and it closes that
+  fully only under a **constructed root**, which binds no `/sys` at all. Under
+  the walking skeleton's recursive read-only host root, `/sys/fs/cgroup` is
+  still mounted from the parent namespace — a cgroup namespace re-roots
+  `/proc/PID/cgroup` and freshly mounted cgroup2 filesystems, not an inherited
+  mount — and that posture has no PID namespace either, so the layout is still
+  recoverable by finding your own host PID under `cgroup.procs`. The `-try`
+  spelling follows from that: cgroup namespaces need kernel 4.6, and refusing a
+  launch over a partial disclosure fix that backs no enforcement claim would be
+  the wrong trade. **So this one is best-effort, not guaranteed:** on a kernel
+  or under an outer confinement that refuses the namespace, the launch
+  continues without it and `/proc/self/cgroup` reads the host path as before.
+  Nothing else about the posture changes, because nothing else depends on it —
+  but do not treat cgroup hiding as a property you can rely on. Your workload's
+  resource ceiling is unaffected either way — `resource-limit-exec` runs
+  outside bubblewrap and puts the workload in the cgroup before the launch
+  command execs.
+
+Two consequences worth knowing:
+
+- System V IPC and POSIX message queues are now **absent** in every posture,
+  including the default one. `ipcs` shows nothing, and anything relying on
+  shared-memory IPC with a host process — X11 MIT-SHM against a host X server
+  is the classic case — degrades or fails. This is why `docker run --ipc=host`
+  exists. Harmless for terminal-driven harnesses, which is what this layer
+  wraps.
+- A **nested** `tclaude` run *inside* a sandbox sees `0::/` and cannot derive a
+  delegated cgroup parent from it — when the cgroup namespace was created at
+  all; see the best-effort note above. With no `resource_limits` authored that
+  degrades with a diagnosis. With a ceiling authored it fails closed, exactly
+  as an undelegated host does — there is no flag to wave it through; the
+  dashboard's "Allow launch without enforcement" fresh-spawn control is the
+  only thing that widens it.
+
+UTS is deliberately not unshared. The sandbox already cannot change a hostname
+— that needs `CAP_SYS_ADMIN` in the user namespace owning the host's UTS
+namespace, which is the initial one, and bubblewrap drops all capabilities. A
+synthetic hostname would be a concealment feature rather than a boundary, and
+it would need a synthesized `/etc/hosts` in every posture to avoid breaking
+`getaddrinfo(gethostname())`, since `/etc` is bound whole from the host.
+
 ### Isolated-with-agentd network posture
 
 The profile's `network_access` field maps differently because the outer layer
@@ -697,7 +761,10 @@ wrapped by that root.
 That posture is deliberately rated **partially enforced**, permanently. With the
 host network namespace shared, Linux abstract-namespace Unix sockets (`@…`) are
 not filesystem objects at all, so no mount plan can hide them; close network
-access as well if you need those confined too. The recursive-root remainder
+access as well if you need those confined too. The sibling non-filesystem
+channels — System V IPC and POSIX message queues — *are* closed here, since
+every posture unshares the IPC namespace, so abstract sockets are the
+remainder rather than one example of a class. The recursive-root remainder
 applies here as it does under closed network access: a socket beneath a
 directory the profile makes readable or writable stays reachable.
 
