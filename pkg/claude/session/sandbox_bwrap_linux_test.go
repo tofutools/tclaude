@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -17,6 +18,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/probehelper"
@@ -512,6 +515,19 @@ func runRelayFakeReporter(t *testing.T) {
 func TestAmbientNamespacesAppearInBothTheLaunchAndTheProbe(t *testing.T) {
 	ambient := tclaudeLayerAmbientNamespaceArgs()
 	require.NotEmpty(t, ambient)
+
+	// A constructed root refuses to render without the agentd socket it binds
+	// back, so stand one up rather than letting the case depend on whether a
+	// daemon happens to be running on the machine under test.
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	for _, floorSocket := range sandboxpolicy.AgentdSocketFloor() {
+		require.NoError(t, os.MkdirAll(filepath.Dir(floorSocket), 0o700))
+		listener, listenErr := net.Listen("unix", floorSocket)
+		require.NoError(t, listenErr)
+		t.Cleanup(func() { _ = listener.Close() })
+	}
 
 	for _, tc := range []struct {
 		name    string
