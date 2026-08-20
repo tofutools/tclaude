@@ -290,8 +290,11 @@ func TestResolveTclaudeLayerRefusesUnavailableIsolatedNamespaces(t *testing.T) {
 	require.NoError(t, err)
 	_, verdict, err := ResolveTclaudeLayer(
 		sandboxpolicy.NetworkIsolatedWithAgentd, sandboxpolicy.RootConstructed)
-	require.ErrorContains(t, err, "mount, network, and PID namespaces")
+	require.ErrorContains(t, err, "mount, network, PID, and IPC namespaces")
 	require.ErrorContains(t, err, "read-only remount support")
+	// The cgroup namespace is probed and launched with --unshare-cgroup-try, so
+	// no host is refused over it and the refusal must not claim otherwise.
+	require.NotContains(t, err.Error(), "cgroup")
 	assert.Equal(t, "off", verdict.State)
 	assert.Equal(t, []sandboxpolicy.NetworkPosture{
 		sandboxpolicy.NetworkHostOpen,

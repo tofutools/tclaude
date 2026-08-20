@@ -1899,6 +1899,49 @@ func bwrapArgs(
 		sandboxpolicy.AgentdSocketFloor(), "", nil)
 }
 
+// tclaudeLayerAmbientNamespaceArgs renders the namespaces every posture takes,
+// including the walking skeleton that keeps the host network namespace and the
+// read-only host root. Both close ambient channels that no mount plan can
+// reach, so neither is conditioned on the posture the way --unshare-net and
+// --unshare-pid are.
+//
+// --unshare-ipc closes System V IPC. Those objects are permission-checked by
+// uid and have no filesystem presence at all, so shmget/semget/msgget reach
+// every segment the invoking user owns on the host no matter what the mount
+// plan hides — the same shape as the abstract-socket remainder documented for
+// the host-network constructed root, but in a namespace tclaude can actually
+// create. POSIX message queues are already unreachable because --dev builds a
+// fresh /dev with no mqueue mount; this covers the syscall-only half.
+//
+// --unshare-cgroup-try is an information boundary rather than a containment
+// one, and the -try spelling is deliberate on both counts. Escaping a cgroup
+// needs a writable /sys/fs/cgroup: the constructed root never binds /sys, and
+// the walking skeleton binds / read-only, so there is nothing to escape
+// through and no confinement claim rests on this. What it does close is
+// /proc/self/cgroup disclosing agentd's delegation layout and the session ID
+// to the sandbox. A cgroup namespace needs kernel 4.6 and CONFIG_CGROUPS, so
+// the hard flag would refuse launches on hosts tclaude serves today for a
+// benefit that is not part of any enforcement claim.
+//
+// The workload's resource ceiling is unaffected: `session resource-limit-exec`
+// joins the prepared cgroup on the host and then execs bubblewrap, so the
+// namespace only changes what the path inside reads as. The cost lands on a
+// nested tclaude instead — see resourceDelegationDeniedHint, which names this
+// sandbox among the cgroup namespaces that flatten the delegated-parent
+// derivation.
+//
+// UTS is deliberately absent. Changing a hostname needs CAP_SYS_ADMIN in the
+// user namespace owning that UTS namespace, which for the host's is the
+// initial one; bubblewrap drops all capabilities, and a nested unshare only
+// grants capabilities over namespaces the process itself creates. So the
+// sandbox already cannot sethostname, and a bare --unshare-uts would buy
+// nothing. Concealing the host's name is a separate decision with a real cost:
+// /etc is bound whole from the host, so a synthetic --hostname would leave
+// /etc/hosts mapping the real one and break getaddrinfo(gethostname()).
+func tclaudeLayerAmbientNamespaceArgs() []string {
+	return []string{"--unshare-ipc", "--unshare-cgroup-try"}
+}
+
 func bwrapArgsWithDaemonFinal(
 	phase0WriteDirs []string,
 	plan sandboxpolicy.MountPlan,
@@ -1930,6 +1973,7 @@ func bwrapArgsWithDaemonFinal(
 		// pane shell outside this namespace.
 		"--new-session",
 	}
+	args = append(args, tclaudeLayerAmbientNamespaceArgs()...)
 	// The floor, not the posture: a filtered plan under the proxy engine builds
 	// the isolated posture's namespace exactly, so it takes that case rather
 	// than a copy of it (see TclaudeLayerFloorPosture).

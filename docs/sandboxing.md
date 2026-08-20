@@ -33,8 +33,8 @@ same layer. The values:
   precedence chain and preserves each harness's historical behavior (for
   OpenCode, the command filter plus an explicit no-confinement warning).
 - **`tclaude-layer`** — tclaude wraps the tool-executing harness process in its
-  own wall: bubblewrap mount/PID (and optionally network) namespaces on Linux,
-  Seatbelt (`sandbox-exec`) on macOS. The harness's own OS sandbox is forced
+  own wall: bubblewrap mount/IPC/cgroup/PID (and optionally network) namespaces
+  on Linux, Seatbelt (`sandbox-exec`) on macOS. The harness's own OS sandbox is forced
   off inside it (Claude Code mode `off`, Codex `danger-full-access`; Copilot
   has no off-flag tclaude can set, so its configuration is verified instead and
   an unverifiable posture refuses). Supported for Claude Code, Codex, OpenCode,
@@ -649,6 +649,42 @@ fires wherever auto-approval pairs with an unprovable sandbox. The
 
 ## Deep dives
 
+### Namespaces every Linux posture takes
+
+Network and PID namespaces are posture-dependent — they cost real capability
+(no host IP, no host process table) and are paid only where a posture's claims
+need them. Two others are unconditional, including in the walking-skeleton
+host-open posture that keeps the host network namespace and the read-only host
+root:
+
+- **IPC.** System V IPC objects are permission-checked by uid and identified by
+  a namespace-scoped integer. They are not filesystem objects, so no mount plan
+  can hide them, and a sandboxed process running as the invoking user would
+  otherwise reach every segment, semaphore, and message queue that user owns on
+  the host — a bidirectional channel straight out of the sandbox. The IPC
+  namespace is the only thing that closes it. (POSIX message queues were
+  already unreachable: `--dev` builds a fresh `/dev` with no `mqueue` mount.)
+- **cgroup**, via `--unshare-cgroup-try`. This is an information boundary, not
+  a containment one, and nothing claims otherwise: escaping a cgroup needs a
+  writable `/sys/fs/cgroup`, which the constructed root never binds and the
+  walking skeleton binds read-only. What it closes is `/proc/self/cgroup`
+  disclosing agentd's delegation layout and the session ID. The `-try` spelling
+  is deliberate — cgroup namespaces need kernel 4.6, and refusing a launch over
+  a namespace no enforcement claim rests on would be the wrong trade. Your
+  workload's resource ceiling is unaffected either way: `resource-limit-exec`
+  joins the prepared cgroup on the host before bubblewrap runs.
+
+One consequence worth knowing: a **nested** `tclaude` run *inside* a sandbox
+sees `0::/` and cannot derive a delegated cgroup parent from it. That path
+degrades with a diagnosis rather than failing the launch.
+
+UTS is deliberately not unshared. The sandbox already cannot change a hostname
+— that needs `CAP_SYS_ADMIN` in the user namespace owning the host's UTS
+namespace, which is the initial one, and bubblewrap drops all capabilities. A
+synthetic hostname would be a concealment feature rather than a boundary, and
+it would need a synthesized `/etc/hosts` in every posture to avoid breaking
+`getaddrinfo(gethostname())`, since `/etc` is bound whole from the host.
+
 ### Isolated-with-agentd network posture
 
 The profile's `network_access` field maps differently because the outer layer
@@ -697,7 +733,9 @@ wrapped by that root.
 That posture is deliberately rated **partially enforced**, permanently. With the
 host network namespace shared, Linux abstract-namespace Unix sockets (`@…`) are
 not filesystem objects at all, so no mount plan can hide them; close network
-access as well if you need those confined too. The recursive-root remainder
+access as well if you need those confined too. The sibling non-filesystem
+channel, System V IPC, *is* closed here — every posture unshares the IPC
+namespace — so abstract sockets are the remainder, not one example of a class. The recursive-root remainder
 applies here as it does under closed network access: a socket beneath a
 directory the profile makes readable or writable stays reachable.
 
