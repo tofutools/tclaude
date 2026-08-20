@@ -179,11 +179,14 @@ warning**; after enforcement is selected, failures are fail-closed.
 The pasta feature probe answers in two tiers, because the two postures need
 different things from it.
 
-The **full tier** is what an authored list needs. It requires
-`--map-host-loopback`, `--map-guest-addr` and `--no-splice`, which are what put
-host loopback at the fixed synthetic addresses an nft rule can name. Upstream
-added these in August 2024, so distribution packages older than that — notably
-Ubuntu 24.04 LTS, which ships `0.0~git20240220` — do not have them.
+The **full tier** is what an authored list needs, and its controls do two
+different jobs. `--map-host-loopback` and `--map-guest-addr` are the synthetic
+mapping: the first puts host loopback at fixed addresses an nft rule can name,
+the second removes the translation of the host's own external address.
+`--no-splice` has nothing to do with addressing — it turns off pasta's bypass
+for local traffic. Upstream added all three in August 2024, so distribution
+packages older than that — notably Ubuntu 24.04 LTS, which ships
+`0.0~git20240220` — do not have them.
 
 The **base tier** is everything else the gateway uses, and it is enough for
 `network.namespace: private`. That posture authors no allow rows, so nothing
