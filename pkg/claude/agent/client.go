@@ -107,6 +107,44 @@ func realDaemonAvailable() bool {
 const daemonRequiredMsg = "tclaude agentd is not running.\n" +
 	"Start it from a non-sandboxed shell with: tclaude agentd serve"
 
+// daemonUnreachableMsg explains an unreachable daemon, naming the socket
+// override when one is in force.
+//
+// An override short-circuits every fallback — ClientSocketPaths returns it
+// ALONE — so a stale or mistyped TCLAUDE_AGENTD_SOCKET makes a perfectly
+// healthy daemon look absent. Reporting "not running" then sends the operator
+// off to start a daemon that is already up, so name the path actually dialled,
+// say where that path came from, and, when the default socket turns out to be
+// live, name unsetting the variable as the fix.
+func daemonUnreachableMsg() string {
+	override := agentipc.ExplicitSocketPath()
+	if override == "" {
+		return daemonRequiredMsg
+	}
+	msg := fmt.Sprintf("tclaude agentd is not reachable on %s,\n"+
+		"which the %s environment variable pins it to.", override, agentipc.SocketEnv)
+	canonical := agentipc.CanonicalSocketPath()
+	if canonical != "" && canonical != override && agentipc.SocketReachable(canonical) {
+		return msg + fmt.Sprintf("\n\nA daemon IS listening on the default socket %s.\n"+
+			"Unset %s to use it.", canonical, agentipc.SocketEnv)
+	}
+	return msg + fmt.Sprintf("\n\nStart it from a non-sandboxed shell with:"+
+		" tclaude agentd serve --socket %s\n"+
+		"or unset %s to use the default socket.", shellQuote(override), agentipc.SocketEnv)
+}
+
+// shellQuote renders s so a POSIX shell reproduces it as a single argument.
+// The recovery command above is meant to be pasted, and a socket path holding a
+// space or a metacharacter would otherwise be re-split into several arguments —
+// silently naming a different socket than the one that failed. Paths needing
+// nothing are returned bare so the common case stays readable.
+func shellQuote(s string) string {
+	if s != "" && !strings.ContainsAny(s, " \t\n\v\r\"'\\$`&;|<>()*?[]{}!#~^") {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // RequireDaemonOrExit writes a clear "daemon not running" message to
 // stderr and returns rcIOFailure if the daemon isn't reachable. CLI
 // entry points use this as a precondition so we never silently fall
@@ -117,7 +155,7 @@ func RequireDaemonOrExit(stderr io.Writer) int {
 	if waitForDaemon(stderr, DaemonAvailable, defaultRetryPolicy()) {
 		return rcOK
 	}
-	fmt.Fprintln(stderr, "Error: "+daemonRequiredMsg)
+	fmt.Fprintln(stderr, "Error: "+daemonUnreachableMsg())
 	return rcIOFailure
 }
 
