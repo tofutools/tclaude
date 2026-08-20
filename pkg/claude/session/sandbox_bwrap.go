@@ -749,16 +749,6 @@ func ProbeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 	return probeFilteredNetworkPrerequisite()
 }
 
-// ValidateFilteredNetworkHarnessSupport is the harness activation seam. All
-// currently registered tclaude-layer harnesses consume the Linux filtered
-// gateway; provider-specific model transport remains independently fail-closed.
-//
-// Ordinary filtered rules retain the historical widen-and-disclose behavior
-// when the gateway is unavailable. An explicitly private namespace is
-// different: its topology is the policy, so falling back to host networking
-// would violate the operator's selection. Refuse it here, where the exact live
-// probe detail is still available, rather than later in the capability table
-// after that result has been reduced to a boolean.
 // FilteredNetworkPostureAvailable reports whether the live probe can carry THIS
 // policy's packet-gateway launch.
 //
@@ -791,6 +781,16 @@ func FilteredNetworkPostureAvailable(
 		sandboxpolicy.NetworkRulesArePrivateRoutedOpen(network)
 }
 
+// ValidateFilteredNetworkHarnessSupport is the harness activation seam. All
+// currently registered tclaude-layer harnesses consume the Linux filtered
+// gateway; provider-specific model transport remains independently fail-closed.
+//
+// Ordinary filtered rules retain the historical widen-and-disclose behavior
+// when the gateway is unavailable. An explicitly private namespace is
+// different: its topology is the policy, so falling back to host networking
+// would violate the operator's selection. Refuse it here, where the exact live
+// probe detail is still available, rather than later in the capability table
+// after that result has been reduced to a boolean.
 func ValidateFilteredNetworkHarnessSupport(
 	_ *harness.Harness,
 	_ sandboxpolicy.Implementation,

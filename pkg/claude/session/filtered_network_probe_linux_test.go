@@ -75,7 +75,7 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	assert.NotContains(t, got.LaunchWhy(true), "outbound remains open")
 }
 
-func TestFilteredNetworkPastaCapabilityProbeRequiresExactGatewayControls(t *testing.T) {
+func TestFilteredNetworkPastaCapabilityProbeRequiresEveryBaseControl(t *testing.T) {
 	full := append(
 		append([]string(nil), baseFilteredNetworkPastaOptions...),
 		syntheticLoopbackFilteredNetworkPastaOptions...)

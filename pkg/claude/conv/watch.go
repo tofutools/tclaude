@@ -2557,7 +2557,14 @@ func resumeLaunchCmdWithStackedProof(
 		if postureErr != nil {
 			return "", "", nil, postureErr
 		}
-		if plannedNetworkPosture == sandboxpolicy.NetworkFiltered {
+		// The private routed posture leaves IP destinations unrestricted, so
+		// there is no authored list for a resolved model endpoint to be covered
+		// by and nothing for this gate to decide. session new and the daemon
+		// spawn guard both skip it for exactly that reason; resuming through
+		// this path must agree, or a conversation that spawned fine would be
+		// refused on resume with unsupported_filtered_model_transport.
+		if plannedNetworkPosture == sandboxpolicy.NetworkFiltered &&
+			!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(plannedAxes.Network) {
 			resolvedModel, err = session.ResolveTclaudeLayerModelTransport(
 				h,
 				session.ModelTransportLaunchContext{

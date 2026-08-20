@@ -98,6 +98,66 @@ func TestFilteredNetworkPastaArgsBaseTierOmitsSyntheticControls(t *testing.T) {
 	}
 }
 
+// The launch boundary's fail-closed guard is the last thing standing between a
+// base-tier pasta and a loopback allow row that reads as enforced while naming
+// an address the namespace does not have. Exercise the composed condition, not
+// just its two operands.
+func TestPrepareFilteredNetworkRelayRefusesAuthoredRowsOnBaseTierPasta(t *testing.T) {
+	oldLookPath := filteredNetworkLookPath
+	oldInspect := inspectFilteredNetworkPasta
+	t.Cleanup(func() {
+		filteredNetworkLookPath = oldLookPath
+		inspectFilteredNetworkPasta = oldInspect
+	})
+	stubTrustedExecutableWalk(t)
+	filteredNetworkLookPath = func(name string) (string, error) {
+		return "/usr/bin/" + name, nil
+	}
+	// A base-tier pasta: resolvable, but no synthetic host-loopback controls.
+	inspectFilteredNetworkPasta = func(string) (bool, error) { return false, nil }
+
+	encode := func(t *testing.T, ir sandboxpolicy.FilteredNetworkRuleSet) string {
+		t.Helper()
+		encoded, err := encodeFilteredNetworkRelayPolicy(sandboxpolicy.MountPlan{
+			NetworkPosture:  sandboxpolicy.NetworkFiltered,
+			FilteredNetwork: &ir,
+		})
+		require.NoError(t, err)
+		return encoded
+	}
+
+	list := sandboxpolicy.FilteredNetworkRuleSet{
+		ProtocolContract: sandboxpolicy.FilteredNetworkProtocolContract,
+		DefaultVerdict:   sandboxpolicy.FilteredNetworkDefaultDrop,
+		Rules: []sandboxpolicy.FilteredNetworkRule{{
+			Selector: sandboxpolicy.NetworkSelectorLoopback,
+			Value:    sandboxpolicy.FilteredNetworkHostLoopbackName,
+			Ports:    []int{8080},
+		}},
+	}
+	_, err := prepareFilteredNetworkRelay(encode(t, list))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "synthetic host-loopback controls")
+	assert.Contains(t, err.Error(), "--map-host-loopback")
+	assert.Contains(t, err.Error(), `network.namespace "private"`)
+
+	// The private routed posture authors no rows and must pass this same gate.
+	// It is allowed to fail LATER on host I/O this test does not stub; what must
+	// not happen is the refusal above.
+	private := sandboxpolicy.FilteredNetworkRuleSet{
+		ProtocolContract:  sandboxpolicy.FilteredNetworkProtocolContract,
+		DefaultVerdict:    sandboxpolicy.FilteredNetworkDefaultAccept,
+		BlockHostLoopback: true,
+	}
+	relay, err := prepareFilteredNetworkRelay(encode(t, private))
+	if err != nil {
+		assert.NotContains(t, err.Error(), "synthetic host-loopback controls")
+	} else {
+		assert.False(t, relay.PastaSyntheticLoopback)
+		relay.Close()
+	}
+}
+
 func TestFilteredNetworkNeedsSyntheticLoopbackTracksAuthoredRows(t *testing.T) {
 	private := sandboxpolicy.FilteredNetworkRuleSet{
 		ProtocolContract:  sandboxpolicy.FilteredNetworkProtocolContract,

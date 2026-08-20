@@ -174,9 +174,24 @@ func resolveBwrapServerBinary(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
 ) (string, error) {
+	binary, _, err := resolveBwrapServerBinaryWithFilteredHelpers(posture, root)
+	return binary, err
+}
+
+// resolveBwrapServerBinaryWithFilteredHelpers is resolveBwrapServerBinary that
+// also hands back the filtered-network helpers it had to resolve anyway.
+//
+// The prerequisite probe needs the pasta capability tier this returns, and
+// re-resolving to read it would fork `pasta --help` a second time on every
+// session new and every spawn.
+func resolveBwrapServerBinaryWithFilteredHelpers(
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+) (string, filteredNetworkExecutables, error) {
+	var helpers filteredNetworkExecutables
 	binary, err := lookPathBwrap("bwrap")
 	if err != nil {
-		return "", fmt.Errorf("tclaude-layer requires bubblewrap (`bwrap`) on PATH: %w", err)
+		return "", helpers, fmt.Errorf("tclaude-layer requires bubblewrap (`bwrap`) on PATH: %w", err)
 	}
 	// bwrap builds the sandbox every other trusted executable runs inside, so it
 	// gets the same trust walk as the filtered-network helpers — and the probe
@@ -186,7 +201,7 @@ func resolveBwrapServerBinary(
 		// "could not resolve a trusted", not "is not trusted": this also covers
 		// the binary vanishing between the PATH lookup and the walk, which is a
 		// missing bwrap rather than an untrusted one.
-		return "", fmt.Errorf(
+		return "", helpers, fmt.Errorf(
 			"tclaude-layer could not resolve a trusted bubblewrap (`bwrap`): %w", err)
 	}
 	if err := probeBwrap(binary, posture, root); err != nil {
@@ -201,15 +216,16 @@ func resolveBwrapServerBinary(
 				requiredNamespaces = "mount and PID namespaces plus read-only remount support required by a constructed root under host networking"
 			}
 		}
-		return "", fmt.Errorf("tclaude-layer cannot create the bubblewrap %s "+
+		return "", helpers, fmt.Errorf("tclaude-layer cannot create the bubblewrap %s "+
 			"(unprivileged user namespaces may be unavailable): %w", requiredNamespaces, err)
 	}
 	if posture == sandboxpolicy.NetworkFiltered {
-		if _, err := resolveFilteredNetworkExecutables(); err != nil {
-			return "", fmt.Errorf("tclaude-layer filtered network prerequisite: %w", err)
+		helpers, err = resolveFilteredNetworkExecutables()
+		if err != nil {
+			return "", helpers, fmt.Errorf("tclaude-layer filtered network prerequisite: %w", err)
 		}
 	}
-	return binary, nil
+	return binary, helpers, nil
 }
 
 func tclaudeLayerCommand(

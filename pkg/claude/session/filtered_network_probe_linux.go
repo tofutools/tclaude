@@ -189,19 +189,15 @@ func validatePastaCapabilities(help string) (bool, error) {
 }
 
 func probeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
-	if _, err := resolveBwrapServerBinary(
-		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed); err != nil {
-		return FilteredNetworkPrerequisite{
-			Detail: "bubblewrap/user/network namespace probe failed: " + err.Error(),
-		}
-	}
-	// resolveBwrapServerBinary already required the base tier to get here, so
-	// the private routed namespace is available either way. Re-resolving reads
-	// the synthetic tier, which is what separates it from a full list launch.
-	executables, err := resolveFilteredNetworkExecutables()
+	// Resolving through the bwrap helper hands back the pasta capability tier
+	// it had to read anyway. Reaching here at all means the base tier passed,
+	// so the private routed namespace is available; the tier below is what
+	// separates that from a full authored-list launch.
+	_, executables, err := resolveBwrapServerBinaryWithFilteredHelpers(
+		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed)
 	if err != nil {
 		return FilteredNetworkPrerequisite{
-			Detail: "filtered-network helper probe failed: " + err.Error(),
+			Detail: "bubblewrap/user/network namespace probe failed: " + err.Error(),
 		}
 	}
 	if !executables.SyntheticLoopback {
