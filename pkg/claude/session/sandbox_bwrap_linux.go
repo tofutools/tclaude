@@ -87,6 +87,12 @@ func tclaudeLayerProbeArgs(
 		"--die-with-parent",
 		"--ro-bind", "/", "/",
 	}
+	// Every posture's launch takes these, so every posture's probe must too: a
+	// host whose kernel cannot build the namespace has to fail here, where the
+	// refusal is a disclosure, rather than at launch. --unshare-cgroup-try
+	// keeps its launch spelling for the same reason — probing the hard flag
+	// would refuse a launch that would have succeeded.
+	args = append(args, tclaudeLayerAmbientNamespaceArgs()...)
 	switch posture {
 	case sandboxpolicy.NetworkHostOpen:
 		if root == sandboxpolicy.RootConstructed {
@@ -205,15 +211,18 @@ func resolveBwrapServerBinaryWithFilteredHelpers(
 			"tclaude-layer could not resolve a trusted bubblewrap (`bwrap`): %w", err)
 	}
 	if err := probeBwrap(binary, posture, root); err != nil {
-		requiredNamespaces := "mount namespace and read-only remount support"
+		// IPC appears in every branch because every posture unshares it; the
+		// cgroup namespace never does, because it is probed and launched with
+		// --unshare-cgroup-try and so is not required of any host.
+		requiredNamespaces := "mount and IPC namespaces plus read-only remount support"
 		switch posture {
 		case sandboxpolicy.NetworkIsolatedWithAgentd:
-			requiredNamespaces = "mount, network, and PID namespaces plus read-only remount support required by isolated-with-agentd"
+			requiredNamespaces = "mount, network, PID, and IPC namespaces plus read-only remount support required by isolated-with-agentd"
 		case sandboxpolicy.NetworkFiltered:
-			requiredNamespaces = "mount, network, and PID namespaces plus read-only remount support required by filtered network"
+			requiredNamespaces = "mount, network, PID, and IPC namespaces plus read-only remount support required by filtered network"
 		default:
 			if root == sandboxpolicy.RootConstructed {
-				requiredNamespaces = "mount and PID namespaces plus read-only remount support required by a constructed root under host networking"
+				requiredNamespaces = "mount, PID, and IPC namespaces plus read-only remount support required by a constructed root under host networking"
 			}
 		}
 		return "", helpers, fmt.Errorf("tclaude-layer cannot create the bubblewrap %s "+

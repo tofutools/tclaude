@@ -64,6 +64,14 @@ func TestBubblewrapAssumptions(t *testing.T) {
 	runLinuxAssumption(t, "NetworkAndPIDNamespaceIsolation",
 		"session.bwrapArgs isolated posture and session.tclaudeLayerProbeArgs",
 		func(t *testing.T) { assumeNetworkAndPIDIsolation(t, bwrap) })
+	runLinuxAssumption(t, "IPCNamespaceIsolatesSysVSegments",
+		"session.tclaudeLayerAmbientNamespaceArgs --unshare-ipc, taken by every "+
+			"posture including the read-only host root",
+		func(t *testing.T) { assumeIPCIsolation(t, bwrap) })
+	runLinuxAssumption(t, "CgroupNamespaceHidesHostCgroupPath",
+		"session.tclaudeLayerAmbientNamespaceArgs --unshare-cgroup-try and "+
+			"session.resourceDelegationDeniedHint",
+		func(t *testing.T) { assumeCgroupIsolation(t, bwrap) })
 	runLinuxAssumption(t, "SealedMemfdMaterializesExecutable",
 		"session.prepareStackedRelayBinding exact-engine binding",
 		func(t *testing.T) { assumeSealedMemfdMaterialization(t, bwrap) })
@@ -423,6 +431,129 @@ func assumeNetworkAndPIDIsolation(t *testing.T, bwrap string) {
 	runHelperInBwrap(t, bwrap, args, "verify-network-pid", env, nil)
 }
 
+// assumeIPCIsolation pins the reason --unshare-ipc is worth taking in every
+// posture: a System V segment is permission-checked by uid and identified by a
+// namespace-scoped integer, with no filesystem object anywhere for a mount plan
+// to hide. The read-only host root is therefore the interesting case, not the
+// constructed one — the segment stays reachable there however the root is
+// built, and only the IPC namespace closes it.
+//
+// Both directions are measured. A one-sided assertion could pass because shmat
+// failed for some unrelated reason, which would leave the flag looking load-
+// bearing when it was not.
+func assumeIPCIsolation(t *testing.T, bwrap string) {
+	t.Helper()
+	id, err := unix.SysvShmGet(unix.IPC_PRIVATE, os.Getpagesize(), unix.IPC_CREAT|0o600)
+	if err != nil {
+		t.Fatalf("create host System V shared memory segment: %v", err)
+	}
+	defer func() { _, _ = unix.SysvShmCtl(id, unix.IPC_RMID, nil) }()
+
+	base := []string{
+		"--die-with-parent",
+		"--ro-bind", "/", "/",
+		"--dev", "/dev",
+		"--proc", "/proc",
+	}
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		reachable bool
+	}{
+		{name: "shared-ipc-namespace", args: base, reachable: true},
+		{
+			name:      "unshared-ipc-namespace",
+			args:      append(append([]string(nil), base...), "--unshare-ipc"),
+			reachable: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runHelperInBwrap(t, bwrap, tc.args, "verify-ipc", map[string]string{
+				"ASSUME_SHM_ID":        strconv.Itoa(id),
+				"ASSUME_SHM_REACHABLE": strconv.FormatBool(tc.reachable),
+			}, nil)
+		})
+	}
+}
+
+// assumeCgroupIsolation pins what --unshare-cgroup-try actually changes, which
+// is a disclosure and not a confinement. /proc/self/cgroup stops naming
+// agentd's delegated node and the session inside it; nothing about the ceiling
+// moves, because the wrapper joins the cgroup on the host before bubblewrap
+// runs at all.
+//
+// The flattened path is also the input resourceDelegationDeniedHint has to
+// diagnose for a nested tclaude, so the exact "/" shape is the assumption, not
+// merely "different from the host's".
+//
+// Only the cgroup v2 unified line is compared, in both directions, because
+// that is the only line production reads (session.processCgroupDir). A hybrid
+// host also relativizes its v1 controller lines inside the namespace, so
+// asserting the whole file would pin a shape neither the kernel nor tclaude
+// promises.
+//
+// This measures the HARD --unshare-cgroup even though the launch renders
+// --unshare-cgroup-try, and the divergence is the point. The assumption being
+// pinned is "when a cgroup namespace is created, /proc/self/cgroup reads /",
+// so the precondition has to be unambiguous. Probing -try instead would make a
+// host that silently skipped the namespace indistinguishable from a bubblewrap
+// that stopped relativizing the path — the first is an environment tclaude
+// deliberately still serves, the second is the regression this exists to
+// catch, and a -try assertion would report both as the same failure.
+func assumeCgroupIsolation(t *testing.T, bwrap string) {
+	t.Helper()
+	// Not a /proc/self/ns/cgroup stat: that proves the kernel has the feature,
+	// not that this process may use it. Seccomp, an LSM, or an outer container
+	// can refuse the unshare on a kernel that advertises it, which is exactly
+	// the case -try exists to carry — so ask bubblewrap itself.
+	probe := exec.Command(bwrap,
+		"--die-with-parent", "--ro-bind", "/", "/", "--unshare-cgroup",
+		"--", "/bin/true")
+	if out, err := probe.CombinedOutput(); err != nil {
+		t.Skipf("this environment refuses a cgroup namespace, which is why the "+
+			"launch uses --unshare-cgroup-try rather than the hard flag: %v: %s",
+			err, strings.TrimSpace(string(out)))
+	}
+	raw, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		t.Fatalf("read host cgroup path: %v", err)
+	}
+	hostCgroup, ok := unifiedCgroupPath(string(raw))
+	if !ok {
+		t.Skip("host has no cgroup v2 unified hierarchy, so there is no line " +
+			"production would read and none to relativize")
+	}
+	if hostCgroup == "/" {
+		t.Skip("host already sits at the root of its cgroup namespace, so the " +
+			"two directions would be indistinguishable")
+	}
+	base := []string{
+		"--die-with-parent",
+		"--ro-bind", "/", "/",
+		"--dev", "/dev",
+		"--proc", "/proc",
+	}
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		unshared bool
+	}{
+		{name: "shared-cgroup-namespace", args: base, unshared: false},
+		{
+			name:     "unshared-cgroup-namespace",
+			args:     append(append([]string(nil), base...), "--unshare-cgroup"),
+			unshared: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runHelperInBwrap(t, bwrap, tc.args, "verify-cgroup", map[string]string{
+				"ASSUME_HOST_CGROUP":     hostCgroup,
+				"ASSUME_CGROUP_UNSHARED": strconv.FormatBool(tc.unshared),
+			}, nil)
+		})
+	}
+}
+
 func assumeSealedMemfdMaterialization(t *testing.T, bwrap string) {
 	t.Helper()
 	memfd, err := unix.MemfdCreate(
@@ -550,6 +681,10 @@ func TestBubblewrapAssumptionHelper(t *testing.T) {
 		linuxHelperVerifyDevpts(t)
 	case "verify-network-pid":
 		linuxHelperVerifyNetworkPID(t)
+	case "verify-ipc":
+		linuxHelperVerifyIPC(t)
+	case "verify-cgroup":
+		linuxHelperVerifyCgroup(t)
 	case "verify-stable-executable":
 		if filepath.Clean(os.Args[0]) != filepath.Clean(os.Getenv("ASSUME_STABLE_PATH")) {
 			t.Fatalf("executed path %q, want stable materialized path %q",
@@ -688,6 +823,65 @@ func linuxHelperVerifyDevpts(t *testing.T) {
 	}
 	if !strings.Contains(string(buf[:n]), "devpts-roundtrip") {
 		t.Fatalf("unexpected pty round-trip payload %q", buf[:n])
+	}
+}
+
+func linuxHelperVerifyIPC(t *testing.T) {
+	t.Helper()
+	id, err := strconv.Atoi(os.Getenv("ASSUME_SHM_ID"))
+	if err != nil {
+		t.Fatalf("parse host shared memory id: %v", err)
+	}
+	reachable := os.Getenv("ASSUME_SHM_REACHABLE") == "true"
+	data, attachErr := unix.SysvShmAttach(id, 0, 0)
+	if attachErr == nil {
+		defer func() { _ = unix.SysvShmDetach(data) }()
+	}
+	switch {
+	case reachable && attachErr != nil:
+		t.Fatalf("host segment %d was unreachable while the IPC namespace was "+
+			"shared, so this assumption is not measuring the namespace: %v",
+			id, attachErr)
+	case !reachable && attachErr == nil:
+		t.Fatalf("host segment %d remained attachable inside an unshared IPC "+
+			"namespace", id)
+	}
+}
+
+// unifiedCgroupPath returns the path from the cgroup v2 unified line of a
+// /proc/<pid>/cgroup body — the "0::" hierarchy, and the only one production
+// reads. The bool reports whether such a line was present at all, which it is
+// not on a cgroup v1-only host.
+func unifiedCgroupPath(body string) (string, bool) {
+	for _, line := range strings.Split(body, "\n") {
+		if path, found := strings.CutPrefix(strings.TrimSpace(line), "0::"); found {
+			return path, true
+		}
+	}
+	return "", false
+}
+
+func linuxHelperVerifyCgroup(t *testing.T) {
+	t.Helper()
+	raw, err := os.ReadFile("/proc/self/cgroup")
+	if err != nil {
+		t.Fatalf("read cgroup path inside sandbox: %v", err)
+	}
+	seen, ok := unifiedCgroupPath(string(raw))
+	if !ok {
+		t.Fatalf("no cgroup v2 unified line inside the sandbox: %q", raw)
+	}
+	host := os.Getenv("ASSUME_HOST_CGROUP")
+	if os.Getenv("ASSUME_CGROUP_UNSHARED") != "true" {
+		if seen != host {
+			t.Fatalf("a shared cgroup namespace read %q, want the host's %q, so "+
+				"this assumption is not measuring the namespace", seen, host)
+		}
+		return
+	}
+	if seen != "/" {
+		t.Fatalf("an unshared cgroup namespace read %q, want %q; the host's path "+
+			"was %q", seen, "/", host)
 	}
 }
 
