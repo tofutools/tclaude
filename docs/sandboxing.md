@@ -657,26 +657,45 @@ need them. Two others are unconditional, including in the walking-skeleton
 host-open posture that keeps the host network namespace and the read-only host
 root:
 
-- **IPC.** System V IPC objects are permission-checked by uid and identified by
-  a namespace-scoped integer. They are not filesystem objects, so no mount plan
-  can hide them, and a sandboxed process running as the invoking user would
-  otherwise reach every segment, semaphore, and message queue that user owns on
-  the host — a bidirectional channel straight out of the sandbox. The IPC
-  namespace is the only thing that closes it. (POSIX message queues were
-  already unreachable: `--dev` builds a fresh `/dev` with no `mqueue` mount.)
-- **cgroup**, via `--unshare-cgroup-try`. This is an information boundary, not
-  a containment one, and nothing claims otherwise: escaping a cgroup needs a
-  writable `/sys/fs/cgroup`, which the constructed root never binds and the
-  walking skeleton binds read-only. What it closes is `/proc/self/cgroup`
-  disclosing agentd's delegation layout and the session ID. The `-try` spelling
-  is deliberate — cgroup namespaces need kernel 4.6, and refusing a launch over
-  a namespace no enforcement claim rests on would be the wrong trade. Your
-  workload's resource ceiling is unaffected either way: `resource-limit-exec`
-  joins the prepared cgroup on the host before bubblewrap runs.
+- **IPC.** This closes System V IPC *and* POSIX message queues. Neither is a
+  filesystem object: `shmget`/`semget`/`msgget` take integer keys, and
+  `mq_open` resolves its name against the IPC namespace's own internal mount
+  rather than any path — `/dev/mqueue` only makes queues browsable, it is not
+  what makes them work. Both are permission-checked by uid, so a sandboxed
+  process running as the invoking user would otherwise reach every segment,
+  semaphore, and message queue that user owns on the host, in either direction,
+  with nothing a mount plan could do about it. This is the one flag here that
+  an enforcement claim rests on, so it is a hard requirement: a kernel that
+  cannot build an IPC namespace refuses the launch.
+- **cgroup**, via `--unshare-cgroup-try`. An information boundary, not a
+  containment one, and a partial one — nothing claims otherwise. Escaping a
+  cgroup needs a writable `/sys/fs/cgroup`, which no posture provides, so
+  there is nothing here to contain. What it closes is `/proc/self/cgroup`
+  naming agentd's delegated node and the session inside it, and it closes that
+  fully only under a **constructed root**, which binds no `/sys` at all. Under
+  the walking skeleton's recursive read-only host root, `/sys/fs/cgroup` is
+  still mounted from the parent namespace — a cgroup namespace re-roots
+  `/proc/PID/cgroup` and freshly mounted cgroup2 filesystems, not an inherited
+  mount — and that posture has no PID namespace either, so the layout is still
+  recoverable by finding your own host PID under `cgroup.procs`. The `-try`
+  spelling follows from that: cgroup namespaces need kernel 4.6, and refusing a
+  launch over a partial disclosure fix that backs no enforcement claim would be
+  the wrong trade. Your workload's resource ceiling is unaffected either way —
+  `resource-limit-exec` runs outside bubblewrap and puts the workload in the
+  cgroup before the launch command execs.
 
-One consequence worth knowing: a **nested** `tclaude` run *inside* a sandbox
-sees `0::/` and cannot derive a delegated cgroup parent from it. That path
-degrades with a diagnosis rather than failing the launch.
+Two consequences worth knowing:
+
+- System V IPC and POSIX message queues are now **absent** in every posture,
+  including the default one. `ipcs` shows nothing, and anything relying on
+  shared-memory IPC with a host process — X11 MIT-SHM against a host X server
+  is the classic case — degrades or fails. This is why `docker run --ipc=host`
+  exists. Harmless for terminal-driven harnesses, which is what this layer
+  wraps.
+- A **nested** `tclaude` run *inside* a sandbox sees `0::/` and cannot derive a
+  delegated cgroup parent from it. With no `resource_limits` authored that
+  degrades with a diagnosis; with a ceiling authored it still fails closed,
+  as it does anywhere else, unless `--allow-unenforced` is passed.
 
 UTS is deliberately not unshared. The sandbox already cannot change a hostname
 — that needs `CAP_SYS_ADMIN` in the user namespace owning the host's UTS
@@ -734,8 +753,9 @@ That posture is deliberately rated **partially enforced**, permanently. With the
 host network namespace shared, Linux abstract-namespace Unix sockets (`@…`) are
 not filesystem objects at all, so no mount plan can hide them; close network
 access as well if you need those confined too. The sibling non-filesystem
-channel, System V IPC, *is* closed here — every posture unshares the IPC
-namespace — so abstract sockets are the remainder, not one example of a class. The recursive-root remainder
+channels — System V IPC and POSIX message queues — *are* closed here, since
+every posture unshares the IPC namespace, so abstract sockets are the
+remainder rather than one example of a class. The recursive-root remainder
 applies here as it does under closed network access: a socket beneath a
 directory the profile makes readable or writable stays reachable.
 

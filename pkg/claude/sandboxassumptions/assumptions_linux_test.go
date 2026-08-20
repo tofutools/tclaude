@@ -483,19 +483,30 @@ func assumeIPCIsolation(t *testing.T, bwrap string) {
 // runs at all.
 //
 // The flattened path is also the input resourceDelegationDeniedHint has to
-// diagnose for a nested tclaude, so the exact "0::/" shape is the assumption,
-// not merely "different from the host's".
+// diagnose for a nested tclaude, so the exact "/" shape is the assumption, not
+// merely "different from the host's".
+//
+// Only the cgroup v2 unified line is compared, in both directions, because
+// that is the only line production reads (session.processCgroupDir). A hybrid
+// host also relativizes its v1 controller lines inside the namespace, so
+// asserting the whole file would pin a shape neither the kernel nor tclaude
+// promises.
 func assumeCgroupIsolation(t *testing.T, bwrap string) {
 	t.Helper()
 	if _, err := os.Stat("/proc/self/ns/cgroup"); err != nil {
 		t.Skipf("kernel has no cgroup namespaces, which is why the launch uses "+
 			"--unshare-cgroup-try rather than the hard flag: %v", err)
 	}
-	hostCgroup, err := os.ReadFile("/proc/self/cgroup")
+	raw, err := os.ReadFile("/proc/self/cgroup")
 	if err != nil {
 		t.Fatalf("read host cgroup path: %v", err)
 	}
-	if strings.TrimSpace(string(hostCgroup)) == "0::/" {
+	hostCgroup, ok := unifiedCgroupPath(string(raw))
+	if !ok {
+		t.Skip("host has no cgroup v2 unified hierarchy, so there is no line " +
+			"production would read and none to relativize")
+	}
+	if hostCgroup == "/" {
 		t.Skip("host already sits at the root of its cgroup namespace, so the " +
 			"two directions would be indistinguishable")
 	}
@@ -519,7 +530,7 @@ func assumeCgroupIsolation(t *testing.T, bwrap string) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runHelperInBwrap(t, bwrap, tc.args, "verify-cgroup", map[string]string{
-				"ASSUME_HOST_CGROUP":     strings.TrimSpace(string(hostCgroup)),
+				"ASSUME_HOST_CGROUP":     hostCgroup,
 				"ASSUME_CGROUP_UNSHARED": strconv.FormatBool(tc.unshared),
 			}, nil)
 		})
@@ -820,13 +831,29 @@ func linuxHelperVerifyIPC(t *testing.T) {
 	}
 }
 
+// unifiedCgroupPath returns the path from the cgroup v2 unified line of a
+// /proc/<pid>/cgroup body — the "0::" hierarchy, and the only one production
+// reads. The bool reports whether such a line was present at all, which it is
+// not on a cgroup v1-only host.
+func unifiedCgroupPath(body string) (string, bool) {
+	for _, line := range strings.Split(body, "\n") {
+		if path, found := strings.CutPrefix(strings.TrimSpace(line), "0::"); found {
+			return path, true
+		}
+	}
+	return "", false
+}
+
 func linuxHelperVerifyCgroup(t *testing.T) {
 	t.Helper()
 	raw, err := os.ReadFile("/proc/self/cgroup")
 	if err != nil {
 		t.Fatalf("read cgroup path inside sandbox: %v", err)
 	}
-	seen := strings.TrimSpace(string(raw))
+	seen, ok := unifiedCgroupPath(string(raw))
+	if !ok {
+		t.Fatalf("no cgroup v2 unified line inside the sandbox: %q", raw)
+	}
 	host := os.Getenv("ASSUME_HOST_CGROUP")
 	if os.Getenv("ASSUME_CGROUP_UNSHARED") != "true" {
 		if seen != host {
@@ -835,9 +862,9 @@ func linuxHelperVerifyCgroup(t *testing.T) {
 		}
 		return
 	}
-	if seen != "0::/" {
+	if seen != "/" {
 		t.Fatalf("an unshared cgroup namespace read %q, want %q; the host's path "+
-			"was %q", seen, "0::/", host)
+			"was %q", seen, "/", host)
 	}
 }
 

@@ -501,6 +501,55 @@ func runRelayFakeReporter(t *testing.T) {
 	require.NoError(t, os.WriteFile(os.Getenv(relayFakeResizedEnv), []byte("resized"), 0o600))
 }
 
+// The probe backs the dashboard's polled capability disclosure as well as the
+// launch refusal, so a namespace the launch takes but the probe does not would
+// surface as a green capability beside a failing launch — and one the probe
+// takes but the launch does not would refuse hosts for nothing. Both renderers
+// therefore read the ambient namespaces from tclaudeLayerAmbientNamespaceArgs,
+// and this pins that they both actually carry everything it returns. Driving
+// the assertion off the helper rather than a literal list is deliberate: a
+// third flag added there is covered without touching this test.
+func TestAmbientNamespacesAppearInBothTheLaunchAndTheProbe(t *testing.T) {
+	ambient := tclaudeLayerAmbientNamespaceArgs()
+	require.NotEmpty(t, ambient)
+
+	for _, tc := range []struct {
+		name    string
+		posture sandboxpolicy.NetworkPosture
+		root    sandboxpolicy.RootPosture
+	}{
+		{"host-open-inherited-root", sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootHostInherited},
+		{"host-open-constructed-root", sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootConstructed},
+		{"isolated-with-agentd", sandboxpolicy.NetworkIsolatedWithAgentd, sandboxpolicy.RootConstructed},
+		{"filtered", sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			probe, err := tclaudeLayerProbeArgs(tc.posture, tc.root)
+			require.NoError(t, err)
+			for _, flag := range ambient {
+				assert.Contains(t, probe, flag, "the probe must build what the launch will")
+			}
+
+			if tc.posture == sandboxpolicy.NetworkFiltered {
+				// The filtered launch needs a compiled gateway policy that this
+				// table cannot cheaply synthesize. It is not a coverage hole:
+				// the ambient args are appended in the shared prologue, before
+				// the posture switch, so the three plans below exercise the
+				// same line. Its probe is covered above like the others.
+				return
+			}
+			launch, err := bwrapArgs(nil, sandboxpolicy.MountPlan{
+				NetworkPosture: tc.posture,
+				RootPosture:    tc.root,
+			})
+			require.NoError(t, err)
+			for _, flag := range ambient {
+				assert.Contains(t, launch, flag, "the launch must take what the probe proved")
+			}
+		})
+	}
+}
+
 func TestTclaudeLayerProbeExercisesReadOnlyRemountSemantics(t *testing.T) {
 	for _, posture := range []sandboxpolicy.NetworkPosture{
 		sandboxpolicy.NetworkHostOpen,

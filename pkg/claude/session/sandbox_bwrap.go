@@ -1905,30 +1905,49 @@ func bwrapArgs(
 // reach, so neither is conditioned on the posture the way --unshare-net and
 // --unshare-pid are.
 //
-// --unshare-ipc closes System V IPC. Those objects are permission-checked by
-// uid and have no filesystem presence at all, so shmget/semget/msgget reach
-// every segment the invoking user owns on the host no matter what the mount
-// plan hides — the same shape as the abstract-socket remainder documented for
-// the host-network constructed root, but in a namespace tclaude can actually
-// create. POSIX message queues are already unreachable because --dev builds a
-// fresh /dev with no mqueue mount; this covers the syscall-only half.
+// --unshare-ipc closes BOTH System V IPC and POSIX message queues, and both
+// halves matter. Neither is a filesystem object the mount plan can reach:
+// shmget/semget/msgget take integer keys, and mq_open resolves its name
+// against the IPC namespace's own internal mount rather than any path — the
+// optional /dev/mqueue mount (bwrap's separate --mqueue, which nothing here
+// passes) only makes queues browsable, it is not what makes them work. Both
+// are permission-checked by uid, and the sandbox runs as the invoking user, so
+// before this flag either one carried a bidirectional channel to any host
+// process of that user. This is the same shape as the abstract-socket
+// remainder documented for the host-network constructed root, except that a
+// namespace closes it without giving up host networking.
+//
+// IPC is a hard flag while cgroup below is a soft one, and the asymmetry is
+// the point: an enforcement claim now rests on the IPC namespace, so a kernel
+// that cannot build one must refuse the launch rather than run it with the
+// claim quietly false. Nothing rests on the cgroup namespace.
 //
 // --unshare-cgroup-try is an information boundary rather than a containment
-// one, and the -try spelling is deliberate on both counts. Escaping a cgroup
-// needs a writable /sys/fs/cgroup: the constructed root never binds /sys, and
-// the walking skeleton binds / read-only, so there is nothing to escape
-// through and no confinement claim rests on this. What it does close is
-// /proc/self/cgroup disclosing agentd's delegation layout and the session ID
-// to the sandbox. A cgroup namespace needs kernel 4.6 and CONFIG_CGROUPS, so
-// the hard flag would refuse launches on hosts tclaude serves today for a
-// benefit that is not part of any enforcement claim.
+// one, and a partial one. Escaping a cgroup needs a writable /sys/fs/cgroup,
+// which no posture provides, so nothing is being contained here. What it
+// closes is /proc/self/cgroup naming agentd's delegated node and the session
+// inside it — and it closes that fully only under a CONSTRUCTED root, which
+// binds no /sys at all (see tclaudeLayerStaticOSPaths). Under the walking
+// skeleton's recursive read-only host root, /sys/fs/cgroup is still mounted
+// from the parent namespace; a cgroup namespace re-roots /proc/PID/cgroup and
+// freshly mounted cgroup2 filesystems, not an inherited mount, and that
+// posture has no PID namespace either, so the sandbox can still recover the
+// layout by finding its own host PID under cgroup.procs. The flag is worth
+// taking there for the spelling it does change, but the disclosure is only
+// really closed where /sys is absent.
 //
-// The workload's resource ceiling is unaffected: `session resource-limit-exec`
-// joins the prepared cgroup on the host and then execs bubblewrap, so the
-// namespace only changes what the path inside reads as. The cost lands on a
-// nested tclaude instead — see resourceDelegationDeniedHint, which names this
-// sandbox among the cgroup namespaces that flatten the delegated-parent
-// derivation.
+// Hence -try rather than the hard flag: cgroup namespaces need kernel 4.6 and
+// CONFIG_CGROUPS, and refusing a launch over a partial disclosure fix that
+// backs no enforcement claim would be the wrong trade.
+//
+// The workload's resource ceiling is unaffected. `session resource-limit-exec`
+// runs OUTSIDE bubblewrap: it forks a gated shell, writes that child's PID
+// into the prepared cgroup, and only then releases the gate so the child execs
+// the launch command — so the ceiling is already in force before bubblewrap
+// starts, and the namespace changes only what the path inside reads as. The
+// cost lands on a nested tclaude instead — see resourceDelegationDeniedHint,
+// which names this sandbox among the cgroup namespaces that flatten the
+// delegated-parent derivation.
 //
 // UTS is deliberately absent. Changing a hostname needs CAP_SYS_ADMIN in the
 // user namespace owning that UTS namespace, which for the host's is the

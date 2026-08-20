@@ -380,7 +380,7 @@ const (
 	// differs from the packet gateway's condition in the outcome, not just the
 	// prerequisites: a host that cannot build this floor REFUSES the launch
 	// rather than starting it with the rules unenforced.
-	ProxyEngineLaunchCondition = "At launch, bubblewrap must create the mount, network, PID and IPC namespaces this floor needs, and pidfds must be available. " +
+	ProxyEngineLaunchCondition = "At launch, bubblewrap must create the mount, network, PID, and IPC namespaces this floor needs, and pidfds must be available. " +
 		"A launch that cannot build the floor is refused rather than started with these rules unenforced. " +
 		"No pasta, nft, or DNS broker is involved."
 )
