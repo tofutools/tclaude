@@ -491,11 +491,28 @@ func assumeIPCIsolation(t *testing.T, bwrap string) {
 // host also relativizes its v1 controller lines inside the namespace, so
 // asserting the whole file would pin a shape neither the kernel nor tclaude
 // promises.
+//
+// This measures the HARD --unshare-cgroup even though the launch renders
+// --unshare-cgroup-try, and the divergence is the point. The assumption being
+// pinned is "when a cgroup namespace is created, /proc/self/cgroup reads /",
+// so the precondition has to be unambiguous. Probing -try instead would make a
+// host that silently skipped the namespace indistinguishable from a bubblewrap
+// that stopped relativizing the path — the first is an environment tclaude
+// deliberately still serves, the second is the regression this exists to
+// catch, and a -try assertion would report both as the same failure.
 func assumeCgroupIsolation(t *testing.T, bwrap string) {
 	t.Helper()
-	if _, err := os.Stat("/proc/self/ns/cgroup"); err != nil {
-		t.Skipf("kernel has no cgroup namespaces, which is why the launch uses "+
-			"--unshare-cgroup-try rather than the hard flag: %v", err)
+	// Not a /proc/self/ns/cgroup stat: that proves the kernel has the feature,
+	// not that this process may use it. Seccomp, an LSM, or an outer container
+	// can refuse the unshare on a kernel that advertises it, which is exactly
+	// the case -try exists to carry — so ask bubblewrap itself.
+	probe := exec.Command(bwrap,
+		"--die-with-parent", "--ro-bind", "/", "/", "--unshare-cgroup",
+		"--", "/bin/true")
+	if out, err := probe.CombinedOutput(); err != nil {
+		t.Skipf("this environment refuses a cgroup namespace, which is why the "+
+			"launch uses --unshare-cgroup-try rather than the hard flag: %v: %s",
+			err, strings.TrimSpace(string(out)))
 	}
 	raw, err := os.ReadFile("/proc/self/cgroup")
 	if err != nil {
@@ -524,7 +541,7 @@ func assumeCgroupIsolation(t *testing.T, bwrap string) {
 		{name: "shared-cgroup-namespace", args: base, unshared: false},
 		{
 			name:     "unshared-cgroup-namespace",
-			args:     append(append([]string(nil), base...), "--unshare-cgroup-try"),
+			args:     append(append([]string(nil), base...), "--unshare-cgroup"),
 			unshared: true,
 		},
 	} {

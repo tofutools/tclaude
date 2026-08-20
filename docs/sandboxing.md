@@ -653,9 +653,10 @@ fires wherever auto-approval pairs with an unprovable sandbox. The
 
 Network and PID namespaces are posture-dependent — they cost real capability
 (no host IP, no host process table) and are paid only where a posture's claims
-need them. Two others are unconditional, including in the walking-skeleton
-host-open posture that keeps the host network namespace and the read-only host
-root:
+need them. Two others are requested in every posture, including the
+walking-skeleton host-open one that keeps the host network namespace and the
+read-only host root. Only one of the two is *guaranteed*, and the difference
+matters:
 
 - **IPC.** This closes System V IPC *and* POSIX message queues. Neither is a
   filesystem object: `shmget`/`semget`/`msgget` take integer keys, and
@@ -680,9 +681,14 @@ root:
   recoverable by finding your own host PID under `cgroup.procs`. The `-try`
   spelling follows from that: cgroup namespaces need kernel 4.6, and refusing a
   launch over a partial disclosure fix that backs no enforcement claim would be
-  the wrong trade. Your workload's resource ceiling is unaffected either way —
-  `resource-limit-exec` runs outside bubblewrap and puts the workload in the
-  cgroup before the launch command execs.
+  the wrong trade. **So this one is best-effort, not guaranteed:** on a kernel
+  or under an outer confinement that refuses the namespace, the launch
+  continues without it and `/proc/self/cgroup` reads the host path as before.
+  Nothing else about the posture changes, because nothing else depends on it —
+  but do not treat cgroup hiding as a property you can rely on. Your workload's
+  resource ceiling is unaffected either way — `resource-limit-exec` runs
+  outside bubblewrap and puts the workload in the cgroup before the launch
+  command execs.
 
 Two consequences worth knowing:
 
@@ -693,9 +699,12 @@ Two consequences worth knowing:
   exists. Harmless for terminal-driven harnesses, which is what this layer
   wraps.
 - A **nested** `tclaude` run *inside* a sandbox sees `0::/` and cannot derive a
-  delegated cgroup parent from it. With no `resource_limits` authored that
-  degrades with a diagnosis; with a ceiling authored it still fails closed,
-  as it does anywhere else, unless `--allow-unenforced` is passed.
+  delegated cgroup parent from it — when the cgroup namespace was created at
+  all; see the best-effort note above. With no `resource_limits` authored that
+  degrades with a diagnosis. With a ceiling authored it fails closed, exactly
+  as an undelegated host does — there is no flag to wave it through; the
+  dashboard's "Allow launch without enforcement" fresh-spawn control is the
+  only thing that widens it.
 
 UTS is deliberately not unshared. The sandbox already cannot change a hostname
 — that needs `CAP_SYS_ADMIN` in the user namespace owning the host's UTS
