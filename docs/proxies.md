@@ -34,6 +34,15 @@ agents cannot use. The command registers when either holds:
   `GET /v1/info` reports proxy support (daemons predating that projection keep
   the command visible).
 
+A managed agent is recognised by any of `TCLAUDE_AGENTD_SOCKET`,
+`CODEX_PERMISSION_PROFILE=tclaude-agent`, or `TCLAUDE_AGENT_HINT=1` in its
+environment. Only the last is carried by every managed launch: the socket is
+pinned for sandboxed agents alone, so an unsandboxed managed pane has the hint
+and nothing else.
+The local config read cannot stand in for that test: a sandbox that denies
+`~/.tclaude/data` by mounting it empty makes an enabled config look exactly
+like an absent one, with no error to distinguish them.
+
 If an agent reports that `tclaude proxy` does not exist, that is the symptom
 of an operator who has not opted in — not a broken install.
 

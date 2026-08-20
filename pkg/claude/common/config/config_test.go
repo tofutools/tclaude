@@ -346,7 +346,8 @@ func TestLoad_NormalizesFromFile(t *testing.T) {
 func TestLoad_InaccessibleConfigIsAbsentForSandboxedAgent(t *testing.T) {
 	isolateConfigHome(t)
 	t.Setenv(agentipc.SocketEnv, "")
-	t.Setenv(codexPermissionProfileEnv, "")
+	t.Setenv(agentipc.CodexPermissionProfileEnv, "")
+	t.Setenv(agentipc.AgentHintEnvVar, "")
 	require.NoError(t, os.MkdirAll(DataDir(), 0o700))
 	require.NoError(t, os.WriteFile(ConfigPath(), []byte(`{"log_level":"debug"}`), 0o600))
 	// Make the whole ~/.tclaude subtree untraversable so reading
@@ -365,10 +366,19 @@ func TestLoad_InaccessibleConfigIsAbsentForSandboxedAgent(t *testing.T) {
 	})
 
 	t.Run("managed Codex profile", func(t *testing.T) {
-		t.Setenv(codexPermissionProfileEnv, managedCodexProfileName)
+		t.Setenv(agentipc.CodexPermissionProfileEnv, agentipc.ManagedCodexProfileName)
 		cfg, err := Load()
 		require.NoError(t, err)
 		assert.Equal(t, "info", cfg.LogLevel, "managed Codex agents use defaults without reading operator config")
+	})
+
+	// A managed Claude Code pane carries neither of the above; the agent hint is
+	// the only signal it has.
+	t.Run("agent hint only", func(t *testing.T) {
+		t.Setenv(agentipc.AgentHintEnvVar, "1")
+		cfg, err := Load()
+		require.NoError(t, err)
+		assert.Equal(t, "info", cfg.LogLevel, "hinted agents use defaults without reading operator config")
 	})
 }
 

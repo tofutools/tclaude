@@ -389,7 +389,7 @@ func OperatorToken() string {
 }
 
 func hasAgentHint() bool {
-	return strings.TrimSpace(os.Getenv(agentipc.AgentHintEnvVar)) == "1"
+	return agentipc.HasAgentHint()
 }
 
 // DaemonRequestImpl is the indirection point for DaemonRequest so CLI
