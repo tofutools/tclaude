@@ -73,7 +73,61 @@ func TestFilteredNetworkPastaArgsGiveSyntheticIPv6MappingARoute(t *testing.T) {
 		"--no-splice",
 		"--pid", "/tmp/pasta.pid",
 		"123",
-	}, filteredNetworkPastaArgs("/tmp/pasta.pid", 123))
+	}, filteredNetworkPastaArgs("/tmp/pasta.pid", 123, true))
+}
+
+// The base tier drops the three synthetic-mapping controls and --gateway. What
+// is left must still close host loopback (--no-map-gw) and still forward no
+// ports in either direction, which is what leaves the splice bypass inert.
+func TestFilteredNetworkPastaArgsBaseTierOmitsSyntheticControls(t *testing.T) {
+	args := filteredNetworkPastaArgs("/tmp/pasta.pid", 123, false)
+	assert.Equal(t, []string{
+		"--foreground",
+		"--quiet",
+		"--config-net",
+		"--no-map-gw",
+		"--tcp-ports", "none",
+		"--udp-ports", "none",
+		"--tcp-ns", "none",
+		"--udp-ns", "none",
+		"--pid", "/tmp/pasta.pid",
+		"123",
+	}, args)
+	for _, absent := range syntheticLoopbackFilteredNetworkPastaOptions {
+		assert.NotContains(t, args, absent)
+	}
+}
+
+func TestFilteredNetworkNeedsSyntheticLoopbackTracksAuthoredRows(t *testing.T) {
+	private := sandboxpolicy.FilteredNetworkRuleSet{
+		ProtocolContract:  sandboxpolicy.FilteredNetworkProtocolContract,
+		DefaultVerdict:    sandboxpolicy.FilteredNetworkDefaultAccept,
+		BlockHostLoopback: true,
+	}
+	assert.False(t, filteredNetworkNeedsSyntheticLoopback(private))
+
+	// A deny row is an nft drop; the address it names is simply unreachable on
+	// a base-tier pasta, so the authored intent still holds.
+	denyOnly := private
+	denyOnly.DenyRules = []sandboxpolicy.FilteredNetworkRule{{
+		Selector: sandboxpolicy.NetworkSelectorHost, Value: "example.com",
+	}}
+	assert.False(t, filteredNetworkNeedsSyntheticLoopback(denyOnly))
+
+	// An allow row can resolve onto host loopback through the synthetic-address
+	// reservation gap, so it is held to the full tier.
+	allow := private
+	allow.Rules = []sandboxpolicy.FilteredNetworkRule{{
+		Selector: sandboxpolicy.NetworkSelectorLoopback,
+		Value:    sandboxpolicy.FilteredNetworkHostLoopbackName,
+	}}
+	assert.True(t, filteredNetworkNeedsSyntheticLoopback(allow))
+
+	// A default-drop list is the ordinary filtered posture: full tier.
+	drop := private
+	drop.DefaultVerdict = sandboxpolicy.FilteredNetworkDefaultDrop
+	drop.BlockHostLoopback = false
+	assert.True(t, filteredNetworkNeedsSyntheticLoopback(drop))
 }
 
 func TestFilteredNetworkResolvMountMaterializesRuntimeSymlinkTarget(t *testing.T) {

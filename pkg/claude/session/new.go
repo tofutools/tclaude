@@ -1330,7 +1330,7 @@ func runNew(params *NewParams) error {
 					); supportErr != nil {
 						return supportErr
 					}
-					if probe.Detected {
+					if FilteredNetworkPostureAvailable(probe, axes.Network) {
 						tclaudeLayerPosture = sandboxpolicy.NetworkFiltered
 					}
 				}

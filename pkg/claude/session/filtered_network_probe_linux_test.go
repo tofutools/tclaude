@@ -60,7 +60,7 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	filteredNetworkLookPath = func(name string) (string, error) {
 		return "/usr/bin/" + name, nil
 	}
-	inspectFilteredNetworkPasta = func(string) error { return nil }
+	inspectFilteredNetworkPasta = func(string) (bool, error) { return true, nil }
 
 	got := ProbeFilteredNetworkPrerequisite()
 	require.True(t, got.Detected)
@@ -76,17 +76,39 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 }
 
 func TestFilteredNetworkPastaCapabilityProbeRequiresExactGatewayControls(t *testing.T) {
-	help := strings.Join(requiredFilteredNetworkPastaOptions, "\n")
-	require.NoError(t, validatePastaCapabilities(help))
+	full := append(
+		append([]string(nil), baseFilteredNetworkPastaOptions...),
+		syntheticLoopbackFilteredNetworkPastaOptions...)
+	help := strings.Join(full, "\n")
+	synthetic, err := validatePastaCapabilities(help)
+	require.NoError(t, err)
+	assert.True(t, synthetic)
 
-	help = strings.ReplaceAll(help, "--map-host-loopback", "--old--map-host-loopback")
-	help = strings.ReplaceAll(help, "--gateway", "--old--gateway")
-	help = strings.ReplaceAll(help, "--pid", "--pidfile")
-	err := validatePastaCapabilities(help)
-	require.ErrorContains(t, err, "--map-host-loopback")
-	assert.ErrorContains(t, err, "--gateway")
+	// Dropping a BASE control is fatal: no tier can run without it.
+	base := strings.ReplaceAll(help, "--pid", "--pidfile")
+	base = strings.ReplaceAll(base, "--config-net", "--old--config-net")
+	synthetic, err = validatePastaCapabilities(base)
+	require.ErrorContains(t, err, "--config-net")
 	assert.ErrorContains(t, err, "--pid")
+	assert.False(t, synthetic)
 	assert.NotContains(t, err.Error(), "--map-guest-addr")
+}
+
+// An Ubuntu 24.04 vintage pasta lacks exactly the three synthetic-mapping
+// controls. That caps it at the private-namespace tier rather than refusing it.
+func TestFilteredNetworkPastaCapabilityProbeAcceptsBaseTierPasta(t *testing.T) {
+	full := append(
+		append([]string(nil), baseFilteredNetworkPastaOptions...),
+		syntheticLoopbackFilteredNetworkPastaOptions...)
+	help := strings.Join(full, "\n")
+	for _, option := range []string{
+		"--map-guest-addr", "--map-host-loopback", "--no-splice",
+	} {
+		help = strings.ReplaceAll(help, option, "--old"+option)
+	}
+	synthetic, err := validatePastaCapabilities(help)
+	require.NoError(t, err)
+	assert.False(t, synthetic)
 }
 
 func TestFilteredNetworkPastaCapabilityProbeBoundsExecutionAndOutput(t *testing.T) {
@@ -103,14 +125,16 @@ func TestFilteredNetworkPastaCapabilityProbeBoundsExecutionAndOutput(t *testing.
 	filteredNetworkPastaCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 		return exec.CommandContext(ctx, "/bin/sleep", "1")
 	}
-	require.ErrorContains(t, inspectPastaCapabilities("/trusted/pasta"), "deadline exceeded")
+	_, err := inspectPastaCapabilities("/trusted/pasta")
+	require.ErrorContains(t, err, "deadline exceeded")
 
 	filteredNetworkPastaProbeTimeout = 5 * time.Second
 	filteredNetworkPastaHelpLimit = 8
 	filteredNetworkPastaCommand = func(ctx context.Context, _ string, _ ...string) *exec.Cmd {
 		return exec.CommandContext(ctx, "/bin/echo", "123456789")
 	}
-	require.ErrorContains(t, inspectPastaCapabilities("/trusted/pasta"), "output exceeds")
+	_, err = inspectPastaCapabilities("/trusted/pasta")
+	require.ErrorContains(t, err, "output exceeds")
 }
 
 func TestFilteredNetworkPrerequisiteProbeRefusesOlderPasta(t *testing.T) {
@@ -130,14 +154,15 @@ func TestFilteredNetworkPrerequisiteProbeRefusesOlderPasta(t *testing.T) {
 	filteredNetworkLookPath = func(name string) (string, error) {
 		return "/usr/bin/" + name, nil
 	}
-	inspectFilteredNetworkPasta = func(string) error {
-		return errors.New("missing options: --map-host-loopback")
+	inspectFilteredNetworkPasta = func(string) (bool, error) {
+		return false, errors.New("missing options: --config-net")
 	}
 
 	got := ProbeFilteredNetworkPrerequisite()
 	require.False(t, got.Detected)
+	assert.False(t, got.PrivateNamespaceDetected)
 	assert.Contains(t, got.Detail, "pasta")
-	assert.Contains(t, got.Detail, "--map-host-loopback")
+	assert.Contains(t, got.Detail, "--config-net")
 	assert.Contains(t, got.LaunchWhy(false), "outbound remains open")
 }
 
@@ -218,6 +243,96 @@ func TestOpenCodeFilteredNetworkUsesSharedPrerequisiteContract(t *testing.T) {
 		FilteredNetworkPrerequisite{Detected: true},
 	)
 	require.NoError(t, err)
+}
+
+// A base-tier pasta carries an explicitly private routed namespace but nothing
+// that authors rows. The predicate is shared by the refusal and both posture
+// selections precisely so those cannot disagree.
+func TestFilteredNetworkPostureAvailableSeparatesTheTwoTiers(t *testing.T) {
+	baseTier := FilteredNetworkPrerequisite{PrivateNamespaceDetected: true}
+	fullTier := FilteredNetworkPrerequisite{
+		Detected: true, PrivateNamespaceDetected: true,
+	}
+	unavailable := FilteredNetworkPrerequisite{}
+
+	private := sandboxpolicy.NetworkRules{
+		Mode:      sandboxpolicy.AccessModeOpen,
+		Namespace: sandboxpolicy.NetworkNamespacePrivate,
+	}
+	list := sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			CIDR: "192.0.2.0/24", Ports: []int{443},
+		}},
+	}
+	privateWithDeny := sandboxpolicy.NetworkRules{
+		Mode:      sandboxpolicy.AccessModeOpen,
+		Namespace: sandboxpolicy.NetworkNamespacePrivate,
+		Deny:      []sandboxpolicy.NetworkAllowEntry{{Host: "telemetry.example"}},
+	}
+
+	assert.True(t, FilteredNetworkPostureAvailable(baseTier, private))
+	assert.False(t, FilteredNetworkPostureAvailable(baseTier, list),
+		"an authored list needs the synthetic host-loopback mapping")
+	assert.False(t, FilteredNetworkPostureAvailable(baseTier, privateWithDeny),
+		"the base tier is deliberately scoped to the rowless private posture")
+
+	assert.True(t, FilteredNetworkPostureAvailable(fullTier, private))
+	assert.True(t, FilteredNetworkPostureAvailable(fullTier, list))
+	assert.True(t, FilteredNetworkPostureAvailable(fullTier, privateWithDeny))
+
+	assert.False(t, FilteredNetworkPostureAvailable(unavailable, private))
+	assert.False(t, FilteredNetworkPostureAvailable(unavailable, list))
+}
+
+// The refusal must follow the same predicate: a base-tier host admits a private
+// namespace, and an enforced private launch must not be disclosed as open.
+func TestPrivateNetworkOnBaseTierPastaIsAdmittedAndDisclosedAsEnforced(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode:      sandboxpolicy.AccessModeOpen,
+		Namespace: sandboxpolicy.NetworkNamespacePrivate,
+	}}
+	probe := FilteredNetworkPrerequisite{
+		PrivateNamespaceDetected: true,
+		Detail:                   "this pasta predates the synthetic host-loopback controls",
+	}
+	require.NoError(t, ValidateFilteredNetworkHarnessSupport(
+		harness.Default(), sandboxpolicy.ImplementationTclaudeLayer, axes, probe))
+
+	why := probe.LaunchWhy(true)
+	assert.Contains(t, why, "private-namespace tier")
+	assert.Contains(t, why, "host loopback closed")
+	assert.NotContains(t, why, "outbound remains open")
+
+	notice := FilteredNetworkPrerequisiteNotice(probe, true)
+	assert.Equal(t,
+		sandboxpolicy.AccessNoticeEffectLaunchGated, notice.Effect)
+
+	// The same probe under a launch that could not consume it stays honest.
+	assert.Contains(t, probe.LaunchWhy(false), "outbound remains open")
+	assert.Equal(t,
+		sandboxpolicy.AccessNoticeEffectNotEnforced,
+		FilteredNetworkPrerequisiteNotice(probe, false).Effect)
+}
+
+// A base-tier host authoring a real list keeps the historical widen-and-disclose
+// behaviour rather than gaining a new refusal.
+func TestListPolicyOnBaseTierPastaStillWidensAndDiscloses(t *testing.T) {
+	axes := sandboxpolicy.ResolvedAxes{Network: sandboxpolicy.NetworkRules{
+		Mode: sandboxpolicy.AccessModeList,
+		Allow: []sandboxpolicy.NetworkAllowEntry{{
+			CIDR: "192.0.2.0/24", Ports: []int{443},
+		}},
+	}}
+	probe := FilteredNetworkPrerequisite{
+		PrivateNamespaceDetected: true,
+		Detail:                   "this pasta predates the synthetic host-loopback controls",
+	}
+	require.NoError(t, ValidateFilteredNetworkHarnessSupport(
+		harness.Default(), sandboxpolicy.ImplementationTclaudeLayer, axes, probe),
+		"a list policy must widen and disclose, not refuse")
+	assert.False(t, FilteredNetworkPostureAvailable(probe, axes.Network))
+	assert.Contains(t, probe.LaunchWhy(false), "outbound remains open")
 }
 
 func TestPrivateNetworkPrerequisiteRefusalNamesExactProbeFailure(t *testing.T) {

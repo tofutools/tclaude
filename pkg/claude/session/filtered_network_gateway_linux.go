@@ -82,7 +82,10 @@ type preparedFilteredNetworkRelay struct {
 	Sync         *net.UnixConn
 	PastaPath    string
 	PastaPIDFile string
-	Rules        sandboxpolicy.FilteredNetworkRuleSet
+	// PastaSyntheticLoopback selects the gateway argument tier resolved for
+	// this launch's pasta. See filteredNetworkPastaArgs.
+	PastaSyntheticLoopback bool
+	Rules                  sandboxpolicy.FilteredNetworkRuleSet
 	// Policy is the rendered nft ruleset. It is installed by the supervisor via
 	// installBasePolicy rather than inside the sandbox, because bubblewrap's
 	// stock AppArmor profile denies all capabilities to the sandboxed process.
@@ -151,6 +154,19 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 	executables, err := resolveFilteredNetworkExecutables()
 	if err != nil {
 		return preparedFilteredNetworkRelay{}, err
+	}
+	// Fail closed at the launch boundary. The posture selection upstream only
+	// admits a base-tier pasta for a policy that authors no rows; anything that
+	// reaches here needing an nft rule to name host loopback would otherwise get
+	// a namespace where that address simply does not exist, and a loopback allow
+	// row would read as enforced while silently never matching.
+	if !executables.SyntheticLoopback && filteredNetworkNeedsSyntheticLoopback(ir) {
+		return preparedFilteredNetworkRelay{}, fmt.Errorf(
+			"rootless pasta %q predates the synthetic host-loopback controls (%s), "+
+				"so it cannot carry an authored network list; it supports "+
+				"network.namespace \"private\" only",
+			executables.Pasta,
+			strings.Join(syntheticLoopbackFilteredNetworkPastaOptions, ", "))
 	}
 	hostHosts, err := os.ReadFile("/etc/hosts")
 	if err != nil && !os.IsNotExist(err) {
@@ -281,9 +297,10 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 		},
 		Files:        files,
 		SyncListener: syncListener,
-		PastaPath:    executables.Pasta,
-		PastaPIDFile: filepath.Join(pidDir, "pasta.pid"),
-		Rules:        ir,
+		PastaPath:              executables.Pasta,
+		PastaPIDFile:           filepath.Join(pidDir, "pasta.pid"),
+		PastaSyntheticLoopback: executables.SyntheticLoopback,
+		Rules:                  ir,
 		Policy:       policy,
 		NsenterPath:  executables.Nsenter,
 		NFTPath:      executables.NFT,
@@ -701,7 +718,8 @@ func (p *preparedFilteredNetworkRelay) startPasta(
 	if p == nil || p.PastaPath == "" {
 		return nil, nil, nil
 	}
-	args := filteredNetworkPastaArgs(p.PastaPIDFile, namespacePID)
+	args := filteredNetworkPastaArgs(
+		p.PastaPIDFile, namespacePID, p.PastaSyntheticLoopback)
 	cmd := exec.Command(p.PastaPath, args...)
 	cmd.Env = filteredNetworkHelperEnv()
 	cmd.Stdout = os.Stderr
@@ -744,27 +762,66 @@ func (p *preparedFilteredNetworkRelay) startPasta(
 	}
 }
 
-func filteredNetworkPastaArgs(pidFile string, namespacePID int) []string {
-	return []string{
+// filteredNetworkNeedsSyntheticLoopback reports whether this launch IR needs
+// pasta to map host loopback to the synthetic addresses.
+//
+// Only an ALLOW-polarity loopback row needs the mapping to exist. A deny row
+// naming host loopback is an nft drop, and on a base-tier pasta the address it
+// names is unreachable anyway, so the authored intent still holds. Any other
+// authored row can resolve to a host-loopback address through the documented
+// synthetic-address reservation gap, so a policy carrying rows at all is held
+// to the full tier.
+func filteredNetworkNeedsSyntheticLoopback(
+	ir sandboxpolicy.FilteredNetworkRuleSet,
+) bool {
+	return len(ir.Rules) > 0 ||
+		sandboxpolicy.FilteredNetworkDefaultVerdictForRules(ir) !=
+			sandboxpolicy.FilteredNetworkDefaultAccept
+}
+
+// filteredNetworkPastaArgs renders the supervised gateway's arguments.
+//
+// syntheticLoopback selects the tier. Without it the three synthetic-mapping
+// controls are simply absent rather than replaced: pasta then has no
+// host-loopback mapping at all, which is what an explicitly private namespace
+// wants, and the four "none" port specs already leave the splice bypass with
+// nothing to act on. --gateway goes with that tier too — see
+// syntheticLoopbackFilteredNetworkPastaOptions for why passing it to an older
+// pasta breaks IPv4 on an IPv4-only host.
+func filteredNetworkPastaArgs(
+	pidFile string,
+	namespacePID int,
+	syntheticLoopback bool,
+) []string {
+	args := []string{
 		"--foreground",
 		"--quiet",
 		"--config-net",
+	}
+	if syntheticLoopback {
 		// Give the namespace an IPv6 default route to pasta's emulated
 		// gateway. The reserved fd00::2 host-loopback mapping must not depend
 		// on an unrelated route existing in the host's selected template.
-		"--gateway", sandboxpolicy.FilteredNetworkGatewayIPv6,
-		"--no-map-gw",
-		"--map-guest-addr", "none",
-		"--map-host-loopback", sandboxpolicy.FilteredNetworkLoopbackIPv4,
-		"--map-host-loopback", sandboxpolicy.FilteredNetworkLoopbackIPv6,
+		args = append(args, "--gateway", sandboxpolicy.FilteredNetworkGatewayIPv6)
+	}
+	args = append(args, "--no-map-gw")
+	if syntheticLoopback {
+		args = append(args,
+			"--map-guest-addr", "none",
+			"--map-host-loopback", sandboxpolicy.FilteredNetworkLoopbackIPv4,
+			"--map-host-loopback", sandboxpolicy.FilteredNetworkLoopbackIPv6,
+		)
+	}
+	args = append(args,
 		"--tcp-ports", "none",
 		"--udp-ports", "none",
 		"--tcp-ns", "none",
 		"--udp-ns", "none",
-		"--no-splice",
-		"--pid", pidFile,
-		strconv.Itoa(namespacePID),
+	)
+	if syntheticLoopback {
+		args = append(args, "--no-splice")
 	}
+	return append(args, "--pid", pidFile, strconv.Itoa(namespacePID))
 }
 
 func tclaudeLayerFilteredBootstrapCmd() *cobra.Command {

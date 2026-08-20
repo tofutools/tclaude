@@ -25,22 +25,50 @@ type filteredNetworkExecutables struct {
 	Pasta   string
 	NFT     string
 	Nsenter string
+	// SyntheticLoopback reports whether Pasta can place host loopback at the
+	// fixed, nft-filterable synthetic addresses. False means a base-tier pasta:
+	// enough for a private routed namespace, not enough for an authored list.
+	SyntheticLoopback bool
 }
 
-var requiredFilteredNetworkPastaOptions = []string{
+// baseFilteredNetworkPastaOptions are the controls every packet-gateway launch
+// needs regardless of tier: foreground supervision, a configured namespace, no
+// host-loopback mapping, and no port forwarding in either direction.
+//
+// The four "none" port specs matter more than they look. pasta defaults all
+// four to "auto", which scans for bound ports and forwards them — and the
+// namespace-to-init direction is exactly the splice bypass --no-splice turns
+// off. With all four pinned to "none" pasta binds no local port, so the bypass
+// has nothing to act on and --no-splice becomes redundant rather than missing.
+var baseFilteredNetworkPastaOptions = []string{
 	"--foreground",
 	"--quiet",
 	"--config-net",
-	"--gateway",
 	"--no-map-gw",
-	"--map-guest-addr",
-	"--map-host-loopback",
 	"--tcp-ports",
 	"--udp-ports",
 	"--tcp-ns",
 	"--udp-ns",
-	"--no-splice",
 	"--pid",
+}
+
+// syntheticLoopbackFilteredNetworkPastaOptions are the additional controls that
+// re-add host loopback at a fixed address an nft rule can name, which is what an
+// authored network list needs and a private routed namespace does not.
+//
+// --gateway is in this tier even though far older pasta also accepts it. In
+// pasta mode -g also means "do not copy the host's routes", and before upstream
+// 2024-08-07 ("Make -g and -a skip route/addresses copy for matching IP
+// version") that suppression was global rather than per-family — so passing an
+// IPv6 gateway there also stops the IPv4 default route from being installed,
+// and an IPv4-only host loses connectivity entirely. --map-host-loopback landed
+// 2024-08-21, two weeks after that fix, so a pasta advertising it necessarily
+// scopes the suppression per family and -g is safe to pass alongside it.
+var syntheticLoopbackFilteredNetworkPastaOptions = []string{
+	"--gateway",
+	"--map-guest-addr",
+	"--map-host-loopback",
+	"--no-splice",
 }
 
 func resolveFilteredNetworkExecutables() (filteredNetworkExecutables, error) {
@@ -48,7 +76,8 @@ func resolveFilteredNetworkExecutables() (filteredNetworkExecutables, error) {
 	if err != nil {
 		return filteredNetworkExecutables{}, fmt.Errorf("rootless pasta is required: %w", err)
 	}
-	if err := inspectFilteredNetworkPasta(pasta); err != nil {
+	syntheticLoopback, err := inspectFilteredNetworkPasta(pasta)
+	if err != nil {
 		return filteredNetworkExecutables{}, fmt.Errorf(
 			"rootless pasta lacks the required filtered-network capabilities: %w", err)
 	}
@@ -64,7 +93,12 @@ func resolveFilteredNetworkExecutables() (filteredNetworkExecutables, error) {
 		return filteredNetworkExecutables{}, fmt.Errorf(
 			"util-linux `nsenter` is required: %w", err)
 	}
-	return filteredNetworkExecutables{Pasta: pasta, NFT: nft, Nsenter: nsenter}, nil
+	return filteredNetworkExecutables{
+		Pasta:             pasta,
+		NFT:               nft,
+		Nsenter:           nsenter,
+		SyntheticLoopback: syntheticLoopback,
+	}, nil
 }
 
 func resolveFilteredNetworkExecutable(name string) (string, error) {
@@ -75,7 +109,9 @@ func resolveFilteredNetworkExecutable(name string) (string, error) {
 	return resolveTrustedExecutablePath(name, path)
 }
 
-func inspectPastaCapabilities(path string) error {
+// inspectPastaCapabilities reports whether the binary supports the synthetic
+// host-loopback tier. An error means it cannot carry any packet-gateway launch.
+func inspectPastaCapabilities(path string) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), filteredNetworkPastaProbeTimeout)
 	defer cancel()
 	output := cappedFilteredNetworkOutput{limit: filteredNetworkPastaHelpLimit}
@@ -85,13 +121,13 @@ func inspectPastaCapabilities(path string) error {
 	cmd.Stderr = &output
 	err := cmd.Run()
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		return fmt.Errorf("inspect %q with --help: %w", path, ctxErr)
+		return false, fmt.Errorf("inspect %q with --help: %w", path, ctxErr)
 	}
 	if err != nil {
-		return fmt.Errorf("inspect %q with --help: %w", path, err)
+		return false, fmt.Errorf("inspect %q with --help: %w", path, err)
 	}
 	if output.truncated {
-		return fmt.Errorf(
+		return false, fmt.Errorf(
 			"inspect %q with --help: output exceeds %d bytes",
 			path,
 			filteredNetworkPastaHelpLimit,
@@ -125,22 +161,31 @@ func (w *cappedFilteredNetworkOutput) String() string {
 	return w.buffer.String()
 }
 
-func validatePastaCapabilities(help string) error {
+// validatePastaCapabilities reports whether the synthetic host-loopback tier is
+// available. A missing BASE option is an error — that binary cannot carry any
+// packet-gateway launch. A missing synthetic option is not: it caps the binary
+// at the private routed namespace, which the launch boundary enforces.
+func validatePastaCapabilities(help string) (bool, error) {
 	tokens := make(map[string]struct{})
 	for _, field := range strings.Fields(help) {
 		token, _, _ := strings.Cut(field, "=")
 		tokens[token] = struct{}{}
 	}
 	var missing []string
-	for _, option := range requiredFilteredNetworkPastaOptions {
+	for _, option := range baseFilteredNetworkPastaOptions {
 		if _, ok := tokens[option]; !ok {
 			missing = append(missing, option)
 		}
 	}
 	if len(missing) != 0 {
-		return fmt.Errorf("missing options: %s", strings.Join(missing, ", "))
+		return false, fmt.Errorf("missing options: %s", strings.Join(missing, ", "))
 	}
-	return nil
+	for _, option := range syntheticLoopbackFilteredNetworkPastaOptions {
+		if _, ok := tokens[option]; !ok {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func probeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
@@ -150,8 +195,27 @@ func probeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 			Detail: "bubblewrap/user/network namespace probe failed: " + err.Error(),
 		}
 	}
+	// resolveBwrapServerBinary already required the base tier to get here, so
+	// the private routed namespace is available either way. Re-resolving reads
+	// the synthetic tier, which is what separates it from a full list launch.
+	executables, err := resolveFilteredNetworkExecutables()
+	if err != nil {
+		return FilteredNetworkPrerequisite{
+			Detail: "filtered-network helper probe failed: " + err.Error(),
+		}
+	}
+	if !executables.SyntheticLoopback {
+		return FilteredNetworkPrerequisite{
+			PrivateNamespaceDetected: true,
+			Detail: "bubblewrap user/network namespace execution passed and trusted pasta, nft, and nsenter " +
+				"executables were found, but this pasta predates the synthetic host-loopback controls (" +
+				strings.Join(syntheticLoopbackFilteredNetworkPastaOptions, ", ") +
+				"); it can carry a private routed namespace but not an authored network list",
+		}
+	}
 	return FilteredNetworkPrerequisite{
-		Detected: true,
+		Detected:                 true,
+		PrivateNamespaceDetected: true,
 		Detail: "bubblewrap user/network namespace execution passed; trusted pasta, nft, and nsenter executables " +
 			"were found; the base nft policy is installed from the supervisor via nsenter, and end-to-end gateway readiness is decided at the gated launch boundary",
 	}

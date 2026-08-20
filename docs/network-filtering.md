@@ -81,6 +81,9 @@ supported for exact Linux `tclaude-layer` Claude Code, Codex, OpenCode, and
 Copilot launches, and refuses elsewhere rather than falling back. A private
 namespace in a global or included profile cannot be widened by a child.
 
+It also has a lower `pasta` bar than an authored list does — see
+[the two pasta tiers](#the-two-pasta-tiers).
+
 The `unix_sockets` axis (`mode: open|closed|list` plus `path`/`path_glob`
 entries; `**` refused; the agentd socket is a non-removable floor) governs
 filesystem Unix sockets. Authoring it as `closed` or a list on an otherwise
@@ -170,6 +173,40 @@ group/world-writable path component, a regular executable target; ownership is
 not checked, so a user-installed one is accepted), pidfd support, the pasta
 feature probe — the filtered rules **widen to host-open with a persisted
 warning**; after enforcement is selected, failures are fail-closed.
+
+### The two pasta tiers
+
+The pasta feature probe answers in two tiers, because the two postures need
+different things from it.
+
+The **full tier** is what an authored list needs. It requires
+`--map-host-loopback`, `--map-guest-addr` and `--no-splice`, which are what put
+host loopback at the fixed synthetic addresses an nft rule can name. Upstream
+added these in August 2024, so distribution packages older than that — notably
+Ubuntu 24.04 LTS, which ships `0.0~git20240220` — do not have them.
+
+The **base tier** is everything else the gateway uses, and it is enough for
+`network.namespace: private`. That posture authors no allow rows, so nothing
+ever needs to name host loopback; it wants the mapping *gone*, which plain
+`--no-map-gw` already delivers. The other two absences cost nothing either:
+pasta has no guest-address translation to disable on those builds, and the
+`--tcp-ports`/`--udp-ports`/`--tcp-ns`/`--udp-ns` `none` settings the gateway
+already passes leave pasta binding no local port, so the splice bypass
+`--no-splice` turns off has nothing to act on.
+
+`--gateway` is treated as a full-tier control even though far older pasta
+accepts it. In pasta mode `-g` also means "do not copy the host's routes", and
+before upstream's 2024-08-07 fix that suppression was global rather than
+per-family — so passing tclaude's IPv6 gateway to an older build also stops the
+IPv4 default route from being installed, breaking connectivity outright on an
+IPv4-only host. The per-family fix predates `--map-host-loopback` by two weeks,
+so a pasta advertising the latter always has the former.
+
+On a base-tier host, then: a private namespace launches and is enforced, while
+an authored list keeps the ordinary widen-to-host-open-with-a-warning
+behaviour. To get list filtering on such a host, either build pasta from source
+(CI pins a known-good revision) or select the proxy engine, which needs no
+pasta at all.
 
 ### The model-transport gate
 
@@ -289,6 +326,7 @@ mind: they document intent, they do not yet enforce it.
 | Launch refused: `unsupported_filtered_model_transport` | The authored list does not cover the resolved provider endpoint — add the matching pack or use network open |
 | Launch refused over `HTTP_PROXY`/`ALL_PROXY` | A foreign proxy variable in the launch environment; remove it or use network open |
 | Filtered rules silently became host-open (warning recorded) | A packet-engine prerequisite (`bwrap`, `pasta`, `nft`, pidfds) was missing before enforcement was selected |
+| An authored list widens to host-open but `network.namespace: private` works | A base-tier `pasta` — see [the two pasta tiers](#the-two-pasta-tiers) |
 | Rules recorded but "not enforced" notice on the launch | Non-activated engine cell — e.g. Copilot, or macOS packet filtering |
 | Host loopback reachable despite no loopback row | The synthetic-address reservation gap — a CIDR or DNS-derived rule can reach host loopback on its ports |
 

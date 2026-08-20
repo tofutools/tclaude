@@ -379,7 +379,7 @@ func planSandboxProfileAccessForLaunch(
 						return nil, sandboxCapabilitySpawnFailure(
 							supportErr, "unsupported_sandbox_profile_access")
 					}
-					if probe.Detected {
+					if session.FilteredNetworkPostureAvailable(probe, axes.Network) {
 						posture = sandboxpolicy.NetworkFiltered
 					}
 				}

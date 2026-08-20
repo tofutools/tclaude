@@ -726,8 +726,13 @@ func TclaudeLayerServerHostToolingPresence() error {
 // filtered gateway. Detected does not itself mean NetworkList is enforced:
 // the exact launch remains gated on policy installation and gateway readiness.
 type FilteredNetworkPrerequisite struct {
-	Detected bool   `json:"detected"`
-	Detail   string `json:"detail"`
+	Detected bool `json:"detected"`
+	// PrivateNamespaceDetected is the weaker tier: the host can route a private
+	// namespace through pasta, but its pasta may predate the synthetic
+	// host-loopback controls an authored network list needs. Detected implies
+	// it; the reverse does not hold.
+	PrivateNamespaceDetected bool   `json:"private_namespace_detected,omitempty"`
+	Detail                   string `json:"detail"`
 }
 
 // ProbeFilteredNetworkPrerequisite checks the exact host building blocks named
@@ -754,6 +759,38 @@ func ProbeFilteredNetworkPrerequisite() FilteredNetworkPrerequisite {
 // would violate the operator's selection. Refuse it here, where the exact live
 // probe detail is still available, rather than later in the capability table
 // after that result has been reduced to a boolean.
+// FilteredNetworkPostureAvailable reports whether the live probe can carry THIS
+// policy's packet-gateway launch.
+//
+// It exists because the probe answers in two tiers and the policy decides which
+// one it needs. A full-tier host carries everything. A base-tier host — pasta
+// predating the synthetic host-loopback controls — carries only a private
+// routed namespace, which authors no allow rows and therefore never needs an
+// nft rule to name host loopback.
+//
+// Every surface that selects the filtered posture asks this one predicate: the
+// session boundary, the daemon spawn guard, and the refusal below. Deriving it
+// twice is how the refusal and the posture selection would come to disagree,
+// and a disagreement here reads as "supported" followed by a silent widening to
+// host networking.
+//
+// The base tier is deliberately scoped to NetworkRulesArePrivateRoutedOpen
+// rather than to every policy whose rows happen to be enforceable without the
+// mapping. A private namespace carrying deny rows would also survive on base
+// tier — the rows are nft drops, and a deny-loopback row drops an address that
+// no longer exists — but reusing the existing tested predicate keeps this
+// change to the posture the operator actually asked for.
+func FilteredNetworkPostureAvailable(
+	probe FilteredNetworkPrerequisite,
+	network sandboxpolicy.NetworkRules,
+) bool {
+	if probe.Detected {
+		return true
+	}
+	return probe.PrivateNamespaceDetected &&
+		sandboxpolicy.NetworkRulesArePrivateRoutedOpen(network)
+}
+
 func ValidateFilteredNetworkHarnessSupport(
 	_ *harness.Harness,
 	_ sandboxpolicy.Implementation,
@@ -761,7 +798,7 @@ func ValidateFilteredNetworkHarnessSupport(
 	probe FilteredNetworkPrerequisite,
 ) error {
 	if axes.Network.Namespace == sandboxpolicy.NetworkNamespacePrivate &&
-		!probe.Detected {
+		!FilteredNetworkPostureAvailable(probe, axes.Network) {
 		detail := strings.TrimSpace(probe.Detail)
 		if detail == "" {
 			detail = "the prerequisite probe returned no detail"
@@ -784,6 +821,14 @@ func (p FilteredNetworkPrerequisite) LaunchWhy(enforcing bool) string {
 		return "filtered-network prerequisite probe: detected (" + p.Detail +
 			"); this launch cannot consume the filtered network rules, so they remain unenforced and outbound remains open"
 	}
+	// An enforcing launch on a host whose only tier is the private namespace is
+	// still enforced, so it must not inherit the "outbound remains open" line
+	// below. Reaching here with enforcing set means the posture selection
+	// already agreed the base tier carries this policy.
+	if p.PrivateNamespaceDetected && enforcing {
+		return "filtered-network prerequisite probe: private-namespace tier (" + p.Detail +
+			"); this launch routes through a private namespace with host loopback closed, and remains gated on atomic nft policy installation before the supervised pasta route becomes available"
+	}
 	return "filtered-network prerequisite probe: unavailable (" + p.Detail +
 		"); the filtered network rules remain unenforced and outbound remains open"
 }
@@ -796,7 +841,7 @@ func FilteredNetworkPrerequisiteNotice(
 	enforcing bool,
 ) sandboxpolicy.AccessNotice {
 	effect := sandboxpolicy.AccessNoticeEffectNotEnforced
-	if probe.Detected && enforcing {
+	if (probe.Detected || probe.PrivateNamespaceDetected) && enforcing {
 		effect = sandboxpolicy.AccessNoticeEffectLaunchGated
 	}
 	return sandboxpolicy.AccessNotice{
