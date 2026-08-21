@@ -450,9 +450,19 @@ type exitCallbackParams struct {
 // copying into the log.
 //
 // It is exported because the authenticated pane callback here is not the only
-// observer of such an exit — the daemon's reconciler sees the ones the callback
-// misses — and a window that differed between them would make the Logs tab's
-// contents depend on which observer happened to win the race.
+// observer of such an exit: the daemon's reconciler sees the ones this callback
+// misses, and both must answer "was this a launch failure" the same way rather
+// than each inventing a bound.
+//
+// The reconciler does not apply this value raw, and should not be read as
+// promising it will. This callback fires within milliseconds of a death, so it
+// measures the window against the launch almost exactly; a sweep that only looks
+// every reaper interval cannot, and widens it by that latency (see
+// agentd.reconciledStartupFailureWindow). Because neither observer knows the
+// death time, that widening also admits a slightly later DEATH — a pane dying at
+// t=45s is captured by the reconciler and refused here. That asymmetry is
+// accepted: bounding the sweep by the raw window would drop the failures the
+// capture exists for, on nothing but sweep phase.
 const SpawnFailureDiagnosticWindow = 30 * time.Second
 
 const spawnFailureDiagnosticBytes = 8 * 1024
