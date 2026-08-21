@@ -108,7 +108,7 @@ func verifyCodexAppServerLaunchVersion(
 	}
 	launchEnvironment := launchModelEnvironment(environment)
 	if strings.TrimSpace(executable) == "" {
-		resolved, err := codexEffectiveConfigLookPath(launchEnvironment["PATH"])
+		resolved, err := codexEffectiveConfigLookPath(cwd, launchEnvironment["PATH"])
 		if err != nil {
 			return markCodexAppServerVersionFailure(params,
 				fmt.Errorf("locate exact codex launch executable: %w", err))
