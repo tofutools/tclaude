@@ -12120,6 +12120,86 @@ body.wizard #cleanup-modal #cleanup-submit.danger:hover {
 }
 body.wizard #cleanup-modal #cleanup-submit:disabled { opacity: 0.6; }
 
+/* ─── Wizard bulk-retire preview — "Banish familiars" ────────────
+   The group, Unbound, and all-parties retirement previews share this one
+   transaction-owned overlay. Keep its arcane skin scoped to
+   #retire-preview-modal so the sibling cleanup dialogs remain independent.
+   The initial submit stays ember-red because retirement revokes membership
+   and boons; the result-phase Done action loses .danger and becomes gilded. */
+body.wizard #retire-preview-modal .cleanup-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #retire-preview-modal .cleanup-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #retire-preview-modal .cleanup-hint,
+body.wizard #retire-preview-modal .cleanup-toolbar { color: #b39ddb; }
+body.wizard #retire-preview-modal .cleanup-count { color: #e7d9f5; }
+body.wizard #retire-preview-modal .cleanup-toolbar button {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #retire-preview-modal .cleanup-toolbar button:hover { background: #3a2a63; }
+body.wizard #retire-preview-modal .cleanup-toolbar input[type=search] {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.5); color: #f3e6c0;
+}
+body.wizard #retire-preview-modal .cleanup-toolbar input[type=search]:focus {
+  outline: none; border-color: #a97bd6;
+}
+body.wizard #retire-preview-modal .cleanup-list {
+  background: #120c24; border-color: rgba(122, 93, 176, 0.5);
+}
+body.wizard #retire-preview-modal .cleanup-row { border-bottom-color: #241b3d; }
+body.wizard #retire-preview-modal .cleanup-row input[type=checkbox],
+body.wizard #retire-preview-modal .delete-agent-wt input[type=checkbox] {
+  accent-color: #a97bd6;
+}
+body.wizard #retire-preview-modal .cleanup-row .title { color: #f3e6c0; }
+body.wizard #retire-preview-modal .cleanup-row .id,
+body.wizard #retire-preview-modal .cleanup-row .meta,
+body.wizard #retire-preview-modal .cleanup-empty { color: #b39ddb; }
+/* Candidate status/class badges get wizard chrome. Result rows have no label,
+   so their semantic green/amber/red outcome palette remains authoritative. */
+body.wizard #retire-preview-modal .cleanup-row label .cleanup-badge {
+  background: #1c1436; border-color: #3a2a63; color: #b39ddb;
+}
+body.wizard #retire-preview-modal .delete-agent-wt { color: #e7d9f5; }
+body.wizard #retire-preview-modal .delete-agent-wt .wt-note { color: #b39ddb; }
+body.wizard #retire-preview-modal .modal-buttons {
+  border-top-color: rgba(122, 93, 176, 0.4);
+}
+body.wizard #retire-preview-modal .modal-buttons button:not(#retire-preview-submit) {
+  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
+}
+body.wizard #retire-preview-modal .modal-buttons button:not(#retire-preview-submit):hover {
+  background: #3a2a63; border-color: #d9b45a;
+}
+body.wizard #retire-preview-modal #retire-preview-submit {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0; border: 2px solid #d9b45a; border-radius: 6px;
+  box-shadow: 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 0.5px; font-weight: 700;
+}
+body.wizard #retire-preview-modal #retire-preview-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #retire-preview-modal #retire-preview-submit.danger {
+  background: linear-gradient(180deg, #6e1f2a 0%, #3a1018 100%);
+  border-color: #f0883e;
+  box-shadow: 0 0 10px rgba(240, 136, 62, 0.5);
+}
+body.wizard #retire-preview-modal #retire-preview-submit.danger:hover {
+  background: linear-gradient(180deg, #8a2836 0%, #4a141f 100%);
+  box-shadow: 0 0 16px rgba(240, 136, 62, 0.8);
+}
+body.wizard #retire-preview-modal #retire-preview-submit:disabled { opacity: 0.6; }
+
 /* ─── Wizard delete-retired preview — "Dispel banished familiars" ───
    This overlay shares .cleanup-modal with the bulk cleanup, retire-preview,
    and worktree-cleanup dialogs. Keep the violet surface, filters, preview
