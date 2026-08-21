@@ -363,6 +363,89 @@ func TestSessionReaper_DeathObservedPastTheWindowIsNotCaptured(t *testing.T) {
 	requireNoStartupFailureCapture(t, logs.Bytes(), paneText)
 }
 
+// makeShellSession retags an existing session row as a shell session. A shell
+// launch has no conversation and no harness, so the flow harness has no builder
+// for one; the row's harness column is the only thing the reaper reads.
+func makeShellSession(t *testing.T, sessionID string) {
+	t.Helper()
+	row, err := db.LoadSession(sessionID)
+	require.NoError(t, err)
+	row.Harness = session.ShellHarnessName
+	require.NoError(t, db.SaveSession(row))
+}
+
+// Scenario: a shell session's pane dies young and non-zero, which for a coding
+// harness would be captured.
+//
+// Expected: no capture, on the harness alone. A shell pane's command is
+// `exec $SHELL` with no sandbox stack in front of it, so once the launch gate
+// releases there is no phase where the pane holds tclaude's output rather than
+// the user's own terminal — at any age. A short window could not express this:
+// the age is measured to the sweep, not to the death, so any bound below the
+// sweep interval would admit nothing and only look like a rule.
+func TestSessionReaper_StartedShellPaneIsNeverCaptured(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "shel-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "shell-session")
+	f.HaveAliveSession(conv, "spwn-shel", "tmux-shel", f.TestCwd("shel"))
+	makeShellSession(t, "spwn-shel")
+	const paneText = "psql -h prod -c 'select * from users'"
+	f.World.Tmux.SetDeadPaneOutput("tmux-shel", paneText)
+	// Young, non-zero, no lifecycle intent: every other gate would admit this,
+	// so only the shell rule can be what excludes it.
+	code := 1
+	f.World.Tmux.MarkPaneDead("tmux-shel", &code, "")
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick(), "the dead pane should still be reaped")
+
+	requireNoStartupFailureCapture(t, logs.Bytes(), paneText)
+}
+
+// Scenario: a launch never crosses the exit-audit gate — the parent died before
+// releasing it, so the pane printed the gate's own refusal and exited 125. The
+// sweep does not reach it until long afterwards.
+//
+// Expected: captured anyway, for a SHELL, past the age bound. A pane that never
+// passed the gate ran nothing but the gate's poll loop, so its whole content is
+// tclaude's own message whoever owned the session. This is the one case a shell
+// is captured at all, and it has to ignore age: the gate itself waits up to
+// half a minute before giving up.
+func TestSessionReaper_PreHarnessDeathIsCapturedPastTheWindow(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "gate-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "gated-shell")
+	f.HaveAliveSession(conv, "spwn-gate", "tmux-gate", f.TestCwd("gate"))
+	makeShellSession(t, "spwn-gate")
+	// After the harness retag: SaveSession preserves the gate state only when
+	// the row carries no launch generation, so set the state second either way.
+	require.NoError(t, db.MarkSessionExitLaunchPending("spwn-gate", ""))
+	const paneText = "tclaude: managed pane exit-audit launch gate timed out or was cancelled"
+	f.World.Tmux.SetDeadPaneOutput("tmux-gate", paneText)
+	code := 125
+	f.World.Tmux.MarkPaneDead("tmux-gate", &code, "")
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	reaper.TickAt(time.Now().Add(time.Hour))
+
+	captured := startupFailureLogRecord(t, logs.Bytes())
+	assert.Contains(t, captured["pane_output"], paneText)
+	assert.Equal(t, "pending", captured["gate_state"],
+		"the capture must say which arm admitted it, since age did not")
+}
+
 // Scenario: a Codex pane disappears with no recorded reason. Codex has
 // no reliable SessionEnd hook, so a normal terminal close reaches the
 // reaper looking exactly like "no reason recorded". That must render as

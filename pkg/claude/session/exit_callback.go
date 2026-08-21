@@ -467,6 +467,45 @@ const SpawnFailureDiagnosticWindow = 30 * time.Second
 
 const spawnFailureDiagnosticBytes = 8 * 1024
 
+// StartupPaneTextIsOurs reports whether a dead pane can only be holding
+// tclaude's own launch output, rather than a terminal someone was using.
+//
+// This is the privacy boundary of the pane capture, shared by both observers
+// because they must answer it identically — the window they each apply differs
+// (see SpawnFailureDiagnosticWindow), but WHOSE TEXT THIS IS cannot.
+//
+// It is not one rule, because a pane does not have one owner.
+//
+// A pane that never passed the launch gate ran nothing but the gate's poll loop
+// and printed nothing but its own refusal. That is ours at any age, and it needs
+// to be: the gate waits up to exitLaunchBarrierWindow before giving up, so such
+// a launch can be half a minute old before it has printed its one line.
+//
+// For a shell session that is the ONLY case. Its pane command is `exec $SHELL`
+// with no sandbox stack in front of it (see startShellSession), so the instant
+// the gate releases the pane is the user's terminal — there is no later moment
+// at which its text is ours to copy, at any age. Expressing that as a short
+// window would not work and would only look like a rule: the reconciling
+// observer measures age to its own sweep rather than to the death, because tmux
+// attaches no death time to a corpse.
+//
+// A harness launch is the case that genuinely has a middle phase.
+// resource-limit-exec, the tclaude-layer relay, bubblewrap and the harness's own
+// startup all print to this pane before the first conversation turn, and that
+// phase is where a filtered network refused by the host's confinement fails.
+// Age is the only proxy available for "still in that phase", so this last arm is
+// a real but imprecise bound — and the one place the capture can still read
+// something a working agent had on screen.
+func StartupPaneTextIsOurs(harness, gateState string, startupAge, window time.Duration) bool {
+	if gateState == db.SessionExitGatePending {
+		return true
+	}
+	if harness == ShellHarnessName {
+		return false
+	}
+	return startupAge >= 0 && startupAge <= window
+}
+
 func exitCallbackCmd() *cobra.Command {
 	var p exitCallbackParams
 	cmd := &cobra.Command{
@@ -565,9 +604,19 @@ func applyExitCallback(p exitCallbackParams) error {
 	// declined to write. The least evidence must not also mean the least
 	// diagnosis.
 	startupAge := time.Duration(-1)
+	paneHarness, gateState := "", ""
 	failedStartup := p.ExitCode != "0"
-	if row, loadErr := db.LoadSession(p.SessionID); failedStartup && loadErr == nil && row != nil && !row.CreatedAt.IsZero() {
-		startupAge = time.Since(row.CreatedAt)
+	if row, loadErr := db.LoadSession(p.SessionID); failedStartup && loadErr == nil && row != nil {
+		paneHarness = row.Harness
+		if !row.CreatedAt.IsZero() {
+			startupAge = time.Since(row.CreatedAt)
+		}
+		// LoadSession does not populate the write-only launch columns, so the
+		// gate state comes from its own read. Nothing in the record below writes
+		// it, which is why reading it here rather than after is equivalent.
+		if identity, idErr := db.GetSessionExitLaunchIdentity(p.SessionID); idErr == nil {
+			gateState = identity.GateState
+		}
 	}
 	var code *int
 	cause := db.AgentExitCauseUnknown
@@ -598,7 +647,8 @@ func applyExitCallback(p exitCallbackParams) error {
 			"pane_id", p.PaneID, "error", err)
 		return fmt.Errorf("record managed pane exit: %w", err)
 	}
-	if result.LifecycleAction == "" && startupAge >= 0 && startupAge <= SpawnFailureDiagnosticWindow {
+	if result.LifecycleAction == "" && failedStartup &&
+		StartupPaneTextIsOurs(paneHarness, gateState, startupAge, SpawnFailureDiagnosticWindow) {
 		// Record the failure even when the pane printed nothing. Silence is
 		// itself a finding — the process died before writing a word, which
 		// points at the launch wrapper rather than the harness — and an absent
