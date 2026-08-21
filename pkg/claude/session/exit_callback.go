@@ -445,10 +445,17 @@ type exitCallbackParams struct {
 	Signal      string
 }
 
-const (
-	spawnFailureDiagnosticWindow = 30 * time.Second
-	spawnFailureDiagnosticBytes  = 8 * 1024
-)
+// SpawnFailureDiagnosticWindow bounds how long after a session row is created a
+// managed pane's exit still counts as a launch failure whose output is worth
+// copying into the log.
+//
+// It is exported because the authenticated pane callback here is not the only
+// observer of such an exit — the daemon's reconciler sees the ones the callback
+// misses — and a window that differed between them would make the Logs tab's
+// contents depend on which observer happened to win the race.
+const SpawnFailureDiagnosticWindow = 30 * time.Second
+
+const spawnFailureDiagnosticBytes = 8 * 1024
 
 func exitCallbackCmd() *cobra.Command {
 	var p exitCallbackParams
@@ -581,7 +588,7 @@ func applyExitCallback(p exitCallbackParams) error {
 			"pane_id", p.PaneID, "error", err)
 		return fmt.Errorf("record managed pane exit: %w", err)
 	}
-	if result.LifecycleAction == "" && startupAge >= 0 && startupAge <= spawnFailureDiagnosticWindow {
+	if result.LifecycleAction == "" && startupAge >= 0 && startupAge <= SpawnFailureDiagnosticWindow {
 		// Record the failure even when the pane printed nothing. Silence is
 		// itself a finding — the process died before writing a word, which
 		// points at the launch wrapper rather than the harness — and an absent
@@ -589,23 +596,15 @@ func applyExitCallback(p exitCallbackParams) error {
 		// the confusion this whole path exists to prevent.
 		//
 		// Which is exactly why an unreadable pane must NOT borrow the empty
-		// pane's wording. A concurrent reaper (the daemon's, or
-		// tmuxLaunchNameFree freeing the launch name) can remove the corpse
-		// between the record above and this capture; asserting "printed
-		// nothing" there would send the operator hunting the launch wrapper
-		// for output that existed and was merely unreadable by then.
-		paneOutput, captureErr := captureDeadPaneDiagnostic(p.PaneID)
-		switch {
-		case captureErr != nil:
-			paneOutput = "(the pane could not be captured: " + captureErr.Error() + ")"
-		case paneOutput == "":
-			paneOutput = "(the pane printed nothing before it died)"
-		}
+		// pane's wording — a distinction DeadPaneDiagnostic keeps. A concurrent
+		// reaper (the daemon's, or tmuxLaunchNameFree freeing the launch name)
+		// can remove the corpse between the record above and this capture.
+		paneOutput := DeadPaneDiagnostic(p.PaneID)
 		// tmux reports an exit code OR a signal, never both, so the other field
 		// being empty is normal. BOTH empty means tmux had not reaped the
 		// pane's child yet — say that in the word the audit row already uses,
 		// rather than emitting two blanks that read as "fields not populated".
-		exitCode, signal := exitCodeForLog(code), strings.ToUpper(p.Signal)
+		exitCode, signal := ExitCodeForLog(code), strings.ToUpper(p.Signal)
 		if exitCode == "" && signal == "" {
 			exitCode, signal = "unavailable", "unavailable"
 		}
@@ -629,26 +628,39 @@ func applyExitCallback(p exitCallbackParams) error {
 	return nil
 }
 
-// CaptureDeadPaneDiagnostic is captureDeadPaneDiagnostic for the daemon.
+// DeadPaneDiagnostic renders a dying pane's bounded output tail as one
+// log-ready value.
 //
-// agentd needs it because its own spawn-failure path can destroy this
-// callback's anchor before the callback runs: rolling back a failed spawn
-// deletes the enrolled agent, and that cascade removes the session row
-// (DeleteAgentByConvID). A pane-died callback arriving afterwards cannot load
-// the session and rejects with "sql: no rows in result set", so the pane's
-// output — the whole content of the "see the Logs tab" the spawn error points
-// at — is never copied. The daemon therefore captures it BEFORE it rolls back.
-func CaptureDeadPaneDiagnostic(paneID string) (string, error) {
-	return captureDeadPaneDiagnostic(paneID)
+// agentd needs an exported form for two reasons. Its own spawn-failure path can
+// destroy this callback's anchor before the callback runs: rolling back a failed
+// spawn deletes the enrolled agent, and that cascade removes the session row
+// (DeleteAgentByConvID), so a pane-died callback arriving afterwards cannot load
+// the session and rejects with "sql: no rows in result set". And its reconciler
+// is the first — often only — observer of a launch that dies after an async
+// spawn's inline grace has already returned. Either way the pane holds the
+// explanation and this callback never copies it.
+//
+// The three outcomes are folded here rather than at each call site because they
+// must not drift. "" with a nil capture error means the pane genuinely printed
+// nothing, which is evidence about the launch; a non-nil error means tmux could
+// not be asked, which is evidence about nothing. Collapsing them lets an
+// unreadable pane masquerade as a silent one, and sends the operator hunting the
+// launch wrapper for output that existed and was merely unreadable by then.
+func DeadPaneDiagnostic(paneID string) string {
+	output, err := captureDeadPaneDiagnostic(paneID)
+	switch {
+	case err != nil:
+		return "(the pane could not be captured: " + err.Error() + ")"
+	case output == "":
+		return "(the pane printed nothing before it died)"
+	default:
+		return output
+	}
 }
 
-// captureDeadPaneDiagnostic copies the dying pane's bounded output tail.
-//
-// The error is returned rather than folded into an empty string because the
-// caller reports the two outcomes differently: "" with a nil error means the
-// pane genuinely printed nothing, which is evidence about the launch, while a
-// non-nil error means tmux could not be asked, which is evidence about
-// nothing. Collapsing them lets an unreadable pane masquerade as a silent one.
+// captureDeadPaneDiagnostic copies the dying pane's bounded output tail. The
+// error stays separate from the empty string here; DeadPaneDiagnostic is where
+// the two are rendered apart.
 func captureDeadPaneDiagnostic(paneID string) (string, error) {
 	out, err := clcommon.TmuxCommand("capture-pane", "-p", "-J", "-S", "-40", "-t", paneID).Output()
 	if err != nil {

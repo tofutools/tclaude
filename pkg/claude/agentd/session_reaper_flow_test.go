@@ -1,6 +1,8 @@
 package agentd_test
 
 import (
+	"bytes"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -188,6 +190,77 @@ func TestSessionReaper_StampsUnexpectedExitReason(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "unexpected", reason,
 		"a session reaped with no recorded SessionEnd reason is stamped unexpected")
+}
+
+// Scenario: a spawn's pane comes up, so an async spawn reports "launched" and
+// stops watching, and the tclaude-layer supervisor behind it dies a few seconds
+// later — refused by the host's own confinement, or standing up a
+// filtered-network gateway that never came up. tmux has closed the pane's pty
+// but not yet reaped its child, so the corpse reports dead with NO exit status,
+// and the pane-died callback never records: this sweep is the only observer.
+//
+// Expected: the supervisor's own error reaches the log before the corpse is
+// reaped. Without it the operator gets one audit line reading
+// "cause_kind=unknown, exit_code=unavailable" — the failure with its
+// explanation deleted — and nothing anywhere else.
+func TestSessionReaper_DeadPaneOutputIsLoggedBeforeTheCorpseIsReaped(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "aapr-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "private-network-worker")
+	f.HaveAliveSession(conv, "spwn-aapr", "tmux-aapr", f.TestCwd("aapr"))
+	const paneError = "tclaude: terminal resize relay: inspect filtered-network " +
+		"namespace identity: readlink /proc/74344/ns/net: permission denied"
+	f.World.Tmux.SetDeadPaneOutput("tmux-aapr", paneError)
+	f.World.Tmux.MarkPaneDead("tmux-aapr", nil, "")
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick(), "the dead pane should be reaped")
+	assert.Equal(t, "exited", statusOf(t, "spwn-aapr"))
+
+	got := logs.String()
+	assert.Contains(t, got, `"msg":"managed pane failed during startup"`)
+	assert.Contains(t, got, "readlink /proc/74344/ns/net: permission denied",
+		"the supervisor's own error is the whole point of the capture")
+	// The audit row's own words for "tmux had not reaped the child yet", so the
+	// log line and the audit line describe the same exit in the same terms.
+	assert.Contains(t, got, `"exit_code":"unavailable"`)
+}
+
+// Scenario: an agent is stopped on purpose, and the reaper is the observer of
+// the resulting pane death.
+//
+// Expected: no capture. The startup-failure path exists for launches that died
+// with something to explain; an expected lifecycle exit has nothing to explain,
+// and its pane holds a working agent's terminal, which must not be copied into
+// the log just because the reaper happened to be the one who noticed.
+func TestSessionReaper_ExpectedLifecycleExitIsNotCaptured(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "lcyc-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "stopped-worker")
+	f.HaveAliveSession(conv, "spwn-lcyc", "tmux-lcyc", f.TestCwd("lcyc"))
+	f.World.Tmux.SetDeadPaneOutput("tmux-lcyc", "a working agent's conversation")
+	code := 0
+	f.World.Tmux.MarkPaneDead("tmux-lcyc", &code, "")
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick(), "the dead pane should still be reaped")
+
+	got := logs.String()
+	assert.NotContains(t, got, `"msg":"managed pane failed during startup"`)
+	assert.NotContains(t, got, "a working agent's conversation",
+		"a clean exit's pane must never be copied into the log")
 }
 
 // Scenario: a Codex pane disappears with no recorded reason. Codex has
