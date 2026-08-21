@@ -2082,6 +2082,14 @@ func bwrapArgsWithDaemonFinal(
 	// on top next. An ordinary ancestor hide triggers a narrower repair during
 	// plan replay.
 	existingPhase0WriteDirs := make([]string, 0, len(phase0WriteDirs))
+	planWriteDirs := make(map[string]bool, len(plan.Entries))
+	for _, entry := range plan.Entries {
+		path := filepath.Clean(entry.Path)
+		if entry.Mode == sandboxpolicy.MountRW &&
+			filepath.Clean(entry.SourcePath()) == path {
+			planWriteDirs[path] = true
+		}
+	}
 	for i, path := range phase0WriteDirs {
 		path = filepath.Clean(path)
 		if path == "." || !filepath.IsAbs(path) {
@@ -2092,7 +2100,14 @@ func bwrapArgsWithDaemonFinal(
 			return nil, fmt.Errorf("launch-contract write entry %d source %q: %w", i, path, err)
 		}
 		if exists {
-			args = append(args, "--bind", path, path)
+			// BuildTclaudeLayerLaunchSpec also carries launch-contract write
+			// directories through the composed policy plan. Let that later plan
+			// entry materialize an identical same-path RW bind once. Keep the
+			// directory in existingPhase0WriteDirs so an ancestor hide can still
+			// trigger the contract repair that preserves class-1 authority.
+			if !planWriteDirs[path] {
+				args = append(args, "--bind", path, path)
+			}
 			existingPhase0WriteDirs = append(existingPhase0WriteDirs, path)
 		}
 	}

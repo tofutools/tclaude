@@ -110,6 +110,44 @@ func TestBwrapArgsSkipsMissingBindsButStillAppliesMissingHide(t *testing.T) {
 	assert.NotContains(t, got, missing+"-rw")
 }
 
+func TestBwrapArgsDoesNotDuplicateLaunchContractWriteBindsInPlan(t *testing.T) {
+	root := t.TempDir()
+	container := filepath.Join(root, "repos")
+	workspace := filepath.Join(container, "repo-worktree")
+	gitCommon := filepath.Join(container, "repo", ".git")
+	gitAdmin := filepath.Join(gitCommon, "worktrees", "repo-worktree")
+	writeDirs := []string{container, gitAdmin, gitCommon, workspace}
+	for _, path := range writeDirs {
+		require.NoError(t, os.MkdirAll(path, 0o755))
+	}
+
+	entries := make([]sandboxpolicy.MountEntry, 0, len(writeDirs))
+	for _, path := range writeDirs {
+		entries = append(entries, sandboxpolicy.MountEntry{
+			Path: path,
+			Mode: sandboxpolicy.MountRW,
+		})
+	}
+	got, err := bwrapArgs(writeDirs, sandboxpolicy.MountPlan{Entries: entries})
+	require.NoError(t, err)
+
+	filesystemArgs := bwrapFilesystemArgsWithin(got, root)
+	for _, path := range writeDirs {
+		assert.Equal(t, 1, countBwrapTriplet(filesystemArgs, "--bind", path, path),
+			"launch-contract write bind %s should be emitted once", path)
+	}
+}
+
+func countBwrapTriplet(args []string, flag, source, target string) int {
+	count := 0
+	for i := 0; i+2 < len(args); i++ {
+		if args[i] == flag && args[i+1] == source && args[i+2] == target {
+			count++
+		}
+	}
+	return count
+}
+
 // TestBwrapArgsHidesProtectedRootsWithNoReopens is the applier-layer half of
 // the absolute protected-root invariant (TCL-791). Its policy-layer half lives
 // in sandboxpolicy.TestRenderedMountPlanNeverTouchesAProtectedRoot.
@@ -478,13 +516,13 @@ func TestBwrapArgsGeneratedHomeWriteRehidesProtectedRoots(t *testing.T) {
 	tclaudeHides := indicesOfBwrapTriplet(got, "--tmpfs", tclaudeProtected)
 	claudeRemount := indexOfBwrapTriplet(got, "--remount-ro", claudeProtected)
 	tclaudeRemount := indexOfBwrapTriplet(got, "--remount-ro", tclaudeProtected)
-	require.Len(t, homeBinds, 2, "the generated plan contains the workspace/Home reopen")
+	require.Len(t, homeBinds, 1, "the generated plan emits the workspace/Home reopen once")
 	require.Len(t, claudeHides, 2)
 	require.Len(t, tclaudeHides, 2)
 	require.NotEqual(t, -1, claudeRemount)
 	require.NotEqual(t, -1, tclaudeRemount)
-	assert.Less(t, homeBinds[1], claudeHides[1])
-	assert.Less(t, homeBinds[1], tclaudeHides[1],
+	assert.Less(t, homeBinds[0], claudeHides[1])
+	assert.Less(t, homeBinds[0], tclaudeHides[1],
 		"generated launch grants must not acquire protected authority")
 	assert.Less(t, claudeHides[1], claudeRemount)
 	assert.Less(t, tclaudeHides[1], tclaudeRemount)
