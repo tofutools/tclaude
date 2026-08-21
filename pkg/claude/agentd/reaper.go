@@ -12,6 +12,89 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
+// reconciledStartupFailureWindow is the window this sweep hands to
+// session.StartupPaneTextIsOurs: session.SpawnFailureDiagnosticWindow as the
+// sweep can actually apply it.
+//
+// The pane-died callback fires within milliseconds of a death, so it measures
+// that window against the launch directly. This sweep only looks every
+// sessionReaperInterval, so a pane that died eight seconds into its launch may
+// not be LOOKED at until well past thirty. Bounding by the raw window would drop
+// exactly the failures this path exists to report, on nothing more than sweep
+// phase — so allow the sweep's own latency on top of it. The question being
+// asked is still "did this die during startup", not "has an agent been running
+// for a while". (sessionReaperGracePeriod is deliberately not added: it exempts
+// only rows with no dead pane to read, which are not this path's subject.)
+//
+// It bounds only the harness arm of that predicate. A shell session is excluded
+// by harness at any age, and a pane that never crossed the launch gate is
+// admitted at any age; neither consults this value.
+const reconciledStartupFailureWindow = session.SpawnFailureDiagnosticWindow +
+	sessionReaperInterval
+
+// logReconciledStartupFailure copies a dead pane's bounded output tail into the
+// log when this reconciler is the observer of a launch that died during startup.
+//
+// The authenticated pane-died callback already does this for the exits IT
+// records (applyExitCallback), and it is not always the one that records them.
+// An async spawn returns once its inline grace elapses, so a launch that fails
+// after that — a tclaude-layer supervisor refused by the host's confinement, a
+// filtered-network gateway that never came up — is first seen right here. What
+// the operator got in that case was one audit line reading "cause_kind=unknown,
+// exit_code=unavailable", which is the failure with its explanation deleted:
+// tmux had not reaped the pane's child, so it carried no status, and nothing
+// had read the pane's own text.
+//
+// The pane still holds that text until CleanupDeadTmuxPane runs, so every
+// caller must invoke this BEFORE it reaps the corpse. The gate is the callback's
+// gate plus session.StartupPaneTextIsOurs: an expected lifecycle exit is never
+// captured, a clean exit is never captured, and a pane whose text belongs to
+// whoever was typing into it is never captured.
+func logReconciledStartupFailure(
+	now time.Time,
+	st *session.SessionState,
+	observer string,
+	gateState string,
+	evidence session.PaneExitEvidence,
+	result db.AgentExitRecordResult,
+) {
+	if st == nil || result.LifecycleAction != "" || evidence.PaneID == "" {
+		return
+	}
+	// Only a literal 0 is a clean exit. Neither field set means tmux had not
+	// reaped the pane's child yet, which is precisely the shape a fast launch
+	// failure takes — the least evidence must not also mean the least diagnosis.
+	if evidence.Signal == "" && evidence.ExitCode != nil && *evidence.ExitCode == 0 {
+		return
+	}
+	startupAge := time.Duration(-1)
+	if !st.Created.IsZero() {
+		startupAge = now.Sub(st.Created)
+	}
+	if !session.StartupPaneTextIsOurs(
+		st.Harness, gateState, startupAge, reconciledStartupFailureWindow) {
+		return
+	}
+	exitCode, signal := session.ExitCodeForLog(evidence.ExitCode), evidence.Signal
+	if exitCode == "" && signal == "" {
+		exitCode, signal = "unavailable", "unavailable"
+	}
+	age := "unavailable"
+	if startupAge >= 0 {
+		age = startupAge.String()
+	}
+	// event_id ties this line to the audit row it explains. The complaint being
+	// answered is "the row exists but its explanation does not", so the two must
+	// be joinable. gate_state says which arm of session.StartupPaneTextIsOurs
+	// admitted the capture, otherwise invisible when age was not the reason.
+	slog.Error("managed pane failed during startup",
+		"session_id", st.ID, "tmux_session", st.TmuxSession,
+		"pane_id", evidence.PaneID, "observer", observer,
+		"event_id", result.EventID, "gate_state", gateState, "startup_age", age,
+		"exit_code", exitCode, "signal", signal,
+		"pane_output", session.DeadPaneDiagnostic(evidence.PaneID))
+}
+
 // sessionReaperInterval is how often the reaper sweeps for sessions
 // whose process has gone. 30s matches the cron scheduler's cadence —
 // "offline" is a coarse state, a sub-minute lag is imperceptible, and a
@@ -376,7 +459,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 			case evidence.ExitCode != nil:
 				cause = db.AgentExitCauseNormal
 			}
-			_, recordErr := db.RecordAgentExitObservation(db.AgentExitObservation{
+			result, recordErr := db.RecordAgentExitObservation(db.AgentExitObservation{
 				At: now, SessionID: st.ID, TmuxSession: st.TmuxSession, PaneID: evidence.PaneID,
 				Observer: db.AgentExitObserverReconcile, CauseKind: cause,
 				ExitCode: evidence.ExitCode, Signal: evidence.Signal,
@@ -389,6 +472,9 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 				continue
 			}
 			delete(r.deadPaneRecordFailure, st.ID)
+			// Before CleanupDeadTmuxPane below, which destroys the pane text.
+			logReconciledStartupFailure(now, st, db.AgentExitObserverReconcile,
+				launchIdentity.GateState, evidence, result)
 			if cleanupErr := session.CleanupDeadTmuxPane(evidence); cleanupErr != nil {
 				slog.Warn("reaper: exited retained dead pane cleanup retry failed",
 					"session", st.ID, "tmux_session", st.TmuxSession,
@@ -504,7 +590,7 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 		if st.Harness == harness.OpenCodeName && serverLost {
 			exitReason = unexpectedExitReason
 		}
-		ok, _, err := db.MarkSessionExitedAndRecordObservationIfUnchanged(
+		ok, result, err := db.MarkSessionExitedAndRecordObservationIfUnchanged(
 			st.ID, prevStatus, prevUpdated, exitReason,
 			db.AgentExitObservation{
 				At: now, SessionID: st.ID, TmuxSession: st.TmuxSession, PaneID: paneID,
@@ -538,6 +624,11 @@ func (r *sessionReaper) tick(now time.Time) (reaped int) {
 				"session", st.ID, "error", err)
 		}
 		if paneEvidence != nil {
+			// Before CleanupDeadTmuxPane below, which destroys the pane text.
+			// This is the site that sees a launch failing after an async spawn's
+			// inline grace has already reported the pane up.
+			logReconciledStartupFailure(now, st, observer,
+				launchIdentity.GateState, *paneEvidence, result)
 			if err := session.CleanupDeadTmuxPane(*paneEvidence); err != nil {
 				slog.Warn("reaper: retained dead pane cleanup failed",
 					"session", st.ID, "tmux_session", st.TmuxSession,

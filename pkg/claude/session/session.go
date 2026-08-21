@@ -587,7 +587,7 @@ func tmuxLaunchNameFree(name string) bool {
 	// of what the agent actually exited with.
 	slog.Warn("tmux launch: reaping a retained dead pane to free the launch name; unrecorded exit evidence is being discarded",
 		"tmux_session", name, "pane_id", evidence.PaneID, "generation", evidence.Generation,
-		"exit_code", exitCodeForLog(evidence.ExitCode), "signal", evidence.Signal)
+		"exit_code", ExitCodeForLog(evidence.ExitCode), "signal", evidence.Signal)
 	if err := CleanupDeadTmuxPane(evidence); err != nil {
 		slog.Warn("tmux launch: could not reap the dead pane holding the launch name",
 			"tmux_session", name, "pane_id", evidence.PaneID, "error", err)
@@ -596,8 +596,8 @@ func tmuxLaunchNameFree(name string) bool {
 	return !tmuxSessionNameTaken(name)
 }
 
-// exitCodeForLog renders a possibly-absent exit code for a log field.
-func exitCodeForLog(code *int) string {
+// ExitCodeForLog renders a possibly-absent exit code for a log field.
+func ExitCodeForLog(code *int) string {
 	if code == nil {
 		return ""
 	}

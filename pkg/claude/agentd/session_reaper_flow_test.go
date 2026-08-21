@@ -1,6 +1,9 @@
 package agentd_test
 
 import (
+	"bytes"
+	"encoding/json"
+	"log/slog"
 	"testing"
 	"time"
 
@@ -188,6 +191,259 @@ func TestSessionReaper_StampsUnexpectedExitReason(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "unexpected", reason,
 		"a session reaped with no recorded SessionEnd reason is stamped unexpected")
+}
+
+// Scenario: a spawn's pane comes up, so an async spawn reports "launched" and
+// stops watching, and the tclaude-layer supervisor behind it dies a few seconds
+// later — refused by the host's own confinement, or standing up a
+// filtered-network gateway that never came up. tmux has closed the pane's pty
+// but not yet reaped its child, so the corpse reports dead with NO exit status,
+// and the pane-died callback never records: this sweep is the only observer.
+//
+// Expected: the supervisor's own error reaches the log before the corpse is
+// reaped. Without it the operator gets one audit line reading
+// "cause_kind=unknown, exit_code=unavailable" — the failure with its
+// explanation deleted — and nothing anywhere else.
+func TestSessionReaper_DeadPaneOutputIsLoggedBeforeTheCorpseIsReaped(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "aapr-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "private-network-worker")
+	f.HaveAliveSession(conv, "spwn-aapr", "tmux-aapr", f.TestCwd("aapr"))
+	const paneError = "tclaude: terminal resize relay: inspect filtered-network " +
+		"namespace identity: readlink /proc/74344/ns/net: permission denied"
+	f.World.Tmux.SetDeadPaneOutput("tmux-aapr", paneError)
+	f.World.Tmux.MarkPaneDead("tmux-aapr", nil, "")
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick(), "the dead pane should be reaped")
+	assert.Equal(t, "exited", statusOf(t, "spwn-aapr"))
+
+	// Assert against THIS line, not the buffer. The pre-existing "managed pane
+	// exit observed" audit line lands in the same buffer and renders a nil exit
+	// code as "unavailable" too, so a whole-buffer assertion on that value would
+	// pass with the capture removed entirely.
+	captured := startupFailureLogRecord(t, logs.Bytes())
+	assert.Contains(t, captured["pane_output"], "readlink /proc/74344/ns/net: permission denied",
+		"the supervisor's own error is the whole point of the capture")
+	// The audit row's own word for "tmux had not reaped the child yet", so the
+	// log line and the audit line describe the same exit in the same terms.
+	assert.Equal(t, "unavailable", captured["exit_code"])
+	assert.Equal(t, "reconcile", captured["observer"])
+	assert.NotEmpty(t, captured["event_id"],
+		"the capture must name the audit row it explains")
+}
+
+// startupFailureLogRecord returns the one JSON log record emitted by the
+// startup-failure capture, failing the test if there is not exactly one. Every
+// field is flattened to a string; the capture emits only string values.
+func startupFailureLogRecord(t *testing.T, logs []byte) map[string]string {
+	t.Helper()
+	var found []map[string]string
+	for _, line := range bytes.Split(bytes.TrimSpace(logs), []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var record map[string]string
+		if err := json.Unmarshal(line, &record); err != nil {
+			continue // a record with non-string values is not this one
+		}
+		if record["msg"] == "managed pane failed during startup" {
+			found = append(found, record)
+		}
+	}
+	require.Len(t, found, 1, "expected exactly one startup-failure capture in:\n%s", logs)
+	return found[0]
+}
+
+// requireNoStartupFailureCapture fails unless the sweep captured nothing.
+func requireNoStartupFailureCapture(t *testing.T, logs []byte, paneText string) {
+	t.Helper()
+	got := string(logs)
+	assert.NotContains(t, got, `"msg":"managed pane failed during startup"`)
+	assert.NotContains(t, got, paneText,
+		"this pane's contents must never be copied into the log")
+}
+
+// Scenario: an agent is stopped on purpose — a lifecycle exit with a recorded
+// intent — and the reaper, not the pane callback, is the observer of the
+// resulting pane death. The pane exits non-zero, so the clean-exit gate does
+// NOT stop it; only the recorded lifecycle action does.
+//
+// Expected: no capture. The startup-failure path exists for launches that died
+// with something to explain; a deliberate stop has nothing to explain, and its
+// pane holds a working agent's terminal, which must not be copied into the log
+// just because the reaper happened to be the one who noticed.
+func TestSessionReaper_ExpectedLifecycleExitIsNotCaptured(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "lcyc-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "stopped-worker")
+	f.HaveAliveSession(conv, "spwn-lcyc", "tmux-lcyc", f.TestCwd("lcyc"))
+	const paneText = "a deliberately stopped agent's conversation"
+	f.World.Tmux.SetDeadPaneOutput("tmux-lcyc", paneText)
+	// Non-zero, so the clean-exit gate cannot be what excludes this.
+	code := 1
+	f.World.Tmux.MarkPaneDead("tmux-lcyc", &code, "")
+	_, err := db.SetSessionExitIntent("spwn-lcyc", db.AgentExitActionStop, "", time.Now())
+	require.NoError(t, err)
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick(), "the dead pane should still be reaped")
+	require.Contains(t, logs.String(), `"lifecycle_action":"stop"`,
+		"the exit must actually have been recorded as a lifecycle stop")
+
+	requireNoStartupFailureCapture(t, logs.Bytes(), paneText)
+}
+
+// Scenario: an agent's pane exits 0 with no lifecycle intent recorded — an
+// ordinary clean close the reaper happens to observe.
+//
+// Expected: no capture. Only a literal 0 is a clean exit, and a clean exit has
+// nothing to diagnose.
+func TestSessionReaper_CleanExitIsNotCaptured(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "clen-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "clean-worker")
+	f.HaveAliveSession(conv, "spwn-clen", "tmux-clen", f.TestCwd("clen"))
+	const paneText = "a working agent's conversation"
+	f.World.Tmux.SetDeadPaneOutput("tmux-clen", paneText)
+	code := 0
+	f.World.Tmux.MarkPaneDead("tmux-clen", &code, "")
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick(), "the dead pane should still be reaped")
+
+	requireNoStartupFailureCapture(t, logs.Bytes(), paneText)
+}
+
+// Scenario: a launch fails the same way as the capture test above, but the
+// sweep does not reach it until well past the startup window — a long-offline
+// daemon catching up, say.
+//
+// Expected: no capture. Past the window the sweep can no longer tell a launch
+// failure from an agent that worked for a while and then crashed, and the
+// second must not have its terminal copied into the log.
+func TestSessionReaper_DeathObservedPastTheWindowIsNotCaptured(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "oldw-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "late-observed-worker")
+	f.HaveAliveSession(conv, "spwn-oldw", "tmux-oldw", f.TestCwd("oldw"))
+	const paneText = "tclaude: terminal resize relay: something went wrong"
+	f.World.Tmux.SetDeadPaneOutput("tmux-oldw", paneText)
+	f.World.Tmux.MarkPaneDead("tmux-oldw", nil, "")
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	// Reachable only because the window is measured against the sweep's own
+	// clock rather than time.Now().
+	reaper.TickAt(time.Now().Add(time.Hour))
+
+	requireNoStartupFailureCapture(t, logs.Bytes(), paneText)
+}
+
+// makeShellSession retags an existing session row as a shell session. A shell
+// launch has no conversation and no harness, so the flow harness has no builder
+// for one; the row's harness column is the only thing the reaper reads.
+func makeShellSession(t *testing.T, sessionID string) {
+	t.Helper()
+	row, err := db.LoadSession(sessionID)
+	require.NoError(t, err)
+	row.Harness = session.ShellHarnessName
+	require.NoError(t, db.SaveSession(row))
+}
+
+// Scenario: a shell session's pane dies young and non-zero, which for a coding
+// harness would be captured.
+//
+// Expected: no capture, on the harness alone. A shell pane's command is
+// `exec $SHELL` with no sandbox stack in front of it, so once the launch gate
+// releases there is no phase where the pane holds tclaude's output rather than
+// the user's own terminal — at any age. A short window could not express this:
+// the age is measured to the sweep, not to the death, so any bound below the
+// sweep interval would admit nothing and only look like a rule.
+func TestSessionReaper_StartedShellPaneIsNeverCaptured(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "shel-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "shell-session")
+	f.HaveAliveSession(conv, "spwn-shel", "tmux-shel", f.TestCwd("shel"))
+	makeShellSession(t, "spwn-shel")
+	const paneText = "psql -h prod -c 'select * from users'"
+	f.World.Tmux.SetDeadPaneOutput("tmux-shel", paneText)
+	// Young, non-zero, no lifecycle intent: every other gate would admit this,
+	// so only the shell rule can be what excludes it.
+	code := 1
+	f.World.Tmux.MarkPaneDead("tmux-shel", &code, "")
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	require.Equal(t, 1, reaper.Tick(), "the dead pane should still be reaped")
+
+	requireNoStartupFailureCapture(t, logs.Bytes(), paneText)
+}
+
+// Scenario: a launch never crosses the exit-audit gate — the parent died before
+// releasing it, so the pane printed the gate's own refusal and exited 125. The
+// sweep does not reach it until long afterwards.
+//
+// Expected: captured anyway, for a SHELL, past the age bound. A pane that never
+// passed the gate ran nothing but the gate's poll loop, so its whole content is
+// tclaude's own message whoever owned the session. This is the one case a shell
+// is captured at all, and it has to ignore age: the gate itself waits up to
+// half a minute before giving up.
+func TestSessionReaper_PreHarnessDeathIsCapturedPastTheWindow(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "gate-1111-2222-3333-444444444444"
+	f.HaveConvWithTitle(conv, "gated-shell")
+	f.HaveAliveSession(conv, "spwn-gate", "tmux-gate", f.TestCwd("gate"))
+	makeShellSession(t, "spwn-gate")
+	// After the harness retag: SaveSession preserves the gate state only when
+	// the row carries no launch generation, so set the state second either way.
+	require.NoError(t, db.MarkSessionExitLaunchPending("spwn-gate", ""))
+	const paneText = "tclaude: managed pane exit-audit launch gate timed out or was cancelled"
+	f.World.Tmux.SetDeadPaneOutput("tmux-gate", paneText)
+	code := 125
+	f.World.Tmux.MarkPaneDead("tmux-gate", &code, "")
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	reaper.TickAt(time.Now().Add(time.Hour))
+
+	captured := startupFailureLogRecord(t, logs.Bytes())
+	assert.Contains(t, captured["pane_output"], paneText)
+	assert.Equal(t, "pending", captured["gate_state"],
+		"the capture must say which arm admitted it, since age did not")
 }
 
 // Scenario: a Codex pane disappears with no recorded reason. Codex has

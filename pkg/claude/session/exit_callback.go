@@ -445,10 +445,66 @@ type exitCallbackParams struct {
 	Signal      string
 }
 
-const (
-	spawnFailureDiagnosticWindow = 30 * time.Second
-	spawnFailureDiagnosticBytes  = 8 * 1024
-)
+// SpawnFailureDiagnosticWindow bounds how long after a session row is created a
+// managed pane's exit still counts as a launch failure whose output is worth
+// copying into the log.
+//
+// It is exported because the authenticated pane callback here is not the only
+// observer of such an exit: the daemon's reconciler sees the ones this callback
+// misses, and both must answer "was this a launch failure" the same way rather
+// than each inventing a bound.
+//
+// The reconciler does not apply this value raw, and should not be read as
+// promising it will. This callback fires within milliseconds of a death, so it
+// measures the window against the launch almost exactly; a sweep that only looks
+// every reaper interval cannot, and widens it by that latency (see
+// agentd.reconciledStartupFailureWindow). Because neither observer knows the
+// death time, that widening also admits a slightly later DEATH — a pane dying at
+// t=45s is captured by the reconciler and refused here. That asymmetry is
+// accepted: bounding the sweep by the raw window would drop the failures the
+// capture exists for, on nothing but sweep phase.
+const SpawnFailureDiagnosticWindow = 30 * time.Second
+
+const spawnFailureDiagnosticBytes = 8 * 1024
+
+// StartupPaneTextIsOurs reports whether a dead pane can only be holding
+// tclaude's own launch output, rather than a terminal someone was using.
+//
+// This is the privacy boundary of the pane capture, shared by both observers
+// because they must answer it identically — the window they each apply differs
+// (see SpawnFailureDiagnosticWindow), but WHOSE TEXT THIS IS cannot.
+//
+// It is not one rule, because a pane does not have one owner.
+//
+// A pane that never passed the launch gate ran nothing but the gate's poll loop
+// and printed nothing but its own refusal. That is ours at any age, and it needs
+// to be: the gate waits up to exitLaunchBarrierWindow before giving up, so such
+// a launch can be half a minute old before it has printed its one line.
+//
+// For a shell session that is the ONLY case. Its pane command is `exec $SHELL`
+// with no sandbox stack in front of it (see startShellSession), so the instant
+// the gate releases the pane is the user's terminal — there is no later moment
+// at which its text is ours to copy, at any age. Expressing that as a short
+// window would not work and would only look like a rule: the reconciling
+// observer measures age to its own sweep rather than to the death, because tmux
+// attaches no death time to a corpse.
+//
+// A harness launch is the case that genuinely has a middle phase.
+// resource-limit-exec, the tclaude-layer relay, bubblewrap and the harness's own
+// startup all print to this pane before the first conversation turn, and that
+// phase is where a filtered network refused by the host's confinement fails.
+// Age is the only proxy available for "still in that phase", so this last arm is
+// a real but imprecise bound — and the one place the capture can still read
+// something a working agent had on screen.
+func StartupPaneTextIsOurs(harness, gateState string, startupAge, window time.Duration) bool {
+	if gateState == db.SessionExitGatePending {
+		return true
+	}
+	if harness == ShellHarnessName {
+		return false
+	}
+	return startupAge >= 0 && startupAge <= window
+}
 
 func exitCallbackCmd() *cobra.Command {
 	var p exitCallbackParams
@@ -548,9 +604,19 @@ func applyExitCallback(p exitCallbackParams) error {
 	// declined to write. The least evidence must not also mean the least
 	// diagnosis.
 	startupAge := time.Duration(-1)
+	paneHarness, gateState := "", ""
 	failedStartup := p.ExitCode != "0"
-	if row, loadErr := db.LoadSession(p.SessionID); failedStartup && loadErr == nil && row != nil && !row.CreatedAt.IsZero() {
-		startupAge = time.Since(row.CreatedAt)
+	if row, loadErr := db.LoadSession(p.SessionID); failedStartup && loadErr == nil && row != nil {
+		paneHarness = row.Harness
+		if !row.CreatedAt.IsZero() {
+			startupAge = time.Since(row.CreatedAt)
+		}
+		// LoadSession does not populate the write-only launch columns, so the
+		// gate state comes from its own read. Nothing in the record below writes
+		// it, which is why reading it here rather than after is equivalent.
+		if identity, idErr := db.GetSessionExitLaunchIdentity(p.SessionID); idErr == nil {
+			gateState = identity.GateState
+		}
 	}
 	var code *int
 	cause := db.AgentExitCauseUnknown
@@ -581,7 +647,8 @@ func applyExitCallback(p exitCallbackParams) error {
 			"pane_id", p.PaneID, "error", err)
 		return fmt.Errorf("record managed pane exit: %w", err)
 	}
-	if result.LifecycleAction == "" && startupAge >= 0 && startupAge <= spawnFailureDiagnosticWindow {
+	if result.LifecycleAction == "" && failedStartup &&
+		StartupPaneTextIsOurs(paneHarness, gateState, startupAge, SpawnFailureDiagnosticWindow) {
 		// Record the failure even when the pane printed nothing. Silence is
 		// itself a finding — the process died before writing a word, which
 		// points at the launch wrapper rather than the harness — and an absent
@@ -589,23 +656,15 @@ func applyExitCallback(p exitCallbackParams) error {
 		// the confusion this whole path exists to prevent.
 		//
 		// Which is exactly why an unreadable pane must NOT borrow the empty
-		// pane's wording. A concurrent reaper (the daemon's, or
-		// tmuxLaunchNameFree freeing the launch name) can remove the corpse
-		// between the record above and this capture; asserting "printed
-		// nothing" there would send the operator hunting the launch wrapper
-		// for output that existed and was merely unreadable by then.
-		paneOutput, captureErr := captureDeadPaneDiagnostic(p.PaneID)
-		switch {
-		case captureErr != nil:
-			paneOutput = "(the pane could not be captured: " + captureErr.Error() + ")"
-		case paneOutput == "":
-			paneOutput = "(the pane printed nothing before it died)"
-		}
+		// pane's wording — a distinction DeadPaneDiagnostic keeps. A concurrent
+		// reaper (the daemon's, or tmuxLaunchNameFree freeing the launch name)
+		// can remove the corpse between the record above and this capture.
+		paneOutput := DeadPaneDiagnostic(p.PaneID)
 		// tmux reports an exit code OR a signal, never both, so the other field
 		// being empty is normal. BOTH empty means tmux had not reaped the
 		// pane's child yet — say that in the word the audit row already uses,
 		// rather than emitting two blanks that read as "fields not populated".
-		exitCode, signal := exitCodeForLog(code), strings.ToUpper(p.Signal)
+		exitCode, signal := ExitCodeForLog(code), strings.ToUpper(p.Signal)
 		if exitCode == "" && signal == "" {
 			exitCode, signal = "unavailable", "unavailable"
 		}
@@ -629,26 +688,39 @@ func applyExitCallback(p exitCallbackParams) error {
 	return nil
 }
 
-// CaptureDeadPaneDiagnostic is captureDeadPaneDiagnostic for the daemon.
+// DeadPaneDiagnostic renders a dying pane's bounded output tail as one
+// log-ready value.
 //
-// agentd needs it because its own spawn-failure path can destroy this
-// callback's anchor before the callback runs: rolling back a failed spawn
-// deletes the enrolled agent, and that cascade removes the session row
-// (DeleteAgentByConvID). A pane-died callback arriving afterwards cannot load
-// the session and rejects with "sql: no rows in result set", so the pane's
-// output — the whole content of the "see the Logs tab" the spawn error points
-// at — is never copied. The daemon therefore captures it BEFORE it rolls back.
-func CaptureDeadPaneDiagnostic(paneID string) (string, error) {
-	return captureDeadPaneDiagnostic(paneID)
+// agentd needs an exported form for two reasons. Its own spawn-failure path can
+// destroy this callback's anchor before the callback runs: rolling back a failed
+// spawn deletes the enrolled agent, and that cascade removes the session row
+// (DeleteAgentByConvID), so a pane-died callback arriving afterwards cannot load
+// the session and rejects with "sql: no rows in result set". And its reconciler
+// is the first — often only — observer of a launch that dies after an async
+// spawn's inline grace has already returned. Either way the pane holds the
+// explanation and this callback never copies it.
+//
+// The three outcomes are folded here rather than at each call site because they
+// must not drift. "" with a nil capture error means the pane genuinely printed
+// nothing, which is evidence about the launch; a non-nil error means tmux could
+// not be asked, which is evidence about nothing. Collapsing them lets an
+// unreadable pane masquerade as a silent one, and sends the operator hunting the
+// launch wrapper for output that existed and was merely unreadable by then.
+func DeadPaneDiagnostic(paneID string) string {
+	output, err := captureDeadPaneDiagnostic(paneID)
+	switch {
+	case err != nil:
+		return "(the pane could not be captured: " + err.Error() + ")"
+	case output == "":
+		return "(the pane printed nothing before it died)"
+	default:
+		return output
+	}
 }
 
-// captureDeadPaneDiagnostic copies the dying pane's bounded output tail.
-//
-// The error is returned rather than folded into an empty string because the
-// caller reports the two outcomes differently: "" with a nil error means the
-// pane genuinely printed nothing, which is evidence about the launch, while a
-// non-nil error means tmux could not be asked, which is evidence about
-// nothing. Collapsing them lets an unreadable pane masquerade as a silent one.
+// captureDeadPaneDiagnostic copies the dying pane's bounded output tail. The
+// error stays separate from the empty string here; DeadPaneDiagnostic is where
+// the two are rendered apart.
 func captureDeadPaneDiagnostic(paneID string) (string, error) {
 	out, err := clcommon.TmuxCommand("capture-pane", "-p", "-J", "-S", "-40", "-t", paneID).Output()
 	if err != nil {

@@ -690,6 +690,84 @@ func TestRunExitCallback_DoesNotCaptureExpectedStartupExit(t *testing.T) {
 	}
 }
 
+// Scenario: a shell session's pane dies young and non-zero, and the pane-died
+// callback — the observer that usually wins — records it.
+//
+// Expected: no capture. This is the same rule the daemon's reconciler applies,
+// and it has to hold HERE above all: the callback normally beats the reconciler
+// to a death, so a shell exclusion that lived only in the reaper would almost
+// never be the one consulted.
+func TestRunExitCallback_DoesNotCaptureAStartedShellPane(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%34", deadOutput: "tmux-shell-exit|%34|1|1||34343434343434343434343434343434",
+		captureOutput: "psql -h prod -c 'select * from users'",
+	}
+	setupExitCallbackTest(t, fake)
+
+	const generation = "34343434343434343434343434343434"
+	const token = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-shell-exit", TmuxSession: "tmux-shell-exit",
+		Harness: ShellHarnessName, Status: StatusRunning, Created: time.Now(),
+	}, generation, db.SessionExitGateReleased))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-shell-exit", generation, hex.EncodeToString(hash[:]), "%34"))
+	// SetSessionExitLaunchBinding moves the gate back to pending, which would
+	// admit the capture on its own. Return it to the released state a live shell
+	// actually runs in, so the harness rule is what this test exercises.
+	require.NoError(t, db.MarkSessionExitLaunchReleasing("spwn-shell-exit", generation))
+	require.NoError(t, db.MarkSessionExitLaunchReleased("spwn-shell-exit", generation))
+
+	require.NoError(t, runExitCallback(exitCallbackParams{
+		SessionID: "spwn-shell-exit", TmuxSession: "tmux-shell-exit", PaneID: "%34",
+		Generation: generation, Token: token, ExitCode: "1",
+	}))
+	for _, call := range fake.calls {
+		assert.NotEqual(t, "capture-pane", call[0],
+			"a started shell's pane is the user's terminal and must never be copied")
+	}
+}
+
+// Scenario: a launch dies without ever crossing the exit-audit gate, and is
+// recorded well after the startup window would have closed.
+//
+// Expected: captured anyway. The pane ran nothing but the gate's poll loop, so
+// its content is tclaude's own refusal whoever owned the session — and the gate
+// waits up to exitLaunchBarrierWindow, so this case is routinely older than the
+// window by the time it has anything to say.
+func TestRunExitCallback_CapturesPreHarnessDeathPastTheWindow(t *testing.T) {
+	fake := &exitCallbackTmux{
+		paneID: "%35", deadOutput: "tmux-gate-exit|%35|1|125||35353535353535353535353535353535",
+		captureOutput: "tclaude: managed pane exit-audit launch gate timed out or was cancelled",
+	}
+	setupExitCallbackTest(t, fake)
+
+	const generation = "35353535353535353535353535353535"
+	const token = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: "spwn-gate-exit", TmuxSession: "tmux-gate-exit",
+		Harness: ShellHarnessName, Status: StatusRunning,
+		Created: time.Now().Add(-time.Hour),
+	}, generation, db.SessionExitGatePending))
+	hash := sha256.Sum256([]byte(token))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		"spwn-gate-exit", generation, hex.EncodeToString(hash[:]), "%35"))
+
+	require.NoError(t, runExitCallback(exitCallbackParams{
+		SessionID: "spwn-gate-exit", TmuxSession: "tmux-gate-exit", PaneID: "%35",
+		Generation: generation, Token: token, ExitCode: "125",
+	}))
+	captured := false
+	for _, call := range fake.calls {
+		if call[0] == "capture-pane" {
+			captured = true
+		}
+	}
+	assert.True(t, captured,
+		"a pane that never passed the gate holds only tclaude's own message, at any age")
+}
+
 func TestBoundDeadPaneDiagnosticCapsLinesAndBytes(t *testing.T) {
 	var lines []string
 	for i := 0; i < 100; i++ {

@@ -7920,16 +7920,9 @@ func logStartupCorpseOutput(label, tmuxSession, paneID, detail string) {
 	if paneID == "" {
 		return
 	}
-	output, err := session.CaptureDeadPaneDiagnostic(paneID)
-	switch {
-	case err != nil:
-		output = "(the pane could not be captured: " + err.Error() + ")"
-	case output == "":
-		output = "(the pane printed nothing before it died)"
-	}
 	slog.Error("spawn: managed pane died during startup",
 		"label", label, "tmux_session", tmuxSession, "pane_id", paneID,
-		"exit_detail", detail, "pane_output", output)
+		"exit_detail", detail, "pane_output", session.DeadPaneDiagnostic(paneID))
 }
 
 // deadPaneExitDetail renders tmux's mutually exclusive dead-pane exit
