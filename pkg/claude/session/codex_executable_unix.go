@@ -4,14 +4,17 @@ package session
 
 import "golang.org/x/sys/unix"
 
-// codexExecutableAccess reports whether this process may execute path, as
-// execve would decide it: the kernel answers, so a noexec mount and an LSM
-// denial both count, which a mode-bit test cannot see.
+// codexExecutableAccess reports whether this process may execute path. It asks
+// the kernel rather than reading mode bits, so the ownership the caller
+// actually has and a noexec mount both count — faccessat reports EACCES for an
+// executable on a noexec mount, which a mode-bit test cannot see.
 //
-// unix.Access asks about the real UID where execve tests the effective one.
-// They differ only for a set-user-ID process, which neither tclaude nor the
-// daemon is, and the portable alternative across every unix target here would
-// be a hand-rolled faccessat.
+// AT_EACCESS makes the question use the effective UID, which is the one execve
+// tests; this is the same call exec.LookPath makes for the same reason.
+//
+// It is not a complete answer for every refusal. A path-based LSM such as
+// AppArmor mediates program execution at exec rather than at faccessat, so its
+// denials still surface only when execve runs.
 func codexExecutableAccess(path string) error {
-	return unix.Access(path, unix.X_OK)
+	return unix.Faccessat(unix.AT_FDCWD, path, unix.X_OK, unix.AT_EACCESS)
 }

@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,11 +39,30 @@ const (
 	codexConfigLayerMDM        = "mdm"
 )
 
+// codexEffectiveConfigWaitDelay bounds how long the probe's teardown waits for
+// a killed Codex to release the pipes before os/exec closes them itself.
+const codexEffectiveConfigWaitDelay = 2 * time.Second
+
 // codexEffectiveConfigTimeout bounds the probe. It is a var only so a test can
 // shrink it: the timeout branch is the one failure path that cannot be reached
 // by making Codex fail fast, and waiting out the production value to cover it
-// would put 45s into every run.
+// would put 45s into every run. Production reads it at every probe, so mutate
+// it only through setCodexEffectiveConfigTimeoutForTest, never from a parallel
+// test.
 var codexEffectiveConfigTimeout = 45 * time.Second
+
+// setCodexEffectiveConfigTimeoutForTest shrinks the probe deadline for the
+// duration of one test. It exists so the constraint above is enforced by the
+// helper rather than only described in a comment.
+func setCodexEffectiveConfigTimeoutForTest(t interface {
+	Cleanup(func())
+	Helper()
+}, d time.Duration) {
+	t.Helper()
+	previous := codexEffectiveConfigTimeout
+	codexEffectiveConfigTimeout = d
+	t.Cleanup(func() { codexEffectiveConfigTimeout = previous })
+}
 
 // codexProviderRoutingKeys are the effective-config keys that can move model
 // traffic to a different destination. Every one of them is reported with its
@@ -214,6 +235,13 @@ func readCodexEffectiveConfigJSON(
 	// "produced no result" message with nothing to diagnose it from.
 	var diagnostics boundedBuffer
 	command.Stderr = &diagnostics
+	// Bound the teardown. Killing Codex does not close the stderr pipe if it
+	// left a grandchild holding the write end, and the deferred Wait below
+	// joins the goroutine copying that pipe — so without a delay a launch
+	// preflight can block past its own deadline, forever, on a process it has
+	// already given up on. WaitDelay makes os/exec close the parent's side and
+	// let Wait return instead.
+	command.WaitDelay = codexEffectiveConfigWaitDelay
 
 	stdin, err := command.StdinPipe()
 	if err != nil {
@@ -457,11 +485,13 @@ func sortedEnvironment(environment map[string]string) []string {
 //
 // It mirrors exec.LookPath's rule that a candidate this process cannot execute
 // is not a match: mode bits alone are not executability. A file can carry an
-// execute bit for an owner this process is not, sit on a noexec mount, or be
-// refused by an LSM, and testing the bits instead of the access would both stop
-// the walk at that candidate — never reaching a working codex later in PATH —
-// and turn what should be "no usable codex here" into an EACCES from execve,
-// reported as if Codex itself had failed.
+// execute bit for an owner this process is not, or sit on a noexec mount, and
+// testing the bits instead of the access would both stop the walk at that
+// candidate — never reaching a working codex later in PATH — and turn what
+// should be "no usable codex here" into an EACCES from execve, reported as if
+// Codex itself had failed. A path-based LSM decides at exec rather than at
+// faccessat, so its refusals still arrive from execve; see
+// codexExecutableAccess.
 var codexEffectiveConfigLookPath = func(path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return exec.LookPath("codex")
@@ -471,13 +501,29 @@ var codexEffectiveConfigLookPath = func(path string) (string, error) {
 		if dir == "" {
 			dir = "."
 		}
-		candidate := filepath.Join(dir, "codex")
+		// Absolute, because the returned path is handed to a command whose Dir
+		// is the launch cwd, not this process's. A relative PATH entry would
+		// otherwise be inspected here against one directory and executed
+		// against another, and filepath.Join cleans a leading "./" away
+		// entirely, which would leave exec resolving the bare name "codex"
+		// against the PARENT process PATH — the thing this walk exists to
+		// avoid.
+		candidate, err := filepath.Abs(filepath.Join(dir, "codex"))
+		if err != nil {
+			continue
+		}
 		info, err := os.Stat(candidate)
 		if err != nil || info.IsDir() {
 			continue
 		}
 		if err := codexExecutableAccess(candidate); err != nil {
-			unexecutable = append(unexecutable, candidate)
+			// Only a permission answer says "this file is the operator's
+			// problem". A racing unlink or a broken symlink means there is no
+			// candidate here at all, and reporting it as unexecutable would
+			// make the refusal say something untrue.
+			if errors.Is(err, fs.ErrPermission) {
+				unexecutable = append(unexecutable, candidate)
+			}
 			continue
 		}
 		return candidate, nil
@@ -485,10 +531,11 @@ var codexEffectiveConfigLookPath = func(path string) (string, error) {
 	// Naming the rejected candidates is the whole point of the distinction. An
 	// operator whose only codex is one this process may not execute is looking
 	// at a permission problem, and a bare "not found" would send them to
-	// install a binary they already have.
+	// install a binary they already have. The parenthetical stays open about
+	// the cause because chmod is the fix for only one of them.
 	if len(unexecutable) > 0 {
 		return "", fmt.Errorf(
-			"%q is present in the launch PATH at %s but not executable by this process; grant execute permission there, or put an executable %q earlier in PATH",
+			"%q is present in the launch PATH at %s but not executable by this process (permission bits, a noexec mount, or a security policy); make it executable there, or put an executable %q earlier in PATH",
 			"codex", strings.Join(unexecutable, ", "), "codex")
 	}
 	return "", fmt.Errorf(

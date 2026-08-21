@@ -15,9 +15,6 @@ import (
 )
 
 // writeCodexStub writes a `codex` entry with mode into dir and returns its path.
-// A mode with no execute bit is the portable way to make access(X_OK) refuse a
-// file for every user including root, which is what lets these tests cover the
-// unexecutable-candidate rules on a root CI runner as well as a normal one.
 func writeCodexStub(t *testing.T, dir string, mode os.FileMode, body string) string {
 	t.Helper()
 	require.NoError(t, os.MkdirAll(dir, 0o755))
@@ -25,6 +22,84 @@ func writeCodexStub(t *testing.T, dir string, mode os.FileMode, body string) str
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 	require.NoError(t, os.Chmod(path, mode))
 	return path
+}
+
+// modeExecutableByOthersOnly carries an execute bit — so the mode-bit test this
+// walk used to apply accepts it — while denying execute to its owner. It is the
+// mode that separates "has an x bit somewhere" from "this process may run it".
+const modeExecutableByOthersOnly os.FileMode = 0o601
+
+// requireUnprivileged skips when the test runs as root, which bypasses the
+// permission check the case under test depends on: root's access(X_OK) succeeds
+// whenever any execute bit is set, so no mode can express "not executable by
+// me" for it.
+func requireUnprivileged(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses the execute-permission check under test")
+	}
+}
+
+// The distinction the walk turns on: a candidate whose mode bits look
+// executable but which THIS process may not run. Without this case the suite
+// passes against the old mode-bit predicate, and a regression back to it would
+// ship green.
+func TestCodexEffectiveConfigLookPathSkipsCandidateItMayNotExecute(t *testing.T) {
+	requireUnprivileged(t)
+	root := t.TempDir()
+	shadowed := filepath.Join(root, "shadowed")
+	usable := filepath.Join(root, "usable")
+	blocked := writeCodexStub(t, shadowed, modeExecutableByOthersOnly, "#!/bin/sh\nexit 0\n")
+	want := writeCodexStub(t, usable, 0o755, "#!/bin/sh\nexit 0\n")
+
+	// Guard the fixture itself: if this file ever stops satisfying "execute bit
+	// set, still not executable by me", the test would silently stop covering
+	// the regression it exists for.
+	info, err := os.Stat(blocked)
+	require.NoError(t, err)
+	require.NotZero(t, info.Mode().Perm()&0o111,
+		"fixture must carry an execute bit the old predicate accepted")
+	require.Error(t, codexExecutableAccess(blocked),
+		"fixture must still be unexecutable by this process")
+
+	resolved, err := codexEffectiveConfigLookPath(
+		strings.Join([]string{shadowed, usable}, string(os.PathListSeparator)))
+	require.NoError(t, err)
+	assert.Equal(t, want, resolved)
+}
+
+// An entry the process may not execute is a permission problem and is named;
+// one that simply is not an executable file is not a candidate at all.
+func TestCodexEffectiveConfigLookPathNamesCandidateItMayNotExecute(t *testing.T) {
+	requireUnprivileged(t)
+	dir := filepath.Join(t.TempDir(), "bin")
+	blocked := writeCodexStub(t, dir, modeExecutableByOthersOnly, "#!/bin/sh\nexit 0\n")
+
+	_, err := codexEffectiveConfigLookPath(dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), blocked)
+	assert.Contains(t, err.Error(), "not executable by this process")
+}
+
+// PATH entries are resolved to absolute paths: the caller hands the result to a
+// command whose Dir is the launch cwd, so a relative entry must not come back
+// relative, and an empty entry must not collapse to the bare name "codex" —
+// that would send exec back to the parent process PATH.
+func TestCodexEffectiveConfigLookPathReturnsAbsoluteCandidate(t *testing.T) {
+	dir := t.TempDir()
+	want := writeCodexStub(t, dir, 0o755, "#!/bin/sh\nexit 0\n")
+	t.Chdir(dir)
+
+	// A lone separator is two EMPTY entries, which is the case that used to
+	// collapse to the bare name; a wholly empty PATH is a different branch that
+	// defers to exec.LookPath.
+	for _, entry := range []string{string(os.PathListSeparator), "."} {
+		resolved, err := codexEffectiveConfigLookPath(entry)
+		require.NoErrorf(t, err, "PATH entry %q", entry)
+		assert.Truef(t, filepath.IsAbs(resolved),
+			"PATH entry %q resolved to non-absolute %q", entry, resolved)
+		assert.Equalf(t, want, resolved, "PATH entry %q", entry)
+	}
 }
 
 // The walk must treat a candidate this process cannot execute the way
@@ -92,19 +167,19 @@ func TestCodexEffectiveConfigTimeoutKeepsCodexDiagnostics(t *testing.T) {
 	// because the probe runs the stub with the launch PATH, which is this
 	// directory alone.
 	writeCodexStub(t, dir, 0o755,
-		"#!/bin/sh\nprintf '%s\\n' '"+complaint+"' >&2\nexec /bin/sleep 1\n")
+		"#!/bin/sh\nprintf '%s\\n' '"+complaint+"' >&2\nexec /bin/sleep 3\n")
 
-	// Comfortably shorter than the stub's lifetime, so the deadline has passed
-	// by the time the stub's exit ends the read and the timeout branch is the
-	// one that reports.
-	previous := codexEffectiveConfigTimeout
-	codexEffectiveConfigTimeout = 100 * time.Millisecond
-	t.Cleanup(func() { codexEffectiveConfigTimeout = previous })
+	// The deadline has to be long enough that forking /bin/sh and running its
+	// printf beats it even on a loaded runner — otherwise the stub is killed
+	// before it complains and the tail under test never exists — and short
+	// enough that it passes well before the stub exits on its own, so the
+	// timeout branch is the one that reports.
+	setCodexEffectiveConfigTimeoutForTest(t, 750*time.Millisecond)
 
 	_, err := readCodexEffectiveConfigJSON(t.TempDir(),
 		[]sandboxpolicy.EnvironmentEntry{{Name: "PATH", Value: dir}}, "")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "did not answer within 100ms")
+	assert.Contains(t, err.Error(), "did not answer within 750ms")
 	assert.Contains(t, err.Error(), "Codex reported: "+complaint)
 }
 
