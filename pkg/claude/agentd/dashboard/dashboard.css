@@ -4731,6 +4731,23 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   max-width: min(1100px, calc(100vw - 32px));
   min-height: 260px;
 }
+/* Sandbox profiles can make this resizable surface itself scroll. Theme that
+   scrollbar (including its resize-corner) instead of exposing the browser's
+   light native chrome. Keep this id-scoped: other manage panels can choose
+   their own treatment without inheriting sandbox-profile styling. */
+@supports not selector(::-webkit-scrollbar) {
+  #sandbox-profiles-manage-modal .manage-modal {
+    scrollbar-width: thin; scrollbar-color: #3a4553 #161b22;
+  }
+}
+#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar { width: 10px; height: 10px; }
+#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-track,
+#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-corner { background: #161b22; }
+#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb {
+  background: #3a4553; border-radius: 6px; border: 2px solid #161b22;
+}
+#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb:hover { background: #4d5866; }
+#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb:active { background: #6e7681; }
 /* Let the listing absorb extra vertical space when the panel is enlarged,
    keeping the footer Close button at the bottom; the panel still scrolls as one
    unit (as it already does at the 86vh cap) when the list outgrows a shortened
@@ -5763,6 +5780,24 @@ body.wizard .group-pending-title-wizard { display: inline; }
   border: 1px solid #2a3340; border-radius: 4px;
   overflow-y: auto; max-height: 52vh;
 }
+/* The slug list is the permission editor's scroll container. Keep its native
+   scrollbar in the same dark chrome as the dialog instead of letting a light
+   browser-default track cut through it. Firefox has no ::-webkit-scrollbar
+   surface; keep its standardized fallback out of Blink, where scrollbar-color
+   would suppress the richer thumb states below. */
+@supports not selector(::-webkit-scrollbar) {
+  #perm-edit-modal .perm-edit-list {
+    scrollbar-width: thin; scrollbar-color: #3a4553 #0d1117;
+  }
+}
+#perm-edit-modal .perm-edit-list::-webkit-scrollbar { width: 10px; height: 10px; }
+#perm-edit-modal .perm-edit-list::-webkit-scrollbar-track,
+#perm-edit-modal .perm-edit-list::-webkit-scrollbar-corner { background: #0d1117; }
+#perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb {
+  background: #3a4553; border-radius: 6px; border: 2px solid #0d1117;
+}
+#perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb:hover { background: #4d5866; }
+#perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb:active { background: #6e7681; }
 .perm-row {
   display: flex; align-items: center; gap: 10px;
   padding: 6px 10px; border-bottom: 1px solid #21262d;
@@ -13857,6 +13892,18 @@ body.wizard #sandbox-profiles-manage-modal .manage-modal {
   box-shadow: 0 0 32px rgba(122, 93, 176, 0.35), 0 8px 24px rgba(0, 0, 0, 0.5);
   color: #e7d9f5;
 }
+@supports not selector(::-webkit-scrollbar) {
+  body.wizard #sandbox-profiles-manage-modal .manage-modal {
+    scrollbar-color: #7a5db0 #140f28;
+  }
+}
+body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-track,
+body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb {
+  background: #7a5db0; border-color: #140f28;
+}
+body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
+body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
 body.wizard #sandbox-profiles-manage-modal .manage-modal h3 {
   color: #f3e6c0;
   font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
@@ -14402,6 +14449,16 @@ body.wizard #context-features-modal .perm-edit-toolbar button:hover { background
 /* Slug list: violet frame + dividers, gilt slug label, violet description. */
 body.wizard #perm-edit-modal .perm-edit-list,
 body.wizard #context-features-modal .perm-edit-list { border-color: rgba(122, 93, 176, 0.4); }
+@supports not selector(::-webkit-scrollbar) {
+  body.wizard #perm-edit-modal .perm-edit-list { scrollbar-color: #7a5db0 #140f28; }
+}
+body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-track,
+body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb {
+  background: #7a5db0; border-color: #140f28;
+}
+body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
+body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
 body.wizard #perm-edit-modal .perm-row,
 body.wizard #context-features-modal .perm-row { border-bottom-color: rgba(122, 93, 176, 0.2); }
 body.wizard #perm-edit-modal .perm-row-slug,

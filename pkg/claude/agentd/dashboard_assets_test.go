@@ -348,6 +348,54 @@ func TestDashboardCSS_ModalScrollbarsThemed(t *testing.T) {
 	}
 }
 
+// TestDashboardCSS_PermissionEditorScrollbarThemed guards the inner slug
+// list's scrollbar in both the regular dark editor and its wizard re-skin.
+// This list, rather than the dialog surface, owns the scroll overflow.
+func TestDashboardCSS_PermissionEditorScrollbarThemed(t *testing.T) {
+	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
+	if err != nil {
+		t.Fatalf("reading embedded dashboard.css: %v", err)
+	}
+	css := string(cssBytes)
+	for _, needle := range []string{
+		"#perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb {",
+		"scrollbar-width: thin; scrollbar-color: #3a4553 #0d1117;",
+		"body.wizard #perm-edit-modal .perm-edit-list { scrollbar-color: #7a5db0 #140f28; }",
+		"body.wizard #perm-edit-modal .perm-edit-list::-webkit-scrollbar-thumb {",
+	} {
+		if !strings.Contains(css, needle) {
+			t.Errorf("dashboard.css missing %q — permission-editor scrollbar theming regressed", needle)
+		}
+	}
+	if strings.Contains(css, "body.wizard .perm-edit-list::-webkit-scrollbar") {
+		t.Error("wizard permission-editor scrollbar override is unscoped")
+	}
+}
+
+// TestDashboardCSS_SandboxProfilesScrollbarThemed guards the resizable manage
+// surface's scrollbar in regular and wizard modes. Long profile cards make the
+// surface itself scroll, so styling a child list would not cover this dialog.
+func TestDashboardCSS_SandboxProfilesScrollbarThemed(t *testing.T) {
+	cssBytes, err := fs.ReadFile(dashboardAssetsFS, "dashboard.css")
+	if err != nil {
+		t.Fatalf("reading embedded dashboard.css: %v", err)
+	}
+	css := string(cssBytes)
+	for _, needle := range []string{
+		"#sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb {",
+		"scrollbar-width: thin; scrollbar-color: #3a4553 #161b22;",
+		"body.wizard #sandbox-profiles-manage-modal .manage-modal {\n    scrollbar-color: #7a5db0 #140f28;",
+		"body.wizard #sandbox-profiles-manage-modal .manage-modal::-webkit-scrollbar-thumb {",
+	} {
+		if !strings.Contains(css, needle) {
+			t.Errorf("dashboard.css missing %q — sandbox-profile scrollbar theming regressed", needle)
+		}
+	}
+	if strings.Contains(css, "body.wizard .manage-modal::-webkit-scrollbar") {
+		t.Error("wizard sandbox-profile scrollbar override is unscoped")
+	}
+}
+
 // TestDashboardJS_SelectTooltipWired guards full-path tooltip ownership on
 // the maintained Preact worktree controls. Spawn gives each shortened option
 // its full path, while clone also derives the closed select's controlled title.
