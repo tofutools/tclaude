@@ -30,15 +30,17 @@ func writeCodexStub(t *testing.T, dir string, mode os.FileMode, body string) str
 const modeExecutableByOthersOnly os.FileMode = 0o601
 
 // requireUnprivileged skips when the test runs as root, which bypasses the
-// permission check the case under test depends on: root's access(X_OK) succeeds
-// whenever any execute bit is set, so no mode can express "not executable by
-// me" for it.
+// permission checks these cases depend on: root traverses any directory, and
+// its access(X_OK) succeeds whenever any execute bit is set, so no mode can
+// express "not executable by me" for it.
 func requireUnprivileged(t *testing.T) {
 	t.Helper()
 	if os.Geteuid() == 0 {
-		t.Skip("root bypasses the execute-permission check under test")
+		t.Skip("root bypasses the permission checks under test")
 	}
 }
+
+const codexStubBody = "#!/bin/sh\nexit 0\n"
 
 // The distinction the walk turns on: a candidate whose mode bits look
 // executable but which THIS process may not run. Without this case the suite
@@ -49,8 +51,8 @@ func TestCodexEffectiveConfigLookPathSkipsCandidateItMayNotExecute(t *testing.T)
 	root := t.TempDir()
 	shadowed := filepath.Join(root, "shadowed")
 	usable := filepath.Join(root, "usable")
-	blocked := writeCodexStub(t, shadowed, modeExecutableByOthersOnly, "#!/bin/sh\nexit 0\n")
-	want := writeCodexStub(t, usable, 0o755, "#!/bin/sh\nexit 0\n")
+	blocked := writeCodexStub(t, shadowed, modeExecutableByOthersOnly, codexStubBody)
+	want := writeCodexStub(t, usable, 0o755, codexStubBody)
 
 	// Guard the fixture itself: if this file ever stops satisfying "execute bit
 	// set, still not executable by me", the test would silently stop covering
@@ -62,39 +64,89 @@ func TestCodexEffectiveConfigLookPathSkipsCandidateItMayNotExecute(t *testing.T)
 	require.Error(t, codexExecutableAccess(blocked),
 		"fixture must still be unexecutable by this process")
 
-	resolved, err := codexEffectiveConfigLookPath(
+	resolved, err := codexEffectiveConfigLookPath("",
 		strings.Join([]string{shadowed, usable}, string(os.PathListSeparator)))
 	require.NoError(t, err)
 	assert.Equal(t, want, resolved)
 }
 
-// An entry the process may not execute is a permission problem and is named;
-// one that simply is not an executable file is not a candidate at all.
-func TestCodexEffectiveConfigLookPathNamesCandidateItMayNotExecute(t *testing.T) {
-	requireUnprivileged(t)
-	dir := filepath.Join(t.TempDir(), "bin")
-	blocked := writeCodexStub(t, dir, modeExecutableByOthersOnly, "#!/bin/sh\nexit 0\n")
+// A file that is not an executable at all is skipped the same way, and the walk
+// still reaches a working codex behind it. This one needs no privilege gate.
+func TestCodexEffectiveConfigLookPathSkipsNonExecutableCandidate(t *testing.T) {
+	root := t.TempDir()
+	shadowed := filepath.Join(root, "shadowed")
+	usable := filepath.Join(root, "usable")
+	writeCodexStub(t, shadowed, 0o644, codexStubBody)
+	want := writeCodexStub(t, usable, 0o755, codexStubBody)
 
-	_, err := codexEffectiveConfigLookPath(dir)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), blocked)
-	assert.Contains(t, err.Error(), "not executable by this process")
+	resolved, err := codexEffectiveConfigLookPath("",
+		strings.Join([]string{shadowed, usable}, string(os.PathListSeparator)))
+	require.NoError(t, err)
+	assert.Equal(t, want, resolved)
 }
 
-// PATH entries are resolved to absolute paths: the caller hands the result to a
-// command whose Dir is the launch cwd, so a relative entry must not come back
-// relative, and an empty entry must not collapse to the bare name "codex" —
-// that would send exec back to the parent process PATH.
+// When the only codex in PATH is one this process cannot run, the refusal has
+// to say so and name it. "Not found" would send an operator to install a binary
+// they already have, which is the wrong half of the problem.
+func TestCodexEffectiveConfigLookPathNamesCandidateItCannotExecute(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "bin")
+	blocked := writeCodexStub(t, dir, 0o644, codexStubBody)
+
+	_, err := codexEffectiveConfigLookPath("", dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), blocked)
+	assert.Contains(t, err.Error(), "cannot be executed by this process")
+	assert.NotContains(t, err.Error(), "not found in the launch PATH")
+}
+
+// A candidate the process cannot even stat — a directory on the way to it that
+// it may not traverse — is a permission problem too, and reporting it as "not
+// found" would be the same misdirection in a different disguise.
+func TestCodexEffectiveConfigLookPathNamesCandidateItCannotExamine(t *testing.T) {
+	requireUnprivileged(t)
+	dir := filepath.Join(t.TempDir(), "bin")
+	candidate := writeCodexStub(t, dir, 0o755, codexStubBody)
+	require.NoError(t, os.Chmod(dir, 0o000))
+	// Restore before TempDir's own cleanup, which cannot remove what it cannot
+	// traverse either.
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+
+	_, err := codexEffectiveConfigLookPath("", dir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), candidate)
+	assert.Contains(t, err.Error(), "cannot be executed by this process")
+	assert.NotContains(t, err.Error(), "not found in the launch PATH")
+}
+
+// A relative PATH entry means "relative to the process that uses it", and that
+// process is the launch, not this one. Resolving it against the parent's cwd
+// would inspect one codex and let the launch run a different one.
+func TestCodexEffectiveConfigLookPathResolvesRelativeEntryFromLaunchCwd(t *testing.T) {
+	parent := t.TempDir()
+	launch := t.TempDir()
+	decoy := writeCodexStub(t, filepath.Join(parent, "bin"), 0o755, codexStubBody)
+	want := writeCodexStub(t, filepath.Join(launch, "bin"), 0o755, codexStubBody)
+	t.Chdir(parent)
+
+	resolved, err := codexEffectiveConfigLookPath(launch, "bin")
+	require.NoError(t, err)
+	assert.Equal(t, want, resolved)
+	assert.NotEqual(t, decoy, resolved,
+		"a relative PATH entry must not resolve against the parent process cwd")
+}
+
+// Candidates come back absolute. An empty PATH element must not collapse to the
+// bare name "codex", which exec would resolve against the PARENT process PATH.
 func TestCodexEffectiveConfigLookPathReturnsAbsoluteCandidate(t *testing.T) {
-	dir := t.TempDir()
-	want := writeCodexStub(t, dir, 0o755, "#!/bin/sh\nexit 0\n")
-	t.Chdir(dir)
+	launch := t.TempDir()
+	want := writeCodexStub(t, launch, 0o755, codexStubBody)
+	t.Chdir(t.TempDir())
 
 	// A lone separator is two EMPTY entries, which is the case that used to
 	// collapse to the bare name; a wholly empty PATH is a different branch that
 	// defers to exec.LookPath.
 	for _, entry := range []string{string(os.PathListSeparator), "."} {
-		resolved, err := codexEffectiveConfigLookPath(entry)
+		resolved, err := codexEffectiveConfigLookPath(launch, entry)
 		require.NoErrorf(t, err, "PATH entry %q", entry)
 		assert.Truef(t, filepath.IsAbs(resolved),
 			"PATH entry %q resolved to non-absolute %q", entry, resolved)
@@ -102,40 +154,10 @@ func TestCodexEffectiveConfigLookPathReturnsAbsoluteCandidate(t *testing.T) {
 	}
 }
 
-// The walk must treat a candidate this process cannot execute the way
-// exec.LookPath does — as no match — and keep looking. Stopping there hid a
-// working Codex later in PATH behind an EACCES raised much later by execve.
-func TestCodexEffectiveConfigLookPathSkipsUnexecutableCandidate(t *testing.T) {
-	root := t.TempDir()
-	shadowed := filepath.Join(root, "shadowed")
-	usable := filepath.Join(root, "usable")
-	writeCodexStub(t, shadowed, 0o644, "#!/bin/sh\nexit 0\n")
-	want := writeCodexStub(t, usable, 0o755, "#!/bin/sh\nexit 0\n")
-
-	resolved, err := codexEffectiveConfigLookPath(
-		strings.Join([]string{shadowed, usable}, string(os.PathListSeparator)))
-	require.NoError(t, err)
-	assert.Equal(t, want, resolved)
-}
-
-// When the only codex in PATH is one this process may not execute, the refusal
-// has to say so and name it. "Not found" would send an operator to install a
-// binary they already have, which is the wrong half of the problem.
-func TestCodexEffectiveConfigLookPathNamesUnexecutableCandidate(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "bin")
-	blocked := writeCodexStub(t, dir, 0o644, "#!/bin/sh\nexit 0\n")
-
-	_, err := codexEffectiveConfigLookPath(dir)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), blocked)
-	assert.Contains(t, err.Error(), "not executable by this process")
-	assert.NotContains(t, err.Error(), "not found in the launch PATH")
-}
-
 // A PATH with no codex at all keeps the plain not-found refusal: the two
 // diagnoses point at different fixes and must stay distinguishable.
 func TestCodexEffectiveConfigLookPathReportsAbsentCodex(t *testing.T) {
-	_, err := codexEffectiveConfigLookPath(t.TempDir())
+	_, err := codexEffectiveConfigLookPath("", t.TempDir())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found in the launch PATH")
 }
@@ -146,7 +168,7 @@ func TestCodexEffectiveConfigLookPathIgnoresDirectoryNamedCodex(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "codex"), 0o755))
 
-	_, err := codexEffectiveConfigLookPath(dir)
+	_, err := codexEffectiveConfigLookPath("", dir)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found in the launch PATH")
 }
@@ -189,7 +211,7 @@ func TestCodexEffectiveConfigExitKeepsCodexDiagnostics(t *testing.T) {
 	const complaint = "codex: unknown subcommand `app-server`"
 	dir := filepath.Join(t.TempDir(), "bin")
 	writeCodexStub(t, dir, 0o755,
-		"#!/bin/sh\nprintf '%s\\n' "+"'"+complaint+"'"+" >&2\nexit 2\n")
+		"#!/bin/sh\nprintf '%s\\n' '"+complaint+"' >&2\nexit 2\n")
 
 	_, err := readCodexEffectiveConfigJSON(t.TempDir(),
 		[]sandboxpolicy.EnvironmentEntry{{Name: "PATH", Value: dir}}, "")

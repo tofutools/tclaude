@@ -206,7 +206,7 @@ func readCodexEffectiveConfigJSON(
 	// a different Codex build than the one that launches would mean reading a
 	// different layer precedence, so resolve against the launch environment.
 	launchEnvironment := launchModelEnvironment(environment)
-	executable, lookErr := codexEffectiveConfigLookPath(launchEnvironment["PATH"])
+	executable, lookErr := codexEffectiveConfigLookPath(cwd, launchEnvironment["PATH"])
 	if lookErr != nil {
 		return nil, fmt.Errorf(
 			"cannot locate the Codex binary to read its effective config: %w",
@@ -492,54 +492,80 @@ func sortedEnvironment(environment map[string]string) []string {
 // Codex itself had failed. A path-based LSM decides at exec rather than at
 // faccessat, so its refusals still arrive from execve; see
 // codexExecutableAccess.
-var codexEffectiveConfigLookPath = func(path string) (string, error) {
+var codexEffectiveConfigLookPath = func(cwd, path string) (string, error) {
 	if strings.TrimSpace(path) == "" {
 		return exec.LookPath("codex")
 	}
-	var unexecutable []string
+	var unusable []string
 	for _, dir := range filepath.SplitList(path) {
 		if dir == "" {
 			dir = "."
 		}
-		// Absolute, because the returned path is handed to a command whose Dir
-		// is the launch cwd, not this process's. A relative PATH entry would
-		// otherwise be inspected here against one directory and executed
-		// against another, and filepath.Join cleans a leading "./" away
-		// entirely, which would leave exec resolving the bare name "codex"
-		// against the PARENT process PATH — the thing this walk exists to
-		// avoid.
-		candidate, err := filepath.Abs(filepath.Join(dir, "codex"))
+		candidate, err := codexPathCandidate(cwd, dir)
 		if err != nil {
 			continue
 		}
+		// A permission answer — from the stat as much as from the access
+		// check — is the operator's problem and has to be reported as one. A
+		// directory on the way to the candidate that this process may not
+		// traverse fails here, and skipping it silently would report the
+		// permission problem as "not found": the exact confusion this walk was
+		// changed to remove.
 		info, err := os.Stat(candidate)
-		if err != nil || info.IsDir() {
+		if err != nil {
+			if errors.Is(err, fs.ErrPermission) {
+				unusable = append(unusable, candidate)
+			}
+			continue
+		}
+		if info.IsDir() {
 			continue
 		}
 		if err := codexExecutableAccess(candidate); err != nil {
-			// Only a permission answer says "this file is the operator's
-			// problem". A racing unlink or a broken symlink means there is no
-			// candidate here at all, and reporting it as unexecutable would
-			// make the refusal say something untrue.
+			// Anything other than a permission answer — a racing unlink, a
+			// broken symlink — means there is no candidate here at all, and
+			// reporting it would make the refusal say something untrue.
 			if errors.Is(err, fs.ErrPermission) {
-				unexecutable = append(unexecutable, candidate)
+				unusable = append(unusable, candidate)
 			}
 			continue
 		}
 		return candidate, nil
 	}
 	// Naming the rejected candidates is the whole point of the distinction. An
-	// operator whose only codex is one this process may not execute is looking
-	// at a permission problem, and a bare "not found" would send them to
-	// install a binary they already have. The parenthetical stays open about
-	// the cause because chmod is the fix for only one of them.
-	if len(unexecutable) > 0 {
+	// operator whose only codex is one this process cannot run is looking at a
+	// permission problem, and a bare "not found" would send them to install a
+	// binary they already have. The causes stay enumerated because chmod is the
+	// fix for only one of them.
+	if len(unusable) > 0 {
 		return "", fmt.Errorf(
-			"%q is present in the launch PATH at %s but not executable by this process (permission bits, a noexec mount, or a security policy); make it executable there, or put an executable %q earlier in PATH",
-			"codex", strings.Join(unexecutable, ", "), "codex")
+			"%q in the launch PATH at %s cannot be executed by this process: permission denied on the file, on a directory leading to it, a noexec mount, or a security policy; resolve that, or put an executable %q earlier in PATH",
+			"codex", strings.Join(unusable, ", "), "codex")
 	}
 	return "", fmt.Errorf(
 		"%q not found in the launch PATH", "codex")
+}
+
+// codexPathCandidate resolves one PATH entry's codex to an absolute path,
+// against the LAUNCH working directory rather than this process's.
+//
+// A relative PATH entry means "relative to the process that uses it", and that
+// process is the launch, not the daemon running this preflight — resolving it
+// here against the parent's cwd would inspect one file while the launch runs
+// another, which defeats the point of reading the Codex the launch will get.
+// The absolute result also matters for a different reason: filepath.Join cleans
+// a leading "./" away entirely, so an empty PATH element would otherwise yield
+// the bare name "codex", and exec resolves a name with no separator against the
+// PARENT process PATH — the thing this walk exists to avoid.
+func codexPathCandidate(cwd, dir string) (string, error) {
+	candidate := filepath.Join(dir, "codex")
+	if filepath.IsAbs(candidate) {
+		return candidate, nil
+	}
+	if launchDir := strings.TrimSpace(cwd); filepath.IsAbs(launchDir) {
+		return filepath.Join(launchDir, candidate), nil
+	}
+	return filepath.Abs(candidate)
 }
 
 // boundedBuffer keeps only the tail of a stream. Codex can be chatty on stderr
