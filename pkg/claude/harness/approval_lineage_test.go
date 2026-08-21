@@ -125,12 +125,13 @@ func TestApprovalLineageAllowedMatrix(t *testing.T) {
 		// `yolo` (TCL-1010) is Copilot's bypassPermissions: every prompt gone,
 		// no reviewer of any kind, and — outside tclaude-layer — no file
 		// boundary left, since Copilot's directory check was the only one and
-		// its built-in edits are not OS-confined. It therefore sits at the same
-		// height as claude bypass and an inherit CHILD, and is minted only by a
-		// parent already at that height, or by a human.
+		// its built-in edits are not OS-confined. Claude auto is the deliberate
+		// cross-harness exception: its supervisor can approve the same operations,
+		// while sandbox lineage independently bounds the child's file access.
 		{"copilot allow-tools cannot mint copilot yolo", CopilotName, CopilotApprovalAllowTools, false, CopilotName, CopilotApprovalYolo, false, false},
 		{"codex never cannot mint copilot yolo", CodexName, ApprovalNever, false, CopilotName, CopilotApprovalYolo, false, false},
-		{"claude auto cannot mint copilot yolo", DefaultName, claudePermAuto, false, CopilotName, CopilotApprovalYolo, false, false},
+		{"claude auto can mint copilot yolo", DefaultName, claudePermAuto, false, CopilotName, CopilotApprovalYolo, false, true},
+		{"malformed claude auto-review cannot mint copilot yolo", DefaultName, claudePermAuto, true, CopilotName, CopilotApprovalYolo, false, false},
 		{"claude bypass can mint copilot yolo", DefaultName, claudePermBypass, false, CopilotName, CopilotApprovalYolo, false, true},
 		{"copilot yolo to same", CopilotName, CopilotApprovalYolo, false, CopilotName, CopilotApprovalYolo, false, true},
 		// A yolo parent holds everything, so it can delegate every narrower

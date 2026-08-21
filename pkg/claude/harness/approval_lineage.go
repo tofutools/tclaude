@@ -9,10 +9,13 @@ import (
 // broader AUTOMATIC command-acceptance capability than its parent.
 //
 // Both sides are first resolved to a normalized capability shape and then
-// compared as a subset test. There are no per-direction or per-harness
-// exceptions: Codex approval policies and Claude Code permission modes are
-// projected onto the SAME capability axes, because their labels do not form one
-// directly comparable authority lattice (see TCL-92).
+// compared as a subset test. Codex approval policies and Claude Code permission
+// modes are projected onto the SAME capability axes, because their labels do
+// not form one directly comparable authority lattice (see TCL-92). The sole
+// cross-harness compatibility exception is Claude `auto` -> Copilot `yolo`:
+// Claude's supervised auto mode has no exact Copilot counterpart, and `yolo` is
+// Copilot's only fully unattended mode. Sandbox lineage independently bounds
+// the child's file access.
 //
 // Human approval is baseline throughout: a human remains the trust root, so a
 // posture that reaches a human — the Claude approval popup, a Codex escalation
@@ -39,7 +42,25 @@ func ApprovalLineageAllowed(parentHarness, parentPolicy string, parentAutoReview
 	if !parent.valid || !child.valid {
 		return false
 	}
+	if claudeAutoMayDelegateCopilotYolo(parentHarness, parentPolicy, parentAutoReview,
+		childHarness, childPolicy, childAutoReview) {
+		return true
+	}
 	return child.capability&^parent.capability == 0
+}
+
+// claudeAutoMayDelegateCopilotYolo bridges the one approval-mode mismatch that
+// the shared capability lattice cannot express. Claude's `auto` supervisor may
+// approve the same actions Copilot `yolo` must accept without a corresponding
+// supervisor mode. This does not make `auto` equivalent to Claude
+// `bypassPermissions`, and it does not let narrower postures mint `yolo`.
+func claudeAutoMayDelegateCopilotYolo(parentHarness, parentPolicy string, parentAutoReview bool, childHarness, childPolicy string, childAutoReview bool) bool {
+	return normalizeLineageHarness(parentHarness) == DefaultName &&
+		strings.TrimSpace(parentPolicy) == claudePermAuto &&
+		!parentAutoReview &&
+		normalizeLineageHarness(childHarness) == CopilotName &&
+		strings.TrimSpace(childPolicy) == CopilotApprovalYolo &&
+		!childAutoReview
 }
 
 // ApprovalLineageDenialHint returns actionable guidance for a denied child
@@ -64,7 +85,7 @@ func ApprovalLineageDenialHint(parentHarness, parentPolicy string, parentAutoRev
 			return fmt.Sprintf(
 				"%q removes every Copilot permission prompt, including the directory-access "+
 					"dialog that is the only file boundary an un-sandboxed Copilot launch has, so "+
-					"it can only be minted by a parent that already holds it, or by a human; pass "+
+					"it can only be minted by Claude auto, a parent that already holds it, or a human; pass "+
 					"%q for a child whose directory access stays scoped to the sandbox profile",
 				CopilotApprovalYolo, CopilotApprovalAllowTools)
 		default:
