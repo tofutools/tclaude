@@ -634,6 +634,13 @@ type tuiModel struct {
 	// one that can strand a stale "refresh failed" over a live listing.
 	notice     string
 	refreshErr string
+	// spawnAttachNotice keeps launch warnings alive across the automatic
+	// handover to a newly spawned pane. A ready Claude pane is attached before
+	// the operator can read the spawn status, and tuiAttachedMsg otherwise
+	// replaces that status with "Back from ..." on return. Pending Codex
+	// launches have no pane yet, which made the same warnings appear
+	// harness-dependent even though both launch snapshots carried them.
+	spawnAttachNotice string
 	// profilesErr is the spawn-profile listing's last failure, shown in the
 	// spawn form rather than over the agent list — it costs one picker.
 	profilesErr string
@@ -2407,10 +2414,14 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.notice = tuiSpawnSummary(msg) + m.worktreeLandedNote()
+		warningNote := tuiSpawnWarningNote(msg.resp)
+		m.notice += warningNote
 		if focused, cmd := m.focusSpawned(msg); cmd != nil {
+			focused.spawnAttachNotice = warningNote
 			// Going to the pane ends in a tuiAttachedMsg, which refreshes.
 			return focused, cmd
 		}
+		m.spawnAttachNotice = ""
 		// Pull the new agent in now rather than waiting out the tick.
 		return m.beginRefresh()
 
@@ -2503,12 +2514,15 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.beginRefresh()
 
 	case tuiAttachedMsg:
+		spawnNotice := m.spawnAttachNotice
+		m.spawnAttachNotice = ""
 		if msg.err != nil {
 			if msg.remote {
 				m.notice = "Could not reach the remote terminal for " + msg.agent + ": " + msg.err.Error()
 			} else {
 				m.notice = "Could not reach " + msg.session + ": " + msg.err.Error()
 			}
+			m.notice += spawnNotice
 			return m, nil
 		}
 		if msg.remote {
@@ -2518,6 +2532,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.notice = "Back from " + msg.session + " (" + msg.agent + ")."
 		}
+		m.notice += spawnNotice
 		// The pane may have ended while the operator was on it.
 		return m.beginRefresh()
 
@@ -2590,6 +2605,21 @@ func tuiSpawnSummary(msg tuiSpawnedMsg) string {
 		out += " (tmux " + msg.resp.TmuxSession + ")"
 	}
 	return out
+}
+
+// tuiSpawnWarningNote renders the daemon's resolved launch warnings on the
+// console's status line. These are launch-gate and degradation disclosures,
+// not debug detail; dropping them here made the TUI disagree with the CLI and
+// with the frozen launch plan.
+func tuiSpawnWarningNote(resp agent.SpawnResponse) string {
+	if resp.Resolved == nil {
+		return ""
+	}
+	warnings := tuiTrimmedLines(resp.Resolved.Warnings)
+	if len(warnings) == 0 {
+		return ""
+	}
+	return " Note: " + strings.Join(warnings, "; ") + "."
 }
 
 // tuiWorktreeReadyNotice says which of the two things the resolve step did.
