@@ -125,7 +125,9 @@ actions than its parent: each approval posture maps to a capability set
 set must be a subset of the caller's (`403 approval_restricted`). A child
 posture left unset is narrowed to the caller's own same-harness posture
 rather than failing; an `inherit` parent may mint an exactly-`inherit`
-child. One residual gap is documented: the guard compares *requested*
+child. Claude `auto` may also mint Copilot `yolo`: supervised `auto` has no
+one-to-one Copilot mode, and sandbox lineage separately bounds the child's
+file access. One residual gap is documented: the guard compares *requested*
 postures, so a parent that can write the child's working directory could
 widen the child's effective posture through its settings file — bounded in
 practice by sandbox lineage, which governs who can write where.

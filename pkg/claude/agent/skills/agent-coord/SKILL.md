@@ -331,6 +331,10 @@ Claude `auto` and Codex `never`/`on-request`/`on-failure` add unattended
 in-sandbox commands; Codex auto-review is a separate boundary-review
 capability; Claude `bypassPermissions` is the only unreviewed posture.
 
+Claude `auto` may spawn a Copilot `yolo` child as the one cross-harness
+compatibility exception: Claude's supervised automatic mode has no one-to-one
+Copilot equivalent, while sandbox lineage independently bounds file access.
+
 Claude `inherit` is unknown, so the guard uses dual bounds: as a parent it gets
 only the proven baseline; as a child it is charged the broadest non-bypass
 shape. The one compatibility exception is exact Claude `inherit` → `inherit`,

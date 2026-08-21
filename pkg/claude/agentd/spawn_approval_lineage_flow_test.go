@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -34,6 +35,7 @@ func TestSpawnApprovalLineage_Matrix(t *testing.T) {
 		{"claude inherit cannot mint explicit claude auto", harness.DefaultName, harness.ClaudePermissionInherit, false, harness.DefaultName, "auto", false, http.StatusForbidden},
 		{"claude inherit cannot mint codex never", harness.DefaultName, harness.ClaudePermissionInherit, false, harness.CodexName, harness.ApprovalNever, false, http.StatusForbidden},
 		{"claude auto can mint codex never", harness.DefaultName, "auto", false, harness.CodexName, harness.ApprovalNever, false, http.StatusOK},
+		{"claude auto can mint copilot yolo", harness.DefaultName, "auto", false, harness.CopilotName, harness.CopilotApprovalYolo, false, http.StatusOK},
 
 		// Bypass and unresolvable-inherit children stay gated.
 		{"codex human-gated cannot mint claude bypass", harness.CodexName, harness.ApprovalOnRequest, false, harness.DefaultName, "bypassPermissions", false, http.StatusForbidden},
@@ -76,6 +78,8 @@ func TestSpawnApprovalLineage_Matrix(t *testing.T) {
 			childSandbox := harness.ClaudeSandboxOff
 			if tt.childHarness == harness.CodexName {
 				childSandbox = harness.SandboxDangerFull
+			} else if tt.childHarness == harness.CopilotName {
+				childSandbox = harness.CopilotSandboxOff
 			} else if tt.childHarness == harness.OpenCodeName {
 				childSandbox = harness.OpenCodeSandboxAccessControl
 			} else if tt.parentHarness == harness.OpenCodeName {
@@ -83,13 +87,17 @@ func TestSpawnApprovalLineage_Matrix(t *testing.T) {
 				// parent's delegation bound so approval is the guard under test.
 				childSandbox = harness.ClaudeSandboxOn
 			}
-			resp := f.AsAgent(parent).SpawnWith("alpha", map[string]any{
+			body := map[string]any{
 				"name":        "worker",
 				"harness":     tt.childHarness,
 				"sandbox":     childSandbox,
 				"approval":    tt.childPolicy,
 				"auto_review": tt.childAutoReview,
-			})
+			}
+			if tt.childHarness == harness.CopilotName {
+				body["sandbox_implementation"] = string(sandboxpolicy.ImplementationTclaudeLayer)
+			}
+			resp := f.AsAgent(parent).SpawnWith("alpha", body)
 			require.Equalf(t, tt.wantStatus, resp.Code, "spawn body=%s", resp.Raw)
 			if tt.wantStatus == http.StatusForbidden {
 				assert.Contains(t, string(resp.Raw), "approval_restricted")
