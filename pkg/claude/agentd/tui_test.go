@@ -249,6 +249,43 @@ func TestTUISpawnGoesToTheNewAgentsPane(t *testing.T) {
 	assert.True(t, back.(tuiModel).refreshing)
 }
 
+func TestTUISpawnWarningsSurviveAutomaticPaneAttach(t *testing.T) {
+	stubAttach(t)
+	m := newTUIModel(nil)
+	m.operator = true
+
+	updated, cmd := m.Update(tuiSpawnedMsg{
+		group: "dev",
+		resp: agent.SpawnResponse{
+			AgentID: "agt_1", TmuxSession: "cc-dev-1",
+			Resolved: &agent.ResolvedLaunch{Warnings: []string{
+				"Filtering engine: Packet filter.",
+				"Required model destination verified: api.anthropic.com:443",
+			}},
+		},
+	})
+	got := updated.(tuiModel)
+	require.NotNil(t, cmd)
+	assert.Contains(t, got.notice, "Filtering engine: Packet filter")
+	assert.Contains(t, got.notice, "api.anthropic.com:443")
+	assert.NotContains(t, got.notice, ".;")
+
+	attached := cmd().(tuiAttachedMsg)
+	assert.Contains(t, attached.spawnNotice, "Filtering engine: Packet filter")
+	returned, _ := got.Update(attached)
+	got = returned.(tuiModel)
+	assert.Contains(t, got.notice, "cc-dev-1")
+	assert.Contains(t, got.notice, "Filtering engine: Packet filter")
+	assert.Contains(t, got.notice, "api.anthropic.com:443")
+}
+
+func TestTUISpawnWithoutResolvedWarningsAddsNoNote(t *testing.T) {
+	assert.Empty(t, tuiSpawnWarningNote(agent.SpawnResponse{}))
+	assert.Empty(t, tuiSpawnWarningNote(agent.SpawnResponse{
+		Resolved: &agent.ResolvedLaunch{Warnings: []string{" ", "\t"}},
+	}))
+}
+
 // An agent that has no pane yet — a Codex spawn held behind a startup gate —
 // has nothing to go to, so the spawn just lands in the listing.
 func TestTUISpawnWithoutAPaneJustRefreshes(t *testing.T) {
@@ -259,12 +296,31 @@ func TestTUISpawnWithoutAPaneJustRefreshes(t *testing.T) {
 	})
 	m.operator = true
 
-	updated, cmd := m.Update(tuiSpawnedMsg{group: "dev", resp: agent.SpawnResponse{AgentID: "agt_1"}})
+	updated, cmd := m.Update(tuiSpawnedMsg{group: "dev", resp: agent.SpawnResponse{
+		AgentID: "agt_1",
+		Resolved: &agent.ResolvedLaunch{Warnings: []string{
+			"Filtered network launch is gated",
+		}},
+	}})
 	got := updated.(tuiModel)
 	assert.False(t, rec.called)
 	assert.True(t, got.refreshing)
 	assert.NotNil(t, cmd)
 	assert.NotContains(t, got.notice, "attaching")
+	assert.Contains(t, got.notice, "Filtered network launch is gated")
+}
+
+func TestTUISpawnWarningIsBoundToItsAutomaticAttach(t *testing.T) {
+	spawnCmd := func() tea.Msg {
+		return tuiAttachedMsg{agent: "spawned", session: "spawned-pane"}
+	}
+	wrapped := tuiAttachCarryingSpawnNotice(spawnCmd, " Note: filtered launch.")
+
+	unrelated := tuiAttachedMsg{agent: "existing", session: "existing-pane"}
+	assert.Empty(t, unrelated.spawnNotice)
+	spawned := wrapped().(tuiAttachedMsg)
+	assert.Equal(t, "spawned", spawned.agent)
+	assert.Equal(t, " Note: filtered launch.", spawned.spawnNotice)
 }
 
 // Going to a pane is an operator move wherever it is triggered from: a

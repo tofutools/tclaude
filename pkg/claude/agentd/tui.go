@@ -866,10 +866,11 @@ type (
 	// tuiAttachedMsg carries the outcome of putting the operator on an
 	// agent's pane — after they detach, in the attach case.
 	tuiAttachedMsg struct {
-		agent   string
-		session string
-		remote  bool
-		err     error
+		agent       string
+		session     string
+		remote      bool
+		spawnNotice string
+		err         error
 	}
 	// tuiRetiredMsg carries the outcome of one retire request.
 	tuiRetiredMsg struct {
@@ -2407,9 +2408,11 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.notice = tuiSpawnSummary(msg) + m.worktreeLandedNote()
+		warningNote := tuiSpawnWarningNote(msg.resp)
+		m.notice += warningNote
 		if focused, cmd := m.focusSpawned(msg); cmd != nil {
 			// Going to the pane ends in a tuiAttachedMsg, which refreshes.
-			return focused, cmd
+			return focused, tuiAttachCarryingSpawnNotice(cmd, warningNote)
 		}
 		// Pull the new agent in now rather than waiting out the tick.
 		return m.beginRefresh()
@@ -2509,6 +2512,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.notice = "Could not reach " + msg.session + ": " + msg.err.Error()
 			}
+			m.notice += msg.spawnNotice
 			return m, nil
 		}
 		if msg.remote {
@@ -2518,6 +2522,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.notice = "Back from " + msg.session + " (" + msg.agent + ")."
 		}
+		m.notice += msg.spawnNotice
 		// The pane may have ended while the operator was on it.
 		return m.beginRefresh()
 
@@ -2590,6 +2595,43 @@ func tuiSpawnSummary(msg tuiSpawnedMsg) string {
 		out += " (tmux " + msg.resp.TmuxSession + ")"
 	}
 	return out
+}
+
+// tuiSpawnWarningNote renders the daemon's resolved launch warnings on the
+// console's status line. These are launch-gate and degradation disclosures,
+// not debug detail; dropping them here made the TUI disagree with the CLI and
+// with the frozen launch plan.
+func tuiSpawnWarningNote(resp agent.SpawnResponse) string {
+	if resp.Resolved == nil {
+		return ""
+	}
+	warnings := tuiTrimmedLines(resp.Resolved.Warnings)
+	if len(warnings) == 0 {
+		return ""
+	}
+	for i := range warnings {
+		warnings[i] = strings.TrimSuffix(warnings[i], ".")
+	}
+	return " Note: " + strings.Join(warnings, "; ") + "."
+}
+
+// tuiAttachCarryingSpawnNotice binds a launch disclosure to the exact
+// automatic handover it belongs to. Commands complete asynchronously, so a
+// model-level latch could be consumed by an unrelated attach that finishes
+// first.
+func tuiAttachCarryingSpawnNotice(cmd tea.Cmd, notice string) tea.Cmd {
+	if cmd == nil || notice == "" {
+		return cmd
+	}
+	return func() tea.Msg {
+		msg := cmd()
+		attached, ok := msg.(tuiAttachedMsg)
+		if !ok {
+			return msg
+		}
+		attached.spawnNotice = notice
+		return attached
+	}
 }
 
 // tuiWorktreeReadyNotice says which of the two things the resolve step did.
