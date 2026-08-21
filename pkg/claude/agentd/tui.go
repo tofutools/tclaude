@@ -634,13 +634,6 @@ type tuiModel struct {
 	// one that can strand a stale "refresh failed" over a live listing.
 	notice     string
 	refreshErr string
-	// spawnAttachNotice keeps launch warnings alive across the automatic
-	// handover to a newly spawned pane. A ready Claude pane is attached before
-	// the operator can read the spawn status, and tuiAttachedMsg otherwise
-	// replaces that status with "Back from ..." on return. Pending Codex
-	// launches have no pane yet, which made the same warnings appear
-	// harness-dependent even though both launch snapshots carried them.
-	spawnAttachNotice string
 	// profilesErr is the spawn-profile listing's last failure, shown in the
 	// spawn form rather than over the agent list — it costs one picker.
 	profilesErr string
@@ -873,10 +866,11 @@ type (
 	// tuiAttachedMsg carries the outcome of putting the operator on an
 	// agent's pane — after they detach, in the attach case.
 	tuiAttachedMsg struct {
-		agent   string
-		session string
-		remote  bool
-		err     error
+		agent       string
+		session     string
+		remote      bool
+		spawnNotice string
+		err         error
 	}
 	// tuiRetiredMsg carries the outcome of one retire request.
 	tuiRetiredMsg struct {
@@ -2417,11 +2411,9 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		warningNote := tuiSpawnWarningNote(msg.resp)
 		m.notice += warningNote
 		if focused, cmd := m.focusSpawned(msg); cmd != nil {
-			focused.spawnAttachNotice = warningNote
 			// Going to the pane ends in a tuiAttachedMsg, which refreshes.
-			return focused, cmd
+			return focused, tuiAttachCarryingSpawnNotice(cmd, warningNote)
 		}
-		m.spawnAttachNotice = ""
 		// Pull the new agent in now rather than waiting out the tick.
 		return m.beginRefresh()
 
@@ -2514,15 +2506,13 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.beginRefresh()
 
 	case tuiAttachedMsg:
-		spawnNotice := m.spawnAttachNotice
-		m.spawnAttachNotice = ""
 		if msg.err != nil {
 			if msg.remote {
 				m.notice = "Could not reach the remote terminal for " + msg.agent + ": " + msg.err.Error()
 			} else {
 				m.notice = "Could not reach " + msg.session + ": " + msg.err.Error()
 			}
-			m.notice += spawnNotice
+			m.notice += msg.spawnNotice
 			return m, nil
 		}
 		if msg.remote {
@@ -2532,7 +2522,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.notice = "Back from " + msg.session + " (" + msg.agent + ")."
 		}
-		m.notice += spawnNotice
+		m.notice += msg.spawnNotice
 		// The pane may have ended while the operator was on it.
 		return m.beginRefresh()
 
@@ -2619,7 +2609,29 @@ func tuiSpawnWarningNote(resp agent.SpawnResponse) string {
 	if len(warnings) == 0 {
 		return ""
 	}
+	for i := range warnings {
+		warnings[i] = strings.TrimSuffix(warnings[i], ".")
+	}
 	return " Note: " + strings.Join(warnings, "; ") + "."
+}
+
+// tuiAttachCarryingSpawnNotice binds a launch disclosure to the exact
+// automatic handover it belongs to. Commands complete asynchronously, so a
+// model-level latch could be consumed by an unrelated attach that finishes
+// first.
+func tuiAttachCarryingSpawnNotice(cmd tea.Cmd, notice string) tea.Cmd {
+	if cmd == nil || notice == "" {
+		return cmd
+	}
+	return func() tea.Msg {
+		msg := cmd()
+		attached, ok := msg.(tuiAttachedMsg)
+		if !ok {
+			return msg
+		}
+		attached.spawnNotice = notice
+		return attached
+	}
 }
 
 // tuiWorktreeReadyNotice says which of the two things the resolve step did.

@@ -266,15 +266,17 @@ func TestTUISpawnWarningsSurviveAutomaticPaneAttach(t *testing.T) {
 	})
 	got := updated.(tuiModel)
 	require.NotNil(t, cmd)
-	assert.Contains(t, got.notice, "Filtering engine: Packet filter.")
+	assert.Contains(t, got.notice, "Filtering engine: Packet filter")
 	assert.Contains(t, got.notice, "api.anthropic.com:443")
+	assert.NotContains(t, got.notice, ".;")
 
-	returned, _ := got.Update(cmd())
+	attached := cmd().(tuiAttachedMsg)
+	assert.Contains(t, attached.spawnNotice, "Filtering engine: Packet filter")
+	returned, _ := got.Update(attached)
 	got = returned.(tuiModel)
 	assert.Contains(t, got.notice, "cc-dev-1")
-	assert.Contains(t, got.notice, "Filtering engine: Packet filter.")
+	assert.Contains(t, got.notice, "Filtering engine: Packet filter")
 	assert.Contains(t, got.notice, "api.anthropic.com:443")
-	assert.Empty(t, got.spawnAttachNotice, "the disclosure applies only to the spawn handover")
 }
 
 func TestTUISpawnWithoutResolvedWarningsAddsNoNote(t *testing.T) {
@@ -306,7 +308,19 @@ func TestTUISpawnWithoutAPaneJustRefreshes(t *testing.T) {
 	assert.NotNil(t, cmd)
 	assert.NotContains(t, got.notice, "attaching")
 	assert.Contains(t, got.notice, "Filtered network launch is gated")
-	assert.Empty(t, got.spawnAttachNotice, "a spawn without a handover must not leak into a later attach")
+}
+
+func TestTUISpawnWarningIsBoundToItsAutomaticAttach(t *testing.T) {
+	spawnCmd := func() tea.Msg {
+		return tuiAttachedMsg{agent: "spawned", session: "spawned-pane"}
+	}
+	wrapped := tuiAttachCarryingSpawnNotice(spawnCmd, " Note: filtered launch.")
+
+	unrelated := tuiAttachedMsg{agent: "existing", session: "existing-pane"}
+	assert.Empty(t, unrelated.spawnNotice)
+	spawned := wrapped().(tuiAttachedMsg)
+	assert.Equal(t, "spawned", spawned.agent)
+	assert.Equal(t, " Note: filtered launch.", spawned.spawnNotice)
 }
 
 // Going to a pane is an operator move wherever it is triggered from: a
