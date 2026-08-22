@@ -20,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 func nativeRegistryFixture(t *testing.T) CodexNativeRegistryOptions {
@@ -54,8 +55,9 @@ func nativeProfile(name, writable string) string {
 	if err != nil {
 		panic(err)
 	}
-	privateState := filepath.Join(filepath.Dir(filepath.Dir(agentipc.CanonicalSocketPath())), "data")
+	privateState := tclcommon.TclaudeDataDir()
 	agentdSocket := agentipc.CanonicalSocketPath()
+	agentdDir := agentipc.CanonicalSocketDir()
 	return fmt.Sprintf(`# Managed generated profile
 default_permissions = %q
 
@@ -71,13 +73,14 @@ extends = ":workspace"
 %q = "none"
 %q = "none"
 %q = "read"
+%q = "read"
 
 [permissions.%s.network]
 enabled = true
 
 [permissions.%s.network.unix_sockets]
 %q = "allow"
-`, name, name, name, writable, privateState, tmuxDir, agentdSocket, name, name, agentdSocket)
+`, name, name, name, writable, privateState, tmuxDir, agentdSocket, agentdDir, name, name, agentdSocket)
 }
 
 func requireNativeRegistryCode(t *testing.T, err error, code string) {

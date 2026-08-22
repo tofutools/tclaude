@@ -14,13 +14,17 @@ import (
 )
 
 func TestApplyAgentSocketEnv(t *testing.T) {
-	home := t.TempDir()
+	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
 
 	env := map[string]string{}
 	require.NoError(t, ApplyAgentSocketEnv(harness.DefaultName, harness.ClaudeSandboxInherit, "", false, env))
 	assert.NotContains(t, env, agentipc.SocketEnv)
+	require.NoError(t, os.MkdirAll(agentipc.CanonicalSocketDir(), 0o700))
+	canonical, err := net.Listen("unix", agentipc.CanonicalSocketPath())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = canonical.Close() })
 
 	for _, tc := range []struct {
 		name       string
@@ -36,7 +40,7 @@ func TestApplyAgentSocketEnv(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			env := map[string]string{}
 			require.NoError(t, ApplyAgentSocketEnv(tc.harness, tc.sandbox, tc.permission, tc.isolated, env))
-			assert.Equal(t, filepath.Join(home, ".tclaude", "api", "agentd.sock"), env[agentipc.SocketEnv])
+			assert.Equal(t, agentipc.CanonicalSocketPath(), env[agentipc.SocketEnv])
 		})
 	}
 }
@@ -83,47 +87,50 @@ func TestApplyAgentSocketEnvAcceptsCanonicalDaemon(t *testing.T) {
 	assert.Equal(t, agentipc.CanonicalSocketPath(), env[agentipc.SocketEnv])
 }
 
-func TestApplyAgentSocketEnvSelectsOnlyLiveDirectStableSocket(t *testing.T) {
+func TestApplyAgentSocketEnvRequiresLiveDirectCanonicalSocket(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		occupy func(t *testing.T, stable, canonical string)
-		stable bool
+		name    string
+		occupy  func(t *testing.T, canonical, compatibility string)
+		wantErr bool
 	}{
 		{
 			name: "live socket",
-			occupy: func(t *testing.T, stable, _ string) {
-				listener, err := net.Listen("unix", stable)
+			occupy: func(t *testing.T, canonical, _ string) {
+				listener, err := net.Listen("unix", canonical)
 				require.NoError(t, err)
 				t.Cleanup(func() { _ = listener.Close() })
 			},
-			stable: true,
 		},
 		{
 			name: "regular file",
-			occupy: func(t *testing.T, stable, _ string) {
-				require.NoError(t, os.WriteFile(stable, []byte("not a socket"), 0o600))
+			occupy: func(t *testing.T, canonical, _ string) {
+				require.NoError(t, os.WriteFile(canonical, []byte("not a socket"), 0o600))
 			},
+			wantErr: true,
 		},
 		{
 			name: "directory",
-			occupy: func(t *testing.T, stable, _ string) {
-				require.NoError(t, os.Mkdir(stable, 0o700))
+			occupy: func(t *testing.T, canonical, _ string) {
+				require.NoError(t, os.Mkdir(canonical, 0o700))
 			},
+			wantErr: true,
 		},
 		{
-			name: "symlink to live canonical",
-			occupy: func(t *testing.T, stable, canonical string) {
-				require.NoError(t, os.Symlink(canonical, stable))
+			name: "symlink to live compatibility socket",
+			occupy: func(t *testing.T, canonical, compatibility string) {
+				require.NoError(t, os.Symlink(compatibility, canonical))
 			},
+			wantErr: true,
 		},
 		{
 			name: "stale socket",
-			occupy: func(t *testing.T, stable, _ string) {
-				listener, err := net.Listen("unix", stable)
+			occupy: func(t *testing.T, canonical, _ string) {
+				listener, err := net.Listen("unix", canonical)
 				require.NoError(t, err)
 				listener.(*net.UnixListener).SetUnlinkOnClose(false)
 				require.NoError(t, listener.Close())
 			},
+			wantErr: true,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -131,21 +138,23 @@ func TestApplyAgentSocketEnvSelectsOnlyLiveDirectStableSocket(t *testing.T) {
 			t.Setenv("HOME", home)
 			t.Setenv(agentipc.SocketEnv, "")
 			canonical := agentipc.CanonicalSocketPath()
-			stable := agentipc.SandboxSocketPath()
-			require.NoError(t, os.MkdirAll(filepath.Dir(stable), 0o700))
-			canonicalListener, err := net.Listen("unix", canonical)
+			compatibility := agentipc.LegacyAPISocketPath()
+			require.NoError(t, os.MkdirAll(filepath.Dir(canonical), 0o700))
+			compatibilityListener, err := net.Listen("unix", compatibility)
 			require.NoError(t, err)
-			t.Cleanup(func() { _ = canonicalListener.Close() })
-			tc.occupy(t, stable, canonical)
+			t.Cleanup(func() { _ = compatibilityListener.Close() })
+			tc.occupy(t, canonical, compatibility)
 
 			env := map[string]string{}
-			require.NoError(t, ApplyAgentSocketEnv(
-				harness.CodexName, harness.SandboxDangerFull, "", true, env))
-			want := canonical
-			if tc.stable {
-				want = stable
+			err = ApplyAgentSocketEnv(harness.CodexName, harness.SandboxDangerFull, "", true, env)
+			if tc.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "restart agentd")
+				assert.NotContains(t, env, agentipc.SocketEnv)
+				return
 			}
-			assert.Equal(t, want, env[agentipc.SocketEnv])
+			require.NoError(t, err)
+			assert.Equal(t, canonical, env[agentipc.SocketEnv])
 		})
 	}
 }
@@ -163,18 +172,18 @@ func TestApplyAgentSocketEnvRejectsCustomSocket(t *testing.T) {
 	assert.Contains(t, err.Error(), agentipc.CanonicalSocketPath())
 }
 
-func TestApplyAgentSocketEnvAcceptsInheritedStableSocketForNestedConstructedRoot(t *testing.T) {
+func TestApplyAgentSocketEnvAcceptsInheritedCanonicalSocketForNestedConstructedRoot(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
-	stable := agentipc.SandboxSocketPath()
-	require.NoError(t, os.MkdirAll(filepath.Dir(stable), 0o700))
-	listener, err := net.Listen("unix", stable)
+	canonical := agentipc.CanonicalSocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(canonical), 0o700))
+	listener, err := net.Listen("unix", canonical)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
-	t.Setenv(agentipc.SocketEnv, stable)
+	t.Setenv(agentipc.SocketEnv, canonical)
 
 	env := map[string]string{}
 	require.NoError(t, ApplyAgentSocketEnv(
 		harness.CodexName, harness.SandboxDangerFull, "", true, env))
-	assert.Equal(t, stable, env[agentipc.SocketEnv])
+	assert.Equal(t, canonical, env[agentipc.SocketEnv])
 }

@@ -35,13 +35,15 @@ const (
 // tclaude sandbox path tokens as ~-relative strings, the form Claude Code's
 // settings.json sandbox rules expect (it expands ~ itself).
 //
-// The canonical agentd socket lives under ~/.tclaude/api — an agent-reachable
+// The canonical agentd socket directory lives under ~/.tclaude/api — an agent-reachable
 // surface OUTSIDE the denied private-state subtree ~/.tclaude/data — so the
 // socket stays reachable while all daemon state stays hidden under one deny
 // rule. The two legacy sockets are kept allowlisted for the migration window;
 // both sit outside ~/.tclaude/data, so the deny does not cover them.
 const (
-	tclaudeAgentdSocketTilde      = "~/.tclaude/api/agentd.sock"
+	tclaudeAgentdSocketDirTilde   = "~/.tclaude/api/agentd-socket"
+	tclaudeAgentdSocketTilde      = "~/.tclaude/api/agentd-socket/agentd.sock"
+	tclaudeLegacyAPISocketTilde   = "~/.tclaude/api/agentd.sock"
 	tclaudeLegacyHomeSocketTilde  = "~/.tclaude-agentd.sock"
 	tclaudeLegacyRootSocketTilde  = "~/.tclaude/agentd.sock"
 	tclaudePrivateStateDirTilde   = "~/.tclaude/data"
@@ -51,7 +53,11 @@ const (
 // tclaudeAgentdSocketTildes lists every agentd socket a sandboxed agent may need
 // to reach: the canonical api/ socket plus the retained legacy endpoints.
 func tclaudeAgentdSocketTildes() []any {
-	return []any{tclaudeAgentdSocketTilde, tclaudeLegacyHomeSocketTilde, tclaudeLegacyRootSocketTilde}
+	return []any{tclaudeAgentdSocketTilde, tclaudeLegacyAPISocketTilde, tclaudeLegacyHomeSocketTilde, tclaudeLegacyRootSocketTilde}
+}
+
+func tclaudeAgentdFilesystemTildes() []any {
+	return []any{tclaudeAgentdSocketDirTilde, tclaudeLegacyAPISocketTilde, tclaudeLegacyHomeSocketTilde, tclaudeLegacyRootSocketTilde}
 }
 
 // claudeSandbox is Claude Code's SandboxCatalog. The default is `inherit`: a
@@ -168,7 +174,7 @@ func ClaudeSandboxOnBlock() map[string]any {
 		"filesystem": map[string]any{
 			"denyWrite": []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde},
 			"denyRead":  []any{tclaudePrivateStateDirTilde, tclaudeClaudeSessionsDirTilde},
-			"allowRead": tclaudeAgentdSocketTildes(),
+			"allowRead": tclaudeAgentdFilesystemTildes(),
 		},
 	}
 }

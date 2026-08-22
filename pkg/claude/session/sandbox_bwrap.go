@@ -2145,17 +2145,17 @@ func bwrapArgsWithDaemonFinal(
 			if socket == "" || !filepath.IsAbs(socket) {
 				return nil, fmt.Errorf("resolve agentd socket floor entry %d for isolated tclaude-layer", i)
 			}
-			isRestartStable := filepath.Clean(socket) == filepath.Clean(agentipc.SandboxSocketPath())
+			isCanonical := filepath.Clean(socket) == filepath.Clean(agentipc.CanonicalSocketPath())
 			bind := TclaudeLayerReadOnlyBind{Source: socket, Target: socket}
-			if isRestartStable {
+			if isCanonical {
 				// Socket selection happened once, before the harness command was
 				// rendered. This seam only projects the narrow parent directory; it
 				// must not independently reselect an endpoint from a later liveness
 				// observation and race the authoritative harness environment.
 				bind.Source = filepath.Dir(socket)
 				bind.Target = filepath.Dir(socket)
-				if !agentipc.SandboxSocketDirAvailable() {
-					continue
+				if !agentipc.CanonicalSocketDirAvailable() {
+					return nil, fmt.Errorf("isolated tclaude-layer requires the canonical agentd socket directory %s", bind.Source)
 				}
 			}
 			exists, err := bwrapBindSourceExists(bind.Source)

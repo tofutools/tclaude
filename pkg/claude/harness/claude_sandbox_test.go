@@ -138,8 +138,9 @@ func TestClaudeSpawner_Sandbox(t *testing.T) {
 		t.Fatalf("on must set sandbox.enabled=true, got %v", on["enabled"])
 	}
 	settings := claudeSandboxSettingsJSON("on")
-	if !strings.Contains(settings, "~/.tclaude/api/agentd.sock") {
-		t.Fatal("on must allowlist the canonical api/ agentd socket so the agent can run `tclaude agent`")
+	if !strings.Contains(settings, "~/.tclaude/api/agentd-socket/agentd.sock") ||
+		!strings.Contains(settings, "~/.tclaude/api/agentd-socket") {
+		t.Fatal("on must allowlist the canonical agentd socket directory so the agent can run `tclaude agent`")
 	}
 	// The private-state subtree ~/.tclaude/data must be denied; the socket lives
 	// outside it under api/, so denying data/ never hides the socket.
@@ -244,8 +245,8 @@ func TestClaudeSettingsSandboxProfileFilesystemRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	filesystem := settings["sandbox"].(map[string]any)["filesystem"].(map[string]any)
-	if got := filesystem["allowRead"].([]any); !slices.Contains(got, any("/opt/read")) || !slices.Contains(got, any(tclaudeAgentdSocketTilde)) {
-		t.Fatalf("allowRead must preserve the agentd socket and add the profile read: %v", got)
+	if got := filesystem["allowRead"].([]any); !slices.Contains(got, any("/opt/read")) || !slices.Contains(got, any(tclaudeAgentdSocketDirTilde)) {
+		t.Fatalf("allowRead must preserve the agentd socket directory and add the profile read: %v", got)
 	}
 	if got := filesystem["allowWrite"].([]any); len(got) != 1 || got[0] != "/opt/write" {
 		t.Fatalf("allowWrite = %v", got)

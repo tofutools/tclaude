@@ -16,15 +16,15 @@ func TestSocketPaths(t *testing.T) {
 	agentipctest.IsolateSocketEnv(t)
 	t.Setenv("HOME", home)
 
-	assert.Equal(t, filepath.Join(home, ".tclaude", "api", "agentd.sock"), CanonicalSocketPath())
-	assert.Equal(t, filepath.Join(home, ".tclaude", "api", "sandbox-agentd"), SandboxSocketDir())
-	assert.Equal(t, filepath.Join(home, ".tclaude", "api", "sandbox-agentd", "agentd.sock"), SandboxSocketPath())
+	assert.Equal(t, filepath.Join(home, ".tclaude", "api", "agentd-socket"), CanonicalSocketDir())
+	assert.Equal(t, filepath.Join(home, ".tclaude", "api", "agentd-socket", "agentd.sock"), CanonicalSocketPath())
+	assert.Equal(t, filepath.Join(home, ".tclaude", "api", "agentd.sock"), LegacyAPISocketPath())
 	assert.Equal(t, filepath.Join(home, ".tclaude-agentd.sock"), LegacyHomeSocketPath())
 	assert.Equal(t, filepath.Join(home, ".tclaude", "agentd.sock"), LegacySocketPath())
-	assert.Equal(t, []string{LegacyHomeSocketPath(), LegacySocketPath()}, LegacySocketPaths())
+	assert.Equal(t, []string{LegacyAPISocketPath(), LegacyHomeSocketPath(), LegacySocketPath()}, LegacySocketPaths())
 	assert.Equal(t, CanonicalSocketPath(), ClientSocketPath())
 	assert.Equal(t,
-		[]string{CanonicalSocketPath(), LegacyHomeSocketPath(), LegacySocketPath()},
+		[]string{CanonicalSocketPath(), LegacyAPISocketPath(), LegacyHomeSocketPath(), LegacySocketPath()},
 		ClientSocketPaths())
 
 	override := filepath.Join(home, "agent.sock")
@@ -38,18 +38,18 @@ func TestSocketPaths(t *testing.T) {
 	assert.Empty(t, ExplicitSocketPath())
 }
 
-func TestLiveSandboxSocketPathRejectsSymlinkedParent(t *testing.T) {
+func TestLiveCanonicalSocketPathRejectsSymlinkedParent(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	target := agentipctest.ShortSocketDir(t)
-	require.NoError(t, os.MkdirAll(filepath.Dir(SandboxSocketDir()), 0o700))
-	require.NoError(t, os.Symlink(target, SandboxSocketDir()))
+	require.NoError(t, os.MkdirAll(filepath.Dir(CanonicalSocketDir()), 0o700))
+	require.NoError(t, os.Symlink(target, CanonicalSocketDir()))
 	listener, err := net.Listen("unix", filepath.Join(target, "agentd.sock"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
 
-	assert.False(t, SandboxSocketDirAvailable())
-	assert.False(t, LiveSandboxSocketPath(),
+	assert.False(t, CanonicalSocketDirAvailable())
+	assert.False(t, LiveCanonicalSocketPath(),
 		"a live socket beneath a symlinked parent is not the dedicated projection")
 }
 

@@ -1239,7 +1239,7 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
-	socket := agentipc.CanonicalSocketPath()
+	socket := agentipc.CanonicalSocketDir()
 	for _, floorSocket := range sandboxpolicy.AgentdSocketFloor() {
 		require.NoError(t, os.MkdirAll(filepath.Dir(floorSocket), 0o700))
 		listener, listenErr := net.Listen("unix", floorSocket)
@@ -1302,7 +1302,7 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 		"the child socket bind must land before its hidden parent becomes read-only")
 	for _, floorSocket := range sandboxpolicy.AgentdSocketFloor() {
 		source := floorSocket
-		if filepath.Clean(floorSocket) == filepath.Clean(agentipc.SandboxSocketPath()) {
+		if filepath.Clean(floorSocket) == filepath.Clean(agentipc.CanonicalSocketPath()) {
 			source = filepath.Dir(floorSocket)
 		}
 		binds := indicesOfBwrapTriplet(got, "--ro-bind", source)
@@ -1324,7 +1324,7 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 		"class-4 tmux hide remains final under the constructed root")
 }
 
-func TestBwrapArgsProjectsRestartStableAgentdDirectory(t *testing.T) {
+func TestBwrapArgsProjectsCanonicalAgentdDirectory(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
@@ -1354,37 +1354,32 @@ func TestBwrapArgsProjectsRestartStableAgentdDirectory(t *testing.T) {
 	require.NoError(t, err)
 
 	canonical := agentipc.CanonicalSocketPath()
-	stable := agentipc.SandboxSocketPath()
-	stableDir := filepath.Dir(stable)
-	require.Len(t, indicesOfBwrapBind(got, "--ro-bind", stableDir, stableDir), 2,
+	canonicalDir := agentipc.CanonicalSocketDir()
+	require.Len(t, indicesOfBwrapBind(got, "--ro-bind", canonicalDir, canonicalDir), 2,
 		"the dedicated directory projection must be repaired after an ancestor hide")
-	assert.Empty(t, indicesOfBwrapBind(got, "--ro-bind", stableDir, filepath.Dir(canonical)),
-		"the stable directory must not cover writable API siblings")
-	assert.Len(t, indicesOfBwrapBind(got, "--ro-bind", canonical, canonical), 2,
-		"canonical remains mounted for compatibility")
+	assert.Empty(t, indicesOfBwrapBind(got, "--ro-bind", filepath.Dir(canonicalDir), filepath.Dir(canonicalDir)),
+		"the canonical directory must not cover writable API siblings")
+	assert.Empty(t, indicesOfBwrapBind(got, "--ro-bind", canonical, canonical),
+		"the canonical socket inode must not be mounted directly")
 	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--tmpfs", attachmentParent))
 	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--bind", attachmentDir))
 	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--setenv", agentipc.SocketEnv),
 		"the renderer must not race the authoritative harness environment with a second selection")
 }
 
-func TestRenderedConstructedRootCommandKeepsStableSocketAuthoritative(t *testing.T) {
+func TestRenderedConstructedRootCommandKeepsCanonicalSocketAuthoritative(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
 	canonical := agentipc.CanonicalSocketPath()
-	stable := agentipc.SandboxSocketPath()
-	require.NoError(t, os.MkdirAll(filepath.Dir(stable), 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Dir(canonical), 0o700))
 	canonicalListener, err := net.Listen("unix", canonical)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = canonicalListener.Close() })
-	stableListener, err := net.Listen("unix", stable)
 	require.NoError(t, err)
 	environment := map[string]string{}
 	require.NoError(t, ApplyAgentSocketEnv(
 		harness.CodexName, harness.SandboxDangerFull, "", true, environment))
-	require.Equal(t, stable, environment[agentipc.SocketEnv])
-	require.NoError(t, stableListener.Close(),
+	require.Equal(t, canonical, environment[agentipc.SocketEnv])
+	require.NoError(t, canonicalListener.Close(),
 		"exercise disappearance after the one authoritative selection")
 	harnessCommand := harness.MustGet(harness.CodexName).Spawn.BuildCommand(harness.SpawnSpec{
 		ExecutablePath:   "/usr/bin/codex",
@@ -1396,35 +1391,32 @@ func TestRenderedConstructedRootCommandKeepsStableSocketAuthoritative(t *testing
 			NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
 		}, harnessCommand)
 	require.NoError(t, err)
-	assert.Contains(t, command, "export "+agentipc.SocketEnv+"="+stable+";")
-	assert.NotContains(t, command, "export "+agentipc.SocketEnv+"="+canonical+";",
-		"the final harness export must not override the renderer back to canonical")
+	assert.Contains(t, command, "export "+agentipc.SocketEnv+"="+canonical+";")
+	assert.NotContains(t, command, "export "+agentipc.SocketEnv+"="+agentipc.LegacyAPISocketPath()+";")
 	assert.Contains(t, command,
-		harness.CodexShellEnvironmentOverridePrefix+agentipc.SocketEnv+"=\""+stable+"\"",
+		harness.CodexShellEnvironmentOverridePrefix+agentipc.SocketEnv+"=\""+canonical+"\"",
 		"Codex tool shells must inherit the same authoritative endpoint")
-	assert.NotContains(t, command,
-		harness.CodexShellEnvironmentOverridePrefix+agentipc.SocketEnv+"=\""+canonical+"\"")
 	assert.NotContains(t, command, "--setenv "+agentipc.SocketEnv,
 		"rendering must not perform a second socket selection")
 }
 
-func TestRenderedConstructedRootCommandDoesNotReselectLateStableSocket(t *testing.T) {
+func TestRenderedConstructedRootCommandDoesNotReselectLateCompatibilitySocket(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
 	canonical := agentipc.CanonicalSocketPath()
-	stable := agentipc.SandboxSocketPath()
-	require.NoError(t, os.MkdirAll(filepath.Dir(stable), 0o700))
+	compatibility := agentipc.LegacyAPISocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(canonical), 0o700))
 	canonicalListener, err := net.Listen("unix", canonical)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = canonicalListener.Close() })
 	environment := map[string]string{}
 	require.NoError(t, ApplyAgentSocketEnv(
 		harness.CodexName, harness.SandboxDangerFull, "", true, environment))
 	require.Equal(t, canonical, environment[agentipc.SocketEnv])
-	stableListener, err := net.Listen("unix", stable)
+	require.NoError(t, canonicalListener.Close())
+	compatibilityListener, err := net.Listen("unix", compatibility)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = stableListener.Close() })
+	t.Cleanup(func() { _ = compatibilityListener.Close() })
 
 	harnessCommand := harness.MustGet(harness.CodexName).Spawn.BuildCommand(harness.SpawnSpec{
 		ExecutablePath:   "/usr/bin/codex",
@@ -1437,81 +1429,67 @@ func TestRenderedConstructedRootCommandDoesNotReselectLateStableSocket(t *testin
 		}, harnessCommand)
 	require.NoError(t, err)
 	assert.Contains(t, command, "export "+agentipc.SocketEnv+"="+canonical+";")
-	assert.NotContains(t, command, "export "+agentipc.SocketEnv+"="+stable+";")
+	assert.NotContains(t, command, "export "+agentipc.SocketEnv+"="+compatibility+";")
 	assert.NotContains(t, command, "--setenv "+agentipc.SocketEnv)
 }
 
-func TestBwrapArgsFallsBackFromInvalidStableEndpoint(t *testing.T) {
+func TestBwrapArgsProjectsCanonicalDirectoryWithoutReprobingEndpoint(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
 	canonical := agentipc.CanonicalSocketPath()
-	stable := agentipc.SandboxSocketPath()
-	require.NoError(t, os.MkdirAll(filepath.Dir(stable), 0o700))
-	canonicalListener, err := net.Listen("unix", canonical)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = canonicalListener.Close() })
-	require.NoError(t, os.WriteFile(stable, []byte("not a socket"), 0o600))
+	canonicalDir := agentipc.CanonicalSocketDir()
+	require.NoError(t, os.MkdirAll(canonicalDir, 0o700))
+	require.NoError(t, os.WriteFile(canonical, []byte("not a socket"), 0o600))
 
 	got, err := bwrapArgsWithDaemonFinal(nil, sandboxpolicy.MountPlan{
 		NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
 	}, nil, nil, nil, sandboxpolicy.AgentdSocketFloor(), "", nil)
 	require.NoError(t, err)
-	assert.NotEmpty(t, indicesOfBwrapBind(got, "--ro-bind", filepath.Dir(stable), filepath.Dir(stable)),
-		"the narrow directory projection is harmless when canonical remains authoritative")
+	assert.NotEmpty(t, indicesOfBwrapBind(got, "--ro-bind", canonicalDir, canonicalDir),
+		"the renderer projects the selected directory without racing selection")
 	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--setenv", agentipc.SocketEnv))
-	assert.NotEmpty(t, indicesOfBwrapBind(got, "--ro-bind", canonical, canonical),
-		"a bad optional endpoint must leave the healthy canonical mount in place")
+	assert.Empty(t, indicesOfBwrapBind(got, "--ro-bind", canonical, canonical))
 }
 
-func TestBwrapArgsDoesNotProjectSymlinkedStableParent(t *testing.T) {
+func TestBwrapArgsRejectsSymlinkedCanonicalParent(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
-	canonical := agentipc.CanonicalSocketPath()
-	stableDir := agentipc.SandboxSocketDir()
+	canonicalDir := agentipc.CanonicalSocketDir()
 	target := agentipctest.ShortSocketDir(t)
-	require.NoError(t, os.MkdirAll(filepath.Dir(stableDir), 0o700))
-	require.NoError(t, os.Symlink(target, stableDir))
-	canonicalListener, err := net.Listen("unix", canonical)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = canonicalListener.Close() })
+	require.NoError(t, os.MkdirAll(filepath.Dir(canonicalDir), 0o700))
+	require.NoError(t, os.Symlink(target, canonicalDir))
 	redirected, err := net.Listen("unix", filepath.Join(target, "agentd.sock"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = redirected.Close() })
 
-	got, err := bwrapArgsWithDaemonFinal(nil, sandboxpolicy.MountPlan{
+	_, err = bwrapArgsWithDaemonFinal(nil, sandboxpolicy.MountPlan{
 		NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
 	}, nil, nil, nil, sandboxpolicy.AgentdSocketFloor(), "", nil)
-	require.NoError(t, err)
-	assert.Empty(t, indicesOfBwrapBind(got, "--ro-bind", stableDir, stableDir))
-	assert.NotContains(t, got, target,
-		"a symlink target must never become the dedicated directory projection")
+	require.ErrorContains(t, err, "canonical agentd socket directory")
 }
 
-func TestBwrapArgsRepairsStableDirectoryAfterExactDeny(t *testing.T) {
+func TestBwrapArgsRepairsCanonicalDirectoryAfterExactDeny(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
 	canonical := agentipc.CanonicalSocketPath()
-	stable := agentipc.SandboxSocketPath()
-	stableDir := filepath.Dir(stable)
-	require.NoError(t, os.MkdirAll(stableDir, 0o700))
-	for _, socket := range []string{canonical, stable} {
-		listener, err := net.Listen("unix", socket)
-		require.NoError(t, err)
-		t.Cleanup(func() { _ = listener.Close() })
-	}
+	canonicalDir := agentipc.CanonicalSocketDir()
+	require.NoError(t, os.MkdirAll(canonicalDir, 0o700))
+	listener, err := net.Listen("unix", canonical)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
 
 	got, err := bwrapArgsWithDaemonFinal(nil, sandboxpolicy.MountPlan{
 		NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
 		Entries: []sandboxpolicy.MountEntry{{
-			Path: stableDir, Mode: sandboxpolicy.MountHide,
+			Path: canonicalDir, Mode: sandboxpolicy.MountHide,
 		}},
 	}, nil, nil, nil, sandboxpolicy.AgentdSocketFloor(), "", nil)
 	require.NoError(t, err)
-	hide := indexOfBwrapTriplet(got, "--tmpfs", stableDir)
-	binds := indicesOfBwrapBind(got, "--ro-bind", stableDir, stableDir)
+	hide := indexOfBwrapTriplet(got, "--tmpfs", canonicalDir)
+	binds := indicesOfBwrapBind(got, "--ro-bind", canonicalDir, canonicalDir)
 	require.NotEqual(t, -1, hide)
 	require.Len(t, binds, 2)
 	assert.Less(t, hide, binds[1],
@@ -1525,7 +1503,7 @@ func TestBwrapArgsConstructsHostOpenRootWithoutUnsharingNetwork(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
-	socket := agentipc.CanonicalSocketPath()
+	socket := agentipc.CanonicalSocketDir()
 	for _, floorSocket := range sandboxpolicy.AgentdSocketFloor() {
 		require.NoError(t, os.MkdirAll(filepath.Dir(floorSocket), 0o700))
 		listener, listenErr := net.Listen("unix", floorSocket)

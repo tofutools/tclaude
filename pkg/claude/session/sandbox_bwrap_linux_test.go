@@ -28,10 +28,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const stableSocketReconnectHelperEnv = "TCLAUDE_STABLE_SOCKET_RECONNECT_HELPER"
+const canonicalSocketReconnectHelperEnv = "TCLAUDE_CANONICAL_SOCKET_RECONNECT_HELPER"
 
-func TestConstructedRootStableSocketReconnectsAfterReplacement(t *testing.T) {
-	if os.Getenv(stableSocketReconnectHelperEnv) == "1" {
+func TestConstructedRootCanonicalSocketReconnectsAfterReplacement(t *testing.T) {
+	if os.Getenv(canonicalSocketReconnectHelperEnv) == "1" {
 		for attempt := 1; attempt <= 2; attempt++ {
 			conn, err := net.DialTimeout("unix", agentipc.ClientSocketPath(), time.Second)
 			require.NoError(t, err)
@@ -54,14 +54,10 @@ func TestConstructedRootStableSocketReconnectsAfterReplacement(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
 	canonical := agentipc.CanonicalSocketPath()
-	stable := agentipc.SandboxSocketPath()
-	require.NoError(t, os.MkdirAll(filepath.Dir(stable), 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Dir(canonical), 0o700))
 	canonicalListener, err := net.Listen("unix", canonical)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = canonicalListener.Close() })
-	stableListener, err := net.Listen("unix", stable)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = stableListener.Close() })
 
 	workspace := filepath.Join(home, "work")
 	require.NoError(t, os.MkdirAll(workspace, 0o700))
@@ -80,10 +76,10 @@ func TestConstructedRootStableSocketReconnectsAfterReplacement(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bwrap,
 		append(args, "--", helper,
-			"-test.run=^TestConstructedRootStableSocketReconnectsAfterReplacement$")...)
+			"-test.run=^TestConstructedRootCanonicalSocketReconnectsAfterReplacement$")...)
 	cmd.Env = append(os.Environ(),
-		stableSocketReconnectHelperEnv+"=1",
-		agentipc.SocketEnv+"="+stable,
+		canonicalSocketReconnectHelperEnv+"=1",
+		agentipc.SocketEnv+"="+canonical,
 	)
 	stdin, err := cmd.StdinPipe()
 	require.NoError(t, err)
@@ -97,8 +93,8 @@ func TestConstructedRootStableSocketReconnectsAfterReplacement(t *testing.T) {
 	require.NoErrorf(t, err, "first sandbox connection: %s", stderr.String())
 	assert.Equal(t, "connected-1\n", line)
 
-	require.NoError(t, stableListener.Close())
-	stableListener, err = net.Listen("unix", stable)
+	require.NoError(t, canonicalListener.Close())
+	canonicalListener, err = net.Listen("unix", canonical)
 	require.NoError(t, err)
 	_, err = fmt.Fprintln(stdin, "reconnect")
 	require.NoError(t, err)

@@ -3,7 +3,7 @@ package agentd
 import "github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 
 // SocketPath is the canonical, agent-reachable location for agentd's Unix
-// socket (~/.tclaude/api/agentd.sock).
+// socket (~/.tclaude/api/agentd-socket/agentd.sock).
 func SocketPath() string {
 	return agentipc.CanonicalSocketPath()
 }

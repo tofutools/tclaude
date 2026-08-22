@@ -46,8 +46,8 @@ const maxSocketPathLen = 104
 
 // socketSuffixHeadroom reserves room, below the directory this helper returns,
 // for the longest socket path any caller derives from it. The deepest is the
-// HOME-relative restart-stable socket
-// "<dir>/.tclaude/api/sandbox-agentd/agentd.sock" (40 bytes); we round up for
+// HOME-relative canonical socket
+// "<dir>/.tclaude/api/agentd-socket/agentd.sock" (39 bytes); we round up for
 // margin (and the sun_path NUL terminator).
 const socketSuffixHeadroom = 48
 

@@ -33,7 +33,7 @@ the CLI and daemon share an evolving request schema and an old daemon
 silently drops request fields it does not know.
 
 Agents reach the daemon over a Unix socket, canonically
-`~/.tclaude/api/agentd.sock` — kept outside `~/.tclaude/data/` so sandbox
+`~/.tclaude/api/agentd-socket/agentd.sock` — kept outside `~/.tclaude/data/` so sandbox
 profiles can deny the private data tree while leaving the socket reachable.
 The human additionally gets a loopback HTTP listener on a random port for
 the [dashboard](dashboard.md) and human-approval popups (`--dashboard-port`

@@ -632,14 +632,14 @@ in-code spec identical):
     "failIfUnavailable": true,
     "allowUnsandboxedCommands": false,
     "network": {
-      "allowUnixSockets":    ["~/.tclaude/api/agentd.sock", "~/.tclaude-agentd.sock", "~/.tclaude/agentd.sock"],
+      "allowUnixSockets":    ["~/.tclaude/api/agentd-socket/agentd.sock", "~/.tclaude/api/agentd.sock", "~/.tclaude-agentd.sock", "~/.tclaude/agentd.sock"],
       "allowAllUnixSockets": true,
       "allowedDomains":      ["github.com", "api.github.com"]
     },
     "filesystem": {
       "denyWrite": ["~/.tclaude/data", "~/.claude/sessions"],
       "denyRead":  ["~/.tclaude/data", "~/.claude/sessions"],
-      "allowRead": ["~/.tclaude/api/agentd.sock", "~/.tclaude-agentd.sock", "~/.tclaude/agentd.sock"]
+      "allowRead": ["~/.tclaude/api/agentd-socket", "~/.tclaude/api/agentd.sock", "~/.tclaude-agentd.sock", "~/.tclaude/agentd.sock"]
     }
   },
   "permissions": {
@@ -780,8 +780,9 @@ wraps the whole harness process, not only its tool executions:
   for merged-usr symlinks); `/dev` and `/proc` are fresh, `/tmp` is tmpfs, and
   `/run`, `/var`, `/srv`, `/media`, `/mnt`, `/boot`, and `/root` are absent.
   Home paths exist only where the launch contract or ordered profile plan binds
-  them. The canonical `~/.tclaude/api/agentd.sock` is bound read-only as a
-  launch-contract path.
+  them. The canonical `~/.tclaude/api/agentd-socket/` directory is bound
+  read-only as a launch-contract path, so socket replacement remains visible
+  across agentd restarts.
 
 Since TCL-798 the constructed root is no longer welded to the network posture.
 A sandbox profile can select the filesystem root explicitly with

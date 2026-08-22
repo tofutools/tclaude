@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -294,7 +295,11 @@ func TestTclaudeLayerDarwinCommandCarriesFullAgentdSocketFloor(t *testing.T) {
 	)
 	require.NoError(t, err)
 	for _, socket := range sandboxpolicy.AgentdSocketFloor() {
-		assert.Containsf(t, command, socket, "missing rendered agentd socket floor entry %s", socket)
+		want := socket
+		if filepath.Clean(socket) == filepath.Clean(agentipc.CanonicalSocketPath()) {
+			want = agentipc.CanonicalSocketDir()
+		}
+		assert.Containsf(t, command, want, "missing rendered agentd socket floor entry %s", want)
 	}
 }
 

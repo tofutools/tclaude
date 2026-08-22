@@ -55,7 +55,7 @@ func TestServeSocketPaths(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	assert.Equal(t,
-		append([]string{SocketPath(), agentipc.SandboxSocketPath()}, LegacySocketPaths()...),
+		append([]string{SocketPath()}, LegacySocketPaths()...),
 		serveSocketPaths(""))
 
 	custom := filepath.Join(home, "isolated.sock")
@@ -131,52 +131,33 @@ func TestServeSocketsSkipUnbindableLegacyPaths(t *testing.T) {
 	require.NoError(t, conn.Close())
 }
 
-func TestServeSocketsSkipUnavailableStableParent(t *testing.T) {
+func TestServeSocketsRejectUnavailableCanonicalParent(t *testing.T) {
 	home := shortSocketDir(t)
 	t.Setenv("HOME", home)
 	required := agentipc.CanonicalSocketPath()
-	stable := agentipc.SandboxSocketPath()
-	require.NoError(t, os.MkdirAll(filepath.Dir(required), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Dir(stable), []byte("not a directory"), 0o600))
+	dir := agentipc.CanonicalSocketDir()
+	require.NoError(t, os.MkdirAll(filepath.Dir(dir), 0o700))
+	require.NoError(t, os.WriteFile(dir, []byte("not a directory"), 0o600))
 
-	var skipped []string
-	note := func(path string, _ error) { skipped = append(skipped, path) }
-	kept, err := prepareServeSockets(required, []string{stable}, note)
-	require.NoError(t, err)
-	assert.Empty(t, kept)
-	assert.Equal(t, []string{stable}, skipped)
-
-	listeners, created, err := listenUnixSockets(required, kept, note)
-	require.NoError(t, err)
-	t.Cleanup(func() { closeListeners(listeners) })
-	assert.Equal(t, []string{required}, created)
-	assert.True(t, agentipc.SocketReachable(required),
-		"an unavailable optional stable parent must not cost the canonical daemon")
+	_, err := prepareServeSockets(required, LegacySocketPaths(), failOnWarn(t))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "canonical socket directory")
 }
 
-func TestServeSocketsSkipSymlinkedStableParent(t *testing.T) {
+func TestServeSocketsRejectSymlinkedCanonicalParent(t *testing.T) {
 	home := shortSocketDir(t)
 	t.Setenv("HOME", home)
 	required := agentipc.CanonicalSocketPath()
-	stable := agentipc.SandboxSocketPath()
 	target := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Dir(required), 0o700))
-	require.NoError(t, os.Symlink(target, filepath.Dir(stable)))
+	dir := agentipc.CanonicalSocketDir()
+	require.NoError(t, os.MkdirAll(filepath.Dir(dir), 0o700))
+	require.NoError(t, os.Symlink(target, dir))
 
-	var skipped []string
-	kept, err := prepareServeSockets(required, []string{stable},
-		func(path string, _ error) { skipped = append(skipped, path) })
-	require.NoError(t, err)
-	assert.Empty(t, kept)
-	assert.Equal(t, []string{stable}, skipped)
+	_, err := prepareServeSockets(required, LegacySocketPaths(), failOnWarn(t))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a direct directory")
 	assert.NoFileExists(t, filepath.Join(target, "agentd.sock"),
 		"preparation must not create a socket beneath a symlink target")
-
-	listeners, created, err := listenUnixSockets(required, kept, failOnWarn(t))
-	require.NoError(t, err)
-	t.Cleanup(func() { closeListeners(listeners) })
-	assert.Equal(t, []string{required}, created)
-	assert.True(t, agentipc.SocketReachable(required))
 }
 
 // AF_UNIX bind reports EADDRINUSE for ANY pre-existing directory entry, so the

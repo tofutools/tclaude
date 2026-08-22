@@ -32,7 +32,7 @@ import (
 )
 
 type serveParams struct {
-	Socket                       string `long:"socket" short:"s" optional:"true" help:"Unix socket path. Default: bind the canonical agent-reachable ~/.tclaude/api/agentd.sock, a restart-stable sandbox projection, and the pre-split ~/.tclaude-agentd.sock and ~/.tclaude/agentd.sock compatibility paths. Passing a path binds ONLY that socket, which sandboxed agents will not reach unless their sandbox settings allow it."`
+	Socket                       string `long:"socket" short:"s" optional:"true" help:"Unix socket path. Default: bind the canonical agent-reachable ~/.tclaude/api/agentd-socket/agentd.sock and retained compatibility paths. Passing a path binds ONLY that socket, which sandboxed agents will not reach unless their sandbox settings allow it."`
 	NoTray                       bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts. Also settable via agent.disable_tray in config.json."`
 	AutoLaunchDashboard          bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
 	Slop                         bool   `long:"slop" help:"Open the auto-launched dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
@@ -130,24 +130,24 @@ func closeListeners(listeners []net.Listener) {
 // prepareServeSockets prepares every endpoint agentd is about to bind and
 // reports which optional ones survived.
 //
-// required — the canonical api/ socket, or whatever --socket named — is the
+// required — the canonical directory-backed socket, or whatever --socket named — is the
 // daemon's reason to exist, so any problem with it fails startup. The optional
-// endpoints include the restart-stable sandbox projection and migration-window
-// aliases; one alias (~/.tclaude-agentd.sock) sits in $HOME, which an operator
+// endpoints are migration-window aliases; one alias
+// (~/.tclaude-agentd.sock) sits in $HOME, which an operator
 // may deliberately keep unwritable by tclaude. Losing an optional endpoint
 // must not cost the operator a working daemon, so those failures warn and drop
 // the path.
 func prepareServeSockets(required string, optional []string, warn func(string, error)) ([]string, error) {
-	if err := prepareSocketPath(required); err != nil {
+	prepareRequired := prepareSocketPath
+	if filepath.Clean(required) == filepath.Clean(agentipc.CanonicalSocketPath()) {
+		prepareRequired = prepareCanonicalSocketPath
+	}
+	if err := prepareRequired(required); err != nil {
 		return nil, err
 	}
 	kept := make([]string, 0, len(optional))
 	for _, path := range optional {
-		prepare := prepareSocketPath
-		if filepath.Clean(path) == filepath.Clean(agentipc.SandboxSocketPath()) {
-			prepare = prepareSandboxSocketPath
-		}
-		if err := prepare(path); err != nil {
+		if err := prepareSocketPath(path); err != nil {
 			if errors.Is(err, errSocketInUse) {
 				return nil, err
 			}
@@ -159,13 +159,13 @@ func prepareServeSockets(required string, optional []string, warn func(string, e
 	return kept, nil
 }
 
-func prepareSandboxSocketPath(path string) error {
-	dir := agentipc.SandboxSocketDir()
+func prepareCanonicalSocketPath(path string) error {
+	dir := agentipc.CanonicalSocketDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create restart-stable socket directory %s: %w", dir, err)
+		return fmt.Errorf("create canonical socket directory %s: %w", dir, err)
 	}
-	if !agentipc.SandboxSocketDirAvailable() {
-		return fmt.Errorf("restart-stable socket parent %s is not a direct directory", dir)
+	if !agentipc.CanonicalSocketDirAvailable() {
+		return fmt.Errorf("canonical socket parent %s is not a direct directory", dir)
 	}
 	return prepareSocketPath(path)
 }
@@ -249,7 +249,6 @@ func serveSocketPaths(requested string) []string {
 		return []string{requested}
 	}
 	paths := []string{SocketPath()}
-	paths = appendSocketPath(paths, agentipc.SandboxSocketPath())
 	for _, legacy := range LegacySocketPaths() {
 		paths = appendSocketPath(paths, legacy)
 	}

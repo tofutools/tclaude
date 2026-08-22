@@ -16,45 +16,33 @@ import (
 const SocketEnv = "TCLAUDE_AGENTD_SOCKET"
 
 // CanonicalSocketPath is the agent-reachable endpoint used by every current
-// tclaude client and harness (~/.tclaude/api/agentd.sock). It lives under the
-// api/ surface — NOT under data/ — so private daemon state (~/.tclaude/data)
-// can be denied to sandboxed agents as one complete subtree while the socket
-// stays reachable. See pkg/common.TclaudeAPIDir.
+// tclaude client and harness (~/.tclaude/api/agentd-socket/agentd.sock). Its
+// dedicated parent can be projected as one narrow unit into every agent
+// sandbox, so pathname replacement remains visible across agentd restarts
+// without exposing writable API siblings.
 func CanonicalSocketPath() string {
-	apiDir := common.TclaudeAPIDir()
-	if apiDir == "" {
-		return ""
-	}
-	return filepath.Join(apiDir, "agentd.sock")
-}
-
-// SandboxSocketPath is the host-side endpoint projected into constructed
-// tclaude-layer roots. Its dedicated parent is mounted instead of the socket
-// inode itself, so replacing the pathname on an agentd restart becomes visible
-// to already-running sandboxes without exposing writable API siblings.
-func SandboxSocketPath() string {
-	dir := SandboxSocketDir()
+	dir := CanonicalSocketDir()
 	if dir == "" {
 		return ""
 	}
 	return filepath.Join(dir, "agentd.sock")
 }
 
-// SandboxSocketDir is the dedicated parent projected into constructed roots.
-func SandboxSocketDir() string {
+// CanonicalSocketDir is the dedicated parent projected into agent sandboxes.
+func CanonicalSocketDir() string {
 	apiDir := common.TclaudeAPIDir()
 	if apiDir == "" {
 		return ""
 	}
-	return filepath.Join(apiDir, "sandbox-agentd")
+	return filepath.Join(apiDir, "agentd-socket")
 }
 
-// SandboxSocketDirAvailable reports whether the dedicated parent exists as a
+// CanonicalSocketDirAvailable reports whether the dedicated parent exists as a
 // direct directory entry. Lstat deliberately rejects a symlink: projecting a
 // symlink target would expose an arbitrary directory rather than the narrow
 // daemon-owned socket surface.
-func SandboxSocketDirAvailable() bool {
-	dir := SandboxSocketDir()
+func CanonicalSocketDirAvailable() bool {
+	dir := CanonicalSocketDir()
 	if dir == "" {
 		return false
 	}
@@ -62,10 +50,22 @@ func SandboxSocketDirAvailable() bool {
 	return err == nil && info.IsDir()
 }
 
-// LiveSandboxSocketPath combines the direct-parent invariant with endpoint
-// liveness for the authoritative constructed-root selection.
-func LiveSandboxSocketPath() bool {
-	return SandboxSocketDirAvailable() && LiveSocketPath(SandboxSocketPath())
+// LiveCanonicalSocketPath combines the direct-parent invariant with endpoint
+// liveness for authoritative managed-agent selection.
+func LiveCanonicalSocketPath() bool {
+	return CanonicalSocketDirAvailable() && LiveSocketPath(CanonicalSocketPath())
+}
+
+// LegacyAPISocketPath is the former canonical endpoint
+// (~/.tclaude/api/agentd.sock). It remains a compatibility bind+dial listener
+// for clients installed before the canonical socket moved beneath its own
+// projectable directory.
+func LegacyAPISocketPath() string {
+	apiDir := common.TclaudeAPIDir()
+	if apiDir == "" {
+		return ""
+	}
+	return filepath.Join(apiDir, "agentd.sock")
 }
 
 // LegacyHomeSocketPath is the pre-split canonical endpoint
@@ -92,12 +92,11 @@ func LegacySocketPath() string {
 	return filepath.Join(root, "agentd.sock")
 }
 
-// LegacySocketPaths returns every retained pre-split endpoint, in the order a
-// client should try them after the canonical path: the pre-split home socket
-// first, then the oldest under-root socket. Empty entries (unresolvable home)
-// are omitted.
+// LegacySocketPaths returns every retained compatibility endpoint, in the
+// order a client should try them after the canonical path. Empty entries
+// (unresolvable home) are omitted.
 func LegacySocketPaths() []string {
-	return dedupeNonEmpty(LegacyHomeSocketPath(), LegacySocketPath())
+	return dedupeNonEmpty(LegacyAPISocketPath(), LegacyHomeSocketPath(), LegacySocketPath())
 }
 
 // AnyLegacySocketReachable reports whether a daemon is currently accepting

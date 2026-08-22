@@ -218,7 +218,7 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	if profileName == "" {
 		return "", fmt.Errorf("codex permission profile name is required")
 	}
-	socketPaths := append([]string{socketPath, agentipc.SandboxSocketPath()}, agentipc.LegacySocketPaths()...)
+	socketPaths := append([]string{socketPath, agentipc.CanonicalSocketPath()}, agentipc.LegacySocketPaths()...)
 	if rules.MaterializedUnixSocketPaths != nil {
 		if rules.UnixSockets == nil {
 			return "", fmt.Errorf(
@@ -251,6 +251,7 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 		normalizedSocketPaths = append(normalizedSocketPaths, path)
 	}
 	socketPaths = normalizedSocketPaths
+	filesystemFloor := append([]string{agentipc.CanonicalSocketDir()}, socketPaths...)
 	if err := validateCodexProfilePath("tclaude private state dir", privateStateDir); err != nil {
 		return "", err
 	}
@@ -362,7 +363,7 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	fmt.Fprintf(&b, "extends = \":workspace\"\n\n")
 	fmt.Fprintf(&b, "[permissions.%s.filesystem]\n", p)
 	fmt.Fprintf(&b, "%q = \"none\"\n", privateStateDir)
-	for _, path := range socketPaths {
+	for _, path := range filesystemFloor {
 		fmt.Fprintf(&b, "%q = \"read\"\n", path)
 	}
 	if len(grantPaths) > 0 {
