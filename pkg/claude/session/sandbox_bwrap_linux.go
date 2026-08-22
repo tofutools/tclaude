@@ -105,16 +105,16 @@ func tclaudeLayerProbeArgs(
 	case sandboxpolicy.NetworkIsolatedWithAgentd:
 		args = append(args, "--unshare-net", "--unshare-pid")
 	case sandboxpolicy.NetworkFiltered:
-		// The filtered launch builds the same user, network, and PID namespaces.
-		// It no longer needs CAP_NET_ADMIN inside the sandbox: the base nft policy
-		// is installed from the supervisor, which joins the namespace from outside
-		// bubblewrap's AppArmor confinement. Probing an in-sandbox capability here
-		// would spuriously refuse the launch on hosts (e.g. stock Ubuntu) whose
-		// bwrap AppArmor profile denies capabilities to the sandboxed process.
+		// The filtered launch builds the same user, network, and PID namespaces
+		// while retaining the invoking uid/gid in bubblewrap's final nested user
+		// namespace. It no longer needs CAP_NET_ADMIN inside the sandbox: the base
+		// nft policy is installed from the supervisor, which joins the owning outer
+		// namespace from outside bubblewrap's AppArmor confinement. Probing an
+		// in-sandbox capability here would spuriously refuse the launch on hosts
+		// (e.g. stock Ubuntu) whose bwrap AppArmor profile denies capabilities to
+		// the sandboxed process.
 		args = append(args,
 			"--unshare-user",
-			"--uid", "0",
-			"--gid", "0",
 			"--unshare-net",
 			"--unshare-pid",
 		)
@@ -125,6 +125,15 @@ func tclaudeLayerProbeArgs(
 		probeBind  = "/tmp/.tclaude-remount-probe"
 		probeWrite = "/tmp/.tclaude-remount-write"
 	)
+	probeCommand := "test -e " + probeBind + " && ! touch " + probeWrite
+	if posture == sandboxpolicy.NetworkFiltered {
+		// The generated launch relies on bubblewrap's devpts-driven nested user
+		// namespace to restore the invoking identity after its uid-0 setup layer.
+		// Prove that behavior on this host rather than accepting a launch whose
+		// passwd identity would disagree with HOME.
+		probeCommand += " && test \"$(id -u)\" = " + strconv.Itoa(os.Getuid()) +
+			" && test \"$(id -g)\" = " + strconv.Itoa(os.Getgid())
+	}
 	args = append(args,
 		"--dev", "/dev",
 		"--proc", "/proc",
@@ -135,7 +144,7 @@ func tclaudeLayerProbeArgs(
 		"--ro-bind", "/dev/null", probeBind,
 		"--remount-ro", "/tmp",
 		"--", "/bin/sh", "-c",
-		"test -e "+probeBind+" && ! touch "+probeWrite,
+		probeCommand,
 	)
 	return args, nil
 }

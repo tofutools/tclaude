@@ -2026,16 +2026,14 @@ func bwrapArgsWithDaemonFinal(
 		args = append(args, "--unshare-net", "--unshare-pid")
 		args = hideRemounts.appendHide(args, "/")
 	case sandboxpolicy.NetworkFiltered:
-		// Rootless bubblewrap maps the invoking host user to namespace root.
-		// That identity is required only so the sealed bootstrap can receive
-		// CAP_NET_ADMIN for the namespace-local nft policy. The private DNS
-		// listener uses an unprivileged port behind an nft redirect. Host file ownership
-		// remains the invoking user's, and the bootstrap zeroes and verifies
-		// every capability set before the harness exec.
+		// Keep the invoking user's numeric identity in the final namespace. The
+		// --dev mount makes rootless bubblewrap use an outer uid-0 setup namespace
+		// (which owns this network namespace) and a nested user namespace that maps
+		// back to the requested ids. Omitting explicit --uid/--gid therefore keeps
+		// the agent's passwd identity consistent with the inherited HOME without
+		// changing the supervisor's namespace-scoped nft authority.
 		args = append(args,
 			"--unshare-user",
-			"--uid", "0",
-			"--gid", "0",
 			"--unshare-net",
 			"--unshare-pid",
 		)

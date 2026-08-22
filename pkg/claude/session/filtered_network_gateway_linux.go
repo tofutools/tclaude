@@ -62,8 +62,9 @@ func filteredNetworkHelperEnv() []string {
 //
 // --preserve-credentials is required: bubblewrap sets setgroups=deny on the
 // sandbox userns, so nsenter's default setgroups() call would fail. Skipping it
-// is safe because joining the owning user namespace already lands the caller at
-// uid 0 inside that namespace, so nft runs with CAP_NET_ADMIN scoped to it.
+// is safe because this joins the outer setup namespace that owns the netns, not
+// bubblewrap's final nested identity namespace: the caller lands at uid 0 and
+// nft retains CAP_NET_ADMIN scoped to the owning namespace.
 func filteredNetworkNsenterArgs(nftPath string) []string {
 	return []string{
 		"--preserve-credentials",

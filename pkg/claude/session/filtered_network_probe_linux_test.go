@@ -146,13 +146,16 @@ func TestFilteredNetworkProbeArgsBuildTheNamespaceShapeWithoutInSandboxCapabilit
 		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed)
 	require.NoError(t, err)
 	joined := strings.Join(args, " ")
-	assert.Contains(t, joined,
-		"--unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid")
+	assert.Contains(t, joined, "--unshare-user --unshare-net --unshare-pid")
+	assert.NotContains(t, args, "--uid")
+	assert.NotContains(t, args, "--gid")
 	// The base policy is installed by the supervisor via nsenter, so the probe
 	// no longer grants or checks any in-sandbox capability.
 	assert.NotContains(t, joined, "--cap-add")
 	assert.NotContains(t, joined, "CAP_NET_ADMIN")
 	assert.NotContains(t, joined, `case "$cap_eff" in`)
+	assert.Contains(t, args[len(args)-1], `test "$(id -u)" = `)
+	assert.Contains(t, args[len(args)-1], `test "$(id -g)" = `)
 }
 
 func TestFilteredNetworkPrerequisiteProbeReportsFirstMissingCapability(t *testing.T) {
