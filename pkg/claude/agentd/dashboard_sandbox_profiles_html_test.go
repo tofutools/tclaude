@@ -134,7 +134,7 @@ func TestDashboardHTML_SandboxProfilesUI(t *testing.T) {
 		`.sbx-refusal-kind {`:                                                          "TCL-915: the capability kind is a distinct token in the refusal banner",
 		`.sbx-refusal-detail {`:                                                        "TCL-915: the verbatim refusal message has its own styling",
 		`function loadCommonRuleCatalog()`:                                             "the repurposed catalog feeds the preset menu",
-		`12, 13, 14].includes(parsed?.format_version)`:                                 "import accepts every export envelope version, including filesystem-root v14",
+		`14, 15, 16].includes(parsed?.format_version)`:                                 "import accepts every export envelope version, including caller-identity v16",
 		`if (body?.code) error.code = body.code`:                                       "request failures preserve the daemon's typed code",
 		`id="sandbox-profile-import-include-error"`:                                    "per-policy include errors render in the import preview",
 		`conflict === 'skip' ? 'skip' : 'overwrite'`:                                   "the error policy shares the all-incoming overwrite graph",

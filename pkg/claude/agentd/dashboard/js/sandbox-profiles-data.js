@@ -129,6 +129,7 @@ export function sandboxNetworkAuthoring(profile = {}) {
     // legacy payload that already names one keeps it.
     ...(network?.engine ? { engine: network.engine } : {}),
     ...(network?.namespace ? { namespace: network.namespace } : {}),
+    ...(network?.preserve_caller_identity ? { preserve_caller_identity: true } : {}),
   };
 }
 
@@ -193,6 +194,7 @@ export function sandboxProfileForWire(draft) {
       ...((value.network.deny || []).length ? { deny: value.network.deny } : {}),
       ...(value.network.engine ? { engine: value.network.engine } : {}),
       ...(value.network.namespace ? { namespace: value.network.namespace } : {}),
+      ...(value.network.preserve_caller_identity ? { preserve_caller_identity: true } : {}),
     };
   }
   const networkAllow = networkEntriesForWire(value.network.allow);

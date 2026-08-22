@@ -222,10 +222,11 @@ func PlannedEffectiveAccessAxes(effective EffectiveProfile) (ResolvedAxes, error
 				// different engine here than the preview named would be exactly
 				// the disclosure-does-not-match-rendered-surface bug.
 				axes.Network = NetworkRules{
-					Mode:      AccessModeOpen,
-					Deny:      cloneNetworkRules(axes.Network).Deny,
-					Engine:    axes.Network.Engine,
-					Namespace: axes.Network.Namespace,
+					Mode:                   AccessModeOpen,
+					Deny:                   cloneNetworkRules(axes.Network).Deny,
+					Engine:                 axes.Network.Engine,
+					Namespace:              axes.Network.Namespace,
+					PreserveCallerIdentity: axes.Network.PreserveCallerIdentity,
 				}
 			case "ports_unsupported":
 				if axes.Network.Mode != AccessModeList {

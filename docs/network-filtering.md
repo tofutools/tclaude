@@ -125,17 +125,24 @@ The Linux default for a list or deny policy under `tclaude-layer`. Four
 building blocks, assembled per launch:
 
 1. **bubblewrap** creates user, network, PID, and mount namespaces with no
-   connectivity, mapping the invoking user to namespace UID 0 (one-ID rootless
-   mapping — not host root).
-2. A pinned bootstrap installs a **default-drop nftables output policy**
-   (`inet tclaude_filter`) inside the namespace as one atomic transaction,
-   with timed per-rule IPv4/IPv6 sets. Only `CAP_NET_ADMIN` crosses that one
-   exec; the bootstrap then drops every capability and sets no-new-privileges
-   before the harness starts.
+   connectivity. By default it retains the historical namespace UID/GID 0
+   identity (one-ID rootless mapping — not host root). A profile can explicitly
+   set `network.preserve_caller_identity: true` to present the harness as the
+   invoking numeric UID/GID instead; files created in authorized host binds
+   remain owned by that host identity in either mode.
+2. The outside supervisor joins the user namespace that owns the network
+   namespace, then installs a **default-drop nftables output policy**
+   (`inet tclaude_filter`) as one atomic transaction with timed per-rule
+   IPv4/IPv6 sets. The sandbox bootstrap holds no capabilities, drops and
+   verifies all capability sets, sets no-new-privileges, and gates the harness
+   until setup completes.
 3. Rootless **pasta** provides outbound-only connectivity — no inbound
    forwards, no splice shortcuts. Harness exec is gated until the policy and
    pasta are both verified; if pasta or the broker dies, the supervisor kills
-   the sandbox.
+   the sandbox. In caller-identity mode the supervisor starts pasta from the
+   network namespace's owning user namespace before it joins the nested
+   network namespace; this keeps pasta and nft authority independent of the
+   harness identity.
 4. A **tclaude DNS broker** at `127.0.0.53` (a real listener on port 1053
    behind an nft redirect) answers only authored names. Each admitted A/AAAA
    answer is leased into the matching nft set for the observed DNS TTL, capped

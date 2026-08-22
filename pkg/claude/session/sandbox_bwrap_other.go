@@ -12,6 +12,7 @@ import (
 func resolveBwrapBinary(
 	sandboxpolicy.NetworkPosture,
 	sandboxpolicy.RootPosture,
+	...bool,
 ) (string, error) {
 	return "", fmt.Errorf("tclaude-layer requires Linux/bubblewrap or macOS/Seatbelt; this platform is not supported")
 }
@@ -19,6 +20,7 @@ func resolveBwrapBinary(
 func resolveBwrapServerBinary(
 	sandboxpolicy.NetworkPosture,
 	sandboxpolicy.RootPosture,
+	...bool,
 ) (string, error) {
 	return "", fmt.Errorf(
 		"tclaude-layer server wrapping requires Linux/bubblewrap or macOS/Seatbelt")

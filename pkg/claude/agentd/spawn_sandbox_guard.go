@@ -33,6 +33,26 @@ var resolveTclaudeLayerAccessVerdict = func(
 	return verdict, err
 }
 
+func resolveTclaudeLayerAccessVerdictWithIdentity(
+	harnessName string,
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+	engine sandboxpolicy.NetworkEngine,
+	preserveCallerIdentity bool,
+) (harness.LaunchOSSandbox, error) {
+	if !preserveCallerIdentity {
+		return resolveTclaudeLayerAccessVerdict(harnessName, posture, root, engine)
+	}
+	if session.TclaudeLayerUsesServerBoundary(harnessName) {
+		_, verdict, err := session.ResolveTclaudeLayerServerForEngineWithIdentity(
+			posture, root, engine, true)
+		return verdict, err
+	}
+	_, verdict, err := session.ResolveTclaudeLayerForEngineWithIdentity(
+		posture, root, engine, true)
+	return verdict, err
+}
+
 var probeFilteredNetworkPrerequisite = session.ProbeFilteredNetworkPrerequisite
 
 // spawnSandboxLineageFailure prevents an agent that can spawn peers from
@@ -403,8 +423,9 @@ func planSandboxProfileAccessForLaunch(
 			return nil, &spawnFailure{http.StatusUnprocessableEntity,
 				"invalid_sandbox_profile", engineErr.Error()}
 		}
-		verdict, err = resolveTclaudeLayerAccessVerdict(
-			h.Name, posture, root, deployedEngine)
+		verdict, err = resolveTclaudeLayerAccessVerdictWithIdentity(
+			h.Name, posture, root, deployedEngine,
+			axes.Network.PreserveCallerIdentity)
 		if err != nil {
 			// Reached from spawn, clone, reincarnate and relaunch — all of
 			// which refuse here on a LIVE host-capability failure, so all of

@@ -61,17 +61,25 @@ func filteredNetworkHelperEnv() []string {
 // ExtraFiles, which land at those fixed fd numbers in the nsenter child.
 //
 // --preserve-credentials is required: bubblewrap sets setgroups=deny on the
-// sandbox userns, so nsenter's default setgroups() call would fail. Skipping it
-// is safe because joining the owning user namespace already lands the caller at
-// uid 0 inside that namespace, so nft runs with CAP_NET_ADMIN scoped to it.
-func filteredNetworkNsenterArgs(nftPath string) []string {
-	return []string{
+// sandbox userns, so nsenter's default setgroups() call would fail. The default
+// namespace-root mode lands at uid 0. Caller-identity mode explicitly selects
+// uid/gid 0 after setns so the helpers retain the capabilities granted in the
+// owning user namespace. Keeping --preserve-credentials alongside those
+// selectors suppresses nsenter's otherwise failing pre-setns setgroups call.
+// This spelling is portable to util-linux releases before --keep-caps.
+func filteredNetworkNsenterArgs(nftPath string, preserveCallerIdentity ...bool) []string {
+	args := []string{
 		"--preserve-credentials",
+	}
+	if len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0] {
+		args = append(args, "--setuid=0", "--setgid=0")
+	}
+	return append(args,
 		"--user=/proc/self/fd/3",
 		"--net=/proc/self/fd/4",
 		"--",
 		nftPath, "-f", "-",
-	}
+	)
 }
 
 type preparedFilteredNetworkRelay struct {
@@ -101,8 +109,9 @@ type preparedFilteredNetworkRelay struct {
 	dnsNFTAuthority *os.File
 	// sandboxNetns pins the sandbox network namespace at the moment its peer
 	// identity is validated in waitPolicyReady, so installBasePolicy operates on
-	// exactly that namespace and cannot be redirected by a reused PID.
-	sandboxNetns *os.File
+	// exactly that namespace and pasta is launched through its owning userns.
+	sandboxNetns           *os.File
+	preserveCallerIdentity bool
 }
 
 func encodeFilteredNetworkRelayPolicy(plan sandboxpolicy.MountPlan) (string, error) {
@@ -124,7 +133,10 @@ func encodeFilteredNetworkRelayPolicy(plan sandboxpolicy.MountPlan) (string, err
 	return encoded, nil
 }
 
-func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay, retErr error) {
+func prepareFilteredNetworkRelay(
+	encoded string,
+	preserveCallerIdentity ...bool,
+) (_ preparedFilteredNetworkRelay, retErr error) {
 	if strings.TrimSpace(encoded) == "" {
 		return preparedFilteredNetworkRelay{}, nil
 	}
@@ -148,7 +160,8 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 	if err != nil {
 		return preparedFilteredNetworkRelay{}, fmt.Errorf("validate filtered network policy: %w", err)
 	}
-	executables, err := resolveFilteredNetworkExecutables()
+	preserve := len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0]
+	executables, err := resolveFilteredNetworkExecutables(preserve)
 	if err != nil {
 		return preparedFilteredNetworkRelay{}, err
 	}
@@ -279,16 +292,17 @@ func prepareFilteredNetworkRelay(encoded string) (_ preparedFilteredNetworkRelay
 			tclaudeLayerFilteredBootstrapCommand,
 			"--",
 		},
-		Files:        files,
-		SyncListener: syncListener,
-		PastaPath:    executables.Pasta,
-		PastaPIDFile: filepath.Join(pidDir, "pasta.pid"),
-		Rules:        ir,
-		Policy:       policy,
-		NsenterPath:  executables.Nsenter,
-		NFTPath:      executables.NFT,
-		DNSUpstreams: dnsUpstreams,
-		DNSHosts:     dnsHosts,
+		Files:                  files,
+		SyncListener:           syncListener,
+		PastaPath:              executables.Pasta,
+		PastaPIDFile:           filepath.Join(pidDir, "pasta.pid"),
+		Rules:                  ir,
+		Policy:                 policy,
+		NsenterPath:            executables.Nsenter,
+		NFTPath:                executables.NFT,
+		DNSUpstreams:           dnsUpstreams,
+		DNSHosts:               dnsHosts,
+		preserveCallerIdentity: preserve,
 	}, nil
 }
 
@@ -536,11 +550,7 @@ func (p *preparedFilteredNetworkRelay) installBasePolicy(namespacePID int) error
 		return fmt.Errorf("filtered-network policy install is missing its helper paths")
 	}
 	netFile := p.sandboxNetns
-	if netFile != nil {
-		// Consume the namespace pinned at validation time.
-		p.sandboxNetns = nil
-		defer func() { _ = netFile.Close() }()
-	} else {
+	if netFile == nil {
 		if namespacePID <= 0 {
 			return fmt.Errorf("filtered-network policy install requires a namespace pid")
 		}
@@ -553,6 +563,9 @@ func (p *preparedFilteredNetworkRelay) installBasePolicy(namespacePID int) error
 		netFile = os.NewFile(uintptr(netFD), "sandbox-netns")
 		defer func() { _ = netFile.Close() }()
 	}
+	// Keep a namespace pinned by waitPolicyReady open for pasta, which must join
+	// this netns through its owning user namespace rather than the sandbox
+	// child's nested identity namespace.
 	ownerFD, err := unix.IoctlRetInt(int(netFile.Fd()), unix.NS_GET_USERNS)
 	if err != nil {
 		return fmt.Errorf("resolve owning user namespace of sandbox netns: %w", err)
@@ -561,7 +574,10 @@ func (p *preparedFilteredNetworkRelay) installBasePolicy(namespacePID int) error
 	defer func() { _ = ownerFile.Close() }()
 	// ExtraFiles land at fd 3, 4 in the child with close-on-exec cleared, matching
 	// the /proc/self/fd references in filteredNetworkNsenterArgs.
-	cmd := exec.Command(p.NsenterPath, filteredNetworkNsenterArgs(p.NFTPath)...)
+	cmd := exec.Command(
+		p.NsenterPath,
+		filteredNetworkNsenterArgs(p.NFTPath, p.preserveCallerIdentity)...,
+	)
 	cmd.Env = filteredNetworkHelperEnv()
 	cmd.Stdin = strings.NewReader(p.Policy)
 	cmd.Stdout = os.Stderr
@@ -701,12 +717,59 @@ func (p *preparedFilteredNetworkRelay) startPasta(
 	if p == nil || p.PastaPath == "" {
 		return nil, nil, nil
 	}
-	args := filteredNetworkPastaArgs(p.PastaPIDFile, namespacePID)
-	cmd := exec.Command(p.PastaPath, args...)
+	if !p.preserveCallerIdentity {
+		args := filteredNetworkPastaArgs(p.PastaPIDFile, namespacePID)
+		cmd := exec.Command(p.PastaPath, args...)
+		cmd.Env = filteredNetworkHelperEnv()
+		cmd.Stdout = os.Stderr
+		cmd.Stderr = os.Stderr
+		cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+		return startFilteredNetworkPasta(cmd, p.PastaPIDFile)
+	}
+	if p.NsenterPath == "" {
+		return nil, nil, fmt.Errorf("filtered-network pasta is missing the nsenter path")
+	}
+	if namespacePID <= 0 {
+		return nil, nil, fmt.Errorf("filtered-network pasta requires a namespace pid")
+	}
+	netFile := p.sandboxNetns
+	if netFile == nil {
+		netFD, err := unix.Open(
+			filepath.Join("/proc", strconv.Itoa(namespacePID), "ns", "net"),
+			unix.O_RDONLY|unix.O_CLOEXEC, 0)
+		if err != nil {
+			return nil, nil, fmt.Errorf("open sandbox network namespace for pasta: %w", err)
+		}
+		netFile = os.NewFile(uintptr(netFD), "sandbox-netns-pasta")
+		defer func() { _ = netFile.Close() }()
+	}
+	ownerFD, err := unix.IoctlRetInt(int(netFile.Fd()), unix.NS_GET_USERNS)
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolve owning user namespace for pasta: %w", err)
+	}
+	ownerFile := os.NewFile(uintptr(ownerFD), "sandbox-owner-userns-pasta")
+	defer func() { _ = ownerFile.Close() }()
+
+	args := filteredNetworkPastaLaunchArgs(
+		p.PastaPath, p.PastaPIDFile, namespacePID)
+	cmd := exec.Command(p.NsenterPath, args...)
 	cmd.Env = filteredNetworkHelperEnv()
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
+	// Enter the user namespace that OWNS the network namespace before pasta
+	// starts. pasta closes inherited descriptors during its initial isolation,
+	// so it cannot consume the owner fd itself; nsenter consumes fd 3 first and
+	// then execs pasta. pasta remains in the host network namespace until it
+	// joins the live sandbox process's netns in --netns-only mode.
+	cmd.ExtraFiles = []*os.File{ownerFile}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
+	return startFilteredNetworkPasta(cmd, p.PastaPIDFile)
+}
+
+func startFilteredNetworkPasta(
+	cmd *exec.Cmd,
+	pidFile string,
+) (*exec.Cmd, <-chan error, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, nil, fmt.Errorf("start filtered-network pasta gateway: %w", err)
 	}
@@ -714,7 +777,7 @@ func (p *preparedFilteredNetworkRelay) startPasta(
 	go func() { waitCh <- cmd.Wait() }()
 	deadline := time.Now().Add(filteredNetworkPastaReadyTimeout)
 	for {
-		data, err := os.ReadFile(p.PastaPIDFile)
+		data, err := os.ReadFile(pidFile)
 		if err == nil {
 			pid, parseErr := strconv.Atoi(strings.TrimSpace(string(data)))
 			if parseErr == nil {
@@ -764,6 +827,41 @@ func filteredNetworkPastaArgs(pidFile string, namespacePID int) []string {
 		"--no-splice",
 		"--pid", pidFile,
 		strconv.Itoa(namespacePID),
+	}
+}
+
+func filteredNetworkPastaLaunchArgs(
+	pastaPath string,
+	pidFile string,
+	namespacePID int,
+) []string {
+	return []string{
+		"--preserve-credentials",
+		"--setuid=0",
+		"--setgid=0",
+		"--user=/proc/self/fd/3",
+		"--",
+		pastaPath,
+		"--foreground",
+		"--quiet",
+		"--config-net",
+		// Give the namespace an IPv6 default route to pasta's emulated
+		// gateway. The reserved fd00::2 host-loopback mapping must not depend
+		// on an unrelated route existing in the host's selected template.
+		"--gateway", sandboxpolicy.FilteredNetworkGatewayIPv6,
+		"--no-map-gw",
+		"--map-guest-addr", "none",
+		"--map-host-loopback", sandboxpolicy.FilteredNetworkLoopbackIPv4,
+		"--map-host-loopback", sandboxpolicy.FilteredNetworkLoopbackIPv6,
+		"--tcp-ports", "none",
+		"--udp-ports", "none",
+		"--tcp-ns", "none",
+		"--udp-ns", "none",
+		"--no-splice",
+		"--pid", pidFile,
+		"--netns-only",
+		"--netns", filepath.Join(
+			"/proc", strconv.Itoa(namespacePID), "ns", "net"),
 	}
 }
 
@@ -937,5 +1035,9 @@ func filteredNetworkRelayPrefix(plan sandboxpolicy.MountPlan) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return " --filtered-network-policy " + clcommon.ShellQuoteArg(encoded), nil
+	prefix := " --filtered-network-policy " + clcommon.ShellQuoteArg(encoded)
+	if plan.PreserveCallerIdentity {
+		prefix += " --filtered-network-preserve-caller-identity"
+	}
+	return prefix, nil
 }

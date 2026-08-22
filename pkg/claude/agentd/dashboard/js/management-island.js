@@ -722,6 +722,7 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
         baseline, ...next,
         ...(current.engine ? { engine: current.engine } : {}),
         ...(current.namespace ? { namespace: current.namespace } : {}),
+        ...(current.preserve_caller_identity ? { preserve_caller_identity: true } : {}),
       } };
     });
   };
@@ -767,6 +768,7 @@ function NetworkAccessEditor({ draft, setDraft, catalog, newDraft, packVisibilit
       <label class="sbx-network-control"><span class="sbx-network-control-kind">Traffic policy</span><span class="sbx-network-control-label">Baseline</span><${Select} id="sandbox-profile-editor-network-baseline" value=${rules.baseline} onChange=${changeBaseline} options=${NETWORK_BASELINE_OPTIONS}/><span class="sbx-network-control-help">What destinations are permitted before individual rules are applied.</span></label>
       <label class="sbx-network-control"><span class="sbx-network-control-kind">Filtering mechanism</span><span class="sbx-network-control-label">Engine</span><${Select} id="sandbox-profile-editor-network-engine" value=${rules.engine || ''} onChange=${(engine) => update({ engine })} options=${NETWORK_ENGINE_OPTIONS}/><span class="sbx-network-control-help">How destination rules are enforced when the composed policy has them.</span></label>
       <label class="sbx-network-control"><span class="sbx-network-control-kind">Network isolation</span><span class="sbx-network-control-label">Namespace</span><${Select} id="sandbox-profile-editor-network-namespace" value=${rules.namespace || ''} onChange=${(namespace) => update({ namespace })} options=${NETWORK_NAMESPACE_OPTIONS}/><span class="sbx-network-control-help">Whether the agent shares host localhost and abstract Unix sockets.</span></label>
+      <label class="sbx-network-control"><span class="sbx-network-control-kind">Linux packet identity</span><span class="sbx-network-control-label">Caller UID/GID</span><input id="sandbox-profile-editor-preserve-caller-identity" type="checkbox" checked=${!!rules.preserve_caller_identity} onChange=${(event) => update({ preserve_caller_identity: event.currentTarget.checked })}/><span class="sbx-network-control-help">Opt in to the invoking numeric identity; omitted keeps namespace root.</span></label>
     </div>
     ${rules.namespace === 'private' && html`<p class="sbx-inline-note sbx-network-namespace-note"><strong>Private, routed:</strong> internet traffic is routed normally, while host localhost services, IDE bridges, and abstract Unix sockets are not shared. Linux tclaude-layer only.</p>`}
     ${packVisibilityError && html`<div class="sbx-network-pack-visibility-error" role="alert"><span>⚠ ${packVisibilityError}</span>
@@ -1956,6 +1958,7 @@ function sandboxImportNetworkRows(profile) {
   const network = sandboxNetworkAuthoring(profile);
   const rows = [];
   if (network.baseline && (network.baseline !== 'inherit' || profile.network)) rows.push(`baseline ${network.baseline}${network.baseline === 'inherit' ? '' : ' all'}${network.engine ? ` · ${network.engine} filter` : ''}`);
+  if (network.preserve_caller_identity) rows.push('preserve caller UID/GID (Linux packet filter)');
   for (const pack of network.packs || []) rows.push(`allow pack ${pack}`);
   for (const pack of network.deny_packs || []) rows.push(`deny pack ${pack}`);
   const endpoint = (entry) => {
@@ -2017,7 +2020,7 @@ function SandboxImport({ current, state, actions, confirmDiscard }) {
     setError(''); setBusy('inspect');
     try {
       const parsed = JSON.parse(raw);
-      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
+      if (parsed?.format !== 'tclaude-sandbox-profiles' || ![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16].includes(parsed?.format_version)) throw new Error('not a tclaude sandbox-profile export');
       const found = await actions.inspectSandboxBundle(parsed);
       setEnvelope(parsed); setPreview(found);
     } catch (e) {

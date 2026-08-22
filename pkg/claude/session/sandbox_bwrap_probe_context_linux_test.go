@@ -123,6 +123,19 @@ func TestProbeBwrapInLaunchContextCachesPositivesPerTmuxServer(t *testing.T) {
 	assert.Equal(t, 3, calls)
 }
 
+func TestBwrapProbeCacheSeparatesCallerIdentityMode(t *testing.T) {
+	memo := &bwrapProbeMemo{}
+	base := bwrapProbeKey{
+		binary: "/usr/bin/bwrap", posture: sandboxpolicy.NetworkFiltered,
+		root: sandboxpolicy.RootConstructed,
+	}
+	memo.record(4242, base)
+	assert.True(t, memo.healthy(4242, base))
+	base.preserveCallerIdentity = true
+	assert.False(t, memo.healthy(4242, base),
+		"a namespace-root pass must not answer the caller-identity probe")
+}
+
 // A tmux server can outlive any number of host changes, so the pid alone does
 // not bound a remembered yes. ProbeFilteredNetworkPrerequisite DISCLOSES this
 // answer: an operator who turns a prerequisite off must stop being told the

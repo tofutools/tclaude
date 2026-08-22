@@ -578,6 +578,18 @@ func ResolveTclaudeLayerForEngine(
 	return resolveTclaudeLayerForEngine(ResolveTclaudeLayer, posture, root, engine)
 }
 
+// ResolveTclaudeLayerForEngineWithIdentity probes the selected identity mode;
+// the ordinary entry point remains the compatibility namespace-root probe.
+func ResolveTclaudeLayerForEngineWithIdentity(
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+	engine sandboxpolicy.NetworkEngine,
+	preserveCallerIdentity bool,
+) (string, harness.LaunchOSSandbox, error) {
+	return resolveTclaudeLayerForEngine(
+		ResolveTclaudeLayer, posture, root, engine, preserveCallerIdentity)
+}
+
 // ResolveTclaudeLayerServerForEngine is ResolveTclaudeLayerForEngine for the
 // non-interactive server boundary. It exists so a server-boundary harness
 // reaches the proxy floor through the same mapping an interactive one does: a
@@ -588,19 +600,33 @@ func ResolveTclaudeLayerServerForEngine(
 	root sandboxpolicy.RootPosture,
 	engine sandboxpolicy.NetworkEngine,
 ) (string, harness.LaunchOSSandbox, error) {
+	return resolveTclaudeLayerForEngine(ResolveTclaudeLayerServer, posture, root, engine)
+}
+
+// ResolveTclaudeLayerServerForEngineWithIdentity is the non-interactive twin
+// of ResolveTclaudeLayerForEngineWithIdentity.
+func ResolveTclaudeLayerServerForEngineWithIdentity(
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+	engine sandboxpolicy.NetworkEngine,
+	preserveCallerIdentity bool,
+) (string, harness.LaunchOSSandbox, error) {
 	return resolveTclaudeLayerForEngine(
-		ResolveTclaudeLayerServer, posture, root, engine)
+		ResolveTclaudeLayerServer, posture, root, engine, preserveCallerIdentity)
 }
 
 func resolveTclaudeLayerForEngine(
-	resolve func(sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) (
+	resolve func(sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture, ...bool) (
 		string, harness.LaunchOSSandbox, error),
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
 	engine sandboxpolicy.NetworkEngine,
+	preserveCallerIdentity ...bool,
 ) (string, harness.LaunchOSSandbox, error) {
 	floor := TclaudeLayerFloorPosture(posture, engine)
-	binary, sandbox, err := resolve(floor, root)
+	preserve := floor == sandboxpolicy.NetworkFiltered &&
+		len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0]
+	binary, sandbox, err := resolve(floor, root, preserve)
 	if err != nil {
 		return "", sandbox, err
 	}
@@ -633,15 +659,16 @@ func tclaudeLayerProxyLaunchOSSandbox() harness.LaunchOSSandbox {
 func ResolveTclaudeLayer(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
+	preserveCallerIdentity ...bool,
 ) (string, harness.LaunchOSSandbox, error) {
-	binary, err := resolveBwrapBinary(posture, root)
+	binary, err := resolveBwrapBinary(posture, root, preserveCallerIdentity...)
 	if err != nil {
 		return "", harness.LaunchOSSandbox{
 			State:  "off",
 			Source: "tclaude-layer unavailable",
 		}, err
 	}
-	return binary, TclaudeLayerLaunchOSSandbox(posture, root), nil
+	return binary, TclaudeLayerLaunchOSSandbox(posture, root, preserveCallerIdentity...), nil
 }
 
 // ResolveTclaudeLayerServer verifies the host capability needed by a
@@ -650,15 +677,16 @@ func ResolveTclaudeLayer(
 func ResolveTclaudeLayerServer(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
+	preserveCallerIdentity ...bool,
 ) (string, harness.LaunchOSSandbox, error) {
-	binary, err := resolveBwrapServerBinary(posture, root)
+	binary, err := resolveBwrapServerBinary(posture, root, preserveCallerIdentity...)
 	if err != nil {
 		return "", harness.LaunchOSSandbox{
 			State:  "off",
 			Source: "tclaude-layer unavailable",
 		}, err
 	}
-	return binary, TclaudeLayerLaunchOSSandbox(posture, root), nil
+	return binary, TclaudeLayerLaunchOSSandbox(posture, root, preserveCallerIdentity...), nil
 }
 
 // TclaudeLayerHostAvailability reports whether THIS HOST can create the
@@ -871,8 +899,14 @@ func appendFilteredNetworkPrerequisiteNotice(
 func TclaudeLayerLaunchOSSandbox(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
+	preserveCallerIdentity ...bool,
 ) harness.LaunchOSSandbox {
-	return tclaudeLayerLaunchOSSandbox(posture, root)
+	resolved := tclaudeLayerLaunchOSSandbox(posture, root)
+	if runtime.GOOS == "linux" && posture == sandboxpolicy.NetworkFiltered &&
+		len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0] {
+		resolved.Source += "; harness preserves invoking numeric UID/GID"
+	}
+	return resolved
 }
 
 // TclaudeLayerLaunchOSSandboxForEngine is TclaudeLayerLaunchOSSandbox for a
@@ -884,11 +918,12 @@ func TclaudeLayerLaunchOSSandboxForEngine(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
 	engine sandboxpolicy.NetworkEngine,
+	preserveCallerIdentity ...bool,
 ) harness.LaunchOSSandbox {
 	if TclaudeLayerFloorPosture(posture, engine) != posture {
 		return tclaudeLayerProxyLaunchOSSandbox()
 	}
-	return tclaudeLayerLaunchOSSandbox(posture, root)
+	return TclaudeLayerLaunchOSSandbox(posture, root, preserveCallerIdentity...)
 }
 
 // TclaudeLayerLaunchOSSandboxForHarness describes the actual process boundary.
@@ -905,8 +940,10 @@ func TclaudeLayerLaunchOSSandboxForHarness(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
 	engine sandboxpolicy.NetworkEngine,
+	preserveCallerIdentity ...bool,
 ) harness.LaunchOSSandbox {
-	resolved := TclaudeLayerLaunchOSSandboxForEngine(posture, root, engine)
+	resolved := TclaudeLayerLaunchOSSandboxForEngine(
+		posture, root, engine, preserveCallerIdentity...)
 	if harnessName == harness.OpenCodeName {
 		if posture == sandboxpolicy.NetworkFiltered {
 			resolved.Source += "; OpenCode tool-executing server confined; " +
@@ -2022,19 +2059,18 @@ func bwrapArgsWithDaemonFinal(
 		args = append(args, "--unshare-net", "--unshare-pid")
 		args = hideRemounts.appendHide(args, "/")
 	case sandboxpolicy.NetworkFiltered:
-		// Rootless bubblewrap maps the invoking host user to namespace root.
-		// That identity is required only so the sealed bootstrap can receive
-		// CAP_NET_ADMIN for the namespace-local nft policy. The private DNS
-		// listener uses an unprivileged port behind an nft redirect. Host file ownership
-		// remains the invoking user's, and the bootstrap zeroes and verifies
-		// every capability set before the harness exec.
+		// The historical/default launch selects namespace root. The explicit
+		// profile opt-in omits that selection: --dev makes rootless bubblewrap use
+		// an outer uid-0 setup namespace (which owns the netns) and a nested user
+		// namespace that maps back to the invoking ids. Supervisor nft/pasta setup
+		// still joins the owning outer namespace in either mode.
 		args = append(args,
 			"--unshare-user",
-			"--uid", "0",
-			"--gid", "0",
-			"--unshare-net",
-			"--unshare-pid",
 		)
+		if !plan.PreserveCallerIdentity {
+			args = append(args, "--uid", "0", "--gid", "0")
+		}
+		args = append(args, "--unshare-net", "--unshare-pid")
 		args = hideRemounts.appendHide(args, "/")
 	default:
 		return nil, fmt.Errorf("mount plan has invalid network posture %d", plan.NetworkPosture)

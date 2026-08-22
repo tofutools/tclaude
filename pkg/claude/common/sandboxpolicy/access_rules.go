@@ -72,6 +72,12 @@ type NetworkRules struct {
 	// (ResolveNetworkEngine) rather than through the intersection lattice the
 	// other fields use. Omitted is the fourth state and never changes behavior.
 	Engine NetworkEngine `json:"engine,omitempty"`
+	// PreserveCallerIdentity opts the Linux packet-filtered sandbox into
+	// presenting the harness as the invoking numeric UID/GID. Omitted/false
+	// retains the historical namespace-root identity. The setting is carried
+	// with network policy because no other sandbox posture creates this user
+	// namespace shape; proxy filtering and non-Linux targets ignore it.
+	PreserveCallerIdentity bool `json:"preserve_caller_identity,omitempty"`
 }
 
 // NetworkAllowEntry names exactly one outbound destination selector. The
@@ -384,6 +390,7 @@ func normalizeNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 		Mode: in.Mode, Baseline: in.Baseline,
 		Packs: packs, DenyPacks: denyPacks,
 		Engine: in.Engine, Namespace: in.Namespace,
+		PreserveCallerIdentity: in.PreserveCallerIdentity,
 	}
 	out.Allow, err = normalizeNetworkEntries(in.Allow, "allow")
 	if err != nil {
@@ -437,7 +444,10 @@ func normalizeEffectiveNetworkRules(in *NetworkRules) (*NetworkRules, error) {
 	if err := ValidateNetworkNamespace(in.Namespace); err != nil {
 		return nil, err
 	}
-	out := &NetworkRules{Mode: in.Mode, Engine: in.Engine, Namespace: in.Namespace}
+	out := &NetworkRules{
+		Mode: in.Mode, Engine: in.Engine, Namespace: in.Namespace,
+		PreserveCallerIdentity: in.PreserveCallerIdentity,
+	}
 	var err error
 	out.Allow, err = normalizeNetworkEntries(in.Allow, "allow")
 	if err != nil {
@@ -1082,6 +1092,10 @@ func intersectNetworkRules(left, right NetworkRules) NetworkRules {
 	out.Deny = unionNetworkEntries(left.Deny, right.Deny)
 	out.Engine = mergeNetworkEngines(left.Engine, right.Engine)
 	out.Namespace = intersectNetworkNamespaces(left.Namespace, right.Namespace)
+	// Caller identity is an opt-in capability of the packet boundary rather
+	// than network authority. Once any applied profile requests it, a more
+	// specific profile cannot silently switch the launch back to namespace root.
+	out.PreserveCallerIdentity = left.PreserveCallerIdentity || right.PreserveCallerIdentity
 	return out
 }
 

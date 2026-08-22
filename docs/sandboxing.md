@@ -182,7 +182,9 @@ The axes:
   allow/deny rows, packs, and a `namespace` selector (the legacy
   `network_access: internet|none` spelling is still accepted). The composed
   result resolves to an open, closed, or list-filtered launch. Covered on the
-  [network-filtering](network-filtering.md) page.
+  [network-filtering](network-filtering.md) page. On Linux packet-filtered
+  launches, `preserve_caller_identity: true` opts the harness into the invoking
+  numeric UID/GID; omitted/false retains the historical namespace-root identity.
 - **`unix_sockets`** — `mode: open|closed|list` plus `path`/`path_glob` entries
   (`**` is refused). The agentd socket is a non-removable floor. Authoring this
   axis on an otherwise host-open profile switches the launch to a constructed

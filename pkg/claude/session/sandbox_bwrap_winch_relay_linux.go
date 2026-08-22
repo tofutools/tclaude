@@ -29,11 +29,12 @@ type bwrapChildStatus struct {
 }
 
 type stackedRelayBindingOptions struct {
-	ManifestPath   string
-	ManifestSHA256 string
-	Consume        bool
-	ReadyPath      string
-	FilteredPolicy string
+	ManifestPath           string
+	ManifestSHA256         string
+	Consume                bool
+	ReadyPath              string
+	FilteredPolicy         string
+	PreserveCallerIdentity bool
 	// ProxyPolicy carries the proxy engine's compiled policy. It is a separate
 	// flag from FilteredPolicy rather than a mode byte on one payload so that
 	// neither engine can ever be handed the other's policy by a parsing
@@ -104,6 +105,12 @@ func tclaudeLayerWinchRelayCmd() *cobra.Command {
 		"stacked-binding",
 		"",
 		"launch-owned stacked binding manifest (internal)",
+	)
+	cmd.Flags().BoolVar(
+		&binding.PreserveCallerIdentity,
+		"filtered-network-preserve-caller-identity",
+		false,
+		"preserve caller UID/GID in the filtered sandbox (internal)",
 	)
 	cmd.Flags().StringVar(
 		&binding.ManifestSHA256,
@@ -208,7 +215,8 @@ func runTclaudeLayerWinchRelay(
 			_ = file.Close()
 		}
 	}()
-	filtered, err := prepareFilteredNetworkRelay(binding.FilteredPolicy)
+	filtered, err := prepareFilteredNetworkRelay(
+		binding.FilteredPolicy, binding.PreserveCallerIdentity)
 	if err != nil {
 		return 125, err
 	}

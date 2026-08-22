@@ -1289,6 +1289,7 @@ func runNew(params *NewParams) error {
 	// "no engine deployed", which leaves every one of those on the pre-engine
 	// path by construction.
 	tclaudeLayerEngine := sandboxpolicy.NetworkEngineUnset
+	tclaudeLayerPreserveCallerIdentity := false
 	if outerLayer &&
 		sandboxImplementation == sandboxpolicy.ImplementationTclaudeLayer &&
 		launchSandbox != nil && launchSandbox.Effective.Network != nil {
@@ -1307,6 +1308,7 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("resolve network filtering engine: %w", engineErr)
 		}
 		tclaudeLayerEngine = deployedEngine
+		tclaudeLayerPreserveCallerIdentity = axes.Network.PreserveCallerIdentity
 		if requestedNetworkPosture == sandboxpolicy.NetworkFiltered {
 			if runtime.GOOS == "darwin" &&
 				sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network) {
@@ -1519,15 +1521,18 @@ func runNew(params *NewParams) error {
 	var bwrapCapabilityErr error
 	if outerLayer {
 		if tclaudeLayerWrapsPane(h.Name) {
-			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayerForEngine(
-				tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine)
+			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayerForEngineWithIdentity(
+				tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine,
+				tclaudeLayerPreserveCallerIdentity)
 		} else {
-			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayerServerForEngine(
-				tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine)
+			bwrapBinary, launchOSSandbox, bwrapCapabilityErr = ResolveTclaudeLayerServerForEngineWithIdentity(
+				tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine,
+				tclaudeLayerPreserveCallerIdentity)
 		}
 		if bwrapCapabilityErr == nil && !stacked {
 			launchOSSandbox = TclaudeLayerLaunchOSSandboxForHarness(
-				h.Name, tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine)
+				h.Name, tclaudeLayerPosture, tclaudeLayerRoot, tclaudeLayerEngine,
+				tclaudeLayerPreserveCallerIdentity)
 		}
 	}
 	if outerLayer {
