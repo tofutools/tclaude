@@ -1402,6 +1402,10 @@ func TestAppendTclaudeLayerTclaudeCLIResolvesOneExecutableFile(t *testing.T) {
 	require.NoError(t, os.Symlink(realBinary, linkedBinary))
 	resolvedBinary, err := filepath.EvalSymlinks(linkedBinary)
 	require.NoError(t, err)
+	bashEnvSource, err := tclaudeLayerConstructedRootBashEnvSource()
+	require.NoError(t, err)
+	bashEnvSource, err = filepath.EvalSymlinks(bashEnvSource)
+	require.NoError(t, err)
 
 	got, err := appendTclaudeLayerTclaudeCLI([]string{"prefix"}, linkedBinary)
 	require.NoError(t, err)
@@ -1410,6 +1414,7 @@ func TestAppendTclaudeLayerTclaudeCLIResolvesOneExecutableFile(t *testing.T) {
 		"--dir", tclaudeLayerConstructedRootTclaudeDir,
 		"--dir", tclaudeLayerConstructedRootTclaudeBin,
 		"--ro-bind", resolvedBinary, tclaudeLayerConstructedRootTclaudePath,
+		"--ro-bind", bashEnvSource, tclaudeLayerConstructedRootBashEnvPath,
 		"--setenv", "PATH", tclaudeLayerConstructedRootTclaudeBin + ":/usr/bin:/bin",
 	}, got)
 }
@@ -1418,6 +1423,10 @@ func TestAppendTclaudeLayerTclaudeCLIProjectsExecutableAlreadyInStaticRoot(t *te
 	t.Setenv("PATH", "/usr/bin:/bin")
 	resolved, err := filepath.EvalSymlinks("/bin/sh")
 	require.NoError(t, err)
+	bashEnvSource, err := tclaudeLayerConstructedRootBashEnvSource()
+	require.NoError(t, err)
+	bashEnvSource, err = filepath.EvalSymlinks(bashEnvSource)
+	require.NoError(t, err)
 	got, err := appendTclaudeLayerTclaudeCLI([]string{"prefix"}, "/bin/sh")
 	require.NoError(t, err)
 	assert.Equal(t, []string{
@@ -1425,6 +1434,7 @@ func TestAppendTclaudeLayerTclaudeCLIProjectsExecutableAlreadyInStaticRoot(t *te
 		"--dir", tclaudeLayerConstructedRootTclaudeDir,
 		"--dir", tclaudeLayerConstructedRootTclaudeBin,
 		"--ro-bind", resolved, tclaudeLayerConstructedRootTclaudePath,
+		"--ro-bind", bashEnvSource, tclaudeLayerConstructedRootBashEnvPath,
 		"--setenv", "PATH", tclaudeLayerConstructedRootTclaudeBin + ":/usr/bin:/bin",
 	}, got, "the active CLI must land on PATH even when its source is under /opt or another static root")
 }
@@ -1438,7 +1448,7 @@ func TestAppendTclaudeLayerTclaudeCLIRejectsNonExecutableFile(t *testing.T) {
 }
 
 func TestConstructedRootTclaudePathExportSurvivesHarnessEnvironmentForwarding(t *testing.T) {
-	ambient := "export PATH=/home/operator/go/bin:/usr/bin; "
+	ambient := "export PATH=/home/operator/go/bin:/usr/bin; export BASH_ENV=/operator/bash-env; "
 	preLaunch := "printf pre-launch; "
 	exports := appendTclaudeLayerConstructedRootPathExport(ambient)
 	projectedExport := appendTclaudeLayerConstructedRootPathExport("")
@@ -1465,9 +1475,30 @@ func TestConstructedRootTclaudePathExportSurvivesHarnessEnvironmentForwarding(t 
 			assert.Less(t, ambientAt, projectedAt,
 				"the harness must not overwrite the projected CLI PATH")
 			assert.Less(t, projectedAt, preLaunchAt,
-				"operator pre-launch PATH changes retain their established final precedence")
+				"operator pre-launch PATH and BASH_ENV changes retain their established final precedence")
 		})
 	}
+}
+
+func TestMaterializeTclaudeLayerConstructedRootBashEnvPublishesExactFragment(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	path, err := materializeTclaudeLayerConstructedRootBashEnv()
+	require.NoError(t, err)
+	assert.Equal(t,
+		filepath.Join(home, ".tclaude", "data", tclaudeLayerConstructedRootBashEnvState),
+		path)
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, tclaudeLayerConstructedRootBashEnv(
+		tclaudeLayerConstructedRootTclaudeBin,
+		tclaudeLayerConstructedRootBashEnvPath,
+	), string(got))
+
+	pathAgain, err := materializeTclaudeLayerConstructedRootBashEnv()
+	require.NoError(t, err)
+	assert.Equal(t, path, pathAgain, "repeat launches replace the release-owned fragment atomically")
 }
 
 func TestConstructedRootTclaudePathExportDoesNotAddCurrentDirectory(t *testing.T) {

@@ -829,6 +829,17 @@ about `filesystem_root`, says nothing about `unix_sockets` (or sets sockets to
 `open`), and has no network rule requiring construction launches with exactly
 the read-only host root it launched with before.
 
+Constructed-root launches project the resolved `tclaude` executable as the
+single read-only file `/.tclaude/bin/tclaude`. The launch prepends that directory
+to PATH and arms a one-shot `BASH_ENV` fragment for Bash processes started by
+the harness, so a non-interactive Bash login shell can rebuild PATH from its
+profiles without losing the coordination CLI. After that first Bash startup,
+the fragment restores the operator's prior `BASH_ENV` (or unsets it); it is not
+imposed on nested descendant shells. Operator pre-launch script runs after the
+generated setup and retains final precedence over PATH and `BASH_ENV`. Other
+shells keep the launch-time PATH but receive no startup hook: if their own login
+files replace PATH, `tclaude` predictably becomes undiscoverable again.
+
 Two consequences of building the root reach beyond sockets, and both are stated
 in the launch warning rather than left to be discovered:
 

@@ -16,6 +16,22 @@ import (
 // which restores this scrubbed default afterwards.
 func TestMain(m *testing.M) {
 	_ = os.Unsetenv("TCLAUDE_EXIT_GENERATION")
+	bashEnv, err := os.CreateTemp("", "tclaude-test-bash-env-")
+	if err != nil {
+		panic(err)
+	}
+	if _, err := bashEnv.WriteString(tclaudeLayerConstructedRootBashEnv(
+		tclaudeLayerConstructedRootTclaudeBin,
+		tclaudeLayerConstructedRootBashEnvPath,
+	)); err != nil {
+		panic(err)
+	}
+	if err := bashEnv.Close(); err != nil {
+		panic(err)
+	}
+	tclaudeLayerConstructedRootBashEnvSource = func() (string, error) {
+		return bashEnv.Name(), nil
+	}
 	// Gated namespace smokes render bubblewrap arguments in this Go test
 	// process but launch a separately built tclaude binary. Without this seam,
 	// the constructed root would project the test executable as /usr/bin/tclaude
@@ -24,5 +40,7 @@ func TestMain(m *testing.M) {
 	if binary := os.Getenv("TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"); binary != "" {
 		tclaudeLayerTclaudeCLIPath = func() string { return binary }
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	_ = os.Remove(bashEnv.Name())
+	os.Exit(code)
 }

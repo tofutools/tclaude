@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/sandboxproxy"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 // TclaudeLayerLaunchContract carries writable paths required by the launched
@@ -2587,9 +2588,13 @@ var tclaudeLayerStaticOSPaths = []string{
 }
 
 const (
-	tclaudeLayerConstructedRootTclaudeDir  = "/.tclaude"
-	tclaudeLayerConstructedRootTclaudeBin  = "/.tclaude/bin"
-	tclaudeLayerConstructedRootTclaudePath = "/.tclaude/bin/tclaude"
+	tclaudeLayerConstructedRootTclaudeDir   = "/.tclaude"
+	tclaudeLayerConstructedRootTclaudeBin   = "/.tclaude/bin"
+	tclaudeLayerConstructedRootTclaudePath  = "/.tclaude/bin/tclaude"
+	tclaudeLayerConstructedRootBashEnvPath  = "/.tclaude/bash-env"
+	tclaudeLayerConstructedRootBashEnvState = "constructed-root-bash-env-v1"
+	tclaudeLayerSavedBashEnvSet             = "TCLAUDE_SAVED_BASH_ENV_SET"
+	tclaudeLayerSavedBashEnv                = "TCLAUDE_SAVED_BASH_ENV"
 )
 
 // tclaudeLayerTclaudeCLIPath is a seam for the real bubblewrap smoke, whose
@@ -2599,9 +2604,89 @@ const (
 var tclaudeLayerTclaudeCLIPath = clcommon.SelfTclaudePath
 
 func appendTclaudeLayerConstructedRootPathExport(exports string) string {
-	return exports + "if [ -n \"${PATH:-}\" ]; then export PATH=" +
-		tclaudeLayerConstructedRootTclaudeBin + ":\"$PATH\"; else export PATH=" +
-		tclaudeLayerConstructedRootTclaudeBin + "; fi; "
+	return appendTclaudeLayerConstructedRootPathExportAt(
+		exports,
+		tclaudeLayerConstructedRootTclaudeBin,
+		tclaudeLayerConstructedRootBashEnvPath,
+	)
+}
+
+// appendTclaudeLayerConstructedRootPathExportAt restores the projected CLI
+// after generated environment forwarding and arms one Bash startup read. Bash
+// reads BASH_ENV after a non-interactive login shell has processed its login
+// profiles, which is the reset this hook needs to survive. The fragment then
+// restores the operator's prior BASH_ENV (or unsets it), so tclaude does not
+// impose a startup hook on nested descendant shells. Shells that do not honor
+// BASH_ENV retain the launch-time PATH only and degrade to their normal command
+// lookup if their own startup files replace it.
+//
+// Operator-authored pre-launch script still follows this generated prefix. It
+// therefore retains final precedence over PATH and BASH_ENV.
+func appendTclaudeLayerConstructedRootPathExportAt(exports, bin, bashEnv string) string {
+	return exports +
+		"if [ \"${BASH_ENV+x}\" = x ]; then export " + tclaudeLayerSavedBashEnvSet +
+		"=1; export " + tclaudeLayerSavedBashEnv + "=\"$BASH_ENV\"; else unset " +
+		tclaudeLayerSavedBashEnvSet + " " + tclaudeLayerSavedBashEnv + "; fi; " +
+		"export BASH_ENV=" + clcommon.ShellQuoteArg(bashEnv) + "; " +
+		"if [ -n \"${PATH:-}\" ]; then export PATH=" + clcommon.ShellQuoteArg(bin) +
+		":\"$PATH\"; else export PATH=" + clcommon.ShellQuoteArg(bin) + "; fi; "
+}
+
+func tclaudeLayerConstructedRootBashEnv(bin, bashEnv string) string {
+	return "case :\"${PATH:-}\": in *:" + bin + ":*) ;; *) " +
+		"if [ -n \"${PATH:-}\" ]; then export PATH=" + bin +
+		":\"$PATH\"; else export PATH=" + bin + "; fi ;; esac\n" +
+		"if [ \"${" + tclaudeLayerSavedBashEnvSet + ":-}\" = 1 ]; then\n" +
+		"  export BASH_ENV=\"${" + tclaudeLayerSavedBashEnv + ":-}\"\n" +
+		"  unset " + tclaudeLayerSavedBashEnvSet + " " + tclaudeLayerSavedBashEnv + "\n" +
+		"  if [ -n \"$BASH_ENV\" ] && [ \"$BASH_ENV\" != " +
+		clcommon.ShellQuoteArg(bashEnv) + " ]; then . \"$BASH_ENV\"; fi\n" +
+		"else\n" +
+		"  unset BASH_ENV " + tclaudeLayerSavedBashEnvSet + " " + tclaudeLayerSavedBashEnv + "\n" +
+		"fi\n"
+}
+
+// tclaudeLayerConstructedRootBashEnvSource materializes a release-owned,
+// non-secret startup fragment in private tclaude state. Bubblewrap binds only
+// this file into the constructed root; its private parent and every other host
+// file remain hidden. The variable is a test seam so argument-rendering tests
+// do not write into the developer's real state directory.
+var tclaudeLayerConstructedRootBashEnvSource = materializeTclaudeLayerConstructedRootBashEnv
+
+func materializeTclaudeLayerConstructedRootBashEnv() (string, error) {
+	dir := tclcommon.TclaudeDataDir()
+	if strings.TrimSpace(dir) == "" {
+		return "", fmt.Errorf("resolve constructed-root Bash environment state directory")
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("create constructed-root Bash environment state directory: %w", err)
+	}
+	target := filepath.Join(dir, tclaudeLayerConstructedRootBashEnvState)
+	tmp, err := os.CreateTemp(dir, ".constructed-root-bash-env-*")
+	if err != nil {
+		return "", fmt.Errorf("stage constructed-root Bash environment: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	fragment := tclaudeLayerConstructedRootBashEnv(
+		tclaudeLayerConstructedRootTclaudeBin,
+		tclaudeLayerConstructedRootBashEnvPath,
+	)
+	if _, err := tmp.WriteString(fragment); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("write constructed-root Bash environment: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return "", fmt.Errorf("sync constructed-root Bash environment: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return "", fmt.Errorf("close constructed-root Bash environment: %w", err)
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		return "", fmt.Errorf("publish constructed-root Bash environment: %w", err)
+	}
+	return target, nil
 }
 
 // appendTclaudeLayerStaticOSRoot constructs the fixed executable/runtime
@@ -2662,6 +2747,14 @@ func appendTclaudeLayerTclaudeCLI(args []string, candidate string) ([]string, er
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
 		return nil, fmt.Errorf("tclaude CLI path %q is not an executable regular file", resolved)
 	}
+	bashEnvSource, err := tclaudeLayerConstructedRootBashEnvSource()
+	if err != nil {
+		return nil, err
+	}
+	bashEnvSource, err = filepath.EvalSymlinks(bashEnvSource)
+	if err != nil {
+		return nil, fmt.Errorf("resolve constructed-root Bash environment: %w", err)
+	}
 	path := os.Getenv("PATH")
 	if path == "" {
 		path = tclaudeLayerConstructedRootTclaudeBin
@@ -2672,6 +2765,7 @@ func appendTclaudeLayerTclaudeCLI(args []string, candidate string) ([]string, er
 		"--dir", tclaudeLayerConstructedRootTclaudeDir,
 		"--dir", tclaudeLayerConstructedRootTclaudeBin,
 		"--ro-bind", resolved, tclaudeLayerConstructedRootTclaudePath,
+		"--ro-bind", bashEnvSource, tclaudeLayerConstructedRootBashEnvPath,
 		"--setenv", "PATH", path,
 	), nil
 }

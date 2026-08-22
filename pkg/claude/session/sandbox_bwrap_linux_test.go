@@ -18,6 +18,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -34,6 +35,72 @@ const (
 	relayFakeResizedEnv  = "TCLAUDE_RELAY_FAKE_RESIZED"
 	relayFakeTestBinEnv  = "TCLAUDE_RELAY_FAKE_TEST_BINARY"
 )
+
+func TestRenderedHarnessLaunchKeepsProjectedTclaudeAfterBashLoginPathReset(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash is required for the supported login-shell launch-path smoke")
+	}
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	projectedBin := filepath.Join(root, "projected-bin")
+	require.NoError(t, os.MkdirAll(home, 0o700))
+	require.NoError(t, os.MkdirAll(projectedBin, 0o700))
+	// Representative login-profile behavior: discard the inherited PATH.
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".bash_profile"),
+		[]byte("export PATH=/usr/bin:/bin\n"), 0o600))
+	projectedCLI := filepath.Join(projectedBin, "tclaude")
+	require.NoError(t, os.WriteFile(projectedCLI,
+		[]byte("#!/bin/sh\nexit 0\n"), 0o700))
+
+	operatorBashEnv := filepath.Join(root, "operator-bash-env")
+	require.NoError(t, os.WriteFile(operatorBashEnv,
+		[]byte("export TCL_OPERATOR_BASH_ENV=sourced\n"), 0o600))
+	launchBashEnv := filepath.Join(root, "launch-bash-env")
+	require.NoError(t, os.WriteFile(launchBashEnv,
+		[]byte(tclaudeLayerConstructedRootBashEnv(projectedBin, launchBashEnv)), 0o600))
+
+	// The fake harness ignores adapter-specific arguments and exercises the
+	// shell path a real harness tool launch uses. A nested login shell proves
+	// the tclaude hook was one-shot: the operator's original hook remains, but
+	// tclaude no longer globally repairs deeper descendants.
+	harnessBinary := filepath.Join(root, "harness")
+	require.NoError(t, os.WriteFile(harnessBinary, []byte(`#!/bin/sh
+exec /bin/bash --login -c '
+printf "outer=%s|%s|%s|%s\n" "$(command -v tclaude)" "$TCL_PRE_LAUNCH" "$TCL_OPERATOR_BASH_ENV" "$BASH_ENV"
+/bin/bash --login -c '\''printf "nested=%s|%s|%s\n" "$TCL_OPERATOR_BASH_ENV" "$BASH_ENV" "$(command -v tclaude || printf missing)"'\''
+'
+`), 0o700))
+
+	envExports := clcommon.BuildEnvExports(map[string]string{
+		"HOME":     home,
+		"PATH":     projectedBin + ":/usr/bin:/bin",
+		"BASH_ENV": operatorBashEnv,
+	})
+	envExports = appendTclaudeLayerConstructedRootPathExportAt(
+		envExports, projectedBin, launchBashEnv)
+
+	for _, harnessName := range []string{
+		harness.DefaultName,
+		harness.CodexName,
+		harness.OpenCodeName,
+		harness.CopilotName,
+	} {
+		t.Run(harnessName, func(t *testing.T) {
+			command := harness.MustGet(harnessName).Spawn.BuildCommand(harness.SpawnSpec{
+				ExecutablePath:  harnessBinary,
+				EnvExports:      envExports,
+				PreLaunchScript: "export TCL_PRE_LAUNCH=kept; ",
+				ServerURL:       "http://127.0.0.1:4096",
+			})
+			got, err := exec.Command("/bin/sh", "-c", command).CombinedOutput()
+			require.NoErrorf(t, err, "rendered launch failed: %s", got)
+			assert.Equal(t,
+				"outer="+projectedCLI+"|kept|sourced|"+operatorBashEnv+"\n"+
+					"nested=sourced|"+operatorBashEnv+"|missing\n",
+				string(got))
+		})
+	}
+}
 
 // A Codex-only host may never have created Claude's per-process session-state
 // directory. The outer layer still hides that cross-harness protected root,
