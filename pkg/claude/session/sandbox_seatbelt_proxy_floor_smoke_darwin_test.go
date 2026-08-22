@@ -160,6 +160,8 @@ func TestSeatbeltProxyFloorSmoke(t *testing.T) {
 	})
 
 	home := agentipctest.ShortSocketDir(t)
+	home, err = filepath.EvalSymlinks(home)
+	require.NoError(t, err)
 	t.Setenv("HOME", home)
 	agentdSocket := agentipc.CanonicalSocketPath()
 	require.NotEmpty(t, agentdSocket)
