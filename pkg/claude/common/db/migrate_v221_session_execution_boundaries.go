@@ -20,10 +20,6 @@ func migrateV220toV221(d *sql.DB) error {
 	) STRICT`); err != nil {
 		return fmt.Errorf("migrate v220→v221 (session execution boundaries): create table: %w", err)
 	}
-	if err := addColumnIfMissing(tx, "opencode_runtimes", "execution_boundary_json",
-		`ALTER TABLE opencode_runtimes ADD COLUMN execution_boundary_json TEXT NOT NULL DEFAULT ''`); err != nil {
-		return fmt.Errorf("migrate v220→v221 (OpenCode execution boundary): add column: %w", err)
-	}
 	if _, err := tx.Exec(`UPDATE schema_version SET version = 221`); err != nil {
 		return fmt.Errorf("migrate v220→v221 (session execution boundaries): version: %w", err)
 	}
