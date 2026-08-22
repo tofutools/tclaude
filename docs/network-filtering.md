@@ -161,10 +161,11 @@ reserved from CIDR or DNS-derived rules, so either kind of rule can also reach
 host loopback on its authored ports — a DNS-rebinding route to host services.
 
 The packet engine is enforced for exact `tclaude-layer` **Claude Code, Codex,
-and OpenCode** launches on Linux. OpenCode is supported for strict
-explicit-provider configurations only; its local and model-API presets are
-launch-refused under this engine because they name no explicit provider
-endpoint to check. If a prerequisite is missing before enforcement is selected
+and OpenCode** launches on Linux. When OpenCode supplies a strict explicit-
+provider configuration, tclaude checks that provider endpoint against the
+authored rules. An OpenCode route tclaude cannot inspect is left to those rules:
+the launch proceeds, and the packet floor allows or blocks the actual request.
+If a prerequisite is missing before enforcement is selected
 — `bwrap`, `pasta`, `nft`, or `nsenter` resolved through trust-walked paths (no
 group/world-writable path component, a regular executable target; ownership is
 not checked, so a user-installed one is accepted), pidfd support, the pasta
@@ -249,10 +250,9 @@ Claude Code, Codex, OpenCode** (pinned against Claude Code 2.1.220, Codex
 leaves the rules unenforced with a notice. Engine defaults do not flip: unset
 means the packet engine on Linux and historical behavior on macOS.
 
-OpenCode's local-provider presets, launch-refused under the packet gateway,
-compose normally under an activated proxy engine — it resolves nothing ahead
-of time, so the launch is held to the ordinary explicit-provider contract
-instead.
+OpenCode's local-provider presets compose under either engine. When tclaude
+cannot inspect their model route, launch proceeds without model-endpoint
+coverage validation and the authored rules remain the entire egress authority.
 
 ### Group routes ride the proxy
 

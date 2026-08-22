@@ -8,18 +8,19 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-func TestOpenCodeSelectedModelStillRequiresAnExplicitProvider(t *testing.T) {
+func TestOpenCodeSelectedModelMayLeaveProviderRouteUnknown(t *testing.T) {
 	_, cwd := isolateModelTransportLaunch(t)
 	openCode := harness.MustGet(harness.OpenCodeName)
 
-	_, err := ResolveTclaudeLayerModelTransport(openCode,
+	resolved, err := ResolveTclaudeLayerModelTransport(openCode,
 		ModelTransportLaunchContext{Model: "sonnet", Cwd: cwd})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(),
-		"requires an explicit provider/model launch model")
+	require.NoError(t, err)
+	assert.Equal(t, "sonnet", resolved.Model)
+	assert.False(t, resolved.ProviderResolved)
 
-	_, err = ResolveTclaudeLayerModelTransport(openCode,
+	resolved, err = ResolveTclaudeLayerModelTransport(openCode,
 		ModelTransportLaunchContext{Model: "corp/model", Cwd: cwd})
-	require.Error(t, err,
-		"an explicit provider/model still needs the inline explicit-provider config")
+	require.NoError(t, err)
+	assert.Equal(t, "corp/model", resolved.Model)
+	assert.False(t, resolved.ProviderResolved)
 }

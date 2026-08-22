@@ -1012,15 +1012,11 @@ func ValidateTclaudeLayerNetwork(
 		if engineErr != nil {
 			return nil, engineErr
 		}
-		// OpenCode has no effective-config read from which to infer a provider
-		// when the operator did not select a launch model. In that case the
-		// authored rules are the complete policy: do not invent a provider,
-		// automatically add model access, or refuse the launch merely because
-		// inference may be unreachable. If a model was selected, the resolver
-		// above must still prove its provider and the normal coverage gate below
-		// ensures the authored rules admit it.
+		// OpenCode has no reliable effective-config read for every provider route.
+		// When resolution is unknown, the authored rules are the complete policy:
+		// do not invent model access or refuse the launch merely because inference
+		// may be unreachable.
 		if h != nil && h.Name == harness.OpenCodeName &&
-			strings.TrimSpace(resolvedModel.Model) == "" &&
 			!resolvedModel.ProviderResolved {
 			return nil, nil
 		}
@@ -1053,7 +1049,7 @@ func ValidateTclaudeLayerNetwork(
 			}
 		}
 		if h.Name == harness.OpenCodeName {
-			detail += " OpenCode filtered supports explicit-provider configs only: the launch model and frozen OPENCODE_CONFIG_CONTENT must name exactly one inspected openai-compatible provider, model without a provider override, and concrete options.baseURL. The server uses daemon-final read-only, provider-empty private XDG and HOME config directories and rechecks those directories plus persistent account/org authority before every initial exec or restart so none of those sources can replace the inspected route. OpenCode's built-in webfetch/websearch permission rules are soft tool policy; this tclaude-layer nft boundary is the packet-enforced floor."
+			detail += " This OpenCode route was resolved from an explicit-provider config: the launch model and frozen OPENCODE_CONFIG_CONTENT name one inspected openai-compatible provider, model without a provider override, and concrete options.baseURL. The server uses daemon-final read-only, provider-empty private XDG and HOME config directories and rechecks those directories plus persistent account/org authority before every initial exec or restart so none of those sources can replace the inspected route. OpenCode's built-in webfetch/websearch permission rules are soft tool policy; this tclaude-layer nft boundary is the packet-enforced floor."
 		}
 		return []sandboxpolicy.AccessNotice{{
 			Class:  sandboxpolicy.AccessNoticeClassDegradation,

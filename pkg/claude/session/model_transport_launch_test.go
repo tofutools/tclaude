@@ -401,7 +401,7 @@ func TestResolveTclaudeLayerCodexAllowsAuthlessExplicitProvider(t *testing.T) {
 	assert.Equal(t, "https://models.example/v1", resolved.BaseURL)
 }
 
-func TestResolveTclaudeLayerOpenCodeRequiresAndResolvesStrictInlineProvider(t *testing.T) {
+func TestResolveTclaudeLayerOpenCodeResolvesStrictProviderOrLeavesRouteUnknown(t *testing.T) {
 	_, cwd := isolateModelTransportLaunch(t)
 	openCode := harness.MustGet(harness.OpenCodeName)
 
@@ -422,10 +422,9 @@ func TestResolveTclaudeLayerOpenCodeRequiresAndResolvesStrictInlineProvider(t *t
 		openCode,
 		ModelTransportLaunchContext{Model: "provider/model", Cwd: cwd},
 	)
-	require.Error(t, err)
+	require.NoError(t, err)
 	assert.False(t, resolved.ProviderResolved)
-	assert.Contains(t, err.Error(), "explicit-provider configs only")
-	assert.Contains(t, err.Error(), "network open")
+	assert.Equal(t, "provider/model", resolved.Model)
 
 	content := `{
 		"enabled_providers":["corp"],
@@ -456,26 +455,28 @@ func TestResolveTclaudeLayerOpenCodeRequiresAndResolvesStrictInlineProvider(t *t
 
 	context.Environment[0].Value = strings.Replace(
 		content, "https://models.example/v1", "{env:MODEL_URL}", 1)
-	_, err = ResolveTclaudeLayerModelTransport(openCode, context)
-	require.ErrorContains(t, err, "may not use environment")
+	resolved, err = ResolveTclaudeLayerModelTransport(openCode, context)
+	require.NoError(t, err)
+	assert.False(t, resolved.ProviderResolved)
 
 	context.Environment[0].Value = strings.Replace(
 		content, `"enabled_providers":["corp"]`,
 		`"enabled_providers":["corp","other"]`, 1)
-	_, err = ResolveTclaudeLayerModelTransport(openCode, context)
-	require.ErrorContains(t, err, "exactly")
+	resolved, err = ResolveTclaudeLayerModelTransport(openCode, context)
+	require.NoError(t, err)
+	assert.False(t, resolved.ProviderResolved)
 
 	context.Environment[0].Value = strings.Replace(
 		content,
 		`"models":{"model":{"name":"Model"}}`,
 		`"models":{"model":{"name":"Model","provider":{"npm":"file:///opaque.js"}}}`,
 		1)
-	_, err = ResolveTclaudeLayerModelTransport(openCode, context)
-	require.ErrorContains(t, err, "may not override model.provider")
-	require.ErrorContains(t, err, "network open")
+	resolved, err = ResolveTclaudeLayerModelTransport(openCode, context)
+	require.NoError(t, err)
+	assert.False(t, resolved.ProviderResolved)
 }
 
-func TestResolveTclaudeLayerOpenCodeRefusesManagedConfig(t *testing.T) {
+func TestResolveTclaudeLayerOpenCodeLeavesManagedConfigRouteUnresolved(t *testing.T) {
 	_, cwd := isolateModelTransportLaunch(t)
 	managed := filepath.Join(t.TempDir(), "opencode.json")
 	require.NoError(t, os.WriteFile(managed, []byte(`{}`), 0o600))
@@ -483,7 +484,7 @@ func TestResolveTclaudeLayerOpenCodeRefusesManagedConfig(t *testing.T) {
 	openCodeManagedConfigPaths = func() []string { return []string{managed} }
 	t.Cleanup(func() { openCodeManagedConfigPaths = previous })
 
-	_, err := ResolveTclaudeLayerModelTransport(
+	resolved, err := ResolveTclaudeLayerModelTransport(
 		harness.MustGet(harness.OpenCodeName),
 		ModelTransportLaunchContext{
 			Model: "corp/model", Cwd: cwd,
@@ -492,9 +493,9 @@ func TestResolveTclaudeLayerOpenCodeRefusesManagedConfig(t *testing.T) {
 				Value: `{"enabled_providers":["corp"],"provider":{"corp":{"npm":"@ai-sdk/openai-compatible","whitelist":["model"],"models":{"model":{}},"options":{"baseURL":"https://models.example"}}}}`,
 			}},
 		})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), managed)
-	assert.Contains(t, err.Error(), "network open")
+	require.NoError(t, err)
+	assert.Equal(t, "corp/model", resolved.Model)
+	assert.False(t, resolved.ProviderResolved)
 }
 
 func isolateModelTransportLaunch(t *testing.T) (home, cwd string) {
