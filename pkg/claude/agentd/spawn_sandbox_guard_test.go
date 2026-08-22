@@ -183,7 +183,7 @@ func TestPlanSandboxProfileAccessPersistsDetectedProbeWhenVerdictCannotFlip(t *t
 		"a ready probe without a filtered launch verdict must not activate enforcement")
 }
 
-func TestPlanSandboxProfileAccessActivatesReadyOpenCodeWithExplicitProvider(t *testing.T) {
+func TestPlanSandboxProfileAccessAllowsResolvedOrUnknownOpenCodeProvider(t *testing.T) {
 	testharness.ClearModelTransportProxyEnv(t)
 	oldProbe := probeFilteredNetworkPrerequisite
 	oldVerdict := resolveTclaudeLayerAccessVerdict
@@ -249,6 +249,19 @@ func TestPlanSandboxProfileAccessActivatesReadyOpenCodeWithExplicitProvider(t *t
 		false,
 	)
 	require.Nil(t, failure)
+
+	unknownRoute := newSnapshot()
+	unknownRoute.Effective.Environment = nil
+	_, failure = planSandboxProfileAccessForLaunch(
+		harness.OpenCodeName,
+		harness.OpenCodeSandboxTclaudeLayer,
+		unknownRoute,
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		session.ModelTransportLaunchContext{Model: "openai/gpt-5.6-sol"},
+		false,
+	)
+	require.Nil(t, failure,
+		"unknown model-host coverage must not prevent an OpenCode launch")
 }
 
 func TestPlanSandboxProfileAccessPrivateNetworkReportsExactProbeFailure(t *testing.T) {

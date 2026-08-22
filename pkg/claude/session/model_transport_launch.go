@@ -51,6 +51,17 @@ func ResolveTclaudeLayerModelTransport(
 		return harness.ResolvedModelTransport{}, nil
 	}
 	environment := launchModelEnvironment(context.Environment)
+	// OpenCode has no effective-config API from which tclaude can reliably
+	// resolve every provider route. Treat an uninspectable route as unknown,
+	// not as authority to refuse the launch: the authored network policy remains
+	// the packet-enforced boundary and will allow or block the actual request.
+	if h.Name == harness.OpenCodeName {
+		resolved, err := resolveOpenCodeModelTransport(h, context, environment)
+		if err != nil {
+			return harness.ResolvedModelTransport{Model: context.Model}, nil
+		}
+		return resolved, nil
+	}
 	if variable := modelTransportProxyVariable(environment); variable != "" {
 		return harness.ResolvedModelTransport{}, modelTransportLaunchError(h,
 			fmt.Sprintf("model transport proxy variable %s puts the real destination behind a proxy this seam does not resolve, so the authored list cannot be checked against it; remove the proxy variable or use network open",
@@ -61,8 +72,6 @@ func ResolveTclaudeLayerModelTransport(
 		return resolveClaudeModelTransport(h, context, environment)
 	case harness.CodexName:
 		return resolveCodexModelTransport(h, context, environment)
-	case harness.OpenCodeName:
-		return resolveOpenCodeModelTransport(h, context, environment)
 	case harness.CopilotName:
 		return resolveCopilotModelTransport(h, context, environment)
 	default:
