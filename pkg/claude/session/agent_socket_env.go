@@ -30,7 +30,7 @@ func ApplyAgentSocketEnv(
 	canonical := agentipc.CanonicalSocketPath()
 	stable := agentipc.SandboxSocketPath()
 	if explicit := agentipc.ExplicitSocketPath(); explicit != "" && explicit != canonical &&
-		!(tclaudeLayerIsolated && explicit == stable) {
+		(!tclaudeLayerIsolated || explicit != stable) {
 		return fmt.Errorf("managed sandbox profiles require the canonical agentd socket %s; "+
 			"custom socket %s is unsupported for sandboxed agents", canonical, explicit)
 	}
