@@ -162,3 +162,19 @@ func TestApplyAgentSocketEnvRejectsCustomSocket(t *testing.T) {
 	assert.Contains(t, err.Error(), "custom socket")
 	assert.Contains(t, err.Error(), agentipc.CanonicalSocketPath())
 }
+
+func TestApplyAgentSocketEnvAcceptsInheritedStableSocketForNestedConstructedRoot(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	stable := agentipc.SandboxSocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(stable), 0o700))
+	listener, err := net.Listen("unix", stable)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	t.Setenv(agentipc.SocketEnv, stable)
+
+	env := map[string]string{}
+	require.NoError(t, ApplyAgentSocketEnv(
+		harness.CodexName, harness.SandboxDangerFull, "", true, env))
+	assert.Equal(t, stable, env[agentipc.SocketEnv])
+}

@@ -28,13 +28,15 @@ func ApplyAgentSocketEnv(
 		return nil
 	}
 	canonical := agentipc.CanonicalSocketPath()
-	if explicit := agentipc.ExplicitSocketPath(); explicit != "" && explicit != canonical {
+	stable := agentipc.SandboxSocketPath()
+	if explicit := agentipc.ExplicitSocketPath(); explicit != "" && explicit != canonical &&
+		!(tclaudeLayerIsolated && explicit == stable) {
 		return fmt.Errorf("managed sandbox profiles require the canonical agentd socket %s; "+
 			"custom socket %s is unsupported for sandboxed agents", canonical, explicit)
 	}
 	selected := canonical
-	if tclaudeLayerIsolated && agentipc.LiveSocketPath(agentipc.SandboxSocketPath()) {
-		selected = agentipc.SandboxSocketPath()
+	if tclaudeLayerIsolated && agentipc.LiveSocketPath(stable) {
+		selected = stable
 	}
 	if selected == canonical &&
 		!agentipc.SocketReachable(canonical) && agentipc.AnyLegacySocketReachable() {

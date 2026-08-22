@@ -17,6 +17,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/fsnotify/fsnotify"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -2443,15 +2444,25 @@ func resumeLaunchCmdWithStackedProof(
 		if err != nil {
 			return "", "", nil, err
 		}
+		rootPosture, err := session.TclaudeLayerRootPosture(posture, effectiveProfile)
+		if err != nil {
+			return "", "", nil, err
+		}
 		if err := session.ApplyAgentSocketEnv(
 			h.Name,
 			"",
 			"",
-			posture == sandboxpolicy.NetworkIsolatedWithAgentd ||
-				posture == sandboxpolicy.NetworkFiltered,
+			rootPosture == sandboxpolicy.RootConstructed,
 			resumeEnv,
 		); err != nil {
 			return "", "", nil, err
+		}
+		if selected := resumeEnv[agentipc.SocketEnv]; selected != "" &&
+			rootPosture == sandboxpolicy.RootConstructed {
+			if shellEnvironment == nil {
+				shellEnvironment = map[string]string{}
+			}
+			shellEnvironment[agentipc.SocketEnv] = selected
 		}
 	}
 	// Mirror the spawn seam: every tclaude-launched Claude pane reads its

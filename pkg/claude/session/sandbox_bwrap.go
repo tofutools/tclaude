@@ -2139,23 +2139,25 @@ func bwrapArgsWithDaemonFinal(
 	for _, root := range protectedRoots {
 		args = hideRemounts.appendHide(args, root)
 	}
-	liveSocketBinds := make([]TclaudeLayerReadOnlyBind, 0, len(socketPaths))
-	restartStableSocket := ""
+	socketBinds := make([]TclaudeLayerReadOnlyBind, 0, len(socketPaths))
 	if tclaudeLayerPlanUsesConstructedRoot(plan) {
 		for i, socket := range socketPaths {
 			if socket == "" || !filepath.IsAbs(socket) {
 				return nil, fmt.Errorf("resolve agentd socket floor entry %d for isolated tclaude-layer", i)
 			}
 			isRestartStable := filepath.Clean(socket) == filepath.Clean(agentipc.SandboxSocketPath())
-			// The stable endpoint is optional. Only its direct, live socket entry
-			// authorizes selecting and projecting the parent directory; a regular
-			// file, directory, symlink, or stale socket must fall back to canonical.
-			if isRestartStable && !agentipc.LiveSocketPath(socket) {
-				continue
+			bind := TclaudeLayerReadOnlyBind{Source: socket, Target: socket}
+			if isRestartStable {
+				// Socket selection happened once, before the harness command was
+				// rendered. This seam only projects the narrow parent directory; it
+				// must not independently reselect an endpoint from a later liveness
+				// observation and race the authoritative harness environment.
+				bind.Source = filepath.Dir(socket)
+				bind.Target = filepath.Dir(socket)
 			}
-			exists, err := bwrapBindSourceExists(socket)
+			exists, err := bwrapBindSourceExists(bind.Source)
 			if err != nil {
-				return nil, fmt.Errorf("agentd socket source %q: %w", socket, err)
+				return nil, fmt.Errorf("agentd socket source %q: %w", bind.Source, err)
 			}
 			if !exists {
 				if i == 0 {
@@ -2168,17 +2170,8 @@ func bwrapArgsWithDaemonFinal(
 				}
 				continue
 			}
-			bind := TclaudeLayerReadOnlyBind{Source: socket, Target: socket}
-			if isRestartStable {
-				bind.Source = filepath.Dir(socket)
-				bind.Target = filepath.Dir(socket)
-				restartStableSocket = socket
-			}
 			args = append(args, "--ro-bind", bind.Source, bind.Target)
-			liveSocketBinds = append(liveSocketBinds, bind)
-		}
-		if restartStableSocket != "" {
-			args = append(args, "--setenv", agentipc.SocketEnv, restartStableSocket)
+			socketBinds = append(socketBinds, bind)
 		}
 	}
 	// Class 2: replay the policy plan exactly as rendered. Repair mounts do not
@@ -2247,7 +2240,7 @@ func bwrapArgsWithDaemonFinal(
 			args = appendTclaudeLayerSocketBindRepairs(
 				args,
 				path,
-				liveSocketBinds,
+				socketBinds,
 				&hideRemounts,
 			)
 			// The resolver file is reopened during root construction, so an
@@ -2875,7 +2868,7 @@ func appendTclaudeLayerSocketBindRepairs(
 ) []string {
 	for _, bind := range binds {
 		target := filepath.Clean(bind.Target)
-		if hide != target && sandboxpolicy.PathContainsOrEqual(hide, target) {
+		if sandboxpolicy.PathContainsOrEqual(hide, target) {
 			hideRemounts.noteReplacement(target)
 			args = append(args, "--ro-bind", filepath.Clean(bind.Source), target)
 		}
