@@ -32,7 +32,7 @@ import (
 )
 
 type serveParams struct {
-	Socket                       string `long:"socket" short:"s" optional:"true" help:"Unix socket path. Default: bind the canonical agent-reachable ~/.tclaude/api/agentd.sock, plus the pre-split ~/.tclaude-agentd.sock and ~/.tclaude/agentd.sock so older clients and previously installed sandbox settings still reach a restarted daemon. Passing a path binds ONLY that socket, which sandboxed agents will not reach unless their sandbox settings allow it."`
+	Socket                       string `long:"socket" short:"s" optional:"true" help:"Unix socket path. Default: bind the canonical agent-reachable ~/.tclaude/api/agentd.sock, a restart-stable sandbox projection, and the pre-split ~/.tclaude-agentd.sock and ~/.tclaude/agentd.sock compatibility paths. Passing a path binds ONLY that socket, which sandboxed agents will not reach unless their sandbox settings allow it."`
 	NoTray                       bool   `long:"no-tray" help:"Don't show a system tray icon. Use on headless / CI hosts. Also settable via agent.disable_tray in config.json."`
 	AutoLaunchDashboard          bool   `long:"auto-launch-dashboard" help:"Open the agentd dashboard in your browser on startup (also settable via agent.auto_launch_dashboard in config.json)."`
 	Slop                         bool   `long:"slop" help:"Open the auto-launched dashboard in 🎰 slop machine theme — a purely cosmetic re-skin, same data."`
@@ -131,11 +131,12 @@ func closeListeners(listeners []net.Listener) {
 // reports which optional ones survived.
 //
 // required — the canonical api/ socket, or whatever --socket named — is the
-// daemon's reason to exist, so any problem with it fails startup. The retained
-// legacy endpoints are migration-window compatibility only, and one of them
-// (~/.tclaude-agentd.sock) sits in $HOME, which an operator may deliberately
-// keep unwritable by tclaude. Losing a compatibility alias must not cost the
-// operator a working daemon, so those failures warn and drop the path.
+// daemon's reason to exist, so any problem with it fails startup. The optional
+// endpoints include the restart-stable sandbox projection and migration-window
+// aliases; one alias (~/.tclaude-agentd.sock) sits in $HOME, which an operator
+// may deliberately keep unwritable by tclaude. Losing an optional endpoint
+// must not cost the operator a working daemon, so those failures warn and drop
+// the path.
 func prepareServeSockets(required string, optional []string, warn func(string, error)) ([]string, error) {
 	if err := prepareSocketPath(required); err != nil {
 		return nil, err
@@ -233,6 +234,7 @@ func serveSocketPaths(requested string) []string {
 		return []string{requested}
 	}
 	paths := []string{SocketPath()}
+	paths = appendSocketPath(paths, agentipc.SandboxSocketPath())
 	for _, legacy := range LegacySocketPaths() {
 		paths = appendSocketPath(paths, legacy)
 	}
@@ -330,13 +332,13 @@ func runServe(p *serveParams) error {
 	// until the listening banner: these fire before the SQLite migration
 	// narration, which can run for minutes, and an indented sub-bullet stranded
 	// above unrelated output reads as belonging to whatever follows it.
-	var skippedLegacySocks []string
-	skipLegacySocket := func(path string, err error) {
-		slog.Warn("agentd: legacy compatibility socket unavailable; skipping",
+	var skippedOptionalSocks []string
+	skipOptionalSocket := func(path string, err error) {
+		slog.Warn("agentd: optional socket unavailable; skipping",
 			"socket", path, "error", err)
-		skippedLegacySocks = appendSocketPath(skippedLegacySocks, path)
+		skippedOptionalSocks = appendSocketPath(skippedOptionalSocks, path)
 	}
-	legacySockPaths, err := prepareServeSockets(sockPath, socketPaths[1:], skipLegacySocket)
+	optionalSockPaths, err := prepareServeSockets(sockPath, socketPaths[1:], skipOptionalSocket)
 	if err != nil {
 		return err
 	}
@@ -404,7 +406,7 @@ func runServe(p *serveParams) error {
 		slog.Warn("dashboard session: could not restore restart grace cookies", "error", err)
 	}
 
-	listeners, createdSocketPaths, err := listenUnixSockets(sockPath, legacySockPaths, skipLegacySocket)
+	listeners, createdSocketPaths, err := listenUnixSockets(sockPath, optionalSockPaths, skipOptionalSocket)
 	if err != nil {
 		return err
 	}
@@ -814,17 +816,17 @@ func runServe(p *serveParams) error {
 	// (systray needs the main thread on every supported platform).
 	serveErrCh := make(chan error, len(listeners))
 	// Report what is actually bound, not what was attempted. listenUnixSockets
-	// returns the canonical socket first, so the tail is exactly the aliases
-	// that came up.
-	boundLegacy := createdSocketPaths[1:]
-	slog.Info("agentd listening", "socket", sockPath, "legacy_sockets", boundLegacy,
-		"skipped_legacy_sockets", skippedLegacySocks, "popup", popupBaseURL)
+	// returns the canonical socket first, so the tail is exactly the optional
+	// restart-stable and compatibility endpoints that came up.
+	boundOptional := createdSocketPaths[1:]
+	slog.Info("agentd listening", "socket", sockPath, "additional_sockets", boundOptional,
+		"skipped_additional_sockets", skippedOptionalSocks, "popup", popupBaseURL)
 	fmt.Fprintf(out, "tclaude agentd listening on %s\n", sockPath)
-	for _, legacy := range boundLegacy {
-		fmt.Fprintf(out, "  legacy compatibility socket: %s\n", legacy)
+	for _, additional := range boundOptional {
+		fmt.Fprintf(out, "  additional agent socket: %s\n", additional)
 	}
-	for _, skipped := range skippedLegacySocks {
-		fmt.Fprintf(out, "  legacy compatibility socket unavailable (skipped): %s\n", skipped)
+	for _, skipped := range skippedOptionalSocks {
+		fmt.Fprintf(out, "  additional agent socket unavailable (skipped): %s\n", skipped)
 	}
 	if popupBaseURL != "" {
 		dashLoc := "loopback"

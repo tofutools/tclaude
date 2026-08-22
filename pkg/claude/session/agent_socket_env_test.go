@@ -83,6 +83,73 @@ func TestApplyAgentSocketEnvAcceptsCanonicalDaemon(t *testing.T) {
 	assert.Equal(t, agentipc.CanonicalSocketPath(), env[agentipc.SocketEnv])
 }
 
+func TestApplyAgentSocketEnvSelectsOnlyLiveDirectStableSocket(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		occupy func(t *testing.T, stable, canonical string)
+		stable bool
+	}{
+		{
+			name: "live socket",
+			occupy: func(t *testing.T, stable, _ string) {
+				listener, err := net.Listen("unix", stable)
+				require.NoError(t, err)
+				t.Cleanup(func() { _ = listener.Close() })
+			},
+			stable: true,
+		},
+		{
+			name: "regular file",
+			occupy: func(t *testing.T, stable, _ string) {
+				require.NoError(t, os.WriteFile(stable, []byte("not a socket"), 0o600))
+			},
+		},
+		{
+			name: "directory",
+			occupy: func(t *testing.T, stable, _ string) {
+				require.NoError(t, os.Mkdir(stable, 0o700))
+			},
+		},
+		{
+			name: "symlink to live canonical",
+			occupy: func(t *testing.T, stable, canonical string) {
+				require.NoError(t, os.Symlink(canonical, stable))
+			},
+		},
+		{
+			name: "stale socket",
+			occupy: func(t *testing.T, stable, _ string) {
+				listener, err := net.Listen("unix", stable)
+				require.NoError(t, err)
+				listener.(*net.UnixListener).SetUnlinkOnClose(false)
+				require.NoError(t, listener.Close())
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := agentipctest.ShortSocketDir(t)
+			t.Setenv("HOME", home)
+			t.Setenv(agentipc.SocketEnv, "")
+			canonical := agentipc.CanonicalSocketPath()
+			stable := agentipc.SandboxSocketPath()
+			require.NoError(t, os.MkdirAll(filepath.Dir(stable), 0o700))
+			canonicalListener, err := net.Listen("unix", canonical)
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = canonicalListener.Close() })
+			tc.occupy(t, stable, canonical)
+
+			env := map[string]string{}
+			require.NoError(t, ApplyAgentSocketEnv(
+				harness.CodexName, harness.SandboxDangerFull, "", true, env))
+			want := canonical
+			if tc.stable {
+				want = stable
+			}
+			assert.Equal(t, want, env[agentipc.SocketEnv])
+		})
+	}
+}
+
 func TestApplyAgentSocketEnvRejectsCustomSocket(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

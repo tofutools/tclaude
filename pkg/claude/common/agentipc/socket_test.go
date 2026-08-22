@@ -1,10 +1,13 @@
 package agentipc
 
 import (
+	"net"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 )
 
@@ -14,6 +17,7 @@ func TestSocketPaths(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	assert.Equal(t, filepath.Join(home, ".tclaude", "api", "agentd.sock"), CanonicalSocketPath())
+	assert.Equal(t, filepath.Join(home, ".tclaude", "api", "sandbox-agentd", "agentd.sock"), SandboxSocketPath())
 	assert.Equal(t, filepath.Join(home, ".tclaude-agentd.sock"), LegacyHomeSocketPath())
 	assert.Equal(t, filepath.Join(home, ".tclaude", "agentd.sock"), LegacySocketPath())
 	assert.Equal(t, []string{LegacyHomeSocketPath(), LegacySocketPath()}, LegacySocketPaths())
@@ -31,4 +35,21 @@ func TestSocketPaths(t *testing.T) {
 	t.Setenv(SocketEnv, "relative.sock")
 	assert.Equal(t, CanonicalSocketPath(), ClientSocketPath())
 	assert.Empty(t, ExplicitSocketPath())
+}
+
+func TestLiveSocketPathRejectsNonSocketAndSymlink(t *testing.T) {
+	dir := agentipctest.ShortSocketDir(t)
+	livePath := filepath.Join(dir, "live.sock")
+	listener, err := net.Listen("unix", livePath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	assert.True(t, LiveSocketPath(livePath))
+
+	regular := filepath.Join(dir, "regular")
+	require.NoError(t, os.WriteFile(regular, []byte("not a socket"), 0o600))
+	assert.False(t, LiveSocketPath(regular))
+
+	symlink := filepath.Join(dir, "linked.sock")
+	require.NoError(t, os.Symlink(livePath, symlink))
+	assert.False(t, LiveSocketPath(symlink))
 }

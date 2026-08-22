@@ -1301,7 +1301,11 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 	assert.Less(t, socketBinds[1], homeRemount,
 		"the child socket bind must land before its hidden parent becomes read-only")
 	for _, floorSocket := range sandboxpolicy.AgentdSocketFloor() {
-		binds := indicesOfBwrapTriplet(got, "--ro-bind", floorSocket)
+		source := floorSocket
+		if filepath.Clean(floorSocket) == filepath.Clean(agentipc.SandboxSocketPath()) {
+			source = filepath.Dir(floorSocket)
+		}
+		binds := indicesOfBwrapTriplet(got, "--ro-bind", source)
 		require.Lenf(t, binds, 2, "every live agentd socket spelling must survive the ancestor deny: %s", floorSocket)
 		assert.Less(t, binds[1], rootRemount)
 	}
@@ -1318,6 +1322,102 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, len(got)-4, indexOfBwrapTriplet(got, "--tmpfs", tmuxSocketDir),
 		"class-4 tmux hide remains final under the constructed root")
+}
+
+func TestBwrapArgsProjectsOnlyLiveRestartStableAgentdDirectory(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	for _, socket := range sandboxpolicy.AgentdSocketFloor() {
+		require.NoError(t, os.MkdirAll(filepath.Dir(socket), 0o700))
+		listener, err := net.Listen("unix", socket)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = listener.Close() })
+	}
+	workspace := filepath.Join(home, "work")
+	require.NoError(t, os.MkdirAll(workspace, 0o700))
+	attachmentParent := common.SpawnAttachmentsPrivateBase()
+	attachmentDir := common.SpawnAttachmentsPrivateDir("restart-stable-test")
+	require.NoError(t, os.MkdirAll(attachmentDir, 0o700))
+
+	plan := sandboxpolicy.MountPlan{
+		NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+		Entries: []sandboxpolicy.MountEntry{
+			{Path: home, Mode: sandboxpolicy.MountHide},
+			{Path: workspace, Mode: sandboxpolicy.MountRW},
+		},
+	}
+	got, err := bwrapArgsWithDaemonFinal(
+		[]string{workspace}, plan, []TclaudeLayerPrivateWriteDir{{
+			Parent: attachmentParent, Current: attachmentDir,
+		}}, nil, nil, sandboxpolicy.AgentdSocketFloor(), "", nil)
+	require.NoError(t, err)
+
+	canonical := agentipc.CanonicalSocketPath()
+	stable := agentipc.SandboxSocketPath()
+	stableDir := filepath.Dir(stable)
+	require.Len(t, indicesOfBwrapBind(got, "--ro-bind", stableDir, stableDir), 2,
+		"the dedicated directory projection must be repaired after an ancestor hide")
+	assert.Empty(t, indicesOfBwrapBind(got, "--ro-bind", stableDir, filepath.Dir(canonical)),
+		"the stable directory must not cover writable API siblings")
+	assert.Len(t, indicesOfBwrapBind(got, "--ro-bind", canonical, canonical), 2,
+		"canonical remains mounted for compatibility")
+	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--tmpfs", attachmentParent))
+	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--bind", attachmentDir))
+	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--setenv", agentipc.SocketEnv))
+	assert.Contains(t, got, stable)
+}
+
+func TestRenderedConstructedRootCommandKeepsStableSocketAuthoritative(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	for _, socket := range sandboxpolicy.AgentdSocketFloor() {
+		require.NoError(t, os.MkdirAll(filepath.Dir(socket), 0o700))
+		listener, err := net.Listen("unix", socket)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = listener.Close() })
+	}
+	environment := map[string]string{}
+	require.NoError(t, ApplyAgentSocketEnv(
+		harness.CodexName, harness.SandboxDangerFull, "", true, environment))
+	stable := agentipc.SandboxSocketPath()
+	canonical := agentipc.CanonicalSocketPath()
+	require.Equal(t, stable, environment[agentipc.SocketEnv])
+	harnessCommand := harness.MustGet(harness.CodexName).Spawn.BuildCommand(harness.SpawnSpec{
+		ExecutablePath: "/usr/bin/codex",
+		EnvExports:     clcommon.BuildEnvExports(environment),
+	})
+	command, err := bwrapCommand("/usr/bin/bwrap", nil, nil, nil, nil,
+		sandboxpolicy.AgentdSocketFloor(), sandboxpolicy.MountPlan{
+			NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+		}, harnessCommand)
+	require.NoError(t, err)
+	assert.Contains(t, command, "export "+agentipc.SocketEnv+"="+stable+";")
+	assert.NotContains(t, command, "export "+agentipc.SocketEnv+"="+canonical+";",
+		"the final harness export must not override the renderer back to canonical")
+}
+
+func TestBwrapArgsFallsBackFromInvalidStableEndpoint(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	canonical := agentipc.CanonicalSocketPath()
+	stable := agentipc.SandboxSocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(stable), 0o700))
+	canonicalListener, err := net.Listen("unix", canonical)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = canonicalListener.Close() })
+	require.NoError(t, os.WriteFile(stable, []byte("not a socket"), 0o600))
+
+	got, err := bwrapArgsWithDaemonFinal(nil, sandboxpolicy.MountPlan{
+		NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+	}, nil, nil, nil, sandboxpolicy.AgentdSocketFloor(), "", nil)
+	require.NoError(t, err)
+	assert.Empty(t, indicesOfBwrapBind(got, "--ro-bind", filepath.Dir(stable), filepath.Dir(stable)))
+	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--setenv", agentipc.SocketEnv))
+	assert.NotEmpty(t, indicesOfBwrapBind(got, "--ro-bind", canonical, canonical),
+		"a bad optional endpoint must leave the healthy canonical mount in place")
 }
 
 // TCL-798. The whole point of the new posture is that these two decisions are

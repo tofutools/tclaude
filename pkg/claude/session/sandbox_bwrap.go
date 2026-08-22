@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/sandboxproxy"
@@ -2138,11 +2139,19 @@ func bwrapArgsWithDaemonFinal(
 	for _, root := range protectedRoots {
 		args = hideRemounts.appendHide(args, root)
 	}
-	liveSocketPaths := make([]string, 0, len(socketPaths))
+	liveSocketBinds := make([]TclaudeLayerReadOnlyBind, 0, len(socketPaths))
+	restartStableSocket := ""
 	if tclaudeLayerPlanUsesConstructedRoot(plan) {
 		for i, socket := range socketPaths {
 			if socket == "" || !filepath.IsAbs(socket) {
 				return nil, fmt.Errorf("resolve agentd socket floor entry %d for isolated tclaude-layer", i)
+			}
+			isRestartStable := filepath.Clean(socket) == filepath.Clean(agentipc.SandboxSocketPath())
+			// The stable endpoint is optional. Only its direct, live socket entry
+			// authorizes selecting and projecting the parent directory; a regular
+			// file, directory, symlink, or stale socket must fall back to canonical.
+			if isRestartStable && !agentipc.LiveSocketPath(socket) {
+				continue
 			}
 			exists, err := bwrapBindSourceExists(socket)
 			if err != nil {
@@ -2159,8 +2168,17 @@ func bwrapArgsWithDaemonFinal(
 				}
 				continue
 			}
-			args = append(args, "--ro-bind", socket, socket)
-			liveSocketPaths = append(liveSocketPaths, socket)
+			bind := TclaudeLayerReadOnlyBind{Source: socket, Target: socket}
+			if isRestartStable {
+				bind.Source = filepath.Dir(socket)
+				bind.Target = filepath.Dir(socket)
+				restartStableSocket = socket
+			}
+			args = append(args, "--ro-bind", bind.Source, bind.Target)
+			liveSocketBinds = append(liveSocketBinds, bind)
+		}
+		if restartStableSocket != "" {
+			args = append(args, "--setenv", agentipc.SocketEnv, restartStableSocket)
 		}
 	}
 	// Class 2: replay the policy plan exactly as rendered. Repair mounts do not
@@ -2226,10 +2244,10 @@ func bwrapArgsWithDaemonFinal(
 				protectedRoots,
 				&hideRemounts,
 			)
-			args = appendTclaudeLayerSocketRepairs(
+			args = appendTclaudeLayerSocketBindRepairs(
 				args,
 				path,
-				liveSocketPaths,
+				liveSocketBinds,
 				&hideRemounts,
 			)
 			// The resolver file is reopened during root construction, so an
@@ -2844,6 +2862,22 @@ func appendTclaudeLayerSocketRepairs(
 		if hide != socket && sandboxpolicy.PathContainsOrEqual(hide, socket) {
 			hideRemounts.noteReplacement(socket)
 			args = append(args, "--ro-bind", socket, socket)
+		}
+	}
+	return args
+}
+
+func appendTclaudeLayerSocketBindRepairs(
+	args []string,
+	hide string,
+	binds []TclaudeLayerReadOnlyBind,
+	hideRemounts *tclaudeLayerHideRemounts,
+) []string {
+	for _, bind := range binds {
+		target := filepath.Clean(bind.Target)
+		if hide != target && sandboxpolicy.PathContainsOrEqual(hide, target) {
+			hideRemounts.noteReplacement(target)
+			args = append(args, "--ro-bind", filepath.Clean(bind.Source), target)
 		}
 	}
 	return args

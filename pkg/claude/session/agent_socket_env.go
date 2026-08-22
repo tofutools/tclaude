@@ -8,12 +8,14 @@ import (
 )
 
 // ApplyAgentSocketEnv pins launch modes whose sandbox explicitly allowlists
-// agentd to the canonical api/ socket. It refuses the upgrade edge where an old
-// daemon is still listening only on a pre-split legacy socket that the current
-// sandbox posture does not allowlist, so launching would create an agent that
-// cannot coordinate. (The retained legacy sockets sit outside ~/.tclaude/data,
-// which is the only denied subtree; this guard is about a daemon that has not
-// yet restarted onto the api/ canonical path.)
+// agentd to one authoritative endpoint. Constructed roots prefer the live
+// restart-stable endpoint whose parent is projected into the namespace; other
+// managed sandboxes retain the canonical api/ socket. It refuses the upgrade
+// edge where an old daemon is still listening only on a pre-split legacy socket
+// that the current sandbox posture does not allowlist, so launching would
+// create an agent that cannot coordinate. (The retained legacy sockets sit
+// outside ~/.tclaude/data, which is the only denied subtree; this guard is about
+// a daemon that has not yet restarted onto the api/ canonical path.)
 func ApplyAgentSocketEnv(
 	harnessName, harnessBuiltinMode, permissionProfile string,
 	tclaudeLayerIsolated bool,
@@ -30,13 +32,18 @@ func ApplyAgentSocketEnv(
 		return fmt.Errorf("managed sandbox profiles require the canonical agentd socket %s; "+
 			"custom socket %s is unsupported for sandboxed agents", canonical, explicit)
 	}
-	if !agentipc.SocketReachable(canonical) && agentipc.AnyLegacySocketReachable() {
+	selected := canonical
+	if tclaudeLayerIsolated && agentipc.LiveSocketPath(agentipc.SandboxSocketPath()) {
+		selected = agentipc.SandboxSocketPath()
+	}
+	if selected == canonical &&
+		!agentipc.SocketReachable(canonical) && agentipc.AnyLegacySocketReachable() {
 		return fmt.Errorf("agentd is still listening only on a pre-split legacy socket (%v); "+
 			"restart agentd after upgrading tclaude before launching a sandboxed agent",
 			agentipc.LegacySocketPaths())
 	}
-	if canonical != "" {
-		env[agentipc.SocketEnv] = canonical
+	if selected != "" {
+		env[agentipc.SocketEnv] = selected
 	}
 	return nil
 }

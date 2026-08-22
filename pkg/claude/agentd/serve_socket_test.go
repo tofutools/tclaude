@@ -55,7 +55,7 @@ func TestServeSocketPaths(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	assert.Equal(t,
-		append([]string{SocketPath()}, LegacySocketPaths()...),
+		append([]string{SocketPath(), agentipc.SandboxSocketPath()}, LegacySocketPaths()...),
 		serveSocketPaths(""))
 
 	custom := filepath.Join(home, "isolated.sock")
@@ -129,6 +129,29 @@ func TestServeSocketsSkipUnbindableLegacyPaths(t *testing.T) {
 	conn, dialErr := net.Dial("unix", required)
 	require.NoError(t, dialErr, "the canonical socket must be reachable")
 	require.NoError(t, conn.Close())
+}
+
+func TestServeSocketsSkipUnavailableStableParent(t *testing.T) {
+	home := shortSocketDir(t)
+	t.Setenv("HOME", home)
+	required := agentipc.CanonicalSocketPath()
+	stable := agentipc.SandboxSocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(required), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Dir(stable), []byte("not a directory"), 0o600))
+
+	var skipped []string
+	note := func(path string, _ error) { skipped = append(skipped, path) }
+	kept, err := prepareServeSockets(required, []string{stable}, note)
+	require.NoError(t, err)
+	assert.Empty(t, kept)
+	assert.Equal(t, []string{stable}, skipped)
+
+	listeners, created, err := listenUnixSockets(required, kept, note)
+	require.NoError(t, err)
+	t.Cleanup(func() { closeListeners(listeners) })
+	assert.Equal(t, []string{required}, created)
+	assert.True(t, agentipc.SocketReachable(required),
+		"an unavailable optional stable parent must not cost the canonical daemon")
 }
 
 // AF_UNIX bind reports EADDRINUSE for ANY pre-existing directory entry, so the
