@@ -218,7 +218,7 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	if profileName == "" {
 		return "", fmt.Errorf("codex permission profile name is required")
 	}
-	socketPaths := append([]string{socketPath}, agentipc.LegacySocketPaths()...)
+	socketPaths := append([]string{socketPath, agentipc.SandboxSocketPath()}, agentipc.LegacySocketPaths()...)
 	if rules.MaterializedUnixSocketPaths != nil {
 		if rules.UnixSockets == nil {
 			return "", fmt.Errorf(
