@@ -124,7 +124,8 @@ test('shutdown actions share one busy lock and retry the same frozen soft choice
   first.reject(new Error('soft stop failed'));
   await harness.act(() => first.promise.catch(() => {}));
   assert.equal(host.querySelector('[role="alert"]').textContent, 'soft stop failed');
-  assert.equal(host.querySelector('#shutdown-soft').textContent, 'Retry soft exit');
+  assert.equal(host.querySelector('#shutdown-soft .theme-copy-regular').textContent, 'Retry soft exit');
+  assert.equal(host.querySelector('#shutdown-soft .theme-copy-wizard').textContent, 'Retry slumber');
   assert.equal(host.querySelector('#shutdown-soft').disabled, false);
   assert.equal(host.querySelector('#shutdown-force').disabled, true,
     'the failed soft choice cannot be retargeted to force');
@@ -173,6 +174,8 @@ test('shutdown force path freezes force=true and yields Escape to a higher overl
   assert.equal(host.querySelector('#shutdown-soft').hasAttribute('aria-busy'), false);
   request.reject(new Error('force failed'));
   await harness.act(() => request.promise.catch(() => {}));
+  assert.equal(host.querySelector('#shutdown-force .theme-copy-regular').textContent, 'Retry force kill');
+  assert.equal(host.querySelector('#shutdown-force .theme-copy-wizard').textContent, 'Retry force slumber');
   escape(harness);
   await harness.act(() => Promise.resolve());
   assertAbsent(host.querySelector('#shutdown-modal'));
