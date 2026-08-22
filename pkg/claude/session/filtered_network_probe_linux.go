@@ -14,11 +14,12 @@ import (
 )
 
 var (
-	filteredNetworkLookPath          = exec.LookPath
-	inspectFilteredNetworkPasta      = inspectPastaCapabilities
-	filteredNetworkPastaCommand      = exec.CommandContext
-	filteredNetworkPastaProbeTimeout = 5 * time.Second
-	filteredNetworkPastaHelpLimit    = 64 << 10
+	filteredNetworkLookPath             = exec.LookPath
+	inspectFilteredNetworkPasta         = inspectPastaCapabilities
+	inspectFilteredNetworkPastaIdentity = inspectPastaIdentityCapabilities
+	filteredNetworkPastaCommand         = exec.CommandContext
+	filteredNetworkPastaProbeTimeout    = 5 * time.Second
+	filteredNetworkPastaHelpLimit       = 64 << 10
 )
 
 type filteredNetworkExecutables struct {
@@ -50,15 +51,14 @@ func resolveFilteredNetworkExecutables(
 	if err != nil {
 		return filteredNetworkExecutables{}, fmt.Errorf("rootless pasta is required: %w", err)
 	}
-	if err := inspectFilteredNetworkPasta(pasta); err != nil {
-		return filteredNetworkExecutables{}, fmt.Errorf(
-			"rootless pasta lacks the required filtered-network capabilities: %w", err)
-	}
 	if len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0] {
-		if err := inspectPastaIdentityCapabilities(pasta); err != nil {
+		if err := inspectFilteredNetworkPastaIdentity(pasta); err != nil {
 			return filteredNetworkExecutables{}, fmt.Errorf(
 				"rootless pasta lacks caller-identity namespace controls: %w", err)
 		}
+	} else if err := inspectFilteredNetworkPasta(pasta); err != nil {
+		return filteredNetworkExecutables{}, fmt.Errorf(
+			"rootless pasta lacks the required filtered-network capabilities: %w", err)
 	}
 	nft, err := resolveFilteredNetworkExecutable("nft")
 	if err != nil {
