@@ -1497,6 +1497,19 @@ func TestBwrapArgsCanonicalDirectoryIsImmutableFloor(t *testing.T) {
 	}
 }
 
+func TestAppendTclaudeLayerSocketBindRepairsPreservesExactHide(t *testing.T) {
+	target := "/run/private/tool.sock"
+	binds := []TclaudeLayerReadOnlyBind{{Source: target, Target: target}}
+	var remounts tclaudeLayerHideRemounts
+
+	exact := appendTclaudeLayerSocketBindRepairs(nil, target, binds, &remounts)
+	assert.Empty(t, exact, "an exact deny must not reopen its socket bind")
+
+	ancestor := appendTclaudeLayerSocketBindRepairs(nil, filepath.Dir(target), binds, &remounts)
+	assert.Equal(t, []string{"--ro-bind", target, target}, ancestor,
+		"an ancestor deny still requires the socket bind repair")
+}
+
 // TCL-798. The whole point of the new posture is that these two decisions are
 // now independent, so the assertions come in pairs: everything the constructed
 // root does, and the network namespace still being the host's.

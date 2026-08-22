@@ -53,6 +53,22 @@ func TestLiveCanonicalSocketPathRejectsSymlinkedParent(t *testing.T) {
 		"a live socket beneath a symlinked parent is not the dedicated projection")
 }
 
+func TestLiveCanonicalSocketPathRejectsPeerWritableParent(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	dir := CanonicalSocketDir()
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	require.NoError(t, os.Chmod(dir, 0o777),
+		"chmod after mkdir avoids the process umask masking the unsafe bits")
+	listener, err := net.Listen("unix", CanonicalSocketPath())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	assert.False(t, CanonicalSocketDirAvailable())
+	assert.False(t, LiveCanonicalSocketPath(),
+		"a peer-writable parent permits replacement of the managed endpoint")
+}
+
 func TestLiveSocketPathRejectsNonSocketAndSymlink(t *testing.T) {
 	dir := agentipctest.ShortSocketDir(t)
 	livePath := filepath.Join(dir, "live.sock")

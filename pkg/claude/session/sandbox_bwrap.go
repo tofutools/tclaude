@@ -2885,7 +2885,7 @@ func appendTclaudeLayerSocketBindRepairs(
 ) []string {
 	for _, bind := range binds {
 		target := filepath.Clean(bind.Target)
-		if sandboxpolicy.PathContainsOrEqual(hide, target) {
+		if hide != target && sandboxpolicy.PathContainsOrEqual(hide, target) {
 			hideRemounts.noteReplacement(target)
 			args = append(args, "--ro-bind", filepath.Clean(bind.Source), target)
 		}

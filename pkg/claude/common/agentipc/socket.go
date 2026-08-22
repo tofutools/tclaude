@@ -38,16 +38,18 @@ func CanonicalSocketDir() string {
 }
 
 // CanonicalSocketDirAvailable reports whether the dedicated parent exists as a
-// direct directory entry. Lstat deliberately rejects a symlink: projecting a
-// symlink target would expose an arbitrary directory rather than the narrow
-// daemon-owned socket surface.
+// direct, non-writable-by-peers directory entry. Lstat deliberately rejects a
+// symlink: projecting a symlink target would expose an arbitrary directory
+// rather than the narrow daemon-owned socket surface. Group/other read and
+// search bits remain compatible with directories created by earlier versions;
+// only write authority permits replacing the managed endpoint.
 func CanonicalSocketDirAvailable() bool {
 	dir := CanonicalSocketDir()
 	if dir == "" {
 		return false
 	}
 	info, err := os.Lstat(dir)
-	return err == nil && info.IsDir()
+	return err == nil && info.IsDir() && info.Mode().Perm()&0o022 == 0
 }
 
 // LiveCanonicalSocketPath combines the direct-parent invariant with endpoint
