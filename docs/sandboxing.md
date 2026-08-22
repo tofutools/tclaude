@@ -530,7 +530,8 @@ The versioned JSON deliberately separates three configurations:
   environment values, harness-config posture, network/socket rules, resource
   limits, and pre-launch blocks;
 - `running` — the latest recorded launch's harness mode, sandbox
-  implementation, OS-sandbox verdict, approval posture, and effective policy.
+  implementation, model/effort, status/error detail, OS-sandbox verdict,
+  approval posture, and effective policy.
 
 The export also records the tclaude version and host platform. Environment
 values and local paths are intentionally included because they are often the

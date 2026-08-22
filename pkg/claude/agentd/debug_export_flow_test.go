@@ -43,6 +43,8 @@ func TestDashboardDebugExportCarriesExactRecordedConfiguration(t *testing.T) {
 		HarnessBuiltinMode: mode, SandboxImplementation: implementation,
 		ApprovalPolicy: "never", EffectiveSandbox: &snapshot,
 	}))
+	require.NoError(t, db.UpdateSessionModelSlug("spwn-debug", model))
+	require.NoError(t, db.UpdateSessionEffort("spwn-debug", "high"))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/agents/"+agentID+"/debug-export", nil)
@@ -73,4 +75,6 @@ func TestDashboardDebugExportCarriesExactRecordedConfiguration(t *testing.T) {
 	latest := running["launch"].(map[string]any)
 	assert.Equal(t, f.TestCwd("repo"), latest["cwd"])
 	assert.Equal(t, implementation, latest["sandbox_implementation"])
+	assert.Equal(t, model, latest["model_id"])
+	assert.Equal(t, "high", latest["effort"])
 }

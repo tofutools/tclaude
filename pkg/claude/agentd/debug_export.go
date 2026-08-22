@@ -67,6 +67,8 @@ type agentDebugIdentity struct {
 // not transient activity (PID, token usage, subagents, or status detail).
 type agentDebugLatestLaunch struct {
 	SessionID                string                  `json:"session_id"`
+	Status                   string                  `json:"status"`
+	StatusDetail             string                  `json:"status_detail,omitempty"`
 	CreatedAt                string                  `json:"created_at"`
 	UpdatedAt                string                  `json:"updated_at"`
 	Cwd                      string                  `json:"cwd"`
@@ -84,6 +86,10 @@ type agentDebugLatestLaunch struct {
 	AutoMemory               bool                    `json:"auto_memory"`
 	ContextFeatures          map[string]string       `json:"context_features,omitempty"`
 	AutoCompactWindow        string                  `json:"auto_compact_window,omitempty"`
+	Model                    string                  `json:"model,omitempty"`
+	ModelID                  string                  `json:"model_id,omitempty"`
+	Effort                   string                  `json:"effort,omitempty"`
+	ContextWindowSize        int64                   `json:"context_window_size,omitempty"`
 	EffectiveSandbox         *sandboxpolicy.Snapshot `json:"effective_sandbox,omitempty"`
 }
 
@@ -139,9 +145,14 @@ func buildAgentDebugExport(convID string) (*agentDebugExport, error) {
 		return nil, fmt.Errorf("load latest launch: %w", sessionErr)
 	} else if len(sessions) > 0 {
 		s := sessions[0]
+		context, contextErr := db.GetContextSnapshot(s.ID)
+		if contextErr != nil {
+			return nil, fmt.Errorf("load latest launch model and effort: %w", contextErr)
+		}
 		out.Configurations.Running.Recorded = true
 		out.Configurations.Running.Launch = &agentDebugLatestLaunch{
-			SessionID: s.ID, CreatedAt: s.CreatedAt.UTC().Format(time.RFC3339Nano),
+			SessionID: s.ID, Status: s.Status, StatusDetail: s.StatusDetail,
+			CreatedAt: s.CreatedAt.UTC().Format(time.RFC3339Nano),
 			UpdatedAt: s.UpdatedAt.UTC().Format(time.RFC3339Nano), Cwd: s.Cwd, Harness: s.Harness,
 			HarnessBuiltinMode: s.HarnessBuiltinMode, SandboxImplementation: s.SandboxImplementation,
 			HarnessBuiltinModeSource: s.HarnessBuiltinModeSource, OSSandboxState: s.OSSandboxState,
@@ -149,7 +160,9 @@ func buildAgentDebugExport(convID string) (*agentDebugExport, error) {
 			ApprovalPolicy: s.ApprovalPolicy, ApprovalAutoReview: s.ApprovalAutoReview,
 			AskUserQuestionTimeout: s.AskUserQuestionTimeout, RemoteControl: s.RemoteControl,
 			AutoMemory: s.AutoMemory, ContextFeatures: s.ContextFeatures,
-			AutoCompactWindow: s.AutoCompactWindow, EffectiveSandbox: s.EffectiveSandbox,
+			AutoCompactWindow: s.AutoCompactWindow, Model: context.Model, ModelID: context.ModelID,
+			Effort: context.EffortLevel, ContextWindowSize: context.ContextWindowSize,
+			EffectiveSandbox: s.EffectiveSandbox,
 		}
 	}
 	return out, nil
