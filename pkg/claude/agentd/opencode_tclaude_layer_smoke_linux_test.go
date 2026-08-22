@@ -242,7 +242,7 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 				hostileEnvironment[index].Value = filteredFixture.hostileModelConfig
 			}
 		}
-		_, hostileErr := session.ResolveTclaudeLayerModelTransport(
+		hostileResolved, hostileErr := session.ResolveTclaudeLayerModelTransport(
 			harness.MustGet(harness.OpenCodeName),
 			session.ModelTransportLaunchContext{
 				Model:       "test/test-model",
@@ -250,8 +250,10 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 				Environment: hostileEnvironment,
 			},
 		)
-		require.ErrorContains(t, hostileErr, "may not override model.provider",
-			"the pinned activation gate must reject an opaque model adapter")
+		require.NoError(t, hostileErr)
+		assert.Equal(t, "test/test-model", hostileResolved.Model)
+		assert.False(t, hostileResolved.ProviderResolved,
+			"an opaque model adapter remains subject to the packet floor without blocking launch")
 		_, validateErr := session.ValidateTclaudeLayerNetwork(
 			harness.MustGet(harness.OpenCodeName), snapshot.Effective, resolved)
 		require.NoError(t, validateErr)

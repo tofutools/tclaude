@@ -1032,7 +1032,8 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 		})
 	require.NoError(t, err)
 	require.Len(t, notices, 1)
-	assert.Contains(t, notices[0].Detail, "explicit-provider configs only")
+	assert.Contains(t, notices[0].Detail,
+		"route was resolved from an explicit-provider config")
 	assert.Contains(t, notices[0].Detail, "OPENCODE_CONFIG_CONTENT")
 	assert.Contains(t, notices[0].Detail, "without a provider override")
 	assert.Contains(t, notices[0].Detail, "read-only, provider-empty private XDG and HOME")
