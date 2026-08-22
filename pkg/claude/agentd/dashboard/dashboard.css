@@ -11071,6 +11071,61 @@ body.wizard #retire-modal #retire-ok:disabled::after {
   letter-spacing: 1px;
 }
 
+/* ─── Wizard shutdown modal — "Slumber this familiar?" ──────────────
+   A reversible stop uses the established Slumber/Awaken vocabulary. Keep the
+   rules scoped to this transaction overlay: shutdown shares the generic
+   .modal surface with unrelated destructive dialogs. */
+body.wizard #shutdown-modal .modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+}
+body.wizard #shutdown-modal .modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #shutdown-modal .modal p { color: #e7d9f5; }
+body.wizard #shutdown-modal .modal .modal-meta {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #shutdown-modal .modal-buttons button {
+  background: #241b3d;
+  border: 1px solid #d9b45a;
+  color: #f3e6c0;
+}
+body.wizard #shutdown-modal .modal-buttons button:hover {
+  background: #3a2a63;
+  border-color: #d9b45a;
+}
+body.wizard #shutdown-modal #shutdown-soft {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  font-weight: 700;
+}
+body.wizard #shutdown-modal #shutdown-soft:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #shutdown-modal #shutdown-force {
+  background: linear-gradient(180deg, #66222b 0%, #3b1720 100%);
+  border-color: #e06c75;
+  color: #ffd9d9;
+  box-shadow: 0 3px 0 #260d13, 0 0 8px rgba(224, 108, 117, 0.35);
+}
+body.wizard #shutdown-modal #shutdown-force:hover {
+  background: linear-gradient(180deg, #7a2934 0%, #4a1c27 100%);
+  border-color: #f08a92;
+  color: #fff0f0;
+}
+body.wizard #shutdown-modal .modal-buttons button:disabled { opacity: 0.7; }
+
 /* ─── Wizard shared confirm dialog — the arcane "are you sure?" ───────
    #confirm-modal is the shared confirm singleton (confirmModal in
    refresh.js): move-agent-to-another-group, remove-from-group, the

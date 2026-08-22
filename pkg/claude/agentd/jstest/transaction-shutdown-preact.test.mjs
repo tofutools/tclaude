@@ -51,12 +51,17 @@ function escape(harness) {
 test('shutdown renderer preserves distinct actions, initial focus, and exact focus return', async (t) => {
   const mounted = await openShutdown(t, async () => {});
   const { harness, host, opener } = mounted;
-  assert.equal(host.querySelector('#shutdown-title').textContent, 'Shut down agent?');
+  assert.equal(host.querySelector('#shutdown-title .theme-copy-regular').textContent, 'Shut down agent?');
+  assert.equal(host.querySelector('#shutdown-title .theme-copy-wizard').textContent, 'Slumber this familiar?');
   assert.equal(host.querySelector('#shutdown-meta').textContent, 'Stable target');
   assert.match(host.querySelector('#shutdown-modal').textContent,
     /Soft exit injects \/exit into tmux pane/);
-  assert.equal(host.querySelector('#shutdown-soft').textContent, 'Soft exit');
-  assert.equal(host.querySelector('#shutdown-force').textContent, 'Force kill');
+  assert.match(host.querySelector('#shutdown-modal p .theme-copy-wizard').textContent,
+    /Force slumber immediately kills the tmux session/);
+  assert.equal(host.querySelector('#shutdown-soft .theme-copy-regular').textContent, 'Soft exit');
+  assert.equal(host.querySelector('#shutdown-soft .theme-copy-wizard').textContent, '🌙 Slumber');
+  assert.equal(host.querySelector('#shutdown-force .theme-copy-regular').textContent, 'Force kill');
+  assert.equal(host.querySelector('#shutdown-force .theme-copy-wizard').textContent, 'Force slumber');
   assert.equal(host.querySelector('#shutdown-force').classList.contains('confirm-danger'), true);
   assert.equal(host.querySelector('#shutdown-soft').classList.contains('confirm-danger'), false);
   assert.equal(harness.document.activeElement.id, 'shutdown-soft');
@@ -121,7 +126,8 @@ test('shutdown actions share one busy lock and retry the same frozen soft choice
   first.reject(new Error('soft stop failed'));
   await harness.act(() => first.promise.catch(() => {}));
   assert.equal(host.querySelector('[role="alert"]').textContent, 'soft stop failed');
-  assert.equal(host.querySelector('#shutdown-soft').textContent, 'Retry soft exit');
+  assert.equal(host.querySelector('#shutdown-soft .theme-copy-regular').textContent, 'Retry soft exit');
+  assert.equal(host.querySelector('#shutdown-soft .theme-copy-wizard').textContent, 'Retry slumber');
   assert.equal(host.querySelector('#shutdown-soft').disabled, false);
   assert.equal(host.querySelector('#shutdown-force').disabled, true,
     'the failed soft choice cannot be retargeted to force');
@@ -170,6 +176,8 @@ test('shutdown force path freezes force=true and yields Escape to a higher overl
   assert.equal(host.querySelector('#shutdown-soft').hasAttribute('aria-busy'), false);
   request.reject(new Error('force failed'));
   await harness.act(() => request.promise.catch(() => {}));
+  assert.equal(host.querySelector('#shutdown-force .theme-copy-regular').textContent, 'Retry force kill');
+  assert.equal(host.querySelector('#shutdown-force .theme-copy-wizard').textContent, 'Retry force slumber');
   escape(harness);
   await harness.act(() => Promise.resolve());
   assertAbsent(host.querySelector('#shutdown-modal'));
