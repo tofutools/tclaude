@@ -531,7 +531,22 @@ The versioned JSON deliberately separates three configurations:
   limits, and pre-launch blocks;
 - `running` — the latest recorded launch's harness mode, sandbox
   implementation, model/effort, status/error detail, OS-sandbox verdict,
-  approval posture, and effective policy.
+  approval posture, effective policy, and a versioned execution-boundary
+  record. The boundary includes the resolved harness executable/runtime roots,
+  the host `tclaude` source and its sandbox mount target, automatic static-root
+  and daemon-final mounts, the materialized outer-layer render input, PATH
+  construction and pre-launch mutation caveats, and host-to-sandbox UID/GID
+  mapping.
+
+The export records agentd's current UID/GID/groups separately from the launch
+boundary's host and sandbox identities. On Linux it also reads the recorded
+live harness process through `/proc` and reports its host-visible real,
+effective, saved, and filesystem UID/GID values, supplementary groups, and
+the kernel's live `uid_map`/`gid_map`, actual executable path, and current
+`PATH`. A stopped process, an unreadable `/proc` entry, or a
+platform without that observation is reported explicitly as unavailable or
+unsupported; the export never substitutes agentd's environment for the
+agent's.
 
 The export also records the tclaude version and host platform. Environment
 values and local paths are intentionally included because they are often the

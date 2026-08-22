@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -1996,6 +1997,12 @@ func runNew(params *NewParams) error {
 	if err := SaveSessionStateForLaunch(state, exitGeneration, db.SessionExitGateUngated); err != nil {
 		return fmt.Errorf("prepare managed pane exit identity: %w", err)
 	}
+	// A reused session id must never expose its predecessor's execution record
+	// while this launch is still resolving. The new boundary is written only
+	// after every adapter-specific value below has been materialized.
+	if err := db.ClearSessionExecutionBoundary(sessionID); err != nil {
+		return fmt.Errorf("clear predecessor execution boundary: %w", err)
+	}
 	// Save the off/unavailable verdict before refusing so a resume of an
 	// existing conversation cannot leave a stale "on" badge behind.
 	if bwrapCapabilityErr != nil {
@@ -2240,6 +2247,33 @@ func runNew(params *NewParams) error {
 		if err != nil {
 			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)
 		}
+	}
+	boundaryInput := ExecutionBoundaryInput{
+		SandboxImplementation: string(sandboxImplementation),
+		HarnessName:           h.Name,
+		HarnessLookupName:     h.Spawn.Binary(),
+		HarnessExecutable:     spawnSpec.ExecutablePath,
+		HarnessRuntimeRoots:   harnessReadPaths,
+		Cwd:                   cwd,
+		Environment:           additionalEnv,
+	}
+	if effectiveSandbox != nil {
+		boundaryInput.PreLaunch = effectiveSandbox.Effective.PreLaunch
+	}
+	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
+		boundaryInput.LauncherBinary = bwrapBinary
+		boundaryInput.LayerSpec = &layerSpec
+	}
+	executionBoundary, err := BuildExecutionBoundary(boundaryInput)
+	if err != nil {
+		return fmt.Errorf("record launch execution boundary: %w", err)
+	}
+	executionBoundaryJSON, err := json.Marshal(executionBoundary)
+	if err != nil {
+		return fmt.Errorf("encode launch execution boundary: %w", err)
+	}
+	if err := db.SetSessionExecutionBoundary(sessionID, string(executionBoundaryJSON)); err != nil {
+		return fmt.Errorf("persist launch execution boundary: %w", err)
 	}
 	resourceCgroupCleanup := func() {}
 	resourceCgroupOwnedByPane := false

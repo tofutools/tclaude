@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 func TestDashboardDebugExportCarriesExactRecordedConfiguration(t *testing.T) {
@@ -39,7 +42,7 @@ func TestDashboardDebugExportCarriesExactRecordedConfiguration(t *testing.T) {
 	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
 	require.NoError(t, db.SaveSession(&db.SessionRow{
 		ID: "spwn-debug", TmuxSession: "tmux-debug", ConvID: convID,
-		Cwd: f.TestCwd("repo"), Status: "running", Harness: "codex",
+		PID: os.Getpid(), Cwd: f.TestCwd("repo"), Status: "running", Harness: "codex",
 		HarnessBuiltinMode: mode, SandboxImplementation: implementation,
 		ApprovalPolicy: "never", EffectiveSandbox: &snapshot,
 	}))
@@ -62,6 +65,30 @@ func TestDashboardDebugExportCarriesExactRecordedConfiguration(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.UpdateSessionModelSlug("spwn-debug", model))
 	require.NoError(t, db.UpdateSessionEffort("spwn-debug", "high"))
+	boundaryRaw, err := json.Marshal(session.ExecutionBoundary{
+		Version: session.ExecutionBoundaryVersion, SandboxImplementation: implementation,
+		Platform: "linux",
+		Harness: session.ExecutionHarness{
+			Name: "codex", LookupName: "codex", HostPath: "/opt/codex/bin/codex",
+			SandboxPath: "/opt/codex/bin/codex", Resolution: "absolute executable resolved before sandbox launch",
+		},
+		Tclaude: &session.ExecutionBinary{
+			Name: "tclaude", HostPath: "/home/helena/go/bin/tclaude",
+			SandboxPath: "/.tclaude/bin/tclaude", Exposure: "single-file read-only bind",
+		},
+		PATH: session.ExecutionPATH{
+			Host: "/usr/bin", LaunchBase: "/usr/bin", BeforePreLaunch: "/.tclaude/bin:/usr/bin",
+			Construction: []string{"prepend /.tclaude/bin"}, FinalValueKnown: true,
+		},
+		Identity: session.ExecutionIdentityMapping{
+			Host:          session.ExecutionUnixIdentity{UID: 1000, GID: 1000},
+			Sandbox:       session.ExecutionUnixIdentity{UID: 0, GID: 0},
+			UserNamespace: true, Mapping: "host uid/gid mapped to namespace 0:0",
+		},
+		RootMode: "constructed", AutomaticEntries: []session.ExecutionNamespaceEntry{},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.SetSessionExecutionBoundary("spwn-debug", string(boundaryRaw)))
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/agents/"+agentID+"/debug-export", nil)
@@ -94,4 +121,19 @@ func TestDashboardDebugExportCarriesExactRecordedConfiguration(t *testing.T) {
 	assert.Equal(t, implementation, latest["sandbox_implementation"])
 	assert.Equal(t, model, latest["model_id"])
 	assert.Equal(t, "high", latest["effort"])
+	assert.Equal(t, true, latest["execution_boundary_recorded"])
+	boundary := latest["execution_boundary"].(map[string]any)
+	assert.Equal(t, "/.tclaude/bin:/usr/bin", boundary["path"].(map[string]any)["before_pre_launch"])
+	assert.Equal(t, "/.tclaude/bin/tclaude", boundary["tclaude"].(map[string]any)["sandbox_path"])
+	assert.Equal(t, float64(0), boundary["identity"].(map[string]any)["sandbox"].(map[string]any)["uid"])
+	live := latest["live_process"].(map[string]any)
+	if runtime.GOOS == "linux" {
+		assert.Equal(t, "unavailable", live["status"],
+			"the flow fixture PID is the test process, not a validated harness")
+	} else {
+		assert.Equal(t, "unsupported", live["status"])
+	}
+	agentdIdentity := payload["tclaude"].(map[string]any)["agentd_identity"].(map[string]any)
+	assert.Equal(t, float64(os.Getuid()), agentdIdentity["uid"])
+	assert.Equal(t, float64(os.Getgid()), agentdIdentity["gid"])
 }

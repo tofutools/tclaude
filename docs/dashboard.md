@@ -93,7 +93,10 @@ drag it back to reinstate.
 
 The row's `⚙` menu includes **export debug info**, a direct JSON download that
 separates the requested, resolved, and running configurations: original spawn
-parameters, durable/composed sandbox settings, and latest launch evidence. It
+parameters, durable/composed sandbox settings, and latest launch evidence,
+including executable/mount exposure, PATH construction, and agentd/host/sandbox
+UID and GID identities. On Linux a live harness PATH and process identity are
+observed from `/proc` when available. It
 works while the agent is offline. The export includes environment values and
 local paths, so treat it as sensitive; task text and one-time authorization
 tokens are redacted.
