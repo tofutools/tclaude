@@ -43,7 +43,9 @@ var requiredFilteredNetworkPastaOptions = []string{
 	"--pid",
 }
 
-func resolveFilteredNetworkExecutables() (filteredNetworkExecutables, error) {
+func resolveFilteredNetworkExecutables(
+	preserveCallerIdentity ...bool,
+) (filteredNetworkExecutables, error) {
 	pasta, err := resolveFilteredNetworkExecutable("pasta")
 	if err != nil {
 		return filteredNetworkExecutables{}, fmt.Errorf("rootless pasta is required: %w", err)
@@ -51,6 +53,12 @@ func resolveFilteredNetworkExecutables() (filteredNetworkExecutables, error) {
 	if err := inspectFilteredNetworkPasta(pasta); err != nil {
 		return filteredNetworkExecutables{}, fmt.Errorf(
 			"rootless pasta lacks the required filtered-network capabilities: %w", err)
+	}
+	if len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0] {
+		if err := inspectPastaIdentityCapabilities(pasta); err != nil {
+			return filteredNetworkExecutables{}, fmt.Errorf(
+				"rootless pasta lacks caller-identity namespace controls: %w", err)
+		}
 	}
 	nft, err := resolveFilteredNetworkExecutable("nft")
 	if err != nil {
@@ -76,6 +84,14 @@ func resolveFilteredNetworkExecutable(name string) (string, error) {
 }
 
 func inspectPastaCapabilities(path string) error {
+	return inspectPastaCapabilitiesWithIdentity(path, false)
+}
+
+func inspectPastaIdentityCapabilities(path string) error {
+	return inspectPastaCapabilitiesWithIdentity(path, true)
+}
+
+func inspectPastaCapabilitiesWithIdentity(path string, preserveCallerIdentity bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), filteredNetworkPastaProbeTimeout)
 	defer cancel()
 	output := cappedFilteredNetworkOutput{limit: filteredNetworkPastaHelpLimit}
@@ -97,7 +113,7 @@ func inspectPastaCapabilities(path string) error {
 			filteredNetworkPastaHelpLimit,
 		)
 	}
-	return validatePastaCapabilities(output.String())
+	return validatePastaCapabilities(output.String(), preserveCallerIdentity)
 }
 
 type cappedFilteredNetworkOutput struct {
@@ -125,7 +141,7 @@ func (w *cappedFilteredNetworkOutput) String() string {
 	return w.buffer.String()
 }
 
-func validatePastaCapabilities(help string) error {
+func validatePastaCapabilities(help string, preserveCallerIdentity ...bool) error {
 	tokens := make(map[string]struct{})
 	for _, field := range strings.Fields(help) {
 		token, _, _ := strings.Cut(field, "=")
@@ -135,6 +151,13 @@ func validatePastaCapabilities(help string) error {
 	for _, option := range requiredFilteredNetworkPastaOptions {
 		if _, ok := tokens[option]; !ok {
 			missing = append(missing, option)
+		}
+	}
+	if len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0] {
+		for _, option := range []string{"--netns", "--netns-only"} {
+			if _, ok := tokens[option]; !ok {
+				missing = append(missing, option)
+			}
 		}
 	}
 	if len(missing) != 0 {

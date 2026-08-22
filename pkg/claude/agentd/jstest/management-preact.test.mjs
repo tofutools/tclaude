@@ -4244,6 +4244,11 @@ test('network filtering engine is authorable, survives a baseline change, and is
     network: { baseline: 'allow', namespace: 'private' },
     unix_sockets: { mode: '', allow: [] },
   }).network.namespace, 'private');
+  assert.equal(model.sandboxProfileForWire({
+    name: 'caller-id', filesystem: [], environment: [],
+    network: { baseline: 'deny', preserve_caller_identity: true },
+    unix_sockets: { mode: '', allow: [] },
+  }).network.preserve_caller_identity, true);
   assert.equal(Object.hasOwn(model.sandboxProfileForWire({
     name: 'plain', filesystem: [], environment: [],
     network: { baseline: 'deny', allow: [{ domain: 'example.com' }] },
@@ -4298,7 +4303,7 @@ test('profile editor engine control selects an engine and keeps it across a base
   const engine = host.querySelector('#sandbox-profile-editor-network-engine');
   assert.ok(engine, 'the editor offers a filtering-engine control');
   assert.deepEqual([...host.querySelectorAll('.sbx-network-control-kind')].map((node) => node.textContent),
-    ['Traffic policy', 'Filtering mechanism', 'Network isolation']);
+    ['Traffic policy', 'Filtering mechanism', 'Network isolation', 'Linux packet identity']);
   assert.match(host.querySelector('.sbx-network-controls').textContent,
     /What destinations are permitted.*How destination rules are enforced.*Whether the agent shares host localhost/s);
   assert.deepEqual([...engine.options].map((option) => option.value),
@@ -4315,6 +4320,11 @@ test('profile editor engine control selects an engine and keeps it across a base
   assert.match(host.textContent, /host localhost services, IDE bridges/);
   assert.equal(engine.disabled, false, 'engine remains independent of the baseline and namespace');
   assert.equal(namespace.disabled, false, 'private routing remains valid with the proxy engine');
+
+  const callerIdentity = host.querySelector('#sandbox-profile-editor-preserve-caller-identity');
+  assert.ok(callerIdentity, 'the editor exposes caller identity as an explicit opt-in');
+  callerIdentity.checked = true;
+  await harness.act(() => harness.fireEvent(callerIdentity, 'change'));
 
   // Changing the baseline must not clear the engine: it is not one of the
   // rules the baseline governs, and losing it would swap the mechanism as a
@@ -4333,6 +4343,7 @@ test('profile editor engine control selects an engine and keeps it across a base
     host.querySelector('#sandbox-profile-editor-submit'), 'click'));
   assert.equal(saved.draft.network.engine, 'proxy');
   assert.equal(saved.draft.network.namespace, 'private');
+  assert.equal(saved.draft.network.preserve_caller_identity, true);
   assert.equal(saved.draft.network.baseline, 'allow');
 
   unmount();

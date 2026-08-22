@@ -84,6 +84,7 @@ func probeDarwinSeatbeltCapability(binary string) error {
 func resolveBwrapBinary(
 	posture sandboxpolicy.NetworkPosture,
 	_ sandboxpolicy.RootPosture,
+	_ ...bool,
 ) (string, error) {
 	switch posture {
 	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
@@ -138,6 +139,7 @@ func tclaudeLayerToolingPresence(bool) error {
 func resolveBwrapServerBinary(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
+	_ ...bool,
 ) (string, error) {
 	return resolveBwrapBinary(posture, root)
 }

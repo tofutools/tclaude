@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -78,14 +79,21 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 func TestFilteredNetworkPastaCapabilityProbeRequiresExactGatewayControls(t *testing.T) {
 	help := strings.Join(requiredFilteredNetworkPastaOptions, "\n")
 	require.NoError(t, validatePastaCapabilities(help))
+	require.ErrorContains(t, validatePastaCapabilities(help, true), "--netns")
+	help += "\n--netns\n--netns-only"
+	require.NoError(t, validatePastaCapabilities(help, true))
 
 	help = strings.ReplaceAll(help, "--map-host-loopback", "--old--map-host-loopback")
 	help = strings.ReplaceAll(help, "--gateway", "--old--gateway")
 	help = strings.ReplaceAll(help, "--pid", "--pidfile")
-	err := validatePastaCapabilities(help)
+	help = strings.ReplaceAll(help, "--netns", "--old--netns")
+	help = strings.ReplaceAll(help, "--netns-only", "--old--netns-only")
+	err := validatePastaCapabilities(help, true)
 	require.ErrorContains(t, err, "--map-host-loopback")
 	assert.ErrorContains(t, err, "--gateway")
 	assert.ErrorContains(t, err, "--pid")
+	assert.ErrorContains(t, err, "--netns")
+	assert.ErrorContains(t, err, "--netns-only")
 	assert.NotContains(t, err.Error(), "--map-guest-addr")
 }
 
@@ -142,17 +150,28 @@ func TestFilteredNetworkPrerequisiteProbeRefusesOlderPasta(t *testing.T) {
 }
 
 func TestFilteredNetworkProbeArgsBuildTheNamespaceShapeWithoutInSandboxCapability(t *testing.T) {
-	args, err := tclaudeLayerProbeArgs(
-		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed)
-	require.NoError(t, err)
-	joined := strings.Join(args, " ")
-	assert.Contains(t, joined,
-		"--unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid")
-	// The base policy is installed by the supervisor via nsenter, so the probe
-	// no longer grants or checks any in-sandbox capability.
-	assert.NotContains(t, joined, "--cap-add")
-	assert.NotContains(t, joined, "CAP_NET_ADMIN")
-	assert.NotContains(t, joined, `case "$cap_eff" in`)
+	for _, preserve := range []bool{false, true} {
+		t.Run(strconv.FormatBool(preserve), func(t *testing.T) {
+			args, err := tclaudeLayerProbeArgs(
+				sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed, preserve)
+			require.NoError(t, err)
+			joined := strings.Join(args, " ")
+			assert.Contains(t, joined, "--unshare-user")
+			assert.Contains(t, joined, "--unshare-net --unshare-pid")
+			if preserve {
+				assert.NotContains(t, args, "--uid")
+				assert.NotContains(t, args, "--gid")
+				assert.Contains(t, args[len(args)-1], `test "$(id -u)" = `)
+				assert.Contains(t, args[len(args)-1], `test "$(id -g)" = `)
+			} else {
+				assert.NotEqual(t, -1, indexOfBwrapTriplet(args, "--uid", "0"))
+				assert.NotEqual(t, -1, indexOfBwrapTriplet(args, "--gid", "0"))
+				assert.NotContains(t, args[len(args)-1], "id -u")
+			}
+			assert.NotContains(t, joined, "--cap-add")
+			assert.NotContains(t, joined, "CAP_NET_ADMIN")
+		})
+	}
 }
 
 func TestFilteredNetworkPrerequisiteProbeReportsFirstMissingCapability(t *testing.T) {

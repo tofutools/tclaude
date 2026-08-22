@@ -34,12 +34,19 @@ const bwrapProbeTimeout = 5 * time.Second
 
 var (
 	lookPathBwrap = exec.LookPath
-	probeBwrap = func(
+	probeBwrap    = func(
 		binary string,
 		posture sandboxpolicy.NetworkPosture,
 		root sandboxpolicy.RootPosture,
 	) error {
 		return probeBwrapInLaunchContext(binary, posture, root)
+	}
+	probeBwrapIdentity = func(
+		binary string,
+		posture sandboxpolicy.NetworkPosture,
+		root sandboxpolicy.RootPosture,
+	) error {
+		return probeBwrapInLaunchContext(binary, posture, root, true)
 	}
 	probeTclaudeLayerPidfd = func() error {
 		fd, err := unix.PidfdOpen(os.Getpid(), 0)
@@ -62,8 +69,9 @@ func probeBwrapInProcess(
 	binary string,
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
+	preserveCallerIdentity ...bool,
 ) error {
-	args, err := tclaudeLayerProbeArgs(posture, root)
+	args, err := tclaudeLayerProbeArgs(posture, root, preserveCallerIdentity...)
 	if err != nil {
 		return err
 	}
@@ -82,6 +90,7 @@ func probeBwrapInProcess(
 func tclaudeLayerProbeArgs(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
+	preserveCallerIdentity ...bool,
 ) ([]string, error) {
 	args := []string{
 		"--die-with-parent",
@@ -106,18 +115,22 @@ func tclaudeLayerProbeArgs(
 		args = append(args, "--unshare-net", "--unshare-pid")
 	case sandboxpolicy.NetworkFiltered:
 		// The filtered launch builds the same user, network, and PID namespaces.
-		// It no longer needs CAP_NET_ADMIN inside the sandbox: the base nft policy
-		// is installed from the supervisor, which joins the namespace from outside
-		// bubblewrap's AppArmor confinement. Probing an in-sandbox capability here
-		// would spuriously refuse the launch on hosts (e.g. stock Ubuntu) whose
-		// bwrap AppArmor profile denies capabilities to the sandboxed process.
+		// Its historical/default shape selects namespace root; the profile opt-in
+		// omits those selectors and verifies bubblewrap restores the invoking ids.
+		// It no longer needs CAP_NET_ADMIN inside the sandbox: the base
+		// nft policy is installed from the supervisor, which joins the owning outer
+		// namespace from outside bubblewrap's AppArmor confinement. Probing an
+		// in-sandbox capability here would spuriously refuse the launch on hosts
+		// (e.g. stock Ubuntu) whose bwrap AppArmor profile denies capabilities to
+		// the sandboxed process.
 		args = append(args,
 			"--unshare-user",
-			"--uid", "0",
-			"--gid", "0",
-			"--unshare-net",
-			"--unshare-pid",
 		)
+		preserve := len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0]
+		if !preserve {
+			args = append(args, "--uid", "0", "--gid", "0")
+		}
+		args = append(args, "--unshare-net", "--unshare-pid")
 	default:
 		return nil, fmt.Errorf("invalid tclaude-layer network posture %d", posture)
 	}
@@ -125,6 +138,16 @@ func tclaudeLayerProbeArgs(
 		probeBind  = "/tmp/.tclaude-remount-probe"
 		probeWrite = "/tmp/.tclaude-remount-write"
 	)
+	probeCommand := "test -e " + probeBind + " && ! touch " + probeWrite
+	if posture == sandboxpolicy.NetworkFiltered &&
+		len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0] {
+		// The generated launch relies on bubblewrap's devpts-driven nested user
+		// namespace to restore the invoking identity after its uid-0 setup layer.
+		// Prove that behavior on this host rather than accepting a launch whose
+		// passwd identity would disagree with HOME.
+		probeCommand += " && test \"$(id -u)\" = " + strconv.Itoa(os.Getuid()) +
+			" && test \"$(id -g)\" = " + strconv.Itoa(os.Getgid())
+	}
 	args = append(args,
 		"--dev", "/dev",
 		"--proc", "/proc",
@@ -135,7 +158,7 @@ func tclaudeLayerProbeArgs(
 		"--ro-bind", "/dev/null", probeBind,
 		"--remount-ro", "/tmp",
 		"--", "/bin/sh", "-c",
-		"test -e "+probeBind+" && ! touch "+probeWrite,
+		probeCommand,
 	)
 	return args, nil
 }
@@ -143,8 +166,9 @@ func tclaudeLayerProbeArgs(
 func resolveBwrapBinary(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
+	preserveCallerIdentity ...bool,
 ) (string, error) {
-	binary, err := resolveBwrapServerBinary(posture, root)
+	binary, err := resolveBwrapServerBinary(posture, root, preserveCallerIdentity...)
 	if err != nil {
 		return "", err
 	}
@@ -179,6 +203,7 @@ func tclaudeLayerToolingPresence(interactive bool) error {
 func resolveBwrapServerBinary(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
+	preserveCallerIdentity ...bool,
 ) (string, error) {
 	binary, err := lookPathBwrap("bwrap")
 	if err != nil {
@@ -195,7 +220,12 @@ func resolveBwrapServerBinary(
 		return "", fmt.Errorf(
 			"tclaude-layer could not resolve a trusted bubblewrap (`bwrap`): %w", err)
 	}
-	if err := probeBwrap(binary, posture, root); err != nil {
+	preserve := len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0]
+	probe := probeBwrap
+	if preserve {
+		probe = probeBwrapIdentity
+	}
+	if err := probe(binary, posture, root); err != nil {
 		// IPC appears in every branch because every posture unshares it; the
 		// cgroup namespace never does, because it is probed and launched with
 		// --unshare-cgroup-try and so is not required of any host.
@@ -553,8 +583,11 @@ func tclaudeLayerUnixRelayServerCommandArgs(
 		"session", tclaudeLayerWinchRelayCommand,
 		"--preserve-fds", "2",
 		policyFlag, encoded,
-		"--",
 	}
+	if !tclaudeLayerPlanDeploysProxy(plan) && plan.PreserveCallerIdentity {
+		argv = append(argv, "--filtered-network-preserve-caller-identity")
+	}
+	argv = append(argv, "--")
 	return append(argv, bwrapArgv...), nil
 }
 

@@ -44,6 +44,9 @@ const (
 	filteredGatewayDNSSmokeEnv       = "TCLAUDE_FILTERED_DNS_HELPER"
 	filteredGatewayDenySmokeEnv      = "TCLAUDE_FILTERED_DENY_HELPER"
 	filteredGatewayLocalBaselineEnv  = "TCLAUDE_FILTERED_LOCAL_BASELINE"
+	filteredGatewayCallerUIDEnv      = "TCLAUDE_FILTERED_CALLER_UID"
+	filteredGatewayCallerGIDEnv      = "TCLAUDE_FILTERED_CALLER_GID"
+	filteredGatewayOwnershipPathEnv  = "TCLAUDE_FILTERED_OWNERSHIP_PATH"
 	filteredGatewayTclaudeBinaryEnv  = "TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY"
 	filteredGatewayConnectionTimeout = 900 * time.Millisecond
 	filteredGatewayExactHost         = "exact-host.filtered.test"
@@ -122,9 +125,9 @@ func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, smokeKind string) {
 	deniedPort := requireFilteredSmokePort(t, filteredGatewayDeniedPortEnv)
 
 	bwrapBinary, _, err := ResolveTclaudeLayer(
-		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed)
+		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed, true)
 	require.NoError(t, err)
-	executables, err := resolveFilteredNetworkExecutables()
+	executables, err := resolveFilteredNetworkExecutables(true)
 	require.NoError(t, err)
 
 	previousRelay := tclaudeLayerRelayPrefix
@@ -210,6 +213,9 @@ func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, smokeKind string) {
 			},
 		)
 	}
+	// This executing boundary covers the opt-in identity mode while retaining
+	// the existing packet, DNS, pasta, nft, and fail-closed assertions.
+	rules.PreserveCallerIdentity = true
 	axes := sandboxpolicy.ResolvedAxes{Network: rules}
 	snapshot := sandboxpolicy.EmptySnapshot()
 	snapshot.Effective.Network = &rules
@@ -273,6 +279,12 @@ func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, smokeKind string) {
 				os.Environ(), allowedAddr, adjacentAddr, allowedAddr6, adjacentAddr6,
 				allowedPort, deniedPort,
 				hostAllowedPort, hostDeniedPort, "", false, dnsSmoke,
+			)
+			cmd.Env = append(cmd.Env,
+				filteredGatewayCallerUIDEnv+"="+strconv.Itoa(os.Getuid()),
+				filteredGatewayCallerGIDEnv+"="+strconv.Itoa(os.Getgid()),
+				filteredGatewayOwnershipPathEnv+"="+
+					filepath.Join(helperDir, "caller-owned-"+harnessName),
 			)
 			if denySmoke {
 				cmd.Env = append(cmd.Env,
@@ -496,6 +508,19 @@ func TestFilteredNetworkGatewayHelper(t *testing.T) {
 	assert.Contains(t, string(status), "\nCapInh:\t0000000000000000\n")
 	assert.Contains(t, string(status), "\nCapAmb:\t0000000000000000\n")
 	assert.Contains(t, string(status), "\nNoNewPrivs:\t1\n")
+	if callerUID := strings.TrimSpace(os.Getenv(filteredGatewayCallerUIDEnv)); callerUID != "" {
+		callerGID := requireFilteredSmokeEnv(t, filteredGatewayCallerGIDEnv)
+		assert.Equal(t, callerUID, strconv.Itoa(os.Getuid()))
+		assert.Equal(t, callerGID, strconv.Itoa(os.Getgid()))
+		ownershipPath := requireFilteredSmokeEnv(t, filteredGatewayOwnershipPathEnv)
+		require.NoError(t, os.WriteFile(ownershipPath, []byte("caller-owned\n"), 0o600))
+		info, statErr := os.Stat(ownershipPath)
+		require.NoError(t, statErr)
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		require.True(t, ok)
+		assert.Equal(t, callerUID, strconv.FormatUint(uint64(stat.Uid), 10))
+		assert.Equal(t, callerGID, strconv.FormatUint(uint64(stat.Gid), 10))
+	}
 
 	hosts, err := os.ReadFile("/etc/hosts")
 	require.NoError(t, err)

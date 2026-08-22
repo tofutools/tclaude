@@ -2784,8 +2784,10 @@ func resumeLaunchCmdWithStackedProof(
 			return "", "", nil, engineErr
 		}
 		var resolveErr error
-		binary, _, resolveErr = session.ResolveTclaudeLayerForEngine(
-			posture, root, engine)
+		binary, _, resolveErr = session.ResolveTclaudeLayerForEngineWithIdentity(
+			posture, root, engine,
+			effectiveProfile.Network != nil &&
+				effectiveProfile.Network.PreserveCallerIdentity)
 		if resolveErr != nil {
 			return "", "", nil, resolveErr
 		}

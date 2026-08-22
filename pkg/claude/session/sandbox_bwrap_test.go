@@ -1639,7 +1639,7 @@ func TestBwrapArgsRequiresCompiledFilteredPolicy(t *testing.T) {
 	require.ErrorContains(t, err, "no compiled gateway policy")
 }
 
-func TestBwrapArgsFilteredBootstrapUsesNamespaceRootIdentity(t *testing.T) {
+func TestBwrapArgsFilteredBootstrapSelectsConfiguredIdentity(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
@@ -1663,11 +1663,20 @@ func TestBwrapArgsFilteredBootstrapUsesNamespaceRootIdentity(t *testing.T) {
 
 	socketPaths := append([]string{}, sandboxpolicy.AgentdSocketFloor()...)
 	socketPaths = append(socketPaths, policySocket)
+	defaultArgs, err := bwrapArgsWithDaemonFinal(
+		nil, sandboxpolicy.MountPlan{
+			NetworkPosture: sandboxpolicy.NetworkFiltered, FilteredNetwork: &ir,
+		}, nil, nil, nil, socketPaths, "", nil)
+	require.NoError(t, err)
+	assert.NotEqual(t, -1, indexOfBwrapTriplet(defaultArgs, "--uid", "0"))
+	assert.NotEqual(t, -1, indexOfBwrapTriplet(defaultArgs, "--gid", "0"))
+
 	args, err := bwrapArgsWithDaemonFinal(
 		nil,
 		sandboxpolicy.MountPlan{
-			NetworkPosture:  sandboxpolicy.NetworkFiltered,
-			FilteredNetwork: &ir,
+			NetworkPosture:         sandboxpolicy.NetworkFiltered,
+			FilteredNetwork:        &ir,
+			PreserveCallerIdentity: true,
 		},
 		nil,
 		nil,
@@ -1677,8 +1686,12 @@ func TestBwrapArgsFilteredBootstrapUsesNamespaceRootIdentity(t *testing.T) {
 		nil,
 	)
 	require.NoError(t, err)
-	assert.Contains(t, strings.Join(args, " "),
-		"--unshare-user --uid 0 --gid 0 --unshare-net --unshare-pid")
+	joined := strings.Join(args, " ")
+	assert.Contains(t, joined, "--unshare-user --unshare-net --unshare-pid")
+	assert.NotContains(t, args, "--uid")
+	assert.NotContains(t, args, "--gid")
+	assert.NotEqual(t, -1, indexOfBwrapTriplet(args, "--dev", "/dev"),
+		"bubblewrap's devpts setup supplies the outer uid-0 namespace while the final nested namespace restores the invoking ids")
 	runMount := indexOfBwrapTriplet(args, "--tmpfs", "/run")
 	socketBind := indexOfBwrapTriplet(args, "--ro-bind", policySocket)
 	rootRemount := indexOfBwrapTriplet(args, "--remount-ro", "/")

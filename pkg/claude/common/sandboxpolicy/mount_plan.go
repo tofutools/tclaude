@@ -139,6 +139,9 @@ type MountPlan struct {
 	// so the plan cannot claim a mechanism the launch does not run.
 	NetworkEngine   NetworkEngine
 	FilteredNetwork *FilteredNetworkRuleSet
+	// PreserveCallerIdentity selects the opt-in Linux packet-sandbox user
+	// namespace shape. It is inert for every other plan floor.
+	PreserveCallerIdentity bool
 }
 
 // EffectiveRootPosture is the root an applier must actually build, and is what

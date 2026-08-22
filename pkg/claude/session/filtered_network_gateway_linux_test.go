@@ -56,8 +56,16 @@ func TestFilteredNetworkInstallBasePolicyValidatesInputs(t *testing.T) {
 	require.ErrorContains(t, relay.installBasePolicy(0), "namespace pid")
 }
 
-func TestFilteredNetworkPastaArgsGiveSyntheticIPv6MappingARoute(t *testing.T) {
+func TestFilteredNetworkPastaArgsJoinNetworkNamespaceOwner(t *testing.T) {
+	legacy := filteredNetworkPastaArgs("/tmp/pasta.pid", 123)
+	assert.Equal(t, "123", legacy[len(legacy)-1])
+	assert.NotContains(t, legacy, "--netns-only")
+
 	assert.Equal(t, []string{
+		"--preserve-credentials",
+		"--user=/proc/self/fd/3",
+		"--",
+		"/usr/bin/pasta",
 		"--foreground",
 		"--quiet",
 		"--config-net",
@@ -72,8 +80,10 @@ func TestFilteredNetworkPastaArgsGiveSyntheticIPv6MappingARoute(t *testing.T) {
 		"--udp-ns", "none",
 		"--no-splice",
 		"--pid", "/tmp/pasta.pid",
-		"123",
-	}, filteredNetworkPastaArgs("/tmp/pasta.pid", 123))
+		"--netns-only",
+		"--netns", "/proc/123/ns/net",
+	}, filteredNetworkPastaLaunchArgs(
+		"/usr/bin/pasta", "/tmp/pasta.pid", 123))
 }
 
 func TestFilteredNetworkResolvMountMaterializesRuntimeSymlinkTarget(t *testing.T) {
@@ -113,6 +123,13 @@ func TestFilteredNetworkResolvMountMaterializesRuntimeSymlinkTarget(t *testing.T
 
 func TestFilteredNetworkPastaReadinessRetriesPartialPIDFile(t *testing.T) {
 	root := t.TempDir()
+	nsenterPath := filepath.Join(root, "nsenter")
+	require.NoError(t, os.WriteFile(nsenterPath, []byte(`#!/bin/sh
+while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done
+[ "$1" = -- ] || exit 90
+shift
+exec "$@"
+`), 0o700))
 	pastaPath := filepath.Join(root, "pasta")
 	require.NoError(t, os.WriteFile(pastaPath, []byte(`#!/bin/sh
 pidfile=
@@ -136,6 +153,7 @@ while :; do sleep 1; done
 	relay := &preparedFilteredNetworkRelay{
 		PastaPath:    pastaPath,
 		PastaPIDFile: filepath.Join(root, "pasta.pid"),
+		NsenterPath:  nsenterPath,
 	}
 	cmd, waitCh, err := relay.startPasta(os.Getpid())
 	require.NoError(t, err)

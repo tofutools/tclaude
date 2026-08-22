@@ -64,7 +64,9 @@ func probeBwrapInLaunchContext(
 	binary string,
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
+	preserveCallerIdentity ...bool,
 ) error {
+	preserve := len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0]
 	serverPID, err := tmuxServerPID()
 	if err != nil {
 		// The ordinary case on a host with nothing running yet, so Debug: this
@@ -72,15 +74,22 @@ func probeBwrapInLaunchContext(
 		// loses the fix.
 		slog.Debug("tclaude-layer: no tmux server to probe from; "+
 			"the preparing process's confinement is the one its pane will inherit", "error", err)
-		return probeBwrapInProcess(binary, posture, root)
+		return probeBwrapInProcess(binary, posture, root, preserve)
 	}
-	key := bwrapProbeKey{binary: binary, posture: posture, root: root}
+	key := bwrapProbeKey{
+		binary: binary, posture: posture, root: root,
+		preserveCallerIdentity: preserve,
+	}
 	if bwrapProbeCache.healthy(serverPID, key) {
 		return nil
 	}
-	ran, verdict := probeBwrapViaTmuxServer(binary, posture, root)
+	probeViaTmux := probeBwrapViaTmuxServer
+	if preserve {
+		probeViaTmux = probeBwrapIdentityViaTmuxServer
+	}
+	ran, verdict := probeViaTmux(binary, posture, root)
 	if !ran {
-		return probeBwrapInProcess(binary, posture, root)
+		return probeBwrapInProcess(binary, posture, root, preserve)
 	}
 	if verdict == nil {
 		bwrapProbeCache.record(serverPID, key)
@@ -109,9 +118,10 @@ var tmuxServerPID = func() (int, error) {
 }
 
 type bwrapProbeKey struct {
-	binary  string
-	posture sandboxpolicy.NetworkPosture
-	root    sandboxpolicy.RootPosture
+	binary                 string
+	posture                sandboxpolicy.NetworkPosture
+	root                   sandboxpolicy.RootPosture
+	preserveCallerIdentity bool
 }
 
 // bwrapProbeMemoTTL bounds how long a passing posture may be reused.
@@ -198,7 +208,24 @@ var probeBwrapViaTmuxServer = func(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
 ) (ran bool, verdict error) {
-	if _, err := tclaudeLayerProbeArgs(posture, root); err != nil {
+	return probeBwrapViaTmuxServerForIdentity(binary, posture, root, false)
+}
+
+var probeBwrapIdentityViaTmuxServer = func(
+	binary string,
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+) (ran bool, verdict error) {
+	return probeBwrapViaTmuxServerForIdentity(binary, posture, root, true)
+}
+
+func probeBwrapViaTmuxServerForIdentity(
+	binary string,
+	posture sandboxpolicy.NetworkPosture,
+	root sandboxpolicy.RootPosture,
+	preserve bool,
+) (ran bool, verdict error) {
+	if _, err := tclaudeLayerProbeArgs(posture, root, preserve); err != nil {
 		// An invalid posture is a programming error, not a host capability
 		// question; report it without a round trip.
 		return true, err
@@ -211,7 +238,8 @@ var probeBwrapViaTmuxServer = func(
 	defer func() { _ = os.RemoveAll(dir) }()
 	resultPath := filepath.Join(dir, "result")
 
-	command := tclaudeLayerProbeShellCommand(binary, posture, root, resultPath)
+	command := tclaudeLayerProbeShellCommand(
+		binary, posture, root, resultPath, preserve)
 
 	// The round trip gets STRICTLY MORE than the probe it carries. The job runs
 	// probeBwrapInProcess, which spends bwrapProbeTimeout on the bwrap exec
@@ -346,14 +374,19 @@ func tclaudeLayerProbeShellCommand(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
 	resultPath string,
+	preserveCallerIdentity ...bool,
 ) string {
-	return escapeTmuxFormat(
+	command :=
 		clcommon.ShellQuoteArg(clcommon.SelfTclaudePath()) +
 			" session " + tclaudeLayerProbeCommand +
 			" --bwrap " + clcommon.ShellQuoteArg(binary) +
 			" --network-posture " + clcommon.ShellQuoteArg(posture.String()) +
-			" --root-posture " + clcommon.ShellQuoteArg(root.String()) +
-			" --result " + clcommon.ShellQuoteArg(resultPath))
+			" --root-posture " + clcommon.ShellQuoteArg(root.String())
+	if len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0] {
+		command += " --preserve-caller-identity"
+	}
+	return escapeTmuxFormat(command +
+		" --result " + clcommon.ShellQuoteArg(resultPath))
 }
 
 // escapeTmuxFormat neutralises tmux's format layer, which expands `#{…}`, the
@@ -430,6 +463,7 @@ func parseTclaudeLayerProbeResult(raw string) (ran bool, verdict error) {
 // whole file exists to stop trusting.
 func tclaudeLayerProbeCmd() *cobra.Command {
 	var binary, networkPosture, rootPosture, resultPath string
+	var preserveCallerIdentity bool
 	cmd := &cobra.Command{
 		Use:               tclaudeLayerProbeCommand,
 		Short:             "Probe tclaude-layer host capability from the pane's confinement (internal)",
@@ -456,7 +490,8 @@ func tclaudeLayerProbeCmd() *cobra.Command {
 				return errors.New("--bwrap is required")
 			}
 			result := tclaudeLayerProbeResultOK
-			if err := probeBwrapInProcess(binary, posture, root); err != nil {
+			if err := probeBwrapInProcess(
+				binary, posture, root, preserveCallerIdentity); err != nil {
 				result = tclaudeLayerProbeResultPrefix + err.Error()
 			}
 			return writeTclaudeLayerProbeResult(resultPath, result)
@@ -465,6 +500,8 @@ func tclaudeLayerProbeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&binary, "bwrap", "", "resolved bubblewrap binary to probe (internal)")
 	cmd.Flags().StringVar(&networkPosture, "network-posture", "", "network posture token to probe (internal)")
 	cmd.Flags().StringVar(&rootPosture, "root-posture", "", "root posture token to probe (internal)")
+	cmd.Flags().BoolVar(&preserveCallerIdentity, "preserve-caller-identity", false,
+		"probe caller UID/GID preservation (internal)")
 	cmd.Flags().StringVar(&resultPath, "result", "", "file the verdict is written to (internal)")
 	return cmd
 }
