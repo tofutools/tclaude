@@ -14,6 +14,7 @@ func TestSocketPaths(t *testing.T) {
 	t.Setenv("HOME", home)
 
 	assert.Equal(t, filepath.Join(home, ".tclaude", "api", "agentd.sock"), CanonicalSocketPath())
+	assert.Equal(t, filepath.Join(home, ".tclaude", "api", "sandbox-agentd", "agentd.sock"), SandboxSocketPath())
 	assert.Equal(t, filepath.Join(home, ".tclaude-agentd.sock"), LegacyHomeSocketPath())
 	assert.Equal(t, filepath.Join(home, ".tclaude", "agentd.sock"), LegacySocketPath())
 	assert.Equal(t, []string{LegacyHomeSocketPath(), LegacySocketPath()}, LegacySocketPaths())

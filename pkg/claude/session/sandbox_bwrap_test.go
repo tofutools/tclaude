@@ -1320,6 +1320,38 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 		"class-4 tmux hide remains final under the constructed root")
 }
 
+func TestBwrapArgsProjectsAgentdDirectoryForRestartStableCanonicalSocket(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	for _, socket := range append(sandboxpolicy.AgentdSocketFloor(), agentipc.SandboxSocketPath()) {
+		require.NoError(t, os.MkdirAll(filepath.Dir(socket), 0o700))
+		listener, err := net.Listen("unix", socket)
+		require.NoError(t, err)
+		t.Cleanup(func() { _ = listener.Close() })
+	}
+	workspace := filepath.Join(home, "work")
+	require.NoError(t, os.MkdirAll(workspace, 0o700))
+
+	got, err := bwrapArgsWithDaemonFinal(
+		[]string{workspace}, sandboxpolicy.MountPlan{
+			NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+			Entries: []sandboxpolicy.MountEntry{
+				{Path: home, Mode: sandboxpolicy.MountHide},
+				{Path: workspace, Mode: sandboxpolicy.MountRW},
+			},
+		}, nil, nil, nil, sandboxpolicy.AgentdSocketFloor(), "", nil)
+	require.NoError(t, err)
+
+	canonical := agentipc.CanonicalSocketPath()
+	projectedDir := filepath.Dir(agentipc.SandboxSocketPath())
+	canonicalDir := filepath.Dir(canonical)
+	require.Len(t, indicesOfBwrapBind(got, "--ro-bind", projectedDir, canonicalDir), 2,
+		"the directory projection must be repaired after an ancestor hide")
+	assert.Empty(t, indicesOfBwrapBind(got, "--ro-bind", canonical, canonical),
+		"binding the canonical socket file would pin the pre-restart inode")
+}
+
 // TCL-798. The whole point of the new posture is that these two decisions are
 // now independent, so the assertions come in pairs: everything the constructed
 // root does, and the network namespace still being the host's.

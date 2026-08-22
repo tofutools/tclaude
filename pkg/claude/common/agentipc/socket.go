@@ -28,6 +28,19 @@ func CanonicalSocketPath() string {
 	return filepath.Join(apiDir, "agentd.sock")
 }
 
+// SandboxSocketPath is the host-side endpoint projected into constructed
+// tclaude-layer roots as the canonical socket. Its dedicated parent is mounted
+// rather than the socket inode itself, so replacing the pathname on an agentd
+// restart becomes visible to already-running sandboxes. Clients never dial
+// this spelling directly.
+func SandboxSocketPath() string {
+	apiDir := common.TclaudeAPIDir()
+	if apiDir == "" {
+		return ""
+	}
+	return filepath.Join(apiDir, "sandbox-agentd", "agentd.sock")
+}
+
 // LegacyHomeSocketPath is the pre-split canonical endpoint
 // (~/.tclaude-agentd.sock, outside ~/.tclaude). Retained as a compatibility
 // bind+dial listener during the migration window for older clients and

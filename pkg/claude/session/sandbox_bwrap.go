@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/sandboxproxy"
@@ -2136,7 +2137,7 @@ func bwrapArgsWithDaemonFinal(
 	for _, root := range protectedRoots {
 		args = hideRemounts.appendHide(args, root)
 	}
-	liveSocketPaths := make([]string, 0, len(socketPaths))
+	liveSocketBinds := make([]TclaudeLayerReadOnlyBind, 0, len(socketPaths))
 	if tclaudeLayerPlanUsesConstructedRoot(plan) {
 		for i, socket := range socketPaths {
 			if socket == "" || !filepath.IsAbs(socket) {
@@ -2157,8 +2158,27 @@ func bwrapArgsWithDaemonFinal(
 				}
 				continue
 			}
-			args = append(args, "--ro-bind", socket, socket)
-			liveSocketPaths = append(liveSocketPaths, socket)
+			bind := TclaudeLayerReadOnlyBind{Source: socket, Target: socket}
+			// Binding a Unix socket pins that inode forever. The daemon instead
+			// keeps an equivalent endpoint in a dedicated directory whose only
+			// purpose is this projection. Mounting the directory over the
+			// canonical API location preserves the public pathname while letting
+			// unlink+bind on daemon restart become visible in a live sandbox.
+			// Fall back to the file bind when talking to an older daemon that did
+			// not create the projection endpoint yet.
+			if i == 0 && filepath.Clean(socket) == filepath.Clean(agentipc.CanonicalSocketPath()) {
+				projected := agentipc.SandboxSocketPath()
+				projectedExists, projectedErr := bwrapBindSourceExists(projected)
+				if projectedErr != nil {
+					return nil, fmt.Errorf("restart-stable agentd socket source %q: %w", projected, projectedErr)
+				}
+				if projectedExists {
+					bind.Source = filepath.Dir(projected)
+					bind.Target = filepath.Dir(socket)
+				}
+			}
+			args = append(args, "--ro-bind", bind.Source, bind.Target)
+			liveSocketBinds = append(liveSocketBinds, bind)
 		}
 	}
 	// Class 2: replay the policy plan exactly as rendered. Repair mounts do not
@@ -2224,10 +2244,10 @@ func bwrapArgsWithDaemonFinal(
 				protectedRoots,
 				&hideRemounts,
 			)
-			args = appendTclaudeLayerSocketRepairs(
+			args = appendTclaudeLayerSocketBindRepairs(
 				args,
 				path,
-				liveSocketPaths,
+				liveSocketBinds,
 				&hideRemounts,
 			)
 			// The resolver file is reopened during root construction, so an
@@ -2850,6 +2870,22 @@ func appendTclaudeLayerSocketRepairs(
 		if hide != socket && sandboxpolicy.PathContainsOrEqual(hide, socket) {
 			hideRemounts.noteReplacement(socket)
 			args = append(args, "--ro-bind", socket, socket)
+		}
+	}
+	return args
+}
+
+func appendTclaudeLayerSocketBindRepairs(
+	args []string,
+	hide string,
+	binds []TclaudeLayerReadOnlyBind,
+	hideRemounts *tclaudeLayerHideRemounts,
+) []string {
+	for _, bind := range binds {
+		target := filepath.Clean(bind.Target)
+		if hide != target && sandboxpolicy.PathContainsOrEqual(hide, target) {
+			hideRemounts.noteReplacement(target)
+			args = append(args, "--ro-bind", filepath.Clean(bind.Source), target)
 		}
 	}
 	return args
