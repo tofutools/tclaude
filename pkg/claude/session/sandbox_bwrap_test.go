@@ -963,21 +963,6 @@ func TestValidateTclaudeLayerNetworkRequiresDescriptorAndExplicitTransportAssert
 	assert.Empty(t, notices)
 }
 
-func TestValidateTclaudeLayerNetworkSkipsModelTransportForEmptyPrivateList(t *testing.T) {
-	effective := sandboxpolicy.EffectiveProfile{Network: &sandboxpolicy.NetworkRules{
-		Mode:      sandboxpolicy.AccessModeList,
-		Namespace: sandboxpolicy.NetworkNamespacePrivate,
-		Engine:    sandboxpolicy.NetworkEnginePacket,
-	}}
-
-	notices, err := ValidateTclaudeLayerNetwork(
-		harness.MustGet(harness.OpenCodeName), effective,
-		harness.ResolvedModelTransport{Model: "openai/gpt-5.6-sol"},
-	)
-	require.NoError(t, err)
-	assert.Empty(t, notices)
-}
-
 func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *testing.T) {
 	claude := harness.Default()
 	effective := sandboxpolicy.EffectiveProfile{

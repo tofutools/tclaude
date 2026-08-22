@@ -1687,8 +1687,7 @@ func runNew(params *NewParams) error {
 				notices = append(notices, *noProxyNotice)
 			}
 			if plannedNetworkPosture == sandboxpolicy.NetworkFiltered &&
-				!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(plannedAxes.Network) &&
-				!sandboxpolicy.FilteredNetworkRulesAllowNoDestinations(plannedAxes.Network) {
+				!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(plannedAxes.Network) {
 				var resolveModelErr error
 				resolvedModel, resolveModelErr = ResolveTclaudeLayerModelTransport(
 					h,

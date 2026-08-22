@@ -227,15 +227,6 @@ func NetworkRulesArePrivateRoutedOpen(rules NetworkRules) bool {
 			(rules.Mode == AccessModeOpen && len(rules.Deny) == 0))
 }
 
-// FilteredNetworkRulesAllowNoDestinations identifies the filtered posture whose
-// effective network authority is empty. There is no model endpoint to resolve
-// or require coverage for under it: the network floor blocks every destination.
-// An empty list is the closed posture by another spelling, but materialized
-// snapshots can retain that spelling at filtered launch seams.
-func FilteredNetworkRulesAllowNoDestinations(rules NetworkRules) bool {
-	return rules.Mode == AccessModeList && len(rules.Allow) == 0
-}
-
 // RootPostureForAxes decides whether the plan needs a constructed filesystem
 // root. It is the whole of TCL-798's policy seam: everything else in this
 // change is an applier honoring the answer.
