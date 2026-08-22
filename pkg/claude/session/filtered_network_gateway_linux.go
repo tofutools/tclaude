@@ -61,18 +61,25 @@ func filteredNetworkHelperEnv() []string {
 // ExtraFiles, which land at those fixed fd numbers in the nsenter child.
 //
 // --preserve-credentials is required: bubblewrap sets setgroups=deny on the
-// sandbox userns, so nsenter's default setgroups() call would fail. Skipping it
-// is safe because this joins the outer setup namespace that owns the netns, not
-// bubblewrap's final nested identity namespace: the caller lands at uid 0 and
-// nft retains CAP_NET_ADMIN scoped to the owning namespace.
-func filteredNetworkNsenterArgs(nftPath string) []string {
-	return []string{
+// sandbox userns, so nsenter's default setgroups() call would fail. The default
+// namespace-root mode lands at uid 0. Caller-identity mode explicitly selects
+// uid/gid 0 after setns so the helpers retain the capabilities granted in the
+// owning user namespace. Keeping --preserve-credentials alongside those
+// selectors suppresses nsenter's otherwise failing pre-setns setgroups call.
+// This spelling is portable to util-linux releases before --keep-caps.
+func filteredNetworkNsenterArgs(nftPath string, preserveCallerIdentity ...bool) []string {
+	args := []string{
 		"--preserve-credentials",
+	}
+	if len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0] {
+		args = append(args, "--setuid=0", "--setgid=0")
+	}
+	return append(args,
 		"--user=/proc/self/fd/3",
 		"--net=/proc/self/fd/4",
 		"--",
 		nftPath, "-f", "-",
-	}
+	)
 }
 
 type preparedFilteredNetworkRelay struct {
@@ -567,7 +574,10 @@ func (p *preparedFilteredNetworkRelay) installBasePolicy(namespacePID int) error
 	defer func() { _ = ownerFile.Close() }()
 	// ExtraFiles land at fd 3, 4 in the child with close-on-exec cleared, matching
 	// the /proc/self/fd references in filteredNetworkNsenterArgs.
-	cmd := exec.Command(p.NsenterPath, filteredNetworkNsenterArgs(p.NFTPath)...)
+	cmd := exec.Command(
+		p.NsenterPath,
+		filteredNetworkNsenterArgs(p.NFTPath, p.preserveCallerIdentity)...,
+	)
 	cmd.Env = filteredNetworkHelperEnv()
 	cmd.Stdin = strings.NewReader(p.Policy)
 	cmd.Stdout = os.Stderr
@@ -827,6 +837,8 @@ func filteredNetworkPastaLaunchArgs(
 ) []string {
 	return []string{
 		"--preserve-credentials",
+		"--setuid=0",
+		"--setgid=0",
 		"--user=/proc/self/fd/3",
 		"--",
 		pastaPath,

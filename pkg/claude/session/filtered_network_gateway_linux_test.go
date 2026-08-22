@@ -34,6 +34,15 @@ func TestFilteredNetworkNsenterArgsJoinOwnerUsernsFirst(t *testing.T) {
 		"--",
 		"/usr/sbin/nft", "-f", "-",
 	}, filteredNetworkNsenterArgs("/usr/sbin/nft"))
+	assert.Equal(t, []string{
+		"--preserve-credentials",
+		"--setuid=0",
+		"--setgid=0",
+		"--user=/proc/self/fd/3",
+		"--net=/proc/self/fd/4",
+		"--",
+		"/usr/sbin/nft", "-f", "-",
+	}, filteredNetworkNsenterArgs("/usr/sbin/nft", true))
 }
 
 func TestFilteredNetworkInstallBasePolicyValidatesInputs(t *testing.T) {
@@ -63,6 +72,8 @@ func TestFilteredNetworkPastaArgsJoinNetworkNamespaceOwner(t *testing.T) {
 
 	assert.Equal(t, []string{
 		"--preserve-credentials",
+		"--setuid=0",
+		"--setgid=0",
 		"--user=/proc/self/fd/3",
 		"--",
 		"/usr/bin/pasta",

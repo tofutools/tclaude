@@ -244,7 +244,7 @@ func resolveBwrapServerBinary(
 			"(unprivileged user namespaces may be unavailable): %w", requiredNamespaces, err)
 	}
 	if posture == sandboxpolicy.NetworkFiltered {
-		if _, err := resolveFilteredNetworkExecutables(); err != nil {
+		if _, err := resolveFilteredNetworkExecutables(preserve); err != nil {
 			return "", fmt.Errorf("tclaude-layer filtered network prerequisite: %w", err)
 		}
 	}

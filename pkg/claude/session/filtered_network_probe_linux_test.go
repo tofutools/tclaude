@@ -97,6 +97,68 @@ func TestFilteredNetworkPastaCapabilityProbeRequiresExactGatewayControls(t *test
 	assert.NotContains(t, err.Error(), "--map-guest-addr")
 }
 
+func TestFilteredNetworkExecutableResolutionUsesExactIdentityCapabilities(t *testing.T) {
+	oldPath := filteredNetworkLookPath
+	oldDefault := inspectFilteredNetworkPasta
+	oldIdentity := inspectFilteredNetworkPastaIdentity
+	t.Cleanup(func() {
+		filteredNetworkLookPath = oldPath
+		inspectFilteredNetworkPasta = oldDefault
+		inspectFilteredNetworkPastaIdentity = oldIdentity
+	})
+	stubTrustedExecutableWalk(t)
+	filteredNetworkLookPath = func(name string) (string, error) {
+		return "/usr/bin/" + name, nil
+	}
+	defaultCalls, identityCalls := 0, 0
+	inspectFilteredNetworkPasta = func(string) error {
+		defaultCalls++
+		return nil
+	}
+	inspectFilteredNetworkPastaIdentity = func(string) error {
+		identityCalls++
+		return nil
+	}
+
+	_, err := resolveFilteredNetworkExecutables(false)
+	require.NoError(t, err)
+	assert.Equal(t, 1, defaultCalls)
+	assert.Zero(t, identityCalls)
+
+	_, err = resolveFilteredNetworkExecutables(true)
+	require.NoError(t, err)
+	assert.Equal(t, 1, defaultCalls)
+	assert.Equal(t, 1, identityCalls)
+}
+
+func TestResolveBwrapServerBinaryGatesCallerIdentityPastaMode(t *testing.T) {
+	oldBwrapPath := lookPathBwrap
+	oldBwrapProbe := probeBwrapIdentity
+	oldFilteredPath := filteredNetworkLookPath
+	oldIdentity := inspectFilteredNetworkPastaIdentity
+	t.Cleanup(func() {
+		lookPathBwrap = oldBwrapPath
+		probeBwrapIdentity = oldBwrapProbe
+		filteredNetworkLookPath = oldFilteredPath
+		inspectFilteredNetworkPastaIdentity = oldIdentity
+	})
+	stubTrustedExecutableWalk(t)
+	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
+	probeBwrapIdentity = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error {
+		return nil
+	}
+	filteredNetworkLookPath = func(name string) (string, error) {
+		return "/usr/bin/" + name, nil
+	}
+	inspectFilteredNetworkPastaIdentity = func(string) error {
+		return errors.New("missing options: --netns, --netns-only")
+	}
+
+	_, err := resolveBwrapServerBinary(
+		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed, true)
+	require.ErrorContains(t, err, "caller-identity namespace controls")
+}
+
 func TestFilteredNetworkPastaCapabilityProbeBoundsExecutionAndOutput(t *testing.T) {
 	oldCommand := filteredNetworkPastaCommand
 	oldTimeout := filteredNetworkPastaProbeTimeout

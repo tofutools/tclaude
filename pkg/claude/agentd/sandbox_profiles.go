@@ -737,11 +737,13 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 	for _, profile := range out {
 		if profile.Network != nil && profile.Network.PreserveCallerIdentity {
 			formatVersion = 16
-			break
+			continue
 		}
 		if profile.HarnessConfig != "" {
-			formatVersion = 15
-			break
+			if formatVersion < 15 {
+				formatVersion = 15
+			}
+			continue
 		}
 		if profile.FilesystemRoot != "" {
 			if formatVersion < 14 {

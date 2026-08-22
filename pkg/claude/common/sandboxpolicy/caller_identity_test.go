@@ -33,3 +33,31 @@ func TestPreserveCallerIdentityIsExplicitAndComposesMonotonically(t *testing.T) 
 	assert.Equal(t, NetworkFiltered, plan.NetworkPosture)
 	assert.True(t, plan.PreserveCallerIdentity)
 }
+
+func TestPreserveCallerIdentitySurvivesDisclosedAllowListWidening(t *testing.T) {
+	effective := EffectiveProfile{
+		Network: &NetworkRules{
+			Mode:                   AccessModeList,
+			Allow:                  []NetworkAllowEntry{{Host: "unsupported.example"}},
+			Deny:                   []NetworkAllowEntry{{Host: "blocked.example"}},
+			PreserveCallerIdentity: true,
+		},
+		AccessNotices: []AccessNotice{{
+			Class:  AccessNoticeClassDegradation,
+			Axis:   "network",
+			Reason: "selector_unsupported",
+			Effect: AccessNoticeEffectNotEnforced,
+		}},
+	}
+
+	axes, err := PlannedEffectiveAccessAxes(effective)
+	require.NoError(t, err)
+	assert.Equal(t, AccessModeOpen, axes.Network.Mode)
+	assert.NotEmpty(t, axes.Network.Deny, "the retained deny keeps packet filtering active")
+	assert.True(t, axes.Network.PreserveCallerIdentity)
+
+	plan, err := RenderMountPlan(effective)
+	require.NoError(t, err)
+	assert.Equal(t, NetworkFiltered, plan.NetworkPosture)
+	assert.True(t, plan.PreserveCallerIdentity)
+}
