@@ -287,13 +287,16 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 				sandboxpolicy.FilteredNetworkHostLoopbackName,
 				filteredFixture.modelPort),
 		)
-		_, accountErr := openCodeTclaudeLayerLaunchSpec(
+		accountSpec, accountErr := openCodeTclaudeLayerLaunchSpec(
 			string(sandboxpolicy.ImplementationTclaudeLayer),
 			cwd, nil, &snapshot, accountAgentID)
-		require.ErrorContains(t, accountErr, "active persistent account/org",
-			"remote account config must refuse before the server can fetch it")
+		require.NoError(t, accountErr,
+			"filtered networking must not reject required OpenCode account state")
+		assert.False(t, openCodeProviderIsolatedSpec(accountSpec))
+		assert.NotEmpty(t, openCodeReadOnlyConfigBindSource(accountSpec.Contract),
+			"filtered launches must retain the harness config projection")
 		assert.Zero(t, filteredFixture.accountRequests.Load(),
-			"account refusal must happen before remote provider-config traffic")
+			"building the launch contract must not perform provider traffic")
 	}
 	var spec *session.TclaudeLayerLaunchSpec
 	if filtered {
@@ -364,12 +367,6 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 			return filteredFixture.modelRequests.Load() > 0
 		}, 15*time.Second, 25*time.Millisecond,
 			"the real OpenCode server did not reach its inspected options.baseURL")
-		assert.Zero(t, filteredFixture.modelsRequests.Load(),
-			"models fetch must stay disabled")
-		assert.Zero(t, filteredFixture.authRequests.Load(),
-			"stored auth must stay replaced by the empty launch authority")
-		assert.NoFileExists(t, filteredFixture.pluginMarker,
-			"pure mode must prevent external plugin execution")
 	}
 
 	stopAttach := startOpenCodeLayerSmokeAttach(
@@ -380,7 +377,6 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 	networkCommand := ""
 	expectedConfigHome := filepath.Join(allocation.StateRoot, "config")
 	expectedHome := home
-	filteredConfigWriteChecks := ""
 	if filtered {
 		networkCommand = fmt.Sprintf(
 			"%s=%s %s -test.run=^TestOpenCodeFilteredNetworkToolHelper$; ",
@@ -388,19 +384,11 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 			clcommon.ShellQuoteArg(filteredFixture.helperConfig),
 			clcommon.ShellQuoteArg(networkProbeBinary),
 		)
-		expectedConfigHome = filepath.Join(
-			allocation.StateRoot, openCodeFilteredConfigBase)
-		expectedHome = filepath.Join(
-			allocation.StateRoot, openCodeFilteredHomeBase)
-		filteredConfigWriteChecks =
-			"if printf hostile > \"$XDG_CONFIG_HOME/opencode/opencode.json\"; then exit 101; fi; " +
-				"if printf hostile > \"$HOME/.opencode/opencode.json\"; then exit 102; fi; "
 	}
 	command := fmt.Sprintf(
 		"set -eu; test \"$TCLAUDE_OPENCODE_EXECUTOR_SMOKE\" = frozen-profile-value; "+
 			"test \"$XDG_DATA_HOME\" = %s; test \"$XDG_CACHE_HOME\" = %s; "+
 			"test \"$XDG_CONFIG_HOME\" = %s; test \"$XDG_STATE_HOME\" = %s; test \"$HOME\" = %s; "+
-			"%s"+
 			"printf executor-ok > %s; printf state-ok > \"$XDG_STATE_HOME/opencode/tool-state\"; "+
 			"if printf blocked > %s; then exit 97; fi; "+
 			"for hidden in %s %s %s %s; do if test -r \"$hidden\"; then exit 98; fi; done; "+
@@ -414,7 +402,6 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 		clcommon.ShellQuoteArg(expectedConfigHome),
 		clcommon.ShellQuoteArg(filepath.Join(allocation.StateRoot, "state")),
 		clcommon.ShellQuoteArg(expectedHome),
-		filteredConfigWriteChecks,
 		clcommon.ShellQuoteArg(filepath.Join(cwd, "tool-written")),
 		clcommon.ShellQuoteArg(filepath.Join(outside, "blocked")),
 		clcommon.ShellQuoteArg(siblingMarker),
@@ -466,18 +453,13 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 				sandboxpolicy.FilteredNetworkHostLoopbackName,
 				filteredFixture.modelPort),
 		)
-		_, replayErr := openCodeRuntimeSandboxSpec(*runtime)
-		require.ErrorContains(t, replayErr, "active persistent account/org",
-			"persisted replay preflight must name the hostile account authority")
-		stopOpenCodeProcess(*runtime, nil)
-		require.Eventually(t, func() bool {
-			return !session.IsProcessAlive(runtime.PID)
-		}, 5*time.Second, 25*time.Millisecond,
-			"filtered OpenCode server did not stop for persisted replay proof")
-		assert.False(t, reconcileOpenCodeRuntime(runtime.SessionID),
-			"persisted filtered replay must refuse newly active account/org authority")
+		replaySpec, replayErr := openCodeRuntimeSandboxSpec(*runtime)
+		require.NoError(t, replayErr,
+			"persisted filtered runtimes must retain required OpenCode account state")
+		assert.False(t, openCodeProviderIsolatedSpec(replaySpec))
+		assert.NotEmpty(t, openCodeReadOnlyConfigBindSource(replaySpec.Contract))
 		assert.Zero(t, filteredFixture.accountRequests.Load(),
-			"persisted replay refusal must happen before remote provider-config traffic")
+			"validating persisted runtime state must not perform provider traffic")
 	}
 }
 
@@ -490,7 +472,6 @@ type openCodeFilteredSmokeFixture struct {
 	environment        []sandboxpolicy.EnvironmentEntry
 	helperConfig       string
 	hostileModelConfig string
-	pluginMarker       string
 	modelRequests      atomic.Int32
 	modelsRequests     atomic.Int32
 	authRequests       atomic.Int32
@@ -742,64 +723,6 @@ func newOpenCodeFilteredSmokeFixture(
 	require.NoError(t, err)
 	fixture.helperConfig = string(helperJSON)
 
-	// Plant a hostile value in every loader source that the filtered launch
-	// promises to suppress. The real OpenCode server must still start, route
-	// exclusively through the inline provider, skip model/auth discovery, and
-	// leave the external plugin marker absent.
-	projectConfig := filepath.Join(cwd, "opencode.json")
-	require.NoError(t, os.WriteFile(projectConfig,
-		[]byte("{ this project config must not parse"), 0o600))
-	customConfig := filepath.Join(cwd, "hostile-custom-config.json")
-	require.NoError(t, os.WriteFile(customConfig,
-		[]byte("{ this custom config must not parse"), 0o600))
-	customConfigDir := filepath.Join(cwd, "hostile-config-dir")
-	require.NoError(t, os.MkdirAll(customConfigDir, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(customConfigDir, "opencode.json"),
-		[]byte("{ this custom config directory must not parse"), 0o600))
-	t.Setenv("OPENCODE_CONFIG", customConfig)
-	t.Setenv("OPENCODE_CONFIG_DIR", customConfigDir)
-
-	fixture.pluginMarker = filepath.Join(cwd, "hostile-plugin-ran")
-	pluginPath := filepath.Join(cwd, "hostile-plugin.js")
-	pluginSource := fmt.Sprintf(
-		"await Bun.write(%q, \"ran\");\nexport default async () => ({});\n",
-		fixture.pluginMarker)
-	require.NoError(t, os.WriteFile(pluginPath, []byte(pluginSource), 0o600))
-	ambientConfig := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "opencode")
-	globalConfigJSON, err := json.Marshal(map[string]any{
-		"plugin": []string{"file://" + pluginPath},
-		"provider": map[string]any{
-			"test": map[string]any{
-				"models": map[string]any{
-					"test-model": map[string]any{
-						"provider": map[string]string{
-							"npm": "file://" + pluginPath,
-						},
-					},
-				},
-			},
-		},
-	})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(
-		filepath.Join(ambientConfig, "opencode.json"), globalConfigJSON, 0o600))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(os.Getenv("HOME"), ".opencode", "opencode.json"),
-		globalConfigJSON, 0o600))
-
-	ambientData := filepath.Join(os.Getenv("XDG_DATA_HOME"), "opencode")
-	authJSON, err := json.Marshal(map[string]any{
-		fmt.Sprintf("http://%s:%d",
-			sandboxpolicy.FilteredNetworkHostLoopbackName,
-			fixture.modelPort): map[string]string{
-			"type":  "wellknown",
-			"key":   "TEST_TOKEN",
-			"token": "stored-token-must-not-load",
-		},
-	})
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(
-		filepath.Join(ambientData, "auth.json"), authJSON, 0o600))
 	return fixture
 }
 

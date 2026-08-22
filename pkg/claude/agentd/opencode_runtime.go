@@ -625,7 +625,7 @@ func openCodeRuntimeSandboxSpec(
 	if spec.Version == session.TclaudeLayerLaunchSpecVersion ||
 		spec.Version == session.TclaudeLayerUnixRelaySpecVersion {
 		if err := validateOpenCodeV3LaunchContract(
-			spec.Contract, openCodeFilteredNetworkSpec(&spec)); err != nil {
+			spec.Contract, openCodeProviderIsolatedSpec(&spec)); err != nil {
 			return nil, err
 		}
 	}
@@ -1499,7 +1499,7 @@ func openCodeServerEnvironment(
 		return append([]string(nil), ambient...)
 	}
 	privateState := len(sandboxSpec.Contract.Environment) > 0
-	filtered := openCodeFilteredNetworkSpec(sandboxSpec)
+	filtered := openCodeProviderIsolatedSpec(sandboxSpec)
 	out := make([]string, 0, len(ambient)+len(sandboxSpec.Effective.Environment)+
 		len(sandboxSpec.Contract.Environment)+8)
 	for _, entry := range ambient {
@@ -1539,6 +1539,30 @@ func openCodeServerEnvironment(
 		)
 	}
 	return out
+}
+
+func openCodeProviderIsolatedSpec(
+	spec *session.TclaudeLayerLaunchSpec,
+) bool {
+	if spec == nil {
+		return false
+	}
+	// Provider isolation is a persisted contract shape, not a consequence of
+	// filtered networking. New sandboxes always retain the harness-required
+	// config/auth projection; recognize this shape only so older serialized
+	// provider-isolated specs remain replayable.
+	stateRoot := canonicalOpenCodeRuntimePath(spec.Contract.StateRoot)
+	if stateRoot == "" {
+		return false
+	}
+	want := canonicalOpenCodeRuntimePath(filepath.Join(
+		stateRoot, openCodeFilteredConfigBase))
+	for _, entry := range spec.Contract.Environment {
+		if entry.Name == "XDG_CONFIG_HOME" {
+			return canonicalOpenCodeRuntimePath(entry.Value) == want
+		}
+	}
+	return false
 }
 
 func openCodeFilteredNetworkSpec(
@@ -1683,7 +1707,7 @@ func validateOpenCodeV3LaunchContract(
 func validateOpenCodeFilteredProviderAuthority(
 	spec *session.TclaudeLayerLaunchSpec,
 ) error {
-	if !openCodeFilteredNetworkSpec(spec) {
+	if !openCodeProviderIsolatedSpec(spec) {
 		return nil
 	}
 	if err := validateOpenCodeFilteredProviderSources(
@@ -1800,7 +1824,7 @@ func openCodeTclaudeLayerLaunchSpec(
 			if axesErr != nil {
 				return nil, axesErr
 			}
-			providerFiltered := !sandboxpolicy.NetworkRulesArePrivateRoutedOpen(
+			privateRouted := sandboxpolicy.NetworkRulesArePrivateRoutedOpen(
 				axes.Network)
 			// The engine comes from the composed policy, through the same
 			// resolution the launch itself performs, so the preflight probes
@@ -1817,18 +1841,18 @@ func openCodeTclaudeLayerLaunchSpec(
 				return nil, filteredErr
 			}
 			if goruntime.GOOS == "darwin" {
-				if !providerFiltered {
+				if privateRouted {
 					return nil, fmt.Errorf("private routed networking requires Linux")
 				}
 				return buildOpenCodeTclaudeLayerLaunchSpec(
-					cwd, gitWriteDirs, snapshot, agentID, false, true,
+					cwd, gitWriteDirs, snapshot, agentID, false, false,
 					privateSessionIDs...)
 			}
 			if goruntime.GOOS != "linux" {
 				return nil, fmt.Errorf("OpenCode filtered networking requires Linux or macOS")
 			}
 			return buildOpenCodeTclaudeLayerLaunchSpec(
-				cwd, gitWriteDirs, snapshot, agentID, true, providerFiltered,
+				cwd, gitWriteDirs, snapshot, agentID, true, false,
 				privateSessionIDs...)
 		}
 		openCodeHarness, resolveErr := harness.Resolve(harness.OpenCodeName)

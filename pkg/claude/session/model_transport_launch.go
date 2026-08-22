@@ -143,9 +143,9 @@ type openCodeFilteredProvider struct {
 // model leaves inference access entirely to the authored network rules; there
 // is no provider choice for tclaude to resolve or validate in that case.
 //
-// The executing server separately forces the loader's own isolation
-// affordances, making an inline, frozen profile value the provider authority
-// instead of guessing a built-in or remotely mutable default.
+// This resolution is advisory preflight evidence, not the executing server's
+// provider authority. The server retains OpenCode's required config and auth
+// inputs; the packet filter governs whichever endpoint OpenCode actually uses.
 func resolveOpenCodeModelTransport(
 	h *harness.Harness,
 	context ModelTransportLaunchContext,

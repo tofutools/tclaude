@@ -139,11 +139,10 @@ type PredictedNetworkEntry struct {
 
 const PredictedNetworkDenyNotEnforcedDetail = "This deny rule is saved, but this launch target does not apply network deny entries; traffic matching this destination is not blocked by this rule. Choose Linux tclaude sandbox for enforced deny rules."
 
-// OpenCodeFilteredExplicitProviderCaveat explains the conditional provider
-// validation on OpenCode filtered launches. Selecting a model asks tclaude to
-// resolve and check its inference endpoint; omitting one deliberately leaves
-// inference access under the operator's authored network rules.
-const OpenCodeFilteredExplicitProviderCaveat = "When OpenCode selects an explicit provider/model launch model, tclaude also requires inline explicit-provider config and checks that provider endpoint against these rules. Without a launch model, only the authored network rules apply and inference access is user-managed."
+// OpenCodeFilteredExplicitProviderCaveat explains the best-effort provider
+// validation on OpenCode filtered launches. The packet filter remains the
+// authority when tclaude cannot resolve OpenCode's effective provider route.
+const OpenCodeFilteredExplicitProviderCaveat = "When OpenCode's selected provider route is inspectable, tclaude also checks that endpoint against these rules. An uninspectable route does not block launch; the authored network rules allow or block the actual request."
 
 const FilteredNetworkDNSDenyDefaultAllowCaveat = "tclaude blocks addresses observed for this denied name through the sandbox DNS broker. With Allow all, another address for the same service, or encrypted DNS that bypasses the broker, can remain reachable. A blocked shared address also affects other names until the DNS lease expires."
 

@@ -1036,9 +1036,9 @@ func TestValidateTclaudeLayerFilteredNetworkRequiresHonestModelResolution(t *tes
 		"route was resolved from an explicit-provider config")
 	assert.Contains(t, notices[0].Detail, "OPENCODE_CONFIG_CONTENT")
 	assert.Contains(t, notices[0].Detail, "without a provider override")
-	assert.Contains(t, notices[0].Detail, "read-only, provider-empty private XDG and HOME")
-	assert.Contains(t, notices[0].Detail, "before every initial exec or restart")
-	assert.Contains(t, notices[0].Detail, "persistent account/org authority")
+	assert.Contains(t, notices[0].Detail,
+		"retains OpenCode's required config, install, auth, and runtime-state projections")
+	assert.Contains(t, notices[0].Detail, "packet boundary remains authoritative")
 	assert.Contains(t, notices[0].Detail, "soft tool policy")
 	assert.Contains(t, notices[0].Detail, "packet-enforced floor")
 }
