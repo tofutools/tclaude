@@ -293,7 +293,11 @@ func writeAgentDebugExport(w http.ResponseWriter, convID string, attachment bool
 	if attachment {
 		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tclaude-agent-debug-%s.json"`, short8(payload.Agent.AgentID)))
 	}
-	writeJSON(w, http.StatusOK, payload)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	encoder := json.NewEncoder(w)
+	encoder.SetIndent("", "  ")
+	_ = encoder.Encode(payload)
 }
 
 func handleWhoamiDebugExport(w http.ResponseWriter, r *http.Request) {

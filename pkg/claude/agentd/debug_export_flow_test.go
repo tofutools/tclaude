@@ -102,6 +102,7 @@ func TestDashboardDebugExportCarriesExactRecordedConfiguration(t *testing.T) {
 	agentd.BuildDashboardHandlerForTest().ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Contains(t, rec.Header().Get("Content-Disposition"), "attachment")
+	assert.Contains(t, rec.Body.String(), "\n  \"format\": \"tclaude-agent-debug\",")
 
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
