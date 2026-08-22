@@ -811,6 +811,21 @@ func TestRandomOpenCodePassword(t *testing.T) {
 	assert.NotEqual(t, first, second)
 }
 
+func TestExposeOpenCodeExecutableIsIdempotent(t *testing.T) {
+	executable := filepath.Join(t.TempDir(), "opencode")
+	require.NoError(t, os.WriteFile(executable, []byte("fixture"), 0o700))
+	spec := session.TclaudeLayerLaunchSpec{}
+
+	first, err := exposeOpenCodeExecutable(&spec, executable)
+	require.NoError(t, err)
+	second, err := exposeOpenCodeExecutable(&spec, executable)
+	require.NoError(t, err)
+	assert.Equal(t, first, second)
+	require.Len(t, spec.Contract.ReadOnlyBinds, 1)
+	assert.Equal(t, first, spec.Contract.ReadOnlyBinds[0].Source)
+	assert.Equal(t, first, spec.Contract.ReadOnlyBinds[0].Target)
+}
+
 func TestOpenCodeRuntimeSandboxSpecRoundTripsAndRevalidates(t *testing.T) {
 	setupTestDB(t)
 	home, err := filepath.EvalSymlinks(os.Getenv("HOME"))

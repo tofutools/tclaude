@@ -77,6 +77,12 @@ func TestSetAgentInitialSpawnConfig_RoundTrip(t *testing.T) {
 	require.NoError(t, d.QueryRow(
 		`SELECT initial_spawn_config FROM agents WHERE agent_id = ?`, agentID).Scan(&got))
 	assert.Equal(t, cfg, got, "stored verbatim")
+	loaded, err := AgentInitialSpawnConfigForConv("conv-cfg")
+	require.NoError(t, err)
+	assert.Equal(t, cfg, loaded, "public read path preserves the original request")
+	missing, err := AgentInitialSpawnConfigForConv("conv-missing")
+	require.NoError(t, err)
+	assert.Empty(t, missing)
 
 	// Unknown agent is a no-op, not an error.
 	require.NoError(t, SetAgentInitialSpawnConfig("agt_nope", cfg))

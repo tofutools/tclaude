@@ -42,6 +42,11 @@ type stackedSandboxBindingManifest struct {
 	ManagedPolicy             []stackedSandboxBindingFile `json:"managed_policy,omitempty"`
 }
 
+type StackedSandboxRuntimeBinding struct {
+	HostPath    string
+	SandboxPath string
+}
+
 // StackedSandboxProof is the launch-owned authority carried from the exact
 // behavioral probe into the final outer relay. The relay reopens and re-hashes
 // every staged file into sealed memfds, then passes those immutable
@@ -57,6 +62,8 @@ type StackedSandboxProof struct {
 	// into the outer sandbox. Unlike Executable.Path (the in-sandbox target), it
 	// is directly executable by the parent for exact-version proof.
 	VersionProbePath string
+	RuntimeRoot      string
+	RuntimeBindings  []StackedSandboxRuntimeBinding
 	ManifestPath     string
 	ManifestSHA256   string
 	ReadyPath        string
@@ -283,6 +290,14 @@ func prepareStackedSandboxProof(
 	proof.Executable = executable
 	proof.VersionProbePath = manifest.Engine.StagePath
 	proof.Executable.Path = manifest.Engine.Destination
+	if len(manifest.RuntimeFiles) > 0 {
+		proof.RuntimeRoot = stackedBoundCodexRuntimeRoot
+		for _, file := range manifest.RuntimeFiles {
+			proof.RuntimeBindings = append(proof.RuntimeBindings, StackedSandboxRuntimeBinding{
+				HostPath: file.StagePath, SandboxPath: file.Destination,
+			})
+		}
+	}
 	proof.ManifestPath = manifestPath
 	proof.ManifestSHA256 = stackedBindingDigest(encoded)
 	proof.ReadyPath = readyPath

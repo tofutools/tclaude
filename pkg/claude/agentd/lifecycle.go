@@ -3403,19 +3403,6 @@ func normalizeSpawnPermissionOverrides(in map[string]db.PermissionOverride) (map
 // Permission: groups.members.spawn (default human-only — this lets an agent
 // run arbitrary CC instances on the human's machine, blast radius
 // matches `agent.spawn` in the design doc).
-// marshalSpawnConfig serialises a spawn request to the verbatim JSON stored on
-// agents.initial_spawn_config. It marshals the already-validated, already-decoded
-// request, so an error is not expected; on the off chance one occurs it returns
-// "" (the spawn proceeds without the audit snapshot rather than failing).
-func marshalSpawnConfig(req agent.SpawnRequest) string {
-	b, err := json.Marshal(req)
-	if err != nil {
-		slog.Warn("spawn: failed to marshal spawn config for audit", "error", err)
-		return ""
-	}
-	return string(b)
-}
-
 // spawnAuditResolution is the complete, user-facing shape that reached the
 // shared spawn core. It deliberately excludes write-proof tokens and other
 // daemon-only capabilities, while retaining every launch/enrollment choice,
@@ -3530,7 +3517,8 @@ func spawnAuditResolution(p spawnParams, launch *agent.ResolvedLaunch, requested
 	}
 }
 
-// decodeSpawnBody decodes the spawn request and puts the raw bytes BACK on
+// decodeSpawnBody decodes the spawn request, returns its original JSON, and
+// puts the raw bytes BACK on
 // r.Body, so a later ask-human popup still previews the request the agent
 // actually sent (snapshotRequestBody has the same restore contract, for the
 // same reason). Decoding has to happen before the permission gate — the gate
@@ -3548,9 +3536,9 @@ func spawnAuditResolution(p spawnParams, launch *agent.ResolvedLaunch, requested
 // overrides, and leaving the spawn_profile gate to judge a profile the request
 // never got to state. Only ContentLength == 0 is a declared empty body, and
 // even that falls through to the same trimmed-length test.
-func decodeSpawnBody(w http.ResponseWriter, r *http.Request, body *agent.SpawnRequest) bool {
+func decodeSpawnBody(w http.ResponseWriter, r *http.Request, body *agent.SpawnRequest) (string, bool) {
 	if r.Body == nil {
-		return true
+		return `{}`, true
 	}
 	// The popup's restore bound is the sibling limit and the natural ceiling: a
 	// body this path cannot buffer is one snapshotRequestBody could not preview
@@ -3559,17 +3547,17 @@ func decodeSpawnBody(w http.ResponseWriter, r *http.Request, body *agent.SpawnRe
 	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxApprovalRestoreBody))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
-		return false
+		return "", false
 	}
 	r.Body = io.NopCloser(bytes.NewReader(raw))
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return true
+		return `{}`, true
 	}
 	if err := json.Unmarshal(raw, body); err != nil {
 		writeError(w, http.StatusBadRequest, "json", err.Error())
-		return false
+		return "", false
 	}
-	return true
+	return string(raw), true
 }
 
 // resolvedSpawnProfileNameForScope answers "which named spawn profile will
@@ -3621,9 +3609,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// this spawn will actually launch with. decodeSpawnBody restores r.Body so
 	// the ask-human popup still previews the full request.
 	var body agent.SpawnRequest
-	if !decodeSpawnBody(w, r, &body) {
+	requestedSpawnConfigJSON, decoded := decodeSpawnBody(w, r, &body)
+	if !decoded {
 		return
 	}
+	// Preserve the caller's decoded wire parameters before profile/default
+	// resolution, generated-name assignment, normalization, or permission
+	// attenuation mutates body below. Resolved and running launch state have
+	// their own durable records; this is the requested side of the comparison.
 	// The spawn_profile the gate judges is the RESOLVED one — request profile,
 	// else the group default, else the global default — never the raw request
 	// field. "" (no profile resolves, or a named one that does not exist)
@@ -4347,9 +4340,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		identityNotes = append(identityNotes, fmt.Sprintf(
 			"%s %s (%d)", overridesSource, permissionOverridesField, len(permOverrides)))
 	}
-	// Fold both back onto the body so the durable "what was this agent spawned
-	// with" record (marshalSpawnConfig below) states what the launch actually
-	// used, the way it already does for every resolved launch field.
+	// Fold both back onto the working body for subsequent resolution. The
+	// original request was captured before this mutation; resolved launch state
+	// is persisted separately.
 	body.IsOwner, body.PermissionOverrides = isOwner, permOverrides
 	// Startup-context trims ride the tier stack whole rather than merging — see
 	// resolveContextFeaturesLaunchField. Unset everywhere means "trim nothing",
@@ -4925,12 +4918,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		IsOwner:                     isOwner,
 		PermissionOverrides:         permOverrides,
 		Timeout:                     timeout,
-		// Verbatim snapshot of the spawn request, recorded onto the new actor's
-		// agents.initial_spawn_config in enrollSpawnedConv (a durable, agent-level
-		// "what was this spawned with" record). Marshalling the already-decoded
-		// body cannot fail in practice; on the off chance it does, leave it empty
-		// rather than fail a spawn over an audit field.
-		SpawnConfigJSON: marshalSpawnConfig(body),
+		// Verbatim decoded request captured at the HTTP boundary, before the
+		// working body was resolved or normalized. enrollSpawnedConv persists it
+		// as the durable "what did the caller request" record.
+		SpawnConfigJSON: requestedSpawnConfigJSON,
 		// The HTTP spawn endpoint (dashboard + `tclaude agent spawn`) is
 		// non-blocking: a spawn whose conv-id does not materialise within the
 		// inline grace becomes a PENDING agent rather than hanging the request

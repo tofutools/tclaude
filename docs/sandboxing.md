@@ -505,6 +505,54 @@ tclaude agent sandbox-profiles plan --group <g> --sandbox-profile <name>
 tclaude agent sandbox-profiles plan --agent <selector>
 ```
 
+## Exporting an agent's debug configuration
+
+When a sandbox behaves differently from the operator's shell, export the
+configuration recorded for that specific agent instead of trying to recreate
+its launch from current defaults:
+
+```bash
+tclaude agent debug-export <agent> --file agent-debug.json
+```
+
+An agent can omit `<agent>` to export its own configuration. Exporting another
+agent requires `agent.debug-export`, the group-scoped
+`groups.members.debug-export`, or ownership covering the target's active
+groups. The Groups dashboard exposes the same download as **export debug info**
+in each agent's cog menu, including for offline agents.
+
+The versioned JSON deliberately separates three configurations:
+
+- `requested` — the original spawn parameters, including which values were
+  omitted;
+- `resolved` — durable resume/relaunch values and the exact composed sandbox
+  snapshot, including applied-profile provenance, filesystem grants,
+  environment values, harness-config posture, network/socket rules, resource
+  limits, and pre-launch blocks;
+- `running` — the latest recorded launch's harness mode, sandbox
+  implementation, model/effort, status/error detail, OS-sandbox verdict,
+  approval posture, effective policy, and a versioned execution-boundary
+  record. The boundary includes the resolved harness executable/runtime roots,
+  the host `tclaude` source and its sandbox mount target, automatic static-root
+  and daemon-final mounts, the materialized outer-layer render input, PATH
+  construction and pre-launch mutation caveats, and host-to-sandbox UID/GID
+  mapping.
+
+The export records agentd's current UID/GID/groups separately from the launch
+boundary's host and sandbox identities. On Linux it also reads the recorded
+live harness process through `/proc` and reports its host-visible real,
+effective, saved, and filesystem UID/GID values, supplementary groups, and
+the kernel's live `uid_map`/`gid_map`, actual executable path, and current
+`PATH`. A stopped process, an unreadable `/proc` entry, or a
+platform without that observation is reported explicitly as unavailable or
+unsupported; the export never substitutes agentd's environment for the
+agent's.
+
+The export also records the tclaude version and host platform. Environment
+values and local paths are intentionally included because they are often the
+cause of sandbox failures, so treat the file as sensitive. Initial task text
+and one-time authorization tokens are redacted.
+
 Renames go through `edit` (change the JSON `name`; stable-ID assignments
 follow). `import` is transactional, with assignment application opt-in.
 `draft --token --file` is the scribe seam: a dashboard-summoned drafting agent

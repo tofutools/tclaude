@@ -15,6 +15,7 @@ func TestOpenCodeRuntimeLookupByConversation(t *testing.T) {
 		Cwd: "/tmp/project", PID: 42,
 		SandboxImplementation: "tclaude-layer",
 		SandboxLaunchSpecJSON: `{"version":1}`,
+		ExecutionBoundaryJSON: `{"version":1,"path":{"host":"/original"}}`,
 		PermissionJSON:        `[{"permission":"*","pattern":"*","action":"deny"}]`,
 	}))
 
@@ -25,6 +26,7 @@ func TestOpenCodeRuntimeLookupByConversation(t *testing.T) {
 	assert.Equal(t, "private", runtime.Password)
 	assert.Equal(t, "tclaude-layer", runtime.SandboxImplementation)
 	assert.Equal(t, `{"version":1}`, runtime.SandboxLaunchSpecJSON)
+	assert.JSONEq(t, `{"version":1,"path":{"host":"/original"}}`, runtime.ExecutionBoundaryJSON)
 	assert.Equal(t, `[{"permission":"*","pattern":"*","action":"deny"}]`, runtime.PermissionJSON)
 
 	missing, err := GetOpenCodeRuntimeByConvID("ses_missing")

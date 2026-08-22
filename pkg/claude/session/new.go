@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -2241,6 +2242,58 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)
 		}
 	}
+	boundaryInput := ExecutionBoundaryInput{
+		LaunchGeneration:      exitGeneration,
+		SandboxImplementation: string(sandboxImplementation),
+		HarnessName:           h.Name,
+		HarnessLookupName:     h.Spawn.Binary(),
+		HarnessExecutable:     spawnSpec.ExecutablePath,
+		HarnessRuntimeRoots:   harnessReadPaths,
+		Cwd:                   cwd,
+		Environment:           additionalEnv,
+	}
+	if stackedProof != nil {
+		// The nested engine's launch path is guest-only. Resolve the staged,
+		// verified source in the host namespace and record its distinct final
+		// destination without ever trying to stat the destination on the host.
+		boundaryInput.HarnessExecutable = stackedProof.VersionProbePath
+		boundaryInput.HarnessExecutableResolved = true
+		boundaryInput.HarnessSandboxPath = stackedProof.Executable.Path
+		if stackedProof.RuntimeRoot != "" {
+			boundaryInput.HarnessRuntimeRoots = []string{stackedProof.RuntimeRoot}
+			boundaryInput.HarnessRuntimeBindings = append(
+				[]StackedSandboxRuntimeBinding(nil), stackedProof.RuntimeBindings...)
+		}
+	}
+	if effectiveSandbox != nil {
+		boundaryInput.PreLaunch = effectiveSandbox.Effective.PreLaunch
+	}
+	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
+		boundaryInput.LauncherBinary = bwrapBinary
+		boundaryInput.LauncherBinaryResolved = true
+		boundaryInput.LayerSpec = &layerSpec
+	}
+	var executionBoundaryJSON []byte
+	// OpenCode's authoritative tool-executing boundary belongs to its managed
+	// server, not this attach-only pane. agentd records that server boundary
+	// after both server and pane are live.
+	if h.Name != harness.OpenCodeName {
+		executionBoundary, boundaryErr := BuildExecutionBoundary(boundaryInput)
+		if boundaryErr != nil {
+			// Debug evidence must never become a launch prerequisite. A missing
+			// executable or other observation race is represented by the absent
+			// record and logged for the operator.
+			slog.Warn("could not record launch execution boundary",
+				"session_id", sessionID, "error", boundaryErr)
+		} else {
+			executionBoundaryJSON, err = json.Marshal(executionBoundary)
+			if err != nil {
+				slog.Warn("could not encode launch execution boundary",
+					"session_id", sessionID, "error", err)
+				executionBoundaryJSON = nil
+			}
+		}
+	}
 	resourceCgroupCleanup := func() {}
 	resourceCgroupOwnedByPane := false
 	defer func() {
@@ -2546,6 +2599,15 @@ func runNew(params *NewParams) error {
 		ordinaryNativeActivated = true
 	}
 	launchProfileOwnedByPane = launchProfilePath != ""
+	if len(executionBoundaryJSON) > 0 {
+		// Publish only at the same successful launch-commit boundary as the row.
+		// Until here a relaunch retains its predecessor's last-known-good record;
+		// any persistence failure tears down this pane and leaves that record intact.
+		if err := db.SetSessionExecutionBoundary(sessionID, string(executionBoundaryJSON)); err != nil {
+			slog.Warn("could not persist launch execution boundary",
+				"session_id", sessionID, "error", err)
+		}
+	}
 
 	// The pane is up and bound; from here the row belongs to the live session
 	// (an attach failure below must not delete it).
