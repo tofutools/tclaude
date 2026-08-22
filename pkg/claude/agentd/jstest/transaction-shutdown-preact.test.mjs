@@ -56,6 +56,8 @@ test('shutdown renderer preserves distinct actions, initial focus, and exact foc
   assert.equal(host.querySelector('#shutdown-meta').textContent, 'Stable target');
   assert.match(host.querySelector('#shutdown-modal').textContent,
     /Soft exit injects \/exit into tmux pane/);
+  assert.match(host.querySelector('#shutdown-modal p .theme-copy-wizard').textContent,
+    /Force slumber immediately kills the tmux session/);
   assert.equal(host.querySelector('#shutdown-soft .theme-copy-regular').textContent, 'Soft exit');
   assert.equal(host.querySelector('#shutdown-soft .theme-copy-wizard').textContent, '🌙 Slumber');
   assert.equal(host.querySelector('#shutdown-force .theme-copy-regular').textContent, 'Force kill');

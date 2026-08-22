@@ -1681,7 +1681,7 @@ function ShutdownAgentDialog({ descriptor, actions, confirmDiscard }) {
     >
       <p><${Words}
         plain="Soft exit injects /exit into tmux pane. Conv jsonl is preserved; in-flight tool calls are interrupted."
-        wizard="Gentle slumber whispers /exit into the familiar's tmux pane. Its conversation scroll is preserved; in-flight invocations are interrupted."
+        wizard="Gentle slumber whispers /exit into the familiar's tmux pane. Its conversation scroll is preserved; in-flight invocations are interrupted. Force slumber immediately kills the tmux session and should be used only if gentle slumber is stuck."
       /></p>
     </${TransactionDialogFrame}>
   `;
