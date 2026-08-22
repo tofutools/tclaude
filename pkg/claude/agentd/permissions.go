@@ -185,6 +185,10 @@ var permissionRegistry = []PermSlug{
 		Description: "Read ANOTHER agent's context-window state globally (tclaude agent context-info --target / --group). Group-scoped authority uses groups.members.context-info.",
 	},
 	{
+		Slug: PermAgentDebugExport, GroupSibling: PermGroupsMembersDebugExport,
+		Description: "Export ANOTHER agent's recorded launch and sandbox configuration globally (tclaude agent debug-export <target>). Group-scoped authority uses groups.members.debug-export.",
+	},
+	{
 		Slug: PermAgentTask, GroupSibling: PermGroupsMembersTask,
 		Description: "Set/clear ANOTHER agent's task-reference link globally (tclaude agent task set/clear --target). Group-scoped authority uses groups.members.task.",
 	},
@@ -219,6 +223,10 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug: PermGroupsMembersContextInfo, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},
 		Description: "Read another member's context-window state when its current active groups are covered.",
+	},
+	{
+		Slug: PermGroupsMembersDebugExport, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},
+		Description: "Export another member's recorded launch and sandbox configuration when its current active groups are covered.",
 	},
 	{
 		Slug: PermGroupsMembersTask, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},

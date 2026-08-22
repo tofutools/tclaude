@@ -50,15 +50,16 @@ const (
 )
 
 type openCodeLaunch struct {
-	SessionID           string
-	ConvID              string
-	ServerURL           string
-	Password            string
-	PID                 int
-	Transport           string
-	ControlSocketPath   string
-	ControlSocketDevice int64
-	ControlSocketInode  int64
+	SessionID             string
+	ConvID                string
+	ServerURL             string
+	Password              string
+	PID                   int
+	Transport             string
+	ControlSocketPath     string
+	ControlSocketDevice   int64
+	ControlSocketInode    int64
+	ExecutionBoundaryJSON string
 }
 
 type openCodeUnixLaunchHandshake struct {
@@ -180,11 +181,30 @@ func startOpenCodeRuntime(
 	if err != nil {
 		return nil, err
 	}
+	// Freeze the executable bind before serializing the renderer input. The
+	// managed server, rather than its attach-only pane, is OpenCode's actual
+	// tool-executing boundary.
+	if sandboxSpec != nil {
+		executable, executableErr := harness.OpenCodeExecutable()
+		if executableErr != nil {
+			return nil, fmt.Errorf("find OpenCode executable: %w", executableErr)
+		}
+		if _, executableErr = exposeOpenCodeExecutable(sandboxSpec, executable); executableErr != nil {
+			return nil, executableErr
+		}
+	}
 	sandboxSpecJSON := ""
 	sandboxImplementation, sandboxSpecJSON, err = openCodeSandboxRecord(
 		sandboxImplementation, sandboxSpec)
 	if err != nil {
 		return nil, err
+	}
+	executionBoundaryJSON, err := buildOpenCodeExecutionBoundary(
+		sandboxImplementation, sandboxSpec, cwd)
+	if err != nil {
+		slog.Warn("could not record OpenCode server execution boundary",
+			"session_id", sessionID, "error", err)
+		executionBoundaryJSON = ""
 	}
 	transport, controlPath, err := openCodeRuntimeTransportForSpec(sandboxSpec)
 	if err != nil {
@@ -234,7 +254,9 @@ func startOpenCodeRuntime(
 				return nil, fmt.Errorf("verify OpenCode session permission: %w", err)
 			}
 			ensureOpenCodeSSE(*existing)
-			return openCodeLaunchFromRuntime(*existing), nil
+			launch := openCodeLaunchFromRuntime(*existing)
+			launch.ExecutionBoundaryJSON = executionBoundaryJSON
+			return launch, nil
 		}
 		if !openCodeRuntimeSafeToReplace(*existing) {
 			return nil, fmt.Errorf(
@@ -320,7 +342,9 @@ func startOpenCodeRuntime(
 		}
 		ensureOpenCodeSSE(runtime)
 		keepReusedResourceCgroup = true
-		return openCodeLaunchFromRuntime(runtime), nil
+		launch := openCodeLaunchFromRuntime(runtime)
+		launch.ExecutionBoundaryJSON = executionBoundaryJSON
+		return launch, nil
 	}
 	return nil, fmt.Errorf("start OpenCode server after 3 port attempts: %w", lastErr)
 }
@@ -358,6 +382,61 @@ func openCodeLaunchFromRuntime(runtime db.OpenCodeRuntime) *openCodeLaunch {
 		ControlSocketDevice: runtime.ControlSocketDevice,
 		ControlSocketInode:  runtime.ControlSocketInode,
 	}
+}
+
+func buildOpenCodeExecutionBoundary(
+	implementation string,
+	spec *session.TclaudeLayerLaunchSpec,
+	cwd string,
+) (string, error) {
+	executable, err := harness.OpenCodeExecutable()
+	if err != nil {
+		return "", err
+	}
+	launcher := ""
+	if spec != nil {
+		posture, postureErr := session.TclaudeLayerNetworkPosture(spec.Effective)
+		if postureErr != nil {
+			return "", postureErr
+		}
+		root, rootErr := session.TclaudeLayerRootPosture(posture, spec.Effective)
+		if rootErr != nil {
+			return "", rootErr
+		}
+		engine, engineErr := session.TclaudeLayerNetworkEngine(spec.Effective)
+		if engineErr != nil {
+			return "", engineErr
+		}
+		launcher, _, err = resolveOpenCodeTclaudeLayer(posture, root, engine)
+		if err != nil {
+			return "", err
+		}
+	}
+	environment := map[string]string{}
+	for _, entry := range openCodeServerEnvironment(os.Environ(), spec) {
+		name, value, found := strings.Cut(entry, "=")
+		if found && name == "PATH" {
+			environment[name] = value
+		}
+	}
+	boundary, err := session.BuildExecutionBoundary(session.ExecutionBoundaryInput{
+		SandboxImplementation: implementation,
+		HarnessName:           harness.OpenCodeName,
+		HarnessLookupName:     harness.OpenCodeName,
+		HarnessExecutable:     executable,
+		LauncherBinary:        launcher,
+		Cwd:                   cwd,
+		Environment:           environment,
+		LayerSpec:             spec,
+	})
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(boundary)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 func openCodeSandboxRecord(
@@ -848,6 +927,11 @@ func exposeOpenCodeExecutable(spec *session.TclaudeLayerLaunchSpec, executable s
 	// broad deny hides its installation directory. OpenCode's mutable XDG
 	// roots remain the separate daemon-owned writable state contract.
 	bind := session.TclaudeLayerReadOnlyBind{Source: resolved, Target: resolved}
+	for _, existing := range spec.Contract.ReadOnlyBinds {
+		if existing == bind {
+			return resolved, nil
+		}
+	}
 	spec.Contract.ReadOnlyBinds = append(
 		[]session.TclaudeLayerReadOnlyBind{bind}, spec.Contract.ReadOnlyBinds...)
 	return resolved, nil

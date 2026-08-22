@@ -276,6 +276,7 @@ func handleDashboardHideAPI(w http.ResponseWriter, r *http.Request) {
 //	POST   /api/agents/{conv}/reincarnate  → spawn successor + soft-exit original
 //	POST   /api/agents/{conv}/task         → set/clear task-reference link
 //	GET    /api/agents/{conv}/status       → compact standalone-terminal status
+//	GET    /api/agents/{conv}/debug-export → download recorded launch configuration
 //
 // Behaviour:
 //   - Runs conv.DeleteAgentAllGenerations (unlinks .jsonl, drops conv_index
@@ -316,6 +317,18 @@ func handleDashboardAgentsAPI(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			writeDashboardTerminalAgentStatus(w, convSelector)
+			return
+		case "debug-export":
+			if r.Method != http.MethodGet {
+				http.Error(w, "GET only", http.StatusMethodNotAllowed)
+				return
+			}
+			res, _, err := agent.ResolveSelector(convSelector)
+			if err != nil {
+				http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
+				return
+			}
+			writeAgentDebugExport(w, res.ConvID, true)
 			return
 		case "stop":
 			if r.Method != http.MethodPost {

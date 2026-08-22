@@ -103,6 +103,8 @@ func handleAgentByConv(w http.ResponseWriter, r *http.Request) {
 		handleAgentDir(w, r, convID)
 	case "context":
 		handleAgentContext(w, r, convID)
+	case "debug-export":
+		handleAgentDebugExport(w, r, convID)
 	case "codex-app-server":
 		handleAgentCodexAppServerStatus(w, r, convID)
 	case "task":

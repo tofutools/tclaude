@@ -1462,3 +1462,8 @@ CREATE TABLE trigger_dwell_states (
 
 CREATE INDEX idx_trigger_dwell_states_due ON trigger_dwell_states(result, true_since, fired_at);
 
+CREATE TABLE session_execution_boundaries (
+		session_id    TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+		boundary_json TEXT NOT NULL
+	) STRICT;
+

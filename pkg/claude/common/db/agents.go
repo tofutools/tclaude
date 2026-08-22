@@ -538,11 +538,11 @@ func ReplaceAgentPendingName(agentID, expected, name string) (bool, error) {
 
 // SetAgentInitialSpawnConfig records the verbatim JSON snapshot of the spawn
 // request an actor was born from onto agents.initial_spawn_config — the durable,
-// agent-level "what was this spawned with" record. A plain UPDATE — a no-op when
+// agent-level "what did the caller request" record. A plain UPDATE — a no-op when
 // the agent is unknown. Written once at spawn enrollment; later lifecycle ops
 // (rename, reincarnate, /clear) never touch it, so it stays the birth record.
-// The column is write-only by design: tclaude stores it verbatim and never reads
-// it back (resume reads live state), so there is no matching getter.
+// Lifecycle resume does not read this record; debug export uses it only for the
+// requested-versus-resolved comparison.
 func SetAgentInitialSpawnConfig(agentID, cfg string) error {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {
@@ -555,6 +555,27 @@ func SetAgentInitialSpawnConfig(agentID, cfg string) error {
 	_, err = d.Exec(`UPDATE agents SET initial_spawn_config = ? WHERE agent_id = ?`,
 		cfg, agentID)
 	return err
+}
+
+// AgentInitialSpawnConfigForConv loads the verbatim request recorded when the
+// stable actor was first spawned. Empty means the actor predates the snapshot
+// or entered agent management through a path with no SpawnRequest (promotion,
+// legacy backfill, or a sweeper enrollment).
+func AgentInitialSpawnConfigForConv(convID string) (string, error) {
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var raw string
+	err = d.QueryRow(`
+		SELECT a.initial_spawn_config
+		FROM agent_conversations ac
+		JOIN agents a ON a.agent_id = ac.agent_id
+		WHERE ac.conv_id = ?`, strings.TrimSpace(convID)).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return raw, err
 }
 
 // SetAgentEffectiveSandboxConfig records the immutable values authorized for

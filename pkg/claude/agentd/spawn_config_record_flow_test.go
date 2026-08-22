@@ -3,7 +3,6 @@ package agentd_test
 import (
 	"encoding/json"
 	"net/http"
-	"regexp"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -14,10 +13,8 @@ import (
 
 // Scenario: spawning an agent records the verbatim spawn request onto the new
 // actor's agents.initial_spawn_config — the durable, agent-level "what was this
-// spawned with" record (JOH-334). It is write-only by design: tclaude never
-// reads it back (resume reads live state), so this test reads the column
-// directly to assert the write fired, including the [1m] window selection that
-// motivated it.
+// caller requested" record (JOH-334). Resume does not use it; diagnostics read
+// it back only to contrast it with resolved and running launch state.
 func TestSpawn_RecordsInitialSpawnConfigVerbatim(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
@@ -57,7 +54,7 @@ func TestSpawn_RecordsInitialSpawnConfigVerbatim(t *testing.T) {
 	assert.Equal(t, "builder", req.Role)
 }
 
-func TestSpawn_RecordsDerivedNameInInitialSpawnConfig(t *testing.T) {
+func TestSpawn_RecordsOmittedNameInInitialSpawnConfig(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("review-team")
 
@@ -73,6 +70,35 @@ func TestSpawn_RecordsDerivedNameInInitialSpawnConfig(t *testing.T) {
 		`SELECT initial_spawn_config FROM agents WHERE agent_id = ?`, agentID).Scan(&cfg))
 	var req agent.SpawnRequest
 	require.NoError(t, json.Unmarshal([]byte(cfg), &req))
-	assert.Regexp(t, regexp.MustCompile(`^review-team-[0-9]{8}-[0-9]{4}-[A-Za-z0-9_-]{4}$`), req.Name,
-		"durable spawn config records the effective derived name")
+	assert.Empty(t, req.Name,
+		"requested config preserves the omitted field; resolved state owns the generated name")
+}
+
+func TestSpawn_RequestedConfigDoesNotFoldInProfileDefaults(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("profile-debug")
+	_, err := db.CreateSpawnProfile(&db.SpawnProfile{
+		Name: "profile-debug-defaults", Harness: "claude", Model: "sonnet", Effort: "high",
+	})
+	require.NoError(t, err)
+
+	spawn := f.AsHuman().SpawnWith("profile-debug", map[string]any{
+		"profile": "profile-debug-defaults",
+		"cwd":     t.TempDir(),
+	})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	agentID, err := db.AgentIDForConv(spawn.ConvID)
+	require.NoError(t, err)
+
+	d, err := db.Open()
+	require.NoError(t, err)
+	var raw string
+	require.NoError(t, d.QueryRow(
+		`SELECT initial_spawn_config FROM agents WHERE agent_id = ?`, agentID).Scan(&raw))
+	var req agent.SpawnRequest
+	require.NoError(t, json.Unmarshal([]byte(raw), &req))
+	assert.Equal(t, "profile-debug-defaults", req.Profile)
+	assert.Empty(t, req.Harness, "profile-supplied harness was not requested explicitly")
+	assert.Empty(t, req.Model, "profile-supplied model was not requested explicitly")
+	assert.Empty(t, req.Effort, "profile-supplied effort was not requested explicitly")
 }
