@@ -43,18 +43,25 @@ func TestRenderedHarnessLaunchKeepsProjectedTclaudeAfterBashLoginPathReset(t *te
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	projectedBin := filepath.Join(root, "projected-bin")
+	profileBin := filepath.Join(root, "profile-bin")
 	require.NoError(t, os.MkdirAll(home, 0o700))
 	require.NoError(t, os.MkdirAll(projectedBin, 0o700))
+	require.NoError(t, os.MkdirAll(profileBin, 0o700))
 	// Representative login-profile behavior: discard the inherited PATH.
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".bash_profile"),
-		[]byte("export PATH=/usr/bin:/bin\n"), 0o600))
+		[]byte("export PATH="+profileBin+":/usr/bin:/bin\n"), 0o600))
 	projectedCLI := filepath.Join(projectedBin, "tclaude")
 	require.NoError(t, os.WriteFile(projectedCLI,
 		[]byte("#!/bin/sh\nexit 0\n"), 0o700))
 
-	operatorBashEnv := filepath.Join(root, "operator-bash-env")
-	require.NoError(t, os.WriteFile(operatorBashEnv,
+	operatorBashEnv := "operator-bash-env"
+	require.NoError(t, os.WriteFile(filepath.Join(root, operatorBashEnv),
 		[]byte("export TCL_OPERATOR_BASH_ENV=sourced\n"), 0o600))
+	// Bash opens a slashless BASH_ENV relative to cwd. The `.` builtin searches
+	// PATH unless tclaude explicitly preserves that lookup rule, so a same-named
+	// profile entry catches an incorrect chain.
+	require.NoError(t, os.WriteFile(filepath.Join(profileBin, operatorBashEnv),
+		[]byte("export TCL_OPERATOR_BASH_ENV=wrong-path-entry\n"), 0o600))
 	launchBashEnv := filepath.Join(root, "launch-bash-env")
 	require.NoError(t, os.WriteFile(launchBashEnv,
 		[]byte(tclaudeLayerConstructedRootBashEnv(projectedBin, launchBashEnv)), 0o600))
@@ -92,7 +99,9 @@ printf "outer=%s|%s|%s|%s\n" "$(command -v tclaude)" "$TCL_PRE_LAUNCH" "$TCL_OPE
 				PreLaunchScript: "export TCL_PRE_LAUNCH=kept; ",
 				ServerURL:       "http://127.0.0.1:4096",
 			})
-			got, err := exec.Command("/bin/sh", "-c", command).CombinedOutput()
+			cmd := exec.Command("/bin/sh", "-c", command)
+			cmd.Dir = root
+			got, err := cmd.CombinedOutput()
 			require.NoErrorf(t, err, "rendered launch failed: %s", got)
 			assert.Equal(t,
 				"outer="+projectedCLI+"|kept|sourced|"+operatorBashEnv+"\n"+

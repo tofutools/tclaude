@@ -2648,7 +2648,9 @@ func tclaudeLayerConstructedRootBashEnv(bin, bashEnv string) string {
 		"  export BASH_ENV=\"${" + tclaudeLayerSavedBashEnv + ":-}\"\n" +
 		"  unset " + tclaudeLayerSavedBashEnvSet + " " + tclaudeLayerSavedBashEnv + "\n" +
 		"  if [ -n \"$BASH_ENV\" ] && [ \"$BASH_ENV\" != " +
-		clcommon.ShellQuoteArg(bashEnv) + " ]; then . \"$BASH_ENV\"; fi\n" +
+		clcommon.ShellQuoteArg(bashEnv) + " ]; then\n" +
+		"    case \"$BASH_ENV\" in */*) . \"$BASH_ENV\" ;; *) . \"./$BASH_ENV\" ;; esac\n" +
+		"  fi\n" +
 		"else\n" +
 		"  unset BASH_ENV " + tclaudeLayerSavedBashEnvSet + " " + tclaudeLayerSavedBashEnv + "\n" +
 		"fi\n"
