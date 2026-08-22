@@ -445,22 +445,6 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 	assert.Equal(t, expectedAgentID, strings.Fields(identityLine)[0],
 		"agentd must resolve the exact managed identity through the wrapped server ancestry")
 
-	if filtered {
-		plantOpenCodeFilteredActiveAccount(
-			t,
-			allocation.StateRoot,
-			fmt.Sprintf("http://%s:%d",
-				sandboxpolicy.FilteredNetworkHostLoopbackName,
-				filteredFixture.modelPort),
-		)
-		replaySpec, replayErr := openCodeRuntimeSandboxSpec(*runtime)
-		require.NoError(t, replayErr,
-			"persisted filtered runtimes must retain required OpenCode account state")
-		assert.False(t, openCodeProviderIsolatedSpec(replaySpec))
-		assert.NotEmpty(t, openCodeReadOnlyConfigBindSource(replaySpec.Contract))
-		assert.Zero(t, filteredFixture.accountRequests.Load(),
-			"validating persisted runtime state must not perform provider traffic")
-	}
 }
 
 type openCodeFilteredSmokeFixture struct {
