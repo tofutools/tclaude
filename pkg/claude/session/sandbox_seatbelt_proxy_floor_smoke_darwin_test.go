@@ -25,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/sandboxproxy"
 )
@@ -158,11 +159,7 @@ func TestSeatbeltProxyFloorSmoke(t *testing.T) {
 		}
 	})
 
-	home, err := os.MkdirTemp(os.TempDir(), "sbf-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(home) })
-	home, err = filepath.EvalSymlinks(home)
-	require.NoError(t, err)
+	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	agentdSocket := agentipc.CanonicalSocketPath()
 	require.NotEmpty(t, agentdSocket)
