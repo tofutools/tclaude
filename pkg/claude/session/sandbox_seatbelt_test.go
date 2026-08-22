@@ -534,6 +534,7 @@ func TestSeatbeltRuntimePolicyUsesIdentityAwareCarveoutIntersection(t *testing.T
 }
 
 func TestSeatbeltOrdinaryAncestorHideRepairsRequiredAgentdSocket(t *testing.T) {
+	t.Setenv("HOME", "/Users/dev")
 	const (
 		socketDir = "/Users/dev/.tclaude/api/agentd-socket"
 		socket    = socketDir + "/agentd.sock"
