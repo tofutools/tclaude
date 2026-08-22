@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
 
 const ExecutionBoundaryVersion = 1
@@ -203,6 +204,11 @@ func BuildExecutionBoundary(input ExecutionBoundaryInput) (*ExecutionBoundary, e
 		out.AutomaticEntries = append(out.AutomaticEntries, ExecutionNamespaceEntry{
 			Kind: "bind", Source: tclaudeSource, Target: tclaudeLayerConstructedRootTclaudePath,
 			Access: "read-only", Origin: "tclaude coordination CLI",
+		}, ExecutionNamespaceEntry{
+			Kind:   "bind",
+			Source: filepath.Join(tclcommon.TclaudeDataDir(), tclaudeLayerConstructedRootBashEnvState),
+			Target: tclaudeLayerConstructedRootBashEnvPath,
+			Access: "read-only", Origin: "constructed-root Bash PATH repair",
 		})
 		out.PATH.BeforePreLaunch = tclaudeLayerConstructedRootTclaudeBin + string(os.PathListSeparator) + basePATH
 		out.PATH.Construction = append(out.PATH.Construction,

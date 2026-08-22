@@ -70,6 +70,12 @@ func TestBuildExecutionBoundaryRecordsInjectedCLIPathAndIdentity(t *testing.T) {
 			Kind: "bind", Source: tclaude, Target: tclaudeLayerConstructedRootTclaudePath,
 			Access: "read-only", Origin: "tclaude coordination CLI",
 		})
+		assert.Contains(t, boundary.AutomaticEntries, ExecutionNamespaceEntry{
+			Kind:   "bind",
+			Source: filepath.Join(home, ".tclaude", "data", tclaudeLayerConstructedRootBashEnvState),
+			Target: tclaudeLayerConstructedRootBashEnvPath,
+			Access: "read-only", Origin: "constructed-root Bash PATH repair",
+		})
 		assert.Equal(t, os.Getuid(), boundary.Identity.Host.UID)
 		assert.Equal(t, os.Getgid(), boundary.Identity.Host.GID)
 	}
