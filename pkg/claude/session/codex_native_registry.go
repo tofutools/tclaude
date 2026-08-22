@@ -805,6 +805,9 @@ func validateStoredNativeProfile(name, content string) error {
 		profile.Network.UnixSockets[agentdSocket] != "allow" {
 		return fmt.Errorf("generated profile %s does not allow the canonical agentd socket", name)
 	}
+	if agentdDir := agentipc.CanonicalSocketDir(); agentdDir == "" || profile.Filesystem[agentdDir] != "read" {
+		return fmt.Errorf("generated profile %s does not allow the canonical agentd socket directory", name)
+	}
 	if !strings.Contains(content, "[permissions."+name+"]") {
 		return fmt.Errorf("generated profile %s has no canonical permission table", name)
 	}

@@ -94,7 +94,7 @@ func TestOpenCodeTclaudeLayerDarwinExecutorSmoke(t *testing.T) {
 
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
-	agentSocket := filepath.Join(home, ".tclaude", "api", "agentd.sock")
+	agentSocket := agentipc.CanonicalSocketPath()
 	t.Setenv(agentipc.SocketEnv, agentSocket)
 	stopAgentd := startOpenCodeDarwinLayerSmokeAgentd(t, tclaudeBinary, agentSocket)
 	t.Cleanup(stopAgentd)

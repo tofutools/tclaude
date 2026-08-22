@@ -22,6 +22,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
@@ -2104,6 +2105,15 @@ func runNew(params *NewParams) error {
 	if err != nil {
 		return err
 	}
+	shellEnvironment := sandboxSnapshotEnvironment(effectiveSandbox)
+	if outerLayer && tclaudeLayerRoot == sandboxpolicy.RootConstructed {
+		if selected := additionalEnv[agentipc.SocketEnv]; selected != "" {
+			if shellEnvironment == nil {
+				shellEnvironment = map[string]string{}
+			}
+			shellEnvironment[agentipc.SocketEnv] = selected
+		}
+	}
 	spawnSpec := harness.SpawnSpec{
 		ExecutablePath:                 executablePath,
 		CodexAppServerSocket:           params.CodexAppServerSocket,
@@ -2123,7 +2133,7 @@ func runNew(params *NewParams) error {
 		OpenCodeServerPID:              openCodeServerPID,
 		EnvExports:                     envExports,
 		PreLaunchScript:                preLaunchScript,
-		ShellEnvironment:               sandboxSnapshotEnvironment(effectiveSandbox),
+		ShellEnvironment:               shellEnvironment,
 		ResumeID:                       fullConvID,
 		SessionID:                      params.SessionID,
 		Name:                           params.Name,

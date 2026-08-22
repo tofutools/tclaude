@@ -856,9 +856,10 @@ func cloneUnixSocketRulesPtr(in *UnixSocketRules) *UnixSocketRules {
 	return &out
 }
 
-// AgentdSocketFloor returns every spelling retained by the control-plane
-// migration. These paths are injected outside editable policy and therefore
-// cannot be removed by any access-axis payload.
+// AgentdSocketFloor returns the canonical directory-backed endpoint and every
+// spelling retained by the control-plane migration. These
+// paths are injected outside editable policy and therefore cannot be removed by
+// any access-axis payload.
 func AgentdSocketFloor() []string {
 	paths := append([]string{agentipc.CanonicalSocketPath()}, agentipc.LegacySocketPaths()...)
 	out := make([]string, 0, len(paths))

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/sandboxproxy"
@@ -385,8 +386,11 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	// otherwise slip past the named refusal and silently hide it.
 	if err := validateRemappedGuestPathsAgainstContract(
 		remappedGrants, append(
-			append(append([]string(nil), contractWriteDirs...), launchContractReadDirs...),
-			input.HarnessReadPaths...,
+			append(
+				append(append([]string(nil), contractWriteDirs...), launchContractReadDirs...),
+				input.HarnessReadPaths...,
+			),
+			agentipc.CanonicalSocketDir(), agentipc.CanonicalSocketPath(),
 		),
 	); err != nil {
 		return TclaudeLayerLaunchSpec{}, err
@@ -2170,15 +2174,28 @@ func bwrapArgsWithDaemonFinal(
 	for _, root := range protectedRoots {
 		args = hideRemounts.appendHide(args, root)
 	}
-	liveSocketPaths := make([]string, 0, len(socketPaths))
+	socketBinds := make([]TclaudeLayerReadOnlyBind, 0, len(socketPaths))
 	if tclaudeLayerPlanUsesConstructedRoot(plan) {
 		for i, socket := range socketPaths {
 			if socket == "" || !filepath.IsAbs(socket) {
 				return nil, fmt.Errorf("resolve agentd socket floor entry %d for isolated tclaude-layer", i)
 			}
-			exists, err := bwrapBindSourceExists(socket)
+			isCanonical := filepath.Clean(socket) == filepath.Clean(agentipc.CanonicalSocketPath())
+			bind := TclaudeLayerReadOnlyBind{Source: socket, Target: socket}
+			if isCanonical {
+				// Socket selection happened once, before the harness command was
+				// rendered. This seam only projects the narrow parent directory; it
+				// must not independently reselect an endpoint from a later liveness
+				// observation and race the authoritative harness environment.
+				bind.Source = filepath.Dir(socket)
+				bind.Target = filepath.Dir(socket)
+				if !agentipc.CanonicalSocketDirAvailable() {
+					return nil, fmt.Errorf("isolated tclaude-layer requires the canonical agentd socket directory %s", bind.Source)
+				}
+			}
+			exists, err := bwrapBindSourceExists(bind.Source)
 			if err != nil {
-				return nil, fmt.Errorf("agentd socket source %q: %w", socket, err)
+				return nil, fmt.Errorf("agentd socket source %q: %w", bind.Source, err)
 			}
 			if !exists {
 				if i == 0 {
@@ -2191,8 +2208,8 @@ func bwrapArgsWithDaemonFinal(
 				}
 				continue
 			}
-			args = append(args, "--ro-bind", socket, socket)
-			liveSocketPaths = append(liveSocketPaths, socket)
+			args = append(args, "--ro-bind", bind.Source, bind.Target)
+			socketBinds = append(socketBinds, bind)
 		}
 	}
 	// Class 2: replay the policy plan exactly as rendered. Repair mounts do not
@@ -2215,6 +2232,17 @@ func bwrapArgsWithDaemonFinal(
 			return nil, fmt.Errorf(
 				"mount plan entry %d hides sandbox path %q but names host source %q; a hide is always same-path",
 				i, path, source)
+		}
+		if !entry.IsRemapped() && tclaudeLayerPlanUsesConstructedRoot(plan) &&
+			path == filepath.Clean(agentipc.CanonicalSocketDir()) {
+			switch entry.Mode {
+			case sandboxpolicy.MountRO, sandboxpolicy.MountRW, sandboxpolicy.MountHide:
+				// The initial directory projection is the immutable read/connect
+				// floor. An exact ordinary row cannot widen or hide it.
+				continue
+			default:
+				return nil, fmt.Errorf("mount plan entry %d has invalid mode %d", i, entry.Mode)
+			}
 		}
 		switch entry.Mode {
 		case sandboxpolicy.MountRO, sandboxpolicy.MountRW:
@@ -2258,10 +2286,10 @@ func bwrapArgsWithDaemonFinal(
 				protectedRoots,
 				&hideRemounts,
 			)
-			args = appendTclaudeLayerSocketRepairs(
+			args = appendTclaudeLayerSocketBindRepairs(
 				args,
 				path,
-				liveSocketPaths,
+				socketBinds,
 				&hideRemounts,
 			)
 			// The resolver file is reopened during root construction, so an
@@ -2881,6 +2909,22 @@ func appendTclaudeLayerSocketRepairs(
 	return args
 }
 
+func appendTclaudeLayerSocketBindRepairs(
+	args []string,
+	hide string,
+	binds []TclaudeLayerReadOnlyBind,
+	hideRemounts *tclaudeLayerHideRemounts,
+) []string {
+	for _, bind := range binds {
+		target := filepath.Clean(bind.Target)
+		if hide != target && sandboxpolicy.PathContainsOrEqual(hide, target) {
+			hideRemounts.noteReplacement(target)
+			args = append(args, "--ro-bind", filepath.Clean(bind.Source), target)
+		}
+	}
+	return args
+}
+
 // appendTclaudeLayerProtectedRehides is the Linux twin of the Seatbelt emitter's
 // appendSeatbeltProtectedRehides, and carries the same bias for the same reason.
 // A true answer EMITS A HIDE, so an unsettled case/NFC-folded nomination re-hides
@@ -3233,11 +3277,11 @@ func remappedGrantsForEffective(
 }
 
 // validateRemappedGuestPathsAgainstContract refuses a mount that would land on
-// top of a path the launch itself requires. Launch-contract binds are applied
-// BEFORE the policy plan replays, so a remapped mount covering one of them would
-// shadow it — the workspace, a Git admin directory or harness state would simply
-// be gone, and the harness would fail in a way that points nowhere near the rule
-// that caused it.
+// top of a path the launch itself requires. Launch-contract and agentd-floor
+// binds are applied BEFORE the policy plan replays, so a remapped mount covering
+// one of them would shadow it — the workspace, a Git admin directory, harness
+// state, or the control socket would simply be gone, and the harness would fail
+// in a way that points nowhere near the rule that caused it.
 func validateRemappedGuestPathsAgainstContract(
 	remapped []sandboxpolicy.FilesystemGrant,
 	contractDirs []string,

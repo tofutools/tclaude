@@ -15,6 +15,7 @@ import (
 	"time"
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -392,6 +393,7 @@ func renderDarwinSeatbeltCommandWithRouteSlots(
 		)
 	}
 	for i := range socketPaths {
+		isCanonical := filepath.Clean(socketPaths[i]) == filepath.Clean(agentipc.CanonicalSocketPath())
 		if i >= len(sandboxpolicy.AgentdSocketFloor()) {
 			info, statErr := os.Lstat(socketPaths[i])
 			if statErr != nil || info.Mode()&os.ModeSocket == 0 {
@@ -401,6 +403,13 @@ func renderDarwinSeatbeltCommandWithRouteSlots(
 			}
 		}
 		socketPaths[i] = canonicalSeatbeltOwnedPath(socketPaths[i])
+		if isCanonical {
+			// The directory is the narrow filesystem floor, while Seatbelt's
+			// unix-socket matcher still needs the exact endpoint to reopen a
+			// connect beneath an authored ancestor hide.
+			socketPaths[i] = canonicalSeatbeltOwnedPath(agentipc.CanonicalSocketDir())
+			socketPaths = append(socketPaths, canonicalSeatbeltOwnedPath(agentipc.CanonicalSocketPath()))
+		}
 	}
 	readOnlyPaths, err := darwinSeatbeltReadOnlyPaths(readOnlyBinds)
 	if err != nil {

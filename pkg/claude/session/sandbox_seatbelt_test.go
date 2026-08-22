@@ -9,8 +9,38 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
+
+func TestSeatbeltCanonicalSocketDirIsImmutableFloor(t *testing.T) {
+	canonicalDir := agentipc.CanonicalSocketDir()
+	baselineProfile, baselineParams, err := renderSeatbeltProfile(
+		nil, []string{canonicalDir},
+		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		netip.AddrPort{}, nil, "/tmp/tmux", "/tmp/runtime", nil, nil,
+	)
+	require.NoError(t, err)
+	for _, mode := range []sandboxpolicy.MountMode{
+		sandboxpolicy.MountRO, sandboxpolicy.MountRW, sandboxpolicy.MountHide,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			profile, params, err := renderSeatbeltProfile(
+				nil, []string{canonicalDir},
+				sandboxpolicy.MountPlan{
+					NetworkPosture: sandboxpolicy.NetworkHostOpen,
+					Entries:        []sandboxpolicy.MountEntry{{Path: canonicalDir, Mode: mode}},
+				},
+				netip.AddrPort{}, nil, "/tmp/tmux", "/tmp/runtime", nil, nil,
+			)
+			require.NoError(t, err)
+			assert.Equal(t, baselineProfile, profile,
+				"an exact authored row must not alter the canonical socket floor")
+			assert.Equal(t, baselineParams, params,
+				"an exact authored row must not alter the canonical socket floor")
+		})
+	}
+}
 
 func TestRenderSeatbeltProfileGolden(t *testing.T) {
 	plan := sandboxpolicy.MountPlan{
@@ -504,10 +534,14 @@ func TestSeatbeltRuntimePolicyUsesIdentityAwareCarveoutIntersection(t *testing.T
 }
 
 func TestSeatbeltOrdinaryAncestorHideRepairsRequiredAgentdSocket(t *testing.T) {
-	const socket = "/Users/dev/.tclaude/api/agentd.sock"
+	t.Setenv("HOME", "/Users/dev")
+	const (
+		socketDir = "/Users/dev/.tclaude/api/agentd-socket"
+		socket    = socketDir + "/agentd.sock"
+	)
 	profile, params, err := renderSeatbeltProfile(
 		nil,
-		[]string{socket},
+		[]string{socketDir, socket},
 		sandboxpolicy.MountPlan{
 			NetworkPosture: sandboxpolicy.NetworkHostOpen,
 			Entries: []sandboxpolicy.MountEntry{{
@@ -545,6 +579,29 @@ func TestSeatbeltOrdinaryAncestorHideRepairsRequiredAgentdSocket(t *testing.T) {
 		strings.Count(profile, "\n(deny network-outbound"),
 		"every hide read deny must have one Unix-connect sibling",
 	)
+}
+
+func TestSeatbeltProtectedTmuxHideNeverReopensSocketDescendant(t *testing.T) {
+	const (
+		tmuxDir = "/private/tmp/tmux-501"
+		socket  = tmuxDir + "/foreign.sock"
+	)
+	_, params, err := renderSeatbeltProfile(
+		nil,
+		[]string{socket},
+		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		netip.AddrPort{},
+		nil,
+		tmuxDir,
+		"/private/var/folders/ab/runtime/T",
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	for _, param := range params {
+		assert.NotEqual(t, socket, param.path,
+			"the protected tmux boundary must not reopen a socket descendant")
+	}
 }
 
 func TestSeatbeltPrivateAttachmentParentUsesUniformReadAndUnixConnectHide(t *testing.T) {

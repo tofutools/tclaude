@@ -131,6 +131,35 @@ func TestServeSocketsSkipUnbindableLegacyPaths(t *testing.T) {
 	require.NoError(t, conn.Close())
 }
 
+func TestServeSocketsRejectUnavailableCanonicalParent(t *testing.T) {
+	home := shortSocketDir(t)
+	t.Setenv("HOME", home)
+	required := agentipc.CanonicalSocketPath()
+	dir := agentipc.CanonicalSocketDir()
+	require.NoError(t, os.MkdirAll(filepath.Dir(dir), 0o700))
+	require.NoError(t, os.WriteFile(dir, []byte("not a directory"), 0o600))
+
+	_, err := prepareServeSockets(required, LegacySocketPaths(), failOnWarn(t))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "canonical socket directory")
+}
+
+func TestServeSocketsRejectSymlinkedCanonicalParent(t *testing.T) {
+	home := shortSocketDir(t)
+	t.Setenv("HOME", home)
+	required := agentipc.CanonicalSocketPath()
+	target := t.TempDir()
+	dir := agentipc.CanonicalSocketDir()
+	require.NoError(t, os.MkdirAll(filepath.Dir(dir), 0o700))
+	require.NoError(t, os.Symlink(target, dir))
+
+	_, err := prepareServeSockets(required, LegacySocketPaths(), failOnWarn(t))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not a direct directory")
+	assert.NoFileExists(t, filepath.Join(target, "agentd.sock"),
+		"preparation must not create a socket beneath a symlink target")
+}
+
 // AF_UNIX bind reports EADDRINUSE for ANY pre-existing directory entry, so the
 // errno cannot stand in for "a second daemon". Something landing at an alias
 // between the prepare pass and the bind pass — a dotfile manager or a home

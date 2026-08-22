@@ -45,10 +45,11 @@ func IsolateManagedAgentEnv(t *testing.T) {
 const maxSocketPathLen = 104
 
 // socketSuffixHeadroom reserves room, below the directory this helper returns,
-// for the longest socket path any caller derives from it. The deepest is a
-// HOME-relative canonical socket "<dir>/.tclaude/api/agentd.sock" (25 bytes);
-// we round up for margin (and the sun_path NUL terminator).
-const socketSuffixHeadroom = 32
+// for the longest socket path any caller derives from it. The deepest is the
+// HOME-relative canonical socket
+// "<dir>/.tclaude/api/agentd-socket/agentd.sock" (39 bytes); we round up for
+// margin (and the sun_path NUL terminator).
+const socketSuffixHeadroom = 48
 
 // candidateBases lists the base directories ShortSocketDir probes, in priority
 // order. The first that is writable AND yields a short-enough path wins.

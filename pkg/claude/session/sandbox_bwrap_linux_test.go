@@ -3,6 +3,8 @@
 package session
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +27,83 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/probehelper"
 	"golang.org/x/sys/unix"
 )
+
+const canonicalSocketReconnectHelperEnv = "TCLAUDE_CANONICAL_SOCKET_RECONNECT_HELPER"
+
+func TestConstructedRootCanonicalSocketReconnectsAfterReplacement(t *testing.T) {
+	if os.Getenv(canonicalSocketReconnectHelperEnv) == "1" {
+		for attempt := 1; attempt <= 2; attempt++ {
+			conn, err := net.DialTimeout("unix", agentipc.ClientSocketPath(), time.Second)
+			require.NoError(t, err)
+			require.NoError(t, conn.Close())
+			fmt.Printf("connected-%d\n", attempt)
+			if attempt == 1 {
+				_, err = bufio.NewReader(os.Stdin).ReadString('\n')
+				require.NoError(t, err)
+			}
+		}
+		return
+	}
+
+	bwrap, _, err := ResolveTclaudeLayer(
+		sandboxpolicy.NetworkHostOpen, sandboxpolicy.RootConstructed)
+	if err != nil {
+		t.Skipf("bubblewrap constructed roots unavailable: %v", err)
+	}
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	canonical := agentipc.CanonicalSocketPath()
+	require.NoError(t, os.MkdirAll(filepath.Dir(canonical), 0o700))
+	canonicalListener, err := net.Listen("unix", canonical)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = canonicalListener.Close() })
+
+	workspace := filepath.Join(home, "work")
+	require.NoError(t, os.MkdirAll(workspace, 0o700))
+	helper := filepath.Join(workspace, "socket-reconnect-helper")
+	copyTestBinary(t, os.Args[0], helper)
+	args, err := bwrapArgsWithDaemonFinal([]string{workspace}, sandboxpolicy.MountPlan{
+		NetworkPosture: sandboxpolicy.NetworkHostOpen,
+		RootPosture:    sandboxpolicy.RootConstructed,
+		Entries: []sandboxpolicy.MountEntry{{
+			Path: workspace, Mode: sandboxpolicy.MountRW,
+		}},
+	}, nil, nil, nil, sandboxpolicy.AgentdSocketFloor(), "", nil)
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bwrap,
+		append(args, "--", helper,
+			"-test.run=^TestConstructedRootCanonicalSocketReconnectsAfterReplacement$")...)
+	cmd.Env = append(os.Environ(),
+		canonicalSocketReconnectHelperEnv+"=1",
+		agentipc.SocketEnv+"="+canonical,
+	)
+	stdin, err := cmd.StdinPipe()
+	require.NoError(t, err)
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	require.NoError(t, cmd.Start())
+	reader := bufio.NewReader(stdout)
+	line, err := reader.ReadString('\n')
+	require.NoErrorf(t, err, "first sandbox connection: %s", stderr.String())
+	assert.Equal(t, "connected-1\n", line)
+
+	require.NoError(t, canonicalListener.Close())
+	canonicalListener, err = net.Listen("unix", canonical)
+	require.NoError(t, err)
+	_, err = fmt.Fprintln(stdin, "reconnect")
+	require.NoError(t, err)
+	require.NoError(t, stdin.Close())
+	line, err = reader.ReadString('\n')
+	require.NoErrorf(t, err, "replacement sandbox connection: %s", stderr.String())
+	assert.Equal(t, "connected-2\n", line)
+	require.NoErrorf(t, cmd.Wait(), "socket replacement helper: %s", stderr.String())
+}
 
 const (
 	relayFakeBwrapEnv    = "TCLAUDE_RELAY_FAKE_BWRAP"

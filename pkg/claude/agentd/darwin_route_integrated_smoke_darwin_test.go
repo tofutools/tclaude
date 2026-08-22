@@ -22,6 +22,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -518,10 +520,14 @@ func TestDarwinRouteCapabilityIntegratedSmoke(t *testing.T) {
 	}
 	t.Logf("TCL-952 Darwin exact checked-out head: %s", actualHead)
 
-	home := t.TempDir()
+	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("TMUX", "")
+	require.NoError(t, os.MkdirAll(agentipc.CanonicalSocketDir(), 0o700))
+	agentSocket, err := net.Listen("unix", agentipc.CanonicalSocketPath())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = agentSocket.Close() })
 	// One slot per launch keeps the exact claim/listener we observe below
 	// unambiguous while preserving the production allocator and RunNew path.
 	t.Setenv("TCLAUDE_DARWIN_ROUTE_SLOT_COUNT", "1")

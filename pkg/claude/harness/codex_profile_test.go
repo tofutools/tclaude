@@ -14,6 +14,7 @@ import (
 	"github.com/pelletier/go-toml/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
@@ -59,6 +60,40 @@ func TestCodexManagedProfileRendersResolvedUnixSocketList(t *testing.T) {
 		if !strings.Contains(content, want) {
 			t.Fatalf("managed profile missing socket rule %q:\n%s", want, content)
 		}
+	}
+}
+
+func TestCodexManagedProfileCanonicalSocketDirIsImmutableFloor(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv("TMUX_TMPDIR", t.TempDir())
+	canonicalDir := agentipc.CanonicalSocketDir()
+
+	tests := []struct {
+		name                string
+		readDirs, writeDirs []string
+		denyDirs            []string
+	}{
+		{name: "read", readDirs: []string{canonicalDir}},
+		{name: "write", writeDirs: []string{canonicalDir}},
+		{name: "deny", denyDirs: []string{canonicalDir}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			content, err := codexAgentProfileContentForNameAndRulesAndNetworkForOS(
+				"test", agentipc.CanonicalSocketPath(), filepath.Join(home, ".tclaude", "data"),
+				tc.readDirs, tc.writeDirs, tc.denyDirs, sandboxpolicy.NetworkAccessInternet, "linux",
+			)
+			require.NoError(t, err)
+
+			var parsed struct {
+				Permissions map[string]struct {
+					Filesystem map[string]string `toml:"filesystem"`
+				} `toml:"permissions"`
+			}
+			require.NoError(t, toml.Unmarshal([]byte(content), &parsed), content)
+			assert.Equal(t, "read", parsed.Permissions["test"].Filesystem[canonicalDir])
+		})
 	}
 }
 

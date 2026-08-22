@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
@@ -196,7 +197,7 @@ func TestOpenCodeUnixRelayBuildsV4ForIsolatedSmokeAndFilteredPublicLaunch(t *tes
 	_, err = openCodeRuntimeSandboxSpec(v3ClaimingUnix)
 	require.ErrorContains(t, err, "host-open loopback control plane")
 	if runtime.GOOS == "linux" {
-		agentdSocket := filepath.Join(shortHome, ".tclaude", "api", "agentd.sock")
+		agentdSocket := agentipc.CanonicalSocketPath()
 		require.NoError(t, os.MkdirAll(filepath.Dir(agentdSocket), 0o700))
 		agentdListener, listenErr := net.Listen("unix", agentdSocket)
 		require.NoError(t, listenErr)

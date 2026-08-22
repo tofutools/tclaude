@@ -68,7 +68,7 @@ killing the daemon disables the features rather than bypassing their gates.
 
 `agentd` has two faces:
 
-- a **Unix socket** (`~/.tclaude/api/agentd.sock`) for agents, and
+- a **Unix socket** (`~/.tclaude/api/agentd-socket/agentd.sock`) for agents, and
 - a **web API** on loopback for the human, hosting the
   [dashboard](dashboard.md).
 

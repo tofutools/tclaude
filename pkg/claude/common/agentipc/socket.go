@@ -16,11 +16,53 @@ import (
 const SocketEnv = "TCLAUDE_AGENTD_SOCKET"
 
 // CanonicalSocketPath is the agent-reachable endpoint used by every current
-// tclaude client and harness (~/.tclaude/api/agentd.sock). It lives under the
-// api/ surface — NOT under data/ — so private daemon state (~/.tclaude/data)
-// can be denied to sandboxed agents as one complete subtree while the socket
-// stays reachable. See pkg/common.TclaudeAPIDir.
+// tclaude client and harness (~/.tclaude/api/agentd-socket/agentd.sock). Its
+// dedicated parent can be projected as one narrow unit into every agent
+// sandbox, so pathname replacement remains visible across agentd restarts
+// without exposing writable API siblings.
 func CanonicalSocketPath() string {
+	dir := CanonicalSocketDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "agentd.sock")
+}
+
+// CanonicalSocketDir is the dedicated parent projected into agent sandboxes.
+func CanonicalSocketDir() string {
+	apiDir := common.TclaudeAPIDir()
+	if apiDir == "" {
+		return ""
+	}
+	return filepath.Join(apiDir, "agentd-socket")
+}
+
+// CanonicalSocketDirAvailable reports whether the dedicated parent exists as a
+// direct, non-writable-by-peers directory entry. Lstat deliberately rejects a
+// symlink: projecting a symlink target would expose an arbitrary directory
+// rather than the narrow daemon-owned socket surface. Group/other read and
+// search bits remain compatible with directories created by earlier versions;
+// only write authority permits replacing the managed endpoint.
+func CanonicalSocketDirAvailable() bool {
+	dir := CanonicalSocketDir()
+	if dir == "" {
+		return false
+	}
+	info, err := os.Lstat(dir)
+	return err == nil && info.IsDir() && info.Mode().Perm()&0o022 == 0
+}
+
+// LiveCanonicalSocketPath combines the direct-parent invariant with endpoint
+// liveness for authoritative managed-agent selection.
+func LiveCanonicalSocketPath() bool {
+	return CanonicalSocketDirAvailable() && LiveSocketPath(CanonicalSocketPath())
+}
+
+// LegacyAPISocketPath is the former canonical endpoint
+// (~/.tclaude/api/agentd.sock). It remains a compatibility bind+dial listener
+// for clients installed before the canonical socket moved beneath its own
+// projectable directory.
+func LegacyAPISocketPath() string {
 	apiDir := common.TclaudeAPIDir()
 	if apiDir == "" {
 		return ""
@@ -52,12 +94,11 @@ func LegacySocketPath() string {
 	return filepath.Join(root, "agentd.sock")
 }
 
-// LegacySocketPaths returns every retained pre-split endpoint, in the order a
-// client should try them after the canonical path: the pre-split home socket
-// first, then the oldest under-root socket. Empty entries (unresolvable home)
-// are omitted.
+// LegacySocketPaths returns every retained compatibility endpoint, in the
+// order a client should try them after the canonical path. Empty entries
+// (unresolvable home) are omitted.
 func LegacySocketPaths() []string {
-	return dedupeNonEmpty(LegacyHomeSocketPath(), LegacySocketPath())
+	return dedupeNonEmpty(LegacyAPISocketPath(), LegacyHomeSocketPath(), LegacySocketPath())
 }
 
 // AnyLegacySocketReachable reports whether a daemon is currently accepting
@@ -129,4 +170,19 @@ func SocketReachable(path string) bool {
 	}
 	_ = conn.Close()
 	return true
+}
+
+// LiveSocketPath reports whether path itself is a Unix socket with a process
+// accepting connections. Unlike SocketReachable, it rejects symlinks before
+// dialing so an optional daemon-owned endpoint cannot be redirected to some
+// other live socket.
+func LiveSocketPath(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Lstat(path)
+	if err != nil || info.Mode()&os.ModeSocket == 0 {
+		return false
+	}
+	return SocketReachable(path)
 }

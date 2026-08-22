@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
@@ -30,6 +31,7 @@ type seatbeltRegion struct {
 	mode             sandboxpolicy.MountMode
 	policy           bool
 	networkException bool
+	filesystemOnly   bool
 	denyBoundary     bool
 	daemonReopen     bool
 	unshadowable     bool
@@ -191,10 +193,12 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		return "", nil, err
 	}
 	for _, path := range requiredSockets {
+		filesystemOnly := filepath.Clean(path) == filepath.Clean(agentipc.CanonicalSocketDir())
 		ordered = append(ordered, seatbeltRegion{
 			path:             path,
 			mode:             sandboxpolicy.MountRO,
-			networkException: true,
+			networkException: !filesystemOnly,
+			filesystemOnly:   filesystemOnly,
 		})
 	}
 	for _, path := range protected {
@@ -217,6 +221,12 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		path, cleanErr := cleanSeatbeltPath(fmt.Sprintf("mount plan entry %d", i), entry.Path)
 		if cleanErr != nil {
 			return "", nil, cleanErr
+		}
+		if filepath.Clean(path) == filepath.Clean(agentipc.CanonicalSocketDir()) {
+			// The socket-only directory is a daemon-owned read/connect floor.
+			// Exact operator rows cannot hide or widen it; ancestor rules still
+			// apply normally and the required child region reopens the floor.
+			continue
 		}
 		switch entry.Mode {
 		case sandboxpolicy.MountRO, sandboxpolicy.MountRW, sandboxpolicy.MountHide:
@@ -256,10 +266,12 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 			for _, requiredSocket := range requiredSockets {
 				if !seatbeltSamePath(path, requiredSocket, identity) &&
 					seatbeltPathContains(path, requiredSocket, identity) {
+					filesystemOnly := filepath.Clean(requiredSocket) == filepath.Clean(agentipc.CanonicalSocketDir())
 					ordered = append(ordered, seatbeltRegion{
 						path:             requiredSocket,
 						mode:             sandboxpolicy.MountRO,
-						networkException: true,
+						networkException: !filesystemOnly,
+						filesystemOnly:   filesystemOnly,
 					})
 					ordered = appendSeatbeltProtectedRehides(
 						ordered,
@@ -688,6 +700,7 @@ func expandSeatbeltAliasRegions(
 				mode:             region.mode,
 				policy:           region.policy,
 				networkException: region.networkException,
+				filesystemOnly:   region.filesystemOnly,
 				denyBoundary:     region.denyBoundary,
 				daemonReopen:     region.daemonReopen,
 				unshadowable:     region.unshadowable,
@@ -869,6 +882,7 @@ func compileSeatbeltDenyRegions(
 			nodeIndex,
 			func(mode sandboxpolicy.MountMode) bool { return mode == sandboxpolicy.MountHide },
 		)
+		exceptions = appendSeatbeltNetworkExceptionDescendants(nodes, nodeIndex, exceptions)
 		params = appendSeatbeltDenyRule(
 			&profile,
 			params,
@@ -888,6 +902,39 @@ func compileSeatbeltDenyRegions(
 		)
 	}
 	return profile.String(), params
+}
+
+// appendSeatbeltNetworkExceptionDescendants retains exact Unix-socket
+// exceptions even when a readable parent directory is already the first
+// filesystem carveout. Seatbelt accepts the parent subpath for file reads but
+// its unix-socket matcher needs the concrete endpoint spelling.
+func appendSeatbeltNetworkExceptionDescendants(
+	nodes []seatbeltRegionNode,
+	root int,
+	exceptions []int,
+) []int {
+	if nodes[root].unshadowable || nodes[root].denyBoundary {
+		return exceptions
+	}
+	seen := make(map[int]bool, len(exceptions))
+	for _, exception := range exceptions {
+		seen[exception] = true
+	}
+	var walk func(int)
+	walk = func(index int) {
+		for _, child := range nodes[index].children {
+			if nodes[child].networkException && !seen[child] {
+				exceptions = append(exceptions, child)
+				seen[child] = true
+			}
+			walk(child)
+		}
+	}
+	walk(root)
+	sort.Slice(exceptions, func(i, j int) bool {
+		return nodes[exceptions[i]].path < nodes[exceptions[j]].path
+	})
+	return exceptions
 }
 
 func seatbeltDenyExceptions(
@@ -1378,9 +1425,10 @@ func appendSeatbeltDenyRule(
 // appendSeatbeltUnixConnectDenyRule gives every hidden region the same
 // boundary for AF_UNIX connect as it has for file reads. Seatbelt evaluates
 // connect(2) as network-outbound, not file-read*, so omitting this sibling
-// would leave a hidden socket usable. Reuse the read rule's exact parameters
-// and descendant exceptions: an agentd socket reopened beneath an ordinary
-// ancestor hide must remain connectable, while class-4 tmux has no reopen.
+// would leave a hidden socket usable. Reuse the read rule's descendant
+// exceptions except for paths explicitly marked filesystem-only: the canonical
+// agentd parent is a directory projection, while its concrete socket child is
+// the connect exception. Class-4 tmux still has no reopen.
 func appendSeatbeltUnixConnectDenyRule(
 	profile *strings.Builder,
 	name string,
@@ -1396,6 +1444,9 @@ func appendSeatbeltUnixConnectDenyRule(
 	profile.WriteString(name)
 	profile.WriteString("\")))\n")
 	for index := range exceptions {
+		if nodes[exceptions[index]].filesystemOnly {
+			continue
+		}
 		exceptionName := fmt.Sprintf("%s_REOPEN_%d", name, index)
 		profile.WriteString("      (require-not (literal (param \"")
 		profile.WriteString(exceptionName)
