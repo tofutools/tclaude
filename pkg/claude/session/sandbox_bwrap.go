@@ -1086,7 +1086,7 @@ func ValidateTclaudeLayerNetwork(
 			}
 		}
 		if h.Name == harness.OpenCodeName {
-			detail += " This OpenCode route was resolved from an explicit-provider config: the launch model and frozen OPENCODE_CONFIG_CONTENT name one inspected openai-compatible provider, model without a provider override, and concrete options.baseURL. The server uses daemon-final read-only, provider-empty private XDG and HOME config directories and rechecks those directories plus persistent account/org authority before every initial exec or restart so none of those sources can replace the inspected route. OpenCode's built-in webfetch/websearch permission rules are soft tool policy; this tclaude-layer nft boundary is the packet-enforced floor."
+			detail += " This OpenCode route was resolved from an explicit-provider config: the launch model and OPENCODE_CONFIG_CONTENT name one inspected openai-compatible provider, model without a provider override, and concrete options.baseURL. The isolated server retains OpenCode's required config, install, auth, and runtime-state projections; the tclaude-layer packet boundary remains authoritative if those inputs select a different route at runtime. OpenCode's built-in webfetch/websearch permission rules are soft tool policy; this tclaude-layer nft boundary is the packet-enforced floor."
 		}
 		return []sandboxpolicy.AccessNotice{{
 			Class:  sandboxpolicy.AccessNoticeClassDegradation,

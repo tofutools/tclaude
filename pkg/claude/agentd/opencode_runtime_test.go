@@ -956,7 +956,7 @@ func TestOpenCodeServerEnvironmentAppliesFrozenExecutorProfile(t *testing.T) {
 	assert.Equal(t, "/usr/bin", lastOpenCodeEnvironmentValue(env, "PATH"))
 }
 
-func TestOpenCodeFilteredServerEnvironmentFreezesInspectedProviderInputs(t *testing.T) {
+func TestOpenCodeFilteredServerEnvironmentRetainsHarnessInputs(t *testing.T) {
 	spec := &session.TclaudeLayerLaunchSpec{
 		Contract: session.TclaudeLayerLaunchContract{
 			StateRoot: "/tmp/agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -988,17 +988,18 @@ func TestOpenCodeFilteredServerEnvironmentFreezesInspectedProviderInputs(t *test
 
 	assert.Equal(t, `{"provider":"frozen"}`,
 		lastOpenCodeEnvironmentValue(env, "OPENCODE_CONFIG_CONTENT"))
-	assert.Equal(t,
-		"/tmp/agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/"+openCodeFilteredHomeBase,
-		lastOpenCodeEnvironmentValue(env, "HOME"))
-	assert.Empty(t, lastOpenCodeEnvironmentValue(env, "OPENCODE_CONFIG"))
-	assert.Empty(t, lastOpenCodeEnvironmentValue(env, "OPENCODE_CONFIG_DIR"))
-	assert.Equal(t, "1", lastOpenCodeEnvironmentValue(
+	assert.Equal(t, "/home/profile", lastOpenCodeEnvironmentValue(env, "HOME"))
+	assert.Equal(t, "/tmp/ambient.json",
+		lastOpenCodeEnvironmentValue(env, "OPENCODE_CONFIG"))
+	assert.Equal(t, "/tmp/ambient-config",
+		lastOpenCodeEnvironmentValue(env, "OPENCODE_CONFIG_DIR"))
+	assert.Equal(t, "0", lastOpenCodeEnvironmentValue(
 		env, "OPENCODE_DISABLE_PROJECT_CONFIG"))
-	assert.Equal(t, "1", lastOpenCodeEnvironmentValue(env, "OPENCODE_PURE"))
-	assert.Equal(t, "1", lastOpenCodeEnvironmentValue(
+	assert.Equal(t, "0", lastOpenCodeEnvironmentValue(env, "OPENCODE_PURE"))
+	assert.Equal(t, "0", lastOpenCodeEnvironmentValue(
 		env, "OPENCODE_DISABLE_MODELS_FETCH"))
-	assert.Equal(t, "{}", lastOpenCodeEnvironmentValue(env, "OPENCODE_AUTH_CONTENT"))
+	assert.Equal(t, `{"ambient":"profile"}`,
+		lastOpenCodeEnvironmentValue(env, "OPENCODE_AUTH_CONTENT"))
 }
 
 func lastOpenCodeEnvironmentValue(environment []string, name string) string {
@@ -1144,9 +1145,11 @@ func TestReconcileOpenCodeFilteredRuntimeRechecksPersistentAccountAuthority(
 			`"models":{"model":{}},"options":{` +
 			`"baseURL":"http://host.tclaude.internal:43210"}}}}`,
 	}}
-	spec, err := openCodeTclaudeLayerLaunchSpec(
-		string(sandboxpolicy.ImplementationTclaudeLayer),
-		cwd, nil, &snapshot, agentID)
+	// Persist the historical provider-isolated contract directly: current
+	// launches retain the harness config/auth projection, while replay must
+	// continue accepting and policing older serialized specs.
+	spec, err := buildOpenCodeTclaudeLayerLaunchSpec(
+		cwd, nil, &snapshot, agentID, true, true)
 	require.NoError(t, err)
 	frozenAgentSocket := session.CanonicalTclaudeLayerGeneratedPath(agentSocket)
 	require.NotEqual(t, agentSocket, frozenAgentSocket,
@@ -1292,19 +1295,30 @@ func TestOpenCodeCredentialHandoffNeverEntersWrapperArgv(t *testing.T) {
 	assert.NotContains(t, joined, "43210")
 }
 
-func TestOpenCodePrivateRoutedNetworkIsNotProviderFiltered(t *testing.T) {
+func TestOpenCodeProviderIsolationIsSeparateFromFilteredNetwork(t *testing.T) {
 	spec := &session.TclaudeLayerLaunchSpec{Effective: sandboxpolicy.EffectiveProfile{
 		Network: &sandboxpolicy.NetworkRules{
 			Mode:      sandboxpolicy.AccessModeOpen,
 			Namespace: sandboxpolicy.NetworkNamespacePrivate,
 		},
 	}}
-	assert.False(t, openCodeFilteredNetworkSpec(spec),
+	assert.False(t, openCodeProviderIsolatedSpec(spec),
 		"unrestricted private routing must not activate provider authority isolation")
 
 	spec.Effective.Network.Deny = []sandboxpolicy.NetworkAllowEntry{{
 		CIDR: "192.0.2.0/24",
 	}}
+	assert.False(t, openCodeProviderIsolatedSpec(spec),
+		"destination filtering alone must not hide harness-required config")
 	assert.True(t, openCodeFilteredNetworkSpec(spec),
-		"a private namespace with destination rules remains provider-filtered")
+		"destination filtering must still activate the network boundary")
+
+	spec.Contract.StateRoot = "/tmp/agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	spec.Contract.Environment = []sandboxpolicy.EnvironmentEntry{{
+		Name: "XDG_CONFIG_HOME",
+		Value: filepath.Join(
+			"/tmp/agt_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", openCodeFilteredConfigBase),
+	}}
+	assert.True(t, openCodeProviderIsolatedSpec(spec),
+		"legacy provider-isolated contracts remain identifiable for replay")
 }

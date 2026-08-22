@@ -1029,7 +1029,7 @@ func TestSandboxProfileDraftEnforcementActivatesOpenCodeLinuxDenyRows(t *testing
 	}, "linux")
 	assert.Equal(t, harness.AccessPredictionEnforced, axes.Network.Outcome)
 	assert.Contains(t, axes.Network.Detail,
-		"explicit provider/model launch model",
+		harness.OpenCodeFilteredExplicitProviderCaveat,
 		"the preview must disclose when tclaude checks selected-model access")
 	require.Len(t, rows, 3)
 	for _, row := range rows {

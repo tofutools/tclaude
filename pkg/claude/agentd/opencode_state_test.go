@@ -262,60 +262,15 @@ func TestOpenCodeUnixRelayBuildsV4ForIsolatedSmokeAndFilteredPublicLaunch(t *tes
 		require.NoError(t, filteredErr)
 		require.Equal(t, session.TclaudeLayerUnixRelaySpecVersion, filteredSpec.Version)
 		require.NoError(t, validateOpenCodeV3LaunchContract(
-			filteredSpec.Contract, true))
+			filteredSpec.Contract, false))
 		require.Len(t, filteredSpec.Contract.Environment, 4)
 		assert.Equal(t, sandboxpolicy.EnvironmentEntry{
 			Name: "XDG_CONFIG_HOME",
 			Value: filepath.Join(
-				filteredSpec.Contract.StateRoot, openCodeFilteredConfigBase),
+				filteredSpec.Contract.StateRoot, "config"),
 		}, filteredSpec.Contract.Environment[2])
-		require.DirExists(t, filepath.Join(
-			filteredSpec.Contract.StateRoot, openCodeFilteredConfigBase, "opencode"))
-		require.DirExists(t, filepath.Join(
-			filteredSpec.Contract.StateRoot, openCodeFilteredHomeBase, ".opencode"))
-		require.NoError(t, validateOpenCodeFilteredProviderAuthority(filteredSpec))
-		require.GreaterOrEqual(t, len(filteredSpec.Contract.ReadOnlyBinds), 2)
-		sealed := filteredSpec.Contract.ReadOnlyBinds[len(filteredSpec.Contract.ReadOnlyBinds)-2:]
-		assert.Equal(t, []session.TclaudeLayerReadOnlyBind{
-			{
-				Source: filepath.Join(
-					filteredSpec.Contract.StateRoot, openCodeFilteredConfigBase,
-					"opencode"),
-				Target: filepath.Join(
-					filteredSpec.Contract.StateRoot, openCodeFilteredConfigBase,
-					"opencode"),
-			},
-			{
-				Source: filepath.Join(
-					filteredSpec.Contract.StateRoot, openCodeFilteredHomeBase,
-					".opencode"),
-				Target: filepath.Join(
-					filteredSpec.Contract.StateRoot, openCodeFilteredHomeBase,
-					".opencode"),
-			},
-		}, sealed)
-		missingFilteredEnvironment := filteredSpec.Contract
-		missingFilteredEnvironment.Environment = nil
-		require.ErrorContains(t, validateOpenCodeV3LaunchContract(
-			missingFilteredEnvironment, true), "no enforced XDG environment")
-		unsealedFiltered := filteredSpec.Contract
-		unsealedFiltered.ReadOnlyBinds =
-			unsealedFiltered.ReadOnlyBinds[:len(unsealedFiltered.ReadOnlyBinds)-1]
-		require.ErrorContains(t, validateOpenCodeV3LaunchContract(
-			unsealedFiltered, true), "seal provider config root")
-		hostileFilteredConfig := filepath.Join(
-			filteredSpec.Contract.StateRoot, openCodeFilteredConfigBase,
-			"opencode", "opencode.json")
-		require.NoError(t, os.WriteFile(
-			hostileFilteredConfig, []byte(`{"provider":{"opaque":{}}}`), 0o600))
-		// TCL-923: the sentence names the condition that fired (a second entry
-		// beside the marker), not the property the directory was required to
-		// have. The old wording told an EMPTY directory it was not empty.
-		authorityErr := validateOpenCodeFilteredProviderAuthority(filteredSpec)
-		require.ErrorContains(t, authorityErr, "does not hold exactly one entry")
-		require.NotContains(t, authorityErr.Error(), "is not provider-empty",
-			"the retired wording must not come back")
-		require.NoError(t, os.Remove(hostileFilteredConfig))
+		assert.NotEmpty(t, openCodeReadOnlyConfigBindSource(filteredSpec.Contract),
+			"filtered launches must retain the read-only harness config projection")
 		require.NoError(t, validateOpenCodeFilteredProviderAuthority(filteredSpec))
 		listenerFD, executableFD, fdErr :=
 			session.TclaudeLayerUnixRelayServerFDs(*filteredSpec)
@@ -336,15 +291,13 @@ func TestOpenCodeUnixRelayBuildsV4ForIsolatedSmokeAndFilteredPublicLaunch(t *tes
 			"-- /proc/self/fd/4 session tclaude-layer-winch-relay")
 		assert.Contains(t, filteredJoined, "--preserve-fds 2")
 		assert.Contains(t, filteredJoined, "--filtered-network-policy")
-		for _, path := range []string{
-			filepath.Join(filteredSpec.Contract.StateRoot, openCodeFilteredConfigBase,
-				"opencode"),
-			filepath.Join(filteredSpec.Contract.StateRoot, openCodeFilteredHomeBase,
-				".opencode"),
-		} {
-			assert.Contains(t, filteredJoined, "--ro-bind "+path+" "+path,
-				"provider-empty config roots must be final read-only mounts")
-		}
+		configSource := openCodeReadOnlyConfigBindSource(filteredSpec.Contract)
+		configTarget := filepath.Join(filteredSpec.Contract.StateRoot, "config", "opencode")
+		assert.Contains(t, filteredJoined,
+			"--ro-bind "+configSource+" "+configTarget,
+			"filtered launches must mount the harness config read-only")
+		assert.NotContains(t, filteredJoined, openCodeFilteredConfigBase)
+		assert.NotContains(t, filteredJoined, openCodeFilteredHomeBase)
 		assert.Contains(t, filteredJoined,
 			"/proc/self/fd/9 "+opencodeapi.InheritedUnixRelayMode+" 8 ",
 			"the filtered supervisor must remap both inherited authorities after its sealed gateway fds")

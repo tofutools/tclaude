@@ -223,12 +223,10 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	// production does not perform.
 	//
 	// WHICH HOME is the part that is easy to get wrong and silently lose the
-	// entire audit trail. A filtered launch has openCodeServerEnvironment pin
-	// HOME into the harness state root, and the launcher execs the supervisor
-	// with that environment — so the supervisor reads its config and writes its
-	// log under the state root's filtered home, NOT under this test's HOME.
-	supervisorHome := filepath.Join(
-		allocation.StateRoot, openCodeFilteredHomeBase)
+	// entire audit trail. Network filtering does not replace the harness HOME;
+	// the launcher execs the supervisor with this test's frozen HOME, so its
+	// config and decision log live there too.
+	supervisorHome := home
 	writeOpenCodeFloorDebugConfig(t, supervisorHome)
 	t.Cleanup(func() {
 		if !t.Failed() {
@@ -731,10 +729,10 @@ func openCodeFloorTransportErrors(t *testing.T, home string) []string {
 //
 // The home is passed in rather than taken from the accessor, and that is the
 // whole correctness of this reader: common.OutputLogPath() resolves against THIS
-// PROCESS's home, while the supervisor runs with HOME pinned into the harness
-// state root. It is kept as a last fallback only so a future launch that does
-// not repin HOME still reads somewhere sensible. The ~/.tclaude/output.log
-// spelling is read too because the log has moved once already.
+// PROCESS's home, while the supervisor may run with a profile-frozen HOME. It
+// is kept as a last fallback so both layouts remain diagnosable. The
+// ~/.tclaude/output.log spelling is read too because the log has moved once
+// already.
 func readOpenCodeFloorLogLines(home, message string) []string {
 	candidates := []string{
 		filepath.Join(home, ".tclaude", "data", "output.log"),
