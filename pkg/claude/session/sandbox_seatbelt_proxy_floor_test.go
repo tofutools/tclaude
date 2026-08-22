@@ -366,18 +366,20 @@ func TestSeatbeltProxyFloorWithoutAllowlistedSocketsStillReachesTheProxy(t *test
 	}
 }
 
-// A real launch allowlists the whole agentd socket floor — canonical plus
-// legacy spellings — not the single socket the golden above uses. The endpoint
-// exception has to survive alongside all of them, in the same deny, or the
-// normal launch shape is the one that loses its route to the proxy.
+// A real launch allowlists the whole agentd socket floor — canonical,
+// restart-stable, and legacy spellings — not the single socket the golden above
+// uses. The endpoint exception has to survive alongside all of them, in the
+// same deny, or the normal launch shape is the one that loses its route to the
+// proxy.
 //
 // This is asserted as a property over every socket count from zero up, not at
-// one fixture size. AgentdSocketFloor() dedups, so it is normally three but two
+// one fixture size. AgentdSocketFloor() dedups, so it is normally four but three
 // whenever a legacy spelling is empty or folds away; a test pinned at three
 // discrete sizes leaves the counts between them free to behave differently.
 func TestSeatbeltProxyFloorKeepsTheEndpointBesideEverySocketException(t *testing.T) {
 	sockets := []string{
 		"/Users/dev/.tclaude/api/agentd.sock",
+		"/Users/dev/.tclaude/api/sandbox-agentd/agentd.sock",
 		"/Users/dev/.tclaude-agentd.sock",
 		"/Users/dev/.tclaude/agentd.sock",
 	}
