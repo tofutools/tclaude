@@ -56,7 +56,7 @@ func TestFilteredNetworkInstallBasePolicyValidatesInputs(t *testing.T) {
 	require.ErrorContains(t, relay.installBasePolicy(0), "namespace pid")
 }
 
-func TestFilteredNetworkPastaArgsGiveSyntheticIPv6MappingARoute(t *testing.T) {
+func TestFilteredNetworkPastaArgsJoinNetworkNamespaceOwner(t *testing.T) {
 	assert.Equal(t, []string{
 		"--foreground",
 		"--quiet",
@@ -72,8 +72,9 @@ func TestFilteredNetworkPastaArgsGiveSyntheticIPv6MappingARoute(t *testing.T) {
 		"--udp-ns", "none",
 		"--no-splice",
 		"--pid", "/tmp/pasta.pid",
-		"123",
-	}, filteredNetworkPastaArgs("/tmp/pasta.pid", 123))
+		"--userns", "/proc/self/fd/3",
+		"--netns", "/proc/self/fd/4",
+	}, filteredNetworkPastaArgs("/tmp/pasta.pid"))
 }
 
 func TestFilteredNetworkResolvMountMaterializesRuntimeSymlinkTarget(t *testing.T) {

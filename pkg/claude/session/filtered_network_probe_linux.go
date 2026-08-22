@@ -41,6 +41,8 @@ var requiredFilteredNetworkPastaOptions = []string{
 	"--udp-ns",
 	"--no-splice",
 	"--pid",
+	"--userns",
+	"--netns",
 }
 
 func resolveFilteredNetworkExecutables() (filteredNetworkExecutables, error) {
