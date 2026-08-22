@@ -13,7 +13,6 @@ import (
 
 	"github.com/pelletier/go-toml/v2"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
-	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -799,14 +798,6 @@ func validateStoredNativeProfile(name, content string) error {
 	tmuxDir, err := clcommon.TclaudeTmuxSocketDir()
 	if err != nil || tmuxDir == "" || profile.Filesystem[tmuxDir] != "none" {
 		return fmt.Errorf("generated profile %s does not deny the tmux control directory", name)
-	}
-	agentdSocket := agentipc.CanonicalSocketPath()
-	if agentdSocket == "" || profile.Filesystem[agentdSocket] != "read" ||
-		profile.Network.UnixSockets[agentdSocket] != "allow" {
-		return fmt.Errorf("generated profile %s does not allow the canonical agentd socket", name)
-	}
-	if agentdDir := agentipc.CanonicalSocketDir(); agentdDir == "" || profile.Filesystem[agentdDir] != "read" {
-		return fmt.Errorf("generated profile %s does not allow the canonical agentd socket directory", name)
 	}
 	if !strings.Contains(content, "[permissions."+name+"]") {
 		return fmt.Errorf("generated profile %s has no canonical permission table", name)
