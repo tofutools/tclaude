@@ -1641,36 +1641,48 @@ function ShutdownAgentDialog({ descriptor, actions, confirmDiscard }) {
 
   const retrying = !!submittedRequest;
   const forceChoice = submittedRequest?.force === true;
+  const title = html`<${Words} plain="Shut down agent?" wizard="Slumber this familiar?" />`;
+  const softLabel = html`<${Words}
+    plain=${retrying && !forceChoice ? 'Retry soft exit' : 'Soft exit'}
+    wizard=${retrying && !forceChoice ? 'Retry slumber' : '🌙 Slumber'}
+  />`;
+  const forceLabel = html`<${Words}
+    plain=${retrying && forceChoice ? 'Retry force kill' : 'Force kill'}
+    wizard=${retrying && forceChoice ? 'Retry force slumber' : 'Force slumber'}
+  />`;
   return html`
     <${TransactionDialogFrame}
       id="shutdown-modal"
       labelledby="shutdown-title"
-      title="Shut down agent?"
+      title=${title}
       meta=${descriptor.label || ''}
       metaID="shutdown-meta"
       error=${error}
       errorID="shutdown-error"
       busy=${busy}
       busyAction=${forceChoice ? 'alternate' : 'primary'}
-      primaryLabel=${retrying && !forceChoice ? 'Retry soft exit' : 'Soft exit'}
+      primaryLabel=${softLabel}
       busyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
         plain="Soft exiting…" wizard="Slumbering…" />`}
       primaryClass=""
       submitDisabled=${retrying && forceChoice}
       submitID="shutdown-soft"
-      alternateLabel=${retrying && forceChoice ? 'Retry force kill' : 'Force kill'}
+      alternateLabel=${forceLabel}
       alternateBusyLabel=${html`<span class="btn-spinner" aria-hidden="true"></span><${Words}
         plain="Force killing…" wizard="Forcing slumber…" />`}
       alternateDisabled=${retrying && !forceChoice}
       alternateID="shutdown-force"
-      alternateTitle="Immediately kills the tmux session; use if soft exit is stuck"
+      alternateTitle="Immediately kills the tmux session; use if the graceful exit is stuck"
       cancelID="shutdown-cancel"
       onClose=${actions.close}
       onSubmit=${() => submit(false)}
       onAlternateSubmit=${() => submit(true)}
       confirmDiscard=${confirmDiscard}
     >
-      <p>Soft exit injects /exit into tmux pane. Conv jsonl is preserved; in-flight tool calls are interrupted.</p>
+      <p><${Words}
+        plain="Soft exit injects /exit into tmux pane. Conv jsonl is preserved; in-flight tool calls are interrupted."
+        wizard="Gentle slumber whispers /exit into the familiar's tmux pane. Its conversation scroll is preserved; in-flight invocations are interrupted."
+      /></p>
     </${TransactionDialogFrame}>
   `;
 }

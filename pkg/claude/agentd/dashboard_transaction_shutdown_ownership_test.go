@@ -27,16 +27,23 @@ func TestDashboardTransactionShutdownExclusiveOwnership(t *testing.T) {
 	if strings.Contains(html, `id="shutdown-modal"`) {
 		t.Error("static dashboard HTML still owns #shutdown-modal")
 	}
-	if strings.Contains(css, "#shutdown-modal") {
-		t.Error("dashboard CSS retains a static #shutdown-modal ownership hook")
-	}
 	for _, required := range []string{
 		`id="shutdown-modal"`, `kind === 'shutdown-agent'`,
-		`primaryLabel=${retrying && !forceChoice ? 'Retry soft exit' : 'Soft exit'}`,
-		`alternateLabel=${retrying && forceChoice ? 'Retry force kill' : 'Force kill'}`,
+		`wizard="Slumber this familiar?"`,
+		`wizard=${retrying && !forceChoice ? 'Retry slumber' : '🌙 Slumber'}`,
+		`wizard=${retrying && forceChoice ? 'Retry force slumber' : 'Force slumber'}`,
 	} {
 		if !strings.Contains(island, required) {
 			t.Errorf("transaction island is missing shutdown ownership contract %q", required)
+		}
+	}
+	for _, required := range []string{
+		"body.wizard #shutdown-modal .modal {",
+		"body.wizard #shutdown-modal #shutdown-soft {",
+		"body.wizard #shutdown-modal #shutdown-force {",
+	} {
+		if !strings.Contains(css, required) {
+			t.Errorf("dashboard CSS is missing scoped wizard shutdown chrome %q", required)
 		}
 	}
 	if !strings.Contains(controller, "openShutdownAgentDialog(agent, label") {
