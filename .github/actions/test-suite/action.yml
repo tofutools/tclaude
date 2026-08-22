@@ -23,6 +23,15 @@ inputs:
   race:
     description: Set to 'true' to run with -race (roughly triples wall time).
     default: 'false'
+  diff-base:
+    description: >-
+      Git revision to grade the shard against. When set, the shard runs only
+      the packages a change since that revision can actually reach, computed
+      from the real import graph by scripts/ci/affected; when empty (the
+      default) the whole shard runs, which is what the release flows want.
+      PR CI passes HEAD^1 — the base commit of the merge ref actions/checkout
+      builds — so the job needs fetch-depth >= 2 to have that parent.
+    default: ''
 
 runs:
   using: composite
@@ -55,6 +64,8 @@ runs:
     # every other package.
     - name: Run tests (${{ inputs.shard }})
       shell: bash
+      env:
+        DIFF_BASE: ${{ inputs.diff-base }}
       run: |
         case "${{ inputs.shard }}" in
           all|agentd|jstest)
@@ -95,4 +106,21 @@ runs:
         esac
         race=""
         if [ "${{ inputs.race }}" = "true" ]; then race="-race"; fi
+
+        # Package selection. The selector is conservative by construction: a
+        # changed file it cannot attribute to a package (go.mod, a doc a test
+        # reads, a workflow, its own source) degrades to the full shard, and
+        # it prints the reason for whichever verdict it reached. Only the PR
+        # flow passes a base; release and manual-release always run in full,
+        # so anything a wrong skip could hide is still measured before a
+        # release, on the merge commit itself.
+        if [ -n "$DIFF_BASE" ]; then
+          selected="$(go run ./scripts/ci/affected -base "$DIFF_BASE" $pkgs)"
+          if [ -z "$selected" ]; then
+            echo "No package in this shard can be reached by the change; nothing to test."
+            exit 0
+          fi
+          pkgs="$selected"
+        fi
+
         go test $race $pkgs

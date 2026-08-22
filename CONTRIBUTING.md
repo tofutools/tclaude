@@ -36,6 +36,27 @@ TCLAUDE_SANDBOX_ASSUMPTIONS=1 \
     -run '^TestBubblewrapAssumptions$' -count=1 -v -timeout=180s
 ```
 
+### What PR CI actually runs
+
+`go test ./...` locally runs everything. PR CI does not: each shard is graded
+against the pull request's base commit by `scripts/ci/affected`, which walks
+the real import graph — including test-only imports — and runs only the
+packages a change can reach. The step log always names the verdict and why it
+was reached.
+
+The selector is deliberately conservative. A changed file it cannot attribute
+to a Go package — `go.mod`, a workflow, a shell script, a doc that a test
+reads — falls back to running the whole shard, as does a change to the
+selector itself or setting `TCLAUDE_CI_FULL_TESTS=1`. Release and
+manual-release always run every shard in full, so the merge commit is measured
+without selection before anything ships.
+
+Two consequences worth knowing. A test that reads a file outside its own
+package directory without importing that package is invisible to the graph;
+keep such reads inside the package, or reach the file through an import, as
+`pkg/claude/agentd/jstest` does. And a green PR check means "everything this
+change can reach passed", not "the whole suite ran".
+
 ### Deterministic timing in tests
 
 Make correctness conditions causal. Use a channel, barrier, callback, wait

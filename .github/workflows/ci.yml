@@ -908,6 +908,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          # Two commits, not one: for a pull_request event actions/checkout
+          # builds the merge ref, so HEAD^1 is the base branch commit this PR
+          # is measured against. The test-suite action grades the shard
+          # against it and skips packages the change cannot reach.
+          fetch-depth: 2
 
       # The Go race detector is OFF by default and gated behind the RUN_RACE
       # repository variable (Settings -> Secrets and variables -> Actions ->
@@ -921,6 +927,9 @@ jobs:
         with:
           shard: ${{ matrix.shard }}
           race: ${{ vars.RUN_RACE }}
+          # Only the PR flow selects; release.yml and manual-release.yml pass
+          # no base and run every shard in full on the merge commit.
+          diff-base: HEAD^1
 
   # Credential-free GitHub Copilot CLI regression smoke (TCL-1046).
   #
