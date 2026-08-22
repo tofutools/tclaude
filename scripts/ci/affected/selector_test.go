@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"sort"
 	"testing"
@@ -151,4 +153,44 @@ func sortedKeys(m map[string]bool) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// A file moved between packages must be reported under both paths: the package
+// that lost it changed just as much as the one that gained it, and git's
+// rename detection would hide the old path.
+func TestChangedFilesReportsBothSidesOfARename(t *testing.T) {
+	repo := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		if _, err := runGit(repo, args...); err != nil {
+			t.Fatalf("git %v: %v", args, err)
+		}
+	}
+	git("init", "-q", ".")
+	git("config", "user.email", "test@example.invalid")
+	git("config", "user.name", "test")
+	if err := os.MkdirAll(filepath.Join(repo, "pkg", "leaf"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(repo, "pkg", "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "pkg", "leaf", "moved.go"), []byte("package leaf\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git("add", ".")
+	git("commit", "-qm", "before")
+	git("mv", "pkg/leaf/moved.go", "pkg/other/moved.go")
+	git("commit", "-qam", "after")
+
+	s := testSelector()
+	s.root = repo
+	got, err := s.changedFiles("HEAD~1", "HEAD")
+	if err != nil {
+		t.Fatalf("changedFiles: %v", err)
+	}
+	want := []string{"pkg/leaf/moved.go", "pkg/other/moved.go"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("changedFiles = %v, want %v", got, want)
+	}
 }

@@ -47,7 +47,7 @@ type selector struct {
 }
 
 func newSelector() (*selector, error) {
-	root, err := runGit("rev-parse", "--show-toplevel")
+	root, err := runGit("", "rev-parse", "--show-toplevel")
 	if err != nil {
 		return nil, fmt.Errorf("locating the module root: %w", err)
 	}
@@ -174,11 +174,14 @@ func (s *selector) ownerDir(file string) (string, bool) {
 // changedFiles lists the paths that differ between base and head — the working
 // tree when head is empty — as module-root-relative slash paths.
 func (s *selector) changedFiles(base, head string) ([]string, error) {
-	args := []string{"diff", "--name-only", base}
+	// --no-renames on purpose: with rename detection a file moved from one
+	// package to another is reported only under its new path, which would
+	// leave the package that lost it untested.
+	args := []string{"diff", "--name-only", "--no-renames", base}
 	if head != "" {
 		args = append(args, head)
 	}
-	out, err := runGit(append(args, "--")...)
+	out, err := s.git(append(args, "--")...)
 	if err != nil {
 		return nil, err
 	}
@@ -259,8 +262,15 @@ func listPackages(patterns []string) ([]goPkg, error) {
 	return pkgs, nil
 }
 
-func runGit(args ...string) (string, error) {
+// git runs a git command in the module root, so the selector does not depend
+// on the caller's working directory.
+func (s *selector) git(args ...string) (string, error) {
+	return runGit(s.root, args...)
+}
+
+func runGit(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
 	cmd.Stderr = os.Stderr
 	out, err := cmd.Output()
 	if err != nil {
