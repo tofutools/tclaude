@@ -22,6 +22,11 @@ func observeAgentProcess(rootPID int, harnessName string) agentDebugLiveProcess 
 		out.Status, out.Detail = "unavailable", "no validated harness process is visible beneath the host launch boundary"
 		return out
 	}
+	startTime, ok := debugProcStartTime(pid)
+	if !ok {
+		out.Status, out.Detail = "unavailable", "cannot bind the harness PID to a process generation"
+		return out
+	}
 	out.PID = pid
 	status, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
 	if err != nil {
@@ -67,11 +72,35 @@ func observeAgentProcess(rootPID int, harnessName string) agentDebugLiveProcess 
 			break
 		}
 	}
+	if after, stable := debugProcStartTime(pid); !stable || after != startTime {
+		return agentDebugLiveProcess{
+			Status: "unavailable",
+			Detail: "harness process exited or its PID was reused during observation",
+		}
+	}
 	out.Status = "observed"
 	if out.PATH == "" {
 		out.Status, out.Detail = "partial", "identity observed; PATH is absent from the process environment"
 	}
 	return out
+}
+
+func debugProcStartTime(pid int) (string, bool) {
+	data, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid))
+	if err != nil {
+		return "", false
+	}
+	text := string(data)
+	closeParen := strings.LastIndex(text, ")")
+	if closeParen < 0 || closeParen+2 >= len(text) {
+		return "", false
+	}
+	// Fields after comm begin at field 3 (state); starttime is field 22.
+	fields := strings.Fields(text[closeParen+2:])
+	if len(fields) <= 19 {
+		return "", false
+	}
+	return fields[19], true
 }
 
 func findHostHarnessDescendant(rootPID int, harnessName string) int {

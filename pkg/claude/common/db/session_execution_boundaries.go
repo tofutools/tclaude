@@ -34,15 +34,6 @@ func SetSessionExecutionBoundary(sessionID, raw string) error {
 	return nil
 }
 
-func ClearSessionExecutionBoundary(sessionID string) error {
-	d, err := Open()
-	if err != nil {
-		return err
-	}
-	_, err = d.Exec(`DELETE FROM session_execution_boundaries WHERE session_id = ?`, strings.TrimSpace(sessionID))
-	return err
-}
-
 func SessionExecutionBoundary(sessionID string) (string, error) {
 	d, err := Open()
 	if err != nil {

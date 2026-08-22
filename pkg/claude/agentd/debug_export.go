@@ -224,16 +224,18 @@ func liveDebugProcessRoot(s *db.SessionRow) int {
 		return 0
 	}
 	if s.Harness == "opencode" {
-		if runtime, err := db.GetOpenCodeRuntimeByConvID(s.ConvID); err == nil && runtime != nil && runtime.PID > 0 {
-			return runtime.PID
+		if openCodeRuntime, err := db.GetOpenCodeRuntimeByConvID(s.ConvID); err == nil &&
+			openCodeRuntime != nil && openCodeRuntime.PID > 0 && openCodeRuntimeVerified(*openCodeRuntime) {
+			return openCodeRuntime.PID
 		}
+		return 0
 	}
 	if panePID := livePanePID(s.TmuxSession); panePID > 0 {
 		return panePID
 	}
-	// Direct/non-tmux sessions may already record a host PID. The observer
-	// validates that it is a harness before reading anything from /proc.
-	return s.PID
+	// A database PID has no durable process-generation identity. Never expose
+	// another process's environment merely because the kernel reused it.
+	return 0
 }
 
 func sanitizeInitialSpawnRequest(raw string) (map[string]any, []string, error) {

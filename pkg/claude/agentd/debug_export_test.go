@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
 func TestSanitizeInitialSpawnRequestRedactsContentAndAuthority(t *testing.T) {
@@ -21,4 +22,10 @@ func TestSanitizeInitialSpawnRequestRedactsContentAndAuthority(t *testing.T) {
 		"configurations.requested.parameters.initial_message",
 		"configurations.requested.parameters.write_proof_token",
 	}, redactions)
+}
+
+func TestLiveDebugProcessRootDoesNotTrustStoredPIDWithoutLiveBoundary(t *testing.T) {
+	assert.Zero(t, liveDebugProcessRoot(&db.SessionRow{
+		Harness: "codex", PID: 12345,
+	}))
 }

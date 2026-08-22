@@ -84,6 +84,7 @@ type ExecutionBoundaryInput struct {
 	HarnessName           string
 	HarnessLookupName     string
 	HarnessExecutable     string
+	HarnessSandboxPath    string
 	HarnessRuntimeRoots   []string
 	LauncherBinary        string
 	Cwd                   string
@@ -125,6 +126,9 @@ func BuildExecutionBoundary(input ExecutionBoundaryInput) (*ExecutionBoundary, e
 		}
 		out.Harness.HostPath = resolved
 		out.Harness.SandboxPath = resolved
+		if sandboxPath := strings.TrimSpace(input.HarnessSandboxPath); sandboxPath != "" {
+			out.Harness.SandboxPath = sandboxPath
+		}
 		out.Harness.Resolution = "absolute executable resolved before sandbox launch"
 	} else if candidate := resolveRecordedPATHExecutable(input.HarnessLookupName, basePATH, input.Cwd); candidate != "" {
 		out.Harness.HostPath = candidate
