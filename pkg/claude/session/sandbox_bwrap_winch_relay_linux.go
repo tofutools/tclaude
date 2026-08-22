@@ -111,6 +111,24 @@ func tclaudeLayerShellEnvSetupArgs(fd int) []string {
 	}
 }
 
+func insertTclaudeLayerShellEnvArgs(argv, shellEnvArgs []string) ([]string, error) {
+	for index := 0; index+2 < len(argv); index++ {
+		if argv[index] != "--ro-bind" ||
+			argv[index+2] != tclaudeLayerConstructedRootTclaudePath {
+			continue
+		}
+		// The fixed CLI bind follows the --dir operations that materialize
+		// /.tclaude. Create the fragment immediately after it, before policy
+		// replay remounts the constructed root read-only.
+		out := make([]string, 0, len(argv)+len(shellEnvArgs))
+		out = append(out, argv[:index+3]...)
+		out = append(out, shellEnvArgs...)
+		out = append(out, argv[index+3:]...)
+		return out, nil
+	}
+	return nil, fmt.Errorf("constructed-root shell environment has no CLI projection")
+}
+
 // tclaudeLayerWinchRelayCmd stays outside bubblewrap and outside the terminal
 // I/O path. Bubblewrap inherits stdin/stdout/stderr directly; this process only
 // turns the host PTY's SIGWINCH notification into the same fixed signal for the
@@ -329,18 +347,22 @@ func runTclaudeLayerWinchRelay(
 			len(engineFiles) + len(preservedFiles)
 		shellEnvArgs = tclaudeLayerShellEnvSetupArgs(shellEnvFD)
 	}
-	relaySetupArgs := make([]string, 0,
-		len(bindingArgs)+len(engineSetupArgs)+len(shellEnvArgs))
+	original := argv[1:]
+	if len(shellEnvArgs) != 0 {
+		original, err = insertTclaudeLayerShellEnvArgs(original, shellEnvArgs)
+		if err != nil {
+			return 125, err
+		}
+	}
+	relaySetupArgs := make([]string, 0, len(bindingArgs)+len(engineSetupArgs))
 	relaySetupArgs = append(relaySetupArgs, bindingArgs...)
 	relaySetupArgs = append(relaySetupArgs, engineSetupArgs...)
-	relaySetupArgs = append(relaySetupArgs, shellEnvArgs...)
-	childArgs := make([]string, 0, len(argv)+len(relaySetupArgs)+8)
+	childArgs := make([]string, 0, len(original)+len(relaySetupArgs)+10)
 	childArgs = append(childArgs, "--json-status-fd", "3")
 	if len(relaySetupArgs) == 0 {
-		childArgs = append(childArgs, argv[1:]...)
+		childArgs = append(childArgs, original...)
 	} else {
 		commandIndex := -1
-		original := argv[1:]
 		for index, arg := range original {
 			if arg == "--" {
 				commandIndex = index

@@ -470,6 +470,20 @@ func TestConstructedRootShellEnvSurvivesLoginPathReset(t *testing.T) {
 		"--setenv", "BASH_ENV", tclaudeLayerConstructedRootShellEnvPath,
 		"--setenv", "ENV", tclaudeLayerConstructedRootShellEnvPath,
 	}, tclaudeLayerShellEnvSetupArgs(9))
+	inserted, err := insertTclaudeLayerShellEnvArgs([]string{
+		"--dir", tclaudeLayerConstructedRootTclaudeDir,
+		"--ro-bind", "/host/tclaude", tclaudeLayerConstructedRootTclaudePath,
+		"--remount-ro", "/",
+		"--", "/bin/agent",
+	}, []string{"--file", "9", tclaudeLayerConstructedRootShellEnvPath})
+	require.NoError(t, err)
+	assert.Equal(t, []string{
+		"--dir", tclaudeLayerConstructedRootTclaudeDir,
+		"--ro-bind", "/host/tclaude", tclaudeLayerConstructedRootTclaudePath,
+		"--file", "9", tclaudeLayerConstructedRootShellEnvPath,
+		"--remount-ro", "/",
+		"--", "/bin/agent",
+	}, inserted)
 
 	fragment, err := prepareTclaudeLayerShellEnv()
 	require.NoError(t, err)
