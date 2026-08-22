@@ -2,6 +2,7 @@ package session
 
 import (
 	"os"
+	"sync"
 	"testing"
 )
 
@@ -16,20 +17,34 @@ import (
 // which restores this scrubbed default afterwards.
 func TestMain(m *testing.M) {
 	_ = os.Unsetenv("TCLAUDE_EXIT_GENERATION")
-	bashEnv, err := os.CreateTemp("", "tclaude-test-bash-env-")
-	if err != nil {
-		panic(err)
-	}
-	if _, err := bashEnv.WriteString(tclaudeLayerConstructedRootBashEnv(
-		tclaudeLayerConstructedRootTclaudeBin,
-	)); err != nil {
-		panic(err)
-	}
-	if err := bashEnv.Close(); err != nil {
-		panic(err)
-	}
+	// Keep this fixture lazy: the Darwin smoke helper runs TestMain inside a
+	// Seatbelt that denies temporary-file writes, and it never needs the
+	// Linux-only constructed-root projection this source supports.
+	var bashEnvOnce sync.Once
+	var bashEnvPath string
+	var bashEnvErr error
 	tclaudeLayerConstructedRootBashEnvSource = func() (string, error) {
-		return bashEnv.Name(), nil
+		bashEnvOnce.Do(func() {
+			bashEnv, err := os.CreateTemp("", "tclaude-test-bash-env-")
+			if err != nil {
+				bashEnvErr = err
+				return
+			}
+			bashEnvPath = bashEnv.Name()
+			if _, err := bashEnv.WriteString(tclaudeLayerConstructedRootBashEnv(
+				tclaudeLayerConstructedRootTclaudeBin,
+			)); err != nil {
+				bashEnvErr = err
+			}
+			if err := bashEnv.Close(); bashEnvErr == nil && err != nil {
+				bashEnvErr = err
+			}
+			if bashEnvErr != nil {
+				_ = os.Remove(bashEnvPath)
+				bashEnvPath = ""
+			}
+		})
+		return bashEnvPath, bashEnvErr
 	}
 	// Gated namespace smokes render bubblewrap arguments in this Go test
 	// process but launch a separately built tclaude binary. Without this seam,
@@ -40,6 +55,8 @@ func TestMain(m *testing.M) {
 		tclaudeLayerTclaudeCLIPath = func() string { return binary }
 	}
 	code := m.Run()
-	_ = os.Remove(bashEnv.Name())
+	if bashEnvPath != "" {
+		_ = os.Remove(bashEnvPath)
+	}
 	os.Exit(code)
 }
