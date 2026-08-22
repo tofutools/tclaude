@@ -1,3 +1,9 @@
+//ci:whole-tree
+//
+// This guard parses every production file in the module, not only what
+// session imports, so PR CI's package selection cannot tell whether a
+// change reached it. The marker runs it on every change.
+
 package session
 
 import (

@@ -16,6 +16,14 @@ import (
 // selector must never grade a change to itself.
 const selfPkgDir = "scripts/ci/affected"
 
+// wholeTreeMarker opts a package out of selection entirely: a test file
+// carrying it scans the whole module rather than only what its package
+// imports, so the import graph cannot tell whether a change reached it. Such a
+// package is selected by every change. scripts/ci/affected's own guard test
+// keeps the marker and the scanners in sync, and it carries the marker itself
+// so that it, too, runs on every change.
+const wholeTreeMarker = "//ci:whole-tree"
+
 // goPkg is the slice of `go list -json` output this tool consumes. Deps is the
 // transitive import closure of the non-test package; the Test/XTest imports
 // are direct only, so their own Deps are folded in when the graph is built.
@@ -44,6 +52,10 @@ type selector struct {
 	// testClosure maps an import path to every in-module package its test
 	// binary is built from, itself included.
 	testClosure map[string]map[string]bool
+
+	// alwaysDirs holds the module-root-relative directories whose tests carry
+	// wholeTreeMarker. They are selected by every change.
+	alwaysDirs map[string]bool
 }
 
 func newSelector() (*selector, error) {
@@ -57,15 +69,16 @@ func newSelector() (*selector, error) {
 	if err != nil {
 		return nil, err
 	}
-	goDirs, err := scanGoDirs(root)
+	goDirs, alwaysDirs, err := scanGoDirs(root)
 	if err != nil {
 		return nil, err
 	}
 
 	s := &selector{
-		root:     root,
-		dirToPkg: make(map[string]string, len(pkgs)),
-		goDirs:   goDirs,
+		root:       root,
+		dirToPkg:   make(map[string]string, len(pkgs)),
+		goDirs:     goDirs,
+		alwaysDirs: alwaysDirs,
 	}
 	for _, p := range pkgs {
 		rel, err := filepath.Rel(root, p.Dir)
@@ -113,7 +126,8 @@ func buildTestClosure(pkgs []goPkg) map[string]map[string]bool {
 }
 
 // affectedBy returns every in-module package whose test binary is built from
-// at least one changed package.
+// at least one changed package, plus the packages that scan the whole module
+// and so are reachable from any change at all.
 func (s *selector) affectedBy(changed map[string]bool) map[string]bool {
 	out := make(map[string]bool)
 	for p, deps := range s.testClosure {
@@ -122,6 +136,11 @@ func (s *selector) affectedBy(changed map[string]bool) map[string]bool {
 				out[p] = true
 				break
 			}
+		}
+	}
+	for dir := range s.alwaysDirs {
+		if ip, ok := s.dirToPkg[dir]; ok {
+			out[ip] = true
 		}
 	}
 	return out
@@ -197,10 +216,12 @@ func (s *selector) changedFiles(base, head string) ([]string, error) {
 
 // scanGoDirs records every directory under root holding at least one .go file,
 // build tags ignored, so a file excluded on this platform still marks its
-// directory as Go-owned.
-func scanGoDirs(root string) (map[string]bool, error) {
-	dirs := make(map[string]bool)
-	err := filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
+// directory as Go-owned. It also reports the directories whose test files
+// carry wholeTreeMarker.
+func scanGoDirs(root string) (dirs, always map[string]bool, err error) {
+	dirs = make(map[string]bool)
+	always = make(map[string]bool)
+	err = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -217,13 +238,23 @@ func scanGoDirs(root string) (map[string]bool, error) {
 		if err != nil {
 			return err
 		}
-		dirs[filepath.ToSlash(rel)] = true
+		dir := filepath.ToSlash(rel)
+		dirs[dir] = true
+		if strings.HasSuffix(d.Name(), "_test.go") && !always[dir] {
+			body, err := os.ReadFile(p)
+			if err != nil {
+				return err
+			}
+			if strings.Contains(string(body), wholeTreeMarker) {
+				always[dir] = true
+			}
+		}
 		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("scanning for Go directories: %w", err)
+		return nil, nil, fmt.Errorf("scanning for Go directories: %w", err)
 	}
-	return dirs, nil
+	return dirs, always, nil
 }
 
 // resolvePackages expands the caller's package patterns to import paths,

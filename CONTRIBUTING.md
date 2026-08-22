@@ -51,11 +51,20 @@ selector itself or setting `TCLAUDE_CI_FULL_TESTS=1`. Release and
 manual-release always run every shard in full, so the merge commit is measured
 without selection before anything ships.
 
-Two consequences worth knowing. A test that reads a file outside its own
-package directory without importing that package is invisible to the graph;
-keep such reads inside the package, or reach the file through an import, as
-`pkg/claude/agentd/jstest` does. And a green PR check means "everything this
-change can reach passed", not "the whole suite ran".
+A test that reads a file outside its own package directory without importing
+that package is invisible to the graph. Keep such reads inside the package, or
+reach the file through an import, as `pkg/claude/agentd/jstest` does. When a
+test genuinely has to scan the whole module — the structural guards that parse
+every production file, for instance — no import graph can predict it, so put a
+`//ci:whole-tree` comment in the file. That opts its package out of selection
+entirely: every change selects it. `scripts/ci/affected` has a guard test that
+fails when a module-root scanner is missing the marker, so this is enforced
+rather than remembered.
+
+Two more things worth knowing. A green PR check means "everything this change
+can reach passed", not "the whole suite ran". And running the selector by hand
+against your working tree under-reports untracked files, since it grades a
+`git diff`; commit first, or pass `-head`.
 
 ### Deterministic timing in tests
 

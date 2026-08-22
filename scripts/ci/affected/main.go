@@ -35,24 +35,33 @@ func main() {
 		os.Exit(2)
 	}
 
-	sel, err := newSelector()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "affected: %v\n", err)
-		os.Exit(1)
-	}
+	// An unusable graph is an uncertainty like any other: print why, hand the
+	// caller back exactly what it asked for, and let `go test` be the thing
+	// that fails if the tree is genuinely broken.
 	want, err := resolvePackages(requested)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "affected: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(os.Stderr, "affected: %v — running the full shard\n", err)
+		printPackages(requested)
+		return
+	}
+	sel, err := newSelector()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "affected: %v — running the full shard\n", err)
+		printPackages(want)
+		return
 	}
 
 	selected, reason := sel.selectFor(*base, *head, want)
 	fmt.Fprintf(os.Stderr, "affected: %s — %d of %d requested packages selected\n",
 		reason, len(selected), len(want))
 
+	printPackages(selected)
+}
+
+func printPackages(pkgs []string) {
 	out := bufio.NewWriter(os.Stdout)
 	defer func() { _ = out.Flush() }()
-	for _, p := range selected {
+	for _, p := range pkgs {
 		fmt.Fprintln(out, p)
 	}
 }
