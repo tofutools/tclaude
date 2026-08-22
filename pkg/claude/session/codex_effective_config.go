@@ -259,14 +259,19 @@ func readCodexEffectiveConfigJSON(
 	}
 	waited := false
 	waitErr := error(nil)
-	defer func() {
+	finish := func(kill bool) error {
 		_ = stdin.Close()
-		if command.Process != nil {
+		if kill && command.Process != nil {
 			_ = command.Process.Kill()
 		}
 		if !waited {
-			_ = command.Wait()
+			waitErr = command.Wait()
+			waited = true
 		}
+		return waitErr
+	}
+	defer func() {
+		_ = finish(true)
 	}()
 
 	requests := []any{
@@ -288,9 +293,14 @@ func readCodexEffectiveConfigJSON(
 			return nil, marshalErr
 		}
 		if _, writeErr := stdin.Write(append(encoded, '\n')); writeErr != nil {
+			// Wait joins os/exec's stderr-copy goroutine. An app-server that
+			// reports a startup error and exits quickly can close stdin while
+			// that goroutine still has its diagnostic buffered; formatting the
+			// error before Wait intermittently dropped the only useful clue.
+			exitErr := finish(true)
 			return nil, fmt.Errorf(
-				"the Codex app-server closed before answering config/read: %w",
-				writeErr)
+				"the Codex app-server produced no config/read result (%s; stdin closed: %v)%s",
+				codexEffectiveConfigExit(exitErr), writeErr, diagnostics.suffix())
 		}
 	}
 
@@ -326,18 +336,18 @@ func readCodexEffectiveConfigJSON(
 		// CODEX_HOME — can print the reason and then hang instead of exiting,
 		// and dropping the tail here left the operator a bare "did not answer"
 		// with nothing to act on.
+		_ = finish(true)
 		return nil, fmt.Errorf(
 			"the Codex app-server effective-config read did not answer within %s%s",
 			codexEffectiveConfigTimeout, diagnostics.suffix())
 	}
 	if err := scanner.Err(); err != nil {
+		_ = finish(true)
 		return nil, fmt.Errorf(
 			"cannot read the Codex app-server effective-config reply: %w%s",
 			err, diagnostics.suffix())
 	}
-	_ = stdin.Close()
-	waitErr = command.Wait()
-	waited = true
+	waitErr = finish(false)
 	return nil, fmt.Errorf(
 		"the Codex app-server produced no config/read result (%s)%s",
 		codexEffectiveConfigExit(waitErr), diagnostics.suffix())
