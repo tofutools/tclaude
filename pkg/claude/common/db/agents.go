@@ -538,11 +538,11 @@ func ReplaceAgentPendingName(agentID, expected, name string) (bool, error) {
 
 // SetAgentInitialSpawnConfig records the verbatim JSON snapshot of the spawn
 // request an actor was born from onto agents.initial_spawn_config — the durable,
-// agent-level "what was this spawned with" record. A plain UPDATE — a no-op when
+// agent-level "what did the caller request" record. A plain UPDATE — a no-op when
 // the agent is unknown. Written once at spawn enrollment; later lifecycle ops
 // (rename, reincarnate, /clear) never touch it, so it stays the birth record.
-// The column is write-only by design: tclaude stores it verbatim and never reads
-// it back (resume reads live state), so there is no matching getter.
+// Lifecycle resume does not read this record; debug export uses it only for the
+// requested-versus-resolved comparison.
 func SetAgentInitialSpawnConfig(agentID, cfg string) error {
 	agentID = strings.TrimSpace(agentID)
 	if agentID == "" {

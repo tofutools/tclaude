@@ -35,3 +35,21 @@ func TestRunDebugExport_SelfToPrivateFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }
+
+func TestRunDebugExport_TightensExistingFilePermissions(t *testing.T) {
+	var gotPath string
+	stubDaemonGetRaw(t, &gotPath, `{"format":"tclaude-agent-debug"}`)
+	path := filepath.Join(t.TempDir(), "debug.json")
+	require.NoError(t, os.WriteFile(path, []byte("old"), 0o644))
+	require.NoError(t, os.Chmod(path, 0o644))
+
+	var stdout, stderr bytes.Buffer
+	rc := runDebugExport(&debugExportParams{File: path}, &stdout, &stderr)
+	require.Equal(t, rcOK, rc, "stderr=%q", stderr.String())
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	got, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"format":"tclaude-agent-debug"}`, string(got))
+}

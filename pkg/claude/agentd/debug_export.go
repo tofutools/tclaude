@@ -145,6 +145,15 @@ func buildAgentDebugExport(convID string) (*agentDebugExport, error) {
 		return nil, fmt.Errorf("load latest launch: %w", sessionErr)
 	} else if len(sessions) > 0 {
 		s := sessions[0]
+		// The query is ordered by activity for lifecycle callers. Select by
+		// launch chronology here so a delayed hook from an old process generation
+		// cannot displace the newest launch in the diagnostic export.
+		for _, candidate := range sessions[1:] {
+			if candidate.CreatedAt.After(s.CreatedAt) ||
+				(candidate.CreatedAt.Equal(s.CreatedAt) && candidate.UpdatedAt.After(s.UpdatedAt)) {
+				s = candidate
+			}
+		}
 		context, contextErr := db.GetContextSnapshot(s.ID)
 		if contextErr != nil {
 			return nil, fmt.Errorf("load latest launch model and effort: %w", contextErr)

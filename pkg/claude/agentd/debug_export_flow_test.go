@@ -43,6 +43,23 @@ func TestDashboardDebugExportCarriesExactRecordedConfiguration(t *testing.T) {
 		HarnessBuiltinMode: mode, SandboxImplementation: implementation,
 		ApprovalPolicy: "never", EffectiveSandbox: &snapshot,
 	}))
+	// An older launch can receive a delayed hook and become most recently
+	// updated. Running diagnostics must still select the newest launch.
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-debug-old", TmuxSession: "tmux-debug-old", ConvID: convID,
+		Cwd: f.TestCwd("old-repo"), Status: "idle", Harness: "claude",
+		HarnessBuiltinMode: "default", SandboxImplementation: "harness-builtin",
+	}))
+	d, err := db.Open()
+	require.NoError(t, err)
+	_, err = d.Exec(`UPDATE sessions SET created_at = CASE id
+		WHEN 'spwn-debug-old' THEN 1000000000
+		ELSE 2000000000 END,
+		updated_at = CASE id
+		WHEN 'spwn-debug-old' THEN 4000000000
+		ELSE 3000000000 END
+		WHERE id IN ('spwn-debug', 'spwn-debug-old')`)
+	require.NoError(t, err)
 	require.NoError(t, db.UpdateSessionModelSlug("spwn-debug", model))
 	require.NoError(t, db.UpdateSessionEffort("spwn-debug", "high"))
 

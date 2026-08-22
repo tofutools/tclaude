@@ -55,7 +55,7 @@ func runDebugExport(p *debugExportParams, stdout, stderr io.Writer) int {
 	}
 	out.WriteByte('\n')
 	if file := strings.TrimSpace(p.File); file != "" {
-		if err := os.WriteFile(file, out.Bytes(), 0o600); err != nil {
+		if err := writePrivateDebugExport(file, out.Bytes()); err != nil {
 			fmt.Fprintf(stderr, "Error: writing %s: %v\n", file, err)
 			return rcIOFailure
 		}
@@ -66,4 +66,26 @@ func runDebugExport(p *debugExportParams, stdout, stderr io.Writer) int {
 		return rcIOFailure
 	}
 	return rcOK
+}
+
+func writePrivateDebugExport(path string, data []byte) (err error) {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if closeErr := f.Close(); err == nil {
+			err = closeErr
+		}
+	}()
+	// OpenFile's mode applies only at creation. Tighten an existing target
+	// through the descriptor before replacing its contents.
+	if err = f.Chmod(0o600); err != nil {
+		return err
+	}
+	if err = f.Truncate(0); err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	return err
 }
