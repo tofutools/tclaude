@@ -518,6 +518,8 @@ func runDarwinSeatbeltSmokeHelper(
 	cmd.Stdout = &output
 	cmd.Stderr = &output
 	require.NoError(t, cmd.Start())
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
 	waited := false
 	defer func() {
 		if waited {
@@ -528,7 +530,7 @@ func runDarwinSeatbeltSmokeHelper(
 		// leave os/exec's output-copy goroutines unjoined.
 		_ = gateWriter.Close()
 		cancel()
-		_ = cmd.Wait()
+		<-waitCh
 	}()
 	require.NoError(t, gateReader.Close())
 
@@ -540,15 +542,34 @@ func runDarwinSeatbeltSmokeHelper(
 	// deterministic and, crucially, makes the isolated whoami assertion test
 	// the Seatbelt socket path instead of a malformed fixture identity.
 	var helperPID int
-	require.Eventually(t, func() bool {
-		raw, readErr := os.ReadFile(helperPIDFile)
-		if readErr != nil {
-			return false
+	poll := time.NewTicker(10 * time.Millisecond)
+	defer poll.Stop()
+	for helperPID <= 1 {
+		select {
+		case err = <-waitCh:
+			waited = true
+			require.FailNowf(t, "darwin smoke helper did not publish its PID",
+				"helper exited before publishing its PID: %v\noutput:\n%s", err, output.String())
+		case <-ctx.Done():
+			// CommandContext kills the outer shell, but the sandboxed helper can
+			// still hold the output pipes while blocked on this gate. Release it
+			// before Wait so the descendant can observe EOF and exit too.
+			_ = gateWriter.Close()
+			err = <-waitCh
+			waited = true
+			require.FailNowf(t, "darwin smoke helper did not publish its PID",
+				"helper timed out before publishing its PID: %v\noutput:\n%s", err, output.String())
+		case <-poll.C:
+			raw, readErr := os.ReadFile(helperPIDFile)
+			if readErr != nil {
+				continue
+			}
+			helperPID, readErr = strconv.Atoi(strings.TrimSpace(string(raw)))
+			if readErr != nil {
+				helperPID = 0
+			}
 		}
-		helperPID, readErr = strconv.Atoi(strings.TrimSpace(string(raw)))
-		return readErr == nil && helperPID > 1
-	}, 5*time.Second, 10*time.Millisecond,
-		"darwin smoke helper did not publish its PID")
+	}
 	row, err := db.LoadSession(darwinSmokeSessionID)
 	require.NoError(t, err)
 	row.PID = helperPID
@@ -558,7 +579,7 @@ func runDarwinSeatbeltSmokeHelper(
 	require.NoError(t, err)
 	require.NoError(t, gateWriter.Close())
 
-	err = cmd.Wait()
+	err = <-waitCh
 	waited = true
 	if ctx.Err() != nil {
 		t.Fatal("darwin tclaude-layer smoke timed out")
