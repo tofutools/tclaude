@@ -876,6 +876,7 @@ func compileSeatbeltDenyRegions(
 			nodeIndex,
 			func(mode sandboxpolicy.MountMode) bool { return mode == sandboxpolicy.MountHide },
 		)
+		exceptions = appendSeatbeltNetworkExceptionDescendants(nodes, nodeIndex, exceptions)
 		params = appendSeatbeltDenyRule(
 			&profile,
 			params,
@@ -895,6 +896,36 @@ func compileSeatbeltDenyRegions(
 		)
 	}
 	return profile.String(), params
+}
+
+// appendSeatbeltNetworkExceptionDescendants retains exact Unix-socket
+// exceptions even when a readable parent directory is already the first
+// filesystem carveout. Seatbelt accepts the parent subpath for file reads but
+// its unix-socket matcher needs the concrete endpoint spelling.
+func appendSeatbeltNetworkExceptionDescendants(
+	nodes []seatbeltRegionNode,
+	root int,
+	exceptions []int,
+) []int {
+	seen := make(map[int]bool, len(exceptions))
+	for _, exception := range exceptions {
+		seen[exception] = true
+	}
+	var walk func(int)
+	walk = func(index int) {
+		for _, child := range nodes[index].children {
+			if nodes[child].networkException && !seen[child] {
+				exceptions = append(exceptions, child)
+				seen[child] = true
+			}
+			walk(child)
+		}
+	}
+	walk(root)
+	sort.Slice(exceptions, func(i, j int) bool {
+		return nodes[exceptions[i]].path < nodes[exceptions[j]].path
+	})
+	return exceptions
 }
 
 func seatbeltDenyExceptions(

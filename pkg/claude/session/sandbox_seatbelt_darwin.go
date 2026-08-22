@@ -402,7 +402,11 @@ func renderDarwinSeatbeltCommandWithRouteSlots(
 		}
 		socketPaths[i] = canonicalSeatbeltOwnedPath(socketPaths[i])
 		if isCanonical {
+			// The directory is the narrow filesystem floor, while Seatbelt's
+			// unix-socket matcher still needs the exact endpoint to reopen a
+			// connect beneath an authored ancestor hide.
 			socketPaths[i] = canonicalSeatbeltOwnedPath(agentipc.CanonicalSocketDir())
+			socketPaths = append(socketPaths, canonicalSeatbeltOwnedPath(agentipc.CanonicalSocketPath()))
 		}
 	}
 	readOnlyPaths, err := darwinSeatbeltReadOnlyPaths(readOnlyBinds)

@@ -534,10 +534,13 @@ func TestSeatbeltRuntimePolicyUsesIdentityAwareCarveoutIntersection(t *testing.T
 }
 
 func TestSeatbeltOrdinaryAncestorHideRepairsRequiredAgentdSocket(t *testing.T) {
-	const socket = "/Users/dev/.tclaude/api/agentd.sock"
+	const (
+		socketDir = "/Users/dev/.tclaude/api/agentd-socket"
+		socket    = socketDir + "/agentd.sock"
+	)
 	profile, params, err := renderSeatbeltProfile(
 		nil,
-		[]string{socket},
+		[]string{socketDir, socket},
 		sandboxpolicy.MountPlan{
 			NetworkPosture: sandboxpolicy.NetworkHostOpen,
 			Entries: []sandboxpolicy.MountEntry{{
