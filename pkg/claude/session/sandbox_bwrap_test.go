@@ -1447,6 +1447,18 @@ func TestAppendTclaudeLayerTclaudeCLIRejectsNonExecutableFile(t *testing.T) {
 	require.ErrorContains(t, err, "is not an executable regular file")
 }
 
+func TestConstructedRootCLIEnvironmentIsLinuxProjectionOnly(t *testing.T) {
+	assert.True(t, tclaudeLayerHasConstructedRootCLIProjection(
+		true, sandboxpolicy.RootConstructed, "linux"))
+	assert.False(t, tclaudeLayerHasConstructedRootCLIProjection(
+		true, sandboxpolicy.RootConstructed, "darwin"),
+		"Seatbelt uses the logical posture without constructing a filesystem root")
+	assert.False(t, tclaudeLayerHasConstructedRootCLIProjection(
+		true, sandboxpolicy.RootHostInherited, "linux"))
+	assert.False(t, tclaudeLayerHasConstructedRootCLIProjection(
+		false, sandboxpolicy.RootConstructed, "linux"))
+}
+
 func TestConstructedRootTclaudePathExportSurvivesHarnessEnvironmentForwarding(t *testing.T) {
 	ambient := "export PATH=/home/operator/go/bin:/usr/bin; export BASH_ENV=/operator/bash-env; "
 	preLaunch := "printf pre-launch; "

@@ -2603,6 +2603,14 @@ const (
 // shared sibling/PATH-aware resolver.
 var tclaudeLayerTclaudeCLIPath = clcommon.SelfTclaudePath
 
+func tclaudeLayerHasConstructedRootCLIProjection(
+	outerLayer bool,
+	root sandboxpolicy.RootPosture,
+	goos string,
+) bool {
+	return outerLayer && root == sandboxpolicy.RootConstructed && goos == "linux"
+}
+
 func appendTclaudeLayerConstructedRootPathExport(exports string) string {
 	return appendTclaudeLayerConstructedRootPathExportAt(
 		exports,

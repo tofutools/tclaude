@@ -1448,12 +1448,16 @@ func runNew(params *NewParams) error {
 		)
 		envExports = clcommon.BuildEnvExports(additionalEnv)
 	}
-	if outerLayer && tclaudeLayerRoot == sandboxpolicy.RootConstructed {
+	if tclaudeLayerHasConstructedRootCLIProjection(
+		outerLayer, tclaudeLayerRoot, runtime.GOOS,
+	) {
 		// Bubblewrap seeds this PATH too, which is sufficient for direct
 		// namespace helpers. Production harness commands then replay the ambient
 		// environment inside that namespace, including PATH, so the trusted
 		// single-file CLI directory must be restored after those generated
-		// exports and before any operator-authored pre-launch script.
+		// exports and before any operator-authored pre-launch script. Darwin's
+		// network policy may use the logical constructed posture too, but Seatbelt
+		// inherits the host root and has no projected file to restore.
 		envExports = appendTclaudeLayerConstructedRootPathExport(envExports)
 	}
 
