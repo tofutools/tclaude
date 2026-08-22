@@ -580,6 +580,29 @@ func TestSeatbeltOrdinaryAncestorHideRepairsRequiredAgentdSocket(t *testing.T) {
 	)
 }
 
+func TestSeatbeltProtectedTmuxHideNeverReopensSocketDescendant(t *testing.T) {
+	const (
+		tmuxDir = "/private/tmp/tmux-501"
+		socket  = tmuxDir + "/foreign.sock"
+	)
+	_, params, err := renderSeatbeltProfile(
+		nil,
+		[]string{socket},
+		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		netip.AddrPort{},
+		nil,
+		tmuxDir,
+		"/private/var/folders/ab/runtime/T",
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	for _, param := range params {
+		assert.NotEqual(t, socket, param.path,
+			"the protected tmux boundary must not reopen a socket descendant")
+	}
+}
+
 func TestSeatbeltPrivateAttachmentParentUsesUniformReadAndUnixConnectHide(t *testing.T) {
 	const (
 		parent  = "/Users/dev/.tclaude/api/spawn-attachments"

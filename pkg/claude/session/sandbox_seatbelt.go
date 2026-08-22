@@ -907,6 +907,9 @@ func appendSeatbeltNetworkExceptionDescendants(
 	root int,
 	exceptions []int,
 ) []int {
+	if nodes[root].unshadowable || nodes[root].denyBoundary {
+		return exceptions
+	}
 	seen := make(map[int]bool, len(exceptions))
 	for _, exception := range exceptions {
 		seen[exception] = true
