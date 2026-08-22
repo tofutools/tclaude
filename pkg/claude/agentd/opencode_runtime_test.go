@@ -1233,7 +1233,7 @@ func TestReconcileOpenCodeFilteredRuntimeRechecksPersistentAccountAuthority(
 		string(sandboxpolicy.ImplementationTclaudeLayer),
 		cwd, nil, &emptySnapshot, emptyAgentID)
 	require.NoError(t, err)
-	assert.False(t, openCodeProviderFilteredNetworkSpec(emptySpec))
+	assert.False(t, openCodeFilteredNetworkSpec(emptySpec))
 	_, emptyEncoded, err := openCodeSandboxRecord(
 		string(sandboxpolicy.ImplementationTclaudeLayer), emptySpec)
 	require.NoError(t, err)
@@ -1245,36 +1245,6 @@ func TestReconcileOpenCodeFilteredRuntimeRechecksPersistentAccountAuthority(
 		SandboxLaunchSpecJSON: emptyEncoded,
 		Transport:             db.OpenCodeTransportUnixRelay,
 		ControlSocketPath:     emptyControl.SocketPath,
-		ControlSocketDevice:   1,
-		ControlSocketInode:    1,
-	})
-	require.NoError(t, err)
-
-	// Before empty lists were exempted from provider inspection, this policy
-	// was persisted with the stricter provider-isolated contract layout. Replay
-	// must validate that historical shape from the contract while applying the
-	// current no-provider-authority policy semantics.
-	legacyAgentID := db.NewAgentID()
-	legacyAllocation, err := allocatePrivateOpenCodeState(legacyAgentID)
-	require.NoError(t, err)
-	legacySpec, err := buildOpenCodeTclaudeLayerLaunchSpec(
-		cwd, nil, &emptySnapshot, legacyAgentID, true, true)
-	require.NoError(t, err)
-	assert.True(t, openCodeFilteredContractLayout(legacySpec))
-	assert.False(t, openCodeProviderFilteredNetworkSpec(legacySpec))
-	plantOpenCodeFilteredActiveAccount(
-		t, legacyAllocation.StateRoot, "https://legacy-account.example.invalid")
-	_, legacyEncoded, err := openCodeSandboxRecord(
-		string(sandboxpolicy.ImplementationTclaudeLayer), legacySpec)
-	require.NoError(t, err)
-	require.NotNil(t, legacySpec.Contract.OpenCodeControl)
-	legacyControl := legacySpec.Contract.OpenCodeControl
-	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
-		Cwd:                   cwd,
-		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
-		SandboxLaunchSpecJSON: legacyEncoded,
-		Transport:             db.OpenCodeTransportUnixRelay,
-		ControlSocketPath:     legacyControl.SocketPath,
 		ControlSocketDevice:   1,
 		ControlSocketInode:    1,
 	})
@@ -1364,13 +1334,13 @@ func TestOpenCodePrivateRoutedNetworkIsNotProviderFiltered(t *testing.T) {
 			Namespace: sandboxpolicy.NetworkNamespacePrivate,
 		},
 	}}
-	assert.False(t, openCodeProviderFilteredNetworkSpec(spec),
+	assert.False(t, openCodeFilteredNetworkSpec(spec),
 		"unrestricted private routing must not activate provider authority isolation")
 
 	spec.Effective.Network.Deny = []sandboxpolicy.NetworkAllowEntry{{
 		CIDR: "192.0.2.0/24",
 	}}
-	assert.True(t, openCodeProviderFilteredNetworkSpec(spec),
+	assert.True(t, openCodeFilteredNetworkSpec(spec),
 		"a private namespace with destination rules remains provider-filtered")
 
 	spec.Effective.Network = &sandboxpolicy.NetworkRules{
@@ -1378,6 +1348,6 @@ func TestOpenCodePrivateRoutedNetworkIsNotProviderFiltered(t *testing.T) {
 		Namespace: sandboxpolicy.NetworkNamespacePrivate,
 		Engine:    sandboxpolicy.NetworkEnginePacket,
 	}
-	assert.False(t, openCodeProviderFilteredNetworkSpec(spec),
+	assert.False(t, openCodeFilteredNetworkSpec(spec),
 		"an empty allowlist has no provider destination to inspect")
 }

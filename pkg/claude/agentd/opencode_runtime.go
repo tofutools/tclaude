@@ -422,7 +422,7 @@ func resolveOpenCodeLayerLauncher(spec *session.TclaudeLayerLaunchSpec) (string,
 		}
 	} else {
 		filteredDarwinProxy := false
-		if goruntime.GOOS == "darwin" && openCodeProviderFilteredNetworkSpec(spec) {
+		if goruntime.GOOS == "darwin" && openCodeFilteredNetworkSpec(spec) {
 			engine, err := session.TclaudeLayerNetworkEngine(spec.Effective)
 			if err != nil {
 				return "", err
@@ -625,7 +625,7 @@ func openCodeRuntimeSandboxSpec(
 	if spec.Version == session.TclaudeLayerLaunchSpecVersion ||
 		spec.Version == session.TclaudeLayerUnixRelaySpecVersion {
 		if err := validateOpenCodeV3LaunchContract(
-			spec.Contract, openCodeFilteredContractLayout(&spec)); err != nil {
+			spec.Contract, openCodeFilteredNetworkSpec(&spec)); err != nil {
 			return nil, err
 		}
 	}
@@ -1499,7 +1499,7 @@ func openCodeServerEnvironment(
 		return append([]string(nil), ambient...)
 	}
 	privateState := len(sandboxSpec.Contract.Environment) > 0
-	filtered := openCodeProviderFilteredNetworkSpec(sandboxSpec)
+	filtered := openCodeFilteredNetworkSpec(sandboxSpec)
 	out := make([]string, 0, len(ambient)+len(sandboxSpec.Effective.Environment)+
 		len(sandboxSpec.Contract.Environment)+8)
 	for _, entry := range ambient {
@@ -1541,7 +1541,7 @@ func openCodeServerEnvironment(
 	return out
 }
 
-func openCodeProviderFilteredNetworkSpec(
+func openCodeFilteredNetworkSpec(
 	spec *session.TclaudeLayerLaunchSpec,
 ) bool {
 	if spec == nil {
@@ -1553,27 +1553,6 @@ func openCodeProviderFilteredNetworkSpec(
 	}
 	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(spec.Effective)
 	return err == nil && openCodeProviderFilteredNetworkRules(axes.Network)
-}
-
-// openCodeFilteredContractLayout identifies the provider-isolated filesystem
-// shape from the persisted contract itself. It deliberately does not infer the
-// shape from current policy semantics: older empty-list specs used this stricter
-// layout and must remain replayable after empty lists stop requiring provider
-// authority.
-func openCodeFilteredContractLayout(
-	spec *session.TclaudeLayerLaunchSpec,
-) bool {
-	if spec == nil {
-		return false
-	}
-	want := canonicalOpenCodeRuntimePath(filepath.Join(
-		spec.Contract.StateRoot, openCodeFilteredConfigBase))
-	for _, entry := range spec.Contract.Environment {
-		if entry.Name == "XDG_CONFIG_HOME" {
-			return canonicalOpenCodeRuntimePath(entry.Value) == want
-		}
-	}
-	return false
 }
 
 func openCodeProviderFilteredNetworkRules(
@@ -1710,7 +1689,7 @@ func validateOpenCodeV3LaunchContract(
 func validateOpenCodeFilteredProviderAuthority(
 	spec *session.TclaudeLayerLaunchSpec,
 ) error {
-	if !openCodeProviderFilteredNetworkSpec(spec) {
+	if !openCodeFilteredNetworkSpec(spec) {
 		return nil
 	}
 	if err := validateOpenCodeFilteredProviderSources(
@@ -1760,7 +1739,7 @@ func openCodeServeExecWithAuthority(
 		return executable, serveArgs, nil
 	}
 	filteredDarwinProxy := false
-	if goruntime.GOOS == "darwin" && openCodeProviderFilteredNetworkSpec(sandboxSpec) {
+	if goruntime.GOOS == "darwin" && openCodeFilteredNetworkSpec(sandboxSpec) {
 		engine, engineErr := session.TclaudeLayerNetworkEngine(sandboxSpec.Effective)
 		if engineErr != nil {
 			return "", nil, engineErr
