@@ -92,8 +92,8 @@ drag it back to reinstate.
 ### The member row
 
 The row's `⚙` menu includes **export debug info**, a direct JSON download that
-separates the parameters requested at spawn from the agent's actual durable
-launch settings, latest launch evidence, and exact composed sandbox policy. It
+separates the requested, resolved, and running configurations: original spawn
+parameters, durable/composed sandbox settings, and latest launch evidence. It
 works while the agent is offline. The export includes environment values and
 local paths, so treat it as sensitive; task text and one-time authorization
 tokens are redacted.

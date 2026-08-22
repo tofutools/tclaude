@@ -521,15 +521,21 @@ agent requires `agent.debug-export`, the group-scoped
 groups. The Groups dashboard exposes the same download as **export debug info**
 in each agent's cog menu, including for offline agents.
 
-The versioned JSON deliberately separates `requested_at_spawn` (the original
-parameters, including which values were omitted) from `actual_configuration`
-(durable resume/relaunch values, latest launch evidence, and the exact composed
-sandbox snapshot). The latter includes profile provenance, filesystem grants,
-environment values, harness-config posture, network/socket rules, resource
-limits, and pre-launch blocks. The export also records the tclaude version and
-host platform. Environment values and local paths are intentionally included
-because they are often the cause of sandbox failures, so treat the file as
-sensitive. Initial task text and one-time authorization tokens are redacted.
+The versioned JSON deliberately separates three configurations:
+
+- `requested` — the original spawn parameters, including which values were
+  omitted;
+- `resolved` — durable resume/relaunch values and the exact composed sandbox
+  snapshot, including applied-profile provenance, filesystem grants,
+  environment values, harness-config posture, network/socket rules, resource
+  limits, and pre-launch blocks;
+- `running` — the latest recorded launch's harness mode, sandbox
+  implementation, OS-sandbox verdict, approval posture, and effective policy.
+
+The export also records the tclaude version and host platform. Environment
+values and local paths are intentionally included because they are often the
+cause of sandbox failures, so treat the file as sensitive. Initial task text
+and one-time authorization tokens are redacted.
 
 Renames go through `edit` (change the JSON `name`; stable-ID assignments
 follow). `import` is transactional, with assignment application opt-in.

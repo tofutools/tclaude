@@ -16,26 +16,35 @@ import (
 const agentDebugExportFormatVersion = 1
 
 type agentDebugExport struct {
-	Format              string                   `json:"format"`
-	FormatVersion       int                      `json:"format_version"`
-	GeneratedAt         string                   `json:"generated_at"`
-	Tclaude             agentDebugTclaude        `json:"tclaude"`
-	Agent               agentDebugIdentity       `json:"agent"`
-	RequestedAtSpawn    agentDebugRequestedSpawn `json:"requested_at_spawn"`
-	ActualConfiguration agentDebugActualConfig   `json:"actual_configuration"`
-	Redactions          []string                 `json:"redactions"`
+	Format         string                   `json:"format"`
+	FormatVersion  int                      `json:"format_version"`
+	GeneratedAt    string                   `json:"generated_at"`
+	Tclaude        agentDebugTclaude        `json:"tclaude"`
+	Agent          agentDebugIdentity       `json:"agent"`
+	Configurations agentDebugConfigurations `json:"configurations"`
+	Redactions     []string                 `json:"redactions"`
 }
 
-type agentDebugRequestedSpawn struct {
+type agentDebugConfigurations struct {
+	Requested agentDebugRequestedConfig `json:"requested"`
+	Resolved  agentDebugResolvedConfig  `json:"resolved"`
+	Running   agentDebugRunningConfig   `json:"running"`
+}
+
+type agentDebugRequestedConfig struct {
 	Recorded   bool           `json:"recorded"`
 	Parameters map[string]any `json:"parameters,omitempty"`
 }
 
-type agentDebugActualConfig struct {
+type agentDebugResolvedConfig struct {
 	ConversationResume *db.ConversationResumeProfile `json:"conversation_resume,omitempty"`
 	DurableRelaunch    *db.AgentRelaunchProfile      `json:"durable_relaunch,omitempty"`
 	EffectiveSandbox   *sandboxpolicy.Snapshot       `json:"effective_sandbox,omitempty"`
-	LatestLaunch       *agentDebugLatestLaunch       `json:"latest_launch,omitempty"`
+}
+
+type agentDebugRunningConfig struct {
+	Recorded bool                    `json:"recorded"`
+	Launch   *agentDebugLatestLaunch `json:"launch,omitempty"`
 }
 
 type agentDebugTclaude struct {
@@ -117,9 +126,12 @@ func buildAgentDebugExport(convID string) (*agentDebugExport, error) {
 			CreatedAt: actor.CreatedAt.UTC().Format(time.RFC3339Nano), CreatedVia: actor.CreatedVia,
 			PendingName: actor.PendingName, Retired: !actor.RetiredAt.IsZero(),
 		},
-		RequestedAtSpawn: agentDebugRequestedSpawn{Recorded: initialRaw != "", Parameters: initial},
-		ActualConfiguration: agentDebugActualConfig{
-			ConversationResume: resume, DurableRelaunch: relaunch, EffectiveSandbox: effective,
+		Configurations: agentDebugConfigurations{
+			Requested: agentDebugRequestedConfig{Recorded: initialRaw != "", Parameters: initial},
+			Resolved: agentDebugResolvedConfig{
+				ConversationResume: resume, DurableRelaunch: relaunch, EffectiveSandbox: effective,
+			},
+			Running: agentDebugRunningConfig{},
 		},
 		Redactions: redactions,
 	}
@@ -127,7 +139,8 @@ func buildAgentDebugExport(convID string) (*agentDebugExport, error) {
 		return nil, fmt.Errorf("load latest launch: %w", sessionErr)
 	} else if len(sessions) > 0 {
 		s := sessions[0]
-		out.ActualConfiguration.LatestLaunch = &agentDebugLatestLaunch{
+		out.Configurations.Running.Recorded = true
+		out.Configurations.Running.Launch = &agentDebugLatestLaunch{
 			SessionID: s.ID, CreatedAt: s.CreatedAt.UTC().Format(time.RFC3339Nano),
 			UpdatedAt: s.UpdatedAt.UTC().Format(time.RFC3339Nano), Cwd: s.Cwd, Harness: s.Harness,
 			HarnessBuiltinMode: s.HarnessBuiltinMode, SandboxImplementation: s.SandboxImplementation,
@@ -153,11 +166,11 @@ func sanitizeInitialSpawnRequest(raw string) (map[string]any, []string, error) {
 	redactions := []string{}
 	if message, ok := request["initial_message"].(string); ok {
 		request["initial_message"] = fmt.Sprintf("<redacted: %d bytes>", len(message))
-		redactions = append(redactions, "requested_at_spawn.parameters.initial_message")
+		redactions = append(redactions, "configurations.requested.parameters.initial_message")
 	}
 	if _, ok := request["write_proof_token"]; ok {
 		delete(request, "write_proof_token")
-		redactions = append(redactions, "requested_at_spawn.parameters.write_proof_token")
+		redactions = append(redactions, "configurations.requested.parameters.write_proof_token")
 	}
 	return request, redactions, nil
 }

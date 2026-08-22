@@ -18,7 +18,7 @@ func TestSanitizeInitialSpawnRequestRedactsContentAndAuthority(t *testing.T) {
 	assert.Equal(t, "<redacted: 11 bytes>", request["initial_message"])
 	assert.NotContains(t, request, "write_proof_token")
 	assert.ElementsMatch(t, []string{
-		"requested_at_spawn.parameters.initial_message",
-		"requested_at_spawn.parameters.write_proof_token",
+		"configurations.requested.parameters.initial_message",
+		"configurations.requested.parameters.write_proof_token",
 	}, redactions)
 }
