@@ -551,6 +551,10 @@ func runDarwinSeatbeltSmokeHelper(
 			require.FailNowf(t, "darwin smoke helper did not publish its PID",
 				"helper exited before publishing its PID: %v\noutput:\n%s", err, output.String())
 		case <-ctx.Done():
+			// CommandContext kills the outer shell, but the sandboxed helper can
+			// still hold the output pipes while blocked on this gate. Release it
+			// before Wait so the descendant can observe EOF and exit too.
+			_ = gateWriter.Close()
 			err = <-waitCh
 			waited = true
 			require.FailNowf(t, "darwin smoke helper did not publish its PID",
