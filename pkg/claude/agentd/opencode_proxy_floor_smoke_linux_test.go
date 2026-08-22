@@ -191,7 +191,7 @@ func TestOpenCodeProxyFloorCooperation(t *testing.T) {
 	require.NoError(t, os.MkdirAll(cwd, 0o700))
 	db.ResetForTest()
 	t.Cleanup(db.ResetForTest)
-	agentSocket := filepath.Join(home, ".tclaude", "api", "agentd.sock")
+	agentSocket := agentipc.CanonicalSocketPath()
 	t.Setenv(agentipc.SocketEnv, agentSocket)
 	stopAgentd := startOpenCodeLayerSmokeAgentd(t, tclaudeBinary, agentSocket)
 	t.Cleanup(stopAgentd)

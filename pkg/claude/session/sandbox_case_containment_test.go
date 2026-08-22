@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
@@ -249,6 +250,23 @@ func TestBwrapRefusalGuardsRefuseFoldedVariantSpellings(t *testing.T) {
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported_sandbox_profile_mount_path")
+}
+
+func TestBwrapRemappedGuestPathCannotShadowCanonicalAgentdFloor(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	canonicalDir := agentipc.CanonicalSocketDir()
+	for _, guest := range []string{
+		canonicalDir,
+		filepath.Dir(canonicalDir),
+		agentipc.CanonicalSocketPath(),
+	} {
+		err := validateRemappedGuestPathsAgainstContract(
+			[]sandboxpolicy.FilesystemGrant{{Path: "/source", MountPath: guest}},
+			[]string{canonicalDir, agentipc.CanonicalSocketPath()},
+		)
+		require.Error(t, err, guest)
+		assert.Contains(t, err.Error(), "unsupported_sandbox_profile_mount_path")
+	}
 }
 
 // TestSeatbeltRuntimeCarveoutGuardFailsClosed covers the file's second refusal

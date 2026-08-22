@@ -149,7 +149,7 @@ esac
 		"set TCLAUDE_SANDBOX_V2_TCLAUDE_BINARY to the current built tclaude binary")
 	tclaudeBinary, err = filepath.Abs(tclaudeBinary)
 	require.NoError(t, err)
-	agentSocket := filepath.Join(smokeHome, ".tclaude", "api", "agentd.sock")
+	agentSocket := agentipc.CanonicalSocketPath()
 	t.Setenv(agentipc.SocketEnv, agentSocket)
 	stopAgentd := startTclaudeLayerSmokeAgentd(t, tclaudeBinary, agentSocket)
 	t.Cleanup(stopAgentd)

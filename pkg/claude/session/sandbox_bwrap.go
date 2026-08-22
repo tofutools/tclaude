@@ -386,8 +386,11 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	// otherwise slip past the named refusal and silently hide it.
 	if err := validateRemappedGuestPathsAgainstContract(
 		remappedGrants, append(
-			append(append([]string(nil), contractWriteDirs...), launchContractReadDirs...),
-			input.HarnessReadPaths...,
+			append(
+				append(append([]string(nil), contractWriteDirs...), launchContractReadDirs...),
+				input.HarnessReadPaths...,
+			),
+			agentipc.CanonicalSocketDir(), agentipc.CanonicalSocketPath(),
 		),
 	); err != nil {
 		return TclaudeLayerLaunchSpec{}, err
@@ -3231,11 +3234,11 @@ func remappedGrantsForEffective(
 }
 
 // validateRemappedGuestPathsAgainstContract refuses a mount that would land on
-// top of a path the launch itself requires. Launch-contract binds are applied
-// BEFORE the policy plan replays, so a remapped mount covering one of them would
-// shadow it — the workspace, a Git admin directory or harness state would simply
-// be gone, and the harness would fail in a way that points nowhere near the rule
-// that caused it.
+// top of a path the launch itself requires. Launch-contract and agentd-floor
+// binds are applied BEFORE the policy plan replays, so a remapped mount covering
+// one of them would shadow it — the workspace, a Git admin directory, harness
+// state, or the control socket would simply be gone, and the harness would fail
+// in a way that points nowhere near the rule that caused it.
 func validateRemappedGuestPathsAgainstContract(
 	remapped []sandboxpolicy.FilesystemGrant,
 	contractDirs []string,

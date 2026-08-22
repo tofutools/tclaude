@@ -66,14 +66,14 @@ func runMerge(tree map[string]any) *hardeningReport {
 	return r
 }
 
-// The spec has 20 leaf values: 4 scalars (sandbox.enabled,
+// The spec has 22 leaf values: 4 scalars (sandbox.enabled,
 // sandbox.failIfUnavailable, sandbox.allowUnsandboxedCommands,
 // sandbox.network.allowAllUnixSockets) and
-// 16 array elements (allowedDomains 2, allowUnixSockets 3, denyWrite 2,
-// denyRead 2, allowRead 3, permissions.deny 4). The socket lists carry the
-// canonical api/ socket plus the two retained pre-split sockets. The deny lists
+// 18 array elements (allowedDomains 2, allowUnixSockets 4, denyWrite 2,
+// denyRead 2, allowRead 4, permissions.deny 4). The floors carry the canonical
+// socket directory plus the three retained compatibility sockets. The deny lists
 // cover the two protected roots: ~/.tclaude/data and ~/.claude/sessions.
-const specLeafCount = 20
+const specLeafCount = 22
 
 // Pin the fail-closed properties together with the network allowance that makes
 // disabling dangerouslyDisableSandbox usable for the required GitHub workflow.

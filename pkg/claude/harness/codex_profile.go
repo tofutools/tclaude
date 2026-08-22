@@ -326,6 +326,10 @@ func codexAgentProfileContentForRules(profileName, socketPath, privateStateDir s
 	// The private-state baseline deny is emitted separately below, so drop any
 	// duplicate TOML key an operator profile repeated explicitly.
 	delete(grants, privateStateDir)
+	// The directory-backed agentd endpoint is an immutable read/connect floor.
+	// Drop an exact authored row so it cannot duplicate the generated TOML key,
+	// widen the socket-only directory to write, or hide it from the agent.
+	delete(grants, agentipc.CanonicalSocketDir())
 	grantPaths := make([]string, 0, len(grants))
 	for dir := range grants {
 		grantPaths = append(grantPaths, dir)

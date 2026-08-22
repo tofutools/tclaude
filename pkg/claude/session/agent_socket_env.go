@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -28,17 +29,15 @@ func ApplyAgentSocketEnv(
 		return nil
 	}
 	canonical := agentipc.CanonicalSocketPath()
-	if explicit := agentipc.ExplicitSocketPath(); explicit != "" && explicit != canonical {
+	if explicit := agentipc.ExplicitSocketPath(); explicit != "" &&
+		explicit != canonical && !slices.Contains(agentipc.LegacySocketPaths(), explicit) {
 		return fmt.Errorf("managed sandbox profiles require the canonical agentd socket %s; "+
 			"custom socket %s is unsupported for sandboxed agents", canonical, explicit)
 	}
-	if !agentipc.LiveCanonicalSocketPath() {
-		if agentipc.AnyLegacySocketReachable() {
-			return fmt.Errorf("agentd is still listening only on a compatibility socket (%v); "+
-				"restart agentd after upgrading tclaude before launching a sandboxed agent",
-				agentipc.LegacySocketPaths())
-		}
-		return fmt.Errorf("canonical agentd socket %s is not live; restart agentd before launching a sandboxed agent", canonical)
+	if !agentipc.LiveCanonicalSocketPath() && agentipc.AnyLegacySocketReachable() {
+		return fmt.Errorf("agentd is still listening only on a compatibility socket (%v); "+
+			"restart agentd after upgrading tclaude before launching a sandboxed agent",
+			agentipc.LegacySocketPaths())
 	}
 	if canonical != "" {
 		env[agentipc.SocketEnv] = canonical

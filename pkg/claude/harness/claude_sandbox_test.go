@@ -7,6 +7,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 )
 
 // TestClaudeSandbox_Catalog pins the catalog the spawn dialog / profile editor
@@ -256,6 +260,35 @@ func TestClaudeSettingsSandboxProfileFilesystemRules(t *testing.T) {
 		if !slices.Contains(got, any("/opt/secret")) || !slices.Contains(got, any(tclaudePrivateStateDirTilde)) {
 			t.Fatalf("%s must preserve baseline denies and add the profile deny: %v", key, got)
 		}
+	}
+}
+
+func TestClaudeSettingsCanonicalSocketDirIsImmutableFloor(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	canonicalDir := agentipc.CanonicalSocketDir()
+	tests := []struct {
+		name                          string
+		readDirs, writeDirs, denyDirs []string
+	}{
+		{name: "read", readDirs: []string{canonicalDir}},
+		{name: "write", writeDirs: []string{canonicalDir}},
+		{name: "deny", denyDirs: []string{canonicalDir}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			payload := claudeSettingsJSON(SpawnSpec{
+				HarnessBuiltinMode: ClaudeSandboxOn,
+				SandboxReadDirs:    tc.readDirs, SandboxWriteDirs: tc.writeDirs, SandboxDenyDirs: tc.denyDirs,
+			})
+			var settings map[string]any
+			require.NoError(t, json.Unmarshal([]byte(payload), &settings))
+			filesystem := settings["sandbox"].(map[string]any)["filesystem"].(map[string]any)
+			for _, key := range []string{"allowWrite", "denyRead", "denyWrite"} {
+				values, _ := filesystem[key].([]any)
+				assert.NotContains(t, values, any(canonicalDir), "%s must not override the socket floor", key)
+			}
+			assert.Contains(t, filesystem["allowRead"].([]any), any(tclaudeAgentdSocketDirTilde))
+		})
 	}
 }
 

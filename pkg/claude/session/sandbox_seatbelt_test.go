@@ -9,8 +9,38 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
+
+func TestSeatbeltCanonicalSocketDirIsImmutableFloor(t *testing.T) {
+	canonicalDir := agentipc.CanonicalSocketDir()
+	baselineProfile, baselineParams, err := renderSeatbeltProfile(
+		nil, []string{canonicalDir},
+		sandboxpolicy.MountPlan{NetworkPosture: sandboxpolicy.NetworkHostOpen},
+		netip.AddrPort{}, nil, "/tmp/tmux", "/tmp/runtime", nil, nil,
+	)
+	require.NoError(t, err)
+	for _, mode := range []sandboxpolicy.MountMode{
+		sandboxpolicy.MountRO, sandboxpolicy.MountRW, sandboxpolicy.MountHide,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			profile, params, err := renderSeatbeltProfile(
+				nil, []string{canonicalDir},
+				sandboxpolicy.MountPlan{
+					NetworkPosture: sandboxpolicy.NetworkHostOpen,
+					Entries:        []sandboxpolicy.MountEntry{{Path: canonicalDir, Mode: mode}},
+				},
+				netip.AddrPort{}, nil, "/tmp/tmux", "/tmp/runtime", nil, nil,
+			)
+			require.NoError(t, err)
+			assert.Equal(t, baselineProfile, profile,
+				"an exact authored row must not alter the canonical socket floor")
+			assert.Equal(t, baselineParams, params,
+				"an exact authored row must not alter the canonical socket floor")
+		})
+	}
+}
 
 func TestRenderSeatbeltProfileGolden(t *testing.T) {
 	plan := sandboxpolicy.MountPlan{

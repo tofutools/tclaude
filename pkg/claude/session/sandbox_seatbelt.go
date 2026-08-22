@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
@@ -217,6 +218,12 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		path, cleanErr := cleanSeatbeltPath(fmt.Sprintf("mount plan entry %d", i), entry.Path)
 		if cleanErr != nil {
 			return "", nil, cleanErr
+		}
+		if filepath.Clean(path) == filepath.Clean(agentipc.CanonicalSocketDir()) {
+			// The socket-only directory is a daemon-owned read/connect floor.
+			// Exact operator rows cannot hide or widen it; ancestor rules still
+			// apply normally and the required child region reopens the floor.
+			continue
 		}
 		switch entry.Mode {
 		case sandboxpolicy.MountRO, sandboxpolicy.MountRW, sandboxpolicy.MountHide:

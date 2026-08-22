@@ -5,6 +5,8 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
 )
 
 // claudeSettingsJSON collects every per-session Claude Code settings.json
@@ -30,7 +32,7 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 		}
 		settings["sandbox"] = block
 	}
-	if dirs := normalizedSandboxWriteDirs(spec.SandboxWriteDirs); len(dirs) > 0 &&
+	if dirs := withoutCanonicalAgentdDir(normalizedSandboxWriteDirs(spec.SandboxWriteDirs)); len(dirs) > 0 &&
 		strings.TrimSpace(spec.HarnessBuiltinMode) != ClaudeSandboxOff {
 		block, _ := settings["sandbox"].(map[string]any)
 		if block == nil {
@@ -47,7 +49,7 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 		}
 		appendSandboxFilesystemDirs(filesystem, "allowWrite", dirs)
 	}
-	if dirs := normalizedSandboxWriteDirs(spec.SandboxReadDirs); len(dirs) > 0 &&
+	if dirs := withoutCanonicalAgentdDir(normalizedSandboxWriteDirs(spec.SandboxReadDirs)); len(dirs) > 0 &&
 		strings.TrimSpace(spec.HarnessBuiltinMode) != ClaudeSandboxOff {
 		block, _ := settings["sandbox"].(map[string]any)
 		if block == nil {
@@ -61,7 +63,7 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 		}
 		appendSandboxFilesystemDirs(filesystem, "allowRead", dirs)
 	}
-	if dirs := normalizedSandboxWriteDirs(spec.SandboxDenyDirs); len(dirs) > 0 &&
+	if dirs := withoutCanonicalAgentdDir(normalizedSandboxWriteDirs(spec.SandboxDenyDirs)); len(dirs) > 0 &&
 		strings.TrimSpace(spec.HarnessBuiltinMode) != ClaudeSandboxOff {
 		block, _ := settings["sandbox"].(map[string]any)
 		if block == nil {
@@ -79,7 +81,7 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 		// authored row binds the built-in Read/Write/Edit tools too, not just
 		// Bash (TCL-666).
 		rules, skipped := claudeToolPermissionDenyRules(
-			spec.SandboxReadDirs, spec.SandboxWriteDirs, spec.SandboxDenyDirs,
+			spec.SandboxReadDirs, spec.SandboxWriteDirs, dirs,
 		)
 		appendClaudePermissionDeny(settings, rules)
 		if len(skipped) > 0 {
@@ -141,6 +143,18 @@ func normalizedSandboxWriteDirs(dirs []string) []string {
 			continue
 		}
 		seen[dir] = true
+		out = append(out, dir)
+	}
+	return out
+}
+
+func withoutCanonicalAgentdDir(dirs []string) []string {
+	canonical := filepath.Clean(agentipc.CanonicalSocketDir())
+	out := make([]string, 0, len(dirs))
+	for _, dir := range dirs {
+		if canonical != "." && filepath.Clean(dir) == canonical {
+			continue
+		}
 		out = append(out, dir)
 	}
 	return out
