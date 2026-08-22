@@ -143,7 +143,11 @@ func prepareServeSockets(required string, optional []string, warn func(string, e
 	}
 	kept := make([]string, 0, len(optional))
 	for _, path := range optional {
-		if err := prepareSocketPath(path); err != nil {
+		prepare := prepareSocketPath
+		if filepath.Clean(path) == filepath.Clean(agentipc.SandboxSocketPath()) {
+			prepare = prepareSandboxSocketPath
+		}
+		if err := prepare(path); err != nil {
 			if errors.Is(err, errSocketInUse) {
 				return nil, err
 			}
@@ -153,6 +157,17 @@ func prepareServeSockets(required string, optional []string, warn func(string, e
 		kept = append(kept, path)
 	}
 	return kept, nil
+}
+
+func prepareSandboxSocketPath(path string) error {
+	dir := agentipc.SandboxSocketDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create restart-stable socket directory %s: %w", dir, err)
+	}
+	if !agentipc.SandboxSocketDirAvailable() {
+		return fmt.Errorf("restart-stable socket parent %s is not a direct directory", dir)
+	}
+	return prepareSocketPath(path)
 }
 
 // listenUnixSockets binds required strictly and each optional endpoint on a

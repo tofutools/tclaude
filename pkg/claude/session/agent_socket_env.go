@@ -35,7 +35,7 @@ func ApplyAgentSocketEnv(
 			"custom socket %s is unsupported for sandboxed agents", canonical, explicit)
 	}
 	selected := canonical
-	if tclaudeLayerIsolated && agentipc.LiveSocketPath(stable) {
+	if tclaudeLayerIsolated && agentipc.LiveSandboxSocketPath() {
 		selected = stable
 	}
 	if selected == canonical &&

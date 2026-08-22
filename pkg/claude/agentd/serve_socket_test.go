@@ -154,6 +154,31 @@ func TestServeSocketsSkipUnavailableStableParent(t *testing.T) {
 		"an unavailable optional stable parent must not cost the canonical daemon")
 }
 
+func TestServeSocketsSkipSymlinkedStableParent(t *testing.T) {
+	home := shortSocketDir(t)
+	t.Setenv("HOME", home)
+	required := agentipc.CanonicalSocketPath()
+	stable := agentipc.SandboxSocketPath()
+	target := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Dir(required), 0o700))
+	require.NoError(t, os.Symlink(target, filepath.Dir(stable)))
+
+	var skipped []string
+	kept, err := prepareServeSockets(required, []string{stable},
+		func(path string, _ error) { skipped = append(skipped, path) })
+	require.NoError(t, err)
+	assert.Empty(t, kept)
+	assert.Equal(t, []string{stable}, skipped)
+	assert.NoFileExists(t, filepath.Join(target, "agentd.sock"),
+		"preparation must not create a socket beneath a symlink target")
+
+	listeners, created, err := listenUnixSockets(required, kept, failOnWarn(t))
+	require.NoError(t, err)
+	t.Cleanup(func() { closeListeners(listeners) })
+	assert.Equal(t, []string{required}, created)
+	assert.True(t, agentipc.SocketReachable(required))
+}
+
 // AF_UNIX bind reports EADDRINUSE for ANY pre-existing directory entry, so the
 // errno cannot stand in for "a second daemon". Something landing at an alias
 // between the prepare pass and the bind pass — a dotfile manager or a home

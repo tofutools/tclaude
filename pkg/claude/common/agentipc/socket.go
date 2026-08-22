@@ -33,11 +33,39 @@ func CanonicalSocketPath() string {
 // inode itself, so replacing the pathname on an agentd restart becomes visible
 // to already-running sandboxes without exposing writable API siblings.
 func SandboxSocketPath() string {
+	dir := SandboxSocketDir()
+	if dir == "" {
+		return ""
+	}
+	return filepath.Join(dir, "agentd.sock")
+}
+
+// SandboxSocketDir is the dedicated parent projected into constructed roots.
+func SandboxSocketDir() string {
 	apiDir := common.TclaudeAPIDir()
 	if apiDir == "" {
 		return ""
 	}
-	return filepath.Join(apiDir, "sandbox-agentd", "agentd.sock")
+	return filepath.Join(apiDir, "sandbox-agentd")
+}
+
+// SandboxSocketDirAvailable reports whether the dedicated parent exists as a
+// direct directory entry. Lstat deliberately rejects a symlink: projecting a
+// symlink target would expose an arbitrary directory rather than the narrow
+// daemon-owned socket surface.
+func SandboxSocketDirAvailable() bool {
+	dir := SandboxSocketDir()
+	if dir == "" {
+		return false
+	}
+	info, err := os.Lstat(dir)
+	return err == nil && info.IsDir()
+}
+
+// LiveSandboxSocketPath combines the direct-parent invariant with endpoint
+// liveness for the authoritative constructed-root selection.
+func LiveSandboxSocketPath() bool {
+	return SandboxSocketDirAvailable() && LiveSocketPath(SandboxSocketPath())
 }
 
 // LegacyHomeSocketPath is the pre-split canonical endpoint

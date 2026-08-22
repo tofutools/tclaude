@@ -2154,6 +2154,9 @@ func bwrapArgsWithDaemonFinal(
 				// observation and race the authoritative harness environment.
 				bind.Source = filepath.Dir(socket)
 				bind.Target = filepath.Dir(socket)
+				if !agentipc.SandboxSocketDirAvailable() {
+					continue
+				}
 			}
 			exists, err := bwrapBindSourceExists(bind.Source)
 			if err != nil {

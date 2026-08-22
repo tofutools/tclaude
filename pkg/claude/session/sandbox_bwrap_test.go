@@ -1464,6 +1464,31 @@ func TestBwrapArgsFallsBackFromInvalidStableEndpoint(t *testing.T) {
 		"a bad optional endpoint must leave the healthy canonical mount in place")
 }
 
+func TestBwrapArgsDoesNotProjectSymlinkedStableParent(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	canonical := agentipc.CanonicalSocketPath()
+	stableDir := agentipc.SandboxSocketDir()
+	target := agentipctest.ShortSocketDir(t)
+	require.NoError(t, os.MkdirAll(filepath.Dir(stableDir), 0o700))
+	require.NoError(t, os.Symlink(target, stableDir))
+	canonicalListener, err := net.Listen("unix", canonical)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = canonicalListener.Close() })
+	redirected, err := net.Listen("unix", filepath.Join(target, "agentd.sock"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = redirected.Close() })
+
+	got, err := bwrapArgsWithDaemonFinal(nil, sandboxpolicy.MountPlan{
+		NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+	}, nil, nil, nil, sandboxpolicy.AgentdSocketFloor(), "", nil)
+	require.NoError(t, err)
+	assert.Empty(t, indicesOfBwrapBind(got, "--ro-bind", stableDir, stableDir))
+	assert.NotContains(t, got, target,
+		"a symlink target must never become the dedicated directory projection")
+}
+
 func TestBwrapArgsRepairsStableDirectoryAfterExactDeny(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
