@@ -91,6 +91,13 @@ drag it back to reinstate.
 
 ### The member row
 
+The row's `⚙` menu includes **export debug info**, a direct JSON download that
+separates the parameters requested at spawn from the agent's actual durable
+launch settings, latest launch evidence, and exact composed sandbox policy. It
+works while the agent is offline. The export includes environment values and
+local paths, so treat it as sensitive; task text and one-time authorization
+tokens are redacted.
+
 Columns are hide/showable via "▾ view" (persisted server-side):
 
 - **ctl** — status dot, row actions, and the harness line:

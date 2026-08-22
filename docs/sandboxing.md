@@ -505,6 +505,32 @@ tclaude agent sandbox-profiles plan --group <g> --sandbox-profile <name>
 tclaude agent sandbox-profiles plan --agent <selector>
 ```
 
+## Exporting an agent's debug configuration
+
+When a sandbox behaves differently from the operator's shell, export the
+configuration recorded for that specific agent instead of trying to recreate
+its launch from current defaults:
+
+```bash
+tclaude agent debug-export <agent> --file agent-debug.json
+```
+
+An agent can omit `<agent>` to export its own configuration. Exporting another
+agent requires `agent.debug-export`, the group-scoped
+`groups.members.debug-export`, or ownership covering the target's active
+groups. The Groups dashboard exposes the same download as **export debug info**
+in each agent's cog menu, including for offline agents.
+
+The versioned JSON deliberately separates `requested_at_spawn` (the original
+parameters, including which values were omitted) from `actual_configuration`
+(durable resume/relaunch values, latest launch evidence, and the exact composed
+sandbox snapshot). The latter includes profile provenance, filesystem grants,
+environment values, harness-config posture, network/socket rules, resource
+limits, and pre-launch blocks. The export also records the tclaude version and
+host platform. Environment values and local paths are intentionally included
+because they are often the cause of sandbox failures, so treat the file as
+sensitive. Initial task text and one-time authorization tokens are redacted.
+
 Renames go through `edit` (change the JSON `name`; stable-ID assignments
 follow). `import` is transactional, with assignment application opt-in.
 `draft --token --file` is the scribe seam: a dashboard-summoned drafting agent

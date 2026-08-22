@@ -359,6 +359,7 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermGroupsMembersRename:               "requireCrossAgentPermission — checks every current active group",
 	PermGroupsMembersClone:                "requireCrossAgentPermission — checks the frozen clone footprint",
 	PermGroupsMembersContextInfo:          "requireCrossAgentPermission / requireGroupContextAccess — check every affected group",
+	PermGroupsMembersDebugExport:          "requireCrossAgentPermission — checks every current active group",
 	PermGroupsMembersTask:                 "requireCrossAgentPermission — checks every current active group",
 	PermGroupsMembersPR:                   "requireCrossAgentPermission — checks every current active group",
 	PermGroupsMembersTags:                 "requireCrossAgentPermission — checks every current active group",

@@ -557,6 +557,27 @@ func SetAgentInitialSpawnConfig(agentID, cfg string) error {
 	return err
 }
 
+// AgentInitialSpawnConfigForConv loads the verbatim request recorded when the
+// stable actor was first spawned. Empty means the actor predates the snapshot
+// or entered agent management through a path with no SpawnRequest (promotion,
+// legacy backfill, or a sweeper enrollment).
+func AgentInitialSpawnConfigForConv(convID string) (string, error) {
+	d, err := Open()
+	if err != nil {
+		return "", err
+	}
+	var raw string
+	err = d.QueryRow(`
+		SELECT a.initial_spawn_config
+		FROM agent_conversations ac
+		JOIN agents a ON a.agent_id = ac.agent_id
+		WHERE ac.conv_id = ?`, strings.TrimSpace(convID)).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return raw, err
+}
+
 // SetAgentEffectiveSandboxConfig records the immutable values authorized for
 // an actor's launch. Unlike initial_spawn_config, this snapshot is read by
 // lifecycle paths; registry names and IDs inside it are provenance only.

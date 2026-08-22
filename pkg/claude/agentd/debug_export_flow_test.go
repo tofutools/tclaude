@@ -1,0 +1,73 @@
+package agentd_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+)
+
+func TestDashboardDebugExportCarriesExactRecordedConfiguration(t *testing.T) {
+	const convID = "debug-1111-2222-3333-4444"
+	f := newFlow(t)
+	f.HaveGroup("debuggers")
+	f.HaveAliveSession(convID, "spwn-debug", "tmux-debug", f.TestCwd("repo"))
+	f.HaveMember("debuggers", convID)
+	agentID, err := db.AgentIDForConv(convID)
+	require.NoError(t, err)
+	require.NotEmpty(t, agentID)
+
+	require.NoError(t, db.SetAgentInitialSpawnConfig(agentID,
+		`{"harness":"codex","sandbox_profile":"developer","initial_message":"private brief","write_proof_token":"one-time"}`))
+	mode, implementation, model := "tclaude-agent", "harness-builtin", "gpt-5.6-sol"
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, HarnessBuiltinMode: &mode,
+		SandboxImplementation: &implementation, ModelID: &model,
+	}))
+	snapshot := sandboxpolicy.NewSnapshot(sandboxpolicy.EffectiveProfile{
+		Filesystem:       []sandboxpolicy.FilesystemGrant{},
+		Environment:      []sandboxpolicy.EnvironmentEntry{{Name: "HOME", Value: "/home/helena"}},
+		AgentDirectories: []string{},
+		HarnessConfig:    sandboxpolicy.HarnessConfigAccessRead,
+	}, []sandboxpolicy.AppliedProfile{{Scope: sandboxpolicy.ScopeGlobal, ID: 7, Name: "developer"}})
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &snapshot))
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "spwn-debug", TmuxSession: "tmux-debug", ConvID: convID,
+		Cwd: f.TestCwd("repo"), Status: "running", Harness: "codex",
+		HarnessBuiltinMode: mode, SandboxImplementation: implementation,
+		ApprovalPolicy: "never", EffectiveSandbox: &snapshot,
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/agents/"+agentID+"/debug-export", nil)
+	req.Header.Set("Origin", "http://localhost")
+	agentd.BuildDashboardHandlerForTest().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Header().Get("Content-Disposition"), "attachment")
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &payload))
+	assert.Equal(t, "tclaude-agent-debug", payload["format"])
+	requested := payload["requested_at_spawn"].(map[string]any)
+	assert.Equal(t, true, requested["recorded"])
+	spawn := requested["parameters"].(map[string]any)
+	assert.Equal(t, "codex", spawn["harness"])
+	assert.Equal(t, "<redacted: 13 bytes>", spawn["initial_message"])
+	assert.NotContains(t, spawn, "write_proof_token")
+	actual := payload["actual_configuration"].(map[string]any)
+	relaunch := actual["durable_relaunch"].(map[string]any)
+	assert.Equal(t, model, relaunch["model_id"])
+	effective := actual["effective_sandbox"].(map[string]any)["effective"].(map[string]any)
+	assert.Equal(t, "read", effective["harness_config"])
+	environment := effective["environment"].([]any)
+	assert.Equal(t, "/home/helena", environment[0].(map[string]any)["value"])
+	latest := actual["latest_launch"].(map[string]any)
+	assert.Equal(t, f.TestCwd("repo"), latest["cwd"])
+	assert.Equal(t, implementation, latest["sandbox_implementation"])
+}

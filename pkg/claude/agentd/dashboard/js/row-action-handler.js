@@ -668,6 +668,29 @@ export async function handleRowAction(action) {
         openAgentExportDialog(agent, label);
         return;
       }
+      case 'debug-export': {
+        const response = await fetch(`/api/agents/${encodeURIComponent(agent)}/debug-export`, {
+          method: 'GET', credentials: 'same-origin',
+        });
+        if (!response.ok) {
+          toast(`export debug info failed: ${await response.text()}`, true);
+          return;
+        }
+        const blob = await response.blob();
+        const disposition = response.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="([^"]+)"/i);
+        const filename = match?.[1] || `tclaude-agent-debug-${shortId(agent)}.json`;
+        const href = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = href;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(href);
+        toast(`debug info exported for ${label}`);
+        return;
+      }
       case 'edit-task': {
         // Operator-only edit of an existing agent's task-reference URL and
         // optional display label. Empty cells expose attach; populated cells
