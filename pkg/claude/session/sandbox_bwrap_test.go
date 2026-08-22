@@ -1503,6 +1503,19 @@ func TestConstructedRootTclaudePathExportDoesNotAddCurrentDirectory(t *testing.T
 	}
 }
 
+func TestConstructedRootTclaudePathExportPinsShellStartupFragment(t *testing.T) {
+	cmd := exec.Command("/bin/sh", "-c",
+		appendTclaudeLayerConstructedRootPathExport("")+
+			`printf '%s\n%s\n' "$BASH_ENV" "$ENV"`)
+	cmd.Env = []string{"PATH=/usr/bin:/bin"}
+	got, err := cmd.Output()
+	require.NoError(t, err)
+	assert.Equal(t,
+		tclaudeLayerConstructedRootShellEnvPath+"\n"+
+			tclaudeLayerConstructedRootShellEnvPath+"\n",
+		string(got))
+}
+
 func TestBwrapArgsOperatorHideCanShadowConstructedRootTclaudeCLI(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

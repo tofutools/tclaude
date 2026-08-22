@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -454,6 +455,45 @@ func TestTclaudeLayerWinchRelaySignalsDescendantGroupAndPreservesExit(t *testing
 	case <-time.After(3 * time.Second):
 		t.Fatal("relay did not return after its child exited")
 	}
+}
+
+func TestConstructedRootShellEnvSurvivesLoginPathReset(t *testing.T) {
+	assert.True(t, tclaudeLayerProjectsConstructedRootCLI([]string{
+		"bwrap", "--ro-bind", "/host/tclaude", tclaudeLayerConstructedRootTclaudePath,
+	}))
+	assert.False(t, tclaudeLayerProjectsConstructedRootCLI([]string{
+		"bwrap", "--ro-bind", "/host/other", "/sandbox/other",
+	}))
+	assert.Equal(t, []string{
+		"--perms", "0444",
+		"--file", "9", tclaudeLayerConstructedRootShellEnvPath,
+		"--setenv", "BASH_ENV", tclaudeLayerConstructedRootShellEnvPath,
+		"--setenv", "ENV", tclaudeLayerConstructedRootShellEnvPath,
+	}, tclaudeLayerShellEnvSetupArgs(9))
+
+	fragment, err := prepareTclaudeLayerShellEnv()
+	require.NoError(t, err)
+	data, err := io.ReadAll(fragment)
+	require.NoError(t, err)
+	require.NoError(t, fragment.Close())
+	assert.Equal(t, tclaudeLayerConstructedRootShellEnv, string(data))
+
+	fragment, err = prepareTclaudeLayerShellEnv()
+	require.NoError(t, err)
+	defer fragment.Close()
+	cmd := exec.Command("/bin/bash", "--login", "-c", `printf '%s' "$PATH"`)
+	cmd.Env = []string{
+		"HOME=" + t.TempDir(),
+		"PATH=/usr/bin:/bin",
+		"BASH_ENV=/dev/fd/3",
+	}
+	cmd.ExtraFiles = []*os.File{fragment}
+	got, err := cmd.Output()
+	require.NoError(t, err)
+	assert.True(t,
+		string(got) == tclaudeLayerConstructedRootTclaudeBin ||
+			strings.HasPrefix(string(got), tclaudeLayerConstructedRootTclaudeBin+":"),
+		"login shell dropped constructed-root tclaude PATH: %q", got)
 }
 
 func runRelayFakeBwrap(t *testing.T) {

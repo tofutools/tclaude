@@ -2589,9 +2589,15 @@ var tclaudeLayerStaticOSPaths = []string{
 }
 
 const (
-	tclaudeLayerConstructedRootTclaudeDir  = "/.tclaude"
-	tclaudeLayerConstructedRootTclaudeBin  = "/.tclaude/bin"
-	tclaudeLayerConstructedRootTclaudePath = "/.tclaude/bin/tclaude"
+	tclaudeLayerConstructedRootTclaudeDir   = "/.tclaude"
+	tclaudeLayerConstructedRootTclaudeBin   = "/.tclaude/bin"
+	tclaudeLayerConstructedRootTclaudePath  = "/.tclaude/bin/tclaude"
+	tclaudeLayerConstructedRootShellEnvPath = "/.tclaude/shell-env"
+	tclaudeLayerConstructedRootShellEnv     = "case :\"${PATH:-}\": in *:" +
+		tclaudeLayerConstructedRootTclaudeBin + ":*) ;; *) " +
+		"if [ -n \"${PATH:-}\" ]; then export PATH=" +
+		tclaudeLayerConstructedRootTclaudeBin + ":\"$PATH\"; else export PATH=" +
+		tclaudeLayerConstructedRootTclaudeBin + "; fi ;; esac\n"
 )
 
 // tclaudeLayerTclaudeCLIPath is a seam for the real bubblewrap smoke, whose
@@ -2601,7 +2607,9 @@ const (
 var tclaudeLayerTclaudeCLIPath = clcommon.SelfTclaudePath
 
 func appendTclaudeLayerConstructedRootPathExport(exports string) string {
-	return exports + "if [ -n \"${PATH:-}\" ]; then export PATH=" +
+	return exports + "export BASH_ENV=" + tclaudeLayerConstructedRootShellEnvPath +
+		"; export ENV=" + tclaudeLayerConstructedRootShellEnvPath + "; " +
+		"if [ -n \"${PATH:-}\" ]; then export PATH=" +
 		tclaudeLayerConstructedRootTclaudeBin + ":\"$PATH\"; else export PATH=" +
 		tclaudeLayerConstructedRootTclaudeBin + "; fi; "
 }

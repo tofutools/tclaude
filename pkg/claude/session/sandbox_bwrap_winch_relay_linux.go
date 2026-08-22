@@ -75,6 +75,42 @@ func validateRouteAuthorityMetadata(binding stackedRelayBindingOptions, proxyAct
 	return nil
 }
 
+func tclaudeLayerProjectsConstructedRootCLI(argv []string) bool {
+	for index := 0; index+2 < len(argv); index++ {
+		if argv[index] == "--ro-bind" &&
+			argv[index+2] == tclaudeLayerConstructedRootTclaudePath {
+			return true
+		}
+	}
+	return false
+}
+
+func prepareTclaudeLayerShellEnv() (*os.File, error) {
+	readEnd, writeEnd, err := os.Pipe()
+	if err != nil {
+		return nil, fmt.Errorf("create constructed-root shell environment pipe: %w", err)
+	}
+	if _, err := io.WriteString(writeEnd, tclaudeLayerConstructedRootShellEnv); err != nil {
+		_ = readEnd.Close()
+		_ = writeEnd.Close()
+		return nil, fmt.Errorf("stage constructed-root shell environment: %w", err)
+	}
+	if err := writeEnd.Close(); err != nil {
+		_ = readEnd.Close()
+		return nil, fmt.Errorf("finish constructed-root shell environment pipe: %w", err)
+	}
+	return readEnd, nil
+}
+
+func tclaudeLayerShellEnvSetupArgs(fd int) []string {
+	return []string{
+		"--perms", "0444",
+		"--file", strconv.Itoa(fd), tclaudeLayerConstructedRootShellEnvPath,
+		"--setenv", "BASH_ENV", tclaudeLayerConstructedRootShellEnvPath,
+		"--setenv", "ENV", tclaudeLayerConstructedRootShellEnvPath,
+	}
+}
+
 // tclaudeLayerWinchRelayCmd stays outside bubblewrap and outside the terminal
 // I/O path. Bubblewrap inherits stdin/stdout/stderr directly; this process only
 // turns the host PTY's SIGWINCH notification into the same fixed signal for the
@@ -279,9 +315,28 @@ func runTclaudeLayerWinchRelay(
 		engineCommand = proxy.Command
 		engineFiles = proxy.Files
 	}
-	childArgs := make([]string, 0, len(argv)+len(bindingArgs)+len(engineSetupArgs)+8)
+	var shellEnvFile *os.File
+	var shellEnvArgs []string
+	if tclaudeLayerProjectsConstructedRootCLI(argv) {
+		shellEnvFile, err = prepareTclaudeLayerShellEnv()
+		if err != nil {
+			return 125, err
+		}
+		defer func() { _ = shellEnvFile.Close() }()
+		// fd 3 is the status pipe. Stacked, engine, and preserved descriptors
+		// retain their existing numbers; this launch-only fragment follows them.
+		shellEnvFD := tclaudeLayerRelayStatusFD + 1 + len(bindingFiles) +
+			len(engineFiles) + len(preservedFiles)
+		shellEnvArgs = tclaudeLayerShellEnvSetupArgs(shellEnvFD)
+	}
+	relaySetupArgs := make([]string, 0,
+		len(bindingArgs)+len(engineSetupArgs)+len(shellEnvArgs))
+	relaySetupArgs = append(relaySetupArgs, bindingArgs...)
+	relaySetupArgs = append(relaySetupArgs, engineSetupArgs...)
+	relaySetupArgs = append(relaySetupArgs, shellEnvArgs...)
+	childArgs := make([]string, 0, len(argv)+len(relaySetupArgs)+8)
 	childArgs = append(childArgs, "--json-status-fd", "3")
-	if len(bindingArgs) == 0 && len(engineSetupArgs) == 0 {
+	if len(relaySetupArgs) == 0 {
 		childArgs = append(childArgs, argv[1:]...)
 	} else {
 		commandIndex := -1
@@ -296,8 +351,7 @@ func runTclaudeLayerWinchRelay(
 			return 125, fmt.Errorf("relay binding requires a bubblewrap command separator")
 		}
 		childArgs = append(childArgs, original[:commandIndex]...)
-		childArgs = append(childArgs, bindingArgs...)
-		childArgs = append(childArgs, engineSetupArgs...)
+		childArgs = append(childArgs, relaySetupArgs...)
 		childArgs = append(childArgs, "--")
 		childArgs = append(childArgs, engineCommand...)
 		childArgs = append(childArgs, original[commandIndex+1:]...)
@@ -314,11 +368,17 @@ func runTclaudeLayerWinchRelay(
 	child.ExtraFiles = append([]*os.File{statusW}, bindingFiles...)
 	child.ExtraFiles = append(child.ExtraFiles, engineFiles...)
 	child.ExtraFiles = append(child.ExtraFiles, preservedFiles...)
+	if shellEnvFile != nil {
+		child.ExtraFiles = append(child.ExtraFiles, shellEnvFile)
+	}
 	if err := child.Start(); err != nil {
 		_ = statusW.Close()
 		return 125, tclaudeLayerStartRefusal(argv[0], err)
 	}
 	_ = statusW.Close()
+	if shellEnvFile != nil {
+		_ = shellEnvFile.Close()
+	}
 	// Bubblewrap now owns duplicates of every preserved descriptor. Drop the
 	// relay's copies immediately; the shell/helper topology must have exactly
 	// one live credential FD path, not a parent-side duplicate.
