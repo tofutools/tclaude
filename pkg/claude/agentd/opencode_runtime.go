@@ -1552,8 +1552,14 @@ func openCodeFilteredNetworkSpec(
 		return false
 	}
 	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(spec.Effective)
-	return err == nil &&
-		!sandboxpolicy.NetworkRulesArePrivateRoutedOpen(axes.Network)
+	return err == nil && openCodeProviderFilteredNetworkRules(axes.Network)
+}
+
+func openCodeProviderFilteredNetworkRules(
+	rules sandboxpolicy.NetworkRules,
+) bool {
+	return !sandboxpolicy.NetworkRulesArePrivateRoutedOpen(rules) &&
+		!sandboxpolicy.FilteredNetworkRulesAllowNoDestinations(rules)
 }
 
 func openCodeFilteredControlledEnvironmentName(name string) bool {
@@ -1800,8 +1806,7 @@ func openCodeTclaudeLayerLaunchSpec(
 			if axesErr != nil {
 				return nil, axesErr
 			}
-			providerFiltered := !sandboxpolicy.NetworkRulesArePrivateRoutedOpen(
-				axes.Network)
+			providerFiltered := openCodeProviderFilteredNetworkRules(axes.Network)
 			// The engine comes from the composed policy, through the same
 			// resolution the launch itself performs, so the preflight probes
 			// the floor the launch will actually build. Never re-derived here:

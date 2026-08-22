@@ -1214,6 +1214,41 @@ func TestReconcileOpenCodeFilteredRuntimeRechecksPersistentAccountAuthority(
 	assert.False(t, reconcileOpenCodeRuntime(runtime.SessionID))
 	assert.False(t, restartAttempted,
 		"persistent account authority must refuse before replay exec")
+
+	// The same persistent authority is harmless under an empty allowlist: no
+	// provider destination can cross the packet floor, so both a fresh launch
+	// spec and its persisted replay must remain admissible.
+	emptyAgentID := db.NewAgentID()
+	emptyAllocation, err := allocatePrivateOpenCodeState(emptyAgentID)
+	require.NoError(t, err)
+	plantOpenCodeFilteredActiveAccount(
+		t, emptyAllocation.StateRoot, "https://account.example.invalid")
+	emptySnapshot := sandboxpolicy.EmptySnapshot()
+	emptySnapshot.Effective.Network = &sandboxpolicy.NetworkRules{
+		Mode:      sandboxpolicy.AccessModeList,
+		Namespace: sandboxpolicy.NetworkNamespacePrivate,
+		Engine:    sandboxpolicy.NetworkEnginePacket,
+	}
+	emptySpec, err := openCodeTclaudeLayerLaunchSpec(
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		cwd, nil, &emptySnapshot, emptyAgentID)
+	require.NoError(t, err)
+	assert.False(t, openCodeFilteredNetworkSpec(emptySpec))
+	_, emptyEncoded, err := openCodeSandboxRecord(
+		string(sandboxpolicy.ImplementationTclaudeLayer), emptySpec)
+	require.NoError(t, err)
+	require.NotNil(t, emptySpec.Contract.OpenCodeControl)
+	emptyControl := emptySpec.Contract.OpenCodeControl
+	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
+		Cwd:                   cwd,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		SandboxLaunchSpecJSON: emptyEncoded,
+		Transport:             db.OpenCodeTransportUnixRelay,
+		ControlSocketPath:     emptyControl.SocketPath,
+		ControlSocketDevice:   1,
+		ControlSocketInode:    1,
+	})
+	require.NoError(t, err)
 }
 
 func TestOpenCodeServeExecWrapsAuthoritativeServer(t *testing.T) {
@@ -1307,4 +1342,12 @@ func TestOpenCodePrivateRoutedNetworkIsNotProviderFiltered(t *testing.T) {
 	}}
 	assert.True(t, openCodeFilteredNetworkSpec(spec),
 		"a private namespace with destination rules remains provider-filtered")
+
+	spec.Effective.Network = &sandboxpolicy.NetworkRules{
+		Mode:      sandboxpolicy.AccessModeList,
+		Namespace: sandboxpolicy.NetworkNamespacePrivate,
+		Engine:    sandboxpolicy.NetworkEnginePacket,
+	}
+	assert.False(t, openCodeFilteredNetworkSpec(spec),
+		"an empty allowlist has no provider destination to inspect")
 }
