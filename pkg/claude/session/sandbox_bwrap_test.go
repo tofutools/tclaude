@@ -1470,7 +1470,7 @@ func TestBwrapArgsRejectsSymlinkedCanonicalParent(t *testing.T) {
 	require.ErrorContains(t, err, "canonical agentd socket directory")
 }
 
-func TestBwrapArgsRepairsCanonicalDirectoryAfterExactDeny(t *testing.T) {
+func TestBwrapArgsCanonicalDirectoryIsImmutableFloor(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)
 	t.Setenv(agentipc.SocketEnv, "")
@@ -1481,19 +1481,20 @@ func TestBwrapArgsRepairsCanonicalDirectoryAfterExactDeny(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
 
-	got, err := bwrapArgsWithDaemonFinal(nil, sandboxpolicy.MountPlan{
-		NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
-		Entries: []sandboxpolicy.MountEntry{{
-			Path: canonicalDir, Mode: sandboxpolicy.MountHide,
-		}},
-	}, nil, nil, nil, sandboxpolicy.AgentdSocketFloor(), "", nil)
-	require.NoError(t, err)
-	hide := indexOfBwrapTriplet(got, "--tmpfs", canonicalDir)
-	binds := indicesOfBwrapBind(got, "--ro-bind", canonicalDir, canonicalDir)
-	require.NotEqual(t, -1, hide)
-	require.Len(t, binds, 2)
-	assert.Less(t, hide, binds[1],
-		"the daemon socket floor must override an exact profile hide of its dedicated directory")
+	for _, mode := range []sandboxpolicy.MountMode{
+		sandboxpolicy.MountRO, sandboxpolicy.MountRW, sandboxpolicy.MountHide,
+	} {
+		t.Run(mode.String(), func(t *testing.T) {
+			got, err := bwrapArgsWithDaemonFinal(nil, sandboxpolicy.MountPlan{
+				NetworkPosture: sandboxpolicy.NetworkIsolatedWithAgentd,
+				Entries:        []sandboxpolicy.MountEntry{{Path: canonicalDir, Mode: mode}},
+			}, nil, nil, nil, sandboxpolicy.AgentdSocketFloor(), "", nil)
+			require.NoError(t, err)
+			assert.Len(t, indicesOfBwrapBind(got, "--ro-bind", canonicalDir, canonicalDir), 1)
+			assert.Empty(t, indicesOfBwrapBind(got, "--bind", canonicalDir, canonicalDir))
+			assert.Equal(t, -1, indexOfBwrapTriplet(got, "--tmpfs", canonicalDir))
+		})
+	}
 }
 
 // TCL-798. The whole point of the new posture is that these two decisions are

@@ -34,10 +34,13 @@ func ApplyAgentSocketEnv(
 		return fmt.Errorf("managed sandbox profiles require the canonical agentd socket %s; "+
 			"custom socket %s is unsupported for sandboxed agents", canonical, explicit)
 	}
-	if !agentipc.LiveCanonicalSocketPath() && agentipc.AnyLegacySocketReachable() {
-		return fmt.Errorf("agentd is still listening only on a compatibility socket (%v); "+
-			"restart agentd after upgrading tclaude before launching a sandboxed agent",
-			agentipc.LegacySocketPaths())
+	if !agentipc.LiveCanonicalSocketPath() {
+		if agentipc.AnyLegacySocketReachable() {
+			return fmt.Errorf("agentd is still listening only on a compatibility socket (%v); "+
+				"restart agentd after upgrading tclaude before launching a sandboxed agent",
+				agentipc.LegacySocketPaths())
+		}
+		return fmt.Errorf("canonical agentd socket %s is not live; restart agentd before launching a sandboxed agent", canonical)
 	}
 	if canonical != "" {
 		env[agentipc.SocketEnv] = canonical

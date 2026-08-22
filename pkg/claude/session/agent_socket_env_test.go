@@ -72,6 +72,20 @@ func TestApplyAgentSocketEnvRequiresRestartForLegacyOnlyDaemon(t *testing.T) {
 	}
 }
 
+func TestApplyAgentSocketEnvRejectsWhenNoManagedEndpointIsLive(t *testing.T) {
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+
+	env := map[string]string{}
+	err := ApplyAgentSocketEnv(
+		harness.CodexName, "", harness.CodexAgentProfile, false, env)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "canonical agentd socket")
+	assert.Contains(t, err.Error(), "restart agentd")
+	assert.NotContains(t, env, agentipc.SocketEnv)
+}
+
 func TestApplyAgentSocketEnvAcceptsCanonicalDaemon(t *testing.T) {
 	home := agentipctest.ShortSocketDir(t)
 	t.Setenv("HOME", home)

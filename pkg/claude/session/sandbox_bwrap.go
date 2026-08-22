@@ -2201,6 +2201,17 @@ func bwrapArgsWithDaemonFinal(
 				"mount plan entry %d hides sandbox path %q but names host source %q; a hide is always same-path",
 				i, path, source)
 		}
+		if !entry.IsRemapped() && tclaudeLayerPlanUsesConstructedRoot(plan) &&
+			path == filepath.Clean(agentipc.CanonicalSocketDir()) {
+			switch entry.Mode {
+			case sandboxpolicy.MountRO, sandboxpolicy.MountRW, sandboxpolicy.MountHide:
+				// The initial directory projection is the immutable read/connect
+				// floor. An exact ordinary row cannot widen or hide it.
+				continue
+			default:
+				return nil, fmt.Errorf("mount plan entry %d has invalid mode %d", i, entry.Mode)
+			}
+		}
 		switch entry.Mode {
 		case sandboxpolicy.MountRO, sandboxpolicy.MountRW:
 			exists, err := bwrapBindSourceExists(source)

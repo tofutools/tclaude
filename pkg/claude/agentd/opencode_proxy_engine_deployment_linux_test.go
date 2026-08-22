@@ -72,7 +72,7 @@ func TestOpenCodeUnixRelayDeploysTheProxyEngine(t *testing.T) {
 	// The isolated boundary binds the canonical agentd socket, and the argv
 	// renderer refuses a spec whose socket is absent. Bind a real one so the
 	// renderer reaches the engine question it is being asked about.
-	socketPath := filepath.Join(home, ".tclaude", "api", "agentd.sock")
+	socketPath := agentipc.CanonicalSocketPath()
 	require.NoError(t, os.MkdirAll(filepath.Dir(socketPath), 0o700))
 	socket, err := net.Listen("unix", socketPath)
 	require.NoError(t, err)
@@ -477,7 +477,7 @@ func TestOpenCodeLayerResolveProbesTheFloorTheLaunchBuilds(t *testing.T) {
 			t.Cleanup(func() { _ = os.RemoveAll(home) })
 			t.Setenv("HOME", home)
 			t.Setenv("XDG_DATA_HOME", filepath.Join(home, "data"))
-			socketPath := filepath.Join(home, ".tclaude", "api", "agentd.sock")
+			socketPath := agentipc.CanonicalSocketPath()
 			require.NoError(t, os.MkdirAll(filepath.Dir(socketPath), 0o700))
 			socket, err := net.Listen("unix", socketPath)
 			require.NoError(t, err)
