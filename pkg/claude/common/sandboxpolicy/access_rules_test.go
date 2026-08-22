@@ -647,6 +647,7 @@ func TestAgentdSocketFloorSurvivesEveryAccessModeCombinationAndRawJSON(t *testin
 	t.Setenv("HOME", home)
 	floor := []string{
 		agentipc.CanonicalSocketPath(),
+		agentipc.SandboxSocketPath(),
 		agentipc.LegacyHomeSocketPath(),
 		agentipc.LegacySocketPath(),
 	}

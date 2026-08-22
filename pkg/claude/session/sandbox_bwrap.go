@@ -2138,6 +2138,7 @@ func bwrapArgsWithDaemonFinal(
 		args = hideRemounts.appendHide(args, root)
 	}
 	liveSocketBinds := make([]TclaudeLayerReadOnlyBind, 0, len(socketPaths))
+	restartStableSocket := ""
 	if tclaudeLayerPlanUsesConstructedRoot(plan) {
 		for i, socket := range socketPaths {
 			if socket == "" || !filepath.IsAbs(socket) {
@@ -2159,26 +2160,22 @@ func bwrapArgsWithDaemonFinal(
 				continue
 			}
 			bind := TclaudeLayerReadOnlyBind{Source: socket, Target: socket}
-			// Binding a Unix socket pins that inode forever. The daemon instead
-			// keeps an equivalent endpoint in a dedicated directory whose only
-			// purpose is this projection. Mounting the directory over the
-			// canonical API location preserves the public pathname while letting
-			// unlink+bind on daemon restart become visible in a live sandbox.
-			// Fall back to the file bind when talking to an older daemon that did
-			// not create the projection endpoint yet.
-			if i == 0 && filepath.Clean(socket) == filepath.Clean(agentipc.CanonicalSocketPath()) {
-				projected := agentipc.SandboxSocketPath()
-				projectedExists, projectedErr := bwrapBindSourceExists(projected)
-				if projectedErr != nil {
-					return nil, fmt.Errorf("restart-stable agentd socket source %q: %w", projected, projectedErr)
-				}
-				if projectedExists {
-					bind.Source = filepath.Dir(projected)
-					bind.Target = filepath.Dir(socket)
-				}
+			// Binding a Unix socket pins that inode forever. The daemon keeps the
+			// sandbox endpoint alone in a dedicated directory, so mount that
+			// narrow directory at its own path and make clients dial through it.
+			// Replacing the pathname on agentd restart then becomes visible to a
+			// live sandbox without making the sibling attachment/control trees
+			// read-only.
+			if filepath.Clean(socket) == filepath.Clean(agentipc.SandboxSocketPath()) {
+				bind.Source = filepath.Dir(socket)
+				bind.Target = filepath.Dir(socket)
+				restartStableSocket = socket
 			}
 			args = append(args, "--ro-bind", bind.Source, bind.Target)
 			liveSocketBinds = append(liveSocketBinds, bind)
+		}
+		if restartStableSocket != "" {
+			args = append(args, "--setenv", agentipc.SocketEnv, restartStableSocket)
 		}
 	}
 	// Class 2: replay the policy plan exactly as rendered. Repair mounts do not

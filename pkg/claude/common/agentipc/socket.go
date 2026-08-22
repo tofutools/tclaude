@@ -31,8 +31,9 @@ func CanonicalSocketPath() string {
 // SandboxSocketPath is the host-side endpoint projected into constructed
 // tclaude-layer roots as the canonical socket. Its dedicated parent is mounted
 // rather than the socket inode itself, so replacing the pathname on an agentd
-// restart becomes visible to already-running sandboxes. Clients never dial
-// this spelling directly.
+// restart becomes visible to already-running sandboxes. Constructed Linux
+// sandboxes select this endpoint explicitly; other clients use the canonical
+// spelling.
 func SandboxSocketPath() string {
 	apiDir := common.TclaudeAPIDir()
 	if apiDir == "" {
