@@ -24,6 +24,10 @@ func TestBuildExecutionBoundaryRecordsInjectedCLIPathAndIdentity(t *testing.T) {
 	for _, path := range []string{launcher, tclaude, harnessBinary} {
 		require.NoError(t, os.WriteFile(path, []byte("fixture"), 0o700))
 	}
+	canonicalLauncher, err := filepath.EvalSymlinks(launcher)
+	require.NoError(t, err)
+	canonicalHarnessBinary, err := filepath.EvalSymlinks(harnessBinary)
+	require.NoError(t, err)
 	previousCLI := tclaudeLayerTclaudeCLIPath
 	tclaudeLayerTclaudeCLIPath = func() string { return tclaude }
 	t.Cleanup(func() { tclaudeLayerTclaudeCLIPath = previousCLI })
@@ -59,8 +63,8 @@ func TestBuildExecutionBoundaryRecordsInjectedCLIPathAndIdentity(t *testing.T) {
 	}
 	assert.False(t, boundary.PATH.FinalValueKnown)
 	assert.Equal(t, []string{"tools"}, boundary.PATH.PreLaunchDeclaresPATH)
-	assert.Equal(t, harnessBinary, boundary.Harness.HostPath)
-	assert.Equal(t, launcher, boundary.Launcher.HostPath)
+	assert.Equal(t, canonicalHarnessBinary, boundary.Harness.HostPath)
+	assert.Equal(t, canonicalLauncher, boundary.Launcher.HostPath)
 	if runtime.GOOS == "linux" {
 		assert.Contains(t, boundary.AutomaticEntries, ExecutionNamespaceEntry{
 			Kind: "bind", Source: tclaude, Target: tclaudeLayerConstructedRootTclaudePath,
@@ -77,14 +81,16 @@ func TestBuildExecutionBoundaryResolvesHarnessFromInjectedPATH(t *testing.T) {
 	require.NoError(t, os.MkdirAll(bin, 0o700))
 	executable := filepath.Join(bin, "codex")
 	require.NoError(t, os.WriteFile(executable, []byte("fixture"), 0o700))
+	canonicalExecutable, err := filepath.EvalSymlinks(executable)
+	require.NoError(t, err)
 
 	boundary, err := BuildExecutionBoundary(ExecutionBoundaryInput{
 		SandboxImplementation: "harness-builtin", HarnessName: "codex", HarnessLookupName: "codex",
 		Cwd: root, Environment: map[string]string{"PATH": bin + ":/usr/bin"},
 	})
 	require.NoError(t, err)
-	assert.Equal(t, executable, boundary.Harness.HostPath)
-	assert.Equal(t, executable, boundary.Harness.SandboxPath)
+	assert.Equal(t, canonicalExecutable, boundary.Harness.HostPath)
+	assert.Equal(t, canonicalExecutable, boundary.Harness.SandboxPath)
 	assert.Equal(t, "resolved from launch PATH before exec", boundary.Harness.Resolution)
 	assert.Equal(t, bin+":/usr/bin", boundary.PATH.BeforePreLaunch)
 }
@@ -92,12 +98,14 @@ func TestBuildExecutionBoundaryResolvesHarnessFromInjectedPATH(t *testing.T) {
 func TestBuildExecutionBoundaryRecordsDistinctHostAndSandboxExecutable(t *testing.T) {
 	hostExecutable := filepath.Join(t.TempDir(), "staged-codex")
 	require.NoError(t, os.WriteFile(hostExecutable, []byte("fixture"), 0o700))
+	canonicalHostExecutable, err := filepath.EvalSymlinks(hostExecutable)
+	require.NoError(t, err)
 
 	boundary, err := BuildExecutionBoundary(ExecutionBoundaryInput{
 		HarnessName: "codex", HarnessLookupName: "codex",
 		HarnessExecutable: hostExecutable, HarnessSandboxPath: "/tmp/.tclaude-stacked/engine",
 	})
 	require.NoError(t, err)
-	assert.Equal(t, hostExecutable, boundary.Harness.HostPath)
+	assert.Equal(t, canonicalHostExecutable, boundary.Harness.HostPath)
 	assert.Equal(t, "/tmp/.tclaude-stacked/engine", boundary.Harness.SandboxPath)
 }
