@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"runtime"
 	"strings"
 	"time"
@@ -192,11 +193,22 @@ func buildAgentDebugExport(convID string) (*agentDebugExport, error) {
 			return nil, fmt.Errorf("load latest launch execution boundary: %w", boundaryErr)
 		}
 		var boundary *session.ExecutionBoundary
+		launchIdentity, identityErr := db.GetSessionExitLaunchIdentity(s.ID)
+		if identityErr != nil {
+			return nil, fmt.Errorf("load latest launch generation: %w", identityErr)
+		}
 		if boundaryRaw != "" {
 			boundary = &session.ExecutionBoundary{}
 			if err := json.Unmarshal([]byte(boundaryRaw), boundary); err != nil {
 				return nil, fmt.Errorf("decode latest launch execution boundary: %w", err)
 			}
+			if boundary.LaunchGeneration == "" ||
+				boundary.LaunchGeneration != launchIdentity.Generation {
+				boundary = nil
+			}
+		}
+		if s.Harness == "opencode" {
+			boundary = openCodeDebugExecutionBoundary(s.ConvID)
 		}
 		out.Configurations.Running.Recorded = true
 		out.Configurations.Running.Launch = &agentDebugLatestLaunch{
@@ -225,7 +237,8 @@ func liveDebugProcessRoot(s *db.SessionRow) int {
 	}
 	if s.Harness == "opencode" {
 		if openCodeRuntime, err := db.GetOpenCodeRuntimeByConvID(s.ConvID); err == nil &&
-			openCodeRuntime != nil && openCodeRuntime.PID > 0 && openCodeRuntimeVerified(*openCodeRuntime) {
+			openCodeRuntime != nil && openCodeRuntime.PID > 0 && openCodeRuntime.PID != os.Getpid() &&
+			openCodeRuntimeVerified(*openCodeRuntime) {
 			return openCodeRuntime.PID
 		}
 		return 0
@@ -236,6 +249,19 @@ func liveDebugProcessRoot(s *db.SessionRow) int {
 	// A database PID has no durable process-generation identity. Never expose
 	// another process's environment merely because the kernel reused it.
 	return 0
+}
+
+func openCodeDebugExecutionBoundary(convID string) *session.ExecutionBoundary {
+	runtime, err := db.GetOpenCodeRuntimeByConvID(convID)
+	if err != nil || runtime == nil || runtime.PID <= 0 || runtime.PID == os.Getpid() ||
+		!openCodeRuntimeVerified(*runtime) || strings.TrimSpace(runtime.ExecutionBoundaryJSON) == "" {
+		return nil
+	}
+	boundary := &session.ExecutionBoundary{}
+	if err := json.Unmarshal([]byte(runtime.ExecutionBoundaryJSON), boundary); err != nil {
+		return nil
+	}
+	return boundary
 }
 
 func sanitizeInitialSpawnRequest(raw string) (map[string]any, []string, error) {

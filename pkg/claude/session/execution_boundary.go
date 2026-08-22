@@ -19,6 +19,7 @@ const ExecutionBoundaryVersion = 1
 // constructed-root entries, PATH injection, and user-namespace identity.
 type ExecutionBoundary struct {
 	Version               int                       `json:"version"`
+	LaunchGeneration      string                    `json:"launch_generation,omitempty"`
 	SandboxImplementation string                    `json:"sandbox_implementation"`
 	Platform              string                    `json:"platform"`
 	Harness               ExecutionHarness          `json:"harness"`
@@ -80,17 +81,21 @@ type ExecutionNamespaceEntry struct {
 }
 
 type ExecutionBoundaryInput struct {
-	SandboxImplementation string
-	HarnessName           string
-	HarnessLookupName     string
-	HarnessExecutable     string
-	HarnessSandboxPath    string
-	HarnessRuntimeRoots   []string
-	LauncherBinary        string
-	Cwd                   string
-	Environment           map[string]string
-	PreLaunch             []sandboxpolicy.PreLaunchBlock
-	LayerSpec             *TclaudeLayerLaunchSpec
+	LaunchGeneration          string
+	SandboxImplementation     string
+	HarnessName               string
+	HarnessLookupName         string
+	HarnessExecutable         string
+	HarnessExecutableResolved bool
+	HarnessSandboxPath        string
+	HarnessRuntimeRoots       []string
+	HarnessRuntimeBindings    []StackedSandboxRuntimeBinding
+	LauncherBinary            string
+	LauncherBinaryResolved    bool
+	Cwd                       string
+	Environment               map[string]string
+	PreLaunch                 []sandboxpolicy.PreLaunchBlock
+	LayerSpec                 *TclaudeLayerLaunchSpec
 }
 
 // BuildExecutionBoundary freezes the launch-adapter facts that are otherwise
@@ -102,8 +107,9 @@ func BuildExecutionBoundary(input ExecutionBoundaryInput) (*ExecutionBoundary, e
 		basePATH = os.Getenv("PATH")
 	}
 	out := &ExecutionBoundary{
-		Version: ExecutionBoundaryVersion, SandboxImplementation: input.SandboxImplementation,
-		Platform: runtime.GOOS,
+		Version: ExecutionBoundaryVersion, LaunchGeneration: input.LaunchGeneration,
+		SandboxImplementation: input.SandboxImplementation,
+		Platform:              runtime.GOOS,
 		Harness: ExecutionHarness{
 			Name: input.HarnessName, LookupName: input.HarnessLookupName,
 			Resolution: "shell PATH lookup", RuntimeRoots: append([]string(nil), input.HarnessRuntimeRoots...),
@@ -120,7 +126,7 @@ func BuildExecutionBoundary(input ExecutionBoundaryInput) (*ExecutionBoundary, e
 		AutomaticEntries: []ExecutionNamespaceEntry{},
 	}
 	if executable := strings.TrimSpace(input.HarnessExecutable); executable != "" {
-		resolved, err := resolveRecordedExecutable(executable)
+		resolved, err := resolveRecordedExecutionPath(executable, input.HarnessExecutableResolved)
 		if err != nil {
 			return nil, fmt.Errorf("record harness executable: %w", err)
 		}
@@ -135,10 +141,19 @@ func BuildExecutionBoundary(input ExecutionBoundaryInput) (*ExecutionBoundary, e
 		out.Harness.SandboxPath = candidate
 		out.Harness.Resolution = "resolved from launch PATH before exec"
 	}
-	for _, root := range out.Harness.RuntimeRoots {
-		out.AutomaticEntries = append(out.AutomaticEntries, ExecutionNamespaceEntry{
-			Kind: "bind", Source: root, Target: root, Access: "read-only", Origin: "harness runtime closure",
-		})
+	if len(input.HarnessRuntimeBindings) == 0 {
+		for _, root := range out.Harness.RuntimeRoots {
+			out.AutomaticEntries = append(out.AutomaticEntries, ExecutionNamespaceEntry{
+				Kind: "bind", Source: root, Target: root, Access: "read-only", Origin: "harness runtime closure",
+			})
+		}
+	} else {
+		for _, binding := range input.HarnessRuntimeBindings {
+			out.AutomaticEntries = append(out.AutomaticEntries, ExecutionNamespaceEntry{
+				Kind: "bind", Source: binding.HostPath, Target: binding.SandboxPath,
+				Access: "read-only", Origin: "staged nested harness runtime closure",
+			})
+		}
 	}
 	preLaunch := input.PreLaunch
 	if input.LayerSpec == nil {
@@ -201,7 +216,7 @@ func BuildExecutionBoundary(input ExecutionBoundaryInput) (*ExecutionBoundary, e
 			Access: "read-only", Origin: "daemon-final launch contract",
 		})
 	}
-	launcher, err := resolveRecordedExecutable(input.LauncherBinary)
+	launcher, err := resolveRecordedExecutionPath(input.LauncherBinary, input.LauncherBinaryResolved)
 	if err != nil {
 		return nil, fmt.Errorf("record outer-layer launcher: %w", err)
 	}
@@ -237,6 +252,10 @@ func recordExecutionPATHPreLaunch(path *ExecutionPATH, blocks []sandboxpolicy.Pr
 }
 
 func resolveRecordedExecutable(path string) (string, error) {
+	return resolveRecordedExecutionPath(path, false)
+}
+
+func resolveRecordedExecutionPath(path string, alreadyResolved bool) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", fmt.Errorf("path is empty")
@@ -244,6 +263,9 @@ func resolveRecordedExecutable(path string) (string, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", err
+	}
+	if alreadyResolved {
+		return filepath.Clean(abs), nil
 	}
 	return filepath.EvalSymlinks(abs)
 }

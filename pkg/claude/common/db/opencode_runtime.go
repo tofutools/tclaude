@@ -27,6 +27,9 @@ type OpenCodeRuntime struct {
 	// SandboxLaunchSpecJSON is the exact versioned renderer input required to
 	// reproduce a tclaude-layer restart. It is empty for harness-builtin rows.
 	SandboxLaunchSpecJSON string
+	// ExecutionBoundaryJSON is immutable evidence for the currently recorded
+	// server process. Healthy reuse returns it unchanged; a real restart replaces it.
+	ExecutionBoundaryJSON string
 	// Transport records how authenticated HTTP reaches the managed server.
 	// Legacy/v2/v3 runtimes use host loopback. A v4 unix-relay runtime carries
 	// the exact pathname identity agentd must prove before sending credentials.
@@ -60,9 +63,9 @@ func UpsertOpenCodeRuntime(runtime OpenCodeRuntime) error {
 	_, err = d.Exec(`
 		INSERT INTO opencode_runtimes
 			(session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
-			 sandbox_launch_spec_json, transport, control_socket_path,
+			 sandbox_launch_spec_json, execution_boundary_json, transport, control_socket_path,
 			 control_socket_device, control_socket_inode, permission_json, resource_cgroup_dir, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(session_id) DO UPDATE SET
 			conv_id = excluded.conv_id,
 			server_url = excluded.server_url,
@@ -71,6 +74,7 @@ func UpsertOpenCodeRuntime(runtime OpenCodeRuntime) error {
 			cwd = excluded.cwd,
 			sandbox_implementation = excluded.sandbox_implementation,
 			sandbox_launch_spec_json = excluded.sandbox_launch_spec_json,
+			execution_boundary_json = excluded.execution_boundary_json,
 			transport = excluded.transport,
 			control_socket_path = excluded.control_socket_path,
 			control_socket_device = excluded.control_socket_device,
@@ -79,7 +83,7 @@ func UpsertOpenCodeRuntime(runtime OpenCodeRuntime) error {
 			resource_cgroup_dir = excluded.resource_cgroup_dir,
 			updated_at = excluded.updated_at
 	`, runtime.SessionID, runtime.ConvID, runtime.ServerURL, runtime.Password,
-		runtime.PID, runtime.Cwd, runtime.SandboxImplementation, runtime.SandboxLaunchSpecJSON,
+		runtime.PID, runtime.Cwd, runtime.SandboxImplementation, runtime.SandboxLaunchSpecJSON, runtime.ExecutionBoundaryJSON,
 		normalizeOpenCodeTransport(runtime.Transport), runtime.ControlSocketPath,
 		runtime.ControlSocketDevice, runtime.ControlSocketInode, runtime.PermissionJSON, runtime.ResourceCgroupDir,
 		dbTime(runtime.CreatedAt),
@@ -94,7 +98,7 @@ func GetOpenCodeRuntime(sessionID string) (*OpenCodeRuntime, error) {
 	}
 	row := d.QueryRow(`
 		SELECT session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
-			sandbox_launch_spec_json, transport, control_socket_path,
+			sandbox_launch_spec_json, execution_boundary_json, transport, control_socket_path,
 			control_socket_device, control_socket_inode, permission_json, resource_cgroup_dir, created_at, updated_at
 		FROM opencode_runtimes WHERE session_id = ?
 	`, sessionID)
@@ -112,7 +116,7 @@ func GetOpenCodeRuntimeByConvID(convID string) (*OpenCodeRuntime, error) {
 	}
 	row := d.QueryRow(`
 		SELECT session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
-			sandbox_launch_spec_json, transport, control_socket_path,
+			sandbox_launch_spec_json, execution_boundary_json, transport, control_socket_path,
 			control_socket_device, control_socket_inode, permission_json, resource_cgroup_dir, created_at, updated_at
 		FROM opencode_runtimes WHERE conv_id = ? ORDER BY created_at DESC LIMIT 1
 	`, convID)
@@ -138,7 +142,7 @@ func FindOpenCodeRuntimeByPID(pid int) (*OpenCodeRuntime, error) {
 	}
 	row := d.QueryRow(`
 		SELECT session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
-			sandbox_launch_spec_json, transport, control_socket_path,
+			sandbox_launch_spec_json, execution_boundary_json, transport, control_socket_path,
 			control_socket_device, control_socket_inode, permission_json, resource_cgroup_dir, created_at, updated_at
 		FROM opencode_runtimes WHERE pid = ? ORDER BY updated_at DESC LIMIT 1
 	`, pid)
@@ -156,7 +160,7 @@ func ListOpenCodeRuntimes() ([]OpenCodeRuntime, error) {
 	}
 	rows, err := d.Query(`
 		SELECT session_id, conv_id, server_url, password, pid, cwd, sandbox_implementation,
-			sandbox_launch_spec_json, transport, control_socket_path,
+			sandbox_launch_spec_json, execution_boundary_json, transport, control_socket_path,
 			control_socket_device, control_socket_inode, permission_json, resource_cgroup_dir, created_at, updated_at
 		FROM opencode_runtimes ORDER BY created_at
 	`)
@@ -193,7 +197,7 @@ func scanOpenCodeRuntime(row openCodeRuntimeScanner) (*OpenCodeRuntime, error) {
 	var created, updated dbTimestamp
 	if err := row.Scan(&runtime.SessionID, &runtime.ConvID, &runtime.ServerURL,
 		&runtime.Password, &runtime.PID, &runtime.Cwd, &runtime.SandboxImplementation,
-		&runtime.SandboxLaunchSpecJSON, &runtime.Transport, &runtime.ControlSocketPath,
+		&runtime.SandboxLaunchSpecJSON, &runtime.ExecutionBoundaryJSON, &runtime.Transport, &runtime.ControlSocketPath,
 		&runtime.ControlSocketDevice, &runtime.ControlSocketInode, &runtime.PermissionJSON, &runtime.ResourceCgroupDir,
 		&created, &updated); err != nil {
 		return nil, err

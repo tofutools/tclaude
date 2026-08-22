@@ -2243,6 +2243,7 @@ func runNew(params *NewParams) error {
 		}
 	}
 	boundaryInput := ExecutionBoundaryInput{
+		LaunchGeneration:      exitGeneration,
 		SandboxImplementation: string(sandboxImplementation),
 		HarnessName:           h.Name,
 		HarnessLookupName:     h.Spawn.Binary(),
@@ -2256,13 +2257,20 @@ func runNew(params *NewParams) error {
 		// verified source in the host namespace and record its distinct final
 		// destination without ever trying to stat the destination on the host.
 		boundaryInput.HarnessExecutable = stackedProof.VersionProbePath
+		boundaryInput.HarnessExecutableResolved = true
 		boundaryInput.HarnessSandboxPath = stackedProof.Executable.Path
+		if stackedProof.RuntimeRoot != "" {
+			boundaryInput.HarnessRuntimeRoots = []string{stackedProof.RuntimeRoot}
+			boundaryInput.HarnessRuntimeBindings = append(
+				[]StackedSandboxRuntimeBinding(nil), stackedProof.RuntimeBindings...)
+		}
 	}
 	if effectiveSandbox != nil {
 		boundaryInput.PreLaunch = effectiveSandbox.Effective.PreLaunch
 	}
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
 		boundaryInput.LauncherBinary = bwrapBinary
+		boundaryInput.LauncherBinaryResolved = true
 		boundaryInput.LayerSpec = &layerSpec
 	}
 	var executionBoundaryJSON []byte

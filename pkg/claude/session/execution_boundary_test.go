@@ -109,3 +109,25 @@ func TestBuildExecutionBoundaryRecordsDistinctHostAndSandboxExecutable(t *testin
 	assert.Equal(t, canonicalHostExecutable, boundary.Harness.HostPath)
 	assert.Equal(t, "/tmp/.tclaude-stacked/engine", boundary.Harness.SandboxPath)
 }
+
+func TestBuildExecutionBoundaryRecordsStagedRuntimeClosure(t *testing.T) {
+	hostExecutable := filepath.Join(t.TempDir(), "staged-codex")
+	runtimeFile := filepath.Join(t.TempDir(), "runtime-lib")
+	require.NoError(t, os.WriteFile(hostExecutable, []byte("engine"), 0o700))
+	require.NoError(t, os.WriteFile(runtimeFile, []byte("library"), 0o600))
+
+	boundary, err := BuildExecutionBoundary(ExecutionBoundaryInput{
+		HarnessName: "codex", HarnessLookupName: "codex",
+		HarnessExecutable: hostExecutable, HarnessSandboxPath: "/tmp/.tclaude-stacked-codex/bin/codex",
+		HarnessRuntimeRoots: []string{"/tmp/.tclaude-stacked-codex"},
+		HarnessRuntimeBindings: []StackedSandboxRuntimeBinding{{
+			HostPath: runtimeFile, SandboxPath: "/tmp/.tclaude-stacked-codex/lib/runtime-lib",
+		}},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/tmp/.tclaude-stacked-codex"}, boundary.Harness.RuntimeRoots)
+	assert.Contains(t, boundary.AutomaticEntries, ExecutionNamespaceEntry{
+		Kind: "bind", Source: runtimeFile, Target: "/tmp/.tclaude-stacked-codex/lib/runtime-lib",
+		Access: "read-only", Origin: "staged nested harness runtime closure",
+	})
+}

@@ -18,6 +18,7 @@ import (
 
 func TestDashboardDebugExportCarriesExactRecordedConfiguration(t *testing.T) {
 	const convID = "debug-1111-2222-3333-4444"
+	const launchGeneration = "11111111111111111111111111111111"
 	f := newFlow(t)
 	f.HaveGroup("debuggers")
 	f.HaveAliveSession(convID, "spwn-debug", "tmux-debug", f.TestCwd("repo"))
@@ -65,9 +66,14 @@ func TestDashboardDebugExportCarriesExactRecordedConfiguration(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.UpdateSessionModelSlug("spwn-debug", model))
 	require.NoError(t, db.UpdateSessionEffort("spwn-debug", "high"))
+	require.NoError(t, db.SetSessionExitLaunchGeneration("spwn-debug", launchGeneration))
+	current, err := db.GetSessionExitLaunchIdentity("spwn-debug")
+	require.NoError(t, err)
+	require.Equal(t, launchGeneration, current.Generation)
 	boundaryRaw, err := json.Marshal(session.ExecutionBoundary{
-		Version: session.ExecutionBoundaryVersion, SandboxImplementation: implementation,
-		Platform: "linux",
+		Version: session.ExecutionBoundaryVersion, LaunchGeneration: launchGeneration,
+		SandboxImplementation: implementation,
+		Platform:              "linux",
 		Harness: session.ExecutionHarness{
 			Name: "codex", LookupName: "codex", HostPath: "/opt/codex/bin/codex",
 			SandboxPath: "/opt/codex/bin/codex", Resolution: "absolute executable resolved before sandbox launch",

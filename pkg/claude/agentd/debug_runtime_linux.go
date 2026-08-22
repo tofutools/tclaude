@@ -63,6 +63,12 @@ func observeAgentProcess(rootPID int, harnessName string) agentDebugLiveProcess 
 	}
 	environ, err := os.ReadFile(fmt.Sprintf("/proc/%d/environ", pid))
 	if err != nil {
+		if after, stable := debugProcStartTime(pid); !stable || after != startTime {
+			return agentDebugLiveProcess{
+				Status: "unavailable",
+				Detail: "harness process exited or its PID was reused during observation",
+			}
+		}
 		out.Status, out.Detail = "partial", "identity observed; process environment is unreadable"
 		return out
 	}

@@ -7154,7 +7154,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// recording the boundary before the child starts lets non-preset harnesses
 	// reject such a row, while launch enrollment has the stronger conv-id proof.
 	launchedAt := time.Now()
-	openCodeBoundaryPublished := false
 	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
 		return launchFailed(err)
 	}
@@ -7322,15 +7321,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				continue
 			}
 			tmuxSession = s.TmuxSession
-			if openCodeLaunch != nil && !openCodeBoundaryPublished &&
-				strings.TrimSpace(openCodeLaunch.ExecutionBoundaryJSON) != "" {
-				if err := db.SetSessionExecutionBoundary(s.ID, openCodeLaunch.ExecutionBoundaryJSON); err != nil {
-					slog.Warn("spawn: failed to publish OpenCode server execution boundary",
-						"session_id", s.ID, "error", err)
-				} else {
-					openCodeBoundaryPublished = true
-				}
-			}
 			focusSpawn() // pane is up — open it now, conv-id or not
 			// Arm best-known remote-control on the row the moment it
 			// materialises (JOH-258). The --remote-control launch flag already
@@ -10048,12 +10038,6 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 			"conv", convID, "pid", pid, "err", err,
 			"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
 		return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
-	}
-	if openCodeLaunch != nil && strings.TrimSpace(openCodeLaunch.ExecutionBoundaryJSON) != "" {
-		if err := db.SetSessionExecutionBoundary(a.ConvID, openCodeLaunch.ExecutionBoundaryJSON); err != nil {
-			slog.Warn("resume: failed to publish OpenCode server execution boundary",
-				"session_id", a.ConvID, "error", err)
-		}
 	}
 	resumeLaunched = true
 	return nil

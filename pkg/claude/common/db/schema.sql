@@ -985,7 +985,7 @@ CREATE TABLE "opencode_runtimes" (
 			cwd        TEXT NOT NULL,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL
-		, permission_json TEXT NOT NULL DEFAULT '', sandbox_implementation TEXT NOT NULL DEFAULT 'harness-builtin', sandbox_launch_spec_json TEXT NOT NULL DEFAULT '', transport TEXT NOT NULL DEFAULT 'loopback-tcp', control_socket_path TEXT NOT NULL DEFAULT '', control_socket_device INTEGER NOT NULL DEFAULT 0, control_socket_inode INTEGER NOT NULL DEFAULT 0, resource_cgroup_dir TEXT NOT NULL DEFAULT '') STRICT;
+		, permission_json TEXT NOT NULL DEFAULT '', sandbox_implementation TEXT NOT NULL DEFAULT 'harness-builtin', sandbox_launch_spec_json TEXT NOT NULL DEFAULT '', transport TEXT NOT NULL DEFAULT 'loopback-tcp', control_socket_path TEXT NOT NULL DEFAULT '', control_socket_device INTEGER NOT NULL DEFAULT 0, control_socket_inode INTEGER NOT NULL DEFAULT 0, resource_cgroup_dir TEXT NOT NULL DEFAULT '', execution_boundary_json TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE TABLE "opencode_usage_activity" (
 			session_id  TEXT NOT NULL,
