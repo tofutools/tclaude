@@ -482,7 +482,8 @@ func planSandboxProfileAccessForLaunch(
 			notices = append(notices, *noProxyNotice)
 		}
 		resolvedModel := harness.ResolvedModelTransport{}
-		if !sandboxpolicy.NetworkRulesArePrivateRoutedOpen(rendered.Network) {
+		if !sandboxpolicy.NetworkRulesArePrivateRoutedOpen(rendered.Network) &&
+			!sandboxpolicy.FilteredNetworkRulesAllowNoDestinations(rendered.Network) {
 			var resolveModelErr error
 			resolvedModel, resolveModelErr = session.ResolveTclaudeLayerModelTransport(
 				h, modelContext)

@@ -776,6 +776,32 @@ func TestPrivateRoutedOpenUsesDefaultAcceptFilteredGateway(t *testing.T) {
 	}
 }
 
+func TestFilteredNetworkRulesAllowNoDestinations(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		rules NetworkRules
+		want  bool
+	}{
+		{name: "closed", rules: NetworkRules{Mode: AccessModeClosed}},
+		{name: "empty private list", rules: NetworkRules{
+			Mode: AccessModeList, Namespace: NetworkNamespacePrivate,
+		}, want: true},
+		{name: "list with an allow", rules: NetworkRules{
+			Mode:  AccessModeList,
+			Allow: []NetworkAllowEntry{{Host: "models.example"}},
+		}},
+		{name: "private routed open", rules: NetworkRules{
+			Mode: AccessModeOpen, Namespace: NetworkNamespacePrivate,
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := FilteredNetworkRulesAllowNoDestinations(tc.rules); got != tc.want {
+				t.Fatalf("FilteredNetworkRulesAllowNoDestinations() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 // TestMountPlanSnapshot pins the diffable rendering. These strings are the
 // groundwork for a dry-run/effective-plan surface, so a change to them is a
 // change to an operator-facing contract and should be deliberate.

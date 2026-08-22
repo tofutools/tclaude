@@ -2557,7 +2557,8 @@ func resumeLaunchCmdWithStackedProof(
 		if postureErr != nil {
 			return "", "", nil, postureErr
 		}
-		if plannedNetworkPosture == sandboxpolicy.NetworkFiltered {
+		if plannedNetworkPosture == sandboxpolicy.NetworkFiltered &&
+			!sandboxpolicy.FilteredNetworkRulesAllowNoDestinations(plannedAxes.Network) {
 			resolvedModel, err = session.ResolveTclaudeLayerModelTransport(
 				h,
 				session.ModelTransportLaunchContext{

@@ -164,7 +164,10 @@ The packet engine is enforced for exact `tclaude-layer` **Claude Code, Codex,
 and OpenCode** launches on Linux. OpenCode is supported for strict
 explicit-provider configurations only; its local and model-API presets are
 launch-refused under this engine because they name no explicit provider
-endpoint to check. If a prerequisite is missing before enforcement is selected
+endpoint to check. The exception is an empty allowlist: because it authorizes no
+destination, OpenCode may launch without provider inspection and every model
+endpoint remains blocked by the network floor. If a prerequisite is missing
+before enforcement is selected
 — `bwrap`, `pasta`, `nft`, or `nsenter` resolved through trust-walked paths (no
 group/world-writable path component, a regular executable target; ownership is
 not checked, so a user-installed one is accepted), pidfd support, the pasta

@@ -251,6 +251,51 @@ func TestPlanSandboxProfileAccessActivatesReadyOpenCodeWithExplicitProvider(t *t
 	require.Nil(t, failure)
 }
 
+func TestPlanSandboxProfileAccessAllowsOpenCodeEmptyPrivateNetworkListWithoutProviderConfig(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("filtered gateway capability is Linux-only")
+	}
+	testharness.ClearModelTransportProxyEnv(t)
+	oldProbe := probeFilteredNetworkPrerequisite
+	oldVerdict := resolveTclaudeLayerAccessVerdict
+	t.Cleanup(func() {
+		probeFilteredNetworkPrerequisite = oldProbe
+		resolveTclaudeLayerAccessVerdict = oldVerdict
+	})
+	probeFilteredNetworkPrerequisite = func() session.FilteredNetworkPrerequisite {
+		return session.FilteredNetworkPrerequisite{
+			Detected: true,
+			Detail:   "namespace, pasta, and nft detected",
+		}
+	}
+	resolveTclaudeLayerAccessVerdict = func(
+		_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+		_ sandboxpolicy.NetworkEngine,
+	) (harness.LaunchOSSandbox, error) {
+		return harness.LaunchOSSandbox{
+			State: "on", Source: "test bwrap",
+			FilteredNetwork: posture == sandboxpolicy.NetworkFiltered,
+		}, nil
+	}
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		Network: &sandboxpolicy.NetworkRules{
+			Mode:      sandboxpolicy.AccessModeList,
+			Namespace: sandboxpolicy.NetworkNamespacePrivate,
+			Engine:    sandboxpolicy.NetworkEnginePacket,
+		},
+	}}
+
+	_, failure := planSandboxProfileAccessForLaunch(
+		harness.OpenCodeName,
+		harness.OpenCodeSandboxTclaudeLayer,
+		snapshot,
+		string(sandboxpolicy.ImplementationTclaudeLayer),
+		session.ModelTransportLaunchContext{Model: "openai/gpt-5.6-sol"},
+		false,
+	)
+	require.Nil(t, failure)
+}
+
 func TestPlanSandboxProfileAccessPrivateNetworkReportsExactProbeFailure(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("private routed networking is Linux-only")
