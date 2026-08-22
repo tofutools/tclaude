@@ -394,7 +394,9 @@ func prepareOpenCodeDarwinProxySmoke(t *testing.T) openCodeDarwinProxySmokeFixtu
 	agentID := db.NewAgentID()
 	allocation, err := allocatePrivateOpenCodeState(agentID)
 	require.NoError(t, err)
-	supervisorHome := filepath.Join(allocation.StateRoot, openCodeFilteredHomeBase)
+	// Filtered networking retains the profile-frozen harness HOME; provider
+	// isolation no longer redirects the supervisor into filtered-home.
+	supervisorHome := home
 	writeOpenCodeDarwinProxyDebugConfig(t, supervisorHome)
 	spec, err := openCodeTclaudeLayerLaunchSpec(
 		string(sandboxpolicy.ImplementationTclaudeLayer), cwd, nil, &snapshot, agentID)
