@@ -213,7 +213,7 @@ func BuildExecutionBoundary(input ExecutionBoundaryInput) (*ExecutionBoundary, e
 		out.PATH.BeforePreLaunch = tclaudeLayerConstructedRootTclaudeBin + string(os.PathListSeparator) + basePATH
 		out.PATH.Construction = append(out.PATH.Construction,
 			"prepend /.tclaude/bin after generated launch environment exports",
-			"arm a one-shot Bash startup fragment, then restore the prior BASH_ENV")
+			"when BASH_ENV is unset, arm a one-shot Bash startup fragment")
 	} else if runtime.GOOS == "darwin" {
 		out.RootMode = "host-inherited (Seatbelt policy; no mount namespace)"
 	}

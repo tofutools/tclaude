@@ -834,11 +834,13 @@ single read-only file `/.tclaude/bin/tclaude`. The launch prepends that director
 to PATH and arms a one-shot `BASH_ENV` fragment for Bash processes started by
 the harness, so a non-interactive Bash login shell can rebuild PATH from its
 profiles without losing the coordination CLI. After that first Bash startup,
-the fragment restores the operator's prior `BASH_ENV` (or unsets it); it is not
-imposed on nested descendant shells. Operator pre-launch script runs after the
-generated setup and retains final precedence over PATH and `BASH_ENV`. Other
-shells keep the launch-time PATH but receive no startup hook: if their own login
-files replace PATH, `tclaude` predictably becomes undiscoverable again.
+the fragment unsets itself, so it is not imposed on nested descendant shells.
+An existing operator `BASH_ENV` is left completely unchanged rather than
+chained; operator pre-launch script also runs after the generated setup and
+retains final precedence over PATH and `BASH_ENV`. Other shells, and Bash
+launches with an existing hook, keep the launch-time PATH but receive no
+tclaude startup hook: if their own login files replace PATH, `tclaude`
+predictably becomes undiscoverable again.
 
 Two consequences of building the root reach beyond sockets, and both are stated
 in the launch warning rather than left to be discovered:

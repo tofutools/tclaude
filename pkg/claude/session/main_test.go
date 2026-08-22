@@ -22,7 +22,6 @@ func TestMain(m *testing.M) {
 	}
 	if _, err := bashEnv.WriteString(tclaudeLayerConstructedRootBashEnv(
 		tclaudeLayerConstructedRootTclaudeBin,
-		tclaudeLayerConstructedRootBashEnvPath,
 	)); err != nil {
 		panic(err)
 	}

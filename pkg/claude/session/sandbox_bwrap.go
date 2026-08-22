@@ -2593,8 +2593,6 @@ const (
 	tclaudeLayerConstructedRootTclaudePath  = "/.tclaude/bin/tclaude"
 	tclaudeLayerConstructedRootBashEnvPath  = "/.tclaude/bash-env"
 	tclaudeLayerConstructedRootBashEnvState = "constructed-root-bash-env-v1"
-	tclaudeLayerSavedBashEnvSet             = "TCLAUDE_SAVED_BASH_ENV_SET"
-	tclaudeLayerSavedBashEnv                = "TCLAUDE_SAVED_BASH_ENV"
 )
 
 // tclaudeLayerTclaudeCLIPath is a seam for the real bubblewrap smoke, whose
@@ -2622,38 +2620,28 @@ func appendTclaudeLayerConstructedRootPathExport(exports string) string {
 // appendTclaudeLayerConstructedRootPathExportAt restores the projected CLI
 // after generated environment forwarding and arms one Bash startup read. Bash
 // reads BASH_ENV after a non-interactive login shell has processed its login
-// profiles, which is the reset this hook needs to survive. The fragment then
-// restores the operator's prior BASH_ENV (or unsets it), so tclaude does not
-// impose a startup hook on nested descendant shells. Shells that do not honor
-// BASH_ENV retain the launch-time PATH only and degrade to their normal command
-// lookup if their own startup files replace it.
+// profiles, which is the reset this hook needs to survive. The hook is armed
+// only when BASH_ENV was unset: an operator-supplied value retains Bash's native
+// lookup and expansion semantics completely unchanged. The fragment unsets its
+// own hook after one read, so tclaude does not impose it on nested descendant
+// shells. Shells that do not honor BASH_ENV retain the launch-time PATH only and
+// degrade to their normal command lookup if their startup files replace it.
 //
 // Operator-authored pre-launch script still follows this generated prefix. It
 // therefore retains final precedence over PATH and BASH_ENV.
 func appendTclaudeLayerConstructedRootPathExportAt(exports, bin, bashEnv string) string {
 	return exports +
-		"if [ \"${BASH_ENV+x}\" = x ]; then export " + tclaudeLayerSavedBashEnvSet +
-		"=1; export " + tclaudeLayerSavedBashEnv + "=\"$BASH_ENV\"; else unset " +
-		tclaudeLayerSavedBashEnvSet + " " + tclaudeLayerSavedBashEnv + "; fi; " +
-		"export BASH_ENV=" + clcommon.ShellQuoteArg(bashEnv) + "; " +
+		"if [ \"${BASH_ENV+x}\" != x ]; then export BASH_ENV=" +
+		clcommon.ShellQuoteArg(bashEnv) + "; fi; " +
 		"if [ -n \"${PATH:-}\" ]; then export PATH=" + clcommon.ShellQuoteArg(bin) +
 		":\"$PATH\"; else export PATH=" + clcommon.ShellQuoteArg(bin) + "; fi; "
 }
 
-func tclaudeLayerConstructedRootBashEnv(bin, bashEnv string) string {
+func tclaudeLayerConstructedRootBashEnv(bin string) string {
 	return "case :\"${PATH:-}\": in *:" + bin + ":*) ;; *) " +
 		"if [ -n \"${PATH:-}\" ]; then export PATH=" + bin +
 		":\"$PATH\"; else export PATH=" + bin + "; fi ;; esac\n" +
-		"if [ \"${" + tclaudeLayerSavedBashEnvSet + ":-}\" = 1 ]; then\n" +
-		"  export BASH_ENV=\"${" + tclaudeLayerSavedBashEnv + ":-}\"\n" +
-		"  unset " + tclaudeLayerSavedBashEnvSet + " " + tclaudeLayerSavedBashEnv + "\n" +
-		"  if [ -n \"$BASH_ENV\" ] && [ \"$BASH_ENV\" != " +
-		clcommon.ShellQuoteArg(bashEnv) + " ]; then\n" +
-		"    case \"$BASH_ENV\" in */*) . \"$BASH_ENV\" ;; *) . \"./$BASH_ENV\" ;; esac\n" +
-		"  fi\n" +
-		"else\n" +
-		"  unset BASH_ENV " + tclaudeLayerSavedBashEnvSet + " " + tclaudeLayerSavedBashEnv + "\n" +
-		"fi\n"
+		"unset BASH_ENV\n"
 }
 
 // tclaudeLayerConstructedRootBashEnvSource materializes a release-owned,
@@ -2678,10 +2666,7 @@ func materializeTclaudeLayerConstructedRootBashEnv() (string, error) {
 	}
 	tmpPath := tmp.Name()
 	defer func() { _ = os.Remove(tmpPath) }()
-	fragment := tclaudeLayerConstructedRootBashEnv(
-		tclaudeLayerConstructedRootTclaudeBin,
-		tclaudeLayerConstructedRootBashEnvPath,
-	)
+	fragment := tclaudeLayerConstructedRootBashEnv(tclaudeLayerConstructedRootTclaudeBin)
 	if _, err := tmp.WriteString(fragment); err != nil {
 		_ = tmp.Close()
 		return "", fmt.Errorf("write constructed-root Bash environment: %w", err)

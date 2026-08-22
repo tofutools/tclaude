@@ -43,45 +43,42 @@ func TestRenderedHarnessLaunchKeepsProjectedTclaudeAfterBashLoginPathReset(t *te
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	projectedBin := filepath.Join(root, "projected-bin")
-	profileBin := filepath.Join(root, "profile-bin")
 	require.NoError(t, os.MkdirAll(home, 0o700))
 	require.NoError(t, os.MkdirAll(projectedBin, 0o700))
-	require.NoError(t, os.MkdirAll(profileBin, 0o700))
 	// Representative login-profile behavior: discard the inherited PATH.
 	require.NoError(t, os.WriteFile(filepath.Join(home, ".bash_profile"),
-		[]byte("export PATH="+profileBin+":/usr/bin:/bin\n"), 0o600))
+		[]byte("export PATH=/usr/bin:/bin\n"), 0o600))
 	projectedCLI := filepath.Join(projectedBin, "tclaude")
 	require.NoError(t, os.WriteFile(projectedCLI,
 		[]byte("#!/bin/sh\nexit 0\n"), 0o700))
 
-	operatorBashEnv := "operator-bash-env"
-	require.NoError(t, os.WriteFile(filepath.Join(root, operatorBashEnv),
-		[]byte("export TCL_OPERATOR_BASH_ENV=sourced\n"), 0o600))
-	// Bash opens a slashless BASH_ENV relative to cwd. The `.` builtin searches
-	// PATH unless tclaude explicitly preserves that lookup rule, so a same-named
-	// profile entry catches an incorrect chain.
-	require.NoError(t, os.WriteFile(filepath.Join(profileBin, operatorBashEnv),
-		[]byte("export TCL_OPERATOR_BASH_ENV=wrong-path-entry\n"), 0o600))
 	launchBashEnv := filepath.Join(root, "launch-bash-env")
 	require.NoError(t, os.WriteFile(launchBashEnv,
-		[]byte(tclaudeLayerConstructedRootBashEnv(projectedBin, launchBashEnv)), 0o600))
+		[]byte(tclaudeLayerConstructedRootBashEnv(projectedBin)), 0o600))
 
 	// The fake harness ignores adapter-specific arguments and exercises the
 	// shell path a real harness tool launch uses. A nested login shell proves
-	// the tclaude hook was one-shot: the operator's original hook remains, but
-	// tclaude no longer globally repairs deeper descendants.
+	// the tclaude hook was one-shot and no longer repairs deeper descendants.
 	harnessBinary := filepath.Join(root, "harness")
 	require.NoError(t, os.WriteFile(harnessBinary, []byte(`#!/bin/sh
 exec /bin/bash --login -c '
-printf "outer=%s|%s|%s|%s\n" "$(command -v tclaude)" "$TCL_PRE_LAUNCH" "$TCL_OPERATOR_BASH_ENV" "$BASH_ENV"
-/bin/bash --login -c '\''printf "nested=%s|%s|%s\n" "$TCL_OPERATOR_BASH_ENV" "$BASH_ENV" "$(command -v tclaude || printf missing)"'\''
+printf "outer=%s|%s|%s\n" "$(command -v tclaude)" "$TCL_PRE_LAUNCH" "${BASH_ENV-unset}"
+/bin/bash --login -c '\''printf "nested=%s|%s\n" "${BASH_ENV-unset}" "$(command -v tclaude || printf missing)"'\''
 '
 `), 0o700))
+	priorBashEnv, hadBashEnv := os.LookupEnv("BASH_ENV")
+	require.NoError(t, os.Unsetenv("BASH_ENV"))
+	t.Cleanup(func() {
+		if hadBashEnv {
+			_ = os.Setenv("BASH_ENV", priorBashEnv)
+		} else {
+			_ = os.Unsetenv("BASH_ENV")
+		}
+	})
 
 	envExports := clcommon.BuildEnvExports(map[string]string{
-		"HOME":     home,
-		"PATH":     projectedBin + ":/usr/bin:/bin",
-		"BASH_ENV": operatorBashEnv,
+		"HOME": home,
+		"PATH": projectedBin + ":/usr/bin:/bin",
 	})
 	envExports = appendTclaudeLayerConstructedRootPathExportAt(
 		envExports, projectedBin, launchBashEnv)
@@ -104,11 +101,31 @@ printf "outer=%s|%s|%s|%s\n" "$(command -v tclaude)" "$TCL_PRE_LAUNCH" "$TCL_OPE
 			got, err := cmd.CombinedOutput()
 			require.NoErrorf(t, err, "rendered launch failed: %s", got)
 			assert.Equal(t,
-				"outer="+projectedCLI+"|kept|sourced|"+operatorBashEnv+"\n"+
-					"nested=sourced|"+operatorBashEnv+"|missing\n",
+				"outer="+projectedCLI+"|kept|unset\n"+
+					"nested=unset|missing\n",
 				string(got))
 		})
 	}
+}
+
+func TestConstructedRootPathExportPreservesExistingBashEnvExpansion(t *testing.T) {
+	root := t.TempDir()
+	hook := filepath.Join(root, "operator-hook")
+	require.NoError(t, os.WriteFile(hook,
+		[]byte("export TCL_OPERATOR_BASH_ENV=sourced\n"), 0o600))
+	command := appendTclaudeLayerConstructedRootPathExportAt(
+		"", "/projected/bin", "/projected/bash-env") +
+		`/bin/bash -c 'printf "%s|%s" "$TCL_OPERATOR_BASH_ENV" "$BASH_ENV"'`
+	cmd := exec.Command("/bin/sh", "-c", command)
+	cmd.Env = []string{
+		"HOME=" + root,
+		"PATH=/usr/bin:/bin",
+		`BASH_ENV=$HOME/operator-hook`,
+	}
+	got, err := cmd.Output()
+	require.NoError(t, err)
+	assert.Equal(t, `sourced|$HOME/operator-hook`, string(got),
+		"an existing operator hook must retain Bash's native expansion semantics")
 }
 
 // A Codex-only host may never have created Claude's per-process session-state

@@ -1505,7 +1505,6 @@ func TestMaterializeTclaudeLayerConstructedRootBashEnvPublishesExactFragment(t *
 	require.NoError(t, err)
 	assert.Equal(t, tclaudeLayerConstructedRootBashEnv(
 		tclaudeLayerConstructedRootTclaudeBin,
-		tclaudeLayerConstructedRootBashEnvPath,
 	), string(got))
 
 	pathAgain, err := materializeTclaudeLayerConstructedRootBashEnv()
