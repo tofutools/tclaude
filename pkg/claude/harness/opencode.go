@@ -19,6 +19,7 @@ func init() {
 		Convs:                    openCodeConvStore{},
 		Life:                     openCodeLifecycle{},
 		TmuxScrollback:           true,
+		TmuxPassthrough:          true,
 		LaunchEnrollment:         true,
 		ServerAuthoritative:      true,
 		AwaitingInputObservation: true,

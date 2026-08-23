@@ -205,6 +205,12 @@ typing into its pane. Reconnection is deliberately conservative: bounded
 auto-retries, then only a proven `agentd` restart earns one automatic
 reattach; otherwise you get a manual Reconnect button.
 
+Mouse selections owned by OpenCode and Copilot are copied into the browser
+through OSC 52. Their tmux passthrough permission is enabled only on those
+harness windows; the shared tmux server and other harnesses remain unchanged.
+To make a browser-owned selection instead, use Option-drag on macOS or
+Shift-drag on Linux/Windows.
+
 ### The spawn dialog
 
 `+` on a group (group pinned) or the top-level spawn action (with a Group

@@ -163,6 +163,8 @@ func init() {
 		// and a per-spawn flag that silently rewrites the operator's config is
 		// not a per-spawn flag.
 		TmuxScrollback: false,
+		// Copilot wraps clipboard OSC 52 in tmux's DCS passthrough envelope.
+		TmuxPassthrough: true,
 
 		// BuiltinOSSandbox stays false, and TCL-977 is the evaluation that
 		// decided so rather than the absence of one. Copilot really does own an
