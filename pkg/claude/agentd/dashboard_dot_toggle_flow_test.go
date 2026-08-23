@@ -150,12 +150,9 @@ func TestDotToggle_OfflineDotWakesAgent(t *testing.T) {
 	assert.True(t, a.Online, "after the toggle the agent's dot must read online again")
 }
 
-// Legacy stopped sessions intentionally have no trustworthy physical resume
-// provenance. A dashboard click is an explicit human trust boundary, so it
-// must recapture the current directory identity and wake the agent instead of
-// returning error:resume_provenance (the unattended agent path still fails
-// closed and requires --ask-human approval).
-func TestDotToggle_ManualWakeRecoversMissingResumeProvenance(t *testing.T) {
+// Legacy provenance metadata is not a resume credential. Clearing it must not
+// prevent the ordinary dashboard wake path.
+func TestDotToggle_ManualWakeIgnoresMissingResumeProvenance(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)
 	mux := agentd.BuildDashboardHandlerForTest()
@@ -172,19 +169,12 @@ func TestDotToggle_ManualWakeRecoversMissingResumeProvenance(t *testing.T) {
 	code, resp := postDotVerb(t, mux, conv, "resume", "")
 	require.Equal(t, http.StatusOK, code)
 	assert.Equal(t, "resumed", resp.Action,
-		"a human dashboard wake must recover provenance; detail=%s", resp.Detail)
-
-	profile, err := db.ConversationResumeProfileForConv(conv)
-	require.NoError(t, err)
-	require.NotNil(t, profile)
-	assert.NotEmpty(t, profile.ResumeProvenance,
-		"human recovery must persist the newly trusted physical identity")
+		"legacy provenance metadata must not block resume; detail=%s", resp.Detail)
 }
 
 // Session pruning may remove every exited row while the durable agent and its
-// real Claude conversation remain. The dashboard is a human trust boundary,
-// so waking that agent reconstructs and persists a fresh resume anchor before
-// launching it through the ordinary pinned path.
+// real Claude conversation remain. Waking that already-authorized agent
+// reconstructs and persists its durable resume profile from the harness store.
 func TestDotToggle_ManualWakeRecoversPrunedSessionRow(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)

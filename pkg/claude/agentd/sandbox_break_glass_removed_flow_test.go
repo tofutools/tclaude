@@ -30,7 +30,7 @@ import (
 //     naming a protected root is still refused, and there is no longer any
 //     second representation that reaches one.
 //  3. Everything that merely lived next to break-glass still works —
-//     reopen-under-deny, deny-row resume lineage, older import formats.
+//     reopen-under-deny, current-policy relaunches, older import formats.
 
 // protectedTestDirs materializes the protected roots and an ordinary ~/.codex
 // tree inside the flow harness's per-test HOME. Every assertion therefore
@@ -344,11 +344,9 @@ func TestSpawnCarryingBreakGlassAcknowledgementIsRefused(t *testing.T) {
 	assert.Contains(t, string(spawn.Raw), "break_glass_removed")
 }
 
-// The deny-row resume clamp is the surviving lineage rule, and it is the one
-// most likely to be collateral damage: it shares the resume path break-glass
-// clamping used to live on. An agent launched under a deny must keep it even
-// after the ambient profile drops it.
-func TestResumeCannotDropLaunchedDenyRow(t *testing.T) {
+// A profile edit followed by stop/resume is an operator-authored policy
+// change, including when the edit removes a deny.
+func TestResumeAppliesDroppedDenyRow(t *testing.T) {
 	f := newFlow(t)
 	protectedTestDirs(t)
 	f.HaveGroup("crew")
@@ -386,14 +384,13 @@ func TestResumeCannotDropLaunchedDenyRow(t *testing.T) {
 	after, err := db.AgentEffectiveSandboxConfigForConv(spawn.ConvID)
 	require.NoError(t, err)
 	require.NotNil(t, after)
-	assert.Contains(t, after.Effective.Filesystem,
-		sandboxpolicy.FilesystemGrant{Path: denied, Access: sandboxpolicy.AccessDeny},
-		"dropping a deny the agent launched under is widening and must not happen implicitly on resume")
+	assert.NotContains(t, after.Effective.Filesystem,
+		sandboxpolicy.FilesystemGrant{Path: denied, Access: sandboxpolicy.AccessDeny})
 }
 
 // The same boundary on reincarnation, which is a relaunch through a different
 // endpoint and therefore a separate wiring.
-func TestSelfReincarnateCannotDropLaunchedDenyRow(t *testing.T) {
+func TestSelfReincarnateAppliesDroppedDenyRow(t *testing.T) {
 	f := newFlow(t)
 	protectedTestDirs(t)
 	f.HaveGroup("crew")
@@ -422,9 +419,8 @@ func TestSelfReincarnateCannotDropLaunchedDenyRow(t *testing.T) {
 	after, err := db.AgentEffectiveSandboxConfigForConv(newConv)
 	require.NoError(t, err)
 	require.NotNil(t, after, "the real self endpoint must persist an exact successor snapshot")
-	assert.Contains(t, after.Effective.Filesystem,
-		sandboxpolicy.FilesystemGrant{Path: denied, Access: sandboxpolicy.AccessDeny},
-		"dropping a launched deny is widening and must not happen on reincarnation either")
+	assert.NotContains(t, after.Effective.Filesystem,
+		sandboxpolicy.FilesystemGrant{Path: denied, Access: sandboxpolicy.AccessDeny})
 }
 
 // An import whose graph is invalid must still report the graph error rather

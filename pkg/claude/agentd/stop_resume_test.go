@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -235,7 +234,7 @@ func TestCodexDriveRollbackRestoresNativeProfileWhenSelectionWriteFails(t *testi
 		restoreCodexNativePermissionProfile = previousRestore
 	})
 
-	res := resumeOneConvWithCodexRollbackLocked(convID, false, false)
+	res := resumeOneConvWithCodexRollbackLocked(convID, false)
 	assert.Equal(t, "error:codex_drive_rollback", res.Action)
 	assert.Contains(t, res.Detail, "injected selection write failure")
 	assert.True(t, restored)
@@ -495,13 +494,13 @@ func TestResumeOneConv_RetiredAgentSkips(t *testing.T) {
 
 func TestResumeOneConv_OrphanWithoutSessionOrIndexErrors(t *testing.T) {
 	setupTestDB(t)
-	res := resumeOneConvWithTrustRoot("orphan-conv-id-12345678", false)
+	res := resumeOneConv("orphan-conv-id-12345678")
 	assert.Equal(t, "error", res.Action, "action")
 	assert.Contains(t, res.Detail, "no trustworthy recovery target")
 	assert.Contains(t, res.Detail, "conversation no longer exists")
 }
 
-func TestResumeOneConv_ConvIndexWithoutProvenanceFailsClosed(t *testing.T) {
+func TestResumeOneConv_StaleConvIndexWithoutHarnessConversationFails(t *testing.T) {
 	setupTestDB(t)
 	rec := installRecordingResumeSpawner(t)
 
@@ -515,61 +514,9 @@ func TestResumeOneConv_ConvIndexWithoutProvenanceFailsClosed(t *testing.T) {
 	}))
 
 	res := resumeOneConv(convID)
-	require.Equal(t, "error:resume_provenance", res.Action, "detail=%s", res.Detail)
-	assert.Contains(t, res.Detail, "no durable conversation resume profile")
-	assert.Empty(t, rec.convID)
-
-	res = resumeOneConvWithTrustRoot(convID, false)
 	require.Equal(t, "error", res.Action, "detail=%s", res.Detail)
 	assert.Contains(t, res.Detail, "conversation no longer exists")
 	assert.Empty(t, rec.convID, "a stale conv_index row must not become launch authority")
-}
-
-func TestResumeOneConv_CodexNativeStoreWithoutProvenanceFailsClosed(t *testing.T) {
-	setupTestDB(t)
-	rec := installRecordingResumeSpawner(t)
-
-	home, err := os.UserHomeDir()
-	require.NoError(t, err)
-	cwd := filepath.Join(home, "repo")
-	require.NoError(t, os.MkdirAll(cwd, 0o755))
-	require.NoError(t, exec.Command("git", "init", "-q", cwd).Run())
-	const convID = "019ec663-3bef-7c41-abf8-ad956ed94a01"
-	cx := testharness.NewCodexSimWithID(t, home, convID, cwd)
-	require.NoError(t, cx.Start())
-	require.NoError(t, cx.WriteThreadRow(testharness.CodexThreadSeed{
-		Cwd:       cwd,
-		CreatedAt: cx.CreatedUnix(),
-		UpdatedAt: cx.CreatedUnix(),
-	}))
-
-	res := resumeOneConv(convID)
-	require.Equal(t, "error:resume_provenance", res.Action, "detail=%s", res.Detail)
-	assert.Contains(t, res.Detail, "no durable conversation resume profile")
-	assert.Empty(t, rec.convID)
-	rows, err := db.FindSessionsByConvID(convID)
-	require.NoError(t, err)
-	assert.Empty(t, rows, "unattended recovery must not persist a resume anchor")
-	staleCachedCwd := t.TempDir()
-	require.NoError(t, db.UpsertConvIndex(&db.ConvIndexRow{
-		ConvID: convID, ProjectPath: staleCachedCwd, Harness: harness.CodexName, IndexedAt: time.Now(),
-	}))
-
-	res = resumeOneConvWithTrustRoot(convID, false)
-	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
-	assert.Equal(t, convID, rec.convID)
-	assert.Equal(t, physicalTestPath(t, cwd), rec.cwd)
-	assert.NotEqual(t, physicalTestPath(t, staleCachedCwd), rec.cwd,
-		"Codex's native conversation cwd must win over a stale conv_index cache path")
-	assert.Equal(t, harness.CodexName, rec.harness)
-	rows, err = db.FindSessionsByConvID(convID)
-	require.NoError(t, err)
-	assert.Empty(t, rows, "human recovery must not recreate process history")
-	profile, err := db.ConversationResumeProfileForConv(convID)
-	require.NoError(t, err)
-	require.NotNil(t, profile)
-	assert.NotEmpty(t, profile.ResumeProvenance,
-		"human recovery must persist physical provenance before launch")
 }
 
 // A resume whose recorded launch dir was deleted must NOT spawn into the
@@ -613,7 +560,7 @@ func TestResumeOneConvRecreate_RecreatesMissingCwdThenSpawns(t *testing.T) {
 	saveResumeSession(t, convID, gone, harness.DefaultName)
 	require.NoError(t, os.Remove(gone))
 
-	res := resumeOneConvWithTrustRoot(convID, true)
+	res := resumeOneConvRecreate(convID, true)
 	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
 	assert.DirExists(t, gone, "the recreate opt-in must create the empty launch dir")
 	assert.Equal(t, physicalGone, rec.cwd, "the resumed agent must launch into the recreated dir")
@@ -824,7 +771,7 @@ func TestResumeOneConv_TemporaryOffDisablesTclaudeOuterLayer(t *testing.T) {
 		"temporary off must omit the tclaude outer wrapper as well as disabling Claude's sandbox")
 }
 
-func TestResumeOneConv_UsesDaemonOwnedFilesystemPin(t *testing.T) {
+func TestResumeOneConv_DoesNotRequireFilesystemPin(t *testing.T) {
 	setupTestDB(t)
 	rec := installRecordingResumeSpawner(t)
 	const convID = "unproved-group-member-conv-12345678"
@@ -832,8 +779,8 @@ func TestResumeOneConv_UsesDaemonOwnedFilesystemPin(t *testing.T) {
 
 	res := resumeOneConv(convID)
 	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
-	assert.NotEmpty(t, rec.cwdWriteProof,
-		"daemon must bind the verified target cwd through the child launch")
+	assert.Empty(t, rec.cwdWriteProof,
+		"an authorized lifecycle continuation must not re-prove its inherited cwd")
 }
 
 func TestResumeOneConv_UsesDurableProfilesAfterAllSessionsArePruned(t *testing.T) {
@@ -938,11 +885,10 @@ func TestResumeOneConv_RestoresPreviousSandboxSnapshotWhenLaunchFails(t *testing
 	assert.Contains(t, res.Detail, "launch reservation lost")
 	require.NotNil(t, rec.effectiveSandbox)
 	assert.Equal(t, "new", rec.effectiveSandbox.Effective.Environment[0].Value)
-	// The newly resolved deny applies, and the deny the agent launched under is
-	// re-imposed rather than dropped: resume clamps, never widens.
+	// The current operator-authored profile is passed to the attempted launch;
+	// rules removed since the previous launch are not restored.
 	assert.Equal(t, []sandboxpolicy.FilesystemGrant{
 		{Path: newDeny, Access: sandboxpolicy.AccessDeny},
-		{Path: oldDeny, Access: sandboxpolicy.AccessDeny},
 	}, sortedGrants(rec.effectiveSandbox.Effective.Filesystem, newDeny, oldDeny))
 
 	persisted, err := db.AgentEffectiveSandboxConfigForConv(convID)

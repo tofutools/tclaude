@@ -119,7 +119,7 @@ func TestManualResumeCancelsPendingAutomaticRetry(t *testing.T) {
 		ExpectedGeneration: generation, ObservedState: "exited"})
 	require.NoError(t, err)
 
-	result := resumeOneConvLocked(conv, false, false)
+	result := resumeOneConvLocked(conv, false)
 	assert.Equal(t, "resumed", result.Action)
 	runAgentRecoverySweep(now.Add(10 * time.Second))
 	assert.Equal(t, 1, recorder.resumeCalls, "manual and automatic recovery share one launch mutex/winner")
@@ -234,7 +234,7 @@ func TestManualRecoverySuccessorEarnsHealthyReset(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, changed)
 
-	result := resumeOneConvLocked(conv, false, false)
+	result := resumeOneConvLocked(conv, false)
 	require.Equal(t, "resumed", result.Action)
 	manualAttempt, err := db.AgentRecoveryForAgent(agentID)
 	require.NoError(t, err)

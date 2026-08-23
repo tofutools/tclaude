@@ -391,6 +391,45 @@ func TestSpawnDirProof_WorktreeDirAlsoChallenged(t *testing.T) {
 	require.Equalf(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 }
 
+func TestSpawnDirProof_ProfileRootDoesNotRequireDirectoryEntryWrite(t *testing.T) {
+	f := newFlow(t)
+	group := f.HaveGroup("alpha")
+	const parent = "parent-profile-root-aaaa-bbbb-cccc-111111111111"
+	haveSpawnCapableSandboxParent(t, f, group.Name, parent,
+		harness.DefaultName, harness.ClaudeSandboxInherit)
+
+	profileRoot, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	require.NoError(t, os.Chmod(profileRoot, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(profileRoot, 0o755) })
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{
+		Name: "device-style-root",
+		Filesystem: []db.SandboxFilesystemGrant{{
+			Path: profileRoot, Access: "write",
+		}},
+	})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile(group.Name, "device-style-root")
+	require.NoError(t, err)
+	setEffectiveSandboxWriteRoot(t, parent, profileRoot)
+
+	cwd, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	body := map[string]any{"name": "worker", "cwd": cwd}
+	ch := decodeWriteProofChallenge(t,
+		agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body))
+	assert.Equal(t, []string{cwd}, ch.WriteProof.Dirs,
+		"profile roots are authorized by lineage, not by creating entries in the root")
+	assert.NotContains(t, ch.WriteProof.Dirs, profileRoot)
+
+	answerChallenge(t, ch)
+	body["write_proof_token"] = ch.WriteProof.Token
+	rec := agentReq(t, f, parent, http.MethodPost, "/v1/groups/alpha/spawn", body)
+	require.Equalf(t, http.StatusOK, rec.Code,
+		"a valid profile root must not block agent-to-agent spawn; body=%s", rec.Body.String())
+	assertNoDirWriteProofMarkers(t, profileRoot)
+}
+
 // Scenario: the human spawns into an arbitrary dir — no challenge, exactly
 // as before. Humans are the trust root.
 func TestSpawnDirProof_HumanExempt(t *testing.T) {
@@ -858,20 +897,17 @@ func TestSpawnDirProof_CodexResumeInheritsTargetRepositoryAuthority(t *testing.T
 	require.Equalf(t, http.StatusOK, rec.Code, "inherited-authority resume; body=%s", rec.Body.String())
 	dirs, ok := f.World.SpawnGitWorktreeWriteDirs(target)
 	require.True(t, ok)
-	gitDir := filepath.Join(repo, ".git")
-	assert.Contains(t, dirs, repoParent,
-		"resume must pass repository roots derived from verified target provenance")
-	assert.Contains(t, dirs, gitDir,
-		"resume must pin the checkout metadata identity")
+	assert.Empty(t, dirs,
+		"resume leaves repository grant derivation to the continuation launcher")
 	dirProof, ok := f.World.SpawnDirWriteProof(target)
 	require.True(t, ok)
 	assert.Empty(t, dirProof)
 	cwdProof, ok := f.World.SpawnCwdWriteProof(target)
 	require.True(t, ok)
-	assert.NotEmpty(t, cwdProof, "resume must carry the daemon-owned launch-integrity pin")
+	assert.Empty(t, cwdProof, "resume must not redo initial-spawn write proofs")
 	assertNoDirWriteProofMarkers(t, repo)
 	assertNoDirWriteProofMarkers(t, repoParent)
-	assertNoDirWriteProofMarkers(t, gitDir)
+	assertNoDirWriteProofMarkers(t, filepath.Join(repo, ".git"))
 }
 
 func TestSpawnDirProof_CodexTemplateProvesAndPinsGitCommonDir(t *testing.T) {
@@ -995,6 +1031,8 @@ func TestSpawnDirProof_InheritedLifecycleAuthorityNeedsNoProof(t *testing.T) {
 		require.NoError(t, err)
 		writeRoot, err := filepath.EvalSymlinks(t.TempDir())
 		require.NoError(t, err)
+		require.NoError(t, os.Chmod(writeRoot, 0o555))
+		t.Cleanup(func() { _ = os.Chmod(writeRoot, 0o755) })
 		f.HaveConvWithTitle(caller, "profile-cloner")
 		f.HaveAliveSession(caller, "spwn-profile-clone", "tclaude-profile-clone", cwd)
 		require.NoError(t, db.GrantAgentPermission(caller, agentd.PermSelfClone, "test"))
@@ -1032,6 +1070,8 @@ func TestSpawnDirProof_InheritedLifecycleAuthorityNeedsNoProof(t *testing.T) {
 		require.NoError(t, err)
 		writeRoot, err := filepath.EvalSymlinks(t.TempDir())
 		require.NoError(t, err)
+		require.NoError(t, os.Chmod(writeRoot, 0o555))
+		t.Cleanup(func() { _ = os.Chmod(writeRoot, 0o755) })
 		f.HaveConvWithTitle(target, "offline-target")
 		group := f.HaveGroup("resume-policy")
 		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: group.ID, ConvID: target}))
@@ -1053,8 +1093,8 @@ func TestSpawnDirProof_InheritedLifecycleAuthorityNeedsNoProof(t *testing.T) {
 		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 		cwdProof, ok := f.World.SpawnCwdWriteProof(target)
 		require.True(t, ok)
-		assert.NotEmpty(t, cwdProof,
-			"resume must bind inherited target authority with a daemon-owned launch pin")
+		assert.Empty(t, cwdProof,
+			"resume must not create markers in inherited target directories")
 		assertNoDirWriteProofMarkers(t, cwd)
 		assertNoDirWriteProofMarkers(t, writeRoot)
 	})

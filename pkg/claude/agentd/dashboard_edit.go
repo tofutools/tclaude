@@ -1505,10 +1505,8 @@ func dashboardResumeAgent(w http.ResponseWriter, r *http.Request, convSelector s
 		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
 		return
 	}
-	// The dashboard cookie is the human-consent boundary. Route through the
-	// shared handler under a synthetic human peer so a manual wake can recover
-	// missing or stale resume provenance instead of taking the unattended,
-	// agent-initiated fail-closed path.
+	// Route through the shared handler under a synthetic human peer so the
+	// dashboard receives the same resume behavior as the CLI.
 	handleAgentResume(w, asDashboardHumanPeer(r), res.ConvID)
 }
 

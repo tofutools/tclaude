@@ -312,14 +312,6 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 		res.Detail = "capture selected pane: " + targetErr.Error()
 		return res, softExitUnattempted
 	}
-	if err := refreshStoppedSessionResumeProvenance(sess); err != nil {
-		// Administrative stop must remain available even when the target cwd is
-		// unhealthy. The helper clears stale provenance before returning whenever
-		// the DB is writable, so a later non-human resume fails closed.
-		res.Detail = "resume provenance unavailable; human recovery will be required: " + err.Error()
-		slog.Error("stop: resume provenance capture failed; continuing stop with provenance invalidated",
-			"session", sess.ID, "conv", convID, "error", err)
-	}
 	if force {
 		intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
 		if lifecycleAction != "" && intentSet == nil {
@@ -1081,35 +1073,6 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, signalKeys []string, c
 	})
 }
 
-func refreshStoppedSessionResumeProvenance(sess *db.SessionRow) error {
-	if sess == nil {
-		return errors.New("missing live session row")
-	}
-	physicalCwd, err := livePaneCwd(sess.TmuxSession)
-	if err == nil {
-		var captured resumeprovenance.Provenance
-		captured, err = resumeprovenance.Capture(physicalCwd)
-		if err == nil {
-			var encoded string
-			encoded, err = resumeprovenance.Encode(captured)
-			if err == nil {
-				if persistErr := db.SetSessionResumeProvenance(sess.ID, encoded); persistErr == nil {
-					return nil
-				} else {
-					err = fmt.Errorf("persist captured provenance: %w", persistErr)
-				}
-			}
-		}
-	}
-	// Never leave an older apparently valid value after a failed controlled
-	// stop capture. This is a single-column replacement, not a hook UPSERT (whose
-	// empty-value semantics intentionally preserve existing metadata).
-	if clearErr := db.SetSessionResumeProvenance(sess.ID, ""); clearErr != nil {
-		return fmt.Errorf("%v; additionally failed to invalidate stale provenance: %w", err, clearErr)
-	}
-	return err
-}
-
 // injectSoftExit injects a harness soft-exit command (Claude Code's
 // /exit, Codex's /quit) into convID's live pane and arms a background
 // retry. It returns whether the FIRST injection's send-keys succeeded —
@@ -1322,13 +1285,11 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			selected[member.ConvID] = true
 		}
 	}
-	caller, ok := requireGroupPermission(w, r, PermGroupsMembersResume, g,
+	_, ok := requireGroupPermission(w, r, PermGroupsMembersResume, g,
 		ActionContext{affectedConvs: affected})
 	if !ok {
 		return
 	}
-	authTarget := caller
-	requestTrustRoot := caller == "" || hasHumanApprovalContinuation(r, PermGroupsMembersResume, authTarget)
 	// Resume every member CONCURRENTLY: each one is a DB/filesystem probe plus
 	// a spawned `tclaude session new` subprocess, so a sequential loop cost the
 	// SUM of every member's launch. The bound is the same one the dashboard's
@@ -1342,7 +1303,7 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 				return memberOpResult{ConvID: m.ConvID, AgentID: peerAgentID(m.ConvID),
 					Title: agent.FreshTitle(m.ConvID), Action: "skipped:already_online"}, true
 			}
-			res := resumeOneConvLocked(m.ConvID, false, requestTrustRoot)
+			res := resumeOneConvLocked(m.ConvID, false)
 			confirmResumedConvOnline(m.ConvID, &res)
 			res.AgentID = peerAgentID(m.ConvID)
 			res.Title = agent.FreshTitle(m.ConvID)
@@ -1350,29 +1311,6 @@ func handleGroupResume(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		})
 	if out.Members == nil {
 		out.Members = []memberOpResult{}
-	}
-	// The recovery-approval retry stays SEQUENTIAL and after the fan-out: it
-	// pops a human prompt per member and can write the response itself, neither
-	// of which is safe from a worker goroutine. Only members that actually hit
-	// the provenance gate reach it, so the common case never pays for it.
-	if !requestTrustRoot && parseAskHumanHeader(r) > 0 {
-		for i := range out.Members {
-			if out.Members[i].Action != "error:resume_provenance" {
-				continue
-			}
-			convID := out.Members[i].ConvID
-			if !requestResumeRecoveryApproval(w, r, PermGroupsMembersResume, authTarget, convID) {
-				return
-			}
-			res := resumeOneConvLocked(convID, false, true)
-			res.AgentID = peerAgentID(convID)
-			res.Title = agent.FreshTitle(convID)
-			// Same verification the fan-out applies — a member rescued through
-			// the popup must not be the one path that still reports a resume
-			// that never came up.
-			confirmResumedConvOnline(convID, &res)
-			out.Members[i] = res
-		}
 	}
 	// Re-enable exactly the rhythms a prior emptying retire auto-disabled
 	// (JOH-345) — but ONLY once the group has live members again. Retire REMOVES
@@ -1503,11 +1441,7 @@ func resumeOneConv(convID string) memberOpResult {
 // confirms. When false, a missing cwd short-circuits to `error:missing_cwd`
 // instead of spawning a child that would wedge at startup.
 func resumeOneConvRecreate(convID string, recreateMissingDir bool) memberOpResult {
-	return resumeOneConvLocked(convID, recreateMissingDir, false)
-}
-
-func resumeOneConvWithTrustRoot(convID string, recreateMissingDir bool) memberOpResult {
-	return resumeOneConvLocked(convID, recreateMissingDir, true)
+	return resumeOneConvLocked(convID, recreateMissingDir)
 }
 
 var resumeLaunchLocks sync.Map         // map[stable actor or unowned conv]*sync.Mutex
@@ -1545,31 +1479,7 @@ func writeEffectiveSandboxLoadError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusInternalServerError, "io", "load effective sandbox snapshot: "+err.Error())
 }
 
-// sandboxWriteProofDir returns the concrete directory that controls whether a
-// frozen write path can materialize. Existing roots prove themselves; missing
-// roots prove their nearest existing ancestor. Thus an agent cannot arrange
-// for an unproved path to appear between the challenge and harness launch.
-func sandboxWriteProofDir(path string) (string, error) {
-	for {
-		info, err := os.Lstat(path)
-		if err == nil {
-			if !info.IsDir() {
-				return "", fmt.Errorf("sandbox profile write proof path %q is not a directory", path)
-			}
-			return path, nil
-		}
-		if !os.IsNotExist(err) {
-			return "", err
-		}
-		parent := filepath.Dir(path)
-		if parent == path {
-			return "", err
-		}
-		path = parent
-	}
-}
-
-func resumeOneConvLocked(convID string, recreateMissingDir, trustRoot bool) memberOpResult {
+func resumeOneConvLocked(convID string, recreateMissingDir bool) memberOpResult {
 	// Flag the whole attempt — including time queued on the launch lock — so
 	// dashboards render the multi-second wake as "waking" rather than a dead
 	// offline dot. See waking.go.
@@ -1577,12 +1487,12 @@ func resumeOneConvLocked(convID string, recreateMissingDir, trustRoot bool) memb
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
-	return resumeOneConvClaimedUnderLaunchLock(convID, recreateMissingDir, trustRoot)
+	return resumeOneConvClaimedUnderLaunchLock(convID, recreateMissingDir)
 }
 
-func resumeOneConvClaimedUnderLaunchLock(convID string, recreateMissingDir, trustRoot bool) memberOpResult {
+func resumeOneConvClaimedUnderLaunchLock(convID string, recreateMissingDir bool) memberOpResult {
 	if isConvOnline(convID) {
-		return resumeOneConvUnderLaunchLock(convID, recreateMissingDir, trustRoot, nil)
+		return resumeOneConvUnderLaunchLock(convID, recreateMissingDir, nil)
 	}
 	now := time.Now()
 	manualClaim, err := db.BeginManualAgentRecovery(convID, now)
@@ -1591,7 +1501,7 @@ func resumeOneConvClaimedUnderLaunchLock(convID string, recreateMissingDir, trus
 	} else if manualClaim != nil {
 		_ = db.RecordAgentRecoveryAudit(*manualClaim, db.AuditVerbAgentRecoveryManual, "manual_resume", now)
 	}
-	res := resumeOneConvUnderLaunchLock(convID, recreateMissingDir, trustRoot, manualClaim)
+	res := resumeOneConvUnderLaunchLock(convID, recreateMissingDir, manualClaim)
 	if manualClaim != nil && res.Action != "resumed" && res.Action != "skipped:already_online" {
 		if cancelled, cancelErr := db.CancelAgentRecoveryGeneration(*manualClaim, "manual_resume_failed", time.Now()); cancelErr != nil {
 			slog.Warn("resume: cancel failed manual recovery claim", "conv", short8(convID), "error", cancelErr)
@@ -1612,7 +1522,7 @@ var setAgentCodexAppServerSelectionForConv = db.SetAgentCodexAppServerSelectionF
 var unregisterCodexNativePermissionProfile = session.UnregisterCodexNativePermissionProfile
 var restoreCodexNativePermissionProfile = session.RestoreCodexNativePermissionProfile
 
-func resumeOneConvWithCodexRollbackLocked(convID string, recreateMissingDir, trustRoot bool) memberOpResult {
+func resumeOneConvWithCodexRollbackLocked(convID string, recreateMissingDir bool) memberOpResult {
 	launchLock := resumeLaunchLock(convID)
 	launchLock.Lock()
 	defer launchLock.Unlock()
@@ -1629,7 +1539,7 @@ func resumeOneConvWithCodexRollbackLocked(convID string, recreateMissingDir, tru
 		return res
 	}
 	if profile.CodexAppServer == nil || !*profile.CodexAppServer {
-		return resumeOneConvClaimedUnderLaunchLock(convID, recreateMissingDir, trustRoot)
+		return resumeOneConvClaimedUnderLaunchLock(convID, recreateMissingDir)
 	}
 	runtime, err := db.GetCodexAppServerRuntimeByConvID(convID)
 	if err != nil || runtime == nil ||
@@ -1682,7 +1592,7 @@ func resumeOneConvWithCodexRollbackLocked(convID string, recreateMissingDir, tru
 		return res
 	}
 	removeCodexAppServerGeneration(runtime.SocketPath)
-	return resumeOneConvClaimedUnderLaunchLock(convID, recreateMissingDir, trustRoot)
+	return resumeOneConvClaimedUnderLaunchLock(convID, recreateMissingDir)
 }
 func errorString(err error) string {
 	if err == nil {
@@ -1695,7 +1605,7 @@ func errorString(err error) string {
 // per-conversation launch mutex has been acquired. Automatic recovery calls it
 // directly so it does not cancel its own durable lease; every manual wrapper
 // above cancels a pending automatic attempt first under the same mutex.
-func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot bool, recoveryClaim *db.AgentRecovery) memberOpResult {
+func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recoveryClaim *db.AgentRecovery) memberOpResult {
 	res := memberOpResult{ConvID: convID}
 	if isConvOnline(convID) {
 		res.Action = "skipped:already_online"
@@ -1715,9 +1625,9 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		res.Detail = "placeholder member (no conv yet) — Phase B will support template-based fresh spawn"
 		return res
 	}
-	// Resume authority is durable agent + conversation state. A human trust root
-	// may establish a missing conversation profile from the real harness store;
-	// a predecessor session row is never required or consulted here.
+	// Resume authority is durable agent + conversation state. A missing legacy
+	// conversation profile may be reconstructed from the real harness store; a
+	// predecessor session row is never required.
 	conversationProfile, profileErr := db.ConversationResumeProfileForConv(convID)
 	if profileErr != nil {
 		res.Action = "error"
@@ -1725,11 +1635,6 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		return res
 	}
 	if conversationProfile == nil {
-		if !trustRoot {
-			res.Action = "error:resume_provenance"
-			res.Detail = "no durable conversation resume profile for this agent; a direct human resume or --ask-human approval is required to recover it from the real harness conversation"
-			return res
-		}
 		_, recoverErr := recoverMissingConversationResumeProfile(convID, recreateMissingDir)
 		if recoverErr != nil {
 			var missing *missingResumeAnchorCwdError
@@ -1749,17 +1654,18 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		res.Detail = configErr.Error()
 		return res
 	}
-	expected, provenanceErr := resumeprovenance.Decode(launchConfig.ResumeProvenance)
 	cwd := launchConfig.Cwd
-	if provenanceErr == nil {
-		// Never follow the old launch spelling again. It may contain a symlink
-		// that now targets a different directory; the durable physical path is
-		// the only unattended resume candidate.
-		cwd = expected.Cwd.Path
+	// Prefer the physical launch spelling captured at admission when it is
+	// available. This is an address selection, not an authorization check: the
+	// continuation neither re-captures nor compares provenance, and malformed or
+	// legacy metadata simply falls back to the durable profile cwd.
+	if recorded, err := resumeprovenance.Decode(launchConfig.ResumeProvenance); err == nil &&
+		recorded.Cwd.Path != "" && filepath.IsAbs(recorded.Cwd.Path) {
+		cwd = recorded.Cwd.Path
 	}
 	if cwd == "" || !filepath.IsAbs(cwd) {
-		res.Action = "error:resume_provenance"
-		res.Detail = "resume provenance unusable: no absolute launch directory is available; ask the human to recreate this agent"
+		res.Action = "error:resume_profile"
+		res.Detail = "no absolute launch directory is available; recreate this agent"
 		return res
 	}
 	// The recorded launch dir may have been deleted since the agent last ran.
@@ -1787,43 +1693,6 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		}
 		slog.Info("resume: recreated missing launch directory before relaunch",
 			"conv", short8(convID), "cwd", cwd)
-	}
-	observed, observeErr := resumeprovenance.Capture(cwd)
-	if provenanceErr == nil && observeErr == nil {
-		provenanceErr = resumeprovenance.Compare(expected, observed)
-	}
-	if provenanceErr == nil && observeErr != nil {
-		provenanceErr = observeErr
-	}
-	if provenanceErr != nil {
-		if !trustRoot {
-			res.Action = "error:resume_provenance"
-			res.Detail = "resume provenance verification failed: " + provenanceErr.Error() +
-				"; a direct human resume or --ask-human approval is required to trust the current target identity"
-			return res
-		}
-		// A direct human or an actually approved one-shot recovery is the only
-		// trust root allowed to bless the current physical identity. Persist it
-		// before launch so the recovery is explicit and durable.
-		if observeErr != nil {
-			res.Action = "error"
-			res.Detail = "human recovery could not capture current resume provenance: " + observeErr.Error()
-			return res
-		}
-		encoded, err := resumeprovenance.Encode(observed)
-		if err != nil {
-			res.Action = "error"
-			res.Detail = "human recovery could not encode current resume provenance: " + err.Error()
-			return res
-		}
-		if err := db.SetConversationResumeProvenance(convID, encoded); err != nil {
-			res.Action = "error"
-			res.Detail = "human recovery could not persist current resume provenance: " + err.Error()
-			return res
-		}
-		expected = observed
-		slog.Info("resume: human trust root recovered target provenance",
-			"conv", short8(convID), "cwd", expected.Cwd.Path)
 	}
 	// Re-arm Remote Access if the conv's own persisted best-known state was on
 	// (JOH-261). Read BEFORE relaunch: resume keeps the conv-id but mints a NEW
@@ -1938,97 +1807,10 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 			res.Warnings = append(res.Warnings, notice.Detail)
 		}
 	}
-	// Derive repository grants only from the verified durable identity. Calling
-	// git rev-parse here would follow a mutable .git file a second time and could
-	// turn a post-verification retarget into new write authority.
-	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
-		harnessName, relaunchSandbox, relaunchSandboxImplementation)
-	codexGitCommonDir := ""
-	gitDir := ""
-	var gitWriteDirs []string
-	if codexGitCommonDirPinned && expected.RepositoryState == resumeprovenance.RepositoryGit {
-		codexGitCommonDir = expected.Repository.CommonDir.Path
-		gitDir = expected.Repository.Dir.Path
-		home, err := os.UserHomeDir()
-		if err != nil {
-			res.Action = "error"
-			res.Detail = "resolve home for verified repository grants: " + err.Error()
-			return res
-		}
-		gitWriteDirs = harness.GitWorktreeWriteDirsForIdentity(codexGitCommonDir, gitDir, home)
-		// Exact metadata dirs are redundant descendants of the ordinary grant
-		// roots, but carrying them makes the child guard bind both provenance
-		// identities instead of merely their writable ancestor.
-		gitWriteDirs = appendUniqueDirs(gitWriteDirs, codexGitCommonDir, gitDir)
-	}
-
-	// Close provenance-check→session-new races with daemon-owned markers. The
-	// child checks cwd relative to the inode tmux actually entered and checks
-	// every extra root by canonical pathname immediately before exec. Profile
-	// write roots participate only when concrete for this launch; missing
-	// read/write rules stay inactive in session new.
-	rawPins := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
-	if effectiveSandbox != nil {
-		for _, grant := range effectiveSandbox.Effective.Filesystem {
-			if grant.Access != sandboxpolicy.AccessWrite {
-				continue
-			}
-			info, err := os.Lstat(grant.Path)
-			if os.IsNotExist(err) {
-				continue
-			}
-			if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-				res.Action = "error"
-				res.Detail = fmt.Sprintf("sandbox_profile_changed: write root %s is no longer a canonical directory", grant.Path)
-				return res
-			}
-			rawPins = appendUniqueDirs(rawPins, grant.Path)
-		}
-	}
-	pinMapping, pinToken, pinDirs, cleanupPins, pinErr := pinInheritedLaunchDirs(rawPins)
-	if pinErr != nil {
-		res.Action = "error"
-		res.Detail = "pin verified resume directories: " + pinErr.Error()
-		return res
-	}
-	defer cleanupPins()
-	if resolved := pinMapping[cwd]; resolved != "" {
-		cwd = resolved
-	}
-	for i, dir := range gitWriteDirs {
-		if resolved := pinMapping[dir]; resolved != "" {
-			gitWriteDirs[i] = resolved
-		}
-	}
-	if resolved := pinMapping[codexGitCommonDir]; resolved != "" {
-		codexGitCommonDir = resolved
-	}
-	// Re-observe after the markers exist. If a pathname was replaced between
-	// provenance verification and pin creation, this comparison catches it;
-	// if it changes later, the child-side marker guard catches it.
-	postPin, err := resumeprovenance.Capture(cwd)
-	if err != nil {
-		res.Action = "error"
-		res.Detail = "resume identity changed while pinning launch: " + err.Error()
-		return res
-	}
-	if err := resumeprovenance.Compare(expected, postPin); err != nil {
-		res.Action = "error"
-		res.Detail = "resume identity changed while pinning launch: " + err.Error()
-		return res
-	}
-	if fail := reassertDirWriteProof(pinDirs); fail != nil {
-		res.Action = "error"
-		res.Detail = fail.Msg
-		return res
-	}
-	var grantFail *spawnFailure
-	gitWriteDirs, grantFail = canonicalizeRepositoryWriteDirs(gitWriteDirs, pinDirs, pinToken)
-	if grantFail != nil {
-		res.Action = "error"
-		res.Detail = grantFail.Msg
-		return res
-	}
+	// This is a continuation of authority admitted at the initial spawn. The
+	// session launcher derives any repository grants from the current cwd and
+	// applies the current operator-authored sandbox profile; resume does not
+	// manufacture write-proof markers in inherited directories.
 	var persistedAgentID string
 	if effectiveSandbox != nil && !launchConfig.TemporaryHarnessBuiltinMode {
 		agentID, err := db.AgentIDForConv(convID)
@@ -2067,34 +1849,29 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		fastModeAtLaunch = codexFastModeAtLaunch(launchConfig.FastMode, launchConfig.CodexStateRoot)
 	}
 	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
-		EffectiveSandbox:           effectiveSandbox,
-		AgentID:                    persistedAgentID,
-		ConvID:                     convID,
-		Cwd:                        cwd,
-		CwdWriteProof:              pinToken,
-		CodexGitCommonDir:          codexGitCommonDir,
-		CodexGitCommonDirPinned:    codexGitCommonDirPinned,
-		GitWorktreeWriteDirs:       gitWriteDirs,
-		GitWorktreeWriteDirsPinned: true,
-		Effort:                     launchConfig.Effort,
-		Model:                      launchConfig.Model,
-		Harness:                    harnessName,
-		Sandbox:                    relaunchSandbox,
-		SandboxImplementation:      relaunchSandboxImplementation,
-		SandboxChosenBy:            launchConfig.HarnessBuiltinModeSource,
-		Approval:                   approval,
-		AutoReview:                 autoReview,
-		AskUserQuestionTimeout:     launchConfig.AskUserQuestionTimeout,
-		ToolGovernance:             launchConfig.ToolGovernance,
-		RemoteControl:              remoteControl,
-		AutoMemory:                 launchConfig.AutoMemory,
-		ContextFeatures:            launchConfig.ContextFeatures,
-		AutoCompactWindow:          launchConfig.AutoCompactWindow,
-		ContextWindowMax:           launchConfig.ContextWindowMax,
-		CopilotAPI:                 launchConfig.CopilotAPI,
-		CodexAppServer:             launchConfig.CodexAppServer,
-		CodexStateRoot:             launchConfig.CodexStateRoot,
-		FastMode:                   launchConfig.FastMode,
+		EffectiveSandbox:       effectiveSandbox,
+		AgentID:                persistedAgentID,
+		ConvID:                 convID,
+		Cwd:                    cwd,
+		Effort:                 launchConfig.Effort,
+		Model:                  launchConfig.Model,
+		Harness:                harnessName,
+		Sandbox:                relaunchSandbox,
+		SandboxImplementation:  relaunchSandboxImplementation,
+		SandboxChosenBy:        launchConfig.HarnessBuiltinModeSource,
+		Approval:               approval,
+		AutoReview:             autoReview,
+		AskUserQuestionTimeout: launchConfig.AskUserQuestionTimeout,
+		ToolGovernance:         launchConfig.ToolGovernance,
+		RemoteControl:          remoteControl,
+		AutoMemory:             launchConfig.AutoMemory,
+		ContextFeatures:        launchConfig.ContextFeatures,
+		AutoCompactWindow:      launchConfig.AutoCompactWindow,
+		ContextWindowMax:       launchConfig.ContextWindowMax,
+		CopilotAPI:             launchConfig.CopilotAPI,
+		CodexAppServer:         launchConfig.CodexAppServer,
+		CodexStateRoot:         launchConfig.CodexStateRoot,
+		FastMode:               launchConfig.FastMode,
 	}); err != nil {
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
@@ -2161,10 +1938,9 @@ func (e *missingResumeAnchorCwdError) Error() string { return "missing launch di
 
 // recoverMissingConversationResumeProfile is the compatibility bridge for
 // managed agents that predate durable conversation profiles. It is called at a
-// real human trust boundary. The harness conversation must still exist; a
-// stale conv_index row alone is not enough. Once resolved, recovery captures
-// the same physical cwd/repository identity as an ordinary trusted launch and
-// persists it on the conversation before returning to the normal path.
+// real harness store. The harness conversation must still exist; a stale
+// conv_index row alone is not enough. Once resolved, recovery persists the
+// canonical cwd on the conversation before returning to the normal path.
 func recoverMissingConversationResumeProfile(convID string, recreateMissingDir bool) (*db.ConversationResumeProfile, error) {
 	cwd, harnessName, err := resolveMissingSessionResumeTarget(convID)
 	if err != nil {
@@ -2186,13 +1962,9 @@ func recoverMissingConversationResumeProfile(convID string, recreateMissingDir b
 			return nil, fmt.Errorf("failed to recreate launch directory %s: %w", cwd, err)
 		}
 	}
-	observed, err := resumeprovenance.Capture(cwd)
+	physicalCwd, err := filepath.EvalSymlinks(cwd)
 	if err != nil {
-		return nil, fmt.Errorf("human recovery could not capture current resume provenance: %w", err)
-	}
-	encoded, err := resumeprovenance.Encode(observed)
-	if err != nil {
-		return nil, fmt.Errorf("human recovery could not encode current resume provenance: %w", err)
+		return nil, fmt.Errorf("resolve recovered launch directory: %w", err)
 	}
 	empty := ""
 	// Recovery has no recorded approval input to reproduce, so it records none:
@@ -2215,31 +1987,31 @@ func recoverMissingConversationResumeProfile(convID string, recreateMissingDir b
 		SSHWorkaround: &sshWorkaround,
 	}
 	profile := db.ConversationResumeProfile{
-		Version: db.RelaunchProfileVersion, Harness: harnessName, Cwd: observed.Cwd.Path, ResumeProvenance: encoded,
+		Version: db.RelaunchProfileVersion, Harness: harnessName, Cwd: physicalCwd,
 		FallbackRelaunch: &legacy,
 	}
 	if err := db.SetConversationResumeProfile(convID, profile); err != nil {
-		return nil, fmt.Errorf("human recovery could not persist a conversation resume profile: %w", err)
+		return nil, fmt.Errorf("legacy recovery could not persist a conversation resume profile: %w", err)
 	}
 	// TCL-636's compatibility path historically materialized a blank legacy
 	// session anchor, whose launch readers reconstructed the same explicit
-	// baseline below. Persist that baseline on the stable agent now so the human
+	// baseline below. Persist that baseline on the stable agent now so the
 	// recovery remains one-shot and later session pruning cannot erase it.
 	if agentProfile, err := db.AgentRelaunchProfileForConv(convID); err != nil {
-		return nil, fmt.Errorf("human recovery could not inspect agent relaunch profile: %w", err)
+		return nil, fmt.Errorf("legacy recovery could not inspect agent relaunch profile: %w", err)
 	} else if agentProfile == nil {
 		agentID, err := db.AgentIDForConv(convID)
 		if err != nil {
-			return nil, fmt.Errorf("human recovery could not resolve stable agent: %w", err)
+			return nil, fmt.Errorf("legacy recovery could not resolve stable agent: %w", err)
 		}
 		if agentID != "" {
 			if err := db.SetAgentRelaunchProfile(agentID, legacy); err != nil {
-				return nil, fmt.Errorf("human recovery could not persist agent relaunch profile: %w", err)
+				return nil, fmt.Errorf("legacy recovery could not persist agent relaunch profile: %w", err)
 			}
 		}
 	}
-	slog.Info("resume: human trust root recovered missing conversation profile",
-		"conv", short8(convID), "harness", harnessName, "cwd", observed.Cwd.Path)
+	slog.Info("resume: recovered missing conversation profile from harness store",
+		"conv", short8(convID), "harness", harnessName, "cwd", physicalCwd)
 	return &profile, nil
 }
 
@@ -3133,14 +2905,13 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 	// write access inside a directory that does not exist.
 	recreate := r.URL.Query().Get("recreate") == "1"
 	if recreate && !trustRoot {
-		if parseAskHumanHeader(r) <= 0 || !requestResumeRecoveryApproval(w, r, PermAgentResume, targetConv, targetConv) {
+		if parseAskHumanHeader(r) <= 0 || !requestResumeDirectoryRecreationApproval(w, r, PermAgentResume, targetConv, targetConv) {
 			if parseAskHumanHeader(r) <= 0 {
 				writeError(w, http.StatusForbidden, "recreate_dir_restricted",
 					"agent-initiated resume may not recreate a missing launch directory without actual human approval; ask the human to run resume --recreate-dir or retry with --ask-human")
 			}
 			return
 		}
-		trustRoot = true
 	}
 	// ?recreate=1 opts into recreating a deleted launch dir empty before the
 	// relaunch (the CLI's `--recreate-dir`, the dashboard's confirm-and-retry).
@@ -3148,15 +2919,9 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 	// can decide.
 	var res memberOpResult
 	if sendKeys {
-		res = resumeOneConvWithCodexRollbackLocked(targetConv, recreate, trustRoot)
+		res = resumeOneConvWithCodexRollbackLocked(targetConv, recreate)
 	} else {
-		res = resumeOneConvLocked(targetConv, recreate, trustRoot)
-	}
-	if res.Action == "error:resume_provenance" && !trustRoot && parseAskHumanHeader(r) > 0 {
-		if !requestResumeRecoveryApproval(w, r, PermAgentResume, targetConv, targetConv) {
-			return
-		}
-		res = resumeOneConvLocked(targetConv, recreate, true)
+		res = resumeOneConvLocked(targetConv, recreate)
 	}
 	resp := map[string]any{
 		"conv_id": res.ConvID,
@@ -3175,19 +2940,17 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// requestResumeRecoveryApproval is used only after ordinary authorization has
-// succeeded but durable target integrity cannot be established. It creates a
-// real, audited access request; approval marks this exact in-flight operation
-// as a human trust root, while deny/timeout returns before provenance or the
-// stopped target is changed.
-func requestResumeRecoveryApproval(w http.ResponseWriter, r *http.Request, perm, authTarget, targetConv string) bool {
+// requestResumeDirectoryRecreationApproval creates a real, audited access
+// request before an agent-triggered resume creates a missing directory with
+// the daemon user's filesystem authority.
+func requestResumeDirectoryRecreationApproval(w http.ResponseWriter, r *http.Request, perm, authTarget, targetConv string) bool {
 	timeout := parseAskHumanHeader(r)
 	if timeout <= 0 {
 		return false
 	}
 	if popupBaseURL == "" {
 		writeError(w, http.StatusForbidden, "permission",
-			"no popup base URL configured; resume provenance recovery cannot be approved")
+			"no popup base URL configured; launch-directory recreation cannot be approved")
 		return false
 	}
 	p := peerFromContext(r.Context())
@@ -3211,8 +2974,8 @@ func requestResumeRecoveryApproval(w http.ResponseWriter, r *http.Request, perm,
 		method:          r.Method,
 		path:            r.URL.Path,
 		rawQuery:        r.URL.RawQuery,
-		bodyPreview:     "Recapture and trust the stopped target's current physical working-directory and Git identity for this resume.",
-		bodyLabel:       "Resume provenance recovery",
+		bodyPreview:     "Recreate the stopped target's missing launch directory for this resume.",
+		bodyLabel:       "Resume launch-directory recreation",
 		targetGroup:     targetGroup,
 		targetConvID:    targetConv,
 		targetConvTitle: targetTitle,
@@ -3226,7 +2989,7 @@ func requestResumeRecoveryApproval(w http.ResponseWriter, r *http.Request, perm,
 		return true
 	}
 	writeError(w, http.StatusForbidden, "permission",
-		fmt.Sprintf("human declined or timed out after %s while recovering resume provenance for target %s",
+		fmt.Sprintf("human declined or timed out after %s while recreating the launch directory for target %s",
 			timeout, short8(targetConv)))
 	return false
 }
@@ -4617,9 +4380,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// Dir write-proof — the launch-directory half of the spawn sandbox guard
 	// (spawn_dir_proof.go). The lineage guard above caps the child's sandbox
 	// MODE; this caps its anchor: an agent caller must prove its own sandbox
-	// can write in every directory the child would get write access to (the
-	// launch cwd, plus the designated worktree when one is passed), otherwise
-	// spawning a child there would be a write-permission escape. The gate
+	// can write in every caller-selected directory the child would get write
+	// access to (the launch cwd, plus the designated worktree when one is
+	// passed), otherwise spawning a child there would be a write-permission escape.
+	// Sandbox-profile roots are authorized by the lineage containment check
+	// above. They are deliberately not write-proved: a grant permits writes to
+	// existing descendants, but does not imply permission to create directory
+	// entries in the grant root itself (for example /dev/dri).
+	// The gate
 	// challenges (403 write_proof_required) or verifies; on success it pins
 	// cwd/worktree to the symlink-resolved paths the proof was verified in, so
 	// a link swapped after verification cannot retarget the grant. Humans,
@@ -4665,16 +4433,6 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		dirs := []string{cwd}
 		dirs = appendUniqueDirs(dirs, worktreePath)
 		dirs = appendUniqueDirs(dirs, gitWorktreeWriteDirs...)
-		for _, grant := range effectiveSandbox.Effective.Filesystem {
-			if grant.Access == sandboxpolicy.AccessWrite {
-				proofDir, proofErr := sandboxWriteProofDir(grant.Path)
-				if proofErr != nil {
-					writeError(w, http.StatusBadRequest, "invalid_sandbox_profile", proofErr.Error())
-					return
-				}
-				dirs = appendUniqueDirs(dirs, proofDir)
-			}
-		}
 		resolved, ok := requireDirWriteProof(w, r, spawnerConvID, body.WriteProofToken, dirs)
 		if !ok {
 			return

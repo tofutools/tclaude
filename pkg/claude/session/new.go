@@ -2415,18 +2415,17 @@ func runNew(params *NewParams) error {
 	if proofToken == "" {
 		proofToken = params.DirWriteProof
 	}
-	if proofToken != "" {
+	profileWriteDirs := sandboxSnapshotHostDirs(launchSandbox, sandboxpolicy.AccessWrite)
+	if proofToken != "" || len(profileWriteDirs) > 0 {
 		path, cleanupProofReady, readyErr := newSpawnCwdReadinessFile()
 		if readyErr != nil {
 			return readyErr
 		}
 		defer cleanupProofReady()
 		proofReadyPath = path
-		proofWriteDirs := append([]string{}, params.GitWorktreeWriteDirs...)
-		sandboxProofDirs, generatedWriteDirs := sandboxSnapshotProofDirs(launchSandbox, sandboxpolicy.AccessWrite)
-		proofWriteDirs = append(proofWriteDirs, sandboxProofDirs...)
 		harnessCmd = guardHarnessCommandWithDirProof(
-			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "", proofWriteDirs, generatedWriteDirs)
+			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "",
+			params.GitWorktreeWriteDirs, profileWriteDirs)
 	}
 
 	// The command is now fully assembled — every wrapper layer applied. Hand it
@@ -2517,9 +2516,9 @@ func runNew(params *NewParams) error {
 	if provenanceErr != nil {
 		if params.ManagedLaunch {
 			killLaunchPane()
-			return fmt.Errorf("capture managed launch resume provenance: %w", provenanceErr)
+			return fmt.Errorf("capture managed launch provenance metadata: %w", provenanceErr)
 		}
-		slog.Warn("could not capture resume provenance for direct session; a controlled stop will retry",
+		slog.Warn("could not capture launch-directory metadata for direct session",
 			"session", sessionID, "error", provenanceErr)
 	}
 	applyTmuxWindowTitle(tmuxSession, sessionID)
@@ -2552,9 +2551,8 @@ func runNew(params *NewParams) error {
 	}
 	if resumeProvenance != "" {
 		// SessionStart may have inserted this row before the launch parent got
-		// here. SaveSession deliberately never updates provenance on conflict so
-		// a stale hook cannot resurrect trust after stop invalidates it; the
-		// launch boundary therefore owns this explicit post-upsert write.
+		// here. SaveSession deliberately never updates provenance on conflict;
+		// the launch boundary therefore owns this explicit post-upsert write.
 		if err := db.SetSessionResumeProvenance(sessionID, resumeProvenance); err != nil {
 			killLaunchPane()
 			return fmt.Errorf("persist managed launch resume provenance: %w", err)
@@ -3144,43 +3142,21 @@ func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.
 	return out
 }
 
-// sandboxSnapshotProofDirs separates caller-controlled sandbox roots, whose
-// marker must have been created by the calling agent, from daemon-materialized
-// per-agent directories. Agentd creates the latter only after the caller's
-// proof challenge, so they cannot require a caller marker; they still ride to
-// the launch guard separately for a final canonical/non-symlink path check.
-func sandboxSnapshotProofDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) (proofDirs, generatedDirs []string) {
+// sandboxSnapshotHostDirs returns the host-side roots that must still be
+// canonical immediately before the harness starts. These roots intentionally
+// do not require proof markers: a profile grant may permit writes to existing
+// descendants without permitting a new entry in the root itself.
+func sandboxSnapshotHostDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) []string {
 	if snapshot == nil {
-		return nil, nil
+		return nil
 	}
-	agentDirectoryNames := make(map[string]bool, len(snapshot.Effective.AgentDirectories))
-	for _, name := range snapshot.Effective.AgentDirectories {
-		agentDirectoryNames[name] = true
-	}
-	// A materialized agent directory is recognized either as its own env-var'd
-	// path (the per-directory grant mode) or as the shared parent root that
-	// contains it (the mount-parent grant mode, features.agent_dirs_mount_parent).
-	// Both are daemon-created and must skip the caller-marker proof. Adding the
-	// parent is flag-agnostic and inert when the flag is off: per-directory mode
-	// issues no grant at the parent, so no grant is ever reclassified there.
-	agentDirectoryPaths := make(map[string]bool, len(agentDirectoryNames))
-	for _, entry := range snapshot.Effective.Environment {
-		if agentDirectoryNames[entry.Name] {
-			agentDirectoryPaths[entry.Value] = true
-			agentDirectoryPaths[filepath.Dir(entry.Value)] = true
-		}
-	}
+	out := make([]string, 0, len(snapshot.Effective.Filesystem))
 	for _, grant := range snapshot.Effective.Filesystem {
-		if grant.Access != access {
-			continue
-		}
-		if agentDirectoryPaths[grant.Path] {
-			generatedDirs = append(generatedDirs, grant.Path)
-		} else {
-			proofDirs = append(proofDirs, grant.Path)
+		if grant.Access == access {
+			out = append(out, grant.Path)
 		}
 	}
-	return proofDirs, generatedDirs
+	return out
 }
 
 func sandboxSnapshotActiveFilesystem(snapshot *sandboxpolicy.Snapshot) []sandboxpolicy.FilesystemGrant {
@@ -3489,12 +3465,12 @@ func isValidSpawnCwdProofToken(proof string) bool {
 
 // guardHarnessCommandWithDirProof prefixes the harness command with marker
 // checks performed by the shell tmux starts. The relative cwd check binds to
-// tmux's already-established directory inode. Every extra permission root is
-// also required to remain canonical and carry the same unpredictable marker,
-// so the child never consumes a path substituted after daemon verification.
-// Daemon-materialized per-agent directories are not caller-controlled roots,
-// so they skip the marker requirement but retain the path-substitution check.
-func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkCwd bool, dirs, generatedDirs []string) string {
+// tmux's already-established directory inode. Every caller-selected permission
+// root is also required to remain canonical and carry the same unpredictable
+// marker, so the child never consumes a path substituted after daemon
+// verification. Profile roots skip the marker requirement but retain the late
+// path-substitution check.
+func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkCwd bool, dirs, integrityDirs []string) string {
 	marker := clcommon.SpawnDirWriteProofPrefix + proof
 	ready := clcommon.ShellQuoteArg(readyPath)
 	fail := func(reason string) string {
@@ -3513,11 +3489,11 @@ func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkC
 			" ] || [ ! -f " + quotedMarker + " ] || [ -L " + quotedMarker + " ] || [ -s " + quotedMarker + " ]; then " +
 			"echo 'tclaude: repository write proof changed; refusing harness launch' >&2; " + fail("repository-proof") + "; fi; "
 	}
-	for _, dir := range generatedDirs {
+	for _, dir := range integrityDirs {
 		quotedDir := clcommon.ShellQuoteArg(dir)
 		guard += "if [ \"$(cd " + quotedDir + " 2>/dev/null && pwd -P)\" != " + quotedDir +
 			" ] || [ -L " + quotedDir + " ]; then " +
-			"echo 'tclaude: generated directory changed; refusing harness launch' >&2; " + fail("repository-proof") + "; fi; "
+			"echo 'tclaude: sandbox profile directory changed; refusing harness launch' >&2; " + fail("repository-proof") + "; fi; "
 	}
 	return guard + "printf '%s' ok > " + ready + " || exit 126; " + harnessCmd
 }

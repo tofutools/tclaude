@@ -541,9 +541,6 @@ func reconcileAgentRecoveryCandidateTx(tx *sql.Tx, meta exitSessionMeta, e Audit
 	if meta.CallbackGeneration == "" {
 		reason = "unknown_launch_generation"
 	}
-	if strings.TrimSpace(meta.ResumeProvenance) == "" {
-		reason = "resume_provenance_missing"
-	}
 	var currentConv string
 	var retiredAt dbTimestamp
 	if err := tx.QueryRow(`SELECT current_conv_id, retired_at FROM agents WHERE agent_id = ?`, meta.AgentID).Scan(&currentConv, &retiredAt); err != nil {

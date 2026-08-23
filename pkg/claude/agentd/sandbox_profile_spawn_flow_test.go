@@ -82,9 +82,8 @@ func TestSandboxProfileSpawnRefreshesExplicitValuesOnResumeAndSelectionIsHumanOn
 }
 
 // Restart re-resolves the currently selected profile rather than replaying the
-// launch snapshot — with one exception: a deny the agent launched under is
-// re-imposed, because dropping it would widen a running agent (see
-// clampResumeDenyLineage).
+// launch snapshot. Editing a profile and then stopping/resuming is the
+// operator's explicit way to apply the new policy to an existing agent.
 func TestSandboxProfileRestartUsesCurrentRulesAndProvenance(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
@@ -123,11 +122,11 @@ func TestSandboxProfileRestartUsesCurrentRulesAndProvenance(t *testing.T) {
 		paths[grant.Path] = grant.Access
 	}
 	assert.Equal(t, sandboxpolicy.AccessDeny, paths[editedDeny], "restart picks up the newly authored restriction")
-	assert.Equal(t, sandboxpolicy.AccessDeny, paths[launchDeny], "and keeps the deny the agent launched under")
+	assert.NotContains(t, paths, launchDeny, "restart must not restore rules the operator removed")
 	assert.Equal(t, map[string][]sandboxpolicy.ProfileSource{
 		editedDeny: {{Scope: sandboxpolicy.ScopeExplicit, Profile: "current-restrictions"}},
 	}, after.Effective.Provenance.Filesystem,
-		"the restored deny has no current-registry source and must not claim one")
+		"the resumed snapshot must describe the current registry exactly")
 
 	persisted, err := db.AgentEffectiveSandboxConfigForConv(parent.ConvID)
 	require.NoError(t, err)
@@ -477,7 +476,7 @@ func TestSandboxProfileSpawnRejectsExplicitInternetWidening(t *testing.T) {
 	})
 }
 
-func TestSandboxProfileWriteRootParticipatesInAgentSpawnProof(t *testing.T) {
+func TestSandboxProfileWriteRootDoesNotParticipateInAgentSpawnProof(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	writeRoot, err := filepath.EvalSymlinks(t.TempDir())
@@ -504,7 +503,7 @@ func TestSandboxProfileWriteRootParticipatesInAgentSpawnProof(t *testing.T) {
 		"/v1/groups/"+url.PathEscape("crew")+"/spawn",
 		map[string]any{"name": "child", "cwd": childCwd, "approval": "default"})
 	challenge := decodeWriteProofChallenge(t, rec)
-	assert.ElementsMatch(t, []string{childCwd, writeRoot}, challenge.WriteProof.Dirs)
+	assert.ElementsMatch(t, []string{childCwd}, challenge.WriteProof.Dirs)
 
 	// The challenge is observational in this test; ensure no marker was
 	// accidentally materialised by the daemon itself.
@@ -512,7 +511,7 @@ func TestSandboxProfileWriteRootParticipatesInAgentSpawnProof(t *testing.T) {
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
-func TestMissingSandboxProfileWriteRootProofsNearestExistingAncestor(t *testing.T) {
+func TestMissingSandboxProfileWriteRootDoesNotProofNearestExistingAncestor(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	writeParent, err := filepath.EvalSymlinks(t.TempDir())
@@ -540,7 +539,7 @@ func TestMissingSandboxProfileWriteRootProofsNearestExistingAncestor(t *testing.
 		"/v1/groups/"+url.PathEscape("crew")+"/spawn",
 		map[string]any{"name": "child", "cwd": childCwd, "approval": "default"})
 	challenge := decodeWriteProofChallenge(t, rec)
-	assert.ElementsMatch(t, []string{childCwd, writeParent}, challenge.WriteProof.Dirs)
+	assert.ElementsMatch(t, []string{childCwd}, challenge.WriteProof.Dirs)
 	assert.NotContains(t, challenge.WriteProof.Dirs, missingWriteRoot)
 }
 

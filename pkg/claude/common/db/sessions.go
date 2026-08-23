@@ -271,9 +271,9 @@ func SaveSession(s *SessionRow) error {
 	// propagateAgentCompanions. The conflict guard re-derives only when the new
 	// value is non-empty, so a later status-update upsert (whose conv may not
 	// resolve) never wipes an agent already known for this session.
-	// Resume provenance is intentionally insert-only here. Trusted lifecycle
-	// boundaries update it through SetSessionResumeProvenance; allowing generic
-	// hook UPSERTs to update it could resurrect a value invalidated during stop.
+	// Resume provenance is intentionally insert-only here. The managed launch
+	// boundary updates it through SetSessionResumeProvenance; generic hook
+	// UPSERTs may race that launch and must not replace its physical metadata.
 	tx, err := db.Begin()
 	if err != nil {
 		return err
@@ -854,10 +854,9 @@ func UpdateSessionLastHook(id string, t time.Time) error {
 	return err
 }
 
-// SetSessionResumeProvenance replaces the durable offline-resume identity for
-// one session. Unlike SaveSession's hook-safe UPSERT, an empty value is
-// meaningful here: controlled stop uses it to atomically invalidate an older
-// snapshot when fresh live-pane capture fails.
+// SetSessionResumeProvenance replaces the physical launch metadata for one
+// session. Unlike SaveSession's hook-safe UPSERT, this explicit write belongs
+// to the managed launch boundary that captured the metadata.
 func SetSessionResumeProvenance(id, provenance string) error {
 	return execSessionUpdateAndProject(id, relaunchProjectionOptions{},
 		`UPDATE sessions SET resume_provenance = ? WHERE id = ?`, provenance, id)

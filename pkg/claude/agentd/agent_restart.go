@@ -106,7 +106,7 @@ func dashboardRestartAgent(w http.ResponseWriter, _ *http.Request, convSelector 
 		return
 	}
 
-	resume := resumeOneConvUnderLaunchLock(convID, false, true, nil)
+	resume := resumeOneConvUnderLaunchLock(convID, false, nil)
 	switchedClients := clientHandoff.finishForConv(convID)
 	if resume.Action != "resumed" {
 		writeError(w, http.StatusInternalServerError, "restart_failed",

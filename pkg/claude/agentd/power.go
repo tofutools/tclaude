@@ -221,7 +221,7 @@ func handleShutdown(w http.ResponseWriter, r *http.Request) {
 //	  {"scope":"all"}                      — every offline agent
 //
 // For each OFFLINE agent in scope it spawns a fresh detached tmux
-// session for the conv (resumeOneConvWithTrustRoot — the same primitive the
+// session for the conv (resumeOneConv — the same primitive the
 // per-agent "wake" button and `tclaude agent groups resume` use).
 // Agents already online are skipped at collection, mirroring how
 // shutdown skips already-offline ones. Resume-only: nothing is
@@ -395,7 +395,7 @@ func runShutdown(targets []string, grace time.Duration) []powerAgentOutcome {
 // successes and failures.
 func runPowerOn(targets []string) []powerAgentOutcome {
 	return runPowerOnWithResume(targets, func(convID string) memberOpResult {
-		return resumeOneConvWithTrustRoot(convID, false)
+		return resumeOneConv(convID)
 	})
 }
 

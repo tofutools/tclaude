@@ -800,11 +800,11 @@ func TestTUIStopSummaryCarriesSuccessfulDetail(t *testing.T) {
 		agent: "worker",
 		res: tuiStopResult{
 			Action: "soft_stopped",
-			Detail: "resume provenance unavailable; human recovery will be required",
+			Detail: "agent acknowledged the stop request",
 		},
 	})
 	assert.Contains(t, summary, "Asked worker to go offline")
-	assert.Contains(t, summary, "human recovery will be required")
+	assert.Contains(t, summary, "agent acknowledged the stop request")
 }
 
 func TestTUIXNoLongerRetiresAnAgent(t *testing.T) {
