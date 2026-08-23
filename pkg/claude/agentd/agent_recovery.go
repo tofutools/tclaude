@@ -203,7 +203,7 @@ func reconcileAgentRecovery(r db.AgentRecovery, now time.Time) {
 	if !current {
 		return
 	}
-	result := resumeOneConvUnderLaunchLock(claim.ConvID, false, false, claim)
+	result := resumeOneConvUnderLaunchLock(claim.ConvID, false, claim)
 	if result.Action == "resumed" || result.Action == "skipped:already_online" || result.Action == "skipped:recovery_cancelled" {
 		// A successful spawn is confirmed only after its concrete session and
 		// generation are observable. An already-online result means a manual or
@@ -211,7 +211,7 @@ func reconcileAgentRecovery(r db.AgentRecovery, now time.Time) {
 		// it without launching again or manufacturing a failure.
 		return
 	}
-	if strings.HasPrefix(result.Action, "error:resume_provenance") || result.Action == "error:missing_cwd" ||
+	if result.Action == "error:missing_cwd" ||
 		(result.Action == "error" && !strings.HasPrefix(result.Detail, "spawn:")) {
 		if changed, _ := db.SuppressAgentRecovery(*claim, now, "resume_ineligible"); changed {
 			if row, _ := db.AgentRecoveryForAgent(claim.AgentID); row != nil {

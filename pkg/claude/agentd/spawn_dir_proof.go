@@ -18,8 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sys/unix"
-
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -39,9 +37,12 @@ import (
 // lives in settings files, and may not even exist for a raw caller), so
 // instead the parent proves the capability directly: agentd hands out a
 // single-use random token, the parent creates an empty file named after the
-// token in every directory in question — a write its own sandbox must allow
-// — and retries; agentd verifies the files exist, deletes them, and lets the
-// spawn proceed. `tclaude agent spawn` runs inside the calling agent's
+// token in every caller-selected launch/repository directory — a write its own
+// sandbox must allow — and retries; agentd verifies the files exist, deletes
+// them, and lets the spawn proceed. Sandbox-profile roots are authorized by
+// policy-lineage containment instead: the right to write existing descendants
+// does not imply the right to create a marker in the root itself.
+// `tclaude agent spawn` runs inside the calling agent's
 // sandbox, so it answers the challenge transparently; an agent whose sandbox
 // forbids the write gets a clear refusal instead of an escape.
 //
@@ -174,8 +175,8 @@ func markWriteProofHumanApproval(r *http.Request, perm, authTarget string) {
 // markHumanApprovalContinuation records that this exact in-flight operation
 // was approved by the human. Unlike the write-proof continuation it never
 // crosses requests, so it does not need to canonicalise or retain request body
-// data. Repeated permission gates in the same handler and resume provenance
-// recovery consume this same audited trust-root signal.
+// data. Repeated permission gates in the same handler consume this same
+// audited trust-root signal.
 func markHumanApprovalContinuation(r *http.Request, perm, authTarget string) {
 	if r == nil {
 		return
@@ -437,7 +438,7 @@ func requireDirWriteProof(w http.ResponseWriter, r *http.Request, callerConvID, 
 			"caller", short8(callerConvID), "dirs", strings.Join(missing, ","))
 		writeError(w, http.StatusForbidden, "write_proof_failed", fmt.Sprintf(
 			"write-permission proof file %s not found in: %s. Agent %s must itself be able "+
-				"to create files in every directory the new agent would get write access to; "+
+				"to create files in every caller-selected launch or repository directory; "+
 				"its sandbox evidently does not allow writing there, so it may not launch an "+
 				"agent there either. Pick a directory you can write to, or have a human do the spawn.",
 			filename, strings.Join(missing, ", "), short8(callerConvID)))
@@ -509,52 +510,6 @@ func cleanupDirWriteProofMarkers(token string, dirs []string) {
 		}
 		_ = os.Remove(filepath.Join(dir, filename))
 	}
-}
-
-// pinInheritedLaunchDirs creates daemon-owned, short-lived marker files after
-// durable target provenance has established which physical directories an
-// offline lifecycle launch may reuse. This is launch-integrity plumbing, not
-// caller authorization: the requester never writes into target-owned paths.
-func pinInheritedLaunchDirs(rawDirs []string) (map[string]string, string, []string, func(), error) {
-	return pinInheritedLaunchDirsWithToken(rawDirs, newDirWriteProofToken())
-}
-
-func pinInheritedLaunchDirsWithToken(rawDirs []string, token string) (map[string]string, string, []string, func(), error) {
-	resolved, mapping, err := resolveDirWriteProofDirs(rawDirs)
-	if err != nil {
-		return nil, "", nil, func() {}, err
-	}
-	if token == "" {
-		return nil, "", nil, func() {}, fmt.Errorf("generate inherited launch pin")
-	}
-	filename := dirWriteProofFilePrefix + token
-	type heldMarker struct {
-		dir *os.File
-	}
-	held := make([]heldMarker, 0, len(resolved))
-	cleanup := func() {
-		for _, marker := range held {
-			_ = unix.Unlinkat(int(marker.dir.Fd()), filename, 0)
-			_ = marker.dir.Close()
-		}
-	}
-	for _, dir := range resolved {
-		dirHandle, openErr := os.Open(dir)
-		if openErr != nil {
-			cleanup()
-			return nil, "", nil, func() {}, fmt.Errorf("open inherited launch pin directory %s: %w", dir, openErr)
-		}
-		fd, createErr := unix.Openat(int(dirHandle.Fd()), filename,
-			unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW, 0o600)
-		if createErr != nil {
-			_ = dirHandle.Close()
-			cleanup()
-			return nil, "", nil, func() {}, fmt.Errorf("create inherited launch pin in %s: %w", dir, createErr)
-		}
-		_ = unix.Close(fd)
-		held = append(held, heldMarker{dir: dirHandle})
-	}
-	return mapping, token, resolved, cleanup, nil
 }
 
 func appendUniqueDirs(dirs []string, candidates ...string) []string {

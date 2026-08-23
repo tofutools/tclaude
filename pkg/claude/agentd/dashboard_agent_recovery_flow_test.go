@@ -51,7 +51,7 @@ func TestDashboardSnapshot_SurfacesCodexRecoveryStatesEverywhere(t *testing.T) {
 		require.NoError(t, err)
 		reason := ""
 		if status == db.AgentRecoveryStatusSuppressed {
-			reason = "resume_provenance_missing"
+			reason = "recovery_suppressed"
 		}
 		var recoveredAtValue any
 		if status == db.AgentRecoveryStatusRecovered {

@@ -10,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -140,105 +139,6 @@ func TestSandboxSnapshotForOneShotLaunchFreezesActiveRules(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "deny rule")
 	assert.Contains(t, err.Error(), "cannot be enforced")
-}
-
-func TestSandboxSnapshotProofDirsExcludesMaterializedAgentDirectory(t *testing.T) {
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
-	cwd := filepath.Join(root, "cwd")
-	customWriteDir := filepath.Join(root, "custom")
-	agentWriteDir := filepath.Join(root, "agent-dirs", "spwn-test", "GOCACHE")
-	for _, dir := range []string{cwd, customWriteDir, agentWriteDir} {
-		require.NoError(t, os.MkdirAll(dir, 0o700))
-	}
-	snapshot := &sandboxpolicy.Snapshot{
-		Version: sandboxpolicy.SnapshotVersion,
-		Effective: sandboxpolicy.EffectiveProfile{
-			AgentDirectories: []string{"GOCACHE"},
-			Environment:      []sandboxpolicy.EnvironmentEntry{{Name: "GOCACHE", Value: agentWriteDir}},
-			Filesystem: []sandboxpolicy.FilesystemGrant{
-				{Path: customWriteDir, Access: sandboxpolicy.AccessWrite},
-				{Path: agentWriteDir, Access: sandboxpolicy.AccessWrite},
-			},
-		},
-	}
-
-	assert.Equal(t, []string{customWriteDir, agentWriteDir},
-		sandboxSnapshotDirs(snapshot, sandboxpolicy.AccessWrite),
-		"the generated directory must remain writable by the child")
-	proofDirs, generatedDirs := sandboxSnapshotProofDirs(snapshot, sandboxpolicy.AccessWrite)
-	assert.Equal(t, []string{customWriteDir}, proofDirs,
-		"only caller-controlled roots should require the caller's marker")
-	assert.Equal(t, []string{agentWriteDir}, generatedDirs,
-		"the generated root should retain a path-substitution check")
-
-	proof := "proof-agent-directory"
-	marker := clcommon.SpawnDirWriteProofPrefix + proof
-	for _, dir := range []string{cwd, customWriteDir} {
-		require.NoError(t, os.WriteFile(filepath.Join(dir, marker), nil, 0o600))
-	}
-	ready := filepath.Join(root, "ready")
-	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
-
-	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
-		"true", proof, ready, true, proofDirs, generatedDirs))
-	cmd.Dir = cwd
-	require.NoError(t, cmd.Run(),
-		"a daemon-materialized directory created after the challenge must not need a caller marker")
-	status, err := os.ReadFile(ready)
-	require.NoError(t, err)
-	assert.Equal(t, "ok", string(status))
-
-	// The generated directory needs no caller marker, but it must not be
-	// replaceable with a symlink between daemon materialization and launch.
-	forbidden := filepath.Join(root, "forbidden")
-	require.NoError(t, os.Mkdir(forbidden, 0o700))
-	require.NoError(t, os.Rename(agentWriteDir, agentWriteDir+"-old"))
-	require.NoError(t, os.Symlink(forbidden, agentWriteDir))
-	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
-	cmd = exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
-		"true", proof, ready, true, proofDirs, generatedDirs))
-	cmd.Dir = cwd
-	require.Error(t, cmd.Run())
-	status, err = os.ReadFile(ready)
-	require.NoError(t, err)
-	assert.Equal(t, "error:repository-proof", string(status))
-}
-
-// With features.agent_dirs_mount_parent, the write grant is the shared parent
-// root rather than each per-name subdir. The classifier must still recognize
-// that root as daemon-generated (parent of the agent-dir env values) so it
-// skips the caller-marker proof — otherwise the launch would demand a marker
-// inside a directory the caller never created.
-func TestSandboxSnapshotProofDirsExcludesMountedParentRoot(t *testing.T) {
-	root, err := filepath.EvalSymlinks(t.TempDir())
-	require.NoError(t, err)
-	customWriteDir := filepath.Join(root, "custom")
-	agentRoot := filepath.Join(root, "agent-dirs", "spwn-test")
-	goCache := filepath.Join(agentRoot, "GOCACHE")
-	goTmp := filepath.Join(agentRoot, "GOTMPDIR")
-	snapshot := &sandboxpolicy.Snapshot{
-		Version: sandboxpolicy.SnapshotVersion,
-		Effective: sandboxpolicy.EffectiveProfile{
-			AgentDirectories: []string{"GOCACHE", "GOTMPDIR"},
-			Environment: []sandboxpolicy.EnvironmentEntry{
-				{Name: "GOCACHE", Value: goCache},
-				{Name: "GOTMPDIR", Value: goTmp},
-			},
-			// Mount-parent mode grants the parent root once; the subdirs
-			// themselves get no individual grant.
-			Filesystem: []sandboxpolicy.FilesystemGrant{
-				{Path: agentRoot, Access: sandboxpolicy.AccessWrite},
-				{Path: customWriteDir, Access: sandboxpolicy.AccessWrite},
-			},
-		},
-	}
-
-	proofDirs, generatedDirs := sandboxSnapshotProofDirs(snapshot, sandboxpolicy.AccessWrite)
-	assert.Equal(t, []string{customWriteDir}, proofDirs,
-		"only the caller-controlled root should require the caller's marker")
-	assert.Equal(t, []string{agentRoot}, generatedDirs,
-		"the mounted parent root is daemon-generated and must skip the caller marker")
 }
 
 // A deny covering the workspace masks what `extends = ":workspace"` grants, and

@@ -2421,11 +2421,9 @@ func runNew(params *NewParams) error {
 		}
 		defer cleanupProofReady()
 		proofReadyPath = path
-		proofWriteDirs := append([]string{}, params.GitWorktreeWriteDirs...)
-		sandboxProofDirs, generatedWriteDirs := sandboxSnapshotProofDirs(launchSandbox, sandboxpolicy.AccessWrite)
-		proofWriteDirs = append(proofWriteDirs, sandboxProofDirs...)
 		harnessCmd = guardHarnessCommandWithDirProof(
-			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "", proofWriteDirs, generatedWriteDirs)
+			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "",
+			params.GitWorktreeWriteDirs, nil)
 	}
 
 	// The command is now fully assembled — every wrapper layer applied. Hand it
@@ -2514,11 +2512,7 @@ func runNew(params *NewParams) error {
 		}
 	}
 	if provenanceErr != nil {
-		if params.ManagedLaunch {
-			killLaunchPane()
-			return fmt.Errorf("capture managed launch resume provenance: %w", provenanceErr)
-		}
-		slog.Warn("could not capture resume provenance for direct session; a controlled stop will retry",
+		slog.Warn("could not capture launch-directory metadata; continuing without it",
 			"session", sessionID, "error", provenanceErr)
 	}
 	applyTmuxWindowTitle(tmuxSession, sessionID)
@@ -2551,9 +2545,8 @@ func runNew(params *NewParams) error {
 	}
 	if resumeProvenance != "" {
 		// SessionStart may have inserted this row before the launch parent got
-		// here. SaveSession deliberately never updates provenance on conflict so
-		// a stale hook cannot resurrect trust after stop invalidates it; the
-		// launch boundary therefore owns this explicit post-upsert write.
+		// here. SaveSession deliberately never updates provenance on conflict;
+		// the launch boundary therefore owns this explicit post-upsert write.
 		if err := db.SetSessionResumeProvenance(sessionID, resumeProvenance); err != nil {
 			killLaunchPane()
 			return fmt.Errorf("persist managed launch resume provenance: %w", err)
@@ -3141,45 +3134,6 @@ func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.
 		}
 	}
 	return out
-}
-
-// sandboxSnapshotProofDirs separates caller-controlled sandbox roots, whose
-// marker must have been created by the calling agent, from daemon-materialized
-// per-agent directories. Agentd creates the latter only after the caller's
-// proof challenge, so they cannot require a caller marker; they still ride to
-// the launch guard separately for a final canonical/non-symlink path check.
-func sandboxSnapshotProofDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) (proofDirs, generatedDirs []string) {
-	if snapshot == nil {
-		return nil, nil
-	}
-	agentDirectoryNames := make(map[string]bool, len(snapshot.Effective.AgentDirectories))
-	for _, name := range snapshot.Effective.AgentDirectories {
-		agentDirectoryNames[name] = true
-	}
-	// A materialized agent directory is recognized either as its own env-var'd
-	// path (the per-directory grant mode) or as the shared parent root that
-	// contains it (the mount-parent grant mode, features.agent_dirs_mount_parent).
-	// Both are daemon-created and must skip the caller-marker proof. Adding the
-	// parent is flag-agnostic and inert when the flag is off: per-directory mode
-	// issues no grant at the parent, so no grant is ever reclassified there.
-	agentDirectoryPaths := make(map[string]bool, len(agentDirectoryNames))
-	for _, entry := range snapshot.Effective.Environment {
-		if agentDirectoryNames[entry.Name] {
-			agentDirectoryPaths[entry.Value] = true
-			agentDirectoryPaths[filepath.Dir(entry.Value)] = true
-		}
-	}
-	for _, grant := range snapshot.Effective.Filesystem {
-		if grant.Access != access {
-			continue
-		}
-		if agentDirectoryPaths[grant.Path] {
-			generatedDirs = append(generatedDirs, grant.Path)
-		} else {
-			proofDirs = append(proofDirs, grant.Path)
-		}
-	}
-	return proofDirs, generatedDirs
 }
 
 func sandboxSnapshotActiveFilesystem(snapshot *sandboxpolicy.Snapshot) []sandboxpolicy.FilesystemGrant {

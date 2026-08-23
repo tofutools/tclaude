@@ -24,13 +24,6 @@ type observingResumeSpawner struct {
 	mutate func(clcommon.SpawnArgs) error
 }
 
-func canonicalResumeTestPath(t *testing.T, path string) string {
-	t.Helper()
-	physical, err := filepath.EvalSymlinks(path)
-	require.NoError(t, err)
-	return physical
-}
-
 func (s *observingResumeSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	return s.inner.SpawnNew(args)
 }
@@ -68,7 +61,7 @@ func ownerResumeFixture(t *testing.T, f *testFlow, target, caller string) *db.Ag
 // exporting the concrete testharness type from newFlow's local helper.
 type testFlow = testharness.Flow
 
-func TestResumeProvenance_CwdSymlinkRetargetUsesOriginalPhysicalTarget(t *testing.T) {
+func TestResumeUsesRecordedCwdWithoutRecheckingPhysicalIdentity(t *testing.T) {
 	f := newFlow(t)
 	const (
 		target = "resume-symlink-target-aaaa-bbbb-111111111111"
@@ -79,7 +72,6 @@ func TestResumeProvenance_CwdSymlinkRetargetUsesOriginalPhysicalTarget(t *testin
 	unrelated := filepath.Join(root, "unrelated")
 	require.NoError(t, os.Mkdir(original, 0o755))
 	require.NoError(t, os.Mkdir(unrelated, 0o755))
-	physicalOriginal := canonicalResumeTestPath(t, original)
 	launchPath := filepath.Join(root, "launch")
 	require.NoError(t, os.Symlink(original, launchPath))
 	f.HaveConvWithTitle(target, "resume-symlink-target")
@@ -95,11 +87,11 @@ func TestResumeProvenance_CwdSymlinkRetargetUsesOriginalPhysicalTarget(t *testin
 	observer.mu.Lock()
 	launchedCwd := observer.args.Cwd
 	observer.mu.Unlock()
-	assert.Equal(t, physicalOriginal, launchedCwd,
-		"offline resume must use durable physical cwd, not follow the retargeted launch spelling")
+	assert.Equal(t, launchPath, launchedCwd,
+		"resume must reuse the recorded launch path without a new provenance decision")
 }
 
-func TestResumeProvenance_RepositoryReplacementFailsClosedForOwner(t *testing.T) {
+func TestResumeAllowsRepositoryReplacementAfterInitialSpawn(t *testing.T) {
 	f := newFlow(t)
 	const (
 		target = "resume-repo-target-aaaa-bbbb-111111111111"
@@ -119,19 +111,17 @@ func TestResumeProvenance_RepositoryReplacementFailsClosedForOwner(t *testing.T)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	var response struct {
 		Action string `json:"action"`
-		Detail string `json:"detail"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
-	assert.Equal(t, "error:resume_provenance", response.Action)
-	assert.Contains(t, response.Detail, "Git")
+	assert.Equal(t, "resumed", response.Action)
 	_, launched := f.World.SpawnCwdWriteProof(target)
-	assert.False(t, launched)
+	assert.True(t, launched)
 	assertNoDirWriteProofMarkers(t, repo)
 	assertNoDirWriteProofMarkers(t, filepath.Join(repo, ".git"))
 	assertNoDirWriteProofMarkers(t, filepath.Join(repo, ".git-old"))
 }
 
-func TestResumeProvenance_MalformedMetadataFailsClosedForOwner(t *testing.T) {
+func TestResumeIgnoresLegacyMalformedProvenance(t *testing.T) {
 	f := newFlow(t)
 	const (
 		target = "resume-malformed-target-aaaa-bbbb-111111111111"
@@ -147,12 +137,12 @@ func TestResumeProvenance_MalformedMetadataFailsClosedForOwner(t *testing.T) {
 
 	rec := agentReq(t, f, caller, http.MethodPost, "/v1/agent/"+target+"/resume", nil)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "error:resume_provenance")
+	assert.Contains(t, rec.Body.String(), `"action":"resumed"`)
 	_, launched := f.World.SpawnCwdWriteProof(target)
-	assert.False(t, launched)
+	assert.True(t, launched)
 }
 
-func TestResumeProvenance_ProductionHandoffRejectsCwdReplacementAndCleansPin(t *testing.T) {
+func TestResumeDoesNotCreateLaunchPins(t *testing.T) {
 	f := newFlow(t)
 	const (
 		target = "resume-race-target-aaaa-bbbb-111111111111"
@@ -162,23 +152,23 @@ func TestResumeProvenance_ProductionHandoffRejectsCwdReplacementAndCleansPin(t *
 	cwd := filepath.Join(root, "cwd")
 	moved := filepath.Join(root, "cwd-old")
 	require.NoError(t, os.Mkdir(cwd, 0o755))
-	physicalCwd := canonicalResumeTestPath(t, cwd)
 	f.HaveConvWithTitle(target, "resume-race-target")
 	f.HaveAliveSession(target, "resume-race-session", "resume-race-tmux", cwd)
 	f.MarkOffline("resume-race-tmux")
 	ownerResumeFixture(t, f, target, caller)
 	installObservingResumeSpawner(t, func(args clcommon.SpawnArgs) error {
-		require.Equal(t, physicalCwd, args.Cwd)
+		require.Equal(t, cwd, args.Cwd)
+		require.Empty(t, args.CwdWriteProof)
+		require.Empty(t, args.DirWriteProof)
 		require.NoError(t, os.Rename(cwd, moved))
 		return os.Mkdir(cwd, 0o755)
 	})
 
 	rec := agentReq(t, f, caller, http.MethodPost, "/v1/agent/"+target+"/resume", nil)
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-	assert.Contains(t, rec.Body.String(), "spawn dir proof marker",
-		"the production SpawnArgs handoff must reach the child-side cwd marker guard")
+	assert.Contains(t, rec.Body.String(), `"action":"resumed"`)
 	assertNoDirWriteProofMarkers(t, cwd)
 	assertNoDirWriteProofMarkers(t, moved)
 	_, launched := f.World.SpawnCwdWriteProof(target)
-	assert.False(t, launched)
+	assert.True(t, launched)
 }

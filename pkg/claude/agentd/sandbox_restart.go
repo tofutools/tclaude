@@ -162,7 +162,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 	); err != nil {
 		// The posture did not change, so restore availability under the old
 		// configuration before reporting the persistence failure.
-		resume := resumeOneConvUnderLaunchLock(convID, false, true, nil)
+		resume := resumeOneConvUnderLaunchLock(convID, false, nil)
 		clientHandoff.finishForConv(convID)
 		detail := "persist temporary sandbox mode: " + err.Error()
 		if resume.Action != "resumed" && resume.Action != "skipped:already_online" {
@@ -172,7 +172,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 		return
 	}
 
-	resume := resumeOneConvUnderLaunchLock(convID, false, true, nil)
+	resume := resumeOneConvUnderLaunchLock(convID, false, nil)
 	switchedClients := clientHandoff.finishForConv(convID)
 	if resume.Action != "resumed" {
 		writeError(w, http.StatusInternalServerError, "restart_failed",
