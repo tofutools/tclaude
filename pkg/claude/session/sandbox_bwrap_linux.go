@@ -115,8 +115,8 @@ func tclaudeLayerProbeArgs(
 		args = append(args, "--unshare-net", "--unshare-pid")
 	case sandboxpolicy.NetworkFiltered:
 		// The filtered launch builds the same user, network, and PID namespaces.
-		// Its historical/default shape selects namespace root; the profile opt-in
-		// omits those selectors and verifies bubblewrap restores the invoking ids.
+		// Its caller-identity shape omits uid/gid selectors and verifies bubblewrap
+		// restores the invoking ids.
 		// It no longer needs CAP_NET_ADMIN inside the sandbox: the base
 		// nft policy is installed from the supervisor, which joins the owning outer
 		// namespace from outside bubblewrap's AppArmor confinement. Probing an
@@ -203,7 +203,7 @@ func tclaudeLayerToolingPresence(interactive bool) error {
 func resolveBwrapServerBinary(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
-	preserveCallerIdentity ...bool,
+	_ ...bool,
 ) (string, error) {
 	binary, err := lookPathBwrap("bwrap")
 	if err != nil {
@@ -220,7 +220,7 @@ func resolveBwrapServerBinary(
 		return "", fmt.Errorf(
 			"tclaude-layer could not resolve a trusted bubblewrap (`bwrap`): %w", err)
 	}
-	preserve := len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0]
+	preserve := posture == sandboxpolicy.NetworkFiltered
 	probe := probeBwrap
 	if preserve {
 		probe = probeBwrapIdentity
@@ -584,7 +584,7 @@ func tclaudeLayerUnixRelayServerCommandArgs(
 		"--preserve-fds", "2",
 		policyFlag, encoded,
 	}
-	if !tclaudeLayerPlanDeploysProxy(plan) && plan.PreserveCallerIdentity {
+	if !tclaudeLayerPlanDeploysProxy(plan) {
 		argv = append(argv, "--filtered-network-preserve-caller-identity")
 	}
 	argv = append(argv, "--")

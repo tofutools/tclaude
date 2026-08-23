@@ -149,15 +149,11 @@ func MaterializeNetworkRules(in NetworkRules) (NetworkRules, error) {
 	// pack-expanded profile launch under a different engine than it authored.
 	switch in.Baseline {
 	case NetworkBaselineInherit:
-		return NetworkRules{
-			Engine: in.Engine, Namespace: in.Namespace,
-			PreserveCallerIdentity: in.PreserveCallerIdentity,
-		}, nil
+		return NetworkRules{Engine: in.Engine, Namespace: in.Namespace}, nil
 	case NetworkBaselineAllow:
 		return NetworkRules{
 			Mode: AccessModeOpen, Deny: denyEntries, Engine: in.Engine,
-			Namespace:              in.Namespace,
-			PreserveCallerIdentity: in.PreserveCallerIdentity,
+			Namespace: in.Namespace,
 		}, nil
 	case NetworkBaselineDeny:
 	default:
@@ -171,14 +167,12 @@ func MaterializeNetworkRules(in NetworkRules) (NetworkRules, error) {
 	if len(allowEntries) == 0 {
 		return NetworkRules{
 			Mode: AccessModeClosed, Deny: denyEntries, Engine: in.Engine,
-			Namespace:              in.Namespace,
-			PreserveCallerIdentity: in.PreserveCallerIdentity,
+			Namespace: in.Namespace,
 		}, nil
 	}
 	return NetworkRules{
 		Mode: AccessModeList, Allow: allowEntries, Deny: denyEntries,
 		Engine: in.Engine, Namespace: in.Namespace,
-		PreserveCallerIdentity: in.PreserveCallerIdentity,
 	}, nil
 }
 

@@ -196,9 +196,8 @@ func TestTclaudeLayerSSHWorkaroundCoversNonCodexAndBothPacketIdentities(t *testi
 		{
 			Name: "caller-id-packet",
 			Network: &sandboxpolicy.NetworkRules{
-				Baseline:               sandboxpolicy.NetworkBaselineDeny,
-				Engine:                 sandboxpolicy.NetworkEnginePacket,
-				PreserveCallerIdentity: true,
+				Baseline: sandboxpolicy.NetworkBaselineDeny,
+				Engine:   sandboxpolicy.NetworkEnginePacket,
 				Allow: []sandboxpolicy.NetworkAllowEntry{
 					{Domain: "example.test"},
 					{Domain: "api.anthropic.com", Ports: []int{443}},
@@ -223,9 +222,8 @@ func TestTclaudeLayerSSHWorkaroundCoversNonCodexAndBothPacketIdentities(t *testi
 		{
 			Name: "caller-id-proxy",
 			Network: &sandboxpolicy.NetworkRules{
-				Baseline:               sandboxpolicy.NetworkBaselineDeny,
-				Engine:                 sandboxpolicy.NetworkEngineProxy,
-				PreserveCallerIdentity: true,
+				Baseline: sandboxpolicy.NetworkBaselineDeny,
+				Engine:   sandboxpolicy.NetworkEngineProxy,
 				Allow: []sandboxpolicy.NetworkAllowEntry{
 					{Domain: "example.test"},
 					{Domain: "api.anthropic.com", Ports: []int{443}},

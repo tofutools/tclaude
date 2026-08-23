@@ -82,7 +82,7 @@ func TestSandboxProfileExportUsesHighestVersionAcrossOrderedProfiles(t *testing.
 		{
 			"name": "caller-identity-last",
 			"network": map[string]any{
-				"baseline": "deny", "preserve_caller_identity": true,
+				"baseline": "deny",
 			},
 		},
 	} {
@@ -96,10 +96,19 @@ func TestSandboxProfileExportUsesHighestVersionAcrossOrderedProfiles(t *testing.
 	require.Equalf(t, http.StatusOK, rec.Code, "export body=%s", rec.Body.String())
 	var bundle map[string]any
 	testharness.DecodeJSON(t, rec, &bundle)
-	assert.Equal(t, float64(16), bundle["format_version"])
+	assert.Equal(t, float64(15), bundle["format_version"])
 
 	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import/inspect", bundle)
 	assert.Equalf(t, http.StatusOK, rec.Code, "inspect body=%s", rec.Body.String())
+
+	// Version 16 briefly carried an opt-in for caller identity. It remains
+	// readable after that field became the unconditional packet-filter default.
+	bundle["format_version"] = float64(16)
+	profiles := bundle["profiles"].([]any)
+	last := profiles[len(profiles)-1].(map[string]any)
+	last["network"].(map[string]any)["preserve_caller_identity"] = true
+	rec = profileReq(t, f, http.MethodPost, "/v1/sandbox-profiles/import/inspect", bundle)
+	assert.Equalf(t, http.StatusOK, rec.Code, "v16 inspect body=%s", rec.Body.String())
 }
 
 func TestSandboxProfileFilesystemRootPredictionRefusesUnsupportedTargets(t *testing.T) {

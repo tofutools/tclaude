@@ -215,7 +215,6 @@ func runTclaudeLayerFilteredNetworkSmoke(t *testing.T, smokeKind string) {
 	}
 	// This executing boundary covers the opt-in identity mode while retaining
 	// the existing packet, DNS, pasta, nft, and fail-closed assertions.
-	rules.PreserveCallerIdentity = true
 	axes := sandboxpolicy.ResolvedAxes{Network: rules}
 	snapshot := sandboxpolicy.EmptySnapshot()
 	snapshot.Effective.Network = &rules

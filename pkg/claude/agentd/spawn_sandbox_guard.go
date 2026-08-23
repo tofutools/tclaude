@@ -425,7 +425,8 @@ func planSandboxProfileAccessForLaunch(
 		}
 		verdict, err = resolveTclaudeLayerAccessVerdictWithIdentity(
 			h.Name, posture, root, deployedEngine,
-			axes.Network.PreserveCallerIdentity)
+			posture == sandboxpolicy.NetworkFiltered &&
+				deployedEngine == sandboxpolicy.NetworkEnginePacket)
 		if err != nil {
 			// Reached from spawn, clone, reincarnate and relaunch — all of
 			// which refuse here on a LIVE host-capability failure, so all of

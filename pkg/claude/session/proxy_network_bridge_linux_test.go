@@ -76,7 +76,7 @@ func proxyBridgeDiscriminatingRules() sandboxpolicy.NetworkRules {
 
 // TestProxyNetworkFloorReusesTheIsolatedConstruction is the floor half of the
 // milestone: a proxy-engine launch must build the isolated posture's namespace
-// and must NOT acquire the packet posture's user namespace, uid-0 mapping or
+// and must NOT acquire the packet posture's user namespace or
 // capabilities. Reverting the floor mapping fails this on the --unshare-user
 // assertion.
 func TestProxyNetworkFloorReusesTheIsolatedConstruction(t *testing.T) {
@@ -100,10 +100,11 @@ func TestProxyNetworkFloorReusesTheIsolatedConstruction(t *testing.T) {
 	assert.NotContains(t, proxyArgs, "--uid")
 	assert.NotContains(t, proxyArgs, "--gid")
 
-	// The packet posture is unchanged by this milestone, and the proxy floor is
-	// the isolated construction rather than a third variant of it.
+	// The packet posture uses its caller-identity user namespace, while the proxy
+	// floor is the isolated construction rather than a third variant of it.
 	assert.Contains(t, packetArgs, "--unshare-user")
-	assert.Contains(t, packetArgs, "--uid")
+	assert.NotContains(t, packetArgs, "--uid")
+	assert.NotContains(t, packetArgs, "--gid")
 	assert.Equal(t, isolatedArgs, proxyArgs,
 		"the proxy floor is the isolated posture's construction, unchanged")
 }

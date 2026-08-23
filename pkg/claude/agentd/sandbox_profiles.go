@@ -735,10 +735,6 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 	}
 	formatVersion := sandboxProfileExportVersionLegacy
 	for _, profile := range out {
-		if profile.Network != nil && profile.Network.PreserveCallerIdentity {
-			formatVersion = 16
-			continue
-		}
 		if profile.HarnessConfig != "" {
 			if formatVersion < 15 {
 				formatVersion = 15
@@ -989,8 +985,10 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 // cannot be sent under an older envelope because ignoring `private` would
 // silently replace its network boundary with the shared host namespace.
 // Version 14 adds the explicit filesystem-root posture. Omitting it preserves
-// the historical automatic derivation. Version 15 adds harness-config access,
-// and version 16 adds the filtered Linux caller-identity opt-in.
+// the historical automatic derivation. Version 15 adds harness-config access.
+// Version 16 remains readable because released bundles may carry the retired
+// caller-identity field; decoding now ignores it because packet filtering
+// preserves caller identity unconditionally.
 //
 // Older versions stay readable so imports from older installations keep
 // working. The two removals are handled DIFFERENTLY on purpose. The retired
@@ -1013,16 +1011,6 @@ func supportedSandboxProfileExport(format string, version int) bool {
 
 func validateSandboxProfileExportVersionContent(env sandboxProfileExportEnvelope) *spawnFailure {
 	for _, profile := range env.Profiles {
-		if env.FormatVersion < 16 && profile.Network != nil &&
-			profile.Network.PreserveCallerIdentity {
-			return &spawnFailure{
-				Status: http.StatusBadRequest,
-				Kind:   "invalid_format",
-				Msg: fmt.Sprintf(
-					"sandbox profile %q preserves filtered Linux caller identity, which requires export format version 16",
-					profile.Name),
-			}
-		}
 		if env.FormatVersion < 15 && profile.HarnessConfig != "" {
 			return &spawnFailure{
 				Status: http.StatusBadRequest,
