@@ -61,7 +61,7 @@ func ownerResumeFixture(t *testing.T, f *testFlow, target, caller string) *db.Ag
 // exporting the concrete testharness type from newFlow's local helper.
 type testFlow = testharness.Flow
 
-func TestResumeUsesRecordedCwdWithoutRecheckingPhysicalIdentity(t *testing.T) {
+func TestResumeUsesAdmittedPhysicalCwdWithoutRecheckingIdentity(t *testing.T) {
 	f := newFlow(t)
 	const (
 		target = "resume-symlink-target-aaaa-bbbb-111111111111"
@@ -72,6 +72,8 @@ func TestResumeUsesRecordedCwdWithoutRecheckingPhysicalIdentity(t *testing.T) {
 	unrelated := filepath.Join(root, "unrelated")
 	require.NoError(t, os.Mkdir(original, 0o755))
 	require.NoError(t, os.Mkdir(unrelated, 0o755))
+	physicalOriginal, err := filepath.EvalSymlinks(original)
+	require.NoError(t, err)
 	launchPath := filepath.Join(root, "launch")
 	require.NoError(t, os.Symlink(original, launchPath))
 	f.HaveConvWithTitle(target, "resume-symlink-target")
@@ -87,8 +89,8 @@ func TestResumeUsesRecordedCwdWithoutRecheckingPhysicalIdentity(t *testing.T) {
 	observer.mu.Lock()
 	launchedCwd := observer.args.Cwd
 	observer.mu.Unlock()
-	assert.Equal(t, launchPath, launchedCwd,
-		"resume must reuse the recorded launch path without a new provenance decision")
+	assert.Equal(t, physicalOriginal, launchedCwd,
+		"resume must reuse the admitted physical address without re-verifying its identity")
 }
 
 func TestResumeAllowsRepositoryReplacementAfterInitialSpawn(t *testing.T) {
