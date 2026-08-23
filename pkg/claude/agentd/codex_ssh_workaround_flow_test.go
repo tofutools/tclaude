@@ -159,10 +159,14 @@ func TestCodexTclaudeLayerSSHWorkaroundRequiresCallerIdentityPacketSandbox(t *te
 		return session.FilteredNetworkPrerequisite{Detected: true, Detail: "test packet gateway"}
 	}))
 	verdict := func(
-		_ string, _ sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+		_ string, posture sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
 		_ sandboxpolicy.NetworkEngine,
 	) (harness.LaunchOSSandbox, error) {
-		return harness.LaunchOSSandbox{State: "on", Source: "test tclaude-layer"}, nil
+		return harness.LaunchOSSandbox{
+			State:           "on",
+			Source:          "test tclaude-layer",
+			FilteredNetwork: posture == sandboxpolicy.NetworkFiltered,
+		}, nil
 	}
 	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(verdict))
 	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictWithIdentityForTest(func(
@@ -178,7 +182,11 @@ func TestCodexTclaudeLayerSSHWorkaroundRequiresCallerIdentityPacketSandbox(t *te
 				Baseline:               sandboxpolicy.NetworkBaselineDeny,
 				Engine:                 sandboxpolicy.NetworkEnginePacket,
 				PreserveCallerIdentity: true,
-				Allow:                  []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
+				Allow: []sandboxpolicy.NetworkAllowEntry{
+					{Domain: "example.test"},
+					{Domain: "chatgpt.com", Ports: []int{443}},
+					{Domain: "auth.openai.com", Ports: []int{443}},
+				},
 			},
 		},
 		{
@@ -186,7 +194,11 @@ func TestCodexTclaudeLayerSSHWorkaroundRequiresCallerIdentityPacketSandbox(t *te
 			Network: &sandboxpolicy.NetworkRules{
 				Baseline: sandboxpolicy.NetworkBaselineDeny,
 				Engine:   sandboxpolicy.NetworkEnginePacket,
-				Allow:    []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
+				Allow: []sandboxpolicy.NetworkAllowEntry{
+					{Domain: "example.test"},
+					{Domain: "chatgpt.com", Ports: []int{443}},
+					{Domain: "auth.openai.com", Ports: []int{443}},
+				},
 			},
 		},
 		{
@@ -195,7 +207,11 @@ func TestCodexTclaudeLayerSSHWorkaroundRequiresCallerIdentityPacketSandbox(t *te
 				Baseline:               sandboxpolicy.NetworkBaselineDeny,
 				Engine:                 sandboxpolicy.NetworkEngineProxy,
 				PreserveCallerIdentity: true,
-				Allow:                  []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
+				Allow: []sandboxpolicy.NetworkAllowEntry{
+					{Domain: "example.test"},
+					{Domain: "chatgpt.com", Ports: []int{443}},
+					{Domain: "auth.openai.com", Ports: []int{443}},
+				},
 			},
 		},
 	} {
