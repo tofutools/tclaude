@@ -771,7 +771,7 @@ func TestResumeOneConv_TemporaryOffDisablesTclaudeOuterLayer(t *testing.T) {
 		"temporary off must omit the tclaude outer wrapper as well as disabling Claude's sandbox")
 }
 
-func TestResumeOneConv_UsesDaemonOwnedFilesystemPin(t *testing.T) {
+func TestResumeOneConv_DoesNotRequireFilesystemPin(t *testing.T) {
 	setupTestDB(t)
 	rec := installRecordingResumeSpawner(t)
 	const convID = "unproved-group-member-conv-12345678"
@@ -779,8 +779,8 @@ func TestResumeOneConv_UsesDaemonOwnedFilesystemPin(t *testing.T) {
 
 	res := resumeOneConv(convID)
 	require.Equal(t, "resumed", res.Action, "detail=%s", res.Detail)
-	assert.NotEmpty(t, rec.cwdWriteProof,
-		"daemon must bind the verified target cwd through the child launch")
+	assert.Empty(t, rec.cwdWriteProof,
+		"an authorized lifecycle continuation must not re-prove its inherited cwd")
 }
 
 func TestResumeOneConv_UsesDurableProfilesAfterAllSessionsArePruned(t *testing.T) {

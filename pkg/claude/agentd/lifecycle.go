@@ -2903,7 +2903,6 @@ func handleAgentResume(w http.ResponseWriter, r *http.Request, targetConv string
 			}
 			return
 		}
-		trustRoot = true
 	}
 	// ?recreate=1 opts into recreating a deleted launch dir empty before the
 	// relaunch (the CLI's `--recreate-dir`, the dashboard's confirm-and-retry).
