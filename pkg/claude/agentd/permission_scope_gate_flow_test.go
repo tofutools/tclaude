@@ -151,7 +151,13 @@ func TestPermissionScope_GlobalAgentSpawnUsesProfileScopes(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
 	const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000006"
-	haveSpawnCapableMember(t, f, "alpha", lead)
+	f.HaveConvWithTitle(lead, "global-spawner")
+	f.HaveEnrolledAgent(lead)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "sess-" + lead, TmuxSession: "tmux-" + lead, ConvID: lead,
+		Cwd: f.World.HomeDir, Status: "running", Harness: harness.DefaultName,
+		HarnessBuiltinMode: harness.ClaudeSandboxOff, ApprovalPolicy: "bypassPermissions",
+	}))
 	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "global-allowed"})
 	require.NoError(t, err)
 	grantScoped(t, f, lead, agentd.PermAgentSpawn, map[string]any{
@@ -162,6 +168,29 @@ func TestPermissionScope_GlobalAgentSpawnUsesProfileScopes(t *testing.T) {
 		"name": "global-spawn-worker", "sandbox_profile": "global-allowed",
 	})
 	require.Equal(t, http.StatusOK, spawn.Code, spawn.Raw)
+}
+
+func TestPermissionScope_SandboxProfileCannotNameAnOmittedProfile(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000007"
+	f.HaveMember("alpha", lead)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "sess-" + lead, TmuxSession: "tmux-" + lead, ConvID: lead,
+		Cwd: f.World.HomeDir, Status: "running", Harness: harness.CodexName,
+		HarnessBuiltinMode: harness.SandboxDangerFull, ApprovalPolicy: "never",
+	}))
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "locked"})
+	require.NoError(t, err)
+	grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn,
+		map[string]any{"sandbox_profile": []string{"locked"}})
+
+	spawn := f.AsAgent(lead).SpawnWith("alpha", map[string]any{
+		"name": "omitted-sandbox-worker", "harness": harness.CodexName,
+		"sandbox": harness.SandboxDangerFull, "sandbox_profile": "locked",
+	})
+	assert.Equal(t, http.StatusForbidden, spawn.Code, spawn.Raw)
+	assert.Contains(t, string(spawn.Raw), "resolved launch mode omits sandbox profiles")
 }
 
 // Regression guard for the ~129 gate sites that pass no ActionContext: an

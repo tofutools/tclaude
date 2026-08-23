@@ -709,7 +709,7 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 		return "max_live_workers", fmt.Sprintf("rule already has %d live workers (max %d)", n, spec.MaxLiveWorkers), ""
 	}
 	recorder := httptest.NewRecorder()
-	if !checkSpawnGuardrails(recorder, g, ownerConv) {
+	if !checkSpawnGuardrails(recorder, g, ownerConv, false) {
 		return "guardrail_denied", strings.TrimSpace(recorder.Body.String()), ""
 	}
 	claimed := claimSpawnRateSlot(recorder, ownerConv)

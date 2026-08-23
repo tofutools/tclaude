@@ -3670,7 +3670,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// is claimed after the validation gates below (claimSpawnRateSlot) so a
 	// refused request — including the dir write-proof challenge round-trip —
 	// never burns a slot. See spawn_guardrails.go.
-	if !checkSpawnGuardrails(w, g, spawnerConvID) {
+	if !checkSpawnGuardrails(w, g, spawnerConvID,
+		authorizedPermissionForRequest(r, "") == PermAgentSpawn) {
 		return
 	}
 
@@ -4528,6 +4529,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// instead of resolving a policy that must fail capability validation later.
 	// The dashboard mirrors this by forcing its selector to the visible "none"
 	// state; this server-side rule also covers CLI callers and older tabs.
+	if spawnerConvID != "" && body.SandboxProfile != "" &&
+		sandboxProfilesDisabled(h.Name, harnessBuiltinMode, body.SandboxImplementation) {
+		writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
+			"the resolved launch mode omits sandbox profiles and cannot satisfy a named sandbox-profile selection")
+		return
+	}
 	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()
 	var policyErr error
 	if !sandboxProfilesDisabled(h.Name, harnessBuiltinMode, body.SandboxImplementation) &&
