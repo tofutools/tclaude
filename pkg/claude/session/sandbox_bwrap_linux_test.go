@@ -387,15 +387,18 @@ func TestResolveTclaudeLayerRefusesUnavailableIsolatedNamespaces(t *testing.T) {
 func TestResolveTclaudeLayerNamesFilteredNamespaceRequirement(t *testing.T) {
 	oldLookPath := lookPathBwrap
 	oldProbe := probeBwrap
+	oldIdentityProbe := probeBwrapIdentity
 	t.Cleanup(func() {
 		lookPathBwrap = oldLookPath
 		probeBwrap = oldProbe
+		probeBwrapIdentity = oldIdentityProbe
 	})
 	stubTrustedExecutableWalk(t)
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error {
 		return errors.New("operation not permitted")
 	}
+	probeBwrapIdentity = probeBwrap
 
 	_, _, err := ResolveTclaudeLayer(
 		sandboxpolicy.NetworkFiltered, sandboxpolicy.RootConstructed)
