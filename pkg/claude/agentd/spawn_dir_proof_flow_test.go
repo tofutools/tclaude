@@ -1058,6 +1058,56 @@ func TestSpawnDirProof_InheritedLifecycleAuthorityNeedsNoProof(t *testing.T) {
 		assertNoDirWriteProofMarkers(t, cwd)
 		assertNoDirWriteProofMarkers(t, writeRoot)
 	})
+
+	t.Run("resume with non-entry-writable profile root", func(t *testing.T) {
+		f := newFlow(t)
+		const caller = "profile-eacces-resumer-aaaa-bbbb-111111111111"
+		const target = "profile-eacces-target-bbbb-cccc-222222222222"
+		f.HaveConvWithTitle(caller, "profile-eacces-resumer")
+		require.NoError(t, db.GrantAgentPermission(caller, agentd.PermAgentResume, "test"))
+
+		cwd, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		writeRoot, err := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, err)
+		require.NoError(t, os.Chmod(writeRoot, 0o555))
+		t.Cleanup(func() { _ = os.Chmod(writeRoot, 0o755) })
+		probe := filepath.Join(writeRoot, "entry-permission-probe")
+		if err := os.WriteFile(probe, nil, 0o600); err == nil {
+			_ = os.Remove(probe)
+			t.Skip("test user can create entries in a mode-0555 directory")
+		} else {
+			require.ErrorIs(t, err, os.ErrPermission)
+		}
+
+		f.HaveConvWithTitle(target, "offline-eacces-target")
+		group := f.HaveGroup("resume-eacces-policy")
+		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: group.ID, ConvID: target}))
+		_, err = db.CreateSandboxProfile(&db.SandboxProfile{
+			Name: "resume-eacces-root",
+			Filesystem: []db.SandboxFilesystemGrant{{
+				Path: writeRoot, Access: "write",
+			}},
+		})
+		require.NoError(t, err)
+		_, err = db.SetAgentGroupSandboxProfile(group.Name, "resume-eacces-root")
+		require.NoError(t, err)
+		f.HaveAliveSession(target, "spwn-profile-eacces", "tclaude-profile-eacces", cwd)
+		f.MarkOffline("tclaude-profile-eacces")
+		setEffectiveSandboxWriteRoot(t, target, writeRoot)
+		observer := installObservingResumeSpawner(t, nil)
+
+		rec := agentReq(t, f, caller, http.MethodPost,
+			"/v1/agent/"+url.PathEscape(target)+"/resume", nil)
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		observer.mu.Lock()
+		canonicalOnly := append([]string(nil), observer.args.CanonicalSandboxWriteDirs...)
+		observer.mu.Unlock()
+		assert.Equal(t, []string{writeRoot}, canonicalOnly,
+			"the unpinnable inherited grant must retain a child-side canonical path check")
+		assertNoDirWriteProofMarkers(t, cwd)
+		assertNoDirWriteProofMarkers(t, writeRoot)
+	})
 }
 
 // Regression (TCL-991): the read-only exemption above must NOT extend to a

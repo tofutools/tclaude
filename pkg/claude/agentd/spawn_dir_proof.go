@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -515,17 +516,34 @@ func cleanupDirWriteProofMarkers(token string, dirs []string) {
 // durable target provenance has established which physical directories an
 // offline lifecycle launch may reuse. This is launch-integrity plumbing, not
 // caller authorization: the requester never writes into target-owned paths.
-func pinInheritedLaunchDirs(rawDirs []string) (map[string]string, string, []string, func(), error) {
-	return pinInheritedLaunchDirsWithToken(rawDirs, newDirWriteProofToken())
+// rawDirs are launch anchors (cwd and Git roots) whose markers are mandatory.
+// optionalRawDirs are inherited sandbox roots: a profile's write grant permits
+// access to existing descendants but does not promise the daemon can create a
+// directory entry in the host root. Those roots retain a canonical-path check
+// when marker creation is refused specifically by host entry permissions.
+func pinInheritedLaunchDirs(rawDirs, optionalRawDirs []string) (map[string]string, string, []string, []string, func(), error) {
+	return pinInheritedLaunchDirsWithToken(rawDirs, optionalRawDirs, newDirWriteProofToken())
 }
 
-func pinInheritedLaunchDirsWithToken(rawDirs []string, token string) (map[string]string, string, []string, func(), error) {
-	resolved, mapping, err := resolveDirWriteProofDirs(rawDirs)
+func pinInheritedLaunchDirsWithToken(rawDirs, optionalRawDirs []string, token string) (map[string]string, string, []string, []string, func(), error) {
+	return pinInheritedLaunchDirsWithTokenAndOpen(rawDirs, optionalRawDirs, token, unix.Openat)
+}
+
+func pinInheritedLaunchDirsWithTokenAndOpen(
+	rawDirs, optionalRawDirs []string,
+	token string,
+	openat func(int, string, int, uint32) (int, error),
+) (map[string]string, string, []string, []string, func(), error) {
+	resolved, mapping, err := resolveDirWriteProofDirs(append(append([]string{}, rawDirs...), optionalRawDirs...))
 	if err != nil {
-		return nil, "", nil, func() {}, err
+		return nil, "", nil, nil, func() {}, err
 	}
 	if token == "" {
-		return nil, "", nil, func() {}, fmt.Errorf("generate inherited launch pin")
+		return nil, "", nil, nil, func() {}, fmt.Errorf("generate inherited launch pin")
+	}
+	required := make(map[string]bool, len(rawDirs))
+	for _, raw := range rawDirs {
+		required[mapping[raw]] = true
 	}
 	filename := dirWriteProofFilePrefix + token
 	type heldMarker struct {
@@ -538,23 +556,35 @@ func pinInheritedLaunchDirsWithToken(rawDirs []string, token string) (map[string
 			_ = marker.dir.Close()
 		}
 	}
+	var pinned, canonicalOnly []string
 	for _, dir := range resolved {
 		dirHandle, openErr := os.Open(dir)
 		if openErr != nil {
 			cleanup()
-			return nil, "", nil, func() {}, fmt.Errorf("open inherited launch pin directory %s: %w", dir, openErr)
+			return nil, "", nil, nil, func() {}, fmt.Errorf("open inherited launch pin directory %s: %w", dir, openErr)
 		}
-		fd, createErr := unix.Openat(int(dirHandle.Fd()), filename,
+		fd, createErr := openat(int(dirHandle.Fd()), filename,
 			unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW, 0o600)
 		if createErr != nil {
 			_ = dirHandle.Close()
+			if !required[dir] && inheritedLaunchPinEntryUnavailable(createErr) {
+				slog.Info("resume sandbox write root cannot hold launch marker; retaining canonical path check",
+					"dir", dir, "error", createErr)
+				canonicalOnly = append(canonicalOnly, dir)
+				continue
+			}
 			cleanup()
-			return nil, "", nil, func() {}, fmt.Errorf("create inherited launch pin in %s: %w", dir, createErr)
+			return nil, "", nil, nil, func() {}, fmt.Errorf("create inherited launch pin in %s: %w", dir, createErr)
 		}
 		_ = unix.Close(fd)
 		held = append(held, heldMarker{dir: dirHandle})
+		pinned = append(pinned, dir)
 	}
-	return mapping, token, resolved, cleanup, nil
+	return mapping, token, pinned, canonicalOnly, cleanup, nil
+}
+
+func inheritedLaunchPinEntryUnavailable(err error) bool {
+	return errors.Is(err, unix.EACCES) || errors.Is(err, unix.EPERM) || errors.Is(err, unix.EROFS)
 }
 
 func appendUniqueDirs(dirs []string, candidates ...string) []string {

@@ -1964,9 +1964,11 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	// Close provenance-check→session-new races with daemon-owned markers. The
 	// child checks cwd relative to the inode tmux actually entered and checks
 	// every extra root by canonical pathname immediately before exec. Profile
-	// write roots participate only when concrete for this launch; missing
-	// read/write rules stay inactive in session new.
+	// write roots participate only when concrete for this launch. A profile root
+	// that refuses host directory-entry creation keeps the canonical child check
+	// without a marker; cwd and Git roots remain mandatory marker pins.
 	rawPins := appendUniqueDirs([]string{cwd}, gitWriteDirs...)
+	var optionalSandboxPins []string
 	if effectiveSandbox != nil {
 		for _, grant := range effectiveSandbox.Effective.Filesystem {
 			if grant.Access != sandboxpolicy.AccessWrite {
@@ -1981,10 +1983,11 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 				res.Detail = fmt.Sprintf("sandbox_profile_changed: write root %s is no longer a canonical directory", grant.Path)
 				return res
 			}
-			rawPins = appendUniqueDirs(rawPins, grant.Path)
+			optionalSandboxPins = appendUniqueDirs(optionalSandboxPins, grant.Path)
 		}
 	}
-	pinMapping, pinToken, pinDirs, cleanupPins, pinErr := pinInheritedLaunchDirs(rawPins)
+	pinMapping, pinToken, pinDirs, canonicalSandboxWriteDirs, cleanupPins, pinErr :=
+		pinInheritedLaunchDirs(rawPins, optionalSandboxPins)
 	if pinErr != nil {
 		res.Action = "error"
 		res.Detail = "pin verified resume directories: " + pinErr.Error()
@@ -2017,6 +2020,11 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		return res
 	}
 	if fail := reassertDirWriteProof(pinDirs); fail != nil {
+		res.Action = "error"
+		res.Detail = fail.Msg
+		return res
+	}
+	if fail := reassertDirWriteProof(canonicalSandboxWriteDirs); fail != nil {
 		res.Action = "error"
 		res.Detail = fail.Msg
 		return res
@@ -2075,6 +2083,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 		CodexGitCommonDirPinned:    codexGitCommonDirPinned,
 		GitWorktreeWriteDirs:       gitWriteDirs,
 		GitWorktreeWriteDirsPinned: true,
+		CanonicalSandboxWriteDirs:  canonicalSandboxWriteDirs,
 		Effort:                     launchConfig.Effort,
 		Model:                      launchConfig.Model,
 		Harness:                    harnessName,
@@ -9193,6 +9202,9 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	for _, dir := range a.GitWorktreeWriteDirs {
 		args = append(args, "--git-worktree-write-dir", dir)
 	}
+	for _, dir := range a.CanonicalSandboxWriteDirs {
+		args = append(args, "--canonical-sandbox-write-dir", dir)
+	}
 	if a.GitWorktreeWriteDirsPinned {
 		args = append(args, "--git-worktree-write-dirs-pinned")
 	}
@@ -9431,6 +9443,9 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	}
 	for _, dir := range a.GitWorktreeWriteDirs {
 		args = append(args, "--git-worktree-write-dir", dir)
+	}
+	for _, dir := range a.CanonicalSandboxWriteDirs {
+		args = append(args, "--canonical-sandbox-write-dir", dir)
 	}
 	if a.GitWorktreeWriteDirsPinned {
 		args = append(args, "--git-worktree-write-dirs-pinned")

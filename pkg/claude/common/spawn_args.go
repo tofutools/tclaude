@@ -111,6 +111,12 @@ type SpawnArgs struct {
 	// starts, so the child consumes exactly the paths the daemon verified.
 	GitWorktreeWriteDirs       []string
 	GitWorktreeWriteDirsPinned bool
+	// CanonicalSandboxWriteDirs are inherited sandbox-profile write roots where
+	// the daemon could open the directory but the host filesystem refused
+	// creation of a proof entry. The pane bootstrap checks these roots remain
+	// canonical immediately before launch instead of requiring a marker. Cwd
+	// and Git roots never use this fallback.
+	CanonicalSandboxWriteDirs []string
 
 	// Effort is the reasoning-effort flag; "" omits --effort. Resume surfaces
 	// pass the predecessor's inherited effort so the agent stays on it

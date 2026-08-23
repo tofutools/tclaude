@@ -166,7 +166,7 @@ func TestSandboxSnapshotProofDirsExcludesMaterializedAgentDirectory(t *testing.T
 	assert.Equal(t, []string{customWriteDir, agentWriteDir},
 		sandboxSnapshotDirs(snapshot, sandboxpolicy.AccessWrite),
 		"the generated directory must remain writable by the child")
-	proofDirs, generatedDirs := sandboxSnapshotProofDirs(snapshot, sandboxpolicy.AccessWrite)
+	proofDirs, generatedDirs := sandboxSnapshotProofDirs(snapshot, sandboxpolicy.AccessWrite, nil)
 	assert.Equal(t, []string{customWriteDir}, proofDirs,
 		"only caller-controlled roots should require the caller's marker")
 	assert.Equal(t, []string{agentWriteDir}, generatedDirs,
@@ -234,11 +234,68 @@ func TestSandboxSnapshotProofDirsExcludesMountedParentRoot(t *testing.T) {
 		},
 	}
 
-	proofDirs, generatedDirs := sandboxSnapshotProofDirs(snapshot, sandboxpolicy.AccessWrite)
+	proofDirs, generatedDirs := sandboxSnapshotProofDirs(snapshot, sandboxpolicy.AccessWrite, nil)
 	assert.Equal(t, []string{customWriteDir}, proofDirs,
 		"only the caller-controlled root should require the caller's marker")
 	assert.Equal(t, []string{agentRoot}, generatedDirs,
 		"the mounted parent root is daemon-generated and must skip the caller marker")
+}
+
+func TestSandboxSnapshotProofDirs_CanonicalOnlyInheritedRootNeedsNoMarker(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	writeRoot := filepath.Join(root, "device-root")
+	require.NoError(t, os.Mkdir(writeRoot, 0o700))
+	snapshot := &sandboxpolicy.Snapshot{
+		Version: sandboxpolicy.SnapshotVersion,
+		Effective: sandboxpolicy.EffectiveProfile{Filesystem: []sandboxpolicy.FilesystemGrant{{
+			Path: writeRoot, Access: sandboxpolicy.AccessWrite,
+		}}},
+	}
+
+	proofDirs, canonicalDirs := sandboxSnapshotProofDirs(
+		snapshot, sandboxpolicy.AccessWrite, []string{writeRoot})
+	assert.Empty(t, proofDirs)
+	assert.Equal(t, []string{writeRoot}, canonicalDirs)
+
+	ready := filepath.Join(root, "ready")
+	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
+		"true", "inherited-proof", ready, false, proofDirs, canonicalDirs))
+	require.NoError(t, cmd.Run(),
+		"a host directory that refused marker creation must launch without a marker")
+	status, err := os.ReadFile(ready)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", string(status))
+
+	require.NoError(t, os.Rename(writeRoot, writeRoot+"-old"))
+	require.NoError(t, os.Symlink(t.TempDir(), writeRoot))
+	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
+	cmd = exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
+		"true", "inherited-proof", ready, false, proofDirs, canonicalDirs))
+	require.Error(t, cmd.Run(), "canonical-only roots must still reject path substitution")
+}
+
+func TestValidateCanonicalSandboxWriteDirsRequiresProofAndActiveGrant(t *testing.T) {
+	writeRoot := t.TempDir()
+	snapshot := &sandboxpolicy.Snapshot{
+		Effective: sandboxpolicy.EffectiveProfile{Filesystem: []sandboxpolicy.FilesystemGrant{{
+			Path: writeRoot, Access: sandboxpolicy.AccessWrite,
+		}}},
+	}
+
+	params := &NewParams{CanonicalSandboxWriteDirs: []string{writeRoot}}
+	require.ErrorContains(t, validateCanonicalSandboxWriteDirs(params, snapshot),
+		"require a daemon write proof")
+
+	params.CwdWriteProof = "proof"
+	params.CanonicalSandboxWriteDirs = []string{t.TempDir()}
+	require.ErrorContains(t, validateCanonicalSandboxWriteDirs(params, snapshot),
+		"is not an active write grant")
+
+	params.CanonicalSandboxWriteDirs = []string{writeRoot, writeRoot}
+	require.NoError(t, validateCanonicalSandboxWriteDirs(params, snapshot))
+	assert.Equal(t, []string{writeRoot}, params.CanonicalSandboxWriteDirs)
 }
 
 // A deny covering the workspace masks what `extends = ":workspace"` grants, and

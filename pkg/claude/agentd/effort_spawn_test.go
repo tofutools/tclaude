@@ -447,3 +447,23 @@ func TestSessionResumeArgs_ForwardsPreparedResourceCgroupDir(t *testing.T) {
 		t.Fatalf("prepared resource cgroup dir must ride into the resumed session launcher, got %v", withDir)
 	}
 }
+
+func TestSessionArgsForwardCanonicalSandboxWriteDirs(t *testing.T) {
+	for name, args := range map[string][]string{
+		"new": sessionNewArgs(clcommon.SpawnArgs{
+			Label: "label", Cwd: "/tmp/work",
+			CanonicalSandboxWriteDirs: []string{"/dev/dri"},
+		}),
+		"resume": sessionResumeArgs(clcommon.SpawnArgs{
+			ConvID: "conv", Cwd: "/tmp/work",
+			CanonicalSandboxWriteDirs: []string{"/dev/dri"},
+		}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			i := slices.Index(args, "--canonical-sandbox-write-dir")
+			if i < 0 || i+1 >= len(args) || args[i+1] != "/dev/dri" {
+				t.Fatalf("canonical-only sandbox root must reach session new, got %v", args)
+			}
+		})
+	}
+}

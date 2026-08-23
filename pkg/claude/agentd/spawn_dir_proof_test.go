@@ -11,7 +11,53 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"golang.org/x/sys/unix"
 )
+
+func TestPinInheritedLaunchDirs_EntryCreationFailureOnlyFallsBackForOptionalSandboxRoots(t *testing.T) {
+	required := t.TempDir()
+	optional := t.TempDir()
+	denyCreate := func(int, string, int, uint32) (int, error) {
+		return -1, unix.EACCES
+	}
+
+	_, _, _, _, cleanup, err := pinInheritedLaunchDirsWithTokenAndOpen(
+		[]string{required}, nil, "required-denied", denyCreate)
+	cleanup()
+	require.Error(t, err)
+	assert.ErrorIs(t, err, unix.EACCES,
+		"cwd and Git pins must keep failing closed when marker creation is denied")
+
+	mapping, token, pinned, canonicalOnly, cleanup, err := pinInheritedLaunchDirsWithTokenAndOpen(
+		nil, []string{optional}, "optional-denied", denyCreate)
+	require.NoError(t, err)
+	t.Cleanup(cleanup)
+	assert.Equal(t, "optional-denied", token)
+	assert.Equal(t, optional, mapping[optional])
+	assert.Empty(t, pinned)
+	assert.Equal(t, []string{optional}, canonicalOnly,
+		"a sandbox grant does not imply permission to create host directory entries")
+}
+
+func TestPinInheritedLaunchDirs_WritablePinsAreCheckedAndCleaned(t *testing.T) {
+	required := t.TempDir()
+	optional := t.TempDir()
+	mapping, token, pinned, canonicalOnly, cleanup, err := pinInheritedLaunchDirsWithToken(
+		[]string{required}, []string{optional}, "writable-pins")
+	require.NoError(t, err)
+	assert.Equal(t, required, mapping[required])
+	assert.Equal(t, optional, mapping[optional])
+	assert.ElementsMatch(t, []string{required, optional}, pinned)
+	assert.Empty(t, canonicalOnly)
+	for _, dir := range pinned {
+		assert.FileExists(t, filepath.Join(dir, dirWriteProofFilePrefix+token))
+	}
+
+	cleanup()
+	for _, dir := range pinned {
+		assert.NoFileExists(t, filepath.Join(dir, dirWriteProofFilePrefix+token))
+	}
+}
 
 func TestDirWriteChallenge_SingleUse(t *testing.T) {
 	tok := mintDirWriteChallenge("conv-a", []string{"/x"}, nil)

@@ -71,6 +71,7 @@ type NewParams struct {
 	// avoids re-deriving permission roots from a mutable path in the child.
 	GitWorktreeWriteDirs       []string `short:"X" long:"git-worktree-write-dir" optional:"true" help:"Internal: proof-pinned repository sandbox write root"`
 	GitWorktreeWriteDirsPinned bool     `short:"Y" long:"git-worktree-write-dirs-pinned" help:"Internal: use the daemon-pinned repository write roots, including an empty set"`
+	CanonicalSandboxWriteDirs  []string `long:"canonical-sandbox-write-dir" optional:"true" help:"Internal: inherited sandbox write root requiring a canonical-path launch check"`
 	Resume                     string   `long:"resume" short:"r" optional:"true" help:"Resume an existing conversation by ID"`
 	Global                     bool     `short:"g" help:"Search for conversation across all projects (with --resume)"`
 	Label                      string   `long:"label" optional:"true" help:"Custom label for the session"`
@@ -627,6 +628,9 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	if err := validateGitWorktreeWriteDirPins(params); err != nil {
+		return err
+	}
+	if err := validateCanonicalSandboxWriteDirs(params, launchSandbox); err != nil {
 		return err
 	}
 
@@ -2422,7 +2426,8 @@ func runNew(params *NewParams) error {
 		defer cleanupProofReady()
 		proofReadyPath = path
 		proofWriteDirs := append([]string{}, params.GitWorktreeWriteDirs...)
-		sandboxProofDirs, generatedWriteDirs := sandboxSnapshotProofDirs(launchSandbox, sandboxpolicy.AccessWrite)
+		sandboxProofDirs, generatedWriteDirs := sandboxSnapshotProofDirs(
+			launchSandbox, sandboxpolicy.AccessWrite, params.CanonicalSandboxWriteDirs)
 		proofWriteDirs = append(proofWriteDirs, sandboxProofDirs...)
 		harnessCmd = guardHarnessCommandWithDirProof(
 			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "", proofWriteDirs, generatedWriteDirs)
@@ -3143,18 +3148,23 @@ func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.
 	return out
 }
 
-// sandboxSnapshotProofDirs separates caller-controlled sandbox roots, whose
-// marker must have been created by the calling agent, from daemon-materialized
-// per-agent directories. Agentd creates the latter only after the caller's
-// proof challenge, so they cannot require a caller marker; they still ride to
-// the launch guard separately for a final canonical/non-symlink path check.
-func sandboxSnapshotProofDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) (proofDirs, generatedDirs []string) {
+// sandboxSnapshotProofDirs separates sandbox roots requiring a marker from
+// roots requiring only a final canonical/non-symlink path check. The latter
+// include daemon-materialized per-agent directories and inherited profile
+// roots where the host refused marker entry creation. Agentd creates the
+// former after the caller's challenge; the latter already belong to the
+// resumed agent's frozen authority.
+func sandboxSnapshotProofDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access, canonicalOnlyDirs []string) (proofDirs, canonicalDirs []string) {
 	if snapshot == nil {
 		return nil, nil
 	}
 	agentDirectoryNames := make(map[string]bool, len(snapshot.Effective.AgentDirectories))
 	for _, name := range snapshot.Effective.AgentDirectories {
 		agentDirectoryNames[name] = true
+	}
+	canonicalOnly := make(map[string]bool, len(canonicalOnlyDirs))
+	for _, path := range canonicalOnlyDirs {
+		canonicalOnly[path] = true
 	}
 	// A materialized agent directory is recognized either as its own env-var'd
 	// path (the per-directory grant mode) or as the shared parent root that
@@ -3173,13 +3183,44 @@ func sandboxSnapshotProofDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpo
 		if grant.Access != access {
 			continue
 		}
-		if agentDirectoryPaths[grant.Path] {
-			generatedDirs = append(generatedDirs, grant.Path)
+		if agentDirectoryPaths[grant.Path] || canonicalOnly[grant.Path] {
+			canonicalDirs = append(canonicalDirs, grant.Path)
 		} else {
 			proofDirs = append(proofDirs, grant.Path)
 		}
 	}
-	return proofDirs, generatedDirs
+	return proofDirs, canonicalDirs
+}
+
+func validateCanonicalSandboxWriteDirs(params *NewParams, snapshot *sandboxpolicy.Snapshot) error {
+	if len(params.CanonicalSandboxWriteDirs) == 0 {
+		return nil
+	}
+	if params.CwdWriteProof == "" && params.DirWriteProof == "" {
+		return fmt.Errorf("internal canonical sandbox write dirs require a daemon write proof")
+	}
+	writable := make(map[string]bool)
+	if snapshot != nil {
+		for _, grant := range snapshot.Effective.Filesystem {
+			if grant.Access == sandboxpolicy.AccessWrite {
+				writable[grant.Path] = true
+			}
+		}
+	}
+	seen := make(map[string]bool, len(params.CanonicalSandboxWriteDirs))
+	out := make([]string, 0, len(params.CanonicalSandboxWriteDirs))
+	for _, dir := range params.CanonicalSandboxWriteDirs {
+		dir = filepath.Clean(strings.TrimSpace(dir))
+		if dir == "." || !filepath.IsAbs(dir) || !writable[dir] {
+			return fmt.Errorf("internal canonical sandbox write dir %q is not an active write grant", dir)
+		}
+		if !seen[dir] {
+			seen[dir] = true
+			out = append(out, dir)
+		}
+	}
+	params.CanonicalSandboxWriteDirs = out
+	return nil
 }
 
 func sandboxSnapshotActiveFilesystem(snapshot *sandboxpolicy.Snapshot) []sandboxpolicy.FilesystemGrant {
@@ -3493,7 +3534,7 @@ func isValidSpawnCwdProofToken(proof string) bool {
 // so the child never consumes a path substituted after daemon verification.
 // Daemon-materialized per-agent directories are not caller-controlled roots,
 // so they skip the marker requirement but retain the path-substitution check.
-func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkCwd bool, dirs, generatedDirs []string) string {
+func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkCwd bool, dirs, canonicalDirs []string) string {
 	marker := clcommon.SpawnDirWriteProofPrefix + proof
 	ready := clcommon.ShellQuoteArg(readyPath)
 	fail := func(reason string) string {
@@ -3512,11 +3553,11 @@ func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkC
 			" ] || [ ! -f " + quotedMarker + " ] || [ -L " + quotedMarker + " ] || [ -s " + quotedMarker + " ]; then " +
 			"echo 'tclaude: repository write proof changed; refusing harness launch' >&2; " + fail("repository-proof") + "; fi; "
 	}
-	for _, dir := range generatedDirs {
+	for _, dir := range canonicalDirs {
 		quotedDir := clcommon.ShellQuoteArg(dir)
 		guard += "if [ \"$(cd " + quotedDir + " 2>/dev/null && pwd -P)\" != " + quotedDir +
 			" ] || [ -L " + quotedDir + " ]; then " +
-			"echo 'tclaude: generated directory changed; refusing harness launch' >&2; " + fail("repository-proof") + "; fi; "
+			"echo 'tclaude: sandbox write directory changed; refusing harness launch' >&2; " + fail("repository-proof") + "; fi; "
 	}
 	return guard + "printf '%s' ok > " + ready + " || exit 126; " + harnessCmd
 }
