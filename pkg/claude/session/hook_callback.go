@@ -22,7 +22,6 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
-	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -1720,14 +1719,6 @@ func applyHook(ctx context.Context, input HookCallbackInput, envSessionID string
 	// callbacks are separate processes and must not replay a potentially huge
 	// JSONL at turn boundaries; dashboard/context reads consume only appended
 	// bytes and persist a durable cursor for restart recovery.
-
-	// Refresh usage cache when user is likely looking at the status bar.
-	// Runs synchronously — hook callbacks are separate processes so this
-	// just keeps the process alive a bit longer without blocking Claude.
-	// SQLite's TryClaimUsageFetch prevents concurrent API calls.
-	if state.Status == StatusIdle || state.Status == StatusAwaitingPermission || state.Status == StatusAwaitingInput {
-		usageapi.RefreshCache()
-	}
 
 	// Signal task runner when Stop/UserPromptSubmit fires in task mode
 	// (writes/removes the signal file the auto-/exit watcher polls).

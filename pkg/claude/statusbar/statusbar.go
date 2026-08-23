@@ -329,8 +329,10 @@ func run() error {
 		modelLabel, contextWindowTag(effectiveWindow), contextBar(ctxPct), ctxLabel))
 
 	// Rate limits from Claude Code's statusline input (subscription plan) or cost (API plan).
-	// Falls back to Anthropic usage API (cached) when statusline input lacks rate limit data
-	// (e.g. before the first API response in a new session).
+	// Falls back to the shared usage cache when statusline input lacks rate
+	// limit data (e.g. before the first API response in a new session). This
+	// fallback is cache-only; background Anthropic API refresh is a separate,
+	// explicit agentd opt-in.
 	hasLimits := false
 	if rl := input.RateLimits; rl != nil {
 		if rl.FiveHour != nil {
@@ -356,7 +358,7 @@ func run() error {
 
 	}
 
-	// Fallback: use Anthropic usage API cache when statusline input has no rate limits
+	// Fallback: use the shared cache when statusline input has no rate limits.
 	if !hasLimits {
 		if usage, stale := facts.Usage, facts.UsageStale; usage != nil {
 			if stale {

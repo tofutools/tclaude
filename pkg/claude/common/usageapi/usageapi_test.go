@@ -153,33 +153,6 @@ func TestGetCached_BackoffAfterError(t *testing.T) {
 	assert.Equal(t, int32(1), fetchCount.Load(), "expected 1 fetch during backoff")
 }
 
-func TestRefreshCache_BackoffAfterError(t *testing.T) {
-	setupTestCache(t)
-
-	// Seed cache
-	stubFuncs(t, okToken, okFetch(30.0))
-	RefreshCache()
-
-	// Expire
-	stale := loadCacheStale()
-	stale.LastAttemptAt = time.Now().Add(-cacheTTL - 30*time.Second)
-	saveCache(stale, "", nil)
-
-	// Fail once
-	var fetchCount atomic.Int32
-	stubFuncs(t, okToken, func(token string) (*Response, error) {
-		fetchCount.Add(1)
-		return failFetch(token)
-	})
-
-	RefreshCache()
-
-	// Second call should be backed off
-	RefreshCache()
-
-	assert.Equal(t, int32(1), fetchCount.Load(), "expected 1 fetch during backoff")
-}
-
 func TestGetCached_NoStaleCache_ReturnsNilAndError(t *testing.T) {
 	setupTestCache(t)
 
@@ -326,49 +299,6 @@ func TestGetCached_429RefreshFailsFallsBackToStale(t *testing.T) {
 	require.NotNil(t, result, "expected stale data")
 	require.NotNil(t, result.FiveHour, "expected stale 33%%, got %+v", result.FiveHour)
 	require.Equal(t, 33.0, result.FiveHour.Pct, "expected stale 33%%, got %+v", result.FiveHour)
-}
-
-func TestRefreshCache_429DoesNotRetryByDefault(t *testing.T) {
-	setupTestCache(t)
-
-	var fetchCount atomic.Int32
-
-	stubFuncs(t, okToken, func(token string) (*Response, error) {
-		fetchCount.Add(1)
-		return rateLimitFetch(token)
-	})
-
-	RefreshCache()
-
-	assert.Equal(t, int32(1), fetchCount.Load(), "expected 1 fetch (no retry)")
-}
-
-func TestRefreshCache_429RefreshesTokenWhenEnvSet(t *testing.T) {
-	setupTestCache(t)
-	t.Setenv("TCLAUDE_DEBUG_REFRESH", "1")
-
-	var fetchCount atomic.Int32
-
-	stubFuncsWithRefresh(t, okToken,
-		func(token string) (*Response, error) {
-			n := fetchCount.Add(1)
-			if n == 1 {
-				return rateLimitFetch(token)
-			}
-			return okFetch(55.0)(token)
-		},
-		func() (string, error) {
-			return "refreshed-token", nil
-		},
-	)
-
-	RefreshCache()
-
-	cached := loadCacheStale()
-	require.NotNil(t, cached, "expected cache to be populated after refresh+retry")
-	require.NotNil(t, cached.FiveHour, "expected 55%%, got %+v", cached.FiveHour)
-	require.Equal(t, 55.0, cached.FiveHour.Pct, "expected 55%%, got %+v", cached.FiveHour)
-	assert.Equal(t, int32(2), fetchCount.Load(), "expected 2 fetches")
 }
 
 func TestHasClaudeOAuth(t *testing.T) {

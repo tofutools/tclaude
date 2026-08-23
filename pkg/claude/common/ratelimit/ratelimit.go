@@ -20,16 +20,11 @@ func WaitForRateLimit(ctx context.Context, out io.Writer, sessionId, cwd string)
 	if cfg.RateLimit == nil {
 		return false
 	}
-	slog.Debug("checking rate limit")
-	usage, err := usageapi.GetCached()
+	slog.Debug("checking rate limit from cached usage")
+	usage := usageapi.Peek()
 	if usage == nil {
-		if err != nil {
-			slog.Warn("unable to check rate limit", "error", err)
-		}
+		slog.Debug("unable to check rate limit: no cached usage")
 		return false
-	}
-	if err != nil {
-		slog.Warn("using stale usage cache", "error", err)
 	}
 	if usage.FiveHour != nil && usage.FiveHour.Pct > cfg.RateLimit.FiveHourPercentMaxUsed {
 		resetsAt := usage.FiveHour.ResetsAt
