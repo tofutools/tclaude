@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { assertAbsent, assertSameNode } from './assertions.mjs';
-import { createPreactHarness, getByRole } from './preact-harness.mjs';
+import { createPreactHarness, getByLabelText, getByRole } from './preact-harness.mjs';
 
 test('shell island reacts to snapshots while preserving keyed usage and footer nodes', async (t) => {
   const harness = await createPreactHarness(t);
@@ -66,8 +66,9 @@ test('disconnect overlay is removed on reconnect so its compositor layers cannot
 
 test('footer open PRs disclosure pins, filters, and closes accessibly', async (t) => {
   const harness = await createPreactHarness(t);
-  const [{ createDashboardState }, { OpenPRs }] = await Promise.all([
+  const [{ createDashboardState }, { dashPrefs }, { OpenPRs }] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/prefs.js'),
     harness.importDashboardModule('js/shell-island.js'),
   ]);
   const state = createDashboardState();
@@ -79,7 +80,7 @@ test('footer open PRs disclosure pins, filters, and closes accessibly', async (t
     items: [
       { number: 1, url: 'https://github.com/acme/app/pull/1', title: 'Fails', repository: 'acme/app', agent_id: 'agt_1', agent_title: 'builder', checks: { total: 1, failed: 1, state: 'failing' } },
       { number: 2, url: 'https://github.com/acme/app/pull/2', title: 'Runs', repository: 'acme/app', checks: { total: 1, pending: 1, state: 'pending' } },
-      { number: 3, url: 'https://github.com/acme/app/pull/3', title: 'Passes', repository: 'acme/app', agent_id: 'agt_3', checks: { total: 1, passed: 1, state: 'passing' } },
+      { number: 3, url: 'https://github.com/acme/app/pull/3', title: 'Passes', repository: 'acme/app', agent_id: 'agt_3', draft: true, checks: { total: 1, passed: 1, state: 'passing' } },
     ],
   } }));
   const trigger = getByRole(mounted.container, 'button', { name: /Open PRs/ });
@@ -89,6 +90,19 @@ test('footer open PRs disclosure pins, filters, and closes accessibly', async (t
   await harness.act(() => trigger.click());
   assert.equal(trigger.getAttribute('aria-expanded'), 'true');
   assert.equal(mounted.container.querySelectorAll('.open-pr-row').length, 3);
+  assert.ok(mounted.container.querySelector('.open-pr-row.is-draft .open-pr-state-draft'));
+  assert.equal(mounted.container.querySelector('.open-pr-draft-label').textContent, 'Draft');
+  assert.match(getByRole(mounted.container, 'button', { name: /Needs attention 1/ }).textContent, /Needs attention 1/);
+
+  assert.equal(mounted.container.querySelector('.open-prs-include-drafts'), null,
+    'the draft preference stays contextual to the attention view');
+  await harness.act(() => getByRole(mounted.container, 'button', { name: /Needs attention 1/ }).click());
+  const includeDrafts = getByLabelText(mounted.container, 'Include drafts');
+  assert.equal(includeDrafts.hasAttribute('checked'), false);
+  includeDrafts.checked = true;
+  await harness.act(() => harness.fireEvent(includeDrafts, 'change'));
+  assert.match(getByRole(mounted.container, 'button', { name: /Needs attention 2/ }).textContent, /Needs attention 2/);
+  assert.equal(dashPrefs.getItem('tclaude.dash.open-prs.include-drafts-attention'), '1');
 
   await harness.act(() => getByRole(mounted.container, 'button', { name: /Unattached 1/ }).click());
   assert.deepEqual([...mounted.container.querySelectorAll('.open-pr-title')].map((node) => node.textContent), ['Runs']);
