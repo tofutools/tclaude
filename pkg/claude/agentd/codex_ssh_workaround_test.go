@@ -11,7 +11,70 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
+
+func TestSSHWorkaroundAppliesToEveryPacketLayerHarnessAndIdentity(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the SSH workaround is Linux-only")
+	}
+	packet := sandboxpolicy.EmptySnapshot()
+	packet.Effective.Network = &sandboxpolicy.NetworkRules{
+		Mode:                   sandboxpolicy.AccessModeList,
+		Engine:                 sandboxpolicy.NetworkEnginePacket,
+		PreserveCallerIdentity: true,
+		Allow:                  []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
+	}
+	proxy := packet
+	proxy.Effective.Network = &sandboxpolicy.NetworkRules{
+		Mode:                   sandboxpolicy.AccessModeList,
+		Engine:                 sandboxpolicy.NetworkEngineProxy,
+		PreserveCallerIdentity: true,
+		Allow:                  []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
+	}
+	ordinary := packet
+	ordinary.Effective.Network = &sandboxpolicy.NetworkRules{
+		Mode:   sandboxpolicy.AccessModeList,
+		Engine: sandboxpolicy.NetworkEnginePacket,
+		Allow:  []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
+	}
+
+	for _, harnessName := range []string{
+		harness.DefaultName, harness.CodexName, harness.OpenCodeName, harness.CopilotName,
+	} {
+		for _, implementation := range []sandboxpolicy.Implementation{
+			sandboxpolicy.ImplementationTclaudeLayer, sandboxpolicy.ImplementationStacked,
+		} {
+			assert.True(t, codexSSHWorkaroundApplies(
+				harnessName, harness.SandboxDangerFull,
+				string(implementation), &packet), harnessName+" "+string(implementation))
+			assert.True(t, codexSSHWorkaroundApplies(
+				harnessName, harness.SandboxDangerFull,
+				string(implementation), &ordinary), harnessName+" "+string(implementation))
+		}
+	}
+	assert.False(t, codexSSHWorkaroundApplies(
+		harness.CodexName, harness.SandboxDangerFull,
+		string(sandboxpolicy.ImplementationTclaudeLayer), &proxy))
+	assert.False(t, codexSSHWorkaroundApplies(
+		harness.CodexName, harness.SandboxDangerFull,
+		string(sandboxpolicy.ImplementationStacked), &proxy))
+	assert.False(t, codexSSHWorkaroundApplies(
+		harness.CodexName, harness.SandboxDangerFull,
+		string(sandboxpolicy.ImplementationHarnessBuiltin), &packet))
+	assert.False(t, codexSSHWorkaroundApplies(
+		harness.DefaultName, harness.SandboxManagedProfile,
+		string(sandboxpolicy.ImplementationHarnessBuiltin), &packet))
+	assert.True(t, codexSSHWorkaroundApplies(
+		harness.CodexName, harness.SandboxManagedProfile,
+		string(sandboxpolicy.ImplementationHarnessBuiltin), &ordinary))
+	assert.True(t, sshWorkaroundImplementationEligible(
+		harness.DefaultName, harness.SandboxDangerFull,
+		string(sandboxpolicy.ImplementationStacked)))
+	assert.False(t, sshWorkaroundImplementationEligible(
+		harness.DefaultName, harness.SandboxDangerFull,
+		string(sandboxpolicy.ImplementationOff)))
+}
 
 func TestCodexSSHWorkaroundCopiesSystemConfigAndPinsGit(t *testing.T) {
 	if runtime.GOOS != "linux" {
@@ -131,7 +194,7 @@ func TestCodexSSHWorkaroundDisabledLeavesSnapshotUnchanged(t *testing.T) {
 	assert.Equal(t, snapshot, got)
 }
 
-func TestCodexSSHWorkaroundProfileClampsUnsupportedSandbox(t *testing.T) {
+func TestSSHWorkaroundProfilePreservesIntentAcrossSandboxComposition(t *testing.T) {
 	on := true
 	profile, fail := buildProfileFromJSON(spawnProfileJSON{
 		Name: "raw-codex", Harness: "codex", Sandbox: "workspace-write",
@@ -140,5 +203,34 @@ func TestCodexSSHWorkaroundProfileClampsUnsupportedSandbox(t *testing.T) {
 	require.Nil(t, fail)
 	require.NotNil(t, profile)
 	require.NotNil(t, profile.SSHWorkaround)
-	assert.False(t, *profile.SSHWorkaround)
+	assert.Equal(t, runtime.GOOS == "linux", *profile.SSHWorkaround,
+		"platform capability and the launch boundary, not an individual profile tier, decide applicability")
+
+	layered, fail := buildProfileFromJSON(spawnProfileJSON{
+		Name: "layered-codex", Harness: "codex", Sandbox: "workspace-write",
+		SandboxImplementation: "tclaude-layer", SSHWorkaround: &on,
+	})
+	require.Nil(t, fail)
+	require.NotNil(t, layered)
+	require.NotNil(t, layered.SSHWorkaround)
+	assert.Equal(t, runtime.GOOS == "linux", *layered.SSHWorkaround,
+		"tclaude-layer keeps the Linux workaround eligible for the effective sandbox profile")
+
+	layeredClaude, fail := buildProfileFromJSON(spawnProfileJSON{
+		Name: "layered-claude", Harness: harness.DefaultName,
+		SandboxImplementation: "tclaude-layer", SSHWorkaround: &on,
+	})
+	require.Nil(t, fail)
+	require.NotNil(t, layeredClaude)
+	require.NotNil(t, layeredClaude.SSHWorkaround)
+	assert.Equal(t, runtime.GOOS == "linux", *layeredClaude.SSHWorkaround)
+
+	stackedClaude, fail := buildProfileFromJSON(spawnProfileJSON{
+		Name: "stacked-claude", Harness: harness.DefaultName,
+		SandboxImplementation: "stacked", SSHWorkaround: &on,
+	})
+	require.Nil(t, fail)
+	require.NotNil(t, stackedClaude)
+	require.NotNil(t, stackedClaude.SSHWorkaround)
+	assert.Equal(t, runtime.GOOS == "linux", *stackedClaude.SSHWorkaround)
 }

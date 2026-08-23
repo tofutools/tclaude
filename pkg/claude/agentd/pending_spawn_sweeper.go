@@ -201,6 +201,9 @@ func sweepOnePendingSpawn(ps *db.PendingSpawn) {
 	// welcome) the inline path runs — and, because the conv-id now exists, it
 	// only send-keys to a Codex pane that has cleared its startup gates.
 	sshWorkaround := codexSSHWorkaroundEnabledInSnapshot(ps.EffectiveSandbox)
+	if ps.SSHWorkaround != nil {
+		sshWorkaround = *ps.SSHWorkaround
+	}
 	p := spawnParams{
 		AgentID:          ps.AgentID,
 		Harness:          sess.Harness,

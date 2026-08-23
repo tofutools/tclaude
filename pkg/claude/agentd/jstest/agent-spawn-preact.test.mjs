@@ -27,7 +27,7 @@ const harnesses = [{
   can_auto_review: false,
   can_ask_timeout: true, ask_timeout_modes: ['inherit', 'never'], default_ask_timeout: 'inherit',
   ask_timeout_mode_help: { inherit: 'keep settings', never: 'wait forever' },
-  can_remote_control: true, can_auto_memory: true,
+  can_remote_control: true, can_auto_memory: true, can_ssh_workaround: true,
   can_dir_trust: true, dir_trust_store: '~/.claude.json',
   can_context_features: true,
   context_features: [
@@ -70,7 +70,7 @@ const harnesses = [{
   tools_mode_help: { allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' },
   can_auto_review: false,
   can_ask_timeout: false, ask_timeout_modes: [], default_ask_timeout: '',
-  can_remote_control: false, can_auto_memory: false,
+  can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true,
   // OpenCode has no trust-folder dialog, so no store to seed either.
   can_dir_trust: false, dir_trust_store: '',
 }];
@@ -336,7 +336,7 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
     attachments: ['/tmp/a.png'], effort: 'high', model: 'opus',
     task_ref_url: 'https://linear.app/TCL-458', harness: 'claude', sandbox: 'on',
     sandbox_profile: 'strict', approval: 'plan', ask_user_question_timeout: 'never',
-    remote_control: false, auto_memory: false, is_owner: true,
+    remote_control: false, auto_memory: false, ssh_workaround: true, is_owner: true,
     permission_overrides: { 'groups.members.spawn': 'grant' },
     // Always present for a trim-capable harness, empty when nothing is trimmed:
     // the form is the authoritative statement of what the agent loads, so an
@@ -1503,7 +1503,7 @@ test('spawn dialog applies a profile auto memory default', async (t) => {
   assert.equal(silent.autoMemory, false, 'a profile that says nothing leaves auto memory off');
 });
 
-test('Codex SSH workaround defaults on and a spawn or profile can opt out', async (t) => {
+test('SSH workaround covers managed Codex and every tclaude sandbox layer harness', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');
   const context = { groups, harnesses, userDefaultModel: '', normalizeNames: true };
@@ -1530,9 +1530,26 @@ test('Codex SSH workaround defaults on and a spawn or profile can opt out', asyn
     'a sparse Codex profile returns to the default-on posture');
 
   const raw = { ...codex, name: 'raw-codex', sandbox: 'workspace-write' };
-  assert.equal(model.spawnCapabilityView(raw, context).sshWorkaroundAvailable, false);
-  assert.equal(model.buildSpawnRequest(raw, context, null, []).body.ssh_workaround, false,
-    'raw Codex modes cannot claim the managed-sandbox workaround is active');
+  assert.equal(model.spawnCapabilityView(raw, context).sshWorkaroundAvailable, true,
+    'the control captures intent even when this launch shape will leave it dormant');
+  assert.equal(model.buildSpawnRequest(raw, context, null, []).body.ssh_workaround, true,
+    'the request preserves intent while the daemon decides whether it is active');
+
+  const layered = { ...raw, name: 'layered-codex', sandboxImpl: 'tclaude-layer' };
+  assert.equal(model.spawnCapabilityView(layered, context).sshWorkaroundAvailable, true);
+  assert.equal(model.buildSpawnRequest(layered, context, null, []).body.ssh_workaround, true,
+    'the daemon applies the enabled workaround only when the packet sandbox needs it');
+
+  const claude = model.selectSpawnHarness(initial, 'claude', context);
+  assert.equal(model.spawnCapabilityView(claude, context).showSSHWorkaround, true);
+  assert.equal(model.spawnCapabilityView(claude, context).sshWorkaroundAvailable, true,
+    'a generic tier can set intent for a separately composed tclaude layer');
+  const layeredClaude = { ...claude, name: 'layered-claude', sandboxImpl: 'tclaude-layer' };
+  assert.equal(model.spawnCapabilityView(layeredClaude, context).sshWorkaroundAvailable, true);
+  assert.equal(model.buildSpawnRequest(layeredClaude, context, null, []).body.ssh_workaround, true);
+  const stackedClaude = { ...claude, name: 'stacked-claude', sandboxImpl: 'stacked' };
+  assert.equal(model.spawnCapabilityView(stackedClaude, context).sshWorkaroundAvailable, true);
+  assert.equal(model.buildSpawnRequest(stackedClaude, context, null, []).body.ssh_workaround, true);
 });
 
 // TCL-609: a policy loaded for a previous selection (or still in flight) must

@@ -12,6 +12,7 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 const (
@@ -35,6 +36,51 @@ func codexSSHSource() sandboxpolicy.ProfileSource {
 	}
 }
 
+// codexSSHWorkaroundApplies reports whether this launch exposes the ownership
+// translation the private SSH config exists to avoid. Codex's managed native
+// sandbox has always needed the workaround. Every harness in tclaude's packet
+// sandbox needs it: both namespace-root and caller-identity mappings leave host
+// root unmapped, so root-owned SSH drop-ins appear as nobody:nogroup.
+func codexSSHWorkaroundApplies(
+	harnessName, harnessBuiltinMode, sandboxImplementation string,
+	snapshot *sandboxpolicy.Snapshot,
+) bool {
+	if runtime.GOOS != "linux" {
+		return false
+	}
+	implementation, err := sandboxpolicy.NormalizeImplementation(sandboxImplementation)
+	if err != nil {
+		return false
+	}
+	if implementation == sandboxpolicy.ImplementationHarnessBuiltin {
+		return harnessName == harness.CodexName &&
+			harnessBuiltinMode == harness.SandboxManagedProfile
+	}
+	if !implementation.UsesTclaudeLayer() || snapshot == nil {
+		return false
+	}
+	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(snapshot.Effective)
+	if err != nil {
+		return false
+	}
+	engine, err := sandboxpolicy.DeployedNetworkEngineForRules(axes.Network)
+	return err == nil && engine == sandboxpolicy.NetworkEnginePacket
+}
+
+func sshWorkaroundImplementationEligible(
+	harnessName, harnessBuiltinMode, sandboxImplementation string,
+) bool {
+	implementation, err := sandboxpolicy.NormalizeImplementation(sandboxImplementation)
+	if err != nil {
+		return false
+	}
+	if implementation == sandboxpolicy.ImplementationHarnessBuiltin {
+		return harnessName == harness.CodexName &&
+			harnessBuiltinMode == harness.SandboxManagedProfile
+	}
+	return implementation.UsesTclaudeLayer()
+}
+
 // codexSSHWorkaroundEnabledInSnapshot recovers the resolved birth posture
 // from the immutable launch snapshot. Pending Codex enrollment can be resumed
 // by the sweeper after the original spawnParams are gone, while the snapshot
@@ -54,8 +100,8 @@ func codexSSHWorkaroundEnabledInSnapshot(snapshot *sandboxpolicy.Snapshot) bool 
 // configureCodexSSHWorkaroundDeclaration adds or removes the private
 // agent-directory declaration before ordinary materialization/reconciliation.
 // Generated state is deliberately represented inside the frozen snapshot so
-// the Codex adapter pins GIT_SSH_COMMAND in both the process environment and
-// shell_environment_policy.
+// every harness receives GIT_SSH_COMMAND through the process environment; the
+// Codex adapter also pins it in shell_environment_policy.
 func configureCodexSSHWorkaroundDeclaration(snapshot sandboxpolicy.Snapshot, enabled bool) (sandboxpolicy.Snapshot, error) {
 	if runtime.GOOS != "linux" || snapshot.ProfilesOmitted {
 		enabled = false
@@ -134,7 +180,7 @@ func prepareCodexSSHWorkaroundForNewLaunch(
 ) (sandboxpolicy.Snapshot, func(), error) {
 	configured, err := configureCodexSSHWorkaroundDeclaration(snapshot, enabled)
 	if err != nil {
-		return sandboxpolicy.Snapshot{}, func() {}, fmt.Errorf("configure Codex SSH workaround: %w", err)
+		return sandboxpolicy.Snapshot{}, func() {}, fmt.Errorf("configure SSH workaround: %w", err)
 	}
 	materialized, cleanup, err := materializeAgentDirectories(configured, launchKey)
 	if err != nil {
@@ -178,10 +224,10 @@ func populateCodexSSHWorkaround(snapshot sandboxpolicy.Snapshot) (sandboxpolicy.
 	}
 	parent := filepath.Dir(configDir)
 	if _, err := removeDirAtNoFollow(parent, filepath.Base(configDir)); err != nil {
-		return sandboxpolicy.Snapshot{}, fmt.Errorf("reset Codex SSH workaround directory: %w", err)
+		return sandboxpolicy.Snapshot{}, fmt.Errorf("reset SSH workaround directory: %w", err)
 	}
 	if err := mkdirAllNoFollow(configDir, 0o700); err != nil {
-		return sandboxpolicy.Snapshot{}, fmt.Errorf("recreate Codex SSH workaround directory: %w", err)
+		return sandboxpolicy.Snapshot{}, fmt.Errorf("recreate SSH workaround directory: %w", err)
 	}
 
 	configPath, err := writeCodexSSHConfig(configDir)
@@ -190,11 +236,11 @@ func populateCodexSSHWorkaround(snapshot sandboxpolicy.Snapshot) (sandboxpolicy.
 	}
 	sshPath, err := codexSSHLookPath("ssh")
 	if err != nil {
-		return sandboxpolicy.Snapshot{}, fmt.Errorf("locate ssh for Codex SSH workaround: %w", err)
+		return sandboxpolicy.Snapshot{}, fmt.Errorf("locate ssh for SSH workaround: %w", err)
 	}
 	sshPath, err = filepath.Abs(sshPath)
 	if err != nil {
-		return sandboxpolicy.Snapshot{}, fmt.Errorf("resolve ssh path for Codex SSH workaround: %w", err)
+		return sandboxpolicy.Snapshot{}, fmt.Errorf("resolve ssh path for SSH workaround: %w", err)
 	}
 	if resolved, resolveErr := filepath.EvalSymlinks(sshPath); resolveErr == nil {
 		sshPath = resolved
@@ -240,7 +286,7 @@ func writeCodexSSHConfig(configDir string) (string, error) {
 	contents := "Include " + quoteSSHConfigPath(codexSSHUserConfig) + "\nHost *\n" + string(system)
 	configPath := filepath.Join(configDir, codexSSHConfigName)
 	if err := writeNewPrivateFile(configPath, []byte(contents)); err != nil {
-		return "", fmt.Errorf("write Codex SSH config: %w", err)
+		return "", fmt.Errorf("write SSH workaround config: %w", err)
 	}
 	return configPath, nil
 }

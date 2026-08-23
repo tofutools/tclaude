@@ -92,8 +92,9 @@ type profileJSON struct {
 	// memory so agents sharing a repo don't cross-pollute one project memory
 	// store. Claude-Code-only.
 	AutoMemory *bool `json:"auto_memory,omitempty"`
-	// SSHWorkaround is the Codex Git-over-SSH compatibility default. nil leaves
-	// the launch default in place; false explicitly opts out.
+	// SSHWorkaround is the Git-over-SSH compatibility default. nil leaves
+	// the launch default in place; false explicitly opts out. The launch applies
+	// it only to an ownership-isolating sandbox shape that needs it.
 	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
 
 	// Identity / enrollment fields.

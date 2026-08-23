@@ -208,7 +208,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   const fastMode = (!h || h.can_fast_mode) ? readTri(draft.fast_mode) : null;
   if (fastMode != null) body.fast_mode = fastMode;
   if (h?.can_ssh_workaround) {
-    body.ssh_workaround = draft.sandbox === 'tclaude-agent' && !!draft.ssh_workaround;
+    body.ssh_workaround = !!draft.ssh_workaround;
   }
   for (const [key, value] of [['sync_worktree', draft.sync_worktree], ['fetch_latest_worktree', draft.fetch_latest_worktree], ['auto_focus', draft.auto_focus], ['include_group_default_context', draft.include_group_default_context], ['is_owner', draft.is_owner]]) {
     const parsed = readTri(value); if (parsed != null) body[key] = parsed;

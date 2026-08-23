@@ -377,15 +377,6 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		}
 		sshWorkaround = &resolved
 	}
-	resolvedSandbox, err := harness.ResolveHarnessBuiltinMode(h, sandbox)
-	if err != nil {
-		return nil, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
-	}
-	if resolvedSandbox != harness.SandboxManagedProfile && sshWorkaround != nil {
-		off := false
-		sshWorkaround = &off
-	}
-
 	// The agent_name becomes the spawned agent's display name (a /rename title
 	// at spawn) — same slash/control-char rules a template agent name follows.
 	agentName := strings.TrimSpace(body.AgentName)

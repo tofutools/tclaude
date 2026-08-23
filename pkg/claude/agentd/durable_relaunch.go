@@ -84,10 +84,11 @@ func temporarySandboxLaunchSnapshot(harnessName string, stable *sandboxpolicy.Sn
 	return &unconfined
 }
 
-// relaunchProfileForSpawn freezes the already-resolved launch posture at an
+// relaunchProfileForSpawn freezes the already-resolved launch intent at an
 // agent's birth. executeSpawn calls applyDefaultProfile before enrollment, so
-// these values are the exact flags handed to the harness rather than the raw
-// request or a later process-row observation.
+// these values are the resolved launch choices rather than the raw request or
+// a later process-row observation. SSHWorkaround is intent: each generation's
+// effective network engine independently gates whether it becomes active.
 func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	model := strings.TrimSpace(p.Model)
 	contextWindowSize := int64(0)
@@ -440,8 +441,9 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 	if err != nil {
 		return nil, fmt.Errorf("invalid durable SSH workaround posture: %w", err)
 	}
-	normalSSHWorkaround := sshWorkaround && normalHarnessBuiltinMode == harness.SandboxManagedProfile
-	if harnessBuiltinMode != harness.SandboxManagedProfile {
+	normalSSHWorkaround := sshWorkaround &&
+		sshWorkaroundImplementationEligible(h.Name, normalHarnessBuiltinMode, string(sandboxImplementation))
+	if !sshWorkaroundImplementationEligible(h.Name, harnessBuiltinMode, string(sandboxImplementation)) {
 		sshWorkaround = false
 	}
 

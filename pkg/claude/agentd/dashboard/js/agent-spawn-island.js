@@ -1357,16 +1357,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         </div>
       </div>`}
     <label class="cron-create-enabled" id="agent-spawn-ssh-workaround-row" hidden=${!view.showSSHWorkaround}
-      title=${view.sshWorkaroundAvailable
-        ? 'Use an agent-owned copy of the host SSH client config to avoid Codex sandbox ownership errors. This overrides Git core.sshCommand; disable it if the workaround conflicts with your SSH setup.'
-        : 'Available only for the Codex tclaude-agent managed sandbox with sandbox profiles enabled.'}>
+      title="Use an agent-owned SSH client config when the launch needs it. It activates only for the Codex managed sandbox or tclaude packet filtering, and overrides Git core.sshCommand.">
       <input id="agent-spawn-ssh-workaround" type="checkbox"
-        checked=${view.sshWorkaroundAvailable && draft.sshWorkaround}
-        disabled=${busy || !view.sshWorkaroundAvailable}
+        checked=${draft.sshWorkaround}
+        disabled=${busy}
         onChange=${(event) => update('sshWorkaround', event.currentTarget.checked)} />
-      ${view.sshWorkaroundAvailable
-        ? 'Use Codex SSH compatibility workaround'
-        : 'Codex SSH compatibility workaround — unavailable for this sandbox'}
+      Use SSH compatibility workaround
     </label>
     <${ErrorBanner} error=${error} onDismiss=${() => setError('')} />
     <div class="modal-buttons">

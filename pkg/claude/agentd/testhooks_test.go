@@ -907,6 +907,15 @@ func SetTclaudeLayerAccessVerdictForTest(
 	return func() { resolveTclaudeLayerAccessVerdict = previous }
 }
 
+func SetTclaudeLayerAccessVerdictWithIdentityForTest(
+	fn func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture,
+		sandboxpolicy.NetworkEngine, bool) (harness.LaunchOSSandbox, error),
+) func() {
+	previous := resolveTclaudeLayerAccessVerdictWithIdentity
+	resolveTclaudeLayerAccessVerdictWithIdentity = fn
+	return func() { resolveTclaudeLayerAccessVerdictWithIdentity = previous }
+}
+
 func SetFilteredNetworkPrerequisiteForTest(
 	fn func() session.FilteredNetworkPrerequisite,
 ) func() {

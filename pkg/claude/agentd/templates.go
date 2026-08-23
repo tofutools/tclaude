@@ -755,9 +755,10 @@ type templateAgentLaunch struct {
 	// agent. Resolved from the profile tiers like RemoteControl; defaults off,
 	// which makes the launch inject CLAUDE_CODE_DISABLE_AUTO_MEMORY=1.
 	AutoMemory bool
-	// SSHWorkaround is the resolved Codex Git-over-SSH compatibility posture.
-	// It defaults on for a managed Codex launch and may be disabled by the
-	// referenced or inline profile.
+	// SSHWorkaround is the resolved Git-over-SSH compatibility posture.
+	// It defaults on for a managed Codex launch or any tclaude-layer launch,
+	// then the effective sandbox clamps it to shapes that need it. A referenced
+	// or inline profile may disable it.
 	SSHWorkaround    bool
 	SSHWorkaroundSet bool
 	// ContextFeatures is the startup-context trim map a template-deployed agent
@@ -1418,10 +1419,10 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		// explicit request — stamping a false decision onto a pure default.
 		sshWorkaroundSource = agent.ProvHarnessDefault
 	}
-	if sandbox != harness.SandboxManagedProfile {
+	if !sshWorkaroundImplementationEligible(h.Name, sandbox, sandboxImplementation) {
 		if sshWorkaround {
 			notes = append(notes,
-				"SSH workaround disabled because it applies only to the Codex tclaude-agent managed sandbox")
+				"SSH workaround disabled because this launch cannot use a supported ownership-translating sandbox")
 		}
 		sshWorkaround = false
 	}

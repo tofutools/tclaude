@@ -10,8 +10,9 @@ import (
 )
 
 type resumeSandboxPolicy struct {
-	Snapshot *sandboxpolicy.Snapshot
-	Previous *sandboxpolicy.Snapshot
+	Snapshot      *sandboxpolicy.Snapshot
+	Previous      *sandboxpolicy.Snapshot
+	SSHWorkaround bool
 }
 
 // cleanupUncommittedResumeSandboxPolicy removes generation-specific roots
@@ -86,7 +87,11 @@ func resolveCurrentSandboxChainForConv(
 // current global/group/explicit registry state. The previous snapshot supplies
 // only stable provenance and private agent-directory bindings; its ordinary
 // filesystem/environment values are not launch authority after resume.
-func resolveResumeSandboxPolicy(convID string, sshWorkaround bool, sshLaunchKey string) (*resumeSandboxPolicy, error) {
+func resolveResumeSandboxPolicy(
+	convID string,
+	sshWorkaround bool,
+	sshLaunchKey, harnessName, harnessBuiltinMode, sandboxImplementation string,
+) (*resumeSandboxPolicy, error) {
 	resolved, previous, err := resolveCurrentSandboxChainForConv(convID)
 	if err != nil || previous == nil {
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
@@ -98,6 +103,8 @@ func resolveResumeSandboxPolicy(convID string, sshWorkaround bool, sshLaunchKey 
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, nil
 	}
 	current := *resolved
+	sshWorkaround = sshWorkaround && codexSSHWorkaroundApplies(
+		harnessName, harnessBuiltinMode, sandboxImplementation, &current)
 	current, err = configureCodexSSHWorkaroundDeclaration(current, sshWorkaround)
 	if err != nil {
 		return nil, err
@@ -130,7 +137,9 @@ func resolveResumeSandboxPolicy(convID string, sshWorkaround bool, sshLaunchKey 
 		current.Effective.AccessNotices,
 		previous.Effective.AccessNotices,
 	)
-	return &resumeSandboxPolicy{Snapshot: &current, Previous: previous}, nil
+	return &resumeSandboxPolicy{
+		Snapshot: &current, Previous: previous, SSHWorkaround: sshWorkaround,
+	}, nil
 }
 
 func mergeResumeAccessNotices(

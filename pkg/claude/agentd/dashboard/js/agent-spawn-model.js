@@ -538,11 +538,7 @@ export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
     && (effectiveSandboxImpl === SANDBOX_IMPL_OFF
       || (draft.harness === 'codex' && draft.sandbox === 'danger-full-access'));
   const showSSHWorkaround = !!harness?.can_ssh_workaround;
-  const sshWorkaroundAvailable = showSSHWorkaround
-    && (!draft.sandboxImpl || draft.sandboxImpl === SANDBOX_IMPL_DEFAULT)
-    && draft.sandbox === 'tclaude-agent'
-    && !sandboxProfilesDisabled
-    && draft.sandboxProfile !== SANDBOX_PROFILE_NONE;
+  const sshWorkaroundAvailable = showSSHWorkaround;
   return {
     harness,
     models,
@@ -1293,7 +1289,7 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
     body.fast_mode = draft.fastMode === '1' ? 'on' : draft.fastMode === '0' ? 'off' : 'inherit';
   }
   if (view.showSSHWorkaround) {
-    body.ssh_workaround = !!(view.sshWorkaroundAvailable && draft.sshWorkaround);
+    body.ssh_workaround = !!draft.sshWorkaround;
   }
   // Blank omits the key so the daemon's profile tier stack still speaks; the
   // daemon normalizes "450k" to plain digits, so the raw field text is sent.

@@ -1833,7 +1833,8 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	remoteControl := launchConfig.RemoteControl
 	sshLaunchKey := generateSpawnLabel()
 	resumePolicy, snapshotErr := resolveResumeSandboxPolicy(
-		convID, launchConfig.SSHWorkaround, sshLaunchKey)
+		convID, launchConfig.SSHWorkaround, sshLaunchKey, launchConfig.Harness,
+		launchConfig.Sandbox, launchConfig.activeSandboxImplementation())
 	if snapshotErr != nil {
 		res.Action = "error"
 		res.Detail = "sandbox_profile_changed: " + snapshotErr.Error()
@@ -1841,10 +1842,10 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 	}
 	if resumePolicy != nil && resumePolicy.Snapshot != nil {
 		refreshed, refreshErr := finalizeCodexSSHWorkaroundForRelaunch(
-			*resumePolicy.Snapshot, launchConfig.SSHWorkaround)
+			*resumePolicy.Snapshot, resumePolicy.SSHWorkaround)
 		if refreshErr != nil {
 			res.Action = "error"
-			res.Detail = "prepare Codex SSH workaround: " + refreshErr.Error()
+			res.Detail = "prepare SSH workaround: " + refreshErr.Error()
 			if cleanupErr := cleanupUncommittedResumeSandboxPolicy(resumePolicy); cleanupErr != nil {
 				res.Detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
 			}
@@ -4444,16 +4445,6 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes,
 			clcommon.OpenCodeStatePrivateNote)
 	}
-	if harnessBuiltinMode != harness.SandboxManagedProfile {
-		if sshWorkaround {
-			resolvedLaunch.Notes = append(resolvedLaunch.Notes,
-				"SSH workaround disabled because it applies only to the Codex tclaude-agent managed sandbox")
-		}
-		sshWorkaround = false
-	}
-	// Persist the resolved posture in the audit request as an explicit boolean,
-	// including the default-on case and an operator's opt-out.
-	body.SSHWorkaround = &sshWorkaround
 	// body.ApprovalPolicy is already profile-merged above (resolveStringLaunchField
 	// overlays the profile tiers without defaulting), so an empty value here means
 	// NOTHING chose a posture — neither an explicit flag nor a spawn profile. Only
@@ -4602,6 +4593,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	sshWorkaroundIntent := sshWorkaround
+	if sshWorkaround && !codexSSHWorkaroundApplies(
+		h.Name, harnessBuiltinMode, body.SandboxImplementation, &effectiveSandbox) {
+		sshWorkaround = false
+		resolvedLaunch.Notes = append(resolvedLaunch.Notes,
+			"SSH workaround disabled because this launch does not use the Codex managed sandbox or tclaude's packet sandbox")
+	}
+	// Persist the resolved posture in the audit request as an explicit boolean,
+	// including the default-on case and an operator's opt-out.
+	body.SSHWorkaround = &sshWorkaround
 	for _, notice := range effectiveSandbox.Effective.AccessNotices {
 		resolvedLaunch.Warnings = append(resolvedLaunch.Warnings, notice.Detail)
 	}
@@ -4886,7 +4887,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		ContextWindowMaxSource:      contextWindowMaxSource,
 		FastModeSource:              fastModeSource,
 		SandboxImplementationSource: sandboxImplSource,
-		SSHWorkaround:               sshWorkaround,
+		SSHWorkaround:               sshWorkaroundIntent,
 		SSHWorkaroundSet:            true,
 		SSHWorkaroundSource:         sshWorkaroundSource,
 		HarnessBuiltinMode:          harnessBuiltinMode,
@@ -5114,8 +5115,9 @@ type spawnParams struct {
 	// boundary (handleGroupSpawn resolves it against the harness registry
 	// before building the params).
 	Harness string
-	// SSHWorkaround is the already-resolved Codex Git-over-SSH compatibility
-	// posture. It is frozen into the durable relaunch profile at enrollment.
+	// SSHWorkaround is the already-resolved Git-over-SSH compatibility intent.
+	// The effective sandbox gates activation for each process generation, while
+	// this value is frozen into the durable relaunch profile at enrollment.
 	SSHWorkaround bool
 	// SSHWorkaroundSet preserves an explicit false through executeSpawn's
 	// safety-net profile overlay.
@@ -6378,9 +6380,6 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		h, p.HarnessBuiltinMode, p.SandboxImplementation); fail != nil {
 		return fail
 	}
-	if p.HarnessBuiltinMode != harness.SandboxManagedProfile {
-		p.SSHWorkaround = false
-	}
 	// As at the HTTP boundary: empty HERE (after the profile tiers above) means
 	// no flag and no profile chose a posture, so the harness default may be
 	// narrowed to one this caller is allowed to grant. A value already resolved
@@ -6594,6 +6593,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	); fail != nil {
 		return nil, fail
 	}
+	activeSSHWorkaround := p.SSHWorkaround && codexSSHWorkaroundApplies(
+		p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation, p.EffectiveSandbox)
 	if strings.TrimSpace(p.DirWriteProofToken) == "" {
 		p.GitWorktreeWriteDirs = nil
 		p.GitWorktreeWriteDirsPinned = false
@@ -6750,7 +6751,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	}()
 	if p.EffectiveSandbox != nil {
 		materialized, cleanup, err := prepareCodexSSHWorkaroundForNewLaunch(
-			*p.EffectiveSandbox, label, p.SSHWorkaround)
+			*p.EffectiveSandbox, label, activeSSHWorkaround)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "spawn", err.Error()}
 		}
@@ -7782,6 +7783,8 @@ func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.P
 		TaskLabel:           p.TaskLabel,
 		EffectiveSandbox:    p.EffectiveSandbox,
 	}
+	sshWorkaround := p.SSHWorkaround
+	pending.SSHWorkaround = &sshWorkaround
 	if harnessOrDefault(p.Harness) == harness.CodexName {
 		selected := p.CodexAppServer
 		pending.CodexAppServer = &selected

@@ -15,16 +15,16 @@ func TestResolveSSHWorkaround(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, runtime.GOOS == "linux", codex.CanSSHWorkaround())
-	assert.False(t, claude.CanSSHWorkaround())
+	assert.Equal(t, runtime.GOOS == "linux", claude.CanSSHWorkaround())
 	assert.False(t, (*Harness)(nil).CanSSHWorkaround())
 
 	got, err := ResolveSSHWorkaround(codex, nil)
 	require.NoError(t, err)
-	assert.Equal(t, runtime.GOOS == "linux", got, "Codex defaults the workaround on where it applies")
+	assert.Equal(t, runtime.GOOS == "linux", got, "Linux harnesses default the workaround on where it applies")
 
 	got, err = ResolveSSHWorkaround(claude, nil)
 	require.NoError(t, err)
-	assert.False(t, got)
+	assert.Equal(t, runtime.GOOS == "linux", got)
 
 	on, off := true, false
 	got, err = ResolveSSHWorkaround(codex, &off)
@@ -34,9 +34,12 @@ func TestResolveSSHWorkaround(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, runtime.GOOS == "linux", got)
 
-	_, err = ResolveSSHWorkaround(claude, &on)
-	require.ErrorContains(t, err, "not supported")
+	got, err = ResolveSSHWorkaround(claude, &on)
+	require.NoError(t, err)
+	assert.Equal(t, runtime.GOOS == "linux", got)
 	got, err = ResolveSSHWorkaround(claude, &off)
 	require.NoError(t, err)
 	assert.False(t, got)
+	_, err = ResolveSSHWorkaround(nil, &on)
+	require.ErrorContains(t, err, "requires a harness")
 }

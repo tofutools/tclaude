@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { assertAbsent, assertDifferentNode, assertSameNode } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
-const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', approval_mode_help: { inherit: 'keep settings', plan: 'plan only' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: false, can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true, can_auto_memory: true, can_dir_trust: true, dir_trust_store: '~/.claude.json' }, { name: 'codex', display_name: 'Codex CLI', models: [], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', approval_mode_help: { never: 'never prompt', untrusted: 'ask for untrusted', 'on-failure': 'deprecated retry', 'on-request': 'ask when requested' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: true, can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true, can_fast_mode: true, can_dir_trust: true, dir_trust_store: '~/.codex/config.toml' }, { name: 'opencode', display_name: 'OpenCode', models: [], effort_levels: [], can_sandbox: true, can_builtin_os_sandbox: false, sandbox_modes: ['access-control', 'tclaude-layer', 'off'], default_sandbox: 'access-control', sandbox_mode_help: { 'access-control': 'soft rules', 'tclaude-layer': 'OS containment', off: '⚠ No tclaude OS containment' }, can_approval: true, approval_modes: ['deny', 'ask', 'allow-tools'], default_approval: 'deny', profile_recommended_approval: 'allow-tools', approval_mode_help: { deny: 'deny edits', ask: 'ask for edits', 'allow-tools': 'allow scoped edits' }, profile_recommended_sandbox_implementation: 'tclaude-layer', can_tools: true, tools_modes: ['allow', 'ask', 'deny'], default_tools: 'allow', tools_mode_help: { allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' }, can_auto_review: false, can_remote_control: false, can_auto_memory: false, can_dir_trust: false, dir_trust_store: '' }];
+const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet'], effort_levels: ['low', 'high'], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['inherit', 'on'], default_sandbox: 'inherit', can_approval: true, approval_modes: ['inherit', 'plan'], default_approval: 'inherit', approval_mode_help: { inherit: 'keep settings', plan: 'plan only' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: false, can_ask_timeout: true, ask_timeout_modes: ['inherit', '60s'], default_ask_timeout: 'inherit', can_remote_control: true, can_auto_memory: true, can_ssh_workaround: true, can_dir_trust: true, dir_trust_store: '~/.claude.json' }, { name: 'codex', display_name: 'Codex CLI', models: [], can_sandbox: true, can_builtin_os_sandbox: true, sandbox_modes: ['workspace-write'], default_sandbox: 'workspace-write', can_approval: true, approval_modes: ['never', 'untrusted', 'on-failure', 'on-request'], default_approval: 'never', approval_mode_help: { never: 'never prompt', untrusted: 'ask for untrusted', 'on-failure': 'deprecated retry', 'on-request': 'ask when requested' }, can_tools: false, tools_modes: [], default_tools: '', tools_mode_help: {}, can_auto_review: true, can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true, can_fast_mode: true, can_dir_trust: true, dir_trust_store: '~/.codex/config.toml' }, { name: 'opencode', display_name: 'OpenCode', models: [], effort_levels: [], can_sandbox: true, can_builtin_os_sandbox: false, sandbox_modes: ['access-control', 'tclaude-layer', 'off'], default_sandbox: 'access-control', sandbox_mode_help: { 'access-control': 'soft rules', 'tclaude-layer': 'OS containment', off: '⚠ No tclaude OS containment' }, can_approval: true, approval_modes: ['deny', 'ask', 'allow-tools'], default_approval: 'deny', profile_recommended_approval: 'allow-tools', approval_mode_help: { deny: 'deny edits', ask: 'ask for edits', 'allow-tools': 'allow scoped edits' }, profile_recommended_sandbox_implementation: 'tclaude-layer', can_tools: true, tools_modes: ['allow', 'ask', 'deny'], default_tools: 'allow', tools_mode_help: { allow: 'allow tools', ask: 'ask for tools', deny: 'deny tools' }, can_auto_review: false, can_remote_control: false, can_auto_memory: false, can_ssh_workaround: true, can_dir_trust: false, dir_trust_store: '' }];
 
 const sandboxImpl = {
   options: [
@@ -3790,7 +3790,7 @@ test('Codex fast mode profile preserves inherit, on, and off', async (t) => {
   assert.equal(model.profilePayload(claude, null, catalog).fast_mode, undefined);
 });
 
-test('Codex profile SSH workaround is a default-on opt-out checkbox', async (t) => {
+test('profile SSH workaround covers managed Codex and tclaude sandbox layers', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
 
@@ -3808,13 +3808,21 @@ test('Codex profile SSH workaround is a default-on opt-out checkbox', async (t) 
   assert.equal(model.profilePayload(optedOut, null, catalog).ssh_workaround, false);
 
   const raw = { ...defaults, sandbox: 'workspace-write' };
-  assert.equal(model.profilePayload(raw, null, catalog).ssh_workaround, false,
-    'raw Codex profiles persist the workaround as inactive');
+	assert.equal(model.profilePayload(raw, null, catalog).ssh_workaround, true,
+	  'profile tiers preserve intent so a separate implementation tier can activate it');
+
+  const layered = { ...raw, sandbox_implementation: 'tclaude-layer' };
+  assert.equal(model.profilePayload(layered, null, catalog).ssh_workaround, true,
+    'layered profiles preserve the request for packet-sandbox launch resolution');
 
   const claude = model.profileDraft(
     { name: 'p', harness: 'claude', ssh_workaround: false }, {}, catalog,
   );
-  assert.equal(model.profilePayload(claude, null, catalog).ssh_workaround, undefined);
+  assert.equal(model.profilePayload(claude, null, catalog).ssh_workaround, false);
+	const layeredClaude = { ...claude, sandbox_implementation: 'tclaude-layer', ssh_workaround: true };
+	assert.equal(model.profilePayload(layeredClaude, null, catalog).ssh_workaround, true);
+	const stackedClaude = { ...claude, sandbox_implementation: 'stacked', ssh_workaround: true };
+	assert.equal(model.profilePayload(stackedClaude, null, catalog).ssh_workaround, true);
 });
 
 // TCL-865. The editor exposes two different resolutions next to each other, and

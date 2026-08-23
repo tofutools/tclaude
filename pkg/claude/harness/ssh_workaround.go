@@ -5,27 +5,24 @@ import (
 	"runtime"
 )
 
-// CanSSHWorkaround reports whether tclaude can give managed agents an
-// ownership-safe SSH client configuration. The workaround exists for Codex's
-// Linux user-namespace sandbox, which can expose root-owned system SSH
-// drop-ins as nobody:nogroup and make OpenSSH reject them.
+// CanSSHWorkaround reports whether tclaude can give this harness an
+// ownership-safe SSH client configuration. Every harness can encounter the
+// ownership translation in tclaude's Linux packet sandbox; launch-time
+// applicability still limits the historical harness-builtin case to Codex's
+// managed sandbox.
 func (h *Harness) CanSSHWorkaround() bool {
-	return h != nil && h.Name == CodexName && runtime.GOOS == "linux"
+	return h != nil && runtime.GOOS == "linux"
 }
 
-// ResolveSSHWorkaround resolves the profile/spawn tri-state. Codex defaults to
-// ON so ordinary managed agents get working Git-over-SSH; other harnesses
-// default to OFF and reject an explicit opt-in.
+// ResolveSSHWorkaround resolves the profile/spawn tri-state. Linux harnesses
+// default to ON so the launch boundary can apply it only to an
+// ownership-translating sandbox shape.
 func ResolveSSHWorkaround(h *Harness, requested *bool) (bool, error) {
 	if requested == nil {
 		return h != nil && h.CanSSHWorkaround(), nil
 	}
-	if *requested && (h == nil || h.Name != CodexName) {
-		name := ""
-		if h != nil {
-			name = h.Name
-		}
-		return false, fmt.Errorf("SSH compatibility workaround is not supported by harness %q", name)
+	if *requested && h == nil {
+		return false, fmt.Errorf("SSH compatibility workaround requires a harness")
 	}
 	return *requested && h != nil && h.CanSSHWorkaround(), nil
 }
