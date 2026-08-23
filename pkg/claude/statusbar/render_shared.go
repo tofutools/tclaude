@@ -269,11 +269,9 @@ func applyRenderWrites(w renderWrites) (ok bool) {
 // usage-cache read: a render carrying no rate-limit buckets of its own
 // only learns it is on a subscription plan from the fallback. The inline
 // code had exactly this shape — every other write, then the usage read,
-// then cost — and preserving it matters beyond tidiness: folding cost in
-// with the others would put the usage read (which on the direct path can
-// make a network call) in front of all eight writes, so a render killed
-// by the harness's statusline timeout would record nothing at all instead
-// of everything but its cost.
+// then cost. Preserve that dependency explicitly: folding cost into the
+// other writes would either classify it before the cache verdict exists or
+// make every unrelated write wait on a read it does not need.
 func applyCostWrite(w renderWrites, hasLimits bool) (ok bool) {
 	if w.Owned == "" || w.Input.Cost.TotalCostUSD <= 0 {
 		return true
