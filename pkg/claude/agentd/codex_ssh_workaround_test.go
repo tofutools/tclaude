@@ -42,16 +42,23 @@ func TestSSHWorkaroundAppliesToEveryPacketLayerHarnessAndIdentity(t *testing.T) 
 	for _, harnessName := range []string{
 		harness.DefaultName, harness.CodexName, harness.OpenCodeName, harness.CopilotName,
 	} {
-		assert.True(t, codexSSHWorkaroundApplies(
-			harnessName, harness.SandboxDangerFull,
-			string(sandboxpolicy.ImplementationTclaudeLayer), &packet), harnessName)
-		assert.True(t, codexSSHWorkaroundApplies(
-			harnessName, harness.SandboxDangerFull,
-			string(sandboxpolicy.ImplementationTclaudeLayer), &ordinary), harnessName)
+		for _, implementation := range []sandboxpolicy.Implementation{
+			sandboxpolicy.ImplementationTclaudeLayer, sandboxpolicy.ImplementationStacked,
+		} {
+			assert.True(t, codexSSHWorkaroundApplies(
+				harnessName, harness.SandboxDangerFull,
+				string(implementation), &packet), harnessName+" "+string(implementation))
+			assert.True(t, codexSSHWorkaroundApplies(
+				harnessName, harness.SandboxDangerFull,
+				string(implementation), &ordinary), harnessName+" "+string(implementation))
+		}
 	}
 	assert.False(t, codexSSHWorkaroundApplies(
 		harness.CodexName, harness.SandboxDangerFull,
 		string(sandboxpolicy.ImplementationTclaudeLayer), &proxy))
+	assert.False(t, codexSSHWorkaroundApplies(
+		harness.CodexName, harness.SandboxDangerFull,
+		string(sandboxpolicy.ImplementationStacked), &proxy))
 	assert.False(t, codexSSHWorkaroundApplies(
 		harness.CodexName, harness.SandboxDangerFull,
 		string(sandboxpolicy.ImplementationHarnessBuiltin), &packet))
@@ -61,6 +68,12 @@ func TestSSHWorkaroundAppliesToEveryPacketLayerHarnessAndIdentity(t *testing.T) 
 	assert.True(t, codexSSHWorkaroundApplies(
 		harness.CodexName, harness.SandboxManagedProfile,
 		string(sandboxpolicy.ImplementationHarnessBuiltin), &ordinary))
+	assert.True(t, sshWorkaroundImplementationEligible(
+		harness.DefaultName, harness.SandboxDangerFull,
+		string(sandboxpolicy.ImplementationStacked)))
+	assert.False(t, sshWorkaroundImplementationEligible(
+		harness.DefaultName, harness.SandboxDangerFull,
+		string(sandboxpolicy.ImplementationOff)))
 }
 
 func TestCodexSSHWorkaroundCopiesSystemConfigAndPinsGit(t *testing.T) {
@@ -181,7 +194,7 @@ func TestCodexSSHWorkaroundDisabledLeavesSnapshotUnchanged(t *testing.T) {
 	assert.Equal(t, snapshot, got)
 }
 
-func TestCodexSSHWorkaroundProfileClampsUnsupportedSandbox(t *testing.T) {
+func TestSSHWorkaroundProfilePreservesIntentAcrossSandboxComposition(t *testing.T) {
 	on := true
 	profile, fail := buildProfileFromJSON(spawnProfileJSON{
 		Name: "raw-codex", Harness: "codex", Sandbox: "workspace-write",
@@ -190,7 +203,8 @@ func TestCodexSSHWorkaroundProfileClampsUnsupportedSandbox(t *testing.T) {
 	require.Nil(t, fail)
 	require.NotNil(t, profile)
 	require.NotNil(t, profile.SSHWorkaround)
-	assert.False(t, *profile.SSHWorkaround)
+	assert.True(t, *profile.SSHWorkaround,
+		"the launch boundary, not an individual profile tier, decides applicability")
 
 	layered, fail := buildProfileFromJSON(spawnProfileJSON{
 		Name: "layered-codex", Harness: "codex", Sandbox: "workspace-write",
@@ -210,4 +224,13 @@ func TestCodexSSHWorkaroundProfileClampsUnsupportedSandbox(t *testing.T) {
 	require.NotNil(t, layeredClaude)
 	require.NotNil(t, layeredClaude.SSHWorkaround)
 	assert.Equal(t, runtime.GOOS == "linux", *layeredClaude.SSHWorkaround)
+
+	stackedClaude, fail := buildProfileFromJSON(spawnProfileJSON{
+		Name: "stacked-claude", Harness: harness.DefaultName,
+		SandboxImplementation: "stacked", SSHWorkaround: &on,
+	})
+	require.Nil(t, fail)
+	require.NotNil(t, stackedClaude)
+	require.NotNil(t, stackedClaude.SSHWorkaround)
+	assert.Equal(t, runtime.GOOS == "linux", *stackedClaude.SSHWorkaround)
 }

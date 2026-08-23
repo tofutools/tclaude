@@ -27,5 +27,7 @@ func TestDashboardHTML_SSHWorkaroundWired(t *testing.T) {
 	must(`id="profile-editor-ssh-workaround"`, "profile editor has an SSH workaround checkbox")
 	must(`hidden=${!hEntry?.can_ssh_workaround}`, "profile checkbox is capability gated")
 	must("draft.sandbox_implementation === 'tclaude-layer'",
-		"profile payload carries both opt-in and opt-out")
+		"profile payload supports the dedicated tclaude layer")
+	must("draft.sandbox_implementation === 'stacked'",
+		"profile payload supports the outer layer in stacked mode")
 }

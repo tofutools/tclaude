@@ -3790,7 +3790,7 @@ test('Codex fast mode profile preserves inherit, on, and off', async (t) => {
   assert.equal(model.profilePayload(claude, null, catalog).fast_mode, undefined);
 });
 
-test('profile SSH workaround covers managed Codex and tclaude-layer harnesses', async (t) => {
+test('profile SSH workaround covers managed Codex and tclaude sandbox layers', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/management-model.js');
 
@@ -3808,8 +3808,8 @@ test('profile SSH workaround covers managed Codex and tclaude-layer harnesses', 
   assert.equal(model.profilePayload(optedOut, null, catalog).ssh_workaround, false);
 
   const raw = { ...defaults, sandbox: 'workspace-write' };
-  assert.equal(model.profilePayload(raw, null, catalog).ssh_workaround, false,
-    'raw Codex profiles persist the workaround as inactive');
+	assert.equal(model.profilePayload(raw, null, catalog).ssh_workaround, true,
+	  'profile tiers preserve intent so a separate implementation tier can activate it');
 
   const layered = { ...raw, sandbox_implementation: 'tclaude-layer' };
   assert.equal(model.profilePayload(layered, null, catalog).ssh_workaround, true,
@@ -3819,8 +3819,10 @@ test('profile SSH workaround covers managed Codex and tclaude-layer harnesses', 
     { name: 'p', harness: 'claude', ssh_workaround: false }, {}, catalog,
   );
   assert.equal(model.profilePayload(claude, null, catalog).ssh_workaround, false);
-  const layeredClaude = { ...claude, sandbox_implementation: 'tclaude-layer', ssh_workaround: true };
-  assert.equal(model.profilePayload(layeredClaude, null, catalog).ssh_workaround, true);
+	const layeredClaude = { ...claude, sandbox_implementation: 'tclaude-layer', ssh_workaround: true };
+	assert.equal(model.profilePayload(layeredClaude, null, catalog).ssh_workaround, true);
+	const stackedClaude = { ...claude, sandbox_implementation: 'stacked', ssh_workaround: true };
+	assert.equal(model.profilePayload(stackedClaude, null, catalog).ssh_workaround, true);
 });
 
 // TCL-865. The editor exposes two different resolutions next to each other, and

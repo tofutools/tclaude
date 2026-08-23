@@ -56,7 +56,7 @@ func codexSSHWorkaroundApplies(
 		return harnessName == harness.CodexName &&
 			harnessBuiltinMode == harness.SandboxManagedProfile
 	}
-	if implementation != sandboxpolicy.ImplementationTclaudeLayer || snapshot == nil {
+	if !implementation.UsesTclaudeLayer() || snapshot == nil {
 		return false
 	}
 	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(snapshot.Effective)
@@ -78,7 +78,7 @@ func sshWorkaroundImplementationEligible(
 		return harnessName == harness.CodexName &&
 			harnessBuiltinMode == harness.SandboxManagedProfile
 	}
-	return implementation == sandboxpolicy.ImplementationTclaudeLayer
+	return implementation.UsesTclaudeLayer()
 }
 
 // codexSSHWorkaroundEnabledInSnapshot recovers the resolved birth posture

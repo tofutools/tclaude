@@ -1503,7 +1503,7 @@ test('spawn dialog applies a profile auto memory default', async (t) => {
   assert.equal(silent.autoMemory, false, 'a profile that says nothing leaves auto memory off');
 });
 
-test('SSH workaround covers managed Codex and every tclaude-layer harness', async (t) => {
+test('SSH workaround covers managed Codex and every tclaude sandbox layer harness', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/agent-spawn-model.js');
   const context = { groups, harnesses, userDefaultModel: '', normalizeNames: true };
@@ -1531,8 +1531,8 @@ test('SSH workaround covers managed Codex and every tclaude-layer harness', asyn
 
   const raw = { ...codex, name: 'raw-codex', sandbox: 'workspace-write' };
   assert.equal(model.spawnCapabilityView(raw, context).sshWorkaroundAvailable, false);
-  assert.equal(model.buildSpawnRequest(raw, context, null, []).body.ssh_workaround, false,
-    'raw Codex modes cannot claim the managed-sandbox workaround is active');
+	assert.equal(model.buildSpawnRequest(raw, context, null, []).body.ssh_workaround, true,
+	  'the request preserves intent while the daemon decides whether it is active');
 
   const layered = { ...raw, name: 'layered-codex', sandboxImpl: 'tclaude-layer' };
   assert.equal(model.spawnCapabilityView(layered, context).sshWorkaroundAvailable, true);
@@ -1543,9 +1543,12 @@ test('SSH workaround covers managed Codex and every tclaude-layer harness', asyn
   assert.equal(model.spawnCapabilityView(claude, context).showSSHWorkaround, true);
   assert.equal(model.spawnCapabilityView(claude, context).sshWorkaroundAvailable, false,
     'a non-Codex harness-builtin launch does not claim the workaround');
-  const layeredClaude = { ...claude, name: 'layered-claude', sandboxImpl: 'tclaude-layer' };
-  assert.equal(model.spawnCapabilityView(layeredClaude, context).sshWorkaroundAvailable, true);
-  assert.equal(model.buildSpawnRequest(layeredClaude, context, null, []).body.ssh_workaround, true);
+	const layeredClaude = { ...claude, name: 'layered-claude', sandboxImpl: 'tclaude-layer' };
+	assert.equal(model.spawnCapabilityView(layeredClaude, context).sshWorkaroundAvailable, true);
+	assert.equal(model.buildSpawnRequest(layeredClaude, context, null, []).body.ssh_workaround, true);
+	const stackedClaude = { ...claude, name: 'stacked-claude', sandboxImpl: 'stacked' };
+	assert.equal(model.spawnCapabilityView(stackedClaude, context).sshWorkaroundAvailable, true);
+	assert.equal(model.buildSpawnRequest(stackedClaude, context, null, []).body.ssh_workaround, true);
 });
 
 // TCL-609: a policy loaded for a previous selection (or still in flight) must

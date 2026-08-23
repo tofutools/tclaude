@@ -146,6 +146,7 @@ func TestCodexSpawnSSHWorkaroundDefaultsOnAndCanBeDisabled(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, snapshot)
 	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", false)
+
 }
 
 func TestTclaudeLayerSSHWorkaroundCoversNonCodexAndBothPacketIdentities(t *testing.T) {
@@ -277,6 +278,11 @@ func TestTclaudeLayerSSHWorkaroundCoversNonCodexAndBothPacketIdentities(t *testi
 
 	changed := spawn("packet-profile-will-change", harness.CodexName, "caller-id-packet")
 	require.Equalf(t, http.StatusOK, changed.Code, "body=%s", changed.Raw)
+	durable, err := db.AgentRelaunchProfileForConv(changed.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, durable)
+	require.NotNil(t, durable.SSHWorkaround)
+	assert.True(t, *durable.SSHWorkaround, "birth freezes the opt-in, not current activation")
 	profile, err := db.GetSandboxProfile("caller-id-packet")
 	require.NoError(t, err)
 	profile.Network.Engine = sandboxpolicy.NetworkEngineProxy
@@ -288,6 +294,26 @@ func TestTclaudeLayerSSHWorkaroundCoversNonCodexAndBothPacketIdentities(t *testi
 	require.True(t, ok)
 	require.NotNil(t, snapshot)
 	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", false)
+	durable, err = db.AgentRelaunchProfileForConv(changed.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, durable)
+	require.NotNil(t, durable.SSHWorkaround)
+	assert.True(t, *durable.SSHWorkaround, "proxy activation must not erase the durable opt-in")
+
+	profile, err = db.GetSandboxProfile("caller-id-packet")
+	require.NoError(t, err)
+	profile.Network.Engine = sandboxpolicy.NetworkEnginePacket
+	require.NoError(t, db.UpdateSandboxProfile(profile))
+	currentSession, err := db.FindSessionByConvID(changed.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, currentSession)
+	f.MarkOffline(currentSession.TmuxSession)
+	resumed = f.AsHuman().Resume(changed.ConvID)
+	require.Equalf(t, http.StatusOK, resumed.Code, "body=%s", resumed.Raw)
+	snapshot, ok = f.World.SpawnSandboxPolicy(changed.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, snapshot)
+	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", true)
 }
 
 func assertSnapshotHasEnvironment(t *testing.T, entries []sandboxpolicy.EnvironmentEntry, name string, want bool) {

@@ -4593,6 +4593,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	sshWorkaroundIntent := sshWorkaround
 	if sshWorkaround && !codexSSHWorkaroundApplies(
 		h.Name, harnessBuiltinMode, body.SandboxImplementation, &effectiveSandbox) {
 		sshWorkaround = false
@@ -4886,7 +4887,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		ContextWindowMaxSource:      contextWindowMaxSource,
 		FastModeSource:              fastModeSource,
 		SandboxImplementationSource: sandboxImplSource,
-		SSHWorkaround:               sshWorkaround,
+		SSHWorkaround:               sshWorkaroundIntent,
 		SSHWorkaroundSet:            true,
 		SSHWorkaroundSource:         sshWorkaroundSource,
 		HarnessBuiltinMode:          harnessBuiltinMode,
@@ -5114,8 +5115,9 @@ type spawnParams struct {
 	// boundary (handleGroupSpawn resolves it against the harness registry
 	// before building the params).
 	Harness string
-	// SSHWorkaround is the already-resolved Git-over-SSH compatibility
-	// posture. It is frozen into the durable relaunch profile at enrollment.
+	// SSHWorkaround is the already-resolved Git-over-SSH compatibility intent.
+	// The effective sandbox gates activation for each process generation, while
+	// this value is frozen into the durable relaunch profile at enrollment.
 	SSHWorkaround bool
 	// SSHWorkaroundSet preserves an explicit false through executeSpawn's
 	// safety-net profile overlay.
@@ -6591,7 +6593,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	); fail != nil {
 		return nil, fail
 	}
-	p.SSHWorkaround = p.SSHWorkaround && codexSSHWorkaroundApplies(
+	activeSSHWorkaround := p.SSHWorkaround && codexSSHWorkaroundApplies(
 		p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation, p.EffectiveSandbox)
 	if strings.TrimSpace(p.DirWriteProofToken) == "" {
 		p.GitWorktreeWriteDirs = nil
@@ -6749,7 +6751,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	}()
 	if p.EffectiveSandbox != nil {
 		materialized, cleanup, err := prepareCodexSSHWorkaroundForNewLaunch(
-			*p.EffectiveSandbox, label, p.SSHWorkaround)
+			*p.EffectiveSandbox, label, activeSSHWorkaround)
 		if err != nil {
 			return nil, &spawnFailure{http.StatusInternalServerError, "spawn", err.Error()}
 		}
@@ -7781,6 +7783,8 @@ func pendingSpawnFromParams(g *db.AgentGroup, p spawnParams, label string) *db.P
 		TaskLabel:           p.TaskLabel,
 		EffectiveSandbox:    p.EffectiveSandbox,
 	}
+	sshWorkaround := p.SSHWorkaround
+	pending.SSHWorkaround = &sshWorkaround
 	if harnessOrDefault(p.Harness) == harness.CodexName {
 		selected := p.CodexAppServer
 		pending.CodexAppServer = &selected
