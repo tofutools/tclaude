@@ -23,6 +23,7 @@ type ScopeDim string
 const (
 	ScopeDimGroup           ScopeDim = "group"
 	ScopeDimSpawnProfile    ScopeDim = "spawn_profile"
+	ScopeDimSandboxProfile  ScopeDim = "sandbox_profile"
 	ScopeDimProcessTemplate ScopeDim = "process_template"
 	ScopeDimRemote          ScopeDim = "remote"
 	ScopeDimLinearTeam      ScopeDim = "linear_team"
@@ -81,6 +82,7 @@ type permissionScopeDimension struct {
 var permissionScopeDimensions = map[ScopeDim]permissionScopeDimension{
 	ScopeDimGroup:           {},
 	ScopeDimSpawnProfile:    {},
+	ScopeDimSandboxProfile:  {},
 	ScopeDimProcessTemplate: {},
 	ScopeDimRemote:          {matcher: permissionScopeMatchRemotePattern},
 	ScopeDimLinearTeam:      {matcher: permissionScopeMatchTeamKey, enumerable: true},
@@ -283,7 +285,7 @@ func appendUnique(out []string, seen map[string]bool, s string) []string {
 // The picker still accepts free text, which is what makes a scope-only posture
 // (no operator list at all) writable.
 func scopeDimOptionsSnapshot(
-	groups []*db.AgentGroup, profiles []spawnProfileJSON, linearTeams []string,
+	groups []*db.AgentGroup, profiles []spawnProfileJSON, sandboxProfiles []*db.SandboxProfile, linearTeams []string,
 ) map[ScopeDim]snapshotScopeDimOptions {
 	out := make(map[ScopeDim]snapshotScopeDimOptions, len(permissionScopeDimensions))
 	for _, dim := range permissionScopeDims() {
@@ -301,6 +303,12 @@ func scopeDimOptionsSnapshot(
 		case ScopeDimSpawnProfile:
 			for _, p := range profiles {
 				options.Values = append(options.Values, p.Name)
+			}
+		case ScopeDimSandboxProfile:
+			for _, p := range sandboxProfiles {
+				if p != nil {
+					options.Values = append(options.Values, p.Name)
+				}
 			}
 		case ScopeDimLinearTeam:
 			// Offered upper-cased, the way Linear itself spells a team key and

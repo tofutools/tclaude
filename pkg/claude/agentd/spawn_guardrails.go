@@ -104,13 +104,15 @@ func resolveSpawnGuardrailConfig(cfg *config.Config) string {
 }
 
 // checkSpawnGuardrails runs guardrails 1 and 2 for a request into group g
-// by caller spawnerConvID ("" for the human). On a rejection it writes the
+// by caller spawnerConvID ("" for the human). allowAnyGroup is reserved for
+// the global agent.spawn capability; max-members still binds that path, while
+// the group-membership restriction does not. On a rejection it writes the
 // HTTP error and returns false; the caller (handleGroupSpawn) just returns.
 // The rate limit (guardrail 3) is claimed separately via claimSpawnRateSlot
 // once the request has fully validated — in particular AFTER the dir
 // write-proof gate, so the proof challenge round-trip (one 403 + one retry
 // per spawn) costs one slot, not two.
-func checkSpawnGuardrails(w http.ResponseWriter, g *db.AgentGroup, spawnerConvID string) bool {
+func checkSpawnGuardrails(w http.ResponseWriter, g *db.AgentGroup, spawnerConvID string, allowAnyGroup bool) bool {
 	// 1. Max group size. A hard property of the group — binds every
 	//    caller, the human included.
 	if g.MaxMembers > 0 {
@@ -131,6 +133,9 @@ func checkSpawnGuardrails(w http.ResponseWriter, g *db.AgentGroup, spawnerConvID
 
 	// 2 & 3 are agent-only. The human bypasses them.
 	if spawnerConvID == "" {
+		return true
+	}
+	if allowAnyGroup {
 		return true
 	}
 

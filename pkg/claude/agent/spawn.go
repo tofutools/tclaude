@@ -194,8 +194,9 @@ type SpawnRequest struct {
 	// the ordinary fail-closed behavior.
 	AllowUnenforcedSandbox bool `json:"allow_unenforced_sandbox,omitempty"`
 	// SandboxProfile is an optional filesystem/environment profile.
-	// Only a daemon-boundary-classified human may set it; agent callers may
-	// inherit the group's/global policy but cannot select an escalation.
+	// Agent callers may select it when their spawn permission is unscoped or
+	// admits the name through its sandbox_profile scope. Sandbox lineage still
+	// prevents the selection from widening the parent's authority.
 	SandboxProfile string `json:"sandbox_profile,omitempty"`
 	// HarnessConfig selects the harness-config posture for this launch: "read"
 	// pins the read-only floor over the harness's own settings/hook/skill
@@ -741,7 +742,7 @@ type SpawnParams struct {
 	// Precedence: explicit flags override the profile, which overrides the
 	// group / global / harness defaults (see mergeProfileIntoSpawn).
 	Profile                   string `long:"profile" short:"p" optional:"true" help:"RECOMMENDED: pre-fill the launch shape and identity from a spawn profile preconfigured by the operator (see 'tclaude agent profiles ls') — with a profile, usually no other launch flags are needed. Explicit flags override the profile; the profile overrides group/global/harness defaults"`
-	SandboxProfile            string `long:"sandbox-profile" optional:"true" help:"Human-only filesystem/environment sandbox profile for this spawn"`
+	SandboxProfile            string `long:"sandbox-profile" optional:"true" help:"Filesystem/environment sandbox profile for this spawn (agent callers may be permission-scoped to named profiles)"`
 	OmitSandboxProfiles       bool   `long:"omit-sandbox-profiles" help:"Human-only: omit all global, group, and explicit tclaude sandbox-profile values for this launch; mutually exclusive with --sandbox-profile"`
 	HarnessConfig             string `long:"harness-config" optional:"true" help:"Harness-config posture for this spawn: read (pin the read-only floor over the harness's own settings.json, hooks, skills, agents and commands) | write (lift it, letting the agent edit that surface). Unset = the sandbox-profile chain, whose own default is the floor. Needs the sandbox.harness-config permission for an agent caller (not default-granted, not implied by group ownership); sandbox lineage still refuses a posture wider than the parent's"`
 	IUnderstandBreakGlassRisk bool   `long:"i-understand-break-glass-risk" optional:"true" help:"REMOVED: break-glass no longer exists (TCL-791); passing this flag is an error"`

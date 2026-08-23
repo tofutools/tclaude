@@ -97,6 +97,30 @@ func TestRequireCrossAgentPermission_GroupSiblingWorksForNonOwner(t *testing.T) 
 	assert.Equal(t, "manager", caller)
 }
 
+func TestRequireSpawnPermission_ApprovedGlobalSlugReachesForeignGroup(t *testing.T) {
+	setupTestDB(t)
+	groupID, err := db.CreateAgentGroup("foreign", "")
+	require.NoError(t, err)
+	g, err := db.GetAgentGroupByName("foreign")
+	require.NoError(t, err)
+	require.Equal(t, groupID, g.ID)
+	_, _, err = db.EnsureAgentForConv("manager", "test")
+	require.NoError(t, err)
+	require.NoError(t, db.GrantAgentPermissionWithScope(
+		"manager", PermAgentSpawn, `{"group":["different-group"]}`, "test"))
+
+	w := httptest.NewRecorder()
+	r := requestWithPeer(&peer{PID: 999, HasClaudeAncestor: true, ConvID: "manager"})
+	markHumanApprovalContinuation(r, PermAgentSpawn, "manager")
+	caller, ok := requireSpawnPermission(w, r, g, ActionContext{Group: g.Name})
+	require.True(t, ok, "approved global spawn should pass; body=%s", w.Body.String())
+	assert.Equal(t, "manager", caller)
+	assert.Equal(t, PermAgentSpawn, authorizedPermissionForRequest(r, ""))
+	assert.True(t, checkSpawnGuardrails(w, g, caller,
+		authorizedPermissionForRequest(r, "") == PermAgentSpawn),
+		"the recorded global slug bypasses only the same-group restriction")
+}
+
 func TestRequireCrossAgentPermission_GroupSiblingRequiresEveryCurrentGroup(t *testing.T) {
 	setupTestDB(t)
 	for _, name := range []string{"owned", "other"} {

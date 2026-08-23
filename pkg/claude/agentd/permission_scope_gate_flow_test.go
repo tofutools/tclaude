@@ -120,6 +120,79 @@ func TestPermissionScope_UndescribedDimensionFailsClosed(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, refused.Code, refused.Body)
 }
 
+func TestPermissionScope_SandboxProfileScopedGrantGatesAgentSelection(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000005"
+	haveSpawnCapableMember(t, f, "alpha", lead)
+	for _, name := range []string{"locked", "open"} {
+		_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: name})
+		require.NoError(t, err)
+	}
+	grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn,
+		map[string]any{"sandbox_profile": []string{"locked"}})
+
+	allowed := f.AsAgent(lead).SpawnWith("alpha", map[string]any{
+		"name": "sandbox-scoped-worker", "sandbox_profile": "locked",
+	})
+	require.Equal(t, http.StatusOK, allowed.Code, allowed.Raw)
+
+	refused := f.AsAgent(lead).SpawnWith("alpha", map[string]any{
+		"name": "wrong-sandbox-worker", "sandbox_profile": "open",
+	})
+	assert.Equal(t, http.StatusForbidden, refused.Code, refused.Raw)
+
+	missing := spawnAttempt(t, f, lead, "alpha", "missing-sandbox-worker")
+	assert.Equal(t, http.StatusForbidden, missing.Code, missing.Body,
+		"a sandbox-scoped grant requires an explicit named selection")
+}
+
+func TestPermissionScope_GlobalAgentSpawnUsesProfileScopes(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000006"
+	f.HaveConvWithTitle(lead, "global-spawner")
+	f.HaveEnrolledAgent(lead)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "sess-" + lead, TmuxSession: "tmux-" + lead, ConvID: lead,
+		Cwd: f.World.HomeDir, Status: "running", Harness: harness.DefaultName,
+		HarnessBuiltinMode: harness.ClaudeSandboxOff, ApprovalPolicy: "bypassPermissions",
+	}))
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "global-allowed"})
+	require.NoError(t, err)
+	grantScoped(t, f, lead, agentd.PermAgentSpawn, map[string]any{
+		"group": []string{"alpha"}, "sandbox_profile": []string{"global-allowed"},
+	})
+
+	spawn := f.AsAgent(lead).SpawnWith("alpha", map[string]any{
+		"name": "global-spawn-worker", "sandbox_profile": "global-allowed",
+	})
+	require.Equal(t, http.StatusOK, spawn.Code, spawn.Raw)
+}
+
+func TestPermissionScope_SandboxProfileCannotNameAnOmittedProfile(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000007"
+	f.HaveMember("alpha", lead)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "sess-" + lead, TmuxSession: "tmux-" + lead, ConvID: lead,
+		Cwd: f.World.HomeDir, Status: "running", Harness: harness.CodexName,
+		HarnessBuiltinMode: harness.SandboxDangerFull, ApprovalPolicy: "never",
+	}))
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "locked"})
+	require.NoError(t, err)
+	grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn,
+		map[string]any{"sandbox_profile": []string{"locked"}})
+
+	spawn := f.AsAgent(lead).SpawnWith("alpha", map[string]any{
+		"name": "omitted-sandbox-worker", "harness": harness.CodexName,
+		"sandbox": harness.SandboxDangerFull, "sandbox_profile": "locked",
+	})
+	assert.Equal(t, http.StatusForbidden, spawn.Code, spawn.Raw)
+	assert.Contains(t, string(spawn.Raw), "resolved launch mode omits sandbox profiles")
+}
+
 // Regression guard for the ~129 gate sites that pass no ActionContext: an
 // UNSCOPED grant must still decide exactly as it did before scopes existed.
 func TestPermissionScope_UnscopedGrantIsUnaffected(t *testing.T) {

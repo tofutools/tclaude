@@ -34,6 +34,11 @@ type ActionContext struct {
 	// profile actually used after request/group-default resolution, never
 	// the raw request field. Wired up in Phase 4.
 	SpawnProfile string
+	// SandboxProfile is the explicitly selected sandbox profile for a spawn.
+	// A blank request leaves the dimension undescribed, even when ambient
+	// global/group profiles apply: a scoped grant requires the agent to pick a
+	// named operator-authored profile from its allowlist.
+	SandboxProfile string
 	// ProcessTemplate is the stable, user-authored template id supplied as
 	// templateId when creating a run. It deliberately is not a version ref:
 	// grants remain useful when a template gets a new stored version.
@@ -87,6 +92,8 @@ func (a ActionContext) value(dim ScopeDim) string {
 		return a.TargetAgent
 	case ScopeDimSpawnProfile:
 		return a.SpawnProfile
+	case ScopeDimSandboxProfile:
+		return a.SandboxProfile
 	case ScopeDimProcessTemplate:
 		return a.ProcessTemplate
 	case ScopeDimRemote:

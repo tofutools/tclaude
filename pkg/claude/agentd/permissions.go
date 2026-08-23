@@ -201,6 +201,11 @@ var permissionRegistry = []PermSlug{
 		Description: "Set ANOTHER agent's tags globally (tclaude agent tags set/add/rm --target). Group-scoped authority uses groups.members.tags.",
 	},
 	{
+		Slug: PermAgentSpawn, GroupSibling: PermGroupsMembersSpawn,
+		ScopeDims:   []ScopeDim{ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile},
+		Description: "Spawn a fresh agent into any group globally. Group-scoped authority uses groups.members.spawn.",
+	},
+	{
 		Slug: PermGroupsMembersReincarnate, OwnerImplied: true, ScopeDims: []ScopeDim{ScopeDimGroup},
 		Description: "Reincarnate another agent when all of its current active group memberships are covered.",
 	},
@@ -273,7 +278,7 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug:         PermGroupsMembersSpawn,
 		OwnerImplied: true,
-		ScopeDims:    []ScopeDim{ScopeDimGroup, ScopeDimSpawnProfile},
+		ScopeDims:    []ScopeDim{ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile},
 		Description:  "Spawn a fresh session and add it to a group (tclaude agent spawn). Ownership contributes this slug scoped to each owned group; spawn guardrails still apply.",
 	},
 	{

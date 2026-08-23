@@ -689,19 +689,18 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 	if fail := profileSpawnFailure(profile, ownerConv); fail != nil {
 		return "permission_denied", fail.Msg, ""
 	}
+	allowAnyGroup := false
 	if ownerConv != "" {
 		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
 		ctx := ActionContext{Group: g.Name, SpawnProfile: profile.Name, structuralGroup: g.Name}
-		allowed, _, authErr := permissionAllowsAction(req, ownerConv, PermGroupsMembersSpawn, ctx)
+		allowed, authorizedSlug, _, authErr := spawnPermissionAllowsAction(req, ownerConv, ctx)
 		if authErr != nil {
 			return "io", authErr.Error(), ""
 		}
-		if !allowed && resolvePermissionVerdictForRequest(req, ownerConv, PermGroupsMembersSpawn).Resolution != permDeny {
-			allowed, _ = structuralPermissionMatch(ownerConv, PermGroupsMembersSpawn, ctx)
-		}
 		if !allowed {
-			return "permission_denied", fmt.Sprintf("owner lacks %s for group %s and spawn profile %s", PermGroupsMembersSpawn, g.Name, profile.Name), ""
+			return "permission_denied", fmt.Sprintf("owner lacks %s or %s for group %s and spawn profile %s", PermAgentSpawn, PermGroupsMembersSpawn, g.Name, profile.Name), ""
 		}
+		allowAnyGroup = authorizedSlug == PermAgentSpawn
 	}
 	if n, err := db.CountLiveManagedWorkers(source.RuleID, source.CronJobID, index); err != nil {
 		return "io", err.Error(), ""
@@ -709,7 +708,7 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 		return "max_live_workers", fmt.Sprintf("rule already has %d live workers (max %d)", n, spec.MaxLiveWorkers), ""
 	}
 	recorder := httptest.NewRecorder()
-	if !checkSpawnGuardrails(recorder, g, ownerConv) {
+	if !checkSpawnGuardrails(recorder, g, ownerConv, allowAnyGroup) {
 		return "guardrail_denied", strings.TrimSpace(recorder.Body.String()), ""
 	}
 	claimed := claimSpawnRateSlot(recorder, ownerConv)

@@ -346,6 +346,7 @@ const (
 	PermAgentTask                         = "agent.task"
 	PermAgentPR                           = "agent.pr"
 	PermAgentTags                         = "agent.tags"
+	PermAgentSpawn                        = "agent.spawn"
 	PermGroupsAdmin                       = "groups.admin"
 	PermGroupsCreate                      = "groups.create"
 	PermGroupsDelete                      = "groups.delete"
@@ -837,6 +838,58 @@ func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string,
 		ctx.bulkGroupMemberCoverage = true
 	}
 	return requirePermissionEx(w, r, perm, ctx)
+}
+
+// spawnPermissionAllowsAction evaluates the global and group-scoped spawn
+// capabilities as independent positive sources. The returned slug is the one
+// that authorized the action; callers use it to decide whether the legacy
+// same-group guardrail still applies.
+func spawnPermissionAllowsAction(r *http.Request, convID string, actx ActionContext) (bool, string, string, error) {
+	for _, slug := range []string{PermAgentSpawn, PermGroupsMembersSpawn} {
+		allowed, matched, err := permissionAllowsAction(r, convID, slug, actx)
+		if err != nil {
+			return false, "", "", err
+		}
+		if allowed {
+			return true, slug, matched, nil
+		}
+	}
+	return false, "", "", nil
+}
+
+// requireSpawnPermission accepts either the global agent.spawn capability or
+// the group-scoped groups.members.spawn capability. The two are independent
+// positive sources: a missing or denied global capability does not suppress a
+// grant contributed by group policy or ownership.
+func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, actx ActionContext) (string, bool) {
+	clearAuthorizedPermission(r)
+	actx.Group = g.Name
+	actx.structuralGroup = g.Name
+	p := peerFromContext(r.Context())
+	if classify(p) == classAgent {
+		state, err := db.AgentState(p.ConvID)
+		if err == nil && state != db.AgentStateRetired {
+			if allowed, slug, matched, authErr := spawnPermissionAllowsAction(r, p.ConvID, actx); authErr == nil && allowed {
+				recordAuditPermissionScope(r, slug, matched)
+				recordAuthorizedPermission(r, slug, loadBearingSudoGrantID(r, p.ConvID, slug, actx))
+				return p.ConvID, true
+			}
+		}
+	}
+	// Let the shared gate handle humans, identity/state failures, one-shot
+	// approval, and the final error response. Prefer the global slug when the
+	// caller has an explicit global verdict (including a scope mismatch);
+	// otherwise keep the established group-scoped error/popup vocabulary.
+	fallback := PermGroupsMembersSpawn
+	if classify(p) == classAgent &&
+		resolvePermissionVerdictForRequest(r, p.ConvID, PermAgentSpawn).Resolution != permUndecided {
+		fallback = PermAgentSpawn
+	}
+	convID, ok := requirePermissionEx(w, r, fallback, actx)
+	if ok && convID != "" {
+		recordAuthorizedPermission(r, fallback, 0)
+	}
+	return convID, ok
 }
 
 func isBulkGroupMemberPermission(slug string) bool {

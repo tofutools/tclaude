@@ -10,7 +10,8 @@ import (
 
 func TestPermissionRegistryScopeDeclarations(t *testing.T) {
 	want := map[string][]ScopeDim{
-		PermGroupsMembersSpawn: {ScopeDimGroup, ScopeDimSpawnProfile},
+		PermAgentSpawn:         {ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile},
+		PermGroupsMembersSpawn: {ScopeDimGroup, ScopeDimSpawnProfile, ScopeDimSandboxProfile},
 		PermProcessRunsManage:  {ScopeDimProcessTemplate},
 		PermAgentRetire:        {ScopeDimGroup, ScopeDimTargetAgent},
 		PermAgentStanddown:     {ScopeDimGroup, ScopeDimTargetAgent},

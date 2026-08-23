@@ -3388,8 +3388,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// an inline launch shape is not a named profile and must not pass a
 	// profile-pinned grant. An unscoped grant is unaffected, so this reaches
 	// the existing 400 for a bad profile name exactly as before.
-	spawnerConvID, ok := requireGroupPermission(w, r, PermGroupsMembersSpawn, g,
-		ActionContext{Group: g.Name, SpawnProfile: resolvedSpawnProfileNameForScope(g, body.Profile)})
+	spawnerConvID, ok := requireSpawnPermission(w, r, g, ActionContext{
+		Group: g.Name, SpawnProfile: resolvedSpawnProfileNameForScope(g, body.Profile),
+		SandboxProfile: strings.TrimSpace(body.SandboxProfile),
+	})
 	if !ok {
 		return
 	}
@@ -3414,10 +3416,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			"sandbox_profile and omit_sandbox_profiles are mutually exclusive")
 		return
 	}
-	if (body.SandboxProfile != "" || body.OmitSandboxProfiles) &&
-		classify(peerFromContext(r.Context())) != classHuman {
+	if body.OmitSandboxProfiles && classify(peerFromContext(r.Context())) != classHuman {
 		writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
-			"only the human operator may select or omit sandbox profiles; agents may only inherit existing policy")
+			"only the human operator may omit inherited sandbox profiles")
 		return
 	}
 	if !validateSpawnHarnessConfig(w, r, body.HarnessConfig) {
@@ -3432,7 +3433,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// is claimed after the validation gates below (claimSpawnRateSlot) so a
 	// refused request — including the dir write-proof challenge round-trip —
 	// never burns a slot. See spawn_guardrails.go.
-	if !checkSpawnGuardrails(w, g, spawnerConvID) {
+	if !checkSpawnGuardrails(w, g, spawnerConvID,
+		authorizedPermissionForRequest(r, "") == PermAgentSpawn) {
 		return
 	}
 
@@ -4290,6 +4292,12 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// instead of resolving a policy that must fail capability validation later.
 	// The dashboard mirrors this by forcing its selector to the visible "none"
 	// state; this server-side rule also covers CLI callers and older tabs.
+	if spawnerConvID != "" && body.SandboxProfile != "" &&
+		sandboxProfilesDisabled(h.Name, harnessBuiltinMode, body.SandboxImplementation) {
+		writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
+			"the resolved launch mode omits sandbox profiles and cannot satisfy a named sandbox-profile selection")
+		return
+	}
 	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()
 	var policyErr error
 	if !sandboxProfilesDisabled(h.Name, harnessBuiltinMode, body.SandboxImplementation) &&
