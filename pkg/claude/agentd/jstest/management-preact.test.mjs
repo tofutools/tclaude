@@ -3811,6 +3811,10 @@ test('Codex profile SSH workaround is a default-on opt-out checkbox', async (t) 
   assert.equal(model.profilePayload(raw, null, catalog).ssh_workaround, false,
     'raw Codex profiles persist the workaround as inactive');
 
+  const layered = { ...raw, sandbox_implementation: 'tclaude-layer' };
+  assert.equal(model.profilePayload(layered, null, catalog).ssh_workaround, true,
+    'layered profiles preserve the request for caller-identity launch resolution');
+
   const claude = model.profileDraft(
     { name: 'p', harness: 'claude', ssh_workaround: false }, {}, catalog,
   );

@@ -1533,6 +1533,11 @@ test('Codex SSH workaround defaults on and a spawn or profile can opt out', asyn
   assert.equal(model.spawnCapabilityView(raw, context).sshWorkaroundAvailable, false);
   assert.equal(model.buildSpawnRequest(raw, context, null, []).body.ssh_workaround, false,
     'raw Codex modes cannot claim the managed-sandbox workaround is active');
+
+  const layered = { ...raw, name: 'layered-codex', sandboxImpl: 'tclaude-layer' };
+  assert.equal(model.spawnCapabilityView(layered, context).sshWorkaroundAvailable, true);
+  assert.equal(model.buildSpawnRequest(layered, context, null, []).body.ssh_workaround, true,
+    'the daemon applies the enabled workaround only when caller identity needs it');
 });
 
 // TCL-609: a policy loaded for a previous selection (or still in flight) must

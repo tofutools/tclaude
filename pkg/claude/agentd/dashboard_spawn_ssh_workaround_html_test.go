@@ -26,6 +26,6 @@ func TestDashboardHTML_CodexSSHWorkaroundWired(t *testing.T) {
 
 	must(`id="profile-editor-ssh-workaround"`, "profile editor has an SSH workaround checkbox")
 	must(`hidden=${!hEntry?.can_ssh_workaround}`, "profile checkbox is Codex-capability gated")
-	must("body.ssh_workaround = draft.sandbox === 'tclaude-agent'",
+	must("draft.sandbox_implementation === 'tclaude-layer'",
 		"profile payload carries both opt-in and opt-out")
 }

@@ -14,8 +14,8 @@ func (h *Harness) CanSSHWorkaround() bool {
 }
 
 // ResolveSSHWorkaround resolves the profile/spawn tri-state. Codex defaults to
-// ON so ordinary managed agents get working Git-over-SSH; other harnesses
-// default to OFF and reject an explicit opt-in.
+// ON so the launch boundary can apply it to ownership-isolating sandbox shapes;
+// other harnesses default to OFF and reject an explicit opt-in.
 func ResolveSSHWorkaround(h *Harness, requested *bool) (bool, error) {
 	if requested == nil {
 		return h != nil && h.CanSSHWorkaround(), nil

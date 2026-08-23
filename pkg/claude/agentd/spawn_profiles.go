@@ -10,6 +10,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -381,7 +382,12 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_sandbox", err.Error()}
 	}
-	if resolvedSandbox != harness.SandboxManagedProfile && sshWorkaround != nil {
+	implementation, implementationErr := sandboxpolicy.NormalizeImplementation(body.SandboxImplementation)
+	if implementationErr != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_sandbox_implementation", implementationErr.Error()}
+	}
+	if resolvedSandbox != harness.SandboxManagedProfile &&
+		implementation != sandboxpolicy.ImplementationTclaudeLayer && sshWorkaround != nil {
 		off := false
 		sshWorkaround = &off
 	}

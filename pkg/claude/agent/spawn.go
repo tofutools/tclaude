@@ -215,8 +215,9 @@ type SpawnRequest struct {
 	// higher tier selected a foreign harness).
 	Profile string `json:"profile,omitempty"`
 	// SSHWorkaround controls tclaude's Codex-only Git-over-SSH compatibility
-	// config. nil inherits the selected profile and then defaults on for managed
-	// Codex agents; false is an explicit opt-out.
+	// config. nil inherits the selected profile and then defaults on for Codex's
+	// managed sandbox and caller-identity packet-filtered tclaude-layer launches;
+	// false is an explicit opt-out.
 	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
 	// BreakGlassAcknowledged is a tombstone. TCL-791 removed break-glass; the
 	// field survives ONLY so a spawn payload still carrying it is refused

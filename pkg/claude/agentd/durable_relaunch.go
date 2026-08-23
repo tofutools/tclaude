@@ -440,8 +440,9 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 	if err != nil {
 		return nil, fmt.Errorf("invalid durable SSH workaround posture: %w", err)
 	}
-	normalSSHWorkaround := sshWorkaround && normalHarnessBuiltinMode == harness.SandboxManagedProfile
-	if harnessBuiltinMode != harness.SandboxManagedProfile {
+	normalSSHWorkaround := sshWorkaround &&
+		sshWorkaroundImplementationEligible(normalHarnessBuiltinMode, string(sandboxImplementation))
+	if !sshWorkaroundImplementationEligible(harnessBuiltinMode, string(sandboxImplementation)) {
 		sshWorkaround = false
 	}
 

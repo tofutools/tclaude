@@ -10,6 +10,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -143,6 +145,101 @@ func TestCodexSpawnSSHWorkaroundDefaultsOnAndCanBeDisabled(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, snapshot)
 	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", false)
+}
+
+func TestCodexTclaudeLayerSSHWorkaroundRequiresCallerIdentityPacketSandbox(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the Codex SSH workaround is Linux-only")
+	}
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return nil }))
+	t.Cleanup(agentd.SetFilteredNetworkPrerequisiteForTest(func() session.FilteredNetworkPrerequisite {
+		return session.FilteredNetworkPrerequisite{Detected: true, Detail: "test packet gateway"}
+	}))
+	verdict := func(
+		_ string, _ sandboxpolicy.NetworkPosture, _ sandboxpolicy.RootPosture,
+		_ sandboxpolicy.NetworkEngine,
+	) (harness.LaunchOSSandbox, error) {
+		return harness.LaunchOSSandbox{State: "on", Source: "test tclaude-layer"}, nil
+	}
+	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictForTest(verdict))
+	t.Cleanup(agentd.SetTclaudeLayerAccessVerdictWithIdentityForTest(func(
+		name string, posture sandboxpolicy.NetworkPosture, root sandboxpolicy.RootPosture,
+		engine sandboxpolicy.NetworkEngine, _ bool,
+	) (harness.LaunchOSSandbox, error) {
+		return verdict(name, posture, root, engine)
+	}))
+	for _, profile := range []*db.SandboxProfile{
+		{
+			Name: "caller-id-packet",
+			Network: &sandboxpolicy.NetworkRules{
+				Baseline:               sandboxpolicy.NetworkBaselineDeny,
+				Engine:                 sandboxpolicy.NetworkEnginePacket,
+				PreserveCallerIdentity: true,
+				Allow:                  []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
+			},
+		},
+		{
+			Name: "namespace-root-packet",
+			Network: &sandboxpolicy.NetworkRules{
+				Baseline: sandboxpolicy.NetworkBaselineDeny,
+				Engine:   sandboxpolicy.NetworkEnginePacket,
+				Allow:    []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
+			},
+		},
+		{
+			Name: "caller-id-proxy",
+			Network: &sandboxpolicy.NetworkRules{
+				Baseline:               sandboxpolicy.NetworkBaselineDeny,
+				Engine:                 sandboxpolicy.NetworkEngineProxy,
+				PreserveCallerIdentity: true,
+				Allow:                  []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
+			},
+		},
+	} {
+		_, err := db.CreateSandboxProfile(profile)
+		require.NoError(t, err)
+	}
+
+	spawn := func(name, profile string) testharness.SpawnResp {
+		return f.AsHuman().SpawnWith("crew", map[string]any{
+			"name": name, "harness": "codex",
+			"sandbox_implementation": "tclaude-layer",
+			"sandbox_profile":        profile,
+			"ssh_workaround":         true,
+		})
+	}
+
+	caller := spawn("caller-id", "caller-id-packet")
+	require.Equalf(t, http.StatusOK, caller.Code, "body=%s", caller.Raw)
+	snapshot, ok := f.World.SpawnSandboxPolicy(caller.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, snapshot)
+	assert.Contains(t, snapshot.Effective.AgentDirectories, "TCL_CODEX_SSH_CONFIG_DIR")
+	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", true)
+
+	for _, tc := range []struct{ name, profile string }{
+		{"namespace-root", "namespace-root-packet"},
+		{"proxy", "caller-id-proxy"},
+	} {
+		got := spawn(tc.name, tc.profile)
+		require.Equalf(t, http.StatusOK, got.Code, "%s body=%s", tc.name, got.Raw)
+		snapshot, ok := f.World.SpawnSandboxPolicy(got.ConvID)
+		require.True(t, ok)
+		require.NotNil(t, snapshot)
+		assert.NotContains(t, snapshot.Effective.AgentDirectories, "TCL_CODEX_SSH_CONFIG_DIR")
+		assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", false)
+	}
+
+	f.MarkOffline(caller.TmuxSession)
+	resumed := f.AsHuman().Resume(caller.ConvID)
+	require.Equalf(t, http.StatusOK, resumed.Code, "body=%s", resumed.Raw)
+	snapshot, ok = f.World.SpawnSandboxPolicy(caller.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, snapshot)
+	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", true)
 }
 
 func assertSnapshotHasEnvironment(t *testing.T, entries []sandboxpolicy.EnvironmentEntry, name string, want bool) {

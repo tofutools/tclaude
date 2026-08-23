@@ -1418,10 +1418,10 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		// explicit request — stamping a false decision onto a pure default.
 		sshWorkaroundSource = agent.ProvHarnessDefault
 	}
-	if sandbox != harness.SandboxManagedProfile {
+	if !sshWorkaroundImplementationEligible(sandbox, sandboxImplementation) {
 		if sshWorkaround {
 			notes = append(notes,
-				"SSH workaround disabled because it applies only to the Codex tclaude-agent managed sandbox")
+				"SSH workaround disabled because this launch cannot use a supported Codex ownership-isolating sandbox")
 		}
 		sshWorkaround = false
 	}

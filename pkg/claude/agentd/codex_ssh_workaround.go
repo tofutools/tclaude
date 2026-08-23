@@ -12,6 +12,7 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 const (
@@ -33,6 +34,42 @@ func codexSSHSource() sandboxpolicy.ProfileSource {
 		Scope:   sandboxpolicy.ScopeExplicit,
 		Profile: codexSSHSourceName,
 	}
+}
+
+// codexSSHWorkaroundApplies reports whether this launch exposes the ownership
+// translation the private SSH config exists to avoid. Codex's managed native
+// sandbox has always needed the workaround. The tclaude layer needs it only
+// for the opt-in packet-filter shape that preserves the caller's numeric
+// identity: that shape creates a user namespace while leaving host root
+// unmapped, so root-owned SSH drop-ins appear as nobody:nogroup.
+func codexSSHWorkaroundApplies(
+	harnessName, harnessBuiltinMode, sandboxImplementation string,
+	snapshot *sandboxpolicy.Snapshot,
+) bool {
+	if runtime.GOOS != "linux" || harnessName != harness.CodexName {
+		return false
+	}
+	if harnessBuiltinMode == harness.SandboxManagedProfile {
+		return true
+	}
+	implementation, err := sandboxpolicy.NormalizeImplementation(sandboxImplementation)
+	if err != nil || implementation != sandboxpolicy.ImplementationTclaudeLayer || snapshot == nil {
+		return false
+	}
+	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(snapshot.Effective)
+	if err != nil || !axes.Network.PreserveCallerIdentity {
+		return false
+	}
+	engine, err := sandboxpolicy.DeployedNetworkEngineForRules(axes.Network)
+	return err == nil && engine == sandboxpolicy.NetworkEnginePacket
+}
+
+func sshWorkaroundImplementationEligible(harnessBuiltinMode, sandboxImplementation string) bool {
+	if harnessBuiltinMode == harness.SandboxManagedProfile {
+		return true
+	}
+	implementation, err := sandboxpolicy.NormalizeImplementation(sandboxImplementation)
+	return err == nil && implementation == sandboxpolicy.ImplementationTclaudeLayer
 }
 
 // codexSSHWorkaroundEnabledInSnapshot recovers the resolved birth posture

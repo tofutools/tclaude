@@ -332,6 +332,8 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			Msg:    fail.Msg,
 		}
 	}
+	cloneSSH = cloneSSH && codexSSHWorkaroundApplies(
+		srcHarness, cloneSandbox, relaunch.SandboxImplementation, effectiveSandbox)
 	codexGitCommonDirPinned := spawnUsesPinnedGitCommonDir(
 		srcHarness, cloneSandbox, relaunch.SandboxImplementation)
 	if codexGitCommonDirPinned && gitWriteDirs == nil {

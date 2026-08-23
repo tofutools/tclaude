@@ -33,7 +33,7 @@ var resolveTclaudeLayerAccessVerdict = func(
 	return verdict, err
 }
 
-func resolveTclaudeLayerAccessVerdictWithIdentity(
+var resolveTclaudeLayerAccessVerdictWithIdentity = func(
 	harnessName string,
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,

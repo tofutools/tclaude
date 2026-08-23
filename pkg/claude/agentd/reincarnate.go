@@ -369,14 +369,15 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	// where that link lands — see agentLaunchIdentities.
 	defer claimAgentLaunchIdentity(label)()
 	relaunchPolicy, policyErr := resolveResumeSandboxPolicy(
-		target, relaunch.SSHWorkaround, label)
+		target, relaunch.SSHWorkaround, label, relaunch.Harness,
+		relaunch.Sandbox, relaunch.activeSandboxImplementation())
 	if policyErr != nil {
 		writeEffectiveSandboxLoadError(w, &effectiveSandboxChangedError{err: policyErr})
 		return
 	}
 	if relaunchPolicy != nil && relaunchPolicy.Snapshot != nil {
 		refreshed, refreshErr := finalizeCodexSSHWorkaroundForRelaunch(
-			*relaunchPolicy.Snapshot, relaunch.SSHWorkaround)
+			*relaunchPolicy.Snapshot, relaunchPolicy.SSHWorkaround)
 		if refreshErr != nil {
 			detail := "prepare Codex SSH workaround: " + refreshErr.Error()
 			if cleanupErr := cleanupUncommittedResumeSandboxPolicy(relaunchPolicy); cleanupErr != nil {
