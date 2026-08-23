@@ -1984,18 +1984,19 @@ func TestBwrapArgsRejectInvalidEntry(t *testing.T) {
 
 func TestBwrapArgsUsesDeviceBindForWritableDevGrant(t *testing.T) {
 	ordinary := t.TempDir()
+	readOnly := t.TempDir()
 	got, err := bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
 		{Path: ordinary, Mode: sandboxpolicy.MountRW},
 		{Path: "/dev", Mode: sandboxpolicy.MountRW},
-		{Path: "/sys", Mode: sandboxpolicy.MountRO},
+		{Path: readOnly, Mode: sandboxpolicy.MountRO},
 	}})
 	require.NoError(t, err)
 	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--bind", ordinary))
 	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--dev-bind", "/dev"),
 		"an explicit writable /dev grant must carry bubblewrap device authority")
 	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--bind", "/dev"))
-	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--ro-bind", "/sys"),
-		"sysfs remains an ordinary read-only projection")
+	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--ro-bind", readOnly),
+		"ordinary read-only paths retain the standard projection")
 }
 
 func TestBwrapArgsZeroModeFailsClosed(t *testing.T) {
