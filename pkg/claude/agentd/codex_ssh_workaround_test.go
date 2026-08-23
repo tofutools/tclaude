@@ -42,11 +42,17 @@ func TestCodexSSHWorkaroundAppliesToCallerIdentityPacketLayerOnly(t *testing.T) 
 	assert.True(t, codexSSHWorkaroundApplies(
 		harness.CodexName, harness.SandboxDangerFull,
 		string(sandboxpolicy.ImplementationTclaudeLayer), &packet))
+	assert.True(t, codexSSHWorkaroundApplies(
+		harness.CodexName, harness.SandboxManagedProfile,
+		string(sandboxpolicy.ImplementationTclaudeLayer), &packet))
 	assert.False(t, codexSSHWorkaroundApplies(
 		harness.CodexName, harness.SandboxDangerFull,
 		string(sandboxpolicy.ImplementationTclaudeLayer), &proxy))
 	assert.False(t, codexSSHWorkaroundApplies(
 		harness.CodexName, harness.SandboxDangerFull,
+		string(sandboxpolicy.ImplementationTclaudeLayer), &ordinary))
+	assert.False(t, codexSSHWorkaroundApplies(
+		harness.CodexName, harness.SandboxManagedProfile,
 		string(sandboxpolicy.ImplementationTclaudeLayer), &ordinary))
 	assert.False(t, codexSSHWorkaroundApplies(
 		harness.CodexName, harness.SandboxDangerFull,

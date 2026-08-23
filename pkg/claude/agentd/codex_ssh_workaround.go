@@ -49,11 +49,14 @@ func codexSSHWorkaroundApplies(
 	if runtime.GOOS != "linux" || harnessName != harness.CodexName {
 		return false
 	}
-	if harnessBuiltinMode == harness.SandboxManagedProfile {
-		return true
-	}
 	implementation, err := sandboxpolicy.NormalizeImplementation(sandboxImplementation)
-	if err != nil || implementation != sandboxpolicy.ImplementationTclaudeLayer || snapshot == nil {
+	if err != nil {
+		return false
+	}
+	if implementation == sandboxpolicy.ImplementationHarnessBuiltin {
+		return harnessBuiltinMode == harness.SandboxManagedProfile
+	}
+	if implementation != sandboxpolicy.ImplementationTclaudeLayer || snapshot == nil {
 		return false
 	}
 	axes, err := sandboxpolicy.PlannedEffectiveAccessAxes(snapshot.Effective)
@@ -65,11 +68,14 @@ func codexSSHWorkaroundApplies(
 }
 
 func sshWorkaroundImplementationEligible(harnessBuiltinMode, sandboxImplementation string) bool {
-	if harnessBuiltinMode == harness.SandboxManagedProfile {
-		return true
-	}
 	implementation, err := sandboxpolicy.NormalizeImplementation(sandboxImplementation)
-	return err == nil && implementation == sandboxpolicy.ImplementationTclaudeLayer
+	if err != nil {
+		return false
+	}
+	if implementation == sandboxpolicy.ImplementationHarnessBuiltin {
+		return harnessBuiltinMode == harness.SandboxManagedProfile
+	}
+	return implementation == sandboxpolicy.ImplementationTclaudeLayer
 }
 
 // codexSSHWorkaroundEnabledInSnapshot recovers the resolved birth posture
