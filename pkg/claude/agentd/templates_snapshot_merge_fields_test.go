@@ -86,12 +86,13 @@ var snapshotMergeTracedBase = map[string]db.SpawnProfile{
 	"ContextWindowMax": {Harness: harness.CopilotName},
 	"CopilotAPI":       {Harness: harness.CopilotName},
 	"CodexAppServer":   {Harness: harness.CodexName},
+	// SSHWorkaround is intentionally absent: every Linux harness accepts the
+	// intent, while the resolved sandbox shape decides whether it activates.
 	// Codex-only toggles. Without a Codex base these would be judged against
 	// Claude, refused, and fall through to the disclosure escape below — which
 	// passes, but proves much less than checking them where they are legal.
-	"FastMode":      {Harness: harness.CodexName},
-	"SSHWorkaround": {Harness: harness.CodexName},
-	"AutoReview":    {Harness: harness.CodexName},
+	"FastMode":   {Harness: harness.CodexName},
+	"AutoReview": {Harness: harness.CodexName},
 	// OpenCode owns the tool-governance axis; ContextFeatures is Claude-only and
 	// needs a base only so the GATE direction gets exercised (see the legal
 	// samples below — without one it is judged where it is legal and the gate is
