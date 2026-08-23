@@ -27,6 +27,17 @@ func TestMigrateV223PendingSSHWorkaround(t *testing.T) {
 	require.NoError(t, migrateV222toV223(d), "partially applied migration converges")
 }
 
+func TestMigrateV223ToleratesLegacySchemaWithoutPendingSpawns(t *testing.T) {
+	d, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "v222-no-pending.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = d.Close() })
+	mustExec(t, d, `CREATE TABLE schema_version (version INTEGER NOT NULL)`)
+	mustExec(t, d, `INSERT INTO schema_version VALUES (222)`)
+
+	require.NoError(t, migrateV222toV223(d))
+	assert.Equal(t, 223, schemaVersion(d))
+}
+
 func TestPendingSpawnSSHWorkaroundIntentRoundTrips(t *testing.T) {
 	setupTestDB(t)
 	for _, intent := range []bool{false, true} {

@@ -13,9 +13,15 @@ func migrateV222toV223(d *sql.DB) error {
 		return fmt.Errorf("migrate v222→v223 (pending SSH workaround): begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err := addColumnIfMissing(tx, "pending_spawns", "ssh_workaround",
-		`ALTER TABLE pending_spawns ADD COLUMN ssh_workaround INTEGER`); err != nil {
-		return fmt.Errorf("migrate v222→v223 (pending SSH workaround): add column: %w", err)
+	var haveTable int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'pending_spawns'`).Scan(&haveTable); err != nil {
+		return fmt.Errorf("migrate v222→v223 (pending SSH workaround): probe table: %w", err)
+	}
+	if haveTable != 0 {
+		if err := addColumnIfMissing(tx, "pending_spawns", "ssh_workaround",
+			`ALTER TABLE pending_spawns ADD COLUMN ssh_workaround INTEGER`); err != nil {
+			return fmt.Errorf("migrate v222→v223 (pending SSH workaround): add column: %w", err)
+		}
 	}
 	if _, err := tx.Exec(`UPDATE schema_version SET version = 223`); err != nil {
 		return fmt.Errorf("migrate v222→v223 (pending SSH workaround): version: %w", err)
