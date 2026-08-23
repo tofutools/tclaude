@@ -756,15 +756,12 @@ func cronSpawnPreflightWarning(r *http.Request, ownerConv string, g *db.AgentGro
 	}
 	authRequest := nonInteractiveCronAuthRequest(r)
 	ctx := ActionContext{Group: g.Name, SpawnProfile: profile, structuralGroup: g.Name}
-	allowed, _, err := permissionAllowsAction(authRequest, ownerConv, PermGroupsMembersSpawn, ctx)
-	if err == nil && !allowed && resolvePermissionVerdictForRequest(authRequest, ownerConv, PermGroupsMembersSpawn).Resolution != permDeny {
-		allowed, _ = structuralPermissionMatch(ownerConv, PermGroupsMembersSpawn, ctx)
-	}
+	allowed, _, _, err := spawnPermissionAllowsAction(authRequest, ownerConv, ctx)
 	if err != nil {
 		return "could not verify the owning agent's spawn permission; firing will reauthorize and may be denied"
 	}
 	if !allowed {
-		return fmt.Sprintf("owning agent lacks %s for group %s and spawn profile %s; firing will be denied until granted", PermGroupsMembersSpawn, g.Name, profile)
+		return fmt.Sprintf("owning agent lacks %s or %s for group %s and spawn profile %s; firing will be denied until granted", PermAgentSpawn, PermGroupsMembersSpawn, g.Name, profile)
 	}
 	return ""
 }

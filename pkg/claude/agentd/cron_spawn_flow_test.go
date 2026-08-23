@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -267,6 +268,47 @@ func TestCronSpawnFeatureGateLeavesMessageCronAvailable(t *testing.T) {
 	assert.Equal(t, http.StatusOK, message.Code, message.Body.String())
 }
 
+func TestCronSpawnGlobalPermissionScopesAndForeignGroupAuthority(t *testing.T) {
+	setup := func(t *testing.T, scope string) (*testharness.Flow, int64) {
+		t.Helper()
+		f := triggerFlow(t)
+		g := f.HaveGroup("foreign")
+		_, err := db.SetAgentGroupDefaultCwd(g.Name, t.TempDir())
+		require.NoError(t, err)
+		_, err = db.CreateSpawnProfile(&db.SpawnProfile{Name: "scanner", Harness: harness.DefaultName})
+		require.NoError(t, err)
+		const owner = "cron-global-spawn-owner"
+		f.HaveConvWithTitle(owner, "global spawner")
+		f.HaveEnrolledAgent(owner)
+		require.NoError(t, db.SaveSession(&db.SessionRow{
+			ID: "sess-" + owner, TmuxSession: "tmux-" + owner, ConvID: owner,
+			Cwd: f.World.HomeDir, Status: "running", Harness: harness.DefaultName,
+			HarnessBuiltinMode: harness.ClaudeSandboxOff, ApprovalPolicy: "bypassPermissions",
+		}))
+		require.NoError(t, db.GrantAgentPermissionWithScope(owner, agentd.PermAgentSpawn, scope, "test"))
+		require.NoError(t, db.GrantAgentPermissionWithScope(owner, agentd.PermGroupsMessagesSchedule,
+			`{"group":["foreign"]}`, "test"))
+		id, err := db.InsertAgentCronJob(&db.AgentCronJob{
+			Name: "global", OwnerConv: owner, TargetKind: db.CronTargetGroup, GroupID: g.ID,
+			IntervalSeconds: 3600, Enabled: true, ActionKind: db.CronActionSpawn,
+			SpawnProfile: "scanner", SpawnInstructionTemplate: "scan",
+			SpawnConcurrencyPolicy: db.CronConcurrencyForbid, SpawnMaxLiveWorkers: 1,
+		})
+		require.NoError(t, err)
+		return f, id
+	}
+
+	t.Run("group and spawn profile scope authorizes a foreign group", func(t *testing.T) {
+		f, id := setup(t, `{"group":["foreign"],"spawn_profile":["scanner"]}`)
+		assert.Equal(t, "spawned", runCronNow(t, f, id))
+	})
+
+	t.Run("sandbox profile scope fails closed without an explicit selection", func(t *testing.T) {
+		f, id := setup(t, `{"group":["foreign"],"spawn_profile":["scanner"],"sandbox_profile":["locked"]}`)
+		assert.Equal(t, "permission_denied", runCronNow(t, f, id))
+	})
+}
+
 func TestDashboardCronLogsPreserveWorkerIdentity(t *testing.T) {
 	f := newFlow(t)
 	group := f.HaveGroup("log-workers")
@@ -320,6 +362,18 @@ func TestCronSpawnCreateWarnsAboutMissingGrantAndPatchEditsPayload(t *testing.T)
 	testharness.DecodeJSON(t, rec, &created)
 	require.Len(t, created.Warnings, 1)
 	assert.Contains(t, created.Warnings[0], agentd.PermGroupsMembersSpawn)
+	require.NoError(t, db.GrantAgentPermissionWithScope(owner, agentd.PermAgentSpawn,
+		`{"group":["alpha"],"spawn_profile":["scanner"]}`, "test"))
+	allowed := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, "/v1/cron", map[string]any{
+		"name": "global-allowed", "target": "group:alpha", "owner": owner, "interval": "8h",
+		"action_kind": "spawn", "spawn_profile": "scanner", "spawn_instruction_template": "scan",
+	})))
+	require.Equal(t, http.StatusOK, allowed.Code, allowed.Body.String())
+	var allowedCreated struct {
+		Warnings []string `json:"warnings"`
+	}
+	testharness.DecodeJSON(t, allowed, &allowedCreated)
+	assert.Empty(t, allowedCreated.Warnings, "global agent.spawn authority satisfies cron preflight")
 
 	patch := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPatch,
 		fmt.Sprintf("/v1/cron/%d", created.ID), map[string]any{

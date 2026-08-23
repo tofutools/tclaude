@@ -840,6 +840,23 @@ func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string,
 	return requirePermissionEx(w, r, perm, ctx)
 }
 
+// spawnPermissionAllowsAction evaluates the global and group-scoped spawn
+// capabilities as independent positive sources. The returned slug is the one
+// that authorized the action; callers use it to decide whether the legacy
+// same-group guardrail still applies.
+func spawnPermissionAllowsAction(r *http.Request, convID string, actx ActionContext) (bool, string, string, error) {
+	for _, slug := range []string{PermAgentSpawn, PermGroupsMembersSpawn} {
+		allowed, matched, err := permissionAllowsAction(r, convID, slug, actx)
+		if err != nil {
+			return false, "", "", err
+		}
+		if allowed {
+			return true, slug, matched, nil
+		}
+	}
+	return false, "", "", nil
+}
+
 // requireSpawnPermission accepts either the global agent.spawn capability or
 // the group-scoped groups.members.spawn capability. The two are independent
 // positive sources: a missing or denied global capability does not suppress a
@@ -852,12 +869,10 @@ func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	if classify(p) == classAgent {
 		state, err := db.AgentState(p.ConvID)
 		if err == nil && state != db.AgentStateRetired {
-			for _, slug := range []string{PermAgentSpawn, PermGroupsMembersSpawn} {
-				if allowed, matched, _ := permissionAllowsAction(r, p.ConvID, slug, actx); allowed {
-					recordAuditPermissionScope(r, slug, matched)
-					recordAuthorizedPermission(r, slug, loadBearingSudoGrantID(r, p.ConvID, slug, actx))
-					return p.ConvID, true
-				}
+			if allowed, slug, matched, authErr := spawnPermissionAllowsAction(r, p.ConvID, actx); authErr == nil && allowed {
+				recordAuditPermissionScope(r, slug, matched)
+				recordAuthorizedPermission(r, slug, loadBearingSudoGrantID(r, p.ConvID, slug, actx))
+				return p.ConvID, true
 			}
 		}
 	}
