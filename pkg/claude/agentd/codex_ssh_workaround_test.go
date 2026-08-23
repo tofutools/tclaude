@@ -203,8 +203,8 @@ func TestSSHWorkaroundProfilePreservesIntentAcrossSandboxComposition(t *testing.
 	require.Nil(t, fail)
 	require.NotNil(t, profile)
 	require.NotNil(t, profile.SSHWorkaround)
-	assert.True(t, *profile.SSHWorkaround,
-		"the launch boundary, not an individual profile tier, decides applicability")
+	assert.Equal(t, runtime.GOOS == "linux", *profile.SSHWorkaround,
+		"platform capability and the launch boundary, not an individual profile tier, decide applicability")
 
 	layered, fail := buildProfileFromJSON(spawnProfileJSON{
 		Name: "layered-codex", Harness: "codex", Sandbox: "workspace-write",
