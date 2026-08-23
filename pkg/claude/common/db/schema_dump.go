@@ -89,7 +89,9 @@ func SchemaSQL(d *sql.DB) (string, error) {
 			emit(c)
 		}
 	}
-	return b.String(), nil
+	// Keep blank lines between statements without leaving a whitespace-only
+	// line at EOF (which also keeps generated snapshots clean under diff --check).
+	return strings.TrimSuffix(b.String(), "\n"), nil
 }
 
 // SchemaColumn is one column's structure, mirroring pragma_table_info.
