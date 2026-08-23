@@ -183,7 +183,8 @@ and passed/skipped, with live elapsed timers and a link to the GitHub checks
 page. The data comes from `git` and `gh` off the snapshot path, cached with a
 90-second TTL. The footer's **Open PRs** popover reuses the same badges with
 Open / Needs attention / Unattached / Closed filters and an "Open all on
-GitHub" action.
+GitHub" action. Drafts are muted grey and stay out of **Needs attention** by
+default; select that filter to reveal its **Include drafts** checkbox.
 
 ### Zooming into a terminal
 

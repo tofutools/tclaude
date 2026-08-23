@@ -158,7 +158,7 @@ export function footerMetaView(snapshot) {
 
 const PR_URL_RE = /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pull\/[1-9][0-9]*(?:\/.*)?$/;
 
-export function authoredOpenPRsView(snapshot, filter = 'all') {
+export function authoredOpenPRsView(snapshot, filter = 'all', includeDraftsInAttention = false) {
   const source = snapshot?.authored_open_prs;
   if (!source?.available) return { available: false, items: [], total: 0, recentCount: 0, recentWindowDays: 0 };
   const sane = (list) => (list || []).filter((pr) => PR_URL_RE.test(pr?.url || ''));
@@ -172,6 +172,10 @@ export function authoredOpenPRsView(snapshot, filter = 'all') {
   // Everything terminal (red or green) is ready for a decision, while a PR
   // with no checks at all is ready for the operator to notice that absence.
   const needsAttention = (pr) => {
+    // A draft is explicitly not ready for an operator decision. Keep it in
+    // the Open and Unattached views, but leave it out of the attention signal
+    // unless the operator opts into using drafts as part of that queue.
+    if (pr?.draft && !includeDraftsInAttention) return false;
     const checks = pr?.checks;
     if (!checks || Number(checks.total || 0) === 0) return true;
     return checks.state === 'failing' || checks.state === 'passing';
@@ -192,6 +196,7 @@ export function authoredOpenPRsView(snapshot, filter = 'all') {
     searchURL: showingRecent ? searchURL(source.recent_search_url) : searchURL(source.search_url),
     attention: all.filter(needsAttention).length,
     unattached: all.filter((pr) => !pr?.agent_id).length,
+    hasDrafts: all.some((pr) => !!pr?.draft),
     recentCount: recent.length,
     recentWindowDays,
     showingRecent,

@@ -53,16 +53,22 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
       { number: 2, url: 'https://github.com/acme/app/pull/2', checks: { total: 2, pending: 2, state: 'pending' } },
       { number: 3, url: 'https://github.com/acme/app/pull/3', checks: { total: 2, passed: 2, state: 'passing' } },
       { number: 4, url: 'https://github.com/acme/app/pull/4' },
-      { number: 5, url: 'https://github.com/acme/app/pull/5', checks: { total: 0, state: 'none' } },
+      { number: 5, url: 'https://github.com/acme/app/pull/5', draft: true, checks: { total: 0, state: 'none' } },
     ],
   };
   assert.deepEqual(
     authoredOpenPRsView({ authored_open_prs: prs }, 'attention').items.map((pr) => pr.number),
+    [1, 3, 4],
+    'failed, completed, and no-CI PRs need attention; clean CI still running and drafts do not',
+  );
+  assert.deepEqual(
+    authoredOpenPRsView({ authored_open_prs: prs }, 'attention', true).items.map((pr) => pr.number),
     [1, 3, 4, 5],
-    'failed, completed, and no-CI PRs need attention; clean CI still running does not',
+    'the explicit opt-in adds otherwise-attention-worthy drafts to the queue',
   );
   assert.deepEqual(authoredOpenPRsView({ authored_open_prs: prs }, 'unattached').items.map((pr) => pr.number), [2, 3, 4, 5]);
-  assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).attention, 4);
+  assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).attention, 3);
+  assert.equal(authoredOpenPRsView({ authored_open_prs: prs }).hasDrafts, true);
   assert.equal(authoredOpenPRsView({ authored_open_prs: { ...prs, search_url: 'javascript:alert(1)' } }).searchURL, '');
   const localPR = {
     number: 6, url: 'https://github.com/acme/app/pull/6', local: true, agent_id: 'agt_2',
@@ -91,7 +97,7 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   const openView = authoredOpenPRsView({ authored_open_prs: withRecent });
   assert.deepEqual(openView.items.map((pr) => pr.number), [1, 2, 3, 4, 5]);
   assert.equal(openView.recentCount, 1, 'a malformed recent URL is dropped');
-  assert.equal(openView.attention, 4, 'recent PRs never inflate the open tallies');
+  assert.equal(openView.attention, 3, 'recent PRs never inflate the open tallies');
   assert.equal(openView.alwaysShow, true);
   const recentView = authoredOpenPRsView({ authored_open_prs: withRecent }, 'recent');
   assert.deepEqual(recentView.items.map((pr) => pr.number), [9]);

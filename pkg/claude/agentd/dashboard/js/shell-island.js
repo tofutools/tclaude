@@ -13,9 +13,11 @@ import {
 } from './shell-model.js';
 import { PRChecksBadge } from './pr-checks-hover.js';
 import { hasUnreadHumanNotifications } from './human-notification-attention.js';
+import { dashPrefs } from './prefs.js';
 
 const html = htm.bind(h);
 const OPEN_PRS_HOVER_CLOSE_DELAY_MS = 1000;
+const OPEN_PRS_INCLUDE_DRAFTS_PREF = 'tclaude.dash.open-prs.include-drafts-attention';
 
 function UsageToken({ token }) {
   if (token.kind === 'cost') {
@@ -119,9 +121,10 @@ function FooterMeta({ state }) {
 // "no active agent" note, which only means something for open work.
 function OpenPRRow({ pr, showFinalCI = false }) {
   const terminal = pr.state === 'merged' || pr.state === 'closed';
-  const dot = terminal ? pr.state : (pr?.checks?.state || 'unknown');
+  const draft = !!pr.draft && !terminal;
+  const dot = terminal ? pr.state : (draft ? 'draft' : (pr?.checks?.state || 'unknown'));
   return html`
-    <li class="open-pr-row">
+    <li class=${`open-pr-row${draft ? ' is-draft' : ''}`}>
       <span class=${`open-pr-state open-pr-state-${dot}`} aria-hidden="true"></span>
       <span class="open-pr-main">
         <a class="open-pr-title" href=${pr.url} target="_blank" rel="noopener noreferrer">${pr.title || `Pull request #${pr.number}`}</a>
@@ -131,7 +134,7 @@ function OpenPRRow({ pr, showFinalCI = false }) {
           ${!terminal && pr.agent_title ? html`<span> · ${pr.agent_title}</span>` : null}
           ${!terminal && !pr.agent_title ? html`<span> · no active agent</span>` : null}
           ${!terminal && pr.local ? html`<span title="Known from local agent activity; not yet in GitHub's authored search"> · via agent</span>` : null}
-          ${pr.draft && !terminal ? html`<span> · draft</span>` : null}
+          ${draft ? html`<span class="open-pr-draft-label">Draft</span>` : null}
         </span>
       </span>
       <${PRChecksBadge} url=${pr.url} prNumber=${pr.number}
@@ -142,6 +145,9 @@ function OpenPRRow({ pr, showFinalCI = false }) {
 
 function OpenPRs({ state }) {
   const [filter, setFilter] = useState('all');
+  const [includeDraftsInAttention, setIncludeDraftsInAttention] = useState(
+    () => dashPrefs.getItem(OPEN_PRS_INCLUDE_DRAFTS_PREF) === '1',
+  );
   // Closed/merged work is history, so its last CI result stays quiet unless
   // the operator explicitly asks for it. This is intentionally local UI
   // state: enabling it reveals the cached snapshot summary but changes no
@@ -151,7 +157,7 @@ function OpenPRs({ state }) {
   const [pinned, setPinned] = useState(false);
   const rootRef = useRef(null);
   const hoverCloseTimer = useRef(null);
-  const view = authoredOpenPRsView(state.snapshot.value, filter);
+  const view = authoredOpenPRsView(state.snapshot.value, filter, includeDraftsInAttention);
   // The indicator is permanent by default (dashboard.always_show_open_prs), so
   // the popover must open at zero open PRs too — that is where the recently
   // closed list lives. It still stays out of the footer entirely until the
@@ -237,13 +243,23 @@ function OpenPRs({ state }) {
               title=${`Pull requests you merged or closed in the last ${view.recentWindowDays} day(s)`}
               onClick=${() => setFilter('recent')}>${recentLabel} ${view.recentCount}</button>` : null}
           </div>
-          ${view.searchURL || view.showingRecent ? html`<div class="open-prs-foot">
+          ${view.searchURL || view.showingRecent || (filter === 'attention' && view.hasDrafts) ? html`<div class="open-prs-foot">
             <span>${view.truncated ? html`<span>Showing the first ${view.items.length} · </span>` : null}${view.searchURL ? html`<a href=${view.searchURL} target="_blank" rel="noopener noreferrer">${view.showingRecent ? 'See them all on GitHub ↗' : 'Open all on GitHub ↗'}</a>` : null}</span>
             ${view.showingRecent ? html`<label class="open-prs-final-ci"
               title="Show the last cached CI result. Closed and merged pull requests are never refreshed.">
               <input type="checkbox" checked=${showFinalCI}
                 onChange=${(event) => setShowFinalCI(event.currentTarget.checked)} />
               <span>Final CI</span>
+            </label>` : null}
+            ${filter === 'attention' && view.hasDrafts ? html`<label class="open-prs-include-drafts"
+              title="Include draft pull requests in Needs attention">
+              <input type="checkbox" checked=${includeDraftsInAttention}
+                onChange=${(event) => {
+                  const checked = event.currentTarget.checked;
+                  setIncludeDraftsInAttention(checked);
+                  dashPrefs.setItem(OPEN_PRS_INCLUDE_DRAFTS_PREF, checked ? '1' : '0');
+                }} />
+              <span>Include drafts</span>
             </label>` : null}
           </div>` : null}
         </div>
