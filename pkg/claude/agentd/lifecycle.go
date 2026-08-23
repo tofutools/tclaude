@@ -3625,8 +3625,10 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// an inline launch shape is not a named profile and must not pass a
 	// profile-pinned grant. An unscoped grant is unaffected, so this reaches
 	// the existing 400 for a bad profile name exactly as before.
-	spawnerConvID, ok := requireGroupPermission(w, r, PermGroupsMembersSpawn, g,
-		ActionContext{Group: g.Name, SpawnProfile: resolvedSpawnProfileNameForScope(g, body.Profile)})
+	spawnerConvID, ok := requireSpawnPermission(w, r, g, ActionContext{
+		Group: g.Name, SpawnProfile: resolvedSpawnProfileNameForScope(g, body.Profile),
+		SandboxProfile: strings.TrimSpace(body.SandboxProfile),
+	})
 	if !ok {
 		return
 	}
@@ -3651,10 +3653,9 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			"sandbox_profile and omit_sandbox_profiles are mutually exclusive")
 		return
 	}
-	if (body.SandboxProfile != "" || body.OmitSandboxProfiles) &&
-		classify(peerFromContext(r.Context())) != classHuman {
+	if body.OmitSandboxProfiles && classify(peerFromContext(r.Context())) != classHuman {
 		writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
-			"only the human operator may select or omit sandbox profiles; agents may only inherit existing policy")
+			"only the human operator may omit inherited sandbox profiles")
 		return
 	}
 	if !validateSpawnHarnessConfig(w, r, body.HarnessConfig) {

@@ -19,9 +19,10 @@ tclaude agent spawn myteam --profile worker \
 
 The daemon launches `tclaude session new -d --global`, waits for the new
 conversation id to materialize, and adds it to the group. Spawning requires
-the `groups.members.spawn` permission — human-only by default; group
-ownership contributes it scoped to owned groups, and the guardrails below
-still apply to agent callers.
+the global `agent.spawn` or group-scoped `groups.members.spawn` permission —
+human-only by default. Group ownership contributes the latter scoped to owned
+groups, and the guardrails below still apply to agent callers. Grants for
+either slug may be restricted to named spawn and sandbox profiles.
 
 The flags that matter most:
 

@@ -105,7 +105,7 @@ func TestPermissionSlugsAdvertiseScopeDimensions(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &slugs))
 	for _, slug := range slugs {
 		if slug.Slug == agentd.PermGroupsMembersSpawn {
-			assert.Equal(t, []string{"group", "spawn_profile"}, slug.ScopeDims)
+			assert.Equal(t, []string{"group", "spawn_profile", "sandbox_profile"}, slug.ScopeDims)
 			return
 		}
 	}

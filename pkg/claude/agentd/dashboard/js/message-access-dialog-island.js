@@ -895,7 +895,7 @@ function PermissionsDialog({ descriptor, state, actions, snapshot, confirmDiscar
   }) : html`<div class="empty" style="padding:10px">${rows.length ? 'No matching permission slugs.' : 'No permission slugs registered.'}</div>`}</div>
     ${groupMode && html`<div class="perm-edit-owner-scopes" id="perm-edit-owner-scopes">
       <label for="perm-edit-owner-scopes-input"><${Words}
-        plain=${html`👑 <strong>Owner-grant constraints</strong> — adds constraints to the automatic permission grants contributed by owning this group, e.g. <code>{"groups.members.spawn": {"spawn_profile": ["reviewer"]}}</code>. Empty = no extra constraints. Other grants are unaffected.`}
+        plain=${html`👑 <strong>Owner-grant constraints</strong> — adds constraints to the automatic permission grants contributed by owning this group, e.g. <code>{"groups.members.spawn": {"spawn_profile": ["reviewer"], "sandbox_profile": ["locked-down"]}}</code>. Empty = no extra constraints. Other grants are unaffected.`}
         wizard=${html`👑 <strong>Bind the crown</strong> — adds constraints to the boons granted by wearing this party's crown, e.g. <code>{"groups.members.spawn": {"spawn_profile": ["reviewer"]}}</code>. Empty = unbound. Other boons are untouched.`}/></label>
       <textarea id="perm-edit-owner-scopes-input" rows="4" spellcheck="false" autocomplete="off"
         placeholder=${'{\n  "groups.members.spawn": { "spawn_profile": ["reviewer"] }\n}'}

@@ -120,6 +120,50 @@ func TestPermissionScope_UndescribedDimensionFailsClosed(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, refused.Code, refused.Body)
 }
 
+func TestPermissionScope_SandboxProfileScopedGrantGatesAgentSelection(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000005"
+	haveSpawnCapableMember(t, f, "alpha", lead)
+	for _, name := range []string{"locked", "open"} {
+		_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: name})
+		require.NoError(t, err)
+	}
+	grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn,
+		map[string]any{"sandbox_profile": []string{"locked"}})
+
+	allowed := f.AsAgent(lead).SpawnWith("alpha", map[string]any{
+		"name": "sandbox-scoped-worker", "sandbox_profile": "locked",
+	})
+	require.Equal(t, http.StatusOK, allowed.Code, allowed.Raw)
+
+	refused := f.AsAgent(lead).SpawnWith("alpha", map[string]any{
+		"name": "wrong-sandbox-worker", "sandbox_profile": "open",
+	})
+	assert.Equal(t, http.StatusForbidden, refused.Code, refused.Raw)
+
+	missing := spawnAttempt(t, f, lead, "alpha", "missing-sandbox-worker")
+	assert.Equal(t, http.StatusForbidden, missing.Code, missing.Body,
+		"a sandbox-scoped grant requires an explicit named selection")
+}
+
+func TestPermissionScope_GlobalAgentSpawnUsesProfileScopes(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000006"
+	haveSpawnCapableMember(t, f, "alpha", lead)
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "global-allowed"})
+	require.NoError(t, err)
+	grantScoped(t, f, lead, agentd.PermAgentSpawn, map[string]any{
+		"group": []string{"alpha"}, "sandbox_profile": []string{"global-allowed"},
+	})
+
+	spawn := f.AsAgent(lead).SpawnWith("alpha", map[string]any{
+		"name": "global-spawn-worker", "sandbox_profile": "global-allowed",
+	})
+	require.Equal(t, http.StatusOK, spawn.Code, spawn.Raw)
+}
+
 // Regression guard for the ~129 gate sites that pass no ActionContext: an
 // UNSCOPED grant must still decide exactly as it did before scopes existed.
 func TestPermissionScope_UnscopedGrantIsUnaffected(t *testing.T) {

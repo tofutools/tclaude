@@ -3793,7 +3793,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Templates = templates
 	out.Profiles = profiles
 	out.Permissions.ScopeDimOptions = scopeDimOptionsSnapshot(
-		groups, profiles, cfg.ResolvedLinearProxy().AllowedTeams)
+		groups, profiles, sandboxProfiles, cfg.ResolvedLinearProxy().AllowedTeams)
 	if defaultProfile != nil {
 		out.SpawnProfileDefault = defaultProfile.Name
 	}

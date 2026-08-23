@@ -95,7 +95,7 @@ A grant can be narrowed to part of what its slug reaches:
 
 ```bash
 tclaude agent permissions grant builder groups.members.spawn \
-  --scope group=dev,staging
+  --scope group=dev,staging --scope sandbox_profile=locked-down
 tclaude agent permissions grant lead agent.retire \
   --scope target_agent=@self-spawned
 ```
@@ -112,12 +112,18 @@ evaluation rules:
   sources, and if none passes, the request gets a 403.
 
 The registry advertises which dimensions each slug supports (`group`,
-`spawn_profile`, `process_template`, `target_agent`, and proxy-specific
+`spawn_profile`, `sandbox_profile`, `process_template`, `target_agent`, and proxy-specific
 dimensions). Two relational matchers exist on `agent.retire` and
 `agent.standdown`: `target_agent=@self-spawned` (agents the grantee spawned)
 and `@descendants` (its spawn lineage, up to 64 generations). Lineage is
 recorded only for agent-initiated spawns made after the feature existed;
 reincarnation preserves descendants, but a clone is not a child.
+
+Both `agent.spawn` and `groups.members.spawn` accept the three spawn dimensions.
+A `sandbox_profile` scope requires an agent caller to explicitly select one of
+the named profiles; ambient global and group sandbox layers still compose with
+that selection. An unscoped spawn grant may select any saved sandbox profile,
+subject to sandbox lineage. Omitting all inherited profiles remains human-only.
 
 ### Denies are never scoped
 

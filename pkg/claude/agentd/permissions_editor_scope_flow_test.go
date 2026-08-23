@@ -63,6 +63,8 @@ func TestPermEditorScope_RoundTripsThroughSnapshot(t *testing.T) {
 	const conv = "permscope-dddd-eeee-ffff-0001"
 	f.HaveConvWithTitle(conv, "agent-scope")
 	f.HaveEnrolledAgent(conv)
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "locked-sandbox"})
+	require.NoError(t, err)
 	writeLinearConfig(t, []string{"TCL", "JOH"})
 
 	mux := agentd.BuildDashboardHandlerForTest()
@@ -81,6 +83,8 @@ func TestPermEditorScope_RoundTripsThroughSnapshot(t *testing.T) {
 		"the editor must be able to render what the grant was narrowed to")
 	assert.Contains(t, view.Permissions.DimOpts["group"].Values, "alpha",
 		"the group picker offers the live groups")
+	assert.Contains(t, view.Permissions.DimOpts["sandbox_profile"].Values, "locked-sandbox",
+		"the sandbox-profile picker offers operator-authored profiles")
 	assert.Contains(t, view.Permissions.DimOpts["target_agent"].Selectors, "@descendants",
 		"a dimension's relational selectors are advertised, not hardcoded in the frontend")
 	// linear_team's catalogue is the operator's own agent.linear_proxy.allowed_teams:
