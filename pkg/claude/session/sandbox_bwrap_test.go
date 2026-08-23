@@ -26,9 +26,12 @@ func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
 	privatePath := writePath + "/private"
 	projectPath := root + "/project"
 	reopenPath := projectPath + "/reopen"
+	devicePath := root + "/gpu"
+	outsideDevicePath := t.TempDir()
 	require.NoError(t, os.MkdirAll(readPath, 0o755))
 	require.NoError(t, os.MkdirAll(privatePath, 0o755))
 	require.NoError(t, os.MkdirAll(reopenPath, 0o755))
+	require.NoError(t, os.MkdirAll(devicePath, 0o755))
 	for _, tc := range []struct {
 		name string
 		plan sandboxpolicy.MountPlan
@@ -71,6 +74,14 @@ func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
 				"--bind", reopenPath, reopenPath,
 				"--remount-ro", projectPath,
 			},
+		},
+		{
+			name: "device bind filtering uses the destination",
+			plan: sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+				{Path: devicePath, Source: "/dev", Mode: sandboxpolicy.MountRW},
+				{Path: outsideDevicePath, Source: "/dev", Mode: sandboxpolicy.MountRW},
+			}},
+			want: []string{"--dev-bind", "/dev", devicePath},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1991,11 +2002,11 @@ func TestBwrapArgsUsesDeviceBindForWritableDevGrant(t *testing.T) {
 		{Path: readOnly, Mode: sandboxpolicy.MountRO},
 	}})
 	require.NoError(t, err)
-	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--bind", ordinary))
-	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--dev-bind", "/dev"),
+	assert.Len(t, indicesOfBwrapBind(got, "--bind", ordinary, ordinary), 1)
+	assert.Len(t, indicesOfBwrapBind(got, "--dev-bind", "/dev", "/dev"), 1,
 		"an explicit writable /dev grant must carry bubblewrap device authority")
-	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--bind", "/dev"))
-	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--ro-bind", readOnly),
+	assert.Empty(t, indicesOfBwrapBind(got, "--bind", "/dev", "/dev"))
+	assert.Len(t, indicesOfBwrapBind(got, "--ro-bind", readOnly, readOnly), 1,
 		"ordinary read-only paths retain the standard projection")
 }
 

@@ -424,12 +424,29 @@ func TestPrivateOpenCodeStateBuildsPerAgentV3Contract(t *testing.T) {
 		"does not bind global config read-only")
 	legacyAppOnly := specA.Contract
 	legacyAppOnly.StateDirs = append([]string(nil), legacyAppOnly.StateDirs...)
+	legacyAppOnly.WriteDirs = append([]string(nil), legacyAppOnly.WriteDirs...)
 	for _, index := range []int{0, 1, 3} {
+		current := legacyAppOnly.StateDirs[index]
 		legacyAppOnly.StateDirs[index] = filepath.Join(
 			legacyAppOnly.Environment[index].Value, "opencode")
+		for writeIndex, writeDir := range legacyAppOnly.WriteDirs {
+			if writeDir == current {
+				legacyAppOnly.WriteDirs[writeIndex] = legacyAppOnly.StateDirs[index]
+			}
+		}
 	}
 	require.NoError(t, validateOpenCodeV3LaunchContract(legacyAppOnly, false),
 		"persisted app-only launch specs must remain replayable")
+	legacySpec := *specA
+	legacySpec.Contract = legacyAppOnly
+	legacyJSON, err := json.Marshal(legacySpec)
+	require.NoError(t, err)
+	_, err = openCodeRuntimeSandboxSpec(db.OpenCodeRuntime{
+		Cwd: cwd, SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		SandboxLaunchSpecJSON: string(legacyJSON), Transport: db.OpenCodeTransportLoopbackTCP,
+	})
+	require.NoError(t, err,
+		"persisted app-only launch specs must survive the complete runtime replay checks")
 	seeded, err := os.ReadFile(filepath.Join(allocationA.StateRoot, "data", "opencode", "auth.json"))
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"provider":"seed"}`, string(seeded))
