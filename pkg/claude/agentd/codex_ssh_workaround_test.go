@@ -198,6 +198,6 @@ func TestCodexSSHWorkaroundProfileClampsUnsupportedSandbox(t *testing.T) {
 	require.Nil(t, fail)
 	require.NotNil(t, layered)
 	require.NotNil(t, layered.SSHWorkaround)
-	assert.True(t, *layered.SSHWorkaround,
-		"the effective sandbox profile decides whether caller identity activates it")
+	assert.Equal(t, runtime.GOOS == "linux", *layered.SSHWorkaround,
+		"tclaude-layer keeps the Linux workaround eligible for the effective sandbox profile")
 }

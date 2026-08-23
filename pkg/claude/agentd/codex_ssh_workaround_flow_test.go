@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"runtime"
 	"testing"
@@ -152,6 +153,16 @@ func TestCodexTclaudeLayerSSHWorkaroundRequiresCallerIdentityPacketSandbox(t *te
 		t.Skip("the Codex SSH workaround is Linux-only")
 	}
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Cleanup(session.SetCodexEffectiveConfigProbeForTest(
+		func(string, []sandboxpolicy.EnvironmentEntry, string) (json.RawMessage, error) {
+			return json.RawMessage(`{
+				"config": {
+					"model_provider": "test",
+					"model_providers": {"test": {"base_url": "https://example.test/v1"}}
+				},
+				"origins": {}
+			}`), nil
+		}))
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	t.Cleanup(agentd.SetTclaudeLayerHostAvailabilityForTest(func() error { return nil }))
