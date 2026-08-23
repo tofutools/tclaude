@@ -1309,7 +1309,8 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("resolve network filtering engine: %w", engineErr)
 		}
 		tclaudeLayerEngine = deployedEngine
-		tclaudeLayerPreserveCallerIdentity = axes.Network.PreserveCallerIdentity
+		tclaudeLayerPreserveCallerIdentity = requestedNetworkPosture == sandboxpolicy.NetworkFiltered &&
+			deployedEngine == sandboxpolicy.NetworkEnginePacket
 		if requestedNetworkPosture == sandboxpolicy.NetworkFiltered {
 			if runtime.GOOS == "darwin" &&
 				sandboxpolicy.NetworkRulesAreLoopbackOnly(axes.Network) {

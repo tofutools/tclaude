@@ -582,8 +582,9 @@ func ResolveTclaudeLayerForEngine(
 	return resolveTclaudeLayerForEngine(ResolveTclaudeLayer, posture, root, engine)
 }
 
-// ResolveTclaudeLayerForEngineWithIdentity probes the selected identity mode;
-// the ordinary entry point remains the compatibility namespace-root probe.
+// ResolveTclaudeLayerForEngineWithIdentity is retained for callers compiled
+// against the former identity selection. Packet filtering now always probes
+// and launches with the caller identity, regardless of the legacy argument.
 func ResolveTclaudeLayerForEngineWithIdentity(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
@@ -625,11 +626,10 @@ func resolveTclaudeLayerForEngine(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
 	engine sandboxpolicy.NetworkEngine,
-	preserveCallerIdentity ...bool,
+	_ ...bool,
 ) (string, harness.LaunchOSSandbox, error) {
 	floor := TclaudeLayerFloorPosture(posture, engine)
-	preserve := floor == sandboxpolicy.NetworkFiltered &&
-		len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0]
+	preserve := floor == sandboxpolicy.NetworkFiltered
 	binary, sandbox, err := resolve(floor, root, preserve)
 	if err != nil {
 		return "", sandbox, err
@@ -903,11 +903,10 @@ func appendFilteredNetworkPrerequisiteNotice(
 func TclaudeLayerLaunchOSSandbox(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
-	preserveCallerIdentity ...bool,
+	_ ...bool,
 ) harness.LaunchOSSandbox {
 	resolved := tclaudeLayerLaunchOSSandbox(posture, root)
-	if runtime.GOOS == "linux" && posture == sandboxpolicy.NetworkFiltered &&
-		len(preserveCallerIdentity) > 0 && preserveCallerIdentity[0] {
+	if runtime.GOOS == "linux" && posture == sandboxpolicy.NetworkFiltered {
 		resolved.Source += "; harness preserves invoking numeric UID/GID"
 	}
 	return resolved
@@ -2063,17 +2062,14 @@ func bwrapArgsWithDaemonFinal(
 		args = append(args, "--unshare-net", "--unshare-pid")
 		args = hideRemounts.appendHide(args, "/")
 	case sandboxpolicy.NetworkFiltered:
-		// The historical/default launch selects namespace root. The explicit
-		// profile opt-in omits that selection: --dev makes rootless bubblewrap use
+		// The caller-identity launch omits an explicit uid/gid selection: --dev
+		// makes rootless bubblewrap use
 		// an outer uid-0 setup namespace (which owns the netns) and a nested user
 		// namespace that maps back to the invoking ids. Supervisor nft/pasta setup
-		// still joins the owning outer namespace in either mode.
+		// still joins the owning outer namespace.
 		args = append(args,
 			"--unshare-user",
 		)
-		if !plan.PreserveCallerIdentity {
-			args = append(args, "--uid", "0", "--gid", "0")
-		}
 		args = append(args, "--unshare-net", "--unshare-pid")
 		args = hideRemounts.appendHide(args, "/")
 	default:

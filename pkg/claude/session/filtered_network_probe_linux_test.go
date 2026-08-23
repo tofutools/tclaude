@@ -44,13 +44,17 @@ func TestTclaudeLayerNetworkPostureUsesPlannedDenyRows(t *testing.T) {
 func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 	oldBwrapPath := lookPathBwrap
 	oldBwrapProbe := probeBwrap
+	oldBwrapIdentityProbe := probeBwrapIdentity
 	oldFilteredPath := filteredNetworkLookPath
 	oldFilteredInspect := inspectFilteredNetworkPasta
+	oldFilteredIdentityInspect := inspectFilteredNetworkPastaIdentity
 	t.Cleanup(func() {
 		lookPathBwrap = oldBwrapPath
 		probeBwrap = oldBwrapProbe
+		probeBwrapIdentity = oldBwrapIdentityProbe
 		filteredNetworkLookPath = oldFilteredPath
 		inspectFilteredNetworkPasta = oldFilteredInspect
+		inspectFilteredNetworkPastaIdentity = oldFilteredIdentityInspect
 	})
 	stubTrustedExecutableWalk(t)
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
@@ -58,10 +62,12 @@ func TestFilteredNetworkPrerequisiteProbeNamesEveryBuildingBlock(t *testing.T) {
 		assert.Equal(t, sandboxpolicy.NetworkFiltered, posture)
 		return nil
 	}
+	probeBwrapIdentity = probeBwrap
 	filteredNetworkLookPath = func(name string) (string, error) {
 		return "/usr/bin/" + name, nil
 	}
 	inspectFilteredNetworkPasta = func(string) error { return nil }
+	inspectFilteredNetworkPastaIdentity = func(string) error { return nil }
 
 	got := ProbeFilteredNetworkPrerequisite()
 	require.True(t, got.Detected)
@@ -186,23 +192,29 @@ func TestFilteredNetworkPastaCapabilityProbeBoundsExecutionAndOutput(t *testing.
 func TestFilteredNetworkPrerequisiteProbeRefusesOlderPasta(t *testing.T) {
 	oldBwrapPath := lookPathBwrap
 	oldBwrapProbe := probeBwrap
+	oldBwrapIdentityProbe := probeBwrapIdentity
 	oldFilteredPath := filteredNetworkLookPath
 	oldFilteredInspect := inspectFilteredNetworkPasta
+	oldFilteredIdentityInspect := inspectFilteredNetworkPastaIdentity
 	t.Cleanup(func() {
 		lookPathBwrap = oldBwrapPath
 		probeBwrap = oldBwrapProbe
+		probeBwrapIdentity = oldBwrapIdentityProbe
 		filteredNetworkLookPath = oldFilteredPath
 		inspectFilteredNetworkPasta = oldFilteredInspect
+		inspectFilteredNetworkPastaIdentity = oldFilteredIdentityInspect
 	})
 	stubTrustedExecutableWalk(t)
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error { return nil }
+	probeBwrapIdentity = probeBwrap
 	filteredNetworkLookPath = func(name string) (string, error) {
 		return "/usr/bin/" + name, nil
 	}
 	inspectFilteredNetworkPasta = func(string) error {
 		return errors.New("missing options: --map-host-loopback")
 	}
+	inspectFilteredNetworkPastaIdentity = inspectFilteredNetworkPasta
 
 	got := ProbeFilteredNetworkPrerequisite()
 	require.False(t, got.Detected)
@@ -239,15 +251,18 @@ func TestFilteredNetworkProbeArgsBuildTheNamespaceShapeWithoutInSandboxCapabilit
 func TestFilteredNetworkPrerequisiteProbeReportsFirstMissingCapability(t *testing.T) {
 	oldBwrapPath := lookPathBwrap
 	oldBwrapProbe := probeBwrap
+	oldBwrapIdentityProbe := probeBwrapIdentity
 	oldFilteredPath := filteredNetworkLookPath
 	t.Cleanup(func() {
 		lookPathBwrap = oldBwrapPath
 		probeBwrap = oldBwrapProbe
+		probeBwrapIdentity = oldBwrapIdentityProbe
 		filteredNetworkLookPath = oldFilteredPath
 	})
 	stubTrustedExecutableWalk(t)
 	lookPathBwrap = func(string) (string, error) { return "/usr/bin/bwrap", nil }
 	probeBwrap = func(string, sandboxpolicy.NetworkPosture, sandboxpolicy.RootPosture) error { return nil }
+	probeBwrapIdentity = probeBwrap
 	filteredNetworkLookPath = func(name string) (string, error) {
 		if name == "pasta" {
 			return "", errors.New("not found")

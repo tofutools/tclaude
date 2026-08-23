@@ -2797,8 +2797,8 @@ func resumeLaunchCmdWithStackedProof(
 		var resolveErr error
 		binary, _, resolveErr = session.ResolveTclaudeLayerForEngineWithIdentity(
 			posture, root, engine,
-			effectiveProfile.Network != nil &&
-				effectiveProfile.Network.PreserveCallerIdentity)
+			posture == sandboxpolicy.NetworkFiltered &&
+				engine == sandboxpolicy.NetworkEnginePacket)
 		if resolveErr != nil {
 			return "", "", nil, resolveErr
 		}

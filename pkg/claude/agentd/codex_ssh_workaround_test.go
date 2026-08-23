@@ -14,23 +14,21 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-func TestSSHWorkaroundAppliesToEveryPacketLayerHarnessAndIdentity(t *testing.T) {
+func TestSSHWorkaroundAppliesToEveryPacketLayerHarness(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("the SSH workaround is Linux-only")
 	}
 	packet := sandboxpolicy.EmptySnapshot()
 	packet.Effective.Network = &sandboxpolicy.NetworkRules{
-		Mode:                   sandboxpolicy.AccessModeList,
-		Engine:                 sandboxpolicy.NetworkEnginePacket,
-		PreserveCallerIdentity: true,
-		Allow:                  []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
+		Mode:   sandboxpolicy.AccessModeList,
+		Engine: sandboxpolicy.NetworkEnginePacket,
+		Allow:  []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
 	}
 	proxy := packet
 	proxy.Effective.Network = &sandboxpolicy.NetworkRules{
-		Mode:                   sandboxpolicy.AccessModeList,
-		Engine:                 sandboxpolicy.NetworkEngineProxy,
-		PreserveCallerIdentity: true,
-		Allow:                  []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
+		Mode:   sandboxpolicy.AccessModeList,
+		Engine: sandboxpolicy.NetworkEngineProxy,
+		Allow:  []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
 	}
 	ordinary := packet
 	ordinary.Effective.Network = &sandboxpolicy.NetworkRules{

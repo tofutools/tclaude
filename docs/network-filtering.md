@@ -125,11 +125,9 @@ The Linux default for a list or deny policy under `tclaude-layer`. Four
 building blocks, assembled per launch:
 
 1. **bubblewrap** creates user, network, PID, and mount namespaces with no
-   connectivity. By default it retains the historical namespace UID/GID 0
-   identity (one-ID rootless mapping — not host root). A profile can explicitly
-   set `network.preserve_caller_identity: true` to present the harness as the
-   invoking numeric UID/GID instead; files created in authorized host binds
-   remain owned by that host identity in either mode.
+   connectivity, presenting the harness as the invoking numeric UID/GID. Files
+   created in authorized host binds therefore remain owned by that host
+   identity.
 2. The outside supervisor joins the user namespace that owns the network
    namespace, then installs a **default-drop nftables output policy**
    (`inet tclaude_filter`) as one atomic transaction with timed per-rule
