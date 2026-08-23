@@ -600,7 +600,8 @@ func openCodeStateLayoutForAllocation(
 	baseNames := []string{"data", "cache", "config", "state"}
 	layout.stateDirs = make([]string, 0, len(baseNames))
 	for _, name := range baseNames {
-		appDir := filepath.Join(validated.StateRoot, name, "opencode")
+		baseDir := filepath.Join(validated.StateRoot, name)
+		appDir := filepath.Join(baseDir, "opencode")
 		if err := os.MkdirAll(appDir, 0o700); err != nil {
 			return nil, fmt.Errorf("create private OpenCode %s directory: %w", name, err)
 		}
@@ -614,10 +615,20 @@ func openCodeStateLayoutForAllocation(
 				"private OpenCode %s directory %q could not be resolved or is not canonical",
 				name, appDir)
 		}
-		layout.stateDirs = append(layout.stateDirs, appDir)
+		// OpenCode exports these XDG bases to every tool it launches. Data,
+		// cache, and state are private to this agent, so expose the whole base:
+		// sibling tools are entitled to follow the XDG contract too (Cargo
+		// dependencies such as tracel are one real example). Config is the
+		// exception: only the OpenCode app directory is projected read-only from
+		// ambient config below, and the rest of the private base stays opaque.
+		stateDir := baseDir
+		if name == "config" {
+			stateDir = appDir
+		}
+		layout.stateDirs = append(layout.stateDirs, stateDir)
 		layout.environment = append(layout.environment, sandboxpolicy.EnvironmentEntry{
 			Name:  "XDG_" + strings.ToUpper(name) + "_HOME",
-			Value: filepath.Join(validated.StateRoot, name),
+			Value: baseDir,
 		})
 	}
 	layout.finalHideDirs = []string{
@@ -658,7 +669,8 @@ func openCodeStateLayoutForAllocation(
 	if err := adaptOpenCodeStateLayoutForPlatform(layout); err != nil {
 		return nil, err
 	}
-	if err := seedOpenCodeCredentials(layout.ambient.data, layout.stateDirs[0]); err != nil {
+	if err := seedOpenCodeCredentials(
+		layout.ambient.data, filepath.Join(validated.StateRoot, "data", "opencode")); err != nil {
 		return nil, err
 	}
 	return layout, nil

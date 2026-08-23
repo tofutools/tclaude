@@ -26,9 +26,12 @@ func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
 	privatePath := writePath + "/private"
 	projectPath := root + "/project"
 	reopenPath := projectPath + "/reopen"
+	devicePath := root + "/gpu"
+	outsideDevicePath := t.TempDir()
 	require.NoError(t, os.MkdirAll(readPath, 0o755))
 	require.NoError(t, os.MkdirAll(privatePath, 0o755))
 	require.NoError(t, os.MkdirAll(reopenPath, 0o755))
+	require.NoError(t, os.MkdirAll(devicePath, 0o755))
 	for _, tc := range []struct {
 		name string
 		plan sandboxpolicy.MountPlan
@@ -71,6 +74,14 @@ func TestBwrapArgsRenderOrderedMountPlan(t *testing.T) {
 				"--bind", reopenPath, reopenPath,
 				"--remount-ro", projectPath,
 			},
+		},
+		{
+			name: "device bind filtering uses the destination",
+			plan: sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+				{Path: devicePath, Source: "/dev", Mode: sandboxpolicy.MountRW},
+				{Path: outsideDevicePath, Source: "/dev", Mode: sandboxpolicy.MountRW},
+			}},
+			want: []string{"--dev-bind", "/dev", devicePath},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1957,7 +1968,7 @@ func bwrapFilesystemArgsWithin(args []string, root string) []string {
 	var filtered []string
 	for i, arg := range args {
 		switch arg {
-		case "--bind", "--ro-bind":
+		case "--bind", "--dev-bind", "--ro-bind":
 			if i+2 < len(args) && sandboxpolicy.PathContainsOrEqual(root, args[i+2]) {
 				filtered = append(filtered, args[i:i+3]...)
 			}
@@ -1980,6 +1991,23 @@ func TestBwrapArgsRejectInvalidEntry(t *testing.T) {
 		{Path: "/work", Mode: sandboxpolicy.MountMode(99)},
 	}})
 	require.ErrorContains(t, err, "invalid mode")
+}
+
+func TestBwrapArgsUsesDeviceBindForWritableDevGrant(t *testing.T) {
+	ordinary := t.TempDir()
+	readOnly := t.TempDir()
+	got, err := bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+		{Path: ordinary, Mode: sandboxpolicy.MountRW},
+		{Path: "/dev", Mode: sandboxpolicy.MountRW},
+		{Path: readOnly, Mode: sandboxpolicy.MountRO},
+	}})
+	require.NoError(t, err)
+	assert.Len(t, indicesOfBwrapBind(got, "--bind", ordinary, ordinary), 1)
+	assert.Len(t, indicesOfBwrapBind(got, "--dev-bind", "/dev", "/dev"), 1,
+		"an explicit writable /dev grant must carry bubblewrap device authority")
+	assert.Empty(t, indicesOfBwrapBind(got, "--bind", "/dev", "/dev"))
+	assert.Len(t, indicesOfBwrapBind(got, "--ro-bind", readOnly, readOnly), 1,
+		"ordinary read-only paths retain the standard projection")
 }
 
 func TestBwrapArgsZeroModeFailsClosed(t *testing.T) {
