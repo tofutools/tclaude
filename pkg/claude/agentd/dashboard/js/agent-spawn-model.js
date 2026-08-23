@@ -538,13 +538,7 @@ export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
     && (effectiveSandboxImpl === SANDBOX_IMPL_OFF
       || (draft.harness === 'codex' && draft.sandbox === 'danger-full-access'));
   const showSSHWorkaround = !!harness?.can_ssh_workaround;
-  const sshWorkaroundAvailable = showSSHWorkaround
-    && (((!effectiveSandboxImpl || effectiveSandboxImpl === SANDBOX_IMPL_DEFAULT)
-        && draft.sandbox === 'tclaude-agent')
-      || effectiveSandboxImpl === SANDBOX_IMPL_TCLAUDE_LAYER
-      || effectiveSandboxImpl === SANDBOX_IMPL_STACKED)
-    && !sandboxProfilesDisabled
-    && draft.sandboxProfile !== SANDBOX_PROFILE_NONE;
+  const sshWorkaroundAvailable = showSSHWorkaround;
   return {
     harness,
     models,

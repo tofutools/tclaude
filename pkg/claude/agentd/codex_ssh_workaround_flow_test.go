@@ -87,8 +87,13 @@ func TestCodexSpawnSSHWorkaroundDefaultsOnAndCanBeDisabled(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, rawDurable)
 	require.NotNil(t, rawDurable.SSHWorkaround)
-	assert.False(t, *rawDurable.SSHWorkaround,
-		"raw Codex containment cannot persist the managed-sandbox workaround as active")
+	assert.True(t, *rawDurable.SSHWorkaround,
+		"durable intent is preserved independently of current applicability")
+	snapshot, ok = f.World.SpawnSandboxPolicy(raw.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, snapshot)
+	assert.NotContains(t, snapshot.Effective.AgentDirectories, "TCL_CODEX_SSH_CONFIG_DIR")
+	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", false)
 
 	optedOut := f.AsHuman().SpawnWith("crew", map[string]any{
 		"name": "explicit-off", "harness": "codex", "sandbox": "tclaude-agent",

@@ -18,16 +18,15 @@ func TestDashboardHTML_SSHWorkaroundWired(t *testing.T) {
 	must("const showSSHWorkaround = !!harness?.can_ssh_workaround",
 		"spawn row gates on the harness capability")
 	must("sshWorkaroundAvailable = showSSHWorkaround",
-		"spawn row distinguishes managed sandbox availability")
+		"spawn row exposes launch intent for every capable harness")
 	must("sshWorkaround: !!harness?.can_ssh_workaround",
 		"capable harnesses default the checkbox on")
-	must("view.sshWorkaroundAvailable && draft.sshWorkaround",
-		"spawn request always carries the visible checkbox state")
+	must("checked=${draft.sshWorkaround}",
+		"spawn checkbox renders the preserved intent")
 
 	must(`id="profile-editor-ssh-workaround"`, "profile editor has an SSH workaround checkbox")
 	must(`hidden=${!hEntry?.can_ssh_workaround}`, "profile checkbox is capability gated")
-	must("draft.sandbox_implementation === 'tclaude-layer'",
-		"profile payload supports the dedicated tclaude layer")
-	must("draft.sandbox_implementation === 'stacked'",
-		"profile payload supports the outer layer in stacked mode")
+	must("checked=${draft.ssh_workaround}", "profile checkbox renders intent independent of its sandbox tier")
+	must("body.ssh_workaround = !!draft.ssh_workaround",
+		"profile payload preserves intent across independently composed tiers")
 }
