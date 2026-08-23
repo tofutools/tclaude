@@ -232,7 +232,6 @@ body.dock-open .open-prs.is-open::before {
 .open-pr-meta { overflow: hidden; color: #7d8590; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .open-pr-row.is-draft { background: rgba(110,118,129,.045); }
 .open-pr-row.is-draft .open-pr-title { color: #8b949e; }
-.open-pr-row.is-draft .open-pr-meta { color: #6e7681; }
 .open-pr-row.is-draft .ci-badge { color: #8b949e; border-color: #3c444d; background: #20252b; }
 .open-pr-draft-label {
   display: inline-block; margin-left: 5px; padding: 0 5px; border: 1px solid #484f58;
