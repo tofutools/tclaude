@@ -152,8 +152,9 @@ func TestRunHookCallback_IdleTransitionDoesNotRefreshUsage(t *testing.T) {
 	require.NoError(t, err)
 	var after usageapi.CachedUsage
 	require.NoError(t, json.Unmarshal(row.Data, &after))
-	assert.Equal(t, stamp, after.LastAttemptAt,
-		"an idle hook must not attempt an API refresh")
+	assert.True(t, stamp.Equal(after.LastAttemptAt),
+		"an idle hook must not attempt an API refresh: before=%s after=%s",
+		stamp, after.LastAttemptAt)
 }
 
 // A SessionEnd hook with a real exit reason flips the session row to
