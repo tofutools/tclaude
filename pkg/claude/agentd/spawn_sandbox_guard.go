@@ -38,19 +38,12 @@ var resolveTclaudeLayerAccessVerdictWithIdentity = func(
 	posture sandboxpolicy.NetworkPosture,
 	root sandboxpolicy.RootPosture,
 	engine sandboxpolicy.NetworkEngine,
-	preserveCallerIdentity bool,
+	_ bool,
 ) (harness.LaunchOSSandbox, error) {
-	if !preserveCallerIdentity {
-		return resolveTclaudeLayerAccessVerdict(harnessName, posture, root, engine)
-	}
-	if session.TclaudeLayerUsesServerBoundary(harnessName) {
-		_, verdict, err := session.ResolveTclaudeLayerServerForEngineWithIdentity(
-			posture, root, engine, true)
-		return verdict, err
-	}
-	_, verdict, err := session.ResolveTclaudeLayerForEngineWithIdentity(
-		posture, root, engine, true)
-	return verdict, err
+	// Caller identity is now inherent to the packet-filtered resolver above.
+	// Keep this compatibility seam delegating dynamically so tests and older
+	// callers that replace the ordinary verdict resolver observe one boundary.
+	return resolveTclaudeLayerAccessVerdict(harnessName, posture, root, engine)
 }
 
 var probeFilteredNetworkPrerequisite = session.ProbeFilteredNetworkPrerequisite
