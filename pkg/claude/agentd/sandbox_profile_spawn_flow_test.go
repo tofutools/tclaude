@@ -476,7 +476,7 @@ func TestSandboxProfileSpawnRejectsExplicitInternetWidening(t *testing.T) {
 	})
 }
 
-func TestSandboxProfileWriteRootParticipatesInAgentSpawnProof(t *testing.T) {
+func TestSandboxProfileWriteRootDoesNotParticipateInAgentSpawnProof(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	writeRoot, err := filepath.EvalSymlinks(t.TempDir())
@@ -503,7 +503,7 @@ func TestSandboxProfileWriteRootParticipatesInAgentSpawnProof(t *testing.T) {
 		"/v1/groups/"+url.PathEscape("crew")+"/spawn",
 		map[string]any{"name": "child", "cwd": childCwd, "approval": "default"})
 	challenge := decodeWriteProofChallenge(t, rec)
-	assert.ElementsMatch(t, []string{childCwd, writeRoot}, challenge.WriteProof.Dirs)
+	assert.ElementsMatch(t, []string{childCwd}, challenge.WriteProof.Dirs)
 
 	// The challenge is observational in this test; ensure no marker was
 	// accidentally materialised by the daemon itself.
@@ -511,7 +511,7 @@ func TestSandboxProfileWriteRootParticipatesInAgentSpawnProof(t *testing.T) {
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
-func TestMissingSandboxProfileWriteRootProofsNearestExistingAncestor(t *testing.T) {
+func TestMissingSandboxProfileWriteRootDoesNotProofNearestExistingAncestor(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	writeParent, err := filepath.EvalSymlinks(t.TempDir())
@@ -539,7 +539,7 @@ func TestMissingSandboxProfileWriteRootProofsNearestExistingAncestor(t *testing.
 		"/v1/groups/"+url.PathEscape("crew")+"/spawn",
 		map[string]any{"name": "child", "cwd": childCwd, "approval": "default"})
 	challenge := decodeWriteProofChallenge(t, rec)
-	assert.ElementsMatch(t, []string{childCwd, writeParent}, challenge.WriteProof.Dirs)
+	assert.ElementsMatch(t, []string{childCwd}, challenge.WriteProof.Dirs)
 	assert.NotContains(t, challenge.WriteProof.Dirs, missingWriteRoot)
 }
 

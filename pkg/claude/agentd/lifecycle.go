@@ -29,6 +29,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
 )
@@ -1624,9 +1625,9 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 		res.Detail = "placeholder member (no conv yet) — Phase B will support template-based fresh spawn"
 		return res
 	}
-	// Resume authority is durable agent + conversation state. A human trust root
-	// may establish a missing conversation profile from the real harness store;
-	// a predecessor session row is never required or consulted here.
+	// Resume authority is durable agent + conversation state. A missing legacy
+	// conversation profile may be reconstructed from the real harness store; a
+	// predecessor session row is never required.
 	conversationProfile, profileErr := db.ConversationResumeProfileForConv(convID)
 	if profileErr != nil {
 		res.Action = "error"
@@ -1654,6 +1655,14 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 		return res
 	}
 	cwd := launchConfig.Cwd
+	// Prefer the physical launch spelling captured at admission when it is
+	// available. This is an address selection, not an authorization check: the
+	// continuation neither re-captures nor compares provenance, and malformed or
+	// legacy metadata simply falls back to the durable profile cwd.
+	if recorded, err := resumeprovenance.Decode(launchConfig.ResumeProvenance); err == nil &&
+		recorded.Cwd.Path != "" && filepath.IsAbs(recorded.Cwd.Path) {
+		cwd = recorded.Cwd.Path
+	}
 	if cwd == "" || !filepath.IsAbs(cwd) {
 		res.Action = "error:resume_profile"
 		res.Detail = "no absolute launch directory is available; recreate this agent"

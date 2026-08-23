@@ -64,8 +64,8 @@ func TestCrossAgentAskHuman_ResumeCreatesPendingRequestAndApprovalLaunchesOnce(t
 	require.Equal(t, http.StatusOK, response.Code, "resume body=%s", response.Body.String())
 	proof, launched := f.World.SpawnCwdWriteProof(target)
 	assert.True(t, launched, "approved resume must launch exactly once")
-	assert.NotEmpty(t, proof,
-		"daemon-owned launch pin must bind target provenance without asking the caller to write there")
+	assert.Empty(t, proof,
+		"approved lifecycle continuation must not manufacture a new cwd proof")
 }
 
 func TestCrossAgentAskHuman_ResumeDenyAndTimeoutLeaveTargetStopped(t *testing.T) {
