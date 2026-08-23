@@ -389,7 +389,10 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 		"set -eu; test \"$TCLAUDE_OPENCODE_EXECUTOR_SMOKE\" = frozen-profile-value; "+
 			"test \"$XDG_DATA_HOME\" = %s; test \"$XDG_CACHE_HOME\" = %s; "+
 			"test \"$XDG_CONFIG_HOME\" = %s; test \"$XDG_STATE_HOME\" = %s; test \"$HOME\" = %s; "+
-			"printf executor-ok > %s; printf state-ok > \"$XDG_STATE_HOME/opencode/tool-state\"; "+
+			"printf executor-ok > %s; mkdir -p \"$XDG_DATA_HOME/tracel\" \"$XDG_CACHE_HOME/cargo\"; "+
+			"printf data-ok > \"$XDG_DATA_HOME/tracel/tool-data\"; "+
+			"printf cache-ok > \"$XDG_CACHE_HOME/cargo/tool-cache\"; "+
+			"printf state-ok > \"$XDG_STATE_HOME/opencode/tool-state\"; "+
 			"if printf blocked > %s; then exit 97; fi; "+
 			"for hidden in %s %s %s %s; do if test -r \"$hidden\"; then exit 98; fi; done; "+
 			"test -r %s; test -r %s; "+
@@ -429,6 +432,8 @@ func runOpenCodeTclaudeLayerExecutorSmoke(t *testing.T, filtered bool) {
 			openCodeFilteredDenyHelperTag, output)
 	}
 	require.FileExists(t, filepath.Join(cwd, "tool-written"))
+	require.FileExists(t, filepath.Join(allocation.StateRoot, "data", "tracel", "tool-data"))
+	require.FileExists(t, filepath.Join(allocation.StateRoot, "cache", "cargo", "tool-cache"))
 	_, statErr := os.Stat(filepath.Join(outside, "blocked"))
 	require.ErrorIs(t, statErr, os.ErrNotExist,
 		"the real OpenCode bash tool must remain inside the server's mount boundary")

@@ -1636,8 +1636,15 @@ func validateOpenCodeV3LaunchContract(
 				i, entry.Name, name)
 		}
 		wantStateDir := filepath.Join(entry.Value, "opencode")
-		matchesStateDir := canonicalOpenCodeRuntimePath(contract.StateDirs[i]) ==
-			canonicalOpenCodeRuntimePath(wantStateDir)
+		actualStateDir := canonicalOpenCodeRuntimePath(contract.StateDirs[i])
+		matchesStateDir := actualStateDir == canonicalOpenCodeRuntimePath(wantStateDir)
+		// New private layouts reopen each mutable XDG base so tools launched by
+		// OpenCode can use their own application directories. Accept the older
+		// app-only shape as well: launch specs are persisted and must replay
+		// across upgrades. Config remains app-only and read-only below.
+		if i != 2 && actualStateDir == canonicalOpenCodeRuntimePath(entry.Value) {
+			matchesStateDir = true
+		}
 		if i == 2 && filtered {
 			wantConfigBase := filepath.Join(stateRoot, openCodeFilteredConfigBase)
 			if canonicalOpenCodeRuntimePath(entry.Value) !=

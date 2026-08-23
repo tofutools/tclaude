@@ -1957,7 +1957,7 @@ func bwrapFilesystemArgsWithin(args []string, root string) []string {
 	var filtered []string
 	for i, arg := range args {
 		switch arg {
-		case "--bind", "--ro-bind":
+		case "--bind", "--dev-bind", "--ro-bind":
 			if i+2 < len(args) && sandboxpolicy.PathContainsOrEqual(root, args[i+2]) {
 				filtered = append(filtered, args[i:i+3]...)
 			}
@@ -1980,6 +1980,22 @@ func TestBwrapArgsRejectInvalidEntry(t *testing.T) {
 		{Path: "/work", Mode: sandboxpolicy.MountMode(99)},
 	}})
 	require.ErrorContains(t, err, "invalid mode")
+}
+
+func TestBwrapArgsUsesDeviceBindForWritableDevGrant(t *testing.T) {
+	ordinary := t.TempDir()
+	got, err := bwrapArgs(nil, sandboxpolicy.MountPlan{Entries: []sandboxpolicy.MountEntry{
+		{Path: ordinary, Mode: sandboxpolicy.MountRW},
+		{Path: "/dev", Mode: sandboxpolicy.MountRW},
+		{Path: "/sys", Mode: sandboxpolicy.MountRO},
+	}})
+	require.NoError(t, err)
+	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--bind", ordinary))
+	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--dev-bind", "/dev"),
+		"an explicit writable /dev grant must carry bubblewrap device authority")
+	assert.Equal(t, -1, indexOfBwrapTriplet(got, "--bind", "/dev"))
+	assert.NotEqual(t, -1, indexOfBwrapTriplet(got, "--ro-bind", "/sys"),
+		"sysfs remains an ordinary read-only projection")
 }
 
 func TestBwrapArgsZeroModeFailsClosed(t *testing.T) {

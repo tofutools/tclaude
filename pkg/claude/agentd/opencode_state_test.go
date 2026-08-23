@@ -383,6 +383,17 @@ func TestPrivateOpenCodeStateBuildsPerAgentV3Contract(t *testing.T) {
 		wantConfigBind.Target = ambientConfig
 	}
 	require.Equal(t, wantEnvironment, specA.Contract.Environment)
+	wantStateDirs := []string{
+		filepath.Join(allocationA.StateRoot, "data"),
+		filepath.Join(allocationA.StateRoot, "cache"),
+		filepath.Join(allocationA.StateRoot, "config", "opencode"),
+		filepath.Join(allocationA.StateRoot, "state"),
+	}
+	if runtime.GOOS == "darwin" {
+		wantStateDirs[2] = ambientConfig
+	}
+	require.Equal(t, wantStateDirs, specA.Contract.StateDirs,
+		"mutable XDG bases are agent-writable while OpenCode config remains app-scoped")
 	assert.NotContains(t, environmentNames(specA.Contract.Environment), "OPENCODE_CONFIG_DIR")
 	assert.ElementsMatch(t, []string{
 		filepath.Join(home, "ambient-data", "opencode"),
@@ -411,6 +422,14 @@ func TestPrivateOpenCodeStateBuildsPerAgentV3Contract(t *testing.T) {
 	}
 	require.ErrorContains(t, validateOpenCodeV3LaunchContract(missingConfigBind, false),
 		"does not bind global config read-only")
+	legacyAppOnly := specA.Contract
+	legacyAppOnly.StateDirs = append([]string(nil), legacyAppOnly.StateDirs...)
+	for _, index := range []int{0, 1, 3} {
+		legacyAppOnly.StateDirs[index] = filepath.Join(
+			legacyAppOnly.Environment[index].Value, "opencode")
+	}
+	require.NoError(t, validateOpenCodeV3LaunchContract(legacyAppOnly, false),
+		"persisted app-only launch specs must remain replayable")
 	seeded, err := os.ReadFile(filepath.Join(allocationA.StateRoot, "data", "opencode", "auth.json"))
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"provider":"seed"}`, string(seeded))

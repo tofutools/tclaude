@@ -2260,6 +2260,14 @@ func bwrapArgsWithDaemonFinal(
 			flag := "--ro-bind"
 			if entry.Mode == sandboxpolicy.MountRW {
 				flag = "--bind"
+				// bubblewrap deliberately separates ordinary writable binds from
+				// device-authorizing binds. A profile row for /dev/dri otherwise
+				// looks writable in the plan but its character devices still cannot
+				// be opened by GPU workloads. Keep the stronger primitive scoped to
+				// an explicit writable row at or below /dev.
+				if sandboxpolicy.PathContainsOrEqual("/dev", source) {
+					flag = "--dev-bind"
+				}
 			}
 			args = append(args, flag, source, path)
 			args = appendTclaudeLayerProtectedRehides(
