@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -123,6 +124,37 @@ func feedHook(t *testing.T, sessionID string, payload map[string]any) {
 
 	t.Setenv("TCLAUDE_SESSION_ID", sessionID)
 	require.NoError(t, runHookCallback())
+}
+
+func TestRunHookCallback_IdleTransitionDoesNotRefreshUsage(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	require.NoError(t, SaveSessionState(&SessionState{
+		ID: "cache-only-hook", ConvID: "cache-only-conv", Status: StatusWorking,
+	}))
+	stamp := time.Now().Add(-time.Hour).Truncate(time.Microsecond)
+	cached := usageapi.CachedUsage{FetchedAt: stamp, LastAttemptAt: stamp}
+	data, err := json.Marshal(cached)
+	require.NoError(t, err)
+	require.NoError(t, db.SaveUsageCache(data, stamp, stamp))
+
+	feedHook(t, "cache-only-hook", map[string]any{
+		"session_id":        "cache-only-conv",
+		"hook_event_name":   "Notification",
+		"notification_type": "idle_prompt",
+		"cwd":               dir,
+	})
+
+	row, err := db.LoadUsageCache()
+	require.NoError(t, err)
+	var after usageapi.CachedUsage
+	require.NoError(t, json.Unmarshal(row.Data, &after))
+	assert.True(t, stamp.Equal(after.LastAttemptAt),
+		"an idle hook must not attempt an API refresh: before=%s after=%s",
+		stamp, after.LastAttemptAt)
 }
 
 // A SessionEnd hook with a real exit reason flips the session row to

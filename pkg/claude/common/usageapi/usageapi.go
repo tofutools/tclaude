@@ -872,31 +872,6 @@ func carryForwardWindow(fresh, prev *CachedBucket, now time.Time) *CachedBucket 
 	return prev
 }
 
-// RefreshCache updates the cache if stale. Called from hooks when the user is
-// likely looking at the status bar. Uses atomic SQLite claim to prevent
-// concurrent hook processes from all hitting the API simultaneously.
-func RefreshCache() {
-	// Atomic check-and-claim: only one process proceeds per TTL window.
-	// If we crash after claiming, the TTL expires naturally (no stuck locks).
-	claimed, err := db.TryClaimUsageFetch(cacheTTL)
-	if err != nil {
-		slog.Warn("RefreshCache: failed to check cache", "error", err)
-		return
-	}
-	if !claimed {
-		return // still fresh or another process claimed it
-	}
-
-	resp, err := fetchWithRateLimitRetry()
-	if err != nil {
-		slog.Warn("RefreshCache: failed to fetch usage data", "error", err)
-		stampLastAttempt(err)
-		return
-	}
-	cached, windows := buildCachedUsage(resp)
-	saveCache(cached, "api", windows)
-}
-
 // UpdateFromStatusLine updates the usage cache with rate limit data received
 // from Claude Code's statusline input. This keeps the cache fresh without
 // needing an API call, so other consumers (e.g. new sessions before their

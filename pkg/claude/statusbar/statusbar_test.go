@@ -8,7 +8,36 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/usageapi"
 )
+
+func TestDirectHostStateUsageFallbackIsCacheOnly(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	db.ResetForTest()
+	t.Cleanup(db.ResetForTest)
+
+	stamp := time.Now().Add(-time.Hour).Truncate(time.Microsecond)
+	cached := usageapi.CachedUsage{
+		FiveHour:      &usageapi.CachedBucket{Pct: 10, ResetsAt: time.Now().Add(time.Hour)},
+		FetchedAt:     stamp,
+		LastAttemptAt: stamp,
+	}
+	data, err := json.Marshal(cached)
+	require.NoError(t, err)
+	require.NoError(t, db.SaveUsageCache(data, stamp, stamp))
+
+	facts := directHostState(renderRequest{WantUsage: true})
+	require.NotNil(t, facts.Usage)
+	assert.True(t, facts.UsageStale)
+
+	row, err := db.LoadUsageCache()
+	require.NoError(t, err)
+	var after usageapi.CachedUsage
+	require.NoError(t, json.Unmarshal(row.Data, &after))
+	assert.True(t, stamp.Equal(after.LastAttemptAt),
+		"a statusline fallback must not attempt an API refresh: before=%s after=%s",
+		stamp, after.LastAttemptAt)
+}
 
 func TestApplyRenderWritesPreservesGitSnapshotFreshness(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

@@ -112,21 +112,17 @@ func directHostState(req renderRequest) renderFacts {
 		WorkspaceConv: workspaceConv,
 	}
 
-	// The order below is the inline code's, and it is deliberate rather
-	// than incidental. The usage-cache PUBLISH precedes the usage READ so
-	// a render carrying buckets is not answered from a cache one write
-	// staler than itself. The main write set precedes the read because
-	// the read can make a network call: putting it first would mean a
-	// render the harness's statusline timeout kills records NOTHING —
-	// including the context snapshot the pre-compact guard judges from —
-	// instead of everything but its cost. Only the cost write has to
-	// follow, because only it needs the read's verdict.
+	// The order below is deliberate rather than incidental. The usage-cache
+	// PUBLISH precedes the cache-only usage READ so a render carrying buckets
+	// is not answered from a cache one write staler than itself. The main write
+	// set also precedes the read, while only the cost write has to follow it
+	// because only cost needs the read's subscription verdict.
 	updateUsageCacheFromRender(req.Input)
 	applyRenderWrites(writes)
 
 	hasLimits := hasSubscriptionLimits(req.Input)
 	if !hasLimits && req.WantUsage {
-		facts.Usage, facts.UsageStale = cachedUsage()
+		facts.Usage, facts.UsageStale = peekUsage()
 		hasLimits = usageHasLimits(facts.Usage)
 	}
 	applyCostWrite(writes, hasLimits)
@@ -144,32 +140,16 @@ func usageHasLimits(usage *usageapi.CachedUsage) bool {
 		(usage.SevenDaySonnet != nil && usage.SevenDaySonnet.Pct > 0)
 }
 
-// cachedUsage reads the usage-API cache, refreshing it over the network
-// when it has expired, and reports separately whether what came back is a
-// stale value the refresh could not replace. This is the pane's own read,
-// unchanged.
-func cachedUsage() (*usageapi.CachedUsage, bool) {
-	usage, err := usageapi.GetCached()
-	if usage == nil {
-		return nil, false
-	}
-	return usage, err != nil
-}
-
-// peekUsage is the DAEMON's read of the same cache, and it deliberately
-// never refreshes.
+// peekUsage reads the shared usage cache without ever refreshing it over the
+// network. Both direct and brokered statusline renders use this path.
 //
-// Two reasons, either sufficient. First, latency: GetCached falls through
-// to an HTTP request on a 10-second client, while the pane that is waiting
-// gives up after three — so a slow usage API would freeze every wrapped
-// agent's status bar and leave daemon goroutines writing into round trips
-// nobody is reading. Second, capability: a sandboxed agent's network
-// posture is decided by its launch contract, and making the daemon fetch
-// on its behalf would hand it an egress path that its own process cannot
-// take. agentd already refreshes this cache on its own schedule
-// (maybeRefreshUsage), so the figures here are exactly as current as the
-// dashboard's, and a bar that has not caught up renders the same "~"
-// prefix a stale direct read renders.
+// A statusline callback normally publishes Claude's own rate-limit buckets
+// into this cache before reading it. When the user explicitly enables
+// usage.poll_anthropic_api, agentd may also refresh it in the background.
+// Keeping the fallback cache-only prevents an ordinary render from acquiring
+// Claude Code credentials and unexpectedly calling Anthropic's OAuth API; it
+// also avoids putting network latency on a cosmetic display callback. A cache
+// older than the TTL renders with the existing "~" prefix.
 func peekUsage() (*usageapi.CachedUsage, bool) {
 	usage := usageapi.Peek()
 	if usage == nil {

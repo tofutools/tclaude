@@ -281,47 +281,6 @@ func LoadDashboardUsageCaches() (*UsageCacheRow, *CodexUsageCacheRow, *Subscript
 	return usage, codex, copilot, hasHistory, nil
 }
 
-// TryClaimUsageFetch atomically checks whether a fetch is needed (last_attempt_at
-// older than ttl) and stamps the current time if so. Returns true if the caller
-// should proceed with the fetch, false if another process already claimed it.
-// This replaces the file-based mutex for usage API rate limiting.
-// Crash-safe: if the caller crashes after claiming, the TTL expires naturally.
-func TryClaimUsageFetch(ttl time.Duration) (bool, error) {
-	db, err := Open()
-	if err != nil {
-		return false, err
-	}
-
-	cutoff := dbTime(time.Now().Add(-ttl))
-	now := dbTime(time.Now())
-
-	// Try to claim: update only if stale or missing
-	result, err := db.Exec(`UPDATE usage_cache SET last_attempt_at = ?
-		WHERE id = 1 AND (last_attempt_at IS NULL OR last_attempt_at < ?)`, now, cutoff)
-	if err != nil {
-		return false, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	if affected == 1 {
-		return true, nil // we claimed it
-	}
-
-	// No row existed — try to insert (first-ever fetch)
-	result, err = db.Exec(`INSERT OR IGNORE INTO usage_cache (id, data, fetched_at, last_attempt_at)
-		VALUES (1, '{}', ?, ?)`, now, now)
-	if err != nil {
-		return false, err
-	}
-	affected, err = result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return affected == 1, nil
-}
-
 // GitCacheRow represents cached git/PR data for a repository.
 type GitCacheRow struct {
 	Data      json.RawMessage // full GitSnapshot JSON blob
