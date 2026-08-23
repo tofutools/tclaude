@@ -17,7 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-func TestSandboxProfileSpawnRefreshesExplicitValuesOnResumeAndSelectionIsHumanOnly(t *testing.T) {
+func TestSandboxProfileSpawnRefreshesExplicitValuesOnResumeAndAgentSelectionPreservesLineage(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("crew")
 	profileID, err := db.CreateSandboxProfile(&db.SandboxProfile{
@@ -56,14 +56,18 @@ func TestSandboxProfileSpawnRefreshesExplicitValuesOnResumeAndSelectionIsHumanOn
 	assert.Equal(t, snapshot.Effective.Environment, persisted.Effective.Environment)
 
 	require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermGroupsMembersSpawn, "test"))
-	require.NoError(t, db.GrantAgentPermission(spawn.ConvID, agentd.PermSandboxProfilesManage, "test"))
-	denied := f.AsAgent(spawn.ConvID).SpawnWith("crew", map[string]any{
+	child := f.AsAgent(spawn.ConvID).SpawnWith("crew", map[string]any{
 		"name": "child", "sandbox_profile": "literal-env", "approval": "default",
 	})
-	require.Equal(t, http.StatusForbidden, denied.Code)
-	assert.Contains(t, string(denied.Raw), "sandbox_profile_restricted")
+	require.Equal(t, http.StatusOK, child.Code, string(child.Raw))
+	childSnapshot, ok := f.World.SpawnSandboxPolicy(child.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, childSnapshot)
+	require.Len(t, childSnapshot.Applied, 1)
+	assert.Equal(t, profileID, childSnapshot.Applied[0].ID)
+	assert.Equal(t, snapshot.Effective.Environment, childSnapshot.Effective.Environment)
 	deniedOmit := f.AsAgent(spawn.ConvID).SpawnWith("crew", map[string]any{
-		"name": "child", "omit_sandbox_profiles": true, "approval": "default",
+		"name": "child-omit", "omit_sandbox_profiles": true, "approval": "default",
 	})
 	require.Equal(t, http.StatusForbidden, deniedOmit.Code)
 	assert.Contains(t, string(deniedOmit.Raw), "sandbox_profile_restricted")
