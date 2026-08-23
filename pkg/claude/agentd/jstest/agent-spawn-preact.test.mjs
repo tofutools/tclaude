@@ -336,7 +336,7 @@ test('agent-spawn model normalizes names and builds exact launch bodies', async 
     attachments: ['/tmp/a.png'], effort: 'high', model: 'opus',
     task_ref_url: 'https://linear.app/TCL-458', harness: 'claude', sandbox: 'on',
     sandbox_profile: 'strict', approval: 'plan', ask_user_question_timeout: 'never',
-    remote_control: false, auto_memory: false, ssh_workaround: false, is_owner: true,
+    remote_control: false, auto_memory: false, ssh_workaround: true, is_owner: true,
     permission_overrides: { 'groups.members.spawn': 'grant' },
     // Always present for a trim-capable harness, empty when nothing is trimmed:
     // the form is the authoritative statement of what the agent loads, so an
