@@ -14,9 +14,9 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-func TestCodexSSHWorkaroundAppliesToCallerIdentityPacketLayerOnly(t *testing.T) {
+func TestSSHWorkaroundAppliesToEveryPacketLayerHarnessAndIdentity(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("the Codex SSH workaround is Linux-only")
+		t.Skip("the SSH workaround is Linux-only")
 	}
 	packet := sandboxpolicy.EmptySnapshot()
 	packet.Effective.Network = &sandboxpolicy.NetworkRules{
@@ -39,23 +39,24 @@ func TestCodexSSHWorkaroundAppliesToCallerIdentityPacketLayerOnly(t *testing.T) 
 		Allow:  []sandboxpolicy.NetworkAllowEntry{{Domain: "example.test"}},
 	}
 
-	assert.True(t, codexSSHWorkaroundApplies(
-		harness.CodexName, harness.SandboxDangerFull,
-		string(sandboxpolicy.ImplementationTclaudeLayer), &packet))
-	assert.True(t, codexSSHWorkaroundApplies(
-		harness.CodexName, harness.SandboxManagedProfile,
-		string(sandboxpolicy.ImplementationTclaudeLayer), &packet))
+	for _, harnessName := range []string{
+		harness.DefaultName, harness.CodexName, harness.OpenCodeName, harness.CopilotName,
+	} {
+		assert.True(t, codexSSHWorkaroundApplies(
+			harnessName, harness.SandboxDangerFull,
+			string(sandboxpolicy.ImplementationTclaudeLayer), &packet), harnessName)
+		assert.True(t, codexSSHWorkaroundApplies(
+			harnessName, harness.SandboxDangerFull,
+			string(sandboxpolicy.ImplementationTclaudeLayer), &ordinary), harnessName)
+	}
 	assert.False(t, codexSSHWorkaroundApplies(
 		harness.CodexName, harness.SandboxDangerFull,
 		string(sandboxpolicy.ImplementationTclaudeLayer), &proxy))
 	assert.False(t, codexSSHWorkaroundApplies(
 		harness.CodexName, harness.SandboxDangerFull,
-		string(sandboxpolicy.ImplementationTclaudeLayer), &ordinary))
+		string(sandboxpolicy.ImplementationHarnessBuiltin), &packet))
 	assert.False(t, codexSSHWorkaroundApplies(
-		harness.CodexName, harness.SandboxManagedProfile,
-		string(sandboxpolicy.ImplementationTclaudeLayer), &ordinary))
-	assert.False(t, codexSSHWorkaroundApplies(
-		harness.CodexName, harness.SandboxDangerFull,
+		harness.DefaultName, harness.SandboxManagedProfile,
 		string(sandboxpolicy.ImplementationHarnessBuiltin), &packet))
 	assert.True(t, codexSSHWorkaroundApplies(
 		harness.CodexName, harness.SandboxManagedProfile,
@@ -200,4 +201,13 @@ func TestCodexSSHWorkaroundProfileClampsUnsupportedSandbox(t *testing.T) {
 	require.NotNil(t, layered.SSHWorkaround)
 	assert.Equal(t, runtime.GOOS == "linux", *layered.SSHWorkaround,
 		"tclaude-layer keeps the Linux workaround eligible for the effective sandbox profile")
+
+	layeredClaude, fail := buildProfileFromJSON(spawnProfileJSON{
+		Name: "layered-claude", Harness: harness.DefaultName,
+		SandboxImplementation: "tclaude-layer", SSHWorkaround: &on,
+	})
+	require.Nil(t, fail)
+	require.NotNil(t, layeredClaude)
+	require.NotNil(t, layeredClaude.SSHWorkaround)
+	assert.Equal(t, runtime.GOOS == "linux", *layeredClaude.SSHWorkaround)
 }

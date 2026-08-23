@@ -379,7 +379,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		refreshed, refreshErr := finalizeCodexSSHWorkaroundForRelaunch(
 			*relaunchPolicy.Snapshot, relaunchPolicy.SSHWorkaround)
 		if refreshErr != nil {
-			detail := "prepare Codex SSH workaround: " + refreshErr.Error()
+			detail := "prepare SSH workaround: " + refreshErr.Error()
 			if cleanupErr := cleanupUncommittedResumeSandboxPolicy(relaunchPolicy); cleanupErr != nil {
 				detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
 			}

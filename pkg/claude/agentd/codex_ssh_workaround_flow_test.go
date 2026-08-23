@@ -148,9 +148,9 @@ func TestCodexSpawnSSHWorkaroundDefaultsOnAndCanBeDisabled(t *testing.T) {
 	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", false)
 }
 
-func TestCodexTclaudeLayerSSHWorkaroundRequiresCallerIdentityPacketSandbox(t *testing.T) {
+func TestTclaudeLayerSSHWorkaroundCoversNonCodexAndBothPacketIdentities(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip("the Codex SSH workaround is Linux-only")
+		t.Skip("the SSH workaround is Linux-only")
 	}
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Cleanup(session.SetCodexEffectiveConfigProbeForTest(
@@ -195,6 +195,7 @@ func TestCodexTclaudeLayerSSHWorkaroundRequiresCallerIdentityPacketSandbox(t *te
 				PreserveCallerIdentity: true,
 				Allow: []sandboxpolicy.NetworkAllowEntry{
 					{Domain: "example.test"},
+					{Domain: "api.anthropic.com", Ports: []int{443}},
 					{Domain: "chatgpt.com", Ports: []int{443}},
 					{Domain: "auth.openai.com", Ports: []int{443}},
 				},
@@ -207,6 +208,7 @@ func TestCodexTclaudeLayerSSHWorkaroundRequiresCallerIdentityPacketSandbox(t *te
 				Engine:   sandboxpolicy.NetworkEnginePacket,
 				Allow: []sandboxpolicy.NetworkAllowEntry{
 					{Domain: "example.test"},
+					{Domain: "api.anthropic.com", Ports: []int{443}},
 					{Domain: "chatgpt.com", Ports: []int{443}},
 					{Domain: "auth.openai.com", Ports: []int{443}},
 				},
@@ -220,6 +222,7 @@ func TestCodexTclaudeLayerSSHWorkaroundRequiresCallerIdentityPacketSandbox(t *te
 				PreserveCallerIdentity: true,
 				Allow: []sandboxpolicy.NetworkAllowEntry{
 					{Domain: "example.test"},
+					{Domain: "api.anthropic.com", Ports: []int{443}},
 					{Domain: "chatgpt.com", Ports: []int{443}},
 					{Domain: "auth.openai.com", Ports: []int{443}},
 				},
@@ -230,16 +233,17 @@ func TestCodexTclaudeLayerSSHWorkaroundRequiresCallerIdentityPacketSandbox(t *te
 		require.NoError(t, err)
 	}
 
-	spawn := func(name, profile string) testharness.SpawnResp {
+	launchCwd := t.TempDir()
+	spawn := func(name, harnessName, profile string) testharness.SpawnResp {
 		return f.AsHuman().SpawnWith("crew", map[string]any{
-			"name": name, "harness": "codex",
+			"name": name, "harness": harnessName,
+			"cwd":                    launchCwd,
 			"sandbox_implementation": "tclaude-layer",
 			"sandbox_profile":        profile,
-			"ssh_workaround":         true,
 		})
 	}
 
-	caller := spawn("caller-id", "caller-id-packet")
+	caller := spawn("caller-id", harness.CodexName, "caller-id-packet")
 	require.Equalf(t, http.StatusOK, caller.Code, "body=%s", caller.Raw)
 	snapshot, ok := f.World.SpawnSandboxPolicy(caller.ConvID)
 	require.True(t, ok)
@@ -247,18 +251,21 @@ func TestCodexTclaudeLayerSSHWorkaroundRequiresCallerIdentityPacketSandbox(t *te
 	assert.Contains(t, snapshot.Effective.AgentDirectories, "TCL_CODEX_SSH_CONFIG_DIR")
 	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", true)
 
-	for _, tc := range []struct{ name, profile string }{
-		{"namespace-root", "namespace-root-packet"},
-		{"proxy", "caller-id-proxy"},
-	} {
-		got := spawn(tc.name, tc.profile)
-		require.Equalf(t, http.StatusOK, got.Code, "%s body=%s", tc.name, got.Raw)
-		snapshot, ok := f.World.SpawnSandboxPolicy(got.ConvID)
-		require.True(t, ok)
-		require.NotNil(t, snapshot)
-		assert.NotContains(t, snapshot.Effective.AgentDirectories, "TCL_CODEX_SSH_CONFIG_DIR")
-		assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", false)
-	}
+	namespaceRoot := spawn("namespace-root", harness.DefaultName, "namespace-root-packet")
+	require.Equalf(t, http.StatusOK, namespaceRoot.Code, "body=%s", namespaceRoot.Raw)
+	snapshot, ok = f.World.SpawnSandboxPolicy(namespaceRoot.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, snapshot)
+	assert.Contains(t, snapshot.Effective.AgentDirectories, "TCL_CODEX_SSH_CONFIG_DIR")
+	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", true)
+
+	proxy := spawn("proxy", harness.DefaultName, "caller-id-proxy")
+	require.Equalf(t, http.StatusOK, proxy.Code, "body=%s", proxy.Raw)
+	snapshot, ok = f.World.SpawnSandboxPolicy(proxy.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, snapshot)
+	assert.NotContains(t, snapshot.Effective.AgentDirectories, "TCL_CODEX_SSH_CONFIG_DIR")
+	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", false)
 
 	f.MarkOffline(caller.TmuxSession)
 	resumed := f.AsHuman().Resume(caller.ConvID)
@@ -268,11 +275,11 @@ func TestCodexTclaudeLayerSSHWorkaroundRequiresCallerIdentityPacketSandbox(t *te
 	require.NotNil(t, snapshot)
 	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", true)
 
-	changed := spawn("caller-id-profile-will-change", "caller-id-packet")
+	changed := spawn("packet-profile-will-change", harness.CodexName, "caller-id-packet")
 	require.Equalf(t, http.StatusOK, changed.Code, "body=%s", changed.Raw)
 	profile, err := db.GetSandboxProfile("caller-id-packet")
 	require.NoError(t, err)
-	profile.Network.PreserveCallerIdentity = false
+	profile.Network.Engine = sandboxpolicy.NetworkEngineProxy
 	require.NoError(t, db.UpdateSandboxProfile(profile))
 	f.MarkOffline(changed.TmuxSession)
 	resumed = f.AsHuman().Resume(changed.ConvID)

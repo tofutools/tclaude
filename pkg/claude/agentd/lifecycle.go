@@ -1845,7 +1845,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir, trustRoot b
 			*resumePolicy.Snapshot, resumePolicy.SSHWorkaround)
 		if refreshErr != nil {
 			res.Action = "error"
-			res.Detail = "prepare Codex SSH workaround: " + refreshErr.Error()
+			res.Detail = "prepare SSH workaround: " + refreshErr.Error()
 			if cleanupErr := cleanupUncommittedResumeSandboxPolicy(resumePolicy); cleanupErr != nil {
 				res.Detail += "; remove unused agent-owned directories: " + cleanupErr.Error()
 			}
@@ -4597,7 +4597,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		h.Name, harnessBuiltinMode, body.SandboxImplementation, &effectiveSandbox) {
 		sshWorkaround = false
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes,
-			"SSH workaround disabled because this launch does not use the Codex managed sandbox or the caller-identity packet sandbox")
+			"SSH workaround disabled because this launch does not use the Codex managed sandbox or tclaude's packet sandbox")
 	}
 	// Persist the resolved posture in the audit request as an explicit boolean,
 	// including the default-on case and an operator's opt-out.
@@ -5114,7 +5114,7 @@ type spawnParams struct {
 	// boundary (handleGroupSpawn resolves it against the harness registry
 	// before building the params).
 	Harness string
-	// SSHWorkaround is the already-resolved Codex Git-over-SSH compatibility
+	// SSHWorkaround is the already-resolved Git-over-SSH compatibility
 	// posture. It is frozen into the durable relaunch profile at enrollment.
 	SSHWorkaround bool
 	// SSHWorkaroundSet preserves an explicit false through executeSpawn's
