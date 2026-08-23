@@ -123,6 +123,46 @@ func TestGuardHarnessCommandWithDirProofChecksRepositoryWithoutCwdMarker(t *test
 	assert.Equal(t, "ok", string(status))
 }
 
+func TestGuardHarnessCommandChecksProfileRootWithoutWritingMarker(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	profileRoot := filepath.Join(root, "profile-root")
+	require.NoError(t, os.Mkdir(profileRoot, 0o755))
+	require.NoError(t, os.Chmod(profileRoot, 0o555))
+	t.Cleanup(func() { _ = os.Chmod(profileRoot, 0o755) })
+	ready := filepath.Join(root, "ready")
+	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
+
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
+		"true", "", ready, false, nil, []string{profileRoot}))
+	require.NoError(t, cmd.Run(),
+		"a profile root needs a canonical-path check, not permission to create an entry")
+	status, err := os.ReadFile(ready)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", string(status))
+	assert.NoFileExists(t, filepath.Join(profileRoot, clcommon.SpawnDirWriteProofPrefix))
+}
+
+func TestGuardHarnessCommandRejectsSwappedProfileRootWithoutMarker(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	profileRoot := filepath.Join(root, "profile-root")
+	forbidden := filepath.Join(root, "forbidden")
+	require.NoError(t, os.Mkdir(profileRoot, 0o755))
+	require.NoError(t, os.Mkdir(forbidden, 0o755))
+	require.NoError(t, os.Rename(profileRoot, profileRoot+"-old"))
+	require.NoError(t, os.Symlink(forbidden, profileRoot))
+	ready := filepath.Join(root, "ready")
+	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
+
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
+		"true", "", ready, false, nil, []string{profileRoot}))
+	require.Error(t, cmd.Run())
+	status, err := os.ReadFile(ready)
+	require.NoError(t, err)
+	assert.Equal(t, "error:repository-proof", string(status))
+}
+
 func TestSpawnCwdProofTokenValidation(t *testing.T) {
 	assert.True(t, isValidSpawnCwdProofToken("abc_DEF-123"))
 	assert.False(t, isValidSpawnCwdProofToken(""))

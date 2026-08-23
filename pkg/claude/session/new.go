@@ -2414,7 +2414,8 @@ func runNew(params *NewParams) error {
 	if proofToken == "" {
 		proofToken = params.DirWriteProof
 	}
-	if proofToken != "" {
+	profileWriteDirs := sandboxSnapshotHostDirs(launchSandbox, sandboxpolicy.AccessWrite)
+	if proofToken != "" || len(profileWriteDirs) > 0 {
 		path, cleanupProofReady, readyErr := newSpawnCwdReadinessFile()
 		if readyErr != nil {
 			return readyErr
@@ -2423,7 +2424,7 @@ func runNew(params *NewParams) error {
 		proofReadyPath = path
 		harnessCmd = guardHarnessCommandWithDirProof(
 			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "",
-			params.GitWorktreeWriteDirs, nil)
+			params.GitWorktreeWriteDirs, profileWriteDirs)
 	}
 
 	// The command is now fully assembled — every wrapper layer applied. Hand it
@@ -2512,7 +2513,11 @@ func runNew(params *NewParams) error {
 		}
 	}
 	if provenanceErr != nil {
-		slog.Warn("could not capture launch-directory metadata; continuing without it",
+		if params.ManagedLaunch {
+			killLaunchPane()
+			return fmt.Errorf("capture managed launch provenance metadata: %w", provenanceErr)
+		}
+		slog.Warn("could not capture launch-directory metadata for direct session",
 			"session", sessionID, "error", provenanceErr)
 	}
 	applyTmuxWindowTitle(tmuxSession, sessionID)
@@ -3136,6 +3141,23 @@ func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.
 	return out
 }
 
+// sandboxSnapshotHostDirs returns the host-side roots that must still be
+// canonical immediately before the harness starts. These roots intentionally
+// do not require proof markers: a profile grant may permit writes to existing
+// descendants without permitting a new entry in the root itself.
+func sandboxSnapshotHostDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) []string {
+	if snapshot == nil {
+		return nil
+	}
+	out := make([]string, 0, len(snapshot.Effective.Filesystem))
+	for _, grant := range snapshot.Effective.Filesystem {
+		if grant.Access == access {
+			out = append(out, grant.Path)
+		}
+	}
+	return out
+}
+
 func sandboxSnapshotActiveFilesystem(snapshot *sandboxpolicy.Snapshot) []sandboxpolicy.FilesystemGrant {
 	if snapshot == nil {
 		return nil
@@ -3442,12 +3464,12 @@ func isValidSpawnCwdProofToken(proof string) bool {
 
 // guardHarnessCommandWithDirProof prefixes the harness command with marker
 // checks performed by the shell tmux starts. The relative cwd check binds to
-// tmux's already-established directory inode. Every extra permission root is
-// also required to remain canonical and carry the same unpredictable marker,
-// so the child never consumes a path substituted after daemon verification.
-// Daemon-materialized per-agent directories are not caller-controlled roots,
-// so they skip the marker requirement but retain the path-substitution check.
-func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkCwd bool, dirs, generatedDirs []string) string {
+// tmux's already-established directory inode. Every caller-selected permission
+// root is also required to remain canonical and carry the same unpredictable
+// marker, so the child never consumes a path substituted after daemon
+// verification. Profile roots skip the marker requirement but retain the late
+// path-substitution check.
+func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkCwd bool, dirs, integrityDirs []string) string {
 	marker := clcommon.SpawnDirWriteProofPrefix + proof
 	ready := clcommon.ShellQuoteArg(readyPath)
 	fail := func(reason string) string {
@@ -3466,11 +3488,11 @@ func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkC
 			" ] || [ ! -f " + quotedMarker + " ] || [ -L " + quotedMarker + " ] || [ -s " + quotedMarker + " ]; then " +
 			"echo 'tclaude: repository write proof changed; refusing harness launch' >&2; " + fail("repository-proof") + "; fi; "
 	}
-	for _, dir := range generatedDirs {
+	for _, dir := range integrityDirs {
 		quotedDir := clcommon.ShellQuoteArg(dir)
 		guard += "if [ \"$(cd " + quotedDir + " 2>/dev/null && pwd -P)\" != " + quotedDir +
 			" ] || [ -L " + quotedDir + " ]; then " +
-			"echo 'tclaude: generated directory changed; refusing harness launch' >&2; " + fail("repository-proof") + "; fi; "
+			"echo 'tclaude: sandbox profile directory changed; refusing harness launch' >&2; " + fail("repository-proof") + "; fi; "
 	}
 	return guard + "printf '%s' ok > " + ready + " || exit 126; " + harnessCmd
 }

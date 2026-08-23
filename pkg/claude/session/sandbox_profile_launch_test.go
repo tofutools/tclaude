@@ -92,6 +92,18 @@ func TestSandboxSnapshotEnvironmentCarriesMaterializedAgentDirectory(t *testing.
 	assert.Nil(t, sandboxSnapshotEnvironment(nil))
 }
 
+func TestSandboxSnapshotHostDirsUsesHostPathForLateGuard(t *testing.T) {
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: "/host/write-root", MountPath: "/guest/write-root", Access: sandboxpolicy.AccessWrite},
+			{Path: "/host/read-root", MountPath: "/guest/read-root", Access: sandboxpolicy.AccessRead},
+		},
+	}}
+
+	assert.Equal(t, []string{"/host/write-root"},
+		sandboxSnapshotHostDirs(snapshot, sandboxpolicy.AccessWrite))
+}
+
 func TestSandboxSnapshotDirsOmitsMissingRuleUntilLaterLaunch(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
