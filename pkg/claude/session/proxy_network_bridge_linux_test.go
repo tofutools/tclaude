@@ -765,10 +765,12 @@ func proxyBridgeSnapshot(
 func TestResolveTclaudeLayerForEngineProbesTheFloorItBuilds(t *testing.T) {
 	previousLookPath := lookPathBwrap
 	previousProbe := probeBwrap
+	previousIdentityProbe := probeBwrapIdentity
 	previousPidfd := probeTclaudeLayerPidfd
 	t.Cleanup(func() {
 		lookPathBwrap = previousLookPath
 		probeBwrap = previousProbe
+		probeBwrapIdentity = previousIdentityProbe
 		probeTclaudeLayerPidfd = previousPidfd
 	})
 	stubTrustedExecutableWalk(t)
@@ -783,6 +785,7 @@ func TestResolveTclaudeLayerForEngineProbesTheFloorItBuilds(t *testing.T) {
 		probed = append(probed, posture)
 		return nil
 	}
+	probeBwrapIdentity = probeBwrap
 	_, sandbox, err := ResolveTclaudeLayerForEngine(
 		sandboxpolicy.NetworkFiltered,
 		sandboxpolicy.RootConstructed,
