@@ -171,6 +171,13 @@ type Harness struct {
 	// See JOH-213.
 	TmuxScrollback bool
 
+	// TmuxPassthrough marks a harness that deliberately wraps terminal control
+	// sequences in tmux's DCS passthrough envelope. The spawn path enables
+	// allow-passthrough on only that harness's window so those sequences can
+	// reach the attached terminal without relaxing the shared tmux server.
+	// Copilot and OpenCode use this for OSC 52 clipboard writes.
+	TmuxPassthrough bool
+
 	// LaunchEnrollment marks a harness whose conv-id can be known before its
 	// pane starts. Claude Code accepts a caller-preset UUID
 	// (SpawnSpec.SessionID → `claude --session-id`); a server-authoritative
@@ -681,6 +688,12 @@ func (h *Harness) SupportsHooks() bool {
 // See the TmuxScrollback field and session.ConfigureTmuxScrollback (JOH-213).
 func (h *Harness) WantsTmuxScrollback() bool {
 	return h != nil && h.TmuxScrollback
+}
+
+// WantsTmuxPassthrough reports whether the spawn path should allow this
+// harness's DCS-wrapped terminal control sequences through its tmux window.
+func (h *Harness) WantsTmuxPassthrough() bool {
+	return h != nil && h.TmuxPassthrough
 }
 
 // registry holds the registered harnesses keyed by Name. Populated from

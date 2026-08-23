@@ -7,7 +7,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
-func TestConfigureTmuxPassthrough_CopilotOnly(t *testing.T) {
+func TestConfigureTmuxPassthrough(t *testing.T) {
 	tests := []struct {
 		name    string
 		harness *harness.Harness
@@ -17,18 +17,26 @@ func TestConfigureTmuxPassthrough_CopilotOnly(t *testing.T) {
 			name:    "copilot",
 			harness: mustTestHarness(t, harness.CopilotName),
 			want: [][]string{{
-				"set-option", "-t", "=sess-copilot:", "allow-passthrough", "on",
+				"set-option", "-t", "=sess-harness:", "allow-passthrough", "on",
+			}},
+		},
+		{
+			name:    "opencode",
+			harness: mustTestHarness(t, harness.OpenCodeName),
+			want: [][]string{{
+				"set-option", "-t", "=sess-harness:", "allow-passthrough", "on",
 			}},
 		},
 		{name: "claude", harness: harness.Default()},
 		{name: "codex", harness: mustTestHarness(t, harness.CodexName)},
+		{name: "bare", harness: &harness.Harness{Name: "bare"}},
 		{name: "nil", harness: nil},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			rec := withRecordingTmux(t)
-			ConfigureTmuxPassthrough("sess-copilot", tt.harness)
+			ConfigureTmuxPassthrough("sess-harness", tt.harness)
 			if !reflect.DeepEqual(rec.calls, tt.want) {
 				t.Fatalf("tmux passthrough config = %v, want %v", rec.calls, tt.want)
 			}
