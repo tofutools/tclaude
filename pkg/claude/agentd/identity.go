@@ -845,6 +845,7 @@ func requireGroupPermission(w http.ResponseWriter, r *http.Request, perm string,
 // positive sources: a missing or denied global capability does not suppress a
 // grant contributed by group policy or ownership.
 func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, actx ActionContext) (string, bool) {
+	clearAuthorizedPermission(r)
 	actx.Group = g.Name
 	actx.structuralGroup = g.Name
 	p := peerFromContext(r.Context())
@@ -869,7 +870,11 @@ func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentG
 		resolvePermissionVerdictForRequest(r, p.ConvID, PermAgentSpawn).Resolution != permUndecided {
 		fallback = PermAgentSpawn
 	}
-	return requirePermissionEx(w, r, fallback, actx)
+	convID, ok := requirePermissionEx(w, r, fallback, actx)
+	if ok && convID != "" {
+		recordAuthorizedPermission(r, fallback, 0)
+	}
+	return convID, ok
 }
 
 func isBulkGroupMemberPermission(slug string) bool {
