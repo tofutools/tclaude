@@ -240,6 +240,20 @@ func TestCodexTclaudeLayerSSHWorkaroundRequiresCallerIdentityPacketSandbox(t *te
 	require.True(t, ok)
 	require.NotNil(t, snapshot)
 	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", true)
+
+	changed := spawn("caller-id-profile-will-change", "caller-id-packet")
+	require.Equalf(t, http.StatusOK, changed.Code, "body=%s", changed.Raw)
+	profile, err := db.GetSandboxProfile("caller-id-packet")
+	require.NoError(t, err)
+	profile.Network.PreserveCallerIdentity = false
+	require.NoError(t, db.UpdateSandboxProfile(profile))
+	f.MarkOffline(changed.TmuxSession)
+	resumed = f.AsHuman().Resume(changed.ConvID)
+	require.Equalf(t, http.StatusOK, resumed.Code, "body=%s", resumed.Raw)
+	snapshot, ok = f.World.SpawnSandboxPolicy(changed.ConvID)
+	require.True(t, ok)
+	require.NotNil(t, snapshot)
+	assertSnapshotHasEnvironment(t, snapshot.Effective.Environment, "GIT_SSH_COMMAND", false)
 }
 
 func assertSnapshotHasEnvironment(t *testing.T, entries []sandboxpolicy.EnvironmentEntry, name string, want bool) {
