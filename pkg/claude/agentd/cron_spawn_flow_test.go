@@ -32,6 +32,19 @@ func cronSpawnFixture(t *testing.T, policy string, maxLive int) (*testharness.Fl
 	return f, job
 }
 
+// runCronNowWithDetail is runCronNow plus the recorded failure message, for
+// tests that must prove WHICH gate decided rather than merely that something
+// refused. run-now answers with the status alone; the reason is written to the
+// job's run log.
+func runCronNowWithDetail(t *testing.T, f *testharness.Flow, id int64) (string, string) {
+	t.Helper()
+	status := runCronNow(t, f, id)
+	runs, err := db.ListAgentCronRunsForJob(id, 1)
+	require.NoError(t, err)
+	require.NotEmpty(t, runs, "a fire must leave a run row")
+	return status, runs[0].ErrorMsg
+}
+
 func runCronNow(t *testing.T, f *testharness.Flow, id int64) string {
 	t.Helper()
 	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost, fmt.Sprintf("/v1/cron/%d/run-now", id), nil)))
@@ -303,9 +316,83 @@ func TestCronSpawnGlobalPermissionScopesAndForeignGroupAuthority(t *testing.T) {
 		assert.Equal(t, "spawned", runCronNow(t, f, id))
 	})
 
-	t.Run("sandbox profile scope fails closed without an explicit selection", func(t *testing.T) {
+	t.Run("sandbox profile scope fails closed with nothing to inherit", func(t *testing.T) {
 		f, id := setup(t, `{"group":["foreign"],"spawn_profile":["scanner"],"sandbox_profile":["locked"]}`)
 		assert.Equal(t, "permission_denied", runCronNow(t, f, id))
+	})
+
+	// A managed worker never selects a sandbox profile, so the group's own
+	// assignment is what the scope has to be read against — otherwise a
+	// sandbox_profile-scoped grant could never fire a cron spawn at all.
+	t.Run("sandbox profile scope matches the group assignment the worker inherits", func(t *testing.T) {
+		f, id := setup(t, `{"group":["foreign"],"spawn_profile":["scanner"],"sandbox_profile":["locked"]}`)
+		_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "locked"})
+		require.NoError(t, err)
+		_, err = db.SetAgentGroupSandboxProfile("foreign", "locked")
+		require.NoError(t, err)
+		assert.Equal(t, "spawned", runCronNow(t, f, id))
+	})
+}
+
+// The managed-spawn counterpart of the launch-time binding check. A scoped
+// owner's firing is refused when the spawn profile resolves a launch that would
+// not enforce the inherited profile; an unscoped owner's identical firing is
+// not, because it never traded on the profile.
+func TestCronSpawnScopedSandboxProfileMustBindTheManagedWorker(t *testing.T) {
+	setup := func(t *testing.T, scope string) (*testharness.Flow, int64) {
+		t.Helper()
+		f := triggerFlow(t)
+		g := f.HaveGroup("workers")
+		_, err := db.SetAgentGroupDefaultCwd(g.Name, t.TempDir())
+		require.NoError(t, err)
+		// The spawn profile itself resolves the profiles-omitting launch.
+		_, err = db.CreateSpawnProfile(&db.SpawnProfile{
+			Name: "unconfined", Harness: harness.CodexName,
+			Sandbox: harness.SandboxDangerFull, Approval: "never",
+		})
+		require.NoError(t, err)
+		_, err = db.CreateSandboxProfile(&db.SandboxProfile{Name: "locked"})
+		require.NoError(t, err)
+		_, err = db.SetAgentGroupSandboxProfile(g.Name, "locked")
+		require.NoError(t, err)
+		const owner = "cron-bind-owner"
+		f.HaveConvWithTitle(owner, "cron owner")
+		f.HaveEnrolledAgent(owner)
+		// A member, so the group-restriction guardrail is not what decides
+		// either subtest — the binding check below has to be the deciding gate.
+		f.HaveMember(g.Name, owner)
+		require.NoError(t, db.SaveSession(&db.SessionRow{
+			ID: "sess-" + owner, TmuxSession: "tmux-" + owner, ConvID: owner,
+			Cwd: f.World.HomeDir, Status: "running", Harness: harness.CodexName,
+			HarnessBuiltinMode: harness.SandboxDangerFull, ApprovalPolicy: "never",
+		}))
+		if scope == "" {
+			require.NoError(t, db.GrantAgentPermission(owner, agentd.PermGroupsMembersSpawn, "test"))
+		} else {
+			require.NoError(t, db.GrantAgentPermissionWithScope(owner,
+				agentd.PermGroupsMembersSpawn, scope, "test"))
+		}
+		id, err := db.InsertAgentCronJob(&db.AgentCronJob{
+			Name: "bind", OwnerConv: owner, TargetKind: db.CronTargetGroup, GroupID: g.ID,
+			IntervalSeconds: 3600, Enabled: true, ActionKind: db.CronActionSpawn,
+			SpawnProfile: "unconfined", SpawnInstructionTemplate: "scan",
+			SpawnConcurrencyPolicy: db.CronConcurrencyForbid, SpawnMaxLiveWorkers: 1,
+		})
+		require.NoError(t, err)
+		return f, id
+	}
+
+	t.Run("scoped owner is refused at fire time", func(t *testing.T) {
+		f, id := setup(t, `{"sandbox_profile":["locked"]}`)
+		status, detail := runCronNowWithDetail(t, f, id)
+		assert.Equal(t, "permission_denied", status)
+		assert.Contains(t, detail, "would not enforce it",
+			"the binding check must be what refuses, not an unrelated guardrail")
+	})
+
+	t.Run("unscoped owner still fires", func(t *testing.T) {
+		f, id := setup(t, "")
+		assert.Equal(t, "spawned", runCronNow(t, f, id))
 	})
 }
 

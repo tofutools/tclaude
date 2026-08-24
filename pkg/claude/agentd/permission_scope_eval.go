@@ -34,10 +34,14 @@ type ActionContext struct {
 	// profile actually used after request/group-default resolution, never
 	// the raw request field. Wired up in Phase 4.
 	SpawnProfile string
-	// SandboxProfile is the explicitly selected sandbox profile for a spawn.
-	// A blank request leaves the dimension undescribed, even when ambient
-	// global/group profiles apply: a scoped grant requires the agent to pick a
-	// named operator-authored profile from its allowlist.
+	// SandboxProfile is the sandbox profile a spawn will RESOLVE to, never the
+	// raw request field: the caller's explicit selection when it makes one,
+	// else the ambient assignment the launch inherits (the group's, else the
+	// global one). A grant naming the profile the operator already made the
+	// default therefore admits a spawn that does not override it, and a
+	// managed cron/trigger spawn — which never selects one — is describable at
+	// all. "" (nothing resolves) leaves the dimension undescribed, which a
+	// scoped grant cannot satisfy.
 	SandboxProfile string
 	// ProcessTemplate is the stable, user-authored template id supplied as
 	// templateId when creating a run. It deliberately is not a version ref:
@@ -127,6 +131,12 @@ type permScopeEval struct {
 	// Matched renders the scope that authorized the action, for the audit
 	// row. Empty when Unscoped (there is no scope to record) or unsatisfied.
 	Matched string
+	// MatchedDims names the dimensions the authorizing scope actually pinned.
+	// A gate whose value has to stay load-bearing past the gate itself — not
+	// merely satisfy it once — needs to tell "the operator constrained this
+	// dimension" apart from "the value happened to resolve to something". Nil
+	// when Unscoped (nothing was pinned) or unsatisfied.
+	MatchedDims map[ScopeDim]bool
 }
 
 // evalPermissionScope evaluates the winning tier's scopes (§5) against actx.
@@ -167,6 +177,10 @@ func evalPermissionScope(v permVerdict, callerConvID string, actx ActionContext)
 		if !out.Satisfied && permissionScopeSatisfied(callerConvID, scope, actx) {
 			out.Satisfied = true
 			out.Matched = permissionScopeDisplay(scope)
+			out.MatchedDims = make(map[ScopeDim]bool, len(scope))
+			for dim := range scope {
+				out.MatchedDims[dim] = true
+			}
 		}
 	}
 	return out

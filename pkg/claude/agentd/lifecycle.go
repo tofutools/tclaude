@@ -3353,6 +3353,77 @@ func resolvedSpawnProfileNameForScope(g *db.AgentGroup, requested string) string
 	return ""
 }
 
+// resolvedSandboxProfileNameForScope answers "which named sandbox profile will
+// this spawn run under", for the sandbox_profile scope dimension only.
+//
+// An explicit request selection describes the dimension as itself. When the
+// request selects nothing, the ambient assignment the launch inherits does —
+// the group's, else the global one — so a grant listing the profile the
+// operator already made the default admits a spawn that simply does not
+// override it. Without this, a sandbox_profile-scoped grant would force every
+// caller to restate the default by name, and would leave cron/trigger managed
+// spawns (which never select one) unable to fire at all.
+//
+// Reading the most specific tier only is what the grant already means: naming
+// a profile explicitly composes the global and group assignments underneath it
+// too, so a grant scoped to the innermost tier has always tolerated the ones
+// above it.
+//
+// It returns "" when nothing resolves, leaving the dimension undescribed so a
+// scoped grant fails closed. Callers pair it with a post-resolution check that
+// the launch mode did not omit sandbox profiles outright — see
+// sandboxProfilesDisabled — because an ambient tier that gets dropped must not
+// keep authorizing the spawn it no longer applies to.
+// The explicit branch deliberately does NOT round-trip the name through the
+// registry the way resolvedSpawnProfileNameForScope does. That sibling
+// canonicalizes because spawn profiles have alternate handles — a
+// spawn_profile_aliases table ResolveSpawnProfile joins — so the requested
+// handle and the profile's name can legitimately differ. Sandbox profiles have
+// no alias table at all: `sandbox_profiles.name` is the key, declared
+// `TEXT NOT NULL UNIQUE` with no NOCASE collation, and the launch itself
+// selects the explicit profile by `WHERE name = ?`. The requested string IS the
+// canonical name for every name that resolves, so a lookup here could only
+// change the answer for one that does not.
+//
+// Leaving a non-resolving name described is the better of the two readings. A
+// caller whose grant does not list it is refused 403 either way, so nothing
+// leaks; a caller whose grant DOES list it — an operator allowlist naming a
+// profile since deleted — reaches the ordinary 400 that names the missing
+// profile instead of an opaque scope refusal, which is what makes the stale
+// grant diagnosable.
+func resolvedSandboxProfileNameForScope(g *db.AgentGroup, requested string) string {
+	if name := strings.TrimSpace(requested); name != "" {
+		return name
+	}
+	return ambientSandboxProfileName(g)
+}
+
+// ambientSandboxProfileName is the group-then-global sandbox assignment, by
+// canonical current name. Both tiers are read through their stable registry
+// ids, so a renamed profile still answers as the name a grant is written
+// against today.
+func ambientSandboxProfileName(g *db.AgentGroup) string {
+	if g != nil {
+		prof, err := db.GetAgentGroupSandboxProfile(g.Name)
+		if err != nil {
+			slog.Warn("spawn: failed to load group sandbox profile", "group", g.Name, "error", err)
+			return ""
+		}
+		if prof != nil {
+			return prof.Name
+		}
+	}
+	prof, err := db.GetGlobalSandboxProfile()
+	if err != nil {
+		slog.Warn("spawn: failed to load global sandbox profile", "error", err)
+		return ""
+	}
+	if prof == nil {
+		return ""
+	}
+	return prof.Name
+}
+
 func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	// requireGroupPermission also hands back the caller's conv-id: a real
 	// agent (e.g. a PO orchestrating workers) resolves to its conv-id,
@@ -3388,13 +3459,28 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// an inline launch shape is not a named profile and must not pass a
 	// profile-pinned grant. An unscoped grant is unaffected, so this reaches
 	// the existing 400 for a bad profile name exactly as before.
-	spawnerConvID, ok := requireSpawnPermission(w, r, g, ActionContext{
+	//
+	// The sandbox_profile the gate judges is likewise the RESOLVED one — the
+	// request selection, else the ambient group/global assignment the launch
+	// will inherit — so a grant naming the operator's default profile does not
+	// force every caller to restate it. The check further down refuses the
+	// launch modes that would drop that inherited tier again.
+	sandboxProfileForScope := resolvedSandboxProfileNameForScope(g, body.SandboxProfile)
+	spawnActionContext := ActionContext{
 		Group: g.Name, SpawnProfile: resolvedSpawnProfileNameForScope(g, body.Profile),
-		SandboxProfile: strings.TrimSpace(body.SandboxProfile),
-	})
+		SandboxProfile: sandboxProfileForScope,
+	}
+	spawnerConvID, ok := requireSpawnPermission(w, r, g, spawnActionContext)
 	if !ok {
 		return
 	}
+	// Whether the grant that admitted this spawn was CONDITIONED on the sandbox
+	// profile, as opposed to merely being evaluated alongside it. Only that
+	// caller has to keep the profile load-bearing all the way to the launch;
+	// binding an unscoped or ownership-derived grant to it would refuse spawns
+	// that had nothing to do with the scope feature. See the check below.
+	sandboxScopePinned := scopePinsDimension(r, spawnerConvID,
+		authorizedPermissionForRequest(r, ""), spawnActionContext, ScopeDimSandboxProfile)
 	if !requireGroupActive(w, g) {
 		return
 	}
@@ -4296,6 +4382,24 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		sandboxProfilesDisabled(h.Name, harnessBuiltinMode, body.SandboxImplementation) {
 		writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
 			"the resolved launch mode omits sandbox profiles and cannot satisfy a named sandbox-profile selection")
+		return
+	}
+	// A grant scoped to a sandbox profile authorized this spawn on the promise
+	// that the child runs under that profile, so the profile has to actually
+	// bind it. That is the ENFORCEMENT question, not the composition one: an
+	// implementation that stands the OS boundary down still composes and
+	// records the whole chain while enforcing none of its access rules, which
+	// would satisfy the scope on paper and confine nothing.
+	//
+	// Only the scope-pinned caller is bound. An unscoped grant, an
+	// ownership-derived one, or a scope over `group` alone never traded on the
+	// profile, and an ambient assignment existing somewhere in the deployment
+	// is not by itself a reason to refuse them.
+	if sandboxScopePinned &&
+		sandboxProfileTierInert(h.Name, harnessBuiltinMode, body.SandboxImplementation) {
+		writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
+			fmt.Sprintf("this spawn is authorized by a grant scoped to sandbox profile %q, "+
+				"and the resolved launch mode would not enforce it", sandboxProfileForScope))
 		return
 	}
 	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()

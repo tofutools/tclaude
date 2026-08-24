@@ -174,6 +174,13 @@ func requireSpawnWorktreePermission(w http.ResponseWriter, r *http.Request, grou
 			return "", false
 		}
 		if g != nil && !g.IsArchived() {
+			// The worktree is the launch-directory half of the spawn that
+			// follows, so it has to describe the same sandbox_profile the spawn
+			// gate will. A prepare request names no profile of its own, which
+			// leaves the inherited assignment as the value — without it a grant
+			// scoped to the group's own default is refused here and then admitted
+			// one call later, so `spawn --worktree` fails at step one.
+			ctx.SandboxProfile = ambientSandboxProfileName(g)
 			return requireGroupPermission(w, r, PermGroupsMembersSpawn, g, ctx)
 		}
 	}

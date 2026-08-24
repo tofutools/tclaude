@@ -690,9 +690,17 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 		return "permission_denied", fail.Msg, ""
 	}
 	allowAnyGroup := false
+	// A managed worker never selects a sandbox profile of its own, so the
+	// sandbox_profile dimension is described by the ambient assignment it will
+	// inherit. Without that this whole path is unreachable for an owner whose
+	// spawn grant carries a sandbox_profile scope: the dimension would be
+	// undescribed and fail closed on every firing.
+	sandboxProfileForScope := ambientSandboxProfileName(g)
+	sandboxScopePinned := false
 	if ownerConv != "" {
 		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
-		ctx := ActionContext{Group: g.Name, SpawnProfile: profile.Name, structuralGroup: g.Name}
+		ctx := ActionContext{Group: g.Name, SpawnProfile: profile.Name,
+			SandboxProfile: sandboxProfileForScope, structuralGroup: g.Name}
 		allowed, authorizedSlug, _, authErr := spawnPermissionAllowsAction(req, ownerConv, ctx)
 		if authErr != nil {
 			return "io", authErr.Error(), ""
@@ -701,6 +709,8 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 			return "permission_denied", fmt.Sprintf("owner lacks %s or %s for group %s and spawn profile %s", PermAgentSpawn, PermGroupsMembersSpawn, g.Name, profile.Name), ""
 		}
 		allowAnyGroup = authorizedSlug == PermAgentSpawn
+		sandboxScopePinned = scopePinsDimension(req, ownerConv, authorizedSlug,
+			ctx, ScopeDimSandboxProfile)
 	}
 	if n, err := db.CountLiveManagedWorkers(source.RuleID, source.CronJobID, index); err != nil {
 		return "io", err.Error(), ""
@@ -802,6 +812,17 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 		return "spawn_failed", fail.Msg, ""
 	}
 	snapshot := sandboxpolicy.OmittedProfilesSnapshot()
+	// The owner's grant was conditioned on the inherited sandbox profile, so
+	// refuse when the spawn profile resolves a launch that would not enforce
+	// it. Only a scope-pinned owner is bound: an unscoped grant or group
+	// ownership never traded on the profile, and a daemon-owned firing
+	// (ownerConv == "") answered to no grant at all.
+	if sandboxScopePinned &&
+		sandboxProfileTierInert(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
+		return "permission_denied", fmt.Sprintf(
+			"this firing is authorized by a grant scoped to sandbox profile %s, and spawn profile %s resolves a launch mode that would not enforce it",
+			sandboxProfileForScope, profile.Name), ""
+	}
 	if !sandboxProfilesDisabled(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
 		snapshot, err = db.ResolveEffectiveSandboxSnapshot(g.ID, "")
 		if err != nil {

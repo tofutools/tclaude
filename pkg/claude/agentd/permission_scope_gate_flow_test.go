@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -144,7 +146,180 @@ func TestPermissionScope_SandboxProfileScopedGrantGatesAgentSelection(t *testing
 
 	missing := spawnAttempt(t, f, lead, "alpha", "missing-sandbox-worker")
 	assert.Equal(t, http.StatusForbidden, missing.Code, missing.Body,
-		"a sandbox-scoped grant requires an explicit named selection")
+		"with no group or global assignment to inherit, the dimension stays undescribed")
+}
+
+// The inherited half of the same gate: a caller that selects nothing is judged
+// on the profile it will actually run under, so the operator's own default
+// satisfies a grant that names it. Scoping a lead to the group default is the
+// natural way to say "spawn workers exactly as configured, nothing wider", and
+// before this the lead had to restate the default by name to spawn at all.
+func TestPermissionScope_SandboxProfileScopeAcceptsInheritedDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		assign  func(t *testing.T)
+		granted string
+		want    int
+	}{
+		{
+			name: "group-default",
+			assign: func(t *testing.T) {
+				_, err := db.SetAgentGroupSandboxProfile("alpha", "locked")
+				require.NoError(t, err)
+			},
+			granted: "locked",
+			want:    http.StatusOK,
+		},
+		{
+			name:    "global-default",
+			assign:  func(t *testing.T) { require.NoError(t, db.SetGlobalSandboxProfile("locked")) },
+			granted: "locked",
+			want:    http.StatusOK,
+		},
+		{
+			// The group assignment is the tier the launch resolves to, so a
+			// grant that only admits the global one does not reach it.
+			name: "group-default-shadows-allowed-global",
+			assign: func(t *testing.T) {
+				require.NoError(t, db.SetGlobalSandboxProfile("locked"))
+				_, err := db.SetAgentGroupSandboxProfile("alpha", "open")
+				require.NoError(t, err)
+			},
+			granted: "locked",
+			want:    http.StatusForbidden,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("alpha")
+			const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000008"
+			haveSpawnCapableMember(t, f, "alpha", lead)
+			for _, name := range []string{"locked", "open"} {
+				_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: name})
+				require.NoError(t, err)
+			}
+			tc.assign(t)
+			grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn,
+				map[string]any{"sandbox_profile": []string{tc.granted}})
+
+			inherited := spawnAttempt(t, f, lead, "alpha", "inherited-sandbox-worker")
+			assert.Equal(t, tc.want, inherited.Code, inherited.Body)
+		})
+	}
+}
+
+// An inherited tier authorizes the spawn only as long as it BINDS the child, so
+// a caller may not spend a sandbox_profile-scoped grant on a launch that would
+// not enforce the profile. Two distinct routes drop it: a mode that omits the
+// profile tiers outright, and an implementation that composes the whole chain
+// and records it while standing the OS boundary down. Both must refuse, or the
+// scope is satisfied on paper and confines nothing.
+func TestPermissionScope_ScopedSandboxProfileMustBindTheChild(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		body      map[string]any
+		linuxOnly bool
+	}{
+		{
+			name: "mode-omits-the-tiers",
+			body: map[string]any{"harness": harness.CodexName, "sandbox": harness.SandboxDangerFull},
+		},
+		{
+			// resource-only composes and records `locked` in full, so the
+			// composition predicate says nothing was dropped — but it enforces
+			// none of the access rules.
+			//
+			// Linux-only: elsewhere the implementation is refused 422 as
+			// unavailable before the request ever reaches this guard, so there
+			// would be nothing here to assert on.
+			name:      "implementation-omits-os-confinement",
+			body:      map[string]any{"sandbox_implementation": string(sandboxpolicy.ImplementationResourceOnly)},
+			linuxOnly: true,
+		},
+		{
+			name: "implementation-off",
+			body: map[string]any{"sandbox_implementation": string(sandboxpolicy.ImplementationOff)},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.linuxOnly && runtime.GOOS != "linux" {
+				t.Skip("sandbox implementation resource-only is Linux only; " +
+					"the availability check refuses it before the scope-binding guard runs")
+			}
+			f := newFlow(t)
+			f.HaveGroup("alpha")
+			const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000009"
+			f.HaveMember("alpha", lead)
+			require.NoError(t, db.SaveSession(&db.SessionRow{
+				ID: "sess-" + lead, TmuxSession: "tmux-" + lead, ConvID: lead,
+				Cwd: f.World.HomeDir, Status: "running", Harness: harness.CodexName,
+				HarnessBuiltinMode: harness.SandboxDangerFull, ApprovalPolicy: "never",
+			}))
+			_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "locked"})
+			require.NoError(t, err)
+			_, err = db.SetAgentGroupSandboxProfile("alpha", "locked")
+			require.NoError(t, err)
+			grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn,
+				map[string]any{"sandbox_profile": []string{"locked"}})
+
+			body := map[string]any{"name": "unbound-sandbox-worker"}
+			for k, v := range tc.body {
+				body[k] = v
+			}
+			spawn := f.AsAgent(lead).SpawnWith("alpha", body)
+			assert.Equal(t, http.StatusForbidden, spawn.Code, spawn.Raw)
+			assert.Contains(t, string(spawn.Raw), "sandbox_profile_restricted")
+		})
+	}
+}
+
+// The counterpart the guard must NOT catch. Binding the launch to the profile
+// is owed only by the caller whose authority was conditioned on it; an agent
+// holding an ordinary unscoped grant never traded on the profile, so the mere
+// existence of an ambient assignment somewhere in the deployment is not a
+// reason to refuse it. The global tier makes this sharp: it resolves for EVERY
+// group, so a guard keyed on "a profile resolved" rather than "the grant
+// pinned one" would bind every agent caller in the whole install.
+func TestPermissionScope_UnscopedSpawnGrantIsNotBoundByAmbientSandboxProfile(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		assign func(t *testing.T)
+	}{
+		{
+			name:   "global-assignment-only",
+			assign: func(t *testing.T) { require.NoError(t, db.SetGlobalSandboxProfile("locked")) },
+		},
+		{
+			name: "group-assignment",
+			assign: func(t *testing.T) {
+				_, err := db.SetAgentGroupSandboxProfile("alpha", "locked")
+				require.NoError(t, err)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("alpha")
+			const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000010"
+			f.HaveMember("alpha", lead)
+			require.NoError(t, db.SaveSession(&db.SessionRow{
+				ID: "sess-" + lead, TmuxSession: "tmux-" + lead, ConvID: lead,
+				Cwd: f.World.HomeDir, Status: "running", Harness: harness.CodexName,
+				HarnessBuiltinMode: harness.SandboxDangerFull, ApprovalPolicy: "never",
+			}))
+			_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "locked"})
+			require.NoError(t, err)
+			tc.assign(t)
+			// Unscoped: the grant says nothing about sandbox profiles.
+			require.NoError(t, db.GrantAgentPermission(lead, agentd.PermGroupsMembersSpawn, "test"))
+
+			spawn := f.AsAgent(lead).SpawnWith("alpha", map[string]any{
+				"name": "unscoped-omitting-worker", "harness": harness.CodexName,
+				"sandbox": harness.SandboxDangerFull,
+			})
+			assert.Equal(t, http.StatusOK, spawn.Code, spawn.Raw)
+		})
+	}
 }
 
 func TestPermissionScope_GlobalAgentSpawnUsesProfileScopes(t *testing.T) {
