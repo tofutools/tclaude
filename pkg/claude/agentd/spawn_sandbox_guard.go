@@ -541,6 +541,34 @@ func planSandboxProfileAccessForLaunch(
 // profile that renders filesystem rules. An explicit implementation=off is a
 // harness-neutral opt-out and therefore omits every sandbox-profile tier,
 // including for OpenCode.
+// sandboxProfileTierInert reports whether a resolved sandbox profile will fail
+// to confine the launch — either because the mode omits the profile tiers
+// outright (sandboxProfilesDisabled) or because the implementation stands the
+// OS boundary down while still composing them.
+//
+// The distinction matters because sandboxProfilesDisabled answers a
+// COMPOSITION question ("which tiers get merged"), and resource-only composes
+// the whole chain and records it while enforcing none of its access rules. A
+// gate asking the ENFORCEMENT question — "is the profile that authorized this
+// spawn actually going to bind the child" — must treat resource-only exactly
+// as it treats off, which is the contract Implementation.OmitsOSConfinement
+// exists to state.
+func sandboxProfileTierInert(
+	harnessName, harnessBuiltinMode string,
+	sandboxImplementation ...string,
+) bool {
+	if sandboxProfilesDisabled(harnessName, harnessBuiltinMode, sandboxImplementation...) {
+		return true
+	}
+	if len(sandboxImplementation) > 0 {
+		implementation, err := sandboxpolicy.NormalizeImplementation(sandboxImplementation[0])
+		if err == nil && implementation.OmitsOSConfinement() {
+			return true
+		}
+	}
+	return false
+}
+
 func sandboxProfilesDisabled(
 	harnessName, harnessBuiltinMode string,
 	sandboxImplementation ...string,

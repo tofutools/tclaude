@@ -892,6 +892,33 @@ func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	return convID, ok
 }
 
+// scopePinsDimension reports whether the scope that authorized this request
+// actually PINNED dim, as opposed to merely being satisfied by whatever the
+// call site described.
+//
+// A gate normally only has to hold at the gate. The sandbox_profile spawn
+// dimension is the exception: its value names policy that has to still be
+// applied when the child launches, so the launch-time check needs to fire for
+// the callers whose authority was conditioned on that profile and for nobody
+// else. Asking "did an operator constrain this dimension" is what separates
+// them — an unscoped grant, an ownership-derived one, or a scope that pinned
+// only `group` is not answering for the profile and must not be bound by it.
+//
+// The verdict is re-resolved rather than threaded down through
+// permissionAllowsAction: the inputs are unchanged within the request, so the
+// answer is the same one the gate reached, and every unrelated call site keeps
+// its signature.
+func scopePinsDimension(r *http.Request, convID, slug string, actx ActionContext, dim ScopeDim) bool {
+	if convID == "" || slug == "" {
+		return false
+	}
+	eval := evalPermissionScope(resolvePermissionVerdictForRequest(r, convID, slug), convID, actx)
+	if eval.Unscoped || !eval.Satisfied {
+		return false
+	}
+	return eval.MatchedDims[dim]
+}
+
 func isBulkGroupMemberPermission(slug string) bool {
 	switch slug {
 	case PermGroupsMembersStop, PermGroupsMembersResume, PermGroupsMembersRetire:

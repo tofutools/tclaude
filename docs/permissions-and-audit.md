@@ -130,12 +130,22 @@ selects a profile — fire under a scoped grant at all. Ambient global and group
 layers compose underneath an explicit selection either way.
 
 A group with no sandbox profile assigned and no global default leaves the
-dimension undescribed, so a scoped grant there still fails closed. And an agent
-caller may not resolve a sandbox profile and then launch in a mode that omits
-sandbox profiles wholesale (Codex `danger-full-access`, or sandbox
-implementation `off`): the tier that authorized the spawn has to survive to the
-launch. An unscoped spawn grant may select any saved sandbox profile, subject
-to sandbox lineage. Omitting all inherited profiles remains human-only.
+dimension undescribed, so a scoped grant there still fails closed.
+
+A `sandbox_profile` scope also has to keep binding the child after the gate, so
+a spawn admitted by such a grant is refused when the resolved launch would not
+enforce the profile — whether because the mode omits the profile tiers outright
+(Codex `danger-full-access`) or because the implementation stands the OS
+boundary down while still composing them (`off` and `resource-only`). This
+binds only the caller whose authority was *conditioned* on the profile. An
+unscoped grant, an ownership-derived one, or a scope over `group` alone never
+traded on it and is unaffected — the presence of a group or global assignment
+somewhere in the deployment is not by itself a restriction. The same rule
+applies to a cron/trigger managed spawn, where it is evaluated at fire time
+against the launch the spawn profile resolves.
+
+An unscoped spawn grant may select any saved sandbox profile, subject to
+sandbox lineage. Omitting all inherited profiles remains human-only.
 
 ### Denies are never scoped
 

@@ -3449,13 +3449,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// force every caller to restate it. The check further down refuses the
 	// launch modes that would drop that inherited tier again.
 	sandboxProfileForScope := resolvedSandboxProfileNameForScope(g, body.SandboxProfile)
-	spawnerConvID, ok := requireSpawnPermission(w, r, g, ActionContext{
+	spawnActionContext := ActionContext{
 		Group: g.Name, SpawnProfile: resolvedSpawnProfileNameForScope(g, body.Profile),
 		SandboxProfile: sandboxProfileForScope,
-	})
+	}
+	spawnerConvID, ok := requireSpawnPermission(w, r, g, spawnActionContext)
 	if !ok {
 		return
 	}
+	// Whether the grant that admitted this spawn was CONDITIONED on the sandbox
+	// profile, as opposed to merely being evaluated alongside it. Only that
+	// caller has to keep the profile load-bearing all the way to the launch;
+	// binding an unscoped or ownership-derived grant to it would refuse spawns
+	// that had nothing to do with the scope feature. See the check below.
+	sandboxScopePinned := scopePinsDimension(r, spawnerConvID,
+		authorizedPermissionForRequest(r, ""), spawnActionContext, ScopeDimSandboxProfile)
 	if !requireGroupActive(w, g) {
 		return
 	}
@@ -4353,18 +4361,28 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// instead of resolving a policy that must fail capability validation later.
 	// The dashboard mirrors this by forcing its selector to the visible "none"
 	// state; this server-side rule also covers CLI callers and older tabs.
-	//
-	// sandboxProfileForScope, not body.SandboxProfile, is what this must test:
-	// it is the value the spawn gate was authorized against, and an ambient
-	// group/global assignment authorizes just as an explicit selection does.
-	// An agent that could reach this mode with the tier resolved but dropped
-	// would be spending a sandbox_profile-scoped grant on a launch that ends up
-	// carrying no profile at all. The human operator is unaffected, and so is
-	// any group with no sandbox profile assigned.
-	if spawnerConvID != "" && sandboxProfileForScope != "" &&
+	if spawnerConvID != "" && body.SandboxProfile != "" &&
 		sandboxProfilesDisabled(h.Name, harnessBuiltinMode, body.SandboxImplementation) {
 		writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
-			"the resolved launch mode omits sandbox profiles and cannot satisfy the resolved sandbox-profile selection")
+			"the resolved launch mode omits sandbox profiles and cannot satisfy a named sandbox-profile selection")
+		return
+	}
+	// A grant scoped to a sandbox profile authorized this spawn on the promise
+	// that the child runs under that profile, so the profile has to actually
+	// bind it. That is the ENFORCEMENT question, not the composition one: an
+	// implementation that stands the OS boundary down still composes and
+	// records the whole chain while enforcing none of its access rules, which
+	// would satisfy the scope on paper and confine nothing.
+	//
+	// Only the scope-pinned caller is bound. An unscoped grant, an
+	// ownership-derived one, or a scope over `group` alone never traded on the
+	// profile, and an ambient assignment existing somewhere in the deployment
+	// is not by itself a reason to refuse them.
+	if sandboxScopePinned &&
+		sandboxProfileTierInert(h.Name, harnessBuiltinMode, body.SandboxImplementation) {
+		writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
+			fmt.Sprintf("this spawn is authorized by a grant scoped to sandbox profile %q, "+
+				"and the resolved launch mode would not enforce it", sandboxProfileForScope))
 		return
 	}
 	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()
