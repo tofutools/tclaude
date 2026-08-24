@@ -3374,6 +3374,23 @@ func resolvedSpawnProfileNameForScope(g *db.AgentGroup, requested string) string
 // the launch mode did not omit sandbox profiles outright — see
 // sandboxProfilesDisabled — because an ambient tier that gets dropped must not
 // keep authorizing the spawn it no longer applies to.
+// The explicit branch deliberately does NOT round-trip the name through the
+// registry the way resolvedSpawnProfileNameForScope does. That sibling
+// canonicalizes because spawn profiles have alternate handles — a
+// spawn_profile_aliases table ResolveSpawnProfile joins — so the requested
+// handle and the profile's name can legitimately differ. Sandbox profiles have
+// no alias table at all: `sandbox_profiles.name` is the key, declared
+// `TEXT NOT NULL UNIQUE` with no NOCASE collation, and the launch itself
+// selects the explicit profile by `WHERE name = ?`. The requested string IS the
+// canonical name for every name that resolves, so a lookup here could only
+// change the answer for one that does not.
+//
+// Leaving a non-resolving name described is the better of the two readings. A
+// caller whose grant does not list it is refused 403 either way, so nothing
+// leaks; a caller whose grant DOES list it — an operator allowlist naming a
+// profile since deleted — reaches the ordinary 400 that names the missing
+// profile instead of an opaque scope refusal, which is what makes the stale
+// grant diagnosable.
 func resolvedSandboxProfileNameForScope(g *db.AgentGroup, requested string) string {
 	if name := strings.TrimSpace(requested); name != "" {
 		return name

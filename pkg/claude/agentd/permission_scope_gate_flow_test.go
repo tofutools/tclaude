@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -215,8 +216,9 @@ func TestPermissionScope_SandboxProfileScopeAcceptsInheritedDefault(t *testing.T
 // scope is satisfied on paper and confines nothing.
 func TestPermissionScope_ScopedSandboxProfileMustBindTheChild(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		body map[string]any
+		name      string
+		body      map[string]any
+		linuxOnly bool
 	}{
 		{
 			name: "mode-omits-the-tiers",
@@ -226,8 +228,13 @@ func TestPermissionScope_ScopedSandboxProfileMustBindTheChild(t *testing.T) {
 			// resource-only composes and records `locked` in full, so the
 			// composition predicate says nothing was dropped — but it enforces
 			// none of the access rules.
-			name: "implementation-omits-os-confinement",
-			body: map[string]any{"sandbox_implementation": string(sandboxpolicy.ImplementationResourceOnly)},
+			//
+			// Linux-only: elsewhere the implementation is refused 422 as
+			// unavailable before the request ever reaches this guard, so there
+			// would be nothing here to assert on.
+			name:      "implementation-omits-os-confinement",
+			body:      map[string]any{"sandbox_implementation": string(sandboxpolicy.ImplementationResourceOnly)},
+			linuxOnly: true,
 		},
 		{
 			name: "implementation-off",
@@ -235,6 +242,10 @@ func TestPermissionScope_ScopedSandboxProfileMustBindTheChild(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.linuxOnly && runtime.GOOS != "linux" {
+				t.Skip("sandbox implementation resource-only is Linux only; " +
+					"the availability check refuses it before the scope-binding guard runs")
+			}
 			f := newFlow(t)
 			f.HaveGroup("alpha")
 			const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000009"
