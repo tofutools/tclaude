@@ -22,7 +22,9 @@ conversation id to materialize, and adds it to the group. Spawning requires
 the global `agent.spawn` or group-scoped `groups.members.spawn` permission —
 human-only by default. Group ownership contributes the latter scoped to owned
 groups, and the guardrails below still apply to agent callers. Grants for
-either slug may be restricted to named spawn and sandbox profiles.
+either slug may be restricted to named spawn and sandbox profiles; a
+`sandbox_profile` scope matches the profile the launch resolves to, which is
+the inherited group or global assignment when `--sandbox-profile` is omitted.
 
 The flags that matter most:
 

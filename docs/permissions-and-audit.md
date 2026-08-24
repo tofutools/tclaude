@@ -120,10 +120,22 @@ recorded only for agent-initiated spawns made after the feature existed;
 reincarnation preserves descendants, but a clone is not a child.
 
 Both `agent.spawn` and `groups.members.spawn` accept the three spawn dimensions.
-A `sandbox_profile` scope requires an agent caller to explicitly select one of
-the named profiles; ambient global and group sandbox layers still compose with
-that selection. An unscoped spawn grant may select any saved sandbox profile,
-subject to sandbox lineage. Omitting all inherited profiles remains human-only.
+A `sandbox_profile` scope is matched against the profile the spawn will
+actually run under: the caller's explicit selection when it makes one, and
+otherwise the ambient assignment it inherits — the group's sandbox profile,
+else the global one. So a grant naming the profile an operator already set as
+the group or global default admits a plain `tclaude agent spawn` that selects
+nothing, and it is what lets a cron or trigger managed spawn — which never
+selects a profile — fire under a scoped grant at all. Ambient global and group
+layers compose underneath an explicit selection either way.
+
+A group with no sandbox profile assigned and no global default leaves the
+dimension undescribed, so a scoped grant there still fails closed. And an agent
+caller may not resolve a sandbox profile and then launch in a mode that omits
+sandbox profiles wholesale (Codex `danger-full-access`, or sandbox
+implementation `off`): the tier that authorized the spawn has to survive to the
+launch. An unscoped spawn grant may select any saved sandbox profile, subject
+to sandbox lineage. Omitting all inherited profiles remains human-only.
 
 ### Denies are never scoped
 

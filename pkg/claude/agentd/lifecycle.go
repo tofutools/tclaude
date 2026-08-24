@@ -3353,6 +3353,60 @@ func resolvedSpawnProfileNameForScope(g *db.AgentGroup, requested string) string
 	return ""
 }
 
+// resolvedSandboxProfileNameForScope answers "which named sandbox profile will
+// this spawn run under", for the sandbox_profile scope dimension only.
+//
+// An explicit request selection describes the dimension as itself. When the
+// request selects nothing, the ambient assignment the launch inherits does —
+// the group's, else the global one — so a grant listing the profile the
+// operator already made the default admits a spawn that simply does not
+// override it. Without this, a sandbox_profile-scoped grant would force every
+// caller to restate the default by name, and would leave cron/trigger managed
+// spawns (which never select one) unable to fire at all.
+//
+// Reading the most specific tier only is what the grant already means: naming
+// a profile explicitly composes the global and group assignments underneath it
+// too, so a grant scoped to the innermost tier has always tolerated the ones
+// above it.
+//
+// It returns "" when nothing resolves, leaving the dimension undescribed so a
+// scoped grant fails closed. Callers pair it with a post-resolution check that
+// the launch mode did not omit sandbox profiles outright — see
+// sandboxProfilesDisabled — because an ambient tier that gets dropped must not
+// keep authorizing the spawn it no longer applies to.
+func resolvedSandboxProfileNameForScope(g *db.AgentGroup, requested string) string {
+	if name := strings.TrimSpace(requested); name != "" {
+		return name
+	}
+	return ambientSandboxProfileName(g)
+}
+
+// ambientSandboxProfileName is the group-then-global sandbox assignment, by
+// canonical current name. Both tiers are read through their stable registry
+// ids, so a renamed profile still answers as the name a grant is written
+// against today.
+func ambientSandboxProfileName(g *db.AgentGroup) string {
+	if g != nil {
+		prof, err := db.GetAgentGroupSandboxProfile(g.Name)
+		if err != nil {
+			slog.Warn("spawn: failed to load group sandbox profile", "group", g.Name, "error", err)
+			return ""
+		}
+		if prof != nil {
+			return prof.Name
+		}
+	}
+	prof, err := db.GetGlobalSandboxProfile()
+	if err != nil {
+		slog.Warn("spawn: failed to load global sandbox profile", "error", err)
+		return ""
+	}
+	if prof == nil {
+		return ""
+	}
+	return prof.Name
+}
+
 func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	// requireGroupPermission also hands back the caller's conv-id: a real
 	// agent (e.g. a PO orchestrating workers) resolves to its conv-id,
@@ -3388,9 +3442,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// an inline launch shape is not a named profile and must not pass a
 	// profile-pinned grant. An unscoped grant is unaffected, so this reaches
 	// the existing 400 for a bad profile name exactly as before.
+	//
+	// The sandbox_profile the gate judges is likewise the RESOLVED one — the
+	// request selection, else the ambient group/global assignment the launch
+	// will inherit — so a grant naming the operator's default profile does not
+	// force every caller to restate it. The check further down refuses the
+	// launch modes that would drop that inherited tier again.
+	sandboxProfileForScope := resolvedSandboxProfileNameForScope(g, body.SandboxProfile)
 	spawnerConvID, ok := requireSpawnPermission(w, r, g, ActionContext{
 		Group: g.Name, SpawnProfile: resolvedSpawnProfileNameForScope(g, body.Profile),
-		SandboxProfile: strings.TrimSpace(body.SandboxProfile),
+		SandboxProfile: sandboxProfileForScope,
 	})
 	if !ok {
 		return
@@ -4292,10 +4353,18 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// instead of resolving a policy that must fail capability validation later.
 	// The dashboard mirrors this by forcing its selector to the visible "none"
 	// state; this server-side rule also covers CLI callers and older tabs.
-	if spawnerConvID != "" && body.SandboxProfile != "" &&
+	//
+	// sandboxProfileForScope, not body.SandboxProfile, is what this must test:
+	// it is the value the spawn gate was authorized against, and an ambient
+	// group/global assignment authorizes just as an explicit selection does.
+	// An agent that could reach this mode with the tier resolved but dropped
+	// would be spending a sandbox_profile-scoped grant on a launch that ends up
+	// carrying no profile at all. The human operator is unaffected, and so is
+	// any group with no sandbox profile assigned.
+	if spawnerConvID != "" && sandboxProfileForScope != "" &&
 		sandboxProfilesDisabled(h.Name, harnessBuiltinMode, body.SandboxImplementation) {
 		writeError(w, http.StatusForbidden, "sandbox_profile_restricted",
-			"the resolved launch mode omits sandbox profiles and cannot satisfy a named sandbox-profile selection")
+			"the resolved launch mode omits sandbox profiles and cannot satisfy the resolved sandbox-profile selection")
 		return
 	}
 	effectiveSandbox := sandboxpolicy.OmittedProfilesSnapshot()

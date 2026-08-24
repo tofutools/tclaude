@@ -144,7 +144,92 @@ func TestPermissionScope_SandboxProfileScopedGrantGatesAgentSelection(t *testing
 
 	missing := spawnAttempt(t, f, lead, "alpha", "missing-sandbox-worker")
 	assert.Equal(t, http.StatusForbidden, missing.Code, missing.Body,
-		"a sandbox-scoped grant requires an explicit named selection")
+		"with no group or global assignment to inherit, the dimension stays undescribed")
+}
+
+// The inherited half of the same gate: a caller that selects nothing is judged
+// on the profile it will actually run under, so the operator's own default
+// satisfies a grant that names it. Scoping a lead to the group default is the
+// natural way to say "spawn workers exactly as configured, nothing wider", and
+// before this the lead had to restate the default by name to spawn at all.
+func TestPermissionScope_SandboxProfileScopeAcceptsInheritedDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		assign  func(t *testing.T)
+		granted string
+		want    int
+	}{
+		{
+			name:    "group-default",
+			assign:  func(t *testing.T) { _, err := db.SetAgentGroupSandboxProfile("alpha", "locked"); require.NoError(t, err) },
+			granted: "locked",
+			want:    http.StatusOK,
+		},
+		{
+			name:    "global-default",
+			assign:  func(t *testing.T) { require.NoError(t, db.SetGlobalSandboxProfile("locked")) },
+			granted: "locked",
+			want:    http.StatusOK,
+		},
+		{
+			// The group assignment is the tier the launch resolves to, so a
+			// grant that only admits the global one does not reach it.
+			name: "group-default-shadows-allowed-global",
+			assign: func(t *testing.T) {
+				require.NoError(t, db.SetGlobalSandboxProfile("locked"))
+				_, err := db.SetAgentGroupSandboxProfile("alpha", "open")
+				require.NoError(t, err)
+			},
+			granted: "locked",
+			want:    http.StatusForbidden,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("alpha")
+			const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000008"
+			haveSpawnCapableMember(t, f, "alpha", lead)
+			for _, name := range []string{"locked", "open"} {
+				_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: name})
+				require.NoError(t, err)
+			}
+			tc.assign(t)
+			grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn,
+				map[string]any{"sandbox_profile": []string{tc.granted}})
+
+			inherited := spawnAttempt(t, f, lead, "alpha", "inherited-sandbox-worker")
+			assert.Equal(t, tc.want, inherited.Code, inherited.Body)
+		})
+	}
+}
+
+// An inherited tier authorizes the spawn only as long as it survives to the
+// launch. Codex danger-full-access omits every sandbox profile, so a caller may
+// not spend a sandbox_profile-scoped grant on it by simply leaving the
+// selection blank — the same refusal an explicit selection already got.
+func TestPermissionScope_InheritedSandboxProfileCannotBeOmitted(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("alpha")
+	const lead = "scopegate-lead-aaaa-bbbb-cccc-000000000009"
+	f.HaveMember("alpha", lead)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: "sess-" + lead, TmuxSession: "tmux-" + lead, ConvID: lead,
+		Cwd: f.World.HomeDir, Status: "running", Harness: harness.CodexName,
+		HarnessBuiltinMode: harness.SandboxDangerFull, ApprovalPolicy: "never",
+	}))
+	_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "locked"})
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupSandboxProfile("alpha", "locked")
+	require.NoError(t, err)
+	grantScoped(t, f, lead, agentd.PermGroupsMembersSpawn,
+		map[string]any{"sandbox_profile": []string{"locked"}})
+
+	spawn := f.AsAgent(lead).SpawnWith("alpha", map[string]any{
+		"name": "omitted-inherited-worker", "harness": harness.CodexName,
+		"sandbox": harness.SandboxDangerFull,
+	})
+	assert.Equal(t, http.StatusForbidden, spawn.Code, spawn.Raw)
+	assert.Contains(t, string(spawn.Raw), "omits sandbox profiles")
 }
 
 func TestPermissionScope_GlobalAgentSpawnUsesProfileScopes(t *testing.T) {

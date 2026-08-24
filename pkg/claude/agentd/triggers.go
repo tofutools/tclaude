@@ -690,9 +690,16 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 		return "permission_denied", fail.Msg, ""
 	}
 	allowAnyGroup := false
+	// A managed worker never selects a sandbox profile of its own, so the
+	// sandbox_profile dimension is described by the ambient assignment it will
+	// inherit. Without that this whole path is unreachable for an owner whose
+	// spawn grant carries a sandbox_profile scope: the dimension would be
+	// undescribed and fail closed on every firing.
+	sandboxProfileForScope := ambientSandboxProfileName(g)
 	if ownerConv != "" {
 		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
-		ctx := ActionContext{Group: g.Name, SpawnProfile: profile.Name, structuralGroup: g.Name}
+		ctx := ActionContext{Group: g.Name, SpawnProfile: profile.Name,
+			SandboxProfile: sandboxProfileForScope, structuralGroup: g.Name}
 		allowed, authorizedSlug, _, authErr := spawnPermissionAllowsAction(req, ownerConv, ctx)
 		if authErr != nil {
 			return "io", authErr.Error(), ""
@@ -802,7 +809,17 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 		return "spawn_failed", fail.Msg, ""
 	}
 	snapshot := sandboxpolicy.OmittedProfilesSnapshot()
-	if !sandboxProfilesDisabled(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
+	if sandboxProfilesDisabled(p.Harness, p.HarnessBuiltinMode, p.SandboxImplementation) {
+		// The spawn profile resolved to a launch mode that carries no tclaude
+		// sandbox profile. The authorization above was granted against the
+		// ambient tier this drops, so an agent-owned firing must not proceed on
+		// it; a daemon-owned one (ownerConv == "") answered to no grant.
+		if ownerConv != "" && sandboxProfileForScope != "" {
+			return "permission_denied", fmt.Sprintf(
+				"spawn profile %s resolves a launch mode that omits sandbox profiles and cannot satisfy the resolved sandbox-profile selection %s",
+				profile.Name, sandboxProfileForScope), ""
+		}
+	} else {
 		snapshot, err = db.ResolveEffectiveSandboxSnapshot(g.ID, "")
 		if err != nil {
 			return "spawn_failed", err.Error(), ""

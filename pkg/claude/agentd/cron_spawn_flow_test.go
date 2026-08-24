@@ -303,9 +303,21 @@ func TestCronSpawnGlobalPermissionScopesAndForeignGroupAuthority(t *testing.T) {
 		assert.Equal(t, "spawned", runCronNow(t, f, id))
 	})
 
-	t.Run("sandbox profile scope fails closed without an explicit selection", func(t *testing.T) {
+	t.Run("sandbox profile scope fails closed with nothing to inherit", func(t *testing.T) {
 		f, id := setup(t, `{"group":["foreign"],"spawn_profile":["scanner"],"sandbox_profile":["locked"]}`)
 		assert.Equal(t, "permission_denied", runCronNow(t, f, id))
+	})
+
+	// A managed worker never selects a sandbox profile, so the group's own
+	// assignment is what the scope has to be read against — otherwise a
+	// sandbox_profile-scoped grant could never fire a cron spawn at all.
+	t.Run("sandbox profile scope matches the group assignment the worker inherits", func(t *testing.T) {
+		f, id := setup(t, `{"group":["foreign"],"spawn_profile":["scanner"],"sandbox_profile":["locked"]}`)
+		_, err := db.CreateSandboxProfile(&db.SandboxProfile{Name: "locked"})
+		require.NoError(t, err)
+		_, err = db.SetAgentGroupSandboxProfile("foreign", "locked")
+		require.NoError(t, err)
+		assert.Equal(t, "spawned", runCronNow(t, f, id))
 	})
 }
 

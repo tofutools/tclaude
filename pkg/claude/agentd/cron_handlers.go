@@ -755,7 +755,8 @@ func cronSpawnPreflightWarning(r *http.Request, ownerConv string, g *db.AgentGro
 		return ""
 	}
 	authRequest := nonInteractiveCronAuthRequest(r)
-	ctx := ActionContext{Group: g.Name, SpawnProfile: profile, structuralGroup: g.Name}
+	ctx := ActionContext{Group: g.Name, SpawnProfile: profile,
+		SandboxProfile: ambientSandboxProfileName(g), structuralGroup: g.Name}
 	allowed, _, _, err := spawnPermissionAllowsAction(authRequest, ownerConv, ctx)
 	if err != nil {
 		return "could not verify the owning agent's spawn permission; firing will reauthorize and may be denied"
