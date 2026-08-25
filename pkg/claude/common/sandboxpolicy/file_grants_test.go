@@ -11,12 +11,33 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// fileGrantTestHome returns a CANONICAL home while pointing $HOME at a
+// symlinked spelling of it.
+//
+// Both halves matter. Normalize resolves symlinks, so a test that asserts on a
+// normalized path has to expect the resolved spelling — otherwise it fails on
+// macOS alone, where the temp root sits under /var, a symlink to /private/var.
+// Merely resolving t.TempDir() would fix that while leaving Linux unable to
+// catch a recurrence, because there the temp root is already canonical and the
+// resolve is a no-op. Reaching HOME through a symlink of our own makes every
+// platform run the shape that broke, so this is caught wherever CI runs.
+func fileGrantTestHome(t *testing.T) string {
+	t.Helper()
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	home := filepath.Join(base, "home")
+	require.NoError(t, os.MkdirAll(home, 0o755))
+	link := filepath.Join(base, "home-link")
+	require.NoError(t, os.Symlink(home, link))
+	t.Setenv("HOME", link)
+	return home
+}
+
 // A read/write row may name one regular file. This is the rule a directory
 // grant cannot express: reopen exactly ~/.gitconfig without also reopening
 // everything else that shares its directory.
 func TestNormalizeFilesystemAcceptsRegularFileRows(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := fileGrantTestHome(t)
 	gitconfig := filepath.Join(home, ".gitconfig")
 	netrc := filepath.Join(home, ".netrc")
 	require.NoError(t, os.WriteFile(gitconfig, []byte("[user]\n"), 0o600))
@@ -39,8 +60,7 @@ func TestNormalizeFilesystemAcceptsRegularFileRows(t *testing.T) {
 // A directory row stays unstamped, so every profile authored before file rules
 // existed serializes byte-identically and needs no migration.
 func TestNormalizeFilesystemLeavesDirectoryRowsUnstamped(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := fileGrantTestHome(t)
 	work := filepath.Join(home, "work")
 	require.NoError(t, os.MkdirAll(work, 0o755))
 
@@ -62,8 +82,7 @@ func TestNormalizeFilesystemLeavesDirectoryRowsUnstamped(t *testing.T) {
 // cleanly and bind the whole replacement tree. The path never changes, so
 // nothing but the recorded kind can catch it.
 func TestFileRuleRefusesAPathThatBecameADirectory(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := fileGrantTestHome(t)
 	path := filepath.Join(home, ".gitconfig")
 	require.NoError(t, os.WriteFile(path, []byte("[user]\n"), 0o600))
 
@@ -94,8 +113,7 @@ func TestFileRuleRefusesAPathThatBecameADirectory(t *testing.T) {
 // A missing path is inert for either kind — retained with a warning, skipped at
 // launch — so the commitment must not turn a disappeared file into a refusal.
 func TestFileRuleToleratesAPathThatDisappeared(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := fileGrantTestHome(t)
 	path := filepath.Join(home, ".gitconfig")
 	require.NoError(t, os.WriteFile(path, nil, 0o600))
 	stored := []FilesystemGrant{{Path: path, Access: AccessRead, Kind: GrantKindFile}}
@@ -121,8 +139,7 @@ func TestFileRuleToleratesAPathThatDisappeared(t *testing.T) {
 // than was authored, and refusing it would break rules built from bare path
 // lists, which carry no commitment at all.
 func TestDirectoryRuleToleratesAPathThatBecameAFile(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := fileGrantTestHome(t)
 	path := filepath.Join(home, "toolchain")
 	require.NoError(t, os.WriteFile(path, nil, 0o600))
 
@@ -136,8 +153,7 @@ func TestDirectoryRuleToleratesAPathThatBecameAFile(t *testing.T) {
 }
 
 func TestNormalizeFilesystemRejectsAnInvalidKind(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := fileGrantTestHome(t)
 	work := filepath.Join(home, "work")
 	require.NoError(t, os.MkdirAll(work, 0o755))
 
@@ -151,8 +167,7 @@ func TestNormalizeFilesystemRejectsAnInvalidKind(t *testing.T) {
 // A file row may be projected, exactly as a directory row may. The guest path
 // is validated syntactically only, so the renderer's purity is unaffected.
 func TestNormalizeFilesystemAcceptsRemappedRegularFileRow(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := fileGrantTestHome(t)
 	source := filepath.Join(home, "corpus.jsonl")
 	require.NoError(t, os.WriteFile(source, nil, 0o600))
 
@@ -169,8 +184,7 @@ func TestNormalizeFilesystemAcceptsRemappedRegularFileRow(t *testing.T) {
 // an ordinary bind entry. Kind is decided by the layer that owns filesystem
 // questions, never re-derived here.
 func TestRenderMountPlanEmitsRegularFileRow(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := fileGrantTestHome(t)
 	gitconfig := filepath.Join(home, ".gitconfig")
 	require.NoError(t, os.WriteFile(gitconfig, nil, 0o600))
 
@@ -183,8 +197,7 @@ func TestRenderMountPlanEmitsRegularFileRow(t *testing.T) {
 }
 
 func TestFilesystemForLaunchKeepsRegularFileRow(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := fileGrantTestHome(t)
 	gitconfig := filepath.Join(home, ".gitconfig")
 	require.NoError(t, os.WriteFile(gitconfig, nil, 0o600))
 
@@ -208,7 +221,8 @@ func TestSupportsFileGrants(t *testing.T) {
 }
 
 func TestValidateFileGrantSupport(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	dir := filepath.Join(root, "workspace")
 	file := filepath.Join(root, "gitconfig")
 	require.NoError(t, os.MkdirAll(dir, 0o755))
@@ -246,7 +260,8 @@ func TestValidateFileGrantSupport(t *testing.T) {
 // Dropping it is safe only because the capability gate above refuses every
 // implementation that would have needed the list to express it.
 func TestDirectoryGrantsDropsFileRows(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
 	dir := filepath.Join(root, "workspace")
 	file := filepath.Join(root, "gitconfig")
 	missing := filepath.Join(root, "not-created-yet")
@@ -278,8 +293,7 @@ func TestDirectoryGrantsDropsFileRows(t *testing.T) {
 // replaced by a file must refuse the launch, not reach an applier with a hide it
 // cannot express.
 func TestFilesystemForLaunchRefusesDenyThatBecameAFile(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := fileGrantTestHome(t)
 	path := filepath.Join(home, "secrets")
 	require.NoError(t, os.WriteFile(path, []byte("was a directory once"), 0o600))
 
@@ -297,8 +311,7 @@ func TestFilesystemForLaunchRefusesDenyThatBecameAFile(t *testing.T) {
 // commitment is re-derived from the live filesystem at any step it is gone by
 // the time it matters, and the final launch binds the replacement tree.
 func TestFileCommitmentSurvivesTheMissingPathLifecycle(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := fileGrantTestHome(t)
 	path := filepath.Join(home, ".gitconfig")
 	require.NoError(t, os.WriteFile(path, []byte("[user]\n"), 0o600))
 
@@ -341,8 +354,7 @@ func TestFileCommitmentSurvivesTheMissingPathLifecycle(t *testing.T) {
 // first row's kind would let an unstamped row silently drop a stamped row's
 // restriction depending on authored order.
 func TestFileCommitmentSurvivesFoldingInEitherOrder(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
+	home := fileGrantTestHome(t)
 	path := filepath.Join(home, ".gitconfig")
 	require.NoError(t, os.WriteFile(path, nil, 0o600))
 	stamped := FilesystemGrant{Path: path, Access: AccessRead, Kind: GrantKindFile}
