@@ -555,8 +555,9 @@ func normalizeFilesystem(in []FilesystemGrant, allowMissing bool) ([]FilesystemG
 		}
 		if accessRank(candidate.Access) > accessRank(previous.Access) {
 			previous.Access = candidate.Access
-			byGuest[guest] = previous
 		}
+		previous.Kind = strictestGrantKind(previous.Kind, candidate.Kind)
+		byGuest[guest] = previous
 	}
 	out := make([]FilesystemGrant, 0, len(byGuest))
 	for _, grant := range byGuest {
@@ -728,6 +729,14 @@ func normalizeFilesystemGrant(
 			index, resolved,
 		)
 	}
+	// The commitment CARRIES rather than being re-derived. Deriving it from the
+	// live filesystem alone would erase it exactly when it is load-bearing: a
+	// missing path resolves as neither file nor directory, so a stored file rule
+	// whose path is momentarily absent would come back unstamped, and the next
+	// launch — after that pathname reappears as a directory — would have nothing
+	// left to check. A path that IS a file additionally stamps an unstamped rule,
+	// which is the narrowing arm GrantKind documents.
+	kind = grant.Kind
 	if file {
 		kind = GrantKindFile
 	}
@@ -908,6 +917,7 @@ func normalizeFilesystemForAuthoringWithIdentity(
 		if accessRank(candidate.access) > accessRank(group.access) {
 			group.access = candidate.access
 		}
+		group.kind = strictestGrantKind(group.kind, candidate.kind)
 		group.missing = group.missing || candidate.missing
 		if candidate.spelling != group.resolved {
 			group.spellings[candidate.spelling] = struct{}{}
@@ -1126,6 +1136,26 @@ func sameDirectoryTarget(left, right string) bool {
 	leftInfo, leftErr := os.Stat(left)
 	rightInfo, rightErr := os.Stat(right)
 	return leftErr == nil && rightErr == nil && os.SameFile(leftInfo, rightInfo)
+}
+
+// strictestGrantKind merges two commitments for one rule.
+//
+// A commitment is a RESTRICTION — it says this rule may only ever be one file —
+// so the merge keeps the strictest contributor rather than the first one seen.
+// File beats unset in both directions, which is what makes folding, cross-scope
+// union, and identity coalescing order-independent. Taking the first row's kind
+// instead would let an unstamped legacy or bare-path row silently drop a
+// stamped row's restriction depending on map iteration or authored order.
+//
+// This cannot refuse anything a single row would not: normalizeFilesystemGrant
+// has already rejected a stamped rule whose path is now a directory, so a
+// GrantKindFile reaching a merge means the path is a file or is missing, and
+// both contributors agree in the first case.
+func strictestGrantKind(left, right GrantKind) GrantKind {
+	if left == GrantKindFile || right == GrantKindFile {
+		return GrantKindFile
+	}
+	return GrantKindUnset
 }
 
 func accessRank(access Access) int {

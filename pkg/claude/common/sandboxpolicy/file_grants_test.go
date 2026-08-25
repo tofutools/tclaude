@@ -108,6 +108,9 @@ func TestFileRuleToleratesAPathThatDisappeared(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, normalized.Filesystem, 1)
 	assert.Equal(t, []string{path}, missing)
+	assert.Equal(t, GrantKindFile, normalized.Filesystem[0].Kind,
+		"the commitment must SURVIVE the absence; deriving it from the live "+
+			"filesystem would erase it exactly when it is load-bearing")
 
 	launch, err := FilesystemForLaunch(EffectiveProfile{Filesystem: stored})
 	require.NoError(t, err)
@@ -285,4 +288,86 @@ func TestFilesystemForLaunchRefusesDenyThatBecameAFile(t *testing.T) {
 	}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "a deny rule cannot name")
+}
+
+// The full lifecycle the commitment has to survive, end to end. A rule is
+// authored against a file; the file is then removed, which is the ordinary
+// retained-with-warning state; the profile is re-resolved and re-saved in that
+// state; and only then does the pathname reappear as a DIRECTORY. If the
+// commitment is re-derived from the live filesystem at any step it is gone by
+// the time it matters, and the final launch binds the replacement tree.
+func TestFileCommitmentSurvivesTheMissingPathLifecycle(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".gitconfig")
+	require.NoError(t, os.WriteFile(path, []byte("[user]\n"), 0o600))
+
+	authored, _, err := NormalizeForPersistence(Profile{
+		Name: "p", Filesystem: []FilesystemGrant{{Path: path, Access: AccessRead}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, GrantKindFile, authored.Filesystem[0].Kind)
+
+	// The file goes away. The rule is retained and inert.
+	require.NoError(t, os.Remove(path))
+	resolvedWhileMissing, _, err := NormalizeForPersistence(Profile{
+		Name: "p", Filesystem: authored.Filesystem,
+	})
+	require.NoError(t, err)
+	require.Equal(t, GrantKindFile, resolvedWhileMissing.Filesystem[0].Kind)
+	launch, err := FilesystemForLaunch(
+		EffectiveProfile{Filesystem: resolvedWhileMissing.Filesystem})
+	require.NoError(t, err)
+	assert.Empty(t, launch)
+
+	// The pathname comes back as a directory full of other secrets.
+	require.NoError(t, os.MkdirAll(path, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(path, "credentials"), []byte("s"), 0o600))
+
+	_, _, err = NormalizeForPersistence(Profile{
+		Name: "p", Filesystem: resolvedWhileMissing.Filesystem,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "was a regular file when this rule was authored")
+
+	_, err = FilesystemForLaunch(
+		EffectiveProfile{Filesystem: resolvedWhileMissing.Filesystem})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "was a regular file when it was authored")
+}
+
+// A commitment is a restriction, so a merge keeps the strictest contributor
+// rather than the first one seen. Order-independence is the point: taking the
+// first row's kind would let an unstamped row silently drop a stamped row's
+// restriction depending on authored order.
+func TestFileCommitmentSurvivesFoldingInEitherOrder(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".gitconfig")
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	stamped := FilesystemGrant{Path: path, Access: AccessRead, Kind: GrantKindFile}
+	bare := FilesystemGrant{Path: path, Access: AccessWrite}
+	require.NoError(t, os.Remove(path))
+
+	for _, order := range [][]FilesystemGrant{
+		{stamped, bare},
+		{bare, stamped},
+	} {
+		normalized, _, err := NormalizeForPersistence(Profile{
+			Name: "p", Filesystem: append([]FilesystemGrant(nil), order...),
+		})
+		require.NoError(t, err)
+		require.Len(t, normalized.Filesystem, 1)
+		assert.Equal(t, GrantKindFile, normalized.Filesystem[0].Kind,
+			"either contributor committing to one file must restrict the merged rule")
+		assert.Equal(t, AccessWrite, normalized.Filesystem[0].Access,
+			"the access lattice is unchanged")
+	}
+}
+
+func TestStrictestGrantKind(t *testing.T) {
+	assert.Equal(t, GrantKindFile, strictestGrantKind(GrantKindFile, GrantKindUnset))
+	assert.Equal(t, GrantKindFile, strictestGrantKind(GrantKindUnset, GrantKindFile))
+	assert.Equal(t, GrantKindFile, strictestGrantKind(GrantKindFile, GrantKindFile))
+	assert.Equal(t, GrantKindUnset, strictestGrantKind(GrantKindUnset, GrantKindUnset))
 }

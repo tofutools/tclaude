@@ -151,10 +151,11 @@ The axes:
   directory it lives in. A saved file row records `"kind": "file"`, and a launch
   refuses if that pathname now holds a **directory**: the path would re-resolve
   cleanly and bind the whole replacement tree, which is wider authority than was
-  authored. (The reverse — a directory row whose path became a file — is a
-  narrowing and is allowed. Directory rows stay unstamped, so existing profiles
-  are unchanged.) Two further limits, both refusals rather than silent
-  degradations:
+  authored. The record travels with the rule rather than being re-derived, so it
+  survives the path going missing and coming back. (The reverse — a directory row
+  whose path became a file — is a narrowing and is allowed. Directory rows stay
+  unstamped, so existing profiles are unchanged.) Two further limits, both
+  refusals rather than silent degradations:
     - **`deny` may not name a file.** Hiding a directory is a mount of an empty
       tmpfs over it, and no primitive makes a single *file* absent — every
       candidate substitutes content instead of removing the name. Deny the

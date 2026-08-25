@@ -236,6 +236,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			if accessRank(grant.Access) > accessRank(current.access) {
 				current.access = grant.Access
 			}
+			current.kind = strictestGrantKind(current.kind, grant.Kind)
 			current.sources = append(current.sources, source)
 			filesystem[guest] = current
 		}
@@ -352,6 +353,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		if accessRank(canonical.Access) > accessRank(current.access) {
 			current.access = canonical.Access
 		}
+		current.kind = strictestGrantKind(current.kind, canonical.Kind)
 		current.sources = append(current.sources, grant.sources...)
 		revalidated[canonicalGuest] = current
 	}
