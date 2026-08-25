@@ -60,6 +60,15 @@ const (
 	smokeMountROGuestEnv  = "TCLAUDE_SANDBOX_V2_MOUNT_RO_GUEST"
 	smokeMountRWSourceEnv = "TCLAUDE_SANDBOX_V2_MOUNT_RW_SOURCE"
 	smokeMountRWGuestEnv  = "TCLAUDE_SANDBOX_V2_MOUNT_RW_GUEST"
+	// TCL-1041 file-row evidence: one rule naming a single regular file at its
+	// own path, and one projecting a file onto a sandbox path.
+	smokeFileROSourceEnv    = "TCLAUDE_SANDBOX_V2_FILE_RO_SOURCE"
+	smokeFileMountSourceEnv = "TCLAUDE_SANDBOX_V2_FILE_MOUNT_SOURCE"
+	smokeFileMountGuestEnv  = "TCLAUDE_SANDBOX_V2_FILE_MOUNT_GUEST"
+	// A real file beside the file rows that no rule names. The in-sandbox
+	// helper requires it to be absent, which is only evidence because host
+	// setup actually creates it.
+	smokeFileSiblingName = "unreachable-sibling"
 )
 
 // tclaudeLayerSmokeMounts carries the TCL-866 projection fixture through the
@@ -70,6 +79,12 @@ type tclaudeLayerSmokeMounts struct {
 	ReadOnlyGuest   string
 	ReadWriteSource string
 	ReadWriteGuest  string
+	// TCL-1041. FileSource is granted read at its own path; FileMountSource is
+	// projected onto FileMountGuest. Both are regular files, which is the whole
+	// point: neither rule could be authored before file rows existed.
+	FileSource      string
+	FileMountSource string
+	FileMountGuest  string
 }
 
 const smokeConvID = "75000000-0000-4000-8000-000000000750"
@@ -208,11 +223,23 @@ esac
 		ReadOnlyGuest:   "/srv/dataset",
 		ReadWriteSource: filepath.Join(mountBase, "scratch"),
 		ReadWriteGuest:  "/srv/scratch",
+		FileSource:      filepath.Join(mountBase, "gitconfig"),
+		FileMountSource: filepath.Join(mountBase, "corpus.jsonl"),
+		FileMountGuest:  "/srv/corpus.jsonl",
 	}
 	require.NoError(t, os.MkdirAll(mounts.ReadOnlySource, 0o700))
 	require.NoError(t, os.MkdirAll(mounts.ReadWriteSource, 0o700))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(mounts.ReadOnlySource, "probe"), []byte("mounted-ro"), 0o600))
+	require.NoError(t, os.WriteFile(mounts.FileSource, []byte("file-ro"), 0o600))
+	require.NoError(t, os.WriteFile(mounts.FileMountSource, []byte("file-projected"), 0o600))
+	// A REAL neighbour of the file rows, named by no rule. Without it the
+	// "a file bind does not expose its parent" assertion inside the sandbox
+	// would pass vacuously — a stat of a path that never existed fails for the
+	// wrong reason, and would keep passing if a regression bound the whole
+	// parent directory.
+	require.NoError(t, os.WriteFile(
+		filepath.Join(mountBase, smokeFileSiblingName), []byte("unreachable"), 0o600))
 
 	// Spell the profile rule through a symlink and persist it through the real
 	// registry path. Resolution must bind the canonical target and recover the
@@ -240,6 +267,15 @@ esac
 				Path: mounts.ReadWriteSource, Access: sandboxpolicy.AccessWrite,
 				MountPath: mounts.ReadWriteGuest,
 			},
+			// TCL-1041: a rule naming a single regular file, at its own path
+			// and projected onto a sandbox path. The parent directory carries
+			// no rule of its own, so the ONLY way either file can be visible
+			// inside the namespace is through these two rows.
+			{Path: mounts.FileSource, Access: sandboxpolicy.AccessRead},
+			{
+				Path: mounts.FileMountSource, Access: sandboxpolicy.AccessRead,
+				MountPath: mounts.FileMountGuest,
+			},
 		},
 	})
 	require.NoError(t, err)
@@ -258,6 +294,13 @@ esac
 	assert.Contains(t, plan.Entries, sandboxpolicy.MountEntry{
 		Path: mounts.ReadWriteGuest, Mode: sandboxpolicy.MountRW,
 		Source: mounts.ReadWriteSource,
+	})
+	assert.Contains(t, plan.Entries, sandboxpolicy.MountEntry{
+		Path: mounts.FileSource, Mode: sandboxpolicy.MountRO,
+	})
+	assert.Contains(t, plan.Entries, sandboxpolicy.MountEntry{
+		Path: mounts.FileMountGuest, Mode: sandboxpolicy.MountRO,
+		Source: mounts.FileMountSource,
 	})
 
 	phase0, err := tclaudeLayerPhase0WriteDirs(TclaudeLayerLaunchContract{
@@ -387,6 +430,9 @@ func runTclaudeLayerHostNetworkConstructedRootHelper(
 		smokeMountROGuestEnv+"="+mounts.ReadOnlyGuest,
 		smokeMountRWSourceEnv+"="+mounts.ReadWriteSource,
 		smokeMountRWGuestEnv+"="+mounts.ReadWriteGuest,
+		smokeFileROSourceEnv+"="+mounts.FileSource,
+		smokeFileMountSourceEnv+"="+mounts.FileMountSource,
+		smokeFileMountGuestEnv+"="+mounts.FileMountGuest,
 		smokeResolverTargetEnv+"="+resolverTarget,
 	)
 	output, err := cmd.CombinedOutput()
@@ -496,6 +542,47 @@ func TestTclaudeLayerHostNetworkConstructedRootHelper(t *testing.T) {
 		require.Errorf(t, err,
 			"the host path %q must not also be exposed inside the sandbox", hostSource)
 	}
+
+	// 5. TCL-1041 file rows under this posture too.
+	assertTclaudeLayerSmokeFileRows(t)
+}
+
+// assertTclaudeLayerSmokeFileRows is the real-kernel evidence for TCL-1041: a
+// rule naming ONE regular file exposes exactly that file, at its own path or at
+// the sandbox path it was projected onto, and its directory stays otherwise
+// closed. The directory containing both files carries no rule, so anything else
+// under it being reachable would mean the bind widened past what was authored.
+func assertTclaudeLayerSmokeFileRows(t *testing.T) {
+	t.Helper()
+	fileSource := os.Getenv(smokeFileROSourceEnv)
+	fileMountSource := os.Getenv(smokeFileMountSourceEnv)
+	fileMountGuest := os.Getenv(smokeFileMountGuestEnv)
+	require.NotEmpty(t, fileSource)
+	require.NotEmpty(t, fileMountGuest)
+
+	body, err := os.ReadFile(fileSource)
+	require.NoError(t, err, "a read rule naming one file must expose that file at its own path")
+	assert.Equal(t, "file-ro", string(body))
+	err = os.WriteFile(fileSource, []byte("no"), 0o600)
+	require.Error(t, err, "a read rule must stay read-only")
+	assert.True(t, errors.Is(err, syscall.EROFS),
+		"file read rule write must fail with EROFS, got %v", err)
+
+	projected, err := os.ReadFile(fileMountGuest)
+	require.NoError(t, err, "a projected file must be readable at its sandbox path")
+	assert.Equal(t, "file-projected", string(projected))
+	_, err = os.Stat(fileMountSource)
+	require.Error(t, err,
+		"the projected file's host path must not also be exposed inside the sandbox")
+
+	// The bind is the file, not the directory it lives in. This sibling really
+	// exists on the host (see the fixture), so its absence here is evidence
+	// rather than a stat of a path that was never created.
+	sibling := filepath.Join(filepath.Dir(fileSource), smokeFileSiblingName)
+	_, err = os.Stat(sibling)
+	require.Error(t, err, "a file rule must not expose its parent directory")
+	assert.Truef(t, errors.Is(err, syscall.ENOENT),
+		"sibling %q must be absent with ENOENT, got %v", sibling, err)
 }
 
 func runTclaudeLayerSmokeHelper(
@@ -534,6 +621,9 @@ func runTclaudeLayerSmokeHelper(
 		smokeMountROGuestEnv+"="+mounts.ReadOnlyGuest,
 		smokeMountRWSourceEnv+"="+mounts.ReadWriteSource,
 		smokeMountRWGuestEnv+"="+mounts.ReadWriteGuest,
+		smokeFileROSourceEnv+"="+mounts.FileSource,
+		smokeFileMountSourceEnv+"="+mounts.FileMountSource,
+		smokeFileMountGuestEnv+"="+mounts.FileMountGuest,
 	)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
@@ -730,6 +820,8 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 		assert.Truef(t, errors.Is(err, syscall.ENOENT),
 			"host path %q must be absent with ENOENT, got %v", hostSource, err)
 	}
+	assertTclaudeLayerSmokeFileRows(t)
+
 	// Real-kernel proof of the absolute protected-root invariant (TCL-791):
 	// nothing the profile can say makes this file readable inside the wall.
 	if _, err := os.ReadFile(protectedFile); err == nil {

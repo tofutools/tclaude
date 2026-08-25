@@ -726,12 +726,31 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 func FilesystemForLaunch(in EffectiveProfile) ([]FilesystemGrant, error) {
 	out := make([]FilesystemGrant, 0, len(in.Filesystem))
 	for _, grant := range in.Filesystem {
-		canonical, missing, err := canonicalDirectory(grant.Path, true)
+		canonical, missing, file, err := canonicalGrantTarget(grant.Path, true)
 		if err != nil {
 			return nil, fmt.Errorf("prepare filesystem %s rule %q for launch: %w", grant.Access, grant.Path, err)
 		}
 		if canonical != grant.Path {
 			return nil, fmt.Errorf("filesystem rule %q changed canonical target before launch", grant.Path)
+		}
+		// A deny may not name a regular file (normalizeFilesystemGrant says why),
+		// and the path's KIND can change after the profile was saved. Re-ask here
+		// rather than trusting the authoring-time answer: a deny that became a
+		// file would otherwise reach the applier as a hide it cannot express.
+		if file && grant.Access == AccessDeny {
+			return nil, fmt.Errorf(
+				"filesystem deny rule %q is now a regular file, which a deny rule cannot name; deny the directory that contains it and reopen the entries that must stay reachable",
+				grant.Path)
+		}
+		// The same question in the widening direction, asked here as well as at
+		// resolution because this is the LAST read of the path before it becomes
+		// a mount. A rule authored against one file whose pathname now holds a
+		// directory would otherwise bind that whole tree — the path is unchanged,
+		// so nothing else in this loop can see it. See GrantKind.
+		if grant.Kind == GrantKindFile && !missing && !file {
+			return nil, fmt.Errorf(
+				"filesystem %s rule %q was a regular file when it was authored and is now a directory; the rule grants one file, not the tree that replaced it",
+				grant.Access, grant.Path)
 		}
 		if missing {
 			if grant.Access == AccessDeny {

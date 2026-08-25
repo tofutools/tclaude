@@ -125,7 +125,8 @@ type SpawnSpec struct {
 	// launch before BuildCommand; silently dropping them is not allowed.
 	SandboxReadDirs []string
 	// SandboxDenyDirs are canonical paths denied all filesystem access. Most
-	// come from directory-only sandbox-profile rows; Claude launch preparation
+	// come from the directory sandbox-profile rows (a file row rides the
+	// tclaude-layer mount plan instead); Claude launch preparation
 	// also adds tclaude's exact tmux server socket as a non-profile host-control
 	// boundary. Claude renders both denyRead and denyWrite; Codex renders
 	// permission-profile "none" entries.

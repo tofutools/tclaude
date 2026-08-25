@@ -182,6 +182,16 @@ func sandboxProfileCapabilityFailure(
 			http.StatusUnprocessableEntity,
 			"unsupported_sandbox_profile_mount_path", err.Error()}
 	}
+	// A rule naming a single file needs the same namespace, and answering here
+	// too means the spawn API names the capability instead of the caller
+	// watching the pane die.
+	if err := sandboxpolicy.ValidateFileGrantSupport(
+		filesystem, implementation, runtime.GOOS,
+	); err != nil {
+		return &spawnFailure{
+			http.StatusUnprocessableEntity,
+			"unsupported_sandbox_profile_file_grant", err.Error()}
+	}
 	if implementation.UsesTclaudeLayer() {
 		// The outer applier, not the harness-native sandbox catalog, represents
 		// filesystem and network policy. The session boundary validates the

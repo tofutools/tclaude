@@ -85,8 +85,8 @@ import (
 // allowAllUnixSockets — need no IR change at all: allowing one socket is an
 // ordinary read-only bind of that socket file's path, so it rides the existing
 // {Path, Mode} entry as-is. Such entries come from the launch contract rather
-// than from a profile, because profile paths are directory-only
-// (canonicalDirectory requires IsDir).
+// than from a profile: a profile path may be a directory or a regular file
+// (canonicalGrantTarget), never a socket.
 //
 // A genuinely non-filesystem resource class (network posture, seccomp rules)
 // gets a SIBLING FIELD on MountPlan instead of a kind discriminator on

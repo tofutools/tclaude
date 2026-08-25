@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -232,13 +233,15 @@ func TestNormalizeFilesystemRejectsInvalidAndProtectedPaths(t *testing.T) {
 	}{
 		{"relative", "cache", "not absolute", AccessRead},
 		{"missing", filepath.Join(home, "missing"), "resolve symlinks", AccessRead},
-		{"regular file", filepath.Join(safe, "file"), "not a directory", AccessRead},
+		{"deny on a regular file", filepath.Join(safe, "file"), "a deny rule cannot name", AccessDeny},
+		{"fifo", filepath.Join(safe, "fifo"), "neither a directory nor a regular file", AccessRead},
 		{"bad access", safe, "access", Access("execute")},
 		{"protected exact", protected[0], "intersects protected", AccessRead},
 		{"protected child", filepath.Join(protected[1], "child"), "intersects protected", AccessWrite},
 		{"protected ancestor", home, "intersects protected", AccessRead},
 	}
 	require.NoError(t, os.WriteFile(filepath.Join(safe, "file"), []byte("x"), 0o644))
+	require.NoError(t, syscall.Mkfifo(filepath.Join(safe, "fifo"), 0o644))
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := Normalize(Profile{Name: "p", Filesystem: []FilesystemGrant{{Path: tt.path, Access: tt.access}}})

@@ -175,6 +175,22 @@ func predictSandboxFilesystem(
 			),
 		)
 	}
+	// Same shape for a rule naming a single file, and for the same reason: the
+	// surfaces that cannot bind one render directory lists, so the preview must
+	// not show a cell reading as enforced for a rule that would simply be absent.
+	fileCount, fileDetail := fileGrantSummary(profile.Filesystem)
+	if fileCount > 0 &&
+		!sandboxpolicy.SupportsFileGrants(target.implementation, target.platform) {
+		return predictedSandboxFeature(
+			tier, harness.AccessPredictionRefused,
+			fmt.Sprintf(
+				"%d rule%s name%s a single file rather than a directory (%s); "+
+					"binding one file needs a mount namespace whose whole boundary tclaude owns, which only the Linux tclaude-layer provides, so launch is refused rather than launching without the rule",
+				fileCount, pluralSuffix(fileCount),
+				singularVerbSuffix(fileCount), fileDetail,
+			),
+		)
+	}
 	if target.implementation.UsesTclaudeLayer() {
 		mechanism := "tclaude-layer Seatbelt"
 		if target.platform == "linux" {
@@ -187,6 +203,12 @@ func predictSandboxFilesystem(
 			detail += fmt.Sprintf(
 				" and mounts %d host director%s at a different sandbox path (%s)",
 				remappedCount, pluralY(remappedCount), remappedDetail,
+			)
+		}
+		if fileCount > 0 {
+			detail += fmt.Sprintf(
+				" and binds %d individual file%s (%s)",
+				fileCount, pluralSuffix(fileCount), fileDetail,
 			)
 		}
 		if len(reopens) > 0 {
@@ -411,6 +433,24 @@ func remappedGrantSummary(grants []sandboxpolicy.FilesystemGrant) (int, string) 
 		shown = append(shown, fmt.Sprintf("and %d more", total-maxShown))
 	}
 	return total, strings.Join(shown, ", ")
+}
+
+// fileGrantSummary is remappedGrantSummary for the rules whose host path is a
+// regular file, capped the same way and for the same reason.
+func fileGrantSummary(grants []sandboxpolicy.FilesystemGrant) (int, string) {
+	const maxShown = 2
+	paths := sandboxpolicy.FileGrantPaths(grants)
+	shown := make([]string, 0, maxShown+1)
+	for i, path := range paths {
+		if i == maxShown {
+			break
+		}
+		shown = append(shown, fmt.Sprintf("%q", path))
+	}
+	if len(paths) > maxShown {
+		shown = append(shown, fmt.Sprintf("and %d more", len(paths)-maxShown))
+	}
+	return len(paths), strings.Join(shown, ", ")
 }
 
 func describePredictedReopens(reopens []sandboxpolicy.ReopenUnderDeny) string {

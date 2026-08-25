@@ -90,7 +90,11 @@ type resolvedFilesystemGrant struct {
 	path      string
 	mountPath string
 	access    Access
-	sources   []ProfileSource
+	// kind carries the authoring-time file commitment (GrantKind) through the
+	// merge, so the effective profile a snapshot freezes still says which rules
+	// were authored against a single file.
+	kind    GrantKind
+	sources []ProfileSource
 }
 
 type observableFilesystemSpelling struct {
@@ -175,7 +179,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			// profiles contain only canonical paths here and therefore derive
 			// no aliases.
 			for _, grant := range tier.profile.Filesystem {
-				canonical, _, canonicalErr := canonicalDirectory(grant.Path, true)
+				canonical, _, _, canonicalErr := canonicalGrantTarget(grant.Path, true)
 				if canonicalErr != nil {
 					return EffectiveProfile{}, fmt.Errorf(
 						"discover canonical target for %s sandbox profile %q spelling %q: %w",
@@ -214,7 +218,8 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			if !exists {
 				filesystem[guest] = resolvedFilesystemGrant{
 					path: grant.Path, mountPath: grant.MountPath,
-					access: grant.Access, sources: []ProfileSource{source},
+					access: grant.Access, kind: grant.Kind,
+					sources: []ProfileSource{source},
 				}
 				continue
 			}
@@ -231,6 +236,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			if accessRank(grant.Access) > accessRank(current.access) {
 				current.access = grant.Access
 			}
+			current.kind = strictestGrantKind(current.kind, grant.Kind)
 			current.sources = append(current.sources, source)
 			filesystem[guest] = current
 		}
@@ -319,6 +325,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		grant := filesystem[guest]
 		normalized, _, err := normalizeFilesystem([]FilesystemGrant{{
 			Path: grant.path, Access: grant.access, MountPath: grant.mountPath,
+			Kind: grant.kind,
 		}}, true)
 		if err != nil {
 			return EffectiveProfile{}, fmt.Errorf("revalidate effective filesystem path %q: %w", grant.path, err)
@@ -329,7 +336,8 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		if !exists {
 			revalidated[canonicalGuest] = resolvedFilesystemGrant{
 				path: canonical.Path, mountPath: canonical.MountPath,
-				access: canonical.Access, sources: append([]ProfileSource(nil), grant.sources...),
+				access: canonical.Access, kind: canonical.Kind,
+				sources: append([]ProfileSource(nil), grant.sources...),
 			}
 			continue
 		}
@@ -345,6 +353,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		if accessRank(canonical.Access) > accessRank(current.access) {
 			current.access = canonical.Access
 		}
+		current.kind = strictestGrantKind(current.kind, canonical.Kind)
 		current.sources = append(current.sources, grant.sources...)
 		revalidated[canonicalGuest] = current
 	}
@@ -357,6 +366,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 		grant := revalidated[guest]
 		result.Filesystem = append(result.Filesystem, FilesystemGrant{
 			Path: grant.path, Access: grant.access, MountPath: grant.mountPath,
+			Kind: grant.kind,
 		})
 		// Provenance stays keyed on the host path: it answers "which profile
 		// granted authority over this directory", and the host path is the

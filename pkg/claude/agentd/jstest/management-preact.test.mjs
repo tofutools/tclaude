@@ -1375,7 +1375,7 @@ test('sandbox editor owns nested rows, raw validation, dirty discard, and save-i
   mountManagementIsland({ host, state, actions, confirmDiscard: async () => false, openProfilePermissions() {}, registerCleanup(fn) { cleanups.push(fn); } }); await harness.act(() => Promise.resolve());
   assert.match(host.querySelector('#sandbox-profile-editor-modal .cron-create-row input').placeholder, /shared-build-caches/);
   const network = host.querySelector('#sandbox-profile-editor-network-baseline'); assert.ok(network.querySelector('option[value="allow"]')); network.querySelector('option[value="deny"]').selected = true; network.dispatchEvent(new harness.window.Event('change', { bubbles: true })); await harness.act(() => Promise.resolve());
-  [...host.querySelectorAll('.sbx-add-row')].find((button) => /directory/.test(button.textContent)).click(); await harness.act(() => Promise.resolve());
+  [...host.querySelectorAll('.sbx-add-row')].find((button) => /add path/.test(button.textContent)).click(); await harness.act(() => Promise.resolve());
   const path = host.querySelector('.sbx-path'); path.value = '/cache'; path.dispatchEvent(new harness.window.Event('input', { bubbles: true })); await harness.act(() => Promise.resolve());
   assert.equal(harness.document.activeElement === path || path.value === '/cache', true);
   host.querySelector('.sbx-include-add').click(); host.querySelector('.sbx-agent-add').click(); await harness.act(() => Promise.resolve());
@@ -3421,7 +3421,7 @@ test('a failing common-rule feed blocks hidden pack authority but leaves manual 
     'the authority warning is rendered and announced exactly once');
   assert.equal(host.querySelector('#sandbox-profile-editor-submit').disabled, true,
     'unrendered release-owned network authority cannot be saved');
-  [...host.querySelectorAll('.sbx-add-row')].find((button) => /directory/.test(button.textContent)).click();
+  [...host.querySelectorAll('.sbx-add-row')].find((button) => /add path/.test(button.textContent)).click();
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelectorAll('.sbx-section .sbx-path').length, 1, 'rows can still be added by hand');
   // Retry recovers the menu without a reopen.

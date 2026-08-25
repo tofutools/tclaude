@@ -2415,7 +2415,20 @@ func resumeLaunchCmdWithStackedProof(
 		); err != nil {
 			return "", "", nil, err
 		}
-		for _, grant := range launchFilesystem {
+		// Nor can they express a rule naming a single file. Refuse the resume
+		// rather than bringing the agent back with that rule quietly gone.
+		if err := sandboxpolicy.ValidateFileGrantSupport(
+			launchFilesystem, implementation, runtime.GOOS,
+		); err != nil {
+			return "", "", nil, err
+		}
+		// A rule naming a single FILE is dropped rather than remapped: these
+		// lists are directories by contract, and the gate above has already
+		// refused every implementation that would have needed one of them to
+		// carry the rule. Under the one implementation that does reach here with
+		// a file rule — the Linux tclaude-layer — the outer applier takes it
+		// from the snapshot's mount plan, not from these lists.
+		for _, grant := range sandboxpolicy.DirectoryGrants(launchFilesystem) {
 			// These lists become the HARNESS's own sandbox dirs, which under the
 			// stacked implementation is the nested wall running inside the
 			// namespace tclaude built. So a remapped grant contributes the path

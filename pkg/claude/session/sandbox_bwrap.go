@@ -2422,7 +2422,34 @@ func requireTclaudeLayerGuestMountpoint(
 			"tclaude_layer_missing_mount_point: mount plan entry %d cannot mount %q at sandbox path %q because the sandbox root is the host root under the %s network posture with an inherited root, so the mount point must already exist on the host; create %q, or use a posture where tclaude constructs the root (closed or filtered network access, or an explicit unix_sockets rule)",
 			index, entry.SourcePath(), entry.Path, plan.NetworkPosture, entry.Path)
 	}
+	// A file cannot be mounted over a directory, nor a directory over a file.
+	// bubblewrap refuses the combination with a message that names neither the
+	// rule nor the profile it came from, so state it here instead. Only the
+	// inherited-root arm needs this: under a constructed root bubblewrap creates
+	// the mount point itself, in the shape the source requires.
+	sourceIsFile, err := bwrapBindSourceIsFile(entry.SourcePath())
+	if err != nil {
+		return fmt.Errorf("mount plan entry %d source %q: %w", index, entry.SourcePath(), err)
+	}
+	targetIsFile, err := bwrapBindSourceIsFile(entry.Path)
+	if err != nil {
+		return fmt.Errorf("mount plan entry %d sandbox mount point %q: %w", index, entry.Path, err)
+	}
+	if sourceIsFile != targetIsFile {
+		return fmt.Errorf(
+			"tclaude_layer_mount_point_kind: mount plan entry %d cannot mount %q at sandbox path %q because %s is a file and %s is a directory; an inherited root mounts onto the host mount point, so the two must be the same kind",
+			index, entry.SourcePath(), entry.Path,
+			mountKindSubject(sourceIsFile, entry.SourcePath(), entry.Path),
+			mountKindSubject(!sourceIsFile, entry.SourcePath(), entry.Path))
+	}
 	return nil
+}
+
+func mountKindSubject(sourceSide bool, source, target string) string {
+	if sourceSide {
+		return "the host path " + source
+	}
+	return "the sandbox mount point " + target
 }
 
 // tclaudeLayerPlanUsesConstructedRoot is the applier's single reading of the
@@ -3373,6 +3400,21 @@ func tclaudeLayerWrapsPane(harnessName string) bool {
 // the pane process.
 func TclaudeLayerUsesServerBoundary(harnessName string) bool {
 	return !tclaudeLayerWrapsPane(harnessName)
+}
+
+// bwrapBindSourceIsFile reports whether a bind endpoint is a regular file
+// rather than a directory. A missing path answers false; the caller has already
+// established that both endpoints exist before asking.
+func bwrapBindSourceIsFile(path string) (bool, error) {
+	info, err := os.Stat(path)
+	switch {
+	case err == nil:
+		return info.Mode().IsRegular(), nil
+	case os.IsNotExist(err):
+		return false, nil
+	default:
+		return false, err
+	}
 }
 
 func bwrapBindSourceExists(path string) (bool, error) {
