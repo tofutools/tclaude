@@ -741,6 +741,14 @@ func runNew(params *NewParams) error {
 	); err != nil {
 		return err
 	}
+	// Same shape, same reason, for a rule naming a single file: the directory
+	// lists below cannot carry one, so an implementation that enforces through
+	// them would launch with the rule silently absent.
+	if err := sandboxpolicy.ValidateFileGrantSupport(
+		sandboxSnapshotActiveFilesystem(launchSandbox), sandboxImplementation, runtime.GOOS,
+	); err != nil {
+		return err
+	}
 	// An implementation that confines nothing is not asked whether the harness
 	// can represent a rule: it has stood every access boundary down on purpose,
 	// so the rules below are inert rather than unsupported. Refusing here would
@@ -2416,7 +2424,8 @@ func runNew(params *NewParams) error {
 		proofToken = params.DirWriteProof
 	}
 	profileWriteDirs := sandboxSnapshotHostDirs(launchSandbox, sandboxpolicy.AccessWrite)
-	if proofToken != "" || len(profileWriteDirs) > 0 {
+	profileWriteFiles := sandboxSnapshotHostFiles(launchSandbox, sandboxpolicy.AccessWrite)
+	if proofToken != "" || len(profileWriteDirs) > 0 || len(profileWriteFiles) > 0 {
 		path, cleanupProofReady, readyErr := newSpawnCwdReadinessFile()
 		if readyErr != nil {
 			return readyErr
@@ -2425,7 +2434,7 @@ func runNew(params *NewParams) error {
 		proofReadyPath = path
 		harnessCmd = guardHarnessCommandWithDirProof(
 			harnessCmd, proofToken, proofReadyPath, params.CwdWriteProof != "",
-			params.GitWorktreeWriteDirs, profileWriteDirs)
+			params.GitWorktreeWriteDirs, profileWriteDirs, profileWriteFiles)
 	}
 
 	// The command is now fully assembled — every wrapper layer applied. Hand it
@@ -2793,6 +2802,15 @@ func OneShotLaunchPosture(
 	); err != nil {
 		return harness.SpawnSpec{}, err
 	}
+	// And for the same reason a recorded FILE rule cannot be replayed here: the
+	// harness-native posture is rendered from directory lists, so replaying one
+	// would drop the rule rather than reproduce it.
+	if err := sandboxpolicy.ValidateFileGrantSupport(
+		sandboxSnapshotActiveFilesystem(effectiveSandbox),
+		sandboxpolicy.ImplementationHarnessBuiltin, runtime.GOOS,
+	); err != nil {
+		return harness.SpawnSpec{}, err
+	}
 	params := &NewParams{}
 	launchGitWriteDirs := gitWorktreeWriteDirs(params, harnessName, harnessBuiltinMode, cwd)
 	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
@@ -3129,7 +3147,14 @@ func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.
 		return nil
 	}
 	out := make([]string, 0, len(snapshot.Effective.Filesystem))
-	for _, grant := range snapshot.Effective.Filesystem {
+	// A rule naming a single FILE contributes nothing here. These are the
+	// bare directory lists a harness is handed — `--add-dir` roots, Claude
+	// Code's sandbox filesystem arrays — and a file in one of them is at best
+	// ignored. The rule is not lost: the only implementation that reaches a
+	// launch with one is the Linux tclaude-layer, whose applier binds it from
+	// the mount plan. Every other implementation was refused by
+	// ValidateFileGrantSupport before this point.
+	for _, grant := range sandboxpolicy.DirectoryGrants(snapshot.Effective.Filesystem) {
 		if grant.Access == access {
 			// These lists describe the namespace the harness will run in, so a
 			// remapped grant contributes the path it occupies THERE. Under the
@@ -3146,13 +3171,35 @@ func sandboxSnapshotDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.
 // canonical immediately before the harness starts. These roots intentionally
 // do not require proof markers: a profile grant may permit writes to existing
 // descendants without permitting a new entry in the root itself.
+//
+// Rules naming a single file are checked by sandboxSnapshotHostFiles instead:
+// the directory guard proves a path by `cd`-ing into it, which a file cannot
+// satisfy, so folding the two kinds together would fail every launch carrying a
+// file rule rather than check it.
 func sandboxSnapshotHostDirs(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) []string {
 	if snapshot == nil {
 		return nil
 	}
 	out := make([]string, 0, len(snapshot.Effective.Filesystem))
-	for _, grant := range snapshot.Effective.Filesystem {
+	for _, grant := range sandboxpolicy.DirectoryGrants(snapshot.Effective.Filesystem) {
 		if grant.Access == access {
+			out = append(out, grant.Path)
+		}
+	}
+	return out
+}
+
+// sandboxSnapshotHostFiles is sandboxSnapshotHostDirs for the rules that name a
+// regular file. The integrity question is the same one — is this still the
+// thing the profile resolved, rather than a symlink swapped in since — asked
+// with the check a file can answer.
+func sandboxSnapshotHostFiles(snapshot *sandboxpolicy.Snapshot, access sandboxpolicy.Access) []string {
+	if snapshot == nil {
+		return nil
+	}
+	var out []string
+	for _, grant := range snapshot.Effective.Filesystem {
+		if grant.Access == access && sandboxpolicy.IsFileGrant(grant) {
 			out = append(out, grant.Path)
 		}
 	}
@@ -3470,7 +3517,11 @@ func isValidSpawnCwdProofToken(proof string) bool {
 // marker, so the child never consumes a path substituted after daemon
 // verification. Profile roots skip the marker requirement but retain the late
 // path-substitution check.
-func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkCwd bool, dirs, integrityDirs []string) string {
+func guardHarnessCommandWithDirProof(
+	harnessCmd, proof, readyPath string,
+	checkCwd bool,
+	dirs, integrityDirs, integrityFiles []string,
+) string {
 	marker := clcommon.SpawnDirWriteProofPrefix + proof
 	ready := clcommon.ShellQuoteArg(readyPath)
 	fail := func(reason string) string {
@@ -3494,6 +3545,15 @@ func guardHarnessCommandWithDirProof(harnessCmd, proof, readyPath string, checkC
 		guard += "if [ \"$(cd " + quotedDir + " 2>/dev/null && pwd -P)\" != " + quotedDir +
 			" ] || [ -L " + quotedDir + " ]; then " +
 			"echo 'tclaude: sandbox profile directory changed; refusing harness launch' >&2; " + fail("repository-proof") + "; fi; "
+	}
+	// The same check for a rule naming a single file. `cd` cannot express it, so
+	// the file form asks the two questions that remain answerable: the path is
+	// still a regular file, and it is still not a symlink pointing somewhere the
+	// profile never resolved.
+	for _, file := range integrityFiles {
+		quotedFile := clcommon.ShellQuoteArg(file)
+		guard += "if [ ! -f " + quotedFile + " ] || [ -L " + quotedFile + " ]; then " +
+			"echo 'tclaude: sandbox profile file changed; refusing harness launch' >&2; " + fail("repository-proof") + "; fi; "
 	}
 	return guard + "printf '%s' ok > " + ready + " || exit 126; " + harnessCmd
 }

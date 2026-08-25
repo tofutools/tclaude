@@ -175,7 +175,7 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			// profiles contain only canonical paths here and therefore derive
 			// no aliases.
 			for _, grant := range tier.profile.Filesystem {
-				canonical, _, canonicalErr := canonicalDirectory(grant.Path, true)
+				canonical, _, _, canonicalErr := canonicalGrantTarget(grant.Path, true)
 				if canonicalErr != nil {
 					return EffectiveProfile{}, fmt.Errorf(
 						"discover canonical target for %s sandbox profile %q spelling %q: %w",

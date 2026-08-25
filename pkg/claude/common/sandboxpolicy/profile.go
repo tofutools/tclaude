@@ -45,10 +45,12 @@ const (
 	AccessDeny  Access = "deny"
 )
 
-// FilesystemGrant is one operator-authored directory rule.
+// FilesystemGrant is one operator-authored filesystem rule. Path names a
+// directory or a single regular file; see canonicalGrantTarget for why those
+// two and nothing else.
 //
 // Path is always a HOST path: it is the authority-bearing side, and it is what
-// symlink resolution, protected-root containment and directory-ness are decided
+// symlink resolution, protected-root containment and path kind are decided
 // against. MountPath is optional and is the SANDBOX-side path the host
 // directory appears at, in the style of a Kubernetes volume mount (TCL-866).
 //
@@ -668,9 +670,23 @@ func normalizeFilesystemGrant(
 	if err != nil {
 		return "", "", "", false, fmt.Errorf("filesystem[%d].path: %w", index, err)
 	}
-	resolved, missing, err = canonicalDirectory(spelling, allowMissing)
+	resolved, missing, file, err := canonicalGrantTarget(spelling, allowMissing)
 	if err != nil {
 		return "", "", "", false, fmt.Errorf("filesystem[%d].path: %w", index, err)
+	}
+	// A deny is the one access a file row cannot carry. Hiding a directory is a
+	// mount over it — an empty tmpfs — and there is no equivalent primitive that
+	// makes a single FILE absent: every candidate substitutes content (an empty
+	// file, /dev/null) rather than removing the name, which is a different rule
+	// than the one the operator wrote. Refuse it here, where the message can
+	// name the alternative, rather than in an applier that would have to invent
+	// a semantics for it. Denying the containing directory and reopening the
+	// siblings that are still needed expresses the same intent exactly.
+	if file && grant.Access == AccessDeny {
+		return "", "", "", false, fmt.Errorf(
+			"filesystem[%d].path %q is a regular file, which a deny rule cannot name; deny the directory that contains it and reopen the entries that must stay reachable",
+			index, resolved,
+		)
 	}
 	if grant.Access != AccessDeny {
 		for _, denied := range protected {
@@ -1016,7 +1032,7 @@ func validateFilesystemSpellingTarget(
 	profileName, spelling, resolved string,
 	allowMissing bool,
 ) error {
-	current, _, err := canonicalDirectory(spelling, allowMissing)
+	current, _, _, err := canonicalGrantTarget(spelling, allowMissing)
 	if err != nil {
 		return fmt.Errorf(
 			"sandbox profile %q retained spelling %q originally resolved to %q but its current target is unavailable (%v); re-save the profile to adopt the new target, or remove the retained spelling",
@@ -1063,21 +1079,57 @@ func accessRank(access Access) int {
 	}
 }
 
+// canonicalDirectory is canonicalGrantTarget for the callers whose paths are
+// structurally directories — the common-rule catalog. A regular file is a real
+// authoring error there rather than a narrower grant, so it keeps the historical
+// refusal instead of inheriting file support.
 func canonicalDirectory(path string, allowMissing bool) (string, bool, error) {
+	resolved, missing, file, err := canonicalGrantTarget(path, allowMissing)
+	if err != nil {
+		return "", false, err
+	}
+	if file {
+		return "", false, fmt.Errorf("path %q is not a directory", resolved)
+	}
+	return resolved, missing, nil
+}
+
+// canonicalGrantTarget resolves one authored filesystem-rule path to its
+// canonical host spelling and reports what kind of thing it names.
+//
+// A rule may name a DIRECTORY or a REGULAR FILE (TCL-1041). The file form
+// exists because the most valuable carve-out beneath a denied Home is usually a
+// single dotfile — ~/.gitconfig, ~/.netrc — and reopening the whole directory
+// that contains it hands over everything else in it too. Nothing else is
+// admitted: a socket, device node, or FIFO reached through a grant would be an
+// active channel rather than a body of content, and tclaude has separate,
+// narrower axes (unix_sockets, the /dev rows the applier turns into --dev-bind)
+// for the cases where that is genuinely wanted.
+//
+// Kind is a property of the HOST path, decided here, on the layer that already
+// owns every other filesystem question about a grant. Callers that cannot
+// enforce a file rule refuse it by capability (ValidateFileGrantSupport); they
+// never re-derive the kind for themselves.
+//
+// A path that does not exist yet is reported as a directory: there is nothing
+// on disk to ask. That is the honest answer and the safe one — a missing
+// read/write row is skipped at launch, and a missing row that later appears as
+// a file is re-canonicalized by FilesystemForLaunch before it can be applied.
+func canonicalGrantTarget(path string, allowMissing bool) (string, bool, bool, error) {
 	original := path
 	clean, err := cleanDirectoryPath(path)
 	if err != nil {
-		return "", false, err
+		return "", false, false, err
 	}
 	resolved, err := filepath.EvalSymlinks(clean)
 	if err != nil {
 		if allowMissing && os.IsNotExist(err) {
 			resolved, err = canonicalMissingDirectory(clean)
 			if err == nil {
-				return resolved, true, nil
+				return resolved, true, false, nil
 			}
 		}
-		return "", false, fmt.Errorf("resolve symlinks for %q: %w", original, err)
+		return "", false, false, fmt.Errorf("resolve symlinks for %q: %w", original, err)
 	}
 	// Restore the on-disk spelling so a case- or NFC-variant authoring of a
 	// path lands on the same string every other spelling of it does. Without
@@ -1087,12 +1139,17 @@ func canonicalDirectory(path string, allowMissing bool) (string, bool, error) {
 	resolved = CanonicalHostSpelling(filepath.Clean(resolved))
 	info, err := os.Stat(resolved)
 	if err != nil {
-		return "", false, fmt.Errorf("stat %q: %w", resolved, err)
+		return "", false, false, fmt.Errorf("stat %q: %w", resolved, err)
 	}
-	if !info.IsDir() {
-		return "", false, fmt.Errorf("path %q is not a directory", resolved)
+	switch {
+	case info.IsDir():
+		return resolved, false, false, nil
+	case info.Mode().IsRegular():
+		return resolved, false, true, nil
+	default:
+		return "", false, false, fmt.Errorf(
+			"path %q is neither a directory nor a regular file", resolved)
 	}
-	return resolved, false, nil
 }
 
 // cleanDirectoryPath applies the lexical path rules shared by canonical

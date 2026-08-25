@@ -72,8 +72,8 @@ same layer. The values:
   `cpu.stat`), host-OOM attribution (`resource_limit_oom` exit reason), and a
   kill handle for everything the agent started. The profile chain still
   resolves — it carries the limits — and its access rules are recorded but not
-  enforced, disclosed with a `not_enforced` notice. Remapped `mount_path` rules
-  and non-Linux hosts refuse. A fresh launch that cannot create its cgroup
+  enforced, disclosed with a `not_enforced` notice. Remapped `mount_path` rules,
+  rows naming a single file, and non-Linux hosts refuse. A fresh launch that cannot create its cgroup
   refuses; a relaunch of a ceiling-free boundary degrades with a
   `resource_cgroup_unavailable` notice instead (ceilings always fail closed).
 - **`off`** — the cross-harness explicit opt-out: each harness's native
@@ -139,25 +139,43 @@ Kubernetes-style volume-mount projection.
 The axes:
 
 - **`filesystem`** — rows of `{path, access, mount_path?}` with `access` one of
-  `read` | `write` | `deny`. Rows are directories only; a non-directory path is
-  rejected, so home-level dotfiles such as `~/.gitconfig` cannot be reopened
-  individually under a denied Home. `~` expands to the daemon's home; paths are
-  symlink-resolved and case/NFC-canonicalized, and duplicate spellings of one
-  physical directory fold into a single row with deny > write > read. Missing
-  paths are retained with a warning and skipped at launch — tclaude never
-  creates operator-authored host directories.
+  `read` | `write` | `deny`. A row names a **directory or a single regular
+  file**; anything else (a socket, device node, or FIFO) is rejected. `~`
+  expands to the daemon's home; paths are symlink-resolved and
+  case/NFC-canonicalized, and duplicate spellings of one physical directory fold
+  into a single row with deny > write > read. Missing paths are retained with a
+  warning and skipped at launch — tclaude never creates operator-authored host
+  paths.
+- **File rows** — `{"path": "~/.gitconfig", "access": "read"}` reopens exactly
+  that one dotfile beneath a denied Home, without handing over the rest of the
+  directory it lives in. Two limits, both refusals rather than silent
+  degradations:
+    - **`deny` may not name a file.** Hiding a directory is a mount of an empty
+      tmpfs over it, and no primitive makes a single *file* absent — every
+      candidate substitutes content instead of removing the name. Deny the
+      containing directory and reopen the entries that must stay reachable.
+    - **Enforcement needs `tclaude-layer` on Linux.** Binding one file requires a
+      mount namespace whose whole boundary tclaude owns. Seatbelt,
+      `harness-builtin`, `resource-only`/`off`, and `stacked` all refuse with
+      `unsupported_sandbox_profile_file_grant`. `stacked` refuses even on Linux:
+      its inner harness-native wall is fed from directory lists, so the outer
+      bind would land while the inner wall still blocked the path.
 - **Carve-outs work in both directions.** A narrower row shadows a broader one:
   a narrow `write` reopens beneath a `deny`, and a narrow `deny` hides beneath
   an allow. This most-specific-wins shape is the whole strictness mechanism —
   see below.
-- **`mount_path`** — a `read`/`write` row may project its host directory at a
+- **`mount_path`** — a `read`/`write` row may project its host path at a
   different sandbox path (`{"path": "/srv/corpus-v3", "access": "read",
-  "mount_path": "/data"}`). `deny` rows may not carry one (a deny hides a path,
-  it never projects). Two host paths cannot claim one guest path; one host path
-  at several guest paths is fine; a host path whose most specific rule is a
-  deny may not be remapped. Ordering and most-specific-wins evaluate in
-  guest-path space. Enforcement needs a real mount namespace, so it works only
-  under `tclaude-layer`/`stacked` on Linux; Seatbelt (a path filter, not a
+  "mount_path": "/data"}`), whether that host path is a directory or a file.
+  `deny` rows may not carry one (a deny hides a path, it never projects). Two
+  host paths cannot claim one guest path; one host path at several guest paths
+  is fine; a host path whose most specific rule is a deny may not be remapped.
+  Ordering and most-specific-wins evaluate in guest-path space. Under an
+  *inherited* filesystem root the mount point must already exist on the host and
+  be the same kind as the source — there the sandbox root *is* the host root, so
+  bubblewrap has nowhere to create one; a constructed root creates it.
+  Enforcement needs a real mount namespace, so it works only under
+  `tclaude-layer`/`stacked` on Linux; Seatbelt (a path filter, not a
   mount namespace) and `harness-builtin` refuse the launch with
   `unsupported_sandbox_profile_mount_path` rather than falling back to the
   host path.
@@ -288,8 +306,9 @@ trust-folder record. `/model` and directory trust for Claude Code land in
    plugin installs and nothing else. A broader `~` or `~/.claude` write does
    not count: the operator has to name the surface. A row *beneath* a floored
    directory (`~/.claude/hooks/mine`) reopens only that path and leaves the
-   floor over the rest of the directory intact. Rows are directories only, so
-   a floored *file* cannot be reopened this way.
+   floor over the rest of the directory intact. A floored *file* is reopened the
+   same way — `{"path": "~/.claude/settings.json", "access": "write"}` — since a
+   row may name a single file.
 2. `"harness_config": "write"` turns the whole floor off, restoring the
    pre-floor posture — but only when nothing else in the chain pins it.
    Composition is strictest-wins, so an explicit `"read"` in any included,

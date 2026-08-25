@@ -701,3 +701,33 @@ func TestSandboxProfileCapabilityFailureRejectsUnsupportedNetworkOnlyProfile(t *
 		require.Nil(t, failure)
 	}
 }
+
+// The spawn API names the missing capability itself, so a caller that authors a
+// file rule against an implementation that cannot bind one gets the refusal
+// back from the request rather than watching the pane die.
+func TestSandboxProfileCapabilityFailureRefusesFileGrantWithoutMountNamespace(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	gitconfig := filepath.Join(root, "gitconfig")
+	require.NoError(t, os.WriteFile(gitconfig, []byte("[user]\n"), 0o600))
+	snapshot := &sandboxpolicy.Snapshot{Effective: sandboxpolicy.EffectiveProfile{
+		Filesystem: []sandboxpolicy.FilesystemGrant{
+			{Path: gitconfig, Access: sandboxpolicy.AccessRead},
+		},
+	}}
+
+	failure := sandboxProfileCapabilityFailure(
+		harness.DefaultName, harness.ClaudeSandboxOn, snapshot,
+		string(sandboxpolicy.ImplementationStacked),
+	)
+	require.NotNil(t, failure)
+	assert.Equal(t, "unsupported_sandbox_profile_file_grant", failure.Kind)
+	assert.Contains(t, failure.Msg, gitconfig)
+
+	if runtime.GOOS == "linux" {
+		assert.Nil(t, sandboxProfileCapabilityFailure(
+			harness.DefaultName, harness.ClaudeSandboxOff, snapshot,
+			string(sandboxpolicy.ImplementationTclaudeLayer),
+		), "the Linux tclaude-layer is the one implementation that binds a single file")
+	}
+}

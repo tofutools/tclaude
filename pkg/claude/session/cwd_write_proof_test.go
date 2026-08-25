@@ -23,7 +23,7 @@ func TestSpawnCwdReadinessFileLivesInPrivateDataDir(t *testing.T) {
 	// The guard is a shell prefix executed before harnessCmd starts the
 	// sandboxed harness, so it can acknowledge readiness in the denied data
 	// subtree without granting that subtree to the agent.
-	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", "", path, false, nil, nil))
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", "", path, false, nil, nil, nil))
 	require.NoError(t, cmd.Run())
 	status, err := os.ReadFile(path)
 	require.NoError(t, err)
@@ -40,7 +40,7 @@ func TestGuardHarnessCommandWithCwdProof_ChecksMarkerThenRuns(t *testing.T) {
 	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
 
 	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
-		"printf launched > "+clcommon.ShellQuoteArg(launched), proof, ready, true, nil, nil))
+		"printf launched > "+clcommon.ShellQuoteArg(launched), proof, ready, true, nil, nil, nil))
 	cmd.Dir = dir
 	require.NoError(t, cmd.Run())
 
@@ -68,7 +68,7 @@ func TestGuardHarnessCommandWithCwdProof_RejectsPathSwap(t *testing.T) {
 	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
 
 	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
-		"printf launched > "+clcommon.ShellQuoteArg(launched), proof, ready, true, nil, nil))
+		"printf launched > "+clcommon.ShellQuoteArg(launched), proof, ready, true, nil, nil, nil))
 	cmd.Dir = target
 	err := cmd.Run()
 	require.Error(t, err)
@@ -95,7 +95,7 @@ func TestGuardHarnessCommandWithDirProofRejectsSwappedRepositoryRoot(t *testing.
 	ready := filepath.Join(root, "ready")
 	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
 
-	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", proof, ready, true, []string{grant}, nil))
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", proof, ready, true, []string{grant}, nil, nil))
 	cmd.Dir = cwd
 	require.Error(t, cmd.Run())
 	status, err := os.ReadFile(ready)
@@ -115,7 +115,7 @@ func TestGuardHarnessCommandWithDirProofChecksRepositoryWithoutCwdMarker(t *test
 	ready := filepath.Join(root, "ready")
 	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
 
-	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", proof, ready, false, []string{grant}, nil))
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof("true", proof, ready, false, []string{grant}, nil, nil))
 	cmd.Dir = cwd
 	require.NoError(t, cmd.Run())
 	status, err := os.ReadFile(ready)
@@ -134,7 +134,7 @@ func TestGuardHarnessCommandChecksProfileRootWithoutWritingMarker(t *testing.T) 
 	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
 
 	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
-		"true", "", ready, false, nil, []string{profileRoot}))
+		"true", "", ready, false, nil, []string{profileRoot}, nil))
 	require.NoError(t, cmd.Run(),
 		"a profile root needs a canonical-path check, not permission to create an entry")
 	status, err := os.ReadFile(ready)
@@ -156,7 +156,45 @@ func TestGuardHarnessCommandRejectsSwappedProfileRootWithoutMarker(t *testing.T)
 	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
 
 	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
-		"true", "", ready, false, nil, []string{profileRoot}))
+		"true", "", ready, false, nil, []string{profileRoot}, nil))
+	require.Error(t, cmd.Run())
+	status, err := os.ReadFile(ready)
+	require.NoError(t, err)
+	assert.Equal(t, "error:repository-proof", string(status))
+}
+
+// A profile rule may name a single regular file, and the integrity check for
+// one is the file-shaped twin of the profile-root check above: the launch
+// proceeds while the path is still that file, and refuses once it is not.
+func TestGuardHarnessCommandChecksProfileFile(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	grantFile := filepath.Join(root, "gitconfig")
+	require.NoError(t, os.WriteFile(grantFile, []byte("[user]\n"), 0o600))
+	ready := filepath.Join(root, "ready")
+	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
+
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
+		"true", "", ready, false, nil, nil, []string{grantFile}))
+	require.NoError(t, cmd.Run(),
+		"a profile file rule needs a kind check, not a write marker")
+	status, err := os.ReadFile(ready)
+	require.NoError(t, err)
+	assert.Equal(t, "ok", string(status))
+}
+
+func TestGuardHarnessCommandRejectsSwappedProfileFile(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	grantFile := filepath.Join(root, "gitconfig")
+	forbidden := filepath.Join(root, "forbidden")
+	require.NoError(t, os.WriteFile(forbidden, []byte("stolen"), 0o600))
+	require.NoError(t, os.Symlink(forbidden, grantFile))
+	ready := filepath.Join(root, "ready")
+	require.NoError(t, os.WriteFile(ready, []byte("pending"), 0o600))
+
+	cmd := exec.Command("sh", "-c", guardHarnessCommandWithDirProof(
+		"true", "", ready, false, nil, nil, []string{grantFile}))
 	require.Error(t, cmd.Run())
 	status, err := os.ReadFile(ready)
 	require.NoError(t, err)
