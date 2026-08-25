@@ -184,7 +184,9 @@ The axes:
   `tclaude-layer`/`stacked` on Linux; Seatbelt (a path filter, not a
   mount namespace) and `harness-builtin` refuse the launch with
   `unsupported_sandbox_profile_mount_path` rather than falling back to the
-  host path.
+  host path. **`stacked` carries directory rows only**: a row naming a file is
+  refused there whether or not it is remapped, so projecting a *file* needs
+  plain `tclaude-layer`.
 - **`harness_config`** — `read` | `write`, omitted meaning the default
   read-only floor over the harness's own config surface. See
   [The harness-config floor](#the-harness-config-floor) below. Composes
@@ -314,7 +316,8 @@ trust-folder record. `/model` and directory trust for Claude Code land in
    directory (`~/.claude/hooks/mine`) reopens only that path and leaves the
    floor over the rest of the directory intact. A floored *file* is reopened the
    same way — `{"path": "~/.claude/settings.json", "access": "write"}` — since a
-   row may name a single file.
+   row may name a single file, though that row needs `tclaude-layer` on Linux
+   and is refused under `stacked` and `harness-builtin` like any other file row.
 2. `"harness_config": "write"` turns the whole floor off, restoring the
    pre-floor posture — but only when nothing else in the chain pins it.
    Composition is strictest-wins, so an explicit `"read"` in any included,
