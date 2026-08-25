@@ -65,6 +65,10 @@ const (
 	smokeFileROSourceEnv    = "TCLAUDE_SANDBOX_V2_FILE_RO_SOURCE"
 	smokeFileMountSourceEnv = "TCLAUDE_SANDBOX_V2_FILE_MOUNT_SOURCE"
 	smokeFileMountGuestEnv  = "TCLAUDE_SANDBOX_V2_FILE_MOUNT_GUEST"
+	// A real file beside the file rows that no rule names. The in-sandbox
+	// helper requires it to be absent, which is only evidence because host
+	// setup actually creates it.
+	smokeFileSiblingName = "unreachable-sibling"
 )
 
 // tclaudeLayerSmokeMounts carries the TCL-866 projection fixture through the
@@ -229,6 +233,13 @@ esac
 		filepath.Join(mounts.ReadOnlySource, "probe"), []byte("mounted-ro"), 0o600))
 	require.NoError(t, os.WriteFile(mounts.FileSource, []byte("file-ro"), 0o600))
 	require.NoError(t, os.WriteFile(mounts.FileMountSource, []byte("file-projected"), 0o600))
+	// A REAL neighbour of the file rows, named by no rule. Without it the
+	// "a file bind does not expose its parent" assertion inside the sandbox
+	// would pass vacuously — a stat of a path that never existed fails for the
+	// wrong reason, and would keep passing if a regression bound the whole
+	// parent directory.
+	require.NoError(t, os.WriteFile(
+		filepath.Join(mountBase, smokeFileSiblingName), []byte("unreachable"), 0o600))
 
 	// Spell the profile rule through a symlink and persist it through the real
 	// registry path. Resolution must bind the canonical target and recover the
@@ -564,11 +575,14 @@ func assertTclaudeLayerSmokeFileRows(t *testing.T) {
 	require.Error(t, err,
 		"the projected file's host path must not also be exposed inside the sandbox")
 
-	// The bind is the file, not the directory it lives in: a sibling that no
-	// rule names stays unreachable.
-	sibling := filepath.Join(filepath.Dir(fileSource), "unreachable-sibling")
+	// The bind is the file, not the directory it lives in. This sibling really
+	// exists on the host (see the fixture), so its absence here is evidence
+	// rather than a stat of a path that was never created.
+	sibling := filepath.Join(filepath.Dir(fileSource), smokeFileSiblingName)
 	_, err = os.Stat(sibling)
 	require.Error(t, err, "a file rule must not expose its parent directory")
+	assert.Truef(t, errors.Is(err, syscall.ENOENT),
+		"sibling %q must be absent with ENOENT, got %v", sibling, err)
 }
 
 func runTclaudeLayerSmokeHelper(

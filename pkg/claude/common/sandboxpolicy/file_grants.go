@@ -52,9 +52,15 @@ func IsFileGrantPath(path string) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-// IsFileGrant reports whether one rule's host path is a regular file.
+// IsFileGrant reports whether one rule names a regular file.
+//
+// The authoring-time commitment answers first: a rule stamped GrantKindFile is
+// a file rule even if its path is momentarily absent, which is what keeps it out
+// of the harness directory lists in every state. A rule with no commitment — one
+// built from a bare path list, such as the launch contract's own file binds —
+// falls back to asking the host.
 func IsFileGrant(grant FilesystemGrant) bool {
-	return IsFileGrantPath(grant.Path)
+	return grant.Kind == GrantKindFile || IsFileGrantPath(grant.Path)
 }
 
 // HasFileGrant reports whether any rule in a set names a regular file, so a

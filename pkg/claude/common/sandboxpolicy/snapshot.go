@@ -742,6 +742,16 @@ func FilesystemForLaunch(in EffectiveProfile) ([]FilesystemGrant, error) {
 				"filesystem deny rule %q is now a regular file, which a deny rule cannot name; deny the directory that contains it and reopen the entries that must stay reachable",
 				grant.Path)
 		}
+		// The same question in the widening direction, asked here as well as at
+		// resolution because this is the LAST read of the path before it becomes
+		// a mount. A rule authored against one file whose pathname now holds a
+		// directory would otherwise bind that whole tree — the path is unchanged,
+		// so nothing else in this loop can see it. See GrantKind.
+		if grant.Kind == GrantKindFile && !missing && !file {
+			return nil, fmt.Errorf(
+				"filesystem %s rule %q was a regular file when it was authored and is now a directory; the rule grants one file, not the tree that replaced it",
+				grant.Access, grant.Path)
+		}
 		if missing {
 			if grant.Access == AccessDeny {
 				return nil, fmt.Errorf("filesystem deny rule %q does not exist and cannot be enforced", grant.Path)

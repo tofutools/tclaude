@@ -1,8 +1,10 @@
 package sandboxpolicy
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,8 +28,121 @@ func TestNormalizeFilesystemAcceptsRegularFileRows(t *testing.T) {
 	}})
 	require.NoError(t, err)
 	require.Len(t, normalized.Filesystem, 2)
-	assert.Equal(t, FilesystemGrant{Path: gitconfig, Access: AccessRead}, normalized.Filesystem[0])
-	assert.Equal(t, FilesystemGrant{Path: netrc, Access: AccessWrite}, normalized.Filesystem[1])
+	assert.Equal(t,
+		FilesystemGrant{Path: gitconfig, Access: AccessRead, Kind: GrantKindFile},
+		normalized.Filesystem[0])
+	assert.Equal(t,
+		FilesystemGrant{Path: netrc, Access: AccessWrite, Kind: GrantKindFile},
+		normalized.Filesystem[1])
+}
+
+// A directory row stays unstamped, so every profile authored before file rules
+// existed serializes byte-identically and needs no migration.
+func TestNormalizeFilesystemLeavesDirectoryRowsUnstamped(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	work := filepath.Join(home, "work")
+	require.NoError(t, os.MkdirAll(work, 0o755))
+
+	normalized, err := Normalize(Profile{Name: "p", Filesystem: []FilesystemGrant{
+		{Path: work, Access: AccessWrite},
+	}})
+	require.NoError(t, err)
+	require.Len(t, normalized.Filesystem, 1)
+	assert.Equal(t, GrantKindUnset, normalized.Filesystem[0].Kind)
+
+	encoded, err := json.Marshal(normalized.Filesystem[0])
+	require.NoError(t, err)
+	assert.Equal(t, `{"path":`+strconv.Quote(work)+`,"access":"write"}`, string(encoded),
+		"an unstamped row must not grow a kind key")
+}
+
+// The widening this commitment exists to stop: a rule authored against one file
+// whose pathname is later replaced by a directory would otherwise re-resolve
+// cleanly and bind the whole replacement tree. The path never changes, so
+// nothing but the recorded kind can catch it.
+func TestFileRuleRefusesAPathThatBecameADirectory(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".gitconfig")
+	require.NoError(t, os.WriteFile(path, []byte("[user]\n"), 0o600))
+
+	normalized, err := Normalize(Profile{Name: "p", Filesystem: []FilesystemGrant{
+		{Path: path, Access: AccessRead},
+	}})
+	require.NoError(t, err)
+	stored := normalized.Filesystem
+	require.Equal(t, GrantKindFile, stored[0].Kind)
+
+	// The host swaps the pathname for a directory holding other secrets.
+	require.NoError(t, os.Remove(path))
+	require.NoError(t, os.MkdirAll(path, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(path, "credentials"), []byte("s"), 0o600))
+
+	// Re-resolution refuses …
+	_, err = Normalize(Profile{Name: "p", Filesystem: stored})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "was a regular file when this rule was authored")
+
+	// … and so does the last read before the mount, which closes the window
+	// between resolution and launch.
+	_, err = FilesystemForLaunch(EffectiveProfile{Filesystem: stored})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "was a regular file when it was authored")
+}
+
+// A missing path is inert for either kind — retained with a warning, skipped at
+// launch — so the commitment must not turn a disappeared file into a refusal.
+func TestFileRuleToleratesAPathThatDisappeared(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, ".gitconfig")
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	stored := []FilesystemGrant{{Path: path, Access: AccessRead, Kind: GrantKindFile}}
+	require.NoError(t, os.Remove(path))
+
+	// NormalizeForPersistence is the arm that retains a missing path; the
+	// commitment must not turn that retention into a refusal.
+	normalized, missing, err := NormalizeForPersistence(
+		Profile{Name: "p", Filesystem: stored})
+	require.NoError(t, err)
+	require.Len(t, normalized.Filesystem, 1)
+	assert.Equal(t, []string{path}, missing)
+
+	launch, err := FilesystemForLaunch(EffectiveProfile{Filesystem: stored})
+	require.NoError(t, err)
+	assert.Empty(t, launch, "a missing read rule stays frozen and inactive")
+}
+
+// The reverse transition is a NARROWING and is left alone: it cannot grant more
+// than was authored, and refusing it would break rules built from bare path
+// lists, which carry no commitment at all.
+func TestDirectoryRuleToleratesAPathThatBecameAFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	path := filepath.Join(home, "toolchain")
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+
+	normalized, err := Normalize(Profile{Name: "p", Filesystem: []FilesystemGrant{
+		{Path: path, Access: AccessRead},
+	}})
+	require.NoError(t, err)
+	require.Len(t, normalized.Filesystem, 1)
+	assert.Equal(t, GrantKindFile, normalized.Filesystem[0].Kind,
+		"the rule is re-stamped to what the path actually is now")
+}
+
+func TestNormalizeFilesystemRejectsAnInvalidKind(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	work := filepath.Join(home, "work")
+	require.NoError(t, os.MkdirAll(work, 0o755))
+
+	_, err := Normalize(Profile{Name: "p", Filesystem: []FilesystemGrant{
+		{Path: work, Access: AccessRead, Kind: GrantKind("directory")},
+	}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "kind")
 }
 
 // A file row may be projected, exactly as a directory row may. The guest path
@@ -147,6 +262,12 @@ func TestDirectoryGrantsDropsFileRows(t *testing.T) {
 	assert.Equal(t, []string{file}, FileGrantPaths([]FilesystemGrant{
 		{Path: dir, Access: AccessWrite},
 		{Path: file, Access: AccessRead},
+	}))
+
+	// A stamped file row stays a file row even while its path is absent, so it
+	// cannot slip into a harness directory list in that window.
+	assert.Empty(t, DirectoryGrants([]FilesystemGrant{
+		{Path: missing, Access: AccessRead, Kind: GrantKindFile},
 	}))
 }
 

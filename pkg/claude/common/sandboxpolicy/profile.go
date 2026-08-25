@@ -69,7 +69,38 @@ type FilesystemGrant struct {
 	Path      string `json:"path"`
 	Access    Access `json:"access"`
 	MountPath string `json:"mount_path,omitempty"`
+	// Kind is the COMMITMENT that this rule's host path was a regular file when
+	// the rule was authored. See GrantKind.
+	Kind GrantKind `json:"kind,omitempty"`
 }
+
+// GrantKind records what a rule's host path resolved to at authoring time, so
+// the authority the operator granted cannot quietly change shape underneath
+// them.
+//
+// The distinction is security-relevant in one direction only. A rule authored
+// against a FILE grants exactly one path; if that pathname is later replaced by
+// a DIRECTORY, re-resolving it at launch would hand the agent the whole
+// replacement tree — a strictly wider authority than the one authored, and one
+// the path alone cannot detect, because the path did not change. So the kind
+// travels with the rule and is re-checked wherever the path is.
+//
+// The reverse — a directory rule whose path became a file — is a NARROWING and
+// is left alone. It cannot grant more than was authored, and refusing it would
+// break the ordinary case of a rule built from a bare path list, which carries
+// no commitment at all (GrantsFromDirs; the launch contract's own file binds,
+// such as the harness-config floor, arrive that way).
+//
+// Only the file value is ever stamped. GrantKindUnset therefore means "a
+// directory, or a path whose kind was never resolved", which is exactly what
+// every rule authored before file rules existed meant — so no stored profile or
+// snapshot changes shape, and no migration is needed.
+type GrantKind string
+
+const (
+	GrantKindUnset GrantKind = ""
+	GrantKindFile  GrantKind = "file"
+)
 
 // GuestPath is the path this grant occupies INSIDE the sandbox. It is the key
 // every namespace-relative question must use: mount-plan ordering and shadowing,
@@ -498,7 +529,7 @@ func normalizeFilesystem(in []FilesystemGrant, allowMissing bool) ([]FilesystemG
 	byGuest := make(map[string]FilesystemGrant, len(in))
 	missingPaths := map[string]bool{}
 	for i, grant := range in {
-		_, path, mountPath, missing, err := normalizeFilesystemGrant(
+		_, path, mountPath, kind, missing, err := normalizeFilesystemGrant(
 			i, grant, allowMissing, protected,
 		)
 		if err != nil {
@@ -507,7 +538,9 @@ func normalizeFilesystem(in []FilesystemGrant, allowMissing bool) ([]FilesystemG
 		if missing {
 			missingPaths[path] = true
 		}
-		candidate := FilesystemGrant{Path: path, Access: grant.Access, MountPath: mountPath}
+		candidate := FilesystemGrant{
+			Path: path, Access: grant.Access, MountPath: mountPath, Kind: kind,
+		}
 		guest := candidate.GuestPath()
 		previous, exists := byGuest[guest]
 		if !exists {
@@ -659,20 +692,44 @@ func normalizeFilesystemGrant(
 	grant FilesystemGrant,
 	allowMissing bool,
 	protected []string,
-) (spelling, resolved, mountPath string, missing bool, err error) {
+) (spelling, resolved, mountPath string, kind GrantKind, missing bool, err error) {
 	if grant.Access != AccessRead && grant.Access != AccessWrite && grant.Access != AccessDeny {
-		return "", "", "", false, fmt.Errorf(
+		return "", "", "", "", false, fmt.Errorf(
 			"filesystem[%d].access %q is invalid (want read, write, or deny)",
 			index, grant.Access,
 		)
 	}
+	switch grant.Kind {
+	case GrantKindUnset, GrantKindFile:
+	default:
+		return "", "", "", "", false, fmt.Errorf(
+			"filesystem[%d].kind %q is invalid (want %q or omitted)",
+			index, grant.Kind, GrantKindFile,
+		)
+	}
 	spelling, err = cleanDirectoryPath(grant.Path)
 	if err != nil {
-		return "", "", "", false, fmt.Errorf("filesystem[%d].path: %w", index, err)
+		return "", "", "", "", false, fmt.Errorf("filesystem[%d].path: %w", index, err)
 	}
 	resolved, missing, file, err := canonicalGrantTarget(spelling, allowMissing)
 	if err != nil {
-		return "", "", "", false, fmt.Errorf("filesystem[%d].path: %w", index, err)
+		return "", "", "", "", false, fmt.Errorf("filesystem[%d].path: %w", index, err)
+	}
+	// The widening this commitment exists to stop: a rule authored against one
+	// file whose pathname now holds a directory. Re-resolving alone cannot see
+	// it — the path is unchanged and the new target is perfectly valid — so the
+	// rule would silently become authority over an entire tree the operator
+	// never granted. Checked only when the path EXISTS: a missing path is
+	// retained-with-warning and skipped at launch, which is the same inert
+	// outcome for either kind.
+	if grant.Kind == GrantKindFile && !missing && !file {
+		return "", "", "", "", false, fmt.Errorf(
+			"filesystem[%d].path %q was a regular file when this rule was authored and is now a directory; the rule grants one file, not the tree that replaced it — re-author the rule if the new shape is intended",
+			index, resolved,
+		)
+	}
+	if file {
+		kind = GrantKindFile
 	}
 	// A deny is the one access a file row cannot carry. Hiding a directory is a
 	// mount over it — an empty tmpfs — and there is no equivalent primitive that
@@ -683,7 +740,7 @@ func normalizeFilesystemGrant(
 	// a semantics for it. Denying the containing directory and reopening the
 	// siblings that are still needed expresses the same intent exactly.
 	if file && grant.Access == AccessDeny {
-		return "", "", "", false, fmt.Errorf(
+		return "", "", "", "", false, fmt.Errorf(
 			"filesystem[%d].path %q is a regular file, which a deny rule cannot name; deny the directory that contains it and reopen the entries that must stay reachable",
 			index, resolved,
 		)
@@ -695,7 +752,7 @@ func normalizeFilesystemGrant(
 			// on-disk spelling to restore, so the residual folded collision has
 			// to be refused here rather than admitted.
 			if GuardPathsIntersect(resolved, denied) {
-				return "", "", "", false, fmt.Errorf(
+				return "", "", "", "", false, fmt.Errorf(
 					"filesystem[%d].path %q intersects protected directory %q",
 					index, resolved, denied,
 				)
@@ -704,9 +761,9 @@ func normalizeFilesystemGrant(
 	}
 	mountPath, err = normalizeMountPath(index, grant, resolved)
 	if err != nil {
-		return "", "", "", false, err
+		return "", "", "", "", false, err
 	}
-	return spelling, resolved, mountPath, missing, nil
+	return spelling, resolved, mountPath, kind, missing, nil
 }
 
 // normalizeMountPath validates the optional sandbox-side path. Validation is
@@ -745,6 +802,7 @@ type authoredFilesystemCandidate struct {
 	spelling  string
 	mountPath string
 	access    Access
+	kind      GrantKind
 	missing   bool
 	info      os.FileInfo
 }
@@ -753,6 +811,7 @@ type authoredFilesystemGroup struct {
 	resolved  string
 	mountPath string
 	access    Access
+	kind      GrantKind
 	missing   bool
 	info      os.FileInfo
 	spellings map[string]struct{}
@@ -776,7 +835,7 @@ func normalizeFilesystemForAuthoringWithIdentity(
 	}
 	candidates := make([]authoredFilesystemCandidate, 0, len(in))
 	for i, grant := range in {
-		spelling, resolved, mountPath, missing, err := normalizeFilesystemGrant(
+		spelling, resolved, mountPath, kind, missing, err := normalizeFilesystemGrant(
 			i, grant, allowMissing, protected,
 		)
 		if err != nil {
@@ -794,7 +853,7 @@ func normalizeFilesystemForAuthoringWithIdentity(
 		}
 		candidates = append(candidates, authoredFilesystemCandidate{
 			resolved: resolved, spelling: spelling, mountPath: mountPath,
-			access: grant.Access, missing: missing, info: info,
+			access: grant.Access, kind: kind, missing: missing, info: info,
 		})
 	}
 	// The representative must not depend on request row order. Folding only
@@ -839,7 +898,7 @@ func normalizeFilesystemForAuthoringWithIdentity(
 		if groupIndex < 0 {
 			groups = append(groups, authoredFilesystemGroup{
 				resolved: candidate.resolved, mountPath: candidate.mountPath,
-				access:  candidate.access,
+				access: candidate.access, kind: candidate.kind,
 				missing: candidate.missing, info: candidate.info,
 				spellings: map[string]struct{}{},
 			})
@@ -865,6 +924,7 @@ func normalizeFilesystemForAuthoringWithIdentity(
 	for _, group := range groups {
 		grant := FilesystemGrant{
 			Path: group.resolved, Access: group.access, MountPath: group.mountPath,
+			Kind: group.kind,
 		}
 		guest := grant.GuestPath()
 		if previous, exists := claimedGuestPaths[guest]; exists && previous != grant.Path {

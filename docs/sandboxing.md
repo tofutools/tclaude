@@ -148,7 +148,12 @@ The axes:
   paths.
 - **File rows** — `{"path": "~/.gitconfig", "access": "read"}` reopens exactly
   that one dotfile beneath a denied Home, without handing over the rest of the
-  directory it lives in. Two limits, both refusals rather than silent
+  directory it lives in. A saved file row records `"kind": "file"`, and a launch
+  refuses if that pathname now holds a **directory**: the path would re-resolve
+  cleanly and bind the whole replacement tree, which is wider authority than was
+  authored. (The reverse — a directory row whose path became a file — is a
+  narrowing and is allowed. Directory rows stay unstamped, so existing profiles
+  are unchanged.) Two further limits, both refusals rather than silent
   degradations:
     - **`deny` may not name a file.** Hiding a directory is a mount of an empty
       tmpfs over it, and no primitive makes a single *file* absent — every
@@ -1102,7 +1107,9 @@ cause, not a restored pre-flight contract.
 | `command not found` for a tool on `$PATH` | Install root under a deny and not reopened |
 | Builds fail despite readable caches | Toolchain binary root denied, not just the cache |
 | `tclaude: command not found`, socket fine | tclaude's binary dir not reopened — it is never implicit |
-| Git loses identity / credential helper | `~/.gitconfig` is a file; files cannot be reopened |
+| Git loses identity / credential helper | `~/.gitconfig` not reopened — add a file row for it (needs `tclaude-layer` on Linux) |
+| `unsupported_sandbox_profile_file_grant` | A row names a file on an implementation that cannot bind one — use `tclaude-layer` on Linux |
+| `…was a regular file when this rule was authored and is now a directory` | The pathname a file row named was replaced by a directory; re-author the row if that is intended |
 | `git add -A`: "can only add regular files" | Claude Code masks a denied path with a `/dev/null` device node — stage specific paths |
 | Launch refused, `…reopen_under_deny` | Claude Code not sandbox `on`, or Codex not Linux managed-profile with a verified probe |
 | `stacked` refused on Ubuntu 24.04+ | The `bwrap-userns-restrict` AppArmor policy denies nested bubblewrap |
