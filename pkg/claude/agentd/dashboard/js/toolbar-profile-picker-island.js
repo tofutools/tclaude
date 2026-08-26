@@ -18,11 +18,21 @@ const NEW_PROFILE = '/new-profile';
 const GLOBAL_DEFAULT_PROFILE_NAME = 'Global default spawn profile';
 const GLOBAL_SANDBOX_PROFILE_NAME = 'Global sandbox profile';
 
-function labels(kind, current) {
+function useWizardMode() {
+  const [wizard, setWizard] = useState(isWizardActive());
+  useLayoutEffect(() => {
+    const sync = () => setWizard(isWizardActive());
+    document.addEventListener('tclaude:wizard', sync);
+    return () => document.removeEventListener('tclaude:wizard', sync);
+  }, []);
+  return wizard;
+}
+
+function labels(kind, current, wizard) {
   if (kind === 'sandbox') {
     return {
       id: 'dashboard-default-sandbox-profile', icon: '🛡', className: 'global-sandbox-profile',
-      create: isWizardActive() ? '＋ new ward…' : '＋ new sandbox profile…', none: '(none)',
+      create: wizard ? '＋ new ward…' : '＋ new sandbox profile…', none: '(none)',
       name: GLOBAL_SANDBOX_PROFILE_NAME,
       aria: current
         ? `${GLOBAL_SANDBOX_PROFILE_NAME}: ${current}. Click to change.`
@@ -34,7 +44,7 @@ function labels(kind, current) {
   }
   return {
     id: 'dashboard-default-profile', icon: '🧠', className: 'user-default-model',
-    create: isWizardActive() ? '＋ new pattern…' : '＋ new profile…', none: '(none)',
+    create: wizard ? '＋ new pattern…' : '＋ new profile…', none: '(none)',
     name: GLOBAL_DEFAULT_PROFILE_NAME,
     aria: current
       ? `${GLOBAL_DEFAULT_PROFILE_NAME}: ${current}. Click to change.`
@@ -46,6 +56,7 @@ function labels(kind, current) {
 }
 
 function ToolbarProfileControl({ kind, state, actions }) {
+  const wizard = useWizardMode();
   const descriptor = state.editor.value;
   const active = descriptor?.kind === kind;
   const current = state.values[kind].value;
@@ -54,7 +65,7 @@ function ToolbarProfileControl({ kind, state, actions }) {
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [error, setError] = useState('');
-  const copy = labels(kind, current);
+  const copy = labels(kind, current, wizard);
 
   useLayoutEffect(() => {
     if (!active) return undefined;
