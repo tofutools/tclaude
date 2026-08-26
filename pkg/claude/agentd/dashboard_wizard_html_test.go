@@ -646,10 +646,18 @@ func TestDashboardHTML_WizardProfileVocabulary(t *testing.T) {
 
 	// The three profile *selectors* also speak the vocabulary in wizard mode:
 	//   - spawn dialog: the "Profile" row label (static .profiles-word span pair)
-	//   - global + group default: the "＋ new profile…" option in the shared
-	//     openToolbarProfilePicker <select> (JS, wizWord).
+	//   - global + group default: the "＋ new profile…" option in their picker
+	//     (JS, wizWord).
 	must(`prefix="profiles-word" plain="Profile" wizard="Pattern"`, "the spawn dialog's Profile selector keeps both vocabularies")
 	must("＋ new pattern…", "the global/group default picker's new-entry reads '＋ new pattern…' in wizard mode")
+
+	// The global toolbar controls now share a browser-rendered Select. Its
+	// trigger and top-layer listbox both join the arcane skin rather than
+	// leaving a default-dark island inside the wizard dock.
+	must("body.wizard .tc-select-trigger {", "the shared Select trigger gets wizard chrome")
+	must("body.wizard .tc-select-popover {", "the shared top-layer listbox gets wizard chrome")
+	must("body.wizard .tc-select-option.highlighted {", "the highlighted spell gets a wizard cursor")
+	must("body.wizard .tc-select-caret", "the Select caret gets the gold spell accent")
 }
 
 // TestDashboardHTML_WizardSandboxProfiles pins the wizard re-skin + vocabulary
@@ -682,6 +690,7 @@ func TestDashboardHTML_WizardSandboxProfiles(t *testing.T) {
 	// The JS-rendered editor title swaps via wizWord().
 	must("New ward", "the editor title reads 'New ward' when creating in wizard mode")
 	must("Edit ward: ${seed.name}", "the editor title reads 'Edit ward: <name>' when editing in wizard mode")
+	must("＋ new ward…", "the global sandbox picker offers a new ward in wizard mode")
 
 	// The dialog surfaces are re-skinned arcane, each scoped to its own id.
 	must("body.wizard #sandbox-profiles-manage-modal .manage-modal", "the ward overlay surface is re-skinned")

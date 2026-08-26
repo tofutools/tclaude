@@ -62,6 +62,17 @@ test('toolbar profile controls open browser-contained listboxes', async (t) => {
   assert.equal(picker.state.editor.value, null);
   assert.equal(picker.harness.document.activeElement.id, 'dashboard-default-profile',
     'Escape restores focus to the persistent trigger');
+
+  picker.harness.document.body.classList.add('wizard');
+  await picker.harness.act(() => picker.harness.fireEvent(profileButton, 'click'));
+  await picker.harness.act(async () => {});
+  assert.ok(option(picker.profileHost, '＋ new pattern…'),
+    'opening after a live theme change uses wizard vocabulary');
+  await picker.harness.act(() => picker.harness.fireEvent(popup(picker.profileHost), 'keydown', { key: 'Escape' }));
+  await picker.harness.act(() => picker.harness.fireEvent(sandboxButton, 'click'));
+  await picker.harness.act(async () => {});
+  assert.ok(option(picker.sandboxHost, '＋ new ward…'),
+    'the sandbox Select uses wizard ward vocabulary');
   picker.cleanup();
 });
 

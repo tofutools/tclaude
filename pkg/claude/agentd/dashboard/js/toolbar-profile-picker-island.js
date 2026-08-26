@@ -22,7 +22,7 @@ function labels(kind, current) {
   if (kind === 'sandbox') {
     return {
       id: 'dashboard-default-sandbox-profile', icon: '🛡', className: 'global-sandbox-profile',
-      create: '＋ new sandbox profile…', none: '(none)',
+      create: isWizardActive() ? '＋ new ward…' : '＋ new sandbox profile…', none: '(none)',
       name: GLOBAL_SANDBOX_PROFILE_NAME,
       aria: current
         ? `${GLOBAL_SANDBOX_PROFILE_NAME}: ${current}. Click to change.`

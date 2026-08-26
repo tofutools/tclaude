@@ -10327,6 +10327,41 @@ body.wizard footer {
   border-top: 1px solid #d9b45a;
 }
 body.wizard footer .meta { color: #e7d9f5; opacity: 0.85; }
+/* Shared Selects become compact spellbooks in wizard mode. The popover stays
+   ordinary browser HTML in the top layer; these descendant selectors still
+   apply because promotion to the top layer does not re-parent the element. */
+body.wizard .tc-select-trigger {
+  background: linear-gradient(180deg, #241b3d 0%, #1a1330 100%);
+  border-color: #7a5db0; color: #e7d9f5;
+  box-shadow: 0 0 7px rgba(122, 93, 176, 0.22);
+}
+body.wizard .tc-select-trigger:hover,
+body.wizard .tc-select-trigger:focus-visible,
+body.wizard .tc-select-trigger[aria-expanded="true"] {
+  background: #3a2a63; border-color: #d9b45a; color: #f3e6c0;
+  box-shadow: 0 0 10px rgba(169, 123, 214, 0.42);
+}
+body.wizard .tc-select-trigger:focus-visible {
+  outline-color: #d9b45a;
+}
+body.wizard .tc-select-caret,
+body.wizard .tc-select-check {
+  color: #d9b45a; text-shadow: 0 0 5px rgba(217, 180, 90, 0.55);
+}
+body.wizard .tc-select-popover {
+  scrollbar-color: #7a5db0 #140f28;
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border-color: #7a5db0; color: #e7d9f5;
+  box-shadow: 0 8px 24px rgba(10, 6, 24, 0.9), 0 0 14px rgba(169, 123, 214, 0.35);
+}
+body.wizard .tc-select-option[aria-selected="true"] { color: #f3d58b; }
+body.wizard .tc-select-option.highlighted {
+  background: #3a2a63; color: #f3e6c0;
+  box-shadow: inset 0 0 0 1px #d9b45a;
+}
+body.wizard .tc-select-option.disabled,
+body.wizard .tc-select-status { color: #9a86c4; }
+body.wizard .tc-select-error { color: #f0a3bf; }
 /* The PR disclosure lives above the themed footer but is fixed outside its
    visual box, so it needs its own arcane surface and descendant colours. */
 body.wizard .open-prs-popover {

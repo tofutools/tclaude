@@ -55,31 +55,39 @@ resolve();
 }catch(error){reject(error);}});});});`
 	}
 
+	actions := []dashsnap.BrowserAction{
+		{Kind: "click", Selector: "#dock-actions-profile #dashboard-default-profile"},
+		{Kind: "eval", JS: assertOpen("#dock-actions-profile #dashboard-default-profile")},
+		{Kind: "key", Key: "Escape"},
+		{Kind: "eval", JS: `var trigger=document.querySelector('#dashboard-default-profile');
+if (document.querySelector('.toolbar-profile-popover:popover-open')) throw new Error('Escape did not close profile listbox');
+if (document.activeElement !== trigger || trigger.getAttribute('aria-expanded') !== 'false') throw new Error('Escape did not restore profile trigger focus');`},
+		{Kind: "click", Selector: "#dock-actions-profile #dashboard-default-sandbox-profile"},
+		{Kind: "eval", JS: assertOpen("#dock-actions-profile #dashboard-default-sandbox-profile")},
+		{Kind: "click", Selector: "#dock-body"},
+		{Kind: "eval", JS: `return new Promise(function(resolve,reject){setTimeout(function(){try{
+if (document.querySelector('.toolbar-profile-popover:popover-open')) throw new Error('outside click did not dismiss sandbox listbox');
+if (document.querySelector('#dashboard-default-sandbox-profile').getAttribute('aria-expanded') !== 'false') throw new Error('dismissed sandbox trigger remained expanded');
+resolve();
+}catch(error){reject(error);}},50);});`},
+		{Kind: "click", Selector: "#dock-actions-profile #dashboard-default-sandbox-profile"},
+		{Kind: "eval", JS: assertOpen("#dock-actions-profile #dashboard-default-sandbox-profile")},
+	}
 	state := dashsnap.State{
 		Key:     "toolbar-select-dock-top-layer",
 		Title:   "Dock profile selectors — HTML top layer",
 		Caption: "Real Chrome opens both re-homed profile selectors as viewport-contained HTML listboxes; Escape and outside-click dismissal are self-checked.",
 		JS:      ready,
-		Actions: []dashsnap.BrowserAction{
-			{Kind: "click", Selector: "#dock-actions-profile #dashboard-default-profile"},
-			{Kind: "eval", JS: assertOpen("#dock-actions-profile #dashboard-default-profile")},
-			{Kind: "key", Key: "Escape"},
-			{Kind: "eval", JS: `var trigger=document.querySelector('#dashboard-default-profile');
-if (document.querySelector('.toolbar-profile-popover:popover-open')) throw new Error('Escape did not close profile listbox');
-if (document.activeElement !== trigger || trigger.getAttribute('aria-expanded') !== 'false') throw new Error('Escape did not restore profile trigger focus');`},
-			{Kind: "click", Selector: "#dock-actions-profile #dashboard-default-sandbox-profile"},
-			{Kind: "eval", JS: assertOpen("#dock-actions-profile #dashboard-default-sandbox-profile")},
-			{Kind: "click", Selector: "#dock-body"},
-			{Kind: "eval", JS: `return new Promise(function(resolve,reject){setTimeout(function(){try{
-if (document.querySelector('.toolbar-profile-popover:popover-open')) throw new Error('outside click did not dismiss sandbox listbox');
-if (document.querySelector('#dashboard-default-sandbox-profile').getAttribute('aria-expanded') !== 'false') throw new Error('dismissed sandbox trigger remained expanded');
-resolve();
-}catch(error){reject(error);}},50);});`},
-			{Kind: "click", Selector: "#dock-actions-profile #dashboard-default-sandbox-profile"},
-			{Kind: "eval", JS: assertOpen("#dock-actions-profile #dashboard-default-sandbox-profile")},
-		},
+		Actions: actions,
 	}
-	shots, err := dashsnap.Capture(dashsnap.Config{BaseURL: srv.URL, OutDir: outDir, States: []dashsnap.State{state}})
+	wizardState := dashsnap.State{
+		Key:     "toolbar-select-dock-top-layer-wizard",
+		Title:   "Dock profile selectors — wizard spellbook",
+		Caption: "The same browser-contained listbox inherits the wizard dock's violet, gold, and parchment treatment.",
+		JS:      strings.Replace(ready, "return (async function(){", "return (async function(){document.body.classList.add('wizard');", 1),
+		Actions: actions,
+	}
+	shots, err := dashsnap.Capture(dashsnap.Config{BaseURL: srv.URL, OutDir: outDir, States: []dashsnap.State{state, wizardState}})
 	if err != nil {
 		t.Fatalf("dashsnap.Capture: %v", err)
 	}
