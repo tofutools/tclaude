@@ -179,6 +179,8 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 		"the two re-homed profile controls share the narrow dock without intrinsic select overflow")
 	must(".dock-actions-profile .toolbar-profile-select { width: calc(100% - 8px); }",
 		"an active native profile select keeps its popup affordance inside the dock")
+	must(".dock-actions-profile .toolbar-profile-error {",
+		"a docked select can wrap its inline load or save error within the same column")
 
 	// Item 5: the profiles section carries its FULL name in the dock (operator
 	// request); templates + roles keep their short headings.

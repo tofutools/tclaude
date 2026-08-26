@@ -16325,8 +16325,12 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
   width: 100%; min-width: 0;
 }
 .dock-actions-profile:empty { display: none; }
-.dock-actions-profile .toolbar-profile-control { min-width: 0; overflow: hidden; }
+.dock-actions-profile .toolbar-profile-control { min-width: 0; flex-wrap: wrap; }
 .dock-actions-profile .toolbar-profile-select { width: calc(100% - 8px); }
+.dock-actions-profile .toolbar-profile-error {
+  flex-basis: calc(100% - 8px); min-width: 0; max-width: calc(100% - 8px);
+  margin-left: 8px;
+}
 .dock-actions-profile #dashboard-default-profile { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* The in-dock "Hide ›" collapse affordance (req 2) — a quiet text button so
    it reads as a deliberate control, not chrome. */
