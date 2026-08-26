@@ -1,7 +1,8 @@
-import { Fragment, h, render } from 'preact';
+import { h, render } from 'preact';
 import { useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { registerToolbarProfilePickerController } from './toolbar-profile-picker.js';
+import { SelectControl } from './select-control.js';
 import { isWizardActive } from './slop.js';
 import {
   GLOBAL_DEFAULT_PROFILE_ROLE, GLOBAL_SANDBOX_PROFILE_ROLE,
@@ -21,7 +22,7 @@ function labels(kind, current) {
   if (kind === 'sandbox') {
     return {
       id: 'dashboard-default-sandbox-profile', icon: '🛡', className: 'global-sandbox-profile',
-      dataName: 'data-sandbox-profile', create: '＋ new sandbox profile…', none: '(none)',
+      create: '＋ new sandbox profile…', none: '(none)',
       name: GLOBAL_SANDBOX_PROFILE_NAME,
       aria: current
         ? `${GLOBAL_SANDBOX_PROFILE_NAME}: ${current}. Click to change.`
@@ -33,7 +34,7 @@ function labels(kind, current) {
   }
   return {
     id: 'dashboard-default-profile', icon: '🧠', className: 'user-default-model',
-    dataName: 'data-profile', create: isWizardActive() ? '＋ new pattern…' : '＋ new profile…', none: '(none)',
+    create: isWizardActive() ? '＋ new pattern…' : '＋ new profile…', none: '(none)',
     name: GLOBAL_DEFAULT_PROFILE_NAME,
     aria: current
       ? `${GLOBAL_DEFAULT_PROFILE_NAME}: ${current}. Click to change.`
@@ -53,9 +54,6 @@ function ToolbarProfileControl({ kind, state, actions }) {
   const [saving, setSaving] = useState(false);
   const savingRef = useRef(false);
   const [error, setError] = useState('');
-  const selectRef = useRef(null);
-  const triggerRef = useRef(null);
-  const restoreFocusRef = useRef(false);
   const copy = labels(kind, current);
 
   useLayoutEffect(() => {
@@ -63,7 +61,6 @@ function ToolbarProfileControl({ kind, state, actions }) {
     let live = true;
     setLoading(true);
     setError('');
-    queueMicrotask(() => selectRef.current?.focus());
     actions.load(kind).then((result) => {
       if (live) setChoices(result.choices);
     }).catch((cause) => {
@@ -74,40 +71,28 @@ function ToolbarProfileControl({ kind, state, actions }) {
     return () => { live = false; };
   }, [active, kind]);
 
-  useLayoutEffect(() => {
-    if (active || !restoreFocusRef.current) return;
-    restoreFocusRef.current = false;
-    triggerRef.current?.focus();
-  }, [active]);
-
-  if (!active) {
-    return html`<button ref=${triggerRef} type="button" id=${copy.id}
-      class=${`${copy.className}${current ? '' : ' unset'}`}
-      data-act=${kind === 'sandbox' ? 'set-dash-sandbox-profile' : 'set-dash-profile'}
-      ...${{ [copy.dataName]: current }} aria-label=${copy.aria} title=${copy.title}
-    >${copy.icon}${current ? ` ${current}` : ''}</button>`;
-  }
-
   const missing = current && !choices.some((choice) => choice.value === current);
-  const errorID = `toolbar-profile-${kind}-error`;
-  const close = (restoreFocus = false) => {
-    const closed = state.close(descriptor);
-    if (closed && restoreFocus) restoreFocusRef.current = true;
-    return closed;
-  };
-  return html`<${Fragment}><select ref=${selectRef} class="toolbar-profile-select" value=${current} disabled=${saving}
-    aria-label=${copy.name}
-    aria-busy=${loading ? 'true' : undefined} aria-invalid=${error ? 'true' : undefined}
-    aria-describedby=${error ? errorID : undefined} title=${error || undefined}
-    onKeyDown=${(event) => {
-      if (event.key !== 'Escape' || savingRef.current) return;
-      event.preventDefault();
-      close(true);
-    }}
-    onBlur=${() => { if (!savingRef.current) close(); }}
-    onChange=${async (event) => {
+  const close = () => state.close(descriptor);
+  const options = [
+    { key: 'new', value: NEW_PROFILE, label: copy.create },
+    { key: 'none', value: '', label: copy.none },
+    ...choices,
+    ...(missing ? [{ key: 'missing', value: current, label: `${current} (missing)` }] : []),
+  ];
+  return html`<${SelectControl}
+    id=${copy.id}
+    className=${`${copy.className}${current ? '' : ' unset'}`}
+    popupClassName="toolbar-profile-popover"
+    value=${current} options=${options} open=${active}
+    busy=${saving} loading=${loading} error=${error}
+    ariaLabel=${copy.name} title=${copy.title}
+    onOpenChange=${(next) => {
       if (savingRef.current) return;
-      const name = event.currentTarget.value;
+      if (next) state.open({ kind, current });
+      else if (active) close();
+    }}
+    onValueChange=${async (name) => {
+      if (savingRef.current) return;
       if (name === NEW_PROFILE) {
         if (!close()) return;
         actions.openNew(kind, (created) => { void actions.commitFromEditor(kind, created); });
@@ -125,22 +110,15 @@ function ToolbarProfileControl({ kind, state, actions }) {
         savingRef.current = false;
         setSaving(false);
         if (committed) {
-          close(true);
-        } else {
-          queueMicrotask(() => selectRef.current?.focus());
+          close();
         }
       } catch (cause) {
         setError(cause?.message || String(cause));
         savingRef.current = false;
         setSaving(false);
-        queueMicrotask(() => selectRef.current?.focus());
       }
-    }}>
-    <option value=${NEW_PROFILE}>${copy.create}</option>
-    <option value="">${copy.none}</option>
-    ${choices.map((choice) => html`<option key=${choice.value} value=${choice.value}>${choice.label}</option>`)}
-    ${missing ? html`<option value=${current}>${current} (missing)</option>` : null}
-  </select>${error ? html`<span id=${errorID} class="toolbar-profile-error" role="alert" title=${error}>⚠ ${error}</span>` : null}</${Fragment}>`;
+    }}
+  >${copy.icon}${current ? ` ${current}` : ''}</${SelectControl}>`;
 }
 
 export function mountToolbarProfilePickerIsland({ profileHost, sandboxHost, state, actions, registerCleanup }) {

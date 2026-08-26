@@ -4570,23 +4570,44 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 .user-default-model:focus-visible, .global-sandbox-profile:focus-visible {
   outline: 2px solid #58a6ff; outline-offset: 1px;
 }
-/* The inline profile picker — a <select> swapped in for a group or toolbar
-   chip while choosing a spawn or sandbox profile.
-   Same compact monospace look as the chip inputs above. */
-.group-default-profile-select, .toolbar-profile-select {
+/* The per-group inline profile picker remains a compact native <select>.
+   Dashboard-wide selects migrate separately onto the shared tc-select
+   primitive; the two global toolbar pickers are its first consumers. */
+.group-default-profile-select {
   background: #0d1117; border: 1px solid #58a6ff; border-radius: 3px;
   color: #d4d4d4; padding: 1px 6px; font: inherit;
   font-family: ui-monospace, monospace; font-size: 11px; margin-left: 8px;
 }
-/* Native selects size from their longest option. Keep the toolbar variant
-   shrinkable so moving its host into the narrow right dock cannot park the
-   select's popup affordance outside the dock's clipped flex row. */
-.toolbar-profile-select { box-sizing: border-box; min-width: 0; max-width: 100%; }
-.toolbar-profile-error {
-  align-self: center; color: #f85149; font-family: ui-monospace, monospace;
-  font-size: 11px; margin-left: 5px; max-width: 18em; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap;
+/* Shared non-native Select. Its popover enters the browser top layer, so it is
+   ordinary HTML/CSS yet escapes clipped dock/modal ancestors and never creates
+   the Linux window-manager popup used by a native <select>. Floating UI writes
+   fixed left/top/max dimensions after flip + shift + size collision handling. */
+.tc-select-root { display: inline-flex; min-width: 0; }
+.tc-select-trigger { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.tc-select-caret { color: #6e7681; font-size: 9px; line-height: 1; }
+.tc-select-trigger[aria-expanded="true"] { color: #d4d4d4; border-color: #58a6ff; }
+.tc-select-popover {
+  position: fixed; inset: auto; box-sizing: border-box; margin: 0;
+  padding: 4px; overflow: auto; overscroll-behavior: contain;
+  border: 1px solid #30363d; border-radius: 6px;
+  background: #161b22; color: #c9d1d9;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+  font-family: ui-monospace, monospace; font-size: 11px;
 }
+.tc-select-popover[data-fallback-open="true"] { display: block; z-index: 10004; }
+.tc-select-popover::backdrop { background: transparent; }
+.tc-select-option {
+  display: flex; align-items: center; gap: 6px;
+  min-height: 24px; box-sizing: border-box; padding: 3px 7px;
+  border-radius: 4px; cursor: default; white-space: nowrap;
+}
+.tc-select-option.highlighted { background: #1f6feb; color: #fff; }
+.tc-select-option.disabled { color: #6e7681; }
+.tc-select-check { flex: 0 0 10px; text-align: center; }
+.tc-select-option-label { overflow: hidden; text-overflow: ellipsis; }
+.tc-select-status, .tc-select-error { padding: 5px 7px; }
+.tc-select-status { color: #8b949e; }
+.tc-select-error { color: #f85149; white-space: normal; }
 .modal-context-textarea {
   width: 100%; box-sizing: border-box; resize: vertical;
   background: #0d1117; border: 1px solid #30363d; border-radius: 3px;
@@ -16320,17 +16341,8 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
 /* Row 2: the 🧠 default-profile chip on its own line. :empty (dock collapsed →
    chip is back in the toolbar) removes the row so the header doesn't keep a bare
    gap. */
-.dock-actions-profile {
-  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
-  width: 100%; min-width: 0;
-}
+.dock-actions-profile { display: flex; min-width: 0; }
 .dock-actions-profile:empty { display: none; }
-.dock-actions-profile .toolbar-profile-control { min-width: 0; flex-wrap: wrap; }
-.dock-actions-profile .toolbar-profile-select { width: calc(100% - 8px); }
-.dock-actions-profile .toolbar-profile-error {
-  flex-basis: calc(100% - 8px); min-width: 0; max-width: calc(100% - 8px);
-  margin-left: 8px;
-}
 .dock-actions-profile #dashboard-default-profile { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* The in-dock "Hide ›" collapse affordance (req 2) — a quiet text button so
    it reads as a deliberate control, not chrome. */

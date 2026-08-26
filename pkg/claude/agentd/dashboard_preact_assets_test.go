@@ -10,6 +10,8 @@ import (
 
 func TestDashboardPreactRuntimeAssets(t *testing.T) {
 	wantHashes := map[string]string{
+		"vendor/floating-ui/floating-ui.core.browser.min.js": "895286af18d41dd1d59d8bca70f5d6ccee1c0d3c8ae41b8e5075758bf8c13f7e",
+		"vendor/floating-ui/floating-ui.dom.browser.min.js":  "96c4bf63ebf119c1575ee930e0b0ae76bc4eaf84f33d6cc55398cf15ef986a17",
 		"vendor/preact/preact.module.js":           "850dcba8ed3535b0a3611495c405551b9887724885d3b8482207a03de365d64e",
 		"vendor/preact/preact.module.js.map":       "a24b8606d61210775bbd11a742054c25b74f82c33bcde21efa1883253ce65630",
 		"vendor/preact/hooks.module.js":            "a6ee626f2d01570592dd569a792e3f050154aa02890eead8c223fa3ed5aa3d5a",
@@ -41,6 +43,8 @@ func TestDashboardPreactRuntimeAssets(t *testing.T) {
 		"vendor/preact/LICENSE-signals.txt",
 		"vendor/preact/LICENSE-htm.txt",
 		"vendor/preact/README.md",
+		"vendor/floating-ui/LICENSE.txt",
+		"vendor/floating-ui/README.md",
 	} {
 		data, err := fs.ReadFile(dashboardAssetsFS, name)
 		if err != nil {
@@ -71,6 +75,8 @@ func TestDashboardPreactImportMap(t *testing.T) {
 		`"@preact/signals-core": "/static/vendor/preact/signals-core.module.js"`,
 		`"@preact/signals": "/static/vendor/preact/signals.module.js"`,
 		`"htm": "/static/vendor/preact/htm.module.js"`,
+		`"@floating-ui/core": "/static/vendor/floating-ui/floating-ui.core.browser.min.js"`,
+		`"@floating-ui/dom": "/static/vendor/floating-ui/floating-ui.dom.browser.min.js"`,
 	} {
 		if !strings.Contains(html, mapping) {
 			t.Errorf("dashboard import map missing %s", mapping)

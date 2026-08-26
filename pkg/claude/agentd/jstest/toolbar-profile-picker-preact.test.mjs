@@ -1,6 +1,5 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertAbsent } from './assertions.mjs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 async function mountPicker(t, overrides = {}) {
@@ -26,7 +25,16 @@ async function mountPicker(t, overrides = {}) {
   return { harness, profileHost, sandboxHost, state, cleanup };
 }
 
-test('toolbar profile controls replace each chip with an in-place select', async (t) => {
+function popup(host) {
+  return host.querySelector('.tc-select-popover');
+}
+
+function option(host, label) {
+  return [...host.querySelectorAll('[role="option"]')]
+    .find((item) => item.textContent.trim().endsWith(label));
+}
+
+test('toolbar profile controls open browser-contained listboxes', async (t) => {
   const picker = await mountPicker(t);
   await picker.harness.act(() => {
     picker.state.update('profile', 'alpha');
@@ -34,99 +42,95 @@ test('toolbar profile controls replace each chip with an in-place select', async
   });
   const profileButton = picker.profileHost.querySelector('button');
   const sandboxButton = picker.sandboxHost.querySelector('button');
-  assert.equal(profileButton.textContent, '🧠 alpha');
-  assert.equal(profileButton.dataset.act, 'set-dash-profile');
-  assert.equal(profileButton.dataset.profile, 'alpha');
-  assert.equal(sandboxButton.textContent, '🛡 safe');
-  assert.equal(sandboxButton.dataset.act, 'set-dash-sandbox-profile');
-  assert.equal(sandboxButton.dataset.sandboxProfile, 'safe');
+  assert.equal(profileButton.textContent, '🧠 alpha▾');
+  assert.equal(profileButton.getAttribute('aria-haspopup'), 'listbox');
+  assert.equal(profileButton.getAttribute('aria-expanded'), 'false');
+  assert.equal(sandboxButton.textContent, '🛡 safe▾');
 
-  await picker.harness.act(() => picker.state.open({ kind: 'profile', current: 'alpha' }));
+  await picker.harness.act(() => picker.harness.fireEvent(profileButton, 'click'));
   await picker.harness.act(async () => {});
-  const select = picker.profileHost.querySelector('.toolbar-profile-select');
-  assert.ok(select, 'the profile chip is replaced inside its stable toolbar host');
-  assertAbsent(picker.profileHost.querySelector('button'));
+  const listbox = popup(picker.profileHost);
+  assert.equal(listbox.getAttribute('popover'), 'auto', 'the popup uses the browser top layer');
+  assert.equal(profileButton.getAttribute('aria-expanded'), 'true');
+  assert.equal(picker.harness.document.activeElement, listbox);
+  assert.ok(picker.profileHost.querySelector('button'), 'the stable trigger remains mounted while open');
   assert.ok(picker.sandboxHost.querySelector('#dashboard-default-sandbox-profile'),
     'the other toolbar control remains interactive');
-  assert.equal(select.querySelector('option[value="/new-profile"]').textContent, '＋ new profile…');
+  assert.ok(option(picker.profileHost, '＋ new profile…'));
 
-  await picker.harness.act(() => picker.harness.fireEvent(select, 'keydown', { key: 'Escape' }));
+  await picker.harness.act(() => picker.harness.fireEvent(listbox, 'keydown', { key: 'Escape' }));
   assert.equal(picker.state.editor.value, null);
   assert.equal(picker.harness.document.activeElement.id, 'dashboard-default-profile',
-    'Escape restores focus to the remounted chip');
+    'Escape restores focus to the persistent trigger');
   picker.cleanup();
 });
 
-test('toolbar inline picker focuses after a delayed load and closes on blur', async (t) => {
+test('toolbar listbox stays focused while a delayed option load completes', async (t) => {
   const picker = await mountPicker(t, { load: () => new Promise((resolve) => {
     setTimeout(() => resolve({ choices: [{ value: 'alpha', label: 'alpha' }] }), 10);
   }) });
   await picker.harness.act(() => picker.state.open({ kind: 'profile', current: '' }));
   await picker.harness.act(async () => {});
   await new Promise((resolve) => setTimeout(resolve, 10));
-  const select = picker.profileHost.querySelector('.toolbar-profile-select');
-  assert.equal(select.disabled, false, 'the delayed load finished rendering');
-  assert.equal(picker.harness.document.activeElement === select, true,
-    'the enabled select explicitly receives focus when loading completes');
-  await picker.harness.act(() => picker.harness.fireEvent(select, 'blur'));
-  assert.equal(picker.state.editor.value, null, 'blur closes the inline editor');
+  const listbox = popup(picker.profileHost);
+  assert.equal(listbox.getAttribute('aria-busy'), null, 'the delayed load finished rendering');
+  assert.equal(picker.harness.document.activeElement, listbox);
+  assert.ok(option(picker.profileHost, 'alpha'));
   picker.cleanup();
 });
 
-test('toolbar inline picker remains cancellable while its profile load stalls', async (t) => {
+test('toolbar listbox remains cancellable while its profile load stalls', async (t) => {
   const picker = await mountPicker(t, { load: () => new Promise(() => {}) });
   await picker.harness.act(() => picker.state.open({ kind: 'sandbox', current: '' }));
   await new Promise((resolve) => setTimeout(resolve, 0));
-  const select = picker.sandboxHost.querySelector('.toolbar-profile-select');
-  assert.equal(select.disabled, false);
-  assert.equal(select.getAttribute('aria-busy'), 'true');
-  assert.equal(picker.harness.document.activeElement === select, true);
-  await picker.harness.act(() => picker.harness.fireEvent(select, 'keydown', { key: 'Escape' }));
+  const listbox = popup(picker.sandboxHost);
+  assert.equal(listbox.getAttribute('aria-busy'), 'true');
+  assert.equal(picker.harness.document.activeElement, listbox);
+  await picker.harness.act(() => picker.harness.fireEvent(listbox, 'keydown', { key: 'Escape' }));
   assert.equal(picker.state.editor.value, null);
   picker.cleanup();
 });
 
-test('toolbar inline picker renders accessible load and save failures', async (t) => {
+test('toolbar listbox renders accessible load and save failures', async (t) => {
   const loadPicker = await mountPicker(t, { load: async () => { throw new Error('registry unavailable'); } });
   await loadPicker.harness.act(() => loadPicker.state.open({ kind: 'sandbox', current: '' }));
   await loadPicker.harness.act(async () => {});
-  const loadSelect = loadPicker.sandboxHost.querySelector('.toolbar-profile-select');
   const loadError = loadPicker.sandboxHost.querySelector('[role="alert"]');
   assert.match(loadError.textContent, /registry unavailable/);
-  assert.equal(loadSelect.getAttribute('aria-describedby'), loadError.id);
+  assert.equal(loadError.closest('[role="listbox"]'), popup(loadPicker.sandboxHost));
   loadPicker.cleanup();
 
   const savePicker = await mountPicker(t, { commit: async () => { throw new Error('save rejected'); } });
   await savePicker.harness.act(() => savePicker.state.open({ kind: 'profile', current: '' }));
   await savePicker.harness.act(async () => {});
-  const saveSelect = savePicker.profileHost.querySelector('.toolbar-profile-select');
-  Object.defineProperty(saveSelect, 'value', { configurable: true, writable: true, value: 'alpha' });
-  await savePicker.harness.act(() => savePicker.harness.fireEvent(saveSelect, 'change'));
+  await savePicker.harness.act(() => savePicker.harness.fireEvent(option(savePicker.profileHost, 'alpha'), 'click'));
   await new Promise((resolve) => setTimeout(resolve, 0));
   await savePicker.harness.act(async () => {});
   const saveError = savePicker.profileHost.querySelector('[role="alert"]');
   assert.match(saveError.textContent, /save rejected/);
-  assert.equal(saveSelect.getAttribute('aria-describedby'), saveError.id);
-  assert.equal(saveSelect.disabled, false, 'a failed save is retryable');
+  assert.equal(savePicker.profileHost.querySelector('button').getAttribute('aria-describedby'), saveError.id);
+  assert.equal(savePicker.profileHost.querySelector('button').disabled, false,
+    'a failed save is retryable');
+  assert.equal(savePicker.state.editor.value.kind, 'profile', 'a failed save keeps the listbox open');
   savePicker.cleanup();
 });
 
-test('a successful inline save releases its lock before the control is reopened', async (t) => {
+test('a successful listbox save releases its lock before the control is reopened', async (t) => {
   const picker = await mountPicker(t);
   await picker.harness.act(() => picker.state.open({ kind: 'profile', current: '' }));
   await picker.harness.act(async () => {});
-  const select = picker.profileHost.querySelector('.toolbar-profile-select');
-  Object.defineProperty(select, 'value', { configurable: true, writable: true, value: 'alpha' });
-  picker.harness.fireEvent(select, 'change');
+  picker.harness.fireEvent(option(picker.profileHost, 'alpha'), 'click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   await picker.harness.act(async () => {});
-  assert.ok(picker.profileHost.querySelector('#dashboard-default-profile'), 'success closes back to the chip');
+  assert.equal(picker.state.editor.value, null, 'success closes the listbox');
+  assert.equal(picker.harness.document.activeElement, picker.profileHost.querySelector('button'),
+    'successful selection restores focus to its trigger');
   await picker.harness.act(() => picker.state.open({ kind: 'profile', current: '' }));
-  assert.equal(picker.profileHost.querySelector('.toolbar-profile-select').disabled, false);
+  assert.equal(picker.profileHost.querySelector('button').disabled, false);
   picker.cleanup();
 });
 
-test('a stale inline save completion cannot close a replacement control', async (t) => {
+test('a stale listbox save completion cannot close a replacement control', async (t) => {
   let resolveCommit;
   let commitStarted = false;
   const commitGate = new Promise((resolve) => { resolveCommit = resolve; });
@@ -136,9 +140,7 @@ test('a stale inline save completion cannot close a replacement control', async 
   await picker.harness.act(() => picker.state.open({ kind: 'profile', current: '' }));
   await picker.harness.act(async () => {});
   await new Promise((resolve) => setTimeout(resolve, 10));
-  const select = picker.profileHost.querySelector('.toolbar-profile-select');
-  Object.defineProperty(select, 'value', { configurable: true, writable: true, value: 'alpha' });
-  picker.harness.fireEvent(select, 'change');
+  picker.harness.fireEvent(option(picker.profileHost, 'alpha'), 'click');
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(commitStarted, true);
 
@@ -149,10 +151,10 @@ test('a stale inline save completion cannot close a replacement control', async 
   await new Promise((resolve) => setTimeout(resolve, 0));
   assert.equal(picker.state.editor.value === replacement, true,
     'the old generation cannot clear the replacement descriptor');
-  assert.ok(picker.sandboxHost.querySelector('.toolbar-profile-select'));
+  assert.equal(popup(picker.sandboxHost).hidden, false);
   await picker.harness.act(() => picker.state.close(replacement));
   await picker.harness.act(() => picker.state.open({ kind: 'profile', current: '' }));
-  assert.equal(picker.profileHost.querySelector('.toolbar-profile-select').disabled, false,
+  assert.equal(picker.profileHost.querySelector('button').disabled, false,
     'the stale successful save releases its local lock before this control is reopened');
   picker.cleanup();
 });
@@ -174,7 +176,7 @@ test('controller replays values painted before mount and is released on cleanup'
     actions: { load: async () => ({ choices: [] }), commit: async () => true, openNew() {} },
     registerCleanup: (registered) => { cleanup = registered; },
   });
-  assert.equal(profileHost.querySelector('button').textContent, '🧠 cached');
+  assert.equal(profileHost.querySelector('button').textContent, '🧠 cached▾');
   cleanup();
   assert.throws(() => controller.openToolbarProfilePicker(), /not ready/);
 });

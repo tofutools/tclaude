@@ -5,7 +5,6 @@
 
 import { shortId } from './helpers.js';
 import { featureState } from './feature-state-registry.js';
-import { openToolbarProfilePicker } from './toolbar-profile-picker.js';
 import { openCronCreateModal } from './jobs-controller.js';
 import { openGroupCreateModal } from './group-create-controller.js';
 import {
@@ -757,23 +756,6 @@ export async function handleRowAction(action) {
       // (JOH-210): the group 🧠 chip is now a clickable spawn-profile picker
       // (set-group-profile, above), not a model editor. No data-act emits
       // this case.
-      case 'set-dash-profile': {
-        // The dashboard-level 🧠 chip (groups filter bar): pick the
-        // global default spawn profile, which pre-fills the spawn dialog and
-        // is also agentd's fallback after a group's own profile. The setter
-        // awaits the shared validated API before updating the UI cache.
-        const current = data.profile || '';
-        openToolbarProfilePicker({ kind: 'profile', current });
-        return;
-      }
-      case 'set-dash-sandbox-profile': {
-        // The dashboard-level 🛡 chip: pick the global sandbox profile from
-        // the sandbox registry, then repaint the snapshot-backed chip and
-        // recompute the spawn dialog's composed policy preview.
-        const current = data.sandboxProfile || '';
-        openToolbarProfilePicker({ kind: 'sandbox', current });
-        return;
-      }
       case 'export-group': {
         // Export is a file download, not a mutation. Trigger it via
         // a transient anchor so the browser saves the .zip (the

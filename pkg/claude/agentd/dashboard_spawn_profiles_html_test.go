@@ -128,13 +128,15 @@ func TestDashboardHTML_SpawnProfilesUI(t *testing.T) {
 
 	// 4. Dashboard default-profile chip replaced the user-default-model chip.
 	present(`id: 'dashboard-default-profile'`, "the dashboard default-profile chip")
-	present(`data-act=${kind === 'sandbox' ? 'set-dash-sandbox-profile' : 'set-dash-profile'}`, "the dashboard default-profile picker action")
-	present(`case 'set-dash-profile':`, "the dashboard default-profile handler")
+	present(`onOpenChange=${(next) => {`, "the dashboard default-profile picker owns its controlled open state")
+	absent(`case 'set-dash-profile':`, "the shared select no longer routes its own trigger through document-level row actions")
 	present(`function renderDashDefaultProfile(`, "the dashboard default-profile chip renderer")
 	present(`/api/spawn-profile-default`, "global default uses the validated operational endpoint")
 	present(`await setDashDefaultProfile(name)`, "picker waits for persistence before reporting success")
 	present(`id="dashboard-default-profile-control"`, "the inline picker has a stable Preact host")
-	present(`class="toolbar-profile-select"`, "the toolbar chip swaps to an inline select")
+	present(`import { SelectControl } from './select-control.js';`, "the toolbar uses the shared non-native select primitive")
+	present(`popover="auto"`, "the shared select popup stays inside the browser top layer")
+	present(`computePosition(trigger, popup`, "the shared select uses maintained viewport collision positioning")
 	present(`mountToolbarProfilePickerFeature`, "the picker is mounted as a keyed feature")
 	absent(`select.replaceWith(chipEl)`, "Preact owns the inline chip/select replacement")
 	present(`syncDashDefaultProfile(data.spawn_profile_default)`, "snapshot reconciles CLI changes without a separate poll request")
