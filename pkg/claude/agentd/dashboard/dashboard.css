@@ -4578,6 +4578,10 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
   color: #d4d4d4; padding: 1px 6px; font: inherit;
   font-family: ui-monospace, monospace; font-size: 11px; margin-left: 8px;
 }
+/* Native selects size from their longest option. Keep the toolbar variant
+   shrinkable so moving its host into the narrow right dock cannot park the
+   select's popup affordance outside the dock's clipped flex row. */
+.toolbar-profile-select { box-sizing: border-box; min-width: 0; max-width: 100%; }
 .toolbar-profile-error {
   align-self: center; color: #f85149; font-family: ui-monospace, monospace;
   font-size: 11px; margin-left: 5px; max-width: 18em; overflow: hidden;
@@ -16316,8 +16320,13 @@ body:not(.dock-open) .dock-toggle-chevron { transform: rotate(180deg); }
 /* Row 2: the 🧠 default-profile chip on its own line. :empty (dock collapsed →
    chip is back in the toolbar) removes the row so the header doesn't keep a bare
    gap. */
-.dock-actions-profile { display: flex; min-width: 0; }
+.dock-actions-profile {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: 100%; min-width: 0;
+}
 .dock-actions-profile:empty { display: none; }
+.dock-actions-profile .toolbar-profile-control { min-width: 0; overflow: hidden; }
+.dock-actions-profile .toolbar-profile-select { width: calc(100% - 8px); }
 .dock-actions-profile #dashboard-default-profile { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* The in-dock "Hide ›" collapse affordance (req 2) — a quiet text button so
    it reads as a deliberate control, not chrome. */

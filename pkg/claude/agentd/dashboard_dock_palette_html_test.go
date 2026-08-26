@@ -175,6 +175,10 @@ func TestDashboardHTML_DockPalette(t *testing.T) {
 	must("function syncDockActions(", "dock.js moves the toolbar globals in/out of the dock head")
 	must(".dock-actions-profile:empty { display: none; }",
 		"the re-homed profile row collapses when its chip is back in the toolbar")
+	must("grid-template-columns: repeat(2, minmax(0, 1fr));",
+		"the two re-homed profile controls share the narrow dock without intrinsic select overflow")
+	must(".dock-actions-profile .toolbar-profile-select { width: calc(100% - 8px); }",
+		"an active native profile select keeps its popup affordance inside the dock")
 
 	// Item 5: the profiles section carries its FULL name in the dock (operator
 	// request); templates + roles keep their short headings.
