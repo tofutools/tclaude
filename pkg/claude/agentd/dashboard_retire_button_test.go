@@ -104,6 +104,13 @@ func TestDashboardHTML_RetireButtonWired(t *testing.T) {
 	}
 }
 
+func TestDashboardHTML_RetireOptionNotesAreSpacedFromLabels(t *testing.T) {
+	css := dashboardAssetFile(t, "dashboard.css")
+	if !strings.Contains(css, "#retire-modal .delete-agent-wt .wt-note { margin-left: 6px; }") {
+		t.Error("retire dialog checkbox notes lost their spacing from the option labels")
+	}
+}
+
 func TestDashboardHTML_RetireIconButtonWired(t *testing.T) {
 	tmpl := helpersFuncBody(t, "MemberActions")
 	for _, needle := range []string{
