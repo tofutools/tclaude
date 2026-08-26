@@ -799,8 +799,8 @@ func TestDashboardAssets_GroupProfileIconDimming(t *testing.T) {
 //   - row-actions.js delegates Enter/Space on those spans into the shared
 //     click dispatcher, and the inline chip editors return focus to the
 //     restored chip on Escape;
-//   - dashboard.html serves the toolbar 🧠 chip as a native <button>
-//     (its 🛡 sibling already is one — see the sandbox-profiles test);
+//   - the shared Select primitive serves both toolbar profile chips as native
+//     buttons while their browser-rendered listbox is closed;
 //   - dashboard.css reveals the folded .qo-text labels for a focused
 //     collapsed group and draws the shared focus ring.
 func TestDashboardAssets_QuickChipKeyboardOperability(t *testing.T) {
@@ -825,9 +825,13 @@ func TestDashboardAssets_QuickChipKeyboardOperability(t *testing.T) {
 		"restoreFocusRef.current = true;",
 		"if (active || !restoreFocusRef.current) return;",
 		"triggerRef.current?.focus();",
-		// toolbar-profile-picker-island.js — each toolbar chip keeps native
-		// button semantics until Preact swaps it for the inline select.
-		`<button ref=${triggerRef} type="button" id=${copy.id}`,
+		// select-control.js / toolbar-profile-picker-island.js — each toolbar
+		// chip delegates to the shared trigger, which keeps native button
+		// semantics and announces the browser-rendered listbox.
+		`<button ref=${triggerRef} type="button" id=${id}`,
+		`aria-label=${ariaLabel} aria-haspopup="listbox"`,
+		`<${SelectControl}`,
+		`id=${copy.id}`,
 		// toolbar-profile-renderers.js — its accessible name tracks the picked profile.
 		"`Set ${GLOBAL_DEFAULT_PROFILE_NAME.toLowerCase()}`",
 		// dashboard.css — tabbing onto a collapsed group's chips reveals the
