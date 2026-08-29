@@ -66,7 +66,7 @@ test('every harness mode help splits cleanly into collapsed copy and visible cav
   assert.match(helpCaveat(reviewer), /Choose an interactive policy/, 'the remedy stays visible');
 });
 
-test('HelpField collapses help behind a [?] that opens on click and on keyboard focus', async (t) => {
+test('HelpField opens help only on activation and dismisses it after keyboard reading', async (t) => {
   const harness = await createPreactHarness(t);
   const { HelpField } = await harness.importDashboardModule('js/help-field.js');
   let open = '';
@@ -93,35 +93,53 @@ test('HelpField collapses help behind a [?] that opens on click and on keyboard 
   assert.equal(select.getAttribute('aria-describedby'), 'demo-hint');
   assert.equal(description.textContent, 'Some long help. ⚠ And a caveat that must stay visible.');
   assert.equal(button.getAttribute('aria-expanded'), 'false');
+  assert.equal(description.getAttribute('tabindex'), '-1', 'closed help stays out of passive Tab traversal');
 
-  // Replay the browser's actual pointer sequence: mousedown, then focus unless
-  // the handler prevented the default, then click. Without the preventDefault
-  // the focus would open the disclosure and the click would immediately toggle
-  // it shut, leaving [?] unusable with a mouse.
-  // `open` is lifted state in the real dialogs, so Preact re-renders the button
-  // with the new prop between the focus and the click. Rerendering here is what
-  // makes the toggle-shut regression observable.
-  const pointerPress = async () => {
-    const target = host.querySelector('.spawn-field-help-trigger');
-    let down;
-    await harness.act(() => { down = harness.fireEvent(target, 'mousedown'); });
-    if (!down.defaultPrevented) {
-      await harness.act(() => harness.fireEvent(target, 'focus'));
-      await rerender(node());
-    }
-    await harness.act(() => harness.fireEvent(host.querySelector('.spawn-field-help-trigger'), 'click'));
-    await rerender(node());
-  };
-  await pointerPress();
+  // Tabbing through the form highlights the button but must not leave a trail
+  // of popovers covering later fields.
+  await harness.act(() => harness.fireEvent(button, 'focus'));
+  await rerender(node());
+  assert.equal(open, '', 'focus alone does not open help');
+  assert.equal(host.querySelector('.spawn-field-help-trigger').getAttribute('aria-expanded'), 'false');
+
+  // Native button activation covers pointer clicks plus Enter/Space. Focus no
+  // longer mutates state, so an ordinary click needs no mousedown workaround.
+  await harness.act(() => harness.fireEvent(host.querySelector('.spawn-field-help-trigger'), 'click'));
+  await rerender(node());
   assert.equal(open, 'demo', 'clicking [?] opens the disclosure');
   assert.equal(host.querySelector('.spawn-field-help-trigger').getAttribute('aria-expanded'), 'true');
+  assert.equal(host.querySelector('#demo-hint').getAttribute('tabindex'), '0',
+    'opened help is reachable for keyboard reading');
 
-  await pointerPress();
-  assert.equal(open, '', 'clicking again closes it');
+  // Moving from the trigger into its description keeps the disclosure open;
+  // moving on to the next form control dismisses it.
+  const openButton = host.querySelector('.spawn-field-help-trigger');
+  const openDescription = host.querySelector('#demo-hint');
+  await harness.act(() => {
+    harness.fireEvent(openButton, 'blur', { relatedTarget: openDescription });
+    harness.fireEvent(openDescription, 'focus');
+  });
+  assert.equal(open, 'demo', 'focus can enter the opened help');
+  await harness.act(() => harness.fireEvent(openDescription, 'blur', { relatedTarget: select }));
+  await rerender(node());
+  assert.equal(open, '', 'leaving the trigger and description closes help');
+  assert.equal(host.querySelector('#demo-hint').getAttribute('tabindex'), '-1');
 
-  // Keyboard users never fire mousedown, so focus alone must open it.
-  await harness.act(() => harness.fireEvent(host.querySelector('.spawn-field-help-trigger'), 'focus'));
-  assert.equal(open, 'demo', 'tabbing to [?] opens the disclosure');
+  // Escape dismisses an explicitly opened disclosure without escaping the
+  // containing modal, and returns focus to its trigger.
+  await harness.act(() => harness.fireEvent(host.querySelector('.spawn-field-help-trigger'), 'click'));
+  await rerender(node());
+  const escape = harness.fireEvent(host.querySelector('#demo-hint'), 'keydown', { key: 'Escape' });
+  await rerender(node());
+  assert.equal(escape.defaultPrevented, true);
+  assert.equal(open, '');
+  assert.equal(harness.document.activeElement, host.querySelector('.spawn-field-help-trigger'));
+
+  await harness.act(() => harness.fireEvent(host.querySelector('.spawn-field-help-trigger'), 'click'));
+  await rerender(node());
+  await harness.act(() => harness.fireEvent(host.querySelector('.spawn-field-help-trigger'), 'click'));
+  await rerender(node());
+  assert.equal(open, '', 'activating an open help button toggles it closed');
 });
 
 test('HelpField keeps the ⚠ caveat visible outside the popover anchor', async (t) => {

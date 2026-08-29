@@ -13,12 +13,13 @@ func TestDashboardHTML_SpawnSandboxHelpUsesNativeTooltips(t *testing.T) {
 		"aria-label=${name}":               "the caveat variant renames itself, so the [!] is not a sighted-only cue",
 		`.spawn-field-help-trigger.warn {`: "a caveat trigger paints differently from ordinary field help",
 		`aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'}`:               "disclosure publishes expanded state",
-		`<span id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex="0"`: "help is focusable and scrollable",
+		`<span id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex=${open ? '0' : '-1'}`: "only explicitly opened help joins the tab order",
 		`<label class="cron-create-label" for=${id}>`:                                           "selector retains an explicit label",
 		`title=${help} aria-describedby=${help ? descriptionID : null}`:                         "select receives native and accessible help, with no dangling reference while help is empty",
 		`descriptionID="agent-spawn-sandbox-profile-preview"`:                                   "sandbox-profile preview keeps its stable id",
 		`onClick=${() => setOpen(open ? '' : id)}`:                                              "click/tap toggles the disclosure",
-		`onFocus=${() => setOpen(id)}`:                                                          "keyboard focus opens the disclosure",
+		`onBlur=${closeAfterTrigger} onKeyDown=${closeOnEscape}`:                                "the trigger dismisses help after focus leaves and owns Escape",
+		`onBlur=${closeAfterDescription} onKeyDown=${closeOnEscape}`:                            "opened help remains readable before focus leaves and owns Escape",
 		`.spawn-field-description {`:                                                            "accessible descriptions are visually hidden",
 		`.spawn-field-help-trigger[aria-expanded="true"] + .spawn-field-description,`:           "expanded disclosure becomes visible",
 		`max-height: min(180px, 30vh); overflow: auto;`:                                         "long help remains scrollable",
@@ -31,6 +32,8 @@ func TestDashboardHTML_SpawnSandboxHelpUsesNativeTooltips(t *testing.T) {
 		`id="agent-spawn-sandbox-hint" class="spawn-field-hint"`,
 		`id="agent-spawn-sandbox-profile-preview" class="spawn-field-hint"`,
 		`class="spawn-field-tooltip-copy"`,
+		`onFocus=${() => setOpen(id)}`,
+		`onMouseDown=${swallowFocus}`,
 	} {
 		if strings.Contains(dashboardAssets, obsolete) {
 			t.Errorf("spawn dialog still renders persistent sandbox help: %q", obsolete)
