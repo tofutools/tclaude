@@ -885,7 +885,7 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 		"openWebWindowPane(target.selector, target.label, { harness: target.harness });",
 		// config.js — load + gather the Config-tab checkbox.
 		"#cfg-dashboard-default-web-terminal",
-		"dashboard.default_terminal = 'web'",
+		"dashboard.default_terminal = 'native'",
 		// dashboard.html — the Config-tab control.
 		`id="cfg-dashboard-default-web-terminal"`,
 	} {
@@ -906,7 +906,7 @@ func TestDashboardAssets_DirectoryPickerWired(t *testing.T) {
 		"/api/browse-directories",
 		"lastSnapshot?.default_directory_picker === 'web'",
 		"#cfg-dashboard-default-web-directory-picker",
-		"dashboard.default_directory_picker = 'web'",
+		"dashboard.default_directory_picker = 'native'",
 		`id="directory-picker-modal"`,
 		`#directory-picker-modal {`,
 		`z-index: 10002`,

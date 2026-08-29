@@ -518,9 +518,9 @@ function populateConfigForm(cfg) {
   $('#cfg-dashboard-group-quick-fold').checked = !(cfg.dashboard && cfg.dashboard.group_quick_options === 'expanded');
 
   // Default terminal — route the plain focus / open-window / open-terminal
-  // actions to in-browser web terminals. Default native (unchecked); only an
-  // explicit dashboard.default_terminal:"web" checks it.
-  $('#cfg-dashboard-default-web-terminal').checked = !!(cfg.dashboard && cfg.dashboard.default_terminal === 'web');
+  // actions to in-browser web terminals. Default web (checked); only an
+  // explicit dashboard.default_terminal:"native" unchecks it.
+  $('#cfg-dashboard-default-web-terminal').checked = cfg.dashboard?.default_terminal !== 'native';
 
   const terminalAttach = (cfg.dashboard && cfg.dashboard.terminal_attach) || {};
   setSelectValue($('#cfg-terminal-attach-mode'), terminalAttach.mode || 'repair');
@@ -531,9 +531,9 @@ function populateConfigForm(cfg) {
   $('#cfg-terminal-attach-pre-delay').value = terminalAttach.pre_attach_delay_ms != null
     ? terminalAttach.pre_attach_delay_ms : '';
 
-  // Local dashboards keep the native chooser by default; checked forces the
-  // Preact web picker locally too. Remote origins use it regardless.
-  $('#cfg-dashboard-default-web-directory-picker').checked = !!(cfg.dashboard && cfg.dashboard.default_directory_picker === 'web');
+  // Local dashboards use the web chooser by default too; only an explicit
+  // native preference unchecks it. Remote origins use web regardless.
+  $('#cfg-dashboard-default-web-directory-picker').checked = cfg.dashboard?.default_directory_picker !== 'native';
 
   // Per-agent "hide window" button — the slashed-eye beside "focus". Hidden
   // by default (unchecked); only an explicit dashboard.show_agent_hide_button
@@ -845,10 +845,9 @@ function assembleConfig() {
   // NON-default "expanded" and drop the key when folding — mirrors the Go
   // omitempty + default-hover resolver.
   if (!$('#cfg-dashboard-group-quick-fold').checked) dashboard.group_quick_options = 'expanded'; else delete dashboard.group_quick_options;
-  // default_terminal: native is the default, so store only the NON-default
-  // "web" and drop the key otherwise — mirrors the Go omitempty + default-
-  // native resolver.
-  if ($('#cfg-dashboard-default-web-terminal').checked) dashboard.default_terminal = 'web'; else delete dashboard.default_terminal;
+  // default_terminal: web is the default, so store only the NON-default
+  // "native" and drop the key otherwise — mirrors the Go resolver.
+  if (!$('#cfg-dashboard-default-web-terminal').checked) dashboard.default_terminal = 'native'; else delete dashboard.default_terminal;
   const terminalAttach = (dashboard.terminal_attach && typeof dashboard.terminal_attach === 'object')
     ? dashboard.terminal_attach : {};
   const terminalAttachMode = controlValue($('#cfg-terminal-attach-mode'));
@@ -865,9 +864,9 @@ function assembleConfig() {
   }
   if (Object.keys(terminalAttach).length) dashboard.terminal_attach = terminalAttach;
   else delete dashboard.terminal_attach;
-  // Remote dashboards always route to the web picker; this persisted opt-in
-  // chooses the same UI on localhost instead of the native OS dialog.
-  if ($('#cfg-dashboard-default-web-directory-picker').checked) dashboard.default_directory_picker = 'web'; else delete dashboard.default_directory_picker;
+  // Web is also the local default; persist only an explicit opt-out to the
+  // native OS dialog. Remote dashboards still always route to web.
+  if (!$('#cfg-dashboard-default-web-directory-picker').checked) dashboard.default_directory_picker = 'native'; else delete dashboard.default_directory_picker;
   // show_agent_hide_button: false (hidden) is the default, so store only the
   // NON-default true and drop the key otherwise — mirrors the Go omitempty.
   if ($('#cfg-dashboard-show-agent-hide-btn').checked) dashboard.show_agent_hide_button = true; else delete dashboard.show_agent_hide_button;

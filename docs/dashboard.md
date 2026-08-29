@@ -193,9 +193,9 @@ Row actions:
 - **term** / **web term** — a fresh shell in the agent's directory, native or
   in-browser.
 - **open window** / **web window** — attach to the agent's live harness TUI.
-- **👁 focus** — jump to the agent's native window, or its web pane when
-  `dashboard.default_terminal` is `"web"`; the crossed-eye variant hides the
-  native window (detaches the tmux client; the agent keeps running).
+- **👁 focus** — jump to the agent's web pane by default, or its native window
+  when `dashboard.default_terminal` is `"native"`; the crossed-eye variant
+  hides the native window (detaches the tmux client; the agent keeps running).
 
 Web terminals are fully interactive attached PTYs (xterm.js over WebSocket,
 backed by a real tmux client) — there is no read-only mode; what you type
@@ -204,6 +204,10 @@ lands in the agent's session. Ctrl/Cmd-click opens a pane in the background.
 typing into its pane. Reconnection is deliberately conservative: bounded
 auto-retries, then only a proven `agentd` restart earns one automatic
 reattach; otherwise you get a manual Reconnect button.
+
+Directory fields also use the in-dashboard web picker by default. Set
+`dashboard.default_directory_picker` to `"native"` to use the host OS chooser
+on a local dashboard; remote dashboards always use the web picker.
 
 Mouse selections owned by OpenCode and Copilot are copied into the browser
 through OSC 52. Their tmux passthrough permission is enabled only on those
