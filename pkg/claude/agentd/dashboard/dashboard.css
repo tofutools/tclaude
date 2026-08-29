@@ -7219,6 +7219,13 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   padding: 4px 10px; cursor: pointer;
 }
 .sbx-add-row:hover { background: #1c2330; border-color: #3a4553; color: #c9d1d9; }
+.sbx-effective-environment-toggle {
+  background: transparent; border: 1px solid #30363d; border-radius: 4px;
+  color: #8b949e; font-family: inherit; font-size: 12px; padding: 4px 9px;
+  cursor: pointer;
+}
+.sbx-effective-environment-toggle:hover,
+.sbx-effective-environment-toggle:focus { border-color: #58a6ff; color: #c9d1d9; }
 /* Keep explanatory copy available without permanently adding a paragraph
    below compact add-row controls. The wrapper anchors the disclosure to the
    whole control pair, so its panel can use the dialog column's useful width. */
@@ -7234,8 +7241,8 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   top: calc(100% + 4px); bottom: auto; left: 0; right: auto;
   width: min(32rem, calc(100vw - 64px));
 }
-/* The effective-environment preview has no add control to anchor help to.
-   Keep the values full-width and put the same compact disclosure beside them. */
+/* The effective-environment preview expands under the Environment controls.
+   Keep the values full-width and put the same compact help beside them. */
 .sbx-effective-environment-help {
   position: relative; display: grid; grid-template-columns: minmax(0, 1fr) 24px;
   align-items: start; gap: 6px;

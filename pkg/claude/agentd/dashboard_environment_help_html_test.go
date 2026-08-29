@@ -8,6 +8,7 @@ func TestDashboardHTML_EnvironmentHelpUsesCompactDisclosures(t *testing.T) {
 	for needle, why := range map[string]string{
 		`id="agent-spawn-environment-help"`:             "spawn overrides have a help disclosure",
 		`id="agent-spawn-effective-environment-help"`:   "effective spawn values have a help disclosure",
+		`id="agent-spawn-effective-environment-toggle"`: "effective spawn values are collapsed behind an explicit toggle",
 		`id="profile-editor-environment-help"`:          "profile variables have a help disclosure",
 		`id="group-settings-environment-help"`:          "group variables have a help disclosure",
 		`class="sbx-add-row-help"`:                      "environment editors put help beside their add controls",

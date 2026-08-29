@@ -756,13 +756,31 @@ test('spawn environment controls carry wizard vocabulary without replacing the f
   setValue(name, 'SPAWN_SCOPE');
   await harness.act(() => harness.fireEvent(name, 'input'));
   await flush(harness);
-  const preview = host.querySelector('#agent-spawn-environment-preview');
   assert.equal(host.querySelector('#agent-spawn-attachments-row').nextElementSibling?.id, row.id,
     'Environment follows attachments');
-  assert.equal(row.nextElementSibling?.id, preview.id,
-    'Effective environment follows the editable environment');
-  assert.equal(preview.nextElementSibling.classList.contains('agent-spawn-roles-row'), true,
-    'Roles follows both environment rows');
+  assert.equal(row.nextElementSibling.classList.contains('agent-spawn-roles-row'), true,
+    'Roles follows the compact environment editor');
+  const effectiveToggle = row.querySelector('#agent-spawn-effective-environment-toggle');
+  assert.equal(effectiveToggle.querySelector('.theme-copy-regular').textContent, 'Effective env');
+  assert.match(effectiveToggle.textContent, /^▸ .* \(1\)$/);
+  assert.equal(effectiveToggle.getAttribute('aria-expanded'), 'false');
+  const collapsedPreview = row.querySelector('#agent-spawn-environment-preview');
+  assert.equal(collapsedPreview.hasAttribute('hidden'), true,
+    'effective values stay hidden by default');
+  assert.equal(effectiveToggle.getAttribute('aria-controls'), collapsedPreview.id,
+    'the disclosure always controls a stable preview node');
+  effectiveToggle.click();
+  await flush(harness);
+  const preview = row.querySelector('#agent-spawn-environment-preview');
+  assertSameNode(preview, collapsedPreview, 'expanding preserves the resolved preview node');
+  assert.ok(preview, 'explicit activation reveals effective values inside the Environment row');
+  assert.equal(preview.hasAttribute('hidden'), false);
+  assert.equal(row.querySelector('#agent-spawn-effective-environment-toggle').getAttribute('aria-expanded'), 'true');
+  assert.match(preview.textContent, /SPAWN_SCOPE/);
+  row.querySelector('#agent-spawn-effective-environment-toggle').click();
+  await flush(harness);
+  assert.equal(preview.hasAttribute('hidden'), true, 'activating the disclosure again collapses it');
+  assert.equal(row.querySelector('#agent-spawn-effective-environment-toggle').getAttribute('aria-expanded'), 'false');
   assert.equal(row.querySelector('.cron-create-label .theme-copy-wizard').textContent,
     'Summoning runes');
   assert.equal(row.querySelector('.sbx-add-row .theme-copy-wizard').textContent,
@@ -773,6 +791,8 @@ test('spawn environment controls carry wizard vocabulary without replacing the f
   await flush(harness);
   assert.equal(host.querySelector('#agent-spawn-modal [role="dialog"]'), dialog,
     'a live wizard flip preserves the environment form node');
+  assert.equal(row.querySelector('#agent-spawn-effective-environment-toggle .theme-copy-wizard').textContent,
+    'Runes in force');
   assert.match(row.textContent, /resolved spellbook is sealed/);
   await mounted.cleanup();
 });
