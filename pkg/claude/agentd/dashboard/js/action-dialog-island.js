@@ -8,12 +8,16 @@ import {
 import { normaliseFollowUp } from './action-dialog-actions.js';
 import { registerActionDialogController } from './action-dialog-controller.js';
 import { shortCwd } from './helpers.js';
+import { HelpDisclosure } from './help-field.js';
 import {
   AgentExportDialog, PresetCloneDialog, SandboxImplDialog, TerminalDirectoryDialog,
 } from './small-dialog-components.js';
 
 const html = htm.bind(h);
 const WT_NEW = '__new__';
+const GROUP_ENVIRONMENT_HELP = 'Inherited by fresh spawns; profile and per-spawn values override matching names.';
+const GROUP_ENVIRONMENT_HELP_WIZARD = 'Inherited by newly summoned familiars; pattern and per-summon runes '
+  + 'override matching names.';
 
 function errorMessage(error) { return error?.message || String(error); }
 function shortID(value) { return String(value || '').slice(0, 8); }
@@ -524,6 +528,7 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
   const [busy, setBusy] = useState(false);
   const [browseBusy, setBrowseBusy] = useState(false);
   const [error, setError] = useState('');
+  const [environmentHelpOpen, setEnvironmentHelpOpen] = useState('');
   const set = (key, value) => setValues((current) => ({ ...current, [key]: value }));
   const dirty = JSON.stringify(values) !== JSON.stringify(initial);
   const submit = async () => {
@@ -553,7 +558,7 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Startup context" wizard="Opening lore" /></span><textarea rows="5" value=${values.defaultContext} onInput=${(event) => set('defaultContext', event.currentTarget.value)}></textarea></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Spawn profile" wizard="Familiar pattern" /></span><select value=${values.defaultProfile} onChange=${(event) => set('defaultProfile', event.currentTarget.value)}><option value="">— none —</option>${(snapshot?.value?.profiles || []).map((profile) => html`<option value=${profile.name}>${profile.name}</option>`)}</select></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Sandbox profile" wizard="Ward" /></span><select value=${values.sandboxProfile} onChange=${(event) => set('sandboxProfile', event.currentTarget.value)}><option value="">— inherit global —</option>${(snapshot?.value?.sandbox_profiles || []).map((profile) => { const name = typeof profile === 'string' ? profile : profile.name; return html`<option value=${name}>${name}</option>`; })}</select></label>
-    <div class="cron-create-row" id="group-settings-environment-row"><span class="cron-create-label"><${Words} plain="Environment" wizard="Summoning runes" /></span><div class="cron-create-target"><div class="sbx-rows">${values.environment.map((entry, index) => html`<div class="sbx-row sbx-environment-row"><input class="sbx-env-name" placeholder="NAME" value=${entry.name} onInput=${(event) => set('environment', values.environment.map((row, rowIndex) => rowIndex === index ? { ...row, name: event.currentTarget.value } : row))}/><input class="sbx-env-value" placeholder="value" value=${entry.value} onInput=${(event) => set('environment', values.environment.map((row, rowIndex) => rowIndex === index ? { ...row, value: event.currentTarget.value } : row))}/><button type="button" onClick=${() => set('environment', values.environment.filter((_, rowIndex) => rowIndex !== index))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => set('environment', [...values.environment, { name: '', value: '' }])}><${Words} plain="＋ add variable" wizard="✦ bind rune" /></button><div class="spawn-field-hint"><${Words} plain="Inherited by fresh spawns; profile and per-spawn values override matching names." wizard="Inherited by newly summoned familiars; pattern and per-summon runes override matching names." /></div></div></div>
+    <div class="cron-create-row" id="group-settings-environment-row"><span class="cron-create-label"><${Words} plain="Environment" wizard="Summoning runes" /></span><div class="cron-create-target"><div class="sbx-rows">${values.environment.map((entry, index) => html`<div class="sbx-row sbx-environment-row"><input class="sbx-env-name" placeholder="NAME" value=${entry.name} onInput=${(event) => set('environment', values.environment.map((row, rowIndex) => rowIndex === index ? { ...row, name: event.currentTarget.value } : row))}/><input class="sbx-env-value" placeholder="value" value=${entry.value} onInput=${(event) => set('environment', values.environment.map((row, rowIndex) => rowIndex === index ? { ...row, value: event.currentTarget.value } : row))}/><button type="button" onClick=${() => set('environment', values.environment.filter((_, rowIndex) => rowIndex !== index))}>×</button></div>`)}</div><div class="sbx-add-row-help"><button type="button" class="sbx-add-row" onClick=${() => set('environment', [...values.environment, { name: '', value: '' }])}><${Words} plain="＋ add variable" wizard="✦ bind rune" /></button><${HelpDisclosure} id="group-settings-environment-help" label="Group environment variables" help=${GROUP_ENVIRONMENT_HELP} content=${html`<${Words} plain=${GROUP_ENVIRONMENT_HELP} wizard=${GROUP_ENVIRONMENT_HELP_WIZARD} />`} open=${environmentHelpOpen === 'group-settings-environment-help'} setOpen=${setEnvironmentHelpOpen} /></div></div></div>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Member cap" wizard="Party limit" /></span><input type="number" min="0" value=${values.maxMembers} onInput=${(event) => set('maxMembers', event.currentTarget.value)}/></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Notifications" wizard="Omens" /></span><input type="checkbox" checked=${values.notifyEnabled} onChange=${(event) => set('notifyEnabled', event.currentTarget.checked)}/></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Remote policy" wizard="Scrying policy" /></span><select value=${values.remoteControlPolicy} onChange=${(event) => set('remoteControlPolicy', event.currentTarget.value)}><option value="inherit">inherit profile</option><option value="optin">opt in</option><option value="deny">deny</option></select></label>
