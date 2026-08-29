@@ -25,3 +25,25 @@ func TestLaunchEnvironmentSurvivesSnapshotRevalidationAndUnconfinedLaunch(t *tes
 	assert.Equal(t, snapshot.LaunchEnvironment, validated.LaunchEnvironment)
 	assert.Equal(t, snapshot.LaunchEnvironment, UnconfinedLaunchSnapshot(snapshot).LaunchEnvironment)
 }
+
+func TestEnvironmentForLaunchPreservesTrustedGeneratedBindings(t *testing.T) {
+	snapshot := EmptySnapshot()
+	// PATH and CODEX_HOME cannot be operator-authored, but launch adapters add
+	// trusted bindings after the authored profile has been validated.
+	snapshot.Effective.Environment = []EnvironmentEntry{
+		{Name: "PATH", Value: "/generated/bin"},
+		{Name: "CODEX_HOME", Value: "/generated/codex"},
+		{Name: "COMMON", Value: "sandbox"},
+	}
+	snapshot.LaunchEnvironment = []EnvironmentEntry{
+		{Name: "COMMON", Value: "spawn"},
+		{Name: "TEAM", Value: "platform"},
+	}
+
+	assert.Equal(t, []EnvironmentEntry{
+		{Name: "PATH", Value: "/generated/bin"},
+		{Name: "CODEX_HOME", Value: "/generated/codex"},
+		{Name: "COMMON", Value: "spawn"},
+		{Name: "TEAM", Value: "platform"},
+	}, EnvironmentForLaunch(&snapshot))
+}

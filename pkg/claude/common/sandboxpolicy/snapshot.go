@@ -747,12 +747,24 @@ func EnvironmentForLaunch(snapshot *Snapshot) []EnvironmentEntry {
 	if snapshot == nil {
 		return nil
 	}
-	merged, err := MergeEnvironment(snapshot.Effective.Environment, snapshot.LaunchEnvironment)
-	if err != nil {
-		// Authority-use boundaries call RevalidateSnapshot first. Returning nil
-		// keeps this convenience helper fail-closed if a caller violates that
-		// contract rather than launching with a partially merged environment.
-		return nil
+	// Effective may contain trusted launch-derived bindings added after profile
+	// validation (PATH, CODEX_HOME, XDG_CONFIG_HOME, agent directories, ...).
+	// Re-running the operator-authored validator here would reject those reserved
+	// names and erase the entire process environment. LaunchEnvironment itself
+	// was canonicalized at every authoring and snapshot boundary; overlay it
+	// without reclassifying the trusted base as operator input.
+	merged := append([]EnvironmentEntry(nil), snapshot.Effective.Environment...)
+	positions := make(map[string]int, len(merged))
+	for i, entry := range merged {
+		positions[entry.Name] = i
+	}
+	for _, entry := range snapshot.LaunchEnvironment {
+		if i, ok := positions[entry.Name]; ok {
+			merged[i] = entry
+			continue
+		}
+		positions[entry.Name] = len(merged)
+		merged = append(merged, entry)
 	}
 	return merged
 }
