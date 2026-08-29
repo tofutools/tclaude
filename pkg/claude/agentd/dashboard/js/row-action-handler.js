@@ -845,7 +845,7 @@ export async function handleRowAction(action) {
         // menu item is only rendered when the group HAS a default dir, so the
         // server resolve always has a target; a group whose dir was cleared
         // between render and click 404s, which the pane surfaces as an error.
-        openGroupWebTermPane(group, label);
+        openGroupWebTermPane(group, label, terminalPaneOptions);
         return;
       }
       case 'set-group-context': {

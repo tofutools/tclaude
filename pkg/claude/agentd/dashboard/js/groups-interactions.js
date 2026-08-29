@@ -231,7 +231,7 @@ export function ActionMenu({ menuKey, kind, wrapperClass, children }) {
 
 export function InlineEditor({
   editorKey, value, type = 'text', className, placeholder, inputProps = {},
-  onCommit, children, triggerProps = {},
+  onCommit, children, triggerProps = {}, passModifiedClick = false,
 }) {
   const interactions = useGroupsInteractions();
   const active = interactions.editorKey === editorKey;
@@ -256,6 +256,7 @@ export function InlineEditor({
     return h(as, {
       ...props,
       onClick: (event) => {
+        if (passModifiedClick && (event.ctrlKey || event.metaKey)) return;
         event.preventDefault();
         event.stopPropagation();
         interactions.beginEditor(editorKey, event.currentTarget);

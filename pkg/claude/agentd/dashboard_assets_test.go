@@ -936,7 +936,8 @@ func TestDashboardAssets_DirectoryPickerWired(t *testing.T) {
 
 // TestDashboardAssets_GroupWebTerminalWired guards the group ⚙ menu's "open web
 // terminal" item — the group counterpart of the per-agent "web term" button. Its
-// pieces span three JS files plus a server route (dashboard_edit.go), and there's
+// pieces span the Groups presentation/interaction files, the delegated action
+// files, terminals-tab.js, and a server route (dashboard_edit.go), and there's
 // no JS render test, so a rename in any one of them would silently break the
 // feature in the browser. Assert on the embedded concatenation at `go test ./...`;
 // the server route + resolve is covered by TestGroupTermWS_* below.
@@ -949,10 +950,14 @@ func TestDashboardAssets_GroupWebTerminalWired(t *testing.T) {
 		"function GroupMenuItems(",
 		`data-act="group-web-term"`,
 		"group.default_cwd ? html`<${MenuButton}",
+		"passModifiedClick=${!!group.default_cwd}",
+		"data-act=${group.default_cwd ? 'group-web-term' : undefined}",
+		"if (passModifiedClick && (event.ctrlKey || event.metaKey)) return;",
 		// row-actions.js — the import and the dispatch case.
+		"'group-web-term'",
 		"openGroupWebTermPane,",
 		"case 'group-web-term':",
-		"openGroupWebTermPane(group, label);",
+		"openGroupWebTermPane(group, label, terminalPaneOptions);",
 		// terminals-tab.js — the exported pane-opener + its WS path.
 		"export function openGroupWebTermPane(",
 		"/api/group-term-ws/",

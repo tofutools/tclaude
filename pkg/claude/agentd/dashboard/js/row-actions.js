@@ -6,7 +6,7 @@
 
 import { handleRowAction } from './row-action-handler.js';
 
-const BACKGROUND_CONTEXT_ACTIONS = new Set(['jump', 'web-open-window']);
+const BACKGROUND_CONTEXT_ACTIONS = new Set(['jump', 'web-open-window', 'group-web-term']);
 
 export function liveActionSource(event, selector = '[data-act]') {
   const source = event?.target?.closest?.(selector);

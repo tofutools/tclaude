@@ -56,13 +56,14 @@ func TestGroupTerminalActionsSupportBackgroundOpen(t *testing.T) {
 	for _, needle := range []string{
 		"Boolean(event?.ctrlKey || event?.metaKey)",
 		"openInBackground: Boolean(",
-		"BACKGROUND_CONTEXT_ACTIONS = new Set(['jump', 'web-open-window'])",
+		"BACKGROUND_CONTEXT_ACTIONS = new Set(['jump', 'web-open-window', 'group-web-term'])",
 		"document.addEventListener('contextmenu', onContextMenu)",
 		"document.addEventListener('mousedown', clearContextActivation)",
 		"if (source === contextActivatedSource)",
 		"const terminalPaneOptions = { reveal: action.openInBackground !== true }",
 		"focusTerminalForConv([agent], terminalPaneOptions)",
 		"openWebWindowPane(agent, label, { ...terminalPaneOptions, harness })",
+		"openGroupWebTermPane(group, label, terminalPaneOptions)",
 	} {
 		if !strings.Contains(rows, needle) {
 			t.Errorf("Groups terminal background-open wiring missing %q", needle)

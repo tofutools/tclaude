@@ -244,11 +244,11 @@ function Pager({ kind, paging }) {
   </div>`;
 }
 
-function EditableGroupChip({ group, actions, field, value, className, action, title, children, type = 'text', inputClass, placeholder, inputProps, normalize = (next) => next.trim(), message }) {
+function EditableGroupChip({ group, actions, field, value, className, action, title, children, type = 'text', inputClass, placeholder, inputProps, normalize = (next) => next.trim(), message, passModifiedClick = false }) {
   const editorKey = `group:${group.name}:${field}`;
   return html`<${InlineEditor}
     editorKey=${editorKey} value=${value} type=${type} className=${inputClass} placeholder=${placeholder}
-    inputProps=${inputProps}
+    inputProps=${inputProps} passModifiedClick=${passModifiedClick}
     onCommit=${async (raw) => {
       const next = normalize(raw);
       if (next === value) return false;
@@ -440,13 +440,16 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
     <${EditableGroupChip}
       className=${`group-default-cwd${group.default_cwd ? '' : ' unset'}`} action="set-group-dir" group=${group} actions=${actions}
       field="default_cwd" value=${group.default_cwd || ''} inputClass="group-default-cwd-input" placeholder="absolute path (~ OK) — empty clears the default"
-      title=${group.default_cwd ? `Default spawn directory: ${group.default_cwd} — click the text to edit, the 📁 to browse` : 'No default spawn directory — click the text to type one, the 📁 to browse'}
+      passModifiedClick=${!!group.default_cwd}
+      title=${group.default_cwd ? `Default spawn directory: ${group.default_cwd} — click the text to edit, Ctrl/Cmd-click it to open a terminal, or click the 📁 to browse` : 'No default spawn directory — click the text to type one, the 📁 to browse'}
       message=${(value) => value ? `${group.name}: default dir → ${value}` : `${group.name}: default dir cleared`}
     ><span class="gdc-pick" tabindex="0" role="button" data-act="pick-group-dir" data-group=${group.name} data-label=${group.name} data-cwd=${group.default_cwd || ''} title="Browse for a directory" onClick=${(event) => {
       event.preventDefault();
       event.stopPropagation();
       void actions.pickGroupDirectory(group).catch((error) => actions.reportError(error));
-    }}>📁</span><span class="qo-text"> ${group.default_cwd ? shortCwd(group.default_cwd) : 'no default dir'}</span><//>
+    }}>📁</span><span class="qo-text" data-act=${group.default_cwd ? 'group-web-term' : undefined}
+      data-group=${group.default_cwd ? group.name : undefined} data-label=${group.default_cwd ? group.name : undefined}
+    > ${group.default_cwd ? shortCwd(group.default_cwd) : 'no default dir'}</span><//>
     <${EditableGroupChip}
       className=${`group-max-members${full ? ' full' : ''}${group.max_members ? '' : ' unset'}`} action="set-group-max-members" group=${group} actions=${actions}
       field="max_members" value=${maxValue} type="number" inputClass="group-max-members-input"

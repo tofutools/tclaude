@@ -80,12 +80,12 @@ export function openWebTermPane(agent, label, whichOrPromise) {
   );
 }
 
-export function openGroupWebTermPane(group, label) {
+export function openGroupWebTermPane(group, label, options) {
   openTerminalPane({
     ws: `/api/group-term-ws/${encodeURIComponent(group)}`,
     label,
     key: `groupterm:${group}`,
-  });
+  }, options);
 }
 
 export function focusTerminalForConv(selectors, options) {
