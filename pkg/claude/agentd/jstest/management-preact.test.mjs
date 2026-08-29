@@ -145,6 +145,10 @@ test('Codex profile permission modes populate, survive harness switches, save, a
   assert.equal(approval.getAttribute('title'), 'never prompt');
   assert.equal(host.querySelector('#profile-editor-approval-row .spawn-field-help-trigger').getAttribute('aria-expanded'), 'false');
   assertAbsent(host.querySelector('#profile-editor-approval-caveat'), 'help with no ⚠ leaves nothing on screen');
+  assert.equal(host.querySelector('#profile-editor-environment-row .cron-create-label .theme-copy-wizard').textContent,
+    'Summoning runes');
+  assert.equal(host.querySelector('#profile-editor-environment-row .sbx-add-row .theme-copy-wizard').textContent,
+    '✦ bind rune');
   const initialReviewer = host.querySelector('#profile-editor-approval-reviewer');
   assert.deepEqual([...initialReviewer.options].map((option) => option.value), ['', 'human', 'auto_review']);
   assert.equal(selectedValue(initialReviewer), 'auto_review');

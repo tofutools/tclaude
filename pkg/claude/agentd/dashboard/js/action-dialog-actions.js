@@ -1,5 +1,6 @@
 import { clonePayload } from './clone-payload.js';
 import { findSpawnHarness, sandboxImplOptionsFor } from './agent-spawn-model.js';
+import { pickDirectory as defaultPickDirectory } from './helpers.js';
 
 const CLONE_TIMEOUT_MS = 35_000;
 const EXPORT_POLL_INTERVAL_MS = 2_000;
@@ -54,6 +55,7 @@ export function createActionDialogActions({
   notify,
   downloadExport = () => {},
   getSnapshot = () => null,
+  pickDirectory = defaultPickDirectory,
   setTimer = setTimeout,
   clearTimer = clearTimeout,
 }) {
@@ -71,6 +73,7 @@ export function createActionDialogActions({
     openTaskLink: state.openTaskLink,
     openGroupAttachment: state.openGroupAttachment,
 		openGroupSettings: state.openGroupSettings,
+    pickDirectory,
     openPresetClone(options) {
       if (!options?.source?.name || typeof options.create !== 'function') {
         notify('nothing to clone', true);
