@@ -748,6 +748,12 @@ func EnvironmentForLaunch(snapshot *Snapshot) []EnvironmentEntry {
 	if snapshot == nil {
 		return nil
 	}
+	if len(snapshot.Effective.Environment) == 0 && len(snapshot.LaunchEnvironment) == 0 {
+		if snapshot.Effective.Environment != nil || snapshot.LaunchEnvironment != nil {
+			return []EnvironmentEntry{}
+		}
+		return nil
+	}
 	// Effective may contain trusted launch-derived bindings added after profile
 	// validation (PATH, CODEX_HOME, XDG_CONFIG_HOME, agent directories, ...).
 	// Re-running the operator-authored validator here would reject those reserved
