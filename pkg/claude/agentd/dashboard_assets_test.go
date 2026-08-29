@@ -904,6 +904,9 @@ func TestDashboardAssets_DirectoryPickerWired(t *testing.T) {
 		"mountDirectoryPickerFeature",
 		"configureDirectoryPickerBridge",
 		"/api/browse-directories",
+		"/api/create-directory",
+		"/api/rename-directory",
+		"/api/delete-directory",
 		"lastSnapshot?.default_directory_picker === 'web'",
 		"#cfg-dashboard-default-web-directory-picker",
 		"dashboard.default_directory_picker = 'native'",
@@ -912,6 +915,9 @@ func TestDashboardAssets_DirectoryPickerWired(t *testing.T) {
 		`z-index: 10002`,
 		`.toast.error { border-left-color: #f85149; z-index: 10003; }`,
 		"body.wizard .directory-picker-modal",
+		"directory-picker-new",
+		"directory-picker-entry-action",
+		`id="directory-picker-action-modal"`,
 	} {
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q — web directory picker wiring broken", needle)

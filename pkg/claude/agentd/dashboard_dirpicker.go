@@ -63,6 +63,214 @@ type browseDirsResp struct {
 	Error       string           `json:"error,omitempty"`
 }
 
+// directoryMutationResp is shared by the web picker's create, rename, and
+// delete operations. Path is the resulting path for create/rename and the
+// removed path for delete.
+type directoryMutationResp struct {
+	Path  string `json:"path,omitempty"`
+	Error string `json:"error,omitempty"`
+}
+
+func decodeDirectoryMutation(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if !checkDashboardAuth(w, r) {
+		return false
+	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "POST only", http.StatusMethodNotAllowed)
+		return false
+	}
+	if r.Body == nil {
+		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "request body is required"})
+		return false
+	}
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "malformed JSON body: " + err.Error()})
+		return false
+	}
+	return true
+}
+
+func cleanDirectoryPath(raw string) (string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return "", errors.New("directory path is required")
+	}
+	path := raw
+	abs, err := filepath.Abs(expandTilde(path))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(abs), nil
+}
+
+func cleanDirectoryName(raw string) (string, error) {
+	name := strings.TrimSpace(raw)
+	if name == "" {
+		return "", errors.New("folder name is required")
+	}
+	if name == "." || name == ".." || filepath.Base(name) != name || filepath.IsAbs(name) {
+		return "", errors.New("folder name must be a single path component")
+	}
+	return name, nil
+}
+
+func selectableDirectory(path string) (os.FileInfo, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return info, nil
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		target, statErr := os.Stat(path)
+		if statErr == nil && target.IsDir() {
+			return info, nil
+		}
+	}
+	return nil, errors.New("not a directory")
+}
+
+// handleDashboardCreateDirAPI creates one direct child of an existing host
+// directory. The name is deliberately a single component: the picker exposes
+// creation in its current folder, not an arbitrary mkdir -p text box.
+func handleDashboardCreateDirAPI(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Parent string `json:"parent"`
+		Name   string `json:"name"`
+	}
+	if !decodeDirectoryMutation(w, r, &body) {
+		return
+	}
+	parent, err := cleanDirectoryPath(body.Parent)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "resolve parent directory: " + err.Error()})
+		return
+	}
+	if info, statErr := os.Stat(parent); statErr != nil || !info.IsDir() {
+		if statErr != nil {
+			err = statErr
+		} else {
+			err = errors.New("not a directory")
+		}
+		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "open parent directory: " + err.Error()})
+		return
+	}
+	name, err := cleanDirectoryName(body.Name)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: err.Error()})
+		return
+	}
+	path := filepath.Join(parent, name)
+	if err := os.Mkdir(path, 0o755); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, os.ErrExist) {
+			status = http.StatusConflict
+		} else if errors.Is(err, os.ErrPermission) {
+			status = http.StatusForbidden
+		}
+		writeJSON(w, status, directoryMutationResp{Error: "create directory: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, directoryMutationResp{Path: path})
+}
+
+// handleDashboardRenameDirAPI renames a directory within its existing parent.
+// A single-component destination prevents the rename control from becoming a
+// second, surprising move-directory feature.
+func handleDashboardRenameDirAPI(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+		Name string `json:"name"`
+	}
+	if !decodeDirectoryMutation(w, r, &body) {
+		return
+	}
+	path, err := cleanDirectoryPath(body.Path)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "resolve directory: " + err.Error()})
+		return
+	}
+	sourceInfo, err := selectableDirectory(path)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "open directory: " + err.Error()})
+		return
+	}
+	if filepath.Dir(path) == path {
+		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "cannot rename a filesystem root"})
+		return
+	}
+	name, err := cleanDirectoryName(body.Name)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: err.Error()})
+		return
+	}
+	destination := filepath.Join(filepath.Dir(path), name)
+	if destination == path {
+		writeJSON(w, http.StatusOK, directoryMutationResp{Path: path})
+		return
+	}
+	if destinationInfo, err := os.Lstat(destination); err == nil {
+		// Case-insensitive filesystems resolve a case-only destination spelling
+		// to the source itself. That is a rename, not a collision.
+		if !os.SameFile(sourceInfo, destinationInfo) {
+			writeJSON(w, http.StatusConflict, directoryMutationResp{Error: "rename directory: destination already exists"})
+			return
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, http.StatusInternalServerError, directoryMutationResp{Error: "check rename destination: " + err.Error()})
+		return
+	}
+	if err := os.Rename(path, destination); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, os.ErrPermission) {
+			status = http.StatusForbidden
+		}
+		writeJSON(w, status, directoryMutationResp{Error: "rename directory: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, directoryMutationResp{Path: destination})
+}
+
+// handleDashboardDeleteDirAPI recursively removes one host directory. The
+// client must echo the canonical absolute path as confirmation; checking that
+// again server-side prevents a stale or bypassed dialog from deleting a
+// different target. Symlinked directories remove only the link.
+func handleDashboardDeleteDirAPI(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path    string `json:"path"`
+		Confirm string `json:"confirm"`
+	}
+	if !decodeDirectoryMutation(w, r, &body) {
+		return
+	}
+	path, err := cleanDirectoryPath(body.Path)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "resolve directory: " + err.Error()})
+		return
+	}
+	if filepath.Dir(path) == path {
+		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "cannot delete a filesystem root"})
+		return
+	}
+	if body.Confirm != path {
+		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "confirmation must exactly match the directory path"})
+		return
+	}
+	if _, err := selectableDirectory(path); err != nil {
+		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "open directory: " + err.Error()})
+		return
+	}
+	if err := os.RemoveAll(path); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, os.ErrPermission) {
+			status = http.StatusForbidden
+		}
+		writeJSON(w, status, directoryMutationResp{Error: "delete directory: " + err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, directoryMutationResp{Path: path})
+}
+
 // handleDashboardBrowseDirsAPI lists the direct child directories of a path
 // on the agentd host. The authenticated dashboard already accepts host paths
 // for spawn/group/template operations; this endpoint gives a remote browser a

@@ -30,6 +30,14 @@ test('directory picker actions preserve host path payloads and API errors', asyn
   assert.equal((await actions.browse(' /srv ')).path, '/srv');
   assert.equal(requests[0][0], '/api/browse-directories');
   assert.deepEqual(JSON.parse(requests[0][1].body), { path: '/srv' });
+  await actions.create('/srv ', ' child ');
+  await actions.rename('/srv /child ', ' renamed ');
+  await actions.remove('/srv /renamed ', '/srv /renamed ');
+  assert.deepEqual(requests.slice(1).map(([url, options]) => [url, JSON.parse(options.body)]), [
+    ['/api/create-directory', { parent: '/srv ', name: 'child' }],
+    ['/api/rename-directory', { path: '/srv /child ', name: 'renamed' }],
+    ['/api/delete-directory', { path: '/srv /renamed ', confirm: '/srv /renamed ' }],
+  ]);
 
   const failing = createDirectoryPickerActions({
     fetchImpl: async () => new Response(JSON.stringify({ error: 'permission denied' }), {
@@ -98,7 +106,7 @@ test('Preact picker filters its folder pane and completes the active match', asy
   const input = host.querySelector('#directory-picker-path');
   await harness.input(input, '/root/tcl');
   assert.deepEqual(
-    [...host.querySelectorAll('.directory-picker-list button')].map((button) => button.textContent),
+    [...host.querySelectorAll('.directory-picker-open')].map((button) => button.textContent),
     ['📁tclaude', '📁tclaude-dir-picker', '📁project-tclaude'],
   );
   assert.equal(host.querySelector('.directory-picker-count').textContent, '3 of 5 folders');
@@ -185,6 +193,94 @@ test('Preact picker accepts a trailing slash through Ctrl/Cmd+Enter and the choo
   choose.click();
   await harness.act(() => Promise.resolve());
   assert.deepEqual(await result, { path: '/root' });
+  await mounted.unmount();
+});
+
+test('Preact picker creates, renames, and explicitly confirms recursive deletion', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDirectoryPickerState }, { DirectoryPickerApp }] = await Promise.all([
+    harness.importDashboardModule('js/directory-picker-state.js'),
+    harness.importDashboardModule('js/directory-picker-island.js'),
+  ]);
+  const state = createDirectoryPickerState();
+  let directories = [{ name: 'alpha', path: '/root/alpha' }];
+  const mutations = [];
+  const actions = {
+    async browse(path) {
+      return path === '/root'
+        ? { path, parent: '/', home: '/home/me', directories }
+        : { path, parent: '/root', home: '/home/me', directories: [] };
+    },
+    async create(parent, name) {
+      mutations.push(['create', parent, name]);
+      directories = [...directories, { name, path: `${parent}/${name}` }];
+      return { path: `${parent}/${name}` };
+    },
+    async rename(path, name) {
+      mutations.push(['rename', path, name]);
+      directories = directories.map((directory) => directory.path === path
+        ? { name, path: `/root/${name}` } : directory);
+      return { path: `/root/${name}` };
+    },
+    async remove(path, confirm) {
+      mutations.push(['delete', path, confirm]);
+      directories = directories.filter((directory) => directory.path !== path);
+      return { path };
+    },
+  };
+  const mounted = await harness.mount(
+    harness.html`<${DirectoryPickerApp} state=${state} actions=${actions} />`,
+  );
+  let result;
+  await harness.act(() => { result = state.open({ startDir: '/root', title: 'Choose' }); });
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+  mounted.container.querySelector('.directory-picker-new').click();
+  await harness.act(() => Promise.resolve());
+  let action = mounted.container.querySelector('#directory-picker-action-modal');
+  const pickerOverlay = mounted.container.querySelector('#directory-picker-modal');
+  assert.equal(pickerOverlay.hasAttribute('inert'), true);
+  assert.equal(pickerOverlay.getAttribute('aria-hidden'), 'true');
+  assert.equal(pickerOverlay.querySelector('[role="dialog"]').getAttribute('aria-modal'), 'false');
+  assert.equal(action.querySelector('[role="dialog"]').getAttribute('aria-modal'), 'true');
+  assert.equal(action.querySelector('h3').textContent, 'Create a folder');
+  await harness.input(action.querySelector('input'), 'new-child');
+  action.querySelector('button.primary').click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(mutations[0], ['create', '/root', 'new-child']);
+  assert.equal(pickerOverlay.hasAttribute('inert'), false);
+  assert.equal(pickerOverlay.hasAttribute('aria-hidden'), false);
+  assert.equal(pickerOverlay.querySelector('[role="dialog"]').getAttribute('aria-modal'), 'true');
+  assert.equal(mounted.container.querySelector('#directory-picker-path').value, '/root/new-child/');
+
+  mounted.container.querySelector('.directory-picker-nav button').click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  mounted.container.querySelector('[aria-label="Rename alpha"]').click();
+  await harness.act(() => Promise.resolve());
+  action = mounted.container.querySelector('#directory-picker-action-modal');
+  assert.equal(action.querySelector('input').value, 'alpha');
+  await harness.input(action.querySelector('input'), 'beta');
+  action.querySelector('button.primary').click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(mutations[1], ['rename', '/root/alpha', 'beta']);
+  assert.ok(mounted.container.querySelector('[aria-label="Delete beta"]'));
+
+  mounted.container.querySelector('[aria-label="Delete beta"]').click();
+  await harness.act(() => Promise.resolve());
+  action = mounted.container.querySelector('#directory-picker-action-modal');
+  const deleteButton = action.querySelector('button.danger');
+  assert.equal(deleteButton.disabled, true);
+  await harness.input(action.querySelector('input'), 'beta');
+  assert.equal(deleteButton.disabled, true, 'a folder name alone cannot confirm deletion');
+  await harness.input(action.querySelector('input'), '/root/beta');
+  assert.equal(deleteButton.disabled, false);
+  deleteButton.click();
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  assert.deepEqual(mutations[2], ['delete', '/root/beta', '/root/beta']);
+  assert.equal(mounted.container.querySelector('[aria-label="Delete beta"]'), null);
+
+  state.finish({ canceled: true });
+  await result;
   await mounted.unmount();
 });
 
@@ -325,7 +421,7 @@ test('Preact picker leaves the list intact for a directly typed path', async (t)
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   const input = mounted.container.querySelector('#directory-picker-path');
   await harness.input(input, '/other/workspace');
-  assert.equal(mounted.container.querySelectorAll('.directory-picker-list button').length, 2);
+  assert.equal(mounted.container.querySelectorAll('.directory-picker-open').length, 2);
   assert.equal(input.getAttribute('role'), null);
   assert.equal(mounted.container.querySelector('.directory-picker-list').getAttribute('role'), 'list');
   assert.match(mounted.container.querySelector('.directory-picker-hint').textContent, /Press Enter/);
@@ -370,7 +466,7 @@ test('Preact picker navigates host folders, chooses, cancels, and restores focus
   assert.equal(host.querySelector('#directory-picker-title').textContent, 'Select a workspace');
   assert.equal(host.querySelector('#directory-picker-path').value, '/root');
   assert.equal(harness.document.activeElement.id, 'directory-picker-path');
-  host.querySelector('.directory-picker-list button').click();
+  host.querySelector('.directory-picker-open').click();
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.deepEqual(calls, ['/root', '/root/alpha']);
   assert.equal(host.querySelector('#directory-picker-path').value, '/root/alpha/');

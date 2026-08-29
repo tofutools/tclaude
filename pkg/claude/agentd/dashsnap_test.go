@@ -2780,7 +2780,7 @@ func directoryPickerDashSnapJS() string {
       if (modal.getAttribute('aria-hidden') === 'true') throw new Error('picker unexpectedly hidden');
       var input = modal.querySelector('#directory-picker-path');
       if (document.activeElement !== input) throw new Error('picker did not take focus');
-      var first = list.querySelector('button');
+      var first = list.querySelector('.directory-picker-open');
       if (!first) throw new Error('picker fixture has no folders to filter');
       var name = first.lastElementChild.textContent;
       var base = first.title.slice(0, first.title.length - name.length);

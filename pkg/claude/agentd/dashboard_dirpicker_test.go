@@ -21,7 +21,92 @@ func servePickDir(w http.ResponseWriter, r *http.Request) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/pick-directory", handleDashboardPickDirAPI)
 	mux.HandleFunc("/api/browse-directories", handleDashboardBrowseDirsAPI)
+	mux.HandleFunc("/api/create-directory", handleDashboardCreateDirAPI)
+	mux.HandleFunc("/api/rename-directory", handleDashboardRenameDirAPI)
+	mux.HandleFunc("/api/delete-directory", handleDashboardDeleteDirAPI)
 	mux.ServeHTTP(w, r)
+}
+
+func TestDirectoryMutations_CreateRenameDelete(t *testing.T) {
+	withDashboardAuth(t)
+	root := t.TempDir()
+
+	w := httptest.NewRecorder()
+	servePickDir(w, dashboardRequest(http.MethodPost, "/api/create-directory",
+		`{"parent":`+strconv.Quote(root)+`,"name":"created"}`))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	created := filepath.Join(root, "created")
+	require.DirExists(t, created)
+
+	require.NoError(t, os.WriteFile(filepath.Join(created, "kept-until-delete.txt"), []byte("x"), 0o644))
+	w = httptest.NewRecorder()
+	servePickDir(w, dashboardRequest(http.MethodPost, "/api/rename-directory",
+		`{"path":`+strconv.Quote(created)+`,"name":"renamed"}`))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	renamed := filepath.Join(root, "renamed")
+	require.DirExists(t, renamed)
+	assert.NoDirExists(t, created)
+
+	w = httptest.NewRecorder()
+	servePickDir(w, dashboardRequest(http.MethodPost, "/api/delete-directory",
+		`{"path":`+strconv.Quote(renamed)+`,"confirm":`+strconv.Quote(renamed)+`}`))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	assert.NoDirExists(t, renamed)
+}
+
+func TestDirectoryMutations_ValidateNamesTargetsAndConfirmation(t *testing.T) {
+	withDashboardAuth(t)
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, "source"), 0o755))
+	require.NoError(t, os.Mkdir(filepath.Join(root, "occupied"), 0o755))
+
+	for _, tc := range []struct {
+		name, route, body string
+		status            int
+	}{
+		{"create nested", "/api/create-directory", `{"parent":` + strconv.Quote(root) + `,"name":"nested/child"}`, http.StatusBadRequest},
+		{"create existing", "/api/create-directory", `{"parent":` + strconv.Quote(root) + `,"name":"source"}`, http.StatusConflict},
+		{"rename nested", "/api/rename-directory", `{"path":` + strconv.Quote(filepath.Join(root, "source")) + `,"name":"../moved"}`, http.StatusBadRequest},
+		{"rename occupied", "/api/rename-directory", `{"path":` + strconv.Quote(filepath.Join(root, "source")) + `,"name":"occupied"}`, http.StatusConflict},
+		{"delete wrong confirmation", "/api/delete-directory", `{"path":` + strconv.Quote(filepath.Join(root, "source")) + `,"confirm":"source"}`, http.StatusBadRequest},
+		{"delete root", "/api/delete-directory", `{"path":"/","confirm":"/"}`, http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			servePickDir(w, dashboardRequest(http.MethodPost, tc.route, tc.body))
+			assert.Equal(t, tc.status, w.Code, "body=%s", w.Body.String())
+		})
+	}
+	require.DirExists(t, filepath.Join(root, "source"))
+}
+
+func TestDirectoryMutations_PreserveTrailingSpaceInTargetPath(t *testing.T) {
+	withDashboardAuth(t)
+	root := t.TempDir()
+	plain := filepath.Join(root, "folder")
+	spaced := filepath.Join(root, "folder ")
+	require.NoError(t, os.Mkdir(plain, 0o755))
+	require.NoError(t, os.Mkdir(spaced, 0o755))
+
+	w := httptest.NewRecorder()
+	servePickDir(w, dashboardRequest(http.MethodPost, "/api/delete-directory",
+		`{"path":`+strconv.Quote(spaced)+`,"confirm":`+strconv.Quote(spaced)+`}`))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	require.DirExists(t, plain)
+	assert.NoDirExists(t, spaced)
+}
+
+func TestDirectoryMutations_RequireAuthAndPost(t *testing.T) {
+	root := t.TempDir()
+	w := httptest.NewRecorder()
+	servePickDir(w, httptest.NewRequest(http.MethodPost, "/api/create-directory", nil))
+	assert.NotEqual(t, http.StatusOK, w.Code)
+
+	withDashboardAuth(t)
+	w = httptest.NewRecorder()
+	servePickDir(w, dashboardRequest(http.MethodGet, "/api/delete-directory",
+		`{"path":`+strconv.Quote(root)+`}`))
+	assert.Equal(t, http.StatusMethodNotAllowed, w.Code)
 }
 
 func TestBrowseDirs_ListsOnlyDirectories(t *testing.T) {
