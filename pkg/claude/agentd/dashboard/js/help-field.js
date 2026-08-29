@@ -40,11 +40,27 @@ export function HelpDisclosure({
   id, descriptionID = `${id}-hint`, label, help, content = null, open, setOpen, warn = false,
 }) {
   if (!help && !content) return null;
-  /* A browser focuses the button on mousedown, which would open the disclosure
-     before onClick ran and make the click read as a toggle-closed. Suppressing
-     the default mousedown keeps click a plain toggle while Tab still opens it
-     via onFocus. */
-  const swallowFocus = (event) => event.preventDefault();
+  /* Focus alone is passive form traversal, not a request to cover the dialog
+     with help. Once explicitly opened, however, the trigger and description
+     act as one focus group: Tab may enter the copy, and leaving both closes it. */
+  const closeAfterTrigger = (event) => {
+    if (!open || event.currentTarget.nextElementSibling?.contains(event.relatedTarget)) return;
+    setOpen('');
+  };
+  const closeAfterDescription = (event) => {
+    if (!open || event.currentTarget.contains(event.relatedTarget)
+      || event.currentTarget.previousElementSibling?.contains(event.relatedTarget)) return;
+    setOpen('');
+  };
+  const closeOnEscape = (event) => {
+    if (!open || event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    setOpen('');
+    const trigger = event.currentTarget.classList.contains('spawn-field-help-trigger')
+      ? event.currentTarget : event.currentTarget.previousElementSibling;
+    trigger?.focus();
+  };
   /* aria-label wins over content, so the [!] glyph is not announced. Naming the
      warn state here is what gives a screen-reader user the same "this control
      has a caveat" cue the colour gives a sighted one. */
@@ -53,11 +69,10 @@ export function HelpDisclosure({
     <button type="button" class=${`spawn-field-help-trigger${warn ? ' warn' : ''}`}
       aria-label=${name}
       aria-controls=${descriptionID} aria-expanded=${open ? 'true' : 'false'} title=${name}
-      onMouseDown=${swallowFocus}
       onClick=${() => setOpen(open ? '' : id)}
-      onFocus=${() => setOpen(id)}>${warn ? '!' : '?'}</button>
-    <span id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex="0"
-      aria-live="polite" onFocus=${() => setOpen(id)}>${content || help}</span>
+      onBlur=${closeAfterTrigger} onKeyDown=${closeOnEscape}>${warn ? '!' : '?'}</button>
+    <span id=${descriptionID} class="spawn-field-description" role="tooltip" tabindex=${open ? '0' : '-1'}
+      aria-live="polite" onBlur=${closeAfterDescription} onKeyDown=${closeOnEscape}>${content || help}</span>
   <//>`;
 }
 
