@@ -440,7 +440,7 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
     <${EditableGroupChip}
       className=${`group-default-cwd${group.default_cwd ? '' : ' unset'}`} action="set-group-dir" group=${group} actions=${actions}
       field="default_cwd" value=${group.default_cwd || ''} inputClass="group-default-cwd-input" placeholder="absolute path (~ OK) — empty clears the default"
-      passModifiedClick=${true}
+      passModifiedClick=${!!group.default_cwd}
       title=${group.default_cwd ? `Default spawn directory: ${group.default_cwd} — click the text to edit, Ctrl/Cmd-click it to open a terminal, or click the 📁 to browse` : 'No default spawn directory — click the text to type one, the 📁 to browse'}
       message=${(value) => value ? `${group.name}: default dir → ${value}` : `${group.name}: default dir cleared`}
     ><span class="gdc-pick" tabindex="0" role="button" data-act="pick-group-dir" data-group=${group.name} data-label=${group.name} data-cwd=${group.default_cwd || ''} title="Browse for a directory" onClick=${(event) => {

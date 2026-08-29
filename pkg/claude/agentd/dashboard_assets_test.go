@@ -950,7 +950,7 @@ func TestDashboardAssets_GroupWebTerminalWired(t *testing.T) {
 		"function GroupMenuItems(",
 		`data-act="group-web-term"`,
 		"group.default_cwd ? html`<${MenuButton}",
-		"passModifiedClick=${true}",
+		"passModifiedClick=${!!group.default_cwd}",
 		"data-act=${group.default_cwd ? 'group-web-term' : undefined}",
 		"if (passModifiedClick && (event.ctrlKey || event.metaKey)) return;",
 		// row-actions.js — the import and the dispatch case.
