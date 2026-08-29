@@ -188,7 +188,7 @@ CREATE TABLE "agent_groups" (
 			descr       TEXT NOT NULL DEFAULT '',
 			created_at  INTEGER NOT NULL
 		, archived_at INTEGER, default_cwd TEXT NOT NULL DEFAULT '', default_context TEXT NOT NULL DEFAULT '', max_members INTEGER NOT NULL DEFAULT 0, notify_enabled INTEGER NOT NULL DEFAULT 1, default_profile TEXT NOT NULL DEFAULT '', remote_control INTEGER, mission TEXT NOT NULL DEFAULT '', source_template TEXT NOT NULL DEFAULT '', parent_id INTEGER REFERENCES agent_groups(id) ON DELETE SET NULL, default_profile_id INTEGER, source_template_id INTEGER, sandbox_profile TEXT NOT NULL DEFAULT '', sandbox_profile_id INTEGER, attachment_url TEXT NOT NULL DEFAULT '', attachment_label TEXT NOT NULL DEFAULT '', route_generation INTEGER NOT NULL DEFAULT 0, owner_scopes_json TEXT NOT NULL DEFAULT ''
-			CHECK(length(CAST(owner_scopes_json AS BLOB)) BETWEEN 0 AND 262144), default_spawn_group INTEGER NOT NULL DEFAULT 0) STRICT;
+			CHECK(length(CAST(owner_scopes_json AS BLOB)) BETWEEN 0 AND 262144), default_spawn_group INTEGER NOT NULL DEFAULT 0, environment_json TEXT NOT NULL DEFAULT '[]') STRICT;
 
 CREATE INDEX idx_agent_groups_archived
 			ON agent_groups(archived_at);
@@ -527,7 +527,7 @@ CREATE TABLE "spawn_profiles" (
 			include_group_default_context INTEGER,
 			created_at                    INTEGER NOT NULL,
 			updated_at                    INTEGER NOT NULL
-		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER, tools TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', ssh_workaround INTEGER, sandbox_implementation TEXT NOT NULL DEFAULT '', operator_only INTEGER NOT NULL DEFAULT 0, startup_context TEXT NOT NULL DEFAULT '', context_window_max INTEGER NOT NULL DEFAULT 0, copilot_api INTEGER, fast_mode INTEGER, codex_app_server INTEGER, role_ref TEXT NOT NULL DEFAULT '', role_refs TEXT NOT NULL DEFAULT '[]', fetch_latest_worktree INTEGER) STRICT;
+		, remote_control INTEGER, is_owner INTEGER, permission_overrides TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', disabled_reason TEXT NOT NULL DEFAULT '', disabled INTEGER NOT NULL DEFAULT 0, auto_memory INTEGER, tools TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', ssh_workaround INTEGER, sandbox_implementation TEXT NOT NULL DEFAULT '', operator_only INTEGER NOT NULL DEFAULT 0, startup_context TEXT NOT NULL DEFAULT '', context_window_max INTEGER NOT NULL DEFAULT 0, copilot_api INTEGER, fast_mode INTEGER, codex_app_server INTEGER, role_ref TEXT NOT NULL DEFAULT '', role_refs TEXT NOT NULL DEFAULT '[]', fetch_latest_worktree INTEGER, environment_json TEXT NOT NULL DEFAULT '[]') STRICT;
 
 CREATE TRIGGER spawn_profile_name_not_alias_insert
 		BEFORE INSERT ON spawn_profiles

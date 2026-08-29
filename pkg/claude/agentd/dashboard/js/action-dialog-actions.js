@@ -70,6 +70,7 @@ export function createActionDialogActions({
     },
     openTaskLink: state.openTaskLink,
     openGroupAttachment: state.openGroupAttachment,
+		openGroupSettings: state.openGroupSettings,
     openPresetClone(options) {
       if (!options?.source?.name || typeof options.create !== 'function') {
         notify('nothing to clone', true);
@@ -188,6 +189,30 @@ export function createActionDialogActions({
       notify(url ? `${group}: attachment updated` : `${group}: attachment cleared`);
       await refresh();
     },
+		async saveGroupSettings({ group, values }, owner) {
+			const patch = {
+				descr: values.descr.trim(), default_cwd: values.defaultCwd.trim(),
+				default_context: values.defaultContext, default_profile: values.defaultProfile,
+				environment: values.environment.map((entry) => ({ name: entry.name.trim(), value: entry.value })).filter((entry) => entry.name),
+				max_members: Math.max(0, Number(values.maxMembers) || 0),
+				notify_enabled: !!values.notifyEnabled,
+				remote_control_policy: values.remoteControlPolicy,
+			};
+			await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(group)}`, {
+				method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+			});
+			await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(group)}/sandbox-profile`, {
+				method: values.sandboxProfile ? 'PUT' : 'DELETE', headers: { 'Content-Type': 'application/json' },
+				...(values.sandboxProfile ? { body: JSON.stringify({ name: values.sandboxProfile }) } : {}),
+			});
+			await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(group)}/attachment`, {
+				method: 'POST', headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify(values.attachmentURL.trim() ? { url: values.attachmentURL.trim(), label: values.attachmentLabel.trim() } : { clear: true }),
+			});
+			state.close(owner);
+			notify(`${group}: settings saved`);
+			await refresh();
+		},
     async clonePreset({ source, create, name }, owner) {
       const cleanName = String(name || '').trim();
       if (!cleanName) throw new Error('name is required');

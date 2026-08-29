@@ -158,6 +158,16 @@ func cloneSSHWorkaround(relaunch *durableRelaunchConfig) bool {
 	return relaunch.SSHWorkaround
 }
 
+func preserveCloneLaunchEnvironment(current, previous *sandboxpolicy.Snapshot) *sandboxpolicy.Snapshot {
+	if current == nil || previous == nil {
+		return current
+	}
+	refreshed := *current
+	refreshed.LaunchEnvironment = append(
+		[]sandboxpolicy.EnvironmentEntry(nil), previous.LaunchEnvironment...)
+	return &refreshed
+}
+
 // cloneSpawnOnce mints a clone's conv-id (and optionally its jsonl).
 // Two branches:
 //   - copy: use convops to fork the existing jsonl onto a fresh
@@ -248,7 +258,12 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		refreshGeneratedProfile = true
 	}
 	if refreshGeneratedProfile {
-		effectiveSandbox, _, err = resolveCurrentSandboxChainForConv(sourceConv)
+		var previous *sandboxpolicy.Snapshot
+		effectiveSandbox, previous, err = resolveCurrentSandboxChainForConv(sourceConv)
+		// Generated Codex declarations track the current sandbox registry,
+		// but common group/profile/per-spawn environment is birth-time launch
+		// state just like restart and reincarnate preserve.
+		effectiveSandbox = preserveCloneLaunchEnvironment(effectiveSandbox, previous)
 	} else {
 		effectiveSandbox, err = db.AgentEffectiveSandboxConfigForConv(sourceConv)
 	}

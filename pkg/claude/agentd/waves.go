@@ -229,8 +229,14 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		if spawnCodexGitCommonDirPinned {
 			spawnCodexGitCommonDir = codexGitCommonDir
 		}
+		spawnSandbox := effectiveSandbox
+		if effectiveSandbox != nil {
+			copy := *effectiveSandbox
+			copy.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), launch.Environment...)
+			spawnSandbox = &copy
+		}
 		outcome, fail := executeSpawn(g, spawnParams{
-			EffectiveSandbox:            effectiveSandbox,
+			EffectiveSandbox:            spawnSandbox,
 			Name:                        finalName,
 			Role:                        a.Role,
 			Descr:                       a.Descr,

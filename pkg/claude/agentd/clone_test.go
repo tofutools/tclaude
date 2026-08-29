@@ -137,6 +137,22 @@ func TestInheritEffectiveSandboxSnapshotPreservesPrePersistedCloneSnapshot(t *te
 	assert.NotEqual(t, source.Effective.Environment, persisted.Effective.Environment)
 }
 
+func TestPreserveCloneLaunchEnvironmentAcrossSandboxRefresh(t *testing.T) {
+	current := sandboxpolicy.EmptySnapshot()
+	current.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{Name: "SANDBOX", Value: "new"}}
+	previous := sandboxpolicy.EmptySnapshot()
+	previous.LaunchEnvironment = []sandboxpolicy.EnvironmentEntry{{Name: "BIRTH", Value: "frozen"}}
+
+	got := preserveCloneLaunchEnvironment(&current, &previous)
+	require.NotNil(t, got)
+	assert.Equal(t, current.Effective.Environment, got.Effective.Environment)
+	assert.Equal(t, previous.LaunchEnvironment, got.LaunchEnvironment)
+
+	got.LaunchEnvironment[0].Value = "changed"
+	assert.Equal(t, "frozen", previous.LaunchEnvironment[0].Value,
+		"the clone snapshot must not alias the source snapshot")
+}
+
 func TestInheritEffectiveSandboxSnapshotForGroupRebindsResumeProvenance(t *testing.T) {
 	setupTestDB(t)
 	snapshot := sandboxpolicy.EmptySnapshot()

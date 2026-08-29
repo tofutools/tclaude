@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -187,6 +188,8 @@ func setSampleProfileField(t *testing.T, p *db.SpawnProfile, idx int) {
 		// Any effect other than a grant — that is the half of the override map
 		// mergeSnapshotInlineProfile carries forward.
 		f.Set(reflect.ValueOf(map[string]db.PermissionOverride{"guard-sample": db.Deny()}))
+	case []sandboxpolicy.EnvironmentEntry:
+		f.Set(reflect.ValueOf([]sandboxpolicy.EnvironmentEntry{{Name: "GUARD_SAMPLE", Value: "set"}}))
 	default:
 		t.Fatalf("db.SpawnProfile.%s is a %s, which this guard cannot populate: "+
 			"teach setSampleProfileField the new type so the field is actually covered",

@@ -35,7 +35,7 @@ func copilotAPIFolderTrustFailure(p spawnParams) *spawnFailure {
 	}
 	var environment []sandboxpolicy.EnvironmentEntry
 	if p.EffectiveSandbox != nil {
-		environment = p.EffectiveSandbox.Effective.Environment
+		environment = sandboxpolicy.EnvironmentForLaunch(p.EffectiveSandbox)
 	}
 	if err := session.ValidateCopilotAPIFolderTrust(
 		// resume=false: this is the fresh-spawn boundary. A relaunch never

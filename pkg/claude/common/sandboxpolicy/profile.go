@@ -1404,6 +1404,37 @@ func normalizeEnvironment(in []EnvironmentEntry) ([]EnvironmentEntry, error) {
 	return out, nil
 }
 
+// NormalizeEnvironment validates and canonicalizes operator-authored process
+// environment entries. It deliberately shares the sandbox-profile rules: the
+// same reserved launch-control names, size limits, UTF-8 requirements, and
+// deterministic ordering apply no matter which configuration surface supplied
+// an entry.
+func NormalizeEnvironment(in []EnvironmentEntry) ([]EnvironmentEntry, error) {
+	return normalizeEnvironment(in)
+}
+
+// MergeEnvironment overlays tiers from left to right and returns one
+// canonical environment. Later tiers win by variable name. Each tier and the
+// aggregate are validated, so combining individually valid configurations can
+// never bypass the total count or byte limits.
+func MergeEnvironment(tiers ...[]EnvironmentEntry) ([]EnvironmentEntry, error) {
+	byName := make(map[string]string)
+	for _, tier := range tiers {
+		normalized, err := normalizeEnvironment(tier)
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range normalized {
+			byName[entry.Name] = entry.Value
+		}
+	}
+	merged := make([]EnvironmentEntry, 0, len(byName))
+	for name, value := range byName {
+		merged = append(merged, EnvironmentEntry{Name: name, Value: value})
+	}
+	return normalizeEnvironment(merged)
+}
+
 func isReservedEnvironmentName(name string) bool {
 	if name == OfflineModelTransportEnv {
 		return false

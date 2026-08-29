@@ -766,6 +766,7 @@ export function createSpawnDraft({
     fixedGroup: !!groupName,
     profile: '',
     name: '', role: '', roleRefs: [], descr: '', task: '', initialMessage: '',
+		environment: [],
     ...harnessDefaults(harness, rememberedEffort),
     owner: false,
     permissionOverrides: {},
@@ -1251,8 +1252,10 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
     descr: text(draft.descr).trim(),
     initial_message: draft.initialMessage,
     auto_focus: !!draft.autoFocus,
-    include_group_context: !!draft.includeGroupContext,
+		include_group_context: !!draft.includeGroupContext,
   };
+	const environment = (draft.environment || []).map((entry) => ({ name: text(entry.name).trim(), value: text(entry.value) })).filter((entry) => entry.name);
+	if (environment.length) body.environment = environment;
   // Tell the daemon not to pop a native window; its ordinary browser-focus
   // response then lets the dashboard attach the new pane in the Terminals tab.
   if (draft.autoFocus && context.defaultTerminal === 'web') body.auto_focus_web = true;

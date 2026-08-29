@@ -1257,7 +1257,7 @@ func runNew(params *NewParams) error {
 	}
 	applyManagedAgentHint(params.ManagedLaunch, additionalEnv)
 	if effectiveSandbox != nil {
-		for _, entry := range effectiveSandbox.Effective.Environment {
+		for _, entry := range sandboxpolicy.EnvironmentForLaunch(effectiveSandbox) {
 			additionalEnv[entry.Name] = entry.Value
 		}
 	}
@@ -1582,7 +1582,7 @@ func runNew(params *NewParams) error {
 	if outerLayer {
 		var launchEnvironment []sandboxpolicy.EnvironmentEntry
 		if launchSandbox != nil {
-			launchEnvironment = launchSandbox.Effective.Environment
+			launchEnvironment = sandboxpolicy.EnvironmentForLaunch(launchSandbox)
 		}
 		if err := ValidateTclaudeLayerHarnessPosture(h, launchEnvironment, extraArgs); err != nil {
 			return err
@@ -1844,7 +1844,7 @@ func runNew(params *NewParams) error {
 	{
 		var launchEnvironment []sandboxpolicy.EnvironmentEntry
 		if launchSandbox != nil {
-			launchEnvironment = launchSandbox.Effective.Environment
+			launchEnvironment = sandboxpolicy.EnvironmentForLaunch(launchSandbox)
 		}
 		if err := ValidateCopilotAPIFolderTrust(
 			h, params.CopilotAPI, params.TrustDir,
@@ -1857,7 +1857,7 @@ func runNew(params *NewParams) error {
 	if params.TrustDir {
 		var launchEnvironment []sandboxpolicy.EnvironmentEntry
 		if launchSandbox != nil {
-			launchEnvironment = launchSandbox.Effective.Environment
+			launchEnvironment = sandboxpolicy.EnvironmentForLaunch(launchSandbox)
 		}
 		trustEnv := launchModelEnvironment(launchEnvironment)
 		if configDir, ok := additionalEnv["CLAUDE_CONFIG_DIR"]; ok {
@@ -2100,7 +2100,7 @@ func runNew(params *NewParams) error {
 	// the Copilot sandbox baseline uses, for the same reason.
 	var copilotGateEnvironment []sandboxpolicy.EnvironmentEntry
 	if launchSandbox != nil {
-		copilotGateEnvironment = launchSandbox.Effective.Environment
+		copilotGateEnvironment = sandboxpolicy.EnvironmentForLaunch(launchSandbox)
 	}
 	if err := harness.ValidateCopilotAddDirGrants(
 		h.Name, cwd,
@@ -2240,7 +2240,7 @@ func runNew(params *NewParams) error {
 	}
 	var versionEnvironment []sandboxpolicy.EnvironmentEntry
 	if effectiveSandbox != nil {
-		versionEnvironment = effectiveSandbox.Effective.Environment
+		versionEnvironment = sandboxpolicy.EnvironmentForLaunch(effectiveSandbox)
 	}
 	if err := verifyCodexAppServerLaunchVersion(
 		params, versionProbeExecutable, cwd, versionEnvironment); err != nil {
@@ -3031,7 +3031,7 @@ func authoredPaneCommandSecrets(snapshot *sandboxpolicy.Snapshot) PaneCommandSec
 		return PaneCommandSecrets{}
 	}
 	var secrets PaneCommandSecrets
-	for _, entry := range snapshot.Effective.Environment {
+	for _, entry := range sandboxpolicy.EnvironmentForLaunch(snapshot) {
 		if len(entry.Value) > authoredSecretMinLen {
 			secrets.Values = append(secrets.Values, entry.Value)
 		}
@@ -3042,11 +3042,12 @@ func authoredPaneCommandSecrets(snapshot *sandboxpolicy.Snapshot) PaneCommandSec
 }
 
 func sandboxSnapshotEnvironment(snapshot *sandboxpolicy.Snapshot) map[string]string {
-	if snapshot == nil || len(snapshot.Effective.Environment) == 0 {
+	entries := sandboxpolicy.EnvironmentForLaunch(snapshot)
+	if len(entries) == 0 {
 		return nil
 	}
-	out := make(map[string]string, len(snapshot.Effective.Environment))
-	for _, entry := range snapshot.Effective.Environment {
+	out := make(map[string]string, len(entries))
+	for _, entry := range entries {
 		out[entry.Name] = entry.Value
 	}
 	return out
@@ -3122,7 +3123,7 @@ func sandboxLaunchContractReadDirs(snapshot *sandboxpolicy.Snapshot, candidates 
 	// Agent-owned directories are materialized by agentd and exported by name;
 	// their absolute paths ride in the effective environment.
 	for _, name := range snapshot.Effective.AgentDirectories {
-		for _, entry := range snapshot.Effective.Environment {
+		for _, entry := range sandboxpolicy.EnvironmentForLaunch(snapshot) {
 			if entry.Name == name {
 				all = append(all, entry.Value)
 			}

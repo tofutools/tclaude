@@ -147,6 +147,7 @@ function GroupMenuItems({ group, members, snapshot, actions }) {
     ? (pinned ? 'Quick options are pinned open for this party — click to let its enchanted header chips fold again.' : "Pin this party's quick options open so its enchanted header chips stay expanded.")
     : (pinned ? 'Quick options are pinned open for this group — its header chips stay expanded even though auto-fold is on. Click to let them fold to icons again.' : "Pin this group's quick options open — its header chips stay expanded (not folded to icons) even while auto-fold is on. Click to fold them with the rest.");
   return html`
+    <${MenuButton} ...${shared} data-act="group-settings" title="Edit directory, startup context, spawn defaults, environment, policies, and persistent link in one place" regular="⚙ settings…" wizard="⚙ party settings…" />
     <${MenuButton} ...${shared} data-act="add-member" title=${wizardMode ? 'Invite an existing conversation to become a familiar in this party' : 'Add an existing conversation to this group'} regular="+ add member" wizard="+ add familiar" onClick=${(event) => {
       event.preventDefault();
       event.stopPropagation();

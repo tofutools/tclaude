@@ -33,6 +33,10 @@ export function openGroupAttachmentDialog({ group, url, attachmentLabel }) {
   return requireController().openGroupAttachment({ group, url, attachmentLabel });
 }
 
+export function openGroupSettingsDialog({ group }) {
+	return requireController().openGroupSettings({ group });
+}
+
 export function openPresetCloneDialog(options) {
   return requireController().openPresetClone(options);
 }

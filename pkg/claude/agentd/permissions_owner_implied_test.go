@@ -26,7 +26,7 @@ func TestPermissionRegistry_OwnerImpliedSet(t *testing.T) {
 		PermGroupsMembersRemoteControl, PermGroupsMembersInboxWatch,
 		PermGroupsMembersSpawn, PermGroupsOwnersManage, PermGroupsRename,
 		PermGroupsSettingsDescription, PermGroupsSettingsDefaultDir,
-		PermGroupsSettingsDefaultContext, PermGroupsSettingsDefaultProfile,
+		PermGroupsSettingsDefaultContext, PermGroupsSettingsEnvironment, PermGroupsSettingsDefaultProfile,
 		PermGroupsSettingsMaxMembers, PermGroupsSettingsNotifications,
 		PermGroupsSettingsRemoteControlPolicy,
 		PermGroupsSettingsMemberPermissions, PermGroupsSettingsOwnerScopes,

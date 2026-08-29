@@ -720,6 +720,7 @@ func buildRhythmsFromJSON(in []rhythmJSON) ([]db.Rhythm, *spawnFailure) {
 // spawnParams.
 type templateAgentLaunch struct {
 	SpawnProfile string
+	Environment  []sandboxpolicy.EnvironmentEntry
 	Harness      string
 	Model        string
 	Effort       string
@@ -1442,6 +1443,11 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	if ctxNote != "" {
 		notes = append(notes, ctxNote)
 	}
+	allEnvironmentTiers := append(append([]launchProfileTier(nil), tiers...), defaultTiers...)
+	environment, envErr := resolveCommonLaunchEnvironment(g, allEnvironmentTiers, nil)
+	if envErr != nil {
+		return failed(&spawnFailure{http.StatusBadRequest, "invalid_environment", envErr.Error()})
+	}
 	// Codex sandbox cwd-safety: a writable Codex sandbox confines writes to the
 	// cwd subtree, so a cwd at/above $HOME would expose ~/.tclaude / ~/.codex /
 	// ~/.claude. Refuse per-agent here, mirroring handleGroupSpawn's guard.
@@ -1452,6 +1458,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	}
 
 	return templateAgentLaunch{
+		Environment:            environment,
 		Harness:                h.Name,
 		Model:                  model,
 		Effort:                 effort,
@@ -4272,6 +4279,11 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 	if out.ContextFeatures == nil {
 		out.ContextFeatures = prev.ContextFeatures
 	}
+	// A template-local environment is curated launch configuration; no session
+	// trace can reconstruct which profile tier authored it, so carry it forward.
+	if out.Environment == nil {
+		out.Environment = append([]sandboxpolicy.EnvironmentEntry(nil), prev.Environment...)
+	}
 	// The window is observable too, but "" is ambiguous here (a member that pins
 	// nothing and a member that could not be traced both read ""), so a blank
 	// falls back to the template's previous value like Approval does rather than
@@ -4321,7 +4333,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
 		out.SSHWorkaround == nil && out.FetchLatestWorktree == nil &&
 		out.CopilotAPI == nil && out.CodexAppServer == nil && out.FastMode == nil &&
-		len(out.ContextFeatures) == 0 &&
+		len(out.ContextFeatures) == 0 && len(out.Environment) == 0 &&
 		out.IsOwner == nil && len(out.PermissionOverrides) == 0 {
 		return nil, drop
 	}

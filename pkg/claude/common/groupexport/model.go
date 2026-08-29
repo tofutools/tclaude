@@ -15,12 +15,17 @@
 // the bytes on disk — phase 1 ships a zip container.
 package groupexport
 
+import "github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+
 // FormatVersion is the current group-export manifest format version. It
 // is written into every export and checked on import: an export whose
 // FormatVersion the running binary does not recognise is refused rather
 // than mishandled (see container.go). Bump this on any breaking change
 // to the Export shape; the export format is meant to live in source
 // control, so forward-incompatible changes must be detectable.
+//
+// v5 adds the group's common spawn environment. Older readers must reject v5
+// rather than silently dropping environment inherited by imported spawns.
 //
 // v4 adds scope_json to group, permanent, and sudo permission grants. Older
 // readers must reject v4 rather than silently dropping a scope and widening
@@ -36,7 +41,7 @@ package groupexport
 // still does imports fine — the importer reads its legacy default_model and
 // synthesizes a default spawn profile from it (see db.ImportGroup), so the
 // older export's effective spawn default does not silently regress.
-const FormatVersion = 4
+const FormatVersion = 5
 
 // Export is the complete, format-agnostic, in-memory representation of
 // one per-group export.
@@ -95,11 +100,12 @@ type Export struct {
 // on import) and default_cwd (a source path — reset to the import
 // target).
 type Group struct {
-	Descr           string            `json:"descr"`
-	DefaultContext  string            `json:"default_context"`
-	AttachmentURL   string            `json:"attachment_url,omitempty"`
-	AttachmentLabel string            `json:"attachment_label,omitempty"`
-	Permissions     []GroupPermission `json:"permissions,omitempty"`
+	Descr           string                           `json:"descr"`
+	DefaultContext  string                           `json:"default_context"`
+	Environment     []sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
+	AttachmentURL   string                           `json:"attachment_url,omitempty"`
+	AttachmentLabel string                           `json:"attachment_label,omitempty"`
+	Permissions     []GroupPermission                `json:"permissions,omitempty"`
 	// DefaultModel is LEGACY / import-only (JOH-220). The vestigial
 	// per-group default_model column was dropped, so a current export
 	// never writes this field — CollectGroupExport leaves it "" and

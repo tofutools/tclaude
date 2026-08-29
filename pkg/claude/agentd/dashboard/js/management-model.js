@@ -152,6 +152,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null, c
     initial_message: seed?.initial_message || '', sync_worktree: triValue(seed?.sync_worktree),
     fetch_latest_worktree: triValue(seed?.fetch_latest_worktree),
     startup_context: seed?.startup_context || '',
+		environment: (seed?.environment || []).map((entry) => ({ name: entry.name || '', value: entry.value || '' })),
     auto_focus: triValue(seed?.auto_focus), include_group_default_context: triValue(seed?.include_group_default_context),
     is_owner: triValue(seed?.is_owner), permission_overrides: { ...(seed?.permission_overrides || {}) },
     context_features: { ...(seed?.context_features || {}) },
@@ -167,6 +168,7 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
     descr: draft.descr.trim(),
     initial_message: draft.initial_message, disabled: !!draft.disabled,
     startup_context: draft.startup_context,
+		environment: (draft.environment || []).map((entry) => ({ name: String(entry.name || '').trim(), value: String(entry.value || '') })).filter((entry) => entry.name),
     operator_only: !!draft.operator_only,
   };
   if (draft.disabled_reason.trim()) body.disabled_reason = draft.disabled_reason.trim();

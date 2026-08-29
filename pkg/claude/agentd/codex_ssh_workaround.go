@@ -170,6 +170,7 @@ func configureCodexSSHWorkaroundDeclaration(snapshot sandboxpolicy.Snapshot, ena
 	configured := sandboxpolicy.NewSnapshot(effective, snapshot.Applied)
 	configured.ResolutionGroupID = snapshot.ResolutionGroupID
 	configured.ProfilesOmitted = snapshot.ProfilesOmitted
+	configured.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironment...)
 	return sandboxpolicy.RevalidateSnapshot(configured)
 }
 
@@ -264,6 +265,8 @@ func populateCodexSSHWorkaround(snapshot sandboxpolicy.Snapshot) (sandboxpolicy.
 	})
 	populated := sandboxpolicy.NewSnapshot(effective, snapshot.Applied)
 	populated.ResolutionGroupID = snapshot.ResolutionGroupID
+	populated.ProfilesOmitted = snapshot.ProfilesOmitted
+	populated.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironment...)
 	return sandboxpolicy.RevalidateSnapshot(populated)
 }
 

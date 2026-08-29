@@ -187,6 +187,8 @@ func materializeAgentDirectories(snapshot sandboxpolicy.Snapshot, launchKey stri
 	addAgentDirectoryWriteGrants(&effective, agentDirsMountParentEnabled(), bindings)
 	materialized := sandboxpolicy.NewSnapshot(effective, snapshot.Applied)
 	materialized.ResolutionGroupID = snapshot.ResolutionGroupID
+	materialized.ProfilesOmitted = snapshot.ProfilesOmitted
+	materialized.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironment...)
 	validated, err := sandboxpolicy.RevalidateSnapshot(materialized)
 	if err != nil {
 		cleanup()
@@ -324,6 +326,8 @@ func reconcileAgentDirectoriesForResume(
 	addAgentDirectoryWriteGrants(&effective, agentDirsMountParentEnabled(), bindings)
 	resumed := sandboxpolicy.NewSnapshot(effective, current.Applied)
 	resumed.ResolutionGroupID = current.ResolutionGroupID
+	resumed.ProfilesOmitted = current.ProfilesOmitted
+	resumed.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), current.LaunchEnvironment...)
 	return sandboxpolicy.RevalidateSnapshot(resumed)
 }
 

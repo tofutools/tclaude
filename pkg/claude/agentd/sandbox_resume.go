@@ -102,6 +102,11 @@ func resolveResumeSandboxPolicy(
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, nil
 	}
 	current := *resolved
+	// Group/profile/per-spawn environment is birth-time launch configuration,
+	// unlike the mutable sandbox registry that resume intentionally refreshes.
+	// Preserve the original resolved values across restart, wake, reincarnate,
+	// and every other relaunch using this boundary.
+	current.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), previous.LaunchEnvironment...)
 	sshWorkaround = sshWorkaround && codexSSHWorkaroundApplies(
 		harnessName, harnessBuiltinMode, sandboxImplementation, &current)
 	current, err = configureCodexSSHWorkaroundDeclaration(current, sshWorkaround)

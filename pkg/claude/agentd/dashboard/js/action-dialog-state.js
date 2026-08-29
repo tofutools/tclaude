@@ -70,6 +70,9 @@ export function createActionDialogState() {
     openGroupAttachment({ group, url = '', attachmentLabel = '' }) {
       return !!open({ kind: 'group-attachment', group, url, attachmentLabel });
     },
+		openGroupSettings({ group }) {
+			return !!open({ kind: 'group-settings', group });
+		},
     openPresetClone({ kind, kindWizard, source, create }) {
       return !!open({ kind: 'preset-clone', presetKind: kind, kindWizard, source, create });
     },

@@ -45,6 +45,10 @@ The flags that matter most:
   toggles (see [Harnesses](harnesses.md)). `--profile` pre-fills all of
   these from a saved spawn profile — with a profile, usually no other
   launch flag is needed.
+- **Environment**: repeat `--env NAME=value` for one-off process variables.
+  Values may contain `=` and commas. These are ordinary configuration, not a
+  secret store: they are visible in the dashboard and persisted with the
+  agent's launch record.
 - **Worktree**: `--worktree <branch>` creates or reuses a git worktree on
   that branch and spawns the agent into it; `--worktree-base` picks the
   branch it is cut from; `--worktree-repo` covers the monorepo case — the
@@ -75,6 +79,17 @@ resolved independently, highest tier first:
 3. the group's default spawn profile
 4. the global default spawn profile
 5. the harness's own default
+
+Environment variables use name-by-name overlay precedence, lowest to highest:
+sandbox profile, group, global default spawn profile, group default spawn
+profile, explicitly selected spawn profile, and explicit `--env` / spawn-dialog
+values. A higher tier replaces only matching names. Reserved launch-control
+names (`HOME`, `PATH`, `TCLAUDE_*`, `CODEX_*`, and similar) are rejected.
+
+The resolved common environment is birth-time configuration. It is frozen on
+the agent rather than re-read from mutable groups or profiles, so stop/resume,
+restart, clone, and reincarnate keep the original values. A new spawn observes
+subsequent group or profile edits.
 
 The harness resolves through the full chain *first*; the other fields then
 validate against it. An incompatible explicit flag is a loud error; an

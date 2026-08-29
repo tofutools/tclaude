@@ -2390,8 +2390,9 @@ func resumeLaunchCmdWithStackedProof(
 		}
 		effectiveSandbox = &validated
 		effectiveProfile = validated.Effective
-		shellEnvironment = make(map[string]string, len(validated.Effective.Environment))
-		for _, entry := range validated.Effective.Environment {
+		launchEnvironment := sandboxpolicy.EnvironmentForLaunch(&validated)
+		shellEnvironment = make(map[string]string, len(launchEnvironment))
+		for _, entry := range launchEnvironment {
 			resumeEnv[entry.Name] = entry.Value
 			shellEnvironment[entry.Name] = entry.Value
 		}

@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // TestInlineProfileJSONCoversEveryLaunchField is a STRUCTURAL guard, not a
@@ -51,6 +52,15 @@ func TestInlineProfileJSONCoversEveryLaunchField(t *testing.T) {
 				"stored. Add it to the struct AND to inlineProfileToJSON/inlineProfileFromJSON, "+
 				"or add it to this test's exempt list with a reason.", name)
 	}
+}
+
+func TestInlineProfileRoundTripsEnvironment(t *testing.T) {
+	want := []sandboxpolicy.EnvironmentEntry{{Name: "TEAM", Value: "platform"}}
+	encoded := inlineProfileToJSON(&SpawnProfile{Environment: want})
+	require.NotEmpty(t, encoded)
+	decoded := inlineProfileFromJSON(encoded)
+	require.NotNil(t, decoded)
+	assert.Equal(t, want, decoded.Environment)
 }
 
 // TestInlineProfileRoundTripsCopilotDrive pins the tri-state specifically: the
