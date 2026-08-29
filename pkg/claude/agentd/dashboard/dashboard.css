@@ -7219,6 +7219,21 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   padding: 4px 10px; cursor: pointer;
 }
 .sbx-add-row:hover { background: #1c2330; border-color: #3a4553; color: #c9d1d9; }
+/* Keep explanatory copy available without permanently adding a paragraph
+   below compact add-row controls. The wrapper anchors the disclosure to the
+   whole control pair, so its panel can use the dialog column's useful width. */
+.sbx-add-row-help {
+  align-self: flex-start; display: inline-flex; align-items: stretch; gap: 6px;
+  position: relative;
+}
+.sbx-add-row-help .spawn-field-help-trigger {
+  flex: 0 0 24px; width: 24px; font-size: 11px; line-height: 1;
+}
+.sbx-add-row-help .spawn-field-help-trigger[aria-expanded="true"] + .spawn-field-description,
+.sbx-add-row-help .spawn-field-description:focus {
+  top: calc(100% + 4px); bottom: auto; left: 0; right: auto;
+  width: min(32rem, calc(100vw - 64px));
+}
 .sbx-missing {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 7px 9px; border: 1px solid rgba(210, 153, 34, 0.4); border-radius: 4px;
