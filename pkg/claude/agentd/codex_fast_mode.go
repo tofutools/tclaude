@@ -138,7 +138,7 @@ func codexFastModeProbeBoundary(
 		return nil, "", nil
 	}
 	if sess.EffectiveSandbox != nil {
-		environment = append(environment, sess.EffectiveSandbox.Effective.Environment...)
+		environment = append(environment, sandboxpolicy.EnvironmentForLaunch(sess.EffectiveSandbox)...)
 	}
 	relaunch, relaunchErr := db.AgentRelaunchProfileForConv(sess.ConvID)
 	if relaunchErr != nil {

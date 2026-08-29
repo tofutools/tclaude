@@ -117,7 +117,7 @@ Promote also reinstates a retired agent. Cross-agent promotion is gated
 
 A group is the **allow-list of who can talk to whom**, plus shared
 settings: startup context, a default directory, a default spawn profile, a
-member cap. Reads (`ls`, `members`, `owners`) are open to any agent;
+common spawn environment, and a member cap. Reads (`ls`, `members`, `owners`) are open to any agent;
 mutations gate on `groups.*` permission slugs.
 
 ```bash
@@ -130,7 +130,7 @@ tclaude agent groups members myteam
 (`--member name=..,role=..,descr=..,cwd=..`). Beyond the roster verbs
 (`add`, `remove`, `update-member`, `rename`, `rm`), groups carry a family
 of settings verbs — `set-context`, `set-default-dir`,
-`set-default-profile`, `set-descr`, `set-max-members`,
+`set-default-profile`, `set-environment`, `set-descr`, `set-max-members`,
 `set-notifications`, `set-owner-scopes`, `set-remote-control` — plus
 `archive`/`unarchive`, `clone`, bulk `stop`/`resume`/`retire`, `rebrief`,
 `export`/`import` (human-only), persistent `attachment` reference links,
@@ -160,6 +160,20 @@ shared context that is delivered as part of every spawned member's startup
 briefing — the standing brief every member of the team should start with.
 A single spawn can opt out with `--no-group-context`, and spawn profiles
 carry an `include_group_default_context` field.
+
+### Group spawn environment
+
+The dashboard's consolidated **Group settings** dialog edits the default
+directory, startup context, default spawn and sandbox profiles, environment,
+policies, and persistent link together. The CLI equivalent for environment is:
+
+```bash
+tclaude agent groups set-environment myteam \
+  --env APP_ENV=development --env FEATURE_FLAG=on
+```
+
+Omit every `--env` to clear the group environment. Resolution lives in the
+daemon, so the same settings reach dashboard, CLI, and agent-to-agent spawns.
 
 ### Default directory and auto-join
 

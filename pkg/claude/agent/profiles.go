@@ -13,6 +13,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/common"
@@ -95,7 +96,8 @@ type profileJSON struct {
 	// SSHWorkaround is the Git-over-SSH compatibility default. nil leaves
 	// the launch default in place; false explicitly opts out. The launch applies
 	// it only to an ownership-isolating sandbox shape that needs it.
-	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
+	SSHWorkaround *bool                            `json:"ssh_workaround,omitempty"`
+	Environment   []sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
 
 	// Identity / enrollment fields.
 	AgentName      string   `json:"agent_name,omitempty"`

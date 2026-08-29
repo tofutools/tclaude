@@ -10,6 +10,12 @@ import (
 	"time"
 )
 
+// SnapshotVersion 13 adds LaunchEnvironment, the non-authority process
+// environment resolved from group, spawn-profile, and per-spawn settings.
+// Keeping it outside Effective prevents those convenience defaults from
+// becoming sandbox lineage authority while still freezing them across every
+// lifecycle relaunch.
+//
 // SnapshotVersion 12 adds the harness-config access posture, whose omitted
 // value now MEANS the read-only floor rather than "no opinion". An older
 // binary must reject such a snapshot rather than read the absent field as its
@@ -27,7 +33,7 @@ import (
 // bump preserved the fail-closed downgrade property, where an older binary
 // rejects a newer snapshot rather than ignoring a marker it does not
 // understand. Version 5 removed the retired read-baseline mechanism (TCL-623).
-const SnapshotVersion = 12
+const SnapshotVersion = 13
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -451,6 +457,10 @@ type Snapshot struct {
 	ResolutionGroupID int64            `json:"resolution_group_id,omitempty"`
 	Effective         EffectiveProfile `json:"effective"`
 	Applied           []AppliedProfile `json:"applied"`
+	// LaunchEnvironment is merged into the child process after the sandbox
+	// profile environment. It is immutable launch configuration, not sandbox
+	// authority, so RequireContained intentionally does not inspect it.
+	LaunchEnvironment []EnvironmentEntry `json:"launch_environment,omitempty"`
 	// UnixSocketMaterialization is launch-derived, not authored authority. It
 	// freezes the one filesystem observation shared by disclosure and the
 	// target adapter; every fresh launch replaces it.
@@ -529,6 +539,8 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.Provenance.ResourceCPU = nil
 	out := NewSnapshot(effective, in.Applied)
 	out.ResolutionGroupID = in.ResolutionGroupID
+	out.ProfilesOmitted = in.ProfilesOmitted
+	out.LaunchEnvironment = append([]EnvironmentEntry(nil), in.LaunchEnvironment...)
 	return out
 }
 
@@ -560,6 +572,16 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 		len(in.Effective.PreLaunch) > 0 ||
 		in.UnixSocketMaterialization != nil) {
 		return Snapshot{}, fmt.Errorf("omitted sandbox-profile snapshot contains profile values")
+	}
+	launchEnvironment, err := normalizeEnvironment(in.LaunchEnvironment)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("revalidate launch environment: %w", err)
+	}
+	if !slices.Equal(launchEnvironment, in.LaunchEnvironment) {
+		return Snapshot{}, fmt.Errorf("launch environment changed since resolution")
+	}
+	if _, err := MergeEnvironment(in.Effective.Environment, launchEnvironment); err != nil {
+		return Snapshot{}, fmt.Errorf("revalidate combined process environment: %w", err)
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
 		Name:                    "effective-sandbox-snapshot",
@@ -668,6 +690,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	out := NewSnapshot(in.Effective, in.Applied)
 	out.ResolutionGroupID = in.ResolutionGroupID
 	out.ProfilesOmitted = in.ProfilesOmitted
+	out.LaunchEnvironment = append([]EnvironmentEntry(nil), in.LaunchEnvironment...)
 	out.UnixSocketMaterialization = cloneUnixSocketMaterialization(
 		in.UnixSocketMaterialization)
 	return out, nil
@@ -709,12 +732,29 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	// strictly narrows what the agent may write, so it cannot widen anything a
 	// human already sanctioned, and no live agent is stranded.
 	// TestEverySnapshotVersionUpToCurrentIsAccepted pins that.
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, SnapshotVersion:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:
 		return Snapshot{}, fmt.Errorf("unsupported sandbox snapshot version %d", in.Version)
 	}
+}
+
+// EnvironmentForLaunch combines sandbox-profile and common launch entries.
+// Common launch configuration wins by name and is already frozen in the
+// snapshot, so relaunch callers do not need to consult mutable registries.
+func EnvironmentForLaunch(snapshot *Snapshot) []EnvironmentEntry {
+	if snapshot == nil {
+		return nil
+	}
+	merged, err := MergeEnvironment(snapshot.Effective.Environment, snapshot.LaunchEnvironment)
+	if err != nil {
+		// Authority-use boundaries call RevalidateSnapshot first. Returning nil
+		// keeps this convenience helper fail-closed if a caller violates that
+		// contract rather than launching with a partially merged environment.
+		return nil
+	}
+	return merged
 }
 
 // FilesystemForLaunch returns the rules safe to hand to a harness now. Missing

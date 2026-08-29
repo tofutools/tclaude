@@ -482,7 +482,7 @@ func planSandboxProfileAccessForLaunch(
 		// posture verified whatever the network policy is, or a host-open
 		// tclaude-layer spawn would silently stack two filesystem boundaries.
 		if err := session.ValidateTclaudeLayerHarnessPosture(
-			h, snapshot.Effective.Environment, modelContext.ExtraArgs,
+			h, sandboxpolicy.EnvironmentForLaunch(snapshot), modelContext.ExtraArgs,
 		); err != nil {
 			return nil, sandboxCapabilitySpawnFailure(
 				err, harness.SandboxCapabilityCopilotInnerSandbox)

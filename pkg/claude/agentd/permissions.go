@@ -312,6 +312,12 @@ var permissionRegistry = []PermSlug{
 		Description:  "Set or clear a group's shared startup context (tclaude agent groups set-context)",
 	},
 	{
+		Slug:         PermGroupsSettingsEnvironment,
+		OwnerImplied: true,
+		ScopeDims:    []ScopeDim{ScopeDimGroup},
+		Description:  "Set or clear a group's common spawn environment",
+	},
+	{
 		Slug:        PermGroupsSettingsDefaultSpawnTarget,
 		Description: "Make or unmake a group the default spawn target (tclaude agent groups set-default)",
 	},

@@ -293,6 +293,21 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     ? launchDefaultsAnswer.value
     : null;
   const view = spawnCapabilityView(draft, context, launchDefaults?.implementation);
+	const effectiveEnvironment = useMemo(() => {
+		const byName = new Map();
+		const add = (entries, source) => (entries || []).forEach((entry) => {
+			if (entry?.name) byName.set(entry.name, { ...entry, source });
+		});
+		const group = (context.groups || []).find((entry) => entry.name === draft.group);
+		add(group?.environment, `group ${draft.group}`);
+		const handles = [actions.dashboardDefaultProfile(), group?.default_profile, draft.profile].filter(Boolean);
+		for (const handle of handles) {
+			const profile = findSpawnProfile(profiles, handle);
+			add(profile?.environment, `profile ${profile?.name || handle}`);
+		}
+		add(draft.environment, 'this spawn');
+		return [...byName.values()].sort((left, right) => left.name.localeCompare(right.name));
+	}, [draft.group, draft.profile, draft.environment, context.groups, profiles]);
   const dirty = spawnDraftIsDirty(draft, baseline, attachments.length);
   const nameHint = spawnNameHint(draft.name, context.normalizeNames);
   const permissionsLabel = spawnPermissionIndicator(draft.permissionOverrides);
@@ -905,6 +920,8 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         placeholder="optional — sets /rename on the new pane" autocomplete="off" spellcheck="false" />
       <div id="agent-spawn-name-hint" class=${`spawn-field-hint${nameHint.warn ? ' warn' : ''}`}>${nameHint.text}</div>
     </label>
+		<div class="cron-create-row" id="agent-spawn-environment-row"><span class="cron-create-label">Environment</span><div class="cron-create-target"><div class="sbx-rows">${(draft.environment || []).map((row, index) => html`<div key=${index} class="sbx-row sbx-environment-row"><input class="sbx-env-name" value=${row.name || ''} disabled=${busy} placeholder="NAME" onInput=${(event) => update('environment', draft.environment.map((entry, rowIndex) => rowIndex === index ? { ...entry, name: event.currentTarget.value } : entry))}/><input class="sbx-env-value" value=${row.value || ''} disabled=${busy} placeholder="value" onInput=${(event) => update('environment', draft.environment.map((entry, rowIndex) => rowIndex === index ? { ...entry, value: event.currentTarget.value } : entry))}/><button type="button" disabled=${busy} onClick=${() => update('environment', draft.environment.filter((_, rowIndex) => rowIndex !== index))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" disabled=${busy} onClick=${() => update('environment', [...(draft.environment || []), { name: '', value: '' }])}>＋ add override</button><div class="muted">Explicit values override matching profile, group, and sandbox-profile variables. The resolved values are frozen for resume, restart, clone, and reincarnate.</div></div></div>
+		${effectiveEnvironment.length ? html`<div class="cron-create-row" id="agent-spawn-environment-preview"><span class="cron-create-label">Effective env</span><div class="cron-create-target"><div class="sbx-caps">${effectiveEnvironment.map((entry) => html`<div class="sbx-cap"><span class="sbx-cap-tag sbx-cap-env">${entry.name}</span><span class="sbx-cap-val" title=${entry.value}>${entry.value}</span><span class="muted">${entry.source}</span></div>`)}</div><div class="muted">Common configured values shown here; sandbox-profile variables are additionally resolved by the daemon at launch.</div></div></div>` : null}
     <label class="cron-create-row">
       <span class="cron-create-label">Initial msg</span>
       <textarea id="agent-spawn-init-msg" rows="4" value=${draft.initialMessage} disabled=${busy}

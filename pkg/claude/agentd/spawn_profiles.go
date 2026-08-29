@@ -10,6 +10,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -115,7 +116,8 @@ type spawnProfileJSON struct {
 	// StartupContext is profile-owned guidance injected into every resolved
 	// spawn's briefing. It is deliberately separate from InitialMessage, which
 	// is only a replaceable task default in the spawn dialog.
-	StartupContext string `json:"startup_context,omitempty"`
+	StartupContext string                           `json:"startup_context,omitempty"`
+	Environment    []sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
 
 	// Dialog toggles.
 	SyncWorktree               *bool `json:"sync_worktree,omitempty"`
@@ -173,6 +175,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		Descr:                      p.Descr,
 		InitialMessage:             p.InitialMessage,
 		StartupContext:             p.StartupContext,
+		Environment:                append([]sandboxpolicy.EnvironmentEntry(nil), p.Environment...),
 		SyncWorktree:               p.SyncWorktree,
 		FetchLatestWorktree:        p.FetchLatestWorktree,
 		AutoFocus:                  p.AutoFocus,
@@ -421,6 +424,10 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 	if err != nil {
 		return nil, &spawnFailure{http.StatusBadRequest, "invalid_context_features", err.Error()}
 	}
+	environment, err := sandboxpolicy.NormalizeEnvironment(body.Environment)
+	if err != nil {
+		return nil, &spawnFailure{http.StatusBadRequest, "invalid_environment", err.Error()}
+	}
 	roleRefs := body.RoleRefs
 	if len(roleRefs) == 0 && strings.TrimSpace(body.RoleRef) != "" {
 		roleRefs = []string{body.RoleRef}
@@ -479,6 +486,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		Descr:                      strings.TrimSpace(body.Descr),
 		InitialMessage:             im,
 		StartupContext:             startupContext,
+		Environment:                environment,
 		SyncWorktree:               body.SyncWorktree,
 		FetchLatestWorktree:        body.FetchLatestWorktree,
 		AutoFocus:                  body.AutoFocus,

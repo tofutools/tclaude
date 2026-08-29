@@ -76,14 +76,20 @@ func CollectGroupExport(name string) (*groupexport.Export, error) {
 	// default_model is intentionally NOT selected: the vestigial column was
 	// dropped (JOH-220), so a v2 export omits it. exp.Group.DefaultModel
 	// stays "" and is left out of the manifest (omitempty).
+	var environmentJSON string
 	if err := d.QueryRow(`
-		SELECT descr, default_context, attachment_url, attachment_label,
+		SELECT descr, default_context, environment_json, attachment_url, attachment_label,
 		       max_members, created_at, archived_at
 		FROM agent_groups WHERE id = ?`, g.ID).Scan(
 		&exp.Group.Descr, &exp.Group.DefaultContext,
+		&environmentJSON,
 		&exp.Group.AttachmentURL, &exp.Group.AttachmentLabel,
 		&exp.Group.MaxMembers, &groupCreatedAt, &groupArchivedAt); err != nil {
 		return nil, fmt.Errorf("collect group row: %w", err)
+	}
+	exp.Group.Environment, err = unmarshalEnvironmentColumn(environmentJSON)
+	if err != nil {
+		return nil, fmt.Errorf("collect group environment: %w", err)
 	}
 	exp.Group.CreatedAt = exportTimestamp(groupCreatedAt)
 	exp.Group.ArchivedAt = exportTimestamp(groupArchivedAt)
@@ -857,6 +863,10 @@ func (c *importCtx) backfillAgentCompanions() error {
 
 func (c *importCtx) group() error {
 	g := c.exp.Group
+	environmentJSON, err := marshalEnvironmentColumn(g.Environment)
+	if err != nil {
+		return fmt.Errorf("import: group environment: %w", err)
+	}
 	createdAt := g.CreatedAt
 	if createdAt == "" {
 		createdAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -867,11 +877,11 @@ func (c *importCtx) group() error {
 	// profile from it rather than resurrecting the column.
 	res, err := c.tx.Exec(`
 		INSERT INTO agent_groups
-			(name, descr, default_cwd, default_context, attachment_url,
+			(name, descr, default_cwd, default_context, environment_json, attachment_url,
 			 attachment_label, max_members, created_at, archived_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.plan.TargetName, g.Descr, c.plan.TargetCwd, g.DefaultContext,
-		g.AttachmentURL, g.AttachmentLabel, g.MaxMembers, requiredImportDBTime(createdAt), nullableDBTimeText(g.ArchivedAt))
+		environmentJSON, g.AttachmentURL, g.AttachmentLabel, g.MaxMembers, requiredImportDBTime(createdAt), nullableDBTimeText(g.ArchivedAt))
 	if err != nil {
 		return fmt.Errorf("import: create group: %w", err)
 	}

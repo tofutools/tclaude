@@ -111,8 +111,9 @@ type ResolvedSandboxPolicy struct {
 }
 
 func SummarizeSandboxPolicy(snapshot sandboxpolicy.Snapshot) *ResolvedSandboxPolicy {
-	environment := make([]string, 0, len(snapshot.Effective.Environment)+len(snapshot.Effective.AgentDirectories))
-	for _, entry := range snapshot.Effective.Environment {
+	launchEnvironment := sandboxpolicy.EnvironmentForLaunch(&snapshot)
+	environment := make([]string, 0, len(launchEnvironment)+len(snapshot.Effective.AgentDirectories))
+	for _, entry := range launchEnvironment {
 		environment = append(environment, entry.Name)
 	}
 	environment = append(environment, snapshot.Effective.AgentDirectories...)
@@ -186,6 +187,10 @@ func quoteName(name string) string { return `"` + name + `"` }
 // handleGroupSpawn decodes it. One type means the CLI and the
 // dashboard cannot drift in which fields the daemon understands.
 type SpawnRequest struct {
+	// Environment is the explicit per-spawn process environment. The daemon
+	// overlays it after sandbox-profile, group, and spawn-profile values, then
+	// freezes the result for every lifecycle relaunch.
+	Environment []sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
 	// AllowUnenforcedSandbox is the dashboard-only, fresh-spawn authorization
 	// to proceed when the selected implementation cannot enforce closed network
 	// access or every authored network deny entry. It is accepted only from the
@@ -725,16 +730,17 @@ func (r SpawnRequest) PermissionOverridesSpecified() bool { return r.permissionO
 // SpawnParams drives `tclaude agent spawn <group>`. The daemon does
 // the actual spawn + group-join; this struct just shapes the request.
 type SpawnParams struct {
-	Group          string `pos:"true" help:"Existing group to join the new agent into"`
-	Name           string `long:"name" short:"n" optional:"true" help:"Name for the new agent (e.g. 'reviewer'). Becomes its conversation title via /rename"`
-	Role           string `long:"role" short:"r" optional:"true" help:"Role tag for the new member (e.g. 'tech-lead')"`
-	RoleRef        string `long:"role-ref" optional:"true" help:"Behavioral guidance and default access from a saved role (see 'tclaude agent roles ls'); independent of --role's routing/display label"`
-	Descr          string `long:"descr" short:"d" optional:"true" help:"Short one-line description shown on the dashboard. Keep it terse — use --initial-message for the task brief"`
-	InitialMessage string `long:"initial-message" short:"m" optional:"true" help:"Task brief delivered to the new agent's inbox. Newlines are preserved — pass a full multi-line brief if you like"`
-	File           string `long:"file" short:"f" optional:"true" help:"Read the task brief from this file instead of --initial-message ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing briefs. Mutually exclusive with --initial-message; same 16384-byte cap"`
-	ReplyTo        string `long:"reply-to" optional:"true" help:"Whom the new agent's reply to its startup brief should reach (conv-id / prefix / title). Defaults to you when you are an agent; empty for a human-initiated spawn"`
-	Cwd            string `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
-	Timeout        string `long:"timeout" short:"t" optional:"true" help:"How long to wait for the new conv-id to materialise (e.g. 30s, 1m). Default 30s."`
+	Group          string   `pos:"true" help:"Existing group to join the new agent into"`
+	Name           string   `long:"name" short:"n" optional:"true" help:"Name for the new agent (e.g. 'reviewer'). Becomes its conversation title via /rename"`
+	Role           string   `long:"role" short:"r" optional:"true" help:"Role tag for the new member (e.g. 'tech-lead')"`
+	RoleRef        string   `long:"role-ref" optional:"true" help:"Behavioral guidance and default access from a saved role (see 'tclaude agent roles ls'); independent of --role's routing/display label"`
+	Descr          string   `long:"descr" short:"d" optional:"true" help:"Short one-line description shown on the dashboard. Keep it terse — use --initial-message for the task brief"`
+	InitialMessage string   `long:"initial-message" short:"m" optional:"true" help:"Task brief delivered to the new agent's inbox. Newlines are preserved — pass a full multi-line brief if you like"`
+	File           string   `long:"file" short:"f" optional:"true" help:"Read the task brief from this file instead of --initial-message ('-' reads stdin). Sidesteps shell quoting — best for long, multi-line, or backtick-containing briefs. Mutually exclusive with --initial-message; same 16384-byte cap"`
+	ReplyTo        string   `long:"reply-to" optional:"true" help:"Whom the new agent's reply to its startup brief should reach (conv-id / prefix / title). Defaults to you when you are an agent; empty for a human-initiated spawn"`
+	Cwd            string   `long:"cwd" short:"C" optional:"true" help:"Working directory for the new CC session (defaults to the caller's cwd)"`
+	Timeout        string   `long:"timeout" short:"t" optional:"true" help:"How long to wait for the new conv-id to materialise (e.g. 30s, 1m). Default 30s."`
+	Environment    []string `long:"env" optional:"true" help:"Process environment NAME=value. Repeatable; later sources override group/profile values. Values may contain '='."`
 
 	// Profile pre-fills the spawn fields from a saved spawn profile (JOH-210),
 	// the CLI twin of the dashboard's "Load from profile" picker. An explicit
@@ -929,7 +935,10 @@ func spawnCmd() *cobra.Command {
 			"\n\n" +
 			"Requires the `groups.members.spawn` permission (default: human-only).",
 		ParamEnrich: common.DefaultParamEnricher(),
-		InitFuncCtx: func(ctx *boa.HookContext, p *SpawnParams, _ *cobra.Command) error {
+		InitFuncCtx: func(ctx *boa.HookContext, p *SpawnParams, cmd *cobra.Command) error {
+			// Environment is a non-splitting StringArray: values may contain commas.
+			boa.GetParamT(ctx, &p.Environment).SetNoFlag(true)
+			cmd.Flags().StringArrayVar(&p.Environment, "env", nil, "Process environment NAME=value. Repeatable; values may contain commas or '='. Explicit values override profile and group values.")
 			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
 			boa.GetParamT(ctx, &p.Profile).SetAlternativesFunc(completeSpawnProfileNames)
@@ -1534,7 +1543,14 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		}
 	}
 
+	environment, err := parseEnvironmentFlags(p.Environment)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return nil, rcInvalidArg
+	}
+
 	req := SpawnRequest{
+		Environment:            environment,
 		Profile:                strings.TrimSpace(p.Profile),
 		SandboxProfile:         strings.TrimSpace(p.SandboxProfile),
 		OmitSandboxProfiles:    p.OmitSandboxProfiles,
@@ -1747,6 +1763,22 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 		fmt.Fprintf(stdout, "  Worktree: %s (branch %s)\n", wtPath, wt)
 	}
 	return &resp, rcOK
+}
+
+func parseEnvironmentFlags(values []string) ([]sandboxpolicy.EnvironmentEntry, error) {
+	entries := make([]sandboxpolicy.EnvironmentEntry, 0, len(values))
+	for _, raw := range values {
+		name, value, ok := strings.Cut(raw, "=")
+		if !ok {
+			return nil, fmt.Errorf("--env %q must use NAME=value", raw)
+		}
+		entries = append(entries, sandboxpolicy.EnvironmentEntry{Name: name, Value: value})
+	}
+	normalized, err := sandboxpolicy.NormalizeEnvironment(entries)
+	if err != nil {
+		return nil, fmt.Errorf("--env: %w", err)
+	}
+	return normalized, nil
 }
 
 // printResolvedLaunch prints the resolved harness/model/effort with provenance,

@@ -26,6 +26,7 @@ func TestDashboardAgentRestartReResolvesSandboxProfile(t *testing.T) {
 
 	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
 		"name": "worker", "sandbox_profile": "restart-rules",
+		"environment": []map[string]string{{"name": "BIRTH_VALUE", "value": "frozen"}},
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 	before, ok := f.World.SpawnSandboxPolicy(spawn.ConvID)
@@ -33,6 +34,7 @@ func TestDashboardAgentRestartReResolvesSandboxProfile(t *testing.T) {
 	require.NotNil(t, before)
 	require.Len(t, before.Effective.Environment, 1)
 	assert.Equal(t, "before", before.Effective.Environment[0].Value)
+	require.Equal(t, []db.SandboxEnvironmentEntry{{Name: "BIRTH_VALUE", Value: "frozen"}}, before.LaunchEnvironment)
 
 	profile, err := db.GetSandboxProfile("restart-rules")
 	require.NoError(t, err)
@@ -68,6 +70,8 @@ func TestDashboardAgentRestartReResolvesSandboxProfile(t *testing.T) {
 	require.Len(t, after.Effective.Environment, 1)
 	assert.Equal(t, "after", after.Effective.Environment[0].Value,
 		"restart should resolve the profile's current rules")
+	assert.Equal(t, []db.SandboxEnvironmentEntry{{Name: "BIRTH_VALUE", Value: "frozen"}}, after.LaunchEnvironment,
+		"restart must preserve birth-time group/profile/per-spawn environment")
 
 	snapshot := fetchDashSnapshot(t, mux)
 	group := groupInSnap(snapshot, "crew")

@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/paneinput"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -3339,7 +3340,8 @@ type groupSummary struct {
 	// back to (agent_groups.default_cwd); "" = none. It is a path on the
 	// operator's own filesystem and this listing is readable by every local
 	// caller, so it is served only to a human one — see handleGroups.
-	DefaultCwd string `json:"default_cwd,omitempty"`
+	DefaultCwd  string                           `json:"default_cwd,omitempty"`
+	Environment []sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
 	// DefaultSpawnGroup is the operator-selected tie-breaker used only when
 	// directory auto-join matches more than one active group.
 	DefaultSpawnGroup bool     `json:"default_spawn_group,omitempty"`
@@ -3460,8 +3462,10 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			}
 			attachment := groupAttachmentViewFor(g)
 			defaultCwd := ""
+			var environment []sandboxpolicy.EnvironmentEntry
 			if human {
 				defaultCwd = g.DefaultCwd
+				environment = append([]sandboxpolicy.EnvironmentEntry(nil), g.Environment...)
 			}
 			out = append(out, groupSummary{
 				Name:                    g.Name,
@@ -3474,6 +3478,7 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 				MaxMembers:              g.MaxMembers,
 				DefaultProfile:          g.DefaultProfile,
 				DefaultCwd:              defaultCwd,
+				Environment:             environment,
 				DefaultSpawnGroup:       g.DefaultSpawnGroup,
 				Permissions:             groupPermissions,
 				Archived:                g.IsArchived(),
@@ -3873,10 +3878,11 @@ func normalizeGroupDescr(s string) string {
 // write.
 func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
 	var body struct {
-		Descr             *string `json:"descr,omitempty"`
-		DefaultCwd        *string `json:"default_cwd,omitempty"`
-		DefaultContext    *string `json:"default_context,omitempty"`
-		DefaultSpawnGroup *bool   `json:"default_spawn_group,omitempty"`
+		Descr             *string                           `json:"descr,omitempty"`
+		DefaultCwd        *string                           `json:"default_cwd,omitempty"`
+		DefaultContext    *string                           `json:"default_context,omitempty"`
+		Environment       *[]sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
+		DefaultSpawnGroup *bool                             `json:"default_spawn_group,omitempty"`
 		// DefaultProfile names the spawn profile (JOH-210) whose launch fields
 		// fill blank spawn fields for this group's agents; "" clears it. *string
 		// so a caller can clear it by sending "" — distinct from omitting it.
@@ -3908,9 +3914,9 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 		writeError(w, http.StatusBadRequest, "json", err.Error())
 		return
 	}
-	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.DefaultSpawnGroup == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.Permissions == nil && body.OwnerScopes == nil {
+	if body.Descr == nil && body.DefaultCwd == nil && body.DefaultContext == nil && body.Environment == nil && body.DefaultSpawnGroup == nil && body.DefaultProfile == nil && body.MaxMembers == nil && body.NotifyEnabled == nil && body.RemoteControlPolicy == nil && body.Permissions == nil && body.OwnerScopes == nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg",
-			"nothing to update (expected descr, default_cwd, default_context, default_spawn_group, default_profile, max_members, notify_enabled, remote_control_policy, permissions and/or owner_scopes)")
+			"nothing to update (expected descr, default_cwd, default_context, environment, default_spawn_group, default_profile, max_members, notify_enabled, remote_control_policy, permissions and/or owner_scopes)")
 		return
 	}
 	required := make([]string, 0, 10)
@@ -3922,6 +3928,9 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 	}
 	if body.DefaultContext != nil {
 		required = append(required, PermGroupsSettingsDefaultContext)
+	}
+	if body.Environment != nil {
+		required = append(required, PermGroupsSettingsEnvironment)
 	}
 	if body.DefaultSpawnGroup != nil {
 		required = append(required, PermGroupsSettingsDefaultSpawnTarget)
@@ -3976,6 +3985,15 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			return
 		}
 		ownerScopes = canonical
+	}
+	var normalizedEnvironment []sandboxpolicy.EnvironmentEntry
+	if body.Environment != nil {
+		var err error
+		normalizedEnvironment, err = sandboxpolicy.NormalizeEnvironment(*body.Environment)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_environment", err.Error())
+			return
+		}
 	}
 	var normalizedPermissions []db.PermissionGrant
 	if body.Permissions != nil {
@@ -4082,6 +4100,19 @@ func handleGroupUpdate(w http.ResponseWriter, r *http.Request, g *db.AgentGroup)
 			return
 		}
 		resp["default_context"] = ctx
+	}
+
+	if body.Environment != nil {
+		n, err := db.SetAgentGroupEnvironment(g.Name, normalizedEnvironment)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		if n == 0 {
+			writeError(w, http.StatusNotFound, "not_found", "no such group")
+			return
+		}
+		resp["environment"] = normalizedEnvironment
 	}
 
 	if body.DefaultProfile != nil {

@@ -720,6 +720,7 @@ func buildRhythmsFromJSON(in []rhythmJSON) ([]db.Rhythm, *spawnFailure) {
 // spawnParams.
 type templateAgentLaunch struct {
 	SpawnProfile string
+	Environment  []sandboxpolicy.EnvironmentEntry
 	Harness      string
 	Model        string
 	Effort       string
@@ -1442,6 +1443,11 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	if ctxNote != "" {
 		notes = append(notes, ctxNote)
 	}
+	allEnvironmentTiers := append(append([]launchProfileTier(nil), tiers...), defaultTiers...)
+	environment, envErr := resolveCommonLaunchEnvironment(g, allEnvironmentTiers, nil)
+	if envErr != nil {
+		return failed(&spawnFailure{http.StatusBadRequest, "invalid_environment", envErr.Error()})
+	}
 	// Codex sandbox cwd-safety: a writable Codex sandbox confines writes to the
 	// cwd subtree, so a cwd at/above $HOME would expose ~/.tclaude / ~/.codex /
 	// ~/.claude. Refuse per-agent here, mirroring handleGroupSpawn's guard.
@@ -1452,6 +1458,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	}
 
 	return templateAgentLaunch{
+		Environment:            environment,
 		Harness:                h.Name,
 		Model:                  model,
 		Effort:                 effort,

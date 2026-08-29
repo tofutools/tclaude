@@ -15,6 +15,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/table"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -59,6 +60,7 @@ func groupsCmd() *cobra.Command {
 			groupsSetRemoteControlCmd(),
 			groupsSetOwnerScopesCmd(),
 			groupsSetContextCmd(),
+			groupsSetEnvironmentCmd(),
 			groupsSetMaxMembersCmd(),
 			groupsSetNotificationsCmd(),
 			groupsCloneCmd(),
@@ -97,18 +99,19 @@ func groupsLsCmd() *cobra.Command {
 }
 
 type groupSummary struct {
-	Name                    string `json:"name"`
-	Descr                   string `json:"descr,omitempty"`
-	AttachmentURL           string `json:"attachment_url,omitempty"`
-	AttachmentLabel         string `json:"attachment_label,omitempty"`
-	AttachmentLabelOverride string `json:"attachment_label_override,omitempty"`
-	Members                 int    `json:"members"`
-	Online                  int    `json:"online"`
-	MaxMembers              int    `json:"max_members,omitempty"`     // hard member cap; 0 = unlimited
-	DefaultProfile          string `json:"default_profile,omitempty"` // spawn profile whose launch fields fill blank spawn fields; "" = none
-	Archived                bool   `json:"archived,omitempty"`
-	NotifyMuted             bool   `json:"notify_muted,omitempty"`          // OS notifications switched off for this group's agents
-	RemoteControl           string `json:"remote_control_policy,omitempty"` // group remote-control policy: inherit | optin | deny (JOH-262)
+	Name                    string                           `json:"name"`
+	Descr                   string                           `json:"descr,omitempty"`
+	AttachmentURL           string                           `json:"attachment_url,omitempty"`
+	AttachmentLabel         string                           `json:"attachment_label,omitempty"`
+	AttachmentLabelOverride string                           `json:"attachment_label_override,omitempty"`
+	Members                 int                              `json:"members"`
+	Online                  int                              `json:"online"`
+	MaxMembers              int                              `json:"max_members,omitempty"`     // hard member cap; 0 = unlimited
+	DefaultProfile          string                           `json:"default_profile,omitempty"` // spawn profile whose launch fields fill blank spawn fields; "" = none
+	Environment             []sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
+	Archived                bool                             `json:"archived,omitempty"`
+	NotifyMuted             bool                             `json:"notify_muted,omitempty"`          // OS notifications switched off for this group's agents
+	RemoteControl           string                           `json:"remote_control_policy,omitempty"` // group remote-control policy: inherit | optin | deny (JOH-262)
 }
 
 func runGroupsLs(p *groupsLsParams, stdout, stderr io.Writer) int {
@@ -1740,6 +1743,64 @@ func runGroupsSetOwnerScopes(p *groupsSetOwnerScopesParams, stdin io.Reader, std
 		return rcOK
 	}
 	fmt.Fprintf(stdout, "%s: owner-grant constraints set to %s\n", resp.Group, rendered)
+	return rcOK
+}
+
+// --- groups set-environment ---
+
+type groupsSetEnvironmentParams struct {
+	Group       string   `pos:"true" help:"Group to configure"`
+	Environment []string `long:"env" optional:"true" help:"NAME=value entry. Repeatable; omit all entries to clear."`
+	AskHuman    string   `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout."`
+}
+
+func groupsSetEnvironmentCmd() *cobra.Command {
+	return boa.CmdT[groupsSetEnvironmentParams]{
+		Use:         "set-environment",
+		Short:       "Replace or clear a group's common spawn environment",
+		Long:        "Replace the environment inherited by fresh spawns in this group. Repeat --env NAME=value; omit --env to clear it. Existing agents retain the values frozen at their original spawn.",
+		ParamEnrich: common.DefaultParamEnricher(),
+		InitFuncCtx: func(ctx *boa.HookContext, p *groupsSetEnvironmentParams, cmd *cobra.Command) error {
+			boa.GetParamT(ctx, &p.Group).SetAlternativesFunc(completeGroupNames)
+			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(completeAskHumanDurations)
+			boa.GetParamT(ctx, &p.Environment).SetNoFlag(true)
+			cmd.Flags().StringArrayVar(&p.Environment, "env", nil, "NAME=value entry. Repeatable; values may contain commas or '='. Omit all entries to clear.")
+			return nil
+		},
+		RunFunc: func(p *groupsSetEnvironmentParams, _ *cobra.Command, _ []string) {
+			os.Exit(runGroupsSetEnvironment(p, os.Stdout, os.Stderr))
+		},
+	}.ToCobra()
+}
+
+func runGroupsSetEnvironment(p *groupsSetEnvironmentParams, stdout, stderr io.Writer) int {
+	if strings.TrimSpace(p.Group) == "" {
+		fmt.Fprintln(stderr, "Error: group name is required")
+		return rcInvalidArg
+	}
+	environment, err := parseEnvironmentFlags(p.Environment)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	if rc := RequireDaemonOrExit(stderr); rc != rcOK {
+		return rc
+	}
+	ask, err := ParseAskHuman(p.AskHuman)
+	if err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return rcInvalidArg
+	}
+	var resp struct {
+		Group       string                           `json:"group"`
+		Environment []sandboxpolicy.EnvironmentEntry `json:"environment"`
+	}
+	body := map[string]any{"environment": environment}
+	if err := DaemonRequest(http.MethodPatch, "/v1/groups/"+url.PathEscape(p.Group), body, &resp, DaemonOpts{AskHuman: ask}); err != nil {
+		fmt.Fprintf(stderr, "Error: %v\n", err)
+		return MapDaemonErrorToRC(err)
+	}
+	fmt.Fprintf(stdout, "%s: spawn environment set (%d variables)\n", resp.Group, len(resp.Environment))
 	return rcOK
 }
 

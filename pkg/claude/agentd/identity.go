@@ -386,6 +386,7 @@ const (
 	PermGroupsSettingsDescription         = "groups.settings.description"
 	PermGroupsSettingsDefaultDir          = "groups.settings.default-dir"
 	PermGroupsSettingsDefaultContext      = "groups.settings.default-context"
+	PermGroupsSettingsEnvironment         = "groups.settings.environment"
 	PermGroupsSettingsDefaultSpawnTarget  = "groups.settings.default-spawn-target"
 	PermGroupsSettingsDefaultProfile      = "groups.settings.default-profile"
 	PermGroupsSettingsMaxMembers          = "groups.settings.max-members"

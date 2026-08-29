@@ -4447,6 +4447,16 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			}
 		}
 	}
+	launchEnvironment, envErr := resolveCommonLaunchEnvironment(g, profileTiers, body.Environment)
+	if envErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_environment", envErr.Error())
+		return
+	}
+	if _, envErr := sandboxpolicy.MergeEnvironment(effectiveSandbox.Effective.Environment, launchEnvironment); envErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid_environment", envErr.Error())
+		return
+	}
+	effectiveSandbox.LaunchEnvironment = launchEnvironment
 	if fail := sandboxProfileCapabilityFailure(
 		h.Name, harnessBuiltinMode, &effectiveSandbox, body.SandboxImplementation); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
@@ -5587,6 +5597,25 @@ type launchProfileTier struct {
 	defaultTier bool
 }
 
+// resolveCommonLaunchEnvironment applies the process-environment precedence:
+// sandbox-profile values are merged later at process launch, while common
+// values resolve as group < global profile < group profile < named/inline
+// profile < explicit spawn. profileTiers arrives highest-first, so walk it in
+// reverse before applying the explicit tier.
+func resolveCommonLaunchEnvironment(g *db.AgentGroup, profileTiers []launchProfileTier, explicit []sandboxpolicy.EnvironmentEntry) ([]sandboxpolicy.EnvironmentEntry, error) {
+	tiers := make([][]sandboxpolicy.EnvironmentEntry, 0, len(profileTiers)+2)
+	if g != nil {
+		tiers = append(tiers, g.Environment)
+	}
+	for i := len(profileTiers) - 1; i >= 0; i-- {
+		if profileTiers[i].profile != nil {
+			tiers = append(tiers, profileTiers[i].profile.Environment)
+		}
+	}
+	tiers = append(tiers, explicit)
+	return sandboxpolicy.MergeEnvironment(tiers...)
+}
+
 func profileSource(prof *db.SpawnProfile, format func(string) string) string {
 	if prof == nil {
 		return ""
@@ -6058,6 +6087,13 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 				p.HarnessSource = tierSource
 			}
 		}
+	}
+	if p.EffectiveSandbox != nil && p.EffectiveSandbox.LaunchEnvironment == nil {
+		environment, err := resolveCommonLaunchEnvironment(g, tiers, nil)
+		if err != nil {
+			return &spawnFailure{http.StatusBadRequest, "invalid_environment", err.Error()}
+		}
+		p.EffectiveSandbox.LaunchEnvironment = environment
 	}
 
 	// Apply the chosen harness's SECURE launch defaults to any field still

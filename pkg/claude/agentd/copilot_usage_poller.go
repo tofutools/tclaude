@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
@@ -293,7 +294,7 @@ func liveCopilotSessions() ([]*db.SessionRow, bool) {
 // frozen launch environment wins whenever it names one.
 func copilotHomeForSession(sess *db.SessionRow) string {
 	if sess != nil && sess.EffectiveSandbox != nil {
-		for _, entry := range sess.EffectiveSandbox.Effective.Environment {
+		for _, entry := range sandboxpolicy.EnvironmentForLaunch(sess.EffectiveSandbox) {
 			if entry.Name != harness.CopilotHomeEnvVar {
 				continue
 			}

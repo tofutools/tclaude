@@ -285,6 +285,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	effective := sandboxpolicy.EffectiveProfile{}
 	if input.Snapshot != nil {
 		effective = input.Snapshot.Effective
+		effective.Environment = sandboxpolicy.EnvironmentForLaunch(input.Snapshot)
 		filesystem, err := sandboxpolicy.FilesystemForLaunch(effective)
 		if err != nil {
 			return TclaudeLayerLaunchSpec{}, fmt.Errorf("freeze tclaude-layer filesystem: %w", err)

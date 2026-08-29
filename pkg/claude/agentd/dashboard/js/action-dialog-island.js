@@ -508,6 +508,48 @@ function GroupAttachmentDialogGate({ descriptor, state, snapshot, actions, confi
   return html`<${TaskLinkDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
 }
 
+function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) {
+  const { requestClose, registerClose } = useGuardedOverlayClose();
+  const group = (snapshot?.value?.groups || []).find((item) => item.name === descriptor.group);
+  const initial = useMemo(() => ({
+    descr: group?.descr || '', defaultCwd: group?.default_cwd || '',
+    defaultContext: group?.default_context || '', defaultProfile: group?.default_profile || '',
+    sandboxProfile: group?.sandbox_profile || '',
+    environment: (group?.environment || []).map((entry) => ({ ...entry })),
+    maxMembers: String(group?.max_members || 0), notifyEnabled: group?.notify_enabled !== false,
+    remoteControlPolicy: group?.remote_control_policy || 'inherit',
+    attachmentURL: group?.attachment_url || '', attachmentLabel: group?.attachment_label_override || '',
+  }), [descriptor.launchID]);
+  const [values, setValues] = useState(initial);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const set = (key, value) => setValues((current) => ({ ...current, [key]: value }));
+  const dirty = JSON.stringify(values) !== JSON.stringify(initial);
+  const submit = async () => {
+    if (busy) return;
+    setBusy(true); setError('');
+    try { await actions.saveGroupSettings({ group: descriptor.group, values }, descriptor); }
+    catch (cause) { setError(errorMessage(cause)); }
+    finally { setBusy(false); }
+  };
+  return html`<${Overlay} id="group-settings-modal" labelledby="group-settings-title" onClose=${() => actions.close(descriptor)} onSubmitHotkey=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.group-settings">
+    <h3 id="group-settings-title">Group settings: ${descriptor.group}</h3>
+    <label class="cron-create-row"><span class="cron-create-label">Description</span><input value=${values.descr} onInput=${(event) => set('descr', event.currentTarget.value)}/></label>
+    <label class="cron-create-row"><span class="cron-create-label">Default dir</span><input value=${values.defaultCwd} placeholder="absolute path" spellcheck="false" onInput=${(event) => set('defaultCwd', event.currentTarget.value)}/></label>
+    <label class="cron-create-row"><span class="cron-create-label">Startup context</span><textarea rows="5" value=${values.defaultContext} onInput=${(event) => set('defaultContext', event.currentTarget.value)}></textarea></label>
+    <label class="cron-create-row"><span class="cron-create-label">Spawn profile</span><select value=${values.defaultProfile} onChange=${(event) => set('defaultProfile', event.currentTarget.value)}><option value="">— none —</option>${(snapshot?.value?.profiles || []).map((profile) => html`<option value=${profile.name}>${profile.name}</option>`)}</select></label>
+    <label class="cron-create-row"><span class="cron-create-label">Sandbox profile</span><select value=${values.sandboxProfile} onChange=${(event) => set('sandboxProfile', event.currentTarget.value)}><option value="">— inherit global —</option>${(snapshot?.value?.sandbox_profiles || []).map((profile) => { const name = typeof profile === 'string' ? profile : profile.name; return html`<option value=${name}>${name}</option>`; })}</select></label>
+    <div class="cron-create-row"><span class="cron-create-label">Environment</span><div class="cron-create-target"><div class="sbx-rows">${values.environment.map((entry, index) => html`<div class="sbx-row sbx-environment-row"><input class="sbx-env-name" placeholder="NAME" value=${entry.name} onInput=${(event) => set('environment', values.environment.map((row, rowIndex) => rowIndex === index ? { ...row, name: event.currentTarget.value } : row))}/><input class="sbx-env-value" placeholder="value" value=${entry.value} onInput=${(event) => set('environment', values.environment.map((row, rowIndex) => rowIndex === index ? { ...row, value: event.currentTarget.value } : row))}/><button type="button" onClick=${() => set('environment', values.environment.filter((_, rowIndex) => rowIndex !== index))}>×</button></div>`)}</div><button type="button" class="sbx-add-row" onClick=${() => set('environment', [...values.environment, { name: '', value: '' }])}>＋ add variable</button><div class="spawn-field-hint">Inherited by fresh spawns; profile and per-spawn values override matching names.</div></div></div>
+    <label class="cron-create-row"><span class="cron-create-label">Member cap</span><input type="number" min="0" value=${values.maxMembers} onInput=${(event) => set('maxMembers', event.currentTarget.value)}/></label>
+    <label class="cron-create-row"><span class="cron-create-label">Notifications</span><input type="checkbox" checked=${values.notifyEnabled} onChange=${(event) => set('notifyEnabled', event.currentTarget.checked)}/></label>
+    <label class="cron-create-row"><span class="cron-create-label">Remote policy</span><select value=${values.remoteControlPolicy} onChange=${(event) => set('remoteControlPolicy', event.currentTarget.value)}><option value="inherit">inherit profile</option><option value="optin">opt in</option><option value="deny">deny</option></select></label>
+    <label class="cron-create-row"><span class="cron-create-label">Link / attachment</span><input type="url" placeholder="https://…" value=${values.attachmentURL} onInput=${(event) => set('attachmentURL', event.currentTarget.value)}/></label>
+    <label class="cron-create-row"><span class="cron-create-label">Link label</span><input placeholder="optional display label" value=${values.attachmentLabel} onInput=${(event) => set('attachmentLabel', event.currentTarget.value)}/></label>
+    <${ErrorBanner} id="group-settings-error" error=${error} onDismiss=${() => setError('')} />
+    <div class="modal-buttons"><button disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button><span class="spacer"></span><button class="primary" disabled=${busy || !dirty} onClick=${submit}>${busy ? 'Saving…' : 'Save settings'}</button></div>
+  </${Overlay}>`;
+}
+
 export function ActionDialogApp({ state, actions, confirmDiscard, snapshot }) {
   const descriptor = state.view.value.dialog;
   if (!descriptor) return null;
@@ -522,6 +564,7 @@ export function ActionDialogApp({ state, actions, confirmDiscard, snapshot }) {
     actions=${actions}
     confirmDiscard=${confirmDiscard}
   />`;
+  if (descriptor.kind === 'group-settings') return html`<${GroupSettingsDialog} key=${descriptor.launchID} descriptor=${descriptor} snapshot=${snapshot} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'preset-clone') return html`<${PresetCloneDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'agent-export') return html`<${AgentExportDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;
   if (descriptor.kind === 'sandbox-impl') return html`<${SandboxImplDialog} key=${descriptor.launchID} descriptor=${descriptor} actions=${actions} confirmDiscard=${confirmDiscard} />`;

@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 func normalizeProfileRoleRefs(roleRefs []string, legacy string) []string {
@@ -159,6 +161,9 @@ type SpawnProfile struct {
 	// this profile. Unlike InitialMessage it is not a spawn-dialog task default:
 	// it is an additional briefing section, so a per-spawn task cannot replace it.
 	StartupContext string
+	// Environment is common, non-secret process configuration applied when the
+	// profile participates in a fresh spawn's resolution chain.
+	Environment []sandboxpolicy.EnvironmentEntry
 
 	// Dialog toggles; nil = unset.
 	SyncWorktree               *bool
@@ -227,6 +232,10 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 	defer func() { _ = tx.Rollback() }()
 	now := dbTime(time.Now())
 	roleRef, roleRefs := marshalProfileRoleRefs(p.RoleRefs, p.RoleRef)
+	environmentJSON, err := marshalEnvironmentColumn(p.Environment)
+	if err != nil {
+		return 0, err
+	}
 	res, err := tx.Exec(
 		`INSERT INTO spawn_profiles
 		   (name, disabled, disabled_reason, operator_only, harness, model, effort, sandbox, sandbox_implementation, approval, tools, ask_user_question_timeout,
@@ -234,9 +243,9 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		    auto_review, trust_dir,
 		    agent_name, role, role_ref, role_refs, descr, initial_message, startup_context,
 		    sync_worktree, fetch_latest_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, ssh_workaround,
-		    is_owner, permission_overrides, context_features,
+		    is_owner, permission_overrides, context_features, environment_json,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.Disabled, p.DisabledReason, p.OperatorOnly, p.Harness, p.Model, p.Effort, p.Sandbox, p.SandboxImplementation, p.Approval, p.ToolGovernance, p.AskUserQuestionTimeout,
 		p.AutoCompactWindow, p.ContextWindowMax, boolPtrToNull(p.CopilotAPI), boolPtrToNull(p.CodexAppServer), boolPtrToNull(p.FastMode),
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
@@ -246,6 +255,7 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		boolPtrToNull(p.AutoMemory), boolPtrToNull(p.SSHWorkaround),
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
 		marshalStringMapColumn(p.ContextFeatures, "spawn_profiles.context_features"),
+		environmentJSON,
 		now, now)
 	if err != nil {
 		if isSpawnProfileHandleViolation(err) {
@@ -287,6 +297,10 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		return err
 	}
 	roleRef, roleRefs := marshalProfileRoleRefs(p.RoleRefs, p.RoleRef)
+	environmentJSON, err := marshalEnvironmentColumn(p.Environment)
+	if err != nil {
+		return err
+	}
 	res, err := tx.Exec(
 		`UPDATE spawn_profiles SET
 		   name = ?, disabled = ?, disabled_reason = ?, operator_only = ?, harness = ?, model = ?, effort = ?, sandbox = ?,
@@ -296,7 +310,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		   agent_name = ?, role = ?, role_ref = ?, role_refs = ?, descr = ?, initial_message = ?, startup_context = ?,
 		   sync_worktree = ?, fetch_latest_worktree = ?, auto_focus = ?, include_group_default_context = ?, remote_control = ?,
 		   auto_memory = ?, ssh_workaround = ?,
-		   is_owner = ?, permission_overrides = ?, context_features = ?,
+		   is_owner = ?, permission_overrides = ?, context_features = ?, environment_json = ?,
 		   updated_at = ?
 		 WHERE id = ?`,
 		p.Name, p.Disabled, p.DisabledReason, p.OperatorOnly, p.Harness, p.Model, p.Effort, p.Sandbox,
@@ -309,6 +323,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		boolPtrToNull(p.AutoMemory), boolPtrToNull(p.SSHWorkaround),
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
 		marshalStringMapColumn(p.ContextFeatures, "spawn_profiles.context_features"),
+		environmentJSON,
 		dbTime(time.Now()), p.ID)
 	if err != nil {
 		if isSpawnProfileHandleViolation(err) {
@@ -556,21 +571,21 @@ const spawnProfileSelect = `SELECT id, name, disabled, disabled_reason, operator
 	tools, ask_user_question_timeout, auto_compact_window, context_window_max, copilot_api, codex_app_server, fast_mode,
 	auto_review, trust_dir, agent_name, role, role_ref, role_refs, descr, initial_message, startup_context,
 	sync_worktree, fetch_latest_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, ssh_workaround,
-	is_owner, permission_overrides, context_features, created_at, updated_at
+	is_owner, permission_overrides, context_features, environment_json, created_at, updated_at
 	FROM spawn_profiles`
 
 func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	var p SpawnProfile
 	var disabled int64
 	var copilotAPI, codexAppServer, fastMode, autoReview, trustDir, syncWorktree, fetchLatestWorktree, autoFocus, includeCtx, remoteControl, autoMemory, sshWorkaround, isOwner sql.NullInt64
-	var roleRefs, permOverrides, contextFeatures string
+	var roleRefs, permOverrides, contextFeatures, environmentJSON string
 	var createdAt, updatedAt dbTimestamp
 	if err := s.Scan(&p.ID, &p.Name, &disabled, &p.DisabledReason, &p.OperatorOnly, &p.Harness, &p.Model, &p.Effort, &p.Sandbox,
 		&p.SandboxImplementation, &p.Approval,
 		&p.ToolGovernance, &p.AskUserQuestionTimeout, &p.AutoCompactWindow, &p.ContextWindowMax, &copilotAPI, &codexAppServer, &fastMode,
 		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.RoleRef, &roleRefs, &p.Descr, &p.InitialMessage, &p.StartupContext,
 		&syncWorktree, &fetchLatestWorktree, &autoFocus, &includeCtx, &remoteControl, &autoMemory, &sshWorkaround,
-		&isOwner, &permOverrides, &contextFeatures, &createdAt, &updatedAt); err != nil {
+		&isOwner, &permOverrides, &contextFeatures, &environmentJSON, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
 	p.Disabled = disabled != 0
@@ -593,6 +608,11 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	p.IsOwner = nullToBoolPtr(isOwner)
 	p.PermissionOverrides = unmarshalPermissionOverrides(permOverrides)
 	p.ContextFeatures = unmarshalStringMapColumn(contextFeatures, "spawn_profiles.context_features")
+	environment, err := unmarshalEnvironmentColumn(environmentJSON)
+	if err != nil {
+		return nil, err
+	}
+	p.Environment = environment
 	p.CreatedAt = createdAt.Time()
 	p.UpdatedAt = updatedAt.Time()
 	return &p, nil

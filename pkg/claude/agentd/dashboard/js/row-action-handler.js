@@ -18,7 +18,7 @@ import {
 } from './links-controller.js';
 import {
   chooseTerminalDirectory, openAgentExportDialog, openCloneAgentDialog,
-  openNestGroupDialog, openReincarnateAgentDialog, openSandboxImplDialog,
+  openGroupSettingsDialog, openNestGroupDialog, openReincarnateAgentDialog, openSandboxImplDialog,
   openTaskLinkDialog,
 } from './action-dialog-controller.js';
 import {
@@ -854,6 +854,10 @@ export async function handleRowAction(action) {
         // gets its own modal with a <textarea>.
         openGroupContextModal(group);
         return; // Modal owns the save + refresh.
+      }
+      case 'group-settings': {
+        openGroupSettingsDialog({ group });
+        return;
       }
       case 'clone-group': {
         // Open the clone-group modal (new name + with/without agents).
