@@ -259,7 +259,7 @@ function GroupCreateDialog({
         autocomplete="off" spellcheck="false" />
       <button id="group-create-cwd-browse" type="button" class="dir-browse-btn"
         disabled=${disabled || browseBusy}
-        title="Open a native directory picker on the daemon's desktop"
+        title="Browse for a directory"
         onClick=${() => { void browse(); }}>${browseBusy ? 'Opening…' : 'Browse…'}</button>
     </label>
     <label class="cron-create-row">

@@ -443,11 +443,11 @@ const (
 //
 //	"native" — pop a native OS terminal window (the historical default),
 //	           falling back to an in-browser PTY only when no native window
-//	           can be opened. This is the default.
+//	           can be opened.
 //	"web"    — open the console as an in-browser terminal pane in the
 //	           dashboard's own Terminals tab, without touching the OS windowing
 //	           system — the same surface the dedicated "web term" / "web window"
-//	           buttons already always use.
+//	           buttons already always use. This is the default.
 //
 // An empty / unknown value falls back to the default (see DefaultTerminal).
 const (
@@ -536,20 +536,20 @@ type DashboardConfig struct {
 	GroupQuickOptions string `json:"group_quick_options,omitempty"`
 	// DefaultTerminal selects how the dashboard's spawn auto-focus, per-agent
 	// focus / open-window / open-terminal actions open a console — one of
-	// DefaultTerminal{Native, Web}. "native" (the default) pops a native OS
-	// window (falling back to an in-browser PTY only when it can't); "web" opens
+	// DefaultTerminal{Native, Web}. "native" pops a native OS window (falling
+	// back to an in-browser PTY only when it can't); "web" (the default) opens
 	// an in-browser terminal pane in the dashboard's Terminals tab instead, the
 	// same surface the dedicated "web term" / "web window" buttons use. Empty /
-	// unknown → default (native). The dashboard reads the resolved value off the
+	// unknown → default (web). The dashboard reads the resolved value off the
 	// snapshot and routes its focus/open actions accordingly.
 	// See (*Config).DefaultTerminal.
 	DefaultTerminal string `json:"default_terminal,omitempty"`
 	// DefaultDirectoryPicker selects the directory chooser used from a local
-	// dashboard: "native" (the default) opens the host OS dialog, while "web"
+	// dashboard: "native" opens the host OS dialog, while "web" (the default)
 	// uses the dashboard's browser-rendered directory navigator. Remote
 	// dashboard origins always use the web picker because a host-side native
 	// dialog cannot be operated from the remote browser. Empty / unknown falls
-	// back to native. See (*Config).DefaultDirectoryPicker.
+	// back to web. See (*Config).DefaultDirectoryPicker.
 	DefaultDirectoryPicker string `json:"default_directory_picker,omitempty"`
 	// ShowAgentHideButton keeps the per-agent "hide window" button — the
 	// slashed-eye icon beside "focus" in each agent row's quick-control
@@ -1487,17 +1487,17 @@ func normalizeDefaultTerminal(s string) string {
 // DefaultTerminal reports how the dashboard's spawn auto-focus, per-agent
 // focus / open-window / open-terminal actions open a console — config
 // dashboard.default_terminal.
-// Default "native" (absent block / key or an unknown value): pop a native OS
-// window (with the usual in-browser fallback when none can be opened). "web"
-// routes those actions to an in-browser terminal pane in the dashboard's
-// Terminals tab instead. Nil-safe on the receiver so callers need no guard.
+// Default "web" (absent block / key or an unknown value): route actions to an
+// in-browser terminal pane in the dashboard's Terminals tab. "native" opts
+// back into an OS window (with the usual in-browser fallback when none can be
+// opened). Nil-safe on the receiver so callers need no guard.
 func (c *Config) DefaultTerminal() string {
 	if c != nil && c.Dashboard != nil {
 		if s := normalizeDefaultTerminal(c.Dashboard.DefaultTerminal); s != "" {
 			return s
 		}
 	}
-	return DefaultTerminalNative
+	return DefaultTerminalWeb
 }
 
 // DefaultDirectoryPicker reports the configured directory chooser for local
@@ -1510,7 +1510,7 @@ func (c *Config) DefaultDirectoryPicker() string {
 			return c.Dashboard.DefaultDirectoryPicker
 		}
 	}
-	return DefaultDirectoryPickerNative
+	return DefaultDirectoryPickerWeb
 }
 
 // FocusConfig holds window-focus behavior knobs.

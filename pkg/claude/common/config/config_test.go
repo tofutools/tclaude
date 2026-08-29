@@ -1018,31 +1018,31 @@ func TestGroupQuickOptions(t *testing.T) {
 }
 
 // TestDefaultTerminal covers the dashboard.default_terminal resolver: nil
-// config / absent block / absent key / garbage all default to "native"; only
-// an explicit "web" opts in. A default config marshals no dashboard block, and
-// an explicit "web" survives Save/Load.
+// config / absent block / absent key / garbage all default to "web"; only an
+// explicit "native" opts out. A default config marshals no dashboard block,
+// and an explicit "native" survives Save/Load.
 func TestDefaultTerminal(t *testing.T) {
-	// Default is native for every "unset"/garbage shape.
-	assert.Equal(t, DefaultTerminalNative, (*Config)(nil).DefaultTerminal(), "nil → native")
-	assert.Equal(t, DefaultTerminalNative, (&Config{}).DefaultTerminal(), "no block → native")
-	assert.Equal(t, DefaultTerminalNative, (&Config{Dashboard: &DashboardConfig{}}).DefaultTerminal(), "absent key → native")
-	assert.Equal(t, DefaultTerminalNative, (&Config{Dashboard: &DashboardConfig{DefaultTerminal: "wat"}}).DefaultTerminal(), "unknown → native")
-	assert.Equal(t, DefaultTerminalNative, (&Config{Dashboard: &DashboardConfig{DefaultTerminal: DefaultTerminalNative}}).DefaultTerminal(), "explicit native → native")
-
-	// Only an explicit "web" opts into browser terminals.
+	// Default is web for every "unset"/garbage shape.
+	assert.Equal(t, DefaultTerminalWeb, (*Config)(nil).DefaultTerminal(), "nil → web")
+	assert.Equal(t, DefaultTerminalWeb, (&Config{}).DefaultTerminal(), "no block → web")
+	assert.Equal(t, DefaultTerminalWeb, (&Config{Dashboard: &DashboardConfig{}}).DefaultTerminal(), "absent key → web")
+	assert.Equal(t, DefaultTerminalWeb, (&Config{Dashboard: &DashboardConfig{DefaultTerminal: "wat"}}).DefaultTerminal(), "unknown → web")
 	assert.Equal(t, DefaultTerminalWeb, (&Config{Dashboard: &DashboardConfig{DefaultTerminal: DefaultTerminalWeb}}).DefaultTerminal(), "explicit web → web")
+
+	// Only an explicit "native" opts out of browser terminals.
+	assert.Equal(t, DefaultTerminalNative, (&Config{Dashboard: &DashboardConfig{DefaultTerminal: DefaultTerminalNative}}).DefaultTerminal(), "explicit native → native")
 
 	// A fresh (all-default) config serializes no dashboard block / key.
 	clean, err := json.Marshal(&Config{})
 	require.NoError(t, err)
 	assert.NotContains(t, string(clean), "default_terminal")
 
-	// Explicit "web" survives Save/Load — the non-default is persisted.
+	// Explicit "native" survives Save/Load — the non-default is persisted.
 	t.Setenv("HOME", t.TempDir())
-	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{DefaultTerminal: DefaultTerminalWeb}}))
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{DefaultTerminal: DefaultTerminalNative}}))
 	loaded, err := Load()
 	require.NoError(t, err)
-	assert.Equal(t, DefaultTerminalWeb, loaded.DefaultTerminal(), "web survives round-trip")
+	assert.Equal(t, DefaultTerminalNative, loaded.DefaultTerminal(), "native survives round-trip")
 }
 
 func TestResolvedTerminalAttach(t *testing.T) {
@@ -1073,20 +1073,21 @@ func TestResolvedTerminalAttach(t *testing.T) {
 }
 
 func TestDefaultDirectoryPicker(t *testing.T) {
-	assert.Equal(t, DefaultDirectoryPickerNative, (*Config)(nil).DefaultDirectoryPicker())
-	assert.Equal(t, DefaultDirectoryPickerNative, (&Config{}).DefaultDirectoryPicker())
-	assert.Equal(t, DefaultDirectoryPickerNative, (&Config{Dashboard: &DashboardConfig{DefaultDirectoryPicker: "wat"}}).DefaultDirectoryPicker())
+	assert.Equal(t, DefaultDirectoryPickerWeb, (*Config)(nil).DefaultDirectoryPicker())
+	assert.Equal(t, DefaultDirectoryPickerWeb, (&Config{}).DefaultDirectoryPicker())
+	assert.Equal(t, DefaultDirectoryPickerWeb, (&Config{Dashboard: &DashboardConfig{DefaultDirectoryPicker: "wat"}}).DefaultDirectoryPicker())
 	assert.Equal(t, DefaultDirectoryPickerWeb, (&Config{Dashboard: &DashboardConfig{DefaultDirectoryPicker: DefaultDirectoryPickerWeb}}).DefaultDirectoryPicker())
+	assert.Equal(t, DefaultDirectoryPickerNative, (&Config{Dashboard: &DashboardConfig{DefaultDirectoryPicker: DefaultDirectoryPickerNative}}).DefaultDirectoryPicker())
 
 	clean, err := json.Marshal(&Config{})
 	require.NoError(t, err)
 	assert.NotContains(t, string(clean), "default_directory_picker")
 
 	t.Setenv("HOME", t.TempDir())
-	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{DefaultDirectoryPicker: DefaultDirectoryPickerWeb}}))
+	require.NoError(t, Save(&Config{Dashboard: &DashboardConfig{DefaultDirectoryPicker: DefaultDirectoryPickerNative}}))
 	loaded, err := Load()
 	require.NoError(t, err)
-	assert.Equal(t, DefaultDirectoryPickerWeb, loaded.DefaultDirectoryPicker())
+	assert.Equal(t, DefaultDirectoryPickerNative, loaded.DefaultDirectoryPicker())
 }
 
 func TestShowAgentHideButton(t *testing.T) {

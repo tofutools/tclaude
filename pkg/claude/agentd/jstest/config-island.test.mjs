@@ -93,7 +93,7 @@ test('Config load populates representative fields, conditions, notices, and roun
     ratelimit: { five_hour_percent_max_used: 88, seven_day_percent_max_used: 97.5, future_limit: 7 },
     agent: { spawn_max_per_hour: 3, sudo: { max_duration: '2h' } },
     slop: { volume: 0.4 },
-    dashboard: { default_directory_picker: 'web' },
+    dashboard: { default_terminal: 'native', default_directory_picker: 'native' },
   };
   const state = createConfigState({ activeTab: harness.signals.signal('groups') });
   const fetchImpl = async (url) => {
@@ -110,16 +110,45 @@ test('Config load populates representative fields, conditions, notices, and roun
   assert.equal(terminal.querySelector('option[value="ghostty"]').selected, true, terminal.outerHTML);
   assert.equal(adapter.assembleConfig().terminal, 'ghostty');
   assert.equal(mounted.container.querySelector('#cfg-record-hooks').checked, true);
-  assert.equal(mounted.container.querySelector('#cfg-dashboard-default-web-directory-picker').checked, true);
+  assert.equal(mounted.container.querySelector('#cfg-dashboard-default-web-terminal').checked, false);
+  assert.equal(mounted.container.querySelector('#cfg-dashboard-default-web-directory-picker').checked, false);
   assert.equal(mounted.container.querySelector('#cfg-ratelimit-5h').disabled, false);
   assert.match(mounted.container.querySelector('#cfg-notice').textContent, /future_root/);
   const assembled = adapter.assembleConfig();
   assert.equal(assembled.ratelimit.future_limit, 7);
   assert.equal(assembled.slop.volume, 0.4);
   assert.deepEqual(assembled.agent.sudo, { max_duration: '2h' });
-  assert.equal(assembled.dashboard.default_directory_picker, 'web');
+  assert.equal(assembled.dashboard.default_terminal, 'native');
+  assert.equal(assembled.dashboard.default_directory_picker, 'native');
   assert.equal(state.view.value.phase, 'ready');
   assert.equal(state.view.value.dirty, false);
+  await mounted.unmount();
+});
+
+test('Config defaults terminal and directory actions to web while persisting native opt-outs', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createConfigState }, { ConfigApp }, adapter] = await Promise.all([
+    harness.importDashboardModule('js/config-state.js'),
+    harness.importDashboardModule('js/config-island.js'),
+    harness.importDashboardModule('js/config-form-adapter.js'),
+  ]);
+  const state = createConfigState({ activeTab: harness.signals.signal('config') });
+  const mounted = await harness.mount(harness.html`<${ConfigApp} state=${state} dependencies=${{
+    fetchImpl: async () => ({ ok: true, json: async () => ({ raw: '{}' }) }),
+  }} />`);
+  await adapter.loadConfigTab();
+
+  const terminal = mounted.container.querySelector('#cfg-dashboard-default-web-terminal');
+  const directoryPicker = mounted.container.querySelector('#cfg-dashboard-default-web-directory-picker');
+  assert.equal(terminal.checked, true);
+  assert.equal(directoryPicker.checked, true);
+  assert.equal(adapter.assembleConfig().dashboard?.default_terminal, undefined);
+  assert.equal(adapter.assembleConfig().dashboard?.default_directory_picker, undefined);
+
+  terminal.checked = false;
+  directoryPicker.checked = false;
+  assert.equal(adapter.assembleConfig().dashboard.default_terminal, 'native');
+  assert.equal(adapter.assembleConfig().dashboard.default_directory_picker, 'native');
   await mounted.unmount();
 });
 

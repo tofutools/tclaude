@@ -77,8 +77,8 @@ export let lastSnapshot = null;
 // module bindings are read-only in the poll/reconciliation module.
 export function setLastSnapshot(v) { lastSnapshot = v; }
 
-// webTerminalDefault reports whether the operator has opted into in-browser
-// web terminals as the default for the dashboard's per-agent focus /
+// webTerminalDefault reports whether the operator uses in-browser web
+// terminals for the dashboard's per-agent focus /
 // open-window / open-terminal actions and bulk windows-modal focus (config
 // dashboard.default_terminal="web").
 // Read off the latest snapshot so it tracks a live config change on the next

@@ -1119,8 +1119,8 @@ type snapshotPayload struct {
 	GroupQuickOptions string `json:"group_quick_options"`
 	// DefaultTerminal mirrors config dashboard.default_terminal — how spawn
 	// auto-focus, per-agent focus / open-window / open-terminal actions and bulk
-	// windows-modal focus open a console: "native" (pop a native OS window, the
-	// default) or "web" (open an in-browser terminal pane in the Terminals tab).
+	// windows-modal focus open a console: "native" (pop a native OS window) or
+	// "web" (the default; open an in-browser pane in the Terminals tab).
 	// The browser reads this off each poll to route those actions; the dedicated
 	// "web term" / "web window" buttons ignore it (always web).
 	DefaultTerminal string `json:"default_terminal"`
