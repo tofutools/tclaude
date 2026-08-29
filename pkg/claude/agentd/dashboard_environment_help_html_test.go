@@ -1,9 +1,6 @@
 package agentd
 
-import (
-	"strings"
-	"testing"
-)
+import "testing"
 
 // Environment precedence remains available on demand without reserving a
 // permanent paragraph in either of the two launch-profile authoring surfaces.
@@ -25,7 +22,7 @@ func TestDashboardHTML_EnvironmentHelpUsesCompactDisclosures(t *testing.T) {
 		`<div class="muted"><${Words} plain="Explicit values override`:                "spawn precedence copy is still always visible",
 		`<div class="spawn-field-hint"><${Words} plain="Applied to every fresh spawn`: "profile precedence copy is still always visible",
 	} {
-		if strings.Contains(dashboardAssets, obsolete) {
+		if dashboardSourceContains(dashboardAssets, obsolete) {
 			t.Errorf("%s: %q", why, obsolete)
 		}
 	}
