@@ -1824,7 +1824,7 @@ export function TemplateDeployDialog({
           id="template-deploy-cwd-browse"
           type="button"
           class="dir-browse-btn"
-          title="Open a native directory picker on the daemon's desktop"
+          title="Browse for a directory"
           onClick=${() => browse('cwd')}
         >
           Browse…
@@ -1854,7 +1854,7 @@ export function TemplateDeployDialog({
           id="template-deploy-wt-repo-browse"
           type="button"
           class="dir-browse-btn"
-          title="Open a native directory picker on the daemon's desktop"
+          title="Browse for a directory"
           onClick=${() => browse('repo')}
         >
           Browse…

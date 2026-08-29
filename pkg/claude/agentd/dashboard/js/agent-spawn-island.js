@@ -1230,7 +1230,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         onInput=${(event) => { touched.current.add('cwd'); setDraft((before) => setSpawnCwd(before, event.currentTarget.value)); }}
         placeholder="optional — prefilled from the group's default dir; ~ expands to home" autocomplete="off" spellcheck="false" />
       <button id="agent-spawn-cwd-browse" type="button" class="dir-browse-btn" disabled=${busy || !!browseBusy}
-        title="Open a native directory picker on the daemon's desktop" onClick=${() => { void browse('cwd'); }}>
+        title="Browse for a directory" onClick=${() => { void browse('cwd'); }}>
         ${browseBusy === 'cwd' ? 'Opening…' : 'Browse…'}
       </button>
     </label>
@@ -1243,7 +1243,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         ${(worktrees.subRepos || []).map((repo) => html`<option key=${repo.path} value=${repo.path}>${repo.rel}</option>`)}
       </datalist>
       <button id="agent-spawn-wt-repo-browse" type="button" class="dir-browse-btn" disabled=${busy || !!browseBusy}
-        title="Open a native directory picker on the daemon's desktop" onClick=${() => { void browse('repo'); }}>
+        title="Browse for a directory" onClick=${() => { void browse('repo'); }}>
         ${browseBusy === 'repo' ? 'Opening…' : 'Browse…'}
       </button>
     </label>

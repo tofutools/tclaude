@@ -441,7 +441,7 @@ function RealGroupSummary({ group, activity, membersView, snapshot, actions }) {
       field="default_cwd" value=${group.default_cwd || ''} inputClass="group-default-cwd-input" placeholder="absolute path (~ OK) — empty clears the default"
       title=${group.default_cwd ? `Default spawn directory: ${group.default_cwd} — click the text to edit, the 📁 to browse` : 'No default spawn directory — click the text to type one, the 📁 to browse'}
       message=${(value) => value ? `${group.name}: default dir → ${value}` : `${group.name}: default dir cleared`}
-    ><span class="gdc-pick" tabindex="0" role="button" data-act="pick-group-dir" data-group=${group.name} data-label=${group.name} data-cwd=${group.default_cwd || ''} title="Browse for a directory with a native picker" onClick=${(event) => {
+    ><span class="gdc-pick" tabindex="0" role="button" data-act="pick-group-dir" data-group=${group.name} data-label=${group.name} data-cwd=${group.default_cwd || ''} title="Browse for a directory" onClick=${(event) => {
       event.preventDefault();
       event.stopPropagation();
       void actions.pickGroupDirectory(group).catch((error) => actions.reportError(error));

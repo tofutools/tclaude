@@ -25,7 +25,7 @@ func TestDashboardHTML_TemplateCwdBrowse(t *testing.T) {
 
 	// The unified dialog's Browse… button, byte-identical to the group-create
 	// idiom bar the id, sits right after its cwd input.
-	must(`<button id="template-deploy-cwd-browse" type="button" class="dir-browse-btn" title="Open a native directory picker on the daemon's desktop"`,
+	must(`<button id="template-deploy-cwd-browse" type="button" class="dir-browse-btn" title="Browse for a directory"`,
 		"the summon dialog gains a Browse… button beside its cwd field")
 
 	// The Preact dialog imports the shared helper and its two buttons call the
