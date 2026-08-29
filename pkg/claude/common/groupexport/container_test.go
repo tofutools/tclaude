@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // sampleExport builds an Export covering a representative slice of every
@@ -83,7 +84,7 @@ func TestMarshalStampsFormatVersion(t *testing.T) {
 }
 
 func TestScopedPermissionFieldsRequireV4(t *testing.T) {
-	assert.Equal(t, 4, FormatVersion, "scope-bearing archives must be rejected by v3 readers")
+	assert.GreaterOrEqual(t, FormatVersion, 4, "scope-bearing archives must be rejected by v3 readers")
 	exp := sampleExport()
 	exp.Group.Permissions = []GroupPermission{{
 		Slug: "groups.members.spawn", ScopeJSON: `{"group":["dev"]}`,
@@ -100,6 +101,18 @@ func TestScopedPermissionFieldsRequireV4(t *testing.T) {
 	assert.Equal(t, exp.Group.Permissions, got.Group.Permissions)
 	assert.Equal(t, exp.Permissions, got.Permissions)
 	assert.Equal(t, exp.SudoGrants, got.SudoGrants)
+}
+
+func TestGroupEnvironmentRequiresV5(t *testing.T) {
+	assert.Equal(t, 5, FormatVersion, "environment-bearing archives must be rejected by v4 readers")
+	exp := sampleExport()
+	exp.Group.Environment = []sandboxpolicy.EnvironmentEntry{{Name: "TEAM", Value: "platform"}}
+
+	archive, err := Marshal(exp)
+	require.NoError(t, err)
+	got, err := Unmarshal(archive)
+	require.NoError(t, err)
+	assert.Equal(t, exp.Group.Environment, got.Group.Environment)
 }
 
 // TestUnmarshalNotAZip rejects bytes that are not a zip archive at all —

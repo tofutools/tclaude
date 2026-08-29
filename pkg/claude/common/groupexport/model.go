@@ -24,6 +24,9 @@ import "github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 // to the Export shape; the export format is meant to live in source
 // control, so forward-incompatible changes must be detectable.
 //
+// v5 adds the group's common spawn environment. Older readers must reject v5
+// rather than silently dropping environment inherited by imported spawns.
+//
 // v4 adds scope_json to group, permanent, and sudo permission grants. Older
 // readers must reject v4 rather than silently dropping a scope and widening
 // the imported authority.
@@ -38,7 +41,7 @@ import "github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 // still does imports fine — the importer reads its legacy default_model and
 // synthesizes a default spawn profile from it (see db.ImportGroup), so the
 // older export's effective spawn default does not silently regress.
-const FormatVersion = 4
+const FormatVersion = 5
 
 // Export is the complete, format-agnostic, in-memory representation of
 // one per-group export.
