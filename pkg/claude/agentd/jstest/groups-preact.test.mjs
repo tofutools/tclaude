@@ -781,7 +781,26 @@ test('native member and group editors preserve drafts, park DnD and surface busy
 
   const cwdSave = deferred();
   patchResult = () => cwdSave.promise;
-  await harness.act(() => harness.fireEvent(summary.querySelector('.group-default-cwd'), 'click'));
+  const cwdTrigger = summary.querySelector('.group-default-cwd');
+  const cwdText = cwdTrigger.querySelector('.qo-text');
+  const routedTerminalGestures = [];
+  const recordTerminalGesture = (event) => {
+    if (event.target.closest('[data-act="group-web-term"]')) routedTerminalGestures.push(event.type);
+  };
+  harness.document.addEventListener('click', recordTerminalGesture);
+  harness.document.addEventListener('contextmenu', recordTerminalGesture);
+  t.after(() => {
+    harness.document.removeEventListener('click', recordTerminalGesture);
+    harness.document.removeEventListener('contextmenu', recordTerminalGesture);
+  });
+  for (const modifier of ['ctrlKey', 'metaKey']) {
+    await harness.act(() => harness.fireEvent(cwdText, 'click', { [modifier]: true }));
+    assertAbsent(summary.querySelector('.group-default-cwd-input'));
+  }
+  harness.fireEvent(cwdText, 'contextmenu', { ctrlKey: true });
+  assert.deepEqual(routedTerminalGestures, ['click', 'click', 'contextmenu'],
+    'modified path gestures reach the shared terminal action dispatcher');
+  await harness.act(() => harness.fireEvent(cwdText, 'click'));
   const cwdInput = summary.querySelector('.group-default-cwd-input');
   await harness.input(cwdInput, ' /tmp/new ');
   harness.fireEvent(cwdInput, 'keydown', { key: 'Enter' });
