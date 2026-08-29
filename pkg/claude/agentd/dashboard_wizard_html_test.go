@@ -522,6 +522,7 @@ func TestDashboardHTML_WizardEnvironmentEditors(t *testing.T) {
 	must("wizard=${`Enchant party: ${descriptor.group}`}",
 		"the consolidated party editor carries a wizard title")
 	must(`id="group-settings-submit"`, "the party editor submit lever has a stable styling hook")
+	must(`id="group-settings-default-cwd-browse"`, "the party sanctum has a directory-picker affordance")
 }
 
 // TestDashboardHTML_WizardHumanReplyModal pins the wizard re-skin of the

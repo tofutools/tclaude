@@ -522,6 +522,7 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
   }), [descriptor.launchID]);
   const [values, setValues] = useState(initial);
   const [busy, setBusy] = useState(false);
+  const [browseBusy, setBrowseBusy] = useState(false);
   const [error, setError] = useState('');
   const set = (key, value) => setValues((current) => ({ ...current, [key]: value }));
   const dirty = JSON.stringify(values) !== JSON.stringify(initial);
@@ -532,10 +533,23 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
     catch (cause) { setError(errorMessage(cause)); }
     finally { setBusy(false); }
   };
+  const browseDefaultCwd = async () => {
+    if (busy || browseBusy) return;
+    setBrowseBusy(true); setError('');
+    try {
+      const result = await actions.pickDirectory({
+        startDir: values.defaultCwd,
+        title: `Select the default directory for ${descriptor.group}`,
+      });
+      if (result?.path) set('defaultCwd', result.path);
+      else if (result?.error) setError(result.error);
+    } catch (cause) { setError(errorMessage(cause)); }
+    finally { setBrowseBusy(false); }
+  };
   return html`<${Overlay} id="group-settings-modal" labelledby="group-settings-title" onClose=${() => actions.close(descriptor)} onSubmitHotkey=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.group-settings">
     <h3 id="group-settings-title"><${Words} plain=${`Group settings: ${descriptor.group}`} wizard=${`Enchant party: ${descriptor.group}`} /></h3>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Description" wizard="Lore" /></span><input value=${values.descr} onInput=${(event) => set('descr', event.currentTarget.value)}/></label>
-    <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Default dir" wizard="Sanctum" /></span><input value=${values.defaultCwd} placeholder="absolute path" spellcheck="false" onInput=${(event) => set('defaultCwd', event.currentTarget.value)}/></label>
+    <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Default dir" wizard="Sanctum" /></span><input id="group-settings-default-cwd" value=${values.defaultCwd} placeholder="absolute path" spellcheck="false" onInput=${(event) => set('defaultCwd', event.currentTarget.value)}/><button id="group-settings-default-cwd-browse" type="button" class="dir-browse-btn" disabled=${busy || browseBusy} title="Browse for a directory" onClick=${() => { void browseDefaultCwd(); }}><${Words} plain=${browseBusy ? 'Opening…' : 'Browse…'} wizard=${browseBusy ? 'Scrying…' : 'Scry…'} /></button></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Startup context" wizard="Opening lore" /></span><textarea rows="5" value=${values.defaultContext} onInput=${(event) => set('defaultContext', event.currentTarget.value)}></textarea></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Spawn profile" wizard="Familiar pattern" /></span><select value=${values.defaultProfile} onChange=${(event) => set('defaultProfile', event.currentTarget.value)}><option value="">— none —</option>${(snapshot?.value?.profiles || []).map((profile) => html`<option value=${profile.name}>${profile.name}</option>`)}</select></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Sandbox profile" wizard="Ward" /></span><select value=${values.sandboxProfile} onChange=${(event) => set('sandboxProfile', event.currentTarget.value)}><option value="">— inherit global —</option>${(snapshot?.value?.sandbox_profiles || []).map((profile) => { const name = typeof profile === 'string' ? profile : profile.name; return html`<option value=${name}>${name}</option>`; })}</select></label>

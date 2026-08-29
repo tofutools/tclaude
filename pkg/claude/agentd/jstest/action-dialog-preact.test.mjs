@@ -67,7 +67,7 @@ async function mountDialogs(
   return { harness, host, state, actions, calls, cleanup: () => mounted.unmount() };
 }
 
-test('group settings emits complete wizard copy for its dialog and environment controls', async (t) => {
+test('group settings emits complete wizard copy and browses for its default directory', async (t) => {
   const snapshot = { value: {
     groups: [{
       name: 'alpha', descr: 'builders', default_cwd: '/repo', default_context: 'shared lore',
@@ -76,7 +76,13 @@ test('group settings emits complete wizard copy for its dialog and environment c
     profiles: [{ name: 'reviewer' }], sandbox_profiles: [{ name: 'confined' }],
   } };
   const mounted = await mountDialogs(
-    t, 'group-settings', { group: 'alpha' }, { saveGroupSettings: async () => {} },
+    t, 'group-settings', { group: 'alpha' }, {
+      saveGroupSettings: async () => {},
+      pickDirectory: async (options) => {
+        assert.deepEqual(options, { startDir: '/repo', title: 'Select the default directory for alpha' });
+        return { path: '/picked/repo' };
+      },
+    },
     async () => true, snapshot,
   );
   const { host } = mounted;
@@ -91,6 +97,10 @@ test('group settings emits complete wizard copy for its dialog and environment c
   assert.match(host.querySelector('#group-settings-modal').textContent, /Opening lore/);
   assert.match(host.querySelector('#group-settings-modal').textContent, /Familiar pattern/);
   assert.match(host.querySelector('#group-settings-modal').textContent, /Scrying policy/);
+  assert.equal(host.querySelector('#group-settings-default-cwd-browse .theme-copy-wizard').textContent, 'Scry…');
+  host.querySelector('#group-settings-default-cwd-browse').click();
+  await mounted.harness.act(() => Promise.resolve());
+  assert.equal(host.querySelector('#group-settings-default-cwd').value, '/picked/repo');
   assert.equal(host.querySelector('#group-settings-cancel .theme-copy-wizard').textContent, 'Dispel');
   assert.equal(host.querySelector('#group-settings-submit .theme-copy-wizard').textContent, '✦ Enchant party');
   await mounted.cleanup();
