@@ -28,17 +28,17 @@ export function createDirectoryPickerActions({ fetchImpl = fetch } = {}) {
     },
     create(parent, name) {
       return mutate('/api/create-directory', {
-        parent: String(parent || '').trim(), name: String(name || '').trim(),
+        parent: String(parent || ''), name: String(name || '').trim(),
       });
     },
     rename(path, name) {
       return mutate('/api/rename-directory', {
-        path: String(path || '').trim(), name: String(name || '').trim(),
+        path: String(path || ''), name: String(name || '').trim(),
       });
     },
     remove(path, confirm) {
       return mutate('/api/delete-directory', {
-        path: String(path || '').trim(), confirm: String(confirm || '').trim(),
+        path: String(path || ''), confirm: String(confirm || ''),
       });
     },
   });

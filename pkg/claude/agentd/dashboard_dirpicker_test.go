@@ -80,6 +80,22 @@ func TestDirectoryMutations_ValidateNamesTargetsAndConfirmation(t *testing.T) {
 	require.DirExists(t, filepath.Join(root, "source"))
 }
 
+func TestDirectoryMutations_PreserveTrailingSpaceInTargetPath(t *testing.T) {
+	withDashboardAuth(t)
+	root := t.TempDir()
+	plain := filepath.Join(root, "folder")
+	spaced := filepath.Join(root, "folder ")
+	require.NoError(t, os.Mkdir(plain, 0o755))
+	require.NoError(t, os.Mkdir(spaced, 0o755))
+
+	w := httptest.NewRecorder()
+	servePickDir(w, dashboardRequest(http.MethodPost, "/api/delete-directory",
+		`{"path":`+strconv.Quote(spaced)+`,"confirm":`+strconv.Quote(spaced)+`}`))
+	require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+	require.DirExists(t, plain)
+	assert.NoDirExists(t, spaced)
+}
+
 func TestDirectoryMutations_RequireAuthAndPost(t *testing.T) {
 	root := t.TempDir()
 	w := httptest.NewRecorder()

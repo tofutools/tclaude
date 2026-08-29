@@ -30,13 +30,13 @@ test('directory picker actions preserve host path payloads and API errors', asyn
   assert.equal((await actions.browse(' /srv ')).path, '/srv');
   assert.equal(requests[0][0], '/api/browse-directories');
   assert.deepEqual(JSON.parse(requests[0][1].body), { path: '/srv' });
-  await actions.create(' /srv ', ' child ');
-  await actions.rename(' /srv/child ', ' renamed ');
-  await actions.remove(' /srv/renamed ', ' /srv/renamed ');
+  await actions.create('/srv ', ' child ');
+  await actions.rename('/srv /child ', ' renamed ');
+  await actions.remove('/srv /renamed ', '/srv /renamed ');
   assert.deepEqual(requests.slice(1).map(([url, options]) => [url, JSON.parse(options.body)]), [
-    ['/api/create-directory', { parent: '/srv', name: 'child' }],
-    ['/api/rename-directory', { path: '/srv/child', name: 'renamed' }],
-    ['/api/delete-directory', { path: '/srv/renamed', confirm: '/srv/renamed' }],
+    ['/api/create-directory', { parent: '/srv ', name: 'child' }],
+    ['/api/rename-directory', { path: '/srv /child ', name: 'renamed' }],
+    ['/api/delete-directory', { path: '/srv /renamed ', confirm: '/srv /renamed ' }],
   ]);
 
   const failing = createDirectoryPickerActions({
@@ -238,11 +238,19 @@ test('Preact picker creates, renames, and explicitly confirms recursive deletion
   mounted.container.querySelector('.directory-picker-new').click();
   await harness.act(() => Promise.resolve());
   let action = mounted.container.querySelector('#directory-picker-action-modal');
+  const pickerOverlay = mounted.container.querySelector('#directory-picker-modal');
+  assert.equal(pickerOverlay.hasAttribute('inert'), true);
+  assert.equal(pickerOverlay.getAttribute('aria-hidden'), 'true');
+  assert.equal(pickerOverlay.querySelector('[role="dialog"]').getAttribute('aria-modal'), 'false');
+  assert.equal(action.querySelector('[role="dialog"]').getAttribute('aria-modal'), 'true');
   assert.equal(action.querySelector('h3').textContent, 'Create a folder');
   await harness.input(action.querySelector('input'), 'new-child');
   action.querySelector('button.primary').click();
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   assert.deepEqual(mutations[0], ['create', '/root', 'new-child']);
+  assert.equal(pickerOverlay.hasAttribute('inert'), false);
+  assert.equal(pickerOverlay.hasAttribute('aria-hidden'), false);
+  assert.equal(pickerOverlay.querySelector('[role="dialog"]').getAttribute('aria-modal'), 'true');
   assert.equal(mounted.container.querySelector('#directory-picker-path').value, '/root/new-child/');
 
   mounted.container.querySelector('.directory-picker-nav button').click();

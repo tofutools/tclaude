@@ -198,6 +198,8 @@ export function DirectoryPickerApp({ state, actions }) {
     labelledby="directory-picker-title"
     onClose=${close}
     onSubmitHotkey=${choose}
+    blocked=${!!operation}
+    suspended=${!!operation}
   >
     <h3 id="directory-picker-title">${request.title}</h3>
     <form class="directory-picker-path" onSubmit=${(event) => {

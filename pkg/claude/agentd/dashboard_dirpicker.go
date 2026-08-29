@@ -91,10 +91,10 @@ func decodeDirectoryMutation(w http.ResponseWriter, r *http.Request, dst any) bo
 }
 
 func cleanDirectoryPath(raw string) (string, error) {
-	path := strings.TrimSpace(raw)
-	if path == "" {
+	if strings.TrimSpace(raw) == "" {
 		return "", errors.New("directory path is required")
 	}
+	path := raw
 	abs, err := filepath.Abs(expandTilde(path))
 	if err != nil {
 		return "", err
@@ -190,7 +190,8 @@ func handleDashboardRenameDirAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "resolve directory: " + err.Error()})
 		return
 	}
-	if _, err := selectableDirectory(path); err != nil {
+	sourceInfo, err := selectableDirectory(path)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "open directory: " + err.Error()})
 		return
 	}
@@ -208,9 +209,13 @@ func handleDashboardRenameDirAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, directoryMutationResp{Path: path})
 		return
 	}
-	if _, err := os.Lstat(destination); err == nil {
-		writeJSON(w, http.StatusConflict, directoryMutationResp{Error: "rename directory: destination already exists"})
-		return
+	if destinationInfo, err := os.Lstat(destination); err == nil {
+		// Case-insensitive filesystems resolve a case-only destination spelling
+		// to the source itself. That is a rename, not a collision.
+		if !os.SameFile(sourceInfo, destinationInfo) {
+			writeJSON(w, http.StatusConflict, directoryMutationResp{Error: "rename directory: destination already exists"})
+			return
+		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		writeJSON(w, http.StatusInternalServerError, directoryMutationResp{Error: "check rename destination: " + err.Error()})
 		return
@@ -247,7 +252,7 @@ func handleDashboardDeleteDirAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "cannot delete a filesystem root"})
 		return
 	}
-	if strings.TrimSpace(body.Confirm) != path {
+	if body.Confirm != path {
 		writeJSON(w, http.StatusBadRequest, directoryMutationResp{Error: "confirmation must exactly match the directory path"})
 		return
 	}

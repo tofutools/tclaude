@@ -54,6 +54,7 @@ export function ManagementOverlay({
   onPaste = null,
   initialFocusRef = null,
   registerClose = null,
+  suspended = false,
   children,
 }) {
   const overlayRef = useRef(null);
@@ -163,6 +164,8 @@ export function ManagementOverlay({
     ref=${overlayRef}
     class=${`${manage ? 'manage-overlay show' : 'modal-overlay show'}${overlayClass ? ` ${overlayClass}` : ''}`}
     id=${id}
+    inert=${suspended || undefined}
+    aria-hidden=${suspended ? 'true' : undefined}
     onMouseDown=${(event) => {
       if (guardBackdropDrag) {
         pressedOnBackdrop.current = event.target === event.currentTarget;
@@ -194,7 +197,7 @@ export function ManagementOverlay({
       ref=${dialogRef}
       class=${manage ? 'manage-modal' : modalClass}
       role="dialog"
-      aria-modal="true"
+      aria-modal=${suspended ? 'false' : 'true'}
       aria-labelledby=${labelledby}
       aria-describedby=${describedby}
       aria-label=${ariaLabel}
