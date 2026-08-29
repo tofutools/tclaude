@@ -61,9 +61,9 @@ function DirectoryOperationDialog({ operation, currentPath, actions, browse, onC
     setError('');
     try {
       if (creating) {
-        const result = await actions.create(currentPath, trimmed);
+        await actions.create(currentPath, trimmed);
         onClose();
-        await browse(result.path, true);
+        await browse(currentPath);
       } else if (renaming) {
         await actions.rename(directory.path, trimmed);
         onClose();
@@ -109,7 +109,7 @@ function DirectoryOperationDialog({ operation, currentPath, actions, browse, onC
       <span class="spacer"></span>
       <button type="button" class=${deleting ? 'danger' : 'primary'} disabled=${busy || !valid}
         onClick=${submit}>${busy ? (deleting ? 'Deleting…' : renaming ? 'Renaming…' : 'Creating…')
-          : deleting ? 'Delete folder' : renaming ? 'Rename' : 'Create and open'}</button>
+          : deleting ? 'Delete folder' : renaming ? 'Rename' : 'Create'}</button>
     </div>
   </${Overlay}>`;
 }
