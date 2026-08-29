@@ -34,9 +34,17 @@ func TestEnvironmentForLaunchPreservesTrustedGeneratedBindings(t *testing.T) {
 		{Name: "PATH", Value: "/generated/bin"},
 		{Name: "CODEX_HOME", Value: "/generated/codex"},
 		{Name: "COMMON", Value: "sandbox"},
+		{Name: "GOCACHE", Value: "/private/cache"},
+		{Name: "GIT_SSH_COMMAND", Value: "generated ssh command"},
+	}
+	snapshot.Effective.AgentDirectories = []string{"GOCACHE"}
+	snapshot.Effective.Provenance.Environment["GIT_SSH_COMMAND"] = ProfileSource{
+		Scope: ScopeExplicit, Profile: "__tclaude_codex_ssh_workaround",
 	}
 	snapshot.LaunchEnvironment = []EnvironmentEntry{
 		{Name: "COMMON", Value: "spawn"},
+		{Name: "GOCACHE", Value: "/operator/cache"},
+		{Name: "GIT_SSH_COMMAND", Value: "operator ssh command"},
 		{Name: "TEAM", Value: "platform"},
 	}
 
@@ -44,6 +52,8 @@ func TestEnvironmentForLaunchPreservesTrustedGeneratedBindings(t *testing.T) {
 		{Name: "PATH", Value: "/generated/bin"},
 		{Name: "CODEX_HOME", Value: "/generated/codex"},
 		{Name: "COMMON", Value: "spawn"},
+		{Name: "GOCACHE", Value: "/private/cache"},
+		{Name: "GIT_SSH_COMMAND", Value: "generated ssh command"},
 		{Name: "TEAM", Value: "platform"},
 	}, EnvironmentForLaunch(&snapshot))
 }

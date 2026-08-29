@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -758,8 +759,23 @@ func EnvironmentForLaunch(snapshot *Snapshot) []EnvironmentEntry {
 	for i, entry := range merged {
 		positions[entry.Name] = i
 	}
+	generated := make(map[string]bool, len(snapshot.Effective.AgentDirectories)+1)
+	for _, name := range snapshot.Effective.AgentDirectories {
+		generated[name] = true
+	}
+	for name, source := range snapshot.Effective.Provenance.Environment {
+		// Launch adapters mark synthetic bindings with an internal provenance
+		// source. They are installed after common settings resolve and must stay
+		// authoritative (for example the Codex SSH workaround command).
+		if strings.HasPrefix(source.Profile, "__tclaude_") {
+			generated[name] = true
+		}
+	}
 	for _, entry := range snapshot.LaunchEnvironment {
 		if i, ok := positions[entry.Name]; ok {
+			if generated[entry.Name] {
+				continue
+			}
 			merged[i] = entry
 			continue
 		}
