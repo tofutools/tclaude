@@ -1,4 +1,4 @@
-import { h, render } from 'preact';
+import { Fragment, h, render } from 'preact';
 import { useCallback, useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { configureDirectoryPickerBridge } from './helpers.js';
@@ -33,6 +33,87 @@ export function filterDirectories(directories, term) {
   return [...prefixes, ...substrings];
 }
 
+function childPath(parent, name) {
+  const base = parent === '/' ? '' : String(parent || '').replace(/\/+$/, '');
+  return `${base}/${String(name || '').trim()}`;
+}
+
+function DirectoryOperationDialog({ operation, currentPath, actions, browse, onClose }) {
+  const inputRef = useRef(null);
+  const [value, setValue] = useState(operation.kind === 'rename' ? operation.directory.name : '');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const directory = operation.directory;
+  const creating = operation.kind === 'create';
+  const renaming = operation.kind === 'rename';
+  const deleting = operation.kind === 'delete';
+  const title = creating ? 'Create a folder' : renaming
+    ? `Rename “${directory.name}”` : `Delete “${directory.name}”?`;
+  const trimmed = value.trim();
+  const destination = creating ? childPath(currentPath, trimmed) : renaming
+    ? childPath(currentPath, trimmed) : directory.path;
+  const valid = creating ? !!trimmed : renaming
+    ? !!trimmed && trimmed !== directory.name : value === directory.path;
+
+  const submit = useCallback(async () => {
+    if (!valid || busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      if (creating) {
+        const result = await actions.create(currentPath, trimmed);
+        onClose();
+        await browse(result.path, true);
+      } else if (renaming) {
+        await actions.rename(directory.path, trimmed);
+        onClose();
+        await browse(currentPath);
+      } else {
+        await actions.remove(directory.path, value);
+        onClose();
+        await browse(currentPath);
+      }
+    } catch (operationError) {
+      setError(operationError?.message || String(operationError));
+    } finally {
+      setBusy(false);
+    }
+  }, [actions, browse, busy, creating, currentPath, directory, onClose, renaming, trimmed, valid, value]);
+
+  return html`<${Overlay}
+    id="directory-picker-action-modal"
+    dialogClass=${`directory-picker-action-modal${deleting ? ' danger' : ''}`}
+    overlayClass="directory-picker-action-overlay"
+    labelledby="directory-picker-action-title"
+    describedby=${deleting ? 'directory-picker-delete-warning' : undefined}
+    onClose=${onClose}
+    onSubmitEnter=${submit}
+    initialFocusRef=${inputRef}
+    blocked=${busy}
+  >
+    <h3 id="directory-picker-action-title">${title}</h3>
+    ${creating && html`<p>The folder will be created inside the directory currently open in the picker.</p>`}
+    ${renaming && html`<p>Only the folder name changes; it stays inside the current directory.</p>`}
+    ${deleting && html`<div id="directory-picker-delete-warning" class="directory-picker-delete-warning">
+      This permanently deletes the folder and everything inside it from the agentd host. This cannot be undone.
+    </div>`}
+    <label class="directory-picker-action-field">
+      <span>${deleting ? 'Type the exact host path to confirm' : 'Folder name'}</span>
+      <input ref=${inputRef} value=${value} autocomplete="off" spellcheck="false"
+        onInput=${(event) => setValue(event.currentTarget.value)} />
+    </label>
+    <div class="directory-picker-action-path">${destination}</div>
+    <div role="alert" class="directory-picker-error">${error}</div>
+    <div class="modal-buttons">
+      <button type="button" disabled=${busy} onClick=${onClose}>Cancel</button>
+      <span class="spacer"></span>
+      <button type="button" class=${deleting ? 'danger' : 'primary'} disabled=${busy || !valid}
+        onClick=${submit}>${busy ? (deleting ? 'Deleting…' : renaming ? 'Renaming…' : 'Creating…')
+          : deleting ? 'Delete folder' : renaming ? 'Rename' : 'Create and open'}</button>
+    </div>
+  </${Overlay}>`;
+}
+
 export function DirectoryPickerApp({ state, actions }) {
   const request = state.request.value;
   const pathRef = useRef(null);
@@ -45,6 +126,7 @@ export function DirectoryPickerApp({ state, actions }) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [operation, setOperation] = useState(null);
 
   const browse = useCallback(async (target, appendSlash = false) => {
     const requested = String(target || '').trim();
@@ -82,6 +164,7 @@ export function DirectoryPickerApp({ state, actions }) {
     setPath(request.startDir);
     setActiveIndex(0);
     setError('');
+    setOperation(null);
     void browse(request.startDir);
     return () => { generation.current += 1; };
   }, [request]);
@@ -109,7 +192,7 @@ export function DirectoryPickerApp({ state, actions }) {
   const choose = () => {
     if (validated && !busy) state.finish({ path: view.path });
   };
-  return html`<${Overlay}
+  return html`<${Fragment}><${Overlay}
     id="directory-picker-modal"
     dialogClass="directory-picker-modal"
     labelledby="directory-picker-title"
@@ -165,6 +248,8 @@ export function DirectoryPickerApp({ state, actions }) {
         onClick=${() => void browse(view?.parent, true)}>↑ Parent</button>
       <button type="button" disabled=${busy || !view?.home || view?.home === view?.path}
         onClick=${() => void browse(view?.home, true)}>⌂ Home</button>
+      <button type="button" class="directory-picker-new" disabled=${busy || !view?.path}
+        onClick=${() => setOperation({ kind: 'create' })}>＋ New folder</button>
       <span class="directory-picker-count" role="status" aria-live="polite">${view ? count : ''}</span>
     </div>
     ${typedOtherPath && html`<div class="directory-picker-hint">Press Enter to open the typed path.</div>`}
@@ -177,12 +262,19 @@ export function DirectoryPickerApp({ state, actions }) {
       ><button id=${selecting ? optionID(directory) : undefined}
           type="button" title=${directory.path} disabled=${busy}
           ref=${active ? activeEntryRef : undefined}
-          class=${active ? 'active' : undefined}
+          class=${`directory-picker-open${active ? ' active' : ''}`}
           role=${selecting ? 'option' : undefined}
           aria-selected=${selecting ? active ? 'true' : 'false' : undefined}
           tabIndex=${selecting ? -1 : undefined}
           onClick=${() => void browse(directory.path, true)}
-        ><span aria-hidden="true">📁</span><span>${directory.name}</span></button></div>`;
+        ><span aria-hidden="true">📁</span><span>${directory.name}</span></button>
+        <button type="button" class="directory-picker-entry-action" disabled=${busy}
+          aria-label=${`Rename ${directory.name}`} title=${`Rename ${directory.name}`}
+          onClick=${() => setOperation({ kind: 'rename', directory })}>✎</button>
+        <button type="button" class="directory-picker-entry-action danger" disabled=${busy}
+          aria-label=${`Delete ${directory.name}`} title=${`Delete ${directory.name}`}
+          onClick=${() => setOperation({ kind: 'delete', directory })}>🗑</button>
+      </div>`;
       })}
       ${view && !visibleDirectories.length && html`<p class="directory-picker-empty">
         ${filtering ? 'No matching folders' : 'No subdirectories'}
@@ -195,7 +287,12 @@ export function DirectoryPickerApp({ state, actions }) {
       <button type="button" class="primary" disabled=${busy || !validated}
         onClick=${choose}>Use this folder</button>
     </div>
-  </${Overlay}>`;
+  </${Overlay}>
+  ${operation && html`<${DirectoryOperationDialog}
+    operation=${operation} currentPath=${view?.path || ''} actions=${actions}
+    browse=${browse} onClose=${() => setOperation(null)}
+  />`}
+  </${Fragment}>`;
 }
 
 export function mountDirectoryPickerIsland({ host, state, actions, prefersWeb, registerCleanup }) {
