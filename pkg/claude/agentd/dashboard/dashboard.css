@@ -11086,12 +11086,12 @@ body.wizard #group-settings-modal .cron-create-row select option {
   background: #e7d9f5;
 }
 body.wizard #group-settings-modal input[type=checkbox] { accent-color: #d9b45a; }
-body.wizard #group-settings-modal button:not(#group-settings-submit) {
+body.wizard #group-settings-modal button:not(#group-settings-submit):not(.cron-create-error-x) {
   background: #241b3d;
   border: 1px solid #d9b45a;
   color: #f3e6c0;
 }
-body.wizard #group-settings-modal button:not(#group-settings-submit):hover:not(:disabled) { background: #3a2a63; }
+body.wizard #group-settings-modal button:not(#group-settings-submit):not(.cron-create-error-x):hover:not(:disabled) { background: #3a2a63; }
 body.wizard #group-settings-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 body.wizard #group-settings-modal #group-settings-submit {
   background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);

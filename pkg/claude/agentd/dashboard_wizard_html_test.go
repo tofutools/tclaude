@@ -523,6 +523,8 @@ func TestDashboardHTML_WizardEnvironmentEditors(t *testing.T) {
 		"the consolidated party editor carries a wizard title")
 	must(`id="group-settings-submit"`, "the party editor submit lever has a stable styling hook")
 	must(`id="group-settings-default-cwd-browse"`, "the party sanctum has a directory-picker affordance")
+	must("button:not(#group-settings-submit):not(.cron-create-error-x)",
+		"the party button skin preserves the error banner's ghost dismiss control")
 }
 
 // TestDashboardHTML_WizardHumanReplyModal pins the wizard re-skin of the
