@@ -743,6 +743,27 @@ test('spawn role chips compose multiple roles, inspect details, and feed the per
   await mounted.cleanup();
 });
 
+test('spawn environment controls carry wizard vocabulary without replacing the form', async (t) => {
+  const mounted = await mountSpawn(t);
+  const { harness, host, state } = mounted;
+  state.open({ groupName: 'alpha' });
+  await flush(harness);
+
+  const row = host.querySelector('#agent-spawn-environment-row');
+  assert.equal(row.querySelector('.cron-create-label .theme-copy-wizard').textContent,
+    'Summoning runes');
+  assert.equal(row.querySelector('.sbx-add-row .theme-copy-wizard').textContent,
+    '✦ bind override');
+  const dialog = host.querySelector('#agent-spawn-modal [role="dialog"]');
+  harness.document.body.classList.add('wizard');
+  harness.document.dispatchEvent(new harness.window.CustomEvent('tclaude:wizard', { detail: { active: true } }));
+  await flush(harness);
+  assert.equal(host.querySelector('#agent-spawn-modal [role="dialog"]'), dialog,
+    'a live wizard flip preserves the environment form node');
+  assert.match(row.textContent, /resolved spellbook is sealed/);
+  await mounted.cleanup();
+});
+
 test('Preact agent-spawn renders the unenforced-rules checkbox under the sandbox profile', async (t) => {
   const mounted = await mountSpawn(t);
   const { harness, host, state } = mounted;

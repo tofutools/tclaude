@@ -19,6 +19,7 @@ async function mountDialogs(
   descriptor,
   overrides = {},
   confirmDiscard = async () => false,
+  snapshot = null,
 ) {
   const harness = await createPreactHarness(t);
   const [{ createActionDialogState }, { ActionDialogApp }] = await Promise.all([
@@ -61,10 +62,39 @@ async function mountDialogs(
   };
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
   const mounted = await harness.mount(harness.html`
-    <${ActionDialogApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} />
+    <${ActionDialogApp} state=${state} actions=${actions} confirmDiscard=${confirmDiscard} snapshot=${snapshot} />
   `, host);
   return { harness, host, state, actions, calls, cleanup: () => mounted.unmount() };
 }
+
+test('group settings emits complete wizard copy for its dialog and environment controls', async (t) => {
+  const snapshot = { value: {
+    groups: [{
+      name: 'alpha', descr: 'builders', default_cwd: '/repo', default_context: 'shared lore',
+      environment: [{ name: 'TEAM', value: 'alpha' }], notify_enabled: true,
+    }],
+    profiles: [{ name: 'reviewer' }], sandbox_profiles: [{ name: 'confined' }],
+  } };
+  const mounted = await mountDialogs(
+    t, 'group-settings', { group: 'alpha' }, { saveGroupSettings: async () => {} },
+    async () => true, snapshot,
+  );
+  const { host } = mounted;
+
+  assert.equal(host.querySelector('#group-settings-title .theme-copy-wizard').textContent,
+    'Enchant party: alpha');
+  assert.equal(host.querySelector('#group-settings-environment-row .cron-create-label .theme-copy-wizard').textContent,
+    'Summoning runes');
+  assert.equal(host.querySelector('#group-settings-environment-row .sbx-add-row .theme-copy-wizard').textContent,
+    '✦ bind rune');
+  assert.match(host.querySelector('#group-settings-modal').textContent, /Sanctum/);
+  assert.match(host.querySelector('#group-settings-modal').textContent, /Opening lore/);
+  assert.match(host.querySelector('#group-settings-modal').textContent, /Familiar pattern/);
+  assert.match(host.querySelector('#group-settings-modal').textContent, /Scrying policy/);
+  assert.equal(host.querySelector('#group-settings-cancel .theme-copy-wizard').textContent, 'Dispel');
+  assert.equal(host.querySelector('#group-settings-submit .theme-copy-wizard').textContent, '✦ Enchant party');
+  await mounted.cleanup();
+});
 
 test('dirty clone Cancel rejects and accepts through the overlay close transaction', async (t) => {
   let allowDiscard = false;

@@ -10883,6 +10883,7 @@ body.wizard #agent-spawn-modal .spawn-field-hint.warn { color: #f0883e; }
 body.wizard #agent-spawn-modal .spawn-field-hint.info { color: #58a6ff; }
 body.wizard #agent-spawn-modal .cron-create-row input[type=text],
 body.wizard #agent-spawn-modal .cron-create-row input[type=url],
+body.wizard #agent-spawn-modal .cron-create-row input:not([type]),
 body.wizard #agent-spawn-modal .cron-create-row select,
 body.wizard #agent-spawn-modal .cron-create-row textarea {
   background: #140f28;
@@ -10891,6 +10892,7 @@ body.wizard #agent-spawn-modal .cron-create-row textarea {
 }
 body.wizard #agent-spawn-modal .cron-create-row input[type=text]:focus,
 body.wizard #agent-spawn-modal .cron-create-row input[type=url]:focus,
+body.wizard #agent-spawn-modal .cron-create-row input:not([type]):focus,
 body.wizard #agent-spawn-modal .cron-create-row select:focus,
 body.wizard #agent-spawn-modal .cron-create-row textarea:focus {
   border-color: #a97bd6;
@@ -10900,6 +10902,7 @@ body.wizard #agent-spawn-modal .cron-create-row textarea:focus {
 body.wizard #agent-spawn-modal .cron-create-row select option {
   color: #1a1330; background: #e7d9f5;
 }
+body.wizard #agent-spawn-modal .muted { color: #b39ddb; }
 /* Secondary + inline buttons (Clear / Save as profile… / Attach… / Browse… /
    Permissions… / Cancel). The :not(#agent-spawn-submit) excludes the Summon
    button (it keeps its own gilded-lever treatment below), so this rule and the
@@ -11048,6 +11051,68 @@ body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal)
 body.wizard :is(#clone-agent-modal, #reincarnate-agent-modal, #group-nest-modal) .modal-buttons button:disabled {
   opacity: 0.7;
 }
+
+/* ─── Wizard group settings — "Enchant party" ──────────────────────
+   The consolidated party editor is a full sibling of Summon and the profile
+   editor: its fields determine the sanctum, lore, pattern, ward, runes, and
+   policies inherited by future familiars. Keep the skin id-scoped because the
+   same overlay primitive is shared by ordinary action dialogs. */
+body.wizard #group-settings-modal .cron-create-modal {
+  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
+  border: 1px solid #7a5db0;
+  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
+  color: #e7d9f5;
+  scrollbar-color: #7a5db0 #140f28;
+}
+body.wizard #group-settings-modal .cron-create-modal h3 {
+  color: #f3e6c0;
+  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
+  letter-spacing: 1px;
+  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
+}
+body.wizard #group-settings-modal :is(.cron-create-label, .spawn-field-hint, .muted) {
+  color: #b39ddb;
+}
+body.wizard #group-settings-modal .cron-create-row :is(input:not([type]), input[type=url], input[type=number], select, textarea) {
+  background: #140f28;
+  border-color: rgba(122, 93, 176, 0.5);
+  color: #f3e6c0;
+}
+body.wizard #group-settings-modal .cron-create-row :is(input:not([type]), input[type=url], input[type=number], select, textarea):focus {
+  border-color: #a97bd6;
+}
+body.wizard #group-settings-modal .cron-create-row select option {
+  color: #1a1330;
+  background: #e7d9f5;
+}
+body.wizard #group-settings-modal input[type=checkbox] { accent-color: #d9b45a; }
+body.wizard #group-settings-modal button:not(#group-settings-submit) {
+  background: #241b3d;
+  border: 1px solid #d9b45a;
+  color: #f3e6c0;
+}
+body.wizard #group-settings-modal button:not(#group-settings-submit):hover:not(:disabled) { background: #3a2a63; }
+body.wizard #group-settings-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
+body.wizard #group-settings-modal #group-settings-submit {
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  color: #f3e6c0;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 6px 16px;
+  transition: transform 0.08s ease;
+}
+body.wizard #group-settings-modal #group-settings-submit:hover:not(:disabled) {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #group-settings-modal #group-settings-submit:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #group-settings-modal button:disabled { opacity: 0.7; }
 
 /* ─── Wizard retire modal — "Banish this familiar?" ─────────────────
    The arcane counterpart to the Summon dialog above: retiring a familiar
@@ -12693,7 +12758,8 @@ body.wizard #profile-editor-modal .cron-create-modal h3 {
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
 body.wizard #profile-editor-modal .cron-create-label,
-body.wizard #profile-editor-modal .spawn-perms-indicator { color: #b39ddb; }
+body.wizard #profile-editor-modal .spawn-perms-indicator,
+body.wizard #profile-editor-modal .spawn-field-hint { color: #b39ddb; }
 body.wizard #profile-editor-modal .cron-create-row input[type=text],
 body.wizard #profile-editor-modal .cron-create-row input:not([type]),
 body.wizard #profile-editor-modal .cron-create-row select,

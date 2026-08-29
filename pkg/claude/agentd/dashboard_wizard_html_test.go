@@ -498,6 +498,32 @@ func TestDashboardCSS_WizardProfileEditorScoped(t *testing.T) {
 	}
 }
 
+// TestDashboardHTML_WizardEnvironmentEditors pins the wizard presentation of
+// the environment controls added to summon, profile, and consolidated group
+// settings. The group editor is its own overlay and therefore needs an
+// explicitly scoped surface; the spawn inputs intentionally omit type, so the
+// field skin must include that selector rather than relying on type=text.
+func TestDashboardHTML_WizardEnvironmentEditors(t *testing.T) {
+	must := func(needle, why string) {
+		t.Helper()
+		if !dashboardSourceContains(dashboardAssets, needle) {
+			t.Errorf("dashboard source missing %q (%s)", needle, why)
+		}
+	}
+
+	must(`id="agent-spawn-environment-row"`, "the summon environment editor ships")
+	must(`wizard="Summoning runes"`, "environment editors carry wizard vocabulary")
+	must("body.wizard #agent-spawn-modal .cron-create-row input:not([type])",
+		"untyped summon environment inputs receive the wizard field skin")
+	must(`id="profile-editor-environment-row"`, "the pattern environment editor ships")
+	must(`id="group-settings-environment-row"`, "the party environment editor ships")
+	must("body.wizard #group-settings-modal .cron-create-modal",
+		"the consolidated party editor receives an id-scoped wizard surface")
+	must("wizard=${`Enchant party: ${descriptor.group}`}",
+		"the consolidated party editor carries a wizard title")
+	must(`id="group-settings-submit"`, "the party editor submit lever has a stable styling hook")
+}
+
 // TestDashboardHTML_WizardHumanReplyModal pins the wizard re-skin of the
 // reply-to-a-human-notification dialog ("✒ Answer the familiar"): the
 // Messages tab Human folder's `reply` button opens it, and answering a
