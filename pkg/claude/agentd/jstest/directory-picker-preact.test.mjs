@@ -251,10 +251,9 @@ test('Preact picker creates, renames, and explicitly confirms recursive deletion
   assert.equal(pickerOverlay.hasAttribute('inert'), false);
   assert.equal(pickerOverlay.hasAttribute('aria-hidden'), false);
   assert.equal(pickerOverlay.querySelector('[role="dialog"]').getAttribute('aria-modal'), 'true');
-  assert.equal(mounted.container.querySelector('#directory-picker-path').value, '/root/new-child/');
+  assert.equal(mounted.container.querySelector('#directory-picker-path').value, '/root');
+  assert.ok(mounted.container.querySelector('[aria-label="Rename new-child"]'));
 
-  mounted.container.querySelector('.directory-picker-nav button').click();
-  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 0)));
   mounted.container.querySelector('[aria-label="Rename alpha"]').click();
   await harness.act(() => Promise.resolve());
   action = mounted.container.querySelector('#directory-picker-action-modal');
