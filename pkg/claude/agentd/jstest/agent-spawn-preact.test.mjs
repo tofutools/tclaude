@@ -750,6 +750,19 @@ test('spawn environment controls carry wizard vocabulary without replacing the f
   await flush(harness);
 
   const row = host.querySelector('#agent-spawn-environment-row');
+  row.querySelector('.sbx-add-row').click();
+  await flush(harness);
+  const name = row.querySelector('.sbx-env-name');
+  setValue(name, 'SPAWN_SCOPE');
+  await harness.act(() => harness.fireEvent(name, 'input'));
+  await flush(harness);
+  const preview = host.querySelector('#agent-spawn-environment-preview');
+  assert.equal(host.querySelector('#agent-spawn-attachments-row').nextElementSibling?.id, row.id,
+    'Environment follows attachments');
+  assert.equal(row.nextElementSibling?.id, preview.id,
+    'Effective environment follows the editable environment');
+  assert.equal(preview.nextElementSibling.classList.contains('agent-spawn-roles-row'), true,
+    'Roles follows both environment rows');
   assert.equal(row.querySelector('.cron-create-label .theme-copy-wizard').textContent,
     'Summoning runes');
   assert.equal(row.querySelector('.sbx-add-row .theme-copy-wizard').textContent,
