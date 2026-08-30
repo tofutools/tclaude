@@ -1096,3 +1096,37 @@ func TestAWBProxy_AttachUploadIsNotBufferedForAudit(t *testing.T) {
 	assert.Equal(t, content, rec.only(t).Body,
 		"skipping the audit buffer must not change what the handler reads")
 }
+
+// TestAWBProxy_NonSearchListingsRefuseTerms — only `search` matches text, and
+// the other three have no way to.
+//
+// Dropping the field silently would answer a caller that asked to NARROW a
+// listing with the wide one, confidently. The proxy refuses it for the same
+// reason it refuses a status filter on `ready`: a filter a verb cannot honour
+// is a usage error, not a field to ignore.
+func TestAWBProxy_NonSearchListingsRefuseTerms(t *testing.T) {
+	for _, path := range []string{
+		"/v1/awb/issue/list", "/v1/awb/issue/ready", "/v1/awb/issue/blocked",
+	} {
+		w, rec := awbWorld(t, []string{"awb"})
+		w.grant(agentd.PermAWBRead)
+		res := w.post(path, map[string]any{"terms": []string{"credential rotation"}})
+		assert.Equal(t, http.StatusBadRequest, res.Code, "%s: body=%s", path, res.Body.String())
+		assert.Contains(t, res.Body.String(), "search", "the refusal names the verb that does")
+		assert.False(t, rec.sawAnyCall(),
+			"%s: refused before the project resolution spends a call", path)
+	}
+
+	t.Run("a blank term is not a term, so it is not a refusal either", func(t *testing.T) {
+		w, rec := awbWorld(t, []string{"awb"})
+		w.grant(agentd.PermAWBRead)
+		rec.response = func(req agentd.AWBProxyRequest) (int, string) {
+			if strings.Contains(req.URL, "/api/projects") {
+				return http.StatusOK, awbProjectsJSON("awb")
+			}
+			return http.StatusOK, "[]"
+		}
+		res := w.post("/v1/awb/issue/list", map[string]any{"terms": []string{"", "  "}})
+		w.outcome(res)
+	})
+}

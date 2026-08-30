@@ -637,9 +637,29 @@ func TestVisiblePermissionRegistryGatesEachProxyFamily(t *testing.T) {
 		got := slugs(proxyVisibility{git: true})
 		assert.True(t, got[PermGitRead])
 		assert.True(t, got[PermGitHubWrite])
-		assert.True(t, got[PermLinearRead], "Linear rides with git; see proxyVisibility")
 		assert.False(t, got[PermAWBRead], "a git-only host has no AWB server to reach")
 		assert.False(t, got[PermAWBWrite])
+	})
+
+	// A Linear-only host: the case that used to hide both Linear slugs, leaving
+	// an operator unable to grant a capability their host actually had.
+	t.Run("linear only", func(t *testing.T) {
+		got := slugs(proxyVisibility{linear: true})
+		assert.True(t, got[PermLinearRead],
+			"a slug missing from the catalog is one nobody can grant")
+		assert.True(t, got[PermLinearWrite])
+		assert.False(t, got[PermGitRead])
+		assert.False(t, got[PermAWBRead])
+	})
+
+	// The coupling TestProxyPermissionSlugsFollowProxyVisibility pins: a
+	// git-configured host advertises Linear too. configuredProxyVisibility sets
+	// both bits for it, so the catalog keeps saying what that test expects.
+	t.Run("git implies linear, as the repository already pins", func(t *testing.T) {
+		got := slugs(proxyVisibility{git: true, linear: true})
+		assert.True(t, got[PermGitRead])
+		assert.True(t, got[PermLinearRead])
+		assert.False(t, got[PermAWBRead])
 	})
 
 	t.Run("awb only", func(t *testing.T) {

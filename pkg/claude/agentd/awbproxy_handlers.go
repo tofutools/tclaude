@@ -484,6 +484,14 @@ func (s *awbProxySession) runAWBListing(
 			writeProxyFault(w, fault)
 			return
 		}
+	} else if len(trimmedNonEmpty(f.Terms)) > 0 {
+		// Refused rather than dropped, for the reason the rejected status and
+		// assignee filters are: a caller that asked to NARROW a listing and got
+		// the wide one back has been answered confidently and wrongly. Only
+		// `search` matches text, and the other three have no way to.
+		writeProxyFault(w, faultf(http.StatusBadRequest, "invalid_arg",
+			"this listing does not match text; `search` is the verb that takes terms"))
+		return
 	}
 	q, projects, fault := s.awbListingQuery(r.Context(), f, opts)
 	if fault != nil {

@@ -2332,6 +2332,24 @@ func (c *Config) LinearProxyEnabled() bool {
 	return len(c.ResolvedLinearProxy().AllowedTeams) > 0
 }
 
+// LinearProxyConfigured reports whether the operator has set up the Linear
+// proxy AT ALL — any allow-list, any key file, any workspace route.
+//
+// It is deliberately broader than LinearProxyEnabled, and answers a different
+// question. LinearProxyEnabled is about the operator's global TEAM POLICY, one
+// half of an authorization decision. This is about whether the feature exists
+// on this host, which is what the permission catalog needs: a slug hidden from
+// the catalog is one an operator cannot grant, so the test for showing it has
+// to be "could this ever work here" rather than "is it fully configured".
+//
+// A key supplied only through LINEAR_API_KEY in the daemon's environment is
+// invisible from here; the caller adds that signal, since reading the daemon's
+// own environment is not config's job.
+func (c *Config) LinearProxyConfigured() bool {
+	p := c.ResolvedLinearProxy()
+	return len(p.AllowedTeams) > 0 || p.APIKeyFile != "" || len(p.Workspaces) > 0
+}
+
 // LinearTeamAllowed reports whether key names a team the operator allow-listed.
 // Exact, case-insensitive match on the whole key — there is no prefix or
 // wildcard rule here, unlike the remote matcher, because team keys are a flat

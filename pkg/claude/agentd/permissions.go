@@ -701,14 +701,15 @@ var permissionRegistry = []PermSlug{
 // proxy.git.*, and a host with only the git proxy has none to advertise
 // proxy.awb.*.
 //
-// Linear deliberately rides with git rather than getting its own flag. Its
-// operator-global switch (allowed_teams) is not the whole enablement rule — a
-// scope-only posture with no list at all is supported — so gating on it would
-// HIDE a slug that works, which is worse than showing one that does not: an
-// operator cannot grant what the catalog does not list.
+// Each family is answered by "could this work on this host", never by "is its
+// policy complete". A slug missing from the catalog is one an operator cannot
+// grant, so the cost of hiding a usable slug is higher than the cost of showing
+// an unusable one — which is why every family's bit is the OR of several
+// sources rather than its strictest setting.
 type proxyVisibility struct {
-	git bool
-	awb bool
+	git    bool
+	linear bool
+	awb    bool
 }
 
 // visiblePermissionRegistry returns the permission catalog exposed to humans
@@ -733,9 +734,10 @@ func visiblePermissionRegistry(vis proxyVisibility) []PermSlug {
 // proxy permission is always visible.
 func proxyPermissionVisible(slug string, vis proxyVisibility) bool {
 	switch slug {
-	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
-		PermLinearRead, PermLinearWrite:
+	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge:
 		return vis.git
+	case PermLinearRead, PermLinearWrite:
+		return vis.linear
 	case PermAWBRead, PermAWBWrite:
 		return vis.awb
 	default:

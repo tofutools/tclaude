@@ -207,18 +207,17 @@ func gitProxyRoutesEnabled(r *http.Request) bool {
 // because a scope-only posture is supported and the operator's global block may
 // legitimately be empty.
 func proxyVisibilityForRequest(r *http.Request) proxyVisibility {
-	var vis proxyVisibility
-	if cfg, err := config.Load(); err == nil {
-		vis.git = cfg.GitProxyEnabled()
-		vis.awb = cfg.AWBProxyEnabled()
-	}
-	if vis.git && vis.awb {
+	vis := configuredProxyVisibility()
+	if vis.git && vis.linear && vis.awb {
 		return vis
 	}
 	p := peerFromContext(r.Context())
 	if classify(p) != classAgent {
 		return vis
 	}
+	// A scoped grant is the second source, and for a scope-only posture it is
+	// the only one: the operator's global block may legitimately be empty while
+	// individual agents carry their own remote/team/project scopes.
 	scoped := func(slugs ...string) bool {
 		for _, slug := range slugs {
 			v := resolvePermissionVerdictForRequest(r, p.ConvID, slug)
@@ -231,10 +230,47 @@ func proxyVisibilityForRequest(r *http.Request) proxyVisibility {
 	if !vis.git {
 		vis.git = scoped(PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge)
 	}
+	if !vis.linear {
+		vis.linear = scoped(PermLinearRead, PermLinearWrite)
+	}
 	if !vis.awb {
 		vis.awb = scoped(PermAWBRead, PermAWBWrite)
 	}
 	return vis
+}
+
+// configuredProxyVisibility is the operator-side half, with no caller in view.
+// It is what the dashboard's catalog uses, where there is no agent whose grants
+// could widen the answer.
+func configuredProxyVisibility() proxyVisibility {
+	cfg, err := config.Load()
+	if err != nil {
+		return proxyVisibility{}
+	}
+	return proxyVisibility{
+		git: cfg.GitProxyEnabled(),
+		// Linear's bit is ADDITIVE over the git one rather than a replacement.
+		//
+		// TestProxyPermissionSlugsFollowProxyVisibility pins that a host with
+		// the git proxy configured advertises the Linear slugs too. That
+		// coupling is not obviously right — a git-only host has no Linear key —
+		// but it is the repository's existing statement, and unpicking it is a
+		// change to the Linear surface that belongs in its own commit rather
+		// than riding along with the AWB proxy.
+		//
+		// What IS fixed here is the harmful direction. A host with Linear
+		// configured and no git proxy used to hide both Linear slugs, so an
+		// operator could not grant a capability their host actually had: a slug
+		// missing from the catalog is one nobody can pick. Adding the Linear
+		// sources can only ever reveal a slug, never hide one.
+		//
+		// The environment is read HERE rather than in config because
+		// LINEAR_API_KEY is the daemon's, not the config file's, and
+		// resolveLinearRouteKey consults the same variable.
+		linear: cfg.GitProxyEnabled() ||
+			cfg.LinearProxyConfigured() || os.Getenv("LINEAR_API_KEY") != "",
+		awb: cfg.AWBProxyEnabled(),
+	}
 }
 
 // gitProxyDisabledMessage is written to be actionable for an unscoped grant.
