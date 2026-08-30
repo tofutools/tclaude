@@ -976,3 +976,123 @@ func TestAWBProxy_CommentListIsGatedByProject(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
 	assert.False(t, rec.sawAnyCall())
 }
+
+// --- activity ---
+
+func awbChangeJSON(id int, issue, action string) string {
+	return `{"id":` + strconv.Itoa(id) + `,"issue":"` + issue + `","kind":"change",` +
+		`"actor":"tclaude-bot","body":"","action":"` + action + `",` +
+		`"changes":[{"field":"status","from":"open","to":"closed"}],` +
+		`"created_at":"2026-08-26T09:14:00.000Z"}`
+}
+
+// TestAWBProxy_ActivityReturnsTheWholeTimeline is what distinguishes `activity`
+// from `comment list`: the change records are the half comments leave out.
+func TestAWBProxy_ActivityReturnsTheWholeTimeline(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"})
+	w.grant(agentd.PermAWBRead)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, "[" +
+			awbChangeJSON(44, "awb-a3f9c1", "closed") + "," +
+			awbActivityJSON(42, "awb-a3f9c1", "", "Reproduced.") + "]"
+	}
+
+	res := w.post("/v1/awb/activity/list", map[string]any{"id": "awb-a3f9c1", "compact": true})
+	out := w.outcome(res)
+
+	q := awbQuery(t, rec.only(t))
+	assert.Empty(t, q.Get("kind"), "no kind means the whole timeline")
+	assert.Equal(t, "50", q.Get("limit"))
+	assert.Equal(t,
+		"44 2026-08-26T09:14:00.000Z change @tclaude-bot closed "+
+			`[{"field":"status","from":"open","to":"closed"}]`+"\n"+
+			`42 2026-08-26T09:12:03.412Z comment @tclaude-bot "Reproduced."`+"\n",
+		out.Text)
+}
+
+func TestAWBProxy_ActivityNarrowsByKind(t *testing.T) {
+	for _, kind := range []string{"comment", "change"} {
+		w, rec := awbWorld(t, []string{"awb"})
+		w.grant(agentd.PermAWBRead)
+		rec.response = func(agentd.AWBProxyRequest) (int, string) { return http.StatusOK, "[]" }
+
+		res := w.post("/v1/awb/activity/list", map[string]any{"id": "awb-a3f9c1", "kind": kind})
+		w.outcome(res)
+		assert.Equal(t, kind, awbQuery(t, rec.only(t)).Get("kind"))
+	}
+
+	t.Run("an unknown kind is refused with the vocabulary", func(t *testing.T) {
+		w, rec := awbWorld(t, []string{"awb"})
+		w.grant(agentd.PermAWBRead)
+		res := w.post("/v1/awb/activity/list",
+			map[string]any{"id": "awb-a3f9c1", "kind": "changes"})
+		assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
+		assert.Contains(t, res.Body.String(), "comment, change")
+		assert.False(t, rec.sawAnyCall())
+	})
+}
+
+func TestAWBProxy_ActivityIsGatedByProject(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"})
+	w.grant(agentd.PermAWBRead)
+	res := w.post("/v1/awb/activity/list", map[string]any{"id": "secret-a3f9c1"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.False(t, rec.sawAnyCall())
+}
+
+// TestAWBProxy_ActivityIsAReadNotAWrite — reading a timeline changes nothing,
+// so it must not require the write slug.
+func TestAWBProxy_ActivityIsAReadNotAWrite(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"})
+	res := w.post("/v1/awb/activity/list", map[string]any{"id": "awb-a3f9c1"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "an ungranted caller is refused")
+	assert.False(t, rec.sawAnyCall())
+
+	w.grant(agentd.PermAWBRead)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) { return http.StatusOK, "[]" }
+	w.outcome(w.post("/v1/awb/activity/list", map[string]any{"id": "awb-a3f9c1"}))
+}
+
+// --- the review's findings ---
+
+// TestAWBProxy_SearchTermsAreValidatedBeforeTheNetwork keeps the rule the rest
+// of the listing path already follows: a malformed request must not spend a
+// call on the operator's account to reach its refusal. An unfiltered listing
+// resolves the server's project list first, so the terms have to be checked
+// ahead of that.
+func TestAWBProxy_SearchTermsAreValidatedBeforeTheNetwork(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"})
+	w.grant(agentd.PermAWBRead)
+
+	res := w.post("/v1/awb/issue/search", map[string]any{"terms": []string{"  "}})
+	assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
+	assert.False(t, rec.sawAnyCall(),
+		"not even the /api/projects resolution should have happened")
+}
+
+// TestAWBProxy_AttachUploadIsNotBufferedForAudit is the second half of the
+// audit-body story.
+//
+// Capping the buffer bounded the damage; not buffering at all removes it. The
+// AWB describers name their verb from the path, so there is nothing to read —
+// and the read would otherwise happen before the permission gate, for a caller
+// that may be refused.
+func TestAWBProxy_AttachUploadIsNotBufferedForAudit(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, `{"issue":"awb-a3f9c1","name":"big.bin",` +
+			`"content_type":"application/octet-stream","size":2097152,"sha256":"9f86d0",` +
+			`"created_at":"2026-08-26T09:12:03.412Z"}`
+	}
+
+	// Past the old audit cap, so a buffering middleware would have to rewind it.
+	// The handler must still receive every byte either way.
+	content := bytes.Repeat([]byte("x"), 2<<20)
+	res := w.post("/v1/awb/attach/add", map[string]any{
+		"id": "awb-a3f9c1", "name": "big.bin", "content": content,
+	})
+	w.outcome(res)
+	assert.Equal(t, content, rec.only(t).Body,
+		"skipping the audit buffer must not change what the handler reads")
+}

@@ -171,6 +171,17 @@ type awbCommentListRequest struct {
 	Offset int `json:"offset,omitempty"`
 }
 
+// awbActivityListRequest is `activity`: the whole timeline, optionally narrowed
+// to one kind. `comment list` is the same read with the kind fixed, which is
+// why the two share a tail rather than a route — an audit row should say which
+// question was asked.
+type awbActivityListRequest struct {
+	awbIssueRefRequest
+	Kind   string `json:"kind,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+	Offset int    `json:"offset,omitempty"`
+}
+
 type awbAttachAddRequest struct {
 	awbIssueRefRequest
 	Name        string `json:"name"`
@@ -462,20 +473,25 @@ func (s *awbProxySession) runAWBListing(
 	w http.ResponseWriter, r *http.Request, verb, path string,
 	f *awbFilterRequest, opts awbFilterOptions, withBlockers bool,
 ) {
+	// The terms are validated BEFORE the query is built, because building it can
+	// resolve the server's project list — one call on the operator's account.
+	// A malformed term must not spend that call to reach its refusal, which is
+	// the same ordering rule the filter checks in awbListingQuery follow.
+	var terms []string
+	if opts.relevance {
+		var fault *proxyFault
+		if terms, fault = validateAWBSearchTerms(f.Terms); fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+	}
 	q, projects, fault := s.awbListingQuery(r.Context(), f, opts)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
-	if opts.relevance {
-		terms, fault := validateAWBSearchTerms(f.Terms)
-		if fault != nil {
-			writeProxyFault(w, fault)
-			return
-		}
-		for _, term := range terms {
-			q.Add("q", term)
-		}
+	for _, term := range terms {
+		q.Add("q", term)
 	}
 	// Non-nil even when nothing matched: an empty listing has to render as `[]`
 	// rather than as `null`, or a consumer's "did I get rows" test would depend
@@ -786,49 +802,108 @@ func handleAWBProxyDepTree(w http.ResponseWriter, r *http.Request) {
 // `comment list` is a view of it rather than a separate store. A close reason
 // therefore arrives here, as a comment carrying action "closed".
 //
-// NOTE that this is the one read on this surface that carries THIRD-PARTY PROSE
-// into an agent's context — anyone with access to the tracker can write a
-// comment. The CLI help says so; there is nothing the daemon can do about it
-// beyond bounding the size, which is why it is said rather than enforced.
+// NOTE that this is one of the two reads on this surface that carry
+// THIRD-PARTY PROSE into an agent's context — anyone with access to the tracker
+// can write a comment. The CLI help says so; there is nothing the daemon can do
+// about it beyond bounding the size, which is why it is said rather than
+// enforced.
 func handleAWBProxyCommentList(w http.ResponseWriter, r *http.Request) {
 	var body awbCommentListRequest
 	s, ok := openAWBProxy(w, r, PermAWBRead, &body)
 	if !ok {
 		return
 	}
-	ref, fault := s.gateIssueRef(body.ID)
+	s.runAWBActivityListing(w, r, "comment.list", awbActivityQuery{
+		id: body.ID, kind: awbActivityKindComment, limit: body.Limit, offset: body.Offset,
+		compact: body.Compact,
+	})
+}
+
+// handleAWBProxyActivityList serves POST /v1/awb/activity/list — the whole
+// timeline, comments and change records together, newest first.
+//
+// The change records are what `comment list` leaves out: who claimed the issue,
+// when it was closed and what moved. Reading them is how an agent picks up work
+// somebody else touched without having to ask.
+//
+// It carries the same third-party prose `comment list` does, since comments are
+// part of what it returns.
+func handleAWBProxyActivityList(w http.ResponseWriter, r *http.Request) {
+	var body awbActivityListRequest
+	s, ok := openAWBProxy(w, r, PermAWBRead, &body)
+	if !ok {
+		return
+	}
+	kind, fault := validateAWBActivityKind(body.Kind)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
-	limit, fault := validateAWBLimit(body.Limit)
+	s.runAWBActivityListing(w, r, "activity.list", awbActivityQuery{
+		id: body.ID, kind: kind, limit: body.Limit, offset: body.Offset, compact: body.Compact,
+	})
+}
+
+// awbActivityQuery is one timeline read, however it was asked for.
+type awbActivityQuery struct {
+	id string
+	// kind narrows the timeline; empty means every entry.
+	kind    string
+	limit   int
+	offset  int
+	compact bool
+}
+
+// runAWBActivityListing is the tail `comment list` and `activity` share.
+//
+// One implementation rather than two, because the gate, the bounds and the
+// rendering must not be able to differ between "the comments" and "the
+// timeline" — they are the same rows read through the same endpoint.
+func (s *awbProxySession) runAWBActivityListing(
+	w http.ResponseWriter, r *http.Request, verb string, q awbActivityQuery,
+) {
+	ref, fault := s.gateIssueRef(q.id)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
-	offset, fault := validateAWBOffset(body.Offset)
+	limit, fault := validateAWBLimit(q.limit)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
-	q := url.Values{
-		"kind":  []string{awbActivityKindComment},
-		"limit": []string{strconv.Itoa(limit)},
+	offset, fault := validateAWBOffset(q.offset)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	query := url.Values{"limit": []string{strconv.Itoa(limit)}}
+	if q.kind != "" {
+		query.Set("kind", q.kind)
 	}
 	if offset > 0 {
-		q.Set("offset", strconv.Itoa(offset))
+		query.Set("offset", strconv.Itoa(offset))
 	}
-	// Non-nil so an issue with no comments renders as `[]` rather than `null`,
+	// Non-nil so an issue with no entries renders as `[]` rather than `null`,
 	// for the reason every other listing here does.
 	entries := []awbActivity{}
 	if _, fault := s.exec(r.Context(), awbCall{
-		Method: http.MethodGet, Path: "/api/issues/" + awbSegment(ref) + "/activity", Query: q,
+		Method: http.MethodGet, Path: "/api/issues/" + awbSegment(ref) + "/activity", Query: query,
 	}, &entries); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
-	s.respond(w, r, "comment.list", body.Compact, entries, awbCompactActivityLines(entries),
-		fmt.Sprintf("issue=%s rows=%d", ref, len(entries)))
+	s.respond(w, r, verb, q.compact, entries, awbCompactActivityLines(entries),
+		fmt.Sprintf("issue=%s kind=%s rows=%d", ref, awbKindOrAll(q.kind), len(entries)))
+}
+
+// awbKindOrAll labels an unfiltered timeline read in the audit row, so a row
+// says which question was asked rather than leaving the field blank.
+func awbKindOrAll(kind string) string {
+	if kind == "" {
+		return "all"
+	}
+	return kind
 }
 
 // handleAWBProxyAttachList serves POST /v1/awb/attach/list.

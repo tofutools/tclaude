@@ -1327,9 +1327,31 @@ func awbSegment(v string) string { return url.PathEscape(v) }
 // five priorities, four relation types — which is what makes it teachable to an
 // agent in a few lines. Repeating it here is what lets the proxy refuse a bad
 // value with the list rather than forwarding it for a 400.
-// awbActivityKindComment is the one timeline kind this proxy asks for by name:
-// `comment list` is the activity listing narrowed to it.
-const awbActivityKindComment = "comment"
+// The timeline's two kinds. A comment is prose somebody wrote; a change is the
+// compact record a successful mutation leaves behind. `comment list` is the
+// listing narrowed to the first; `activity` takes either, or neither for the
+// whole timeline.
+const (
+	awbActivityKindComment = "comment"
+	awbActivityKindChange  = "change"
+)
+
+var awbActivityKinds = []string{awbActivityKindComment, awbActivityKindChange}
+
+// validateAWBActivityKind bounds the timeline filter. Empty is the whole
+// timeline, which is what `activity` answers with when no kind is named.
+func validateAWBActivityKind(kind string) (string, *proxyFault) {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind == "" {
+		return "", nil
+	}
+	if !slices.Contains(awbActivityKinds, kind) {
+		return "", faultf(http.StatusBadRequest, "invalid_arg",
+			"%q is not an activity kind; AWB has exactly: %s",
+			kind, strings.Join(awbActivityKinds, ", "))
+	}
+	return kind, nil
+}
 
 var (
 	awbTypes         = []string{"epic", "feature", "bug", "task", "chore"}

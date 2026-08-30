@@ -1457,6 +1457,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/awb/dep/tree", handleAWBProxyDepTree)
 	mux.HandleFunc("POST /v1/awb/comment/add", handleAWBProxyCommentAdd)
 	mux.HandleFunc("POST /v1/awb/comment/list", handleAWBProxyCommentList)
+	mux.HandleFunc("POST /v1/awb/activity/list", handleAWBProxyActivityList)
 	mux.HandleFunc("POST /v1/awb/attach/add", handleAWBProxyAttachAdd)
 	mux.HandleFunc("POST /v1/awb/attach/list", handleAWBProxyAttachList)
 	mux.HandleFunc("POST /v1/awb/attach/show", handleAWBProxyAttachShow)

@@ -149,6 +149,20 @@ type auditRoute struct {
 	segs     []string
 	verb     string // fixed verb; "" → use the {verb} capture
 	describe describer
+	// pathOnly says this route's describer reads the PATH and nothing else, so
+	// the middleware need not buffer the body for it at all.
+	//
+	// It matters because the buffering happens before the handler — before its
+	// permission gate — so a route that carries megabytes makes the daemon
+	// allocate for a caller that may be refused a moment later. The AWB proxy's
+	// attachment upload is exactly that route, and its describer names the verb
+	// from the path capture, so there is nothing to read.
+	//
+	// The git, GitHub and Linear describers are path-only too and could carry
+	// this; they are left alone here because their bodies are small command
+	// payloads, so the saving would be theoretical and the change would touch
+	// three surfaces this branch has no other reason to.
+	pathOnly bool
 }
 
 // auditRoutes is the allowlist of daemon-proxied commands. Canonical
@@ -304,8 +318,10 @@ var auditRoutes = []auditRoute{
 	// route is matched first; a two-segment path falls through to the second.
 	{method: http.MethodPost, segs: []string{"linear", "{verb}"}, describe: describeLinearProxy},
 	{method: http.MethodPost, segs: []string{"linear", "{resource}", "{action}"}, describe: describeLinearProxyResource},
-	{method: http.MethodPost, segs: []string{"awb", "{verb}"}, describe: describeAWBProxy},
-	{method: http.MethodPost, segs: []string{"awb", "{resource}", "{action}"}, describe: describeAWBProxyResource},
+	{method: http.MethodPost, segs: []string{"awb", "{verb}"},
+		describe: describeAWBProxy, pathOnly: true},
+	{method: http.MethodPost, segs: []string{"awb", "{resource}", "{action}"},
+		describe: describeAWBProxyResource, pathOnly: true},
 }
 
 // auditedGitProxyVerbs / auditedGitHubProxyVerbs gate the path captures to the
@@ -394,6 +410,7 @@ var (
 		"dep.tree":      true,
 		"comment.add":   true,
 		"comment.list":  true,
+		"activity.list": true,
 		"attach.add":    true,
 		"attach.list":   true,
 		"attach.show":   true,
@@ -494,7 +511,7 @@ func auditRequests(h http.Handler) http.Handler {
 			r = r.WithContext(context.WithValue(r.Context(), auditResultContextKey{}, result))
 		}
 		var body []byte
-		if ok && route.describe != nil {
+		if ok && route.describe != nil && !route.pathOnly {
 			body = bufferAuditBody(r)
 		}
 		captureResponse := ok && route.verb == "spawn"
@@ -649,9 +666,10 @@ func splitPathSegments(path string) []string {
 // rather than in an endpoint.
 //
 // The value is far past any command payload and far below anything dangerous.
-// Every describer parses a small JSON command and extracts short strings from
-// it; the one route that legitimately carries megabytes — the AWB proxy's
-// attachment upload — is named entirely from its path and reads no body at all.
+// Every describer that needs a body parses a small JSON command and extracts
+// short strings from it; a route whose describer needs none is marked pathOnly
+// and never reaches here at all, which is what keeps an attachment upload from
+// being buffered for a caller that may be refused.
 const maxAuditBodyBytes = 1 << 20
 
 // bufferAuditBody reads the request body so a describer can parse it, then

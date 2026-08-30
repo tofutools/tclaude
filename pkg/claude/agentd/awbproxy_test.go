@@ -614,3 +614,87 @@ func TestAWBCompactAttachmentLine(t *testing.T) {
 		}),
 		"the content type is quoted because it may carry a parameter with a space in it")
 }
+
+// TestVisiblePermissionRegistryGatesEachProxyFamily pins what the slug catalog
+// advertises.
+//
+// The catalog exists so an agent does not mistake an unconfigured optional
+// feature for missing authority. One OR-combined flag defeated that: a git-only
+// host advertised proxy.awb.*, and an AWB-only host advertised the git family.
+// Hiding a slug never withdraws a grant made under it — the full registry still
+// backs validation and stored-grant resolution — so this is about advertising,
+// not enforcement.
+func TestVisiblePermissionRegistryGatesEachProxyFamily(t *testing.T) {
+	slugs := func(vis proxyVisibility) map[string]bool {
+		out := map[string]bool{}
+		for _, p := range visiblePermissionRegistry(vis) {
+			out[p.Slug] = true
+		}
+		return out
+	}
+
+	t.Run("git only", func(t *testing.T) {
+		got := slugs(proxyVisibility{git: true})
+		assert.True(t, got[PermGitRead])
+		assert.True(t, got[PermGitHubWrite])
+		assert.True(t, got[PermLinearRead], "Linear rides with git; see proxyVisibility")
+		assert.False(t, got[PermAWBRead], "a git-only host has no AWB server to reach")
+		assert.False(t, got[PermAWBWrite])
+	})
+
+	t.Run("awb only", func(t *testing.T) {
+		got := slugs(proxyVisibility{awb: true})
+		assert.True(t, got[PermAWBRead])
+		assert.True(t, got[PermAWBWrite])
+		assert.False(t, got[PermGitRead], "an AWB-only host has no git proxy configured")
+		assert.False(t, got[PermGitHubMerge])
+		assert.False(t, got[PermLinearRead])
+	})
+
+	t.Run("neither", func(t *testing.T) {
+		got := slugs(proxyVisibility{})
+		for _, slug := range []string{
+			PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
+			PermLinearRead, PermLinearWrite, PermAWBRead, PermAWBWrite,
+		} {
+			assert.False(t, got[slug], "%s must not be advertised with no proxy configured", slug)
+		}
+		assert.NotEmpty(t, got, "every non-proxy slug is still listed")
+	})
+
+	t.Run("a non-proxy slug is never filtered", func(t *testing.T) {
+		for _, vis := range []proxyVisibility{{}, {git: true}, {awb: true}, {git: true, awb: true}} {
+			assert.True(t, slugs(vis)[PermPermissionsGrant])
+		}
+	})
+
+	t.Run("every semantic-proxy slug is answered by exactly one family", func(t *testing.T) {
+		// The guard that keeps a slug added later from defaulting to visible:
+		// with both families off, no semantic-proxy slug may appear.
+		got := slugs(proxyVisibility{})
+		for _, p := range permissionRegistry {
+			if isSemanticProxyPermission(p.Slug) {
+				assert.False(t, got[p.Slug],
+					"%s is a semantic-proxy slug but is not gated by any family", p.Slug)
+			}
+		}
+	})
+}
+
+func TestValidateAWBActivityKind(t *testing.T) {
+	got, fault := validateAWBActivityKind("")
+	require.Nil(t, fault)
+	assert.Empty(t, got, "no kind means the whole timeline")
+
+	got, fault = validateAWBActivityKind("  COMMENT ")
+	require.Nil(t, fault)
+	assert.Equal(t, "comment", got)
+
+	got, fault = validateAWBActivityKind("change")
+	require.Nil(t, fault)
+	assert.Equal(t, "change", got)
+
+	_, fault = validateAWBActivityKind("changes")
+	require.NotNil(t, fault)
+	assert.Contains(t, fault.Msg, "comment, change", "the refusal lists the whole vocabulary")
+}

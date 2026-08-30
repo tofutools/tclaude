@@ -674,8 +674,9 @@ var permissionRegistry = []PermSlug{
 		Slug:      PermAWBRead,
 		ScopeDims: []ScopeDim{ScopeDimAWBProject},
 		Description: "Read AWB issues through the daemon's AWB account (tclaude proxy awb whoami, show, list, ready, blocked, " +
-			"search, dep tree, comment list, attach list/show/get). Note that comment list carries third-party prose — anyone " +
-			"with tracker access can write a comment — into the agent's context. Narrowable per agent with --scope awb_project=awb: with an operator " +
+			"search, dep tree, comment list, activity, attach list/show/get). Note that comment list and activity carry " +
+			"third-party prose — anyone with tracker access can write a comment — into the agent's context. Narrowable per agent " +
+			"with --scope awb_project=awb: with an operator " +
 			"agent.awb_proxy.allowed_projects list configured the two intersect and the scope can only narrow it, while with no " +
 			"such list a scoped grant is the whole project policy. An UNSCOPED grant is refused outright when the operator has " +
 			"no list. Not default-granted: it reads the operator's tracker as them.",
@@ -692,21 +693,54 @@ var permissionRegistry = []PermSlug{
 	},
 }
 
+// proxyVisibility says which semantic-proxy families this host has configured,
+// and so which of their permission slugs are worth showing.
+//
+// It is per-family rather than one boolean because the families are configured
+// independently: a host with only the AWB proxy has no reason to advertise
+// proxy.git.*, and a host with only the git proxy has none to advertise
+// proxy.awb.*.
+//
+// Linear deliberately rides with git rather than getting its own flag. Its
+// operator-global switch (allowed_teams) is not the whole enablement rule — a
+// scope-only posture with no list at all is supported — so gating on it would
+// HIDE a slug that works, which is worse than showing one that does not: an
+// operator cannot grant what the catalog does not list.
+type proxyVisibility struct {
+	git bool
+	awb bool
+}
+
 // visiblePermissionRegistry returns the permission catalog exposed to humans
 // and agents. Proxy permissions are useful only when the semantic proxy is
 // available; advertising them otherwise makes agents mistake an unavailable
 // optional feature for missing authority to use their environment's normal
 // Git, GitHub, Linear, or AWB tooling. Keep the full registry above for validation
-// and stored-grant resolution so disabling the proxy never destroys policy.
-func visiblePermissionRegistry(proxyEnabled bool) []PermSlug {
+// and stored-grant resolution so disabling the proxy never destroys policy —
+// hiding a slug never withdraws a grant already made under it.
+func visiblePermissionRegistry(vis proxyVisibility) []PermSlug {
 	out := make([]PermSlug, 0, len(permissionRegistry))
 	for _, p := range permissionRegistry {
-		if !proxyEnabled && isSemanticProxyPermission(p.Slug) {
+		if !proxyPermissionVisible(p.Slug, vis) {
 			continue
 		}
 		out = append(out, p)
 	}
 	return out
+}
+
+// proxyPermissionVisible answers for one slug. Anything that is not a semantic
+// proxy permission is always visible.
+func proxyPermissionVisible(slug string, vis proxyVisibility) bool {
+	switch slug {
+	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
+		PermLinearRead, PermLinearWrite:
+		return vis.git
+	case PermAWBRead, PermAWBWrite:
+		return vis.awb
+	default:
+		return true
+	}
 }
 
 func isSemanticProxyPermission(slug string) bool {
@@ -1464,7 +1498,7 @@ func handlePermissionsSlugs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	out := visiblePermissionRegistry(gitProxyRoutesEnabled(r))
+	out := visiblePermissionRegistry(proxyVisibilityForRequest(r))
 	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
 	writeJSON(w, http.StatusOK, out)
 }

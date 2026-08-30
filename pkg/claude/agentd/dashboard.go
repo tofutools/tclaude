@@ -3336,7 +3336,9 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			Overrides:        map[string]map[string]string{},
 			UnreadableScopes: map[string][]string{},
 		},
-		Slugs: visiblePermissionRegistry(cfg.GitProxyEnabled() || cfg.AWBProxyEnabled()),
+		Slugs: visiblePermissionRegistry(proxyVisibility{
+			git: cfg.GitProxyEnabled(), awb: cfg.AWBProxyEnabled(),
+		}),
 	}
 	out.RetiredTotal = retiredTotal
 	sort.Slice(out.Slugs, func(i, j int) bool { return out.Slugs[i].Slug < out.Slugs[j].Slug })

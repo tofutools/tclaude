@@ -194,6 +194,49 @@ func gitProxyRoutesEnabled(r *http.Request) bool {
 	return false
 }
 
+// proxyVisibilityForRequest answers, per proxy family, whether this caller has
+// any reason to see that family's permission slugs.
+//
+// It is the per-family sibling of gitProxyRoutesEnabled, which stays a single
+// boolean because it answers a different question: "is `tclaude proxy` a command
+// on this host at all", for which any configured proxy is enough. The catalog
+// needs finer grain — a git-only host advertising proxy.awb.* sends an agent
+// looking for a tracker that is not there.
+//
+// A family also counts as visible when the CALLER holds a scoped grant for it,
+// because a scope-only posture is supported and the operator's global block may
+// legitimately be empty.
+func proxyVisibilityForRequest(r *http.Request) proxyVisibility {
+	var vis proxyVisibility
+	if cfg, err := config.Load(); err == nil {
+		vis.git = cfg.GitProxyEnabled()
+		vis.awb = cfg.AWBProxyEnabled()
+	}
+	if vis.git && vis.awb {
+		return vis
+	}
+	p := peerFromContext(r.Context())
+	if classify(p) != classAgent {
+		return vis
+	}
+	scoped := func(slugs ...string) bool {
+		for _, slug := range slugs {
+			v := resolvePermissionVerdictForRequest(r, p.ConvID, slug)
+			if v.Resolution == permAllow && !evalPermissionScope(v, p.ConvID, ActionContext{}).Unscoped {
+				return true
+			}
+		}
+		return false
+	}
+	if !vis.git {
+		vis.git = scoped(PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge)
+	}
+	if !vis.awb {
+		vis.awb = scoped(PermAWBRead, PermAWBWrite)
+	}
+	return vis
+}
+
 // gitProxyDisabledMessage is written to be actionable for an unscoped grant.
 const gitProxyDisabledMessage = "the git/github proxy has no remote policy for this unscoped grant. " +
 	"Ask the operator to scope the grant by remote, or set legacy agent.git_proxy.allowed_remotes in ~/.tclaude/data/config.json " +
