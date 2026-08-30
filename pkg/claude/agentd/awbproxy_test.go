@@ -637,6 +637,10 @@ func TestVisiblePermissionRegistryGatesEachProxyFamily(t *testing.T) {
 		got := slugs(proxyVisibility{git: true})
 		assert.True(t, got[PermGitRead])
 		assert.True(t, got[PermGitHubWrite])
+		assert.False(t, got[PermLinearRead],
+			"a git-only host has no Linear key, so advertising the slug sends an agent after a "+
+				"tracker that is not there")
+		assert.False(t, got[PermLinearWrite])
 		assert.False(t, got[PermAWBRead], "a git-only host has no AWB server to reach")
 		assert.False(t, got[PermAWBWrite])
 	})
@@ -652,14 +656,14 @@ func TestVisiblePermissionRegistryGatesEachProxyFamily(t *testing.T) {
 		assert.False(t, got[PermAWBRead])
 	})
 
-	// The coupling TestProxyPermissionSlugsFollowProxyVisibility pins: a
-	// git-configured host advertises Linear too. configuredProxyVisibility sets
-	// both bits for it, so the catalog keeps saying what that test expects.
-	t.Run("git implies linear, as the repository already pins", func(t *testing.T) {
-		got := slugs(proxyVisibility{git: true, linear: true})
-		assert.True(t, got[PermGitRead])
-		assert.True(t, got[PermLinearRead])
-		assert.False(t, got[PermAWBRead])
+	t.Run("every family at once", func(t *testing.T) {
+		got := slugs(proxyVisibility{git: true, linear: true, awb: true})
+		for _, slug := range []string{
+			PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
+			PermLinearRead, PermLinearWrite, PermAWBRead, PermAWBWrite,
+		} {
+			assert.True(t, got[slug], "%s", slug)
+		}
 	})
 
 	t.Run("awb only", func(t *testing.T) {
@@ -717,4 +721,39 @@ func TestValidateAWBActivityKind(t *testing.T) {
 	_, fault = validateAWBActivityKind("changes")
 	require.NotNil(t, fault)
 	assert.Contains(t, fault.Msg, "comment, change", "the refusal lists the whole vocabulary")
+}
+
+// TestEveryAdvertisedFamilyAlsoRegistersTheCommand is the coherence rule
+// between the two halves of "is this proxy available here".
+//
+// The permission catalog and the command tree answer for different surfaces —
+// what an operator can grant, and what an agent can run — but they must not
+// disagree. A host that advertises a family's slugs while `tclaude proxy`
+// itself is unregistered lets an operator grant a capability with no way to
+// exercise it; the reverse hides a command whose slugs are grantable. Both
+// halves read proxyVisibility, so the rule holds by construction and this
+// pins it.
+func TestEveryAdvertisedFamilyAlsoRegistersTheCommand(t *testing.T) {
+	for _, vis := range []proxyVisibility{
+		{git: true}, {linear: true}, {awb: true},
+		{git: true, linear: true}, {linear: true, awb: true},
+		{git: true, linear: true, awb: true},
+	} {
+		advertised := false
+		for _, p := range visiblePermissionRegistry(vis) {
+			if isSemanticProxyPermission(p.Slug) {
+				advertised = true
+				break
+			}
+		}
+		registered := vis.git || vis.linear || vis.awb
+		assert.Equal(t, registered, advertised,
+			"%+v: the catalog and the command tree must agree", vis)
+	}
+
+	t.Run("and nothing configured advertises nothing", func(t *testing.T) {
+		for _, p := range visiblePermissionRegistry(proxyVisibility{}) {
+			assert.False(t, isSemanticProxyPermission(p.Slug), "%s", p.Slug)
+		}
+	})
 }

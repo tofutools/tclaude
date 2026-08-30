@@ -48,8 +48,16 @@ const (
 // exactly like an absent one, error-free. Only ManagedAgentProcess separates
 // "the operator has no policy" from "I am not allowed to see it".
 func Configured() bool {
+	// Any configured family registers the command tree. LinearProxyConfigured
+	// rather than LinearProxyEnabled, for the reason the daemon's own
+	// visibility check uses it: a key with no allow-list is the scope-only
+	// posture, and the command has to exist for a scoped grant to be usable.
+	// A key supplied only through LINEAR_API_KEY is invisible from here — that
+	// is the DAEMON's environment, and a managed agent reaches the same answer
+	// through the /v1/info projection below.
 	cfg, err := config.Load()
-	if err == nil && (cfg.GitProxyEnabled() || cfg.AWBProxyEnabled()) {
+	if err == nil &&
+		(cfg.GitProxyEnabled() || cfg.LinearProxyConfigured() || cfg.AWBProxyEnabled()) {
 		return true
 	}
 	// Do not turn every ordinary host-side command construction into a daemon

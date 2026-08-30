@@ -28,13 +28,24 @@ timeout counts as a deny.
 `tclaude proxy` is **conditionally registered**. On a host where no proxy is
 configured, it is an unknown command and does not appear in `tclaude --help` —
 by design, so unconfigured operators do not advertise a capability their
-agents cannot use. The command registers when any of these holds:
+agents cannot use. The command registers when any proxy family is configured:
 
-- the host config has a non-empty `agent.git_proxy.allowed_remotes`, or
-- the host config has an `agent.awb_proxy.url`, or
+- `agent.git_proxy.allowed_remotes` is non-empty (Git and GitHub), or
+- `agent.linear_proxy` names an allow-list, a key file or a workspace route —
+  or the daemon has `LINEAR_API_KEY` in its environment, or
+- `agent.awb_proxy.url` is set, or
 - the caller is a managed agent and a capability probe of agentd's
   `GET /v1/info` reports proxy support (daemons predating that projection keep
   the command visible).
+
+The **permission catalog** follows the same per-family answer: a host
+advertises `proxy.git.*` / `proxy.github.*`, `proxy.linear.*` and `proxy.awb.*`
+only where that family could work, plus any family the calling agent holds a
+scoped grant for. The two must agree — advertising a slug whose command is not
+registered would let an operator grant a capability nothing can exercise.
+
+Visibility is not enforcement. The full registry still backs validation and
+stored-grant resolution, so hiding a slug never withdraws a grant made under it.
 
 A managed agent is recognised by any of `TCLAUDE_AGENTD_SOCKET`,
 `CODEX_PERMISSION_PROFILE=tclaude-agent`, or `TCLAUDE_AGENT_HINT=1` in its

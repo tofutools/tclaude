@@ -701,11 +701,11 @@ var permissionRegistry = []PermSlug{
 // proxy.git.*, and a host with only the git proxy has none to advertise
 // proxy.awb.*.
 //
-// Each family is answered by "could this work on this host", never by "is its
-// policy complete". A slug missing from the catalog is one an operator cannot
-// grant, so the cost of hiding a usable slug is higher than the cost of showing
-// an unusable one — which is why every family's bit is the OR of several
-// sources rather than its strictest setting.
+// Each family answers for itself, and each is answered by "could this work on
+// this host" rather than "is its policy complete". A slug missing from the
+// catalog is one an operator cannot grant, so the cost of hiding a usable slug
+// is higher than the cost of showing an unusable one — which is why every
+// family's bit is the OR of several sources rather than its strictest setting.
 type proxyVisibility struct {
 	git    bool
 	linear bool
