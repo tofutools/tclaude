@@ -159,9 +159,10 @@ The `agent.linear_proxy` block in `~/.tclaude/data/config.json`:
 tclaude proxy awb whoami                  # server, account, reachable projects
 tclaude proxy awb ready --compact         # the primary entry point
 tclaude proxy awb claim awb-a3f9c1
+tclaude proxy awb comment add awb-a3f9c1 --body-file findings.md
 # other verbs: show, list, blocked, search, create, update, close, reopen,
 #              release, delete, label add|rm, dep add|rm|tree,
-#              attach add|list|show|get|delete
+#              comment list, attach add|list|show|get|delete
 ```
 
 [AWB](https://github.com/tofutools/awb) — Agent Work Board — is an agent-first
@@ -182,6 +183,13 @@ database or a terminal rather than the data: `--db`, `--attachments`,
   key could only be gated after the issue had been fetched.
 - **Listings are bounded.** `awb` returns every row by default; the proxy
   defaults to 50, capped at 500, because the rows land in an agent's context.
+  `comment list` is bounded the same way, and additionally caps `--offset`.
+
+Comments are an append-only timeline shared with AWB's change records, so
+`comment list` is the activity listing narrowed to `kind=comment`. A close
+reason lives there too: since AWB 0.6 `close --reason` records a typed comment
+rather than setting a field on the issue, and the issue carries no
+`close_reason` at all.
 
 `dep tree` is pruned to the caller's projects: AWB follows children across
 project boundaries by design, so a child outside the gate is dropped with its
@@ -195,7 +203,9 @@ Permissions, scoped on the `awb_project` dimension (for example
 `--scope awb_project=awb`):
 
 - `proxy.awb.read` — `whoami`, `show`, `list`, `ready`, `blocked`, `search`,
-  `dep tree`, `attach list/show/get`.
+  `dep tree`, `comment list`, `attach list/show/get`. `comment list` is the one
+  read that carries third-party prose into an agent's context: anyone with
+  tracker access can write a comment.
 - `proxy.awb.write` — everything that changes the tracker, including the hard
   `delete` (which additionally needs `--force`). Requires the operator config
   `agent.awb_proxy.allow_write`.

@@ -157,6 +157,17 @@ type awbRelationRequest struct {
 	Force bool   `json:"force,omitempty"`
 }
 
+type awbCommentAddRequest struct {
+	awbIssueRefRequest
+	Body string `json:"body"`
+}
+
+type awbCommentListRequest struct {
+	awbIssueRefRequest
+	Limit  int `json:"limit,omitempty"`
+	Offset int `json:"offset,omitempty"`
+}
+
 type awbAttachAddRequest struct {
 	awbIssueRefRequest
 	Name        string `json:"name"`
@@ -765,6 +776,58 @@ func handleAWBProxyDepTree(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("issue=%s pruned=%d", kept.ID, pruned))
 }
 
+// handleAWBProxyCommentList serves POST /v1/awb/comment/list.
+//
+// It is the activity listing narrowed to `kind=comment`, which is how awb
+// spells it too: comments and change records are one append-only timeline, and
+// `comment list` is a view of it rather than a separate store. A close reason
+// therefore arrives here, as a comment carrying action "closed".
+//
+// NOTE that this is the one read on this surface that carries THIRD-PARTY PROSE
+// into an agent's context — anyone with access to the tracker can write a
+// comment. The CLI help says so; there is nothing the daemon can do about it
+// beyond bounding the size, which is why it is said rather than enforced.
+func handleAWBProxyCommentList(w http.ResponseWriter, r *http.Request) {
+	var body awbCommentListRequest
+	s, ok := openAWBProxy(w, r, PermAWBRead, &body)
+	if !ok {
+		return
+	}
+	ref, fault := s.gateIssueRef(body.ID)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	limit, fault := validateAWBLimit(body.Limit)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	offset, fault := validateAWBOffset(body.Offset)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	q := url.Values{
+		"kind":  []string{awbActivityKindComment},
+		"limit": []string{strconv.Itoa(limit)},
+	}
+	if offset > 0 {
+		q.Set("offset", strconv.Itoa(offset))
+	}
+	// Non-nil so an issue with no comments renders as `[]` rather than `null`,
+	// for the reason every other listing here does.
+	entries := []awbActivity{}
+	if _, fault := s.exec(r.Context(), awbCall{
+		Method: http.MethodGet, Path: "/api/issues/" + awbSegment(ref) + "/activity", Query: q,
+	}, &entries); fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	s.respond(w, r, "comment.list", body.Compact, entries, awbCompactActivityLines(entries),
+		fmt.Sprintf("issue=%s rows=%d", ref, len(entries)))
+}
+
 // handleAWBProxyAttachList serves POST /v1/awb/attach/list.
 func handleAWBProxyAttachList(w http.ResponseWriter, r *http.Request) {
 	var body awbIssueRefRequest
@@ -1361,6 +1424,64 @@ func openAWBDepVerb(
 		return nil, "", "", "", body, false
 	}
 	return s, ref, relType, other, body, true
+}
+
+// handleAWBProxyCommentAdd serves POST /v1/awb/comment/add — the write an agent
+// reports progress with.
+//
+// Unlike every other write here it answers with the new TIMELINE ENTRY rather
+// than with the issue, because that is what AWB returns and what the caller
+// asked for; a comment does not move any field of the issue, so echoing the
+// issue would show nothing that changed.
+func handleAWBProxyCommentAdd(w http.ResponseWriter, r *http.Request) {
+	var body awbCommentAddRequest
+	s, ok := openAWBProxy(w, r, PermAWBWrite, &body)
+	if !ok {
+		return
+	}
+	ref, fault := s.gateIssueRef(body.ID)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	if fault := validateAWBComment(body.Body); fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	encoded, err := json.Marshal(awbCommentBody{Body: body.Body})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "io", "could not encode the AWB request")
+		return
+	}
+	if fault := s.requireMutationBudget(); fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	var entry awbActivity
+	if _, fault := s.exec(r.Context(), awbCall{
+		Method: http.MethodPost, Path: "/api/issues/" + awbSegment(ref) + "/comments",
+		Body: encoded, ContentType: "application/json",
+	}, &entry); fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	// The entry names the issue it landed on, so the gate gets its second look
+	// here as it does everywhere else — this time on a reference rather than on
+	// an issue body.
+	if fault := s.requireAllowedProject(projectKeyOf(strings.ToLower(entry.Issue))); fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	// Nothing on success in compact mode, exactly as awb prints nothing: the
+	// caller already knows what it wrote.
+	s.respond(w, r, "comment.add", body.Compact, &entry, "",
+		fmt.Sprintf("issue=%s entry=%d bytes=%d", entry.Issue, entry.ID, len(body.Body)))
+}
+
+// awbCommentBody is AWB's CommentCreate. Spelled out rather than a map because
+// AWB rejects an unrecognised field rather than ignoring it.
+type awbCommentBody struct {
+	Body string `json:"body"`
 }
 
 // handleAWBProxyAttachAdd serves POST /v1/awb/attach/add.

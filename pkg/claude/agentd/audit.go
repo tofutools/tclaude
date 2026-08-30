@@ -392,6 +392,8 @@ var (
 		"dep.add":       true,
 		"dep.rm":        true,
 		"dep.tree":      true,
+		"comment.add":   true,
+		"comment.list":  true,
 		"attach.add":    true,
 		"attach.list":   true,
 		"attach.show":   true,

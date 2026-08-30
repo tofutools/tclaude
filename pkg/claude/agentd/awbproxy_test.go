@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"strings"
@@ -495,6 +496,113 @@ func TestAWBCompactTree(t *testing.T) {
 			"    awb-gk P3 closed chore \"Grandkid\"\n",
 		b.String(),
 		"two spaces per level of depth, the root unindented")
+}
+
+// TestAWBCompactActivityLine pins the timeline format, which is the one an
+// agent reads a discussion out of. The body is a JSON string so that a comment
+// containing line breaks still occupies exactly one line — the property that
+// makes a timeline splittable on newlines.
+func TestAWBCompactActivityLine(t *testing.T) {
+	t.Run("an ordinary comment carries no action", func(t *testing.T) {
+		assert.Equal(t,
+			`42 2026-08-26T09:12:03.412Z comment @claude-1 "Reproduced with an empty token stream."`,
+			awbCompactActivityLine(&awbActivity{
+				ID: 42, CreatedAt: "2026-08-26T09:12:03.412Z", Kind: "comment",
+				Actor: "claude-1", Body: "Reproduced with an empty token stream.",
+			}))
+	})
+
+	t.Run("a close reason is a comment whose action is closed", func(t *testing.T) {
+		assert.Equal(t,
+			`43 2026-08-26T09:13:00.000Z comment @claude-1 closed "Guard against empty token stream"`,
+			awbCompactActivityLine(&awbActivity{
+				ID: 43, CreatedAt: "2026-08-26T09:13:00.000Z", Kind: "comment",
+				Actor: "claude-1", Action: "closed", Body: "Guard against empty token stream",
+			}))
+	})
+
+	t.Run("a change carries its action bare, and its field changes as JSON", func(t *testing.T) {
+		assert.Equal(t,
+			`44 2026-08-26T09:14:00.000Z change @claude-1 closed `+
+				`[{"field":"status","from":"open","to":"closed"}]`,
+			awbCompactActivityLine(&awbActivity{
+				ID: 44, CreatedAt: "2026-08-26T09:14:00.000Z", Kind: "change",
+				Actor: "claude-1", Action: "closed",
+				Changes: []awbActivityChange{{
+					Field: "status",
+					From:  json.RawMessage(`"open"`),
+					To:    json.RawMessage(`"closed"`),
+				}},
+			}))
+	})
+
+	t.Run("an unknown actor is simply absent", func(t *testing.T) {
+		assert.Equal(t,
+			`45 2026-08-26T09:15:00.000Z comment "no identity was configured"`,
+			awbCompactActivityLine(&awbActivity{
+				ID: 45, CreatedAt: "2026-08-26T09:15:00.000Z", Kind: "comment",
+				Body: "no identity was configured",
+			}))
+	})
+
+	t.Run("a multi-line body stays on ONE line", func(t *testing.T) {
+		line := awbCompactActivityLine(&awbActivity{
+			ID: 46, CreatedAt: "2026-08-26T09:16:00.000Z", Kind: "comment",
+			Body: "first\nsecond\tthird",
+		})
+		assert.NotContains(t, line, "\n", "a timeline must stay splittable on newlines")
+		assert.Contains(t, line, `"first\nsecond\tthird"`)
+	})
+}
+
+// TestValidateAWBComment covers the one rule a comment has that a description
+// does not: it may not be blank.
+func TestValidateAWBComment(t *testing.T) {
+	assert.Nil(t, validateAWBComment("Reproduced with an empty token stream."))
+	assert.Nil(t, validateAWBComment("line one\nline two\ttabbed\r\n"),
+		"the whitespace controls Markdown needs are allowed")
+
+	for _, blank := range []string{"", "   ", "\n\t "} {
+		fault := validateAWBComment(blank)
+		require.NotNil(t, fault, "%q is not a comment", blank)
+		assert.Equal(t, http.StatusBadRequest, fault.Status)
+	}
+
+	fault := validateAWBComment("bell\x07here")
+	require.NotNil(t, fault)
+	assert.Contains(t, fault.Msg, "control character")
+
+	fault = validateAWBComment(strings.Repeat("x", maxAWBCommentBytes+1))
+	require.NotNil(t, fault)
+	assert.Contains(t, fault.Msg, "maximum")
+}
+
+func TestValidateAWBOffset(t *testing.T) {
+	got, fault := validateAWBOffset(0)
+	require.Nil(t, fault)
+	assert.Equal(t, 0, got)
+
+	got, fault = validateAWBOffset(25)
+	require.Nil(t, fault)
+	assert.Equal(t, 25, got)
+
+	_, fault = validateAWBOffset(-1)
+	assert.NotNil(t, fault)
+	_, fault = validateAWBOffset(maxAWBOffset + 1)
+	assert.NotNil(t, fault)
+}
+
+// TestAWBIssueCarriesNoCloseReason pins a REMOVAL.
+//
+// AWB 0.6 took close_reason off the issue entirely — a close reason is now a
+// typed comment. Keeping the field would have reported `"close_reason": ""` on
+// every issue, which reads as "no reason recorded" for a concept the tracker no
+// longer has, and would go on doing so silently.
+func TestAWBIssueCarriesNoCloseReason(t *testing.T) {
+	encoded, err := json.Marshal(&awbIssue{ID: "awb-1", Project: "awb"})
+	require.NoError(t, err)
+	assert.NotContains(t, string(encoded), "close_reason",
+		"close_reason is not a field AWB has any more")
 }
 
 func TestAWBCompactAttachmentLine(t *testing.T) {

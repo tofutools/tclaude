@@ -130,7 +130,27 @@ const (
 	maxAWBContentTypeLen = 255
 
 	// maxAWBCloseReasonLen bounds a close reason. AWB's own cap.
+	//
+	// A reason is no longer a FIELD on the issue: since AWB 0.6 a non-empty one
+	// becomes a typed comment on the closing transition, in the same
+	// transaction. The cap is still the server's, and is still shorter than a
+	// comment's, because a reason is a line rather than a document — a longer
+	// account belongs in `comment add`.
 	maxAWBCloseReasonLen = 500
+
+	// maxAWBCommentBytes bounds a comment body. It is AWB's own description cap
+	// — a comment is Markdown prose held to the same bounds — applied here so
+	// an over-long one is refused with the field named rather than as a 400
+	// from the server.
+	maxAWBCommentBytes = 64 * 1024
+
+	// maxAWBOffset bounds how far into a timeline one request may skip.
+	//
+	// AWB itself sets no ceiling. The proxy does, for the same reason it
+	// supplies a default limit: an offset is how a caller pages, and a page
+	// beyond any real timeline is a request that spends the operator's account
+	// to answer with nothing.
+	maxAWBOffset = 100000
 
 	// maxAWBLimit / defaultAWBLimit bound a listing.
 	//
@@ -1062,6 +1082,45 @@ func validateAWBDescription(body string) *proxyFault {
 	return nil
 }
 
+// validateAWBComment bounds a comment body.
+//
+// A comment is prose that will be published under the operator's account, so
+// the charset is deliberately as permissive as AWB's own: any text, with the
+// whitespace controls that Markdown needs, and nothing else from the control
+// range. Unlike a description it may not be blank — an empty comment is an
+// entry in the timeline that says nothing, and AWB refuses one too.
+func validateAWBComment(body string) *proxyFault {
+	if strings.TrimSpace(body) == "" {
+		return faultf(http.StatusBadRequest, "invalid_arg", "a comment body is required")
+	}
+	if len(body) > maxAWBCommentBytes {
+		return faultf(http.StatusBadRequest, "invalid_arg",
+			"the comment is %d bytes; AWB's maximum is %d", len(body), maxAWBCommentBytes)
+	}
+	if !utf8.ValidString(body) {
+		return faultf(http.StatusBadRequest, "invalid_arg", "the comment is not valid UTF-8")
+	}
+	for _, r := range body {
+		if r == '\t' || r == '\n' || r == '\r' {
+			continue
+		}
+		if unicode.Is(unicode.Cc, r) {
+			return faultf(http.StatusBadRequest, "invalid_arg",
+				"the comment contains a control character (U+%04X)", r)
+		}
+	}
+	return nil
+}
+
+// validateAWBOffset bounds how far into a timeline a request may skip.
+func validateAWBOffset(offset int) (int, *proxyFault) {
+	if offset < 0 || offset > maxAWBOffset {
+		return 0, faultf(http.StatusBadRequest, "invalid_arg",
+			"offset must be between 0 and %d", maxAWBOffset)
+	}
+	return offset, nil
+}
+
 // validateAWBCloseReason bounds a close reason.
 func validateAWBCloseReason(reason string) *proxyFault {
 	if utf8.RuneCountInString(reason) > maxAWBCloseReasonLen {
@@ -1268,6 +1327,10 @@ func awbSegment(v string) string { return url.PathEscape(v) }
 // five priorities, four relation types — which is what makes it teachable to an
 // agent in a few lines. Repeating it here is what lets the proxy refuse a bad
 // value with the list rather than forwarding it for a 400.
+// awbActivityKindComment is the one timeline kind this proxy asks for by name:
+// `comment list` is the activity listing narrowed to it.
+const awbActivityKindComment = "comment"
+
 var (
 	awbTypes         = []string{"epic", "feature", "bug", "task", "chore"}
 	awbStatuses      = []string{"open", "in_progress", "closed"}
@@ -1287,6 +1350,12 @@ var (
 // off every issue that comes back, and --compact renders from these fields. A
 // field AWB adds later is dropped rather than forwarded, which is the same
 // trade the Linear proxy makes.
+//
+// There is deliberately no close_reason. AWB 0.6 removed it from the issue
+// entirely: a close reason is now a typed comment on the closing transition,
+// reachable through `comment list`. Keeping the field would have reported
+// `"close_reason": ""` on every issue — a value that reads as "this issue has
+// no reason recorded" for a concept the tracker no longer has.
 type awbIssue struct {
 	ID          string          `json:"id"`
 	Project     string          `json:"project"`
@@ -1297,7 +1366,6 @@ type awbIssue struct {
 	Priority    int             `json:"priority"`
 	Labels      []string        `json:"labels"`
 	Assignee    string          `json:"assignee"`
-	CloseReason string          `json:"close_reason"`
 	CreatedAt   string          `json:"created_at"`
 	UpdatedAt   string          `json:"updated_at"`
 	Blocked     bool            `json:"blocked"`
@@ -1331,6 +1399,37 @@ type awbAttachment struct {
 	Size        int64  `json:"size"`
 	SHA256      string `json:"sha256"`
 	CreatedAt   string `json:"created_at"`
+}
+
+// awbActivity is one entry of an issue's append-only timeline: a comment
+// somebody wrote, or a compact record of a change.
+//
+// The two are one shape on purpose, and `comment list` is the activity listing
+// narrowed to `kind=comment` rather than a separate endpoint — which is also
+// why a close reason arrives here, as a comment carrying Action "closed".
+type awbActivity struct {
+	ID    int64  `json:"id"`
+	Issue string `json:"issue"`
+	Kind  string `json:"kind"`
+	// Actor is empty when the server authenticates nobody, or on a migrated
+	// entry whose author is not reliably known.
+	Actor string `json:"actor"`
+	// Body is Markdown for a comment and empty for a change.
+	Body string `json:"body"`
+	// Action is empty for an ordinary comment and "closed" for a close-reason
+	// one; for a change it names the change.
+	Action    string              `json:"action"`
+	Changes   []awbActivityChange `json:"changes"`
+	CreatedAt string              `json:"created_at"`
+}
+
+// awbActivityChange is one field-level difference. From and To are raw JSON so
+// a scalar and a collection share one wire shape without losing their types —
+// passing them through untouched is what keeps that promise across the proxy.
+type awbActivityChange struct {
+	Field string          `json:"field"`
+	From  json.RawMessage `json:"from"`
+	To    json.RawMessage `json:"to"`
 }
 
 type awbProject struct {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -821,4 +822,157 @@ func TestAWBProxy_AnOversizedBodyIsBoundedBeforeThePermissionGate(t *testing.T) 
 		assert.Equal(t, http.StatusBadRequest, res.Code, "code=%d", res.Code)
 		assert.False(t, rec.sawAnyCall())
 	})
+}
+
+// --- comments ---
+
+func awbActivityJSON(id int, issue, action, body string) string {
+	return `{"id":` + strconv.Itoa(id) + `,"issue":"` + issue + `","kind":"comment",` +
+		`"actor":"tclaude-bot","body":"` + body + `","action":"` + action + `","changes":[],` +
+		`"created_at":"2026-08-26T09:12:03.412Z"}`
+}
+
+// TestAWBProxy_CommentAddIsAWrite — a comment is published under the operator's
+// account, so reading an issue must not confer the ability to write on it.
+func TestAWBProxy_CommentAddIsAWrite(t *testing.T) {
+	t.Run("proxy.awb.read does not confer it", func(t *testing.T) {
+		w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+		w.grant(agentd.PermAWBRead)
+		res := w.post("/v1/awb/comment/add",
+			map[string]any{"id": "awb-a3f9c1", "body": "done"})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.False(t, rec.sawAnyCall())
+	})
+
+	t.Run("and the operator's ceiling applies too", func(t *testing.T) {
+		w, rec := awbWorld(t, []string{"awb"}) // allow_write defaults to false
+		w.grant(agentd.PermAWBWrite)
+		res := w.post("/v1/awb/comment/add",
+			map[string]any{"id": "awb-a3f9c1", "body": "done"})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.Contains(t, res.Body.String(), "awb_write_disabled")
+		assert.False(t, rec.sawAnyCall())
+	})
+}
+
+func TestAWBProxy_CommentAddSendsAWBsOwnBody(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusCreated, awbActivityJSON(42, "awb-a3f9c1", "", "Reproduced.")
+	}
+
+	res := w.post("/v1/awb/comment/add", map[string]any{
+		"id": "awb-a3f9c1", "body": "Reproduced.\nOn an empty token stream.", "compact": true,
+	})
+	out := w.outcome(res)
+	assert.Empty(t, out.Text, "awb prints nothing on a successful comment")
+
+	call := rec.only(t)
+	assert.Equal(t, http.MethodPost, call.Method)
+	assert.Equal(t, "https://awb.example/api/issues/awb-a3f9c1/comments", call.URL)
+	assert.Equal(t, "application/json", call.ContentType)
+	assert.JSONEq(t, `{"body":"Reproduced.\nOn an empty token stream."}`, string(call.Body),
+		"the body is stored byte for byte, so it must travel unaltered")
+}
+
+// TestAWBProxy_CommentAddRefusesAnEmptyBody — an empty comment is an entry in
+// the timeline that says nothing, and the timeline is append-only.
+func TestAWBProxy_CommentAddRefusesAnEmptyBody(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+
+	for _, blank := range []string{"", "   ", "\n\t"} {
+		res := w.post("/v1/awb/comment/add", map[string]any{"id": "awb-a3f9c1", "body": blank})
+		assert.Equal(t, http.StatusBadRequest, res.Code, "%q: body=%s", blank, res.Body.String())
+	}
+	assert.False(t, rec.sawAnyCall(), "the cheap gate runs before the network")
+}
+
+// TestAWBProxy_CommentAddIsGatedByProject — the same gate as every other verb,
+// checked before the call and again on the issue AWB names in its answer.
+func TestAWBProxy_CommentAddIsGatedByProject(t *testing.T) {
+	t.Run("before the call", func(t *testing.T) {
+		w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+		w.grant(agentd.PermAWBWrite)
+		res := w.post("/v1/awb/comment/add",
+			map[string]any{"id": "secret-a3f9c1", "body": "hello"})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.False(t, rec.sawAnyCall())
+	})
+
+	t.Run("and again on the entry AWB returned", func(t *testing.T) {
+		w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+		w.grant(agentd.PermAWBWrite)
+		rec.response = func(agentd.AWBProxyRequest) (int, string) {
+			return http.StatusCreated, awbActivityJSON(42, "secret-9", "", "landed elsewhere")
+		}
+		res := w.post("/v1/awb/comment/add", map[string]any{"id": "awb-a3f", "body": "hello"})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.NotContains(t, res.Body.String(), "landed elsewhere")
+	})
+}
+
+// TestAWBProxy_CommentListNarrowsTheTimelineToComments is what makes
+// `comment list` that verb rather than the whole activity stream.
+func TestAWBProxy_CommentListNarrowsTheTimelineToComments(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"})
+	w.grant(agentd.PermAWBRead)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, "[" +
+			awbActivityJSON(43, "awb-a3f9c1", "closed", "Guard against empty token stream") + "," +
+			awbActivityJSON(42, "awb-a3f9c1", "", "Reproduced.") + "]"
+	}
+
+	res := w.post("/v1/awb/comment/list",
+		map[string]any{"id": "awb-a3f9c1", "compact": true, "limit": 10, "offset": 5})
+	out := w.outcome(res)
+
+	call := rec.only(t)
+	assert.Equal(t, http.MethodGet, call.Method)
+	u, err := url.Parse(call.URL)
+	require.NoError(t, err)
+	assert.Equal(t, "/api/issues/awb-a3f9c1/activity", u.Path,
+		"comments are a view of the one timeline, not a separate store")
+	assert.Equal(t, "comment", u.Query().Get("kind"))
+	assert.Equal(t, "10", u.Query().Get("limit"))
+	assert.Equal(t, "5", u.Query().Get("offset"))
+
+	assert.Equal(t,
+		"43 2026-08-26T09:12:03.412Z comment @tclaude-bot closed \"Guard against empty token stream\"\n"+
+			"42 2026-08-26T09:12:03.412Z comment @tclaude-bot \"Reproduced.\"\n",
+		out.Text,
+		"a close reason reads back here, as a comment whose action is closed")
+}
+
+// TestAWBProxy_CommentListIsBounded: awb returns every entry by default, and
+// these land in an agent's context.
+func TestAWBProxy_CommentListIsBounded(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"})
+	w.grant(agentd.PermAWBRead)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) { return http.StatusOK, "[]" }
+
+	res := w.post("/v1/awb/comment/list", map[string]any{"id": "awb-a3f9c1"})
+	out := w.outcome(res)
+	assert.Equal(t, "[]", string(out.JSON), "an issue with no comments renders as [], never null")
+	assert.Equal(t, "50", awbQuery(t, rec.only(t)).Get("limit"))
+
+	t.Run("and a silly offset is refused rather than spent", func(t *testing.T) {
+		w, rec := awbWorld(t, []string{"awb"})
+		w.grant(agentd.PermAWBRead)
+		res := w.post("/v1/awb/comment/list",
+			map[string]any{"id": "awb-a3f9c1", "offset": -1})
+		assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
+		assert.False(t, rec.sawAnyCall())
+	})
+}
+
+// TestAWBProxy_CommentListIsGatedByProject — reading a discussion is reading
+// the issue.
+func TestAWBProxy_CommentListIsGatedByProject(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"})
+	w.grant(agentd.PermAWBRead)
+	res := w.post("/v1/awb/comment/list", map[string]any{"id": "secret-a3f9c1"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.False(t, rec.sawAnyCall())
 }

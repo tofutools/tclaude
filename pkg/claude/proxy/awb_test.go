@@ -33,6 +33,7 @@ var awbVerbPaths = [][]string{
 	{"create"}, {"update"}, {"claim"}, {"release"}, {"close"}, {"reopen"}, {"delete"},
 	{"label", "add"}, {"label", "rm"},
 	{"dep", "add"}, {"dep", "rm"}, {"dep", "tree"},
+	{"comment", "add"}, {"comment", "list"},
 	{"attach", "add"}, {"attach", "list"}, {"attach", "show"}, {"attach", "get"},
 	{"attach", "delete"},
 }

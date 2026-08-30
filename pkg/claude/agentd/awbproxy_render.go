@@ -141,3 +141,63 @@ func awbJSONString(s string) string {
 	}
 	return strings.TrimSuffix(b.String(), "\n")
 }
+
+// awbCompactActivityLine renders one timeline entry as AWB's stable single
+// line:
+//
+//	42 2026-08-26T09:12:03.412Z comment @claude-1 "Reproduced with an empty token stream."
+//	43 2026-08-26T09:13:00.000Z change @claude-1 closed [{"field":"status","from":"open","to":"closed"}]
+//
+// Three mandatory positional fields lead — the id, the timestamp and the kind —
+// followed by @<actor> when one is known. A COMMENT then carries its action
+// when it has one (a close reason is a comment whose action is "closed") and
+// its body as a JSON string; a CHANGE carries its action bare. Either may end
+// with its field changes as a JSON array.
+//
+// The body and the changes are JSON precisely so that embedded whitespace and
+// line breaks can never make one entry span two lines — which is what lets a
+// caller split a timeline on newlines and read each entry whole.
+func awbCompactActivityLine(a *awbActivity) string {
+	var b strings.Builder
+
+	b.WriteString(strconv.FormatInt(a.ID, 10))
+	b.WriteByte(' ')
+	b.WriteString(a.CreatedAt)
+	b.WriteByte(' ')
+	b.WriteString(a.Kind)
+
+	if a.Actor != "" {
+		b.WriteString(" @")
+		b.WriteString(a.Actor)
+	}
+	if a.Kind == awbActivityKindComment {
+		// An ordinary comment has no action, and the field is simply absent
+		// rather than rendered as an empty token.
+		if a.Action != "" {
+			b.WriteByte(' ')
+			b.WriteString(a.Action)
+		}
+		b.WriteByte(' ')
+		b.WriteString(awbJSONString(a.Body))
+	} else {
+		b.WriteByte(' ')
+		b.WriteString(a.Action)
+	}
+	if len(a.Changes) > 0 {
+		if encoded, err := json.Marshal(a.Changes); err == nil {
+			b.WriteByte(' ')
+			b.Write(encoded)
+		}
+	}
+	return b.String()
+}
+
+// awbCompactActivityLines renders a timeline, one line per entry.
+func awbCompactActivityLines(entries []awbActivity) string {
+	var b strings.Builder
+	for i := range entries {
+		b.WriteString(awbCompactActivityLine(&entries[i]))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
