@@ -142,13 +142,14 @@ func groupTermSessionName(groupName string) string {
 //
 //	GET /api/group-term-ws/{group}
 //
-// The directory is captured at FIRST open: groupTermSessionName keys the
-// backing tmux session on the group name alone, and `tmux new-session -A`
-// re-attaches an existing session in its original dir, ignoring the -c
-// here. So changing the group's default_cwd (or renaming it) after a
-// terminal was opened re-attaches the old shell in the old dir until that
-// session is killed — the same first-open-wins behaviour termSessionName
-// documents for the per-agent path.
+// The directory and group environment are captured at FIRST open:
+// groupTermSessionName keys the backing tmux session on the group name alone,
+// and `tmux new-session -A` re-attaches an existing session in its original
+// dir and environment, ignoring the -c/-e options here. So changing the
+// group's default_cwd or environment (or renaming it) after a terminal was
+// opened re-attaches the old shell with its original launch configuration
+// until that session is killed — the same first-open-wins behaviour
+// termSessionName documents for the per-agent path.
 //
 // Same threat model as the rest of /api/* — the dashboard cookie +
 // Origin pin (or remote pre-auth) is the human-consent layer.
@@ -186,8 +187,14 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
-	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
-		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(sessName), shellSingleQuote(dir))
+	newSessionFlags := make([]string, 1, 1+len(g.Environment)*2)
+	newSessionFlags[0] = "-A"
+	for _, entry := range g.Environment {
+		newSessionFlags = append(newSessionFlags, "-e", shellSingleQuote(entry.Name+"="+entry.Value))
+	}
+	cmd := fmt.Sprintf("tmux -L %s %s new-session %s -s %s -c %s",
+		clcommon.TmuxSocketName, clientFlags, strings.Join(newSessionFlags, " "),
+		shellSingleQuote(sessName), shellSingleQuote(dir))
 	runPTYOverWS(w, r, cmd, sessName, "", nil)
 }
 
