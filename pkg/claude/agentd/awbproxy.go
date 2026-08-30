@@ -260,9 +260,18 @@ func doAWBRequest(ctx context.Context, req AWBProxyRequest) (awbHTTPResult, erro
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAWBResponseBytes))
+	// One byte past the bound, so an over-long response is DETECTED rather
+	// than silently truncated. A plain LimitReader returns the first N bytes
+	// with no error, which for `attach get` would mean writing a corrupt file
+	// and reporting success — the one failure mode a caller cannot notice.
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxAWBResponseBytes+1))
 	if err != nil {
 		return awbHTTPResult{}, fmt.Errorf("read response: %w", err)
+	}
+	if len(raw) > maxAWBResponseBytes {
+		return awbHTTPResult{}, fmt.Errorf(
+			"the AWB server's response is larger than the %d bytes this proxy will read",
+			maxAWBResponseBytes)
 	}
 	return awbHTTPResult{Status: resp.StatusCode, Body: raw, Headers: resp.Header}, nil
 }

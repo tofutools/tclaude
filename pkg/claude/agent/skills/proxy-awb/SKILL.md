@@ -64,10 +64,12 @@ you rarely need to re-run `whoami`.
 `allow_write` is the operator's own ceiling. `false` means every mutating verb
 is refused however your grants are spelled.
 
-Each entry under `projects` also carries `reachable` and the `access` the
-daemon's account holds there. A project the account cannot see does not appear
-at all — which is itself the answer, and why the two lists are printed side by
-side.
+Each entry under `projects` carries `reachable`. A project you MAY reach is
+described in full — its name, its open-issue count, and the `access` the
+daemon's account holds there. One you may not is reported as its **key alone**:
+enough to ask the operator to add it, and nothing about what is inside it. A
+project the account cannot see does not appear at all — which is itself the
+answer, and why the two lists are printed side by side.
 
 ## Prerequisites
 
@@ -242,6 +244,12 @@ reopened.
 **`dep tree` is pruned to what you may see.** AWB follows children across
 project boundaries; a child in a project outside your gate is dropped together
 with its own subtree rather than returned.
+
+**A truncated `attach get` is refused rather than written.** AWB records each
+attachment's size, so a transfer that does not match it is an error (`502`)
+instead of a short file you would go on to read as evidence. Retry; if it
+persists, the stored file no longer matches its metadata and the human needs to
+know.
 
 **`502 awb_schema_drift` is a tclaude bug, not your mistake.** It means the
 daemon's own request no longer matches what the server accepts. Do not retry —

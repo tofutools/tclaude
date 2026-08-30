@@ -635,28 +635,65 @@ func splitPathSegments(path string) []string {
 	return out
 }
 
-// bufferAuditBody reads the request body so a describer can parse it,
-// then restores r.Body verbatim for the handler. It reads the body in
-// full — the same ReadAll the handler does — and restores exactly those
-// bytes, so it can never truncate what the handler sees. Only audited
-// command routes are buffered (their bodies are small JSON command
-// payloads); the describers cap only the short strings they extract.
+// maxAuditBodyBytes bounds what the audit middleware will hold in memory for
+// ONE request.
+//
+// It exists because this buffering happens in middleware, ahead of the
+// handler: before the handler's own http.MaxBytesReader, and before its
+// permission gate. Without a bound here, a caller holding no permission at all
+// could make the daemon allocate a body of any size simply by POSTing to an
+// audited route — the handler's cap arrives too late to prevent it, which is
+// what the note on maxClipboardRequestBytes describes and says belongs here
+// rather than in an endpoint.
+//
+// The value is far past any command payload and far below anything dangerous.
+// Every describer parses a small JSON command and extracts short strings from
+// it; the one route that legitimately carries megabytes — the AWB proxy's
+// attachment upload — is named entirely from its path and reads no body at all.
+const maxAuditBodyBytes = 1 << 20
+
+// bufferAuditBody reads the request body so a describer can parse it, then
+// restores it for the handler.
+//
+// Restoring is exact in both directions, which is the property that matters:
+// the handler must see the same bytes it would have seen unbuffered, or a
+// command could be decoded from a truncated body. Under the cap that is a
+// re-read of what was buffered; over it, the buffered prefix is handed back in
+// front of the unread remainder and NO body is recorded for audit — a truncated
+// one would decode to a partial command and put a half-read of it in the log.
 func bufferAuditBody(r *http.Request) []byte {
 	if r.Body == nil {
 		return nil
 	}
-	buf, err := io.ReadAll(r.Body)
+	orig := r.Body
+	// One byte past the cap, so "exactly at the cap" and "over it" are
+	// distinguishable rather than both looking full.
+	buf, err := io.ReadAll(io.LimitReader(orig, maxAuditBodyBytes+1))
 	if err != nil {
 		// On a failed/partial read, do NOT hand the handler a silently
 		// truncated body (it could decode to a partial command). Close the
 		// original and leave it: the handler hits the same read error and
 		// rejects the request. We record no body for audit.
-		_ = r.Body.Close()
+		_ = orig.Close()
 		return nil
 	}
-	_ = r.Body.Close()
+	if len(buf) > maxAuditBodyBytes {
+		// The handler still gets the whole body — its own MaxBytesReader is
+		// what decides whether that is acceptable, and it runs after the
+		// permission gate, which is the ordering the cap above exists to
+		// restore.
+		r.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(buf), orig), Closer: orig}
+		return nil
+	}
+	_ = orig.Close()
 	r.Body = io.NopCloser(bytes.NewReader(buf))
 	return buf
+}
+
+// readCloser rejoins a rewound body to the connection it must still close.
+type readCloser struct {
+	io.Reader
+	io.Closer
 }
 
 // recordAuditRow assembles and writes one audit_log row. Best-effort: a

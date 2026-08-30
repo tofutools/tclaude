@@ -1,6 +1,7 @@
 package agentd_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -652,4 +653,172 @@ func TestAWBProxy_ScopedGrantIsTheWholePolicyWithNoOperatorList(t *testing.T) {
 	res := w.post("/v1/awb/issue/show", map[string]any{"id": "awb-a3f9c1"})
 	out := w.outcome(res)
 	assert.Equal(t, []string{"awb"}, out.Projects)
+}
+
+// --- the review's three findings ---
+
+// TestAWBProxy_WhoamiKeepsOutOfScopeProjectsToTheirKey is the discovery verb's
+// own share of the project gate.
+//
+// `whoami` exists so a refused agent can tell its human which key to add, so an
+// unreachable project's KEY has to be in the answer — every refusal already
+// names the operator's list anyway. What must NOT be there is what the project
+// contains: its name, its issue count, and the account's access in it are
+// facts about a project this caller may not read.
+func TestAWBProxy_WhoamiKeepsOutOfScopeProjectsToTheirKey(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb", "acquisition"})
+	w.grantScoped(agentd.PermAWBRead, `{"awb_project":["awb"]}`)
+	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
+		switch {
+		case strings.Contains(req.URL, "/api/identity"):
+			return http.StatusOK, `{"identity":"tclaude-bot"}`
+		case strings.Contains(req.URL, "/api/users/"):
+			return http.StatusOK, `{"name":"tclaude-bot","project_admin":true,"user_admin":false,` +
+				`"created_at":"2026-08-26T09:12:03.412Z","updated_at":"2026-08-26T09:12:03.412Z",` +
+				`"projects":[{"project":"awb","user":"tclaude-bot","access":"regular"},` +
+				`{"project":"acquisition","user":"tclaude-bot","access":"admin"}]}`
+		}
+		return http.StatusOK, `[{"key":"awb","name":"Agent Work Board","description":"",` +
+			`"active_issues":2,"created_at":"2026-08-26T09:12:03.412Z",` +
+			`"updated_at":"2026-08-26T09:12:03.412Z"},` +
+			`{"key":"acquisition","name":"Project Bluebird","description":"","active_issues":47,` +
+			`"created_at":"2026-08-26T09:12:03.412Z","updated_at":"2026-08-26T09:12:03.412Z"}]`
+	}
+
+	for _, compact := range []bool{false, true} {
+		res := w.post("/v1/awb/whoami", map[string]any{"compact": compact})
+		out := w.outcome(res)
+		body := string(out.JSON) + out.Text
+
+		assert.Contains(t, body, "acquisition",
+			"the KEY is the diagnostic: the agent has to be able to name what to ask for")
+		assert.NotContains(t, body, "Project Bluebird",
+			"an out-of-scope project's NAME describes it, and the gate says this caller may not read it")
+		assert.NotContains(t, body, "47",
+			"nor its issue count")
+		assert.NotContains(t, body, "admin",
+			"nor the account's access in it")
+		assert.Contains(t, body, "Agent Work Board",
+			"a project the caller MAY reach is still described in full")
+	}
+}
+
+// TestAWBProxy_AttachGetRefusesAShortTransfer is the failure mode a caller
+// cannot notice for itself: it writes a file and reads it as the attachment.
+//
+// AWB records a size and serves the content uncompressed precisely so that a
+// truncated transfer is detectable, so the proxy checks rather than trusts.
+func TestAWBProxy_AttachGetRefusesAShortTransfer(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"})
+	w.grant(agentd.PermAWBRead)
+	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
+		if strings.HasSuffix(req.URL, "/content") {
+			return http.StatusOK, "short"
+		}
+		return http.StatusOK, `{"issue":"awb-a3f9c1","name":"trace.txt",` +
+			`"content_type":"text/plain","size":4096,"sha256":"9f86d0",` +
+			`"created_at":"2026-08-26T09:12:03.412Z"}`
+	}
+
+	res := w.post("/v1/awb/attach/get", map[string]any{"id": "awb-a3f9c1", "name": "trace.txt"})
+	assert.Equal(t, http.StatusBadGateway, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "truncated")
+	assert.NotContains(t, res.Body.String(), "short",
+		"a partial transfer must not be returned as though it were the file")
+}
+
+// awbUnstubbedWorld is awbWorld without the transport stub, so the REAL
+// outbound path — the one that decides what the daemon will read from a
+// server — is the thing under test.
+func awbUnstubbedWorld(t *testing.T, url string) *awbFlow {
+	t.Helper()
+	f := newFlow(t)
+	f.HaveConvWithTitle(awbProxyTestConv, "ticket-worker")
+	f.HaveEnrolledAgent(awbProxyTestConv)
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{
+		AWBProxy: &config.AWBProxyConfig{
+			URL: url, Username: "tclaude-bot", AllowedProjects: []string{"awb"},
+		},
+	}}))
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	return &awbFlow{t: t, flow: f}
+}
+
+// TestAWBProxy_OversizedResponseIsDetectedRatherThanTruncated covers the same
+// hazard one layer down: a plain io.LimitReader hands back the first N bytes
+// with no error, which reads exactly like a complete short response.
+func TestAWBProxy_OversizedResponseIsDetectedRatherThanTruncated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, _ *http.Request) {
+		rw.Header().Set("Content-Type", "application/json")
+		// Comfortably past maxAWBResponseBytes.
+		_, _ = rw.Write([]byte(`{"pad":"`))
+		chunk := bytes.Repeat([]byte("x"), 1<<20)
+		for i := 0; i < 17; i++ {
+			if _, err := rw.Write(chunk); err != nil {
+				return
+			}
+		}
+		_, _ = rw.Write([]byte(`"}`))
+	}))
+	defer srv.Close()
+
+	w := awbUnstubbedWorld(t, srv.URL)
+	w.grant(agentd.PermAWBRead)
+
+	res := w.post("/v1/awb/issue/show", map[string]any{"id": "awb-a3f9c1"})
+	assert.Equal(t, http.StatusBadGateway, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "awb_unreachable",
+		"an over-long response must be an error, not the first 16 MiB of one")
+}
+
+// TestAWBProxy_AnOversizedBodyIsBoundedBeforeThePermissionGate is the audit
+// middleware's share of this surface.
+//
+// The buffering happens in middleware, ahead of both the handler's own
+// MaxBytesReader and its permission gate. Attachment upload is the route that
+// makes that ordering matter: it legitimately carries megabytes, so "audited
+// bodies are small" — the assumption bufferAuditBody was written under — is no
+// longer true here, and an ungranted caller must not be able to make the daemon
+// hold whatever it sends.
+func TestAWBProxy_AnOversizedBodyIsBoundedBeforeThePermissionGate(t *testing.T) {
+	t.Run("an ungranted caller is still refused", func(t *testing.T) {
+		w, rec := awbWorld(t, []string{"awb"})
+		res := w.post("/v1/awb/attach/add", map[string]any{
+			"id": "awb-a3f9c1", "name": "big.bin",
+			"content": bytes.Repeat([]byte("x"), 2<<20),
+		})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.False(t, rec.sawAnyCall())
+	})
+
+	t.Run("and a granted one still receives the whole body", func(t *testing.T) {
+		w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+		w.grant(agentd.PermAWBWrite)
+		rec.response = func(agentd.AWBProxyRequest) (int, string) {
+			return http.StatusOK, `{"issue":"awb-a3f9c1","name":"big.bin",` +
+				`"content_type":"application/octet-stream","size":2097152,"sha256":"9f86d0",` +
+				`"created_at":"2026-08-26T09:12:03.412Z"}`
+		}
+		// Past the audit buffer's cap and under the handler's own, so the body
+		// travels the rewound path rather than the buffered one — the case
+		// where a truncating middleware would corrupt an upload silently.
+		content := bytes.Repeat([]byte("x"), 2<<20)
+		res := w.post("/v1/awb/attach/add", map[string]any{
+			"id": "awb-a3f9c1", "name": "big.bin", "content": content,
+		})
+		w.outcome(res)
+		assert.Equal(t, content, rec.only(t).Body,
+			"rewinding for audit must hand the handler the same bytes it would have read")
+	})
+
+	t.Run("past the handler's own cap it is a bounded refusal", func(t *testing.T) {
+		w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+		w.grant(agentd.PermAWBWrite)
+		res := w.post("/v1/awb/attach/add", map[string]any{
+			"id": "awb-a3f9c1", "name": "big.bin",
+			"content": bytes.Repeat([]byte("x"), 12<<20),
+		})
+		assert.Equal(t, http.StatusBadRequest, res.Code, "code=%d", res.Code)
+		assert.False(t, rec.sawAnyCall())
+	})
 }

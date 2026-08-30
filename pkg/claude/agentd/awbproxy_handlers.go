@@ -504,10 +504,17 @@ type awbWhoamiResponse struct {
 	// is refused however the caller's grants are spelled.
 	AllowWrite bool `json:"allow_write"`
 	// Projects is every project the daemon's account can see, each marked with
-	// whether THIS caller may reach it and what access the account holds there.
-	// A project the caller may reach and the account cannot see does not appear
-	// — which is itself the answer, and the reason the two lists are reported
-	// side by side.
+	// whether THIS caller may reach it. A project the caller may reach and the
+	// account cannot see does not appear — which is itself the answer, and the
+	// reason the two lists are reported side by side.
+	//
+	// An UNREACHABLE entry carries its key and nothing else. The key has to be
+	// there: "this project exists on the server, ask the operator to add it" is
+	// the diagnostic this verb exists for, and every refusal already names the
+	// operator's list anyway. Its name, its issue count and the account's access
+	// in it are a different thing — they describe the project rather than
+	// establish that the key exists — and the project gate is exactly the rule
+	// that says this caller may not read them. See awbWhoamiProject.
 	Projects []awbWhoamiProject `json:"projects"`
 	// Note carries a best-effort read that failed. The membership read is the
 	// one call here whose failure must not fail the verb: a server with no
@@ -516,11 +523,18 @@ type awbWhoamiResponse struct {
 	Note string `json:"note,omitempty"`
 }
 
+// awbWhoamiProject is one project the daemon's account can see.
+//
+// Everything but Key and Reachable is omitempty and filled in only for a
+// project THIS caller may reach, so an out-of-scope row says that the key
+// exists and stops there. See awbWhoamiResponse.Projects.
 type awbWhoamiProject struct {
-	Key          string `json:"key"`
-	Name         string `json:"name"`
-	ActiveIssues int    `json:"active_issues"`
-	Reachable    bool   `json:"reachable"`
+	Key       string `json:"key"`
+	Reachable bool   `json:"reachable"`
+	// Name and ActiveIssues describe the project, so they are reported only
+	// where the caller could read the same facts from a listing anyway.
+	Name         string `json:"name,omitempty"`
+	ActiveIssues int    `json:"active_issues,omitempty"`
 	// Access is the daemon account's access level in this project — "regular"
 	// or "admin" — and empty on a server that authenticates nobody.
 	Access string `json:"access,omitempty"`
@@ -566,13 +580,13 @@ func handleAWBProxyWhoami(w http.ResponseWriter, r *http.Request) {
 	access := s.whoamiAccess(r.Context(), &resp)
 	for _, p := range projects {
 		key := strings.ToLower(strings.TrimSpace(p.Key))
-		resp.Projects = append(resp.Projects, awbWhoamiProject{
-			Key:          p.Key,
-			Name:         p.Name,
-			ActiveIssues: p.ActiveIssues,
-			Reachable:    s.projectAllowed(key),
-			Access:       access[key],
-		})
+		row := awbWhoamiProject{Key: p.Key, Reachable: s.projectAllowed(key)}
+		if row.Reachable {
+			row.Name = p.Name
+			row.ActiveIssues = p.ActiveIssues
+			row.Access = access[key]
+		}
+		resp.Projects = append(resp.Projects, row)
 	}
 	s.respond(w, r, "whoami", body.Compact, &resp, awbWhoamiText(&resp),
 		fmt.Sprintf("projects=%d", len(resp.Projects)))
@@ -621,15 +635,16 @@ func awbWhoamiText(resp *awbWhoamiResponse) string {
 	}
 	b.WriteString("identity " + identity + " " + write + "\n")
 	for _, p := range resp.Projects {
-		reach := "-"
-		if p.Reachable {
-			reach = "reachable"
+		if !p.Reachable {
+			// The key alone, for the reason awbWhoamiResponse.Projects gives.
+			b.WriteString(p.Key + " -\n")
+			continue
 		}
 		access := p.Access
 		if access == "" {
 			access = "-"
 		}
-		b.WriteString(p.Key + " " + reach + " " + access + " " +
+		b.WriteString(p.Key + " reachable " + access + " " +
 			strconv.Itoa(p.ActiveIssues) + " " + awbJSONString(p.Name) + "\n")
 	}
 	return b.String()
@@ -841,6 +856,18 @@ func handleAWBProxyAttachGet(w http.ResponseWriter, r *http.Request) {
 	}, nil)
 	if fault != nil {
 		writeProxyFault(w, fault)
+		return
+	}
+	// The bytes must be the ones the metadata describes. AWB records a size and
+	// serves that response uncompressed precisely so a short transfer is
+	// detectable, and this is the one verb where accepting a short one would be
+	// invisible: the caller writes a file and reads it as the attachment.
+	// Refusing beats handing over something that looks like evidence and is not.
+	if int64(len(res.Body)) != attachment.Size {
+		writeProxyFault(w, faultf(http.StatusBadGateway, "awb_failed",
+			"%q on %s is recorded as %d bytes but %d arrived; the transfer was truncated or the "+
+				"stored file no longer matches its metadata",
+			name, ref, attachment.Size, len(res.Body)))
 		return
 	}
 	s.respondContent(w, r, "attach.get", res.Body,

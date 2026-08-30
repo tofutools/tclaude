@@ -185,7 +185,9 @@ database or a terminal rather than the data: `--db`, `--attachments`,
 
 `dep tree` is pruned to the caller's projects: AWB follows children across
 project boundaries by design, so a child outside the gate is dropped with its
-subtree. Attachment content travels through the daemon in request and response
+subtree. `whoami` describes only the projects the caller may reach; one it may
+not is reported as its key alone, which is what a refused agent needs in order
+to ask for it and nothing more. Attachment content travels through the daemon in request and response
 bodies rather than as a path it would read from the agent's work tree, which
 caps it at 8 MiB either way.
 

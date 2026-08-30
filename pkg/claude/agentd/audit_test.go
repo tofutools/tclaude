@@ -3,6 +3,7 @@ package agentd
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -425,4 +426,53 @@ func TestRecordApprovalRequest_WritesAgentRow(t *testing.T) {
 	if fallback.ActorLabel != short8(req.convID) {
 		t.Errorf("fallback actor label = %q, want %q (short conv-id)", fallback.ActorLabel, short8(req.convID))
 	}
+}
+
+// TestBufferAuditBodyIsBoundedAndExact covers the two properties the audit
+// middleware's body buffering has to hold at once, which pull in opposite
+// directions.
+//
+// It runs BEFORE the handler — before the handler's own MaxBytesReader and
+// before its permission gate — so it must bound what it holds. And the handler
+// must still see exactly the bytes it would have seen unbuffered, or a command
+// could be decoded from a truncated body.
+func TestBufferAuditBodyIsBoundedAndExact(t *testing.T) {
+	newReq := func(body []byte) *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/v1/anything", bytes.NewReader(body))
+		return r
+	}
+
+	t.Run("under the cap: buffered, and handed back", func(t *testing.T) {
+		want := []byte(`{"text":"hello"}`)
+		r := newReq(want)
+		got := bufferAuditBody(r)
+		assert.Equal(t, want, got, "a command payload is available to the describer")
+		rest, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.Equal(t, want, rest, "and the handler still reads the whole body")
+	})
+
+	t.Run("over the cap: not recorded, and still handed back in full", func(t *testing.T) {
+		want := bytes.Repeat([]byte("x"), maxAuditBodyBytes+4096)
+		r := newReq(want)
+		got := bufferAuditBody(r)
+		assert.Nil(t, got,
+			"a truncated body would decode to a partial command, so none is recorded at all")
+		rest, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.Equal(t, want, rest,
+			"the handler's view must be byte-identical: it is what enforces the real limit")
+	})
+
+	t.Run("exactly at the cap is still under it", func(t *testing.T) {
+		want := bytes.Repeat([]byte("x"), maxAuditBodyBytes)
+		r := newReq(want)
+		assert.Equal(t, want, bufferAuditBody(r))
+	})
+
+	t.Run("no body", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodGet, "/v1/anything", nil)
+		r.Body = nil
+		assert.Nil(t, bufferAuditBody(r))
+	})
 }
