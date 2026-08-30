@@ -175,14 +175,17 @@ const gitProxyDisabledCode = "git_proxy_disabled"
 
 func gitProxyRoutesEnabled(r *http.Request) bool {
 	cfg, err := config.Load()
-	if err == nil && cfg.GitProxyEnabled() {
+	if err == nil && (cfg.GitProxyEnabled() || cfg.AWBProxyEnabled()) {
 		return true
 	}
 	p := peerFromContext(r.Context())
 	if classify(p) != classAgent {
 		return false
 	}
-	for _, slug := range []string{PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge} {
+	for _, slug := range []string{
+		PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
+		PermAWBRead, PermAWBWrite,
+	} {
 		v := resolvePermissionVerdictForRequest(r, p.ConvID, slug)
 		if v.Resolution == permAllow && !evalPermissionScope(v, p.ConvID, ActionContext{}).Unscoped {
 			return true

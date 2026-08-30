@@ -304,6 +304,8 @@ var auditRoutes = []auditRoute{
 	// route is matched first; a two-segment path falls through to the second.
 	{method: http.MethodPost, segs: []string{"linear", "{verb}"}, describe: describeLinearProxy},
 	{method: http.MethodPost, segs: []string{"linear", "{resource}", "{action}"}, describe: describeLinearProxyResource},
+	{method: http.MethodPost, segs: []string{"awb", "{verb}"}, describe: describeAWBProxy},
+	{method: http.MethodPost, segs: []string{"awb", "{resource}", "{action}"}, describe: describeAWBProxyResource},
 }
 
 // auditedGitProxyVerbs / auditedGitHubProxyVerbs gate the path captures to the
@@ -365,6 +367,37 @@ var (
 		"issue.update":   true,
 		"issue.link":     true,
 	}
+	// auditedAWBProxyVerbs must name EVERY /v1/awb/… route the mux registers,
+	// for exactly the reason auditedLinearProxyVerbs must: a route missing here
+	// is not merely unlabelled, it writes NO audit row at all — the call runs,
+	// spends the operator's AWB account, and leaves nothing behind.
+	// TestAuditCoversEveryAWBProxyRoute pins the map against the routes serve.go
+	// actually registers.
+	auditedAWBProxyVerbs = map[string]bool{
+		"whoami":        true,
+		"issue.show":    true,
+		"issue.list":    true,
+		"issue.ready":   true,
+		"issue.blocked": true,
+		"issue.search":  true,
+		"issue.create":  true,
+		"issue.update":  true,
+		"issue.claim":   true,
+		"issue.release": true,
+		"issue.close":   true,
+		"issue.reopen":  true,
+		"issue.delete":  true,
+		"label.add":     true,
+		"label.rm":      true,
+		"dep.add":       true,
+		"dep.rm":        true,
+		"dep.tree":      true,
+		"attach.add":    true,
+		"attach.list":   true,
+		"attach.show":   true,
+		"attach.get":    true,
+		"attach.delete": true,
+	}
 )
 
 // describeGitProxy names a git-proxy row "git.fetch", "git.push", … from the
@@ -411,6 +444,29 @@ func describeLinearProxyResource(c *auditCtx) {
 func nameLinearProxyVerb(c *auditCtx, verb string) {
 	if auditedLinearProxyVerbs[verb] {
 		c.fields.Verb = "linear." + verb
+	} else {
+		c.fields.Verb = ""
+	}
+}
+
+// describeAWBProxy names a one-segment awb-proxy row ("awb.whoami"). Same rule
+// as the three above: the path only, never the body — an issue title, a
+// description or an attachment's bytes must not land in the audit log.
+func describeAWBProxy(c *auditCtx) {
+	nameAWBProxyVerb(c, c.vars["verb"])
+}
+
+// describeAWBProxyResource names a two-segment row ("awb.issue.close").
+func describeAWBProxyResource(c *auditCtx) {
+	nameAWBProxyVerb(c, c.vars["resource"]+"."+c.vars["action"])
+}
+
+// nameAWBProxyVerb is the shared tail. An unrecognised verb is CLEARED rather
+// than merely left alone, because recordAuditRow has already defaulted it to
+// the raw path capture.
+func nameAWBProxyVerb(c *auditCtx, verb string) {
+	if auditedAWBProxyVerbs[verb] {
+		c.fields.Verb = "awb." + verb
 	} else {
 		c.fields.Verb = ""
 	}

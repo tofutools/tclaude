@@ -475,6 +475,8 @@ const (
 	PermGitHubMerge = "proxy.github.merge"
 	PermLinearRead  = "proxy.linear.read"
 	PermLinearWrite = "proxy.linear.write"
+	PermAWBRead     = "proxy.awb.read"
+	PermAWBWrite    = "proxy.awb.write"
 )
 
 // permResolution is the verdict of the non-interactive permission

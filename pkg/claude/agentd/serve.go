@@ -1431,6 +1431,35 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/linear/issue/create", handleLinearProxyIssueCreate)
 	mux.HandleFunc("POST /v1/linear/issue/update", handleLinearProxyIssueUpdate)
 	mux.HandleFunc("POST /v1/linear/issue/link", handleLinearProxyIssueLink)
+	// AWB proxy. agentd calls the operator's Agent Work Board server with the
+	// operator's account so a sandboxed agent never holds its password. Gated
+	// on the proxy.awb.* slugs (neither default-granted) AND on the operator's
+	// agent.awb_proxy policy; the project the request may act in comes from the
+	// allow-list and the caller's grant scope, never from a bare request
+	// parameter that has not been through both.
+	mux.HandleFunc("POST /v1/awb/whoami", handleAWBProxyWhoami)
+	mux.HandleFunc("POST /v1/awb/issue/show", handleAWBProxyIssueShow)
+	mux.HandleFunc("POST /v1/awb/issue/list", handleAWBProxyIssueList)
+	mux.HandleFunc("POST /v1/awb/issue/ready", handleAWBProxyIssueReady)
+	mux.HandleFunc("POST /v1/awb/issue/blocked", handleAWBProxyIssueBlocked)
+	mux.HandleFunc("POST /v1/awb/issue/search", handleAWBProxyIssueSearch)
+	mux.HandleFunc("POST /v1/awb/issue/create", handleAWBProxyIssueCreate)
+	mux.HandleFunc("POST /v1/awb/issue/update", handleAWBProxyIssueUpdate)
+	mux.HandleFunc("POST /v1/awb/issue/claim", handleAWBProxyIssueClaim)
+	mux.HandleFunc("POST /v1/awb/issue/release", handleAWBProxyIssueRelease)
+	mux.HandleFunc("POST /v1/awb/issue/close", handleAWBProxyIssueClose)
+	mux.HandleFunc("POST /v1/awb/issue/reopen", handleAWBProxyIssueReopen)
+	mux.HandleFunc("POST /v1/awb/issue/delete", handleAWBProxyIssueDelete)
+	mux.HandleFunc("POST /v1/awb/label/add", handleAWBProxyLabelAdd)
+	mux.HandleFunc("POST /v1/awb/label/rm", handleAWBProxyLabelRemove)
+	mux.HandleFunc("POST /v1/awb/dep/add", handleAWBProxyDepAdd)
+	mux.HandleFunc("POST /v1/awb/dep/rm", handleAWBProxyDepRemove)
+	mux.HandleFunc("POST /v1/awb/dep/tree", handleAWBProxyDepTree)
+	mux.HandleFunc("POST /v1/awb/attach/add", handleAWBProxyAttachAdd)
+	mux.HandleFunc("POST /v1/awb/attach/list", handleAWBProxyAttachList)
+	mux.HandleFunc("POST /v1/awb/attach/show", handleAWBProxyAttachShow)
+	mux.HandleFunc("POST /v1/awb/attach/get", handleAWBProxyAttachGet)
+	mux.HandleFunc("POST /v1/awb/attach/delete", handleAWBProxyAttachDelete)
 	// Experimental template-authoring surfaces remain registered so off means a
 	// stable 404 rather than a different mux shape. processRoute reloads the
 	// feature flag per request.
