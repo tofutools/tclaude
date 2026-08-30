@@ -23,6 +23,7 @@ func TestActionContextCoversEveryScopeDimension(t *testing.T) {
 		ProcessTemplate: "t",
 		Remote:          "github.com/acme/repo",
 		LinearTeam:      "TCL",
+		AWBProject:      "awb",
 	}
 	for dim := range permissionScopeDimensions {
 		if full.value(dim) == "" {
@@ -411,6 +412,9 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermLinearRead: "Linear proxy — linearEffectiveTeams evaluates ActionContext{LinearTeam} per candidate team " +
 		"into the session's effective set, which every team check reads",
 	PermLinearWrite: "Linear proxy — same effective-set resolution as proxy.linear.read",
+	PermAWBRead: "AWB proxy — awbEffectiveProjects evaluates ActionContext{AWBProject} per candidate " +
+		"project into the session's effective set, which every project check reads",
+	PermAWBWrite: "AWB proxy — same effective-set resolution as proxy.awb.read",
 }
 
 func TestEveryScopedSlugDeclaresAnEnforcementPath(t *testing.T) {
