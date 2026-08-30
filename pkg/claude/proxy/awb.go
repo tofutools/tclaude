@@ -7,8 +7,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
@@ -181,6 +183,9 @@ func ensureTrailingNewline(s string) string {
 
 // awbProxyCall is the shared tail of every awb verb.
 func awbProxyCall(path string, body map[string]any, askHuman string, stdout, stderr io.Writer) int {
+	if rc := rejectInvalidUTF8(body, stderr); rc != rcOK {
+		return rc
+	}
 	ask, err := agent.ParseAskHuman(askHuman)
 	if err != nil {
 		fmt.Fprintf(stderr, "Error: %v\n", err)
@@ -290,7 +295,7 @@ func awbShowCmd() *cobra.Command {
 }
 
 func awbReopenCmd() *cobra.Command {
-	return awbIDCmd("reopen", "Set the status to open, clearing the close reason and the assignee",
+	return awbIDCmd("reopen", "Set the status to open and clear the assignee",
 		"Reopen a closed issue, returning it to the pool `ready` draws from. Its historical "+
 			"close-reason comment stays in the activity timeline.\n\n"+
 			"It acts only on a closed issue: on one that is not closed it succeeds and changes "+
@@ -802,8 +807,8 @@ func awbClaimCmd() *cobra.Command {
 		Short: "Atomically set the assignee and status to in_progress",
 		Long: "Claim an issue.\n\n" +
 			"Claiming one already held by the same name succeeds. It fails if the issue is assigned to " +
-			"somebody else, blocked, or closed; --force overrides all three, and a forced claim on a " +
-			"closed issue clears the close reason along with the status.\n\n" +
+			"somebody else, blocked, or closed; --force overrides all three. A close reason stays in the " +
+			"issue's activity timeline either way — `comment list` still shows it.\n\n" +
 			"Without --as the assignee is the OPERATOR's AWB account: the daemon holds it, and agents " +
 			"have no AWB identity of their own. If several agents share that account, --as is how they " +
 			"tell their claims apart.\n\n" +
@@ -1510,6 +1515,57 @@ func awbCommentListCmd() *cobra.Command {
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
+
+// rejectInvalidUTF8 refuses a request carrying text that is not valid UTF-8,
+// BEFORE it is marshalled.
+//
+// This is the one rule that cannot be left to the daemon, and the reason is the
+// transport rather than the policy. encoding/json replaces an invalid byte
+// sequence with U+FFFD on the way out, so by the time the daemon's own
+// validator sees the string it is necessarily valid and the original bytes are
+// gone. AWB refuses such a body outright — `awb comment add` reports "not valid
+// UTF-8" — so without this check the proxy would silently store a replacement
+// character where the native command reported an error, and would do it in an
+// append-only timeline nothing can edit afterwards.
+//
+// Every other rule (blank, control characters, length) survives the round trip
+// intact and stays where the gates belong: in the daemon, where a caller
+// talking to the socket directly cannot skip it.
+//
+// It walks the whole body rather than the fields one verb knows about, so a
+// verb added later inherits the check instead of having to remember it. []byte
+// values are skipped: attachment content is base64 on the wire and arrives
+// byte-exact, which is the whole reason it travels that way.
+func rejectInvalidUTF8(body map[string]any, stderr io.Writer) int {
+	// Sorted, so a body with two bad fields names the same one every run.
+	keys := make([]string, 0, len(body))
+	for key := range body {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch v := body[key].(type) {
+		case string:
+			if !utf8.ValidString(v) {
+				return reportInvalidUTF8(key, stderr)
+			}
+		case []string:
+			for _, item := range v {
+				if !utf8.ValidString(item) {
+					return reportInvalidUTF8(key, stderr)
+				}
+			}
+		}
+	}
+	return rcOK
+}
+
+func reportInvalidUTF8(field string, stderr io.Writer) int {
+	fmt.Fprintf(stderr,
+		"Error: %s is not valid UTF-8. AWB stores text byte for byte and refuses anything else, "+
+			"and sending it would replace the offending bytes rather than report them.\n", field)
+	return rcInvalidArg
+}
 
 // awbFlagGiven reports whether the caller actually typed a flag, as opposed to
 // leaving it at its zero value. It tolerates a nil command because the build

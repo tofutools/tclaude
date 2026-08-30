@@ -140,8 +140,11 @@ type awbForceRequest struct {
 
 type awbCloseRequest struct {
 	awbIssueRefRequest
-	// Reason is a pointer because absent leaves any recorded reason alone while
-	// "" clears it — awb's own distinction.
+	// Reason is a pointer only to control whether the member is SENT. Since AWB
+	// 0.6 there is no reason field to clear: a non-empty reason becomes a typed
+	// comment on the closing transition, and empty and absent alike record no
+	// comment. The pointer stays because "the caller typed --reason ''" is still
+	// worth transmitting faithfully rather than silently dropping.
 	Reason *string `json:"reason,omitempty"`
 }
 

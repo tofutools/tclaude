@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -468,4 +469,116 @@ func TestAWBFilterBody(t *testing.T) {
 	empty := awbFilterValues{}.body(false)
 	assert.Equal(t, map[string]any{"compact": false}, empty,
 		"an unfiltered listing must send no filter at all, so the daemon supplies the defaults")
+}
+
+// --- the transport's own rule ---
+
+// TestRejectInvalidUTF8 covers the one validation that cannot live in the
+// daemon, because the transport destroys the evidence before it gets there.
+//
+// encoding/json replaces an invalid byte sequence with U+FFFD, so a daemon-side
+// utf8.ValidString always passes and the original bytes are gone. AWB refuses
+// such a body; without this check the proxy would store a replacement character
+// and report success — in an append-only timeline nothing can edit afterwards.
+func TestRejectInvalidUTF8(t *testing.T) {
+	t.Run("json really does destroy it, which is why this check is here", func(t *testing.T) {
+		encoded, err := json.Marshal(map[string]any{"body": "bad\xffbyte"})
+		require.NoError(t, err)
+		var out struct {
+			Body string `json:"body"`
+		}
+		require.NoError(t, json.Unmarshal(encoded, &out))
+		assert.True(t, utf8.ValidString(out.Body),
+			"by the time the daemon sees it, it is valid — so the daemon cannot be the gate")
+		assert.NotEqual(t, "bad\xffbyte", out.Body)
+	})
+
+	t.Run("a bad string field is refused, and named", func(t *testing.T) {
+		var stderr bytes.Buffer
+		rc := rejectInvalidUTF8(map[string]any{
+			"id": "awb-a3f9c1", "body": "bad\xffbyte",
+		}, &stderr)
+		assert.Equal(t, rcInvalidArg, rc)
+		assert.Contains(t, stderr.String(), "body")
+		assert.Contains(t, stderr.String(), "not valid UTF-8")
+	})
+
+	t.Run("a bad element of a repeatable field is refused too", func(t *testing.T) {
+		var stderr bytes.Buffer
+		rc := rejectInvalidUTF8(map[string]any{"labels": []string{"ok", "bad\xff"}}, &stderr)
+		assert.Equal(t, rcInvalidArg, rc)
+		assert.Contains(t, stderr.String(), "labels")
+	})
+
+	t.Run("attachment content is skipped: base64 carries bytes exactly", func(t *testing.T) {
+		var stderr bytes.Buffer
+		rc := rejectInvalidUTF8(map[string]any{
+			"id": "awb-a3f9c1", "name": "trace.bin", "content": []byte{0xff, 0xfe, 0x00},
+		}, &stderr)
+		assert.Equal(t, rcOK, rc,
+			"binary content is exactly what attach add is for; it does not travel as a JSON string")
+		assert.Empty(t, stderr.String())
+	})
+
+	t.Run("ordinary bodies pass, multi-byte characters included", func(t *testing.T) {
+		var stderr bytes.Buffer
+		rc := rejectInvalidUTF8(map[string]any{
+			"body": "Reproduced — with an empty token stream 🎉", "compact": true, "limit": 10,
+		}, &stderr)
+		assert.Equal(t, rcOK, rc)
+	})
+}
+
+// TestAWBHelpDoesNotPromiseCloseReasonClearing pins the schema migration into
+// the user-facing text.
+//
+// AWB 0.6 has no mutable close-reason field: a reason is a comment, and it
+// survives both a reopen and a forced claim. Help that says otherwise sends an
+// agent to avoid a safe transition, or to report that history was destroyed
+// when `comment list` still shows it.
+func TestAWBHelpDoesNotPromiseCloseReasonClearing(t *testing.T) {
+	root := awbCmd()
+	for _, path := range awbVerbPaths {
+		cmd, _, err := root.Find(path)
+		require.NoError(t, err)
+		text := cmd.Short + "\n" + cmd.Long
+		lower := strings.ToLower(text)
+		for _, claim := range []string{
+			"clearing the close reason",
+			"clears the close reason",
+			"clear the close reason",
+		} {
+			assert.NotContains(t, lower, claim,
+				"`awb %s` still promises to clear a close reason, which AWB no longer stores",
+				strings.Join(path, " "))
+		}
+	}
+
+	reopen, _, err := root.Find([]string{"reopen"})
+	require.NoError(t, err)
+	assert.Contains(t, reopen.Short, "clear the assignee",
+		"reopen's short help should say what it actually does")
+}
+
+// TestAWBCommentAddRefusesInvalidUTF8BeforeTheDaemon is the end-to-end half of
+// the check above: it goes through the real verb, so a future refactor that
+// moved the guard out of the shared call path would fail here.
+//
+// It also proves the refusal happens before the daemon is contacted at all —
+// which matters because there is no daemon in this test, and a check that ran
+// later would report "agentd is not running" instead of the real problem.
+func TestAWBCommentAddRefusesInvalidUTF8BeforeTheDaemon(t *testing.T) {
+	file := t.TempDir() + "/note.md"
+	require.NoError(t, os.WriteFile(file, []byte("latin-1 caf\xe9\n"), 0o600))
+
+	var stdout, stderr bytes.Buffer
+	rc := runAWBCommentAdd(&awbCommentAddParams{
+		ID: "awb-a3f9c1", BodyFile: file,
+	}, strings.NewReader(""), &stdout, &stderr)
+
+	assert.Equal(t, rcInvalidArg, rc)
+	assert.Contains(t, stderr.String(), "not valid UTF-8")
+	assert.NotContains(t, stderr.String(), "agentd is not running",
+		"the refusal must come before the daemon call, or it reports the wrong problem")
+	assert.Empty(t, stdout.String())
 }
