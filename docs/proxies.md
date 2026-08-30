@@ -31,8 +31,7 @@ by design, so unconfigured operators do not advertise a capability their
 agents cannot use. The command registers when any proxy family is configured:
 
 - `agent.git_proxy.allowed_remotes` is non-empty (Git and GitHub), or
-- `agent.linear_proxy` names an allow-list, a key file or a workspace route —
-  or the daemon has `LINEAR_API_KEY` in its environment, or
+- `agent.linear_proxy` names an allow-list, a key file or a workspace route, or
 - `agent.awb_proxy.url` is set, or
 - the caller is a managed agent and a capability probe of agentd's
   `GET /v1/info` reports proxy support (daemons predating that projection keep
@@ -43,6 +42,16 @@ advertises `proxy.git.*` / `proxy.github.*`, `proxy.linear.*` and `proxy.awb.*`
 only where that family could work, plus any family the calling agent holds a
 scoped grant for. The two must agree — advertising a slug whose command is not
 registered would let an operator grant a capability nothing can exercise.
+
+One asymmetry is deliberate and worth knowing. The daemon also counts
+`LINEAR_API_KEY` in **its own** environment as a configured Linear family, so a
+managed agent (which reads the projection) gets the command from an
+environment-only Linear setup. A plain host shell does not: it answers from the
+config file alone, because probing the daemon on every `tclaude` invocation
+would cost a round trip on every command. An operator running an
+environment-only Linear proxy who wants `tclaude proxy` in their own shell
+should give `agent.linear_proxy` an `api_key_file` (or an `allowed_teams` list)
+rather than relying on the variable.
 
 Visibility is not enforcement. The full registry still backs validation and
 stored-grant resolution, so hiding a slug never withdraws a grant made under it.
