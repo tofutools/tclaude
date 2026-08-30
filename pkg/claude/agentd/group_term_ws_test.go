@@ -6,7 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
 // TestGroupTermWS_ResolvesGroupDefaultDir covers the pre-upgrade resolution of
@@ -90,5 +94,58 @@ func TestGroupTermSessionName_StableAndDistinct(t *testing.T) {
 	// it so a future prefix edit that broke the separation would fail here.
 	if strings.HasPrefix(termSessionName("alpha", "current"), "tclaude-groupterm-") {
 		t.Errorf("per-agent term session name must not fall in the group-term namespace")
+	}
+}
+
+func TestGroupTermWSIncludesGroupEnvironmentWithoutGrowingTmuxCommand(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+
+	w := testharness.New(t)
+	previousTmux := clcommon.Default
+	clcommon.Default = w.Tmux
+	t.Cleanup(func() { clcommon.Default = previousTmux })
+	t.Setenv("TMUX", "")
+	t.Setenv(session.ResourceDelegationDirEnv, "")
+
+	if _, err := db.CreateAgentGroup("squad", ""); err != nil {
+		t.Fatalf("CreateAgentGroup: %v", err)
+	}
+	if _, err := db.SetAgentGroupDefaultCwd("squad", "/work/squad"); err != nil {
+		t.Fatalf("SetAgentGroupDefaultCwd: %v", err)
+	}
+	if _, err := db.SetAgentGroupEnvironment("squad", []sandboxpolicy.EnvironmentEntry{
+		{Name: "PLAIN", Value: "yes"},
+		{Name: "BIG", Value: strings.Repeat("x", sandboxpolicy.MaxEnvironmentValue)},
+	}); err != nil {
+		t.Fatalf("SetAgentGroupEnvironment: %v", err)
+	}
+
+	command := captureTermCommand(t, handleDashboardGroupTermWS, "/api/group-term-ws/squad")
+	if strings.Contains(command, "PLAIN=yes") || strings.Contains(command, strings.Repeat("x", 64)) {
+		t.Fatalf("group environment leaked into tmux argv: %s", command)
+	}
+	if len(command) > 2048 {
+		t.Fatalf("group terminal command grew with environment (%d bytes): %s", len(command), command)
+	}
+	if !strings.Contains(command, "launch-scripts") {
+		t.Fatalf("group terminal command does not use a private launch script: %s", command)
+	}
+}
+
+func TestGroupTerminalBootstrapExportsLiteralEnvironment(t *testing.T) {
+	t.Setenv("SHELL", "/bin/zsh")
+	got := groupTerminalBootstrap([]sandboxpolicy.EnvironmentEntry{
+		{Name: "PLAIN", Value: "yes"},
+		{Name: "LITERAL", Value: "spaces $(touch nope); `echo nope` 'quoted'"},
+	})
+	for _, want := range []string{
+		"export PLAIN=yes\n",
+		"export LITERAL='spaces $(touch nope); `echo nope` '\\''quoted'\\'''\n",
+		"exec /bin/zsh",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("group terminal bootstrap missing %q:\n%s", want, got)
+		}
 	}
 }

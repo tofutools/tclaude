@@ -21,6 +21,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -142,13 +143,14 @@ func groupTermSessionName(groupName string) string {
 //
 //	GET /api/group-term-ws/{group}
 //
-// The directory is captured at FIRST open: groupTermSessionName keys the
-// backing tmux session on the group name alone, and `tmux new-session -A`
-// re-attaches an existing session in its original dir, ignoring the -c
-// here. So changing the group's default_cwd (or renaming it) after a
-// terminal was opened re-attaches the old shell in the old dir until that
-// session is killed — the same first-open-wins behaviour termSessionName
-// documents for the per-agent path.
+// The directory and group environment are captured at FIRST open:
+// groupTermSessionName keys the backing tmux session on the group name alone,
+// and `tmux new-session -A` re-attaches an existing session in its original
+// dir and environment, ignoring the -c/-e options here. So changing the
+// group's default_cwd or environment (or renaming it) after a terminal was
+// opened re-attaches the old shell with its original launch configuration
+// until that session is killed — the same first-open-wins behaviour
+// termSessionName documents for the per-agent path.
 //
 // Same threat model as the rest of /api/* — the dashboard cookie +
 // Origin pin (or remote pre-auth) is the human-consent layer.
@@ -185,10 +187,34 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
+	paneCommand := ""
+	if len(g.Environment) > 0 {
+		bootstrap := groupTerminalBootstrap(g.Environment)
+		scriptPath, cleanupScript, writeErr := session.WriteLaunchScript(bootstrap)
+		if writeErr != nil {
+			http.Error(w, "prepare group terminal: "+writeErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer cleanupScript()
+		paneCommand = " " + clcommon.BootstrapShellCommandPrefix() + " " + shellSingleQuote(scriptPath)
+	}
 	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
-	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
-		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(sessName), shellSingleQuote(dir))
+	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s%s",
+		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(sessName), shellSingleQuote(dir), paneCommand)
 	runPTYOverWS(w, r, cmd, sessName, "", nil)
+}
+
+func groupTerminalBootstrap(environment []sandboxpolicy.EnvironmentEntry) string {
+	var command strings.Builder
+	for _, entry := range environment {
+		fmt.Fprintf(&command, "export %s=%s\n", entry.Name, clcommon.ShellQuoteArg(entry.Value))
+	}
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	fmt.Fprintf(&command, "exec %s", clcommon.ShellQuoteArg(shell))
+	return command.String()
 }
 
 // handleDashboardOpenWindowWS is the in-browser fallback for "open

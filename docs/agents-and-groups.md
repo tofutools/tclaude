@@ -174,6 +174,8 @@ tclaude agent groups set-environment myteam \
 
 Omit every `--env` to clear the group environment. Resolution lives in the
 daemon, so the same settings reach dashboard, CLI, and agent-to-agent spawns.
+The group's web terminal also inherits these values when its persistent tmux
+session is first created; an existing terminal keeps its original environment.
 
 ### Default directory and auto-join
 

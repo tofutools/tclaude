@@ -15,8 +15,8 @@ import {
 
 const html = htm.bind(h);
 const WT_NEW = '__new__';
-const GROUP_ENVIRONMENT_HELP = 'Inherited by fresh spawns; profile and per-spawn values override matching names.';
-const GROUP_ENVIRONMENT_HELP_WIZARD = 'Inherited by newly summoned familiars; pattern and per-summon runes '
+const GROUP_ENVIRONMENT_HELP = 'Inherited by fresh spawns and group terminals; profile and per-spawn values override matching names.';
+const GROUP_ENVIRONMENT_HELP_WIZARD = 'Inherited by newly summoned familiars and sanctum terminals; pattern and per-summon runes '
   + 'override matching names.';
 
 function errorMessage(error) { return error?.message || String(error); }
