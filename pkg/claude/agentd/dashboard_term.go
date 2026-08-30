@@ -21,6 +21,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -186,16 +187,34 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
-	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
-	newSessionFlags := make([]string, 1, 1+len(g.Environment)*2)
-	newSessionFlags[0] = "-A"
-	for _, entry := range g.Environment {
-		newSessionFlags = append(newSessionFlags, "-e", shellSingleQuote(entry.Name+"="+entry.Value))
+	paneCommand := ""
+	if len(g.Environment) > 0 {
+		bootstrap := groupTerminalBootstrap(g.Environment)
+		scriptPath, cleanupScript, writeErr := session.WriteLaunchScript(bootstrap)
+		if writeErr != nil {
+			http.Error(w, "prepare group terminal: "+writeErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer cleanupScript()
+		paneCommand = " " + clcommon.BootstrapShellCommandPrefix() + " " + shellSingleQuote(scriptPath)
 	}
-	cmd := fmt.Sprintf("tmux -L %s %s new-session %s -s %s -c %s",
-		clcommon.TmuxSocketName, clientFlags, strings.Join(newSessionFlags, " "),
-		shellSingleQuote(sessName), shellSingleQuote(dir))
+	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
+	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s%s",
+		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(sessName), shellSingleQuote(dir), paneCommand)
 	runPTYOverWS(w, r, cmd, sessName, "", nil)
+}
+
+func groupTerminalBootstrap(environment []sandboxpolicy.EnvironmentEntry) string {
+	var command strings.Builder
+	for _, entry := range environment {
+		fmt.Fprintf(&command, "export %s=%s\n", entry.Name, clcommon.ShellQuoteArg(entry.Value))
+	}
+	shell := os.Getenv("SHELL")
+	if shell == "" {
+		shell = "/bin/sh"
+	}
+	fmt.Fprintf(&command, "exec %s", clcommon.ShellQuoteArg(shell))
+	return command.String()
 }
 
 // handleDashboardOpenWindowWS is the in-browser fallback for "open

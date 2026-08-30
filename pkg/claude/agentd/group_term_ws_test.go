@@ -97,7 +97,7 @@ func TestGroupTermSessionName_StableAndDistinct(t *testing.T) {
 	}
 }
 
-func TestGroupTermWSIncludesGroupEnvironment(t *testing.T) {
+func TestGroupTermWSIncludesGroupEnvironmentWithoutGrowingTmuxCommand(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)
 
@@ -116,18 +116,36 @@ func TestGroupTermWSIncludesGroupEnvironment(t *testing.T) {
 	}
 	if _, err := db.SetAgentGroupEnvironment("squad", []sandboxpolicy.EnvironmentEntry{
 		{Name: "PLAIN", Value: "yes"},
-		{Name: "LITERAL", Value: "spaces $(touch nope); `echo nope` 'quoted'"},
+		{Name: "BIG", Value: strings.Repeat("x", sandboxpolicy.MaxEnvironmentValue)},
 	}); err != nil {
 		t.Fatalf("SetAgentGroupEnvironment: %v", err)
 	}
 
 	command := captureTermCommand(t, handleDashboardGroupTermWS, "/api/group-term-ws/squad")
+	if strings.Contains(command, "PLAIN=yes") || strings.Contains(command, strings.Repeat("x", 64)) {
+		t.Fatalf("group environment leaked into tmux argv: %s", command)
+	}
+	if len(command) > 2048 {
+		t.Fatalf("group terminal command grew with environment (%d bytes): %s", len(command), command)
+	}
+	if !strings.Contains(command, "launch-scripts") {
+		t.Fatalf("group terminal command does not use a private launch script: %s", command)
+	}
+}
+
+func TestGroupTerminalBootstrapExportsLiteralEnvironment(t *testing.T) {
+	t.Setenv("SHELL", "/bin/zsh")
+	got := groupTerminalBootstrap([]sandboxpolicy.EnvironmentEntry{
+		{Name: "PLAIN", Value: "yes"},
+		{Name: "LITERAL", Value: "spaces $(touch nope); `echo nope` 'quoted'"},
+	})
 	for _, want := range []string{
-		"-e 'PLAIN=yes'",
-		"-e 'LITERAL=spaces $(touch nope); `echo nope` '\\''quoted'\\'''",
+		"export PLAIN=yes\n",
+		"export LITERAL='spaces $(touch nope); `echo nope` '\\''quoted'\\'''\n",
+		"exec /bin/zsh",
 	} {
-		if !strings.Contains(command, want) {
-			t.Errorf("group terminal command missing %q: %s", want, command)
+		if !strings.Contains(got, want) {
+			t.Errorf("group terminal bootstrap missing %q:\n%s", want, got)
 		}
 	}
 }
