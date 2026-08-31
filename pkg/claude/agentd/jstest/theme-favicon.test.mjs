@@ -9,11 +9,11 @@ const REGULAR_FAVICON = '/static/tclaude-icon.svg';
 test('theme changes replace and uniquely version the favicon link', async (t) => {
   const harness = await createPreactHarness(t);
   const { document, window } = harness;
-  document.head.innerHTML = `<title>tclaude agent dashboard</title><link rel="icon">`;
+  document.head.innerHTML = `<title>tclaude</title><link rel="icon">`;
   document.querySelector('link[rel="icon"]').setAttribute('href', REGULAR_FAVICON);
   document.body.innerHTML = `<header><h1>
     <button class="slop-icon"><img src="${REGULAR_FAVICON}" alt=""><span class="theme-mode-badge"></span></button>
-    <span class="dashboard-title">tclaude agent dashboard</span>
+    <span class="dashboard-title">tclaude</span>
   </h1></header>`;
 
   Object.defineProperty(window, 'location', {
@@ -53,5 +53,5 @@ test('theme changes replace and uniquely version the favicon link', async (t) =>
   assert.match(restoredLink.getAttribute('href'), /^\/static\/tclaude-icon\.svg/);
   assert.match(restoredLink.getAttribute('href'), /#tclaude-regular-[^-]+-[^-]+-3$/);
   assert.equal(document.querySelector('.theme-mode-badge').textContent, '');
-  assert.equal(document.title, 'tclaude agent dashboard');
+  assert.equal(document.title, 'tclaude');
 });
