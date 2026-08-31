@@ -230,6 +230,16 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		}
 		switch entry.Mode {
 		case sandboxpolicy.MountRO, sandboxpolicy.MountRW, sandboxpolicy.MountHide:
+		case sandboxpolicy.MountTmpfs:
+			// Same shape and same reason as the projection refusal above:
+			// Seatbelt filters paths in the host namespace and has no mount to
+			// create, so it cannot materialize a temporary filesystem at all.
+			// ValidateTmpfsSupport refuses the launch before it reaches here;
+			// this is the backstop that keeps a future caller from rendering a
+			// policy the platform cannot enforce.
+			return "", nil, fmt.Errorf(
+				"seatbelt_tmpfs_mount: Seatbelt cannot mount a temporary filesystem at sandbox path %q (mount plan entry %d); a tmpfs requires a mount namespace, which only the Linux tclaude-layer provides",
+				entry.Path, i)
 		default:
 			return "", nil, fmt.Errorf("mount plan entry %d has invalid mode %d", i, entry.Mode)
 		}

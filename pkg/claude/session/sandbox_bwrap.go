@@ -385,14 +385,27 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	// After the agent directories are in contractWriteDirs, not before: they are
 	// launch-required in exactly the same way, and a mount shadowing one would
 	// otherwise slip past the named refusal and silently hide it.
-	if err := validateRemappedGuestPathsAgainstContract(
-		remappedGrants, append(
-			append(
-				append(append([]string(nil), contractWriteDirs...), launchContractReadDirs...),
-				input.HarnessReadPaths...,
-			),
-			agentipc.CanonicalSocketDir(), agentipc.CanonicalSocketPath(),
+	contractGuestDirs := append(
+		append(
+			append(append([]string(nil), contractWriteDirs...), launchContractReadDirs...),
+			input.HarnessReadPaths...,
 		),
+		agentipc.CanonicalSocketDir(), agentipc.CanonicalSocketPath(),
+	)
+	if err := validateRemappedGuestPathsAgainstContract(
+		remappedGrants, contractGuestDirs,
+	); err != nil {
+		return TclaudeLayerLaunchSpec{}, err
+	}
+	// A tmpfs shadows exactly as a remapped mount does, and it is the more
+	// likely mistake of the two: an operator reaching for scratch space at
+	// ~/.codex or at the workspace itself would mount an empty filesystem over
+	// the harness's own state and lose it for the life of the launch. The
+	// protected-root wall in normalizeTmpfs does not cover this — the launch
+	// contract's paths are not protected roots — so the refusal belongs here,
+	// where the contract is known.
+	if err := validateTmpfsPathsAgainstContract(
+		effective.Tmpfs, contractGuestDirs,
 	); err != nil {
 		return TclaudeLayerLaunchSpec{}, err
 	}
@@ -2221,9 +2234,19 @@ func bwrapArgsWithDaemonFinal(
 		// authority the entry carries. They differ only for a mount_path grant
 		// (TCL-866), and a hide is always same-path because a deny names a host
 		// path rather than projecting one.
-		source := filepath.Clean(entry.SourcePath())
-		if source == "." || !filepath.IsAbs(source) {
-			return nil, fmt.Errorf("mount plan entry %d has non-absolute source %q", i, entry.Source)
+		// A tmpfs entry has no host side at all, so every host-path question
+		// below is skipped for it: SourcePath() would answer with the guest path
+		// and invite an applier to treat it as a directory to bind FROM.
+		source := path
+		if entry.HasHostSource() {
+			source = filepath.Clean(entry.SourcePath())
+			if source == "." || !filepath.IsAbs(source) {
+				return nil, fmt.Errorf("mount plan entry %d has non-absolute source %q", i, entry.Source)
+			}
+		} else if entry.Source != "" {
+			return nil, fmt.Errorf(
+				"mount plan entry %d mounts a temporary filesystem at %q but names host source %q; a tmpfs has no host side",
+				i, path, entry.Source)
 		}
 		if entry.IsRemapped() && entry.Mode == sandboxpolicy.MountHide {
 			return nil, fmt.Errorf(
@@ -2233,15 +2256,33 @@ func bwrapArgsWithDaemonFinal(
 		if !entry.IsRemapped() && tclaudeLayerPlanUsesConstructedRoot(plan) &&
 			path == filepath.Clean(agentipc.CanonicalSocketDir()) {
 			switch entry.Mode {
-			case sandboxpolicy.MountRO, sandboxpolicy.MountRW, sandboxpolicy.MountHide:
+			case sandboxpolicy.MountRO, sandboxpolicy.MountRW, sandboxpolicy.MountHide,
+				sandboxpolicy.MountTmpfs:
 				// The initial directory projection is the immutable read/connect
-				// floor. An exact ordinary row cannot widen or hide it.
+				// floor. An exact ordinary row cannot widen, hide, or mount
+				// scratch space over it.
 				continue
 			default:
 				return nil, fmt.Errorf("mount plan entry %d has invalid mode %d", i, entry.Mode)
 			}
 		}
 		switch entry.Mode {
+		case sandboxpolicy.MountTmpfs:
+			if err := requireTclaudeLayerGuestMountpoint(i, entry, plan); err != nil {
+				return nil, err
+			}
+			args = hideRemounts.appendTmpfs(args, path, entry.SizeBytes)
+			// A tmpfs is a mount like any other, so it shadows a class-3 hide it
+			// covers. normalizeTmpfs already refuses a row that intersects a
+			// protected root, but the rehide is emitted anyway: it makes the
+			// invariant hold in this file, structurally, rather than by
+			// reference to a validation several packages away.
+			args = appendTclaudeLayerProtectedRehides(
+				args,
+				path,
+				protectedRoots,
+				&hideRemounts,
+			)
 		case sandboxpolicy.MountRO, sandboxpolicy.MountRW:
 			exists, err := bwrapBindSourceExists(source)
 			if err != nil {
@@ -2401,6 +2442,12 @@ func bwrapArgsWithDaemonFinal(
 // creates the mountpoint like any other constructed root, so the refusal no
 // longer applies there.
 //
+// A TMPFS entry has the same precondition for the same reason — bubblewrap has
+// to ensure the destination directory exists before mounting on it — and it hits
+// the case far more often than a remap does, because a scratch path like
+// /scratch is precisely the kind of name that is not supposed to exist on the
+// host. That is why the refusal names the root posture as the fix.
+//
 // tclaude deliberately does not mkdir the mountpoint itself. Creating host
 // directories as a side effect of launching is the same failure the missing-
 // source rule already refuses (see RenderMountPlanFromGrants): it would leave
@@ -2411,17 +2458,40 @@ func requireTclaudeLayerGuestMountpoint(
 	entry sandboxpolicy.MountEntry,
 	plan sandboxpolicy.MountPlan,
 ) error {
-	if !entry.IsRemapped() || tclaudeLayerPlanUsesConstructedRoot(plan) {
+	needsMountpoint := entry.IsRemapped() || entry.Mode == sandboxpolicy.MountTmpfs
+	if !needsMountpoint || tclaudeLayerPlanUsesConstructedRoot(plan) {
 		return nil
 	}
+	const inheritedRootRemedy = "or use a posture where tclaude constructs the root " +
+		"(closed or filtered network access, an explicit unix_sockets rule, or filesystem_root: separate)"
 	exists, err := bwrapBindSourceExists(entry.Path)
 	if err != nil {
 		return fmt.Errorf("mount plan entry %d sandbox mount point %q: %w", index, entry.Path, err)
 	}
+	if entry.Mode == sandboxpolicy.MountTmpfs {
+		// A tmpfs has no source, so the remaining checks are stated in its own
+		// terms: the mount point must exist, and it must be a directory, because
+		// a temporary filesystem is always one.
+		if !exists {
+			return fmt.Errorf(
+				"tclaude_layer_missing_mount_point: mount plan entry %d cannot mount a temporary filesystem at sandbox path %q because the sandbox root is the host root under the %s network posture with an inherited root, so the mount point must already exist on the host; create %q, %s",
+				index, entry.Path, plan.NetworkPosture, entry.Path, inheritedRootRemedy)
+		}
+		targetIsFile, err := bwrapBindSourceIsFile(entry.Path)
+		if err != nil {
+			return fmt.Errorf("mount plan entry %d sandbox mount point %q: %w", index, entry.Path, err)
+		}
+		if targetIsFile {
+			return fmt.Errorf(
+				"tclaude_layer_mount_point_kind: mount plan entry %d cannot mount a temporary filesystem at sandbox path %q because the host path is a file and a temporary filesystem is a directory",
+				index, entry.Path)
+		}
+		return nil
+	}
 	if !exists {
 		return fmt.Errorf(
-			"tclaude_layer_missing_mount_point: mount plan entry %d cannot mount %q at sandbox path %q because the sandbox root is the host root under the %s network posture with an inherited root, so the mount point must already exist on the host; create %q, or use a posture where tclaude constructs the root (closed or filtered network access, or an explicit unix_sockets rule)",
-			index, entry.SourcePath(), entry.Path, plan.NetworkPosture, entry.Path)
+			"tclaude_layer_missing_mount_point: mount plan entry %d cannot mount %q at sandbox path %q because the sandbox root is the host root under the %s network posture with an inherited root, so the mount point must already exist on the host; create %q, %s",
+			index, entry.SourcePath(), entry.Path, plan.NetworkPosture, entry.Path, inheritedRootRemedy)
 	}
 	// A file cannot be mounted over a directory, nor a directory over a file.
 	// bubblewrap refuses the combination with a message that names neither the
@@ -2517,6 +2587,30 @@ func (r *tclaudeLayerHideRemounts) appendHide(args []string, path string) []stri
 		r.order = append(r.order, path)
 	}
 	r.active[path] = true
+	return append(args, "--tmpfs", path)
+}
+
+// appendTmpfs mounts a fresh writable temporary filesystem at path. It is
+// exactly appendHide except for the flush: the operator asked for scratch
+// space, so the mount must NOT be remounted read-only at the end. Recording the
+// path as inactive rather than skipping the tracker entirely is what makes a
+// later hide at the same path — or a later exact bind over it — behave the same
+// way it does for every other mount.
+func (r *tclaudeLayerHideRemounts) appendTmpfs(args []string, path string, sizeBytes uint64) []string {
+	if r.active == nil {
+		r.active = make(map[string]bool)
+	}
+	r.noteAncestorReplacement(path)
+	if _, seen := r.active[path]; !seen {
+		r.order = append(r.order, path)
+	}
+	r.active[path] = false
+	// --size applies to the NEXT filesystem operation, so it must immediately
+	// precede its own --tmpfs. Zero means the kernel default, which is what
+	// bubblewrap does with no modifier at all.
+	if sizeBytes > 0 {
+		args = append(args, "--size", strconv.FormatUint(sizeBytes, 10))
+	}
 	return append(args, "--tmpfs", path)
 }
 
@@ -3329,6 +3423,31 @@ func validateRemappedGuestPathsAgainstContract(
 				return fmt.Errorf(
 					"unsupported_sandbox_profile_mount_path: mounting %q at sandbox path %q would shadow the launch-required directory %q",
 					grant.Path, guest, dir)
+			}
+		}
+	}
+	return nil
+}
+
+// validateTmpfsPathsAgainstContract refuses a temporary filesystem that would
+// cover a directory the launch itself requires. The comparison is the same one
+// the remapped-mount check makes and in the same direction: a tmpfs AT or ABOVE
+// a contract directory hides it, while one strictly beneath a contract
+// directory is ordinary most-specific-wins and is allowed.
+func validateTmpfsPathsAgainstContract(
+	mounts []sandboxpolicy.TmpfsMount,
+	contractDirs []string,
+) error {
+	for _, mount := range mounts {
+		for _, dir := range contractDirs {
+			dir = canonicalSandboxPath(dir)
+			if dir == "" {
+				continue
+			}
+			if sandboxpolicy.GuardContainsOrEqual(mount.Path, dir) {
+				return fmt.Errorf(
+					"unsupported_sandbox_profile_tmpfs: a temporary filesystem at sandbox path %q would shadow the launch-required directory %q",
+					mount.Path, dir)
 			}
 		}
 	}

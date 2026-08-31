@@ -209,6 +209,7 @@ func hypotheticalSandboxProfilePlan(body sandboxProfilePlanRequest) (sandboxProf
 	}
 	policy := sandboxpolicy.Profile{
 		Filesystem:       append([]sandboxpolicy.FilesystemGrant(nil), snapshot.Effective.Filesystem...),
+		Tmpfs:            append([]sandboxpolicy.TmpfsMount(nil), snapshot.Effective.Tmpfs...),
 		Environment:      sandboxpolicy.EnvironmentForLaunch(&snapshot),
 		AgentDirectories: append([]string(nil), snapshot.Effective.AgentDirectories...),
 		FilesystemRoot:   snapshot.Effective.FilesystemRoot,

@@ -9,6 +9,13 @@ const (
 	MountHide MountMode = iota
 	MountRO
 	MountRW
+	// MountTmpfs mounts an empty temporary filesystem at Path. It has no host
+	// source: SourcePath() is meaningless for it, and an applier must never
+	// treat Path as a directory to bind FROM. Like MountHide it shadows
+	// whatever occupied the path before it; unlike MountHide it stays
+	// writable, which is the whole difference between hiding a path and giving
+	// the agent scratch space at one.
+	MountTmpfs
 )
 
 // MountEntry is one ordered entry in an OS-sandbox mount plan.
@@ -32,6 +39,12 @@ type MountEntry struct {
 	Path   string
 	Mode   MountMode
 	Source string
+	// SizeBytes is meaningful only for MountTmpfs, where zero means the
+	// kernel's own tmpfs default. It is on the entry rather than in a sibling
+	// list because the size belongs to one specific mount, and separating the
+	// two would let an applier that preserves order still pair a ceiling with
+	// the wrong mount.
+	SizeBytes uint64
 }
 
 // SourcePath is the HOST path this entry exposes. It is the value an applier
@@ -43,6 +56,12 @@ func (entry MountEntry) SourcePath() string {
 	}
 	return entry.Path
 }
+
+// HasHostSource reports whether the entry exposes a host path at all. A tmpfs
+// entry does not: it materializes an empty filesystem, so an applier must skip
+// every host-side question — existence, directory-ness, mountpoint kind — that
+// a bind entry has to answer.
+func (entry MountEntry) HasHostSource() bool { return entry.Mode != MountTmpfs }
 
 // IsRemapped reports whether the entry projects a host path onto a different
 // sandbox path. Only a real mount namespace can enforce that; a path-filter

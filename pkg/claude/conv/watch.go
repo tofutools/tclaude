@@ -2423,6 +2423,14 @@ func resumeLaunchCmdWithStackedProof(
 		); err != nil {
 			return "", "", nil, err
 		}
+		// Nor a temporary filesystem. Bringing the agent back without the
+		// scratch space its recorded policy promised would silently change what
+		// the resumed session can do.
+		if err := sandboxpolicy.ValidateTmpfsSupport(
+			validated.Effective.Tmpfs, implementation, runtime.GOOS,
+		); err != nil {
+			return "", "", nil, err
+		}
 		// A rule naming a single FILE is dropped rather than remapped: these
 		// lists are directories by contract, and the gate above has already
 		// refused every implementation that would have needed one of them to
@@ -2445,6 +2453,15 @@ func resumeLaunchCmdWithStackedProof(
 				readDirs = append(readDirs, grant.GuestPath())
 			case sandboxpolicy.AccessDeny:
 				denyDirs = append(denyDirs, grant.Path)
+			}
+		}
+		// Mirror the spawn seam: a temporary filesystem is writable inside the
+		// namespace, so the harness's own view must say so or it would prompt on
+		// every write to space the profile granted. The gate above has already
+		// refused every implementation that cannot mount one.
+		if sandboxpolicy.SupportsTmpfsMounts(implementation, runtime.GOOS) {
+			for _, mount := range validated.Effective.Tmpfs {
+				writeDirs = append(writeDirs, mount.Path)
 			}
 		}
 	}

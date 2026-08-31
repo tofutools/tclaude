@@ -50,6 +50,7 @@ type SandboxProfile struct {
 	// what the file says.
 	Filesystem              []SandboxFilesystemGrant           `json:"filesystem"`
 	FilesystemSpellings     *sandboxpolicy.FilesystemSpellings `json:"filesystem_spellings,omitempty"`
+	Tmpfs                   []sandboxpolicy.TmpfsMount         `json:"tmpfs,omitempty"`
 	Environment             []SandboxEnvironmentEntry          `json:"environment"`
 	AgentDirectories        []string                           `json:"agent_directories"`
 	FilesystemRoot          sandboxpolicy.FilesystemRootMode   `json:"filesystem_root,omitempty"`
@@ -123,8 +124,8 @@ func CreateSandboxProfile(p *SandboxProfile) (int64, error) {
 	defer func() { _ = tx.Rollback() }()
 	now := dbTime(time.Now())
 	res, err := tx.Exec(`INSERT INTO sandbox_profiles
-		(name, filesystem_json, filesystem_spellings_json, environment_json, agent_directories_json, filesystem_root, harness_config, network_access, network_json, unix_sockets_json, resource_limits_json, darwin_allow_mach_register, pre_launch_json, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		p.Name, payload.filesystem, payload.filesystemSpellings, payload.environment, payload.agentDirectories,
+		(name, filesystem_json, filesystem_spellings_json, tmpfs_json, environment_json, agent_directories_json, filesystem_root, harness_config, network_access, network_json, unix_sockets_json, resource_limits_json, darwin_allow_mach_register, pre_launch_json, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		p.Name, payload.filesystem, payload.filesystemSpellings, payload.tmpfs, payload.environment, payload.agentDirectories,
 		p.FilesystemRoot, p.HarnessConfig, p.NetworkAccess, payload.network, payload.unixSockets, payload.resourceLimits, p.DarwinAllowMachRegister,
 		payload.preLaunch, payload.includes, now, now)
 	if err != nil {
@@ -186,8 +187,8 @@ func updateSandboxProfile(p *SandboxProfile, revision string) error {
 		return err
 	}
 	now := dbTime(time.Now())
-	query := `UPDATE sandbox_profiles SET name = ?, filesystem_json = ?, filesystem_spellings_json = ?, environment_json = ?, agent_directories_json = ?, filesystem_root = ?, harness_config = ?, network_access = ?, network_json = ?, unix_sockets_json = ?, resource_limits_json = ?, darwin_allow_mach_register = ?, pre_launch_json = ?, includes_json = ?, updated_at = ? WHERE id = ?`
-	args := []any{p.Name, payload.filesystem, payload.filesystemSpellings, payload.environment, payload.agentDirectories,
+	query := `UPDATE sandbox_profiles SET name = ?, filesystem_json = ?, filesystem_spellings_json = ?, tmpfs_json = ?, environment_json = ?, agent_directories_json = ?, filesystem_root = ?, harness_config = ?, network_access = ?, network_json = ?, unix_sockets_json = ?, resource_limits_json = ?, darwin_allow_mach_register = ?, pre_launch_json = ?, includes_json = ?, updated_at = ? WHERE id = ?`
+	args := []any{p.Name, payload.filesystem, payload.filesystemSpellings, payload.tmpfs, payload.environment, payload.agentDirectories,
 		p.FilesystemRoot, p.HarnessConfig, p.NetworkAccess, payload.network, payload.unixSockets, payload.resourceLimits, p.DarwinAllowMachRegister,
 		payload.preLaunch, payload.includes, now, p.ID}
 	if revision != "" {
@@ -407,6 +408,7 @@ type sandboxProfilePayloadJSON struct {
 	filesystem          string
 	filesystemSpellings string
 	environment         string
+	tmpfs               string
 	agentDirectories    string
 	network             string
 	unixSockets         string
@@ -483,9 +485,18 @@ func marshalSandboxProfilePayload(p *SandboxProfile) (sandboxProfilePayloadJSON,
 	if err != nil {
 		return sandboxProfilePayloadJSON{}, fmt.Errorf("marshal sandbox profile includes: %w", err)
 	}
+	tmpfs := p.Tmpfs
+	if tmpfs == nil {
+		tmpfs = []sandboxpolicy.TmpfsMount{}
+	}
+	tmpfsJSON, err := json.Marshal(tmpfs)
+	if err != nil {
+		return sandboxProfilePayloadJSON{}, fmt.Errorf("marshal sandbox profile temporary filesystems: %w", err)
+	}
 	return sandboxProfilePayloadJSON{
 		filesystem:          string(filesystemJSON),
 		filesystemSpellings: string(filesystemSpellingsJSON),
+		tmpfs:               string(tmpfsJSON),
 		environment:         string(environmentJSON),
 		agentDirectories:    string(agentDirectoriesJSON),
 		network:             string(networkJSON),
@@ -509,6 +520,7 @@ func normalizeSandboxProfileForStore(p *SandboxProfile) (*SandboxProfile, error)
 	}
 	input := sandboxpolicy.Profile{
 		Name: p.Name, Filesystem: p.Filesystem, FilesystemSpellings: p.FilesystemSpellings,
+		Tmpfs:       p.Tmpfs,
 		Environment: p.Environment, AgentDirectories: p.AgentDirectories, FilesystemRoot: p.FilesystemRoot,
 		HarnessConfig: p.HarnessConfig, NetworkAccess: p.NetworkAccess,
 		Network: p.Network, UnixSockets: p.UnixSockets, ResourceLimits: p.ResourceLimits, Includes: p.Includes,
@@ -535,6 +547,7 @@ func normalizeSandboxProfileForStore(p *SandboxProfile) (*SandboxProfile, error)
 	out.Name = normalized.Name
 	out.Filesystem = normalized.Filesystem
 	out.FilesystemSpellings = normalized.FilesystemSpellings
+	out.Tmpfs = normalized.Tmpfs
 	out.Environment = normalized.Environment
 	out.AgentDirectories = normalized.AgentDirectories
 	out.FilesystemRoot = normalized.FilesystemRoot
@@ -626,14 +639,14 @@ func GetSandboxProfileByID(id int64) (*SandboxProfile, error) {
 	return scanSandboxProfile(d.QueryRow(sandboxProfileSelect+` WHERE id = ?`, id))
 }
 
-const sandboxProfileSelect = `SELECT id, name, filesystem_json, filesystem_spellings_json, environment_json, agent_directories_json, filesystem_root, harness_config, network_access, network_json, unix_sockets_json, resource_limits_json, darwin_allow_mach_register, pre_launch_json, includes_json, created_at, updated_at FROM sandbox_profiles`
+const sandboxProfileSelect = `SELECT id, name, filesystem_json, filesystem_spellings_json, tmpfs_json, environment_json, agent_directories_json, filesystem_root, harness_config, network_access, network_json, unix_sockets_json, resource_limits_json, darwin_allow_mach_register, pre_launch_json, includes_json, created_at, updated_at FROM sandbox_profiles`
 
 func scanSandboxProfile(row rowScanner) (*SandboxProfile, error) {
 	var p SandboxProfile
-	var filesystemJSON, filesystemSpellingsJSON, environmentJSON, agentDirectoriesJSON, networkJSON, unixSocketsJSON, resourceLimitsJSON, preLaunchJSON, includesJSON string
+	var filesystemJSON, filesystemSpellingsJSON, tmpfsJSON, environmentJSON, agentDirectoriesJSON, networkJSON, unixSocketsJSON, resourceLimitsJSON, preLaunchJSON, includesJSON string
 	var createdAt, updatedAt dbTimestamp
 	if err := row.Scan(
-		&p.ID, &p.Name, &filesystemJSON, &filesystemSpellingsJSON, &environmentJSON, &agentDirectoriesJSON,
+		&p.ID, &p.Name, &filesystemJSON, &filesystemSpellingsJSON, &tmpfsJSON, &environmentJSON, &agentDirectoriesJSON,
 		&p.FilesystemRoot, &p.HarnessConfig, &p.NetworkAccess, &networkJSON, &unixSocketsJSON, &resourceLimitsJSON, &p.DarwinAllowMachRegister,
 		&preLaunchJSON, &includesJSON, &createdAt, &updatedAt,
 	); errors.Is(err, sql.ErrNoRows) {
@@ -651,6 +664,13 @@ func scanSandboxProfile(row rowScanner) (*SandboxProfile, error) {
 			return nil, fmt.Errorf(
 				"decode sandbox profile %q filesystem spellings: %w", p.Name, err,
 			)
+		}
+	}
+	// A row written before the column existed decodes to no mounts, which is
+	// what an absent payload means.
+	if tmpfsJSON != "" {
+		if err := json.Unmarshal([]byte(tmpfsJSON), &p.Tmpfs); err != nil {
+			return nil, fmt.Errorf("decode sandbox profile %q temporary filesystems: %w", p.Name, err)
 		}
 	}
 	if err := json.Unmarshal([]byte(environmentJSON), &p.Environment); err != nil {
@@ -762,6 +782,7 @@ func ImportSandboxProfilesWithOptions(profiles []*SandboxProfile, opts SandboxPr
 		p, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
 			Name: profile.Name, Filesystem: profile.Filesystem,
 			FilesystemSpellings: profile.FilesystemSpellings,
+			Tmpfs:               profile.Tmpfs,
 			Environment:         profile.Environment, AgentDirectories: profile.AgentDirectories, FilesystemRoot: profile.FilesystemRoot,
 			HarnessConfig: profile.HarnessConfig, NetworkAccess: profile.NetworkAccess,
 			Network: profile.Network, UnixSockets: profile.UnixSockets, ResourceLimits: profile.ResourceLimits, Includes: profile.Includes,
@@ -775,6 +796,7 @@ func ImportSandboxProfilesWithOptions(profiles []*SandboxProfile, opts SandboxPr
 		normalizedProfile.Name = p.Name
 		normalizedProfile.Filesystem = p.Filesystem
 		normalizedProfile.FilesystemSpellings = p.FilesystemSpellings
+		normalizedProfile.Tmpfs = p.Tmpfs
 		normalizedProfile.Environment = p.Environment
 		normalizedProfile.AgentDirectories = p.AgentDirectories
 		normalizedProfile.FilesystemRoot = p.FilesystemRoot
@@ -846,15 +868,15 @@ func ImportSandboxProfilesWithOptions(profiles []*SandboxProfile, opts SandboxPr
 			return result, err
 		}
 		if item.existingID != 0 {
-			if _, err := tx.Exec(`UPDATE sandbox_profiles SET filesystem_json = ?, filesystem_spellings_json = ?, environment_json = ?, agent_directories_json = ?, filesystem_root = ?, harness_config = ?, network_access = ?, network_json = ?, unix_sockets_json = ?, resource_limits_json = ?, darwin_allow_mach_register = ?, pre_launch_json = ?, includes_json = ?, updated_at = ? WHERE id = ?`,
-				payload.filesystem, payload.filesystemSpellings, payload.environment, payload.agentDirectories, item.profile.FilesystemRoot, item.profile.HarnessConfig, item.profile.NetworkAccess,
+			if _, err := tx.Exec(`UPDATE sandbox_profiles SET filesystem_json = ?, filesystem_spellings_json = ?, tmpfs_json = ?, environment_json = ?, agent_directories_json = ?, filesystem_root = ?, harness_config = ?, network_access = ?, network_json = ?, unix_sockets_json = ?, resource_limits_json = ?, darwin_allow_mach_register = ?, pre_launch_json = ?, includes_json = ?, updated_at = ? WHERE id = ?`,
+				payload.filesystem, payload.filesystemSpellings, payload.tmpfs, payload.environment, payload.agentDirectories, item.profile.FilesystemRoot, item.profile.HarnessConfig, item.profile.NetworkAccess,
 				payload.network, payload.unixSockets, payload.resourceLimits, item.profile.DarwinAllowMachRegister,
 				payload.preLaunch, payload.includes, now, item.existingID); err != nil {
 				return result, err
 			}
 		} else if _, err := tx.Exec(`INSERT INTO sandbox_profiles
-			(name, filesystem_json, filesystem_spellings_json, environment_json, agent_directories_json, filesystem_root, harness_config, network_access, network_json, unix_sockets_json, resource_limits_json, darwin_allow_mach_register, pre_launch_json, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			item.profile.Name, payload.filesystem, payload.filesystemSpellings, payload.environment, payload.agentDirectories,
+			(name, filesystem_json, filesystem_spellings_json, tmpfs_json, environment_json, agent_directories_json, filesystem_root, harness_config, network_access, network_json, unix_sockets_json, resource_limits_json, darwin_allow_mach_register, pre_launch_json, includes_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			item.profile.Name, payload.filesystem, payload.filesystemSpellings, payload.tmpfs, payload.environment, payload.agentDirectories,
 			item.profile.FilesystemRoot, item.profile.HarnessConfig, item.profile.NetworkAccess, payload.network, payload.unixSockets, payload.resourceLimits, item.profile.DarwinAllowMachRegister,
 			payload.preLaunch, payload.includes, now, now); err != nil {
 			if isUniqueViolation(err) {
@@ -944,6 +966,7 @@ func flattenSandboxProfileInRegistry(
 		return sandboxpolicy.Profile{
 			Name: p.Name, Filesystem: p.Filesystem,
 			FilesystemSpellings: p.FilesystemSpellings,
+			Tmpfs:               p.Tmpfs,
 			Environment:         p.Environment,
 			AgentDirectories:    p.AgentDirectories, FilesystemRoot: p.FilesystemRoot,
 			HarnessConfig: p.HarnessConfig, NetworkAccess: p.NetworkAccess,
@@ -1270,6 +1293,7 @@ func resolveEffectiveSandboxSnapshot(groupID int64, explicitName string, explici
 		return &sandboxpolicy.Profile{
 			Name: p.Name, Filesystem: p.Filesystem,
 			FilesystemSpellings: p.FilesystemSpellings,
+			Tmpfs:               p.Tmpfs,
 			Environment:         p.Environment, AgentDirectories: p.AgentDirectories, NetworkAccess: p.NetworkAccess,
 			FilesystemRoot: p.FilesystemRoot,
 			HarnessConfig:  p.HarnessConfig,

@@ -187,6 +187,29 @@ The axes:
   host path. **`stacked` carries directory rows only**: a row naming a file is
   refused there whether or not it is remapped, so projecting a *file* needs
   plain `tclaude-layer`.
+- **`tmpfs`** — rows of `{path, size?}` mounting a temporary filesystem *inside*
+  the sandbox: `{"path": "/scratch", "size": "512MiB"}`. This is the one thing a
+  `filesystem` row cannot express — writable space backed by no host directory
+  at all, which vanishes when the launch ends. `path` is a **sandbox** path, so
+  it is validated syntactically like `mount_path` and never resolved against the
+  host; `size` takes the same k8s-like quantities as a memory limit and, when
+  omitted, gets the kernel's tmpfs default of **half of RAM** — worth setting,
+  because an agent that fills an uncapped tmpfs is consuming host memory.
+  A tmpfs takes part in ordinary most-specific-wins ordering: it shadows what
+  was at its path, and a narrower `read`/`write` row still lands on top of it.
+  What it may *not* do is claim a path a `filesystem` row already claims (that
+  is a conflict of intent, not a shadow), intersect a protected root, shadow the
+  agentd socket, or cover a launch-required directory such as the workspace or
+  the harness state root — each is a refusal naming the row. Under an
+  *inherited* filesystem root the mount point must already exist on the host,
+  for the same reason `mount_path` needs one; `filesystem_root: separate` is
+  usually the answer for a path like `/scratch`. Enforcement needs a mount
+  namespace whose whole boundary tclaude owns, so it works only under plain
+  `tclaude-layer` on Linux — Seatbelt, `harness-builtin`, `resource-only`/`off`
+  and `stacked` all refuse with `unsupported_sandbox_profile_tmpfs`. `stacked`
+  refuses even on Linux: the outer layer would mount the tmpfs and the inner
+  harness-native wall, fed from host-path directory lists, would then deny the
+  harness's own tools every write to it.
 - **`harness_config`** — `read` | `write`, omitted meaning the default
   read-only floor over the harness's own config surface. See
   [The harness-config floor](#the-harness-config-floor) below. Composes

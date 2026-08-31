@@ -521,6 +521,7 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective := cloneEffectiveProfile(in.Effective)
 	effective.Filesystem = nil
 	effective.MountAliases = nil
+	effective.Tmpfs = nil
 	effective.AgentDirectories = nil
 	effective.FilesystemRoot = FilesystemRootAutomatic
 	effective.HarnessConfig = HarnessConfigAccessDefault
@@ -531,6 +532,7 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	effective.DarwinAllowMachRegister = false
 	effective.AccessNotices = nil
 	effective.Provenance.Filesystem = nil
+	effective.Provenance.Tmpfs = nil
 	effective.Provenance.FilesystemRoot = nil
 	effective.Provenance.HarnessConfig = nil
 	effective.Provenance.AgentDirectories = nil
@@ -560,6 +562,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	if in.ProfilesOmitted && (len(in.Applied) > 0 ||
 		len(in.Effective.Filesystem) > 0 ||
 		len(in.Effective.MountAliases) > 0 ||
+		len(in.Effective.Tmpfs) > 0 ||
 		len(in.Effective.Environment) > 0 ||
 		len(in.Effective.AgentDirectories) > 0 ||
 		in.Effective.FilesystemRoot != FilesystemRootAutomatic ||
@@ -587,6 +590,7 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	normalized, _, err := NormalizeForPersistence(Profile{
 		Name:                    "effective-sandbox-snapshot",
 		Filesystem:              in.Effective.Filesystem,
+		Tmpfs:                   in.Effective.Tmpfs,
 		Environment:             in.Effective.Environment,
 		FilesystemRoot:          in.Effective.FilesystemRoot,
 		HarnessConfig:           in.Effective.HarnessConfig,
@@ -622,6 +626,13 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	}
 	if !reflect.DeepEqual(normalized.Filesystem, in.Effective.Filesystem) {
 		return Snapshot{}, fmt.Errorf("effective sandbox filesystem changed since resolution")
+	}
+	// The tmpfs rows are re-validated by the same NormalizeForPersistence call
+	// above, which re-runs the protected-root and socket-shadow walls against
+	// the CURRENT host — a path that became a spelling of a protected root since
+	// resolution is refused here rather than mounted over it.
+	if !reflect.DeepEqual(normalized.Tmpfs, cloneTmpfsMounts(in.Effective.Tmpfs)) {
+		return Snapshot{}, fmt.Errorf("effective sandbox temporary filesystems changed since resolution")
 	}
 	aliases, err := renderMountAliases(in.Effective.MountAliases)
 	if err != nil {
@@ -841,6 +852,7 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 	out := EffectiveProfile{
 		Filesystem:              append([]FilesystemGrant{}, in.Filesystem...),
 		MountAliases:            append([]MountAlias(nil), in.MountAliases...),
+		Tmpfs:                   cloneTmpfsMounts(in.Tmpfs),
 		Environment:             append([]EnvironmentEntry{}, in.Environment...),
 		AgentDirectories:        append([]string{}, in.AgentDirectories...),
 		FilesystemRoot:          in.FilesystemRoot,
@@ -864,6 +876,12 @@ func cloneEffectiveProfile(in EffectiveProfile) EffectiveProfile {
 			ResourceMemory:   nil,
 			ResourceCPU:      nil,
 		},
+	}
+	if in.Provenance.Tmpfs != nil {
+		out.Provenance.Tmpfs = make(map[string][]ProfileSource, len(in.Provenance.Tmpfs))
+		for path, sources := range in.Provenance.Tmpfs {
+			out.Provenance.Tmpfs[path] = cloneProfileSources(sources)
+		}
 	}
 	for path, sources := range in.Provenance.Filesystem {
 		out.Provenance.Filesystem[path] = cloneProfileSources(sources)

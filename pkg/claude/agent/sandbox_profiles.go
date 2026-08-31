@@ -27,6 +27,7 @@ type sandboxProfileJSON struct {
 	Name                    string                             `json:"name"`
 	Filesystem              []sandboxpolicy.FilesystemGrant    `json:"filesystem"`
 	FilesystemSpellings     *sandboxpolicy.FilesystemSpellings `json:"filesystem_spellings"`
+	Tmpfs                   []sandboxpolicy.TmpfsMount         `json:"tmpfs,omitempty"`
 	Environment             []sandboxpolicy.EnvironmentEntry   `json:"environment"`
 	AgentDirectories        []string                           `json:"agent_directories,omitempty"`
 	NetworkAccess           sandboxpolicy.NetworkAccess        `json:"network_access,omitempty"`
@@ -195,7 +196,7 @@ func printSandboxProfilePlan(w io.Writer, result sandboxProfilePlanJSON) {
 		fmt.Fprintf(w, "  unavailable: %s\n", unavailable)
 	}
 	for _, entry := range result.Plan.UnavailableEntries {
-		fmt.Fprintf(w, "  %d %-18s %-4s %-24s %s [unavailable: %s]\n",
+		fmt.Fprintf(w, "  %d %-18s %-5s %-24s %s [unavailable: %s]\n",
 			entry.Class, entry.ClassName, entry.Mode, entry.Origin,
 			entry.Target, entry.Reason)
 	}
@@ -208,7 +209,7 @@ func printSandboxProfilePlan(w io.Writer, result sandboxProfilePlanJSON) {
 		if entry.Source != "" && entry.Source != entry.Target {
 			source = entry.Source + " -> "
 		}
-		fmt.Fprintf(w, "  %d %-18s %-4s %-24s %s%s [%s]\n",
+		fmt.Fprintf(w, "  %d %-18s %-5s %-24s %s%s [%s]\n",
 			entry.Class, entry.ClassName, entry.Mode, entry.Origin,
 			source, entry.Target, entry.Disposition)
 	}
@@ -425,6 +426,18 @@ func printSandboxProfileHuman(w io.Writer, profile sandboxProfileJSON) {
 		fmt.Fprintln(w, "  filesystem:")
 		for _, grant := range profile.Filesystem {
 			fmt.Fprintf(w, "    %-5s %s\n", grant.Access, grant.Path)
+		}
+	}
+	// Printed only when authored: an axis most profiles never use would
+	// otherwise add a "(none)" line to every `show`.
+	if len(profile.Tmpfs) > 0 {
+		fmt.Fprintln(w, "  tmpfs:")
+		for _, mount := range profile.Tmpfs {
+			if mount.Size != "" {
+				fmt.Fprintf(w, "    %s (max %s)\n", mount.Path, mount.Size)
+				continue
+			}
+			fmt.Fprintf(w, "    %s\n", mount.Path)
 		}
 	}
 	if len(profile.Environment) == 0 {

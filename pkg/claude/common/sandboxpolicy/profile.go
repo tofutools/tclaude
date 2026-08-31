@@ -216,18 +216,22 @@ const (
 // the override semantics. Flatten expands Includes; Resolve refuses profiles
 // that still carry them.
 type Profile struct {
-	Name                    string               `json:"name"`
-	Filesystem              []FilesystemGrant    `json:"filesystem,omitempty"`
-	FilesystemSpellings     *FilesystemSpellings `json:"filesystem_spellings,omitempty"`
-	Environment             []EnvironmentEntry   `json:"environment,omitempty"`
-	AgentDirectories        []string             `json:"agent_directories,omitempty"`
-	FilesystemRoot          FilesystemRootMode   `json:"filesystem_root,omitempty"`
-	HarnessConfig           HarnessConfigAccess  `json:"harness_config,omitempty"`
-	NetworkAccess           NetworkAccess        `json:"network_access,omitempty"`
-	Network                 *NetworkRules        `json:"network,omitempty"`
-	UnixSockets             *UnixSocketRules     `json:"unix_sockets,omitempty"`
-	ResourceLimits          ResourceLimits       `json:"resource_limits,omitempty"`
-	DarwinAllowMachRegister bool                 `json:"darwin_allow_mach_register,omitempty"`
+	Name                string               `json:"name"`
+	Filesystem          []FilesystemGrant    `json:"filesystem,omitempty"`
+	FilesystemSpellings *FilesystemSpellings `json:"filesystem_spellings,omitempty"`
+	// Tmpfs mounts temporary filesystems at sandbox paths. It is a sibling of
+	// Filesystem rather than a fourth access value because its rows carry no
+	// host authority at all; see tmpfs.go.
+	Tmpfs                   []TmpfsMount        `json:"tmpfs,omitempty"`
+	Environment             []EnvironmentEntry  `json:"environment,omitempty"`
+	AgentDirectories        []string            `json:"agent_directories,omitempty"`
+	FilesystemRoot          FilesystemRootMode  `json:"filesystem_root,omitempty"`
+	HarnessConfig           HarnessConfigAccess `json:"harness_config,omitempty"`
+	NetworkAccess           NetworkAccess       `json:"network_access,omitempty"`
+	Network                 *NetworkRules       `json:"network,omitempty"`
+	UnixSockets             *UnixSocketRules    `json:"unix_sockets,omitempty"`
+	ResourceLimits          ResourceLimits      `json:"resource_limits,omitempty"`
+	DarwinAllowMachRegister bool                `json:"darwin_allow_mach_register,omitempty"`
 	// PreLaunch is operator-authored shell run inside the sandbox before the
 	// harness starts, for setup the declarative fields cannot express. Like
 	// Includes it keeps its authored order, because the blocks are sequential
@@ -316,6 +320,23 @@ func normalize(in Profile, allowMissing, authoring bool) (Profile, []string, err
 			return Profile{}, nil, err
 		}
 	}
+	// Resolved only when the profile actually has tmpfs rows: protectedPaths()
+	// touches the filesystem, and normalizeFilesystem above already paid for it
+	// once. A profile with no rows must cost nothing new.
+	var tmpfs []TmpfsMount
+	if len(in.Tmpfs) > 0 {
+		protectedForTmpfs, protectedErr := protectedPaths()
+		if protectedErr != nil {
+			return Profile{}, nil, protectedErr
+		}
+		tmpfs, err = normalizeTmpfs(in.Tmpfs, protectedForTmpfs)
+		if err != nil {
+			return Profile{}, nil, err
+		}
+		if err := validateTmpfsAgainstFilesystem(tmpfs, filesystem); err != nil {
+			return Profile{}, nil, err
+		}
+	}
 	environment, err := normalizeEnvironment(in.Environment)
 	if err != nil {
 		return Profile{}, nil, err
@@ -369,6 +390,7 @@ func normalize(in Profile, allowMissing, authoring bool) (Profile, []string, err
 	sort.Strings(missing)
 	return Profile{
 		Name: name, Filesystem: filesystem, FilesystemSpellings: filesystemSpellings,
+		Tmpfs:       tmpfs,
 		Environment: environment, AgentDirectories: agentDirectories, FilesystemRoot: filesystemRoot,
 		HarnessConfig: harnessConfig, NetworkAccess: networkAccess,
 		Network: network, UnixSockets: unixSockets, ResourceLimits: resourceLimits,

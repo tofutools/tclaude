@@ -191,7 +191,7 @@ func TestMountPlanStringDisclosesProjection(t *testing.T) {
 		{Path: "/host/data", Access: AccessRead, MountPath: "/srv/shared"},
 	})
 	require.NoError(t, err)
-	assert.Contains(t, plan.String(), "ro   /srv/shared <- /host/data")
+	assert.Contains(t, plan.String(), "ro    /srv/shared <- /host/data")
 }
 
 func TestEffectiveAccessAtUsesGuestPath(t *testing.T) {

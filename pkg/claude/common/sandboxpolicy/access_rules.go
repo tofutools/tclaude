@@ -1491,6 +1491,7 @@ func UnconfinedAccessRulesNotice(
 		filesystem = nil
 	}
 	authored := len(filesystem) > 0 ||
+		len(effective.Tmpfs) > 0 ||
 		len(effective.AgentDirectories) > 0 ||
 		effective.FilesystemRoot != FilesystemRootAutomatic ||
 		effective.Network != nil ||

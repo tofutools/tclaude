@@ -153,7 +153,7 @@ func RenderMountPlanWithEngine(
 	}
 	plan, err := renderMountPlanSections([]mountGrantSection{
 		{label: "filesystem", grants: effective.Filesystem},
-	})
+	}, effective.Tmpfs)
 	if err != nil {
 		return MountPlan{}, err
 	}
@@ -399,10 +399,19 @@ func NetworkPostureForAccess(access NetworkAccess) (NetworkPosture, error) {
 // touching the filesystem (existence, directory-ness, symlink identity) stays
 // with that layer.
 func RenderMountPlanFromGrants(grants []FilesystemGrant) (MountPlan, error) {
-	return renderMountPlanSections([]mountGrantSection{{label: "filesystem", grants: grants}})
+	return renderMountPlanSections([]mountGrantSection{{label: "filesystem", grants: grants}}, nil)
 }
 
-func renderMountPlanSections(sections []mountGrantSection) (MountPlan, error) {
+// renderMountPlanSections emits the ordered entry list. Tmpfs rows join the
+// same list rather than a sibling one: a temporary filesystem occupies a
+// position inside the namespace and shadows what came before it at that
+// position, so it has to sort with everything else for most-specific-wins to
+// keep holding. Splitting them out would put every tmpfs either before or after
+// every grant, which is a different policy than the one authored.
+func renderMountPlanSections(
+	sections []mountGrantSection,
+	tmpfs []TmpfsMount,
+) (MountPlan, error) {
 	total := 0
 	for _, section := range sections {
 		total += len(section.grants)
@@ -410,8 +419,12 @@ func renderMountPlanSections(sections []mountGrantSection) (MountPlan, error) {
 	type plannedMount struct {
 		access Access
 		source string
+		// tmpfs marks an entry with no host side at all. access is unset for
+		// such a row, so the lattice below never runs on one.
+		tmpfs     bool
+		sizeBytes uint64
 	}
-	byGuest := make(map[string]plannedMount, total)
+	byGuest := make(map[string]plannedMount, total+len(tmpfs))
 	for _, section := range sections {
 		for i, grant := range section.grants {
 			switch grant.Access {
@@ -458,6 +471,30 @@ func renderMountPlanSections(sections []mountGrantSection) (MountPlan, error) {
 			}
 		}
 	}
+	for i, mount := range tmpfs {
+		path, err := canonicalMountPath(mount.Path)
+		if err != nil {
+			return MountPlan{}, fmt.Errorf("tmpfs[%d].path: %w", i, err)
+		}
+		// Exact collision with a grant is an authoring conflict the plan cannot
+		// settle; normalizeTmpfs already refuses it at the profile boundary, and
+		// this seam also renders launch-composed sets that never passed through
+		// that boundary, so it is stated here too rather than assumed.
+		if previous, exists := byGuest[path]; exists && !previous.tmpfs {
+			return MountPlan{}, fmt.Errorf(
+				"tmpfs[%d]: sandbox path %q is claimed by both a temporary filesystem and a filesystem rule for %q",
+				i, path, previous.source)
+		}
+		// Two tmpfs rows for one path fold to the smaller ceiling, matching
+		// normalizeTmpfs, so a plan rendered from an un-normalized set is the
+		// same plan as one rendered from a normalized one.
+		if previous, exists := byGuest[path]; exists {
+			if previous.sizeBytes != 0 && (mount.SizeBytes == 0 || previous.sizeBytes <= mount.SizeBytes) {
+				continue
+			}
+		}
+		byGuest[path] = plannedMount{tmpfs: true, sizeBytes: mount.SizeBytes}
+	}
 	paths := make([]string, 0, len(byGuest))
 	for path := range byGuest {
 		paths = append(paths, path)
@@ -466,6 +503,11 @@ func renderMountPlanSections(sections []mountGrantSection) (MountPlan, error) {
 	entries := make([]MountEntry, 0, len(paths))
 	for _, path := range paths {
 		planned := byGuest[path]
+		if planned.tmpfs {
+			entries = append(entries, MountEntry{
+				Path: path, Mode: MountTmpfs, SizeBytes: planned.sizeBytes})
+			continue
+		}
 		entry := MountEntry{Path: path, Mode: mountModeForAccess(planned.access)}
 		if planned.source != path {
 			entry.Source = planned.source

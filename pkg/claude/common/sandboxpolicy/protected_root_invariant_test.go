@@ -232,7 +232,19 @@ func TestNoProfileFieldCanCarryProtectedAccess(t *testing.T) {
 			// (session.prepareHarnessConfigFloor) check every entry against
 			// ProtectedPaths. Its only reachable effect is to REMOVE write
 			// access, never to add any.
-			want: []string{"Name", "Filesystem", "FilesystemSpellings", "Environment", "AgentDirectories", "FilesystemRoot", "HarnessConfig", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "Includes"},
+			//
+			// Tmpfs (TCL-1218) names a SANDBOX path, never a host one, and the
+			// mount it produces is an empty in-memory filesystem: there is no
+			// host directory whose contents it could expose, so it cannot carry
+			// access to a protected root or to anything else. What it CAN do is
+			// occupy a sandbox position, so normalizeTmpfs applies the same
+			// guest-side wall validateMountPaths applies to a mount_path —
+			// refusing any row intersecting ProtectedPaths(), in both the
+			// authored and the canonical spelling, and any row that would shadow
+			// the agentd control socket.
+			// TestTmpfsCannotShadowProtectedRoots below checks this rather than
+			// leaving it as a claim.
+			want: []string{"Name", "Filesystem", "FilesystemSpellings", "Tmpfs", "Environment", "AgentDirectories", "FilesystemRoot", "HarnessConfig", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "Includes"},
 		},
 		{
 			name: "EffectiveProfile",
@@ -241,7 +253,11 @@ func TestNoProfileFieldCanCarryProtectedAccess(t *testing.T) {
 			// the launch path can run it, but it is never consulted by anything
 			// that renders access.
 			// HarnessConfig: see the Profile note above.
-			want: []string{"Filesystem", "MountAliases", "Environment", "AgentDirectories", "FilesystemRoot", "HarnessConfig", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "AccessNotices", "Provenance"},
+			// Tmpfs: see the Profile note above. Resolution folds the rows to
+			// the strictest ceiling and re-runs the same wall over the composed
+			// set, so a pair of profiles cannot compose into a row neither one
+			// could author.
+			want: []string{"Filesystem", "MountAliases", "Tmpfs", "Environment", "AgentDirectories", "FilesystemRoot", "HarnessConfig", "NetworkAccess", "Network", "UnixSockets", "ResourceLimits", "DarwinAllowMachRegister", "PreLaunch", "AccessNotices", "Provenance"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

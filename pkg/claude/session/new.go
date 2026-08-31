@@ -749,6 +749,13 @@ func runNew(params *NewParams) error {
 	); err != nil {
 		return err
 	}
+	// And the same for a temporary filesystem, which no path-filter or
+	// directory-list sandbox can conjure at all.
+	if err := sandboxpolicy.ValidateTmpfsSupport(
+		sandboxSnapshotTmpfs(launchSandbox), sandboxImplementation, runtime.GOOS,
+	); err != nil {
+		return err
+	}
 	// An implementation that confines nothing is not asked whether the harness
 	// can represent a rule: it has stood every access boundary down on purpose,
 	// so the rules below are inert rather than unsupported. Refusing here would
@@ -2072,6 +2079,18 @@ func runNew(params *NewParams) error {
 	if outerLayer {
 		launchWriteDirs = appendUniqueDir(launchWriteDirs, canonicalSandboxPath(cwd))
 	}
+	// A temporary filesystem really is writable inside the namespace, so the
+	// harness has to be told so. These lists become the harness's OWN view —
+	// Claude Code's permission settings, Copilot's --add-dir roots — and a
+	// scratch directory the operator mounted but the harness treats as
+	// out-of-bounds would prompt on every write to space it was given on
+	// purpose. Gated on the capability so this is a no-op on every
+	// implementation ValidateTmpfsSupport has already refused.
+	if sandboxpolicy.SupportsTmpfsMounts(sandboxImplementation, runtime.GOOS) {
+		for _, mount := range sandboxSnapshotTmpfs(launchSandbox) {
+			launchWriteDirs = appendUniqueDir(launchWriteDirs, mount.Path)
+		}
+	}
 	launchReadDirs := append(sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessRead), launchContractReadDirs...)
 	launchDenyDirs := sandboxSnapshotDirs(launchSandbox, sandboxpolicy.AccessDeny)
 	// Re-run the capability gate on the RULES THAT WILL BE EMITTED. The early
@@ -2811,6 +2830,15 @@ func OneShotLaunchPosture(
 	); err != nil {
 		return harness.SpawnSpec{}, err
 	}
+	// A recorded tmpfs cannot be replayed here either: there is no namespace to
+	// mount it in, and a replay silently missing the agent's scratch space is a
+	// different policy than the one being replayed.
+	if err := sandboxpolicy.ValidateTmpfsSupport(
+		sandboxSnapshotTmpfs(effectiveSandbox),
+		sandboxpolicy.ImplementationHarnessBuiltin, runtime.GOOS,
+	); err != nil {
+		return harness.SpawnSpec{}, err
+	}
 	params := &NewParams{}
 	launchGitWriteDirs := gitWorktreeWriteDirs(params, harnessName, harnessBuiltinMode, cwd)
 	if sandboxDenyCoversPath(effectiveSandbox, cwd) {
@@ -3212,6 +3240,13 @@ func sandboxSnapshotActiveFilesystem(snapshot *sandboxpolicy.Snapshot) []sandbox
 		return nil
 	}
 	return snapshot.Effective.Filesystem
+}
+
+func sandboxSnapshotTmpfs(snapshot *sandboxpolicy.Snapshot) []sandboxpolicy.TmpfsMount {
+	if snapshot == nil {
+		return nil
+	}
+	return snapshot.Effective.Tmpfs
 }
 
 func sandboxSnapshotForLaunch(snapshot *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {

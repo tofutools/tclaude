@@ -69,6 +69,11 @@ const (
 	// helper requires it to be absent, which is only evidence because host
 	// setup actually creates it.
 	smokeFileSiblingName = "unreachable-sibling"
+	// TCL-1218 tmpfs evidence: the sandbox path a temporary filesystem must
+	// appear at, and the exact ceiling it must be created with.
+	smokeTmpfsGuestEnv = "TCLAUDE_SANDBOX_V2_TMPFS_GUEST"
+	smokeTmpfsSize     = "8MiB"
+	smokeTmpfsBytes    = 8 << 20
 )
 
 // tclaudeLayerSmokeMounts carries the TCL-866 projection fixture through the
@@ -85,6 +90,9 @@ type tclaudeLayerSmokeMounts struct {
 	FileSource      string
 	FileMountSource string
 	FileMountGuest  string
+	// TCL-1218. A sandbox path backed by no host directory at all: the only
+	// way anything can exist here is because the layer mounted a tmpfs.
+	TmpfsGuest string
 }
 
 const smokeConvID = "75000000-0000-4000-8000-000000000750"
@@ -226,6 +234,7 @@ esac
 		FileSource:      filepath.Join(mountBase, "gitconfig"),
 		FileMountSource: filepath.Join(mountBase, "corpus.jsonl"),
 		FileMountGuest:  "/srv/corpus.jsonl",
+		TmpfsGuest:      "/srv/scratch-tmpfs",
 	}
 	require.NoError(t, os.MkdirAll(mounts.ReadOnlySource, 0o700))
 	require.NoError(t, os.MkdirAll(mounts.ReadWriteSource, 0o700))
@@ -277,6 +286,11 @@ esac
 				MountPath: mounts.FileMountGuest,
 			},
 		},
+		// TCL-1218: writable scratch space backed by no host directory, with an
+		// explicit ceiling so the rendered --size is proved too.
+		Tmpfs: []sandboxpolicy.TmpfsMount{
+			{Path: mounts.TmpfsGuest, Size: smokeTmpfsSize},
+		},
 	})
 	require.NoError(t, err)
 	snapshot, err := db.ResolveEffectiveSandboxSnapshot(0, "tclaude-layer-smoke")
@@ -297,6 +311,10 @@ esac
 	})
 	assert.Contains(t, plan.Entries, sandboxpolicy.MountEntry{
 		Path: mounts.FileSource, Mode: sandboxpolicy.MountRO,
+	})
+	assert.Contains(t, plan.Entries, sandboxpolicy.MountEntry{
+		Path: mounts.TmpfsGuest, Mode: sandboxpolicy.MountTmpfs,
+		SizeBytes: smokeTmpfsBytes,
 	})
 	assert.Contains(t, plan.Entries, sandboxpolicy.MountEntry{
 		Path: mounts.FileMountGuest, Mode: sandboxpolicy.MountRO,
@@ -433,6 +451,7 @@ func runTclaudeLayerHostNetworkConstructedRootHelper(
 		smokeFileROSourceEnv+"="+mounts.FileSource,
 		smokeFileMountSourceEnv+"="+mounts.FileMountSource,
 		smokeFileMountGuestEnv+"="+mounts.FileMountGuest,
+		smokeTmpfsGuestEnv+"="+mounts.TmpfsGuest,
 		smokeResolverTargetEnv+"="+resolverTarget,
 	)
 	output, err := cmd.CombinedOutput()
@@ -545,6 +564,41 @@ func TestTclaudeLayerHostNetworkConstructedRootHelper(t *testing.T) {
 
 	// 5. TCL-1041 file rows under this posture too.
 	assertTclaudeLayerSmokeFileRows(t)
+
+	// 6. TCL-1218 temporary filesystem under this posture too.
+	assertTclaudeLayerSmokeTmpfs(t)
+}
+
+// assertTclaudeLayerSmokeTmpfs is the real-kernel evidence for TCL-1218. Three
+// claims, none of which any other rule in the fixture could produce:
+//
+//   - The sandbox path exists and is EMPTY, even though the host has no
+//     directory there at all — so it was created by the mount, not projected
+//     from somewhere.
+//   - It is WRITABLE and stays writable through the applier's read-only flush,
+//     which is the single mechanical difference between a tmpfs row and a deny.
+//   - Its capacity is exactly the authored ceiling, which proves --size reached
+//     the right mount rather than being dropped or bound to a neighbour.
+func assertTclaudeLayerSmokeTmpfs(t *testing.T) {
+	t.Helper()
+	guest := os.Getenv(smokeTmpfsGuestEnv)
+	require.NotEmpty(t, guest)
+
+	entries, err := os.ReadDir(guest)
+	require.NoError(t, err, "a tmpfs row must materialize its sandbox path")
+	assert.Empty(t, entries, "a freshly mounted tmpfs must be empty")
+
+	probe := filepath.Join(guest, "scratch-probe")
+	require.NoError(t, os.WriteFile(probe, []byte("scratch"), 0o600),
+		"a temporary filesystem must be writable; only a deny is remounted read-only")
+	body, err := os.ReadFile(probe)
+	require.NoError(t, err)
+	assert.Equal(t, "scratch", string(body))
+
+	var stat unix.Statfs_t
+	require.NoError(t, unix.Statfs(guest, &stat))
+	assert.Equal(t, int64(smokeTmpfsBytes), int64(stat.Blocks)*stat.Bsize,
+		"the authored ceiling must be the mount's actual capacity")
 }
 
 // assertTclaudeLayerSmokeFileRows is the real-kernel evidence for TCL-1041: a
@@ -624,6 +678,7 @@ func runTclaudeLayerSmokeHelper(
 		smokeFileROSourceEnv+"="+mounts.FileSource,
 		smokeFileMountSourceEnv+"="+mounts.FileMountSource,
 		smokeFileMountGuestEnv+"="+mounts.FileMountGuest,
+		smokeTmpfsGuestEnv+"="+mounts.TmpfsGuest,
 	)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
@@ -821,6 +876,7 @@ func TestTclaudeLayerSmokeHelper(t *testing.T) {
 			"host path %q must be absent with ENOENT, got %v", hostSource, err)
 	}
 	assertTclaudeLayerSmokeFileRows(t)
+	assertTclaudeLayerSmokeTmpfs(t)
 
 	// Real-kernel proof of the absolute protected-root invariant (TCL-791):
 	// nothing the profile can say makes this file readable inside the wall.

@@ -896,6 +896,7 @@ func effectiveDraftSandboxProfileContexts(
 		}
 		policy := sandboxpolicy.Profile{
 			Filesystem:              append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...),
+			Tmpfs:                   append([]sandboxpolicy.TmpfsMount(nil), effective.Tmpfs...),
 			Environment:             append([]sandboxpolicy.EnvironmentEntry(nil), effective.Environment...),
 			AgentDirectories:        append([]string(nil), effective.AgentDirectories...),
 			FilesystemRoot:          effective.FilesystemRoot,
@@ -1082,6 +1083,7 @@ func sandboxProfileDBToPolicy(profile *db.SandboxProfile) *sandboxpolicy.Profile
 	return &sandboxpolicy.Profile{
 		Name: profile.Name, Filesystem: profile.Filesystem,
 		FilesystemSpellings: profile.FilesystemSpellings,
+		Tmpfs:               profile.Tmpfs,
 		Environment:         profile.Environment, AgentDirectories: profile.AgentDirectories,
 		FilesystemRoot: profile.FilesystemRoot,
 		HarnessConfig:  profile.HarnessConfig,
