@@ -769,41 +769,12 @@ func clearFailedExitIntent(intentRef *db.SessionExitIntentRef) {
 	}
 }
 
-// logSoftExitPaneState records what the pane is showing around one soft-exit
-// injection attempt. Two captures bracket each attempt: "pre-send" is taken
-// BEFORE that attempt's prefix keys run — Copilot's C-c clears a half-typed
-// input line, so the escalation-time capture alone can never show whether an
-// earlier attempt's exit command was sitting unsubmitted in the input box —
-// and "post-send" is taken right after the settled submit, where a discarded
-// command shows an idle prompt, a stuck one shows the text still in the box,
-// and an accepted one shows the pane tearing down. Together they let a single
-// occurrence of an ignored soft exit say which of those it was, instead of the
-// operator reconstructing it from timing (the intermittent Copilot retire
-// escalations that motivated this).
-//
-// Copilot-only, like every soft-exit screen capture (see
-// softExitPaneScreenTail): the intermittent ignored-exit failure is a Copilot
-// TUI behaviour, and other harnesses should not pay the capture nor leak
-// their screens into logs for a bug they do not have.
-func logSoftExitPaneState(target *lifecycleTarget, reason, phase string, attempt int) {
-	if harnessForConv(target.convID).Name != harness.CopilotName {
-		return
-	}
-	slog.Info("soft-exit: pane state",
-		"phase", phase, "attempt", attempt,
-		"session", target.sessionID, "conv", short8(target.convID),
-		"tmux_session", target.tmuxSession, "pane_id", target.paneID,
-		"reason", reason,
-		"pane_screen", capturePaneScreenTail(target.paneID))
-}
-
 // logSoftExitBatchStart records that one soft-exit attempt (a "batch" — the
 // full signal-key sequence, or the typed exit command) is about to be sent
-// into the pane, and which attempt of the bounded ladder it is. Unlike the
-// Copilot-only screen captures (logSoftExitPaneState) this is cheap and runs
-// for every harness: when several agents stop in parallel these lines are what
-// lets an operator line up per-pane batch timings against how long each stop
-// actually took.
+// into the pane, and which attempt of the bounded ladder it is. This is cheap
+// and runs for every harness: when several agents stop in parallel these lines
+// are what lets an operator line up per-pane batch timings against how long
+// each stop actually took, without copying pane contents into the logs.
 func logSoftExitBatchStart(target *lifecycleTarget, reason string, attempt int, signalKeys []string) {
 	mode := "typed"
 	if len(signalKeys) > 0 {
@@ -862,13 +833,11 @@ func injectSoftExitTarget(target *lifecycleTarget, exitCmd string, prefixKeys []
 	h := harnessForConv(target.convID)
 	signalKeys := h.SignalExitKeys()
 	copilot := h.Name == harness.CopilotName
-	logSoftExitPaneState(target, reason, "pre-send", 1)
 	logSoftExitBatchStart(target, reason, 1, signalKeys)
 	if err := sendSoftExitToTarget(target, signalKeys, exitCmd, prefixKeys); err != nil {
 		logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
 		return false
 	}
-	logSoftExitPaneState(target, reason, "post-send", 1)
 	if afterSoftExitTargetSendForTest != nil {
 		afterSoftExitTargetSendForTest()
 	}
@@ -983,11 +952,10 @@ func clearFailedExitIntentTarget(ref *db.SessionExitIntentRef, tmuxSession strin
 
 func scheduleSoftExitRetryTarget(target *lifecycleTarget, signalKeys []string, copilot bool, exitCmd string, prefixKeys []string, reason string, intentRef *db.SessionExitIntentRef) {
 	goBackground(func() {
-		// Attempt-timeline logging is Copilot-only, like the screen captures
-		// (logSoftExitPaneState): the ignored-soft-exit forensics they exist
-		// for is a Copilot failure mode, and every other harness would just
-		// log more for nothing. The signal-exit send path is picked by the
-		// caller-resolved signalKeys (sendSoftExitToTarget).
+		// Attempt-timeline logging is Copilot-only: the ignored-soft-exit
+		// forensics it exists for is a Copilot failure mode, and every other
+		// harness would just log more for nothing. The signal-exit send path is
+		// picked by the caller-resolved signalKeys (sendSoftExitToTarget).
 		logAttempts := copilot
 		for attempt := 2; attempt <= softExitMaxAttempts; attempt++ {
 			select {
@@ -1047,7 +1015,6 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, signalKeys []string, c
 				}
 				return
 			}
-			logSoftExitPaneState(target, reason, "pre-send", attempt)
 			logSoftExitBatchStart(target, reason, attempt, signalKeys)
 			if err := sendSoftExitToTarget(target, signalKeys, exitCmd, prefixKeys); err != nil {
 				logLifecycleStopFailure("send", target.paneID, target.sessionID, err)
@@ -1064,7 +1031,6 @@ func scheduleSoftExitRetryTarget(target *lifecycleTarget, signalKeys []string, c
 				scheduleUnknownIntentCleanup(target, intentRef)
 				return
 			}
-			logSoftExitPaneState(target, reason, "post-send", attempt)
 			if attempt == softExitMaxAttempts {
 				// Delivery succeeded; retain attribution through the observer window.
 				scheduleUnknownIntentCleanup(target, intentRef)
