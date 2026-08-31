@@ -103,6 +103,104 @@ if ! cmp -s "$work/apt-update.want" "$apt_update_argv"; then
   failures=1
 fi
 
+# The passt Git smart-HTTP response is truncated on hosted runners, so source
+# provisioning uses the official release archive. Prove the helper requests
+# bounded curl retries, verifies the exact archive bytes, strips the archive's
+# top directory, and refuses a checksum mismatch before creating DEST. Curl is
+# shadowed, so this is deterministic and performs no network access.
+mkdir -p "$work/archive-source/passt-pin"
+printf 'pinned source\n' > "$work/archive-source/passt-pin/source.txt"
+tar -cJf "$work/archive.fixture.tar.xz" -C "$work/archive-source" passt-pin
+archive_sha="$(smoke::sha256_file "$work/archive.fixture.tar.xz")"
+archive_dest="$work/archive-dest"
+(
+  curl() {
+    printf '%s\n' "$@" > "$work/archive-curl.argv"
+    local output=""
+    while (( $# > 0 )); do
+      if [[ "$1" == "--output" ]]; then
+        output="$2"
+        shift 2
+      else
+        shift
+      fi
+    done
+    cp "$work/archive.fixture.tar.xz" "$output"
+  }
+  smoke::download_extract_tar_xz \
+    https://example.invalid/passt.tar.xz "$archive_sha" "$archive_dest"
+) || {
+  echo 'selftest FAIL: pinned archive download/extract rejected matching bytes'
+  failures=1
+}
+cat > "$work/archive-curl.want" <<EOF
+--fail
+--silent
+--show-error
+--location
+--connect-timeout
+15
+--max-time
+120
+--retry
+3
+--retry-all-errors
+--retry-delay
+2
+--output
+$archive_dest.tar.xz
+https://example.invalid/passt.tar.xz
+EOF
+if ! cmp -s "$work/archive-curl.want" "$work/archive-curl.argv" ||
+   [[ "$(cat "$archive_dest/source.txt" 2>/dev/null || true)" != "pinned source" ||
+      "$(cat "$archive_dest/.tclaude-archive-sha256" 2>/dev/null || true)" != "$archive_sha" ]]; then
+  echo 'selftest FAIL: pinned archive helper lost its retry arguments or extraction shape'
+  failures=1
+fi
+
+bad_archive_dest="$work/archive-bad-dest"
+if (
+  curl() {
+    local output=""
+    while (( $# > 0 )); do
+      if [[ "$1" == "--output" ]]; then output="$2"; shift 2; else shift; fi
+    done
+    cp "$work/archive.fixture.tar.xz" "$output"
+  }
+  smoke::download_extract_tar_xz \
+    https://example.invalid/passt.tar.xz \
+    0000000000000000000000000000000000000000000000000000000000000000 \
+    "$bad_archive_dest"
+); then
+  echo 'selftest FAIL: pinned archive helper accepted a checksum mismatch'
+  failures=1
+fi
+if [[ -e "$bad_archive_dest" ]]; then
+  echo 'selftest FAIL: pinned archive helper extracted before checksum verification'
+  failures=1
+fi
+
+broken_extract_dest="$work/archive-broken-extract"
+if (
+  curl() {
+    local output=""
+    while (( $# > 0 )); do
+      if [[ "$1" == "--output" ]]; then output="$2"; shift 2; else shift; fi
+    done
+    cp "$work/archive.fixture.tar.xz" "$output"
+  }
+  tar() { return 1; }
+  smoke::download_extract_tar_xz \
+    https://example.invalid/passt.tar.xz "$archive_sha" "$broken_extract_dest"
+); then
+  echo 'selftest FAIL: pinned archive helper accepted a failed extraction'
+  failures=1
+fi
+if [[ -e "$broken_extract_dest" ]]; then
+  echo 'selftest FAIL: pinned archive helper promoted a partial extraction'
+  failures=1
+fi
+
 # expect_verdict WANT(pass|refuse) CASE LOG_CONTENT TEST_NAME...
 expect_verdict() {
   local want="$1" name="$2" content="$3"
@@ -1094,4 +1192,4 @@ if [[ "$failures" -ne 0 ]]; then
   echo "smoke evidence selftest FAILED; refusing to trust any smoke result"
   exit 1
 fi
-echo "smoke evidence selftest: ok (apt-source guards + evidence checker + manifest drift guards + per-flow harness declarations + shard-map union, derived-install-set, workflow-matrix and harness-coverage guards + fixture teardown)"
+echo "smoke evidence selftest: ok (apt-source guards + pinned archive download + evidence checker + manifest drift guards + per-flow harness declarations + shard-map union, derived-install-set, workflow-matrix and harness-coverage guards + fixture teardown)"

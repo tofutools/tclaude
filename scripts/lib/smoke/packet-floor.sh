@@ -28,6 +28,8 @@
 # needs, so the smokes build a reproducible prerequisite from source.
 SMOKE_PASST_TAG="2026_07_28.f8df3f1"
 SMOKE_PASST_COMMIT="f8df3f1b228fe19a74a269334fdfe6cc7d0605ce"
+SMOKE_PASST_ARCHIVE_URL="https://passt.top/passt/snapshot/passt-${SMOKE_PASST_TAG}.tar.xz"
+SMOKE_PASST_ARCHIVE_SHA256="fcfeb5fbdf775bcc48edc1d5eac8a6d57bc333f8e67b714149376d36061416f0"
 
 # The install prefix is dedicated and root-owned on purpose: hosted runners
 # deliberately leave /usr/local/bin writable, which must FAIL tclaude's
@@ -70,19 +72,15 @@ smoke::packet_floor_install() {
     fi
 
     if [[ ! -d "$source_dir" ]]; then
-      git clone --quiet --depth 1 --branch "$SMOKE_PASST_TAG" \
-        https://passt.top/passt "$source_dir" ||
-        { smoke::packet_floor_prereq_failed "cloning passt $SMOKE_PASST_TAG failed"; return 1; }
+      smoke::download_extract_tar_xz \
+        "$SMOKE_PASST_ARCHIVE_URL" "$SMOKE_PASST_ARCHIVE_SHA256" "$source_dir" ||
+        { smoke::packet_floor_prereq_failed "downloading passt $SMOKE_PASST_TAG source failed"; return 1; }
     fi
-    # The tag is verified against its commit: a moved tag would otherwise
-    # silently change what the floor is built from, and every smoke resting on
-    # this floor would then be evidence about an unknown version.
-    local head
-    head="$(git -C "$source_dir" rev-parse HEAD)" ||
-      { smoke::packet_floor_prereq_failed "reading the passt checkout failed"; return 1; }
-    if [[ "$head" != "$SMOKE_PASST_COMMIT" ]]; then
+    local source_sha
+    source_sha="$(cat "$source_dir/.tclaude-archive-sha256" 2>/dev/null || true)"
+    if [[ "$source_sha" != "$SMOKE_PASST_ARCHIVE_SHA256" ]]; then
       smoke::packet_floor_prereq_failed \
-        "passt $SMOKE_PASST_TAG resolved to $head, not the pinned $SMOKE_PASST_COMMIT"
+        "passt source provenance is ${source_sha:-missing}, not the pinned archive SHA-256 $SMOKE_PASST_ARCHIVE_SHA256"
       return 1
     fi
     make -C "$source_dir" pasta ||

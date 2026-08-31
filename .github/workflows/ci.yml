@@ -74,12 +74,20 @@ jobs:
           # Ubuntu's packaged pasta predates the synthetic host-loopback
           # controls required by the filtered gateway. Build a reproducible
           # smoke prerequisite from the exact upstream release exercised here.
-          git clone --quiet --depth 1 \
-            --branch 2026_07_28.f8df3f1 \
-            https://passt.top/passt \
-            "$RUNNER_TEMP/passt"
-          test "$(git -C "$RUNNER_TEMP/passt" rev-parse HEAD)" = \
-            "f8df3f1b228fe19a74a269334fdfe6cc7d0605ce"
+          if declare -F smoke::download_extract_tar_xz >/dev/null 2>&1; then
+            smoke::download_extract_tar_xz \
+              https://passt.top/passt/snapshot/passt-2026_07_28.f8df3f1.tar.xz \
+              fcfeb5fbdf775bcc48edc1d5eac8a6d57bc333f8e67b714149376d36061416f0 \
+              "$RUNNER_TEMP/passt"
+          else
+            echo "::warning title=Missing smoke helper::smoke::download_extract_tar_xz was not found after sourcing common.sh; using a single clone for this stale checkout."
+            git clone --quiet --depth 1 \
+              --branch 2026_07_28.f8df3f1 \
+              https://passt.top/passt \
+              "$RUNNER_TEMP/passt"
+            test "$(git -C "$RUNNER_TEMP/passt" rev-parse HEAD)" = \
+              "f8df3f1b228fe19a74a269334fdfe6cc7d0605ce"
+          fi
           make -C "$RUNNER_TEMP/passt" pasta
           # Install into a dedicated root-owned path: hosted runners
           # deliberately leave /usr/local/bin writable, which must fail the
