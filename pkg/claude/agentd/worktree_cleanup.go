@@ -153,8 +153,7 @@ func inspectWorktreeDirs(
 // agentWorktreeClaimSnapshot is one operation's stable view of worktree
 // ownership. dirClaims maps every immutable startup dir (plus the tracked
 // current dir) to the active agents / live panes using it;
-// views lazily caches already-inspected target worktrees so a batch does not
-// repeat Git inspection for the same conversation.
+// views carries any target worktrees pre-resolved by the caller.
 //
 // complete is false when any global discovery step failed. Deletion safety
 // fails closed in that case: shared reports every non-empty path as claimed.
@@ -432,9 +431,6 @@ func (s agentWorktreeClaimSnapshot) resolve(convID string, excluding map[string]
 	wt, ok := s.views[convID]
 	if !ok {
 		wt = inspectAgentWorktree(convID)
-		// Batch cleanup resolves several members against one snapshot. Cache on
-		// first use so duplicate generations/selectors do not repeat Git work.
-		s.views[convID] = wt
 	}
 	if wt.Path == "" {
 		return wt
