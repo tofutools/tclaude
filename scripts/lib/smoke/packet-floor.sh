@@ -70,8 +70,8 @@ smoke::packet_floor_install() {
     fi
 
     if [[ ! -d "$source_dir" ]]; then
-      git clone --quiet --depth 1 --branch "$SMOKE_PASST_TAG" \
-        https://passt.top/passt "$source_dir" ||
+      smoke::git_clone_retry https://passt.top/passt "$source_dir" \
+        --quiet --depth 1 --branch "$SMOKE_PASST_TAG" ||
         { smoke::packet_floor_prereq_failed "cloning passt $SMOKE_PASST_TAG failed"; return 1; }
     fi
     # The tag is verified against its commit: a moved tag would otherwise

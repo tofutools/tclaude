@@ -23,6 +23,39 @@ smoke::error() {
   printf 'ERROR: %s\n' "$*" >&2
 }
 
+# smoke::git_clone_retry URL DEST [CLONE_ARGS...] — clone an external smoke
+# prerequisite with bounded retries. Hosted runners occasionally truncate a
+# Git HTTPS transfer (GnuTLS recv error / early EOF); that is not evidence of a
+# product regression. Each attempt uses a fresh sibling path so a half-created
+# checkout from one transfer cannot poison the next.
+smoke::git_clone_retry() {
+  local url="$1"
+  local destination="$2"
+  shift 2
+
+  if [[ -z "$url" || -z "$destination" || -e "$destination" ]]; then
+    smoke::error "retrying git clone requires a URL and a nonexistent destination: ${destination:-<empty>}"
+    return 1
+  fi
+
+  local attempt attempt_dir
+  for attempt in 1 2 3; do
+    attempt_dir="${destination}.clone-attempt-${attempt}"
+    if git clone "$@" "$url" "$attempt_dir"; then
+      if mv -- "$attempt_dir" "$destination"; then
+        return 0
+      fi
+      smoke::error "could not move cloned prerequisite into place: $destination"
+      return 1
+    fi
+    if (( attempt < 3 )); then
+      smoke::log "Git clone attempt $attempt failed; retrying"
+      sleep $((attempt * 2))
+    fi
+  done
+  return 1
+}
+
 # smoke::apt_source_is_microsoft_only FILE — classify an active deb822 source
 # file without changing it. Source files are world-readable on supported
 # Ubuntu images, so this deliberately stays plain awk: the shared self-test can

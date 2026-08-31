@@ -61,10 +61,10 @@ jobs:
           # Ubuntu's packaged pasta predates the synthetic host-loopback
           # controls required by the filtered gateway. Build a reproducible
           # smoke prerequisite from the exact upstream release exercised here.
-          git clone --quiet --depth 1 \
-            --branch 2026_07_28.f8df3f1 \
+          smoke::git_clone_retry \
             https://passt.top/passt \
-            "$RUNNER_TEMP/passt"
+            "$RUNNER_TEMP/passt" \
+            --quiet --depth 1 --branch 2026_07_28.f8df3f1
           test "$(git -C "$RUNNER_TEMP/passt" rev-parse HEAD)" = \
             "f8df3f1b228fe19a74a269334fdfe6cc7d0605ce"
           make -C "$RUNNER_TEMP/passt" pasta
