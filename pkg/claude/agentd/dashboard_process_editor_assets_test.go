@@ -623,15 +623,16 @@ func TestDashboardProcessEditorScrollbarsScoped(t *testing.T) {
 	}
 
 	for _, theme := range []struct {
-		name, anchor string
+		name, selector string
 	}{
-		{name: "default", anchor: ".process-scroll-surface {"},
-		{name: "wizard", anchor: "body.wizard .process-scroll-surface {"},
+		{name: "default", selector: ".process-scroll-surface"},
+		{name: "wizard", selector: "body.wizard .process-scroll-surface"},
 	} {
-		ruleStart := strings.Index(block, theme.anchor)
-		if ruleStart < 0 {
+		selectorMatch := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(theme.selector) + `\s*\{`).FindStringIndex(block)
+		if selectorMatch == nil {
 			t.Fatalf("%s scrollbar theme rule is missing", theme.name)
 		}
+		ruleStart := selectorMatch[0]
 		ruleOpen := strings.Index(block[ruleStart:], "{")
 		if ruleOpen < 0 {
 			t.Fatalf("%s scrollbar theme rule is malformed", theme.name)
