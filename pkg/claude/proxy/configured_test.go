@@ -108,3 +108,91 @@ func TestConfigured(t *testing.T) {
 		}
 	})
 }
+
+// TestConfiguredLinearRegistration pins how the Linear family reaches the
+// command tree, including the one shape where the CLI and the daemon
+// deliberately disagree.
+//
+// The daemon treats LINEAR_API_KEY in ITS environment as a configured family.
+// A plain host shell cannot see that and does not go looking: probing the
+// daemon on every `tclaude` invocation would put a round trip on every command,
+// which Configured rejects on purpose. So an environment-only Linear setup
+// registers the command in a managed pane and not in an operator's shell —
+// documented in docs/proxies.md, and pinned here so it stays a decision rather
+// than becoming a surprise.
+func TestConfiguredLinearRegistration(t *testing.T) {
+	previousRequest := agent.DaemonRequestImpl
+	t.Cleanup(func() { agent.DaemonRequestImpl = previousRequest })
+
+	unmanaged := func(t *testing.T) {
+		t.Helper()
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("TCLAUDE_AGENTD_SOCKET", "")
+		t.Setenv("CODEX_PERMISSION_PROFILE", "")
+		t.Setenv(agentipc.AgentHintEnvVar, "")
+	}
+
+	t.Run("an allow-list registers the command", func(t *testing.T) {
+		unmanaged(t)
+		if err := config.Save(&config.Config{Agent: &config.AgentConfig{
+			LinearProxy: &config.LinearProxyConfig{AllowedTeams: []string{"TCL"}},
+		}}); err != nil {
+			t.Fatalf("save config: %v", err)
+		}
+		if !Configured() {
+			t.Fatal("a Linear-only host must register the command")
+		}
+	})
+
+	t.Run("so does a key file with no allow-list", func(t *testing.T) {
+		unmanaged(t)
+		if err := config.Save(&config.Config{Agent: &config.AgentConfig{
+			LinearProxy: &config.LinearProxyConfig{APIKeyFile: "~/.tclaude/linear-key.txt"},
+		}}); err != nil {
+			t.Fatalf("save config: %v", err)
+		}
+		if !Configured() {
+			t.Fatal("the scope-only posture must still register the command")
+		}
+	})
+
+	t.Run("an empty block does not", func(t *testing.T) {
+		unmanaged(t)
+		if err := config.Save(&config.Config{Agent: &config.AgentConfig{
+			LinearProxy: &config.LinearProxyConfig{},
+		}}); err != nil {
+			t.Fatalf("save config: %v", err)
+		}
+		if Configured() {
+			t.Fatal("a block naming no key and no team configures nothing")
+		}
+	})
+
+	t.Run("LINEAR_API_KEY alone does not register it for a host shell", func(t *testing.T) {
+		unmanaged(t)
+		// Even in the CLI's OWN environment: the variable that matters is the
+		// daemon's, and a host shell that happened to export one would
+		// otherwise register a command whose every call the daemon refuses.
+		t.Setenv("LINEAR_API_KEY", "lin_api_testkey")
+		agent.DaemonRequestImpl = func(string, string, any, any, agent.DaemonOpts) error {
+			t.Fatal("an unmanaged caller must not spend a daemon round trip here")
+			return nil
+		}
+		if Configured() {
+			t.Fatal("see docs/proxies.md: give agent.linear_proxy an api_key_file instead")
+		}
+	})
+
+	t.Run("but a managed agent gets it from the daemon projection", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		t.Setenv("TCLAUDE_AGENTD_SOCKET", "/agent-reachable/agentd.sock")
+		t.Setenv(agentipc.AgentHintEnvVar, "")
+		agent.DaemonRequestImpl = func(_, _ string, _, out any, _ agent.DaemonOpts) error {
+			data, _ := json.Marshal(map[string]bool{"proxy": true})
+			return json.Unmarshal(data, out)
+		}
+		if !Configured() {
+			t.Fatal("the projection is how an environment-only setup reaches a managed pane")
+		}
+	})
+}

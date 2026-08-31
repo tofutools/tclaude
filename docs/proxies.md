@@ -9,12 +9,13 @@ actual git invocation or API call on the host, where the credentials live.
 There is no passthrough flag and no raw-query escape hatch; every gate is
 enforced daemon-side.
 
-Three proxies exist, as subcommands of a top-level command:
+Four proxies exist, as subcommands of a top-level command:
 
 ```bash
 tclaude proxy git     # fetch, pull, push through the daemon
 tclaude proxy github  # PRs, issues, and Actions runs (alias: gh)
 tclaude proxy linear  # Linear issues, bounded by a team allow-list
+tclaude proxy awb     # AWB issues, bounded by a project allow-list
 ```
 
 None of their permissions are granted by default, and none are implied by
@@ -27,12 +28,33 @@ timeout counts as a deny.
 `tclaude proxy` is **conditionally registered**. On a host where no proxy is
 configured, it is an unknown command and does not appear in `tclaude --help` —
 by design, so unconfigured operators do not advertise a capability their
-agents cannot use. The command registers when either holds:
+agents cannot use. The command registers when any proxy family is configured:
 
-- the host config has a non-empty `agent.git_proxy.allowed_remotes`, or
+- `agent.git_proxy.allowed_remotes` is non-empty (Git and GitHub), or
+- `agent.linear_proxy` names an allow-list, a key file or a workspace route, or
+- `agent.awb_proxy.url` is set, or
 - the caller is a managed agent and a capability probe of agentd's
   `GET /v1/info` reports proxy support (daemons predating that projection keep
   the command visible).
+
+The **permission catalog** follows the same per-family answer: a host
+advertises `proxy.git.*` / `proxy.github.*`, `proxy.linear.*` and `proxy.awb.*`
+only where that family could work, plus any family the calling agent holds a
+scoped grant for. The two must agree — advertising a slug whose command is not
+registered would let an operator grant a capability nothing can exercise.
+
+One asymmetry is deliberate and worth knowing. The daemon also counts
+`LINEAR_API_KEY` in **its own** environment as a configured Linear family, so a
+managed agent (which reads the projection) gets the command from an
+environment-only Linear setup. A plain host shell does not: it answers from the
+config file alone, because probing the daemon on every `tclaude` invocation
+would cost a round trip on every command. An operator running an
+environment-only Linear proxy who wants `tclaude proxy` in their own shell
+should give `agent.linear_proxy` an `api_key_file` (or an `allowed_teams` list)
+rather than relying on the variable.
+
+Visibility is not enforcement. The full registry still backs validation and
+stored-grant resolution, so hiding a slug never withdraws a grant made under it.
 
 A managed agent is recognised by any of `TCLAUDE_AGENTD_SOCKET`,
 `CODEX_PERMISSION_PROFILE=tclaude-agent`, or `TCLAUDE_AGENT_HINT=1` in its
@@ -151,14 +173,94 @@ The `agent.linear_proxy` block in `~/.tclaude/data/config.json`:
   personal key is scoped to one workspace; each workspace entry requires its
   own `api_key_file`, with no environment fallback.
 
+## AWB proxy
+
+```bash
+tclaude proxy awb whoami                  # server, account, reachable projects
+tclaude proxy awb ready --compact         # the primary entry point
+tclaude proxy awb claim awb-a3f9c1
+tclaude proxy awb comment add awb-a3f9c1 --body-file findings.md
+# other verbs: show, list, blocked, search, create, update, close, reopen,
+#              release, delete, label add|rm, dep add|rm|tree,
+#              comment list, activity, attach add|list|show|get|delete
+```
+
+[AWB](https://github.com/tofutools/awb) — Agent Work Board — is an agent-first
+issue tracker with an HTTP API. As with Linear there is no CLI tool underneath:
+the daemon speaks AWB's REST API directly, every path is assembled from
+compile-time constants plus a validated issue reference, and every caller value
+travels as a query parameter or a marshalled JSON field. And as with Linear
+there is no filesystem anchor, so the **project allow-list is the entire scope
+gate**, checked once on the reference the caller supplied and again on the
+project AWB reports for the issue it returned.
+
+The verbs and flags mirror `awb`'s own one for one, minus five that name a local
+database or a terminal rather than the data: `--db`, `--attachments`,
+`--no-context`, `--color`, `--no-color`. Two differences are worth knowing:
+
+- **A bare hash is refused.** `awb` accepts `a3f9c1`; the proxy requires
+  `awb-a3f9c1` (a hash prefix is fine), because a reference carrying no project
+  key could only be gated after the issue had been fetched.
+- **Listings are bounded.** `awb` returns every row by default; the proxy
+  defaults to 50, capped at 500, because the rows land in an agent's context.
+  `comment list` and `activity` are bounded the same way, and additionally cap
+  `--offset`.
+
+Comments are an append-only timeline shared with AWB's change records.
+`activity` reads the whole thing (`--kind comment|change` narrows it) and
+`comment list` is the same read with the kind fixed. A close reason lives there
+too: since AWB 0.6 `close --reason` records a typed comment rather than setting
+a field on the issue, and the issue carries no `close_reason` at all.
+
+`dep tree` is pruned to the caller's projects: AWB follows children across
+project boundaries by design, so a child outside the gate is dropped with its
+subtree. `whoami` describes only the projects the caller may reach; one it may
+not is reported as its key alone, which is what a refused agent needs in order
+to ask for it and nothing more. Attachment content travels through the daemon in request and response
+bodies rather than as a path it would read from the agent's work tree, which
+caps it at 8 MiB either way.
+
+Permissions, scoped on the `awb_project` dimension (for example
+`--scope awb_project=awb`):
+
+- `proxy.awb.read` — `whoami`, `show`, `list`, `ready`, `blocked`, `search`,
+  `dep tree`, `comment list`, `activity`, `attach list/show/get`. `comment list`
+  and `activity` are the reads that carry third-party prose into an agent's
+  context: anyone with tracker access can write a comment.
+- `proxy.awb.write` — everything that changes the tracker, including the hard
+  `delete` (which additionally needs `--force`). Requires the operator config
+  `agent.awb_proxy.allow_write`.
+
+Scoped grants intersect with the operator's `allowed_projects` list when one
+exists; an *unscoped* grant is refused outright when the operator has no list.
+Read and write scopes are independent.
+
+The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
+
+- `url` — the AWB server's base URL. This is what registers the command; only
+  http/https, and a URL carrying userinfo is refused rather than stripped.
+- `username` — the account every proxied call authenticates as, and the identity
+  AWB attributes writes to. It is also what `claim` records without `--as` and
+  what `--mine` filters on. Empty suits a server whose database holds no user,
+  which AWB treats as unauthenticated.
+- `password_file` — empty falls back to `AWB_PASSWORD` in agentd's environment;
+  with a username and neither, the proxy refuses rather than sending half a
+  credential. The password is never a field of `config.json` itself.
+- `allowed_projects` — project keys, case-insensitive, no wildcard by design.
+- `allow_write` — default false.
+
+AWB applies its own authorization underneath: the daemon's account works in the
+projects it is a member of, and one it holds no access to answers `404`. That
+bounds the operator; the allow-list above bounds the agent.
+
 ## Teaching agents to use the proxies
 
 ```bash
 tclaude setup --install-proxy-skills
 ```
 
-installs the `proxy-git` and `proxy-linear` agent skills into the Claude Code
-and Codex skill directories, so agents discover the semantic commands instead
+installs the `proxy-git`, `proxy-linear` and `proxy-awb` agent skills into the
+Claude Code and Codex skill directories, so agents discover the semantic commands instead
 of fighting their missing credentials. The flag is deliberately excluded from
 `--install-agent-skills` and `--install-all`: an operator who has not
 configured the proxies should not advertise them to agents.

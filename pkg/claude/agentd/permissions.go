@@ -670,18 +670,59 @@ var permissionRegistry = []PermSlug{
 			"--scope linear_team=TCL, on the same terms as proxy.linear.read and independently of it, so read and write reach can " +
 			"differ. Not default-granted and not owner-implied.",
 	},
+	{
+		Slug:      PermAWBRead,
+		ScopeDims: []ScopeDim{ScopeDimAWBProject},
+		Description: "Read AWB issues through the daemon's AWB account (tclaude proxy awb whoami, show, list, ready, blocked, " +
+			"search, dep tree, comment list, activity, attach list/show/get). Note that comment list and activity carry " +
+			"third-party prose — anyone with tracker access can write a comment — into the agent's context. Narrowable per agent " +
+			"with --scope awb_project=awb: with an operator " +
+			"agent.awb_proxy.allowed_projects list configured the two intersect and the scope can only narrow it, while with no " +
+			"such list a scoped grant is the whole project policy. An UNSCOPED grant is refused outright when the operator has " +
+			"no list. Not default-granted: it reads the operator's tracker as them.",
+	},
+	{
+		Slug:      PermAWBWrite,
+		ScopeDims: []ScopeDim{ScopeDimAWBProject},
+		Description: "Create, update, claim, release, close, reopen and DELETE AWB issues, comment on them, label them, relate " +
+			"them, and attach files, through the daemon's AWB account (tclaude proxy awb create/update/claim/release/close/reopen/delete, " +
+			"comment add, label add|rm, dep add|rm, attach add|delete). Everything it writes is attributed to the operator's AWB user, and it " +
+			"additionally requires agent.awb_proxy.allow_write. Note that delete is a HARD delete AWB cannot undo; it needs " +
+			"--force on top of this slug. Narrowable per agent with --scope awb_project=awb, on the same terms as proxy.awb.read " +
+			"and independently of it, so read and write reach can differ. Not default-granted and not owner-implied.",
+	},
+}
+
+// proxyVisibility says which semantic-proxy families this host has configured,
+// and so which of their permission slugs are worth showing.
+//
+// It is per-family rather than one boolean because the families are configured
+// independently: a host with only the AWB proxy has no reason to advertise
+// proxy.git.*, and a host with only the git proxy has none to advertise
+// proxy.awb.*.
+//
+// Each family answers for itself, and each is answered by "could this work on
+// this host" rather than "is its policy complete". A slug missing from the
+// catalog is one an operator cannot grant, so the cost of hiding a usable slug
+// is higher than the cost of showing an unusable one — which is why every
+// family's bit is the OR of several sources rather than its strictest setting.
+type proxyVisibility struct {
+	git    bool
+	linear bool
+	awb    bool
 }
 
 // visiblePermissionRegistry returns the permission catalog exposed to humans
 // and agents. Proxy permissions are useful only when the semantic proxy is
 // available; advertising them otherwise makes agents mistake an unavailable
 // optional feature for missing authority to use their environment's normal
-// Git, GitHub, or Linear tooling. Keep the full registry above for validation
-// and stored-grant resolution so disabling the proxy never destroys policy.
-func visiblePermissionRegistry(proxyEnabled bool) []PermSlug {
+// Git, GitHub, Linear, or AWB tooling. Keep the full registry above for validation
+// and stored-grant resolution so disabling the proxy never destroys policy —
+// hiding a slug never withdraws a grant already made under it.
+func visiblePermissionRegistry(vis proxyVisibility) []PermSlug {
 	out := make([]PermSlug, 0, len(permissionRegistry))
 	for _, p := range permissionRegistry {
-		if !proxyEnabled && isSemanticProxyPermission(p.Slug) {
+		if !proxyPermissionVisible(p.Slug, vis) {
 			continue
 		}
 		out = append(out, p)
@@ -689,10 +730,25 @@ func visiblePermissionRegistry(proxyEnabled bool) []PermSlug {
 	return out
 }
 
+// proxyPermissionVisible answers for one slug. Anything that is not a semantic
+// proxy permission is always visible.
+func proxyPermissionVisible(slug string, vis proxyVisibility) bool {
+	switch slug {
+	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge:
+		return vis.git
+	case PermLinearRead, PermLinearWrite:
+		return vis.linear
+	case PermAWBRead, PermAWBWrite:
+		return vis.awb
+	default:
+		return true
+	}
+}
+
 func isSemanticProxyPermission(slug string) bool {
 	switch slug {
 	case PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge,
-		PermLinearRead, PermLinearWrite:
+		PermLinearRead, PermLinearWrite, PermAWBRead, PermAWBWrite:
 		return true
 	default:
 		return false
@@ -1444,7 +1500,7 @@ func handlePermissionsSlugs(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, "method", "GET only")
 		return
 	}
-	out := visiblePermissionRegistry(gitProxyRoutesEnabled(r))
+	out := visiblePermissionRegistry(proxyVisibilityForRequest(r))
 	sort.Slice(out, func(i, j int) bool { return out[i].Slug < out[j].Slug })
 	writeJSON(w, http.StatusOK, out)
 }

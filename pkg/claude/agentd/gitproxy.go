@@ -174,21 +174,86 @@ const haveRefNamespace = "refs/tclaude-have/"
 const gitProxyDisabledCode = "git_proxy_disabled"
 
 func gitProxyRoutesEnabled(r *http.Request) bool {
-	cfg, err := config.Load()
-	if err == nil && cfg.GitProxyEnabled() {
-		return true
+	// Any family is enough: this answers "is `tclaude proxy` a command here at
+	// all", not "which of its subcommands are usable". It shares
+	// proxyVisibilityForRequest with the permission catalog so the two cannot
+	// disagree — a host that advertises a family's slugs must also register the
+	// command those slugs authorize, or an operator can grant a capability that
+	// has no way to be exercised.
+	vis := proxyVisibilityForRequest(r)
+	return vis.git || vis.linear || vis.awb
+}
+
+// proxyVisibilityForRequest answers, per proxy family, whether this caller has
+// any reason to see that family's permission slugs.
+//
+// It is the per-family sibling of gitProxyRoutesEnabled, which stays a single
+// boolean because it answers a different question: "is `tclaude proxy` a command
+// on this host at all", for which any configured proxy is enough. The catalog
+// needs finer grain — a git-only host advertising proxy.awb.* sends an agent
+// looking for a tracker that is not there.
+//
+// A family also counts as visible when the CALLER holds a scoped grant for it,
+// because a scope-only posture is supported and the operator's global block may
+// legitimately be empty.
+func proxyVisibilityForRequest(r *http.Request) proxyVisibility {
+	vis := configuredProxyVisibility()
+	if vis.git && vis.linear && vis.awb {
+		return vis
 	}
 	p := peerFromContext(r.Context())
 	if classify(p) != classAgent {
+		return vis
+	}
+	// A scoped grant is the second source, and for a scope-only posture it is
+	// the only one: the operator's global block may legitimately be empty while
+	// individual agents carry their own remote/team/project scopes.
+	scoped := func(slugs ...string) bool {
+		for _, slug := range slugs {
+			v := resolvePermissionVerdictForRequest(r, p.ConvID, slug)
+			if v.Resolution == permAllow && !evalPermissionScope(v, p.ConvID, ActionContext{}).Unscoped {
+				return true
+			}
+		}
 		return false
 	}
-	for _, slug := range []string{PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge} {
-		v := resolvePermissionVerdictForRequest(r, p.ConvID, slug)
-		if v.Resolution == permAllow && !evalPermissionScope(v, p.ConvID, ActionContext{}).Unscoped {
-			return true
-		}
+	if !vis.git {
+		vis.git = scoped(PermGitRead, PermGitPush, PermGitHubRead, PermGitHubWrite, PermGitHubMerge)
 	}
-	return false
+	if !vis.linear {
+		vis.linear = scoped(PermLinearRead, PermLinearWrite)
+	}
+	if !vis.awb {
+		vis.awb = scoped(PermAWBRead, PermAWBWrite)
+	}
+	return vis
+}
+
+// configuredProxyVisibility is the operator-side half, with no caller in view.
+// It is what the dashboard's catalog uses, where there is no agent whose grants
+// could widen the answer.
+func configuredProxyVisibility() proxyVisibility {
+	cfg, err := config.Load()
+	if err != nil {
+		return proxyVisibility{}
+	}
+	return proxyVisibility{
+		git: cfg.GitProxyEnabled(),
+		// Linear answers for itself. It used to ride on the git proxy's bit,
+		// which was wrong in both directions: a git-only host advertised slugs
+		// backed by no Linear key, and a Linear-only host hid slugs its
+		// operator needed in order to grant them.
+		//
+		// The sources are every way this host could reach Linear at all — an
+		// allow-list, a key file, a workspace route (Config.LinearProxyConfigured),
+		// or a key in the daemon's own environment. The environment is read
+		// HERE rather than in config because LINEAR_API_KEY is the daemon's,
+		// not the config file's, and resolveLinearRouteKey consults the same
+		// variable. A caller's own scoped grant is the further source
+		// proxyVisibilityForRequest adds, for the scope-only posture.
+		linear: cfg.LinearProxyConfigured() || os.Getenv("LINEAR_API_KEY") != "",
+		awb:    cfg.AWBProxyEnabled(),
+	}
 }
 
 // gitProxyDisabledMessage is written to be actionable for an unscoped grant.

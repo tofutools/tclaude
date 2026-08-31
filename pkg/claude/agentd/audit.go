@@ -149,6 +149,20 @@ type auditRoute struct {
 	segs     []string
 	verb     string // fixed verb; "" → use the {verb} capture
 	describe describer
+	// pathOnly says this route's describer reads the PATH and nothing else, so
+	// the middleware need not buffer the body for it at all.
+	//
+	// It matters because the buffering happens before the handler — before its
+	// permission gate — so a route that carries megabytes makes the daemon
+	// allocate for a caller that may be refused a moment later. The AWB proxy's
+	// attachment upload is exactly that route, and its describer names the verb
+	// from the path capture, so there is nothing to read.
+	//
+	// The git, GitHub and Linear describers are path-only too and could carry
+	// this; they are left alone here because their bodies are small command
+	// payloads, so the saving would be theoretical and the change would touch
+	// three surfaces this branch has no other reason to.
+	pathOnly bool
 }
 
 // auditRoutes is the allowlist of daemon-proxied commands. Canonical
@@ -304,6 +318,10 @@ var auditRoutes = []auditRoute{
 	// route is matched first; a two-segment path falls through to the second.
 	{method: http.MethodPost, segs: []string{"linear", "{verb}"}, describe: describeLinearProxy},
 	{method: http.MethodPost, segs: []string{"linear", "{resource}", "{action}"}, describe: describeLinearProxyResource},
+	{method: http.MethodPost, segs: []string{"awb", "{verb}"},
+		describe: describeAWBProxy, pathOnly: true},
+	{method: http.MethodPost, segs: []string{"awb", "{resource}", "{action}"},
+		describe: describeAWBProxyResource, pathOnly: true},
 }
 
 // auditedGitProxyVerbs / auditedGitHubProxyVerbs gate the path captures to the
@@ -365,6 +383,40 @@ var (
 		"issue.update":   true,
 		"issue.link":     true,
 	}
+	// auditedAWBProxyVerbs must name EVERY /v1/awb/… route the mux registers,
+	// for exactly the reason auditedLinearProxyVerbs must: a route missing here
+	// is not merely unlabelled, it writes NO audit row at all — the call runs,
+	// spends the operator's AWB account, and leaves nothing behind.
+	// TestAuditCoversEveryAWBProxyRoute pins the map against the routes serve.go
+	// actually registers.
+	auditedAWBProxyVerbs = map[string]bool{
+		"whoami":        true,
+		"issue.show":    true,
+		"issue.list":    true,
+		"issue.ready":   true,
+		"issue.blocked": true,
+		"issue.search":  true,
+		"issue.create":  true,
+		"issue.update":  true,
+		"issue.claim":   true,
+		"issue.release": true,
+		"issue.close":   true,
+		"issue.reopen":  true,
+		"issue.delete":  true,
+		"label.add":     true,
+		"label.rm":      true,
+		"dep.add":       true,
+		"dep.rm":        true,
+		"dep.tree":      true,
+		"comment.add":   true,
+		"comment.list":  true,
+		"activity.list": true,
+		"attach.add":    true,
+		"attach.list":   true,
+		"attach.show":   true,
+		"attach.get":    true,
+		"attach.delete": true,
+	}
 )
 
 // describeGitProxy names a git-proxy row "git.fetch", "git.push", … from the
@@ -416,6 +468,29 @@ func nameLinearProxyVerb(c *auditCtx, verb string) {
 	}
 }
 
+// describeAWBProxy names a one-segment awb-proxy row ("awb.whoami"). Same rule
+// as the three above: the path only, never the body — an issue title, a
+// description or an attachment's bytes must not land in the audit log.
+func describeAWBProxy(c *auditCtx) {
+	nameAWBProxyVerb(c, c.vars["verb"])
+}
+
+// describeAWBProxyResource names a two-segment row ("awb.issue.close").
+func describeAWBProxyResource(c *auditCtx) {
+	nameAWBProxyVerb(c, c.vars["resource"]+"."+c.vars["action"])
+}
+
+// nameAWBProxyVerb is the shared tail. An unrecognised verb is CLEARED rather
+// than merely left alone, because recordAuditRow has already defaulted it to
+// the raw path capture.
+func nameAWBProxyVerb(c *auditCtx, verb string) {
+	if auditedAWBProxyVerbs[verb] {
+		c.fields.Verb = "awb." + verb
+	} else {
+		c.fields.Verb = ""
+	}
+}
+
 // auditRequests wraps a mux so every matched command writes an audit
 // row. It buffers the request body (restoring it for the handler) only
 // for matched routes, runs the handler, then records the row with the
@@ -436,7 +511,7 @@ func auditRequests(h http.Handler) http.Handler {
 			r = r.WithContext(context.WithValue(r.Context(), auditResultContextKey{}, result))
 		}
 		var body []byte
-		if ok && route.describe != nil {
+		if ok && route.describe != nil && !route.pathOnly {
 			body = bufferAuditBody(r)
 		}
 		captureResponse := ok && route.verb == "spawn"
@@ -579,28 +654,66 @@ func splitPathSegments(path string) []string {
 	return out
 }
 
-// bufferAuditBody reads the request body so a describer can parse it,
-// then restores r.Body verbatim for the handler. It reads the body in
-// full — the same ReadAll the handler does — and restores exactly those
-// bytes, so it can never truncate what the handler sees. Only audited
-// command routes are buffered (their bodies are small JSON command
-// payloads); the describers cap only the short strings they extract.
+// maxAuditBodyBytes bounds what the audit middleware will hold in memory for
+// ONE request.
+//
+// It exists because this buffering happens in middleware, ahead of the
+// handler: before the handler's own http.MaxBytesReader, and before its
+// permission gate. Without a bound here, a caller holding no permission at all
+// could make the daemon allocate a body of any size simply by POSTing to an
+// audited route — the handler's cap arrives too late to prevent it, which is
+// what the note on maxClipboardRequestBytes describes and says belongs here
+// rather than in an endpoint.
+//
+// The value is far past any command payload and far below anything dangerous.
+// Every describer that needs a body parses a small JSON command and extracts
+// short strings from it; a route whose describer needs none is marked pathOnly
+// and never reaches here at all, which is what keeps an attachment upload from
+// being buffered for a caller that may be refused.
+const maxAuditBodyBytes = 1 << 20
+
+// bufferAuditBody reads the request body so a describer can parse it, then
+// restores it for the handler.
+//
+// Restoring is exact in both directions, which is the property that matters:
+// the handler must see the same bytes it would have seen unbuffered, or a
+// command could be decoded from a truncated body. Under the cap that is a
+// re-read of what was buffered; over it, the buffered prefix is handed back in
+// front of the unread remainder and NO body is recorded for audit — a truncated
+// one would decode to a partial command and put a half-read of it in the log.
 func bufferAuditBody(r *http.Request) []byte {
 	if r.Body == nil {
 		return nil
 	}
-	buf, err := io.ReadAll(r.Body)
+	orig := r.Body
+	// One byte past the cap, so "exactly at the cap" and "over it" are
+	// distinguishable rather than both looking full.
+	buf, err := io.ReadAll(io.LimitReader(orig, maxAuditBodyBytes+1))
 	if err != nil {
 		// On a failed/partial read, do NOT hand the handler a silently
 		// truncated body (it could decode to a partial command). Close the
 		// original and leave it: the handler hits the same read error and
 		// rejects the request. We record no body for audit.
-		_ = r.Body.Close()
+		_ = orig.Close()
 		return nil
 	}
-	_ = r.Body.Close()
+	if len(buf) > maxAuditBodyBytes {
+		// The handler still gets the whole body — its own MaxBytesReader is
+		// what decides whether that is acceptable, and it runs after the
+		// permission gate, which is the ordering the cap above exists to
+		// restore.
+		r.Body = readCloser{Reader: io.MultiReader(bytes.NewReader(buf), orig), Closer: orig}
+		return nil
+	}
+	_ = orig.Close()
 	r.Body = io.NopCloser(bytes.NewReader(buf))
 	return buf
+}
+
+// readCloser rejoins a rewound body to the connection it must still close.
+type readCloser struct {
+	io.Reader
+	io.Closer
 }
 
 // recordAuditRow assembles and writes one audit_log row. Best-effort: a

@@ -48,8 +48,16 @@ const (
 // exactly like an absent one, error-free. Only ManagedAgentProcess separates
 // "the operator has no policy" from "I am not allowed to see it".
 func Configured() bool {
+	// Any configured family registers the command tree. LinearProxyConfigured
+	// rather than LinearProxyEnabled, for the reason the daemon's own
+	// visibility check uses it: a key with no allow-list is the scope-only
+	// posture, and the command has to exist for a scoped grant to be usable.
+	// A key supplied only through LINEAR_API_KEY is invisible from here — that
+	// is the DAEMON's environment, and a managed agent reaches the same answer
+	// through the /v1/info projection below.
 	cfg, err := config.Load()
-	if err == nil && cfg.GitProxyEnabled() {
+	if err == nil &&
+		(cfg.GitProxyEnabled() || cfg.LinearProxyConfigured() || cfg.AWBProxyEnabled()) {
 		return true
 	}
 	// Do not turn every ordinary host-side command construction into a daemon
@@ -91,22 +99,23 @@ func Cmd() *cobra.Command {
 	return boa.CmdT[struct{}]{
 		Use:   "proxy",
 		Short: "Operations the daemon performs for you with credentials you do not hold",
-		Long: "Perform Git-remote, GitHub and Linear operations WITHOUT holding the credentials yourself.\n\n" +
+		Long: "Perform Git-remote, GitHub, Linear and AWB operations WITHOUT holding the credentials yourself.\n\n" +
 			"`tclaude agentd` runs git and gh on the host, where the SSH key and GitHub token live, and " +
-			"calls Linear's API with the operator's key. Your sandbox can deny ~/.ssh and ~/.config/gh " +
-			"outright, and hold no Linear key at all, and you can still fetch, push, open a pull request, " +
-			"and update your ticket.\n\n" +
+			"calls Linear's and AWB's APIs with the operator's credentials. Your sandbox can deny ~/.ssh " +
+			"and ~/.config/gh outright, and hold no tracker credentials at all, and you can still fetch, " +
+			"push, open a pull request, and update your ticket.\n\n" +
 			"You describe the operation (\"push my branch\"); the daemon builds the command. There is no " +
-			"passthrough flag, no way to influence the argv it runs, and no raw-GraphQL escape hatch.\n\n" +
+			"passthrough flag, no way to influence the argv it runs, and no raw-query escape hatch.\n\n" +
 			"Every verb needs a permission slug the operator grants: `proxy.git.read`, `proxy.git.push`, " +
 			"`proxy.github.read`, `proxy.github.write`, `proxy.github.merge`, `proxy.linear.read`, " +
-			"`proxy.linear.write`. None is granted by default — " +
+			"`proxy.linear.write`, `proxy.awb.read`, `proxy.awb.write`. None is granted by default — " +
 			"ask the operator, or pass --ask-human for a one-off approval.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
 			gitCmd(),
 			githubCmd(),
 			linearCmd(),
+			awbCmd(),
 		},
 	}.ToCobra()
 }

@@ -353,6 +353,8 @@ func completePermissionSlugs(_ *cobra.Command, _ []string, toComplete string) []
 			{"proxy.github.merge", "Merge GitHub PRs as the operator (not implied by proxy.github.write)"},
 			{"proxy.linear.read", "Read Linear issues/comments through the daemon's Linear key"},
 			{"proxy.linear.write", "Create/update/comment on and link Linear issues as the operator"},
+			{"proxy.awb.read", "Read AWB issues, comments and activity through the daemon's AWB account"},
+			{"proxy.awb.write", "Create/update/claim/close/comment on/delete AWB issues as the operator"},
 		}
 	}
 	out := []string{}

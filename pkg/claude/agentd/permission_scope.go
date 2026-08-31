@@ -27,6 +27,7 @@ const (
 	ScopeDimProcessTemplate ScopeDim = "process_template"
 	ScopeDimRemote          ScopeDim = "remote"
 	ScopeDimLinearTeam      ScopeDim = "linear_team"
+	ScopeDimAWBProject      ScopeDim = "awb_project"
 	ScopeDimTargetAgent     ScopeDim = "target_agent"
 )
 
@@ -49,6 +50,14 @@ const (
 	// operator allow-list is stored lower-cased, and an operator typing
 	// `--scope linear_team=tcl` means the team they read as TCL.
 	permissionScopeMatchTeamKey
+	// permissionScopeMatchProjectKey is the AWB proxy's whole-key,
+	// case-insensitive comparison. Evaluated exactly like
+	// permissionScopeMatchTeamKey and kept separate from it only so the SHAPE
+	// check can be AWB's: a Linear team key is alphanumeric, while an AWB
+	// project key is lower-case, may carry hyphens, and must start with a
+	// letter. One kind checking two vocabularies would have to accept the union
+	// of both, which is a matcher neither proxy can ever match.
+	permissionScopeMatchProjectKey
 )
 
 type permissionScopeDimension struct {
@@ -86,6 +95,7 @@ var permissionScopeDimensions = map[ScopeDim]permissionScopeDimension{
 	ScopeDimProcessTemplate: {},
 	ScopeDimRemote:          {matcher: permissionScopeMatchRemotePattern},
 	ScopeDimLinearTeam:      {matcher: permissionScopeMatchTeamKey, enumerable: true},
+	ScopeDimAWBProject:      {matcher: permissionScopeMatchProjectKey, enumerable: true},
 	ScopeDimTargetAgent: {selectors: map[string]struct{}{
 		"@descendants":  {},
 		"@self-spawned": {},
@@ -177,12 +187,20 @@ func parsePermissionScope(raw json.RawMessage) (PermissionScope, string, error) 
 // single-issue verb refused and every listing empty. Refusing it at the door is
 // what turns that silence into an error an operator can read.
 func permissionScopeMatcherShape(dim ScopeDim, spec permissionScopeDimension, matcher string) error {
-	if spec.matcher != permissionScopeMatchTeamKey {
-		return nil
-	}
-	if err := linearTeamKeyShapeErr(matcher); err != nil {
-		return fmt.Errorf("permission scope dimension %q: %w (there is no wildcard: a team key "+
-			"is matched whole, case-insensitively)", dim, err)
+	switch spec.matcher {
+	case permissionScopeMatchTeamKey:
+		if err := linearTeamKeyShapeErr(matcher); err != nil {
+			return fmt.Errorf("permission scope dimension %q: %w (there is no wildcard: a team key "+
+				"is matched whole, case-insensitively)", dim, err)
+		}
+	case permissionScopeMatchProjectKey:
+		// Same reasoning one vocabulary over: an AWB project key is what the AWB
+		// proxy compares this matcher against, so a matcher that cannot BE one
+		// would store and render as a narrow grant while matching nothing.
+		if err := awbProjectKeyShapeErr(matcher); err != nil {
+			return fmt.Errorf("permission scope dimension %q: %w (there is no wildcard: a project "+
+				"key is matched whole, case-insensitively)", dim, err)
+		}
 	}
 	return nil
 }
@@ -278,14 +296,16 @@ func appendUnique(out []string, seen map[string]bool, s string) []string {
 // at all; both are free text plus their selectors, which is exactly what the
 // CLI's --scope accepts.
 //
-// linearTeams is the operator's own agent.linear_proxy.allowed_teams. It is the
-// USEFUL catalogue rather than the complete one: a team the operator has not
-// allow-listed cannot be reached by any grant, so offering the workspace's full
-// team list would invite an operator to write a scope that authorizes nothing.
+// linearTeams is the operator's own agent.linear_proxy.allowed_teams, and
+// awbProjects the operator's own agent.awb_proxy.allowed_projects. Each is the
+// USEFUL catalogue rather than the complete one: a team or project the operator
+// has not allow-listed cannot be reached by any grant, so offering the server's
+// full list would invite an operator to write a scope that authorizes nothing.
 // The picker still accepts free text, which is what makes a scope-only posture
 // (no operator list at all) writable.
 func scopeDimOptionsSnapshot(
-	groups []*db.AgentGroup, profiles []spawnProfileJSON, sandboxProfiles []*db.SandboxProfile, linearTeams []string,
+	groups []*db.AgentGroup, profiles []spawnProfileJSON, sandboxProfiles []*db.SandboxProfile,
+	linearTeams, awbProjects []string,
 ) map[ScopeDim]snapshotScopeDimOptions {
 	out := make(map[ScopeDim]snapshotScopeDimOptions, len(permissionScopeDimensions))
 	for _, dim := range permissionScopeDims() {
@@ -317,6 +337,11 @@ func scopeDimOptionsSnapshot(
 			for _, key := range linearTeams {
 				options.Values = append(options.Values, strings.ToUpper(key))
 			}
+		case ScopeDimAWBProject:
+			// Offered exactly as stored. Unlike a Linear team key, an AWB
+			// project key IS lower-case — its own charset says so — so there is
+			// no presentational spelling to restore.
+			options.Values = append(options.Values, awbProjects...)
 		}
 		sort.Strings(options.Values)
 		out[dim] = options

@@ -3336,7 +3336,7 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 			Overrides:        map[string]map[string]string{},
 			UnreadableScopes: map[string][]string{},
 		},
-		Slugs: visiblePermissionRegistry(cfg.GitProxyEnabled()),
+		Slugs: visiblePermissionRegistry(configuredProxyVisibility()),
 	}
 	out.RetiredTotal = retiredTotal
 	sort.Slice(out.Slugs, func(i, j int) bool { return out.Slugs[i].Slug < out.Slugs[j].Slug })
@@ -3794,7 +3794,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 	out.Templates = templates
 	out.Profiles = profiles
 	out.Permissions.ScopeDimOptions = scopeDimOptionsSnapshot(
-		groups, profiles, sandboxProfiles, cfg.ResolvedLinearProxy().AllowedTeams)
+		groups, profiles, sandboxProfiles,
+		cfg.ResolvedLinearProxy().AllowedTeams, cfg.ResolvedAWBProxy().AllowedProjects)
 	if defaultProfile != nil {
 		out.SpawnProfileDefault = defaultProfile.Name
 	}

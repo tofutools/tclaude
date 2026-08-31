@@ -1993,6 +1993,86 @@ type AgentConfig struct {
 	// a sandboxed agent, so it must never come up enabled on an operator who
 	// has not configured it. See LinearProxyConfig.
 	LinearProxy *LinearProxyConfig `json:"linear_proxy,omitempty"`
+
+	// AWBProxy configures the daemon-mediated AWB proxy — `tclaude proxy
+	// awb`. Absent (the default) means the proxy is OFF, for the same reason
+	// GitProxy and LinearProxy are: it lends the operator's AWB account to a
+	// sandboxed agent, so it must never come up enabled on an operator who has
+	// not configured it. See AWBProxyConfig.
+	AWBProxy *AWBProxyConfig `json:"awb_proxy,omitempty"`
+}
+
+// AWBProxyConfig is the operator's policy for the daemon-mediated AWB proxy —
+// Agent Work Board, an agent-first issue tracker with an HTTP API.
+//
+// It answers the same question LinearProxyConfig does, in AWB's vocabulary:
+// which PROJECTS may agentd reach with the operator's AWB account, on behalf of
+// an agent that holds no credentials of its own?
+//
+// AWB has no filesystem artifact that could anchor an agent the way a git work
+// tree anchors the git proxy. A project allow-list is therefore the whole scope
+// gate, which is why it is fail-closed. This block is the OPERATOR-GLOBAL half;
+// the per-agent half is an `awb_project` scope on the agent's own
+// proxy.awb.read / proxy.awb.write grant (`tclaude agent permissions grant
+// <agent> proxy.awb.read --scope awb_project=awb`). The two are enforced
+// together and neither can widen the other.
+//
+// Unlike Linear there is no multi-key routing here: one URL is one server, and
+// one account reaches every project it is a member of. An operator running two
+// AWB servers points the daemon at one of them.
+type AWBProxyConfig struct {
+	// URL is the base URL of the AWB server's HTTP API — "https://awb.example"
+	// or "https://example/awb" when a reverse proxy serves it under a path.
+	// The proxy joins "/api/…" onto it.
+	//
+	// It is what OPTS THE OPERATOR IN: with no URL the daemon has no server to
+	// call, so `tclaude proxy awb` is not registered and its permission slugs
+	// are hidden. Only http:// and https:// are accepted, and a URL carrying
+	// userinfo is refused — credentials belong in Username and PasswordFile,
+	// where they do not travel in log lines.
+	URL string `json:"url,omitempty"`
+
+	// Username is the AWB account every proxied call authenticates as, and
+	// therefore the identity AWB attributes every write to. It is also what
+	// `claim` records as the assignee when the caller gives no --as, and what
+	// `--mine` filters on.
+	//
+	// Empty means the server holds no users and authenticates nothing, which
+	// AWB supports; the daemon then sends no credentials. That is only sensible
+	// for a server nothing but the daemon can reach.
+	Username string `json:"username,omitempty"`
+
+	// PasswordFile is a file whose contents become the AWB password. When empty
+	// the daemon falls back to AWB_PASSWORD in its own environment; with
+	// neither, and a Username set, the proxy refuses rather than sending a
+	// half-formed credential.
+	//
+	// The password is deliberately NOT a field of this struct's own JSON: this
+	// file is plaintext, shows up in the dashboard's Config tab, and is the
+	// sort of thing an operator copies into a bug report. Same treatment as
+	// LinearProxyConfig.APIKeyFile — `~/…` is expanded against the home
+	// directory of the account agentd runs as, and shell variables are not.
+	PasswordFile string `json:"password_file,omitempty"`
+
+	// AllowedProjects is the allow-list of AWB project keys the proxy may act
+	// on — the prefix of an issue ID, so "awb" authorizes awb-a3f9c1.
+	// Compared case-insensitively.
+	//
+	// EMPTY OR ABSENT DISABLES UNSCOPED GRANTS, exactly as an empty
+	// AllowedTeams disables unscoped Linear-proxy grants: an agent whose grant
+	// carries an `awb_project` scope supplies its own projects instead, and
+	// when both exist a request must satisfy both. There is deliberately no
+	// wildcard: project keys are a flat namespace with no hierarchy to match a
+	// prefix against, so a wildcard would only ever mean "all of them".
+	AllowedProjects []string `json:"allowed_projects,omitempty"`
+
+	// AllowWrite permits the mutating verbs (create, update, claim, release,
+	// close, reopen, delete, label, dep add/rm, attach add/delete) at all.
+	// Default off, so an operator who wants an agent to READ its ticket does
+	// not silently also let it write to the tracker under their account. The
+	// `proxy.awb.write` permission slug still gates the caller on top of this:
+	// the config is the operator's ceiling, the slug is the per-agent grant.
+	AllowWrite bool `json:"allow_write,omitempty"`
 }
 
 // LinearProxyConfig is the operator's policy for the daemon-mediated Linear
@@ -2252,6 +2332,24 @@ func (c *Config) LinearProxyEnabled() bool {
 	return len(c.ResolvedLinearProxy().AllowedTeams) > 0
 }
 
+// LinearProxyConfigured reports whether the operator has set up the Linear
+// proxy AT ALL — any allow-list, any key file, any workspace route.
+//
+// It is deliberately broader than LinearProxyEnabled, and answers a different
+// question. LinearProxyEnabled is about the operator's global TEAM POLICY, one
+// half of an authorization decision. This is about whether the feature exists
+// on this host, which is what the permission catalog needs: a slug hidden from
+// the catalog is one an operator cannot grant, so the test for showing it has
+// to be "could this ever work here" rather than "is it fully configured".
+//
+// A key supplied only through LINEAR_API_KEY in the daemon's environment is
+// invisible from here; the caller adds that signal, since reading the daemon's
+// own environment is not config's job.
+func (c *Config) LinearProxyConfigured() bool {
+	p := c.ResolvedLinearProxy()
+	return len(p.AllowedTeams) > 0 || p.APIKeyFile != "" || len(p.Workspaces) > 0
+}
+
 // LinearTeamAllowed reports whether key names a team the operator allow-listed.
 // Exact, case-insensitive match on the whole key — there is no prefix or
 // wildcard rule here, unlike the remote matcher, because team keys are a flat
@@ -2266,6 +2364,55 @@ func (p LinearProxyConfig) LinearTeamAllowed(key string) bool {
 		return false
 	}
 	return slices.Contains(p.AllowedTeams, key)
+}
+
+// ResolvedAWBProxy returns the effective AWB-proxy policy. Nil-safe in the same
+// way ResolvedLinearProxy is: a nil config, absent agent block, or absent
+// awb_proxy block all yield a zero policy whose empty URL means "proxy off".
+//
+// Project keys go through normalizeGitProxyPatterns despite the name: it trims,
+// de-blanks, de-duplicates and lower-cases, which is exactly the treatment an
+// AWB project key needs, and the matcher lower-cases the other side too.
+func (c *Config) ResolvedAWBProxy() AWBProxyConfig {
+	var out AWBProxyConfig
+	if c != nil && c.Agent != nil && c.Agent.AWBProxy != nil {
+		src := c.Agent.AWBProxy
+		out.URL = strings.TrimRight(strings.TrimSpace(src.URL), "/")
+		out.Username = strings.TrimSpace(src.Username)
+		out.PasswordFile = strings.TrimSpace(src.PasswordFile)
+		out.AllowedProjects = normalizeGitProxyPatterns(src.AllowedProjects)
+		out.AllowWrite = src.AllowWrite
+	}
+	return out
+}
+
+// AWBProxyEnabled reports whether the operator has pointed the daemon at an AWB
+// server at all. It is the registration gate — the question "does this host
+// have an AWB proxy" — and deliberately NOT the authorization gate: which
+// projects a caller may reach is agentd.awbEffectiveProjects, which folds the
+// allow-list below together with the caller's own grant scope.
+//
+// It keys on the URL rather than on AllowedProjects because a scope-only
+// posture (no operator list, per-agent `awb_project` grants) is a supported
+// configuration, and an operator running it still has a proxy.
+func (c *Config) AWBProxyEnabled() bool {
+	return c.ResolvedAWBProxy().URL != ""
+}
+
+// AWBProjectAllowed reports whether key names a project the operator
+// allow-listed. Exact, case-insensitive match on the whole key — there is no
+// prefix or wildcard rule here, for the same reason LinearTeamAllowed has none:
+// project keys are a flat namespace, and a prefix match would let "web"
+// authorize "webhooks".
+//
+// This is the operator half of the gate only. A request is authorized by
+// agentd's effective project set, which also folds in the caller's grant scope.
+func (p AWBProxyConfig) AWBProjectAllowed(key string) bool {
+	key = strings.ToLower(strings.TrimSpace(key))
+	if key == "" {
+		return false
+	}
+	return slices.Contains(p.AllowedProjects, key)
 }
 
 // normalizeGitProxyPatterns trims, lower-cases and de-blanks a pattern list,

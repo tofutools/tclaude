@@ -1380,3 +1380,32 @@ func TestRecentPRWindowDays(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, loaded.RecentPRWindowDays(), "an explicit 0 is not lost to omitempty")
 }
+
+// TestLinearProxyConfigured covers the predicate the permission catalog uses,
+// which is deliberately broader than LinearProxyEnabled.
+//
+// The two answer different questions. Enabled is "is the operator's global team
+// policy set", one half of an authorization decision. Configured is "could the
+// Linear proxy work on this host at all" — and that is the right test for
+// showing a slug, because a slug the catalog omits is one nobody can grant.
+func TestLinearProxyConfigured(t *testing.T) {
+	cfg := func(p *LinearProxyConfig) *Config {
+		return &Config{Agent: &AgentConfig{LinearProxy: p}}
+	}
+
+	assert.False(t, (&Config{}).LinearProxyConfigured(), "nil-safe, and nothing configured")
+	assert.False(t, cfg(&LinearProxyConfig{}).LinearProxyConfigured())
+
+	assert.True(t, cfg(&LinearProxyConfig{AllowedTeams: []string{"TCL"}}).LinearProxyConfigured())
+	assert.True(t, cfg(&LinearProxyConfig{APIKeyFile: "~/key.txt"}).LinearProxyConfigured(),
+		"a key with no allow-list is a scope-only posture, which is supported")
+	assert.True(t, cfg(&LinearProxyConfig{
+		Workspaces: []LinearWorkspaceConfig{{Name: "acme", APIKeyFile: "~/k", Teams: []string{"ACM"}}},
+	}).LinearProxyConfigured())
+
+	assert.False(t, cfg(&LinearProxyConfig{}).LinearProxyEnabled(),
+		"Enabled stays what it was: the global team policy alone")
+	assert.True(t, cfg(&LinearProxyConfig{AllowedTeams: []string{"TCL"}}).LinearProxyEnabled())
+	assert.False(t, cfg(&LinearProxyConfig{APIKeyFile: "~/key.txt"}).LinearProxyEnabled(),
+		"a key is not a team policy, which is exactly why Configured exists separately")
+}
