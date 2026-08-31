@@ -1,6 +1,7 @@
 package session
 
 import (
+	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -8,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc"
+	"github.com/tofutools/tclaude/pkg/claude/common/agentipc/agentipctest"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
@@ -30,10 +33,29 @@ func constructedRootPlan(entries ...sandboxpolicy.MountEntry) sandboxpolicy.Moun
 	}
 }
 
+// liveAgentdSocket stands up the canonical agentd socket a CONSTRUCTED root
+// requires. Without it the applier refuses before it ever reaches plan replay,
+// so every constructed-root test below has to provide one — a developer box
+// running a real daemon would hide that requirement and only CI would notice.
+func liveAgentdSocket(t *testing.T) string {
+	t.Helper()
+	home := agentipctest.ShortSocketDir(t)
+	t.Setenv("HOME", home)
+	t.Setenv(agentipc.SocketEnv, "")
+	for _, floorSocket := range sandboxpolicy.AgentdSocketFloor() {
+		require.NoError(t, os.MkdirAll(filepath.Dir(floorSocket), 0o700))
+		listener, listenErr := net.Listen("unix", floorSocket)
+		require.NoError(t, listenErr)
+		t.Cleanup(func() { _ = listener.Close() })
+	}
+	return home
+}
+
 // The whole point of a tmpfs row, at the applier layer: it renders `--tmpfs`
 // like a hide does, and then — unlike a hide — it is NOT remounted read-only at
 // flush time, because the operator asked for writable scratch space.
 func TestBwrapArgsMountsTmpfsAndLeavesItWritable(t *testing.T) {
+	liveAgentdSocket(t)
 	got, err := bwrapArgs(nil, constructedRootPlan(
 		sandboxpolicy.MountEntry{Path: "/scratch", Mode: sandboxpolicy.MountTmpfs},
 	))
@@ -44,6 +66,7 @@ func TestBwrapArgsMountsTmpfsAndLeavesItWritable(t *testing.T) {
 }
 
 func TestBwrapArgsRendersTmpfsSizeImmediatelyBeforeItsMount(t *testing.T) {
+	liveAgentdSocket(t)
 	got, err := bwrapArgs(nil, constructedRootPlan(
 		sandboxpolicy.MountEntry{
 			Path: "/scratch", Mode: sandboxpolicy.MountTmpfs, SizeBytes: 512 << 20,
@@ -60,6 +83,7 @@ func TestBwrapArgsRendersTmpfsSizeImmediatelyBeforeItsMount(t *testing.T) {
 }
 
 func TestBwrapArgsOmitsSizeForAnUncappedTmpfs(t *testing.T) {
+	liveAgentdSocket(t)
 	got, err := bwrapArgs(nil, constructedRootPlan(
 		sandboxpolicy.MountEntry{Path: "/scratch", Mode: sandboxpolicy.MountTmpfs},
 	))
@@ -71,6 +95,7 @@ func TestBwrapArgsOmitsSizeForAnUncappedTmpfs(t *testing.T) {
 // beneath a tmpfs still lands on top of it, so the agent gets a real host
 // directory inside its scratch tree.
 func TestBwrapArgsLetsANarrowerBindLandOnTopOfATmpfs(t *testing.T) {
+	liveAgentdSocket(t)
 	source := t.TempDir()
 	got, err := bwrapArgs(nil, constructedRootPlan(
 		sandboxpolicy.MountEntry{Path: "/scratch", Mode: sandboxpolicy.MountTmpfs},
@@ -91,6 +116,7 @@ func TestBwrapArgsLetsANarrowerBindLandOnTopOfATmpfs(t *testing.T) {
 // non-recursive, so the hidden parent stays hidden while the scratch child
 // beneath it stays writable.
 func TestBwrapArgsKeepsAnAncestorHideReadOnlyAboveATmpfs(t *testing.T) {
+	liveAgentdSocket(t)
 	got, err := bwrapArgs(nil, constructedRootPlan(
 		sandboxpolicy.MountEntry{Path: "/opt/vendor", Mode: sandboxpolicy.MountHide},
 		sandboxpolicy.MountEntry{Path: "/opt/vendor/scratch", Mode: sandboxpolicy.MountTmpfs},
@@ -104,6 +130,7 @@ func TestBwrapArgsKeepsAnAncestorHideReadOnlyAboveATmpfs(t *testing.T) {
 // pending remount, or the scratch space the operator asked for would come back
 // read-only.
 func TestBwrapArgsTmpfsCancelsAnEarlierHideAtTheSamePath(t *testing.T) {
+	liveAgentdSocket(t)
 	got, err := bwrapArgs(nil, constructedRootPlan(
 		sandboxpolicy.MountEntry{Path: "/scratch", Mode: sandboxpolicy.MountHide},
 		sandboxpolicy.MountEntry{Path: "/scratch/inner", Mode: sandboxpolicy.MountTmpfs},
@@ -156,6 +183,7 @@ func TestBwrapArgsRefusesTmpfsOnAFileMountPoint(t *testing.T) {
 // than a projection, and reading Path as a bind source is exactly the mistake
 // the refusal exists to catch.
 func TestBwrapArgsRefusesTmpfsEntryCarryingAHostSource(t *testing.T) {
+	liveAgentdSocket(t)
 	_, err := bwrapArgs(nil, constructedRootPlan(
 		sandboxpolicy.MountEntry{
 			Path: "/scratch", Mode: sandboxpolicy.MountTmpfs, Source: "/host/data",

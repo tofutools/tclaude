@@ -10,7 +10,7 @@ import (
 )
 
 func TestNormalizeTmpfsCanonicalizesAndSorts(t *testing.T) {
-	home, _, _, _ := protectedHome(t)
+	protectedHome(t)
 	profile, _, err := NormalizeForPersistence(Profile{
 		Name: "scratch",
 		Tmpfs: []TmpfsMount{
@@ -21,11 +21,42 @@ func TestNormalizeTmpfsCanonicalizesAndSorts(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, profile.Tmpfs, 3)
+	// `~` expands, "." collapses, a trailing slash goes — but the result is
+	// NOT symlink-resolved, and that is the contract rather than an oversight:
+	// a tmpfs path names a position inside a namespace that does not exist
+	// yet, so resolving it would answer a question about the wrong filesystem.
+	// Expect the raw $HOME spelling; on macOS the canonical form of the same
+	// directory is /private/var/... and asserting that would pin the opposite
+	// behavior.
+	rawHome, err := os.UserHomeDir()
+	require.NoError(t, err)
 	assert.Equal(t, []TmpfsMount{
 		{Path: "/scratch/inner", Size: "512MiB", SizeBytes: 512 << 20},
 		{Path: "/srv/build"},
-		{Path: filepath.Join(home, "work-cache")},
+		{Path: filepath.Join(rawHome, "work-cache")},
 	}, profile.Tmpfs)
+}
+
+// The flip side of the note above, asserted rather than implied: an authored
+// tmpfs path is retained lexically even when the same directory has a
+// different canonical spelling on this host. The protected-root and
+// launch-contract walls are what compare both spellings; normalization does
+// not rewrite the operator's path.
+func TestNormalizeTmpfsRetainsTheAuthoredSpelling(t *testing.T) {
+	protectedHome(t)
+	root := t.TempDir()
+	target := filepath.Join(root, "real")
+	require.NoError(t, os.MkdirAll(target, 0o755))
+	link := filepath.Join(root, "link")
+	require.NoError(t, os.Symlink(target, link))
+
+	profile, _, err := NormalizeForPersistence(Profile{
+		Name: "scratch", Tmpfs: []TmpfsMount{{Path: link}},
+	})
+	require.NoError(t, err)
+	require.Len(t, profile.Tmpfs, 1)
+	assert.Equal(t, link, profile.Tmpfs[0].Path,
+		"a tmpfs path is a namespace position, not a host path to resolve")
 }
 
 func TestNormalizeTmpfsRejectsMalformedRows(t *testing.T) {
