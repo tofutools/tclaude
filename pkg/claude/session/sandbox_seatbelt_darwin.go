@@ -549,6 +549,16 @@ func existingSeatbeltPlan(plan sandboxpolicy.MountPlan) (sandboxpolicy.MountPlan
 			filtered.Entries = append(filtered.Entries, entry)
 			continue
 		}
+		if entry.Mode == sandboxpolicy.MountTmpfs {
+			// Named rather than reported as an unrecognized mode number:
+			// Seatbelt filters paths in the host namespace and has no mount to
+			// create, so there is nothing to stat and nothing to filter.
+			// ValidateTmpfsSupport refuses this launch before it reaches here;
+			// this is the backstop that keeps the reason attributable.
+			return sandboxpolicy.MountPlan{}, fmt.Errorf(
+				"seatbelt_tmpfs_mount: Seatbelt cannot mount a temporary filesystem at sandbox path %q (mount plan entry %d); a tmpfs requires a mount namespace, which only the Linux tclaude-layer provides",
+				entry.Path, i)
+		}
 		if entry.Mode != sandboxpolicy.MountRO && entry.Mode != sandboxpolicy.MountRW {
 			return sandboxpolicy.MountPlan{}, fmt.Errorf(
 				"mount plan entry %d has invalid mode %d",

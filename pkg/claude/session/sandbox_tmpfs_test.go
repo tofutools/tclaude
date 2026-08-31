@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 // indexOfBwrapFlagPath finds a two-token bubblewrap operation such as
@@ -202,4 +203,48 @@ func TestRenderSeatbeltProfileRefusesTmpfs(t *testing.T) {
 	)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "seatbelt_tmpfs_mount")
+}
+
+// The end-to-end policy → spec → arguments path, which is the one a launch
+// actually walks. A tmpfs in the frozen snapshot must survive the launch
+// contract's own composition of the filesystem — that composition flattens the
+// grants back into bare host-path lists, which cannot carry a mount with no
+// host side, so this is exactly where a tmpfs could silently vanish.
+func TestTclaudeLayerLaunchSpecCarriesTmpfsThroughToTheArguments(t *testing.T) {
+	cwd := t.TempDir()
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.Effective.FilesystemRoot = sandboxpolicy.FilesystemRootSeparate
+	snapshot.Effective.Tmpfs = []sandboxpolicy.TmpfsMount{
+		{Path: "/scratch", Size: "64MiB", SizeBytes: 64 << 20},
+	}
+	spec, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: harness.DefaultName, Cwd: cwd, Snapshot: &snapshot,
+	})
+	require.NoError(t, err)
+	require.Equal(t, snapshot.Effective.Tmpfs, spec.Effective.Tmpfs,
+		"the launch contract must not drop the mount while recomposing the filesystem")
+
+	plan, err := sandboxpolicy.RenderMountPlanWithEngine(
+		spec.Effective, spec.Contract.NetworkEngine)
+	require.NoError(t, err)
+	assert.Contains(t, plan.Entries, sandboxpolicy.MountEntry{
+		Path: "/scratch", Mode: sandboxpolicy.MountTmpfs, SizeBytes: 64 << 20,
+	}, "recomposing the launch filesystem must not collide with the mount")
+}
+
+// A tmpfs over the workspace would mount an empty filesystem on top of the
+// directory the agent was launched to work in. The protected-root wall does not
+// cover this — the workspace is not a protected root — so the refusal has to
+// come from the seam that knows the launch contract.
+func TestTclaudeLayerLaunchSpecRefusesATmpfsOverTheWorkspace(t *testing.T) {
+	cwd := t.TempDir()
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.Effective.FilesystemRoot = sandboxpolicy.FilesystemRootSeparate
+	snapshot.Effective.Tmpfs = []sandboxpolicy.TmpfsMount{{Path: cwd}}
+	_, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: harness.DefaultName, Cwd: cwd, Snapshot: &snapshot,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported_sandbox_profile_tmpfs")
+	assert.Contains(t, err.Error(), "launch-required directory")
 }
