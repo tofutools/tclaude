@@ -184,6 +184,7 @@ type sandboxProfileEffectiveContext struct {
 	Filesystem              []sandboxpolicy.FilesystemGrant   `json:"filesystem"`
 	Environment             []string                          `json:"environment"`
 	AgentDirectories        []string                          `json:"agent_directories"`
+	Tmpfs                   []sandboxpolicy.TmpfsMount        `json:"tmpfs,omitempty"`
 	FilesystemRoot          sandboxpolicy.FilesystemRootMode  `json:"filesystem_root,omitempty"`
 	HarnessConfig           sandboxpolicy.HarnessConfigAccess `json:"harness_config,omitempty"`
 	Network                 sandboxpolicy.NetworkRules        `json:"network"`
@@ -924,6 +925,7 @@ func effectiveDraftSandboxProfileContexts(
 			Filesystem:              policy.Filesystem,
 			Environment:             environment,
 			AgentDirectories:        policy.AgentDirectories,
+			Tmpfs:                   policy.Tmpfs,
 			FilesystemRoot:          policy.FilesystemRoot,
 			HarnessConfig:           policy.HarnessConfig,
 			Network:                 axes.Network,

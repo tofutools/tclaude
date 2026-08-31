@@ -1437,6 +1437,15 @@ func baseStates() []dashsnap.State {
 			SettleMS: 700,
 		},
 		{
+			Key:      "management-sandbox-tmpfs-editor",
+			Title:    "Management — temporary filesystems",
+			Caption:  "Scratch mounts backed by no host directory: a flat path+size row per mount, the capability limit stated where they are authored, and a blank size showing the kernel default rather than a fake number.",
+			Width:    1280,
+			Height:   1000,
+			JS:       sandboxTmpfsDashSnapJS(),
+			SettleMS: 700,
+		},
+		{
 			Key:   "management-sandbox-mount-path-editor",
 			Title: "Management — mount a directory at a sandbox path",
 			Caption: "The per-row \u2933 control on the filesystem table. Row 1 is remapped with its panel open; " +
@@ -3694,6 +3703,59 @@ func sandboxPreLaunchDashSnapJS(expanded bool) string {
   }
   section.scrollIntoView({block:'center'});
 })();`, expanded, expanded)
+}
+
+// sandboxTmpfsDashSnapJS opens the real editor on a profile carrying the two
+// shapes the section has to distinguish at a glance: a capped mount and an
+// uncapped one. The section is expanded, because the point of the capture is
+// the row geometry — a path that gets the width and a size that stays
+// secondary — which a collapsed count cannot show.
+func sandboxTmpfsDashSnapJS() string {
+	return `return (async function(){
+  var module = await import('/static/js/sandbox-profiles.js');
+  module.openSandboxProfileEditor({
+    name:'dashsnap-tmpfs',filesystem:[{path:'/tmp',access:'write'}],environment:[],includes:[],agent_directories:[],
+    tmpfs:[
+      {path:'/scratch',size:'512MiB'},
+      {path:'/home/dev/project/node_modules'}
+    ],
+    network:{baseline:'allow',packs:[],deny_packs:[],allow:[],deny:[]},
+    unix_sockets:{mode:''}
+  });
+  var deadline=Date.now()+6000;
+  while(!document.querySelector('#sandbox-profile-editor-tmpfs-section')&&Date.now()<deadline){
+    await new Promise(function(resolve){setTimeout(resolve,40);});
+  }
+  var section=document.querySelector('#sandbox-profile-editor-tmpfs-section');
+  if(!section) throw new Error('tmpfs editor section did not render');
+  section.open=true;
+  await new Promise(function(resolve){requestAnimationFrame(function(){requestAnimationFrame(resolve);});});
+  if(section.querySelector('.sbx-section-count').textContent.trim()!=='2 entries'){
+    throw new Error('tmpfs editor count does not use shared section wording');
+  }
+  var rows=[...section.querySelectorAll('.sbx-tmpfs-row')];
+  if(rows.length!==2) throw new Error('expected two visible tmpfs rows');
+  if(rows.some(function(row,index){return row.getAttribute('role')!=='group'||!row.getAttribute('aria-label').includes('Temporary filesystem '+(index+1)+':');})){
+    throw new Error('tmpfs rows are not accessibly grouped by position and path');
+  }
+  if(rows.some(function(row){return !row.querySelector('.sbx-tmpfs-path')||!row.querySelector('.sbx-tmpfs-size');})){
+    throw new Error('a tmpfs row is missing its path or size field');
+  }
+  if(!section.querySelector('.sbx-tmpfs-intro').textContent.includes('Linux tclaude-layer only')){
+    throw new Error('capability limit is missing from the section body');
+  }
+  // The size field must stay narrower than the path it qualifies, or the row
+  // reads as two equal fields rather than a path with a modifier.
+  var path=rows[0].querySelector('.sbx-tmpfs-path').getBoundingClientRect();
+  var size=rows[0].querySelector('.sbx-tmpfs-size').getBoundingClientRect();
+  if(Math.abs(size.top-path.top)>1){
+    throw new Error('tmpfs row wrapped at this capture width; path top '+path.top+' vs size top '+size.top);
+  }
+  if(size.width>=path.width){
+    throw new Error('size field is not secondary to the sandbox path: path '+path.width+'px vs size '+size.width+'px');
+  }
+  section.scrollIntoView({block:'center'});
+})();`
 }
 
 // sandboxDenyPreviewDashSnapJS drives the real sandbox editor and prediction

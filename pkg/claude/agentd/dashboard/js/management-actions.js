@@ -914,6 +914,12 @@ export function createManagementActions({
       // an operator's setup script the moment it loaded a profile it cannot
       // yet display.
       if (draft.pre_launch !== undefined) body.pre_launch = draft.pre_launch;
+      // Same tri-state as pre_launch, and it matters for the same reason: the
+      // daemon reads an absent tmpfs key as "leave the mounts alone" and an
+      // explicit [] as "unmount them", so a body that always carried the field
+      // would silently drop an agent's scratch space the moment this editor
+      // loaded a profile it could not yet display.
+      if (draft.tmpfs !== undefined) body.tmpfs = draft.tmpfs;
       if (draft.id) body.id = draft.id;
       if (draft.filesystem_spellings !== undefined) body.filesystem_spellings = draft.filesystem_spellings;
       if (draft.network !== undefined) body.network = draft.network;
@@ -949,9 +955,15 @@ export function createManagementActions({
       // the preview with the key absent, and absence means "keep them". Carry
       // the intent across explicitly, or clearing a block would silently do
       // nothing.
-      const committed = body.pre_launch === undefined
-        ? preview.after
-        : { ...preview.after, pre_launch: body.pre_launch };
+      const committed = {
+        ...preview.after,
+        ...(body.pre_launch === undefined ? {} : { pre_launch: body.pre_launch }),
+        // preview.after carries tmpfs with omitempty too, so a deliberate
+        // "remove every mount" ([]) comes back with the key absent — which
+        // means "keep them". Carry the intent across explicitly or clearing
+        // the last mount would silently do nothing.
+        ...(body.tmpfs === undefined ? {} : { tmpfs: body.tmpfs }),
+      };
       await sandbox.saveSandboxProfile(targetName, committed, preview.revision || '');
       state.closeDialog();
       notify(`sandbox profile saved: ${preview.after.name}`);

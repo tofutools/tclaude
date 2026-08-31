@@ -190,9 +190,10 @@ The axes:
 - **`tmpfs`** — rows of `{path, size?}` mounting a temporary filesystem *inside*
   the sandbox: `{"path": "/scratch", "size": "512MiB"}`. This is the one thing a
   `filesystem` row cannot express — writable space backed by no host directory
-  at all, which vanishes when the launch ends. `path` is a **sandbox** path, so
-  it is validated syntactically like `mount_path` and never resolved against the
-  host; `size` takes the same k8s-like quantities as a memory limit and, when
+  at all, which vanishes when the launch ends. The dashboard editor has a
+  **Temporary filesystems** section for it, beside Filesystem. `path` is a
+  **sandbox** path, so it is validated syntactically like `mount_path` and never
+  resolved against the host; `size` takes the same k8s-like quantities as a memory limit and, when
   omitted, gets the kernel's tmpfs default of **half of RAM** — worth setting,
   because an agent that fills an uncapped tmpfs is consuming host memory.
   A tmpfs takes part in ordinary most-specific-wins ordering: it shadows what
