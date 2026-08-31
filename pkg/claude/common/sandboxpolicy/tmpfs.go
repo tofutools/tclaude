@@ -136,13 +136,16 @@ func normalizeTmpfs(in []TmpfsMount, protected []string) ([]TmpfsMount, error) {
 // cross-scope union in Resolve stay independent of tier order, exactly as the
 // deny-dominates-write-dominates-read lattice does for grants.
 //
-// Equal ceilings need a tie-break, and it is not cosmetic. `1Mi` and `1048576`
-// are the same number of bytes and different authored SPELLINGS, and the
+// Equal ceilings need a tie-break, and it is not cosmetic. `1Mi` and `1MiB` are
+// the same number of bytes and two different authored SPELLINGS, and the
 // spelling is retained for export and UI editing — so without a tie-break the
 // merged row's Size would depend on which tier happened to be folded first,
 // and the same two profiles would persist and export differently depending on
 // the order they were composed in. Picking the lexically smaller spelling is
 // arbitrary but total, which is all commutativity needs.
+//
+// (A suffix-less `1048576` is NOT the third spelling it looks like: the
+// quantity grammar refuses it outright, so it never reaches this fold.)
 //
 // The zero value merges as "nothing here yet", so callers can fold into an
 // absent map entry without a lookup dance.
