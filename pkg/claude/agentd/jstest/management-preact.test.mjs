@@ -4856,6 +4856,20 @@ test('sandbox tmpfs validation compares sandbox paths the way the daemon cleans 
   assert.match(root.mounts[0].path.join(' '), /sandbox root/,
     'a dot-segment spelling of / does not slip past the root check');
 
+  // The daemon expands bare "~" and a "~/" prefix against its OWN home and
+  // refuses to guess another account's, so "~someone/x" keeps its literal "~"
+  // and is then rejected as non-absolute. The client must draw the same line.
+  assert.deepEqual(sandboxTmpfsValidation([{ path: '~' }]).errors, []);
+  assert.deepEqual(sandboxTmpfsValidation([{ path: '~/scratch' }]).errors, []);
+  assert.deepEqual(sandboxTmpfsValidation([{ path: '/scratch' }]).errors, []);
+  const otherHome = sandboxTmpfsValidation([{ path: '~someone/scratch' }]);
+  assert.match(otherHome.mounts[0].path.join(' '), /must be absolute/,
+    'another account’s home is not a spelling the daemon accepts');
+  assert.match(otherHome.mounts[0].path.join(' '), /~otheruser/,
+    'the message names the shape that was rejected rather than only the rule');
+  assert.deepEqual(sandboxTmpfsValidation([{ path: 'scratch' }]).errors.length, 1,
+    'a bare relative path is still refused');
+
   // The mount_path form of a filesystem row is its guest path, so that is what
   // a tmpfs collides with — not the host path it reads from.
   const remapped = sandboxTmpfsValidation(

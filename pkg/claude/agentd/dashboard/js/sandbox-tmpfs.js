@@ -125,8 +125,13 @@ export function sandboxTmpfsValidation(mounts, filesystem = []) {
     if (!authored) {
       errors.path.push('Path is required.');
     } else {
-      if (!authored.startsWith('/') && !authored.startsWith('~')) {
-        errors.path.push('Path must be absolute (or start with ~ for the daemon’s home).');
+      // Exactly the shapes cleanDirectoryPath accepts: an absolute path, bare
+      // "~", or a "~/" prefix. "~otheruser/x" is NOT one of them — the daemon
+      // refuses to guess another account's home, keeps the literal "~", and
+      // then rejects the path as non-absolute. Accepting any leading "~" here
+      // would leave Save enabled on a payload certain to be refused.
+      if (authored !== '~' && !authored.startsWith('~/') && !authored.startsWith('/')) {
+        errors.path.push('Path must be absolute, or start with ~ or ~/ for the daemon’s own home (~otheruser/… is not supported).');
       }
       if (path === '/') errors.path.push('The sandbox root cannot be a temporary filesystem.');
       if (utf8.encode(authored).length > MAX_PATH_BYTES) {
