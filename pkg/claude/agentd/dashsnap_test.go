@@ -1437,11 +1437,13 @@ func baseStates() []dashsnap.State {
 			SettleMS: 700,
 		},
 		{
-			Key:      "management-sandbox-tmpfs-editor",
-			Title:    "Management — temporary filesystems",
-			Caption:  "Scratch mounts backed by no host directory: a flat path+size row per mount, the capability limit stated where they are authored, and a blank size showing the kernel default rather than a fake number.",
+			Key:   "management-sandbox-tmpfs-editor",
+			Title: "Management — temporary filesystems",
+			Caption: "Scratch mounts backed by no host directory: a flat path+size row per mount, the capability limit stated where they are authored, " +
+				"and a blank size showing the kernel default rather than a fake number. Tall enough to also catch the effective-policy preview refusing " +
+				"a harness-builtin target, which is the capability honesty the axis promises.",
 			Width:    1280,
-			Height:   1000,
+			Height:   1240,
 			JS:       sandboxTmpfsDashSnapJS(),
 			SettleMS: 700,
 		},
@@ -3714,7 +3716,7 @@ func sandboxTmpfsDashSnapJS() string {
 	return `return (async function(){
   var module = await import('/static/js/sandbox-profiles.js');
   module.openSandboxProfileEditor({
-    name:'dashsnap-tmpfs',filesystem:[{path:'/tmp',access:'write'}],environment:[],includes:[],agent_directories:[],
+    name:'dashsnap-tmpfs',filesystem:[{path:'/usr/share',access:'read'}],environment:[],includes:[],agent_directories:[],
     tmpfs:[
       {path:'/scratch',size:'512MiB'},
       {path:'/home/dev/project/node_modules'}

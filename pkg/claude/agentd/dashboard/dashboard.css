@@ -7085,8 +7085,13 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
   gap: .3rem;
 }
 .sbx-tmpfs-row.is-invalid > input[aria-invalid="true"] { border-color: #6e3a3a; }
-.sbx-tmpfs-path { flex: 1 1 auto; min-width: 0; }
-.sbx-tmpfs-size {
+/* Both selectors carry the row class on purpose. The shared
+   `.sbx-section input:not([type])` rule above sets `flex: 1` and outranks a
+   bare class, so without this the path and the size render at exactly the same
+   width and the row reads as two equal fields instead of a path with a
+   modifier hanging off it. */
+.sbx-section .sbx-tmpfs-row input.sbx-tmpfs-path { flex: 1 1 auto; min-width: 0; }
+.sbx-section .sbx-tmpfs-row input.sbx-tmpfs-size {
   flex: 0 1 13rem;
   min-width: 7rem;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
