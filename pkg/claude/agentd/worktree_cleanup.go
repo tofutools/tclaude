@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -92,16 +93,15 @@ func inspectAgentWorktree(convID string) agentWorktreeView {
 	// then runs Git once or more per distinct repository. Reserve that scan for
 	// the exceptional case it exists to support — a linked worktree directory
 	// that was deleted out-of-band while its Git registration survives.
-	if wt := inspectAgentWorktreeWithRegistry(convID, nil); wt.Kind != "none" {
+	dirs := agentWorktreeDirs(convID)
+	wt := inspectWorktreeDirs(dirs, nil)
+	if wt.Kind != "none" || !worktreeDirsNeedRegistrationFallback(dirs) {
 		return wt
 	}
-	return inspectAgentWorktreeWithRegistry(convID, registeredWorktreesForCleanup())
+	return inspectWorktreeDirs(dirs, registeredWorktreesForCleanup())
 }
 
-func inspectAgentWorktreeWithRegistry(
-	convID string,
-	registered map[string]registeredSweepWorktree,
-) agentWorktreeView {
+func agentWorktreeDirs(convID string) []string {
 	loc := agent.ResolveLocation(convID)
 	dirs := []string{loc.CurrentDir, loc.StartupDir}
 	if sess, err := db.FindSessionByConvID(convID); err == nil && sess != nil {
@@ -109,7 +109,25 @@ func inspectAgentWorktreeWithRegistry(
 			dirs = append(dirs, physical)
 		}
 	}
-	return inspectWorktreeDirs(dirs, registered)
+	return dirs
+}
+
+// worktreeDirsNeedRegistrationFallback distinguishes the recovery case from
+// an ordinary accessible directory that simply is not a Git worktree. The
+// global registration scan can recover a linked worktree deleted out-of-band,
+// but has nothing to add for an existing non-repository directory.
+func worktreeDirsNeedRegistrationFallback(dirs []string) bool {
+	for _, dir := range dirs {
+		dir = strings.TrimSpace(dir)
+		if dir == "" {
+			continue
+		}
+		info, err := os.Stat(dir)
+		if err != nil || !info.IsDir() {
+			return true
+		}
+	}
+	return false
 }
 
 func inspectWorktreeDirs(

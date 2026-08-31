@@ -83,6 +83,41 @@ func TestRetireWorktreeProbeSkipsGlobalRegistrationScanForAccessibleTarget(t *te
 	assert.Zero(t, worktreeLists, "accessible target must not list unrelated worktrees")
 }
 
+func TestRetireWorktreeProbeSkipsGlobalScanForAccessibleNonRepo(t *testing.T) {
+	const dashboardOrigin = "http://127.0.0.1:0"
+	t.Cleanup(agentd.SetPopupBaseURLForTest(dashboardOrigin))
+	f := newFlow(t)
+
+	const conv = "rwnone-1111-2222-3333-4444"
+	cwd := f.TestCwd("rw-accessible-non-repo")
+	f.HaveConvWithTitle(conv, "non-repo-probe-worker")
+	f.HaveAliveSession(conv, "spwn-rwnone", "tmux-rwnone", cwd)
+	f.HaveEnrolledAgent(conv)
+	installFakeWorktrees(t, nil)
+
+	var repoProbes, worktreeLists int
+	t.Cleanup(agentd.SetSweepWorktreeFnsForTest(
+		func(string) ([]worktree.WorktreeInfo, error) {
+			worktreeLists++
+			return nil, nil
+		},
+		func(string) (string, error) {
+			repoProbes++
+			return "", errors.New("not a repo")
+		},
+		func(string) bool { return false },
+	))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	req := testharness.JSONRequest(t, http.MethodGet, "/api/agents/"+conv+"/worktree?retire=1", nil)
+	req.Header.Set("Origin", dashboardOrigin)
+	probe := testharness.Serve(mux, req)
+	require.Equal(t, http.StatusOK, probe.Code, "body=%s", probe.Body.String())
+	assert.Contains(t, probe.Body.String(), `"kind":"none"`)
+	assert.Zero(t, repoProbes, "accessible non-repo must not scan historical repository dirs")
+	assert.Zero(t, worktreeLists, "accessible non-repo must not list unrelated worktrees")
+}
+
 // postRetireWt fires the retire request with a raw query string and
 // decodes the worktree-aware response.
 func postRetireWt(t *testing.T, mux http.Handler, conv, query string) (int, retireWtResp) {
@@ -148,6 +183,8 @@ func TestRetire_RemovesMissingDetachedRegisteredWorktree(t *testing.T) {
 	f.HaveConvWithTitle(conv, "missing-detached-worker")
 	f.HaveAliveSession(conv, "spwn-rwmd", "tmux-rwmd", missing)
 	f.MarkOffline("tmux-rwmd")
+	require.NoError(t, os.RemoveAll(missing),
+		"the scenario requires an out-of-band deleted worktree directory")
 	f.HaveEnrolledAgent(conv)
 	f.HaveGroup("squad")
 	_, err := db.SetAgentGroupDefaultCwd("squad", repo)

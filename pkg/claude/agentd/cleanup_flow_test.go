@@ -425,6 +425,8 @@ func TestCleanup_Agents_DeleteRemovesMissingRegisteredWorktree(t *testing.T) {
 	f.HaveAliveSession(conv, "spwn-wmrg", "tmux-wmrg",
 		filepath.Join(missing, "nested"))
 	f.MarkOffline("tmux-wmrg")
+	require.NoError(t, os.RemoveAll(missing),
+		"the scenario requires an out-of-band deleted worktree directory")
 	f.HaveGroup("squad")
 	_, err := db.SetAgentGroupDefaultCwd("squad", repo)
 	require.NoError(t, err)
@@ -494,6 +496,8 @@ func TestCleanup_Agents_MissingRegisteredFallbackIsPerAgent(t *testing.T) {
 		f.HaveEnrolledAgent(row.conv)
 		require.NoError(t, db.UpsertAgentWorkdir(row.conv, scratch, "", ""))
 	}
+	require.NoError(t, os.RemoveAll(missingA))
+	require.NoError(t, os.RemoveAll(missingB))
 	f.HaveGroup("squad")
 	_, err := db.SetAgentGroupDefaultCwd("squad", repo)
 	require.NoError(t, err)
