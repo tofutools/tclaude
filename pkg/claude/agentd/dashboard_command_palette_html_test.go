@@ -34,6 +34,17 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// CSS: the box + the keyboard-selection highlight.
 	must(".palette-box {", "the palette box has a CSS rule")
 	must(".palette-item.selected", "the keyboard-selected command is highlighted")
+	for _, scrollbarRule := range []struct{ needle, why string }{
+		{"#command-palette-modal .palette-list::-webkit-scrollbar", "the results list has explicit WebKit scrollbar geometry"},
+		{"scrollbar-color: #6e7681 #0d1117", "Firefox gets the regular dashboard scrollbar colors"},
+		{"body.wizard #command-palette-modal .palette-list {", "Firefox gets the wizard scrollbar colors"},
+		{"scrollbar-color: #7a5db0 #140f28", "the Firefox wizard scrollbar uses arcane chrome"},
+		{"body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb", "WebKit gets the wizard scrollbar thumb"},
+		{"background: #a97bd6;", "the wizard scrollbar has the standard hover color"},
+		{"background: #c9a6f0;", "the wizard scrollbar has the standard active color"},
+	} {
+		must(scrollbarRule.needle, scrollbarRule.why)
+	}
 
 	// JS: command construction stays plain while Preact owns both markup roots
 	// and exposes one lifecycle-aware mount boundary.
