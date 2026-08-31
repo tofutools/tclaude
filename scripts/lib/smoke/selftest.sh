@@ -103,67 +103,75 @@ if ! cmp -s "$work/apt-update.want" "$apt_update_argv"; then
   failures=1
 fi
 
-# External prerequisite clones occasionally arrive truncated on hosted
-# runners. Prove the retry helper forwards the reviewed clone arguments, uses
-# a fresh destination for every attempt, promotes only the successful one, and
-# stops after exactly three failures. Git and sleep are shadowed, so this is
-# deterministic and performs no network access or real backoff.
-git_clone_retry_success="$work/git-clone-retry-success"
+# The passt Git smart-HTTP response is truncated on hosted runners, so source
+# provisioning uses the official release archive. Prove the helper requests
+# bounded curl retries, verifies the exact archive bytes, strips the archive's
+# top directory, and refuses a checksum mismatch before creating DEST. Curl is
+# shadowed, so this is deterministic and performs no network access.
+mkdir -p "$work/archive-source/passt-pin"
+printf 'pinned source\n' > "$work/archive-source/passt-pin/source.txt"
+tar -cJf "$work/archive.fixture.tar.xz" -C "$work/archive-source" passt-pin
+archive_sha="$(sha256sum "$work/archive.fixture.tar.xz" | awk '{print $1}')"
+archive_dest="$work/archive-dest"
 (
-  retry_calls=0
-  sleep() { :; }
-  git() {
-    retry_calls=$((retry_calls + 1))
-    printf '%s\n' "$@" > "$work/git-clone-retry-$retry_calls.argv"
-    local attempt_dir="${*: -1}"
-    mkdir -p "$attempt_dir"
-    printf '%s\n' "$retry_calls" > "$attempt_dir/attempt"
-    (( retry_calls >= 3 ))
+  curl() {
+    printf '%s\n' "$@" > "$work/archive-curl.argv"
+    local output=""
+    while (( $# > 0 )); do
+      if [[ "$1" == "--output" ]]; then
+        output="$2"
+        shift 2
+      else
+        shift
+      fi
+    done
+    cp "$work/archive.fixture.tar.xz" "$output"
   }
-  smoke::git_clone_retry https://example.invalid/passt "$git_clone_retry_success" \
-    --quiet --depth 1 --branch pinned
-  [[ "$retry_calls" -eq 3 ]]
+  smoke::download_extract_tar_xz \
+    https://example.invalid/passt.tar.xz "$archive_sha" "$archive_dest"
 ) || {
-  echo 'selftest FAIL: git clone retry did not succeed on its third attempt'
+  echo 'selftest FAIL: pinned archive download/extract rejected matching bytes'
   failures=1
 }
-for attempt in 1 2 3; do
-  cat > "$work/git-clone-retry-$attempt.want" <<EOF
-clone
---quiet
---depth
-1
---branch
-pinned
-https://example.invalid/passt
-$git_clone_retry_success.clone-attempt-$attempt
+cat > "$work/archive-curl.want" <<EOF
+--fail
+--silent
+--show-error
+--location
+--retry
+3
+--retry-all-errors
+--retry-delay
+2
+--output
+$archive_dest.tar.xz
+https://example.invalid/passt.tar.xz
 EOF
-  if ! cmp -s "$work/git-clone-retry-$attempt.want" "$work/git-clone-retry-$attempt.argv"; then
-    printf 'selftest FAIL: git clone retry attempt %s did not preserve its arguments/path\n' "$attempt"
-    failures=1
-  fi
-done
-if [[ "$(cat "$git_clone_retry_success/attempt" 2>/dev/null || true)" != 3 ||
-      ! -d "$git_clone_retry_success.clone-attempt-1" ||
-      ! -d "$git_clone_retry_success.clone-attempt-2" ||
-      -e "$git_clone_retry_success.clone-attempt-3" ]]; then
-  echo 'selftest FAIL: git clone retry did not isolate attempts and promote only the success'
+if ! cmp -s "$work/archive-curl.want" "$work/archive-curl.argv" ||
+   [[ "$(cat "$archive_dest/source.txt" 2>/dev/null || true)" != "pinned source" ]]; then
+  echo 'selftest FAIL: pinned archive helper lost its retry arguments or extraction shape'
   failures=1
 fi
 
-git_clone_retry_failure="$work/git-clone-retry-failure"
-retry_failure_calls="$work/git-clone-retry-failure.calls"
-: > "$retry_failure_calls"
+bad_archive_dest="$work/archive-bad-dest"
 if (
-  sleep() { :; }
-  git() { printf 'x' >> "$retry_failure_calls"; return 1; }
-  smoke::git_clone_retry https://example.invalid/passt "$git_clone_retry_failure" --quiet
+  curl() {
+    local output=""
+    while (( $# > 0 )); do
+      if [[ "$1" == "--output" ]]; then output="$2"; shift 2; else shift; fi
+    done
+    cp "$work/archive.fixture.tar.xz" "$output"
+  }
+  smoke::download_extract_tar_xz \
+    https://example.invalid/passt.tar.xz \
+    0000000000000000000000000000000000000000000000000000000000000000 \
+    "$bad_archive_dest"
 ); then
-  echo 'selftest FAIL: git clone retry accepted three failed attempts'
+  echo 'selftest FAIL: pinned archive helper accepted a checksum mismatch'
   failures=1
 fi
-if [[ "$(wc -c < "$retry_failure_calls" | tr -d ' ')" -ne 3 || -e "$git_clone_retry_failure" ]]; then
-  echo 'selftest FAIL: git clone retry did not stop after three failures without promotion'
+if [[ -e "$bad_archive_dest" ]]; then
+  echo 'selftest FAIL: pinned archive helper extracted before checksum verification'
   failures=1
 fi
 
@@ -1158,4 +1166,4 @@ if [[ "$failures" -ne 0 ]]; then
   echo "smoke evidence selftest FAILED; refusing to trust any smoke result"
   exit 1
 fi
-echo "smoke evidence selftest: ok (apt-source guards + clone retry + evidence checker + manifest drift guards + per-flow harness declarations + shard-map union, derived-install-set, workflow-matrix and harness-coverage guards + fixture teardown)"
+echo "smoke evidence selftest: ok (apt-source guards + pinned archive download + evidence checker + manifest drift guards + per-flow harness declarations + shard-map union, derived-install-set, workflow-matrix and harness-coverage guards + fixture teardown)"

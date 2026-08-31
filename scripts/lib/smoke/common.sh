@@ -23,37 +23,32 @@ smoke::error() {
   printf 'ERROR: %s\n' "$*" >&2
 }
 
-# smoke::git_clone_retry URL DEST [CLONE_ARGS...] — clone an external smoke
-# prerequisite with bounded retries. Hosted runners occasionally truncate a
-# Git HTTPS transfer (GnuTLS recv error / early EOF); that is not evidence of a
-# product regression. Each attempt uses a fresh sibling path so a half-created
-# checkout from one transfer cannot poison the next.
-smoke::git_clone_retry() {
+# smoke::download_extract_tar_xz URL SHA256 DEST — fetch a pinned source
+# archive with curl's bounded transport retries, verify its exact bytes, and
+# extract its single top-level directory into DEST. The archive path avoids the
+# passt Git server's consistently truncated smart-HTTP response on hosted
+# runners while retaining reproducible source identity through SHA-256.
+smoke::download_extract_tar_xz() {
   local url="$1"
-  local destination="$2"
-  shift 2
+  local want_sha="$2"
+  local destination="$3"
+  local archive="${destination}.tar.xz"
 
-  if [[ -z "$url" || -z "$destination" || -e "$destination" ]]; then
-    smoke::error "retrying git clone requires a URL and a nonexistent destination: ${destination:-<empty>}"
+  if [[ -z "$url" || -z "$want_sha" || -z "$destination" || -e "$destination" ]]; then
+    smoke::error "downloading a pinned archive requires URL, SHA-256, and a nonexistent destination: ${destination:-<empty>}"
     return 1
   fi
-
-  local attempt attempt_dir
-  for attempt in 1 2 3; do
-    attempt_dir="${destination}.clone-attempt-${attempt}"
-    if git clone "$@" "$url" "$attempt_dir"; then
-      if mv -- "$attempt_dir" "$destination"; then
-        return 0
-      fi
-      smoke::error "could not move cloned prerequisite into place: $destination"
-      return 1
-    fi
-    if (( attempt < 3 )); then
-      smoke::log "Git clone attempt $attempt failed; retrying"
-      sleep $((attempt * 2))
-    fi
-  done
-  return 1
+  curl --fail --silent --show-error --location \
+    --retry 3 --retry-all-errors --retry-delay 2 \
+    --output "$archive" "$url" || return 1
+  local got_sha
+  got_sha="$(sha256sum "$archive" | awk '{print $1}')" || return 1
+  if [[ "$got_sha" != "$want_sha" ]]; then
+    smoke::error "archive checksum mismatch: got $got_sha, wanted $want_sha"
+    return 1
+  fi
+  mkdir -p "$destination" || return 1
+  tar -xJf "$archive" --strip-components=1 -C "$destination"
 }
 
 # smoke::apt_source_is_microsoft_only FILE — classify an active deb822 source
