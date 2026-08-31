@@ -21,6 +21,37 @@ const ZERO_SIZE = /^(?:0+(?:\.0*)?|\.0+)[A-Za-z]+$/i;
 const utf8 = new TextEncoder();
 let editorRowSequence = 0;
 
+// cleanSandboxPath is the LEXICAL half of what the daemon does before it
+// compares two sandbox paths: collapse repeated separators, drop "." segments,
+// resolve ".." against what precedes it, and strip a trailing separator.
+//
+// Lexical only, deliberately. The daemon expands a leading "~" against its own
+// home and this browser does not know that path, so "~/scratch" stays as
+// authored and a collision with its expanded spelling is the daemon's to
+// catch. What this DOES buy is identity for the cases the client can decide —
+// "/srv/./work" and "/srv/work" are one path, and without this the editor
+// would happily enable Save on a payload the daemon is certain to refuse.
+export function cleanSandboxPath(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const absolute = raw.startsWith('/');
+  const out = [];
+  for (const segment of raw.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      // A leading ".." on an absolute path has nowhere to go; the kernel keeps
+      // it at the root, so drop it rather than escaping above "/".
+      if (out.length && out[out.length - 1] !== '..') out.pop();
+      else if (!absolute) out.push('..');
+      continue;
+    }
+    out.push(segment);
+  }
+  const joined = out.join('/');
+  if (absolute) return `/${joined}`;
+  return joined || '.';
+}
+
 function nextEditorRowID() {
   editorRowSequence += 1;
   return `tmpfs-editor-${editorRowSequence}`;
@@ -73,7 +104,7 @@ export function sandboxTmpfsValidation(mounts, filesystem = []) {
 
   const counts = new Map();
   for (const row of mounts) {
-    const path = String(row?.path ?? '').trim();
+    const path = cleanSandboxPath(row?.path);
     if (!path) continue;
     counts.set(path, (counts.get(path) || 0) + 1);
   }
@@ -81,22 +112,24 @@ export function sandboxTmpfsValidation(mounts, filesystem = []) {
   // when it carries one — that is the position a tmpfs would collide with.
   const claimed = new Map();
   for (const row of Array.isArray(filesystem) ? filesystem : []) {
-    const mountPath = String(row?.mount_path ?? '').trim();
-    const guest = mountPath || String(row?.path ?? '').trim();
+    const guest = cleanSandboxPath(row?.mount_path) || cleanSandboxPath(row?.path);
     if (guest) claimed.set(guest, String(row?.access ?? 'read'));
   }
 
   const perMount = mounts.map((row) => {
     const errors = { path: [], size: [] };
-    const path = String(row?.path ?? '').trim();
-    if (!path) {
+    const authored = String(row?.path ?? '').trim();
+    // Identity questions ask the cleaned spelling, because that is what the
+    // daemon compares; shape questions ask what the operator actually typed.
+    const path = cleanSandboxPath(authored);
+    if (!authored) {
       errors.path.push('Path is required.');
     } else {
-      if (!path.startsWith('/') && !path.startsWith('~')) {
+      if (!authored.startsWith('/') && !authored.startsWith('~')) {
         errors.path.push('Path must be absolute (or start with ~ for the daemon’s home).');
       }
       if (path === '/') errors.path.push('The sandbox root cannot be a temporary filesystem.');
-      if (utf8.encode(path).length > MAX_PATH_BYTES) {
+      if (utf8.encode(authored).length > MAX_PATH_BYTES) {
         errors.path.push(`Path must be at most ${MAX_PATH_BYTES} bytes.`);
       }
       if ((counts.get(path) || 0) > 1) errors.path.push('Each sandbox path may be mounted once.');

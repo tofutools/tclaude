@@ -4638,3 +4638,231 @@ test('sandbox editor omits tmpfs entirely for a profile that authored none', asy
   unmount();
   host.remove();
 });
+
+// Regression for the raw-mode half of the tri-state. The structured editor got
+// this right from the start; the raw panel did not, because the text alone
+// cannot distinguish "typed a mount then deleted it" from "never opened this".
+test('sandbox raw-JSON tmpfs edits are dirty-tracked and keep an explicit clear', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  // A profile that never had a tmpfs — the case where absent and empty differ.
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'raw', filesystem: [], environment: [], includes: [], agent_directories: [] },
+    options: {},
+  });
+  const saves = [];
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saves.push(value); },
+  });
+  await harness.act(() => Promise.resolve());
+
+  const toggle = host.querySelector('.sbx-advanced-toggle');
+  await harness.act(() => harness.fireEvent(toggle, 'click'));
+  const raw = host.querySelector('#sandbox-profile-editor-tmpfs');
+
+  // Deleting a typed mount again is a deliberate "no mounts", not a return to
+  // "untouched" — the two differ once another client has added one since load.
+  raw.value = JSON.stringify([{ path: '/scratch' }]);
+  await harness.act(() => harness.fireEvent(raw, 'input'));
+  raw.value = '[]';
+  await harness.act(() => harness.fireEvent(raw, 'input'));
+  await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+  assert.deepEqual(saves[0].draft.tmpfs, [],
+    'a raw add-then-clear emits the explicit empty array, not an absent key');
+  unmount();
+  host.remove();
+});
+
+// The discard guard is observable only through confirmDiscard, so this mounts
+// its own island rather than using the shared helper's fixed stub.
+test('sandbox raw-JSON tmpfs edits arm the discard guard', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  const cleanups = []; let confirms = 0;
+  const host = harness.document.createElement('div');
+  harness.document.body.appendChild(host);
+  mountManagementIsland({
+    host,
+    state,
+    actions: {
+      async loadCommonRuleCatalog() { return COMMON_RULES; },
+      async inspectDirectories() { return { missing: [], creatable: [] }; },
+      async createDirectories() {},
+      async predictSandbox() { return { targets: [], contexts: [] }; },
+      async saveSandbox() {},
+      configureSandboxWithAgent() {},
+    },
+    confirmDiscard: async () => { confirms += 1; return true; },
+    openProfilePermissions() {},
+    registerCleanup(fn) { cleanups.push(fn); },
+  });
+  const pressEscape = async () => {
+    const event = new harness.window.Event('keydown', { bubbles: true });
+    Object.defineProperty(event, 'key', { value: 'Escape' });
+    harness.document.dispatchEvent(event);
+    await harness.act(() => Promise.resolve());
+  };
+
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'raw', filesystem: [], environment: [], includes: [], agent_directories: [] },
+    options: {},
+  });
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-advanced-toggle'), 'click'));
+  await pressEscape();
+  assert.equal(confirms, 0, 'merely opening Advanced is not an edit');
+
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'raw', filesystem: [], environment: [], includes: [], agent_directories: [] },
+    options: {},
+  });
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-advanced-toggle'), 'click'));
+  const raw = host.querySelector('#sandbox-profile-editor-tmpfs');
+  raw.value = JSON.stringify([{ path: '/scratch' }]);
+  await harness.act(() => harness.fireEvent(raw, 'input'));
+  await pressEscape();
+  assert.equal(confirms, 1,
+    'a raw tmpfs edit must arm the discard guard like every other raw axis');
+  cleanups.reverse().forEach((fn) => fn());
+  host.remove();
+});
+
+// The same provenance gap existed for pre-launch blocks; the tmpfs work shares
+// the mechanism, so pin both or the next reader cannot tell which is intended.
+test('sandbox raw-JSON pre-launch edits keep an explicit clear', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'raw', filesystem: [], environment: [], includes: [], agent_directories: [] },
+    options: {},
+  });
+  const saves = [];
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async saveSandbox(value) { saves.push(value); },
+  });
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => harness.fireEvent(host.querySelector('.sbx-advanced-toggle'), 'click'));
+  const raw = host.querySelector('#sandbox-profile-editor-pre-launch');
+  raw.value = JSON.stringify([{ name: 'setup', script: 'true\n' }]);
+  await harness.act(() => harness.fireEvent(raw, 'input'));
+  raw.value = '[]';
+  await harness.act(() => harness.fireEvent(raw, 'input'));
+  await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+  assert.deepEqual(saves[0].draft.pre_launch, []);
+
+  // …and an untouched panel still saves byte-identically, with no key at all.
+  const second = createManagementState();
+  second.openDialog({
+    kind: 'sandbox-editor',
+    seed: { name: 'raw2', filesystem: [], environment: [], includes: [], agent_directories: [] },
+    options: {},
+  });
+  const later = [];
+  const mounted = mountSandboxEditor(harness, mountManagementIsland, second, {
+    async saveSandbox(value) { later.push(value); },
+  });
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => harness.fireEvent(mounted.host.querySelector('.sbx-advanced-toggle'), 'click'));
+  await harness.act(() => harness.fireEvent(mounted.host.querySelector('#sandbox-profile-editor-submit'), 'click'));
+  assert.equal('pre_launch' in later[0].draft, false);
+  assert.equal('tmpfs' in later[0].draft, false);
+  mounted.unmount();
+  mounted.host.remove();
+  unmount();
+  host.remove();
+});
+
+// Editor-only bookkeeping must not escape on ANY outbound path, not just the
+// save. Structured mode reaches prediction and the scribe handoff without
+// passing through the raw projection, which is exactly where it leaked.
+test('sandbox tmpfs rows are wire-projected on the prediction and scribe paths', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createManagementState }, { mountManagementIsland }] = await Promise.all([
+    harness.importDashboardModule('js/management-state.js'),
+    harness.importDashboardModule('js/management-island.js'),
+  ]);
+  const state = createManagementState();
+  state.openDialog({
+    kind: 'sandbox-editor',
+    seed: {
+      name: 'projected', filesystem: [], environment: [], includes: [], agent_directories: [],
+      tmpfs: [{ path: '/scratch', size: '512MiB' }],
+    },
+    options: {},
+  });
+  const predictions = []; const handoffs = [];
+  const { host, unmount } = mountSandboxEditor(harness, mountManagementIsland, state, {
+    async predictSandbox(draft) { predictions.push(structuredClone(draft)); return { targets: [], contexts: [] }; },
+    configureSandboxWithAgent(draft) { handoffs.push(structuredClone(draft)); },
+  });
+  await harness.act(() => Promise.resolve());
+  await harness.act(() => new Promise((resolve) => setTimeout(resolve, 500)));
+
+  const predicted = predictions.find((draft) => (draft.tmpfs || []).length);
+  assert.ok(predicted, 'the prediction request carries the authored mounts');
+  assert.deepEqual(predicted.tmpfs, [{ path: '/scratch', size: '512MiB' }]);
+  assert.equal('_editor_id' in predicted.tmpfs[0], false,
+    'editor row identities never reach the prediction endpoint');
+
+  await harness.act(() => harness.fireEvent(host.querySelector('#sandbox-profile-editor-scribe'), 'click'));
+  assert.equal(handoffs.length, 1);
+  assert.deepEqual(handoffs[0].tmpfs, [{ path: '/scratch', size: '512MiB' }]);
+  assert.equal('_editor_id' in handoffs[0].tmpfs[0], false,
+    'editor row identities never reach the sandbox scribe');
+  unmount();
+  host.remove();
+});
+
+// Parity with the daemon, which cleans both sandbox paths before comparing:
+// /srv/./work and /srv/work are one path, so the editor must not enable Save on
+// a payload the daemon is certain to refuse.
+test('sandbox tmpfs validation compares sandbox paths the way the daemon cleans them', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { sandboxTmpfsValidation, cleanSandboxPath } =
+    await harness.importDashboardModule('js/sandbox-tmpfs.js');
+
+  assert.equal(cleanSandboxPath('/srv/./work/'), '/srv/work');
+  assert.equal(cleanSandboxPath('/srv/tmp/../work'), '/srv/work');
+  assert.equal(cleanSandboxPath('/./'), '/');
+  assert.equal(cleanSandboxPath('/../..'), '/', 'a leading .. cannot escape the root');
+
+  const conflict = sandboxTmpfsValidation(
+    [{ path: '/srv/./work' }], [{ path: '/srv/work', access: 'write' }],
+  );
+  assert.match(conflict.mounts[0].path.join(' '), /already claimed by a write/,
+    'a dot-segment spelling of a claimed path is still the same path');
+
+  const dupes = sandboxTmpfsValidation([{ path: '/scratch' }, { path: '/scratch/' }]);
+  assert.match(dupes.mounts[1].path.join(' '), /mounted once/);
+
+  const root = sandboxTmpfsValidation([{ path: '/./' }]);
+  assert.match(root.mounts[0].path.join(' '), /sandbox root/,
+    'a dot-segment spelling of / does not slip past the root check');
+
+  // The mount_path form of a filesystem row is its guest path, so that is what
+  // a tmpfs collides with — not the host path it reads from.
+  const remapped = sandboxTmpfsValidation(
+    [{ path: '/data' }], [{ path: '/host/corpus', mount_path: '/data', access: 'read' }],
+  );
+  assert.match(remapped.mounts[0].path.join(' '), /already claimed by a read/);
+  assert.deepEqual(sandboxTmpfsValidation([{ path: '/host/corpus' }],
+    [{ path: '/host/corpus', mount_path: '/data', access: 'read' }]).errors, [],
+    'the host path a remapped row reads from is not a sandbox position a tmpfs can collide with');
+});
