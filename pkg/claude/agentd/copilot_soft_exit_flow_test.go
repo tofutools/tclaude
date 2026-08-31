@@ -40,6 +40,7 @@ func TestCopilotSoftExit_SignalExitClosesAnIdlePane(t *testing.T) {
 		"name":      "copilot-worker",
 	})
 
+	capturesBefore := f.World.Tmux.CommandCount("capture-pane")
 	f.AssertSoftStopped(f.AsHuman().Stop(resp.ConvID, false))
 
 	// Assert on the SYNCHRONOUS attempt alone, before the background retry
@@ -61,6 +62,8 @@ func TestCopilotSoftExit_SignalExitClosesAnIdlePane(t *testing.T) {
 
 	agentd.WaitForBackgroundForTest()
 	assert.Empty(t, killTargets(f), "a graceful Copilot exit is never escalated to a kill")
+	assert.Equal(t, capturesBefore, f.World.Tmux.CommandCount("capture-pane"),
+		"a normal soft exit must not copy the pane contents into diagnostic logs")
 }
 
 // Scenario: the pane is parked on a permission dialog, which owns the
