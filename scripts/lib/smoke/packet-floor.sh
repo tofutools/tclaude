@@ -76,6 +76,13 @@ smoke::packet_floor_install() {
         "$SMOKE_PASST_ARCHIVE_URL" "$SMOKE_PASST_ARCHIVE_SHA256" "$source_dir" ||
         { smoke::packet_floor_prereq_failed "downloading passt $SMOKE_PASST_TAG source failed"; return 1; }
     fi
+    local source_sha
+    source_sha="$(cat "$source_dir/.tclaude-archive-sha256" 2>/dev/null || true)"
+    if [[ "$source_sha" != "$SMOKE_PASST_ARCHIVE_SHA256" ]]; then
+      smoke::packet_floor_prereq_failed \
+        "passt source provenance is ${source_sha:-missing}, not the pinned archive SHA-256 $SMOKE_PASST_ARCHIVE_SHA256"
+      return 1
+    fi
     make -C "$source_dir" pasta ||
       { smoke::packet_floor_prereq_failed "building pasta from source failed"; return 1; }
 

@@ -23,6 +23,18 @@ smoke::error() {
   printf 'ERROR: %s\n' "$*" >&2
 }
 
+# smoke::sha256_file FILE — portable SHA-256 for Linux and macOS hosts.
+smoke::sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    smoke::error "neither sha256sum nor shasum is available"
+    return 1
+  fi
+}
+
 # smoke::download_extract_tar_xz URL SHA256 DEST — fetch a pinned source
 # archive with curl's bounded transport retries, verify its exact bytes, and
 # extract its single top-level directory into DEST. The archive path avoids the
@@ -33,22 +45,26 @@ smoke::download_extract_tar_xz() {
   local want_sha="$2"
   local destination="$3"
   local archive="${destination}.tar.xz"
+  local staging
 
   if [[ -z "$url" || -z "$want_sha" || -z "$destination" || -e "$destination" ]]; then
     smoke::error "downloading a pinned archive requires URL, SHA-256, and a nonexistent destination: ${destination:-<empty>}"
     return 1
   fi
   curl --fail --silent --show-error --location \
+    --connect-timeout 15 --max-time 120 \
     --retry 3 --retry-all-errors --retry-delay 2 \
     --output "$archive" "$url" || return 1
   local got_sha
-  got_sha="$(sha256sum "$archive" | awk '{print $1}')" || return 1
+  got_sha="$(smoke::sha256_file "$archive")" || return 1
   if [[ "$got_sha" != "$want_sha" ]]; then
     smoke::error "archive checksum mismatch: got $got_sha, wanted $want_sha"
     return 1
   fi
-  mkdir -p "$destination" || return 1
-  tar -xJf "$archive" --strip-components=1 -C "$destination"
+  staging="$(mktemp -d "${destination}.extracting.XXXXXX")" || return 1
+  tar -xJf "$archive" --strip-components=1 -C "$staging" || return 1
+  printf '%s\n' "$want_sha" > "$staging/.tclaude-archive-sha256" || return 1
+  mv -- "$staging" "$destination"
 }
 
 # smoke::apt_source_is_microsoft_only FILE — classify an active deb822 source
