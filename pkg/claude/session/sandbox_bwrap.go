@@ -3430,24 +3430,41 @@ func validateRemappedGuestPathsAgainstContract(
 }
 
 // validateTmpfsPathsAgainstContract refuses a temporary filesystem that would
-// cover a directory the launch itself requires. The comparison is the same one
-// the remapped-mount check makes and in the same direction: a tmpfs AT or ABOVE
-// a contract directory hides it, while one strictly beneath a contract
-// directory is ordinary most-specific-wins and is allowed.
+// cover a directory the launch itself requires. Containment runs in the same
+// direction the remapped-mount check uses: a tmpfs AT or ABOVE a contract
+// directory hides it, while one strictly beneath is ordinary
+// most-specific-wins and is allowed.
+//
+// BOTH spellings of the mount are compared, and that is the whole subtlety. An
+// authored tmpfs path stays lexical — it names a position in a namespace that
+// does not exist yet, so normalization deliberately does not resolve it — while
+// the contract directories here are canonicalized. Comparing only the lexical
+// spelling would let a row authored through an existing symlink (say
+// /scratch-link, which resolves to the workspace) pass this gate and then have
+// bubblewrap resolve the destination through that symlink and mount an empty
+// filesystem over the workspace. This mirrors what normalizeTmpfs already does
+// for the protected roots, and for the same reason.
 func validateTmpfsPathsAgainstContract(
 	mounts []sandboxpolicy.TmpfsMount,
 	contractDirs []string,
 ) error {
 	for _, mount := range mounts {
+		spellings := []string{mount.Path}
+		if canonical := canonicalSandboxPath(mount.Path); canonical != "" &&
+			canonical != mount.Path {
+			spellings = append(spellings, canonical)
+		}
 		for _, dir := range contractDirs {
 			dir = canonicalSandboxPath(dir)
 			if dir == "" {
 				continue
 			}
-			if sandboxpolicy.GuardContainsOrEqual(mount.Path, dir) {
-				return fmt.Errorf(
-					"unsupported_sandbox_profile_tmpfs: a temporary filesystem at sandbox path %q would shadow the launch-required directory %q",
-					mount.Path, dir)
+			for _, spelling := range spellings {
+				if sandboxpolicy.GuardContainsOrEqual(spelling, dir) {
+					return fmt.Errorf(
+						"unsupported_sandbox_profile_tmpfs: a temporary filesystem at sandbox path %q would shadow the launch-required directory %q",
+						mount.Path, dir)
+				}
 			}
 		}
 	}

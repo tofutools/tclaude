@@ -127,6 +127,43 @@ func TestNormalizeTmpfsFoldsDuplicatesToTheStrictestCeiling(t *testing.T) {
 	}
 }
 
+// Equal byte ceilings with different authored SPELLINGS are the case a plain
+// `<=` comparison gets wrong: `1Mi` and `1MiB` are the same number of bytes and
+// two different retained strings, so the fold has to pick by something other
+// than operand order — otherwise the persisted and exported profile would
+// depend on which row happened to be folded first.
+func TestNormalizeTmpfsFoldIsCommutativeForEqualCeilings(t *testing.T) {
+	protectedHome(t)
+	forward, _, err := NormalizeForPersistence(Profile{Name: "scratch", Tmpfs: []TmpfsMount{
+		{Path: "/scratch", Size: "1Mi"},
+		{Path: "/scratch", Size: "1MiB"},
+	}})
+	require.NoError(t, err)
+	reverse, _, err := NormalizeForPersistence(Profile{Name: "scratch", Tmpfs: []TmpfsMount{
+		{Path: "/scratch", Size: "1MiB"},
+		{Path: "/scratch", Size: "1Mi"},
+	}})
+	require.NoError(t, err)
+	assert.Equal(t, forward.Tmpfs, reverse.Tmpfs,
+		"two spellings of one ceiling must fold to the same row in either order")
+	require.Len(t, forward.Tmpfs, 1)
+	assert.Equal(t, uint64(1<<20), forward.Tmpfs[0].SizeBytes)
+}
+
+// The same tie-break, across scopes rather than within one profile: the
+// cross-scope union is documented as independent of tier order, so swapping the
+// tiers must not change what is frozen into the snapshot.
+func TestResolveTmpfsFoldIsIndependentOfTierOrder(t *testing.T) {
+	protectedHome(t)
+	a := Profile{Name: "a", Tmpfs: []TmpfsMount{{Path: "/scratch", Size: "1Mi"}}}
+	b := Profile{Name: "b", Tmpfs: []TmpfsMount{{Path: "/scratch", Size: "1MiB"}}}
+	forward, err := Resolve(Scopes{Global: &a, Explicit: &b})
+	require.NoError(t, err)
+	reverse, err := Resolve(Scopes{Global: &b, Explicit: &a})
+	require.NoError(t, err)
+	assert.Equal(t, forward.Tmpfs, reverse.Tmpfs)
+}
+
 func TestNormalizeTmpfsBoundsRowCount(t *testing.T) {
 	protectedHome(t)
 	rows := make([]TmpfsMount, MaxTmpfsMountCount+1)

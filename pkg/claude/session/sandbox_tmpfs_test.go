@@ -248,3 +248,51 @@ func TestTclaudeLayerLaunchSpecRefusesATmpfsOverTheWorkspace(t *testing.T) {
 	assert.Contains(t, err.Error(), "unsupported_sandbox_profile_tmpfs")
 	assert.Contains(t, err.Error(), "launch-required directory")
 }
+
+// The gate has to compare BOTH spellings of the mount. An authored tmpfs path
+// stays lexical by design, so a row naming an existing symlink that resolves to
+// the workspace would otherwise sail past a canonical-only comparison and then
+// have bubblewrap resolve the destination through that symlink and mount an
+// empty filesystem over the directory the agent was launched to work in.
+func TestValidateTmpfsPathsAgainstContractResolvesSymlinkedSpellings(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "project")
+	require.NoError(t, os.MkdirAll(workspace, 0o755))
+	link := filepath.Join(root, "scratch-link")
+	require.NoError(t, os.Symlink(workspace, link))
+
+	err := validateTmpfsPathsAgainstContract(
+		[]sandboxpolicy.TmpfsMount{{Path: link}}, []string{workspace})
+	require.Error(t, err, "a symlinked spelling of the workspace must be refused")
+	assert.Contains(t, err.Error(), "unsupported_sandbox_profile_tmpfs")
+	assert.Contains(t, err.Error(), link,
+		"the refusal must name the spelling the operator actually wrote")
+
+	// A symlink that resolves somewhere harmless is still allowed: the extra
+	// spelling is a second thing to check, not a blanket refusal of symlinks.
+	elsewhere := filepath.Join(root, "elsewhere")
+	require.NoError(t, os.MkdirAll(elsewhere, 0o755))
+	harmless := filepath.Join(root, "harmless-link")
+	require.NoError(t, os.Symlink(elsewhere, harmless))
+	require.NoError(t, validateTmpfsPathsAgainstContract(
+		[]sandboxpolicy.TmpfsMount{{Path: harmless}}, []string{workspace}))
+}
+
+// …and the same through the production seam, so the fix is pinned where a
+// launch actually reaches it rather than only at the helper.
+func TestTclaudeLayerLaunchSpecRefusesATmpfsSymlinkedOntoTheWorkspace(t *testing.T) {
+	root := t.TempDir()
+	cwd := filepath.Join(root, "project")
+	require.NoError(t, os.MkdirAll(cwd, 0o755))
+	link := filepath.Join(root, "scratch-link")
+	require.NoError(t, os.Symlink(cwd, link))
+
+	snapshot := sandboxpolicy.EmptySnapshot()
+	snapshot.Effective.FilesystemRoot = sandboxpolicy.FilesystemRootSeparate
+	snapshot.Effective.Tmpfs = []sandboxpolicy.TmpfsMount{{Path: link}}
+	_, err := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
+		HarnessName: harness.DefaultName, Cwd: cwd, Snapshot: &snapshot,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unsupported_sandbox_profile_tmpfs")
+}
