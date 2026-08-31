@@ -42,6 +42,47 @@ type retireWtResp struct {
 	} `json:"worktree"`
 }
 
+// The common retire-dialog probe must inspect only the target checkout. The
+// global registration scan exists for a missing-directory recovery case; doing
+// it eagerly makes latency grow with every historical session and repository.
+func TestRetireWorktreeProbeSkipsGlobalRegistrationScanForAccessibleTarget(t *testing.T) {
+	const dashboardOrigin = "http://127.0.0.1:0"
+	t.Cleanup(agentd.SetPopupBaseURLForTest(dashboardOrigin))
+	f := newFlow(t)
+
+	const conv = "rwfast-1111-2222-3333-4444"
+	cwd := f.TestCwd("rw-fast-linked")
+	f.HaveConvWithTitle(conv, "fast-probe-worker")
+	f.HaveAliveSession(conv, "spwn-rwfast", "tmux-rwfast", cwd)
+	f.HaveEnrolledAgent(conv)
+	installFakeWorktrees(t, map[string]worktree.WorktreeStatus{
+		cwd: {Root: cwd, Branch: "feat", Kind: "linked"},
+	})
+
+	var repoProbes, worktreeLists int
+	t.Cleanup(agentd.SetSweepWorktreeFnsForTest(
+		func(string) ([]worktree.WorktreeInfo, error) {
+			worktreeLists++
+			return nil, nil
+		},
+		func(string) (string, error) {
+			repoProbes++
+			return "", errors.New("not a repo")
+		},
+		func(string) bool { return false },
+	))
+
+	mux := agentd.BuildDashboardHandlerForTest()
+	req := testharness.JSONRequest(t, http.MethodGet, "/api/agents/"+conv+"/worktree?retire=1", nil)
+	req.Header.Set("Origin", dashboardOrigin)
+	probe := testharness.Serve(mux, req)
+	require.Equal(t, http.StatusOK, probe.Code, "body=%s", probe.Body.String())
+	assert.Contains(t, probe.Body.String(), `"removable":true`)
+	assert.NotEmpty(t, probe.Header().Get("Server-Timing"))
+	assert.Zero(t, repoProbes, "accessible target must not scan historical repository dirs")
+	assert.Zero(t, worktreeLists, "accessible target must not list unrelated worktrees")
+}
+
 // postRetireWt fires the retire request with a raw query string and
 // decodes the worktree-aware response.
 func postRetireWt(t *testing.T, mux http.Handler, conv, query string) (int, retireWtResp) {

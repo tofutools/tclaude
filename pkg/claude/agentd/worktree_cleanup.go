@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -85,6 +86,15 @@ func (v agentWorktreeView) Removable() bool {
 // callers fill it via otherAgentWorktreeRoots with the right
 // exclusion set.
 func inspectAgentWorktree(convID string) agentWorktreeView {
+	// The ordinary case has an accessible checkout and InspectWorktree can
+	// classify it directly. Building the global registration fallback first is
+	// surprisingly expensive: it walks every group and historical session dir,
+	// then runs Git once or more per distinct repository. Reserve that scan for
+	// the exceptional case it exists to support — a linked worktree directory
+	// that was deleted out-of-band while its Git registration survives.
+	if wt := inspectAgentWorktreeWithRegistry(convID, nil); wt.Kind != "none" {
+		return wt
+	}
 	return inspectAgentWorktreeWithRegistry(convID, registeredWorktreesForCleanup())
 }
 
@@ -143,8 +153,8 @@ func inspectWorktreeDirs(
 // agentWorktreeClaimSnapshot is one operation's stable view of worktree
 // ownership. dirClaims maps every immutable startup dir (plus the tracked
 // current dir) to the active agents / live panes using it;
-// views caches their already-inspected worktrees so a batch does not repeat
-// global DB/tmux discovery and git inspection once per member.
+// views lazily caches already-inspected target worktrees so a batch does not
+// repeat Git inspection for the same conversation.
 //
 // complete is false when any global discovery step failed. Deletion safety
 // fails closed in that case: shared reports every non-empty path as claimed.
@@ -152,6 +162,19 @@ type agentWorktreeClaimSnapshot struct {
 	views     map[string]agentWorktreeView
 	dirClaims map[string]map[string]bool
 	complete  bool
+	timing    agentWorktreeClaimTiming
+}
+
+// agentWorktreeClaimTiming makes a slow retire-dialog probe diagnosable from
+// the browser's Server-Timing panel without enabling daemon-wide debug logs.
+// The values deliberately describe only read-only discovery; target Git
+// inspection is reported separately by dashboardAgentWorktree.
+type agentWorktreeClaimTiming struct {
+	sessions time.Duration
+	agents   time.Duration
+	tmux     time.Duration
+	claims   time.Duration
+	runtimes time.Duration
 }
 
 // captureAgentWorktreeClaims returns the worktrees in use by active agents or
@@ -213,19 +236,25 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 		views:     map[string]agentWorktreeView{},
 		dirClaims: map[string]map[string]bool{},
 	}
+	stage := time.Now()
 	sessions, err := db.ListSessions()
+	snap.timing.sessions = time.Since(stage)
 	if err != nil {
 		return snap
 	}
+	stage = time.Now()
 	active, err := db.ListActiveAgents()
+	snap.timing.agents = time.Since(stage)
 	if err != nil {
 		return snap
 	}
+	stage = time.Now()
 	alive, err := session.LiveTmuxSessions()
+	snap.timing.tmux = time.Since(stage)
 	if err != nil {
 		return snap
 	}
-	registered := registeredWorktreesForCleanup()
+	stage = time.Now()
 
 	// Resolve one location per claimant. Active agents claim their immutable
 	// startup root even while offline, plus their tracked current directory.
@@ -297,17 +326,6 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 
 	for convID := range claimants {
 		loc := agent.ResolveLocation(convID)
-		dir := loc.CurrentDir
-		if dir == "" {
-			dir = loc.StartupDir
-		}
-		if dir != "" {
-			dirs := []string{loc.CurrentDir, loc.StartupDir}
-			for extra := range extraDirs[convID] {
-				dirs = append(dirs, extra)
-			}
-			snap.views[convID] = inspectWorktreeDirs(dirs, registered)
-		}
 		for _, claimDir := range []string{loc.StartupDir, loc.CurrentDir} {
 			addExtraDir(convID, claimDir)
 		}
@@ -322,6 +340,7 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 			snap.dirClaims[claimDir][convID] = true
 		}
 	}
+	snap.timing.claims = time.Since(stage)
 	// Managed OpenCode servers. startOpenCodeRuntimeForSpawn launches these with
 	// cmd.Dir set to the launch dir BEFORE the pane fork, so between that start
 	// and the forked `session new` writing its session row a real process holds
@@ -333,7 +352,9 @@ func captureAgentWorktreeClaims() agentWorktreeClaimSnapshot {
 	// not proof: rows outlive a crashed daemon, and an unconditional claim would
 	// pin the worktree forever. A namespaced conv-id lets retirement identify
 	// and stop its own server without mistaking it for a peer claimant.
+	stage = time.Now()
 	runtimes, err := db.ListOpenCodeRuntimes()
+	snap.timing.runtimes = time.Since(stage)
 	if err != nil {
 		return snap
 	}
@@ -411,6 +432,9 @@ func (s agentWorktreeClaimSnapshot) resolve(convID string, excluding map[string]
 	wt, ok := s.views[convID]
 	if !ok {
 		wt = inspectAgentWorktree(convID)
+		// Batch cleanup resolves several members against one snapshot. Cache on
+		// first use so duplicate generations/selectors do not repeat Git work.
+		s.views[convID] = wt
 	}
 	if wt.Path == "" {
 		return wt
@@ -498,6 +522,7 @@ func compareSessionLaunchRecency(candidate, current *db.SessionRow) int {
 // computed against every OTHER agent, so a worktree another agent
 // still works in comes back removable=false.
 func dashboardAgentWorktree(w http.ResponseWriter, r *http.Request, convSelector string) {
+	started := time.Now()
 	convID := convSelector
 	if res, _, err := agent.ResolveSelector(convSelector); err == nil {
 		convID = res.ConvID
@@ -505,6 +530,7 @@ func dashboardAgentWorktree(w http.ResponseWriter, r *http.Request, convSelector
 		http.Error(w, "resolve agent: "+err.Error(), http.StatusNotFound)
 		return
 	}
+	selectorDuration := time.Since(started)
 	excluding := map[string]bool{convID: true}
 	if r.URL.Query().Get("retire") == "1" {
 		// Retirement with worktree cleanup also shuts down this agent's managed
@@ -512,7 +538,25 @@ func dashboardAgentWorktree(w http.ResponseWriter, r *http.Request, convSelector
 		// sharing the worktree, so do not disable the retire option for it.
 		excluding[openCodeRuntimeClaimant(convID)] = true
 	}
-	wt := captureAgentWorktreeClaims().resolve(convID, excluding)
+	claimStarted := time.Now()
+	snap := captureAgentWorktreeClaims()
+	claimDuration := time.Since(claimStarted)
+	inspectStarted := time.Now()
+	wt := snap.resolve(convID, excluding)
+	inspectDuration := time.Since(inspectStarted)
+	w.Header().Set("Server-Timing", fmt.Sprintf(
+		"selector;dur=%.1f, sessions;dur=%.1f, agents;dur=%.1f, tmux;dur=%.1f, claims;dur=%.1f, runtimes;dur=%.1f, inspect;dur=%.1f",
+		durationMillis(selectorDuration), durationMillis(snap.timing.sessions),
+		durationMillis(snap.timing.agents), durationMillis(snap.timing.tmux),
+		durationMillis(snap.timing.claims), durationMillis(snap.timing.runtimes),
+		durationMillis(inspectDuration),
+	))
+	if total := time.Since(started); total >= 250*time.Millisecond {
+		slog.Info("slow agent worktree probe",
+			"conv", convID, "duration", total,
+			"claim_discovery", claimDuration, "target_inspection", inspectDuration,
+			"active_claim_dirs", len(snap.dirClaims))
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"kind":      wt.Kind,
 		"path":      wt.Path,
@@ -520,6 +564,10 @@ func dashboardAgentWorktree(w http.ResponseWriter, r *http.Request, convSelector
 		"shared":    wt.Shared,
 		"removable": wt.Removable(),
 	})
+}
+
+func durationMillis(d time.Duration) float64 {
+	return float64(d) / float64(time.Millisecond)
 }
 
 // applyWorktreeCleanup removes wt's worktree when the human asked for
