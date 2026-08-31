@@ -103,6 +103,70 @@ if ! cmp -s "$work/apt-update.want" "$apt_update_argv"; then
   failures=1
 fi
 
+# External prerequisite clones occasionally arrive truncated on hosted
+# runners. Prove the retry helper forwards the reviewed clone arguments, uses
+# a fresh destination for every attempt, promotes only the successful one, and
+# stops after exactly three failures. Git and sleep are shadowed, so this is
+# deterministic and performs no network access or real backoff.
+git_clone_retry_success="$work/git-clone-retry-success"
+(
+  retry_calls=0
+  sleep() { :; }
+  git() {
+    retry_calls=$((retry_calls + 1))
+    printf '%s\n' "$@" > "$work/git-clone-retry-$retry_calls.argv"
+    local attempt_dir="${*: -1}"
+    mkdir -p "$attempt_dir"
+    printf '%s\n' "$retry_calls" > "$attempt_dir/attempt"
+    (( retry_calls >= 3 ))
+  }
+  smoke::git_clone_retry https://example.invalid/passt "$git_clone_retry_success" \
+    --quiet --depth 1 --branch pinned
+  [[ "$retry_calls" -eq 3 ]]
+) || {
+  echo 'selftest FAIL: git clone retry did not succeed on its third attempt'
+  failures=1
+}
+for attempt in 1 2 3; do
+  cat > "$work/git-clone-retry-$attempt.want" <<EOF
+clone
+--quiet
+--depth
+1
+--branch
+pinned
+https://example.invalid/passt
+$git_clone_retry_success.clone-attempt-$attempt
+EOF
+  if ! cmp -s "$work/git-clone-retry-$attempt.want" "$work/git-clone-retry-$attempt.argv"; then
+    printf 'selftest FAIL: git clone retry attempt %s did not preserve its arguments/path\n' "$attempt"
+    failures=1
+  fi
+done
+if [[ "$(cat "$git_clone_retry_success/attempt" 2>/dev/null || true)" != 3 ||
+      ! -d "$git_clone_retry_success.clone-attempt-1" ||
+      ! -d "$git_clone_retry_success.clone-attempt-2" ||
+      -e "$git_clone_retry_success.clone-attempt-3" ]]; then
+  echo 'selftest FAIL: git clone retry did not isolate attempts and promote only the success'
+  failures=1
+fi
+
+git_clone_retry_failure="$work/git-clone-retry-failure"
+retry_failure_calls="$work/git-clone-retry-failure.calls"
+: > "$retry_failure_calls"
+if (
+  sleep() { :; }
+  git() { printf 'x' >> "$retry_failure_calls"; return 1; }
+  smoke::git_clone_retry https://example.invalid/passt "$git_clone_retry_failure" --quiet
+); then
+  echo 'selftest FAIL: git clone retry accepted three failed attempts'
+  failures=1
+fi
+if [[ "$(wc -c < "$retry_failure_calls" | tr -d ' ')" -ne 3 || -e "$git_clone_retry_failure" ]]; then
+  echo 'selftest FAIL: git clone retry did not stop after three failures without promotion'
+  failures=1
+fi
+
 # expect_verdict WANT(pass|refuse) CASE LOG_CONTENT TEST_NAME...
 expect_verdict() {
   local want="$1" name="$2" content="$3"
@@ -1094,4 +1158,4 @@ if [[ "$failures" -ne 0 ]]; then
   echo "smoke evidence selftest FAILED; refusing to trust any smoke result"
   exit 1
 fi
-echo "smoke evidence selftest: ok (apt-source guards + evidence checker + manifest drift guards + per-flow harness declarations + shard-map union, derived-install-set, workflow-matrix and harness-coverage guards + fixture teardown)"
+echo "smoke evidence selftest: ok (apt-source guards + clone retry + evidence checker + manifest drift guards + per-flow harness declarations + shard-map union, derived-install-set, workflow-matrix and harness-coverage guards + fixture teardown)"
