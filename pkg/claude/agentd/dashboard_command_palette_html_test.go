@@ -34,6 +34,19 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	// CSS: the box + the keyboard-selection highlight.
 	must(".palette-box {", "the palette box has a CSS rule")
 	must(".palette-item.selected", "the keyboard-selected command is highlighted")
+	for _, scrollbarRule := range []struct{ needle, why string }{
+		{"#command-palette-modal .palette-list {\n    scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117;\n  }", "Firefox gets the regular dashboard scrollbar colors"},
+		{"body.wizard #command-palette-modal .palette-list {\n    scrollbar-color: #7a5db0 #140f28;\n  }", "Firefox gets the wizard scrollbar colors"},
+		{"#command-palette-modal .palette-list::-webkit-scrollbar { width: 10px; height: 10px; }", "the results list has explicit WebKit scrollbar geometry"},
+		{"#command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover { background: #8b949e; }", "the regular scrollbar has the standard hover color"},
+		{"#command-palette-modal .palette-list::-webkit-scrollbar-thumb:active { background: #b1bac4; }", "the regular scrollbar has the standard active color"},
+		{"body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }", "the wizard scrollbar has the standard hover color"},
+		{"body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active { background: #c9a6f0; }", "the wizard scrollbar has the standard active color"},
+		{"#command-palette-modal .palette-list {\n    scrollbar-width: auto;\n    scrollbar-color: auto;\n    forced-color-adjust: auto;\n  }", "high-contrast mode restores native Firefox geometry and colors"},
+		{"#command-palette-modal .palette-list::-webkit-scrollbar-thumb {\n    background: ButtonText; border: 1px solid Canvas;\n  }", "high-contrast mode uses system thumb colors"},
+	} {
+		must(scrollbarRule.needle, scrollbarRule.why)
+	}
 
 	// JS: command construction stays plain while Preact owns both markup roots
 	// and exposes one lifecycle-aware mount boundary.

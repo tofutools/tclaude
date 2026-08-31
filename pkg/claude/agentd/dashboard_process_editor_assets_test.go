@@ -555,8 +555,7 @@ func TestDashboardProcessEditorAssets(t *testing.T) {
 }
 
 // TestDashboardProcessEditorScrollbarsScoped pins TCL-571's ownership and
-// theme contract. Actual editor scroll owners opt into one marker; the command
-// palette may join only under the existing active-editor marker. Unrelated
+// theme contract. Actual editor scroll owners opt into one marker. Unrelated
 // dashboard scroll regions must never be captured by this block.
 func TestDashboardProcessEditorScrollbarsScoped(t *testing.T) {
 	read := func(name string) string {
@@ -575,9 +574,7 @@ func TestDashboardProcessEditorScrollbarsScoped(t *testing.T) {
 	}
 	block := css[start:end]
 	for _, needle := range []string{
-		".process-scroll-surface,",
-		"body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list {",
-		"body.wizard:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list {",
+		".process-scroll-surface {",
 		"--process-scrollbar-track: #0d1117;",
 		"--process-scrollbar-thumb: #6e7681;",
 		"--process-scrollbar-thumb-hover: #8b949e;",
@@ -590,9 +587,9 @@ func TestDashboardProcessEditorScrollbarsScoped(t *testing.T) {
 		"--process-scrollbar-corner: #211832;",
 		"scrollbar-width: thin;",
 		"scrollbar-color: var(--process-scrollbar-thumb) var(--process-scrollbar-track);",
-		".process-scroll-surface::-webkit-scrollbar-thumb:hover,",
-		".process-scroll-surface::-webkit-scrollbar-thumb:active,",
-		".process-scroll-surface::-webkit-scrollbar-corner,",
+		".process-scroll-surface::-webkit-scrollbar-thumb:hover {",
+		".process-scroll-surface::-webkit-scrollbar-thumb:active {",
+		".process-scroll-surface::-webkit-scrollbar-corner {",
 		"@media (forced-colors: active)",
 		"scrollbar-width: auto;",
 		"scrollbar-color: auto;",
@@ -606,7 +603,7 @@ func TestDashboardProcessEditorScrollbarsScoped(t *testing.T) {
 	for _, banned := range []string{
 		".process-viewer",
 		".process-worklist",
-		"body.wizard #command-palette-modal .palette-list",
+		"#command-palette-modal",
 	} {
 		if strings.Contains(block, banned) {
 			t.Errorf("dashboard.css process scrollbar block widened into %q", banned)
@@ -626,15 +623,16 @@ func TestDashboardProcessEditorScrollbarsScoped(t *testing.T) {
 	}
 
 	for _, theme := range []struct {
-		name, anchor string
+		name, selector string
 	}{
-		{name: "default", anchor: ".process-scroll-surface,"},
-		{name: "wizard", anchor: "body.wizard .process-scroll-surface,"},
+		{name: "default", selector: ".process-scroll-surface"},
+		{name: "wizard", selector: "body.wizard .process-scroll-surface"},
 	} {
-		ruleStart := strings.Index(block, theme.anchor)
-		if ruleStart < 0 {
+		selectorMatch := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(theme.selector) + `\s*\{`).FindStringIndex(block)
+		if selectorMatch == nil {
 			t.Fatalf("%s scrollbar theme rule is missing", theme.name)
 		}
+		ruleStart := selectorMatch[0]
 		ruleOpen := strings.Index(block[ruleStart:], "{")
 		if ruleOpen < 0 {
 			t.Fatalf("%s scrollbar theme rule is malformed", theme.name)

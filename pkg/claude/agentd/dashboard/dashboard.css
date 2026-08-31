@@ -4665,6 +4665,41 @@ details[data-group-key][open] > summary .group-sandbox-profile:not(.unset) > .gr
 }
 #palette-input::placeholder { color: #6e7681; }
 .palette-list { max-height: 50vh; overflow-y: auto; padding: 6px; }
+/* Keep the results scrollbar in the same dark dashboard chrome as the other
+   scrolling panes. Firefox needs the standardized properties; keeping them
+   behind this feature query preserves the richer Blink/WebKit hover states. */
+@supports not selector(::-webkit-scrollbar) {
+  #command-palette-modal .palette-list {
+    scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117;
+  }
+  body.wizard #command-palette-modal .palette-list {
+    scrollbar-color: #7a5db0 #140f28;
+  }
+}
+#command-palette-modal .palette-list::-webkit-scrollbar { width: 10px; height: 10px; }
+#command-palette-modal .palette-list::-webkit-scrollbar-track,
+#command-palette-modal .palette-list::-webkit-scrollbar-corner { background: #0d1117; }
+#command-palette-modal .palette-list::-webkit-scrollbar-thumb {
+  min-height: 24px;
+  background: #6e7681; border: 2px solid #0d1117; border-radius: 6px;
+}
+#command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover { background: #8b949e; }
+#command-palette-modal .palette-list::-webkit-scrollbar-thumb:active { background: #b1bac4; }
+@media (forced-colors: active) {
+  #command-palette-modal .palette-list {
+    scrollbar-width: auto;
+    scrollbar-color: auto;
+    forced-color-adjust: auto;
+  }
+  #command-palette-modal .palette-list::-webkit-scrollbar { width: auto; height: auto; }
+  #command-palette-modal .palette-list::-webkit-scrollbar-track,
+  #command-palette-modal .palette-list::-webkit-scrollbar-corner { background: Canvas; }
+  #command-palette-modal .palette-list::-webkit-scrollbar-thumb {
+    background: ButtonText; border: 1px solid Canvas;
+  }
+  #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover,
+  #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active { background: Highlight; }
+}
 .palette-item {
   display: flex; align-items: center; gap: 10px;
   padding: 8px 10px; border-radius: 6px; cursor: pointer;
@@ -12063,6 +12098,15 @@ body.wizard #command-palette-modal #palette-input {
 }
 body.wizard #command-palette-modal #palette-input::placeholder { color: #b39ddb; }
 
+/* The results scrollbar follows the spellbook's midnight-violet chrome. */
+body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-track,
+body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-corner { background: #140f28; }
+body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb {
+  background: #7a5db0; border-color: #140f28;
+}
+body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
+body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active { background: #c9a6f0; }
+
 /* Command rows — parchment label, violet icon + hint. */
 body.wizard #command-palette-modal .palette-item { color: #e7d9f5; }
 body.wizard #command-palette-modal .palette-item .palette-ico,
@@ -17008,10 +17052,8 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
   overflow: hidden;
 }
 .process-editor { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-/* Actual editor-owned overflow containers carry this marker. The command
-   palette joins only while the existing active-editor marker is present. */
-.process-scroll-surface,
-body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list {
+/* Actual editor-owned overflow containers carry this marker. */
+.process-scroll-surface {
   --process-scrollbar-track: #0d1117;
   --process-scrollbar-thumb: #6e7681;
   --process-scrollbar-thumb-hover: #8b949e;
@@ -17020,70 +17062,56 @@ body:has(#tab-processes.active #process-editor-view) #command-palette-modal .pal
   scrollbar-width: thin;
   scrollbar-color: var(--process-scrollbar-thumb) var(--process-scrollbar-track);
 }
-body.wizard .process-scroll-surface,
-body.wizard:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list {
+body.wizard .process-scroll-surface {
   --process-scrollbar-track: #181226;
   --process-scrollbar-thumb: #755da0;
   --process-scrollbar-thumb-hover: #957ac0;
   --process-scrollbar-thumb-active: #d4af37;
   --process-scrollbar-corner: #211832;
 }
-.process-scroll-surface::-webkit-scrollbar,
-body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar {
+.process-scroll-surface::-webkit-scrollbar {
   width: 10px;
   height: 10px;
 }
-.process-scroll-surface::-webkit-scrollbar-track,
-body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-track {
+.process-scroll-surface::-webkit-scrollbar-track {
   background: var(--process-scrollbar-track);
 }
-.process-scroll-surface::-webkit-scrollbar-thumb,
-body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb {
+.process-scroll-surface::-webkit-scrollbar-thumb {
   min-height: 24px;
   background: var(--process-scrollbar-thumb);
   border-radius: 6px;
 }
-.process-scroll-surface::-webkit-scrollbar-thumb:hover,
-body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover {
+.process-scroll-surface::-webkit-scrollbar-thumb:hover {
   background: var(--process-scrollbar-thumb-hover);
 }
-.process-scroll-surface::-webkit-scrollbar-thumb:active,
-body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active {
+.process-scroll-surface::-webkit-scrollbar-thumb:active {
   background: var(--process-scrollbar-thumb-active);
 }
-.process-scroll-surface::-webkit-scrollbar-corner,
-body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-corner {
+.process-scroll-surface::-webkit-scrollbar-corner {
   background: var(--process-scrollbar-corner);
 }
 /* High contrast returns to native geometry/Firefox colors. System keywords
    provide a safe fallback where Chromium still exposes the pseudo-elements. */
 @media (forced-colors: active) {
-  .process-scroll-surface,
-  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list {
+  .process-scroll-surface {
     scrollbar-width: auto;
     scrollbar-color: auto;
     forced-color-adjust: auto;
   }
-  .process-scroll-surface::-webkit-scrollbar,
-  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar {
+  .process-scroll-surface::-webkit-scrollbar {
     width: auto;
     height: auto;
   }
   .process-scroll-surface::-webkit-scrollbar-track,
-  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-track,
-  .process-scroll-surface::-webkit-scrollbar-corner,
-  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-corner {
+  .process-scroll-surface::-webkit-scrollbar-corner {
     background: Canvas;
   }
-  .process-scroll-surface::-webkit-scrollbar-thumb,
-  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb {
+  .process-scroll-surface::-webkit-scrollbar-thumb {
     background: ButtonText;
     border: 1px solid Canvas;
   }
   .process-scroll-surface::-webkit-scrollbar-thumb:hover,
-  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:hover,
-  .process-scroll-surface::-webkit-scrollbar-thumb:active,
-  body:has(#tab-processes.active #process-editor-view) #command-palette-modal .palette-list::-webkit-scrollbar-thumb:active {
+  .process-scroll-surface::-webkit-scrollbar-thumb:active {
     background: Highlight;
   }
 }
