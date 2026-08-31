@@ -42,6 +42,9 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 		{"body.wizard #command-palette-modal .palette-list::-webkit-scrollbar-thumb", "WebKit gets the wizard scrollbar thumb"},
 		{"background: #a97bd6;", "the wizard scrollbar has the standard hover color"},
 		{"background: #c9a6f0;", "the wizard scrollbar has the standard active color"},
+		{"@media (forced-colors: active)", "high-contrast mode gets an explicit reset"},
+		{"scrollbar-color: auto;", "high-contrast mode restores native Firefox colors"},
+		{"background: ButtonText; border: 1px solid Canvas;", "high-contrast mode uses system thumb colors"},
 	} {
 		must(scrollbarRule.needle, scrollbarRule.why)
 	}
