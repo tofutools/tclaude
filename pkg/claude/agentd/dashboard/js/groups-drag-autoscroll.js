@@ -75,6 +75,18 @@ function bindGroupsDragAutoScroll() {
     }
     if (!frameID) frameID = window.requestAnimationFrame(frame);
   };
+  const leave = (e) => {
+    if (!active || e.relatedTarget) return;
+    // Child-to-child dragleave events are noisy. Only pause when the pointer
+    // actually crossed the viewport boundary; otherwise the last edge speed
+    // could keep scrolling the page while the drag is in another window.
+    if (e.clientX <= 0 || e.clientY <= 0
+        || e.clientX >= window.innerWidth - 1
+        || e.clientY >= window.innerHeight - 1) {
+      velocity = 0;
+      stopFrame();
+    }
+  };
   const start = (e) => {
     const source = e.target.closest?.('.dnd-draggable, [data-group-reorder]');
     if (!source) return;
@@ -85,6 +97,7 @@ function bindGroupsDragAutoScroll() {
 
   document.addEventListener('dragstart', start);
   document.addEventListener('dragover', update);
+  document.addEventListener('dragleave', leave);
   document.addEventListener('dragend', stop);
   document.addEventListener('drop', stop);
 
@@ -92,6 +105,7 @@ function bindGroupsDragAutoScroll() {
     stop();
     document.removeEventListener('dragstart', start);
     document.removeEventListener('dragover', update);
+    document.removeEventListener('dragleave', leave);
     document.removeEventListener('dragend', stop);
     document.removeEventListener('drop', stop);
   };
