@@ -39,6 +39,7 @@ function bindGroupsDragAutoScroll() {
   let velocity = 0;
   let frameID = 0;
   let lastFrame = 0;
+  let activeSource = null;
 
   const stopFrame = () => {
     if (frameID) window.cancelAnimationFrame(frameID);
@@ -49,6 +50,8 @@ function bindGroupsDragAutoScroll() {
     active = false;
     velocity = 0;
     stopFrame();
+    activeSource?.removeEventListener('dragend', stop);
+    activeSource = null;
   };
   const frame = (now) => {
     frameID = 0;
@@ -90,9 +93,15 @@ function bindGroupsDragAutoScroll() {
   const start = (e) => {
     const source = e.target.closest?.('.dnd-draggable, [data-group-reorder]');
     if (!source) return;
+    stop();
     active = true;
     velocity = 0;
     lastFrame = 0;
+    activeSource = source;
+    // Snapshot reconciliation may detach the source before dragend. Native
+    // dragend still targets that node but can no longer bubble to document,
+    // so source-local teardown is required to stop the animation reliably.
+    source.addEventListener('dragend', stop, { once: true });
   };
 
   document.addEventListener('dragstart', start);

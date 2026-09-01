@@ -30,3 +30,25 @@ test('group drag edge scrolling rejects unusable geometry', async (t) => {
   assert.equal(edgeScrollVelocity(Number.NaN, 800), 0);
   assert.equal(edgeScrollVelocity(0, 0), 0);
 });
+
+test('a detached drag source still stops the edge-scroll frame', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { bindGroupsDragAutoScroll } = await harness.importDashboardModule('js/groups-drag-autoscroll.js');
+  const source = harness.document.body.appendChild(harness.document.createElement('div'));
+  source.className = 'dnd-draggable';
+
+  const cancelled = [];
+  harness.window.requestAnimationFrame = () => 41;
+  harness.window.cancelAnimationFrame = (id) => cancelled.push(id);
+  Object.defineProperty(harness.window, 'innerHeight', { configurable: true, value: 800 });
+
+  const cleanup = bindGroupsDragAutoScroll();
+  harness.fireEvent(source, 'dragstart');
+  harness.fireEvent(source, 'dragover', { clientY: 799 });
+  source.remove();
+  harness.fireEvent(source, 'dragend');
+
+  assert.deepEqual(cancelled, [41],
+    'source-local dragend cancels scrolling after reconciliation detaches the source');
+  cleanup();
+});
