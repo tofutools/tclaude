@@ -41,6 +41,8 @@ export const SYNONYMS = {
   awaken: ['resume'],
   retire: ['banish'],
   banish: ['retire'],
+  message: ['missive'],
+  missive: ['message'],
   // A saved spawn "profile" is re-lettered a "familiar pattern" in wizard mode,
   // so bridge the two nouns both ways (lifts the profiles-manager command to a
   // label hit whichever vocabulary the human types in either theme).

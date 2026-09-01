@@ -1257,6 +1257,7 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("'Manage wards…'", "the sandbox-profile manager presents as wards in wizard mode")
 	must("'Manage cross-realm summons…'", "the global cross-harness policy presents as cross-realm summons in wizard mode")
 	must("'Manage arcane channels between parties…'", "the inter-group links manager presents as arcane channels in wizard mode")
+	must("`Send missive to party: ${g.name}…`", "per-group messaging presents as a missive to the named party in wizard mode")
 	must("'Unfurl the grimoire'", "show-dock presents as Unfurl the grimoire in wizard mode (matching the dock edge-toggle title)")
 	must("'Furl the grimoire'", "hide-dock presents as Furl the grimoire in wizard mode (matching the dock edge-toggle title)")
 
@@ -1308,6 +1309,8 @@ func TestDashboardHTML_WizardCommandPaletteSynonyms(t *testing.T) {
 	must("reveal: ['focus', 'show']", "reveal bridges to focus/show")
 	must("party: ['group']", "party bridges to group (Form a party ↔ Create new group)")
 	must("group: ['party']", "group bridges to party")
+	must("message: ['missive']", "message bridges to the wizard-mode missive verb")
+	must("missive: ['message']", "missive bridges to the plain message verb")
 }
 
 // TestDashboardCSS_WizardCommandPaletteScoped guards that the wizard palette

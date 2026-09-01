@@ -69,7 +69,7 @@ import { scribeGroupVisible } from './scribe-groups.js';
 import { closeTerminalsForConvs, closeTerminalsForWindowOp, focusTerminalForConv, openWebWindowPane } from './terminals-tab.js';
 import { createPaletteWindowOperator, webWindowTargets } from './palette-window-ops.js';
 import { buildRegisteredCommands } from './command-registry.js';
-import { openOperatorMessageDialog } from './message-access-dialog-controller.js';
+import { openMessageCreateModal, openOperatorMessageDialog } from './message-access-dialog-controller.js';
 
 // wiz(regular, wizard) returns the arcane string in 🧙 mode, else the plain
 // one. buildCommands wraps every command's PRESENTED label + hint (and its
@@ -439,8 +439,10 @@ export function buildCommands(snapshot) {
       + ' arcane channels channel parties missive whisper weave',
     run: () => openLinksManager(),
   });
-  // One pinned spawn per group, so the operator can launch straight into a
-  // named group without first picking it in the dialog.
+  // One pinned spawn and one pinned message per group, so the operator can
+  // launch or compose straight into a named group without first picking it in
+  // the dialog. The message command reuses the same group-scoped composer as
+  // the per-group cog's "message" / "missive" item.
   for (const g of groups) {
     cmds.push({
       icon: wiz('＋', '🔮'), label: wiz(`Spawn agent in ${g.name}…`, `Summon a familiar into ${g.name}…`),
@@ -449,6 +451,17 @@ export function buildCommands(snapshot) {
       keywords: 'new agent create spawn launch start group ' + g.name
         + ' summon conjure invoke familiar party',
       run: () => { recordGroupInteraction(g.name); openAgentSpawnModal({ groupName: g.name }); },
+    });
+    cmds.push({
+      icon: wiz('✉', '✒'), label: wiz(`Message group: ${g.name}…`, `Send missive to party: ${g.name}…`),
+      hint: wiz('compose a one-shot message to the whole group or a chosen subset',
+        'inscribe a missive for every familiar in this party or a chosen circle'),
+      keywords: 'message send compose notify group broadcast multicast all members agents ' + g.name
+        + ' missive inscribe party familiars circle',
+      run: () => {
+        recordGroupInteraction(g.name);
+        openMessageCreateModal({ targetMode: 'group', groupName: g.name });
+      },
     });
   }
 
