@@ -39,9 +39,27 @@ func TestDashboardDndBindersAreDisposable(t *testing.T) {
 		}
 	}
 
+	autoScroll, err := fs.ReadFile(dashboardAssetsFS, "js/groups-drag-autoscroll.js")
+	if err != nil {
+		t.Fatalf("read groups-drag-autoscroll.js: %v", err)
+	}
+	for _, needle := range []string{
+		"source.addEventListener('dragend', stop, { once: true });",
+		"activeSource?.removeEventListener('dragend', stop);",
+		"document.removeEventListener('dragstart', start);",
+		"document.removeEventListener('dragover', update);",
+		"document.removeEventListener('dragleave', leave);",
+		"document.removeEventListener('dragend', stop);",
+		"document.removeEventListener('drop', stop);",
+	} {
+		if !strings.Contains(string(autoScroll), needle) {
+			t.Errorf("groups-drag-autoscroll.js missing disposable-listener contract %q", needle)
+		}
+	}
+
 	for _, needle := range []string{
 		"const pageCleanups = [];",
-		"pageCleanups.push(bindDnd(), bindGroupReorder());",
+		"pageCleanups.push(bindDnd(), bindGroupReorder(), bindGroupsDragAutoScroll());",
 		"pageCleanups.push(bindDockDnd());",
 		"pageCleanups.push(bindDockSaveDnd());",
 		"for (const cleanup of pageCleanups.reverse()) cleanup?.();",
