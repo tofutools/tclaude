@@ -36,6 +36,7 @@ import { bindRowActions } from './row-actions.js';
 import { bindToolbarActionsMenu } from './toolbar-actions-menu.js';
 import { bindDnd } from './dnd.js';
 import { bindGroupReorder } from './group-reorder.js';
+import { bindGroupsDragAutoScroll } from './groups-drag-autoscroll.js';
 import { bindDockDnd } from './dock-dnd.js';
 import { bindDockSaveDnd } from './dock-save-dnd.js';
 import { bindGroupsCleanupButtons } from './modal-message.js';
@@ -317,7 +318,7 @@ async function settleInitialLayout() {
   pageCleanups.push(
     bindDetailsPersistence(), bindGroupTitleToggle(), bindToolbarActionsMenu(), bindRowActions(),
   );
-  pageCleanups.push(bindDnd(), bindGroupReorder());
+  pageCleanups.push(bindDnd(), bindGroupReorder(), bindGroupsDragAutoScroll());
   // Drag a palette dock profile/role card onto a group → spawn dialog prefilled
   // (JOH-375). Its document-level listeners coexist with dnd.js /
   // group-reorder.js via a distinct custom MIME + self-gating state.
