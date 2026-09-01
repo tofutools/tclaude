@@ -77,6 +77,8 @@ export function sandboxProfileSummary(profile) {
   if (authoredNetwork.namespace === 'host') parts.push('shared host network');
   const axes = sandboxAccessAxes(profile);
   if (axes.unix_sockets.mode) parts.push(`sockets ${axes.unix_sockets.mode}${axes.unix_sockets.mode === 'list' ? ` (${axes.unix_sockets.allow.length})` : ''}`);
+  const tmpfs = (profile.tmpfs || []).length;
+  if (tmpfs) parts.push(`${tmpfs} tmpfs`);
   return parts.join(' · ') || 'no sandbox rules';
 }
 
@@ -390,6 +392,16 @@ function effectiveRuleRows(context = {}, constructedRoot = false) {
   }
   for (const name of context.agent_directories || []) {
     rows.push({ axis: 'agent_directories', label: `Private read/write directory: $${name}` });
+  }
+  // Filed under the filesystem axis because that is the axis whose capability
+  // verdict actually gates it: an implementation that cannot mount refuses the
+  // launch, and the refusal arrives on the filesystem cell.
+  for (const mount of context.tmpfs || []) {
+    if (!mount || !mount.path) continue;
+    rows.push({
+      axis: 'filesystem',
+      label: `Temporary filesystem: ${mount.path}${mount.size ? ` (max ${mount.size})` : ' (default: half of host RAM)'}`,
+    });
   }
   // Blocks are the one axis that is arbitrary shell rather than a rule, so the
   // preview names them and says what they promise to define, without pretending

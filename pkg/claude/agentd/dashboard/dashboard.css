@@ -7139,6 +7139,40 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 .sbx-prelaunch-actions .sbx-prelaunch-remove:hover { border-color: #6e3a3a; }
 .sbx-prelaunch-error { color: #ff7b72; font-size: .76rem; line-height: 1.35; }
 .sbx-prelaunch-add:disabled { cursor: default; opacity: .45; }
+
+/* Temporary filesystems (TCL-1218). A tmpfs row is a path plus an optional
+   ceiling, so it reuses the flat .sbx-row shape the filesystem table uses
+   rather than the pre-launch card — it is a one-line rule, not a script. The
+   size field is deliberately narrow and secondary: the path is what an
+   operator scans for, and a blank size is the common, valid case. */
+.sbx-tmpfs-intro {
+  color: var(--text-muted);
+  font-size: .82rem;
+  line-height: 1.4;
+}
+.sbx-tmpfs-list {
+  display: flex;
+  flex-direction: column;
+  gap: .3rem;
+}
+.sbx-tmpfs-row.is-invalid > input[aria-invalid="true"] { border-color: #6e3a3a; }
+/* Both selectors carry the row class on purpose. The shared
+   `.sbx-section input:not([type])` rule above sets `flex: 1` and outranks a
+   bare class, so without this the path and the size render at exactly the same
+   width and the row reads as two equal fields instead of a path with a
+   modifier hanging off it. */
+.sbx-section .sbx-tmpfs-row input.sbx-tmpfs-path { flex: 1 1 auto; min-width: 0; }
+.sbx-section .sbx-tmpfs-row input.sbx-tmpfs-size {
+  flex: 0 1 13rem;
+  min-width: 7rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.sbx-tmpfs-error { color: #ff7b72; font-size: .76rem; line-height: 1.35; }
+.sbx-tmpfs-add:disabled { cursor: default; opacity: .45; }
+@media (max-width: 700px) {
+  .sbx-tmpfs-row { flex-wrap: wrap; }
+  .sbx-tmpfs-size { flex-basis: 100%; }
+}
 @media (max-width: 700px) {
   .sbx-prelaunch-head { align-items: stretch; grid-template-columns: auto minmax(0, 1fr); }
   .sbx-prelaunch-actions { grid-column: 2; }
@@ -7277,6 +7311,10 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
 .sbx-cap-inc   { color: #d2a8ff; background: rgba(163, 113, 247, 0.12); border-color: rgba(163, 113, 247, 0.30); }
 /* "own" = agent-owned directory variable (isolated per-agent dir at spawn). */
 .sbx-cap-own   { color: #56d4dd; background: rgba(57, 197, 207, 0.12); border-color: rgba(57, 197, 207, 0.30); }
+/* "tmpfs" = empty writable scratch backed by no host directory, gone at exit.
+   Deliberately not tinted like read/write: it confers no host authority, and
+   colouring it as a grant would misread at a glance. */
+.sbx-cap-tmpfs { color: #adbac7; background: rgba(110, 118, 129, 0.14); border-color: rgba(110, 118, 129, 0.34); }
 .sbx-cap-val {
   flex: 1; min-width: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px; color: #c9d1d9;

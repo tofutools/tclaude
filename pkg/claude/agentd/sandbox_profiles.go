@@ -92,7 +92,7 @@ const sandboxProfileMaxBodyBytes = 8 << 20
 
 const (
 	sandboxProfileExportFormat        = "tclaude-sandbox-profiles"
-	sandboxProfileExportVersion       = 16
+	sandboxProfileExportVersion       = 17
 	sandboxProfileExportVersionLegacy = 9
 )
 
@@ -106,6 +106,7 @@ type sandboxProfileJSON struct {
 	Name                    string                             `json:"name"`
 	Filesystem              []sandboxpolicy.FilesystemGrant    `json:"filesystem"`
 	FilesystemSpellings     *sandboxpolicy.FilesystemSpellings `json:"filesystem_spellings"`
+	Tmpfs                   []sandboxpolicy.TmpfsMount         `json:"tmpfs,omitempty"`
 	Environment             []sandboxpolicy.EnvironmentEntry   `json:"environment"`
 	AgentDirectories        []string                           `json:"agent_directories,omitempty"`
 	FilesystemRoot          sandboxpolicy.FilesystemRootMode   `json:"filesystem_root,omitempty"`
@@ -158,6 +159,7 @@ func sandboxProfileToJSON(p *db.SandboxProfile, localFields bool) sandboxProfile
 	out := sandboxProfileJSON{
 		Name: p.Name, Filesystem: p.Filesystem,
 		FilesystemSpellings: p.FilesystemSpellings,
+		Tmpfs:               p.Tmpfs,
 		Environment:         p.Environment, AgentDirectories: p.AgentDirectories,
 		FilesystemRoot: p.FilesystemRoot,
 		HarnessConfig:  p.HarnessConfig,
@@ -182,6 +184,7 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 	input := sandboxpolicy.Profile{
 		Name: body.Name, Filesystem: body.Filesystem,
 		FilesystemSpellings: body.FilesystemSpellings,
+		Tmpfs:               body.Tmpfs,
 		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, FilesystemRoot: body.FilesystemRoot,
 		HarnessConfig: body.HarnessConfig, NetworkAccess: body.NetworkAccess,
 		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits,
@@ -202,6 +205,7 @@ func buildSandboxProfile(body sandboxProfileJSON) (*db.SandboxProfile, []string,
 	return &db.SandboxProfile{
 		Name: normalized.Name, Filesystem: normalized.Filesystem,
 		FilesystemSpellings: normalized.FilesystemSpellings,
+		Tmpfs:               normalized.Tmpfs,
 		Environment:         normalized.Environment, AgentDirectories: normalized.AgentDirectories,
 		FilesystemRoot: normalized.FilesystemRoot,
 		HarnessConfig:  normalized.HarnessConfig,
@@ -216,6 +220,7 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 	normalized, missing, err := sandboxpolicy.NormalizeForImport(sandboxpolicy.Profile{
 		Name: body.Name, Filesystem: body.Filesystem,
 		FilesystemSpellings: body.FilesystemSpellings,
+		Tmpfs:               body.Tmpfs,
 		Environment:         body.Environment, AgentDirectories: body.AgentDirectories, FilesystemRoot: body.FilesystemRoot,
 		HarnessConfig: body.HarnessConfig, NetworkAccess: body.NetworkAccess,
 		Network: body.Network, UnixSockets: body.UnixSockets, ResourceLimits: body.ResourceLimits,
@@ -228,6 +233,7 @@ func buildSandboxProfileForImport(body sandboxProfileJSON) (*db.SandboxProfile, 
 	return &db.SandboxProfile{
 		Name: normalized.Name, Filesystem: normalized.Filesystem,
 		FilesystemSpellings: normalized.FilesystemSpellings,
+		Tmpfs:               normalized.Tmpfs,
 		Environment:         normalized.Environment, AgentDirectories: normalized.AgentDirectories,
 		FilesystemRoot: normalized.FilesystemRoot,
 		HarnessConfig:  normalized.HarnessConfig,
@@ -374,6 +380,13 @@ func handleSandboxProfileByName(w http.ResponseWriter, r *http.Request) {
 		_ = json.Unmarshal(raw, &present)
 		if _, sent := present["pre_launch"]; !sent {
 			body.PreLaunch = existing.PreLaunch
+		}
+		// Same reasoning, same probe, for the temporary filesystems: an editor
+		// that predates the axis omits the key entirely, and silently unmounting
+		// an agent's scratch space because someone renamed a profile would be
+		// exactly the data loss the pre_launch guard above exists to prevent.
+		if _, sent := present["tmpfs"]; !sent {
+			body.Tmpfs = existing.Tmpfs
 		}
 		p, missing, err := buildSandboxProfile(body)
 		if err != nil {
@@ -735,6 +748,10 @@ func handleSandboxProfilesExport(w http.ResponseWriter, r *http.Request) {
 	}
 	formatVersion := sandboxProfileExportVersionLegacy
 	for _, profile := range out {
+		if len(profile.Tmpfs) > 0 {
+			formatVersion = 17
+			continue
+		}
 		if profile.HarnessConfig != "" {
 			if formatVersion < 15 {
 				formatVersion = 15
@@ -989,6 +1006,9 @@ func handleSandboxProfilesImportInspect(w http.ResponseWriter, r *http.Request) 
 // Version 16 remains readable because released bundles may carry the retired
 // caller-identity field; decoding now ignores it because packet filtering
 // preserves caller identity unconditionally.
+// Version 17 adds temporary filesystems, which an older reader would drop
+// silently — and a profile whose scratch space vanished is a different policy,
+// not an older spelling of the same one.
 //
 // Older versions stay readable so imports from older installations keep
 // working. The two removals are handled DIFFERENTLY on purpose. The retired
@@ -1011,6 +1031,15 @@ func supportedSandboxProfileExport(format string, version int) bool {
 
 func validateSandboxProfileExportVersionContent(env sandboxProfileExportEnvelope) *spawnFailure {
 	for _, profile := range env.Profiles {
+		if env.FormatVersion < 17 && len(profile.Tmpfs) > 0 {
+			return &spawnFailure{
+				Status: http.StatusBadRequest,
+				Kind:   "invalid_format",
+				Msg: fmt.Sprintf(
+					"sandbox profile %q contains temporary filesystems, which require export format version 17",
+					profile.Name),
+			}
+		}
 		if env.FormatVersion < 15 && profile.HarnessConfig != "" {
 			return &spawnFailure{
 				Status: http.StatusBadRequest,

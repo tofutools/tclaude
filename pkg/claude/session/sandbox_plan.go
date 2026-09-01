@@ -16,6 +16,13 @@ const (
 	SandboxPlanPresent          SandboxPlanDisposition = "present"
 	SandboxPlanMissingWouldSkip SandboxPlanDisposition = "missing-would-skip"
 	SandboxPlanHidden           SandboxPlanDisposition = "hidden"
+	// SandboxPlanCreated is a mount an applier materializes rather than
+	// projects: a temporary filesystem exists because the launch makes it, so
+	// the present/missing question the other dispositions answer does not
+	// apply to it. Reporting it as missing-would-skip — which is what an
+	// empty source means for every other mode — would tell an operator their
+	// scratch space is about to be dropped.
+	SandboxPlanCreated SandboxPlanDisposition = "created"
 )
 
 // SandboxPlanEntry is one operator-facing row in the four-class outer-layer
@@ -129,8 +136,14 @@ func DescribeTclaudeLayerPlan(
 		// Source is the host authority and Target is where it lands inside the
 		// sandbox. They differ for a mount_path grant, and the row must show both
 		// so a dry-run reader can tell a projected mount from a same-path one.
+		// A tmpfs has no host authority at all, so its source column stays
+		// empty rather than repeating the guest path as if it were one.
+		source := entry.SourcePath()
+		if !entry.HasHostSource() {
+			source = ""
+		}
 		add(2, "profile-plan", "effective-filesystem", mountModeLabel(entry.Mode),
-			entry.SourcePath(), entry.Path)
+			source, entry.Path)
 	}
 
 	protected, err := sandboxpolicy.ProtectedPaths()
@@ -209,7 +222,10 @@ func DescribeRecordedEffectivePlan(
 	}
 	for _, entry := range plan.Entries {
 		mode := mountModeLabel(entry.Mode)
-		if entry.Mode != sandboxpolicy.MountHide {
+		// A hide and a tmpfs are both fully determined by the record: neither
+		// depends on a host path being present at launch, so both have a
+		// disposition an inspection can state without inventing a fact.
+		if entry.Mode != sandboxpolicy.MountHide && entry.Mode != sandboxpolicy.MountTmpfs {
 			target := entry.Path
 			if entry.IsRemapped() {
 				target = fmt.Sprintf("%s (from %s)", entry.Path, entry.Source)
@@ -223,8 +239,12 @@ func DescribeRecordedEffectivePlan(
 				})
 			continue
 		}
+		source := entry.Path
+		if !entry.HasHostSource() {
+			source = ""
+		}
 		add(2, "profile-plan", "recorded-effective-filesystem",
-			mode, entry.Path, entry.Path)
+			mode, source, entry.Path)
 	}
 	protected, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
@@ -249,6 +269,9 @@ func sandboxPlanDisposition(mode, source string) (SandboxPlanDisposition, error)
 	if mode == "hide" {
 		return SandboxPlanHidden, nil
 	}
+	if mode == "tmpfs" {
+		return SandboxPlanCreated, nil
+	}
 	if source == "" {
 		return SandboxPlanMissingWouldSkip, nil
 	}
@@ -266,6 +289,8 @@ func mountModeLabel(mode sandboxpolicy.MountMode) string {
 		return "ro"
 	case sandboxpolicy.MountRW:
 		return "rw"
+	case sandboxpolicy.MountTmpfs:
+		return "tmpfs"
 	default:
 		return "hide"
 	}

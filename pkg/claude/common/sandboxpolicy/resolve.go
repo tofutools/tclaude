@@ -47,6 +47,7 @@ type ResolutionProvenance struct {
 	Filesystem       map[string][]ProfileSource `json:"filesystem"`
 	Environment      map[string]ProfileSource   `json:"environment"`
 	AgentDirectories map[string][]ProfileSource `json:"agent_directories"`
+	Tmpfs            map[string][]ProfileSource `json:"tmpfs,omitempty"`
 	FilesystemRoot   *ProfileSource             `json:"filesystem_root,omitempty"`
 	HarnessConfig    *ProfileSource             `json:"harness_config,omitempty"`
 	Network          *ProfileSource             `json:"network,omitempty"`
@@ -64,7 +65,11 @@ type EffectiveProfile struct {
 	// still contain symlinks. Modern registry profiles retain those spellings
 	// in non-authoritative metadata; legacy profiles may have already lost
 	// them. Omitempty keeps snapshots with no observable aliases byte-compatible.
-	MountAliases            []MountAlias        `json:"mount_aliases,omitempty"`
+	MountAliases []MountAlias `json:"mount_aliases,omitempty"`
+	// Tmpfs is the composed set of temporary filesystems. Omitempty keeps a
+	// snapshot that authored none byte-compatible with every snapshot written
+	// before the axis existed.
+	Tmpfs                   []TmpfsMount        `json:"tmpfs,omitempty"`
 	Environment             []EnvironmentEntry  `json:"environment"`
 	AgentDirectories        []string            `json:"agent_directories"`
 	FilesystemRoot          FilesystemRootMode  `json:"filesystem_root,omitempty"`
@@ -123,10 +128,12 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			Filesystem:       map[string][]ProfileSource{},
 			Environment:      map[string]ProfileSource{},
 			AgentDirectories: map[string][]ProfileSource{},
+			Tmpfs:            map[string][]ProfileSource{},
 		},
 	}
 
 	filesystem := map[string]resolvedFilesystemGrant{}
+	tmpfs := map[string]TmpfsMount{}
 	environment := map[string]string{}
 	agentDirectories := map[string][]ProfileSource{}
 	networkRules := NetworkRules{}
@@ -239,6 +246,15 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 			current.kind = strictestGrantKind(current.kind, grant.Kind)
 			current.sources = append(current.sources, source)
 			filesystem[guest] = current
+		}
+		// Strictest-wins across scopes, exactly like the filesystem union above:
+		// a group profile must not be able to widen a ceiling a global one set.
+		// See mergeTmpfsStrictest for why the fold is commutative, which is what
+		// makes the result independent of tier order.
+		for _, mount := range normalized.Tmpfs {
+			tmpfs[mount.Path] = mergeTmpfsStrictest(tmpfs[mount.Path], mount)
+			result.Provenance.Tmpfs[mount.Path] = append(
+				result.Provenance.Tmpfs[mount.Path], source)
 		}
 		for _, entry := range normalized.Environment {
 			if _, exists := agentDirectories[entry.Name]; exists {
@@ -385,6 +401,19 @@ func Resolve(in Scopes) (EffectiveProfile, error) {
 	}
 	if err := validateMountPaths(result.Filesystem, protectedForMounts); err != nil {
 		return EffectiveProfile{}, fmt.Errorf("validate effective filesystem mount paths: %w", err)
+	}
+	result.Tmpfs = sortedTmpfsMounts(tmpfs)
+	for path := range result.Provenance.Tmpfs {
+		result.Provenance.Tmpfs[path] = canonicalSources(result.Provenance.Tmpfs[path])
+	}
+	if len(result.Provenance.Tmpfs) == 0 {
+		result.Provenance.Tmpfs = nil
+	}
+	// Same reason the mount-path invariants are rechecked above: a tmpfs and a
+	// grant can first land on one sandbox path when two scopes compose, and
+	// neither profile is wrong on its own.
+	if err := validateTmpfsAgainstFilesystem(result.Tmpfs, result.Filesystem); err != nil {
+		return EffectiveProfile{}, fmt.Errorf("validate effective temporary filesystems: %w", err)
 	}
 	activeCanonicalPaths := make(map[string]bool, len(result.Filesystem))
 	for _, grant := range result.Filesystem {

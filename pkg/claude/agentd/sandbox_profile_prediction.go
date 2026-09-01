@@ -143,7 +143,7 @@ func predictSandboxFilesystem(
 	target parsedSandboxProfileEnforcementTarget,
 	validatedBuiltinMode string,
 ) harness.PredictedAccessAxis {
-	tier := sandboxFilesystemTier(profile.Filesystem, len(profile.AgentDirectories))
+	tier := sandboxFilesystemTier(profile.Filesystem, len(profile.AgentDirectories), len(profile.Tmpfs))
 	grants, err := filesystemGrantsWithPredictedAgentDirectories(profile)
 	if err != nil {
 		return predictedSandboxFeature(
@@ -152,7 +152,24 @@ func predictSandboxFilesystem(
 		)
 	}
 	reopens := sandboxpolicy.ReopensUnderDeny(grants)
-	if len(profile.Filesystem) == 0 && len(profile.AgentDirectories) == 0 {
+	// Asked before the "nothing configured" arm below: a profile whose only
+	// filesystem opinion is a tmpfs still has one, and reporting it as "no
+	// directory-access rules are configured" on a target that cannot mount it
+	// would hide the refusal the launch will actually produce.
+	if tmpfsCount, tmpfsDetail := tmpfsMountSummary(profile.Tmpfs); tmpfsCount > 0 &&
+		!sandboxpolicy.SupportsTmpfsMounts(target.implementation, target.platform) {
+		return predictedSandboxFeature(
+			tier, harness.AccessPredictionRefused,
+			fmt.Sprintf(
+				"%d rule%s mount%s a temporary filesystem inside the sandbox (%s); "+
+					"a tmpfs needs a mount namespace whose whole boundary tclaude owns, which only the Linux tclaude-layer provides, so launch is refused rather than launching without the mount",
+				tmpfsCount, pluralSuffix(tmpfsCount),
+				singularVerbSuffix(tmpfsCount), tmpfsDetail,
+			),
+		)
+	}
+	if len(profile.Filesystem) == 0 && len(profile.AgentDirectories) == 0 &&
+		len(profile.Tmpfs) == 0 {
 		return predictedSandboxFeature(
 			tier, harness.AccessPredictionEnforced,
 			"no directory-access rules are configured",
@@ -388,6 +405,7 @@ func filesystemGrantsWithPredictedAgentDirectories(
 func sandboxFilesystemTier(
 	grants []sandboxpolicy.FilesystemGrant,
 	agentDirectoryCount int,
+	tmpfsCount int,
 ) string {
 	counts := map[sandboxpolicy.Access]int{}
 	for _, grant := range grants {
@@ -406,6 +424,14 @@ func sandboxFilesystemTier(
 	if agentDirectoryCount > 0 {
 		parts = append(parts, fmt.Sprintf(
 			"%d generated write root%s", agentDirectoryCount, pluralSuffix(agentDirectoryCount),
+		))
+	}
+	// Counted separately from the generated write roots: both are writable
+	// directories the profile did not name a host path for, but an agent
+	// directory persists on the host and a tmpfs does not survive the launch.
+	if tmpfsCount > 0 {
+		parts = append(parts, fmt.Sprintf(
+			"%d temporary filesystem%s", tmpfsCount, pluralSuffix(tmpfsCount),
 		))
 	}
 	if len(parts) == 0 {
@@ -440,6 +466,24 @@ func remappedGrantSummary(grants []sandboxpolicy.FilesystemGrant) (int, string) 
 func fileGrantSummary(grants []sandboxpolicy.FilesystemGrant) (int, string) {
 	const maxShown = 2
 	paths := sandboxpolicy.FileGrantPaths(grants)
+	shown := make([]string, 0, maxShown+1)
+	for i, path := range paths {
+		if i == maxShown {
+			break
+		}
+		shown = append(shown, fmt.Sprintf("%q", path))
+	}
+	if len(paths) > maxShown {
+		shown = append(shown, fmt.Sprintf("and %d more", len(paths)-maxShown))
+	}
+	return len(paths), strings.Join(shown, ", ")
+}
+
+// tmpfsMountSummary is fileGrantSummary for temporary filesystems, capped the
+// same way and for the same reason.
+func tmpfsMountSummary(mounts []sandboxpolicy.TmpfsMount) (int, string) {
+	const maxShown = 2
+	paths := sandboxpolicy.TmpfsPaths(mounts)
 	shown := make([]string, 0, maxShown+1)
 	for i, path := range paths {
 		if i == maxShown {

@@ -91,6 +91,7 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 	out := Profile{
 		Name:                    root.Name,
 		PreLaunch:               clonePreLaunch(parts.preLaunch),
+		Tmpfs:                   sortedTmpfsMounts(parts.tmpfs),
 		Filesystem:              make([]FilesystemGrant, 0, len(parts.filesystem)),
 		Environment:             make([]EnvironmentEntry, 0, len(parts.environment)),
 		AgentDirectories:        make([]string, 0, len(parts.agentDirectories)),
@@ -177,7 +178,14 @@ func FlattenWithNotices(in Profile, lookup LookupProfile) (Profile, []AccessNoti
 }
 
 type flattenedParts struct {
-	filesystem          map[string]FilesystemGrant
+	filesystem map[string]FilesystemGrant
+	// tmpfs follows include semantics rather than the cross-scope lattice: a
+	// later layer REPLACES a same-path row, exactly as it does for a filesystem
+	// rule. Includes are an authoring convenience inside one operator-owned
+	// registry, where overriding an inherited row is the point; the
+	// strictest-wins union belongs to cross-scope resolution, which composes
+	// profiles the author may not control.
+	tmpfs               map[string]TmpfsMount
 	filesystemSpellings map[string]map[string]struct{}
 	// filesystemConflicts records overrides that replace one HOST path's rule
 	// with a rule about a DIFFERENT host path at the same sandbox path. Ordinary
@@ -284,6 +292,7 @@ func (f *flattener) chainDepth(name string) (int, error) {
 func (f *flattener) compose(p Profile) *flattenedParts {
 	out := &flattenedParts{
 		filesystem:          map[string]FilesystemGrant{},
+		tmpfs:               map[string]TmpfsMount{},
 		filesystemSpellings: map[string]map[string]struct{}{},
 		environment:         map[string]EnvironmentEntry{},
 		agentDirectories:    map[string]struct{}{},
@@ -297,6 +306,9 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 		for guest, grant := range parts.filesystem {
 			out.noteFilesystemOverride(guest, grant)
 			out.filesystem[guest] = grant
+		}
+		for path, mount := range parts.tmpfs {
+			out.tmpfs[path] = mount
 		}
 		mergeFlattenedFilesystemSpellings(out.filesystemSpellings, parts.filesystemSpellings)
 		out.hasFilesystemSpellings =
@@ -339,6 +351,9 @@ func (f *flattener) compose(p Profile) *flattenedParts {
 			out.socketListContributors, parts.socketListContributors...)
 	}
 	out.preLaunch = mergePreLaunch(out.preLaunch, p.PreLaunch)
+	for _, mount := range p.Tmpfs {
+		out.tmpfs[mount.Path] = mount
+	}
 	for _, grant := range p.Filesystem {
 		// Include override is keyed on the guest path: "the same rule" means the
 		// same position inside the sandbox. For an unremapped rule that is the

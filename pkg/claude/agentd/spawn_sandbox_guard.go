@@ -192,6 +192,15 @@ func sandboxProfileCapabilityFailure(
 			http.StatusUnprocessableEntity,
 			"unsupported_sandbox_profile_file_grant", err.Error()}
 	}
+	// And so does a temporary filesystem: it is a mount, so nothing without a
+	// mount namespace can produce one.
+	if err := sandboxpolicy.ValidateTmpfsSupport(
+		snapshot.Effective.Tmpfs, implementation, runtime.GOOS,
+	); err != nil {
+		return &spawnFailure{
+			http.StatusUnprocessableEntity,
+			"unsupported_sandbox_profile_tmpfs", err.Error()}
+	}
 	if implementation.UsesTclaudeLayer() {
 		// The outer applier, not the harness-native sandbox catalog, represents
 		// filesystem and network policy. The session boundary validates the

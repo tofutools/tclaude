@@ -25,10 +25,17 @@ var memoryLimitRE = regexp.MustCompile(`^([0-9]+(?:\.[0-9]+)?|\.[0-9]+)([a-zA-Z]
 // K/KB, M/MB, G/GB and T/TB are powers of 1000, while Ki/KiB through Ti/TiB
 // are powers of 1024. B is accepted explicitly; suffixes are case-insensitive.
 func ParseMemoryLimitBytes(input string) (uint64, error) {
+	return parseByteQuantity("memory limit", input)
+}
+
+// parseByteQuantity is the shared quantity grammar. The label names the axis
+// being parsed so a refusal points at the field the operator actually wrote
+// rather than at whichever axis happened to define the grammar first.
+func parseByteQuantity(label, input string) (uint64, error) {
 	value := strings.TrimSpace(input)
 	match := memoryLimitRE.FindStringSubmatch(value)
 	if match == nil {
-		return 0, fmt.Errorf("memory limit %q is invalid (examples: 512MiB, 4GB, 1.5GiB)", input)
+		return 0, fmt.Errorf("%s %q is invalid (examples: 512MiB, 4GB, 1.5GiB)", label, input)
 	}
 	factors := map[string]uint64{
 		"b": 1,
@@ -43,11 +50,11 @@ func ParseMemoryLimitBytes(input string) (uint64, error) {
 	}
 	factor, ok := factors[strings.ToLower(match[2])]
 	if !ok {
-		return 0, fmt.Errorf("memory limit %q has an unsupported suffix", input)
+		return 0, fmt.Errorf("%s %q has an unsupported suffix", label, input)
 	}
 	quantity, ok := new(big.Rat).SetString(match[1])
 	if !ok || quantity.Sign() <= 0 {
-		return 0, fmt.Errorf("memory limit must be greater than zero")
+		return 0, fmt.Errorf("%s must be greater than zero", label)
 	}
 	quantity.Mul(quantity, new(big.Rat).SetInt(new(big.Int).SetUint64(factor)))
 	// Round fractional bytes up so the rendered hard ceiling is never smaller
@@ -56,7 +63,7 @@ func ParseMemoryLimitBytes(input string) (uint64, error) {
 	denominator := quantity.Denom()
 	bytes := new(big.Int).Quo(new(big.Int).Add(numerator, new(big.Int).Sub(denominator, big.NewInt(1))), denominator)
 	if !bytes.IsUint64() || bytes.Sign() <= 0 {
-		return 0, fmt.Errorf("memory limit %q is outside the supported byte range", input)
+		return 0, fmt.Errorf("%s %q is outside the supported byte range", label, input)
 	}
 	return bytes.Uint64(), nil
 }

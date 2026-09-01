@@ -184,6 +184,7 @@ type sandboxProfileEffectiveContext struct {
 	Filesystem              []sandboxpolicy.FilesystemGrant   `json:"filesystem"`
 	Environment             []string                          `json:"environment"`
 	AgentDirectories        []string                          `json:"agent_directories"`
+	Tmpfs                   []sandboxpolicy.TmpfsMount        `json:"tmpfs,omitempty"`
 	FilesystemRoot          sandboxpolicy.FilesystemRootMode  `json:"filesystem_root,omitempty"`
 	HarnessConfig           sandboxpolicy.HarnessConfigAccess `json:"harness_config,omitempty"`
 	Network                 sandboxpolicy.NetworkRules        `json:"network"`
@@ -896,6 +897,7 @@ func effectiveDraftSandboxProfileContexts(
 		}
 		policy := sandboxpolicy.Profile{
 			Filesystem:              append([]sandboxpolicy.FilesystemGrant(nil), effective.Filesystem...),
+			Tmpfs:                   append([]sandboxpolicy.TmpfsMount(nil), effective.Tmpfs...),
 			Environment:             append([]sandboxpolicy.EnvironmentEntry(nil), effective.Environment...),
 			AgentDirectories:        append([]string(nil), effective.AgentDirectories...),
 			FilesystemRoot:          effective.FilesystemRoot,
@@ -923,6 +925,7 @@ func effectiveDraftSandboxProfileContexts(
 			Filesystem:              policy.Filesystem,
 			Environment:             environment,
 			AgentDirectories:        policy.AgentDirectories,
+			Tmpfs:                   policy.Tmpfs,
 			FilesystemRoot:          policy.FilesystemRoot,
 			HarnessConfig:           policy.HarnessConfig,
 			Network:                 axes.Network,
@@ -1082,6 +1085,7 @@ func sandboxProfileDBToPolicy(profile *db.SandboxProfile) *sandboxpolicy.Profile
 	return &sandboxpolicy.Profile{
 		Name: profile.Name, Filesystem: profile.Filesystem,
 		FilesystemSpellings: profile.FilesystemSpellings,
+		Tmpfs:               profile.Tmpfs,
 		Environment:         profile.Environment, AgentDirectories: profile.AgentDirectories,
 		FilesystemRoot: profile.FilesystemRoot,
 		HarnessConfig:  profile.HarnessConfig,

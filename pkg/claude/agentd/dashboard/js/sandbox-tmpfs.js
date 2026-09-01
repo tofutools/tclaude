@@ -1,0 +1,164 @@
+// Editor-side model for the sandbox profile's temporary filesystems (TCL-1218).
+//
+// The shape is deliberately small — {path, size?} — and this module mirrors
+// sandbox-pre-launch.js: stable editor row ids so typing in one row cannot
+// remount another, a wire projection that strips editor-only fields, and a
+// validation pass whose messages are the ones the daemon would produce, said
+// earlier and beside the field.
+//
+// The daemon remains authoritative. Everything here exists so an operator finds
+// out about a bad row while they are looking at it, not after a save round trip.
+
+const MAX_MOUNTS = 32;
+const MAX_PATH_BYTES = 4096;
+
+// The same quantity grammar the memory limit accepts, and refused for the same
+// reason it is refused server-side: a bare number has no unit, so `1048576`
+// would be an ambiguous ceiling rather than a small one.
+const SIZE = /^(?:\d+(?:\.\d+)?|\.\d+)(?:[KMGT](?:I(?:B)?|B)?|B)$/i;
+const ZERO_SIZE = /^(?:0+(?:\.0*)?|\.0+)[A-Za-z]+$/i;
+
+const utf8 = new TextEncoder();
+let editorRowSequence = 0;
+
+// cleanSandboxPath is the LEXICAL half of what the daemon does before it
+// compares two sandbox paths: collapse repeated separators, drop "." segments,
+// resolve ".." against what precedes it, and strip a trailing separator.
+//
+// Lexical only, deliberately. The daemon expands a leading "~" against its own
+// home and this browser does not know that path, so "~/scratch" stays as
+// authored and a collision with its expanded spelling is the daemon's to
+// catch. What this DOES buy is identity for the cases the client can decide —
+// "/srv/./work" and "/srv/work" are one path, and without this the editor
+// would happily enable Save on a payload the daemon is certain to refuse.
+export function cleanSandboxPath(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const absolute = raw.startsWith('/');
+  const out = [];
+  for (const segment of raw.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      // A leading ".." on an absolute path has nowhere to go; the kernel keeps
+      // it at the root, so drop it rather than escaping above "/".
+      if (out.length && out[out.length - 1] !== '..') out.pop();
+      else if (!absolute) out.push('..');
+      continue;
+    }
+    out.push(segment);
+  }
+  const joined = out.join('/');
+  if (absolute) return `/${joined}`;
+  return joined || '.';
+}
+
+function nextEditorRowID() {
+  editorRowSequence += 1;
+  return `tmpfs-editor-${editorRowSequence}`;
+}
+
+export function sandboxTmpfsEditorRows(mounts, previous = []) {
+  if (!Array.isArray(mounts)) return [];
+  const previousByPath = new Map(previous.flatMap((row) => {
+    const path = typeof row?.path === 'string' ? row.path.trim() : '';
+    return path && row?._editor_id ? [[path, row._editor_id]] : [];
+  }));
+  return mounts.map((row, index) => {
+    const path = typeof row?.path === 'string' ? row.path.trim() : '';
+    return {
+      path: row?.path ?? '',
+      size: row?.size ?? '',
+      _editor_id: row?._editor_id || previousByPath.get(path)
+        || previous[index]?._editor_id || nextEditorRowID(),
+    };
+  });
+}
+
+export function sandboxTmpfsNewEditorRow() {
+  return { path: '', size: '', _editor_id: nextEditorRowID() };
+}
+
+// size_bytes is deliberately never sent: it is derived server-side from the
+// authored spelling, and a client that also sent it would be asserting a
+// number it did not compute.
+export function sandboxTmpfsForWire(mounts) {
+  if (!Array.isArray(mounts)) return [];
+  return mounts.map((row) => {
+    const size = String(row?.size ?? '').trim();
+    return { path: String(row?.path ?? '').trim(), ...(size ? { size } : {}) };
+  });
+}
+
+// filesystem is passed so the one cross-field conflict the daemon refuses — a
+// sandbox path claimed by both a tmpfs and a filesystem rule — is reported on
+// the row that causes it rather than as an opaque save failure.
+export function sandboxTmpfsValidation(mounts, filesystem = []) {
+  const profile = [];
+  if (!Array.isArray(mounts)) {
+    const message = 'Temporary filesystems must be an array of mounts.';
+    return { profile: [message], mounts: [], errors: [message] };
+  }
+  if (mounts.length > MAX_MOUNTS) {
+    profile.push(`A profile may mount at most ${MAX_MOUNTS} temporary filesystems.`);
+  }
+
+  const counts = new Map();
+  for (const row of mounts) {
+    const path = cleanSandboxPath(row?.path);
+    if (!path) continue;
+    counts.set(path, (counts.get(path) || 0) + 1);
+  }
+  // Keyed on the guest path a filesystem row occupies, which is its mount_path
+  // when it carries one — that is the position a tmpfs would collide with.
+  const claimed = new Map();
+  for (const row of Array.isArray(filesystem) ? filesystem : []) {
+    const guest = cleanSandboxPath(row?.mount_path) || cleanSandboxPath(row?.path);
+    if (guest) claimed.set(guest, String(row?.access ?? 'read'));
+  }
+
+  const perMount = mounts.map((row) => {
+    const errors = { path: [], size: [] };
+    const authored = String(row?.path ?? '').trim();
+    // Identity questions ask the cleaned spelling, because that is what the
+    // daemon compares; shape questions ask what the operator actually typed.
+    const path = cleanSandboxPath(authored);
+    if (!authored) {
+      errors.path.push('Path is required.');
+    } else {
+      // Exactly the shapes cleanDirectoryPath accepts: an absolute path, bare
+      // "~", or a "~/" prefix. "~otheruser/x" is NOT one of them — the daemon
+      // refuses to guess another account's home, keeps the literal "~", and
+      // then rejects the path as non-absolute. Accepting any leading "~" here
+      // would leave Save enabled on a payload certain to be refused.
+      if (authored !== '~' && !authored.startsWith('~/') && !authored.startsWith('/')) {
+        errors.path.push('Path must be absolute, or start with ~ or ~/ for the daemon’s own home (~otheruser/… is not supported).');
+      }
+      if (path === '/') errors.path.push('The sandbox root cannot be a temporary filesystem.');
+      if (utf8.encode(authored).length > MAX_PATH_BYTES) {
+        errors.path.push(`Path must be at most ${MAX_PATH_BYTES} bytes.`);
+      }
+      if ((counts.get(path) || 0) > 1) errors.path.push('Each sandbox path may be mounted once.');
+      if (claimed.has(path)) {
+        errors.path.push(
+          `This path is already claimed by a ${claimed.get(path)} filesystem rule; a sandbox path is either a temporary filesystem or a filesystem rule, not both.`,
+        );
+      }
+    }
+
+    const size = String(row?.size ?? '').trim();
+    if (size) {
+      if (!SIZE.test(size)) {
+        errors.size.push('Size must be a quantity with a B, K/KB/KiB, M/MB/MiB, G/GB/GiB, or T/TB/TiB unit, such as 512MiB.');
+      } else if (ZERO_SIZE.test(size)) {
+        errors.size.push('Size must be greater than zero.');
+      }
+    }
+    return errors;
+  });
+
+  const errors = [
+    ...profile,
+    ...perMount.flatMap((row) => [...row.path, ...row.size]),
+  ];
+  return { profile, mounts: perMount, errors };
+}
