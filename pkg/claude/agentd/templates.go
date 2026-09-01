@@ -3170,22 +3170,6 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		}
 	}
 
-	// Clone only after every template authority and sandbox preflight has
-	// passed, but before the group row or any agents are created. git clone
-	// creates the final checkout directory; cloneGroupRepository creates any
-	// missing parents first.
-	if !reinforce && spec.repositoryClone != nil {
-		if err := cloneGroupRepository(spec.repositoryClone); err != nil {
-			writeError(w, http.StatusBadGateway, "clone_failed", err.Error())
-			return
-		}
-		spec.cwd = spec.repositoryClone.Destination
-		if spec.codexGitCommonDir, err = templateCodexGitCommonDir(spec.cwd, spec.perAgentWorktrees); err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
-		}
-	}
-
 	granter := granterLabel(spec.caller)
 
 	var g *db.AgentGroup
@@ -3213,6 +3197,29 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 			}
 			writeError(w, http.StatusInternalServerError, "io", "create group: "+err.Error())
 			return
+		}
+		// Reserve the authoritative group name and validate its parent before
+		// cloning. The row has no members or settings yet, so clone failure can
+		// roll it back safely and leave the operator's dialog retryable.
+		if spec.repositoryClone != nil {
+			if err := cloneGroupRepository(spec.repositoryClone); err != nil {
+				if deleteErr := db.DeleteAgentGroup(spec.groupName); deleteErr != nil {
+					slog.Error("instantiate: clone failed and empty group rollback failed",
+						"group", spec.groupName, "error", deleteErr)
+				}
+				cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+				writeError(w, http.StatusBadGateway, "clone_failed", err.Error())
+				return
+			}
+			spec.cwd = spec.repositoryClone.Destination
+			if spec.codexGitCommonDir, err = templateCodexGitCommonDir(spec.cwd, spec.perAgentWorktrees); err != nil {
+				if deleteErr := db.DeleteAgentGroup(spec.groupName); deleteErr != nil {
+					slog.Error("instantiate: git metadata failed and empty group rollback failed",
+						"group", spec.groupName, "error", deleteErr)
+				}
+				writeError(w, http.StatusInternalServerError, "io", err.Error())
+				return
+			}
 		}
 		// Best-effort post-create config — a failure here is logged, not
 		// fatal: the group exists and the human can adjust it on the

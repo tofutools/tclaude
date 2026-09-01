@@ -44,6 +44,7 @@ func prepareGroupRepositoryClone(raw *groupRepositoryClone) (*preparedGroupRepos
 		return nil, nil
 	}
 	repository := strings.TrimSpace(raw.Repository)
+	repository = strings.TrimPrefix(repository, "github.com/")
 	repository = strings.TrimPrefix(repository, "https://github.com/")
 	repository = strings.TrimPrefix(repository, "http://github.com/")
 	repository = strings.TrimPrefix(repository, "ssh://git@github.com/")

@@ -3587,10 +3587,6 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "exists", "group already exists")
 			return
 		}
-		if err := cloneGroupRepository(repositoryPlan); err != nil {
-			writeError(w, http.StatusBadGateway, "clone_failed", err.Error())
-			return
-		}
 		id, err := db.CreateAgentGroupWithParent(body.Name, groupDescr, body.Parent)
 		if errors.Is(err, db.ErrGroupParentNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -3602,6 +3598,18 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
+		// The group row reserves its unique name and validates its parent before
+		// host-side cloning begins. It is still empty here, so a clone failure can
+		// safely roll it back and leave the dialog retryable without an orphaned
+		// group or a successful checkout detached from a failed DB insert.
+		if err := cloneGroupRepository(repositoryPlan); err != nil {
+			if deleteErr := db.DeleteAgentGroup(body.Name); deleteErr != nil {
+				slog.Error("groups create: clone failed and empty group rollback failed",
+					"group", body.Name, "error", deleteErr)
+			}
+			writeError(w, http.StatusBadGateway, "clone_failed", err.Error())
 			return
 		}
 		// Apply the default cwd + startup context as post-create updates

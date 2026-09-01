@@ -22,6 +22,7 @@ func TestPrepareGroupRepositoryCloneNormalizesGitHubForms(t *testing.T) {
 		name, repository, transport, cloneURL string
 	}{
 		{"short ssh", "acme/payments", "ssh", "git@github.com:acme/payments.git"},
+		{"bare host", "github.com/acme/payments", "https", "https://github.com/acme/payments.git"},
 		{"web https", "https://github.com/acme/payments.git", "https", "https://github.com/acme/payments.git"},
 		{"scp copied", "git@github.com:acme/payments.git", "ssh", "git@github.com:acme/payments.git"},
 	} {
@@ -81,7 +82,7 @@ func TestDashboardCreateGroupClonesAndAttachesRepository(t *testing.T) {
 	body, err := json.Marshal(map[string]any{
 		"name": "repo-team",
 		"repository_clone": map[string]any{
-			"repository": "acme/repo", "transport": "ssh",
+			"repository": "github.com/acme/repo", "transport": "ssh",
 			"destination": destination, "attach": true,
 		},
 	})
@@ -123,6 +124,32 @@ func TestDashboardCreateGroupCloneFailureKeepsGroupUncreated(t *testing.T) {
 	assert.Nil(t, group)
 	_, err = os.Stat(filepath.Dir(destination))
 	assert.NoError(t, err, "the clone parent is created automatically before git runs")
+}
+
+func TestDashboardCreateGroupValidatesParentBeforeCloning(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	destination := filepath.Join(t.TempDir(), "must-not-clone", "repo")
+	previous := runGroupRepositoryClone
+	t.Cleanup(func() { runGroupRepositoryClone = previous })
+	cloneCalls := 0
+	runGroupRepositoryClone = func(context.Context, string, string) ([]byte, error) {
+		cloneCalls++
+		return nil, nil
+	}
+	body, err := json.Marshal(map[string]any{
+		"name": "orphan-risk", "parent": "missing-parent",
+		"repository_clone": map[string]any{
+			"repository": "github.com/acme/repo", "transport": "https", "destination": destination,
+		},
+	})
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	serveDashboardGroups(w, dashboardRequest(http.MethodPost, "/api/groups", string(body)))
+	assert.Equal(t, http.StatusNotFound, w.Code, "body=%s", w.Body.String())
+	assert.Zero(t, cloneCalls)
+	_, err = os.Stat(filepath.Dir(destination))
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestTemplateInstantiateClonesBeforeCreatingGroup(t *testing.T) {
