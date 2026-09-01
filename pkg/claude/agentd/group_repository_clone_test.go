@@ -37,6 +37,20 @@ func TestPrepareGroupRepositoryCloneNormalizesGitHubForms(t *testing.T) {
 	}
 }
 
+func TestPrepareGroupRepositoryCloneAcceptsEmptyDestinationAndRejectsNonEmpty(t *testing.T) {
+	empty := filepath.Join(t.TempDir(), "empty")
+	require.NoError(t, os.Mkdir(empty, 0o755))
+	_, err := prepareGroupRepositoryClone(&groupRepositoryClone{
+		Repository: "acme/repo", Transport: "https", Destination: empty,
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(empty, "keep"), []byte("data"), 0o644))
+	_, err = prepareGroupRepositoryClone(&groupRepositoryClone{
+		Repository: "acme/repo", Transport: "https", Destination: empty,
+	})
+	assert.ErrorContains(t, err, "not empty")
+}
+
 func TestCloneGroupRepositoryCreatesMissingParents(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "one", "two", "repo")
 	previous := runGroupRepositoryClone

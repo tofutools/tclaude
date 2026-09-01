@@ -72,8 +72,17 @@ func prepareGroupRepositoryClone(raw *groupRepositoryClone) (*preparedGroupRepos
 	if destination == filepath.Dir(destination) {
 		return nil, errors.New("clone destination must not be a filesystem root")
 	}
-	if _, err := os.Lstat(destination); err == nil {
-		return nil, fmt.Errorf("clone destination already exists: %s", destination)
+	if info, err := os.Lstat(destination); err == nil {
+		if !info.IsDir() {
+			return nil, fmt.Errorf("clone destination already exists and is not a directory: %s", destination)
+		}
+		entries, readErr := os.ReadDir(destination)
+		if readErr != nil {
+			return nil, fmt.Errorf("cannot inspect clone destination %s: %v", destination, readErr)
+		}
+		if len(entries) != 0 {
+			return nil, fmt.Errorf("clone destination already exists and is not empty: %s", destination)
+		}
 	} else if !os.IsNotExist(err) {
 		return nil, fmt.Errorf("cannot inspect clone destination %s: %v", destination, err)
 	}
@@ -86,13 +95,19 @@ func prepareGroupRepositoryClone(raw *groupRepositoryClone) (*preparedGroupRepos
 }
 
 var runGroupRepositoryClone = func(ctx context.Context, cloneURL, destination string) ([]byte, error) {
-	return exec.CommandContext(ctx, "git", "clone", "--", cloneURL, destination).CombinedOutput()
+	cmd := exec.CommandContext(ctx, "git", "clone", "--", cloneURL, destination)
+	// agentd has no interactive terminal in which to answer a credential
+	// prompt. Use credentials already available through helpers, keychains, or
+	// SSH agents, and fail promptly when none are configured.
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=Never")
+	return cmd.CombinedOutput()
 }
 
 // cloneGroupRepository creates missing parent directories, then lets git clone
-// create the final repository directory. A failed clone may leave that final
-// directory behind (git's normal behaviour); the error names it so the human
-// can inspect or remove partial data rather than agentd deleting it silently.
+// create the final repository directory (or populate an existing empty one).
+// A failed clone may leave that directory behind (git's normal behaviour); the
+// error names it so the human can inspect partial data rather than agentd
+// deleting it silently. An empty leftover is accepted on retry.
 func cloneGroupRepository(plan *preparedGroupRepositoryClone) error {
 	if plan == nil {
 		return nil
