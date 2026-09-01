@@ -38,6 +38,7 @@ const COMMANDS = [
   { label: 'Manage sandbox profiles…', keywords: 'sandbox profiles profile manage policy filesystem environment network launch security wards ward protections boundaries realm' },
   { label: 'Manage cross-harness spawns…', keywords: 'cross-harness spawns cross harness spawn manage policy matrix source target allow deny delegation cross-realm summons realm realms summon wards familiar' },
   { label: 'Manage inter-group links…', keywords: 'inter-group links inter group link manage communication directed edge message groups arcane channels channel parties missive whisper weave' },
+  { label: 'Message group: alpha…', keywords: 'message send compose notify group broadcast multicast all members agents alpha missive inscribe party familiars circle' },
   { label: 'Switch to slop theme', keywords: 'toggle switch theme slop regular vegas casino mode appearance descend leave depart halls machine' },
   { label: 'Go to Groups', keywords: 'tab navigate go open groups scry peer gaze behold chamber vision' },
   { label: 'Hide group: alpha', keywords: 'hide unfocus group windows alpha veil conceal cloak portal scrying party' },
@@ -67,6 +68,7 @@ const WIZ_COMMANDS = [
   { label: 'Manage wards…', keywords: 'sandbox profiles profile manage policy filesystem environment network launch security wards ward protections boundaries realm' },
   { label: 'Manage cross-realm summons…', keywords: 'cross-harness spawns cross harness spawn manage policy matrix source target allow deny delegation cross-realm summons realm realms summon wards familiar' },
   { label: 'Manage arcane channels between parties…', keywords: 'inter-group links inter group link manage communication directed edge message groups arcane channels channel parties missive whisper weave' },
+  { label: 'Send missive to party: alpha…', keywords: 'message send compose notify group broadcast multicast all members agents alpha missive inscribe party familiars circle' },
   { label: 'Banish familiar: worker-7', keywords: 'retire demote cleanup remove agent worker-7 banish exile dismiss familiar' },
 ];
 
@@ -160,6 +162,8 @@ test('expandQuery maps synonyms bidirectionally', () => {
   // Group ↔ party (the wizard label for "Create new group…" is "Form a party…").
   assert.ok(expandQuery('party').includes('group'));
   assert.ok(expandQuery('group').includes('party'));
+  assert.ok(expandQuery('message').includes('missive'));
+  assert.ok(expandQuery('missive').includes('message'));
 });
 
 test('SYNONYMS pairs are bidirectional', () => {
@@ -201,6 +205,8 @@ test('SYNONYMS pairs are bidirectional', () => {
   assert.deepEqual(SYNONYMS.banished, ['retired']);
   assert.deepEqual(SYNONYMS.party, ['group']);
   assert.deepEqual(SYNONYMS.group, ['party']);
+  assert.deepEqual(SYNONYMS.message, ['missive']);
+  assert.deepEqual(SYNONYMS.missive, ['message']);
 });
 
 // -- Wizard-theme synonyms: the arcane vocabulary must find the plain-labelled
@@ -235,6 +241,13 @@ test('plain verb still finds the arcane label in wizard mode', () => {
   assert.ok(rankCommands(WIZ_COMMANDS, 'retire')
     .some((command) => command.label === 'Banish familiar: worker-7'));
   assert.equal(wizTop('hide'), 'Veil all familiars');
+});
+
+test('per-group message is reachable by plain and wizard vocabulary', () => {
+  assert.equal(top('message alpha'), 'Message group: alpha…');
+  assert.equal(top('missive alpha'), 'Message group: alpha…');
+  assert.equal(wizTop('message alpha'), 'Send missive to party: alpha…');
+  assert.equal(wizTop('missive alpha'), 'Send missive to party: alpha…');
 });
 
 test('create-group is reachable by both vocabularies in both themes', () => {

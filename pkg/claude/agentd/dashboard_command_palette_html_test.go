@@ -109,6 +109,16 @@ func TestDashboardHTML_CommandPalette(t *testing.T) {
 	must("openAgentSpawnModal({ groupName: g.name })",
 		"each per-group spawn pins its group")
 
+	// Group message: the palette exposes the same group-scoped composer as the
+	// per-group cog's message item. It pins the selected group while preserving
+	// the composer's whole-group / selected-subset choice.
+	must("import { openMessageCreateModal, openOperatorMessageDialog } from './message-access-dialog-controller.js'",
+		"palette imports the shared message composer")
+	must("wiz(`Message group: ${g.name}…`, `Send missive to party: ${g.name}…`)",
+		"the palette offers a per-group message command with wizard wording")
+	must("openMessageCreateModal({ targetMode: 'group', groupName: g.name })",
+		"each per-group message reuses the cog's group-scoped composer")
+
 	// Spawn profiles: the palette can open the profiles-management overlay —
 	// the same list the Groups cog's "⧉ profiles…" entry opens — reusing
 	// openProfilesManageModal (exported from modal-profiles.js just for this).
