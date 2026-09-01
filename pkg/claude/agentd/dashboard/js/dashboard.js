@@ -193,6 +193,7 @@ async function settleInitialLayout() {
     }),
     () => mountGroupCreateFeature({
       getSnapshot: () => lastSnapshot,
+      prefs: dashPrefs,
       pickDirectory,
       openTemplateManager: openTemplatesManageModal,
       confirmDiscard,

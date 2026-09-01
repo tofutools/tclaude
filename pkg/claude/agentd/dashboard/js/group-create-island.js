@@ -7,6 +7,7 @@ import {
 } from './management-overlay.js';
 import {
   createGroupCreateDraft,
+  derivedCloneDestination,
   findGroupCreateTemplate,
   groupCreateDraftIsDirty,
   reconcileGroupCreateTemplates,
@@ -47,6 +48,7 @@ function GroupCreateDialog({
     groups: current.groups,
     presetTemplate: current.presetTemplate,
     parentGroup: current.parentGroup,
+    cloneTransport: actions.cloneTransport(),
   }), [current]);
   const [draft, setDraft] = useState(baseline);
   const [templates, setTemplates] = useState(current.templates);
@@ -76,6 +78,17 @@ function GroupCreateDialog({
     [key]: value,
     ...(key === 'cwd' ? { cwdOrigin: 'user' } : {}),
   }));
+  const changeRepository = (repository) => setDraft((value) => {
+    const previousAuto = derivedCloneDestination(value.repository);
+    const nextAuto = derivedCloneDestination(repository);
+    const destination = !value.cloneDestination.trim() || value.cloneDestination === previousAuto
+      ? nextAuto : value.cloneDestination;
+    return { ...value, repository, cloneDestination: destination };
+  });
+  const changeCloneTransport = (transport) => {
+    actions.rememberCloneTransport(transport);
+    setField('cloneTransport', transport);
+  };
   const changeTemplate = (name) => setDraft((value) =>
     selectGroupCreateTemplate(value, name, modelOptions));
   const changeSource = (name) => setDraft((value) =>
@@ -126,8 +139,10 @@ function GroupCreateDialog({
     setBrowseBusy(true);
     try {
       const result = await actions.pickDirectory({
-        startDir: draft.cwd.trim(),
-        title: 'Select the group default working directory',
+        startDir: (draft.workspaceMode === 'clone' ? draft.cloneDestination : draft.cwd).trim(),
+        title: draft.workspaceMode === 'clone'
+          ? 'Select where the repository should be cloned'
+          : 'Select the group default working directory',
       });
       if (
         request !== directoryReturn.current ||
@@ -135,8 +150,11 @@ function GroupCreateDialog({
       ) return;
       if (result.error) setError(result.error);
       else if (result.path) {
-        setField('cwd', result.path);
-        queueMicrotask(() => document.querySelector('#group-create-cwd')?.focus());
+        const field = draft.workspaceMode === 'clone' ? 'cloneDestination' : 'cwd';
+        setField(field, result.path);
+        queueMicrotask(() => document.querySelector(
+          draft.workspaceMode === 'clone' ? '#group-create-clone-destination' : '#group-create-cwd',
+        )?.focus());
       }
     } finally {
       if (
@@ -250,18 +268,65 @@ function GroupCreateDialog({
         onKeyDown=${submitOnEnter} placeholder="optional one-line description"
         autocomplete="off" spellcheck="false" />
     </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label">Default cwd</span>
-      <input id="group-create-cwd" type="text" value=${draft.cwd} disabled=${disabled}
-        onInput=${(event) => setField('cwd', event.currentTarget.value)}
-        onKeyDown=${submitOnEnter}
-        placeholder="optional — absolute path (~ OK) pre-filled when spawning agents into this group"
-        autocomplete="off" spellcheck="false" />
-      <button id="group-create-cwd-browse" type="button" class="dir-browse-btn"
-        disabled=${disabled || browseBusy}
-        title="Browse for a directory"
-        onClick=${() => { void browse(); }}>${browseBusy ? 'Opening…' : 'Browse…'}</button>
-    </label>
+    <fieldset class="group-create-workspace">
+      <legend>Workspace <span>optional</span></legend>
+      <div class="group-create-workspace-modes" role="group" aria-label="Workspace source">
+        <button type="button" class=${draft.workspaceMode === 'existing' ? 'selected' : ''}
+          aria-pressed=${draft.workspaceMode === 'existing'} disabled=${disabled}
+          onClick=${() => setField('workspaceMode', 'existing')}>Use existing directory</button>
+        <button type="button" class=${draft.workspaceMode === 'clone' ? 'selected' : ''}
+          aria-pressed=${draft.workspaceMode === 'clone'} disabled=${disabled}
+          onClick=${() => setField('workspaceMode', 'clone')}>Clone repository</button>
+      </div>
+      ${draft.workspaceMode === 'existing' ? html`
+        <label class="cron-create-row group-create-workspace-row">
+          <span class="cron-create-label">Directory</span>
+          <input id="group-create-cwd" type="text" value=${draft.cwd} disabled=${disabled}
+            onInput=${(event) => setField('cwd', event.currentTarget.value)}
+            onKeyDown=${submitOnEnter}
+            placeholder="absolute path (~ OK) pre-filled when spawning agents"
+            autocomplete="off" spellcheck="false" />
+          <button id="group-create-cwd-browse" type="button" class="dir-browse-btn"
+            disabled=${disabled || browseBusy} title="Browse for a directory"
+            onClick=${() => { void browse(); }}>${browseBusy ? 'Opening…' : 'Browse…'}</button>
+        </label>
+      ` : html`
+        <label class="cron-create-row group-create-workspace-row group-create-workspace-simple-row">
+          <span class="cron-create-label">Repository</span>
+          <input id="group-create-repository" type="text" value=${draft.repository} disabled=${disabled}
+            onInput=${(event) => changeRepository(event.currentTarget.value)}
+            onKeyDown=${submitOnEnter} placeholder="github.com/owner/repository"
+            autocomplete="off" spellcheck="false" />
+        </label>
+        <div class="cron-create-row group-create-workspace-row group-create-workspace-simple-row">
+          <span class="cron-create-label">Clone with</span>
+          <div class="group-create-clone-transport" role="group" aria-label="Clone transport">
+            <button type="button" class=${draft.cloneTransport === 'ssh' ? 'selected' : ''}
+              aria-pressed=${draft.cloneTransport === 'ssh'} disabled=${disabled}
+              onClick=${() => changeCloneTransport('ssh')}>SSH</button>
+            <button type="button" class=${draft.cloneTransport === 'https' ? 'selected' : ''}
+              aria-pressed=${draft.cloneTransport === 'https'} disabled=${disabled}
+              onClick=${() => changeCloneTransport('https')}>HTTPS</button>
+          </div>
+        </div>
+        <label class="cron-create-row group-create-workspace-row">
+          <span class="cron-create-label">Clone into</span>
+          <input id="group-create-clone-destination" type="text" value=${draft.cloneDestination}
+            disabled=${disabled} onInput=${(event) => setField('cloneDestination', event.currentTarget.value)}
+            onKeyDown=${submitOnEnter} placeholder="absolute path (~ OK); missing parent directories are created"
+            autocomplete="off" spellcheck="false" />
+          <button id="group-create-clone-browse" type="button" class="dir-browse-btn"
+            disabled=${disabled || browseBusy} title="Browse for a clone destination"
+            onClick=${() => { void browse(); }}>${browseBusy ? 'Opening…' : 'Browse…'}</button>
+        </label>
+        <label class="group-create-attach-repository">
+          <input type="checkbox" checked=${draft.attachRepository} disabled=${disabled}
+            onChange=${(event) => setField('attachRepository', event.currentTarget.checked)} />
+          <span>Show repository link on the group</span>
+        </label>
+        <div class="group-create-clone-hint">The checkout becomes this group’s default working directory.</div>
+      `}
+    </fieldset>
     <label class="cron-create-row">
       <span class="cron-create-label">Startup context</span>
       <textarea id="group-create-context" class="modal-context-textarea" rows="5"
@@ -296,8 +361,8 @@ function GroupCreateDialog({
       <button id="group-create-submit" class="primary" type="button" disabled=${busy}
         aria-busy=${busy ? 'true' : undefined}
         onClick=${() => { void submit(); }}>${busy
-          ? (templateMode ? 'Creating & spawning…' : 'Creating…')
-          : (templateMode ? 'Create & spawn' : 'Create')}</button>
+          ? (draft.workspaceMode === 'clone' ? 'Cloning & creating…' : (templateMode ? 'Creating & spawning…' : 'Creating…'))
+          : (draft.workspaceMode === 'clone' ? (templateMode ? 'Clone, create & spawn' : 'Clone & create') : (templateMode ? 'Create & spawn' : 'Create'))}</button>
     </div>
   </${Overlay}>`;
 }

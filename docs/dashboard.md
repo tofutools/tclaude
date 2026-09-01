@@ -215,6 +215,17 @@ harness windows; the shared tmux server and other harnesses remain unchanged.
 To make a browser-owned selection instead, use Option-drag on macOS or
 Shift-drag on Linux/Windows.
 
+### Creating a group workspace
+
+The new-group dialog can either point the group at an existing directory or
+clone a GitHub repository over SSH or HTTPS. For a clone, agentd creates any
+missing parent directories, runs `git clone` with the credentials available to
+the daemon process, and makes the checkout the group's default working
+directory. The repository's web URL can also be stored as the group's
+persistent attachment link. Clone failures stay in the open dialog so the
+draft can be corrected and retried. The dashboard remembers the last selected
+SSH/HTTPS transport for the next group.
+
 ### The spawn dialog
 
 `+` on a group (group pinned) or the top-level spawn action (with a Group

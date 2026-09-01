@@ -1,5 +1,7 @@
 import { groupCreateRequest } from './group-create-model.js';
 
+const CLONE_TRANSPORT_PREF = 'tclaude.dash.group-create.clone-transport';
+
 async function responseText(response) {
   try { return await response.text(); } catch (_) { return ''; }
 }
@@ -12,6 +14,7 @@ export function createGroupCreateActions({
   refresh = () => {},
   setExpanded = () => {},
   recordInteraction = () => {},
+  prefs,
 } = {}) {
   return Object.freeze({
     async submit(draft, template, parentGroup = '') {
@@ -23,7 +26,14 @@ export function createGroupCreateActions({
         body: JSON.stringify(request.body),
       });
       const raw = await responseText(response);
-      if (!response.ok) throw new Error(raw || `HTTP ${response.status}`);
+      if (!response.ok) {
+        let message = raw;
+        try {
+          const parsed = JSON.parse(raw);
+          message = parsed?.message || parsed?.error || raw;
+        } catch (_) {}
+        throw new Error(message || `HTTP ${response.status}`);
+      }
       let payload = {};
       if (request.kind === 'template') {
         try { payload = JSON.parse(raw); } catch (_) {}
@@ -46,6 +56,15 @@ export function createGroupCreateActions({
 
     openTemplateManager(onClose) {
       return openTemplateManager({ onClose });
+    },
+
+    cloneTransport() {
+      try { return prefs?.getItem(CLONE_TRANSPORT_PREF) === 'https' ? 'https' : 'ssh'; } catch (_) { return 'ssh'; }
+    },
+
+    rememberCloneTransport(value) {
+      const transport = value === 'https' ? 'https' : 'ssh';
+      try { prefs?.setItem(CLONE_TRANSPORT_PREF, transport); } catch (_) {}
     },
 
     complete(result, parentGroup = '') {

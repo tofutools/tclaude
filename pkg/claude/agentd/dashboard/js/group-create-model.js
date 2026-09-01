@@ -55,6 +55,7 @@ function parentPrefill(template, parent) {
 
 export function createGroupCreateDraft({
   templates = [], groups = [], presetTemplate = '', parentGroup = '',
+  cloneTransport = 'ssh',
 } = {}) {
   const template = findGroupCreateTemplate(templates, presetTemplate);
   const parent = findGroupCreateSource(groups, parentGroup);
@@ -69,6 +70,11 @@ export function createGroupCreateDraft({
     descr: prefill.descr,
     cwd: prefill.cwd,
     cwdOrigin: prefill.cwdOrigin,
+    workspaceMode: 'existing',
+    repository: '',
+    cloneTransport: cloneTransport === 'https' ? 'https' : 'ssh',
+    cloneDestination: '',
+    attachRepository: true,
     context: prefill.context,
     task: '',
     maxMembers: '',
@@ -150,6 +156,8 @@ export function reconcileGroupCreateTemplates(draft, options = {}) {
 export function groupCreateDraftIsDirty(draft, baseline) {
   const keys = [
     'template', 'name', 'source', 'nested', 'descr', 'cwd',
+    'workspaceMode', 'repository', 'cloneTransport', 'cloneDestination',
+    'attachRepository',
     'context', 'task', 'maxMembers',
   ];
   return keys.some((key) => draft[key] !== baseline[key]);
@@ -157,6 +165,11 @@ export function groupCreateDraftIsDirty(draft, baseline) {
 
 export function validateGroupCreateDraft(draft, { templateMode = false } = {}) {
   if (!text(draft.name).trim()) return 'name is required';
+  if (draft.workspaceMode === 'clone') {
+    if (!text(draft.repository).trim()) return 'repository is required';
+    if (!text(draft.cloneDestination).trim()) return 'clone destination is required';
+    if (!['ssh', 'https'].includes(draft.cloneTransport)) return 'clone transport must be SSH or HTTPS';
+  }
   if (templateMode) return '';
   const raw = text(draft.maxMembers).trim();
   if (raw && !/^\d+$/.test(raw)) {
@@ -167,6 +180,14 @@ export function validateGroupCreateDraft(draft, { templateMode = false } = {}) {
 
 export function groupCreateRequest(draft, template, parentGroup = '') {
   const name = text(draft.name).trim();
+  const cloning = draft.workspaceMode === 'clone';
+  const cwd = cloning ? text(draft.cloneDestination).trim() : text(draft.cwd).trim();
+  const repositoryClone = cloning ? {
+    repository: text(draft.repository).trim(),
+    transport: draft.cloneTransport,
+    destination: cwd,
+    attach: !!draft.attachRepository,
+  } : undefined;
   if (!template) {
     return {
       kind: 'blank', name,
@@ -175,19 +196,21 @@ export function groupCreateRequest(draft, template, parentGroup = '') {
         name,
         parent: text(parentGroup),
         descr: text(draft.descr).trim(),
-        default_cwd: text(draft.cwd).trim(),
+        default_cwd: cwd,
         default_context: text(draft.context).trim(),
         max_members: Number.parseInt(text(draft.maxMembers).trim(), 10) || 0,
+        ...(repositoryClone ? { repository_clone: repositoryClone } : {}),
       },
     };
   }
   const body = {
     group_name: name,
     task: text(draft.task),
-    cwd: text(draft.cwd).trim(),
+    cwd,
     descr_override: text(draft.descr).trim(),
     context_override: text(draft.context),
   };
+  if (repositoryClone) body.repository_clone = repositoryClone;
   if (parentGroup) body.parent = parentGroup;
   else if (draft.source && draft.nested) body.parent = draft.source;
   return {
@@ -195,4 +218,10 @@ export function groupCreateRequest(draft, template, parentGroup = '') {
     url: `/api/templates/${encodeURIComponent(template.name)}/instantiate`,
     body,
   };
+}
+
+export function derivedCloneDestination(repository) {
+  let value = text(repository).trim().replace(/\/$/, '').replace(/\.git$/, '');
+  value = value.slice(Math.max(value.lastIndexOf('/'), value.lastIndexOf(':')) + 1);
+  return value ? `~/git/${value}` : '';
 }

@@ -3512,6 +3512,10 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			// "" / "inherit" (defer to the profile), "optin" (force on), "deny"
 			// (force off).
 			RemoteControlPolicy string `json:"remote_control_policy,omitempty"`
+			// RepositoryClone is a dashboard-human-only convenience: clone a
+			// GitHub repository before creating the group, use that checkout as
+			// default_cwd, and optionally expose its web URL as the group attachment.
+			RepositoryClone *groupRepositoryClone `json:"repository_clone,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -3528,6 +3532,15 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
 		}
+		if body.RepositoryClone != nil && creator != "" {
+			writeError(w, http.StatusForbidden, "human_required", "repository cloning during group creation is available only to the dashboard human")
+			return
+		}
+		repositoryPlan, err := prepareGroupRepositoryClone(body.RepositoryClone)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_repository", err.Error())
+			return
+		}
 		// Validate the optional default cwd + startup context up front,
 		// before any DB write, so a bad value fails cleanly without
 		// leaving a half-configured group behind.
@@ -3535,6 +3548,13 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
 			return
+		}
+		if repositoryPlan != nil {
+			if groupCwd != "" && groupCwd != repositoryPlan.Destination {
+				writeError(w, http.StatusBadRequest, "invalid_cwd", "default_cwd must match the repository clone destination")
+				return
+			}
+			groupCwd = repositoryPlan.Destination
 		}
 		groupContext, err := normalizeGroupContext(body.DefaultContext)
 		if err != nil {
@@ -3567,6 +3587,10 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "exists", "group already exists")
 			return
 		}
+		if err := cloneGroupRepository(repositoryPlan); err != nil {
+			writeError(w, http.StatusBadGateway, "clone_failed", err.Error())
+			return
+		}
 		id, err := db.CreateAgentGroupWithParent(body.Name, groupDescr, body.Parent)
 		if errors.Is(err, db.ErrGroupParentNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
@@ -3588,6 +3612,12 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		if groupCwd != "" {
 			if _, err := db.SetAgentGroupDefaultCwd(body.Name, groupCwd); err != nil {
 				slog.Warn("groups create: failed to set default cwd",
+					"group", body.Name, "error", err)
+			}
+		}
+		if repositoryPlan != nil && body.RepositoryClone.Attach {
+			if _, err := db.SetAgentGroupAttachment(body.Name, repositoryPlan.WebURL, repositoryPlan.Label); err != nil {
+				slog.Warn("groups create: failed to set repository attachment",
 					"group", body.Name, "error", err)
 			}
 		}
