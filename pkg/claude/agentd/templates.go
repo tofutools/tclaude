@@ -2711,7 +2711,8 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		// see handleTemplateDeploy's body for the full contract. Applied in
 		// runInstantiation (applyAgentProfileOverrides) only to members with no
 		// profile of their own.
-		AgentProfiles map[string]string `json:"agent_profiles,omitempty"`
+		AgentProfiles   map[string]string     `json:"agent_profiles,omitempty"`
+		RepositoryClone *groupRepositoryClone `json:"repository_clone,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
@@ -2730,17 +2731,37 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Existence-check the cwd with resolveSpawnCwd — the same validator
-	// handleGroupSpawn uses — not resolveGroupDefaultCwd (which skips the
-	// dir-exists check). executeSpawn passes cwd straight to the spawn
-	// subprocess; a non-existent path there would only fail INSIDE each
-	// `tclaude session new`, turning a typo into an N×30s conv-id-poll
-	// timeout and an orphaned empty group. An empty cwd stays empty
-	// (agents inherit the daemon's cwd, as for a plain spawn).
-	cwd, err := resolveSpawnCwd(body.Cwd)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
+	if body.RepositoryClone != nil && caller != "" {
+		writeError(w, http.StatusForbidden, "human_required", "repository cloning during group creation is available only to the dashboard human")
 		return
+	}
+	repositoryPlan, err := prepareGroupRepositoryClone(body.RepositoryClone)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_repository", err.Error())
+		return
+	}
+	// An existing-directory cwd uses resolveSpawnCwd so a typo cannot turn into
+	// an N×30s spawn timeout. A repository workspace is intentionally absent at
+	// this point: validate its absolute destination without requiring existence,
+	// then runInstantiation clones it after the template preflight.
+	var cwd string
+	if repositoryPlan != nil {
+		requestedCwd, cwdErr := resolveGroupDefaultCwd(body.Cwd)
+		if cwdErr != nil {
+			writeError(w, http.StatusBadRequest, "invalid_cwd", cwdErr.Error())
+			return
+		}
+		if requestedCwd != "" && requestedCwd != repositoryPlan.Destination {
+			writeError(w, http.StatusBadRequest, "invalid_cwd", "cwd must match the repository clone destination")
+			return
+		}
+		cwd = repositoryPlan.Destination
+	} else {
+		cwd, err = resolveSpawnCwd(body.Cwd)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
+			return
+		}
 	}
 	worktreePath, perAgentWorktrees, ok := resolveTemplateWorktreeInputs(w, body.WorktreePath, body.PerAgentWorktrees)
 	if !ok {
@@ -2753,10 +2774,13 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	// dirs on success.
 	var proofDirs []string
 	var resolvedRepo string
-	codexGitCommonDir, err := templateCodexGitCommonDir(cwd, perAgentWorktrees)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
+	var codexGitCommonDir string
+	if repositoryPlan == nil {
+		codexGitCommonDir, err = templateCodexGitCommonDir(cwd, perAgentWorktrees)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
 	}
 	cwd, worktreePath, resolvedRepo, codexGitCommonDir, proofDirs, ok = requireTemplateDirWriteProof(w, r, caller, body.WriteProofToken, cwd, worktreePath,
 		templateRepoAnchor(perAgentWorktrees), templatePerAgentWorktreeParent(perAgentWorktrees), codexGitCommonDir)
@@ -2801,6 +2825,8 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		contextOverride:   body.ContextOverride,
 		parentGroup:       parentGroup,
 		agentProfiles:     body.AgentProfiles,
+		repositoryClone:   repositoryPlan,
+		attachRepository:  body.RepositoryClone != nil && body.RepositoryClone.Attach,
 	})
 }
 
@@ -2947,7 +2973,9 @@ type instantiateSpec struct {
 	// roster is partitioned into waves, so both the synchronous wave 0 and the
 	// persisted choreography for later waves carry it. Empty / nil = no overrides
 	// (the roster spawns with exactly the template's stored per-member profiles).
-	agentProfiles map[string]string
+	agentProfiles    map[string]string
+	repositoryClone  *preparedGroupRepositoryClone
+	attachRepository bool
 }
 
 // applyAgentProfileOverrides returns the roster with the deploy form's per-member
@@ -3170,12 +3198,40 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 			writeError(w, http.StatusInternalServerError, "io", "create group: "+err.Error())
 			return
 		}
+		// Reserve the authoritative group name and validate its parent before
+		// cloning. The row has no members or settings yet, so clone failure can
+		// roll it back safely and leave the operator's dialog retryable.
+		if spec.repositoryClone != nil {
+			if err := cloneGroupRepository(spec.repositoryClone); err != nil {
+				if deleteErr := db.DeleteAgentGroup(spec.groupName); deleteErr != nil {
+					slog.Error("instantiate: clone failed and empty group rollback failed",
+						"group", spec.groupName, "error", deleteErr)
+				}
+				cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+				writeError(w, http.StatusBadGateway, "clone_failed", err.Error())
+				return
+			}
+			spec.cwd = spec.repositoryClone.Destination
+			if spec.codexGitCommonDir, err = templateCodexGitCommonDir(spec.cwd, spec.perAgentWorktrees); err != nil {
+				if deleteErr := db.DeleteAgentGroup(spec.groupName); deleteErr != nil {
+					slog.Error("instantiate: git metadata failed and empty group rollback failed",
+						"group", spec.groupName, "error", deleteErr)
+				}
+				writeError(w, http.StatusInternalServerError, "io", err.Error())
+				return
+			}
+		}
 		// Best-effort post-create config — a failure here is logged, not
 		// fatal: the group exists and the human can adjust it on the
 		// dashboard. Mirrors the /v1/groups create path.
 		if spec.cwd != "" {
 			if _, err := db.SetAgentGroupDefaultCwd(spec.groupName, spec.cwd); err != nil {
 				slog.Warn("instantiate: set default cwd failed", "group", spec.groupName, "error", err)
+			}
+		}
+		if spec.repositoryClone != nil && spec.attachRepository {
+			if _, err := db.SetAgentGroupAttachment(spec.groupName, spec.repositoryClone.WebURL, spec.repositoryClone.Label); err != nil {
+				slog.Warn("instantiate: set repository attachment failed", "group", spec.groupName, "error", err)
 			}
 		}
 		if groupContext != "" {

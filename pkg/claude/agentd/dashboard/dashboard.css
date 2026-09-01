@@ -4191,6 +4191,42 @@ body.show-group-description .group-descr { display: inline; }
    default, restored under the same opt-in body class. */
 .group-create-descr-row { display: none; }
 body.show-group-description .group-create-descr-row { display: flex; }
+.group-create-workspace {
+  margin: 2px 0; padding: 10px 10px 9px; min-width: 0;
+  border: 1px solid #2a3340; border-radius: 6px; background: #12171e;
+}
+.group-create-workspace legend {
+  padding: 0 4px; color: #d4d4d4; font-size: 12px; font-weight: 600;
+}
+.group-create-workspace legend span {
+  margin-left: 5px; color: #6e7681; font-weight: 400;
+}
+.group-create-workspace-modes,
+.group-create-clone-transport {
+  display: grid; grid-template-columns: 1fr 1fr;
+  padding: 2px; border: 1px solid #2a3340; border-radius: 5px; background: #0d1117;
+}
+.group-create-clone-transport { flex: 1; }
+.group-create-workspace-modes { margin-bottom: 10px; }
+.group-create-workspace-modes button,
+.group-create-clone-transport button {
+  height: 27px; border: 0; border-radius: 3px; background: transparent;
+  color: #7d8590; font: inherit; font-size: 11px; cursor: pointer;
+}
+.group-create-workspace-modes button.selected,
+.group-create-clone-transport button.selected {
+  background: #1f3f67; color: #79c0ff; box-shadow: inset 0 0 0 1px #1f6feb;
+}
+.group-create-workspace-row { margin-top: 8px; }
+.group-create-workspace-simple-row > :last-child { margin-right: 0; }
+.group-create-attach-repository {
+  display: flex; align-items: center; gap: 7px; margin: 8px 0 0 82px;
+  color: #8b949e; font-size: 11px;
+}
+.group-create-attach-repository input { margin: 0; }
+.group-create-clone-hint {
+  margin: 3px 0 0 82px; color: #6e7681; font-size: 10.5px;
+}
 .group-descr {
   font-size: 11px; color: #7d8590;
   margin-left: 8px; cursor: pointer; padding: 1px 6px; border-radius: 4px;
@@ -11908,6 +11944,13 @@ body.wizard #group-create-modal button:not(.primary) {
   background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
 }
 body.wizard #group-create-modal button:not(.primary):hover { background: #3a2a63; }
+body.wizard #group-create-modal .group-create-workspace {
+  border-color: rgba(122, 93, 176, 0.45); background: #171126;
+}
+body.wizard #group-create-modal .group-create-workspace-modes button.selected,
+body.wizard #group-create-modal .group-create-clone-transport button.selected {
+  background: #3a2a63; color: #e5d3ff; box-shadow: inset 0 0 0 1px #a97bd6;
+}
 body.wizard #group-create-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
 
 /* Create = ⚔ Form the party! — the submit button re-skinned into a gilded

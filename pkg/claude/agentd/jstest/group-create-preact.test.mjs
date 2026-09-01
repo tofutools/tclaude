@@ -47,7 +47,8 @@ test('group-create model preserves compatible prefill and clears stale source-ow
   const blank = model.createGroupCreateDraft({ templates, groups });
   assert.deepEqual(blank, {
     template: '', name: '', source: '', nested: false, descr: '', cwd: '',
-    cwdOrigin: '', context: '', task: '', maxMembers: '',
+    cwdOrigin: '', workspaceMode: 'existing', repository: '', cloneTransport: 'ssh',
+    cloneDestination: '', attachRepository: true, context: '', task: '', maxMembers: '',
   });
 
   let draft = model.createGroupCreateDraft({
@@ -113,6 +114,21 @@ test('group-create model validates and builds exact blank, template, and nested 
     group_name: 'party', task: ' ship\n', cwd: '/repo', descr_override: 'desc',
     context_override: ' context\n', parent: 'alpha',
   });
+
+  const cloned = model.groupCreateRequest({
+    ...base, name: 'cloned', workspaceMode: 'clone',
+    repository: 'github.com/acme/repo', cloneTransport: 'https',
+    cloneDestination: ' ~/git/repo ', attachRepository: true,
+  }, null);
+  assert.deepEqual(cloned.body, {
+    name: 'cloned', parent: '', descr: '', default_cwd: '~/git/repo',
+    default_context: '', max_members: 0,
+    repository_clone: {
+      repository: 'github.com/acme/repo', transport: 'https',
+      destination: '~/git/repo', attach: true,
+    },
+  });
+  assert.equal(model.derivedCloneDestination('git@github.com:acme/payments.git'), '~/git/payments');
 });
 
 test('group-create state snapshots each open and invalidates closed generations', async (t) => {
@@ -174,6 +190,19 @@ test('group-create actions preserve HTTP errors, partial outcome toasts, expansi
   assert.ok(calls.some((entry) => entry[0] === 'refresh'));
 });
 
+test('group-create actions remember clone transport in dashboard preferences', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createGroupCreateActions } = await harness.importDashboardModule('js/group-create-actions.js');
+  const stored = new Map([['tclaude.dash.group-create.clone-transport', 'https']]);
+  const actions = createGroupCreateActions({ prefs: {
+    getItem: (key) => stored.get(key) ?? null,
+    setItem: (key, value) => stored.set(key, value),
+  } });
+  assert.equal(actions.cloneTransport(), 'https');
+  actions.rememberCloneTransport('ssh');
+  assert.equal(stored.get('tclaude.dash.group-create.clone-transport'), 'ssh');
+});
+
 async function mountGroupCreate(
   t,
   actionOverrides = {},
@@ -193,6 +222,8 @@ async function mountGroupCreate(
     loadTemplates: async () => templates,
     pickDirectory: async () => ({ canceled: true }),
     openTemplateManager: (onClose) => calls.push(['manager', onClose]),
+    cloneTransport: () => 'ssh',
+    rememberCloneTransport: (value) => calls.push(['transport', value]),
     ...actionOverrides,
   };
   const host = harness.document.body.appendChild(harness.document.createElement('div'));
@@ -235,6 +266,24 @@ test('Preact group-create owner renders preset/mirror/pinned paths and reconcile
   assert.equal(host.querySelector('#group-create-descr').value, 'alpha descr');
   assert.equal(host.querySelector('#group-create-cwd').value, '/alpha');
   assert.equal(host.querySelector('#group-create-source-row').hidden, true);
+  await mounted.cleanup();
+});
+
+test('Preact group-create clone workspace derives destination and remembers transport', async (t) => {
+  const mounted = await mountGroupCreate(t);
+  const { harness, host, state, calls } = mounted;
+  state.open();
+  await flush(harness);
+  const buttons = [...host.querySelectorAll('.group-create-workspace-modes button')];
+  buttons[1].click();
+  await flush(harness);
+  await harness.input(host.querySelector('#group-create-repository'), 'git@github.com:acme/payments.git');
+  assert.equal(host.querySelector('#group-create-clone-destination').value, '~/git/payments');
+  const transports = [...host.querySelectorAll('.group-create-clone-transport button')];
+  transports[1].click();
+  await flush(harness);
+  assert.ok(calls.some(([kind, value]) => kind === 'transport' && value === 'https'));
+  assert.match(host.querySelector('#group-create-submit').textContent, /Clone & create/);
   await mounted.cleanup();
 });
 
