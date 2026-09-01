@@ -269,7 +269,7 @@ function GroupCreateDialog({
         autocomplete="off" spellcheck="false" />
     </label>
     <fieldset class="group-create-workspace">
-      <legend>Workspace <span>optional</span></legend>
+      <legend>Workspace</legend>
       <div class="group-create-workspace-modes" role="group" aria-label="Workspace source">
         <button type="button" class=${draft.workspaceMode === 'existing' ? 'selected' : ''}
           aria-pressed=${draft.workspaceMode === 'existing'} disabled=${disabled}
