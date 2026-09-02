@@ -127,12 +127,7 @@ func TestTUIUsageLineCarriesNoLabel(t *testing.T) {
 // The point of dropping the label: both accounts' 5h and 7d windows are four
 // fields, and all four must survive on an ordinary terminal.
 func TestTUIUsageLineFitsFourWindowsOnOneRow(t *testing.T) {
-	u := claudeUsage()
-	u.Codex = &tuiSubscriptionUsage{
-		Available: true,
-		FiveHour:  &tuiUsageWindow{Pct: 7, Remaining: "1h2m"},
-		SevenDay:  &tuiUsageWindow{Pct: 63, Remaining: "5d1h"},
-	}
+	u := bothAccountsUsage()
 	u.TotalCostUSD = 12.34
 
 	for _, width := range []int{200, 140, 120, 100, 80, 60} {
@@ -148,30 +143,86 @@ func TestTUIUsageLineFitsFourWindowsOnOneRow(t *testing.T) {
 	}
 }
 
-// Ornament is what a crowded line gives up first: the reset timers, then half
-// the bar, then the bar. A field only goes when nothing else is left to trim.
-func TestTUIUsageLineTrimsOrnamentBeforeFields(t *testing.T) {
+// bothAccountsUsage is a readout with all four windows in it — the reading the
+// line is laid out around.
+func bothAccountsUsage() tuiUsage {
 	u := claudeUsage()
 	u.Codex = &tuiSubscriptionUsage{
 		Available: true,
 		FiveHour:  &tuiUsageWindow{Pct: 7, Remaining: "1h2m"},
 		SevenDay:  &tuiUsageWindow{Pct: 63, Remaining: "5d1h"},
 	}
+	return u
+}
 
-	wide := loadedUsageModel(u)
-	wide.width = 200
-	assert.Contains(t, wide.usageLine(), "(3h41m)", "a wide terminal keeps the reset timers")
+// usageBarCells counts one field's bar in cells, filled and empty together, so
+// a test can tell a full bar from the half-width one without decoding the
+// color escapes lipgloss wraps them in.
+func usageBarCells(field string) int {
+	return strings.Count(field, "█") + strings.Count(field, "░")
+}
+
+// usageFirstField is the leftmost field of a rendered line.
+func usageFirstField(line string) string {
+	return strings.Split(line, " • ")[0]
+}
+
+// Ornament is what a crowded line gives up first: the reset timers, then half
+// the bar, then the bar, then the spend field, and only last a rolling window.
+// The order is the contract here, not the widths it happens at.
+func TestTUIUsageLineTrimsOrnamentBeforeFields(t *testing.T) {
+	u := bothAccountsUsage()
+	u.TotalCostUSD = 12.34
+
+	// The widest terminal at which the line has already given something up.
+	// Each degradation is monotone in width, so walking down finds it.
+	givenUpAt := func(gone func(line string) bool) int {
+		for width := 200; width >= 20; width-- {
+			m := loadedUsageModel(u)
+			m.width = width
+			if line := m.usageLine(); line != "" && gone(line) {
+				return width
+			}
+		}
+		return 0
+	}
+	timers := givenUpAt(func(l string) bool { return !strings.Contains(l, "(3h41m)") })
+	halfBar := givenUpAt(func(l string) bool {
+		return usageBarCells(usageFirstField(l)) == tuiUsageNarrowBarWidth
+	})
+	noBar := givenUpAt(func(l string) bool { return usageBarCells(usageFirstField(l)) == 0 })
+	noSpend := givenUpAt(func(l string) bool { return !strings.Contains(l, "api ") })
+	noWindow := givenUpAt(func(l string) bool { return !strings.Contains(l, "codex 7d") })
+
+	assert.Greater(t, timers, halfBar, "the reset timers go before the bar is halved")
+	assert.Greater(t, halfBar, noBar, "the bar is halved before it is dropped")
+	assert.Greater(t, noBar, noSpend, "every window is drawn plainly before the spend goes")
+	assert.Greater(t, noSpend, noWindow, "and the spend goes before any rolling window")
+
+	// The widest terminal draws the whole reading.
+	m := loadedUsageModel(u)
+	m.width = 200
+	line := m.usageLine()
+	assert.Contains(t, line, "(3h41m)")
+	assert.Equal(t, tuiUsageBarWidth, usageBarCells(usageFirstField(line)))
+}
+
+// API spend is the rightmost field and the first one dropped, so a terminal
+// that cannot hold everything keeps the rolling windows rather than the money.
+func TestTUIUsageLineDropsAPISpendBeforeAWindow(t *testing.T) {
+	u := bothAccountsUsage()
+	u.TotalCostUSD = 12.34
 
 	m := loadedUsageModel(u)
-	m.width = 120
-	line := m.usageLine()
-	assert.NotContains(t, line, "(3h41m)", "the timers go before any field does")
-	assert.Contains(t, line, "█", "but the bars are still drawn")
+	m.width = 200
+	assert.Contains(t, m.usageLine(), "api $12.34 mtd", "there is room for all of it")
 
 	m.width = 70
-	line = m.usageLine()
-	assert.NotContains(t, line, "█", "then the bars go")
-	assert.Contains(t, line, "codex 7d 63%", "and all four fields are still there")
+	line := m.usageLine()
+	assert.NotContains(t, line, "api ", "the spend goes first")
+	for _, want := range []string{"claude 5h", "claude 7d", "codex 5h", "codex 7d"} {
+		assert.Contains(t, line, want)
+	}
 }
 
 func TestTUIUsageLineIsAbsentUntilTheFirstReadLands(t *testing.T) {
