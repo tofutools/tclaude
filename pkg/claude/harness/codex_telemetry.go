@@ -348,7 +348,17 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 	if json.Unmarshal(line, &env) != nil {
 		return false
 	}
+	s.applyCostFastModeBaseline(env.Timestamp)
 	if s.ownerID != "" && !s.ownerBoundarySeen {
+		// Full-history forks copy their parent's settings history before the
+		// child's own session_meta. Tokens in that prefix remain excluded, but
+		// the settings transitions establish the tier the child inherited at
+		// spawn when Codex emits no post-boundary settings readback.
+		if env.Type == "event_msg" {
+			if fast, ok := codexFastModeFromSettingsPayload(env.Payload); ok {
+				s.costFastMode = fast
+			}
+		}
 		if env.Type != "session_meta" {
 			return true
 		}
@@ -361,7 +371,6 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 		}
 		return true
 	}
-	s.applyCostFastModeBaseline(env.Timestamp)
 	if env.Type == "compacted" {
 		s.invalidateContext()
 		return true
@@ -448,6 +457,20 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 		}
 	}
 	return true
+}
+
+func codexFastModeFromSettingsPayload(payload json.RawMessage) (bool, bool) {
+	var kind struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(payload, &kind) != nil || kind.Type != "thread_settings_applied" {
+		return false, false
+	}
+	var ev codexThreadSettingsAppliedEvent
+	if json.Unmarshal(payload, &ev) != nil {
+		return false, false
+	}
+	return codexServiceTierIsFast(ev.ThreadSettings.ServiceTier), true
 }
 
 func (s *codexRuntimeScanState) applyTokenCost(info codexTokenCountInfo, observed string) {

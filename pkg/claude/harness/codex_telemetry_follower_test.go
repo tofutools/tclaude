@@ -381,6 +381,35 @@ func TestCodexTelemetryFollower_AggregatesNestedChildOwnedCostExactlyOnce(t *tes
 		"archive transition preserves the child-owned boundary and total")
 }
 
+func TestCodexTelemetryFollower_ChildInheritsPreSpawnFastModeChange(t *testing.T) {
+	home := t.TempDir()
+	const (
+		rootID  = "019ec004-4250-79b1-9ade-ebaea41354b1"
+		childID = "019ec004-4250-79b1-9ade-ebaea41354b2"
+	)
+	root := newFollowerTestRollout(t, home, rootID)
+	appendRolloutEnvelope(t, root, "turn_context", map[string]any{"model": "gpt-5.6-terra"})
+	appendTokenCount(t, root, 100, 0, 100)
+	appendThreadSettingsApplied(t, root, "priority")
+	appendSubagentActivity(t, root, childID, "started", "")
+
+	child := followerTestRolloutPath(t, home, childID)
+	appendRolloutEnvelope(t, child, "turn_context", map[string]any{"model": "gpt-5.6-terra"})
+	appendTokenCount(t, child, 100, 0, 100)
+	appendThreadSettingsApplied(t, child, "priority")
+	appendRolloutEnvelope(t, child, "session_meta", map[string]any{"id": childID})
+	appendRolloutEnvelope(t, child, "turn_context", map[string]any{"model": "gpt-5.6-sol"})
+	appendTokenCount(t, child, 100, 0, 100)
+
+	follower := &CodexTelemetryFollower{}
+	follower.SetCostFastModeBaseline(false, time.Now().Add(-time.Minute))
+	got, err := follower.RuntimeTelemetry(home, rootID)
+	require.NoError(t, err)
+	require.True(t, got.HasCost)
+	assert.InDelta(t, 0.0012, got.Cost.CostUSD, 1e-12,
+		"root request is standard and child request inherits the pre-spawn Fast toggle")
+}
+
 func TestAggregateCodexRuntimeCosts_MergesDailyCumulativeHistories(t *testing.T) {
 	at := time.Date(2026, 7, 12, 12, 0, 0, 0, time.UTC)
 	parts := []CodexRuntimeSnapshot{
