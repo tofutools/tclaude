@@ -114,6 +114,7 @@ func CodexVirtualCostFromRollout(rolloutPath, modelHint string) (CodexTokenCost,
 
 	var (
 		latestModel = strings.TrimSpace(modelHint)
+		fastMode    bool
 		costUSD     float64
 		priced      bool
 		observed    time.Time
@@ -133,8 +134,24 @@ func CodexVirtualCostFromRollout(rolloutPath, modelHint string) (CodexTokenCost,
 				latestModel = strings.TrimSpace(tc.Model)
 			}
 		case "event_msg":
+			var kind struct {
+				Type string `json:"type"`
+			}
+			if json.Unmarshal(env.Payload, &kind) != nil {
+				return true
+			}
+			if kind.Type == "thread_settings_applied" {
+				var settings codexThreadSettingsAppliedEvent
+				if json.Unmarshal(env.Payload, &settings) == nil {
+					fastMode = codexServiceTierIsFast(settings.ThreadSettings.ServiceTier)
+				}
+				return true
+			}
+			if kind.Type != "token_count" {
+				return true
+			}
 			var ev codexTokenCountEvent
-			if json.Unmarshal(env.Payload, &ev) != nil || ev.Type != "token_count" {
+			if json.Unmarshal(env.Payload, &ev) != nil {
 				return true
 			}
 			turnUsage := ev.Info.LastTokenUsage
@@ -152,6 +169,7 @@ func CodexVirtualCostFromRollout(rolloutPath, modelHint string) (CodexTokenCost,
 			}
 			turnCost, ok := codexVirtualCost(latestModel, turnUsage)
 			if ok {
+				turnCost = codexFastModeCost(turnCost, fastMode)
 				costUSD += turnCost
 				priced = true
 			}
@@ -166,6 +184,22 @@ func CodexVirtualCostFromRollout(rolloutPath, modelHint string) (CodexTokenCost,
 		return CodexTokenCost{}, false, nil
 	}
 	return CodexTokenCost{CostUSD: costUSD, Model: latestModel, Observed: observed}, true, nil
+}
+
+const codexFastModeCostMultiplier = 2.0
+
+// codexFastModeCost applies Codex's priority-service surcharge to the entire
+// request price. The multiplier covers every token category, including cached
+// reads and any explicit cache-write category added to rollouts in the future.
+func codexFastModeCost(cost float64, fastMode bool) float64 {
+	if fastMode {
+		return cost * codexFastModeCostMultiplier
+	}
+	return cost
+}
+
+func codexServiceTierIsFast(serviceTier *string) bool {
+	return serviceTier != nil && (*serviceTier == "priority" || *serviceTier == "fast")
 }
 
 func codexVirtualCost(model string, usage codexTokenUsage) (float64, bool) {

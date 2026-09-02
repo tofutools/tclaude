@@ -113,11 +113,11 @@ func TestCodexTelemetryFollower_CheckpointSurvivesRestartWithFoldState(t *testin
 	require.True(t, ok)
 	var legacy map[string]any
 	require.NoError(t, json.Unmarshal(checkpoint, &legacy))
-	legacy["version"] = float64(5)
+	legacy["version"] = float64(6)
 	legacyCheckpoint, err := json.Marshal(legacy)
 	require.NoError(t, err)
 	assert.Error(t, (&CodexTelemetryFollower{}).RestoreCheckpoint(legacyCheckpoint),
-		"v5 lacks authoritative Fast state and must rebuild once on upgrade")
+		"v6 costs predate Fast pricing and must rebuild once on upgrade")
 	checkpointOffset := codexFollowerOffset(t, beforeRestart)
 
 	restored := &CodexTelemetryFollower{}
@@ -154,6 +154,7 @@ func TestCodexTelemetryFollower_CostFoldSurvivesRestartAndReadsAppend(t *testing
 	appendRolloutEnvelope(t, path, "turn_context", map[string]any{
 		"model": "gpt-5.6-terra", "effort": "high",
 	})
+	appendThreadSettingsApplied(t, path, "priority")
 	usage := func(input, cached, output int64) map[string]any {
 		return map[string]any{
 			"input_tokens": input, "cached_input_tokens": cached,
@@ -181,9 +182,9 @@ func TestCodexTelemetryFollower_CostFoldSurvivesRestartAndReadsAppend(t *testing
 	first := assertFollowerMatchesFull(t, firstFollower, home, id, path)
 	require.True(t, first.HasCost)
 	require.True(t, first.CostAuthoritative)
-	assert.InDelta(t, 1.42, first.Cost.CostUSD, 1e-12)
+	assert.InDelta(t, 2.84, first.Cost.CostUSD, 1e-12)
 	require.Len(t, first.CostHistory, 1)
-	assert.InDelta(t, 1.42, first.CostHistory[0].CostUSD, 1e-12)
+	assert.InDelta(t, 2.84, first.CostHistory[0].CostUSD, 1e-12)
 	assert.Equal(t, "high", first.Effort)
 	require.NotNil(t, first.Usage)
 	require.NotNil(t, first.Usage.FiveHour)
@@ -202,10 +203,10 @@ func TestCodexTelemetryFollower_CostFoldSurvivesRestartAndReadsAppend(t *testing
 	got := assertFollowerMatchesFull(t, restored, home, id, path)
 	require.True(t, got.HasCost)
 	require.True(t, got.CostAuthoritative)
-	assert.InDelta(t, 4.06, got.Cost.CostUSD, 1e-12)
+	assert.InDelta(t, 8.12, got.Cost.CostUSD, 1e-12)
 	require.Len(t, got.CostHistory, 1)
-	assert.InDelta(t, 4.06, got.CostHistory[0].CostUSD, 1e-12,
-		"daily cumulative history survives the durable cursor")
+	assert.InDelta(t, 8.12, got.CostHistory[0].CostUSD, 1e-12,
+		"Fast mode and daily cumulative history survive the durable cursor")
 	assert.Equal(t, "high", got.Effort, "effort survives the durable cursor")
 	require.NotNil(t, got.Usage, "latest populated usage survives the durable cursor")
 	require.NotNil(t, got.Usage.FiveHour)

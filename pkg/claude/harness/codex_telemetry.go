@@ -378,8 +378,7 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 			return false
 		}
 		s.hasFastMode = true
-		s.fastMode = ev.ThreadSettings.ServiceTier != nil &&
-			(*ev.ThreadSettings.ServiceTier == "priority" || *ev.ThreadSettings.ServiceTier == "fast")
+		s.fastMode = codexServiceTierIsFast(ev.ThreadSettings.ServiceTier)
 		s.fastModeObserved = env.Timestamp
 	case "token_count":
 		var ev codexTokenCountEvent
@@ -436,6 +435,7 @@ func (s *codexRuntimeScanState) applyTokenCost(info codexTokenCountInfo, observe
 	if !ok {
 		return
 	}
+	cost = codexFastModeCost(cost, s.fastMode)
 	if legacy {
 		s.costUSD = cost
 	} else {
