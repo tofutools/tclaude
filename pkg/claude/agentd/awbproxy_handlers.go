@@ -1068,16 +1068,20 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	project, fault := s.validateAWBProject(body.Workspace)
+	// Validate every caller-controlled field before spending the operator's
+	// account on workspace discovery. The workspace is populated only after
+	// the otherwise complete payload has passed its cheap local gates.
+	payload, fault := s.buildAWBCreateBody("", &body)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
-	payload, fault := s.buildAWBCreateBody(project, &body)
+	project, fault := s.resolveCreateWorkspace(r.Context(), body.Workspace)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
+	payload.Workspace = project
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "could not encode the AWB request")
@@ -1102,6 +1106,26 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 	// awb create is the exception to "a mutating command prints nothing":
 	// minting an id is the point, so the compact form is that id.
 	s.respond(w, r, "issue.create", body.Compact, &issue, issue.ID+"\n", "issue="+issue.ID)
+}
+
+// resolveCreateWorkspace accepts an explicit workspace or infers the only
+// workspace both visible to the daemon account and admitted by this caller's
+// effective proxy gate. Ambiguity is refused before the mutation.
+func (s *awbProxySession) resolveCreateWorkspace(ctx context.Context, raw string) (string, *proxyFault) {
+	if strings.TrimSpace(raw) != "" {
+		return s.validateAWBProject(raw)
+	}
+	workspaces, fault := s.listingProjects(ctx, nil)
+	if fault != nil {
+		return "", fault
+	}
+	if len(workspaces) > 1 {
+		return "", faultf(http.StatusBadRequest, "invalid_arg",
+			"--workspace is required because several visible workspaces are within this caller's proxy gate: %s; "+
+				"run `tclaude proxy awb whoami` to inspect workspace access",
+			strings.Join(workspaces, ", "))
+	}
+	return workspaces[0], nil
 }
 
 // buildAWBCreateBody validates every field of a create and assembles AWB's

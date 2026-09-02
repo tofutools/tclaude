@@ -275,12 +275,13 @@ func TestAWBCreateBody(t *testing.T) {
 			"0 is the HIGHEST priority, so an unset int cannot stand in for 'not asked for'")
 	})
 
-	t.Run("--workspace is required, because there is no directory context", func(t *testing.T) {
+	t.Run("workspace may be omitted for daemon-side inference", func(t *testing.T) {
 		cmd, p := parsedAWBCreate(t, "Parser crashes")
 		var stderr bytes.Buffer
-		_, rc := buildAWBCreateBody(p, cmd, strings.NewReader(""), &stderr)
-		assert.Equal(t, rcInvalidArg, rc)
-		assert.Contains(t, stderr.String(), "--workspace is required")
+		body, rc := buildAWBCreateBody(p, cmd, strings.NewReader(""), &stderr)
+		assert.Equal(t, rcOK, rc)
+		assert.NotContains(t, body, "workspace")
+		assert.Empty(t, stderr.String())
 	})
 
 	t.Run("a title is required", func(t *testing.T) {

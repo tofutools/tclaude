@@ -224,8 +224,11 @@ tclaude proxy awb dep tree awb-a3f9c1 --compact
 tclaude proxy awb attach add awb-a3f9c1 ./trace.txt
 ```
 
-`--workspace` is **required** on `create`: the daemon is not in your working tree,
-so there is no `.awb.yaml` for it to read a default from.
+`--workspace` may be omitted when exactly one visible workspace is within your
+proxy gate. With multiple visible workspaces it is **required**: the daemon is
+not in your working tree, so there is no `.awb.yaml` default. With none visible,
+`whoami` reports the access/configuration problem; naming a workspace cannot
+make an inaccessible one reachable.
 
 Relation flags read *"the new issue — relation — the named issue"*, the single
 convention of the whole tool. Only `blocked-by` drives readiness; `has-parent`

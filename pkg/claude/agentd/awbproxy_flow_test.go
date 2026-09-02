@@ -454,6 +454,51 @@ func TestAWBProxy_CreateSendsAWBsOwnBody(t *testing.T) {
 		string(call.Body))
 }
 
+func TestAWBProxy_CreateInfersTheOnlyVisibleWorkspace(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb", "gone"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
+		if strings.Contains(req.URL, "/api/workspaces") {
+			return http.StatusOK, awbProjectsJSON("awb")
+		}
+		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
+	}
+
+	res := w.post("/v1/awb/issue/create", map[string]any{"title": "Parser crashes"})
+	w.outcome(res)
+	calls := rec.snapshot()
+	require.Len(t, calls, 2, "workspace discovery must precede the mutation")
+	assert.JSONEq(t, `{"workspace":"awb","title":"Parser crashes"}`, string(calls[1].Body))
+}
+
+func TestAWBProxy_CreateValidatesRelationsBeforeWorkspaceInference(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+
+	res := w.post("/v1/awb/issue/create", map[string]any{
+		"title": "New thing", "blocked_by": []string{"secret-000001"},
+	})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.False(t, rec.sawAnyCall(), "relation and field validation must stay ahead of workspace discovery")
+}
+
+func TestAWBProxy_CreateRequiresWorkspaceWhenSeveralAreVisible(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb", "web"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
+		if strings.Contains(req.URL, "/api/workspaces") {
+			return http.StatusOK, awbProjectsJSON("awb", "web")
+		}
+		require.Fail(t, "create mutation must not be attempted while workspace is ambiguous")
+		return http.StatusInternalServerError, `{}`
+	}
+
+	res := w.post("/v1/awb/issue/create", map[string]any{"title": "Parser crashes"})
+	assert.Equal(t, http.StatusBadRequest, res.Code)
+	assert.Contains(t, res.Body.String(), "--workspace is required")
+	require.Len(t, rec.snapshot(), 1)
+}
+
 // TestAWBProxy_DepGatesBothEnds — a relation is read from either end, so
 // writing one into an unreachable project is a write outside the gate wearing
 // the subject's clothes.

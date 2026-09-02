@@ -595,7 +595,7 @@ type awbCreateParams struct {
 	DescriptionFile string `long:"description-file" short:"F" optional:"true" help:"Read the description from this file (\"-\" reads stdin)."`
 	Type            string `long:"type" optional:"true" help:"epic, feature, bug, task or chore (default: task)."`
 	Priority        *int   `long:"priority" help:"0 (highest) to 4 (lowest). Default 2."`
-	Workspace       string `long:"workspace" optional:"true" help:"The workspace to create the issue in. REQUIRED: the daemon is not in your working tree, so there is no .awb.yaml to read a default from."`
+	Workspace       string `long:"workspace" optional:"true" help:"The workspace to create the issue in. Optional when exactly one visible workspace is within your proxy gate."`
 	JSON            bool   `long:"json" optional:"true" help:"Print the stable JSON representation. This is the DEFAULT; the flag exists so an awb command line copies over unchanged."`
 	Compact         bool   `long:"compact" optional:"true" help:"Print awb's one terse line per issue instead. Cheapest output there is, and the one to prefer when you only need to see what is there."`
 	// Declared after --ask-human for the shorthand reason awbFilterParams gives.
@@ -650,19 +650,13 @@ func buildAWBCreateBody(
 	if rc != rcOK {
 		return nil, rc
 	}
-	if strings.TrimSpace(p.Workspace) == "" {
-		fmt.Fprintln(stderr, "Error: --workspace is required "+
-			"(run `tclaude proxy awb whoami` to see which workspaces you may use).")
-		return nil, rcInvalidArg
-	}
 	if strings.TrimSpace(p.Title) == "" {
 		fmt.Fprintln(stderr, "Error: a title is required.")
 		return nil, rcInvalidArg
 	}
-	body := map[string]any{
-		"workspace": strings.TrimSpace(p.Workspace),
-		"title":     strings.TrimSpace(p.Title),
-		"compact":   compact,
+	body := map[string]any{"title": strings.TrimSpace(p.Title), "compact": compact}
+	if workspace := strings.TrimSpace(p.Workspace); workspace != "" {
+		body["workspace"] = workspace
 	}
 	// Sent only when actually given. A create has nothing to clear, and AWB
 	// supplies its own defaults for type and priority, so an omitted flag must
