@@ -2065,6 +2065,10 @@ type AWBProxyConfig struct {
 	// wildcard: workspace keys are a flat namespace with no hierarchy to match a
 	// prefix against, so a wildcard would only ever mean "all of them".
 	AllowedWorkspaces []string `json:"allowed_workspaces,omitempty"`
+	// LegacyAllowedProjects reads and preserves configs written before AWB
+	// renamed projects to workspaces. Effective policy merges it into
+	// AllowedWorkspaces; remove after one compatibility cycle.
+	LegacyAllowedProjects []string `json:"allowed_projects,omitempty"`
 
 	// AllowWrite permits the mutating verbs (create, update, claim, release,
 	// close, reopen, delete, label, dep add/rm, attach add/delete) at all.
@@ -2380,7 +2384,8 @@ func (c *Config) ResolvedAWBProxy() AWBProxyConfig {
 		out.URL = strings.TrimRight(strings.TrimSpace(src.URL), "/")
 		out.Username = strings.TrimSpace(src.Username)
 		out.PasswordFile = strings.TrimSpace(src.PasswordFile)
-		out.AllowedWorkspaces = normalizeGitProxyPatterns(src.AllowedWorkspaces)
+		allowed := append(append([]string{}, src.AllowedWorkspaces...), src.LegacyAllowedProjects...)
+		out.AllowedWorkspaces = normalizeGitProxyPatterns(allowed)
 		out.AllowWrite = src.AllowWrite
 	}
 	return out

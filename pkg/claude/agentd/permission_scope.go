@@ -29,6 +29,10 @@ const (
 	ScopeDimLinearTeam      ScopeDim = "linear_team"
 	ScopeDimAWBWorkspace    ScopeDim = "awb_workspace"
 	ScopeDimTargetAgent     ScopeDim = "target_agent"
+	// legacyScopeDimAWBProject is accepted only while parsing persisted grants
+	// written before AWB renamed projects to workspaces. Canonical output always
+	// uses ScopeDimAWBWorkspace, so any subsequent write upgrades the row.
+	legacyScopeDimAWBProject = "awb_project"
 )
 
 // PermissionScope is the persisted scope shape: dimensions AND together;
@@ -122,6 +126,10 @@ func parsePermissionScope(raw json.RawMessage) (PermissionScope, string, error) 
 	}
 	if wire == nil {
 		return nil, "", fmt.Errorf("permission scope must be a JSON object")
+	}
+	if legacy := wire[legacyScopeDimAWBProject]; len(legacy) > 0 {
+		wire[string(ScopeDimAWBWorkspace)] = append(wire[string(ScopeDimAWBWorkspace)], legacy...)
+		delete(wire, legacyScopeDimAWBProject)
 	}
 	scope := make(PermissionScope, len(wire))
 	for rawDim, rawMatchers := range wire {

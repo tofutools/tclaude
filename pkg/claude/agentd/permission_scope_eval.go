@@ -59,8 +59,8 @@ type ActionContext struct {
 	// AWBWorkspace is the AWB workspace KEY the request acts within — the prefix of
 	// an issue ID, so "awb" for awb-a3f9c1. Case is irrelevant (the matcher
 	// folds it), but it must be a single whole key: an AWB action that spans
-	// several projects describes each of them in turn rather than passing a
-	// set, so every check is one project against one grant.
+	// several workspaces describes each of them in turn rather than passing a
+	// set, so every check is one workspace against one grant.
 	AWBWorkspace string
 
 	// structuralGroup is the group whose ownership or membership may confer the requested slug.

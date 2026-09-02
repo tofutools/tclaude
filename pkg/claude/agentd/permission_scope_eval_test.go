@@ -413,7 +413,7 @@ var scopedSlugEnforcementPaths = map[string]string{
 		"into the session's effective set, which every team check reads",
 	PermLinearWrite: "Linear proxy — same effective-set resolution as proxy.linear.read",
 	PermAWBRead: "AWB proxy — awbEffectiveWorkspaces evaluates ActionContext{AWBWorkspace} per candidate " +
-		"project into the session's effective set, which every project check reads",
+		"workspace into the session's effective set, which every workspace check reads",
 	PermAWBWrite: "AWB proxy — same effective-set resolution as proxy.awb.read",
 }
 

@@ -1409,3 +1409,16 @@ func TestLinearProxyConfigured(t *testing.T) {
 	assert.False(t, cfg(&LinearProxyConfig{APIKeyFile: "~/key.txt"}).LinearProxyEnabled(),
 		"a key is not a team policy, which is exactly why Configured exists separately")
 }
+
+func TestAWBProxyLegacyAllowedProjectsRemainEffectiveAndRoundTrip(t *testing.T) {
+	var cfg Config
+	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"url":"https://awb.example","allowed_projects":["AWB"]}}}`), &cfg))
+
+	resolved := cfg.ResolvedAWBProxy()
+	assert.Equal(t, []string{"awb"}, resolved.AllowedWorkspaces)
+
+	roundTrip, err := json.Marshal(&cfg)
+	require.NoError(t, err)
+	assert.Contains(t, string(roundTrip), `"allowed_projects":["AWB"]`,
+		"saving an older config must not silently discard its allow-list")
+}

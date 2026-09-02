@@ -866,16 +866,16 @@ func AutoGrantableSlugs() []string {
 // and ADD to defaults rather than replace them.
 //
 // Overrides is the full tri-state per-conv view — conv-id → slug →
-// "grant" | "deny". Grants (above) is the grant-only workspaceion of the
+// "grant" | "deny". Grants (above) is the grant-only projection of the
 // same table, kept for back-compat with readers that predate deny.
 //
-// AgentIDs workspaces the stable agent_id behind each conv key in
+// AgentIDs projects the stable agent_id behind each conv key in
 // Grants/Overrides (conv-id → agent_id), so the CLI roster can LEAD with
 // the rotation-immune id (`name (agt_xxxxxxxx)`) while the maps stay
 // conv-keyed on the wire (JOH-325). Absent for a conv that doesn't (yet)
 // resolve to an actor; readers fall back to the conv prefix then.
 //
-// Titles is the display-name workspaceion of the same keys (conv-id →
+// Titles is the display-name projection of the same keys (conv-id →
 // display title). It exists so an agent-side CLI can render the roster
 // without reading ~/.tclaude/data itself — a sandboxed agent is denied
 // that directory by design, so decoration has to arrive over the wire

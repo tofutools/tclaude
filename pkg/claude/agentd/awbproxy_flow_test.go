@@ -334,6 +334,21 @@ func TestAWBProxy_ListIsBoundedByTheAllowList(t *testing.T) {
 		"a row from outside the effective set must be dropped, not returned")
 }
 
+func TestAWBProxy_ListAcceptsLegacyProjectsFilter(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"})
+	w.grant(agentd.PermAWBRead)
+	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, "[]"
+	}
+
+	res := w.post("/v1/awb/issue/list", map[string]any{"projects": []string{"awb"}})
+	w.outcome(res)
+
+	q := awbQuery(t, rec.last(t))
+	assert.Equal(t, []string{"awb"}, q["workspace"],
+		"a pre-rename client must still constrain a new daemon by workspace")
+}
+
 // TestAWBProxy_ListingSkipsAllowedWorkspacesTheServerDoesNotHave covers the
 // misconfiguration that would otherwise break every unfiltered listing: AWB
 // answers a `workspace` filter naming no workspace with a 404 rather than with an
