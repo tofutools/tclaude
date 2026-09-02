@@ -217,14 +217,14 @@ something that actually happened.
 ## Recording what you find
 
 ```bash
-tclaude proxy awb create "Add fuzz tests for the parser" --project awb \
+tclaude proxy awb create "Add fuzz tests for the parser" --workspace awb \
   --type task --discovered-from awb-a3f9c1 --blocked-by awb-a3f9c1
 tclaude proxy awb dep add awb-77e0b2 --has-parent awb-a3f9c1
 tclaude proxy awb dep tree awb-a3f9c1 --compact
 tclaude proxy awb attach add awb-a3f9c1 ./trace.txt
 ```
 
-`--project` is **required** on `create`: the daemon is not in your working tree,
+`--workspace` is **required** on `create`: the daemon is not in your working tree,
 so there is no `.awb.yaml` for it to read a default from.
 
 Relation flags read *"the new issue — relation — the named issue"*, the single

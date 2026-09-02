@@ -771,7 +771,7 @@ func (s *awbProxySession) enforceIssueProject(issue *awbIssue) *proxyFault {
 	if issue == nil {
 		return faultf(http.StatusNotFound, "not_found", "no such issue")
 	}
-	if key := strings.TrimSpace(issue.Project); key != "" {
+	if key := strings.TrimSpace(issue.Workspace); key != "" {
 		return s.requireAllowedProject(key)
 	}
 	// No project on the response means AWB returned something this package
@@ -792,7 +792,7 @@ func (s *awbProxySession) enforceIssueProject(issue *awbIssue) *proxyFault {
 func (s *awbProxySession) enforceIssueList(issues []awbIssue) []awbIssue {
 	kept := make([]awbIssue, 0, len(issues))
 	for i := range issues {
-		if s.projectAllowed(issues[i].Project) {
+		if s.projectAllowed(issues[i].Workspace) {
 			kept = append(kept, issues[i])
 		}
 	}
@@ -815,7 +815,7 @@ func (s *awbProxySession) pruneTree(node *awbIssueTree) (kept *awbIssueTree, pru
 	if node == nil {
 		return nil, 0
 	}
-	if !s.projectAllowed(node.Project) {
+	if !s.projectAllowed(node.Workspace) {
 		return nil, countTreeNodes(node)
 	}
 	children := make([]awbIssueTree, 0, len(node.Children))
@@ -867,7 +867,7 @@ func (s *awbProxySession) listingProjects(ctx context.Context, named []string) (
 // resolveServerProjects is listingProjects' one call, without the memoization.
 func (s *awbProxySession) resolveServerProjects(ctx context.Context) ([]string, *proxyFault) {
 	var projects []awbProject
-	if _, fault := s.exec(ctx, awbCall{Method: http.MethodGet, Path: "/api/projects"}, &projects); fault != nil {
+	if _, fault := s.exec(ctx, awbCall{Method: http.MethodGet, Path: "/api/workspaces"}, &projects); fault != nil {
 		return nil, fault
 	}
 	present := make(map[string]bool, len(projects))
@@ -1380,16 +1380,19 @@ var (
 // no reason recorded" for a concept the tracker no longer has.
 type awbIssue struct {
 	ID          string          `json:"id"`
-	Project     string          `json:"project"`
+	Workspace   string          `json:"workspace"`
 	Title       string          `json:"title"`
 	Description string          `json:"description"`
 	Type        string          `json:"type"`
 	Status      string          `json:"status"`
 	Priority    int             `json:"priority"`
+	Order       int             `json:"order"`
+	BoardHidden bool            `json:"board_hidden"`
 	Labels      []string        `json:"labels"`
-	Assignee    string          `json:"assignee"`
+	Assignees   []string        `json:"assignees"`
 	CreatedAt   string          `json:"created_at"`
 	UpdatedAt   string          `json:"updated_at"`
+	ClosedAt    string          `json:"closed_at"`
 	Blocked     bool            `json:"blocked"`
 	Blockers    []string        `json:"blockers"`
 	Relations   []awbRelation   `json:"relations"`
@@ -1464,18 +1467,18 @@ type awbProject struct {
 }
 
 type awbMembership struct {
-	Project string `json:"project"`
-	User    string `json:"user"`
-	Access  string `json:"access"`
+	Workspace string `json:"workspace"`
+	User      string `json:"user"`
+	Access    string `json:"access"`
 }
 
 type awbUser struct {
-	Name         string          `json:"name"`
-	ProjectAdmin bool            `json:"project_admin"`
-	UserAdmin    bool            `json:"user_admin"`
-	CreatedAt    string          `json:"created_at"`
-	UpdatedAt    string          `json:"updated_at"`
-	Projects     []awbMembership `json:"projects"`
+	Name           string          `json:"name"`
+	WorkspaceAdmin bool            `json:"workspace_admin"`
+	UserAdmin      bool            `json:"user_admin"`
+	CreatedAt      string          `json:"created_at"`
+	UpdatedAt      string          `json:"updated_at"`
+	Workspaces     []awbMembership `json:"workspaces"`
 }
 
 type awbIdentityResponse struct {
@@ -1497,7 +1500,7 @@ type awbProxyOutcome struct {
 	// response. It is the single most common thing an agent needs when a call
 	// is refused, and carrying it means the agent does not have to run `whoami`
 	// to find out.
-	Projects []string `json:"projects,omitempty"`
+	Projects []string `json:"workspaces,omitempty"`
 	// JSON is the payload in --json mode, already shaped by this package.
 	JSON json.RawMessage `json:"json,omitempty"`
 	// Text is the payload in --compact mode, and the one line a delete or a

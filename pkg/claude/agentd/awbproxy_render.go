@@ -52,9 +52,9 @@ func awbCompactLine(issue *awbIssue, withBlockers bool) string {
 	b.WriteByte(' ')
 	b.WriteString(awbJSONString(issue.Title))
 
-	if issue.Assignee != "" {
+	for _, assignee := range issue.Assignees {
 		b.WriteString(" @")
-		b.WriteString(issue.Assignee)
+		b.WriteString(assignee)
 	}
 	for _, label := range issue.Labels {
 		b.WriteString(" #")

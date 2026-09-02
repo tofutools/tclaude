@@ -143,9 +143,9 @@ func awbTestSession(projects ...string) *awbProxySession {
 func TestEnforceIssueProject(t *testing.T) {
 	s := awbTestSession("awb")
 
-	assert.Nil(t, s.enforceIssueProject(&awbIssue{ID: "awb-1", Project: "awb"}))
+	assert.Nil(t, s.enforceIssueProject(&awbIssue{ID: "awb-1", Workspace: "awb"}))
 
-	fault := s.enforceIssueProject(&awbIssue{ID: "secret-1", Project: "secret"})
+	fault := s.enforceIssueProject(&awbIssue{ID: "secret-1", Workspace: "secret"})
 	require.NotNil(t, fault)
 	assert.Equal(t, http.StatusForbidden, fault.Status)
 
@@ -163,16 +163,16 @@ func TestEnforceIssueProject(t *testing.T) {
 func TestPruneTree(t *testing.T) {
 	s := awbTestSession("awb")
 	tree := &awbIssueTree{
-		awbIssue: awbIssue{ID: "awb-root", Project: "awb"},
+		awbIssue: awbIssue{ID: "awb-root", Workspace: "awb"},
 		Children: []awbIssueTree{
-			{awbIssue: awbIssue{ID: "awb-a", Project: "awb"}},
+			{awbIssue: awbIssue{ID: "awb-a", Workspace: "awb"}},
 			{
-				awbIssue: awbIssue{ID: "secret-b", Project: "secret", Description: "confidential"},
+				awbIssue: awbIssue{ID: "secret-b", Workspace: "secret", Description: "confidential"},
 				Children: []awbIssueTree{
-					{awbIssue: awbIssue{ID: "secret-c", Project: "secret"}},
+					{awbIssue: awbIssue{ID: "secret-c", Workspace: "secret"}},
 					// Reachable, but only through an unreachable parent. It goes
 					// too: the path to it is what a caller may not see.
-					{awbIssue: awbIssue{ID: "awb-d", Project: "awb"}},
+					{awbIssue: awbIssue{ID: "awb-d", Workspace: "awb"}},
 				},
 			},
 		},
@@ -186,7 +186,7 @@ func TestPruneTree(t *testing.T) {
 
 	t.Run("an out-of-scope root leaves nothing", func(t *testing.T) {
 		kept, pruned := s.pruneTree(&awbIssueTree{
-			awbIssue: awbIssue{ID: "secret-1", Project: "secret"}})
+			awbIssue: awbIssue{ID: "secret-1", Workspace: "secret"}})
 		assert.Nil(t, kept)
 		assert.Equal(t, 1, pruned)
 	})
@@ -197,9 +197,9 @@ func TestPruneTree(t *testing.T) {
 func TestEnforceIssueList(t *testing.T) {
 	s := awbTestSession("awb", "web")
 	kept := s.enforceIssueList([]awbIssue{
-		{ID: "awb-1", Project: "awb"},
-		{ID: "secret-1", Project: "secret"},
-		{ID: "web-1", Project: "web"},
+		{ID: "awb-1", Workspace: "awb"},
+		{ID: "secret-1", Workspace: "secret"},
+		{ID: "web-1", Workspace: "web"},
 		{ID: "orphan-1"},
 	})
 	require.Len(t, kept, 2)
@@ -450,7 +450,7 @@ func TestAWBCompactLine(t *testing.T) {
 		awbCompactLine(issue, false),
 		"the five mandatory positional fields, the title as a JSON string")
 
-	issue.Assignee = "claude-1"
+	issue.Assignees = []string{"claude-1"}
 	issue.Labels = []string{"tokeniser", "parser"}
 	issue.Blocked = true
 	issue.Blockers = []string{"awb-000001", "awb-000002"}
@@ -599,7 +599,7 @@ func TestValidateAWBOffset(t *testing.T) {
 // every issue, which reads as "no reason recorded" for a concept the tracker no
 // longer has, and would go on doing so silently.
 func TestAWBIssueCarriesNoCloseReason(t *testing.T) {
-	encoded, err := json.Marshal(&awbIssue{ID: "awb-1", Project: "awb"})
+	encoded, err := json.Marshal(&awbIssue{ID: "awb-1", Workspace: "awb"})
 	require.NoError(t, err)
 	assert.NotContains(t, string(encoded), "close_reason",
 		"close_reason is not a field AWB has any more")

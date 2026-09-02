@@ -152,7 +152,7 @@ func (w *awbFlow) outcome(res *httptest.ResponseRecorder) awbOutcomeView {
 }
 
 type awbOutcomeView struct {
-	Projects   []string        `json:"projects"`
+	Projects   []string        `json:"workspaces"`
 	JSON       json.RawMessage `json:"json"`
 	Text       string          `json:"text"`
 	Content    []byte          `json:"content"`
@@ -161,7 +161,7 @@ type awbOutcomeView struct {
 
 // issueJSON builds a scripted issue response.
 func awbIssueJSON(id, project string) string {
-	return `{"id":"` + id + `","project":"` + project + `","title":"A thing","description":"",` +
+	return `{"id":"` + id + `","workspace":"` + project + `","title":"A thing","description":"",` +
 		`"type":"task","status":"open","priority":2,"labels":[],"assignee":"","close_reason":"",` +
 		`"created_at":"2026-08-26T09:12:03.412Z","updated_at":"2026-08-26T09:12:03.412Z",` +
 		`"blocked":false,"blockers":[],"relations":[],"links":[],"attachments":[]}`
@@ -286,7 +286,7 @@ func TestAWBProxy_ProjectGateReChecksAWBsAnswer(t *testing.T) {
 	w.grant(agentd.PermAWBRead)
 	rec.response = func(agentd.AWBProxyRequest) (int, string) {
 		// The caller asked for awb-a3f; AWB answers with an issue elsewhere.
-		return http.StatusOK, `{"id":"secret-9","project":"secret","title":"Acquisition plan",` +
+		return http.StatusOK, `{"id":"secret-9","workspace":"secret","title":"Acquisition plan",` +
 			`"description":"confidential","type":"task","status":"open","priority":2,"labels":[],` +
 			`"assignee":"","close_reason":"","created_at":"2026-08-26T09:12:03.412Z",` +
 			`"updated_at":"2026-08-26T09:12:03.412Z","blocked":false,"blockers":[],` +
@@ -306,7 +306,7 @@ func TestAWBProxy_ListIsBoundedByTheAllowList(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb", "web"})
 	w.grant(agentd.PermAWBRead)
 	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
-		if strings.Contains(req.URL, "/api/projects") {
+		if strings.Contains(req.URL, "/api/workspaces") {
 			return http.StatusOK, awbProjectsJSON("awb", "web", "secret")
 		}
 		// AWB answers with a row from outside the filter. The daemon must drop
@@ -321,7 +321,7 @@ func TestAWBProxy_ListIsBoundedByTheAllowList(t *testing.T) {
 	calls := rec.snapshot()
 	require.Len(t, calls, 2, "the project list, then the listing itself")
 	q := awbQuery(t, calls[1])
-	assert.ElementsMatch(t, []string{"awb", "web"}, q["project"],
+	assert.ElementsMatch(t, []string{"awb", "web"}, q["workspace"],
 		"an unfiltered listing must still name every project it may see, and no more")
 	assert.Equal(t, "50", q.Get("limit"), "the proxy bounds a listing awb would leave unbounded")
 
@@ -339,7 +339,7 @@ func TestAWBProxy_ListingSkipsAllowedProjectsTheServerDoesNotHave(t *testing.T) 
 	w, rec := awbWorld(t, []string{"awb", "gone"})
 	w.grant(agentd.PermAWBRead)
 	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
-		if strings.Contains(req.URL, "/api/projects") {
+		if strings.Contains(req.URL, "/api/workspaces") {
 			return http.StatusOK, awbProjectsJSON("awb")
 		}
 		return http.StatusOK, "[]"
@@ -349,7 +349,7 @@ func TestAWBProxy_ListingSkipsAllowedProjectsTheServerDoesNotHave(t *testing.T) 
 	w.outcome(res)
 
 	q := awbQuery(t, rec.last(t))
-	assert.Equal(t, []string{"awb"}, q["project"],
+	assert.Equal(t, []string{"awb"}, q["workspace"],
 		"a stale entry in the operator's allow-list must not 404 every listing")
 }
 
@@ -378,7 +378,7 @@ func TestAWBProxy_SearchTermsTravelAsQueryValues(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"})
 	w.grant(agentd.PermAWBRead)
 	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
-		if strings.Contains(req.URL, "/api/projects") {
+		if strings.Contains(req.URL, "/api/workspaces") {
 			return http.StatusOK, awbProjectsJSON("awb")
 		}
 		return http.StatusOK, "[]"
@@ -422,7 +422,7 @@ func TestAWBProxy_CreateGatesEveryRelationTarget(t *testing.T) {
 	w.grant(agentd.PermAWBWrite)
 
 	res := w.post("/v1/awb/issue/create", map[string]any{
-		"project": "awb", "title": "New thing", "blocked_by": []string{"secret-000001"},
+		"workspace": "awb", "title": "New thing", "blocked_by": []string{"secret-000001"},
 	})
 	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
 	assert.False(t, rec.sawAnyCall(),
@@ -437,7 +437,7 @@ func TestAWBProxy_CreateSendsAWBsOwnBody(t *testing.T) {
 	}
 
 	res := w.post("/v1/awb/issue/create", map[string]any{
-		"project": "awb", "title": " Parser crashes ", "type": "bug", "priority": 1,
+		"workspace": "awb", "title": " Parser crashes ", "type": "bug", "priority": 1,
 		"labels": []string{"parser"}, "blocked_by": []string{"awb-000001"},
 		"compact": true,
 	})
@@ -447,7 +447,7 @@ func TestAWBProxy_CreateSendsAWBsOwnBody(t *testing.T) {
 
 	call := rec.only(t)
 	assert.Equal(t, "https://awb.example/api/issues", call.URL)
-	assert.JSONEq(t, `{"project":"awb","title":"Parser crashes","type":"bug","priority":1,`+
+	assert.JSONEq(t, `{"workspace":"awb","title":"Parser crashes","type":"bug","priority":1,`+
 		`"labels":["parser"],"relations":[{"type":"blocked-by","other":"awb-000001"}]}`,
 		string(call.Body))
 }
@@ -477,7 +477,7 @@ func TestAWBProxy_DeleteNeedsForce(t *testing.T) {
 	assert.False(t, rec.sawAnyCall())
 
 	rec.response = func(agentd.AWBProxyRequest) (int, string) {
-		return http.StatusOK, `{"id":"awb-a3f9c1","project":"awb","title":"A thing",` +
+		return http.StatusOK, `{"id":"awb-a3f9c1","workspace":"awb","title":"A thing",` +
 			`"description":"","type":"task","status":"open","priority":2,"labels":[],"assignee":"",` +
 			`"close_reason":"","created_at":"2026-08-26T09:12:03.412Z",` +
 			`"updated_at":"2026-08-26T09:12:03.412Z","blocked":false,"blockers":[],` +
@@ -593,11 +593,11 @@ func TestAWBProxy_DepTreePrunesOutOfScopeChildren(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"})
 	w.grant(agentd.PermAWBRead)
 	rec.response = func(agentd.AWBProxyRequest) (int, string) {
-		root := `{"id":"awb-a00001","project":"awb","title":"Root","description":"","type":"epic",` +
+		root := `{"id":"awb-a00001","workspace":"awb","title":"Root","description":"","type":"epic",` +
 			`"status":"open","priority":0,"labels":[],"assignee":"","close_reason":"",` +
 			`"created_at":"2026-08-26T09:12:03.412Z","updated_at":"2026-08-26T09:12:03.412Z",` +
 			`"blocked":false,"blockers":[],"relations":[],"links":[],"attachments":[],"children":[` +
-			`{"id":"secret-b00002","project":"secret","title":"Merger terms","description":"confidential",` +
+			`{"id":"secret-b00002","workspace":"secret","title":"Merger terms","description":"confidential",` +
 			`"type":"task","status":"open","priority":2,"labels":[],"assignee":"","close_reason":"",` +
 			`"created_at":"2026-08-26T09:12:03.412Z","updated_at":"2026-08-26T09:12:03.412Z",` +
 			`"blocked":false,"blockers":[],"relations":[],"links":[],"attachments":[],"children":[]}]}`
@@ -621,7 +621,7 @@ func TestAWBProxy_GrantScopeNarrowsTheOperatorList(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb", "web"})
 	w.grantScoped(agentd.PermAWBRead, `{"awb_project":["awb"]}`)
 	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
-		if strings.Contains(req.URL, "/api/projects") {
+		if strings.Contains(req.URL, "/api/workspaces") {
 			return http.StatusOK, awbProjectsJSON("awb", "web")
 		}
 		return http.StatusOK, "[]"
@@ -631,7 +631,7 @@ func TestAWBProxy_GrantScopeNarrowsTheOperatorList(t *testing.T) {
 	out := w.outcome(res)
 	assert.Equal(t, []string{"awb"}, out.Projects,
 		"the echoed set is what THIS caller may reach, not what the operator allows in general")
-	assert.Equal(t, []string{"awb"}, awbQuery(t, rec.last(t))["project"])
+	assert.Equal(t, []string{"awb"}, awbQuery(t, rec.last(t))["workspace"])
 
 	t.Run("and the project the operator allows but the grant does not is refused", func(t *testing.T) {
 		res := w.post("/v1/awb/issue/show", map[string]any{"id": "web-a3f9c1"})
@@ -676,8 +676,8 @@ func TestAWBProxy_WhoamiKeepsOutOfScopeProjectsToTheirKey(t *testing.T) {
 		case strings.Contains(req.URL, "/api/users/"):
 			return http.StatusOK, `{"name":"tclaude-bot","project_admin":true,"user_admin":false,` +
 				`"created_at":"2026-08-26T09:12:03.412Z","updated_at":"2026-08-26T09:12:03.412Z",` +
-				`"projects":[{"project":"awb","user":"tclaude-bot","access":"regular"},` +
-				`{"project":"acquisition","user":"tclaude-bot","access":"admin"}]}`
+				`"workspaces":[{"workspace":"awb","user":"tclaude-bot","access":"regular"},` +
+				`{"workspace":"acquisition","user":"tclaude-bot","access":"admin"}]}`
 		}
 		return http.StatusOK, `[{"key":"awb","name":"Agent Work Board","description":"",` +
 			`"active_issues":2,"created_at":"2026-08-26T09:12:03.412Z",` +
@@ -1121,7 +1121,7 @@ func TestAWBProxy_NonSearchListingsRefuseTerms(t *testing.T) {
 		w, rec := awbWorld(t, []string{"awb"})
 		w.grant(agentd.PermAWBRead)
 		rec.response = func(req agentd.AWBProxyRequest) (int, string) {
-			if strings.Contains(req.URL, "/api/projects") {
+			if strings.Contains(req.URL, "/api/workspaces") {
 				return http.StatusOK, awbProjectsJSON("awb")
 			}
 			return http.StatusOK, "[]"

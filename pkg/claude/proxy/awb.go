@@ -104,7 +104,7 @@ type awbProxyOutcome struct {
 	// Projects is the caller's EFFECTIVE project set, echoed on every response
 	// — already narrowed by the caller's own grant scope, so it is what this
 	// agent may reach rather than what the operator allows in general.
-	Projects []string        `json:"projects"`
+	Projects []string        `json:"workspaces"`
 	JSON     json.RawMessage `json:"json"`
 	Text     string          `json:"text"`
 	// Content is an attachment's bytes, for `attach get` alone.
@@ -331,7 +331,7 @@ type awbFilterValues struct {
 	Assignees     []string
 	Mine          bool
 	Unassigned    bool
-	Projects      []string
+	Workspaces    []string
 	Parent        string
 	Limit         int
 	Sort          string
@@ -349,7 +349,7 @@ func (v awbFilterValues) body(compact bool) map[string]any {
 	addIfAny("types", v.Types)
 	addIfAny("labels", v.Labels)
 	addIfAny("assignees", v.Assignees)
-	addIfAny("projects", v.Projects)
+	addIfAny("workspaces", v.Workspaces)
 	if len(v.Priorities) > 0 {
 		body["priorities"] = v.Priorities
 	}
@@ -403,7 +403,7 @@ type awbFilterParams struct {
 	Assignees     []string `long:"assignee" optional:"true" help:"Select this assignee. Repeat for several. Mutually exclusive with --mine and --unassigned."`
 	Mine          bool     `long:"mine" optional:"true" help:"Shorthand for --assignee <the daemon's AWB account>. Note that this is the OPERATOR's user: agents have no AWB identity of their own."`
 	Unassigned    bool     `long:"unassigned" optional:"true" help:"Select unassigned issues."`
-	Projects      []string `long:"project" optional:"true" help:"Select this project. Repeat for several. Defaults to every project you may reach."`
+	Workspaces    []string `long:"workspace" optional:"true" help:"Select this workspace. Repeat for several. Defaults to every workspace you may reach."`
 	Parent        string   `long:"parent" optional:"true" help:"Select the direct children of this issue — not the whole subtree, which is 'dep tree'."`
 	Limit         int      `long:"limit" optional:"true" help:"Cap the rows returned (1-500, default 50). awb itself returns every row by default; the proxy bounds it, because the rows land in an agent's context."`
 	Sort          string   `long:"sort" optional:"true" help:"Ordering, optionally prefixed with \"-\" for descending: priority, created, updated or id."`
@@ -414,7 +414,7 @@ func (p *awbFilterParams) values() awbFilterValues {
 		Statuses: p.Statuses, IncludeClosed: p.IncludeClosed, Types: p.Types,
 		Priorities: p.Priorities, PriorityMax: p.PriorityMax, Labels: p.Labels,
 		Assignees: p.Assignees, Mine: p.Mine, Unassigned: p.Unassigned,
-		Projects: p.Projects, Parent: p.Parent, Limit: p.Limit, Sort: p.Sort,
+		Workspaces: p.Workspaces, Parent: p.Parent, Limit: p.Limit, Sort: p.Sort,
 	}
 }
 
@@ -491,7 +491,7 @@ func awbListingCmd(use, short, long, path string, opts awbListingOptions) *cobra
 
 func awbListCmd() *cobra.Command {
 	return awbListingCmd("list", "List issues",
-		"List issues across every project you may reach, or some of them with --project.\n\n"+
+		"List issues across every workspace you may reach, or some of them with --workspace.\n\n"+
 			"By default closed ones are hidden; --include-closed widens whatever status set is in "+
 			"force.",
 		"/v1/awb/issue/list", awbListingOptions{status: true, assignee: true})
@@ -532,7 +532,7 @@ type awbSearchParams struct {
 	Assignees     []string `long:"assignee" optional:"true" help:"Select this assignee. Repeat for several. Mutually exclusive with --mine and --unassigned."`
 	Mine          bool     `long:"mine" optional:"true" help:"Shorthand for --assignee <the daemon's AWB account>. Note that this is the OPERATOR's user: agents have no AWB identity of their own."`
 	Unassigned    bool     `long:"unassigned" optional:"true" help:"Select unassigned issues."`
-	Projects      []string `long:"project" optional:"true" help:"Select this project. Repeat for several. Defaults to every project you may reach."`
+	Workspaces    []string `long:"workspace" optional:"true" help:"Select this workspace. Repeat for several. Defaults to every workspace you may reach."`
 	Parent        string   `long:"parent" optional:"true" help:"Select the direct children of this issue — not the whole subtree, which is 'dep tree'."`
 	Limit         int      `long:"limit" optional:"true" help:"Cap the rows returned (1-500, default 50). awb itself returns every row by default; the proxy bounds it, because the rows land in an agent's context."`
 	Sort          string   `long:"sort" optional:"true" help:"Ordering, optionally prefixed with \"-\" for descending: relevance, priority, created, updated or id. Defaults to relevance."`
@@ -543,7 +543,7 @@ func (p *awbSearchParams) values() awbFilterValues {
 		Statuses: p.Statuses, IncludeClosed: p.IncludeClosed, Types: p.Types,
 		Priorities: p.Priorities, PriorityMax: p.PriorityMax, Labels: p.Labels,
 		Assignees: p.Assignees, Mine: p.Mine, Unassigned: p.Unassigned,
-		Projects: p.Projects, Parent: p.Parent, Limit: p.Limit, Sort: p.Sort,
+		Workspaces: p.Workspaces, Parent: p.Parent, Limit: p.Limit, Sort: p.Sort,
 	}
 }
 
@@ -593,11 +593,11 @@ type awbCreateParams struct {
 	DescriptionFile string `long:"description-file" short:"F" optional:"true" help:"Read the description from this file (\"-\" reads stdin)."`
 	Type            string `long:"type" optional:"true" help:"epic, feature, bug, task or chore (default: task)."`
 	Priority        *int   `long:"priority" help:"0 (highest) to 4 (lowest). Default 2."`
-	Project         string `long:"project" optional:"true" help:"The project to create the issue in. REQUIRED: the daemon is not in your working tree, so there is no .awb.yaml to read a default from."`
+	Workspace       string `long:"workspace" optional:"true" help:"The workspace to create the issue in. REQUIRED: the daemon is not in your working tree, so there is no .awb.yaml to read a default from."`
 	JSON            bool   `long:"json" optional:"true" help:"Print the stable JSON representation. This is the DEFAULT; the flag exists so an awb command line copies over unchanged."`
 	Compact         bool   `long:"compact" optional:"true" help:"Print awb's one terse line per issue instead. Cheapest output there is, and the one to prefer when you only need to see what is there."`
 	// Declared after --ask-human for the shorthand reason awbFilterParams gives.
-	Assignee       string   `long:"assignee" optional:"true" help:"Create and claim in one step: a non-empty assignee also sets the status to in_progress."`
+	Assignees      []string `long:"assignee" optional:"true" help:"Create and claim in one step. Repeat to assign several people; any assignee sets status to in_progress."`
 	HasParent      string   `long:"has-parent" optional:"true" help:"The new issue is part of decomposing this one."`
 	BlockedBy      []string `long:"blocked-by" optional:"true" help:"The new issue cannot start until this one is closed. Repeat for several."`
 	DiscoveredFrom []string `long:"discovered-from" optional:"true" help:"The new issue was found while working on this one. Repeat for several."`
@@ -648,9 +648,9 @@ func buildAWBCreateBody(
 	if rc != rcOK {
 		return nil, rc
 	}
-	if strings.TrimSpace(p.Project) == "" {
-		fmt.Fprintln(stderr, "Error: --project is required "+
-			"(run `tclaude proxy awb whoami` to see which projects you may use).")
+	if strings.TrimSpace(p.Workspace) == "" {
+		fmt.Fprintln(stderr, "Error: --workspace is required "+
+			"(run `tclaude proxy awb whoami` to see which workspaces you may use).")
 		return nil, rcInvalidArg
 	}
 	if strings.TrimSpace(p.Title) == "" {
@@ -658,9 +658,9 @@ func buildAWBCreateBody(
 		return nil, rcInvalidArg
 	}
 	body := map[string]any{
-		"project": strings.TrimSpace(p.Project),
-		"title":   strings.TrimSpace(p.Title),
-		"compact": compact,
+		"workspace": strings.TrimSpace(p.Workspace),
+		"title":     strings.TrimSpace(p.Title),
+		"compact":   compact,
 	}
 	// Sent only when actually given. A create has nothing to clear, and AWB
 	// supplies its own defaults for type and priority, so an omitted flag must
@@ -679,8 +679,8 @@ func buildAWBCreateBody(
 	if p.Priority != nil {
 		body["priority"] = *p.Priority
 	}
-	if v := strings.TrimSpace(p.Assignee); v != "" {
-		body["assignee"] = v
+	if values := trimmedNonEmptyStrings(p.Assignees); len(values) > 0 {
+		body["assignees"] = values
 	}
 	if v := strings.TrimSpace(p.HasParent); v != "" {
 		body["has_parent"] = v
@@ -805,7 +805,7 @@ type awbClaimParams struct {
 func awbClaimCmd() *cobra.Command {
 	return boa.CmdT[awbClaimParams]{
 		Use:   "claim",
-		Short: "Atomically set the assignee and status to in_progress",
+		Short: "Atomically join the assignees and set status to in_progress",
 		Long: "Claim an issue.\n\n" +
 			"Claiming one already held by the same name succeeds. It fails if the issue is assigned to " +
 			"somebody else, blocked, or closed; --force overrides all three. A close reason stays in the " +
@@ -846,7 +846,7 @@ type awbForceParams struct {
 func awbReleaseCmd() *cobra.Command {
 	return boa.CmdT[awbForceParams]{
 		Use:   "release",
-		Short: "Clear the assignee and set the status back to open",
+		Short: "Leave the assignees, reopening the issue when the last one leaves",
 		Long: "Release an issue.\n\n" +
 			"Releasing one that is already open and unassigned succeeds. It fails on a closed issue, " +
 			"or on one assigned to somebody else, unless --force.\n\n" +

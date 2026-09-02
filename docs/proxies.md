@@ -176,7 +176,7 @@ The `agent.linear_proxy` block in `~/.tclaude/data/config.json`:
 ## AWB proxy
 
 ```bash
-tclaude proxy awb whoami                  # server, account, reachable projects
+tclaude proxy awb whoami                  # server, account, reachable workspaces
 tclaude proxy awb ready --compact         # the primary entry point
 tclaude proxy awb claim awb-a3f9c1
 tclaude proxy awb comment add awb-a3f9c1 --body-file findings.md
