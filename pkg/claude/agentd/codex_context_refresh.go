@@ -66,6 +66,10 @@ type codexReadThroughSnapshot struct {
 	runtimeReset          bool
 	runtimeFastMode       bool
 	runtimeHasFastMode    bool
+	costBaselineConvID    string
+	costBaselineCreatedAt time.Time
+	costFastModeBaseline  bool
+	hasCostFastBaseline   bool
 	persistedConvID       string
 	persistedCreatedAt    time.Time
 	persistedContext      harness.ContextTelemetry
@@ -485,6 +489,32 @@ func refreshCodexContextSnapshotOnReadBatched(
 			"session_id", sess.ID, "error", err, "module", "agentd")
 		return codexContextRefreshResultFromCache(sess, cached)
 	}
+	costBaselineConvID := cached.costBaselineConvID
+	costBaselineCreatedAt := cached.costBaselineCreatedAt
+	costFastModeBaseline := cached.costFastModeBaseline
+	hasCostFastBaseline := cached.hasCostFastBaseline
+	if costBaselineConvID != sess.ConvID || !costBaselineCreatedAt.Equal(sess.CreatedAt) {
+		profile, profileErr := db.AgentRelaunchProfileForConv(sess.ConvID)
+		if profileErr != nil {
+			slog.Warn("codex-cost: failed to resolve launch Fast-mode baseline",
+				"session_id", sess.ID, "conv_id", sess.ConvID, "error", profileErr, "module", "agentd")
+		} else {
+			costBaselineConvID = sess.ConvID
+			costBaselineCreatedAt = sess.CreatedAt
+			hasCostFastBaseline = profile != nil &&
+				(profile.FastModeAtLaunch != nil || profile.FastMode != nil)
+			if profile != nil && profile.FastModeAtLaunch != nil {
+				costFastModeBaseline = *profile.FastModeAtLaunch
+			} else if profile != nil && profile.FastMode != nil {
+				// Legacy launches may predate the launch-observation field. Match
+				// the UI's best-known explicit-state fallback for those rows.
+				costFastModeBaseline = *profile.FastMode
+			}
+		}
+	}
+	if hasCostFastBaseline {
+		cached.follower.SetCostFastModeBaseline(costFastModeBaseline, sess.CreatedAt)
+	}
 	rolloutStarted := time.Now()
 	snap, err := cached.follower.RuntimeTelemetry(home, sess.ConvID)
 	timing.rolloutRead = time.Since(rolloutStarted)
@@ -769,6 +799,10 @@ func refreshCodexContextSnapshotOnReadBatched(
 		snap.ContextReset,
 		runtimeFastMode,
 		runtimeHasFastMode,
+		costBaselineConvID,
+		costBaselineCreatedAt,
+		costFastModeBaseline,
+		hasCostFastBaseline,
 		contextPersistenceDeferred,
 		cachePersistedConvID,
 		cachePersistedCreatedAt,
@@ -990,6 +1024,10 @@ func cacheCodexRuntimeRefresh(
 	runtimeReset bool,
 	runtimeFastMode bool,
 	runtimeHasFastMode bool,
+	costBaselineConvID string,
+	costBaselineCreatedAt time.Time,
+	costFastModeBaseline bool,
+	hasCostFastBaseline bool,
 	keepRefreshing bool,
 	persistedConvID string,
 	persistedCreatedAt time.Time,
@@ -1021,6 +1059,10 @@ func cacheCodexRuntimeRefresh(
 	prev.runtimeReset = runtimeReset
 	prev.runtimeFastMode = runtimeFastMode
 	prev.runtimeHasFastMode = runtimeHasFastMode
+	prev.costBaselineConvID = costBaselineConvID
+	prev.costBaselineCreatedAt = costBaselineCreatedAt
+	prev.costFastModeBaseline = costFastModeBaseline
+	prev.hasCostFastBaseline = hasCostFastBaseline
 	prev.persistedConvID = persistedConvID
 	prev.persistedCreatedAt = persistedCreatedAt
 	prev.persistedContext = persistedContext

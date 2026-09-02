@@ -252,6 +252,11 @@ type codexRuntimeScanState struct {
 	fastMode             bool
 	hasFastMode          bool
 	fastModeObserved     string
+	costFastMode         bool
+	costFastBaseline     bool
+	hasCostFastBaseline  bool
+	costFastBaselineAt   time.Time
+	costFastBaselineUsed bool
 	usage                *CodexUsage
 	costUSD              float64
 	costPriced           bool
@@ -290,6 +295,11 @@ func (s codexRuntimeScanState) clone() codexRuntimeScanState {
 		fastMode:             s.fastMode,
 		hasFastMode:          s.hasFastMode,
 		fastModeObserved:     s.fastModeObserved,
+		costFastMode:         s.costFastMode,
+		costFastBaseline:     s.costFastBaseline,
+		hasCostFastBaseline:  s.hasCostFastBaseline,
+		costFastBaselineAt:   s.costFastBaselineAt,
+		costFastBaselineUsed: s.costFastBaselineUsed,
 		usage:                s.usage,
 		costUSD:              s.costUSD,
 		costPriced:           s.costPriced,
@@ -338,6 +348,7 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 		}
 		return true
 	}
+	s.applyCostFastModeBaseline(env.Timestamp)
 	if env.Type == "compacted" {
 		s.invalidateContext()
 		return true
@@ -379,6 +390,7 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 		}
 		s.hasFastMode = true
 		s.fastMode = codexServiceTierIsFast(ev.ThreadSettings.ServiceTier)
+		s.costFastMode = s.fastMode
 		s.fastModeObserved = env.Timestamp
 	case "token_count":
 		var ev codexTokenCountEvent
@@ -435,7 +447,7 @@ func (s *codexRuntimeScanState) applyTokenCost(info codexTokenCountInfo, observe
 	if !ok {
 		return
 	}
-	cost = codexFastModeCost(cost, s.fastMode)
+	cost = codexFastModeCost(cost, s.costFastMode)
 	if legacy {
 		s.costUSD = cost
 	} else {
@@ -457,6 +469,18 @@ func (s *codexRuntimeScanState) applyTokenCost(info codexTokenCountInfo, observe
 	} else {
 		s.costHistory = append(s.costHistory, daily)
 	}
+}
+
+func (s *codexRuntimeScanState) applyCostFastModeBaseline(observed string) {
+	if !s.hasCostFastBaseline || s.costFastBaselineUsed {
+		return
+	}
+	at := parseCodexEventTime(observed)
+	if at.IsZero() || at.Before(s.costFastBaselineAt) {
+		return
+	}
+	s.costFastMode = s.costFastBaseline
+	s.costFastBaselineUsed = true
 }
 
 func (s *codexRuntimeScanState) invalidateContext() {

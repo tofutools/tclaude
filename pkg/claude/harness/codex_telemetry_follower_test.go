@@ -214,6 +214,52 @@ func TestCodexTelemetryFollower_CostFoldSurvivesRestartAndReadsAppend(t *testing
 	assert.Greater(t, codexFollowerOffset(t, restored), firstOffset, "restored follower consumes only the append")
 }
 
+func TestCodexTelemetryFollower_CostUsesLaunchFastModeBeforeSettingsReadback(t *testing.T) {
+	home := t.TempDir()
+	const id = "019ec004-4250-79b1-9ade-ebaea41354f9"
+	path := newFollowerTestRollout(t, home, id)
+	appendRolloutEnvelope(t, path, "turn_context", map[string]any{"model": "gpt-5.6-terra"})
+	appendTokenCount(t, path, 1000, 100, 1100)
+
+	follower := &CodexTelemetryFollower{}
+	follower.SetCostFastModeBaseline(true, time.Now().Add(-time.Minute))
+	first, err := follower.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	require.True(t, first.HasCost)
+	assert.InDelta(t, 0.0064, first.Cost.CostUSD, 1e-12)
+	assert.False(t, first.HasFastMode,
+		"the launch baseline prices usage without impersonating a rollout readback")
+
+	checkpoint, ok, err := follower.Checkpoint()
+	require.NoError(t, err)
+	require.True(t, ok)
+	restored := &CodexTelemetryFollower{}
+	require.NoError(t, restored.RestoreCheckpoint(checkpoint))
+	appendTokenCount(t, path, 1000, 100, 1100)
+	second, err := restored.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.0128, second.Cost.CostUSD, 1e-12,
+		"the launch baseline survives checkpoint restoration")
+}
+
+func TestCodexTelemetryFollower_CostLaunchBaselineDoesNotRewriteOlderUsage(t *testing.T) {
+	home := t.TempDir()
+	const id = "019ec004-4250-79b1-9ade-ebaea41354fa"
+	path := newFollowerTestRollout(t, home, id)
+	appendRolloutEnvelope(t, path, "turn_context", map[string]any{"model": "gpt-5.6-terra"})
+	appendTokenCount(t, path, 1000, 100, 1100)
+	launchedAt := time.Now()
+	appendTokenCount(t, path, 1000, 100, 1100)
+
+	follower := &CodexTelemetryFollower{}
+	follower.SetCostFastModeBaseline(true, launchedAt)
+	got, err := follower.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	require.True(t, got.HasCost)
+	assert.InDelta(t, 0.0096, got.Cost.CostUSD, 1e-12,
+		"pre-launch usage stays standard while new-generation usage is Fast")
+}
+
 func TestCodexTelemetryFollower_AggregatesNestedChildOwnedCostExactlyOnce(t *testing.T) {
 	home := t.TempDir()
 	const (
