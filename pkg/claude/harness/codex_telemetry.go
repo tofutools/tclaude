@@ -225,6 +225,16 @@ func CodexRuntimeTelemetryFromRollout(rolloutPath string) (CodexRuntimeSnapshot,
 }
 
 func codexRuntimeTelemetryStateFromRollout(rolloutPath, ownerID string) (codexRuntimeScanState, error) {
+	return codexRuntimeTelemetryStateFromRolloutWithCostBaseline(
+		rolloutPath, ownerID, false, false, time.Time{},
+	)
+}
+
+func codexRuntimeTelemetryStateFromRolloutWithCostBaseline(
+	rolloutPath, ownerID string,
+	fastMode, hasFastMode bool,
+	observedAt time.Time,
+) (codexRuntimeScanState, error) {
 	rc, err := openCodexRollout(rolloutPath)
 	if err != nil {
 		return codexRuntimeScanState{}, err
@@ -235,6 +245,9 @@ func codexRuntimeTelemetryStateFromRollout(rolloutPath, ownerID string) (codexRu
 	if ownerID != "" {
 		state = newOwnedCodexRuntimeScanState(ownerID)
 	}
+	state.costFastBaseline = fastMode
+	state.hasCostFastBaseline = hasFastMode
+	state.costFastBaselineAt = observedAt
 	if _, _, err := scanCompleteCodexLines(rc, rolloutPath, &state, false); err != nil {
 		return codexRuntimeScanState{}, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
 	}

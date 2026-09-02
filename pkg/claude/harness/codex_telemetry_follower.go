@@ -355,7 +355,10 @@ func (f *CodexTelemetryFollower) runtimeTelemetry(
 		if f.preserveMissing {
 			ownerID = convID
 		}
-		state, err := codexRuntimeTelemetryStateFromRollout(path, ownerID)
+		state, err := codexRuntimeTelemetryStateFromRolloutWithCostBaseline(
+			path, ownerID,
+			f.costFastBaseline, f.hasCostFastBaseline, f.costFastBaselineAt,
+		)
 		if err != nil {
 			return CodexRuntimeSnapshot{}, err
 		}
@@ -401,6 +404,9 @@ func (f *CodexTelemetryFollower) aggregateChildrenLocked(
 		if child == nil {
 			child = &CodexTelemetryFollower{preserveMissing: true}
 			f.children[id] = child
+		}
+		if f.hasCostFastBaseline {
+			child.SetCostFastModeBaseline(f.costFastBaseline, f.costFastBaselineAt)
 		}
 		snap, err := child.runtimeTelemetry(home, id, ancestors)
 		if err != nil {

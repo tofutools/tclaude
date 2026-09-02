@@ -240,6 +240,18 @@ func TestCodexTelemetryFollower_CostUsesLaunchFastModeBeforeSettingsReadback(t *
 	require.NoError(t, err)
 	assert.InDelta(t, 0.0128, second.Cost.CostUSD, 1e-12,
 		"the launch baseline survives checkpoint restoration")
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	enc, err := zstd.NewWriter(nil)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path+".zst", enc.EncodeAll(raw, nil), 0o600))
+	enc.Close()
+	require.NoError(t, os.Remove(path))
+	archived, err := restored.RuntimeTelemetry(home, id)
+	require.NoError(t, err)
+	assert.InDelta(t, second.Cost.CostUSD, archived.Cost.CostUSD, 1e-12,
+		"the launch baseline survives an archive full scan")
 }
 
 func TestCodexTelemetryFollower_CostLaunchBaselineDoesNotRewriteOlderUsage(t *testing.T) {
@@ -300,6 +312,7 @@ func TestCodexTelemetryFollower_AggregatesNestedChildOwnedCostExactlyOnce(t *tes
 	appendTokenCount(t, grand, 100, 0, 100)
 
 	follower := &CodexTelemetryFollower{}
+	follower.SetCostFastModeBaseline(true, time.Now().Add(-time.Minute))
 	type telemetryResult struct {
 		snap CodexRuntimeSnapshot
 		err  error
@@ -318,7 +331,7 @@ func TestCodexTelemetryFollower_AggregatesNestedChildOwnedCostExactlyOnce(t *tes
 		t.Fatal("parent back-reference created a cyclic follower deadlock")
 	}
 	require.True(t, got.HasCost)
-	assert.InDelta(t, 0.00072, got.Cost.CostUSD, 1e-12,
+	assert.InDelta(t, 0.00144, got.Cost.CostUSD, 1e-12,
 		"root + child + grandchild are priced once; copied root history is excluded")
 	require.Len(t, got.CostHistory, 1)
 	assert.InDelta(t, got.Cost.CostUSD, got.CostHistory[0].CostUSD, 1e-12)
@@ -350,7 +363,7 @@ func TestCodexTelemetryFollower_AggregatesNestedChildOwnedCostExactlyOnce(t *tes
 	appendedByteCount := statSize(t, child) - beforeAppendSize
 	appended, err := restored.RuntimeTelemetry(home, rootID)
 	require.NoError(t, err)
-	assert.InDelta(t, 0.00172, appended.Cost.CostUSD, 1e-12,
+	assert.InDelta(t, 0.00344, appended.Cost.CostUSD, 1e-12,
 		"only the newly appended child request is added")
 	assert.Equal(t, appendedByteCount, codexFollowerOffset(t, restored.children[childID])-childOffset,
 		"child work is proportional to appended bytes, not its rollout prefix")
