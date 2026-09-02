@@ -122,6 +122,48 @@ func TestCodexVirtualCostFromRollout_AccumulatesMixedContextTiersPerTurn(t *test
 
 }
 
+func TestCodexVirtualCostFromRollout_FastModeDoublesEveryTokenCategory(t *testing.T) {
+	home := codexTestHome(t)
+	cx := testharness.NewCodexSim(t, home, "/home/u/proj")
+	cx.Model = "gpt-5.3-codex"
+	require.NoError(t, cx.Start())
+	require.NoError(t, cx.WriteThreadSettingsApplied("priority"))
+
+	require.NoError(t, cx.WriteUserInput("fast request"))
+	usage := testharness.CodexTokenUsage{
+		InputTokens: 1000, CachedInputTokens: 100, OutputTokens: 25, TotalTokens: 1025,
+	}
+	require.NoError(t, cx.WriteTokenCount(usage, usage))
+
+	cost, ok, err := harness.CodexVirtualCostFromRollout(cx.RolloutPath, "")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.InDelta(t, 0.003885, cost.CostUSD, 1e-12,
+		"Fast doubles uncached input, cached input, and output")
+}
+
+func TestCodexVirtualCostFromRollout_PricesFastModePerRequest(t *testing.T) {
+	home := codexTestHome(t)
+	cx := testharness.NewCodexSim(t, home, "/home/u/proj")
+	cx.Model = "gpt-5.3-codex"
+	require.NoError(t, cx.Start())
+	usage := testharness.CodexTokenUsage{InputTokens: 1000, OutputTokens: 100, TotalTokens: 1100}
+
+	require.NoError(t, cx.WriteThreadSettingsApplied("priority"))
+	require.NoError(t, cx.WriteUserInput("fast request"))
+	require.NoError(t, cx.WriteTokenCount(usage, usage))
+	require.NoError(t, cx.WriteThreadSettingsApplied("default"))
+	require.NoError(t, cx.WriteUserInput("standard request"))
+	require.NoError(t, cx.WriteTokenCount(
+		testharness.CodexTokenUsage{InputTokens: 2000, OutputTokens: 200, TotalTokens: 2200}, usage))
+
+	cost, ok, err := harness.CodexVirtualCostFromRollout(cx.RolloutPath, "")
+	require.NoError(t, err)
+	require.True(t, ok)
+	assert.InDelta(t, 0.00945, cost.CostUSD, 1e-12,
+		"the Fast request costs $0.00630 and the standard request costs $0.00315")
+}
+
 func TestCodexVirtualCostFromRollout_ResearchPreviewWithoutFinalRate(t *testing.T) {
 	home := codexTestHome(t)
 	cx := testharness.NewCodexSim(t, home, "/home/u/proj")

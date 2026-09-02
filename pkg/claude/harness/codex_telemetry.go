@@ -225,6 +225,16 @@ func CodexRuntimeTelemetryFromRollout(rolloutPath string) (CodexRuntimeSnapshot,
 }
 
 func codexRuntimeTelemetryStateFromRollout(rolloutPath, ownerID string) (codexRuntimeScanState, error) {
+	return codexRuntimeTelemetryStateFromRolloutWithCostBaseline(
+		rolloutPath, ownerID, false, false, time.Time{},
+	)
+}
+
+func codexRuntimeTelemetryStateFromRolloutWithCostBaseline(
+	rolloutPath, ownerID string,
+	fastMode, hasFastMode bool,
+	observedAt time.Time,
+) (codexRuntimeScanState, error) {
 	rc, err := openCodexRollout(rolloutPath)
 	if err != nil {
 		return codexRuntimeScanState{}, err
@@ -235,6 +245,9 @@ func codexRuntimeTelemetryStateFromRollout(rolloutPath, ownerID string) (codexRu
 	if ownerID != "" {
 		state = newOwnedCodexRuntimeScanState(ownerID)
 	}
+	state.costFastBaseline = fastMode
+	state.hasCostFastBaseline = hasFastMode
+	state.costFastBaselineAt = observedAt
 	if _, _, err := scanCompleteCodexLines(rc, rolloutPath, &state, false); err != nil {
 		return codexRuntimeScanState{}, fmt.Errorf("scan codex rollout %s: %w", rolloutPath, err)
 	}
@@ -252,6 +265,11 @@ type codexRuntimeScanState struct {
 	fastMode             bool
 	hasFastMode          bool
 	fastModeObserved     string
+	costFastMode         bool
+	costFastBaseline     bool
+	hasCostFastBaseline  bool
+	costFastBaselineAt   time.Time
+	costFastBaselineUsed bool
 	usage                *CodexUsage
 	costUSD              float64
 	costPriced           bool
@@ -290,6 +308,11 @@ func (s codexRuntimeScanState) clone() codexRuntimeScanState {
 		fastMode:             s.fastMode,
 		hasFastMode:          s.hasFastMode,
 		fastModeObserved:     s.fastModeObserved,
+		costFastMode:         s.costFastMode,
+		costFastBaseline:     s.costFastBaseline,
+		hasCostFastBaseline:  s.hasCostFastBaseline,
+		costFastBaselineAt:   s.costFastBaselineAt,
+		costFastBaselineUsed: s.costFastBaselineUsed,
 		usage:                s.usage,
 		costUSD:              s.costUSD,
 		costPriced:           s.costPriced,
@@ -325,7 +348,17 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 	if json.Unmarshal(line, &env) != nil {
 		return false
 	}
+	s.applyCostFastModeBaseline(env.Timestamp)
 	if s.ownerID != "" && !s.ownerBoundarySeen {
+		// Full-history forks copy their parent's settings history before the
+		// child's own session_meta. Tokens in that prefix remain excluded, but
+		// the settings transitions establish the tier the child inherited at
+		// spawn when Codex emits no post-boundary settings readback.
+		if env.Type == "event_msg" {
+			if fast, ok := codexFastModeFromSettingsPayload(env.Payload); ok {
+				s.costFastMode = fast
+			}
+		}
 		if env.Type != "session_meta" {
 			return true
 		}
@@ -378,8 +411,8 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 			return false
 		}
 		s.hasFastMode = true
-		s.fastMode = ev.ThreadSettings.ServiceTier != nil &&
-			(*ev.ThreadSettings.ServiceTier == "priority" || *ev.ThreadSettings.ServiceTier == "fast")
+		s.fastMode = codexServiceTierIsFast(ev.ThreadSettings.ServiceTier)
+		s.costFastMode = s.fastMode
 		s.fastModeObserved = env.Timestamp
 	case "token_count":
 		var ev codexTokenCountEvent
@@ -426,6 +459,20 @@ func (s *codexRuntimeScanState) consumeLine(line []byte) bool {
 	return true
 }
 
+func codexFastModeFromSettingsPayload(payload json.RawMessage) (bool, bool) {
+	var kind struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(payload, &kind) != nil || kind.Type != "thread_settings_applied" {
+		return false, false
+	}
+	var ev codexThreadSettingsAppliedEvent
+	if json.Unmarshal(payload, &ev) != nil {
+		return false, false
+	}
+	return codexServiceTierIsFast(ev.ThreadSettings.ServiceTier), true
+}
+
 func (s *codexRuntimeScanState) applyTokenCost(info codexTokenCountInfo, observed string) {
 	usage := info.LastTokenUsage
 	legacy := !info.LastTokenUsagePresent
@@ -436,6 +483,7 @@ func (s *codexRuntimeScanState) applyTokenCost(info codexTokenCountInfo, observe
 	if !ok {
 		return
 	}
+	cost = codexFastModeCost(cost, s.costFastMode)
 	if legacy {
 		s.costUSD = cost
 	} else {
@@ -457,6 +505,18 @@ func (s *codexRuntimeScanState) applyTokenCost(info codexTokenCountInfo, observe
 	} else {
 		s.costHistory = append(s.costHistory, daily)
 	}
+}
+
+func (s *codexRuntimeScanState) applyCostFastModeBaseline(observed string) {
+	if !s.hasCostFastBaseline || s.costFastBaselineUsed {
+		return
+	}
+	at := parseCodexEventTime(observed)
+	if at.IsZero() || at.Before(s.costFastBaselineAt) {
+		return
+	}
+	s.costFastMode = s.costFastBaseline
+	s.costFastBaselineUsed = true
 }
 
 func (s *codexRuntimeScanState) invalidateContext() {

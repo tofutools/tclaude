@@ -10,12 +10,13 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/filefollow"
 )
 
 const (
-	codexTelemetryCheckpointVersion  = 6
+	codexTelemetryCheckpointVersion  = 7
 	codexTelemetryAnchorBytes        = 64
 	maxCodexTelemetryCheckpointBytes = 1 << 20
 )
@@ -40,16 +41,25 @@ type CodexTelemetryFollower struct {
 
 	checkpointTooLarge           bool
 	checkpointTooLargeStateBytes int64
+	costFastBaseline             bool
+	hasCostFastBaseline          bool
+	costFastBaselineAt           time.Time
 }
 
 func (f *CodexTelemetryFollower) ensureStream() *filefollow.Follower[codexRuntimeScanState] {
 	if f.stream == nil {
 		f.stream = filefollow.New(filefollow.Config[codexRuntimeScanState]{
 			NewState: func(string, int64) codexRuntimeScanState {
+				var state codexRuntimeScanState
 				if f.preserveMissing {
-					return newOwnedCodexRuntimeScanState(f.convID)
+					state = newOwnedCodexRuntimeScanState(f.convID)
+				} else {
+					state = newCodexRuntimeScanState()
 				}
-				return newCodexRuntimeScanState()
+				state.costFastBaseline = f.costFastBaseline
+				state.hasCostFastBaseline = f.hasCostFastBaseline
+				state.costFastBaselineAt = f.costFastBaselineAt
+				return state
 			},
 			CloneState: func(state codexRuntimeScanState) codexRuntimeScanState { return state.clone() },
 			Scan: func(r io.Reader, path string, state *codexRuntimeScanState, strict bool) (int64, bool, error) {
@@ -87,6 +97,11 @@ type codexTelemetryCheckpoint struct {
 	FastMode             bool                          `json:"fast_mode,omitempty"`
 	HasFastMode          bool                          `json:"has_fast_mode,omitempty"`
 	FastModeObserved     string                        `json:"fast_mode_observed,omitempty"`
+	CostFastMode         bool                          `json:"cost_fast_mode,omitempty"`
+	CostFastBaseline     bool                          `json:"cost_fast_baseline,omitempty"`
+	HasCostFastBaseline  bool                          `json:"has_cost_fast_baseline,omitempty"`
+	CostFastBaselineAt   time.Time                     `json:"cost_fast_baseline_at,omitempty"`
+	CostFastBaselineUsed bool                          `json:"cost_fast_baseline_used,omitempty"`
 	Usage                *CodexUsage                   `json:"usage,omitempty"`
 	CostUSD              float64                       `json:"cost_usd,omitempty"`
 	CostPriced           bool                          `json:"cost_priced,omitempty"`
@@ -135,6 +150,11 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	state.fastMode = cp.FastMode
 	state.hasFastMode = cp.HasFastMode
 	state.fastModeObserved = cp.FastModeObserved
+	state.costFastMode = cp.CostFastMode
+	state.costFastBaseline = cp.CostFastBaseline
+	state.hasCostFastBaseline = cp.HasCostFastBaseline
+	state.costFastBaselineAt = cp.CostFastBaselineAt
+	state.costFastBaselineUsed = cp.CostFastBaselineUsed
 	state.usage = cp.Usage
 	state.costUSD = cp.CostUSD
 	state.costPriced = cp.CostPriced
@@ -170,6 +190,9 @@ func (f *CodexTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	f.path = cp.Path
 	f.state = state
 	f.snapshot = state.snapshot()
+	f.costFastBaseline = cp.CostFastBaseline
+	f.hasCostFastBaseline = cp.HasCostFastBaseline
+	f.costFastBaselineAt = cp.CostFastBaselineAt
 	f.children = make(map[string]*CodexTelemetryFollower, len(cp.Children))
 	for id, childData := range cp.Children {
 		child := &CodexTelemetryFollower{preserveMissing: true}
@@ -218,6 +241,11 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 		FastMode:             f.state.fastMode,
 		HasFastMode:          f.state.hasFastMode,
 		FastModeObserved:     f.state.fastModeObserved,
+		CostFastMode:         f.state.costFastMode,
+		CostFastBaseline:     f.state.costFastBaseline,
+		HasCostFastBaseline:  f.state.hasCostFastBaseline,
+		CostFastBaselineAt:   f.state.costFastBaselineAt,
+		CostFastBaselineUsed: f.state.costFastBaselineUsed,
 		Usage:                f.state.usage,
 		CostUSD:              f.state.costUSD,
 		CostPriced:           f.state.costPriced,
@@ -256,6 +284,23 @@ func (f *CodexTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 	}
 	f.checkpointTooLarge = false
 	return data, true, nil
+}
+
+// SetCostFastModeBaseline supplies the service tier recorded when the current
+// process generation launched. Codex does not emit thread_settings_applied for
+// every explicit launch selection, so the cost fold treats this as a synthetic
+// settings event at observedAt. Older rollout records retain their known tier;
+// later real settings events remain authoritative.
+func (f *CodexTelemetryFollower) SetCostFastModeBaseline(fast bool, observedAt time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.hasCostFastBaseline && f.costFastBaseline == fast && f.costFastBaselineAt.Equal(observedAt) {
+		return
+	}
+	f.costFastBaseline = fast
+	f.hasCostFastBaseline = true
+	f.costFastBaselineAt = observedAt
+	f.clearCursor()
 }
 
 func sortedStringSet(set map[string]struct{}) []string {
@@ -310,7 +355,10 @@ func (f *CodexTelemetryFollower) runtimeTelemetry(
 		if f.preserveMissing {
 			ownerID = convID
 		}
-		state, err := codexRuntimeTelemetryStateFromRollout(path, ownerID)
+		state, err := codexRuntimeTelemetryStateFromRolloutWithCostBaseline(
+			path, ownerID,
+			f.costFastBaseline, f.hasCostFastBaseline, f.costFastBaselineAt,
+		)
 		if err != nil {
 			return CodexRuntimeSnapshot{}, err
 		}
@@ -356,6 +404,9 @@ func (f *CodexTelemetryFollower) aggregateChildrenLocked(
 		if child == nil {
 			child = &CodexTelemetryFollower{preserveMissing: true}
 			f.children[id] = child
+		}
+		if f.hasCostFastBaseline {
+			child.SetCostFastModeBaseline(f.costFastBaseline, f.costFastBaselineAt)
 		}
 		snap, err := child.runtimeTelemetry(home, id, ancestors)
 		if err != nil {

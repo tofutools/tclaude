@@ -208,6 +208,42 @@ func TestCodexContextRefreshFollowerPersistsEffortUsageAndCost(t *testing.T) {
 	assert.Zero(t, rows[1].VirtualCostUSD)
 }
 
+func TestCodexContextRefreshUsesRecordedLaunchFastModeForCost(t *testing.T) {
+	setupTestDB(t)
+	resetCodexContextRefreshStateForTest()
+	t.Cleanup(resetCodexContextRefreshStateForTest)
+
+	const (
+		sessionID = "codex-fast-cost-baseline-session"
+		convID    = "019ec004-4250-79b1-9ade-ebaea41354fb"
+	)
+	path := filepath.Join(os.Getenv("HOME"), ".codex", "sessions", "2026", "07", "16",
+		"rollout-2026-07-16T10-00-00-"+convID+".jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	appendCodexRefreshEnvelope(t, path, "session_meta", map[string]any{"id": convID})
+	appendCodexRefreshEnvelope(t, path, "turn_context", map[string]any{"model": "gpt-5.6-terra"})
+	appendCodexRefreshTokenCount(t, path, 1000, 100)
+
+	fast := true
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+		Version: db.RelaunchProfileVersion, FastModeAtLaunch: &fast,
+	}))
+	sess := &db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: "codex-pane", Status: "idle",
+		Harness: harness.CodexName, CreatedAt: time.Now().Add(-time.Minute),
+	}
+	require.NoError(t, db.SaveSession(sess))
+	refreshCodexContextSnapshotOnRead(sess, true)
+
+	snapshot, err := db.GetContextSnapshot(sessionID)
+	require.NoError(t, err)
+	assert.InDelta(t, 0.0064, snapshot.VirtualCostUSD, 1e-12,
+		"the UI's launch observation prices requests even without a settings event")
+}
+
 func TestCodexContextRefreshRejectsStaleSessionGenerationTelemetry(t *testing.T) {
 	setupTestDB(t)
 	resetCodexContextRefreshStateForTest()
