@@ -1358,7 +1358,7 @@ var (
 	awbStatuses      = []string{"open", "in_progress", "closed"}
 	awbRelationTypes = []string{"blocked-by", "has-parent", "discovered-from", "related"}
 	awbSorts         = []string{
-		"priority", "-priority", "created", "-created", "updated", "-updated", "id", "-id",
+		"order", "-order", "workspace", "-workspace", "status", "-status", "assignee", "-assignee", "blockers", "-blockers", "priority", "-priority", "created", "-created", "updated", "-updated", "id", "-id",
 	}
 	awbSearchSorts = append(append([]string{}, awbSorts...), "relevance", "-relevance")
 )
@@ -1501,6 +1501,9 @@ type awbProxyOutcome struct {
 	// is refused, and carrying it means the agent does not have to run `whoami`
 	// to find out.
 	Projects []string `json:"workspaces,omitempty"`
+	// LegacyProjects keeps separately installed older clients fail-safe during
+	// the project-to-workspace transition. Remove after one compatibility cycle.
+	LegacyProjects []string `json:"projects,omitempty"`
 	// JSON is the payload in --json mode, already shaped by this package.
 	JSON json.RawMessage `json:"json,omitempty"`
 	// Text is the payload in --compact mode, and the one line a delete or a
@@ -1532,7 +1535,7 @@ type awbProxyOutcome struct {
 func (s *awbProxySession) respond(
 	w http.ResponseWriter, r *http.Request, verb string, compact bool, payload any, text, detail string,
 ) {
-	out := awbProxyOutcome{Projects: s.projects}
+	out := awbProxyOutcome{Projects: s.projects, LegacyProjects: s.projects}
 	if compact {
 		out.Text = text
 	} else if payload != nil {
@@ -1555,6 +1558,6 @@ func (s *awbProxySession) respondContent(
 ) {
 	setAuditDetail(r, fmt.Sprintf("op=%s %s", verb, detail))
 	writeJSON(w, http.StatusOK, awbProxyOutcome{
-		Projects: s.projects, Content: content, HasContent: true,
+		Projects: s.projects, LegacyProjects: s.projects, Content: content, HasContent: true,
 	})
 }

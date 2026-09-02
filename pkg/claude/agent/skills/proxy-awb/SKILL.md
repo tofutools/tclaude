@@ -51,21 +51,21 @@ is the command whose output tells the operator exactly what to add.
 Up to two independent lists bound you, and `whoami` reports both, because they
 need different fixes:
 
-- `operator_projects` — `agent.awb_proxy.allowed_projects`, the ceiling for
+- `operator_workspaces` — `agent.awb_proxy.allowed_projects`, the ceiling for
   every agent on this host. Absent means the operator configured no global list,
   and your grant's scope is the whole policy.
-- `grant_projects` — the `awb_project` scope on **your own** `proxy.awb.read` /
+- `grant_workspaces` — the `awb_project` scope on **your own** `proxy.awb.read` /
   `proxy.awb.write` grant, when it has one. Absent means your grant is unscoped
   and the operator's list alone bounds you.
 
-`allowed_projects` is what the list or lists that ARE present leave you: what
-you can actually reach. Every other verb echoes that same set as `projects`, so
+`allowed_workspaces` is what the list or lists that ARE present leave you: what
+you can actually reach. Every other verb echoes that same set as `workspaces`, so
 you rarely need to re-run `whoami`.
 
 `allow_write` is the operator's own ceiling. `false` means every mutating verb
 is refused however your grants are spelled.
 
-Each entry under `projects` carries `reachable`. A project you MAY reach is
+Each entry under `workspaces` carries `reachable`. A workspace you MAY reach is
 described in full — its name, its open-issue count, and the `access` the
 daemon's account holds there. One you may not is reported as its **key alone**:
 enough to ask the operator to add it, and nothing about what is inside it. A
@@ -157,9 +157,9 @@ tclaude proxy awb close awb-a3f9c1 --reason "Guard against empty token stream"
 tclaude proxy awb release awb-a3f9c1               # give it back
 ```
 
-`claim` fails if the issue is held by somebody else, blocked, or closed;
-`--force` overrides all three. `update` changes the title, description, type and
-priority and nothing else — the status and the assignee move only through
+`claim` joins the assignee list and fails only if the issue is blocked or closed;
+`--force` overrides those two checks. `update` changes the title, description, type and
+priority and nothing else — the status and assignees move only through
 `claim`, `release`, `close` and `reopen`, which is what keeps `in_progress` and
 an assignee from drifting apart. Labels are added and removed one at a time, so
 a whole-set replace cannot discard somebody else's edit.

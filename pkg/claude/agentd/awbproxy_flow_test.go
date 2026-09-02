@@ -438,8 +438,9 @@ func TestAWBProxy_CreateSendsAWBsOwnBody(t *testing.T) {
 
 	res := w.post("/v1/awb/issue/create", map[string]any{
 		"workspace": "awb", "title": " Parser crashes ", "type": "bug", "priority": 1,
-		"labels": []string{"parser"}, "blocked_by": []string{"awb-000001"},
-		"compact": true,
+		"labels": []string{"parser"}, "assignees": []string{"claude-1", "claude-2"},
+		"blocked_by": []string{"awb-000001"},
+		"compact":    true,
 	})
 	out := w.outcome(res)
 	assert.Equal(t, "awb-a3f9c1\n", out.Text,
@@ -448,7 +449,8 @@ func TestAWBProxy_CreateSendsAWBsOwnBody(t *testing.T) {
 	call := rec.only(t)
 	assert.Equal(t, "https://awb.example/api/issues", call.URL)
 	assert.JSONEq(t, `{"workspace":"awb","title":"Parser crashes","type":"bug","priority":1,`+
-		`"labels":["parser"],"relations":[{"type":"blocked-by","other":"awb-000001"}]}`,
+		`"assignees":["claude-1","claude-2"],"labels":["parser"],`+
+		`"relations":[{"type":"blocked-by","other":"awb-000001"}]}`,
 		string(call.Body))
 }
 

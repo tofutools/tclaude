@@ -65,19 +65,20 @@ type awbIssueRefRequest struct {
 // ignored. See awbFilterOptions.
 type awbFilterRequest struct {
 	awbCompactRequest
-	Statuses      []string `json:"statuses,omitempty"`
-	IncludeClosed bool     `json:"include_closed,omitempty"`
-	Types         []string `json:"types,omitempty"`
-	Priorities    []int    `json:"priorities,omitempty"`
-	PriorityMax   *int     `json:"priority_max,omitempty"`
-	Labels        []string `json:"labels,omitempty"`
-	Assignees     []string `json:"assignees,omitempty"`
-	Mine          bool     `json:"mine,omitempty"`
-	Unassigned    bool     `json:"unassigned,omitempty"`
-	Workspaces    []string `json:"workspaces,omitempty"`
-	Parent        string   `json:"parent,omitempty"`
-	Limit         int      `json:"limit,omitempty"`
-	Sort          string   `json:"sort,omitempty"`
+	Statuses       []string `json:"statuses,omitempty"`
+	IncludeClosed  bool     `json:"include_closed,omitempty"`
+	Types          []string `json:"types,omitempty"`
+	Priorities     []int    `json:"priorities,omitempty"`
+	PriorityMax    *int     `json:"priority_max,omitempty"`
+	Labels         []string `json:"labels,omitempty"`
+	Assignees      []string `json:"assignees,omitempty"`
+	Mine           bool     `json:"mine,omitempty"`
+	Unassigned     bool     `json:"unassigned,omitempty"`
+	Workspaces     []string `json:"workspaces,omitempty"`
+	LegacyProjects []string `json:"projects,omitempty"`
+	Parent         string   `json:"parent,omitempty"`
+	Limit          int      `json:"limit,omitempty"`
+	Sort           string   `json:"sort,omitempty"`
 	// Terms is search's own, and empty on the other three.
 	Terms []string `json:"terms,omitempty"`
 }
@@ -396,8 +397,9 @@ func (s *awbProxySession) awbListingQuery(
 	}
 	q.Set("limit", strconv.Itoa(limit))
 
-	named := make([]string, 0, len(f.Workspaces))
-	for _, raw := range f.Workspaces {
+	requested := append(append([]string{}, f.Workspaces...), f.LegacyProjects...)
+	named := make([]string, 0, len(requested))
+	for _, raw := range requested {
 		key, fault := s.validateAWBProject(raw)
 		if fault != nil {
 			return nil, nil, fault

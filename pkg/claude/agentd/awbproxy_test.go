@@ -450,19 +450,19 @@ func TestAWBCompactLine(t *testing.T) {
 		awbCompactLine(issue, false),
 		"the five mandatory positional fields, the title as a JSON string")
 
-	issue.Assignees = []string{"claude-1"}
+	issue.Assignees = []string{"claude-1", "claude-2"}
 	issue.Labels = []string{"tokeniser", "parser"}
 	issue.Blocked = true
 	issue.Blockers = []string{"awb-000001", "awb-000002"}
 	assert.Equal(t,
 		`awb-5c1d84 P1 in_progress bug "Tokeniser drops the trailing newline" `+
-			`@claude-1 #tokeniser #parser !blocked`,
+			`@claude-1 @claude-2 #tokeniser #parser !blocked`,
 		awbCompactLine(issue, false),
 		"optional tokens in their fixed order, and no blockers unless asked for")
 
 	assert.Equal(t,
 		`awb-5c1d84 P1 in_progress bug "Tokeniser drops the trailing newline" `+
-			`@claude-1 #tokeniser #parser !blocked blocked-by:awb-000001 blocked-by:awb-000002`,
+			`@claude-1 @claude-2 #tokeniser #parser !blocked blocked-by:awb-000001 blocked-by:awb-000002`,
 		awbCompactLine(issue, true),
 		"blocked's own listing carries the blockers, which are its point")
 

@@ -296,11 +296,11 @@ func awbShowCmd() *cobra.Command {
 }
 
 func awbReopenCmd() *cobra.Command {
-	return awbIDCmd("reopen", "Set the status to open and clear the assignee",
+	return awbIDCmd("reopen", "Set the status to open and clear every assignee",
 		"Reopen a closed issue, returning it to the pool `ready` draws from. Its historical "+
 			"close-reason comment stays in the activity timeline.\n\n"+
 			"It acts only on a closed issue: on one that is not closed it succeeds and changes "+
-			"nothing, whatever its assignee, so it can never take a claim away from somebody who is "+
+			"nothing, whatever its assignees, so it can never take a claim away from somebody who is "+
 			"working.\n\n"+
 			"Needs proxy.awb.write and the operator's agent.awb_proxy.allow_write.",
 		"/v1/awb/issue/reopen")
@@ -322,19 +322,20 @@ func awbReopenCmd() *cobra.Command {
 // written once. TestAWBFilterFlagsAgree pins the two declarations against each
 // other.
 type awbFilterValues struct {
-	Statuses      []string
-	IncludeClosed bool
-	Types         []string
-	Priorities    []int
-	PriorityMax   *int
-	Labels        []string
-	Assignees     []string
-	Mine          bool
-	Unassigned    bool
-	Workspaces    []string
-	Parent        string
-	Limit         int
-	Sort          string
+	Statuses       []string
+	IncludeClosed  bool
+	Types          []string
+	Priorities     []int
+	PriorityMax    *int
+	Labels         []string
+	Assignees      []string
+	Mine           bool
+	Unassigned     bool
+	Workspaces     []string
+	LegacyProjects []string
+	Parent         string
+	Limit          int
+	Sort           string
 }
 
 // body renders the filters into the daemon request.
@@ -350,6 +351,7 @@ func (v awbFilterValues) body(compact bool) map[string]any {
 	addIfAny("labels", v.Labels)
 	addIfAny("assignees", v.Assignees)
 	addIfAny("workspaces", v.Workspaces)
+	addIfAny("projects", v.LegacyProjects)
 	if len(v.Priorities) > 0 {
 		body["priorities"] = v.Priorities
 	}
@@ -414,7 +416,7 @@ func (p *awbFilterParams) values() awbFilterValues {
 		Statuses: p.Statuses, IncludeClosed: p.IncludeClosed, Types: p.Types,
 		Priorities: p.Priorities, PriorityMax: p.PriorityMax, Labels: p.Labels,
 		Assignees: p.Assignees, Mine: p.Mine, Unassigned: p.Unassigned,
-		Workspaces: p.Workspaces, Parent: p.Parent, Limit: p.Limit, Sort: p.Sort,
+		Workspaces: p.Workspaces, LegacyProjects: p.Workspaces, Parent: p.Parent, Limit: p.Limit, Sort: p.Sort,
 	}
 }
 
@@ -431,7 +433,7 @@ type awbListingOptions struct {
 // `search` — the one verb that can order by relevance — needs its own.
 func awbSortAlternatives(relevance bool) []string {
 	sorts := []string{
-		"priority", "-priority", "created", "-created", "updated", "-updated", "id", "-id",
+		"order", "-order", "workspace", "-workspace", "status", "-status", "assignee", "-assignee", "blockers", "-blockers", "priority", "-priority", "created", "-created", "updated", "-updated", "id", "-id",
 	}
 	if relevance {
 		sorts = append(sorts, "relevance", "-relevance")
@@ -543,7 +545,7 @@ func (p *awbSearchParams) values() awbFilterValues {
 		Statuses: p.Statuses, IncludeClosed: p.IncludeClosed, Types: p.Types,
 		Priorities: p.Priorities, PriorityMax: p.PriorityMax, Labels: p.Labels,
 		Assignees: p.Assignees, Mine: p.Mine, Unassigned: p.Unassigned,
-		Workspaces: p.Workspaces, Parent: p.Parent, Limit: p.Limit, Sort: p.Sort,
+		Workspaces: p.Workspaces, LegacyProjects: p.Workspaces, Parent: p.Parent, Limit: p.Limit, Sort: p.Sort,
 	}
 }
 
@@ -795,7 +797,7 @@ func buildAWBUpdateBody(
 type awbClaimParams struct {
 	ID       string `pos:"true" help:"Issue id, e.g. awb-a3f9c1."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
-	Force    bool   `long:"force" optional:"true" help:"Override a held, blocked or closed issue."`
+	Force    bool   `long:"force" optional:"true" help:"Override a blocked or closed issue."`
 	JSON     bool   `long:"json" optional:"true" help:"Print the stable JSON representation. This is the DEFAULT; the flag exists so an awb command line copies over unchanged."`
 	Compact  bool   `long:"compact" optional:"true" help:"Print awb's one terse line per issue instead. Cheapest output there is, and the one to prefer when you only need to see what is there."`
 	// Declared after --ask-human for the shorthand reason awbFilterParams gives.
@@ -807,8 +809,8 @@ func awbClaimCmd() *cobra.Command {
 		Use:   "claim",
 		Short: "Atomically join the assignees and set status to in_progress",
 		Long: "Claim an issue.\n\n" +
-			"Claiming one already held by the same name succeeds. It fails if the issue is assigned to " +
-			"somebody else, blocked, or closed; --force overrides all three. A close reason stays in the " +
+			"Claiming one already held by the same name succeeds, and another claimant joins without " +
+			"replacing anyone. It fails if blocked or closed; --force overrides both. A close reason stays in the " +
 			"issue's activity timeline either way — `comment list` still shows it.\n\n" +
 			"Without --as the assignee is the OPERATOR's AWB account: the daemon holds it, and agents " +
 			"have no AWB identity of their own. If several agents share that account, --as is how they " +
@@ -928,7 +930,7 @@ func awbCloseCmd() *cobra.Command {
 			"transaction — it is not a field on the issue, and it stays in the timeline if the issue is " +
 			"reopened. An empty or omitted reason records nothing; there is no reason to \"clear\". Read " +
 			"it back with `comment list`.\n\n" +
-			"Closing a closed issue succeeds. The assignee is left alone, since it records who did the " +
+			"Closing a closed issue succeeds. The assignees are left alone, since they record who did the " +
 			"work.\n\n" +
 			"Needs proxy.awb.write and the operator's agent.awb_proxy.allow_write.",
 		ParamEnrich: common.DefaultParamEnricher(),

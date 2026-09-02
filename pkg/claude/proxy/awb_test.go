@@ -253,14 +253,14 @@ func TestAWBCreateBody(t *testing.T) {
 	t.Run("everything", func(t *testing.T) {
 		cmd, p := parsedAWBCreate(t,
 			"--workspace", "awb", "--type", "bug", "--priority", "1",
-			"--assignee", "claude-1", "--has-parent", "awb-000001",
+			"--assignee", "claude-1", "--assignee", "claude-2", "--has-parent", "awb-000001",
 			"--blocked-by", "awb-000002", "--related", "awb-000003",
 			"--description", "body text", "Parser crashes")
 		body, rc := buildAWBCreateBody(p, cmd, strings.NewReader(""), os.Stderr)
 		require.Equal(t, rcOK, rc)
 		assert.Equal(t, "bug", body["type"])
 		assert.Equal(t, 1, body["priority"])
-		assert.Equal(t, []string{"claude-1"}, body["assignees"])
+		assert.Equal(t, []string{"claude-1", "claude-2"}, body["assignees"])
 		assert.Equal(t, "awb-000001", body["has_parent"])
 		assert.Equal(t, []string{"awb-000002"}, body["blocked_by"])
 		assert.Equal(t, []string{"awb-000003"}, body["related"])
@@ -561,7 +561,7 @@ func TestAWBHelpDoesNotPromiseCloseReasonClearing(t *testing.T) {
 
 	reopen, _, err := root.Find([]string{"reopen"})
 	require.NoError(t, err)
-	assert.Contains(t, reopen.Short, "clear the assignee",
+	assert.Contains(t, reopen.Short, "clear every assignee",
 		"reopen's short help should say what it actually does")
 }
 
