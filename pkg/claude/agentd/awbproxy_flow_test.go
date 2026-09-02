@@ -152,17 +152,18 @@ func (w *awbFlow) outcome(res *httptest.ResponseRecorder) awbOutcomeView {
 }
 
 type awbOutcomeView struct {
-	Projects   []string        `json:"workspaces"`
-	JSON       json.RawMessage `json:"json"`
-	Text       string          `json:"text"`
-	Content    []byte          `json:"content"`
-	HasContent bool            `json:"has_content"`
+	Projects       []string        `json:"workspaces"`
+	LegacyProjects []string        `json:"projects"`
+	JSON           json.RawMessage `json:"json"`
+	Text           string          `json:"text"`
+	Content        []byte          `json:"content"`
+	HasContent     bool            `json:"has_content"`
 }
 
 // issueJSON builds a scripted issue response.
 func awbIssueJSON(id, project string) string {
 	return `{"id":"` + id + `","workspace":"` + project + `","title":"A thing","description":"",` +
-		`"type":"task","status":"open","priority":2,"labels":[],"assignee":"","close_reason":"",` +
+		`"type":"task","status":"open","priority":2,"labels":[],"assignees":[],` +
 		`"created_at":"2026-08-26T09:12:03.412Z","updated_at":"2026-08-26T09:12:03.412Z",` +
 		`"blocked":false,"blockers":[],"relations":[],"links":[],"attachments":[]}`
 }
@@ -326,6 +327,8 @@ func TestAWBProxy_ListIsBoundedByTheAllowList(t *testing.T) {
 	assert.Equal(t, "50", q.Get("limit"), "the proxy bounds a listing awb would leave unbounded")
 
 	assert.Equal(t, []string{"awb", "web"}, out.Projects)
+	assert.Equal(t, out.Projects, out.LegacyProjects,
+		"the compatibility alias must carry the same effective workspace set")
 	assert.Contains(t, string(out.JSON), "awb-1")
 	assert.NotContains(t, string(out.JSON), "secret-1",
 		"a row from outside the effective set must be dropped, not returned")
@@ -452,6 +455,21 @@ func TestAWBProxy_CreateSendsAWBsOwnBody(t *testing.T) {
 		`"assignees":["claude-1","claude-2"],"labels":["parser"],`+
 		`"relations":[{"type":"blocked-by","other":"awb-000001"}]}`,
 		string(call.Body))
+}
+
+func TestAWBProxy_ShowRendersEveryAssignee(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"})
+	w.grant(agentd.PermAWBRead)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, strings.Replace(awbIssueJSON("awb-a3f9c1", "awb"),
+			`"assignees":[]`, `"assignees":["claude-1","claude-2"]`, 1)
+	}
+
+	out := w.outcome(w.post("/v1/awb/issue/show", map[string]any{
+		"id": "awb-a3f9c1", "compact": true,
+	}))
+	assert.Contains(t, out.Text, "@claude-1 @claude-2",
+		"the flow response must preserve every assignee returned by AWB")
 }
 
 func TestAWBProxy_CreateInfersTheOnlyVisibleWorkspace(t *testing.T) {

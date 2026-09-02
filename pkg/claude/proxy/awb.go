@@ -104,12 +104,19 @@ type awbProxyOutcome struct {
 	// Projects is the caller's EFFECTIVE project set, echoed on every response
 	// — already narrowed by the caller's own grant scope, so it is what this
 	// agent may reach rather than what the operator allows in general.
-	Projects []string        `json:"workspaces"`
-	JSON     json.RawMessage `json:"json"`
-	Text     string          `json:"text"`
+	Projects       []string        `json:"workspaces"`
+	LegacyProjects []string        `json:"projects"`
+	JSON           json.RawMessage `json:"json"`
+	Text           string          `json:"text"`
 	// Content is an attachment's bytes, for `attach get` alone.
 	Content    []byte `json:"content"`
 	HasContent bool   `json:"has_content"`
+}
+
+func (o *awbProxyOutcome) normalizeCompatibility() {
+	if len(o.Projects) == 0 {
+		o.Projects = o.LegacyProjects
+	}
 }
 
 // awbOutputMode resolves the two output modes, and the ONLY two.
@@ -201,6 +208,7 @@ func awbProxyCall(path string, body map[string]any, askHuman string, stdout, std
 		fmt.Fprintf(stderr, "Error: %v\n", err)
 		return agent.MapDaemonErrorToRC(err)
 	}
+	resp.normalizeCompatibility()
 	return resp.render(stdout, stderr)
 }
 
@@ -408,7 +416,7 @@ type awbFilterParams struct {
 	Workspaces    []string `long:"workspace" optional:"true" help:"Select this workspace. Repeat for several. Defaults to every workspace you may reach."`
 	Parent        string   `long:"parent" optional:"true" help:"Select the direct children of this issue — not the whole subtree, which is 'dep tree'."`
 	Limit         int      `long:"limit" optional:"true" help:"Cap the rows returned (1-500, default 50). awb itself returns every row by default; the proxy bounds it, because the rows land in an agent's context."`
-	Sort          string   `long:"sort" optional:"true" help:"Ordering, optionally prefixed with \"-\" for descending: priority, created, updated or id."`
+	Sort          string   `long:"sort" optional:"true" help:"Ordering, optionally prefixed with \"-\" for descending: order, workspace, status, assignee, blockers, priority, created, updated or id."`
 }
 
 func (p *awbFilterParams) values() awbFilterValues {
@@ -537,7 +545,7 @@ type awbSearchParams struct {
 	Workspaces    []string `long:"workspace" optional:"true" help:"Select this workspace. Repeat for several. Defaults to every workspace you may reach."`
 	Parent        string   `long:"parent" optional:"true" help:"Select the direct children of this issue — not the whole subtree, which is 'dep tree'."`
 	Limit         int      `long:"limit" optional:"true" help:"Cap the rows returned (1-500, default 50). awb itself returns every row by default; the proxy bounds it, because the rows land in an agent's context."`
-	Sort          string   `long:"sort" optional:"true" help:"Ordering, optionally prefixed with \"-\" for descending: relevance, priority, created, updated or id. Defaults to relevance."`
+	Sort          string   `long:"sort" optional:"true" help:"Ordering, optionally prefixed with \"-\" for descending: relevance, order, workspace, status, assignee, blockers, priority, created, updated or id. Defaults to relevance."`
 }
 
 func (p *awbSearchParams) values() awbFilterValues {

@@ -132,6 +132,16 @@ func TestAWBSortVocabularyIsPerVerb(t *testing.T) {
 	assert.NotContains(t, awbSortAlternatives(false), "relevance")
 	assert.Contains(t, awbSortAlternatives(true), "relevance")
 	assert.Contains(t, awbSortAlternatives(false), "-priority")
+	for _, sort := range []string{"order", "workspace", "status", "assignee", "blockers"} {
+		assert.Contains(t, awbSortAlternatives(false), sort)
+	}
+}
+
+func TestAWBProxyOutcomeAcceptsLegacyProjects(t *testing.T) {
+	var out awbProxyOutcome
+	require.NoError(t, json.Unmarshal([]byte(`{"projects":["awb"]}`), &out))
+	out.normalizeCompatibility()
+	assert.Equal(t, []string{"awb"}, out.Projects)
 }
 
 // --- the output modes ---
