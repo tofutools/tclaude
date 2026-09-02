@@ -15,7 +15,7 @@ Four proxies exist, as subcommands of a top-level command:
 tclaude proxy git     # fetch, pull, push through the daemon
 tclaude proxy github  # PRs, issues, and Actions runs (alias: gh)
 tclaude proxy linear  # Linear issues, bounded by a team allow-list
-tclaude proxy awb     # AWB issues, bounded by a project allow-list
+tclaude proxy awb     # AWB issues, bounded by a workspace allow-list
 ```
 
 None of their permissions are granted by default, and none are implied by
@@ -190,16 +190,16 @@ issue tracker with an HTTP API. As with Linear there is no CLI tool underneath:
 the daemon speaks AWB's REST API directly, every path is assembled from
 compile-time constants plus a validated issue reference, and every caller value
 travels as a query parameter or a marshalled JSON field. And as with Linear
-there is no filesystem anchor, so the **project allow-list is the entire scope
+there is no filesystem anchor, so the **workspace allow-list is the entire scope
 gate**, checked once on the reference the caller supplied and again on the
-project AWB reports for the issue it returned.
+workspace AWB reports for the issue it returned.
 
 The verbs and flags mirror `awb`'s own one for one, minus five that name a local
 database or a terminal rather than the data: `--db`, `--attachments`,
 `--no-context`, `--color`, `--no-color`. Two differences are worth knowing:
 
 - **A bare hash is refused.** `awb` accepts `a3f9c1`; the proxy requires
-  `awb-a3f9c1` (a hash prefix is fine), because a reference carrying no project
+  `awb-a3f9c1` (a hash prefix is fine), because a reference carrying no workspace
   key could only be gated after the issue had been fetched.
 - **Listings are bounded.** `awb` returns every row by default; the proxy
   defaults to 50, capped at 500, because the rows land in an agent's context.
@@ -212,16 +212,16 @@ Comments are an append-only timeline shared with AWB's change records.
 too: since AWB 0.6 `close --reason` records a typed comment rather than setting
 a field on the issue, and the issue carries no `close_reason` at all.
 
-`dep tree` is pruned to the caller's projects: AWB follows children across
-project boundaries by design, so a child outside the gate is dropped with its
-subtree. `whoami` describes only the projects the caller may reach; one it may
+`dep tree` is pruned to the caller's workspaces: AWB follows children across
+workspace boundaries by design, so a child outside the gate is dropped with its
+subtree. `whoami` describes only the workspaces the caller may reach; one it may
 not is reported as its key alone, which is what a refused agent needs in order
 to ask for it and nothing more. Attachment content travels through the daemon in request and response
 bodies rather than as a path it would read from the agent's work tree, which
 caps it at 8 MiB either way.
 
-Permissions, scoped on the `awb_project` dimension (for example
-`--scope awb_project=awb`):
+Permissions, scoped on the `awb_workspace` dimension (for example
+`--scope awb_workspace=awb`):
 
 - `proxy.awb.read` — `whoami`, `show`, `list`, `ready`, `blocked`, `search`,
   `dep tree`, `comment list`, `activity`, `attach list/show/get`. `comment list`
@@ -231,7 +231,7 @@ Permissions, scoped on the `awb_project` dimension (for example
   `delete` (which additionally needs `--force`). Requires the operator config
   `agent.awb_proxy.allow_write`.
 
-Scoped grants intersect with the operator's `allowed_projects` list when one
+Scoped grants intersect with the operator's `allowed_workspaces` list when one
 exists; an *unscoped* grant is refused outright when the operator has no list.
 Read and write scopes are independent.
 
@@ -246,11 +246,11 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
 - `password_file` — empty falls back to `AWB_PASSWORD` in agentd's environment;
   with a username and neither, the proxy refuses rather than sending half a
   credential. The password is never a field of `config.json` itself.
-- `allowed_projects` — project keys, case-insensitive, no wildcard by design.
+- `allowed_workspaces` — workspace keys, case-insensitive, no wildcard by design.
 - `allow_write` — default false.
 
 AWB applies its own authorization underneath: the daemon's account works in the
-projects it is a member of, and one it holds no access to answers `404`. That
+workspaces it is a member of, and one it holds no access to answers `404`. That
 bounds the operator; the allow-list above bounds the agent.
 
 ## Teaching agents to use the proxies

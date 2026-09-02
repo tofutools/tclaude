@@ -2006,19 +2006,19 @@ type AgentConfig struct {
 // Agent Work Board, an agent-first issue tracker with an HTTP API.
 //
 // It answers the same question LinearProxyConfig does, in AWB's vocabulary:
-// which PROJECTS may agentd reach with the operator's AWB account, on behalf of
+// which WORKSPACES may agentd reach with the operator's AWB account, on behalf of
 // an agent that holds no credentials of its own?
 //
 // AWB has no filesystem artifact that could anchor an agent the way a git work
-// tree anchors the git proxy. A project allow-list is therefore the whole scope
+// tree anchors the git proxy. A workspace allow-list is therefore the whole scope
 // gate, which is why it is fail-closed. This block is the OPERATOR-GLOBAL half;
-// the per-agent half is an `awb_project` scope on the agent's own
+// the per-agent half is an `awb_workspace` scope on the agent's own
 // proxy.awb.read / proxy.awb.write grant (`tclaude agent permissions grant
-// <agent> proxy.awb.read --scope awb_project=awb`). The two are enforced
+// <agent> proxy.awb.read --scope awb_workspace=awb`). The two are enforced
 // together and neither can widen the other.
 //
 // Unlike Linear there is no multi-key routing here: one URL is one server, and
-// one account reaches every project it is a member of. An operator running two
+// one account reaches every workspace it is a member of. An operator running two
 // AWB servers points the daemon at one of them.
 type AWBProxyConfig struct {
 	// URL is the base URL of the AWB server's HTTP API — "https://awb.example"
@@ -2054,17 +2054,17 @@ type AWBProxyConfig struct {
 	// directory of the account agentd runs as, and shell variables are not.
 	PasswordFile string `json:"password_file,omitempty"`
 
-	// AllowedProjects is the allow-list of AWB project keys the proxy may act
+	// AllowedWorkspaces is the allow-list of AWB workspace keys the proxy may act
 	// on — the prefix of an issue ID, so "awb" authorizes awb-a3f9c1.
 	// Compared case-insensitively.
 	//
 	// EMPTY OR ABSENT DISABLES UNSCOPED GRANTS, exactly as an empty
 	// AllowedTeams disables unscoped Linear-proxy grants: an agent whose grant
-	// carries an `awb_project` scope supplies its own projects instead, and
+	// carries an `awb_workspace` scope supplies its own workspaces instead, and
 	// when both exist a request must satisfy both. There is deliberately no
-	// wildcard: project keys are a flat namespace with no hierarchy to match a
+	// wildcard: workspace keys are a flat namespace with no hierarchy to match a
 	// prefix against, so a wildcard would only ever mean "all of them".
-	AllowedProjects []string `json:"allowed_projects,omitempty"`
+	AllowedWorkspaces []string `json:"allowed_workspaces,omitempty"`
 
 	// AllowWrite permits the mutating verbs (create, update, claim, release,
 	// close, reopen, delete, label, dep add/rm, attach add/delete) at all.
@@ -2370,9 +2370,9 @@ func (p LinearProxyConfig) LinearTeamAllowed(key string) bool {
 // way ResolvedLinearProxy is: a nil config, absent agent block, or absent
 // awb_proxy block all yield a zero policy whose empty URL means "proxy off".
 //
-// Project keys go through normalizeGitProxyPatterns despite the name: it trims,
+// Workspace keys go through normalizeGitProxyPatterns despite the name: it trims,
 // de-blanks, de-duplicates and lower-cases, which is exactly the treatment an
-// AWB project key needs, and the matcher lower-cases the other side too.
+// AWB workspace key needs, and the matcher lower-cases the other side too.
 func (c *Config) ResolvedAWBProxy() AWBProxyConfig {
 	var out AWBProxyConfig
 	if c != nil && c.Agent != nil && c.Agent.AWBProxy != nil {
@@ -2380,7 +2380,7 @@ func (c *Config) ResolvedAWBProxy() AWBProxyConfig {
 		out.URL = strings.TrimRight(strings.TrimSpace(src.URL), "/")
 		out.Username = strings.TrimSpace(src.Username)
 		out.PasswordFile = strings.TrimSpace(src.PasswordFile)
-		out.AllowedProjects = normalizeGitProxyPatterns(src.AllowedProjects)
+		out.AllowedWorkspaces = normalizeGitProxyPatterns(src.AllowedWorkspaces)
 		out.AllowWrite = src.AllowWrite
 	}
 	return out
@@ -2389,30 +2389,30 @@ func (c *Config) ResolvedAWBProxy() AWBProxyConfig {
 // AWBProxyEnabled reports whether the operator has pointed the daemon at an AWB
 // server at all. It is the registration gate — the question "does this host
 // have an AWB proxy" — and deliberately NOT the authorization gate: which
-// projects a caller may reach is agentd.awbEffectiveProjects, which folds the
+// workspaces a caller may reach is agentd.awbEffectiveWorkspaces, which folds the
 // allow-list below together with the caller's own grant scope.
 //
-// It keys on the URL rather than on AllowedProjects because a scope-only
-// posture (no operator list, per-agent `awb_project` grants) is a supported
+// It keys on the URL rather than on AllowedWorkspaces because a scope-only
+// posture (no operator list, per-agent `awb_workspace` grants) is a supported
 // configuration, and an operator running it still has a proxy.
 func (c *Config) AWBProxyEnabled() bool {
 	return c.ResolvedAWBProxy().URL != ""
 }
 
-// AWBProjectAllowed reports whether key names a project the operator
+// AWBWorkspaceAllowed reports whether key names a workspace the operator
 // allow-listed. Exact, case-insensitive match on the whole key — there is no
 // prefix or wildcard rule here, for the same reason LinearTeamAllowed has none:
-// project keys are a flat namespace, and a prefix match would let "web"
+// workspace keys are a flat namespace, and a prefix match would let "web"
 // authorize "webhooks".
 //
 // This is the operator half of the gate only. A request is authorized by
-// agentd's effective project set, which also folds in the caller's grant scope.
-func (p AWBProxyConfig) AWBProjectAllowed(key string) bool {
+// agentd's effective workspace set, which also folds in the caller's grant scope.
+func (p AWBProxyConfig) AWBWorkspaceAllowed(key string) bool {
 	key = strings.ToLower(strings.TrimSpace(key))
 	if key == "" {
 		return false
 	}
-	return slices.Contains(p.AllowedProjects, key)
+	return slices.Contains(p.AllowedWorkspaces, key)
 }
 
 // normalizeGitProxyPatterns trims, lower-cases and de-blanks a pattern list,

@@ -14,28 +14,28 @@ import (
 
 // awbproxy_test.go covers the pieces of the AWB proxy that are decisions rather
 // than plumbing: what an issue reference may be, what the operator's URL may
-// be, how the project gate prunes a tree, and the compact renderer — the last
+// be, how the workspace gate prunes a tree, and the compact renderer — the last
 // of which is a second copy of a format awb owns, so it is pinned field by
 // field.
 
 // --- issue references ---
 
-// TestValidateAWBIssueRef is the pre-call half of the project gate, and the
-// reason it can be a pre-call half at all: a reference that carries no project
+// TestValidateAWBIssueRef is the pre-call half of the workspace gate, and the
+// reason it can be a pre-call half at all: a reference that carries no workspace
 // key could only be judged after fetching the issue.
 func TestValidateAWBIssueRef(t *testing.T) {
 	t.Run("a full id", func(t *testing.T) {
 		ref, fault := validateAWBIssueRef("awb-a3f9c1")
 		require.Nil(t, fault)
 		assert.Equal(t, "awb-a3f9c1", ref)
-		assert.Equal(t, "awb", projectKeyOf(ref))
+		assert.Equal(t, "awb", workspaceKeyOf(ref))
 	})
 
-	t.Run("a hash PREFIX still carries the project", func(t *testing.T) {
+	t.Run("a hash PREFIX still carries the workspace", func(t *testing.T) {
 		ref, fault := validateAWBIssueRef("awb-a3f")
 		require.Nil(t, fault)
 		assert.Equal(t, "awb-a3f", ref)
-		assert.Equal(t, "awb", projectKeyOf(ref))
+		assert.Equal(t, "awb", workspaceKeyOf(ref))
 	})
 
 	t.Run("capitals resolve, as they do in awb", func(t *testing.T) {
@@ -44,17 +44,17 @@ func TestValidateAWBIssueRef(t *testing.T) {
 		assert.Equal(t, "awb-a3f9c1", ref)
 	})
 
-	t.Run("a project key may contain hyphens, so the split is on the LAST one", func(t *testing.T) {
+	t.Run("a workspace key may contain hyphens, so the split is on the LAST one", func(t *testing.T) {
 		ref, fault := validateAWBIssueRef("my-proj-a3f9c1")
 		require.Nil(t, fault)
-		assert.Equal(t, "my-proj", projectKeyOf(ref))
+		assert.Equal(t, "my-proj", workspaceKeyOf(ref))
 	})
 
 	t.Run("a BARE hash is refused", func(t *testing.T) {
 		_, fault := validateAWBIssueRef("a3f9c1")
 		require.NotNil(t, fault)
 		assert.Equal(t, http.StatusBadRequest, fault.Status)
-		assert.Contains(t, fault.Msg, "names no project",
+		assert.Contains(t, fault.Msg, "names no workspace",
 			"the refusal has to say WHY a form awb itself accepts is refused here")
 	})
 
@@ -77,15 +77,15 @@ func TestValidateAWBIssueRef(t *testing.T) {
 	})
 }
 
-// TestAWBProjectKeyShape pins the rule the permission-scope parser borrows, so
+// TestAWBWorkspaceKeyShape pins the rule the permission-scope parser borrows, so
 // a matcher an operator can write is always a key a request could also carry.
-func TestAWBProjectKeyShape(t *testing.T) {
+func TestAWBWorkspaceKeyShape(t *testing.T) {
 	for _, ok := range []string{"awb", "a", "my-proj", "web2", "a-1-b"} {
-		assert.NoError(t, awbProjectKeyShapeErr(ok), "%q is a valid AWB project key", ok)
+		assert.NoError(t, awbWorkspaceKeyShapeErr(ok), "%q is a valid AWB workspace key", ok)
 	}
 	for _, bad := range []string{"", "  ", "1web", "-web", "WEB", "we b", "web_x", "web/x", "*",
 		"averyveryverylongkey"} {
-		assert.Error(t, awbProjectKeyShapeErr(bad), "%q must be refused", bad)
+		assert.Error(t, awbWorkspaceKeyShapeErr(bad), "%q must be refused", bad)
 	}
 }
 
@@ -128,38 +128,38 @@ func TestValidateAWBBaseURL(t *testing.T) {
 	})
 }
 
-// --- the project gate ---
+// --- the workspace gate ---
 
-func awbTestSession(projects ...string) *awbProxySession {
+func awbTestSession(workspaces ...string) *awbProxySession {
 	return &awbProxySession{
-		policy:   config.AWBProxyConfig{AllowedProjects: projects},
-		base:     "https://awb.example",
-		projects: projects,
+		policy:     config.AWBProxyConfig{AllowedWorkspaces: workspaces},
+		base:       "https://awb.example",
+		workspaces: workspaces,
 	}
 }
 
-// TestEnforceIssueProject is the SECOND half of the gate: the one that checks
+// TestEnforceIssueWorkspace is the SECOND half of the gate: the one that checks
 // what was actually reached rather than what was asked for.
-func TestEnforceIssueProject(t *testing.T) {
+func TestEnforceIssueWorkspace(t *testing.T) {
 	s := awbTestSession("awb")
 
-	assert.Nil(t, s.enforceIssueProject(&awbIssue{ID: "awb-1", Workspace: "awb"}))
+	assert.Nil(t, s.enforceIssueWorkspace(&awbIssue{ID: "awb-1", Workspace: "awb"}))
 
-	fault := s.enforceIssueProject(&awbIssue{ID: "secret-1", Workspace: "secret"})
+	fault := s.enforceIssueWorkspace(&awbIssue{ID: "secret-1", Workspace: "secret"})
 	require.NotNil(t, fault)
 	assert.Equal(t, http.StatusForbidden, fault.Status)
 
-	fault = s.enforceIssueProject(&awbIssue{ID: "awb-1"})
-	require.NotNil(t, fault, "an issue carrying no project cannot be gated, so it must not pass")
-	assert.Equal(t, "project_unresolved", fault.Code)
+	fault = s.enforceIssueWorkspace(&awbIssue{ID: "awb-1"})
+	require.NotNil(t, fault, "an issue carrying no workspace cannot be gated, so it must not pass")
+	assert.Equal(t, "workspace_unresolved", fault.Code)
 
-	fault = s.enforceIssueProject(nil)
+	fault = s.enforceIssueWorkspace(nil)
 	require.NotNil(t, fault)
 	assert.Equal(t, http.StatusNotFound, fault.Status)
 }
 
 // TestPruneTree covers the one read that can reach outside the gate on its own:
-// AWB follows children across project boundaries by design.
+// AWB follows children across workspace boundaries by design.
 func TestPruneTree(t *testing.T) {
 	s := awbTestSession("awb")
 	tree := &awbIssueTree{
@@ -212,27 +212,27 @@ func TestEnforceIssueList(t *testing.T) {
 	})
 }
 
-// TestRequireAllowedProjectNamesTheRightList is what lets an agent tell its
+// TestRequireAllowedWorkspaceNamesTheRightList is what lets an agent tell its
 // human which of the two lists to widen instead of guessing from a 403.
-func TestRequireAllowedProjectNamesTheRightList(t *testing.T) {
+func TestRequireAllowedWorkspaceNamesTheRightList(t *testing.T) {
 	t.Run("the operator's list excluded it", func(t *testing.T) {
 		s := awbTestSession("awb")
-		fault := s.requireAllowedProject("secret")
+		fault := s.requireAllowedWorkspace("secret")
 		require.NotNil(t, fault)
-		assert.Equal(t, "project_not_allowed", fault.Code)
-		assert.Contains(t, fault.Msg, "allowed_projects")
+		assert.Equal(t, "workspace_not_allowed", fault.Code)
+		assert.Contains(t, fault.Msg, "allowed_workspaces")
 	})
 
 	t.Run("the caller's own grant scope excluded it", func(t *testing.T) {
 		s := &awbProxySession{
 			// The operator allows both; this caller's grant reaches only one.
-			policy:        config.AWBProxyConfig{AllowedProjects: []string{"awb", "web"}},
-			projects:      []string{"awb"},
-			grantProjects: []string{"awb"},
+			policy:          config.AWBProxyConfig{AllowedWorkspaces: []string{"awb", "web"}},
+			workspaces:      []string{"awb"},
+			grantWorkspaces: []string{"awb"},
 		}
-		fault := s.requireAllowedProject("web")
+		fault := s.requireAllowedWorkspace("web")
 		require.NotNil(t, fault)
-		assert.Equal(t, awbProjectOutOfScopeCode, fault.Code)
+		assert.Equal(t, awbWorkspaceOutOfScopeCode, fault.Code)
 		assert.Contains(t, fault.Msg, "this grant covers")
 	})
 }

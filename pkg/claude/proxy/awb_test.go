@@ -141,7 +141,7 @@ func TestAWBProxyOutcomeAcceptsLegacyProjects(t *testing.T) {
 	var out awbProxyOutcome
 	require.NoError(t, json.Unmarshal([]byte(`{"projects":["awb"]}`), &out))
 	out.normalizeCompatibility()
-	assert.Equal(t, []string{"awb"}, out.Projects)
+	assert.Equal(t, []string{"awb"}, out.Workspaces)
 }
 
 // --- the output modes ---
@@ -182,7 +182,7 @@ func TestAWBOutcomeRender(t *testing.T) {
 
 	t.Run("a silent mutation prints nothing", func(t *testing.T) {
 		var stdout, stderr bytes.Buffer
-		out := &awbProxyOutcome{Projects: []string{"awb"}}
+		out := &awbProxyOutcome{Workspaces: []string{"awb"}}
 		assert.Equal(t, rcOK, out.render(&stdout, &stderr))
 		assert.Empty(t, stdout.String(), "awb prints nothing on a successful mutation")
 	})

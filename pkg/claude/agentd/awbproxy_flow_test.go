@@ -23,7 +23,7 @@ import (
 // awbproxy_flow_test.go drives the AWB proxy through the real daemon mux with
 // the outbound-HTTP boundary stubbed.
 //
-// The assertions concentrate on what would fail SILENTLY: that the project
+// The assertions concentrate on what would fail SILENTLY: that the workspace
 // allow-list actually bounds what an agent can reach — in the request the
 // daemon builds AND in the answer it will return — that reading does not confer
 // writing, that the operator's own allow_write ceiling is independent of the
@@ -33,7 +33,7 @@ const awbProxyTestConv = "conv-awb-proxy"
 
 // awbRecorder captures every HTTP request the daemon builds and replays a
 // scripted response. Capturing the fully-assembled URL is the point: it is what
-// lets a test assert that a project filter really was written, and that a
+// lets a test assert that a workspace filter really was written, and that a
 // caller's string reached a query value rather than a path segment.
 type awbRecorder struct {
 	mu       sync.Mutex
@@ -100,9 +100,9 @@ func awbWorld(
 		require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{}}))
 	} else {
 		proxy := &config.AWBProxyConfig{
-			URL:             "https://awb.example",
-			Username:        "tclaude-bot",
-			AllowedProjects: allowed,
+			URL:               "https://awb.example",
+			Username:          "tclaude-bot",
+			AllowedWorkspaces: allowed,
 		}
 		for _, fn := range tweak {
 			fn(proxy)
@@ -136,7 +136,7 @@ func (w *awbFlow) grant(slug string) {
 	require.NoError(w.t, db.GrantAgentPermission(awbProxyTestConv, slug, "test"))
 }
 
-// grantScoped is the per-agent half of the project gate.
+// grantScoped is the per-agent half of the workspace gate.
 func (w *awbFlow) grantScoped(slug, scopeJSON string) {
 	w.t.Helper()
 	require.NoError(w.t, db.GrantAgentPermissionWithScope(awbProxyTestConv, slug, scopeJSON, "test"))
@@ -152,7 +152,7 @@ func (w *awbFlow) outcome(res *httptest.ResponseRecorder) awbOutcomeView {
 }
 
 type awbOutcomeView struct {
-	Projects       []string        `json:"workspaces"`
+	Workspaces     []string        `json:"workspaces"`
 	LegacyProjects []string        `json:"projects"`
 	JSON           json.RawMessage `json:"json"`
 	Text           string          `json:"text"`
@@ -161,16 +161,16 @@ type awbOutcomeView struct {
 }
 
 // issueJSON builds a scripted issue response.
-func awbIssueJSON(id, project string) string {
-	return `{"id":"` + id + `","workspace":"` + project + `","title":"A thing","description":"",` +
+func awbIssueJSON(id, workspace string) string {
+	return `{"id":"` + id + `","workspace":"` + workspace + `","title":"A thing","description":"",` +
 		`"type":"task","status":"open","priority":2,"labels":[],"assignees":[],` +
 		`"created_at":"2026-08-26T09:12:03.412Z","updated_at":"2026-08-26T09:12:03.412Z",` +
 		`"blocked":false,"blockers":[],"relations":[],"links":[],"attachments":[]}`
 }
 
-// projectsJSON is what GET /api/projects answers with, which every unfiltered
+// workspacesJSON is what GET /api/workspaces answers with, which every unfiltered
 // listing resolves before it can build a filter.
-func awbProjectsJSON(keys ...string) string {
+func awbWorkspacesJSON(keys ...string) string {
 	rows := make([]string, 0, len(keys))
 	for _, key := range keys {
 		rows = append(rows, `{"key":"`+key+`","name":"`+key+`","description":"","active_issues":1,`+
@@ -203,7 +203,7 @@ func TestAWBProxy_DisabledUntilConfigured(t *testing.T) {
 		assert.False(t, rec.sawAnyCall(), "an unconfigured proxy must not reach any server")
 	})
 
-	t.Run("a server but no project policy is still disabled", func(t *testing.T) {
+	t.Run("a server but no workspace policy is still disabled", func(t *testing.T) {
 		w, rec := awbWorld(t, []string{})
 		w.grant(agentd.PermAWBRead)
 
@@ -249,22 +249,22 @@ func TestAWBProxy_WriteAlsoNeedsTheOperatorCeiling(t *testing.T) {
 		"the operator's ceiling must be checked before anything reaches AWB")
 }
 
-// --- the project gate ---
+// --- the workspace gate ---
 
-// TestAWBProxy_ProjectAllowListBoundsTheReference refuses a project the
+// TestAWBProxy_WorkspaceAllowListBoundsTheReference refuses a workspace the
 // operator never allow-listed, before any credential is spent.
-func TestAWBProxy_ProjectAllowListBoundsTheReference(t *testing.T) {
+func TestAWBProxy_WorkspaceAllowListBoundsTheReference(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"})
 	w.grant(agentd.PermAWBRead)
 
 	res := w.post("/v1/awb/issue/show", map[string]any{"id": "secret-a3f9c1"})
 	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
-	assert.Contains(t, res.Body.String(), "project_not_allowed")
+	assert.Contains(t, res.Body.String(), "workspace_not_allowed")
 	assert.False(t, rec.sawAnyCall(), "the cheap gate must run before the network, not after it")
 }
 
 // TestAWBProxy_BareHashIsRefusedBeforeTheNetwork covers the form awb accepts
-// and this deliberately does not: a bare hash names no project, so it could
+// and this deliberately does not: a bare hash names no workspace, so it could
 // only be judged after the issue had already been fetched.
 func TestAWBProxy_BareHashIsRefusedBeforeTheNetwork(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"})
@@ -275,14 +275,14 @@ func TestAWBProxy_BareHashIsRefusedBeforeTheNetwork(t *testing.T) {
 	assert.False(t, rec.sawAnyCall())
 }
 
-// TestAWBProxy_ProjectGateReChecksAWBsAnswer is the load-bearing half of the
-// project gate.
+// TestAWBProxy_WorkspaceGateReChecksAWBsAnswer is the load-bearing half of the
+// workspace gate.
 //
 // The reference check is a check on a string the CALLER supplied. AWB resolves
 // an ID PREFIX, so a proxy that trusted the prefix alone would be trusting a
-// label rather than the thing reached. The daemon must refuse on the project
+// label rather than the thing reached. The daemon must refuse on the workspace
 // AWB REPORTED, and the issue's contents must not appear in the response.
-func TestAWBProxy_ProjectGateReChecksAWBsAnswer(t *testing.T) {
+func TestAWBProxy_WorkspaceGateReChecksAWBsAnswer(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"})
 	w.grant(agentd.PermAWBRead)
 	rec.response = func(agentd.AWBProxyRequest) (int, string) {
@@ -308,7 +308,7 @@ func TestAWBProxy_ListIsBoundedByTheAllowList(t *testing.T) {
 	w.grant(agentd.PermAWBRead)
 	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
 		if strings.Contains(req.URL, "/api/workspaces") {
-			return http.StatusOK, awbProjectsJSON("awb", "web", "secret")
+			return http.StatusOK, awbWorkspacesJSON("awb", "web", "secret")
 		}
 		// AWB answers with a row from outside the filter. The daemon must drop
 		// it: the filter is a request AWB honours, the gate is a check we make.
@@ -320,30 +320,30 @@ func TestAWBProxy_ListIsBoundedByTheAllowList(t *testing.T) {
 	out := w.outcome(res)
 
 	calls := rec.snapshot()
-	require.Len(t, calls, 2, "the project list, then the listing itself")
+	require.Len(t, calls, 2, "the workspace list, then the listing itself")
 	q := awbQuery(t, calls[1])
 	assert.ElementsMatch(t, []string{"awb", "web"}, q["workspace"],
-		"an unfiltered listing must still name every project it may see, and no more")
+		"an unfiltered listing must still name every workspace it may see, and no more")
 	assert.Equal(t, "50", q.Get("limit"), "the proxy bounds a listing awb would leave unbounded")
 
-	assert.Equal(t, []string{"awb", "web"}, out.Projects)
-	assert.Equal(t, out.Projects, out.LegacyProjects,
+	assert.Equal(t, []string{"awb", "web"}, out.Workspaces)
+	assert.Equal(t, out.Workspaces, out.LegacyProjects,
 		"the compatibility alias must carry the same effective workspace set")
 	assert.Contains(t, string(out.JSON), "awb-1")
 	assert.NotContains(t, string(out.JSON), "secret-1",
 		"a row from outside the effective set must be dropped, not returned")
 }
 
-// TestAWBProxy_ListingSkipsAllowedProjectsTheServerDoesNotHave covers the
+// TestAWBProxy_ListingSkipsAllowedWorkspacesTheServerDoesNotHave covers the
 // misconfiguration that would otherwise break every unfiltered listing: AWB
-// answers a `project` filter naming no project with a 404 rather than with an
+// answers a `workspace` filter naming no workspace with a 404 rather than with an
 // empty listing.
-func TestAWBProxy_ListingSkipsAllowedProjectsTheServerDoesNotHave(t *testing.T) {
+func TestAWBProxy_ListingSkipsAllowedWorkspacesTheServerDoesNotHave(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb", "gone"})
 	w.grant(agentd.PermAWBRead)
 	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
 		if strings.Contains(req.URL, "/api/workspaces") {
-			return http.StatusOK, awbProjectsJSON("awb")
+			return http.StatusOK, awbWorkspacesJSON("awb")
 		}
 		return http.StatusOK, "[]"
 	}
@@ -382,7 +382,7 @@ func TestAWBProxy_SearchTermsTravelAsQueryValues(t *testing.T) {
 	w.grant(agentd.PermAWBRead)
 	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
 		if strings.Contains(req.URL, "/api/workspaces") {
-			return http.StatusOK, awbProjectsJSON("awb")
+			return http.StatusOK, awbWorkspacesJSON("awb")
 		}
 		return http.StatusOK, "[]"
 	}
@@ -477,7 +477,7 @@ func TestAWBProxy_CreateInfersTheOnlyVisibleWorkspace(t *testing.T) {
 	w.grant(agentd.PermAWBWrite)
 	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
 		if strings.Contains(req.URL, "/api/workspaces") {
-			return http.StatusOK, awbProjectsJSON("awb")
+			return http.StatusOK, awbWorkspacesJSON("awb")
 		}
 		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
 	}
@@ -505,7 +505,7 @@ func TestAWBProxy_CreateRequiresWorkspaceWhenSeveralAreVisible(t *testing.T) {
 	w.grant(agentd.PermAWBWrite)
 	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
 		if strings.Contains(req.URL, "/api/workspaces") {
-			return http.StatusOK, awbProjectsJSON("awb", "web")
+			return http.StatusOK, awbWorkspacesJSON("awb", "web")
 		}
 		require.Fail(t, "create mutation must not be attempted while workspace is ambiguous")
 		return http.StatusInternalServerError, `{}`
@@ -518,7 +518,7 @@ func TestAWBProxy_CreateRequiresWorkspaceWhenSeveralAreVisible(t *testing.T) {
 }
 
 // TestAWBProxy_DepGatesBothEnds — a relation is read from either end, so
-// writing one into an unreachable project is a write outside the gate wearing
+// writing one into an unreachable workspace is a write outside the gate wearing
 // the subject's clothes.
 func TestAWBProxy_DepGatesBothEnds(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
@@ -652,7 +652,7 @@ func TestAWBProxy_AttachNameCannotEscapeItsSegment(t *testing.T) {
 // --- dep tree ---
 
 // TestAWBProxy_DepTreePrunesOutOfScopeChildren covers the one read whose answer
-// can reach outside the gate on its own: AWB follows children across project
+// can reach outside the gate on its own: AWB follows children across workspace
 // boundaries by design.
 func TestAWBProxy_DepTreePrunesOutOfScopeChildren(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"})
@@ -673,7 +673,7 @@ func TestAWBProxy_DepTreePrunesOutOfScopeChildren(t *testing.T) {
 	out := w.outcome(res)
 	assert.Contains(t, string(out.JSON), "awb-a00001")
 	assert.NotContains(t, string(out.JSON), "Merger terms",
-		"a child in an unreachable project arrives as a complete issue unless it is pruned")
+		"a child in an unreachable workspace arrives as a complete issue unless it is pruned")
 	assert.NotContains(t, string(out.JSON), "confidential")
 }
 
@@ -684,24 +684,24 @@ func TestAWBProxy_DepTreePrunesOutOfScopeChildren(t *testing.T) {
 // a grant can never widen past it.
 func TestAWBProxy_GrantScopeNarrowsTheOperatorList(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb", "web"})
-	w.grantScoped(agentd.PermAWBRead, `{"awb_project":["awb"]}`)
+	w.grantScoped(agentd.PermAWBRead, `{"awb_workspace":["awb"]}`)
 	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
 		if strings.Contains(req.URL, "/api/workspaces") {
-			return http.StatusOK, awbProjectsJSON("awb", "web")
+			return http.StatusOK, awbWorkspacesJSON("awb", "web")
 		}
 		return http.StatusOK, "[]"
 	}
 
 	res := w.post("/v1/awb/issue/list", map[string]any{})
 	out := w.outcome(res)
-	assert.Equal(t, []string{"awb"}, out.Projects,
+	assert.Equal(t, []string{"awb"}, out.Workspaces,
 		"the echoed set is what THIS caller may reach, not what the operator allows in general")
 	assert.Equal(t, []string{"awb"}, awbQuery(t, rec.last(t))["workspace"])
 
-	t.Run("and the project the operator allows but the grant does not is refused", func(t *testing.T) {
+	t.Run("and the workspace the operator allows but the grant does not is refused", func(t *testing.T) {
 		res := w.post("/v1/awb/issue/show", map[string]any{"id": "web-a3f9c1"})
 		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
-		assert.Contains(t, res.Body.String(), "project_out_of_scope",
+		assert.Contains(t, res.Body.String(), "workspace_out_of_scope",
 			"the refusal must name the list that actually excluded it")
 	})
 }
@@ -711,35 +711,35 @@ func TestAWBProxy_GrantScopeNarrowsTheOperatorList(t *testing.T) {
 // grant is refused while a scoped one works.
 func TestAWBProxy_ScopedGrantIsTheWholePolicyWithNoOperatorList(t *testing.T) {
 	w, rec := awbWorld(t, []string{})
-	w.grantScoped(agentd.PermAWBRead, `{"awb_project":["awb"]}`)
+	w.grantScoped(agentd.PermAWBRead, `{"awb_workspace":["awb"]}`)
 	rec.response = func(agentd.AWBProxyRequest) (int, string) {
 		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
 	}
 
 	res := w.post("/v1/awb/issue/show", map[string]any{"id": "awb-a3f9c1"})
 	out := w.outcome(res)
-	assert.Equal(t, []string{"awb"}, out.Projects)
+	assert.Equal(t, []string{"awb"}, out.Workspaces)
 }
 
 // --- the review's three findings ---
 
-// TestAWBProxy_WhoamiKeepsOutOfScopeProjectsToTheirKey is the discovery verb's
-// own share of the project gate.
+// TestAWBProxy_WhoamiKeepsOutOfScopeWorkspacesToTheirKey is the discovery verb's
+// own share of the workspace gate.
 //
 // `whoami` exists so a refused agent can tell its human which key to add, so an
-// unreachable project's KEY has to be in the answer — every refusal already
-// names the operator's list anyway. What must NOT be there is what the project
+// unreachable workspace's KEY has to be in the answer — every refusal already
+// names the operator's list anyway. What must NOT be there is what the workspace
 // contains: its name, its issue count, and the account's access in it are
-// facts about a project this caller may not read.
-func TestAWBProxy_WhoamiKeepsOutOfScopeProjectsToTheirKey(t *testing.T) {
+// facts about a workspace this caller may not read.
+func TestAWBProxy_WhoamiKeepsOutOfScopeWorkspacesToTheirKey(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb", "acquisition"})
-	w.grantScoped(agentd.PermAWBRead, `{"awb_project":["awb"]}`)
+	w.grantScoped(agentd.PermAWBRead, `{"awb_workspace":["awb"]}`)
 	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
 		switch {
 		case strings.Contains(req.URL, "/api/identity"):
 			return http.StatusOK, `{"identity":"tclaude-bot"}`
 		case strings.Contains(req.URL, "/api/users/"):
-			return http.StatusOK, `{"name":"tclaude-bot","project_admin":true,"user_admin":false,` +
+			return http.StatusOK, `{"name":"tclaude-bot","workspace_admin":true,"user_admin":false,` +
 				`"created_at":"2026-08-26T09:12:03.412Z","updated_at":"2026-08-26T09:12:03.412Z",` +
 				`"workspaces":[{"workspace":"awb","user":"tclaude-bot","access":"regular"},` +
 				`{"workspace":"acquisition","user":"tclaude-bot","access":"admin"}]}`
@@ -747,7 +747,7 @@ func TestAWBProxy_WhoamiKeepsOutOfScopeProjectsToTheirKey(t *testing.T) {
 		return http.StatusOK, `[{"key":"awb","name":"Agent Work Board","description":"",` +
 			`"active_issues":2,"created_at":"2026-08-26T09:12:03.412Z",` +
 			`"updated_at":"2026-08-26T09:12:03.412Z"},` +
-			`{"key":"acquisition","name":"Project Bluebird","description":"","active_issues":47,` +
+			`{"key":"acquisition","name":"Workspace Bluebird","description":"","active_issues":47,` +
 			`"created_at":"2026-08-26T09:12:03.412Z","updated_at":"2026-08-26T09:12:03.412Z"}]`
 	}
 
@@ -758,14 +758,14 @@ func TestAWBProxy_WhoamiKeepsOutOfScopeProjectsToTheirKey(t *testing.T) {
 
 		assert.Contains(t, body, "acquisition",
 			"the KEY is the diagnostic: the agent has to be able to name what to ask for")
-		assert.NotContains(t, body, "Project Bluebird",
-			"an out-of-scope project's NAME describes it, and the gate says this caller may not read it")
+		assert.NotContains(t, body, "Workspace Bluebird",
+			"an out-of-scope workspace's NAME describes it, and the gate says this caller may not read it")
 		assert.NotContains(t, body, "47",
 			"nor its issue count")
 		assert.NotContains(t, body, "admin",
 			"nor the account's access in it")
 		assert.Contains(t, body, "Agent Work Board",
-			"a project the caller MAY reach is still described in full")
+			"a workspace the caller MAY reach is still described in full")
 	}
 }
 
@@ -803,7 +803,7 @@ func awbUnstubbedWorld(t *testing.T, url string) *awbFlow {
 	f.HaveEnrolledAgent(awbProxyTestConv)
 	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{
 		AWBProxy: &config.AWBProxyConfig{
-			URL: url, Username: "tclaude-bot", AllowedProjects: []string{"awb"},
+			URL: url, Username: "tclaude-bot", AllowedWorkspaces: []string{"awb"},
 		},
 	}}))
 	t.Setenv("AWB_PASSWORD", "hunter2")
@@ -954,9 +954,9 @@ func TestAWBProxy_CommentAddRefusesAnEmptyBody(t *testing.T) {
 	assert.False(t, rec.sawAnyCall(), "the cheap gate runs before the network")
 }
 
-// TestAWBProxy_CommentAddIsGatedByProject — the same gate as every other verb,
+// TestAWBProxy_CommentAddIsGatedByWorkspace — the same gate as every other verb,
 // checked before the call and again on the issue AWB names in its answer.
-func TestAWBProxy_CommentAddIsGatedByProject(t *testing.T) {
+func TestAWBProxy_CommentAddIsGatedByWorkspace(t *testing.T) {
 	t.Run("before the call", func(t *testing.T) {
 		w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
 		w.grant(agentd.PermAWBWrite)
@@ -1032,9 +1032,9 @@ func TestAWBProxy_CommentListIsBounded(t *testing.T) {
 	})
 }
 
-// TestAWBProxy_CommentListIsGatedByProject — reading a discussion is reading
+// TestAWBProxy_CommentListIsGatedByWorkspace — reading a discussion is reading
 // the issue.
-func TestAWBProxy_CommentListIsGatedByProject(t *testing.T) {
+func TestAWBProxy_CommentListIsGatedByWorkspace(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"})
 	w.grant(agentd.PermAWBRead)
 	res := w.post("/v1/awb/comment/list", map[string]any{"id": "secret-a3f9c1"})
@@ -1097,7 +1097,7 @@ func TestAWBProxy_ActivityNarrowsByKind(t *testing.T) {
 	})
 }
 
-func TestAWBProxy_ActivityIsGatedByProject(t *testing.T) {
+func TestAWBProxy_ActivityIsGatedByWorkspace(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"})
 	w.grant(agentd.PermAWBRead)
 	res := w.post("/v1/awb/activity/list", map[string]any{"id": "secret-a3f9c1"})
@@ -1123,7 +1123,7 @@ func TestAWBProxy_ActivityIsAReadNotAWrite(t *testing.T) {
 // TestAWBProxy_SearchTermsAreValidatedBeforeTheNetwork keeps the rule the rest
 // of the listing path already follows: a malformed request must not spend a
 // call on the operator's account to reach its refusal. An unfiltered listing
-// resolves the server's project list first, so the terms have to be checked
+// resolves the server's workspace list first, so the terms have to be checked
 // ahead of that.
 func TestAWBProxy_SearchTermsAreValidatedBeforeTheNetwork(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"})
@@ -1132,7 +1132,7 @@ func TestAWBProxy_SearchTermsAreValidatedBeforeTheNetwork(t *testing.T) {
 	res := w.post("/v1/awb/issue/search", map[string]any{"terms": []string{"  "}})
 	assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
 	assert.False(t, rec.sawAnyCall(),
-		"not even the /api/projects resolution should have happened")
+		"not even the /api/workspaces resolution should have happened")
 }
 
 // TestAWBProxy_AttachUploadIsNotBufferedForAudit is the second half of the
@@ -1179,7 +1179,7 @@ func TestAWBProxy_NonSearchListingsRefuseTerms(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, res.Code, "%s: body=%s", path, res.Body.String())
 		assert.Contains(t, res.Body.String(), "search", "the refusal names the verb that does")
 		assert.False(t, rec.sawAnyCall(),
-			"%s: refused before the project resolution spends a call", path)
+			"%s: refused before the workspace resolution spends a call", path)
 	}
 
 	t.Run("a blank term is not a term, so it is not a refusal either", func(t *testing.T) {
@@ -1187,7 +1187,7 @@ func TestAWBProxy_NonSearchListingsRefuseTerms(t *testing.T) {
 		w.grant(agentd.PermAWBRead)
 		rec.response = func(req agentd.AWBProxyRequest) (int, string) {
 			if strings.Contains(req.URL, "/api/workspaces") {
-				return http.StatusOK, awbProjectsJSON("awb")
+				return http.StatusOK, awbWorkspacesJSON("awb")
 			}
 			return http.StatusOK, "[]"
 		}

@@ -23,15 +23,15 @@ import (
 // The gates run in a fixed order, and the order matters:
 //
 //  1. permission slug — before the body is read, so an ungated caller cannot
-//     probe for the existence of a project;
+//     probe for the existence of a workspace;
 //  2. operator policy and grant scope, resolved together into this caller's
-//     effective project set — the proxy is off unless SOME project is
+//     effective workspace set — the proxy is off unless SOME workspace is
 //     reachable, and writes are off unless allow_write is set;
 //  3. parameter validation — issue-reference shape, charset, length, and every
 //     value AWB's fixed vocabulary bounds;
-//  4. the project gate on the caller's issue reference or --project;
+//  4. the workspace gate on the caller's issue reference or --workspace;
 //  5. the call;
-//  6. the project gate AGAIN, on the project AWB reported.
+//  6. the workspace gate AGAIN, on the workspace AWB reported.
 //
 // Step 6 is not belt-and-braces. Step 4 checks a string the caller supplied;
 // step 6 checks the thing actually reached — and an AWB reference may be a
@@ -201,48 +201,48 @@ type awbAttachNameRequest struct {
 // ---------------------------------------------------------------------------
 
 // openAWBProxy is the shared prologue: method check, permission gate, bounded
-// body decode, project-set resolution. Write verbs additionally clear
+// body decode, workspace-set resolution. Write verbs additionally clear
 // allow_write here, so no handler can forget it.
 //
 // The permission gate goes through preflightProxyPermission, the same helper
 // the git and Linear proxies use, for the same reason: an ungranted caller must
-// still be refused cheaply, while a PROJECT-SCOPED grant cannot be decided
+// still be refused cheaply, while a WORKSPACE-SCOPED grant cannot be decided
 // against an empty ActionContext and would otherwise fall through to an
 // ask-human popup on every single call. The scope is then resolved into the
-// session's effective project set — the verbs here can span several projects at
+// session's effective workspace set — the verbs here can span several workspaces at
 // once, so a set is the only form the decision can take.
 func openAWBProxy(w http.ResponseWriter, r *http.Request, perm string, body any) (*awbProxySession, bool) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "method", "POST only")
 		return nil, false
 	}
-	convID, projectScoped, ok := preflightProxyPermission(w, r, perm)
+	convID, workspaceScoped, ok := preflightProxyPermission(w, r, perm)
 	if !ok {
 		return nil, false
 	}
 	if body != nil && !decodeAWBProxyBody(w, r, body) {
 		return nil, false
 	}
-	s, fault := newAWBProxySession(r, convID, perm, projectScoped)
+	s, fault := newAWBProxySession(r, convID, perm, workspaceScoped)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return nil, false
 	}
-	if projectScoped {
+	if workspaceScoped {
 		// The scoped grant really did decide this request, so the audit row
-		// must say so. It records the GRANT's projects, not the effective set,
+		// must say so. It records the GRANT's workspaces, not the effective set,
 		// so the field means what it means on a git or Linear row: the scope on
 		// the grant that authorized the action, rather than that scope narrowed
 		// by an operator setting the row does not otherwise mention. The
-		// project actually acted on is already on the same row, in the verb's
+		// workspace actually acted on is already on the same row, in the verb's
 		// own detail.
 		//
-		// grantProjects is the EVALUATED set, which is what makes this honest:
-		// the projects the scope merely names can be a superset of the ones it
+		// grantWorkspaces is the EVALUATED set, which is what makes this honest:
+		// the workspaces the scope merely names can be a superset of the ones it
 		// admits, and recording those would claim authority the grant never
 		// conferred.
 		recordAuditPermissionScope(r, perm, permissionScopeDisplay(
-			PermissionScope{ScopeDimAWBProject: s.grantProjects}))
+			PermissionScope{ScopeDimAWBWorkspace: s.grantWorkspaces}))
 	}
 	if perm == PermAWBWrite {
 		if fault := s.requireWrite(); fault != nil {
@@ -270,19 +270,19 @@ func decodeAWBProxyBody(w http.ResponseWriter, r *http.Request, out any) bool {
 	return true
 }
 
-// gateIssueRef is the pre-call half of the project gate for an
+// gateIssueRef is the pre-call half of the workspace gate for an
 // identifier-shaped verb: it validates the reference's shape and checks the
-// project it carries against the effective set.
+// workspace it carries against the effective set.
 //
-// The project is checked BEFORE the call rather than after it, which is the
+// The workspace is checked BEFORE the call rather than after it, which is the
 // whole reason validateAWBIssueRef refuses a bare hash: a reference that names
-// no project could only be judged once the issue had already been fetched.
+// no workspace could only be judged once the issue had already been fetched.
 func (s *awbProxySession) gateIssueRef(raw string) (string, *proxyFault) {
 	ref, fault := validateAWBIssueRef(raw)
 	if fault != nil {
 		return "", fault
 	}
-	if fault := s.requireAllowedProject(projectKeyOf(ref)); fault != nil {
+	if fault := s.requireAllowedWorkspace(workspaceKeyOf(ref)); fault != nil {
 		return "", fault
 	}
 	return ref, nil
@@ -309,10 +309,10 @@ func (s *awbProxySession) identity(what string) (string, *proxyFault) {
 // ---------------------------------------------------------------------------
 
 // awbListingQuery turns a validated filter into the query string one listing
-// call carries, and is the ONLY place a project constraint is constructed.
+// call carries, and is the ONLY place a workspace constraint is constructed.
 //
 // Every list-shaped verb goes through it, so an unfiltered listing is not
-// something a handler can produce by omission: the `project` parameter is
+// something a handler can produce by omission: the `workspace` parameter is
 // always written, from a set the gate has already approved.
 func (s *awbProxySession) awbListingQuery(
 	ctx context.Context, f *awbFilterRequest, opts awbFilterOptions,
@@ -320,7 +320,7 @@ func (s *awbProxySession) awbListingQuery(
 	q := url.Values{}
 
 	// Everything that can be decided from the request alone comes first, and
-	// the project set — the only step that may have to ask the server — comes
+	// the workspace set — the only step that may have to ask the server — comes
 	// last. A filter this verb does not accept is then a refusal made without
 	// spending the operator's account, which is what "the cheap gate runs
 	// before the network" has to mean here.
@@ -376,7 +376,7 @@ func (s *awbProxySession) awbListingQuery(
 	}
 	if strings.TrimSpace(f.Parent) != "" {
 		// The parent is an issue, so it goes through the same gate every other
-		// issue reference does: selecting the children of an issue in a project
+		// issue reference does: selecting the children of an issue in a workspace
 		// this caller cannot reach would answer a question it may not ask.
 		parent, fault := s.gateIssueRef(f.Parent)
 		if fault != nil {
@@ -400,20 +400,20 @@ func (s *awbProxySession) awbListingQuery(
 	requested := append(append([]string{}, f.Workspaces...), f.LegacyProjects...)
 	named := make([]string, 0, len(requested))
 	for _, raw := range requested {
-		key, fault := s.validateAWBProject(raw)
+		key, fault := s.validateAWBWorkspace(raw)
 		if fault != nil {
 			return nil, nil, fault
 		}
-		named = appendProjectKey(named, key)
+		named = appendWorkspaceKey(named, key)
 	}
-	projects, fault := s.listingProjects(ctx, named)
+	workspaces, fault := s.listingWorkspaces(ctx, named)
 	if fault != nil {
 		return nil, nil, fault
 	}
-	for _, key := range projects {
+	for _, key := range workspaces {
 		q.Add("workspace", key)
 	}
-	return q, projects, nil
+	return q, workspaces, nil
 }
 
 // applyAssigneeFilter writes the mutually exclusive assignee filters.
@@ -476,7 +476,7 @@ func (s *awbProxySession) runAWBListing(
 	f *awbFilterRequest, opts awbFilterOptions, withBlockers bool,
 ) {
 	// The terms are validated BEFORE the query is built, because building it can
-	// resolve the server's project list — one call on the operator's account.
+	// resolve the server's workspace list — one call on the operator's account.
 	// A malformed term must not spend that call to reach its refusal, which is
 	// the same ordering rule the filter checks in awbListingQuery follow.
 	var terms []string
@@ -495,7 +495,7 @@ func (s *awbProxySession) runAWBListing(
 			"this listing does not match text; `search` is the verb that takes terms"))
 		return
 	}
-	q, projects, fault := s.awbListingQuery(r.Context(), f, opts)
+	q, workspaces, fault := s.awbListingQuery(r.Context(), f, opts)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
@@ -515,7 +515,7 @@ func (s *awbProxySession) runAWBListing(
 	}
 	issues = s.enforceIssueList(issues)
 	s.respond(w, r, verb, f.Compact, issues, awbCompactLines(issues, withBlockers),
-		fmt.Sprintf("projects=%s rows=%d", strings.Join(projects, ","), len(issues)))
+		fmt.Sprintf("workspaces=%s rows=%d", strings.Join(workspaces, ","), len(issues)))
 }
 
 // ---------------------------------------------------------------------------
@@ -532,30 +532,30 @@ type awbWhoamiResponse struct {
 	// from "wrong password" without reading a 401.
 	Username string `json:"username,omitempty"`
 	Identity string `json:"identity,omitempty"`
-	// OperatorProjects is agent.awb_proxy.allowed_projects, absent when the
-	// operator configured none. GrantProjects is the awb_project scope on the
-	// caller's own grant, absent when it is unscoped. AllowedProjects is what
+	// OperatorWorkspaces is agent.awb_proxy.allowed_workspaces, absent when the
+	// operator configured none. GrantWorkspaces is the awb_workspace scope on the
+	// caller's own grant, absent when it is unscoped. AllowedWorkspaces is what
 	// the ones that ARE present leave this caller — the set every other verb
 	// echoes.
-	OperatorProjects []string `json:"operator_workspaces,omitempty"`
-	GrantProjects    []string `json:"grant_workspaces,omitempty"`
-	AllowedProjects  []string `json:"allowed_workspaces"`
+	OperatorWorkspaces []string `json:"operator_workspaces,omitempty"`
+	GrantWorkspaces    []string `json:"grant_workspaces,omitempty"`
+	AllowedWorkspaces  []string `json:"allowed_workspaces"`
 	// AllowWrite is the operator's own ceiling: false means every mutating verb
 	// is refused however the caller's grants are spelled.
 	AllowWrite bool `json:"allow_write"`
-	// Projects is every project the daemon's account can see, each marked with
-	// whether THIS caller may reach it. A project the caller may reach and the
+	// Workspaces is every workspace the daemon's account can see, each marked with
+	// whether THIS caller may reach it. A workspace the caller may reach and the
 	// account cannot see does not appear — which is itself the answer, and the
 	// reason the two lists are reported side by side.
 	//
 	// An UNREACHABLE entry carries its key and nothing else. The key has to be
-	// there: "this project exists on the server, ask the operator to add it" is
+	// there: "this workspace exists on the server, ask the operator to add it" is
 	// the diagnostic this verb exists for, and every refusal already names the
 	// operator's list anyway. Its name, its issue count and the account's access
-	// in it are a different thing — they describe the project rather than
-	// establish that the key exists — and the project gate is exactly the rule
-	// that says this caller may not read them. See awbWhoamiProject.
-	Projects []awbWhoamiProject `json:"workspaces"`
+	// in it are a different thing — they describe the workspace rather than
+	// establish that the key exists — and the workspace gate is exactly the rule
+	// that says this caller may not read them. See awbWhoamiWorkspace.
+	Workspaces []awbWhoamiWorkspace `json:"workspaces"`
 	// Note carries a best-effort read that failed. The membership read is the
 	// one call here whose failure must not fail the verb: a server with no
 	// users has no account to read, and `whoami` is exactly the command an
@@ -563,19 +563,19 @@ type awbWhoamiResponse struct {
 	Note string `json:"note,omitempty"`
 }
 
-// awbWhoamiProject is one project the daemon's account can see.
+// awbWhoamiWorkspace is one workspace the daemon's account can see.
 //
 // Everything but Key and Reachable is omitempty and filled in only for a
-// project THIS caller may reach, so an out-of-scope row says that the key
-// exists and stops there. See awbWhoamiResponse.Projects.
-type awbWhoamiProject struct {
+// workspace THIS caller may reach, so an out-of-scope row says that the key
+// exists and stops there. See awbWhoamiResponse.Workspaces.
+type awbWhoamiWorkspace struct {
 	Key       string `json:"key"`
 	Reachable bool   `json:"reachable"`
-	// Name and ActiveIssues describe the project, so they are reported only
+	// Name and ActiveIssues describe the workspace, so they are reported only
 	// where the caller could read the same facts from a listing anyway.
 	Name         string `json:"name,omitempty"`
 	ActiveIssues int    `json:"active_issues,omitempty"`
-	// Access is the daemon account's access level in this project — "regular"
+	// Access is the daemon account's access level in this workspace — "regular"
 	// or "admin" — and empty on a server that authenticates nobody.
 	Access string `json:"access,omitempty"`
 }
@@ -583,7 +583,7 @@ type awbWhoamiProject struct {
 // handleAWBProxyWhoami serves POST /v1/awb/whoami — the discovery verb.
 //
 // It is the command to point an agent at when something is refused: it reports
-// both halves of the gate beside the projects the account can actually see, so
+// both halves of the gate beside the workspaces the account can actually see, so
 // the agent can tell the operator exactly which list to widen rather than
 // guessing from a 403.
 func handleAWBProxyWhoami(w http.ResponseWriter, r *http.Request) {
@@ -593,13 +593,13 @@ func handleAWBProxyWhoami(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := awbWhoamiResponse{
-		URL:              s.base,
-		Username:         s.policy.Username,
-		OperatorProjects: s.policy.AllowedProjects,
-		GrantProjects:    s.grantProjects,
-		AllowedProjects:  s.projects,
-		AllowWrite:       s.policy.AllowWrite,
-		Projects:         []awbWhoamiProject{},
+		URL:                s.base,
+		Username:           s.policy.Username,
+		OperatorWorkspaces: s.policy.AllowedWorkspaces,
+		GrantWorkspaces:    s.grantWorkspaces,
+		AllowedWorkspaces:  s.workspaces,
+		AllowWrite:         s.policy.AllowWrite,
+		Workspaces:         []awbWhoamiWorkspace{},
 	}
 	var identity awbIdentityResponse
 	if _, fault := s.exec(r.Context(), awbCall{
@@ -610,29 +610,29 @@ func handleAWBProxyWhoami(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.Identity = identity.Identity
 
-	var projects []awbProject
+	var workspaces []awbWorkspace
 	if _, fault := s.exec(r.Context(), awbCall{
 		Method: http.MethodGet, Path: "/api/workspaces",
-	}, &projects); fault != nil {
+	}, &workspaces); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
 	access := s.whoamiAccess(r.Context(), &resp)
-	for _, p := range projects {
+	for _, p := range workspaces {
 		key := strings.ToLower(strings.TrimSpace(p.Key))
-		row := awbWhoamiProject{Key: p.Key, Reachable: s.projectAllowed(key)}
+		row := awbWhoamiWorkspace{Key: p.Key, Reachable: s.workspaceAllowed(key)}
 		if row.Reachable {
 			row.Name = p.Name
 			row.ActiveIssues = p.ActiveIssues
 			row.Access = access[key]
 		}
-		resp.Projects = append(resp.Projects, row)
+		resp.Workspaces = append(resp.Workspaces, row)
 	}
 	s.respond(w, r, "whoami", body.Compact, &resp, awbWhoamiText(&resp),
-		fmt.Sprintf("projects=%d", len(resp.Projects)))
+		fmt.Sprintf("workspaces=%d", len(resp.Workspaces)))
 }
 
-// whoamiAccess reads the daemon account's per-project access level,
+// whoamiAccess reads the daemon account's per-workspace access level,
 // best-effort.
 //
 // Best-effort because this is the one call in `whoami` whose failure is
@@ -658,7 +658,7 @@ func (s *awbProxySession) whoamiAccess(ctx context.Context, resp *awbWhoamiRespo
 	return access
 }
 
-// awbWhoamiText is `whoami --compact`: one line per project, prefixed with the
+// awbWhoamiText is `whoami --compact`: one line per workspace, prefixed with the
 // two lines that answer "who am I" and "what may I do". awb has no compact form
 // for this verb — it is the proxy's own — so the shape is chosen to match the
 // rest: fields that cannot contain a space, positional, one line each.
@@ -674,9 +674,9 @@ func awbWhoamiText(resp *awbWhoamiResponse) string {
 		write = "read-write"
 	}
 	b.WriteString("identity " + identity + " " + write + "\n")
-	for _, p := range resp.Projects {
+	for _, p := range resp.Workspaces {
 		if !p.Reachable {
-			// The key alone, for the reason awbWhoamiResponse.Projects gives.
+			// The key alone, for the reason awbWhoamiResponse.Workspaces gives.
 			b.WriteString(p.Key + " -\n")
 			continue
 		}
@@ -713,7 +713,7 @@ func handleAWBProxyIssueShow(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	if fault := s.enforceIssueProject(&issue); fault != nil {
+	if fault := s.enforceIssueWorkspace(&issue); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -769,8 +769,8 @@ func handleAWBProxyIssueSearch(w http.ResponseWriter, r *http.Request) {
 
 // handleAWBProxyDepTree serves POST /v1/awb/dep/tree.
 //
-// This is the one read whose answer can reach outside the project gate on its
-// own: AWB follows children across project boundaries by design. See pruneTree
+// This is the one read whose answer can reach outside the workspace gate on its
+// own: AWB follows children across workspace boundaries by design. See pruneTree
 // for what happens to a child the caller may not see.
 func handleAWBProxyDepTree(w http.ResponseWriter, r *http.Request) {
 	var body awbIssueRefRequest
@@ -793,10 +793,10 @@ func handleAWBProxyDepTree(w http.ResponseWriter, r *http.Request) {
 	kept, pruned := s.pruneTree(&tree)
 	if kept == nil {
 		// The ROOT is out of scope, which the pre-call gate should already have
-		// refused — a prefix resolves within its own project. Refusing rather
+		// refused — a prefix resolves within its own workspace. Refusing rather
 		// than answering with nothing keeps the two halves of the gate saying
 		// the same thing.
-		writeProxyFault(w, s.enforceIssueProject(&tree.awbIssue))
+		writeProxyFault(w, s.enforceIssueWorkspace(&tree.awbIssue))
 		return
 	}
 	var text strings.Builder
@@ -1076,12 +1076,12 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	project, fault := s.resolveCreateWorkspace(r.Context(), body.Workspace)
+	workspace, fault := s.resolveCreateWorkspace(r.Context(), body.Workspace)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
-	payload.Workspace = project
+	payload.Workspace = workspace
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "could not encode the AWB request")
@@ -1099,7 +1099,7 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	if fault := s.enforceIssueProject(&issue); fault != nil {
+	if fault := s.enforceIssueWorkspace(&issue); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -1113,9 +1113,9 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 // effective proxy gate. Ambiguity is refused before the mutation.
 func (s *awbProxySession) resolveCreateWorkspace(ctx context.Context, raw string) (string, *proxyFault) {
 	if strings.TrimSpace(raw) != "" {
-		return s.validateAWBProject(raw)
+		return s.validateAWBWorkspace(raw)
 	}
-	workspaces, fault := s.listingProjects(ctx, nil)
+	workspaces, fault := s.listingWorkspaces(ctx, nil)
 	if fault != nil {
 		return "", fault
 	}
@@ -1132,18 +1132,18 @@ func (s *awbProxySession) resolveCreateWorkspace(ctx context.Context, raw string
 // request body.
 //
 // The relation targets go through the same gate as any other issue reference.
-// Relating a new issue to one in a project this caller cannot reach would write
+// Relating a new issue to one in a workspace this caller cannot reach would write
 // into that issue's graph — the relation shows up at both ends — so it is
 // refused rather than allowed on the grounds that only the subject is "the"
 // issue being created.
 func (s *awbProxySession) buildAWBCreateBody(
-	project string, body *awbCreateRequest,
+	workspace string, body *awbCreateRequest,
 ) (*awbIssueCreateBody, *proxyFault) {
 	title, fault := validateAWBTitle(body.Title)
 	if fault != nil {
 		return nil, fault
 	}
-	out := &awbIssueCreateBody{Workspace: project, Title: title}
+	out := &awbIssueCreateBody{Workspace: workspace, Title: title}
 	if body.Description != nil {
 		if fault := validateAWBDescription(*body.Description); fault != nil {
 			return nil, fault
@@ -1413,7 +1413,7 @@ func handleAWBProxyIssueDelete(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	if fault := s.enforceIssueProject(&issue); fault != nil {
+	if fault := s.enforceIssueWorkspace(&issue); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -1513,9 +1513,9 @@ func handleAWBProxyDepRemove(w http.ResponseWriter, r *http.Request) {
 
 // openAWBDepVerb is the prologue the two relation verbs share.
 //
-// BOTH ends go through the project gate. A relation is read from either end —
+// BOTH ends go through the workspace gate. A relation is read from either end —
 // it appears in `relations` on the other issue too — so writing one into a
-// project this caller cannot reach would be a write outside the gate wearing
+// workspace this caller cannot reach would be a write outside the gate wearing
 // the subject's clothes.
 func openAWBDepVerb(
 	w http.ResponseWriter, r *http.Request,
@@ -1582,7 +1582,7 @@ func handleAWBProxyCommentAdd(w http.ResponseWriter, r *http.Request) {
 	// The entry names the issue it landed on, so the gate gets its second look
 	// here as it does everywhere else — this time on a reference rather than on
 	// an issue body.
-	if fault := s.requireAllowedProject(projectKeyOf(strings.ToLower(entry.Issue))); fault != nil {
+	if fault := s.requireAllowedWorkspace(workspaceKeyOf(strings.ToLower(entry.Issue))); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
@@ -1690,7 +1690,7 @@ func handleAWBProxyAttachDelete(w http.ResponseWriter, r *http.Request) {
 }
 
 // mutateIssue is the shared tail of every mutating verb that answers with the
-// issue: budget check, call, the second half of the project gate, render.
+// issue: budget check, call, the second half of the workspace gate, render.
 //
 // payload is marshalled to a JSON body when non-nil; a verb whose endpoint
 // takes no body passes nil. detail is appended to the audit row's issue= field.
@@ -1721,7 +1721,7 @@ func (s *awbProxySession) mutateIssue(
 		writeProxyFault(w, fault)
 		return
 	}
-	if fault := s.enforceIssueProject(&issue); fault != nil {
+	if fault := s.enforceIssueWorkspace(&issue); fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}

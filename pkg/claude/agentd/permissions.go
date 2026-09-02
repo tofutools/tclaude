@@ -672,23 +672,23 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:      PermAWBRead,
-		ScopeDims: []ScopeDim{ScopeDimAWBProject},
+		ScopeDims: []ScopeDim{ScopeDimAWBWorkspace},
 		Description: "Read AWB issues through the daemon's AWB account (tclaude proxy awb whoami, show, list, ready, blocked, " +
 			"search, dep tree, comment list, activity, attach list/show/get). Note that comment list and activity carry " +
 			"third-party prose — anyone with tracker access can write a comment — into the agent's context. Narrowable per agent " +
-			"with --scope awb_project=awb: with an operator " +
-			"agent.awb_proxy.allowed_projects list configured the two intersect and the scope can only narrow it, while with no " +
-			"such list a scoped grant is the whole project policy. An UNSCOPED grant is refused outright when the operator has " +
+			"with --scope awb_workspace=awb: with an operator " +
+			"agent.awb_proxy.allowed_workspaces list configured the two intersect and the scope can only narrow it, while with no " +
+			"such list a scoped grant is the whole workspace policy. An UNSCOPED grant is refused outright when the operator has " +
 			"no list. Not default-granted: it reads the operator's tracker as them.",
 	},
 	{
 		Slug:      PermAWBWrite,
-		ScopeDims: []ScopeDim{ScopeDimAWBProject},
+		ScopeDims: []ScopeDim{ScopeDimAWBWorkspace},
 		Description: "Create, update, claim, release, close, reopen and DELETE AWB issues, comment on them, label them, relate " +
 			"them, and attach files, through the daemon's AWB account (tclaude proxy awb create/update/claim/release/close/reopen/delete, " +
 			"comment add, label add|rm, dep add|rm, attach add|delete). Everything it writes is attributed to the operator's AWB user, and it " +
 			"additionally requires agent.awb_proxy.allow_write. Note that delete is a HARD delete AWB cannot undo; it needs " +
-			"--force on top of this slug. Narrowable per agent with --scope awb_project=awb, on the same terms as proxy.awb.read " +
+			"--force on top of this slug. Narrowable per agent with --scope awb_workspace=awb, on the same terms as proxy.awb.read " +
 			"and independently of it, so read and write reach can differ. Not default-granted and not owner-implied.",
 	},
 }
@@ -866,16 +866,16 @@ func AutoGrantableSlugs() []string {
 // and ADD to defaults rather than replace them.
 //
 // Overrides is the full tri-state per-conv view — conv-id → slug →
-// "grant" | "deny". Grants (above) is the grant-only projection of the
+// "grant" | "deny". Grants (above) is the grant-only workspaceion of the
 // same table, kept for back-compat with readers that predate deny.
 //
-// AgentIDs projects the stable agent_id behind each conv key in
+// AgentIDs workspaces the stable agent_id behind each conv key in
 // Grants/Overrides (conv-id → agent_id), so the CLI roster can LEAD with
 // the rotation-immune id (`name (agt_xxxxxxxx)`) while the maps stay
 // conv-keyed on the wire (JOH-325). Absent for a conv that doesn't (yet)
 // resolve to an actor; readers fall back to the conv prefix then.
 //
-// Titles is the display-name projection of the same keys (conv-id →
+// Titles is the display-name workspaceion of the same keys (conv-id →
 // display title). It exists so an agent-side CLI can render the roster
 // without reading ~/.tclaude/data itself — a sandboxed agent is denied
 // that directory by design, so decoration has to arrive over the wire
