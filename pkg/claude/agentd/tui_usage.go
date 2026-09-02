@@ -34,6 +34,11 @@ const tuiUsageUnsupportedInterval = 10 * time.Minute
 // both surfaces.
 const tuiUsageBarWidth = 8
 
+// tuiUsageNarrowBarWidth is the bar a crowded line falls back to. Four cells
+// still read as a proportion, and halving them buys back the width two
+// accounts' worth of windows need on an 80-column terminal.
+const tuiUsageNarrowBarWidth = 4
+
 // ---- wire shapes -----------------------------------------------------------
 
 // tuiUsage is the subset of /v1/usage the console renders — the same payload
@@ -130,10 +135,10 @@ var tuiUsageStyles = sync.OnceValue(func() tuiUsageBarStyles {
 
 // tuiUsageBar renders one rolling limit as a filled/empty bar, colored on the
 // statusbar's thresholds: green under 60%, amber from 60, red from 80.
-func tuiUsageBar(pct float64) string {
+func tuiUsageBar(pct float64, width int) string {
 	pct = min(max(pct, 0), 100)
 	styles := tuiUsageStyles()
-	filled := int(math.Round(pct / 100 * tuiUsageBarWidth))
+	filled := int(math.Round(pct / 100 * float64(width)))
 	fill := styles.low
 	switch {
 	case pct >= 80:
@@ -142,39 +147,72 @@ func tuiUsageBar(pct float64) string {
 		fill = styles.mid
 	}
 	return fill.Render(strings.Repeat("█", filled)) +
-		styles.empty.Render(strings.Repeat("░", tuiUsageBarWidth-filled))
+		styles.empty.Render(strings.Repeat("░", width-filled))
 }
 
-// tuiUsageWindowText renders one labelled window: "5h ███░░░░░ 42% (3h41m)".
-// The reset timer is dropped when the daemon reported none.
-func tuiUsageWindowText(label string, w *tuiUsageWindow) string {
-	if w == nil {
-		return ""
+// tuiUsageDetail is how much width one pass spends on each window. The line
+// tries these in order and keeps the first rendering that fits, so a crowded
+// terminal gives up ornament — the reset timer, then half the bar, then the
+// bar — before it gives up a whole field. Four windows (both accounts' 5h and
+// 7d) is the reading this ordering is built to keep whole.
+type tuiUsageDetail struct {
+	// bar is the bar's width in cells; zero draws no bar at all.
+	bar int
+	// remaining is whether the window's reset timer is shown.
+	remaining bool
+}
+
+var tuiUsageDetails = []tuiUsageDetail{
+	{bar: tuiUsageBarWidth, remaining: true},
+	{bar: tuiUsageBarWidth},
+	{bar: tuiUsageNarrowBarWidth},
+	{},
+}
+
+// tuiUsageSegment is one field of the line. A segment with a window renders at
+// whatever detail the line can afford; one with only text (API spend, or a
+// one-word status) is the same width at every detail.
+type tuiUsageSegment struct {
+	text   string
+	label  string
+	window *tuiUsageWindow
+}
+
+// render draws one field: "claude 5h ███░░░░░ 42% (3h41m)" at full detail,
+// down to "claude 5h 42%" at the plainest. The reset timer is dropped when the
+// daemon reported none.
+func (s tuiUsageSegment) render(d tuiUsageDetail) string {
+	if s.window == nil {
+		return s.text
+	}
+	out := s.label
+	if d.bar > 0 {
+		out += " " + tuiUsageBar(s.window.Pct, d.bar)
 	}
 	// math.Round, not %.0f: Go rounds a half to even and the dashboard's
 	// Math.round rounds it away from zero, so 62.5% would read 62% here and
 	// 63% there off the very same payload.
-	out := fmt.Sprintf("%s %s %.0f%%", label, tuiUsageBar(w.Pct), math.Round(w.Pct))
-	if w.Remaining != "" {
-		out += " (" + w.Remaining + ")"
+	out += fmt.Sprintf(" %.0f%%", math.Round(s.window.Pct))
+	if d.remaining && s.window.Remaining != "" {
+		out += " (" + s.window.Remaining + ")"
 	}
 	return out
 }
 
-// tuiUsageWindowTexts renders an account's two windows, prefixing each with
-// who it belongs to when the readout names more than one account. A window the
-// source did not report is skipped rather than shown as a 0% bar it cannot
-// stand behind.
-func tuiUsageWindowTexts(u *tuiSubscriptionUsage, prefix string) []string {
+// tuiUsageWindowSegments turns an account's two windows into fields, prefixing
+// each label with who it belongs to when the readout names more than one
+// account. A window the source did not report is skipped rather than shown as
+// a 0% bar it cannot stand behind.
+func tuiUsageWindowSegments(u *tuiSubscriptionUsage, prefix string) []tuiUsageSegment {
 	if u == nil || !u.Available {
 		return nil
 	}
-	var out []string
-	if s := tuiUsageWindowText(prefix+"5h", u.FiveHour); s != "" {
-		out = append(out, s)
+	var out []tuiUsageSegment
+	if u.FiveHour != nil {
+		out = append(out, tuiUsageSegment{label: prefix + "5h", window: u.FiveHour})
 	}
-	if s := tuiUsageWindowText(prefix+"7d", u.SevenDay); s != "" {
-		out = append(out, s)
+	if u.SevenDay != nil {
+		out = append(out, tuiUsageSegment{label: prefix + "7d", window: u.SevenDay})
 	}
 	return out
 }
@@ -201,53 +239,80 @@ func tuiUsageMoney(usd float64) string {
 }
 
 // usageLine is the console's status line: the account's subscription limits
-// and API spend, in the shape Claude Code's own status line shows them.
+// and API spend, in the shape Claude Code's own status line shows them. It
+// carries no "usage" label of its own — the bars and window names say what it
+// is, and the width a label would take is width the second account's windows
+// need.
 //
 // It says nothing rather than guessing. A console the daemon does not treat as
 // the operator never polls the readout (the identity warning above the listing
 // already explains why), and one whose polls have all failed shows that plainly
-// instead of leaving a blank where figures belong.
+// instead of leaving a blank where figures belong. Those wordings keep the
+// "usage" word, because "unavailable" on its own names nothing.
 //
 // The line is budgeted as exactly one row — renderList's chrome accounting
-// depends on it — so segments are dropped from the right until it fits, and a
-// terminal too narrow for even the first one gets no line at all.
+// depends on it — so it is drawn at the most detail that fits, and only then
+// are whole fields dropped from the right; a terminal too narrow for even the
+// first one gets no line at all.
 func (m tuiModel) usageLine() string {
 	if !m.operator || m.usageUnsupported {
 		return ""
 	}
 	if !m.usageLoaded {
 		if m.usageFailed {
-			return m.fitUsageLine([]string{"unavailable"})
+			return m.fitUsageLine(tuiUsageStatus("usage unavailable"))
 		}
 		return ""
 	}
-	segments := tuiUsageWindowTexts(&m.usage.tuiSubscriptionUsage, "")
-	if codex := tuiUsageWindowTexts(m.usage.Codex, "codex "); len(codex) > 0 {
+	segments := tuiUsageWindowSegments(&m.usage.tuiSubscriptionUsage, "")
+	if codex := tuiUsageWindowSegments(m.usage.Codex, "codex "); len(codex) > 0 {
 		// Two accounts on one line: name both, so a bar cannot be read as the
 		// wrong one's.
 		for i := range segments {
-			segments[i] = "claude " + segments[i]
+			segments[i].label = "claude " + segments[i].label
 		}
 		segments = append(segments, codex...)
 	}
 	if cost := tuiUsageCost(m.usage); cost != "" {
-		segments = append(segments, cost)
+		segments = append(segments, tuiUsageSegment{text: cost})
 	}
 	if len(segments) == 0 {
 		// The dashboard's own wording for a readout with nothing in it.
-		return m.fitUsageLine([]string{"n/a"})
+		return m.fitUsageLine(tuiUsageStatus("usage n/a"))
 	}
 	return m.fitUsageLine(segments)
 }
 
-// fitUsageLine assembles the labelled line and trims it to the terminal,
-// dropping whole segments from the right rather than cutting a bar in half.
-func (m tuiModel) fitUsageLine(segments []string) string {
-	const label = "usage  "
-	const indent = 2
-	for n := len(segments); n > 0; n-- {
-		line := label + strings.Join(segments[:n], " • ")
-		if m.width <= 0 || lipgloss.Width(line)+indent <= m.width {
+// tuiUsageStatus is the line reduced to one word about itself, for the states
+// that have no figures to draw.
+func tuiUsageStatus(text string) []tuiUsageSegment {
+	return []tuiUsageSegment{{text: text}}
+}
+
+// fitUsageLine assembles the line and trims it to the terminal: first by
+// spending less width per field (see tuiUsageDetails), and only when even the
+// plainest rendering is too wide by dropping whole fields from the right,
+// rather than cutting a bar in half.
+func (m tuiModel) fitUsageLine(segments []tuiUsageSegment) string {
+	fits := func(line string) bool {
+		const indent = 2
+		return m.width <= 0 || lipgloss.Width(line)+indent <= m.width
+	}
+	render := func(d tuiUsageDetail, n int) string {
+		parts := make([]string, 0, n)
+		for _, s := range segments[:n] {
+			parts = append(parts, s.render(d))
+		}
+		return strings.Join(parts, " • ")
+	}
+	for _, d := range tuiUsageDetails {
+		if line := render(d, len(segments)); fits(line) {
+			return line
+		}
+	}
+	plainest := tuiUsageDetails[len(tuiUsageDetails)-1]
+	for n := len(segments) - 1; n > 0; n-- {
+		if line := render(plainest, n); fits(line) {
 			return line
 		}
 	}

@@ -672,7 +672,8 @@ func TestTUIConsoleShowsTheAccountsUsageLimits(t *testing.T) {
 	c.RefreshUsage()
 
 	view := c.View()
-	assert.Contains(t, view, "usage")
+	// No "usage" label: the line spends its width on the figures themselves.
+	assert.NotContains(t, view, "usage")
 	assert.Contains(t, view, "5h")
 	assert.Contains(t, view, "42%")
 	assert.Contains(t, view, "(3h40m)", "the daemon's own reset timer, counting down")

@@ -113,7 +113,65 @@ func TestTUIUsageLineDoesNotRoundSubCentSpendToZero(t *testing.T) {
 // a cache that has gone stale — gets the dashboard's own wording rather than a
 // blank where the figures belong.
 func TestTUIUsageLineSaysNAWhenTheDaemonHasNoFigures(t *testing.T) {
-	assert.Equal(t, "usage  n/a", loadedUsageModel(tuiUsage{}).usageLine())
+	assert.Equal(t, "usage n/a", loadedUsageModel(tuiUsage{}).usageLine())
+}
+
+// The figures speak for themselves, so the line spends no width on a label —
+// that width belongs to the second account's windows.
+func TestTUIUsageLineCarriesNoLabel(t *testing.T) {
+	line := loadedUsageModel(claudeUsage()).usageLine()
+	assert.NotContains(t, line, "usage")
+	assert.True(t, strings.HasPrefix(line, "5h "), line)
+}
+
+// The point of dropping the label: both accounts' 5h and 7d windows are four
+// fields, and all four must survive on an ordinary terminal.
+func TestTUIUsageLineFitsFourWindowsOnOneRow(t *testing.T) {
+	u := claudeUsage()
+	u.Codex = &tuiSubscriptionUsage{
+		Available: true,
+		FiveHour:  &tuiUsageWindow{Pct: 7, Remaining: "1h2m"},
+		SevenDay:  &tuiUsageWindow{Pct: 63, Remaining: "5d1h"},
+	}
+	u.TotalCostUSD = 12.34
+
+	for _, width := range []int{200, 140, 120, 100, 80, 60} {
+		m := loadedUsageModel(u)
+		m.width = width
+		line := m.usageLine()
+		for _, want := range []string{"claude 5h", "claude 7d", "codex 5h", "codex 7d"} {
+			assert.Contains(t, line, want, "width %d", width)
+		}
+		assert.Contains(t, line, "42%", "width %d", width)
+		assert.Contains(t, line, "63%", "width %d", width)
+		assert.LessOrEqual(t, lipgloss.Width(line)+2, width)
+	}
+}
+
+// Ornament is what a crowded line gives up first: the reset timers, then half
+// the bar, then the bar. A field only goes when nothing else is left to trim.
+func TestTUIUsageLineTrimsOrnamentBeforeFields(t *testing.T) {
+	u := claudeUsage()
+	u.Codex = &tuiSubscriptionUsage{
+		Available: true,
+		FiveHour:  &tuiUsageWindow{Pct: 7, Remaining: "1h2m"},
+		SevenDay:  &tuiUsageWindow{Pct: 63, Remaining: "5d1h"},
+	}
+
+	wide := loadedUsageModel(u)
+	wide.width = 200
+	assert.Contains(t, wide.usageLine(), "(3h41m)", "a wide terminal keeps the reset timers")
+
+	m := loadedUsageModel(u)
+	m.width = 120
+	line := m.usageLine()
+	assert.NotContains(t, line, "(3h41m)", "the timers go before any field does")
+	assert.Contains(t, line, "█", "but the bars are still drawn")
+
+	m.width = 70
+	line = m.usageLine()
+	assert.NotContains(t, line, "█", "then the bars go")
+	assert.Contains(t, line, "codex 7d 63%", "and all four fields are still there")
 }
 
 func TestTUIUsageLineIsAbsentUntilTheFirstReadLands(t *testing.T) {
@@ -133,7 +191,7 @@ func TestTUIUsageLineReportsAReadoutItCouldNotGet(t *testing.T) {
 
 	updated, _ := m.Update(tuiUsageMsg{err: errUsagePoll})
 	failed := updated.(tuiModel)
-	assert.Equal(t, "usage  unavailable", failed.usageLine())
+	assert.Equal(t, "usage unavailable", failed.usageLine())
 
 	// A later success replaces it outright.
 	updated, _ = failed.Update(tuiUsageMsg{usage: claudeUsage()})
@@ -159,7 +217,7 @@ func TestTUIUsageGoesQuietAgainstADaemonWithoutTheEndpoint(t *testing.T) {
 
 	// A daemon that HAS the endpoint and merely failed still gets reported.
 	updated, _ := m.Update(tuiUsageMsg{err: errUsagePoll})
-	assert.Equal(t, "usage  unavailable", updated.(tuiModel).usageLine())
+	assert.Equal(t, "usage unavailable", updated.(tuiModel).usageLine())
 
 	unsupported := fmt.Errorf("GET /v1/usage: %w", &tuiUnsupportedEndpointError{msg: "Not Found"})
 	updated, _ = updated.(tuiModel).Update(tuiUsageMsg{err: unsupported})
@@ -325,6 +383,6 @@ func TestTUIListWithTheUsageLineStillFitsTheTerminal(t *testing.T) {
 	// usageLine is operator-gated, and identityWarning above is only a render.
 	m.operator = true
 
-	require.Contains(t, m.renderList(), "usage")
+	require.Contains(t, m.renderList(), "5h")
 	assert.LessOrEqual(t, strings.Count(m.renderList(), "\n"), m.height)
 }
