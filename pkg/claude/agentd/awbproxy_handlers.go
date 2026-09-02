@@ -65,19 +65,20 @@ type awbIssueRefRequest struct {
 // ignored. See awbFilterOptions.
 type awbFilterRequest struct {
 	awbCompactRequest
-	Statuses      []string `json:"statuses,omitempty"`
-	IncludeClosed bool     `json:"include_closed,omitempty"`
-	Types         []string `json:"types,omitempty"`
-	Priorities    []int    `json:"priorities,omitempty"`
-	PriorityMax   *int     `json:"priority_max,omitempty"`
-	Labels        []string `json:"labels,omitempty"`
-	Assignees     []string `json:"assignees,omitempty"`
-	Mine          bool     `json:"mine,omitempty"`
-	Unassigned    bool     `json:"unassigned,omitempty"`
-	Projects      []string `json:"projects,omitempty"`
-	Parent        string   `json:"parent,omitempty"`
-	Limit         int      `json:"limit,omitempty"`
-	Sort          string   `json:"sort,omitempty"`
+	Statuses       []string `json:"statuses,omitempty"`
+	IncludeClosed  bool     `json:"include_closed,omitempty"`
+	Types          []string `json:"types,omitempty"`
+	Priorities     []int    `json:"priorities,omitempty"`
+	PriorityMax    *int     `json:"priority_max,omitempty"`
+	Labels         []string `json:"labels,omitempty"`
+	Assignees      []string `json:"assignees,omitempty"`
+	Mine           bool     `json:"mine,omitempty"`
+	Unassigned     bool     `json:"unassigned,omitempty"`
+	Workspaces     []string `json:"workspaces,omitempty"`
+	LegacyProjects []string `json:"projects,omitempty"`
+	Parent         string   `json:"parent,omitempty"`
+	Limit          int      `json:"limit,omitempty"`
+	Sort           string   `json:"sort,omitempty"`
 	// Terms is search's own, and empty on the other three.
 	Terms []string `json:"terms,omitempty"`
 }
@@ -100,13 +101,13 @@ type awbFilterOptions struct {
 
 type awbCreateRequest struct {
 	awbCompactRequest
-	Project        string   `json:"project"`
+	Workspace      string   `json:"workspace"`
 	Title          string   `json:"title"`
 	Description    *string  `json:"description,omitempty"`
 	Type           string   `json:"type,omitempty"`
 	Priority       *int     `json:"priority,omitempty"`
 	Labels         []string `json:"labels,omitempty"`
-	Assignee       string   `json:"assignee,omitempty"`
+	Assignees      []string `json:"assignees,omitempty"`
 	HasParent      string   `json:"has_parent,omitempty"`
 	BlockedBy      []string `json:"blocked_by,omitempty"`
 	DiscoveredFrom []string `json:"discovered_from,omitempty"`
@@ -396,8 +397,9 @@ func (s *awbProxySession) awbListingQuery(
 	}
 	q.Set("limit", strconv.Itoa(limit))
 
-	named := make([]string, 0, len(f.Projects))
-	for _, raw := range f.Projects {
+	requested := append(append([]string{}, f.Workspaces...), f.LegacyProjects...)
+	named := make([]string, 0, len(requested))
+	for _, raw := range requested {
 		key, fault := s.validateAWBProject(raw)
 		if fault != nil {
 			return nil, nil, fault
@@ -409,7 +411,7 @@ func (s *awbProxySession) awbListingQuery(
 		return nil, nil, fault
 	}
 	for _, key := range projects {
-		q.Add("project", key)
+		q.Add("workspace", key)
 	}
 	return q, projects, nil
 }
@@ -535,9 +537,9 @@ type awbWhoamiResponse struct {
 	// caller's own grant, absent when it is unscoped. AllowedProjects is what
 	// the ones that ARE present leave this caller — the set every other verb
 	// echoes.
-	OperatorProjects []string `json:"operator_projects,omitempty"`
-	GrantProjects    []string `json:"grant_projects,omitempty"`
-	AllowedProjects  []string `json:"allowed_projects"`
+	OperatorProjects []string `json:"operator_workspaces,omitempty"`
+	GrantProjects    []string `json:"grant_workspaces,omitempty"`
+	AllowedProjects  []string `json:"allowed_workspaces"`
 	// AllowWrite is the operator's own ceiling: false means every mutating verb
 	// is refused however the caller's grants are spelled.
 	AllowWrite bool `json:"allow_write"`
@@ -553,7 +555,7 @@ type awbWhoamiResponse struct {
 	// in it are a different thing — they describe the project rather than
 	// establish that the key exists — and the project gate is exactly the rule
 	// that says this caller may not read them. See awbWhoamiProject.
-	Projects []awbWhoamiProject `json:"projects"`
+	Projects []awbWhoamiProject `json:"workspaces"`
 	// Note carries a best-effort read that failed. The membership read is the
 	// one call here whose failure must not fail the verb: a server with no
 	// users has no account to read, and `whoami` is exactly the command an
@@ -610,7 +612,7 @@ func handleAWBProxyWhoami(w http.ResponseWriter, r *http.Request) {
 
 	var projects []awbProject
 	if _, fault := s.exec(r.Context(), awbCall{
-		Method: http.MethodGet, Path: "/api/projects",
+		Method: http.MethodGet, Path: "/api/workspaces",
 	}, &projects); fault != nil {
 		writeProxyFault(w, fault)
 		return
@@ -649,9 +651,9 @@ func (s *awbProxySession) whoamiAccess(ctx context.Context, resp *awbWhoamiRespo
 		resp.Note = "could not read the daemon account's memberships: " + fault.Msg
 		return nil
 	}
-	access := make(map[string]string, len(user.Projects))
-	for _, m := range user.Projects {
-		access[strings.ToLower(strings.TrimSpace(m.Project))] = m.Access
+	access := make(map[string]string, len(user.Workspaces))
+	for _, m := range user.Workspaces {
+		access[strings.ToLower(strings.TrimSpace(m.Workspace))] = m.Access
 	}
 	return access
 }
@@ -1044,12 +1046,12 @@ func (s *awbProxySession) gateAttachment(body *awbAttachNameRequest) (ref, name 
 // AWB rejects an unrecognised field rather than ignoring it, so this is spelled
 // out rather than assembled from a map.
 type awbIssueCreateBody struct {
-	Project     string               `json:"project"`
+	Workspace   string               `json:"workspace"`
 	Title       string               `json:"title"`
 	Description *string              `json:"description,omitempty"`
 	Type        string               `json:"type,omitempty"`
 	Priority    *int                 `json:"priority,omitempty"`
-	Assignee    string               `json:"assignee,omitempty"`
+	Assignees   []string             `json:"assignees,omitempty"`
 	Labels      []string             `json:"labels,omitempty"`
 	Relations   []awbNewRelationBody `json:"relations,omitempty"`
 }
@@ -1066,16 +1068,20 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	project, fault := s.validateAWBProject(body.Project)
+	// Validate every caller-controlled field before spending the operator's
+	// account on workspace discovery. The workspace is populated only after
+	// the otherwise complete payload has passed its cheap local gates.
+	payload, fault := s.buildAWBCreateBody("", &body)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
-	payload, fault := s.buildAWBCreateBody(project, &body)
+	project, fault := s.resolveCreateWorkspace(r.Context(), body.Workspace)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return
 	}
+	payload.Workspace = project
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "io", "could not encode the AWB request")
@@ -1102,6 +1108,26 @@ func handleAWBProxyIssueCreate(w http.ResponseWriter, r *http.Request) {
 	s.respond(w, r, "issue.create", body.Compact, &issue, issue.ID+"\n", "issue="+issue.ID)
 }
 
+// resolveCreateWorkspace accepts an explicit workspace or infers the only
+// workspace both visible to the daemon account and admitted by this caller's
+// effective proxy gate. Ambiguity is refused before the mutation.
+func (s *awbProxySession) resolveCreateWorkspace(ctx context.Context, raw string) (string, *proxyFault) {
+	if strings.TrimSpace(raw) != "" {
+		return s.validateAWBProject(raw)
+	}
+	workspaces, fault := s.listingProjects(ctx, nil)
+	if fault != nil {
+		return "", fault
+	}
+	if len(workspaces) > 1 {
+		return "", faultf(http.StatusBadRequest, "invalid_arg",
+			"--workspace is required because several visible workspaces are within this caller's proxy gate: %s; "+
+				"run `tclaude proxy awb whoami` to inspect workspace access",
+			strings.Join(workspaces, ", "))
+	}
+	return workspaces[0], nil
+}
+
 // buildAWBCreateBody validates every field of a create and assembles AWB's
 // request body.
 //
@@ -1117,7 +1143,7 @@ func (s *awbProxySession) buildAWBCreateBody(
 	if fault != nil {
 		return nil, fault
 	}
-	out := &awbIssueCreateBody{Project: project, Title: title}
+	out := &awbIssueCreateBody{Workspace: project, Title: title}
 	if body.Description != nil {
 		if fault := validateAWBDescription(*body.Description); fault != nil {
 			return nil, fault
@@ -1133,10 +1159,12 @@ func (s *awbProxySession) buildAWBCreateBody(
 		}
 		out.Priority = body.Priority
 	}
-	if strings.TrimSpace(body.Assignee) != "" {
-		if out.Assignee, fault = validateAWBAssignee(body.Assignee); fault != nil {
-			return nil, fault
+	for _, raw := range body.Assignees {
+		assignee, assignFault := validateAWBAssignee(raw)
+		if assignFault != nil {
+			return nil, assignFault
 		}
+		out.Assignees = append(out.Assignees, assignee)
 	}
 	for _, raw := range body.Labels {
 		label, fault := validateAWBLabel(raw)

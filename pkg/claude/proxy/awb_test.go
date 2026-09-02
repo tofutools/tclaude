@@ -96,7 +96,7 @@ func TestAWBReadyHidesTheFiltersItFixesForItself(t *testing.T) {
 	for _, flag := range []string{"mine", "assignee", "unassigned", "status", "include-closed"} {
 		assert.Nil(t, ready.Flags().Lookup(flag), "`awb ready` must not offer --%s", flag)
 	}
-	for _, flag := range []string{"type", "priority", "label", "project", "parent", "sort", "limit"} {
+	for _, flag := range []string{"type", "priority", "label", "workspace", "parent", "sort", "limit"} {
 		assert.NotNil(t, ready.Flags().Lookup(flag), "`awb ready` must offer --%s", flag)
 	}
 
@@ -132,6 +132,16 @@ func TestAWBSortVocabularyIsPerVerb(t *testing.T) {
 	assert.NotContains(t, awbSortAlternatives(false), "relevance")
 	assert.Contains(t, awbSortAlternatives(true), "relevance")
 	assert.Contains(t, awbSortAlternatives(false), "-priority")
+	for _, sort := range []string{"order", "workspace", "status", "assignee", "blockers"} {
+		assert.Contains(t, awbSortAlternatives(false), sort)
+	}
+}
+
+func TestAWBProxyOutcomeAcceptsLegacyProjects(t *testing.T) {
+	var out awbProxyOutcome
+	require.NoError(t, json.Unmarshal([]byte(`{"projects":["awb"]}`), &out))
+	out.normalizeCompatibility()
+	assert.Equal(t, []string{"awb"}, out.Projects)
 }
 
 // --- the output modes ---
@@ -206,11 +216,16 @@ func parsedAWBCreate(t *testing.T, argv ...string) (*cobra.Command, *awbCreatePa
 		require.NoError(t, err)
 		return v
 	}
+	getAll := func(name string) []string {
+		v, err := flags.GetStringSlice(name)
+		require.NoError(t, err)
+		return v
+	}
 	p.Description = get("description")
 	p.DescriptionFile = get("description-file")
-	p.Project = get("project")
+	p.Workspace = get("workspace")
 	p.Type = get("type")
-	p.Assignee = get("assignee")
+	p.Assignees = getAll("assignee")
 	p.HasParent = get("has-parent")
 	if flags.Changed("priority") {
 		v, err := flags.GetInt("priority")
@@ -237,25 +252,25 @@ func parsedAWBCreate(t *testing.T, argv ...string) (*cobra.Command, *awbCreatePa
 
 func TestAWBCreateBody(t *testing.T) {
 	t.Run("the minimum, with nothing invented", func(t *testing.T) {
-		cmd, p := parsedAWBCreate(t, "--project", "awb", "Parser crashes")
+		cmd, p := parsedAWBCreate(t, "--workspace", "awb", "Parser crashes")
 		body, rc := buildAWBCreateBody(p, cmd, strings.NewReader(""), os.Stderr)
 		require.Equal(t, rcOK, rc)
 		assert.Equal(t, map[string]any{
-			"project": "awb", "title": "Parser crashes", "compact": false,
+			"workspace": "awb", "title": "Parser crashes", "compact": false,
 		}, body, "an omitted type and priority must be AWB's defaults, not zeroes this sends")
 	})
 
 	t.Run("everything", func(t *testing.T) {
 		cmd, p := parsedAWBCreate(t,
-			"--project", "awb", "--type", "bug", "--priority", "1",
-			"--assignee", "claude-1", "--has-parent", "awb-000001",
+			"--workspace", "awb", "--type", "bug", "--priority", "1",
+			"--assignee", "claude-1", "--assignee", "claude-2", "--has-parent", "awb-000001",
 			"--blocked-by", "awb-000002", "--related", "awb-000003",
 			"--description", "body text", "Parser crashes")
 		body, rc := buildAWBCreateBody(p, cmd, strings.NewReader(""), os.Stderr)
 		require.Equal(t, rcOK, rc)
 		assert.Equal(t, "bug", body["type"])
 		assert.Equal(t, 1, body["priority"])
-		assert.Equal(t, "claude-1", body["assignee"])
+		assert.Equal(t, []string{"claude-1", "claude-2"}, body["assignees"])
 		assert.Equal(t, "awb-000001", body["has_parent"])
 		assert.Equal(t, []string{"awb-000002"}, body["blocked_by"])
 		assert.Equal(t, []string{"awb-000003"}, body["related"])
@@ -263,30 +278,31 @@ func TestAWBCreateBody(t *testing.T) {
 	})
 
 	t.Run("priority 0 is a real priority", func(t *testing.T) {
-		cmd, p := parsedAWBCreate(t, "--project", "awb", "--priority", "0", "Urgent")
+		cmd, p := parsedAWBCreate(t, "--workspace", "awb", "--priority", "0", "Urgent")
 		body, rc := buildAWBCreateBody(p, cmd, strings.NewReader(""), os.Stderr)
 		require.Equal(t, rcOK, rc)
 		assert.Equal(t, 0, body["priority"],
 			"0 is the HIGHEST priority, so an unset int cannot stand in for 'not asked for'")
 	})
 
-	t.Run("--project is required, because there is no directory context", func(t *testing.T) {
+	t.Run("workspace may be omitted for daemon-side inference", func(t *testing.T) {
 		cmd, p := parsedAWBCreate(t, "Parser crashes")
 		var stderr bytes.Buffer
-		_, rc := buildAWBCreateBody(p, cmd, strings.NewReader(""), &stderr)
-		assert.Equal(t, rcInvalidArg, rc)
-		assert.Contains(t, stderr.String(), "--project is required")
+		body, rc := buildAWBCreateBody(p, cmd, strings.NewReader(""), &stderr)
+		assert.Equal(t, rcOK, rc)
+		assert.NotContains(t, body, "workspace")
+		assert.Empty(t, stderr.String())
 	})
 
 	t.Run("a title is required", func(t *testing.T) {
-		cmd, p := parsedAWBCreate(t, "--project", "awb")
+		cmd, p := parsedAWBCreate(t, "--workspace", "awb")
 		var stderr bytes.Buffer
 		_, rc := buildAWBCreateBody(p, cmd, strings.NewReader(""), &stderr)
 		assert.Equal(t, rcInvalidArg, rc)
 	})
 
 	t.Run("--description-file - reads stdin", func(t *testing.T) {
-		cmd, p := parsedAWBCreate(t, "--project", "awb", "--description-file", "-", "Thing")
+		cmd, p := parsedAWBCreate(t, "--workspace", "awb", "--description-file", "-", "Thing")
 		body, rc := buildAWBCreateBody(p, cmd, strings.NewReader("from stdin"), os.Stderr)
 		require.Equal(t, rcOK, rc)
 		assert.Equal(t, "from stdin", body["description"])
@@ -452,14 +468,14 @@ func TestAWBFilterBody(t *testing.T) {
 	limit := 10
 	v := awbFilterValues{
 		Statuses: []string{"open", " "}, Types: []string{"bug"}, Labels: []string{"parser"},
-		Projects: []string{"awb"}, Mine: true, Limit: limit, Sort: "-priority",
+		Workspaces: []string{"awb"}, Mine: true, Limit: limit, Sort: "-priority",
 		Priorities: []int{0, 1},
 	}
 	body := v.body(true)
 	assert.Equal(t, []string{"open"}, body["statuses"], "a blank repeated value is dropped")
 	assert.Equal(t, []string{"bug"}, body["types"])
 	assert.Equal(t, []string{"parser"}, body["labels"])
-	assert.Equal(t, []string{"awb"}, body["projects"])
+	assert.Equal(t, []string{"awb"}, body["workspaces"])
 	assert.Equal(t, []int{0, 1}, body["priorities"])
 	assert.Equal(t, true, body["mine"])
 	assert.Equal(t, 10, body["limit"])
@@ -556,7 +572,7 @@ func TestAWBHelpDoesNotPromiseCloseReasonClearing(t *testing.T) {
 
 	reopen, _, err := root.Find([]string{"reopen"})
 	require.NoError(t, err)
-	assert.Contains(t, reopen.Short, "clear the assignee",
+	assert.Contains(t, reopen.Short, "clear every assignee",
 		"reopen's short help should say what it actually does")
 }
 
