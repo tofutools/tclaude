@@ -9,7 +9,7 @@ description: >-
   record what you found, close it, decompose it into children, relate it to a
   blocker, or attach a file to it. Gated on the
   `proxy.awb.read` / `proxy.awb.write` slugs, neither granted by default, and
-  bounded by an operator allow-list of AWB projects, an `awb_project` scope on
+  bounded by an operator allow-list of AWB workspaces, an `awb_workspace` scope on
   your own grant, or both.
 ---
 
@@ -44,17 +44,17 @@ tclaude proxy awb whoami
 ```
 
 It tells you what you would otherwise have to discover from a 403: which server
-the daemon calls, which account it authenticates as, every project that account
+the daemon calls, which account it authenticates as, every workspace that account
 can see, and which of those **you** may reach. When something is refused, this
 is the command whose output tells the operator exactly what to add.
 
 Up to two independent lists bound you, and `whoami` reports both, because they
 need different fixes:
 
-- `operator_workspaces` — `agent.awb_proxy.allowed_projects`, the ceiling for
+- `operator_workspaces` — `agent.awb_proxy.allowed_workspaces`, the ceiling for
   every agent on this host. Absent means the operator configured no global list,
   and your grant's scope is the whole policy.
-- `grant_workspaces` — the `awb_project` scope on **your own** `proxy.awb.read` /
+- `grant_workspaces` — the `awb_workspace` scope on **your own** `proxy.awb.read` /
   `proxy.awb.write` grant, when it has one. Absent means your grant is unscoped
   and the operator's list alone bounds you.
 
@@ -69,7 +69,7 @@ Each entry under `workspaces` carries `reachable`. A workspace you MAY reach is
 described in full — its name, its open-issue count, and the `access` the
 daemon's account holds there. One you may not is reported as its **key alone**:
 enough to ask the operator to add it, and nothing about what is inside it. A
-project the account cannot see does not appear at all — which is itself the
+workspace the account cannot see does not appear at all — which is itself the
 answer, and why the two lists are printed side by side.
 
 ## Prerequisites
@@ -80,14 +80,14 @@ answer, and why the two lists are printed side by side.
 
 **The operator must have configured the proxy.** A `503 awb_not_configured`
 means there is no server to call; `503 awb_proxy_disabled` means there is a
-server but no project policy. Quote this to them:
+server but no workspace policy. Quote this to them:
 
 ```json
 { "agent": { "awb_proxy": {
     "url": "https://awb.example",
     "username": "tclaude-bot",
     "password_file": "~/.tclaude/awb-password.txt",
-    "allowed_projects": ["awb"],
+    "allowed_workspaces": ["awb"],
     "allow_write": false
 } } }
 ```
@@ -246,27 +246,27 @@ a path it reads out of your work tree, so it is capped at 8 MiB either way.
 
 ## Things that will refuse you, and why
 
-**Use `<project>-<hash>`, never a bare hash.** `awb-a3f9c1` is the form, and a
+**Use `<workspace>-<hash>`, never a bare hash.** `awb-a3f9c1` is the form, and a
 hash prefix such as `awb-a3f` works too. A bare `a3f9c1` — which `awb` itself
-accepts — is refused here: it names no project, and the project is what the gate
+accepts — is refused here: it names no workspace, and the workspace is what the gate
 is checked against.
 
-**Project keys match exactly.** `web` does not authorize `webhooks`, and there
+**Workspace keys match exactly.** `web` does not authorize `webhooks`, and there
 is no wildcard.
 
 Three refusals mean three different fixes, so read the code before escalating:
 
-- `403 project_not_allowed` — the project is not on the operator's
-  `agent.awb_proxy.allowed_projects`. Ask them to add it.
-- `403 project_out_of_scope` — **your** grant's project scope excludes it. Ask
+- `403 workspace_not_allowed` — the workspace is not on the operator's
+  `agent.awb_proxy.allowed_workspaces`. Ask them to add it.
+- `403 workspace_out_of_scope` — **your** grant's workspace scope excludes it. Ask
   the human to widen your grant, quoting **the slug the refusal names** — read
   and write carry independent scopes, so a `proxy.awb.write` denial is not fixed
   by widening `proxy.awb.read`:
-  `tclaude agent permissions grant <you> proxy.awb.write --scope awb_project=awb,web`
-  (a `--scope` replaces the previous one, so name every project you need).
-- `403 project_scope_empty` — your project scope authorizes nothing at all: it
+  `tclaude agent permissions grant <you> proxy.awb.write --scope awb_workspace=awb,web`
+  (a `--scope` replaces the previous one, so name every workspace you need).
+- `403 workspace_scope_empty` — your workspace scope authorizes nothing at all: it
   overlaps a configured operator list nowhere, or it constrains something an AWB
-  request cannot describe, or it carries no `awb_project` at all. The message
+  request cannot describe, or it carries no `awb_workspace` at all. The message
   says which.
 
 Each message names what excluded you and what to change; pass it verbatim to the
@@ -285,8 +285,8 @@ guessing again.
 
 **`404 not_found` usually means you typo'd the id.** Check it against `ready` or
 `list` rather than escalating. It also appears when the daemon's account is not
-a member of the project — AWB answers a project you cannot see with 404 rather
-than 403, deliberately, so that it does not tell you the project exists.
+a member of the workspace — AWB answers a workspace you cannot see with 404 rather
+than 403, deliberately, so that it does not tell you the workspace exists.
 
 **`409 awb_conflict` is a constraint that depends on stored state**: a
 dependency cycle, an issue somebody else holds, a parent already set, or a
@@ -298,7 +298,7 @@ drops every relation. Prefer `close --reason`, which records why and can be
 reopened.
 
 **`dep tree` is pruned to what you may see.** AWB follows children across
-project boundaries; a child in a project outside your gate is dropped together
+workspace boundaries; a child in a workspace outside your gate is dropped together
 with its own subtree rather than returned.
 
 **A truncated `attach get` is refused rather than written.** AWB records each

@@ -1434,7 +1434,7 @@ func buildMux() http.Handler {
 	// AWB proxy. agentd calls the operator's Agent Work Board server with the
 	// operator's account so a sandboxed agent never holds its password. Gated
 	// on the proxy.awb.* slugs (neither default-granted) AND on the operator's
-	// agent.awb_proxy policy; the project the request may act in comes from the
+	// agent.awb_proxy policy; the workspace the request may act in comes from the
 	// allow-list and the caller's grant scope, never from a bare request
 	// parameter that has not been through both.
 	mux.HandleFunc("POST /v1/awb/whoami", handleAWBProxyWhoami)

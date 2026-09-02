@@ -672,23 +672,23 @@ var permissionRegistry = []PermSlug{
 	},
 	{
 		Slug:      PermAWBRead,
-		ScopeDims: []ScopeDim{ScopeDimAWBProject},
+		ScopeDims: []ScopeDim{ScopeDimAWBWorkspace},
 		Description: "Read AWB issues through the daemon's AWB account (tclaude proxy awb whoami, show, list, ready, blocked, " +
 			"search, dep tree, comment list, activity, attach list/show/get). Note that comment list and activity carry " +
 			"third-party prose — anyone with tracker access can write a comment — into the agent's context. Narrowable per agent " +
-			"with --scope awb_project=awb: with an operator " +
-			"agent.awb_proxy.allowed_projects list configured the two intersect and the scope can only narrow it, while with no " +
-			"such list a scoped grant is the whole project policy. An UNSCOPED grant is refused outright when the operator has " +
+			"with --scope awb_workspace=awb: with an operator " +
+			"agent.awb_proxy.allowed_workspaces list configured the two intersect and the scope can only narrow it, while with no " +
+			"such list a scoped grant is the whole workspace policy. An UNSCOPED grant is refused outright when the operator has " +
 			"no list. Not default-granted: it reads the operator's tracker as them.",
 	},
 	{
 		Slug:      PermAWBWrite,
-		ScopeDims: []ScopeDim{ScopeDimAWBProject},
+		ScopeDims: []ScopeDim{ScopeDimAWBWorkspace},
 		Description: "Create, update, claim, release, close, reopen and DELETE AWB issues, comment on them, label them, relate " +
 			"them, and attach files, through the daemon's AWB account (tclaude proxy awb create/update/claim/release/close/reopen/delete, " +
 			"comment add, label add|rm, dep add|rm, attach add|delete). Everything it writes is attributed to the operator's AWB user, and it " +
 			"additionally requires agent.awb_proxy.allow_write. Note that delete is a HARD delete AWB cannot undo; it needs " +
-			"--force on top of this slug. Narrowable per agent with --scope awb_project=awb, on the same terms as proxy.awb.read " +
+			"--force on top of this slug. Narrowable per agent with --scope awb_workspace=awb, on the same terms as proxy.awb.read " +
 			"and independently of it, so read and write reach can differ. Not default-granted and not owner-implied.",
 	},
 }

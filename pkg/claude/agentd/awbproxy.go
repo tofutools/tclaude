@@ -36,24 +36,24 @@ import (
 //     path or a filter expression.
 //
 //  2. THERE IS NO ANCHOR. AWB has no filesystem artifact that ties a
-//     conversation to an issue, so — exactly as in the Linear proxy — a PROJECT
+//     conversation to an issue, so — exactly as in the Linear proxy — a WORKSPACE
 //     SET is the whole scope gate: mandatory, fail-closed, and checked twice.
-//     Once on the project key carried by the issue reference the caller
-//     supplied, and again on the project AWB reports on the issue it returned
-//     (see enforceIssueProject). The set has two independent sources and a
+//     Once on the workspace key carried by the issue reference the caller
+//     supplied, and again on the workspace AWB reports on the issue it returned
+//     (see enforceIssueWorkspace). The set has two independent sources and a
 //     request may act only within BOTH: the operator's
-//     agent.awb_proxy.allowed_projects, and — when the caller's
-//     proxy.awb.read / proxy.awb.write grant carries an `awb_project` scope —
-//     the projects that grant names. See awbEffectiveProjects.
+//     agent.awb_proxy.allowed_workspaces, and — when the caller's
+//     proxy.awb.read / proxy.awb.write grant carries an `awb_workspace` scope —
+//     the workspaces that grant names. See awbEffectiveWorkspaces.
 //
 //  3. THERE IS ONE CREDENTIAL. A Linear personal key reaches one workspace, so
-//     that proxy routes teams to keys; an AWB account reaches every project it
+//     that proxy routes teams to keys; an AWB account reaches every workspace it
 //     is a member of on the one server the operator configured. There is
 //     therefore no routing layer here at all — one URL, one username, one
 //     password, and the multi-key machinery of linearproxy.go has no analogue.
 //
 // AWB applies its OWN authorization on top of ours: the daemon's account works
-// in the projects it is a member of and a project it holds no access to is
+// in the workspaces it is a member of and a workspace it holds no access to is
 // answered 404. That is a second, independent gate and not a substitute for
 // this one — it bounds the operator, while this bounds the agent.
 
@@ -63,8 +63,8 @@ const (
 
 	// awbProxyBudget bounds a whole REQUEST, however many calls the verb makes.
 	// Several verbs make more than one — an identifier-shaped write reads the
-	// issue first to confirm its project before mutating it, and an unfiltered
-	// listing resolves the server's project list before it can build a filter.
+	// issue first to confirm its workspace before mutating it, and an unfiltered
+	// listing resolves the server's workspace list before it can build a filter.
 	// A per-call bound alone would let the daemon run past the window the CLI
 	// waits on, and the resulting ambiguity is the bad one: the agent cannot
 	// tell whether the write landed, and a retry writes twice.
@@ -107,9 +107,9 @@ const (
 	// maxAWBTitleLen bounds an issue title, in runes. AWB's own cap.
 	maxAWBTitleLen = 500
 
-	// maxAWBProjectKeyLen bounds a project key. AWB's own cap; applied both to
-	// a caller's --project and to an `awb_project` permission-scope matcher.
-	maxAWBProjectKeyLen = 16
+	// maxAWBWorkspaceKeyLen bounds a workspace key. AWB's own cap; applied both to
+	// a caller's --workspace and to an `awb_workspace` permission-scope matcher.
+	maxAWBWorkspaceKeyLen = 16
 
 	// maxAWBLabelLen bounds a label or an assignee. AWB gives the two one
 	// charset and one length, so they get one constant here too.
@@ -163,33 +163,33 @@ const (
 	defaultAWBLimit = 50
 
 	// awbProxyDisabledCode / …Message are the fail-closed answer when the
-	// operator has not opted in AND the caller's grant carries no project scope
+	// operator has not opted in AND the caller's grant carries no workspace scope
 	// of its own. Distinct from a permission denial: nothing the agent can do
 	// turns this into a success — only the operator, by writing one of the two
 	// lists.
 	awbProxyDisabledCode    = "awb_proxy_disabled"
-	awbProxyDisabledMessage = "the AWB proxy has no project policy for this unscoped grant: the operator has not set " +
-		"agent.awb_proxy.allowed_projects in ~/.tclaude/data/config.json, and an empty allow-list means " +
-		"no project is reachable. Ask the operator to allow-list the project, or to scope the grant by " +
-		"project (tclaude agent permissions grant <agent> proxy.awb.read --scope awb_project=awb)."
+	awbProxyDisabledMessage = "the AWB proxy has no workspace policy for this unscoped grant: the operator has not set " +
+		"agent.awb_proxy.allowed_workspaces in ~/.tclaude/data/config.json, and an empty allow-list means " +
+		"no workspace is reachable. Ask the operator to allow-list the workspace, or to scope the grant by " +
+		"workspace (tclaude agent permissions grant <agent> proxy.awb.read --scope awb_workspace=awb)."
 
-	// awbProjectOutOfScopeCode is the refusal for a project the OPERATOR allows
-	// but this caller's grant does not. Distinct from project_not_allowed so an
+	// awbWorkspaceOutOfScopeCode is the refusal for a workspace the OPERATOR allows
+	// but this caller's grant does not. Distinct from workspace_not_allowed so an
 	// agent reading the code can tell its human which of the two lists to widen.
-	awbProjectOutOfScopeCode = "project_out_of_scope"
+	awbWorkspaceOutOfScopeCode = "workspace_out_of_scope"
 
-	// awbProjectScopeEmptyCode is the refusal when the caller's project scope
+	// awbWorkspaceScopeEmptyCode is the refusal when the caller's workspace scope
 	// and the operator's allow-list do not overlap at all, so the grant
 	// authorizes nothing however the request is spelled. Reported once, up
-	// front, rather than as a per-project refusal on every verb.
-	awbProjectScopeEmptyCode = "project_scope_empty"
+	// front, rather than as a per-workspace refusal on every verb.
+	awbWorkspaceScopeEmptyCode = "workspace_scope_empty"
 
 	// awbMisconfiguredCode is the refusal for an operator policy the daemon
 	// cannot act on: a URL that is not http(s), or one carrying userinfo.
 	awbMisconfiguredCode = "awb_proxy_misconfigured"
 
 	// awbNotConfiguredCode is the refusal when no server URL is configured at
-	// all. Separate from awbProxyDisabledCode, which is about the project
+	// all. Separate from awbProxyDisabledCode, which is about the workspace
 	// policy: this one says there is nothing to call.
 	awbNotConfiguredCode = "awb_not_configured"
 )
@@ -301,7 +301,7 @@ func doAWBRequest(ctx context.Context, req AWBProxyRequest) (awbHTTPResult, erro
 // ---------------------------------------------------------------------------
 
 // awbProxySession is one AWB invocation context: the operator's policy, the
-// caller's effective project set, and the credential that reaches the server.
+// caller's effective workspace set, and the credential that reaches the server.
 type awbProxySession struct {
 	policy config.AWBProxyConfig
 	// base is the validated server URL, without a trailing slash.
@@ -311,19 +311,19 @@ type awbProxySession struct {
 	// a unit test that built a session directly.
 	deadline time.Time
 
-	// projects is the ONE project gate every check in this package consults:
+	// workspaces is the ONE workspace gate every check in this package consults:
 	// the operator's allow-list narrowed by the caller's grant scope,
 	// lower-cased. Never empty on a session that was returned — an empty
 	// intersection is a fault, not a session that quietly authorizes nothing.
-	projects []string
+	workspaces []string
 
-	// grantProjects is the projects the caller's OWN grant admits, lower-cased,
+	// grantWorkspaces is the workspaces the caller's OWN grant admits, lower-cased,
 	// before the operator's ceiling is applied — nil when the grant is
 	// unscoped. It is evaluated, not merely enumerated, so it never names a
-	// project the scope would refuse (see awbEffectiveProjects). Reported,
-	// never gated on: projects is the gate, and this exists so a refusal can
+	// workspace the scope would refuse (see awbEffectiveWorkspaces). Reported,
+	// never gated on: workspaces is the gate, and this exists so a refusal can
 	// say which of the two lists excluded a key.
-	grantProjects []string
+	grantWorkspaces []string
 
 	// password, passwordLoaded and passwordFault memoize the credential read:
 	// one file read per request however many calls the verb makes.
@@ -331,29 +331,29 @@ type awbProxySession struct {
 	passwordLoaded bool
 	passwordFault  *proxyFault
 
-	// serverProjects memoizes the intersection of the effective set with the
-	// projects the server actually has and the daemon's account can see. It is
+	// serverWorkspaces memoizes the intersection of the effective set with the
+	// workspaces the server actually has and the daemon's account can see. It is
 	// resolved lazily because only an unfiltered listing needs it.
-	serverProjects       []string
-	serverProjectsLoaded bool
-	serverProjectsFault  *proxyFault
+	serverWorkspaces       []string
+	serverWorkspacesLoaded bool
+	serverWorkspacesFault  *proxyFault
 }
 
 // newAWBProxySession runs the operator-policy gates and resolves the caller's
-// effective project set.
+// effective workspace set.
 //
 // Ordering matches the Linear proxy's: the fail-closed policy checks come
 // before anything that could touch the network, so a caller holding
 // proxy.awb.read against an unconfigured daemon gets "not configured" rather
 // than a connection error.
 //
-// perm is the slug the calling verb gates on, and projectScoped says the
+// perm is the slug the calling verb gates on, and workspaceScoped says the
 // permission preflight deferred its decision because that grant is
-// project-scoped (see preflightProxyPermission). Both are needed here rather
+// workspace-scoped (see preflightProxyPermission). Both are needed here rather
 // than at the gate, because the scope has to be resolved into a SET before any
 // verb runs — see the file header.
 func newAWBProxySession(
-	r *http.Request, convID, perm string, projectScoped bool,
+	r *http.Request, convID, perm string, workspaceScoped bool,
 ) (*awbProxySession, *proxyFault) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -365,16 +365,16 @@ func newAWBProxySession(
 	if fault != nil {
 		return nil, fault
 	}
-	projects, grantProjects, fault := awbEffectiveProjects(r, convID, perm, policy, projectScoped)
+	workspaces, grantWorkspaces, fault := awbEffectiveWorkspaces(r, convID, perm, policy, workspaceScoped)
 	if fault != nil {
 		return nil, fault
 	}
 	return &awbProxySession{
-		policy:        policy,
-		base:          base,
-		deadline:      time.Now().Add(awbProxyBudget),
-		projects:      projects,
-		grantProjects: grantProjects,
+		policy:          policy,
+		base:            base,
+		deadline:        time.Now().Add(awbProxyBudget),
+		workspaces:      workspaces,
+		grantWorkspaces: grantWorkspaces,
 	}, nil
 }
 
@@ -415,39 +415,39 @@ func validateAWBBaseURL(raw string) (string, *proxyFault) {
 	return raw, nil
 }
 
-// awbEffectiveProjects resolves the project set one request may act within,
+// awbEffectiveWorkspaces resolves the workspace set one request may act within,
 // from the operator's allow-list and the caller's grant scope.
 //
-// It is awbEffectiveProjects and linearEffectiveTeams that make the two proxies
+// It is awbEffectiveWorkspaces and linearEffectiveTeams that make the two proxies
 // behave alike, and the rules are deliberately identical:
 //
 //   - unscoped grant, operator list  → the operator's list;
 //   - scoped grant, operator list    → the intersection, so an operator can
 //     narrow one agent without touching the global list, and a grant can never
 //     widen past it;
-//   - scoped grant, no operator list → the grant's own projects;
+//   - scoped grant, no operator list → the grant's own workspaces;
 //   - unscoped grant, no operator list → nothing is reachable: the fail-closed
 //     awb_proxy_disabled answer.
 //
 // It resolves in TWO steps for the reason the Linear one does. First, which
-// projects the SCOPE admits on its own merits: every project the scope names,
+// workspaces the SCOPE admits on its own merits: every workspace the scope names,
 // put through the real evaluator, because permissionScopeEnumerate unions the
 // matchers across the winning tier's rows and so NAMES more than it admits.
 // Second, the operator's ceiling intersected over that. Separating the steps
 // puts the two ways an empty result arises on two different paths, so each gets
 // the refusal that names what the operator would actually have to change.
-func awbEffectiveProjects(
-	r *http.Request, convID, perm string, policy config.AWBProxyConfig, projectScoped bool,
-) (projects, grantProjects []string, fault *proxyFault) {
-	if !projectScoped {
-		if len(policy.AllowedProjects) == 0 {
+func awbEffectiveWorkspaces(
+	r *http.Request, convID, perm string, policy config.AWBProxyConfig, workspaceScoped bool,
+) (workspaces, grantWorkspaces []string, fault *proxyFault) {
+	if !workspaceScoped {
+		if len(policy.AllowedWorkspaces) == 0 {
 			return nil, nil, &proxyFault{
 				Status: http.StatusServiceUnavailable,
 				Code:   awbProxyDisabledCode,
 				Msg:    awbProxyDisabledMessage,
 			}
 		}
-		return policy.AllowedProjects, nil, nil
+		return policy.AllowedWorkspaces, nil, nil
 	}
 	// A SECOND resolution, because the preflight's verdict does not travel
 	// here. It re-reads the same request-scoped defaults, so in the ordinary
@@ -460,59 +460,59 @@ func awbEffectiveProjects(
 		return nil, nil, faultf(http.StatusForbidden, "permission",
 			"the %s grant was withdrawn while this request was being authorized", perm)
 	}
-	named, ok := permissionScopeEnumerate(v, ScopeDimAWBProject)
+	named, ok := permissionScopeEnumerate(v, ScopeDimAWBWorkspace)
 	if !ok || len(named) == 0 {
-		return nil, nil, faultf(http.StatusForbidden, awbProjectScopeEmptyCode,
-			"the %s grant is scoped, but names no AWB project this daemon can act on; "+
-				"the scope must carry awb_project (e.g. --scope awb_project=awb)", perm)
+		return nil, nil, faultf(http.StatusForbidden, awbWorkspaceScopeEmptyCode,
+			"the %s grant is scoped, but names no AWB workspace this daemon can act on; "+
+				"the scope must carry awb_workspace (e.g. --scope awb_workspace=awb)", perm)
 	}
 	for _, key := range named {
-		if evalPermissionScope(v, convID, ActionContext{AWBProject: key}).Satisfied {
-			grantProjects = appendProjectKey(grantProjects, key)
+		if evalPermissionScope(v, convID, ActionContext{AWBWorkspace: key}).Satisfied {
+			grantWorkspaces = appendWorkspaceKey(grantWorkspaces, key)
 		}
 	}
-	if len(grantProjects) == 0 {
-		// The scope names projects but admits none of them, so something else
+	if len(grantWorkspaces) == 0 {
+		// The scope names workspaces but admits none of them, so something else
 		// in the same scope refused. The operator's list is not the thing to
 		// edit.
-		return nil, nil, faultf(http.StatusForbidden, awbProjectScopeEmptyCode,
-			"the %s grant names project(s) %s, but its scope also constrains a dimension an AWB "+
+		return nil, nil, faultf(http.StatusForbidden, awbWorkspaceScopeEmptyCode,
+			"the %s grant names workspace(s) %s, but its scope also constrains a dimension an AWB "+
 				"request does not describe, so it authorizes nothing; the scope must constrain "+
-				"awb_project alone", perm, strings.Join(lowerProjectKeys(named), ", "))
+				"awb_workspace alone", perm, strings.Join(lowerWorkspaceKeys(named), ", "))
 	}
-	if len(policy.AllowedProjects) == 0 {
+	if len(policy.AllowedWorkspaces) == 0 {
 		// No operator list: the scope is the whole policy.
-		return grantProjects, grantProjects, nil
+		return grantWorkspaces, grantWorkspaces, nil
 	}
-	for _, key := range grantProjects {
-		if policy.AWBProjectAllowed(key) {
-			projects = appendProjectKey(projects, key)
+	for _, key := range grantWorkspaces {
+		if policy.AWBWorkspaceAllowed(key) {
+			workspaces = appendWorkspaceKey(workspaces, key)
 		}
 	}
-	if len(projects) == 0 {
-		return nil, grantProjects, faultf(http.StatusForbidden, awbProjectScopeEmptyCode,
-			"the %s grant is scoped to project(s) %s, none of which is on the operator's "+
-				"agent.awb_proxy.allowed_projects list (allowed: %s); the two must overlap",
-			perm, strings.Join(grantProjects, ", "), strings.Join(policy.AllowedProjects, ", "))
+	if len(workspaces) == 0 {
+		return nil, grantWorkspaces, faultf(http.StatusForbidden, awbWorkspaceScopeEmptyCode,
+			"the %s grant is scoped to workspace(s) %s, none of which is on the operator's "+
+				"agent.awb_proxy.allowed_workspaces list (allowed: %s); the two must overlap",
+			perm, strings.Join(grantWorkspaces, ", "), strings.Join(policy.AllowedWorkspaces, ", "))
 	}
-	return projects, grantProjects, nil
+	return workspaces, grantWorkspaces, nil
 }
 
-// lowerProjectKeys normalizes a project-key list the way the operator's
+// lowerWorkspaceKeys normalizes a workspace-key list the way the operator's
 // allow-list is normalized, so the two are directly comparable and render
 // alike.
-func lowerProjectKeys(keys []string) []string {
+func lowerWorkspaceKeys(keys []string) []string {
 	out := make([]string, 0, len(keys))
 	for _, key := range keys {
-		out = appendProjectKey(out, key)
+		out = appendWorkspaceKey(out, key)
 	}
 	return out
 }
 
-// appendProjectKey adds one normalized project key to a list, dropping blanks
+// appendWorkspaceKey adds one normalized workspace key to a list, dropping blanks
 // and duplicates. Order is preserved: these lists are rendered to humans in
 // refusals and in `whoami`, so they keep the order the operator wrote.
-func appendProjectKey(out []string, key string) []string {
+func appendWorkspaceKey(out []string, key string) []string {
 	key = strings.ToLower(strings.TrimSpace(key))
 	if key == "" || slices.Contains(out, key) {
 		return out
@@ -723,65 +723,65 @@ func awbErrorFault(res awbHTTPResult) *proxyFault {
 }
 
 // ---------------------------------------------------------------------------
-// The project gate
+// The workspace gate
 // ---------------------------------------------------------------------------
 
-// projectAllowed reports whether key is in this caller's effective project set.
+// workspaceAllowed reports whether key is in this caller's effective workspace set.
 //
 // What keeps the reference gate, the listing filter and the row-level drop from
-// diverging is that all three read s.projects — this predicate for the
+// diverging is that all three read s.workspaces — this predicate for the
 // per-issue checks, the listing filter reading the resolved set directly
 // because it needs the whole of it.
-func (s *awbProxySession) projectAllowed(key string) bool {
+func (s *awbProxySession) workspaceAllowed(key string) bool {
 	key = strings.ToLower(strings.TrimSpace(key))
-	return key != "" && slices.Contains(s.projects, key)
+	return key != "" && slices.Contains(s.workspaces, key)
 }
 
-// requireAllowedProject refuses a project key outside the caller's effective
+// requireAllowedWorkspace refuses a workspace key outside the caller's effective
 // set.
 //
 // The message names the list that ACTUALLY excluded the key — the operator's
 // allow-list or the caller's own grant scope — so an agent can tell its human
 // exactly which one to widen rather than guessing from a refusal. The codes are
 // distinct for the same reason.
-func (s *awbProxySession) requireAllowedProject(key string) *proxyFault {
-	if s.projectAllowed(key) {
+func (s *awbProxySession) requireAllowedWorkspace(key string) *proxyFault {
+	if s.workspaceAllowed(key) {
 		return nil
 	}
-	if len(s.policy.AllowedProjects) > 0 && !s.policy.AWBProjectAllowed(key) {
-		return faultf(http.StatusForbidden, "project_not_allowed",
-			"project %q is not on the operator's agent.awb_proxy.allowed_projects list (allowed: %s)",
-			key, strings.Join(s.policy.AllowedProjects, ", "))
+	if len(s.policy.AllowedWorkspaces) > 0 && !s.policy.AWBWorkspaceAllowed(key) {
+		return faultf(http.StatusForbidden, "workspace_not_allowed",
+			"workspace %q is not on the operator's agent.awb_proxy.allowed_workspaces list (allowed: %s)",
+			key, strings.Join(s.policy.AllowedWorkspaces, ", "))
 	}
-	return faultf(http.StatusForbidden, awbProjectOutOfScopeCode,
-		"project %q is outside this caller's AWB project scope (this grant covers: %s)",
-		key, strings.Join(s.grantProjects, ", "))
+	return faultf(http.StatusForbidden, awbWorkspaceOutOfScopeCode,
+		"workspace %q is outside this caller's AWB workspace scope (this grant covers: %s)",
+		key, strings.Join(s.grantWorkspaces, ", "))
 }
 
-// enforceIssueProject is the SECOND half of the project gate, and the
+// enforceIssueWorkspace is the SECOND half of the workspace gate, and the
 // load-bearing one. The reference check tests a string the caller supplied;
-// this tests the project AWB actually reports on the issue it returned.
+// this tests the workspace AWB actually reports on the issue it returned.
 //
 // The two can disagree. An AWB issue reference may be an unambiguous PREFIX, so
 // "awb-a3" resolves to whatever issue that prefix names — and the prefix a
 // caller wrote is not the same thing as the issue reached. Refusing here, after
 // the read but before the response is rendered, means the data never leaves the
 // daemon.
-func (s *awbProxySession) enforceIssueProject(issue *awbIssue) *proxyFault {
+func (s *awbProxySession) enforceIssueWorkspace(issue *awbIssue) *proxyFault {
 	if issue == nil {
 		return faultf(http.StatusNotFound, "not_found", "no such issue")
 	}
 	if key := strings.TrimSpace(issue.Workspace); key != "" {
-		return s.requireAllowedProject(key)
+		return s.requireAllowedWorkspace(key)
 	}
-	// No project on the response means AWB returned something this package
+	// No workspace on the response means AWB returned something this package
 	// cannot gate. Refuse rather than let an unchecked issue through.
-	return faultf(http.StatusInternalServerError, "project_unresolved",
-		"the AWB response carried no project; refusing to return an issue the project gate could "+
+	return faultf(http.StatusInternalServerError, "workspace_unresolved",
+		"the AWB response carried no workspace; refusing to return an issue the workspace gate could "+
 			"not be checked against")
 }
 
-// enforceIssueList applies the project gate to every row of a listing.
+// enforceIssueList applies the workspace gate to every row of a listing.
 //
 // The filter should already have made this a no-op. It runs anyway: the filter
 // is a request AWB honours, while this is a check the daemon makes, and only
@@ -792,19 +792,19 @@ func (s *awbProxySession) enforceIssueProject(issue *awbIssue) *proxyFault {
 func (s *awbProxySession) enforceIssueList(issues []awbIssue) []awbIssue {
 	kept := make([]awbIssue, 0, len(issues))
 	for i := range issues {
-		if s.projectAllowed(issues[i].Workspace) {
+		if s.workspaceAllowed(issues[i].Workspace) {
 			kept = append(kept, issues[i])
 		}
 	}
 	return kept
 }
 
-// pruneTree applies the project gate to a decomposition tree.
+// pruneTree applies the workspace gate to a decomposition tree.
 //
-// `dep tree` follows children ACROSS project boundaries, which is right for AWB
-// — a decomposition is not confined to one project — and wrong for a gate whose
+// `dep tree` follows children ACROSS workspace boundaries, which is right for AWB
+// — a decomposition is not confined to one workspace — and wrong for a gate whose
 // whole job is to bound what leaves the daemon: a child in an unreachable
-// project would arrive as a complete issue, description and all.
+// workspace would arrive as a complete issue, description and all.
 //
 // So an out-of-scope node is dropped together with its subtree, and the count
 // of what went is reported beside the tree rather than left to be inferred from
@@ -815,7 +815,7 @@ func (s *awbProxySession) pruneTree(node *awbIssueTree) (kept *awbIssueTree, pru
 	if node == nil {
 		return nil, 0
 	}
-	if !s.projectAllowed(node.Workspace) {
+	if !s.workspaceAllowed(node.Workspace) {
 		return nil, countTreeNodes(node)
 	}
 	children := make([]awbIssueTree, 0, len(node.Children))
@@ -843,48 +843,48 @@ func countTreeNodes(node *awbIssueTree) int {
 	return n
 }
 
-// listingProjects is the project set ONE listing may ask about.
+// listingWorkspaces is the workspace set ONE listing may ask about.
 //
-// A named project is that project, already gated. An unnamed one is the whole
-// effective set — intersected with the projects the server actually holds and
-// the daemon's account can see, because AWB answers a `project` filter naming
-// no project with a 404 rather than with an empty listing. Without that
+// A named workspace is that workspace, already gated. An unnamed one is the whole
+// effective set — intersected with the workspaces the server actually holds and
+// the daemon's account can see, because AWB answers a `workspace` filter naming
+// no workspace with a 404 rather than with an empty listing. Without that
 // intersection a single stale entry in the operator's allow-list would break
-// every unfiltered listing, and the 404 would name the project rather than the
+// every unfiltered listing, and the 404 would name the workspace rather than the
 // reason.
-func (s *awbProxySession) listingProjects(ctx context.Context, named []string) ([]string, *proxyFault) {
+func (s *awbProxySession) listingWorkspaces(ctx context.Context, named []string) ([]string, *proxyFault) {
 	if len(named) > 0 {
 		return named, nil
 	}
-	if s.serverProjectsLoaded {
-		return s.serverProjects, s.serverProjectsFault
+	if s.serverWorkspacesLoaded {
+		return s.serverWorkspaces, s.serverWorkspacesFault
 	}
-	s.serverProjectsLoaded = true
-	s.serverProjects, s.serverProjectsFault = s.resolveServerProjects(ctx)
-	return s.serverProjects, s.serverProjectsFault
+	s.serverWorkspacesLoaded = true
+	s.serverWorkspaces, s.serverWorkspacesFault = s.resolveServerWorkspaces(ctx)
+	return s.serverWorkspaces, s.serverWorkspacesFault
 }
 
-// resolveServerProjects is listingProjects' one call, without the memoization.
-func (s *awbProxySession) resolveServerProjects(ctx context.Context) ([]string, *proxyFault) {
-	var projects []awbProject
-	if _, fault := s.exec(ctx, awbCall{Method: http.MethodGet, Path: "/api/workspaces"}, &projects); fault != nil {
+// resolveServerWorkspaces is listingWorkspaces' one call, without the memoization.
+func (s *awbProxySession) resolveServerWorkspaces(ctx context.Context) ([]string, *proxyFault) {
+	var workspaces []awbWorkspace
+	if _, fault := s.exec(ctx, awbCall{Method: http.MethodGet, Path: "/api/workspaces"}, &workspaces); fault != nil {
 		return nil, fault
 	}
-	present := make(map[string]bool, len(projects))
-	for _, p := range projects {
+	present := make(map[string]bool, len(workspaces))
+	for _, p := range workspaces {
 		present[strings.ToLower(strings.TrimSpace(p.Key))] = true
 	}
-	kept := make([]string, 0, len(s.projects))
-	for _, key := range s.projects {
+	kept := make([]string, 0, len(s.workspaces))
+	for _, key := range s.workspaces {
 		if present[key] {
 			kept = append(kept, key)
 		}
 	}
 	if len(kept) == 0 {
 		return nil, faultf(http.StatusNotFound, "not_found",
-			"none of the project(s) this caller may reach (%s) exists on %s, or the AWB account "+
+			"none of the workspace(s) this caller may reach (%s) exists on %s, or the AWB account "+
 				"the daemon authenticates as is not a member of any of them",
-			strings.Join(s.projects, ", "), s.base)
+			strings.Join(s.workspaces, ", "), s.base)
 	}
 	return kept, nil
 }
@@ -894,54 +894,54 @@ func (s *awbProxySession) resolveServerProjects(ctx context.Context) ([]string, 
 // ---------------------------------------------------------------------------
 
 // validateAWBIssueRef bounds an issue reference to a form that CARRIES A
-// PROJECT: "<project>-<hash-prefix>".
+// WORKSPACE: "<workspace>-<hash-prefix>".
 //
 // AWB itself also accepts a bare hash, matched across the whole database. That
 // is deliberately refused here for the reason the Linear proxy refuses a raw
-// UUID: the project allow-list is checked before the call is made, and a bare
-// hash names no project, so accepting one would mean every read had to be made
-// first and judged afterwards. Requiring the project prefix keeps the cheap
+// UUID: the workspace allow-list is checked before the call is made, and a bare
+// hash names no workspace, so accepting one would mean every read had to be made
+// first and judged afterwards. Requiring the workspace prefix keeps the cheap
 // gate ahead of the network — and it is how an agent refers to an issue anyway,
 // every listing having printed the full id.
 //
-// A PREFIX of the hash is still fine: it carries the project, which is all the
-// pre-call gate needs, and enforceIssueProject checks what it actually resolved
+// A PREFIX of the hash is still fine: it carries the workspace, which is all the
+// pre-call gate needs, and enforceIssueWorkspace checks what it actually resolved
 // to afterwards.
 func validateAWBIssueRef(raw string) (string, *proxyFault) {
 	id := strings.ToLower(strings.TrimSpace(raw))
 	if id == "" {
 		return "", faultf(http.StatusBadRequest, "invalid_arg",
-			"an issue id is required, in <project>-<hash> form")
+			"an issue id is required, in <workspace>-<hash> form")
 	}
-	if len(id) > maxAWBProjectKeyLen+1+64 {
+	if len(id) > maxAWBWorkspaceKeyLen+1+64 {
 		return "", faultf(http.StatusBadRequest, "invalid_arg", "%q is not an issue id: it is too long", raw)
 	}
-	// Split on the LAST hyphen: a project key may itself contain hyphens, which
+	// Split on the LAST hyphen: a workspace key may itself contain hyphens, which
 	// is why AWB's own SplitID does the same.
 	i := strings.LastIndex(id, "-")
 	if i <= 0 || i == len(id)-1 {
 		return "", faultf(http.StatusBadRequest, "invalid_arg",
-			"%q is not an issue id; the form is <project>-<hash>, e.g. awb-a3f9c1. A bare hash is "+
-				"not accepted here: it names no project, and the project is what the gate is checked "+
+			"%q is not an issue id; the form is <workspace>-<hash>, e.g. awb-a3f9c1. A bare hash is "+
+				"not accepted here: it names no workspace, and the workspace is what the gate is checked "+
 				"against", raw)
 	}
-	project, hash := id[:i], id[i+1:]
-	if fault := validateAWBProjectKeyShape(project); fault != nil {
+	workspace, hash := id[:i], id[i+1:]
+	if fault := validateAWBWorkspaceKeyShape(workspace); fault != nil {
 		return "", fault
 	}
 	for _, r := range hash {
 		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 			return "", faultf(http.StatusBadRequest, "invalid_arg",
-				"%q is not an issue id (the form is <project>-<hash>); the part after the project "+
+				"%q is not an issue id (the form is <workspace>-<hash>); the part after the workspace "+
 					"key must be lowercase hexadecimal", raw)
 		}
 	}
 	return id, nil
 }
 
-// projectKeyOf extracts the project key from a VALIDATED issue reference.
+// workspaceKeyOf extracts the workspace key from a VALIDATED issue reference.
 // Returns "" for anything that did not come through validateAWBIssueRef.
-func projectKeyOf(ref string) string {
+func workspaceKeyOf(ref string) string {
 	i := strings.LastIndex(ref, "-")
 	if i <= 0 {
 		return ""
@@ -949,56 +949,56 @@ func projectKeyOf(ref string) string {
 	return ref[:i]
 }
 
-// validateAWBProjectKeyShape bounds a project key's charset.
-func validateAWBProjectKeyShape(key string) *proxyFault {
-	if err := awbProjectKeyShapeErr(key); err != nil {
+// validateAWBWorkspaceKeyShape bounds a workspace key's charset.
+func validateAWBWorkspaceKeyShape(key string) *proxyFault {
+	if err := awbWorkspaceKeyShapeErr(key); err != nil {
 		return faultf(http.StatusBadRequest, "invalid_arg", "%s", err.Error())
 	}
 	return nil
 }
 
-// awbProjectKeyShapeErr is the shape rule itself, as a plain error.
+// awbWorkspaceKeyShapeErr is the shape rule itself, as a plain error.
 //
-// It exists apart from validateAWBProjectKeyShape so the permission-scope
-// parser can apply the SAME rule to an `awb_project` matcher without depending
+// It exists apart from validateAWBWorkspaceKeyShape so the permission-scope
+// parser can apply the SAME rule to an `awb_workspace` matcher without depending
 // on the proxy's fault type. One rule, two callers: a matcher an operator can
-// write must be a project key this proxy could also accept as a parameter, or a
+// write must be a workspace key this proxy could also accept as a parameter, or a
 // scope could name something no request can ever match — which reads as a
 // narrow grant and silently authorizes nothing.
 //
 // The rule is AWB's own: lowercase ASCII letters, digits and hyphens, starting
 // with a letter.
-func awbProjectKeyShapeErr(key string) error {
+func awbWorkspaceKeyShapeErr(key string) error {
 	key = strings.TrimSpace(key)
 	if key == "" {
-		return errors.New("a project key is required")
+		return errors.New("a workspace key is required")
 	}
-	if len(key) > maxAWBProjectKeyLen {
-		return fmt.Errorf("project key %q is longer than %d characters", key, maxAWBProjectKeyLen)
+	if len(key) > maxAWBWorkspaceKeyLen {
+		return fmt.Errorf("workspace key %q is longer than %d characters", key, maxAWBWorkspaceKeyLen)
 	}
 	if c := key[0]; c < 'a' || c > 'z' {
-		return fmt.Errorf("project key %q must start with a lowercase letter", key)
+		return fmt.Errorf("workspace key %q must start with a lowercase letter", key)
 	}
 	for _, r := range key {
 		isLower := r >= 'a' && r <= 'z'
 		isDigit := r >= '0' && r <= '9'
 		if !isLower && !isDigit && r != '-' {
 			return fmt.Errorf(
-				"project key %q contains a character that is not a lowercase letter, a digit or a hyphen",
+				"workspace key %q contains a character that is not a lowercase letter, a digit or a hyphen",
 				key)
 		}
 	}
 	return nil
 }
 
-// validateAWBProject normalises and allow-list-checks a project key supplied as
-// a parameter (`--project`).
-func (s *awbProxySession) validateAWBProject(key string) (string, *proxyFault) {
+// validateAWBWorkspace normalises and allow-list-checks a workspace key supplied as
+// a parameter (`--workspace`).
+func (s *awbProxySession) validateAWBWorkspace(key string) (string, *proxyFault) {
 	key = strings.ToLower(strings.TrimSpace(key))
-	if fault := validateAWBProjectKeyShape(key); fault != nil {
+	if fault := validateAWBWorkspaceKeyShape(key); fault != nil {
 		return "", fault
 	}
-	if fault := s.requireAllowedProject(key); fault != nil {
+	if fault := s.requireAllowedWorkspace(key); fault != nil {
 		return "", fault
 	}
 	return key, nil
@@ -1368,7 +1368,7 @@ var (
 // ---------------------------------------------------------------------------
 
 // awbIssue mirrors AWB's Issue schema. It is spelled out rather than passed
-// through as raw JSON for two reasons: the project gate has to READ the project
+// through as raw JSON for two reasons: the workspace gate has to READ the workspace
 // off every issue that comes back, and --compact renders from these fields. A
 // field AWB adds later is dropped rather than forwarded, which is the same
 // trade the Linear proxy makes.
@@ -1457,7 +1457,7 @@ type awbActivityChange struct {
 	To    json.RawMessage `json:"to"`
 }
 
-type awbProject struct {
+type awbWorkspace struct {
 	Key          string `json:"key"`
 	Name         string `json:"name"`
 	Description  string `json:"description"`
@@ -1495,12 +1495,12 @@ type awbIdentityResponse struct {
 // no second verdict to report. A 2xx means the operation happened; anything
 // else is a fault with a code and a message, and the CLI exits non-zero on it.
 type awbProxyOutcome struct {
-	// Projects is the caller's EFFECTIVE project set — the operator's
+	// Workspaces is the caller's EFFECTIVE workspace set — the operator's
 	// allow-list narrowed by this caller's grant scope — echoed on every
 	// response. It is the single most common thing an agent needs when a call
 	// is refused, and carrying it means the agent does not have to run `whoami`
 	// to find out.
-	Projects []string `json:"workspaces,omitempty"`
+	Workspaces []string `json:"workspaces,omitempty"`
 	// LegacyProjects keeps separately installed older clients fail-safe during
 	// the project-to-workspace transition. Remove after one compatibility cycle.
 	LegacyProjects []string `json:"projects,omitempty"`
@@ -1535,7 +1535,7 @@ type awbProxyOutcome struct {
 func (s *awbProxySession) respond(
 	w http.ResponseWriter, r *http.Request, verb string, compact bool, payload any, text, detail string,
 ) {
-	out := awbProxyOutcome{Projects: s.projects, LegacyProjects: s.projects}
+	out := awbProxyOutcome{Workspaces: s.workspaces, LegacyProjects: s.workspaces}
 	if compact {
 		out.Text = text
 	} else if payload != nil {
@@ -1558,6 +1558,6 @@ func (s *awbProxySession) respondContent(
 ) {
 	setAuditDetail(r, fmt.Sprintf("op=%s %s", verb, detail))
 	writeJSON(w, http.StatusOK, awbProxyOutcome{
-		Projects: s.projects, LegacyProjects: s.projects, Content: content, HasContent: true,
+		Workspaces: s.workspaces, LegacyProjects: s.workspaces, Content: content, HasContent: true,
 	})
 }

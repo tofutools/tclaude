@@ -89,6 +89,9 @@ func TestPermissionScopeParseAndValidate(t *testing.T) {
 		{"linear team path is not a key", `{"linear_team":["acme/TCL"]}`, PermLinearRead, "", "not a letter or a digit"},
 		{"linear team key length is bounded", `{"linear_team":["THISKEYISWAYTOOLONG"]}`, PermLinearRead, "", "longer than 16"},
 		{"undeclared linear_team dimension", `{"linear_team":["TCL"]}`, PermGroupsMembersSpawn, "", "does not declare"},
+		{"AWB workspace key", `{"awb_workspace":["awb"]}`, PermAWBRead, `{"awb_workspace":["awb"]}`, ""},
+		{"legacy AWB project dimension canonicalizes", `{"awb_project":["web","awb"]}`, PermAWBRead, `{"awb_workspace":["awb","web"]}`, ""},
+		{"legacy and current AWB dimensions merge", `{"awb_project":["web"],"awb_workspace":["awb"]}`, PermAWBRead, `{"awb_workspace":["awb","web"]}`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			scope, canonical, err := parsePermissionScope(json.RawMessage(tc.raw))

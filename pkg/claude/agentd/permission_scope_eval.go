@@ -56,12 +56,12 @@ type ActionContext struct {
 	// action that spans several teams describes each of them in turn rather
 	// than passing a set, so every check is one team against one grant.
 	LinearTeam string
-	// AWBProject is the AWB project KEY the request acts within — the prefix of
+	// AWBWorkspace is the AWB workspace KEY the request acts within — the prefix of
 	// an issue ID, so "awb" for awb-a3f9c1. Case is irrelevant (the matcher
 	// folds it), but it must be a single whole key: an AWB action that spans
-	// several projects describes each of them in turn rather than passing a
-	// set, so every check is one project against one grant.
-	AWBProject string
+	// several workspaces describes each of them in turn rather than passing a
+	// set, so every check is one workspace against one grant.
+	AWBWorkspace string
 
 	// structuralGroup is the group whose ownership or membership may confer the requested slug.
 	// It is deliberately distinct from Group: Group evaluates an explicit
@@ -110,8 +110,8 @@ func (a ActionContext) value(dim ScopeDim) string {
 		return a.Remote
 	case ScopeDimLinearTeam:
 		return a.LinearTeam
-	case ScopeDimAWBProject:
-		return a.AWBProject
+	case ScopeDimAWBWorkspace:
+		return a.AWBWorkspace
 	}
 	return ""
 }
@@ -240,7 +240,7 @@ func permissionScopeLiteralMatches(dim ScopeDim, matcher, value string) bool {
 		pattern := strings.Split(strings.ToLower(strings.Trim(matcher, "/")), "/")
 		target := strings.Split(strings.ToLower(strings.Trim(value, "/")), "/")
 		return matchRemotePattern(pattern, target)
-	case permissionScopeMatchTeamKey, permissionScopeMatchProjectKey:
+	case permissionScopeMatchTeamKey, permissionScopeMatchWorkspaceKey:
 		return strings.EqualFold(strings.TrimSpace(matcher), strings.TrimSpace(value))
 	default:
 		return false

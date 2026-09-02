@@ -27,8 +27,12 @@ const (
 	ScopeDimProcessTemplate ScopeDim = "process_template"
 	ScopeDimRemote          ScopeDim = "remote"
 	ScopeDimLinearTeam      ScopeDim = "linear_team"
-	ScopeDimAWBProject      ScopeDim = "awb_project"
+	ScopeDimAWBWorkspace    ScopeDim = "awb_workspace"
 	ScopeDimTargetAgent     ScopeDim = "target_agent"
+	// legacyScopeDimAWBProject is accepted only while parsing persisted grants
+	// written before AWB renamed projects to workspaces. Canonical output always
+	// uses ScopeDimAWBWorkspace, so any subsequent write upgrades the row.
+	legacyScopeDimAWBProject = "awb_project"
 )
 
 // PermissionScope is the persisted scope shape: dimensions AND together;
@@ -50,14 +54,14 @@ const (
 	// operator allow-list is stored lower-cased, and an operator typing
 	// `--scope linear_team=tcl` means the team they read as TCL.
 	permissionScopeMatchTeamKey
-	// permissionScopeMatchProjectKey is the AWB proxy's whole-key,
+	// permissionScopeMatchWorkspaceKey is the AWB proxy's whole-key,
 	// case-insensitive comparison. Evaluated exactly like
 	// permissionScopeMatchTeamKey and kept separate from it only so the SHAPE
 	// check can be AWB's: a Linear team key is alphanumeric, while an AWB
-	// project key is lower-case, may carry hyphens, and must start with a
+	// workspace key is lower-case, may carry hyphens, and must start with a
 	// letter. One kind checking two vocabularies would have to accept the union
 	// of both, which is a matcher neither proxy can ever match.
-	permissionScopeMatchProjectKey
+	permissionScopeMatchWorkspaceKey
 )
 
 type permissionScopeDimension struct {
@@ -95,7 +99,7 @@ var permissionScopeDimensions = map[ScopeDim]permissionScopeDimension{
 	ScopeDimProcessTemplate: {},
 	ScopeDimRemote:          {matcher: permissionScopeMatchRemotePattern},
 	ScopeDimLinearTeam:      {matcher: permissionScopeMatchTeamKey, enumerable: true},
-	ScopeDimAWBProject:      {matcher: permissionScopeMatchProjectKey, enumerable: true},
+	ScopeDimAWBWorkspace:    {matcher: permissionScopeMatchWorkspaceKey, enumerable: true},
 	ScopeDimTargetAgent: {selectors: map[string]struct{}{
 		"@descendants":  {},
 		"@self-spawned": {},
@@ -122,6 +126,10 @@ func parsePermissionScope(raw json.RawMessage) (PermissionScope, string, error) 
 	}
 	if wire == nil {
 		return nil, "", fmt.Errorf("permission scope must be a JSON object")
+	}
+	if legacy := wire[legacyScopeDimAWBProject]; len(legacy) > 0 {
+		wire[string(ScopeDimAWBWorkspace)] = append(wire[string(ScopeDimAWBWorkspace)], legacy...)
+		delete(wire, legacyScopeDimAWBProject)
 	}
 	scope := make(PermissionScope, len(wire))
 	for rawDim, rawMatchers := range wire {
@@ -193,12 +201,12 @@ func permissionScopeMatcherShape(dim ScopeDim, spec permissionScopeDimension, ma
 			return fmt.Errorf("permission scope dimension %q: %w (there is no wildcard: a team key "+
 				"is matched whole, case-insensitively)", dim, err)
 		}
-	case permissionScopeMatchProjectKey:
-		// Same reasoning one vocabulary over: an AWB project key is what the AWB
+	case permissionScopeMatchWorkspaceKey:
+		// Same reasoning one vocabulary over: an AWB workspace key is what the AWB
 		// proxy compares this matcher against, so a matcher that cannot BE one
 		// would store and render as a narrow grant while matching nothing.
-		if err := awbProjectKeyShapeErr(matcher); err != nil {
-			return fmt.Errorf("permission scope dimension %q: %w (there is no wildcard: a project "+
+		if err := awbWorkspaceKeyShapeErr(matcher); err != nil {
+			return fmt.Errorf("permission scope dimension %q: %w (there is no wildcard: a workspace "+
 				"key is matched whole, case-insensitively)", dim, err)
 		}
 	}
@@ -297,15 +305,15 @@ func appendUnique(out []string, seen map[string]bool, s string) []string {
 // CLI's --scope accepts.
 //
 // linearTeams is the operator's own agent.linear_proxy.allowed_teams, and
-// awbProjects the operator's own agent.awb_proxy.allowed_projects. Each is the
-// USEFUL catalogue rather than the complete one: a team or project the operator
+// awbWorkspaces the operator's own agent.awb_proxy.allowed_workspaces. Each is the
+// USEFUL catalogue rather than the complete one: a team or workspace the operator
 // has not allow-listed cannot be reached by any grant, so offering the server's
 // full list would invite an operator to write a scope that authorizes nothing.
 // The picker still accepts free text, which is what makes a scope-only posture
 // (no operator list at all) writable.
 func scopeDimOptionsSnapshot(
 	groups []*db.AgentGroup, profiles []spawnProfileJSON, sandboxProfiles []*db.SandboxProfile,
-	linearTeams, awbProjects []string,
+	linearTeams, awbWorkspaces []string,
 ) map[ScopeDim]snapshotScopeDimOptions {
 	out := make(map[ScopeDim]snapshotScopeDimOptions, len(permissionScopeDimensions))
 	for _, dim := range permissionScopeDims() {
@@ -337,11 +345,11 @@ func scopeDimOptionsSnapshot(
 			for _, key := range linearTeams {
 				options.Values = append(options.Values, strings.ToUpper(key))
 			}
-		case ScopeDimAWBProject:
+		case ScopeDimAWBWorkspace:
 			// Offered exactly as stored. Unlike a Linear team key, an AWB
-			// project key IS lower-case — its own charset says so — so there is
+			// workspace key IS lower-case — its own charset says so — so there is
 			// no presentational spelling to restore.
-			options.Values = append(options.Values, awbProjects...)
+			options.Values = append(options.Values, awbWorkspaces...)
 		}
 		sort.Strings(options.Values)
 		out[dim] = options

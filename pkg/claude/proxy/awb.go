@@ -36,9 +36,9 @@ import (
 //     directly, and the proxy has no human table mode for them to colour.
 //   - `--no-context` turns off awb's directory-context file, and there is no
 //     directory context here: the daemon is not in the agent's working tree,
-//     which is why `create` requires an explicit --project.
+//     which is why `create` requires an explicit --workspace.
 //
-// Everything else the daemon does. Every gate — which project, which
+// Everything else the daemon does. Every gate — which workspace, which
 // permission slug, which of AWB's fixed vocabularies a value must be in — lives
 // in `pkg/claude/agentd/awbproxy.go`, because a check made in this process is a
 // check the caller could have skipped.
@@ -60,11 +60,11 @@ func awbCmd() *cobra.Command {
 			"flags that name a local database or a terminal left out: there is no --db, --attachments, " +
 			"--no-context, --color or --no-color, because the server is the operator's configuration " +
 			"and this output is not a terminal.\n\n" +
-			"Which projects you can reach is not something you choose. The operator may allow-list them " +
-			"in agent.awb_proxy.allowed_projects, and your own grant may carry an awb_project scope; " +
+			"Which workspaces you can reach is not something you choose. The operator may allow-list them " +
+			"in agent.awb_proxy.allowed_workspaces, and your own grant may carry an awb_workspace scope; " +
 			"where both exist you may act only where they agree, and where only the grant scope does it " +
 			"is the whole policy. Run `tclaude proxy awb whoami` to see what that leaves you, beside the " +
-			"projects the account can actually see.\n\n" +
+			"workspaces the account can actually see.\n\n" +
 			"Reads need `proxy.awb.read`; writing needs `proxy.awb.write` AND the operator's " +
 			"agent.awb_proxy.allow_write. Neither slug is granted by default.",
 		ParamEnrich: common.DefaultParamEnricher(),
@@ -101,10 +101,10 @@ func awbCmd() *cobra.Command {
 // runs, so there is no second verdict to report. A 2xx means the operation
 // happened; anything else arrives as an error with a code and a message.
 type awbProxyOutcome struct {
-	// Projects is the caller's EFFECTIVE project set, echoed on every response
+	// Workspaces is the caller's EFFECTIVE workspace set, echoed on every response
 	// — already narrowed by the caller's own grant scope, so it is what this
 	// agent may reach rather than what the operator allows in general.
-	Projects       []string        `json:"workspaces"`
+	Workspaces     []string        `json:"workspaces"`
 	LegacyProjects []string        `json:"projects"`
 	JSON           json.RawMessage `json:"json"`
 	Text           string          `json:"text"`
@@ -114,8 +114,8 @@ type awbProxyOutcome struct {
 }
 
 func (o *awbProxyOutcome) normalizeCompatibility() {
-	if len(o.Projects) == 0 {
-		o.Projects = o.LegacyProjects
+	if len(o.Workspaces) == 0 {
+		o.Workspaces = o.LegacyProjects
 	}
 }
 
@@ -225,17 +225,17 @@ type awbWhoamiParams struct {
 func awbWhoamiCmd() *cobra.Command {
 	return boa.CmdT[awbWhoamiParams]{
 		Use:   "whoami",
-		Short: "Show which AWB server and account the daemon uses, and which projects you may reach",
+		Short: "Show which AWB server and account the daemon uses, and which workspaces you may reach",
 		Long: "Reports the AWB server the operator configured, the account it authenticates as, every " +
-			"project that account can see, and whether YOU may reach each one.\n\n" +
+			"workspace that account can see, and whether YOU may reach each one.\n\n" +
 			"Up to two lists bound you and the answer breaks out both, because they need different " +
-			"fixes: operator_projects is agent.awb_proxy.allowed_projects (absent when the operator " +
-			"configured none), grant_projects is the awb_project scope on your own grant (absent when " +
-			"it is unscoped), and allowed_projects is what the ones that ARE present leave you.\n\n" +
+			"fixes: operator_workspaces is agent.awb_proxy.allowed_workspaces (absent when the operator " +
+			"configured none), grant_workspaces is the awb_workspace scope on your own grant (absent when " +
+			"it is unscoped), and allowed_workspaces is what the ones that ARE present leave you.\n\n" +
 			"allow_write is the operator's own ceiling: false means every mutating verb is refused " +
 			"however your grants are spelled.\n\n" +
 			"This is the command to run FIRST, and the command to run when something is refused: it " +
-			"tells you the exact project key — and which of the two lists — to ask the operator to " +
+			"tells you the exact workspace key — and which of the two lists — to ask the operator to " +
 			"widen, rather than leaving you to guess from a refusal.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *awbWhoamiParams, _ *cobra.Command) error {
@@ -259,13 +259,13 @@ func awbWhoamiCmd() *cobra.Command {
 
 // awbIDParams is the shape of every verb addressed by one issue.
 //
-// The id must carry its project — "awb-a3f9c1", or an unambiguous prefix of the
+// The id must carry its workspace — "awb-a3f9c1", or an unambiguous prefix of the
 // hash such as "awb-a3f". awb also accepts a BARE hash, and this deliberately
-// does not: the project is what the proxy's gate is checked against, and a bare
+// does not: the workspace is what the proxy's gate is checked against, and a bare
 // hash names none, so accepting one would mean fetching the issue before
 // deciding whether the caller may see it.
 type awbIDParams struct {
-	ID       string `pos:"true" help:"Issue id, e.g. awb-a3f9c1. A hash prefix works (awb-a3f); a BARE hash does not — the project is what the project gate is checked against."`
+	ID       string `pos:"true" help:"Issue id, e.g. awb-a3f9c1. A hash prefix works (awb-a3f); a BARE hash does not — the workspace is what the workspace gate is checked against."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
 	JSON     bool   `long:"json" optional:"true" help:"Print the stable JSON representation. This is the DEFAULT; the flag exists so an awb command line copies over unchanged."`
 	Compact  bool   `long:"compact" optional:"true" help:"Print awb's one terse line per issue instead. Cheapest output there is, and the one to prefer when you only need to see what is there."`
@@ -566,7 +566,7 @@ func awbSearchCmd() *cobra.Command {
 			"Matching is by whole token and is case- and diacritic-insensitive, with no stemming and " +
 			"no prefix matching: \"parser\" finds \"Parser\" and \"parser,\" but neither \"pars\" nor " +
 			"\"parsers\" finds \"parser\". Widen the terms rather than the syntax.\n\n" +
-			"The project gate applies, so a search cannot reach outside it.",
+			"The workspace gate applies, so a search cannot reach outside it.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *awbSearchParams, _ *cobra.Command) error {
 			boa.GetParamT(ctx, &p.AskHuman).SetAlternativesFunc(agent.CompleteAskHumanDurations)
@@ -620,9 +620,9 @@ func awbCreateCmd() *cobra.Command {
 		Short: "Create an issue, with its labels and relations, in one transaction",
 		Long: "Create an issue and print its id.\n\n" +
 			"The relation flags read \"the new issue — relation — the named issue\", the single " +
-			"convention of the whole tool. Every issue they name goes through the same project gate " +
+			"convention of the whole tool. Every issue they name goes through the same workspace gate " +
 			"the new issue does: a relation shows up at both ends, so relating to an issue you cannot " +
-			"reach would write into a project you cannot reach.\n\n" +
+			"reach would write into a workspace you cannot reach.\n\n" +
 			"Creating with an assignee is an atomic create-and-claim.\n\n" +
 			"The issue is created by the OPERATOR's AWB account and is a real ticket in their tracker. " +
 			"Prefer commenting on — or updating — an existing issue when that says the same thing.\n\n" +
@@ -1060,8 +1060,8 @@ func awbDepCmd() *cobra.Command {
 		Long: "Every relation reads \"first id — relation — second id\", the single convention of the " +
 			"whole tool. `dep rm` takes the same flag and the same two ids in the same order as " +
 			"`dep add`, so removing a relation is literally the add command with rm substituted.\n\n" +
-			"BOTH issues go through the project gate. A relation is read from either end — it appears " +
-			"in the other issue's relations too — so relating to an issue in a project you cannot " +
+			"BOTH issues go through the workspace gate. A relation is read from either end — it appears " +
+			"in the other issue's relations too — so relating to an issue in a workspace you cannot " +
 			"reach is refused rather than allowed on the grounds that only the first one is \"yours\".",
 		ParamEnrich: common.DefaultParamEnricher(),
 		SubCmds: []*cobra.Command{
@@ -1120,8 +1120,8 @@ func awbDepTreeCmd() *cobra.Command {
 		"Print the decomposition below an issue, to its full depth. It does not show ancestors, and "+
 			"it accepts none of the listing filters — a tree with holes in it would misrepresent the "+
 			"decomposition.\n\n"+
-			"AWB follows children across project boundaries, and the project gate still applies: a "+
-			"child in a project you may not reach is dropped together with its own subtree rather "+
+			"AWB follows children across workspace boundaries, and the workspace gate still applies: a "+
+			"child in a workspace you may not reach is dropped together with its own subtree rather "+
 			"than returned. The audit row records how many nodes went.\n\n"+
 			"Under --compact each node is the ordinary compact issue line prefixed by two spaces per "+
 			"level of depth, the root unindented.",
