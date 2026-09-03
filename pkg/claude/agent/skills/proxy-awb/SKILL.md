@@ -31,11 +31,10 @@ tclaude proxy awb close awb-a3f9c1 --reason "Guard against empty token stream"
 describe the operation; it builds the HTTP call. You never see the password, and
 there is no raw-request escape hatch.
 
-**The verbs and the flags are awb's own.** If you know `awb`, you know this:
-same names, same arguments, same meanings. Five flags are deliberately absent —
-`--db`, `--attachments`, `--no-context`, `--color`, `--no-color` — because each
-names a database, a directory or a terminal that is the operator's to decide
-about, not yours.
+**The verbs and flags are awb's own**, with deliberate proxy-boundary omissions:
+`--db`, `--attachments`, `--no-context`, `--color` and `--no-color` name local
+state or a terminal the operator controls. `claim --as` is also absent because
+the proxy always acts as the operator's real AWB user.
 
 ## Start with `whoami`
 
@@ -88,8 +87,8 @@ assignee filter and no status filter: those flags are not merely ignored, they
 do not exist on it. "Which issues do I hold" is `list --mine`.
 
 `--mine` means the **operator's** AWB account, not you: the daemon holds theirs,
-they must use another coordination channel to tell their work apart. Assignee
-arguments elsewhere in the proxy name real AWB users, not arbitrary agent labels.
+and you have no AWB identity of your own. Assignee arguments elsewhere in the
+proxy name real AWB users, not arbitrary agent labels.
 
 **`--compact` is the cheapest output there is** — one line per issue, designed
 to cost as little context as possible:
@@ -122,7 +121,8 @@ tclaude proxy awb release awb-a3f9c1               # give it back
 
 `claim` joins the assignee list and fails only if the issue is blocked or closed;
 `--force` overrides those two checks. `update` changes the title, description,
-commit hash, pull request URL, type and priority and nothing else — the status and assignees move only through
+commit hash, pull request URL, type and priority and nothing else — the status
+and assignees move only through
 `claim`, `release`, `close` and `reopen`, which is what keeps `in_progress` and
 an assignee from drifting apart. Labels are added and removed one at a time, so
 a whole-set replace cannot discard somebody else's edit.
@@ -221,6 +221,9 @@ is checked against.
 is no wildcard.
 
 Three refusals mean three different fixes, so read the code before escalating:
+
+- `503 awb_not_configured` / `awb_proxy_disabled` and `403 awb_write_disabled`
+  describe operator setup; report them to the operator rather than changing it.
 
 - `403 workspace_not_allowed` — the workspace is not on the operator's
   `agent.awb_proxy.allowed_workspaces`. Ask them to add it.

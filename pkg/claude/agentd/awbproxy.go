@@ -136,7 +136,11 @@ const (
 	// transaction. The cap is still the server's, and is still shorter than a
 	// comment's, because a reason is a line rather than a document — a longer
 	// account belongs in `comment add`.
-	maxAWBCloseReasonLen    = 500
+	maxAWBCloseReasonLen = 500
+
+	// Implementation metadata uses AWB's own bounds. The validators below
+	// deliberately reproduce AWB's rules so the proxy never accepts a value the
+	// server will reject.
 	minAWBCommitHashLen     = 8
 	maxAWBCommitHashLen     = 128
 	maxAWBPullRequestURLLen = 1000
@@ -1030,7 +1034,10 @@ func validateAWBCommitHash(raw string) (string, *proxyFault) {
 			minAWBCommitHashLen, maxAWBCommitHashLen)
 	}
 	for _, r := range raw {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f', r >= 'A' && r <= 'F':
+			continue
+		default:
 			return "", faultf(http.StatusBadRequest, "invalid_arg",
 				"commit hash must contain only hexadecimal characters")
 		}
@@ -1039,6 +1046,8 @@ func validateAWBCommitHash(raw string) (string, *proxyFault) {
 }
 
 func validateAWBPullRequestURL(raw string) (string, *proxyFault) {
+	// This intentionally matches AWB's validator, including its acceptance of
+	// URL userinfo and Unicode format characters.
 	if raw == "" {
 		return "", nil
 	}

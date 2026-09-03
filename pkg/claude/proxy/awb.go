@@ -679,11 +679,11 @@ func buildAWBCreateBody(
 		}
 		body["description"] = description
 	}
-	if v := strings.TrimSpace(p.CommitHash); v != "" {
-		body["commit_hash"] = v
+	if p.CommitHash != "" {
+		body["commit_hash"] = p.CommitHash
 	}
-	if v := strings.TrimSpace(p.PullRequestURL); v != "" {
-		body["pull_request_url"] = v
+	if p.PullRequestURL != "" {
+		body["pull_request_url"] = p.PullRequestURL
 	}
 	if v := strings.TrimSpace(p.Type); v != "" {
 		body["type"] = v

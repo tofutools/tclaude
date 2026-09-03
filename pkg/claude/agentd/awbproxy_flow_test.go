@@ -423,9 +423,7 @@ func TestAWBProxy_ClaimRecordsTheDaemonsAccount(t *testing.T) {
 		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
 	}
 
-	res := w.post("/v1/awb/issue/claim", map[string]any{
-		"id": "awb-a3f9c1", "as": "not-an-awb-user",
-	})
+	res := w.post("/v1/awb/issue/claim", map[string]any{"id": "awb-a3f9c1"})
 	w.outcome(res)
 
 	call := rec.only(t)
@@ -434,7 +432,14 @@ func TestAWBProxy_ClaimRecordsTheDaemonsAccount(t *testing.T) {
 	assert.Equal(t, "tclaude-bot", call.Username)
 	assert.Equal(t, "hunter2", call.Password)
 	assert.JSONEq(t, `{"assignee":"tclaude-bot"}`, string(call.Body),
-		"even a legacy client cannot override the operator's AWB user")
+		"the assignee is always the operator's AWB user")
+
+	res = w.post("/v1/awb/issue/claim", map[string]any{
+		"id": "awb-a3f9c1", "as": "not-an-awb-user",
+	})
+	assert.Equal(t, http.StatusBadRequest, res.Code)
+	assert.Contains(t, res.Body.String(), "claim no longer accepts as")
+	assert.Len(t, rec.snapshot(), 1, "a removed identity override must never reach AWB")
 }
 
 func TestAWBProxy_CreateGatesEveryRelationTarget(t *testing.T) {
@@ -506,6 +511,12 @@ func TestAWBProxy_RejectsInvalidImplementationFields(t *testing.T) {
 			assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
 		})
 	}
+	assert.False(t, rec.sawAnyCall())
+
+	res := w.post("/v1/awb/issue/create", map[string]any{
+		"workspace": "awb", "title": "Bad metadata", "commit_hash": "1234567",
+	})
+	assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
 	assert.False(t, rec.sawAnyCall())
 }
 

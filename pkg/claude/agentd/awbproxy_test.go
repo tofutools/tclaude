@@ -282,6 +282,28 @@ func TestValidateAWBNameTokens(t *testing.T) {
 	}
 }
 
+func TestValidateAWBImplementationFields(t *testing.T) {
+	for _, ok := range []string{"", "01234567", strings.Repeat("A", maxAWBCommitHashLen)} {
+		got, fault := validateAWBCommitHash(ok)
+		assert.Nil(t, fault, ok)
+		assert.Equal(t, ok, got, "commit hash case is preserved")
+	}
+	for _, bad := range []string{"1234567", strings.Repeat("a", maxAWBCommitHashLen+1), "not-a-hash"} {
+		_, fault := validateAWBCommitHash(bad)
+		assert.NotNil(t, fault, bad)
+	}
+
+	for _, ok := range []string{"", "http://example.com/pull/1", "https://user:token@example.com/pull/1"} {
+		got, fault := validateAWBPullRequestURL(ok)
+		assert.Nil(t, fault, ok)
+		assert.Equal(t, ok, got)
+	}
+	for _, bad := range []string{"ssh://example.com/1", "https://example.com/pull/ 1", "https://"} {
+		_, fault := validateAWBPullRequestURL(bad)
+		assert.NotNil(t, fault, bad)
+	}
+}
+
 func TestValidateAWBVocabularies(t *testing.T) {
 	t.Run("type", func(t *testing.T) {
 		got, fault := validateAWBType("BUG")

@@ -132,7 +132,11 @@ type awbUpdateRequest struct {
 
 type awbClaimRequest struct {
 	awbIssueRefRequest
-	Force bool `json:"force,omitempty"`
+	// As is a removed-field tombstone. Keeping it only in the daemon's private
+	// wire type lets an older client receive a clear refusal instead of being
+	// told its requested identity was accepted while silently ignoring it.
+	As    json.RawMessage `json:"as,omitempty"`
+	Force bool            `json:"force,omitempty"`
 }
 
 type awbForceRequest struct {
@@ -1309,9 +1313,13 @@ func handleAWBProxyIssueClaim(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
+	if body.As != nil {
+		writeProxyFault(w, faultf(http.StatusBadRequest, "invalid_arg",
+			"claim no longer accepts as; claims always use the operator's AWB user"))
+		return
+	}
 	// A claim always belongs to the AWB user whose account the daemon uses.
-	// AWB assignees are users, not free-form agent labels, so caller-provided
-	// identities (including the former `as` request field) are ignored.
+	// AWB assignees are users, not free-form agent labels.
 	assignee, fault := s.identity("claim")
 	if fault != nil {
 		writeProxyFault(w, fault)
