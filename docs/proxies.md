@@ -179,6 +179,8 @@ The `agent.linear_proxy` block in `~/.tclaude/data/config.json`:
 tclaude proxy awb whoami                  # server, account, reachable workspaces
 tclaude proxy awb ready --compact         # the primary entry point
 tclaude proxy awb claim awb-a3f9c1
+tclaude proxy awb update awb-a3f9c1 --commit-hash 01234567
+tclaude proxy awb update awb-a3f9c1 --pull-request-url https://github.com/acme/repo/pull/42
 tclaude proxy awb comment add awb-a3f9c1 --body-file findings.md
 # other verbs: show, list, blocked, search, create, update, close, reopen,
 #              release, delete, label add|rm, dep add|rm|tree,
@@ -194,9 +196,9 @@ there is no filesystem anchor, so the **workspace allow-list is the entire scope
 gate**, checked once on the reference the caller supplied and again on the
 workspace AWB reports for the issue it returned.
 
-The verbs and flags mirror `awb`'s own one for one, minus five that name a local
-database or a terminal rather than the data: `--db`, `--attachments`,
-`--no-context`, `--color`, `--no-color`. Two differences are worth knowing:
+The verbs and flags mirror `awb`'s own, minus five that name a local database or
+terminal rather than the data: `--db`, `--attachments`, `--no-context`,
+`--color`, `--no-color`. Three differences are worth knowing:
 
 - **A bare hash is refused.** `awb` accepts `a3f9c1`; the proxy requires
   `awb-a3f9c1` (a hash prefix is fine), because a reference carrying no workspace
@@ -205,6 +207,8 @@ database or a terminal rather than the data: `--db`, `--attachments`,
   defaults to 50, capped at 500, because the rows land in an agent's context.
   `comment list` and `activity` are bounded the same way, and additionally cap
   `--offset`.
+- **Claims use the operator's user.** `claim --as` is absent because proxy
+  claims always belong to the configured AWB account.
 
 Comments are an append-only timeline shared with AWB's change records.
 `activity` reads the whole thing (`--kind comment|change` narrows it) and
@@ -240,9 +244,10 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
 - `url` — the AWB server's base URL. This is what registers the command; only
   http/https, and a URL carrying userinfo is refused rather than stripped.
 - `username` — the account every proxied call authenticates as, and the identity
-  AWB attributes writes to. It is also what `claim` records without `--as` and
+  AWB attributes writes to. It is also the AWB user every `claim` assigns and
   what `--mine` filters on. Empty suits a server whose database holds no user,
-  which AWB treats as unauthenticated.
+  which AWB treats as unauthenticated, but `claim`, non-forced `release`, and
+  `--mine` then refuse because the proxy has no operator identity to use.
 - `password_file` — empty falls back to `AWB_PASSWORD` in agentd's environment;
   with a username and neither, the proxy refuses rather than sending half a
   credential. The password is never a field of `config.json` itself.

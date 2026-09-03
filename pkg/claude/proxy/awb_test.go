@@ -64,6 +64,22 @@ func TestAWBOmitsTheLocalOnlyFlags(t *testing.T) {
 	}
 }
 
+func TestAWBClaimOmitsAssigneeOverride(t *testing.T) {
+	claim, _, err := awbCmd().Find([]string{"claim"})
+	require.NoError(t, err)
+	assert.Nil(t, claim.Flags().Lookup("as"),
+		"claims always use the operator's AWB user; an arbitrary string is not an assignee")
+}
+
+func TestAWBImplementationFlagsPreserveExistingShorthands(t *testing.T) {
+	for _, cmd := range []*cobra.Command{awbCreateCmd(), awbUpdateCmd()} {
+		assert.Equal(t, "c", cmd.Flags().Lookup("compact").Shorthand)
+		assert.Equal(t, "p", cmd.Flags().Lookup("priority").Shorthand)
+		assert.Equal(t, "H", cmd.Flags().Lookup("commit-hash").Shorthand)
+		assert.Equal(t, "U", cmd.Flags().Lookup("pull-request-url").Shorthand)
+	}
+}
+
 // TestAWBEveryVerbOffersBothOutputModes is the guard the spelled-out --json /
 // --compact declarations need: boa registers no flag at all for an embedded
 // params struct, so a new verb that "inherits" them inherits nothing.
@@ -223,6 +239,8 @@ func parsedAWBCreate(t *testing.T, argv ...string) (*cobra.Command, *awbCreatePa
 	}
 	p.Description = get("description")
 	p.DescriptionFile = get("description-file")
+	p.CommitHash = get("commit-hash")
+	p.PullRequestURL = get("pull-request-url")
 	p.Workspace = get("workspace")
 	p.Type = get("type")
 	p.Assignees = getAll("assignee")
@@ -263,6 +281,7 @@ func TestAWBCreateBody(t *testing.T) {
 	t.Run("everything", func(t *testing.T) {
 		cmd, p := parsedAWBCreate(t,
 			"--workspace", "awb", "--type", "bug", "--priority", "1",
+			"--commit-hash", "01234567", "--pull-request-url", "https://github.com/acme/repo/pull/42",
 			"--assignee", "claude-1", "--assignee", "claude-2", "--has-parent", "awb-000001",
 			"--blocked-by", "awb-000002", "--related", "awb-000003",
 			"--description", "body text", "Parser crashes")
@@ -275,6 +294,8 @@ func TestAWBCreateBody(t *testing.T) {
 		assert.Equal(t, []string{"awb-000002"}, body["blocked_by"])
 		assert.Equal(t, []string{"awb-000003"}, body["related"])
 		assert.Equal(t, "body text", body["description"])
+		assert.Equal(t, "01234567", body["commit_hash"])
+		assert.Equal(t, "https://github.com/acme/repo/pull/42", body["pull_request_url"])
 	})
 
 	t.Run("priority 0 is a real priority", func(t *testing.T) {
@@ -324,6 +345,8 @@ func parsedAWBUpdate(t *testing.T, argv ...string) (*cobra.Command, *awbUpdatePa
 	}{
 		{"title", &p.Title},
 		{"type", &p.Type},
+		{"commit-hash", &p.CommitHash},
+		{"pull-request-url", &p.PullRequestURL},
 	} {
 		if flags.Changed(bind.name) {
 			v, err := flags.GetString(bind.name)
@@ -379,6 +402,14 @@ func TestAWBUpdateBody(t *testing.T) {
 		var stderr bytes.Buffer
 		_, rc := buildAWBUpdateBody(p, cmd, strings.NewReader(""), &stderr)
 		assert.Equal(t, rcInvalidArg, rc)
+	})
+
+	t.Run("implementation fields can be set and cleared", func(t *testing.T) {
+		cmd, p := parsedAWBUpdate(t, "--commit-hash", "01234567", "--pull-request-url", "", "awb-a3f9c1")
+		body, rc := buildAWBUpdateBody(p, cmd, strings.NewReader(""), os.Stderr)
+		require.Equal(t, rcOK, rc)
+		assert.Equal(t, "01234567", body["commit_hash"])
+		assert.Equal(t, "", body["pull_request_url"])
 	})
 
 	t.Run("no field flags at all succeeds and changes nothing, as awb does", func(t *testing.T) {

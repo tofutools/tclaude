@@ -104,6 +104,8 @@ type awbCreateRequest struct {
 	Workspace      string   `json:"workspace"`
 	Title          string   `json:"title"`
 	Description    *string  `json:"description,omitempty"`
+	CommitHash     string   `json:"commit_hash,omitempty"`
+	PullRequestURL string   `json:"pull_request_url,omitempty"`
 	Type           string   `json:"type,omitempty"`
 	Priority       *int     `json:"priority,omitempty"`
 	Labels         []string `json:"labels,omitempty"`
@@ -120,18 +122,21 @@ type awbUpdateRequest struct {
 	// awb update's whole contract is that it changes only what was named. An
 	// empty description is a real state ("this issue has no body"), so absent
 	// and "clear it" have to be told apart.
-	Title       *string `json:"title,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Type        *string `json:"type,omitempty"`
-	Priority    *int    `json:"priority,omitempty"`
+	Title          *string `json:"title,omitempty"`
+	Description    *string `json:"description,omitempty"`
+	CommitHash     *string `json:"commit_hash,omitempty"`
+	PullRequestURL *string `json:"pull_request_url,omitempty"`
+	Type           *string `json:"type,omitempty"`
+	Priority       *int    `json:"priority,omitempty"`
 }
 
 type awbClaimRequest struct {
 	awbIssueRefRequest
-	// As is who the issue is claimed for. Empty means the AWB account the
-	// daemon authenticates as, which is the only identity an agent has here.
-	As    string `json:"as,omitempty"`
-	Force bool   `json:"force,omitempty"`
+	// As is a removed-field tombstone. Keeping it only in the daemon's private
+	// wire type lets an older client receive a clear refusal instead of being
+	// told its requested identity was accepted while silently ignoring it.
+	As    json.RawMessage `json:"as,omitempty"`
+	Force bool            `json:"force,omitempty"`
 }
 
 type awbForceRequest struct {
@@ -1046,14 +1051,16 @@ func (s *awbProxySession) gateAttachment(body *awbAttachNameRequest) (ref, name 
 // AWB rejects an unrecognised field rather than ignoring it, so this is spelled
 // out rather than assembled from a map.
 type awbIssueCreateBody struct {
-	Workspace   string               `json:"workspace"`
-	Title       string               `json:"title"`
-	Description *string              `json:"description,omitempty"`
-	Type        string               `json:"type,omitempty"`
-	Priority    *int                 `json:"priority,omitempty"`
-	Assignees   []string             `json:"assignees,omitempty"`
-	Labels      []string             `json:"labels,omitempty"`
-	Relations   []awbNewRelationBody `json:"relations,omitempty"`
+	Workspace      string               `json:"workspace"`
+	Title          string               `json:"title"`
+	Description    *string              `json:"description,omitempty"`
+	CommitHash     string               `json:"commit_hash,omitempty"`
+	PullRequestURL string               `json:"pull_request_url,omitempty"`
+	Type           string               `json:"type,omitempty"`
+	Priority       *int                 `json:"priority,omitempty"`
+	Assignees      []string             `json:"assignees,omitempty"`
+	Labels         []string             `json:"labels,omitempty"`
+	Relations      []awbNewRelationBody `json:"relations,omitempty"`
 }
 
 type awbNewRelationBody struct {
@@ -1150,6 +1157,12 @@ func (s *awbProxySession) buildAWBCreateBody(
 		}
 		out.Description = body.Description
 	}
+	if out.CommitHash, fault = validateAWBCommitHash(body.CommitHash); fault != nil {
+		return nil, fault
+	}
+	if out.PullRequestURL, fault = validateAWBPullRequestURL(body.PullRequestURL); fault != nil {
+		return nil, fault
+	}
 	if out.Type, fault = validateAWBType(body.Type); fault != nil {
 		return nil, fault
 	}
@@ -1205,16 +1218,18 @@ func nonEmptyRefs(ref string) []string {
 	return []string{ref}
 }
 
-// awbIssuePatchBody is the update payload. Only the four fields awb update can
+// awbIssuePatchBody is the update payload. Only fields awb update can
 // change appear: AWB rejects an unrecognised field, and accepts but refuses to
 // CHANGE status, assignee and labels — those move through their own verbs, so
 // that in_progress and an assignee cannot drift apart and a claim cannot be
 // taken silently.
 type awbIssuePatchBody struct {
-	Title       *string `json:"title,omitempty"`
-	Description *string `json:"description,omitempty"`
-	Type        *string `json:"type,omitempty"`
-	Priority    *int    `json:"priority,omitempty"`
+	Title          *string `json:"title,omitempty"`
+	Description    *string `json:"description,omitempty"`
+	CommitHash     *string `json:"commit_hash,omitempty"`
+	PullRequestURL *string `json:"pull_request_url,omitempty"`
+	Type           *string `json:"type,omitempty"`
+	Priority       *int    `json:"priority,omitempty"`
 }
 
 // handleAWBProxyIssueUpdate serves POST /v1/awb/issue/update.
@@ -1244,6 +1259,22 @@ func handleAWBProxyIssueUpdate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		patch.Description = body.Description
+	}
+	if body.CommitHash != nil {
+		value, fault := validateAWBCommitHash(*body.CommitHash)
+		if fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+		patch.CommitHash = &value
+	}
+	if body.PullRequestURL != nil {
+		value, fault := validateAWBPullRequestURL(*body.PullRequestURL)
+		if fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+		patch.PullRequestURL = &value
 	}
 	if body.Type != nil {
 		t, fault := validateAWBType(*body.Type)
@@ -1282,15 +1313,17 @@ func handleAWBProxyIssueClaim(w http.ResponseWriter, r *http.Request) {
 		writeProxyFault(w, fault)
 		return
 	}
-	// The assignee is always stated explicitly rather than left for the server
-	// to infer, so a proxied claim records exactly what the same `awb claim`
-	// would record: the identity is resolved on this side either way.
-	assignee := strings.TrimSpace(body.As)
-	if assignee == "" {
-		if assignee, fault = s.identity("claim"); fault != nil {
-			writeProxyFault(w, fault)
-			return
-		}
+	if body.As != nil {
+		writeProxyFault(w, faultf(http.StatusBadRequest, "invalid_arg",
+			"claim no longer accepts as; claims always use the operator's AWB user"))
+		return
+	}
+	// A claim always belongs to the AWB user whose account the daemon uses.
+	// AWB assignees are users, not free-form agent labels.
+	assignee, fault := s.identity("claim")
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
 	}
 	if assignee, fault = validateAWBAssignee(assignee); fault != nil {
 		writeProxyFault(w, fault)

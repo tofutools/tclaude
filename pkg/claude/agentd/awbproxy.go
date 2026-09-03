@@ -138,6 +138,13 @@ const (
 	// account belongs in `comment add`.
 	maxAWBCloseReasonLen = 500
 
+	// Implementation metadata uses AWB's own bounds. The validators below
+	// deliberately reproduce AWB's rules so the proxy never accepts a value the
+	// server will reject.
+	minAWBCommitHashLen     = 8
+	maxAWBCommitHashLen     = 128
+	maxAWBPullRequestURLLen = 1000
+
 	// maxAWBCommentBytes bounds a comment body. It is AWB's own description cap
 	// — a comment is Markdown prose held to the same bounds — applied here so
 	// an over-long one is refused with the field named rather than as a 400
@@ -1017,6 +1024,51 @@ func validateAWBAssignee(raw string) (string, *proxyFault) {
 	return validateAWBNameToken(raw, "assignee")
 }
 
+func validateAWBCommitHash(raw string) (string, *proxyFault) {
+	if raw == "" {
+		return "", nil
+	}
+	if len(raw) < minAWBCommitHashLen || len(raw) > maxAWBCommitHashLen {
+		return "", faultf(http.StatusBadRequest, "invalid_arg",
+			"commit hash must be between %d and %d hexadecimal characters",
+			minAWBCommitHashLen, maxAWBCommitHashLen)
+	}
+	for _, r := range raw {
+		switch {
+		case r >= '0' && r <= '9', r >= 'a' && r <= 'f', r >= 'A' && r <= 'F':
+			continue
+		default:
+			return "", faultf(http.StatusBadRequest, "invalid_arg",
+				"commit hash must contain only hexadecimal characters")
+		}
+	}
+	return raw, nil
+}
+
+func validateAWBPullRequestURL(raw string) (string, *proxyFault) {
+	// This intentionally matches AWB's validator, including its acceptance of
+	// URL userinfo and Unicode format characters.
+	if raw == "" {
+		return "", nil
+	}
+	if !utf8.ValidString(raw) {
+		return "", faultf(http.StatusBadRequest, "invalid_arg", "pull request URL is not valid UTF-8")
+	}
+	if utf8.RuneCountInString(raw) > maxAWBPullRequestURLLen {
+		return "", faultf(http.StatusBadRequest, "invalid_arg",
+			"pull request URL is too long: maximum %d characters", maxAWBPullRequestURLLen)
+	}
+	if strings.IndexFunc(raw, unicode.IsSpace) >= 0 {
+		return "", faultf(http.StatusBadRequest, "invalid_arg", "pull request URL must not contain whitespace")
+	}
+	parsed, err := url.Parse(raw)
+	if err != nil || !parsed.IsAbs() || parsed.Hostname() == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return "", faultf(http.StatusBadRequest, "invalid_arg",
+			"pull request URL must be an absolute http or https URL")
+	}
+	return raw, nil
+}
+
 // validateAWBNameToken is the shared rule: lowercase ASCII letters, digits,
 // hyphens, underscores, dots and slashes.
 func validateAWBNameToken(raw, what string) (string, *proxyFault) {
@@ -1379,25 +1431,27 @@ var (
 // `"close_reason": ""` on every issue — a value that reads as "this issue has
 // no reason recorded" for a concept the tracker no longer has.
 type awbIssue struct {
-	ID          string          `json:"id"`
-	Workspace   string          `json:"workspace"`
-	Title       string          `json:"title"`
-	Description string          `json:"description"`
-	Type        string          `json:"type"`
-	Status      string          `json:"status"`
-	Priority    int             `json:"priority"`
-	Order       int             `json:"order"`
-	BoardHidden bool            `json:"board_hidden"`
-	Labels      []string        `json:"labels"`
-	Assignees   []string        `json:"assignees"`
-	CreatedAt   string          `json:"created_at"`
-	UpdatedAt   string          `json:"updated_at"`
-	ClosedAt    string          `json:"closed_at"`
-	Blocked     bool            `json:"blocked"`
-	Blockers    []string        `json:"blockers"`
-	Relations   []awbRelation   `json:"relations"`
-	Links       []awbLink       `json:"links"`
-	Attachments []awbAttachment `json:"attachments"`
+	ID             string          `json:"id"`
+	Workspace      string          `json:"workspace"`
+	Title          string          `json:"title"`
+	Description    string          `json:"description"`
+	CommitHash     string          `json:"commit_hash"`
+	PullRequestURL string          `json:"pull_request_url"`
+	Type           string          `json:"type"`
+	Status         string          `json:"status"`
+	Priority       int             `json:"priority"`
+	Order          int             `json:"order"`
+	BoardHidden    bool            `json:"board_hidden"`
+	Labels         []string        `json:"labels"`
+	Assignees      []string        `json:"assignees"`
+	CreatedAt      string          `json:"created_at"`
+	UpdatedAt      string          `json:"updated_at"`
+	ClosedAt       string          `json:"closed_at"`
+	Blocked        bool            `json:"blocked"`
+	Blockers       []string        `json:"blockers"`
+	Relations      []awbRelation   `json:"relations"`
+	Links          []awbLink       `json:"links"`
+	Attachments    []awbAttachment `json:"attachments"`
 }
 
 // awbIssueTree is one issue extended with its children, recursively.

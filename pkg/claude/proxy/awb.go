@@ -601,6 +601,8 @@ type awbCreateParams struct {
 	AskHuman        string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
 	Description     string `long:"description" optional:"true" help:"Markdown description of the issue. Prefer --description-file for anything multi-line."`
 	DescriptionFile string `long:"description-file" short:"F" optional:"true" help:"Read the description from this file (\"-\" reads stdin)."`
+	CommitHash      string `long:"commit-hash" short:"H" optional:"true" help:"Implementing commit hash."`
+	PullRequestURL  string `long:"pull-request-url" short:"U" optional:"true" help:"Implementing pull request URL."`
 	Type            string `long:"type" optional:"true" help:"epic, feature, bug, task or chore (default: task)."`
 	Priority        *int   `long:"priority" help:"0 (highest) to 4 (lowest). Default 2."`
 	Workspace       string `long:"workspace" optional:"true" help:"The workspace to create the issue in. Optional when exactly one visible workspace is within your proxy gate."`
@@ -677,6 +679,12 @@ func buildAWBCreateBody(
 		}
 		body["description"] = description
 	}
+	if p.CommitHash != "" {
+		body["commit_hash"] = p.CommitHash
+	}
+	if p.PullRequestURL != "" {
+		body["pull_request_url"] = p.PullRequestURL
+	}
 	if v := strings.TrimSpace(p.Type); v != "" {
 		body["type"] = v
 	}
@@ -711,6 +719,8 @@ type awbUpdateParams struct {
 	Title           *string `long:"title" help:"New title. Omit to leave it unchanged."`
 	Description     string  `long:"description" optional:"true" help:"New description, replacing the old one. Pass an empty string to clear it. Prefer --description-file for anything multi-line."`
 	DescriptionFile string  `long:"description-file" short:"F" optional:"true" help:"Read the new description from this file (\"-\" reads stdin)."`
+	CommitHash      *string `long:"commit-hash" short:"H" help:"Implementing commit hash; empty clears it."`
+	PullRequestURL  *string `long:"pull-request-url" short:"U" help:"Implementing pull request URL; empty clears it."`
 	Type            *string `long:"type" help:"epic, feature, bug, task or chore."`
 	Priority        *int    `long:"priority" help:"0 (highest) to 4 (lowest)."`
 	JSON            bool    `long:"json" optional:"true" help:"Print the stable JSON representation. This is the DEFAULT; the flag exists so an awb command line copies over unchanged."`
@@ -720,8 +730,8 @@ type awbUpdateParams struct {
 func awbUpdateCmd() *cobra.Command {
 	return boa.CmdT[awbUpdateParams]{
 		Use:   "update",
-		Short: "Change an issue's title, description, type or priority",
-		Long: "Change the title, description, type or priority. Whichever you omit is left alone.\n\n" +
+		Short: "Change an issue's fields",
+		Long: "Change the title, description, implementation links, type or priority. Whichever you omit is left alone.\n\n" +
 			"update cannot change the status or the assignee: claim, release, close and reopen are the " +
 			"only transitions of either, which keeps in_progress and an assignee from drifting apart " +
 			"and keeps a claim from being taken silently. It cannot change the labels either — that is " +
@@ -778,6 +788,12 @@ func buildAWBUpdateBody(
 	if p.Priority != nil {
 		body["priority"] = *p.Priority
 	}
+	if p.CommitHash != nil {
+		body["commit_hash"] = *p.CommitHash
+	}
+	if p.PullRequestURL != nil {
+		body["pull_request_url"] = *p.PullRequestURL
+	}
 	// `--description ""` means "clear it", which is not the same request as
 	// omitting the flag, and only cobra can tell the two apart — so it is sent
 	// exactly when the caller typed it.
@@ -802,8 +818,6 @@ type awbClaimParams struct {
 	Force    bool   `long:"force" optional:"true" help:"Override a blocked or closed issue."`
 	JSON     bool   `long:"json" optional:"true" help:"Print the stable JSON representation. This is the DEFAULT; the flag exists so an awb command line copies over unchanged."`
 	Compact  bool   `long:"compact" optional:"true" help:"Print awb's one terse line per issue instead. Cheapest output there is, and the one to prefer when you only need to see what is there."`
-	// Declared after --ask-human for the shorthand reason awbFilterParams gives.
-	As string `long:"as" optional:"true" help:"Claim for this name instead of the daemon's AWB account."`
 }
 
 func awbClaimCmd() *cobra.Command {
@@ -814,9 +828,9 @@ func awbClaimCmd() *cobra.Command {
 			"Claiming one already held by the same name succeeds, and another claimant joins without " +
 			"replacing anyone. It fails if blocked or closed; --force overrides both. A close reason stays in the " +
 			"issue's activity timeline either way — `comment list` still shows it.\n\n" +
-			"Without --as the assignee is the OPERATOR's AWB account: the daemon holds it, and agents " +
-			"have no AWB identity of their own. If several agents share that account, --as is how they " +
-			"tell their claims apart.\n\n" +
+			"The assignee is always the OPERATOR's AWB account: the daemon holds it, and agents " +
+			"have no AWB identity of their own. Agents sharing that account must coordinate through " +
+			"other means.\n\n" +
 			"Needs proxy.awb.write and the operator's agent.awb_proxy.allow_write.",
 		ParamEnrich: common.DefaultParamEnricher(),
 		InitFuncCtx: func(ctx *boa.HookContext, p *awbClaimParams, _ *cobra.Command) error {
@@ -830,9 +844,6 @@ func awbClaimCmd() *cobra.Command {
 			}
 			body := map[string]any{
 				"id": strings.TrimSpace(p.ID), "force": p.Force, "compact": compact,
-			}
-			if v := strings.TrimSpace(p.As); v != "" {
-				body["as"] = v
 			}
 			os.Exit(awbProxyCall("/v1/awb/issue/claim", body, p.AskHuman, os.Stdout, os.Stderr))
 		},
