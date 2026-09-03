@@ -423,7 +423,9 @@ func TestAWBProxy_ClaimRecordsTheDaemonsAccount(t *testing.T) {
 		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
 	}
 
-	res := w.post("/v1/awb/issue/claim", map[string]any{"id": "awb-a3f9c1"})
+	res := w.post("/v1/awb/issue/claim", map[string]any{
+		"id": "awb-a3f9c1", "as": "not-an-awb-user",
+	})
 	w.outcome(res)
 
 	call := rec.only(t)
@@ -432,7 +434,7 @@ func TestAWBProxy_ClaimRecordsTheDaemonsAccount(t *testing.T) {
 	assert.Equal(t, "tclaude-bot", call.Username)
 	assert.Equal(t, "hunter2", call.Password)
 	assert.JSONEq(t, `{"assignee":"tclaude-bot"}`, string(call.Body),
-		"the assignee is stated explicitly, so a proxied claim records what `awb claim` would")
+		"even a legacy client cannot override the operator's AWB user")
 }
 
 func TestAWBProxy_CreateGatesEveryRelationTarget(t *testing.T) {
@@ -456,6 +458,7 @@ func TestAWBProxy_CreateSendsAWBsOwnBody(t *testing.T) {
 
 	res := w.post("/v1/awb/issue/create", map[string]any{
 		"workspace": "awb", "title": " Parser crashes ", "type": "bug", "priority": 1,
+		"commit_hash": "01234567", "pull_request_url": "https://github.com/acme/repo/pull/42",
 		"labels": []string{"parser"}, "assignees": []string{"claude-1", "claude-2"},
 		"blocked_by": []string{"awb-000001"},
 		"compact":    true,
@@ -466,10 +469,44 @@ func TestAWBProxy_CreateSendsAWBsOwnBody(t *testing.T) {
 
 	call := rec.only(t)
 	assert.Equal(t, "https://awb.example/api/issues", call.URL)
-	assert.JSONEq(t, `{"workspace":"awb","title":"Parser crashes","type":"bug","priority":1,`+
+	assert.JSONEq(t, `{"workspace":"awb","title":"Parser crashes","commit_hash":"01234567",`+
+		`"pull_request_url":"https://github.com/acme/repo/pull/42","type":"bug","priority":1,`+
 		`"assignees":["claude-1","claude-2"],"labels":["parser"],`+
 		`"relations":[{"type":"blocked-by","other":"awb-000001"}]}`,
 		string(call.Body))
+}
+
+func TestAWBProxy_UpdateImplementationFields(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
+	}
+
+	res := w.post("/v1/awb/issue/update", map[string]any{
+		"id": "awb-a3f9c1", "commit_hash": "89abcdef", "pull_request_url": "",
+	})
+	w.outcome(res)
+
+	call := rec.only(t)
+	assert.Equal(t, http.MethodPatch, call.Method)
+	assert.JSONEq(t, `{"commit_hash":"89abcdef","pull_request_url":""}`, string(call.Body))
+}
+
+func TestAWBProxy_RejectsInvalidImplementationFields(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+
+	for name, body := range map[string]map[string]any{
+		"commit hash":      {"id": "awb-a3f9c1", "commit_hash": "not-a-hash"},
+		"pull request URL": {"id": "awb-a3f9c1", "pull_request_url": "ssh://example.com/42"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := w.post("/v1/awb/issue/update", body)
+			assert.Equal(t, http.StatusBadRequest, res.Code, "body=%s", res.Body.String())
+		})
+	}
+	assert.False(t, rec.sawAnyCall())
 }
 
 func TestAWBProxy_ShowRendersEveryAssignee(t *testing.T) {

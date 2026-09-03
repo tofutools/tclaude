@@ -179,6 +179,8 @@ The `agent.linear_proxy` block in `~/.tclaude/data/config.json`:
 tclaude proxy awb whoami                  # server, account, reachable workspaces
 tclaude proxy awb ready --compact         # the primary entry point
 tclaude proxy awb claim awb-a3f9c1
+tclaude proxy awb update awb-a3f9c1 --commit-hash 01234567
+tclaude proxy awb update awb-a3f9c1 --pull-request-url https://github.com/acme/repo/pull/42
 tclaude proxy awb comment add awb-a3f9c1 --body-file findings.md
 # other verbs: show, list, blocked, search, create, update, close, reopen,
 #              release, delete, label add|rm, dep add|rm|tree,
@@ -240,7 +242,7 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
 - `url` — the AWB server's base URL. This is what registers the command; only
   http/https, and a URL carrying userinfo is refused rather than stripped.
 - `username` — the account every proxied call authenticates as, and the identity
-  AWB attributes writes to. It is also what `claim` records without `--as` and
+  AWB attributes writes to. It is also the AWB user every `claim` assigns and
   what `--mine` filters on. Empty suits a server whose database holds no user,
   which AWB treats as unauthenticated.
 - `password_file` — empty falls back to `AWB_PASSWORD` in agentd's environment;

@@ -72,45 +72,6 @@ enough to ask the operator to add it, and nothing about what is inside it. A
 workspace the account cannot see does not appear at all — which is itself the
 answer, and why the two lists are printed side by side.
 
-## Prerequisites
-
-**The daemon must be running.** If you see
-`Error: tclaude agentd is not running.`, ask the human to start it with
-`tclaude agentd serve`.
-
-**The operator must have configured the proxy.** A `503 awb_not_configured`
-means there is no server to call; `503 awb_proxy_disabled` means there is a
-server but no workspace policy. Quote this to them:
-
-```json
-{ "agent": { "awb_proxy": {
-    "url": "https://awb.example",
-    "username": "tclaude-bot",
-    "password_file": "~/.tclaude/awb-password.txt",
-    "allowed_workspaces": ["awb"],
-    "allow_write": false
-} } }
-```
-
-The password lives in a file, never in `config.json` — that file is plaintext,
-shows up in the dashboard's Config tab, and is the sort of thing that ends up in
-a bug report. `AWB_PASSWORD` in agentd's own environment works instead.
-
-**You need the slug.** A `403` naming `proxy.awb.read` or `proxy.awb.write`
-means the human has not granted it:
-
-```bash
-tclaude agent permissions grant <you> proxy.awb.read
-tclaude agent permissions grant <you> proxy.awb.write
-```
-
-Or retry the one call with `--ask-human 60s` for a one-off popup approval.
-
-**Writing needs the slug AND `allow_write`.** They are different questions: the
-slug says *you* may write, `allow_write` says the operator wants any agent to be
-able to. `403 awb_write_disabled` means the slug is fine and the config is not —
-that is a change only the human can make.
-
 ## Finding work
 
 ```bash
@@ -127,8 +88,8 @@ assignee filter and no status filter: those flags are not merely ignored, they
 do not exist on it. "Which issues do I hold" is `list --mine`.
 
 `--mine` means the **operator's** AWB account, not you: the daemon holds theirs,
-and you have no AWB identity of your own. If several agents share that account,
-`claim --as <name>` is how you tell your claims apart.
+they must use another coordination channel to tell their work apart. Assignee
+arguments elsewhere in the proxy name real AWB users, not arbitrary agent labels.
 
 **`--compact` is the cheapest output there is** — one line per issue, designed
 to cost as little context as possible:
@@ -152,17 +113,22 @@ tclaude proxy awb claim awb-a3f9c1
 tclaude proxy awb comment list awb-a3f9c1 --compact   # what has already been said
 tclaude proxy awb comment add awb-a3f9c1 --body-file findings.md
 tclaude proxy awb update awb-a3f9c1 --description-file findings.md
+tclaude proxy awb update awb-a3f9c1 --commit-hash 01234567
+tclaude proxy awb update awb-a3f9c1 --pull-request-url https://github.com/acme/repo/pull/42
 tclaude proxy awb label add awb-a3f9c1 tokeniser
 tclaude proxy awb close awb-a3f9c1 --reason "Guard against empty token stream"
 tclaude proxy awb release awb-a3f9c1               # give it back
 ```
 
 `claim` joins the assignee list and fails only if the issue is blocked or closed;
-`--force` overrides those two checks. `update` changes the title, description, type and
-priority and nothing else — the status and assignees move only through
+`--force` overrides those two checks. `update` changes the title, description,
+commit hash, pull request URL, type and priority and nothing else — the status and assignees move only through
 `claim`, `release`, `close` and `reopen`, which is what keeps `in_progress` and
 an assignee from drifting apart. Labels are added and removed one at a time, so
 a whole-set replace cannot discard somebody else's edit.
+
+A claim is always assigned to the operator's AWB user. Agents that share that
+account must coordinate ownership elsewhere.
 
 A successful mutation prints nothing under `--compact` and the resulting issue
 by default — awb's own behaviour, not a limitation here.
