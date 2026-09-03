@@ -220,7 +220,7 @@ is checked against.
 **Workspace keys match exactly.** `web` does not authorize `webhooks`, and there
 is no wildcard.
 
-Three refusals mean three different fixes, so read the code before escalating:
+Four refusals mean four different fixes, so read the code before escalating:
 
 - `503 awb_not_configured` / `awb_proxy_disabled` and `403 awb_write_disabled`
   describe operator setup; report them to the operator rather than changing it.

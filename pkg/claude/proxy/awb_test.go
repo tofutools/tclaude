@@ -71,6 +71,15 @@ func TestAWBClaimOmitsAssigneeOverride(t *testing.T) {
 		"claims always use the operator's AWB user; an arbitrary string is not an assignee")
 }
 
+func TestAWBImplementationFlagsPreserveExistingShorthands(t *testing.T) {
+	for _, cmd := range []*cobra.Command{awbCreateCmd(), awbUpdateCmd()} {
+		assert.Equal(t, "c", cmd.Flags().Lookup("compact").Shorthand)
+		assert.Equal(t, "p", cmd.Flags().Lookup("priority").Shorthand)
+		assert.Equal(t, "H", cmd.Flags().Lookup("commit-hash").Shorthand)
+		assert.Equal(t, "U", cmd.Flags().Lookup("pull-request-url").Shorthand)
+	}
+}
+
 // TestAWBEveryVerbOffersBothOutputModes is the guard the spelled-out --json /
 // --compact declarations need: boa registers no flag at all for an embedded
 // params struct, so a new verb that "inherits" them inherits nothing.

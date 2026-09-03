@@ -601,8 +601,8 @@ type awbCreateParams struct {
 	AskHuman        string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout. Capped at 300s. Timeout = deny."`
 	Description     string `long:"description" optional:"true" help:"Markdown description of the issue. Prefer --description-file for anything multi-line."`
 	DescriptionFile string `long:"description-file" short:"F" optional:"true" help:"Read the description from this file (\"-\" reads stdin)."`
-	CommitHash      string `long:"commit-hash" optional:"true" help:"Implementing commit hash."`
-	PullRequestURL  string `long:"pull-request-url" optional:"true" help:"Implementing pull request URL."`
+	CommitHash      string `long:"commit-hash" short:"H" optional:"true" help:"Implementing commit hash."`
+	PullRequestURL  string `long:"pull-request-url" short:"U" optional:"true" help:"Implementing pull request URL."`
 	Type            string `long:"type" optional:"true" help:"epic, feature, bug, task or chore (default: task)."`
 	Priority        *int   `long:"priority" help:"0 (highest) to 4 (lowest). Default 2."`
 	Workspace       string `long:"workspace" optional:"true" help:"The workspace to create the issue in. Optional when exactly one visible workspace is within your proxy gate."`
@@ -719,8 +719,8 @@ type awbUpdateParams struct {
 	Title           *string `long:"title" help:"New title. Omit to leave it unchanged."`
 	Description     string  `long:"description" optional:"true" help:"New description, replacing the old one. Pass an empty string to clear it. Prefer --description-file for anything multi-line."`
 	DescriptionFile string  `long:"description-file" short:"F" optional:"true" help:"Read the new description from this file (\"-\" reads stdin)."`
-	CommitHash      *string `long:"commit-hash" help:"Implementing commit hash; empty clears it."`
-	PullRequestURL  *string `long:"pull-request-url" help:"Implementing pull request URL; empty clears it."`
+	CommitHash      *string `long:"commit-hash" short:"H" help:"Implementing commit hash; empty clears it."`
+	PullRequestURL  *string `long:"pull-request-url" short:"U" help:"Implementing pull request URL; empty clears it."`
 	Type            *string `long:"type" help:"epic, feature, bug, task or chore."`
 	Priority        *int    `long:"priority" help:"0 (highest) to 4 (lowest)."`
 	JSON            bool    `long:"json" optional:"true" help:"Print the stable JSON representation. This is the DEFAULT; the flag exists so an awb command line copies over unchanged."`
