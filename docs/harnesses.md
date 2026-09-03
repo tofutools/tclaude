@@ -175,6 +175,49 @@ default; your own configuration rules.
   on one shows `⚙+N` / `👁+N` instead of `idle` in the
   [dashboard](dashboard.md).
 
+### Relocated config, and what that means for `claude mcp`
+
+Every tclaude-launched Claude pane runs with `CLAUDE_CONFIG_DIR` pinned to the
+harness state root, so it reads **`~/.claude/.claude.json`** — not the ambient
+`~/.claude.json` that a bare `claude` in your terminal opens. That keeps
+account, onboarding and per-project trust state inside the one directory every
+sandbox posture keeps writable; without it a constructed-root launch cannot see
+the top-level file and parks on the login wizard. The relocated file is copied
+from the ambient one **once**, at the first tclaude Claude launch on the
+machine, and the two evolve independently from then on.
+
+Almost nothing in that file is configuration you maintain by hand — it is
+account state, per-project records, caches and counters, all of which *should*
+diverge per launch context. The settings you do edit (`settings.json`,
+`settings.local.json`, `plugins/`) already live under `~/.claude/`, the state
+root both launch kinds share, so they need no special handling.
+
+The one exception is MCP registrations, which Claude Code stores in the config
+file rather than in settings — under `mcpServers` for `--scope user`, and under
+`projects.<dir>.mcpServers` for `--scope local`, the default. **So a bare
+`claude mcp add` configures your ambient config only, and the server will not
+appear in a tclaude pane's `/mcp` list.** Plugin-provided servers still appear,
+because plugin registration lives under the shared state root — which is why
+the failure looks selective rather than total.
+
+Set the config dir on any `claude mcp` command whose result you want tclaude
+panes to see:
+
+```bash
+CLAUDE_CONFIG_DIR=~/.claude claude mcp add --transport http my-server http://localhost:4001/mcp/http
+CLAUDE_CONFIG_DIR=~/.claude claude mcp list
+CLAUDE_CONFIG_DIR=~/.claude claude mcp remove my-server
+```
+
+Panes read the config at launch, so restart or resume the session to pick up a
+change. To configure both your terminal and your agents, run the command twice
+— once with the prefix and once without.
+
+If you have servers that predate this and want them carried over in bulk, merge
+`mcpServers` from `~/.claude.json` into `~/.claude/.claude.json` by hand; there
+is deliberately no automatic sync, so that tclaude never writes MCP entries
+into a config file a running pane is concurrently updating.
+
 ## Codex CLI
 
 First-class: the common contracts — sessions, conversations, ask, groups,
