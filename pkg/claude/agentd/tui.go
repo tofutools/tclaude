@@ -1287,6 +1287,14 @@ func newTUITextInput(prompt string) textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = prompt
 	ti.SetWidth(60)
+	// The field takes the terminal's own paste (see deliverPaste) but not
+	// textinput's ctrl+v, which reads the host's system clipboard. This
+	// console can be agent-class — a pane a harness drives through tmux
+	// send-keys, the same reason Tab completion is gated in completingDir —
+	// and a keystroke that pulls whatever the human last copied into a
+	// visible field is a wider door than that caller should have. A terminal
+	// paste carries only what the pasting side already had.
+	ti.KeyMap.Paste.SetEnabled(false)
 	return ti
 }
 
@@ -2532,6 +2540,37 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// keeps the token reachable afterwards.
 		m.showTokenBanner = false
 		return m.handleKey(msg)
+
+	case tea.PasteMsg:
+		return m.deliverPaste(msg)
+	}
+	return m, nil
+}
+
+// deliverPaste hands pasted text to whichever form field has focus.
+//
+// A bracketed paste arrives as one message of its own rather than as the key
+// presses that would have typed it, so it never reaches handleKey and the
+// fields it is aimed at never see it. The text input already knows what to do
+// with the message — it collapses the newlines and tabs a paste can carry to
+// spaces, since these fields are single-line — it just has to be handed it.
+//
+// Outside the two forms there is no field to paste into, and pasting is not a
+// way to press the list's keys: the content is dropped.
+func (m tuiModel) deliverPaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
+	switch m.mode {
+	case tuiModeSpawn:
+		// Pasted text edits a field exactly as typing does, so the Tab
+		// candidate list goes with it — same as every non-completing key in
+		// handleSpawnKey, and for the same reason: it is an answer to a path
+		// that may no longer be in the field.
+		m.form.dirSuggestions = nil
+		updated, cmd := m.updateFocusedInput(msg)
+		return updated, cmd
+	case tuiModeShell:
+		m.shell.dirSuggestions = nil
+		updated, cmd := m.updateFocusedShellInput(msg)
+		return updated, cmd
 	}
 	return m, nil
 }
