@@ -23,9 +23,9 @@ test('100-repository dialog retains hidden selections and freezes the submitted 
   assert.equal(options[1].checked ?? options[1].hasAttribute('checked'), false);
   await harness.input(host.querySelector('input[type=search]'), 'repo-99');
   assert.equal(host.querySelectorAll('.git-repo-row').length, 1);
-  await harness.act(() => harness.fireEvent(host.querySelector('.git-repos-toolbar button'), 'click')); 
+  await harness.act(() => harness.fireEvent(host.querySelector('.git-repos-toolbar button'), 'click'));
   assert.match(host.querySelector('.git-repos-footer').textContent, /99 of 100 selected/);
-  await harness.act(() => harness.fireEvent(host.querySelector('.git-repos-footer .primary'), 'click')); 
+  await harness.act(() => harness.fireEvent(host.querySelector('.git-repos-footer .primary'), 'click'));
   assert.equal(submitted.length, 99);
   assert.equal(submitted.some((r) => r.path === '/repo-99'), false);
   assert.equal(submitted.every((r) => r.switch_default === true && r.discard === false && r.group === 'team'), true);

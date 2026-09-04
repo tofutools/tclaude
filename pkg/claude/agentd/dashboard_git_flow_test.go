@@ -44,9 +44,11 @@ func gitFixture(t *testing.T) (string, string, string) {
 	repoCommit(t, source, "initial")
 	repoGit(t, source, "push", "-u", "origin", "trunk")
 	repoGit(t, base, "clone", remote, checkout)
+	checkout, err := filepath.EvalSymlinks(checkout)
+	require.NoError(t, err)
 	f := newFlow(t)
 	f.HaveGroup("code")
-	_, err := db.SetAgentGroupDefaultCwd("code", checkout)
+	_, err = db.SetAgentGroupDefaultCwd("code", checkout)
 	require.NoError(t, err)
 	return remote, source, checkout
 }
@@ -150,7 +152,9 @@ func TestDashboardGitWorktreeConflictKeepsChanges(t *testing.T) {
 	_, _, checkout := gitFixture(t)
 	linked := filepath.Join(t.TempDir(), "linked")
 	repoGit(t, checkout, "worktree", "add", "-b", "feature", linked)
-	_, err := db.SetAgentGroupDefaultCwd("code", linked)
+	linked, err := filepath.EvalSymlinks(linked)
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultCwd("code", linked)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(linked, "precious"), []byte("keep"), 0600))
 	result := updateGit(t, linked, true, true, "pull")
