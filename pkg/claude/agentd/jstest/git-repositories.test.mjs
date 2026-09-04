@@ -19,13 +19,13 @@ test('100-repository dialog retains hidden selections and freezes the submitted 
   await harness.act(async () => { await Promise.resolve(); });
   assert.equal(host.querySelectorAll('.git-repo-row').length, 100);
   const options = host.querySelectorAll('.git-repos-options input');
-  assert.equal(options[0].checked, true);
-  assert.equal(!!options[1].checked, false);
+  assert.equal(options[0].checked ?? options[0].hasAttribute('checked'), true);
+  assert.equal(options[1].checked ?? options[1].hasAttribute('checked'), false);
   await harness.input(host.querySelector('input[type=search]'), 'repo-99');
   assert.equal(host.querySelectorAll('.git-repo-row').length, 1);
-  await harness.click(host.querySelector('.git-repos-toolbar button'));
+  await harness.act(() => harness.fireEvent(host.querySelector('.git-repos-toolbar button'), 'click')); 
   assert.match(host.querySelector('.git-repos-footer').textContent, /99 of 100 selected/);
-  await harness.click(host.querySelector('.git-repos-footer .primary'));
+  await harness.act(() => harness.fireEvent(host.querySelector('.git-repos-footer .primary'), 'click')); 
   assert.equal(submitted.length, 99);
   assert.equal(submitted.some((r) => r.path === '/repo-99'), false);
   assert.equal(submitted.every((r) => r.switch_default === true && r.discard === false && r.group === 'team'), true);
@@ -58,4 +58,24 @@ test('batch Git updates bound concurrency and continue after individual failures
   assert.equal(calls.length, 10);
   assert.equal(results.filter((r) => r.status === 'updated').length, 9);
   assert.equal(results.filter((r) => r.status === 'failed').length, 1);
+});
+
+test('palette exposes all/group Git commands in plain and wizard modes', async (t) => {
+  const harness = await createPreactHarness(t);
+  await harness.replaceDashboardModule('js/dashboard.js', `export let lastSnapshot = null; export function setLastSnapshot(v) { lastSnapshot=v; } export function webTerminalDefault() { return false; }`);
+  const { buildCommands } = await harness.importDashboardModule('js/palette.js');
+  const { registerGitRepositoriesController } = await harness.importDashboardModule('js/git-repositories-controller.js');
+  const calls = [];
+  t.after(registerGitRepositoriesController({ open: (...args) => calls.push(args) }));
+  for (const wizard of [false, true]) {
+    harness.document.body.classList.toggle('wizard', wizard);
+    const commands = buildCommands({ groups: [{ name: 'tclaude', agents: [] }], agents: [] });
+    const git = commands.filter((c) => c.keywords?.startsWith('git pull ') || c.keywords?.startsWith('git sync '));
+    assert.equal(git.length, 4);
+    git.forEach((command) => command.run());
+  }
+  assert.deepEqual(calls, [
+    ['pull', ''], ['sync', ''], ['pull', 'tclaude'], ['sync', 'tclaude'],
+    ['pull', ''], ['sync', ''], ['pull', 'tclaude'], ['sync', 'tclaude'],
+  ]);
 });

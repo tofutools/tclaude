@@ -18484,3 +18484,13 @@ body.wizard .git-repos-options small.git-repos-warning { color: #e6bd89; }
   .git-repositories-modal { max-height: 96vh; overflow-y: auto; }
   .git-repos-list { flex-shrink: 0; max-height: 176px; }
 }
+.git-repos-heading h3 { font-size: 20px; }
+.git-repositories-modal button {
+  font: inherit; font-size: 12px; cursor: pointer; border: 1px solid #3a4656;
+  border-radius: 5px; padding: 8px 12px; background: #222d3a; color: #d6e0ec;
+}
+.git-repositories-modal button.primary { background: #276fce; border-color: #3681e6; color: #fff; }
+.git-repositories-modal button.danger { border-color: #cc7e7e; }
+.git-repositories-modal button:disabled { cursor: default; opacity: .5; }
+.git-repositories-modal button:focus-visible, .git-repos-list:focus-visible { outline: 2px solid #72aaf9; outline-offset: 2px; }
+body.wizard .git-repositories-modal button:focus-visible, body.wizard .git-repos-list:focus-visible { outline-color: #c39ee8; }

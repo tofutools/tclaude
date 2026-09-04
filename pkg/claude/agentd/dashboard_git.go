@@ -48,11 +48,18 @@ type dashboardGitResult struct {
 
 // Retain only a bounded diagnostic from potentially noisy Git subprocesses.
 // Return the original size so truncation never blocks Git's pipe writer.
-type dashboardGitOutput struct{ data []byte }
+type dashboardGitOutput struct {
+	data      []byte
+	limit     int
+	truncated bool
+}
 
 func (b *dashboardGitOutput) Write(p []byte) (int, error) {
 	n := len(p)
-	if left := 16*1024 - len(b.data); left > 0 {
+	if len(b.data)+n > b.limit {
+		b.truncated = true
+	}
+	if left := b.limit - len(b.data); left > 0 {
 		b.data = append(b.data, p[:min(left, n)]...)
 	}
 	return n, nil
@@ -62,10 +69,17 @@ func dashboardGit(ctx context.Context, dir string, args ...string) (string, erro
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", dir}, args...)...)
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "GCM_INTERACTIVE=never")
 	cmd.WaitDelay = 2 * time.Second
-	var stdout, stderr dashboardGitOutput
+	stdout := dashboardGitOutput{limit: 4 * 1024 * 1024}
+	stderr := dashboardGitOutput{limit: 16 * 1024}
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
-	out := strings.TrimSpace(string(stdout.data))
+	out := string(stdout.data)
+	if !strings.HasSuffix(out, "\x00") {
+		out = strings.TrimSpace(out)
+	}
+	if stdout.truncated && err == nil {
+		err = fmt.Errorf("Git output exceeded 4 MiB")
+	}
 	if err != nil {
 		detail := strings.TrimSpace(string(stderr.data))
 		if ctx.Err() != nil {
@@ -161,13 +175,8 @@ func dashboardGitRemote(ctx context.Context, path, branch string) (string, error
 }
 
 func dashboardGitDefault(ctx context.Context, path, remote string) (string, error) {
-	prefix := "refs/remotes/" + remote + "/"
-	ref, _ := dashboardGit(ctx, path, "symbolic-ref", "--quiet", prefix+"HEAD")
-	if strings.HasPrefix(ref, prefix) {
-		return strings.TrimPrefix(ref, prefix), nil
-	}
-	// Repositories created with git init may have no local remote HEAD. Ask
-	// the remote instead of assuming main/master (custom defaults are common).
+	// A fetch does not refresh refs/remotes/<remote>/HEAD. Read the live
+	// default so a server-side main -> trunk change cannot pick an old branch.
 	out, err := dashboardGit(ctx, path, "ls-remote", "--symref", "--", remote, "HEAD")
 	if err != nil {
 		return "", err
@@ -322,27 +331,76 @@ func runDashboardGit(ctx context.Context, request dashboardGitRequest) dashboard
 		return true
 	}
 	if request.Discard {
+		// reset --hard can delete an ignored directory obstructing a tracked
+		// file. Refuse such collisions before any requested discard, just as
+		// switch/merge refuse ignored-file collisions below.
+		if err := dashboardGitCheckDiscard(ctx, request.Path); err != nil {
+			result.Detail = err.Error()
+			return result
+		}
 		if !run("reset", "--hard", "HEAD") || !run("clean", "-fd") {
 			return result
 		}
 	}
 	if target != repo.Branch {
 		if localErr == nil {
-			if !run("switch", "--no-guess", "--", target) {
+			if !run("switch", "--no-overwrite-ignore", "--no-guess", "--", target) {
 				return result
 			}
 		} else {
-			if !run("switch", "--create", target, "--track", remoteRef) {
+			if !run("switch", "--no-overwrite-ignore", "--create", target, "--track", remoteRef) {
 				return result
 			}
 		}
 	}
-	if !run("merge", "--ff-only", "--no-edit", "--", remoteRef) {
+	if !run("merge", "--no-overwrite-ignore", "--ff-only", "--no-edit", "--", remoteRef) {
 		return result
 	}
 	result.Status = "updated"
 	result.Detail = "Up to date on " + target
 	return result
+}
+
+// Check both directions: an ignored directory may contain a tracked path,
+// or may itself live underneath a path HEAD expects to be a regular file.
+func dashboardGitCheckDiscard(ctx context.Context, path string) error {
+	ignored, err := dashboardGit(ctx, path, "ls-files", "--others", "--ignored", "--exclude-standard", "-z")
+	if err != nil {
+		return err
+	}
+	if ignored == "" {
+		return nil
+	}
+	tracked, err := dashboardGit(ctx, path, "ls-tree", "-r", "--name-only", "-z", "HEAD")
+	if err != nil {
+		return err
+	}
+	ignoredPaths := map[string]bool{}
+	ignoredParents := map[string]string{}
+	for _, local := range strings.Split(ignored, "\x00") {
+		local = strings.TrimSuffix(local, "/")
+		if local == "" {
+			continue
+		}
+		ignoredPaths[local] = true
+		for parent := local; parent != "."; parent = filepath.Dir(parent) {
+			ignoredParents[parent] = local
+		}
+	}
+	for _, file := range strings.Split(tracked, "\x00") {
+		if file == "" {
+			continue
+		}
+		if local, ok := ignoredParents[file]; ok {
+			return fmt.Errorf("ignored path %q obstructs a tracked file; move it before discarding", local)
+		}
+		for parent := file; parent != "."; parent = filepath.Dir(parent) {
+			if ignoredPaths[parent] {
+				return fmt.Errorf("ignored path %q obstructs a tracked file; move it before discarding", parent)
+			}
+		}
+	}
+	return nil
 }
 
 func handleDashboardGit(w http.ResponseWriter, r *http.Request) {

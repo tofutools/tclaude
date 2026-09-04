@@ -32,6 +32,7 @@ func repoCommit(t *testing.T, path, name string) {
 }
 func gitFixture(t *testing.T) (string, string, string) {
 	t.Helper()
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_CONFIG_GLOBAL", "/dev/null")
 	base := t.TempDir()
@@ -156,4 +157,61 @@ func TestDashboardGitWorktreeConflictKeepsChanges(t *testing.T) {
 	require.Equal(t, "skipped", result["status"], result)
 	require.Contains(t, result["detail"], "another worktree")
 	require.FileExists(t, filepath.Join(linked, "precious"))
+}
+
+func TestDashboardGitIgnoredFilesSurviveSwitchAndMerge(t *testing.T) {
+	for _, switching := range []bool{true, false} {
+		t.Run(map[bool]string{true: "switch", false: "merge"}[switching], func(t *testing.T) {
+			_, source, checkout := gitFixture(t)
+			// Ignore a local secrets file only in this checkout, including while
+			// the upstream starts tracking that same path.
+			require.NoError(t, os.WriteFile(filepath.Join(checkout, ".git", "info", "exclude"), []byte("local.env\n"), 0600))
+			require.NoError(t, os.WriteFile(filepath.Join(checkout, "local.env"), []byte("secret"), 0600))
+			if switching {
+				repoGit(t, checkout, "switch", "-c", "feature")
+			}
+			repoCommit(t, source, "local.env")
+			repoGit(t, source, "push")
+			// For the switch case, put the new tracked file on the local default
+			// branch before attempting to switch to it.
+			if switching {
+				repoGit(t, checkout, "fetch", "origin", "trunk:trunk")
+			}
+			out := updateGit(t, checkout, switching, false, "pull")
+			require.NotEqual(t, "updated", out["status"], out)
+			data, err := os.ReadFile(filepath.Join(checkout, "local.env"))
+			require.NoError(t, err)
+			require.Equal(t, "secret", string(data))
+		})
+	}
+}
+
+func TestDashboardGitRemoteDefaultChange(t *testing.T) {
+	remote, source, checkout := gitFixture(t)
+	repoGit(t, source, "switch", "-c", "new-default")
+	repoCommit(t, source, "new-default-file")
+	repoGit(t, source, "push", "-u", "origin", "new-default")
+	repoGit(t, remote, "symbolic-ref", "HEAD", "refs/heads/new-default")
+	var scan struct {
+		Repos []struct {
+			Default string `json:"default_branch"`
+		}
+	}
+	gitAPI(t, http.MethodGet, nil, &scan)
+	require.Equal(t, "new-default", scan.Repos[0].Default)
+	out := updateGit(t, checkout, true, false, "pull")
+	require.Equal(t, "updated", out["status"], out)
+	require.Equal(t, "new-default", repoGit(t, checkout, "branch", "--show-current"))
+}
+
+func TestDashboardGitDiscardPreservesIgnoredDirectory(t *testing.T) {
+	_, _, checkout := gitFixture(t)
+	require.NoError(t, os.Remove(filepath.Join(checkout, "initial")))
+	require.NoError(t, os.Mkdir(filepath.Join(checkout, "initial"), 0700))
+	secret := filepath.Join(checkout, "initial", "secret")
+	require.NoError(t, os.WriteFile(secret, []byte("keep"), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(checkout, ".git", "info", "exclude"), []byte("initial/\n"), 0600))
+	out := updateGit(t, checkout, true, true, "pull")
+	require.Equal(t, "skipped", out["status"], out)
+	require.FileExists(t, secret)
 }
