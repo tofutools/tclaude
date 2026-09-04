@@ -78,7 +78,7 @@ func dashboardGit(ctx context.Context, dir string, args ...string) (string, erro
 		out = strings.TrimSpace(out)
 	}
 	if stdout.truncated && err == nil {
-		err = fmt.Errorf("Git output exceeded 4 MiB")
+		err = fmt.Errorf("git output exceeded 4 MiB")
 	}
 	if err != nil {
 		detail := strings.TrimSpace(string(stderr.data))
