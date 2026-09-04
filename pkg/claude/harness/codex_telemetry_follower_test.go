@@ -113,11 +113,11 @@ func TestCodexTelemetryFollower_CheckpointSurvivesRestartWithFoldState(t *testin
 	require.True(t, ok)
 	var legacy map[string]any
 	require.NoError(t, json.Unmarshal(checkpoint, &legacy))
-	legacy["version"] = float64(6)
+	legacy["version"] = float64(7)
 	legacyCheckpoint, err := json.Marshal(legacy)
 	require.NoError(t, err)
 	assert.Error(t, (&CodexTelemetryFollower{}).RestoreCheckpoint(legacyCheckpoint),
-		"v6 costs predate Fast pricing and must rebuild once on upgrade")
+		"v7 costs predate Astra pricing and must rebuild once on upgrade")
 	checkpointOffset := codexFollowerOffset(t, beforeRestart)
 
 	restored := &CodexTelemetryFollower{}

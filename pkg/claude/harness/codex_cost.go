@@ -36,13 +36,17 @@ type OpenAIModelPricing struct {
 
 // codexModelPrices lists models whose ordinary-input, cached-read, and output
 // categories match Codex rollout token_count fields. Rates are Standard USD per
-// 1M tokens from OpenAI API pricing. GPT-5.6 also bills explicit cache writes at
-// 1.25x input, but the rollout exposes no cache-write token category; when such
-// a write occurs, this what-if estimate is therefore a lower bound. A nil Long
-// means the pricing page does not list long-context rates for that model. Pro
-// rows list no cached-input discount, so cached input is charged at the regular
-// input rate.
+// 1M tokens from OpenAI API pricing. GPT-5.6 and GPT-6 also bill explicit cache
+// writes at 1.25x input, but the rollout exposes no cache-write token category;
+// when such a write occurs, this what-if estimate is therefore a lower bound. A
+// nil Long means the pricing page does not list long-context rates for that
+// model. Pro rows list no cached-input discount, so cached input is charged at
+// the regular input rate.
 var codexModelPrices = map[string]OpenAIModelPricing{
+	"gpt-6-astra": {
+		Short: OpenAIModelPrice{InputPerMTok: 10.00, CachedInputPerMTok: 1.00, CacheWritePerMTok: 12.50, OutputPerMTok: 50.00},
+		Long:  &OpenAIModelPrice{InputPerMTok: 20.00, CachedInputPerMTok: 2.00, CacheWritePerMTok: 25.00, OutputPerMTok: 75.00},
+	},
 	"gpt-5.6-sol": {
 		Short: OpenAIModelPrice{InputPerMTok: 5.00, CachedInputPerMTok: 0.50, CacheWritePerMTok: 6.25, OutputPerMTok: 30.00},
 		Long:  &OpenAIModelPrice{InputPerMTok: 10.00, CachedInputPerMTok: 1.00, CacheWritePerMTok: 12.50, OutputPerMTok: 45.00},
