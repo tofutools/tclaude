@@ -26,8 +26,12 @@ func TestTUISpawnFormFieldsAcceptAPaste(t *testing.T) {
 	m.groups = []tuiGroupRow{{Name: "dev"}}
 	m = m.openSpawnForm()
 
-	m = paste(typeInto(m, tuiFieldName, "rev"), "iewer")
-	assert.Equal(t, "reviewer", m.form.name.Value())
+	// Pasted text lands at the cursor, so a paste onto the front of a typed
+	// name inserts rather than appending or replacing.
+	m = typeInto(m, tuiFieldName, "reviewer")
+	atStart, _ := m.handleSpawnKey(tea.KeyPressMsg{Code: tea.KeyHome})
+	m = paste(atStart.(tuiModel), "senior-")
+	assert.Equal(t, "senior-reviewer", m.form.name.Value())
 
 	m = m.focusSpawnField(tuiFieldDir)
 	m.form.dir.SetValue("")
@@ -70,6 +74,27 @@ func TestTUISpawnPasteRetiresTheDirCandidateList(t *testing.T) {
 	m = paste(m, "alpha")
 	assert.Equal(t, filepath.Join(root, "project-alpha"), m.form.dir.Value())
 	assert.Empty(t, m.form.dirSuggestions)
+}
+
+// The shell form's Directory field keeps the same bargain.
+func TestTUIShellPasteRetiresTheDirCandidateList(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "alpha"), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "alpine"), 0o755))
+
+	m := operatorShellModel(root)
+	m.width = 120
+	opened, _ := m.handleKey(tuiKey("s"))
+	m = opened.(tuiModel)
+	m.shell.dir.SetValue(filepath.Join(root, "alp"))
+
+	listed, _ := m.handleKey(tuiTabKey())
+	m = listed.(tuiModel)
+	require.NotEmpty(t, m.shell.dirSuggestions)
+
+	m = paste(m, "ha")
+	assert.Equal(t, filepath.Join(root, "alpha"), m.shell.dir.Value())
+	assert.Empty(t, m.shell.dirSuggestions)
 }
 
 // The branch follows a pasted name as it follows a typed one, and a paste
