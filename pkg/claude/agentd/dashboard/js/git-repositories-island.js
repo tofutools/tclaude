@@ -63,9 +63,9 @@ export function GitRepositoriesDialog({ current, state, actions }) {
     labelledby="git-repositories-title" onClose=${state.close} blocked=${busy} onSubmitHotkey=${submit} initialFocusRef=${filterRef}>
     <div class="git-repos-heading">
       <h3 id="git-repositories-title"><${Words} plain=${`${verb} repositories`} wizard=${sync ? '✧ Harmonize repositories' : '↓ Summon latest code'} /></h3>
-      <p role="status"><${Words} plain=${loading ? 'Discovering repositories…' : `${repos.length} repositories discovered in group home directories.`}
-        wizard=${loading ? 'Seeking repositories…' : `${repos.length} repositories discovered in party home directories.`} /></p>
-      <p class="git-repos-hint"><${Words} plain="Scope: " />${current.group || html`<${Words} plain="All groups" wizard="All parties" />`} · <${Words} plain="Shared directories appear once." /></p>
+      <p role="status"><${Words} plain=${loading ? 'Discovering repositories…' : `${repos.length} repositories discovered in group homes and two levels of subdirectories.`}
+        wizard=${loading ? 'Seeking repositories…' : `${repos.length} repositories discovered in party homes and two levels of subdirectories.`} /></p>
+      <p class="git-repos-hint"><${Words} plain="Scope: " />${current.group || html`<${Words} plain="All groups" wizard="All parties" />`} · <${Words} plain="Canonical absolute paths; shared directories appear once." /></p>
     </div>
     <div class="git-repos-options">
       <label><input type="checkbox" checked=${switchDefault} disabled=${locked} onChange=${(e) => setSwitchDefault(e.currentTarget.checked)} />
@@ -99,7 +99,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
       })}
       ${!loading && !visible.length ? html`<p class="git-repos-empty">${repos.length ? 'No matching repositories.' : 'No repositories found in this scope.'}</p>` : null}
     </div>
-    ${issues.length ? html`<details class="git-repos-issues"><summary><${Words} plain=${`${issues.length} groups without a usable repository`} wizard=${`${issues.length} parties without a usable repository`} /></summary>
+    ${issues.length ? html`<details class="git-repos-issues"><summary><${Words} plain=${`${issues.length} group discovery notes`} wizard=${`${issues.length} party discovery notes`} /></summary>
       <ul>${issues.map((issue) => html`<li key=${issue.group}>${issue.group}: ${issue.detail}</li>`)}</ul></details>` : null}
     <p class="git-repos-hint"><${Words} plain="Fast-forward only. Dirty checkouts are skipped unless discard is selected; diverged or blocked branches are reported individually." /></p>
     ${error ? html`<p class="git-repos-error" role="alert">${error}</p>` : null}

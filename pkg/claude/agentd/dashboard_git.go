@@ -95,55 +95,172 @@ func dashboardGitRoot(ctx context.Context, dir string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.EvalSymlinks(root)
+	return canonicalDashboardGitPath(root)
 }
 
-// Only group home directories are anchors: never silently include agents'
-// working directories or all linked worktrees of a discovered repository.
+func canonicalDashboardGitPath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.EvalSymlinks(absolute)
+}
+
+// Scan logical directory depths 0, 1 and 2. Directory symlinks participate,
+// but a canonical directory is visited only at its shallowest depth, so
+// cycles cannot expand the scope. Git administrative directories are excluded.
+func scanDashboardGitHome(ctx context.Context, home, selectedPath string) ([]string, error) {
+	type directory struct {
+		path  string
+		depth int
+	}
+	queue := []directory{{home, 0}}
+	visited := map[string]bool{}
+	roots := []string{}
+	var scanErr error
+	for len(queue) > 0 {
+		if err := ctx.Err(); err != nil {
+			return roots, err
+		}
+		next := queue[0]
+		queue = queue[1:]
+		path, err := canonicalDashboardGitPath(next.path)
+		if err != nil {
+			scanErr = err
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			scanErr = err
+			continue
+		}
+		if !info.IsDir() || visited[path] {
+			continue
+		}
+		visited[path] = true
+		// A home may itself be inside a checkout; descendants are candidates
+		// only when they have their own .git file/directory (also submodules).
+		_, gitErr := os.Stat(filepath.Join(path, ".git"))
+		candidate := next.depth == 0 || gitErr == nil
+		if selectedPath != "" {
+			// During per-repository execution, inspect only the selected
+			// checkout while retaining the identical directory traversal.
+			rel, e := filepath.Rel(selectedPath, path)
+			candidate = candidate && (path == selectedPath || (next.depth == 0 && e == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))))
+		}
+		if candidate {
+			roots = append(roots, path)
+		}
+		if next.depth == 2 {
+			continue
+		}
+		entries, err := os.ReadDir(path)
+		if err != nil {
+			scanErr = err
+			continue
+		}
+		for _, entry := range entries {
+			if entry.Name() == ".git" {
+				continue
+			}
+			if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+				queue = append(queue, directory{filepath.Join(path, entry.Name()), next.depth + 1})
+			}
+		}
+	}
+	return roots, scanErr
+}
+
+// Group homes anchor the depth-limited scan. Overlapping group directories
+// and symlink aliases share a single canonical absolute checkout entry.
 func dashboardGitHomes(ctx context.Context, group, selectedPath string) ([]dashboardGitRepo, []dashboardGitIssue, error) {
 	groups, err := db.ListAgentGroups()
 	if err != nil {
 		return nil, nil, err
 	}
-	repos := []dashboardGitRepo{}
+	candidates := []dashboardGitRepo{}
 	issues := []dashboardGitIssue{}
-	seen := map[string]int{}
-	found := group == ""
+	seenDirs := map[string]int{}
+	hasIssue := map[string]bool{}
+	scoped := []string{}
 	for _, g := range groups {
 		if group != "" && g.Name != group {
 			continue
 		}
-		found = true
+		scoped = append(scoped, g.Name)
 		if g.DefaultCwd == "" {
 			issues = append(issues, dashboardGitIssue{g.Name, "No group home directory configured"})
+			hasIssue[g.Name] = true
 			continue
 		}
-		// A selected root must contain its configured home directory. Avoid
-		// spawning Git in every other repository for each item in a batch.
-		if selectedPath != "" {
-			home, e := filepath.EvalSymlinks(g.DefaultCwd)
-			if e != nil {
-				continue
-			}
-			rel, e := filepath.Rel(selectedPath, home)
-			if e != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-				continue
-			}
+		dirs, scanErr := scanDashboardGitHome(ctx, g.DefaultCwd, selectedPath)
+		if scanErr != nil {
+			issues = append(issues, dashboardGitIssue{g.Name, "Some directories could not be scanned: " + scanErr.Error()})
+			hasIssue[g.Name] = true
 		}
-		root, err := dashboardGitRoot(ctx, g.DefaultCwd)
-		if err != nil {
-			issues = append(issues, dashboardGitIssue{g.Name, "Home directory is unavailable or is not a Git checkout"})
-			continue
-		}
-		if i, ok := seen[root]; ok {
-			repos[i].Groups = append(repos[i].Groups, g.Name)
-		} else {
-			seen[root] = len(repos)
-			repos = append(repos, dashboardGitRepo{Path: root, Name: filepath.Base(root), Groups: []string{g.Name}})
+		for _, dir := range dirs {
+			if i, ok := seenDirs[dir]; ok {
+				candidates[i].Groups = append(candidates[i].Groups, g.Name)
+			} else {
+				seenDirs[dir] = len(candidates)
+				candidates = append(candidates, dashboardGitRepo{Path: dir, Groups: []string{g.Name}})
+			}
 		}
 	}
-	if !found {
+	if group != "" && len(scoped) == 0 {
 		return nil, nil, fmt.Errorf("group %q no longer exists", group)
+	}
+	// Resolve candidate checkouts in parallel even when a single container
+	// home contains all the repos. Canonical directory aliases are inspected
+	// once; final checkout roots are deduplicated after resolution as well.
+	roots := make([]string, len(candidates))
+	var wg sync.WaitGroup
+	jobs := make(chan int)
+	for range min(8, len(candidates)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				roots[i], _ = dashboardGitRoot(ctx, candidates[i].Path)
+			}
+		}()
+	}
+	for i := range candidates {
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	repos := []dashboardGitRepo{}
+	seenRoots := map[string]int{}
+	groupHasRepo := map[string]bool{}
+	for i, root := range roots {
+		if root == "" {
+			continue
+		}
+		index, ok := seenRoots[root]
+		if !ok {
+			index = len(repos)
+			seenRoots[root] = index
+			repos = append(repos, dashboardGitRepo{Path: root, Name: filepath.Base(root), Groups: []string{}})
+		}
+		for _, name := range candidates[i].Groups {
+			groupHasRepo[name] = true
+			already := false
+			for _, existing := range repos[index].Groups {
+				if existing == name {
+					already = true
+					break
+				}
+			}
+			if !already {
+				repos[index].Groups = append(repos[index].Groups, name)
+			}
+		}
+	}
+	for _, name := range scoped {
+		if !groupHasRepo[name] && !hasIssue[name] {
+			issues = append(issues, dashboardGitIssue{name, "No Git checkouts found in the home directory or two levels below it"})
+		}
 	}
 	sort.Slice(repos, func(i, j int) bool { return repos[i].Path < repos[j].Path })
 	return repos, issues, nil
@@ -425,6 +542,16 @@ func handleDashboardGit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		group = request.Group
+		if request.Path == "" {
+			http.Error(w, "repository path required", http.StatusBadRequest)
+			return
+		}
+		canonical, err := canonicalDashboardGitPath(request.Path)
+		if err != nil {
+			http.Error(w, "repository is unavailable; rescan", http.StatusConflict)
+			return
+		}
+		request.Path = canonical
 	}
 	repos, issues, err := dashboardGitHomes(ctx, group, request.Path)
 	if err != nil {
@@ -461,7 +588,7 @@ func handleDashboardGit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !allowed {
-		http.Error(w, "repository is no longer a home directory in this scope; rescan", http.StatusConflict)
+		http.Error(w, "repository is no longer within this group directory scan; rescan", http.StatusConflict)
 		return
 	}
 	result := runDashboardGit(ctx, request)

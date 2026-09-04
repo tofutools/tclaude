@@ -219,3 +219,71 @@ func TestDashboardGitDiscardPreservesIgnoredDirectory(t *testing.T) {
 	require.Equal(t, "skipped", out["status"], out)
 	require.FileExists(t, secret)
 }
+
+func TestDashboardGitContainerDepthAndCanonicalDedup(t *testing.T) {
+	remote, source, _ := gitFixture(t)
+	home := t.TempDir()
+	one := filepath.Join(home, "one")
+	two := filepath.Join(home, "team", "two")
+	three := filepath.Join(home, "team", "deeper", "three")
+	require.NoError(t, os.MkdirAll(filepath.Dir(two), 0700))
+	require.NoError(t, os.MkdirAll(filepath.Dir(three), 0700))
+	for _, path := range []string{one, two, three} {
+		repoGit(t, home, "clone", remote, path)
+	}
+	canonicalOne, err := filepath.EvalSymlinks(one)
+	require.NoError(t, err)
+	canonicalTwo, err := filepath.EvalSymlinks(two)
+	require.NoError(t, err)
+	require.NoError(t, os.Symlink(two, filepath.Join(home, "two-alias")))
+	require.NoError(t, os.Symlink(home, filepath.Join(home, "cycle")))
+	_, err = db.SetAgentGroupDefaultCwd("code", home)
+	require.NoError(t, err)
+	var scan struct {
+		Repos []struct {
+			Path   string
+			Groups []string
+		}
+	}
+	gitAPI(t, http.MethodGet, nil, &scan)
+	require.Len(t, scan.Repos, 2, "scan container children and grandchildren, not great-grandchildren; aliases/cycles dedup")
+	paths := []string{}
+	for _, repo := range scan.Repos {
+		paths = append(paths, repo.Path)
+		require.True(t, filepath.IsAbs(repo.Path))
+		require.Equal(t, []string{"code"}, repo.Groups)
+	}
+	require.ElementsMatch(t, []string{canonicalOne, canonicalTwo}, paths)
+	// A nested checkout can be executed; a third-level one cannot escape the
+	// exact same scan boundary at the mutation endpoint.
+	repoCommit(t, source, "nested-update")
+	repoGit(t, source, "push")
+	out := updateGit(t, two, true, false, "pull")
+	require.Equal(t, "updated", out["status"], out)
+	require.FileExists(t, filepath.Join(two, "nested-update"))
+	require.Equal(t, http.StatusConflict, gitAPI(t, http.MethodPost, map[string]any{"group": "code", "path": three, "mode": "pull"}, nil))
+	// Overlapping group homes attach each group once to a canonical repo.
+	_, err = db.CreateAgentGroup("overlap", "")
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultCwd("overlap", filepath.Join(home, "team"))
+	require.NoError(t, err)
+	gitAPI(t, http.MethodGet, nil, &scan)
+	require.Len(t, scan.Repos, 3)
+	for _, repo := range scan.Repos {
+		if repo.Path == canonicalTwo {
+			require.ElementsMatch(t, []string{"code", "overlap"}, repo.Groups)
+		}
+	}
+}
+
+func TestDashboardGitScansBelowHomeCheckout(t *testing.T) {
+	remote, _, home := gitFixture(t)
+	child := filepath.Join(home, "child")
+	grandchild := filepath.Join(home, "folder", "grandchild")
+	require.NoError(t, os.MkdirAll(filepath.Dir(grandchild), 0700))
+	repoGit(t, home, "clone", remote, child)
+	repoGit(t, home, "clone", remote, grandchild)
+	var scan struct{ Repos []struct{ Path string } }
+	gitAPI(t, http.MethodGet, nil, &scan)
+	require.Len(t, scan.Repos, 3, "finding a repo at the home must not stop nested discovery")
+}

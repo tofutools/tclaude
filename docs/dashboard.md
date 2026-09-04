@@ -561,14 +561,21 @@ shards 1/4 through 4/4 (a few minutes each; an unsharded run needs
 
 Use the command palette's **Pull all repositories…** or **Sync all repositories…**
 commands to update group home directories. Search `pull tclaude` or `sync tclaude`
-to target a named group, or use **pull repository…** / **sync repository…** in its
+to target a named group, or use **pull repositories…** / **sync repositories…** in its
 cog menu. Wizard mode calls these **Summon latest code** and **Harmonize
 repositories**; ordinary Git search terms still work.
 
-The dialog discovers checkouts from configured group home directories and lists
-shared checkouts once. It does not scan every agent worktree. Select repositories
+The dialog scans each configured group home directory, its immediate
+subdirectories, and their subdirectories (two levels below the home). It follows
+directory symlinks within that depth and excludes Git’s internal `.git` directories.
+Repositories are deduplicated by canonical absolute checkout path, so overlapping
+group homes and symlink aliases appear once, with all matching groups listed.
+A third-level repository is excluded unless another group home or a shallower
+directory symlink brings it into scope. It does not scan every agent worktree. Select repositories
 individually, or filter by repository, path or group and select/deselect the shown
 rows. Selections survive filtering; the footer always counts all selected repos.
+Discovery uses up to eight Git workers, including for a single container home
+with many repositories. Updates run up to four repositories concurrently.
 The compact list scrolls independently of the options and action buttons.
 Press **Ctrl+Enter** (or **Cmd+Enter** on macOS) to submit the selected repos.
 **Escape** closes the dialog before starting or after completion; dismissal is

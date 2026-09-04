@@ -240,7 +240,7 @@ export function buildCommands(snapshot) {
     cmds.push({
       icon: mode === 'pull' ? '↓' : '↻',
       label: wiz(`${verb} all repositories…`, mode === 'pull' ? 'Summon latest code · all parties…' : 'Harmonize repositories · all parties…'),
-      hint: wiz('Update repositories in all group home directories', 'Refresh repositories in all party home directories'),
+      hint: wiz('Update repositories in group homes and two levels below', 'Refresh repositories in party homes and two levels below'),
       keywords: `git ${mode} all repositories groups home directories fetch summon latest harmonize`,
       run: () => openGitRepositories(mode),
     });
@@ -287,7 +287,7 @@ export function buildCommands(snapshot) {
       cmds.push({
         icon: mode === 'pull' ? '↓' : '↻',
         label: wiz(`${verb} ${g.name}…`, `${mode === 'pull' ? 'Summon latest code' : 'Harmonize repositories'} · ${g.name}…`),
-        hint: wiz(`Update the home repository for group ${g.name}`, `Refresh the home repository for party ${g.name}`),
+        hint: wiz(`Update repositories in and below group ${g.name}`, `Refresh repositories in and below party ${g.name}`),
         keywords: `git ${mode} ${g.name} repositories group home fetch summon latest harmonize`,
         run: () => { recordGroupInteraction(g.name); return openGitRepositories(mode, g.name); },
       });
