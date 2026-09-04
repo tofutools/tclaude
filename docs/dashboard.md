@@ -556,3 +556,33 @@ dialog markup, or a blanket filename exception.
 with the host's Chrome/Chromium and writes screenshots for manual review; run
 shards 1/4 through 4/4 (a few minutes each; an unsharded run needs
 `-timeout 1800s`). Optional, environment-dependent, and not wired into CI.
+
+### Pull or sync group repositories
+
+Use the command palette's **Pull all repositories…** or **Sync all repositories…**
+commands to update group home directories. Search `pull tclaude` or `sync tclaude`
+to target a named group, or use **pull repository…** / **sync repository…** in its
+cog menu. Wizard mode calls these **Summon latest code** and **Harmonize
+repositories**; ordinary Git search terms still work.
+
+The dialog discovers checkouts from configured group home directories and lists
+shared checkouts once. It does not scan every agent worktree. Select repositories
+individually, or filter by repository, path or group and select/deselect the shown
+rows. Selections survive filtering; the footer always counts all selected repos.
+The compact list scrolls independently of the options and action buttons.
+
+**Switch to default branch first** starts checked and uses each repository's
+remote default branch (including names other than `main` or `master`). Uncheck it
+to pull the current branch's upstream. **Discard uncommitted changes** starts
+unchecked. Selecting it resets tracked edits and removes untracked files with
+`git clean -fd`; ignored files and nested Git repositories are retained. Without
+it, dirty checkouts are skipped.
+
+Pull fetches updates and fast-forwards the selected branch. Sync also prunes stale
+remote-tracking references. Neither command pushes, rebases, or merges divergent
+history. Diverged branches, branches checked out in another worktree, and
+in-progress merges/rebases are skipped with a reason. The dialog reports each
+repository's progress and outcome; failures do not stop the remaining repos.
+Operations are not atomic: a failed later step may leave an earlier fetch,
+branch switch or explicitly requested discard completed. Review the reported
+checkout before retrying a failed or disconnected request.

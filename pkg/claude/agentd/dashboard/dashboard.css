@@ -18410,3 +18410,77 @@ body.wizard .usage-history-error { color: #f0a3bf; }
   .route-map-mode button { flex: 1; }
   .route-map-graph-frame { min-height: 250px; }
 }
+
+/* Git pull/sync: the repository viewport alone grows and scrolls. Controls
+   and results totals remain reachable with a hundred home repositories. */
+.git-repositories-modal {
+  width: min(840px, calc(100vw - 32px)); min-width: 0;
+  max-height: 92vh; overflow: hidden; gap: 12px;
+}
+.git-repositories-modal > :not(.git-repos-list) { flex-shrink: 0; }
+.git-repos-heading h3 { margin: 0 0 8px; }
+.git-repos-heading p { margin: 4px 0; }
+.git-repos-hint { color: #91a0b3; font-size: 12px; margin: 0; }
+.git-repos-options { background: #101720; border: 1px solid #2d3947; border-radius: 6px; padding: 12px; }
+.git-repos-options label { display: flex; gap: 10px; align-items: flex-start; cursor: pointer; }
+.git-repos-options label + label { margin-top: 12px; }
+.git-repos-options small { display: block; color: #91a0b3; font-size: 11px; margin-top: 4px; }
+.git-repos-options small.git-repos-warning { color: #dfaa80; }
+.git-repositories-modal input[type=checkbox] { accent-color: #3985ef; flex-shrink: 0; }
+.git-repos-toolbar { display: flex; gap: 10px; }
+.git-repos-toolbar input { flex: 1; min-width: 0; background: #101720; color: #d4d4d4; border: 1px solid #354356; border-radius: 5px; padding: 8px 10px; }
+.git-repos-list {
+  min-height: 44px; max-height: 352px; overflow: auto; flex: 0 1 auto;
+  scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: #6e7681 #0d1117;
+  border: 1px solid #2d3947; border-radius: 6px;
+}
+.git-repos-list::-webkit-scrollbar { width: 8px; height: 8px; }
+.git-repos-list::-webkit-scrollbar-track { background: #0d1117; }
+.git-repos-list::-webkit-scrollbar-thumb { background: #6e7681; border-radius: 5px; }
+.git-repos-list::-webkit-scrollbar-thumb:hover { background: #8b949e; }
+.git-repo-entry + .git-repo-entry { border-top: 1px solid #2d3947; }
+.git-repo-row { display: flex; align-items: center; height: 44px; gap: 10px; padding: 5px 10px; cursor: pointer; }
+.git-repo-name { flex: 1; min-width: 0; }
+.git-repo-name strong, .git-repo-name small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-repo-name strong { font-size: 12px; }
+.git-repo-name small { font: 10px ui-monospace, monospace; color: #91a0b3; margin-top: 3px; }
+.git-repo-branch { width: 150px; font-size: 11px; color: #aebccc; }
+.git-repo-groups { width: 100px; font-size: 10px; color: #91a0b3; }
+.git-repo-branch, .git-repo-groups { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+.git-repo-badge { min-width: 63px; text-align: center; font-size: 10px; padding: 3px 6px; border-radius: 4px; background: #243142; color: #b8c6d7; }
+.git-repo-badge.clean, .git-repo-badge.updated { color: #8bc9aa; background: #20352e; }
+.git-repo-badge.dirty, .git-repo-badge.skipped { color: #e0b785; background: #3b3023; }
+.git-repo-badge.failed, .git-repos-error { color: #f1a2a2; }
+.git-repo-detail { padding: 0 10px 8px 34px; font-size: 11px; color: #aebccc; overflow-wrap: anywhere; white-space: pre-wrap; }
+.git-repos-empty { padding: 15px; color: #91a0b3; }
+.git-repos-issues { font-size: 12px; color: #91a0b3; }
+.git-repos-issues ul { max-height: 80px; overflow: auto; }
+.git-repos-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-top: 1px solid #2d3947; padding-top: 12px; }
+.git-repos-footer > span { font-size: 12px; color: #91a0b3; }
+.git-repos-footer > div { display: flex; gap: 8px; }
+body.wizard .git-repositories-modal { background: #1c162c; border-color: #51406b; color: #e7d9f5; }
+body.wizard .git-repos-heading h3 { color: #f0e3c9; font-family: Georgia, serif; }
+body.wizard .git-repos-options, body.wizard .git-repos-toolbar input { background: #140f28; border-color: #51406b; color: #e7d9f5; }
+body.wizard .git-repos-list { scrollbar-color: #7a5db0 #140f28; border-color: #483758; }
+body.wizard .git-repos-list::-webkit-scrollbar-track { background: #140f28; }
+body.wizard .git-repos-list::-webkit-scrollbar-thumb { background: #7a5db0; }
+body.wizard .git-repos-list::-webkit-scrollbar-thumb:hover { background: #a97bd6; }
+body.wizard .git-repo-entry + .git-repo-entry, body.wizard .git-repos-footer { border-color: #443353; }
+body.wizard .git-repositories-modal input[type=checkbox] { accent-color: #a97bd6; }
+body.wizard .git-repositories-modal button { background: #30253f; border-color: #655080; color: #e7d9f5; }
+body.wizard .git-repositories-modal button.primary { background: #76539c; border-color: #a97bd6; }
+body.wizard .git-repositories-modal button.danger { border-color: #c57e89; }
+body.wizard .git-repos-hint, body.wizard .git-repo-name small, body.wizard .git-repo-groups,
+body.wizard .git-repos-options small, body.wizard .git-repos-footer > span { color: #b39ddb; }
+body.wizard .git-repos-options small.git-repos-warning { color: #e6bd89; }
+@media (max-width: 650px) {
+  .git-repositories-modal { padding: 14px; }
+  .git-repo-branch { width: 95px; }
+  .git-repo-groups { display: none; }
+  .git-repos-footer { flex-wrap: wrap; }
+  .git-repos-footer > div { flex-wrap: wrap; }
+}
+@media (max-height: 600px) {
+  .git-repositories-modal { max-height: 96vh; overflow-y: auto; }
+  .git-repos-list { flex-shrink: 0; max-height: 176px; }
+}

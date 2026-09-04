@@ -825,3 +825,20 @@ const directoryPickerDescriptor = createIslandDescriptor({
 export function mountDirectoryPickerFeature(dependencies = {}) {
   return mountIslandDescriptor(directoryPickerDescriptor, dependencies);
 }
+
+const gitRepositoriesDescriptor = createIslandDescriptor({
+  name: 'git-repositories', label: 'Git repositories',
+  hosts: { root: '#git-repositories-root' }, primaryHost: 'root',
+  failureClass: 'git-repos-error',
+  load: async ({ hosts, dependencies }) => {
+    const [{ mountGitRepositoriesIsland }, { createGitRepositoriesState }, { createGitRepositoriesActions }] = await Promise.all([
+      import('./git-repositories-island.js'), import('./git-repositories-state.js'), import('./git-repositories-actions.js'),
+    ]);
+    const state = createGitRepositoriesState();
+    const actions = createGitRepositoriesActions(dependencies);
+    return { state, mount: (registerCleanup) => mountGitRepositoriesIsland({ host: hosts.root, state, actions, registerCleanup }) };
+  },
+});
+export function mountGitRepositoriesFeature(dependencies = {}) {
+  return mountIslandDescriptor(gitRepositoriesDescriptor, dependencies);
+}
