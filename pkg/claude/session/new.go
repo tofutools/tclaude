@@ -514,6 +514,8 @@ var JoinGroupHandler func(*NewParams) error
 var ErrNoAutomaticGroupMatch = errors.New("no automatic group match")
 
 func runNew(params *NewParams) error {
+	timing := common.StartupTiming("session_new", "label", params.Label, "harness", params.Harness)
+	defer timing("return")
 	if params.HelpContextFeatures {
 		harness.PrintContextFeatureCatalog(os.Stdout)
 		return nil
@@ -1168,6 +1170,8 @@ func runNew(params *NewParams) error {
 	if params.Label != "" {
 		sessionID = params.Label
 	}
+
+	timing("validated", "session_id", sessionID)
 
 	// When resuming, reserve the conversation before launching. This both
 	// rejects an already-live conv AND serializes against a concurrent resume:
@@ -2261,10 +2265,12 @@ func runNew(params *NewParams) error {
 	if effectiveSandbox != nil {
 		versionEnvironment = sandboxpolicy.EnvironmentForLaunch(effectiveSandbox)
 	}
+	timing("sandbox_and_command_prepared")
 	if err := verifyCodexAppServerLaunchVersion(
 		params, versionProbeExecutable, cwd, versionEnvironment); err != nil {
 		return err
 	}
+	timing("codex_version_checked")
 	harnessCmd := h.Spawn.BuildCommand(spawnSpec)
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
 		if stacked {
@@ -2481,6 +2487,7 @@ func runNew(params *NewParams) error {
 			return StackedEngineBindingRefusal(h, err)
 		}
 	}
+	timing("tmux_launch_begin")
 	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd, CodexProfileMarkerArgs(launchProfilePath)...); err != nil {
 		return err
 	}
@@ -2494,6 +2501,7 @@ func runNew(params *NewParams) error {
 		}
 		darwinRouteReservation = nil
 	}
+	timing("tmux_launched")
 	resourceCgroupOwnedByPane = true
 	// killLaunchPane tears the just-launched pane down on a late launch
 	// failure. It also reclaims launch-profile removal for the parent defer:
@@ -2524,6 +2532,7 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("record successful stacked sandbox binding: %w", err)
 		}
 	}
+	timing("stacked_binding_checked")
 	exitGuard.armPaneHook()
 	exitGuard.bind()
 	if proofReadyPath != "" {
@@ -2532,6 +2541,7 @@ func runNew(params *NewParams) error {
 			return err
 		}
 	}
+	timing("pane_gate_and_directory_proof_complete")
 	resumeProvenance := ""
 	physicalCwd, provenanceErr := clcommon.LivePaneCwd(tmuxSession)
 	if provenanceErr == nil {

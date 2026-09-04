@@ -342,3 +342,49 @@ daemon, and `--repair` recreates your own deleted startup directory
 Cross-cutting conveniences that ride on the same identity — head aliases,
 tags, task links, `present-pr`, exports, and the human-clipboard bridge —
 are covered in [Teams at scale](teams-at-scale.md).
+
+### Diagnosing slow startup
+
+For a diagnostic run, start **agentd** with `TCLAUDE_STARTUP_TIMING=1` in
+its environment (for example, `TCLAUDE_STARTUP_TIMING=1 tclaude-agentd serve`).
+Restart an existing daemon with that environment; setting it only on the
+`agent spawn` client does not enable daemon tracing. Install both binaries from
+the diagnostic branch with `go install . ./cmd/...` before restarting, so the
+forked `tclaude session new` also has the instrumentation. Then spawn normally.
+Direct launches can use `TCLAUDE_STARTUP_TIMING=1 tclaude session new ...`.
+
+Filter the dashboard's Logs tab for `startup timing`, or inspect those JSON
+records in `~/.tclaude/data/output.log`. These are info-level records, so no
+log-level change is needed with the default configuration. Each record has a
+component, process ID, per-process trace number, milestone, total `elapsed_ms`,
+and `step_ms` since that trace's previous milestone. Labels join the daemon
+and session wrapper; `child_pid` joins wrapper dispatch to `session_new` and
+effective-config probes. Conversation IDs join background enrollment/post-init
+and Codex bootstrap. Traces overlap: do not add their totals together. A
+`return` milestone means the function exited, not necessarily that startup
+succeeded; check the readiness/failure fields and adjacent error logs.
+
+Useful boundaries:
+
+- `spawn_request` includes request validation and daemon preflight;
+  `spawn` measures launch preparation and conversation polling.
+- `spawn_wrapper` records the child PID; `spawn_wrapper_exit` includes the
+  wrapper's wait duration. `session_new` separates launch preparation, Codex
+  version checking, tmux creation, and pane/directory gates.
+- `codex_effective_config` separates launching the preflight Codex app-server,
+  waiting for `config/read`, and process teardown. This probe runs separately
+  from the agent's actual Codex process and can occur in either daemon or wrapper.
+- `codex_bootstrap` separates version/PID availability, listener ownership
+  proof, the TUI's thread binding, client initialization, and verified readiness.
+  `codex_await_ready`, `spawn_backfill`, and `spawn_post_init` cover later work.
+
+An asynchronous spawn response can precede readiness: Codex's inline response
+window is 750 ms, and conversation-store discovery starts after a 1-second
+grace with scans at most once per second. The timings measure tclaude's observed
+milestones, not Codex's internal plugin/MCP initialization or first model-token
+latency. A long wait for TUI binding narrows the investigation to that interval
+but does not establish which Codex subsystem caused it.
+
+Unset `TCLAUDE_STARTUP_TIMING` and restart agentd to disable these records.
+Timing records contain identifiers and durations, not prompts, environment
+values, provider config, or capability tokens.
