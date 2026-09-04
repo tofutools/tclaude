@@ -570,6 +570,9 @@ shared checkouts once. It does not scan every agent worktree. Select repositorie
 individually, or filter by repository, path or group and select/deselect the shown
 rows. Selections survive filtering; the footer always counts all selected repos.
 The compact list scrolls independently of the options and action buttons.
+Press **Ctrl+Enter** (or **Cmd+Enter** on macOS) to submit the selected repos.
+**Escape** closes the dialog before starting or after completion; dismissal is
+disabled while a batch is running.
 
 **Switch to default branch first** starts checked and uses each repository's
 remote default branch (including names other than `main` or `master`). Uncheck it

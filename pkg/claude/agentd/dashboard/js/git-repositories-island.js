@@ -60,7 +60,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
     finally { running.current = false; setBusy(false); setDone(true); }
   };
   return html`<${Overlay} id="git-repositories-modal" dialogClass="cron-create-modal git-repositories-modal"
-    labelledby="git-repositories-title" onClose=${state.close} blocked=${busy} initialFocusRef=${filterRef}>
+    labelledby="git-repositories-title" onClose=${state.close} blocked=${busy} onSubmitHotkey=${submit} initialFocusRef=${filterRef}>
     <div class="git-repos-heading">
       <h3 id="git-repositories-title"><${Words} plain=${`${verb} repositories`} wizard=${sync ? '✧ Harmonize repositories' : '↓ Summon latest code'} /></h3>
       <p role="status"><${Words} plain=${loading ? 'Discovering repositories…' : `${repos.length} repositories discovered in group home directories.`}
@@ -107,7 +107,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
       <span role="status" aria-live="polite">${busy || done ? `${completed.length} / ${selected.size} completed · ${completed.filter((o) => o.status === 'updated').length} updated · ${completed.filter((o) => o.status === 'skipped').length} skipped · ${completed.filter((o) => o.status === 'failed').length} failed` : `${selected.size} of ${repos.length} selected`}</span>
       <div>${!done ? html`<button type="button" disabled=${loading || busy} onClick=${() => setGeneration((n) => n + 1)}><${Words} plain="Rescan" wizard="Seek again" /></button>` : null}
         <button type="button" disabled=${busy} onClick=${state.close}><${Words} plain=${done ? 'Done' : 'Cancel'} /></button>
-        ${!done ? html`<button type="button" class=${`primary${discard ? ' danger' : ''}`} disabled=${locked || !selected.size} onClick=${submit}>
+        ${!done ? html`<button type="button" class=${`primary${discard ? ' danger' : ''}`} disabled=${locked || !selected.size} onClick=${submit} aria-keyshortcuts="Control+Enter Meta+Enter" title="Submit selected repositories (Ctrl/Cmd+Enter)">
           <${Words} plain=${busy ? `${verb === 'Sync' ? 'Syncing' : 'Pulling'}…` : `${verb} ${selected.size} ${selected.size === 1 ? 'repository' : 'repositories'}`}
             wizard=${busy ? 'Channeling…' : `${wizardVerb} ${selected.size} ${selected.size === 1 ? 'repository' : 'repositories'}`} /></button>` : null}</div>
     </div>

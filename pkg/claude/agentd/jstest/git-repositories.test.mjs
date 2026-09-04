@@ -79,3 +79,53 @@ test('palette exposes all/group Git commands in plain and wizard modes', async (
     ['pull', ''], ['sync', ''], ['pull', 'tclaude'], ['sync', 'tclaude'],
   ]);
 });
+
+for (const modifier of ['ctrlKey', 'metaKey']) {
+  for (const wizard of [false, true]) {
+    test(`${modifier}+Enter submits once and Escape respects the running batch (${wizard ? 'wizard' : 'plain'})`, async (t) => {
+      const harness = await createPreactHarness(t);
+      harness.document.body.classList.toggle('wizard', wizard);
+      const { GitRepositoriesDialog } = await harness.importDashboardModule('js/git-repositories-island.js');
+      let resolveScan;
+      const scan = new Promise((resolve) => { resolveScan = resolve; });
+      let finish;
+      const pending = new Promise((resolve) => { finish = resolve; });
+      let submissions = 0;
+      let closes = 0;
+      const host = harness.document.body.appendChild(harness.document.createElement('div'));
+      await harness.mount(harness.html`<${GitRepositoriesDialog} current=${{ mode: 'pull', group: '' }}
+        state=${{ close: () => { closes++; } }} actions=${{
+          scan: () => scan,
+          run: async () => { submissions++; await pending; },
+        }} />`, host);
+      const press = async (key, mods = {}) => {
+        const event = new harness.window.Event('keydown', { bubbles: true, cancelable: true });
+        Object.entries({ key, ...mods }).forEach(([name, value]) => Object.defineProperty(event, name, { value }));
+        await harness.act(() => host.querySelector('input[type=search]').dispatchEvent(event));
+      };
+      await press('Enter', { [modifier]: true });
+      assert.equal(submissions, 0, 'loading cannot submit');
+      await harness.act(async () => {
+        resolveScan({ repos: [{ name: 'repo', path: '/repo', groups: ['team'], branch: 'main', default_branch: 'main' }], issues: [] });
+        await scan;
+      });
+      await harness.act(() => harness.fireEvent(host.querySelector('.git-repos-toolbar button'), 'click'));
+      await press('Enter', { [modifier]: true });
+      assert.equal(submissions, 0, 'empty selection cannot submit');
+      await harness.act(() => harness.fireEvent(host.querySelector('.git-repos-toolbar button'), 'click'));
+      await press('Enter', { [modifier]: true, isComposing: true });
+      assert.equal(submissions, 0, 'IME composition cannot submit');
+      await press('Enter', { [modifier]: true });
+      assert.equal(submissions, 1);
+      await press('Enter', { [modifier]: true });
+      await press('Escape');
+      assert.equal(submissions, 1, 'busy shortcut cannot start a second batch');
+      assert.equal(closes, 0, 'busy Escape cannot hide the batch');
+      await harness.act(async () => { finish(); await pending; });
+      await press('Enter', { [modifier]: true });
+      assert.equal(submissions, 1, 'completed batch cannot be submitted again');
+      await press('Escape');
+      assert.equal(closes, 1, 'Escape closes the results');
+    });
+  }
+}
