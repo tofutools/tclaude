@@ -7,10 +7,10 @@ import (
 	"unicode"
 )
 
-// copilotKnownModels is a SUGGESTION list, not an allow-list. It mirrors the
-// documented "Supported models" table plus `auto` (Copilot picks the best
-// available model), and gives every ModelCatalog-driven surface — the spawn
-// dialog, profiles, and template-local launch profiles — the same dropdown.
+// copilotKnownModels is a SUGGESTION list, not an allow-list. It tracks the
+// current and announced models plus `auto` (Copilot picks the best available
+// model), and gives every ModelCatalog-driven surface — the spawn dialog,
+// profiles, and template-local launch profiles — the same dropdown.
 //
 // `auto` leads because it is the choice that never goes stale.
 var copilotKnownModels = []string{
@@ -26,6 +26,7 @@ var copilotKnownModels = []string{
 	"claude-opus-4.7",
 	"claude-opus-4.6",
 	"claude-opus-4.5",
+	"gpt-6-astra",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
