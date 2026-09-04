@@ -31,7 +31,9 @@ func TestCopilotEffortCatalogMatchesPinnedHelpFixture(t *testing.T) {
 // TestCopilotModelCatalogMatchesPinnedHelpFixture keeps the production model
 // suggestions tied to the sanitized evidence. `auto` is tclaude's stable
 // convenience choice and therefore intentionally precedes the concrete ids
-// documented by Copilot.
+// documented by Copilot. Announced models may lead their vendor's released
+// choices before the pinned CLI fixture advertises them; name those exceptions
+// explicitly so the rest of the catalog remains exact.
 func TestCopilotModelCatalogMatchesPinnedHelpFixture(t *testing.T) {
 	help, err := os.ReadFile(copilotfixture.PinnedModelHelpFixture)
 	if err != nil {
@@ -43,7 +45,14 @@ func TestCopilotModelCatalogMatchesPinnedHelpFixture(t *testing.T) {
 	}
 	want := append([]string{"auto"}, advertised...)
 	h := harness.MustGet(harness.CopilotName)
-	if got := h.Models.Models(); !slices.Equal(got, want) {
+	got := h.Models.Models()
+	for _, announced := range []string{"gpt-6-astra"} {
+		if !slices.Contains(got, announced) {
+			t.Fatalf("Copilot Models() = %v, missing announced model %q", got, announced)
+		}
+		got = slices.DeleteFunc(got, func(model string) bool { return model == announced })
+	}
+	if !slices.Equal(got, want) {
 		t.Fatalf("Copilot Models() = %v, want pinned help choices plus auto %v", got, want)
 	}
 }
