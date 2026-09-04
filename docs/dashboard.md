@@ -484,11 +484,11 @@ only); `delete` steps live → offline → retired with confirmation; `f` filter
 to active; `?` help; `q` quits — and an in-process `q` **shuts down the
 daemon**, while standalone just exits.
 
-The spawn and shell forms' text fields take your terminal's paste (bracketed
-paste — `ctrl+shift+v`, `cmd+v`, tmux `paste-buffer`), folding any line breaks
-in the pasted text onto the single line the field is. `ctrl+v` is deliberately
-not bound: it would read the host's system clipboard, and the console can be a
-pane an agent drives through tmux `send-keys`.
+The spawn and shell forms' text fields take your terminal's paste — a
+bracketed paste (`ctrl+shift+v`, `cmd+v`, or tmux's `prefix ]`, which sends
+one by default), folded onto the single line each field is. `ctrl+v` is
+deliberately not bound: it would read the host's system clipboard, and the
+console can be a pane an agent drives through tmux `send-keys`.
 
 Its server surface is a small versioned JSON API plus one attach WebSocket —
 no groups tree, automations, processes, plugins, access, messages, costs,
