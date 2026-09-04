@@ -44,15 +44,14 @@ func TestCopilotModelCatalogMatchesPinnedHelpFixture(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := append([]string{"auto"}, advertised...)
+	gptStart := slices.Index(want, "gpt-5.6-sol")
+	if gptStart < 0 {
+		t.Fatal("pinned Copilot model fixture is missing the first released GPT suggestion")
+	}
+	want = slices.Insert(want, gptStart, "gpt-6-astra")
 	h := harness.MustGet(harness.CopilotName)
 	got := h.Models.Models()
-	for _, announced := range []string{"gpt-6-astra"} {
-		if !slices.Contains(got, announced) {
-			t.Fatalf("Copilot Models() = %v, missing announced model %q", got, announced)
-		}
-		got = slices.DeleteFunc(got, func(model string) bool { return model == announced })
-	}
 	if !slices.Equal(got, want) {
-		t.Fatalf("Copilot Models() = %v, want pinned help choices plus auto %v", got, want)
+		t.Fatalf("Copilot Models() = %v, want pinned help choices plus announced models %v", got, want)
 	}
 }
