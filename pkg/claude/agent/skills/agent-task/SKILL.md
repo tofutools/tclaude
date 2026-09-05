@@ -58,7 +58,11 @@ exactly what to run.
 
 ```bash
 tclaude agent task set https://linear.app/acme/issue/JOH-353/wire-task-links
+tclaude agent task set https://awb.example/#/issues/acme-a3f9c1
 ```
+
+Without `--label`, Linear and AWB links display their issue id, GitHub issue
+and pull-request links display `#<number>`, and other links display their host.
 
 Optional custom label, and reading / clearing it back:
 
