@@ -346,7 +346,7 @@ are covered in [Teams at scale](teams-at-scale.md).
 ### Diagnosing slow startup
 
 Enable **Config → Logging → Startup timings** and save, or set
-`"startup_timing": true` in `~/.tclaude/config.json`. Changes apply to new
+`"startup_timing": true` in `~/.tclaude/data/config.json`. Changes apply to new
 traces immediately, without restarting agentd. Traces already running finish
 with the setting they started with, preserving complete measurements. The
 session wrapper reads the same config, so new launches also pick up changes.
