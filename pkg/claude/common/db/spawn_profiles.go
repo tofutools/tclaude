@@ -139,6 +139,14 @@ type SpawnProfile struct {
 	// recommends memory disabled and injects CLAUDE_CODE_DISABLE_AUTO_MEMORY
 	// accordingly. Claude-Code-only, validated against the profile's harness.
 	AutoMemory *bool
+	// PeerMessaging is the profile's "let Claude Code keep its own cross-session
+	// messaging" default — tri-state: nil = unset, false = off, true = on.
+	// Unset resolves to OFF at spawn: Claude Code's native mesh is a second
+	// coordination channel outside tclaude's groups, permissions and audit
+	// trail, so tclaude closes it and leaves `tclaude agent send` as the way
+	// agents coordinate. Claude-Code-only, validated against the profile's
+	// harness. See harness/peer_messaging.go.
+	PeerMessaging *bool
 	// SSHWorkaround controls tclaude's Codex-only Git-over-SSH compatibility
 	// config. nil = unset (Codex defaults on), false = opt out, true = on.
 	SSHWorkaround *bool
@@ -242,17 +250,17 @@ func CreateSpawnProfile(p *SpawnProfile) (int64, error) {
 		    auto_compact_window, context_window_max, copilot_api, codex_app_server, fast_mode,
 		    auto_review, trust_dir,
 		    agent_name, role, role_ref, role_refs, descr, initial_message, startup_context,
-		    sync_worktree, fetch_latest_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, ssh_workaround,
+		    sync_worktree, fetch_latest_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, peer_messaging, ssh_workaround,
 		    is_owner, permission_overrides, context_features, environment_json,
 		    created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		p.Name, p.Disabled, p.DisabledReason, p.OperatorOnly, p.Harness, p.Model, p.Effort, p.Sandbox, p.SandboxImplementation, p.Approval, p.ToolGovernance, p.AskUserQuestionTimeout,
 		p.AutoCompactWindow, p.ContextWindowMax, boolPtrToNull(p.CopilotAPI), boolPtrToNull(p.CodexAppServer), boolPtrToNull(p.FastMode),
 		boolPtrToNull(p.AutoReview), boolPtrToNull(p.TrustDir),
 		p.AgentName, p.Role, roleRef, roleRefs, p.Descr, p.InitialMessage, p.StartupContext,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.FetchLatestWorktree), boolPtrToNull(p.AutoFocus),
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
-		boolPtrToNull(p.AutoMemory), boolPtrToNull(p.SSHWorkaround),
+		boolPtrToNull(p.AutoMemory), boolPtrToNull(p.PeerMessaging), boolPtrToNull(p.SSHWorkaround),
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
 		marshalStringMapColumn(p.ContextFeatures, "spawn_profiles.context_features"),
 		environmentJSON,
@@ -309,7 +317,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		   auto_review = ?, trust_dir = ?,
 		   agent_name = ?, role = ?, role_ref = ?, role_refs = ?, descr = ?, initial_message = ?, startup_context = ?,
 		   sync_worktree = ?, fetch_latest_worktree = ?, auto_focus = ?, include_group_default_context = ?, remote_control = ?,
-		   auto_memory = ?, ssh_workaround = ?,
+		   auto_memory = ?, peer_messaging = ?, ssh_workaround = ?,
 		   is_owner = ?, permission_overrides = ?, context_features = ?, environment_json = ?,
 		   updated_at = ?
 		 WHERE id = ?`,
@@ -320,7 +328,7 @@ func UpdateSpawnProfile(p *SpawnProfile) error {
 		p.AgentName, p.Role, roleRef, roleRefs, p.Descr, p.InitialMessage, p.StartupContext,
 		boolPtrToNull(p.SyncWorktree), boolPtrToNull(p.FetchLatestWorktree), boolPtrToNull(p.AutoFocus),
 		boolPtrToNull(p.IncludeGroupDefaultContext), boolPtrToNull(p.RemoteControl),
-		boolPtrToNull(p.AutoMemory), boolPtrToNull(p.SSHWorkaround),
+		boolPtrToNull(p.AutoMemory), boolPtrToNull(p.PeerMessaging), boolPtrToNull(p.SSHWorkaround),
 		boolPtrToNull(p.IsOwner), marshalPermissionOverrides(p.PermissionOverrides),
 		marshalStringMapColumn(p.ContextFeatures, "spawn_profiles.context_features"),
 		environmentJSON,
@@ -570,21 +578,21 @@ const spawnProfileSelect = `SELECT id, name, disabled, disabled_reason, operator
 	sandbox_implementation, approval,
 	tools, ask_user_question_timeout, auto_compact_window, context_window_max, copilot_api, codex_app_server, fast_mode,
 	auto_review, trust_dir, agent_name, role, role_ref, role_refs, descr, initial_message, startup_context,
-	sync_worktree, fetch_latest_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, ssh_workaround,
+	sync_worktree, fetch_latest_worktree, auto_focus, include_group_default_context, remote_control, auto_memory, peer_messaging, ssh_workaround,
 	is_owner, permission_overrides, context_features, environment_json, created_at, updated_at
 	FROM spawn_profiles`
 
 func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	var p SpawnProfile
 	var disabled int64
-	var copilotAPI, codexAppServer, fastMode, autoReview, trustDir, syncWorktree, fetchLatestWorktree, autoFocus, includeCtx, remoteControl, autoMemory, sshWorkaround, isOwner sql.NullInt64
+	var copilotAPI, codexAppServer, fastMode, autoReview, trustDir, syncWorktree, fetchLatestWorktree, autoFocus, includeCtx, remoteControl, autoMemory, peerMessaging, sshWorkaround, isOwner sql.NullInt64
 	var roleRefs, permOverrides, contextFeatures, environmentJSON string
 	var createdAt, updatedAt dbTimestamp
 	if err := s.Scan(&p.ID, &p.Name, &disabled, &p.DisabledReason, &p.OperatorOnly, &p.Harness, &p.Model, &p.Effort, &p.Sandbox,
 		&p.SandboxImplementation, &p.Approval,
 		&p.ToolGovernance, &p.AskUserQuestionTimeout, &p.AutoCompactWindow, &p.ContextWindowMax, &copilotAPI, &codexAppServer, &fastMode,
 		&autoReview, &trustDir, &p.AgentName, &p.Role, &p.RoleRef, &roleRefs, &p.Descr, &p.InitialMessage, &p.StartupContext,
-		&syncWorktree, &fetchLatestWorktree, &autoFocus, &includeCtx, &remoteControl, &autoMemory, &sshWorkaround,
+		&syncWorktree, &fetchLatestWorktree, &autoFocus, &includeCtx, &remoteControl, &autoMemory, &peerMessaging, &sshWorkaround,
 		&isOwner, &permOverrides, &contextFeatures, &environmentJSON, &createdAt, &updatedAt); err != nil {
 		return nil, err
 	}
@@ -604,6 +612,7 @@ func scanSpawnProfile(s rowScanner) (*SpawnProfile, error) {
 	p.IncludeGroupDefaultContext = nullToBoolPtr(includeCtx)
 	p.RemoteControl = nullToBoolPtr(remoteControl)
 	p.AutoMemory = nullToBoolPtr(autoMemory)
+	p.PeerMessaging = nullToBoolPtr(peerMessaging)
 	p.SSHWorkaround = nullToBoolPtr(sshWorkaround)
 	p.IsOwner = nullToBoolPtr(isOwner)
 	p.PermissionOverrides = unmarshalPermissionOverrides(permOverrides)

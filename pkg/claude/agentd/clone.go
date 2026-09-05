@@ -302,6 +302,9 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	// False (and so omitted) for an unarmed source or a Codex source.
 	remoteControl := relaunch.RemoteControl
 	autoMemory := relaunch.AutoMemory
+	// Same reasoning again: a clone of an agent that opted into Claude Code's own
+	// messaging mesh keeps it, and a clone of a default agent stays closed.
+	peerMessaging := relaunch.PeerMessaging
 	// A clone is meant to be the same agent working alongside the original, so it
 	// inherits the source's startup-context shape too — a lean source must not
 	// produce a fat sibling.
@@ -567,6 +570,8 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		proofArgs.AskUserQuestionTimeout = askTimeout
 		proofArgs.RemoteControl = remoteControl
 		proofArgs.AutoMemory = autoMemory
+	proofArgs.PeerMessaging = peerMessaging
+		proofArgs.PeerMessaging = peerMessaging
 		proofArgs.ContextFeatures = contextFeatures
 		proofArgs.AutoCompactWindow = autoCompactWindow
 		proofArgs.ContextWindowMax = relaunch.ContextWindowMax

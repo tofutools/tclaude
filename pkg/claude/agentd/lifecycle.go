@@ -1831,6 +1831,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 		ToolGovernance:         launchConfig.ToolGovernance,
 		RemoteControl:          remoteControl,
 		AutoMemory:             launchConfig.AutoMemory,
+		PeerMessaging:          launchConfig.PeerMessaging,
 		ContextFeatures:        launchConfig.ContextFeatures,
 		AutoCompactWindow:      launchConfig.AutoCompactWindow,
 		ContextWindowMax:       launchConfig.ContextWindowMax,
@@ -1949,7 +1950,7 @@ func recoverMissingConversationResumeProfile(convID string, recreateMissingDir b
 		HarnessBuiltinMode: &empty, ApprovalPolicy: &approval,
 		ApprovalAutoReview: &no, ModelID: &empty, Effort: &empty,
 		ContextWindowSize: &zero, AskUserQuestionTimeout: &empty,
-		RemoteControl: &no, AutoMemory: &no, AutoCompactWindow: &empty,
+		RemoteControl: &no, AutoMemory: &no, PeerMessaging: &no, AutoCompactWindow: &empty,
 		SSHWorkaround: &sshWorkaround,
 	}
 	profile := db.ConversationResumeProfile{
@@ -3166,6 +3167,7 @@ func spawnAuditProfileSnapshot(p *db.SpawnProfile) any {
 		"trust_dir":                     p.TrustDir,
 		"remote_control":                p.RemoteControl,
 		"auto_memory":                   p.AutoMemory,
+		"peer_messaging":                p.PeerMessaging,
 		"ssh_workaround":                p.SSHWorkaround,
 		"context_features":              p.ContextFeatures,
 		"agent_name":                    p.AgentName,
@@ -3231,6 +3233,7 @@ func spawnAuditResolution(p spawnParams, launch *agent.ResolvedLaunch, requested
 			"trust_dir":                 p.TrustDir,
 			"remote_control":            p.RemoteControl,
 			"auto_memory":               p.AutoMemory,
+			"peer_messaging":            p.PeerMessaging,
 			"context_features":          features,
 			"auto_compact_window":       p.AutoCompactWindow,
 			"context_window_max":        p.ContextWindowMax,
@@ -3846,7 +3849,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	var autoReviewSet, trustDirSet, sshWorkaroundSet bool
-	var autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote string
+	var autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote string
 	body.AutoReview, autoReviewSet, _, autoReviewNote, fieldFail = resolveBoolLaunchField(
 		"auto_review", body.AutoReview, body.AutoReviewSpecified(), h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.AutoReview }, func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
@@ -3883,6 +3886,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		"auto_memory", body.AutoMemory != nil && *body.AutoMemory, body.AutoMemory != nil, h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.AutoMemory },
 		func(v bool) (bool, error) { return harness.ResolveAutoMemory(h, &v) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	// peer_messaging rides the same tier stack with the same fallback, and for a
+	// closely related reason: unset everywhere resolves to FALSE, and false here
+	// means tclaude injects the refusal. Claude Code's own cross-session
+	// messaging is a second coordination channel with none of tclaude's group
+	// membership, permission slugs or audit trail, so only an explicit opt-in
+	// (spawn body or a matching profile) reopens it.
+	var peerMessaging bool
+	peerMessaging, _, _, peerMessagingNote, fieldFail = resolveBoolLaunchField(
+		"peer_messaging", body.PeerMessaging != nil && *body.PeerMessaging, body.PeerMessaging != nil, h.Name, profileTiers,
+		func(p *db.SpawnProfile) *bool { return p.PeerMessaging },
+		func(v bool) (bool, error) { return harness.ResolvePeerMessaging(h, &v) })
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
@@ -4230,7 +4248,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.SandboxImplementation == "" && sandboxImplNote != "" {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
 	}
-	for _, note := range append([]string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, codexAppServerNote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
+	for _, note := range append([]string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, codexAppServerNote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -4751,6 +4769,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		TrustDirSet:                 trustDirSet,
 		RemoteControl:               remoteControl,
 		AutoMemory:                  autoMemory,
+		PeerMessaging:               peerMessaging,
 		ContextFeatures:             contextFeatures,
 		AutoCompactWindow:           autoCompactWindow,
 		ContextWindowMax:            body.ContextWindowMax,
@@ -5048,6 +5067,15 @@ type spawnParams struct {
 	// (handleGroupSpawn → harness.ResolveAutoMemory); a harness with no
 	// auto-memory system (Codex) rejects a true value.
 	AutoMemory bool
+	// PeerMessaging keeps Claude Code's own cross-session messaging ON for the
+	// new agent, forwarding `--peer-messaging` to `tclaude session new`. false
+	// (the default, and what an unset profile resolves to) instead has the
+	// launch inject the refusal, so agents coordinate through `tclaude agent
+	// send` rather than a channel outside tclaude's groups, permissions and
+	// audit trail. Gated at the spawn boundary (handleGroupSpawn →
+	// harness.ResolvePeerMessaging); a harness with no cross-session messaging
+	// system (Codex) rejects a true value.
+	PeerMessaging bool
 	// ContextFeatures is the resolved per-agent startup-context trim map (slug →
 	// "on" | "off"), forwarding `--context-features <slug>=<state>,…` to `tclaude
 	// session new`; nil/empty omits the flag so the agent keeps Claude Code's own
@@ -6675,6 +6703,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		TrustDir:                   p.TrustDir,
 		RemoteControl:              p.RemoteControl,
 		AutoMemory:                 p.AutoMemory,
+		PeerMessaging:              p.PeerMessaging,
 		ContextFeatures:            p.ContextFeatures,
 		AutoCompactWindow:          p.AutoCompactWindow,
 		ContextWindowMax:           p.ContextWindowMax,
@@ -9146,6 +9175,7 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args = appendTrustDirFlag(args, a.TrustDir)
 	args = appendRemoteControlFlag(args, a.RemoteControl)
 	args = appendAutoMemoryFlag(args, a.AutoMemory)
+	args = appendPeerMessagingFlag(args, a.PeerMessaging)
 	args = appendContextFeaturesFlag(args, a.ContextFeatures)
 	args = appendAutoCompactWindowFlag(args, a.AutoCompactWindow)
 	args = appendContextWindowMaxFlag(args, a.ContextWindowMax)
@@ -9279,6 +9309,19 @@ func appendAutoMemoryFlag(args []string, autoMemory bool) []string {
 	return args
 }
 
+// appendPeerMessagingFlag adds `--peer-messaging` to a `tclaude session new`
+// argv when the spawn opted back INTO Claude Code's own cross-session
+// messaging. false omits it, which is the recommended posture and makes the
+// forked `session new` inject the refusal. Bare boolean flag; the forked
+// `session new` re-validates it against the harness (a non-Claude harness
+// rejects an explicit opt-in).
+func appendPeerMessagingFlag(args []string, peerMessaging bool) []string {
+	if peerMessaging {
+		args = append(args, "--peer-messaging")
+	}
+	return args
+}
+
 // appendAskTimeoutFlag adds `--ask-user-question-timeout <v>` to a `tclaude
 // session new` argv when the spawn chose a Claude Code AskUserQuestion
 // idle-timeout override (never|60s|5m|10m). "" omits it. The forked `session
@@ -9398,6 +9441,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	// Omitted when false, which is the recommended posture and makes the forked
 	// `session new -r` inject CLAUDE_CODE_DISABLE_AUTO_MEMORY=1.
 	args = appendAutoMemoryFlag(args, a.AutoMemory)
+	args = appendPeerMessagingFlag(args, a.PeerMessaging)
 	args = appendContextFeaturesFlag(args, a.ContextFeatures)
 	// Preserve the SOURCE conv's pinned auto-compaction window across the
 	// relaunch — otherwise the successor to an agent deliberately compacting at

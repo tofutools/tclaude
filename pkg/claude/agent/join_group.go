@@ -121,6 +121,7 @@ func spawnParamsForJoinedSession(params *session.NewParams, group string) *Spawn
 		TrustDir:               params.TrustDir,
 		RemoteControl:          params.RemoteControl,
 		AutoMemory:             params.AutoMemory,
+		PeerMessaging:          params.PeerMessaging,
 		ContextFeatures:        params.ContextFeatures,
 		AutoCompactWindow:      params.AutoCompactWindow,
 		ContextWindowMax:       params.ContextWindowMax,

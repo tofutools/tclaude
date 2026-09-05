@@ -105,10 +105,12 @@ func TestResumeContextPosture_ReadsTheRecordedValues(t *testing.T) {
 	require.NoError(t, db.SetSessionAutoMemory(sessionID, true))
 	require.NoError(t, db.SetSessionContextFeatures(sessionID, map[string]string{"bundled-skills": "off"}))
 	require.NoError(t, db.SetSessionAutoCompactWindow(sessionID, "450000"))
+	require.NoError(t, db.SetSessionPeerMessaging(sessionID, true))
 
-	autoMemory, contextFeatures, autoCompactWindow, err := resumeContextPosture(resumeConvClaude)
+	autoMemory, peerMessaging, contextFeatures, autoCompactWindow, err := resumeContextPosture(resumeConvClaude)
 	require.NoError(t, err)
 	assert.True(t, autoMemory)
+	assert.True(t, peerMessaging, "an agent that opted into Claude Code's own messaging must not lose it on resume")
 	assert.Equal(t, map[string]string{"bundled-skills": "off"}, contextFeatures)
 	assert.Equal(t, "450000", autoCompactWindow)
 }

@@ -558,6 +558,7 @@ export function spawnCapabilityView(draft, context, resolvedSandboxImpl = '') {
     trustDirStore: harness?.dir_trust_store || '',
     showRemoteControl: harness ? !!harness.can_remote_control : draft.harness === 'claude',
     showAutoMemory: harness ? !!harness.can_auto_memory : draft.harness === 'claude',
+    showPeerMessaging: harness ? !!harness.can_peer_messaging : draft.harness === 'claude',
     showSSHWorkaround,
     sshWorkaroundAvailable,
     showContextFeatures: harness ? !!harness.can_context_features : draft.harness === 'claude',
@@ -822,6 +823,7 @@ export function selectSpawnHarness(draft, harnessName, context, rememberedEffort
     remoteControl: harness?.can_remote_control
       ? groupRemoteControlDefault(group) : false,
     autoMemory: harness?.can_auto_memory ? draft.autoMemory : false,
+    peerMessaging: harness?.can_peer_messaging ? draft.peerMessaging : false,
     sshWorkaround: !!harness?.can_ssh_workaround,
     // A harness with no steerable startup context cannot carry trims, and keeping
     // them would send a map the daemon rejects with a 400.
@@ -907,6 +909,10 @@ export function applySpawnProfile(
   // the dialog's own default, which is off.
   next.autoMemory = view.showAutoMemory && profile.auto_memory != null
     ? !!profile.auto_memory : false;
+  // Same rule for peer messaging: a profile that says nothing leaves the mesh
+  // closed rather than inheriting a stale opt-in from a previous selection.
+  next.peerMessaging = view.showPeerMessaging && profile.peer_messaging != null
+    ? !!profile.peer_messaging : false;
   next.sshWorkaround = view.showSSHWorkaround
     ? profile.ssh_workaround !== false : false;
   // Same "a sparse profile means inherit" rule: an unset window clears any value

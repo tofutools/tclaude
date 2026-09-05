@@ -223,6 +223,18 @@ type NewParams struct {
 	// this definite bool; a direct human `session new` may set it too.
 	AutoMemory bool `long:"auto-memory" help:"Keep Claude Code's built-in auto memory ON for this session. Off by default for every Claude Code session tclaude launches (it injects CLAUDE_CODE_DISABLE_AUTO_MEMORY=1), because agents sharing a checkout cross-pollute one project memory store. Does not affect CLAUDE.md. Not applicable to codex"`
 
+	// PeerMessaging opts back INTO Claude Code's own cross-session messaging
+	// mesh, which tclaude closes by default: it is a second, unmanaged
+	// coordination channel with none of the group, permission or audit
+	// properties tclaude's own agent messaging has. Off by default, so the
+	// launch injects crossSessionInbound=refuse, isolatePeerMachines=true and a
+	// ListAgents deny; --peer-messaging injects nothing instead and leaves
+	// Claude Code's own defaults in charge. In-harness subagent messaging is
+	// unaffected either way. The daemon spawn path resolves the profile's
+	// tri-state into this definite bool; a direct human `session new` may set it
+	// too. See harness/peer_messaging.go.
+	PeerMessaging bool `long:"peer-messaging" help:"Keep Claude Code's built-in cross-session messaging ON for this session. Off by default for every Claude Code session tclaude launches (it refuses inbound peer messages, denies the ListAgents tool and requires approval for cross-machine sends), because it is a second coordination channel outside tclaude's groups, permissions and audit trail. Use 'tclaude agent send' instead. Does not affect in-harness subagents. Not applicable to codex"`
+
 	// ContextFeatures trims Claude Code's startup context for this session —
 	// bundled skills, unused tool schemas, system-prompt blocks (TCL-597). Unset
 	// changes nothing, so the session keeps whatever the operator's own
@@ -948,6 +960,17 @@ func runNew(params *NewParams) error {
 		return err
 	}
 	params.AutoMemory = autoMemory
+
+	// Gate --peer-messaging the same way: opting back into Claude Code's
+	// cross-session messaging only means something for a harness that has it
+	// (Claude Code), so requesting it for Codex errors here rather than
+	// silently doing nothing. The default (off) is valid for every harness — it
+	// is simply not injected for one with no such system.
+	peerMessaging, err := harness.ResolvePeerMessaging(h, &params.PeerMessaging)
+	if err != nil {
+		return err
+	}
+	params.PeerMessaging = peerMessaging
 
 	// Validate --ask-user-question-timeout: a Claude-Code-only settings.json
 	// override (never|60s|5m|10m) delivered via `--settings`, so a value for a
@@ -2178,6 +2201,7 @@ func runNew(params *NewParams) error {
 		SandboxDenyDirs:                launchDenyDirs,
 		AskUserQuestionTimeout:         askTimeout,
 		ContextFeatures:                contextFeatures,
+		PeerMessaging:                  params.PeerMessaging,
 		PermissionProfile:              launchPermissionProfile,
 		ApprovalPolicy:                 approvalPolicy,
 		AutoReview:                     autoReview,
@@ -2613,6 +2637,7 @@ func runNew(params *NewParams) error {
 	// resolve the drive.
 	RecordLaunchPosture(sessionID, h, LaunchPosture{
 		AutoMemory:        autoMemory,
+		PeerMessaging:     params.PeerMessaging,
 		ContextFeatures:   contextFeatures,
 		AutoCompactWindow: autoCompactWindow,
 		RemoteControl:     remoteControl,

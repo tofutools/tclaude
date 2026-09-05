@@ -109,6 +109,7 @@ type World struct {
 	spawnTrustDir      map[string]bool
 	spawnRemoteControl map[string]bool
 	spawnAutoMemory    map[string]bool
+	spawnPeerMessaging map[string]bool
 	spawnContextTrims  map[string]map[string]string
 	spawnCompactWindow map[string]string
 	spawnCopilotAPI    map[string]bool
@@ -178,6 +179,7 @@ func New(t *testing.T) *World {
 		spawnTrustDir:       map[string]bool{},
 		spawnRemoteControl:  map[string]bool{},
 		spawnAutoMemory:     map[string]bool{},
+		spawnPeerMessaging:  map[string]bool{},
 		spawnContextTrims:   map[string]map[string]string{},
 		spawnCompactWindow:  map[string]string{},
 		spawnCopilotAPI:     map[string]bool{},
@@ -449,6 +451,27 @@ func (w *World) SpawnAutoMemory(convID string) (bool, bool) {
 	defer w.spawnMu.Unlock()
 	mem, ok := w.spawnAutoMemory[convID]
 	return mem, ok
+}
+
+// RecordSpawnPeerMessaging captures the peer-messaging posture a
+// simSpawner.SpawnNew / SpawnResume received, keyed by the new conv-id, so a
+// flow test can assert what the spawn path resolved. The default (false —
+// tclaude closes Claude Code's own cross-session messaging mesh) is recorded
+// too, which is the interesting case: it is what makes the launch inject
+// crossSessionInbound=refuse, isolatePeerMachines=true and the ListAgents deny.
+func (w *World) RecordSpawnPeerMessaging(convID string, peerMessaging bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	w.spawnPeerMessaging[convID] = peerMessaging
+}
+
+// SpawnPeerMessaging returns the peer-messaging posture recorded for a spawned
+// conv-id and whether a spawn for that conv was observed.
+func (w *World) SpawnPeerMessaging(convID string) (bool, bool) {
+	w.spawnMu.Lock()
+	defer w.spawnMu.Unlock()
+	pm, ok := w.spawnPeerMessaging[convID]
+	return pm, ok
 }
 
 // RecordSpawnCopilotAPI captures the Copilot drive a simSpawner.SpawnNew /

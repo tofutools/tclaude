@@ -319,6 +319,22 @@ var launchCarryoverFields = []launchCarryoverField{
 		},
 	},
 	{
+		flag:     "peer-messaging",
+		recorded: "PeerMessaging",
+		supplied: func(p *NewParams) bool { return p.PeerMessaging },
+		carry: func(h *harness.Harness, rec *db.AgentRelaunchProfile, p *NewParams) (any, carryOutcome) {
+			if rec.PeerMessaging == nil {
+				return nil, carryUnrecorded
+			}
+			peerMessaging, err := harness.ResolvePeerMessaging(h, rec.PeerMessaging)
+			if err != nil {
+				return nil, carryDropped
+			}
+			p.PeerMessaging = peerMessaging
+			return peerMessaging, carryApplied
+		},
+	},
+	{
 		flag:     "context-features",
 		recorded: "ContextFeatures",
 		supplied: func(p *NewParams) bool { return strings.TrimSpace(p.ContextFeatures) != "" },
@@ -564,6 +580,7 @@ func applyRecordedLaunchPosture(params *NewParams, explicit explicitLaunchFields
 // omission.
 type LaunchPosture struct {
 	AutoMemory        bool
+	PeerMessaging     bool
 	ContextFeatures   map[string]string
 	AutoCompactWindow string
 	FastMode          string
@@ -599,6 +616,12 @@ func RecordLaunchPosture(sessionID string, h *harness.Harness, posture LaunchPos
 		if err := db.SetSessionAutoMemory(sessionID, posture.AutoMemory); err != nil {
 			slog.Warn("failed to record session auto-memory posture",
 				"session_id", sessionID, "auto_memory", posture.AutoMemory, "error", err)
+		}
+	}
+	if h.SupportsPeerMessaging() {
+		if err := db.SetSessionPeerMessaging(sessionID, posture.PeerMessaging); err != nil {
+			slog.Warn("failed to record session peer-messaging posture",
+				"session_id", sessionID, "peer_messaging", posture.PeerMessaging, "error", err)
 		}
 	}
 	if h.SupportsContextFeatures() {

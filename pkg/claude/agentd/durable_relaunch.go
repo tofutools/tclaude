@@ -40,6 +40,7 @@ type durableRelaunchConfig struct {
 	AskUserQuestionTimeout      string
 	RemoteControl               bool
 	AutoMemory                  bool
+	PeerMessaging               bool
 	SSHWorkaround               bool
 	ContextFeatures             map[string]string
 	AutoCompactWindow           string
@@ -111,6 +112,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 	askTimeout := p.AskUserQuestionTimeout
 	remoteControl := p.RemoteControl
 	autoMemory := p.AutoMemory
+	peerMessaging := p.PeerMessaging
 	sshWorkaround := p.SSHWorkaround
 	// Frozen unconditionally like the value it explains — SSHWorkaround is not
 	// even harness-gated here — so a snapshot can tell a curated opt-out from the
@@ -193,6 +195,7 @@ func relaunchProfileForSpawn(p spawnParams) db.AgentRelaunchProfile {
 		AskUserQuestionTimeout:     &askTimeout,
 		RemoteControl:              &remoteControl,
 		AutoMemory:                 &autoMemory,
+		PeerMessaging:              &peerMessaging,
 		SSHWorkaround:              &sshWorkaround,
 		SSHWorkaroundSource:        &sshWorkaroundSource,
 		ContextFeatures:            &contextFeatures,
@@ -360,6 +363,10 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 	if autoMemory && !h.CanAutoMemory() {
 		autoMemory = false
 	}
+	peerMessaging := agentProfile.PeerMessaging != nil && *agentProfile.PeerMessaging
+	if peerMessaging && !h.CanPeerMessaging() {
+		peerMessaging = false
+	}
 	// Re-resolve the recorded trims against the harness this relaunch will
 	// actually use. A harness change (or a catalog entry retired since the agent
 	// was born) drops the trims rather than wedging the relaunch: losing a trim
@@ -466,6 +473,7 @@ func durableRelaunchConfigForConv(convID string) (*durableRelaunchConfig, error)
 		AskUserQuestionTimeout:      askTimeout,
 		RemoteControl:               remoteControl,
 		AutoMemory:                  autoMemory,
+		PeerMessaging:               peerMessaging,
 		SSHWorkaround:               sshWorkaround,
 		ContextFeatures:             contextFeatures,
 		AutoCompactWindow:           autoCompactWindow,

@@ -756,6 +756,10 @@ type templateAgentLaunch struct {
 	// agent. Resolved from the profile tiers like RemoteControl; defaults off,
 	// which makes the launch inject CLAUDE_CODE_DISABLE_AUTO_MEMORY=1.
 	AutoMemory bool
+	// PeerMessaging keeps Claude Code's own cross-session messaging on for a
+	// template-deployed agent. Resolved from the profile tiers like AutoMemory;
+	// defaults off, which makes the launch inject the refusal.
+	PeerMessaging bool
 	// SSHWorkaround is the resolved Git-over-SSH compatibility posture.
 	// It defaults on for a managed Codex launch or any tclaude-layer launch,
 	// then the effective sandbox clamps it to shapes that need it. A referenced
@@ -998,6 +1002,11 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 	if p.RemoteControl != nil {
 		if _, err := harness.ResolveRemoteControl(h, *p.RemoteControl); err != nil {
 			return wrap(http.StatusBadRequest, "invalid_remote_control", err.Error())
+		}
+	}
+	if p.PeerMessaging != nil {
+		if _, err := harness.ResolvePeerMessaging(h, p.PeerMessaging); err != nil {
+			return wrap(http.StatusBadRequest, "invalid_peer_messaging", err.Error())
 		}
 	}
 	if p.AutoMemory != nil {
@@ -1365,6 +1374,18 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	if memNote != "" {
 		notes = append(notes, memNote)
 	}
+	// Peer messaging rides the same pattern with the same load-bearing default:
+	// unset resolves to off, i.e. tclaude closes Claude Code's own messaging
+	// mesh for template-deployed agents too.
+	peerMessaging, _, _, peerNote, fail := resolveBoolLaunchField("peer_messaging", false, false, h.Name, tiers,
+		func(p *db.SpawnProfile) *bool { return p.PeerMessaging },
+		func(v bool) (bool, error) { return harness.ResolvePeerMessaging(h, &v) })
+	if fail != nil {
+		return failed(fail)
+	}
+	if peerNote != "" {
+		notes = append(notes, peerNote)
+	}
 	// The Copilot drive rides the same pattern, with the same default: unset
 	// resolves to off, i.e. a template-deployed Copilot agent stays on send-keys
 	// unless a profile tier explicitly asked for the API. There is no
@@ -1472,6 +1493,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		AutoReviewSet:          autoReviewSet,
 		RemoteControl:          remoteControl,
 		AutoMemory:             autoMemory,
+		PeerMessaging:          peerMessaging,
 		SSHWorkaround:          sshWorkaround,
 		SSHWorkaroundSet:       sshWorkaroundSet,
 		ContextFeatures:        contextFeatures,
@@ -4304,6 +4326,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 	out.TrustDir = prev.TrustDir
 	out.RemoteControl = prev.RemoteControl
 	out.AutoMemory = prev.AutoMemory
+	out.PeerMessaging = prev.PeerMessaging
 	if out.SSHWorkaround == nil {
 		out.SSHWorkaround = prev.SSHWorkaround
 	}
@@ -4386,7 +4409,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 		out.StartupContext == "" &&
 		out.AutoCompactWindow == "" && out.SandboxImplementation == "" &&
 		out.ContextWindowMax == 0 &&
-		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
+		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil && out.PeerMessaging == nil &&
 		out.SSHWorkaround == nil && out.FetchLatestWorktree == nil &&
 		out.CopilotAPI == nil && out.CodexAppServer == nil && out.FastMode == nil &&
 		len(out.ContextFeatures) == 0 && len(out.Environment) == 0 &&
@@ -4472,6 +4495,11 @@ func dropLaunchFieldsForeignToHarness(out *db.SpawnProfile) *snapshotFieldDrop {
 		if _, err := harness.ResolveSSHWorkaround(h, out.SSHWorkaround); err != nil {
 			out.SSHWorkaround = nil
 			dropped = append(dropped, "ssh_workaround")
+		}
+	}
+	if out.PeerMessaging != nil {
+		if _, err := harness.ResolvePeerMessaging(h, out.PeerMessaging); err != nil {
+			out.PeerMessaging = nil
 		}
 	}
 	if out.AutoMemory != nil {

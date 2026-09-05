@@ -13,6 +13,12 @@ export const AUTO_MEMORY_TRI_OPTIONS = [
   ['', 'Default (off — recommended)'], ['1', 'on'], ['0', 'off'],
 ];
 
+// Peer messaging shares auto memory's shape and its load-bearing default: unset
+// means tclaude closes Claude Code's own cross-session messaging mesh.
+export const PEER_MESSAGING_TRI_OPTIONS = [
+  ['', 'Default (off — recommended)'], ['1', 'on'], ['0', 'off'],
+];
+
 // The Copilot drive's unset default is send-keys — the path every Copilot agent
 // took before the API drive existed. Spell that out so "Default" is not read as
 // "whatever tclaude prefers today".
@@ -142,6 +148,7 @@ export function profileDraft(seed = null, { editExisting = true, local = null, c
     approval_reviewer: reviewerValue(seed?.auto_review),
     trust_dir: triValue(seed?.trust_dir), remote_control: triValue(seed?.remote_control),
     auto_memory: triValue(seed?.auto_memory),
+    peer_messaging: triValue(seed?.peer_messaging),
     copilot_api: triValue(seed?.copilot_api), codex_app_server: triValue(seed?.codex_app_server),
     fast_mode: triValue(seed?.fast_mode),
     ssh_workaround: seed?.ssh_workaround !== false,
@@ -203,6 +210,8 @@ export function profilePayload(draft, original = null, catalog = [], { local = f
   if (remote != null) body.remote_control = remote;
   const autoMemory = (!h || h.can_auto_memory) ? readTri(draft.auto_memory) : null;
   if (autoMemory != null) body.auto_memory = autoMemory;
+  const peerMessaging = (!h || h.can_peer_messaging) ? readTri(draft.peer_messaging) : null;
+  if (peerMessaging != null) body.peer_messaging = peerMessaging;
   const copilotAPI = (!h || h.can_copilot_api) ? readTri(draft.copilot_api) : null;
   if (copilotAPI != null) body.copilot_api = copilotAPI;
   const codexAppServer = (!h || h.can_codex_app_server) ? readTri(draft.codex_app_server) : null;

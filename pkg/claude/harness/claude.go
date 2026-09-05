@@ -145,8 +145,10 @@ func (claudeSpawner) BuildCommand(spec SpawnSpec) string {
 	// managed/policy settings outrank it). claudeSettingsJSON collects EVERY
 	// such override this spawn carries into ONE payload — the spawner emits
 	// `--settings` at most once, so multiple sources must share a single merged
-	// object. An un-chosen spawn (all defaults inherit/unset) yields "" here, so
-	// no flag is emitted and the agent stays on the operator's own settings.json.
+	// object. A spawn that overrides nothing yields "" here, so no flag is
+	// emitted and the agent stays on the operator's own settings.json — though
+	// since TCL-812 the default peer-messaging posture always contributes keys,
+	// so in practice a Claude Code launch nearly always carries the flag.
 	// The JSON is a machine-built payload, shell-quoted as one arg anyway since
 	// it's handed to `sh -c`.
 	if s := claudeSettingsJSON(spec); s != "" {

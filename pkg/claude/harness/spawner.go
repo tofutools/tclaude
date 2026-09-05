@@ -162,6 +162,19 @@ type SpawnSpec struct {
 	// nothing. Harnesses with no steerable startup-context surface (Codex,
 	// OpenCode) ignore it.
 	ContextFeatures map[string]string
+	// PeerMessaging keeps Claude Code's own cross-session messaging mesh
+	// available to the launch, resolved through ResolvePeerMessaging before the
+	// spec is built. See peer_messaging.go for why tclaude closes that channel
+	// by default and exactly how far "off" reaches.
+	//
+	// The ZERO VALUE IS LOAD-BEARING AND MEANS OFF, unlike every other optional
+	// field on this spec: a spec built without touching it injects the refusal,
+	// which is the intended default for every Claude Code session tclaude
+	// launches. Opting in (true) injects nothing at all. Delivered through the
+	// SAME `--settings` payload as HarnessBuiltinMode, AskUserQuestionTimeout
+	// and the settings-only context trims. Harnesses with no cross-session
+	// messaging system (Codex, OpenCode, Copilot) ignore it.
+	PeerMessaging bool
 	// PermissionProfile names a tclaude-managed Codex permission profile to run
 	// under, realised as `codex -p <name>` (a layered config-profile file whose
 	// default_permissions activates the profile for this spawn only). It is the

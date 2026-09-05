@@ -246,6 +246,14 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 		fmt.Fprintf(stderr, "%v\n", err)
 		return 1
 	}
+	// Same read-before-write ordering for the peer-messaging posture, for
+	// exactly the same reason: reading after this resume's own row exists would
+	// echo the new row's column default and decay an opt-in to off.
+	peerMessaging, err := db.PeerMessagingForConv(rc.ConvID)
+	if err != nil {
+		fmt.Fprintf(stderr, "%v\n", err)
+		return 1
+	}
 	// Same read-before-write ordering for the startup-context trims, for exactly
 	// the same reason: reading after this resume's own row exists would echo the
 	// new row's empty default and quietly un-trim the agent on the next resume.
@@ -362,7 +370,7 @@ func runResumeWithSession(rc *resolvedConv, attach, sendKeys bool, stdout, stder
 	// shared with the watch-mode resume: the same launch, the same limits, and
 	// one place for the decision rather than two copies of it.
 	session.RecordLaunchPosture(sessionID, h,
-		resumeLaunchPosture(autoMemory, contextFeatures, autoCompactWindow, remoteControl))
+		resumeLaunchPosture(autoMemory, peerMessaging, contextFeatures, autoCompactWindow, remoteControl))
 
 	displayName := rc.DisplayName
 	if len(displayName) > 50 {
