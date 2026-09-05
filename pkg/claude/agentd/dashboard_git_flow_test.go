@@ -287,3 +287,23 @@ func TestDashboardGitScansBelowHomeCheckout(t *testing.T) {
 	gitAPI(t, http.MethodGet, nil, &scan)
 	require.Len(t, scan.Repos, 3, "finding a repo at the home must not stop nested discovery")
 }
+
+func TestDashboardGitLinkedDefaultConflictKeepsChanges(t *testing.T) {
+	_, _, checkout := gitFixture(t)
+	repoGit(t, checkout, "switch", "-c", "feature")
+	linked := filepath.Join(t.TempDir(), "linked-default")
+	repoGit(t, checkout, "worktree", "add", linked, "trunk")
+	// The default branch is the final porcelain record, whose trailing newline
+	// is removed by the command helper. Refuse before either discard step.
+	tracked := filepath.Join(checkout, "initial")
+	require.NoError(t, os.WriteFile(tracked, []byte("edited"), 0600))
+	untracked := filepath.Join(checkout, "precious")
+	require.NoError(t, os.WriteFile(untracked, []byte("keep"), 0600))
+	result := updateGit(t, checkout, true, true, "pull")
+	require.Equal(t, "skipped", result["status"], result)
+	require.Contains(t, result["detail"], "another worktree")
+	data, err := os.ReadFile(tracked)
+	require.NoError(t, err)
+	require.Equal(t, "edited", string(data))
+	require.FileExists(t, untracked)
+}

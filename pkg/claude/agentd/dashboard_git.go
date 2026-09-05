@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -391,7 +392,7 @@ func runDashboardGit(ctx context.Context, request dashboardGitRequest) dashboard
 		result.Detail = err.Error()
 		return result
 	}
-	if target != repo.Branch && strings.Contains(worktrees, "\nbranch refs/heads/"+target+"\n") {
+	if target != repo.Branch && slices.Contains(strings.Split(worktrees, "\n"), "branch refs/heads/"+target) {
 		result.Detail = "Default branch is checked out in another worktree"
 		return result
 	}
@@ -560,6 +561,10 @@ func handleDashboardGit(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodGet {
 		// Remote HEAD lookups must not serialize a hundred-repository preview.
+		// Each repo gets its own deadline after acquiring a slot. Use the
+		// HTTP request context, not the earlier two-minute discovery budget:
+		// 100 slow repos need 13 waves, and later waves must still get time.
+		// Client cancellation still stops the entire preview.
 		var wg sync.WaitGroup
 		slots := make(chan struct{}, 8)
 		for i := range repos {
@@ -568,7 +573,7 @@ func handleDashboardGit(w http.ResponseWriter, r *http.Request) {
 				defer wg.Done()
 				slots <- struct{}{}
 				defer func() { <-slots }()
-				child, stop := context.WithTimeout(ctx, 15*time.Second)
+				child, stop := context.WithTimeout(r.Context(), 15*time.Second)
 				defer stop()
 				repos[i] = inspectDashboardGit(child, repos[i])
 			}()
