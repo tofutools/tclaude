@@ -1,3 +1,4 @@
+import { openGitRepositories } from './git-repositories-controller.js';
 // palette.js — the Ctrl/Cmd-K command palette ("spotlight").
 //
 // A keyboard-first overlay that searches across the dashboard's
@@ -234,6 +235,16 @@ export function buildCommands(snapshot) {
   //     "Power on all" buttons fire. Each is gated on its live count so
   //     the palette never lists a no-op (no running agents → no "shut
   //     down all"; nothing offline → no "power on all").
+  for (const mode of ['pull', 'sync']) {
+    const verb = mode === 'pull' ? 'Pull' : 'Sync';
+    cmds.push({
+      icon: mode === 'pull' ? '↓' : '↻',
+      label: wiz(`${verb} all repositories…`, mode === 'pull' ? 'Summon latest code · all parties…' : 'Harmonize repositories · all parties…'),
+      hint: wiz('Update repositories in group homes and two levels below', 'Refresh repositories in party homes and two levels below'),
+      keywords: `git ${mode} all repositories groups home directories fetch summon latest harmonize`,
+      run: () => openGitRepositories(mode),
+    });
+  }
   const onlineAll = (snap.agents || []).filter(a => a.online).length;
   const offlineAll = (snap.agents || []).filter(a => !a.online).length;
   if (onlineAll) {
@@ -268,6 +279,19 @@ export function buildCommands(snapshot) {
         + ' awaken rouse stir revive kindle familiars',
       run: () => powerOnScope('all', null),
     });
+  }
+
+  for (const g of (snap.groups || [])) {
+    for (const mode of ['pull', 'sync']) {
+      const verb = mode === 'pull' ? 'Pull' : 'Sync';
+      cmds.push({
+        icon: mode === 'pull' ? '↓' : '↻',
+        label: wiz(`${verb} ${g.name}…`, `${mode === 'pull' ? 'Summon latest code' : 'Harmonize repositories'} · ${g.name}…`),
+        hint: wiz(`Update repositories in and below group ${g.name}`, `Refresh repositories in and below party ${g.name}`),
+        keywords: `git ${mode} ${g.name} repositories group home fetch summon latest harmonize`,
+        run: () => { recordGroupInteraction(g.name); return openGitRepositories(mode, g.name); },
+      });
+    }
   }
 
   // 1c) Create a new group. Opens the very dialog the Groups-tab
