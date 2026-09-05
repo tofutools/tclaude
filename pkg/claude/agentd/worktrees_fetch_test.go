@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -20,6 +21,11 @@ import (
 )
 
 func TestDashboardCreateWorktree_FetchLatestUsesFreshConfiguredUpstream(t *testing.T) {
+	t.Setenv("TCLAUDE_STARTUP_TIMING", "1")
+	var timingLog bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&timingLog, nil)))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	bin := filepath.Join(home, "bin")
@@ -43,7 +49,7 @@ func TestDashboardCreateWorktree_FetchLatestUsesFreshConfiguredUpstream(t *testi
 		"opting out preserves today's local-base behavior")
 
 	on := postDashboardWorktree(t, map[string]any{
-		"repo": repo, "branch": "fresh-base", "from_branch": "main", "fetch_latest": true,
+		"repo": repo, "branch": "fresh-base", "from_branch": "main", "fetch_latest": true, "progress_id": "wt-fetch-test",
 	})
 	require.Equalf(t, http.StatusOK, on.Code, "body=%s", on.Body.String())
 	assert.Equal(t, latest, gitOutput(t, filepath.Join(filepath.Dir(repo), "local-fresh-base"), "rev-parse", "HEAD"),
@@ -52,6 +58,17 @@ func TestDashboardCreateWorktree_FetchLatestUsesFreshConfiguredUpstream(t *testi
 		"the configured non-origin upstream is refreshed")
 	_, hookErr := os.Stat(hookSentinel)
 	assert.Truef(t, os.IsNotExist(hookErr), "repo-controlled fetch hooks must not run in the daemon; stat=%v", hookErr)
+
+	for _, stage := range []string{"session_prepared", "remote_resolved", "transfer_repo_created", "refs_seeded", "network_fetch_complete", "refs_imported", "return_after_cleanup", "worktree_add_complete"} {
+		found := false
+		for _, line := range strings.Split(timingLog.String(), "\n") {
+			var entry map[string]any
+			if json.Unmarshal([]byte(line), &entry) == nil && entry["stage"] == stage && entry["worktree_progress_id"] == "wt-fetch-test" {
+				found = true
+			}
+		}
+		require.True(t, found, "missing correlated timing stage %s", stage)
+	}
 
 	// A requested fresh base is fail-closed: losing the remote leaves neither
 	// a branch nor a worktree behind.

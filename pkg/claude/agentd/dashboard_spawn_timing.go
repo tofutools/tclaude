@@ -24,22 +24,27 @@ func handleDashboardSpawnTiming(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Label       string  `json:"label"`
-		Closed      bool    `json:"closed"`
-		Prepared    float64 `json:"prepared_ms"`
-		Worktree    float64 `json:"worktree_ready_ms"`
-		Attachments float64 `json:"attachments_ready_ms"`
-		Request     float64 `json:"request_sent_ms"`
-		Response    float64 `json:"response_received_ms"`
-		Elapsed     float64 `json:"elapsed_ms"`
+		Label              string  `json:"label"`
+		Closed             bool    `json:"closed"`
+		Prepared           float64 `json:"prepared_ms"`
+		Worktree           float64 `json:"worktree_ready_ms"`
+		Attachments        float64 `json:"attachments_ready_ms"`
+		Request            float64 `json:"request_sent_ms"`
+		Response           float64 `json:"response_received_ms"`
+		Elapsed            float64 `json:"elapsed_ms"`
+		WorktreeProgressID string  `json:"worktree_progress_id"`
+		WorktreeHTTP       float64 `json:"worktree_http_ms"`
+		WorktreeCleanup    float64 `json:"worktree_progress_cleanup_ms"`
+		WorktreeTotal      float64 `json:"worktree_total_ms"`
 	}
 	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil || len(body.Label) > 256 {
+	if err := decoder.Decode(&body); err != nil || len(body.Label) > 256 ||
+		(body.WorktreeProgressID != "" && !validWorktreeProgressID(body.WorktreeProgressID)) {
 		http.Error(w, "invalid timing report", http.StatusBadRequest)
 		return
 	}
-	for _, duration := range []float64{body.Prepared, body.Worktree, body.Attachments, body.Request, body.Response, body.Elapsed} {
+	for _, duration := range []float64{body.Prepared, body.Worktree, body.Attachments, body.Request, body.Response, body.Elapsed, body.WorktreeHTTP, body.WorktreeCleanup, body.WorktreeTotal} {
 		if math.IsNaN(duration) || math.IsInf(duration, 0) || duration < 0 || duration > 86400000 {
 			http.Error(w, "invalid timing duration", http.StatusBadRequest)
 			return
@@ -53,6 +58,10 @@ func handleDashboardSpawnTiming(w http.ResponseWriter, r *http.Request) {
 		"label", body.Label, "elapsed_ms", body.Elapsed,
 		"prepared_ms", body.Prepared, "worktree_ready_ms", body.Worktree,
 		"attachments_ready_ms", body.Attachments, "request_sent_ms", body.Request,
-		"response_received_ms", body.Response)
+		"response_received_ms", body.Response,
+		"worktree_progress_id", body.WorktreeProgressID,
+		"worktree_http_ms", body.WorktreeHTTP,
+		"worktree_progress_cleanup_ms", body.WorktreeCleanup,
+		"worktree_total_ms", body.WorktreeTotal)
 	w.WriteHeader(http.StatusNoContent)
 }

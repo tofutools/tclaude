@@ -14,10 +14,13 @@ import (
 // essential: fetch updates refs/remotes/<remote>/..., not the checked-out local
 // main, so cutting from the local name would still produce a stale worktree.
 func fetchLatestWorktreeBase(ctx context.Context, repoRoot, base string) (string, error) {
+	timing := worktreeStartupTiming(ctx, "worktree_fetch")
+	defer timing("return")
 	remote, remoteBranch, trackingRef, err := worktree.FetchTargetForBranchIn(repoRoot, base)
 	if err != nil {
 		return "", err
 	}
+	timing("fetch_target_resolved")
 	cfg, err := config.Load()
 	if err != nil {
 		return "", fmt.Errorf("read Git proxy configuration: %w", err)
@@ -35,11 +38,14 @@ func fetchLatestWorktreeBase(ctx context.Context, repoRoot, base string) (string
 // does not add an allow-list, but the transfer still permits only the proxy's
 // hardened HTTPS and SSH transports and never runs a credentialed command in
 // the agent-writable repository.
-func fetchWorktreeBaseIsolated(ctx context.Context, repoRoot, remote, branch string, enforceProxyPolicy bool) error {
+func fetchWorktreeBaseIsolated(ctx context.Context, repoRoot, remote, branch string, enforceProxyPolicy bool) (err error) {
+	timing := worktreeStartupTiming(ctx, "worktree_fetch_isolated")
+	defer func() { timing("return_after_cleanup", "failed", err != nil) }()
 	s, fault := newGitProxySessionBase(ctx, !enforceProxyPolicy)
 	if fault != nil {
 		return fmt.Errorf("git proxy: %s", fault.Msg)
 	}
+	timing("session_prepared")
 	if !enforceProxyPolicy {
 		s.pins = operatorWorktreeFetchPins(s.pins)
 	}
@@ -48,14 +54,17 @@ func fetchWorktreeBaseIsolated(ctx context.Context, repoRoot, remote, branch str
 	if fault != nil {
 		return fmt.Errorf("git proxy: %s", fault.Msg)
 	}
+	timing("remote_resolved")
 	xfer, fault := newGitProxyXfer(ctx, s, xferShareObjects)
 	if fault != nil {
 		return fmt.Errorf("git proxy: %s", fault.Msg)
 	}
+	timing("transfer_repo_created")
 	defer xfer.cleanup()
 	if fault := xfer.seedRefs(ctx, s, resolved.Name); fault != nil {
 		return fmt.Errorf("git proxy: %s", fault.Msg)
 	}
+	timing("refs_seeded")
 
 	args := []string{"fetch", gitProxyUploadPack, "--no-recurse-submodules", "--", resolved.FetchURL}
 	args = append(args, fetchRefspecs(resolved.Name, branch, false)...)
@@ -68,10 +77,12 @@ func fetchWorktreeBaseIsolated(ctx context.Context, repoRoot, remote, branch str
 	if result.TimedOut {
 		return fmt.Errorf("git proxy fetch %s/%s timed out", remote, branch)
 	}
+	timing("network_fetch_complete")
 	imported, fault := xfer.importRefs(ctx, s, resolved.Name, false)
 	if fault != nil {
 		return fmt.Errorf("git proxy: %s", fault.Msg)
 	}
+	timing("refs_imported")
 	if result.ExitCode != 0 {
 		return fmt.Errorf("git proxy fetch %s/%s failed: %s", remote, branch, proxyResultMessage(result))
 	}

@@ -610,6 +610,7 @@ test('worktree creation reports backend-owned config-lock retry progress', async
   const harness = await createPreactHarness(t);
   const { createAgentSpawnActions } = await harness.importDashboardModule('js/agent-spawn-actions.js');
   const progress = [];
+  let timing;
   let finishCreate;
   let postedProgressID = '';
   let polledProgressID = '';
@@ -639,8 +640,12 @@ test('worktree creation reports backend-owned config-lock retry progress', async
     worktree: '__new__', wtRepo: '/repo', worktreeBranch: 'worker', worktreeBase: 'main',
   }, {
     phase: 'ready', repo: '/repo', repoRoot: '/repo', worktrees: [],
-  }, (message) => progress.push(message));
+  }, (message) => progress.push(message), (report) => { timing = report; });
 
+  assert.equal(timing.worktree_progress_id, postedProgressID);
+  assert.ok(timing.worktree_http_ms >= 0);
+  assert.ok(timing.worktree_progress_cleanup_ms >= 0);
+  assert.ok(Math.abs(timing.worktree_total_ms - timing.worktree_http_ms - timing.worktree_progress_cleanup_ms) < 0.001);
   assert.deepEqual(selected, { path: '/repo-worker', branch: 'worker' });
   assert.equal(polledProgressID, postedProgressID, 'the poll observes the same server operation');
   assert.ok(progress.some((message) => /retrying upstream setup \(2\/10\)/.test(message)));
