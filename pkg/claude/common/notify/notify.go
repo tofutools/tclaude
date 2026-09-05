@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -361,10 +362,17 @@ func SendPresentedPR(agentSessionID, agentTitle, group, prURL, summary string) {
 }
 
 // formatPresentedPR builds the title/body of a presented-PR notification.
-// The body leads with who presented, then the URL — the thing the human
-// acts on, so it is never dropped for the optional summary or group — and
-// is truncated to the same caps as Send. who falls back to a generic
-// phrase when the agent title is unknown.
+// The body leads with who presented, then the URL, then the optional
+// summary and group. who falls back to a generic phrase when the agent
+// title is unknown.
+//
+// The URL is the point of the banner — it is what the human copies and
+// acts on — so a half-truncated one is worthless. A presented URL may be
+// up to maxAgentPRURLLen (2048) bytes while a banner body caps at
+// notifyBodyMaxLen (1024) runes, so the optional trailers are appended
+// only while they still fit whole, rather than pushing the URL past the
+// cut. Nothing can save a URL that is itself over the cap; a banner cannot
+// display one at all.
 func formatPresentedPR(agentTitle, group, prURL, summary string) (title, notifBody string) {
 	who := strings.TrimSpace(agentTitle)
 	if who == "" {
@@ -372,22 +380,27 @@ func formatPresentedPR(agentTitle, group, prURL, summary string) (title, notifBo
 	}
 	title = truncate("Claude: pull request", notifyTitleMaxLen)
 
-	var b strings.Builder
-	b.WriteString(who)
-	b.WriteString(" presented a pull request")
+	body := who + " presented a pull request"
 	if u := strings.TrimSpace(prURL); u != "" {
-		b.WriteString("\n")
-		b.WriteString(u)
+		body += "\n" + u
 	}
-	if s := strings.TrimSpace(summary); s != "" {
-		b.WriteString("\n")
-		b.WriteString(s)
+	// Each trailer is all-or-nothing: a summary too long to fit is skipped
+	// rather than truncated mid-word, and skipping it still leaves room for
+	// the (short) group line behind it.
+	for _, trailer := range []struct{ prefix, value string }{
+		{"\n", strings.TrimSpace(summary)},
+		{"\n— ", strings.TrimSpace(group)},
+	} {
+		if trailer.value == "" {
+			continue
+		}
+		line := trailer.prefix + trailer.value
+		if utf8.RuneCountInString(body)+utf8.RuneCountInString(line) > notifyBodyMaxLen {
+			continue
+		}
+		body += line
 	}
-	if g := strings.TrimSpace(group); g != "" {
-		b.WriteString("\n— ")
-		b.WriteString(g)
-	}
-	return title, truncate(b.String(), notifyBodyMaxLen)
+	return title, truncate(body, notifyBodyMaxLen)
 }
 
 // formatHumanMessage builds the title/body of a human-message
