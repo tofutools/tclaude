@@ -1,6 +1,6 @@
 // Read flushed NDJSON records from a fetch response. Chunk boundaries need not
 // match records or UTF-8 characters. Ending mid-record is a protocol error.
-export async function* readJSONLines(response) {
+async function* readJSONLines(response) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffered = '';
@@ -23,3 +23,5 @@ export async function* readJSONLines(response) {
     reader.releaseLock();
   }
 }
+
+export { readJSONLines };
