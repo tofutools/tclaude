@@ -82,6 +82,34 @@ func TestGroupAttachment_SetRenderAndClear(t *testing.T) {
 	assert.Empty(t, g.AttachmentLabel)
 }
 
+func TestGroupAttachment_RepositoryLabel(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f.HaveGroup("alpha")
+	const repoURL = "https://github.com/GiGurra/brain"
+	for _, label := range []string{"", "Brain repository"} {
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(
+			t, http.MethodPost, "/v1/groups/alpha/attachment",
+			map[string]any{"url": repoURL, "label": label})))
+		require.Equalf(t, http.StatusOK, rec.Code, "set body=%s", rec.Body.String())
+		want := label
+		if want == "" {
+			want = "gh:GiGurra/brain"
+		}
+		var set groupAttachmentResp
+		testharness.DecodeJSON(t, rec, &set)
+		assert.Equal(t, want, set.Label)
+		assert.Equal(t, label, set.LabelOverride)
+		assert.Equal(t, repoURL, set.URL)
+
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		require.Len(t, snap.Groups, 1)
+		assert.Equal(t, want, snap.Groups[0].AttachmentLabel)
+		assert.Equal(t, label, snap.Groups[0].AttachmentLabelOverride)
+		assert.Equal(t, repoURL, snap.Groups[0].AttachmentURL)
+	}
+}
+
 func TestGroupAttachment_DerivesLabelAndRejectsUnsafeURL(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
