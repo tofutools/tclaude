@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"log/slog"
 	"net"
 	"os"
@@ -20,6 +19,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/codexappserver"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -16,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
