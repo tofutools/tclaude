@@ -415,3 +415,24 @@ Startup timing details also include:
   control readiness. Codex skips the fixed settling sleep when its welcome
   arrived through the launch seed or its app-server provides explicit control
   readiness. Legacy keystroke welcome delivery retains the settling delay.
+
+For newly created worktrees, `spawn_dialog` also reports `worktree_http_ms`
+(the worktree POST through response parsing), `worktree_progress_cleanup_ms`
+(waiting for the progress poll to stop), and `worktree_total_ms`. These three
+are durations, unlike the cumulative click offsets above. They are zero when
+no worktree creation ran during that submit, including reuse of a cached result.
+The `worktree_progress_id` joins that browser report to daemon records:
+
+- `worktree_request`: repository resolution, fetch phase, creation phase,
+  and response handling.
+- `worktree_fetch` / `worktree_fetch_isolated`: upstream resolution, proxy
+  session setup, remote resolution, isolated transfer-repository creation,
+  ref seeding, network fetch, ref import, and cleanup.
+- `worktree_create`: config-lock inspection, initial worktree add (including
+  Git's automatic tracking setup), explicit upstream repair, retry waits,
+  checkout retries, and fallback without tracking.
+
+Each trace's `step_ms` covers work since its previous milestone. Nested traces
+measure overlapping work, so do not sum their totals. Git errors still appear
+through the existing error paths; timing records contain no URLs, credentials,
+repository paths, or Git output. A `return` milestone alone is not success.

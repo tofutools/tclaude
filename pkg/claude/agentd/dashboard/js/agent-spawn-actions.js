@@ -123,7 +123,7 @@ export function createAgentSpawnActions({
       };
     },
 
-    async resolveWorktree(draft, worktrees, onProgress = () => {}) {
+    async resolveWorktree(draft, worktrees, onProgress = () => {}, onTiming = () => {}) {
       const selected = String(draft.worktree || '');
       if (!selected) return { path: '', branch: '' };
       const expectedRepo = String(draft.wtRepo || '').trim();
@@ -140,6 +140,7 @@ export function createAgentSpawnActions({
       if (!branch) throw new Error('enter a branch name for the new worktree');
       onProgress('Creating worktree…');
       const progressID = worktreeProgressID();
+      const startedAt = performance.now();
       let finished = false;
       const pollProgress = (async () => {
         while (!finished) {
@@ -178,8 +179,16 @@ export function createAgentSpawnActions({
         else onProgress('Worktree ready; spawning agent…');
         return { path: payload.path || '', branch: payload.branch || branch };
       } finally {
+        const responseAt = performance.now();
         finished = true;
         await pollProgress;
+        const completedAt = performance.now();
+        onTiming({
+          worktree_progress_id: progressID,
+          worktree_http_ms: responseAt - startedAt,
+          worktree_progress_cleanup_ms: completedAt - responseAt,
+          worktree_total_ms: completedAt - startedAt,
+        });
       }
     },
 

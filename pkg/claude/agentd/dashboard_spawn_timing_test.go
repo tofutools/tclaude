@@ -18,12 +18,14 @@ func TestDashboardSpawnTiming(t *testing.T) {
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
-	report := `{"label":"spawn-test","closed":true,"prepared_ms":10,"worktree_ready_ms":100,"attachments_ready_ms":101,"request_sent_ms":102,"response_received_ms":900,"elapsed_ms":901}`
+	report := `{"label":"spawn-test","closed":true,"prepared_ms":10,"worktree_ready_ms":100,"attachments_ready_ms":101,"request_sent_ms":102,"response_received_ms":900,"elapsed_ms":901,"worktree_progress_id":"wt-test","worktree_http_ms":80,"worktree_progress_cleanup_ms":10,"worktree_total_ms":90}`
 	w := httptest.NewRecorder()
 	handleDashboardSpawnTiming(w, dashboardRequest(http.MethodPost, "/api/spawn-timing", report))
 	require.Equal(t, http.StatusNoContent, w.Code)
 	require.Contains(t, logs.String(), `"stage":"dialog_close_requested"`)
 	require.Contains(t, logs.String(), `"elapsed_ms":901`)
+	require.Contains(t, logs.String(), `"worktree_progress_id":"wt-test"`)
+	require.Contains(t, logs.String(), `"worktree_progress_cleanup_ms":10`)
 	logs.Reset()
 	t.Setenv("TCLAUDE_STARTUP_TIMING", "")
 	w = httptest.NewRecorder()
@@ -31,7 +33,7 @@ func TestDashboardSpawnTiming(t *testing.T) {
 	require.Equal(t, http.StatusNoContent, w.Code)
 	require.Empty(t, logs.String())
 	t.Setenv("TCLAUDE_STARTUP_TIMING", "1")
-	for _, invalid := range []string{`{"elapsed_ms":-1}`, `{"elapsed_ms":1e100}`, `{"prompt":"do not log me"}`} {
+	for _, invalid := range []string{`{"worktree_progress_id":"invalid id"}`, `{"worktree_http_ms":-1}`, `{"worktree_progress_cleanup_ms":1e100}`, `{"elapsed_ms":-1}`, `{"elapsed_ms":1e100}`, `{"prompt":"do not log me"}`} {
 		w = httptest.NewRecorder()
 		handleDashboardSpawnTiming(w, dashboardRequest(http.MethodPost, "/api/spawn-timing", invalid))
 		require.Equal(t, http.StatusBadRequest, w.Code)

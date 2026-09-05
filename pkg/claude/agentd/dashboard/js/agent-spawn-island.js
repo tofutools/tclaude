@@ -801,7 +801,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       let worktreeSelection = resolvedWorktree.current.key === worktreeKey
         ? resolvedWorktree.current.value : null;
       if (!worktreeSelection) {
-        worktreeSelection = await actions.resolveWorktree(next, worktrees, setProgress);
+        worktreeSelection = await actions.resolveWorktree(next, worktrees, setProgress, (timing) => Object.assign(submitTiming, timing));
         resolvedWorktree.current = { key: worktreeKey, value: worktreeSelection };
       }
       markTiming('worktree_ready_ms');
