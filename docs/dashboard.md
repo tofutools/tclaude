@@ -574,15 +574,22 @@ A third-level repository is excluded unless another group home or a shallower
 directory symlink brings it into scope. It does not scan every agent worktree. Select repositories
 individually, or filter by repository, path or group and select/deselect the shown
 rows. Selections survive filtering; the footer always counts all selected repos.
-Discovery uses up to eight Git workers, including for a single container home
-with many repositories. Updates run up to four repositories concurrently.
+Discovery is local-only: it makes no remote requests. It shows checkouts on the
+locally cached remote default branch, or `main`/`master` when that hint is absent;
+feature-branch and detached worktrees are excluded. Group directory walks share
+request-scoped filesystem reads and run up to eight at once. Local Git inspection
+also uses up to eight workers, including for a single container home with many
+repositories. The response includes `Server-Timing` measurements for discovery
+and local Git inspection. Updates run up to four repositories concurrently.
 The compact list scrolls independently of the options and action buttons.
 Press **Ctrl+Enter** (or **Cmd+Enter** on macOS) to submit the selected repos.
 **Escape** closes the dialog before starting or after completion; dismissal is
 disabled while a batch is running.
 
 **Switch to default branch first** starts checked and uses each repository's
-remote default branch (including names other than `main` or `master`). Uncheck it
+remote default branch (including names other than `main` or `master`). The branch
+shown in the preview is a local hint; starting an update verifies the live remote
+default and refreshes the hint after a successful update. Uncheck it
 to pull the current branch's upstream. **Discard uncommitted changes** starts
 unchecked. Selecting it resets tracked edits and removes untracked files with
 `git clean -fd`; ignored files and nested Git repositories are retained. Without

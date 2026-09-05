@@ -107,10 +107,45 @@ func canonicalDashboardGitPath(path string) (string, error) {
 	return filepath.EvalSymlinks(absolute)
 }
 
+// Request-scoped reads are shared across overlapping homes. sync.Once allows
+// unrelated directories to be read concurrently without a global I/O lock.
+type dashboardGitDirectory struct {
+	once     sync.Once
+	path     string
+	info     os.FileInfo
+	err      error
+	git      bool
+	readOnce sync.Once
+	entries  []os.DirEntry
+	readErr  error
+}
+
+type dashboardGitScan struct {
+	paths       sync.Map
+	directories sync.Map
+}
+
+func (s *dashboardGitScan) directory(path string) *dashboardGitDirectory {
+	value, _ := s.paths.LoadOrStore(path, &dashboardGitDirectory{})
+	resolved := value.(*dashboardGitDirectory)
+	resolved.once.Do(func() { resolved.path, resolved.err = canonicalDashboardGitPath(path) })
+	if resolved.err != nil {
+		return resolved
+	}
+	value, _ = s.directories.LoadOrStore(resolved.path, &dashboardGitDirectory{path: resolved.path})
+	dir := value.(*dashboardGitDirectory)
+	dir.once.Do(func() {
+		dir.info, dir.err = os.Stat(dir.path)
+		_, err := os.Stat(filepath.Join(dir.path, ".git"))
+		dir.git = err == nil
+	})
+	return dir
+}
+
 // Scan logical directory depths 0, 1 and 2. Directory symlinks participate,
 // but a canonical directory is visited only at its shallowest depth, so
 // cycles cannot expand the scope. Git administrative directories are excluded.
-func scanDashboardGitHome(ctx context.Context, home, selectedPath string) ([]string, error) {
+func (scan *dashboardGitScan) home(ctx context.Context, home, selectedPath string) ([]string, error) {
 	type directory struct {
 		path  string
 		depth int
@@ -125,24 +160,18 @@ func scanDashboardGitHome(ctx context.Context, home, selectedPath string) ([]str
 		}
 		next := queue[0]
 		queue = queue[1:]
-		path, err := canonicalDashboardGitPath(next.path)
-		if err != nil {
-			scanErr = err
+		dir := scan.directory(next.path)
+		if dir.err != nil {
+			scanErr = dir.err
 			continue
 		}
-		info, err := os.Stat(path)
-		if err != nil {
-			scanErr = err
-			continue
-		}
-		if !info.IsDir() || visited[path] {
+		path := dir.path
+		if !dir.info.IsDir() || visited[path] {
 			continue
 		}
 		visited[path] = true
-		// A home may itself be inside a checkout; descendants are candidates
-		// only when they have their own .git file/directory (also submodules).
-		_, gitErr := os.Stat(filepath.Join(path, ".git"))
-		candidate := next.depth == 0 || gitErr == nil
+		// Homes may be inside a checkout; descendants need their own .git.
+		candidate := next.depth == 0 || dir.git
 		if selectedPath != "" {
 			// During per-repository execution, inspect only the selected
 			// checkout while retaining the identical directory traversal.
@@ -155,12 +184,12 @@ func scanDashboardGitHome(ctx context.Context, home, selectedPath string) ([]str
 		if next.depth == 2 {
 			continue
 		}
-		entries, err := os.ReadDir(path)
-		if err != nil {
-			scanErr = err
+		dir.readOnce.Do(func() { dir.entries, dir.readErr = os.ReadDir(path) })
+		if dir.readErr != nil {
+			scanErr = dir.readErr
 			continue
 		}
-		for _, entry := range entries {
+		for _, entry := range dir.entries {
 			if entry.Name() == ".git" {
 				continue
 			}
@@ -184,7 +213,31 @@ func dashboardGitHomes(ctx context.Context, group, selectedPath string) ([]dashb
 	seenDirs := map[string]int{}
 	hasIssue := map[string]bool{}
 	scoped := []string{}
-	for _, g := range groups {
+	type homeResult struct {
+		dirs []string
+		err  error
+	}
+	scans := make([]homeResult, len(groups))
+	scan := &dashboardGitScan{}
+	var walks sync.WaitGroup
+	walkJobs := make(chan int)
+	for range min(8, len(groups)) {
+		walks.Add(1)
+		go func() {
+			defer walks.Done()
+			for i := range walkJobs {
+				scans[i].dirs, scans[i].err = scan.home(ctx, groups[i].DefaultCwd, selectedPath)
+			}
+		}()
+	}
+	for i, g := range groups {
+		if (group == "" || g.Name == group) && g.DefaultCwd != "" {
+			walkJobs <- i
+		}
+	}
+	close(walkJobs)
+	walks.Wait()
+	for groupIndex, g := range groups {
 		if group != "" && g.Name != group {
 			continue
 		}
@@ -194,7 +247,7 @@ func dashboardGitHomes(ctx context.Context, group, selectedPath string) ([]dashb
 			hasIssue[g.Name] = true
 			continue
 		}
-		dirs, scanErr := scanDashboardGitHome(ctx, g.DefaultCwd, selectedPath)
+		dirs, scanErr := scans[groupIndex].dirs, scans[groupIndex].err
 		if scanErr != nil {
 			issues = append(issues, dashboardGitIssue{g.Name, "Some directories could not be scanned: " + scanErr.Error()})
 			hasIssue[g.Name] = true
@@ -308,22 +361,50 @@ func dashboardGitDefault(ctx context.Context, path, remote string) (string, erro
 	return "", fmt.Errorf("remote default branch could not be determined")
 }
 
+// Preview inspection is strictly local. Cached remote HEAD is only a hint;
+// execution resolves the live default before switching branches.
 func inspectDashboardGit(ctx context.Context, repo dashboardGitRepo) dashboardGitRepo {
-	repo.Branch, _ = dashboardGit(ctx, repo.Path, "symbolic-ref", "--quiet", "--short", "HEAD")
-	status, err := dashboardGit(ctx, repo.Path, "status", "--porcelain", "--untracked-files=normal")
+	status, err := dashboardGit(ctx, repo.Path, "status", "--porcelain=v2", "--branch", "-z", "--untracked-files=normal")
 	if err != nil {
 		repo.Error = err.Error()
 		return repo
 	}
-	repo.Dirty = status != ""
-	repo.Remote, err = dashboardGitRemote(ctx, repo.Path, repo.Branch)
-	if err == nil {
-		repo.DefaultBranch, err = dashboardGitDefault(ctx, repo.Path, repo.Remote)
+	for _, record := range strings.Split(status, "\x00") {
+		if strings.HasPrefix(record, "# branch.head ") {
+			repo.Branch = strings.TrimPrefix(record, "# branch.head ")
+			if repo.Branch == "(detached)" {
+				repo.Branch = ""
+			}
+		} else if record != "" && !strings.HasPrefix(record, "# ") {
+			repo.Dirty = true
+			break
+		}
 	}
+	repo.Remote, err = dashboardGitRemote(ctx, repo.Path, repo.Branch)
 	if err != nil {
 		repo.Error = err.Error()
+		return repo
 	}
+	head, _ := dashboardGit(ctx, repo.Path, "symbolic-ref", "--quiet", "refs/remotes/"+repo.Remote+"/HEAD")
+	repo.DefaultBranch = strings.TrimPrefix(head, "refs/remotes/"+repo.Remote+"/")
 	return repo
+}
+
+// Preview only the locally known default branch checkout. If no default hint
+// exists, main/master are recognized without contacting the remote.
+func dashboardGitPreviewCheckout(ctx context.Context, path string) bool {
+	branch, err := dashboardGit(ctx, path, "symbolic-ref", "--quiet", "--short", "HEAD")
+	if err != nil {
+		return false
+	}
+	remote, err := dashboardGitRemote(ctx, path, branch)
+	if err == nil {
+		head, _ := dashboardGit(ctx, path, "symbolic-ref", "--quiet", "refs/remotes/"+remote+"/HEAD")
+		if head != "" {
+			return head == "refs/remotes/"+remote+"/"+branch
+		}
+	}
+	return branch == "main" || branch == "master"
 }
 
 var dashboardGitActive = struct {
@@ -369,7 +450,11 @@ func runDashboardGit(ctx context.Context, request dashboardGitRequest) dashboard
 	target := repo.Branch
 	remoteBranch := target
 	if request.SwitchDefault {
-		target = repo.DefaultBranch
+		target, err = dashboardGitDefault(ctx, request.Path, repo.Remote)
+		if err != nil {
+			result.Detail = err.Error()
+			return result
+		}
 		remoteBranch = target
 	} else if target != "" {
 		merge, _ := dashboardGit(ctx, request.Path, "config", "--get", "branch."+target+".merge")
@@ -474,6 +559,10 @@ func runDashboardGit(ctx context.Context, request dashboardGitRequest) dashboard
 	if !run("merge", "--no-overwrite-ignore", "--ff-only", "--no-edit", "--", remoteRef) {
 		return result
 	}
+	// Keep the local preview hint aligned with the default verified for this update.
+	if request.SwitchDefault && !run("symbolic-ref", "refs/remotes/"+repo.Remote+"/HEAD", remoteRef) {
+		return result
+	}
 	result.Status = "updated"
 	result.Detail = "Up to date on " + target
 	return result
@@ -554,17 +643,15 @@ func handleDashboardGit(w http.ResponseWriter, r *http.Request) {
 		}
 		request.Path = canonical
 	}
+	started := time.Now()
 	repos, issues, err := dashboardGitHomes(ctx, group, request.Path)
+	discovered := time.Now()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if r.Method == http.MethodGet {
-		// Remote HEAD lookups must not serialize a hundred-repository preview.
-		// Each repo gets its own deadline after acquiring a slot. Use the
-		// HTTP request context, not the earlier two-minute discovery budget:
-		// 100 slow repos need 13 waves, and later waves must still get time.
-		// Client cancellation still stops the entire preview.
+		// Local inspection is bounded independently for each checkout.
 		var wg sync.WaitGroup
 		slots := make(chan struct{}, 8)
 		for i := range repos {
@@ -575,10 +662,16 @@ func handleDashboardGit(w http.ResponseWriter, r *http.Request) {
 				defer func() { <-slots }()
 				child, stop := context.WithTimeout(r.Context(), 15*time.Second)
 				defer stop()
-				repos[i] = inspectDashboardGit(child, repos[i])
+				if dashboardGitPreviewCheckout(child, repos[i].Path) {
+					repos[i] = inspectDashboardGit(child, repos[i])
+				} else {
+					repos[i].Path = ""
+				}
 			}()
 		}
 		wg.Wait()
+		repos = slices.DeleteFunc(repos, func(repo dashboardGitRepo) bool { return repo.Path == "" })
+		w.Header().Set("Server-Timing", fmt.Sprintf("discovery;dur=%.1f, local_git;dur=%.1f, total;dur=%.1f", float64(discovered.Sub(started).Microseconds())/1000, float64(time.Since(discovered).Microseconds())/1000, float64(time.Since(started).Microseconds())/1000))
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"repos": repos, "issues": issues})
 		return
