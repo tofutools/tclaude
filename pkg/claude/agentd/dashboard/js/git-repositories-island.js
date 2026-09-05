@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { ManagementOverlay as Overlay } from './management-overlay.js';
 import { registerGitRepositoriesController } from './git-repositories-controller.js';
-import { gitRepoRequests, matchingGitRepos } from './git-repositories-actions.js';
+import { gitRepoRequests, matchingGitRepos, readGitConcurrency, rememberGitConcurrency } from './git-repositories-actions.js';
 
 const html = htm.bind(h);
 function Words({ plain, wizard = plain }) {
@@ -16,6 +16,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
   const [selected, setSelected] = useState(new Set());
   const [switchDefault, setSwitchDefault] = useState(true);
   const [discard, setDiscard] = useState(false);
+  const [concurrency, setConcurrency] = useState(readGitConcurrency);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -55,7 +56,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
     const requests = gitRepoRequests(repos, selected, { ...current, switchDefault, discard });
     setOutcomes(Object.fromEntries(requests.map((r) => [r.path, { path: r.path, status: 'queued', detail: '' }])));
     try {
-      await actions.run(requests, (out) => setOutcomes((before) => ({ ...before, [out.path]: out })));
+      await actions.run(requests, (out) => setOutcomes((before) => ({ ...before, [out.path]: out })), concurrency);
     } catch (err) { setError(err.message); }
     finally { running.current = false; setBusy(false); setDone(true); }
   };
@@ -72,6 +73,13 @@ export function GitRepositoriesDialog({ current, state, actions }) {
         <span><${Words} plain="Switch to default branch first" /><small><${Words} plain="Branch hints are local; the default is verified when you start. Only locally identified default-branch checkouts are shown." /></small></span></label>
       <label><input type="checkbox" checked=${discard} disabled=${locked} onChange=${(e) => setDiscard(e.currentTarget.checked)} />
         <span><${Words} plain="Discard uncommitted changes" /><small class="git-repos-warning"><${Words} plain="Deletes tracked edits and untracked files in selected repositories. Ignored files are kept." /></small></span></label>
+      <label class="git-repos-concurrency">
+        <span><${Words} plain="Parallel updates" wizard="Parallel invocations" /><small><${Words} plain="Repositories to update at once. Remembered for this dashboard." /></small></span>
+        <select aria-label="Parallel repository updates" value=${concurrency} disabled=${locked}
+          onChange=${(e) => { const value = Number(e.currentTarget.value); setConcurrency(value); rememberGitConcurrency(value); }}>
+          ${Array.from({ length: 100 }, (_, i) => html`<option key=${i + 1} value=${i + 1}>${i + 1}</option>`)}
+        </select>
+      </label>
     </div>
     <p class="git-repos-hint"><${Words} plain=${sync ? 'Fetch remote updates, prune stale remote references, then pull. Does not push.' : 'Fetch and pull the latest code. Does not push.'} /></p>
     <div class="git-repos-toolbar">

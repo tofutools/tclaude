@@ -580,7 +580,11 @@ feature-branch and detached worktrees are excluded. Group directory walks share
 request-scoped filesystem reads and run up to eight at once. Local Git inspection
 also uses up to eight workers, including for a single container home with many
 repositories. The response includes `Server-Timing` measurements for discovery
-and local Git inspection. Updates run up to four repositories concurrently.
+and local Git inspection. Updates default to four repositories concurrently. The dialog’s **Parallel updates**
+selector (**Parallel invocations** in wizard mode) accepts 1–100 and remembers
+the latest choice in the dashboard preference store, which survives daemon
+restarts and is shared across browsers.
+The setting is locked for the duration of a batch.
 The compact list scrolls independently of the options and action buttons.
 Press **Ctrl+Enter** (or **Cmd+Enter** on macOS) to submit the selected repos.
 **Escape** closes the dialog before starting or after completion; dismissal is
