@@ -64,8 +64,9 @@ The `notifications` block in `~/.tclaude/data/config.json`:
 ## Presented PRs
 
 `tclaude agent present-pr` always puts the PR on the agent's dashboard row.
-It can optionally raise a desktop banner too — the PR URL, the presenting
-agent, and its group — so a review request reaches you off the dashboard:
+It can optionally raise a notification too — the presenting agent, the PR
+URL, and (when they fit) the `--summary` and the agent's group — so a review
+request reaches you without watching the dashboard:
 
 ```json
 {
@@ -76,11 +77,17 @@ agent, and its group — so a review request reaches you off the dashboard:
 ```
 
 Off by default, and the `notifications.enabled` master switch still applies:
-both must be on for the banner to fire. The per-agent and per-group
-notification filters apply as well, so a muted agent's PR still appears on
-the dashboard, it just skips the banner. Only presenting a PR notifies —
-`--handled` retires one silently. The Config tab has a checkbox for this
-under Notifications → Presented PRs.
+both must be on for it to fire. It then goes wherever `delivery` sends every
+other notification — the desktop, a dashboard tab, or both — so under
+`"delivery": "browser"` it is a dashboard banner rather than a desktop one.
+The per-agent and per-group filters apply as well, so a muted agent's PR
+still appears on the dashboard row, it just raises nothing. Only presenting
+a PR notifies — `--handled` retires one silently. The Config tab has a
+checkbox for this under Notifications → Presented PRs.
+
+The PR URL is the part that has to survive: a banner body is capped, and
+when the whole message does not fit, the summary and group are dropped and a
+long agent name is trimmed before the URL is touched.
 
 An `idle` notification means the harness finished and no tracked subagent,
 background shell, or monitor is still working — tclaude holds the session at

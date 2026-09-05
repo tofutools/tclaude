@@ -380,9 +380,22 @@ func formatPresentedPR(agentTitle, group, prURL, summary string) (title, notifBo
 	}
 	title = truncate("Claude: pull request", notifyTitleMaxLen)
 
-	body := who + " presented a pull request"
+	// The URL is reserved its room FIRST. An agent title is free text (a
+	// /rename can make it arbitrarily long), and letting the attribution
+	// take unlimited space would push a perfectly short URL past the cut,
+	// leaving a banner that names who but cannot be acted on.
+	attribution := who + " presented a pull request"
+	body := attribution
 	if u := strings.TrimSpace(prURL); u != "" {
-		body += "\n" + u
+		urlLine := "\n" + u
+		switch budget := notifyBodyMaxLen - utf8.RuneCountInString(urlLine); {
+		case budget <= 0:
+			// The URL alone fills the banner; no attribution can fit in
+			// front of it, so give the URL every rune there is.
+			body = u
+		default:
+			body = truncate(attribution, budget) + urlLine
+		}
 	}
 	// Each trailer is all-or-nothing: a summary too long to fit is skipped
 	// rather than truncated mid-word, and skipping it still leaves room for

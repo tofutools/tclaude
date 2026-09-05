@@ -58,6 +58,18 @@ func TestFormatPresentedPR(t *testing.T) {
 			"https://example.com/"+strings.Repeat("a", 2000), "summary")
 		assert.LessOrEqual(t, len([]rune(body)), notifyBodyMaxLen)
 	})
+
+	// An agent title is free text — a /rename can make it arbitrarily long
+	// — so the attribution must not be allowed to push a perfectly short
+	// URL past the cut. Losing who presented it still leaves an actionable
+	// banner; losing the URL does not.
+	t.Run("a huge agent title is trimmed to keep the url", func(t *testing.T) {
+		const prURL = "https://example.com/pr/7"
+		_, body := formatPresentedPR(strings.Repeat("n", notifyBodyMaxLen+500), "squad", prURL, "fix")
+		assert.LessOrEqual(t, len([]rune(body)), notifyBodyMaxLen)
+		assert.Contains(t, body, prURL, "the URL survives an over-long attribution")
+		assert.True(t, strings.HasPrefix(body, "nnn"), "what fits of the attribution is kept")
+	})
 }
 
 // SendPresentedPR self-gates so its callers stay dumb, and it must hold

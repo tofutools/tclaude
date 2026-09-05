@@ -397,8 +397,8 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Presented PRs</span>
-        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-presentpr-notify" /> raise a desktop banner when an agent presents a pull request</label>
-        <span class="cfg-hint">The PR always appears on the agent's dashboard row regardless. Off by default; the banner also requires notifications to be enabled.</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-presentpr-notify" /> notify when an agent presents a pull request</label>
+        <span class="cfg-hint">The PR always appears on the agent's dashboard row regardless. Off by default; also requires notifications to be enabled, and follows the delivery channel above.</span>
       </div>
       <div class="cfg-field">
         <details class="cfg-advanced">
