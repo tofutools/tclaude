@@ -395,6 +395,7 @@ function syncCfgRemoteStatus() {
 function populateConfigForm(cfg) {
   cfg = cfg || {};
   setSelectValue($('#cfg-log-level'), cfg.log_level || 'info');
+  $('#cfg-startup-timing').checked = !!cfg.startup_timing;
   setTerminalSelectValue($('#cfg-terminal'), cfg.terminal || '');
   const pcg = cfg.pre_compact_guard || {};
   $('#cfg-precompact-enabled').checked = !!pcg.enabled;
@@ -662,6 +663,7 @@ function assembleConfig() {
   const cfg = JSON.parse(JSON.stringify(configObj || {}));
 
   cfg.log_level = controlValue($('#cfg-log-level'));
+  cfg.startup_timing = $('#cfg-startup-timing').checked;
   const term = controlValue($('#cfg-terminal')).trim();
   if (term) cfg.terminal = term; else delete cfg.terminal;
 

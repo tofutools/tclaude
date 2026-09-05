@@ -457,3 +457,15 @@ func TestDashboardConfig_DryRunDoesNotApplyCleanupPeriod(t *testing.T) {
 
 	assert.Equal(t, -1, cleanupPeriodDaysOnDisk(t), "dry-run must not write settings.json")
 }
+
+func TestDashboardConfig_StartupTimingTogglesWithoutRestart(t *testing.T) {
+	setupTestDB(t)
+	withDashboardAuth(t)
+	t.Setenv("TCLAUDE_STARTUP_TIMING", "1")
+	for _, value := range []string{"true", "false"} {
+		w, resp := postConfig(t, "/api/config", wrapBody(`{"startup_timing":`+value+`}`, ""))
+		require.Equal(t, http.StatusOK, w.Code, "body=%s", w.Body.String())
+		require.Empty(t, resp.UnknownKeys)
+		require.Equal(t, value == "true", config.StartupTimingEnabled())
+	}
+}

@@ -3391,6 +3391,8 @@ func ambientSandboxProfileName(g *db.AgentGroup) string {
 }
 
 func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	timing := config.StartupTiming("spawn_request")
+	defer timing("return")
 	// requireGroupPermission also hands back the caller's conv-id: a real
 	// agent (e.g. a PO orchestrating workers) resolves to its conv-id,
 	// the human resolves to "". It is the default reply-to target for
@@ -6307,6 +6309,10 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // an Async PENDING success the outcome carries an empty conv-id and the agent
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
+	timing := config.StartupTiming("spawn", "name", p.Name, "harness", p.Harness, "async", p.Async)
+	defer func() {
+		timing("return", "failed", failure != nil)
+	}()
 	groupName := spawnGroupName(g)
 	// Stamped here, once, rather than at each of the six spawnOutcome literals
 	// below: an echo that has to be repeated at every return is an echo that will
@@ -7026,10 +7032,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// is deliberately short and can collide with durable predecessor state;
 	// recording the boundary before the child starts lets non-preset harnesses
 	// reject such a row, while launch enrollment has the stronger conv-id proof.
+	timing("launch_prepared", "label", label)
 	launchedAt := time.Now()
 	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
 		return launchFailed(err)
 	}
+	timing("session_wrapper_dispatched", "label", label)
 	agentDirectoriesLaunched = true
 	privateAttachmentsLaunched = true
 	if openCodeLaunch != nil {
@@ -7123,6 +7131,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	}
 	deadline := launchedAt.Add(pollBudget)
 	var convID string
+	paneObserved := false
 	var lastDiscoveryScan time.Time
 	remoteArmed := false
 	pendingLaunchMarked := false
@@ -7193,6 +7202,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				sleepSpawnPoll(deadline)
 				continue
 			}
+			if !paneObserved {
+				timing("pane_observed", "label", label)
+				paneObserved = true
+			}
 			tmuxSession = s.TmuxSession
 			focusSpawn() // pane is up — open it now, conv-id or not
 			// Arm best-known remote-control on the row the moment it
@@ -7237,6 +7250,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 		sleepSpawnPoll(deadline)
 	}
+
+	timing("conversation_poll_finished", "label", label, "conv", convID, "budget_ms", pollBudget.Milliseconds())
 
 	// Launch-enrollment path: the conv-id was PRESET and enrollment ran before
 	// the fork. Return it only after tmux has proved a live pane. A slow or
@@ -7816,6 +7831,8 @@ func sleepSpawnPoll(deadline time.Time) {
 }
 
 func completePendingSpawnBackfill(g *db.AgentGroup, p spawnParams, label, convID string) {
+	timing := config.StartupTiming("spawn_backfill", "label", label, "conv", convID)
+	defer timing("return")
 	ps, err := db.GetPendingSpawn(label)
 	if err != nil {
 		slog.Warn("spawn: pending inline back-fill lookup failed",
@@ -8432,6 +8449,8 @@ func markBriefingConsumed(convID string, msgID int64, inlined bool) {
 // ("" for a human-initiated one); it is resolved to a display name
 // here so the welcome's attribution line names the real spawner.
 func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch, spawnedByConv, spawnedByAgent string, welcomeInSeed bool) {
+	timing := config.StartupTiming("spawn_post_init", "conv", convID)
+	defer timing("return")
 	if !waitForConvAlive(convID) {
 		slog.Warn("spawn: new conv never came online; post-init injection abandoned",
 			"conv", convID)
@@ -8474,6 +8493,8 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			"conv", convID, "budget", codexAppServerStartupTimeout)
 		return
 	}
+
+	timing("control_ready")
 
 	// Re-resolved AFTER the wait, not before it. The liveness check above is
 	// the precondition for waiting at all; the tmux target is an address the
@@ -9617,6 +9638,8 @@ func SignalSpawnWrapperFailureForTest(label string, err error) {
 // in SQLite once the conv-id materialises). It must be unique in the
 // sessions table.
 func liveSpawnNew(a clcommon.SpawnArgs) error {
+	timing := config.StartupTiming("spawn_wrapper", "label", a.Label)
+	defer timing("dispatch_return")
 	var cleanup func()
 	var err error
 	a, cleanup, err = spawnArgsWithSandboxHandoff(a)
@@ -9672,9 +9695,18 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 		return err
 	}
 	pid := cmd.Process.Pid
+	timing("process_started", "child_pid", pid)
+	waitStarted := time.Now()
+	waitWrapper := func() error {
+		err := cmd.Wait()
+		// A separate trace: the asynchronous wait can overlap dispatch_return.
+		mark := config.StartupTiming("spawn_wrapper_exit", "label", label, "child_pid", pid)
+		mark("exited", "wait_ms", time.Since(waitStarted).Milliseconds(), "failed", err != nil)
+		return err
+	}
 	if a.CwdWriteProof != "" || a.DirWriteProof != "" {
 		defer cleanup()
-		if err := cmd.Wait(); err != nil {
+		if err := waitWrapper(); err != nil {
 			routeCredentialCleanup()
 			slog.Error("spawn subprocess exited with error",
 				"label", label, "pid", pid, "err", err,
@@ -9685,7 +9717,7 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	}
 	go func() {
 		defer cleanup()
-		if err := cmd.Wait(); err != nil {
+		if err := waitWrapper(); err != nil {
 			routeCredentialCleanup()
 			slog.Error("spawn subprocess exited with error",
 				"label", label, "pid", pid, "err", err,

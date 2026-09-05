@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
@@ -196,6 +197,8 @@ func readCodexEffectiveConfigJSON(
 	environment []sandboxpolicy.EnvironmentEntry,
 	permissionProfile string,
 ) (json.RawMessage, error) {
+	timing := config.StartupTiming("codex_effective_config")
+	defer timing("return_after_cleanup")
 	ctx, cancel := context.WithTimeout(
 		context.Background(), codexEffectiveConfigTimeout)
 	defer cancel()
@@ -257,6 +260,7 @@ func readCodexEffectiveConfigJSON(
 		return nil, fmt.Errorf(
 			"cannot run the Codex app-server effective-config read: %w", err)
 	}
+	timing("process_started", "child_pid", command.Process.Pid)
 	waited := false
 	waitErr := error(nil)
 	finish := func(kill bool) error {
@@ -304,6 +308,7 @@ func readCodexEffectiveConfigJSON(
 		}
 	}
 
+	timing("requests_sent")
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	for scanner.Scan() {
@@ -328,6 +333,7 @@ func readCodexEffectiveConfigJSON(
 		if message.ID == nil || *message.ID != 2 {
 			continue
 		}
+		timing("config_response_received")
 		return message.Result, nil
 	}
 	if ctx.Err() != nil {
