@@ -3,12 +3,14 @@ package agentd_test
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
@@ -202,7 +204,7 @@ func TestDashboardGitRemoteDefaultChange(t *testing.T) {
 		}
 	}
 	gitAPI(t, http.MethodGet, nil, &scan)
-	require.Equal(t, "new-default", scan.Repos[0].Default)
+	require.Equal(t, "trunk", scan.Repos[0].Default) // Preview uses the local hint.
 	out := updateGit(t, checkout, true, false, "pull")
 	require.Equal(t, "updated", out["status"], out)
 	require.Equal(t, "new-default", repoGit(t, checkout, "branch", "--show-current"))
@@ -306,4 +308,70 @@ func TestDashboardGitLinkedDefaultConflictKeepsChanges(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "edited", string(data))
 	require.FileExists(t, untracked)
+}
+
+func TestDashboardGitPreviewLocalDefaultWorktrees(t *testing.T) {
+	_, _, checkout := gitFixture(t)
+	home := filepath.Dir(checkout)
+	linked := filepath.Join(home, "default-worktree")
+	repoGit(t, checkout, "switch", "-c", "feature")
+	repoGit(t, checkout, "worktree", "add", linked, "trunk")
+	_, err := db.SetAgentGroupDefaultCwd("code", home)
+	require.NoError(t, err)
+	// Any attempted SSH access leaves evidence, without making a network call.
+	marker := filepath.Join(t.TempDir(), "network-attempt")
+	script := filepath.Join(t.TempDir(), "ssh")
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\ntouch \"$GIT_NETWORK_MARKER\"\nexit 1\n"), 0700))
+	t.Setenv("GIT_NETWORK_MARKER", marker)
+	t.Setenv("GIT_SSH_COMMAND", script)
+	repoGit(t, checkout, "remote", "set-url", "origin", "ssh://example.invalid/repo")
+	// Source is also discovered, on trunk; the feature checkout is excluded.
+	var scan struct {
+		Repos []struct{ Path, Error string }
+	}
+	gitAPI(t, http.MethodGet, nil, &scan)
+	paths := []string{}
+	for _, repo := range scan.Repos {
+		paths = append(paths, repo.Path)
+		require.Empty(t, repo.Error)
+	}
+	require.Contains(t, paths, linked)
+	require.NotContains(t, paths, checkout)
+	require.NoFileExists(t, marker)
+}
+
+func TestDashboardGitPreview74Repositories(t *testing.T) {
+	remote, _, _ := gitFixture(t)
+	home := t.TempDir()
+	for i := range 74 {
+		path := filepath.Join(home, fmt.Sprintf("repo-%02d", i))
+		repoGit(t, home, "clone", "--shared", remote, path)
+		repoGit(t, path, "remote", "set-url", "origin", "ssh://example.invalid/repo")
+	}
+	t.Setenv("GIT_SSH_COMMAND", "false")
+	_, err := db.SetAgentGroupDefaultCwd("code", home)
+	require.NoError(t, err)
+	_, err = db.CreateAgentGroup("overlap", "")
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupDefaultCwd("overlap", home)
+	require.NoError(t, err)
+	request, err := http.NewRequest(http.MethodGet, "/api/git-repositories", nil)
+	require.NoError(t, err)
+	started := time.Now()
+	response := testharness.Serve(agentd.BuildDashboardHandlerForTest(), request)
+	t.Logf("74-repo local preview: %s; %s", time.Since(started), response.Header().Get("Server-Timing"))
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, response.Header().Get("Server-Timing"), "local_git;dur=")
+	var scan struct {
+		Repos []struct {
+			Error  string
+			Groups []string
+		}
+	}
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &scan))
+	require.Len(t, scan.Repos, 74)
+	for _, repo := range scan.Repos {
+		require.Empty(t, repo.Error)
+		require.ElementsMatch(t, []string{"code", "overlap"}, repo.Groups)
+	}
 }

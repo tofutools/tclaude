@@ -69,7 +69,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
     </div>
     <div class="git-repos-options">
       <label><input type="checkbox" checked=${switchDefault} disabled=${locked} onChange=${(e) => setSwitchDefault(e.currentTarget.checked)} />
-        <span><${Words} plain="Switch to default branch first" /><small><${Words} plain="Use each repository’s default branch, shown below." /></small></span></label>
+        <span><${Words} plain="Switch to default branch first" /><small><${Words} plain="Branch hints are local; the default is verified when you start. Only locally identified default-branch checkouts are shown." /></small></span></label>
       <label><input type="checkbox" checked=${discard} disabled=${locked} onChange=${(e) => setDiscard(e.currentTarget.checked)} />
         <span><${Words} plain="Discard uncommitted changes" /><small class="git-repos-warning"><${Words} plain="Deletes tracked edits and untracked files in selected repositories. Ignored files are kept." /></small></span></label>
     </div>
@@ -89,7 +89,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
             <input type="checkbox" aria-label=${`Select ${repo.name}: ${repo.path}`} checked=${selected.has(repo.path)} disabled=${locked || !!repo.error}
               onChange=${(e) => toggle(repo.path, e.currentTarget.checked)} />
             <span class="git-repo-name"><strong>${repo.name}</strong><small title=${repo.path}>${repo.path}</small></span>
-            <span class="git-repo-branch" title=${`${repo.branch || 'Detached HEAD'} → ${switchDefault ? repo.default_branch || '?' : repo.branch || '?'}`}>${repo.branch || '(detached)'} → ${switchDefault ? repo.default_branch || '?' : repo.branch || '?'}</span>
+            <span class="git-repo-branch" title=${`${repo.branch || 'Detached HEAD'} → ${switchDefault ? repo.default_branch || 'default' : repo.branch || '?'}`}>${repo.branch || '(detached)'} → ${switchDefault ? repo.default_branch || 'default' : repo.branch || '?'}</span>
             <span class=${`git-repo-badge ${outcome?.status || (repo.error ? 'failed' : repo.dirty ? 'dirty' : 'clean')}`}>
               ${outcome ? html`<${Words} plain=${outcome.status} wizard=${({ running: 'channeling', queued: 'waiting', updated: 'renewed' })[outcome.status] || outcome.status} />` : repo.error ? 'Unavailable' : repo.dirty ? 'Changed' : 'Clean'}</span>
             <span class="git-repo-groups" title=${repo.groups.join(', ')}>${repo.groups.join(', ')}</span>
