@@ -74,7 +74,7 @@ export function GitRepositoriesDialog({ current, state, actions }) {
       <label><input type="checkbox" checked=${discard} disabled=${locked} onChange=${(e) => setDiscard(e.currentTarget.checked)} />
         <span><${Words} plain="Discard uncommitted changes" /><small class="git-repos-warning"><${Words} plain="Deletes tracked edits and untracked files in selected repositories. Ignored files are kept." /></small></span></label>
       <label class="git-repos-concurrency">
-        <span><${Words} plain="Parallel updates" wizard="Parallel invocations" /><small><${Words} plain="Repositories to update at once. Remembered in this browser." /></small></span>
+        <span><${Words} plain="Parallel updates" wizard="Parallel invocations" /><small><${Words} plain="Repositories to update at once. Remembered for this dashboard." /></small></span>
         <select aria-label="Parallel repository updates" value=${concurrency} disabled=${locked}
           onChange=${(e) => { const value = Number(e.currentTarget.value); setConcurrency(value); rememberGitConcurrency(value); }}>
           ${Array.from({ length: 100 }, (_, i) => html`<option key=${i + 1} value=${i + 1}>${i + 1}</option>`)}

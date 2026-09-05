@@ -1,4 +1,6 @@
-const CONCURRENCY_KEY = 'tclaude.git.concurrency';
+import { dashPrefs } from './prefs.js';
+
+const CONCURRENCY_KEY = 'tclaude.dash.git.concurrency';
 
 export function gitConcurrency(value) {
   const number = Number(value);
@@ -6,13 +8,11 @@ export function gitConcurrency(value) {
 }
 
 export function readGitConcurrency() {
-  try { return gitConcurrency(localStorage.getItem(CONCURRENCY_KEY)); }
-  catch { return 4; }
+  return gitConcurrency(dashPrefs.getItem(CONCURRENCY_KEY));
 }
 
 export function rememberGitConcurrency(value) {
-  try { localStorage.setItem(CONCURRENCY_KEY, String(gitConcurrency(value))); }
-  catch { /* Browser storage can be unavailable; the current choice still works. */ }
+  dashPrefs.setItem(CONCURRENCY_KEY, String(gitConcurrency(value)));
 }
 
 export function matchingGitRepos(repos, query) {

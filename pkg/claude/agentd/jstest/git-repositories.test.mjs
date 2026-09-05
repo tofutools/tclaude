@@ -136,13 +136,16 @@ for (const wizard of [false, true]) {
   test(`parallel update choice persists and is passed to the batch (${wizard ? 'wizard' : 'plain'})`, async (t) => {
     const harness = await createPreactHarness(t);
     harness.document.body.classList.toggle('wizard', wizard);
-    const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
     const stored = new Map();
-    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
-      getItem: (key) => stored.get(key) ?? null,
-      setItem: (key, value) => stored.set(key, value),
-    } });
-    t.after(() => { if (previous) Object.defineProperty(globalThis, 'localStorage', previous); else delete globalThis.localStorage; });
+    t.mock.method(globalThis, 'fetch', async (_url, options = {}) => {
+      if (options.method === 'POST') {
+        const { key, value } = JSON.parse(options.body);
+        stored.set(key, value);
+      }
+      return new Response(JSON.stringify(Object.fromEntries(stored)));
+    });
+    const { dashPrefs, initDashPrefs } = await harness.importDashboardModule('js/prefs.js');
+    await initDashPrefs();
     const { GitRepositoriesDialog } = await harness.importDashboardModule('js/git-repositories-island.js');
     const { readGitConcurrency } = await harness.importDashboardModule('js/git-repositories-actions.js');
     let submitted;
@@ -163,6 +166,9 @@ for (const wizard of [false, true]) {
     select.querySelector('option[value="100"]').selected = true;
     await harness.act(() => harness.fireEvent(select, 'change'));
     assert.equal(readGitConcurrency(), 100);
+    harness.window.dispatchEvent(new harness.window.Event('pagehide'));
+    assert.equal(stored.get('tclaude.dash.git.concurrency'), '100');
+    await initDashPrefs();
     await mount(2);
     // LinkeDOM does not reflect controlled select.value on option.selected.
     // Submitting the remounted dialog verifies its restored state instead.
@@ -170,9 +176,8 @@ for (const wizard of [false, true]) {
     assert.equal(submitted, 100);
     assert.equal(host.querySelector('select').disabled, true);
     await harness.act(async () => { finish(); await pending; });
-    stored.set('tclaude.git.concurrency', 'bad');
+    dashPrefs.setItem('tclaude.dash.git.concurrency', 'bad');
     assert.equal(readGitConcurrency(), 4);
-    Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('disabled'); } });
-    assert.equal(readGitConcurrency(), 4);
+    harness.window.dispatchEvent(new harness.window.Event('pagehide'));
   });
 }
