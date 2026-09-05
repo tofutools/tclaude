@@ -1229,7 +1229,9 @@ test('Preact agent-spawn claims duplicate submit synchronously and retries faile
   const pending = deferred();
   let uploadCalls = 0;
   let spawnCalls = 0;
+  const reports = [];
   const mounted = await mountSpawn(t, {
+    reportTiming: (report) => { reports.push(report); return new Promise(() => {}); },
     uploadAttachments: async () => { uploadCalls += 1; return ['/tmp/a']; },
     spawn: async () => { spawnCalls += 1; return pending.promise; },
   });
@@ -1265,6 +1267,14 @@ test('Preact agent-spawn claims duplicate submit synchronously and retries faile
   pending.resolve({ conv_id: '1234567890' });
   await flush(harness);
   assert.equal(state.dialog.value, null);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].closed, true);
+  const milestones = ['prepared_ms', 'worktree_ready_ms', 'attachments_ready_ms', 'request_sent_ms', 'response_received_ms', 'elapsed_ms'];
+  let previous = 0;
+  for (const field of milestones) {
+    assert.ok(reports[0][field] >= previous, field);
+    previous = reports[0][field];
+  }
   assert.equal(calls.filter(([kind]) => kind === 'complete').length, 1);
   mounted.cleanup();
 });

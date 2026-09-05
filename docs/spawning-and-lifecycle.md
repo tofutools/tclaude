@@ -396,3 +396,22 @@ Uncheck **Startup timings** and save (or set `"startup_timing": false`) to
 disable new traces, even if the environment switch is enabled.
 Timing records contain identifiers and durations, not prompts, environment
 values, provider config, or capability tokens.
+
+Startup timing details also include:
+
+- `spawn_dialog`: browser-measured offsets from the Spawn click through
+  preparation (including auto-name confirmation), worktree resolution,
+  attachment upload, request dispatch, response receipt, and dialog close
+  request. All `*_ms` values are cumulative; subtract adjacent values for
+  phase durations. `elapsed_ms` ends at the close request, not the browser's
+  next paint. Reports arrive asynchronously after closing, so their log
+  timestamp is the receipt time. Failed submits report `submit_failed` and
+  may lack later milestones (shown as zero). Validation rejections and canceled
+  auto-name confirmations do not report a completed submit.
+- `spawn_discovery`: each conversation-store scan, with the launch label,
+  time since launch, store-list duration/count, and whether a conversation
+  matched. The one-second initial grace and scan interval remain unchanged.
+- `spawn_post_init`: `pane_alive` is distinct from keystroke settling and
+  control readiness. Codex skips the fixed settling sleep when its welcome
+  arrived through the launch seed or its app-server provides explicit control
+  readiness. Legacy keystroke welcome delivery retains the settling delay.

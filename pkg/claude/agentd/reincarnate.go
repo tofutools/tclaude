@@ -125,10 +125,19 @@ func customTitlesInUse() map[string]bool {
 // keystrokes. Returns true if the pane became alive within
 // reincarnateAliveTimeout, false otherwise.
 func waitForConvAlive(newConv string) bool {
+	if !waitForConvPaneAlive(newConv) {
+		return false
+	}
+	time.Sleep(reincarnateReadyDelay)
+	return true
+}
+
+// waitForConvPaneAlive proves pane liveness without assuming that callers need
+// a TUI keystroke settling delay. API callers must separately await control readiness.
+func waitForConvPaneAlive(newConv string) bool {
 	deadline := time.Now().Add(reincarnateAliveTimeout)
 	for time.Now().Before(deadline) {
 		if isConvOnline(newConv) {
-			time.Sleep(reincarnateReadyDelay)
 			return true
 		}
 		time.Sleep(500 * time.Millisecond)

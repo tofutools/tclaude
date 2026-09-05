@@ -4,6 +4,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/convops"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -51,11 +52,15 @@ const (
 // `--harness`) yields "", so the caller simply stays on the hook-poll path
 // (Claude Code's behaviour is unchanged: its hook delivers the conv-id before
 // the grace elapses).
-func discoverSpawnedConvID(h *harness.Harness, cwd string, since time.Time) string {
+func discoverSpawnedConvID(h *harness.Harness, cwd string, since time.Time, label string) (found string) {
 	if h == nil || h.Convs == nil {
 		return ""
 	}
+	timing := config.StartupTiming("spawn_discovery", "label", label, "harness", h.Name,
+		"since_launch_ms", time.Since(since).Milliseconds())
+	defer func() { timing("return", "conv", found, "found", found != "") }()
 	entries, err := h.Convs.ListConvs(cwd)
+	timing("store_listed", "entries", len(entries), "failed", err != nil)
 	if err != nil {
 		slog.Warn("spawn: conv-store discovery scan failed",
 			"harness", h.Name, "cwd", cwd, "error", err)
