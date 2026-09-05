@@ -34,33 +34,47 @@ test('100-repository dialog retains hidden selections and freezes the submitted 
   await harness.act(async () => { finish(); await pending; });
 });
 
-for (const concurrency of [undefined, 1, 7, 100, 101, 0, NaN]) {
-test(`batch Git updates honor concurrency ${concurrency} and continue after failures`, async (t) => {
+for (const concurrency of [1, 7, 100, 101]) {
+  test(`one batch request streams incremental progress with concurrency ${concurrency}`, async (t) => {
+    const harness = await createPreactHarness(t);
+    const { createGitRepositoriesActions } = await harness.importDashboardModule('js/git-repositories-actions.js');
+    let stream;
+    let calls = 0;
+    const actions = createGitRepositoriesActions({ fetchImpl: async (url, init) => {
+      calls++;
+      assert.equal(url, '/api/git-repositories/batch');
+      assert.equal(JSON.parse(init.body).concurrency, concurrency <= 100 ? concurrency : 4);
+      return new Response(new ReadableStream({ start(controller) { stream = controller; } }));
+    } });
+    const results = [];
+    const run = actions.run([{path:'/one'}, {path:'/two'}], result => results.push(result), concurrency);
+    await new Promise(resolve => setImmediate(resolve));
+    const bytes = new TextEncoder().encode(JSON.stringify({path:'/one',status:'updated',detail:'Förnyad'}) + '\n');
+    for (const byte of bytes) stream.enqueue(new Uint8Array([byte]));
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(results, [{path:'/one',status:'updated',detail:'Förnyad'}], 'progress visible before stream closes');
+    stream.enqueue(new TextEncoder().encode('{"path":"/two","status":"failed"}\n{"status":"complete"}\n'));
+    stream.close();
+    await run;
+    assert.equal(calls, 1);
+    assert.equal(results.length, 2);
+  });
+}
+
+test('interrupted batch preserves completed rows and does not retry mutations', async (t) => {
   const harness = await createPreactHarness(t);
   const { createGitRepositoriesActions } = await harness.importDashboardModule('js/git-repositories-actions.js');
-  let active = 0;
-  let maxActive = 0;
-  const gates = [];
-  const calls = [];
-  const results = [];
-  const actions = createGitRepositoriesActions({ fetchImpl: async (_url, init) => {
-    const req = JSON.parse(init.body); calls.push(req); active++; maxActive = Math.max(active, maxActive);
-    await new Promise((resolve) => gates.push(resolve)); active--;
-    return req.path === '/2' ? new Response('network failure', { status: 502 }) : new Response(JSON.stringify({ path: req.path, status: 'updated' }));
+  let calls = 0;
+  const actions = createGitRepositoriesActions({ fetchImpl: async () => {
+    calls++;
+    return new Response('{"path":"/one","status":"updated"}\n{"path":');
   } });
-  const requests = Array.from({ length: 110 }, (_, i) => ({ path: `/${i}`, mode: 'sync', group: '', switch_default: true, discard: false }));
-  const run = actions.run(requests, (result) => results.push(result), concurrency);
-  while (results.filter((r) => r.status !== 'running').length < 110) {
-    gates.splice(0).forEach((resolve) => resolve());
-    await new Promise((resolve) => setImmediate(resolve));
-  }
-  await run;
-  assert.equal(maxActive, [1, 7, 100].includes(concurrency) ? concurrency : 4);
-  assert.equal(calls.length, 110);
-  assert.equal(results.filter((r) => r.status === 'updated').length, 109);
-  assert.equal(results.filter((r) => r.status === 'failed').length, 1);
+  const results = [];
+  await assert.rejects(actions.run([{path:'/one'}, {path:'/two'}], r => results.push(r)), /mid-record/);
+  assert.equal(calls, 1);
+  assert.deepEqual(results.map(r => [r.path,r.status]), [['/one','updated'], ['/two','failed']]);
+  assert.match(results[1].detail, /Check the checkout before retrying/);
 });
-}
 
 test('palette exposes all/group Git commands in plain and wizard modes', async (t) => {
   const harness = await createPreactHarness(t);

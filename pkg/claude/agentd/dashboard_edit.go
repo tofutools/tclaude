@@ -54,6 +54,7 @@ func registerDashboardEditRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/agent-generations/", handleDashboardAgentGenerationDelete)
 	mux.HandleFunc("/api/worktrees", handleDashboardWorktreesAPI)
 	mux.HandleFunc("/api/git-repositories", handleDashboardGit)
+	mux.HandleFunc("/api/git-repositories/batch", handleDashboardGitBatch)
 	mux.HandleFunc("/api/worktrees/progress", dashboardWorktreeProgressAPI)
 	mux.HandleFunc("/api/worktrees/cleanup", handleDashboardWorktreeCleanup)
 	mux.HandleFunc("/api/jump/", handleDashboardJumpAPI)

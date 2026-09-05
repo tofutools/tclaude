@@ -394,3 +394,37 @@ func TestDashboardGitPreviewMainWithoutCachedDefault(t *testing.T) {
 	gitAPI(t, http.MethodGet, nil, &scan)
 	require.Empty(t, scan.Repos)
 }
+
+func TestDashboardGitBatchAPI(t *testing.T) {
+	_, source, checkout := gitFixture(t)
+	repoCommit(t, source, "batch-update")
+	repoGit(t, source, "push")
+	body := map[string]any{"concurrency": 100, "requests": []map[string]any{
+		{"group": "code", "path": checkout, "mode": "pull", "switch_default": true},
+		{"group": "code", "path": t.TempDir(), "mode": "pull"},
+	}}
+	request := testharness.JSONRequest(t, http.MethodPost, "/api/git-repositories/batch", body)
+	response := testharness.Serve(agentd.BuildDashboardHandlerForTest(), request)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Equal(t, "application/x-ndjson", response.Header().Get("Content-Type"))
+	statuses := map[string]int{}
+	for _, line := range strings.Split(strings.TrimSpace(response.Body.String()), "\n") {
+		var event map[string]string
+		require.NoError(t, json.Unmarshal([]byte(line), &event))
+		statuses[event["status"]]++
+	}
+	require.Equal(t, map[string]int{"running": 2, "updated": 1, "skipped": 1, "complete": 1}, statuses)
+	require.FileExists(t, filepath.Join(checkout, "batch-update"))
+	for _, limit := range []int{0, 101} {
+		body["concurrency"] = limit
+		response = testharness.Serve(agentd.BuildDashboardHandlerForTest(), testharness.JSONRequest(t, http.MethodPost, "/api/git-repositories/batch", body))
+		require.Equal(t, http.StatusBadRequest, response.Code)
+	}
+	body["concurrency"] = 4
+	alias := filepath.Join(t.TempDir(), "alias")
+	require.NoError(t, os.Symlink(checkout, alias))
+	body["requests"] = []map[string]any{{"group": "code", "path": checkout, "mode": "pull"}, {"group": "code", "path": alias, "mode": "pull"}}
+	response = testharness.Serve(agentd.BuildDashboardHandlerForTest(), testharness.JSONRequest(t, http.MethodPost, "/api/git-repositories/batch", body))
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	require.Contains(t, response.Body.String(), "duplicate")
+}
