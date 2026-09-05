@@ -1,3 +1,20 @@
+const CONCURRENCY_KEY = 'tclaude.git.concurrency';
+
+export function gitConcurrency(value) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 1 && number <= 100 ? number : 4;
+}
+
+export function readGitConcurrency() {
+  try { return gitConcurrency(localStorage.getItem(CONCURRENCY_KEY)); }
+  catch { return 4; }
+}
+
+export function rememberGitConcurrency(value) {
+  try { localStorage.setItem(CONCURRENCY_KEY, String(gitConcurrency(value))); }
+  catch { /* Browser storage can be unavailable; the current choice still works. */ }
+}
+
 export function matchingGitRepos(repos, query) {
   const text = query.trim().toLowerCase();
   return repos.filter((repo) => [repo.name, repo.path, ...(repo.groups || [])]
@@ -18,11 +35,11 @@ export function createGitRepositoriesActions({ fetchImpl = fetch } = {}) {
   }
   return {
     scan: (group, signal) => json(`/api/git-repositories?group=${encodeURIComponent(group)}`, { signal }),
-    async run(requests, onResult) {
+    async run(requests, onResult, concurrency = 4) {
       let next = 0;
       // A bounded worker pool avoids overwhelming Git credential helpers and
       // delivers progress as each checkout finishes, including partial errors.
-      await Promise.all(Array.from({ length: Math.min(4, requests.length) }, async () => {
+      await Promise.all(Array.from({ length: Math.min(gitConcurrency(concurrency), requests.length) }, async () => {
         while (next < requests.length) {
           const request = requests[next++];
           onResult({ path: request.path, status: 'running', detail: '' });

@@ -18494,3 +18494,9 @@ body.wizard .git-repos-options small.git-repos-warning { color: #e6bd89; }
 .git-repositories-modal button:disabled { cursor: default; opacity: .5; }
 .git-repositories-modal button:focus-visible, .git-repos-list:focus-visible { outline: 2px solid #72aaf9; outline-offset: 2px; }
 body.wizard .git-repositories-modal button:focus-visible, body.wizard .git-repos-list:focus-visible { outline-color: #c39ee8; }
+
+.git-repos-options .git-repos-concurrency { align-items: center; justify-content: space-between; }
+.git-repos-concurrency select { background: #101720; color: #d4d4d4; border: 1px solid #354356; border-radius: 5px; padding: 6px 10px; min-width: 76px; }
+.git-repos-concurrency select:focus-visible { outline: 2px solid #6ba5ff; outline-offset: 2px; }
+body.wizard .git-repos-concurrency select { background: #140f28; border-color: #51406b; color: #e7d9f5; }
+body.wizard .git-repos-concurrency select:focus-visible { outline-color: #bb86fc; }

@@ -34,7 +34,8 @@ test('100-repository dialog retains hidden selections and freezes the submitted 
   await harness.act(async () => { finish(); await pending; });
 });
 
-test('batch Git updates bound concurrency and continue after individual failures', async (t) => {
+for (const concurrency of [undefined, 1, 7, 100, 101, 0, NaN]) {
+test(`batch Git updates honor concurrency ${concurrency} and continue after failures`, async (t) => {
   const harness = await createPreactHarness(t);
   const { createGitRepositoriesActions } = await harness.importDashboardModule('js/git-repositories-actions.js');
   let active = 0;
@@ -47,18 +48,19 @@ test('batch Git updates bound concurrency and continue after individual failures
     await new Promise((resolve) => gates.push(resolve)); active--;
     return req.path === '/2' ? new Response('network failure', { status: 502 }) : new Response(JSON.stringify({ path: req.path, status: 'updated' }));
   } });
-  const requests = Array.from({ length: 10 }, (_, i) => ({ path: `/${i}`, mode: 'sync', group: '', switch_default: true, discard: false }));
-  const run = actions.run(requests, (result) => results.push(result));
-  while (results.filter((r) => r.status !== 'running').length < 10) {
+  const requests = Array.from({ length: 110 }, (_, i) => ({ path: `/${i}`, mode: 'sync', group: '', switch_default: true, discard: false }));
+  const run = actions.run(requests, (result) => results.push(result), concurrency);
+  while (results.filter((r) => r.status !== 'running').length < 110) {
     gates.splice(0).forEach((resolve) => resolve());
     await new Promise((resolve) => setImmediate(resolve));
   }
   await run;
-  assert.equal(maxActive, 4);
-  assert.equal(calls.length, 10);
-  assert.equal(results.filter((r) => r.status === 'updated').length, 9);
+  assert.equal(maxActive, [1, 7, 100].includes(concurrency) ? concurrency : 4);
+  assert.equal(calls.length, 110);
+  assert.equal(results.filter((r) => r.status === 'updated').length, 109);
   assert.equal(results.filter((r) => r.status === 'failed').length, 1);
 });
+}
 
 test('palette exposes all/group Git commands in plain and wizard modes', async (t) => {
   const harness = await createPreactHarness(t);
@@ -128,4 +130,48 @@ for (const modifier of ['ctrlKey', 'metaKey']) {
       assert.equal(closes, 1, 'Escape closes the results');
     });
   }
+}
+
+for (const wizard of [false, true]) {
+  test(`parallel update choice persists and is passed to the batch (${wizard ? 'wizard' : 'plain'})`, async (t) => {
+    const harness = await createPreactHarness(t);
+    harness.document.body.classList.toggle('wizard', wizard);
+    const previous = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+    const stored = new Map();
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+      getItem: (key) => stored.get(key) ?? null,
+      setItem: (key, value) => stored.set(key, value),
+    } });
+    t.after(() => { if (previous) Object.defineProperty(globalThis, 'localStorage', previous); else delete globalThis.localStorage; });
+    const { GitRepositoriesDialog } = await harness.importDashboardModule('js/git-repositories-island.js');
+    const { readGitConcurrency } = await harness.importDashboardModule('js/git-repositories-actions.js');
+    let submitted;
+    let finish;
+    const pending = new Promise((resolve) => { finish = resolve; });
+    const host = harness.document.body.appendChild(harness.document.createElement('div'));
+    const mount = async (key) => {
+      await harness.mount(harness.html`<${GitRepositoriesDialog} key=${key} current=${{ mode: 'pull', group: '' }} state=${{ close() {} }} actions=${{
+        scan: async () => ({ repos: [{ name: 'repo', path: '/repo', groups: [], branch: 'main' }], issues: [] }),
+        run: async (_requests, _onResult, concurrency) => { submitted = concurrency; await pending; },
+      }} />`, host);
+      await harness.act(async () => { await Promise.resolve(); });
+    };
+    await mount(1);
+    assert.equal(readGitConcurrency(), 4);
+    const select = host.querySelector('select');
+    assert.equal(select.options.length, 100);
+    select.querySelector('option[value="100"]').selected = true;
+    await harness.act(() => harness.fireEvent(select, 'change'));
+    assert.equal(readGitConcurrency(), 100);
+    await mount(2);
+    assert.equal(host.querySelector('option[value="100"]').selected, true);
+    await harness.act(() => harness.fireEvent(host.querySelector('.primary'), 'click'));
+    assert.equal(submitted, 100);
+    assert.equal(host.querySelector('select').disabled, true);
+    await harness.act(async () => { finish(); await pending; });
+    stored.set('tclaude.git.concurrency', 'bad');
+    assert.equal(readGitConcurrency(), 4);
+    Object.defineProperty(globalThis, 'localStorage', { configurable: true, get() { throw new Error('disabled'); } });
+    assert.equal(readGitConcurrency(), 4);
+  });
 }
