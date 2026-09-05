@@ -732,6 +732,7 @@ function harnessDefaults(harness, rememberedEffort = () => '') {
     // Off is tclaude's recommended posture: agents sharing a repo would
     // otherwise cross-pollute one Claude Code project memory store.
     autoMemory: false,
+    peerMessaging: false,
     sshWorkaround: !!harness?.can_ssh_workaround,
     autoCompactWindow: '',
     contextWindowMax: '',
@@ -788,6 +789,7 @@ export function createSpawnDraft({
     includeGroupContext: true,
     remoteControl: groupRemoteControlDefault(group),
     autoMemory: false,
+    peerMessaging: false,
     sshWorkaround: !!harness?.can_ssh_workaround,
   };
 }
@@ -1006,6 +1008,7 @@ export function clearSpawnProfileFields(draft, context, {
     trustDirSpecified: false,
     remoteControl: defaults.remoteControl,
     autoMemory: false,
+    peerMessaging: false,
     sshWorkaround: !!findSpawnHarness(context.harnesses, defaults.harness)?.can_ssh_workaround,
     autoCompactWindow: defaults.autoCompactWindow,
     sandboxImpl: defaults.sandboxImpl,
@@ -1171,6 +1174,7 @@ export function spawnProfileSeed(draft, context) {
   // chip on a field they never touched — indistinguishable from a deliberate
   // pin, and it would opt the profile out of any future default change.
   if (view.showAutoMemory && draft.autoMemory) seed.auto_memory = true;
+  if (view.showPeerMessaging && draft.peerMessaging) seed.peer_messaging = true;
   if (view.showCopilotAPI && draft.copilotAPI) seed.copilot_api = true;
   if (view.showCodexAppServer && draft.codexAppServer) seed.codex_app_server = true;
   if (view.showFastMode && draft.fastMode !== '') seed.fast_mode = draft.fastMode === '1';
@@ -1194,7 +1198,7 @@ export function spawnProfileSeed(draft, context) {
 const DIRTY_FIELDS = [
   'group', 'profile', 'name', 'role', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'sandboxProfile', 'approval',
-  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'fastMode', 'sandboxImpl', 'allowUnenforcedSandbox', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner',
+  'approvalReviewer', 'tools', 'askTimeout', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'fastMode', 'sandboxImpl', 'allowUnenforcedSandbox', 'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'peerMessaging', 'sshWorkaround', 'owner',
   'cwd', 'wtRepo', 'worktree', 'worktreeBranch', 'worktreeBase',
   'syncWorktree', 'fetchLatestWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -1289,6 +1293,7 @@ export function buildSpawnRequest(draft, context, worktreeSelection, attachmentP
   }
   if (view.showRemoteControl) body.remote_control = !!draft.remoteControl;
   if (view.showAutoMemory) body.auto_memory = !!draft.autoMemory;
+  if (view.showPeerMessaging) body.peer_messaging = !!draft.peerMessaging;
   // Sent as an explicit true/false for a Copilot launch — like auto_memory, the
   // modal is authoritative, so an unchecked box overrides a profile's opt-in.
   // Omitted entirely for every other harness, leaving the pointer nil.

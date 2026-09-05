@@ -85,6 +85,28 @@ func TestClaudeSettingsMergesPeerMessagingDenyWithSandboxDenies(t *testing.T) {
 	assert.True(t, sawSSH, "the sandbox-derived denies must survive the merge: %v", deny)
 }
 
+// Sandbox OFF must still stop mirroring SANDBOX denies onto the tool surface
+// (TestClaudeSettingsSandboxOffEmitsNoToolDeny pins that in isolation) — but a
+// real off-sandbox launch is no longer deny-free, because the peer-messaging
+// default contributes its own unrelated rule. Assert the shape production
+// actually emits, so "sandbox off emits no permissions block" cannot be
+// misread as still true of a live launch.
+func TestClaudeSettingsSandboxOffStillCarriesPeerMessagingDeny(t *testing.T) {
+	payload := claudeSettingsJSON(SpawnSpec{
+		HarnessBuiltinMode: ClaudeSandboxOff,
+		SandboxDenyDirs:    []string{"/home/op/.ssh"},
+	})
+	var got map[string]any
+	require.NoError(t, json.Unmarshal([]byte(payload), &got))
+
+	perms, ok := got["permissions"].(map[string]any)
+	require.True(t, ok, "a real sandbox-off launch still carries the peer-messaging deny: %s", payload)
+	assert.Equal(t, []any{"ListAgents"}, perms["deny"],
+		"exactly one rule: the sandbox denies must NOT be mirrored when the sandbox is off")
+	assert.NotContains(t, payload, ".ssh",
+		"sandbox off must not mirror OS-sandbox denies onto the tool surface")
+}
+
 func TestResolvePeerMessaging(t *testing.T) {
 	claude := &Harness{Name: DefaultName}
 	codex := &Harness{Name: "codex"}

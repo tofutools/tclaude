@@ -3140,10 +3140,11 @@ func resumeLaunchPosture(
 ) session.LaunchPosture {
 	return session.LaunchPosture{
 		AutoMemory: autoMemory,
-		// A watch-mode resume does not re-resolve the peer-messaging posture, so
-		// it asserts the default (off) rather than a value it computed. That is
-		// the same posture the relaunch carryover will have already restored
-		// into the params this literal is built from.
+		// Read back off the recorded posture (resumeContextPosture), exactly
+		// like AutoMemory beside it: this resume RESOLVED the value, so it may
+		// assert it including the false that means "tclaude closes Claude Code's
+		// own messaging mesh". Re-asserting is what keeps an opt-in alive across
+		// repeated resumes rather than decaying it to the column default.
 		PeerMessaging:     peerMessaging,
 		ContextFeatures:   contextFeatures,
 		AutoCompactWindow: autoCompactWindow,

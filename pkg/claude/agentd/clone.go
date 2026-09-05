@@ -570,7 +570,6 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 		proofArgs.AskUserQuestionTimeout = askTimeout
 		proofArgs.RemoteControl = remoteControl
 		proofArgs.AutoMemory = autoMemory
-	proofArgs.PeerMessaging = peerMessaging
 		proofArgs.PeerMessaging = peerMessaging
 		proofArgs.ContextFeatures = contextFeatures
 		proofArgs.AutoCompactWindow = autoCompactWindow
@@ -783,6 +782,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	proofArgs.AskUserQuestionTimeout = askTimeout
 	proofArgs.RemoteControl = remoteControl
 	proofArgs.AutoMemory = autoMemory
+	proofArgs.PeerMessaging = peerMessaging
 	proofArgs.ContextFeatures = contextFeatures
 	proofArgs.AutoCompactWindow = autoCompactWindow
 	proofArgs.ContextWindowMax = relaunch.ContextWindowMax

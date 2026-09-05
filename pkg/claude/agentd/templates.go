@@ -4500,6 +4500,7 @@ func dropLaunchFieldsForeignToHarness(out *db.SpawnProfile) *snapshotFieldDrop {
 	if out.PeerMessaging != nil {
 		if _, err := harness.ResolvePeerMessaging(h, out.PeerMessaging); err != nil {
 			out.PeerMessaging = nil
+			dropped = append(dropped, "peer_messaging")
 		}
 	}
 	if out.AutoMemory != nil {
