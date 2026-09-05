@@ -61,6 +61,27 @@ The `notifications` block in `~/.tclaude/data/config.json`:
   permission, and a secure context; queued banners expire after 10 minutes,
   and clicking one focuses the dashboard rather than a tmux window.
 
+## Presented PRs
+
+`tclaude agent present-pr` always puts the PR on the agent's dashboard row.
+It can optionally raise a desktop banner too — the PR URL, the presenting
+agent, and its group — so a review request reaches you off the dashboard:
+
+```json
+{
+  "agent": {
+    "present_pr_notification": true
+  }
+}
+```
+
+Off by default, and the `notifications.enabled` master switch still applies:
+both must be on for the banner to fire. The per-agent and per-group
+notification filters apply as well, so a muted agent's PR still appears on
+the dashboard, it just skips the banner. Only presenting a PR notifies —
+`--handled` retires one silently. The Config tab has a checkbox for this
+under Notifications → Presented PRs.
+
 An `idle` notification means the harness finished and no tracked subagent,
 background shell, or monitor is still working — tclaude holds the session at
 an internal `main_agent_idle` state until those settle, so you are not

@@ -396,6 +396,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         <span class="cfg-hint">Requests always appear in the dashboard Messages tab. Both extra alerts are off by default; the desktop banner also requires notifications to be enabled.</span>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Presented PRs</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-agent-presentpr-notify" /> raise a desktop banner when an agent presents a pull request</label>
+        <span class="cfg-hint">The PR always appears on the agent's dashboard row regardless. Off by default; the banner also requires notifications to be enabled.</span>
+      </div>
+      <div class="cfg-field">
         <details class="cfg-advanced">
           <summary>Advanced: raw transition rules</summary>
           <span class="cfg-hint" style="padding-left:0">The checklist above toggles <code>*${'\u00a0'}→${'\u00a0'}state</code> rules. Add from-specific or extra rules here (use <code>*</code> as a wildcard for any state). The checklist and this list edit the same setting; an empty list means no state change notifies.</span>

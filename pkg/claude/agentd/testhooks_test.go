@@ -855,6 +855,19 @@ func SetHumanMessageNotifierForTest(fn func(senderSessionID, fromTitle, group, s
 	return func() { humanMsgNotify = prev }
 }
 
+// SetPresentedPRNotifierForTest swaps the present-pr OS-notification seam
+// so a flow test can assert that a presentation dispatched a desktop
+// banner — with the right agent/group/URL/summary — without the production
+// notify.SendPresentedPR (which self-gates on config and would no-op under
+// the test's default config anyway). The handler fires through
+// goBackground, so drain with WaitForBackgroundForTest before asserting.
+// Returns a restore function for t.Cleanup. Mirrors humanMsgNotify.
+func SetPresentedPRNotifierForTest(fn func(agentSessionID, agentTitle, group, prURL, summary string)) func() {
+	prev := presentedPRNotify
+	presentedPRNotify = fn
+	return func() { presentedPRNotify = prev }
+}
+
 // RunHumanMessageAttachmentCleanupForTest runs the filesystem/DB reconciler
 // synchronously for flow coverage.
 func RunHumanMessageAttachmentCleanupForTest() {

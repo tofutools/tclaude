@@ -6,7 +6,16 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 )
+
+// presentedPRNotify is the OS-notification seam for present-pr: an opt-in
+// desktop banner companion to the dashboard's PR badge. Production routes
+// it through notify.SendPresentedPR (which self-gates on config and no-ops
+// unless agent.present_pr_notification is on); flow tests swap in a
+// recorder via SetPresentedPRNotifierForTest. Fired through goBackground so
+// a slow platform send (WSL spawns PowerShell) never blocks the request.
+var presentedPRNotify = notify.SendPresentedPR
 
 // Explicit PR presentation endpoints:
 //
@@ -127,7 +136,30 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 	if len(views) > 0 {
 		view = views[0]
 	}
+	dispatchPresentedPRNotification(target, view.URL, body.Summary)
 	writePRUpdateResponse(w, target, caller, view, false)
+}
+
+// dispatchPresentedPRNotification raises the opt-in desktop banner for a
+// freshly presented PR. Only presentation notifies: marking one handled is
+// cleanup the human already asked for, not a new thing to look at.
+//
+// The attribution is the TARGET agent — whose dashboard row carries the
+// badge and whose terminal the banner focuses — not the caller, so a
+// manager presenting on a worker's behalf still points the human at the
+// worker. The per-agent / per-group notification filters apply as they do
+// for notify-human: a muted agent's PR still shows in the dashboard, it
+// just skips the banner.
+func dispatchPresentedPRNotification(targetConv, prURL, summary string) {
+	sessionID := notifyHumanSenderSessionID(targetConv)
+	title := notifyHumanCallerTitle(targetConv)
+	group := notifyHumanCallerGroup(targetConv)
+	goBackground(func() {
+		if targetConv != "" && !notify.AllowedForConv(targetConv) {
+			return
+		}
+		presentedPRNotify(sessionID, title, group, prURL, summary)
+	})
 }
 
 func writePRsResponse(w http.ResponseWriter, convID, caller string) {

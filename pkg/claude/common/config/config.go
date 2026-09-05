@@ -1818,6 +1818,7 @@ type AgentConfig struct {
 	AutoLaunchDashboard             bool                `json:"auto_launch_dashboard,omitempty"`
 	AccessRequestAutoOpenBrowser    bool                `json:"access_request_auto_open_browser,omitempty"`
 	AccessRequestSystemNotification bool                `json:"access_request_system_notification,omitempty"`
+	PresentPRNotification           bool                `json:"present_pr_notification,omitempty"`
 	DisableTray                     bool                `json:"disable_tray,omitempty"` // suppress the agentd tray icon; --no-tray ORs with it
 	BranchHistoryPREnrichment       bool                `json:"branch_history_pr_enrichment,omitempty"`
 	CloneCooldown                   string              `json:"clone_cooldown,omitempty"`
@@ -2454,6 +2455,15 @@ func (c *Config) AccessRequestAutoOpenBrowser() bool {
 // still enforced by the notification sender.
 func (c *Config) AccessRequestSystemNotification() bool {
 	return c != nil && c.Agent != nil && c.Agent.AccessRequestSystemNotification
+}
+
+// PresentPRNotification reports whether a `tclaude agent present-pr`
+// presentation should also raise an OS notification. Off by default: a
+// presented PR already surfaces on the agent's dashboard row. The global
+// notifications.enabled master switch is still enforced by the
+// notification sender.
+func (c *Config) PresentPRNotification() bool {
+	return c != nil && c.Agent != nil && c.Agent.PresentPRNotification
 }
 
 // DefaultSpawnInlineMaxChars is the fallback briefing-inline threshold (runes)

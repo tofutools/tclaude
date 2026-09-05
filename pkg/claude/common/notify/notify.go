@@ -338,6 +338,58 @@ func SendAccessRequest(senderSessionID, fromTitle, group, perm, path string) {
 	dispatch(senderSessionID, title, truncate(b.String(), notifyBodyMaxLen))
 }
 
+// SendPresentedPR raises an optional OS notification for a `tclaude agent
+// present-pr` presentation — the desktop companion to the PR badge on the
+// agent's dashboard row, so the human sees a review request off the busy
+// terminal. It no-ops unless notifications.enabled and
+// agent.present_pr_notification are both true; the dashboard badge remains
+// the primary surface either way.
+//
+// agentSessionID, when non-empty, makes the notification click-to-focus the
+// presenting agent's terminal. agentTitle/group attribute the PR to the
+// agent whose row carries it — which, when a manager presents on another
+// agent's behalf, is the target rather than the caller.
+func SendPresentedPR(agentSessionID, agentTitle, group, prURL, summary string) {
+	cfg, err := config.Load()
+	if err != nil || cfg.Notifications == nil || !cfg.Notifications.Enabled || !cfg.PresentPRNotification() {
+		return
+	}
+	title, notifBody := formatPresentedPR(agentTitle, group, prURL, summary)
+	slog.Debug("sending presented-PR notification",
+		"agentSessionID", agentSessionID, "agent", agentTitle, "group", group, "url", prURL)
+	dispatch(agentSessionID, title, notifBody)
+}
+
+// formatPresentedPR builds the title/body of a presented-PR notification.
+// The body leads with who presented, then the URL — the thing the human
+// acts on, so it is never dropped for the optional summary or group — and
+// is truncated to the same caps as Send. who falls back to a generic
+// phrase when the agent title is unknown.
+func formatPresentedPR(agentTitle, group, prURL, summary string) (title, notifBody string) {
+	who := strings.TrimSpace(agentTitle)
+	if who == "" {
+		who = "An agent"
+	}
+	title = truncate("Claude: pull request", notifyTitleMaxLen)
+
+	var b strings.Builder
+	b.WriteString(who)
+	b.WriteString(" presented a pull request")
+	if u := strings.TrimSpace(prURL); u != "" {
+		b.WriteString("\n")
+		b.WriteString(u)
+	}
+	if s := strings.TrimSpace(summary); s != "" {
+		b.WriteString("\n")
+		b.WriteString(s)
+	}
+	if g := strings.TrimSpace(group); g != "" {
+		b.WriteString("\n— ")
+		b.WriteString(g)
+	}
+	return title, truncate(b.String(), notifyBodyMaxLen)
+}
+
 // formatHumanMessage builds the title/body of a human-message
 // notification. The title carries the subject (or a "messaged you"
 // attribution when there is none); the body carries the message, prefixed
