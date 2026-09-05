@@ -193,7 +193,9 @@ func TestClaudeAsker_BuildAskArgv(t *testing.T) {
 
 	// A daemon-brokered capture replays the predecessor's recorded sandbox and
 	// approval posture, while ephemeral mode leaves the dead session untouched.
-	posture := SpawnSpec{HarnessBuiltinMode: ClaudeSandboxOff, ApprovalPolicy: "auto"}
+	// PeerMessaging: true keeps the expected payload below about the recorded
+	// posture alone; the default OFF posture adds keys of its own.
+	posture := SpawnSpec{HarnessBuiltinMode: ClaudeSandboxOff, ApprovalPolicy: "auto", PeerMessaging: true}
 	eq("recorded launch posture",
 		claudeAsker{}.BuildAskArgv(AskSpec{
 			Print: true, Ephemeral: true, LaunchPosture: &posture,

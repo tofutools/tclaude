@@ -151,6 +151,9 @@ func recordLaunchPosture(label string, args clcommon.SpawnArgs) error {
 	if args.Harness != "" && args.Harness != harness.DefaultName {
 		return nil
 	}
+	if err := db.SetSessionPeerMessaging(label, args.PeerMessaging); err != nil {
+		return err
+	}
 	if err := db.SetSessionAutoMemory(label, args.AutoMemory); err != nil {
 		return err
 	}
@@ -304,6 +307,7 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnTrustDir(cc.ConvID, args.TrustDir)
 	s.w.RecordSpawnRemoteControl(cc.ConvID, args.RemoteControl)
 	s.w.RecordSpawnAutoMemory(cc.ConvID, args.AutoMemory)
+	s.w.RecordSpawnPeerMessaging(cc.ConvID, args.PeerMessaging)
 	s.w.RecordSpawnContextFeatures(cc.ConvID, args.ContextFeatures)
 	s.w.RecordSpawnAutoCompactWindow(cc.ConvID, args.AutoCompactWindow)
 	s.w.RecordSpawnCopilotAPI(cc.ConvID, args.CopilotAPI)
@@ -440,6 +444,7 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnAutoReview(convID, args.AutoReview)
 	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
 	s.w.RecordSpawnAutoMemory(convID, args.AutoMemory)
+	s.w.RecordSpawnPeerMessaging(convID, args.PeerMessaging)
 	s.w.RecordSpawnContextFeatures(convID, args.ContextFeatures)
 	s.w.RecordSpawnAutoCompactWindow(convID, args.AutoCompactWindow)
 	s.w.RecordSpawnCopilotAPI(convID, args.CopilotAPI)
@@ -575,6 +580,7 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 	s.w.RecordSpawnTrustDir(cx.ConvID, args.TrustDir)
 	s.w.RecordSpawnRemoteControl(cx.ConvID, args.RemoteControl)
 	s.w.RecordSpawnAutoMemory(cx.ConvID, args.AutoMemory)
+	s.w.RecordSpawnPeerMessaging(cx.ConvID, args.PeerMessaging)
 	s.w.RecordSpawnContextFeatures(cx.ConvID, args.ContextFeatures)
 	s.w.RecordSpawnAutoCompactWindow(cx.ConvID, args.AutoCompactWindow)
 	s.w.RecordSpawnCopilotAPI(cx.ConvID, args.CopilotAPI)
@@ -642,6 +648,7 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 	// flow test can positively assert a Codex relaunch never carries it (JOH-261).
 	s.w.RecordSpawnRemoteControl(convID, args.RemoteControl)
 	s.w.RecordSpawnAutoMemory(convID, args.AutoMemory)
+	s.w.RecordSpawnPeerMessaging(convID, args.PeerMessaging)
 	s.w.RecordSpawnContextFeatures(convID, args.ContextFeatures)
 	s.w.RecordSpawnAutoCompactWindow(convID, args.AutoCompactWindow)
 	s.w.RecordSpawnCopilotAPI(convID, args.CopilotAPI)

@@ -93,6 +93,10 @@ type profileJSON struct {
 	// memory so agents sharing a repo don't cross-pollute one project memory
 	// store. Claude-Code-only.
 	AutoMemory *bool `json:"auto_memory,omitempty"`
+
+	// PeerMessaging is the profile's "keep Claude Code's own cross-session
+	// messaging on" default — tri-state, unset resolving to OFF at spawn.
+	PeerMessaging *bool `json:"peer_messaging,omitempty"`
 	// SSHWorkaround is the Git-over-SSH compatibility default. nil leaves
 	// the launch default in place; false explicitly opts out. The launch applies
 	// it only to an ownership-isolating sandbox shape that needs it.
@@ -752,6 +756,7 @@ func printProfileHuman(w io.Writer, p profileJSON) {
 	}{
 		{"auto_review", p.AutoReview}, {"trust_dir", p.TrustDir}, {"remote_control", p.RemoteControl},
 		{"auto_memory", p.AutoMemory},
+		{"peer_messaging", p.PeerMessaging},
 		{"ssh_workaround", p.SSHWorkaround},
 	})...)
 	// Spelled as the drive it picks rather than as an on/off toggle: "copilot_api

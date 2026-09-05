@@ -163,6 +163,9 @@ func TestClaudeSettingsSandboxOffEmitsNoToolDeny(t *testing.T) {
 	settings := claudeSettingsJSON(SpawnSpec{
 		HarnessBuiltinMode: ClaudeSandboxOff,
 		SandboxDenyDirs:    []string{"/home/op/.ssh"},
+		// This test is about SANDBOX-derived denies; the default peer-messaging
+		// posture contributes an unrelated ListAgents deny.
+		PeerMessaging: true,
 	})
 	if strings.Contains(settings, "permissions") {
 		t.Fatalf("sandbox off must emit no tool-permission rules: %s", settings)

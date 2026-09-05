@@ -106,7 +106,7 @@ const UNENFORCED_SANDBOX_TITLE = 'Operator-only escape hatch. If closed network 
 const PROFILE_OWNED_FIELDS = [
   'profile', 'name', 'role', 'roleRefs', 'descr', 'task', 'initialMessage',
   'harness', 'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer', 'tools', 'askTimeout',
-  'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'sshWorkaround', 'owner', 'permissionOverrides',
+  'trustDir', 'trustDirSpecified', 'remoteControl', 'autoMemory', 'peerMessaging', 'sshWorkaround', 'owner', 'permissionOverrides',
   'contextFeatures', 'autoCompactWindow', 'contextWindowMax', 'copilotAPI', 'codexAppServer', 'fastMode', 'sandboxImpl', 'sandboxImplCleared',
   'syncWorktree', 'fetchLatestWorktree', 'autoFocus', 'includeGroupContext',
 ];
@@ -507,7 +507,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     const harnessFields = [
       'model', 'customModel', 'effort', 'sandbox', 'approval', 'approvalReviewer',
       'tools', 'askTimeout', 'trustDir', 'trustDirSpecified', 'remoteControl',
-      'autoMemory', 'sshWorkaround', 'autoCompactWindow', 'contextWindowMax',
+      'autoMemory', 'peerMessaging', 'sshWorkaround', 'autoCompactWindow', 'contextWindowMax',
       'copilotAPI', 'codexAppServer', 'fastMode', 'sandboxImpl', 'sandboxImplCleared', 'contextFeatures',
     ];
     for (const key of harnessFields) {
@@ -1370,6 +1370,12 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
       <input id="agent-spawn-auto-memory" type="checkbox" checked=${draft.autoMemory} disabled=${busy}
         onChange=${(event) => update('autoMemory', event.currentTarget.checked)} />
       Keep Claude Code auto memory on — off by default to stop agents cross-polluting one project memory
+    </label>
+    <label class="cron-create-enabled" id="agent-spawn-peer-messaging-row" hidden=${!view.showPeerMessaging}
+      title="Claude Code's built-in cross-session messaging (the ListAgents and SendMessage tools over a per-session socket). tclaude closes it by default: it is a second coordination channel outside tclaude's groups, permissions and audit trail — use tclaude agent send instead. In-harness subagents are unaffected; the deny names ListAgents, never SendMessage.">
+      <input id="agent-spawn-peer-messaging" type="checkbox" checked=${draft.peerMessaging} disabled=${busy}
+        onChange=${(event) => update('peerMessaging', event.currentTarget.checked)} />
+      Keep Claude Code cross-session messaging on — off by default so agents coordinate through tclaude
     </label>
     <label class="cron-create-enabled" id="agent-spawn-copilot-api-row" hidden=${!view.showCopilotAPI}
       title=${COPILOT_API_TITLE}>

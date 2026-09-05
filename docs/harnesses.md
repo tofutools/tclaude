@@ -157,6 +157,14 @@ default; your own configuration rules.
   cross-pollute the per-project memory store. Opt back in per launch with
   `--auto-memory`. `CLAUDE.md` is unaffected. See
   [memory-files](utilities.md#tclaude-memory-files) for inspecting the store.
+- **Cross-session messaging is off by default.** Claude Code ships its own
+  agent-to-agent mesh (the `ListAgents` and `SendMessage` tools over a
+  per-session socket). That is a second coordination channel with none of
+  tclaude's group membership, permission slugs, or audit trail, so tclaude
+  closes it and leaves `tclaude agent send` as the way agents coordinate. Opt
+  back in per launch with `--peer-messaging`. **In-harness subagents are
+  unaffected either way** — the deny names `ListAgents`, never `SendMessage`.
+  See [Peer messaging](utilities.md#claude-code-peer-messaging).
 - **Startup-context trimming** (`--context-features`) removes bundled skills,
   unused tool schemas, and system-prompt blocks from an agent's startup
   context, per spawn or per profile. Nothing is trimmed unless you ask. See

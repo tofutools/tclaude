@@ -533,6 +533,7 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 		AskUserQuestionTimeout: relaunch.AskUserQuestionTimeout,
 		RemoteControl:          remoteControl,
 		AutoMemory:             relaunch.AutoMemory,
+		PeerMessaging:          relaunch.PeerMessaging,
 		ContextFeatures:        relaunch.ContextFeatures,
 		AutoCompactWindow:      relaunch.AutoCompactWindow,
 		ContextWindowMax:       relaunch.ContextWindowMax,

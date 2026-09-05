@@ -122,6 +122,10 @@ type AgentRelaunchProfile struct {
 	AskUserQuestionTimeout *string `json:"ask_user_question_timeout,omitempty"`
 	RemoteControl          *bool   `json:"remote_control,omitempty"`
 	AutoMemory             *bool   `json:"auto_memory,omitempty"`
+	// PeerMessaging is the durable "leave Claude Code's own cross-session
+	// messaging alone" intent. nil means unknown/legacy, which resolves to OFF
+	// at the spawn boundary — the same default a fresh launch gets.
+	PeerMessaging *bool `json:"peer_messaging,omitempty"`
 	// SSHWorkaround is the durable Codex Git-over-SSH compatibility posture.
 	// nil means unknown/legacy; false is an explicit opt-out.
 	SSHWorkaround *bool `json:"ssh_workaround,omitempty"`
@@ -863,6 +867,7 @@ func SetConversationResumeProvenance(convID, provenance string) error {
 type relaunchProjectionOptions struct {
 	RemoteControl     bool
 	AutoMemory        bool
+	PeerMessaging     bool
 	ContextFeatures   bool
 	AutoCompactWindow bool
 }
@@ -874,7 +879,7 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	var rowID int64
 	var convID, cwd, harnessName, harnessBuiltinMode, sandboxImplementation, approvalPolicy, modelID, effort, askTimeout, provenance string
 	var createdAtStamp migrationBridgeTimestamp
-	var approvalAutoReview, remoteControl, autoMemory int
+	var approvalAutoReview, remoteControl, autoMemory, peerMessaging int
 	var contextWindowSize int64
 	var contextFeaturesRaw, autoCompactWindow string
 	// sessions.context_features arrives in v155 and sessions.auto_compact_window
@@ -917,16 +922,26 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	if haveSandboxImplementation {
 		sandboxImplementationColumn = "sandbox_implementation"
 	}
+	// v226. Guarded like the columns above so a projection running against a
+	// not-yet-migrated database reads "unknown" rather than failing the write.
+	havePeerMessaging, err := sessionsHaveColumn(q, "peer_messaging")
+	if err != nil {
+		return err
+	}
+	peerMessagingColumn := "0"
+	if havePeerMessaging {
+		peerMessagingColumn = "peer_messaging"
+	}
 	var harnessBuiltinModeSource string
 	err = q.QueryRow(`SELECT rowid, conv_id, cwd, harness, sandbox_mode, `+sandboxImplementationColumn+`, `+harnessBuiltinModeSourceColumn+`,
 		approval_policy, approval_auto_review, model_id, effort_level,
 		context_window_size, ask_user_question_timeout, remote_control,
-		auto_memory, `+contextFeaturesColumn+`, `+autoCompactWindowColumn+`, resume_provenance, created_at
+		auto_memory, `+peerMessagingColumn+`, `+contextFeaturesColumn+`, `+autoCompactWindowColumn+`, resume_provenance, created_at
 		FROM sessions WHERE id = ?`, sessionID).Scan(
 		&rowID, &convID, &cwd, &harnessName, &harnessBuiltinMode, &sandboxImplementation, &harnessBuiltinModeSource,
 		&approvalPolicy, &approvalAutoReview, &modelID, &effort,
 		&contextWindowSize, &askTimeout, &remoteControl,
-		&autoMemory, &contextFeaturesRaw, &autoCompactWindow, &provenance, &createdAtStamp)
+		&autoMemory, &peerMessaging, &contextFeaturesRaw, &autoCompactWindow, &provenance, &createdAtStamp)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -963,6 +978,7 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	if !strings.EqualFold(harnessName, DefaultHarness) {
 		remoteControl = 0
 		autoMemory = 0
+		peerMessaging = 0
 		askTimeout = ""
 		contextFeaturesRaw = ""
 		autoCompactWindow = ""
@@ -1011,6 +1027,13 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 	if opts.AutoMemory {
 		agent.AutoMemory = boolPtr(autoMemory != 0)
 	}
+	// Only claim to KNOW the posture when the column was actually there to read,
+	// for the same reason ContextFeatures below is guarded: a pre-v226 absent
+	// column would otherwise project as "known: messaging off", which is
+	// authority this projection never observed.
+	if opts.PeerMessaging && havePeerMessaging {
+		agent.PeerMessaging = boolPtr(peerMessaging != 0)
+	}
 	// Only claim to KNOW the trim intent when the column was actually there to
 	// read. Pre-v155 the absent column would otherwise project as "known: trims
 	// nothing", which is authority this projection never observed.
@@ -1052,6 +1075,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		}
 		if sameSourceGeneration && agent.RemoteControl == nil {
 			agent.RemoteControl = previous.RemoteControl
+		}
+		if sameSourceGeneration && agent.PeerMessaging == nil {
+			agent.PeerMessaging = previous.PeerMessaging
 		}
 		if sameSourceGeneration && agent.AutoMemory == nil {
 			agent.AutoMemory = previous.AutoMemory
@@ -1232,6 +1258,9 @@ func projectSessionRelaunchProfilesTx(q dbExecQuerier, sessionID string, opts re
 		if agent.AutoMemory != nil {
 			merged.AutoMemory = agent.AutoMemory
 		}
+		if agent.PeerMessaging != nil {
+			merged.PeerMessaging = agent.PeerMessaging
+		}
 		if agent.SSHWorkaround != nil {
 			merged.SSHWorkaround = agent.SSHWorkaround
 		}
@@ -1332,7 +1361,7 @@ func projectLatestSessionRelaunchProfilesForConvTx(q dbExecQuerier, convID strin
 	}
 	sessionID := sessionIDs[len(sessionIDs)-1]
 	return projectSessionRelaunchProfilesTx(q, sessionID, relaunchProjectionOptions{
-		RemoteControl: true, AutoMemory: true, ContextFeatures: true, AutoCompactWindow: true,
+		RemoteControl: true, AutoMemory: true, PeerMessaging: true, ContextFeatures: true, AutoCompactWindow: true,
 	})
 }
 
@@ -1452,6 +1481,7 @@ func seedAgentRelaunchProfileFromSpawnConfigTx(q dbExecQuerier, agentID, raw str
 		AskUserQuestionTimeout *string            `json:"ask_user_question_timeout"`
 		RemoteControl          *bool              `json:"remote_control"`
 		AutoMemory             *bool              `json:"auto_memory"`
+		PeerMessaging          *bool              `json:"peer_messaging"`
 		SSHWorkaround          *bool              `json:"ssh_workaround"`
 		ContextFeatures        *map[string]string `json:"context_features"`
 	}
@@ -1470,6 +1500,7 @@ func seedAgentRelaunchProfileFromSpawnConfigTx(q dbExecQuerier, agentID, raw str
 		AskUserQuestionTimeout: spawn.AskUserQuestionTimeout,
 		RemoteControl:          spawn.RemoteControl,
 		AutoMemory:             spawn.AutoMemory,
+		PeerMessaging:          spawn.PeerMessaging,
 		SSHWorkaround:          spawn.SSHWorkaround,
 		ContextFeatures:        spawn.ContextFeatures,
 	}
