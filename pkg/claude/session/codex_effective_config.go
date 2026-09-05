@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -16,7 +17,6 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
-	"github.com/tofutools/tclaude/pkg/common"
 )
 
 // Codex's own config loader is the only honest authority on which provider a
@@ -197,7 +197,7 @@ func readCodexEffectiveConfigJSON(
 	environment []sandboxpolicy.EnvironmentEntry,
 	permissionProfile string,
 ) (json.RawMessage, error) {
-	timing := common.StartupTiming("codex_effective_config")
+	timing := config.StartupTiming("codex_effective_config")
 	defer timing("return_after_cleanup")
 	ctx, cancel := context.WithTimeout(
 		context.Background(), codexEffectiveConfigTimeout)

@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"log/slog"
 	"net"
 	"os"
@@ -281,7 +282,7 @@ func startCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 }
 
 func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
-	timing := tclcommon.StartupTiming("codex_bootstrap", "label", args.Label, "generation", args.CodexAppServerGeneration)
+	timing := config.StartupTiming("codex_bootstrap", "label", args.Label, "generation", args.CodexAppServerGeneration)
 	defer timing("return")
 	ctx, cancel := context.WithTimeout(context.Background(), codexAppServerStartupTimeout)
 	defer cancel()
@@ -1132,7 +1133,7 @@ var (
 )
 
 func awaitCodexAppServerLaunch(convID, launchID string) (ready bool) {
-	timing := tclcommon.StartupTiming("codex_await_ready", "conv", convID, "label", launchID)
+	timing := config.StartupTiming("codex_await_ready", "conv", convID, "label", launchID)
 	defer func() { timing("return", "ready", ready) }()
 	deadline := time.Now().Add(codexAppServerStartupTimeout)
 	for time.Now().Before(deadline) {

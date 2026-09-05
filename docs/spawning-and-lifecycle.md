@@ -345,13 +345,20 @@ are covered in [Teams at scale](teams-at-scale.md).
 
 ### Diagnosing slow startup
 
-For a diagnostic run, start **agentd** with `TCLAUDE_STARTUP_TIMING=1` in
-its environment (for example, `TCLAUDE_STARTUP_TIMING=1 tclaude-agentd serve`).
-Restart an existing daemon with that environment; setting it only on the
-`agent spawn` client does not enable daemon tracing. Install both binaries from
-the diagnostic branch with `go install . ./cmd/...` before restarting, so the
-forked `tclaude session new` also has the instrumentation. Then spawn normally.
-Direct launches can use `TCLAUDE_STARTUP_TIMING=1 tclaude session new ...`.
+Enable **Config → Logging → Startup timings** and save, or set
+`"startup_timing": true` in `~/.tclaude/config.json`. Changes apply to new
+traces immediately, without restarting agentd. Traces already running finish
+with the setting they started with, preserving complete measurements. The
+session wrapper reads the same config, so new launches also pick up changes.
+
+Install both binaries from the diagnostic branch with `go install . ./cmd/...`
+and restart the daemon once to load the updated code. Subsequent setting
+changes need no restart.
+
+The legacy `TCLAUDE_STARTUP_TIMING=1` environment switch still works when the
+config key is absent. An explicit config `true` or `false` overrides it; saving
+the dashboard checkbox writes an explicit value. The checkbox displays the
+saved config value, not an inherited environment setting.
 
 Filter the dashboard's Logs tab for `startup timing`, or inspect those JSON
 records in `~/.tclaude/data/output.log`. These are info-level records, so no
@@ -385,6 +392,7 @@ milestones, not Codex's internal plugin/MCP initialization or first model-token
 latency. A long wait for TUI binding narrows the investigation to that interval
 but does not establish which Codex subsystem caused it.
 
-Unset `TCLAUDE_STARTUP_TIMING` and restart agentd to disable these records.
+Uncheck **Startup timings** and save (or set `"startup_timing": false`) to
+disable new traces, even if the environment switch is enabled.
 Timing records contain identifiers and durations, not prompts, environment
 values, provider config, or capability tokens.

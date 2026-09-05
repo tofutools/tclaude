@@ -89,7 +89,7 @@ test('Config load populates representative fields, conditions, notices, and roun
     harness.importDashboardModule('js/config-form-adapter.js'),
   ]);
   const config = {
-    log_level: 'warn', terminal: 'ghostty', record_hooks: true,
+    log_level: 'warn', terminal: 'ghostty', record_hooks: true, startup_timing: true,
     ratelimit: { five_hour_percent_max_used: 88, seven_day_percent_max_used: 97.5, future_limit: 7 },
     agent: { spawn_max_per_hour: 3, sudo: { max_duration: '2h' } },
     slop: { volume: 0.4 },
@@ -110,6 +110,11 @@ test('Config load populates representative fields, conditions, notices, and roun
   assert.equal(terminal.querySelector('option[value="ghostty"]').selected, true, terminal.outerHTML);
   assert.equal(adapter.assembleConfig().terminal, 'ghostty');
   assert.equal(mounted.container.querySelector('#cfg-record-hooks').checked, true);
+  const startupTiming = mounted.container.querySelector('#cfg-startup-timing');
+  assert.equal(startupTiming.checked, true);
+  assert.equal(adapter.assembleConfig().startup_timing, true);
+  startupTiming.checked = false;
+  assert.equal(adapter.assembleConfig().startup_timing, false);
   assert.equal(mounted.container.querySelector('#cfg-dashboard-default-web-terminal').checked, false);
   assert.equal(mounted.container.querySelector('#cfg-dashboard-default-web-directory-picker').checked, false);
   assert.equal(mounted.container.querySelector('#cfg-ratelimit-5h').disabled, false);

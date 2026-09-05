@@ -1,4 +1,4 @@
-package common
+package config
 
 import (
 	"log/slog"
@@ -9,13 +9,14 @@ import (
 
 var startupTraceSequence atomic.Uint64
 
-// StartupTiming records sequential startup milestones when explicitly enabled
-// in the daemon's environment. Its session-new children inherit the switch.
+// StartupTiming records sequential startup milestones using the current config.
+// The setting is sampled per trace: existing traces finish even if disabled
+// during startup, and new traces observe config edits without a daemon restart.
 // Each trace is confined to one goroutine; nested/overlapping traces must not
 // be summed. Callers supply identifiers only, never prompts or config contents.
 // The returned function is a no-op when disabled.
 func StartupTiming(component string, attrs ...any) func(string, ...any) {
-	if os.Getenv("TCLAUDE_STARTUP_TIMING") != "1" {
+	if !StartupTimingEnabled() {
 		return func(string, ...any) {}
 	}
 	start := time.Now()
@@ -34,4 +35,15 @@ func StartupTiming(component string, attrs ...any) func(string, ...any) {
 	}
 	mark("start")
 	return mark
+}
+
+// StartupTimingEnabled resolves the live config before the legacy environment
+// switch. An explicit false lets the dashboard disable an environment-enabled
+// daemon. Do not import config from pkg/common: config depends on that package.
+func StartupTimingEnabled() bool {
+	cfg, err := Load()
+	if err == nil && cfg.StartupTiming != nil {
+		return *cfg.StartupTiming
+	}
+	return os.Getenv("TCLAUDE_STARTUP_TIMING") == "1"
 }

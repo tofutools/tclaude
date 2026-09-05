@@ -514,7 +514,7 @@ var JoinGroupHandler func(*NewParams) error
 var ErrNoAutomaticGroupMatch = errors.New("no automatic group match")
 
 func runNew(params *NewParams) error {
-	timing := common.StartupTiming("session_new", "label", params.Label, "harness", params.Harness)
+	timing := config.StartupTiming("session_new", "label", params.Label, "harness", params.Harness)
 	defer timing("return")
 	if params.HelpContextFeatures {
 		harness.PrintContextFeatureCatalog(os.Stdout)

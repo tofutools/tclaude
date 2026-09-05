@@ -3391,7 +3391,7 @@ func ambientSandboxProfileName(g *db.AgentGroup) string {
 }
 
 func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
-	timing := tclcommon.StartupTiming("spawn_request")
+	timing := config.StartupTiming("spawn_request")
 	defer timing("return")
 	// requireGroupPermission also hands back the caller's conv-id: a real
 	// agent (e.g. a PO orchestrating workers) resolves to its conv-id,
@@ -6309,7 +6309,7 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // an Async PENDING success the outcome carries an empty conv-id and the agent
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
-	timing := tclcommon.StartupTiming("spawn", "name", p.Name, "harness", p.Harness, "async", p.Async)
+	timing := config.StartupTiming("spawn", "name", p.Name, "harness", p.Harness, "async", p.Async)
 	defer func() {
 		timing("return", "failed", failure != nil)
 	}()
@@ -7831,7 +7831,7 @@ func sleepSpawnPoll(deadline time.Time) {
 }
 
 func completePendingSpawnBackfill(g *db.AgentGroup, p spawnParams, label, convID string) {
-	timing := tclcommon.StartupTiming("spawn_backfill", "label", label, "conv", convID)
+	timing := config.StartupTiming("spawn_backfill", "label", label, "conv", convID)
 	defer timing("return")
 	ps, err := db.GetPendingSpawn(label)
 	if err != nil {
@@ -8449,7 +8449,7 @@ func markBriefingConsumed(convID string, msgID int64, inlined bool) {
 // ("" for a human-initiated one); it is resolved to a display name
 // here so the welcome's attribution line names the real spawner.
 func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch, spawnedByConv, spawnedByAgent string, welcomeInSeed bool) {
-	timing := tclcommon.StartupTiming("spawn_post_init", "conv", convID)
+	timing := config.StartupTiming("spawn_post_init", "conv", convID)
 	defer timing("return")
 	if !waitForConvAlive(convID) {
 		slog.Warn("spawn: new conv never came online; post-init injection abandoned",
@@ -9638,7 +9638,7 @@ func SignalSpawnWrapperFailureForTest(label string, err error) {
 // in SQLite once the conv-id materialises). It must be unique in the
 // sessions table.
 func liveSpawnNew(a clcommon.SpawnArgs) error {
-	timing := tclcommon.StartupTiming("spawn_wrapper", "label", a.Label)
+	timing := config.StartupTiming("spawn_wrapper", "label", a.Label)
 	defer timing("dispatch_return")
 	var cleanup func()
 	var err error
@@ -9700,7 +9700,7 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	waitWrapper := func() error {
 		err := cmd.Wait()
 		// A separate trace: the asynchronous wait can overlap dispatch_return.
-		mark := tclcommon.StartupTiming("spawn_wrapper_exit", "label", label, "child_pid", pid)
+		mark := config.StartupTiming("spawn_wrapper_exit", "label", label, "child_pid", pid)
 		mark("exited", "wait_ms", time.Since(waitStarted).Milliseconds(), "failed", err != nil)
 		return err
 	}
