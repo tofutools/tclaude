@@ -94,14 +94,6 @@ func deriveTaskLabel(rawURL string) string {
 	}
 	host := strings.ToLower(strings.TrimPrefix(u.Host, "www."))
 	segs := pathSegments(u.Path)
-	fragmentSegs := pathSegments(u.Fragment)
-
-	// AWB is a single-page app whose issue route lives in the fragment.
-	// The deployment host and base path are configurable, so identify it by
-	// the #/issues/<id> route rather than either of those URL components.
-	if len(fragmentSegs) == 2 && strings.EqualFold(fragmentSegs[0], "issues") {
-		return fragmentSegs[1]
-	}
 
 	switch {
 	case host == "linear.app" || strings.HasSuffix(host, ".linear.app"):
@@ -117,6 +109,20 @@ func deriveTaskLabel(rawURL string) string {
 			if (s == "issues" || s == "pull") && i+1 < len(segs) && isAllDigits(segs[i+1]) {
 				return "#" + segs[i+1]
 			}
+		}
+	}
+
+	// AWB is a single-page app whose issue route lives in the fragment.
+	// The deployment host and base path are configurable, so identify it by
+	// the #/issues/<id> route rather than either of those URL components. Check
+	// after host-specific formats so an unrelated fragment cannot override a
+	// valid Linear or GitHub label. A hash-router query belongs to the route,
+	// not the issue id.
+	fragmentPath, _, _ := strings.Cut(u.Fragment, "?")
+	fragmentSegs := pathSegments(fragmentPath)
+	if len(fragmentSegs) == 2 && strings.EqualFold(fragmentSegs[0], "issues") {
+		if id, fault := validateAWBIssueRef(fragmentSegs[1]); fault == nil {
+			return id
 		}
 	}
 	return host

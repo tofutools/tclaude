@@ -216,7 +216,8 @@ Self-tagging needs `self.tags`; tagging another agent (`--target`) needs
 
 Each agent can carry one http(s) **task link** — a Linear issue, GitHub
 issue or PR, any ticket — rendered as a clickable label in the dashboard's
-Task column. The label is auto-derived (`JOH-123`, `#456`, or the hostname)
+Task column. The label is auto-derived (a Linear/AWB issue id, GitHub `#456`,
+or the hostname)
 or set with `--task-label`.
 
 ```bash

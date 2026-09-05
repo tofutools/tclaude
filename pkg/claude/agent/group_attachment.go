@@ -35,7 +35,7 @@ func groupAttachmentCmd() *cobra.Command {
 type groupAttachmentSetParams struct {
 	Group    string `pos:"true" help:"Group to configure"`
 	URL      string `pos:"true" help:"Reference URL (http(s) only)"`
-	Label    string `long:"label" short:"l" optional:"true" help:"Optional display label overriding the auto-derived one (Linear issue key, GitHub number, or hostname)"`
+	Label    string `long:"label" short:"l" optional:"true" help:"Optional display label overriding the auto-derived one (Linear/AWB issue id, GitHub number, or hostname)"`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s'). Capped at 300s. Timeout = deny."`
 }
 
