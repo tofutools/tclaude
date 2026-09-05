@@ -208,6 +208,9 @@ func TestDashboardGitRemoteDefaultChange(t *testing.T) {
 	out := updateGit(t, checkout, true, false, "pull")
 	require.Equal(t, "updated", out["status"], out)
 	require.Equal(t, "new-default", repoGit(t, checkout, "branch", "--show-current"))
+	gitAPI(t, http.MethodGet, nil, &scan)
+	require.Len(t, scan.Repos, 1)
+	require.Equal(t, "new-default", scan.Repos[0].Default)
 }
 
 func TestDashboardGitDiscardPreservesIgnoredDirectory(t *testing.T) {
@@ -374,4 +377,20 @@ func TestDashboardGitPreview74Repositories(t *testing.T) {
 		require.Empty(t, repo.Error)
 		require.ElementsMatch(t, []string{"code", "overlap"}, repo.Groups)
 	}
+}
+
+func TestDashboardGitPreviewMainWithoutCachedDefault(t *testing.T) {
+	_, _, checkout := gitFixture(t)
+	repoGit(t, checkout, "branch", "-m", "main")
+	repoGit(t, checkout, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+	var scan struct {
+		Repos []struct{ Branch, Error string }
+	}
+	gitAPI(t, http.MethodGet, nil, &scan)
+	require.Len(t, scan.Repos, 1)
+	require.Equal(t, "main", scan.Repos[0].Branch)
+	require.Empty(t, scan.Repos[0].Error)
+	repoGit(t, checkout, "switch", "-c", "feature")
+	gitAPI(t, http.MethodGet, nil, &scan)
+	require.Empty(t, scan.Repos)
 }

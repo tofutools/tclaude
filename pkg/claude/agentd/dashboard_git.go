@@ -559,6 +559,10 @@ func runDashboardGit(ctx context.Context, request dashboardGitRequest) dashboard
 	if !run("merge", "--no-overwrite-ignore", "--ff-only", "--no-edit", "--", remoteRef) {
 		return result
 	}
+	// Keep the local preview hint aligned with the default verified for this update.
+	if request.SwitchDefault && !run("symbolic-ref", "refs/remotes/"+repo.Remote+"/HEAD", remoteRef) {
+		return result
+	}
 	result.Status = "updated"
 	result.Detail = "Up to date on " + target
 	return result
