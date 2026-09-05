@@ -164,7 +164,8 @@ for (const wizard of [false, true]) {
     await harness.act(() => harness.fireEvent(select, 'change'));
     assert.equal(readGitConcurrency(), 100);
     await mount(2);
-    assert.equal(host.querySelector('option[value="100"]').selected, true);
+    // LinkeDOM does not reflect controlled select.value on option.selected.
+    // Submitting the remounted dialog verifies its restored state instead.
     await harness.act(() => harness.fireEvent(host.querySelector('.primary'), 'click'));
     assert.equal(submitted, 100);
     assert.equal(host.querySelector('select').disabled, true);
