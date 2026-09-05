@@ -77,6 +77,7 @@ var linearIssueRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*-[0-9]+$`)
 // deriveTaskLabel produces a compact display label from a task URL:
 //   - Linear  (linear.app/…/issue/JOH-353/slug) → "JOH-353"
 //   - GitHub  (github.com/owner/repo/issues|pull/42) → "#42"
+//   - GitHub repository (github.com/owner/repo) → "gh:owner/repo"
 //   - anything else → the host with a leading "www." stripped
 //
 // Returns "" only for an unparseable/empty URL — the caller then falls
@@ -103,6 +104,9 @@ func deriveTaskLabel(rawURL string) string {
 			}
 		}
 	case host == "github.com":
+		if len(segs) == 2 {
+			return "gh:" + segs[0] + "/" + segs[1]
+		}
 		// owner/repo/(issues|pull)/<n> — the trailing numeric segment.
 		for i, s := range segs {
 			if (s == "issues" || s == "pull") && i+1 < len(segs) && isAllDigits(segs[i+1]) {
