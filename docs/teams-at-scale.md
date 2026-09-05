@@ -242,6 +242,9 @@ tclaude agent present-pr https://github.com/acme/repo/pull/42 \
 presented PR from the dashboard. Self needs `self.pr`; `--target` needs
 `agent.pr` or the manager path.
 
+A presentation can also raise a notification carrying the PR URL — off by
+default, see [Notifications](notifications.md#presented-prs).
+
 ## Dashboard exports
 
 When you click an agent's "summary…" action in the dashboard, the daemon

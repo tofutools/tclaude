@@ -1422,3 +1422,14 @@ func TestAWBProxyLegacyAllowedProjectsRemainEffectiveAndRoundTrip(t *testing.T) 
 	assert.Contains(t, string(roundTrip), `"allowed_projects":["AWB"]`,
 		"saving an older config must not silently discard its allow-list")
 }
+
+// PresentPRNotification is the opt-in gate for the present-pr desktop
+// banner: absent config, absent agent block, and an absent key all mean
+// off, so an existing config file cannot start notifying on upgrade.
+func TestPresentPRNotification(t *testing.T) {
+	var nilCfg *Config
+	assert.False(t, nilCfg.PresentPRNotification(), "a nil config notifies nothing")
+	assert.False(t, (&Config{}).PresentPRNotification(), "no agent block means off")
+	assert.False(t, (&Config{Agent: &AgentConfig{}}).PresentPRNotification(), "an absent key means off")
+	assert.True(t, (&Config{Agent: &AgentConfig{PresentPRNotification: true}}).PresentPRNotification())
+}

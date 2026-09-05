@@ -604,6 +604,7 @@ function populateConfigForm(cfg) {
   $('#cfg-agent-autolaunch').checked = !!a.auto_launch_dashboard;
   $('#cfg-agent-access-autoopen').checked = !!a.access_request_auto_open_browser;
   $('#cfg-agent-access-notify').checked = !!a.access_request_system_notification;
+  $('#cfg-agent-presentpr-notify').checked = !!a.present_pr_notification;
   $('#cfg-agent-notray').checked = !!a.disable_tray;
   $('#cfg-agent-persisttoken').checked = !!a.persist_operator_token;
   $('#cfg-agent-persisttoken-keychain').checked = !!a.persist_operator_token_keychain;
@@ -996,6 +997,8 @@ function assembleConfig() {
   else delete a.access_request_auto_open_browser;
   if ($('#cfg-agent-access-notify').checked) a.access_request_system_notification = true;
   else delete a.access_request_system_notification;
+  if ($('#cfg-agent-presentpr-notify').checked) a.present_pr_notification = true;
+  else delete a.present_pr_notification;
   if ($('#cfg-agent-notray').checked) a.disable_tray = true;
   else delete a.disable_tray;
   if ($('#cfg-agent-persisttoken').checked) a.persist_operator_token = true;

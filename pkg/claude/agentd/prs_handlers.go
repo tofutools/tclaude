@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 )
 
 // Explicit PR presentation endpoints:
@@ -127,7 +128,36 @@ func runPRUpdate(w http.ResponseWriter, r *http.Request, target, caller string) 
 	if len(views) > 0 {
 		view = views[0]
 	}
+	dispatchPresentedPRNotification(target, view.URL, body.Summary)
 	writePRUpdateResponse(w, target, caller, view, false)
+}
+
+// dispatchPresentedPRNotification raises the opt-in notification for a
+// freshly presented PR. notify.SendPresentedPR self-gates on config, so
+// this is a no-op unless the human opted in, and the configured delivery
+// channel (desktop, dashboard, or both) decides where it surfaces. Fired
+// through goBackground so a slow platform send (WSL spawns PowerShell)
+// never blocks the request.
+//
+// Only presentation notifies: marking one handled is cleanup the human
+// already asked for, not a new thing to look at.
+//
+// The attribution is the TARGET agent — whose dashboard row carries the
+// badge and whose terminal the banner focuses — not the caller, so a
+// manager presenting on a worker's behalf still points the human at the
+// worker. The per-agent / per-group notification filters apply as they do
+// for notify-human: a muted agent's PR still shows in the dashboard, it
+// just skips the banner.
+func dispatchPresentedPRNotification(targetConv, prURL, summary string) {
+	sessionID := notifyHumanSenderSessionID(targetConv)
+	title := notifyHumanCallerTitle(targetConv)
+	group := notifyHumanCallerGroup(targetConv)
+	goBackground(func() {
+		if targetConv != "" && !notify.AllowedForConv(targetConv) {
+			return
+		}
+		notify.SendPresentedPR(sessionID, title, group, prURL, summary)
+	})
 }
 
 func writePRsResponse(w http.ResponseWriter, convID, caller string) {
