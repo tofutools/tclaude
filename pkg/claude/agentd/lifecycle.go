@@ -7239,7 +7239,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		if !launchEnroll && tmuxSession != "" && time.Since(launchedAt) >= convStoreDiscoveryGrace &&
 			time.Since(lastDiscoveryScan) >= convStoreDiscoveryScanInterval {
 			lastDiscoveryScan = time.Now()
-			if id := discoverSpawnedConvID(spawnHarness, p.Cwd, launchedAt); id != "" {
+			if id := discoverSpawnedConvID(spawnHarness, p.Cwd, launchedAt, label); id != "" {
 				if err := db.SetSessionConvID(label, id); err != nil {
 					slog.Warn("spawn: failed to persist discovered conv-id",
 						"label", label, "conv", id, "error", err)
@@ -7724,7 +7724,7 @@ func backfillPendingSpawnInline(g *db.AgentGroup, p spawnParams, label string, h
 		if convID == "" && s.TmuxSession != "" && time.Since(launchedAt) >= convStoreDiscoveryGrace &&
 			time.Since(lastDiscoveryScan) >= convStoreDiscoveryScanInterval {
 			lastDiscoveryScan = time.Now()
-			if id := discoverSpawnedConvID(h, p.Cwd, launchedAt); id != "" {
+			if id := discoverSpawnedConvID(h, p.Cwd, launchedAt, label); id != "" {
 				if err := db.SetSessionConvID(label, id); err != nil {
 					slog.Warn("spawn: failed to persist discovered conv-id during pending back-fill",
 						"label", label, "conv", id, "error", err)
@@ -8451,7 +8451,7 @@ func markBriefingConsumed(convID string, msgID int64, inlined bool) {
 func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch, spawnedByConv, spawnedByAgent string, welcomeInSeed bool) {
 	timing := config.StartupTiming("spawn_post_init", "conv", convID)
 	defer timing("return")
-	if !waitForConvAlive(convID) {
+	if !waitForConvPaneAlive(convID) {
 		slog.Warn("spawn: new conv never came online; post-init injection abandoned",
 			"conv", convID)
 		return
@@ -8460,6 +8460,7 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 		slog.Warn("spawn: no alive tmux session for post-init injection", "conv", convID)
 		return
 	}
+	timing("pane_alive")
 	h := harnessForConv(convID)
 	codexSelected := false
 	if h.Name == harness.CodexName {
@@ -8470,6 +8471,19 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 				"conv", convID, "error", err)
 			return
 		}
+	}
+
+	// Codex's seed-delivered welcome and out-of-band title update need no
+	// keystrokes. Its app-server path has an explicit control-readiness wait.
+	// Preserve the historical settling delay for other paths, including a
+	// legacy Codex welcome that still needs to be typed into the pane.
+	skipKeystrokeDelay := h.Name == harness.CodexName && (welcomeInSeed || codexSelected)
+	if !skipKeystrokeDelay {
+		timing("keystroke_delay_begin", "delay_ms", reincarnateReadyDelay.Milliseconds())
+		time.Sleep(reincarnateReadyDelay)
+		timing("keystroke_delay_complete")
+	} else {
+		timing("keystroke_delay_skipped")
 	}
 
 	// An API-driven Copilot launch is not ready for post-init the moment its

@@ -735,6 +735,9 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
   const submit = async () => {
     if (submitLock.current) return;
     submitLock.current = true;
+    const clickedAt = performance.now();
+    const submitTiming = {};
+    const markTiming = (stage) => { submitTiming[stage] = performance.now() - clickedAt; };
     let next = draft;
     const validation = validateSpawnDraft(next, context);
     if (validation) {
@@ -790,6 +793,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
     busyRef.current = true;
     setBusy(true);
     actions.rememberLaunchPreferences(next);
+    markTiming('prepared_ms');
     try {
       const worktreeKey = JSON.stringify([
         next.wtRepo, next.worktree, next.worktreeBranch, next.worktreeBase, next.fetchLatestWorktree,
@@ -800,6 +804,7 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         worktreeSelection = await actions.resolveWorktree(next, worktrees, setProgress);
         resolvedWorktree.current = { key: worktreeKey, value: worktreeSelection };
       }
+      markTiming('worktree_ready_ms');
       if (!state.isCurrent(current.generation)) return;
       if (policyDrifted()) throw new Error(STALE_POLICY_ERROR);
       const uploadKey = attachments.map((attachment) => `${attachment.id}:${attachKey(attachment.file)}`).join('|');
@@ -809,14 +814,21 @@ function AgentSpawnDialog({ current, state, actions, confirmDiscard }) {
         uploaded.current = { key: uploadKey, paths: attachmentPaths };
       }
       if (!state.isCurrent(current.generation)) return;
+      markTiming('attachments_ready_ms');
       const request = buildSpawnRequest(next, context, worktreeSelection, attachmentPaths);
       if (policyDrifted()) throw new Error(STALE_POLICY_ERROR);
       setProgress('Launching agent…');
+      markTiming('request_sent_ms');
       const payload = await actions.spawn(request);
+      markTiming('response_received_ms');
       if (!state.isCurrent(current.generation)) return;
       state.close();
+      markTiming('elapsed_ms');
+      void actions.reportTiming?.({ ...submitTiming, label: payload.label || '', closed: true });
       void actions.complete(payload, next);
     } catch (cause) {
+      markTiming('elapsed_ms');
+      void actions.reportTiming?.({ ...submitTiming, closed: false });
       if (state.isCurrent(current.generation)) {
         setError(errorMessage(cause));
         setProgress('');

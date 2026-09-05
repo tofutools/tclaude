@@ -276,6 +276,18 @@ export function createAgentSpawnActions({
       return (payload.files || []).map((file) => file.path);
     },
 
+    // Best-effort telemetry after completion: never hold the dialog open or
+    // turn a successful spawn into an error if diagnostic reporting fails.
+    async reportTiming(timing) {
+      try {
+        await fetchImpl('/api/spawn-timing', {
+          method: 'POST', credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(timing),
+        });
+      } catch (_) {}
+    },
+
     async spawn(request) {
       const response = await fetchImpl(request.url, {
         method: 'POST', credentials: 'same-origin',
