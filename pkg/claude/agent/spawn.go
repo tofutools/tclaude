@@ -775,7 +775,7 @@ type SpawnParams struct {
 	// after `--timeout` claims `-t`, both simply get no short.
 	// TestCommandTreeConstructs guards this class of regression.
 	Task      string `long:"task" optional:"true" help:"Task-reference link (http(s)) for the new agent — e.g. its Linear issue or GitHub PR. Rendered as a clickable label in the dashboard's Task column"`
-	TaskLabel string `long:"task-label" optional:"true" help:"Optional display label overriding the auto-derived one for --task (Linear->JOH-xxx, GitHub->#nnn, else host)"`
+	TaskLabel string `long:"task-label" optional:"true" help:"Optional display label overriding the auto-derived one for --task (Linear/AWB->issue id, GitHub->#nnn, else host)"`
 
 	// Effort and Model are declared last so boa's short-flag enricher
 	// (which assigns the first free letter in field order) cannot steal

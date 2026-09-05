@@ -44,7 +44,7 @@ func taskCmd() *cobra.Command {
 
 type taskSetParams struct {
 	URL      string `pos:"true" help:"Task URL (http(s) only) — e.g. a Linear issue or GitHub issue/PR link"`
-	Label    string `long:"label" short:"l" optional:"true" help:"Optional display label overriding the auto-derived one (Linear->JOH-xxx, GitHub->#nnn, else host)"`
+	Label    string `long:"label" short:"l" optional:"true" help:"Optional display label overriding the auto-derived one (Linear/AWB->issue id, GitHub->#nnn, else host)"`
 	Target   string `long:"target" optional:"true" help:"Act on ANOTHER agent instead of self. Selector: title, full conv-id, or 8+-char prefix. Requires agent.task, or owning a group containing the target."`
 	AskHuman string `long:"ask-human" optional:"true" help:"On permission denial, ask the human via popup with this timeout (e.g. '30s' or '60'). Capped at 300s. Timeout = deny. Self-target only."`
 }

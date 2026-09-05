@@ -483,7 +483,7 @@ function TaskLinkDialog({ descriptor, actions, confirmDiscard }) {
           maxlength="200"
           autocomplete="off"
           spellcheck="false"
-          placeholder="Auto: Linear issue key, GitHub number, or hostname"
+          placeholder="Auto: Linear/AWB issue id, GitHub number, or hostname"
           value=${taskLabel}
           onInput=${(event) => setTaskLabel(event.currentTarget.value)}
           onKeyDown=${onFieldKeyDown}

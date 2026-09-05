@@ -62,7 +62,7 @@ func taskRefViewFor(ref db.AgentTaskRef) taskRefView {
 
 // effectiveTaskLabel returns the label to display for a task ref: the
 // human's explicit label when non-empty, otherwise one derived from the
-// URL (Linear issue id, GitHub #number, else the host).
+// URL (Linear/AWB issue id, GitHub #number, else the host).
 func effectiveTaskLabel(ref db.AgentTaskRef) string {
 	if l := strings.TrimSpace(ref.Label); l != "" {
 		return l
@@ -76,6 +76,7 @@ var linearIssueRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*-[0-9]+$`)
 
 // deriveTaskLabel produces a compact display label from a task URL:
 //   - Linear  (linear.app/…/issue/JOH-353/slug) → "JOH-353"
+//   - AWB     (any.host/…#/issues/tcl-536325) → "tcl-536325"
 //   - GitHub  (github.com/owner/repo/issues|pull/42) → "#42"
 //   - anything else → the host with a leading "www." stripped
 //
@@ -108,6 +109,20 @@ func deriveTaskLabel(rawURL string) string {
 			if (s == "issues" || s == "pull") && i+1 < len(segs) && isAllDigits(segs[i+1]) {
 				return "#" + segs[i+1]
 			}
+		}
+	}
+
+	// AWB is a single-page app whose issue route lives in the fragment.
+	// The deployment host and base path are configurable, so identify it by
+	// the #/issues/<id> route rather than either of those URL components. Check
+	// after host-specific formats so an unrelated fragment cannot override a
+	// valid Linear or GitHub label. A hash-router query belongs to the route,
+	// not the issue id.
+	fragmentPath, _, _ := strings.Cut(u.Fragment, "?")
+	fragmentSegs := pathSegments(fragmentPath)
+	if len(fragmentSegs) == 2 && strings.EqualFold(fragmentSegs[0], "issues") {
+		if id, fault := validateAWBIssueRef(fragmentSegs[1]); fault == nil {
+			return id
 		}
 	}
 	return host
