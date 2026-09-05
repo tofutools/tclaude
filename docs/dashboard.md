@@ -584,7 +584,20 @@ and local Git inspection. Updates default to four repositories concurrently. The
 selector (**Parallel invocations** in wizard mode) accepts 1–100 and remembers
 the latest choice in the dashboard preference store, which survives daemon
 restarts and is shared across browsers.
-The setting is locked for the duration of a batch.
+The setting is locked for the duration of a batch. The backend runs the selected
+number of workers; the browser sends one batch POST and receives incremental
+progress over that response, so browser connection limits do not limit Git workers.
+Scope is validated once per batch. Each started repository gets a two-minute
+execution budget. Closing the connection cancels queued work and active Git
+commands; completed steps are not rolled back, and interrupted work is never
+automatically retried.
+
+The dashboard batch streaming pattern uses `application/x-ndjson`: the server
+flushes one JSON record per line, followed by an explicit `complete` record.
+`stream-json.js` reads arbitrary UTF-8/chunk boundaries and rejects truncated
+records. The Git controller preserves finished results and marks unresolved rows
+failed if the stream is interrupted. Keep the audit response wrapper compatible
+with `http.ResponseController` so records are flushed through middleware.
 The compact list scrolls independently of the options and action buttons.
 Press **Ctrl+Enter** (or **Cmd+Enter** on macOS) to submit the selected repos.
 **Escape** closes the dialog before starting or after completion; dismissal is
