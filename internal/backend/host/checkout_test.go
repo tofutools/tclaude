@@ -33,6 +33,12 @@ func TestCheckoutCreateInspectRestoreAndRemove(t *testing.T) {
 	require.Equal(t, CheckoutEffectReady, observed.State)
 	require.Equal(t, created.Evidence.InitialCommit, observed.Commit)
 	require.False(t, observed.Dirty)
+	require.NoError(t, os.WriteFile(filepath.Join(path, "worker.txt"), []byte("committed worker result\n"), 0o600))
+	checkoutGit(t, path, "add", "worker.txt")
+	checkoutGit(t, path, "commit", "-m", "worker result")
+	advancedCommit, err := host.gitOutput(context.Background(), path, "rev-parse", "HEAD")
+	require.NoError(t, err)
+	require.NotEqual(t, created.Evidence.InitialCommit, advancedCommit)
 
 	require.NoError(t, os.RemoveAll(path))
 	absent, err := host.Inspect(context.Background(), created.Evidence)
@@ -42,8 +48,11 @@ func TestCheckoutCreateInspectRestoreAndRemove(t *testing.T) {
 	restored, err := host.Restore(context.Background(), created.Evidence)
 	require.NoError(t, err)
 	require.Equal(t, CheckoutEffectReady, restored.State)
-	require.NotEqual(t, created.Evidence.OwnerToken, restored.Evidence.OwnerToken)
+	require.Equal(t, created.Evidence.OwnerToken, restored.Evidence.OwnerToken)
 	require.DirExists(t, path)
+	restoredObservation, err := host.Inspect(context.Background(), restored.Evidence)
+	require.NoError(t, err)
+	require.Equal(t, advancedCommit, restoredObservation.Commit)
 
 	removed, err := host.Remove(context.Background(), CheckoutRemovalRequest{Evidence: restored.Evidence})
 	require.NoError(t, err)
@@ -116,6 +125,27 @@ func TestCheckoutRejectsFabricatedOwnershipEvidence(t *testing.T) {
 	_, err = host.Remove(context.Background(), CheckoutRemovalRequest{Evidence: forged, Destructive: true})
 	require.ErrorIs(t, err, ErrCheckoutIdentityMismatch)
 	require.DirExists(t, path)
+}
+
+func TestCheckoutRestoreRefusalPreservesOwnershipEvidence(t *testing.T) {
+	repository := checkoutTestRepository(t)
+	host, err := NewCheckoutHost("git")
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "worker")
+	created, err := host.Create(context.Background(), CheckoutIntent{
+		Repository: repository, Path: path, Branch: "feature/restore-refusal", Base: "HEAD",
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.RemoveAll(path))
+	unrelated, err := host.gitOutput(context.Background(), repository, "commit-tree", "HEAD^{tree}", "-m", "unrelated")
+	require.NoError(t, err)
+	checkoutGit(t, repository, "update-ref", "refs/heads/feature/restore-refusal", unrelated)
+
+	for range 2 {
+		_, err = host.Restore(context.Background(), created.Evidence)
+		require.ErrorIs(t, err, ErrCheckoutIdentityMismatch)
+		require.NoError(t, verifyCheckoutOwner(created.Evidence.GitDir, created.Evidence.OwnerToken))
+	}
 }
 
 func TestCheckoutRefusesExistingBranchAtDifferentSelectedBase(t *testing.T) {
