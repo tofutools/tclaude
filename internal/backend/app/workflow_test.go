@@ -40,7 +40,7 @@ func TestWorkflowPersistsEffectsMailAndRecovery(t *testing.T) {
 	require.Equal(t, 1, provider.releases)
 	require.True(t, provider.permitConsumed)
 
-	interaction := app.InteractRequest{RequestContext: effect(model.AgentPrincipal(agent.ID), "request_interact"), ExecutionID: launched.Execution.ID, Text: "hello"}
+	interaction := app.InteractRequest{RequestContext: effect(model.OperatorPrincipal(), "request_interact"), ExecutionID: launched.Execution.ID, Text: "hello"}
 	first, err := service.Interact(ctx, interaction)
 	require.NoError(t, err)
 	second, err := service.Interact(ctx, interaction)
@@ -169,7 +169,7 @@ func TestStandaloneLaunchDoesNotManufactureAgent(t *testing.T) {
 	require.Len(t, snapshot.Executions, 1)
 }
 
-func TestResetDropsPriorNativeContinuationEvidence(t *testing.T) {
+func TestResetDispatchWithoutProviderEvidencePreservesConfirmedContext(t *testing.T) {
 	ctx := context.Background()
 	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
 	require.NoError(t, err)
@@ -184,7 +184,10 @@ func TestResetDropsPriorNativeContinuationEvidence(t *testing.T) {
 	require.NoError(t, err)
 	persisted, err := store.Execution(ctx, changed.Execution.ID)
 	require.NoError(t, err)
-	require.Nil(t, persisted.NativeConversation)
+	require.Equal(t, model.OperationRunning, changed.Operation.State)
+	require.NotNil(t, persisted.NativeConversation)
+	require.Equal(t, "native_initial", persisted.NativeConversation.Reference)
+	require.Equal(t, launched.Execution.ConversationID, persisted.ConversationID)
 }
 
 func TestLateInteractionCannotResurrectExitedExecution(t *testing.T) {
@@ -259,6 +262,8 @@ func TestClientCancellationAfterContextAdmissionDoesNotStrandOperation(t *testin
 	require.NoError(t, err)
 	requestCtx, cancelRequest := context.WithCancel(ctx)
 	service = testService(cancelAfterAdmissionStore{Store: store, cancel: cancelRequest}, provider)
+	_, err = service.Recover(ctx, app.RecoverRequest{Principal: model.OperatorPrincipal()})
+	require.NoError(t, err)
 	result, err := service.ChangeContext(requestCtx, app.ChangeContextRequest{RequestContext: effect(model.OperatorPrincipal(), "request_context_disconnect"), ExecutionID: launched.Execution.ID, Intent: ports.ContextClear, ExpectedConversationID: launched.Execution.ConversationID, ExpectedAssociationRevision: 1})
 	require.NoError(t, err)
 	require.Equal(t, model.OperationSucceeded, result.Operation.State)
@@ -368,15 +373,21 @@ func (p *fakeProvider) Prepare(_ context.Context, request ports.PreparationReque
 	}
 	evidence, _ := model.NewProviderEvidence("fake", 1, []byte("prepared:"+request.Spec.ExecutionID))
 	p.runtime.id = request.Spec.ExecutionID
+	p.runtime.attempt = request.Spec.Attempt
+	p.runtime.observations = request.Observations
+	p.runtime.initialEmitted = false
+	p.runtime.order = 0
 	p.runtime.evidence = evidence
 	p.runtime.native = model.NativeConversationEvidence{Namespace: "fake", Reference: "native_initial", ObservedAt: time.Now()}
-	return &fakePrepared{provider: p, description: ports.PreparedDescription{ExecutionID: request.Spec.ExecutionID, Topology: p.preparedTopology, Requirements: ports.RuntimeRequirements{WorkingDirectory: request.Spec.WorkingDirectory, Loopback: &ports.LoopbackRequirement{Protocol: "http"}}, EffectivePolicy: ports.EffectivePolicy{Approval: request.Spec.Approval, Sandbox: request.Spec.Sandbox, ApprovalEnforced: true, SandboxEnforced: p.enforceSandbox}, Evidence: evidence}}, nil
+	return &fakePrepared{provider: p, description: ports.PreparedDescription{ExecutionID: request.Spec.ExecutionID, Attempt: request.Spec.Attempt, Topology: p.preparedTopology, Requirements: ports.RuntimeRequirements{WorkingDirectory: request.Spec.WorkingDirectory, Loopback: &ports.LoopbackRequirement{Protocol: "http"}}, EffectivePolicy: ports.EffectivePolicy{Approval: request.Spec.Approval, Sandbox: request.Spec.Sandbox, ApprovalEnforced: true, SandboxEnforced: p.enforceSandbox}, Evidence: evidence}}, nil
 }
 func (p *fakeProvider) Recover(_ context.Context, request ports.RecoveryRequest) (ports.RecoveryResult, error) {
 	p.recoveries++
 	p.runtime.id = request.ExecutionID
+	p.runtime.attempt = request.Attempt
+	p.runtime.observations = request.Observations
 	p.runtime.evidence = request.Evidence
-	return ports.RecoveryResult{State: ports.RecoveryControlled, Runtime: p.runtime, Observation: p.runtime.observation(), Evidence: request.Evidence}, nil
+	return ports.RecoveryResult{State: ports.RecoveryControlled, Runtime: p.runtime, Observation: p.runtime.observation(), Evidence: request.Evidence, Attempt: request.Attempt}, nil
 }
 
 type fakePrepared struct {
@@ -407,6 +418,10 @@ type fakeRuntime struct {
 	omitNativeOnChange                        bool
 	onInteract                                func()
 	onObserve                                 func()
+	attempt                                   model.AttemptGeneration
+	observations                              ports.PrimaryObservationSink
+	order                                     int
+	initialEmitted                            bool
 }
 
 func (r *fakeRuntime) ExecutionID() model.ExecutionID { return r.id }
@@ -418,6 +433,11 @@ func (r *fakeRuntime) Observe(context.Context) (ports.Observation, error) {
 		callback := r.onObserve
 		r.onObserve = nil
 		callback()
+	}
+	if !r.initialEmitted && r.observations != nil {
+		r.order++
+		r.initialEmitted = true
+		_ = r.observations.ObservePrimaryContext(context.Background(), ports.PrimaryContextEvidence{ExecutionID: r.id, Attempt: r.attempt, Provider: "fake", PrimaryCorrelation: "primary", Disposition: ports.PrimaryContextInitial, NextBinding: &model.NativeBinding{Namespace: r.native.Namespace, Reference: r.native.Reference}, ProviderOrder: strconv.Itoa(r.order), ObservedAt: time.Now()})
 	}
 	return r.observation(), nil
 }
@@ -432,12 +452,20 @@ func (r *fakeRuntime) Attach(context.Context, ports.AttachmentRequest) (ports.At
 	r.attachments++
 	return ports.AttachmentResult{Disposition: ports.EffectAccepted, Attachment: &fakeAttachment{}, Evidence: r.evidence}, nil
 }
-func (r *fakeRuntime) ChangeContext(context.Context, ports.ContextChange) (ports.ContextChangeResult, error) {
+func (r *fakeRuntime) ChangeContext(ctx context.Context, change ports.ContextChange) (ports.ContextChangeResult, error) {
 	r.contextChanges++
 	if r.omitNativeOnChange {
 		return ports.ContextChangeResult{Disposition: ports.EffectAccepted, Evidence: r.evidence}, nil
 	}
+	prior := model.NativeBinding{Namespace: r.native.Namespace, Reference: r.native.Reference}
 	r.native = model.NativeConversationEvidence{Namespace: "fake", Reference: "native_rotated", ObservedAt: time.Now()}
+	r.order++
+	if r.observations != nil {
+		err := r.observations.ObservePrimaryContext(ctx, ports.PrimaryContextEvidence{ExecutionID: r.id, Attempt: r.attempt, Provider: "fake", PrimaryCorrelation: "primary", Disposition: ports.PrimaryContextReset, PriorBinding: &prior, NextBinding: &model.NativeBinding{Namespace: r.native.Namespace, Reference: r.native.Reference}, TransitionCorrelation: change.TransitionCorrelation, ExpectedConversation: change.ExpectedConversation, ExpectedAssociationRevision: change.ExpectedAssociationRevision, PriorProviderOrder: strconv.Itoa(r.order - 1), ProviderOrder: strconv.Itoa(r.order), ObservedAt: time.Now()})
+		if err != nil {
+			return ports.ContextChangeResult{}, err
+		}
+	}
 	return ports.ContextChangeResult{Disposition: ports.EffectAccepted, NativeConversation: &r.native, Evidence: r.evidence}, nil
 }
 func (r *fakeRuntime) Stop(context.Context, ports.StopRequest) (ports.StopResult, error) {

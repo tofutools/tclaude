@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -22,10 +24,12 @@ const (
 )
 
 type Service struct {
-	store     Store
-	providers ports.ProviderRegistry
-	now       func() time.Time
-	newID     IDGenerator
+	store            Store
+	providers        ports.ProviderRegistry
+	now              func() time.Time
+	newID            IDGenerator
+	accessLease      time.Duration
+	agentAPIEndpoint string
 
 	runtimeMu sync.RWMutex
 	runtimes  map[model.ExecutionID]ports.Runtime
@@ -33,7 +37,7 @@ type Service struct {
 
 func New(store Store, providers ports.ProviderRegistry) *Service {
 	return &Service{
-		store: store, providers: providers, now: time.Now, newID: randomID,
+		store: store, providers: providers, now: time.Now, newID: randomID, accessLease: 24 * time.Hour,
 		runtimes: make(map[model.ExecutionID]ports.Runtime),
 	}
 }
@@ -41,6 +45,20 @@ func New(store Store, providers ports.ProviderRegistry) *Service {
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
 
 func (s *Service) WithIDGenerator(generate IDGenerator) *Service { s.newID = generate; return s }
+
+func (s *Service) WithAccessLease(lease time.Duration) *Service {
+	if lease > 0 {
+		s.accessLease = lease
+	}
+	return s
+}
+
+// WithAgentAPIEndpoint supplies the explicit private Unix-socket path that a
+// cohesive provider exposes to its exact workload as TCLAUDE_BACKEND_SOCKET.
+func (s *Service) WithAgentAPIEndpoint(endpoint string) *Service {
+	s.agentAPIEndpoint = endpoint
+	return s
+}
 
 func randomID(prefix string) string {
 	var value [12]byte
@@ -72,8 +90,11 @@ func (s *Service) CreateAgent(ctx context.Context, req CreateAgentRequest) (Agen
 }
 
 func (s *Service) UpdateAgent(ctx context.Context, req UpdateAgentRequest) (AgentResult, error) {
-	if err := requireOperator(req.Context); err != nil {
-		return AgentResult{}, err
+	if req.Context.Kind != model.PrincipalOperator {
+		request := model.AuthorityRequest{Principal: req.Context, Action: model.ActionUpdateConfiguration, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: req.ID}, RequestedConfiguration: &req.Desired}
+		if err := s.requireAuthority(ctx, request, s.now().UTC()); err != nil {
+			return AgentResult{}, err
+		}
 	}
 	if req.ExpectedRevision == 0 {
 		return AgentResult{}, fail(ErrInvalid, "expected revision is required")
@@ -109,8 +130,13 @@ func (s *Service) CreateGroup(ctx context.Context, req CreateGroupRequest) (Grou
 		}
 	}
 	now := s.now().UTC()
-	group := model.Group{ID: req.ID, Name: req.Name, Members: append([]model.AgentID(nil), req.Members...), Revision: 1, CreatedAt: now, UpdatedAt: now}
-	if err := s.store.CreateGroup(ctx, group); err != nil {
+	if req.OwnerAgentID != "" {
+		if _, ok := seen[req.OwnerAgentID]; !ok {
+			return GroupResult{}, fail(ErrInvalid, "group owner must be a member")
+		}
+	}
+	group := model.Group{ID: req.ID, Name: req.Name, Members: append([]model.AgentID(nil), req.Members...), OwnerAgentID: req.OwnerAgentID, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	if err := s.store.CreateGroup(ctx, group, req.OwnerBounds); err != nil {
 		return GroupResult{}, err
 	}
 	return GroupResult{Group: group}, nil
@@ -134,9 +160,6 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		var err error
 		agent, err = s.store.Agent(ctx, req.Target.Agent.AgentID)
 		if err != nil {
-			return OperationResult{}, err
-		}
-		if err := requireSelfOrOperator(req.Principal, agent.ID); err != nil {
 			return OperationResult{}, err
 		}
 		if req.Target.Agent.ExpectedRevision == 0 {
@@ -173,10 +196,31 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	}
 	operationID := model.OperationID(s.newID("op_"))
 	spec := resolvedSpec(executionID, agent.ID, desired, conversationID)
+	authorityResource := model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: executionID}
+	if agent.ID != "" {
+		authorityResource = model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agent.ID}
+	}
+	authority := model.AuthorityRequest{Principal: req.Principal, Action: model.ActionLaunch, Resource: authorityResource, RequestedConfiguration: &desired}
+	var access model.ExecutionAccess
+	var credential *ports.ActionCredentialMaterial
+	if _, capable := provider.(ports.ActionCredentialProvider); capable {
+		if strings.TrimSpace(s.agentAPIEndpoint) == "" {
+			return OperationResult{}, fail(ErrUnavailable, "agent API endpoint is required for credential-capable provider")
+		}
+		secret := make([]byte, 32)
+		if _, err := rand.Read(secret); err != nil {
+			return OperationResult{}, fail(ErrUnavailable, "generate execution credential: %v", err)
+		}
+		digest := sha256.Sum256(secret)
+		access = model.ExecutionAccess{ExecutionID: executionID, AgentID: agent.ID, Generation: 1, CredentialDigest: digest[:], State: model.ExecutionAccessInactive, IssuedAt: now, ExpiresAt: now.Add(s.accessLease), Revision: 1}
+		credential = &ports.ActionCredentialMaterial{ExecutionID: executionID, Generation: access.Generation, Secret: secret, ExpiresAt: access.ExpiresAt}
+		defer clear(secret)
+	}
 	admission, err := s.store.AdmitLaunch(ctx, LaunchAdmission{
 		Operation: model.Operation{ID: operationID, RequestID: req.RequestID, Kind: kind, Principal: req.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now},
-		Execution: model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, State: model.ExecutionReserved, Revision: 1, CreatedAt: now, UpdatedAt: now},
+		Execution: model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, State: model.ExecutionReserved, Attempt: 1, ContextReadiness: model.ContextReadinessPending, Revision: 1, CreatedAt: now, UpdatedAt: now},
 		AgentID:   agent.ID, Expected: expected, ExpectedConversationRevision: expectedConversationRevision,
+		Authority: authority, Access: access,
 	})
 	if err != nil {
 		return OperationResult{}, err
@@ -187,7 +231,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancelWorkflow()
 
-	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: intent, Continuation: continuation, PriorEvidence: priorEvidence})
+	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: intent, Continuation: continuation, PriorEvidence: priorEvidence, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, spec.Attempt, provider.Name()), AgentAPIEndpoint: s.agentAPIEndpoint})
 	if err != nil {
 		settlementCtx, cancelSettlement := settlementContext(ctx)
 		defer cancelSettlement()
@@ -207,6 +251,16 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 			return OperationResult{}, persistErr
 		}
 		return operationResult(finished), err
+	}
+	if credential != nil {
+		if description.AccessDelivery == nil || description.AccessDelivery.ExecutionID != executionID || description.AccessDelivery.Generation != credential.Generation || description.AccessDelivery.DeliveryID == "" || description.AccessDelivery.FileIdentity == "" {
+			_ = prepared.Abort(workflowCtx)
+			return OperationResult{}, fail(ErrInvalid, "provider did not prove protected credential delivery")
+		}
+		if _, err := s.store.RecordAccessDelivery(workflowCtx, executionID, credential.Generation, *description.AccessDelivery, s.now().UTC()); err != nil {
+			_ = prepared.Abort(workflowCtx)
+			return OperationResult{}, err
+		}
 	}
 	preparedCtx, cancelPrepared := settlementContext(ctx)
 	_, recordErr := s.store.RecordPrepared(preparedCtx, executionID, operationID, description.Evidence, s.now().UTC())
@@ -248,17 +302,15 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	}
 	s.rememberRuntime(released.Runtime)
 	executionState := model.ExecutionReleased
-	var native *model.NativeConversationEvidence
 	if observation, observeErr := released.Runtime.Observe(workflowCtx); observeErr == nil {
 		executionState = stateFromObservation(observation)
-		native = observation.NativeConversation
 		if observation.Evidence.Provider != "" {
 			evidence = observation.Evidence
 		}
 	}
 	settlementCtx, cancelSettlement := settlementContext(ctx)
 	defer cancelSettlement()
-	finished, err := s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: operationID, OperationState: model.OperationSucceeded, ResultCode: "released", ExecutionID: executionID, ExecutionState: executionState, UpdateExecutionState: true, Evidence: evidence, Native: native, At: s.now().UTC()})
+	finished, err := s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: operationID, OperationState: model.OperationSucceeded, ResultCode: "released", ExecutionID: executionID, ExecutionState: executionState, UpdateExecutionState: true, Evidence: evidence, At: s.now().UTC()})
 	if err != nil {
 		return OperationResult{}, err
 	}
@@ -270,7 +322,7 @@ func (s *Service) Observe(ctx context.Context, req ObserveRequest) (ObservationR
 	if err != nil {
 		return ObservationResult{}, err
 	}
-	if err := requireSelfOrOperator(req.Principal, execution.AgentID); err != nil {
+	if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Principal, Action: model.ActionReadStatus, Resource: model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: execution.ID}}, s.now().UTC()); err != nil {
 		return ObservationResult{}, err
 	}
 	runtime, err := s.runtimeFor(ctx, execution)
@@ -281,7 +333,7 @@ func (s *Service) Observe(ctx context.Context, req ObserveRequest) (ObservationR
 	if err != nil {
 		return ObservationResult{}, err
 	}
-	updated, err := s.store.RecordRecovery(ctx, execution.ID, stateFromObservation(observation), observation.NativeConversation, observation.Evidence, s.now().UTC())
+	updated, err := s.store.RecordRecovery(ctx, execution.ID, stateFromObservation(observation), nil, observation.Evidence, s.now().UTC())
 	if err != nil {
 		return ObservationResult{}, err
 	}
@@ -310,6 +362,12 @@ func (s *Service) Attach(ctx context.Context, req AttachRequest) (AttachmentResu
 	// setup call. Bound setup without imposing that deadline on the live view.
 	attachmentCtx, cancelAttachment := context.WithCancel(context.WithoutCancel(ctx))
 	setupTimer := time.AfterFunc(admittedEffectTimeout, cancelAttachment)
+	if err := s.store.ConsumeExecutionEffect(attachmentCtx, admission.Operation.ID, s.now().UTC()); err != nil {
+		setupTimer.Stop()
+		cancelAttachment()
+		_, _ = s.store.CompleteOperation(context.WithoutCancel(ctx), OperationCompletion{OperationID: admission.Operation.ID, OperationState: model.OperationRefused, ResultCode: "authority_revoked", Detail: err.Error(), ExecutionID: admission.Execution.ID, At: s.now().UTC()})
+		return AttachmentResult{}, err
+	}
 	result, effectErr := runtime.Attach(attachmentCtx, ports.AttachmentRequest{Kind: req.Kind})
 	setupTimer.Stop()
 	transferred := false
@@ -364,9 +422,6 @@ func (s *Service) ChangeContext(ctx context.Context, req ChangeContextRequest) (
 	if execution.AgentID == "" {
 		return OperationResult{}, fail(ErrUnsupported, "standalone context associations are not revisioned")
 	}
-	if err := requireSelfOrOperator(req.Principal, execution.AgentID); err != nil {
-		return OperationResult{}, err
-	}
 	admission, runtime, err := s.admitRuntimeEffect(ctx, req.RequestContext, req.ExecutionID, model.OperationChangeContext)
 	if err != nil {
 		return OperationResult{}, err
@@ -393,23 +448,41 @@ func (s *Service) ChangeContext(ctx context.Context, req ChangeContextRequest) (
 		}
 		return OperationResult{}, appConflict("context association")
 	}
-	result, effectErr := runtime.ChangeContext(workflowCtx, ports.ContextChange{Intent: req.Intent, ExpectedConversation: req.ExpectedConversationID, ExpectedAssociationRevision: req.ExpectedAssociationRevision})
-	completion := completionFromDisposition(admission.Operation, admission.Execution, result.Disposition, result.Evidence, "context_changed", effectErr, s.now().UTC())
-	completion.Native = result.NativeConversation
+	correlation := s.newID("ctx_")
+	if err := s.store.BeginContextTransition(workflowCtx, PendingContextTransition{OperationID: admission.Operation.ID, ExecutionID: execution.ID, ExpectedConversationID: req.ExpectedConversationID, ExpectedAssociationRevision: req.ExpectedAssociationRevision, Correlation: correlation, CreatedAt: s.now().UTC()}); err != nil {
+		return OperationResult{}, err
+	}
+	if err := s.store.ConsumeExecutionEffect(workflowCtx, admission.Operation.ID, s.now().UTC()); err != nil {
+		_ = s.store.CancelContextTransition(context.WithoutCancel(ctx), admission.Operation.ID)
+		settlementCtx, cancelSettlement := settlementContext(ctx)
+		defer cancelSettlement()
+		_, _ = s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: admission.Operation.ID, OperationState: model.OperationRefused, ResultCode: "authority_revoked", Detail: err.Error(), ExecutionID: execution.ID, At: s.now().UTC()})
+		return OperationResult{}, err
+	}
 	settlementCtx, cancelSettlement := settlementContext(ctx)
+	dispatched, err := s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: admission.Operation.ID, OperationState: model.OperationRunning, ResultCode: "awaiting_context_evidence", ExecutionID: execution.ID, At: s.now().UTC()})
+	cancelSettlement()
+	if err != nil {
+		_ = s.store.CancelContextTransition(context.WithoutCancel(ctx), admission.Operation.ID)
+		return OperationResult{}, err
+	}
+	result, effectErr := runtime.ChangeContext(workflowCtx, ports.ContextChange{Intent: req.Intent, ExpectedConversation: req.ExpectedConversationID, ExpectedAssociationRevision: req.ExpectedAssociationRevision, TransitionCorrelation: correlation})
+	if effectErr == nil && result.Disposition == ports.EffectAccepted {
+		readCtx, cancelRead := settlementContext(ctx)
+		defer cancelRead()
+		settled, readErr := s.store.OperationResult(readCtx, admission.Operation.ID)
+		if readErr == nil {
+			return operationResult(settled), nil
+		}
+		return operationResult(dispatched), nil
+	}
+	_ = s.store.CancelContextTransition(context.WithoutCancel(ctx), admission.Operation.ID)
+	completion := completionFromDisposition(admission.Operation, admission.Execution, result.Disposition, result.Evidence, "context_dispatch", effectErr, s.now().UTC())
+	settlementCtx, cancelSettlement = settlementContext(ctx)
 	defer cancelSettlement()
-	var finished AdmissionResult
-	if result.Disposition == ports.EffectAccepted && admission.Execution.AgentID != "" {
-		conversationID := model.ConversationID(s.newID("con_"))
-		finished, err = s.store.CompleteContextOperation(settlementCtx, completion, ContextAssociation{ExecutionID: req.ExecutionID, AgentID: admission.Execution.AgentID, ConversationID: conversationID, ExpectedRevision: req.ExpectedAssociationRevision, Native: result.NativeConversation, At: s.now().UTC()})
-		if err != nil {
-			return OperationResult{}, err
-		}
-	} else {
-		finished, err = s.store.CompleteOperation(settlementCtx, completion)
-		if err != nil {
-			return OperationResult{}, err
-		}
+	finished, err := s.store.CompleteOperation(settlementCtx, completion)
+	if err != nil {
+		return OperationResult{}, err
 	}
 	if effectErr != nil {
 		return operationResult(finished), effectErr
@@ -428,7 +501,7 @@ func (s *Service) Resume(ctx context.Context, req ResumeRequest) (OperationResul
 		if err != nil {
 			return OperationResult{}, err
 		}
-		if err := requireSelfOrOperator(req.Principal, agent.ID); err != nil {
+		if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Principal, Action: model.ActionLaunch, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agent.ID}, RequestedConfiguration: &agent.Desired}, s.now().UTC()); err != nil {
 			return OperationResult{}, err
 		}
 	} else if err := requireOperator(req.Principal); err != nil {
@@ -446,11 +519,14 @@ func (s *Service) SendMessage(ctx context.Context, req SendMessageRequest) (Mess
 	if err := validateEffectContext(req.RequestContext); err != nil {
 		return MessageResult{}, err
 	}
-	if req.Principal.Kind == model.PrincipalAgent {
+	if req.Principal.Kind == model.PrincipalAgent || req.Principal.Kind == model.PrincipalExecution {
+		if req.Principal.AgentID == "" {
+			return MessageResult{}, fail(ErrUnsupported, "standalone execution has no agent sender")
+		}
 		if _, err := s.store.Agent(ctx, req.Principal.AgentID); err != nil {
 			return MessageResult{}, fail(ErrUnauthorized, "sender is not an admitted agent")
 		}
-	} else if req.Principal.Kind != model.PrincipalOperator {
+	} else if req.Principal.Kind != model.PrincipalOperator && req.Principal.Kind != model.PrincipalAutomation {
 		return MessageResult{}, fail(ErrUnauthorized, "unsupported principal")
 	}
 	if strings.TrimSpace(req.Body) == "" {
@@ -460,6 +536,7 @@ func (s *Service) SendMessage(ctx context.Context, req SendMessageRequest) (Mess
 		return MessageResult{}, fail(ErrInvalid, "at least one recipient is required")
 	}
 	recipients := make([]model.MessageRecipient, 0, len(req.RecipientAgentIDs))
+	authority := make([]model.AuthorityRequest, 0, len(req.RecipientAgentIDs))
 	seen := map[model.AgentID]struct{}{}
 	for _, id := range req.RecipientAgentIDs {
 		if _, duplicate := seen[id]; duplicate {
@@ -470,11 +547,12 @@ func (s *Service) SendMessage(ctx context.Context, req SendMessageRequest) (Mess
 			return MessageResult{}, err
 		}
 		recipients = append(recipients, model.MessageRecipient{ID: model.RecipientID(s.newID("rcp_")), AgentID: id})
+		authority = append(authority, model.AuthorityRequest{Principal: req.Principal, Action: model.ActionSendMessage, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: id}})
 	}
 	now := s.now().UTC()
 	message := model.Message{ID: model.MessageID(s.newID("msg_")), Sender: req.Principal, Body: req.Body, Recipients: recipients, CreatedAt: now}
 	operationID := model.OperationID(s.newID("op_"))
-	result, err := s.store.CreateMessage(ctx, message, req.RequestID, operationID)
+	result, err := s.store.CreateMessage(ctx, message, req.RequestID, operationID, authority)
 	if err != nil {
 		return MessageResult{}, err
 	}
@@ -482,71 +560,32 @@ func (s *Service) SendMessage(ctx context.Context, req SendMessageRequest) (Mess
 }
 
 func (s *Service) MarkMessageRead(ctx context.Context, req MarkMessageReadRequest) (MessageResult, error) {
-	if req.Principal.Kind != model.PrincipalOperator && (req.Principal.Kind != model.PrincipalAgent || req.Principal.AgentID != req.AgentID) {
-		return MessageResult{}, fail(ErrUnauthorized, "principal cannot acknowledge this recipient")
+	agentID := req.AgentID
+	if req.Principal.Kind != model.PrincipalOperator {
+		agentID = req.Principal.AgentID
+		if agentID == "" {
+			return MessageResult{}, fail(ErrUnsupported, "standalone execution has no agent inbox")
+		}
+		if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Principal, Action: model.ActionMarkInboxRead, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agentID}}, s.now().UTC()); err != nil {
+			return MessageResult{}, err
+		}
 	}
-	message, err := s.store.MarkMessageRead(ctx, req.MessageID, req.AgentID, s.now().UTC())
+	message, err := s.store.MarkMessageRead(ctx, req.MessageID, agentID, s.now().UTC())
+	if req.Principal.Kind != model.PrincipalOperator {
+		message = messageForRecipient(message, agentID)
+	}
 	return MessageResult{Message: message}, err
 }
 
 func (s *Service) Snapshot(ctx context.Context, req SnapshotRequest) (Snapshot, error) {
+	if req.Principal.Kind != model.PrincipalOperator {
+		return Snapshot{}, fail(ErrUnauthorized, "operator snapshot authority required; use scoped queries")
+	}
 	snapshot, err := s.store.Snapshot(ctx)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	if req.Principal.Kind == model.PrincipalOperator {
-		return snapshot, nil
-	}
-	if req.Principal.Kind != model.PrincipalAgent {
-		return Snapshot{}, fail(ErrUnauthorized, "unsupported principal")
-	}
-	id := req.Principal.AgentID
-	filtered := Snapshot{Revision: snapshot.Revision}
-	for _, agent := range snapshot.Agents {
-		if agent.ID == id {
-			filtered.Agents = append(filtered.Agents, agent)
-		}
-	}
-	for _, group := range snapshot.Groups {
-		for _, member := range group.Members {
-			if member == id {
-				filtered.Groups = append(filtered.Groups, group)
-				break
-			}
-		}
-	}
-	for _, execution := range snapshot.Executions {
-		if execution.AgentID == id {
-			filtered.Executions = append(filtered.Executions, execution)
-		}
-	}
-	visibleConversations := map[model.ConversationID]bool{}
-	for _, association := range snapshot.Associations {
-		if association.AgentID == id {
-			filtered.Associations = append(filtered.Associations, association)
-			visibleConversations[association.ConversationID] = true
-		}
-	}
-	for _, conversation := range snapshot.Conversations {
-		if visibleConversations[conversation.ID] {
-			filtered.Conversations = append(filtered.Conversations, conversation)
-		}
-	}
-	for _, operation := range snapshot.Operations {
-		if operation.Principal.Kind == model.PrincipalAgent && operation.Principal.AgentID == id {
-			filtered.Operations = append(filtered.Operations, operation)
-		}
-	}
-	for _, message := range snapshot.Messages {
-		visible := message.Sender.Kind == model.PrincipalAgent && message.Sender.AgentID == id
-		for _, recipient := range message.Recipients {
-			visible = visible || recipient.AgentID == id
-		}
-		if visible {
-			filtered.Messages = append(filtered.Messages, message)
-		}
-	}
-	return filtered, nil
+	return snapshot, nil
 }
 
 func (s *Service) Recover(ctx context.Context, req RecoverRequest) (RecoveryReport, error) {
@@ -562,37 +601,47 @@ func (s *Service) Recover(ctx context.Context, req RecoverRequest) (RecoveryRepo
 		provider, ok := s.providers.Provider(execution.Spec.Harness)
 		if !ok {
 			report.Unknown = append(report.Unknown, execution.ID)
-			if _, err := s.store.RecordRecovery(ctx, execution.ID, model.ExecutionUnknown, execution.NativeConversation, model.ProviderEvidence{}, s.now().UTC()); err != nil {
+			if _, err := s.store.RecordRecovery(ctx, execution.ID, model.ExecutionUnknown, nil, model.ProviderEvidence{}, s.now().UTC()); err != nil {
 				return RecoveryReport{}, err
 			}
 			continue
 		}
-		result, recoverErr := provider.Recover(ctx, ports.RecoveryRequest{ExecutionID: execution.ID, Spec: execution.Spec, Evidence: execution.Evidence})
+		var accessBindingValue *model.ExecutionAccessBinding
+		if access, accessErr := s.store.ExecutionAccess(ctx, execution.ID); accessErr == nil {
+			binding := accessBinding(access)
+			accessBindingValue = &binding
+		}
+		result, recoverErr := provider.Recover(ctx, ports.RecoveryRequest{ExecutionID: execution.ID, Spec: execution.Spec, Evidence: execution.Evidence, Attempt: execution.Attempt, Access: accessBindingValue, Observations: s.primaryObservationSink(execution.ID, execution.Attempt, provider.Name()), AgentAPIEndpoint: s.agentAPIEndpoint})
 		if recoverErr != nil || result.State == ports.RecoveryUnknown {
 			report.Unknown = append(report.Unknown, execution.ID)
-			if _, err := s.store.RecordRecovery(ctx, execution.ID, model.ExecutionUnknown, result.Observation.NativeConversation, result.Evidence, s.now().UTC()); err != nil {
+			if _, err := s.store.RecordRecovery(ctx, execution.ID, model.ExecutionUnknown, nil, result.Evidence, s.now().UTC()); err != nil {
 				return RecoveryReport{}, err
 			}
 			continue
 		}
 		if result.State == ports.RecoveryExited {
 			report.Exited = append(report.Exited, execution.ID)
-			if _, err := s.store.RecordRecovery(ctx, execution.ID, model.ExecutionExited, result.Observation.NativeConversation, result.Evidence, s.now().UTC()); err != nil {
+			if _, err := s.store.RecordRecovery(ctx, execution.ID, model.ExecutionExited, nil, result.Evidence, s.now().UTC()); err != nil {
 				return RecoveryReport{}, err
 			}
 			continue
 		}
 		if result.Runtime == nil || result.Runtime.ExecutionID() != execution.ID {
 			report.Unknown = append(report.Unknown, execution.ID)
-			if _, err := s.store.RecordRecovery(ctx, execution.ID, model.ExecutionUnknown, result.Observation.NativeConversation, result.Evidence, s.now().UTC()); err != nil {
+			if _, err := s.store.RecordRecovery(ctx, execution.ID, model.ExecutionUnknown, nil, result.Evidence, s.now().UTC()); err != nil {
 				return RecoveryReport{}, err
 			}
 			continue
 		}
 		s.rememberRuntime(result.Runtime)
 		report.Controlled = append(report.Controlled, execution.ID)
-		if _, err := s.store.RecordRecovery(ctx, execution.ID, stateFromObservation(result.Observation), result.Observation.NativeConversation, result.Evidence, s.now().UTC()); err != nil {
+		if _, err := s.store.RecordRecovery(ctx, execution.ID, stateFromObservation(result.Observation), nil, result.Evidence, s.now().UTC()); err != nil {
 			return RecoveryReport{}, err
+		}
+		if accessBindingValue != nil && result.Attempt == execution.Attempt && result.AccessProof != nil && result.AccessProof.ExecutionID == execution.ID && result.AccessProof.Generation == accessBindingValue.Generation && result.AccessProof.DeliveryID == accessBindingValue.DeliveryID {
+			if _, err := s.store.ReactivateExecutionAccess(ctx, execution.ID, accessBindingValue.Generation, *result.AccessProof, s.now().UTC()); err != nil && !errors.Is(err, ErrConflict) {
+				return RecoveryReport{}, err
+			}
 		}
 	}
 	return report, nil
@@ -608,6 +657,12 @@ func (s *Service) withRuntimeEffect(ctx context.Context, request RequestContext,
 	}
 	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancelWorkflow()
+	if err := s.store.ConsumeExecutionEffect(workflowCtx, admission.Operation.ID, s.now().UTC()); err != nil {
+		settlementCtx, cancelSettlement := settlementContext(ctx)
+		defer cancelSettlement()
+		_, _ = s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: admission.Operation.ID, OperationState: model.OperationRefused, ResultCode: "authority_revoked", Detail: err.Error(), ExecutionID: admission.Execution.ID, At: s.now().UTC()})
+		return OperationResult{}, err
+	}
 	disposition, evidence, code, effectErr := effect(workflowCtx, runtime)
 	completion := completionFromDisposition(admission.Operation, admission.Execution, disposition, evidence, code, effectErr, s.now().UTC())
 	if kind == model.OperationStop && disposition == ports.EffectAccepted && code == "exited" {
@@ -634,12 +689,10 @@ func (s *Service) admitRuntimeEffect(ctx context.Context, request RequestContext
 	if err != nil {
 		return AdmissionResult{}, nil, err
 	}
-	if err := requireSelfOrOperator(request.Principal, execution.AgentID); err != nil {
-		return AdmissionResult{}, nil, err
-	}
 	now := s.now().UTC()
 	operation := model.Operation{ID: model.OperationID(s.newID("op_")), RequestID: request.RequestID, Kind: kind, Principal: request.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
-	admission, err := s.store.AdmitExecutionOperation(ctx, ExecutionOperationAdmission{Operation: operation})
+	authority := model.AuthorityRequest{Principal: request.Principal, Action: actionForOperation(kind), Resource: model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: executionID}}
+	admission, err := s.store.AdmitExecutionOperation(ctx, ExecutionOperationAdmission{Operation: operation, Authority: authority})
 	if err != nil || admission.Repeated {
 		return admission, nil, err
 	}
@@ -661,19 +714,7 @@ func (s *Service) runtimeFor(ctx context.Context, execution model.Execution) (po
 	if runtime != nil {
 		return runtime, nil
 	}
-	provider, ok := s.providers.Provider(execution.Spec.Harness)
-	if !ok {
-		return nil, fail(ErrUnavailable, "harness %q has no provider", execution.Spec.Harness)
-	}
-	recovered, err := provider.Recover(ctx, ports.RecoveryRequest{ExecutionID: execution.ID, Spec: execution.Spec, Evidence: execution.Evidence})
-	if err != nil {
-		return nil, err
-	}
-	if recovered.State != ports.RecoveryControlled || recovered.Runtime == nil || recovered.Runtime.ExecutionID() != execution.ID {
-		return nil, fail(ErrUnavailable, "control authority for execution %s is not proven", execution.ID)
-	}
-	s.rememberRuntime(recovered.Runtime)
-	return recovered.Runtime, nil
+	return nil, fail(ErrUnavailable, "execution %s requires explicit recovery", execution.ID)
 }
 
 func (s *Service) rememberRuntime(runtime ports.Runtime) {
@@ -711,7 +752,24 @@ func completionFromDisposition(operation model.Operation, execution model.Execut
 }
 
 func resolvedSpec(executionID model.ExecutionID, agentID model.AgentID, desired model.DesiredConfiguration, conversationID model.ConversationID) model.ResolvedExecutionSpec {
-	return model.ResolvedExecutionSpec{ExecutionID: executionID, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox}
+	return model.ResolvedExecutionSpec{ExecutionID: executionID, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox}
+}
+
+func actionForOperation(kind model.OperationKind) model.Action {
+	switch kind {
+	case model.OperationLaunch, model.OperationResume:
+		return model.ActionLaunch
+	case model.OperationInteract:
+		return model.ActionInteract
+	case model.OperationAttach:
+		return model.ActionAttach
+	case model.OperationStop:
+		return model.ActionStop
+	case model.OperationChangeContext:
+		return model.ActionChangeContext
+	default:
+		return ""
+	}
 }
 
 func validatePrepared(provider string, spec model.ResolvedExecutionSpec, description ports.PreparedDescription) error {
@@ -796,13 +854,21 @@ func validateEffectContext(request RequestContext) error {
 	if err := request.RequestID.Validate(); err != nil {
 		return fail(ErrInvalid, "%v", err)
 	}
-	if request.Principal.Kind != model.PrincipalOperator && request.Principal.Kind != model.PrincipalAgent {
+	if request.Principal.Kind != model.PrincipalOperator && request.Principal.Kind != model.PrincipalAgent && request.Principal.Kind != model.PrincipalExecution && request.Principal.Kind != model.PrincipalAutomation {
 		return fail(ErrUnauthorized, "unsupported principal")
 	}
 	if request.Principal.Kind == model.PrincipalAgent {
 		if err := request.Principal.AgentID.Validate(); err != nil {
 			return fail(ErrUnauthorized, "invalid agent principal")
 		}
+	}
+	if request.Principal.Kind == model.PrincipalExecution {
+		if err := request.Principal.ExecutionID.Validate(); err != nil || request.Principal.Generation == 0 {
+			return fail(ErrUnauthorized, "invalid execution principal")
+		}
+	}
+	if request.Principal.Kind == model.PrincipalAutomation && (request.Principal.AutomationRun == "" || request.Principal.Authority.Kind == "") {
+		return fail(ErrUnauthorized, "invalid automation principal")
 	}
 	return nil
 }
