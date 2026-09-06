@@ -164,6 +164,65 @@ func TestAdmitConversationBindingClearMintsNextConversation(t *testing.T) {
 	assert.Equal(t, []int{2, 1, 2}, func() []int { a, b, c := bindingTableCounts(t); return []int{a, b, c} }())
 }
 
+func TestAdmitConversationBindingDoesNotAdvanceAfterDurableExit(t *testing.T) {
+	setupTestDB(t)
+	const generation = "11111111111111111111111111111111"
+	seedManagedBindingSession(t, "spwn-managed", generation, "tmux-managed", "%7", "claude", 4242)
+
+	firstAdmission := managedBindingAdmission("spwn-managed", generation, "evidence-1", "ref-a", 0)
+	first, err := AdmitConversationBinding(firstAdmission)
+	require.NoError(t, err)
+	require.Equal(t, conversation.Accepted, first.Outcome)
+
+	// The adapter captured this evidence while the process was live, but the
+	// production durable-exit writer wins before admission reaches the store.
+	delayedClear := managedBindingAdmission("spwn-managed", generation, "evidence-delayed", "ref-b", 1)
+	delayedClear.Transition = conversation.Clear
+	row, err := LoadSession("spwn-managed")
+	require.NoError(t, err)
+	exited, err := MarkSessionExitedIfUnchanged(row.ID, row.Status, row.UpdatedAt, "unexpected")
+	require.NoError(t, err)
+	require.True(t, exited)
+
+	decision, err := AdmitConversationBinding(delayedClear)
+	require.NoError(t, err)
+	assert.Equal(t, conversation.Historical, decision.Outcome)
+	assert.False(t, decision.Admitted())
+	assert.False(t, decision.Changed)
+	assert.Equal(t, first.Selection, decision.Selection)
+	assert.Equal(t, []int{1, 1, 1}, func() []int { a, b, c := bindingTableCounts(t); return []int{a, b, c} }())
+
+	// A byte-for-byte retry would normally be Duplicate (and therefore
+	// admitted for caller effects). Once durable exit wins it is Historical,
+	// so a retry cannot revive status or conversation state.
+	replay, err := AdmitConversationBinding(firstAdmission)
+	require.NoError(t, err)
+	assert.Equal(t, conversation.Historical, replay.Outcome)
+	assert.False(t, replay.Admitted())
+	assert.False(t, replay.Changed)
+	assert.Equal(t, first.Selection, replay.Selection)
+	assert.Equal(t, []int{1, 1, 1}, func() []int { a, b, c := bindingTableCounts(t); return []int{a, b, c} }())
+}
+
+func TestAdmitConversationBindingExitIntentIsNotObservedCompletion(t *testing.T) {
+	setupTestDB(t)
+	const generation = "11111111111111111111111111111111"
+	seedManagedBindingSession(t, "spwn-managed", generation, "tmux-managed", "%7", "claude", 4242)
+	first, err := AdmitConversationBinding(managedBindingAdmission("spwn-managed", generation, "evidence-1", "ref-a", 0))
+	require.NoError(t, err)
+	require.Equal(t, conversation.Accepted, first.Outcome)
+
+	_, err = SetSessionExitIntent("spwn-managed", AgentExitActionStop, "", time.Now().UTC())
+	require.NoError(t, err)
+	next := managedBindingAdmission("spwn-managed", generation, "evidence-2", "ref-b", 1)
+	decision, err := AdmitConversationBinding(next)
+	require.NoError(t, err)
+	assert.Equal(t, conversation.Accepted, decision.Outcome)
+	assert.True(t, decision.Admitted())
+	assert.Equal(t, conversation.Revision(2), decision.Selection.Revision)
+	assert.Equal(t, first.Selection.Conversation, decision.Selection.Conversation)
+}
+
 func TestAdmitConversationBindingOwnershipConflictRollsBack(t *testing.T) {
 	setupTestDB(t)
 	const (

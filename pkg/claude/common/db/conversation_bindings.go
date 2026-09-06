@@ -72,7 +72,7 @@ func AdmitConversationBinding(a conversation.Admission) (conversation.Decision, 
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	proofDecision, err := recheckManagedAttempt(tx, a)
+	ended, proofDecision, err := recheckManagedAttempt(tx, a)
 	if err != nil || proofDecision.Outcome != "" {
 		return proofDecision, err
 	}
@@ -90,10 +90,19 @@ func AdmitConversationBinding(a conversation.Admission) (conversation.Decision, 
 		if !sameAdmission(replay, a) {
 			return conversation.Decision{Outcome: conversation.Conflict, Reason: "evidence replay key has different immutable admission data", Selection: selection}, nil
 		}
+		if ended {
+			return conversation.Decision{Outcome: conversation.Historical, Reason: "exact replay belongs to a durably exited attempt", Selection: selection}, nil
+		}
 		if found && replay.revision == current.revision {
 			return conversation.Decision{Outcome: conversation.Duplicate, Reason: "exact admission replay", Selection: selection}, nil
 		}
 		return conversation.Decision{Outcome: conversation.Historical, Reason: "exact replay belongs to a superseded binding revision", Selection: selection}, nil
+	}
+	if ended {
+		if found {
+			return conversation.Decision{Outcome: conversation.Historical, Reason: "managed attempt has durably exited", Selection: selectionFromRecord(current)}, nil
+		}
+		return conversation.Decision{Outcome: conversation.Rejected, Reason: "managed attempt has durably exited"}, nil
 	}
 
 	currentRevision := conversation.Revision(0)
@@ -233,31 +242,31 @@ func validateConversationAdmission(a conversation.Admission) error {
 	return nil
 }
 
-func recheckManagedAttempt(tx *sql.Tx, a conversation.Admission) (conversation.Decision, error) {
-	var tmuxSession, harness, generation, paneID string
+func recheckManagedAttempt(tx *sql.Tx, a conversation.Admission) (bool, conversation.Decision, error) {
+	var tmuxSession, harness, generation, paneID, status string
 	var pid int
-	err := tx.QueryRow(`SELECT tmux_session, pid, harness, exit_callback_generation, exit_callback_pane_id FROM sessions WHERE id=?`, a.Attempt.LegacySessionID).
-		Scan(&tmuxSession, &pid, &harness, &generation, &paneID)
+	err := tx.QueryRow(`SELECT tmux_session, pid, harness, exit_callback_generation, exit_callback_pane_id, status FROM sessions WHERE id=?`, a.Attempt.LegacySessionID).
+		Scan(&tmuxSession, &pid, &harness, &generation, &paneID, &status)
 	if errors.Is(err, sql.ErrNoRows) {
-		return conversation.Decision{Outcome: conversation.Rejected, Reason: "durable session does not exist"}, nil
+		return false, conversation.Decision{Outcome: conversation.Rejected, Reason: "durable session does not exist"}, nil
 	}
 	if err != nil {
-		return conversation.Decision{}, err
+		return false, conversation.Decision{}, err
 	}
 	parsedGeneration, err := execution.ParseID(generation)
 	if err != nil || parsedGeneration != a.Attempt.ExecutionID {
-		return conversation.Decision{Outcome: conversation.Rejected, Reason: "durable launch generation does not identify the managed attempt"}, nil
+		return false, conversation.Decision{Outcome: conversation.Rejected, Reason: "durable launch generation does not identify the managed attempt"}, nil
 	}
 	if harness != a.Reference.Harness {
-		return conversation.Decision{Outcome: conversation.Rejected, Reason: "durable session harness does not match the reference"}, nil
+		return false, conversation.Decision{Outcome: conversation.Rejected, Reason: "durable session harness does not match the reference"}, nil
 	}
 	if pid <= 0 || tmuxSession == "" || paneID == "" {
-		return conversation.Decision{Outcome: conversation.Ambiguous, Reason: "durable process or pane association is unavailable"}, nil
+		return false, conversation.Decision{Outcome: conversation.Ambiguous, Reason: "durable process or pane association is unavailable"}, nil
 	}
 	if pid != a.Evidence.PID || tmuxSession != a.Evidence.TmuxSession || paneID != a.Evidence.PaneID {
-		return conversation.Decision{Outcome: conversation.Rejected, Reason: "host evidence does not match the durable process and pane association"}, nil
+		return false, conversation.Decision{Outcome: conversation.Rejected, Reason: "host evidence does not match the durable process and pane association"}, nil
 	}
-	return conversation.Decision{}, nil
+	return status == "exited", conversation.Decision{}, nil
 }
 
 func loadCurrentBinding(tx *sql.Tx, executionID execution.ID) (bindingRecord, bool, error) {
