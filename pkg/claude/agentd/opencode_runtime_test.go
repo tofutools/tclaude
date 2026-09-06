@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -34,6 +35,16 @@ type openCodeWriterFunc func([]byte) (int, error)
 
 func (write openCodeWriterFunc) Write(data []byte) (int, error) {
 	return write(data)
+}
+
+type openCodeProjectionTmux struct{ output string }
+
+func (t *openCodeProjectionTmux) Command(...string) *exec.Cmd {
+	return exec.Command("printf", "%s", t.output)
+}
+
+func (*openCodeProjectionTmux) ListSessions() (map[string]struct{}, error) {
+	return nil, nil
 }
 
 func TestOpenCodeSandboxAlwaysExposesResolvedExecutable(t *testing.T) {
@@ -348,14 +359,16 @@ func TestProjectOpenCodeExecutionBoundaryRequiresExactServerAndLaunch(t *testing
 	require.NoError(t, db.UpsertOpenCodeRuntime(runtime))
 	launch := openCodeLaunchFromRuntime(runtime)
 	previousVerified := openCodeRuntimeVerified
-	previousAuthority := openCodePaneServerAuthority
+	previousAuthority := openCodePaneLaunchMarkerObserved
 	openCodeRuntimeVerified = func(db.OpenCodeRuntime) bool { return true }
-	openCodePaneServerAuthority = func(string) (string, string, bool) {
-		return launch.ServerURL, launch.Password, true
+	openCodePaneLaunchMarkerObserved = func(target db.SessionExitLaunchIdentity, marker string) bool {
+		assert.Equal(t, generation, target.Generation)
+		assert.Equal(t, paneID, target.PaneID)
+		return marker == clcommon.OpenCodeLaunchProjectionMarker(launch.ServerURL, launch.Password)
 	}
 	t.Cleanup(func() {
 		openCodeRuntimeVerified = previousVerified
-		openCodePaneServerAuthority = previousAuthority
+		openCodePaneLaunchMarkerObserved = previousAuthority
 	})
 	row, err := db.LoadSession(sessionID)
 	require.NoError(t, err)
@@ -377,16 +390,49 @@ func TestProjectOpenCodeExecutionBoundaryRequiresExactServerAndLaunch(t *testing
 	replacement.Password = "successor-secret"
 	replacement.PID = 5252
 	require.NoError(t, db.UpsertOpenCodeRuntime(replacement))
-	openCodePaneServerAuthority = func(string) (string, string, bool) {
-		return replacement.ServerURL, replacement.Password, true
-	}
-	projected, err = projectOpenCodeExecutionBoundary(launch, row)
+	successorRow, err := db.LoadSession(sessionID)
 	require.NoError(t, err)
-	assert.False(t, projected, "a replaced server must not populate the successor generation")
+	const third = "33333333333333333333333333333333"
+	openCodePaneLaunchMarkerObserved = func(target db.SessionExitLaunchIdentity, marker string) bool {
+		require.Equal(t, successor, target.Generation,
+			"the external proof must stay tied to the originally captured attempt")
+		require.Equal(t, "%8", target.PaneID)
+		require.Equal(t,
+			clcommon.OpenCodeLaunchProjectionMarker(replacement.ServerURL, replacement.Password), marker)
+		require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, third))
+		require.NoError(t, db.SetSessionExitLaunchBinding(
+			sessionID, third, strings.Repeat("c", 64), "%9"))
+		return true
+	}
+	projected, err = projectOpenCodeExecutionBoundary(openCodeLaunchFromRuntime(replacement), successorRow)
+	require.NoError(t, err)
+	assert.False(t, projected,
+		"a successor installed between external proof and persistence must fail the original CAS")
 	stored, err = db.SessionExecutionBoundary(sessionID)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal([]byte(stored), &projectedBoundary))
 	assert.Equal(t, generation, projectedBoundary.LaunchGeneration)
+}
+
+func TestOpenCodePaneLaunchMarkerRequiresExactPaneCommand(t *testing.T) {
+	const marker = "tclaude-opencode-launch-0123456789abcdef0123456789abcdef"
+	shell := clcommon.BootstrapShellArgv()
+	require.NotEmpty(t, shell)
+	command := strings.Join(append(append([]string{}, shell...),
+		"/tmp/launch-scripts/launch-proof.sh", marker), " ")
+	tmux := &openCodeProjectionTmux{output: "tmux-proof\t%7\t" + command}
+	previousTmux := clcommon.Default
+	clcommon.Default = tmux
+	t.Cleanup(func() { clcommon.Default = previousTmux })
+	target := db.SessionExitLaunchIdentity{TmuxSession: "tmux-proof", PaneID: "%7"}
+
+	assert.True(t, openCodePaneLaunchMarkerObserved(target, marker))
+	tmux.output = "tmux-proof\t%8\t" + command
+	assert.False(t, openCodePaneLaunchMarkerObserved(target, marker),
+		"the marker on a different pane is not evidence for the captured pane")
+	tmux.output = "tmux-proof\t%7\t" + strings.Replace(command, marker, "other-marker", 1)
+	assert.False(t, openCodePaneLaunchMarkerObserved(target, marker),
+		"the captured pane must carry the exact launch-authenticated marker")
 }
 
 func TestReconcileOpenCodeRuntimeVerifiesPermissionOnHealthyServer(t *testing.T) {

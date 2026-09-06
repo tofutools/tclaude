@@ -61,10 +61,13 @@ func TestOpenCodeAgent_FastSpawnStillAnswersInline(t *testing.T) {
 	t.Cleanup(agentd.SetOpenCodeAsyncSpawnResponseGraceForTest(30 * time.Second))
 
 	g := f.HaveGroup("oc-crew")
+	spawnStarted := time.Now()
 	resp := f.AsHuman().SpawnWith("oc-crew", map[string]any{
 		"name":    "oc-worker",
 		"harness": "opencode",
 	})
+	require.Less(t, time.Since(spawnStarted), 2*time.Second,
+		"already-live pane must not wait for unavailable optional boundary evidence")
 	require.Equal(t, 200, resp.Code, "inline spawn stays 200 (raw=%s)", resp.Raw)
 	require.True(t, strings.HasPrefix(resp.ConvID, "ses_"), "fast launch returns the server-issued conv-id inline, got %q", resp.ConvID)
 	require.True(t, strings.HasPrefix(resp.AgentID, db.AgentIDPrefix), "inline outcome carries the reserved stable identity")

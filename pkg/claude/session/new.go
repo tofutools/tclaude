@@ -2536,16 +2536,21 @@ func runNew(params *NewParams) error {
 	}
 
 	// Create the detached tmux session running the harness command. The
-	// managed Codex launch-profile path (when any) rides as an inert argv
-	// marker so the approval monitor's startup recovery can match the live
-	// pane to its profile (see CodexProfileMarkerArgs).
+	// managed Codex launch-profile path and OpenCode server proof (when any)
+	// ride as inert argv markers. They let the daemon match a live pane to the
+	// authority used to construct that exact launch without exposing secrets.
 	if stackedProof != nil {
 		if err := stackedProof.Revalidate(); err != nil {
 			return StackedEngineBindingRefusal(h, err)
 		}
 	}
 	timing("tmux_launch_begin")
-	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd, CodexProfileMarkerArgs(launchProfilePath)...); err != nil {
+	launchMarkers := CodexProfileMarkerArgs(launchProfilePath)
+	if marker := clcommon.OpenCodeLaunchProjectionMarker(
+		openCodeServerURL, os.Getenv("OPENCODE_SERVER_PASSWORD")); marker != "" {
+		launchMarkers = append(launchMarkers, marker)
+	}
+	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd, launchMarkers...); err != nil {
 		return err
 	}
 	if darwinRouteReservation != nil {
