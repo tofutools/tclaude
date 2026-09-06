@@ -48,6 +48,9 @@ func TestWorkflowPersistsEffectsMailAndRecovery(t *testing.T) {
 	require.Equal(t, first.Operation.ID, second.Operation.ID)
 	require.True(t, second.Repeated)
 	require.Equal(t, 1, provider.runtime.interactions)
+	_, err = service.Stop(ctx, app.StopRequest{RequestContext: interaction.RequestContext, ExecutionID: launched.Execution.ID})
+	require.ErrorIs(t, err, app.ErrConflict, "a request identity cannot be reused for a different effect")
+	require.False(t, provider.runtime.stopped)
 
 	attached, err := service.Attach(ctx, app.AttachRequest{RequestContext: effect(operator, "request_attach"), ExecutionID: launched.Execution.ID, Kind: ports.AttachmentTerminal})
 	require.NoError(t, err)
@@ -180,6 +183,9 @@ func TestContextChangeAndResumeUseStoredNativeEvidence(t *testing.T) {
 	changed, err := service.ChangeContext(ctx, app.ChangeContextRequest{RequestContext: effect(model.OperatorPrincipal(), "request_context_change"), ExecutionID: launched.Execution.ID, Intent: ports.ContextClear, ExpectedConversationID: oldConversation, ExpectedAssociationRevision: 1})
 	require.NoError(t, err)
 	require.NotEqual(t, oldConversation, changed.Execution.ConversationID)
+	_, err = service.ChangeContext(ctx, app.ChangeContextRequest{RequestContext: effect(model.OperatorPrincipal(), "request_stale_context"), ExecutionID: launched.Execution.ID, Intent: ports.ContextClear, ExpectedConversationID: oldConversation, ExpectedAssociationRevision: 1})
+	require.ErrorIs(t, err, app.ErrConflict)
+	require.Equal(t, 1, provider.runtime.contextChanges)
 
 	snapshot, err := service.Snapshot(ctx, app.SnapshotRequest{Principal: model.OperatorPrincipal()})
 	require.NoError(t, err)
@@ -277,11 +283,11 @@ func (p *fakePrepared) Release(ctx context.Context, permit ports.ReleasePermit) 
 }
 
 type fakeRuntime struct {
-	id                        model.ExecutionID
-	evidence                  model.ProviderEvidence
-	native                    model.NativeConversationEvidence
-	interactions, attachments int
-	stopped                   bool
+	id                                        model.ExecutionID
+	evidence                                  model.ProviderEvidence
+	native                                    model.NativeConversationEvidence
+	interactions, attachments, contextChanges int
+	stopped                                   bool
 }
 
 func (r *fakeRuntime) ExecutionID() model.ExecutionID { return r.id }
@@ -300,6 +306,7 @@ func (r *fakeRuntime) Attach(context.Context, ports.AttachmentRequest) (ports.At
 	return ports.AttachmentResult{Disposition: ports.EffectAccepted, Attachment: &fakeAttachment{}, Evidence: r.evidence}, nil
 }
 func (r *fakeRuntime) ChangeContext(context.Context, ports.ContextChange) (ports.ContextChangeResult, error) {
+	r.contextChanges++
 	r.native = model.NativeConversationEvidence{Namespace: "fake", Reference: "native_rotated", ObservedAt: time.Now()}
 	return ports.ContextChangeResult{Disposition: ports.EffectAccepted, NativeConversation: &r.native, Evidence: r.evidence}, nil
 }
