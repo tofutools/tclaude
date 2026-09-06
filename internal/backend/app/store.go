@@ -11,6 +11,7 @@ import (
 // Store exposes application-owned persistence operations. Methods that admit
 // effects atomically create the Operation and reserve its exact target.
 type Store interface {
+	ConfigurationCatalogStore
 	CreateAgent(context.Context, model.Agent) error
 	UpdateAgent(context.Context, model.AgentID, model.Revision, string, model.DesiredConfiguration, model.AuthorityRequest, time.Time) (model.Agent, error)
 	Agent(context.Context, model.AgentID) (model.Agent, error)

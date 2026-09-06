@@ -43,6 +43,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize replacement backend schema: %w", err)
 	}
+	if _, err := s.db.ExecContext(ctx, configurationCatalogSchema); err != nil {
+		return err
+	}
 	for _, migration := range []struct{ table, column, definition string }{
 		{"groups", "owner_agent_id", "TEXT NOT NULL DEFAULT ''"},
 		{"executions", "attempt_generation", "INTEGER NOT NULL DEFAULT 1"},
