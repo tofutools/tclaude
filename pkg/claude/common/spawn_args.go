@@ -1,11 +1,22 @@
 package common
 
-import "github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+import (
+	"time"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+)
 
 const (
 	OpenCodeStateIsolationEnv = "TCLAUDE_OPENCODE_STATE_ISOLATION"
 	OpenCodeStatePrivateNote  = "OpenCode state isolation: per-agent-private XDG state; auth.json and mcp-auth.json are seeded once from ambient credentials, then refresh independently per agent"
 	OpenCodeStateLegacyNote   = "OpenCode state isolation: legacy shared XDG retained for this existing conversation; start a new agent for per-agent-private state."
+
+	// OpenCodeResumeProjectionTimeout is bounded below the managed pane gate's
+	// 30-second fallback. The byte protocol rides private inherited pipes; these
+	// values identify state, not authority.
+	OpenCodeResumeProjectionTimeout      = 25 * time.Second
+	OpenCodeResumeProjectionReadyByte    = byte(0x52)
+	OpenCodeResumeProjectionApprovedByte = byte(0x47)
 )
 
 // SpawnDirWriteProofPrefix is the fixed basename prefix for the short-lived

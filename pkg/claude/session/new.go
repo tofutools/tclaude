@@ -40,6 +40,12 @@ type NewParams struct {
 	ExecutionID       string `short:"E" long:"execution-id" optional:"true" help:"Internal: preallocated managed execution identity"`
 	ResumeOperationID string `short:"O" long:"resume-operation-id" optional:"true" help:"Internal: durable managed resume operation correlation"`
 	ResumeClaimFD     int    `short:"F" long:"resume-claim-fd" optional:"true" help:"Internal: inherited one-shot managed resume claim descriptor"`
+	// OpenCodeProjectionReadyFD and OpenCodeProjectionDecisionFD form a
+	// private two-way rendezvous with agentd. The child announces that its
+	// exact generation/pane binding is durable, then remains behind the launch
+	// gate until agentd projects the exact server boundary and approves release.
+	OpenCodeProjectionReadyFD    int `long:"opencode-projection-ready-fd" optional:"true" help:"Internal: inherited OpenCode boundary-ready descriptor"`
+	OpenCodeProjectionDecisionFD int `long:"opencode-projection-decision-fd" optional:"true" help:"Internal: inherited OpenCode boundary-decision descriptor"`
 
 	// ManagedLaunch marks agentd's forked session wrapper. The daemon already
 	// resolved profile precedence, so the child must use the exact passed shape.
@@ -431,6 +437,8 @@ func NewCmd() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("execution-id")
 	_ = cmd.Flags().MarkHidden("resume-operation-id")
 	_ = cmd.Flags().MarkHidden("resume-claim-fd")
+	_ = cmd.Flags().MarkHidden("opencode-projection-ready-fd")
+	_ = cmd.Flags().MarkHidden("opencode-projection-decision-fd")
 	_ = cmd.Flags().MarkHidden("allow-unenforced-sandbox")
 	_ = cmd.Flags().MarkHidden("sandbox-continuation")
 	_ = cmd.Flags().MarkHidden("cwd-write-proof")
@@ -566,6 +574,15 @@ func runNew(params *NewParams) error {
 	if params.ResumeClaimFD != 0 && !params.ManagedLaunch {
 		return errors.New("resume claim handoff is restricted to managed launch")
 	}
+	projectionReady := params.OpenCodeProjectionReadyFD != 0
+	projectionDecision := params.OpenCodeProjectionDecisionFD != 0
+	if projectionReady != projectionDecision {
+		return errors.New("OpenCode resume projection handoff requires both descriptors")
+	}
+	if projectionReady && (!params.ManagedLaunch || strings.TrimSpace(params.Resume) == "" ||
+		strings.TrimSpace(params.ResumeOperationID) == "") {
+		return errors.New("OpenCode resume projection handoff is restricted to managed resume")
+	}
 	if params.HelpContextFeatures {
 		harness.PrintContextFeatureCatalog(os.Stdout)
 		return nil
@@ -615,6 +632,9 @@ func runNew(params *NewParams) error {
 	h, err := harness.Resolve(params.Harness)
 	if err != nil {
 		return err
+	}
+	if projectionReady && h.Name != harness.OpenCodeName {
+		return errors.New("OpenCode resume projection handoff requires the OpenCode harness")
 	}
 
 	// Normalise + validate --effort up front so a typo errors cleanly
@@ -723,6 +743,14 @@ func runNew(params *NewParams) error {
 	outerLayer := sandboxImplementation.UsesTclaudeLayer()
 	stacked := sandboxImplementation.UsesNestedHarnessSandbox()
 	tclaudeLayerOnly := sandboxImplementation == sandboxpolicy.ImplementationTclaudeLayer
+	requiresOpenCodeProjection := h.Name == harness.OpenCodeName &&
+		strings.TrimSpace(params.ResumeOperationID) != "" && tclaudeLayerOnly
+	if requiresOpenCodeProjection != projectionReady {
+		if requiresOpenCodeProjection {
+			return errors.New("managed OpenCode tclaude-layer resume requires boundary projection handoff")
+		}
+		return errors.New("OpenCode boundary projection handoff is unsupported for this launch")
+	}
 	if stacked {
 		if err := ValidateStackedSandboxHarness(h); err != nil {
 			return err
@@ -2866,7 +2894,11 @@ func runNew(params *NewParams) error {
 		}
 	}
 	if !releasePerformed {
-		err = exitGuard.release()
+		err = releaseAfterOpenCodeResumeProjection(
+			params.OpenCodeProjectionReadyFD,
+			params.OpenCodeProjectionDecisionFD,
+			exitGuard.release,
+		)
 	}
 	if err != nil {
 		rollbackExecutionBoundary()
