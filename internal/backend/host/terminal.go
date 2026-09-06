@@ -46,6 +46,12 @@ type TerminalObservation struct {
 	Unknown  bool
 }
 
+// TerminalAttachment is the focused host-side view of an attached PTY.
+type TerminalAttachment interface {
+	io.ReadWriteCloser
+	Resize(context.Context, uint16, uint16) error
+}
+
 type TerminalHost struct {
 	Executable  string
 	PrivateRoot string
@@ -313,7 +319,7 @@ func (t *Terminal) SendLiteral(ctx context.Context, text string) error {
 	return nil
 }
 
-func (t *Terminal) Attach(ctx context.Context) (io.ReadWriteCloser, error) {
+func (t *Terminal) Attach(ctx context.Context) (TerminalAttachment, error) {
 	if observation := t.Observe(); observation.Unknown || observation.Exited {
 		return nil, fmt.Errorf("terminal is not attachable")
 	}
@@ -371,6 +377,18 @@ type terminalAttachment struct {
 
 func (a *terminalAttachment) Read(buffer []byte) (int, error)  { return a.file.Read(buffer) }
 func (a *terminalAttachment) Write(buffer []byte) (int, error) { return a.file.Write(buffer) }
+func (a *terminalAttachment) Resize(ctx context.Context, columns, rows uint16) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if columns == 0 || rows == 0 || columns > 1000 || rows > 1000 {
+		return fmt.Errorf("terminal size must be between 1 and 1000 columns and rows")
+	}
+	if err := pty.Setsize(a.file, &pty.Winsize{Cols: columns, Rows: rows}); err != nil {
+		return fmt.Errorf("resize terminal PTY: %w", err)
+	}
+	return nil
+}
 func (a *terminalAttachment) Close() error {
 	var closeErr error
 	a.once.Do(func() {
