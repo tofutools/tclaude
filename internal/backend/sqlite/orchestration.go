@@ -434,6 +434,191 @@ func (s *Store) SubmitDecision(ctx context.Context, submission model.DecisionSub
 	return s.Decision(ctx, submission.DecisionID)
 }
 
+func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTransition) (app.WorkRunRecord, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return app.WorkRunRecord{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if transition.Evidence != nil {
+		var priorID model.WorkEvidenceID
+		var priorRun model.WorkRunID
+		var priorNode model.WorkNodeID
+		var priorActivation model.WorkActivationID
+		var priorAttempt uint32
+		var priorIssuance model.WorkIssuanceID
+		err = tx.QueryRowContext(ctx, `SELECT id,work_run_id,node_id,activation_id,attempt,issuance_id FROM work_node_evidence WHERE request_scope=? AND request_id=?`, requestScope(transition.Evidence.Reporter), transition.Evidence.RequestID).Scan(&priorID, &priorRun, &priorNode, &priorActivation, &priorAttempt, &priorIssuance)
+		if err == nil {
+			ref := transition.Evidence.Attempt
+			if priorRun != ref.RunID || priorNode != ref.NodeID || priorActivation != ref.ActivationID || priorAttempt != ref.Attempt || priorIssuance != ref.IssuanceID {
+				return app.WorkRunRecord{}, app.ErrConflict
+			}
+			if err = tx.Commit(); err != nil {
+				return app.WorkRunRecord{}, err
+			}
+			return s.WorkRun(ctx, priorRun)
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return app.WorkRunRecord{}, err
+		}
+	}
+	var authorityDecision model.AuthorityDecision
+	if transition.Authority.Action != "" {
+		decision, authorizeErr := authorizeTx(ctx, tx, transition.Authority, transition.At)
+		if authorizeErr != nil {
+			return app.WorkRunRecord{}, authorizeErr
+		}
+		if !decision.Allowed {
+			return app.WorkRunRecord{}, app.ErrUnauthorized
+		}
+		authorityDecision = decision
+	}
+	var currentRevision model.Revision
+	var cancelled bool
+	var deadline sql.NullInt64
+	if err = tx.QueryRowContext(ctx, `SELECT revision,cancellation_requested,deadline FROM work_runs WHERE id=?`, transition.WorkRunID).Scan(&currentRevision, &cancelled, &deadline); err != nil {
+		return app.WorkRunRecord{}, classify(err)
+	}
+	if currentRevision != transition.ExpectedRevision || (cancelled && (transition.Operation != nil || transition.Execution != nil || len(transition.Activations) > 0)) {
+		return app.WorkRunRecord{}, app.ErrConflict
+	}
+	if deadline.Valid && transition.At.After(fromNanos(deadline.Int64)) && transition.RunState != model.WorkRunFailed && transition.RunState != model.WorkRunCancelled {
+		return app.WorkRunRecord{}, app.ErrConflict
+	}
+	if transition.Execution != nil {
+		if transition.Execution.AgentID != "" {
+			var agentRevision model.Revision
+			if err = tx.QueryRowContext(ctx, `SELECT revision FROM agents WHERE id=?`, transition.Execution.AgentID).Scan(&agentRevision); err != nil {
+				return app.WorkRunRecord{}, classify(err)
+			}
+			if transition.AgentExpected == 0 || agentRevision != transition.AgentExpected {
+				return app.WorkRunRecord{}, app.ErrConflict
+			}
+			if err = insertConversationAndAssociation(ctx, tx, transition.Execution.AgentID, transition.Execution.ConversationID, transition.At); err != nil {
+				return app.WorkRunRecord{}, err
+			}
+		}
+		if err = insertExecution(ctx, tx, *transition.Execution); err != nil {
+			return app.WorkRunRecord{}, err
+		}
+		if transition.Access != nil {
+			if err = insertExecutionAccess(ctx, tx, *transition.Access); err != nil {
+				return app.WorkRunRecord{}, err
+			}
+		}
+		if transition.Execution.AgentID != "" {
+			result, updateErr := tx.ExecContext(ctx, `UPDATE agents SET primary_execution_id=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, transition.Execution.ID, nanos(transition.At), transition.Execution.AgentID, transition.AgentExpected)
+			if updateErr != nil {
+				return app.WorkRunRecord{}, updateErr
+			}
+			if count, _ := result.RowsAffected(); count != 1 {
+				return app.WorkRunRecord{}, app.ErrConflict
+			}
+		}
+	}
+	if transition.Operation != nil {
+		if err = insertOperation(ctx, tx, *transition.Operation); err != nil {
+			return app.WorkRunRecord{}, err
+		}
+		if transition.Authority.Action != "" {
+			if err = insertOperationAuthority(ctx, tx, transition.Operation.ID, transition.Authority, authorityDecision); err != nil {
+				return app.WorkRunRecord{}, err
+			}
+		}
+		if transition.Execution == nil && transition.Authority.Action != "" {
+			if _, err = tx.ExecContext(ctx, `INSERT INTO effect_permits(operation_id) VALUES(?)`, transition.Operation.ID); err != nil {
+				return app.WorkRunRecord{}, classify(err)
+			}
+		}
+	}
+	if transition.WorkspaceUse != nil {
+		use := transition.WorkspaceUse
+		if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_uses(id,workspace_id,execution_id,work_run_id,created_at) VALUES(?,?,?,?,?)`, use.ID, use.WorkspaceID, use.ExecutionID, use.WorkRunID, nanos(use.CreatedAt)); err != nil {
+			return app.WorkRunRecord{}, classify(err)
+		}
+	}
+	for _, update := range transition.Updates {
+		var issuance model.WorkIssuanceID
+		var state model.WorkNodeAttemptState
+		err = tx.QueryRowContext(ctx, `SELECT issuance_id,state FROM work_node_attempts WHERE work_run_id=? AND node_id=? AND activation_id=? AND attempt=?`, update.Ref.RunID, update.Ref.NodeID, update.Ref.ActivationID, update.Ref.Attempt).Scan(&issuance, &state)
+		if err != nil {
+			return app.WorkRunRecord{}, classify(err)
+		}
+		if issuance != update.Ref.IssuanceID || terminalNodeAttempt(state) {
+			return app.WorkRunRecord{}, app.ErrConflict
+		}
+		var settled any
+		if terminalNodeAttempt(update.State) {
+			settled = nanos(transition.At)
+		}
+		newIssuance := update.Ref.IssuanceID
+		if update.NewIssuanceID != "" {
+			newIssuance = update.NewIssuanceID
+		}
+		result, updateErr := tx.ExecContext(ctx, `UPDATE work_node_attempts SET issuance_id=?,operation_id=CASE WHEN ?='' THEN operation_id ELSE ? END,execution_id=CASE WHEN ?='' THEN execution_id ELSE ? END,state=?,outcome=?,detail=?,updated_at=?,settled_at=? WHERE work_run_id=? AND node_id=? AND activation_id=? AND attempt=? AND issuance_id=?`, newIssuance, update.OperationID, update.OperationID, update.ExecutionID, update.ExecutionID, update.State, update.Outcome, update.Detail, nanos(transition.At), settled, update.Ref.RunID, update.Ref.NodeID, update.Ref.ActivationID, update.Ref.Attempt, update.Ref.IssuanceID)
+		if updateErr != nil {
+			return app.WorkRunRecord{}, updateErr
+		}
+		if count, _ := result.RowsAffected(); count != 1 {
+			return app.WorkRunRecord{}, app.ErrConflict
+		}
+	}
+	if transition.Evidence != nil {
+		evidence := transition.Evidence
+		reporter, _ := json.Marshal(evidence.Reporter)
+		var passed any
+		if evidence.Passed != nil {
+			passed = *evidence.Passed
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO work_node_evidence(id,request_scope,request_id,work_run_id,node_id,activation_id,attempt,issuance_id,reporter_json,kind,artifact_revision,passed,disposition,detail,recorded_at,revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, evidence.ID, requestScope(evidence.Reporter), evidence.RequestID, evidence.Attempt.RunID, evidence.Attempt.NodeID, evidence.Attempt.ActivationID, evidence.Attempt.Attempt, evidence.Attempt.IssuanceID, reporter, evidence.Kind, evidence.ArtifactRevision, passed, evidence.Disposition, evidence.Detail, nanos(evidence.RecordedAt), evidence.Revision)
+		if err != nil {
+			return app.WorkRunRecord{}, classify(err)
+		}
+	}
+	for _, attempt := range transition.Activations {
+		performer, _ := json.Marshal(attempt.Performer)
+		var retryAt, settledAt any
+		if attempt.RetryAt != nil {
+			retryAt = nanos(*attempt.RetryAt)
+		}
+		if attempt.SettledAt != nil {
+			settledAt = nanos(*attempt.SettledAt)
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO work_node_attempts(work_run_id,node_id,activation_id,attempt,issuance_id,state,performer_json,operation_id,execution_id,ready_at,retry_at,deadline,retry_budget,join_winner,decision_id,outcome,detail,created_at,updated_at,settled_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, attempt.Ref.RunID, attempt.Ref.NodeID, attempt.Ref.ActivationID, attempt.Ref.Attempt, attempt.Ref.IssuanceID, attempt.State, performer, attempt.OperationID, attempt.ExecutionID, nanos(attempt.ReadyAt), retryAt, nanos(attempt.Deadline), attempt.RetryBudget, attempt.JoinWinner, attempt.DecisionID, attempt.Outcome, attempt.Detail, nanos(attempt.CreatedAt), nanos(attempt.UpdatedAt), settledAt)
+		if err != nil {
+			return app.WorkRunRecord{}, classify(err)
+		}
+	}
+	for _, window := range transition.DecisionWindows {
+		if err = insertDecisionWindow(ctx, tx, window); err != nil {
+			return app.WorkRunRecord{}, err
+		}
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE work_runs SET state=?,control_state=?,outcome=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, transition.RunState, transition.ControlState, transition.RunOutcome, nanos(transition.At), transition.WorkRunID, transition.ExpectedRevision)
+	if err != nil {
+		return app.WorkRunRecord{}, err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return app.WorkRunRecord{}, app.ErrConflict
+	}
+	if err = bumpTx(ctx, tx); err != nil {
+		return app.WorkRunRecord{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return app.WorkRunRecord{}, err
+	}
+	return s.WorkRun(ctx, transition.WorkRunID)
+}
+
+func terminalNodeAttempt(state model.WorkNodeAttemptState) bool {
+	switch state {
+	case model.NodeAttemptSucceeded, model.NodeAttemptFailed, model.NodeAttemptWaived, model.NodeAttemptSuppressed:
+		return true
+	default:
+		return false
+	}
+}
+
 type decisionQuery interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
@@ -732,6 +917,61 @@ func (s *Store) OccurrencesForRule(ctx context.Context, id model.AutomationRuleI
 		records = append(records, record)
 	}
 	return records, nil
+}
+
+func (s *Store) PendingOccurrences(ctx context.Context) ([]app.OccurrenceRecord, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM automation_occurrences WHERE state IN (?,?,?,?) ORDER BY eligible_at,id`, model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceUncertain)
+	if err != nil {
+		return nil, err
+	}
+	var ids []model.OccurrenceID
+	for rows.Next() {
+		var id model.OccurrenceID
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err = rows.Close(); err != nil {
+		return nil, err
+	}
+	records := make([]app.OccurrenceRecord, 0, len(ids))
+	for _, id := range ids {
+		record, readErr := s.Occurrence(ctx, id)
+		if readErr != nil {
+			return nil, readErr
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+func (s *Store) UpdateOccurrence(ctx context.Context, id model.OccurrenceID, expected model.Revision, state model.OccurrenceState, operationID model.OperationID, workRunID model.WorkRunID, deploymentID model.DeploymentID, recipients []model.OccurrenceRecipient, at time.Time) (app.OccurrenceRecord, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return app.OccurrenceRecord{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `UPDATE automation_occurrences SET state=?,operation_id=?,work_run_id=?,deployment_id=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, state, operationID, workRunID, deploymentID, nanos(at), id, expected)
+	if err != nil {
+		return app.OccurrenceRecord{}, err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return app.OccurrenceRecord{}, app.ErrConflict
+	}
+	for _, recipient := range recipients {
+		if _, err = tx.ExecContext(ctx, `UPDATE automation_occurrence_recipients SET disposition=?,operation_id=?,detail=? WHERE occurrence_id=? AND agent_id=?`, recipient.Disposition, recipient.OperationID, recipient.Detail, id, recipient.AgentID); err != nil {
+			return app.OccurrenceRecord{}, err
+		}
+	}
+	if err = bumpTx(ctx, tx); err != nil {
+		return app.OccurrenceRecord{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return app.OccurrenceRecord{}, err
+	}
+	return s.Occurrence(ctx, id)
 }
 
 func nullableJSON(value any, encoded []byte) any {

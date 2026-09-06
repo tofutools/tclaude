@@ -466,6 +466,33 @@ func (s *Store) ActiveWorkspaceUses(ctx context.Context, id model.WorkspaceID) (
 	return out, rows.Err()
 }
 
+func (s *Store) WorkspaceUseForExecution(ctx context.Context, executionID model.ExecutionID) (model.WorkspaceUse, error) {
+	var use model.WorkspaceUse
+	var released sql.NullInt64
+	var created int64
+	err := s.db.QueryRowContext(ctx, `SELECT id,workspace_id,execution_id,work_run_id,released_at,created_at FROM workspace_uses WHERE execution_id=?`, executionID).Scan(&use.ID, &use.WorkspaceID, &use.ExecutionID, &use.WorkRunID, &released, &created)
+	if err != nil {
+		return use, classify(err)
+	}
+	use.CreatedAt = fromNanos(created)
+	if released.Valid {
+		at := fromNanos(released.Int64)
+		use.ReleasedAt = &at
+	}
+	return use, nil
+}
+
+func (s *Store) ReleaseWorkspaceUse(ctx context.Context, id model.WorkspaceUseID, executionID model.ExecutionID, at time.Time) error {
+	result, err := s.db.ExecContext(ctx, `UPDATE workspace_uses SET released_at=? WHERE id=? AND execution_id=? AND released_at IS NULL`, nanos(at), id, executionID)
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return app.ErrConflict
+	}
+	return s.bump(ctx)
+}
+
 func (s *Store) UpdateWorkspaceObservation(ctx context.Context, id model.WorkspaceID, expected model.Revision, state model.WorkspaceState, observation model.WorkspaceObservation, resource model.WorkspaceResourceEvidence, at time.Time) (model.Workspace, error) {
 	encoded, _ := json.Marshal(observation)
 	result, err := s.db.ExecContext(ctx, `UPDATE workspaces SET state=?,observation_json=?,resource_owner=?,resource_version=?,resource_payload=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, state, encoded, resource.Owner, resource.Version, resource.Payload, nanos(at), id, expected)
@@ -700,6 +727,34 @@ func (s *Store) WorkRun(ctx context.Context, id model.WorkRunID) (app.WorkRunRec
 	if err = nrows.Close(); err != nil {
 		return record, err
 	}
+	nodeEvidenceRows, err := s.db.QueryContext(ctx, `SELECT id,request_id,node_id,activation_id,attempt,issuance_id,reporter_json,kind,artifact_revision,passed,disposition,detail,recorded_at,revision FROM work_node_evidence WHERE work_run_id=? ORDER BY recorded_at,id`, id)
+	if err != nil {
+		return record, err
+	}
+	for nodeEvidenceRows.Next() {
+		var evidence model.WorkNodeEvidence
+		var reporter []byte
+		var passed sql.NullBool
+		var recordedAt int64
+		evidence.Attempt.RunID = id
+		if err = nodeEvidenceRows.Scan(&evidence.ID, &evidence.RequestID, &evidence.Attempt.NodeID, &evidence.Attempt.ActivationID, &evidence.Attempt.Attempt, &evidence.Attempt.IssuanceID, &reporter, &evidence.Kind, &evidence.ArtifactRevision, &passed, &evidence.Disposition, &evidence.Detail, &recordedAt, &evidence.Revision); err != nil {
+			nodeEvidenceRows.Close()
+			return record, err
+		}
+		if err = json.Unmarshal(reporter, &evidence.Reporter); err != nil {
+			nodeEvidenceRows.Close()
+			return record, err
+		}
+		if passed.Valid {
+			value := passed.Bool
+			evidence.Passed = &value
+		}
+		evidence.RecordedAt = fromNanos(recordedAt)
+		record.NodeEvidence = append(record.NodeEvidence, evidence)
+	}
+	if err = nodeEvidenceRows.Close(); err != nil {
+		return record, err
+	}
 	erows, err := s.db.QueryContext(ctx, `SELECT id,request_id,work_run_id,step,attempt,kind,reporter_json,artifact_revision,passed,detail,recorded_at,revision FROM work_evidence WHERE work_run_id=? ORDER BY recorded_at`, id)
 	if err != nil {
 		return record, err
@@ -769,7 +824,7 @@ func (s *Store) WorkRunByRequest(ctx context.Context, principal model.Principal,
 }
 
 func (s *Store) PendingWorkRuns(ctx context.Context) ([]app.WorkRunRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM work_runs WHERE state IN (?,?,?) ORDER BY created_at`, model.WorkRunPending, model.WorkRunRunning, model.WorkRunUncertain)
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM work_runs WHERE state IN (?,?,?) OR (state=? AND control_state=?) ORDER BY created_at`, model.WorkRunPending, model.WorkRunRunning, model.WorkRunUncertain, model.WorkRunCancelled, model.WorkControlDraining)
 	if err != nil {
 		return nil, err
 	}
@@ -1012,12 +1067,26 @@ func (s *Store) CancelWork(ctx context.Context, id model.WorkRunID, expected mod
 			return app.WorkRunRecord{}, classify(err)
 		}
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE work_runs SET state=?,cancellation_requested=1,cancellation_reason=?,cancel_request_scope=?,cancel_request_id=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND state IN (?,?,?,?)`, nextState, reason, requestScope(authority.Principal), requestID, nanos(at), id, expected, model.WorkRunPending, model.WorkRunRunning, model.WorkRunWaiting, model.WorkRunUncertain)
+	controlState := model.WorkControlSettled
+	var activeGraphAttempts int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM work_node_attempts WHERE work_run_id=? AND state IN (?,?,?)`, id, model.NodeAttemptAdmitted, model.NodeAttemptRunning, model.NodeAttemptUncertain).Scan(&activeGraphAttempts); err != nil {
+		return app.WorkRunRecord{}, err
+	}
+	if activeGraphAttempts > 0 || priorState == model.WorkRunUncertain {
+		controlState = model.WorkControlDraining
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE work_runs SET state=?,control_state=?,outcome=?,cancellation_requested=1,cancellation_reason=?,cancel_request_scope=?,cancel_request_id=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND state IN (?,?,?,?)`, nextState, controlState, model.WorkOutcomeCancelled, reason, requestScope(authority.Principal), requestID, nanos(at), id, expected, model.WorkRunPending, model.WorkRunRunning, model.WorkRunWaiting, model.WorkRunUncertain)
 	if err != nil {
 		return app.WorkRunRecord{}, err
 	}
 	if n, _ := result.RowsAffected(); n != 1 {
 		return app.WorkRunRecord{}, app.ErrConflict
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE work_node_attempts SET state=?,outcome=?,detail=?,updated_at=?,settled_at=? WHERE work_run_id=? AND state IN (?,?,?,?)`, model.NodeAttemptSuppressed, model.WorkOutcomeCancelled, "suppressed by cancellation", nanos(at), nanos(at), id, model.NodeAttemptReady, model.NodeAttemptRetryWait, model.NodeAttemptBlocked, model.NodeAttemptWaiting); err != nil {
+		return app.WorkRunRecord{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE decision_windows SET state=?,revision=revision+1,updated_at=? WHERE work_run_id=? AND state=?`, model.DecisionExpired, nanos(at), id, model.DecisionOpen); err != nil {
+		return app.WorkRunRecord{}, err
 	}
 	if priorState != model.WorkRunUncertain {
 		if _, err = tx.ExecContext(ctx, `UPDATE workspace_uses SET released_at=? WHERE work_run_id=? AND released_at IS NULL AND (execution_id='' OR EXISTS(SELECT 1 FROM executions e WHERE e.id=workspace_uses.execution_id AND e.state IN (?,?)))`, nanos(at), id, model.ExecutionExited, model.ExecutionFailed); err != nil {

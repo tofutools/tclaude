@@ -291,6 +291,7 @@ type ProgramEffectRequirement struct {
 }
 
 type WorkScope struct {
+	WorkspaceID  WorkspaceID
 	GroupID      GroupID
 	DeploymentID DeploymentID
 	RuleID       AutomationRuleID

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -204,6 +205,15 @@ func (s *Service) SaveProgramProfile(ctx context.Context, req SaveProgramProfile
 	if req.Sandbox == "" || len(req.EffectAuthority) == 0 {
 		return ProgramProfileResult{}, fail(ErrInvalid, "program sandbox and effect authority are required")
 	}
+	executeRequirements := 0
+	for _, requirement := range req.EffectAuthority {
+		if requirement.Action == model.ActionExecuteProgram && requirement.Resource.Kind == model.ResourceWorkspace {
+			executeRequirements++
+		}
+	}
+	if executeRequirements != 1 {
+		return ProgramProfileResult{}, fail(ErrInvalid, "program profile requires exactly one workspace execute authority")
+	}
 	if req.Context.Principal.Kind != model.PrincipalOperator {
 		if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionManageProgramProfile, Resource: model.ResourceSelector{Kind: model.ResourceProgramProfile, ProgramProfileID: req.ID}}, s.now().UTC()); err != nil {
 			return ProgramProfileResult{}, err
@@ -283,7 +293,7 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 	if req.Start.Deadline.IsZero() || !req.Start.Deadline.After(s.now().UTC()) {
 		return WorkRunResult{}, fail(ErrInvalid, "a future work deadline is required")
 	}
-	if err := s.validateProgramBindings(ctx, graph, req.Start.AuthorizedProgramProfiles, req.Context.Principal); err != nil {
+	if err := s.validateProgramBindings(ctx, graph, req.Start.AuthorizedProgramProfiles, req.Context.Principal, req.Start.Scope); err != nil {
 		return WorkRunResult{}, err
 	}
 	authority := req.Context.Principal.Authority
@@ -291,7 +301,11 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 		authority = model.AuthoritySubject{Kind: model.AuthorityOperator}
 	}
 	if req.Context.Principal.Kind != model.PrincipalOperator {
-		if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionStartWork, Resource: model.ResourceSelector{Kind: model.ResourceWorkRun, WorkRunID: req.ID}}, s.now().UTC()); err != nil {
+		resource := model.ResourceSelector{Kind: model.ResourceWorkRun, WorkRunID: req.ID}
+		if req.Context.Principal.Kind == model.PrincipalAutomation && req.Start.Scope.RuleID != "" {
+			resource = model.ResourceSelector{Kind: model.ResourceAutomationRule, AutomationRuleID: req.Start.Scope.RuleID}
+		}
+		if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionStartWork, Resource: resource}, s.now().UTC()); err != nil {
 			return WorkRunResult{}, err
 		}
 	}
@@ -301,7 +315,230 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 	attempt, windows := s.initialActivation(req.ID, req.Start.Scope, entry, now, run.Deadline)
 	run.NodeAttempts = []model.WorkNodeAttempt{attempt}
 	record, _, err := s.store.CreateGraphWorkRun(ctx, run, windows)
+	if err == nil && (entry.Kind == model.WorkNodeFork || entry.Kind == model.WorkNodeJoin || entry.Kind == model.WorkNodeEnd) {
+		transition := s.graphOutcomeTransition(record, attempt, model.WorkOutcomeVerified, "entry transition")
+		record, err = s.store.ApplyGraphTransition(ctx, transition)
+	}
 	return WorkRunResult(record), err
+}
+
+func (s *Service) RecordNodeEvidence(ctx context.Context, req RecordNodeEvidenceRequest) (WorkRunResult, error) {
+	if err := validateEffectContext(req.Context); err != nil {
+		return WorkRunResult{}, err
+	}
+	if req.ExpectedRunRevision == 0 || req.Attempt.RunID == "" || req.Attempt.NodeID == "" || req.Attempt.ActivationID == "" || req.Attempt.Attempt == 0 || req.Attempt.IssuanceID == "" {
+		return WorkRunResult{}, fail(ErrInvalid, "exact issued attempt and expected run revision are required")
+	}
+	record, err := s.store.WorkRun(ctx, req.Attempt.RunID)
+	if err != nil {
+		return WorkRunResult{}, err
+	}
+	if record.Run.Revision != req.ExpectedRunRevision || record.Run.Graph == nil {
+		return WorkRunResult{}, ErrConflict
+	}
+	attempt, ok := graphAttempt(record.Run, req.Attempt)
+	if !ok || attempt.State == model.NodeAttemptSucceeded || attempt.State == model.NodeAttemptFailed || attempt.State == model.NodeAttemptWaived || attempt.State == model.NodeAttemptSuppressed {
+		return WorkRunResult{}, ErrConflict
+	}
+	outcome := req.Disposition
+	if outcome == model.WorkOutcomeNone {
+		if req.Passed != nil && !*req.Passed {
+			outcome = model.WorkOutcomeRejected
+		} else {
+			outcome = model.WorkOutcomeVerified
+		}
+	}
+	node := graphNode(*record.Run.Graph, req.Attempt.NodeID)
+	if outcome == model.WorkOutcomeWaived && !node.Waivable {
+		return WorkRunResult{}, fail(ErrUnauthorized, "node %s does not permit waiver", node.ID)
+	}
+	switch outcome {
+	case model.WorkOutcomeVerified, model.WorkOutcomeWaived, model.WorkOutcomeRejected, model.WorkOutcomeUnknown:
+	default:
+		return WorkRunResult{}, fail(ErrInvalid, "evidence disposition is unsupported")
+	}
+	evidence := model.WorkNodeEvidence{ID: model.WorkEvidenceID(s.newID("evidence_")), RequestID: req.Context.RequestID, Attempt: req.Attempt, Reporter: req.Context.Principal, Kind: req.Kind, ArtifactRevision: req.ArtifactRevision, Passed: req.Passed, Disposition: outcome, Detail: req.Detail, RecordedAt: s.now().UTC(), Revision: 1}
+	authority := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionRecordWorkEvidence, Resource: model.ResourceSelector{Kind: model.ResourceWorkRun, WorkRunID: req.Attempt.RunID}}
+	transition := s.graphOutcomeTransition(record, attempt, outcome, req.Detail)
+	transition.Authority, transition.Evidence = authority, &evidence
+	updated, err := s.store.ApplyGraphTransition(ctx, transition)
+	return WorkRunResult(updated), err
+}
+
+func (s *Service) graphOutcomeTransition(record WorkRunRecord, current model.WorkNodeAttempt, outcome model.WorkOutcome, detail string) GraphTransition {
+	now := s.now().UTC()
+	transition := GraphTransition{WorkRunID: record.Run.ID, ExpectedRevision: record.Run.Revision, RunState: model.WorkRunRunning, ControlState: model.WorkControlActive, At: now}
+	state := model.NodeAttemptSucceeded
+	switch outcome {
+	case model.WorkOutcomeWaived:
+		state = model.NodeAttemptWaived
+	case model.WorkOutcomeRejected:
+		state = model.NodeAttemptFailed
+	case model.WorkOutcomeUnknown:
+		state = model.NodeAttemptUncertain
+	}
+	transition.Updates = append(transition.Updates, GraphAttemptUpdate{Ref: current.Ref, State: state, Outcome: outcome, Detail: detail})
+	if record.Run.CancellationRequested {
+		for _, attempt := range record.Run.NodeAttempts {
+			if attempt.Ref == current.Ref {
+				continue
+			}
+			if attempt.State == model.NodeAttemptReady || attempt.State == model.NodeAttemptRetryWait || attempt.State == model.NodeAttemptBlocked || attempt.State == model.NodeAttemptWaiting {
+				transition.Updates = append(transition.Updates, GraphAttemptUpdate{Ref: attempt.Ref, State: model.NodeAttemptSuppressed, Outcome: model.WorkOutcomeCancelled, Detail: "suppressed by cancellation"})
+			}
+		}
+		if outcome == model.WorkOutcomeUnknown {
+			transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunUncertain, model.WorkControlDraining, model.WorkOutcomeUnknown
+		} else {
+			transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunCancelled, model.WorkControlSettled, model.WorkOutcomeCancelled
+			for _, attempt := range record.Run.NodeAttempts {
+				if attempt.Ref != current.Ref && (attempt.State == model.NodeAttemptAdmitted || attempt.State == model.NodeAttemptRunning || attempt.State == model.NodeAttemptUncertain) {
+					transition.ControlState = model.WorkControlDraining
+				}
+			}
+		}
+		return transition
+	}
+	if outcome == model.WorkOutcomeUnknown {
+		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunUncertain, model.WorkControlDraining, model.WorkOutcomeUnknown
+		return transition
+	}
+	if outcome == model.WorkOutcomeRejected {
+		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunFailed, model.WorkControlDraining, model.WorkOutcomeRejected
+		for _, attempt := range record.Run.NodeAttempts {
+			if attempt.Ref == current.Ref {
+				continue
+			}
+			if attempt.State == model.NodeAttemptReady || attempt.State == model.NodeAttemptRetryWait {
+				transition.Updates = append(transition.Updates, GraphAttemptUpdate{Ref: attempt.Ref, State: model.NodeAttemptSuppressed, Outcome: model.WorkOutcomeCancelled, Detail: "suppressed after branch failure"})
+			}
+		}
+		return transition
+	}
+	virtual := append([]model.WorkNodeAttempt(nil), record.Run.NodeAttempts...)
+	for i := range virtual {
+		if virtual[i].Ref == current.Ref {
+			virtual[i].State, virtual[i].Outcome = state, outcome
+		}
+	}
+	graph := *record.Run.Graph
+	var activate func(model.WorkNodeID, model.WorkActivationID)
+	activate = func(nodeID model.WorkNodeID, winner model.WorkActivationID) {
+		node := graphNode(graph, nodeID)
+		if node.ID == "" {
+			return
+		}
+		if node.Kind == model.WorkNodeJoin {
+			for _, attempt := range append(virtual, transition.Activations...) {
+				if attempt.Ref.NodeID == nodeID {
+					return
+				}
+			}
+			if node.Join.Mode == model.JoinAll {
+				for _, incoming := range incomingNodes(graph, nodeID) {
+					if !nodeConcludedSuccessfully(append(virtual, transition.Activations...), incoming) {
+						return
+					}
+				}
+			}
+		}
+		attempt, windows := s.initialActivation(record.Run.ID, record.Run.Scope, node, now, record.Run.Deadline)
+		if node.Kind == model.WorkNodeFork || node.Kind == model.WorkNodeJoin || node.Kind == model.WorkNodeEnd {
+			attempt.State, attempt.Outcome = model.NodeAttemptSucceeded, model.WorkOutcomeVerified
+			attempt.JoinWinner = winner
+			settled := now
+			attempt.SettledAt = &settled
+		}
+		transition.Activations = append(transition.Activations, attempt)
+		transition.DecisionWindows = append(transition.DecisionWindows, windows...)
+		if node.Kind == model.WorkNodeFork || node.Kind == model.WorkNodeJoin {
+			for _, next := range outgoingNodes(graph, nodeID) {
+				activate(next, attempt.Ref.ActivationID)
+			}
+		}
+	}
+	for _, next := range outgoingNodes(graph, current.Ref.NodeID) {
+		activate(next, current.Ref.ActivationID)
+	}
+	combined := append(virtual, transition.Activations...)
+	hasEnd, hasActive, hasUncertain, hasFailure := false, false, false, false
+	for _, attempt := range combined {
+		node := graphNode(graph, attempt.Ref.NodeID)
+		if node.Kind == model.WorkNodeEnd && attempt.State == model.NodeAttemptSucceeded {
+			hasEnd = true
+		}
+		switch attempt.State {
+		case model.NodeAttemptReady, model.NodeAttemptAdmitted, model.NodeAttemptRunning, model.NodeAttemptWaiting, model.NodeAttemptRetryWait, model.NodeAttemptBlocked:
+			hasActive = true
+		case model.NodeAttemptUncertain:
+			hasUncertain = true
+		case model.NodeAttemptFailed:
+			hasFailure = true
+		}
+	}
+	if hasFailure {
+		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunFailed, model.WorkControlDraining, model.WorkOutcomeRejected
+	} else if hasUncertain {
+		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunUncertain, model.WorkControlDraining, model.WorkOutcomeUnknown
+	} else if hasEnd && !hasActive {
+		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunSucceeded, model.WorkControlSettled, model.WorkOutcomeVerified
+	} else if hasEnd {
+		transition.ControlState = model.WorkControlDraining
+	} else if onlyWaiting(combined) {
+		transition.RunState, transition.ControlState = model.WorkRunWaiting, model.WorkControlWaiting
+	}
+	return transition
+}
+
+func graphAttempt(run model.WorkRun, ref model.WorkAttemptRef) (model.WorkNodeAttempt, bool) {
+	for _, attempt := range run.NodeAttempts {
+		if attempt.Ref == ref {
+			return attempt, true
+		}
+	}
+	return model.WorkNodeAttempt{}, false
+}
+
+func outgoingNodes(graph model.WorkGraph, id model.WorkNodeID) []model.WorkNodeID {
+	var result []model.WorkNodeID
+	for _, edge := range graph.Edges {
+		if edge.From == id {
+			result = append(result, edge.To)
+		}
+	}
+	return result
+}
+
+func incomingNodes(graph model.WorkGraph, id model.WorkNodeID) []model.WorkNodeID {
+	var result []model.WorkNodeID
+	for _, edge := range graph.Edges {
+		if edge.To == id {
+			result = append(result, edge.From)
+		}
+	}
+	return result
+}
+
+func nodeConcludedSuccessfully(attempts []model.WorkNodeAttempt, nodeID model.WorkNodeID) bool {
+	for _, attempt := range attempts {
+		if attempt.Ref.NodeID == nodeID && (attempt.State == model.NodeAttemptSucceeded || attempt.State == model.NodeAttemptWaived) {
+			return true
+		}
+	}
+	return false
+}
+
+func onlyWaiting(attempts []model.WorkNodeAttempt) bool {
+	found := false
+	for _, attempt := range attempts {
+		switch attempt.State {
+		case model.NodeAttemptWaiting, model.NodeAttemptBlocked, model.NodeAttemptRetryWait:
+			found = true
+		case model.NodeAttemptReady, model.NodeAttemptAdmitted, model.NodeAttemptRunning:
+			return false
+		}
+	}
+	return found
 }
 
 func (s *Service) initialActivation(runID model.WorkRunID, scope model.WorkScope, node model.WorkNode, now, deadline time.Time) (model.WorkNodeAttempt, []model.DecisionWindow) {
@@ -395,10 +632,46 @@ func (s *Service) SubmitDecision(ctx context.Context, req SubmitDecisionRequest)
 	submission := model.DecisionSubmission{RequestID: req.Context.RequestID, DecisionID: req.DecisionID, ExpectedWindowRevision: req.ExpectedWindowRevision, Answer: req.Answer, Reason: req.Reason, EvidenceRefs: append([]model.WorkEvidenceID(nil), req.EvidenceRefs...), Actor: req.Context.Principal, SubmittedAt: s.now().UTC()}
 	authority := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionDecideWork, Resource: model.ResourceSelector{Kind: model.ResourceWorkRun, WorkRunID: window.Window.Attempt.RunID}}
 	record, err := s.store.SubmitDecision(ctx, submission, authority, s.now().UTC())
-	return DecisionResult(record), err
+	if err != nil {
+		return DecisionResult{}, err
+	}
+	run, err := s.store.WorkRun(ctx, record.Window.Attempt.RunID)
+	if err != nil {
+		return DecisionResult{}, err
+	}
+	attempt, ok := graphAttempt(run.Run, record.Window.Attempt)
+	if !ok {
+		return DecisionResult{}, ErrConflict
+	}
+	if attempt.State == model.NodeAttemptSucceeded || attempt.State == model.NodeAttemptFailed || attempt.State == model.NodeAttemptWaived {
+		return DecisionResult(record), nil
+	}
+	outcome := model.WorkOutcomeVerified
+	switch submission.Answer {
+	case "reject":
+		outcome = model.WorkOutcomeRejected
+	case "cancel":
+		outcome = model.WorkOutcomeCancelled
+	case "waive":
+		node := graphNode(*run.Run.Graph, attempt.Ref.NodeID)
+		if !node.Waivable {
+			return DecisionResult{}, fail(ErrUnauthorized, "node %s does not permit waiver", node.ID)
+		}
+		outcome = model.WorkOutcomeWaived
+	}
+	transition := s.graphOutcomeTransition(run, attempt, outcome, submission.Reason)
+	transition.Authority, transition.Decision = authority, &submission
+	if outcome == model.WorkOutcomeCancelled {
+		transition.Updates[0].State = model.NodeAttemptFailed
+		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunCancelled, model.WorkControlDraining, model.WorkOutcomeCancelled
+	}
+	if _, err = s.store.ApplyGraphTransition(ctx, transition); err != nil && !errors.Is(err, ErrConflict) {
+		return DecisionResult{}, err
+	}
+	return DecisionResult(record), nil
 }
 
-func (s *Service) validateProgramBindings(ctx context.Context, graph model.WorkGraph, authorized []model.ProgramProfileRef, principal model.Principal) error {
+func (s *Service) validateProgramBindings(ctx context.Context, graph model.WorkGraph, authorized []model.ProgramProfileRef, principal model.Principal, scope model.WorkScope) error {
 	allowed := make(map[model.ProgramProfileRevisionID]model.ProgramProfileRef, len(authorized))
 	revisions := make(map[model.ProgramProfileRevisionID]model.ProgramProfileRevision, len(authorized))
 	for _, ref := range authorized {
@@ -421,7 +694,9 @@ func (s *Service) validateProgramBindings(ctx context.Context, graph model.WorkG
 		}
 		if principal.Kind != model.PrincipalOperator {
 			for _, requirement := range revisions[node.Performer.Program.Profile.RevisionID].EffectAuthority {
-				if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: principal, Action: requirement.Action, Resource: requirement.Resource, RequestedConfiguration: requirement.RequestedConfiguration}, s.now().UTC()); err != nil {
+				bound := bindProgramAuthority(requirement, scope.WorkspaceID)
+				bound.Principal = principal
+				if err := s.requireAuthority(ctx, bound, s.now().UTC()); err != nil {
 					return err
 				}
 			}
@@ -530,6 +805,75 @@ func (s *Service) RunRuleNow(ctx context.Context, req RunRuleNowRequest) (Occurr
 	occurrence := model.AutomationOccurrence{ID: req.OccurrenceID, RuleID: req.RuleID, RuleRevisionID: record.Head.ID, SourceOccurrenceKey: "manual:" + req.SourceOccurrenceKey, RequestID: req.Context.RequestID, Requester: req.Context.Principal, ScheduledAt: now, EligibleAt: now, ExpiresAt: expires, State: model.OccurrencePending, Recipients: recipients, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	created, _, err := s.store.MaterializeOccurrence(ctx, occurrence, req.ExpectedRuleRevision)
 	return OccurrenceResult{Occurrence: created.Occurrence}, err
+}
+
+// ObserveAutomationFact accepts application-trusted normalized facts. Each
+// matching rule pins its current immutable revision and uses the native event
+// identity as the durable occurrence key, so redelivery and restart cannot
+// manufacture a second action.
+func (s *Service) ObserveAutomationFact(ctx context.Context, req ObserveAutomationFactRequest) ([]OccurrenceResult, error) {
+	if err := requireOperator(req.Principal); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(req.Fact.Source) == "" || strings.TrimSpace(req.Fact.EventID) == "" || strings.TrimSpace(req.Fact.Kind) == "" || req.Fact.OccurredAt.IsZero() {
+		return nil, fail(ErrInvalid, "fact source, event id, kind and occurrence time are required")
+	}
+	now := s.now().UTC()
+	rules, err := s.store.ListAutomationRules(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	var results []OccurrenceResult
+	for _, rule := range rules {
+		if !rule.Enabled {
+			continue
+		}
+		revision, readErr := s.store.AutomationRuleRevision(ctx, rule.HeadRevisionID)
+		if readErr != nil {
+			return nil, readErr
+		}
+		condition := revision.Condition.Trigger
+		if revision.Condition.Kind != model.AutomationTrigger || condition == nil || condition.FactKind != req.Fact.Kind {
+			continue
+		}
+		if now.Sub(req.Fact.OccurredAt.UTC()) > condition.Freshness || req.Fact.OccurredAt.After(now.Add(time.Minute)) {
+			continue
+		}
+		existing, listErr := s.store.OccurrencesForRule(ctx, rule.ID)
+		if listErr != nil {
+			return nil, listErr
+		}
+		if revision.Policy.Overlap != model.OverlapAllow && hasActiveOccurrence(existing) {
+			continue
+		}
+		if condition.Cooldown > 0 {
+			var mostRecent time.Time
+			for _, prior := range existing {
+				if prior.Occurrence.EventAt.After(mostRecent) {
+					mostRecent = prior.Occurrence.EventAt
+				}
+			}
+			if !mostRecent.IsZero() && req.Fact.OccurredAt.Sub(mostRecent) < condition.Cooldown {
+				continue
+			}
+		}
+		key := "trigger:" + req.Fact.Source + ":" + req.Fact.EventID
+		occurrenceID := model.OccurrenceID(deterministicOrchestrationID("occurrence_", string(revision.ID)+":"+key))
+		requestID := model.RequestID(deterministicOrchestrationID("request_", string(revision.ID)+":"+key))
+		requester := model.AutomationPrincipal(string(occurrenceID), revision.Owner, revision.Delegation)
+		recipients, recipientErr := s.automationRecipients(ctx, revision.Action)
+		if recipientErr != nil {
+			return nil, recipientErr
+		}
+		eligible := now.Add(condition.Dwell + condition.Debounce)
+		occurrence := model.AutomationOccurrence{ID: occurrenceID, RuleID: rule.ID, RuleRevisionID: revision.ID, SourceOccurrenceKey: key, RequestID: requestID, Requester: requester, EventAt: req.Fact.OccurredAt.UTC(), EligibleAt: eligible, ExpiresAt: eligible.Add(revision.Policy.ExpiresAfter), State: model.OccurrencePending, Recipients: recipients, Revision: 1, CreatedAt: now, UpdatedAt: now}
+		created, _, materializeErr := s.store.MaterializeOccurrence(ctx, occurrence, rule.Revision)
+		if materializeErr != nil {
+			return nil, materializeErr
+		}
+		results = append(results, OccurrenceResult{Occurrence: created.Occurrence})
+	}
+	return results, nil
 }
 
 func (s *Service) ListOccurrences(ctx context.Context, req ListOccurrencesRequest) ([]OccurrenceResult, error) {
