@@ -127,10 +127,22 @@ type RenewExecutionAccessRequest struct {
 	ExpectedRevision model.Revision
 }
 
+type ExecutionAccessRenewalFailure struct {
+	ExecutionID model.ExecutionID
+	Code        string
+	Detail      string
+}
+
+type ExecutionAccessRenewalReport struct {
+	Renewed []model.ExecutionAccessBinding
+	Failed  []ExecutionAccessRenewalFailure
+}
+
 // ExecutionAccessLifecycle is a trusted composition port for the host renewal
 // worker. It is not registered on the public agent API.
 type ExecutionAccessLifecycle interface {
 	RenewExecutionAccess(context.Context, RenewExecutionAccessRequest) (ExecutionAccessStatusResult, error)
+	SweepExecutionAccess(context.Context) ExecutionAccessRenewalReport
 }
 
 type AuthorityExplanationRequest struct {

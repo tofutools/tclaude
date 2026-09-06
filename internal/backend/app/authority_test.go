@@ -105,6 +105,27 @@ func TestLiveGrantRevocationBlocksEffectAdmission(t *testing.T) {
 	require.ErrorIs(t, err, app.ErrUnauthorized)
 }
 
+func TestExecutionAccessSweepOwnsLeaseEligibility(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "sweep.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	provider := newAccessProvider()
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	service := testAccessService(store, provider).WithClock(func() time.Time { return now })
+	agent := createAgent(t, ctx, service, model.OperatorPrincipal(), "agent_sweep")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(model.OperatorPrincipal(), "launch_sweep"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	require.Empty(t, service.SweepExecutionAccess(ctx).Renewed, "fresh access is outside the application renewal window")
+	now = now.Add(17 * time.Hour)
+	report := service.SweepExecutionAccess(ctx)
+	require.Empty(t, report.Failed)
+	require.Len(t, report.Renewed, 1)
+	require.Equal(t, launched.Execution.ID, report.Renewed[0].ExecutionID)
+	require.Equal(t, model.AccessGeneration(2), report.Renewed[0].Generation)
+	require.Empty(t, service.SweepExecutionAccess(ctx).Renewed, "a rotated lease is no longer due")
+}
+
 func configurationBounds(desired model.DesiredConfiguration) model.ConfigurationBounds {
 	return model.ConfigurationBounds{Harnesses: []string{desired.Harness}, Models: []string{desired.Model}, WorkingDirectoryRoots: []string{desired.WorkingDirectory}, ApprovalModes: []model.ApprovalMode{desired.Approval}, SandboxModes: []model.SandboxMode{desired.Sandbox}}
 }
