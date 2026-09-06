@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
 )
@@ -33,7 +32,7 @@ func TestClaudeHistoryDiscoverReadAndRevisionGuard(t *testing.T) {
 	require.Equal(t, "Regression hunt", source.Title)
 	require.Equal(t, "/workspace", source.WorkspaceHint)
 	require.Equal(t, model.HistoryContent, source.Availability)
-	require.Equal(t, ports.HistoryPrecisionHead, reader.Capabilities().ForkPrecision)
+	require.Equal(t, ports.HistoryPrecisionNone, reader.Capabilities().ForkPrecision)
 
 	selection := ports.HistorySourceSelection{
 		Provider: Name, Native: source.Native, SourceToken: source.SourceToken,
@@ -56,7 +55,7 @@ func TestClaudeHistoryDiscoverReadAndRevisionGuard(t *testing.T) {
 	require.ErrorContains(t, err, "source revision changed")
 }
 
-func TestClaudeForkUsesNativeHeadAndNewSessionObservation(t *testing.T) {
+func TestClaudeExactForkIsUnsupportedForMutableNativeHead(t *testing.T) {
 	root := t.TempDir()
 	id := "43e874eb-4827-4b22-b1b8-376a5e5e553f"
 	path := filepath.Join(root, id+".jsonl")
@@ -72,28 +71,9 @@ func TestClaudeForkUsesNativeHeadAndNewSessionObservation(t *testing.T) {
 	request := ports.PreparationRequest{Intent: ports.StartFork, History: selection,
 		Spec: model.ResolvedExecutionSpec{ExecutionID: "execution_fork", Harness: Name}}
 	nativeID, err := nativeIDFor(request)
-	require.NoError(t, err)
-	require.Equal(t, id, nativeID)
-	argv := (&prepared{request: request, nativeID: nativeID}).argv()
-	require.Contains(t, argv, "--fork-session")
-	require.Equal(t, []string{"--resume", id, "--fork-session"}, argv[:3])
-
-	spool, err := prepareClaudeHistorySpool(t)
-	require.NoError(t, err)
-	sink := &observationSink{}
-	runtime := &Runtime{executionID: "execution_fork", attempt: 1, nativeID: id,
-		intent: ports.StartFork, observations: sink, spool: spool}
-	destination := "5c597385-dd2f-41a2-a45a-1d0128bdac2c"
-	writeClaudeHookEvent(t, spool.Directory(), sessionStartEvent{
-		SessionID: destination, HookEventName: "SessionStart", Source: "resume",
-	})
-	_, err = runtime.consumeObservationEvents(context.Background(), nil)
-	require.NoError(t, err)
-	require.True(t, runtime.contextReady)
-	require.Equal(t, destination, runtime.nativeID)
-	require.Len(t, sink.values, 1)
-	require.Equal(t, ports.PrimaryContextInitial, sink.values[0].Disposition)
-	require.Nil(t, sink.values[0].PriorBinding)
+	require.Empty(t, nativeID)
+	require.ErrorIs(t, err, ports.ErrHistoryUnsupported)
+	require.Equal(t, ports.HistoryPrecisionNone, (historyReader{}).Capabilities().ForkPrecision)
 }
 
 func TestClaudeHistoryRejectsMessagePrecisionForFork(t *testing.T) {
@@ -112,11 +92,4 @@ func writeClaudeHistory(t *testing.T, path string, records ...string) {
 		content += record + "\n"
 	}
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
-}
-
-func prepareClaudeHistorySpool(t *testing.T) (*host.ObservationSpool, error) {
-	// Kept as a tiny adapter so this fixture stays visibly separate from any
-	// operator/native history location.
-	spool, err := host.PrepareObservationSpool(filepath.Join(t.TempDir(), "observations"))
-	return spool, err
 }
