@@ -618,7 +618,7 @@ func (s *Service) CancelWork(ctx context.Context, req CancelWorkRequest) (WorkRu
 		return WorkRunResult{}, err
 	}
 	authority := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionCancelWork, Resource: model.ResourceSelector{Kind: model.ResourceWorkRun, WorkRunID: req.WorkRunID}}
-	record, err := s.store.CancelWork(ctx, req.WorkRunID, req.ExpectedRunRevision, req.Reason, authority, s.now().UTC())
+	record, err := s.store.CancelWork(ctx, req.WorkRunID, req.ExpectedRunRevision, req.Reason, req.Context.RequestID, authority, s.now().UTC())
 	if err != nil {
 		return WorkRunResult{}, err
 	}
