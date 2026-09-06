@@ -103,8 +103,193 @@ func TestSessionReaper_BackgroundActivityGatesStableIdleNotification(t *testing.
 		"a later sweep may announce the unchanged, activity-free idle state")
 }
 
-func TestSessionReaper_ExpiredBackgroundShellSettlesBeforeIdleNotification(t *testing.T) {
+func TestSessionReaper_ProjectsFinishedShellWithoutDashboard(t *testing.T) {
+	t.Cleanup(agentd.ResetBgShellReconcileCacheForTest)
+	t.Cleanup(agentd.SetBackgroundMainProcessInstanceForTest(func(int) (string, bool) {
+		return "no-dashboard-process", true
+	}))
+	commands := []string{"/bin/sh -c npm run dev"}
+	t.Cleanup(agentd.SetBgShellDescendantCommandLinesForTest(func(int) ([]string, bool) {
+		return append([]string(nil), commands...), true
+	}))
+
 	f := newFlow(t)
+	const (
+		conv      = "idle-nodash-1111-2222-333333333333"
+		sessionID = "spwn-idle-nodash"
+	)
+	f.HaveAliveSession(conv, sessionID, "tmux-idle-nodash", f.TestCwd("idle-nodash"))
+	cwd := f.TestCwd("idle-nodash")
+	require.NoError(t, session.ApplyHook(
+		bgLaunchHook(conv, cwd, "npm run dev", "shell-no-dashboard"), sessionID))
+	require.NoError(t, session.ApplyHook(
+		session.HookCallbackInput{HookEventName: "Stop", ConvID: conv, Cwd: cwd}, sessionID))
+
+	row, err := db.LoadSession(sessionID)
+	require.NoError(t, err)
+	require.NotEmpty(t, row.BgShellsJSON)
+
+	var idleNotifications []string
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	reaper.SetIdleNotify(func(convID, _ string) {
+		idleNotifications = append(idleNotifications, convID)
+	})
+	reaper.TickAt(row.UpdatedAt.Add(time.Second))
+	assert.Equal(t, session.StatusMainAgentIdle, statusOf(t, sessionID))
+
+	// The process ends with no hook and no dashboard GET. The next daemon
+	// sweep owns both ledger repair and the stable-idle transition.
+	commands = nil
+	agentd.ResetBgShellReconcileCacheForTest()
+	settledAt := row.UpdatedAt.Add(2 * time.Second)
+	reaper.TickAt(settledAt)
+	projected, err := db.LoadSession(sessionID)
+	require.NoError(t, err)
+	assert.Empty(t, projected.BgShellsJSON)
+	assert.Equal(t, session.StatusIdle, projected.Status)
+	assert.Empty(t, idleNotifications)
+
+	reaper.TickAt(settledAt.Add(6 * time.Second))
+	assert.Equal(t, []string{conv}, idleNotifications,
+		"the unchanged projected idle state is announced once after dwell")
+	reaper.TickAt(settledAt.Add(12 * time.Second))
+	assert.Equal(t, []string{conv}, idleNotifications,
+		"the projected transition has a single notification claim")
+}
+
+func TestSessionReaper_RefreshesLiveBackgroundLedgerBeforeStopWithoutDashboard(t *testing.T) {
+	statuses := []struct {
+		name        string
+		beforeSweep func(t *testing.T, conv, cwd, sessionID string)
+		wantStatus  string
+	}{
+		{
+			name:       "working",
+			wantStatus: session.StatusWorking,
+		},
+		{
+			name: "awaiting_permission",
+			beforeSweep: func(t *testing.T, conv, cwd, sessionID string) {
+				t.Helper()
+				require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+					HookEventName:    "Notification",
+					NotificationType: "permission_prompt",
+					Message:          "allow this?",
+					ConvID:           conv,
+					Cwd:              cwd,
+				}, sessionID))
+			},
+			wantStatus: session.StatusAwaitingPermission,
+		},
+	}
+	ledgers := []struct {
+		name       string
+		command    string
+		launchHook func(conv, cwd string) session.HookCallbackInput
+		age        func(*db.SessionRow)
+		seen       func(*db.SessionRow) time.Time
+		contains   func(*db.SessionRow) bool
+	}{
+		{
+			name:    "shell",
+			command: "/bin/sh -c npm run dev",
+			launchHook: func(conv, cwd string) session.HookCallbackInput {
+				return bgLaunchHook(conv, cwd, "npm run dev", "work-long-lived")
+			},
+			age: func(row *db.SessionRow) {
+				entry := db.ParseBgShellSet(row.BgShellsJSON)["work-long-lived"]
+				entry.Seen = time.Now().Add(-db.BgShellTTL - time.Minute)
+				row.BgShellsJSON = db.BgShellSet{"work-long-lived": entry}.Encode()
+			},
+			seen: func(row *db.SessionRow) time.Time {
+				return db.ParseBgShellSet(row.BgShellsJSON)["work-long-lived"].Seen
+			},
+			contains: func(row *db.SessionRow) bool {
+				_, ok := db.ParseBgShellSet(row.BgShellsJSON)["work-long-lived"]
+				return ok
+			},
+		},
+		{
+			name:    "monitor",
+			command: "/bin/sh -c gh pr checks 123 --watch",
+			launchHook: func(conv, cwd string) session.HookCallbackInput {
+				return monitorLaunchHook(conv, cwd, "gh pr checks 123 --watch", "work-long-lived", int64((24*time.Hour)/time.Millisecond))
+			},
+			age: func(row *db.SessionRow) {
+				entry := db.ParseMonitorSet(row.MonitorsJSON)["work-long-lived"]
+				entry.Seen = time.Now().Add(-db.MonitorTTL - time.Minute)
+				row.MonitorsJSON = db.MonitorSet{"work-long-lived": entry}.Encode()
+			},
+			seen: func(row *db.SessionRow) time.Time {
+				return db.ParseMonitorSet(row.MonitorsJSON)["work-long-lived"].Seen
+			},
+			contains: func(row *db.SessionRow) bool {
+				_, ok := db.ParseMonitorSet(row.MonitorsJSON)["work-long-lived"]
+				return ok
+			},
+		},
+	}
+	for _, status := range statuses {
+		for _, ledger := range ledgers {
+			t.Run(status.name+"_"+ledger.name, func(t *testing.T) {
+				t.Cleanup(agentd.ResetBgShellReconcileCacheForTest)
+				t.Cleanup(agentd.SetBackgroundMainProcessInstanceForTest(func(int) (string, bool) {
+					return "long-lived-process-" + status.name + "-" + ledger.name, true
+				}))
+				t.Cleanup(agentd.SetBgShellDescendantCommandLinesForTest(func(int) ([]string, bool) {
+					return []string{ledger.command}, true
+				}))
+
+				f := newFlow(t)
+				conv := "refresh-" + status.name + "-" + ledger.name + "-1111-2222"
+				sessionID := "spwn-refresh-" + status.name + "-" + ledger.name
+				cwd := f.TestCwd("refresh-" + status.name + "-" + ledger.name)
+				f.HaveAliveSession(conv, sessionID, "tmux-refresh-"+status.name+"-"+ledger.name, cwd)
+				require.NoError(t, session.ApplyHook(ledger.launchHook(conv, cwd), sessionID))
+				if status.beforeSweep != nil {
+					status.beforeSweep(t, conv, cwd, sessionID)
+				}
+
+				// Model a continuously live command whose last hook sighting crossed
+				// the ledger TTL while the main agent stayed busy or awaited input.
+				row, err := db.LoadSession(sessionID)
+				require.NoError(t, err)
+				require.Equal(t, status.wantStatus, row.Status)
+				ledger.age(row)
+				require.NoError(t, db.SaveSession(row))
+
+				reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+				reaper.TickAt(time.Now())
+				refreshed, err := db.LoadSession(sessionID)
+				require.NoError(t, err)
+				assert.Equal(t, status.wantStatus, refreshed.Status,
+					"ledger maintenance must not interpret a busy or awaiting agent as idle")
+				assert.WithinDuration(t, time.Now(), ledger.seen(refreshed), 5*time.Second,
+					"the daemon sweep refreshes the live command even outside an idle status")
+
+				// Stop uses the refreshed durable ledger through the production hook
+				// path, so it must retain the shell and hold main_agent_idle.
+				require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+					HookEventName: "Stop", ConvID: conv, Cwd: cwd,
+				}, sessionID))
+				stopped, err := db.LoadSession(sessionID)
+				require.NoError(t, err)
+				assert.Equal(t, session.StatusMainAgentIdle, stopped.Status)
+				assert.True(t, ledger.contains(stopped), "Stop must preserve the refreshed live ledger entry")
+			})
+		}
+	}
+}
+
+func TestSessionReaper_ExpiredBackgroundShellWithUnknownScanDoesNotEstablishIdle(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.ResetBgShellReconcileCacheForTest)
+	t.Cleanup(agentd.SetBackgroundMainProcessInstanceForTest(func(int) (string, bool) {
+		return "test-process", true
+	}))
+	t.Cleanup(agentd.SetBgShellDescendantCommandLinesForTest(func(int) ([]string, bool) {
+		return nil, false
+	}))
 
 	const (
 		conv      = "idleshell-1111-2222-3333-444444444444"
@@ -134,13 +319,15 @@ func TestSessionReaper_ExpiredBackgroundShellSettlesBeforeIdleNotification(t *te
 
 	settledAt := row.UpdatedAt.Add(time.Second)
 	reaper.TickAt(settledAt)
-	assert.Equal(t, session.StatusIdle, statusOf(t, sessionID))
+	assert.Equal(t, session.StatusMainAgentIdle, statusOf(t, sessionID),
+		"TTL expiry plus an unavailable process scan is not confirmed idle")
 	assert.Empty(t, idleNotifications,
-		"the first shell-free observation only starts the stability window")
+		"unknown evidence must not start the notification stability window")
 
 	reaper.TickAt(settledAt.Add(6 * time.Second))
-	assert.Equal(t, []string{conv}, idleNotifications,
-		"an unchanged shell-free idle row is announced on the later sweep")
+	assert.Equal(t, session.StatusMainAgentIdle, statusOf(t, sessionID))
+	assert.Empty(t, idleNotifications,
+		"an expired display fallback never becomes confirmed idle through dwell alone")
 }
 
 func TestSessionReaper_StartupDoesNotNotifyHistoricalIdleRows(t *testing.T) {
