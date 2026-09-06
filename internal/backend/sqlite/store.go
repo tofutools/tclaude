@@ -43,11 +43,17 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize replacement backend schema: %w", err)
 	}
+	if err := s.initializeMessageNotifications(ctx); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, configurationCatalogSchema); err != nil {
 		return err
 	}
 	if err := s.initializeUsageActivity(ctx); err != nil {
 		return fmt.Errorf("initialize usage and activity schema: %w", err)
+	}
+	if err := s.initializeAccessRequests(ctx); err != nil {
+		return fmt.Errorf("initialize access request schema: %w", err)
 	}
 	for _, migration := range []struct{ table, column, definition string }{
 		{"agents", "configuration_profile_json", "BLOB"},
