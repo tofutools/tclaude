@@ -961,15 +961,12 @@ func runReincarnationOrchestration(w http.ResponseWriter, target, caller, perm s
 	if err := db.SetConvIndexArchived(target, true); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		slog.Warn("reincarnate: stamp archived_at on predecessor failed", "conv", short8(target), "error", err)
 	}
-	// Soft-stop the old pane via the harness's exit command. A harness
-	// with no soft-exit command (Lifecycle.SoftExitCommand == "") is
-	// left for a hard kill rather than typed a command it can't parse.
-	if h := harnessForConv(target); h.SupportsSoftExit() {
-		intentSet := setExitIntentBestEffort(oldSess, db.AgentExitActionReincarnate, relatedEventID)
-		if !injectSoftExit(target, h.Life.SoftExitCommand(), "reincarnate-exit", intentSet) {
-			clearFailedExitIntent(intentSet)
-		}
-	}
+	// The predecessor is stopped through the same exact-execution adapter as
+	// every other managed Stop caller. This orchestration already holds the
+	// stable actor launch lock, so use the lock-held entry point.
+	_ = managedExecutionRuntime.stopUnderLaunchLock(
+		target, false, db.AgentExitActionReincarnate, relatedEventID, stopNoWait,
+	)
 	if !relaunch.TemporaryHarnessBuiltinMode && relaunchPolicy != nil && relaunchPolicy.Previous != nil && effectiveSandbox != nil {
 		scheduleReincarnationDirectoryCleanup(target, newConv, *relaunchPolicy.Previous)
 	}

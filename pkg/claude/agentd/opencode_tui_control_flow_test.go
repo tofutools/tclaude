@@ -36,7 +36,7 @@ func TestOpenCodeCompactUsesManagedTUICommandAPIWithoutKeys(t *testing.T) {
 	assert.Empty(t, f.World.Tmux.Sent(), "OpenCode compact must not use tmux send-keys")
 }
 
-func TestOpenCodeSoftExitUsesManagedTUICommandAPIWithoutKeys(t *testing.T) {
+func TestOpenCodeStopEndsAuthoritativeServerWithoutAttachmentControl(t *testing.T) {
 	f := newFlow(t)
 	const (
 		conv = "ses_opencode_exit_api"
@@ -45,12 +45,83 @@ func TestOpenCodeSoftExitUsesManagedTUICommandAPIWithoutKeys(t *testing.T) {
 	commands, server := openCodeTUICommandServer(t, f, tmux, true)
 	defer server.Close()
 	haveOpenCodeControlSession(t, f, conv, "spwn-oc-exit-api", tmux, server.URL)
+	t.Cleanup(agentd.SetVerifyOpenCodeRuntimeForStopTest(func(db.OpenCodeRuntime) bool { return true }))
+	t.Cleanup(agentd.SetStopExactOpenCodeRuntimeForTest(func(runtime db.OpenCodeRuntime, _ bool) (bool, error) {
+		return true, db.DeleteOpenCodeRuntime(runtime.SessionID)
+	}))
 
 	action := agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop)
 	require.Equal(t, "soft_stopped", action)
-	assert.Equal(t, "app.exit", receiveCommand(t, commands))
-	assert.False(t, f.World.Tmux.IsAlive(tmux), "app.exit must close the attached TUI")
-	assert.Empty(t, f.World.Tmux.Sent(), "OpenCode exit must not use tmux send-keys")
+	select {
+	case command := <-commands:
+		t.Fatalf("Stop controlled the attachment instead of the server: %q", command)
+	case <-time.After(20 * time.Millisecond):
+	}
+	assert.True(t, f.World.Tmux.IsAlive(tmux), "attachment lifetime is separate from server Stop")
+	stored, err := db.GetOpenCodeRuntime("spwn-oc-exit-api")
+	require.NoError(t, err)
+	assert.Nil(t, stored, "the selected authoritative server must be stopped")
+	assert.Empty(t, f.World.Tmux.Sent(), "OpenCode server Stop must not use tmux send-keys")
+}
+
+func TestOpenCodeStopWithoutLiveAttachmentStillEndsExactServer(t *testing.T) {
+	f := newFlow(t)
+	const (
+		conv  = "ses_opencode_server_only_stop"
+		tmux  = "tmux-opencode-server-only-stop"
+		label = "spwn-oc-server-only-stop"
+	)
+	commands, server := openCodeTUICommandServer(t, f, tmux, false)
+	defer server.Close()
+	haveOpenCodeControlSession(t, f, conv, label, tmux, server.URL)
+	t.Cleanup(agentd.SetVerifyOpenCodeRuntimeForStopTest(func(db.OpenCodeRuntime) bool { return true }))
+	f.MarkOffline(tmux)
+	called := false
+	t.Cleanup(agentd.SetStopExactOpenCodeRuntimeForTest(func(runtime db.OpenCodeRuntime, _ bool) (bool, error) {
+		called = true
+		return true, db.DeleteOpenCodeRuntime(runtime.SessionID)
+	}))
+
+	action := agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop)
+	require.Equal(t, "soft_stopped", action)
+	assert.True(t, called, "server Stop must not depend on a live attachment")
+	select {
+	case command := <-commands:
+		t.Fatalf("server-only Stop dispatched attachment control: %q", command)
+	default:
+	}
+}
+
+func TestOpenCodeStopRefusesRuntimeFromDifferentExecution(t *testing.T) {
+	f := newFlow(t)
+	const (
+		conv  = "ses_opencode_replacement_fence"
+		tmux  = "tmux-opencode-replacement-fence"
+		label = "spwn-oc-replacement-fence"
+	)
+	_, server := openCodeTUICommandServer(t, f, tmux, false)
+	defer server.Close()
+	haveOpenCodeControlSession(t, f, conv, label, tmux, server.URL)
+	t.Cleanup(agentd.SetVerifyOpenCodeRuntimeForStopTest(func(db.OpenCodeRuntime) bool { return true }))
+	runtimeRow, err := db.GetOpenCodeRuntime(label)
+	require.NoError(t, err)
+	require.NotNil(t, runtimeRow)
+	var boundary session.ExecutionBoundary
+	require.NoError(t, json.Unmarshal([]byte(runtimeRow.ExecutionBoundaryJSON), &boundary))
+	boundary.LaunchGeneration = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	tampered, err := json.Marshal(boundary)
+	require.NoError(t, err)
+	runtimeRow.ExecutionBoundaryJSON = string(tampered)
+	require.NoError(t, db.UpsertOpenCodeRuntime(*runtimeRow))
+	called := false
+	t.Cleanup(agentd.SetStopExactOpenCodeRuntimeForTest(func(db.OpenCodeRuntime, bool) (bool, error) {
+		called = true
+		return true, nil
+	}))
+
+	action := agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop)
+	assert.Equal(t, "error", action)
+	assert.False(t, called, "an unbound predecessor runtime must never reach native Stop")
 }
 
 func TestOpenCodeCompactWhileBusyReturnsRetryableFailureBeforeAPIOrKeys(t *testing.T) {
@@ -146,36 +217,6 @@ func TestOpenCodeCompactAPIFailureReturnsRetryableFailureWithoutKeyFallback(t *t
 	assert.Empty(t, f.World.Tmux.Sent(), "managed API failure must never fall back to keystrokes")
 }
 
-func TestOpenCodeReincarnateSoftExitRetriesViaManagedAPIWithoutKeys(t *testing.T) {
-	f := newFlow(t)
-	const (
-		conv = "ses_opencode_reincarnate_exit"
-		tmux = "tmux-opencode-reincarnate-exit"
-	)
-	commands, server := openCodeTUICommandServer(t, f, tmux, false)
-	defer server.Close()
-	haveOpenCodeControlSession(t, f, conv, "spwn-oc-reincarnate-exit", tmux, server.URL)
-	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(time.Millisecond))
-	t.Cleanup(agentd.SetUnknownIntentCleanupDelayForTest(time.Millisecond))
-
-	require.True(t, agentd.InjectSoftExitForTest(conv, "/exit", "reincarnate-exit"))
-	agentd.WaitForBackgroundForTest()
-
-	var got []string
-	for {
-		select {
-		case command := <-commands:
-			got = append(got, command)
-		default:
-			// One app.exit per bounded attempt (softExitMaxAttempts).
-			require.Equal(t, []string{"app.exit", "app.exit", "app.exit", "app.exit", "app.exit"}, got)
-			assert.Empty(t, f.World.Tmux.Sent(),
-				"OpenCode reincarnate exit retries must never use tmux send-keys")
-			return
-		}
-	}
-}
-
 func TestOpenCodeUnreadReminderUsesPromptAPIWithoutKeys(t *testing.T) {
 	f := newFlow(t)
 	const (
@@ -257,13 +298,23 @@ func haveOpenCodeControlSession(
 	f.HaveAliveSession(conv, label, tmux, cwd)
 	setSessionHarness(t, conv, harness.OpenCodeName)
 	f.SetSessionStatus(conv, session.StatusIdle)
+	row, err := db.FindSessionByConvID(conv)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	boundary, err := json.Marshal(session.ExecutionBoundary{
+		Version:          session.ExecutionBoundaryVersion,
+		LaunchGeneration: row.ExecutionID.String(),
+		Harness:          session.ExecutionHarness{Name: harness.OpenCodeName},
+	})
+	require.NoError(t, err)
 	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
-		SessionID: label,
-		ConvID:    conv,
-		ServerURL: serverURL,
-		Password:  "test-password",
-		PID:       os.Getpid(),
-		Cwd:       cwd,
+		SessionID:             label,
+		ConvID:                conv,
+		ServerURL:             serverURL,
+		Password:              "test-password",
+		PID:                   os.Getpid(),
+		Cwd:                   cwd,
+		ExecutionBoundaryJSON: string(boundary),
 	}))
 }
 

@@ -512,17 +512,16 @@ func SetBeforeOpenCodeTUICommandStatusCheckForTest(fn func()) func() {
 	return func() { beforeOpenCodeTUICommandStatusCheckForTest = previous }
 }
 
-func InjectSoftExitForTest(convID, exitCmd, reason string) bool {
-	return injectSoftExit(convID, exitCmd, reason, nil)
+func SetStopExactOpenCodeRuntimeForTest(fn func(db.OpenCodeRuntime, bool) (bool, error)) func() {
+	previous := stopExactOpenCodeRuntimeForStop
+	stopExactOpenCodeRuntimeForStop = fn
+	return func() { stopExactOpenCodeRuntimeForStop = previous }
 }
 
-// SetUnknownIntentCleanupDelayForTest shrinks the observer window retained
-// after a delivered soft-exit whose outcome cannot yet be observed. Production
-// leaves enough time for the reaper; flow tests use a short, explicit window.
-func SetUnknownIntentCleanupDelayForTest(d time.Duration) func() {
-	prev := unknownIntentCleanupDelay
-	unknownIntentCleanupDelay = d
-	return func() { unknownIntentCleanupDelay = prev }
+func SetVerifyOpenCodeRuntimeForStopTest(fn func(db.OpenCodeRuntime) bool) func() {
+	previous := verifyOpenCodeRuntimeForStop
+	verifyOpenCodeRuntimeForStop = fn
+	return func() { verifyOpenCodeRuntimeForStop = previous }
 }
 
 // SetRemoteControlConfirmDelayForTest shrinks the remote-control disable

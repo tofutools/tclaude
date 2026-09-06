@@ -957,6 +957,7 @@ var copilotAPIKeystrokeSinkFiles = map[string]string{
 	// Converted: the spawn welcome, which additionally waits for the bootstrap.
 	"lifecycle.go": "runSpawnPostInit routes an API-driven conv to session.send, and soft " +
 		"exit stays on keystrokes deliberately — no RPC ends the copilot process",
+	"runtime_stop_terminal.go": "the attempt-bound adapter owns repeated Ctrl-C; Copilot API close does not end the CLI workload",
 	// Unreachable: remote control is gated on CanRemoteControl(), and Copilot's
 	// Lifecycle returns "" for RemoteControlCommand, so no Copilot agent — API
 	// or not — ever reaches this sink.
@@ -978,7 +979,7 @@ var copilotAPIKeystrokeSinks = []string{
 	// lives in handlers.go, so it was a real sink in an already-watched file that
 	// this list simply did not name. A guard whose header promises that a NEW
 	// sink trips it has to actually enumerate the existing ones.
-	"injectSoftExitTextSerializedBy",
+	"injectSignalExitSerializedBy",
 }
 
 func TestEveryKeystrokeSinkIsAccountedForAgainstTheCopilotAPIDrive(t *testing.T) {

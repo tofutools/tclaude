@@ -186,16 +186,6 @@ func TestCopilotLifecycleContract(t *testing.T) {
 	if got := h.Life.CompactCommand(); got != "/compact" {
 		t.Fatalf("CompactCommand() = %q, want %q", got, "/compact")
 	}
-	if got := h.Life.SoftExitCommand(); got != "/exit" {
-		t.Fatalf("SoftExitCommand() = %q, want %q", got, "/exit")
-	}
-	// Copilot's TUI discards a slash command typed while it is busy and lets
-	// an Enter meant for it accept a permission dialog's default entry
-	// instead, so the soft exit is preceded by a cancel. Measured against
-	// 1.0.77; see copilotfixture's soft-exit scenario.
-	if got := h.Life.SoftExitPrefixKeys(); len(got) != 1 || got[0] != "C-c" {
-		t.Fatalf("SoftExitPrefixKeys() = %q, want [C-c]", got)
-	}
 	// `/remote [on|off]` is directional; the toggle contract cannot express it,
 	// so remote control stays unsupported rather than half-wired.
 	if got := h.Life.RemoteControlCommand(); got != "" {
@@ -207,9 +197,6 @@ func TestCopilotLifecycleContract(t *testing.T) {
 	}
 	if !h.SupportsCompact() || !h.CanCompact() {
 		t.Fatal("SupportsCompact()/CanCompact() must be true for copilot")
-	}
-	if !h.SupportsSoftExit() {
-		t.Fatal("SupportsSoftExit() must be true for copilot")
 	}
 	if h.SupportsRemoteControl() || h.CanRemoteControl() {
 		t.Fatal("copilot must not advertise remote control")

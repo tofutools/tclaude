@@ -69,13 +69,13 @@ func TestRegister_Roundtrip(t *testing.T) {
 // panicking — the safety property the injection call sites rely on.
 func TestSupports_NilContracts(t *testing.T) {
 	var h *Harness
-	if h.SupportsRename() || h.SupportsCompact() || h.SupportsSoftExit() ||
+	if h.SupportsRename() || h.SupportsCompact() ||
 		h.CanReplayOneShotLaunchPosture() || h.SupportsOfflineModelTransport() ||
 		h.SupportsHostControlSandbox() {
 		t.Fatalf("nil harness must report no capabilities")
 	}
 	bare := &Harness{Name: "bare"}
-	if bare.SupportsRename() || bare.SupportsCompact() || bare.SupportsSoftExit() ||
+	if bare.SupportsRename() || bare.SupportsCompact() ||
 		bare.CanReplayOneShotLaunchPosture() || bare.SupportsOfflineModelTransport() ||
 		bare.SupportsHostControlSandbox() {
 		t.Fatalf("harness with nil Lifecycle must report no capabilities")

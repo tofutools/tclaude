@@ -595,9 +595,8 @@ func TestCodexHarness_Registered(t *testing.T) {
 	require.NotNil(t, h.Convs, "codex harness must expose a ConvStore")
 	assert.Equal(t, "Codex CLI", h.DisplayName)
 	// Rename stays out-of-band (Codex has no in-pane rename — titles live in
-	// its threads state DB, reached via ConvStore), while compact and
-	// soft-exit are in-pane lifecycle commands.
+	// its threads state DB, reached via ConvStore), while compact remains an
+	// in-pane feature control. Stop belongs to the runtime adapter.
 	assert.False(t, h.SupportsRename())
 	assert.True(t, h.SupportsCompact())
-	assert.True(t, h.SupportsSoftExit())
 }

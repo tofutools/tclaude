@@ -55,9 +55,6 @@ func TestOpenCodeLifecycleContract(t *testing.T) {
 	if got := h.Life.CompactCommand(); got != "/compact" {
 		t.Fatalf("CompactCommand() = %q, want %q", got, "/compact")
 	}
-	if got := h.Life.SoftExitCommand(); got != "/exit" {
-		t.Fatalf("SoftExitCommand() = %q, want %q", got, "/exit")
-	}
 	if got := h.Life.RemoteControlCommand(); got != "" {
 		t.Fatalf("RemoteControlCommand() = %q, want \"\" (OpenCode has no built-in remote access)", got)
 	}
@@ -67,9 +64,6 @@ func TestOpenCodeLifecycleContract(t *testing.T) {
 	}
 	if !h.SupportsCompact() || !h.CanCompact() {
 		t.Fatal("SupportsCompact()/CanCompact() must be true for OpenCode")
-	}
-	if !h.SupportsSoftExit() {
-		t.Fatal("SupportsSoftExit() must be true for OpenCode")
 	}
 	if h.SupportsRemoteControl() || h.CanRemoteControl() {
 		t.Fatal("SupportsRemoteControl()/CanRemoteControl() must be false for OpenCode")
