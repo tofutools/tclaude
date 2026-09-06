@@ -11,6 +11,7 @@ import (
 // Store exposes application-owned persistence operations. Methods that admit
 // effects atomically create the Operation and reserve its exact target.
 type Store interface {
+	OrchestrationStore
 	ConfigurationCatalogStore
 	CreateAgent(context.Context, model.Agent) error
 	UpdateAgent(context.Context, model.AgentID, model.Revision, string, string, model.AgentNotificationPreferences, model.DesiredConfiguration, *model.ConfigurationProfileRef, model.AuthorityRequest, time.Time) (model.Agent, error)
@@ -79,6 +80,8 @@ type Store interface {
 	CompleteWorkspaceEffect(context.Context, WorkspaceEffectCompletion) (model.Workspace, error)
 	UpdateWorkspaceObservation(context.Context, model.WorkspaceID, model.Revision, model.WorkspaceState, model.WorkspaceObservation, model.WorkspaceResourceEvidence, time.Time) (model.Workspace, error)
 	ActiveWorkspaceUses(context.Context, model.WorkspaceID) ([]model.WorkspaceUse, error)
+	WorkspaceUseForExecution(context.Context, model.ExecutionID) (model.WorkspaceUse, error)
+	ReleaseWorkspaceUse(context.Context, model.WorkspaceUseID, model.ExecutionID, time.Time) error
 	AcquireHistoryUse(context.Context, model.HistoryUseClaim) error
 	SettleHistoryUse(context.Context, model.HistoryUseID, model.Revision, model.HistoryUseState, time.Time) (model.HistoryUseClaim, error)
 	HistoryUse(context.Context, model.HistoryUseID) (model.HistoryUseClaim, error)
@@ -97,6 +100,37 @@ type Store interface {
 	DecideWork(context.Context, model.WorkDecision, model.Revision, model.AuthorityRequest, time.Time) (WorkRunRecord, error)
 	CancelWork(context.Context, model.WorkRunID, model.Revision, string, model.RequestID, model.AuthorityRequest, time.Time) (WorkRunRecord, error)
 	ResolveWorkUncertainty(context.Context, model.WorkDecision, model.Revision, model.AuthorityRequest, time.Time) (WorkRunRecord, error)
+}
+
+// OrchestrationStore persists authored definitions and graph execution in the
+// same database/transaction owner as ordinary Operations and WorkRuns.
+type OrchestrationStore interface {
+	SaveDefinition(context.Context, model.Definition, model.DefinitionRevision, model.Revision) (DefinitionRecord, error)
+	Definition(context.Context, model.DefinitionID) (DefinitionRecord, error)
+	DefinitionRevision(context.Context, model.DefinitionRevisionID) (model.DefinitionRevision, error)
+	ListDefinitions(context.Context, model.DefinitionKind, bool) ([]model.Definition, error)
+	SaveProgramProfile(context.Context, model.ProgramProfile, model.ProgramProfileRevision, model.Revision) (ProgramProfileRecord, error)
+	ProgramProfile(context.Context, model.ProgramProfileID) (ProgramProfileRecord, error)
+	ProgramProfileRevision(context.Context, model.ProgramProfileRevisionID) (model.ProgramProfileRevision, error)
+	ListProgramProfiles(context.Context, bool) ([]model.ProgramProfile, error)
+	CreateGraphWorkRun(context.Context, model.WorkRun, []model.DecisionWindow) (WorkRunRecord, bool, error)
+	Decision(context.Context, model.DecisionID) (DecisionRecord, error)
+	PendingDecisions(context.Context) ([]DecisionRecord, error)
+	SubmitDecision(context.Context, model.DecisionSubmission, model.AuthorityRequest, time.Time) (DecisionRecord, error)
+	ApplyGraphTransition(context.Context, GraphTransition) (WorkRunRecord, error)
+	SaveAutomationRule(context.Context, model.AutomationRule, model.AutomationRuleRevision, model.Revision) (AutomationRuleRecord, error)
+	AutomationRule(context.Context, model.AutomationRuleID) (AutomationRuleRecord, error)
+	AutomationRuleRevision(context.Context, model.AutomationRuleRevisionID) (model.AutomationRuleRevision, error)
+	ListAutomationRules(context.Context, bool) ([]model.AutomationRule, error)
+	MaterializeOccurrence(context.Context, model.AutomationOccurrence, model.Revision) (OccurrenceRecord, bool, error)
+	Occurrence(context.Context, model.OccurrenceID) (OccurrenceRecord, error)
+	OccurrencesForRule(context.Context, model.AutomationRuleID) ([]OccurrenceRecord, error)
+	PendingOccurrences(context.Context) ([]OccurrenceRecord, error)
+	UpdateOccurrence(context.Context, model.OccurrenceID, model.Revision, model.OccurrenceState, model.OperationID, model.WorkRunID, model.DeploymentID, []model.OccurrenceRecipient, time.Time) (OccurrenceRecord, error)
+	CreateTeamDeployment(context.Context, model.TeamDeployment, model.Group, []model.Agent, model.Principal, time.Time) (model.TeamDeployment, bool, error)
+	TeamDeployment(context.Context, model.DeploymentID) (model.TeamDeployment, error)
+	PendingTeamDeployments(context.Context) ([]model.TeamDeployment, error)
+	UpdateTeamDeployment(context.Context, model.DeploymentID, model.Revision, model.DeploymentState, uint32, time.Time) (model.TeamDeployment, error)
 }
 
 type ShellAdmission struct {
@@ -163,9 +197,66 @@ type WorkspaceEffectCompletion struct {
 }
 
 type WorkRunRecord struct {
-	Run      model.WorkRun
-	Evidence []model.WorkEvidence
-	Decision *model.WorkDecision
+	Run          model.WorkRun
+	Evidence     []model.WorkEvidence
+	Decision     *model.WorkDecision
+	NodeEvidence []model.WorkNodeEvidence
+	Decisions    []model.DecisionWindow
+}
+
+type DefinitionRecord struct {
+	Definition model.Definition
+	Head       model.DefinitionRevision
+}
+
+type ProgramProfileRecord struct {
+	Profile model.ProgramProfile
+	Head    model.ProgramProfileRevision
+}
+
+type AutomationRuleRecord struct {
+	Rule model.AutomationRule
+	Head model.AutomationRuleRevision
+}
+
+type OccurrenceRecord struct {
+	Occurrence model.AutomationOccurrence
+}
+
+type DecisionRecord struct {
+	Window     model.DecisionWindow
+	Submission *model.DecisionSubmission
+}
+
+type GraphAttemptUpdate struct {
+	Ref           model.WorkAttemptRef
+	NewIssuanceID model.WorkIssuanceID
+	OperationID   model.OperationID
+	ExecutionID   model.ExecutionID
+	State         model.WorkNodeAttemptState
+	Outcome       model.WorkOutcome
+	Detail        string
+}
+
+type GraphTransition struct {
+	WorkRunID           model.WorkRunID
+	ExpectedRevision    model.Revision
+	Authority           model.AuthorityRequest
+	AdditionalAuthority []model.AuthorityRequest
+	Evidence            *model.WorkNodeEvidence
+	Decision            *model.DecisionSubmission
+	Operation           *model.Operation
+	Execution           *model.Execution
+	WorkspaceUse        *model.WorkspaceUse
+	AgentExpected       model.Revision
+	Access              *model.ExecutionAccess
+	Updates             []GraphAttemptUpdate
+	Activations         []model.WorkNodeAttempt
+	DecisionWindows     []model.DecisionWindow
+	RunState            model.WorkRunState
+	ControlState        model.WorkControlState
+	RunOutcome          model.WorkOutcome
+	At                  time.Time
 }
 
 type WorkProgress struct {
