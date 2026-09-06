@@ -307,3 +307,57 @@ bootstrap variables. The ordinary execution client still uses
 `TCLAUDE_BACKEND_SOCKET` and `TCLAUDE_BACKEND_CREDENTIAL_FILE`, rereading the
 protected credential resource for each call. Missing execution credentials do
 not fall back to an operator identity.
+
+### Local browser client
+
+Run the shared client's `dashboard --state-dir /absolute/backend-state` command
+against a running replacement backend. It prints a private, single-use login
+link for a loopback listener. The link expires after five minutes; the browser
+exchanges it for an HttpOnly session cookie and removes it from the address bar.
+The operator token remains on disk and is never sent to browser JavaScript.
+
+The browser uses the same authenticated Unix API as the CLI. It supports offline
+agent configuration, group creation, durable messages, history reading, owned
+checkout and shell controls, bounded work evidence/outcomes, and terminal
+attachment. Create an available workspace and an offline worker before starting
+work from history. Exact fork remains provider-dependent; choose an explicit
+fresh handoff when an exact fork is unsupported. Removing a dirty checkout needs
+an explicit discard selection and workspace confirmation. Cancelling a work run
+does not imply its worker stopped.
+
+Disconnecting a terminal or closing the browser server closes the attachment
+view, not its workload. Terminal resize is advertised only when the attachment
+supports it. The negotiated `tclaude.terminal.v1` WebSocket protocol uses binary
+frames for terminal bytes and text JSON frames for resize control. Unnegotiated
+CLI clients retain byte-stream behavior.
+
+Browser JavaScript runs under a same-origin content policy. Inline styles are
+allowed for xterm's dynamically generated terminal styles; inline scripts and
+third-party scripts remain disallowed. This listener is intentionally loopback
+only, not a remotely exposed operator endpoint.
+
+For the optional installed-Chrome acceptance flow, run:
+
+```sh
+TCLAUDE_BROWSER_SMOKE=1 go test ./internal/product/browser -run TestBrowserOfflineAgentGroupAndMessageFlow -count=1
+```
+
+The test uses new disposable backend state, not the operator's database, and
+launches no native model workload. Ordinary browser session/proxy and WebSocket
+lifetime tests run without Chrome under `go test ./internal/product/browser`.
+
+### Offline migration preflight
+
+The shared client can inspect an explicit operator-created schema-v228 snapshot
+bundle without contacting a daemon or writing a target database:
+
+```sh
+tclaude migration inspect --bundle /absolute/snapshot-bundle --manifest manifest.json
+tclaude migration plan --bundle /absolute/snapshot-bundle --manifest manifest.json
+```
+
+Both commands print redacted JSON reports. Blocking diagnostics produce a
+nonzero exit status after printing the report. The plan includes deterministic
+identity/reference mappings and preservation decisions; it does not activate
+legacy authority, replay unfinished work, or perform the final target import.
+No source directory or manifest is inferred from the current user's home.

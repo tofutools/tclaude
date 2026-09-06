@@ -2,6 +2,7 @@ package transport
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -61,7 +62,7 @@ func (h *Handler) attach(w http.ResponseWriter, r *http.Request) {
 	// Closing this view frees connection resources only. The application Stop
 	// operation remains the sole way this transport requests workload exit.
 	defer func() { _ = result.Attachment.Close() }()
-	u := websocket.Upgrader{HandshakeTimeout: 10 * time.Second, CheckOrigin: sameOrigin}
+	u := websocket.Upgrader{HandshakeTimeout: 10 * time.Second, CheckOrigin: sameOrigin, Subprotocols: []string{"tclaude.terminal.v1"}}
 	conn, err := u.Upgrade(w, r, nil)
 	if err != nil {
 		return
@@ -77,6 +78,13 @@ func (h *Handler) attach(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	conn.SetReadLimit(maxRequestBytes)
+	resizable, canResize := result.Attachment.(ports.ResizableAttachment)
+	framed := conn.Subprotocol() == "tclaude.terminal.v1"
+	if framed {
+		if err := conn.WriteJSON(map[string]any{"type": "capabilities", "resize": canResize}); err != nil {
+			return
+		}
+	}
 	outputDone := make(chan struct{})
 	inputDone := make(chan struct{})
 	input := make(chan []byte, 4)
@@ -113,6 +121,22 @@ readInput:
 		kind, data, readErr := conn.ReadMessage()
 		if readErr != nil {
 			break
+		}
+		if framed && kind == websocket.TextMessage {
+			var control struct {
+				Type    string `json:"type"`
+				Columns uint16 `json:"columns"`
+				Rows    uint16 `json:"rows"`
+			}
+			decoder := json.NewDecoder(bytes.NewReader(data))
+			decoder.DisallowUnknownFields()
+			if decoder.Decode(&control) != nil || decoder.Decode(new(any)) != io.EOF || control.Type != "resize" || control.Columns < 1 || control.Columns > 1000 || control.Rows < 1 || control.Rows > 1000 || !canResize {
+				break
+			}
+			if err := resizable.Resize(r.Context(), ports.TerminalSize{Columns: control.Columns, Rows: control.Rows}); err != nil {
+				break
+			}
+			continue
 		}
 		if kind != websocket.BinaryMessage && kind != websocket.TextMessage {
 			continue
