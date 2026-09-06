@@ -38,6 +38,12 @@ type HistoryDiscoveryScope struct {
 
 type HistoryDiscoveryRequest struct{ Scope HistoryDiscoveryScope }
 
+// HistorySourceRegistry resolves caller-selected names to composition-owned
+// provider scope. Paths and provider evidence never cross the public API.
+type HistorySourceRegistry interface {
+	HistorySource(harness, name string) (HistoryDiscoveryScope, bool)
+}
+
 type ProviderHistoryPoint struct {
 	Token      string
 	Kind       model.HistoryPointKind
@@ -133,6 +139,13 @@ type CheckoutRemoveRequest struct {
 	Destructive bool
 }
 
+type CheckoutRestoreRequest struct {
+	WorkspaceID model.WorkspaceID
+	Intent      model.WorkspaceIntent
+	Observation model.WorkspaceObservation
+	Resource    model.WorkspaceResourceEvidence
+}
+
 type WorkspaceEffectResult struct {
 	Disposition EffectDisposition
 	Observation model.WorkspaceObservation
@@ -145,4 +158,5 @@ type WorkspaceHost interface {
 	CreateCheckout(context.Context, CheckoutCreateRequest, EffectPermit) (WorkspaceEffectResult, error)
 	InspectWorkspace(context.Context, model.Workspace) (WorkspaceEffectResult, error)
 	RemoveCheckout(context.Context, CheckoutRemoveRequest, EffectPermit) (WorkspaceEffectResult, error)
+	RestoreCheckout(context.Context, CheckoutRestoreRequest, EffectPermit) (WorkspaceEffectResult, error)
 }

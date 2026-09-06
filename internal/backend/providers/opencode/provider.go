@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -87,6 +88,10 @@ func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p
 type evidence struct {
 	ExecutionID         string                         `json:"execution_id"`
 	NativeID            string                         `json:"native_id,omitempty"`
+	ParentID            string                         `json:"parent_id,omitempty"`
+	Intent              ports.StartIntent              `json:"intent,omitempty"`
+	ForkSourceID        string                         `json:"fork_source_id,omitempty"`
+	ForkPoint           string                         `json:"fork_point,omitempty"`
 	Endpoint            string                         `json:"endpoint"`
 	PasswordFile        string                         `json:"password_file"`
 	StateRoot           string                         `json:"state_root"`
@@ -153,7 +158,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		}
 		access = &receipt
 	}
-	stateRoot, removeOnAbort, nativeID, err := p.prepareHistory(request)
+	stateRoot, removeOnAbort, nativeID, err := p.prepareHistory(ctx, request)
 	if err != nil {
 		if access != nil {
 			_ = p.credentials.RemoveActionCredential(context.Background(), *access)
@@ -206,6 +211,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	}
 	initial, err := encodeEvidence(evidence{
 		ExecutionID: string(request.Spec.ExecutionID), NativeID: nativeID,
+		Intent: request.Intent, ForkSourceID: forkSourceID(request), ForkPoint: forkPoint(request),
 		Endpoint: endpoint, PasswordFile: passwordFile, StateRoot: stateRoot, AttemptMark: attemptMark,
 		EphemeralState: removeOnAbort, Access: access,
 	})
@@ -252,7 +258,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	}, nil
 }
 
-func (p *Provider) prepareHistory(request ports.PreparationRequest) (stateRoot string, removeOnAbort bool, nativeID string, err error) {
+func (p *Provider) prepareHistory(ctx context.Context, request ports.PreparationRequest) (stateRoot string, removeOnAbort bool, nativeID string, err error) {
 	switch request.Intent {
 	case ports.StartFresh:
 		if err := os.MkdirAll(p.privateRoot, 0o700); err != nil {
@@ -283,6 +289,33 @@ func (p *Provider) prepareHistory(request ports.PreparationRequest) (stateRoot s
 			return "", false, "", fmt.Errorf("OpenCode continuation state is unavailable")
 		}
 		return prior.StateRoot, false, request.Continuation.Reference, nil
+	case ports.StartFork:
+		if request.History == nil || request.History.Provider != Name ||
+			request.History.Native.Namespace != NativeNamespace {
+			return "", false, "", fmt.Errorf("OpenCode fork requires an exclusive application-resolved history source")
+		}
+		if err := validateHistoryUseClaim(*request.History); err != nil {
+			return "", false, "", err
+		}
+		if request.History.Point != nil && request.History.Point.Kind != model.HistoryPointHead &&
+			request.History.Point.Kind != model.HistoryPointBeforeMessage {
+			return "", false, "", ports.ErrHistoryUnsupported
+		}
+		history, raw, _, _, readErr := (historyReader{provider: p}).readSelection(ctx, *request.History)
+		if readErr != nil {
+			return "", false, "", readErr
+		}
+		if history.Info.ID != request.History.Native.Reference {
+			return "", false, "", fmt.Errorf("OpenCode fork source export does not match selection")
+		}
+		if err := os.MkdirAll(p.privateRoot, 0o700); err != nil {
+			return "", false, "", err
+		}
+		stateRoot = filepath.Join(p.privateRoot, "execution-"+uuid.NewString())
+		if err := importOpenCodeHistory(ctx, p, stateRoot, request.Spec.WorkingDirectory, raw, history, *request.History); err != nil {
+			return "", false, "", err
+		}
+		return stateRoot, true, request.History.Native.Reference, nil
 	default:
 		return "", false, "", fmt.Errorf("unsupported start intent %q", request.Intent)
 	}
@@ -319,6 +352,19 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 	}
 	if permit == nil || permit.ExecutionID() != p.request.Spec.ExecutionID {
 		return ports.ReleaseResult{}, fmt.Errorf("release permit does not match execution")
+	}
+	if p.request.Intent == ports.StartFork {
+		if err := validateHistoryUseClaim(*p.request.History); err != nil {
+			return ports.ReleaseResult{}, err
+		}
+		if permit.OperationID() != p.request.History.UseClaim.OperationID {
+			return ports.ReleaseResult{}, fmt.Errorf("release permit does not match OpenCode history use claim")
+		}
+		// Revalidate the exact source snapshot while the application-owned
+		// exclusive-use claim is still held and before consuming release.
+		if _, _, _, _, err := (historyReader{provider: p.provider}).readSelection(ctx, *p.request.History); err != nil {
+			return ports.ReleaseResult{}, err
+		}
 	}
 	if err := permit.Consume(ctx); err != nil {
 		return ports.ReleaseResult{}, fmt.Errorf("consume release permit: %w", err)
@@ -357,7 +403,8 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 		process: process, endpoint: p.endpoint, password: p.password,
 		passwordFile: p.passwordFile,
 		stateRoot:    p.stateRoot, cwd: p.request.Spec.WorkingDirectory,
-		nativeID: p.descriptionNativeID(), approval: p.request.Spec.Approval,
+		nativeID: p.descriptionNativeID(), intent: p.request.Intent,
+		forkSourceID: forkSourceID(p.request), forkPoint: forkPoint(p.request), approval: p.request.Spec.Approval,
 		sandbox: p.request.Spec.Sandbox, model: p.request.Spec.Model, attemptMark: p.attemptMark, access: p.access,
 	}
 	currentEvidence, evidenceErr := runtime.providerEvidence()
@@ -367,12 +414,22 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 	if err := runtime.awaitHealthy(ctx); err != nil {
 		return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime, Evidence: currentEvidence}, err
 	}
-	if runtime.nativeID == "" {
+	if runtime.intent == ports.StartFork {
+		if err := runtime.forkSession(ctx); err != nil {
+			currentEvidence, _ = runtime.providerEvidence()
+			return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime, Evidence: currentEvidence}, err
+		}
+	} else if runtime.nativeID == "" {
 		if err := runtime.createSession(ctx); err != nil {
 			currentEvidence, _ = runtime.providerEvidence()
 			return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime, Evidence: currentEvidence}, err
 		}
 	} else if err := runtime.verifySession(ctx); err != nil {
+		return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime, Evidence: currentEvidence}, err
+	}
+	if err := writeHistoryManifest(runtime.stateRoot, historyManifest{
+		NativeID: runtime.nativeID, ParentID: runtime.parentID, CWD: runtime.cwd,
+	}); err != nil {
 		return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime, Evidence: currentEvidence}, err
 	}
 	// Continuation chooses native history for a new execution; it does not
@@ -385,6 +442,70 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 		return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime}, evidenceErr
 	}
 	return ports.ReleaseResult{State: ports.ReleaseStarted, Runtime: runtime, Evidence: currentEvidence}, nil
+}
+
+func validateHistoryUseClaim(selection ports.HistorySourceSelection) error {
+	claim := selection.UseClaim
+	if claim == nil || claim.State != model.HistoryUseHeld || claim.ID == "" || claim.OperationID == "" ||
+		claim.ConversationID != selection.ConversationID || claim.SourceRevision != selection.SourceRevision ||
+		claim.SourceFingerprint != selection.SourceFingerprint {
+		return fmt.Errorf("OpenCode fork requires a held application history use claim bound to the selected source")
+	}
+	return nil
+}
+
+func importOpenCodeHistory(ctx context.Context, p *Provider, targetRoot, cwd string, raw []byte, expected exportedHistory, selection ports.HistorySourceSelection) (err error) {
+	if err := os.Mkdir(targetRoot, 0o700); err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, os.RemoveAll(targetRoot))
+		}
+	}()
+	temporary, err := os.CreateTemp(targetRoot, ".history-import-*.json")
+	if err != nil {
+		return err
+	}
+	path := temporary.Name()
+	defer func() { _ = os.Remove(path) }()
+	if err := temporary.Chmod(0o600); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(raw); err != nil {
+		_ = temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, p.executable, "import", path, "--pure")
+	cmd.Dir = cwd
+	cmd.Env = host.MergeEnvironment(os.Environ(), p.runtimeEnvironment(targetRoot))
+	if output, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("import OpenCode history: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+	exported, _, _, err := (historyReader{provider: p}).export(ctx, targetRoot, selection.Native.Reference, cwd)
+	if err != nil {
+		return fmt.Errorf("verify imported OpenCode history: %w", err)
+	}
+	if exported.Info.ID != expected.Info.ID || !reflect.DeepEqual(exported.Messages, expected.Messages) {
+		return fmt.Errorf("imported OpenCode history content does not match selected source")
+	}
+	if selection.Point != nil && selection.Point.Kind == model.HistoryPointBeforeMessage {
+		found := false
+		for _, message := range exported.Messages {
+			if message.Info.ID == selection.Point.Token {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("imported OpenCode history point is unavailable")
+		}
+	}
+	return nil
 }
 
 func accessResource(access *ports.ActionCredentialReceipt) string {
@@ -473,13 +594,16 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		provider: p, executionID: request.ExecutionID, process: process,
 		attempt: request.Attempt, observations: request.Observations,
 		endpoint: recorded.Endpoint, password: string(passwordBytes), passwordFile: recorded.PasswordFile, stateRoot: recorded.StateRoot,
-		cwd: request.Spec.WorkingDirectory, nativeID: recorded.NativeID,
+		cwd: request.Spec.WorkingDirectory, nativeID: recorded.NativeID, parentID: recorded.ParentID,
+		intent: recorded.Intent, forkSourceID: recorded.ForkSourceID, forkPoint: recorded.ForkPoint,
 		approval: request.Spec.Approval, sandbox: request.Spec.Sandbox, model: request.Spec.Model,
 		attemptMark: recorded.AttemptMark, access: recorded.Access,
 		observationSequence: recorded.ObservationSequence, providerOrder: recorded.ProviderOrder,
 	}
 	var reconcileErr error
-	if runtime.nativeID == "" {
+	if runtime.intent == ports.StartFork && runtime.nativeID == runtime.forkSourceID {
+		reconcileErr = fmt.Errorf("OpenCode fork outcome requires explicit reconciliation")
+	} else if runtime.nativeID == "" {
 		reconcileErr = runtime.reconcileFreshSession(ctx)
 	} else {
 		reconcileErr = runtime.verifySession(ctx)
@@ -488,6 +612,11 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		observation, _ := runtime.Observe(ctx)
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Runtime: runtime,
 			Observation: observation, Evidence: request.Evidence}, reconcileErr
+	}
+	if err := writeHistoryManifest(runtime.stateRoot, historyManifest{
+		NativeID: runtime.nativeID, ParentID: runtime.parentID, CWD: runtime.cwd,
+	}); err != nil {
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Runtime: runtime, Evidence: request.Evidence}, err
 	}
 	disposition, prior := ports.PrimaryContextContinuity, nativeBinding(runtime.nativeID)
 	if runtime.providerOrder == "" {
@@ -526,6 +655,9 @@ type Runtime struct {
 	approval            model.ApprovalMode
 	sandbox             model.SandboxMode
 	model               string
+	intent              ports.StartIntent
+	forkSourceID        string
+	forkPoint           string
 	attemptMark         string
 	access              *ports.ActionCredentialReceipt
 	contextReady        bool
@@ -536,6 +668,7 @@ type Runtime struct {
 
 	mu               sync.Mutex
 	nativeID         string
+	parentID         string
 	attachmentActive atomic.Bool
 }
 
@@ -629,6 +762,10 @@ func (r *Runtime) ChangeContext(ctx context.Context, change ports.ContextChange)
 	defer r.mu.Unlock()
 	prior := nativeBinding(r.nativeID)
 	if err := r.createSession(ctx); err != nil {
+		evidence, _ := r.providerEvidenceLocked()
+		return ports.ContextChangeResult{Disposition: ports.EffectUnknown, Evidence: evidence}, err
+	}
+	if err := writeHistoryManifest(r.stateRoot, historyManifest{NativeID: r.nativeID, ParentID: r.parentID, CWD: r.cwd}); err != nil {
 		evidence, _ := r.providerEvidenceLocked()
 		return ports.ContextChangeResult{Disposition: ports.EffectUnknown, Evidence: evidence}, err
 	}
@@ -731,7 +868,41 @@ func (r *Runtime) createSession(ctx context.Context) error {
 		return fmt.Errorf("OpenCode session did not retain the requested permission policy")
 	}
 	r.nativeID = created.ID
+	r.parentID = ""
 	return nil
+}
+
+func (r *Runtime) forkSession(ctx context.Context) error {
+	if r.forkSourceID == "" || r.nativeID != r.forkSourceID {
+		return fmt.Errorf("OpenCode fork source is not selected")
+	}
+	body := map[string]string{}
+	if r.forkPoint != "" && r.forkPoint != "head" {
+		body["messageID"] = r.forkPoint
+	}
+	response, err := r.do(ctx, http.MethodPost, "/session/"+url.PathEscape(r.forkSourceID)+
+		"/fork?directory="+url.QueryEscape(r.cwd), body)
+	if err != nil {
+		return fmt.Errorf("fork OpenCode session: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("fork OpenCode session returned HTTP %d", response.StatusCode)
+	}
+	var forked sessionRecord
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&forked); err != nil {
+		return fmt.Errorf("decode OpenCode fork: %w", err)
+	}
+	if !strings.HasPrefix(forked.ID, "ses_") || forked.ID == r.forkSourceID || forked.ParentID != nil ||
+		filepath.Clean(forked.Directory) != filepath.Clean(r.cwd) {
+		return fmt.Errorf("OpenCode returned invalid forked session")
+	}
+	r.nativeID = forked.ID
+	// Native OpenCode forks are independent top-level sessions. Platform
+	// lineage remains explicit in ForkSourceID rather than being fabricated as
+	// a native parent relationship.
+	r.parentID = ""
+	return r.verifySession(ctx)
 }
 
 // reconcileFreshSession resolves the crash window between starting the private
@@ -790,7 +961,11 @@ func (r *Runtime) verifySession(ctx context.Context) error {
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&current); err != nil {
 		return fmt.Errorf("decode OpenCode continuation: %w", err)
 	}
-	if current.ID != r.nativeID || current.ParentID != nil || filepath.Clean(current.Directory) != filepath.Clean(r.cwd) {
+	actualParent := ""
+	if current.ParentID != nil {
+		actualParent = *current.ParentID
+	}
+	if current.ID != r.nativeID || actualParent != r.parentID || filepath.Clean(current.Directory) != filepath.Clean(r.cwd) {
 		return fmt.Errorf("OpenCode session is not the exact primary context")
 	}
 	if permissionHasSuffix(current.Permission, expected) {
@@ -809,7 +984,11 @@ func (r *Runtime) verifySession(ctx context.Context) error {
 	if err := json.NewDecoder(io.LimitReader(updated.Body, 1<<20)).Decode(&result); err != nil {
 		return fmt.Errorf("decode applied OpenCode continuation permission: %w", err)
 	}
-	if result.ID != r.nativeID || result.ParentID != nil || filepath.Clean(result.Directory) != filepath.Clean(r.cwd) ||
+	resultParent := ""
+	if result.ParentID != nil {
+		resultParent = *result.ParentID
+	}
+	if result.ID != r.nativeID || resultParent != r.parentID || filepath.Clean(result.Directory) != filepath.Clean(r.cwd) ||
 		!permissionHasSuffix(result.Permission, expected) {
 		return fmt.Errorf("OpenCode continuation did not retain the requested permission policy")
 	}
@@ -863,10 +1042,25 @@ func (r *Runtime) providerEvidence() (model.ProviderEvidence, error) {
 func (r *Runtime) providerEvidenceLocked() (model.ProviderEvidence, error) {
 	identity := r.process.Identity()
 	return encodeEvidence(evidence{
-		ExecutionID: string(r.executionID), NativeID: r.nativeID, Endpoint: r.endpoint,
+		ExecutionID: string(r.executionID), NativeID: r.nativeID, ParentID: r.parentID, Intent: r.intent,
+		ForkSourceID: r.forkSourceID, ForkPoint: r.forkPoint, Endpoint: r.endpoint,
 		PasswordFile: r.passwordFile, StateRoot: r.stateRoot, Process: &identity, AttemptMark: r.attemptMark,
 		Access: r.access, ObservationSequence: r.observationSequence, ProviderOrder: r.providerOrder,
 	})
+}
+
+func forkSourceID(request ports.PreparationRequest) string {
+	if request.Intent == ports.StartFork && request.History != nil {
+		return request.History.Native.Reference
+	}
+	return ""
+}
+
+func forkPoint(request ports.PreparationRequest) string {
+	if request.Intent == ports.StartFork && request.History != nil && request.History.Point != nil {
+		return request.History.Point.Token
+	}
+	return "head"
 }
 
 func (r *Runtime) publishContext(ctx context.Context, disposition ports.PrimaryContextDisposition, prior, next *model.NativeBinding, transition *ports.ContextChange) error {

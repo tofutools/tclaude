@@ -31,16 +31,19 @@ type JourneyAPI interface {
 	RefreshHistory(context.Context, RefreshHistoryRequest) (HistorySearchResult, error)
 	SearchHistory(context.Context, SearchHistoryRequest) (HistorySearchResult, error)
 	ReadHistory(context.Context, ReadHistoryRequest) (HistoryReadResult, error)
+	SetConversationMetadata(context.Context, SetConversationMetadataRequest) (HistorySearchResult, error)
 	RegisterWorkspace(context.Context, RegisterWorkspaceRequest) (WorkspaceResult, error)
 	CreateCheckout(context.Context, CreateCheckoutRequest) (WorkspaceResult, error)
 	InspectWorkspace(context.Context, InspectWorkspaceRequest) (WorkspaceResult, error)
 	RemoveCheckout(context.Context, RemoveCheckoutRequest) (WorkspaceResult, error)
+	RestoreCheckout(context.Context, RestoreCheckoutRequest) (WorkspaceResult, error)
 	StartShell(context.Context, StartShellRequest) (OperationResult, error)
 	StartWork(context.Context, StartWorkRequest) (WorkRunResult, error)
 	InspectWork(context.Context, InspectWorkRequest) (WorkRunResult, error)
 	RecordWorkEvidence(context.Context, RecordWorkEvidenceRequest) (WorkRunResult, error)
 	DecideWork(context.Context, DecideWorkRequest) (WorkRunResult, error)
 	CancelWork(context.Context, CancelWorkRequest) (WorkRunResult, error)
+	ResolveWorkUncertainty(context.Context, ResolveWorkUncertaintyRequest) (WorkRunResult, error)
 }
 
 type WorkReconciler interface {
@@ -198,9 +201,9 @@ type RecoveryReport struct {
 }
 
 type RefreshHistoryRequest struct {
-	Principal model.Principal
-	Harness   string
-	Scope     ports.HistoryDiscoveryScope
+	Principal  model.Principal
+	Harness    string
+	SourceName string
 }
 
 type SearchHistoryRequest struct {
@@ -221,9 +224,18 @@ type ReadHistoryRequest struct {
 	Selection model.HistorySelection
 }
 
+type SetConversationMetadataRequest struct {
+	Context          RequestContext
+	ConversationID   model.ConversationID
+	ExpectedRevision model.Revision
+	Title            string
+	Archived         bool
+}
+
 type HistoryReadResult struct {
 	Entry    model.HistoryCatalogEntry
 	Point    *model.HistoryPoint
+	Points   []model.HistoryPoint
 	Turns    []HistoryTurn
 	Coverage model.HistoryCoverage
 }
@@ -258,6 +270,12 @@ type RemoveCheckoutRequest struct {
 	Destructive      bool
 }
 
+type RestoreCheckoutRequest struct {
+	Context          RequestContext
+	WorkspaceID      model.WorkspaceID
+	ExpectedRevision model.Revision
+}
+
 type StartShellRequest struct {
 	Context          RequestContext
 	WorkspaceID      model.WorkspaceID
@@ -276,11 +294,9 @@ type WorkspaceView struct {
 type WorkspaceResult struct{ Workspace WorkspaceView }
 
 type StartWorkRequest struct {
-	Context    RequestContext
-	ID         model.WorkRunID
-	Spec       model.WorkRunSpec
-	Authority  model.AuthoritySubject
-	Delegation *model.AutomationDelegation
+	Context RequestContext
+	ID      model.WorkRunID
+	Spec    model.WorkRunSpec
 }
 
 type InspectWorkRequest struct {
@@ -295,18 +311,37 @@ type WorkRunResult struct {
 }
 
 type RecordWorkEvidenceRequest struct {
-	Context             model.Principal
-	Evidence            model.WorkEvidence
+	Context             RequestContext
+	WorkRunID           model.WorkRunID
+	Step                model.WorkStep
+	Attempt             uint64
+	Kind                model.WorkEvidenceKind
+	ArtifactRevision    string
+	Passed              *bool
+	Detail              string
 	ExpectedRunRevision model.Revision
 }
 
 type DecideWorkRequest struct {
-	Context             model.Principal
-	Decision            model.WorkDecision
+	Context             RequestContext
+	WorkRunID           model.WorkRunID
+	Step                model.WorkStep
+	Attempt             uint64
+	Decision            model.WorkDecisionKind
+	Reason              string
 	ExpectedRunRevision model.Revision
 }
 
 type CancelWorkRequest struct {
+	Context             RequestContext
+	WorkRunID           model.WorkRunID
+	ExpectedRunRevision model.Revision
+	Reason              string
+}
+
+// ResolveWorkUncertaintyRequest is an explicit operator conclusion that the
+// uncertain external effect did not occur. It never replays that effect.
+type ResolveWorkUncertaintyRequest struct {
 	Context             RequestContext
 	WorkRunID           model.WorkRunID
 	ExpectedRunRevision model.Revision

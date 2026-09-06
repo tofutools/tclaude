@@ -21,14 +21,18 @@ const (
 	ActionManageMembership    Action = "group.membership.manage"
 	ActionReadHistory         Action = "history.read"
 	ActionRefreshHistory      Action = "history.refresh"
+	ActionSetHistoryMetadata  Action = "history.metadata.set"
 	ActionRegisterWorkspace   Action = "workspace.register"
 	ActionCreateWorkspace     Action = "workspace.create"
 	ActionInspectWorkspace    Action = "workspace.inspect"
 	ActionRemoveWorkspace     Action = "workspace.remove"
+	ActionRestoreWorkspace    Action = "workspace.restore"
 	ActionStartWork           Action = "work.start"
 	ActionRecordWorkEvidence  Action = "work.evidence.record"
 	ActionDecideWork          Action = "work.decide"
 	ActionCancelWork          Action = "work.cancel"
+	ActionResolveWork         Action = "work.resolve"
+	ActionStartShell          Action = "shell.start"
 )
 
 type AuthoritySubjectKind string
