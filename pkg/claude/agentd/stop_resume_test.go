@@ -445,7 +445,7 @@ func TestExecutionRuntimeStopReportsSelectedAttemptAndDelivery(t *testing.T) {
 	}, operation.stop.Attempt)
 }
 
-func TestExecutionRuntimeStopTreatsMalformedLegacyGenerationAsUnknown(t *testing.T) {
+func TestExecutionRuntimeStopRefusesMalformedLegacyGeneration(t *testing.T) {
 	w := testharness.New(t)
 	prevTmux := clcommon.Default
 	clcommon.Default = w.Tmux
@@ -459,16 +459,17 @@ func TestExecutionRuntimeStopTreatsMalformedLegacyGenerationAsUnknown(t *testing
 		ID: sessionID, ConvID: convID, TmuxSession: tmuxName,
 		Status: "working", CreatedAt: time.Now(),
 	}))
-	// A blank legacy generation can still be controlled through exact pane/PID
-	// fencing, but it must never be promoted to a shared execution identity.
+	// Stop requires a platform execution identity. Pane/PID evidence cannot
+	// promote a legacy row or authorize control by itself.
 	w.Tmux.MarkAlive(tmuxName)
 
 	operation := managedExecutionRuntime.stop(
 		convID, true, db.AgentExitActionForceStop, "", stopNoWait,
 	)
-	assert.Equal(t, platformexec.StopEffectDelivered, operation.stop.State)
+	assert.Equal(t, platformexec.StopUnresolved, operation.stop.State)
 	assert.Empty(t, operation.stop.Attempt.ExecutionID)
-	assert.Equal(t, sessionID, operation.stop.Attempt.LegacySessionID)
+	assert.Empty(t, operation.stop.Attempt.LegacySessionID)
+	assert.True(t, w.Tmux.IsAlive(tmuxName), "unprovable legacy execution must not be controlled")
 }
 
 func TestExecutionRuntimeWaitingStopRequiresObservedCompletion(t *testing.T) {
@@ -515,6 +516,9 @@ func TestStopOneConvWithIntent_FailedKillClearsAttribution(t *testing.T) {
 		"11111111111111111111111111111111"))
 	w.Tmux.MarkAlive(tmuxName)
 	w.Tmux.FailNextCommand("kill-pane")
+	previousSignal := signalLifecycleProcessGroup
+	signalLifecycleProcessGroup = func(int, syscall.Signal) error { return errors.New("signal refused") }
+	t.Cleanup(func() { signalLifecycleProcessGroup = previousSignal })
 
 	res := stopOneConvWithIntent(convID, true, db.AgentExitActionForceStop, eventID)
 	assert.Equal(t, "error", res.Action)

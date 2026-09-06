@@ -116,8 +116,7 @@ type CodexSim struct {
 	// tight re-press window (0.5 s–5 s between presses all quit), so the
 	// untimed simulator matches production faithfully. A C-c spent clearing a
 	// pending line, or any other keystroke, disarms. This is the pane side of
-	// codexLifecycle.SignalExitKeys, driven by
-	// agentd.injectSignalExitSerializedBy.
+	// the Codex runtime Stop adapter's graceful request.
 	ccArmed bool
 
 	// signalExitWedged makes the pane consume ctrl-c presses without ever
@@ -644,10 +643,8 @@ func (c *CodexSim) installDefaultHandlers() {
 		// analog). Real Codex routes Quit to
 		// request_quit_without_confirmation — a one-shot graceful
 		// shutdown, no confirm prompt, no turn written — so the sim just
-		// flips alive=false. This is what lets the daemon's soft-stop
-		// path (stopOneConv → harness SoftExitCommand "/quit") take a
-		// Codex pane offline gracefully instead of falling back to a
-		// hard kill-session.
+		// flips alive=false. The production runtime adapter now uses the
+		// measured signal sequence instead of this slash command.
 		{prefix: "/quit", fn: func(c *CodexSim, _ string) bool {
 			c.MarkDead()
 			return true

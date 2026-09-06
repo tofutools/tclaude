@@ -243,6 +243,13 @@ func launchHarnessBuiltinMode(harnessName, harnessBuiltinMode, implementation st
 	return resolved
 }
 
+func simulatedLaunchExecutionID(args clcommon.SpawnArgs) string {
+	if id, err := platformexec.ParseID(args.ExecutionID); err == nil {
+		return id.String()
+	}
+	return platformexec.NewID().String()
+}
+
 // SpawnNew builds the harness-appropriate pane sim, writes the SessionRow
 // the production hook callback would have written, and registers in
 // TmuxSim. harness=="codex" routes to a CodexSim + a harness="codex" row;
@@ -356,6 +363,8 @@ func (s *simSpawner) SpawnNew(args clcommon.SpawnArgs) error {
 			EffectiveSandbox:         args.EffectiveSandbox,
 			ApprovalPolicy:           args.Approval,
 			ApprovalAutoReview:       args.AutoReview,
+			ExitLaunchGeneration:     simulatedLaunchExecutionID(args),
+			ExitLaunchGateState:      db.SessionExitGateUngated,
 			// Mirror production's session/new.go, which records the resolved
 			// ask-timeout on the row so a relaunch (resume/clone/reincarnate) can
 			// preserve it (schema v97). "" for a Codex/omitted spawn.
@@ -495,6 +504,8 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 		EffectiveSandbox:         args.EffectiveSandbox,
 		ApprovalPolicy:           args.Approval,
 		ApprovalAutoReview:       args.AutoReview,
+		ExitLaunchGeneration:     simulatedLaunchExecutionID(args),
+		ExitLaunchGateState:      db.SessionExitGateUngated,
 		// The resume mints a fresh row; carry the preserved ask-timeout onto it so
 		// a subsequent relaunch keeps it too (production session/new.go does this).
 		AskUserQuestionTimeout: args.AskUserQuestionTimeout,
@@ -687,7 +698,9 @@ func (s *simSpawner) spawnNewCodex(args clcommon.SpawnArgs) error {
 		// The tag the whole soft-stop / resume / identity path keys on:
 		// harnessForConv resolves this to the Codex harness so a stop
 		// injects `/quit`, and resume relaunches `--harness codex`.
-		Harness: codexHarnessName,
+		Harness:              codexHarnessName,
+		ExitLaunchGeneration: simulatedLaunchExecutionID(args),
+		ExitLaunchGateState:  db.SessionExitGateUngated,
 		// Recorded for the same reason the Claude branch records it: production's
 		// `session new` persists the mode the implementation launches under, and a
 		// Codex row that carried no mode at all left the sandbox-lineage guard
@@ -750,6 +763,8 @@ func (s *simSpawner) spawnResumeCodex(args clcommon.SpawnArgs) error {
 		EffectiveSandbox:       args.EffectiveSandbox,
 		ApprovalPolicy:         args.Approval,
 		ApprovalAutoReview:     args.AutoReview,
+		ExitLaunchGeneration:   simulatedLaunchExecutionID(args),
+		ExitLaunchGateState:    db.SessionExitGateUngated,
 	}); err != nil {
 		return err
 	}
@@ -967,12 +982,14 @@ func (f *Flow) HaveAliveSessionOnBranch(convID, label, tmuxSession, cwd, branch 
 		}
 	}
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
-		ID:             label,
-		TmuxSession:    tmuxSession,
-		ConvID:         convID,
-		Cwd:            cwd,
-		Status:         "running",
-		ApprovalPolicy: "bypassPermissions",
+		ID:                   label,
+		TmuxSession:          tmuxSession,
+		ConvID:               convID,
+		Cwd:                  cwd,
+		Status:               "running",
+		ApprovalPolicy:       "bypassPermissions",
+		ExitLaunchGeneration: platformexec.NewID().String(),
+		ExitLaunchGateState:  db.SessionExitGateUngated,
 	}); err != nil {
 		f.T.Fatalf("HaveAliveSessionOnBranch: %v", err)
 	}
@@ -996,13 +1013,15 @@ func (f *Flow) HaveAliveCodexSession(convID, label, tmuxSession, cwd string) *Co
 		f.T.Fatalf("HaveAliveCodexSession: cx.Start: %v", err)
 	}
 	if err := saveSessionWithResumeProvenance(&db.SessionRow{
-		ID:             label,
-		TmuxSession:    tmuxSession,
-		ConvID:         convID,
-		Cwd:            cwd,
-		Status:         "running",
-		Harness:        codexHarnessName,
-		ApprovalPolicy: harness.ApprovalNever,
+		ID:                   label,
+		TmuxSession:          tmuxSession,
+		ConvID:               convID,
+		Cwd:                  cwd,
+		Status:               "running",
+		Harness:              codexHarnessName,
+		ApprovalPolicy:       harness.ApprovalNever,
+		ExitLaunchGeneration: platformexec.NewID().String(),
+		ExitLaunchGateState:  db.SessionExitGateUngated,
 	}); err != nil {
 		f.T.Fatalf("HaveAliveCodexSession: %v", err)
 	}
@@ -1202,8 +1221,8 @@ type StopResp struct {
 }
 
 // Stop drives POST /v1/agent/{conv}/stop. force=true passes ?force=1 for
-// a hard kill-session; force=false is the soft stop (inject the harness's
-// SoftExitCommand — CC's /exit, Codex's /quit). A truthful HTTP 500 with an
+// a forced stop; force=false requests a graceful stop through the bound
+// harness runtime adapter. A truthful HTTP 500 with an
 // action:error body is returned to error-path scenarios; other non-200
 // responses remain fatal setup/authorization failures.
 func (f *Flow) Stop(convID string, force bool) StopResp {

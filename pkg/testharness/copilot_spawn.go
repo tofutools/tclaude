@@ -79,6 +79,8 @@ func (s *simSpawner) spawnNewCopilot(args clcommon.SpawnArgs) error {
 		ApprovalPolicy:           args.Approval,
 		ApprovalAutoReview:       args.AutoReview,
 		AskUserQuestionTimeout:   args.AskUserQuestionTimeout,
+		ExitLaunchGeneration:     simulatedLaunchExecutionID(args),
+		ExitLaunchGateState:      db.SessionExitGateUngated,
 	}); err != nil {
 		return err
 	}
@@ -159,6 +161,8 @@ func (s *simSpawner) spawnResumeCopilot(args clcommon.SpawnArgs) error {
 		ApprovalPolicy:           args.Approval,
 		ApprovalAutoReview:       args.AutoReview,
 		AskUserQuestionTimeout:   args.AskUserQuestionTimeout,
+		ExitLaunchGeneration:     simulatedLaunchExecutionID(args),
+		ExitLaunchGateState:      db.SessionExitGateUngated,
 	}); err != nil {
 		return err
 	}

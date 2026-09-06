@@ -2,17 +2,15 @@ package agentd
 
 import (
 	"fmt"
-	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-// The soft-exit escalation ladder.
+// Shared terminal-process escalation primitives.
 //
-// A soft stop types the harness's exit command into the pane and hopes. Until
-// TCL-1001 that hope was the whole plan: the bounded re-injection retry was
+// Terminal harness runtime adapters first request a graceful stop. Until
+// TCL-1001 that request was the whole plan: the bounded retry was
 // the last thing that ever happened to a pane which would not go, and the
 // callers that DEPEND on the pane actually closing — retire's agent-directory
 // and worktree cleanup — simply waited out their 60 s grace and then skipped
@@ -20,9 +18,8 @@ import (
 // operator-reported failure: two Copilot agents retired, panes still running,
 // "agent-owned directories kept because agent did not exit within grace".
 //
-// So a delivered-or-failed soft exit now starts a watchdog. It gives the
-// injection (and its two retries) a real window to work, and when the pane is
-// still the same live pane at the end of it, escalates:
+// The adapter now gives its request (and two retries) a real window to work,
+// then uses these shared host primitives when the exact pane is still live:
 //
 //	1. tmux kill-pane on the exact pane id (what force-stop already does)
 //	2. SIGTERM to the pane process group
@@ -41,7 +38,7 @@ import (
 // softExitEscalationDeadline is how long the pane has to close on its own
 // after the first soft-exit delivery before the ladder starts.
 //
-// The bounded re-injections run on a tighter cadence than this deadline: a
+// The adapter's bounded retries run on a tighter cadence than this deadline: a
 // batch is ~1.3 s of lock-held key spacing plus softExitRetryDelay (1.5 s)
 // between batches, so attempts start roughly every 2.8 s and the last one
 // that can matter lands around 8.4 s — a pane that honours it gets a short
@@ -97,118 +94,6 @@ const (
 	// before relaunch) sails straight past its guard.
 	softExitUnattempted
 )
-
-// scheduleSoftExitEscalation backgrounds the ladder for one stopped target.
-// lifecycleAction/relatedEventID are the same attribution the caller armed
-// before injecting, re-armed at the kill so an escalation stays daemon-owned
-// even when the injection failed and its intent was cleared.
-//
-// This is the fire-and-forget half of the pair: the stop returns as soon as
-// the exit command is delivered and the pane is closed out-of-band. Callers
-// that must not proceed until the process has actually stopped — a retire
-// about to delete the agent's directories, a bulk stop reporting what it
-// achieved — use awaitLifecycleTargetExit instead.
-func scheduleSoftExitEscalation(target *lifecycleTarget, lifecycleAction, relatedEventID, reason, fallbackExitReason string) {
-	if target == nil {
-		return
-	}
-	goBackground(func() {
-		// By the time this watchdog returns the stop is resolved either way
-		// (pane exit verified, or the ladder ran to its end), so release the
-		// soft-exit retry watchdog instead of leaving it to sleep out its
-		// delay and rediscover the outcome.
-		defer target.markSoftExitSettled()
-		if waitForLifecycleTargetGone(target, softExitEscalationDeadline) {
-			if err := reconcileStoppedLifecycleTarget(target, lifecycleAction, relatedEventID, fallbackExitReason); err != nil {
-				slog.Warn("soft-exit: recording verified pane exit failed",
-					"session", target.sessionID, "conv", short8(target.convID), "error", err)
-			}
-			return
-		}
-		outcome := escalateStuckSoftExit(target, lifecycleAction, relatedEventID, reason)
-		if outcome == softExitClosed || outcome == softExitEscalated {
-			reconcileReason := fallbackExitReason
-			if outcome == softExitEscalated {
-				reconcileReason = daemonEscalatedKillReason
-			}
-			if err := reconcileStoppedLifecycleTarget(target, lifecycleAction, relatedEventID, reconcileReason); err != nil {
-				slog.Warn("soft-exit: recording verified pane exit after escalation check failed",
-					"session", target.sessionID, "conv", short8(target.convID), "error", err)
-			}
-		}
-	})
-}
-
-// awaitLifecycleTargetExit is scheduleSoftExitEscalation run INLINE: it gives
-// the delivered soft exit (and its bounded re-injections — the double tap)
-// until the deadline to close the pane on its own, then runs the same
-// kill-pane → SIGTERM → SIGKILL ladder, and only returns once the pane process
-// is actually gone or the ladder is exhausted.
-//
-// deadline is AUTHORITATIVE, including zero: the power buttons pass their
-// per-request grace, and a grace of 0 legitimately means "probe once, then
-// escalate". Resolving a default belongs to the caller that has one
-// (stopOneConvAndWait), not here.
-//
-// The caller MUST already hold the conversation's launch lock — the whole
-// point is that the stop, the wait and the escalation are one indivisible
-// step, so a resume cannot relaunch the conv into the identity being killed
-// halfway through.
-func awaitLifecycleTargetExit(target *lifecycleTarget, deadline time.Duration, lifecycleAction, relatedEventID, reason string) softExitOutcome {
-	if target == nil {
-		return softExitClosed
-	}
-	if waitForLifecycleTargetGone(target, deadline) {
-		return softExitClosed
-	}
-	return escalateStuckSoftExitUnderLaunchLock(target, lifecycleAction, relatedEventID, reason)
-}
-
-// waitForLifecycleTargetGone polls until the frozen target is no longer a live
-// pane, or the window closes. It reports true when there is nothing left to
-// escalate against — the pane died, its session vanished, or the identity
-// changed (a successor owns the name now, and it is not ours to kill).
-func waitForLifecycleTargetGone(target *lifecycleTarget, window time.Duration) bool {
-	deadline := time.Now().Add(window)
-	for {
-		if softExitEscalationPollForTest != nil {
-			softExitEscalationPollForTest()
-		}
-		probe, err := probeLifecyclePane(target.tmuxSession)
-		switch {
-		case err != nil || probe.state == paneProbeUnknown:
-			// A probe that cannot be read is not evidence of a live pane. Only
-			// a confirmed still-listed session keeps the ladder armed.
-			if alive, known := lifecycleSessionAlive(target.tmuxSession); known && !alive {
-				return true
-			}
-		case probe.state == paneProbeDead:
-			return true
-		case !lifecycleProbeMatchesTarget(probe, target):
-			return true
-		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return false
-		}
-		sleep := softExitEscalationPollInterval
-		if sleep > remaining {
-			sleep = remaining
-		}
-		time.Sleep(sleep)
-	}
-}
-
-// escalateStuckSoftExit runs the ladder under the conversation launch lock, so
-// a concurrent resume cannot relaunch the conv into the pane identity being
-// killed halfway through. The background scheduler's entry point; a caller
-// that already holds the lock uses escalateStuckSoftExitUnderLaunchLock.
-func escalateStuckSoftExit(target *lifecycleTarget, lifecycleAction, relatedEventID, reason string) softExitOutcome {
-	launchLock := resumeLaunchLock(target.convID)
-	launchLock.Lock()
-	defer launchLock.Unlock()
-	return escalateStuckSoftExitUnderLaunchLock(target, lifecycleAction, relatedEventID, reason)
-}
 
 // reconcileStoppedLifecycleTarget publishes the fact a managed stop already
 // proved: this launch's frozen tmux pane is gone. Leaving that fact to the
@@ -274,130 +159,6 @@ func reconcileStoppedLifecycleTarget(target *lifecycleTarget, lifecycleAction, r
 		}
 	}
 	return fmt.Errorf("session row kept changing after the managed pane exited")
-}
-
-// escalateStuckSoftExitUnderLaunchLock is the ladder itself, after its caller
-// has taken the conversation launch lock. It reports whether the pane process
-// was actually gone by the time it returned, so a synchronous stop can tell
-// "killed, and it is really down" from "nothing left to do".
-func escalateStuckSoftExitUnderLaunchLock(target *lifecycleTarget, lifecycleAction, relatedEventID, reason string) softExitOutcome {
-	if beforeSoftExitEscalationRevalidateForTest != nil {
-		beforeSoftExitEscalationRevalidateForTest()
-	}
-	probe, err := target.revalidate()
-	if err != nil {
-		// Died, or a successor now owns the name — either way the ladder has
-		// nothing of ours to act on.
-		slog.Info("soft-exit escalation stood down; target pane is gone or replaced",
-			"conv", short8(target.convID), "tmux_session", target.tmuxSession,
-			"pane_id", target.paneID, "reason", reason)
-		return softExitClosed
-	}
-
-	// Attribution BEFORE the kill: whatever the ladder does from here, the
-	// reaper must read it as daemon-owned rather than an unexplained close.
-	// The intent is (re-)armed because a failed injection clears it, and the
-	// reason is recorded because the reaper's per-harness fallback is either
-	// silence (Copilot, Codex) or "unexpected" (Claude Code) — neither of
-	// which describes a deliberate daemon kill.
-	setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
-	if err := db.SetSessionExitReason(target.sessionID, daemonEscalatedKillReason); err != nil {
-		slog.Warn("soft-exit escalation: recording daemon-owned exit reason failed",
-			"session", target.sessionID, "conv", short8(target.convID), "error", err)
-	}
-
-	slog.Warn("soft exit did not close the pane; escalating to kill",
-		"conv", short8(target.convID), "session", target.sessionID,
-		"tmux_session", target.tmuxSession, "pane_id", target.paneID,
-		"pane_pid", probe.panePID, "deadline", softExitEscalationDeadline,
-		"reason", reason,
-		"pane_screen", softExitPaneScreenTail(target))
-
-	// Step 1: the identity-guarded tmux kill force-stop already uses.
-	if err := killLifecycleTarget(target); err != nil {
-		slog.Warn("soft-exit escalation: tmux kill failed; continuing to signals",
-			"conv", short8(target.convID), "pane_id", target.paneID, "error", err)
-	}
-
-	// Steps 2 and 3. The pane pid is the harness process tmux started; killing
-	// its GROUP is what reaches a harness that spawned children and is being
-	// held open by one of them.
-	pid := probe.panePID
-	if pid <= 0 {
-		pid = target.panePID
-	}
-	if pid <= 0 {
-		// No pid to signal — the tmux kill above is all the ladder has. Give
-		// the pane one grace window to disappear so the caller still learns
-		// whether the process actually went away.
-		if waitForLifecycleTargetGone(target, softExitEscalationSignalGrace) {
-			return softExitEscalated
-		}
-		return softExitStuck
-	}
-	for _, step := range softExitSignalLadder {
-		if waitForPaneProcessGone(target, pid, softExitEscalationSignalGrace) {
-			return softExitEscalated
-		}
-		slog.Warn("soft-exit escalation: pane process survived; signalling process group",
-			"conv", short8(target.convID), "tmux_session", target.tmuxSession,
-			"pane_pid", pid, "signal", step.name, "reason", reason)
-		if err := signalLifecycleProcessGroup(pid, step.signal); err != nil {
-			slog.Warn("soft-exit escalation: signalling process group failed",
-				"conv", short8(target.convID), "pane_pid", pid,
-				"signal", step.name, "error", err)
-		}
-	}
-	if waitForPaneProcessGone(target, pid, softExitEscalationSignalGrace) {
-		return softExitEscalated
-	}
-	slog.Error("soft-exit escalation exhausted; pane process still alive",
-		"conv", short8(target.convID), "tmux_session", target.tmuxSession,
-		"pane_pid", pid, "reason", reason)
-	return softExitStuck
-}
-
-// paneScreenTailLines and paneScreenTailClip bound what a pre-kill screen
-// capture may add to one warn line. The clip is sized so a full 12-line tail
-// survives at the canonical pane width (TCL-1136: 12 × 200-col lines plus
-// separators ≈ 2.4 KB) — an undersized clip would eat the tail's HEAD, which
-// is where the harness's last real output sits.
-const (
-	paneScreenTailLines = 12
-	paneScreenTailClip  = 3000
-)
-
-// capturePaneScreenTail reads the stuck pane's visible screen so the
-// escalation warn can say WHAT the harness was showing when it ignored its
-// soft exit — a permission dialog, a modal, a wedged teardown. The soft-exit
-// deadline expiring is exactly the moment that state is still on screen and
-// about to be destroyed by the kill. Normal soft-exit attempts deliberately
-// do not capture pane contents; this exceptional pre-kill snapshot is the only
-// soft-exit path that does.
-//
-// Best-effort by design: the pane may die between the caller's revalidate and
-// this read, and a flow-test tmux sim may not implement capture-pane. Both
-// yield "", never an error that could block the ladder. Lines are joined with
-// " | " so the capture stays a single log line for line-based log tooling.
-func capturePaneScreenTail(paneID string) string {
-	out, err := tmuxOutputWithTimeout("capture-pane", "-p", "-J", "-t", paneID)
-	if err != nil {
-		return ""
-	}
-	return formatPaneScreenTail(string(out))
-}
-
-func formatPaneScreenTail(screen string) string {
-	var kept []string
-	for line := range strings.SplitSeq(screen, "\n") {
-		if trimmed := strings.TrimSpace(line); trimmed != "" {
-			kept = append(kept, trimmed)
-		}
-	}
-	if len(kept) > paneScreenTailLines {
-		kept = kept[len(kept)-paneScreenTailLines:]
-	}
-	return auditClip(strings.Join(kept, " | "), paneScreenTailClip)
 }
 
 // waitForPaneProcessGone polls the pane process until it is gone or the grace

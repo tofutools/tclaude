@@ -17,7 +17,7 @@ import (
 // the operator saw on reattach — NO trace in the TUI that anything had been
 // typed at all. These scenarios are the measurement that explains it, and they
 // are why the Copilot lifecycle contributes a cancel keystroke ahead of its
-// exit command (harness.copilotLifecycle.SoftExitPrefixKeys).
+// exit sequence used by Copilot's runtime Stop adapter.
 //
 // The finding, in one line: the TUI accepts a slash command only when it is
 // idle at its input prompt. Mid-turn it renders the typed "/exit" and then
