@@ -536,12 +536,14 @@ func fireTriggerRule(ruleID, expectedRevision int64, event db.TriggerPREvent, no
 	overall := "ok"
 	var details []string
 	for i, actionSpec := range rule.Actions {
-		outcome := executeTriggerAction(rule, firingID, i, actionSpec, event, now)
-		if err := db.InsertTriggerActionOutcome(&outcome); err != nil {
-			slog.Warn("triggers: record action outcome", "firing", firingID, "action", i, "error", err)
-			_ = db.FinishTriggerFiring(firingID, "interrupted", "action completed but its outcome could not be recorded", time.Now().UTC())
-			_ = db.MarkTriggerPREventInterrupted(event.ID, time.Now().UTC())
-			return true
+		outcome, recorded := executeTriggerAction(rule, firingID, i, actionSpec, event, now)
+		if !recorded {
+			if err := db.InsertTriggerActionOutcome(&outcome); err != nil {
+				slog.Warn("triggers: record action outcome", "firing", firingID, "action", i, "error", err)
+				_ = db.FinishTriggerFiring(firingID, "interrupted", "action completed but its outcome could not be recorded", time.Now().UTC())
+				_ = db.MarkTriggerPREventInterrupted(event.ID, time.Now().UTC())
+				return true
+			}
 		}
 		if outcome.Outcome != "ok" && outcome.Outcome != "spawned" && outcome.Outcome != "queued" {
 			overall = "partial_failure"
@@ -563,17 +565,18 @@ func recordTriggerDenial(rule *db.TriggerRule, event db.TriggerPREvent, now time
 	return db.FinishTriggerFiring(id, "permission_denied", detail, now) == nil
 }
 
-func executeTriggerAction(rule *db.TriggerRule, firingID int64, index int, spec db.TriggerAction, event db.TriggerPREvent, now time.Time) db.TriggerActionOutcome {
+func executeTriggerAction(rule *db.TriggerRule, firingID int64, index int, spec db.TriggerAction, event db.TriggerPREvent, now time.Time) (db.TriggerActionOutcome, bool) {
 	o := db.TriggerActionOutcome{FiringID: firingID, ActionIndex: index, ActionType: spec.Type, CreatedAt: time.Now().UTC()}
+	recorded := false
 	switch spec.Type {
 	case db.TriggerActionSpawn:
 		o.Outcome, o.Detail, o.SpawnedAgent = executeTriggerSpawn(rule, firingID, index, spec.Spawn, event, now)
 	case db.TriggerActionMessage:
-		o.Outcome, o.Detail, o.MessageID = executeTriggerMessage(rule, spec.Message, event)
+		o.Outcome, o.Detail, o.MessageID, recorded = executeTriggerMessage(rule, firingID, index, spec.Message, event)
 	default:
 		o.Outcome, o.Detail = "invalid_action", "unknown action type"
 	}
-	return o
+	return o, recorded
 }
 
 func triggerOwnerConv(rule *db.TriggerRule) (string, error) {
@@ -934,21 +937,20 @@ func SetManagedWorkerBeforePromotionForTest(fn func(int64)) func() {
 	return func() { managedWorkerBeforePromotionForTest = old }
 }
 
-func executeTriggerMessage(rule *db.TriggerRule, spec *db.TriggerMessageAction, event db.TriggerPREvent) (string, string, int64) {
+func executeTriggerMessage(rule *db.TriggerRule, firingID int64, actionIndex int, spec *db.TriggerMessageAction, event db.TriggerPREvent) (string, string, int64, bool) {
 	if spec == nil {
-		return "invalid_action", "missing message payload", 0
+		return "invalid_action", "missing message payload", 0, false
 	}
 	ownerConv, err := triggerOwnerConv(rule)
 	if err != nil {
-		return "permission_denied", err.Error(), 0
+		return "permission_denied", err.Error(), 0, false
 	}
 	groupName := ""
-	var targetConv string
 	var groupID int64
 	if spec.Target == "group" {
 		g, gErr := triggerActionGroup(rule, event)
 		if gErr != nil {
-			return "target_invalid", gErr.Error(), 0
+			return "target_invalid", gErr.Error(), 0, false
 		}
 		groupName = g.Name
 		groupID = g.ID
@@ -959,33 +961,25 @@ func executeTriggerMessage(rule *db.TriggerRule, spec *db.TriggerMessageAction, 
 	if spec.Target == "agent" || targetAgent == "" {
 		targetAgent = event.AgentID
 	}
-	targetConv, err = db.CurrentConvForAgent(targetAgent)
-	if err != nil || targetConv == "" {
-		return "target_invalid", "selected agent has no current conversation", 0
+	principal := messagePrincipal{kind: messagePrincipalAgent, conv: ownerConv}
+	if rule.OperatorAuthored {
+		principal.kind = messagePrincipalOperator
 	}
-	if !rule.OperatorAuthored {
-		via, _, routeErr := db.CanSenderReachTarget(ownerConv, targetConv)
-		if routeErr != nil {
-			return "io", routeErr.Error(), 0
-		}
-		if via != nil {
-			groupID = via.ID
-			groupName = via.Name
-		} else if resolvePermission(ownerConv, PermMessageDirect) != permAllow {
-			return "permission_denied", "owner cannot reach selected agent and lacks " + PermMessageDirect, 0
-		}
+	accepted, refused := acceptMessage(principal, messageTarget{agentID: targetAgent},
+		messageContent{render: func(resolvedGroup string) (string, string) {
+			subject := triggerlogic.RenderTemplate(spec.SubjectTemplate, event, resolvedGroup)
+			if strings.TrimSpace(subject) == "" {
+				subject = "[trigger:" + rule.Name + "] " + event.Source
+			}
+			return subject, triggerlogic.RenderTemplate(spec.BodyTemplate, event, resolvedGroup)
+		}}, messageCause{
+			kind: messageCauseTrigger, groupID: groupID, groupName: groupName,
+			firingID: firingID, actionIndex: actionIndex,
+		})
+	if refused != nil {
+		return refused.code, refused.detail, 0, refused.outcomeCommitted
 	}
-	subject := triggerlogic.RenderTemplate(spec.SubjectTemplate, event, groupName)
-	if strings.TrimSpace(subject) == "" {
-		subject = "[trigger:" + rule.Name + "] " + event.Source
-	}
-	body := triggerlogic.RenderTemplate(spec.BodyTemplate, event, groupName)
-	id, err := db.InsertAgentMessage(&db.AgentMessage{GroupID: groupID, FromConv: ownerConv, ToConv: targetConv, Subject: subject, Body: body, ToRecipients: []string{targetConv}, OperatorAuthored: rule.OperatorAuthored})
-	if err != nil {
-		return "queue_failed", err.Error(), 0
-	}
-	maybeFlushUndelivered(targetConv)
-	return "queued", "", id
+	return "queued", "", accepted.messageIDs[0], accepted.outcomeCommitted
 }
 
 func reconcileTriggerWorkers(now time.Time) {
