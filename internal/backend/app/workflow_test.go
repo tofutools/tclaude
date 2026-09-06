@@ -208,6 +208,25 @@ func TestLateInteractionCannotResurrectExitedExecution(t *testing.T) {
 	require.Equal(t, model.ExecutionExited, persisted.State)
 }
 
+func TestLateObservationCannotResurrectExitedExecution(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	provider := newFakeProvider()
+	service := testService(store, provider)
+	agent := createAgent(t, ctx, service, model.OperatorPrincipal(), "agent_observe_order")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(model.OperatorPrincipal(), "request_observe_launch"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	provider.runtime.onObserve = func() {
+		_, stopErr := service.Stop(ctx, app.StopRequest{RequestContext: effect(model.OperatorPrincipal(), "request_observe_stop"), ExecutionID: launched.Execution.ID})
+		require.NoError(t, stopErr)
+	}
+	observed, err := service.Observe(ctx, app.ObserveRequest{Principal: model.OperatorPrincipal(), ExecutionID: launched.Execution.ID})
+	require.NoError(t, err)
+	require.Equal(t, model.ExecutionExited, observed.Execution.State)
+}
+
 func TestContextChangeAndResumeUseStoredNativeEvidence(t *testing.T) {
 	ctx := context.Background()
 	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
@@ -337,6 +356,7 @@ type fakeRuntime struct {
 	stopped                                   bool
 	omitNativeOnChange                        bool
 	onInteract                                func()
+	onObserve                                 func()
 }
 
 func (r *fakeRuntime) ExecutionID() model.ExecutionID { return r.id }
@@ -344,6 +364,11 @@ func (r *fakeRuntime) observation() ports.Observation {
 	return ports.Observation{ObservedAt: time.Now(), Workload: ports.WorkloadRunning, Context: ports.ContextReady, NativeConversation: &r.native, Evidence: r.evidence}
 }
 func (r *fakeRuntime) Observe(context.Context) (ports.Observation, error) {
+	if r.onObserve != nil {
+		callback := r.onObserve
+		r.onObserve = nil
+		callback()
+	}
 	return r.observation(), nil
 }
 func (r *fakeRuntime) Interact(context.Context, ports.Interaction) (ports.InteractionResult, error) {
