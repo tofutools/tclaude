@@ -1,6 +1,9 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -80,11 +83,15 @@ func TestPlatformV2FocusedPolicyWiring(t *testing.T) {
 	}
 	for _, family := range []string{
 		"TestRequireSpawnPermission",
+		"TestSpawnAuthority",
 		"TestCronSpawn",
 		"TestTriggerSpawn",
 	} {
 		if !strings.Contains(focusedRun, family) {
 			t.Errorf("ci.yml platform-v2-core does not retain the %s family", family)
+		}
+		if !testFamilyExists(t, filepath.Join(root, "pkg", "claude", "agentd"), family) {
+			t.Errorf("ci.yml platform-v2-core names %s, but no real test has that prefix", family)
 		}
 	}
 	shards, ok := ci.Jobs["test"].Strategy.Matrix.Shard.(string)
@@ -113,6 +120,27 @@ func TestPlatformV2FocusedPolicyWiring(t *testing.T) {
 			}
 		}
 	}
+}
+
+func testFamilyExists(t *testing.T, dir, prefix string) bool {
+	t.Helper()
+	packages, err := parser.ParseDir(token.NewFileSet(), dir, func(info os.FileInfo) bool {
+		return strings.HasSuffix(info.Name(), "_test.go")
+	}, 0)
+	if err != nil {
+		t.Fatalf("parse test files under %s: %v", dir, err)
+	}
+	for _, pkg := range packages {
+		for _, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				fn, ok := decl.(*ast.FuncDecl)
+				if ok && fn.Recv == nil && strings.HasPrefix(fn.Name.Name, prefix) {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 type workflowPolicy struct {
