@@ -56,8 +56,7 @@ type GroupResult struct{ Group model.Group }
 
 type LaunchRequest struct {
 	RequestContext
-	Target       LaunchTarget
-	Continuation *ContinuationSelection
+	Target LaunchTarget
 }
 
 type LaunchTarget struct {
@@ -73,12 +72,6 @@ type AgentLaunchTarget struct {
 type StandaloneLaunchTarget struct {
 	Desired        model.DesiredConfiguration
 	ConversationID model.ConversationID
-}
-
-type ContinuationSelection struct {
-	ConversationID model.ConversationID
-	Native         model.NativeConversationEvidence
-	PriorEvidence  model.ProviderEvidence
 }
 
 type InteractRequest struct {
@@ -109,8 +102,6 @@ type ResumeRequest struct {
 	Target                      LaunchTarget
 	ConversationID              model.ConversationID
 	ExpectedAssociationRevision model.Revision
-	Native                      model.NativeConversationEvidence
-	PriorEvidence               model.ProviderEvidence
 }
 
 type ChangeContextRequest struct {
