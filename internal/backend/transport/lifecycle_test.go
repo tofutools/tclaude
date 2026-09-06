@@ -23,12 +23,13 @@ type lifecycleProvider struct {
 
 func (*lifecycleProvider) Name() string { return "test-native" }
 func (p *lifecycleProvider) Prepare(_ context.Context, r ports.PreparationRequest) (ports.PreparedAttempt, error) {
-	return &preparedLifecycle{p: p, spec: r.Spec}, nil
+	return &preparedLifecycle{p: p, spec: r.Spec, sink: r.Observations}, nil
 }
 
 type preparedLifecycle struct {
 	p    *lifecycleProvider
 	spec model.ResolvedExecutionSpec
+	sink ports.PrimaryObservationSink
 }
 
 func (p *preparedLifecycle) Describe() ports.PreparedDescription {
@@ -41,25 +42,41 @@ func (p *preparedLifecycle) Release(ctx context.Context, permit ports.ReleasePer
 		return ports.ReleaseResult{}, err
 	}
 	p.p.releases++
-	return ports.ReleaseResult{State: ports.ReleaseStarted, Runtime: &lifecycleRuntime{id: p.spec.ExecutionID}, Evidence: lifecycleEvidence()}, nil
+	return ports.ReleaseResult{State: ports.ReleaseStarted, Runtime: &lifecycleRuntime{id: p.spec.ExecutionID, attempt: p.spec.Attempt, sink: p.sink}, Evidence: lifecycleEvidence()}, nil
 }
 
 type lifecycleRuntime struct {
 	ports.Runtime
-	id     model.ExecutionID
-	exited bool
+	id       model.ExecutionID
+	exited   bool
+	attempt  model.AttemptGeneration
+	sink     ports.PrimaryObservationSink
+	binding  *model.NativeBinding
+	order    string
+	sequence int
 }
 
 func lifecycleEvidence() model.ProviderEvidence {
 	return model.ProviderEvidence{Provider: "test-native", Version: 1, Payload: []byte(`{}`)}
 }
 func (r *lifecycleRuntime) ExecutionID() model.ExecutionID { return r.id }
-func (r *lifecycleRuntime) Observe(context.Context) (ports.Observation, error) {
+func (r *lifecycleRuntime) Observe(ctx context.Context) (ports.Observation, error) {
+	if !r.exited && r.order == "" && r.sink != nil {
+		binding := &model.NativeBinding{Namespace: "test-store", Reference: string(r.id)}
+		if err := r.sink.ObservePrimaryContext(ctx, ports.PrimaryContextEvidence{ExecutionID: r.id, Attempt: r.attempt, Provider: "test-native", PrimaryCorrelation: "fixture-primary", Disposition: ports.PrimaryContextInitial, NextBinding: binding, ProviderOrder: "initial", ObservedAt: time.Now()}); err != nil {
+			return ports.Observation{}, err
+		}
+		r.binding, r.order = binding, "initial"
+	}
 	state := ports.WorkloadRunning
 	if r.exited {
 		state = ports.WorkloadExited
 	}
-	return ports.Observation{ObservedAt: time.Now(), Workload: state, Context: ports.ContextReady, Evidence: lifecycleEvidence(), NativeConversation: &model.NativeConversationEvidence{Namespace: "test-store", Reference: string(r.id)}}, nil
+	var native *model.NativeConversationEvidence
+	if r.binding != nil {
+		native = &model.NativeConversationEvidence{Namespace: r.binding.Namespace, Reference: r.binding.Reference}
+	}
+	return ports.Observation{ObservedAt: time.Now(), Workload: state, Context: ports.ContextReady, Evidence: lifecycleEvidence(), NativeConversation: native}, nil
 }
 func (r *lifecycleRuntime) Stop(context.Context, ports.StopRequest) (ports.StopResult, error) {
 	r.exited = true
@@ -117,8 +134,15 @@ func TestTransportDurableLaunchRetryAndStop(t *testing.T) {
 	}
 }
 
-func (r *lifecycleRuntime) ChangeContext(_ context.Context, _ ports.ContextChange) (ports.ContextChangeResult, error) {
-	return ports.ContextChangeResult{Disposition: ports.EffectAccepted, Evidence: lifecycleEvidence(), NativeConversation: &model.NativeConversationEvidence{Namespace: "test-store", Reference: string(r.id) + "-changed"}}, nil
+func (r *lifecycleRuntime) ChangeContext(ctx context.Context, change ports.ContextChange) (ports.ContextChangeResult, error) {
+	r.sequence++
+	next := &model.NativeBinding{Namespace: "test-store", Reference: fmt.Sprintf("%s-context-%d", r.id, r.sequence)}
+	order := fmt.Sprintf("context-%d", r.sequence)
+	if err := r.sink.ObservePrimaryContext(ctx, ports.PrimaryContextEvidence{ExecutionID: r.id, Attempt: r.attempt, Provider: "test-native", PrimaryCorrelation: "fixture-primary", Disposition: ports.PrimaryContextReset, PriorBinding: r.binding, NextBinding: next, PriorProviderOrder: r.order, ProviderOrder: order, ObservedAt: time.Now(), TransitionCorrelation: change.TransitionCorrelation, ExpectedConversation: change.ExpectedConversation, ExpectedAssociationRevision: change.ExpectedAssociationRevision}); err != nil {
+		return ports.ContextChangeResult{}, err
+	}
+	r.binding, r.order = next, order
+	return ports.ContextChangeResult{Disposition: ports.EffectAccepted, Evidence: lifecycleEvidence(), NativeConversation: &model.NativeConversationEvidence{Namespace: next.Namespace, Reference: next.Reference}}, nil
 }
 
 func TestContextUsesAssociationRevisionReadFromAPI(t *testing.T) {
