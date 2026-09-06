@@ -2,7 +2,6 @@ package agentd
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -31,22 +30,6 @@ func normalizeGroupAttachment(url, label string) (string, string, error) {
 		return "", "", err
 	}
 	return url, label, nil
-}
-
-// setNewGroupAttachment persists a validated attachment during group creation.
-// The caller must still own an empty, rollback-safe group at this point.
-func setNewGroupAttachment(name, url, label string) error {
-	if url == "" {
-		return nil
-	}
-	n, err := db.SetAgentGroupAttachment(name, url, label)
-	if err != nil {
-		return err
-	}
-	if n != 1 {
-		return fmt.Errorf("set attachment on new group %q: updated %d rows, want 1", name, n)
-	}
-	return nil
 }
 
 func groupAttachmentViewFor(g *db.AgentGroup) groupAttachmentView {

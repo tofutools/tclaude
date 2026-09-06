@@ -3594,7 +3594,8 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "exists", "group already exists")
 			return
 		}
-		id, err := db.CreateAgentGroupWithParent(body.Name, groupDescr, body.Parent)
+		id, err := db.CreateAgentGroupWithParentAndAttachment(
+			body.Name, groupDescr, body.Parent, attachmentURL, attachmentLabel)
 		if errors.Is(err, db.ErrGroupParentNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
 			return
@@ -3604,17 +3605,6 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
-			return
-		}
-		// A requested attachment is part of the create contract, not a
-		// best-effort decoration. Persist it while the group is still empty and
-		// rollback-safe, before repository cloning introduces host-side state.
-		if err := setNewGroupAttachment(body.Name, attachmentURL, attachmentLabel); err != nil {
-			if deleteErr := db.DeleteAgentGroup(body.Name); deleteErr != nil {
-				slog.Error("groups create: attachment failed and empty group rollback failed",
-					"group", body.Name, "error", deleteErr)
-			}
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}

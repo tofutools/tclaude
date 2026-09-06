@@ -3218,7 +3218,8 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		g = spec.intoExisting
 		gid = g.ID
 	} else {
-		gid, err = db.CreateAgentGroupWithParent(spec.groupName, spec.descr, spec.parentGroup)
+		gid, err = db.CreateAgentGroupWithParentAndAttachment(
+			spec.groupName, spec.descr, spec.parentGroup, spec.attachmentURL, spec.attachmentLabel)
 		if err != nil {
 			if errors.Is(err, db.ErrGroupParentNotFound) {
 				writeError(w, http.StatusNotFound, "not_found", "no parent group named "+spec.parentGroup)
@@ -3229,18 +3230,6 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 				return
 			}
 			writeError(w, http.StatusInternalServerError, "io", "create group: "+err.Error())
-			return
-		}
-		// The attachment is part of the requested group settings. Commit it while
-		// the group is still empty so a failed or zero-row write can be rolled
-		// back cleanly before cloning a repository or spawning any agents.
-		if err := setNewGroupAttachment(spec.groupName, spec.attachmentURL, spec.attachmentLabel); err != nil {
-			if deleteErr := db.DeleteAgentGroup(spec.groupName); deleteErr != nil {
-				slog.Error("instantiate: attachment failed and empty group rollback failed",
-					"group", spec.groupName, "error", deleteErr)
-			}
-			cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
-			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
 		// Reserve the authoritative group name and validate its parent before
