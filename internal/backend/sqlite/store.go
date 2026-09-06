@@ -296,6 +296,14 @@ CREATE TABLE IF NOT EXISTS operation_authority (
   requested_configuration_json BLOB, admitted_source_kind TEXT NOT NULL DEFAULT '',
   admitted_source_id TEXT NOT NULL DEFAULT '', admitted_revision INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS operation_additional_authority (
+  operation_id TEXT NOT NULL REFERENCES operations(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL, action TEXT NOT NULL,
+  resource_kind TEXT NOT NULL, resource_id TEXT NOT NULL DEFAULT '',
+  requested_configuration_json BLOB, admitted_source_kind TEXT NOT NULL DEFAULT '',
+  admitted_source_id TEXT NOT NULL DEFAULT '', admitted_revision INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(operation_id, position)
+);
 CREATE TABLE IF NOT EXISTS effect_permits (
   operation_id TEXT PRIMARY KEY REFERENCES operations(id) ON DELETE CASCADE,
   consumed_at INTEGER
@@ -774,6 +782,19 @@ func (s *Store) ConsumeRelease(ctx context.Context, executionID model.ExecutionI
 		}
 		if !decision.Allowed {
 			return app.ErrUnauthorized
+		}
+		additional, err := additionalOperationAuthorities(ctx, tx, operationID, request.Principal)
+		if err != nil {
+			return err
+		}
+		for _, requirement := range additional {
+			decision, err = authorizeTx(ctx, tx, requirement, at)
+			if err != nil {
+				return err
+			}
+			if !decision.Allowed {
+				return app.ErrUnauthorized
+			}
 		}
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE release_permits SET consumed_at=? WHERE execution_id=? AND operation_id=? AND consumed_at IS NULL AND EXISTS(SELECT 1 FROM executions WHERE id=? AND state=?) AND EXISTS(SELECT 1 FROM operations WHERE id=? AND state=?)`, nanos(at), executionID, operationID, executionID, model.ExecutionPrepared, operationID, model.OperationAdmitted)

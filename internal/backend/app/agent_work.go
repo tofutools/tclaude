@@ -32,6 +32,9 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	conversationID := model.ConversationID(s.newID("con_"))
 	spec := resolvedSpec(executionID, agent.ID, agent.Desired, conversationID)
 	execution := model.Execution{ID: executionID, Workload: model.ExecutionWorkloadHarness, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, State: model.ExecutionReserved, Attempt: 1, ContextReadiness: model.ContextReadinessPending, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	if err = s.requireNativeGuidanceComposition(ctx, execution); err != nil {
+		return record, err
+	}
 	operation := model.Operation{ID: operationID, RequestID: model.RequestID(issuanceID), Kind: model.OperationAssignWork, Principal: record.Run.Requester, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	authority := model.AuthorityRequest{Principal: record.Run.Requester, Action: model.ActionLaunch, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agent.ID}, RequestedConfiguration: &agent.Desired}
 	var access *model.ExecutionAccess
@@ -138,14 +141,40 @@ func (s *Service) reconcileAgentAttempt(ctx context.Context, record WorkRunRecor
 			if !found {
 				return latest, ErrConflict
 			}
-			node := graphNode(*latest.Run.Graph, current.Ref.NodeID)
-			if string(node.Input["deployment_launch"]) == "true" {
+			deploymentLaunch, deploymentErr := s.isDeploymentLaunch(ctx, latest, current)
+			if deploymentErr != nil {
+				return latest, deploymentErr
+			}
+			if deploymentLaunch {
 				return s.store.ApplyGraphTransition(ctx, s.graphOutcomeTransition(latest, current, model.WorkOutcomeVerified, "member launched with prepared briefing"))
 			}
-			return s.store.ApplyGraphTransition(ctx, GraphTransition{WorkRunID: latest.Run.ID, ExpectedRevision: latest.Run.Revision, Updates: []GraphAttemptUpdate{{Ref: current.Ref, State: model.NodeAttemptRunning, OperationID: current.OperationID, ExecutionID: current.ExecutionID}}, RunState: model.WorkRunRunning, ControlState: model.WorkControlActive, At: s.now().UTC()})
+			runState, controlState, runOutcome := model.WorkRunRunning, model.WorkControlActive, model.WorkOutcomeNone
+			if latest.Run.State == model.WorkRunFailed && latest.Run.ControlState == model.WorkControlDraining {
+				runState, controlState, runOutcome = latest.Run.State, latest.Run.ControlState, latest.Run.Outcome
+			}
+			return s.store.ApplyGraphTransition(ctx, GraphTransition{WorkRunID: latest.Run.ID, ExpectedRevision: latest.Run.Revision, Updates: []GraphAttemptUpdate{{Ref: current.Ref, State: model.NodeAttemptRunning, OperationID: current.OperationID, ExecutionID: current.ExecutionID}}, RunState: runState, ControlState: controlState, RunOutcome: runOutcome, At: s.now().UTC()})
 		}
 	}
 	return record, nil
+}
+
+func (s *Service) isDeploymentLaunch(ctx context.Context, record WorkRunRecord, attempt model.WorkNodeAttempt) (bool, error) {
+	if record.Run.Scope.DeploymentID == "" || attempt.Performer == nil || attempt.Performer.Agent == nil {
+		return false, nil
+	}
+	deployment, err := s.store.TeamDeployment(ctx, record.Run.Scope.DeploymentID)
+	if err != nil {
+		return false, err
+	}
+	if deployment.WorkRunID != record.Run.ID || deployment.GroupID != record.Run.Scope.GroupID {
+		return false, nil
+	}
+	for _, id := range deployment.Members {
+		if id == attempt.Performer.Agent.AgentID {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (s *Service) failAgentOperation(ctx context.Context, record WorkRunRecord, attempt model.WorkNodeAttempt, code string, cause error) (WorkRunRecord, error) {
