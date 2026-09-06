@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"reflect"
 	"strings"
 	"time"
@@ -65,23 +64,25 @@ func (s *Store) ImportHistoricalActivity(ctx context.Context, write app.Historic
 }
 
 const activityUnion = `
-SELECT o.id,'operation',o.principal_kind,o.principal_agent_id,o.principal_execution_id,o.principal_automation_run,
- COALESCE(NULLIF(e.agent_id,''),o.principal_agent_id,''),COALESCE(e.conversation_id,''),o.execution_id,'',o.state,o.result_code,o.created_at,
- CASE WHEN o.state IN ('succeeded','refused','failed','uncertain') THEN o.updated_at END,0,'operation'
+SELECT o.id AS id,'operation' AS kind,o.principal_kind AS actor_kind,o.principal_agent_id AS actor_agent_id,
+ o.principal_execution_id AS actor_execution_id,o.principal_automation_run AS actor_automation_run,'' AS actor_json,
+ COALESCE(NULLIF(e.agent_id,''),o.principal_agent_id,'') AS agent_id,COALESCE(e.conversation_id,'') AS conversation_id,
+ o.execution_id AS execution_id,'' AS work_run_id,o.state AS outcome,o.result_code AS reason,o.created_at AS started_at,
+ CASE WHEN o.state IN ('succeeded','refused','failed','uncertain') THEN o.updated_at END AS finished_at,0 AS historical,'operation' AS provenance
 FROM operations o LEFT JOIN executions e ON e.id=o.execution_id
 UNION ALL
-SELECT w.id,'work_run','json','','','',COALESCE(NULLIF(e.agent_id,''),json_extract(w.requester_json,'$.AgentID'),''),COALESCE(e.conversation_id,''),w.worker_execution_id,w.id,w.state,w.cancellation_reason,w.created_at,
+SELECT w.id,'work_run','json','','','',w.requester_json,COALESCE(NULLIF(e.agent_id,''),json_extract(w.requester_json,'$.AgentID'),''),COALESCE(e.conversation_id,''),w.worker_execution_id,w.id,w.state,w.cancellation_reason,w.created_at,
  CASE WHEN w.state IN ('succeeded','failed','cancelled') THEN w.updated_at END,0,'work_run'
 FROM work_runs w LEFT JOIN executions e ON e.id=w.worker_execution_id
 UNION ALL
-SELECT v.id,'work_evidence','json','','','',COALESCE(NULLIF(e.agent_id,''),json_extract(v.reporter_json,'$.AgentID'),''),COALESCE(e.conversation_id,''),COALESCE(e.id,''),v.work_run_id,
+SELECT v.id,'work_evidence','json','','','',v.reporter_json,COALESCE(NULLIF(e.agent_id,''),json_extract(v.reporter_json,'$.AgentID'),''),COALESCE(e.conversation_id,''),COALESCE(e.id,''),v.work_run_id,
  CASE WHEN v.passed IS NULL THEN v.kind WHEN v.passed=1 THEN v.kind||':passed' ELSE v.kind||':failed' END,'',v.recorded_at,v.recorded_at,0,'work_evidence'
 FROM work_evidence v JOIN work_runs w ON w.id=v.work_run_id LEFT JOIN executions e ON e.id=w.worker_execution_id
 UNION ALL
-SELECT 'decision:'||d.work_run_id,'decision','json','','','',COALESCE(NULLIF(e.agent_id,''),json_extract(d.decider_json,'$.AgentID'),''),COALESCE(e.conversation_id,''),COALESCE(e.id,''),d.work_run_id,d.decision,d.reason,d.decided_at,d.decided_at,0,'work_decision'
+SELECT 'decision:'||d.work_run_id,'decision','json','','','',d.decider_json,COALESCE(NULLIF(e.agent_id,''),json_extract(d.decider_json,'$.AgentID'),''),COALESCE(e.conversation_id,''),COALESCE(e.id,''),d.work_run_id,d.decision,d.reason,d.decided_at,d.decided_at,0,'work_decision'
 FROM work_decisions d JOIN work_runs w ON w.id=d.work_run_id LEFT JOIN executions e ON e.id=w.worker_execution_id
 UNION ALL
-SELECT h.id,h.kind,h.actor_kind,h.actor_agent_id,h.actor_execution_id,h.actor_automation_run,h.agent_id,h.conversation_id,h.execution_id,h.work_run_id,h.outcome,h.reason,h.started_at,h.finished_at,1,h.provenance
+SELECT h.id,h.kind,h.actor_kind,h.actor_agent_id,h.actor_execution_id,h.actor_automation_run,'',h.agent_id,h.conversation_id,h.execution_id,h.work_run_id,h.outcome,h.reason,h.started_at,h.finished_at,1,h.provenance
 FROM historical_activity h`
 
 func (s *Store) QueryActivity(ctx context.Context, filter app.ActivityFilter, authority model.AuthorityRequest, at time.Time) (app.ActivityResult, error) {
@@ -161,15 +162,14 @@ func (s *Store) QueryActivity(ctx context.Context, filter app.ActivityFilter, au
 		var actorJSON, actorAgent, actorExecution, actorAutomation string
 		var started int64
 		var finished sql.NullInt64
-		if err = rows.Scan(&record.ID, &record.Kind, &actorKind, &actorAgent, &actorExecution, &actorAutomation, &record.AgentID, &record.ConversationID, &record.ExecutionID, &record.WorkRunID, &record.Outcome, &record.Reason, &started, &finished, &record.Historical, &record.Provenance); err != nil {
+		if err = rows.Scan(&record.ID, &record.Kind, &actorKind, &actorAgent, &actorExecution, &actorAutomation, &actorJSON, &record.AgentID, &record.ConversationID, &record.ExecutionID, &record.WorkRunID, &record.Outcome, &record.Reason, &started, &finished, &record.Historical, &record.Provenance); err != nil {
 			rows.Close()
 			return result, err
 		}
 		if actorKind == "json" {
-			actorJSON = actorAgent
-			_ = actorJSON
-			// JSON actor columns are decoded below by a second focused lookup.
-			record.Actor = activityActorFor(ctx, tx, record)
+			var principal model.Principal
+			_ = json.Unmarshal([]byte(actorJSON), &principal)
+			record.Actor = model.ActivityActor{Kind: principal.Kind, AgentID: principal.AgentID, ExecutionID: principal.ExecutionID, AutomationRun: principal.AutomationRun}
 		} else {
 			record.Actor = model.ActivityActor{Kind: model.PrincipalKind(actorKind), AgentID: model.AgentID(actorAgent), ExecutionID: model.ExecutionID(actorExecution), AutomationRun: actorAutomation}
 		}
@@ -189,21 +189,6 @@ func (s *Store) QueryActivity(ctx context.Context, filter app.ActivityFilter, au
 		result.Records = result.Records[:limit]
 	}
 	return result, tx.Commit()
-}
-
-func activityActorFor(ctx context.Context, q queryer, record model.ActivityRecord) model.ActivityActor {
-	var raw []byte
-	switch record.Kind {
-	case model.ActivityWorkRun:
-		_ = q.QueryRowContext(ctx, `SELECT requester_json FROM work_runs WHERE id=?`, record.ID).Scan(&raw)
-	case model.ActivityEvidence:
-		_ = q.QueryRowContext(ctx, `SELECT reporter_json FROM work_evidence WHERE id=?`, record.ID).Scan(&raw)
-	case model.ActivityDecision:
-		_ = q.QueryRowContext(ctx, `SELECT decider_json FROM work_decisions WHERE work_run_id=?`, record.WorkRunID).Scan(&raw)
-	}
-	var principal model.Principal
-	_ = json.Unmarshal(raw, &principal)
-	return model.ActivityActor{Kind: principal.Kind, AgentID: principal.AgentID, ExecutionID: principal.ExecutionID, AutomationRun: principal.AutomationRun}
 }
 
 func validateActivityTargetExists(ctx context.Context, q queryer, target app.ActivityTarget) error {
@@ -248,7 +233,4 @@ func placeholders(count int) string {
 	return strings.TrimRight(strings.Repeat("?,", count), ",")
 }
 
-var (
-	_ app.ActivityStore = (*Store)(nil)
-	_                   = errors.Is
-)
+var _ app.ActivityStore = (*Store)(nil)
