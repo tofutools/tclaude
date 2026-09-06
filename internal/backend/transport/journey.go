@@ -118,6 +118,31 @@ func (h *Handler) RegisterJourneyAPI(api app.JourneyAPI) error {
 		result, err := api.CancelWork(ctx, app.CancelWorkRequest{Context: b.context(p), WorkRunID: b.WorkRunID, ExpectedRunRevision: b.ExpectedRevision, Reason: b.Reason})
 		return projectWork(result), err
 	}))
+	h.mux.HandleFunc("POST /v2/history/metadata", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
+		commandIdentity
+		ConversationID   model.ConversationID `json:"conversation_id"`
+		ExpectedRevision model.Revision       `json:"expected_revision"`
+		Title            string               `json:"title"`
+		Archived         bool                 `json:"archived"`
+	}) (any, error) {
+		return api.SetConversationMetadata(ctx, app.SetConversationMetadataRequest{Context: b.context(p), ConversationID: b.ConversationID, ExpectedRevision: b.ExpectedRevision, Title: b.Title, Archived: b.Archived})
+	}))
+	h.mux.HandleFunc("POST /v2/workspaces/restore", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
+		commandIdentity
+		WorkspaceID      model.WorkspaceID `json:"workspace_id"`
+		ExpectedRevision model.Revision    `json:"expected_revision"`
+	}) (any, error) {
+		return api.RestoreCheckout(ctx, app.RestoreCheckoutRequest{Context: b.context(p), WorkspaceID: b.WorkspaceID, ExpectedRevision: b.ExpectedRevision})
+	}))
+	h.mux.HandleFunc("POST /v2/work/resolve", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
+		commandIdentity
+		WorkRunID        model.WorkRunID `json:"work_run_id"`
+		ExpectedRevision model.Revision  `json:"expected_revision"`
+		Reason           string          `json:"reason"`
+	}) (any, error) {
+		result, err := api.ResolveWorkUncertainty(ctx, app.ResolveWorkUncertaintyRequest{Context: b.context(p), WorkRunID: b.WorkRunID, ExpectedRunRevision: b.ExpectedRevision, Reason: b.Reason})
+		return projectWork(result), err
+	}))
 	return nil
 }
 
