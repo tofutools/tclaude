@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,6 +47,8 @@ const (
 	openCodeMaxSSEEventBytes  = 4 << 20
 	openCodeHookRowWait       = 2 * time.Second
 	openCodeHookRowRetryDelay = 25 * time.Millisecond
+	openCodeProjectionWait    = 2 * time.Second
+	openCodeProjectionRetry   = 25 * time.Millisecond
 	openCodeSandboxSpecMax    = 4 << 20
 )
 
@@ -79,14 +82,16 @@ const (
 )
 
 type openCodeProcess struct {
-	cmd         *exec.Cmd
-	pid         int
-	tmuxSession string
-	done        chan error
-	doneOnce    sync.Once
-	cancel      context.CancelFunc
-	sseDone     chan struct{}
-	convID      string
+	cmd              *exec.Cmd
+	pid              int
+	tmuxSession      string
+	done             chan error
+	doneOnce         sync.Once
+	cancel           context.CancelFunc
+	sseDone          chan struct{}
+	projectionCancel context.CancelFunc
+	projectionDone   chan struct{}
+	convID           string
 	// exited is set (under openCodeProcesses' lock) once cmd.Wait returns, so a
 	// consumer that had not yet registered its cancel at death time is never
 	// started against an already-dead server. Only processes with a cmd.Wait
@@ -389,6 +394,192 @@ func openCodeLaunchFromRuntime(runtime db.OpenCodeRuntime) *openCodeLaunch {
 	}
 }
 
+var openCodePaneLaunchMarkerObserved = func(target db.SessionExitLaunchIdentity, marker string) bool {
+	if target.TmuxSession == "" || target.PaneID == "" || marker == "" {
+		return false
+	}
+	out, err := clcommon.TmuxCommand(
+		"-N", "display-message", "-p", "-t", target.PaneID,
+		"#{session_name}\t#{pane_id}\t#{pane_start_command}",
+	).Output()
+	if err != nil {
+		return false
+	}
+	parts := strings.SplitN(strings.TrimSpace(string(out)), "\t", 3)
+	if len(parts) != 3 || parts[0] != target.TmuxSession || parts[1] != target.PaneID {
+		return false
+	}
+	words, ok := codexApprovalRenderedWords(parts[2])
+	if !ok || len(words) < 3 || !clcommon.IsBootstrapShellWord(words[0]) {
+		return false
+	}
+	scriptIndex := 1
+	if filepath.Base(words[0]) == "bash" && words[1] == "-p" {
+		scriptIndex++
+	}
+	if len(words) <= scriptIndex+1 || !codexApprovalLaunchScriptWord(words[scriptIndex]) {
+		return false
+	}
+	return slices.Contains(words[scriptIndex+1:], marker)
+}
+
+// projectOpenCodeExecutionBoundary binds the exact authoritative server
+// started for a spawn to the exact pane execution that subsequently appeared.
+// Both durable identities are re-read and the final write is CAS-fenced, so a
+// delayed predecessor cannot populate a stable session id reused by a successor.
+func projectOpenCodeExecutionBoundary(launch *openCodeLaunch, row *db.SessionRow) (bool, error) {
+	if launch == nil || row == nil || row.ID != launch.SessionID {
+		return false, nil
+	}
+	// Freeze the target attempt before endpoint ownership and pane launch
+	// probes. Those are external observations and may block long enough for a
+	// successor to replace the stable row. The final CAS must use this original
+	// tuple, never re-read a generation after the proof.
+	target, err := db.GetSessionExitLaunchIdentity(row.ID)
+	if err != nil {
+		return false, err
+	}
+	if target.Generation == "" || target.TmuxSession != row.TmuxSession || target.PaneID == "" {
+		return false, nil
+	}
+	runtime, err := db.GetOpenCodeRuntime(launch.SessionID)
+	if err != nil || runtime == nil {
+		return false, err
+	}
+	if runtime.SessionID != launch.SessionID || runtime.ConvID != launch.ConvID ||
+		runtime.ServerURL != launch.ServerURL || runtime.Password != launch.Password ||
+		runtime.PID != launch.PID || runtime.Transport != launch.Transport ||
+		runtime.ControlSocketPath != launch.ControlSocketPath ||
+		runtime.ControlSocketDevice != launch.ControlSocketDevice ||
+		runtime.ControlSocketInode != launch.ControlSocketInode ||
+		strings.TrimSpace(runtime.ExecutionBoundaryJSON) == "" ||
+		runtime.PID == os.Getpid() || !openCodeRuntimeVerified(*runtime) {
+		return false, nil
+	}
+	marker := clcommon.OpenCodeLaunchProjectionMarker(launch.ServerURL, launch.Password)
+	if !openCodePaneLaunchMarkerObserved(target, marker) {
+		return false, nil
+	}
+	var boundary session.ExecutionBoundary
+	if err := json.Unmarshal([]byte(runtime.ExecutionBoundaryJSON), &boundary); err != nil {
+		return false, nil
+	}
+	if boundary.StateStoreIdentity == nil || boundary.OuterLayerRenderInput == nil {
+		return false, nil
+	}
+	h, ok := harness.Get(harness.OpenCodeName)
+	if !ok || h.StateStore == nil || h.StateStore.ValidateStateStoreIdentity(
+		harness.FrozenStateStoreContract{
+			HarnessName: boundary.OuterLayerRenderInput.Contract.HarnessName,
+			StateRoot:   boundary.OuterLayerRenderInput.Contract.StateRoot,
+		}, *boundary.StateStoreIdentity) != nil {
+		return false, nil
+	}
+	boundary.LaunchGeneration = target.Generation
+	raw, err := json.Marshal(&boundary)
+	if err != nil {
+		return false, err
+	}
+	return db.SetSessionExecutionBoundaryForLaunch(
+		row.ID, target.Generation, target.TmuxSession, target.PaneID, string(raw))
+}
+
+// continueOpenCodeExecutionBoundaryProjection preserves optional namespace
+// evidence when the spawn poll observes the pane in the narrow interval after
+// tmux creation but before session/new has durably bound its generation and
+// pane ID. It never delays spawn readiness. Only a launch with an already
+// frozen, valid server boundary gets a retry; off/no-layer and malformed
+// evidence terminate immediately.
+func continueOpenCodeExecutionBoundaryProjection(launch *openCodeLaunch, row *db.SessionRow) {
+	if launch == nil || row == nil || row.ID != launch.SessionID ||
+		!openCodeProjectionHasFrozenSource(launch) {
+		return
+	}
+	launchCopy := *launch
+	rowCopy := *row
+	openCodeProcesses.Lock()
+	process := openCodeProcesses.bySession[launch.SessionID]
+	if process == nil || process.rootPID() != launch.PID || process.stopping ||
+		process.exited || process.projectionDone != nil {
+		openCodeProcesses.Unlock()
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), openCodeProjectionWait)
+	done := make(chan struct{})
+	process.projectionCancel = cancel
+	process.projectionDone = done
+	openCodeProcesses.Unlock()
+	go func() {
+		defer func() {
+			cancel()
+			close(done)
+			openCodeProcesses.Lock()
+			if process.projectionDone == done {
+				process.projectionCancel = nil
+				process.projectionDone = nil
+			}
+			openCodeProcesses.Unlock()
+		}()
+		for {
+			openCodeProcesses.Lock()
+			currentProcess := openCodeProcesses.bySession[rowCopy.ID]
+			owned := currentProcess == process && !process.stopping && !process.exited
+			openCodeProcesses.Unlock()
+			if !owned {
+				return
+			}
+			current, err := db.LoadSession(rowCopy.ID)
+			if err == nil && current != nil && current.TmuxSession == rowCopy.TmuxSession {
+				projected, projectionErr := projectOpenCodeExecutionBoundary(&launchCopy, current)
+				if projected {
+					return
+				}
+				if projectionErr != nil {
+					slog.Warn("spawn: deferred OpenCode execution boundary projection failed",
+						"label", rowCopy.ID, "error", projectionErr)
+				}
+			}
+			if !openCodeProjectionHasFrozenSource(&launchCopy) {
+				return
+			}
+			timer := time.NewTimer(openCodeProjectionRetry)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return
+			case <-timer.C:
+			}
+		}
+	}()
+}
+
+func openCodeProjectionHasFrozenSource(launch *openCodeLaunch) bool {
+	if launch == nil {
+		return false
+	}
+	runtime, err := db.GetOpenCodeRuntime(launch.SessionID)
+	if err != nil || runtime == nil || runtime.SessionID != launch.SessionID ||
+		runtime.ConvID != launch.ConvID || runtime.ServerURL != launch.ServerURL ||
+		runtime.Password != launch.Password || runtime.PID != launch.PID ||
+		runtime.Transport != launch.Transport ||
+		runtime.ControlSocketPath != launch.ControlSocketPath ||
+		runtime.ControlSocketDevice != launch.ControlSocketDevice ||
+		runtime.ControlSocketInode != launch.ControlSocketInode {
+		return false
+	}
+	var boundary session.ExecutionBoundary
+	if json.Unmarshal([]byte(runtime.ExecutionBoundaryJSON), &boundary) != nil ||
+		boundary.StateStoreIdentity == nil || boundary.OuterLayerRenderInput == nil {
+		return false
+	}
+	h, ok := harness.Get(harness.OpenCodeName)
+	return ok && h.StateStore != nil && h.StateStore.ValidateStateStoreIdentity(
+		harness.FrozenStateStoreContract{
+			HarnessName: boundary.OuterLayerRenderInput.Contract.HarnessName,
+			StateRoot:   boundary.OuterLayerRenderInput.Contract.StateRoot,
+		}, *boundary.StateStoreIdentity) == nil
+}
+
 func resolveOpenCodeLaunchAuthority(
 	spec *session.TclaudeLayerLaunchSpec,
 ) (openCodeLaunchAuthority, error) {
@@ -464,6 +655,26 @@ func buildOpenCodeExecutionBoundary(
 			environment[name] = value
 		}
 	}
+	var stateStoreIdentity *harness.StateStoreIdentity
+	if spec != nil {
+		h, ok := harness.Get(harness.OpenCodeName)
+		if !ok || h.StateStore == nil {
+			return "", fmt.Errorf("OpenCode state-store identity adapter is unavailable")
+		}
+		captured, captureErr := h.StateStore.CaptureStateStoreIdentity(harness.StateStoreLaunch{
+			ExplicitStateRoot: spec.Contract.StateRoot,
+		})
+		if captureErr != nil {
+			return "", captureErr
+		}
+		if validateErr := h.StateStore.ValidateStateStoreIdentity(harness.FrozenStateStoreContract{
+			HarnessName: spec.Contract.HarnessName,
+			StateRoot:   spec.Contract.StateRoot,
+		}, captured); validateErr != nil {
+			return "", validateErr
+		}
+		stateStoreIdentity = &captured
+	}
 	boundary, err := session.BuildExecutionBoundary(session.ExecutionBoundaryInput{
 		SandboxImplementation:     implementation,
 		HarnessName:               harness.OpenCodeName,
@@ -475,6 +686,7 @@ func buildOpenCodeExecutionBoundary(
 		Cwd:                       cwd,
 		Environment:               environment,
 		LayerSpec:                 spec,
+		StateStoreIdentity:        stateStoreIdentity,
 	})
 	if err != nil {
 		return "", err
@@ -2047,9 +2259,13 @@ func finishOpenCodeProcessExit(process *openCodeProcess, sessionID string, pid i
 	openCodeProcesses.Lock()
 	process.exited = true
 	cancel := process.cancel
+	projectionCancel := process.projectionCancel
 	openCodeProcesses.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if projectionCancel != nil {
+		projectionCancel()
 	}
 	if waitErr != nil {
 		attrs := []any{"session", sessionID, "pid", pid, "error", waitErr}
@@ -2822,6 +3038,8 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 	process.stopping = true
 	cancel := process.cancel
 	sseDone := process.sseDone
+	projectionCancel := process.projectionCancel
+	projectionDone := process.projectionDone
 	projectorStopped := sseDone == nil
 	openCodeProcesses.Unlock()
 	defer func() {
@@ -2837,6 +3055,17 @@ func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 	if process != nil {
 		if cancel != nil {
 			cancel()
+		}
+		if projectionCancel != nil {
+			projectionCancel()
+		}
+		if projectionDone != nil {
+			select {
+			case <-projectionDone:
+			case <-time.After(openCodeProcessStopWait):
+				slog.Warn("OpenCode boundary projector did not stop before timeout",
+					"session", runtime.SessionID, "timeout", openCodeProcessStopWait)
+			}
 		}
 		if sseDone != nil {
 			// Cancellation interrupts the in-flight HTTP request/scanner and

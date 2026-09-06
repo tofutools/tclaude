@@ -2081,6 +2081,10 @@ func runNew(params *NewParams) error {
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("check for existing session row: %w", err)
 	}
+	priorExecutionBoundary, err := db.SessionExecutionBoundary(sessionID)
+	if err != nil {
+		return fmt.Errorf("read existing execution boundary: %w", err)
+	}
 	launchRowOwned := priorRow == nil
 	launchRowCommitted := false
 	// launchPaneCommand is assigned once the pane command is fully assembled,
@@ -2322,7 +2326,23 @@ func runNew(params *NewParams) error {
 		}
 	}()
 	var layerSpec TclaudeLayerLaunchSpec
+	var stateStoreIdentity *harness.StateStoreIdentity
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
+		stateRoot := ""
+		var preLaunch []sandboxpolicy.PreLaunchBlock
+		if effectiveSandbox != nil {
+			preLaunch = effectiveSandbox.Effective.PreLaunch
+		}
+		captured, captureErr := captureLaunchStateStoreIdentity(h, additionalEnv, nil)
+		if captureErr != nil {
+			slog.Warn("could not capture harness state-store identity",
+				"session_id", sessionID, "harness", h.Name, "error", captureErr)
+		} else if captured != nil {
+			stateRoot = captured.StateRoot
+			if len(preLaunch) == 0 {
+				stateStoreIdentity = captured
+			}
+		}
 		spec, specErr := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
 			HarnessName:      h.Name,
 			Cwd:              cwd,
@@ -2338,11 +2358,26 @@ func runNew(params *NewParams) error {
 			DarwinRouteReservation: darwinRouteReservation,
 			RouteHelper:            routeHelper,
 			HarnessReadPaths:       harnessReadPaths,
+			StateRoot:              stateRoot,
 		})
 		if specErr != nil {
 			return fmt.Errorf("build tclaude-layer launch spec: %w", specErr)
 		}
 		layerSpec = spec
+		if stateStoreIdentity != nil {
+			// The renderer canonicalizes the selected root (including stable
+			// symlink parents). Namespace the canonical contract path so two
+			// launch spellings of the same store cannot become distinct stores.
+			stateStoreIdentity.StateRoot = spec.Contract.StateRoot
+			stateStoreIdentity.Namespace = "host-path:" + spec.Contract.StateRoot
+			if validateErr := h.StateStore.ValidateStateStoreIdentity(
+				harness.FrozenStateStoreContract{
+					HarnessName: spec.Contract.HarnessName,
+					StateRoot:   spec.Contract.StateRoot,
+				}, *stateStoreIdentity); validateErr != nil {
+				stateStoreIdentity = nil
+			}
+		}
 		if prepareErr := PrepareTclaudeLayerHarnessState(layerSpec); prepareErr != nil {
 			return fmt.Errorf("prepare tclaude-layer launch state: %w", prepareErr)
 		}
@@ -2401,6 +2436,7 @@ func runNew(params *NewParams) error {
 		HarnessRuntimeRoots:   harnessReadPaths,
 		Cwd:                   cwd,
 		Environment:           additionalEnv,
+		StateStoreIdentity:    stateStoreIdentity,
 	}
 	if stackedProof != nil {
 		// The nested engine's launch path is guest-only. Resolve the staged,
@@ -2593,16 +2629,21 @@ func runNew(params *NewParams) error {
 	}
 
 	// Create the detached tmux session running the harness command. The
-	// managed Codex launch-profile path (when any) rides as an inert argv
-	// marker so the approval monitor's startup recovery can match the live
-	// pane to its profile (see CodexProfileMarkerArgs).
+	// managed Codex launch-profile path and OpenCode server proof (when any)
+	// ride as inert argv markers. They let the daemon match a live pane to the
+	// authority used to construct that exact launch without exposing secrets.
 	if stackedProof != nil {
 		if err := stackedProof.Revalidate(); err != nil {
 			return StackedEngineBindingRefusal(h, err)
 		}
 	}
 	timing("tmux_launch_begin")
-	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd, CodexProfileMarkerArgs(launchProfilePath)...); err != nil {
+	launchMarkers := CodexProfileMarkerArgs(launchProfilePath)
+	if marker := clcommon.OpenCodeLaunchProjectionMarker(
+		openCodeServerURL, os.Getenv("OPENCODE_SERVER_PASSWORD")); marker != "" {
+		launchMarkers = append(launchMarkers, marker)
+	}
+	if err := launchDetachedTmuxSession(tmuxSession, cwd, harnessCmd, launchMarkers...); err != nil {
 		return err
 	}
 	if darwinRouteReservation != nil {
@@ -2765,36 +2806,133 @@ func runNew(params *NewParams) error {
 			slog.Warn("failed to seed session effort", "harness", h.Name, "session_id", sessionID, "error", err)
 		}
 	}
-	if err := exitGuard.release(); err != nil {
+	boundaryPublished := false
+	rollbackExecutionBoundary := func() {
+		if !boundaryPublished {
+			return
+		}
+		var restored bool
+		var restoreErr error
+		if priorExecutionBoundary == "" {
+			restored, restoreErr = db.ClearSessionExecutionBoundaryForLaunch(
+				sessionID, exitGeneration, tmuxSession, exitGuard.paneID)
+		} else {
+			restored, restoreErr = db.SetSessionExecutionBoundaryForLaunch(
+				sessionID, exitGeneration, tmuxSession, exitGuard.paneID,
+				priorExecutionBoundary)
+		}
+		if restoreErr != nil || !restored {
+			slog.Warn("could not roll back failed launch execution boundary",
+				"session_id", sessionID, "restored", restored, "error", restoreErr)
+			return
+		}
+		boundaryPublished = false
+	}
+	// A late launch failure must put back the predecessor boundary, but only
+	// while the row still names this exact generation/pane. The defer is
+	// registered after exitGuard.abort's defer so it runs first, while the pane
+	// binding needed by the restore CAS still exists.
+	defer func() {
+		if launchRowCommitted || !boundaryPublished {
+			return
+		}
+		rollbackExecutionBoundary()
+	}()
+	releasePerformed := false
+	if len(executionBoundaryJSON) > 0 {
+		// The private gate is still closed here. Publish the exact successor
+		// namespace before release so the earliest authentic SessionStart can
+		// validate it; a managed CAS/write failure must keep the workload gated.
+		publish := func() (bool, error) {
+			return db.SetSessionExecutionBoundaryForLaunch(
+				sessionID, exitGeneration, tmuxSession, exitGuard.paneID,
+				string(executionBoundaryJSON))
+		}
+		if params.ManagedLaunch {
+			boundaryPublished, err = publishManagedBoundaryBeforeRelease(publish, exitGuard.release)
+			releasePerformed = err == nil
+			if err != nil {
+				rollbackExecutionBoundary()
+				killLaunchPane()
+				return err
+			}
+		} else {
+			stored, storeErr := publish()
+			boundaryPublished = stored
+			if storeErr != nil || !stored {
+				slog.Warn("could not persist launch execution boundary",
+					"session_id", sessionID, "stored", stored, "error", storeErr)
+			}
+		}
+	}
+	if !releasePerformed {
+		err = exitGuard.release()
+	}
+	if err != nil {
+		rollbackExecutionBoundary()
 		killLaunchPane()
 		return fmt.Errorf("bind managed pane exit audit: %w", err)
 	}
-	// Launch bookkeeping and exit attribution are durable. Publish successor
-	// readiness only at this final boundary: any earlier failure unregisters
-	// this generation and cannot prune a still-resumable predecessor.
+	// The exact boundary and gate release are now durable. Commit the remaining
+	// launch-owned profile before declaring the row ready to its parent.
 	if ordinaryNativeGeneration != "" {
 		if err := ActivateCodexNativePermissionProfile(ordinaryNativeGeneration); err != nil {
+			rollbackExecutionBoundary()
 			killLaunchPane()
 			return fmt.Errorf("activate generated Codex permission profile: %w", err)
 		}
 		ordinaryNativeActivated = true
 	}
 	launchProfileOwnedByPane = launchProfilePath != ""
-	if len(executionBoundaryJSON) > 0 {
-		// Publish only at the same successful launch-commit boundary as the row.
-		// Until here a relaunch retains its predecessor's last-known-good record;
-		// any persistence failure tears down this pane and leaves that record intact.
-		if err := db.SetSessionExecutionBoundary(sessionID, string(executionBoundaryJSON)); err != nil {
-			slog.Warn("could not persist launch execution boundary",
-				"session_id", sessionID, "error", err)
-		}
-	}
 
 	// The pane is up and bound; from here the row belongs to the live session
 	// (an attach failure below must not delete it).
 	launchRowCommitted = true
 	darwinRouteCommitted = true
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
+}
+
+func publishManagedBoundaryBeforeRelease(
+	publish func() (bool, error),
+	release func() error,
+) (bool, error) {
+	stored, err := publish()
+	if err != nil {
+		return false, fmt.Errorf("publish managed launch execution boundary before release: %w", err)
+	}
+	if !stored {
+		return false, errors.New("publish managed launch execution boundary before release: launch identity CAS refused")
+	}
+	if err := release(); err != nil {
+		return true, fmt.Errorf("bind managed pane exit audit: %w", err)
+	}
+	return true, nil
+}
+
+func captureLaunchStateStoreIdentity(
+	h *harness.Harness,
+	additionalEnv map[string]string,
+	preLaunch []sandboxpolicy.PreLaunchBlock,
+) (*harness.StateStoreIdentity, error) {
+	if h == nil || h.StateStore == nil {
+		return nil, nil
+	}
+	// A pre-launch shell block runs after the composed environment and may
+	// mutate even an undeclared store selector. Keep such an execution
+	// explicitly unknown rather than certifying the pre-script value.
+	if len(preLaunch) > 0 {
+		return nil, nil
+	}
+	launchEnvironment := launchModelEnvironment(nil)
+	for name, value := range additionalEnv {
+		launchEnvironment[name] = value
+	}
+	identity, err := h.StateStore.CaptureStateStoreIdentity(
+		harness.StateStoreLaunch{Environment: launchEnvironment})
+	if err != nil {
+		return nil, err
+	}
+	return &identity, nil
 }
 
 func accessEnforcementOptionsFromLaunchNotices(

@@ -3,11 +3,12 @@ package agentd
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/platform/conversation"
 	"github.com/tofutools/tclaude/pkg/claude/platform/execution"
@@ -24,7 +25,7 @@ func admitManagedHookConversation(
 	harnessPID int,
 	req session.BrokeredHookRequest,
 ) (conversation.Decision, error) {
-	ref, ok, err := managedConversationReference(row, req.Input.ConvID)
+	ref, ok, err := managedConversationReference(row, req.Input.ConvID, req.ExitGeneration)
 	if err != nil {
 		return conversation.Decision{}, err
 	}
@@ -47,7 +48,7 @@ func admitManagedStatuslineConversation(
 	harnessPID int,
 	exitGeneration, convID string,
 ) (conversation.Decision, error) {
-	ref, ok, err := managedConversationReference(row, convID)
+	ref, ok, err := managedConversationReference(row, convID, exitGeneration)
 	if err != nil {
 		return conversation.Decision{}, err
 	}
@@ -60,12 +61,12 @@ func admitManagedStatuslineConversation(
 	return admitManagedConversation(row, callerPID, harnessPID, exitGeneration, ref, conversation.Unspecified, false)
 }
 
-func managedConversationReference(row *db.SessionRow, value string) (conversation.Reference, bool, error) {
+func managedConversationReference(row *db.SessionRow, value, rawGeneration string) (conversation.Reference, bool, error) {
 	harnessName := strings.TrimSpace(row.Harness)
 	if harnessName == "" {
 		harnessName = db.DefaultHarness
 	}
-	namespace, ok, err := managedConversationNamespace(row, strings.TrimSpace(value), harnessName)
+	namespace, ok, err := managedConversationNamespace(row, harnessName, rawGeneration)
 	if err != nil || !ok {
 		return conversation.Reference{}, ok, err
 	}
@@ -76,43 +77,38 @@ func managedConversationReference(row *db.SessionRow, value string) (conversatio
 	}, true, nil
 }
 
-func managedConversationNamespace(row *db.SessionRow, refValue, harnessName string) (string, bool, error) {
-	var root string
-	switch harnessName {
-	case harness.DefaultName:
-		// Every tclaude-launched Claude pane is explicitly pinned to this
-		// launch-owned state root by ApplyClaudeConfigDirEnv. It is therefore
-		// proven default state, not a fallback interpretation of missing data.
-		resolved, err := session.TclaudeLayerHarnessStateRoot(harnessName)
-		if err != nil {
-			return "", false, err
-		}
-		root = resolved
-	case harness.CodexName:
-		profileConv := strings.TrimSpace(row.ConvID)
-		if profileConv == "" {
-			profileConv = refValue
-		}
-		profile, err := db.AgentRelaunchProfileForConv(profileConv)
-		if err != nil {
-			return "", false, err
-		}
-		if profile == nil || profile.CodexStateRoot == nil || profile.CodexStateRootSource == nil ||
-			strings.TrimSpace(*profile.CodexStateRoot) == "" || strings.TrimSpace(*profile.CodexStateRootSource) == "" {
-			return "", false, nil
-		}
-		root = *profile.CodexStateRoot
-	default:
-		// Copilot/OpenCode can relocate their stores through launch environment
-		// that SessionRow does not retain. Until that exact value is durable,
-		// treating the daemon's default as theirs would collapse namespaces.
+func managedConversationNamespace(row *db.SessionRow, harnessName, rawGeneration string) (string, bool, error) {
+	executionID, err := execution.ParseID(strings.TrimSpace(rawGeneration))
+	if err != nil {
 		return "", false, nil
 	}
-	root = filepath.Clean(strings.TrimSpace(root))
-	if !filepath.IsAbs(root) {
+	raw, err := db.SessionExecutionBoundary(row.ID)
+	if err != nil || strings.TrimSpace(raw) == "" {
+		return "", false, err
+	}
+	var boundary session.ExecutionBoundary
+	if err := json.Unmarshal([]byte(raw), &boundary); err != nil {
 		return "", false, nil
 	}
-	return "host-path:" + root, true, nil
+	boundaryExecutionID, err := execution.ParseID(strings.TrimSpace(boundary.LaunchGeneration))
+	if err != nil || boundaryExecutionID != executionID ||
+		boundary.SandboxImplementation != string(sandboxpolicy.ImplementationTclaudeLayer) ||
+		boundary.OuterLayerRenderInput == nil || boundary.StateStoreIdentity == nil ||
+		strings.TrimSpace(boundary.Harness.Name) != harnessName {
+		return "", false, nil
+	}
+	h, ok := harness.Get(harnessName)
+	if !ok || h.StateStore == nil {
+		return "", false, nil
+	}
+	contract := boundary.OuterLayerRenderInput.Contract
+	if err := h.StateStore.ValidateStateStoreIdentity(harness.FrozenStateStoreContract{
+		HarnessName: contract.HarnessName,
+		StateRoot:   contract.StateRoot,
+	}, *boundary.StateStoreIdentity); err != nil {
+		return "", false, nil
+	}
+	return boundary.StateStoreIdentity.Namespace, true, nil
 }
 
 func managedHookTransition(input session.HookCallbackInput) conversation.Transition {
@@ -162,7 +158,7 @@ func admitManagedConversation(
 	}
 	pane, err := brokerLivePaneProbe(row.TmuxSession)
 	if err != nil || pane.state != paneProbeLive || pane.panePID <= 1 || pane.paneID == "" ||
-		pane.generation != executionID.String() {
+		pane.generation != executionID.String() || identity.PaneID != pane.paneID {
 		return conversation.Decision{Outcome: conversation.Ambiguous, Reason: "live managed pane identity is unavailable"}, nil
 	}
 	mainPID, ok := managedMainProcessInLineage(row.Harness, callerPID, pane.panePID)
