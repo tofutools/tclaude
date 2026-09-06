@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -42,6 +43,7 @@ const (
 type Config struct {
 	Executable  string
 	PrivateRoot string
+	AgentSocket string
 	Environment []string
 	HTTPClient  *http.Client
 }
@@ -51,6 +53,8 @@ type Provider struct {
 	privateRoot string
 	environment []string
 	httpClient  *http.Client
+	credentials host.ActionCredentialHost
+	agentSocket string
 }
 
 func New(config Config) (*Provider, error) {
@@ -72,20 +76,24 @@ func New(config Config) (*Provider, error) {
 	return &Provider{
 		executable: resolved, privateRoot: filepath.Clean(config.PrivateRoot),
 		environment: append([]string(nil), config.Environment...), httpClient: client,
+		credentials: host.ActionCredentialHost{PrivateRoot: filepath.Join(config.PrivateRoot, "action-credentials")},
+		agentSocket: config.AgentSocket,
 	}, nil
 }
 
-func (*Provider) Name() string { return Name }
+func (*Provider) Name() string                                        { return Name }
+func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 
 type evidence struct {
-	ExecutionID    string                `json:"execution_id"`
-	NativeID       string                `json:"native_id,omitempty"`
-	Endpoint       string                `json:"endpoint"`
-	Password       string                `json:"password"`
-	StateRoot      string                `json:"state_root"`
-	Process        *host.ProcessIdentity `json:"process,omitempty"`
-	AttemptMark    string                `json:"attempt_marker"`
-	EphemeralState bool                  `json:"ephemeral_state,omitempty"`
+	ExecutionID    string                         `json:"execution_id"`
+	NativeID       string                         `json:"native_id,omitempty"`
+	Endpoint       string                         `json:"endpoint"`
+	Password       string                         `json:"password"`
+	StateRoot      string                         `json:"state_root"`
+	Process        *host.ProcessIdentity          `json:"process,omitempty"`
+	AttemptMark    string                         `json:"attempt_marker"`
+	EphemeralState bool                           `json:"ephemeral_state,omitempty"`
+	Access         *ports.ActionCredentialReceipt `json:"access,omitempty"`
 }
 
 type prepared struct {
@@ -98,9 +106,17 @@ type prepared struct {
 	attemptMark   string
 	removeOnAbort bool
 	description   ports.PreparedDescription
+	access        *ports.ActionCredentialReceipt
 	mu            sync.Mutex
 	released      bool
 	aborted       bool
+}
+
+type sessionRecord struct {
+	ID         string           `json:"id"`
+	Directory  string           `json:"directory"`
+	ParentID   *string          `json:"parentID,omitempty"`
+	Permission []permissionRule `json:"permission"`
 }
 
 func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest) (ports.PreparedAttempt, error) {
@@ -120,12 +136,32 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		return nil, fmt.Errorf("OpenCode requires explicitly selected %q policy; native tool rules do not enforce %q confinement",
 			model.SandboxUnconfined, request.Spec.Sandbox)
 	}
+	var access *ports.ActionCredentialReceipt
+	if request.ActionCredential != nil {
+		if request.ActionCredential.ExecutionID != request.Spec.ExecutionID {
+			return nil, fmt.Errorf("action credential does not match OpenCode execution")
+		}
+		if !filepath.IsAbs(p.agentSocket) {
+			return nil, fmt.Errorf("OpenCode agent API socket must be absolute for credential delivery")
+		}
+		receipt, deliveryErr := p.credentials.PrepareActionCredential(ctx, *request.ActionCredential)
+		if deliveryErr != nil {
+			return nil, deliveryErr
+		}
+		access = &receipt
+	}
 	stateRoot, removeOnAbort, nativeID, err := p.prepareHistory(request)
 	if err != nil {
+		if access != nil {
+			_ = p.credentials.RemoveActionCredential(context.Background(), *access)
+		}
 		return nil, err
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
+		if access != nil {
+			_ = p.credentials.RemoveActionCredential(context.Background(), *access)
+		}
 		if removeOnAbort {
 			_ = os.RemoveAll(stateRoot)
 		}
@@ -138,6 +174,9 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		if removeOnAbort {
 			_ = os.RemoveAll(stateRoot)
 		}
+		if access != nil {
+			_ = p.credentials.RemoveActionCredential(context.Background(), *access)
+		}
 		return nil, err
 	}
 	attemptMark, err := randomPassword()
@@ -146,25 +185,32 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		if removeOnAbort {
 			_ = os.RemoveAll(stateRoot)
 		}
+		if access != nil {
+			_ = p.credentials.RemoveActionCredential(context.Background(), *access)
+		}
 		return nil, err
 	}
 	initial, err := encodeEvidence(evidence{
 		ExecutionID: string(request.Spec.ExecutionID), NativeID: nativeID,
 		Endpoint: endpoint, Password: password, StateRoot: stateRoot, AttemptMark: attemptMark,
-		EphemeralState: removeOnAbort,
+		EphemeralState: removeOnAbort, Access: access,
 	})
 	if err != nil {
 		_ = listener.Close()
 		if removeOnAbort {
 			_ = os.RemoveAll(stateRoot)
 		}
+		if access != nil {
+			_ = p.credentials.RemoveActionCredential(context.Background(), *access)
+		}
 		return nil, err
 	}
 	return &prepared{
 		provider: p, request: request, listener: listener, endpoint: endpoint,
-		password: password, stateRoot: stateRoot, attemptMark: attemptMark, removeOnAbort: removeOnAbort,
+		password: password, stateRoot: stateRoot, attemptMark: attemptMark, removeOnAbort: removeOnAbort, access: access,
 		description: ports.PreparedDescription{
 			ExecutionID: request.Spec.ExecutionID,
+			Attempt:     request.Spec.Attempt,
 			Topology:    ports.TopologyIndependentServer,
 			Requirements: ports.RuntimeRequirements{
 				Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory,
@@ -185,7 +231,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 				{Kind: ports.ResourceServer, Key: endpoint},
 				{Kind: ports.ResourceProcess, Key: stateRoot},
 			},
-			Evidence: initial,
+			Evidence: initial, AccessDelivery: access,
 		},
 	}, nil
 }
@@ -242,6 +288,9 @@ func (p *prepared) Abort(context.Context) error {
 	if p.removeOnAbort {
 		err = errors.Join(err, os.RemoveAll(p.stateRoot))
 	}
+	if p.access != nil {
+		err = errors.Join(err, p.provider.credentials.RemoveActionCredential(context.Background(), *p.access))
+	}
 	return err
 }
 
@@ -271,17 +320,20 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 		Env: append(p.provider.runtimeEnvironment(p.stateRoot),
 			"OPENCODE_SERVER_USERNAME="+serverUsername,
 			"OPENCODE_SERVER_PASSWORD="+p.password,
-			attemptMarkerKey+"="+p.attemptMark),
+			attemptMarkerKey+"="+p.attemptMark,
+			"TCLAUDE_BACKEND_CREDENTIAL_FILE="+accessResource(p.access),
+			"TCLAUDE_BACKEND_SOCKET="+agentSocket(p.access, p.provider.agentSocket)),
 	})
 	if err != nil {
 		return ports.ReleaseResult{}, fmt.Errorf("start OpenCode server: %w", err)
 	}
 	runtime := &Runtime{
 		provider: p.provider, executionID: p.request.Spec.ExecutionID,
+		attempt: p.request.Spec.Attempt, observations: p.request.Observations,
 		process: process, endpoint: p.endpoint, password: p.password,
 		stateRoot: p.stateRoot, cwd: p.request.Spec.WorkingDirectory,
 		nativeID: p.descriptionNativeID(), approval: p.request.Spec.Approval,
-		sandbox: p.request.Spec.Sandbox, model: p.request.Spec.Model, attemptMark: p.attemptMark,
+		sandbox: p.request.Spec.Sandbox, model: p.request.Spec.Model, attemptMark: p.attemptMark, access: p.access,
 	}
 	currentEvidence, evidenceErr := runtime.providerEvidence()
 	if evidenceErr != nil {
@@ -298,11 +350,34 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 	} else if err := runtime.verifySession(ctx); err != nil {
 		return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime, Evidence: currentEvidence}, err
 	}
+	disposition := ports.PrimaryContextInitial
+	var prior *model.NativeBinding
+	if p.request.Intent == ports.StartContinue {
+		disposition = ports.PrimaryContextContinuity
+		prior = bindingFor(p.request.Continuation)
+	}
+	if err := runtime.publishContext(ctx, disposition, prior, nativeBinding(runtime.nativeID), ""); err != nil {
+		return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime, Evidence: currentEvidence}, err
+	}
 	currentEvidence, evidenceErr = runtime.providerEvidence()
 	if evidenceErr != nil {
 		return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime}, evidenceErr
 	}
 	return ports.ReleaseResult{State: ports.ReleaseStarted, Runtime: runtime, Evidence: currentEvidence}, nil
+}
+
+func accessResource(access *ports.ActionCredentialReceipt) string {
+	if access == nil {
+		return ""
+	}
+	return access.Resource
+}
+
+func agentSocket(access *ports.ActionCredentialReceipt, socket string) string {
+	if access == nil {
+		return ""
+	}
+	return socket
 }
 
 func (p *prepared) descriptionNativeID() string {
@@ -330,6 +405,17 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		recorded.Password == "" || !pathWithin(p.privateRoot, recorded.StateRoot) {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
 	}
+	var accessProof *ports.ActionCredentialRecoveryProof
+	if request.Access != nil {
+		if recorded.Access == nil || recorded.Access.DeliveryID != request.Access.DeliveryID || recorded.Access.ExecutionID != request.ExecutionID {
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, nil
+		}
+		proof, inspectErr := p.credentials.InspectActionCredential(ctx, *request.Access)
+		if inspectErr != nil || proof.Resource != recorded.Access.Resource {
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, inspectErr
+		}
+		accessProof = &proof
+	}
 	var process *host.Process
 	if recorded.Process != nil {
 		process, err = host.RecoverProcess(*recorded.Process)
@@ -355,10 +441,11 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	}
 	runtime := &Runtime{
 		provider: p, executionID: request.ExecutionID, process: process,
+		attempt: request.Attempt, observations: request.Observations,
 		endpoint: recorded.Endpoint, password: recorded.Password, stateRoot: recorded.StateRoot,
 		cwd: request.Spec.WorkingDirectory, nativeID: recorded.NativeID,
 		approval: request.Spec.Approval, sandbox: request.Spec.Sandbox, model: request.Spec.Model,
-		attemptMark: recorded.AttemptMark,
+		attemptMark: recorded.AttemptMark, access: recorded.Access,
 	}
 	var reconcileErr error
 	if runtime.nativeID == "" {
@@ -371,6 +458,11 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Runtime: runtime,
 			Observation: observation, Evidence: request.Evidence}, reconcileErr
 	}
+	if err := runtime.publishContext(ctx, ports.PrimaryContextContinuity, nativeBinding(runtime.nativeID), nativeBinding(runtime.nativeID), "recovery"); err != nil {
+		observation, _ := runtime.Observe(ctx)
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Runtime: runtime, Observation: observation,
+			Evidence: request.Evidence, Attempt: request.Attempt}, err
+	}
 	observation, observeErr := runtime.Observe(ctx)
 	if observeErr != nil || observation.Workload == ports.WorkloadUnknown {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Runtime: runtime, Observation: observation, Evidence: request.Evidence}, observeErr
@@ -380,21 +472,26 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Runtime: runtime, Observation: observation,
 			Evidence: request.Evidence}, evidenceErr
 	}
-	return ports.RecoveryResult{State: ports.RecoveryControlled, Runtime: runtime, Observation: observation, Evidence: currentEvidence}, nil
+	return ports.RecoveryResult{State: ports.RecoveryControlled, Runtime: runtime, Observation: observation, Evidence: currentEvidence,
+		Attempt: request.Attempt, AccessProof: accessProof}, nil
 }
 
 type Runtime struct {
-	provider    *Provider
-	executionID model.ExecutionID
-	process     *host.Process
-	endpoint    string
-	password    string
-	stateRoot   string
-	cwd         string
-	approval    model.ApprovalMode
-	sandbox     model.SandboxMode
-	model       string
-	attemptMark string
+	provider     *Provider
+	executionID  model.ExecutionID
+	attempt      model.AttemptGeneration
+	observations ports.PrimaryObservationSink
+	process      *host.Process
+	endpoint     string
+	password     string
+	stateRoot    string
+	cwd          string
+	approval     model.ApprovalMode
+	sandbox      model.SandboxMode
+	model        string
+	attemptMark  string
+	access       *ports.ActionCredentialReceipt
+	contextReady bool
 
 	mu               sync.Mutex
 	nativeID         string
@@ -416,7 +513,7 @@ func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
 		result.Workload = ports.WorkloadUnknown
 	case process.Running:
 		result.Workload = ports.WorkloadRunning
-		if err := r.health(ctx); err == nil && r.nativeID != "" {
+		if err := r.health(ctx); err == nil && r.nativeID != "" && r.contextReady {
 			result.Context = ports.ContextReady
 		} else {
 			result.Context = ports.ContextPending
@@ -483,12 +580,18 @@ func (r *Runtime) Attach(ctx context.Context, request ports.AttachmentRequest) (
 }
 
 func (r *Runtime) ChangeContext(ctx context.Context, change ports.ContextChange) (ports.ContextChangeResult, error) {
-	if change.Intent != ports.ContextClear {
+	if change.Intent != ports.ContextClear && change.Intent != ports.ContextReset {
 		return ports.ContextChangeResult{Disposition: ports.EffectUnsupported}, nil
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	prior := nativeBinding(r.nativeID)
 	if err := r.createSession(ctx); err != nil {
+		evidence, _ := r.providerEvidenceLocked()
+		return ports.ContextChangeResult{Disposition: ports.EffectUnknown, Evidence: evidence}, err
+	}
+	transition := fmt.Sprintf("%s:%d", change.ExpectedConversation, change.ExpectedAssociationRevision)
+	if err := r.publishContextLocked(ctx, ports.PrimaryContextReset, prior, nativeBinding(r.nativeID), transition); err != nil {
 		evidence, _ := r.providerEvidenceLocked()
 		return ports.ContextChangeResult{Disposition: ports.EffectUnknown, Evidence: evidence}, err
 	}
@@ -501,6 +604,9 @@ func (r *Runtime) Stop(ctx context.Context, request ports.StopRequest) (ports.St
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	acknowledged, exited, err := r.process.Stop(ctx, request.Force)
+	if exited && r.access != nil {
+		err = errors.Join(err, r.provider.credentials.RemoveActionCredential(ctx, *r.access))
+	}
 	evidence, evidenceErr := r.providerEvidenceLocked()
 	if evidenceErr != nil && err == nil {
 		err = evidenceErr
@@ -562,14 +668,12 @@ func (r *Runtime) createSession(ctx context.Context) error {
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("create OpenCode session returned HTTP %d", response.StatusCode)
 	}
-	var created struct {
-		ID         string           `json:"id"`
-		Permission []permissionRule `json:"permission"`
-	}
+	var created sessionRecord
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&created); err != nil {
 		return fmt.Errorf("decode OpenCode session: %w", err)
 	}
-	if !strings.HasPrefix(created.ID, "ses_") {
+	if !strings.HasPrefix(created.ID, "ses_") || created.ParentID != nil ||
+		filepath.Clean(created.Directory) != filepath.Clean(r.cwd) {
 		return fmt.Errorf("OpenCode returned invalid native session %q", created.ID)
 	}
 	if !permissionHasSuffix(created.Permission, expected) {
@@ -595,23 +699,27 @@ func (r *Runtime) reconcileFreshSession(ctx context.Context) error {
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("list private OpenCode sessions returned HTTP %d", response.StatusCode)
 	}
-	var sessions []struct {
-		ID string `json:"id"`
-	}
+	var sessions []sessionRecord
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&sessions); err != nil {
 		return fmt.Errorf("decode private OpenCode sessions: %w", err)
 	}
-	switch len(sessions) {
+	primary := make([]sessionRecord, 0, len(sessions))
+	for _, session := range sessions {
+		if session.ParentID == nil && filepath.Clean(session.Directory) == filepath.Clean(r.cwd) {
+			primary = append(primary, session)
+		}
+	}
+	switch len(primary) {
 	case 0:
 		return r.createSession(ctx)
 	case 1:
-		if !strings.HasPrefix(sessions[0].ID, "ses_") {
-			return fmt.Errorf("OpenCode returned invalid private session %q", sessions[0].ID)
+		if !strings.HasPrefix(primary[0].ID, "ses_") {
+			return fmt.Errorf("OpenCode returned invalid private session %q", primary[0].ID)
 		}
-		r.nativeID = sessions[0].ID
+		r.nativeID = primary[0].ID
 		return r.verifySession(ctx)
 	default:
-		return fmt.Errorf("private OpenCode attempt has %d sessions; native identity is ambiguous", len(sessions))
+		return fmt.Errorf("private OpenCode attempt has %d primary sessions; native identity is ambiguous", len(primary))
 	}
 }
 
@@ -626,11 +734,12 @@ func (r *Runtime) verifySession(ctx context.Context) error {
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("OpenCode continuation returned HTTP %d", response.StatusCode)
 	}
-	var current struct {
-		Permission []permissionRule `json:"permission"`
-	}
+	var current sessionRecord
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&current); err != nil {
 		return fmt.Errorf("decode OpenCode continuation: %w", err)
+	}
+	if current.ID != r.nativeID || current.ParentID != nil || filepath.Clean(current.Directory) != filepath.Clean(r.cwd) {
+		return fmt.Errorf("OpenCode session is not the exact primary context")
 	}
 	if permissionHasSuffix(current.Permission, expected) {
 		return nil
@@ -705,7 +814,33 @@ func (r *Runtime) providerEvidenceLocked() (model.ProviderEvidence, error) {
 	return encodeEvidence(evidence{
 		ExecutionID: string(r.executionID), NativeID: r.nativeID, Endpoint: r.endpoint,
 		Password: r.password, StateRoot: r.stateRoot, Process: &identity, AttemptMark: r.attemptMark,
+		Access: r.access,
 	})
+}
+
+func (r *Runtime) publishContext(ctx context.Context, disposition ports.PrimaryContextDisposition, prior, next *model.NativeBinding, transition string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.publishContextLocked(ctx, disposition, prior, next, transition)
+}
+
+func (r *Runtime) publishContextLocked(ctx context.Context, disposition ports.PrimaryContextDisposition, prior, next *model.NativeBinding, transition string) error {
+	if r.observations == nil {
+		return nil
+	}
+	identity := r.process.Identity()
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s", r.executionID, r.attempt, r.attemptMark, identity.StartToken)))
+	evidence := ports.PrimaryContextEvidence{
+		ExecutionID: r.executionID, Attempt: r.attempt, Provider: Name,
+		PrimaryCorrelation: fmt.Sprintf("server:%x", digest[:16]), Disposition: disposition,
+		PriorBinding: prior, NextBinding: next, TransitionCorrelation: transition,
+		ProviderOrder: "session:" + r.nativeID, ObservedAt: time.Now().UTC(),
+	}
+	if err := r.observations.ObservePrimaryContext(ctx, evidence); err != nil {
+		return err
+	}
+	r.contextReady = disposition != ports.PrimaryContextUnresolved
+	return nil
 }
 
 type permissionRule struct {
@@ -799,6 +934,20 @@ func nativeEvidence(id string) *model.NativeConversationEvidence {
 	return &model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: id, ObservedAt: time.Now()}
 }
 
+func nativeBinding(id string) *model.NativeBinding {
+	if id == "" {
+		return nil
+	}
+	return &model.NativeBinding{Namespace: NativeNamespace, Reference: id}
+}
+
+func bindingFor(evidence *model.NativeConversationEvidence) *model.NativeBinding {
+	if evidence == nil {
+		return nil
+	}
+	return &model.NativeBinding{Namespace: evidence.Namespace, Reference: evidence.Reference}
+}
+
 func validateDirectory(path string) error {
 	if !filepath.IsAbs(path) {
 		return fmt.Errorf("working directory must be absolute")
@@ -819,5 +968,6 @@ func pathWithin(root, path string) bool {
 }
 
 var _ ports.Provider = (*Provider)(nil)
+var _ ports.ActionCredentialProvider = (*Provider)(nil)
 var _ ports.PreparedAttempt = (*prepared)(nil)
 var _ ports.Runtime = (*Runtime)(nil)

@@ -3,18 +3,22 @@
 package host
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/ports"
 )
 
 func TestActionCredentialResourcePrepareRenewRecoverAndRemove(t *testing.T) {
 	root := t.TempDir()
 	host := ActionCredentialHost{PrivateRoot: filepath.Join(root, "private")}
-	resource, err := host.Prepare([]byte("generation-one"))
+	resource, err := host.Prepare("delivery-one", []byte("generation-one"))
 	require.NoError(t, err)
 
 	require.Equal(t, []byte("generation-one"), mustReadCredential(t, resource.Path()))
@@ -38,7 +42,7 @@ func TestActionCredentialRenewalIsAtomicForConcurrentReaders(t *testing.T) {
 	host := ActionCredentialHost{PrivateRoot: filepath.Join(t.TempDir(), "private")}
 	oldBearer := []byte("old-credential-material")
 	newBearer := []byte("new-credential-material-with-a-different-length")
-	resource, err := host.Prepare(oldBearer)
+	resource, err := host.Prepare("delivery-atomic", oldBearer)
 	require.NoError(t, err)
 
 	var readers sync.WaitGroup
@@ -77,7 +81,7 @@ func TestActionCredentialRenewalIsAtomicForConcurrentReaders(t *testing.T) {
 func TestActionCredentialRecoveryRejectsUnprotectedOrForeignResources(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "private")
 	host := ActionCredentialHost{PrivateRoot: root}
-	resource, err := host.Prepare([]byte("bearer"))
+	resource, err := host.Prepare("delivery-recovery", []byte("bearer"))
 	require.NoError(t, err)
 
 	require.NoError(t, os.Chmod(resource.Path(), 0o644))
@@ -89,6 +93,47 @@ func TestActionCredentialRecoveryRejectsUnprotectedOrForeignResources(t *testing
 	require.NoError(t, os.WriteFile(foreign, []byte("bearer"), 0o600))
 	_, err = host.Recover(foreign)
 	require.ErrorContains(t, err, "outside private storage")
+}
+
+func TestActionCredentialDeliveryImplementsSharedLifecycle(t *testing.T) {
+	host := ActionCredentialHost{PrivateRoot: filepath.Join(t.TempDir(), "private")}
+	expires := time.Now().Add(time.Hour)
+	first, err := host.PrepareActionCredential(context.Background(), ports.ActionCredentialMaterial{
+		ExecutionID: "execution_delivery", Generation: 1, DeliveryID: "opaque-delivery",
+		Secret: []byte("first"), ExpiresAt: expires,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, first.FileIdentity)
+	require.NotContains(t, first.Resource, "opaque-delivery")
+
+	second, err := host.RotateActionCredential(context.Background(), first, ports.ActionCredentialMaterial{
+		ExecutionID: "execution_delivery", Generation: 2, DeliveryID: "opaque-delivery",
+		Secret: []byte("second"), ExpiresAt: expires,
+	})
+	require.NoError(t, err)
+	require.NotEqual(t, first.FileIdentity, second.FileIdentity)
+	require.Equal(t, []byte("second"), mustReadCredential(t, second.Resource))
+
+	proof, err := host.InspectActionCredential(context.Background(), model.ExecutionAccessBinding{
+		ExecutionID: "execution_delivery", Generation: 2, DeliveryID: "opaque-delivery",
+		State: model.ExecutionAccessSuspended, ExpiresAt: expires,
+	})
+	require.NoError(t, err)
+	require.Equal(t, second.FileIdentity, proof.FileIdentity)
+	require.Equal(t, second.Resource, proof.Resource)
+	_, err = host.InspectActionCredential(context.Background(), model.ExecutionAccessBinding{
+		ExecutionID: "execution_delivery", Generation: 1, DeliveryID: "opaque-delivery",
+		State: model.ExecutionAccessSuspended, ExpiresAt: expires,
+	})
+	require.ErrorContains(t, err, "does not match recovery binding")
+
+	_, err = host.RotateActionCredential(context.Background(), first, ports.ActionCredentialMaterial{
+		ExecutionID: "execution_delivery", Generation: 3, DeliveryID: "opaque-delivery",
+		Secret: []byte("third"), ExpiresAt: expires,
+	})
+	require.ErrorContains(t, err, "stale file identity")
+	require.NoError(t, host.RemoveActionCredential(context.Background(), second))
+	require.NoFileExists(t, second.Resource)
 }
 
 func mustReadCredential(t *testing.T, path string) []byte {
