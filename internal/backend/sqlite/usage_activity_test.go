@@ -18,7 +18,7 @@ func TestUsageCumulativeSourceDeduplicatesAcrossExecutionsAndReopen(t *testing.T
 	require.NoError(t, err)
 	at := time.Date(2026, 9, 7, 1, 2, 3, 0, time.UTC)
 	seedUsageExecution(t, store, "agent_usage", "conversation_usage", "execution_one", at)
-	seedUsageExecution(t, store, "agent_usage", "conversation_usage", "execution_two", at.Add(time.Minute))
+	seedUsageExecution(t, store, "agent_resumed", "conversation_usage", "execution_two", at.Add(time.Minute))
 
 	first := usageWrite("usage_first", "revision_one", at, 10)
 	stored, repeated, err := store.RecordUsage(ctx, first)
@@ -47,8 +47,16 @@ func TestUsageCumulativeSourceDeduplicatesAcrossExecutionsAndReopen(t *testing.T
 	require.Len(t, result.Observations, 1, "latest cumulative observation replaces, rather than adds to, its source")
 	require.Equal(t, int64(25), result.Observations[0].Counters[0].Value)
 	require.Empty(t, result.Observations[0].Attribution.ExecutionID)
+	require.Empty(t, result.Observations[0].Attribution.AgentID, "conversation-cumulative usage does not inherit the latest execution's agent")
 	require.Equal(t, model.UsageAttributionConversation, result.Observations[0].Attribution.Precision)
 	require.Nil(t, result.Observations[0].Cost, "absent native cost survives reopen")
+
+	historical := model.UsageObservation{ID: "usage_historical", Attribution: model.UsageAttribution{AgentID: "agent_usage", ConversationID: "conversation_usage", Precision: model.UsageAttributionConversation}, Harness: "claude", Source: "legacy.audit", SourceRevision: "snapshot:1", ObservedAt: at.Add(-time.Hour), CollectedAt: at, Counters: []model.UsageCounter{{Unit: model.UsageInputTokens, Value: 3}}, Cost: &model.UsageCost{Amount: "0.125", Currency: "USD", Kind: model.UsageCostHistoricalEstimate}, Coverage: model.UsageCoverage{Counters: model.UsageCoveragePartial, Cost: model.UsageCoveragePartial}, Historical: true, Provenance: "snapshot-v228"}
+	imported, repeated, err := store.ImportHistoricalUsage(ctx, app.HistoricalUsageWrite{Observation: historical, SourceKey: "legacy:usage:1", Cumulative: true})
+	require.NoError(t, err)
+	require.False(t, repeated)
+	require.Equal(t, model.UsageCostHistoricalEstimate, imported.Cost.Kind)
+	require.Equal(t, "snapshot-v228", imported.Provenance)
 }
 
 func TestUsageTargetMismatchAndActorScopeAreRejectedInReadTransaction(t *testing.T) {
@@ -94,7 +102,7 @@ func TestActivityProjectsSafeOperationAndHistoricalRecords(t *testing.T) {
 
 func usageWrite(id model.UsageObservationID, revision string, observed time.Time, input int64) app.UsageWrite {
 	return app.UsageWrite{SourceKey: "codex:conversation_usage", Cumulative: true, Observation: model.UsageObservation{
-		ID: id, Attribution: model.UsageAttribution{AgentID: "agent_usage", ConversationID: "conversation_usage", Precision: model.UsageAttributionConversation},
+		ID: id, Attribution: model.UsageAttribution{ConversationID: "conversation_usage", Precision: model.UsageAttributionConversation},
 		Harness: "codex", Source: "codex.rollout.token_count", SourceRevision: revision, ObservedAt: observed, CollectedAt: observed,
 		Counters: []model.UsageCounter{{Unit: model.UsageInputTokens, Value: input}}, Coverage: model.UsageCoverage{Counters: model.UsageCoverageComplete, Cost: model.UsageCoverageUnsupported},
 	}}

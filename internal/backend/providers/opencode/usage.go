@@ -79,6 +79,9 @@ func (r usageReader) Collect(ctx context.Context, request ports.UsageCollectionR
 }
 
 func collectOpenCodeUsage(raw []byte) ([]model.UsageCounter, *model.UsageCost, time.Time, bool, error) {
+	// OpenCode's exported Assistant message schema owns cost and token fields;
+	// cost is already native USD accounting and is never recomputed here.
+	// Contract: https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session.ts
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.UseNumber()
 	var value struct {
