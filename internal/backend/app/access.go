@@ -103,6 +103,7 @@ type SetGroupOwnerRequest struct {
 	Principal             model.Principal
 	GroupID               model.GroupID
 	OwnerAgentID          model.AgentID
+	Bounds                model.ConfigurationBounds
 	ExpectedGroupRevision model.Revision
 }
 
@@ -122,9 +123,10 @@ type RevokeExecutionAccessRequest struct {
 }
 
 type AuthorityExplanationRequest struct {
-	Principal model.Principal
-	Action    model.Action
-	Resource  model.ResourceSelector
+	Principal              model.Principal
+	Action                 model.Action
+	Resource               model.ResourceSelector
+	RequestedConfiguration *model.DesiredConfiguration
 }
 
 type AuthorityExplanationResult struct {
