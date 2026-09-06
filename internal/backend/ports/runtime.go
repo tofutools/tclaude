@@ -196,6 +196,7 @@ type PreparationRequest struct {
 	AgentAPIEndpoint string
 	InitialInput     *PreparedInitialInput
 	NativeGuidance   NativeGuidanceEvaluator
+	CallbackIngress  CallbackIngress
 }
 
 type ProviderRegistry interface {
@@ -210,6 +211,7 @@ type RecoveryRequest struct {
 	Access           *model.ExecutionAccessBinding
 	Observations     PrimaryObservationSink
 	NativeGuidance   NativeGuidanceEvaluator
+	CallbackIngress  CallbackIngress
 	AgentAPIEndpoint string
 }
 
