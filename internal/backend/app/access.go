@@ -43,8 +43,9 @@ type ReadStatusRequest struct {
 }
 
 type StatusResult struct {
-	Agents     []model.Agent
-	Executions []model.Execution
+	Agents       []model.Agent
+	Executions   []model.Execution
+	Associations []model.ConversationAssociation
 }
 
 type PutGrantRequest struct {

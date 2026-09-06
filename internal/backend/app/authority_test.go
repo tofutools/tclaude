@@ -45,6 +45,9 @@ func TestExecutionAccessAuthorityMailRotationAndRestart(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, groupStatus.Agents, 2)
 	require.Len(t, groupStatus.Executions, 1)
+	require.Len(t, groupStatus.Associations, 1)
+	require.Equal(t, a.ID, groupStatus.Associations[0].AgentID)
+	require.True(t, groupStatus.Associations[0].Current)
 
 	sent, err := service.SendMessage(ctx, app.SendMessageRequest{RequestContext: effect(callerA, "same_request"), RecipientAgentIDs: []model.AgentID{b.ID}, Body: "offline"})
 	require.NoError(t, err)
@@ -160,6 +163,164 @@ func TestExecutionAccessSweepOwnsLeaseEligibility(t *testing.T) {
 	require.Equal(t, launched.Execution.ID, report.Renewed[0].ExecutionID)
 	require.Equal(t, model.AccessGeneration(2), report.Renewed[0].Generation)
 	require.Empty(t, service.SweepExecutionAccess(ctx).Renewed, "a rotated lease is no longer due")
+}
+
+type inspectionFailureDelivery struct{ ports.ActionCredentialDelivery }
+
+func (inspectionFailureDelivery) InspectActionCredential(context.Context, model.ExecutionAccessBinding) (ports.ActionCredentialRecoveryProof, error) {
+	return ports.ActionCredentialRecoveryProof{}, errors.New("credential resource missing")
+}
+
+type inspectionFailureProvider struct{ *accessProvider }
+
+func (p *inspectionFailureProvider) ActionCredentials() ports.ActionCredentialDelivery {
+	return inspectionFailureDelivery{ActionCredentialDelivery: p.delivery}
+}
+
+func TestRevocationDeniesBearerBeforeCredentialCleanup(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "revoke.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	provider := &inspectionFailureProvider{accessProvider: newAccessProvider()}
+	service := testAccessService(store, provider)
+	operator := model.OperatorPrincipal()
+	agent := createAgent(t, ctx, service, operator, "agent_revoke_missing_resource")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(operator, "launch_revoke_missing"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	secret := append([]byte(nil), provider.delivery.secret...)
+	status, err := service.ExecutionAccessStatus(ctx, app.ExecutionAccessStatusRequest{Principal: operator, ExecutionID: launched.Execution.ID})
+	require.NoError(t, err)
+	revoked, err := service.RevokeExecutionAccess(ctx, app.RevokeExecutionAccessRequest{Principal: operator, ExecutionID: launched.Execution.ID, ExpectedRevision: status.Access.Revision})
+	require.Error(t, err, "missing host resource is reported as cleanup failure")
+	require.Equal(t, model.ExecutionAccessRevoked, revoked.Access.State)
+	_, err = service.AuthenticateAction(ctx, secret)
+	require.ErrorIs(t, err, app.ErrUnauthorized, "durable denial does not depend on host cleanup")
+}
+
+type permissiveAuthorizeStore struct{ app.Store }
+
+func (*permissiveAuthorizeStore) Authorize(_ context.Context, request model.AuthorityRequest, _ time.Time) (model.AuthorityDecision, error) {
+	return model.AuthorityDecision{Allowed: true, Action: request.Action, Resource: request.Resource}, nil
+}
+
+func TestConfigurationAndReadMutationsAuthorizeInsideTransaction(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "atomic-authority.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	wrapped := &permissiveAuthorizeStore{Store: store}
+	service := testAccessService(wrapped, newAccessProvider())
+	operator := model.OperatorPrincipal()
+	target := createAgent(t, ctx, service, operator, "agent_atomic_target")
+	automation := model.AutomationPrincipal("run_atomic", model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: target.ID}, model.AutomationDelegation{
+		Actions:   []model.Action{model.ActionUpdateConfiguration, model.ActionMarkInboxRead},
+		Resources: []model.ResourceSelector{{Kind: model.ResourceAgent, AgentID: target.ID}},
+		Bounds:    configurationBounds(target.Desired),
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+	_, err = service.UpdateAgent(ctx, app.UpdateAgentRequest{Context: automation, ID: target.ID, ExpectedRevision: target.Revision, Name: "must not change", Desired: target.Desired})
+	require.ErrorIs(t, err, app.ErrUnauthorized, "store transaction ignores a separately forged authorization result")
+
+	message, err := service.SendMessage(ctx, app.SendMessageRequest{RequestContext: effect(operator, "atomic_message"), RecipientAgentIDs: []model.AgentID{target.ID}, Body: "unread"})
+	require.NoError(t, err)
+	_, err = service.MarkMessageRead(ctx, app.MarkMessageReadRequest{RequestContext: effect(automation, "atomic_read"), MessageID: message.Message.ID, AgentID: target.ID})
+	require.ErrorIs(t, err, app.ErrUnauthorized)
+	inbox, err := service.ReadInbox(ctx, app.ReadInboxRequest{Principal: model.AgentPrincipal(target.ID), UnreadOnly: true})
+	require.NoError(t, err)
+	require.Len(t, inbox.Messages, 1, "denied transactional acknowledgement leaves the message unread")
+}
+
+func TestPrimaryContinuityMayRotateNativeReference(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "continuity.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	service := testAccessService(store, newAccessProvider())
+	operator := model.OperatorPrincipal()
+	agent := createAgent(t, ctx, service, operator, "agent_continuity_rotation")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(operator, "launch_continuity_rotation"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	execution, err := store.Execution(ctx, launched.Execution.ID)
+	require.NoError(t, err)
+	require.NotNil(t, execution.NativeConversation)
+	priorConversation := execution.ConversationID
+	rotated, err := store.AdmitPrimaryContext(ctx, app.PrimaryContextAdmission{Evidence: ports.PrimaryContextEvidence{
+		ExecutionID: execution.ID, Attempt: execution.Attempt, Provider: "fake", PrimaryCorrelation: "primary_continuity",
+		Disposition:        ports.PrimaryContextContinuity,
+		PriorBinding:       &model.NativeBinding{Namespace: execution.NativeConversation.Namespace, Reference: execution.NativeConversation.Reference},
+		NextBinding:        &model.NativeBinding{Namespace: execution.NativeConversation.Namespace, Reference: "native_rotated_without_reset"},
+		PriorProviderOrder: execution.ContextOrder, ProviderOrder: "continuity_rotation_2", ObservedAt: time.Now(),
+	}, At: time.Now()})
+	require.NoError(t, err)
+	require.Equal(t, priorConversation, rotated.ConversationID)
+	require.Equal(t, "native_rotated_without_reset", rotated.NativeConversation.Reference)
+}
+
+func TestExpiredAccessCannotBeRenewed(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "expired-renewal.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	provider := newAccessProvider()
+	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	service := testAccessService(store, provider).WithClock(func() time.Time { return now })
+	operator := model.OperatorPrincipal()
+	agent := createAgent(t, ctx, service, operator, "agent_expired_renewal")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(operator, "launch_expired_renewal"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	status, err := service.ExecutionAccessStatus(ctx, app.ExecutionAccessStatusRequest{Principal: operator, ExecutionID: launched.Execution.ID})
+	require.NoError(t, err)
+	now = now.Add(25 * time.Hour)
+	_, err = service.RenewExecutionAccess(ctx, app.RenewExecutionAccessRequest{ExecutionID: launched.Execution.ID, ExpectedRevision: status.Access.Revision})
+	require.ErrorIs(t, err, app.ErrConflict)
+	_, err = store.RotateExecutionAccess(ctx, launched.Execution.ID, status.Access.Generation, status.Access.Revision, make([]byte, 32), ports.ActionCredentialReceipt{
+		ExecutionID: launched.Execution.ID, Generation: status.Access.Generation + 1, DeliveryID: status.Access.DeliveryID, Resource: "/private/credential", FileIdentity: "expired-rotation",
+	}, now, now.Add(24*time.Hour), now)
+	require.ErrorIs(t, err, app.ErrConflict, "the durable CAS independently fences expiry at settlement time")
+}
+
+type cancelAfterRotateDelivery struct {
+	ports.ActionCredentialDelivery
+	cancel context.CancelFunc
+}
+
+func (d cancelAfterRotateDelivery) RotateActionCredential(ctx context.Context, current ports.ActionCredentialReceipt, material ports.ActionCredentialMaterial) (ports.ActionCredentialReceipt, error) {
+	receipt, err := d.ActionCredentialDelivery.RotateActionCredential(ctx, current, material)
+	if err == nil {
+		d.cancel()
+	}
+	return receipt, err
+}
+
+type cancelAfterRotateProvider struct {
+	*accessProvider
+	cancel context.CancelFunc
+}
+
+func (p *cancelAfterRotateProvider) ActionCredentials() ports.ActionCredentialDelivery {
+	return cancelAfterRotateDelivery{ActionCredentialDelivery: p.delivery, cancel: p.cancel}
+}
+
+func TestSuccessfulHostRotationSettlesAfterCallerCancellation(t *testing.T) {
+	baseCtx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "rotation-settlement.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	ctx, cancel := context.WithCancel(baseCtx)
+	provider := &cancelAfterRotateProvider{accessProvider: newAccessProvider(), cancel: cancel}
+	service := testAccessService(store, provider)
+	operator := model.OperatorPrincipal()
+	agent := createAgent(t, ctx, service, operator, "agent_rotation_settlement")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(operator, "launch_rotation_settlement"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	status, err := service.ExecutionAccessStatus(ctx, app.ExecutionAccessStatusRequest{Principal: operator, ExecutionID: launched.Execution.ID})
+	require.NoError(t, err)
+	renewed, err := service.RenewExecutionAccess(ctx, app.RenewExecutionAccessRequest{ExecutionID: launched.Execution.ID, ExpectedRevision: status.Access.Revision})
+	require.NoError(t, err)
+	require.Equal(t, model.AccessGeneration(2), renewed.Access.Generation)
+	_, err = service.AuthenticateAction(baseCtx, provider.delivery.secret)
+	require.NoError(t, err, "durable generation catches up after successful host replacement")
 }
 
 func configurationBounds(desired model.DesiredConfiguration) model.ConfigurationBounds {

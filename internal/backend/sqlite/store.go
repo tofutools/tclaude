@@ -299,8 +299,20 @@ func (s *Store) CreateAgent(ctx context.Context, agent model.Agent) error {
 	return s.bump(ctx)
 }
 
-func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected model.Revision, name string, desired model.DesiredConfiguration, at time.Time) (model.Agent, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE agents SET name=?,harness=?,model=?,working_directory=?,approval=?,sandbox=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`,
+func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected model.Revision, name string, desired model.DesiredConfiguration, authority model.AuthorityRequest, at time.Time) (model.Agent, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.Agent{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	decision, err := authorizeTx(ctx, tx, authority, at)
+	if err != nil {
+		return model.Agent{}, err
+	}
+	if !decision.Allowed {
+		return model.Agent{}, app.ErrUnauthorized
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE agents SET name=?,harness=?,model=?,working_directory=?,approval=?,sandbox=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`,
 		name, desired.Harness, desired.Model, desired.WorkingDirectory, desired.Approval, desired.Sandbox, nanos(at), id, expected)
 	if err != nil {
 		return model.Agent{}, classify(err)
@@ -308,10 +320,17 @@ func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected mode
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return model.Agent{}, app.ErrConflict
 	}
-	if err := s.bump(ctx); err != nil {
+	if err := bumpTx(ctx, tx); err != nil {
 		return model.Agent{}, err
 	}
-	return s.Agent(ctx, id)
+	agent, err := scanAgent(tx.QueryRowContext(ctx, `SELECT id,name,harness,model,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at FROM agents WHERE id=?`, id))
+	if err != nil {
+		return model.Agent{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return model.Agent{}, err
+	}
+	return agent, nil
 }
 
 func (s *Store) Agent(ctx context.Context, id model.AgentID) (model.Agent, error) {
@@ -806,15 +825,30 @@ func (s *Store) CreateMessage(ctx context.Context, message model.Message, reques
 	return app.MessageAdmissionResult{Operation: op, Message: message}, nil
 }
 
-func (s *Store) MarkMessageRead(ctx context.Context, messageID model.MessageID, agentID model.AgentID, at time.Time) (model.Message, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE message_recipients SET read_at=COALESCE(read_at,?) WHERE message_id=? AND agent_id=?`, nanos(at), messageID, agentID)
+func (s *Store) MarkMessageRead(ctx context.Context, messageID model.MessageID, agentID model.AgentID, authority model.AuthorityRequest, at time.Time) (model.Message, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.Message{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	decision, err := authorizeTx(ctx, tx, authority, at)
+	if err != nil {
+		return model.Message{}, err
+	}
+	if !decision.Allowed {
+		return model.Message{}, app.ErrUnauthorized
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE message_recipients SET read_at=COALESCE(read_at,?) WHERE message_id=? AND agent_id=?`, nanos(at), messageID, agentID)
 	if err != nil {
 		return model.Message{}, err
 	}
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return model.Message{}, app.ErrNotFound
 	}
-	if err := s.bump(ctx); err != nil {
+	if err := bumpTx(ctx, tx); err != nil {
+		return model.Message{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return model.Message{}, err
 	}
 	return s.message(ctx, messageID)
