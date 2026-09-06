@@ -289,6 +289,9 @@ func (s *Store) CreateGraphWorkRun(ctx context.Context, run model.WorkRun, windo
 		return app.WorkRunRecord{}, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err = requirePendingAutomationAction(ctx, tx, run.Requester, model.AutomationStartWork, run.Scope.DeploymentID, run.CreatedAt); err != nil {
+		return app.WorkRunRecord{}, false, err
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO work_runs(id,request_scope,request_id,requester_json,authority_json,delegation_json,spec_json,state,worker_execution_id,cancellation_requested,cancellation_reason,revision,created_at,updated_at,graph_json,definition_closure_json,parameters_json,scope_json,authorized_programs_json,control_state,outcome,deadline) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.ID, requestScope(run.Requester), run.RequestID, requester, authority, delegation, spec, run.State, run.WorkerExecutionID, run.CancellationRequested, run.CancellationReason, run.Revision, nanos(run.CreatedAt), nanos(run.UpdatedAt), graph, closure, parameters, scope, programs, run.ControlState, run.Outcome, nanos(run.Deadline))
 	if err != nil {
 		return app.WorkRunRecord{}, false, classify(err)
@@ -500,10 +503,11 @@ func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTr
 		if transition.Execution.AgentID != "" {
 			var agentRevision model.Revision
 			var primary model.ExecutionID
-			if err = tx.QueryRowContext(ctx, `SELECT revision,primary_execution_id FROM agents WHERE id=?`, transition.Execution.AgentID).Scan(&agentRevision, &primary); err != nil {
+			var lifecycle model.AgentLifecycleState
+			if err = tx.QueryRowContext(ctx, `SELECT revision,primary_execution_id,lifecycle_state FROM agents WHERE id=?`, transition.Execution.AgentID).Scan(&agentRevision, &primary, &lifecycle); err != nil {
 				return app.WorkRunRecord{}, classify(err)
 			}
-			if transition.AgentExpected == 0 || agentRevision != transition.AgentExpected {
+			if transition.AgentExpected == 0 || agentRevision != transition.AgentExpected || lifecycle != model.AgentActive {
 				return app.WorkRunRecord{}, app.ErrConflict
 			}
 			if primary != "" {
@@ -800,6 +804,66 @@ func (s *Store) AutomationRuleRevision(ctx context.Context, id model.AutomationR
 	}
 	revision.CreatedAt = fromNanos(created)
 	return revision, nil
+}
+
+// requirePendingAutomationAction is called from the same SQLite transaction
+// that creates a new child effect. Exact retries return before this check, so
+// disabling a rule suppresses only actions that have not already been admitted.
+func requirePendingAutomationAction(ctx context.Context, tx *sql.Tx, principal model.Principal, expected model.AutomationActionKind, continuationDeployment model.DeploymentID, at time.Time) error {
+	if principal.Kind != model.PrincipalAutomation {
+		return nil
+	}
+	occurrenceID := model.OccurrenceID(principal.AutomationRun)
+	if err := occurrenceID.Validate(); err != nil {
+		return nil
+	}
+	var state model.OccurrenceState
+	var ruleID model.AutomationRuleID
+	var eligibleAt, expiresAt int64
+	var deploymentID model.DeploymentID
+	var requesterJSON, actionJSON []byte
+	var enabled, tombstoned bool
+	err := tx.QueryRowContext(ctx, `SELECT o.rule_id,o.state,o.eligible_at,o.expires_at,o.deployment_id,o.requester_json,r.enabled,r.tombstoned,rr.action_json
+		FROM automation_occurrences o
+		JOIN automation_rules r ON r.id=o.rule_id
+		JOIN automation_rule_revisions rr ON rr.id=o.rule_revision_id AND rr.rule_id=o.rule_id
+		WHERE o.id=?`, occurrenceID).Scan(&ruleID, &state, &eligibleAt, &expiresAt, &deploymentID, &requesterJSON, &enabled, &tombstoned, &actionJSON)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Automation principals are also used for application-owned, explicitly
+		// delegated run fixtures that are not rule occurrences.
+		return nil
+	}
+	if err != nil {
+		return app.ErrConflict
+	}
+	var requester model.Principal
+	var action model.AutomationAction
+	if json.Unmarshal(requesterJSON, &requester) != nil || json.Unmarshal(actionJSON, &action) != nil || !reflect.DeepEqual(requester, principal) {
+		return app.ErrConflict
+	}
+	if expected == model.AutomationStartWork && action.Kind == model.AutomationDeployTeam && state == model.OccurrenceAdmitted && continuationDeployment != "" && deploymentID == continuationDeployment {
+		return nil
+	}
+	if action.Kind != expected || state != model.OccurrencePending || !enabled || tombstoned || at.Before(fromNanos(eligibleAt)) || !at.Before(fromNanos(expiresAt)) {
+		return app.ErrConflict
+	}
+	var authorityAction model.Action
+	switch expected {
+	case model.AutomationStartWork:
+		authorityAction = model.ActionStartWork
+	case model.AutomationDeployTeam:
+		authorityAction = model.ActionRunAutomation
+	}
+	if authorityAction != "" {
+		decision, authorizeErr := authorizeTx(ctx, tx, model.AuthorityRequest{Principal: principal, Action: authorityAction, Resource: model.ResourceSelector{Kind: model.ResourceAutomationRule, AutomationRuleID: ruleID}}, at)
+		if authorizeErr != nil {
+			return authorizeErr
+		}
+		if !decision.Allowed {
+			return app.ErrUnauthorized
+		}
+	}
+	return nil
 }
 
 func (s *Store) ListAutomationRules(ctx context.Context, includeTombstoned bool) ([]model.AutomationRule, error) {

@@ -104,6 +104,25 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 			if deploymentErr != nil {
 				return touched, deploymentErr
 			}
+			if deployment.State == model.DeploymentDeploying {
+				if _, workErr := s.store.WorkRun(ctx, deployment.WorkRunID); errors.Is(workErr, ErrNotFound) {
+					definition, definitionErr := s.store.DefinitionRevision(ctx, deployment.Definition.RevisionID)
+					if definitionErr != nil || definition.Team == nil || definition.DefinitionID != deployment.Definition.DefinitionID || definition.ContentHash != deployment.Definition.ContentHash {
+						if definitionErr == nil {
+							definitionErr = ErrConflict
+						}
+						return touched, definitionErr
+					}
+					if workErr = s.startTeamDeploymentProcess(ctx, deployment, *definition.Team, occurrence.Occurrence.Requester, occurrence.Occurrence.RuleID); workErr != nil {
+						if _, updateErr := s.store.UpdateTeamDeployment(ctx, deployment.ID, deployment.Revision, model.DeploymentPartial, deployment.AdvisoryPhase, now); updateErr != nil {
+							return touched, errors.Join(workErr, updateErr)
+						}
+						continue
+					}
+				} else if workErr != nil {
+					return touched, workErr
+				}
+			}
 			state := occurrence.Occurrence.State
 			switch deployment.State {
 			case model.DeploymentReady:
@@ -159,12 +178,15 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 		case model.AutomationDeployTeam:
 			deploymentID := model.DeploymentID(deterministicOrchestrationID("deployment_", string(occurrence.Occurrence.ID)))
 			deployed, deployErr := s.DeployTeam(ctx, DeployTeamRequest{Context: RequestContext{Principal: occurrence.Occurrence.Requester, RequestID: occurrence.Occurrence.RequestID}, DeploymentID: deploymentID, Instantiation: *revision.Action.Team})
-			state := model.OccurrenceAdmitted
-			if deployErr != nil {
-				state = model.OccurrenceDenied
-			}
-			if _, err = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, state, "", "", deployed.Deployment.ID, occurrence.Occurrence.Recipients, now); err != nil {
-				return touched, err
+			if deployed.Deployment.ID == "" {
+				if _, err = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, model.OccurrenceDenied, "", "", "", occurrence.Occurrence.Recipients, now); err != nil {
+					return touched, err
+				}
+			} else if deployErr != nil {
+				// The deployment action was durably admitted before its child
+				// process failed. Its normal deployment reconciliation owns the
+				// resulting partial/denied disposition.
+				continue
 			}
 		}
 		touched = append(touched, occurrence.Occurrence.ID)
