@@ -70,9 +70,7 @@ type listedSession struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
 	Directory string `json:"directory"`
-	Time      struct {
-		Updated int64 `json:"updated"`
-	} `json:"time"`
+	Updated   int64  `json:"time_updated"`
 }
 
 func (p *Provider) History() ports.HistoryReader { return historyReader{provider: p} }
@@ -172,7 +170,9 @@ func (r historyReader) discoverNativeRoot(ctx context.Context, request ports.His
 	if err != nil {
 		return ports.HistoryDiscoveryResult{}, err
 	}
-	cmd := exec.CommandContext(ctx, r.provider.executable, "session", "list", "--format", "json", "--pure")
+	cmd := exec.CommandContext(ctx, r.provider.executable, "db",
+		"SELECT id,title,directory,time_updated FROM session WHERE parent_id IS NULL ORDER BY time_updated DESC",
+		"--format", "json", "--pure")
 	cmd.Dir = root
 	cmd.Env = host.MergeEnvironment(os.Environ(), r.provider.runtimeEnvironment(root))
 	raw, err := cmd.Output()
@@ -201,7 +201,8 @@ func (r historyReader) discoverNativeRoot(ctx context.Context, request ports.His
 			result.Histories = append(result.Histories, ports.DiscoveredHistory{
 				Native:      model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: session.ID, ObservedAt: refreshed},
 				SourceToken: session.ID, SourceFingerprint: historySourceFingerprint(root, session.ID),
-				Title: session.Title, WorkspaceHint: session.Directory, Availability: model.HistoryUnknown,
+				Title: session.Title, WorkspaceHint: session.Directory, ModifiedAt: milliseconds(session.Updated),
+				Availability: model.HistoryUnknown,
 				Coverage: model.HistoryCoverage{Metadata: model.HistoryCoverageComplete,
 					Content: model.HistoryCoverageUnknown, RefreshedAt: refreshed},
 			})
