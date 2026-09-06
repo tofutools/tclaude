@@ -84,6 +84,8 @@ function render(){
 async function selectTab(tab){
  for(const n of document.querySelectorAll('main > section'))n.hidden=n.id!==tab;
  for(const n of document.querySelectorAll('[data-tab]'))n.setAttribute('aria-current',String(n.dataset.tab===tab));
+ if(tab==='processes')await renderDefinitions();
+ if(tab==='decisions')await renderDecisions();
  if(tab==='access'){
   const data=await api('/v2/authority');const list=$('access-list');list.replaceChildren();
   for(const grant of data.Grants||[]){const row=el('div',undefined,'row');row.append(el('strong',grant.Action),el('span',grant.Subject.AgentID||grant.Subject.Kind),el('span',grant.Resource.Kind),button('Revoke',async()=>{await api(`/v2/authority/grants/${encodeURIComponent(grant.ID)}`,{expected_revision:grant.Revision},'DELETE');await selectTab('access')}));list.append(row)}
@@ -165,7 +167,10 @@ function startWork(read){
 }
 function workCard(result){
  const run=result.run,card=el('article',undefined,'card');card.append(el('strong',run.id),el('p',run.state),el('pre',run.spec.Brief||''));
+ for(const attempt of run.node_attempts||[]){const node=el('div',undefined,'row');node.append(el('strong',attempt.Ref.NodeID),el('span',attempt.State),el('span',attempt.Outcome||attempt.Detail||''));if(attempt.DecisionID)node.append(button('Open decision',()=>selectTab('decisions')));card.append(node)}
  for(const evidence of result.evidence||[])card.append(el('p',`${evidence.kind} · ${evidence.reporter.agent_id||evidence.reporter.kind}`),el('pre',evidence.detail));
+ for(const evidence of result.node_evidence||[]){const proof=el('div',undefined,'card');proof.append(el('strong',`${evidence.attempt.NodeID} · ${evidence.kind}`),el('p',`Evidence ${evidence.id} · revision ${evidence.revision}`,'muted'),el('p',`${evidence.reporter.agent_id||evidence.reporter.kind} · attempt ${evidence.attempt.Attempt}`),el('pre',evidence.detail));if(evidence.artifact_revision)proof.append(el('p',`Artifact ${evidence.artifact_revision}`));if(evidence.passed!==undefined)proof.append(el('p',evidence.passed?'Verification passed':'Verification failed'));card.append(proof)}
+ for(const decision of result.decisions||[])card.append(el('p',`${decision.Question||decision.ID}: ${decision.State}`));
  if(result.decision)card.append(el('strong',`${result.decision.decision}: ${result.decision.reason}`));
  const actions=el('div',undefined,'actions');
  const pending=(run.attempts||[]).find(a=>a.step==='await_evidence'&&a.state==='pending');
@@ -182,3 +187,56 @@ $('new-grant').onclick=()=>edit('Grant agent permission',[
  {name:'action',label:'Action',options:['message.send','status.read','execution.stop','execution.interact','execution.attach']},
  {name:'target',label:'Target agent',options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}
 ],async f=>{await api(`/v2/authority/grants/${encodeURIComponent(f.requestID)}`,{subject:{Kind:'agent',AgentID:f.subject},action:f.action,resource:{Kind:'agent',AgentID:f.target},expected_revision:0},'PUT');await selectTab('access')});
+
+async function renderDecisions(){
+ const results=await api('/v2/decisions'),list=$('decision-list');list.replaceChildren();
+ for(const result of results||[]){
+  const window=result.Window,card=el('article',undefined,'card');
+  card.append(el('h2',window.Question||'Decision'),el('p',`${window.Attempt.RunID} · ${window.Attempt.NodeID}`),el('p',`Expires ${new Date(window.ExpiresAt).toLocaleString()}`,'muted'));
+  card.append(button('Answer',()=>edit('Answer decision',[{name:'answer',label:'Answer',options:window.PermittedAnswers||[]},{name:'reason',label:'Reason',multiline:true}],async f=>{
+   await api('/v2/decisions/submit',{request_id:f.requestID,decision_id:window.ID,expected_window_revision:window.Revision,answer:f.answer,reason:f.reason});await renderDecisions();
+  })));
+  list.append(card);
+ }
+ if(!results?.length)empty(list,'No decisions awaiting your answer.');
+}
+async function renderDefinitions(){
+ const definitions=await api('/v2/definitions'),list=$('definition-list');list.replaceChildren();
+ for(const definition of definitions||[]){
+  const card=el('article',undefined,'card');card.append(el('h2',definition.Name),el('p',`${definition.Kind} · revision ${definition.Revision}`,'muted'));
+  card.append(button('Inspect definition',async()=>{const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID));card.append(el('pre',result.Revision.Source))}));
+  if(definition.Kind==='process')card.append(button('Start process',async()=>{
+   const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID));
+   const revision=result.Revision;
+   const memberKeys=[...new Set((revision.Process.Graph.Nodes||[]).map(n=>n.Performer?.Agent?.MemberKey).filter(Boolean))];
+   const agents=(snapshot.agents||[]).filter(a=>a.Lifecycle!=='retired');
+   if(memberKeys.length&&!agents.length)throw new Error('Create an active agent before binding this process.');
+   const bindingFields=memberKeys.map(key=>({name:'binding_'+key,label:'Agent for '+key,options:agents.map(a=>({value:a.ID,label:a.Name}))}));
+   const fields=[{name:'workspace',label:'Workspace',options:(snapshot.workspaces||[]).filter(w=>w.State==='available').map(w=>({value:w.ID,label:w.Intent.Name||w.Observation.ActualPath||w.ID}))},{name:'minutes',label:'Maximum run time in minutes',value:'60'},...parameterFields(revision.Parameters||[]),...bindingFields];
+   edit('Start pinned process',fields,async f=>{
+    const minutes=Number(f.minutes);if(!Number.isFinite(minutes)||minutes<=0||minutes>10080)throw new Error('Choose a run duration between 1 and 10080 minutes.');
+    const programs=(revision.Process.Graph.Nodes||[]).filter(n=>n.Performer?.Program).map(n=>n.Performer.Program.Profile);
+    await api('/v2/processes',{request_id:f.requestID,id:f.requestID,start:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'process'},Scope:{WorkspaceID:f.workspace},Parameters:parameterValues(revision.Parameters||[],f),PerformerBindings:Object.fromEntries(memberKeys.map(key=>[key,{Kind:'agent',Agent:{AgentID:f['binding_'+key]}}])),AuthorizedProgramProfiles:programs,Deadline:new Date(Date.now()+minutes*60000).toISOString()}});
+   });
+  }));
+  if(definition.Kind==='team')card.append(button('Deploy team',async()=>{
+   const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID)),revision=result.Revision;
+   edit('Deploy pinned team',[{name:'mission',label:'Mission',multiline:true},...parameterFields(revision.Parameters||[])],f=>api('/v2/teams/deploy',{request_id:f.requestID,deployment_id:f.requestID,instantiation:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'team'},Mission:f.mission,GroupID:'group_'+f.requestID,Parameters:parameterValues(revision.Parameters||[],f)}}));
+  }));
+  list.append(card);
+ }
+ if(!definitions?.length)empty(list,'No saved definitions. Author a definition with the definition save command.');
+}
+
+function parameterFields(parameters){return parameters.map((p,index)=>{
+ const value=p.Default===undefined||p.Default===null?'':p.Type==='string'?p.Default:JSON.stringify(p.Default);
+ const field={name:'parameter_'+index,label:p.Description||p.Name,value,required:p.Required,multiline:p.Type==='object'||p.Type==='array'};
+ if(p.Type==='boolean')field.options=p.Required?['true','false']:['','true','false'];return field;
+})}
+function parameterValues(parameters,form){const values={};parameters.forEach((p,index)=>{
+ const text=form['parameter_'+index];if(text===''&&!p.Required)return;
+ let value=text;
+ if(p.Type!=='string'){try{value=JSON.parse(text)}catch{throw new Error(`Enter a valid ${p.Type} for ${p.Name}.`)}}
+ const valid=p.Type==='string'?typeof value==='string':p.Type==='number'?typeof value==='number'&&Number.isFinite(value):p.Type==='boolean'?typeof value==='boolean':p.Type==='array'?Array.isArray(value):value!==null&&typeof value==='object'&&!Array.isArray(value);
+ if(!valid)throw new Error(`Enter a valid ${p.Type} for ${p.Name}.`);values[p.Name]=value;
+});return values}
