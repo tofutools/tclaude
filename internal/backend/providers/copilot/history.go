@@ -103,17 +103,17 @@ func (h historyReader) Read(ctx context.Context, selection ports.HistorySourceSe
 		return ports.HistoryReadResult{}, err
 	}
 	if selection.Provider != Name || selection.Native.Namespace != NativeNamespace {
-		return ports.HistoryReadResult{}, fmt.Errorf("Copilot history selection has wrong provider")
+		return ports.HistoryReadResult{}, fmt.Errorf("copilot history selection has wrong provider")
 	}
 	token, err := decodeSourceToken(selection.SourceToken)
 	if err != nil {
 		return ports.HistoryReadResult{}, err
 	}
 	if filepath.Clean(token.StateRoot) != h.provider.nativeHome || token.SessionID != selection.Native.Reference {
-		return ports.HistoryReadResult{}, fmt.Errorf("Copilot history source is outside provider storage")
+		return ports.HistoryReadResult{}, fmt.Errorf("copilot history source is outside provider storage")
 	}
 	if selection.SourceFingerprint != sourceFingerprint(token) {
-		return ports.HistoryReadResult{}, fmt.Errorf("Copilot history source fingerprint changed")
+		return ports.HistoryReadResult{}, fmt.Errorf("copilot history source fingerprint changed")
 	}
 	if err := verifyHistorySelection(selection, token); err != nil {
 		return ports.HistoryReadResult{}, err
@@ -139,7 +139,7 @@ func verifyHistorySelection(selection ports.HistorySourceSelection, token source
 		return err
 	}
 	if digest(raw) != selection.SourceRevision {
-		return fmt.Errorf("Copilot history source revision changed")
+		return fmt.Errorf("copilot history source revision changed")
 	}
 	if selection.Point != nil && selection.Point.Kind != model.HistoryPointHead {
 		return ports.ErrHistoryUnsupported

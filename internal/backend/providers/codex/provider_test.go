@@ -104,6 +104,9 @@ func TestProviderOwnsTerminalCredentialAndRecovery(t *testing.T) {
 }
 
 func TestProviderMapsRequestedNativeConfinement(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is unavailable")
+	}
 	root, err := os.MkdirTemp("/tmp", "tcl-codex-policy-")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
@@ -129,6 +132,30 @@ func TestSessionStartObservationRequiresExpectedPrimarySession(t *testing.T) {
 	require.Equal(t, ports.PrimaryContextInitial, sink.values[0].Disposition)
 	require.True(t, runtime.contextReady)
 	require.Equal(t, "00000000-0000-4000-8000-000000000001", runtime.nativeID)
+	writeHookEvent(t, spool.Directory(), sessionStartEvent{SessionID: "00000000-0000-4000-8000-000000000002", HookEventName: "SessionStart", Source: "clear"})
+	require.NoError(t, runtime.consumeObservations(context.Background()))
+	require.Len(t, sink.values, 2)
+	require.Equal(t, ports.PrimaryContextUnresolved, sink.values[1].Disposition)
+	require.Equal(t, "00000000-0000-4000-8000-000000000001", sink.values[1].PriorBinding.Reference)
+	require.Equal(t, "00000000-0000-4000-8000-000000000002", runtime.nativeID)
+	require.False(t, runtime.contextReady)
+}
+
+func TestAcceptedApplicationContinuationEvidence(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is unavailable")
+	}
+	root, err := os.MkdirTemp("/tmp", "tcl-codex-resume-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
+	provider, err := New(Config{Executable: os.Args[0], PrivateRoot: root})
+	require.NoError(t, err)
+	nativeID := "00000000-0000-4000-8000-000000000001"
+	prior, err := encodeEvidence(evidence{ExecutionID: "prior", NativeID: nativeID, StateRoot: provider.nativeHome, ObservationSpool: filepath.Join(root, "prior-spool")})
+	require.NoError(t, err)
+	prepared, err := provider.Prepare(context.Background(), ports.PreparationRequest{Intent: ports.StartContinue, Continuation: &model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: nativeID}, PriorEvidence: prior, Spec: model.ResolvedExecutionSpec{ExecutionID: "resumed", Harness: Name, WorkingDirectory: root, Approval: model.ApprovalSupervised, Sandbox: model.SandboxReadOnly}})
+	require.NoError(t, err)
+	require.NoError(t, prepared.Abort(context.Background()))
 }
 
 func TestConcurrentExecutionsKeepPolicyAndSpoolsExecutionScoped(t *testing.T) {

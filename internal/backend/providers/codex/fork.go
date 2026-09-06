@@ -29,7 +29,7 @@ type nativeTurnForker struct{ executable string }
 
 func (f nativeTurnForker) Fork(ctx context.Context, request TurnForkRequest) (string, error) {
 	if request.StateRoot == "" || request.ThreadID == "" || request.LastTurnID == "" {
-		return "", errors.New("Codex turn fork requires exact source evidence")
+		return "", errors.New("codex turn fork requires exact source evidence")
 	}
 	command := exec.CommandContext(ctx, f.executable, "app-server", "--listen", "stdio://")
 	command.Dir = request.WorkingDirectory
@@ -91,7 +91,7 @@ func (f nativeTurnForker) Fork(ctx context.Context, request TurnForkRequest) (st
 		} `json:"thread"`
 	}
 	if err := json.Unmarshal(result, &fork); err != nil || fork.Thread.ID == "" || fork.Thread.ID == request.ThreadID {
-		return "", errors.New("Codex app-server returned invalid fork identity")
+		return "", errors.New("codex app-server returned invalid fork identity")
 	}
 	return fork.Thread.ID, nil
 }
@@ -114,10 +114,10 @@ func readRPCResponse(scanner *bufio.Scanner, expected int) (json.RawMessage, err
 			continue
 		}
 		if message.Error != nil {
-			return nil, fmt.Errorf("Codex app-server error %d: %s", message.Error.Code, message.Error.Message)
+			return nil, fmt.Errorf("codex app-server error %d: %s", message.Error.Code, message.Error.Message)
 		}
 		if len(message.Result) == 0 {
-			return nil, errors.New("Codex app-server response has no result")
+			return nil, errors.New("codex app-server response has no result")
 		}
 		return message.Result, nil
 	}
