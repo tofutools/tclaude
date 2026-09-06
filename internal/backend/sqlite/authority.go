@@ -435,6 +435,23 @@ func (s *Store) ExecutionAccess(ctx context.Context, id model.ExecutionID) (mode
 	return executionAccessRow(s.db.QueryRowContext(ctx, accessSelect+` WHERE execution_id=?`, id))
 }
 
+func (s *Store) ExecutionAccessesDue(ctx context.Context, after, before time.Time) ([]model.ExecutionAccess, error) {
+	rows, err := s.db.QueryContext(ctx, accessSelect+` WHERE state=? AND expires_at>? AND expires_at<=? ORDER BY expires_at,execution_id`, model.ExecutionAccessActive, nanos(after), nanos(before))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var accesses []model.ExecutionAccess
+	for rows.Next() {
+		access, err := executionAccessRow(rows)
+		if err != nil {
+			return nil, err
+		}
+		accesses = append(accesses, access)
+	}
+	return accesses, rows.Err()
+}
+
 func (s *Store) AuthenticateExecutionAccess(ctx context.Context, digest []byte, at time.Time) (model.ExecutionAccess, error) {
 	access, err := executionAccessRow(s.db.QueryRowContext(ctx, accessSelect+` WHERE credential_digest=?`, digest))
 	if err != nil {

@@ -296,6 +296,24 @@ func (s *Service) RenewExecutionAccess(ctx context.Context, req RenewExecutionAc
 	return ExecutionAccessStatusResult{Access: accessBinding(rotated)}, err
 }
 
+func (s *Service) SweepExecutionAccess(ctx context.Context) ExecutionAccessRenewalReport {
+	now := s.now().UTC()
+	accesses, err := s.store.ExecutionAccessesDue(ctx, now, now.Add(s.accessLease/3))
+	if err != nil {
+		return ExecutionAccessRenewalReport{Failed: []ExecutionAccessRenewalFailure{{Code: Code(err), Detail: err.Error()}}}
+	}
+	var report ExecutionAccessRenewalReport
+	for _, access := range accesses {
+		result, err := s.RenewExecutionAccess(ctx, RenewExecutionAccessRequest{ExecutionID: access.ExecutionID, ExpectedRevision: access.Revision})
+		if err != nil {
+			report.Failed = append(report.Failed, ExecutionAccessRenewalFailure{ExecutionID: access.ExecutionID, Code: Code(err), Detail: err.Error()})
+			continue
+		}
+		report.Renewed = append(report.Renewed, result.Access)
+	}
+	return report
+}
+
 func validateAccessProof(access model.ExecutionAccess, proof ports.ActionCredentialRecoveryProof) error {
 	if proof.ExecutionID != access.ExecutionID || proof.Generation != access.Generation || proof.DeliveryID != access.DeliveryID || proof.Resource == "" || proof.FileIdentity == "" {
 		return fail(ErrInvalid, "host returned mismatched execution credential proof")

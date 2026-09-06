@@ -44,6 +44,7 @@ type Store interface {
 	AdmitPrimaryContext(context.Context, PrimaryContextAdmission) (model.Execution, error)
 
 	ExecutionAccess(context.Context, model.ExecutionID) (model.ExecutionAccess, error)
+	ExecutionAccessesDue(context.Context, time.Time, time.Time) ([]model.ExecutionAccess, error)
 	AuthenticateExecutionAccess(context.Context, []byte, time.Time) (model.ExecutionAccess, error)
 	RecordAccessDelivery(context.Context, model.ExecutionID, model.AccessGeneration, ports.ActionCredentialReceipt, time.Time) (model.ExecutionAccess, error)
 	RotateExecutionAccess(context.Context, model.ExecutionID, model.AccessGeneration, model.Revision, []byte, ports.ActionCredentialReceipt, time.Time, time.Time) (model.ExecutionAccess, error)
