@@ -45,6 +45,16 @@ func (s *Store) initialize(ctx context.Context) error {
 	}
 	for _, migration := range []struct{ table, column, definition string }{
 		{"groups", "owner_agent_id", "TEXT NOT NULL DEFAULT ''"},
+		{"agents", "lifecycle_state", "TEXT NOT NULL DEFAULT 'active'"},
+		{"agents", "task_reference", "TEXT NOT NULL DEFAULT ''"},
+		{"agents", "parent_agent_id", "TEXT NOT NULL DEFAULT ''"},
+		{"agents", "clone_source_agent_id", "TEXT NOT NULL DEFAULT ''"},
+		{"agents", "retired_at", "INTEGER"},
+		{"agents", "retired_by_kind", "TEXT NOT NULL DEFAULT ''"},
+		{"agents", "retired_by_agent_id", "TEXT NOT NULL DEFAULT ''"},
+		{"agents", "retired_by_execution_id", "TEXT NOT NULL DEFAULT ''"},
+		{"agents", "retirement_reason", "TEXT NOT NULL DEFAULT ''"},
+		{"agents", "direct_notification_intent", "TEXT NOT NULL DEFAULT 'if_available'"},
 		{"executions", "attempt_generation", "INTEGER NOT NULL DEFAULT 1"},
 		{"executions", "context_readiness", "TEXT NOT NULL DEFAULT 'pending'"},
 		{"executions", "context_provider_order", "TEXT NOT NULL DEFAULT ''"},
@@ -73,10 +83,24 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"messages", "sender_automation_run", "TEXT NOT NULL DEFAULT ''"},
 		{"messages", "sender_authority_subject_kind", "TEXT NOT NULL DEFAULT ''"},
 		{"messages", "sender_authority_subject_id", "TEXT NOT NULL DEFAULT ''"},
+		{"messages", "sender_conversation_id", "TEXT NOT NULL DEFAULT ''"},
+		{"messages", "subject", "TEXT NOT NULL DEFAULT 'Message'"},
+		{"messages", "parent_message_id", "TEXT NOT NULL DEFAULT ''"},
+		{"messages", "thread_id", "TEXT NOT NULL DEFAULT ''"},
+		{"messages", "request_digest", "TEXT NOT NULL DEFAULT ''"},
+		{"message_recipients", "address_kind", "TEXT NOT NULL DEFAULT 'agent'"},
+		{"message_recipients", "audience_kind", "TEXT NOT NULL DEFAULT 'to'"},
+		{"message_recipients", "notification_intent", "TEXT NOT NULL DEFAULT 'none'"},
+		{"message_recipients", "notification_outcome", "TEXT NOT NULL DEFAULT 'not_requested'"},
+		{"message_recipients", "notification_detail", "TEXT NOT NULL DEFAULT ''"},
+		{"message_recipients", "notified_at", "INTEGER"},
 	} {
 		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.definition); err != nil {
 			return err
 		}
+	}
+	if err := s.migrateMessageRecipients(ctx); err != nil {
+		return err
 	}
 	if err := s.migrateOperationRequestScope(ctx); err != nil {
 		return err
@@ -181,6 +205,11 @@ INSERT OR IGNORE INTO backend_meta(singleton, revision) VALUES (1, 0);
 
 CREATE TABLE IF NOT EXISTS agents (
   id TEXT PRIMARY KEY, name TEXT NOT NULL,
+	 task_reference TEXT NOT NULL DEFAULT '', parent_agent_id TEXT NOT NULL DEFAULT '',
+	 clone_source_agent_id TEXT NOT NULL DEFAULT '', lifecycle_state TEXT NOT NULL DEFAULT 'active',
+	 retired_at INTEGER, retired_by_kind TEXT NOT NULL DEFAULT '', retired_by_agent_id TEXT NOT NULL DEFAULT '',
+	 retired_by_execution_id TEXT NOT NULL DEFAULT '', retirement_reason TEXT NOT NULL DEFAULT '',
+	 direct_notification_intent TEXT NOT NULL DEFAULT 'if_available',
   harness TEXT NOT NULL, model TEXT NOT NULL, working_directory TEXT NOT NULL,
   approval TEXT NOT NULL, sandbox TEXT NOT NULL,
   primary_execution_id TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL,
@@ -249,12 +278,32 @@ CREATE TABLE IF NOT EXISTS messages (
   sender_automation_run TEXT NOT NULL DEFAULT '',
   sender_authority_subject_kind TEXT NOT NULL DEFAULT '',
   sender_authority_subject_id TEXT NOT NULL DEFAULT '',
-  body TEXT NOT NULL, created_at INTEGER NOT NULL
+	 sender_conversation_id TEXT NOT NULL DEFAULT '', subject TEXT NOT NULL,
+	 parent_message_id TEXT NOT NULL DEFAULT '', thread_id TEXT NOT NULL,
+	 request_digest TEXT NOT NULL, body TEXT NOT NULL, created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS message_recipients (
   id TEXT PRIMARY KEY, message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
-  agent_id TEXT NOT NULL REFERENCES agents(id), read_at INTEGER, notified INTEGER NOT NULL DEFAULT 0,
-  UNIQUE(message_id, agent_id)
+	 address_kind TEXT NOT NULL, agent_id TEXT NOT NULL DEFAULT '', audience_kind TEXT NOT NULL,
+	 read_at INTEGER, notification_intent TEXT NOT NULL, notification_outcome TEXT NOT NULL,
+	 notification_detail TEXT NOT NULL DEFAULT '', notified_at INTEGER,
+	 UNIQUE(message_id, address_kind, agent_id)
+);
+CREATE TABLE IF NOT EXISTS attachments (
+  id TEXT PRIMARY KEY, owner_kind TEXT NOT NULL, owner_agent_id TEXT NOT NULL DEFAULT '',
+	 owner_execution_id TEXT NOT NULL DEFAULT '', owner_generation INTEGER NOT NULL DEFAULT 0,
+	 owner_automation_run TEXT NOT NULL DEFAULT '',
+  filename TEXT NOT NULL, media_type TEXT NOT NULL, size INTEGER NOT NULL, sha256 TEXT NOT NULL,
+  content BLOB NOT NULL, created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS attachment_claims (
+  id TEXT PRIMARY KEY, attachment_id TEXT NOT NULL UNIQUE REFERENCES attachments(id) ON DELETE CASCADE,
+  expires_at INTEGER NOT NULL, consumed_message_id TEXT REFERENCES messages(id), created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS message_attachments (
+  message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  attachment_id TEXT NOT NULL UNIQUE REFERENCES attachments(id), position INTEGER NOT NULL,
+  PRIMARY KEY(message_id, attachment_id)
 );
 
 CREATE TABLE IF NOT EXISTS execution_accesses (
@@ -383,15 +432,21 @@ VALUES('group_owner','Owner','["status.read","inbox.read","inbox.mark_read","mes
 `
 
 func (s *Store) CreateAgent(ctx context.Context, agent model.Agent) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO agents(id,name,harness,model,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		agent.ID, agent.Name, agent.Desired.Harness, agent.Desired.Model, agent.Desired.WorkingDirectory, agent.Desired.Approval, agent.Desired.Sandbox, agent.PrimaryExecutionID, agent.Revision, nanos(agent.CreatedAt), nanos(agent.UpdatedAt))
+	if agent.Lifecycle == "" {
+		agent.Lifecycle = model.AgentActive
+	}
+	if agent.Notifications.DirectMessage == "" {
+		agent.Notifications.DirectMessage = model.NotificationIfAvailable
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO agents(id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,direct_notification_intent,harness,model,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		agent.ID, agent.Name, agent.TaskReference, agent.ParentAgentID, agent.CloneSourceAgentID, agent.Lifecycle, agent.Notifications.DirectMessage, agent.Desired.Harness, agent.Desired.Model, agent.Desired.WorkingDirectory, agent.Desired.Approval, agent.Desired.Sandbox, agent.PrimaryExecutionID, agent.Revision, nanos(agent.CreatedAt), nanos(agent.UpdatedAt))
 	if err != nil {
 		return classify(err)
 	}
 	return s.bump(ctx)
 }
 
-func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected model.Revision, name string, desired model.DesiredConfiguration, authority model.AuthorityRequest, at time.Time) (model.Agent, error) {
+func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected model.Revision, name, taskReference string, notifications model.AgentNotificationPreferences, desired model.DesiredConfiguration, authority model.AuthorityRequest, at time.Time) (model.Agent, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return model.Agent{}, err
@@ -404,8 +459,8 @@ func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected mode
 	if !decision.Allowed {
 		return model.Agent{}, app.ErrUnauthorized
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE agents SET name=?,harness=?,model=?,working_directory=?,approval=?,sandbox=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`,
-		name, desired.Harness, desired.Model, desired.WorkingDirectory, desired.Approval, desired.Sandbox, nanos(at), id, expected)
+	result, err := tx.ExecContext(ctx, `UPDATE agents SET name=?,task_reference=?,direct_notification_intent=?,harness=?,model=?,working_directory=?,approval=?,sandbox=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND lifecycle_state=?`,
+		name, taskReference, notifications.DirectMessage, desired.Harness, desired.Model, desired.WorkingDirectory, desired.Approval, desired.Sandbox, nanos(at), id, expected, model.AgentActive)
 	if err != nil {
 		return model.Agent{}, classify(err)
 	}
@@ -415,7 +470,7 @@ func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected mode
 	if err := bumpTx(ctx, tx); err != nil {
 		return model.Agent{}, err
 	}
-	agent, err := scanAgent(tx.QueryRowContext(ctx, `SELECT id,name,harness,model,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at FROM agents WHERE id=?`, id))
+	agent, err := scanAgent(tx.QueryRowContext(ctx, agentSelect+` WHERE id=?`, id))
 	if err != nil {
 		return model.Agent{}, err
 	}
@@ -426,7 +481,7 @@ func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected mode
 }
 
 func (s *Store) Agent(ctx context.Context, id model.AgentID) (model.Agent, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,name,harness,model,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at FROM agents WHERE id=?`, id)
+	row := s.db.QueryRowContext(ctx, agentSelect+` WHERE id=?`, id)
 	return scanAgent(row)
 }
 
@@ -506,10 +561,11 @@ func (s *Store) AdmitLaunch(ctx context.Context, in app.LaunchAdmission) (app.Ad
 	if in.AgentID != "" {
 		var revision model.Revision
 		var primary model.ExecutionID
-		if err := tx.QueryRowContext(ctx, `SELECT revision,primary_execution_id FROM agents WHERE id=?`, in.AgentID).Scan(&revision, &primary); err != nil {
+		var lifecycle model.AgentLifecycleState
+		if err := tx.QueryRowContext(ctx, `SELECT revision,primary_execution_id,lifecycle_state FROM agents WHERE id=?`, in.AgentID).Scan(&revision, &primary, &lifecycle); err != nil {
 			return app.AdmissionResult{}, classify(err)
 		}
-		if revision != in.Expected {
+		if revision != in.Expected || lifecycle != model.AgentActive {
 			return app.AdmissionResult{}, app.ErrConflict
 		}
 		if primary != "" {
@@ -874,14 +930,22 @@ func (s *Store) CurrentConversation(ctx context.Context, agentID model.AgentID) 
 	return association, nil
 }
 
-func (s *Store) CreateMessage(ctx context.Context, message model.Message, requestID model.RequestID, operationID model.OperationID, authority []model.AuthorityRequest) (app.MessageAdmissionResult, error) {
+func (s *Store) CreateMessage(ctx context.Context, in app.MessageAdmission) (app.MessageAdmissionResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return app.MessageAdmissionResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	for _, request := range authority {
-		decision, err := authorizeTx(ctx, tx, request, message.CreatedAt)
+	// Exact retries are immutable reads. They intentionally precede live
+	// authority, parent, membership, preference, and claim re-evaluation.
+	if existing, ok, err := messageByRequestDigest(ctx, tx, in.Message.Sender, in.RequestID, in.RequestDigest); err != nil {
+		return app.MessageAdmissionResult{}, err
+	} else if ok {
+		_ = tx.Commit()
+		return existing, nil
+	}
+	for _, request := range in.Authority {
+		decision, err := authorizeTx(ctx, tx, request, in.Message.CreatedAt)
 		if err != nil {
 			return app.MessageAdmissionResult{}, err
 		}
@@ -889,24 +953,33 @@ func (s *Store) CreateMessage(ctx context.Context, message model.Message, reques
 			return app.MessageAdmissionResult{}, app.ErrUnauthorized
 		}
 	}
-	if existing, ok, err := messageByRequest(ctx, tx, requestID, message); err != nil {
-		return app.MessageAdmissionResult{}, err
-	} else if ok {
-		_ = tx.Commit()
-		return existing, nil
+	if in.Message.ParentMessageID != "" {
+		parent, err := messageTx(ctx, tx, in.Message.ParentMessageID)
+		if err != nil {
+			return app.MessageAdmissionResult{}, err
+		}
+		if !messageAccessible(in.Message.Sender, parent) {
+			return app.MessageAdmissionResult{}, app.ErrUnauthorized
+		}
+		in.Message.ThreadID = parent.ThreadID
+	} else {
+		in.Message.ThreadID = in.Message.ID
 	}
-	op := model.Operation{ID: operationID, RequestID: requestID, Kind: model.OperationSendMessage, Principal: message.Sender, State: model.OperationSucceeded, ResultCode: "committed", Revision: 1, CreatedAt: message.CreatedAt, UpdatedAt: message.CreatedAt}
+	op := model.Operation{ID: in.OperationID, RequestID: in.RequestID, Kind: model.OperationSendMessage, Principal: in.Message.Sender, State: model.OperationSucceeded, ResultCode: "committed", Revision: 1, CreatedAt: in.Message.CreatedAt, UpdatedAt: in.Message.CreatedAt}
 	if err := insertOperation(ctx, tx, op); err != nil {
 		return app.MessageAdmissionResult{}, err
 	}
-	authorityKind, authorityID := subjectParts(message.Sender.Authority)
-	if _, err := tx.ExecContext(ctx, `INSERT INTO messages(id,operation_id,sender_kind,sender_agent_id,sender_execution_id,sender_generation,sender_automation_run,sender_authority_subject_kind,sender_authority_subject_id,body,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, message.ID, operationID, message.Sender.Kind, message.Sender.AgentID, message.Sender.ExecutionID, message.Sender.Generation, message.Sender.AutomationRun, authorityKind, authorityID, message.Body, nanos(message.CreatedAt)); err != nil {
+	authorityKind, authorityID := subjectParts(in.Message.Sender.Authority)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messages(id,operation_id,sender_kind,sender_agent_id,sender_execution_id,sender_generation,sender_automation_run,sender_authority_subject_kind,sender_authority_subject_id,sender_conversation_id,subject,parent_message_id,thread_id,request_digest,body,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, in.Message.ID, in.OperationID, in.Message.Sender.Kind, in.Message.Sender.AgentID, in.Message.Sender.ExecutionID, in.Message.Sender.Generation, in.Message.Sender.AutomationRun, authorityKind, authorityID, in.Message.SenderConversationID, in.Message.Subject, in.Message.ParentMessageID, in.Message.ThreadID, in.RequestDigest, in.Message.Body, nanos(in.Message.CreatedAt)); err != nil {
 		return app.MessageAdmissionResult{}, classify(err)
 	}
-	for _, recipient := range message.Recipients {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO message_recipients(id,message_id,agent_id,read_at,notified) VALUES(?,?,?,?,?)`, recipient.ID, message.ID, recipient.AgentID, nil, recipient.Notified); err != nil {
+	for _, recipient := range in.Message.Recipients {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO message_recipients(id,message_id,address_kind,agent_id,audience_kind,read_at,notification_intent,notification_outcome,notification_detail,notified_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, recipient.ID, in.Message.ID, recipient.AddressKind, recipient.AgentID, recipient.Audience, nil, recipient.NotificationIntent, recipient.NotificationOutcome, recipient.NotificationDetail, nil); err != nil {
 			return app.MessageAdmissionResult{}, classify(err)
 		}
+	}
+	if err := insertMessageAttachments(ctx, tx, in); err != nil {
+		return app.MessageAdmissionResult{}, err
 	}
 	if err := bumpTx(ctx, tx); err != nil {
 		return app.MessageAdmissionResult{}, err
@@ -914,10 +987,10 @@ func (s *Store) CreateMessage(ctx context.Context, message model.Message, reques
 	if err := tx.Commit(); err != nil {
 		return app.MessageAdmissionResult{}, err
 	}
-	return app.MessageAdmissionResult{Operation: op, Message: message}, nil
+	return app.MessageAdmissionResult{Operation: op, Message: in.Message}, nil
 }
 
-func (s *Store) MarkMessageRead(ctx context.Context, messageID model.MessageID, agentID model.AgentID, authority model.AuthorityRequest, at time.Time) (model.Message, error) {
+func (s *Store) MarkMessageRead(ctx context.Context, messageID model.MessageID, addressKind model.MessageAddressKind, agentID model.AgentID, authority model.AuthorityRequest, at time.Time) (model.Message, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return model.Message{}, err
@@ -930,7 +1003,7 @@ func (s *Store) MarkMessageRead(ctx context.Context, messageID model.MessageID, 
 	if !decision.Allowed {
 		return model.Message{}, app.ErrUnauthorized
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE message_recipients SET read_at=COALESCE(read_at,?) WHERE message_id=? AND agent_id=?`, nanos(at), messageID, agentID)
+	result, err := tx.ExecContext(ctx, `UPDATE message_recipients SET read_at=COALESCE(read_at,?) WHERE message_id=? AND address_kind=? AND agent_id=?`, nanos(at), messageID, addressKind, agentID)
 	if err != nil {
 		return model.Message{}, err
 	}
@@ -947,7 +1020,7 @@ func (s *Store) MarkMessageRead(ctx context.Context, messageID model.MessageID, 
 }
 
 func (s *Store) MessagesForAgent(ctx context.Context, agentID model.AgentID, unreadOnly bool) ([]model.Message, error) {
-	query := `SELECT message_id FROM message_recipients WHERE agent_id=?`
+	query := `SELECT message_id FROM message_recipients WHERE address_kind='agent' AND agent_id=?`
 	if unreadOnly {
 		query += ` AND read_at IS NULL`
 	}
@@ -1027,7 +1100,7 @@ func (s *Store) Snapshot(ctx context.Context) (app.Snapshot, error) {
 		return snapshot, err
 	}
 	associationRows.Close()
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,harness,model,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at FROM agents ORDER BY id`)
+	rows, err := s.db.QueryContext(ctx, agentSelect+` ORDER BY id`)
 	if err != nil {
 		return snapshot, err
 	}
@@ -1262,17 +1335,23 @@ func completeOperationTx(ctx context.Context, tx *sql.Tx, in app.OperationComple
 
 const executionSelect = `SELECT id,workload_kind,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,native_namespace,native_reference,native_observed_at,revision,created_at,updated_at FROM executions`
 const operationSelect = `SELECT id,request_id,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,automation_delegation_json,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at FROM operations`
+const agentSelect = `SELECT id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,retired_at,retired_by_kind,retired_by_agent_id,retired_by_execution_id,retirement_reason,direct_notification_intent,harness,model,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at FROM agents`
 
 type scanner interface{ Scan(...any) error }
 
 func scanAgent(row scanner) (model.Agent, error) {
 	var a model.Agent
+	var retired sql.NullInt64
 	var created, updated int64
-	err := row.Scan(&a.ID, &a.Name, &a.Desired.Harness, &a.Desired.Model, &a.Desired.WorkingDirectory, &a.Desired.Approval, &a.Desired.Sandbox, &a.PrimaryExecutionID, &a.Revision, &created, &updated)
+	err := row.Scan(&a.ID, &a.Name, &a.TaskReference, &a.ParentAgentID, &a.CloneSourceAgentID, &a.Lifecycle, &retired, &a.RetiredBy.Kind, &a.RetiredBy.AgentID, &a.RetiredBy.ExecutionID, &a.RetirementReason, &a.Notifications.DirectMessage, &a.Desired.Harness, &a.Desired.Model, &a.Desired.WorkingDirectory, &a.Desired.Approval, &a.Desired.Sandbox, &a.PrimaryExecutionID, &a.Revision, &created, &updated)
 	if err != nil {
 		return a, classify(err)
 	}
 	a.CreatedAt, a.UpdatedAt = fromNanos(created), fromNanos(updated)
+	if retired.Valid {
+		value := fromNanos(retired.Int64)
+		a.RetiredAt = &value
+	}
 	return a, nil
 }
 func scanExecution(row scanner) (model.Execution, error) {
@@ -1386,89 +1465,7 @@ func executionTx(ctx context.Context, tx *sql.Tx, id model.ExecutionID) (model.E
 }
 
 func (s *Store) message(ctx context.Context, id model.MessageID) (model.Message, error) {
-	var m model.Message
-	var created int64
-	var authorityKind, authorityID string
-	err := s.db.QueryRowContext(ctx, `SELECT id,sender_kind,sender_agent_id,sender_execution_id,sender_generation,sender_automation_run,sender_authority_subject_kind,sender_authority_subject_id,body,created_at FROM messages WHERE id=?`, id).Scan(&m.ID, &m.Sender.Kind, &m.Sender.AgentID, &m.Sender.ExecutionID, &m.Sender.Generation, &m.Sender.AutomationRun, &authorityKind, &authorityID, &m.Body, &created)
-	if err != nil {
-		return m, classify(err)
-	}
-	m.CreatedAt = fromNanos(created)
-	m.Sender.Authority = makeSubject(authorityKind, authorityID)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,agent_id,read_at,notified FROM message_recipients WHERE message_id=? ORDER BY rowid`, id)
-	if err != nil {
-		return m, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var recipient model.MessageRecipient
-		var read sql.NullInt64
-		if err := rows.Scan(&recipient.ID, &recipient.AgentID, &read, &recipient.Notified); err != nil {
-			return m, err
-		}
-		if read.Valid {
-			v := fromNanos(read.Int64)
-			recipient.ReadAt = &v
-		}
-		m.Recipients = append(m.Recipients, recipient)
-	}
-	return m, rows.Err()
-}
-func messageByRequest(ctx context.Context, tx *sql.Tx, requestID model.RequestID, desired model.Message) (app.MessageAdmissionResult, bool, error) {
-	operation, err := operationByRequestTx(ctx, tx, desired.Sender, requestID)
-	if errors.Is(err, app.ErrNotFound) {
-		return app.MessageAdmissionResult{}, false, nil
-	}
-	if err != nil {
-		return app.MessageAdmissionResult{}, false, err
-	}
-	if operation.Kind != model.OperationSendMessage || !sameRequester(operation.Principal, desired.Sender) {
-		return app.MessageAdmissionResult{}, false, app.ErrConflict
-	}
-	var messageID model.MessageID
-	if err := tx.QueryRowContext(ctx, `SELECT id FROM messages WHERE operation_id=?`, operation.ID).Scan(&messageID); err != nil {
-		return app.MessageAdmissionResult{}, false, classify(err)
-	}
-	var m model.Message
-	var created int64
-	var authorityKind, authorityID string
-	if err := tx.QueryRowContext(ctx, `SELECT id,sender_kind,sender_agent_id,sender_execution_id,sender_generation,sender_automation_run,sender_authority_subject_kind,sender_authority_subject_id,body,created_at FROM messages WHERE id=?`, messageID).Scan(&m.ID, &m.Sender.Kind, &m.Sender.AgentID, &m.Sender.ExecutionID, &m.Sender.Generation, &m.Sender.AutomationRun, &authorityKind, &authorityID, &m.Body, &created); err != nil {
-		return app.MessageAdmissionResult{}, false, classify(err)
-	}
-	m.CreatedAt = fromNanos(created)
-	m.Sender.Authority = makeSubject(authorityKind, authorityID)
-	if m.Body != desired.Body {
-		return app.MessageAdmissionResult{}, false, app.ErrConflict
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT id,agent_id,read_at,notified FROM message_recipients WHERE message_id=? ORDER BY rowid`, messageID)
-	if err != nil {
-		return app.MessageAdmissionResult{}, false, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var r model.MessageRecipient
-		var read sql.NullInt64
-		if err := rows.Scan(&r.ID, &r.AgentID, &read, &r.Notified); err != nil {
-			return app.MessageAdmissionResult{}, false, err
-		}
-		if read.Valid {
-			v := fromNanos(read.Int64)
-			r.ReadAt = &v
-		}
-		m.Recipients = append(m.Recipients, r)
-	}
-	if err := rows.Err(); err != nil {
-		return app.MessageAdmissionResult{}, false, err
-	}
-	if len(m.Recipients) != len(desired.Recipients) {
-		return app.MessageAdmissionResult{}, false, app.ErrConflict
-	}
-	for index := range m.Recipients {
-		if m.Recipients[index].AgentID != desired.Recipients[index].AgentID {
-			return app.MessageAdmissionResult{}, false, app.ErrConflict
-		}
-	}
-	return app.MessageAdmissionResult{Operation: operation, Message: m, Repeated: true}, true, nil
+	return messageTx(ctx, s.db, id)
 }
 
 func (s *Store) bump(ctx context.Context) error {
