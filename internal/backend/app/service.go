@@ -27,6 +27,7 @@ type Service struct {
 	store            Store
 	providers        ports.ProviderRegistry
 	workspaceHost    ports.WorkspaceHost
+	historySources   ports.HistorySourceRegistry
 	now              func() time.Time
 	newID            IDGenerator
 	accessLease      time.Duration
@@ -49,6 +50,11 @@ func (s *Service) WithIDGenerator(generate IDGenerator) *Service { s.newID = gen
 
 func (s *Service) WithWorkspaceHost(host ports.WorkspaceHost) *Service {
 	s.workspaceHost = host
+	return s
+}
+
+func (s *Service) WithHistorySources(sources ports.HistorySourceRegistry) *Service {
+	s.historySources = sources
 	return s
 }
 
