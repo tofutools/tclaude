@@ -175,6 +175,73 @@ func TestExitLaunchGuard_PaneLocalHookThenDurableBindingBeforeRelease(t *testing
 		"runtime release state is durable only after the pane acknowledges the file gate")
 }
 
+func newManagedResumeGuardForTest(t *testing.T, fake *exitCallbackTmux, generation string) (*exitLaunchGuard, execution.OperationID) {
+	t.Helper()
+	setupExitCallbackTest(t, fake)
+	const convID = "managed-resume-gate-conv"
+	const sessionID = "managed-resume-gate-session"
+	const tmuxSession = "managed-resume-gate-tmux"
+	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
+		ID: sessionID, TmuxSession: tmuxSession, ConvID: convID,
+		Status: StatusIdle, Created: time.Now(),
+	}, generation, db.SessionExitGatePending))
+	opID := execution.NewOperationID()
+	secret := []byte("managed-resume-gate-secret")
+	eID := execution.ID(generation)
+	require.NoError(t, db.CreateResumeOperation(db.ResumeOperationRow{
+		ID: opID, Kind: "manual_resume", ConvID: convID,
+		Attempt: execution.AttemptRef{ExecutionID: eID}, ClaimHash: db.ResumeClaimHash(secret),
+		State: execution.ResumeRequested, LaunchPhase: "requested", Revision: 1,
+	}))
+	require.NoError(t, db.TransitionResumeOperation(opID, 1, execution.ResumeAccepted, "accepted", ""))
+	claimed, err := db.ClaimResumeOperation(opID, eID, secret, convID, sessionID, 77, "start-77")
+	require.NoError(t, err)
+	require.True(t, claimed)
+	guard, err := newExitLaunchGuard(sessionID, tmuxSession, generation)
+	require.NoError(t, err)
+	guard.paneID = fake.paneID
+	guard.resumeOperationID = opID
+	guard.resumeConversation = convID
+	guard.resumeClaimPID = 77
+	guard.resumeClaimProcessStart = "start-77"
+	return guard, opID
+}
+
+func TestManagedResumeGate_CancellationAfterRegistrationPreventsGo(t *testing.T) {
+	const generation = "71717171717171717171717171717171"
+	guard, opID := newManagedResumeGuardForTest(t, &exitCallbackTmux{paneID: "%71"}, generation)
+	registered, err := guard.registerResumeLaunch()
+	require.NoError(t, err)
+	require.True(t, registered)
+	marker := filepath.Join(t.TempDir(), "workload-started")
+	paneDone := startWrappedExitGate(t, guard, "touch "+clcommon.ShellQuoteArg(marker))
+	won, err := db.RequestResumeCancellation(opID, 4, "race test")
+	require.NoError(t, err)
+	require.True(t, won)
+	require.ErrorContains(t, guard.release(), "revoked")
+	guard.abort()
+	require.Error(t, requireExitGateResult(t, paneDone))
+	_, err = os.Stat(marker)
+	require.ErrorIs(t, err, os.ErrNotExist, "cancelled gate must never publish the workload")
+}
+
+func TestManagedResumeGate_ReleaseWinnerRequiresPostReleaseCancellation(t *testing.T) {
+	const generation = "72727272727272727272727272727272"
+	guard, opID := newManagedResumeGuardForTest(t, &exitCallbackTmux{paneID: "%72"}, generation)
+	registered, err := guard.registerResumeLaunch()
+	require.NoError(t, err)
+	require.True(t, registered)
+	paneDone := startWrappedExitGate(t, guard, "true")
+	require.NoError(t, guard.release())
+	require.NoError(t, requireExitGateResult(t, paneDone))
+	won, err := db.RequestResumeCancellation(opID, 6, "stale pre-release cancel")
+	require.NoError(t, err)
+	assert.False(t, won)
+	won, err = db.RequestReleasedResumeCancellation(opID, 6, "exact stop required")
+	require.NoError(t, err)
+	assert.True(t, won)
+}
+
 func TestExitLaunchGuard_FileReleaseFailureRestoresPreHarnessState(t *testing.T) {
 	fake := &exitCallbackTmux{paneID: "%8"}
 	setupExitCallbackTest(t, fake)

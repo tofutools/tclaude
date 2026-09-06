@@ -30,6 +30,45 @@ import (
 type peerKey struct{}
 
 type permissionDefaultsKey struct{}
+type spawnAuthorityDecisionContextKey struct{}
+type spawnAuthorityRefusalContextKey struct{}
+
+type spawnAuthorityActionKey struct {
+	Group           string
+	SpawnProfile    string
+	SandboxProfile  string
+	StructuralGroup string
+}
+
+func spawnActionKey(actx ActionContext) spawnAuthorityActionKey {
+	return spawnAuthorityActionKey{
+		Group: actx.Group, SpawnProfile: actx.SpawnProfile,
+		SandboxProfile: actx.SandboxProfile, StructuralGroup: actx.structuralGroup,
+	}
+}
+
+// groupSpawnAuthorityAction builds the one authorization footprint shared by
+// HTTP admission and launch-time evidence consumption. Group spawn always
+// acts structurally on its target group; callers need not know or populate the
+// private structuralGroup field themselves.
+func groupSpawnAuthorityAction(group string, actx ActionContext) ActionContext {
+	actx.Group = group
+	actx.structuralGroup = group
+	return actx
+}
+
+type spawnAuthorityRefusalContext struct {
+	ConvID string
+	Slug   string
+	Action spawnAuthorityActionKey
+}
+
+type spawnAuthorityPinEvidence struct {
+	ConvID string
+	Slug   string
+	Action spawnAuthorityActionKey
+	Pinned bool
+}
 
 // withPermissionDefaults snapshots config-backed defaults before a caller
 // enters a global mutation lock. DB-backed grants/denies are still evaluated
@@ -616,6 +655,9 @@ const (
 	// the structural group-owner bypass that call sites (and the listing)
 	// apply to fill the permUndecided gap.
 	permSourceOwner permSource = "owner"
+	// permSourceOperator is an authenticated human or explicitly persisted
+	// operator-authored automation adapter, not a standing permission tier.
+	permSourceOperator permSource = "operator"
 	// permSourceMember is a registry-declared capability conferred by active
 	// membership in the action's target group.
 	permSourceMember permSource = "member"
@@ -656,7 +698,10 @@ type overridePermSource struct {
 // slug — the fail-closed shape for an empty conv-id, an unknown or
 // retired agent, or an unreadable DB.
 type permSources struct {
-	resolvable bool
+	resolvable   bool
+	diagnostics  []permissionReadDiagnostic
+	ownedGroups  []db.OwnedGroupScopes
+	ownerReadErr error
 	// sudo maps slug → active grant id (soonest-expiring wins, matching
 	// db.LookupActiveSudoGrantID's ORDER BY).
 	sudo map[string]sudoPermSource
@@ -674,7 +719,7 @@ type permSources struct {
 // degrade to "this source said nothing", exactly as the per-slug queries
 // did — except an unresolvable agent, which stays fail-closed.
 func loadPermSources(convID string) permSources {
-	src, _ := loadPermSourcesWithReadPolicy(convID, false)
+	src, _ := loadPermSourcesWithReadPolicy(convID, permissionReadLegacy)
 	return src
 }
 
@@ -683,13 +728,13 @@ func loadPermSources(convID string) permSources {
 // callers preserve the ordinary best-effort source reads; a group-bound route
 // gate asks to fail closed if the override or group tier cannot be read, since
 // treating either as absent could expose a lower group/default allow.
-func loadPermSourcesWithReadPolicy(convID string, failOnTierReadError bool) (permSources, error) {
+func loadPermSourcesWithReadPolicy(convID string, readPolicy permissionReadPolicy) (permSources, error) {
 	if convID == "" {
 		return permSources{}, nil
 	}
 	state, err := db.AgentState(convID)
 	if err != nil {
-		if failOnTierReadError {
+		if readPolicy == permissionReadRoute {
 			return permSources{}, fmt.Errorf("read agent state: %w", err)
 		}
 		return permSources{}, nil
@@ -715,22 +760,31 @@ func loadPermSourcesWithReadPolicy(convID string, failOnTierReadError bool) (per
 				out.sudo[g.Slug] = sudoPermSource{ID: g.ID, ScopeJSON: g.ScopeJSON}
 			}
 		}
+	} else {
+		out.diagnostics = append(out.diagnostics, permissionReadDiagnostic{"sudo", err})
 	}
 	if overrides, err := db.ListAgentPermissionOverrideRowsForConv(convID); err == nil {
 		for _, row := range overrides {
 			out.override[row.Slug] = overridePermSource{Effect: row.Effect, ScopeJSON: row.ScopeJSON}
 		}
-	} else if failOnTierReadError {
-		return permSources{}, fmt.Errorf("read permission overrides: %w", err)
+	} else {
+		out.diagnostics = append(out.diagnostics, permissionReadDiagnostic{"override", err})
+		if readPolicy == permissionReadRoute {
+			return out, fmt.Errorf("read permission overrides: %w", err)
+		}
 	}
 	if grants, err := db.ListAgentGroupPermissionRowsForConv(convID); err == nil {
 		for _, grant := range grants {
 			out.group[grant.Slug] = append(out.group[grant.Slug], grant.ScopeJSON)
 			out.groupRows[grant.Slug] = append(out.groupRows[grant.Slug], grant)
 		}
-	} else if failOnTierReadError {
-		return permSources{}, fmt.Errorf("read group permission grants: %w", err)
+	} else {
+		out.diagnostics = append(out.diagnostics, permissionReadDiagnostic{"group", err})
+		if readPolicy == permissionReadRoute {
+			return out, fmt.Errorf("read group permission grants: %w", err)
+		}
 	}
+	out.ownedGroups, out.ownerReadErr = db.ListOwnedGroupScopes(convID)
 	return out, nil
 }
 
@@ -740,7 +794,7 @@ func loadPermSourcesWithReadPolicy(convID string, failOnTierReadError bool) (per
 // and a grant from alpha must never authorize the same verb in beta. Sudo,
 // per-agent overrides and defaults remain actor-wide and are unchanged.
 func resolveGroupBoundPermissionVerdictForRequest(r *http.Request, convID, slug string, targetGroupID int64) (permVerdict, error) {
-	src, err := loadPermSourcesWithReadPolicy(convID, true)
+	src, err := loadPermSourcesWithReadPolicy(convID, permissionReadRoute)
 	if err != nil {
 		return permVerdict{}, err
 	}
@@ -866,33 +920,61 @@ func spawnPermissionAllowsAction(r *http.Request, convID string, actx ActionCont
 // grant contributed by group policy or ownership.
 func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, actx ActionContext) (string, bool) {
 	clearAuthorizedPermission(r)
-	actx.Group = g.Name
-	actx.structuralGroup = g.Name
+	actx = groupSpawnAuthorityAction(g.Name, actx)
 	p := peerFromContext(r.Context())
-	if classify(p) == classAgent {
-		state, err := db.AgentState(p.ConvID)
-		if err == nil && state != db.AgentStateRetired {
-			if allowed, slug, matched, authErr := spawnPermissionAllowsAction(r, p.ConvID, actx); authErr == nil && allowed {
-				recordAuditPermissionScope(r, slug, matched)
-				recordAuthorizedPermission(r, slug, loadBearingSudoGrantID(r, p.ConvID, slug, actx))
-				return p.ConvID, true
-			}
+	var principal spawnAuthorityPrincipal
+	switch classify(p) {
+	case classHuman:
+		principal = spawnAuthorityPrincipal{Kind: authorityPrincipalOperator}
+	case classAgent:
+		agentID, err := db.AgentIDForConv(p.ConvID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return "", false
 		}
+		if agentID == "" {
+			writeError(w, http.StatusForbidden, "auth", "could not verify caller agent identity")
+			return "", false
+		}
+		principal = spawnAuthorityPrincipal{Kind: authorityPrincipalAgent, AgentID: agentID, ConvID: p.ConvID}
+	default:
+		// Preserve the shared identity gate's established 401/403 responses.
+		return requirePermissionEx(w, r, PermGroupsMembersSpawn, actx)
 	}
-	// Let the shared gate handle humans, identity/state failures, one-shot
-	// approval, and the final error response. Prefer the global slug when the
-	// caller has an explicit global verdict (including a scope mismatch);
-	// otherwise keep the established group-scoped error/popup vocabulary.
-	fallback := PermGroupsMembersSpawn
-	if classify(p) == classAgent &&
-		resolvePermissionVerdictForRequest(r, p.ConvID, PermAgentSpawn).Resolution != permUndecided {
-		fallback = PermAgentSpawn
+	decision, evalErr := newSpawnAuthorityEvaluator().EvaluateSpawn(r.Context(), spawnAuthorityRequest{
+		Principal: principal,
+		Origin:    spawnAuthorityOrigin{Kind: spawnAuthorityOriginHTTP},
+		Action:    actx,
+	}, permissionReadLegacy)
+	if evalErr != nil {
+		writeError(w, http.StatusInternalServerError, "io", evalErr.Error())
+		return "", false
 	}
-	convID, ok := requirePermissionEx(w, r, fallback, actx)
-	if ok && convID != "" {
+	if decision.Outcome == spawnAuthorityAllowed {
+		if principal.Kind == authorityPrincipalAgent {
+			*r = *r.WithContext(context.WithValue(r.Context(), spawnAuthorityDecisionContextKey{}, spawnAuthorityPinEvidence{
+				ConvID: p.ConvID, Slug: decision.AuthorizedSlug, Action: spawnActionKey(actx),
+				Pinned: decision.MatchedDims[ScopeDimSandboxProfile],
+			}))
+			recordAuditPermissionScope(r, decision.AuthorizedSlug, decision.Matched)
+			recordAuthorizedPermission(r, decision.AuthorizedSlug, decision.LoadBearingSudo)
+			return p.ConvID, true
+		}
+		return "", true
+	}
+	if decision.Outcome == spawnAuthorityInvalid {
+		writeError(w, http.StatusForbidden, "auth", "spawn authority principal could not be verified")
+		return "", false
+	}
+	fallback := decision.FallbackSlug()
+	*r = *r.WithContext(context.WithValue(r.Context(), spawnAuthorityRefusalContextKey{}, spawnAuthorityRefusalContext{
+		ConvID: p.ConvID, Slug: fallback, Action: spawnActionKey(actx),
+	}))
+	conv, ok := requirePermissionEx(w, r, fallback, actx)
+	if ok && conv != "" {
 		recordAuthorizedPermission(r, fallback, 0)
 	}
-	return convID, ok
+	return conv, ok
 }
 
 // scopePinsDimension reports whether the scope that authorized this request
@@ -907,16 +989,32 @@ func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentG
 // them — an unscoped grant, an ownership-derived one, or a scope that pinned
 // only `group` is not answering for the profile and must not be bound by it.
 //
-// The verdict is re-resolved rather than threaded down through
-// permissionAllowsAction: the inputs are unchanged within the request, so the
-// answer is the same one the gate reached, and every unrelated call site keeps
-// its signature.
+// Spawn authorization carries the exact selected evidence through private
+// request context, avoiding a policy reread at launch. Other callers retain
+// the established resolver path below.
 func scopePinsDimension(r *http.Request, convID, slug string, actx ActionContext, dim ScopeDim) bool {
 	if convID == "" || slug == "" {
 		return false
 	}
+	spawnActx := groupSpawnAuthorityAction(actx.Group, actx)
+	if evidence, ok := r.Context().Value(spawnAuthorityDecisionContextKey{}).(spawnAuthorityPinEvidence); ok &&
+		evidence.ConvID == convID && evidence.Slug == slug && evidence.Action == spawnActionKey(spawnActx) {
+		return dim == ScopeDimSandboxProfile && evidence.Pinned
+	}
 	eval := evalPermissionScope(resolvePermissionVerdictForRequest(r, convID, slug), convID, actx)
 	if eval.Unscoped || !eval.Satisfied {
+		// Structural owner grants are a real positive source, and may carry
+		// the same load-bearing sandbox pin as a standing row. Evaluate the
+		// captured owner scope for this action instead of treating the
+		// context-free verdict as evidence that no pin exists.
+		if slug == PermGroupsMembersSpawn {
+			src := loadPermSources(convID)
+			for _, scope := range ownerImpliedTierFrom(src.ownedGroups, src.ownerReadErr)[slug].Scopes {
+				if permissionScopeSatisfied(convID, scope, actx) && scope[dim] != nil {
+					return true
+				}
+			}
+		}
 		return false
 	}
 	return eval.MatchedDims[dim]
@@ -1125,13 +1223,15 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 	// authoritative and (like an undecided with no derived grant) falls through
 	// to the popup-or-403 path below.
 	allowed := false
+	refusal, hasRefusal := r.Context().Value(spawnAuthorityRefusalContextKey{}).(spawnAuthorityRefusalContext)
+	actionCtx := actionContextOf(actx)
+	preRefused := hasRefusal && refusal.ConvID == p.ConvID && refusal.Slug == perm && refusal.Action == spawnActionKey(actionCtx)
 	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, p.ConvID) ||
 		hasHumanApprovalContinuation(r, perm, p.ConvID) {
 		// A human already approved this exact operation; the standing
 		// grants (and their scopes) are not consulted at all.
 		allowed = true
-	} else {
-		actionCtx := actionContextOf(actx)
+	} else if !preRefused {
 		var matched string
 		var evalErr error
 		allowed, matched, evalErr = permissionAllowsAction(r, p.ConvID, perm, actionCtx)

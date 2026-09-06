@@ -1823,7 +1823,32 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 	if harnessName == harness.CodexName {
 		fastModeAtLaunch = codexFastModeAtLaunch(launchConfig.FastMode, launchConfig.CodexStateRoot)
 	}
-	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
+	operationKind := "manual_resume"
+	if recoveryClaim != nil {
+		operationKind = "recovery_resume"
+	}
+	admission, admissionErr := admitManagedResume(convID, operationKind, recoveryClaim)
+	if admissionErr != nil {
+		res.Action = "error"
+		res.Detail = "admit resume operation: " + admissionErr.Error()
+		return res
+	}
+	var claimReadEnd *os.File
+	if admission != nil {
+		claimReadEnd, admissionErr = admission.claimPipe()
+		if admissionErr != nil {
+			if won, _ := db.RequestResumeCancellation(admission.operation.ID, admission.operation.Revision,
+				"private claim pipe unavailable"); won {
+				_, _ = db.FinalizeResumeFailed(admission.operation.ID, admission.operation.Revision+1,
+					admissionErr.Error())
+			}
+			res.Action = "error"
+			res.Detail = "prepare resume child claim: " + admissionErr.Error()
+			return res
+		}
+		defer claimReadEnd.Close()
+	}
+	spawnArgs := clcommon.SpawnArgs{
 		EffectiveSandbox:       effectiveSandbox,
 		AgentID:                persistedAgentID,
 		ConvID:                 convID,
@@ -1848,7 +1873,21 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 		CodexAppServer:         launchConfig.CodexAppServer,
 		CodexStateRoot:         launchConfig.CodexStateRoot,
 		FastMode:               launchConfig.FastMode,
-	}); err != nil {
+	}
+	if admission != nil {
+		spawnArgs.ExecutionID = admission.operation.Attempt.ExecutionID.String()
+		spawnArgs.ResumeOperationID = admission.operation.ID.String()
+		spawnArgs.ResumeClaimFD = int(claimReadEnd.Fd())
+	}
+	if err := SpawnDetachedTclaudeResume(spawnArgs); err != nil {
+		if admission != nil {
+			rev := admission.operation.Revision
+			if row, getErr := db.GetResumeOperation(admission.operation.ID); getErr == nil {
+				rev = row.Revision
+			}
+			_ = db.TransitionResumeOperation(admission.operation.ID, rev,
+				platformexec.ResumeUnknown, "dispatch_unknown", err.Error())
+		}
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
 		if !launchConfig.TemporaryHarnessBuiltinMode && resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
@@ -9379,6 +9418,17 @@ func appendRemoteControlFlag(args []string, remoteControl bool) []string {
 // can be unit-tested without forking a subprocess.
 func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	args := []string{"session", "new", "--managed-launch", "-r", a.ConvID, "-d", "--global"}
+	if a.ExecutionID != "" {
+		args = append(args, "--execution-id", a.ExecutionID)
+	}
+	if a.ResumeOperationID != "" {
+		args = append(args, "--resume-operation-id", a.ResumeOperationID)
+	}
+	if a.ResumeClaimFD != 0 {
+		// exec.Cmd.ExtraFiles maps the inherited descriptor to fd 3 in the
+		// child regardless of the parent's descriptor number.
+		args = append(args, "--resume-claim-fd", "3")
+	}
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
 	}
@@ -9985,6 +10035,13 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	cmd := exec.Command("tclaude", args...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
+	if a.ResumeClaimFD > 0 {
+		claim := os.NewFile(uintptr(a.ResumeClaimFD), "tclaude-resume-claim")
+		if claim == nil {
+			return fmt.Errorf("resume claim descriptor is invalid")
+		}
+		cmd.ExtraFiles = []*os.File{claim}
+	}
 	stderr := newSpawnStderrCapture()
 	cmd.Stderr = stderr
 	// Spawned agents must not inherit the human's operator token.
