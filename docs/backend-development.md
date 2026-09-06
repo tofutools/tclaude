@@ -271,3 +271,39 @@ request.json` is an operator-only confirmation that the effect did not occur,
 with `request_id`, `work_run_id`, `expected_revision`, and a required `reason`.
 It records that conclusion and releases the relevant claims; it does not replay
 the effect. Use it only after establishing what happened outside the backend.
+
+## Shared product commands
+
+The development binaries now use the shared command builders in
+`internal/product`. The client always goes through the authenticated Unix API;
+selecting a management command does not make an execution caller an operator.
+The production entrypoints still use the existing backend until the replacement
+product and offline migration are ready for cutover.
+
+For an explicitly initialized replacement directory, an operator can run:
+
+```sh
+tclaude-backend-agent --operator-state /absolute/new-state snapshot
+tclaude-backend-agent --operator-state /absolute/new-state agent create --file agent.json
+tclaude-backend-agent --operator-state /absolute/new-state agent update worker --file update.json
+tclaude-backend-agent --operator-state /absolute/new-state authority list
+```
+
+`agent.json` contains `id`, `name` and `desired`; `update.json` contains `name`,
+`desired` and the agent's `expected_revision`. Desired configuration uses the
+existing API fields `Harness`, `Model`, `WorkingDirectory`, `Approval`, and
+`Sandbox`. Agent creation is offline and does not start a native workload.
+
+The `group` commands create groups and assign explicit bounded ownership.
+`authority` provides grant/revoke, role assignment, exact-action explanation,
+and execution-access inspection/revocation. Mutations read an explicit request
+JSON file, including the expected revision required by the corresponding API.
+A successful deletion has no response body. Requests are never automatically
+retried.
+
+`--operator-state` reads that directory's operator token and socket. It cannot
+be combined with execution credential/socket flags or inherited execution
+bootstrap variables. The ordinary execution client still uses
+`TCLAUDE_BACKEND_SOCKET` and `TCLAUDE_BACKEND_CREDENTIAL_FILE`, rereading the
+protected credential resource for each call. Missing execution credentials do
+not fall back to an operator identity.

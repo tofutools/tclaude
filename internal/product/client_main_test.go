@@ -1,4 +1,4 @@
-package main
+package product
 
 import (
 	"bytes"
@@ -48,7 +48,7 @@ func TestAgentCLIUsesDeliveredResourceAndOwnInboxRequest(t *testing.T) {
 	})}
 	defer server.Close()
 	go func() { _ = server.Serve(listener) }()
-	cmd := command()
+	cmd := ClientCommand()
 	var output bytes.Buffer
 	cmd.SetOut(&output)
 	cmd.SetErr(&output)
@@ -68,12 +68,12 @@ func TestAgentCLIUsesDeliveredResourceAndOwnInboxRequest(t *testing.T) {
 func TestAgentCLIHasNoOperatorFallback(t *testing.T) {
 	t.Setenv("TCLAUDE_BACKEND_SOCKET", "")
 	t.Setenv("TCLAUDE_BACKEND_CREDENTIAL_FILE", "")
-	cmd := command()
+	cmd := ClientCommand()
 	cmd.SetArgs([]string{"whoami"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("missing execution delivery metadata accepted")
 	}
-	cmd = command()
+	cmd = ClientCommand()
 	cmd.SetArgs([]string{"read", "message-a"})
 	if err := cmd.Execute(); err == nil {
 		t.Fatal("mutation without request identity accepted")
