@@ -400,17 +400,21 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	if err := checkSpawnDirProofMarker(args); err != nil {
 		return err
 	}
+	resumeSecret, err := readManagedResumeSimulationClaim(args)
+	if err != nil {
+		return err
+	}
 	if args.Harness == codexHarnessName {
 		if err := s.spawnResumeCodex(args); err != nil {
 			return err
 		}
-		return completeManagedResumeSimulation(args)
+		return completeManagedResumeSimulation(args, resumeSecret)
 	}
 	if args.Harness == copilotHarnessName {
 		if err := s.spawnResumeCopilot(args); err != nil {
 			return err
 		}
-		return completeManagedResumeSimulation(args)
+		return completeManagedResumeSimulation(args, resumeSecret)
 	}
 	convID := args.ConvID
 	cc := s.w.CCs.GetByConvID(convID)
@@ -509,24 +513,31 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)
 	s.w.CCs.Set(label, cc)
-	return completeManagedResumeSimulation(args)
+	return completeManagedResumeSimulation(args, resumeSecret)
 }
 
 // completeManagedResumeSimulation models the production child claim, closed
 // gate registration/release, and exact readiness boundary. Flow tests replace
 // the external process boundary only; without this, a successful simulated
 // launch would leave an accepted operation that correctly blocks replay.
-func completeManagedResumeSimulation(args clcommon.SpawnArgs) error {
+func readManagedResumeSimulationClaim(args clcommon.SpawnArgs) ([]byte, error) {
 	if args.ResumeOperationID == "" || args.ResumeClaimFD <= 0 || args.ExecutionID == "" {
-		return nil
+		return nil, nil
 	}
 	claimFile := os.NewFile(uintptr(args.ResumeClaimFD), "sim-resume-claim")
 	if claimFile == nil {
-		return fmt.Errorf("sim resume claim descriptor is invalid")
+		return nil, fmt.Errorf("sim resume claim descriptor is invalid")
 	}
 	secret, err := io.ReadAll(claimFile)
 	if err != nil {
-		return err
+		return nil, err
+	}
+	return secret, nil
+}
+
+func completeManagedResumeSimulation(args clcommon.SpawnArgs, secret []byte) error {
+	if len(secret) == 0 {
+		return nil
 	}
 	row, err := db.FindSessionByConvID(args.ConvID)
 	if err != nil || row == nil {

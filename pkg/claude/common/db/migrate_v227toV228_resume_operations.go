@@ -5,10 +5,8 @@ import (
 	"fmt"
 )
 
-// migrateV227toV228 creates durable managed Resume operation evidence. It is
-// intentionally unregistered until identity migration 227 is integrated on
-// the feature branch; registering this step against v226 would violate the
-// contiguous migration chain.
+// migrateV227toV228 creates durable managed Resume operation evidence after
+// the registered v227 conversation-binding migration.
 func migrateV227toV228(d *sql.DB) error {
 	tx, err := d.Begin()
 	if err != nil {
