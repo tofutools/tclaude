@@ -360,12 +360,16 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		approval: request.Spec.Approval, sandbox: request.Spec.Sandbox, model: request.Spec.Model,
 		attemptMark: recorded.AttemptMark,
 	}
+	var reconcileErr error
 	if runtime.nativeID == "" {
-		if err := runtime.reconcileFreshSession(ctx); err != nil {
-			observation, _ := runtime.Observe(ctx)
-			return ports.RecoveryResult{State: ports.RecoveryUnknown, Runtime: runtime,
-				Observation: observation, Evidence: request.Evidence}, err
-		}
+		reconcileErr = runtime.reconcileFreshSession(ctx)
+	} else {
+		reconcileErr = runtime.verifySession(ctx)
+	}
+	if reconcileErr != nil {
+		observation, _ := runtime.Observe(ctx)
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Runtime: runtime,
+			Observation: observation, Evidence: request.Evidence}, reconcileErr
 	}
 	observation, observeErr := runtime.Observe(ctx)
 	if observeErr != nil || observation.Workload == ports.WorkloadUnknown {
