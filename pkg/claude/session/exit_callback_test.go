@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/platform/execution"
 )
 
 type exitCallbackTmux struct {
@@ -1066,7 +1067,7 @@ func TestExitLaunchGuard_AbortAndStartupRemoveBarrierArtifacts(t *testing.T) {
 	}
 }
 
-func TestExitLaunchGeneration_RNGDegradationStillResetsPredecessorAuthority(t *testing.T) {
+func TestExecutionIDResetsPredecessorAuthorityBeforePrivateTokenFailure(t *testing.T) {
 	fake := &exitCallbackTmux{paneID: "%17"}
 	setupExitCallbackTest(t, fake)
 	const predecessor = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -1080,16 +1081,16 @@ func TestExitLaunchGeneration_RNGDegradationStillResetsPredecessorAuthority(t *t
 		"evt_1234567890abcdef12345678", time.Now())
 	require.NoError(t, err)
 
-	previousRead := exitRandomRead
-	exitRandomRead = func([]byte) (int, error) { return 0, errors.New("rng unavailable") }
-	t.Cleanup(func() { exitRandomRead = previousRead })
-	generation := newExitLaunchGeneration("spwn-degraded", "tmux-degraded")
+	generation := execution.NewID().String()
 	require.NotEqual(t, predecessor, generation)
 	require.True(t, validCallbackHex(generation, 32))
 	require.NoError(t, SaveSessionStateForLaunch(&SessionState{
 		ID: "spwn-degraded", TmuxSession: "tmux-degraded", ConvID: "conv-degraded",
 		Status: StatusWorking, Created: time.Now(),
 	}, generation, db.SessionExitGateUngated))
+	previousRead := exitRandomRead
+	exitRandomRead = func([]byte) (int, error) { return 0, errors.New("rng unavailable") }
+	t.Cleanup(func() { exitRandomRead = previousRead })
 	_, err = newExitLaunchGuard("spwn-degraded", "tmux-degraded", generation)
 	require.Error(t, err, "private token setup degrades after fresh authority is already durable")
 
