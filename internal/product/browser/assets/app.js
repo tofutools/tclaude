@@ -169,6 +169,8 @@ function workCard(result){
  const run=result.run,card=el('article',undefined,'card');card.append(el('strong',run.id),el('p',run.state),el('pre',run.spec.Brief||''));
  for(const attempt of run.node_attempts||[]){const node=el('div',undefined,'row');node.append(el('strong',attempt.Ref.NodeID),el('span',attempt.State),el('span',attempt.Outcome||attempt.Detail||''));if(attempt.DecisionID)node.append(button('Open decision',()=>selectTab('decisions')));card.append(node)}
  for(const evidence of result.evidence||[])card.append(el('p',`${evidence.kind} · ${evidence.reporter.agent_id||evidence.reporter.kind}`),el('pre',evidence.detail));
+ for(const evidence of result.node_evidence||[]){const proof=el('div',undefined,'card');proof.append(el('strong',`${evidence.attempt.NodeID} · ${evidence.kind}`),el('p',`Evidence ${evidence.id} · revision ${evidence.revision}`,'muted'),el('p',`${evidence.reporter.agent_id||evidence.reporter.kind} · attempt ${evidence.attempt.Attempt}`),el('pre',evidence.detail));if(evidence.artifact_revision)proof.append(el('p',`Artifact ${evidence.artifact_revision}`));if(evidence.passed!==undefined)proof.append(el('p',evidence.passed?'Verification passed':'Verification failed'));card.append(proof)}
+ for(const decision of result.decisions||[])card.append(el('p',`${decision.Question||decision.ID}: ${decision.State}`));
  if(result.decision)card.append(el('strong',`${result.decision.decision}: ${result.decision.reason}`));
  const actions=el('div',undefined,'actions');
  const pending=(run.attempts||[]).find(a=>a.step==='await_evidence'&&a.state==='pending');
@@ -206,12 +208,15 @@ async function renderDefinitions(){
   if(definition.Kind==='process')card.append(button('Start process',async()=>{
    const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID));
    const revision=result.Revision;
-   
-   const fields=[{name:'workspace',label:'Workspace',options:(snapshot.workspaces||[]).filter(w=>w.State==='available').map(w=>({value:w.ID,label:w.Intent.Name||w.Observation.ActualPath||w.ID}))},{name:'minutes',label:'Maximum run time in minutes',value:'60'},...parameterFields(revision.Parameters||[])];
+   const memberKeys=[...new Set((revision.Process.Graph.Nodes||[]).map(n=>n.Performer?.Agent?.MemberKey).filter(Boolean))];
+   const agents=(snapshot.agents||[]).filter(a=>a.Lifecycle!=='retired');
+   if(memberKeys.length&&!agents.length)throw new Error('Create an active agent before binding this process.');
+   const bindingFields=memberKeys.map(key=>({name:'binding_'+key,label:'Agent for '+key,options:agents.map(a=>({value:a.ID,label:a.Name}))}));
+   const fields=[{name:'workspace',label:'Workspace',options:(snapshot.workspaces||[]).filter(w=>w.State==='available').map(w=>({value:w.ID,label:w.Intent.Name||w.Observation.ActualPath||w.ID}))},{name:'minutes',label:'Maximum run time in minutes',value:'60'},...parameterFields(revision.Parameters||[]),...bindingFields];
    edit('Start pinned process',fields,async f=>{
     const minutes=Number(f.minutes);if(!Number.isFinite(minutes)||minutes<=0||minutes>10080)throw new Error('Choose a run duration between 1 and 10080 minutes.');
     const programs=(revision.Process.Graph.Nodes||[]).filter(n=>n.Performer?.Program).map(n=>n.Performer.Program.Profile);
-    await api('/v2/processes',{request_id:f.requestID,id:f.requestID,start:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'process'},Scope:{WorkspaceID:f.workspace},Parameters:parameterValues(revision.Parameters||[],f),AuthorizedProgramProfiles:programs,Deadline:new Date(Date.now()+minutes*60000).toISOString()}});
+    await api('/v2/processes',{request_id:f.requestID,id:f.requestID,start:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'process'},Scope:{WorkspaceID:f.workspace},Parameters:parameterValues(revision.Parameters||[],f),PerformerBindings:Object.fromEntries(memberKeys.map(key=>[key,{Kind:'agent',Agent:{AgentID:f['binding_'+key]}}])),AuthorizedProgramProfiles:programs,Deadline:new Date(Date.now()+minutes*60000).toISOString()}});
    });
   }));
   if(definition.Kind==='team')card.append(button('Deploy team',async()=>{

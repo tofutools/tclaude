@@ -239,10 +239,25 @@ type workDecisionView struct {
 	DecidedAt time.Time              `json:"decided_at"`
 	Revision  model.Revision         `json:"revision"`
 }
+type workNodeEvidenceView struct {
+	ID               model.WorkEvidenceID   `json:"id"`
+	RequestID        model.RequestID        `json:"request_id"`
+	Attempt          model.WorkAttemptRef   `json:"attempt"`
+	Reporter         workActor              `json:"reporter"`
+	Kind             model.WorkEvidenceKind `json:"kind"`
+	ArtifactRevision string                 `json:"artifact_revision"`
+	Passed           *bool                  `json:"passed,omitempty"`
+	Disposition      model.WorkOutcome      `json:"disposition"`
+	Detail           string                 `json:"detail"`
+	RecordedAt       time.Time              `json:"recorded_at"`
+	Revision         model.Revision         `json:"revision"`
+}
 type workResultView struct {
-	Run      workRunView        `json:"run"`
-	Evidence []workEvidenceView `json:"evidence"`
-	Decision *workDecisionView  `json:"decision,omitempty"`
+	NodeEvidence []workNodeEvidenceView `json:"node_evidence"`
+	Decisions    []model.DecisionWindow `json:"decisions"`
+	Run          workRunView            `json:"run"`
+	Evidence     []workEvidenceView     `json:"evidence"`
+	Decision     *workDecisionView      `json:"decision,omitempty"`
 }
 
 func projectWork(result app.WorkRunResult) workResultView {
@@ -256,6 +271,11 @@ func projectWork(result app.WorkRunResult) workResultView {
 		evidence = append(evidence, workEvidenceView{e.ID, e.WorkRunID, e.Step, e.Attempt, e.Kind, projectWorkActor(e.Reporter), e.ArtifactRevision, e.Passed, e.Detail, e.RecordedAt, e.Revision})
 	}
 	view := workResultView{Run: workRunView{ID: run.ID, RequestID: run.RequestID, Requester: projectWorkActor(run.Requester), Spec: run.Spec, WorkspaceUseID: run.WorkspaceUseID, WorkerExecutionID: run.WorkerExecutionID, State: run.State, Attempts: attempts, Revision: run.Revision, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt, Graph: run.Graph, DefinitionClosure: run.DefinitionClosure, NodeAttempts: run.NodeAttempts, ControlState: run.ControlState, Outcome: run.Outcome, Deadline: run.Deadline, CancellationRequested: run.CancellationRequested}, Evidence: evidence}
+	view.NodeEvidence = make([]workNodeEvidenceView, 0, len(result.NodeEvidence))
+	for _, e := range result.NodeEvidence {
+		view.NodeEvidence = append(view.NodeEvidence, workNodeEvidenceView{e.ID, e.RequestID, e.Attempt, projectWorkActor(e.Reporter), e.Kind, e.ArtifactRevision, e.Passed, e.Disposition, e.Detail, e.RecordedAt, e.Revision})
+	}
+	view.Decisions = result.Decisions
 	if d := result.Decision; d != nil {
 		view.Decision = &workDecisionView{d.WorkRunID, d.Step, d.Attempt, d.Decision, projectWorkActor(d.Decider), d.Reason, d.DecidedAt, d.Revision}
 	}
