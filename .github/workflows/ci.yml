@@ -1,7 +1,11 @@
 name: CI
 
 on:
+  workflow_dispatch: {}
   pull_request:
+    # Label changes must create a new run: `full-integration-ci` is the
+    # explicit milestone opt-in for the platform rewrite branch.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     # main-codex is the long-lived harness-independence integration branch; gate
     # its increment PRs with the same CI as main. Drop it once main-codex→main lands.
     # implement-stable-agent-identity is the long-lived JOH-26 integration branch
@@ -19,6 +23,21 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Build all packages
+        run: go build ./...
+
   # golangci-lint is platform-independent, so run it once on a single runner
   # rather than duplicating it across the test matrix.
   lint:
@@ -40,6 +59,7 @@ jobs:
 
   sandbox-v2-smoke:
     name: Sandbox v2 bubblewrap smoke
+    if: github.event_name != 'pull_request' || github.base_ref != 'refactor/platform-v2' || contains(github.event.pull_request.labels.*.name, 'full-integration-ci')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -735,6 +755,7 @@ jobs:
 
   sandbox-v2-seatbelt-smoke:
     name: Sandbox v2 Seatbelt smoke
+    if: github.event_name != 'pull_request' || github.base_ref != 'refactor/platform-v2' || contains(github.event.pull_request.labels.*.name, 'full-integration-ci')
     runs-on: macos-latest
     steps:
       - name: Checkout code
@@ -898,7 +919,12 @@ jobs:
         # shared .github/actions/test-suite action, which the release
         # workflows consume with the same split — keep the shard list here in
         # sync with the case statement there.
-        shard: [agentd, jstest, process, sandbox, rest]
+        # The agentd package intentionally mixes unit and daemon-backed flow
+        # tests, so do not call the reduced platform run "unit-only". Its full
+        # mixed suite is deferred on ordinary platform-v2 PRs; the focused job
+        # below retains the architecture-critical regressions. Adding the
+        # full-integration-ci label reruns the workflow with agentd restored.
+        shard: ${{ fromJSON(github.event_name == 'pull_request' && github.base_ref == 'refactor/platform-v2' && !contains(github.event.pull_request.labels.*.name, 'full-integration-ci') && '["jstest","process","sandbox","rest"]' || '["agentd","jstest","process","sandbox","rest"]') }}
         exclude:
           # PR CI skips macOS jstest: the shard exercises browser-targeted
           # dashboard JS under Node + the vendored LinkeDOM runtime, so
@@ -938,7 +964,43 @@ jobs:
           race: ${{ vars.RUN_RACE }}
           # Only the PR flow selects; release.yml and manual-release.yml pass
           # no base and run every shard in full on the merge commit.
-          diff-base: HEAD^1
+          diff-base: ${{ github.event_name == 'pull_request' && 'HEAD^1' || '' }}
+
+  # The long-lived platform rewrite deliberately defers the full mixed agentd
+  # suite between integration milestones, but its architectural seam and the
+  # production identity/authority/lifecycle paths stay mandatory on both
+  # supported platforms. New packages under pkg/claude/platform are included
+  # automatically; focused agentd/session regressions are named by stable
+  # behavioral prefixes rather than by source-file implementation details.
+  platform-v2-core:
+    name: Platform v2 core (${{ matrix.os }})
+    if: github.event_name == 'pull_request' && github.base_ref == 'refactor/platform-v2'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Test platform contracts
+        run: go test ./pkg/claude/platform/...
+
+      - name: Test focused identity, authority, and lifecycle regressions
+        shell: bash
+        run: |
+          go test ./pkg/claude/agentd \
+            -run '^(TestAgentIdentityForPID|TestRequireCrossAgentPermission|TestLifecycleInheritedAuthority_(ResumePinsTargetOwnedDirectory|UsesLivePanePhysicalCwd|ReadOnlyCwdNeedsNoDaemonMarker)|TestExecutionRuntime|TestHandleAgentStop_(SkipsOfflineTarget|NoSlugDenies)|TestDelete_FailedSoftExitThenNaturalCloseProceeds)' \
+            -count=1
+          go test ./pkg/claude/session \
+            -run '^TestExecutionIDResetsPredecessorAuthorityBeforePrivateTokenFailure$' \
+            -count=1
 
   # Credential-free GitHub Copilot CLI regression smoke (TCL-1046).
   #
@@ -976,6 +1038,7 @@ jobs:
   # an auth dependency fails here instead of passing on a logged-in machine.
   copilot-smoke:
     name: Copilot CLI smoke
+    if: github.event_name != 'pull_request' || github.base_ref != 'refactor/platform-v2' || contains(github.event.pull_request.labels.*.name, 'full-integration-ci')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -1081,6 +1144,7 @@ jobs:
   # ever needed to add a smoke, that belongs in the entrypoint instead.
   filtered-proxy-smoke:
     name: Filtered-network proxy smoke (${{ matrix.shard }})
+    if: github.event_name != 'pull_request' || github.base_ref != 'refactor/platform-v2' || contains(github.event.pull_request.labels.*.name, 'full-integration-ci')
     runs-on: ubuntu-latest
     strategy:
       # One red shard must not cancel its sibling. The two halves are
@@ -1196,6 +1260,7 @@ jobs:
   # instead.
   proxy-posture-e2e:
     name: Proxy posture end-to-end
+    if: github.event_name != 'pull_request' || github.base_ref != 'refactor/platform-v2' || contains(github.event.pull_request.labels.*.name, 'full-integration-ci')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
