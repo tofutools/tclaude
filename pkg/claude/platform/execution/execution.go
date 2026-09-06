@@ -29,6 +29,40 @@ type AttemptRef struct {
 	LegacySessionID string
 }
 
+// StopState describes what a Stop operation established about its selected
+// execution. It deliberately separates accepting/delivering the request from
+// observing that the execution has ended.
+type StopState string
+
+const (
+	StopNoExecution     StopState = "no_execution"
+	StopAccepted        StopState = "accepted"
+	StopEffectDelivered StopState = "effect_delivered"
+	StopCompleted       StopState = "completed"
+	StopFailed          StopState = "failed"
+	StopUnresolved      StopState = "unresolved"
+)
+
+// StopEffect is the concrete runtime effect selected for the operation.
+type StopEffect string
+
+const (
+	StopEffectNone     StopEffect = ""
+	StopEffectSoftExit StopEffect = "soft_exit"
+	StopEffectKill     StopEffect = "kill"
+)
+
+// StopOutcome is the portable result of a Stop operation. ExecutionID remains
+// empty when legacy attempt evidence is blank or malformed; the legacy row may
+// still be recorded as a locator. It does not contain tmux, PID, HTTP, or
+// storage-row details.
+type StopOutcome struct {
+	Attempt   AttemptRef
+	State     StopState
+	Effect    StopEffect
+	Escalated bool
+}
+
 var (
 	randomRead      = rand.Read
 	fallbackCounter atomic.Uint64

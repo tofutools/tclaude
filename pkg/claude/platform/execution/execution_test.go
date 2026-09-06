@@ -40,3 +40,17 @@ func TestParseIDRejectsNonCompatibilityRepresentations(t *testing.T) {
 		})
 	}
 }
+
+func TestStopOutcomeKeepsDeliverySeparateFromCompletion(t *testing.T) {
+	id := NewID()
+	delivered := StopOutcome{
+		Attempt: AttemptRef{ExecutionID: id, LegacySessionID: "spwn-stop"},
+		State:   StopEffectDelivered,
+		Effect:  StopEffectSoftExit,
+	}
+	completed := delivered
+	completed.State = StopCompleted
+
+	assert.NotEqual(t, delivered.State, completed.State)
+	assert.Equal(t, delivered.Attempt, completed.Attempt)
+}
