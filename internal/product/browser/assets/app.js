@@ -45,6 +45,8 @@ function agentRow(agent){
  row.append(el('span',`${agent.Desired.Harness} / ${agent.Desired.Model}`,'muted'));
  if(agent.ConfigurationProfile)row.append(el('span','Saved configuration revision','muted'));
  const actions=el('div',undefined,'actions');
+ actions.append(button('Activity',async()=>{activityTarget={AgentID:agent.ID};await selectTab('activity')}));
+ if(execution?.conversation_id)actions.append(button('Usage',async()=>{usageTarget={ConversationID:execution.conversation_id};await selectTab('usage')}));
  if(agent.Lifecycle==='retired'){row.append(el('span','retired','status'));actions.append(button('Reactivate',async()=>{await api(`/v2/agents/${encodeURIComponent(agent.ID)}/reactivate`,{expected_revision:agent.Revision});await refresh()}));row.append(actions);return row}
  actions.append(button('Configure',()=>edit('Configure agent',[...desiredFields({...agent.Desired,name:agent.Name}),...agentMetadataFields(agent)],f=>api(`/v2/agents/${encodeURIComponent(agent.ID)}`,{name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify},expected_revision:agent.Revision},'PUT'))));
  if(!execution || ['exited','failed'].includes(execution.state)){
@@ -95,6 +97,8 @@ async function selectTab(tab){
  for(const n of document.querySelectorAll('main > section'))n.hidden=n.id!==tab;
  for(const n of document.querySelectorAll('[data-tab]'))n.setAttribute('aria-current',String(n.dataset.tab===tab));
  if(tab==='configurations')await renderConfigurations();
+ if(tab==='usage')await renderUsage();
+ if(tab==='activity')await renderActivity();
  if(tab==='access'){
   const data=await api('/v2/authority');const list=$('access-list');list.replaceChildren();
   for(const grant of data.Grants||[]){const row=el('div',undefined,'row');row.append(el('strong',grant.Action),el('span',grant.Subject.AgentID||grant.Subject.Kind),el('span',grant.Resource.Kind),button('Revoke',async()=>{await api(`/v2/authority/grants/${encodeURIComponent(grant.ID)}`,{expected_revision:grant.Revision},'DELETE');await selectTab('access')}));list.append(row)}
@@ -255,4 +259,28 @@ function composeMessage(parent){
 async function downloadAttachment(attachment){
  const result=await api(`/v2/attachments/${encodeURIComponent(attachment.ID)}`),bytes=Uint8Array.from(atob(result.Content),c=>c.charCodeAt(0));
  const url=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'})),link=el('a');link.href=url;link.download=attachment.Filename;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+let usageTarget=null,activityTarget=null;
+function targetFields(kind){return[{name:'kind',label:'Target type',options:kind==='usage'?['ConversationID','ExecutionID']:['AgentID','ConversationID','ExecutionID','WorkRunID']},{name:'id',label:'Target ID'}]}
+$('select-usage').onclick=()=>edit('Select usage target',targetFields('usage'),async f=>{usageTarget={[f.kind]:f.id};await renderUsage()});
+$('select-activity').onclick=()=>edit('Select activity target',targetFields('activity'),async f=>{activityTarget={[f.kind]:f.id};await renderActivity()});
+async function renderUsage(cursor='',append=false){
+ const list=$('usage-list');if(!append)list.replaceChildren();if(!usageTarget){empty(list,'Select a conversation or execution to inspect its usage.');return}
+ const result=await api('/v2/usage/query',{filter:{Target:usageTarget,Limit:25,Cursor:cursor}});
+ if(!append)list.append(button('Refresh native usage',async()=>{await api('/v2/usage/refresh',{target:usageTarget});await renderUsage()}));
+ for(const observation of result.Observations||[]){const card=el('article',undefined,'card');
+ card.append(el('strong',`${observation.Harness} · ${observation.Attribution.Precision}`),el('p',`${observation.Source} · ${new Date(observation.ObservedAt).toLocaleString()}`,'muted'));
+ for(const counter of observation.Counters||[])card.append(el('p',`${counter.Unit.replaceAll('_',' ')}: ${counter.Value}`));
+ if(observation.Cost)card.append(el('p',`${observation.Cost.Amount} ${observation.Cost.Currency} · ${observation.Cost.Kind.replaceAll('_',' ')}`));
+ card.append(el('p',`Counters: ${observation.Coverage.Counters}; cost: ${observation.Coverage.Cost}`,'muted'));if(observation.Coverage.Reason)card.append(el('p',observation.Coverage.Reason));list.append(card)}
+ if(!result.Observations?.length)empty(list,'No recorded observations. Missing usage is not zero usage.');
+ if(result.NextCursor)list.append(button('More observations',async()=>renderUsage(result.NextCursor,true)));
+}
+async function renderActivity(cursor='',append=false){
+ const list=$('activity-list');if(!append)list.replaceChildren();if(!activityTarget){empty(list,'Select an agent, conversation, execution or Work Run.');return}
+ const result=await api('/v2/activity/query',{filter:{Target:activityTarget,Limit:25,Cursor:cursor}});
+ for(const record of result.Records||[]){const card=el('article',undefined,'card');card.append(el('strong',`${record.Kind.replaceAll('_',' ')} · ${record.Outcome}`),el('p',`${record.Actor.AgentID||record.Actor.Kind} · ${new Date(record.StartedAt).toLocaleString()}`,'muted'));if(record.Reason)card.append(el('p',record.Reason));if(record.Historical)card.append(el('p','Imported historical record','muted'));list.append(card)}
+ if(!result.Records?.length)empty(list,'No recorded activity for this target.');
+ if(result.NextCursor)list.append(button('More activity',async()=>renderActivity(result.NextCursor,true)));
 }
