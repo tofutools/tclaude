@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -180,6 +181,71 @@ func TestDisabledRuleCannotRaceTeamAdmission(t *testing.T) {
 	require.Empty(t, got.Occurrence.DeploymentID)
 }
 
+func TestGraphCannotLaunchRetiredAgent(t *testing.T) {
+	ctx := context.Background()
+	store, _, now := regressionService(t)
+	provider := &preparedWorkProvider{}
+	service := app.New(store, providers.NewRegistry(provider)).WithClock(func() time.Time { return now })
+	operator := model.OperatorPrincipal()
+	agent, err := service.CreateAgent(ctx, app.CreateAgentRequest{
+		Context: operator,
+		ID:      "worker",
+		Name:    "worker",
+		Desired: model.DesiredConfiguration{Harness: "prepared-work", Model: "test", Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite, WorkingDirectory: t.TempDir()},
+	})
+	require.NoError(t, err)
+	retired, err := service.RetireAgent(ctx, app.RetireAgentRequest{Context: operator, ID: agent.Agent.ID, ExpectedRevision: agent.Agent.Revision, Reason: "finished"})
+	require.NoError(t, err)
+	_, err = service.Launch(ctx, app.LaunchRequest{RequestContext: effect(operator, "direct"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.Agent.ID, ExpectedRevision: retired.Agent.Revision}}})
+	require.ErrorIs(t, err, app.ErrConflict)
+	graph := model.WorkGraph{
+		CompilerVersion: "1",
+		EntryNodeID:     "task",
+		Nodes: []model.WorkNode{
+			{ID: "task", Kind: model.WorkNodeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Agent: &model.AgentPerformer{AgentID: agent.Agent.ID, Brief: "work"}}},
+			{ID: "done", Kind: model.WorkNodeEnd, End: &model.EndPolicy{Outcome: model.WorkOutcomeVerified}},
+		},
+		Edges: []model.WorkEdge{{From: "task", To: "done"}},
+	}
+	_, err = service.StartProcess(ctx, app.StartProcessRequest{Context: effect(operator, "graph"), ID: "run", Start: model.WorkStart{InlineGraph: &graph, Deadline: now.Add(time.Hour)}})
+	require.NoError(t, err)
+	_, _ = service.ReconcilePendingWork(ctx)
+	require.Empty(t, provider.preparations, "graph issuance must enforce the same retired lifecycle gate as ordinary launch")
+}
+
+func TestAgentRetirementRacingGraphIssuancePreventsLaunch(t *testing.T) {
+	ctx := context.Background()
+	store, _, now := regressionService(t)
+	provider := &preparedWorkProvider{}
+	operator := model.OperatorPrincipal()
+	base := app.New(store, providers.NewRegistry(provider)).WithClock(func() time.Time { return now })
+	agent, err := base.CreateAgent(ctx, app.CreateAgentRequest{
+		Context: operator,
+		ID:      "worker",
+		Name:    "worker",
+		Desired: model.DesiredConfiguration{Harness: "prepared-work", Model: "test", Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite, WorkingDirectory: t.TempDir()},
+	})
+	require.NoError(t, err)
+	racingStore := &retireGraphLaunchStore{Store: store, before: func() {
+		_, retireErr := store.RetireAgent(ctx, agent.Agent.ID, agent.Agent.Revision, operator, "retired during issuance", now)
+		require.NoError(t, retireErr)
+	}}
+	service := app.New(racingStore, providers.NewRegistry(provider)).WithClock(func() time.Time { return now })
+	graph := model.WorkGraph{
+		CompilerVersion: "1",
+		EntryNodeID:     "task",
+		Nodes: []model.WorkNode{
+			{ID: "task", Kind: model.WorkNodeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Agent: &model.AgentPerformer{AgentID: agent.Agent.ID, Brief: "work"}}},
+			{ID: "done", Kind: model.WorkNodeEnd, End: &model.EndPolicy{Outcome: model.WorkOutcomeVerified}},
+		},
+		Edges: []model.WorkEdge{{From: "task", To: "done"}},
+	}
+	_, err = service.StartProcess(ctx, app.StartProcessRequest{Context: effect(operator, "graph_race"), ID: "race_run", Start: model.WorkStart{InlineGraph: &graph, Deadline: now.Add(time.Hour)}})
+	require.NoError(t, err)
+	_, _ = service.ReconcilePendingWork(ctx)
+	require.Empty(t, provider.preparations, "retirement committed before issuance must prevent a fresh graph launch")
+}
+
 func TestScheduledAutomationDeploysTeamThroughDelegatedEffects(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "backend.sqlite"))
@@ -334,6 +400,19 @@ type graphConflictStore struct{ app.Store }
 
 func (graphConflictStore) ApplyGraphTransition(context.Context, app.GraphTransition) (app.WorkRunRecord, error) {
 	return app.WorkRunRecord{}, app.ErrConflict
+}
+
+type retireGraphLaunchStore struct {
+	app.Store
+	before func()
+	once   sync.Once
+}
+
+func (s *retireGraphLaunchStore) ApplyGraphTransition(ctx context.Context, transition app.GraphTransition) (app.WorkRunRecord, error) {
+	if transition.Execution != nil {
+		s.once.Do(s.before)
+	}
+	return s.Store.ApplyGraphTransition(ctx, transition)
 }
 
 type disableGraphAdmissionStore struct {
