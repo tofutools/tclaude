@@ -345,6 +345,7 @@ test('Preact group-create owns clone mode and makes inherited attachment visible
   await flush(harness);
   assert.match(host.querySelector('#group-create-title').textContent, /Clone group/);
   assert.equal(host.querySelector('#group-create-name').value, 'alpha-c-1');
+  assert.equal(host.querySelector('#group-create-name').hasAttribute('data-select-on-focus'), true);
   assert.match(host.querySelector('#group-create-source-summary').textContent, /Alpha project/);
   assert.match(host.querySelector('#group-create-source-summary').textContent, /attachment \/ link/);
   assert.equal(host.querySelector('#group-create-template'), null);

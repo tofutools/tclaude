@@ -302,6 +302,7 @@ function GroupCreateDialog({
       <input ref=${nameRef} id="group-create-name" type="text" value=${draft.name}
         disabled=${disabled} onInput=${(event) => setField('name', event.currentTarget.value)}
         onKeyDown=${submitOnEnter} placeholder="kebab-or-snake-case label"
+        data-select-on-focus=${cloneMode || undefined}
         autocomplete="off" spellcheck="false" />
     </label>
     ${(cloneMode || current.parentGroup) ? html`<div class="cron-create-row group-create-placement-row">
