@@ -47,3 +47,11 @@ func TestTransportPreservesApplicationErrorMeaning(t *testing.T) {
 		}
 	}
 }
+
+func TestTransportOperationDiagnosticsStayPrivate(t *testing.T) {
+	p := &applicationProbe{snapshot: app.Snapshot{Operations: []model.Operation{{ID: "op-a", ResultCode: "release_uncertain", Detail: "private credential in native error"}}}}
+	w := request(testHandler(t, p), "GET", "/v2/snapshot", "", testCredential)
+	if w.Code != 200 || strings.Contains(w.Body.String(), "private credential") || !strings.Contains(w.Body.String(), "release_uncertain") {
+		t.Fatalf("public operation: %d %s", w.Code, w.Body)
+	}
+}

@@ -98,10 +98,10 @@ func operationHandler[Body any](h *Handler, call func(context.Context, model.Pri
 			execution = &view
 		}
 		writeJSON(w, http.StatusAccepted, struct {
-			Operation model.Operation `json:"operation"`
-			Execution *executionView  `json:"execution,omitempty"`
-			Repeated  bool            `json:"repeated"`
-		}{result.Operation, execution, result.Repeated})
+			Operation operationView  `json:"operation"`
+			Execution *executionView `json:"execution,omitempty"`
+			Repeated  bool           `json:"repeated"`
+		}{projectOperation(result.Operation), execution, result.Repeated})
 	}
 }
 
