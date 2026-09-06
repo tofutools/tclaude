@@ -884,8 +884,9 @@ func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	if classify(p) == classAgent {
 		state, err := db.AgentState(p.ConvID)
 		if err == nil && state != db.AgentStateRetired {
+			agentID, _ := db.AgentIDForConv(p.ConvID)
 			decision, evalErr := (spawnAuthorityEvaluator{}).EvaluateSpawn(r.Context(), spawnAuthorityRequest{
-				Principal: spawnAuthorityPrincipal{Kind: authorityPrincipalAgent, ConvID: p.ConvID},
+				Principal: spawnAuthorityPrincipal{Kind: authorityPrincipalAgent, AgentID: agentID, ConvID: p.ConvID},
 				Origin:    spawnAuthorityOrigin{Kind: "http"}, Action: actx,
 			}, permissionReadLegacy)
 			if evalErr == nil && decision.Outcome == spawnAuthorityAllowed {

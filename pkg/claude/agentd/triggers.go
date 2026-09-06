@@ -699,11 +699,16 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 	sandboxProfileForScope := ambientSandboxProfileName(g)
 	sandboxScopePinned := false
 	if ownerConv != "" {
+		agentID, _ := db.AgentIDForConv(ownerConv)
+		originKind := "trigger"
+		if source.CronJobID != 0 {
+			originKind = "cron"
+		}
 		ctx := ActionContext{Group: g.Name, SpawnProfile: profile.Name,
 			SandboxProfile: sandboxProfileForScope, structuralGroup: g.Name}
 		decision, authErr := (spawnAuthorityEvaluator{}).EvaluateSpawn(context.Background(), spawnAuthorityRequest{
-			Principal: spawnAuthorityPrincipal{Kind: authorityPrincipalAgent, ConvID: ownerConv},
-			Origin:    spawnAuthorityOrigin{Kind: "cron", RuleID: rule.ID, FiringID: source.FiringID, CronJobID: source.CronJobID, CronRunID: source.CronRunID, ActionIndex: index}, Action: ctx,
+			Principal: spawnAuthorityPrincipal{Kind: authorityPrincipalAgent, AgentID: agentID, ConvID: ownerConv},
+			Origin:    spawnAuthorityOrigin{Kind: originKind, RuleID: rule.ID, FiringID: source.FiringID, CronJobID: source.CronJobID, CronRunID: source.CronRunID, ActionIndex: index}, Action: ctx,
 		}, permissionReadLegacy)
 		if authErr != nil {
 			return "io", authErr.Error(), ""
