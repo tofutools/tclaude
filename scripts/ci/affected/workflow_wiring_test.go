@@ -81,24 +81,39 @@ func TestPlatformV2FocusedPolicyWiring(t *testing.T) {
 	for _, step := range ci.Jobs["platform-v2-core"].Steps {
 		focusedRun += step.Run
 	}
-	for _, family := range []string{
-		"TestRequireSpawnPermission",
-		"TestSpawnAuthority",
-		"TestCronSpawn",
-		"TestTriggerSpawn",
-		"TestObserveBackgroundWork",
-		"TestResolveBackgroundObservation",
-		"TestDashboardAndTerminalStatusShareReadOnlyBackgroundObservation",
-		"TestSessionReaper_(ProjectsFinishedShellWithoutDashboard|RefreshesLiveBackgroundLedgerBeforeStopWithoutDashboard|ExpiredBackgroundShellWithUnknownScanDoesNotEstablishIdle)",
-		"TestReconcileBackground",
-		"TestProjectSessionBackgroundLedgers",
-		"TestSetSessionStatusFromBackgroundProjection",
+	for _, family := range []struct {
+		fragment string
+		dir      string
+		prefixes []string
+	}{
+		{"TestRequireSpawnPermission", "agentd", []string{"TestRequireSpawnPermission"}},
+		{"TestSpawnAuthority", "agentd", []string{"TestSpawnAuthority"}},
+		{"TestCronSpawn", "agentd", []string{"TestCronSpawn"}},
+		{"TestTriggerSpawn", "agentd", []string{"TestTriggerSpawn"}},
+		{"TestFreshLaunchConfiguration", "agentd", []string{"TestFreshLaunchConfiguration"}},
+		{"TestObserveBackgroundWork", "agentd", []string{"TestObserveBackgroundWork"}},
+		{"TestResolveBackgroundObservation", "agentd", []string{"TestResolveBackgroundObservation"}},
+		{"TestDashboardAndTerminalStatusShareReadOnlyBackgroundObservation", "agentd", []string{"TestDashboardAndTerminalStatusShareReadOnlyBackgroundObservation"}},
+		{
+			"TestSessionReaper_(ProjectsFinishedShellWithoutDashboard|RefreshesLiveBackgroundLedgerBeforeStopWithoutDashboard|ExpiredBackgroundShellWithUnknownScanDoesNotEstablishIdle)",
+			"agentd",
+			[]string{
+				"TestSessionReaper_ProjectsFinishedShellWithoutDashboard",
+				"TestSessionReaper_RefreshesLiveBackgroundLedgerBeforeStopWithoutDashboard",
+				"TestSessionReaper_ExpiredBackgroundShellWithUnknownScanDoesNotEstablishIdle",
+			},
+		},
+		{"TestReconcileBackground", "session", []string{"TestReconcileBackground"}},
+		{"TestProjectSessionBackgroundLedgers", filepath.Join("common", "db"), []string{"TestProjectSessionBackgroundLedgers"}},
+		{"TestSetSessionStatusFromBackgroundProjection", filepath.Join("common", "db"), []string{"TestSetSessionStatusFromBackgroundProjection"}},
 	} {
-		if !strings.Contains(focusedRun, family) {
-			t.Errorf("ci.yml platform-v2-core does not retain the %s family", family)
+		if !strings.Contains(focusedRun, family.fragment) {
+			t.Errorf("ci.yml platform-v2-core does not retain the %s family", family.fragment)
 		}
-		if !testFamilyExists(t, filepath.Join(root, "pkg", "claude", "agentd"), family) {
-			t.Errorf("ci.yml platform-v2-core names %s, but no real test has that prefix", family)
+		for _, prefix := range family.prefixes {
+			if !testFamilyExists(t, filepath.Join(root, "pkg", "claude", family.dir), prefix) {
+				t.Errorf("ci.yml platform-v2-core names %s, but no real test has that prefix", prefix)
+			}
 		}
 	}
 	for _, packagePath := range []string{
