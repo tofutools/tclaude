@@ -49,6 +49,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	if err := s.initializeUsageActivity(ctx); err != nil {
 		return fmt.Errorf("initialize usage and activity schema: %w", err)
 	}
+	if err := s.initializeAccessRequests(ctx); err != nil {
+		return fmt.Errorf("initialize access request schema: %w", err)
+	}
 	for _, migration := range []struct{ table, column, definition string }{
 		{"agents", "configuration_profile_json", "BLOB"},
 		{"executions", "configuration_profile_json", "BLOB"},
