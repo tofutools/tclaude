@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -698,19 +699,20 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 	sandboxProfileForScope := ambientSandboxProfileName(g)
 	sandboxScopePinned := false
 	if ownerConv != "" {
-		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
 		ctx := ActionContext{Group: g.Name, SpawnProfile: profile.Name,
 			SandboxProfile: sandboxProfileForScope, structuralGroup: g.Name}
-		allowed, authorizedSlug, _, authErr := spawnPermissionAllowsAction(req, ownerConv, ctx)
+		decision, authErr := (spawnAuthorityEvaluator{}).EvaluateSpawn(context.Background(), spawnAuthorityRequest{
+			Principal: spawnAuthorityPrincipal{Kind: authorityPrincipalAgent, ConvID: ownerConv},
+			Origin:    spawnAuthorityOrigin{Kind: "cron", RuleID: rule.ID, FiringID: source.FiringID, CronJobID: source.CronJobID, CronRunID: source.CronRunID, ActionIndex: index}, Action: ctx,
+		}, permissionReadLegacy)
 		if authErr != nil {
 			return "io", authErr.Error(), ""
 		}
-		if !allowed {
+		if decision.Outcome != spawnAuthorityAllowed {
 			return "permission_denied", fmt.Sprintf("owner lacks %s or %s for group %s and spawn profile %s", PermAgentSpawn, PermGroupsMembersSpawn, g.Name, profile.Name), ""
 		}
-		allowAnyGroup = authorizedSlug == PermAgentSpawn
-		sandboxScopePinned = scopePinsDimension(req, ownerConv, authorizedSlug,
-			ctx, ScopeDimSandboxProfile)
+		allowAnyGroup = decision.AllowAnyGroup
+		sandboxScopePinned = decision.MatchedDims[ScopeDimSandboxProfile]
 	}
 	if n, err := db.CountLiveManagedWorkers(source.RuleID, source.CronJobID, index); err != nil {
 		return "io", err.Error(), ""
