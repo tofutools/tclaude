@@ -82,15 +82,22 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry) err
 		return err
 	}
 	defer func() { _ = store.Close() }()
-	application := app.New(store, registry)
+	socket := filepath.Join(dir, "api.sock")
+	application := app.New(store, registry).WithAgentAPIEndpoint(socket)
 	if _, err := application.Recover(ctx, app.RecoverRequest{Principal: model.OperatorPrincipal()}); err != nil {
 		return fmt.Errorf("recover backend: %w", err)
 	}
-	handler, err := transport.NewHandler(application, auth)
+	callers, err := transport.NewCallerAuthenticator(auth, application)
 	if err != nil {
 		return err
 	}
-	socket := filepath.Join(dir, "api.sock")
+	handler, err := transport.NewHandler(application, callers)
+	if err != nil {
+		return err
+	}
+	if err := handler.RegisterAgentAPI(application, application); err != nil {
+		return err
+	}
 	// Holding the state-directory lock makes this a stale socket from our own
 	// previous process. Refuse other file types rather than deleting arbitrary data.
 	if info, err := os.Lstat(socket); err == nil {
