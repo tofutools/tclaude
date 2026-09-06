@@ -468,6 +468,13 @@ func TestOpenCodeServerHelper(t *testing.T) {
 			_ = json.NewDecoder(request.Body).Decode(&body)
 			encoded, _ := json.Marshal(body)
 			_ = os.WriteFile(os.Getenv("OPENCODE_TEST_PROMPT"), encoded, 0o600)
+			if path := os.Getenv("OPENCODE_TEST_PROMPT_COUNT"); path != "" {
+				file, _ := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+				if file != nil {
+					_, _ = file.WriteString("prompt\n")
+					_ = file.Close()
+				}
+			}
 			writer.WriteHeader(http.StatusNoContent)
 			return
 		}
