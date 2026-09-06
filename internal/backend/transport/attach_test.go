@@ -121,3 +121,53 @@ func TestAttachmentRejectsForeignOriginBeforeAllocating(t *testing.T) {
 		t.Fatalf("foreign attachment admitted: response=%v err=%v calls=%d", response, err, p.calls.Load())
 	}
 }
+
+type resizablePipe struct {
+	pipeAttachment
+	sizes chan ports.TerminalSize
+}
+
+func (p resizablePipe) Resize(_ context.Context, size ports.TerminalSize) error {
+	p.sizes <- size
+	return nil
+}
+func TestAttachmentResizeUsesNegotiatedControlChannel(t *testing.T) {
+	backend, terminal := net.Pipe()
+	defer terminal.Close()
+	sizes := make(chan ports.TerminalSize, 1)
+	p := &attachmentProbe{attachment: resizablePipe{pipeAttachment{backend}, sizes}}
+	server := httptest.NewServer(testHandler(t, p))
+	defer server.Close()
+	dialer := websocket.Dialer{Subprotocols: []string{"tclaude.terminal.v1"}}
+	conn, _, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/v2/attach?execution_id=e&request_id=r", http.Header{"Authorization": {"Bearer " + testCredential}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	var capability struct {
+		Type   string `json:"type"`
+		Resize bool   `json:"resize"`
+	}
+	if err = conn.ReadJSON(&capability); err != nil || capability.Type != "capabilities" || !capability.Resize {
+		t.Fatalf("capabilities: %+v %v", capability, err)
+	}
+	if err = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"resize","columns":120,"rows":40}`)); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case size := <-sizes:
+		if size.Columns != 120 || size.Rows != 40 {
+			t.Fatalf("size %+v", size)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no resize")
+	}
+	if err = conn.WriteMessage(websocket.BinaryMessage, []byte("input")); err != nil {
+		t.Fatal(err)
+	}
+	_ = terminal.SetReadDeadline(time.Now().Add(time.Second))
+	data := make([]byte, 5)
+	if _, err = io.ReadFull(terminal, data); err != nil || string(data) != "input" {
+		t.Fatalf("input %q: %v", data, err)
+	}
+}

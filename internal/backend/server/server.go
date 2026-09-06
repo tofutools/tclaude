@@ -94,7 +94,12 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry, jou
 	}
 	defer func() { _ = store.Close() }()
 	socket := filepath.Join(dir, "api.sock")
-	application := app.New(store, registry).WithAgentAPIEndpoint(socket)
+	callbacks, err := transport.NewCallbackRegistry(socket)
+	if err != nil {
+		return err
+	}
+	defer callbacks.Close()
+	application := app.New(store, registry).WithAgentAPIEndpoint(socket).WithCallbackIngress(callbacks)
 	if len(journey) == 1 {
 		services := journey[0]
 		application.WithWorkspaceHost(services.Workspaces).WithShellHost(services.Shells).WithHistorySources(services.History)
@@ -111,6 +116,9 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry, jou
 		return err
 	}
 	if err := handler.RegisterAgentAPI(application, application); err != nil {
+		return err
+	}
+	if err := handler.RegisterCallbackIngress(callbacks); err != nil {
 		return err
 	}
 	if err := handler.RegisterJourneyAPI(application); err != nil {
