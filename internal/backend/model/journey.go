@@ -254,20 +254,22 @@ type WorkStepAttempt struct {
 }
 
 type WorkRun struct {
-	ID                WorkRunID
-	RequestID         RequestID
-	Requester         Principal
-	Authority         AuthoritySubject
-	Delegation        *AutomationDelegation
-	Spec              WorkRunSpec
-	WorkspaceUseID    WorkspaceUseID
-	HistoryUseID      HistoryUseID
-	WorkerExecutionID ExecutionID
-	State             WorkRunState
-	Attempts          []WorkStepAttempt
-	Revision          Revision
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                    WorkRunID
+	RequestID             RequestID
+	Requester             Principal
+	Authority             AuthoritySubject
+	Delegation            *AutomationDelegation
+	Spec                  WorkRunSpec
+	WorkspaceUseID        WorkspaceUseID
+	HistoryUseID          HistoryUseID
+	WorkerExecutionID     ExecutionID
+	CancellationRequested bool
+	CancellationReason    string
+	State                 WorkRunState
+	Attempts              []WorkStepAttempt
+	Revision              Revision
+	CreatedAt             time.Time
+	UpdatedAt             time.Time
 }
 
 type WorkEvidenceKind string
