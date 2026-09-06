@@ -194,7 +194,7 @@ func (s *Store) AdmitLaunch(ctx context.Context, in app.LaunchAdmission) (app.Ad
 		return app.AdmissionResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if repeated, ok, err := admissionByRequest(ctx, tx, in.Operation.RequestID); err != nil {
+	if repeated, ok, err := admissionByRequest(ctx, tx, in.Operation, in.AgentID, false); err != nil {
 		return app.AdmissionResult{}, err
 	} else if ok {
 		_ = tx.Commit()
@@ -248,7 +248,7 @@ func (s *Store) AdmitExecutionOperation(ctx context.Context, in app.ExecutionOpe
 		return app.AdmissionResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if repeated, ok, err := admissionByRequest(ctx, tx, in.Operation.RequestID); err != nil {
+	if repeated, ok, err := admissionByRequest(ctx, tx, in.Operation, "", true); err != nil {
 		return app.AdmissionResult{}, err
 	} else if ok {
 		_ = tx.Commit()
@@ -437,7 +437,7 @@ func (s *Store) CreateMessage(ctx context.Context, message model.Message, reques
 		return app.MessageAdmissionResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if existing, ok, err := messageByRequest(ctx, tx, requestID); err != nil {
+	if existing, ok, err := messageByRequest(ctx, tx, requestID, message); err != nil {
 		return app.MessageAdmissionResult{}, err
 	} else if ok {
 		_ = tx.Commit()
@@ -681,13 +681,16 @@ func insertConversationAndAssociation(ctx context.Context, tx *sql.Tx, agentID m
 	_, err = tx.ExecContext(ctx, `INSERT INTO agent_conversations(agent_id,conversation_id,current,revision,associated_at) VALUES(?,?,1,?,?) ON CONFLICT(agent_id,conversation_id) DO UPDATE SET current=1,revision=excluded.revision,associated_at=excluded.associated_at,replaced_at=NULL`, agentID, conversationID, revision+1, nanos(at))
 	return err
 }
-func admissionByRequest(ctx context.Context, tx *sql.Tx, requestID model.RequestID) (app.AdmissionResult, bool, error) {
-	operation, err := operationByRequestTx(ctx, tx, requestID)
+func admissionByRequest(ctx context.Context, tx *sql.Tx, desired model.Operation, targetAgent model.AgentID, strictExecution bool) (app.AdmissionResult, bool, error) {
+	operation, err := operationByRequestTx(ctx, tx, desired.RequestID)
 	if errors.Is(err, app.ErrNotFound) {
 		return app.AdmissionResult{}, false, nil
 	}
 	if err != nil {
 		return app.AdmissionResult{}, false, err
+	}
+	if operation.Kind != desired.Kind || operation.Principal != desired.Principal || (strictExecution && operation.ExecutionID != desired.ExecutionID) {
+		return app.AdmissionResult{}, false, app.ErrConflict
 	}
 	var execution model.Execution
 	if operation.ExecutionID != "" {
@@ -695,6 +698,9 @@ func admissionByRequest(ctx context.Context, tx *sql.Tx, requestID model.Request
 		if err != nil {
 			return app.AdmissionResult{}, false, err
 		}
+	}
+	if !strictExecution && execution.AgentID != targetAgent {
+		return app.AdmissionResult{}, false, app.ErrConflict
 	}
 	return app.AdmissionResult{Operation: operation, Execution: execution, Repeated: true}, true, nil
 }
@@ -735,13 +741,16 @@ func (s *Store) message(ctx context.Context, id model.MessageID) (model.Message,
 	}
 	return m, rows.Err()
 }
-func messageByRequest(ctx context.Context, tx *sql.Tx, requestID model.RequestID) (app.MessageAdmissionResult, bool, error) {
+func messageByRequest(ctx context.Context, tx *sql.Tx, requestID model.RequestID, desired model.Message) (app.MessageAdmissionResult, bool, error) {
 	operation, err := operationByRequestTx(ctx, tx, requestID)
 	if errors.Is(err, app.ErrNotFound) {
 		return app.MessageAdmissionResult{}, false, nil
 	}
 	if err != nil {
 		return app.MessageAdmissionResult{}, false, err
+	}
+	if operation.Kind != model.OperationSendMessage || operation.Principal != desired.Sender {
+		return app.MessageAdmissionResult{}, false, app.ErrConflict
 	}
 	var messageID model.MessageID
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM messages WHERE operation_id=?`, operation.ID).Scan(&messageID); err != nil {
@@ -753,6 +762,9 @@ func messageByRequest(ctx context.Context, tx *sql.Tx, requestID model.RequestID
 		return app.MessageAdmissionResult{}, false, classify(err)
 	}
 	m.CreatedAt = fromNanos(created)
+	if m.Body != desired.Body {
+		return app.MessageAdmissionResult{}, false, app.ErrConflict
+	}
 	rows, err := tx.QueryContext(ctx, `SELECT id,agent_id,read_at,notified FROM message_recipients WHERE message_id=? ORDER BY rowid`, messageID)
 	if err != nil {
 		return app.MessageAdmissionResult{}, false, err
@@ -770,7 +782,18 @@ func messageByRequest(ctx context.Context, tx *sql.Tx, requestID model.RequestID
 		}
 		m.Recipients = append(m.Recipients, r)
 	}
-	return app.MessageAdmissionResult{Operation: operation, Message: m, Repeated: true}, true, rows.Err()
+	if err := rows.Err(); err != nil {
+		return app.MessageAdmissionResult{}, false, err
+	}
+	if len(m.Recipients) != len(desired.Recipients) {
+		return app.MessageAdmissionResult{}, false, app.ErrConflict
+	}
+	for index := range m.Recipients {
+		if m.Recipients[index].AgentID != desired.Recipients[index].AgentID {
+			return app.MessageAdmissionResult{}, false, app.ErrConflict
+		}
+	}
+	return app.MessageAdmissionResult{Operation: operation, Message: m, Repeated: true}, true, nil
 }
 
 func (s *Store) bump(ctx context.Context) error {
