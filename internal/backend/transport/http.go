@@ -170,11 +170,13 @@ func (h *Handler) snapshot(w http.ResponseWriter, r *http.Request) {
 		operations = append(operations, projectOperation(operation))
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Revision   model.Revision  `json:"revision"`
-		Agents     []model.Agent   `json:"agents"`
-		Groups     []model.Group   `json:"groups"`
-		Executions []executionView `json:"executions"`
-		Operations []operationView `json:"operations"`
-		Messages   []model.Message `json:"messages"`
-	}{s.Revision, s.Agents, s.Groups, views, operations, s.Messages})
+		Conversations []model.Conversation            `json:"conversations"`
+		Associations  []model.ConversationAssociation `json:"associations"`
+		Revision      model.Revision                  `json:"revision"`
+		Agents        []model.Agent                   `json:"agents"`
+		Groups        []model.Group                   `json:"groups"`
+		Executions    []executionView                 `json:"executions"`
+		Operations    []operationView                 `json:"operations"`
+		Messages      []model.Message                 `json:"messages"`
+	}{s.Conversations, s.Associations, s.Revision, s.Agents, s.Groups, views, operations, s.Messages})
 }

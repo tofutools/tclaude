@@ -116,3 +116,61 @@ func TestTransportDurableLaunchRetryAndStop(t *testing.T) {
 		t.Fatalf("settled snapshot: %+v", snapshot)
 	}
 }
+
+func (r *lifecycleRuntime) ChangeContext(_ context.Context, _ ports.ContextChange) (ports.ContextChangeResult, error) {
+	return ports.ContextChangeResult{Disposition: ports.EffectAccepted, Evidence: lifecycleEvidence(), NativeConversation: &model.NativeConversationEvidence{Namespace: "test-store", Reference: string(r.id) + "-changed"}}, nil
+}
+
+func TestContextUsesAssociationRevisionReadFromAPI(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "backend.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	h := testHandler(t, app.New(store, providers.NewRegistry(&lifecycleProvider{})))
+	desired := `{"Harness":"test-native","WorkingDirectory":"/tmp","Approval":"supervised","Sandbox":"unconfined"}`
+	w := request(h, "POST", "/v2/agents", `{"id":"worker","name":"worker","desired":`+desired+`}`, testCredential)
+	var agent model.Agent
+	if err := json.Unmarshal(w.Body.Bytes(), &agent); err != nil || w.Code != 201 {
+		t.Fatalf("agent %s %v", w.Body, err)
+	}
+	w = request(h, "POST", "/v2/launch", fmt.Sprintf(`{"request_id":"agent-launch","target":{"agent":{"agent_id":"worker","expected_revision":%d}}}`, agent.Revision), testCredential)
+	if w.Code != 202 {
+		t.Fatal(w.Body.String())
+	}
+	var lastRevision model.Revision
+	for attempt := 0; attempt < 2; attempt++ {
+		w = request(h, "GET", "/v2/snapshot", "", testCredential)
+		var state struct {
+			Executions    []executionView
+			Associations  []model.ConversationAssociation
+			Conversations []model.Conversation
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &state); err != nil {
+			t.Fatal(err)
+		}
+		var selected model.ConversationAssociation
+		for _, association := range state.Associations {
+			if association.AgentID == "worker" && association.Current {
+				selected = association
+			}
+		}
+		if selected.Revision == 0 || selected.Revision <= lastRevision {
+			t.Fatalf("current revision unreadable: %+v", state)
+		}
+		lastRevision = selected.Revision
+		found := false
+		for _, conversation := range state.Conversations {
+			if conversation.ID == selected.ConversationID && conversation.Revision > 0 {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatal("selected conversation missing from API snapshot")
+		}
+		w = request(h, "POST", "/v2/context", fmt.Sprintf(`{"request_id":"context-%d","execution_id":%q,"intent":"reset","expected_conversation_id":%q,"expected_association_revision":%d}`, attempt, state.Executions[0].ID, selected.ConversationID, selected.Revision), testCredential)
+		if w.Code != 202 {
+			t.Fatalf("context based on public selection: %d %s", w.Code, w.Body)
+		}
+	}
+}

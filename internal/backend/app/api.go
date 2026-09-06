@@ -148,12 +148,14 @@ type SnapshotRequest struct {
 }
 
 type Snapshot struct {
-	Revision   model.Revision
-	Agents     []model.Agent
-	Groups     []model.Group
-	Executions []model.Execution
-	Operations []model.Operation
-	Messages   []model.Message
+	Conversations []model.Conversation
+	Associations  []model.ConversationAssociation
+	Revision      model.Revision
+	Agents        []model.Agent
+	Groups        []model.Group
+	Executions    []model.Execution
+	Operations    []model.Operation
+	Messages      []model.Message
 }
 
 type RecoverRequest struct{ Principal model.Principal }

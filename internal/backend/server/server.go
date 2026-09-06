@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/app"
@@ -107,23 +108,52 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry) err
 		return err
 	}
 	defer listener.Close()
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,
-		BaseContext: func(net.Listener) context.Context { return ctx }}
+	requests := &requestDrain{handler: handler}
+	requestCtx, cancelRequests := context.WithCancel(ctx)
+	defer cancelRequests()
+	server := &http.Server{Handler: requests, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,
+		BaseContext: func(net.Listener) context.Context { return requestCtx }}
 	completed := make(chan error, 1)
 	go func() { completed <- server.Serve(listener) }()
+	var serveErr error
 	select {
-	case err := <-completed:
-		if errors.Is(err, http.ErrServerClosed) {
-			return nil
+	case serveErr = <-completed:
+		if errors.Is(serveErr, http.ErrServerClosed) {
+			serveErr = nil
 		}
-		return err
 	case <-ctx.Done():
-		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := server.Shutdown(shutdown); err != nil {
-			_ = server.Close()
-			return err
-		}
-		return nil
 	}
+	requests.stopAccepting()
+	cancelRequests() // Disconnect views; admitted application work owns its lifetime.
+	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := server.Shutdown(shutdown); err != nil {
+		_ = server.Close() // Unblock stalled network I/O, then join the handlers below.
+	}
+	requests.wait()
+	return serveErr
 }
+
+// The gate prevents additions racing with Wait, including connections accepted
+// just before shutdown whose handler has not started yet.
+type requestDrain struct {
+	handler  http.Handler
+	mu       sync.Mutex
+	stopping bool
+	active   sync.WaitGroup
+}
+
+func (d *requestDrain) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	d.mu.Lock()
+	if d.stopping {
+		d.mu.Unlock()
+		http.Error(w, "server stopping", http.StatusServiceUnavailable)
+		return
+	}
+	d.active.Add(1)
+	d.mu.Unlock()
+	defer d.active.Done()
+	d.handler.ServeHTTP(w, r)
+}
+func (d *requestDrain) stopAccepting() { d.mu.Lock(); d.stopping = true; d.mu.Unlock() }
+func (d *requestDrain) wait()          { d.active.Wait() }

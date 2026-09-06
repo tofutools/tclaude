@@ -82,3 +82,9 @@ Focused verification:
 go test ./internal/backend/... -race -count=1
 go build ./...
 ```
+
+Shutdown stops accepting requests and disconnects attachment views, then waits
+for admitted request handlers to settle before closing storage or releasing the
+state-directory lock. A slow admitted workflow can therefore delay shutdown.
+Snapshots include public conversation and agent-conversation association
+revisions; use the current association revision for context/resume requests.
