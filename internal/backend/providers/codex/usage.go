@@ -41,6 +41,10 @@ func (r usageReader) Collect(ctx context.Context, request ports.UsageCollectionR
 	if partial {
 		coverage.Counters = model.UsageCoveragePartial
 	}
+	if len(counters) == 0 {
+		coverage.Counters = model.UsageCoverageUnknown
+		coverage.Reason = "rollout contains no usable token-count observation"
+	}
 	if observed.IsZero() {
 		observed = request.Execution.UpdatedAt
 	}
@@ -75,7 +79,7 @@ func (r usageReader) rollout(ctx context.Context, request ports.UsageCollectionR
 	if err != nil && !os.IsNotExist(err) {
 		return "", "", err
 	}
-	return found, "codex:" + request.Native.Reference, nil
+	return found, "codex:" + sourceFingerprint(sourceToken{StateRoot: r.provider.nativeHome, SessionID: request.Native.Reference, Transcript: found}), nil
 }
 
 func collectCodexUsage(raw []byte) ([]model.UsageCounter, time.Time, bool) {
@@ -106,19 +110,23 @@ func collectCodexUsage(raw []byte) ([]model.UsageCounter, time.Time, bool) {
 			Type string `json:"type"`
 			Info *struct {
 				Total *struct {
-					Input      int64 `json:"input_tokens"`
-					Cached     int64 `json:"cached_input_tokens"`
-					CacheWrite int64 `json:"cache_write_input_tokens"`
-					Output     int64 `json:"output_tokens"`
-					Reasoning  int64 `json:"reasoning_output_tokens"`
-					Total      int64 `json:"total_tokens"`
+					Input      *int64 `json:"input_tokens"`
+					Cached     int64  `json:"cached_input_tokens"`
+					CacheWrite int64  `json:"cache_write_input_tokens"`
+					Output     *int64 `json:"output_tokens"`
+					Reasoning  int64  `json:"reasoning_output_tokens"`
+					Total      int64  `json:"total_tokens"`
 				} `json:"total_token_usage"`
 			} `json:"info"`
 		}
 		if json.Unmarshal(envelope.Payload, &event) != nil || event.Type != "token_count" || event.Info == nil || event.Info.Total == nil {
 			continue
 		}
-		candidate := struct{ Input, Cached, CacheWrite, Output, Reasoning, Total int64 }{event.Info.Total.Input, event.Info.Total.Cached, event.Info.Total.CacheWrite, event.Info.Total.Output, event.Info.Total.Reasoning, event.Info.Total.Total}
+		if event.Info.Total.Input == nil || event.Info.Total.Output == nil {
+			partial = true
+			continue
+		}
+		candidate := struct{ Input, Cached, CacheWrite, Output, Reasoning, Total int64 }{*event.Info.Total.Input, event.Info.Total.Cached, event.Info.Total.CacheWrite, *event.Info.Total.Output, event.Info.Total.Reasoning, event.Info.Total.Total}
 		if candidate.Input < 0 || candidate.Cached < 0 || candidate.CacheWrite < 0 || candidate.Output < 0 || candidate.Reasoning < 0 {
 			partial = true
 			continue
