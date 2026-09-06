@@ -12,7 +12,7 @@ import (
 // Offline inspection is separate from authenticated live application commands.
 // Both paths are explicit; this command never discovers an existing database.
 func migrationCommand(inspector migration.Inspector) *cobra.Command {
-	root := boa.CmdT[struct{}]{Use: "migration", Short: "Inspect an explicit offline snapshot before migration"}.ToCobra()
+	root := boa.CmdT[struct{}]{Use: "migration", Short: "Inspect, import and report explicit offline snapshots"}.ToCobra()
 	for _, name := range []string{"inspect", "plan"} {
 		cmd := boa.CmdT[struct{}]{Use: name, Short: "Report offline snapshot " + name + " results without target writes"}.ToCobra()
 		cmd.Args = cobra.NoArgs
@@ -48,5 +48,6 @@ func migrationCommand(inspector migration.Inspector) *cobra.Command {
 		}
 		root.AddCommand(cmd)
 	}
+	registerOfflineImport(root)
 	return root
 }

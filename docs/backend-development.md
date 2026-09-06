@@ -359,6 +359,43 @@ identity/reference mappings and preservation decisions; it does not activate
 legacy authority, replay unfinished work, or perform the final target import.
 No source directory or manifest is inferred from the current user's home.
 
+To perform the offline conversion into a new private product directory:
+
+```sh
+tclaude migration import --bundle /absolute/snapshot-bundle --manifest manifest.json \
+  --state-dir /absolute/new-imported-state
+tclaude migration report --state-dir /absolute/new-imported-state
+tclaude-agentd serve --state-dir /absolute/new-imported-state
+```
+
+The bundle contains an operator-created schema-v228 SQLite snapshot, a manifest
+with relative paths, exact byte sizes and SHA-256 hashes, and any referenced
+configuration/attachment files. Create it while the old writer is stopped or
+using a consistent SQLite backup; do not copy a changing main database without
+its committed WAL. This command does not discover live state or make a source
+snapshot for you. Keep source paths and manifest entries immutable during import.
+
+Conversion preserves supported durable identities, correspondence and attachment
+content, configuration, historical usage and attribution. Untranslatable authored
+features and authority are retained inactive with explicit diagnostics. Old
+runtime handles are discarded, imported rules remain disabled, and uncertain
+work is not replayed. Missing attachment content blocks conversion unless
+`--metadata-only-attachments` is explicitly selected; report availability counts
+then distinguish retained metadata from available bytes.
+
+The target must be a new directory, or an exact retry of the same completed or
+pending import. A pending target cannot serve requests. The product lock excludes
+a running target daemon. Readiness is published only after database verification
+and durable publication. An exact retry verifies imported semantics and refuses
+changed targets or write sidecars; it never overwrites later product work. Once
+you start operating the imported product, use ordinary product operations rather
+than rerunning import to repair it.
+
+`migration report` is a read-only, redacted receipt/mapping/diagnostic view. It
+does not expose raw source messages, configuration values, credentials or
+attachment bytes. Keep the target offline while using import verification and
+report commands. Neither command starts the daemon or a native workload.
+
 Saved configuration profiles have immutable revisions. Use
 `configuration-profile save --file profile.json` with `request_id`, `id`,
 `revision_id`, `name`, `desired`, and `expected_revision` (zero for a new
