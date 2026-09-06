@@ -129,7 +129,8 @@ func (r historyReader) Discover(ctx context.Context, request ports.HistoryDiscov
 		if err != nil {
 			result.Histories = append(result.Histories, ports.DiscoveredHistory{
 				Native:      model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: manifest.NativeID, ObservedAt: refreshed},
-				SourceToken: entry.Name(), WorkspaceHint: manifest.CWD, ModifiedAt: manifest.Updated,
+				SourceToken: entry.Name(), SourceFingerprint: historySourceFingerprint(stateRoot, manifest.NativeID),
+				WorkspaceHint: manifest.CWD, ModifiedAt: manifest.Updated,
 				Availability: model.HistoryUnknown,
 				Coverage:     model.HistoryCoverage{Metadata: model.HistoryCoveragePartial, Content: model.HistoryCoverageUnknown, RefreshedAt: refreshed},
 			})
@@ -197,6 +198,13 @@ func (r historyReader) discoverNativeRoot(ctx context.Context, request ports.His
 		exported, _, revision, exportErr := r.export(ctx, root, session.ID, session.Directory)
 		if exportErr != nil {
 			result.Coverage.Content = model.HistoryCoveragePartial
+			result.Histories = append(result.Histories, ports.DiscoveredHistory{
+				Native:      model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: session.ID, ObservedAt: refreshed},
+				SourceToken: session.ID, SourceFingerprint: historySourceFingerprint(root, session.ID),
+				Title: session.Title, WorkspaceHint: session.Directory, Availability: model.HistoryUnknown,
+				Coverage: model.HistoryCoverage{Metadata: model.HistoryCoverageComplete,
+					Content: model.HistoryCoverageUnknown, RefreshedAt: refreshed},
+			})
 			continue
 		}
 		updated := milliseconds(exported.Info.Time.Updated)
