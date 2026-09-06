@@ -269,6 +269,25 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 			"conversation id must be a single path-safe segment")
 		return
 	}
+	if layerClaim {
+		decision, err := admitManagedHookConversation(row, p.PID, harnessPID, req)
+		if err != nil {
+			slog.Warn("hook broker: managed conversation admission failed",
+				"session", row.ID, "event", req.Input.HookEventName, "error", err, "module", "hooks")
+			writeError(w, http.StatusInternalServerError, "hook", "managed conversation admission failed")
+			return
+		}
+		if !decision.Admitted() {
+			slog.Info("hook broker: refusing managed hook effects after conversation admission",
+				"session", row.ID, "event", req.Input.HookEventName,
+				"outcome", decision.Outcome, "reason", decision.Reason, "module", "hooks")
+			// Hook failures are soft at the client boundary. An authenticated but
+			// non-admitted observation is acknowledged without applying effects;
+			// returning 403 would misreport this as a socket identity failure.
+			writeJSON(w, http.StatusOK, session.BrokeredHookResponse{})
+			return
+		}
+	}
 
 	sanitizeBrokeredHookInput(&req.Input, row.ConvID)
 
