@@ -27,9 +27,14 @@ type ProcessSpec struct {
 	Args       []string
 	Directory  string
 	Env        []string
-	Stdin      io.Reader
-	Stdout     io.Writer
-	Stderr     io.Writer
+	// ExactEnvironment prevents ambient daemon credentials and configuration
+	// from leaking into a bounded child workload. When false, Env remains an
+	// override layer on the current process environment for existing harness
+	// providers.
+	ExactEnvironment bool
+	Stdin            io.Reader
+	Stdout           io.Writer
+	Stderr           io.Writer
 }
 
 // ProcessIdentity is sufficient to reject a recycled PID or process group.
@@ -63,7 +68,11 @@ func StartProcess(spec ProcessSpec) (*Process, error) {
 	}
 	cmd := exec.Command(spec.Executable, spec.Args...)
 	cmd.Dir = spec.Directory
-	cmd.Env = MergeEnvironment(os.Environ(), spec.Env)
+	if spec.ExactEnvironment {
+		cmd.Env = MergeEnvironment(nil, spec.Env)
+	} else {
+		cmd.Env = MergeEnvironment(os.Environ(), spec.Env)
+	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = spec.Stdin, spec.Stdout, spec.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
