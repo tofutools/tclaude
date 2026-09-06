@@ -266,3 +266,68 @@ func TestBrowserAttachmentProxyClosesViewOnShutdown(t *testing.T) {
 		t.Fatal("upstream attachment remained open")
 	}
 }
+
+func TestConcurrentDashboardSessionsRemainIndependent(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state")
+	if err := backend.Initialize(state); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	views := make([]*Server, 0, 2)
+	for range 2 {
+		view, err := Open(state, "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		views = append(views, view)
+		done := make(chan error, 1)
+		go func() { done <- view.Serve(ctx) }()
+		t.Cleanup(func() {
+			view.Close()
+			select {
+			case <-done:
+			case <-time.After(5 * time.Second):
+				t.Error("dashboard did not stop")
+			}
+		})
+	}
+	jar, _ := cookiejar.New(nil)
+	client := &http.Client{Jar: jar, Timeout: time.Second}
+	call := func(view *Server, method, path string, body string) int {
+		t.Helper()
+		req, err := http.NewRequest(method, view.origin+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Origin", view.origin)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return resp.StatusCode
+	}
+	for _, view := range views {
+		if status := call(view, "POST", "/session", `{"token":"`+view.bootstrap+`"}`); status != http.StatusNoContent {
+			t.Fatalf("login: %d", status)
+		}
+	}
+	// No backend is running: 502 proves each request passed browser authentication.
+	for _, view := range views {
+		if status := call(view, "GET", "/v2/snapshot", ""); status != http.StatusBadGateway {
+			t.Fatalf("independent session lost: %d", status)
+		}
+	}
+	if status := call(views[1], "DELETE", "/session", ""); status != http.StatusNoContent {
+		t.Fatalf("logout: %d", status)
+	}
+	if status := call(views[0], "GET", "/v2/snapshot", ""); status != http.StatusBadGateway {
+		t.Fatalf("other logout invalidated session: %d", status)
+	}
+	if status := call(views[1], "GET", "/v2/snapshot", ""); status != http.StatusUnauthorized {
+		t.Fatalf("logged out session remains authorized: %d", status)
+	}
+}

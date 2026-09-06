@@ -27,9 +27,8 @@ import (
 //go:embed assets/*
 var assets embed.FS
 
-const cookieName = "tclaude_browser"
-
 type Server struct {
+	cookieName     string
 	listener       net.Listener
 	origin         string
 	bootstrap      string
@@ -69,7 +68,12 @@ func Open(state, address string) (*Server, error) {
 		_ = listener.Close()
 		return nil, err
 	}
-	s := &Server{listener: listener, origin: "http://" + listener.Addr().String(), bootstrap: hex.EncodeToString(token), bootstrapUntil: time.Now().Add(5 * time.Minute), state: state}
+	cookieID := make([]byte, 16)
+	if _, err := rand.Read(cookieID); err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
+	s := &Server{cookieName: "tclaude_browser_" + hex.EncodeToString(cookieID), listener: listener, origin: "http://" + listener.Addr().String(), bootstrap: hex.EncodeToString(token), bootstrapUntil: time.Now().Add(5 * time.Minute), state: state}
 	s.lifetime, s.cancel = context.WithCancel(context.Background())
 	s.transport = &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(state, "api.sock"))
@@ -187,7 +191,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.session = ""
 		s.mu.Unlock()
-		http.SetCookie(w, &http.Cookie{Name: cookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+		http.SetCookie(w, &http.Cookie{Name: s.cookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -200,7 +204,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) authenticated(r *http.Request) bool {
-	cookie, err := r.Cookie(cookieName)
+	cookie, err := r.Cookie(s.cookieName)
 	if err != nil {
 		return false
 	}
@@ -240,7 +244,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	s.session = hex.EncodeToString(token)
 	s.sessionUntil = time.Now().Add(12 * time.Hour)
 	s.redeemed = true
-	http.SetCookie(w, &http.Cookie{Name: cookieName, Value: s.session, Path: "/", Expires: s.sessionUntil, HttpOnly: true, SameSite: http.SameSiteStrictMode})
+	http.SetCookie(w, &http.Cookie{Name: s.cookieName, Value: s.session, Path: "/", Expires: s.sessionUntil, HttpOnly: true, SameSite: http.SameSiteStrictMode})
 	w.WriteHeader(http.StatusNoContent)
 }
 func operatorToken(state string) (string, error) {
