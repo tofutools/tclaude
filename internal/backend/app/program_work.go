@@ -257,7 +257,7 @@ func (s *Service) executeProgram(ctx context.Context, record WorkRunRecord, atte
 		return s.failProgramOperation(ctx, record, attempt, model.OperationFailed, model.ExecutionFailed, "prepare_failed", err)
 	}
 	description := prepared.Describe()
-	if description.ExecutionID != attempt.ExecutionID || description.Attempt != 1 || !validProviderEvidence(description.Evidence) {
+	if description.ExecutionID != attempt.ExecutionID || description.Attempt != 1 || !validProviderEvidence(description.Evidence) || description.EffectivePolicy.Sandbox != profile.Sandbox || !description.EffectivePolicy.Enforced || (description.Requirements.WorkingDirectory != "" && description.Requirements.WorkingDirectory != workingDirectory) {
 		_ = prepared.Abort(workflowCtx)
 		return s.failProgramOperation(ctx, record, attempt, model.OperationFailed, model.ExecutionFailed, "invalid_preparation", fail(ErrInvalid, "program host returned mismatched preparation"))
 	}

@@ -19,6 +19,10 @@ const (
 	orchestrationCompilerVersion = "1"
 	maxGraphNodes                = 512
 	maxWorkAttempts              = 100
+	maxProgramArguments          = 256
+	maxProgramEnvironment        = 128
+	maxProgramValueBytes         = 4096
+	maxProgramInputBytes         = 1 << 20
 	minimumScheduleCadence       = 30 * time.Second
 )
 
@@ -202,6 +206,19 @@ func (s *Service) SaveProgramProfile(ctx context.Context, req SaveProgramProfile
 	}
 	if req.Timeout <= 0 || req.OutputLimitBytes <= 0 {
 		return ProgramProfileResult{}, fail(ErrInvalid, "program timeout and output limit must be bounded")
+	}
+	if len(req.ArgumentPrefix) > maxProgramArguments || len(req.Environment) > maxProgramEnvironment {
+		return ProgramProfileResult{}, fail(ErrInvalid, "program argv or environment exceeds bounded limits")
+	}
+	for _, argument := range req.ArgumentPrefix {
+		if len(argument) > maxProgramValueBytes || strings.ContainsRune(argument, '\x00') {
+			return ProgramProfileResult{}, fail(ErrInvalid, "program argument is invalid or too large")
+		}
+	}
+	for key, value := range req.Environment {
+		if strings.TrimSpace(key) == "" || len(key) > maxProgramValueBytes || len(value) > maxProgramValueBytes || strings.ContainsRune(key, '\x00') || strings.ContainsRune(value, '\x00') {
+			return ProgramProfileResult{}, fail(ErrInvalid, "program environment is invalid or too large")
+		}
 	}
 	if req.Sandbox == "" || len(req.EffectAuthority) == 0 {
 		return ProgramProfileResult{}, fail(ErrInvalid, "program sandbox and effect authority are required")
@@ -1215,6 +1232,14 @@ func validatePerformer(performer model.Performer) error {
 	case model.PerformerProgram:
 		if performer.Program == nil || performer.Program.Profile.ProfileID == "" || performer.Program.Profile.RevisionID == "" || performer.Program.Profile.ContentHash == "" {
 			return fail(ErrInvalid, "program performer requires a pinned profile revision")
+		}
+		if len(performer.Program.Arguments) > maxProgramArguments || len(performer.Program.Input) > maxProgramInputBytes || (len(performer.Program.Input) > 0 && !json.Valid(performer.Program.Input)) {
+			return fail(ErrInvalid, "program performer arguments or input exceed bounded limits")
+		}
+		for _, argument := range performer.Program.Arguments {
+			if len(argument) > maxProgramValueBytes || strings.ContainsRune(argument, '\x00') {
+				return fail(ErrInvalid, "program performer argument is invalid or too large")
+			}
 		}
 	case model.PerformerHuman:
 		if performer.Human == nil || (performer.Human.AgentID == "" && performer.Human.RoleID == "") || strings.TrimSpace(performer.Human.Prompt) == "" {
