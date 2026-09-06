@@ -1858,3 +1858,9 @@ func SetPowerOnOnlineGraceForTest(d time.Duration) func() {
 // flow tests can assert /api/snapshot surfaces the exact value the served
 // page was stamped with.
 func DashboardAssetsVersionForTest() string { return dashboardAssetsVersion }
+
+// ReconcileResumeOperationsForTest drives the production crash reconciler
+// after a flow test deliberately omits parent-wrapper bookkeeping.
+func ReconcileResumeOperationsForTest(now time.Time, dispatchExactStop bool) {
+	reconcileResumeOperations(now, dispatchExactStop)
+}
