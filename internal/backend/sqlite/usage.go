@@ -95,7 +95,7 @@ func (s *Store) ImportHistoricalUsage(ctx context.Context, write app.HistoricalU
 	if write.Observation.Cost != nil && write.Observation.Cost.Kind != model.UsageCostHistoricalEstimate && write.Observation.Cost.Kind != model.UsageCostNativeReported {
 		return model.UsageObservation{}, false, app.ErrInvalid
 	}
-	return s.recordUsage(ctx, app.UsageWrite{Observation: write.Observation, SourceKey: write.SourceKey, Cumulative: write.Cumulative})
+	return s.recordUsage(ctx, app.UsageWrite(write))
 }
 
 func (s *Store) recordUsage(ctx context.Context, write app.UsageWrite) (model.UsageObservation, bool, error) {

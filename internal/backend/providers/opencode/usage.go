@@ -30,7 +30,7 @@ func (r usageReader) Collect(ctx context.Context, request ports.UsageCollectionR
 	if request.History != nil {
 		var evidence historyEvidence
 		var readErr error
-		_, raw, revision, evidence, readErr = historyReader{provider: r.provider}.readSelection(ctx, *request.History)
+		_, raw, revision, evidence, readErr = historyReader(r).readSelection(ctx, *request.History)
 		if readErr != nil {
 			return ports.CollectedUsage{}, readErr
 		}
@@ -54,7 +54,7 @@ func (r usageReader) Collect(ctx context.Context, request ports.UsageCollectionR
 				Coverage: model.UsageCoverage{Counters: model.UsageCoverageUnknown, Cost: model.UsageCoverageUnknown, Reason: "attributed OpenCode session is unavailable"}, Cumulative: true, Attribution: model.UsageAttributionConversation}, nil
 		}
 		manifest, _ := readHistoryManifest(stateRoot)
-		_, raw, revision, err = historyReader{provider: r.provider}.export(ctx, stateRoot, manifest.NativeID, manifest.CWD)
+		_, raw, revision, err = historyReader(r).export(ctx, stateRoot, manifest.NativeID, manifest.CWD)
 		if err != nil {
 			return ports.CollectedUsage{}, err
 		}
