@@ -50,6 +50,7 @@ const (
 type spawnAuthorityAlternative struct {
 	Slug        string
 	Resolution  permResolution
+	Allowed     bool
 	Source      permSource
 	Matched     string
 	MatchedDims map[ScopeDim]bool
@@ -71,6 +72,27 @@ type spawnAuthorityDecision struct {
 
 type spawnAuthorityEvaluator struct{}
 
+type spawnAuthorityFactReader interface {
+	Read(convID string, policy permissionReadPolicy) (permSources, map[string]bool, error)
+}
+
+type defaultSpawnAuthorityFactReader struct{}
+
+func (defaultSpawnAuthorityFactReader) Read(convID string, policy permissionReadPolicy) (permSources, map[string]bool, error) {
+	src, err := loadPermSourcesWithReadPolicy(convID, policy)
+	if err != nil {
+		return permSources{}, nil, err
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return src, nil, err
+	}
+	defaults := map[string]bool{PermAgentSpawn: cfg.HasDefaultPermission(PermAgentSpawn), PermGroupsMembersSpawn: cfg.HasDefaultPermission(PermGroupsMembersSpawn), PermGroupsAdmin: cfg.HasDefaultPermission(PermGroupsAdmin)}
+	return src, defaults, nil
+}
+
+var spawnAuthorityFacts spawnAuthorityFactReader = defaultSpawnAuthorityFactReader{}
+
 // EvaluateSpawn evaluates both standing spawn alternatives from one source
 // snapshot. The returned decision is evidence for the current operation only;
 // callers must re-evaluate after queueing or other freshness boundaries.
@@ -82,14 +104,13 @@ func (spawnAuthorityEvaluator) EvaluateSpawn(ctx context.Context, req spawnAutho
 	if req.Principal.Kind == authorityPrincipalOperator {
 		return spawnAuthorityDecision{Outcome: spawnAuthorityAllowed, AuthorizedSlug: "operator", Source: permSourceDefault, AllowAnyGroup: true, EvaluatedAt: time.Now()}, nil
 	}
-	src, err := loadPermSourcesWithReadPolicy(req.Principal.ConvID, readPolicy)
+	src, defaults, err := spawnAuthorityFacts.Read(req.Principal.ConvID, readPolicy)
 	if err != nil {
 		return spawnAuthorityDecision{}, err
 	}
-	cfg, _ := config.Load()
 	dec := spawnAuthorityDecision{Outcome: spawnAuthorityNotGranted, Alternatives: map[string]spawnAuthorityAlternative{}, Diagnostics: src.diagnostics, EvaluatedAt: time.Now()}
 	for _, slug := range []string{PermAgentSpawn, PermGroupsMembersSpawn} {
-		v := resolveEffectivePermissionVerdictFrom(src, slug, cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
+		v := resolveEffectivePermissionVerdictFrom(src, slug, defaults[slug], defaults[PermGroupsAdmin])
 		eval := evalPermissionScope(v, req.Principal.ConvID, req.Action)
 		allowed := v.Resolution == permAllow && eval.Satisfied
 		matched := eval.Matched
@@ -113,7 +134,7 @@ func (spawnAuthorityEvaluator) EvaluateSpawn(ctx context.Context, req spawnAutho
 				}
 			}
 		}
-		alt := spawnAuthorityAlternative{Slug: slug, Resolution: v.Resolution, Source: v.Source, Matched: matched, MatchedDims: matchedDims}
+		alt := spawnAuthorityAlternative{Slug: slug, Resolution: v.Resolution, Allowed: allowed, Source: v.Source, Matched: matched, MatchedDims: matchedDims}
 		dec.Alternatives[slug] = alt
 		if allowed && dec.Outcome != spawnAuthorityAllowed {
 			dec.Outcome, dec.AuthorizedSlug, dec.Source, dec.Matched, dec.MatchedDims = spawnAuthorityAllowed, slug, v.Source, matched, matchedDims
@@ -125,15 +146,13 @@ func (spawnAuthorityEvaluator) EvaluateSpawn(ctx context.Context, req spawnAutho
 		without := src
 		without.sudo = map[string]sudoPermSource{}
 		for _, slug := range []string{dec.AuthorizedSlug} {
-			v := resolveEffectivePermissionVerdictFrom(without, slug, cfg.HasDefaultPermission(slug), cfg.HasDefaultPermission(PermGroupsAdmin))
+			v := resolveEffectivePermissionVerdictFrom(without, slug, defaults[slug], defaults[PermGroupsAdmin])
 			e := evalPermissionScope(v, req.Principal.ConvID, req.Action)
 			ok := v.Resolution == permAllow && e.Satisfied
 			if !ok && v.Resolution != permDeny {
 				ok = ownerImpliedTierFrom(without.ownedGroups, without.ownerReadErr).satisfiedBy(req.Principal.ConvID, slug, req.Action)
 			}
-			if ok {
-				dec.SudoGrantID = 0
-			} else {
+			if !ok {
 				dec.LoadBearingSudo = dec.SudoGrantID
 			}
 		}
