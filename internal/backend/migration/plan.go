@@ -143,7 +143,23 @@ func Plan(inspection Inspection) (MigrationPlan, error) {
 		if count > 0 || inspection.Counts[table] == 0 {
 			plan.Dispositions = append(plan.Dispositions, TableDisposition{Table: table, Rows: count, Classification: rule.class, Conversion: rule.conversion, ReasonCode: rule.reason})
 		}
+		for _, row := range inspection.Snapshot.Rows[table] {
+			conversion, reason := rule.conversion, rule.reason
+			if table == "execution_operations" && !terminalOperation(strings.ToLower(sourcev228.String(row.Values["state"]))) {
+				conversion, reason = ConversionInterrupted, "unresolved_effect_without_replay"
+			}
+			if table == "process_runs" && !legacyTerminal(strings.ToLower(sourcev228.String(row.Values["status"]))) {
+				conversion, reason = ConversionInterrupted, "unresolved_effect_without_replay"
+			}
+			plan.Records = append(plan.Records, RecordDisposition{SourceTable: table, SourceKey: row.Key, Classification: rule.class, Conversion: conversion, ReasonCode: reason})
+		}
 	}
+	sort.Slice(plan.Records, func(i, j int) bool {
+		if plan.Records[i].SourceTable != plan.Records[j].SourceTable {
+			return plan.Records[i].SourceTable < plan.Records[j].SourceTable
+		}
+		return plan.Records[i].SourceKey < plan.Records[j].SourceKey
+	})
 
 	lookup := map[string]string{}
 	used := map[string]string{}
@@ -165,6 +181,17 @@ func Plan(inspection Inspection) (MigrationPlan, error) {
 			}
 			used[usedKey], lookup[spec.table+"\x1f"+sourceKey] = spec.table+"\x1f"+sourceKey, target
 			plan.Identities = append(plan.Identities, IdentityMapping{SourceTable: spec.table, SourceKey: sourceKey, TargetKind: spec.kind, TargetID: target, Retained: retained})
+		}
+	}
+	for _, spec := range []struct{ table, kind, prefix string }{
+		{"group_templates", "definition_revision", "dfr"},
+		{"agent_cron_jobs", "automation_rule_revision", "arr"},
+		{"trigger_rules", "automation_rule_revision", "arr"},
+		{"agent_standing_orders", "automation_rule_revision", "arr"},
+	} {
+		for _, row := range inspection.Snapshot.Rows[spec.table] {
+			payload, _ := json.Marshal(row.Values)
+			plan.Identities = append(plan.Identities, IdentityMapping{SourceTable: spec.table, SourceKey: row.Key, TargetKind: spec.kind, TargetID: deterministicID(spec.prefix, inspection.Source.DatabaseHash, spec.table+"_revision", row.Key+"\x00"+digest(payload))})
 		}
 	}
 	mapLegacyConversations(&plan, inspection.Snapshot, inspection.Source.DatabaseHash, lookup)
