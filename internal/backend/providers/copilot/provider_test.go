@@ -96,6 +96,8 @@ func TestProviderOwnsTerminalCredentialAndRecovery(t *testing.T) {
 	auth, err := os.ReadFile(authPath)
 	require.NoError(t, err)
 	require.Contains(t, string(auth), "fixture-only", "provider-owned native login resource remains native-managed")
+	require.Contains(t, string(auth), "trustedFolders", "native config.json carries the measured directory-trust key")
+	require.NoFileExists(t, filepath.Join(nativeHome, "settings.json"), "directory trust is not written to the inert settings file")
 	access := &model.ExecutionAccessBinding{ExecutionID: request.Spec.ExecutionID, Generation: 1, DeliveryID: "delivery", State: model.ExecutionAccessSuspended, ExpiresAt: expires}
 	recovered, err := provider.Recover(context.Background(), ports.RecoveryRequest{ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: released.Evidence, Attempt: request.Spec.Attempt, Access: access})
 	require.NoError(t, err)
@@ -116,14 +118,31 @@ func TestSessionStartObservationRequiresExpectedPrimarySession(t *testing.T) {
 	require.NoError(t, err)
 	sink := &observationSink{}
 	runtime := &Runtime{executionID: "execution", attempt: 2, nativeID: "00000000-0000-4000-8000-000000000001", intent: ports.StartFresh, observations: sink, spool: spool}
-	writeHookEvent(t, spool.Directory(), sessionStartEvent{SessionID: "00000000-0000-4000-8000-000000000002", HookEventName: "sessionStart", Source: "startup"})
+	writeHookEvent(t, spool.Directory(), sessionStartEvent{SessionID: "00000000-0000-4000-8000-000000000002", Source: "new"})
 	require.NoError(t, runtime.consumeObservations(context.Background()))
 	require.Empty(t, sink.values)
-	writeHookEvent(t, spool.Directory(), sessionStartEvent{SessionID: runtime.nativeID, HookEventName: "sessionStart", Source: "startup"})
+	writeHookEvent(t, spool.Directory(), sessionStartEvent{SessionID: runtime.nativeID, Source: "new"})
 	require.NoError(t, runtime.consumeObservations(context.Background()))
 	require.Len(t, sink.values, 1)
 	require.Equal(t, ports.PrimaryContextInitial, sink.values[0].Disposition)
 	require.True(t, runtime.contextReady)
+}
+
+func TestAcceptedApplicationContinuationEvidence(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is unavailable")
+	}
+	root, err := os.MkdirTemp("/tmp", "tcl-copilot-resume-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
+	provider, err := New(Config{Executable: os.Args[0], PrivateRoot: root})
+	require.NoError(t, err)
+	nativeID := "00000000-0000-4000-8000-000000000001"
+	prior, err := encodeEvidence(evidence{ExecutionID: "prior", NativeID: nativeID, StateRoot: provider.nativeHome, ObservationSpool: filepath.Join(root, "prior-spool")})
+	require.NoError(t, err)
+	prepared, err := provider.Prepare(context.Background(), ports.PreparationRequest{Intent: ports.StartContinue, Continuation: &model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: nativeID}, PriorEvidence: prior, Spec: model.ResolvedExecutionSpec{ExecutionID: "resumed", Harness: Name, WorkingDirectory: root, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined}})
+	require.NoError(t, err)
+	require.NoError(t, prepared.Abort(context.Background()))
 }
 
 func TestConcurrentExecutionsKeepPolicyAndSpoolsExecutionScoped(t *testing.T) {
@@ -136,7 +155,7 @@ func TestConcurrentExecutionsKeepPolicyAndSpoolsExecutionScoped(t *testing.T) {
 	nativeHome := filepath.Join(root, "native-home")
 	require.NoError(t, os.MkdirAll(nativeHome, 0o700))
 	authPath := filepath.Join(nativeHome, "config.json")
-	require.NoError(t, os.WriteFile(authPath, []byte("fixture-auth"), 0o600))
+	require.NoError(t, os.WriteFile(authPath, []byte(`{"oauth_token":"fixture-auth"}`), 0o600))
 	executable := filepath.Join(root, "copilot-fake")
 	require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$PWD/argv\"\nwhile IFS= read -r line; do :; done\n"), 0o700))
 	provider, err := New(Config{Executable: executable, PrivateRoot: root, NativeHome: nativeHome})

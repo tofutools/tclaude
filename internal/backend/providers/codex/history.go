@@ -156,17 +156,17 @@ func (h historyReader) Read(ctx context.Context, selection ports.HistorySourceSe
 		return ports.HistoryReadResult{}, err
 	}
 	if selection.Provider != Name || selection.Native.Namespace != NativeNamespace {
-		return ports.HistoryReadResult{}, fmt.Errorf("Codex history selection has wrong provider")
+		return ports.HistoryReadResult{}, fmt.Errorf("codex history selection has wrong provider")
 	}
 	token, err := decodeSourceToken(selection.SourceToken)
 	if err != nil {
 		return ports.HistoryReadResult{}, err
 	}
 	if filepath.Clean(token.StateRoot) != h.provider.nativeHome || !pathWithin(token.StateRoot, token.Transcript) || token.SessionID != selection.Native.Reference {
-		return ports.HistoryReadResult{}, fmt.Errorf("Codex history source is outside provider storage")
+		return ports.HistoryReadResult{}, fmt.Errorf("codex history source is outside provider storage")
 	}
 	if selection.SourceFingerprint != sourceFingerprint(token) {
-		return ports.HistoryReadResult{}, fmt.Errorf("Codex history source fingerprint changed")
+		return ports.HistoryReadResult{}, fmt.Errorf("codex history source fingerprint changed")
 	}
 	raw, err := verifyHistorySelection(selection, token)
 	if err != nil {
@@ -189,7 +189,7 @@ func verifyHistorySelection(selection ports.HistorySourceSelection, token source
 		return nil, err
 	}
 	if digest(raw) != selection.SourceRevision {
-		return nil, fmt.Errorf("Codex history source revision changed")
+		return nil, fmt.Errorf("codex history source revision changed")
 	}
 	if selection.Point != nil {
 		if selection.Point.Kind != model.HistoryPointTurn {
@@ -203,7 +203,7 @@ func verifyHistorySelection(selection ports.HistorySourceSelection, token source
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("Codex history turn is not in selected source")
+			return nil, fmt.Errorf("codex history turn is not in selected source")
 		}
 	}
 	return raw, nil
