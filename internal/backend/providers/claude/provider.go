@@ -631,6 +631,8 @@ func nativeIDFor(request ports.PreparationRequest) (string, error) {
 			return "", fmt.Errorf("invalid Claude continuation reference: %w", err)
 		}
 		return request.Continuation.Reference, nil
+	case ports.StartFork:
+		return "", ports.ErrHistoryUnsupported
 	default:
 		return "", fmt.Errorf("unsupported start intent %q", request.Intent)
 	}
