@@ -83,7 +83,7 @@ type Store interface {
 	RecordWorkProgress(context.Context, WorkProgress) (WorkRunRecord, error)
 	RecordWorkEvidence(context.Context, model.WorkEvidence, model.Revision, model.AuthorityRequest, time.Time) (WorkRunRecord, error)
 	DecideWork(context.Context, model.WorkDecision, model.Revision, model.AuthorityRequest, time.Time) (WorkRunRecord, error)
-	CancelWork(context.Context, model.WorkRunID, model.Revision, string, model.AuthorityRequest, time.Time) (WorkRunRecord, error)
+	CancelWork(context.Context, model.WorkRunID, model.Revision, string, model.RequestID, model.AuthorityRequest, time.Time) (WorkRunRecord, error)
 	ResolveWorkUncertainty(context.Context, model.WorkDecision, model.Revision, model.AuthorityRequest, time.Time) (WorkRunRecord, error)
 }
 
