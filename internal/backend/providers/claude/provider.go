@@ -5,6 +5,7 @@ package claude
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,11 +33,15 @@ type Config struct {
 	Executable     string
 	TmuxExecutable string
 	PrivateRoot    string
+	AgentSocket    string
 }
 
 type Provider struct {
-	executable string
-	terminal   host.TerminalHost
+	executable      string
+	terminal        host.TerminalHost
+	credentials     host.ActionCredentialHost
+	agentSocket     string
+	observationRoot string
 }
 
 func New(config Config) (*Provider, error) {
@@ -57,16 +62,25 @@ func New(config Config) (*Provider, error) {
 			Executable:  config.TmuxExecutable,
 			PrivateRoot: config.PrivateRoot,
 		},
+		credentials:     host.ActionCredentialHost{PrivateRoot: filepath.Join(config.PrivateRoot, "action-credentials")},
+		agentSocket:     config.AgentSocket,
+		observationRoot: filepath.Join(config.PrivateRoot, "observations"),
 	}, nil
 }
 
-func (*Provider) Name() string { return Name }
+func (*Provider) Name() string                                        { return Name }
+func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 
 type evidence struct {
-	ExecutionID string                         `json:"execution_id"`
-	NativeID    string                         `json:"native_id"`
-	Prepared    *host.PreparedTerminalIdentity `json:"prepared,omitempty"`
-	Terminal    *host.TerminalIdentity         `json:"terminal,omitempty"`
+	ExecutionID      string                         `json:"execution_id"`
+	NativeID         string                         `json:"native_id"`
+	Intent           ports.StartIntent              `json:"intent"`
+	ContextReady     bool                           `json:"context_ready,omitempty"`
+	ProviderOrder    string                         `json:"provider_order,omitempty"`
+	Prepared         *host.PreparedTerminalIdentity `json:"prepared,omitempty"`
+	Terminal         *host.TerminalIdentity         `json:"terminal,omitempty"`
+	Access           *ports.ActionCredentialReceipt `json:"access,omitempty"`
+	ObservationSpool string                         `json:"observation_spool,omitempty"`
 }
 
 type prepared struct {
@@ -75,6 +89,8 @@ type prepared struct {
 	nativeID string
 	terminal *host.PreparedTerminal
 	describe ports.PreparedDescription
+	access   *ports.ActionCredentialReceipt
+	spool    *host.ObservationSpool
 }
 
 func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest) (ports.PreparedAttempt, error) {
@@ -97,20 +113,51 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if err != nil {
 		return nil, err
 	}
+	var access *ports.ActionCredentialReceipt
+	if request.ActionCredential != nil {
+		if request.ActionCredential.ExecutionID != request.Spec.ExecutionID {
+			return nil, fmt.Errorf("action credential does not match Claude execution")
+		}
+		if !filepath.IsAbs(p.agentSocket) {
+			return nil, fmt.Errorf("claude agent API socket must be absolute for credential delivery")
+		}
+		receipt, deliveryErr := p.credentials.PrepareActionCredential(ctx, *request.ActionCredential)
+		if deliveryErr != nil {
+			return nil, deliveryErr
+		}
+		access = &receipt
+	}
 	terminal, err := p.terminal.Prepare(string(request.Spec.ExecutionID))
 	if err != nil {
+		if access != nil {
+			_ = p.credentials.RemoveActionCredential(context.Background(), *access)
+		}
+		return nil, err
+	}
+	spool, err := host.PrepareObservationSpool(p.observationRoot)
+	if err != nil {
+		_ = terminal.Abort()
+		if access != nil {
+			_ = p.credentials.RemoveActionCredential(context.Background(), *access)
+		}
 		return nil, err
 	}
 	preparedIdentity := terminal.Identity()
-	initial, err := encodeEvidence(evidence{ExecutionID: string(request.Spec.ExecutionID), NativeID: nativeID, Prepared: &preparedIdentity})
+	initial, err := encodeEvidence(evidence{ExecutionID: string(request.Spec.ExecutionID), NativeID: nativeID, Intent: request.Intent,
+		Prepared: &preparedIdentity, Access: access, ObservationSpool: spool.Directory()})
 	if err != nil {
 		_ = terminal.Abort()
+		_ = spool.Remove()
+		if access != nil {
+			_ = p.credentials.RemoveActionCredential(context.Background(), *access)
+		}
 		return nil, err
 	}
 	return &prepared{
 		provider: p, request: request, nativeID: nativeID, terminal: terminal,
-		describe: ports.PreparedDescription{
+		access: access, spool: spool, describe: ports.PreparedDescription{
 			ExecutionID: request.Spec.ExecutionID,
+			Attempt:     request.Spec.Attempt,
 			Topology:    ports.TopologyTerminalAuthoritative,
 			Requirements: ports.RuntimeRequirements{
 				Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory,
@@ -125,15 +172,25 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 				Approval: request.Spec.Approval, Sandbox: request.Spec.Sandbox,
 				ApprovalEnforced: true, SandboxEnforced: true,
 			},
-			Resources: []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: terminal.ResourceKey()}},
-			Evidence:  initial,
+			Resources:      []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: terminal.ResourceKey()}},
+			Evidence:       initial,
+			AccessDelivery: access,
 		},
 	}, nil
 }
 
 func (p *prepared) Describe() ports.PreparedDescription { return p.describe }
 
-func (p *prepared) Abort(context.Context) error { return p.terminal.Abort() }
+func (p *prepared) Abort(ctx context.Context) error {
+	err := p.terminal.Abort()
+	if p.spool != nil {
+		err = errors.Join(err, p.spool.Remove())
+	}
+	if p.access != nil {
+		err = errors.Join(err, p.provider.credentials.RemoveActionCredential(ctx, *p.access))
+	}
+	return err
+}
 
 func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (ports.ReleaseResult, error) {
 	if permit == nil || permit.ExecutionID() != p.request.Spec.ExecutionID {
@@ -146,25 +203,48 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 		Executable: p.provider.executable,
 		Args:       p.argv(),
 		Directory:  p.request.Spec.WorkingDirectory,
+		Env:        p.runtimeEnvironment(),
 	})
 	if err != nil {
 		if terminal != nil {
-			runtime := &Runtime{executionID: p.request.Spec.ExecutionID, terminal: terminal, nativeID: p.nativeID}
+			runtime := p.runtime(terminal)
 			evidence, _ := runtime.providerEvidence()
 			return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime, Evidence: evidence}, err
 		}
+		_ = p.spool.Remove()
+		if p.access != nil {
+			_ = p.provider.credentials.RemoveActionCredential(context.Background(), *p.access)
+		}
 		return ports.ReleaseResult{}, err
 	}
-	runtime := &Runtime{
-		executionID: p.request.Spec.ExecutionID,
-		terminal:    terminal,
-		nativeID:    p.nativeID,
-	}
+	runtime := p.runtime(terminal)
 	evidence, err := runtime.providerEvidence()
 	if err != nil {
 		return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime}, err
 	}
 	return ports.ReleaseResult{State: ports.ReleaseStarted, Runtime: runtime, Evidence: evidence}, nil
+}
+
+func (p *prepared) runtime(terminal *host.Terminal) *Runtime {
+	return &Runtime{
+		provider: p.provider, executionID: p.request.Spec.ExecutionID, attempt: p.request.Spec.Attempt,
+		terminal: terminal, nativeID: p.nativeID, intent: p.request.Intent, observations: p.request.Observations,
+		access: p.access, spool: p.spool,
+	}
+}
+
+func (p *prepared) runtimeEnvironment() []string {
+	result := []string{
+		"TCLAUDE_OBSERVATION_SPOOL=" + p.spool.Directory(),
+		"TCLAUDE_BACKEND_CREDENTIAL_FILE=",
+		"TCLAUDE_BACKEND_SOCKET=",
+	}
+	if p.access != nil {
+		result = append(result,
+			"TCLAUDE_BACKEND_CREDENTIAL_FILE="+p.access.Resource,
+			"TCLAUDE_BACKEND_SOCKET="+p.provider.agentSocket)
+	}
+	return result
 }
 
 func (p *prepared) argv() []string {
@@ -182,11 +262,19 @@ func (p *prepared) argv() []string {
 		mode = "auto"
 	}
 	args = append(args, "--permission-mode", mode)
-	settings, _ := json.Marshal(map[string]any{"sandbox": map[string]any{
-		"enabled": true, "failIfUnavailable": true,
-		"allowUnsandboxedCommands": false,
-		"filesystem":               map[string]any{"allowWrite": []string{p.request.Spec.WorkingDirectory}},
-	}})
+	settings, _ := json.Marshal(map[string]any{
+		"sandbox": map[string]any{
+			"enabled": true, "failIfUnavailable": true,
+			"allowUnsandboxedCommands": false,
+			"filesystem":               map[string]any{"allowWrite": []string{p.request.Spec.WorkingDirectory}},
+		},
+		"hooks": map[string]any{"SessionStart": []any{map[string]any{
+			"matcher": "startup|resume|clear|compact",
+			"hooks": []any{map[string]any{
+				"type": "command", "command": "/bin/sh", "args": []string{"-c", claudeObservationCommand},
+			}},
+		}}},
+	})
 	args = append(args, "--settings", string(settings))
 	return args
 }
@@ -211,11 +299,15 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
 	}
 	if errors.Is(err, os.ErrProcessDone) {
+		cleanupErr := host.RemoveObservationSpool(p.observationRoot, recorded.ObservationSpool)
+		if recorded.Access != nil {
+			cleanupErr = errors.Join(cleanupErr, p.credentials.RemoveActionCredential(ctx, *recorded.Access))
+		}
 		return ports.RecoveryResult{
 			State: ports.RecoveryExited, Evidence: request.Evidence,
 			Observation: ports.Observation{ObservedAt: time.Now(), Workload: ports.WorkloadExited,
 				Context: ports.ContextUnknown, NativeConversation: nativeEvidence(recorded.NativeID)},
-		}, nil
+		}, cleanupErr
 	}
 	if err != nil {
 		return ports.RecoveryResult{
@@ -224,22 +316,62 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 				Context: ports.ContextUnknown, NativeConversation: nativeEvidence(recorded.NativeID)},
 		}, nil
 	}
-	runtime := &Runtime{executionID: request.ExecutionID, terminal: terminal, nativeID: recorded.NativeID}
+	spool, spoolErr := host.RecoverObservationSpool(p.observationRoot, recorded.ObservationSpool)
+	if spoolErr != nil {
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, spoolErr
+	}
+	var accessProof *ports.ActionCredentialRecoveryProof
+	if request.Access != nil {
+		if recorded.Access == nil || recorded.Access.DeliveryID != request.Access.DeliveryID || recorded.Access.ExecutionID != request.ExecutionID {
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, nil
+		}
+		proof, inspectErr := p.credentials.InspectActionCredential(ctx, *request.Access)
+		if inspectErr != nil || proof.Resource != recorded.Access.Resource {
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, inspectErr
+		}
+		accessProof = &proof
+	}
+	runtime := &Runtime{provider: p, executionID: request.ExecutionID, attempt: request.Attempt, terminal: terminal,
+		nativeID: recorded.NativeID, intent: recorded.Intent, observations: request.Observations, access: recorded.Access, spool: spool,
+		contextReady: recorded.ContextReady, providerOrder: recorded.ProviderOrder}
 	observation, _ := runtime.Observe(ctx)
-	return ports.RecoveryResult{State: ports.RecoveryControlled, Runtime: runtime, Observation: observation, Evidence: request.Evidence}, nil
+	return ports.RecoveryResult{State: ports.RecoveryControlled, Runtime: runtime, Observation: observation, Evidence: request.Evidence, Attempt: request.Attempt, AccessProof: accessProof}, nil
 }
 
 type Runtime struct {
-	executionID model.ExecutionID
-	terminal    *host.Terminal
-	nativeID    string
-	mu          sync.Mutex
+	provider      *Provider
+	executionID   model.ExecutionID
+	attempt       model.AttemptGeneration
+	terminal      *host.Terminal
+	nativeID      string
+	intent        ports.StartIntent
+	observations  ports.PrimaryObservationSink
+	access        *ports.ActionCredentialReceipt
+	spool         *host.ObservationSpool
+	contextReady  bool
+	providerOrder string
+	cleanupOnce   sync.Once
+	cleanupErr    error
+	mu            sync.Mutex
 }
 
 func (r *Runtime) ExecutionID() model.ExecutionID { return r.executionID }
 
-func (r *Runtime) Observe(context.Context) (ports.Observation, error) {
+func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	observation := r.terminal.Observe()
+	var observationErr error
+	if observation.Running {
+		if _, err := r.consumeObservationEvents(ctx, nil); err != nil {
+			observationErr = err
+			if afterIngress := r.terminal.Observe(); afterIngress.Exited {
+				observation = afterIngress
+			} else {
+				return ports.Observation{}, err
+			}
+		}
+	}
 	result := ports.Observation{
 		ObservedAt: time.Now(), Context: ports.ContextUnknown,
 		NativeConversation: nativeEvidence(r.nativeID),
@@ -248,18 +380,22 @@ func (r *Runtime) Observe(context.Context) (ports.Observation, error) {
 	case observation.Running:
 		result.Workload = ports.WorkloadRunning
 		result.AttachmentActive = r.terminal.AttachmentActive()
+		if r.contextReady {
+			result.Context = ports.ContextReady
+		}
 	case observation.Exited:
 		result.Workload = ports.WorkloadExited
 		result.ExitCode = observation.ExitCode
+		r.cleanupResources(ctx)
 	case observation.Unknown:
 		result.Workload = ports.WorkloadUnknown
 	}
-	evidence, err := r.providerEvidence()
+	evidence, err := r.providerEvidenceUnlocked()
 	if err != nil {
 		return ports.Observation{}, err
 	}
 	result.Evidence = evidence
-	return result, nil
+	return result, errors.Join(observationErr, r.cleanupErr)
 }
 
 func (r *Runtime) Interact(ctx context.Context, interaction ports.Interaction) (ports.InteractionResult, error) {
@@ -269,10 +405,10 @@ func (r *Runtime) Interact(ctx context.Context, interaction ports.Interaction) (
 		return ports.InteractionResult{Disposition: ports.EffectRefused}, nil
 	}
 	if err := r.terminal.SendLiteral(ctx, interaction.Text); err != nil {
-		evidence, _ := r.providerEvidence()
+		evidence, _ := r.providerEvidenceUnlocked()
 		return ports.InteractionResult{Disposition: ports.EffectUnknown, Evidence: evidence}, err
 	}
-	evidence, err := r.providerEvidence()
+	evidence, err := r.providerEvidenceUnlocked()
 	return ports.InteractionResult{Disposition: ports.EffectAccepted, Evidence: evidence}, err
 }
 
@@ -297,21 +433,48 @@ func (r *Runtime) Attach(ctx context.Context, request ports.AttachmentRequest) (
 }
 
 func (r *Runtime) ChangeContext(ctx context.Context, change ports.ContextChange) (ports.ContextChangeResult, error) {
-	// Claude /clear rotates its native session reference. Until this provider
-	// has an authenticated SessionStart observation channel, dispatching it
-	// would leave durable evidence pointing at the predecessor. Refuse instead
-	// of claiming a context change we cannot correlate.
-	_ = ctx
-	_ = change
-	evidence, err := r.providerEvidence()
-	return ports.ContextChangeResult{Disposition: ports.EffectUnsupported, Evidence: evidence}, err
+	if change.Intent != ports.ContextClear && change.Intent != ports.ContextReset {
+		return ports.ContextChangeResult{Disposition: ports.EffectUnsupported}, nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, err := r.consumeObservationEvents(ctx, nil); err != nil {
+		evidence, _ := r.providerEvidenceUnlocked()
+		return ports.ContextChangeResult{Disposition: ports.EffectUnknown, Evidence: evidence}, err
+	}
+	if err := r.terminal.SendLiteral(ctx, "/clear"); err != nil {
+		evidence, _ := r.providerEvidenceUnlocked()
+		return ports.ContextChangeResult{Disposition: ports.EffectUnknown, Evidence: evidence}, err
+	}
+	for {
+		confirmed, err := r.consumeObservationEvents(ctx, &change)
+		if err != nil {
+			evidence, _ := r.providerEvidenceUnlocked()
+			return ports.ContextChangeResult{Disposition: ports.EffectUnknown, Evidence: evidence}, err
+		}
+		if confirmed {
+			evidence, evidenceErr := r.providerEvidenceUnlocked()
+			return ports.ContextChangeResult{Disposition: ports.EffectAccepted,
+				NativeConversation: nativeEvidence(r.nativeID), Evidence: evidence}, evidenceErr
+		}
+		select {
+		case <-ctx.Done():
+			evidence, _ := r.providerEvidenceUnlocked()
+			return ports.ContextChangeResult{Disposition: ports.EffectUnknown, Evidence: evidence}, ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
 }
 
 func (r *Runtime) Stop(ctx context.Context, request ports.StopRequest) (ports.StopResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	acknowledged, exited, err := r.terminal.Stop(ctx, request.Force)
-	evidence, evidenceErr := r.providerEvidence()
+	if exited {
+		r.cleanupResources(ctx)
+		err = errors.Join(err, r.cleanupErr)
+	}
+	evidence, evidenceErr := r.providerEvidenceUnlocked()
 	if evidenceErr != nil && err == nil {
 		err = evidenceErr
 	}
@@ -323,9 +486,134 @@ func (r *Runtime) Stop(ctx context.Context, request ports.StopRequest) (ports.St
 }
 
 func (r *Runtime) providerEvidence() (model.ProviderEvidence, error) {
-	identity := r.terminal.Identity()
-	return encodeEvidence(evidence{ExecutionID: string(r.executionID), NativeID: r.nativeID, Terminal: &identity})
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.providerEvidenceUnlocked()
 }
+
+func (r *Runtime) providerEvidenceUnlocked() (model.ProviderEvidence, error) {
+	identity := r.terminal.Identity()
+	return encodeEvidence(evidence{ExecutionID: string(r.executionID), NativeID: r.nativeID, Terminal: &identity,
+		Intent: r.intent, ContextReady: r.contextReady, ProviderOrder: r.providerOrder,
+		Access: r.access, ObservationSpool: r.spool.Directory()})
+}
+
+func (r *Runtime) cleanupResources(ctx context.Context) {
+	r.cleanupOnce.Do(func() {
+		if r.access != nil {
+			r.cleanupErr = errors.Join(r.cleanupErr, r.provider.credentials.RemoveActionCredential(ctx, *r.access))
+		}
+		if r.spool != nil {
+			r.cleanupErr = errors.Join(r.cleanupErr, r.spool.Remove())
+		}
+	})
+}
+
+type sessionStartEvent struct {
+	SessionID     string `json:"session_id"`
+	Transcript    string `json:"transcript_path"`
+	HookEventName string `json:"hook_event_name"`
+	Source        string `json:"source"`
+	AgentID       string `json:"agent_id,omitempty"`
+}
+
+func (r *Runtime) consumeObservationEvents(ctx context.Context, transition *ports.ContextChange) (bool, error) {
+	if r.spool == nil || r.observations == nil {
+		return false, nil
+	}
+	events, err := r.spool.ReadPending()
+	if err != nil {
+		return false, err
+	}
+	confirmed := false
+	for _, spooled := range events {
+		if spooled.Order == r.providerOrder {
+			if err := r.spool.Acknowledge(spooled.Order); err != nil {
+				return false, err
+			}
+			continue
+		}
+		var event sessionStartEvent
+		if err := json.Unmarshal(spooled.Payload, &event); err != nil || event.HookEventName != "SessionStart" || event.AgentID != "" {
+			if err := r.spool.Acknowledge(spooled.Order); err != nil {
+				return false, err
+			}
+			continue
+		}
+		if _, err := uuid.Parse(event.SessionID); err != nil {
+			if err := r.spool.Acknowledge(spooled.Order); err != nil {
+				return false, err
+			}
+			continue
+		}
+		prior := nativeBinding(r.nativeID)
+		next := nativeBinding(event.SessionID)
+		disposition := ports.PrimaryContextUnresolved
+		transitionCorrelation := ""
+		var expectedConversation model.ConversationID
+		var expectedRevision model.Revision
+		switch {
+		case transition != nil && event.Source == "clear":
+			disposition = ports.PrimaryContextReset
+			transitionCorrelation = transition.TransitionCorrelation
+			expectedConversation = transition.ExpectedConversation
+			expectedRevision = transition.ExpectedAssociationRevision
+		case transition == nil && !r.contextReady && event.SessionID == r.nativeID &&
+			((r.intent == ports.StartFresh && event.Source == "startup") || (r.intent == ports.StartContinue && event.Source == "resume")):
+			if r.intent == ports.StartFresh {
+				disposition = ports.PrimaryContextInitial
+				prior = nil
+			} else {
+				disposition = ports.PrimaryContextContinuity
+			}
+		case transition == nil && r.contextReady && event.Source == "compact" && event.SessionID == r.nativeID:
+			disposition = ports.PrimaryContextContinuity
+		}
+		evidence := ports.PrimaryContextEvidence{
+			ExecutionID: r.executionID, Attempt: r.attempt, Provider: Name,
+			PrimaryCorrelation: r.primaryCorrelation(), Disposition: disposition,
+			PriorBinding: prior, NextBinding: next, TransitionCorrelation: transitionCorrelation,
+			ExpectedConversation: expectedConversation, ExpectedAssociationRevision: expectedRevision,
+			PriorProviderOrder: r.providerOrder, ProviderOrder: spooled.Order, ObservedAt: time.Now().UTC(),
+		}
+		if err := r.observations.ObservePrimaryContext(ctx, evidence); err != nil {
+			return false, err
+		}
+		r.providerOrder = spooled.Order
+		if err := r.spool.Acknowledge(spooled.Order); err != nil {
+			return false, err
+		}
+		if disposition == ports.PrimaryContextInitial || disposition == ports.PrimaryContextContinuity || disposition == ports.PrimaryContextReset {
+			r.nativeID = event.SessionID
+			r.contextReady = true
+		}
+		if disposition == ports.PrimaryContextReset {
+			confirmed = true
+		}
+	}
+	return confirmed, nil
+}
+
+func (r *Runtime) primaryCorrelation() string {
+	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d", r.spool.Directory(), r.executionID, r.attempt)))
+	return fmt.Sprintf("terminal:%x", digest[:16])
+}
+
+func nativeBinding(id string) *model.NativeBinding {
+	if id == "" {
+		return nil
+	}
+	return &model.NativeBinding{Namespace: NativeNamespace, Reference: id}
+}
+
+const claudeObservationCommand = `set -eu
+umask 077
+tmp=$(mktemp "$TCLAUDE_OBSERVATION_SPOOL/.event-XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp"
+name=${tmp##*/}
+name=${name#.event-}
+mv "$tmp" "$TCLAUDE_OBSERVATION_SPOOL/event-$name"`
 
 type terminalAttachment struct{ io.ReadWriteCloser }
 
@@ -389,5 +677,6 @@ func validateDirectory(path string) error {
 }
 
 var _ ports.Provider = (*Provider)(nil)
+var _ ports.ActionCredentialProvider = (*Provider)(nil)
 var _ ports.PreparedAttempt = (*prepared)(nil)
 var _ ports.Runtime = (*Runtime)(nil)
