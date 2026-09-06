@@ -2,10 +2,13 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
+
+var ErrUsageUnsupported = errors.New("provider usage capability unsupported")
 
 type UsageCapabilities struct {
 	CollectCounters bool
@@ -33,6 +36,7 @@ type CollectedUsage struct {
 	Cost           *model.UsageCost
 	Coverage       model.UsageCoverage
 	Cumulative     bool
+	Attribution    model.UsageAttributionPrecision
 }
 
 type UsageReader interface {
