@@ -28,6 +28,7 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	h.mux.HandleFunc("POST /v2/groups", h.createGroup)
 	h.mux.HandleFunc("GET /v2/snapshot", h.snapshot)
 	h.mux.HandleFunc("GET /v2/attach", h.attach)
+	h.mux.HandleFunc("POST /v2/observe", h.observe)
 	h.registerCommands()
 	return h, nil
 }
@@ -76,23 +77,20 @@ func writeError(w http.ResponseWriter, status int, code string) {
 // Application errors require a stable public code before transport exposes
 // details. Native error text is never returned merely because it is an error.
 func applicationError(w http.ResponseWriter, err error) {
-	var coded interface{ Code() string }
-	if errors.As(err, &coded) {
-		switch code := coded.Code(); code {
-		case "forbidden":
-			writeError(w, http.StatusForbidden, code)
-		case "not_found":
-			writeError(w, http.StatusNotFound, code)
-		case "conflict":
-			writeError(w, http.StatusConflict, code)
-		case "invalid_request", "unsupported":
-			writeError(w, http.StatusUnprocessableEntity, code)
-		default:
-			writeError(w, http.StatusInternalServerError, "internal_error")
-		}
-		return
+	switch code := app.Code(err); code {
+	case "forbidden":
+		writeError(w, http.StatusForbidden, code)
+	case "not_found":
+		writeError(w, http.StatusNotFound, code)
+	case "conflict", "uncertain":
+		writeError(w, http.StatusConflict, code)
+	case "invalid_request", "unsupported":
+		writeError(w, http.StatusUnprocessableEntity, code)
+	case "unavailable":
+		writeError(w, http.StatusServiceUnavailable, code)
+	default:
+		writeError(w, http.StatusInternalServerError, "internal_error")
 	}
-	writeError(w, http.StatusInternalServerError, "internal_error")
 }
 
 func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
