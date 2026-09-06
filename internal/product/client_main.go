@@ -9,6 +9,7 @@ import (
 	"github.com/GiGurra/boa/pkg/boa"
 	"github.com/spf13/cobra"
 	"github.com/tofutools/tclaude/internal/backend/client"
+	"github.com/tofutools/tclaude/internal/backend/migration"
 )
 
 // ClientCommand constructs the shared replacement product command.
@@ -110,6 +111,7 @@ func ClientCommand() *cobra.Command {
 		return call(cmd, "POST", "/v2/inbox/"+args[0]+"/read", map[string]string{"request_id": readID})
 	}
 	root.AddCommand(read)
+	root.AddCommand(browserCommand(), migrationCommand(migration.Service{}))
 	registerManagement(root, call)
 	registerControls(root, call)
 	registerJourney(root, call)
