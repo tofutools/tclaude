@@ -552,20 +552,32 @@ func completeManagedResumeSimulation(args clcommon.SpawnArgs, secret []byte) err
 	}
 	opID := platformexec.OperationID(args.ResumeOperationID)
 	claimed, err := db.ClaimResumeOperation(opID, eID, secret, args.ConvID, row.ID, os.Getpid(), "sim-process")
-	if err != nil || !claimed {
+	if err != nil {
 		return err
+	}
+	if !claimed {
+		return fmt.Errorf("sim managed resume claim lost CAS")
 	}
 	registered, err := db.RegisterResumeLaunch(opID, eID, args.ConvID, row.ID, row.TmuxSession, "%sim", "/sim/resume-gate", os.Getpid(), "sim-process")
-	if err != nil || !registered {
+	if err != nil {
 		return err
+	}
+	if !registered {
+		return fmt.Errorf("sim managed resume registration lost CAS")
 	}
 	granted, err := db.GrantResumeRelease(opID, eID, row.ID, row.TmuxSession, "%sim", "/sim/resume-gate")
-	if err != nil || !granted {
+	if err != nil {
 		return err
 	}
+	if !granted {
+		return fmt.Errorf("sim managed resume release lost CAS")
+	}
 	started, err := db.MarkResumeReleased(opID, eID, row.ID, row.TmuxSession, "%sim")
-	if err != nil || !started {
+	if err != nil {
 		return err
+	}
+	if !started {
+		return fmt.Errorf("sim managed resume acknowledgement lost CAS")
 	}
 	return db.TransitionResumeOperation(opID, 6, platformexec.ResumeReady, "ready", "simulated exact harness readiness")
 }
