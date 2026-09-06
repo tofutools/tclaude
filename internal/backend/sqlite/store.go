@@ -3,8 +3,10 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -41,7 +43,110 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize replacement backend schema: %w", err)
 	}
+	for _, migration := range []struct{ table, column, definition string }{
+		{"groups", "owner_agent_id", "TEXT NOT NULL DEFAULT ''"},
+		{"executions", "attempt_generation", "INTEGER NOT NULL DEFAULT 1"},
+		{"executions", "context_readiness", "TEXT NOT NULL DEFAULT 'pending'"},
+		{"executions", "context_provider_order", "TEXT NOT NULL DEFAULT ''"},
+		{"operations", "principal_execution_id", "TEXT NOT NULL DEFAULT ''"},
+		{"operations", "request_scope", "TEXT NOT NULL DEFAULT 'operator'"},
+		{"operations", "principal_generation", "INTEGER NOT NULL DEFAULT 0"},
+		{"operations", "principal_automation_run", "TEXT NOT NULL DEFAULT ''"},
+		{"operations", "authority_subject_kind", "TEXT NOT NULL DEFAULT ''"},
+		{"operations", "authority_subject_id", "TEXT NOT NULL DEFAULT ''"},
+		{"messages", "sender_execution_id", "TEXT NOT NULL DEFAULT ''"},
+		{"messages", "sender_generation", "INTEGER NOT NULL DEFAULT 0"},
+		{"messages", "sender_automation_run", "TEXT NOT NULL DEFAULT ''"},
+	} {
+		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.definition); err != nil {
+			return err
+		}
+	}
+	if err := s.migrateOperationRequestScope(ctx); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS operations_scoped_request ON operations(request_scope,request_id)`); err != nil {
+		return fmt.Errorf("index scoped operation requests: %w", err)
+	}
+	// Access is always suspended across a backend process boundary. Recovery is
+	// the only workflow that can reactivate the exact proven runtime.
+	if _, err := s.db.ExecContext(ctx, `UPDATE execution_accesses SET state=? WHERE state=?`, model.ExecutionAccessSuspended, model.ExecutionAccessActive); err != nil {
+		return fmt.Errorf("suspend execution access at startup: %w", err)
+	}
 	return nil
+}
+
+func (s *Store) ensureColumn(ctx context.Context, table, column, definition string) error {
+	rows, err := s.db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid int
+		var name, kind string
+		var notNull, primaryKey int
+		var defaultValue any
+		if err := rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &primaryKey); err != nil {
+			rows.Close()
+			return err
+		}
+		found = found || name == column
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN `+column+` `+definition); err != nil {
+		return fmt.Errorf("add %s.%s: %w", table, column, err)
+	}
+	return nil
+}
+
+func (s *Store) migrateOperationRequestScope(ctx context.Context) error {
+	var ddl string
+	if err := s.db.QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type='table' AND name='operations'`).Scan(&ddl); err != nil {
+		return err
+	}
+	if !strings.Contains(strings.ToUpper(ddl), "REQUEST_ID TEXT NOT NULL UNIQUE") {
+		return nil
+	}
+	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = OFF`); err != nil {
+		return err
+	}
+	defer func() { _, _ = s.db.ExecContext(context.Background(), `PRAGMA foreign_keys = ON`) }()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `UPDATE operations SET request_scope=CASE principal_kind WHEN 'execution' THEN 'execution:'||principal_execution_id WHEN 'automation' THEN 'automation:'||principal_automation_run WHEN 'agent' THEN 'agent:'||principal_agent_id ELSE 'operator' END`); err != nil {
+		return fmt.Errorf("scope existing operations: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `CREATE TABLE operations_replacement (
+ id TEXT PRIMARY KEY, request_id TEXT NOT NULL, request_scope TEXT NOT NULL, kind TEXT NOT NULL,
+ principal_kind TEXT NOT NULL, principal_agent_id TEXT NOT NULL DEFAULT '',
+ principal_execution_id TEXT NOT NULL DEFAULT '', principal_generation INTEGER NOT NULL DEFAULT 0,
+ principal_automation_run TEXT NOT NULL DEFAULT '', authority_subject_kind TEXT NOT NULL DEFAULT '',
+ authority_subject_id TEXT NOT NULL DEFAULT '', execution_id TEXT NOT NULL DEFAULT '', state TEXT NOT NULL,
+ result_code TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL,
+ created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+)`); err != nil {
+		return fmt.Errorf("create scoped operations replacement: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO operations_replacement(id,request_id,request_scope,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at)
+ SELECT id,request_id,request_scope,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at FROM operations`); err != nil {
+		return fmt.Errorf("copy scoped operations: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DROP TABLE operations`); err != nil {
+		return fmt.Errorf("replace operations table: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `ALTER TABLE operations_replacement RENAME TO operations`); err != nil {
+		return fmt.Errorf("rename scoped operations table: %w", err)
+	}
+	return tx.Commit()
 }
 
 const schema = `
@@ -59,7 +164,7 @@ CREATE TABLE IF NOT EXISTS agents (
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS groups (
-  id TEXT PRIMARY KEY, name TEXT NOT NULL, revision INTEGER NOT NULL,
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, owner_agent_id TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS group_members (
@@ -86,6 +191,9 @@ CREATE TABLE IF NOT EXISTS executions (
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL DEFAULT '', conversation_id TEXT NOT NULL,
   harness TEXT NOT NULL, model TEXT NOT NULL, working_directory TEXT NOT NULL,
   approval TEXT NOT NULL, sandbox TEXT NOT NULL, state TEXT NOT NULL,
+  attempt_generation INTEGER NOT NULL DEFAULT 1,
+  context_readiness TEXT NOT NULL DEFAULT 'pending',
+  context_provider_order TEXT NOT NULL DEFAULT '',
   evidence_provider TEXT NOT NULL DEFAULT '', evidence_version INTEGER NOT NULL DEFAULT 0,
   evidence_payload BLOB,
   native_namespace TEXT NOT NULL DEFAULT '', native_reference TEXT NOT NULL DEFAULT '', native_observed_at INTEGER,
@@ -93,8 +201,11 @@ CREATE TABLE IF NOT EXISTS executions (
 );
 CREATE INDEX IF NOT EXISTS executions_conversation ON executions(conversation_id, created_at);
 CREATE TABLE IF NOT EXISTS operations (
-  id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, kind TEXT NOT NULL,
+  id TEXT PRIMARY KEY, request_id TEXT NOT NULL, request_scope TEXT NOT NULL, kind TEXT NOT NULL,
   principal_kind TEXT NOT NULL, principal_agent_id TEXT NOT NULL DEFAULT '',
+  principal_execution_id TEXT NOT NULL DEFAULT '', principal_generation INTEGER NOT NULL DEFAULT 0,
+  principal_automation_run TEXT NOT NULL DEFAULT '', authority_subject_kind TEXT NOT NULL DEFAULT '',
+  authority_subject_id TEXT NOT NULL DEFAULT '',
   execution_id TEXT NOT NULL DEFAULT '', state TEXT NOT NULL,
   result_code TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '',
   revision INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
@@ -107,6 +218,8 @@ CREATE TABLE IF NOT EXISTS release_permits (
 CREATE TABLE IF NOT EXISTS messages (
   id TEXT PRIMARY KEY, operation_id TEXT NOT NULL UNIQUE REFERENCES operations(id),
   sender_kind TEXT NOT NULL, sender_agent_id TEXT NOT NULL DEFAULT '',
+  sender_execution_id TEXT NOT NULL DEFAULT '', sender_generation INTEGER NOT NULL DEFAULT 0,
+  sender_automation_run TEXT NOT NULL DEFAULT '',
   body TEXT NOT NULL, created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS message_recipients (
@@ -114,6 +227,60 @@ CREATE TABLE IF NOT EXISTS message_recipients (
   agent_id TEXT NOT NULL REFERENCES agents(id), read_at INTEGER, notified INTEGER NOT NULL DEFAULT 0,
   UNIQUE(message_id, agent_id)
 );
+
+CREATE TABLE IF NOT EXISTS execution_accesses (
+  execution_id TEXT PRIMARY KEY REFERENCES executions(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL,
+  credential_digest BLOB NOT NULL UNIQUE, delivery_id TEXT NOT NULL DEFAULT '',
+  file_identity TEXT NOT NULL DEFAULT '', state TEXT NOT NULL,
+  issued_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER,
+  revision INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS authority_grants (
+  id TEXT PRIMARY KEY, subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL,
+  action TEXT NOT NULL, resource_kind TEXT NOT NULL, resource_id TEXT NOT NULL DEFAULT '',
+  bounds_json BLOB NOT NULL, expires_at INTEGER, revision INTEGER NOT NULL,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS authority_grants_subject ON authority_grants(subject_kind, subject_id);
+CREATE TABLE IF NOT EXISTS roles (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, actions_json BLOB NOT NULL,
+  revision INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS role_assignments (
+  role_id TEXT NOT NULL REFERENCES roles(id), subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL,
+  resource_kind TEXT NOT NULL, resource_id TEXT NOT NULL DEFAULT '', bounds_json BLOB NOT NULL,
+  revision INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  PRIMARY KEY(role_id, subject_kind, subject_id, resource_kind, resource_id)
+);
+CREATE TABLE IF NOT EXISTS operation_authority (
+  operation_id TEXT PRIMARY KEY REFERENCES operations(id) ON DELETE CASCADE,
+  action TEXT NOT NULL, resource_kind TEXT NOT NULL, resource_id TEXT NOT NULL DEFAULT '',
+  requested_configuration_json BLOB, admitted_source_kind TEXT NOT NULL DEFAULT '',
+  admitted_source_id TEXT NOT NULL DEFAULT '', admitted_revision INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS effect_permits (
+  operation_id TEXT PRIMARY KEY REFERENCES operations(id) ON DELETE CASCADE,
+  consumed_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS pending_context_transitions (
+  operation_id TEXT PRIMARY KEY REFERENCES operations(id) ON DELETE CASCADE,
+  execution_id TEXT NOT NULL REFERENCES executions(id), expected_conversation_id TEXT NOT NULL,
+  expected_association_revision INTEGER NOT NULL, correlation TEXT NOT NULL UNIQUE,
+  created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS native_binding_history (
+  execution_id TEXT NOT NULL REFERENCES executions(id), conversation_id TEXT NOT NULL,
+  attempt_generation INTEGER NOT NULL, provider TEXT NOT NULL, disposition TEXT NOT NULL,
+  prior_namespace TEXT NOT NULL DEFAULT '', prior_reference TEXT NOT NULL DEFAULT '',
+  next_namespace TEXT NOT NULL DEFAULT '', next_reference TEXT NOT NULL DEFAULT '',
+  primary_correlation TEXT NOT NULL, transition_correlation TEXT NOT NULL DEFAULT '',
+  prior_provider_order TEXT NOT NULL DEFAULT '', provider_order TEXT NOT NULL,
+  observed_at INTEGER NOT NULL, recorded_at INTEGER NOT NULL,
+  PRIMARY KEY(execution_id, attempt_generation, provider, provider_order)
+);
+INSERT OR IGNORE INTO roles(id,name,actions_json,revision,created_at,updated_at)
+VALUES('group_owner','Owner','["status.read","inbox.read","inbox.mark_read","message.send","execution.launch","execution.interact","execution.attach","execution.stop","execution.context.change","agent.configuration.update","group.membership.manage"]',1,0,0);
 `
 
 func (s *Store) CreateAgent(ctx context.Context, agent model.Agent) error {
@@ -145,17 +312,26 @@ func (s *Store) Agent(ctx context.Context, id model.AgentID) (model.Agent, error
 	return scanAgent(row)
 }
 
-func (s *Store) CreateGroup(ctx context.Context, group model.Group) error {
+func (s *Store) CreateGroup(ctx context.Context, group model.Group, ownerBounds model.ConfigurationBounds) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO groups(id,name,revision,created_at,updated_at) VALUES(?,?,?,?,?)`, group.ID, group.Name, group.Revision, nanos(group.CreatedAt), nanos(group.UpdatedAt)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO groups(id,name,owner_agent_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?)`, group.ID, group.Name, group.OwnerAgentID, group.Revision, nanos(group.CreatedAt), nanos(group.UpdatedAt)); err != nil {
 		return classify(err)
 	}
 	for position, member := range group.Members {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO group_members(group_id,agent_id,position) VALUES(?,?,?)`, group.ID, member, position); err != nil {
+			return classify(err)
+		}
+	}
+	if group.OwnerAgentID != "" {
+		bounds, err := json.Marshal(ownerBounds)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO role_assignments(role_id,subject_kind,subject_id,resource_kind,resource_id,bounds_json,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?)`, model.GroupOwnerRole, model.AuthorityAgent, group.OwnerAgentID, model.ResourceGroupPeers, group.ID, bounds, nanos(group.CreatedAt), nanos(group.UpdatedAt)); err != nil {
 			return classify(err)
 		}
 	}
@@ -168,7 +344,7 @@ func (s *Store) CreateGroup(ctx context.Context, group model.Group) error {
 func (s *Store) Group(ctx context.Context, id model.GroupID) (model.Group, error) {
 	var group model.Group
 	var created, updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,revision,created_at,updated_at FROM groups WHERE id=?`, id).Scan(&group.ID, &group.Name, &group.Revision, &created, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,owner_agent_id,revision,created_at,updated_at FROM groups WHERE id=?`, id).Scan(&group.ID, &group.Name, &group.OwnerAgentID, &group.Revision, &created, &updated)
 	if err != nil {
 		return model.Group{}, classify(err)
 	}
@@ -194,6 +370,15 @@ func (s *Store) AdmitLaunch(ctx context.Context, in app.LaunchAdmission) (app.Ad
 		return app.AdmissionResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if in.Authority.Action != "" {
+		decision, err := authorizeTx(ctx, tx, in.Authority, in.Operation.CreatedAt)
+		if err != nil {
+			return app.AdmissionResult{}, err
+		}
+		if !decision.Allowed {
+			return app.AdmissionResult{}, app.ErrUnauthorized
+		}
+	}
 	if repeated, ok, err := admissionByRequest(ctx, tx, in.Operation, in.AgentID, false); err != nil {
 		return app.AdmissionResult{}, err
 	} else if ok {
@@ -217,6 +402,7 @@ func (s *Store) AdmitLaunch(ctx context.Context, in app.LaunchAdmission) (app.Ad
 			if state != model.ExecutionExited && state != model.ExecutionFailed {
 				return app.AdmissionResult{}, app.ErrConflict
 			}
+			_, _ = tx.ExecContext(ctx, `UPDATE execution_accesses SET state=?,revoked_at=?,revision=revision+1 WHERE execution_id=? AND state NOT IN (?,?)`, model.ExecutionAccessRevoked, nanos(in.Execution.CreatedAt), primary, model.ExecutionAccessRevoked, model.ExecutionAccessExpired)
 		}
 		if in.ExpectedConversationRevision != 0 {
 			var associationRevision model.Revision
@@ -238,6 +424,23 @@ func (s *Store) AdmitLaunch(ctx context.Context, in app.LaunchAdmission) (app.Ad
 	if err := insertOperation(ctx, tx, in.Operation); err != nil {
 		return app.AdmissionResult{}, err
 	}
+	if in.Access.ExecutionID != "" {
+		if err := insertExecutionAccess(ctx, tx, in.Access); err != nil {
+			return app.AdmissionResult{}, err
+		}
+	}
+	if in.Authority.Action != "" {
+		decision, err := authorizeTx(ctx, tx, in.Authority, in.Operation.CreatedAt)
+		if err != nil || !decision.Allowed {
+			if err == nil {
+				err = app.ErrUnauthorized
+			}
+			return app.AdmissionResult{}, err
+		}
+		if err := insertOperationAuthority(ctx, tx, in.Operation.ID, in.Authority, decision); err != nil {
+			return app.AdmissionResult{}, err
+		}
+	}
 	if in.AgentID != "" {
 		if _, err := tx.ExecContext(ctx, `UPDATE agents SET primary_execution_id=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, in.Execution.ID, nanos(in.Execution.CreatedAt), in.AgentID, in.Expected); err != nil {
 			return app.AdmissionResult{}, err
@@ -258,6 +461,15 @@ func (s *Store) AdmitExecutionOperation(ctx context.Context, in app.ExecutionOpe
 		return app.AdmissionResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if in.Authority.Action != "" {
+		decision, err := authorizeTx(ctx, tx, in.Authority, in.Operation.CreatedAt)
+		if err != nil {
+			return app.AdmissionResult{}, err
+		}
+		if !decision.Allowed {
+			return app.AdmissionResult{}, app.ErrUnauthorized
+		}
+	}
 	if repeated, ok, err := admissionByRequest(ctx, tx, in.Operation, "", true); err != nil {
 		return app.AdmissionResult{}, err
 	} else if ok {
@@ -270,6 +482,21 @@ func (s *Store) AdmitExecutionOperation(ctx context.Context, in app.ExecutionOpe
 	}
 	if err := insertOperation(ctx, tx, in.Operation); err != nil {
 		return app.AdmissionResult{}, err
+	}
+	if in.Authority.Action != "" {
+		decision, err := authorizeTx(ctx, tx, in.Authority, in.Operation.CreatedAt)
+		if err != nil || !decision.Allowed {
+			if err == nil {
+				err = app.ErrUnauthorized
+			}
+			return app.AdmissionResult{}, err
+		}
+		if err := insertOperationAuthority(ctx, tx, in.Operation.ID, in.Authority, decision); err != nil {
+			return app.AdmissionResult{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO effect_permits(operation_id) VALUES(?)`, in.Operation.ID); err != nil {
+			return app.AdmissionResult{}, err
+		}
 	}
 	if err := bumpTx(ctx, tx); err != nil {
 		return app.AdmissionResult{}, err
@@ -306,14 +533,69 @@ func (s *Store) RecordPrepared(ctx context.Context, executionID model.ExecutionI
 }
 
 func (s *Store) ConsumeRelease(ctx context.Context, executionID model.ExecutionID, operationID model.OperationID, at time.Time) error {
-	result, err := s.db.ExecContext(ctx, `UPDATE release_permits SET consumed_at=? WHERE execution_id=? AND operation_id=? AND consumed_at IS NULL AND EXISTS(SELECT 1 FROM executions WHERE id=? AND state=?) AND EXISTS(SELECT 1 FROM operations WHERE id=? AND state=?)`, nanos(at), executionID, operationID, executionID, model.ExecutionPrepared, operationID, model.OperationAdmitted)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if request, ok, err := operationAuthority(ctx, tx, operationID); err != nil {
+		return err
+	} else if ok {
+		decision, err := authorizeTx(ctx, tx, request, at)
+		if err != nil {
+			return err
+		}
+		if !decision.Allowed {
+			return app.ErrUnauthorized
+		}
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE release_permits SET consumed_at=? WHERE execution_id=? AND operation_id=? AND consumed_at IS NULL AND EXISTS(SELECT 1 FROM executions WHERE id=? AND state=?) AND EXISTS(SELECT 1 FROM operations WHERE id=? AND state=?)`, nanos(at), executionID, operationID, executionID, model.ExecutionPrepared, operationID, model.OperationAdmitted)
 	if err != nil {
 		return err
 	}
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return app.ErrConflict
 	}
-	return s.bump(ctx)
+	if _, err := tx.ExecContext(ctx, `UPDATE execution_accesses SET state=?,revision=revision+1 WHERE execution_id=? AND state=? AND delivery_id<>'' AND expires_at>?`, model.ExecutionAccessActive, executionID, model.ExecutionAccessInactive, nanos(at)); err != nil {
+		return err
+	}
+	if err := bumpTx(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *Store) ConsumeExecutionEffect(ctx context.Context, operationID model.OperationID, at time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	request, ok, err := operationAuthority(ctx, tx, operationID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return app.ErrConflict
+	}
+	decision, err := authorizeTx(ctx, tx, request, at)
+	if err != nil {
+		return err
+	}
+	if !decision.Allowed {
+		return app.ErrUnauthorized
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE effect_permits SET consumed_at=? WHERE operation_id=? AND consumed_at IS NULL`, nanos(at), operationID)
+	if err != nil {
+		return err
+	}
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return app.ErrConflict
+	}
+	if err := bumpTx(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) CompleteOperation(ctx context.Context, in app.OperationCompletion) (app.AdmissionResult, error) {
@@ -371,6 +653,18 @@ func (s *Store) CompleteContextOperation(ctx context.Context, completion app.Ope
 	return app.AdmissionResult{Operation: operation, Execution: execution}, nil
 }
 
+func (s *Store) OperationResult(ctx context.Context, operationID model.OperationID) (app.AdmissionResult, error) {
+	operation, err := operationTx(ctx, s.db, operationID)
+	if err != nil {
+		return app.AdmissionResult{}, err
+	}
+	var execution model.Execution
+	if operation.ExecutionID != "" {
+		execution, err = s.Execution(ctx, operation.ExecutionID)
+	}
+	return app.AdmissionResult{Operation: operation, Execution: execution}, err
+}
+
 func (s *Store) Execution(ctx context.Context, id model.ExecutionID) (model.Execution, error) {
 	return scanExecution(s.db.QueryRowContext(ctx, executionSelect+` WHERE id=?`, id))
 }
@@ -401,6 +695,11 @@ func (s *Store) RecordRecovery(ctx context.Context, id model.ExecutionID, state 
 	_, err := s.db.ExecContext(ctx, `UPDATE executions SET state=CASE WHEN state IN (?,?) THEN state ELSE ? END,evidence_provider=CASE WHEN state IN (?,?) OR ?='' THEN evidence_provider ELSE ? END,evidence_version=CASE WHEN state IN (?,?) OR ?='' THEN evidence_version ELSE ? END,evidence_payload=CASE WHEN state IN (?,?) OR ?='' THEN evidence_payload ELSE ? END,native_namespace=CASE WHEN state IN (?,?) OR ?='' THEN native_namespace ELSE ? END,native_reference=CASE WHEN state IN (?,?) OR ?='' THEN native_reference ELSE ? END,native_observed_at=CASE WHEN state IN (?,?) OR ?='' THEN native_observed_at ELSE ? END,revision=revision+1,updated_at=? WHERE id=?`, model.ExecutionExited, model.ExecutionFailed, state, model.ExecutionExited, model.ExecutionFailed, evidence.Provider, evidence.Provider, model.ExecutionExited, model.ExecutionFailed, evidence.Provider, evidence.Version, model.ExecutionExited, model.ExecutionFailed, evidence.Provider, evidence.Payload, model.ExecutionExited, model.ExecutionFailed, reference, namespace, model.ExecutionExited, model.ExecutionFailed, reference, reference, model.ExecutionExited, model.ExecutionFailed, reference, observed, nanos(at), id)
 	if err != nil {
 		return model.Execution{}, err
+	}
+	if state == model.ExecutionExited || state == model.ExecutionFailed {
+		if _, err := s.db.ExecContext(ctx, `UPDATE execution_accesses SET state=?,revoked_at=?,revision=revision+1 WHERE execution_id=? AND state NOT IN (?,?)`, model.ExecutionAccessRevoked, nanos(at), id, model.ExecutionAccessRevoked, model.ExecutionAccessExpired); err != nil {
+			return model.Execution{}, err
+		}
 	}
 	if err = s.bump(ctx); err != nil {
 		return model.Execution{}, err
@@ -457,12 +756,21 @@ func (s *Store) CurrentConversation(ctx context.Context, agentID model.AgentID) 
 	return association, nil
 }
 
-func (s *Store) CreateMessage(ctx context.Context, message model.Message, requestID model.RequestID, operationID model.OperationID) (app.MessageAdmissionResult, error) {
+func (s *Store) CreateMessage(ctx context.Context, message model.Message, requestID model.RequestID, operationID model.OperationID, authority []model.AuthorityRequest) (app.MessageAdmissionResult, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return app.MessageAdmissionResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	for _, request := range authority {
+		decision, err := authorizeTx(ctx, tx, request, message.CreatedAt)
+		if err != nil {
+			return app.MessageAdmissionResult{}, err
+		}
+		if !decision.Allowed {
+			return app.MessageAdmissionResult{}, app.ErrUnauthorized
+		}
+	}
 	if existing, ok, err := messageByRequest(ctx, tx, requestID, message); err != nil {
 		return app.MessageAdmissionResult{}, err
 	} else if ok {
@@ -473,7 +781,7 @@ func (s *Store) CreateMessage(ctx context.Context, message model.Message, reques
 	if err := insertOperation(ctx, tx, op); err != nil {
 		return app.MessageAdmissionResult{}, err
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO messages(id,operation_id,sender_kind,sender_agent_id,body,created_at) VALUES(?,?,?,?,?,?)`, message.ID, operationID, message.Sender.Kind, message.Sender.AgentID, message.Body, nanos(message.CreatedAt)); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messages(id,operation_id,sender_kind,sender_agent_id,sender_execution_id,sender_generation,sender_automation_run,body,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, message.ID, operationID, message.Sender.Kind, message.Sender.AgentID, message.Sender.ExecutionID, message.Sender.Generation, message.Sender.AutomationRun, message.Body, nanos(message.CreatedAt)); err != nil {
 		return app.MessageAdmissionResult{}, classify(err)
 	}
 	for _, recipient := range message.Recipients {
@@ -502,6 +810,39 @@ func (s *Store) MarkMessageRead(ctx context.Context, messageID model.MessageID, 
 		return model.Message{}, err
 	}
 	return s.message(ctx, messageID)
+}
+
+func (s *Store) MessagesForAgent(ctx context.Context, agentID model.AgentID, unreadOnly bool) ([]model.Message, error) {
+	query := `SELECT message_id FROM message_recipients WHERE agent_id=?`
+	if unreadOnly {
+		query += ` AND read_at IS NULL`
+	}
+	query += ` ORDER BY rowid`
+	rows, err := s.db.QueryContext(ctx, query, agentID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []model.MessageID
+	for rows.Next() {
+		var id model.MessageID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	out := make([]model.Message, 0, len(ids))
+	for _, id := range ids {
+		message, err := s.message(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, message)
+	}
+	return out, nil
 }
 
 func (s *Store) Snapshot(ctx context.Context) (app.Snapshot, error) {
@@ -686,7 +1027,7 @@ func associateConversationTx(ctx context.Context, tx *sql.Tx, in app.ContextAsso
 }
 
 func completeOperationTx(ctx context.Context, tx *sql.Tx, in app.OperationCompletion) error {
-	result, err := tx.ExecContext(ctx, `UPDATE operations SET state=?,result_code=?,detail=?,revision=revision+1,updated_at=? WHERE id=? AND state=?`, in.OperationState, in.ResultCode, in.Detail, nanos(in.At), in.OperationID, model.OperationAdmitted)
+	result, err := tx.ExecContext(ctx, `UPDATE operations SET state=?,result_code=?,detail=?,revision=revision+1,updated_at=? WHERE id=? AND state IN (?,?)`, in.OperationState, in.ResultCode, in.Detail, nanos(in.At), in.OperationID, model.OperationAdmitted, model.OperationRunning)
 	if err != nil {
 		return err
 	}
@@ -699,11 +1040,16 @@ func completeOperationTx(ctx context.Context, tx *sql.Tx, in app.OperationComple
 		namespace, reference, observed = in.Native.Namespace, in.Native.Reference, nanos(in.Native.ObservedAt)
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE executions SET state=CASE WHEN ? THEN ? ELSE state END,evidence_provider=CASE WHEN ?='' THEN evidence_provider ELSE ? END,evidence_version=CASE WHEN ?='' THEN evidence_version ELSE ? END,evidence_payload=CASE WHEN ?='' THEN evidence_payload ELSE ? END,native_namespace=CASE WHEN ?='' THEN native_namespace ELSE ? END,native_reference=CASE WHEN ?='' THEN native_reference ELSE ? END,native_observed_at=CASE WHEN ?='' THEN native_observed_at ELSE ? END,revision=revision+1,updated_at=? WHERE id=?`, in.UpdateExecutionState, in.ExecutionState, in.Evidence.Provider, in.Evidence.Provider, in.Evidence.Provider, in.Evidence.Version, in.Evidence.Provider, in.Evidence.Payload, reference, namespace, reference, reference, reference, observed, nanos(in.At), in.ExecutionID)
+	if err == nil && in.UpdateExecutionState && (in.ExecutionState == model.ExecutionExited || in.ExecutionState == model.ExecutionFailed) {
+		_, err = tx.ExecContext(ctx, `UPDATE execution_accesses SET state=?,revoked_at=?,revision=revision+1 WHERE execution_id=? AND state NOT IN (?,?)`, model.ExecutionAccessRevoked, nanos(in.At), in.ExecutionID, model.ExecutionAccessRevoked, model.ExecutionAccessExpired)
+	} else if err == nil && in.UpdateExecutionState && in.ExecutionState == model.ExecutionUnknown {
+		_, err = tx.ExecContext(ctx, `UPDATE execution_accesses SET state=?,revision=revision+1 WHERE execution_id=? AND state=?`, model.ExecutionAccessSuspended, in.ExecutionID, model.ExecutionAccessActive)
+	}
 	return err
 }
 
-const executionSelect = `SELECT id,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,evidence_provider,evidence_version,evidence_payload,native_namespace,native_reference,native_observed_at,revision,created_at,updated_at FROM executions`
-const operationSelect = `SELECT id,request_id,kind,principal_kind,principal_agent_id,execution_id,state,result_code,detail,revision,created_at,updated_at FROM operations`
+const executionSelect = `SELECT id,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,native_namespace,native_reference,native_observed_at,revision,created_at,updated_at FROM executions`
+const operationSelect = `SELECT id,request_id,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at FROM operations`
 
 type scanner interface{ Scan(...any) error }
 
@@ -722,11 +1068,11 @@ func scanExecution(row scanner) (model.Execution, error) {
 	var observed sql.NullInt64
 	var namespace, reference string
 	var created, updated int64
-	err := row.Scan(&e.ID, &e.AgentID, &e.ConversationID, &e.Spec.Harness, &e.Spec.Model, &e.Spec.WorkingDirectory, &e.Spec.Approval, &e.Spec.Sandbox, &e.State, &e.Evidence.Provider, &e.Evidence.Version, &e.Evidence.Payload, &namespace, &reference, &observed, &e.Revision, &created, &updated)
+	err := row.Scan(&e.ID, &e.AgentID, &e.ConversationID, &e.Spec.Harness, &e.Spec.Model, &e.Spec.WorkingDirectory, &e.Spec.Approval, &e.Spec.Sandbox, &e.State, &e.Attempt, &e.ContextReadiness, &e.ContextOrder, &e.Evidence.Provider, &e.Evidence.Version, &e.Evidence.Payload, &namespace, &reference, &observed, &e.Revision, &created, &updated)
 	if err != nil {
 		return e, classify(err)
 	}
-	e.Spec.ExecutionID, e.Spec.AgentID, e.Spec.ConversationID = e.ID, e.AgentID, e.ConversationID
+	e.Spec.ExecutionID, e.Spec.AgentID, e.Spec.ConversationID, e.Spec.Attempt = e.ID, e.AgentID, e.ConversationID, e.Attempt
 	e.CreatedAt, e.UpdatedAt = fromNanos(created), fromNanos(updated)
 	if reference != "" {
 		e.NativeConversation = &model.NativeConversationEvidence{Namespace: namespace, Reference: reference, ObservedAt: fromNanos(observed.Int64)}
@@ -736,20 +1082,25 @@ func scanExecution(row scanner) (model.Execution, error) {
 func scanOperation(row scanner) (model.Operation, error) {
 	var o model.Operation
 	var created, updated int64
-	err := row.Scan(&o.ID, &o.RequestID, &o.Kind, &o.Principal.Kind, &o.Principal.AgentID, &o.ExecutionID, &o.State, &o.ResultCode, &o.Detail, &o.Revision, &created, &updated)
+	var authorityKind, authorityID string
+	err := row.Scan(&o.ID, &o.RequestID, &o.Kind, &o.Principal.Kind, &o.Principal.AgentID, &o.Principal.ExecutionID, &o.Principal.Generation, &o.Principal.AutomationRun, &authorityKind, &authorityID, &o.ExecutionID, &o.State, &o.ResultCode, &o.Detail, &o.Revision, &created, &updated)
 	if err != nil {
 		return o, classify(err)
 	}
 	o.CreatedAt, o.UpdatedAt = fromNanos(created), fromNanos(updated)
+	if authorityKind != "" {
+		o.Principal.Authority = makeSubject(authorityKind, authorityID)
+	}
 	return o, nil
 }
 
 func insertExecution(ctx context.Context, tx *sql.Tx, e model.Execution) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO executions(id,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,evidence_provider,evidence_version,evidence_payload,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, e.ID, e.AgentID, e.ConversationID, e.Spec.Harness, e.Spec.Model, e.Spec.WorkingDirectory, e.Spec.Approval, e.Spec.Sandbox, e.State, e.Evidence.Provider, e.Evidence.Version, e.Evidence.Payload, e.Revision, nanos(e.CreatedAt), nanos(e.UpdatedAt))
+	_, err := tx.ExecContext(ctx, `INSERT INTO executions(id,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, e.ID, e.AgentID, e.ConversationID, e.Spec.Harness, e.Spec.Model, e.Spec.WorkingDirectory, e.Spec.Approval, e.Spec.Sandbox, e.State, e.Attempt, e.ContextReadiness, e.ContextOrder, e.Evidence.Provider, e.Evidence.Version, e.Evidence.Payload, e.Revision, nanos(e.CreatedAt), nanos(e.UpdatedAt))
 	return classify(err)
 }
 func insertOperation(ctx context.Context, tx *sql.Tx, o model.Operation) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO operations(id,request_id,kind,principal_kind,principal_agent_id,execution_id,state,result_code,detail,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, o.ID, o.RequestID, o.Kind, o.Principal.Kind, o.Principal.AgentID, o.ExecutionID, o.State, o.ResultCode, o.Detail, o.Revision, nanos(o.CreatedAt), nanos(o.UpdatedAt))
+	authorityKind, authorityID := subjectParts(o.Principal.Authority)
+	_, err := tx.ExecContext(ctx, `INSERT INTO operations(id,request_id,request_scope,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, o.ID, o.RequestID, requestScope(o.Principal), o.Kind, o.Principal.Kind, o.Principal.AgentID, o.Principal.ExecutionID, o.Principal.Generation, o.Principal.AutomationRun, authorityKind, authorityID, o.ExecutionID, o.State, o.ResultCode, o.Detail, o.Revision, nanos(o.CreatedAt), nanos(o.UpdatedAt))
 	return classify(err)
 }
 func insertConversationAndAssociation(ctx context.Context, tx *sql.Tx, agentID model.AgentID, conversationID model.ConversationID, at time.Time) error {
@@ -775,14 +1126,14 @@ func insertConversationAndAssociation(ctx context.Context, tx *sql.Tx, agentID m
 	return err
 }
 func admissionByRequest(ctx context.Context, tx *sql.Tx, desired model.Operation, targetAgent model.AgentID, strictExecution bool) (app.AdmissionResult, bool, error) {
-	operation, err := operationByRequestTx(ctx, tx, desired.RequestID)
+	operation, err := operationByRequestTx(ctx, tx, desired.Principal, desired.RequestID)
 	if errors.Is(err, app.ErrNotFound) {
 		return app.AdmissionResult{}, false, nil
 	}
 	if err != nil {
 		return app.AdmissionResult{}, false, err
 	}
-	if operation.Kind != desired.Kind || operation.Principal != desired.Principal || (strictExecution && operation.ExecutionID != desired.ExecutionID) {
+	if operation.Kind != desired.Kind || !sameRequester(operation.Principal, desired.Principal) || (strictExecution && operation.ExecutionID != desired.ExecutionID) {
 		return app.AdmissionResult{}, false, app.ErrConflict
 	}
 	var execution model.Execution
@@ -797,11 +1148,11 @@ func admissionByRequest(ctx context.Context, tx *sql.Tx, desired model.Operation
 	}
 	return app.AdmissionResult{Operation: operation, Execution: execution, Repeated: true}, true, nil
 }
-func operationByRequestTx(ctx context.Context, tx *sql.Tx, id model.RequestID) (model.Operation, error) {
-	return scanOperation(tx.QueryRowContext(ctx, operationSelect+` WHERE request_id=?`, id))
+func operationByRequestTx(ctx context.Context, tx *sql.Tx, principal model.Principal, id model.RequestID) (model.Operation, error) {
+	return scanOperation(tx.QueryRowContext(ctx, operationSelect+` WHERE request_scope=? AND request_id=?`, requestScope(principal), id))
 }
-func operationTx(ctx context.Context, tx *sql.Tx, id model.OperationID) (model.Operation, error) {
-	return scanOperation(tx.QueryRowContext(ctx, operationSelect+` WHERE id=?`, id))
+func operationTx(ctx context.Context, q queryer, id model.OperationID) (model.Operation, error) {
+	return scanOperation(q.QueryRowContext(ctx, operationSelect+` WHERE id=?`, id))
 }
 func executionTx(ctx context.Context, tx *sql.Tx, id model.ExecutionID) (model.Execution, error) {
 	return scanExecution(tx.QueryRowContext(ctx, executionSelect+` WHERE id=?`, id))
@@ -810,7 +1161,7 @@ func executionTx(ctx context.Context, tx *sql.Tx, id model.ExecutionID) (model.E
 func (s *Store) message(ctx context.Context, id model.MessageID) (model.Message, error) {
 	var m model.Message
 	var created int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,sender_kind,sender_agent_id,body,created_at FROM messages WHERE id=?`, id).Scan(&m.ID, &m.Sender.Kind, &m.Sender.AgentID, &m.Body, &created)
+	err := s.db.QueryRowContext(ctx, `SELECT id,sender_kind,sender_agent_id,sender_execution_id,sender_generation,sender_automation_run,body,created_at FROM messages WHERE id=?`, id).Scan(&m.ID, &m.Sender.Kind, &m.Sender.AgentID, &m.Sender.ExecutionID, &m.Sender.Generation, &m.Sender.AutomationRun, &m.Body, &created)
 	if err != nil {
 		return m, classify(err)
 	}
@@ -835,14 +1186,14 @@ func (s *Store) message(ctx context.Context, id model.MessageID) (model.Message,
 	return m, rows.Err()
 }
 func messageByRequest(ctx context.Context, tx *sql.Tx, requestID model.RequestID, desired model.Message) (app.MessageAdmissionResult, bool, error) {
-	operation, err := operationByRequestTx(ctx, tx, requestID)
+	operation, err := operationByRequestTx(ctx, tx, desired.Sender, requestID)
 	if errors.Is(err, app.ErrNotFound) {
 		return app.MessageAdmissionResult{}, false, nil
 	}
 	if err != nil {
 		return app.MessageAdmissionResult{}, false, err
 	}
-	if operation.Kind != model.OperationSendMessage || operation.Principal != desired.Sender {
+	if operation.Kind != model.OperationSendMessage || !sameRequester(operation.Principal, desired.Sender) {
 		return app.MessageAdmissionResult{}, false, app.ErrConflict
 	}
 	var messageID model.MessageID
@@ -851,7 +1202,7 @@ func messageByRequest(ctx context.Context, tx *sql.Tx, requestID model.RequestID
 	}
 	var m model.Message
 	var created int64
-	if err := tx.QueryRowContext(ctx, `SELECT id,sender_kind,sender_agent_id,body,created_at FROM messages WHERE id=?`, messageID).Scan(&m.ID, &m.Sender.Kind, &m.Sender.AgentID, &m.Body, &created); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT id,sender_kind,sender_agent_id,sender_execution_id,sender_generation,sender_automation_run,body,created_at FROM messages WHERE id=?`, messageID).Scan(&m.ID, &m.Sender.Kind, &m.Sender.AgentID, &m.Sender.ExecutionID, &m.Sender.Generation, &m.Sender.AutomationRun, &m.Body, &created); err != nil {
 		return app.MessageAdmissionResult{}, false, classify(err)
 	}
 	m.CreatedAt = fromNanos(created)
