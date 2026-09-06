@@ -206,15 +206,32 @@ async function renderDefinitions(){
   if(definition.Kind==='process')card.append(button('Start process',async()=>{
    const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID));
    const revision=result.Revision;
-   if(revision.Parameters?.length)throw new Error('This process requires typed parameters. Use the process start command with its pinned definition and explicit parameters.');
-   const fields=[{name:'workspace',label:'Workspace',options:(snapshot.workspaces||[]).filter(w=>w.State==='available').map(w=>({value:w.ID,label:w.Intent.Name||w.Observation.ActualPath||w.ID}))},{name:'minutes',label:'Maximum run time in minutes',value:'60'}];
+   
+   const fields=[{name:'workspace',label:'Workspace',options:(snapshot.workspaces||[]).filter(w=>w.State==='available').map(w=>({value:w.ID,label:w.Intent.Name||w.Observation.ActualPath||w.ID}))},{name:'minutes',label:'Maximum run time in minutes',value:'60'},...parameterFields(revision.Parameters||[])];
    edit('Start pinned process',fields,async f=>{
     const minutes=Number(f.minutes);if(!Number.isFinite(minutes)||minutes<=0||minutes>10080)throw new Error('Choose a run duration between 1 and 10080 minutes.');
     const programs=(revision.Process.Graph.Nodes||[]).filter(n=>n.Performer?.Program).map(n=>n.Performer.Program.Profile);
-    await api('/v2/processes',{request_id:f.requestID,id:f.requestID,start:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'process'},Scope:{WorkspaceID:f.workspace},AuthorizedProgramProfiles:programs,Deadline:new Date(Date.now()+minutes*60000).toISOString()}});
+    await api('/v2/processes',{request_id:f.requestID,id:f.requestID,start:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'process'},Scope:{WorkspaceID:f.workspace},Parameters:parameterValues(revision.Parameters||[],f),AuthorizedProgramProfiles:programs,Deadline:new Date(Date.now()+minutes*60000).toISOString()}});
    });
+  }));
+  if(definition.Kind==='team')card.append(button('Deploy team',async()=>{
+   const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID)),revision=result.Revision;
+   edit('Deploy pinned team',[{name:'mission',label:'Mission',multiline:true},...parameterFields(revision.Parameters||[])],f=>api('/v2/teams/deploy',{request_id:f.requestID,deployment_id:f.requestID,instantiation:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'team'},Mission:f.mission,GroupID:'group_'+f.requestID,Parameters:parameterValues(revision.Parameters||[],f)}}));
   }));
   list.append(card);
  }
  if(!definitions?.length)empty(list,'No saved definitions. Author a definition with the definition save command.');
 }
+
+function parameterFields(parameters){return parameters.map((p,index)=>{
+ const value=p.Default===undefined||p.Default===null?'':p.Type==='string'?p.Default:JSON.stringify(p.Default);
+ const field={name:'parameter_'+index,label:p.Description||p.Name,value,required:p.Required,multiline:p.Type==='object'||p.Type==='array'};
+ if(p.Type==='boolean')field.options=p.Required?['true','false']:['','true','false'];return field;
+})}
+function parameterValues(parameters,form){const values={};parameters.forEach((p,index)=>{
+ const text=form['parameter_'+index];if(text===''&&!p.Required)return;
+ let value=text;
+ if(p.Type!=='string'){try{value=JSON.parse(text)}catch{throw new Error(`Enter a valid ${p.Type} for ${p.Name}.`)}}
+ const valid=p.Type==='string'?typeof value==='string':p.Type==='number'?typeof value==='number'&&Number.isFinite(value):p.Type==='boolean'?typeof value==='boolean':p.Type==='array'?Array.isArray(value):value!==null&&typeof value==='object'&&!Array.isArray(value);
+ if(!valid)throw new Error(`Enter a valid ${p.Type} for ${p.Name}.`);values[p.Name]=value;
+});return values}
