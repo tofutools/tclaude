@@ -116,5 +116,6 @@ func ClientCommand() *cobra.Command {
 	registerOrchestration(root, call)
 	registerControls(root, call)
 	registerJourney(root, call)
+	registerAccessRequests(root, call)
 	return root
 }

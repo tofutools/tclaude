@@ -14,13 +14,14 @@ import (
 const maxRequestBytes = 1 << 20
 
 type Handler struct {
-	application   app.API
-	agents        app.AgentAPI
-	authority     app.AuthorityAdminAPI
-	journey       app.JourneyAPI
-	orchestration app.OrchestrationAPI
-	auth          Authenticator
-	mux           *http.ServeMux
+	application    app.API
+	agents         app.AgentAPI
+	authority      app.AuthorityAdminAPI
+	journey        app.JourneyAPI
+	orchestration  app.OrchestrationAPI
+	accessRequests app.AccessRequestAPI
+	auth           Authenticator
+	mux            *http.ServeMux
 }
 
 func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
