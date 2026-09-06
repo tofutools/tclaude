@@ -432,6 +432,14 @@ through the instance-owned reconciliation worker; an HTTP handler admits the
 operation rather than owning its lifetime. Private host resource receipts and
 execution authentication generations are not public process projections.
 
+An execution can request bounded access with `access-request ask --file request.json`.
+The request names an exact action/resource and, for configuration effects, explicit
+configuration bounds. The Decisions tab shows access requests separately from work
+verdicts, including the requested scope, reason and expiry. An operator approves or
+denies that exact request; approval cannot edit it into broader authority. The
+requesting client then retries the ordinary operation explicitly. Approval does
+not replay a failed command, and an access decision cannot complete a work stage.
+
 Message delivery commits the inbox entry before attempting a native notification.
 The daemon sends a fixed inbox notice to a currently controlled primary execution
 only when the recipient still requests notifications and the sender still has
