@@ -77,6 +77,15 @@ type ConversationAssociation struct {
 	ReplacedAt     *time.Time
 }
 
+// NativeConversationEvidence is a provider-observed history reference. The
+// application chooses whether it may be used for continuation; a provider may
+// not infer that choice from a platform ConversationID.
+type NativeConversationEvidence struct {
+	Namespace  string
+	Reference  string
+	ObservedAt time.Time
+}
+
 type ExecutionState string
 
 const (
@@ -85,19 +94,21 @@ const (
 	ExecutionReleased ExecutionState = "released"
 	ExecutionRunning  ExecutionState = "running"
 	ExecutionExited   ExecutionState = "exited"
+	ExecutionFailed   ExecutionState = "failed"
 	ExecutionUnknown  ExecutionState = "unknown"
 )
 
 type Execution struct {
-	ID             ExecutionID
-	AgentID        AgentID
-	ConversationID ConversationID
-	Spec           ResolvedExecutionSpec
-	State          ExecutionState
-	Evidence       ProviderEvidence
-	Revision       Revision
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID                 ExecutionID
+	AgentID            AgentID
+	ConversationID     ConversationID
+	Spec               ResolvedExecutionSpec
+	State              ExecutionState
+	Evidence           ProviderEvidence
+	NativeConversation *NativeConversationEvidence
+	Revision           Revision
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
 }
 
 // ResolvedExecutionSpec is immutable after an Execution is admitted. Provider

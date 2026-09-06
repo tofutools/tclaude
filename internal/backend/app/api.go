@@ -56,8 +56,29 @@ type GroupResult struct{ Group model.Group }
 
 type LaunchRequest struct {
 	RequestContext
+	Target       LaunchTarget
+	Continuation *ContinuationSelection
+}
+
+type LaunchTarget struct {
+	Agent      *AgentLaunchTarget
+	Standalone *StandaloneLaunchTarget
+}
+
+type AgentLaunchTarget struct {
 	AgentID          model.AgentID
 	ExpectedRevision model.Revision
+}
+
+type StandaloneLaunchTarget struct {
+	Desired        model.DesiredConfiguration
+	ConversationID model.ConversationID
+}
+
+type ContinuationSelection struct {
+	ConversationID model.ConversationID
+	Native         model.NativeConversationEvidence
+	PriorEvidence  model.ProviderEvidence
 }
 
 type InteractRequest struct {
@@ -85,15 +106,19 @@ type StopRequest struct {
 
 type ResumeRequest struct {
 	RequestContext
-	AgentID          model.AgentID
-	ConversationID   model.ConversationID
-	ExpectedRevision model.Revision
+	Target                      LaunchTarget
+	ConversationID              model.ConversationID
+	ExpectedAssociationRevision model.Revision
+	Native                      model.NativeConversationEvidence
+	PriorEvidence               model.ProviderEvidence
 }
 
 type ChangeContextRequest struct {
 	RequestContext
-	ExecutionID model.ExecutionID
-	Mode        ports.ContextChangeMode
+	ExecutionID                 model.ExecutionID
+	Intent                      ports.ContextChangeIntent
+	ExpectedConversationID      model.ConversationID
+	ExpectedAssociationRevision model.Revision
 }
 
 type SendMessageRequest struct {
