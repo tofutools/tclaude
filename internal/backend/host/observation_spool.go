@@ -66,9 +66,28 @@ func RecoverObservationSpool(privateRoot, directory string) (*ObservationSpool, 
 	return &ObservationSpool{root: root, directory: directory}, nil
 }
 
+// RemoveObservationSpool idempotently removes an exact attempt spool, including
+// after the workload has exited and an earlier observation already cleaned it.
+func RemoveObservationSpool(privateRoot, directory string) error {
+	root := filepath.Clean(privateRoot)
+	directory = filepath.Clean(directory)
+	relative, err := filepath.Rel(root, directory)
+	if err != nil || strings.Contains(relative, string(filepath.Separator)) ||
+		!strings.HasPrefix(relative, "observation-") || relative == "observation-" {
+		return fmt.Errorf("observation spool is outside private storage")
+	}
+	if err := os.RemoveAll(directory); err != nil {
+		return fmt.Errorf("remove observation spool: %w", err)
+	}
+	return nil
+}
+
 func (s *ObservationSpool) Directory() string { return s.directory }
 
-func (s *ObservationSpool) Drain() ([]ObservationSpoolEvent, error) {
+// ReadPending returns completed events without consuming them. Callers
+// acknowledge each event only after durable admission so a transient sink
+// failure can be retried.
+func (s *ObservationSpool) ReadPending() ([]ObservationSpoolEvent, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	entries, err := os.ReadDir(s.directory)
@@ -96,23 +115,25 @@ func (s *ObservationSpool) Drain() ([]ObservationSpoolEvent, error) {
 		if readErr != nil {
 			return nil, fmt.Errorf("read observation event: %w", readErr)
 		}
-		if removeErr := os.Remove(path); removeErr != nil {
-			return nil, fmt.Errorf("consume observation event: %w", removeErr)
-		}
 		result = append(result, ObservationSpoolEvent{Order: name, Payload: value})
 	}
 	return result, nil
 }
 
+func (s *ObservationSpool) Acknowledge(order string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if filepath.Base(order) != order || !strings.HasPrefix(order, "event-") {
+		return fmt.Errorf("observation event order is invalid")
+	}
+	if err := os.Remove(filepath.Join(s.directory, order)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("acknowledge observation event: %w", err)
+	}
+	return nil
+}
+
 func (s *ObservationSpool) Remove() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	relative, err := filepath.Rel(s.root, s.directory)
-	if err != nil || strings.Contains(relative, string(filepath.Separator)) || !strings.HasPrefix(relative, "observation-") {
-		return fmt.Errorf("observation spool is outside private storage")
-	}
-	if err := os.RemoveAll(s.directory); err != nil {
-		return fmt.Errorf("remove observation spool: %w", err)
-	}
-	return nil
+	return RemoveObservationSpool(s.root, s.directory)
 }

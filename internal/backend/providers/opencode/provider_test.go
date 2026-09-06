@@ -155,9 +155,24 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	controlled := recovered.Runtime.(*Runtime)
+	_, exited, err := controlled.process.Stop(ctx, true)
+	require.NoError(t, err)
+	require.True(t, exited)
+	observation, err = recovered.Runtime.Observe(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, ports.WorkloadExited, observation.Workload)
+	require.NoFileExists(t, description.AccessDelivery.Resource)
+	require.NoFileExists(t, recorded.PasswordFile)
+	afterCleanup, err := provider.Recover(context.Background(), ports.RecoveryRequest{
+		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: released.Evidence,
+		Attempt: request.Spec.Attempt, Access: access, Observations: observations,
+	})
+	require.NoError(t, err)
+	require.Equal(t, ports.RecoveryExited, afterCleanup.State,
+		"confirmed exit remains recoverable after resource cleanup")
 	stopped, err := recovered.Runtime.Stop(ctx, ports.StopRequest{Force: true})
 	require.NoError(t, err)
-	require.True(t, stopped.Acknowledged)
 	require.True(t, stopped.Exited)
 }
 
