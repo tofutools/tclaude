@@ -134,6 +134,14 @@ func TestManagedHookAdmission_ResumeBeforeWrapperBookkeepingPreservesContinuity(
 	haveLayerSession(t, f, convID, successorLabel, successorTmux, brokerPanePID)
 	identity, err := db.GetSessionExitLaunchIdentity(successorLabel)
 	require.NoError(t, err)
+	successorBoundary, err := db.SessionExecutionBoundary(successorLabel)
+	require.NoError(t, err)
+	require.NotEmpty(t, successorBoundary)
+	cleared, err := db.ClearSessionExecutionBoundaryForLaunch(
+		successorLabel, identity.Generation, successorTmux, identity.PaneID)
+	require.NoError(t, err)
+	require.True(t, cleared,
+		"the production-order fixture starts without a successor boundary preseed")
 	executionID, err := execution.ParseID(identity.Generation)
 	require.NoError(t, err)
 	opID := execution.NewOperationID()
@@ -152,6 +160,11 @@ func TestManagedHookAdmission_ResumeBeforeWrapperBookkeepingPreservesContinuity(
 	registered, err := db.RegisterResumeLaunch(opID, executionID, convID, successorLabel, successorTmux, "%1", "/private/early-gate", 7105, "claim-start")
 	require.NoError(t, err)
 	require.True(t, registered)
+	stored, err := db.SetSessionExecutionBoundaryForLaunch(
+		successorLabel, identity.Generation, successorTmux, identity.PaneID, successorBoundary)
+	require.NoError(t, err)
+	require.True(t, stored,
+		"the exact successor namespace must be durable before the workload gate is released")
 	granted, err := db.GrantResumeRelease(opID, executionID, successorLabel, successorTmux, "%1", "/private/early-gate")
 	require.NoError(t, err)
 	require.True(t, granted)
