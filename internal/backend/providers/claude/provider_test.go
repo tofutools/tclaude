@@ -161,6 +161,7 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	controlled := recovered.Runtime.(*Runtime)
+	controlled.observations = &observationSink{}
 	_, exited, err := controlled.terminal.Stop(ctx, true)
 	require.NoError(t, err)
 	require.True(t, exited)
@@ -171,6 +172,10 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 	require.NoError(t, err)
 	require.NoFileExists(t, description.AccessDelivery.Resource)
 	require.NoDirExists(t, recorded.ObservationSpool)
+	observation, err = recovered.Runtime.Observe(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, ports.WorkloadExited, observation.Workload,
+		"repeated exit observation must not reopen the removed ingress spool")
 	afterCleanup, err := provider.Recover(context.Background(), ports.RecoveryRequest{
 		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: released.Evidence,
 		Attempt: request.Spec.Attempt, Access: access,
