@@ -89,7 +89,7 @@ func TestOpenCodeHistoryDiscoversOrdinaryConfiguredNativeRoot(t *testing.T) {
 	listPath := filepath.Join(providerRoot, "sessions.json")
 	require.NoError(t, os.WriteFile(listPath, []byte(`[{"id":"ses_native","title":"Native","directory":"`+workspace+`"}]`), 0o600))
 	executable := filepath.Join(providerRoot, "opencode-fake")
-	script := "#!/bin/sh\nif [ \"$1\" = session ]; then cat \"$OPENCODE_LIST_FIXTURE\"; exit; fi\nif [ \"$1\" = export ]; then cat \"$OPENCODE_EXPORT_FIXTURE\"; exit; fi\nexit 2\n"
+	script := "#!/bin/sh\nif [ \"$1\" = db ]; then cat \"$OPENCODE_LIST_FIXTURE\"; exit; fi\nif [ \"$1\" = export ]; then cat \"$OPENCODE_EXPORT_FIXTURE\"; exit; fi\nexit 2\n"
 	require.NoError(t, os.WriteFile(executable, []byte(script), 0o700))
 	provider, err := New(Config{Executable: executable, PrivateRoot: providerRoot,
 		Environment: []string{"OPENCODE_LIST_FIXTURE=" + listPath, "OPENCODE_EXPORT_FIXTURE=" + exportPath}})
