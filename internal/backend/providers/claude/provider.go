@@ -49,7 +49,7 @@ func New(config Config) (*Provider, error) {
 		return nil, fmt.Errorf("resolve Claude Code executable: %w", err)
 	}
 	if !filepath.IsAbs(config.PrivateRoot) {
-		return nil, fmt.Errorf("Claude private root must be absolute")
+		return nil, fmt.Errorf("claude private root must be absolute")
 	}
 	return &Provider{
 		executable: resolved,
@@ -82,16 +82,16 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		return nil, err
 	}
 	if request.Spec.Harness != Name {
-		return nil, fmt.Errorf("Claude provider cannot prepare harness %q", request.Spec.Harness)
+		return nil, fmt.Errorf("claude provider cannot prepare harness %q", request.Spec.Harness)
 	}
 	if err := validateDirectory(request.Spec.WorkingDirectory); err != nil {
 		return nil, err
 	}
 	if request.Spec.Sandbox != model.SandboxWorkspaceWrite {
-		return nil, fmt.Errorf("Claude provider does not enforce sandbox mode %q", request.Spec.Sandbox)
+		return nil, fmt.Errorf("claude provider does not enforce sandbox mode %q", request.Spec.Sandbox)
 	}
 	if request.Spec.Approval != model.ApprovalSupervised && request.Spec.Approval != model.ApprovalAutomatic {
-		return nil, fmt.Errorf("Claude provider does not support approval mode %q", request.Spec.Approval)
+		return nil, fmt.Errorf("claude provider does not support approval mode %q", request.Spec.Approval)
 	}
 	nativeID, err := nativeIDFor(request)
 	if err != nil {
@@ -337,7 +337,7 @@ func nativeIDFor(request ports.PreparationRequest) (string, error) {
 		return uuid.NewString(), nil
 	case ports.StartContinue:
 		if request.Continuation == nil || request.Continuation.Namespace != NativeNamespace {
-			return "", fmt.Errorf("Claude continuation requires %s native evidence", NativeNamespace)
+			return "", fmt.Errorf("claude continuation requires %s native evidence", NativeNamespace)
 		}
 		if _, err := uuid.Parse(request.Continuation.Reference); err != nil {
 			return "", fmt.Errorf("invalid Claude continuation reference: %w", err)
