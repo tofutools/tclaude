@@ -91,6 +91,20 @@ func registerJourney(root *cobra.Command, call journeyCall) {
 	}
 	workspaceCmd.AddCommand(inspectWorkspace, remove)
 	root.AddCommand(workspaceCmd)
+	var shellRequest, shellSandbox string
+	var shellRevision uint64
+	shell := boa.CmdT[struct{}]{Use: "shell WORKSPACE", Short: "Start an interactive shell without creating an agent or conversation"}.ToCobra()
+	shell.Args = cobra.ExactArgs(1)
+	shell.Flags().StringVar(&shellRequest, "request-id", "", "Stable identity for this shell launch")
+	shell.Flags().Uint64Var(&shellRevision, "revision", 0, "Workspace revision returned by inspect")
+	shell.Flags().StringVar(&shellSandbox, "sandbox", "", "Explicit supported confinement policy")
+	_ = shell.MarkFlagRequired("request-id")
+	_ = shell.MarkFlagRequired("revision")
+	_ = shell.MarkFlagRequired("sandbox")
+	shell.RunE = func(cmd *cobra.Command, args []string) error {
+		return call(cmd, "POST", "/v2/shells", map[string]any{"request_id": shellRequest, "workspace_id": args[0], "expected_revision": shellRevision, "sandbox": shellSandbox})
+	}
+	root.AddCommand(shell)
 
 	work := boa.CmdT[struct{}]{Use: "work", Short: "Run bounded assignments and record explicit outcomes"}.ToCobra()
 	var startID, specFile string

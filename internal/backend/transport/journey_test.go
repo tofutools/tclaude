@@ -122,3 +122,72 @@ func TestJourneyWorkProjectionRetainsUsableRevisionsWithoutPrivateAuthority(t *t
 		t.Fatalf("usable read state missing: %s", w.Body)
 	}
 }
+
+type shellJourneyProbe struct {
+	app.JourneyAPI
+	request *app.StartShellRequest
+}
+
+func (p *shellJourneyProbe) StartShell(_ context.Context, r app.StartShellRequest) (app.OperationResult, error) {
+	p.request = &r
+	return app.OperationResult{Operation: model.Operation{ID: "operation-shell", Revision: 1}, Execution: &model.Execution{ID: "execution-shell", Workload: model.ExecutionWorkloadShell, State: model.ExecutionRunning, Spec: model.ResolvedExecutionSpec{ExecutionID: "execution-shell", Workload: model.ExecutionWorkloadShell}, Evidence: model.ProviderEvidence{Payload: []byte("private-shell-receipt")}}}, nil
+}
+func TestJourneyShellUsesWorkspaceWithoutManufacturedAgentOrNativeInput(t *testing.T) {
+	p := &shellJourneyProbe{}
+	h := testHandler(t, &applicationProbe{})
+	if err := h.RegisterJourneyAPI(p); err != nil {
+		t.Fatal(err)
+	}
+	for _, body := range []string{
+		`{"request_id":"shell-request","workspace_id":"workspace-a","expected_revision":3,"sandbox":"unconfined","executable":"/caller-program"}`,
+		`{"request_id":"shell-request","workspace_id":"workspace-a","expected_revision":3,"sandbox":"unconfined","agent_id":"agent-a"}`,
+		`{"request_id":"shell-request","workspace_id":"workspace-a","expected_revision":3,"sandbox":"unconfined","environment":{"KEY":"value"}}`,
+	} {
+		w := request(h, "POST", "/v2/shells", body, testCredential)
+		if w.Code != 400 || p.request != nil {
+			t.Fatalf("caller native input accepted: %d", w.Code)
+		}
+	}
+	w := request(h, "POST", "/v2/shells", `{"request_id":"shell-request","workspace_id":"workspace-a","expected_revision":3,"sandbox":"unconfined"}`, testCredential)
+	if w.Code != 202 || p.request == nil || p.request.Context.Principal.Kind != model.PrincipalOperator || p.request.ExpectedRevision != 3 {
+		t.Fatalf("shell admission: %d %+v", w.Code, p.request)
+	}
+	var body struct {
+		Execution executionView `json:"execution"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Execution.Workload != model.ExecutionWorkloadShell || body.Execution.AgentID != "" || body.Execution.ConversationID != "" || strings.Contains(w.Body.String(), "private-shell-receipt") {
+		t.Fatalf("shell projection: %s", w.Body)
+	}
+}
+
+func TestJourneySnapshotKeepsRetainedWorkDiscoverableWithoutRecoveryDetails(t *testing.T) {
+	owner := model.ExecutionPrincipal("execution-a", "agent-a", 42)
+	probe := &applicationProbe{snapshot: app.Snapshot{
+		Workspaces:    []app.WorkspaceView{{ID: "workspace-a", Revision: 3}},
+		WorkspaceUses: []model.WorkspaceUse{{ID: "use-a", WorkspaceID: "workspace-a", WorkRunID: "work-a"}},
+		WorkRuns:      []model.WorkRun{{ID: "work-a", Requester: owner, HistoryUseID: "private-source-claim", Revision: 7}},
+		WorkEvidence:  []model.WorkEvidence{{ID: "evidence-a", WorkRunID: "work-a", Reporter: owner, Revision: 2}},
+	}}
+	w := request(testHandler(t, probe), "GET", "/v2/snapshot", "", testCredential)
+	if w.Code != 200 {
+		t.Fatal(w.Code)
+	}
+	var view struct {
+		Workspaces []app.WorkspaceView `json:"workspaces"`
+		WorkRuns   []workResultView    `json:"work_runs"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Workspaces) != 1 || view.Workspaces[0].Revision != 3 || len(view.WorkRuns) != 1 || view.WorkRuns[0].Run.Revision != 7 || len(view.WorkRuns[0].Evidence) != 1 {
+		t.Fatalf("retained state absent: %s", w.Body)
+	}
+	for _, secret := range []string{"Generation", "private-source-claim", "Delegation"} {
+		if strings.Contains(w.Body.String(), secret) {
+			t.Fatalf("snapshot leaked internal state: %s", w.Body)
+		}
+	}
+}
