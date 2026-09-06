@@ -27,6 +27,15 @@ type testPermit struct {
 	consumed  atomic.Bool
 }
 
+type observationSink struct {
+	values []ports.PrimaryContextEvidence
+}
+
+func (s *observationSink) ObservePrimaryContext(_ context.Context, evidence ports.PrimaryContextEvidence) error {
+	s.values = append(s.values, evidence)
+	return nil
+}
+
 func (p *testPermit) ExecutionID() model.ExecutionID { return p.execution }
 func (p *testPermit) OperationID() model.OperationID { return p.operation }
 func (p *testPermit) Consume(context.Context) error {
@@ -44,15 +53,22 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 	script := "#!/bin/sh\nexec \"$OPENCODE_TEST_BINARY\" -test.run=TestOpenCodeServerHelper -- \"$@\"\n"
 	require.NoError(t, os.WriteFile(executable, []byte(script), 0o700))
 	promptPath := filepath.Join(root, "prompt")
+	bootstrapPath := filepath.Join(root, "bootstrap")
+	agentSocket := filepath.Join(root, "backend.sock")
 	provider, err := New(Config{
-		Executable: executable, PrivateRoot: root,
-		Environment: []string{"OPENCODE_TEST_BINARY=" + os.Args[0], "OPENCODE_TEST_PROMPT=" + promptPath},
+		Executable: executable, PrivateRoot: root, AgentSocket: agentSocket,
+		Environment: []string{"OPENCODE_TEST_BINARY=" + os.Args[0], "OPENCODE_TEST_PROMPT=" + promptPath,
+			"OPENCODE_TEST_BOOTSTRAP=" + bootstrapPath},
 	})
 	require.NoError(t, err)
-	request := ports.PreparationRequest{Intent: ports.StartFresh, Spec: model.ResolvedExecutionSpec{
-		ExecutionID: "execution_opencode", Harness: Name, Model: "provider/model",
-		WorkingDirectory: root, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined,
-	}}
+	observations := &observationSink{}
+	request := ports.PreparationRequest{Intent: ports.StartFresh, Observations: observations,
+		ActionCredential: &ports.ActionCredentialMaterial{ExecutionID: "execution_opencode", Generation: 1,
+			DeliveryID: "delivery-opencode", Secret: []byte("provider-secret-value"), ExpiresAt: time.Now().Add(time.Hour)},
+		Spec: model.ResolvedExecutionSpec{
+			ExecutionID: "execution_opencode", Harness: Name, Model: "provider/model",
+			WorkingDirectory: root, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined,
+		}}
 	prepared, err := provider.Prepare(context.Background(), request)
 	require.NoError(t, err)
 	description := prepared.Describe()
@@ -60,12 +76,34 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 	require.Equal(t, []model.SandboxMode{model.SandboxUnconfined}, description.Requirements.Policy.SupportedSandbox)
 	require.True(t, description.EffectivePolicy.SandboxEnforced,
 		"the explicit absence of confinement is preserved without claiming native rules are a sandbox")
+	require.NotNil(t, description.AccessDelivery)
+	require.NotContains(t, string(description.Evidence.Payload), "provider-secret-value")
+	recorded, err := decodeEvidence(description.Evidence)
+	require.NoError(t, err)
+	require.NotEmpty(t, recorded.PasswordFile)
+	serverPassword, err := os.ReadFile(recorded.PasswordFile)
+	require.NoError(t, err)
+	require.NotEmpty(t, serverPassword)
+	require.NotContains(t, string(description.Evidence.Payload), string(serverPassword))
+	info, err := os.Stat(recorded.PasswordFile)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	access := &model.ExecutionAccessBinding{ExecutionID: request.Spec.ExecutionID, Generation: 1,
+		DeliveryID: "delivery-opencode", State: model.ExecutionAccessSuspended, ExpiresAt: request.ActionCredential.ExpiresAt}
 
 	permit := &testPermit{execution: request.Spec.ExecutionID, operation: "operation_launch"}
 	released, err := prepared.Release(context.Background(), permit)
 	require.NoError(t, err)
 	require.True(t, permit.consumed.Load())
 	require.Equal(t, ports.ReleaseStarted, released.State)
+	require.Len(t, observations.values, 1)
+	require.Equal(t, ports.PrimaryContextInitial, observations.values[0].Disposition)
+	require.Eventually(t, func() bool {
+		value, readErr := os.ReadFile(bootstrapPath)
+		return readErr == nil && strings.Contains(string(value), agentSocket) &&
+			strings.Contains(string(value), "provider-secret-value") &&
+			!strings.Contains(string(value), "TCLAUDE_BACKEND_CREDENTIAL=provider-secret-value")
+	}, time.Second, 10*time.Millisecond)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -74,11 +112,13 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 
 	preparedRecovery, err := provider.Recover(context.Background(), ports.RecoveryRequest{
 		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: description.Evidence,
+		Attempt: request.Spec.Attempt, Access: access, Observations: observations,
 	})
 	require.NoError(t, err)
 	require.Equal(t, ports.RecoveryControlled, preparedRecovery.State,
 		"the evidence persisted before release must rediscover the marked server and its private session")
 	require.Equal(t, "ses_test", preparedRecovery.Observation.NativeConversation.Reference)
+	require.NotNil(t, preparedRecovery.AccessProof)
 
 	observation, err := released.Runtime.Observe(context.Background())
 	require.NoError(t, err)
@@ -108,16 +148,102 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 
 	recovered, err := provider.Recover(context.Background(), ports.RecoveryRequest{
 		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: released.Evidence,
+		Attempt: request.Spec.Attempt, Access: access, Observations: observations,
 	})
 	require.NoError(t, err)
 	require.Equal(t, ports.RecoveryControlled, recovered.State)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	controlled := recovered.Runtime.(*Runtime)
+	_, exited, err := controlled.process.Stop(ctx, true)
+	require.NoError(t, err)
+	require.True(t, exited)
+	observation, err = recovered.Runtime.Observe(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, ports.WorkloadExited, observation.Workload)
+	require.NoFileExists(t, description.AccessDelivery.Resource)
+	require.NoFileExists(t, recorded.PasswordFile)
+	afterCleanup, err := provider.Recover(context.Background(), ports.RecoveryRequest{
+		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: released.Evidence,
+		Attempt: request.Spec.Attempt, Access: access, Observations: observations,
+	})
+	require.NoError(t, err)
+	require.Equal(t, ports.RecoveryExited, afterCleanup.State,
+		"confirmed exit remains recoverable after resource cleanup")
 	stopped, err := recovered.Runtime.Stop(ctx, ports.StopRequest{Force: true})
 	require.NoError(t, err)
-	require.True(t, stopped.Acknowledged)
 	require.True(t, stopped.Exited)
+}
+
+func TestOpenCodeResetPublishesConfirmedPrimaryRotation(t *testing.T) {
+	root, executable := prepareOpenCodeHelper(t, "rotation")
+	sink := &observationSink{}
+	provider, err := New(Config{Executable: executable, PrivateRoot: root,
+		Environment: []string{"OPENCODE_TEST_BINARY=" + os.Args[0], "OPENCODE_TEST_ROTATE=1"}})
+	require.NoError(t, err)
+	request := ports.PreparationRequest{Intent: ports.StartFresh, Observations: sink, Spec: model.ResolvedExecutionSpec{
+		ExecutionID: "execution_rotation", Attempt: 3, Harness: Name, WorkingDirectory: root,
+		Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined,
+	}}
+	prepared, err := provider.Prepare(context.Background(), request)
+	require.NoError(t, err)
+	released, err := prepared.Release(context.Background(), &testPermit{execution: request.Spec.ExecutionID, operation: "operation_rotation"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, _ = released.Runtime.Stop(ctx, ports.StopRequest{Force: true})
+	})
+	require.Equal(t, "ses_1", sink.values[0].NextBinding.Reference)
+
+	changed, err := released.Runtime.ChangeContext(context.Background(), ports.ContextChange{
+		Intent: ports.ContextReset, ExpectedConversation: "conversation_before", ExpectedAssociationRevision: 5,
+		TransitionCorrelation: "transition-issued-by-app",
+	})
+	require.NoError(t, err)
+	require.Equal(t, ports.EffectAccepted, changed.Disposition)
+	require.Equal(t, "ses_2", changed.NativeConversation.Reference)
+	require.Len(t, sink.values, 2)
+	require.Equal(t, ports.PrimaryContextReset, sink.values[1].Disposition)
+	require.Equal(t, "ses_1", sink.values[1].PriorBinding.Reference)
+	require.Equal(t, "ses_2", sink.values[1].NextBinding.Reference)
+	require.Equal(t, "transition-issued-by-app", sink.values[1].TransitionCorrelation)
+	require.Equal(t, model.ConversationID("conversation_before"), sink.values[1].ExpectedConversation)
+	require.Equal(t, model.Revision(5), sink.values[1].ExpectedAssociationRevision)
+	require.Equal(t, sink.values[0].ProviderOrder, sink.values[1].PriorProviderOrder)
+}
+
+func TestOpenCodeRejectsNestedSessionAsPrimary(t *testing.T) {
+	root, executable := prepareOpenCodeHelper(t, "nested")
+	sink := &observationSink{}
+	provider, err := New(Config{Executable: executable, PrivateRoot: root,
+		Environment: []string{"OPENCODE_TEST_BINARY=" + os.Args[0], "OPENCODE_TEST_PARENT=ses_parent"}})
+	require.NoError(t, err)
+	request := ports.PreparationRequest{Intent: ports.StartFresh, Observations: sink, Spec: model.ResolvedExecutionSpec{
+		ExecutionID: "execution_nested", Attempt: 9, Harness: Name, WorkingDirectory: root,
+		Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined,
+	}}
+	prepared, err := provider.Prepare(context.Background(), request)
+	require.NoError(t, err)
+	released, err := prepared.Release(context.Background(), &testPermit{execution: request.Spec.ExecutionID, operation: "operation_nested"})
+	require.ErrorContains(t, err, "invalid native session")
+	require.Equal(t, ports.ReleaseUncertain, released.State)
+	require.Empty(t, sink.values)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, _ = released.Runtime.Stop(ctx, ports.StopRequest{Force: true})
+}
+
+func prepareOpenCodeHelper(t *testing.T, name string) (string, string) {
+	t.Helper()
+	root, err := os.MkdirTemp("/tmp", "tclaude-opencode-"+name+"-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
+	executable := filepath.Join(root, "opencode-fake")
+	script := "#!/bin/sh\nexec \"$OPENCODE_TEST_BINARY\" -test.run=TestOpenCodeServerHelper -- \"$@\"\n"
+	require.NoError(t, os.WriteFile(executable, []byte(script), 0o700))
+	return root, executable
 }
 
 func TestProviderRefusesConfinementInsteadOfDowngrading(t *testing.T) {
@@ -145,7 +271,7 @@ func TestContinuationReappliesSupervisedApproval(t *testing.T) {
 		Environment: []string{"OPENCODE_TEST_BINARY=" + os.Args[0]}})
 	require.NoError(t, err)
 
-	automatic := ports.PreparationRequest{Intent: ports.StartFresh, Spec: model.ResolvedExecutionSpec{
+	automatic := ports.PreparationRequest{Intent: ports.StartFresh, Observations: &observationSink{}, Spec: model.ResolvedExecutionSpec{
 		ExecutionID: "execution_automatic", Harness: Name, WorkingDirectory: root,
 		Approval: model.ApprovalAutomatic, Sandbox: model.SandboxUnconfined,
 	}}
@@ -161,7 +287,7 @@ func TestContinuationReappliesSupervisedApproval(t *testing.T) {
 	prior, err := decodeEvidence(first.Evidence)
 	require.NoError(t, err)
 	supervised := ports.PreparationRequest{
-		Intent: ports.StartContinue,
+		Intent: ports.StartContinue, Observations: &observationSink{},
 		Spec: model.ResolvedExecutionSpec{ExecutionID: "execution_supervised", Harness: Name,
 			WorkingDirectory: root, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined},
 		Continuation:  &model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: "ses_test"},
@@ -185,7 +311,7 @@ func TestContinuationReappliesSupervisedApproval(t *testing.T) {
 	var recovered ports.RecoveryResult
 	require.Eventually(t, func() bool {
 		recovered, err = provider.Recover(context.Background(), ports.RecoveryRequest{
-			ExecutionID: supervised.Spec.ExecutionID, Spec: supervised.Spec, Evidence: description.Evidence,
+			ExecutionID: supervised.Spec.ExecutionID, Spec: supervised.Spec, Evidence: description.Evidence, Observations: &observationSink{},
 		})
 		return err == nil && recovered.State == ports.RecoveryControlled
 	}, 2*time.Second, 20*time.Millisecond,
@@ -215,6 +341,14 @@ func TestOpenCodeServerHelper(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:"+port)
 	require.NoError(t, err)
 	password := os.Getenv("OPENCODE_SERVER_PASSWORD")
+	if path := os.Getenv("OPENCODE_TEST_BOOTSTRAP"); path != "" {
+		credential, _ := os.ReadFile(os.Getenv("TCLAUDE_BACKEND_CREDENTIAL_FILE"))
+		value, _ := json.Marshal(map[string]string{
+			"socket": os.Getenv("TCLAUDE_BACKEND_SOCKET"), "credential": string(credential),
+			"credential_env": os.Getenv("TCLAUDE_BACKEND_CREDENTIAL"),
+		})
+		_ = os.WriteFile(path, value, 0o600)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/global/health", func(writer http.ResponseWriter, request *http.Request) {
 		if !validBasicAuth(request, password) {
@@ -234,7 +368,7 @@ func TestOpenCodeServerHelper(t *testing.T) {
 				_ = json.NewEncoder(writer).Encode([]any{})
 				return
 			}
-			_ = json.NewEncoder(writer).Encode([]any{map[string]any{"id": "ses_test", "permission": permissions}})
+			_ = json.NewEncoder(writer).Encode([]any{helperSession(request, "ses_test", permissions)})
 			return
 		}
 		var body struct {
@@ -242,7 +376,11 @@ func TestOpenCodeServerHelper(t *testing.T) {
 		}
 		_ = json.NewDecoder(request.Body).Decode(&body)
 		writeHelperPermission(body.Permission)
-		_ = json.NewEncoder(writer).Encode(map[string]any{"id": "ses_test", "permission": body.Permission})
+		sessionID := "ses_test"
+		if os.Getenv("OPENCODE_TEST_ROTATE") != "" {
+			sessionID = nextHelperSessionID()
+		}
+		_ = json.NewEncoder(writer).Encode(helperSession(request, sessionID, body.Permission))
 	})
 	mux.HandleFunc("/session/", func(writer http.ResponseWriter, request *http.Request) {
 		if !validBasicAuth(request, password) {
@@ -263,12 +401,38 @@ func TestOpenCodeServerHelper(t *testing.T) {
 			}
 			_ = json.NewDecoder(request.Body).Decode(&body)
 			writeHelperPermission(body.Permission)
-			_ = json.NewEncoder(writer).Encode(map[string]any{"id": "ses_test", "permission": body.Permission})
+			_ = json.NewEncoder(writer).Encode(helperSession(request, helperSessionIDFromPath(request.URL.Path), body.Permission))
 			return
 		}
-		_ = json.NewEncoder(writer).Encode(map[string]any{"id": "ses_test", "permission": readHelperPermission()})
+		_ = json.NewEncoder(writer).Encode(helperSession(request, helperSessionIDFromPath(request.URL.Path), readHelperPermission()))
 	})
 	require.NoError(t, http.Serve(listener, mux))
+}
+
+func helperSession(request *http.Request, id string, permission []permissionRule) map[string]any {
+	result := map[string]any{"id": id, "directory": request.URL.Query().Get("directory"), "permission": permission}
+	if parent := os.Getenv("OPENCODE_TEST_PARENT"); parent != "" {
+		result["parentID"] = parent
+	}
+	return result
+}
+
+func helperSessionIDFromPath(path string) string {
+	value := strings.TrimPrefix(path, "/session/")
+	if index := strings.IndexByte(value, '/'); index >= 0 {
+		value = value[:index]
+	}
+	return value
+}
+
+func nextHelperSessionID() string {
+	path := filepath.Join(os.Getenv("XDG_DATA_HOME"), "session-count")
+	value, _ := os.ReadFile(path)
+	count, _ := strconv.Atoi(string(value))
+	count++
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
+	_ = os.WriteFile(path, []byte(strconv.Itoa(count)), 0o600)
+	return fmt.Sprintf("ses_%d", count)
 }
 
 func helperPermissionPath() string {

@@ -30,11 +30,63 @@ type ResourceClaim struct {
 
 type PreparedDescription struct {
 	ExecutionID     model.ExecutionID
+	Attempt         model.AttemptGeneration
 	Topology        WorkloadTopology
 	Requirements    RuntimeRequirements
 	EffectivePolicy EffectivePolicy
 	Resources       []ResourceClaim
 	Evidence        model.ProviderEvidence
+	AccessDelivery  *ActionCredentialReceipt
+}
+
+// ActionCredentialMaterial is application-issued and transient. A cohesive
+// host/provider writes Secret to protected storage and must not retain it in
+// provider evidence, argv, environment values or logs.
+type ActionCredentialMaterial struct {
+	ExecutionID model.ExecutionID
+	Generation  model.AccessGeneration
+	DeliveryID  string
+	Secret      []byte
+	ExpiresAt   time.Time
+}
+
+// ActionCredentialReceipt contains only non-secret delivery evidence. Resource
+// is an opaque host-owned handle; providers may expose its path to the exact
+// workload but application and transport do not interpret it.
+type ActionCredentialReceipt struct {
+	ExecutionID  model.ExecutionID
+	Generation   model.AccessGeneration
+	DeliveryID   string
+	Resource     string
+	FileIdentity string
+	DeliveredAt  time.Time
+}
+
+type ActionCredentialDelivery interface {
+	PrepareActionCredential(context.Context, ActionCredentialMaterial) (ActionCredentialReceipt, error)
+	RotateActionCredential(context.Context, ActionCredentialReceipt, ActionCredentialMaterial) (ActionCredentialReceipt, error)
+	InspectActionCredential(context.Context, model.ExecutionAccessBinding) (ActionCredentialRecoveryProof, error)
+	RemoveActionCredential(context.Context, ActionCredentialReceipt) error
+}
+
+// ActionCredentialRecoveryProof is host-produced metadata about the protected
+// resource. It proves exact delivery identity/generation without returning or
+// persisting bearer plaintext in provider/domain evidence.
+type ActionCredentialRecoveryProof struct {
+	ExecutionID  model.ExecutionID
+	Generation   model.AccessGeneration
+	DeliveryID   string
+	Resource     string
+	FileIdentity string
+	InspectedAt  time.Time
+}
+
+// ActionCredentialProvider is an optional cohesive-provider capability. It is
+// separate from Provider so a provider that cannot deliver renewable protected
+// credentials cannot accidentally advertise execution-agent access.
+type ActionCredentialProvider interface {
+	Provider
+	ActionCredentials() ActionCredentialDelivery
 }
 
 type RuntimeRequirements struct {
@@ -108,10 +160,12 @@ const (
 )
 
 type PreparationRequest struct {
-	Spec          model.ResolvedExecutionSpec
-	Intent        StartIntent
-	Continuation  *model.NativeConversationEvidence
-	PriorEvidence model.ProviderEvidence
+	Spec             model.ResolvedExecutionSpec
+	Intent           StartIntent
+	Continuation     *model.NativeConversationEvidence
+	PriorEvidence    model.ProviderEvidence
+	ActionCredential *ActionCredentialMaterial
+	Observations     PrimaryObservationSink
 }
 
 type ProviderRegistry interface {
@@ -119,9 +173,12 @@ type ProviderRegistry interface {
 }
 
 type RecoveryRequest struct {
-	ExecutionID model.ExecutionID
-	Spec        model.ResolvedExecutionSpec
-	Evidence    model.ProviderEvidence
+	ExecutionID  model.ExecutionID
+	Spec         model.ResolvedExecutionSpec
+	Evidence     model.ProviderEvidence
+	Attempt      model.AttemptGeneration
+	Access       *model.ExecutionAccessBinding
+	Observations PrimaryObservationSink
 }
 
 type RecoveryState string
@@ -137,6 +194,40 @@ type RecoveryResult struct {
 	Runtime     Runtime
 	Observation Observation
 	Evidence    model.ProviderEvidence
+	Attempt     model.AttemptGeneration
+	AccessProof *ActionCredentialRecoveryProof
+}
+
+type PrimaryContextDisposition string
+
+const (
+	PrimaryContextInitial    PrimaryContextDisposition = "initial"
+	PrimaryContextContinuity PrimaryContextDisposition = "continuity"
+	PrimaryContextReset      PrimaryContextDisposition = "reset"
+	PrimaryContextUnresolved PrimaryContextDisposition = "unresolved"
+)
+
+// PrimaryContextEvidence is normalized trusted provider output. The sink is
+// bound by composition to an exact attempt; payload IDs remain correlation and
+// are checked again by application before a durable transition.
+type PrimaryContextEvidence struct {
+	ExecutionID                 model.ExecutionID
+	Attempt                     model.AttemptGeneration
+	Provider                    string
+	PrimaryCorrelation          string
+	Disposition                 PrimaryContextDisposition
+	PriorBinding                *model.NativeBinding
+	NextBinding                 *model.NativeBinding
+	TransitionCorrelation       string
+	ExpectedConversation        model.ConversationID
+	ExpectedAssociationRevision model.Revision
+	PriorProviderOrder          string
+	ProviderOrder               string
+	ObservedAt                  time.Time
+}
+
+type PrimaryObservationSink interface {
+	ObservePrimaryContext(context.Context, PrimaryContextEvidence) error
 }
 
 type Runtime interface {
@@ -223,6 +314,7 @@ type ContextChange struct {
 	Intent                      ContextChangeIntent
 	ExpectedConversation        model.ConversationID
 	ExpectedAssociationRevision model.Revision
+	TransitionCorrelation       string
 }
 
 type ContextChangeResult struct {
