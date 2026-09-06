@@ -307,6 +307,88 @@ func TestEnsureOpenCodeSessionPermissionAppendsOnlyWhenSuffixMissing(t *testing.
 	assert.True(t, openCodePermissionHasSuffix(current, expected))
 }
 
+func TestProjectOpenCodeExecutionBoundaryRequiresExactServerAndLaunch(t *testing.T) {
+	setupTestDB(t)
+	const (
+		sessionID  = "spwn-opencode-projection"
+		generation = "11111111111111111111111111111111"
+		paneID     = "%7"
+	)
+	root := t.TempDir()
+	boundary := session.ExecutionBoundary{
+		Version:               session.ExecutionBoundaryVersion,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		Harness:               session.ExecutionHarness{Name: harness.OpenCodeName},
+		OuterLayerRenderInput: &session.TclaudeLayerLaunchSpec{
+			Version: session.TclaudeLayerLaunchSpecVersion,
+			Contract: session.TclaudeLayerLaunchContract{
+				HarnessName: harness.OpenCodeName, StateRoot: root,
+			},
+		},
+		StateStoreIdentity: &harness.StateStoreIdentity{
+			Harness: harness.OpenCodeName, Namespace: "host-path:" + root,
+			StateRoot: root, Source: "explicit launch allocation",
+		},
+	}
+	boundaryRaw, err := json.Marshal(&boundary)
+	require.NoError(t, err)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: sessionID, ConvID: "ses_projection", TmuxSession: "tmux-projection",
+		Harness: harness.OpenCodeName, Status: "working", CreatedAt: time.Now().UTC(),
+	}))
+	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, generation))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		sessionID, generation, strings.Repeat("a", 64), paneID))
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: "ses_projection", ServerURL: "http://127.0.0.1:1234",
+		Password: "launch-secret", PID: 4242, Cwd: root,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		ExecutionBoundaryJSON: string(boundaryRaw), Transport: db.OpenCodeTransportLoopbackTCP,
+	}
+	require.NoError(t, db.UpsertOpenCodeRuntime(runtime))
+	launch := openCodeLaunchFromRuntime(runtime)
+	previousVerified := openCodeRuntimeVerified
+	previousAuthority := openCodePaneServerAuthority
+	openCodeRuntimeVerified = func(db.OpenCodeRuntime) bool { return true }
+	openCodePaneServerAuthority = func(string) (string, string, bool) {
+		return launch.ServerURL, launch.Password, true
+	}
+	t.Cleanup(func() {
+		openCodeRuntimeVerified = previousVerified
+		openCodePaneServerAuthority = previousAuthority
+	})
+	row, err := db.LoadSession(sessionID)
+	require.NoError(t, err)
+	projected, err := projectOpenCodeExecutionBoundary(launch, row)
+	require.NoError(t, err)
+	require.True(t, projected)
+	stored, err := db.SessionExecutionBoundary(sessionID)
+	require.NoError(t, err)
+	var projectedBoundary session.ExecutionBoundary
+	require.NoError(t, json.Unmarshal([]byte(stored), &projectedBoundary))
+	assert.Equal(t, generation, projectedBoundary.LaunchGeneration)
+
+	const successor = "22222222222222222222222222222222"
+	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, successor))
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		sessionID, successor, strings.Repeat("b", 64), "%8"))
+	replacement := runtime
+	replacement.ServerURL = "http://127.0.0.1:5678"
+	replacement.Password = "successor-secret"
+	replacement.PID = 5252
+	require.NoError(t, db.UpsertOpenCodeRuntime(replacement))
+	openCodePaneServerAuthority = func(string) (string, string, bool) {
+		return replacement.ServerURL, replacement.Password, true
+	}
+	projected, err = projectOpenCodeExecutionBoundary(launch, row)
+	require.NoError(t, err)
+	assert.False(t, projected, "a replaced server must not populate the successor generation")
+	stored, err = db.SessionExecutionBoundary(sessionID)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(stored), &projectedBoundary))
+	assert.Equal(t, generation, projectedBoundary.LaunchGeneration)
+}
+
 func TestReconcileOpenCodeRuntimeVerifiesPermissionOnHealthyServer(t *testing.T) {
 	setupTestDB(t)
 	const password = "private-password"

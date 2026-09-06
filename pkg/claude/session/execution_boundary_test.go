@@ -75,6 +75,24 @@ func TestBuildExecutionBoundaryRecordsInjectedCLIPathAndIdentity(t *testing.T) {
 	}
 }
 
+func TestBuildExecutionBoundaryFreezesStateStoreIdentity(t *testing.T) {
+	identity := harness.StateStoreIdentity{
+		Harness: harness.CopilotName, Namespace: "host-path:/launch/copilot",
+		StateRoot: "/launch/copilot", Source: harness.CopilotHomeEnvVar,
+	}
+	boundary, err := BuildExecutionBoundary(ExecutionBoundaryInput{
+		LaunchGeneration: "11111111111111111111111111111111",
+		HarnessName:      harness.CopilotName, HarnessLookupName: "copilot",
+		Environment: map[string]string{"PATH": "/usr/bin"}, StateStoreIdentity: &identity,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, boundary.StateStoreIdentity)
+	assert.Equal(t, identity, *boundary.StateStoreIdentity)
+	identity.StateRoot = "/mutated"
+	assert.Equal(t, "/launch/copilot", boundary.StateStoreIdentity.StateRoot,
+		"the execution boundary must own a copy of launch identity")
+}
+
 func TestBuildExecutionBoundaryResolvesHarnessFromInjectedPATH(t *testing.T) {
 	root := t.TempDir()
 	bin := filepath.Join(root, "bin")

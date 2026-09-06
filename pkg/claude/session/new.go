@@ -2246,7 +2246,23 @@ func runNew(params *NewParams) error {
 		}
 	}()
 	var layerSpec TclaudeLayerLaunchSpec
+	var stateStoreIdentity *harness.StateStoreIdentity
 	if outerLayer && tclaudeLayerWrapsPane(h.Name) {
+		stateRoot := ""
+		var preLaunch []sandboxpolicy.PreLaunchBlock
+		if effectiveSandbox != nil {
+			preLaunch = effectiveSandbox.Effective.PreLaunch
+		}
+		captured, captureErr := captureLaunchStateStoreIdentity(h, additionalEnv, nil)
+		if captureErr != nil {
+			slog.Warn("could not capture harness state-store identity",
+				"session_id", sessionID, "harness", h.Name, "error", captureErr)
+		} else if captured != nil {
+			stateRoot = captured.StateRoot
+			if len(preLaunch) == 0 {
+				stateStoreIdentity = captured
+			}
+		}
 		spec, specErr := BuildTclaudeLayerLaunchSpec(TclaudeLayerLaunchInput{
 			HarnessName:      h.Name,
 			Cwd:              cwd,
@@ -2262,11 +2278,26 @@ func runNew(params *NewParams) error {
 			DarwinRouteReservation: darwinRouteReservation,
 			RouteHelper:            routeHelper,
 			HarnessReadPaths:       harnessReadPaths,
+			StateRoot:              stateRoot,
 		})
 		if specErr != nil {
 			return fmt.Errorf("build tclaude-layer launch spec: %w", specErr)
 		}
 		layerSpec = spec
+		if stateStoreIdentity != nil {
+			// The renderer canonicalizes the selected root (including stable
+			// symlink parents). Namespace the canonical contract path so two
+			// launch spellings of the same store cannot become distinct stores.
+			stateStoreIdentity.StateRoot = spec.Contract.StateRoot
+			stateStoreIdentity.Namespace = "host-path:" + spec.Contract.StateRoot
+			if validateErr := h.StateStore.ValidateStateStoreIdentity(
+				harness.FrozenStateStoreContract{
+					HarnessName: spec.Contract.HarnessName,
+					StateRoot:   spec.Contract.StateRoot,
+				}, *stateStoreIdentity); validateErr != nil {
+				stateStoreIdentity = nil
+			}
+		}
 		if prepareErr := PrepareTclaudeLayerHarnessState(layerSpec); prepareErr != nil {
 			return fmt.Errorf("prepare tclaude-layer launch state: %w", prepareErr)
 		}
@@ -2325,6 +2356,7 @@ func runNew(params *NewParams) error {
 		HarnessRuntimeRoots:   harnessReadPaths,
 		Cwd:                   cwd,
 		Environment:           additionalEnv,
+		StateStoreIdentity:    stateStoreIdentity,
 	}
 	if stackedProof != nil {
 		// The nested engine's launch path is guest-only. Resolve the staged,
@@ -2681,9 +2713,13 @@ func runNew(params *NewParams) error {
 		// Publish only at the same successful launch-commit boundary as the row.
 		// Until here a relaunch retains its predecessor's last-known-good record;
 		// any persistence failure tears down this pane and leaves that record intact.
-		if err := db.SetSessionExecutionBoundary(sessionID, string(executionBoundaryJSON)); err != nil {
+		stored, storeErr := db.SetSessionExecutionBoundaryForLaunch(
+			sessionID, exitGeneration, tmuxSession, exitGuard.paneID,
+			string(executionBoundaryJSON),
+		)
+		if storeErr != nil || !stored {
 			slog.Warn("could not persist launch execution boundary",
-				"session_id", sessionID, "error", err)
+				"session_id", sessionID, "stored", stored, "error", storeErr)
 		}
 	}
 
@@ -2692,6 +2728,32 @@ func runNew(params *NewParams) error {
 	launchRowCommitted = true
 	darwinRouteCommitted = true
 	return announceAndAttach(fmt.Sprintf("Created session %s", tmuxSession), sessionID, tmuxSession, cwd, params.Detached)
+}
+
+func captureLaunchStateStoreIdentity(
+	h *harness.Harness,
+	additionalEnv map[string]string,
+	preLaunch []sandboxpolicy.PreLaunchBlock,
+) (*harness.StateStoreIdentity, error) {
+	if h == nil || h.StateStore == nil {
+		return nil, nil
+	}
+	// A pre-launch shell block runs after the composed environment and may
+	// mutate even an undeclared store selector. Keep such an execution
+	// explicitly unknown rather than certifying the pre-script value.
+	if len(preLaunch) > 0 {
+		return nil, nil
+	}
+	launchEnvironment := launchModelEnvironment(nil)
+	for name, value := range additionalEnv {
+		launchEnvironment[name] = value
+	}
+	identity, err := h.StateStore.CaptureStateStoreIdentity(
+		harness.StateStoreLaunch{Environment: launchEnvironment})
+	if err != nil {
+		return nil, err
+	}
+	return &identity, nil
 }
 
 func accessEnforcementOptionsFromLaunchNotices(

@@ -158,6 +158,11 @@ type Harness struct {
 	// harness has no reviewed implementation; callers preserve its launch
 	// posture rather than inferring support from the harness name.
 	HostControlSandbox HostControlSandboxContract
+	// StateStore captures the namespace of conversation references from the
+	// effective launch configuration and validates that identity against a
+	// frozen execution contract. nil means managed admission cannot establish
+	// a namespace for this harness.
+	StateStore StateStoreIdentityAdapter
 
 	// TmuxScrollback marks a harness that relies on tmux for scroll-back
 	// history rather than rendering its own. The spawn path turns tmux mouse

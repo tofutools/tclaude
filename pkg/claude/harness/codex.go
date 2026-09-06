@@ -44,6 +44,7 @@ func init() {
 		TclaudeLayerMode: SandboxDangerFull,
 		BuiltinOSSandbox: true,
 		NestedSandbox:    codexNestedSandbox{},
+		StateStore:       codexStateStoreIdentity(),
 		Approval:         codexApproval{},
 		// Codex has a guardian/reviewer subagent the experimental --auto-review
 		// opt-in can route approval prompts to (approvals_reviewer=auto_review).
