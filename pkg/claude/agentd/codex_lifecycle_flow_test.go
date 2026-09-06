@@ -93,7 +93,7 @@ func TestCodexAgent_SpawnMessageGracefulStop(t *testing.T) {
 
 	// Stop GRACEFULLY. The daemon resolves the conv's harness, sees a
 	// signal-exit key sequence, and injects Codex's keystroke-free
-	// double-ctrl-c quit (codexLifecycle.SignalExitKeys, TCL-1137) instead of
+	// double-ctrl-c quit used by the Codex runtime Stop adapter (TCL-1137) instead of
 	// typing `/quit`. The result must be "soft_stopped" — the lead's explicit
 	// ask is that this exercises the graceful path, not the
 	// killed_no_soft_exit hard-kill fallback.

@@ -730,41 +730,8 @@ type claudeLifecycle struct{}
 
 func (claudeLifecycle) RenameCommand() string        { return "/rename" }
 func (claudeLifecycle) CompactCommand() string       { return "/compact" }
-func (claudeLifecycle) SoftExitCommand() string      { return "/exit" }
 func (claudeLifecycle) RemoteControlCommand() string { return "/remote-control" }
 func (claudeLifecycle) FastModeCommand() string      { return "" }
-
-// Claude Code accepts /exit from its prompt without a preparatory key.
-func (claudeLifecycle) SoftExitPrefixKeys() []string { return nil }
-
-// Claude Code's keystroke-free soft exit: Escape, then four ctrl-c presses,
-// one settle apart. Measured in a real tmux pane against 2.1.226 (TCL-1137):
-//
-//   - Its quit is a double ctrl-c — the first press arms "Press Ctrl-C again to
-//     exit", a second press WITHIN THE WINDOW quits (status 0). The window was
-//     bracketed at ~0.8 s: a re-press 0.8 s later still quit, 0.9 s later did
-//     not. The production signal-exit key gap (agentd's signalExitKeyGap,
-//     330 ms) sits inside it with margin for delivery jitter.
-//   - The exit runs the SAME shutdown path as typed /exit: the SessionEnd hook
-//     fires with reason "prompt_input_exit" — identical to /exit — in every
-//     measured state (idle, text in the input box, mid-turn, permission dialog).
-//   - Mid-turn the first ctrl-c interrupts the turn back to the prompt, so a
-//     third press is needed to cover both the interrupt and the arm+quit. The
-//     fourth is margin for the ~0.8 s re-press window: under load a press can
-//     land late enough that an armed quit lapses, and an extra press gives the
-//     batch a second arm+quit pair without waiting for the next retry batch.
-//     A surplus press lands on a dead pane and is tolerated by the injector.
-//   - The leading Escape is why this is strictly SAFER than the typed path.
-//     With a permission dialog open, typed /exit + Enter selects the dialog's
-//     default ("Yes") and RUNS the pending tool instead of exiting; a bare
-//     ctrl-c is swallowed by the dialog (safe but does not exit). Escape
-//     dismisses the dialog first, so the following ctrl-c presses quit without
-//     approving anything. On an idle pane, or one holding a half-typed line,
-//     Escape is harmless (clears the buffer); mid-turn it interrupts — all
-//     states then converge on the same prompt the ctrl-c quit needs.
-func (claudeLifecycle) SignalExitKeys() []string {
-	return []string{"Escape", "C-c", "C-c", "C-c", "C-c"}
-}
 
 // claudeConvStore assembles conversations from Claude Code's storage
 // model — one cwd-indexed `.jsonl` per conv under ~/.claude/projects — by
