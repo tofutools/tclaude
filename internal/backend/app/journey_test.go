@@ -130,9 +130,9 @@ func TestWorkRunPinsRevisionsAndBlocksSharedHistoryAndWorkspaceCleanup(t *testin
 
 func TestShellOwnsExactWorkspaceUntilStopped(t *testing.T) {
 	ctx := context.Background()
-	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "journey.db"))
+	dbPath := filepath.Join(t.TempDir(), "journey.db")
+	store, err := backendsqlite.Open(dbPath)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
 	host := &journeyWorkspaceHost{}
 	shell := &journeyShellHost{}
 	service := journeyService(store, newJourneyProvider(), host).WithShellHost(shell)
@@ -145,6 +145,14 @@ func TestShellOwnsExactWorkspaceUntilStopped(t *testing.T) {
 	require.Equal(t, model.ExecutionRunning, started.Execution.State)
 	_, err = service.RemoveCheckout(ctx, app.RemoveCheckoutRequest{Context: request(operator, "remove_active_shell"), WorkspaceID: workspace.Workspace.ID, ExpectedRevision: workspace.Workspace.Revision})
 	require.ErrorIs(t, err, app.ErrConflict)
+	require.NoError(t, store.Close())
+	store, err = backendsqlite.Open(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	service = journeyService(store, newJourneyProvider(), host).WithShellHost(shell)
+	recovered, err := service.Recover(ctx, app.RecoverRequest{Principal: operator})
+	require.NoError(t, err)
+	require.Equal(t, []model.ExecutionID{started.Execution.ID}, recovered.Controlled)
 	stopped, err := service.Stop(ctx, app.StopRequest{RequestContext: request(operator, "stop_shell"), ExecutionID: started.Execution.ID})
 	require.NoError(t, err)
 	require.Equal(t, model.ExecutionExited, stopped.Execution.State)
@@ -241,8 +249,8 @@ type journeyShellHost struct{}
 func (*journeyShellHost) PrepareShell(_ context.Context, request ports.ShellPreparationRequest) (ports.PreparedShell, error) {
 	return &journeyPreparedShell{request: request}, nil
 }
-func (*journeyShellHost) RecoverShell(context.Context, ports.ShellRecoveryRequest) (ports.ShellRecoveryResult, error) {
-	return ports.ShellRecoveryResult{}, ports.ErrHistoryUnsupported
+func (*journeyShellHost) RecoverShell(_ context.Context, request ports.ShellRecoveryRequest) (ports.ShellRecoveryResult, error) {
+	return ports.ShellRecoveryResult{State: ports.RecoveryControlled, Runtime: &journeyHostRuntime{id: request.ExecutionID}, Observation: ports.HostObservation{ObservedAt: time.Now(), Workload: ports.WorkloadRunning, Evidence: modelShellEvidence()}, Evidence: modelShellEvidence()}, nil
 }
 
 type journeyPreparedShell struct{ request ports.ShellPreparationRequest }
