@@ -437,6 +437,38 @@ test('Preact group-create owns clone mode and makes inherited attachment visible
   await mounted.cleanup();
 });
 
+test('leaving a clone preset does not silently restore clone semantics', async (t) => {
+  const mounted = await mountGroupCreate(t);
+  const { harness, host, state } = mounted;
+  state.openClone('alpha');
+  await flush(harness);
+
+  let origins = [...host.querySelectorAll('.group-create-origin-options button')];
+  origins[0].click();
+  await flush(harness);
+  origins = [...host.querySelectorAll('.group-create-origin-options button')];
+  origins[1].click();
+  await flush(harness);
+
+  assert.equal(host.querySelector('#group-create-with-agents'), null);
+  const model = await harness.importDashboardModule('js/group-create-model.js');
+  const groupSource = host.querySelector('#group-create-group-source');
+  choose(groupSource, 'beta');
+  await harness.act(() => harness.fireEvent(groupSource, 'change'));
+  await harness.input(host.querySelector('#group-create-name'), 'beta-prefill');
+
+  let submitted;
+  mounted.actions.submit = async (draft, template) => {
+    submitted = model.groupCreateRequest(draft, template);
+    return { kind: 'blank', name: draft.name, response: {} };
+  };
+  host.querySelector('#group-create-submit').click();
+  await flush(harness);
+  assert.equal(submitted.kind, 'blank');
+  assert.equal(submitted.body.descr, 'beta descr');
+  await mounted.cleanup();
+});
+
 test('Preact group-create synchronously blocks duplicate submit, blocks busy close, and retries errors', async (t) => {
   const first = deferred();
   let attempts = 0;

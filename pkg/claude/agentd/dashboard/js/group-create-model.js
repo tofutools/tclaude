@@ -130,7 +130,7 @@ export function selectGroupCreateTemplate(draft, templateName, {
     return {
       ...draft,
       origin: 'blank', template: '', source: '', nested: false, task: '',
-      cloneGroup: '',
+      cloneGroup: '', clonePreset: false,
       ...prefill,
     };
   }
@@ -149,6 +149,7 @@ export function selectGroupCreateTemplate(draft, templateName, {
     origin: 'template',
     template: template.name,
     source: source?.name || '',
+    cloneGroup: '', clonePreset: false,
     nested: !!source && draft.nested,
     ...prefill,
   };
@@ -199,7 +200,9 @@ export function selectGroupCreateOrigin(draft, origin, {
 } = {}) {
   if (origin === 'template') {
     const templateName = draft.template || templates[0]?.name || '';
-    if (!templateName) return { ...draft, origin: 'template', cloneGroup: '' };
+    if (!templateName) {
+      return { ...draft, origin: 'template', cloneGroup: '', clonePreset: false };
+    }
     return selectGroupCreateTemplate({ ...draft, cloneGroup: '' }, templateName, {
       templates, groups,
     });
@@ -219,7 +222,7 @@ export function selectGroupCreateOrigin(draft, origin, {
   return {
     ...draft,
     origin: 'blank', template: '', source: '', nested: false, task: '',
-    cloneGroup: '', ...prefill,
+    cloneGroup: '', clonePreset: false, ...prefill,
   };
 }
 
