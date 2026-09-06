@@ -917,7 +917,11 @@ func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentG
 				fallback = PermAgentSpawn
 			}
 			*r = *r.WithContext(context.WithValue(r.Context(), spawnAuthorityRefusalContextKey{}, spawnAuthorityRefusalContext{Slug: fallback}))
-			return requirePermissionEx(w, r, fallback, actx)
+			conv, ok := requirePermissionEx(w, r, fallback, actx)
+			if ok && conv != "" {
+				recordAuthorizedPermission(r, fallback, 0)
+			}
+			return conv, ok
 		}
 	}
 	// Let the shared gate handle humans, identity/state failures, one-shot
@@ -1181,7 +1185,8 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 	// authoritative and (like an undecided with no derived grant) falls through
 	// to the popup-or-403 path below.
 	allowed := false
-	_, preRefused := r.Context().Value(spawnAuthorityRefusalContextKey{}).(spawnAuthorityRefusalContext)
+	refusal, hasRefusal := r.Context().Value(spawnAuthorityRefusalContextKey{}).(spawnAuthorityRefusalContext)
+	preRefused := hasRefusal && refusal.Slug == perm
 	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, p.ConvID) ||
 		hasHumanApprovalContinuation(r, perm, p.ConvID) {
 		// A human already approved this exact operation; the standing
