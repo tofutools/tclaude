@@ -174,6 +174,7 @@ const (
 	OperationRemoveWorkspace OperationKind = "remove_workspace"
 	OperationStartWork       OperationKind = "start_work"
 	OperationCancelWork      OperationKind = "cancel_work"
+	OperationStartShell      OperationKind = "start_shell"
 )
 
 type OperationState string
