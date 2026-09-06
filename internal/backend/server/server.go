@@ -27,6 +27,10 @@ const marker = "tclaude replacement backend development state v1\n"
 
 // Initialize requires a new directory: existing data is never adopted implicitly.
 func Initialize(dir string) error {
+	return initialize(dir, marker)
+}
+
+func initialize(dir, format string) error {
 	if !filepath.IsAbs(dir) {
 		return errors.New("state directory must be absolute")
 	}
@@ -40,7 +44,7 @@ func Initialize(dir string) error {
 	if err := os.WriteFile(filepath.Join(dir, "operator.token"), []byte(hex.EncodeToString(token[:])), 0600); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "FORMAT"), []byte(marker), 0600)
+	return os.WriteFile(filepath.Join(dir, "FORMAT"), []byte(format), 0600)
 }
 
 // JourneyServices are composition-owned resources; requests never select host
