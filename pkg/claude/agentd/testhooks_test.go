@@ -681,6 +681,16 @@ func SetBgShellDescendantCommandLinesForTest(fn func(int) ([]string, bool)) func
 	return func() { bgShellDescendantCommandLines = previous }
 }
 
+// SetBackgroundMainProcessInstanceForTest replaces main-process identity
+// proof for background observation tests. Process enumeration and process
+// identity are separate evidence boundaries and are intentionally injectable
+// independently.
+func SetBackgroundMainProcessInstanceForTest(fn func(int) (string, bool)) func() {
+	previous := backgroundMainProcessInstance
+	backgroundMainProcessInstance = fn
+	return func() { backgroundMainProcessInstance = previous }
+}
+
 // SetAccessRequestNotifyForTest captures the production access-request
 // notification arguments without invoking a host desktop notifier.
 func SetAccessRequestNotifyForTest(notify func(string, string, string, string, string)) func() {

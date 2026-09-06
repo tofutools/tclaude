@@ -71,7 +71,7 @@ func terminalStatusForSessions(
 		} else {
 			out.SubagentCount = pick.SubagentCount
 		}
-		background := backgroundCountsOnRead(pick, true)
+		background := backgroundResolutionOnRead(pick, true).Counts
 		out.BgShellCount = background.Shells
 		out.MonitorCount = background.Monitors
 		switch {
