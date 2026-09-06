@@ -2,11 +2,71 @@ package ports
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
+
+// CallbackIngress is composition-owned ephemeral routing/authentication for
+// provider-native callbacks. It starts empty after backend restart; only after
+// recovering proof for the exact Execution attempt may a provider re-register
+// its retained opaque registration ID and digest of its retained private
+// credential. Credential plaintext remains entirely provider-private.
+type CallbackIngress interface {
+	RegisterCallback(context.Context, CallbackRegistration) (CallbackBinding, error)
+}
+
+type CallbackCredentialDigest [sha256.Size]byte
+
+type CallbackRegistration struct {
+	RegistrationID   string
+	ExecutionID      model.ExecutionID
+	Attempt          model.AttemptGeneration
+	CredentialDigest CallbackCredentialDigest
+	MaxRequestBytes  uint32
+	MaxResponseBytes uint32
+	Handler          NativeCallbackHandler
+}
+
+// NativeCallbackHandler receives raw bounded JSON only after ingress has
+// authenticated the private route credential. Generic transport does not
+// interpret provider payloads or manufacture normalized provenance.
+type NativeCallbackHandler interface {
+	HandleNativeCallback(context.Context, RawNativeCallback) (RawNativeCallbackResponse, error)
+}
+
+type RawNativeCallback struct {
+	Body       []byte
+	ReceivedAt time.Time
+}
+
+type RawNativeCallbackResponse struct {
+	StatusCode  int
+	ContentType string
+	Body        []byte
+}
+
+type CallbackBinding struct {
+	RegistrationID string
+	ExecutionID    model.ExecutionID
+	Attempt        model.AttemptGeneration
+	// Endpoint and Route are local routing metadata for provider preparation;
+	// they are not public application state or runtime authority.
+	Endpoint string
+	Route    string
+	Cleanup  CallbackCleanup
+}
+
+// CallbackCleanup is exact-registration and exact-attempt bound. Close is
+// idempotent and cannot remove a successor registration.
+type CallbackCleanup interface {
+	RegistrationID() string
+	ExecutionID() model.ExecutionID
+	Attempt() model.AttemptGeneration
+	Close(context.Context) error
+}
 
 // NativeGuidanceEvaluator is application-owned and bound at preparation to
 // one exact Execution attempt and current Conversation association revision.
