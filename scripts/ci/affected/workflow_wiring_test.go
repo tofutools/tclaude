@@ -74,6 +74,21 @@ func TestPlatformV2FocusedPolicyWiring(t *testing.T) {
 	if got := ci.Jobs["platform-v2-core"].If; got != platformV2Condition {
 		t.Errorf("ci.yml platform-v2-core if = %q, want %q", got, platformV2Condition)
 	}
+	focusedRun := ""
+	for _, step := range ci.Jobs["platform-v2-core"].Steps {
+		focusedRun += step.Run
+	}
+	for _, family := range []string{
+		"TestRequireSpawnPermission",
+		"TestCronSpawn",
+		"TestTriggerSpawn",
+		"TestSpawnAuthority",
+		"TestEvaluateSpawn",
+	} {
+		if !strings.Contains(focusedRun, family) {
+			t.Errorf("ci.yml platform-v2-core does not retain the %s family", family)
+		}
+	}
 	shards, ok := ci.Jobs["test"].Strategy.Matrix.Shard.(string)
 	if !ok {
 		t.Fatalf("ci.yml test shard is %T, want an expression string", ci.Jobs["test"].Strategy.Matrix.Shard)
@@ -110,7 +125,10 @@ type workflowPolicy struct {
 		} `yaml:"pull_request"`
 	} `yaml:"on"`
 	Jobs map[string]struct {
-		If       string `yaml:"if"`
+		If    string `yaml:"if"`
+		Steps []struct {
+			Run string `yaml:"run"`
+		} `yaml:"steps"`
 		Strategy struct {
 			Matrix struct {
 				Shard any `yaml:"shard"`
