@@ -197,17 +197,24 @@ type workAttemptView struct {
 	SettledAt   *time.Time             `json:"settled_at,omitempty"`
 }
 type workRunView struct {
-	ID                model.WorkRunID      `json:"id"`
-	RequestID         model.RequestID      `json:"request_id"`
-	Requester         workActor            `json:"requester"`
-	Spec              model.WorkRunSpec    `json:"spec"`
-	WorkspaceUseID    model.WorkspaceUseID `json:"workspace_use_id,omitempty"`
-	WorkerExecutionID model.ExecutionID    `json:"worker_execution_id,omitempty"`
-	State             model.WorkRunState   `json:"state"`
-	Attempts          []workAttemptView    `json:"attempts"`
-	Revision          model.Revision       `json:"revision"`
-	CreatedAt         time.Time            `json:"created_at"`
-	UpdatedAt         time.Time            `json:"updated_at"`
+	Graph                 *model.WorkGraph        `json:"graph,omitempty"`
+	DefinitionClosure     []model.DefinitionRef   `json:"definition_closure,omitempty"`
+	NodeAttempts          []model.WorkNodeAttempt `json:"node_attempts,omitempty"`
+	ControlState          model.WorkControlState  `json:"control_state,omitempty"`
+	Outcome               model.WorkOutcome       `json:"outcome,omitempty"`
+	Deadline              time.Time               `json:"deadline,omitempty"`
+	CancellationRequested bool                    `json:"cancellation_requested"`
+	ID                    model.WorkRunID         `json:"id"`
+	RequestID             model.RequestID         `json:"request_id"`
+	Requester             workActor               `json:"requester"`
+	Spec                  model.WorkRunSpec       `json:"spec"`
+	WorkspaceUseID        model.WorkspaceUseID    `json:"workspace_use_id,omitempty"`
+	WorkerExecutionID     model.ExecutionID       `json:"worker_execution_id,omitempty"`
+	State                 model.WorkRunState      `json:"state"`
+	Attempts              []workAttemptView       `json:"attempts"`
+	Revision              model.Revision          `json:"revision"`
+	CreatedAt             time.Time               `json:"created_at"`
+	UpdatedAt             time.Time               `json:"updated_at"`
 }
 type workEvidenceView struct {
 	ID               model.WorkEvidenceID   `json:"id"`
@@ -248,7 +255,7 @@ func projectWork(result app.WorkRunResult) workResultView {
 	for _, e := range result.Evidence {
 		evidence = append(evidence, workEvidenceView{e.ID, e.WorkRunID, e.Step, e.Attempt, e.Kind, projectWorkActor(e.Reporter), e.ArtifactRevision, e.Passed, e.Detail, e.RecordedAt, e.Revision})
 	}
-	view := workResultView{Run: workRunView{run.ID, run.RequestID, projectWorkActor(run.Requester), run.Spec, run.WorkspaceUseID, run.WorkerExecutionID, run.State, attempts, run.Revision, run.CreatedAt, run.UpdatedAt}, Evidence: evidence}
+	view := workResultView{Run: workRunView{ID: run.ID, RequestID: run.RequestID, Requester: projectWorkActor(run.Requester), Spec: run.Spec, WorkspaceUseID: run.WorkspaceUseID, WorkerExecutionID: run.WorkerExecutionID, State: run.State, Attempts: attempts, Revision: run.Revision, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt, Graph: run.Graph, DefinitionClosure: run.DefinitionClosure, NodeAttempts: run.NodeAttempts, ControlState: run.ControlState, Outcome: run.Outcome, Deadline: run.Deadline, CancellationRequested: run.CancellationRequested}, Evidence: evidence}
 	if d := result.Decision; d != nil {
 		view.Decision = &workDecisionView{d.WorkRunID, d.Step, d.Attempt, d.Decision, projectWorkActor(d.Decider), d.Reason, d.DecidedAt, d.Revision}
 	}

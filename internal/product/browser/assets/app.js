@@ -84,6 +84,8 @@ function render(){
 async function selectTab(tab){
  for(const n of document.querySelectorAll('main > section'))n.hidden=n.id!==tab;
  for(const n of document.querySelectorAll('[data-tab]'))n.setAttribute('aria-current',String(n.dataset.tab===tab));
+ if(tab==='processes')await renderDefinitions();
+ if(tab==='decisions')await renderDecisions();
  if(tab==='access'){
   const data=await api('/v2/authority');const list=$('access-list');list.replaceChildren();
   for(const grant of data.Grants||[]){const row=el('div',undefined,'row');row.append(el('strong',grant.Action),el('span',grant.Subject.AgentID||grant.Subject.Kind),el('span',grant.Resource.Kind),button('Revoke',async()=>{await api(`/v2/authority/grants/${encodeURIComponent(grant.ID)}`,{expected_revision:grant.Revision},'DELETE');await selectTab('access')}));list.append(row)}
@@ -165,6 +167,7 @@ function startWork(read){
 }
 function workCard(result){
  const run=result.run,card=el('article',undefined,'card');card.append(el('strong',run.id),el('p',run.state),el('pre',run.spec.Brief||''));
+ for(const attempt of run.node_attempts||[]){const node=el('div',undefined,'row');node.append(el('strong',attempt.Ref.NodeID),el('span',attempt.State),el('span',attempt.Outcome||attempt.Detail||''));if(attempt.DecisionID)node.append(button('Open decision',()=>selectTab('decisions')));card.append(node)}
  for(const evidence of result.evidence||[])card.append(el('p',`${evidence.kind} · ${evidence.reporter.agent_id||evidence.reporter.kind}`),el('pre',evidence.detail));
  if(result.decision)card.append(el('strong',`${result.decision.decision}: ${result.decision.reason}`));
  const actions=el('div',undefined,'actions');
@@ -182,3 +185,36 @@ $('new-grant').onclick=()=>edit('Grant agent permission',[
  {name:'action',label:'Action',options:['message.send','status.read','execution.stop','execution.interact','execution.attach']},
  {name:'target',label:'Target agent',options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}
 ],async f=>{await api(`/v2/authority/grants/${encodeURIComponent(f.requestID)}`,{subject:{Kind:'agent',AgentID:f.subject},action:f.action,resource:{Kind:'agent',AgentID:f.target},expected_revision:0},'PUT');await selectTab('access')});
+
+async function renderDecisions(){
+ const results=await api('/v2/decisions'),list=$('decision-list');list.replaceChildren();
+ for(const result of results||[]){
+  const window=result.Window,card=el('article',undefined,'card');
+  card.append(el('h2',window.Question||'Decision'),el('p',`${window.Attempt.RunID} · ${window.Attempt.NodeID}`),el('p',`Expires ${new Date(window.ExpiresAt).toLocaleString()}`,'muted'));
+  card.append(button('Answer',()=>edit('Answer decision',[{name:'answer',label:'Answer',options:window.PermittedAnswers||[]},{name:'reason',label:'Reason',multiline:true}],async f=>{
+   await api('/v2/decisions/submit',{request_id:f.requestID,decision_id:window.ID,expected_window_revision:window.Revision,answer:f.answer,reason:f.reason});await renderDecisions();
+  })));
+  list.append(card);
+ }
+ if(!results?.length)empty(list,'No decisions awaiting your answer.');
+}
+async function renderDefinitions(){
+ const definitions=await api('/v2/definitions'),list=$('definition-list');list.replaceChildren();
+ for(const definition of definitions||[]){
+  const card=el('article',undefined,'card');card.append(el('h2',definition.Name),el('p',`${definition.Kind} · revision ${definition.Revision}`,'muted'));
+  card.append(button('Inspect definition',async()=>{const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID));card.append(el('pre',result.Revision.Source))}));
+  if(definition.Kind==='process')card.append(button('Start process',async()=>{
+   const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID));
+   const revision=result.Revision;
+   if(revision.Parameters?.length)throw new Error('This process requires typed parameters. Use the process start command with its pinned definition and explicit parameters.');
+   const fields=[{name:'workspace',label:'Workspace',options:(snapshot.workspaces||[]).filter(w=>w.State==='available').map(w=>({value:w.ID,label:w.Intent.Name||w.Observation.ActualPath||w.ID}))},{name:'minutes',label:'Maximum run time in minutes',value:'60'}];
+   edit('Start pinned process',fields,async f=>{
+    const minutes=Number(f.minutes);if(!Number.isFinite(minutes)||minutes<=0||minutes>10080)throw new Error('Choose a run duration between 1 and 10080 minutes.');
+    const programs=(revision.Process.Graph.Nodes||[]).filter(n=>n.Performer?.Program).map(n=>n.Performer.Program.Profile);
+    await api('/v2/processes',{request_id:f.requestID,id:f.requestID,start:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'process'},Scope:{WorkspaceID:f.workspace},AuthorizedProgramProfiles:programs,Deadline:new Date(Date.now()+minutes*60000).toISOString()}});
+   });
+  }));
+  list.append(card);
+ }
+ if(!definitions?.length)empty(list,'No saved definitions. Author a definition with the definition save command.');
+}
