@@ -71,6 +71,14 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"work_runs", "cancellation_reason", "TEXT NOT NULL DEFAULT ''"},
 		{"work_runs", "cancel_request_scope", "TEXT NOT NULL DEFAULT ''"},
 		{"work_runs", "cancel_request_id", "TEXT NOT NULL DEFAULT ''"},
+		{"work_runs", "graph_json", "BLOB"},
+		{"work_runs", "definition_closure_json", "BLOB"},
+		{"work_runs", "parameters_json", "BLOB"},
+		{"work_runs", "scope_json", "BLOB"},
+		{"work_runs", "authorized_programs_json", "BLOB"},
+		{"work_runs", "control_state", "TEXT NOT NULL DEFAULT ''"},
+		{"work_runs", "outcome", "TEXT NOT NULL DEFAULT ''"},
+		{"work_runs", "deadline", "INTEGER"},
 		{"operations", "principal_execution_id", "TEXT NOT NULL DEFAULT ''"},
 		{"operations", "request_scope", "TEXT NOT NULL DEFAULT 'operator'"},
 		{"operations", "principal_generation", "INTEGER NOT NULL DEFAULT 0"},
@@ -337,6 +345,14 @@ CREATE TABLE IF NOT EXISTS operation_authority (
   requested_configuration_json BLOB, admitted_source_kind TEXT NOT NULL DEFAULT '',
   admitted_source_id TEXT NOT NULL DEFAULT '', admitted_revision INTEGER NOT NULL DEFAULT 0
 );
+CREATE TABLE IF NOT EXISTS operation_additional_authority (
+  operation_id TEXT NOT NULL REFERENCES operations(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL, action TEXT NOT NULL,
+  resource_kind TEXT NOT NULL, resource_id TEXT NOT NULL DEFAULT '',
+  requested_configuration_json BLOB, admitted_source_kind TEXT NOT NULL DEFAULT '',
+  admitted_source_id TEXT NOT NULL DEFAULT '', admitted_revision INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY(operation_id, position)
+);
 CREATE TABLE IF NOT EXISTS effect_permits (
   operation_id TEXT PRIMARY KEY REFERENCES operations(id) ON DELETE CASCADE,
   consumed_at INTEGER
@@ -426,6 +442,107 @@ CREATE TABLE IF NOT EXISTS work_decisions (
   request_scope TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '',
   attempt INTEGER NOT NULL, decision TEXT NOT NULL, decider_json BLOB NOT NULL,
   reason TEXT NOT NULL, decided_at INTEGER NOT NULL, revision INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS definitions (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, head_revision_id TEXT NOT NULL,
+  tombstoned INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS definition_revisions (
+  id TEXT PRIMARY KEY, definition_id TEXT NOT NULL REFERENCES definitions(id), number INTEGER NOT NULL,
+	request_scope TEXT NOT NULL, request_id TEXT NOT NULL,
+  content_hash TEXT NOT NULL, schema_version INTEGER NOT NULL, compiler_version TEXT NOT NULL,
+  source TEXT NOT NULL, parameters_json BLOB NOT NULL, team_json BLOB, process_json BLOB,
+  dependencies_json BLOB NOT NULL, author_json BLOB NOT NULL, created_at INTEGER NOT NULL,
+  UNIQUE(definition_id,number), UNIQUE(definition_id,content_hash), UNIQUE(request_scope,request_id)
+);
+CREATE TABLE IF NOT EXISTS program_profiles (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, head_revision_id TEXT NOT NULL,
+  tombstoned INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS program_profile_revisions (
+  id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES program_profiles(id), number INTEGER NOT NULL,
+	request_scope TEXT NOT NULL, request_id TEXT NOT NULL,
+  content_hash TEXT NOT NULL, executable TEXT NOT NULL, argument_prefix_json BLOB NOT NULL,
+  environment_json BLOB NOT NULL, working_directory TEXT NOT NULL, sandbox TEXT NOT NULL,
+  timeout_ns INTEGER NOT NULL, output_limit_bytes INTEGER NOT NULL, effect_authority_json BLOB NOT NULL,
+  author_json BLOB NOT NULL, created_at INTEGER NOT NULL,
+  UNIQUE(profile_id,number), UNIQUE(profile_id,content_hash), UNIQUE(request_scope,request_id)
+);
+CREATE TABLE IF NOT EXISTS work_node_attempts (
+  work_run_id TEXT NOT NULL REFERENCES work_runs(id) ON DELETE CASCADE, node_id TEXT NOT NULL,
+  activation_id TEXT NOT NULL, attempt INTEGER NOT NULL, issuance_id TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL, performer_json BLOB, operation_id TEXT NOT NULL DEFAULT '',
+  execution_id TEXT NOT NULL DEFAULT '', ready_at INTEGER NOT NULL, retry_at INTEGER, deadline INTEGER NOT NULL,
+  retry_budget INTEGER NOT NULL, join_winner TEXT NOT NULL DEFAULT '', decision_id TEXT NOT NULL DEFAULT '',
+  outcome TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL, settled_at INTEGER,
+  PRIMARY KEY(work_run_id,node_id,activation_id,attempt)
+);
+CREATE INDEX IF NOT EXISTS work_node_attempts_ready ON work_node_attempts(state,ready_at,retry_at);
+CREATE UNIQUE INDEX IF NOT EXISTS work_node_attempts_issuance ON work_node_attempts(issuance_id) WHERE issuance_id <> '';
+CREATE TABLE IF NOT EXISTS work_node_evidence (
+  id TEXT PRIMARY KEY, request_scope TEXT NOT NULL, request_id TEXT NOT NULL,
+  work_run_id TEXT NOT NULL, node_id TEXT NOT NULL, activation_id TEXT NOT NULL,
+  attempt INTEGER NOT NULL, issuance_id TEXT NOT NULL, reporter_json BLOB NOT NULL,
+  kind TEXT NOT NULL, artifact_revision TEXT NOT NULL DEFAULT '', passed INTEGER,
+  disposition TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '', recorded_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL, UNIQUE(request_scope,request_id)
+);
+CREATE TABLE IF NOT EXISTS decision_windows (
+  id TEXT PRIMARY KEY, kind TEXT NOT NULL, source_revision INTEGER NOT NULL,
+  work_run_id TEXT NOT NULL DEFAULT '', node_id TEXT NOT NULL DEFAULT '', activation_id TEXT NOT NULL DEFAULT '',
+  attempt INTEGER NOT NULL DEFAULT 0, issuance_id TEXT NOT NULL DEFAULT '', audience_json BLOB NOT NULL,
+  question TEXT NOT NULL, permitted_answers_json BLOB NOT NULL, evidence_refs_json BLOB NOT NULL,
+  expires_at INTEGER NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS decision_submissions (
+  decision_id TEXT PRIMARY KEY REFERENCES decision_windows(id), request_scope TEXT NOT NULL,
+  request_id TEXT NOT NULL, expected_window_revision INTEGER NOT NULL, answer TEXT NOT NULL,
+  reason TEXT NOT NULL, evidence_refs_json BLOB NOT NULL, actor_json BLOB NOT NULL,
+  submitted_at INTEGER NOT NULL, UNIQUE(request_scope,request_id)
+);
+CREATE TABLE IF NOT EXISTS automation_rules (
+  id TEXT PRIMARY KEY, name TEXT NOT NULL, head_revision_id TEXT NOT NULL, enabled INTEGER NOT NULL,
+  tombstoned INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS automation_rule_revisions (
+  id TEXT PRIMARY KEY, rule_id TEXT NOT NULL REFERENCES automation_rules(id), number INTEGER NOT NULL,
+	request_scope TEXT NOT NULL, request_id TEXT NOT NULL,
+  content_hash TEXT NOT NULL, owner_json BLOB NOT NULL, delegation_json BLOB NOT NULL,
+  condition_json BLOB NOT NULL, action_json BLOB NOT NULL, policy_json BLOB NOT NULL,
+  dependencies_json BLOB NOT NULL, author_json BLOB NOT NULL, created_at INTEGER NOT NULL,
+  UNIQUE(rule_id,number), UNIQUE(rule_id,content_hash), UNIQUE(request_scope,request_id)
+);
+CREATE TABLE IF NOT EXISTS automation_occurrences (
+  id TEXT PRIMARY KEY, rule_id TEXT NOT NULL REFERENCES automation_rules(id),
+  rule_revision_id TEXT NOT NULL REFERENCES automation_rule_revisions(id), source_occurrence_key TEXT NOT NULL,
+	request_scope TEXT NOT NULL, request_id TEXT NOT NULL, requester_json BLOB NOT NULL,
+  scheduled_at INTEGER, event_at INTEGER, eligible_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+  state TEXT NOT NULL, operation_id TEXT NOT NULL DEFAULT '', work_run_id TEXT NOT NULL DEFAULT '',
+  deployment_id TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+	UNIQUE(rule_revision_id,source_occurrence_key), UNIQUE(request_scope,request_id)
+);
+CREATE TABLE IF NOT EXISTS automation_occurrence_recipients (
+  occurrence_id TEXT NOT NULL REFERENCES automation_occurrences(id) ON DELETE CASCADE,
+  agent_id TEXT NOT NULL, disposition TEXT NOT NULL, operation_id TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT '', PRIMARY KEY(occurrence_id,agent_id)
+);
+CREATE TABLE IF NOT EXISTS automation_condition_state (
+  rule_id TEXT PRIMARY KEY REFERENCES automation_rules(id), source_cursor TEXT NOT NULL DEFAULT '',
+  dwell_episode_id TEXT NOT NULL DEFAULT '', dwell_since INTEGER, cooldown_until INTEGER,
+  debounce_at INTEGER, debounce_payload BLOB, observed_at INTEGER NOT NULL, revision INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS team_deployments (
+  id TEXT PRIMARY KEY, definition_json BLOB NOT NULL, dependency_closure_json BLOB NOT NULL,
+  mission TEXT NOT NULL, parameters_json BLOB NOT NULL, group_id TEXT NOT NULL,
+  members_json BLOB NOT NULL, automation_rule_ids_json BLOB NOT NULL, work_run_id TEXT NOT NULL,
+  advisory_phase INTEGER NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL,
+  created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
 INSERT OR IGNORE INTO roles(id,name,actions_json,revision,created_at,updated_at)
 VALUES('group_owner','Owner','["status.read","inbox.read","inbox.mark_read","message.send","execution.launch","execution.interact","execution.attach","execution.stop","execution.context.change","agent.configuration.update","group.membership.manage"]',1,0,0);
@@ -722,6 +839,19 @@ func (s *Store) ConsumeRelease(ctx context.Context, executionID model.ExecutionI
 		if !decision.Allowed {
 			return app.ErrUnauthorized
 		}
+		additional, err := additionalOperationAuthorities(ctx, tx, operationID, request.Principal)
+		if err != nil {
+			return err
+		}
+		for _, requirement := range additional {
+			decision, err = authorizeTx(ctx, tx, requirement, at)
+			if err != nil {
+				return err
+			}
+			if !decision.Allowed {
+				return app.ErrUnauthorized
+			}
+		}
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE release_permits SET consumed_at=? WHERE execution_id=? AND operation_id=? AND consumed_at IS NULL AND EXISTS(SELECT 1 FROM executions WHERE id=? AND state=?) AND EXISTS(SELECT 1 FROM operations WHERE id=? AND state=?)`, nanos(at), executionID, operationID, executionID, model.ExecutionPrepared, operationID, model.OperationAdmitted)
 	if err != nil {
@@ -844,7 +974,7 @@ func (s *Store) Execution(ctx context.Context, id model.ExecutionID) (model.Exec
 }
 
 func (s *Store) RecoverableExecutions(ctx context.Context) ([]model.Execution, error) {
-	rows, err := s.db.QueryContext(ctx, executionSelect+` WHERE state IN (?,?,?,?) ORDER BY created_at`, model.ExecutionPrepared, model.ExecutionReleased, model.ExecutionRunning, model.ExecutionUnknown)
+	rows, err := s.db.QueryContext(ctx, executionSelect+` WHERE state IN (?,?,?,?) OR (workload_kind=? AND state IN (?,?) AND EXISTS(SELECT 1 FROM workspace_uses u WHERE u.execution_id=executions.id AND u.released_at IS NULL)) ORDER BY created_at`, model.ExecutionPrepared, model.ExecutionReleased, model.ExecutionRunning, model.ExecutionUnknown, model.ExecutionWorkloadProgram, model.ExecutionExited, model.ExecutionFailed)
 	if err != nil {
 		return nil, err
 	}
@@ -943,6 +1073,9 @@ func (s *Store) CreateMessage(ctx context.Context, in app.MessageAdmission) (app
 	} else if ok {
 		_ = tx.Commit()
 		return existing, nil
+	}
+	if err = requirePendingAutomationAction(ctx, tx, in.Message.Sender, model.AutomationSendMessage, "", in.Message.CreatedAt); err != nil {
+		return app.MessageAdmissionResult{}, err
 	}
 	for _, request := range in.Authority {
 		decision, err := authorizeTx(ctx, tx, request, in.Message.CreatedAt)
