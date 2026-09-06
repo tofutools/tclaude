@@ -60,13 +60,13 @@ func (h *Handler) attach(w http.ResponseWriter, r *http.Request) {
 	}
 	// Closing this view frees connection resources only. The application Stop
 	// operation remains the sole way this transport requests workload exit.
-	defer result.Attachment.Close()
+	defer func() { _ = result.Attachment.Close() }()
 	u := websocket.Upgrader{HandshakeTimeout: 10 * time.Second, CheckOrigin: sameOrigin}
 	conn, err := u.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	closed := make(chan struct{})
 	defer close(closed)
 	go func() {
@@ -82,7 +82,7 @@ func (h *Handler) attach(w http.ResponseWriter, r *http.Request) {
 	input := make(chan []byte, 4)
 	go func() {
 		defer close(inputDone)
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		for data := range input {
 			if _, err := io.Copy(result.Attachment, bytes.NewReader(data)); err != nil {
 				return
@@ -91,7 +91,7 @@ func (h *Handler) attach(w http.ResponseWriter, r *http.Request) {
 	}()
 	go func() {
 		defer close(outputDone)
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		buffer := make([]byte, 32<<10)
 		for {
 			n, readErr := result.Attachment.Read(buffer)
