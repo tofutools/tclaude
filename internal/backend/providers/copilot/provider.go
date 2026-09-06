@@ -1,0 +1,603 @@
+// Package copilot implements the replacement backend's terminal-authoritative
+// GitHub Copilot CLI provider.
+package copilot
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/tofutools/tclaude/internal/backend/host"
+	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/ports"
+	legacyharness "github.com/tofutools/tclaude/pkg/claude/harness"
+)
+
+const (
+	Name                   = "copilot"
+	NativeNamespace        = "github-copilot-cli"
+	evidenceVersion uint32 = 1
+)
+
+type Config struct {
+	Executable     string
+	TmuxExecutable string
+	PrivateRoot    string
+	// NativeHome is a durable provider-owned COPILOT_HOME. Empty selects
+	// PrivateRoot/native-home; an override must remain inside PrivateRoot.
+	NativeHome  string
+	AgentSocket string
+}
+
+type Provider struct {
+	executable      string
+	privateRoot     string
+	nativeHome      string
+	terminal        host.TerminalHost
+	credentials     host.ActionCredentialHost
+	agentSocket     string
+	observationRoot string
+	stateMu         sync.Mutex
+}
+
+func New(config Config) (*Provider, error) {
+	executable := config.Executable
+	if executable == "" {
+		executable = "copilot"
+	}
+	resolved, err := exec.LookPath(executable)
+	if err != nil {
+		return nil, fmt.Errorf("resolve Copilot executable: %w", err)
+	}
+	if !filepath.IsAbs(config.PrivateRoot) {
+		return nil, fmt.Errorf("copilot private root must be absolute")
+	}
+	nativeHome := config.NativeHome
+	if nativeHome == "" {
+		nativeHome = filepath.Join(config.PrivateRoot, "native-home")
+	}
+	if !filepath.IsAbs(nativeHome) || !pathWithin(config.PrivateRoot, nativeHome) {
+		return nil, fmt.Errorf("copilot native home must be an absolute provider-owned path inside private root")
+	}
+	return &Provider{
+		executable: resolved, privateRoot: config.PrivateRoot, nativeHome: filepath.Clean(nativeHome),
+		terminal:    host.TerminalHost{Executable: config.TmuxExecutable, PrivateRoot: filepath.Join(config.PrivateRoot, "terminals")},
+		credentials: host.ActionCredentialHost{PrivateRoot: filepath.Join(config.PrivateRoot, "action-credentials")},
+		agentSocket: config.AgentSocket, observationRoot: filepath.Join(config.PrivateRoot, "observations"),
+	}, nil
+}
+
+func (*Provider) Name() string                                        { return Name }
+func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
+func (p *Provider) History() ports.HistoryReader                      { return historyReader{provider: p} }
+
+type evidence struct {
+	ExecutionID      string                         `json:"execution_id"`
+	NativeID         string                         `json:"native_id"`
+	Intent           ports.StartIntent              `json:"intent"`
+	StateRoot        string                         `json:"state_root"`
+	RemoveOnAbort    bool                           `json:"remove_on_abort,omitempty"`
+	ContextReady     bool                           `json:"context_ready,omitempty"`
+	ProviderOrder    string                         `json:"provider_order,omitempty"`
+	Prepared         *host.PreparedTerminalIdentity `json:"prepared,omitempty"`
+	Terminal         *host.TerminalIdentity         `json:"terminal,omitempty"`
+	Access           *ports.ActionCredentialReceipt `json:"access,omitempty"`
+	ObservationSpool string                         `json:"observation_spool"`
+}
+
+type prepared struct {
+	provider      *Provider
+	request       ports.PreparationRequest
+	nativeID      string
+	stateRoot     string
+	removeOnAbort bool
+	terminal      *host.PreparedTerminal
+	spool         *host.ObservationSpool
+	access        *ports.ActionCredentialReceipt
+	description   ports.PreparedDescription
+}
+
+func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest) (ports.PreparedAttempt, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if request.Spec.Harness != Name {
+		return nil, fmt.Errorf("copilot provider cannot prepare harness %q", request.Spec.Harness)
+	}
+	if err := validateDirectory(request.Spec.WorkingDirectory); err != nil {
+		return nil, err
+	}
+	if request.Spec.Approval != model.ApprovalSupervised && request.Spec.Approval != model.ApprovalAutomatic {
+		return nil, fmt.Errorf("copilot provider does not support approval mode %q", request.Spec.Approval)
+	}
+	// Copilot's preview MXC wall does not confine built-in edits and managed
+	// policy can override it. Do not present that as the platform's enforced
+	// workspace/read-only sandbox.
+	if request.Spec.Sandbox != model.SandboxUnconfined {
+		return nil, fmt.Errorf("copilot provider requires explicitly selected %q; native preview sandbox does not enforce platform mode %q", model.SandboxUnconfined, request.Spec.Sandbox)
+	}
+	nativeID, stateRoot, removeOnAbort, err := p.prepareHistory(request)
+	if err != nil {
+		return nil, err
+	}
+	cleanupState := func() {
+		if removeOnAbort {
+			_ = os.RemoveAll(stateRoot)
+		}
+	}
+	if err := p.prepareStateRoot(stateRoot, request.Spec.WorkingDirectory); err != nil {
+		cleanupState()
+		return nil, err
+	}
+	var access *ports.ActionCredentialReceipt
+	if request.ActionCredential != nil {
+		if request.ActionCredential.ExecutionID != request.Spec.ExecutionID {
+			cleanupState()
+			return nil, fmt.Errorf("action credential does not match Copilot execution")
+		}
+		if !filepath.IsAbs(p.agentSocket) {
+			cleanupState()
+			return nil, fmt.Errorf("copilot agent API socket must be absolute for credential delivery")
+		}
+		receipt, deliveryErr := p.credentials.PrepareActionCredential(ctx, *request.ActionCredential)
+		if deliveryErr != nil {
+			cleanupState()
+			return nil, deliveryErr
+		}
+		access = &receipt
+	}
+	terminal, err := p.terminal.Prepare(string(request.Spec.ExecutionID))
+	if err != nil {
+		cleanupState()
+		if access != nil {
+			_ = p.credentials.RemoveActionCredential(context.Background(), *access)
+		}
+		return nil, err
+	}
+	spool, err := host.PrepareObservationSpool(p.observationRoot)
+	if err != nil {
+		_ = terminal.Abort()
+		cleanupState()
+		if access != nil {
+			_ = p.credentials.RemoveActionCredential(context.Background(), *access)
+		}
+		return nil, err
+	}
+	preparedIdentity := terminal.Identity()
+	initial, err := encodeEvidence(evidence{ExecutionID: string(request.Spec.ExecutionID), NativeID: nativeID, Intent: request.Intent, StateRoot: stateRoot, RemoveOnAbort: removeOnAbort, Prepared: &preparedIdentity, Access: access, ObservationSpool: spool.Directory()})
+	if err != nil {
+		_ = terminal.Abort()
+		_ = spool.Remove()
+		cleanupState()
+		if access != nil {
+			_ = p.credentials.RemoveActionCredential(context.Background(), *access)
+		}
+		return nil, err
+	}
+	return &prepared{provider: p, request: request, nativeID: nativeID, stateRoot: stateRoot, removeOnAbort: removeOnAbort, terminal: terminal, spool: spool, access: access,
+		description: ports.PreparedDescription{ExecutionID: request.Spec.ExecutionID, Attempt: request.Spec.Attempt, Topology: ports.TopologyTerminalAuthoritative,
+			Requirements:    ports.RuntimeRequirements{Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory, PrivateStorage: true, Terminal: &ports.TerminalRequirement{Interactive: true}, Policy: ports.PolicyRequirements{SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxUnconfined}}},
+			EffectivePolicy: ports.EffectivePolicy{Approval: request.Spec.Approval, Sandbox: request.Spec.Sandbox, ApprovalEnforced: true, SandboxEnforced: true},
+			Resources:       []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: terminal.ResourceKey()}, {Kind: ports.ResourceProcess, Key: stateRoot}}, Evidence: initial, AccessDelivery: access}}, nil
+}
+
+func (p *Provider) prepareHistory(request ports.PreparationRequest) (string, string, bool, error) {
+	switch request.Intent {
+	case ports.StartFresh:
+		return uuid.NewString(), p.nativeHome, false, nil
+	case ports.StartContinue:
+		if request.History == nil {
+			if request.Continuation == nil || request.Continuation.Namespace != NativeNamespace || request.Continuation.Reference == "" {
+				return "", "", false, fmt.Errorf("copilot continuation requires native conversation evidence")
+			}
+			prior, priorErr := decodeEvidence(request.PriorEvidence)
+			if priorErr != nil || prior.NativeID != request.Continuation.Reference || filepath.Clean(prior.StateRoot) != p.nativeHome {
+				return "", "", false, fmt.Errorf("copilot continuation evidence does not match provider-owned native state")
+			}
+			return prior.NativeID, prior.StateRoot, false, nil
+		}
+		if request.History == nil || request.History.Provider != Name || request.History.Native.Namespace != NativeNamespace {
+			return "", "", false, fmt.Errorf("copilot continuation requires application-resolved history")
+		}
+		token, err := decodeSourceToken(request.History.SourceToken)
+		if err != nil || token.SessionID != request.History.Native.Reference || filepath.Clean(token.StateRoot) != p.nativeHome {
+			return "", "", false, fmt.Errorf("copilot continuation history evidence is invalid")
+		}
+		if err := verifyHistorySelection(*request.History, token); err != nil {
+			return "", "", false, err
+		}
+		return token.SessionID, token.StateRoot, false, nil
+	case ports.StartFork:
+		return "", "", false, ports.ErrHistoryUnsupported
+	default:
+		return "", "", false, fmt.Errorf("unsupported start intent %q", request.Intent)
+	}
+}
+
+func (p *Provider) prepareStateRoot(root, cwd string) error {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
+	if err := os.MkdirAll(filepath.Join(root, "hooks"), 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(root, 0o700); err != nil {
+		return err
+	}
+	hooks := map[string]any{"version": 1, "hooks": map[string]any{"sessionStart": []any{map[string]any{"type": "command", "exec": "/bin/sh", "args": []string{"-c", observationCommand}}}}}
+	raw, err := json.Marshal(hooks)
+	if err != nil {
+		return err
+	}
+	if err := host.WriteProtectedFile(filepath.Join(root, "hooks", "tclaude-observation.json"), raw); err != nil {
+		return err
+	}
+	return legacyharness.EnsureCopilotDirTrustedForLaunch(func(key string) string {
+		if key == "COPILOT_HOME" {
+			return root
+		}
+		return ""
+	}, filepath.Dir(root), cwd)
+}
+
+func (p *prepared) Describe() ports.PreparedDescription { return p.description }
+func (p *prepared) Abort(ctx context.Context) error {
+	err := p.terminal.Abort()
+	err = errors.Join(err, p.spool.Remove())
+	if p.access != nil {
+		err = errors.Join(err, p.provider.credentials.RemoveActionCredential(ctx, *p.access))
+	}
+	if p.removeOnAbort {
+		err = errors.Join(err, os.RemoveAll(p.stateRoot))
+	}
+	return err
+}
+func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (ports.ReleaseResult, error) {
+	if permit == nil || permit.ExecutionID() != p.request.Spec.ExecutionID {
+		return ports.ReleaseResult{}, fmt.Errorf("release permit does not match execution")
+	}
+	if err := permit.Consume(ctx); err != nil {
+		return ports.ReleaseResult{}, fmt.Errorf("consume release permit: %w", err)
+	}
+	terminal, err := p.terminal.Release(host.ProcessSpec{Executable: p.provider.executable, Args: p.argv(), Directory: p.request.Spec.WorkingDirectory, Env: p.runtimeEnvironment()})
+	if err != nil {
+		if terminal != nil {
+			r := p.runtime(terminal)
+			evidence, _ := r.providerEvidence()
+			return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: r, Evidence: evidence}, err
+		}
+		_ = p.spool.Remove()
+		if p.access != nil {
+			_ = p.provider.credentials.RemoveActionCredential(context.Background(), *p.access)
+		}
+		if p.removeOnAbort {
+			_ = os.RemoveAll(p.stateRoot)
+		}
+		return ports.ReleaseResult{}, err
+	}
+	r := p.runtime(terminal)
+	evidence, e := r.providerEvidence()
+	if e != nil {
+		return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: r}, e
+	}
+	return ports.ReleaseResult{State: ports.ReleaseStarted, Runtime: r, Evidence: evidence}, nil
+}
+func (p *prepared) argv() []string {
+	args := []string{"--no-remote", "--no-remote-export"}
+	if p.request.Intent == ports.StartContinue {
+		args = append(args, "--resume="+p.nativeID)
+	} else {
+		args = append(args, "--session-id", p.nativeID)
+	}
+	if p.request.Spec.Model != "" {
+		args = append(args, "--model", p.request.Spec.Model)
+	}
+	if p.request.Spec.Approval == model.ApprovalAutomatic {
+		args = append(args, "--allow-all-tools", "--no-ask-user")
+	}
+	return args
+}
+func (p *prepared) runtimeEnvironment() []string {
+	result := []string{"COPILOT_HOME=" + p.stateRoot, "COPILOT_ALLOW_ALL=", "TCLAUDE_OBSERVATION_SPOOL=" + p.spool.Directory(), "TCLAUDE_BACKEND_CREDENTIAL_FILE=", "TCLAUDE_BACKEND_SOCKET="}
+	if p.access != nil {
+		result = append(result, "TCLAUDE_BACKEND_CREDENTIAL_FILE="+p.access.Resource, "TCLAUDE_BACKEND_SOCKET="+p.provider.agentSocket)
+	}
+	return result
+}
+func (p *prepared) runtime(t *host.Terminal) *Runtime {
+	return &Runtime{provider: p.provider, executionID: p.request.Spec.ExecutionID, attempt: p.request.Spec.Attempt, terminal: t, nativeID: p.nativeID, intent: p.request.Intent, stateRoot: p.stateRoot, observations: p.request.Observations, access: p.access, spool: p.spool}
+}
+
+func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (ports.RecoveryResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ports.RecoveryResult{}, err
+	}
+	recorded, err := decodeEvidence(request.Evidence)
+	if err != nil {
+		return ports.RecoveryResult{}, err
+	}
+	if recorded.ExecutionID != string(request.ExecutionID) || filepath.Clean(recorded.StateRoot) != p.nativeHome {
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
+	}
+	var terminal *host.Terminal
+	if recorded.Terminal != nil {
+		terminal, err = host.RecoverTerminal(p.terminal, *recorded.Terminal)
+	} else if recorded.Prepared != nil {
+		terminal, err = host.RecoverPreparedTerminal(p.terminal, *recorded.Prepared)
+	} else {
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
+	}
+	if errors.Is(err, os.ErrProcessDone) {
+		cleanup := host.RemoveObservationSpool(p.observationRoot, recorded.ObservationSpool)
+		if recorded.Access != nil {
+			cleanup = errors.Join(cleanup, p.credentials.RemoveActionCredential(ctx, *recorded.Access))
+		}
+		return ports.RecoveryResult{State: ports.RecoveryExited, Evidence: request.Evidence, Observation: ports.Observation{ObservedAt: time.Now(), Workload: ports.WorkloadExited, Context: ports.ContextUnknown, NativeConversation: nativeEvidence(recorded.NativeID)}}, cleanup
+	}
+	if err != nil {
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
+	}
+	spool, err := host.RecoverObservationSpool(p.observationRoot, recorded.ObservationSpool)
+	if err != nil {
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, err
+	}
+	var proof *ports.ActionCredentialRecoveryProof
+	if request.Access != nil {
+		if recorded.Access == nil || recorded.Access.DeliveryID != request.Access.DeliveryID {
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, nil
+		}
+		v, e := p.credentials.InspectActionCredential(ctx, *request.Access)
+		if e != nil || v.Resource != recorded.Access.Resource {
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, e
+		}
+		proof = &v
+	}
+	r := &Runtime{provider: p, executionID: request.ExecutionID, attempt: request.Attempt, terminal: terminal, nativeID: recorded.NativeID, intent: recorded.Intent, stateRoot: recorded.StateRoot, observations: request.Observations, access: recorded.Access, spool: spool, contextReady: recorded.ContextReady, providerOrder: recorded.ProviderOrder}
+	obs, _ := r.Observe(ctx)
+	return ports.RecoveryResult{State: ports.RecoveryControlled, Runtime: r, Observation: obs, Evidence: request.Evidence, Attempt: request.Attempt, AccessProof: proof}, nil
+}
+
+type Runtime struct {
+	provider      *Provider
+	executionID   model.ExecutionID
+	attempt       model.AttemptGeneration
+	terminal      *host.Terminal
+	nativeID      string
+	intent        ports.StartIntent
+	stateRoot     string
+	observations  ports.PrimaryObservationSink
+	access        *ports.ActionCredentialReceipt
+	spool         *host.ObservationSpool
+	contextReady  bool
+	providerOrder string
+	cleanupOnce   sync.Once
+	cleanupErr    error
+	mu            sync.Mutex
+}
+
+func (r *Runtime) ExecutionID() model.ExecutionID { return r.executionID }
+func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	observed := r.terminal.Observe()
+	var ingress error
+	if observed.Running {
+		ingress = r.consumeObservations(ctx)
+	}
+	out := ports.Observation{ObservedAt: time.Now(), Context: ports.ContextUnknown, NativeConversation: nativeEvidence(r.nativeID)}
+	switch {
+	case observed.Running:
+		out.Workload = ports.WorkloadRunning
+		out.AttachmentActive = r.terminal.AttachmentActive()
+		if r.contextReady {
+			out.Context = ports.ContextReady
+		}
+	case observed.Exited:
+		out.Workload = ports.WorkloadExited
+		out.ExitCode = observed.ExitCode
+		r.cleanup(ctx)
+	case observed.Unknown:
+		out.Workload = ports.WorkloadUnknown
+	}
+	e, err := r.providerEvidenceUnlocked()
+	out.Evidence = e
+	return out, errors.Join(ingress, err, r.cleanupErr)
+}
+func (r *Runtime) Interact(ctx context.Context, in ports.Interaction) (ports.InteractionResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if strings.TrimSpace(in.Text) == "" {
+		return ports.InteractionResult{Disposition: ports.EffectRefused}, nil
+	}
+	if err := r.terminal.SendLiteral(ctx, in.Text); err != nil {
+		e, _ := r.providerEvidenceUnlocked()
+		return ports.InteractionResult{Disposition: ports.EffectUnknown, Evidence: e}, err
+	}
+	e, err := r.providerEvidenceUnlocked()
+	return ports.InteractionResult{Disposition: ports.EffectAccepted, Evidence: e}, err
+}
+func (r *Runtime) Attach(ctx context.Context, request ports.AttachmentRequest) (ports.AttachmentResult, error) {
+	if request.Kind != ports.AttachmentTerminal {
+		return ports.AttachmentResult{Disposition: ports.EffectUnsupported}, nil
+	}
+	a, err := r.terminal.Attach(ctx)
+	if err != nil {
+		return ports.AttachmentResult{Disposition: ports.EffectRefused}, err
+	}
+	e, err := r.providerEvidence()
+	if err != nil {
+		_ = a.Close()
+		return ports.AttachmentResult{}, err
+	}
+	return ports.AttachmentResult{Disposition: ports.EffectAccepted, Attachment: terminalAttachment{a}, Evidence: e}, nil
+}
+func (r *Runtime) ChangeContext(context.Context, ports.ContextChange) (ports.ContextChangeResult, error) {
+	return ports.ContextChangeResult{Disposition: ports.EffectUnsupported}, nil
+}
+func (r *Runtime) Stop(ctx context.Context, request ports.StopRequest) (ports.StopResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ack, exited, err := r.terminal.Stop(ctx, request.Force)
+	if exited {
+		r.cleanup(ctx)
+		err = errors.Join(err, r.cleanupErr)
+	}
+	e, eerr := r.providerEvidenceUnlocked()
+	err = errors.Join(err, eerr)
+	d := ports.EffectAccepted
+	if err != nil {
+		d = ports.EffectUnknown
+	}
+	return ports.StopResult{Disposition: d, Acknowledged: ack, Exited: exited, Evidence: e}, err
+}
+func (r *Runtime) providerEvidence() (model.ProviderEvidence, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.providerEvidenceUnlocked()
+}
+func (r *Runtime) providerEvidenceUnlocked() (model.ProviderEvidence, error) {
+	id := r.terminal.Identity()
+	return encodeEvidence(evidence{ExecutionID: string(r.executionID), NativeID: r.nativeID, Intent: r.intent, StateRoot: r.stateRoot, ContextReady: r.contextReady, ProviderOrder: r.providerOrder, Terminal: &id, Access: r.access, ObservationSpool: r.spool.Directory()})
+}
+func (r *Runtime) cleanup(ctx context.Context) {
+	r.cleanupOnce.Do(func() {
+		if r.access != nil {
+			r.cleanupErr = errors.Join(r.cleanupErr, r.provider.credentials.RemoveActionCredential(ctx, *r.access))
+		}
+		if r.spool != nil {
+			r.cleanupErr = errors.Join(r.cleanupErr, r.spool.Remove())
+		}
+	})
+}
+
+type sessionStartEvent struct {
+	SessionID          string `json:"sessionId"`
+	SnakeSessionID     string `json:"session_id"`
+	HookEventName      string `json:"hookEventName"`
+	SnakeHookEventName string `json:"hook_event_name"`
+	Source             string `json:"source"`
+}
+
+func (r *Runtime) consumeObservations(ctx context.Context) error {
+	if r.spool == nil || r.observations == nil {
+		return nil
+	}
+	events, err := r.spool.ReadPending()
+	if err != nil {
+		return err
+	}
+	for _, sp := range events {
+		var event sessionStartEvent
+		if json.Unmarshal(sp.Payload, &event) != nil {
+			_ = r.spool.Acknowledge(sp.Order)
+			continue
+		}
+		nativeID := event.SessionID
+		if nativeID == "" {
+			nativeID = event.SnakeSessionID
+		}
+		hookName := event.HookEventName
+		if hookName == "" {
+			hookName = event.SnakeHookEventName
+		}
+		if (hookName != "" && !strings.EqualFold(hookName, "SessionStart")) || nativeID != r.nativeID {
+			_ = r.spool.Acknowledge(sp.Order)
+			continue
+		}
+		disposition := ports.PrimaryContextUnresolved
+		if !r.contextReady && ((r.intent == ports.StartFresh && (event.Source == "new" || event.Source == "startup")) || (r.intent == ports.StartContinue && event.Source == "resume")) {
+			disposition = ports.PrimaryContextInitial
+		}
+		e := ports.PrimaryContextEvidence{ExecutionID: r.executionID, Attempt: r.attempt, Provider: Name, PrimaryCorrelation: r.primaryCorrelation(), Disposition: disposition, NextBinding: nativeBinding(r.nativeID), PriorProviderOrder: r.providerOrder, ProviderOrder: sp.Order, ObservedAt: time.Now().UTC()}
+		if err := r.observations.ObservePrimaryContext(ctx, e); err != nil {
+			return err
+		}
+		r.providerOrder = sp.Order
+		if err := r.spool.Acknowledge(sp.Order); err != nil {
+			return err
+		}
+		if disposition == ports.PrimaryContextInitial {
+			r.contextReady = true
+		}
+	}
+	return nil
+}
+func (r *Runtime) primaryCorrelation() string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%d", r.spool.Directory(), r.executionID, r.attempt)))
+	return fmt.Sprintf("terminal:%x", sum[:16])
+}
+
+const observationCommand = `set -eu
+umask 077
+tmp=$(mktemp "$TCLAUDE_OBSERVATION_SPOOL/.event-XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+cat >"$tmp"
+name=${tmp##*/}; name=${name#.event-}
+mv "$tmp" "$TCLAUDE_OBSERVATION_SPOOL/event-$name"`
+
+type terminalAttachment struct{ io.ReadWriteCloser }
+
+func (terminalAttachment) Kind() ports.AttachmentKind { return ports.AttachmentTerminal }
+func nativeBinding(id string) *model.NativeBinding {
+	if id == "" {
+		return nil
+	}
+	return &model.NativeBinding{Namespace: NativeNamespace, Reference: id}
+}
+func nativeEvidence(id string) *model.NativeConversationEvidence {
+	if id == "" {
+		return nil
+	}
+	return &model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: id, ObservedAt: time.Now()}
+}
+func encodeEvidence(v evidence) (model.ProviderEvidence, error) {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return model.ProviderEvidence{}, err
+	}
+	return model.NewProviderEvidence(Name, evidenceVersion, raw)
+}
+func decodeEvidence(e model.ProviderEvidence) (evidence, error) {
+	if e.Provider != Name || e.Version != evidenceVersion {
+		return evidence{}, fmt.Errorf("unsupported Copilot evidence %q version %d", e.Provider, e.Version)
+	}
+	var v evidence
+	if err := json.Unmarshal(e.Payload, &v); err != nil {
+		return evidence{}, fmt.Errorf("decode Copilot evidence: %w", err)
+	}
+	return v, nil
+}
+func validateDirectory(path string) error {
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("working directory must be absolute")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("working directory is not a directory")
+	}
+	return nil
+}
+func pathWithin(root, path string) bool {
+	root = filepath.Clean(root)
+	path = filepath.Clean(path)
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+var _ ports.Provider = (*Provider)(nil)
+var _ ports.HistoryProvider = (*Provider)(nil)
+var _ ports.ActionCredentialProvider = (*Provider)(nil)
+var _ ports.PreparedAttempt = (*prepared)(nil)
+var _ ports.Runtime = (*Runtime)(nil)
