@@ -85,7 +85,7 @@ func TestPlatformV2FocusedPolicyWiring(t *testing.T) {
 		"TestObserveBackgroundWork",
 		"TestResolveBackgroundObservation",
 		"TestDashboardAndTerminalStatusShareReadOnlyBackgroundObservation",
-		"TestSessionReaper_(ProjectsFinishedShellWithoutDashboard|ExpiredBackgroundShellWithUnknownScanDoesNotEstablishIdle)",
+		"TestSessionReaper_(ProjectsFinishedShellWithoutDashboard|RefreshesLiveBackgroundLedgerBeforeStopWithoutDashboard|ExpiredBackgroundShellWithUnknownScanDoesNotEstablishIdle)",
 		"TestReconcileBackground",
 		"TestProjectSessionBackgroundLedgers",
 		"TestSetSessionStatusFromBackgroundProjection",

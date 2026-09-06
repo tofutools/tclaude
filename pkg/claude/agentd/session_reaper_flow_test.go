@@ -157,6 +157,130 @@ func TestSessionReaper_ProjectsFinishedShellWithoutDashboard(t *testing.T) {
 		"the projected transition has a single notification claim")
 }
 
+func TestSessionReaper_RefreshesLiveBackgroundLedgerBeforeStopWithoutDashboard(t *testing.T) {
+	statuses := []struct {
+		name        string
+		beforeSweep func(t *testing.T, conv, cwd, sessionID string)
+		wantStatus  string
+	}{
+		{
+			name:       "working",
+			wantStatus: session.StatusWorking,
+		},
+		{
+			name: "awaiting_permission",
+			beforeSweep: func(t *testing.T, conv, cwd, sessionID string) {
+				t.Helper()
+				require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+					HookEventName:    "Notification",
+					NotificationType: "permission_prompt",
+					Message:          "allow this?",
+					ConvID:           conv,
+					Cwd:              cwd,
+				}, sessionID))
+			},
+			wantStatus: session.StatusAwaitingPermission,
+		},
+	}
+	ledgers := []struct {
+		name       string
+		command    string
+		launchHook func(conv, cwd string) session.HookCallbackInput
+		age        func(*db.SessionRow)
+		seen       func(*db.SessionRow) time.Time
+		contains   func(*db.SessionRow) bool
+	}{
+		{
+			name:    "shell",
+			command: "/bin/sh -c npm run dev",
+			launchHook: func(conv, cwd string) session.HookCallbackInput {
+				return bgLaunchHook(conv, cwd, "npm run dev", "work-long-lived")
+			},
+			age: func(row *db.SessionRow) {
+				entry := db.ParseBgShellSet(row.BgShellsJSON)["work-long-lived"]
+				entry.Seen = time.Now().Add(-db.BgShellTTL - time.Minute)
+				row.BgShellsJSON = db.BgShellSet{"work-long-lived": entry}.Encode()
+			},
+			seen: func(row *db.SessionRow) time.Time {
+				return db.ParseBgShellSet(row.BgShellsJSON)["work-long-lived"].Seen
+			},
+			contains: func(row *db.SessionRow) bool {
+				_, ok := db.ParseBgShellSet(row.BgShellsJSON)["work-long-lived"]
+				return ok
+			},
+		},
+		{
+			name:    "monitor",
+			command: "/bin/sh -c gh pr checks 123 --watch",
+			launchHook: func(conv, cwd string) session.HookCallbackInput {
+				return monitorLaunchHook(conv, cwd, "gh pr checks 123 --watch", "work-long-lived", int64((24*time.Hour)/time.Millisecond))
+			},
+			age: func(row *db.SessionRow) {
+				entry := db.ParseMonitorSet(row.MonitorsJSON)["work-long-lived"]
+				entry.Seen = time.Now().Add(-db.MonitorTTL - time.Minute)
+				row.MonitorsJSON = db.MonitorSet{"work-long-lived": entry}.Encode()
+			},
+			seen: func(row *db.SessionRow) time.Time {
+				return db.ParseMonitorSet(row.MonitorsJSON)["work-long-lived"].Seen
+			},
+			contains: func(row *db.SessionRow) bool {
+				_, ok := db.ParseMonitorSet(row.MonitorsJSON)["work-long-lived"]
+				return ok
+			},
+		},
+	}
+	for _, status := range statuses {
+		for _, ledger := range ledgers {
+			t.Run(status.name+"_"+ledger.name, func(t *testing.T) {
+				t.Cleanup(agentd.ResetBgShellReconcileCacheForTest)
+				t.Cleanup(agentd.SetBackgroundMainProcessInstanceForTest(func(int) (string, bool) {
+					return "long-lived-process-" + status.name + "-" + ledger.name, true
+				}))
+				t.Cleanup(agentd.SetBgShellDescendantCommandLinesForTest(func(int) ([]string, bool) {
+					return []string{ledger.command}, true
+				}))
+
+				f := newFlow(t)
+				conv := "refresh-" + status.name + "-" + ledger.name + "-1111-2222"
+				sessionID := "spwn-refresh-" + status.name + "-" + ledger.name
+				cwd := f.TestCwd("refresh-" + status.name + "-" + ledger.name)
+				f.HaveAliveSession(conv, sessionID, "tmux-refresh-"+status.name+"-"+ledger.name, cwd)
+				require.NoError(t, session.ApplyHook(ledger.launchHook(conv, cwd), sessionID))
+				if status.beforeSweep != nil {
+					status.beforeSweep(t, conv, cwd, sessionID)
+				}
+
+				// Model a continuously live command whose last hook sighting crossed
+				// the ledger TTL while the main agent stayed busy or awaited input.
+				row, err := db.LoadSession(sessionID)
+				require.NoError(t, err)
+				require.Equal(t, status.wantStatus, row.Status)
+				ledger.age(row)
+				require.NoError(t, db.SaveSession(row))
+
+				reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+				reaper.TickAt(time.Now())
+				refreshed, err := db.LoadSession(sessionID)
+				require.NoError(t, err)
+				assert.Equal(t, status.wantStatus, refreshed.Status,
+					"ledger maintenance must not interpret a busy or awaiting agent as idle")
+				assert.WithinDuration(t, time.Now(), ledger.seen(refreshed), 5*time.Second,
+					"the daemon sweep refreshes the live command even outside an idle status")
+
+				// Stop uses the refreshed durable ledger through the production hook
+				// path, so it must retain the shell and hold main_agent_idle.
+				require.NoError(t, session.ApplyHook(session.HookCallbackInput{
+					HookEventName: "Stop", ConvID: conv, Cwd: cwd,
+				}, sessionID))
+				stopped, err := db.LoadSession(sessionID)
+				require.NoError(t, err)
+				assert.Equal(t, session.StatusMainAgentIdle, stopped.Status)
+				assert.True(t, ledger.contains(stopped), "Stop must preserve the refreshed live ledger entry")
+			})
+		}
+	}
+}
+
 func TestSessionReaper_ExpiredBackgroundShellWithUnknownScanDoesNotEstablishIdle(t *testing.T) {
 	f := newFlow(t)
 	t.Cleanup(agentd.ResetBgShellReconcileCacheForTest)
