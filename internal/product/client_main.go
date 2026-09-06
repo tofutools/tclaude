@@ -113,6 +113,7 @@ func ClientCommand() *cobra.Command {
 	root.AddCommand(read)
 	root.AddCommand(browserCommand(), migrationCommand(migration.Service{}))
 	registerManagement(root, call)
+	registerOrchestration(root, call)
 	registerControls(root, call)
 	registerJourney(root, call)
 	return root
