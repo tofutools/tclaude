@@ -635,7 +635,7 @@ func associateConversationTx(ctx context.Context, tx *sql.Tx, in app.ContextAsso
 		if in.Native != nil {
 			namespace, reference, observed = in.Native.Namespace, in.Native.Reference, nanos(in.Native.ObservedAt)
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE executions SET conversation_id=?,native_namespace=CASE WHEN ?='' THEN native_namespace ELSE ? END,native_reference=CASE WHEN ?='' THEN native_reference ELSE ? END,native_observed_at=CASE WHEN ?='' THEN native_observed_at ELSE ? END,revision=revision+1,updated_at=? WHERE id=? AND agent_id=?`, in.ConversationID, reference, namespace, reference, reference, reference, observed, nanos(in.At), in.ExecutionID, in.AgentID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE executions SET conversation_id=?,native_namespace=?,native_reference=?,native_observed_at=?,revision=revision+1,updated_at=? WHERE id=? AND agent_id=?`, in.ConversationID, namespace, reference, observed, nanos(in.At), in.ExecutionID, in.AgentID); err != nil {
 			return err
 		}
 	}
@@ -655,7 +655,7 @@ func completeOperationTx(ctx context.Context, tx *sql.Tx, in app.OperationComple
 	if in.Native != nil {
 		namespace, reference, observed = in.Native.Namespace, in.Native.Reference, nanos(in.Native.ObservedAt)
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE executions SET state=?,evidence_provider=CASE WHEN ?='' THEN evidence_provider ELSE ? END,evidence_version=CASE WHEN ?='' THEN evidence_version ELSE ? END,evidence_payload=CASE WHEN ?='' THEN evidence_payload ELSE ? END,native_namespace=CASE WHEN ?='' THEN native_namespace ELSE ? END,native_reference=CASE WHEN ?='' THEN native_reference ELSE ? END,native_observed_at=CASE WHEN ?='' THEN native_observed_at ELSE ? END,revision=revision+1,updated_at=? WHERE id=?`, in.ExecutionState, in.Evidence.Provider, in.Evidence.Provider, in.Evidence.Provider, in.Evidence.Version, in.Evidence.Provider, in.Evidence.Payload, reference, namespace, reference, reference, reference, observed, nanos(in.At), in.ExecutionID)
+	_, err = tx.ExecContext(ctx, `UPDATE executions SET state=CASE WHEN ? THEN ? ELSE state END,evidence_provider=CASE WHEN ?='' THEN evidence_provider ELSE ? END,evidence_version=CASE WHEN ?='' THEN evidence_version ELSE ? END,evidence_payload=CASE WHEN ?='' THEN evidence_payload ELSE ? END,native_namespace=CASE WHEN ?='' THEN native_namespace ELSE ? END,native_reference=CASE WHEN ?='' THEN native_reference ELSE ? END,native_observed_at=CASE WHEN ?='' THEN native_observed_at ELSE ? END,revision=revision+1,updated_at=? WHERE id=?`, in.UpdateExecutionState, in.ExecutionState, in.Evidence.Provider, in.Evidence.Provider, in.Evidence.Provider, in.Evidence.Version, in.Evidence.Provider, in.Evidence.Payload, reference, namespace, reference, reference, reference, observed, nanos(in.At), in.ExecutionID)
 	return err
 }
 
