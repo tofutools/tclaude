@@ -404,6 +404,23 @@ type SpawnRequest struct {
 	// new --auto-memory`.
 	AutoMemory *bool `json:"auto_memory,omitempty"`
 
+	// PeerMessaging keeps Claude Code's own cross-session messaging mesh
+	// available to the spawned agent. Tri-state for the same reason as
+	// AutoMemory: a non-nil value is the caller's explicit intent and overrides
+	// any profile default; nil = unspecified, so the daemon's profile tier stack
+	// fills it, falling back to FALSE.
+	//
+	// The default is off — and off is the interesting direction here too:
+	// Claude Code ships its own agent-to-agent mesh (ListAgents + SendMessage
+	// over a per-session socket), which is a second coordination channel with
+	// none of the group membership, permission slugs or audit trail tclaude's
+	// own agent messaging has. tclaude therefore injects the refusal unless
+	// something opts back in, and `tclaude agent send` stays the way agents
+	// coordinate. In-harness subagent messaging is unaffected either way — the
+	// deny names ListAgents, never SendMessage. The daemon gates a non-nil true
+	// on the chosen harness having a messaging system (Claude Code).
+	PeerMessaging *bool `json:"peer_messaging,omitempty"`
+
 	// ContextFeatures trims Claude Code's startup context for the spawned agent —
 	// bundled skills, tool schemas for capabilities it will never use,
 	// system-prompt blocks — as a map of catalog slug → "on" | "off". See
@@ -827,6 +844,12 @@ type SpawnParams struct {
 	// --remote-control: the flag sends &true and its absence leaves the
 	// pointer nil so a profile default can still speak.
 	AutoMemory bool `long:"auto-memory" help:"Keep Claude Code's built-in auto memory ON for the new agent. Off by default: tclaude disables it because agents sharing a checkout cross-pollute one project memory store. Does not affect CLAUDE.md. Not applicable to codex"`
+
+	// PeerMessaging opts the new agent back INTO Claude Code's own
+	// cross-session messaging, which tclaude disables by default. Opt-in only on
+	// the CLI, like --auto-memory: the flag sends &true and its absence leaves
+	// the pointer nil so a profile default can still speak.
+	PeerMessaging bool `long:"peer-messaging" help:"Keep Claude Code's built-in cross-session messaging ON for the new agent. Off by default: tclaude closes it because it is a second coordination channel outside tclaude's groups, permissions and audit trail. Use 'tclaude agent send' instead. Does not affect in-harness subagents. Not applicable to codex"`
 
 	// ContextFeatures trims the new agent's Claude Code startup context. Unset
 	// leaves the pointer nil so a profile default can still speak, matching
@@ -1364,6 +1387,7 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	trustDir := p.TrustDir
 	remoteControl := p.RemoteControl
 	autoMemory := p.AutoMemory
+	peerMessaging := p.PeerMessaging
 	copilotAPI := p.CopilotAPI
 	codexAppServer := p.CodexAppServer
 	fastMode := strings.TrimSpace(p.FastMode)
@@ -1508,6 +1532,13 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 			fmt.Fprintf(stderr, "Error: %v\n", err)
 			return nil, rcInvalidArg
 		}
+		// Gate --peer-messaging the same way: only a harness with a
+		// cross-session messaging system (Claude Code) can be asked to keep it
+		// on. The daemon re-gates server-side.
+		if peerMessaging, err = harness.ResolvePeerMessaging(h, &p.PeerMessaging); err != nil {
+			fmt.Fprintf(stderr, "Error: %v\n", err)
+			return nil, rcInvalidArg
+		}
 		// Gate --copilot-api the same way: only a harness with an API-backed mode
 		// (Copilot) can be asked for one. The daemon re-gates server-side.
 		if copilotAPI, err = harness.ResolveCopilotAPI(h, &p.CopilotAPI); err != nil {
@@ -1613,6 +1644,13 @@ func RunSpawn(p *SpawnParams, stdout, stderr io.Writer, stdin io.Reader) (*Spawn
 	if autoMemory {
 		on := true
 		req.AutoMemory = &on
+	}
+	// --peer-messaging follows the same opt-in-only discipline, and for the same
+	// reason: leaving the pointer nil is what lets a profile tier speak, and the
+	// nil case resolves server-side to off — the recommended posture.
+	if peerMessaging {
+		on := true
+		req.PeerMessaging = &on
 	}
 	// --copilot-api follows the same opt-in-only discipline, and for the same
 	// reason: leaving the pointer nil is what lets a profile tier speak, and the

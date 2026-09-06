@@ -10,7 +10,6 @@ import {
 import { loadRoles, createRole, updateRole, deleteRole } from './roles.js';
 import { ambientLaunchDecisions } from './management-model.js';
 import { fetchUnsandboxedAutonomy } from './unsandboxed-autonomy.js';
-import { insertGroupBeside, setGroupOrderPref, sortGroupsByPref } from './group-order.js';
 import {
   loadSandboxProfiles,
   loadSandboxCommonRules,
@@ -297,20 +296,6 @@ export function createManagementActions({
       });
       if (!response.ok)
         throw new Error((await response.text()) || `HTTP ${response.status}`);
-    },
-    async cloneGroup(name, body) {
-      const response = await fetch(
-        `/api/groups/${encodeURIComponent(name)}/clone`,
-        {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        },
-      );
-      if (!response.ok)
-        throw new Error((await response.text()) || `HTTP ${response.status}`);
-      return response.json().catch(() => ({}));
     },
     ...groupAPI,
   };
@@ -638,32 +623,6 @@ export function createManagementActions({
       context: group?.default_context || '',
     });
   }
-  function openGroupClone(name, placement = null) {
-    const snapshotGroups = getSnapshot()?.groups || [];
-    const source = snapshotGroups.find((item) => item.name === name) || null;
-    const match = /^(.*?)-(?:c|clone)-\d+$/.exec(name);
-    const base = match ? match[1] : name;
-    const prefix = `${base}-c-`;
-    const used = new Set(
-      snapshotGroups
-        .filter((item) => item.name?.startsWith(prefix))
-        .map((item) => Number.parseInt(item.name.slice(prefix.length), 10))
-        .filter(Number.isInteger),
-    );
-    let suffix = 1;
-    while (used.has(suffix)) suffix += 1;
-    state.openDialog({
-      kind: 'group-clone',
-      group: name,
-      source,
-      defaultName: `${prefix}${suffix}`,
-      placement: placement || {
-        parent: source?.parent || '',
-        anchor: name,
-        before: false,
-      },
-    });
-  }
   async function inspectGroupImport(file, as) {
     return groups.inspectImport(file, as);
   }
@@ -692,43 +651,6 @@ export function createManagementActions({
         : `${name}: startup context cleared`,
     );
     await refresh();
-  }
-  async function cloneGroup(
-    name,
-    defaultName,
-    requestedName,
-    withAgents,
-    copyOwners,
-    placement = null,
-  ) {
-    const body = { no_clone_members: !withAgents, copy_owners: copyOwners };
-    if (requestedName && requestedName !== defaultName)
-      body.new_name = requestedName;
-    if (placement) body.parent = placement.parent || '';
-    const result = await groups.cloneGroup(name, body);
-    if (result.group && placement?.anchor) {
-      const snapshotGroups = getSnapshot()?.groups || [];
-      const names = sortGroupsByPref(snapshotGroups.slice()).map((group) => group.name);
-      setGroupOrderPref(insertGroupBeside(names, result.group, placement.anchor, !!placement.before));
-    }
-    state.closeDialog();
-    const created = result.group ? `"${result.group}"` : 'new group';
-    const failed = (result.members || []).filter(
-      (member) => member?.error,
-    ).length;
-    const bits = [];
-    if (!withAgents) bits.push('no member agents');
-    if (!copyOwners) bits.push('no owners');
-    notify(
-      withAgents
-        ? failed
-          ? `Cloned ${name} → ${created} (${failed} member(s) skipped — see CLI for detail${bits.length ? `; ${bits.join(', ')}` : ''})`
-          : `Cloned ${name} → ${created}${bits.length ? ` (${bits.join(', ')})` : ''}`
-        : `Cloned ${name} → ${created} (settings only${copyOwners ? ' + owners' : ''})`,
-      failed > 0,
-    );
-    await refresh();
-    return result;
   }
   async function loadDeployWorktrees(repo) {
     return templates.loadWorktrees(repo);
@@ -1124,8 +1046,6 @@ export function createManagementActions({
     importGroup,
     openGroupContext,
     saveGroupContext,
-    openGroupClone,
-    cloneGroup,
     inspectProfiles,
     importProfileBundle,
     exportProfileBundle,

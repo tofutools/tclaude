@@ -82,6 +82,72 @@ func TestGroupAttachment_SetRenderAndClear(t *testing.T) {
 	assert.Empty(t, g.AttachmentLabel)
 }
 
+func TestGroupAttachment_RepositoryLabel(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f.HaveGroup("alpha")
+	const repoURL = "https://github.com/GiGurra/brain"
+	for _, label := range []string{"", "Brain repository"} {
+		rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(
+			t, http.MethodPost, "/v1/groups/alpha/attachment",
+			map[string]any{"url": repoURL, "label": label})))
+		require.Equalf(t, http.StatusOK, rec.Code, "set body=%s", rec.Body.String())
+		want := label
+		if want == "" {
+			want = "gh:GiGurra/brain"
+		}
+		var set groupAttachmentResp
+		testharness.DecodeJSON(t, rec, &set)
+		assert.Equal(t, want, set.Label)
+		assert.Equal(t, label, set.LabelOverride)
+		assert.Equal(t, repoURL, set.URL)
+
+		snap := fetchDashSnapshot(t, agentd.BuildDashboardHandlerForTest())
+		require.Len(t, snap.Groups, 1)
+		assert.Equal(t, want, snap.Groups[0].AttachmentLabel)
+		assert.Equal(t, label, snap.Groups[0].AttachmentLabelOverride)
+		assert.Equal(t, repoURL, snap.Groups[0].AttachmentURL)
+	}
+}
+
+func TestGroupAttachment_SubgroupCreateCarriesParentReference(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("parent")
+
+	const refURL = "https://linear.app/acme/project/platform"
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(
+		t, http.MethodPost, "/v1/groups",
+		map[string]any{
+			"name":             "child",
+			"parent":           "parent",
+			"attachment_url":   refURL,
+			"attachment_label": "Platform project",
+		})))
+	require.Equalf(t, http.StatusCreated, rec.Code, "create subgroup body=%s", rec.Body.String())
+
+	child, err := db.GetAgentGroupByName("child")
+	require.NoError(t, err)
+	require.NotNil(t, child)
+	assert.Equal(t, refURL, child.AttachmentURL)
+	assert.Equal(t, "Platform project", child.AttachmentLabel)
+}
+
+func TestGroupAttachment_GroupCreateRejectsUnsafeReference(t *testing.T) {
+	f := newFlow(t)
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(
+		t, http.MethodPost, "/v1/groups",
+		map[string]any{
+			"name":           "unsafe-child",
+			"attachment_url": "javascript:alert(1)",
+		})))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "unsafe attachment must fail before create; body=%s", rec.Body.String())
+
+	group, err := db.GetAgentGroupByName("unsafe-child")
+	require.NoError(t, err)
+	assert.Nil(t, group)
+}
+
 func TestGroupAttachment_DerivesLabelAndRejectsUnsafeURL(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")

@@ -4,6 +4,7 @@
 
 import { lastSnapshot } from './dashboard.js';
 import { managementController } from './management-controller.js';
+import { openGroupCloneModal as openUnifiedGroupCloneModal } from './group-create-controller.js';
 import { openTermModal } from './terminals-tab.js';
 import { toast } from './refresh.js';
 import {
@@ -53,7 +54,7 @@ export function openGroupContextModal(groupName) {
 }
 
 export function openGroupCloneModal(groupName, placement = null) {
-  return managementController().openGroupClone(groupName, placement);
+  return openUnifiedGroupCloneModal(groupName, placement);
 }
 
 export function groupDefaultContext(groupName) {

@@ -610,6 +610,7 @@ test('worktree creation reports backend-owned config-lock retry progress', async
   const harness = await createPreactHarness(t);
   const { createAgentSpawnActions } = await harness.importDashboardModule('js/agent-spawn-actions.js');
   const progress = [];
+  let timing;
   let finishCreate;
   let postedProgressID = '';
   let polledProgressID = '';
@@ -639,8 +640,12 @@ test('worktree creation reports backend-owned config-lock retry progress', async
     worktree: '__new__', wtRepo: '/repo', worktreeBranch: 'worker', worktreeBase: 'main',
   }, {
     phase: 'ready', repo: '/repo', repoRoot: '/repo', worktrees: [],
-  }, (message) => progress.push(message));
+  }, (message) => progress.push(message), (report) => { timing = report; });
 
+  assert.equal(timing.worktree_progress_id, postedProgressID);
+  assert.ok(timing.worktree_http_ms >= 0);
+  assert.ok(timing.worktree_progress_cleanup_ms >= 0);
+  assert.ok(Math.abs(timing.worktree_total_ms - timing.worktree_http_ms - timing.worktree_progress_cleanup_ms) < 0.001);
   assert.deepEqual(selected, { path: '/repo-worker', branch: 'worker' });
   assert.equal(polledProgressID, postedProgressID, 'the poll observes the same server operation');
   assert.ok(progress.some((message) => /retrying upstream setup \(2\/10\)/.test(message)));
@@ -1229,7 +1234,9 @@ test('Preact agent-spawn claims duplicate submit synchronously and retries faile
   const pending = deferred();
   let uploadCalls = 0;
   let spawnCalls = 0;
+  const reports = [];
   const mounted = await mountSpawn(t, {
+    reportTiming: (report) => { reports.push(report); return new Promise(() => {}); },
     uploadAttachments: async () => { uploadCalls += 1; return ['/tmp/a']; },
     spawn: async () => { spawnCalls += 1; return pending.promise; },
   });
@@ -1265,6 +1272,14 @@ test('Preact agent-spawn claims duplicate submit synchronously and retries faile
   pending.resolve({ conv_id: '1234567890' });
   await flush(harness);
   assert.equal(state.dialog.value, null);
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].closed, true);
+  const milestones = ['prepared_ms', 'worktree_ready_ms', 'attachments_ready_ms', 'request_sent_ms', 'response_received_ms', 'elapsed_ms'];
+  let previous = 0;
+  for (const field of milestones) {
+    assert.ok(reports[0][field] >= previous, field);
+    previous = reports[0][field];
+  }
   assert.equal(calls.filter(([kind]) => kind === 'complete').length, 1);
   mounted.cleanup();
 });

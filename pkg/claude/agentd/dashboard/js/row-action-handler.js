@@ -1,3 +1,4 @@
+import { openGitRepositories } from './git-repositories-controller.js';
 // row-action-handler.js — cross-feature and daemon operations selected by
 // the delegated data-act integration boundary. Preact owns presentation and
 // draft state; this handler receives one frozen plain descriptor captured at
@@ -793,6 +794,11 @@ export async function handleRowAction(action) {
         // Open the bulk-cleanup overlay scoped to this group. The
         // modal manages its own POST + refresh on success.
         openCleanupModal({ mode: 'group', group });
+        return;
+      }
+      case 'pull-repositories-group':
+      case 'sync-repositories-group': {
+        await openGitRepositories(act === 'pull-repositories-group' ? 'pull' : 'sync', group);
         return;
       }
       case 'cleanup-worktrees-group': {

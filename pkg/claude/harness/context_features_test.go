@@ -179,12 +179,15 @@ func TestClaudeSettingsCarriesSettingsOnlyContextTrims(t *testing.T) {
 			"claude-ai-connectors": ContextFeatureOff,
 			"bundled-skills":       ContextFeatureOff,
 		},
+		// Isolate the trim under test from the default peer-messaging keys.
+		PeerMessaging: true,
 	})
 	assert.JSONEq(t, `{"disableClaudeAiConnectors":true}`, payload,
 		"only the settings-only trim lands here; bundled-skills rides the env")
 
 	assert.Empty(t, claudeSettingsJSON(SpawnSpec{
 		ContextFeatures: map[string]string{"bundled-skills": ContextFeatureOff},
+		PeerMessaging:   true,
 	}), "an env-only trim must not force an otherwise-empty --settings payload")
 }
 

@@ -90,6 +90,9 @@ func ComposeAgentRelaunchProfile(base, overlay *AgentRelaunchProfile) *AgentRela
 	if overlay.AutoMemory != nil {
 		merged.AutoMemory = overlay.AutoMemory
 	}
+	if overlay.PeerMessaging != nil {
+		merged.PeerMessaging = overlay.PeerMessaging
+	}
 	if overlay.SSHWorkaround != nil {
 		merged.SSHWorkaround = overlay.SSHWorkaround
 	}
@@ -243,7 +246,7 @@ func recordedPostureIsComplete(p *AgentRelaunchProfile) bool {
 	return p.HarnessBuiltinMode != nil && p.SandboxImplementation != nil &&
 		p.ApprovalPolicy != nil && p.ApprovalAutoReview != nil &&
 		p.AskUserQuestionTimeout != nil && p.RemoteControl != nil && p.AutoMemory != nil &&
-		p.ContextFeatures != nil && p.AutoCompactWindow != nil
+		p.PeerMessaging != nil && p.ContextFeatures != nil && p.AutoCompactWindow != nil
 }
 
 // legacySessionLaunchPosture reconstructs what a pre-v145 record can still
@@ -275,6 +278,12 @@ func legacySessionLaunchPosture(convID string) (*AgentRelaunchProfile, error) {
 	}
 	if s.AutoMemory {
 		p.AutoMemory = boolPtr(true)
+	}
+	// Only a TRUE column proves intent here, exactly like AutoMemory above: a
+	// false is indistinguishable from a pre-v226 row that never carried the
+	// column, and both resolve to OFF at the spawn boundary anyway.
+	if s.PeerMessaging {
+		p.PeerMessaging = boolPtr(true)
 	}
 	if len(s.ContextFeatures) > 0 {
 		features := make(map[string]string, len(s.ContextFeatures))

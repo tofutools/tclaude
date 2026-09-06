@@ -331,6 +331,8 @@ func TestGroupTemplate_InstantiateParentNestsNewGroup(t *testing.T) {
 			"parent":           "parent",
 			"context_override": "mirrored parent context",
 			"descr_override":   "",
+			"attachment_url":   "https://linear.app/acme/project/parent",
+			"attachment_label": "Parent project",
 		})
 	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate as subgroup: %s", rec.Body.String())
 	agentd.WaitForBackgroundForTest()
@@ -342,6 +344,9 @@ func TestGroupTemplate_InstantiateParentNestsNewGroup(t *testing.T) {
 	assert.Equal(t, parentID, *g.ParentGroupID, "parent pointer records the selected group")
 	assert.Equal(t, "mirrored parent context", g.DefaultContext, "context override is the new group's own mirrored copy")
 	assert.Empty(t, g.Descr, "empty descr_override stays empty")
+	assert.Equal(t, "https://linear.app/acme/project/parent", g.AttachmentURL,
+		"attachment URL is the new subgroup's own mirrored copy")
+	assert.Equal(t, "Parent project", g.AttachmentLabel)
 }
 
 // Scenario (JOH-385): the summon dialog's copy mode ("new group in this group's

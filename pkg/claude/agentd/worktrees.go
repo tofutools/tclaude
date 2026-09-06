@@ -133,6 +133,14 @@ func dashboardCreateWorktree(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 		return
 	}
+	progressID := strings.TrimSpace(body.ProgressID)
+	if progressID != "" && !validWorktreeProgressID(progressID) {
+		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid worktree progress id")
+		return
+	}
+	ctx := context.WithValue(r.Context(), worktreeTimingKey{}, progressID)
+	timing := worktreeStartupTiming(ctx, "worktree_request")
+	defer timing("return")
 	repo := expandTilde(strings.TrimSpace(body.Repo))
 	if repo == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "repo is required")
@@ -143,6 +151,7 @@ func dashboardCreateWorktree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	root, err := worktree.RepoRootForPath(repo)
+	timing("repo_resolved", "failed", err != nil)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "worktree", err.Error())
 		return
@@ -156,19 +165,17 @@ func dashboardCreateWorktree(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		base, err = fetchLatestWorktreeBase(r.Context(), root, base)
+		timing("fetch_begin")
+		base, err = fetchLatestWorktreeBase(ctx, root, base)
+		timing("fetch_complete", "failed", err != nil)
 		if err != nil {
 			writeError(w, http.StatusBadGateway, "worktree_fetch", "fetch latest worktree base: "+err.Error())
 			return
 		}
 	}
-	progressID := strings.TrimSpace(body.ProgressID)
-	if progressID != "" && !validWorktreeProgressID(progressID) {
-		writeError(w, http.StatusBadRequest, "invalid_arg", "invalid worktree progress id")
-		return
-	}
+	timing("create_begin")
 	defer clearDashboardWorktreeProgress(progressID)
-	path, retries, fallback, err := createDashboardWorktree(r.Context(), root, body.Branch, base,
+	path, retries, fallback, err := createDashboardWorktree(ctx, root, body.Branch, base,
 		expandTilde(strings.TrimSpace(body.Path)), waitOneSecond, func(attempt int) {
 			setDashboardWorktreeProgress(progressID, attempt)
 		})
@@ -176,6 +183,7 @@ func dashboardCreateWorktree(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "worktree", err.Error())
 		return
 	}
+	timing("create_complete", "tracking_retries", retries, "tracking_fallback", fallback)
 	if fallback {
 		postWorktreeTrackingFallbackNotice(root, strings.TrimSpace(body.Branch), base)
 	}
@@ -272,8 +280,14 @@ func createDashboardWorktree(
 	wait func(context.Context) error,
 	onRetry func(attempt int),
 ) (createdPath string, retries int, fallback bool, err error) {
+	timing := worktreeStartupTiming(ctx, "worktree_create")
+	defer func() {
+		timing("return", "failed", err != nil, "tracking_retries", retries, "tracking_fallback", fallback)
+	}()
 	removeSandboxConfigLock(repoRoot)
+	timing("config_lock_checked")
 	createdPath, err = worktree.AddWorktreeIn(repoRoot, branch, base, path)
+	timing("worktree_add_complete", "failed", err != nil)
 	if err == nil || !worktree.IsUpstreamConfigLockError(err) {
 		return createdPath, 0, false, err
 	}
@@ -282,13 +296,18 @@ func createDashboardWorktree(
 		if onRetry != nil {
 			onRetry(retries)
 		}
+		timing("tracking_retry_wait_begin", "attempt", retries)
 		if waitErr := wait(ctx); waitErr != nil {
 			return "", retries - 1, false, waitErr
 		}
+		timing("tracking_retry_wait_complete", "attempt", retries)
 		removeSandboxConfigLock(repoRoot)
 		if worktree.BranchExistsIn(repoRoot, branch) {
+			timing("upstream_set_begin", "attempt", retries)
 			err = worktree.SetBranchUpstreamIn(repoRoot, branch, base)
+			timing("upstream_set_complete", "attempt", retries, "failed", err != nil)
 			if err == nil {
+				timing("retry_checkout_begin")
 				createdPath, err = worktree.AddWorktreeIn(repoRoot, branch, base, path)
 				return createdPath, retries, false, err
 			}
@@ -303,6 +322,7 @@ func createDashboardWorktree(
 		}
 	}
 
+	timing("tracking_fallback_begin")
 	// Git normally leaves the branch behind on the upstream-config failure. If
 	// this version did not, explicitly suppress automatic tracking on the final
 	// attempt so the still-locked config is not touched again.

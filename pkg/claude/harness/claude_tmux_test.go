@@ -53,7 +53,7 @@ func TestPrepareClaudeSandboxLaunchDeniesOnlyTclaudeTmuxSocket(t *testing.T) {
 
 func TestPrepareClaudeSandboxLaunchOffKeepsPrivateTmuxUsable(t *testing.T) {
 	t.Setenv("TMUX_TMPDIR", "relative-would-fail-resolution")
-	spec := SpawnSpec{HarnessBuiltinMode: ClaudeSandboxOff, SandboxDenyDirs: []string{"/opt/secret"}}
+	spec := SpawnSpec{HarnessBuiltinMode: ClaudeSandboxOff, SandboxDenyDirs: []string{"/opt/secret"}, PeerMessaging: true}
 	got, err := PrepareClaudeSandboxLaunch(spec)
 	require.NoError(t, err)
 	assert.Equal(t, spec, got)

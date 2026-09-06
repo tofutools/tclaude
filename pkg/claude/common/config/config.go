@@ -23,9 +23,12 @@ type Config struct {
 	Notifications   *NotificationConfig    `json:"notifications,omitempty"`
 	PreCompactGuard *PreCompactGuardConfig `json:"pre_compact_guard,omitempty"`
 	LogLevel        string                 `json:"log_level,omitempty"`
-	RecordHooks     bool                   `json:"record_hooks,omitempty"`
-	RateLimit       *RateLimitConfig       `json:"ratelimit,omitempty"`
-	Agent           *AgentConfig           `json:"agent,omitempty"`
+	// StartupTiming enables startup diagnostics without restarting agentd.
+	// Nil falls back to TCLAUDE_STARTUP_TIMING; explicit false overrides it.
+	StartupTiming *bool            `json:"startup_timing,omitempty"`
+	RecordHooks   bool             `json:"record_hooks,omitempty"`
+	RateLimit     *RateLimitConfig `json:"ratelimit,omitempty"`
+	Agent         *AgentConfig     `json:"agent,omitempty"`
 
 	// Broker configures agentd's brokered hook/statusline endpoints —
 	// the path a `tclaude-layer` agent uses to reach the conversation

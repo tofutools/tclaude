@@ -209,6 +209,7 @@ import "github.com/tofutools/tclaude/pkg/claude/session"
 func f() session.LaunchPosture {
 	return session.LaunchPosture{
 		AutoMemory:        true,
+		PeerMessaging:     false,
 		ContextFeatures:   nil,
 		AutoCompactWindow: "",
 		FastMode:          "",
@@ -230,7 +231,7 @@ func f() session.LaunchPosture {
 	const positional = `package p
 
 func f() LaunchPosture {
-	return LaunchPosture{true, nil, "", "", false, nil, nil, nil}
+	return LaunchPosture{true, false, nil, "", "", false, nil, nil, nil}
 }
 `
 	want := launchPostureFieldNames()

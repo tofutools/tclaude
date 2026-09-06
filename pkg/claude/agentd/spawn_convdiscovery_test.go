@@ -53,8 +53,8 @@ func TestDiscoverSpawnedConvID(t *testing.T) {
 	}
 
 	t.Run("nil harness or nil store yields empty (CC stays on the hook)", func(t *testing.T) {
-		assert.Empty(t, discoverSpawnedConvID(nil, cwd, launch))
-		assert.Empty(t, discoverSpawnedConvID(&harness.Harness{Name: "x"}, cwd, launch))
+		assert.Empty(t, discoverSpawnedConvID(nil, cwd, launch, "test-launch"))
+		assert.Empty(t, discoverSpawnedConvID(&harness.Harness{Name: "x"}, cwd, launch, "test-launch"))
 	})
 
 	t.Run("picks the conv created at/after launch, ignoring pre-existing ones", func(t *testing.T) {
@@ -62,14 +62,14 @@ func TestDiscoverSpawnedConvID(t *testing.T) {
 			fresh("old-conv", launch.Add(-time.Hour)),
 			fresh("spawned-conv", launch.Add(1*time.Second)),
 		}})
-		assert.Equal(t, "spawned-conv", discoverSpawnedConvID(h, cwd, launch))
+		assert.Equal(t, "spawned-conv", discoverSpawnedConvID(h, cwd, launch, "test-launch"))
 	})
 
 	t.Run("only pre-launch convs => empty (keep polling)", func(t *testing.T) {
 		h := harnessWithConvs(fakeDiscoveryStore{entries: []convops.SessionEntry{
 			fresh("old-conv", launch.Add(-time.Hour)),
 		}})
-		assert.Empty(t, discoverSpawnedConvID(h, cwd, launch))
+		assert.Empty(t, discoverSpawnedConvID(h, cwd, launch, "test-launch"))
 	})
 
 	t.Run("newest wins among fresh convs", func(t *testing.T) {
@@ -77,7 +77,7 @@ func TestDiscoverSpawnedConvID(t *testing.T) {
 			fresh("fresh-older", launch.Add(1*time.Second)),
 			fresh("fresh-newer", launch.Add(2*time.Second)),
 		}})
-		assert.Equal(t, "fresh-newer", discoverSpawnedConvID(h, cwd, launch))
+		assert.Equal(t, "fresh-newer", discoverSpawnedConvID(h, cwd, launch, "test-launch"))
 	})
 
 	t.Run("skips a conv already claimed by another session row", func(t *testing.T) {
@@ -91,18 +91,18 @@ func TestDiscoverSpawnedConvID(t *testing.T) {
 			fresh("fresh-unclaimed", launch.Add(1*time.Second)),
 			fresh("fresh-claimed", launch.Add(2*time.Second)),
 		}})
-		assert.Equal(t, "fresh-unclaimed", discoverSpawnedConvID(h, cwd, launch))
+		assert.Equal(t, "fresh-unclaimed", discoverSpawnedConvID(h, cwd, launch, "test-launch"))
 	})
 
 	t.Run("scan error yields empty (caller keeps polling)", func(t *testing.T) {
 		h := harnessWithConvs(fakeDiscoveryStore{err: assert.AnError})
-		assert.Empty(t, discoverSpawnedConvID(h, cwd, launch))
+		assert.Empty(t, discoverSpawnedConvID(h, cwd, launch, "test-launch"))
 	})
 
 	t.Run("falls back to FileMtime when Created is empty", func(t *testing.T) {
 		h := harnessWithConvs(fakeDiscoveryStore{entries: []convops.SessionEntry{
 			{SessionID: "mtime-conv", ProjectPath: cwd, FileMtime: launch.Add(1 * time.Second)},
 		}})
-		assert.Equal(t, "mtime-conv", discoverSpawnedConvID(h, cwd, launch))
+		assert.Equal(t, "mtime-conv", discoverSpawnedConvID(h, cwd, launch, "test-launch"))
 	})
 }

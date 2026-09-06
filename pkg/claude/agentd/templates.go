@@ -756,6 +756,10 @@ type templateAgentLaunch struct {
 	// agent. Resolved from the profile tiers like RemoteControl; defaults off,
 	// which makes the launch inject CLAUDE_CODE_DISABLE_AUTO_MEMORY=1.
 	AutoMemory bool
+	// PeerMessaging keeps Claude Code's own cross-session messaging on for a
+	// template-deployed agent. Resolved from the profile tiers like AutoMemory;
+	// defaults off, which makes the launch inject the refusal.
+	PeerMessaging bool
 	// SSHWorkaround is the resolved Git-over-SSH compatibility posture.
 	// It defaults on for a managed Codex launch or any tclaude-layer launch,
 	// then the effective sandbox clamps it to shapes that need it. A referenced
@@ -998,6 +1002,11 @@ func validateInlineProfileForHarness(agentName string, h *harness.Harness, p *db
 	if p.RemoteControl != nil {
 		if _, err := harness.ResolveRemoteControl(h, *p.RemoteControl); err != nil {
 			return wrap(http.StatusBadRequest, "invalid_remote_control", err.Error())
+		}
+	}
+	if p.PeerMessaging != nil {
+		if _, err := harness.ResolvePeerMessaging(h, p.PeerMessaging); err != nil {
+			return wrap(http.StatusBadRequest, "invalid_peer_messaging", err.Error())
 		}
 	}
 	if p.AutoMemory != nil {
@@ -1365,6 +1374,18 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 	if memNote != "" {
 		notes = append(notes, memNote)
 	}
+	// Peer messaging rides the same pattern with the same load-bearing default:
+	// unset resolves to off, i.e. tclaude closes Claude Code's own messaging
+	// mesh for template-deployed agents too.
+	peerMessaging, _, _, peerNote, fail := resolveBoolLaunchField("peer_messaging", false, false, h.Name, tiers,
+		func(p *db.SpawnProfile) *bool { return p.PeerMessaging },
+		func(v bool) (bool, error) { return harness.ResolvePeerMessaging(h, &v) })
+	if fail != nil {
+		return failed(fail)
+	}
+	if peerNote != "" {
+		notes = append(notes, peerNote)
+	}
 	// The Copilot drive rides the same pattern, with the same default: unset
 	// resolves to off, i.e. a template-deployed Copilot agent stays on send-keys
 	// unless a profile tier explicitly asked for the API. There is no
@@ -1472,6 +1493,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		AutoReviewSet:          autoReviewSet,
 		RemoteControl:          remoteControl,
 		AutoMemory:             autoMemory,
+		PeerMessaging:          peerMessaging,
 		SSHWorkaround:          sshWorkaround,
 		SSHWorkaroundSet:       sshWorkaroundSet,
 		ContextFeatures:        contextFeatures,
@@ -2646,7 +2668,7 @@ type instantiateAgentResult struct {
 // handleTemplateInstantiate creates a fresh group from a template and
 // spawns its whole agent team. Gated on templates.instantiate.
 //
-// Body: { group_name, task, cwd?, descr?, descr_override?, parent? }. group_name
+// Body: { group_name, task, cwd?, descr?, descr_override?, parent?, attachment_url?, attachment_label? }. group_name
 // doubles as the agent-name prefix — agent "PO" in the template becomes
 // "<group_name>-PO". task is the multi-line assignment, folded into the
 // group's default_context so every member's startup briefing carries
@@ -2707,6 +2729,8 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		// (non-nil ""). Existing callers (the instantiate/deploy modals) omit
 		// it and keep the template's context verbatim.
 		ContextOverride *string `json:"context_override,omitempty"`
+		AttachmentURL   string  `json:"attachment_url,omitempty"`
+		AttachmentLabel string  `json:"attachment_label,omitempty"`
 		// AgentProfiles — the deploy form's per-member launch-profile resolution;
 		// see handleTemplateDeploy's body for the full contract. Applied in
 		// runInstantiation (applyAgentProfileOverrides) only to members with no
@@ -2738,6 +2762,11 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	repositoryPlan, err := prepareGroupRepositoryClone(body.RepositoryClone)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_repository", err.Error())
+		return
+	}
+	attachmentURL, attachmentLabel, err := normalizeGroupAttachment(body.AttachmentURL, body.AttachmentLabel)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_attachment", err.Error())
 		return
 	}
 	// An existing-directory cwd uses resolveSpawnCwd so a typo cannot turn into
@@ -2827,6 +2856,8 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		agentProfiles:     body.AgentProfiles,
 		repositoryClone:   repositoryPlan,
 		attachRepository:  body.RepositoryClone != nil && body.RepositoryClone.Attach,
+		attachmentURL:     attachmentURL,
+		attachmentLabel:   attachmentLabel,
 	})
 }
 
@@ -2976,6 +3007,8 @@ type instantiateSpec struct {
 	agentProfiles    map[string]string
 	repositoryClone  *preparedGroupRepositoryClone
 	attachRepository bool
+	attachmentURL    string
+	attachmentLabel  string
 }
 
 // applyAgentProfileOverrides returns the roster with the deploy form's per-member
@@ -3185,7 +3218,8 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		g = spec.intoExisting
 		gid = g.ID
 	} else {
-		gid, err = db.CreateAgentGroupWithParent(spec.groupName, spec.descr, spec.parentGroup)
+		gid, err = db.CreateAgentGroupWithParentAndAttachment(
+			spec.groupName, spec.descr, spec.parentGroup, spec.attachmentURL, spec.attachmentLabel)
 		if err != nil {
 			if errors.Is(err, db.ErrGroupParentNotFound) {
 				writeError(w, http.StatusNotFound, "not_found", "no parent group named "+spec.parentGroup)
@@ -3509,6 +3543,8 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		// group's settings instead of the template defaults.
 		DescrOverride   *string `json:"descr_override,omitempty"`
 		ContextOverride *string `json:"context_override,omitempty"`
+		AttachmentURL   string  `json:"attachment_url,omitempty"`
+		AttachmentLabel string  `json:"attachment_label,omitempty"`
 		// AgentProfiles carries the dashboard deploy form's per-member launch-profile
 		// selection (JOH-…): keyed by template-agent name, each value the spawn
 		// profile the deploy dialog resolved for a member that carried NO profile of
@@ -3558,6 +3594,11 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	parentGroup, ok := validateInstantiationParent(w, groupName, body.Parent)
 	if !ok {
+		return
+	}
+	attachmentURL, attachmentLabel, err := normalizeGroupAttachment(body.AttachmentURL, body.AttachmentLabel)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_attachment", err.Error())
 		return
 	}
 
@@ -3619,6 +3660,8 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		parentGroup:       parentGroup,
 		contextOverride:   body.ContextOverride,
 		agentProfiles:     body.AgentProfiles,
+		attachmentURL:     attachmentURL,
+		attachmentLabel:   attachmentLabel,
 		// Only frame as a deployed force when there IS a mission; a mission-less
 		// cast records source_template but no mission and no "deployed" response.
 		deployed: mission != "",
@@ -4304,6 +4347,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 	out.TrustDir = prev.TrustDir
 	out.RemoteControl = prev.RemoteControl
 	out.AutoMemory = prev.AutoMemory
+	out.PeerMessaging = prev.PeerMessaging
 	if out.SSHWorkaround == nil {
 		out.SSHWorkaround = prev.SSHWorkaround
 	}
@@ -4386,7 +4430,7 @@ func mergeSnapshotInlineProfile(prev, traced *db.SpawnProfile, observed bool) (*
 		out.StartupContext == "" &&
 		out.AutoCompactWindow == "" && out.SandboxImplementation == "" &&
 		out.ContextWindowMax == 0 &&
-		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil &&
+		out.AutoReview == nil && out.TrustDir == nil && out.RemoteControl == nil && out.AutoMemory == nil && out.PeerMessaging == nil &&
 		out.SSHWorkaround == nil && out.FetchLatestWorktree == nil &&
 		out.CopilotAPI == nil && out.CodexAppServer == nil && out.FastMode == nil &&
 		len(out.ContextFeatures) == 0 && len(out.Environment) == 0 &&
@@ -4472,6 +4516,12 @@ func dropLaunchFieldsForeignToHarness(out *db.SpawnProfile) *snapshotFieldDrop {
 		if _, err := harness.ResolveSSHWorkaround(h, out.SSHWorkaround); err != nil {
 			out.SSHWorkaround = nil
 			dropped = append(dropped, "ssh_workaround")
+		}
+	}
+	if out.PeerMessaging != nil {
+		if _, err := harness.ResolvePeerMessaging(h, out.PeerMessaging); err != nil {
+			out.PeerMessaging = nil
+			dropped = append(dropped, "peer_messaging")
 		}
 	}
 	if out.AutoMemory != nil {

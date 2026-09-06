@@ -1520,6 +1520,9 @@ type statusRec struct {
 	captureTrunc bool
 }
 
+// Unwrap lets http.ResponseController flush streaming responses through auditing.
+func (r *statusRec) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 func (r *statusRec) WriteHeader(c int) {
 	r.code = c
 	r.ResponseWriter.WriteHeader(c)

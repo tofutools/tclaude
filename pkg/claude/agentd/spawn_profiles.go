@@ -100,6 +100,7 @@ type spawnProfileJSON struct {
 	AutoReview     *bool `json:"auto_review,omitempty"`
 	TrustDir       *bool `json:"trust_dir,omitempty"`
 	AutoMemory     *bool `json:"auto_memory,omitempty"`
+	PeerMessaging  *bool `json:"peer_messaging,omitempty"`
 	SSHWorkaround  *bool `json:"ssh_workaround,omitempty"`
 	// RemoteControl is the profile's "start with Claude Code Remote Access on"
 	// default — tri-state (null = unset, false = off, true = on). A group's
@@ -166,6 +167,7 @@ func profileToJSON(p *db.SpawnProfile) spawnProfileJSON {
 		AutoReview:                 p.AutoReview,
 		TrustDir:                   p.TrustDir,
 		AutoMemory:                 p.AutoMemory,
+		PeerMessaging:              p.PeerMessaging,
 		SSHWorkaround:              p.SSHWorkaround,
 		RemoteControl:              p.RemoteControl,
 		AgentName:                  p.AgentName,
@@ -364,6 +366,15 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 			return nil, &spawnFailure{http.StatusBadRequest, "invalid_remote_control", err.Error()}
 		}
 	}
+	// Likewise a profile may keep Claude Code's own cross-session messaging on
+	// only for a harness that has it: peer_messaging=true on a Codex profile is
+	// a 400. false / unset is always fine, and both resolve to "tclaude closes
+	// the native mesh".
+	if body.PeerMessaging != nil {
+		if _, err := harness.ResolvePeerMessaging(h, body.PeerMessaging); err != nil {
+			return nil, &spawnFailure{http.StatusBadRequest, "invalid_peer_messaging", err.Error()}
+		}
+	}
 	// Likewise a profile may keep auto memory on only for a harness that has an
 	// auto-memory system: auto_memory=true on a Codex profile is a 400. false /
 	// unset is always fine, and both resolve to "tclaude disables memory".
@@ -479,6 +490,7 @@ func buildProfileFromJSON(body spawnProfileJSON) (*db.SpawnProfile, *spawnFailur
 		RemoteControl:              body.RemoteControl,
 		SSHWorkaround:              sshWorkaround,
 		AutoMemory:                 body.AutoMemory,
+		PeerMessaging:              body.PeerMessaging,
 		AgentName:                  agentName,
 		Role:                       strings.TrimSpace(body.Role),
 		RoleRef:                    roleRef,

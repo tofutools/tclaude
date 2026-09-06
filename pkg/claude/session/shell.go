@@ -267,6 +267,8 @@ func rejectShellUnsupportedFlags(params *NewParams) error {
 		return fmt.Errorf(notApplicable, "--remote-control", ShellHarnessName, "it has no built-in remote access")
 	case params.AutoMemory:
 		return fmt.Errorf(notApplicable, "--auto-memory", ShellHarnessName, "it has no auto-memory system")
+	case params.PeerMessaging:
+		return fmt.Errorf(notApplicable, "--peer-messaging", ShellHarnessName, "it has no cross-session messaging system")
 	case params.WaitForRateLimit:
 		return fmt.Errorf(notApplicable, "--wait-for-rate-limit", ShellHarnessName, "it has no API rate limit to wait on")
 	case params.JoinGroup != "":

@@ -48,7 +48,7 @@ func TestDashboardHTML_PartyProfilePicker(t *testing.T) {
 	must(`id="group-create-template-preview-row"`, "the roster preview row exists")
 	must(`id="group-create-template-preview"`, "the roster preview host exists")
 	must(`id="group-create-source-row"`, "the mirror-source row exists")
-	must(`id="group-create-parent-row"`, "the subgroup checkbox row exists")
+	must(`id="group-create-placement"`, "the common placement picker replaces the template-only subgroup checkbox")
 	must(`id="group-create-max-members-row"`, "the Max-members row is id'd so it can hide in template mode")
 
 	// (b) CSS: the new <select> and the roster readback get the wizard skin,
