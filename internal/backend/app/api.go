@@ -36,12 +36,14 @@ type JourneyAPI interface {
 	CreateCheckout(context.Context, CreateCheckoutRequest) (WorkspaceResult, error)
 	InspectWorkspace(context.Context, InspectWorkspaceRequest) (WorkspaceResult, error)
 	RemoveCheckout(context.Context, RemoveCheckoutRequest) (WorkspaceResult, error)
+	RestoreCheckout(context.Context, RestoreCheckoutRequest) (WorkspaceResult, error)
 	StartShell(context.Context, StartShellRequest) (OperationResult, error)
 	StartWork(context.Context, StartWorkRequest) (WorkRunResult, error)
 	InspectWork(context.Context, InspectWorkRequest) (WorkRunResult, error)
 	RecordWorkEvidence(context.Context, RecordWorkEvidenceRequest) (WorkRunResult, error)
 	DecideWork(context.Context, DecideWorkRequest) (WorkRunResult, error)
 	CancelWork(context.Context, CancelWorkRequest) (WorkRunResult, error)
+	ResolveWorkUncertainty(context.Context, ResolveWorkUncertaintyRequest) (WorkRunResult, error)
 }
 
 type WorkReconciler interface {
@@ -268,6 +270,12 @@ type RemoveCheckoutRequest struct {
 	Destructive      bool
 }
 
+type RestoreCheckoutRequest struct {
+	Context          RequestContext
+	WorkspaceID      model.WorkspaceID
+	ExpectedRevision model.Revision
+}
+
 type StartShellRequest struct {
 	Context          RequestContext
 	WorkspaceID      model.WorkspaceID
@@ -325,6 +333,15 @@ type DecideWorkRequest struct {
 }
 
 type CancelWorkRequest struct {
+	Context             RequestContext
+	WorkRunID           model.WorkRunID
+	ExpectedRunRevision model.Revision
+	Reason              string
+}
+
+// ResolveWorkUncertaintyRequest is an explicit operator conclusion that the
+// uncertain external effect did not occur. It never replays that effect.
+type ResolveWorkUncertaintyRequest struct {
 	Context             RequestContext
 	WorkRunID           model.WorkRunID
 	ExpectedRunRevision model.Revision

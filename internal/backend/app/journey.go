@@ -318,6 +318,65 @@ func (s *Service) RemoveCheckout(ctx context.Context, req RemoveCheckoutRequest)
 	return workspaceResult(stored), nil
 }
 
+func (s *Service) RestoreCheckout(ctx context.Context, req RestoreCheckoutRequest) (WorkspaceResult, error) {
+	if err := validateEffectContext(req.Context); err != nil {
+		return WorkspaceResult{}, err
+	}
+	if s.workspaceHost == nil {
+		return WorkspaceResult{}, fail(ErrUnavailable, "workspace host is unavailable")
+	}
+	workspace, err := s.store.Workspace(ctx, req.WorkspaceID)
+	if err != nil {
+		return WorkspaceResult{}, err
+	}
+	if req.ExpectedRevision == 0 || workspace.Revision != req.ExpectedRevision || workspace.State != model.WorkspaceRemoved || workspace.Intent.Provenance != model.WorkspacePlatformCreated || workspace.Intent.Ownership != model.WorkspaceOwned {
+		return WorkspaceResult{}, fail(ErrConflict, "only the exact removed owned checkout can be restored")
+	}
+	now := s.now().UTC()
+	op := model.Operation{ID: model.OperationID(s.newID("op_")), RequestID: req.Context.RequestID, Kind: model.OperationRestoreWorkspace, Principal: req.Context.Principal, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	authority := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionRestoreWorkspace, Resource: model.ResourceSelector{Kind: model.ResourceWorkspace, WorkspaceID: workspace.ID}}
+	admitted, err := s.store.AdmitWorkspaceEffect(ctx, WorkspaceEffectAdmission{Operation: op, Workspace: workspace, Authority: authority})
+	if err != nil {
+		return WorkspaceResult{}, err
+	}
+	if admitted.Repeated {
+		return workspaceResult(admitted.Workspace), nil
+	}
+	workflowCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
+	defer cancel()
+	effect, effectErr := s.workspaceHost.CreateCheckout(workflowCtx, ports.CheckoutCreateRequest{WorkspaceID: workspace.ID, Intent: workspace.Intent}, &resourceEffectPermit{store: s.store, operationID: op.ID, now: s.now})
+	state := model.WorkspaceRemoved
+	switch effect.Disposition {
+	case ports.EffectAccepted:
+		state = model.WorkspaceAvailable
+	case ports.EffectUnknown:
+		state = model.WorkspaceUncertain
+	}
+	if effect.Disposition == ports.EffectAccepted && (effect.Resource.Owner == "" || effect.Resource.Version == 0 || len(effect.Resource.Payload) == 0) {
+		effectErr = fail(ErrInvalid, "host omitted workspace ownership evidence")
+		effect.Disposition = ports.EffectUnknown
+		state = model.WorkspaceUncertain
+	}
+	detail := ""
+	if effectErr != nil {
+		detail = effectErr.Error()
+	}
+	stored, settleErr := s.store.CompleteWorkspaceEffect(context.WithoutCancel(ctx), WorkspaceEffectCompletion{OperationID: op.ID, WorkspaceID: workspace.ID, State: state, Observation: effect.Observation, Resource: effect.Resource, Disposition: effect.Disposition, Detail: detail, At: s.now().UTC()})
+	if settleErr != nil {
+		return WorkspaceResult{}, settleErr
+	}
+	if effectErr != nil {
+		return workspaceResult(stored), effectErr
+	}
+	if effect.Disposition == ports.EffectUnknown {
+		return workspaceResult(stored), fail(ErrUncertain, "workspace restore is uncertain")
+	}
+	if effect.Disposition != ports.EffectAccepted {
+		return workspaceResult(stored), fail(ErrUnavailable, "workspace restore refused")
+	}
+	return workspaceResult(stored), nil
+}
+
 func (s *Service) StartShell(ctx context.Context, req StartShellRequest) (OperationResult, error) {
 	if err := validateEffectContext(req.Context); err != nil {
 		return OperationResult{}, err
@@ -564,6 +623,44 @@ func (s *Service) CancelWork(ctx context.Context, req CancelWorkRequest) (WorkRu
 		return WorkRunResult{}, err
 	}
 	return WorkRunResult(record), nil
+}
+
+func (s *Service) ResolveWorkUncertainty(ctx context.Context, req ResolveWorkUncertaintyRequest) (WorkRunResult, error) {
+	if err := validateEffectContext(req.Context); err != nil {
+		return WorkRunResult{}, err
+	}
+	if err := requireOperator(req.Context.Principal); err != nil {
+		return WorkRunResult{}, err
+	}
+	if strings.TrimSpace(req.Reason) == "" {
+		return WorkRunResult{}, fail(ErrInvalid, "uncertainty resolution reason is required")
+	}
+	record, err := s.store.WorkRun(ctx, req.WorkRunID)
+	if err != nil {
+		return WorkRunResult{}, err
+	}
+	if record.Run.State != model.WorkRunUncertain {
+		return WorkRunResult{}, fail(ErrConflict, "work run is not uncertain")
+	}
+	var uncertain model.WorkStepAttempt
+	found := false
+	for _, attempt := range record.Run.Attempts {
+		if attempt.State == model.WorkAttemptUncertain {
+			uncertain = attempt
+			found = true
+			break
+		}
+	}
+	if !found {
+		return WorkRunResult{}, fail(ErrConflict, "work run has no uncertain attempt")
+	}
+	decision := model.WorkDecision{WorkRunID: req.WorkRunID, RequestID: req.Context.RequestID, Step: uncertain.Step, Attempt: uncertain.Attempt, Decision: model.WorkDecisionReject, Decider: req.Context.Principal, Reason: "confirmed no external effect: " + req.Reason, DecidedAt: s.now().UTC(), Revision: 1}
+	authority := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionResolveWork, Resource: model.ResourceSelector{Kind: model.ResourceWorkRun, WorkRunID: req.WorkRunID}}
+	updated, err := s.store.ResolveWorkUncertainty(ctx, decision, req.ExpectedRunRevision, authority, decision.DecidedAt)
+	if err != nil {
+		return WorkRunResult{}, err
+	}
+	return WorkRunResult(updated), nil
 }
 
 // ReconcilePendingWork is the bounded server-owned worker sweep. Each native

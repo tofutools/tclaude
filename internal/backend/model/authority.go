@@ -26,10 +26,12 @@ const (
 	ActionCreateWorkspace     Action = "workspace.create"
 	ActionInspectWorkspace    Action = "workspace.inspect"
 	ActionRemoveWorkspace     Action = "workspace.remove"
+	ActionRestoreWorkspace    Action = "workspace.restore"
 	ActionStartWork           Action = "work.start"
 	ActionRecordWorkEvidence  Action = "work.evidence.record"
 	ActionDecideWork          Action = "work.decide"
 	ActionCancelWork          Action = "work.cancel"
+	ActionResolveWork         Action = "work.resolve"
 	ActionStartShell          Action = "shell.start"
 )
 
