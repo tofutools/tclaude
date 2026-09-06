@@ -47,3 +47,25 @@ func TestDevelopmentInitializationDoesNotRequireNativeExecutables(t *testing.T) 
 		}
 	}
 }
+
+func TestJourneyHistorySourcesAreCompositionOwned(t *testing.T) {
+	services, err := journeyServices(t.TempDir(), []string{"claude", "opencode", "codex"}, []string{"claude:archive=/tmp/disposable-history"}, false, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, ok := services.History.HistorySource("claude", "archive")
+	if !ok || scope.Source != "/tmp/disposable-history" {
+		t.Fatal("named source not resolved")
+	}
+	if _, ok := services.History.HistorySource("opencode", "owned"); !ok {
+		t.Fatal("owned source missing")
+	}
+	if _, ok := services.History.HistorySource("claude", "/tmp/disposable-history"); ok {
+		t.Fatal("raw path accepted as source name")
+	}
+	for _, source := range []string{"claude:x=relative", "copilot:x=/tmp/history", "codex:x=/tmp/history", "opencode:owned=/tmp/history"} {
+		if _, err := journeyServices(t.TempDir(), []string{"claude", "opencode", "codex"}, []string{source}, false, ""); err == nil {
+			t.Fatalf("accepted invalid source %s", source)
+		}
+	}
+}
