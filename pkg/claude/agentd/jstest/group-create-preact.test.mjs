@@ -111,7 +111,7 @@ test('group-create model validates and builds exact blank, template, and nested 
   'a hidden blank-group cap cannot block template instantiation');
 
   const blank = model.groupCreateRequest({
-    ...base, name: '  new-group ', descr: ' desc ', cwd: ' /repo ',
+    ...base, name: '  new-group ', parent: 'alpha', descr: ' desc ', cwd: ' /repo ',
     context: ' context ', maxMembers: '4',
     attachmentURL: ' https://linear.app/acme/project/alpha ',
     attachmentLabel: ' Alpha project ',
@@ -122,6 +122,13 @@ test('group-create model validates and builds exact blank, template, and nested 
     attachment_url: 'https://linear.app/acme/project/alpha',
     attachment_label: 'Alpha project',
   });
+
+  const topLevel = model.groupCreateRequest({
+    ...model.createGroupCreateDraft({ groups, parentGroup: 'alpha' }),
+    name: 'moved-to-top', parent: '',
+  }, null, 'alpha');
+  assert.equal(topLevel.body.parent, '',
+    'clearing an editable placement cannot fall back to the entry-point preset');
 
   const instantiated = model.groupCreateRequest({
     ...base, name: 'party', source: 'alpha', nested: true,

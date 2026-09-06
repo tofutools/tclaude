@@ -266,18 +266,20 @@ export function validateGroupCreateDraft(draft, { templateMode = false } = {}) {
 
 export function groupCreateRequest(draft, template, parentGroup = '') {
   const name = text(draft.name).trim();
+  const parent = Object.prototype.hasOwnProperty.call(draft, 'parent')
+    ? text(draft.parent) : text(parentGroup);
   if (draft.cloneGroup) {
     const body = {
       no_clone_members: !draft.withAgents,
       copy_owners: !!draft.copyOwners,
     };
     if (name !== text(draft.cloneDefaultName)) body.new_name = name;
-    body.parent = text(draft.parent);
+    body.parent = parent;
     return {
       kind: 'clone', name,
       source: text(draft.cloneGroup),
       placement: draft.clonePlacement ? {
-        ...draft.clonePlacement, parent: text(draft.parent),
+        ...draft.clonePlacement, parent,
       } : null,
       withAgents: !!draft.withAgents,
       copyOwners: !!draft.copyOwners,
@@ -299,7 +301,7 @@ export function groupCreateRequest(draft, template, parentGroup = '') {
       url: '/api/groups',
       body: {
         name,
-        parent: text(draft.parent || parentGroup),
+        parent,
         descr: text(draft.descr).trim(),
         default_cwd: cwd,
         default_context: text(draft.context).trim(),
@@ -324,7 +326,7 @@ export function groupCreateRequest(draft, template, parentGroup = '') {
     body.attachment_label = text(draft.attachmentLabel).trim();
   }
   if (repositoryClone) body.repository_clone = repositoryClone;
-  if (draft.parent || parentGroup) body.parent = text(draft.parent || parentGroup);
+  if (parent) body.parent = parent;
   else if (draft.source && draft.nested) body.parent = draft.source;
   return {
     kind: 'template', name,
