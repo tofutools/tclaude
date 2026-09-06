@@ -91,6 +91,8 @@ func TestPlatformV2FocusedPolicyWiring(t *testing.T) {
 		{"TestCronSpawn", "agentd", []string{"TestCronSpawn"}},
 		{"TestTriggerSpawn", "agentd", []string{"TestTriggerSpawn"}},
 		{"TestFreshLaunchConfiguration", "agentd", []string{"TestFreshLaunchConfiguration"}},
+		{"TestMessageAdmission", "agentd", []string{"TestMessageAdmission"}},
+		{"TestTriggerMessageAcceptance", filepath.Join("common", "db"), []string{"TestTriggerMessageAcceptance"}},
 		{"TestOpenCodeResumeProjectionHandoff", "agentd", []string{"TestOpenCodeResumeProjectionHandoff"}},
 		{"TestProjectOpenCodeExecutionBoundary", "agentd", []string{"TestProjectOpenCodeExecutionBoundary"}},
 		{"TestReleaseAfterOpenCodeResumeProjection", "session", []string{"TestReleaseAfterOpenCodeResumeProjection"}},
