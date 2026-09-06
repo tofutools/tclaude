@@ -29,6 +29,8 @@ func (s openCodeWorkSources) HistorySource(harness, name string) (ports.HistoryD
 func TestOpenCodeExactForkRunsDurableWorkJourney(t *testing.T) {
 	root, err := os.MkdirTemp("/tmp", "tclaude-opencode-work-")
 	require.NoError(t, err)
+	root, err = filepath.EvalSymlinks(root)
+	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
 	repository := filepath.Join(root, "repository")
 	require.NoError(t, os.Mkdir(repository, 0o700))
