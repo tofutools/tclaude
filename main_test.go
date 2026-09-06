@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"os/exec"
@@ -12,6 +15,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/internal/backend/migration"
+	_ "modernc.org/sqlite"
 )
 
 // Exercise the shipped binaries with a disposable state directory. No provider
@@ -105,4 +110,50 @@ func TestShippedProductEntrypointsRetainStateAcrossRestart(t *testing.T) {
 	require.NoError(t, err, string(out))
 	require.Contains(t, string(out), "Retained worker")
 	stop()
+	// Import a real frozen-schema offline bundle through the shipped CLI, verify
+	// exact retry before first serve, then inspect retained meaning publicly.
+	bundle := filepath.Join(root, "bundle")
+	require.NoError(t, os.Mkdir(bundle, 0700))
+	schema, err := os.ReadFile("internal/backend/migration/source/v228/testdata/schema.sql")
+	require.NoError(t, err)
+	sourcePath := filepath.Join(bundle, "snapshot.sqlite")
+	source, err := sql.Open("sqlite", sourcePath)
+	require.NoError(t, err)
+	_, err = source.Exec(string(schema))
+	require.NoError(t, err)
+	_, err = source.Exec(`INSERT INTO schema_version(version) VALUES(228);
+ INSERT INTO agents(agent_id,current_conv_id,created_at,pending_name,task_ref_url) VALUES('old-worker','old-native',1,'Imported worker','https://tracker.invalid/retained');
+ INSERT INTO agent_conversations(conv_id,agent_id,linked_at) VALUES('old-native','old-worker',1);
+ INSERT INTO conv_index(conv_id,project_dir,full_path,custom_title,harness) VALUES('old-native','/old/project','/old/native','Imported worker','codex');
+ INSERT INTO human_messages(from_conv,from_agent,body,created_at) VALUES('old-native','old-worker','Retained correspondence',1);`)
+	require.NoError(t, err)
+	require.NoError(t, source.Close())
+	sourceBytes, err := os.ReadFile(sourcePath)
+	require.NoError(t, err)
+	sum := sha256.Sum256(sourceBytes)
+	manifest := migration.Manifest{FormatVersion: 1, Database: migration.ManifestFile{Path: "snapshot.sqlite", Size: int64(len(sourceBytes)), SHA256: hex.EncodeToString(sum[:])}}
+	manifestBytes, err := json.Marshal(manifest)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(bundle, "manifest.json"), manifestBytes, 0600))
+	state = filepath.Join(root, "imported")
+	importArgs := []string{"migration", "import", "--bundle", bundle, "--manifest", "manifest.json", "--state-dir", state}
+	out, err = run(cli, importArgs...)
+	require.NoError(t, err, string(out))
+	out, err = run(cli, importArgs...)
+	require.NoError(t, err, string(out))
+	require.Contains(t, string(out), `"Repeated": true`)
+	out, err = run(cli, "migration", "report", "--state-dir", state)
+	require.NoError(t, err, string(out))
+	require.NotContains(t, string(out), "Retained correspondence")
+	stop = start(daemon, "serve", "--state-dir", state)
+	out, err = run(cli, "--operator-state", state, "snapshot")
+	require.NoError(t, err, string(out))
+	require.Contains(t, string(out), "Imported worker")
+	require.Contains(t, string(out), "Retained correspondence")
+	require.Contains(t, string(out), "https://tracker.invalid/retained")
+	stop()
+	after, err := os.ReadFile(sourcePath)
+	require.NoError(t, err)
+	require.Equal(t, sourceBytes, after)
+
 }
