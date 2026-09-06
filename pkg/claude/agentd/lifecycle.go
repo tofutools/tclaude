@@ -29,6 +29,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	platformexec "github.com/tofutools/tclaude/pkg/claude/platform/execution"
 	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	tclcommon "github.com/tofutools/tclaude/pkg/common"
@@ -155,10 +156,9 @@ func stopOneConv(convID string, force bool) memberOpResult {
 // that mutation fails. Persistence is deliberately best-effort: an audit I/O
 // failure is logged but never changes the established stop result.
 func stopOneConvWithIntent(convID string, force bool, lifecycleAction, relatedEventID string) memberOpResult {
-	launchLock := resumeLaunchLock(convID)
-	launchLock.Lock()
-	defer launchLock.Unlock()
-	return stopOneConvWithIntentUnderLaunchLock(convID, force, lifecycleAction, relatedEventID)
+	return managedExecutionRuntime.stop(
+		convID, force, lifecycleAction, relatedEventID, stopNoWait,
+	).legacy
 }
 
 // stopWaitPolicy says whether a stop returns as soon as the exit command is
@@ -218,8 +218,9 @@ func stopWaitForExit(deadline time.Duration) stopWaitPolicy {
 // operations use it to keep stop → posture mutation → resume indivisible from
 // other daemon wake/stop requests.
 func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAction, relatedEventID string) memberOpResult {
-	res, _ := stopOneConvUnderLaunchLock(convID, force, lifecycleAction, relatedEventID, stopNoWait)
-	return res
+	return managedExecutionRuntime.stopUnderLaunchLock(
+		convID, force, lifecycleAction, relatedEventID, stopNoWait,
+	).legacy
 }
 
 // stopOneConvAndWait soft-stops convID and does not return until its pane
@@ -238,13 +239,17 @@ func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAc
 // caller that needs an explicit zero-grace stop drives
 // stopOneConvUnderLaunchLock with stopWaitForExit(0) itself.
 func stopOneConvAndWait(convID string, force bool, lifecycleAction, relatedEventID string, deadline time.Duration) (memberOpResult, softExitOutcome) {
+	result := stopOperationAndWait(convID, force, lifecycleAction, relatedEventID, deadline)
+	return result.legacy, result.wait
+}
+
+func stopOperationAndWait(convID string, force bool, lifecycleAction, relatedEventID string, deadline time.Duration) stopOperationResult {
 	if deadline <= 0 {
 		deadline = softExitEscalationDeadline
 	}
-	launchLock := resumeLaunchLock(convID)
-	launchLock.Lock()
-	defer launchLock.Unlock()
-	return stopOneConvUnderLaunchLock(convID, force, lifecycleAction, relatedEventID, stopWaitForExit(deadline))
+	return managedExecutionRuntime.stop(
+		convID, force, lifecycleAction, relatedEventID, stopWaitForExit(deadline),
+	)
 }
 
 // errAgentStillRunning reports that a stop ran the whole escalation ladder (or
@@ -269,10 +274,11 @@ var errAgentStillRunning = errors.New("agent is still running after the full sto
 // investigates. An already-offline conv returns immediately with no error,
 // which is the overwhelmingly common case for a delete.
 func stopBeforePurge(convID, relatedEventID string) (memberOpResult, error) {
-	res, outcome := stopOneConvAndWait(
+	operation := stopOperationAndWait(
 		convID, false /* soft exit first */, db.AgentExitActionForceStop, relatedEventID, 0)
-	switch outcome {
-	case softExitStuck, softExitUnattempted:
+	res := operation.legacy
+	switch operation.stop.State {
+	case platformexec.StopUnresolved, platformexec.StopFailed:
 		detail := res.Detail
 		if detail == "" {
 			detail = res.Action
@@ -287,6 +293,17 @@ func stopBeforePurge(convID, relatedEventID string) (memberOpResult, error) {
 // waitPolicy.wait is set (it is softExitClosed otherwise — nothing was
 // waited for, so nothing is known).
 func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, relatedEventID string, waitPolicy stopWaitPolicy) (memberOpResult, softExitOutcome) {
+	result := managedExecutionRuntime.stopUnderLaunchLock(
+		convID, force, lifecycleAction, relatedEventID, waitPolicy,
+	)
+	return result.legacy, result.wait
+}
+
+// stopOneConvEffectUnderLaunchLock is the host/storage adapter used only by
+// executionRuntime. It preserves the established tmux, process, audit, retry,
+// and escalation behavior while reporting portable operation semantics into
+// ctx.
+func stopOneConvEffectUnderLaunchLock(convID string, force bool, lifecycleAction, relatedEventID string, waitPolicy stopWaitPolicy, ctx *stopOperationContext) (memberOpResult, softExitOutcome) {
 	recoveryReason := lifecycleAction
 	if recoveryReason == "" {
 		recoveryReason = db.AgentExitActionStop
@@ -302,6 +319,7 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 	sess := pickAliveSession(convID)
 	if sess == nil {
 		res.Action = "skipped:already_offline"
+		ctx.outcome.State = platformexec.StopNoExecution
 		return res, softExitClosed
 	}
 	res.TmuxSes = sess.TmuxSession
@@ -312,6 +330,8 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 		res.Detail = "capture selected pane: " + targetErr.Error()
 		return res, softExitUnattempted
 	}
+	ctx.outcome.Attempt = target.attempt
+	ctx.outcome.State = platformexec.StopFailed
 	if force {
 		intentSet := setExitIntentTargetBestEffort(target, lifecycleAction, relatedEventID)
 		if lifecycleAction != "" && intentSet == nil {
@@ -324,6 +344,8 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 			res.Detail = "kill-session: " + err.Error()
 		} else {
 			res.Action = "killed"
+			ctx.outcome.State = platformexec.StopEffectDelivered
+			ctx.outcome.Effect = platformexec.StopEffectKill
 		}
 		// A successful kill-pane is tmux letting go of the pane, not proof the
 		// harness process died — it can be wedged in uninterruptible work or
@@ -370,6 +392,8 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 			delivered = injectSoftExitTarget(target, exitCmd, h.Life.SoftExitPrefixKeys(), "soft-exit", intentSet)
 		}
 		if delivered {
+			ctx.outcome.State = platformexec.StopEffectDelivered
+			ctx.outcome.Effect = platformexec.StopEffectSoftExit
 			fallbackExitReason = daemonSoftExitReason
 			if h.Name == harness.CodexName {
 				// Codex has no SessionEnd hook; record daemon-owned /quit
@@ -405,6 +429,7 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 				return res, finishStopWait(target, waitPolicy, lifecycleAction, relatedEventID, "soft-exit", fallbackExitReason, &res)
 			}
 			scheduleSoftExitEscalation(target, lifecycleAction, relatedEventID, "soft-exit", fallbackExitReason)
+			ctx.convergenceScheduled = true
 		} else if waitPolicy.wait {
 			// The caller asked to wait, but this action does not entitle us to
 			// kill (stopIntendsPaneClosure is what gates that). Wait for the pane
@@ -435,6 +460,8 @@ func stopOneConvUnderLaunchLock(convID string, force bool, lifecycleAction, rela
 		res.Detail = "kill-session (harness has no soft-exit): " + err.Error()
 	} else {
 		res.Action = "killed_no_soft_exit"
+		ctx.outcome.State = platformexec.StopEffectDelivered
+		ctx.outcome.Effect = platformexec.StopEffectKill
 	}
 	return res, finishStopWait(target, waitPolicy, lifecycleAction, relatedEventID, "no-soft-exit", daemonEscalatedKillReason, &res)
 }
@@ -483,6 +510,7 @@ func finishStopWait(target *lifecycleTarget, waitPolicy stopWaitPolicy, lifecycl
 }
 
 type lifecycleTarget struct {
+	attempt             platformexec.AttemptRef
 	sessionID           string
 	convID              string
 	tmuxSession         string
@@ -543,7 +571,11 @@ func captureLifecycleTarget(sess *db.SessionRow) (*lifecycleTarget, error) {
 	if identity.Generation != "" && p.generation != "" && p.generation != identity.Generation {
 		return nil, fmt.Errorf("pane generation mismatch")
 	}
-	return &lifecycleTarget{sessionID: sess.ID, convID: sess.ConvID, tmuxSession: sess.TmuxSession, generation: identity.Generation, paneID: p.paneID, panePID: p.panePID, paneGenerationBound: p.generation != "", softExitSettled: make(chan struct{})}, nil
+	attempt := platformexec.AttemptRef{LegacySessionID: sess.ID}
+	if id, parseErr := platformexec.ParseID(identity.Generation); parseErr == nil {
+		attempt.ExecutionID = id
+	}
+	return &lifecycleTarget{attempt: attempt, sessionID: sess.ID, convID: sess.ConvID, tmuxSession: sess.TmuxSession, generation: identity.Generation, paneID: p.paneID, panePID: p.panePID, paneGenerationBound: p.generation != "", softExitSettled: make(chan struct{})}, nil
 }
 
 // probeLifecyclePane reads the pane's identity and liveness in one tmux call.
@@ -1410,25 +1442,12 @@ func resumeOneConvRecreate(convID string, recreateMissingDir bool) memberOpResul
 	return resumeOneConvLocked(convID, recreateMissingDir)
 }
 
-var resumeLaunchLocks sync.Map         // map[stable actor or unowned conv]*sync.Mutex
-var recoveryLaunchCommitLocks sync.Map // map[convID]*sync.Mutex
-
 func resumeLaunchLock(convID string) *sync.Mutex {
-	key := strings.TrimSpace(convID)
-	// Reincarnation changes the current conversation but not the actor whose
-	// process lifecycle and generated policy are being serialized. Resolving
-	// every known generation to the stable actor keeps delayed predecessor
-	// reaping on the same lock as current-generation reinstate/resume.
-	if agentID, err := db.AgentIDForConv(key); err == nil && agentID != "" {
-		key = "agent:" + agentID
-	}
-	lock, _ := resumeLaunchLocks.LoadOrStore(key, &sync.Mutex{})
-	return lock.(*sync.Mutex)
+	return managedExecutionRuntime.launchLock(convID)
 }
 
 func recoveryLaunchCommitLock(convID string) *sync.Mutex {
-	lock, _ := recoveryLaunchCommitLocks.LoadOrStore(convID, &sync.Mutex{})
-	return lock.(*sync.Mutex)
+	return managedExecutionRuntime.recoveryCommitLock(convID)
 }
 
 type effectiveSandboxChangedError struct{ err error }
