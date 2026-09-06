@@ -111,5 +111,7 @@ func TestTerminalHelper(t *testing.T) {
 	if err := os.WriteFile(output, buffer[:n], 0o600); err != nil {
 		os.Exit(4)
 	}
-	select {}
+	for {
+		time.Sleep(time.Hour)
+	}
 }
