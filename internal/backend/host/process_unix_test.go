@@ -84,7 +84,7 @@ func TestHostProcessHelper(t *testing.T) {
 	for index, arg := range args {
 		if arg == "--" && index+1 < len(args) {
 			require.NoError(t, os.WriteFile(args[index+1], []byte("started"), 0o600))
-			select {}
+			waitForTestProcessStop()
 		}
 	}
 	os.Exit(2)
@@ -102,14 +102,20 @@ func TestHostMarkedLauncherHelper(t *testing.T) {
 	})
 	require.NoError(t, cmd.Start())
 	require.NoError(t, os.WriteFile(args[0], []byte("started"), 0o600))
-	select {}
+	waitForTestProcessStop()
 }
 
 func TestHostMarkedDescendantHelper(t *testing.T) {
 	if os.Getenv("TCLAUDE_HOST_MARKED_DESCENDANT_HELPER") != "1" {
 		return
 	}
-	select {}
+	waitForTestProcessStop()
+}
+
+func waitForTestProcessStop() {
+	for {
+		time.Sleep(time.Hour)
+	}
 }
 
 func processHelperArgsAfterDoubleDash(args []string) []string {
