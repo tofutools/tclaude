@@ -1,4 +1,4 @@
-package main
+package product
 
 import (
 	"github.com/GiGurra/boa/pkg/boa"
