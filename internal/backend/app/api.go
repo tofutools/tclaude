@@ -60,6 +60,7 @@ type RequestContext struct {
 }
 
 type CreateAgentRequest struct {
+	ConfigurationDefault string
 	ConfigurationProfile *model.ConfigurationProfileRef
 	Context              model.Principal
 	ID                   model.AgentID
@@ -72,6 +73,7 @@ type CreateAgentRequest struct {
 }
 
 type UpdateAgentRequest struct {
+	ConfigurationDefault string
 	ConfigurationProfile *model.ConfigurationProfileRef
 	Context              model.Principal
 	ID                   model.AgentID

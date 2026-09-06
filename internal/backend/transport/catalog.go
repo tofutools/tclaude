@@ -8,6 +8,39 @@ import (
 )
 
 func (h *Handler) registerConfigurationCatalog(catalog app.ConfigurationCatalogAPI) {
+	h.mux.HandleFunc("GET /v2/configuration-defaults", func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := h.caller(w, r)
+		if !ok {
+			return
+		}
+		result, err := catalog.GetConfigurationDefaults(r.Context(), principal)
+		if err != nil {
+			applicationError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
+	h.mux.HandleFunc("POST /v2/configuration-defaults", func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := h.caller(w, r)
+		if !ok {
+			return
+		}
+		var body struct {
+			commandIdentity
+			ExpectedRevision model.Revision                           `json:"expected_revision"`
+			Global           *model.ConfigurationProfileRef           `json:"global"`
+			Harnesses        map[string]model.ConfigurationProfileRef `json:"harnesses"`
+		}
+		if !decodeRequest(w, r, &body) {
+			return
+		}
+		result, err := catalog.SaveConfigurationDefaults(r.Context(), app.SaveConfigurationDefaultsRequest{Context: body.context(principal), ExpectedRevision: body.ExpectedRevision, Global: body.Global, Harnesses: body.Harnesses})
+		if err != nil {
+			applicationError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
 	h.mux.HandleFunc("POST /v2/configuration-profiles", func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := h.caller(w, r)
 		if !ok {

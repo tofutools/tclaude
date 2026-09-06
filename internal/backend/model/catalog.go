@@ -27,3 +27,12 @@ type ConfigurationProfileRevision struct {
 	Desired   DesiredConfiguration
 	CreatedAt time.Time
 }
+
+// ConfigurationDefaults pins explicit saved revisions. An edited profile does
+// not move these choices; selecting a new default is a separate CAS mutation.
+type ConfigurationDefaults struct {
+	Global    *ConfigurationProfileRef
+	Harnesses map[string]ConfigurationProfileRef
+	Revision  Revision
+	UpdatedAt time.Time
+}

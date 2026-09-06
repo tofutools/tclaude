@@ -377,3 +377,20 @@ the agent. Launch freezes that provenance and configuration on the execution.
 Editing a profile or updating an agent cannot change an existing execution.
 Catalog administration currently requires the explicit operator identity;
 updates to an agent still require the caller's current configuration authority.
+
+Saved defaults use exact configuration revisions. Read them with
+`configuration-defaults`, and replace them using `configuration-defaults save
+--file defaults.json`, including `request_id`, `expected_revision`, `global`
+and `harnesses`. Each selection contains the profile ID, revision ID and content
+hash returned by the configuration catalog. A new agent can select
+`configuration_default: "global"` or a harness name instead of inline desired
+settings or an explicit profile. Changing a default does not change existing
+agents or executions. The browser Configurations page can set and clear these
+defaults and create agents from a displayed saved revision.
+
+Correspondence supports subjects, reply threads, To/CC audiences and bounded
+attachments. Use `send --to AGENT --cc-operator --subject SUBJECT --attach FILE`,
+or the browser composer. Operator inbox receipts use `read --operator MESSAGE`.
+Retiring an agent requires an offline terminal execution state; reactivation is
+explicit and does not restart its previous execution. Cloning configuration
+creates a distinct agent and does not copy grants or ownership.

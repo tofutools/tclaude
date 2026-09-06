@@ -98,6 +98,10 @@ func (s *Service) CreateAgent(ctx context.Context, req CreateAgentRequest) (Agen
 		return AgentResult{}, err
 	}
 	var selectionErr error
+	req.ConfigurationProfile, selectionErr = s.selectConfigurationDefault(ctx, req.ConfigurationDefault, req.Desired, req.ConfigurationProfile)
+	if selectionErr != nil {
+		return AgentResult{}, selectionErr
+	}
 	req.Desired, req.ConfigurationProfile, selectionErr = s.resolveConfigurationSelection(ctx, req.Desired, req.ConfigurationProfile)
 	if selectionErr != nil {
 		return AgentResult{}, selectionErr
@@ -138,6 +142,10 @@ func (s *Service) CreateAgent(ctx context.Context, req CreateAgentRequest) (Agen
 
 func (s *Service) UpdateAgent(ctx context.Context, req UpdateAgentRequest) (AgentResult, error) {
 	var selectionErr error
+	req.ConfigurationProfile, selectionErr = s.selectConfigurationDefault(ctx, req.ConfigurationDefault, req.Desired, req.ConfigurationProfile)
+	if selectionErr != nil {
+		return AgentResult{}, selectionErr
+	}
 	req.Desired, req.ConfigurationProfile, selectionErr = s.resolveConfigurationSelection(ctx, req.Desired, req.ConfigurationProfile)
 	if selectionErr != nil {
 		return AgentResult{}, selectionErr

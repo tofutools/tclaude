@@ -12,6 +12,8 @@ import (
 )
 
 type ConfigurationCatalogStore interface {
+	SaveConfigurationDefaults(context.Context, ConfigurationDefaultsWrite) (model.ConfigurationDefaults, error)
+	ConfigurationDefaults(context.Context) (model.ConfigurationDefaults, error)
 	SaveConfigurationProfile(context.Context, ConfigurationProfileWrite) (ConfigurationProfileResult, error)
 	ConfigurationProfile(context.Context, model.ConfigurationProfileID, model.ConfigurationProfileRevisionID) (ConfigurationProfileResult, error)
 	ConfigurationProfiles(context.Context) ([]model.ConfigurationProfile, error)
@@ -41,6 +43,8 @@ type SaveConfigurationProfileRequest struct {
 }
 
 type ConfigurationCatalogAPI interface {
+	SaveConfigurationDefaults(context.Context, SaveConfigurationDefaultsRequest) (model.ConfigurationDefaults, error)
+	GetConfigurationDefaults(context.Context, model.Principal) (model.ConfigurationDefaults, error)
 	SaveConfigurationProfile(context.Context, SaveConfigurationProfileRequest) (ConfigurationProfileResult, error)
 	GetConfigurationProfile(context.Context, model.Principal, model.ConfigurationProfileRef) (ConfigurationProfileResult, error)
 	ListConfigurationProfiles(context.Context, model.Principal) ([]model.ConfigurationProfile, error)
@@ -110,4 +114,86 @@ func (s *Service) resolveConfigurationSelection(ctx context.Context, desired mod
 	}
 	ref := result.Revision.Ref
 	return result.Revision.Desired, &ref, nil
+}
+
+type SaveConfigurationDefaultsRequest struct {
+	Context          RequestContext
+	ExpectedRevision model.Revision
+	Global           *model.ConfigurationProfileRef
+	Harnesses        map[string]model.ConfigurationProfileRef
+}
+type ConfigurationDefaultsWrite struct {
+	Defaults           model.ConfigurationDefaults
+	ExpectedRevision   model.Revision
+	RequestID          model.RequestID
+	RequestFingerprint string
+}
+
+func (s *Service) SaveConfigurationDefaults(ctx context.Context, req SaveConfigurationDefaultsRequest) (model.ConfigurationDefaults, error) {
+	if err := requireOperator(req.Context.Principal); err != nil {
+		return model.ConfigurationDefaults{}, err
+	}
+	if err := req.Context.RequestID.Validate(); err != nil {
+		return model.ConfigurationDefaults{}, fail(ErrInvalid, "%v", err)
+	}
+	if len(req.Harnesses) > 32 {
+		return model.ConfigurationDefaults{}, ErrInvalid
+	}
+	refs := map[string]model.ConfigurationProfileRef{}
+	for harness, ref := range req.Harnesses {
+		if harness == "" || harness == "global" || len(harness) > 128 {
+			return model.ConfigurationDefaults{}, ErrInvalid
+		}
+		refs[harness] = ref
+	}
+	if req.Global != nil {
+		refs[""] = *req.Global
+	}
+	for harness, ref := range refs {
+		desired, _, err := s.resolveConfigurationSelection(ctx, model.DesiredConfiguration{}, &ref)
+		if err != nil {
+			return model.ConfigurationDefaults{}, err
+		}
+		if harness != "" && desired.Harness != harness {
+			return model.ConfigurationDefaults{}, fail(ErrInvalid, "default harness does not match profile")
+		}
+	}
+	input, _ := json.Marshal(struct {
+		Global    *model.ConfigurationProfileRef
+		Harnesses map[string]model.ConfigurationProfileRef
+		Expected  model.Revision
+	}{req.Global, req.Harnesses, req.ExpectedRevision})
+	hash := sha256.Sum256(input)
+	return s.store.SaveConfigurationDefaults(ctx, ConfigurationDefaultsWrite{Defaults: model.ConfigurationDefaults{Global: req.Global, Harnesses: req.Harnesses, UpdatedAt: s.now().UTC()}, ExpectedRevision: req.ExpectedRevision, RequestID: req.Context.RequestID, RequestFingerprint: hex.EncodeToString(hash[:])})
+}
+func (s *Service) GetConfigurationDefaults(ctx context.Context, p model.Principal) (model.ConfigurationDefaults, error) {
+	if err := requireOperator(p); err != nil {
+		return model.ConfigurationDefaults{}, err
+	}
+	return s.store.ConfigurationDefaults(ctx)
+}
+
+func (s *Service) selectConfigurationDefault(ctx context.Context, name string, desired model.DesiredConfiguration, ref *model.ConfigurationProfileRef) (*model.ConfigurationProfileRef, error) {
+	if name == "" {
+		return ref, nil
+	}
+	if desired != (model.DesiredConfiguration{}) || ref != nil {
+		return nil, fail(ErrInvalid, "select a default, a profile, or explicit settings")
+	}
+	defaults, err := s.store.ConfigurationDefaults(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if name == "global" {
+		if defaults.Global == nil {
+			return nil, ErrNotFound
+		}
+		copy := *defaults.Global
+		return &copy, nil
+	}
+	selected, ok := defaults.Harnesses[name]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return &selected, nil
 }
