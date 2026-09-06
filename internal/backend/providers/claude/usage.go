@@ -54,14 +54,22 @@ func (usageReader) Collect(ctx context.Context, request ports.UsageCollectionReq
 }
 
 func collectClaudeUsage(raw []byte) ([]model.UsageCounter, time.Time, bool) {
-	totals := map[model.UsageUnit]int64{}
+	// Claude Code persists Anthropic response usage fields on assistant JSONL
+	// records. requestId is the native call identity; repeated transcript rows
+	// for the same request replace rather than double-count that call.
+	// Contract: https://github.com/anthropics/claude-code/issues/24147
+	type callUsage struct{ input, output, cacheRead, cacheWrite int64 }
+	calls := map[string]callUsage{}
 	var observed time.Time
 	partial := false
+	rowNumber := 0
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
 	scanner.Buffer(make([]byte, 64<<10), 16<<20)
 	for scanner.Scan() {
 		var row struct {
 			Type      string `json:"type"`
+			UUID      string `json:"uuid"`
+			RequestID string `json:"requestId"`
 			Timestamp string `json:"timestamp"`
 			Message   struct {
 				Role  string `json:"role"`
@@ -80,22 +88,41 @@ func collectClaudeUsage(raw []byte) ([]model.UsageCounter, time.Time, bool) {
 		if row.Type != "assistant" || row.Message.Role != "assistant" || row.Message.Usage == nil {
 			continue
 		}
+		rowNumber++
+		key := row.RequestID
+		if key == "" {
+			key = row.UUID
+		}
+		if key == "" {
+			key = fmt.Sprintf("row:%d", rowNumber)
+		}
+		call := callUsage{row.Message.Usage.Input, row.Message.Usage.Output, row.Message.Usage.CacheRead, row.Message.Usage.CacheWrite}
 		values := []struct {
 			unit  model.UsageUnit
 			value int64
-		}{{model.UsageInputTokens, row.Message.Usage.Input}, {model.UsageOutputTokens, row.Message.Usage.Output}, {model.UsageCacheReadTokens, row.Message.Usage.CacheRead}, {model.UsageCacheWriteTokens, row.Message.Usage.CacheWrite}}
+		}{{model.UsageInputTokens, call.input}, {model.UsageOutputTokens, call.output}, {model.UsageCacheReadTokens, call.cacheRead}, {model.UsageCacheWriteTokens, call.cacheWrite}}
 		for _, value := range values {
 			if value.value < 0 {
 				partial = true
-				continue
+				delete(calls, key)
+				break
 			}
-			totals[value.unit] += value.value
+		}
+		if call.input >= 0 && call.output >= 0 && call.cacheRead >= 0 && call.cacheWrite >= 0 {
+			calls[key] = call
 		}
 		if parsed, err := time.Parse(time.RFC3339Nano, row.Timestamp); err == nil && parsed.After(observed) {
 			observed = parsed.UTC()
 		}
 	}
 	partial = partial || scanner.Err() != nil
+	totals := map[model.UsageUnit]int64{}
+	for _, call := range calls {
+		totals[model.UsageInputTokens] += call.input
+		totals[model.UsageOutputTokens] += call.output
+		totals[model.UsageCacheReadTokens] += call.cacheRead
+		totals[model.UsageCacheWriteTokens] += call.cacheWrite
+	}
 	return orderedUsageCounters(totals), observed, partial
 }
 

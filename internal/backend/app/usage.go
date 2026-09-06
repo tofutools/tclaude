@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 type UsageStore interface {
 	ResolveUsageTarget(context.Context, UsageTarget, model.AuthorityRequest, time.Time) (UsageTargetRecord, error)
 	RecordUsage(context.Context, UsageWrite) (model.UsageObservation, bool, error)
+	ImportHistoricalUsage(context.Context, HistoricalUsageWrite) (model.UsageObservation, bool, error)
 	QueryUsage(context.Context, UsageFilter, model.AuthorityRequest, time.Time) (UsageResult, error)
 }
 
@@ -30,6 +32,14 @@ type UsageTargetRecord struct {
 }
 
 type UsageWrite struct {
+	Observation model.UsageObservation
+	SourceKey   string
+	Cumulative  bool
+}
+
+// HistoricalUsageWrite is consumed only by the offline importer. Provenance is
+// required and the record remains data; it grants no execution authority.
+type HistoricalUsageWrite struct {
 	Observation model.UsageObservation
 	SourceKey   string
 	Cumulative  bool
@@ -106,11 +116,12 @@ func (s *Service) RefreshUsage(ctx context.Context, req RefreshUsageRequest) (Re
 	now := s.now().UTC()
 	observation := model.UsageObservation{
 		ID: model.UsageObservationID(s.newID("usage_")), Attribution: model.UsageAttribution{
-			AgentID: target.Execution.AgentID, ConversationID: target.Execution.ConversationID, Precision: collected.Attribution,
+			ConversationID: target.Execution.ConversationID, Precision: collected.Attribution,
 		}, Harness: provider.Name(), Source: collected.Source, SourceRevision: collected.SourceRevision,
 		ObservedAt: collected.ObservedAt.UTC(), CollectedAt: now, Counters: append([]model.UsageCounter(nil), collected.Counters...), Cost: collected.Cost, Coverage: collected.Coverage,
 	}
 	if collected.Attribution == model.UsageAttributionExecution {
+		observation.Attribution.AgentID = target.Execution.AgentID
 		observation.Attribution.ExecutionID = target.Execution.ID
 	}
 	stored, repeated, err := store.RecordUsage(ctx, UsageWrite{Observation: observation, SourceKey: collected.SourceKey, Cumulative: collected.Cumulative})
@@ -139,6 +150,11 @@ func validateCollectedUsage(value ports.CollectedUsage) error {
 	if strings.TrimSpace(value.SourceKey) == "" || strings.TrimSpace(value.Source) == "" || strings.TrimSpace(value.SourceRevision) == "" || value.ObservedAt.IsZero() {
 		return fail(ErrInvalid, "provider returned incomplete usage source")
 	}
+	switch value.Attribution {
+	case model.UsageAttributionConversation, model.UsageAttributionExecution:
+	default:
+		return fail(ErrInvalid, "provider returned invalid usage attribution %q", value.Attribution)
+	}
 	seen := make(map[model.UsageUnit]struct{}, len(value.Counters))
 	for _, counter := range value.Counters {
 		if counter.Unit == "" || counter.Value < 0 {
@@ -149,8 +165,11 @@ func validateCollectedUsage(value ports.CollectedUsage) error {
 		}
 		seen[counter.Unit] = struct{}{}
 	}
-	if value.Cost != nil && (value.Cost.Kind == "" || strings.TrimSpace(value.Cost.Amount) == "" || strings.TrimSpace(value.Cost.Currency) == "") {
-		return fail(ErrInvalid, "provider returned incomplete usage cost")
+	if value.Cost != nil {
+		amount, ok := new(big.Rat).SetString(strings.TrimSpace(value.Cost.Amount))
+		if !ok || amount.Sign() < 0 || strings.TrimSpace(value.Cost.Currency) == "" || value.Cost.Kind != model.UsageCostNativeReported {
+			return fail(ErrInvalid, "provider returned invalid native usage cost")
+		}
 	}
 	for _, state := range []model.UsageCoverageState{value.Coverage.Counters, value.Coverage.Cost} {
 		switch state {
