@@ -190,6 +190,11 @@ func TestContextChangeAndResumeUseStoredNativeEvidence(t *testing.T) {
 	snapshot, err := service.Snapshot(ctx, app.SnapshotRequest{Principal: model.OperatorPrincipal()})
 	require.NoError(t, err)
 	updatedAgent := snapshot.Agents[0]
+	_, err = service.Resume(ctx, app.ResumeRequest{RequestContext: effect(model.OperatorPrincipal(), "request_resume_while_live"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: updatedAgent.Revision}}, ConversationID: changed.Execution.ConversationID, ExpectedAssociationRevision: 2})
+	require.ErrorIs(t, err, app.ErrConflict)
+	require.Equal(t, 1, provider.releases)
+	_, err = service.Stop(ctx, app.StopRequest{RequestContext: effect(model.OperatorPrincipal(), "request_context_stop"), ExecutionID: launched.Execution.ID})
+	require.NoError(t, err)
 	resumed, err := service.Resume(ctx, app.ResumeRequest{RequestContext: effect(model.OperatorPrincipal(), "request_resume"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: updatedAgent.Revision}}, ConversationID: changed.Execution.ConversationID, ExpectedAssociationRevision: 2})
 	require.NoError(t, err)
 	require.NotEqual(t, launched.Execution.ID, resumed.Execution.ID)
