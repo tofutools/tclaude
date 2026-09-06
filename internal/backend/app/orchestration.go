@@ -412,6 +412,11 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 		state = model.NodeAttemptUncertain
 	}
 	transition.Updates = append(transition.Updates, GraphAttemptUpdate{Ref: current.Ref, State: state, Outcome: outcome, Detail: detail})
+	if outcome == model.WorkOutcomeRejected {
+		if retried, ok := s.retryFailureTransition(record, current, detail, transition); ok {
+			return retried
+		}
+	}
 	if record.Run.State == model.WorkRunFailed && record.Run.ControlState == model.WorkControlDraining {
 		transition.RunState, transition.RunOutcome = model.WorkRunFailed, record.Run.Outcome
 		transition.ControlState = model.WorkControlSettled
@@ -567,7 +572,7 @@ func (s *Service) enforceOutcomePolicy(record WorkRunRecord, transition *GraphTr
 	policy := record.Run.Graph.Outcome
 	accepted := true
 	for _, required := range policy.RequiredNodes {
-		accepted = accepted && nodeConcludedSuccessfully(attempts, required)
+		accepted = accepted && nodeConcludedVerified(attempts, required)
 	}
 	if policy.ArtifactRevision != "" {
 		artifactAccepted := false
@@ -599,6 +604,80 @@ func (s *Service) enforceOutcomePolicy(record WorkRunRecord, transition *GraphTr
 			transition.Activations[i].Detail = "pinned outcome policy was not satisfied"
 		}
 	}
+}
+
+func (s *Service) retryFailureTransition(record WorkRunRecord, current model.WorkNodeAttempt, detail string, transition GraphTransition) (GraphTransition, bool) {
+	node := graphNode(*record.Run.Graph, current.Ref.NodeID)
+	class := retryFailureClass(node)
+	if node.Retry.MaxAttempts == 0 || !containsString(node.Retry.Retryable, class) {
+		return GraphTransition{}, false
+	}
+	if current.Ref.Attempt < current.RetryBudget {
+		next := retryAttempt(current, node, transition.At, current.RetryBudget)
+		transition.Activations = append(transition.Activations, next)
+		return transition, true
+	}
+	decisionID := model.DecisionID(s.newID("decision_"))
+	answers := []string{string(model.BlockedRetry), string(model.BlockedRework), string(model.BlockedCancel)}
+	if node.Waivable {
+		answers = append(answers, string(model.BlockedWaive))
+	}
+	transition.Updates[0] = GraphAttemptUpdate{Ref: current.Ref, DecisionID: decisionID, State: model.NodeAttemptBlocked, Outcome: model.WorkOutcomeRejected, Detail: detail}
+	transition.DecisionWindows = append(transition.DecisionWindows, model.DecisionWindow{
+		ID: decisionID, Kind: model.DecisionBlocked, SourceRevision: record.Run.Revision,
+		Attempt: current.Ref, Audience: []model.DecisionAudience{{Subject: record.Run.Authority}},
+		Question: "Retry, rework, waive, or cancel the exhausted branch?", PermittedAnswers: answers,
+		ExpiresAt: record.Run.Deadline, State: model.DecisionOpen, Revision: 1,
+		CreatedAt: transition.At, UpdatedAt: transition.At,
+	})
+	virtual := append([]model.WorkNodeAttempt(nil), record.Run.NodeAttempts...)
+	for i := range virtual {
+		if virtual[i].Ref == current.Ref {
+			virtual[i].State = model.NodeAttemptBlocked
+		}
+	}
+	if onlyWaiting(virtual) {
+		transition.RunState, transition.ControlState = model.WorkRunWaiting, model.WorkControlWaiting
+	}
+	return transition, true
+}
+
+func retryAttempt(current model.WorkNodeAttempt, node model.WorkNode, now time.Time, budget uint32) model.WorkNodeAttempt {
+	readyAt := now
+	state := model.NodeAttemptReady
+	var retryAt *time.Time
+	if node.Retry.Backoff > 0 {
+		value := now.Add(node.Retry.Backoff)
+		readyAt, retryAt, state = value, &value, model.NodeAttemptRetryWait
+	}
+	deadline := current.Deadline
+	if node.Retry.AttemptBudget > 0 && now.Add(node.Retry.AttemptBudget).Before(deadline) {
+		deadline = now.Add(node.Retry.AttemptBudget)
+	}
+	return model.WorkNodeAttempt{
+		Ref:   model.WorkAttemptRef{RunID: current.Ref.RunID, NodeID: current.Ref.NodeID, ActivationID: current.Ref.ActivationID, Attempt: current.Ref.Attempt + 1},
+		State: state, Performer: current.Performer, ReadyAt: readyAt, RetryAt: retryAt,
+		Deadline: deadline, RetryBudget: budget, CreatedAt: now, UpdatedAt: now,
+	}
+}
+
+func retryFailureClass(node model.WorkNode) string {
+	if node.Kind == model.WorkNodeDecision || node.Performer != nil && node.Performer.Kind == model.PerformerHuman {
+		return model.RetryableHumanRejection
+	}
+	if node.Performer != nil && node.Performer.Kind == model.PerformerAgent {
+		return model.RetryableAgentRejection
+	}
+	return model.RetryableProgramFailure
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
 }
 
 func acceptedArtifactEvidence(evidence model.WorkNodeEvidence, revision string) bool {
@@ -669,6 +748,15 @@ func incomingNodes(graph model.WorkGraph, id model.WorkNodeID) []model.WorkNodeI
 func nodeConcludedSuccessfully(attempts []model.WorkNodeAttempt, nodeID model.WorkNodeID) bool {
 	for _, attempt := range attempts {
 		if attempt.Ref.NodeID == nodeID && (attempt.State == model.NodeAttemptSucceeded || attempt.State == model.NodeAttemptWaived) {
+			return true
+		}
+	}
+	return false
+}
+
+func nodeConcludedVerified(attempts []model.WorkNodeAttempt, nodeID model.WorkNodeID) bool {
+	for _, attempt := range attempts {
+		if attempt.Ref.NodeID == nodeID && attempt.State == model.NodeAttemptSucceeded && attempt.Outcome == model.WorkOutcomeVerified {
 			return true
 		}
 	}
@@ -800,6 +888,9 @@ func (s *Service) SubmitDecision(ctx context.Context, req SubmitDecisionRequest)
 }
 
 func (s *Service) applyAnsweredDecision(ctx context.Context, run WorkRunRecord, attempt model.WorkNodeAttempt, submission model.DecisionSubmission) (WorkRunRecord, error) {
+	if attempt.State == model.NodeAttemptBlocked {
+		return s.applyBlockedResolution(ctx, run, attempt, submission)
+	}
 	outcome := model.WorkOutcomeVerified
 	verdict := submission.Answer
 	switch submission.Answer {
@@ -824,6 +915,69 @@ func (s *Service) applyAnsweredDecision(ctx context.Context, run WorkRunRecord, 
 	}
 	s.enforceOutcomePolicy(run, &transition, nil, true)
 	return s.store.ApplyGraphTransition(ctx, transition)
+}
+
+func (s *Service) applyBlockedResolution(ctx context.Context, run WorkRunRecord, attempt model.WorkNodeAttempt, submission model.DecisionSubmission) (WorkRunRecord, error) {
+	node := graphNode(*run.Run.Graph, attempt.Ref.NodeID)
+	now := s.now().UTC()
+	switch model.BlockedResolutionAction(submission.Answer) {
+	case model.BlockedWaive:
+		if !node.Waivable {
+			return run, fail(ErrUnauthorized, "node %s does not permit waiver", node.ID)
+		}
+		transition := s.graphOutcomeTransitionForVerdict(run, attempt, model.WorkOutcomeWaived, submission.Reason, "")
+		s.enforceOutcomePolicy(run, &transition, nil, true)
+		return s.store.ApplyGraphTransition(ctx, transition)
+	case model.BlockedCancel:
+		transition := s.graphOutcomeTransitionForVerdict(run, attempt, model.WorkOutcomeCancelled, submission.Reason, "")
+		transition.Updates[0].State = model.NodeAttemptFailed
+		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunCancelled, model.WorkControlSettled, model.WorkOutcomeCancelled
+		return s.store.ApplyGraphTransition(ctx, transition)
+	case model.BlockedRetry, model.BlockedRework:
+		window := normalizedAttempts(node.Retry.MaxAttempts)
+		if attempt.RetryBudget >= maxWorkAttempts || window > maxWorkAttempts-attempt.RetryBudget {
+			return run, fail(ErrConflict, "node %s cannot extend retry budget beyond %d attempts", node.ID, maxWorkAttempts)
+		}
+		budget := attempt.RetryBudget + window
+		next := retryAttempt(attempt, node, now, budget)
+		transition := GraphTransition{WorkRunID: run.Run.ID, ExpectedRevision: run.Run.Revision,
+			Updates:     []GraphAttemptUpdate{{Ref: attempt.Ref, State: model.NodeAttemptFailed, Outcome: model.WorkOutcomeRejected, Detail: submission.Reason}},
+			Activations: []model.WorkNodeAttempt{next}, RunState: model.WorkRunRunning,
+			ControlState: model.WorkControlActive, RunOutcome: run.Run.Outcome, At: now}
+		return s.store.ApplyGraphTransition(ctx, transition)
+	default:
+		return run, fail(ErrInvalid, "blocked resolution action is unsupported")
+	}
+}
+
+func (s *Service) ResolveBlocked(ctx context.Context, req ResolveBlockedRequest) (WorkRunResult, error) {
+	if err := validateEffectContext(req.Context); err != nil {
+		return WorkRunResult{}, err
+	}
+	if req.DecisionID == "" || req.Attempt.RunID == "" || req.Attempt.NodeID == "" || req.Attempt.ActivationID == "" || req.Attempt.Attempt == 0 || req.ExpectedWindowRevision == 0 || req.ExpectedRunRevision == 0 || strings.TrimSpace(req.Reason) == "" {
+		return WorkRunResult{}, fail(ErrInvalid, "exact blocked decision, attempt, revisions, action and reason are required")
+	}
+	window, err := s.store.Decision(ctx, req.DecisionID)
+	if err != nil {
+		return WorkRunResult{}, err
+	}
+	if window.Window.Kind != model.DecisionBlocked || window.Window.Attempt != req.Attempt || window.Window.Revision != req.ExpectedWindowRevision {
+		return WorkRunResult{}, ErrConflict
+	}
+	run, err := s.store.WorkRun(ctx, req.Attempt.RunID)
+	if err != nil {
+		return WorkRunResult{}, err
+	}
+	if run.Run.Revision != req.ExpectedRunRevision {
+		return WorkRunResult{}, ErrConflict
+	}
+	_, err = s.SubmitDecision(ctx, SubmitDecisionRequest{Context: req.Context, DecisionID: req.DecisionID,
+		ExpectedWindowRevision: req.ExpectedWindowRevision, Answer: string(req.Action), Reason: req.Reason, EvidenceRefs: req.EvidenceRefs})
+	if err != nil {
+		return WorkRunResult{}, err
+	}
+	updated, err := s.store.WorkRun(ctx, req.Attempt.RunID)
+	return WorkRunResult(updated), err
 }
 
 func (s *Service) validateProgramBindings(ctx context.Context, graph model.WorkGraph, authorized []model.ProgramProfileRef, principal model.Principal, scope model.WorkScope) error {
@@ -1267,6 +1421,9 @@ func validateWorkGraph(graph model.WorkGraph) error {
 		if node.Retry.MaxAttempts > maxWorkAttempts {
 			return fail(ErrInvalid, "work node %s exceeds retry cap %d", node.ID, maxWorkAttempts)
 		}
+		if err := validateRetryPolicy(node); err != nil {
+			return err
+		}
 		if err := validateWorkNode(node); err != nil {
 			return err
 		}
@@ -1336,6 +1493,35 @@ func validateWorkGraph(graph model.WorkGraph) error {
 	for _, id := range graph.Outcome.RequiredNodes {
 		if nodes[id].ID == "" {
 			return fail(ErrInvalid, "outcome references unknown node %s", id)
+		}
+	}
+	return nil
+}
+
+func validateRetryPolicy(node model.WorkNode) error {
+	retry := node.Retry
+	if retry.Backoff < 0 || retry.AttemptBudget < 0 {
+		return fail(ErrInvalid, "work node %s retry timing cannot be negative", node.ID)
+	}
+	if retry.MaxAttempts == 0 {
+		if retry.Backoff != 0 || retry.AttemptBudget != 0 || len(retry.Retryable) != 0 {
+			return fail(ErrInvalid, "work node %s retry fields require max attempts", node.ID)
+		}
+		return nil
+	}
+	if len(retry.Retryable) == 0 {
+		return fail(ErrInvalid, "work node %s retry requires explicit failure classes", node.ID)
+	}
+	seen := make(map[string]bool, len(retry.Retryable))
+	for _, class := range retry.Retryable {
+		if seen[class] {
+			return fail(ErrInvalid, "work node %s retry failure classes must be unique", node.ID)
+		}
+		seen[class] = true
+		switch class {
+		case model.RetryableProgramFailure, model.RetryableAgentRejection, model.RetryableHumanRejection:
+		default:
+			return fail(ErrInvalid, "work node %s has unsupported retry failure class %q", node.ID, class)
 		}
 	}
 	return nil
@@ -1502,6 +1688,9 @@ func validateAutomation(condition model.AutomationCondition, action model.Automa
 		}
 	default:
 		return fail(ErrInvalid, "overlap policy is required")
+	}
+	if policy.Overlap == model.OverlapReplace && action.Kind != model.AutomationStartWork {
+		return fail(ErrInvalid, "replace overlap is currently supported only for work actions")
 	}
 	if policy.MissedTicks != model.MissedTickSkip && policy.MissedTicks != model.MissedTickCoalesce {
 		return fail(ErrInvalid, "missed tick policy is required")
