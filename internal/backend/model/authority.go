@@ -29,6 +29,7 @@ const (
 	ActionRecordWorkEvidence  Action = "work.evidence.record"
 	ActionDecideWork          Action = "work.decide"
 	ActionCancelWork          Action = "work.cancel"
+	ActionStartShell          Action = "shell.start"
 )
 
 type AuthoritySubjectKind string
