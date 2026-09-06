@@ -29,21 +29,23 @@ type Service struct {
 	workspaceHost    ports.WorkspaceHost
 	historySources   ports.HistorySourceRegistry
 	shellHost        ports.ShellHost
+	programHost      ports.ProgramHost
 	now              func() time.Time
 	newID            IDGenerator
 	accessLease      time.Duration
 	agentAPIEndpoint string
 	callbackIngress  ports.CallbackIngress
 
-	runtimeMu    sync.RWMutex
-	runtimes     map[model.ExecutionID]ports.Runtime
-	hostRuntimes map[model.ExecutionID]ports.HostRuntime
+	runtimeMu       sync.RWMutex
+	runtimes        map[model.ExecutionID]ports.Runtime
+	hostRuntimes    map[model.ExecutionID]ports.HostRuntime
+	programRuntimes map[model.ExecutionID]ports.ProgramRuntime
 }
 
 func New(store Store, providers ports.ProviderRegistry) *Service {
 	return &Service{
 		store: store, providers: providers, now: time.Now, newID: randomID, accessLease: 24 * time.Hour,
-		runtimes: make(map[model.ExecutionID]ports.Runtime), hostRuntimes: make(map[model.ExecutionID]ports.HostRuntime),
+		runtimes: make(map[model.ExecutionID]ports.Runtime), hostRuntimes: make(map[model.ExecutionID]ports.HostRuntime), programRuntimes: make(map[model.ExecutionID]ports.ProgramRuntime),
 	}
 }
 
@@ -63,6 +65,11 @@ func (s *Service) WithHistorySources(sources ports.HistorySourceRegistry) *Servi
 
 func (s *Service) WithShellHost(host ports.ShellHost) *Service {
 	s.shellHost = host
+	return s
+}
+
+func (s *Service) WithProgramHost(host ports.ProgramHost) *Service {
+	s.programHost = host
 	return s
 }
 
@@ -260,6 +267,10 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		operationID = model.OperationID(s.newID("op_"))
 	}
 	spec := resolvedSpec(executionID, agent.ID, desired, conversationID)
+	execution := model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, State: model.ExecutionReserved, Attempt: 1, ContextReadiness: model.ContextReadinessPending, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	if err := s.requireNativeGuidanceComposition(ctx, execution); err != nil {
+		return OperationResult{}, err
+	}
 	authorityResource := model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: executionID}
 	if agent.ID != "" {
 		authorityResource = model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agent.ID}
@@ -283,7 +294,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	}
 	admission, err := s.store.AdmitLaunch(ctx, LaunchAdmission{
 		Operation: model.Operation{ID: operationID, RequestID: req.RequestID, Kind: kind, Principal: req.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now},
-		Execution: model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, State: model.ExecutionReserved, Attempt: 1, ContextReadiness: model.ContextReadinessPending, Revision: 1, CreatedAt: now, UpdatedAt: now},
+		Execution: execution,
 		AgentID:   agent.ID, Expected: expected, ExpectedConversationRevision: expectedConversationRevision,
 		Authority: authority, Access: access,
 	})
@@ -296,7 +307,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancelWorkflow()
 
-	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: intent, Continuation: continuation, History: options.history, PriorEvidence: priorEvidence, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, spec.Attempt, provider.Name()), AgentAPIEndpoint: s.agentAPIEndpoint, CallbackIngress: s.callbackIngress})
+	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: intent, Continuation: continuation, History: options.history, PriorEvidence: priorEvidence, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, spec.Attempt, provider.Name()), NativeGuidance: s.boundNativeGuidance(model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, Attempt: spec.Attempt}), AgentAPIEndpoint: s.agentAPIEndpoint, CallbackIngress: s.callbackIngress})
 	if err != nil {
 		settlementCtx, cancelSettlement := settlementContext(ctx)
 		defer cancelSettlement()
@@ -648,6 +659,12 @@ func (s *Service) Recover(ctx context.Context, req RecoverRequest) (RecoveryRepo
 	}
 	var report RecoveryReport
 	for _, execution := range executions {
+		if execution.Workload == model.ExecutionWorkloadProgram {
+			if err := s.recoverProgramExecution(ctx, execution, &report); err != nil {
+				return RecoveryReport{}, err
+			}
+			continue
+		}
 		if execution.Workload == model.ExecutionWorkloadShell {
 			record, recordErr := s.store.ShellRecovery(ctx, execution.ID)
 			if recordErr != nil || s.shellHost == nil {
@@ -700,12 +717,15 @@ func (s *Service) Recover(ctx context.Context, req RecoverRequest) (RecoveryRepo
 			}
 			continue
 		}
+		if err := s.requireNativeGuidanceComposition(ctx, execution); err != nil {
+			return report, err
+		}
 		var accessBindingValue *model.ExecutionAccessBinding
 		if access, accessErr := s.store.ExecutionAccess(ctx, execution.ID); accessErr == nil {
 			binding := accessBinding(access)
 			accessBindingValue = &binding
 		}
-		result, recoverErr := provider.Recover(ctx, ports.RecoveryRequest{ExecutionID: execution.ID, Spec: execution.Spec, Evidence: execution.Evidence, Attempt: execution.Attempt, Access: accessBindingValue, Observations: s.primaryObservationSink(execution.ID, execution.Attempt, provider.Name()), AgentAPIEndpoint: s.agentAPIEndpoint, CallbackIngress: s.callbackIngress})
+		result, recoverErr := provider.Recover(ctx, ports.RecoveryRequest{ExecutionID: execution.ID, Spec: execution.Spec, Evidence: execution.Evidence, Attempt: execution.Attempt, Access: accessBindingValue, Observations: s.primaryObservationSink(execution.ID, execution.Attempt, provider.Name()), NativeGuidance: s.boundNativeGuidance(execution), AgentAPIEndpoint: s.agentAPIEndpoint, CallbackIngress: s.callbackIngress})
 		if recoverErr != nil || result.State == ports.RecoveryUnknown {
 			report.Unknown = append(report.Unknown, execution.ID)
 			if _, err := s.store.RecordRecovery(ctx, execution.ID, model.ExecutionUnknown, nil, result.Evidence, s.now().UTC()); err != nil {

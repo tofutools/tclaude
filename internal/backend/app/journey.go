@@ -680,17 +680,33 @@ func (s *Service) ResolveWorkUncertainty(ctx context.Context, req ResolveWorkUnc
 // that operation and settles the Work attempt; uncertain operations are never
 // replayed.
 func (s *Service) ReconcilePendingWork(ctx context.Context) (WorkReconcileReport, error) {
+	if err := s.reconcileProgramResourceCleanup(ctx); err != nil {
+		return WorkReconcileReport{}, err
+	}
+	if err := s.reconcileTeamDeployments(ctx); err != nil {
+		return WorkReconcileReport{}, err
+	}
+	occurrences, err := s.reconcileAutomation(ctx)
+	if err != nil {
+		return WorkReconcileReport{}, err
+	}
 	records, err := s.store.PendingWorkRuns(ctx)
 	if err != nil {
 		return WorkReconcileReport{}, err
 	}
-	var report WorkReconcileReport
+	report := WorkReconcileReport{Occurrences: occurrences}
 	for _, record := range records {
 		if record.Run.State == model.WorkRunUncertain {
 			report.Uncertain = append(report.Uncertain, record.Run.ID)
 			continue
 		}
-		updated, advanceErr := s.advanceWork(ctx, record)
+		var updated WorkRunRecord
+		var advanceErr error
+		if record.Run.Graph != nil {
+			updated, advanceErr = s.advanceGraphWork(ctx, record)
+		} else {
+			updated, advanceErr = s.advanceWork(ctx, record)
+		}
 		if advanceErr != nil && updated.Run.State != model.WorkRunFailed && updated.Run.State != model.WorkRunUncertain {
 			return report, advanceErr
 		}
@@ -700,6 +716,9 @@ func (s *Service) ReconcilePendingWork(ctx context.Context) (WorkReconcileReport
 		case model.WorkRunRunning, model.WorkRunPending:
 			report.Pending = append(report.Pending, updated.Run.ID)
 		}
+	}
+	if err := s.reconcileTeamDeployments(ctx); err != nil {
+		return report, err
 	}
 	return report, nil
 }

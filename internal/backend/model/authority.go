@@ -39,8 +39,10 @@ const (
 	ActionReadDefinition       Action = "definition.read"
 	ActionManageDefinition     Action = "definition.manage"
 	ActionManageProgramProfile Action = "program_profile.manage"
+	ActionReadProgramProfile   Action = "program_profile.read"
 	ActionExecuteProgram       Action = "program.execute"
 	ActionManageAutomation     Action = "automation.manage"
+	ActionReadAutomation       Action = "automation.read"
 	ActionRunAutomation        Action = "automation.run"
 )
 
