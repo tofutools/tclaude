@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -213,7 +212,7 @@ func (r *shellRuntime) AttachHost(ctx context.Context, request ports.AttachmentR
 		return ports.HostAttachmentResult{Disposition: ports.EffectUnknown, Evidence: r.evidence}, err
 	}
 	return ports.HostAttachmentResult{Disposition: ports.EffectAccepted,
-		Attachment: shellAttachment{ReadWriteCloser: attachment}, Evidence: r.evidence}, nil
+		Attachment: shellAttachment{TerminalAttachment: attachment}, Evidence: r.evidence}, nil
 }
 
 func (r *shellRuntime) StopHost(ctx context.Context, request ports.StopRequest) (ports.HostStopResult, error) {
@@ -233,9 +232,14 @@ func (r *shellRuntime) StopHost(ctx context.Context, request ports.StopRequest) 
 	return result, err
 }
 
-type shellAttachment struct{ io.ReadWriteCloser }
+type shellAttachment struct{ TerminalAttachment }
+
+var _ ports.ResizableAttachment = shellAttachment{}
 
 func (shellAttachment) Kind() ports.AttachmentKind { return ports.AttachmentTerminal }
+func (a shellAttachment) Resize(ctx context.Context, size ports.TerminalSize) error {
+	return a.TerminalAttachment.Resize(ctx, size.Columns, size.Rows)
+}
 
 func encodeShellEvidence(value shellEvidence) (ports.ShellResourceEvidence, error) {
 	payload, err := json.Marshal(value)

@@ -76,6 +76,32 @@ func TestRecoverProcessByEnvironmentSelectsMarkedLauncherRoot(t *testing.T) {
 		"a marker inherited by a child still identifies the launcher root")
 }
 
+func TestStartProcessCanUseExactEnvironment(t *testing.T) {
+	t.Setenv("TCLAUDE_HOST_AMBIENT_SECRET", "must-not-leak")
+	result := filepath.Join(t.TempDir(), "environment")
+	process, err := StartProcess(ProcessSpec{
+		Executable:       os.Args[0],
+		Args:             []string{"-test.run=TestHostExactEnvironmentHelper", "--", result},
+		Env:              []string{"TCLAUDE_HOST_EXACT_ENV_HELPER=1", "PROGRAM_INPUT=bounded"},
+		ExactEnvironment: true,
+	})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return process.Observe().Exited }, 3*time.Second, 10*time.Millisecond)
+	raw, err := os.ReadFile(result)
+	require.NoError(t, err)
+	require.Equal(t, "bounded\n", string(raw), "ambient parent variables must not reach an exact environment")
+}
+
+func TestTerminalAttachmentRejectsInvalidResizeBeforePTYEffect(t *testing.T) {
+	attachment := &terminalAttachment{}
+	require.Error(t, attachment.Resize(context.Background(), 0, 24))
+	require.Error(t, attachment.Resize(context.Background(), 80, 0))
+	require.Error(t, attachment.Resize(context.Background(), 1001, 24))
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.ErrorIs(t, attachment.Resize(canceled, 80, 24), context.Canceled)
+}
+
 func TestHostProcessHelper(t *testing.T) {
 	if os.Getenv("TCLAUDE_HOST_PROCESS_HELPER") != "1" {
 		return
@@ -110,6 +136,15 @@ func TestHostMarkedDescendantHelper(t *testing.T) {
 		return
 	}
 	waitForTestProcessStop()
+}
+
+func TestHostExactEnvironmentHelper(t *testing.T) {
+	if os.Getenv("TCLAUDE_HOST_EXACT_ENV_HELPER") != "1" {
+		return
+	}
+	args := processHelperArgsAfterDoubleDash(os.Args)
+	value := os.Getenv("PROGRAM_INPUT") + "\n" + os.Getenv("TCLAUDE_HOST_AMBIENT_SECRET")
+	require.NoError(t, os.WriteFile(args[0], []byte(value), 0o600))
 }
 
 func waitForTestProcessStop() {

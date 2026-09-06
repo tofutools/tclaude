@@ -18,7 +18,10 @@ const (
 	ActionStop                 Action = "execution.stop"
 	ActionChangeContext        Action = "execution.context.change"
 	ActionUpdateConfiguration  Action = "agent.configuration.update"
+	ActionRetireAgent          Action = "agent.retire"
+	ActionReactivateAgent      Action = "agent.reactivate"
 	ActionManageMembership     Action = "group.membership.manage"
+	ActionReadAttachment       Action = "attachment.read"
 	ActionReadHistory          Action = "history.read"
 	ActionRefreshHistory       Action = "history.refresh"
 	ActionSetHistoryMetadata   Action = "history.metadata.set"
@@ -64,6 +67,7 @@ type ResourceSelectorKind string
 
 const (
 	ResourceSelf           ResourceSelectorKind = "self"
+	ResourceOperator       ResourceSelectorKind = "operator"
 	ResourceAgent          ResourceSelectorKind = "agent"
 	ResourceExecution      ResourceSelectorKind = "execution"
 	ResourceGroup          ResourceSelectorKind = "group"

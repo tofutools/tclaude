@@ -66,13 +66,14 @@ func TestProviderOwnsTerminalCredentialAndRecovery(t *testing.T) {
 	provider, err := New(Config{Executable: executable, PrivateRoot: root, NativeHome: nativeHome, AgentSocket: filepath.Join(root, "agent.sock")})
 	require.NoError(t, err)
 	expires := time.Now().Add(time.Hour)
-	request := ports.PreparationRequest{Intent: ports.StartFresh, Spec: model.ResolvedExecutionSpec{ExecutionID: "execution_copilot", Attempt: 3, Harness: Name, Model: "test-model", WorkingDirectory: root, Approval: model.ApprovalAutomatic, Sandbox: model.SandboxUnconfined}, ActionCredential: &ports.ActionCredentialMaterial{ExecutionID: "execution_copilot", Generation: 1, DeliveryID: "delivery", Secret: []byte("copilot-secret"), ExpiresAt: expires}}
+	request := ports.PreparationRequest{Intent: ports.StartFresh, InitialInput: &ports.PreparedInitialInput{Body: "prepared copilot brief", Correlation: "brief-copilot", RequiredBeforeFirstWork: true}, Spec: model.ResolvedExecutionSpec{ExecutionID: "execution_copilot", Attempt: 3, Harness: Name, Model: "test-model", WorkingDirectory: root, Approval: model.ApprovalAutomatic, Sandbox: model.SandboxUnconfined}, ActionCredential: &ports.ActionCredentialMaterial{ExecutionID: "execution_copilot", Generation: 1, DeliveryID: "delivery", Secret: []byte("copilot-secret"), ExpiresAt: expires}}
 	prepared, err := provider.Prepare(context.Background(), request)
 	require.NoError(t, err)
 	description := prepared.Describe()
 	require.Equal(t, ports.TopologyTerminalAuthoritative, description.Topology)
 	require.Equal(t, []model.SandboxMode{model.SandboxUnconfined}, description.Requirements.Policy.SupportedSandbox)
 	require.NotContains(t, string(description.Evidence.Payload), "copilot-secret")
+	require.Equal(t, &ports.PreparedInitialInputDescription{Correlation: "brief-copilot", Supported: true}, description.InitialInput)
 	permit := &testPermit{execution: request.Spec.ExecutionID}
 	released, err := prepared.Release(context.Background(), permit)
 	require.NoError(t, err)
@@ -83,7 +84,7 @@ func TestProviderOwnsTerminalCredentialAndRecovery(t *testing.T) {
 	})
 	require.Eventually(t, func() bool {
 		raw, readErr := os.ReadFile(argvPath)
-		return readErr == nil && strings.Contains(string(raw), "--allow-all-tools") && strings.Contains(string(raw), "--no-ask-user")
+		return readErr == nil && strings.Contains(string(raw), "--allow-all-tools") && strings.Contains(string(raw), "--no-ask-user") && strings.Contains(string(raw), "prepared copilot brief")
 	}, time.Second, 10*time.Millisecond)
 	interaction, err := released.Runtime.Interact(context.Background(), ports.Interaction{Text: "literal $(touch nope); `false`"})
 	require.NoError(t, err)

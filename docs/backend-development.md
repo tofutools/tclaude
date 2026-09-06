@@ -271,3 +271,93 @@ request.json` is an operator-only confirmation that the effect did not occur,
 with `request_id`, `work_run_id`, `expected_revision`, and a required `reason`.
 It records that conclusion and releases the relevant claims; it does not replay
 the effect. Use it only after establishing what happened outside the backend.
+
+## Shared product commands
+
+The development binaries now use the shared command builders in
+`internal/product`. The client always goes through the authenticated Unix API;
+selecting a management command does not make an execution caller an operator.
+The production entrypoints still use the existing backend until the replacement
+product and offline migration are ready for cutover.
+
+For an explicitly initialized replacement directory, an operator can run:
+
+```sh
+tclaude-backend-agent --operator-state /absolute/new-state snapshot
+tclaude-backend-agent --operator-state /absolute/new-state agent create --file agent.json
+tclaude-backend-agent --operator-state /absolute/new-state agent update worker --file update.json
+tclaude-backend-agent --operator-state /absolute/new-state authority list
+```
+
+`agent.json` contains `id`, `name` and `desired`; `update.json` contains `name`,
+`desired` and the agent's `expected_revision`. Desired configuration uses the
+existing API fields `Harness`, `Model`, `WorkingDirectory`, `Approval`, and
+`Sandbox`. Agent creation is offline and does not start a native workload.
+
+The `group` commands create groups and assign explicit bounded ownership.
+`authority` provides grant/revoke, role assignment, exact-action explanation,
+and execution-access inspection/revocation. Mutations read an explicit request
+JSON file, including the expected revision required by the corresponding API.
+A successful deletion has no response body. Requests are never automatically
+retried.
+
+`--operator-state` reads that directory's operator token and socket. It cannot
+be combined with execution credential/socket flags or inherited execution
+bootstrap variables. The ordinary execution client still uses
+`TCLAUDE_BACKEND_SOCKET` and `TCLAUDE_BACKEND_CREDENTIAL_FILE`, rereading the
+protected credential resource for each call. Missing execution credentials do
+not fall back to an operator identity.
+
+### Local browser client
+
+Run the shared client's `dashboard --state-dir /absolute/backend-state` command
+against a running replacement backend. It prints a private, single-use login
+link for a loopback listener. The link expires after five minutes; the browser
+exchanges it for an HttpOnly session cookie and removes it from the address bar.
+The operator token remains on disk and is never sent to browser JavaScript.
+
+The browser uses the same authenticated Unix API as the CLI. It supports offline
+agent configuration, group creation, durable messages, history reading, owned
+checkout and shell controls, bounded work evidence/outcomes, and terminal
+attachment. Create an available workspace and an offline worker before starting
+work from history. Exact fork remains provider-dependent; choose an explicit
+fresh handoff when an exact fork is unsupported. Removing a dirty checkout needs
+an explicit discard selection and workspace confirmation. Cancelling a work run
+does not imply its worker stopped.
+
+Disconnecting a terminal or closing the browser server closes the attachment
+view, not its workload. Terminal resize is advertised only when the attachment
+supports it. The negotiated `tclaude.terminal.v1` WebSocket protocol uses binary
+frames for terminal bytes and text JSON frames for resize control. Unnegotiated
+CLI clients retain byte-stream behavior.
+
+Browser JavaScript runs under a same-origin content policy. Inline styles are
+allowed for xterm's dynamically generated terminal styles; inline scripts and
+third-party scripts remain disallowed. This listener is intentionally loopback
+only, not a remotely exposed operator endpoint.
+
+For the optional installed-Chrome acceptance flow, run:
+
+```sh
+TCLAUDE_BROWSER_SMOKE=1 go test ./internal/product/browser -run TestBrowserOfflineAgentGroupAndMessageFlow -count=1
+```
+
+The test uses new disposable backend state, not the operator's database, and
+launches no native model workload. Ordinary browser session/proxy and WebSocket
+lifetime tests run without Chrome under `go test ./internal/product/browser`.
+
+### Offline migration preflight
+
+The shared client can inspect an explicit operator-created schema-v228 snapshot
+bundle without contacting a daemon or writing a target database:
+
+```sh
+tclaude migration inspect --bundle /absolute/snapshot-bundle --manifest manifest.json
+tclaude migration plan --bundle /absolute/snapshot-bundle --manifest manifest.json
+```
+
+Both commands print redacted JSON reports. Blocking diagnostics produce a
+nonzero exit status after printing the report. The plan includes deterministic
+identity/reference mappings and preservation decisions; it does not activate
+legacy authority, replay unfinished work, or perform the final target import.
+No source directory or manifest is inferred from the current user's home.

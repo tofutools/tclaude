@@ -1,4 +1,4 @@
-package main
+package product
 
 import (
 	"os"
@@ -36,7 +36,7 @@ func TestRegisteredProvidersComposeAllHarnessesWithoutLaunching(t *testing.T) {
 
 func TestDevelopmentInitializationDoesNotRequireNativeExecutables(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "new")
-	cmd := command()
+	cmd := DaemonCommand()
 	cmd.SetArgs([]string{"--init", "--state-dir", state, "--harness", "codex,copilot"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
