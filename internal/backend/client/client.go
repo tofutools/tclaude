@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -51,8 +52,11 @@ func (e *Error) Error() string {
 // Call performs exactly one request. The caller owns request identity and retry
 // decisions, including after an uncertain outcome or a transport interruption.
 func (c *Client) Call(ctx context.Context, method, path string, body, result any) error {
-	if !strings.HasPrefix(path, "/v2/") || strings.ContainsAny(path, "?#\r\n") {
-		return errors.New("a backend API path without query or fragment is required")
+	if !strings.HasPrefix(path, "/v2/") || strings.ContainsAny(path, "#\r\n") {
+		return errors.New("a relative backend API path without a fragment is required")
+	}
+	if _, err := url.ParseRequestURI(path); err != nil {
+		return errors.New("invalid backend API request path")
 	}
 	if err := ctx.Err(); err != nil {
 		return err
