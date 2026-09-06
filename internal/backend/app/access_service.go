@@ -75,11 +75,12 @@ func (s *Service) ReadInbox(ctx context.Context, req ReadInboxRequest) (InboxRes
 }
 
 func messageForRecipient(message model.Message, agentID model.AgentID) model.Message {
-	recipients := message.Recipients[:0]
+	recipients := make([]model.MessageRecipient, 0, len(message.Recipients))
 	for _, recipient := range message.Recipients {
-		if recipient.AddressKind == model.MessageAddressAgent && recipient.AgentID == agentID {
-			recipients = append(recipients, recipient)
+		if recipient.AddressKind != model.MessageAddressAgent || recipient.AgentID != agentID {
+			recipient = model.MessageRecipient{AddressKind: recipient.AddressKind, AgentID: recipient.AgentID, Audience: recipient.Audience}
 		}
+		recipients = append(recipients, recipient)
 	}
 	message.Recipients = recipients
 	return message
