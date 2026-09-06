@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -49,6 +50,7 @@ func TestExecutionAccessAuthorityMailRotationAndRestart(t *testing.T) {
 	require.NoError(t, err)
 	status, err := service.ExecutionAccessStatus(ctx, app.ExecutionAccessStatusRequest{Principal: operator, ExecutionID: launchedA.Execution.ID})
 	require.NoError(t, err)
+	require.NotEmpty(t, status.Access.DeliveryID, "application allocates delivery identity before provider preparation")
 	renewed, err := service.RenewExecutionAccess(ctx, app.RenewExecutionAccessRequest{ExecutionID: launchedA.Execution.ID, ExpectedRevision: status.Access.Revision})
 	require.NoError(t, err)
 	require.Equal(t, model.AccessGeneration(2), renewed.Access.Generation)
@@ -103,6 +105,40 @@ func TestLiveGrantRevocationBlocksEffectAdmission(t *testing.T) {
 	require.NoError(t, service.DeleteGrant(ctx, app.DeleteGrantRequest{Principal: operator, GrantID: grantResult.Grant.ID, ExpectedRevision: grantResult.Grant.Revision}))
 	_, err = service.Interact(ctx, app.InteractRequest{RequestContext: effect(caller, "revoked_interact"), ExecutionID: launched.Execution.ID, Text: "denied"})
 	require.ErrorIs(t, err, app.ErrUnauthorized)
+}
+
+func TestAutomationDelegationIntersectsLiveOwnerAuthority(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "automation.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	service := testAccessService(store, newAccessProvider())
+	operator := model.OperatorPrincipal()
+	owner := createAgent(t, ctx, service, operator, "agent_automation_owner")
+	target := createAgent(t, ctx, service, operator, "agent_automation_target")
+	outside := createAgent(t, ctx, service, operator, "agent_automation_outside")
+	grant, err := service.PutGrant(ctx, app.PutGrantRequest{Principal: operator, Grant: model.AuthorityGrant{
+		ID:       "grant_automation_send",
+		Subject:  model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: owner.ID},
+		Action:   model.ActionSendMessage,
+		Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: target.ID},
+	}})
+	require.NoError(t, err)
+	automation := model.AutomationPrincipal("run_daily_triage", model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: owner.ID}, model.AutomationDelegation{
+		Actions:   []model.Action{model.ActionSendMessage},
+		Resources: []model.ResourceSelector{{Kind: model.ResourceAgent, AgentID: target.ID}},
+		ExpiresAt: time.Now().Add(time.Hour),
+	})
+	sent, err := service.SendMessage(ctx, app.SendMessageRequest{RequestContext: effect(automation, "automation_send"), RecipientAgentIDs: []model.AgentID{target.ID}, Body: "delegated"})
+	require.NoError(t, err)
+	require.Equal(t, "run_daily_triage", sent.Message.Sender.AutomationRun)
+	require.Equal(t, owner.ID, sent.Message.Sender.Authority.AgentID)
+
+	_, err = service.SendMessage(ctx, app.SendMessageRequest{RequestContext: effect(automation, "automation_outside"), RecipientAgentIDs: []model.AgentID{outside.ID}, Body: "denied"})
+	require.ErrorIs(t, err, app.ErrUnauthorized, "the accepted run fixture cannot broaden its resource scope")
+	require.NoError(t, service.DeleteGrant(ctx, app.DeleteGrantRequest{Principal: operator, GrantID: grant.Grant.ID, ExpectedRevision: grant.Grant.Revision}))
+	_, err = service.SendMessage(ctx, app.SendMessageRequest{RequestContext: effect(automation, "automation_revoked"), RecipientAgentIDs: []model.AgentID{target.ID}, Body: "denied"})
+	require.ErrorIs(t, err, app.ErrUnauthorized, "delegation remains bounded by the owner's live grants")
 }
 
 func TestExecutionAccessSweepOwnsLeaseEligibility(t *testing.T) {
@@ -187,6 +223,9 @@ type fakeCredentialDelivery struct {
 }
 
 func (d *fakeCredentialDelivery) PrepareActionCredential(_ context.Context, material ports.ActionCredentialMaterial) (ports.ActionCredentialReceipt, error) {
+	if material.DeliveryID == "" {
+		return ports.ActionCredentialReceipt{}, errors.New("delivery id is required")
+	}
 	d.secret = append([]byte(nil), material.Secret...)
 	d.secrets[material.ExecutionID] = append([]byte(nil), material.Secret...)
 	return credentialReceipt(material), nil
@@ -208,9 +247,5 @@ func (d *fakeCredentialDelivery) RemoveActionCredential(_ context.Context, recei
 }
 
 func credentialReceipt(material ports.ActionCredentialMaterial) ports.ActionCredentialReceipt {
-	deliveryID := material.DeliveryID
-	if deliveryID == "" {
-		deliveryID = "delivery_" + string(material.ExecutionID)
-	}
-	return ports.ActionCredentialReceipt{ExecutionID: material.ExecutionID, Generation: material.Generation, DeliveryID: deliveryID, Resource: "/private/credential", FileIdentity: "file", DeliveredAt: time.Now()}
+	return ports.ActionCredentialReceipt{ExecutionID: material.ExecutionID, Generation: material.Generation, DeliveryID: material.DeliveryID, Resource: "/private/credential", FileIdentity: "file", DeliveredAt: time.Now()}
 }

@@ -209,6 +209,9 @@ func (s *Service) ExecutionAccessStatus(ctx context.Context, req ExecutionAccess
 		return ExecutionAccessStatusResult{}, err
 	}
 	access, err := s.store.ExecutionAccess(ctx, req.ExecutionID)
+	if err == nil && access.State == model.ExecutionAccessActive && !s.now().UTC().Before(access.ExpiresAt) {
+		access.State = model.ExecutionAccessExpired
+	}
 	return ExecutionAccessStatusResult{Access: accessBinding(access)}, err
 }
 
