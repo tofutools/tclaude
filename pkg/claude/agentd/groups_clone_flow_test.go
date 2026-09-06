@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -292,13 +293,69 @@ func TestGroupsClone_OwnersCopied(t *testing.T) {
 	}
 }
 
-// Scenario: the clone carries EVERY configurable group setting, not
-// just the description — default cwd, startup context, default profile, attachment,
-// live group permissions, the max-members cap and the notify switch. Each is set to a
-// distinctive non-default value on the source; the clone must match all
-// of them. Runs --no-agents so the assertion is purely about the group
-// row (no live-session plumbing needed). notify defaults to true, so
-// setting it false proves the value is copied rather than re-defaulted.
+// Edited settings are persisted on the copy, including explicit clears.
+func TestGroupsClone_EditableSettings(t *testing.T) {
+	for _, clear := range []bool{false, true} {
+		t.Run(fmt.Sprintf("clear=%v", clear), func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("team")
+			_, err := db.SetAgentGroupDefaultContext("team", "original context")
+			require.NoError(t, err)
+			_, err = db.SetAgentGroupMaxMembers("team", 7)
+			require.NoError(t, err)
+			descr, context, cwd, cap := "edited description", "edited context", f.TestCwd("edited"), 3
+			if clear {
+				descr, context, cwd, cap = "", "", "", 0
+			}
+			resp := groupCloneRequest(t, f, "team", map[string]any{
+				"no_clone_members": true, "descr": descr, "default_context": context,
+				"default_cwd": cwd, "max_members": cap,
+			})
+			clone, err := db.GetAgentGroupByName(resp.Group)
+			require.NoError(t, err)
+			require.NotNil(t, clone)
+			assert.Equal(t, descr, clone.Descr)
+			assert.Equal(t, context, clone.DefaultContext)
+			assert.Equal(t, cwd, clone.DefaultCwd)
+			assert.Equal(t, cap, clone.MaxMembers)
+			source, err := db.GetAgentGroupByName("team")
+			require.NoError(t, err)
+			assert.Equal(t, "original context", source.DefaultContext)
+			assert.Equal(t, 7, source.MaxMembers)
+		})
+	}
+}
+
+func TestGroupsClone_RejectsInvalidSettingsBeforeCreation(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("team")
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/groups/team/clone", map[string]any{"new_name": "bad-clone", "max_members": -1}))
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	clone, err := db.GetAgentGroupByName("bad-clone")
+	require.NoError(t, err)
+	require.Nil(t, clone)
+}
+
+func TestGroupsClone_RejectsEditedCapBelowClonedMembers(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("team")
+	for _, name := range []string{"one", "two"} {
+		f.HaveConvWithTitle(name, name)
+		f.HaveAliveSession(name, name, "tmux-"+name, f.TestCwd(name))
+		f.HaveMember("team", name)
+	}
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/groups/team/clone", map[string]any{"new_name": "too-small", "max_members": 1}))
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "%s", rec.Body.String())
+	clone, err := db.GetAgentGroupByName("too-small")
+	require.NoError(t, err)
+	require.Nil(t, clone)
+}
+
+// Omitted settings continue inheriting the source's complete configuration.
 func TestGroupsClone_CopiesAllSettings(t *testing.T) {
 	f := newFlow(t)
 	source := f.HaveGroup("team")

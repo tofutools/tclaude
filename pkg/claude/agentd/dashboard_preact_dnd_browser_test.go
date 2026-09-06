@@ -285,6 +285,10 @@ return (async function(){
   fire(target, 'dragleave', {relatedTarget:null, clientX:0, clientY:0, screenX:0, screenY:0});
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
   if (!document.querySelector('#group-create-modal.show')) throw new Error('macOS zero-event did not immediately finish the green clone plan');
+  for (var id of ['group-create-descr', 'group-create-cwd', 'group-create-context', 'group-create-max-members']) {
+    var field = document.getElementById(id);
+    if (!field || !field.getClientRects().length || field.disabled) throw new Error('drag clone settings unavailable: ' + id);
+  }
   var dragend = new DragEvent('dragend', {bubbles:true, cancelable:false, dataTransfer:transfer});
   Object.defineProperty(dragend, 'dataTransfer', {value:{dropEffect:'none'}});
   source.dispatchEvent(dragend);
