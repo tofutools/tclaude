@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	cronv3 "github.com/robfig/cron/v3"
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
 
@@ -366,6 +367,10 @@ func (s *Service) RecordNodeEvidence(ctx context.Context, req RecordNodeEvidence
 }
 
 func (s *Service) graphOutcomeTransition(record WorkRunRecord, current model.WorkNodeAttempt, outcome model.WorkOutcome, detail string) GraphTransition {
+	return s.graphOutcomeTransitionForVerdict(record, current, outcome, detail, "")
+}
+
+func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current model.WorkNodeAttempt, outcome model.WorkOutcome, detail, verdict string) GraphTransition {
 	now := s.now().UTC()
 	transition := GraphTransition{WorkRunID: record.Run.ID, ExpectedRevision: record.Run.Revision, RunState: model.WorkRunRunning, ControlState: model.WorkControlActive, At: now}
 	state := model.NodeAttemptSucceeded
@@ -445,6 +450,12 @@ func (s *Service) graphOutcomeTransition(record WorkRunRecord, current model.Wor
 		attempt, windows := s.initialActivation(record.Run.ID, record.Run.Scope, node, now, record.Run.Deadline)
 		if node.Kind == model.WorkNodeFork || node.Kind == model.WorkNodeJoin || node.Kind == model.WorkNodeEnd {
 			attempt.State, attempt.Outcome = model.NodeAttemptSucceeded, model.WorkOutcomeVerified
+			if node.Kind == model.WorkNodeEnd && node.End != nil {
+				attempt.Outcome = node.End.Outcome
+				if node.End.Outcome == model.WorkOutcomeRejected || node.End.Outcome == model.WorkOutcomeCancelled || node.End.Outcome == model.WorkOutcomeExpired {
+					attempt.State = model.NodeAttemptFailed
+				}
+			}
 			attempt.JoinWinner = winner
 			settled := now
 			attempt.SettledAt = &settled
@@ -457,7 +468,7 @@ func (s *Service) graphOutcomeTransition(record WorkRunRecord, current model.Wor
 			}
 		}
 	}
-	for _, next := range outgoingNodes(graph, current.Ref.NodeID) {
+	for _, next := range outgoingNodesForVerdict(graph, current.Ref.NodeID, verdict) {
 		activate(next, current.Ref.ActivationID)
 	}
 	combined := append(virtual, transition.Activations...)
@@ -507,6 +518,31 @@ func outgoingNodes(graph model.WorkGraph, id model.WorkNodeID) []model.WorkNodeI
 		}
 	}
 	return result
+}
+
+func outgoingNodesForVerdict(graph model.WorkGraph, id model.WorkNodeID, verdict string) []model.WorkNodeID {
+	if verdict == "" {
+		return outgoingNodes(graph, id)
+	}
+	var matching []model.WorkNodeID
+	for _, edge := range graph.Edges {
+		if edge.From == id && edge.Verdict == verdict {
+			matching = append(matching, edge.To)
+		}
+	}
+	if len(matching) > 0 {
+		return matching
+	}
+	return outgoingNodes(graph, id)
+}
+
+func hasVerdictEdge(graph model.WorkGraph, id model.WorkNodeID, verdict string) bool {
+	for _, edge := range graph.Edges {
+		if edge.From == id && edge.Verdict == verdict {
+			return true
+		}
+	}
+	return false
 }
 
 func incomingNodes(graph model.WorkGraph, id model.WorkNodeID) []model.WorkNodeID {
@@ -647,6 +683,7 @@ func (s *Service) SubmitDecision(ctx context.Context, req SubmitDecisionRequest)
 		return DecisionResult(record), nil
 	}
 	outcome := model.WorkOutcomeVerified
+	verdict := submission.Answer
 	switch submission.Answer {
 	case "reject":
 		outcome = model.WorkOutcomeRejected
@@ -659,7 +696,10 @@ func (s *Service) SubmitDecision(ctx context.Context, req SubmitDecisionRequest)
 		}
 		outcome = model.WorkOutcomeWaived
 	}
-	transition := s.graphOutcomeTransition(run, attempt, outcome, submission.Reason)
+	if outcome == model.WorkOutcomeRejected && hasVerdictEdge(*run.Run.Graph, attempt.Ref.NodeID, verdict) {
+		outcome = model.WorkOutcomeVerified
+	}
+	transition := s.graphOutcomeTransitionForVerdict(run, attempt, outcome, submission.Reason, verdict)
 	transition.Authority, transition.Decision = authority, &submission
 	if outcome == model.WorkOutcomeCancelled {
 		transition.Updates[0].State = model.NodeAttemptFailed
@@ -1204,6 +1244,14 @@ func validateAutomation(condition model.AutomationCondition, action model.Automa
 	case model.AutomationSchedule:
 		if condition.Schedule == nil || (condition.Schedule.Interval > 0) == (strings.TrimSpace(condition.Schedule.Cron) != "") || (condition.Schedule.Interval > 0 && condition.Schedule.Interval < minimumScheduleCadence) || condition.Schedule.Timezone == "" {
 			return fail(ErrInvalid, "schedule requires timezone and cron or interval of at least 30 seconds")
+		}
+		if _, err := time.LoadLocation(condition.Schedule.Timezone); err != nil {
+			return fail(ErrInvalid, "schedule timezone is unavailable: %v", err)
+		}
+		if condition.Schedule.Cron != "" {
+			if _, err := cronv3.ParseStandard(condition.Schedule.Cron); err != nil {
+				return fail(ErrInvalid, "cron schedule is invalid: %v", err)
+			}
 		}
 	case model.AutomationTrigger:
 		if condition.Trigger == nil || strings.TrimSpace(condition.Trigger.FactKind) == "" || condition.Trigger.Freshness <= 0 {

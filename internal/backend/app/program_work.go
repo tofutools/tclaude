@@ -138,6 +138,44 @@ func (s *Service) recoverProgramExecution(ctx context.Context, execution model.E
 	return nil
 }
 
+// reconcileProgramResourceCleanup closes the post-exit crash/retry gap. A
+// runtime may observe process exit before its independent bounded-output
+// spoolers are complete, so cleanup is retried until WorkloadExited and the
+// host acknowledges the exact final observation evidence.
+func (s *Service) reconcileProgramResourceCleanup(ctx context.Context) error {
+	executions, err := s.store.RecoverableExecutions(ctx)
+	if err != nil {
+		return err
+	}
+	for _, execution := range executions {
+		if execution.Workload != model.ExecutionWorkloadProgram || (execution.State != model.ExecutionExited && execution.State != model.ExecutionFailed) {
+			continue
+		}
+		use, useErr := s.store.WorkspaceUseForExecution(ctx, execution.ID)
+		if useErr != nil || use.ReleasedAt != nil {
+			continue
+		}
+		runtime := s.programRuntime(execution.ID)
+		if runtime == nil {
+			continue
+		}
+		observation, observeErr := runtime.ObserveProgram(ctx)
+		if observeErr != nil || observation.Workload != ports.WorkloadExited || !validProviderEvidence(observation.Evidence) {
+			continue
+		}
+		if _, err = s.store.RecordRecovery(context.WithoutCancel(ctx), execution.ID, execution.State, nil, observation.Evidence, s.now().UTC()); err != nil {
+			return err
+		}
+		if err = runtime.ReleaseProgramResources(context.WithoutCancel(ctx), observation.Evidence); err != nil {
+			continue
+		}
+		if err = s.store.ReleaseWorkspaceUse(ctx, use.ID, execution.ID, s.now().UTC()); err != nil && !errors.Is(err, ErrConflict) {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *Service) admitAndRunProgram(ctx context.Context, record WorkRunRecord, attempt model.WorkNodeAttempt) (WorkRunRecord, error) {
 	if s.programHost == nil {
 		return record, fail(ErrUnavailable, "program host is unavailable")
