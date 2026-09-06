@@ -182,7 +182,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 
 	prepared, err := provider.Prepare(ctx, ports.PreparationRequest{Spec: spec, Intent: intent, Continuation: continuation, PriorEvidence: priorEvidence})
 	if err != nil {
-		finished, persistErr := s.store.CompleteOperation(ctx, OperationCompletion{OperationID: operationID, OperationState: model.OperationFailed, ResultCode: "prepare_failed", Detail: err.Error(), ExecutionID: executionID, ExecutionState: model.ExecutionFailed, At: s.now().UTC()})
+		finished, persistErr := s.store.CompleteOperation(ctx, OperationCompletion{OperationID: operationID, OperationState: model.OperationFailed, ResultCode: "prepare_failed", Detail: err.Error(), ExecutionID: executionID, ExecutionState: model.ExecutionFailed, UpdateExecutionState: true, At: s.now().UTC()})
 		if persistErr != nil {
 			return OperationResult{}, persistErr
 		}
@@ -191,7 +191,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	description := prepared.Describe()
 	if err := validatePrepared(provider.Name(), spec, description); err != nil {
 		_ = prepared.Abort(context.WithoutCancel(ctx))
-		finished, persistErr := s.store.CompleteOperation(ctx, OperationCompletion{OperationID: operationID, OperationState: model.OperationFailed, ResultCode: "invalid_preparation", Detail: err.Error(), ExecutionID: executionID, ExecutionState: model.ExecutionFailed, At: s.now().UTC()})
+		finished, persistErr := s.store.CompleteOperation(ctx, OperationCompletion{OperationID: operationID, OperationState: model.OperationFailed, ResultCode: "invalid_preparation", Detail: err.Error(), ExecutionID: executionID, ExecutionState: model.ExecutionFailed, UpdateExecutionState: true, At: s.now().UTC()})
 		if persistErr != nil {
 			return OperationResult{}, persistErr
 		}
@@ -218,7 +218,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		if releaseErr != nil {
 			detail = releaseErr.Error()
 		}
-		finished, persistErr := s.store.CompleteOperation(ctx, OperationCompletion{OperationID: operationID, OperationState: model.OperationUncertain, ResultCode: "release_uncertain", Detail: detail, ExecutionID: executionID, ExecutionState: model.ExecutionUnknown, Evidence: evidence, At: s.now().UTC()})
+		finished, persistErr := s.store.CompleteOperation(ctx, OperationCompletion{OperationID: operationID, OperationState: model.OperationUncertain, ResultCode: "release_uncertain", Detail: detail, ExecutionID: executionID, ExecutionState: model.ExecutionUnknown, UpdateExecutionState: true, Evidence: evidence, At: s.now().UTC()})
 		if released.Runtime != nil {
 			s.rememberRuntime(released.Runtime)
 		}
@@ -240,7 +240,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 			evidence = observation.Evidence
 		}
 	}
-	finished, err := s.store.CompleteOperation(ctx, OperationCompletion{OperationID: operationID, OperationState: model.OperationSucceeded, ResultCode: "released", ExecutionID: executionID, ExecutionState: executionState, Evidence: evidence, Native: native, At: s.now().UTC()})
+	finished, err := s.store.CompleteOperation(ctx, OperationCompletion{OperationID: operationID, OperationState: model.OperationSucceeded, ResultCode: "released", ExecutionID: executionID, ExecutionState: executionState, UpdateExecutionState: true, Evidence: evidence, Native: native, At: s.now().UTC()})
 	if err != nil {
 		return OperationResult{}, err
 	}
@@ -325,19 +325,22 @@ func (s *Service) ChangeContext(ctx context.Context, req ChangeContextRequest) (
 	if err := requireSelfOrOperator(req.Principal, execution.AgentID); err != nil {
 		return OperationResult{}, err
 	}
-	association, err := s.store.CurrentConversation(ctx, execution.AgentID)
-	if err != nil {
-		return OperationResult{}, err
-	}
-	if association.ConversationID != req.ExpectedConversationID || association.Revision != req.ExpectedAssociationRevision {
-		return OperationResult{}, appConflict("context association")
-	}
 	admission, runtime, err := s.admitRuntimeEffect(ctx, req.RequestContext, req.ExecutionID, model.OperationChangeContext)
 	if err != nil {
 		return OperationResult{}, err
 	}
 	if admission.Repeated {
 		return operationResult(admission), nil
+	}
+	association, err := s.store.CurrentConversation(ctx, execution.AgentID)
+	if err != nil {
+		return OperationResult{}, err
+	}
+	if association.ConversationID != req.ExpectedConversationID || association.Revision != req.ExpectedAssociationRevision {
+		if _, persistErr := s.store.CompleteOperation(ctx, OperationCompletion{OperationID: admission.Operation.ID, OperationState: model.OperationRefused, ResultCode: "context_conflict", Detail: "context association changed", ExecutionID: execution.ID, ExecutionState: execution.State, At: s.now().UTC()}); persistErr != nil {
+			return OperationResult{}, persistErr
+		}
+		return OperationResult{}, appConflict("context association")
 	}
 	result, effectErr := runtime.ChangeContext(context.WithoutCancel(ctx), ports.ContextChange{Intent: req.Intent, ExpectedConversation: req.ExpectedConversationID, ExpectedAssociationRevision: req.ExpectedAssociationRevision})
 	completion := completionFromDisposition(admission.Operation, admission.Execution, result.Disposition, result.Evidence, "context_changed", effectErr, s.now().UTC())
@@ -542,6 +545,7 @@ func (s *Service) withRuntimeEffect(ctx context.Context, request RequestContext,
 	completion := completionFromDisposition(admission.Operation, admission.Execution, disposition, evidence, code, effectErr, s.now().UTC())
 	if kind == model.OperationStop && disposition == ports.EffectAccepted && code == "exited" {
 		completion.ExecutionState = model.ExecutionExited
+		completion.UpdateExecutionState = true
 	}
 	finished, err := s.store.CompleteOperation(ctx, completion)
 	if err != nil {
@@ -620,6 +624,7 @@ func completionFromDisposition(operation model.Operation, execution model.Execut
 	case ports.EffectUnknown:
 		completion.OperationState = model.OperationUncertain
 		completion.ExecutionState = model.ExecutionUnknown
+		completion.UpdateExecutionState = true
 	default:
 		completion.OperationState = model.OperationFailed
 	}
