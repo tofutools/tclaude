@@ -117,12 +117,11 @@ export function createGroupCreateDraft({
 // template-to-template switches. A source- or parent-derived cwd is replaced
 // with the new source's value instead of leaking into an incompatible mode.
 export function selectGroupCreateTemplate(draft, templateName, {
-  templates = [], groups = [], parentGroup = '',
+  templates = [], groups = [],
 } = {}) {
   const template = findGroupCreateTemplate(templates, templateName);
-  const parent = findGroupCreateSource(groups, parentGroup);
   if (!template) {
-    const prefill = parent ? parentPrefill(null, parent) : {
+    const prefill = {
       descr: '', context: '',
       cwd: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwd,
       cwdOrigin: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwdOrigin,
@@ -135,12 +134,8 @@ export function selectGroupCreateTemplate(draft, templateName, {
       ...prefill,
     };
   }
-  const source = parent
-    ? null
-    : findGroupCreateSource(groups, draft.source);
-  const prefill = parent
-    ? parentPrefill(template, parent)
-    : source
+  const source = findGroupCreateSource(groups, draft.source);
+  const prefill = source
       ? sourcePrefill(template, source)
       : {
           descr: text(template.descr),
@@ -153,14 +148,14 @@ export function selectGroupCreateTemplate(draft, templateName, {
     ...draft,
     origin: 'template',
     template: template.name,
-    source: parent?.name || source?.name || '',
-    nested: parent ? false : !!source && draft.nested,
+    source: source?.name || '',
+    nested: !!source && draft.nested,
     ...prefill,
   };
 }
 
 export function selectGroupCreateSource(draft, sourceName, {
-  templates = [], groups = [], parentGroup = '',
+  templates = [], groups = [],
 } = {}) {
   const template = findGroupCreateTemplate(templates, draft.template);
   const source = findGroupCreateSource(groups, sourceName);
@@ -181,7 +176,7 @@ export function selectGroupCreateSource(draft, sourceName, {
       ...sourcePrefill(null, source),
     };
   }
-  if (!template || parentGroup) return { ...draft, source: '', nested: false };
+  if (!template) return { ...draft, source: '', nested: false };
   const prefill = source
     ? sourcePrefill(template, source)
     : {
@@ -200,20 +195,20 @@ export function selectGroupCreateSource(draft, sourceName, {
 }
 
 export function selectGroupCreateOrigin(draft, origin, {
-  templates = [], groups = [], parentGroup = '',
+  templates = [], groups = [],
 } = {}) {
   if (origin === 'template') {
     const templateName = draft.template || templates[0]?.name || '';
     if (!templateName) return { ...draft, origin: 'template', cloneGroup: '' };
     return selectGroupCreateTemplate({ ...draft, cloneGroup: '' }, templateName, {
-      templates, groups, parentGroup,
+      templates, groups,
     });
   }
   if (origin === 'group') {
-    const sourceName = draft.source || parentGroup || groups[0]?.name || '';
+    const sourceName = draft.source || draft.parent || groups[0]?.name || '';
     return selectGroupCreateSource({
       ...draft, origin: 'group', template: '', task: '',
-    }, sourceName, { templates, groups, parentGroup });
+    }, sourceName, { templates, groups });
   }
   const prefill = {
     descr: '', context: '',

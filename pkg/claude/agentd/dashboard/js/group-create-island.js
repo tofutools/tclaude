@@ -238,7 +238,7 @@ function GroupCreateDialog({
 
   const regularTitle = 'Create group';
   const wizardTitle = '⚔ Form a party';
-  const sourceVisible = templateMode && !current.parentGroup;
+  const sourceVisible = templateMode;
   const disabled = busy;
 
   return html`<${Overlay}

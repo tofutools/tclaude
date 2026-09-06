@@ -18,6 +18,11 @@ const groups = [{
   attachment_url: 'https://linear.app/acme/project/alpha',
   attachment_label: 'Alpha project',
   attachment_label_override: 'Alpha project',
+}, {
+  name: 'beta',
+  descr: 'beta descr',
+  default_cwd: '/beta',
+  default_context: 'beta context',
 }];
 
 function deferred() {
@@ -92,9 +97,10 @@ test('group-create model preserves compatible prefill and clears stale source-ow
   const pinnedBlank = model.selectGroupCreateTemplate(pinned, '', {
     templates, groups, parentGroup: 'alpha',
   });
-  assert.equal(pinnedBlank.descr, 'alpha descr');
-  assert.equal(pinnedBlank.cwd, '/alpha');
-  assert.equal(pinnedBlank.context, 'alpha context');
+  assert.equal(pinnedBlank.descr, '');
+  assert.equal(pinnedBlank.cwd, '');
+  assert.equal(pinnedBlank.context, '');
+  assert.equal(pinnedBlank.parent, 'alpha', 'source changes do not alter placement');
 });
 
 test('group-create model validates and builds exact blank, template, and nested requests', async (t) => {
@@ -320,7 +326,29 @@ test('Preact group-create owner renders preset/mirror/pinned paths and reconcile
   assert.equal(host.querySelector('#group-create-placement').dataset.currentValue, 'alpha');
   assert.equal(host.querySelector('#group-create-descr').value, 'alpha descr');
   assert.equal(host.querySelector('#group-create-cwd').value, '/alpha');
-  assert.equal(host.querySelector('#group-create-source-row').hidden, true);
+  assert.equal(host.querySelector('#group-create-source-row').hidden, false);
+  await mounted.cleanup();
+});
+
+test('subgroup entry metadata only prefills later Group and Template choices', async (t) => {
+  const mounted = await mountGroupCreate(t);
+  const { harness, host, state } = mounted;
+  state.open('', 'alpha');
+  await flush(harness);
+
+  const groupSource = host.querySelector('#group-create-group-source');
+  choose(groupSource, 'beta');
+  await harness.act(() => harness.fireEvent(groupSource, 'change'));
+  choose(host.querySelector('#group-create-placement'), '');
+  await harness.act(() => harness.fireEvent(host.querySelector('#group-create-placement'), 'change'));
+
+  [...host.querySelectorAll('.group-create-origin-options button')][2].click();
+  await flush(harness);
+  assert.match(host.querySelector('#group-create-source-summary').textContent, /Prefilled from beta/);
+  assert.equal(host.querySelector('#group-create-cwd').value, '/beta');
+  assert.equal(host.querySelector('#group-create-placement').dataset.currentValue, '');
+  assert.equal(host.querySelector('#group-create-source-row').hidden, false,
+    'the entry route cannot permanently pin template mirroring');
   await mounted.cleanup();
 });
 
