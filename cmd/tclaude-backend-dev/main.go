@@ -56,13 +56,13 @@ func command() *cobra.Command {
 			seen[name] = true
 			switch name {
 			case "claude":
-				p, err := claude.New(claude.Config{PrivateRoot: filepath.Join(state, "claude")})
+				p, err := claude.New(claude.Config{PrivateRoot: filepath.Join(state, "claude"), AgentSocket: filepath.Join(state, "api.sock")})
 				if err != nil {
 					return err
 				}
 				entries = append(entries, p)
 			case "opencode":
-				p, err := opencode.New(opencode.Config{PrivateRoot: filepath.Join(state, "opencode"), Environment: os.Environ()})
+				p, err := opencode.New(opencode.Config{PrivateRoot: filepath.Join(state, "opencode"), AgentSocket: filepath.Join(state, "api.sock"), Environment: os.Environ()})
 				if err != nil {
 					return err
 				}
