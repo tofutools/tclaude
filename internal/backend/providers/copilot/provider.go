@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -129,6 +128,10 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if request.Spec.Sandbox != model.SandboxUnconfined {
 		return nil, fmt.Errorf("copilot provider requires explicitly selected %q; native preview sandbox does not enforce platform mode %q", model.SandboxUnconfined, request.Spec.Sandbox)
 	}
+	initialInput, err := preparedInitialInput(request.InitialInput)
+	if err != nil {
+		return nil, err
+	}
 	nativeID, stateRoot, removeOnAbort, err := p.prepareHistory(request)
 	if err != nil {
 		return nil, err
@@ -191,7 +194,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		description: ports.PreparedDescription{ExecutionID: request.Spec.ExecutionID, Attempt: request.Spec.Attempt, Topology: ports.TopologyTerminalAuthoritative,
 			Requirements:    ports.RuntimeRequirements{Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory, PrivateStorage: true, Terminal: &ports.TerminalRequirement{Interactive: true}, Policy: ports.PolicyRequirements{SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxUnconfined}}},
 			EffectivePolicy: ports.EffectivePolicy{Approval: request.Spec.Approval, Sandbox: request.Spec.Sandbox, ApprovalEnforced: true, SandboxEnforced: true},
-			Resources:       []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: terminal.ResourceKey()}, {Kind: ports.ResourceProcess, Key: stateRoot}}, Evidence: initial, AccessDelivery: access}}, nil
+			Resources:       []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: terminal.ResourceKey()}, {Kind: ports.ResourceProcess, Key: stateRoot}}, Evidence: initial, AccessDelivery: access, InitialInput: initialInput}}, nil
 }
 
 func (p *Provider) prepareHistory(request ports.PreparationRequest) (string, string, bool, error) {
@@ -307,7 +310,20 @@ func (p *prepared) argv() []string {
 	if p.request.Spec.Approval == model.ApprovalAutomatic {
 		args = append(args, "--allow-all-tools", "--no-ask-user")
 	}
+	if p.request.InitialInput != nil {
+		args = append(args, "--interactive", p.request.InitialInput.Body)
+	}
 	return args
+}
+
+func preparedInitialInput(input *ports.PreparedInitialInput) (*ports.PreparedInitialInputDescription, error) {
+	if input == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(input.Body) == "" || strings.TrimSpace(input.Correlation) == "" {
+		return nil, fmt.Errorf("copilot prepared initial input requires body and correlation")
+	}
+	return &ports.PreparedInitialInputDescription{Correlation: input.Correlation, Supported: true}, nil
 }
 func (p *prepared) runtimeEnvironment() []string {
 	result := []string{"COPILOT_HOME=" + p.stateRoot, "COPILOT_ALLOW_ALL=", "TCLAUDE_OBSERVATION_SPOOL=" + p.spool.Directory(), "TCLAUDE_BACKEND_CREDENTIAL_FILE=", "TCLAUDE_BACKEND_SOCKET="}
@@ -547,9 +563,14 @@ cat >"$tmp"
 name=${tmp##*/}; name=${name#.event-}
 mv "$tmp" "$TCLAUDE_OBSERVATION_SPOOL/event-$name"`
 
-type terminalAttachment struct{ io.ReadWriteCloser }
+type terminalAttachment struct{ host.TerminalAttachment }
+
+var _ ports.ResizableAttachment = terminalAttachment{}
 
 func (terminalAttachment) Kind() ports.AttachmentKind { return ports.AttachmentTerminal }
+func (a terminalAttachment) Resize(ctx context.Context, size ports.TerminalSize) error {
+	return a.TerminalAttachment.Resize(ctx, size.Columns, size.Rows)
+}
 func nativeBinding(id string) *model.NativeBinding {
 	if id == "" {
 		return nil
