@@ -61,7 +61,8 @@ func TestJourneyPersistsScopedHistoryOwnedWorkspaceAndExactOutcome(t *testing.T)
 	desired := model.DesiredConfiguration{Harness: "journey", Model: "test", WorkingDirectory: workspacePath, Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}
 	agent, err := service.CreateAgent(ctx, app.CreateAgentRequest{Context: operator, ID: "worker_one", Name: "Worker", Desired: desired})
 	require.NoError(t, err)
-	run, err := service.StartWork(ctx, app.StartWorkRequest{Context: request(operator, "start_work"), ID: "work_one", Spec: model.WorkRunSpec{SourceMode: model.WorkSourceFork, History: model.HistorySelection{ConversationID: entry.ConversationID, ExpectedConversationRevision: entry.Revision}, WorkspaceID: workspace.Workspace.ID, WorkspaceRevision: workspace.Workspace.Revision, WorkerAgentID: agent.Agent.ID, WorkerAgentRevision: agent.Agent.Revision, WorkerDesired: desired, Brief: "make the bounded change", Outcome: model.WorkOutcomePolicy{Mode: model.WorkOutcomeHumanDecision}}})
+	startRequest := app.StartWorkRequest{Context: request(operator, "start_work"), ID: "work_one", Spec: model.WorkRunSpec{SourceMode: model.WorkSourceFork, History: model.HistorySelection{ConversationID: entry.ConversationID, ExpectedConversationRevision: entry.Revision}, WorkspaceID: workspace.Workspace.ID, WorkspaceRevision: workspace.Workspace.Revision, WorkerAgentID: agent.Agent.ID, WorkerAgentRevision: agent.Agent.Revision, WorkerDesired: desired, Brief: "make the bounded change", Outcome: model.WorkOutcomePolicy{Mode: model.WorkOutcomeHumanDecision}}}
+	run, err := service.StartWork(ctx, startRequest)
 	require.NoError(t, err)
 	require.Equal(t, model.WorkRunRunning, run.Run.State)
 	require.Len(t, run.Run.Attempts, 6)
@@ -78,6 +79,9 @@ func TestJourneyPersistsScopedHistoryOwnedWorkspaceAndExactOutcome(t *testing.T)
 	require.Equal(t, 1, host.creates, "restart sweep does not replay an admitted native effect")
 	require.Equal(t, 1, provider.releases)
 	require.Equal(t, 1, provider.deliveries)
+	repeatedRun, err := service.StartWork(ctx, startRequest)
+	require.NoError(t, err)
+	require.Equal(t, run.Run.ID, repeatedRun.Run.ID)
 	run, err = service.InspectWork(ctx, app.InspectWorkRequest{Principal: operator, WorkRunID: "work_one"})
 	require.NoError(t, err)
 
@@ -94,6 +98,10 @@ func TestJourneyPersistsScopedHistoryOwnedWorkspaceAndExactOutcome(t *testing.T)
 	require.Equal(t, model.WorkRunSucceeded, decided.Run.State)
 	require.NotNil(t, decided.Decision)
 
+	_, err = service.RemoveCheckout(ctx, app.RemoveCheckoutRequest{Context: request(operator, "remove_live_workspace"), WorkspaceID: workspace.Workspace.ID, ExpectedRevision: workspace.Workspace.Revision})
+	require.ErrorIs(t, err, app.ErrConflict)
+	_, err = service.Stop(ctx, app.StopRequest{RequestContext: request(operator, "stop_worker"), ExecutionID: run.Run.WorkerExecutionID})
+	require.NoError(t, err)
 	removed, err := service.RemoveCheckout(ctx, app.RemoveCheckoutRequest{Context: request(operator, "remove_workspace"), WorkspaceID: workspace.Workspace.ID, ExpectedRevision: workspace.Workspace.Revision})
 	require.NoError(t, err)
 	require.Equal(t, model.WorkspaceRemoved, removed.Workspace.State)
@@ -120,11 +128,24 @@ func TestWorkRunPinsRevisionsAndBlocksSharedHistoryAndWorkspaceCleanup(t *testin
 	spec := model.WorkRunSpec{SourceMode: model.WorkSourceFork, History: model.HistorySelection{ConversationID: history.Entries[0].ConversationID, ExpectedConversationRevision: history.Entries[0].Revision}, WorkspaceID: workspace.Workspace.ID, WorkspaceRevision: workspace.Workspace.Revision, WorkerAgentID: worker.Agent.ID, WorkerAgentRevision: worker.Agent.Revision, WorkerDesired: desired, Brief: "bounded", Outcome: model.WorkOutcomePolicy{Mode: model.WorkOutcomeHumanDecision}}
 	run, err := service.StartWork(ctx, app.StartWorkRequest{Context: request(operator, "run_one"), ID: "run_one", Spec: spec})
 	require.NoError(t, err)
+	_, err = service.RecordWorkEvidence(ctx, app.RecordWorkEvidenceRequest{Context: request(operator, "too_early"), WorkRunID: run.Run.ID, Step: model.WorkStepAwaitEvidence, Attempt: 1, Kind: model.WorkEvidenceWorkerReport, Detail: "premature", ExpectedRunRevision: run.Run.Revision})
+	require.ErrorIs(t, err, app.ErrConflict)
 	_, err = service.StartWork(ctx, app.StartWorkRequest{Context: request(operator, "run_two"), ID: "run_two", Spec: spec})
 	require.Error(t, err, "provider-required exclusive history use is durable")
 	_, err = service.RemoveCheckout(ctx, app.RemoveCheckoutRequest{Context: request(operator, "remove_busy"), WorkspaceID: workspace.Workspace.ID, ExpectedRevision: workspace.Workspace.Revision, Destructive: true})
 	require.ErrorIs(t, err, app.ErrConflict, "destructive intent does not bypass active exact-use claims")
-	_, err = service.CancelWork(ctx, app.CancelWorkRequest{Context: request(operator, "cancel"), WorkRunID: run.Run.ID, ExpectedRunRevision: run.Run.Revision, Reason: "operator cancelled"})
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	run, err = service.InspectWork(ctx, app.InspectWorkRequest{Principal: operator, WorkRunID: run.Run.ID})
+	require.NoError(t, err)
+	cancelled, err := service.CancelWork(ctx, app.CancelWorkRequest{Context: request(operator, "cancel"), WorkRunID: run.Run.ID, ExpectedRunRevision: run.Run.Revision, Reason: "operator cancelled"})
+	require.NoError(t, err)
+	require.True(t, cancelled.Run.CancellationRequested)
+	_, err = service.RemoveCheckout(ctx, app.RemoveCheckoutRequest{Context: request(operator, "remove_cancelled_live"), WorkspaceID: workspace.Workspace.ID, ExpectedRevision: workspace.Workspace.Revision})
+	require.ErrorIs(t, err, app.ErrConflict)
+	_, err = service.Stop(ctx, app.StopRequest{RequestContext: request(operator, "stop_cancelled_worker"), ExecutionID: cancelled.Run.WorkerExecutionID})
+	require.NoError(t, err)
+	_, err = service.RemoveCheckout(ctx, app.RemoveCheckoutRequest{Context: request(operator, "remove_cancelled_stopped"), WorkspaceID: workspace.Workspace.ID, ExpectedRevision: workspace.Workspace.Revision})
 	require.NoError(t, err)
 }
 
@@ -164,9 +185,46 @@ func TestShellOwnsExactWorkspaceUntilStopped(t *testing.T) {
 	require.Equal(t, 2, host.creates)
 }
 
+func TestCancelledUncertainWorkRemainsResolvable(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "journey.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	provider := newJourneyProvider()
+	provider.uncertainRelease = true
+	host := &journeyWorkspaceHost{}
+	service := journeyService(store, provider, host)
+	operator := model.OperatorPrincipal()
+	history, err := service.RefreshHistory(ctx, app.RefreshHistoryRequest{Principal: operator, Harness: "journey", SourceName: "default"})
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "checkout")
+	workspace, err := service.CreateCheckout(ctx, app.CreateCheckoutRequest{Context: request(operator, "uncertain_create"), ID: "uncertain_workspace", Intent: model.WorkspaceIntent{IntendedPath: path}})
+	require.NoError(t, err)
+	desired := model.DesiredConfiguration{Harness: "journey", Model: "test", WorkingDirectory: path, Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}
+	worker, err := service.CreateAgent(ctx, app.CreateAgentRequest{Context: operator, ID: "uncertain_worker", Name: "Worker", Desired: desired})
+	require.NoError(t, err)
+	run, err := service.StartWork(ctx, app.StartWorkRequest{Context: request(operator, "uncertain_start"), ID: "uncertain_run", Spec: model.WorkRunSpec{SourceMode: model.WorkSourceFork, History: model.HistorySelection{ConversationID: history.Entries[0].ConversationID, ExpectedConversationRevision: history.Entries[0].Revision}, WorkspaceID: workspace.Workspace.ID, WorkspaceRevision: workspace.Workspace.Revision, WorkerAgentID: worker.Agent.ID, WorkerAgentRevision: worker.Agent.Revision, WorkerDesired: desired, Brief: "bounded", Outcome: model.WorkOutcomePolicy{Mode: model.WorkOutcomeHumanDecision}}})
+	require.NoError(t, err)
+	report, err := service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []model.WorkRunID{run.Run.ID}, report.Uncertain)
+	run, err = service.InspectWork(ctx, app.InspectWorkRequest{Principal: operator, WorkRunID: run.Run.ID})
+	require.NoError(t, err)
+	cancelled, err := service.CancelWork(ctx, app.CancelWorkRequest{Context: request(operator, "uncertain_cancel"), WorkRunID: run.Run.ID, ExpectedRunRevision: run.Run.Revision, Reason: "cancel future work"})
+	require.NoError(t, err)
+	require.Equal(t, model.WorkRunUncertain, cancelled.Run.State)
+	require.True(t, cancelled.Run.CancellationRequested)
+	resolved, err := service.ResolveWorkUncertainty(ctx, app.ResolveWorkUncertaintyRequest{Context: request(operator, "uncertain_resolve"), WorkRunID: run.Run.ID, ExpectedRunRevision: cancelled.Run.Revision, Reason: "verified process never started"})
+	require.NoError(t, err)
+	require.Equal(t, model.WorkRunFailed, resolved.Run.State)
+	_, err = service.RemoveCheckout(ctx, app.RemoveCheckoutRequest{Context: request(operator, "uncertain_remove"), WorkspaceID: workspace.Workspace.ID, ExpectedRevision: workspace.Workspace.Revision})
+	require.NoError(t, err)
+}
+
 type journeyProvider struct {
 	reader               *journeyHistoryReader
 	releases, deliveries int
+	uncertainRelease     bool
 }
 
 func newJourneyProvider() *journeyProvider { return &journeyProvider{reader: &journeyHistoryReader{}} }
@@ -192,6 +250,9 @@ func (p *journeyPrepared) Release(ctx context.Context, permit ports.ReleasePermi
 		return ports.ReleaseResult{}, err
 	}
 	p.provider.releases++
+	if p.provider.uncertainRelease {
+		return ports.ReleaseResult{State: ports.ReleaseUncertain, Evidence: model.ProviderEvidence{Provider: "journey", Version: 1}}, nil
+	}
 	return ports.ReleaseResult{State: ports.ReleaseStarted, Runtime: &journeyRuntime{id: p.request.Spec.ExecutionID, provider: p.provider}, Evidence: model.ProviderEvidence{Provider: "journey", Version: 1}}, nil
 }
 func (*journeyPrepared) Abort(context.Context) error { return nil }
