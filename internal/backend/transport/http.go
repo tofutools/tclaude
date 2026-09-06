@@ -27,6 +27,7 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	h.mux.HandleFunc("POST /v2/agents", h.createAgent)
 	h.mux.HandleFunc("POST /v2/groups", h.createGroup)
 	h.mux.HandleFunc("GET /v2/snapshot", h.snapshot)
+	h.mux.HandleFunc("GET /v2/attach", h.attach)
 	h.registerCommands()
 	return h, nil
 }
