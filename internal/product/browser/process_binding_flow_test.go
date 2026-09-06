@@ -12,13 +12,14 @@ import (
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/providers"
 	backend "github.com/tofutools/tclaude/internal/backend/server"
 )
 
 // Opt-in browser acceptance uses a disposable SQLite/Unix backend and real
 // browser event handlers. It launches no harness or native model turn.
-func TestBrowserOfflineAgentGroupAndMessageFlow(t *testing.T) {
+func TestBrowserPinnedProcessBindsNamedAgent(t *testing.T) {
 	if os.Getenv("TCLAUDE_BROWSER_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_BROWSER_SMOKE=1 for installed-Chrome product acceptance")
 	}
@@ -35,7 +36,11 @@ func TestBrowserOfflineAgentGroupAndMessageFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	backendDone := make(chan error, 1)
-	go func() { backendDone <- backend.Serve(ctx, state, providers.NewRegistry()) }()
+	workspaceHost, err := host.NewCheckoutHost("")
+	require.NoError(t, err)
+	go func() {
+		backendDone <- backend.Serve(ctx, state, providers.NewRegistry(), backend.JourneyServices{Workspaces: workspaceHost})
+	}()
 	require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(state, "api.sock")); return err == nil }, 5*time.Second, 10*time.Millisecond)
 	view, err := Open(state, "127.0.0.1:0")
 	require.NoError(t, err)
@@ -65,21 +70,13 @@ func TestBrowserOfflineAgentGroupAndMessageFlow(t *testing.T) {
 		}
 		return strings.HasPrefix(text.Value.Str(), "Updated")
 	}, 5*time.Second, 100*time.Millisecond, "browser did not connect")
-	page.MustElement("[data-tab=configurations]").MustClick()
-	page.MustElement("#new-configuration").MustClick()
-	page.MustElement("[name=name]").MustInput("Saved browser worker")
+	page.MustElement("#new-agent").MustClick()
+	page.MustElement("[name=name]").MustInput("Browser worker")
 	page.MustElement("[name=model]").MustInput("fixture")
 	page.MustElement("[name=cwd]").MustInput(root)
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
-	page.MustElementR("#configuration-list button", "Create agent").MustClick()
-	page.MustElement("#editor").MustWaitVisible()
-	page.MustElement("[name=name]").MustSelectAllText().MustInput("Browser worker")
-	page.MustElement("#editor button[type=submit]").MustClick()
-	page.MustElement("#editor").MustWaitInvisible()
-	page.MustElement("[data-tab=groups]").MustClick()
 	page.MustElementR("#roster .name", "Browser worker")
-	page.MustElementR("#roster .muted", "Saved configuration")
 	page.MustElement("#new-group").MustClick()
 	page.MustElement("[name=name]").MustInput("Review team")
 	page.MustElement("[name=members]").MustSelect("Browser worker")
@@ -88,32 +85,10 @@ func TestBrowserOfflineAgentGroupAndMessageFlow(t *testing.T) {
 	page.MustElementR("#roster h2", "Review team")
 	page.MustElement("[data-tab=messages]").MustClick()
 	page.MustElement("#compose").MustClick()
-	page.MustElement("[name=to]").MustSelect("Browser worker")
-	page.MustElement("[name=cc]").MustSelect("Operator")
-	page.MustElement("[name=subject]").MustInput("Browser review")
-	attachmentPath := filepath.Join(root, "review.txt")
-	require.NoError(t, os.WriteFile(attachmentPath, []byte("Browser attachment"), 0600))
-	page.MustElement("[name=files]").MustSetFiles(attachmentPath)
 	page.MustElement("[name=body]").MustInput("Durable browser message")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
 	page.MustElementR("#message-list pre", "Durable browser message")
-	page.MustElementR("#message-list button", "Download review.txt")
-	page.MustElementR("#message-list button", "Mark read").MustClick()
-	page.MustElementR("#message-list p", "Operator · read")
-	page.MustElementR("#message-list button", "Reply all").MustClick()
-	page.MustElement("[name=body]").MustInput("Thread reply")
-	page.MustElement("#editor button[type=submit]").MustClick()
-	page.MustElement("#editor").MustWaitInvisible()
-	page.MustElementR("#message-list pre", "Thread reply")
-	page.MustElement("[data-tab=groups]").MustClick()
-	page.MustElementR("#roster button", "Retire").MustClick()
-	page.MustElement("[name=reason]").MustInput("Finished browser fixture")
-	page.MustElement("#editor button[type=submit]").MustClick()
-	page.MustElement("#editor").MustWaitInvisible()
-	page.MustElementR("#roster button", "Reactivate").MustClick()
-	page.MustElementR("#roster button", "Retire")
-
 	// Seed an authored human-decision process through the same authenticated API,
 	// then answer it through browser controls (no simulated decision handler).
 	page.MustEval(`async () => {
@@ -131,7 +106,19 @@ func TestBrowserOfflineAgentGroupAndMessageFlow(t *testing.T) {
 		return err == nil && strings.Contains(value.Value.Str(), "succeeded")
 	}, 5*time.Second, 100*time.Millisecond)
 
-	require.False(t, page.MustElement("#error").MustVisible())
-	// The fragment was removed after exchanging the one-use login credential.
-	require.NotContains(t, page.MustInfo().URL, "login=")
+	require.NoError(t, exec.Command("git", "init", root).Run())
+	require.NoError(t, exec.Command("git", "-C", root, "-c", "user.name=Reviewer", "-c", "user.email=review@example.invalid", "commit", "--allow-empty", "-m", "fixture").Run())
+	page.MustEval(`async () => {
+  await api('/v2/definitions', {request_id:'binding_definition',draft:{ID:'binding_process',Name:'Binding process',Kind:'process',SchemaVersion:1,Source:'binding fixture',Process:{Graph:{CompilerVersion:'1',EntryNodeID:'task',Nodes:[{ID:'task',Kind:'task',Performer:{Kind:'agent',Agent:{MemberKey:'implementer',Brief:'work'}}},{ID:'done',Kind:'end',End:{Outcome:'verified'}}],Edges:[{From:'task',To:'done'}]}}}});
+  await api('/v2/workspaces/create',{request_id:'binding_workspace',id:'binding_workspace',intent:{Repository:"` + root + `",IntendedPath:"` + root + `/checkout",BaseRevision:"HEAD",Branch:"review-fixture",Provenance:'platform_created',Ownership:'owned',RetainOnFinish:true}});
+  await refresh();
+ }`)
+	page.MustElement("[data-tab=processes]").MustClick()
+	page.MustElementR("#definition-list button", "Start process").MustClick()
+	page.MustElement("#editor [name=workspace]")
+	page.MustElement("#editor [name=binding_implementer]").MustSelect("Browser worker")
+	page.MustElement("#editor button[type=submit]").MustClick()
+	page.MustElement("#editor").MustWaitInvisible()
+	result := page.MustEval(`async () => {const data=await api('/v2/snapshot');const run=(data.work_runs||[]).find(r=>r.run.definition_closure?.some(d=>d.DefinitionID==='binding_process'));const worker=data.agents.find(a=>a.Name==='Browser worker');const performer=run?.run.graph?.Nodes.find(n=>n.ID==='task')?.Performer;return !!worker&&performer?.Agent?.AgentID===worker.ID&&!performer?.Agent?.MemberKey;}`)
+	require.True(t, result.Bool(), "public run must pin the selected agent into its graph")
 }

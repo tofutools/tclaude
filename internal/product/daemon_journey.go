@@ -41,7 +41,7 @@ func journeyServices(state string, harnesses, configured []string, workspaces bo
 		}
 		sources[key] = ports.HistoryDiscoveryScope{Source: path}
 	}
-	result := server.JourneyServices{History: sources}
+	result := server.JourneyServices{History: sources, Programs: host.ProgramProcessHost{PrivateRoot: filepath.Join(state, "programs")}}
 	if workspaces {
 		checkout, err := host.NewCheckoutHost("")
 		if err != nil {
