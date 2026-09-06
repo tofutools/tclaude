@@ -351,24 +351,6 @@ function GroupCreateDialog({
         onKeyDown=${submitOnEnter} placeholder="optional one-line description"
         autocomplete="off" spellcheck="false" />
     </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label"><${Words}
-        plain="Link / attachment" wizard="Quest portal" /></span>
-      <input id="group-create-attachment-url" type="url" value=${draft.attachmentURL}
-        disabled=${disabled}
-        onInput=${(event) => setField('attachmentURL', event.currentTarget.value)}
-        onKeyDown=${submitOnEnter} placeholder="https://…"
-        autocomplete="off" spellcheck="false" />
-    </label>
-    <label class="cron-create-row">
-      <span class="cron-create-label"><${Words}
-        plain="Link label" wizard="Portal name" /></span>
-      <input id="group-create-attachment-label" type="text" value=${draft.attachmentLabel}
-        disabled=${disabled}
-        onInput=${(event) => setField('attachmentLabel', event.currentTarget.value)}
-        onKeyDown=${submitOnEnter} placeholder="optional display name / alias"
-        autocomplete="off" spellcheck="false" />
-    </label>
     <fieldset class="group-create-workspace">
       <legend>Workspace</legend>
       <div class="group-create-workspace-modes" role="group" aria-label="Workspace source">
@@ -454,6 +436,24 @@ function GroupCreateDialog({
         onInput=${(event) => setField('maxMembers', event.currentTarget.value)}
         placeholder="optional — 0 = unlimited; a spawn that would exceed it is refused"
         autocomplete="off" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label"><${Words}
+        plain="Link / attachment" wizard="Quest portal" /></span>
+      <input id="group-create-attachment-url" type="url" value=${draft.attachmentURL}
+        disabled=${disabled}
+        onInput=${(event) => setField('attachmentURL', event.currentTarget.value)}
+        onKeyDown=${submitOnEnter} placeholder="https://…"
+        autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label"><${Words}
+        plain="Link label" wizard="Portal name" /></span>
+      <input id="group-create-attachment-label" type="text" value=${draft.attachmentLabel}
+        disabled=${disabled}
+        onInput=${(event) => setField('attachmentLabel', event.currentTarget.value)}
+        onKeyDown=${submitOnEnter} placeholder="optional display name / alias"
+        autocomplete="off" spellcheck="false" />
     </label>
     <div class="cron-create-error" id="group-create-error" role=${error ? 'alert' : undefined}>${error}</div>
     <div class="modal-buttons">
