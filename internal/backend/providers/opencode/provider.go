@@ -82,7 +82,10 @@ func New(config Config) (*Provider, error) {
 	}, nil
 }
 
-func (*Provider) Name() string                                        { return Name }
+func (*Provider) Name() string { return Name }
+func (*Provider) Capabilities() ports.ProviderCapabilities {
+	return ports.ProviderCapabilities{PreparedInitialInput: true}
+}
 func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 
 type evidence struct {

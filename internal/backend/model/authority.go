@@ -7,32 +7,38 @@ import "time"
 type Action string
 
 const (
-	ActionReadIdentity        Action = "identity.read"
-	ActionReadStatus          Action = "status.read"
-	ActionReadInbox           Action = "inbox.read"
-	ActionMarkInboxRead       Action = "inbox.mark_read"
-	ActionSendMessage         Action = "message.send"
-	ActionLaunch              Action = "execution.launch"
-	ActionInteract            Action = "execution.interact"
-	ActionAttach              Action = "execution.attach"
-	ActionStop                Action = "execution.stop"
-	ActionChangeContext       Action = "execution.context.change"
-	ActionUpdateConfiguration Action = "agent.configuration.update"
-	ActionManageMembership    Action = "group.membership.manage"
-	ActionReadHistory         Action = "history.read"
-	ActionRefreshHistory      Action = "history.refresh"
-	ActionSetHistoryMetadata  Action = "history.metadata.set"
-	ActionRegisterWorkspace   Action = "workspace.register"
-	ActionCreateWorkspace     Action = "workspace.create"
-	ActionInspectWorkspace    Action = "workspace.inspect"
-	ActionRemoveWorkspace     Action = "workspace.remove"
-	ActionRestoreWorkspace    Action = "workspace.restore"
-	ActionStartWork           Action = "work.start"
-	ActionRecordWorkEvidence  Action = "work.evidence.record"
-	ActionDecideWork          Action = "work.decide"
-	ActionCancelWork          Action = "work.cancel"
-	ActionResolveWork         Action = "work.resolve"
-	ActionStartShell          Action = "shell.start"
+	ActionReadIdentity         Action = "identity.read"
+	ActionReadStatus           Action = "status.read"
+	ActionReadInbox            Action = "inbox.read"
+	ActionMarkInboxRead        Action = "inbox.mark_read"
+	ActionSendMessage          Action = "message.send"
+	ActionLaunch               Action = "execution.launch"
+	ActionInteract             Action = "execution.interact"
+	ActionAttach               Action = "execution.attach"
+	ActionStop                 Action = "execution.stop"
+	ActionChangeContext        Action = "execution.context.change"
+	ActionUpdateConfiguration  Action = "agent.configuration.update"
+	ActionManageMembership     Action = "group.membership.manage"
+	ActionReadHistory          Action = "history.read"
+	ActionRefreshHistory       Action = "history.refresh"
+	ActionSetHistoryMetadata   Action = "history.metadata.set"
+	ActionRegisterWorkspace    Action = "workspace.register"
+	ActionCreateWorkspace      Action = "workspace.create"
+	ActionInspectWorkspace     Action = "workspace.inspect"
+	ActionRemoveWorkspace      Action = "workspace.remove"
+	ActionRestoreWorkspace     Action = "workspace.restore"
+	ActionStartWork            Action = "work.start"
+	ActionRecordWorkEvidence   Action = "work.evidence.record"
+	ActionDecideWork           Action = "work.decide"
+	ActionCancelWork           Action = "work.cancel"
+	ActionResolveWork          Action = "work.resolve"
+	ActionStartShell           Action = "shell.start"
+	ActionReadDefinition       Action = "definition.read"
+	ActionManageDefinition     Action = "definition.manage"
+	ActionManageProgramProfile Action = "program_profile.manage"
+	ActionExecuteProgram       Action = "program.execute"
+	ActionManageAutomation     Action = "automation.manage"
+	ActionRunAutomation        Action = "automation.run"
 )
 
 type AuthoritySubjectKind string
@@ -55,26 +61,32 @@ type AuthoritySubject struct {
 type ResourceSelectorKind string
 
 const (
-	ResourceSelf         ResourceSelectorKind = "self"
-	ResourceAgent        ResourceSelectorKind = "agent"
-	ResourceExecution    ResourceSelectorKind = "execution"
-	ResourceGroup        ResourceSelectorKind = "group"
-	ResourceGroupPeers   ResourceSelectorKind = "group_members"
-	ResourceConversation ResourceSelectorKind = "conversation"
-	ResourceWorkspace    ResourceSelectorKind = "workspace"
-	ResourceWorkRun      ResourceSelectorKind = "work_run"
+	ResourceSelf           ResourceSelectorKind = "self"
+	ResourceAgent          ResourceSelectorKind = "agent"
+	ResourceExecution      ResourceSelectorKind = "execution"
+	ResourceGroup          ResourceSelectorKind = "group"
+	ResourceGroupPeers     ResourceSelectorKind = "group_members"
+	ResourceConversation   ResourceSelectorKind = "conversation"
+	ResourceWorkspace      ResourceSelectorKind = "workspace"
+	ResourceWorkRun        ResourceSelectorKind = "work_run"
+	ResourceDefinition     ResourceSelectorKind = "definition"
+	ResourceProgramProfile ResourceSelectorKind = "program_profile"
+	ResourceAutomationRule ResourceSelectorKind = "automation_rule"
 )
 
 // ResourceSelector is deliberately typed. Exactly the field named by Kind is
 // populated; Self expands from the authenticated caller at evaluation time.
 type ResourceSelector struct {
-	Kind           ResourceSelectorKind
-	AgentID        AgentID
-	ExecutionID    ExecutionID
-	GroupID        GroupID
-	ConversationID ConversationID
-	WorkspaceID    WorkspaceID
-	WorkRunID      WorkRunID
+	Kind             ResourceSelectorKind
+	AgentID          AgentID
+	ExecutionID      ExecutionID
+	GroupID          GroupID
+	ConversationID   ConversationID
+	WorkspaceID      WorkspaceID
+	WorkRunID        WorkRunID
+	DefinitionID     DefinitionID
+	ProgramProfileID ProgramProfileID
+	AutomationRuleID AutomationRuleID
 }
 
 type GrantID string

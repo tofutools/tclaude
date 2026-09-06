@@ -234,6 +234,9 @@ type journeyProvider struct {
 
 func newJourneyProvider() *journeyProvider { return &journeyProvider{reader: &journeyHistoryReader{}} }
 func (*journeyProvider) Name() string      { return "journey" }
+func (*journeyProvider) Capabilities() ports.ProviderCapabilities {
+	return ports.ProviderCapabilities{}
+}
 func (p *journeyProvider) Prepare(_ context.Context, request ports.PreparationRequest) (ports.PreparedAttempt, error) {
 	return &journeyPrepared{provider: p, request: request}, nil
 }
