@@ -102,6 +102,11 @@ function GroupCreateDialog({
   const sourceGroupName = cloneMode ? draft.cloneGroup
     : (current.parentGroup || draft.source);
   const sourceGroup = current.groups.find((group) => group?.name === sourceGroupName) || null;
+  const originLabel = cloneMode
+    ? `Group · ${sourceGroupName}`
+    : templateMode
+      ? `Template · ${template.name}${sourceGroup ? ` + Group · ${sourceGroupName}` : ''}`
+      : sourceGroup ? `Group · ${sourceGroupName}` : 'Blank group';
   const dirty = groupCreateDraftIsDirty(draft, baseline);
 
   useEffect(() => () => {
@@ -267,9 +272,7 @@ function GroupCreateDialog({
     /></h3>
     <div class="cron-create-row group-create-origin-row">
       <span class="cron-create-label">Start from</span>
-      <div class="group-create-origin-value">${cloneMode || sourceGroup
-        ? `Group · ${sourceGroupName}`
-        : templateMode ? `Template · ${template.name}` : 'Blank group'}</div>
+      <div class="group-create-origin-value">${originLabel}</div>
     </div>
     ${cloneMode ? null : html`<label class="cron-create-row">
       <span class="cron-create-label"><${Words}
