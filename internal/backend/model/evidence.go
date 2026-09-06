@@ -24,3 +24,8 @@ func NewProviderEvidence(provider string, version uint32, payload []byte) (Provi
 	}
 	return ProviderEvidence{Provider: provider, Version: version, Payload: append([]byte(nil), payload...)}, nil
 }
+
+func (e ProviderEvidence) Validate() error {
+	_, err := NewProviderEvidence(e.Provider, e.Version, e.Payload)
+	return err
+}
