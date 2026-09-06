@@ -674,7 +674,7 @@ func verifyClaudeForkSelection(selection *ports.HistorySourceSelection) error {
 	if err != nil {
 		return err
 	}
-	if evidence.NativeID != selection.Native.Reference {
+	if evidence.NativeID != selection.Native.Reference || evidence.Fingerprint != selection.SourceFingerprint {
 		return fmt.Errorf("Claude fork evidence does not match native source")
 	}
 	revision, _, err := fingerprintFile(evidence.Path)
