@@ -169,6 +169,101 @@ func TestStandaloneLaunchDoesNotManufactureAgent(t *testing.T) {
 	require.Len(t, snapshot.Executions, 1)
 }
 
+func TestResetDropsPriorNativeContinuationEvidence(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	provider := newFakeProvider()
+	provider.runtime.omitNativeOnChange = true
+	service := testService(store, provider)
+	agent := createAgent(t, ctx, service, model.OperatorPrincipal(), "agent_reset")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(model.OperatorPrincipal(), "request_reset_launch"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	changed, err := service.ChangeContext(ctx, app.ChangeContextRequest{RequestContext: effect(model.OperatorPrincipal(), "request_reset"), ExecutionID: launched.Execution.ID, Intent: ports.ContextReset, ExpectedConversationID: launched.Execution.ConversationID, ExpectedAssociationRevision: 1})
+	require.NoError(t, err)
+	persisted, err := store.Execution(ctx, changed.Execution.ID)
+	require.NoError(t, err)
+	require.Nil(t, persisted.NativeConversation)
+}
+
+func TestLateInteractionCannotResurrectExitedExecution(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	provider := newFakeProvider()
+	service := testService(store, provider)
+	agent := createAgent(t, ctx, service, model.OperatorPrincipal(), "agent_ordering")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(model.OperatorPrincipal(), "request_order_launch"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	provider.runtime.onInteract = func() {
+		_, stopErr := service.Stop(ctx, app.StopRequest{RequestContext: effect(model.OperatorPrincipal(), "request_nested_stop"), ExecutionID: launched.Execution.ID})
+		require.NoError(t, stopErr)
+	}
+	_, err = service.Interact(ctx, app.InteractRequest{RequestContext: effect(model.OperatorPrincipal(), "request_late_interact"), ExecutionID: launched.Execution.ID, Text: "hello"})
+	require.NoError(t, err)
+	persisted, err := store.Execution(ctx, launched.Execution.ID)
+	require.NoError(t, err)
+	require.Equal(t, model.ExecutionExited, persisted.State)
+}
+
+func TestLateObservationCannotResurrectExitedExecution(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	provider := newFakeProvider()
+	service := testService(store, provider)
+	agent := createAgent(t, ctx, service, model.OperatorPrincipal(), "agent_observe_order")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(model.OperatorPrincipal(), "request_observe_launch"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	provider.runtime.onObserve = func() {
+		_, stopErr := service.Stop(ctx, app.StopRequest{RequestContext: effect(model.OperatorPrincipal(), "request_observe_stop"), ExecutionID: launched.Execution.ID})
+		require.NoError(t, stopErr)
+	}
+	observed, err := service.Observe(ctx, app.ObserveRequest{Principal: model.OperatorPrincipal(), ExecutionID: launched.Execution.ID})
+	require.NoError(t, err)
+	require.Equal(t, model.ExecutionExited, observed.Execution.State)
+}
+
+func TestClientCancellationDuringEffectDoesNotCancelSettlement(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	provider := newFakeProvider()
+	service := testService(store, provider)
+	agent := createAgent(t, ctx, service, model.OperatorPrincipal(), "agent_disconnect")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(model.OperatorPrincipal(), "request_disconnect_launch"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	requestCtx, cancelRequest := context.WithCancel(ctx)
+	provider.runtime.onInteract = cancelRequest
+	result, err := service.Interact(requestCtx, app.InteractRequest{RequestContext: effect(model.OperatorPrincipal(), "request_disconnect_interact"), ExecutionID: launched.Execution.ID, Text: "continue after disconnect"})
+	require.NoError(t, err)
+	require.Equal(t, model.OperationSucceeded, result.Operation.State)
+	persisted, err := store.Snapshot(ctx)
+	require.NoError(t, err)
+	require.Equal(t, model.OperationSucceeded, persisted.Operations[len(persisted.Operations)-1].State)
+}
+
+func TestClientCancellationAfterContextAdmissionDoesNotStrandOperation(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	provider := newFakeProvider()
+	service := testService(store, provider)
+	agent := createAgent(t, ctx, service, model.OperatorPrincipal(), "agent_context_disconnect")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(model.OperatorPrincipal(), "request_context_disconnect_launch"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	requestCtx, cancelRequest := context.WithCancel(ctx)
+	service = testService(cancelAfterAdmissionStore{Store: store, cancel: cancelRequest}, provider)
+	result, err := service.ChangeContext(requestCtx, app.ChangeContextRequest{RequestContext: effect(model.OperatorPrincipal(), "request_context_disconnect"), ExecutionID: launched.Execution.ID, Intent: ports.ContextClear, ExpectedConversationID: launched.Execution.ConversationID, ExpectedAssociationRevision: 1})
+	require.NoError(t, err)
+	require.Equal(t, model.OperationSucceeded, result.Operation.State)
+}
+
 func TestContextChangeAndResumeUseStoredNativeEvidence(t *testing.T) {
 	ctx := context.Background()
 	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
@@ -183,6 +278,9 @@ func TestContextChangeAndResumeUseStoredNativeEvidence(t *testing.T) {
 	changed, err := service.ChangeContext(ctx, app.ChangeContextRequest{RequestContext: effect(model.OperatorPrincipal(), "request_context_change"), ExecutionID: launched.Execution.ID, Intent: ports.ContextClear, ExpectedConversationID: oldConversation, ExpectedAssociationRevision: 1})
 	require.NoError(t, err)
 	require.NotEqual(t, oldConversation, changed.Execution.ConversationID)
+	repeated, err := service.ChangeContext(ctx, app.ChangeContextRequest{RequestContext: effect(model.OperatorPrincipal(), "request_context_change"), ExecutionID: launched.Execution.ID, Intent: ports.ContextClear, ExpectedConversationID: oldConversation, ExpectedAssociationRevision: 1})
+	require.NoError(t, err)
+	require.True(t, repeated.Repeated)
 	_, err = service.ChangeContext(ctx, app.ChangeContextRequest{RequestContext: effect(model.OperatorPrincipal(), "request_stale_context"), ExecutionID: launched.Execution.ID, Intent: ports.ContextClear, ExpectedConversationID: oldConversation, ExpectedAssociationRevision: 1})
 	require.ErrorIs(t, err, app.ErrConflict)
 	require.Equal(t, 1, provider.runtime.contextChanges)
@@ -190,6 +288,11 @@ func TestContextChangeAndResumeUseStoredNativeEvidence(t *testing.T) {
 	snapshot, err := service.Snapshot(ctx, app.SnapshotRequest{Principal: model.OperatorPrincipal()})
 	require.NoError(t, err)
 	updatedAgent := snapshot.Agents[0]
+	_, err = service.Resume(ctx, app.ResumeRequest{RequestContext: effect(model.OperatorPrincipal(), "request_resume_while_live"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: updatedAgent.Revision}}, ConversationID: changed.Execution.ConversationID, ExpectedAssociationRevision: 2})
+	require.ErrorIs(t, err, app.ErrConflict)
+	require.Equal(t, 1, provider.releases)
+	_, err = service.Stop(ctx, app.StopRequest{RequestContext: effect(model.OperatorPrincipal(), "request_context_stop"), ExecutionID: launched.Execution.ID})
+	require.NoError(t, err)
 	resumed, err := service.Resume(ctx, app.ResumeRequest{RequestContext: effect(model.OperatorPrincipal(), "request_resume"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: updatedAgent.Revision}}, ConversationID: changed.Execution.ConversationID, ExpectedAssociationRevision: 2})
 	require.NoError(t, err)
 	require.NotEqual(t, launched.Execution.ID, resumed.Execution.ID)
@@ -225,6 +328,19 @@ type fakeRegistry struct{ provider ports.Provider }
 
 func (r fakeRegistry) Provider(harness string) (ports.Provider, bool) {
 	return r.provider, harness == "fake"
+}
+
+type cancelAfterAdmissionStore struct {
+	app.Store
+	cancel context.CancelFunc
+}
+
+func (s cancelAfterAdmissionStore) AdmitExecutionOperation(ctx context.Context, admission app.ExecutionOperationAdmission) (app.AdmissionResult, error) {
+	result, err := s.Store.AdmitExecutionOperation(ctx, admission)
+	if err == nil {
+		s.cancel()
+	}
+	return result, err
 }
 
 type fakeProvider struct {
@@ -288,6 +404,9 @@ type fakeRuntime struct {
 	native                                    model.NativeConversationEvidence
 	interactions, attachments, contextChanges int
 	stopped                                   bool
+	omitNativeOnChange                        bool
+	onInteract                                func()
+	onObserve                                 func()
 }
 
 func (r *fakeRuntime) ExecutionID() model.ExecutionID { return r.id }
@@ -295,10 +414,18 @@ func (r *fakeRuntime) observation() ports.Observation {
 	return ports.Observation{ObservedAt: time.Now(), Workload: ports.WorkloadRunning, Context: ports.ContextReady, NativeConversation: &r.native, Evidence: r.evidence}
 }
 func (r *fakeRuntime) Observe(context.Context) (ports.Observation, error) {
+	if r.onObserve != nil {
+		callback := r.onObserve
+		r.onObserve = nil
+		callback()
+	}
 	return r.observation(), nil
 }
 func (r *fakeRuntime) Interact(context.Context, ports.Interaction) (ports.InteractionResult, error) {
 	r.interactions++
+	if r.onInteract != nil {
+		r.onInteract()
+	}
 	return ports.InteractionResult{Disposition: ports.EffectAccepted, Evidence: r.evidence}, nil
 }
 func (r *fakeRuntime) Attach(context.Context, ports.AttachmentRequest) (ports.AttachmentResult, error) {
@@ -307,6 +434,9 @@ func (r *fakeRuntime) Attach(context.Context, ports.AttachmentRequest) (ports.At
 }
 func (r *fakeRuntime) ChangeContext(context.Context, ports.ContextChange) (ports.ContextChangeResult, error) {
 	r.contextChanges++
+	if r.omitNativeOnChange {
+		return ports.ContextChangeResult{Disposition: ports.EffectAccepted, Evidence: r.evidence}, nil
+	}
 	r.native = model.NativeConversationEvidence{Namespace: "fake", Reference: "native_rotated", ObservedAt: time.Now()}
 	return ports.ContextChangeResult{Disposition: ports.EffectAccepted, NativeConversation: &r.native, Evidence: r.evidence}, nil
 }

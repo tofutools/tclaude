@@ -16,6 +16,11 @@ import (
 
 type IDGenerator func(prefix string) string
 
+const (
+	admittedEffectTimeout = 5 * time.Minute
+	settlementTimeout     = 30 * time.Second
+)
+
 type Service struct {
 	store     Store
 	providers ports.ProviderRegistry
@@ -179,10 +184,14 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	if admission.Repeated {
 		return operationResult(admission), nil
 	}
+	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
+	defer cancelWorkflow()
 
-	prepared, err := provider.Prepare(ctx, ports.PreparationRequest{Spec: spec, Intent: intent, Continuation: continuation, PriorEvidence: priorEvidence})
+	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: intent, Continuation: continuation, PriorEvidence: priorEvidence})
 	if err != nil {
-		finished, persistErr := s.store.CompleteOperation(ctx, OperationCompletion{OperationID: operationID, OperationState: model.OperationFailed, ResultCode: "prepare_failed", Detail: err.Error(), ExecutionID: executionID, ExecutionState: model.ExecutionFailed, At: s.now().UTC()})
+		settlementCtx, cancelSettlement := settlementContext(ctx)
+		defer cancelSettlement()
+		finished, persistErr := s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: operationID, OperationState: model.OperationFailed, ResultCode: "prepare_failed", Detail: err.Error(), ExecutionID: executionID, ExecutionState: model.ExecutionFailed, UpdateExecutionState: true, At: s.now().UTC()})
 		if persistErr != nil {
 			return OperationResult{}, persistErr
 		}
@@ -190,19 +199,24 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	}
 	description := prepared.Describe()
 	if err := validatePrepared(provider.Name(), spec, description); err != nil {
-		_ = prepared.Abort(context.WithoutCancel(ctx))
-		finished, persistErr := s.store.CompleteOperation(ctx, OperationCompletion{OperationID: operationID, OperationState: model.OperationFailed, ResultCode: "invalid_preparation", Detail: err.Error(), ExecutionID: executionID, ExecutionState: model.ExecutionFailed, At: s.now().UTC()})
+		_ = prepared.Abort(workflowCtx)
+		settlementCtx, cancelSettlement := settlementContext(ctx)
+		defer cancelSettlement()
+		finished, persistErr := s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: operationID, OperationState: model.OperationFailed, ResultCode: "invalid_preparation", Detail: err.Error(), ExecutionID: executionID, ExecutionState: model.ExecutionFailed, UpdateExecutionState: true, At: s.now().UTC()})
 		if persistErr != nil {
 			return OperationResult{}, persistErr
 		}
 		return operationResult(finished), err
 	}
-	if _, err := s.store.RecordPrepared(ctx, executionID, operationID, description.Evidence, s.now().UTC()); err != nil {
-		_ = prepared.Abort(context.WithoutCancel(ctx))
-		return OperationResult{}, err
+	preparedCtx, cancelPrepared := settlementContext(ctx)
+	_, recordErr := s.store.RecordPrepared(preparedCtx, executionID, operationID, description.Evidence, s.now().UTC())
+	cancelPrepared()
+	if recordErr != nil {
+		_ = prepared.Abort(workflowCtx)
+		return OperationResult{}, recordErr
 	}
 	permit := &releasePermit{store: s.store, executionID: executionID, operationID: operationID, now: s.now}
-	released, releaseErr := prepared.Release(context.WithoutCancel(ctx), permit)
+	released, releaseErr := prepared.Release(workflowCtx, permit)
 	if !permit.consumed.Load() && releaseErr == nil {
 		releaseErr = fail(ErrInvalid, "provider attempted release without consuming application permit")
 	}
@@ -218,7 +232,9 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		if releaseErr != nil {
 			detail = releaseErr.Error()
 		}
-		finished, persistErr := s.store.CompleteOperation(ctx, OperationCompletion{OperationID: operationID, OperationState: model.OperationUncertain, ResultCode: "release_uncertain", Detail: detail, ExecutionID: executionID, ExecutionState: model.ExecutionUnknown, Evidence: evidence, At: s.now().UTC()})
+		settlementCtx, cancelSettlement := settlementContext(ctx)
+		defer cancelSettlement()
+		finished, persistErr := s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: operationID, OperationState: model.OperationUncertain, ResultCode: "release_uncertain", Detail: detail, ExecutionID: executionID, ExecutionState: model.ExecutionUnknown, UpdateExecutionState: true, Evidence: evidence, At: s.now().UTC()})
 		if released.Runtime != nil {
 			s.rememberRuntime(released.Runtime)
 		}
@@ -233,14 +249,16 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	s.rememberRuntime(released.Runtime)
 	executionState := model.ExecutionReleased
 	var native *model.NativeConversationEvidence
-	if observation, observeErr := released.Runtime.Observe(ctx); observeErr == nil {
+	if observation, observeErr := released.Runtime.Observe(workflowCtx); observeErr == nil {
 		executionState = stateFromObservation(observation)
 		native = observation.NativeConversation
 		if observation.Evidence.Provider != "" {
 			evidence = observation.Evidence
 		}
 	}
-	finished, err := s.store.CompleteOperation(ctx, OperationCompletion{OperationID: operationID, OperationState: model.OperationSucceeded, ResultCode: "released", ExecutionID: executionID, ExecutionState: executionState, Evidence: evidence, Native: native, At: s.now().UTC()})
+	settlementCtx, cancelSettlement := settlementContext(ctx)
+	defer cancelSettlement()
+	finished, err := s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: operationID, OperationState: model.OperationSucceeded, ResultCode: "released", ExecutionID: executionID, ExecutionState: executionState, UpdateExecutionState: true, Evidence: evidence, Native: native, At: s.now().UTC()})
 	if err != nil {
 		return OperationResult{}, err
 	}
@@ -274,8 +292,8 @@ func (s *Service) Interact(ctx context.Context, req InteractRequest) (OperationR
 	if strings.TrimSpace(req.Text) == "" {
 		return OperationResult{}, fail(ErrInvalid, "interaction text is required")
 	}
-	return s.withRuntimeEffect(ctx, req.RequestContext, req.ExecutionID, model.OperationInteract, func(runtime ports.Runtime) (ports.EffectDisposition, model.ProviderEvidence, string, error) {
-		result, err := runtime.Interact(context.WithoutCancel(ctx), ports.Interaction{Text: req.Text})
+	return s.withRuntimeEffect(ctx, req.RequestContext, req.ExecutionID, model.OperationInteract, func(workflowCtx context.Context, runtime ports.Runtime) (ports.EffectDisposition, model.ProviderEvidence, string, error) {
+		result, err := runtime.Interact(workflowCtx, ports.Interaction{Text: req.Text})
 		return result.Disposition, result.Evidence, "interaction", err
 	})
 }
@@ -288,9 +306,13 @@ func (s *Service) Attach(ctx context.Context, req AttachRequest) (AttachmentResu
 	if admission.Repeated {
 		return AttachmentResult{Operation: admission.Operation}, nil
 	}
-	result, effectErr := runtime.Attach(context.WithoutCancel(ctx), ports.AttachmentRequest{Kind: req.Kind})
+	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
+	defer cancelWorkflow()
+	result, effectErr := runtime.Attach(workflowCtx, ports.AttachmentRequest{Kind: req.Kind})
 	completion := completionFromDisposition(admission.Operation, admission.Execution, result.Disposition, result.Evidence, "attachment", effectErr, s.now().UTC())
-	finished, err := s.store.CompleteOperation(ctx, completion)
+	settlementCtx, cancelSettlement := settlementContext(ctx)
+	defer cancelSettlement()
+	finished, err := s.store.CompleteOperation(settlementCtx, completion)
 	if err != nil {
 		return AttachmentResult{}, err
 	}
@@ -301,8 +323,8 @@ func (s *Service) Attach(ctx context.Context, req AttachRequest) (AttachmentResu
 }
 
 func (s *Service) Stop(ctx context.Context, req StopRequest) (OperationResult, error) {
-	return s.withRuntimeEffect(ctx, req.RequestContext, req.ExecutionID, model.OperationStop, func(runtime ports.Runtime) (ports.EffectDisposition, model.ProviderEvidence, string, error) {
-		result, err := runtime.Stop(context.WithoutCancel(ctx), ports.StopRequest{Force: req.Force})
+	return s.withRuntimeEffect(ctx, req.RequestContext, req.ExecutionID, model.OperationStop, func(workflowCtx context.Context, runtime ports.Runtime) (ports.EffectDisposition, model.ProviderEvidence, string, error) {
+		result, err := runtime.Stop(workflowCtx, ports.StopRequest{Force: req.Force})
 		code := "stop_acknowledged"
 		if result.Exited {
 			code = "exited"
@@ -325,13 +347,6 @@ func (s *Service) ChangeContext(ctx context.Context, req ChangeContextRequest) (
 	if err := requireSelfOrOperator(req.Principal, execution.AgentID); err != nil {
 		return OperationResult{}, err
 	}
-	association, err := s.store.CurrentConversation(ctx, execution.AgentID)
-	if err != nil {
-		return OperationResult{}, err
-	}
-	if association.ConversationID != req.ExpectedConversationID || association.Revision != req.ExpectedAssociationRevision {
-		return OperationResult{}, appConflict("context association")
-	}
 	admission, runtime, err := s.admitRuntimeEffect(ctx, req.RequestContext, req.ExecutionID, model.OperationChangeContext)
 	if err != nil {
 		return OperationResult{}, err
@@ -339,19 +354,42 @@ func (s *Service) ChangeContext(ctx context.Context, req ChangeContextRequest) (
 	if admission.Repeated {
 		return operationResult(admission), nil
 	}
-	result, effectErr := runtime.ChangeContext(context.WithoutCancel(ctx), ports.ContextChange{Intent: req.Intent, ExpectedConversation: req.ExpectedConversationID, ExpectedAssociationRevision: req.ExpectedAssociationRevision})
-	completion := completionFromDisposition(admission.Operation, admission.Execution, result.Disposition, result.Evidence, "context_changed", effectErr, s.now().UTC())
-	completion.Native = result.NativeConversation
-	finished, err := s.store.CompleteOperation(ctx, completion)
+	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
+	defer cancelWorkflow()
+	association, err := s.store.CurrentConversation(workflowCtx, execution.AgentID)
 	if err != nil {
+		settlementCtx, cancelSettlement := settlementContext(ctx)
+		defer cancelSettlement()
+		if _, persistErr := s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: admission.Operation.ID, OperationState: model.OperationFailed, ResultCode: "context_read_failed", Detail: err.Error(), ExecutionID: execution.ID, ExecutionState: execution.State, At: s.now().UTC()}); persistErr != nil {
+			return OperationResult{}, persistErr
+		}
 		return OperationResult{}, err
 	}
+	if association.ConversationID != req.ExpectedConversationID || association.Revision != req.ExpectedAssociationRevision {
+		settlementCtx, cancelSettlement := settlementContext(ctx)
+		defer cancelSettlement()
+		if _, persistErr := s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: admission.Operation.ID, OperationState: model.OperationRefused, ResultCode: "context_conflict", Detail: "context association changed", ExecutionID: execution.ID, ExecutionState: execution.State, At: s.now().UTC()}); persistErr != nil {
+			return OperationResult{}, persistErr
+		}
+		return OperationResult{}, appConflict("context association")
+	}
+	result, effectErr := runtime.ChangeContext(workflowCtx, ports.ContextChange{Intent: req.Intent, ExpectedConversation: req.ExpectedConversationID, ExpectedAssociationRevision: req.ExpectedAssociationRevision})
+	completion := completionFromDisposition(admission.Operation, admission.Execution, result.Disposition, result.Evidence, "context_changed", effectErr, s.now().UTC())
+	completion.Native = result.NativeConversation
+	settlementCtx, cancelSettlement := settlementContext(ctx)
+	defer cancelSettlement()
+	var finished AdmissionResult
 	if result.Disposition == ports.EffectAccepted && admission.Execution.AgentID != "" {
 		conversationID := model.ConversationID(s.newID("con_"))
-		if err := s.store.AssociateConversation(ctx, ContextAssociation{ExecutionID: req.ExecutionID, AgentID: admission.Execution.AgentID, ConversationID: conversationID, ExpectedRevision: req.ExpectedAssociationRevision, Native: result.NativeConversation, At: s.now().UTC()}); err != nil {
+		finished, err = s.store.CompleteContextOperation(settlementCtx, completion, ContextAssociation{ExecutionID: req.ExecutionID, AgentID: admission.Execution.AgentID, ConversationID: conversationID, ExpectedRevision: req.ExpectedAssociationRevision, Native: result.NativeConversation, At: s.now().UTC()})
+		if err != nil {
 			return OperationResult{}, err
 		}
-		finished.Execution.ConversationID = conversationID
+	} else {
+		finished, err = s.store.CompleteOperation(settlementCtx, completion)
+		if err != nil {
+			return OperationResult{}, err
+		}
 	}
 	if effectErr != nil {
 		return operationResult(finished), effectErr
@@ -528,7 +566,7 @@ func (s *Service) Recover(ctx context.Context, req RecoverRequest) (RecoveryRepo
 	return report, nil
 }
 
-func (s *Service) withRuntimeEffect(ctx context.Context, request RequestContext, executionID model.ExecutionID, kind model.OperationKind, effect func(ports.Runtime) (ports.EffectDisposition, model.ProviderEvidence, string, error)) (OperationResult, error) {
+func (s *Service) withRuntimeEffect(ctx context.Context, request RequestContext, executionID model.ExecutionID, kind model.OperationKind, effect func(context.Context, ports.Runtime) (ports.EffectDisposition, model.ProviderEvidence, string, error)) (OperationResult, error) {
 	admission, runtime, err := s.admitRuntimeEffect(ctx, request, executionID, kind)
 	if err != nil {
 		return OperationResult{}, err
@@ -536,12 +574,17 @@ func (s *Service) withRuntimeEffect(ctx context.Context, request RequestContext,
 	if admission.Repeated {
 		return operationResult(admission), nil
 	}
-	disposition, evidence, code, effectErr := effect(runtime)
+	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
+	defer cancelWorkflow()
+	disposition, evidence, code, effectErr := effect(workflowCtx, runtime)
 	completion := completionFromDisposition(admission.Operation, admission.Execution, disposition, evidence, code, effectErr, s.now().UTC())
 	if kind == model.OperationStop && disposition == ports.EffectAccepted && code == "exited" {
 		completion.ExecutionState = model.ExecutionExited
+		completion.UpdateExecutionState = true
 	}
-	finished, err := s.store.CompleteOperation(ctx, completion)
+	settlementCtx, cancelSettlement := settlementContext(ctx)
+	defer cancelSettlement()
+	finished, err := s.store.CompleteOperation(settlementCtx, completion)
 	if err != nil {
 		return OperationResult{}, err
 	}
@@ -568,9 +611,13 @@ func (s *Service) admitRuntimeEffect(ctx context.Context, request RequestContext
 	if err != nil || admission.Repeated {
 		return admission, nil, err
 	}
-	runtime, err := s.runtimeFor(ctx, execution)
+	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
+	defer cancelWorkflow()
+	runtime, err := s.runtimeFor(workflowCtx, execution)
 	if err != nil {
-		_, _ = s.store.CompleteOperation(ctx, OperationCompletion{OperationID: operation.ID, OperationState: model.OperationRefused, ResultCode: "runtime_unavailable", Detail: err.Error(), ExecutionID: execution.ID, ExecutionState: execution.State, At: s.now().UTC()})
+		settlementCtx, cancelSettlement := settlementContext(ctx)
+		defer cancelSettlement()
+		_, _ = s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: operation.ID, OperationState: model.OperationRefused, ResultCode: "runtime_unavailable", Detail: err.Error(), ExecutionID: execution.ID, ExecutionState: execution.State, At: s.now().UTC()})
 	}
 	return admission, runtime, err
 }
@@ -618,6 +665,7 @@ func completionFromDisposition(operation model.Operation, execution model.Execut
 	case ports.EffectUnknown:
 		completion.OperationState = model.OperationUncertain
 		completion.ExecutionState = model.ExecutionUnknown
+		completion.UpdateExecutionState = true
 	default:
 		completion.OperationState = model.OperationFailed
 	}
@@ -691,6 +739,10 @@ func (p *releasePermit) Consume(ctx context.Context) error {
 }
 
 func appConflict(subject string) error { return fail(ErrConflict, "%s changed", subject) }
+
+func settlementContext(requestContext context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(requestContext), settlementTimeout)
+}
 
 func validateDesired(desired model.DesiredConfiguration) error {
 	if strings.TrimSpace(desired.Harness) == "" {
