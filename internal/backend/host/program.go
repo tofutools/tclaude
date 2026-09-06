@@ -49,12 +49,7 @@ const (
 
 const programSpoolScript = `set -eu
 umask 077
-blocks=$(($3 / 4096))
-remainder=$(($3 % 4096))
-{
-  if [ "$blocks" -gt 0 ]; then "$1" bs=4096 count="$blocks" 2>/dev/null || true; fi
-  if [ "$remainder" -gt 0 ]; then "$1" bs=1 count="$remainder" 2>/dev/null || true; fi
-} >"$4"
+"$1" bs=1 count="$3" of="$4" 2>/dev/null || true
 "$1" bs=1 count=1 of="$5" 2>/dev/null || true
 "$2" >/dev/null
 : >"$6"`
