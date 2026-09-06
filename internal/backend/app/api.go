@@ -10,6 +10,8 @@ import (
 type API interface {
 	CreateAgent(context.Context, CreateAgentRequest) (AgentResult, error)
 	UpdateAgent(context.Context, UpdateAgentRequest) (AgentResult, error)
+	RetireAgent(context.Context, RetireAgentRequest) (AgentResult, error)
+	ReactivateAgent(context.Context, ReactivateAgentRequest) (AgentResult, error)
 	CreateGroup(context.Context, CreateGroupRequest) (GroupResult, error)
 	Launch(context.Context, LaunchRequest) (OperationResult, error)
 	Observe(context.Context, ObserveRequest) (ObservationResult, error)
@@ -20,6 +22,8 @@ type API interface {
 	ChangeContext(context.Context, ChangeContextRequest) (OperationResult, error)
 	SendMessage(context.Context, SendMessageRequest) (MessageResult, error)
 	MarkMessageRead(context.Context, MarkMessageReadRequest) (MessageResult, error)
+	CreateAttachmentClaim(context.Context, CreateAttachmentClaimRequest) (AttachmentClaimResult, error)
+	ReadAttachment(context.Context, ReadAttachmentRequest) (AttachmentContentResult, error)
 	Snapshot(context.Context, SnapshotRequest) (Snapshot, error)
 	Recover(context.Context, RecoverRequest) (RecoveryReport, error)
 }
@@ -56,10 +60,14 @@ type RequestContext struct {
 }
 
 type CreateAgentRequest struct {
-	Context model.Principal
-	ID      model.AgentID
-	Name    string
-	Desired model.DesiredConfiguration
+	Context            model.Principal
+	ID                 model.AgentID
+	Name               string
+	TaskReference      string
+	ParentAgentID      model.AgentID
+	CloneSourceAgentID model.AgentID
+	Notifications      model.AgentNotificationPreferences
+	Desired            model.DesiredConfiguration
 }
 
 type UpdateAgentRequest struct {
@@ -67,7 +75,22 @@ type UpdateAgentRequest struct {
 	ID               model.AgentID
 	ExpectedRevision model.Revision
 	Name             string
+	TaskReference    string
+	Notifications    model.AgentNotificationPreferences
 	Desired          model.DesiredConfiguration
+}
+
+type RetireAgentRequest struct {
+	Context          model.Principal
+	ID               model.AgentID
+	ExpectedRevision model.Revision
+	Reason           string
+}
+
+type ReactivateAgentRequest struct {
+	Context          model.Principal
+	ID               model.AgentID
+	ExpectedRevision model.Revision
 }
 
 type AgentResult struct{ Agent model.Agent }
@@ -153,14 +176,59 @@ type ChangeContextRequest struct {
 
 type SendMessageRequest struct {
 	RequestContext
+	Subject         string
+	ParentMessageID model.MessageID
+	To              model.MessageAudience
+	CC              model.MessageAudience
+	Attachments     []AttachmentInput
+	// RecipientAgentIDs is the temporary transport adapter for the existing
+	// client. New callers author To/CC explicitly.
 	RecipientAgentIDs []model.AgentID
 	Body              string
+}
+
+type AttachmentInput struct {
+	Filename  string
+	MediaType string
+	Content   []byte
+	Claim     *AttachmentClaimReference
+}
+
+// AttachmentClaimReference repeats immutable metadata so exact RequestID
+// retry comparison does not depend on rereading mutable claim state.
+type AttachmentClaimReference struct {
+	ClaimID      model.AttachmentClaimID
+	AttachmentID model.AttachmentID
+	Filename     string
+	MediaType    string
+	Size         int64
+	SHA256       string
+}
+
+type CreateAttachmentClaimRequest struct {
+	Principal model.Principal
+	Filename  string
+	MediaType string
+	Content   []byte
+}
+
+type AttachmentClaimResult struct{ Claim model.AttachmentClaim }
+
+type ReadAttachmentRequest struct {
+	Principal    model.Principal
+	AttachmentID model.AttachmentID
+}
+
+type AttachmentContentResult struct {
+	Attachment model.Attachment
+	Content    []byte
 }
 
 type MarkMessageReadRequest struct {
 	RequestContext
 	MessageID model.MessageID
 	AgentID   model.AgentID
+	Operator  bool
 }
 
 type MessageResult struct{ Message model.Message }

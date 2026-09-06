@@ -106,8 +106,24 @@ func (s *Service) CreateAgent(ctx context.Context, req CreateAgentRequest) (Agen
 	if err := validateDesired(req.Desired); err != nil {
 		return AgentResult{}, err
 	}
+	if err := validateAgentMetadata(req.TaskReference, req.Notifications); err != nil {
+		return AgentResult{}, err
+	}
+	if req.ParentAgentID == req.ID || req.CloneSourceAgentID == req.ID {
+		return AgentResult{}, fail(ErrInvalid, "agent lineage cannot reference itself")
+	}
+	for _, related := range []model.AgentID{req.ParentAgentID, req.CloneSourceAgentID} {
+		if related != "" {
+			if _, err := s.store.Agent(ctx, related); err != nil {
+				return AgentResult{}, fail(ErrInvalid, "lineage agent %s does not exist", related)
+			}
+		}
+	}
+	if req.Notifications.DirectMessage == "" {
+		req.Notifications.DirectMessage = model.NotificationIfAvailable
+	}
 	now := s.now().UTC()
-	agent := model.Agent{ID: req.ID, Name: req.Name, Desired: req.Desired, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	agent := model.Agent{ID: req.ID, Name: req.Name, TaskReference: req.TaskReference, ParentAgentID: req.ParentAgentID, CloneSourceAgentID: req.CloneSourceAgentID, Lifecycle: model.AgentActive, Notifications: req.Notifications, Desired: req.Desired, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.CreateAgent(ctx, agent); err != nil {
 		return AgentResult{}, err
 	}
@@ -124,8 +140,18 @@ func (s *Service) UpdateAgent(ctx context.Context, req UpdateAgentRequest) (Agen
 	if err := validateDesired(req.Desired); err != nil {
 		return AgentResult{}, err
 	}
+	if err := validateAgentMetadata(req.TaskReference, req.Notifications); err != nil {
+		return AgentResult{}, err
+	}
+	if req.Notifications.DirectMessage == "" {
+		current, err := s.store.Agent(ctx, req.ID)
+		if err != nil {
+			return AgentResult{}, err
+		}
+		req.Notifications = current.Notifications
+	}
 	authority := model.AuthorityRequest{Principal: req.Context, Action: model.ActionUpdateConfiguration, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: req.ID}, RequestedConfiguration: &req.Desired}
-	agent, err := s.store.UpdateAgent(ctx, req.ID, req.ExpectedRevision, req.Name, req.Desired, authority, s.now().UTC())
+	agent, err := s.store.UpdateAgent(ctx, req.ID, req.ExpectedRevision, req.Name, req.TaskReference, req.Notifications, req.Desired, authority, s.now().UTC())
 	return AgentResult{Agent: agent}, err
 }
 
@@ -599,66 +625,6 @@ func (s *Service) Resume(ctx context.Context, req ResumeRequest) (OperationResul
 	}
 	launch := LaunchRequest{RequestContext: req.RequestContext, Target: req.Target}
 	return s.launch(ctx, launch, model.OperationResume, &continuation, launchOptions{})
-}
-
-func (s *Service) SendMessage(ctx context.Context, req SendMessageRequest) (MessageResult, error) {
-	if err := validateEffectContext(req.RequestContext); err != nil {
-		return MessageResult{}, err
-	}
-	if req.Principal.Kind == model.PrincipalAgent || req.Principal.Kind == model.PrincipalExecution {
-		if req.Principal.AgentID == "" {
-			return MessageResult{}, fail(ErrUnsupported, "standalone execution has no agent sender")
-		}
-		if _, err := s.store.Agent(ctx, req.Principal.AgentID); err != nil {
-			return MessageResult{}, fail(ErrUnauthorized, "sender is not an admitted agent")
-		}
-	} else if req.Principal.Kind != model.PrincipalOperator && req.Principal.Kind != model.PrincipalAutomation {
-		return MessageResult{}, fail(ErrUnauthorized, "unsupported principal")
-	}
-	if strings.TrimSpace(req.Body) == "" {
-		return MessageResult{}, fail(ErrInvalid, "message body is required")
-	}
-	if len(req.RecipientAgentIDs) == 0 {
-		return MessageResult{}, fail(ErrInvalid, "at least one recipient is required")
-	}
-	recipients := make([]model.MessageRecipient, 0, len(req.RecipientAgentIDs))
-	authority := make([]model.AuthorityRequest, 0, len(req.RecipientAgentIDs))
-	seen := map[model.AgentID]struct{}{}
-	for _, id := range req.RecipientAgentIDs {
-		if _, duplicate := seen[id]; duplicate {
-			return MessageResult{}, fail(ErrInvalid, "duplicate recipient %s", id)
-		}
-		seen[id] = struct{}{}
-		recipients = append(recipients, model.MessageRecipient{ID: model.RecipientID(s.newID("rcp_")), AgentID: id})
-		authority = append(authority, model.AuthorityRequest{Principal: req.Principal, Action: model.ActionSendMessage, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: id}})
-	}
-	now := s.now().UTC()
-	message := model.Message{ID: model.MessageID(s.newID("msg_")), Sender: req.Principal, Body: req.Body, Recipients: recipients, CreatedAt: now}
-	operationID := model.OperationID(s.newID("op_"))
-	result, err := s.store.CreateMessage(ctx, message, req.RequestID, operationID, authority)
-	if err != nil {
-		return MessageResult{}, err
-	}
-	return MessageResult{Message: result.Message}, nil
-}
-
-func (s *Service) MarkMessageRead(ctx context.Context, req MarkMessageReadRequest) (MessageResult, error) {
-	agentID := req.AgentID
-	if req.Principal.Kind != model.PrincipalOperator {
-		agentID = req.Principal.AgentID
-		if req.Principal.Kind == model.PrincipalAutomation && req.Principal.Authority.Kind == model.AuthorityAgent {
-			agentID = req.Principal.Authority.AgentID
-		}
-		if agentID == "" {
-			return MessageResult{}, fail(ErrUnsupported, "standalone execution has no agent inbox")
-		}
-	}
-	authority := model.AuthorityRequest{Principal: req.Principal, Action: model.ActionMarkInboxRead, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agentID}}
-	message, err := s.store.MarkMessageRead(ctx, req.MessageID, agentID, authority, s.now().UTC())
-	if req.Principal.Kind != model.PrincipalOperator {
-		message = messageForRecipient(message, agentID)
-	}
-	return MessageResult{Message: message}, err
 }
 
 func (s *Service) Snapshot(ctx context.Context, req SnapshotRequest) (Snapshot, error) {

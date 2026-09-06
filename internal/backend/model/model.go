@@ -42,11 +42,30 @@ func ExecutionPrincipal(executionID ExecutionID, agentID AgentID, generation Acc
 type Agent struct {
 	ID                 AgentID
 	Name               string
+	TaskReference      string
+	ParentAgentID      AgentID
+	CloneSourceAgentID AgentID
+	Lifecycle          AgentLifecycleState
+	RetiredAt          *time.Time
+	RetiredBy          Principal
+	RetirementReason   string
+	Notifications      AgentNotificationPreferences
 	Desired            DesiredConfiguration
 	PrimaryExecutionID ExecutionID
 	Revision           Revision
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+}
+
+type AgentLifecycleState string
+
+const (
+	AgentActive  AgentLifecycleState = "active"
+	AgentRetired AgentLifecycleState = "retired"
+)
+
+type AgentNotificationPreferences struct {
+	DirectMessage NotificationIntent
 }
 
 type Group struct {
@@ -205,16 +224,74 @@ type Operation struct {
 }
 
 type Message struct {
-	ID         MessageID
-	Sender     Principal
-	Body       string
-	Recipients []MessageRecipient
-	CreatedAt  time.Time
+	ID                   MessageID
+	Sender               Principal
+	SenderConversationID ConversationID
+	Subject              string
+	Body                 string
+	ParentMessageID      MessageID
+	ThreadID             MessageID
+	Recipients           []MessageRecipient
+	Attachments          []Attachment
+	CreatedAt            time.Time
 }
 
+type MessageAddressKind string
+
+const (
+	MessageAddressAgent    MessageAddressKind = "agent"
+	MessageAddressOperator MessageAddressKind = "operator"
+)
+
+type MessageAudienceKind string
+
+const (
+	MessageAudienceTo MessageAudienceKind = "to"
+	MessageAudienceCC MessageAudienceKind = "cc"
+)
+
+type NotificationIntent string
+
+const (
+	NotificationNone        NotificationIntent = "none"
+	NotificationIfAvailable NotificationIntent = "if_available"
+)
+
+type NotificationOutcome string
+
+const (
+	NotificationNotRequested NotificationOutcome = "not_requested"
+	NotificationPending      NotificationOutcome = "pending"
+	NotificationDelivered    NotificationOutcome = "delivered"
+	NotificationUnavailable  NotificationOutcome = "unavailable"
+	NotificationFailed       NotificationOutcome = "failed"
+)
+
 type MessageRecipient struct {
-	ID       RecipientID
-	AgentID  AgentID
-	ReadAt   *time.Time
-	Notified bool
+	ID                  RecipientID
+	AddressKind         MessageAddressKind
+	AgentID             AgentID
+	Audience            MessageAudienceKind
+	ReadAt              *time.Time
+	NotificationIntent  NotificationIntent
+	NotificationOutcome NotificationOutcome
+	NotificationDetail  string
+	NotifiedAt          *time.Time
+}
+
+type Attachment struct {
+	ID        AttachmentID
+	Filename  string
+	MediaType string
+	Size      int64
+	SHA256    string
+	CreatedAt time.Time
+}
+
+type AttachmentClaim struct {
+	ID         AttachmentClaimID
+	Attachment Attachment
+	Owner      Principal
+	ExpiresAt  time.Time
+	CreatedAt  time.Time
 }
