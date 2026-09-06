@@ -9864,6 +9864,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		}
 	}()
 	var openCodeLaunch *openCodeLaunch
+	openCodeProjectionRequired := false
 	if a.Harness == harness.OpenCodeName {
 		resolvedCwd, cwdErr := resolveOpenCodeLaunchCwd(a.Cwd)
 		if cwdErr != nil {
@@ -9939,6 +9940,7 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		a.OpenCodeServerPID = openCodeLaunch.PID
 		a.ResourceCgroupDir = resourceCgroupDir
 		if sandboxSpec != nil {
+			openCodeProjectionRequired = strings.TrimSpace(a.ResumeOperationID) != ""
 			a.OpenCodeEnvironment = append(
 				[]sandboxpolicy.EnvironmentEntry(nil), sandboxSpec.Contract.Environment...)
 			allocation, allocationErr := requireOpenCodeStateAllocation(agentID)
@@ -9970,6 +9972,24 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	}
 	convID := a.ConvID
 	args := sessionResumeArgs(a)
+	var projectionHandoff *openCodeResumeProjectionHandoff
+	if openCodeProjectionRequired {
+		if a.ResumeClaimFD <= 0 {
+			routeCredentialCleanup()
+			cleanup()
+			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+			return errors.New("managed OpenCode Resume projection requires the private admission claim")
+		}
+		projectionHandoff, err = newOpenCodeResumeProjectionHandoff()
+		if err != nil {
+			routeCredentialCleanup()
+			cleanup()
+			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+			return err
+		}
+		defer projectionHandoff.close()
+		args = projectionHandoff.appendChildArgs(args)
+	}
 	cmd := exec.Command("tclaude", args...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
@@ -9979,6 +9999,9 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 			return fmt.Errorf("resume claim descriptor is invalid")
 		}
 		cmd.ExtraFiles = []*os.File{claim}
+	}
+	if projectionHandoff != nil {
+		cmd.ExtraFiles = append(cmd.ExtraFiles, projectionHandoff.childFiles()...)
 	}
 	stderr := newSpawnStderrCapture()
 	cmd.Stderr = stderr
@@ -10010,17 +10033,34 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 		}
 		return err
 	}
+	if projectionHandoff != nil {
+		projectionHandoff.parentStarted()
+	}
 	pid := cmd.Process.Pid
 	defer cleanup()
-	if err := cmd.Wait(); err != nil {
+	var projectionErr error
+	if projectionHandoff != nil {
+		projectionErr = projectionHandoff.projectAndApprove(openCodeLaunch)
+	}
+	waitErr := cmd.Wait()
+	if projectionErr != nil {
+		routeCredentialCleanup()
+		_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
+		slog.Error("OpenCode Resume projection failed before gate release",
+			"conv", convID, "pid", pid, "error", projectionErr,
+			"wrapper_error", waitErr, "stderr", stderr.String(),
+			"stderr_truncated", stderr.Truncated())
+		return projectionErr
+	}
+	if waitErr != nil {
 		routeCredentialCleanup()
 		if openCodeLaunch != nil {
 			_ = stopOpenCodeRuntime(openCodeLaunch.SessionID)
 		}
 		slog.Error("resume subprocess exited with error",
-			"conv", convID, "pid", pid, "err", err,
+			"conv", convID, "pid", pid, "err", waitErr,
 			"stderr", stderr.String(), "stderr_truncated", stderr.Truncated())
-		return fmt.Errorf("resume session wrapper failed: %w: %s", err, stderr.String())
+		return fmt.Errorf("resume session wrapper failed: %w: %s", waitErr, stderr.String())
 	}
 	resumeLaunched = true
 	return nil
