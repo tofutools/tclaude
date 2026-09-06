@@ -148,8 +148,12 @@ func TestShellOwnsExactWorkspaceUntilStopped(t *testing.T) {
 	stopped, err := service.Stop(ctx, app.StopRequest{RequestContext: request(operator, "stop_shell"), ExecutionID: started.Execution.ID})
 	require.NoError(t, err)
 	require.Equal(t, model.ExecutionExited, stopped.Execution.State)
-	_, err = service.RemoveCheckout(ctx, app.RemoveCheckoutRequest{Context: request(operator, "remove_stopped_shell"), WorkspaceID: workspace.Workspace.ID, ExpectedRevision: workspace.Workspace.Revision})
+	removed, err := service.RemoveCheckout(ctx, app.RemoveCheckoutRequest{Context: request(operator, "remove_stopped_shell"), WorkspaceID: workspace.Workspace.ID, ExpectedRevision: workspace.Workspace.Revision})
 	require.NoError(t, err)
+	restored, err := service.RestoreCheckout(ctx, app.RestoreCheckoutRequest{Context: request(operator, "restore_stopped_shell"), WorkspaceID: workspace.Workspace.ID, ExpectedRevision: removed.Workspace.Revision})
+	require.NoError(t, err)
+	require.Equal(t, model.WorkspaceAvailable, restored.Workspace.State)
+	require.Equal(t, 2, host.creates)
 }
 
 type journeyProvider struct {

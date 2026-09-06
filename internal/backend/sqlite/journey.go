@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"time"
 
@@ -319,7 +320,7 @@ func (s *Store) AdmitWorkspaceEffect(ctx context.Context, in app.WorkspaceEffect
 		return app.WorkspaceEffectAdmissionResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if repeated, ok, err := resourceAdmissionByRequest(ctx, tx, in.Operation); err != nil {
+	if repeated, ok, err := resourceAdmissionByRequest(ctx, tx, in.Operation, in.Workspace); err != nil {
 		return app.WorkspaceEffectAdmissionResult{}, err
 	} else if ok {
 		_ = tx.Commit()
@@ -361,7 +362,7 @@ func (s *Store) AdmitWorkspaceEffect(ctx context.Context, in app.WorkspaceEffect
 	return app.WorkspaceEffectAdmissionResult{Operation: in.Operation, Workspace: in.Workspace}, nil
 }
 
-func resourceAdmissionByRequest(ctx context.Context, tx *sql.Tx, operation model.Operation) (app.WorkspaceEffectAdmissionResult, bool, error) {
+func resourceAdmissionByRequest(ctx context.Context, tx *sql.Tx, operation model.Operation, requested model.Workspace) (app.WorkspaceEffectAdmissionResult, bool, error) {
 	var existing model.OperationID
 	err := tx.QueryRowContext(ctx, `SELECT id FROM operations WHERE request_scope=? AND request_id=?`, requestScope(operation.Principal), operation.RequestID).Scan(&existing)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -384,6 +385,9 @@ func resourceAdmissionByRequest(ctx context.Context, tx *sql.Tx, operation model
 	workspace, err := scanWorkspace(tx.QueryRowContext(ctx, `SELECT id,intent_json,state,observation_json,resource_owner,resource_version,resource_payload,revision,created_at,updated_at FROM workspaces WHERE id=?`, workspaceID))
 	if err != nil {
 		return app.WorkspaceEffectAdmissionResult{}, false, err
+	}
+	if workspace.ID != requested.ID || ((operation.Kind == model.OperationCreateWorkspace || operation.Kind == model.OperationRestoreWorkspace) && !reflect.DeepEqual(workspace.Intent, requested.Intent)) {
+		return app.WorkspaceEffectAdmissionResult{}, false, app.ErrConflict
 	}
 	return app.WorkspaceEffectAdmissionResult{Operation: stored, Workspace: workspace, Repeated: true}, true, nil
 }
@@ -863,6 +867,10 @@ func (s *Store) CancelWork(ctx context.Context, id model.WorkRunID, expected mod
 		}
 		return app.WorkRunRecord{}, err
 	}
+	var priorState model.WorkRunState
+	if err = tx.QueryRowContext(ctx, `SELECT state FROM work_runs WHERE id=? AND revision=?`, id, expected).Scan(&priorState); err != nil {
+		return app.WorkRunRecord{}, classify(err)
+	}
 	decider, _ := json.Marshal(authority.Principal)
 	_, err = tx.ExecContext(ctx, `INSERT INTO work_decisions(work_run_id,step,attempt,decision,decider_json,reason,decided_at,revision) VALUES(?,?,?,?,?,?,?,1)`, id, model.WorkStepEvaluate, 1, model.WorkDecisionCancel, decider, reason, nanos(at))
 	if err != nil {
@@ -875,8 +883,13 @@ func (s *Store) CancelWork(ctx context.Context, id model.WorkRunID, expected mod
 	if n, _ := result.RowsAffected(); n != 1 {
 		return app.WorkRunRecord{}, app.ErrConflict
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE workspace_uses SET released_at=? WHERE work_run_id=? AND released_at IS NULL`, nanos(at), id); err != nil {
-		return app.WorkRunRecord{}, err
+	if priorState != model.WorkRunUncertain {
+		if _, err = tx.ExecContext(ctx, `UPDATE workspace_uses SET released_at=? WHERE work_run_id=? AND released_at IS NULL`, nanos(at), id); err != nil {
+			return app.WorkRunRecord{}, err
+		}
+		if _, err = tx.ExecContext(ctx, `UPDATE history_use_claims SET state=?,revision=revision+1,settled_at=? WHERE work_run_id=? AND state=?`, model.HistoryUseReleased, nanos(at), id, model.HistoryUseHeld); err != nil {
+			return app.WorkRunRecord{}, err
+		}
 	}
 	if err = bumpTx(ctx, tx); err != nil {
 		return app.WorkRunRecord{}, err
@@ -885,6 +898,60 @@ func (s *Store) CancelWork(ctx context.Context, id model.WorkRunID, expected mod
 		return app.WorkRunRecord{}, err
 	}
 	return s.WorkRun(ctx, id)
+}
+
+func (s *Store) ResolveWorkUncertainty(ctx context.Context, d model.WorkDecision, expected model.Revision, authority model.AuthorityRequest, at time.Time) (app.WorkRunRecord, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return app.WorkRunRecord{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var existingRun model.WorkRunID
+	var existingReason string
+	err = tx.QueryRowContext(ctx, `SELECT work_run_id,reason FROM work_decisions WHERE request_scope=? AND request_id=?`, requestScope(d.Decider), d.RequestID).Scan(&existingRun, &existingReason)
+	if err == nil {
+		if existingRun != d.WorkRunID || existingReason != d.Reason {
+			return app.WorkRunRecord{}, app.ErrConflict
+		}
+		if err = tx.Commit(); err != nil {
+			return app.WorkRunRecord{}, err
+		}
+		return s.WorkRun(ctx, d.WorkRunID)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return app.WorkRunRecord{}, err
+	}
+	decision, err := authorizeTx(ctx, tx, authority, at)
+	if err != nil {
+		return app.WorkRunRecord{}, err
+	}
+	if !decision.Allowed {
+		return app.WorkRunRecord{}, app.ErrUnauthorized
+	}
+	decider, _ := json.Marshal(d.Decider)
+	if _, err = tx.ExecContext(ctx, `INSERT INTO work_decisions(work_run_id,request_scope,request_id,step,attempt,decision,decider_json,reason,decided_at,revision) VALUES(?,?,?,?,?,?,?,?,?,1)`, d.WorkRunID, requestScope(d.Decider), d.RequestID, d.Step, d.Attempt, d.Decision, decider, d.Reason, nanos(d.DecidedAt)); err != nil {
+		return app.WorkRunRecord{}, classify(err)
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE work_runs SET state=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND state=?`, model.WorkRunFailed, nanos(at), d.WorkRunID, expected, model.WorkRunUncertain)
+	if err != nil {
+		return app.WorkRunRecord{}, err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return app.WorkRunRecord{}, app.ErrConflict
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE workspace_uses SET released_at=? WHERE work_run_id=? AND released_at IS NULL`, nanos(at), d.WorkRunID); err != nil {
+		return app.WorkRunRecord{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE history_use_claims SET state=?,revision=revision+1,settled_at=? WHERE work_run_id=? AND state IN (?,?)`, model.HistoryUseReleased, nanos(at), d.WorkRunID, model.HistoryUseHeld, model.HistoryUseUncertain); err != nil {
+		return app.WorkRunRecord{}, err
+	}
+	if err = bumpTx(ctx, tx); err != nil {
+		return app.WorkRunRecord{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return app.WorkRunRecord{}, err
+	}
+	return s.WorkRun(ctx, d.WorkRunID)
 }
 
 func later(a, b time.Time) time.Time {
