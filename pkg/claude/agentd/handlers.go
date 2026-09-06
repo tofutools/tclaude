@@ -677,9 +677,9 @@ func handleMessages(w http.ResponseWriter, r *http.Request) {
 // identity is the connecting socket peer) and the dashboard's POST
 // /api/message (human sender — identity is the From conv the human
 // picked). Every authority check the send must clear lives below
-// this point — the group member/owner gate inside handleMulticast,
-// the shared-group / message.direct gate inside resolveMessageRouting
-// — so neither caller can route around the gate.
+// this point — the group member/owner gate inside handleMulticast and
+// shared direct-message admission below — so neither caller can route around
+// the gate.
 func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 	if strings.TrimSpace(req.Body) == "" {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "body is empty")
@@ -713,6 +713,24 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 		handleMulticast(w, fromID, req)
 		return
 	}
+	if len(req.Cc) == 0 {
+		accepted, refused := acceptMessage(
+			messagePrincipal{kind: messagePrincipalAgent, conv: fromID},
+			messageTarget{selector: req.To, generation: req.Gen},
+			messageContent{subject: req.Subject, body: req.Body},
+			messageCause{kind: messageCauseDirect},
+		)
+		if refused != nil {
+			writeMessageRefusal(w, req.To, refused)
+			return
+		}
+		writeJSON(w, http.StatusOK, sendResp{
+			ID: accepted.messageIDs[0], Queued: true, Pending: accepted.pending,
+			ViaGroup:       accepted.resolvedAudience.groupName,
+			RedirectedFrom: accepted.resolvedAudience.originalTo,
+		})
+		return
+	}
 	target, matches, err := agent.ResolveSelector(req.To)
 	if errors.Is(err, agent.ErrAmbiguous) {
 		writeJSON(w, http.StatusConflict, map[string]any{
@@ -739,33 +757,14 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 	// keyed on the literal title text).
 	// headConv is the agent's live head generation (the resolver already
 	// redirected a superseded input to it). Authorisation routes against the
-	// head — reachability is an agent-level property — even when `gen` repoints
-	// delivery to a past generation below.
+	// head. This remaining branch is the deliberately unmigrated --cc path;
+	// direct generation pinning was handled by acceptMessage above.
 	headConv := target.ConvID
 	finalConv := headConv
 	originalTo := ""
 	rawInput := strings.TrimSpace(req.To)
 	if rawInput != "" && rawInput != finalConv && db.ResolveLatestConv(rawInput) == finalConv {
 		originalTo = rawInput
-	}
-	// Prev-gen targeting (JOH-310): an explicit `gen` overrides the
-	// head-following default, pinning delivery to a SPECIFIC past generation
-	// of the SAME agent `To` resolved to. It must be a conv of that agent —
-	// validated here so a caller can't smuggle a cross-agent conv past the
-	// agent-keyed routing — and it is the deliberate opt-out from the
-	// resolver's auto-redirect-to-head, so no Original-To attribution.
-	pinGen := false
-	if genTrim := strings.TrimSpace(req.Gen); genTrim != "" {
-		targetAgent, _ := db.AgentIDForConv(headConv)
-		genAgent, _ := db.AgentIDForConv(genTrim)
-		if targetAgent == "" || genAgent == "" || genAgent != targetAgent {
-			writeError(w, http.StatusBadRequest, "invalid_arg",
-				fmt.Sprintf("gen %q is not a generation of the target agent", genTrim))
-			return
-		}
-		finalConv = genTrim
-		originalTo = ""
-		pinGen = true
 	}
 	if finalConv == fromID {
 		writeError(w, http.StatusBadRequest, "invalid_arg", "cannot message self")
@@ -778,9 +777,7 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 	// slug and route as direct messages (group_id 0). Authority is
 	// checked against the LIVE successor (headConv): the outdated id may
 	// have lost membership by the time the successor took over, but the
-	// successor is who actually receives the message. Routing against the
-	// head (not a `gen`-pinned past conv) keeps the owner-of-group /
-	// via-link reach paths — which compare the member's head conv — correct.
+	// successor is who actually receives the message.
 	groupID, viaName, ok := resolveMessageRouting(w, fromID, headConv)
 	if !ok {
 		return
@@ -790,41 +787,26 @@ func dispatchSend(w http.ResponseWriter, fromID string, req *sendReq) {
 	// the same to_recipients / cc_recipients audience. CCs that resolve
 	// ambiguously / not at all / aren't reachable surface as a 4xx so
 	// the sender can fix the typo before any rows are written.
-	if len(req.Cc) > 0 {
-		handleMultiRecipient(w, fromID, finalConv, originalTo, groupID, viaName, req)
-		return
-	}
+	handleMultiRecipient(w, fromID, finalConv, originalTo, groupID, viaName, req)
+}
 
-	id, pending, err := queueRegularAgentMessage(&db.AgentMessage{
-		GroupID:        groupID,
-		FromConv:       fromID,
-		ToConv:         finalConv,
-		OriginalToConv: originalTo,
-		Subject:        req.Subject,
-		Body:           req.Body,
-		// Even single-recipient sends record the audience arrays now
-		// so the recipient's `inbox read` can render a consistent
-		// "To: ..." header. CC stays empty.
-		ToRecipients: []string{finalConv},
-		PinGen:       pinGen,
-	})
-	if err != nil {
-		if full, ok := agentMessageQueueFull(err); ok {
-			writeQueueFull(w, finalConv, full)
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "io", err.Error())
-		return
+func writeMessageRefusal(w http.ResponseWriter, target string, refused *messageRefusal) {
+	switch refused.code {
+	case "ambiguous":
+		writeJSON(w, http.StatusConflict, map[string]any{"error": refused.detail, "code": refused.code, "candidates": peerEntriesFromResolved(refused.candidates)})
+	case "not_found":
+		writeError(w, http.StatusNotFound, refused.code, refused.detail)
+	case "invalid_arg":
+		writeError(w, http.StatusBadRequest, refused.code, refused.detail)
+	case "auth":
+		writeError(w, http.StatusForbidden, refused.code, refused.detail)
+	case "archived":
+		writeError(w, http.StatusConflict, refused.code, refused.detail)
+	case "queue_full":
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"error": refused.detail, "code": refused.code, "target": target, "pending": refused.pending, "limit": refused.limit, "retryable": refused.retryable})
+	default:
+		writeError(w, http.StatusInternalServerError, refused.code, refused.detail)
 	}
-	// Async delivery (JOH-310): queueAgentMessage handed the recipient to the
-	// per-agent worker; the sender never blocks on the tmux nudge.
-	writeJSON(w, http.StatusOK, sendResp{
-		ID:             id,
-		Queued:         true,
-		Pending:        pending,
-		ViaGroup:       viaName,
-		RedirectedFrom: originalTo,
-	})
 }
 
 // walkSuccession returns the live successor of convID and the
