@@ -1628,11 +1628,8 @@ func dispatchSlashCommandOn(
 //
 // Compaction is the only token that reaches here today. That is not a claim
 // about which lifecycle commands exist — it is what this sink carries: rename
-// branches earlier, in deliverRename, and soft exit does not come through
-// dispatchSlashCommand at all (it goes through injectSoftExitTarget, which
-// needs the harness's prefix keys). The soft-exit decision and the measurements
-// behind it live where soft exit actually is, next to that branch in
-// lifecycle.go.
+// branches earlier, in deliverRename, while managed Stop is owned by the bound
+// harness runtime adapter and does not come through dispatchSlashCommand.
 func dispatchCopilotAPISlashCommand(sess *db.SessionRow, line, followUp, reason string) bool {
 	if sess == nil {
 		return false
@@ -1843,33 +1840,14 @@ func injectBracketedTextAndSubmit(tmuxTarget, text string) error {
 	return injectTextAndSubmitWithOptions(tmuxTarget, tmuxTarget, text, true)
 }
 
-// injectSoftExitTextSerializedBy sends the harness's soft-exit command to
-// tmuxTarget while serializing under lockTarget's identity, preceded by that
-// harness's prefix keys (harness.Lifecycle.SoftExitPrefixKeys).
-//
-// The two targets differ because lifecycle types into the exact pane ID (%N)
-// while the same pane's message/nudge streams lock its session-shaped target —
-// the two spellings otherwise key different in-process mutexes AND different
-// cross-process advisory lock files, so the input sequences would not
-// single-file. Callers that know the pane's session pass it as lockTarget.
-//
-// The prefix keys are part of the same locked sequence as the text and its
-// Enters: a cancel that another injector could slip a keystroke into would
-// defeat the state it exists to establish.
-func injectSoftExitTextSerializedBy(lockTarget, tmuxTarget, text string, prefixKeys []string) error {
-	return injectTextAndSubmitWithOptions(lockTarget, tmuxTarget, text, false, prefixKeys...)
-}
-
-// injectSignalExitSerializedBy is a harness's keystroke-free soft exit: the
-// ordered key names from harness.Lifecycle.SignalExitKeys sent into the pane
-// one settle apart, as one lock-held sequence. Keystroke-free on purpose — a
+// injectSignalExitSerializedBy sends an attempt-bound terminal adapter's
+// native stop keys into the pane one settle apart, as one lock-held sequence.
+// Keystroke-free on purpose — a
 // typed slash command is silently dropped both mid-turn and whenever a TUI's
 // keypress reader wedges outright (the Copilot 2026-08-09 incident: three
 // /exit injections ignored for the full 10 s escalation deadline while ctrl-c
 // handling demonstrably kept working), while the ctrl-c quit rides the
-// surviving signal path. The exact keys and press count are per harness (see
-// each Lifecycle.SignalExitKeys): Copilot and Codex send four C-c; Claude Code
-// prefixes an Escape to clear a permission dialog or half-typed line first.
+// surviving signal path. Each runtime adapter owns its exact keys and count.
 //
 // The gap is signalExitKeyGap (330 ms), deliberately tighter than the typed
 // path's injectSettleDelay: the presses must land inside the harness's
@@ -1887,9 +1865,8 @@ func injectSoftExitTextSerializedBy(lockTarget, tmuxTarget, text string, prefixK
 // Only the FIRST key's failure is an error — a pane commonly dies on a later
 // press, making a subsequent "can't find pane" the success case.
 //
-// keys must be non-empty; callers select this path precisely when
-// SignalExitKeys is non-empty (see sendSoftExitToTarget), so the empty-list
-// error below is a belt-and-braces guard, not a reachable production path.
+// keys must be non-empty; the empty-list error is a fail-closed guard against
+// a malformed adapter recipe.
 func injectSignalExitSerializedBy(lockTarget, tmuxTarget string, keys []string) error {
 	if len(keys) == 0 {
 		return fmt.Errorf("signal exit: no keys for %s", tmuxTarget)

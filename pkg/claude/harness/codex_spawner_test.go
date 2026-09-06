@@ -352,17 +352,8 @@ func TestCodexHarness_Registered(t *testing.T) {
 	if !h.SupportsCompact() {
 		t.Fatalf("codex must support compact (/compact)")
 	}
-	if !h.SupportsSoftExit() {
-		t.Fatalf("codex must support soft-exit (/quit) for graceful stop")
-	}
 	if got := h.Life.CompactCommand(); got != "/compact" {
 		t.Fatalf("codex compact command = %q, want /compact", got)
-	}
-	if got := h.Life.SoftExitPrefixKeys(); len(got) != 0 {
-		t.Fatalf("SoftExitPrefixKeys() = %q, want none", got)
-	}
-	if got := h.Life.SoftExitCommand(); got != "/quit" {
-		t.Fatalf("codex soft-exit command = %q, want /quit", got)
 	}
 	if h.SupportsRemoteControl() || h.CanRemoteControl() {
 		t.Fatalf("codex must NOT support remote control (no built-in remote access)")

@@ -36,7 +36,7 @@ func TestOpenCodeCompactUsesManagedTUICommandAPIWithoutKeys(t *testing.T) {
 	assert.Empty(t, f.World.Tmux.Sent(), "OpenCode compact must not use tmux send-keys")
 }
 
-func TestOpenCodeSoftExitUsesManagedTUICommandAPIWithoutKeys(t *testing.T) {
+func TestOpenCodeStopEndsAuthoritativeServerWithoutAttachmentControl(t *testing.T) {
 	f := newFlow(t)
 	const (
 		conv = "ses_opencode_exit_api"
@@ -45,12 +45,157 @@ func TestOpenCodeSoftExitUsesManagedTUICommandAPIWithoutKeys(t *testing.T) {
 	commands, server := openCodeTUICommandServer(t, f, tmux, true)
 	defer server.Close()
 	haveOpenCodeControlSession(t, f, conv, "spwn-oc-exit-api", tmux, server.URL)
+	t.Cleanup(agentd.SetVerifyOpenCodeRuntimeForStopTest(func(db.OpenCodeRuntime) bool { return true }))
+	t.Cleanup(agentd.SetStopExactOpenCodeRuntimeForTest(func(runtime db.OpenCodeRuntime, _ bool) (bool, error) {
+		return true, db.DeleteOpenCodeRuntime(runtime.SessionID)
+	}))
 
 	action := agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop)
 	require.Equal(t, "soft_stopped", action)
-	assert.Equal(t, "app.exit", receiveCommand(t, commands))
-	assert.False(t, f.World.Tmux.IsAlive(tmux), "app.exit must close the attached TUI")
-	assert.Empty(t, f.World.Tmux.Sent(), "OpenCode exit must not use tmux send-keys")
+	select {
+	case command := <-commands:
+		t.Fatalf("Stop controlled the attachment instead of the server: %q", command)
+	case <-time.After(20 * time.Millisecond):
+	}
+	assert.False(t, f.World.Tmux.IsAlive(tmux), "Stop releases the selected server's owned attachment after server teardown")
+	agentd.WaitForBackgroundForTest()
+	stored, err := db.GetOpenCodeRuntime("spwn-oc-exit-api")
+	require.NoError(t, err)
+	assert.Nil(t, stored, "the selected authoritative server must be stopped")
+	assert.Empty(t, f.World.Tmux.Sent(), "OpenCode server Stop must not use tmux send-keys")
+	row, err := db.LoadSession("spwn-oc-exit-api")
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, session.StatusExited, row.Status)
+}
+
+func TestOpenCodeStopWithoutLiveAttachmentStillEndsExactServer(t *testing.T) {
+	f := newFlow(t)
+	const (
+		conv  = "ses_opencode_server_only_stop"
+		tmux  = "tmux-opencode-server-only-stop"
+		label = "spwn-oc-server-only-stop"
+	)
+	commands, server := openCodeTUICommandServer(t, f, tmux, false)
+	defer server.Close()
+	haveOpenCodeControlSession(t, f, conv, label, tmux, server.URL)
+	t.Cleanup(agentd.SetVerifyOpenCodeRuntimeForStopTest(func(db.OpenCodeRuntime) bool { return true }))
+	f.MarkOffline(tmux)
+	called := false
+	t.Cleanup(agentd.SetStopExactOpenCodeRuntimeForTest(func(runtime db.OpenCodeRuntime, _ bool) (bool, error) {
+		called = true
+		return true, db.DeleteOpenCodeRuntime(runtime.SessionID)
+	}))
+
+	action := agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop)
+	require.Equal(t, "soft_stopped", action)
+	assert.True(t, called, "server Stop must not depend on a live attachment")
+	select {
+	case command := <-commands:
+		t.Fatalf("server-only Stop dispatched attachment control: %q", command)
+	default:
+	}
+}
+
+func TestOpenCodeStopDeadServerRemovesRestartAuthority(t *testing.T) {
+	f := newFlow(t)
+	const (
+		conv  = "ses_opencode_dead_server_stop"
+		tmux  = "tmux-opencode-dead-server-stop"
+		label = "spwn-oc-dead-server-stop"
+	)
+	_, server := openCodeTUICommandServer(t, f, tmux, false)
+	defer server.Close()
+	haveOpenCodeControlSession(t, f, conv, label, tmux, server.URL)
+	runtimeRow, err := db.GetOpenCodeRuntime(label)
+	require.NoError(t, err)
+	require.NotNil(t, runtimeRow)
+	runtimeRow.PID = 1 << 30 // deterministically absent on supported hosts
+	require.NoError(t, db.UpsertOpenCodeRuntime(*runtimeRow))
+	t.Cleanup(agentd.SetVerifyOpenCodeRuntimeForStopTest(func(db.OpenCodeRuntime) bool {
+		t.Fatal("a dead exact server must not require live endpoint proof to retire restart authority")
+		return false
+	}))
+	called := false
+	t.Cleanup(agentd.SetStopExactOpenCodeRuntimeForTest(func(runtime db.OpenCodeRuntime, _ bool) (bool, error) {
+		called = true
+		return true, db.DeleteOpenCodeRuntime(runtime.SessionID)
+	}))
+
+	action := agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop)
+	require.Equal(t, "soft_stopped", action)
+	assert.True(t, called, "the exact dead attempt must be torn down, not reported as no execution")
+	stored, err := db.GetOpenCodeRuntime(label)
+	require.NoError(t, err)
+	assert.Nil(t, stored, "Stop must remove the durable authority that lets the reaper restart the server")
+	assert.False(t, f.World.Tmux.IsAlive(tmux), "the dead server's owned attachment is cleaned with its restart authority")
+	_ = agentd.RunReaperTickForTest(time.Now())
+	stored, err = db.GetOpenCodeRuntime(label)
+	require.NoError(t, err)
+	assert.Nil(t, stored, "a later production reaper sweep must not resurrect the stopped server")
+}
+
+func TestOpenCodeStopThenImmediateResumeUsesAuthoritativeCompletion(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	spawn := f.AsHuman().SpawnHarness("crew", "OpenCode stop resume", harness.OpenCodeName)
+	_, server := openCodeTUICommandServer(t, f, spawn.TmuxSession, false)
+	defer server.Close()
+	row, err := db.FindSessionByConvID(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	boundary, err := json.Marshal(session.ExecutionBoundary{
+		Version: session.ExecutionBoundaryVersion, LaunchGeneration: row.ExecutionID.String(),
+		Harness: session.ExecutionHarness{Name: harness.OpenCodeName},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID: row.ID, ConvID: row.ConvID, ServerURL: server.URL,
+		Password: "test-password", PID: os.Getpid(), Cwd: row.Cwd,
+		ExecutionBoundaryJSON: string(boundary),
+	}))
+	t.Cleanup(agentd.SetVerifyOpenCodeRuntimeForStopTest(func(db.OpenCodeRuntime) bool { return true }))
+	t.Cleanup(agentd.SetStopExactOpenCodeRuntimeForTest(func(runtime db.OpenCodeRuntime, _ bool) (bool, error) {
+		return true, db.DeleteOpenCodeRuntime(runtime.SessionID)
+	}))
+
+	require.Equal(t, "soft_stopped", agentd.StopOneConvWithIntentForTest(spawn.ConvID, db.AgentExitActionStop))
+	agentd.WaitForBackgroundForTest()
+	resumed := f.AsHuman().Resume(spawn.ConvID)
+	assert.Equal(t, "resumed", resumed.Action,
+		"authoritative server completion and attachment cleanup must admit the immediate successor: %s", resumed.Detail)
+}
+
+func TestOpenCodeStopRefusesRuntimeFromDifferentExecution(t *testing.T) {
+	f := newFlow(t)
+	const (
+		conv  = "ses_opencode_replacement_fence"
+		tmux  = "tmux-opencode-replacement-fence"
+		label = "spwn-oc-replacement-fence"
+	)
+	_, server := openCodeTUICommandServer(t, f, tmux, false)
+	defer server.Close()
+	haveOpenCodeControlSession(t, f, conv, label, tmux, server.URL)
+	t.Cleanup(agentd.SetVerifyOpenCodeRuntimeForStopTest(func(db.OpenCodeRuntime) bool { return true }))
+	runtimeRow, err := db.GetOpenCodeRuntime(label)
+	require.NoError(t, err)
+	require.NotNil(t, runtimeRow)
+	var boundary session.ExecutionBoundary
+	require.NoError(t, json.Unmarshal([]byte(runtimeRow.ExecutionBoundaryJSON), &boundary))
+	boundary.LaunchGeneration = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	tampered, err := json.Marshal(boundary)
+	require.NoError(t, err)
+	runtimeRow.ExecutionBoundaryJSON = string(tampered)
+	require.NoError(t, db.UpsertOpenCodeRuntime(*runtimeRow))
+	called := false
+	t.Cleanup(agentd.SetStopExactOpenCodeRuntimeForTest(func(db.OpenCodeRuntime, bool) (bool, error) {
+		called = true
+		return true, nil
+	}))
+
+	action := agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop)
+	assert.Equal(t, "error", action)
+	assert.False(t, called, "an unbound predecessor runtime must never reach native Stop")
 }
 
 func TestOpenCodeCompactWhileBusyReturnsRetryableFailureBeforeAPIOrKeys(t *testing.T) {
@@ -146,36 +291,6 @@ func TestOpenCodeCompactAPIFailureReturnsRetryableFailureWithoutKeyFallback(t *t
 	assert.Empty(t, f.World.Tmux.Sent(), "managed API failure must never fall back to keystrokes")
 }
 
-func TestOpenCodeReincarnateSoftExitRetriesViaManagedAPIWithoutKeys(t *testing.T) {
-	f := newFlow(t)
-	const (
-		conv = "ses_opencode_reincarnate_exit"
-		tmux = "tmux-opencode-reincarnate-exit"
-	)
-	commands, server := openCodeTUICommandServer(t, f, tmux, false)
-	defer server.Close()
-	haveOpenCodeControlSession(t, f, conv, "spwn-oc-reincarnate-exit", tmux, server.URL)
-	t.Cleanup(agentd.SetSoftExitRetryDelayForTest(time.Millisecond))
-	t.Cleanup(agentd.SetUnknownIntentCleanupDelayForTest(time.Millisecond))
-
-	require.True(t, agentd.InjectSoftExitForTest(conv, "/exit", "reincarnate-exit"))
-	agentd.WaitForBackgroundForTest()
-
-	var got []string
-	for {
-		select {
-		case command := <-commands:
-			got = append(got, command)
-		default:
-			// One app.exit per bounded attempt (softExitMaxAttempts).
-			require.Equal(t, []string{"app.exit", "app.exit", "app.exit", "app.exit", "app.exit"}, got)
-			assert.Empty(t, f.World.Tmux.Sent(),
-				"OpenCode reincarnate exit retries must never use tmux send-keys")
-			return
-		}
-	}
-}
-
 func TestOpenCodeUnreadReminderUsesPromptAPIWithoutKeys(t *testing.T) {
 	f := newFlow(t)
 	const (
@@ -257,13 +372,23 @@ func haveOpenCodeControlSession(
 	f.HaveAliveSession(conv, label, tmux, cwd)
 	setSessionHarness(t, conv, harness.OpenCodeName)
 	f.SetSessionStatus(conv, session.StatusIdle)
+	row, err := db.FindSessionByConvID(conv)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	boundary, err := json.Marshal(session.ExecutionBoundary{
+		Version:          session.ExecutionBoundaryVersion,
+		LaunchGeneration: row.ExecutionID.String(),
+		Harness:          session.ExecutionHarness{Name: harness.OpenCodeName},
+	})
+	require.NoError(t, err)
 	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
-		SessionID: label,
-		ConvID:    conv,
-		ServerURL: serverURL,
-		Password:  "test-password",
-		PID:       os.Getpid(),
-		Cwd:       cwd,
+		SessionID:             label,
+		ConvID:                conv,
+		ServerURL:             serverURL,
+		Password:              "test-password",
+		PID:                   os.Getpid(),
+		Cwd:                   cwd,
+		ExecutionBoundaryJSON: string(boundary),
 	}))
 }
 

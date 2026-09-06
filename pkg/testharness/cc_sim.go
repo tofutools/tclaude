@@ -80,8 +80,8 @@ type CCSim struct {
 	// C-c while armed exits the process the same way /exit does. Any other
 	// keystroke (including a C-c spent clearing a pending line, an Escape, or a
 	// submitted line) disarms it. This is the pane side of the harness's
-	// keystroke-free signal exit (claudeLifecycle.SignalExitKeys, driven by
-	// agentd.injectSignalExitSerializedBy). The simulator is untimed, so the
+	// keystroke-free signal exit used by the Claude runtime Stop adapter. The
+	// simulator is untimed, so the
 	// armed state persists until the next input rather than expiring on the
 	// measured ~0.8 s window — every production signal-exit send delivers its
 	// C-c presses back-to-back, so the window never lapses between them.

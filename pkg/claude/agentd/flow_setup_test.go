@@ -84,7 +84,6 @@ func newFlow(t *testing.T) *testharness.Flow {
 	// Delivered-but-not-yet-observed exits retain their lifecycle intent for a
 	// production-scale reaper window. Keep that policy testable without making
 	// background drains wait for the production duration.
-	t.Cleanup(agentd.SetUnknownIntentCleanupDelayForTest(5 * time.Millisecond))
 	// And the escalation ladder's waits (10s deadline / 2s per signal step in
 	// prod). A simulator pane honours its soft exit immediately, so the
 	// watchdog's first probe already finds it gone; the shrink is what keeps
@@ -211,9 +210,9 @@ func holdRetiringCodexPane(t *testing.T, f *testharness.Flow, cx *testharness.Co
 // The park hook fires at the top of waitForLifecycleTargetGone's loop, one
 // statement before probeLifecyclePane, so "probed" is exactly "a second issuer
 // of the pane-probe verbs now exists". A scenario whose fault is queued inside
-// the SYNCHRONOUS injection depends on there being no such issuer yet —
-// scheduleSoftExitEscalation is not called until injectSoftExitTarget returns
-// — and that is a property of call ORDER, which is the kind of property
+// the synchronous adapter request depends on there being no such issuer yet —
+// its retry/escalation goroutine starts only after RequestStop returns — and
+// that is a property of call ORDER, which is the kind of property
 // TCL-1028 showed can hold by luck and stop holding silently. Sampling it
 // where the fault is queued, and asserting it false, makes a future
 // re-ordering fail the test instead of recreating the bug.

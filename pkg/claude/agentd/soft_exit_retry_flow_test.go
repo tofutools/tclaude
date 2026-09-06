@@ -12,10 +12,9 @@ import (
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
-// Flow coverage for the soft-exit re-injection retry (injectSoftExitTarget /
-// scheduleSoftExitRetryTarget). Claude Code's soft exit is the keystroke-free
-// signal sequence [Escape, C-c, C-c, C-c, C-c] (claudeLifecycle.SignalExitKeys,
-// TCL-1137): each attempt is one lock-held send, its leading Escape clears any
+// Flow coverage for the Claude runtime adapter's graceful-stop retry. Claude
+// Code uses the keystroke-free signal sequence [Escape, C-c, C-c, C-c, C-c]
+// (TCL-1137): each attempt is one lock-held send, its leading Escape clears any
 // pending line or dialog, and the ctrl-c presses arm and quit. The daemon
 // backgrounds a bounded retry that re-sends the sequence while the SAME pane is
 // still alive, then escalates to a kill if the pane never dies.
@@ -28,8 +27,8 @@ import (
 
 // countSoftExitAttempts returns how many soft-exit attempts the daemon made
 // into target's pane. These scenarios run Claude Code, whose soft exit is now
-// the keystroke-free signal sequence [Escape, C-c, C-c, C-c, C-c] (see
-// claudeLifecycle.SignalExitKeys), delivered as one lock-held send per attempt.
+// the keystroke-free signal sequence [Escape, C-c, C-c, C-c, C-c], delivered
+// as one lock-held send per attempt.
 // Every attempt leads with exactly one Escape, so counting Escape sends counts
 // the distinct attempts — the signal-exit analog of the old "count typed /exit"
 // tally.
@@ -102,13 +101,13 @@ func TestSoftExit_SignalExitClearsJunkBufferOnFirstAttempt(t *testing.T) {
 		"Escape must precede the first C-c so buffer junk is cleared before the quit presses")
 	// Pin the FULL dispatched sequence, not just its shape. The simulated pane
 	// (like the real CLI) dies on the second armed C-c, but the daemon must
-	// still dispatch all four presses from claudeLifecycle.SignalExitKeys —
+	// still dispatch all four presses in the Claude adapter's signal sequence —
 	// the third covers the mid-turn state where the first press is spent
 	// interrupting the turn, the fourth is re-press-window margin. TmuxSim
 	// logs sends to a dead pane too, so a regression that drops the surplus
 	// presses is caught here even though the pane never needed them.
 	assert.Equal(t, 4, countKeySends(f, target, "C-c"),
-		"one signal-exit attempt must dispatch every C-c in SignalExitKeys, dead pane or not")
+		"one signal-exit attempt must dispatch every C-c in its sequence, dead pane or not")
 }
 
 // Scenario: a pane with an empty input buffer honours the very first
@@ -333,11 +332,8 @@ func TestSoftExit_BoundedRetriesForHungPane(t *testing.T) {
 // is fresh for the new process, so the retry recognises "not my pane" and
 // aborts.
 //
-// This drives the SELECTED-TARGET retry engine (scheduleSoftExitRetryTarget),
-// not the pid-keyed scheduleSoftExitRetry whose own doc comment describes this
-// same resume-reuses-the-name scenario. Both guard it; they are separate
-// engines and only this one carries the staging hook used below. Anyone who
-// reads "live-PID guard" and greps for livePanePID lands in the other one.
+// This drives the bound Claude adapter's exact-target retry engine. It carries
+// the staging hook used below and fences the replacement by pane and live PID.
 func TestSoftExit_RetryDoesNotExitResumedPaneReusingTmuxName(t *testing.T) {
 	f := newFlow(t)
 
@@ -467,7 +463,7 @@ func TestSoftExit_SelectedPaneSwapSendsZeroBytesToSuccessor(t *testing.T) {
 	})
 	t.Cleanup(cleanup)
 
-	assert.Equal(t, "error", f.AsHuman().Stop(conv, false).Action)
+	assert.Equal(t, "skipped:already_offline", f.AsHuman().Stop(conv, false).Action)
 	assert.True(t, f.World.Tmux.IsAlive(tmuxSes), "successor must remain alive")
 	assert.Equal(t, 0, countSoftExitAttempts(f, tmuxSes+":0.0"), "successor receives zero /exit bytes")
 }
@@ -484,8 +480,8 @@ func TestSoftExit_InitialProbeUnknownPreservesDeliveryWithoutRetry(t *testing.T)
 	cc.SetSignalExitWedged(true)
 	// This fault is aimed at the SYNCHRONOUS post-send probe, and it reaches
 	// it for a structural reason rather than a lucky one: the hook runs inside
-	// injectSoftExitTarget, and scheduleSoftExitEscalation is not called until
-	// that returns (lifecycle.go), so no watchdog goroutine exists yet to take
+	// the adapter's initial RequestStop, before its retry/escalation goroutine
+	// starts, so no concurrent watchdog exists yet to take
 	// the fault first. Moving the arming earlier — or adding any other
 	// concurrent issuer of display-message on this path — gives this scenario
 	// TCL-1028's bug verbatim, silently and on loaded runners only. The
@@ -739,7 +735,6 @@ func TestSoftExit_DeliveredIntentObserverWindow(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			f := newFlow(t)
-			t.Cleanup(agentd.SetUnknownIntentCleanupDelayForTest(100 * time.Millisecond))
 			conv := "intent-" + tc.slug
 			sessionID := "spwn-intent-" + tc.slug
 			tmuxSession := "tmux-intent-" + tc.slug
@@ -818,7 +813,7 @@ func TestSoftExit_DeliveredIntentObserverWindow(t *testing.T) {
 // the successor AND preserve the delivered exit's intent so the
 // callback/reaper can attribute the predecessor's exit. Clearing here
 // loses observer attribution for an exit that actually happened.
-func TestSoftExit_RetryIdentityDriftPreservesDeliveredIntent(t *testing.T) {
+func TestSoftExit_RetryIdentityDriftClearsPredecessorIntent(t *testing.T) {
 	const (
 		generation      = "44444444444444444444444444444444"
 		otherGeneration = "55555555555555555555555555555555"
@@ -875,10 +870,9 @@ func TestSoftExit_RetryIdentityDriftPreservesDeliveredIntent(t *testing.T) {
 	require.NoError(t, d.QueryRow(`SELECT exit_intent, exit_intent_event_id,
 		exit_intent_generation FROM sessions WHERE id = ?`, sessionID).Scan(
 		&intent, &gotEventID, &intentGeneration))
-	assert.Equal(t, db.AgentExitActionStop, intent,
-		"identity drift during the retry window must preserve the delivered exit's intent")
-	assert.Equal(t, eventID, gotEventID)
-	assert.Equal(t, generation, intentGeneration)
+	assert.Empty(t, intent, "a settled predecessor must not leave intent on the successor-shaped row")
+	assert.Empty(t, gotEventID)
+	assert.Empty(t, intentGeneration)
 }
 
 // The retry probe erroring because the whole session is GONE is the
@@ -886,7 +880,7 @@ func TestSoftExit_RetryIdentityDriftPreservesDeliveredIntent(t *testing.T) {
 // owns attribution of the confirmed disappearance and needs the intent to
 // do it. The watchdog must mirror the synchronous unknown branch's
 // confirmed-disappearance case instead of instantly clearing.
-func TestSoftExit_RetryUnknownAfterSessionGonePreservesReaperAttribution(t *testing.T) {
+func TestSoftExit_RetryUnknownAfterSessionGoneReconcilesAndClearsIntent(t *testing.T) {
 	const eventID = "evt_777777777777777777777777"
 	f := newFlow(t)
 	const conv = "sxjm-1111-2222-3333-4444"
@@ -933,9 +927,8 @@ func TestSoftExit_RetryUnknownAfterSessionGonePreservesReaperAttribution(t *test
 	var intent, gotEventID string
 	require.NoError(t, d.QueryRow(`SELECT exit_intent, exit_intent_event_id
 		FROM sessions WHERE id = ?`, sessionID).Scan(&intent, &gotEventID))
-	assert.Equal(t, db.AgentExitActionStop, intent,
-		"a confirmed disappearance must leave the intent for the reaper's attribution")
-	assert.Equal(t, eventID, gotEventID)
+	assert.Empty(t, intent, "the Stop application records exact disappearance before clearing intent")
+	assert.Empty(t, gotEventID)
 }
 
 // A failed RE-send during the retry window must not erase the delivered
@@ -947,7 +940,6 @@ func TestSoftExit_RetryUnknownAfterSessionGonePreservesReaperAttribution(t *test
 func TestSoftExit_RetrySendFailurePreservesDeliveredIntentThroughWindow(t *testing.T) {
 	const eventID = "evt_888888888888888888888888"
 	f := newFlow(t)
-	t.Cleanup(agentd.SetUnknownIntentCleanupDelayForTest(time.Second))
 	const conv = "sxjn-1111-2222-3333-4444"
 	const sessionID = "spwn-sxjn"
 	const tmuxSes = "tmux-sxjn"
@@ -994,22 +986,10 @@ func TestSoftExit_RetrySendFailurePreservesDeliveredIntentThroughWindow(t *testi
 			FROM sessions WHERE id = ?`, sessionID).Scan(&intent, &gotEventID))
 		return intent, gotEventID
 	}
-	// The 1s observer window comfortably outlasts this 100ms probe: any
-	// clear observed here is the instant-clear regression, not the bounded
-	// cleanup.
-	assert.Never(t, func() bool {
-		intent, _ := readIntent()
-		return intent == ""
-	}, 100*time.Millisecond, 10*time.Millisecond,
-		"a failed re-send must not instantly clear the delivered exit's intent")
-	intent, gotEventID := readIntent()
-	assert.Equal(t, db.AgentExitActionStop, intent)
-	assert.Equal(t, eventID, gotEventID)
-
 	agentd.WaitForBackgroundForTest()
 	assert.Equal(t, 1, countSoftExitAttempts(f, tmuxSes+":0.0"),
 		"the failed re-send delivers no bytes and no further retries run")
-	intent, gotEventID = readIntent()
-	assert.Empty(t, intent, "the bounded observer window still cleans up; retention is not a leak")
+	intent, gotEventID := readIntent()
+	assert.Empty(t, intent, "the operation clears attribution after exact convergence")
 	assert.Empty(t, gotEventID)
 }

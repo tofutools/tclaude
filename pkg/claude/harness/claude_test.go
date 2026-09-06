@@ -799,20 +799,11 @@ func TestClaudeLifecycle_Tokens(t *testing.T) {
 	if h.Life.CompactCommand() != "/compact" {
 		t.Fatalf("compact token = %q, want /compact", h.Life.CompactCommand())
 	}
-	// No preparatory keystroke: Claude Code accepts /exit from its prompt as
-	// typed. Only a harness measured to refuse the command in some state
-	// contributes prefix keys (today: Copilot).
-	if got := h.Life.SoftExitPrefixKeys(); len(got) != 0 {
-		t.Fatalf("SoftExitPrefixKeys() = %q, want none", got)
-	}
-	if h.Life.SoftExitCommand() != "/exit" {
-		t.Fatalf("soft-exit token = %q, want /exit", h.Life.SoftExitCommand())
-	}
 	if h.Life.RemoteControlCommand() != "/remote-control" {
 		t.Fatalf("remote-control token = %q, want /remote-control", h.Life.RemoteControlCommand())
 	}
-	if !h.SupportsRename() || !h.SupportsCompact() || !h.SupportsSoftExit() {
-		t.Fatalf("claude must support rename/compact/soft-exit")
+	if !h.SupportsRename() || !h.SupportsCompact() {
+		t.Fatalf("claude must support rename/compact")
 	}
 	if !h.SupportsRemoteControl() || !h.CanRemoteControl() {
 		t.Fatalf("claude must support remote control (/remote-control)")

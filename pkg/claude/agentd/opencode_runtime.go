@@ -2998,6 +2998,78 @@ func stopOpenCodeRuntimeWithCgroupDisposition(sessionID string, removeCgroup boo
 	return db.DeleteOpenCodeRuntime(sessionID)
 }
 
+// stopExactOpenCodeRuntime tears down only the server attempt captured by a
+// bound StopRuntime. The comparison occurs under the same reconcile lock as
+// teardown, so a delayed stop can never load and terminate a successor that
+// reused the stable session id.
+func stopExactOpenCodeRuntime(expected db.OpenCodeRuntime, removeCgroup bool) (bool, error) {
+	value, _ := openCodeReconcileLocks.LoadOrStore(expected.SessionID, &sync.Mutex{})
+	reconcileMu := value.(*sync.Mutex)
+	reconcileMu.Lock()
+	defer reconcileMu.Unlock()
+
+	current, err := db.GetOpenCodeRuntime(expected.SessionID)
+	if err != nil {
+		return false, err
+	}
+	if current == nil || !sameOpenCodeRuntimeAttempt(*current, expected) {
+		return false, nil
+	}
+	openCodeProcesses.Lock()
+	known := openCodeProcesses.bySession[expected.SessionID]
+	if known != nil && known.rootPID() != expected.PID {
+		openCodeProcesses.Unlock()
+		return false, fmt.Errorf("OpenCode in-memory runtime belongs to a different process; refusing exact stop")
+	}
+	if known == nil {
+		// Install the exact recovered-process tombstone while holding the map
+		// lock. stopOpenCodeProcess must not perform its ordinary stable-ID
+		// lookup after this proof and accidentally acquire a successor.
+		known = &openCodeProcess{pid: expected.PID}
+		openCodeProcesses.bySession[expected.SessionID] = known
+	}
+	openCodeProcesses.Unlock()
+	stopOpenCodeProcess(expected, known)
+	if session.IsProcessAlive(expected.PID) {
+		if expected.Transport == db.OpenCodeTransportUnixRelay {
+			return true, fmt.Errorf("OpenCode recovered process remains alive; retaining Unix replay authority")
+		}
+		return true, fmt.Errorf("OpenCode recovered process remains alive; retaining runtime authority")
+	}
+	if expected.Transport == db.OpenCodeTransportUnixRelay {
+		if err := opencodeapi.RemoveUnixSocket(expected); err != nil {
+			return true, fmt.Errorf("finish OpenCode Unix control cleanup: %w", err)
+		}
+	}
+	if removeCgroup {
+		if err := removeOpenCodeResourceCgroup(expected.ResourceCgroupDir); err != nil {
+			return true, fmt.Errorf("remove retired OpenCode resource cgroup: %w", err)
+		}
+	}
+	// Recheck the durable authority immediately before deletion. A successor
+	// cannot be deleted merely because it appeared during slow process cleanup.
+	current, err = db.GetOpenCodeRuntime(expected.SessionID)
+	if err != nil {
+		return true, err
+	}
+	if current == nil {
+		return true, nil
+	}
+	if !sameOpenCodeRuntimeAttempt(*current, expected) {
+		return true, fmt.Errorf("OpenCode runtime was replaced during exact stop; successor retained")
+	}
+	clearOpenCodeVirtualCostState(expected.SessionID)
+	return true, db.DeleteOpenCodeRuntime(expected.SessionID)
+}
+
+func sameOpenCodeRuntimeAttempt(a, b db.OpenCodeRuntime) bool {
+	return a.SessionID == b.SessionID && a.ConvID == b.ConvID &&
+		a.ServerURL == b.ServerURL && a.Password == b.Password && a.PID == b.PID &&
+		a.Transport == b.Transport && a.ControlSocketPath == b.ControlSocketPath &&
+		a.ControlSocketDevice == b.ControlSocketDevice && a.ControlSocketInode == b.ControlSocketInode &&
+		a.ExecutionBoundaryJSON == b.ExecutionBoundaryJSON && a.ResourceCgroupDir == b.ResourceCgroupDir
+}
+
 func stopOpenCodeProcess(runtime db.OpenCodeRuntime, known *openCodeProcess) {
 	if runtime.ResourceCgroupDir != "" {
 		// The tmux and process-tree kills below are best-effort: a server

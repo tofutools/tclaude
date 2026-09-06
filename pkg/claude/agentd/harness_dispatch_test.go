@@ -17,11 +17,8 @@ type fakeLifecycle struct{}
 
 func (fakeLifecycle) RenameCommand() string        { return "" }
 func (fakeLifecycle) CompactCommand() string       { return "" }
-func (fakeLifecycle) SoftExitCommand() string      { return "" }
 func (fakeLifecycle) RemoteControlCommand() string { return "" }
 func (fakeLifecycle) FastModeCommand() string      { return "" }
-func (fakeLifecycle) SoftExitPrefixKeys() []string { return nil }
-func (fakeLifecycle) SignalExitKeys() []string     { return nil }
 
 // fakeConvStore records SetTitle calls so the test can assert the rename
 // routed to the title store rather than the (absent) injection path.

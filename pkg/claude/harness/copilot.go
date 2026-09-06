@@ -187,22 +187,6 @@ func (copilotLifecycle) RenameCommand() string { return "/rename" }
 // `/compact [FOCUS-INSTRUCTIONS]` summarizes the conversation history.
 func (copilotLifecycle) CompactCommand() string { return "/compact" }
 
-// `/exit` closes the current session; with only tclaude's single session open
-// it quits the CLI. Copilot CLI 1.0.78 exposes no equivalent process-exit RPC:
-// session.shutdown and sessions.close successfully end a session without
-// killing the pane, while runtime.shutdown returns -32603, "Runtime shutdown
-// is not available for this server".
-//
-// A non-empty command here is what marks the harness soft-exit capable
-// (SupportsSoftExit), but agentd's managed stop does NOT type it: Copilot's
-// TUI silently drops typed slash commands both mid-turn and whenever its
-// keypress reader wedges outright (observed 2026-08-09: three /exit
-// injections ignored for a full 10 s while ctrl-c handling kept working), so
-// the stop path sends the CLI's own double-ctrl-c quit instead — see
-// agentd's sendSoftExitToTarget. The typed command remains for paths that
-// still spell exits as keystroke text (reincarnate's pid-keyed injector).
-func (copilotLifecycle) SoftExitCommand() string { return "/exit" }
-
 // Copilot's remote access is `/remote [on|off]` — a DIRECTIONAL command, while
 // RemoteControlCommand is contracted as a single token that flips the current
 // state. Returning "/remote" would make tclaude's toggle send a bare status
@@ -210,40 +194,3 @@ func (copilotLifecycle) SoftExitCommand() string { return "/exit" }
 // stays unsupported until the lifecycle contract itself grows a direction.
 func (copilotLifecycle) RemoteControlCommand() string { return "" }
 func (copilotLifecycle) FastModeCommand() string      { return "" }
-
-// Copilot's TUI only accepts a slash command when it is not mid-turn, so a
-// TYPED soft exit must be preceded by a cancel. Measured against 1.0.77 in a
-// real tmux pane (see copilotfixture): mid-turn or while a tool runs, C-c
-// reports "Operation cancelled by user" and returns the TUI to its input
-// prompt, from which /exit exits 0; with a permission dialog open C-c ABORTS
-// the request (the pending command never runs) rather than accepting its
-// default entry; on a pane holding a half-typed line it clears the buffer.
-// On an idle pane 1.0.77 treated it as a no-op; 1.0.78 arms "ctrl+c again to
-// exit" for a window measured to close between 1.2 s and 1.5 s, and a
-// same-window second press exits the CLI cleanly (status 0) — the behaviour
-// agentd's managed stop now uses directly instead of typing the command at
-// all (see SoftExitCommand). These prefix keys therefore only shape the
-// remaining typed-exit paths, such as reincarnate's.
-//
-// Escape is deliberately NOT used: the CLI holds a lone ESC byte waiting for
-// the rest of a possible escape sequence, so a trailing Escape is never
-// delivered at all.
-func (copilotLifecycle) SoftExitPrefixKeys() []string { return []string{"C-c"} }
-
-// Copilot's keystroke-free soft exit: four ctrl-c presses, one settle apart —
-// the path agentd's managed stop uses instead of typing /exit at all (the
-// original motivation for SignalExitKeys; PR #2112, TCL-1137). Measured against
-// 1.0.78 in a real tmux pane (see copilotfixture): the "again to exit" window
-// closes between 1.2 s and 1.5 s, and a second press 0.5–1.2 s after the first
-// exits cleanly (status 0) through the CLI's designed quit path — which writes
-// the durable session.shutdown event to events.jsonl identically to /exit
-// (verified from a retired session's tail, TCL-1137). The first press may be
-// spent cancelling an in-flight turn or aborting a permission dialog, the next
-// arms the window, and the third lands inside it; the fourth is margin for a
-// press that lands late enough to let an armed window lapse (giving the batch
-// a second arm+exit pair), and any surplus press on a pane that had nothing
-// to cancel lands on a dead pane and is tolerated. Escape is
-// NOT used (see SoftExitPrefixKeys) — the CLI never delivers a lone ESC byte.
-func (copilotLifecycle) SignalExitKeys() []string {
-	return []string{"C-c", "C-c", "C-c", "C-c"}
-}
