@@ -244,11 +244,18 @@ func TestDashboardSnapshot_MonitorReconcileRetiresAFinishedWatch(t *testing.T) {
 	assert.Equal(t, session.StatusMainAgentIdle, got.State.Status,
 		"the surviving watch still keeps the agent off plain idle")
 
-	// The retirement is persisted, not just filtered at read time.
+	// Dashboard reads report the fresh observation without mutating SQLite.
 	row, err := db.LoadSession(label)
 	require.NoError(t, err)
 	stored := db.ParseMonitorSet(row.MonitorsJSON)
-	assert.Len(t, stored, 1, "the dead entry was removed from the stored ledger")
+	assert.Len(t, stored, 2, "a GET must not mutate the stored ledger")
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	reaper.TickAt(time.Now())
+	row, err = db.LoadSession(label)
+	require.NoError(t, err)
+	stored = db.ParseMonitorSet(row.MonitorsJSON)
+	assert.Len(t, stored, 1, "the daemon projector removes the dead entry")
 	_, ghostKept := stored["mon-finished"]
 	assert.False(t, ghostKept)
 
@@ -266,6 +273,12 @@ func TestDashboardSnapshot_MonitorReconcileRetiresAFinishedWatch(t *testing.T) {
 		"a finished watch clears the badge with no end hook involved")
 	assert.Equal(t, session.StatusIdle, got.State.Status,
 		"and the agent settles to idle once nothing is left running")
+	agentd.ResetBgShellReconcileCacheForTest()
+	reaper.TickAt(time.Now().Add(time.Second))
+	row, err = db.LoadSession(label)
+	require.NoError(t, err)
+	assert.Empty(t, db.ParseMonitorSet(row.MonitorsJSON),
+		"the no-dashboard owner eventually persists the final completion")
 }
 
 // A websocket watch runs inside the harness process. The reconcile must
@@ -311,6 +324,13 @@ func TestDashboardSnapshot_WebsocketMonitorSurvivesAnEmptyProcessTable(t *testin
 	row, err := db.LoadSession(label)
 	require.NoError(t, err)
 	stored := db.ParseMonitorSet(row.MonitorsJSON)
+	require.Len(t, stored, 2, "the read-only dashboard keeps both ledger inputs")
+
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	reaper.TickAt(time.Now())
+	row, err = db.LoadSession(label)
+	require.NoError(t, err)
+	stored = db.ParseMonitorSet(row.MonitorsJSON)
 	require.Len(t, stored, 1)
 	assert.True(t, stored["ws-1"].WS, "the surviving entry is the websocket watch")
 }
