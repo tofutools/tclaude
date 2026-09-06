@@ -12,7 +12,7 @@ import (
 // effects atomically create the Operation and reserve its exact target.
 type Store interface {
 	CreateAgent(context.Context, model.Agent) error
-	UpdateAgent(context.Context, model.AgentID, model.Revision, string, model.DesiredConfiguration, time.Time) (model.Agent, error)
+	UpdateAgent(context.Context, model.AgentID, model.Revision, string, model.DesiredConfiguration, model.AuthorityRequest, time.Time) (model.Agent, error)
 	Agent(context.Context, model.AgentID) (model.Agent, error)
 	CreateGroup(context.Context, model.Group, model.ConfigurationBounds) error
 	Group(context.Context, model.GroupID) (model.Group, error)
@@ -47,12 +47,12 @@ type Store interface {
 	ExecutionAccessesDue(context.Context, time.Time, time.Time) ([]model.ExecutionAccess, error)
 	AuthenticateExecutionAccess(context.Context, []byte, time.Time) (model.ExecutionAccess, error)
 	RecordAccessDelivery(context.Context, model.ExecutionID, model.AccessGeneration, ports.ActionCredentialReceipt, time.Time) (model.ExecutionAccess, error)
-	RotateExecutionAccess(context.Context, model.ExecutionID, model.AccessGeneration, model.Revision, []byte, ports.ActionCredentialReceipt, time.Time, time.Time) (model.ExecutionAccess, error)
+	RotateExecutionAccess(context.Context, model.ExecutionID, model.AccessGeneration, model.Revision, []byte, ports.ActionCredentialReceipt, time.Time, time.Time, time.Time) (model.ExecutionAccess, error)
 	ReactivateExecutionAccess(context.Context, model.ExecutionID, model.AccessGeneration, ports.ActionCredentialRecoveryProof, time.Time) (model.ExecutionAccess, error)
 	RevokeExecutionAccess(context.Context, model.ExecutionID, model.Revision, time.Time) (model.ExecutionAccess, error)
 
 	CreateMessage(context.Context, model.Message, model.RequestID, model.OperationID, []model.AuthorityRequest) (MessageAdmissionResult, error)
-	MarkMessageRead(context.Context, model.MessageID, model.AgentID, time.Time) (model.Message, error)
+	MarkMessageRead(context.Context, model.MessageID, model.AgentID, model.AuthorityRequest, time.Time) (model.Message, error)
 	MessagesForAgent(context.Context, model.AgentID, bool) ([]model.Message, error)
 	Snapshot(context.Context) (Snapshot, error)
 	AssociateConversation(context.Context, ContextAssociation) error

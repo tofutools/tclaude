@@ -95,6 +95,7 @@ func (s *Service) ReadStatus(ctx context.Context, req ReadStatusRequest) (Status
 	}
 	var result StatusResult
 	groupMembers := map[model.AgentID]bool{}
+	visibleAgents := map[model.AgentID]bool{}
 	if req.Target.Kind == model.ResourceGroup || req.Target.Kind == model.ResourceGroupPeers {
 		for _, group := range snapshot.Groups {
 			if group.ID == req.Target.GroupID {
@@ -107,6 +108,7 @@ func (s *Service) ReadStatus(ctx context.Context, req ReadStatusRequest) (Status
 	for _, agent := range snapshot.Agents {
 		if req.Target.Kind == model.ResourceAgent && agent.ID == req.Target.AgentID || req.Target.Kind == model.ResourceSelf && agent.ID == req.Principal.AgentID || groupMembers[agent.ID] {
 			result.Agents = append(result.Agents, agent)
+			visibleAgents[agent.ID] = true
 		}
 	}
 	for _, execution := range snapshot.Executions {
@@ -117,6 +119,14 @@ func (s *Service) ReadStatus(ctx context.Context, req ReadStatusRequest) (Status
 		if visible {
 			execution.Evidence = model.ProviderEvidence{}
 			result.Executions = append(result.Executions, execution)
+			if execution.AgentID != "" {
+				visibleAgents[execution.AgentID] = true
+			}
+		}
+	}
+	for _, association := range snapshot.Associations {
+		if association.Current && visibleAgents[association.AgentID] {
+			result.Associations = append(result.Associations, association)
 		}
 	}
 	return result, nil
@@ -224,19 +234,10 @@ func (s *Service) RevokeExecutionAccess(ctx context.Context, req RevokeExecution
 		return ExecutionAccessStatusResult{}, err
 	}
 	var delivery ports.ActionCredentialDelivery
-	var receipt ports.ActionCredentialReceipt
 	if execution, executionErr := s.store.Execution(ctx, req.ExecutionID); executionErr == nil {
 		if provider, ok := s.providers.Provider(execution.Spec.Harness); ok {
 			if credentialProvider, ok := provider.(ports.ActionCredentialProvider); ok {
 				delivery = credentialProvider.ActionCredentials()
-				proof, inspectErr := delivery.InspectActionCredential(ctx, accessBinding(existing))
-				if inspectErr != nil {
-					return ExecutionAccessStatusResult{}, inspectErr
-				}
-				if err := validateAccessProof(existing, proof); err != nil {
-					return ExecutionAccessStatusResult{}, err
-				}
-				receipt = ports.ActionCredentialReceipt{ExecutionID: proof.ExecutionID, Generation: proof.Generation, DeliveryID: proof.DeliveryID, Resource: proof.Resource, FileIdentity: proof.FileIdentity}
 			}
 		}
 	}
@@ -245,6 +246,14 @@ func (s *Service) RevokeExecutionAccess(ctx context.Context, req RevokeExecution
 		return ExecutionAccessStatusResult{}, err
 	}
 	if delivery != nil {
+		proof, inspectErr := delivery.InspectActionCredential(ctx, accessBinding(existing))
+		if inspectErr != nil {
+			return ExecutionAccessStatusResult{Access: accessBinding(access)}, inspectErr
+		}
+		if err := validateAccessProof(existing, proof); err != nil {
+			return ExecutionAccessStatusResult{Access: accessBinding(access)}, err
+		}
+		receipt := ports.ActionCredentialReceipt{ExecutionID: proof.ExecutionID, Generation: proof.Generation, DeliveryID: proof.DeliveryID, Resource: proof.Resource, FileIdentity: proof.FileIdentity}
 		if cleanupErr := delivery.RemoveActionCredential(ctx, receipt); cleanupErr != nil {
 			return ExecutionAccessStatusResult{Access: accessBinding(access)}, cleanupErr
 		}
@@ -261,7 +270,8 @@ func (s *Service) RenewExecutionAccess(ctx context.Context, req RenewExecutionAc
 	if err != nil {
 		return ExecutionAccessStatusResult{}, err
 	}
-	if access.Revision != req.ExpectedRevision || access.State != model.ExecutionAccessActive {
+	now := s.now().UTC()
+	if access.Revision != req.ExpectedRevision || access.State != model.ExecutionAccessActive || !now.Before(access.ExpiresAt) {
 		return ExecutionAccessStatusResult{}, ErrConflict
 	}
 	provider, ok := s.providers.Provider(execution.Spec.Harness)
@@ -284,7 +294,6 @@ func (s *Service) RenewExecutionAccess(ctx context.Context, req RenewExecutionAc
 		return ExecutionAccessStatusResult{}, err
 	}
 	defer clear(secret)
-	now := s.now().UTC()
 	material := ports.ActionCredentialMaterial{ExecutionID: execution.ID, Generation: access.Generation + 1, DeliveryID: access.DeliveryID, Secret: secret, ExpiresAt: now.Add(s.accessLease)}
 	current := ports.ActionCredentialReceipt{ExecutionID: proof.ExecutionID, Generation: proof.Generation, DeliveryID: proof.DeliveryID, Resource: proof.Resource, FileIdentity: proof.FileIdentity}
 	receipt, err := credentialProvider.ActionCredentials().RotateActionCredential(ctx, current, material)
@@ -295,7 +304,10 @@ func (s *Service) RenewExecutionAccess(ctx context.Context, req RenewExecutionAc
 		return ExecutionAccessStatusResult{}, fail(ErrInvalid, "provider returned mismatched credential rotation receipt")
 	}
 	digest := sha256.Sum256(secret)
-	rotated, err := s.store.RotateExecutionAccess(ctx, execution.ID, access.Generation, access.Revision, digest[:], receipt, now, material.ExpiresAt)
+	settlementCtx, cancelSettlement := settlementContext(ctx)
+	defer cancelSettlement()
+	settledAt := s.now().UTC()
+	rotated, err := s.store.RotateExecutionAccess(settlementCtx, execution.ID, access.Generation, access.Revision, digest[:], receipt, now, material.ExpiresAt, settledAt)
 	return ExecutionAccessStatusResult{Access: accessBinding(rotated)}, err
 }
 
