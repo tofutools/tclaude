@@ -145,6 +145,9 @@ func Inspect(ctx context.Context, bundle Bundle) (Inspection, error) {
 			inspection.add(SeverityBlocking, "malformed_config_json", "", 1, "optional authored config is not valid JSON")
 		} else {
 			inspection.Snapshot.Config = append(json.RawMessage(nil), configBytes...)
+			if !validConfig(configBytes) {
+				inspection.add(SeverityBlocking, "invalid_authored_config", "", 1, "authored config has invalid field types")
+			}
 		}
 	}
 	validateAttachments(root, manifest.Attachments, &inspection)
@@ -369,7 +372,13 @@ func sortDiagnostics(diagnostics []Diagnostic) {
 		if a.Code != b.Code {
 			return a.Code < b.Code
 		}
-		return a.Table < b.Table
+		if a.Table != b.Table {
+			return a.Table < b.Table
+		}
+		if a.Detail != b.Detail {
+			return a.Detail < b.Detail
+		}
+		return a.Count < b.Count
 	})
 }
 

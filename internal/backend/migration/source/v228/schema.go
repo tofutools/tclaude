@@ -38,8 +38,8 @@ var RequiredTables = map[string]TableSpec{
 	"human_messages":                  {Columns: []string{"id", "from_conv", "body", "created_at", "from_agent"}, Key: []string{"id"}},
 	"human_message_attachments":       {Columns: []string{"id", "message_id", "seq", "filename", "size_bytes", "storage_path"}, Key: []string{"id"}},
 	"logical_conversations":           {Columns: []string{"id", "created_at"}, Key: []string{"id"}},
-	"conversation_attempt_bindings":   {Columns: []string{"execution_id", "conversation_id", "external_ref", "revision"}, Key: []string{"execution_id"}},
-	"conversation_reference_bindings": {Columns: []string{"execution_id", "revision", "conversation_id", "external_ref"}, Key: []string{"execution_id", "revision"}},
+	"conversation_attempt_bindings":   {Columns: []string{"execution_id", "conversation_id", "external_ref", "revision", "harness", "namespace"}, Key: []string{"execution_id"}},
+	"conversation_reference_bindings": {Columns: []string{"execution_id", "revision", "conversation_id", "external_ref", "harness", "namespace"}, Key: []string{"execution_id", "revision"}},
 	"conv_index":                      {Columns: []string{"conv_id", "full_path", "custom_title", "harness"}, Key: []string{"conv_id"}},
 	"agent_workspace":                 {Columns: []string{"conv_id", "cwd", "branch", "repo_url", "agent_id"}, Key: []string{"conv_id"}},
 	"process_snippets":                {Columns: []string{"id", "envelope_json", "revision"}, Key: []string{"id"}},
@@ -87,6 +87,7 @@ var SnapshotTables = func() map[string][]string {
 		"agent_standing_order_hook_selectors": {"order_id", "harness", "event"}, "daemon_spawn_history": {"principal", "spawned_at"},
 		"agent_routes": {"id"}, "subscription_usage_samples": {"id"}, "subscription_usage_windows": {"sample_id", "window_name"},
 		"session_execution_boundaries": {"session_id"},
+		"dashboard_prefs":              {"key"}, "copilot_usage_snapshots": {"session_id"}, "opencode_usage_activity": {"session_id", "message_id"},
 	} {
 		out[table] = key
 	}
@@ -99,6 +100,8 @@ type JSONSpec struct {
 }
 
 var JSONColumns = map[string]map[string]JSONSpec{
+	"agents":                  {"initial_spawn_config": {262144, true}},
+	"agent_cron_jobs":         {"spawn_role_refs_json": {262144, true}},
 	"agent_groups":            {"owner_scopes_json": {262144, true}, "environment_json": {262144, false}},
 	"agent_permissions":       {"scope_json": {262144, true}},
 	"agent_group_permissions": {"scope_json": {262144, true}},
@@ -228,6 +231,9 @@ func ReadSnapshot(ctx context.Context, db *sql.DB) (Snapshot, error) {
 			for i, column := range columns {
 				mapped[column] = normalize(values[i])
 			}
+			if name == "dashboard_prefs" && String(mapped["key"]) != "tclaude.dash.default_profile" && String(mapped["key"]) != "tclaude.dash.default_profile_id" {
+				continue
+			}
 			out.Rows[name] = append(out.Rows[name], Row{Key: rowKey(mapped, SnapshotTables[name]), Values: mapped})
 		}
 		if err := rows.Close(); err != nil {
@@ -255,20 +261,46 @@ func availableTables(ctx context.Context, db *sql.DB) (map[string]bool, error) {
 }
 
 func ValidateJSON(snapshot *Snapshot) {
-	for table, columns := range JSONColumns {
-		for _, row := range snapshot.Rows[table] {
-			for column, spec := range columns {
-				value, ok := row.Values[column]
-				if !ok || value == nil {
+	for table, rows := range snapshot.Rows {
+		for _, row := range rows {
+			for column, value := range row.Values {
+				spec, authored := JSONColumns[table][column]
+				if !authored && strings.HasSuffix(column, "_json") {
+					spec, authored = JSONSpec{4194304, true}, true
+				}
+				if !authored || value == nil {
 					continue
 				}
 				text, ok := value.(string)
-				if !ok || len(text) > spec.Limit || (text == "" && !spec.AllowEmpty) || (text != "" && !json.Valid([]byte(text))) {
+				if !ok || len(text) > spec.Limit || (text == "" && !spec.AllowEmpty) || (text != "" && !validStructuredJSON(text, table, column)) {
 					snapshot.Malformed[table+"."+column]++
 				}
 			}
 		}
 	}
+}
+
+func validStructuredJSON(text, table, column string) bool {
+	trimmed := strings.TrimSpace(text)
+	if !json.Valid([]byte(trimmed)) {
+		return false
+	}
+	// Authored configuration/checkpoints are structured values, never scalars.
+	if trimmed == "null" {
+		return true
+	} // legacy optional defaults
+	if !strings.HasPrefix(trimmed, "{") && !strings.HasPrefix(trimmed, "[") {
+		return false
+	}
+	if table == "agents" && column == "initial_spawn_config" {
+		return strings.HasPrefix(trimmed, "{")
+	}
+	switch column {
+	case "role_refs", "spawn_role_refs_json", "includes_json":
+		var refs []string
+		return json.Unmarshal([]byte(trimmed), &refs) == nil
+	}
+	return true
 }
 
 func rowKey(values map[string]any, columns []string) string {
