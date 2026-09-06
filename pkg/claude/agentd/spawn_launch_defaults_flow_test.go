@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -159,4 +160,47 @@ func TestSpawnLaunchDefaultsRankTheNamedSpawnProfileFirst(t *testing.T) {
 	// A profile handle that resolves to nothing is the caller's mistake.
 	rec := profileReq(t, f, http.MethodGet, "/v1/spawn-launch-defaults?profile=ghost", nil)
 	assert.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
+}
+
+// TestFreshLaunchConfigurationProductionAgreement proves the read-only answer
+// and a real managed spawn use the same captured owner. The profile changes at
+// the old late-fill seam: this launch must keep the first capture, while a
+// subsequent defaults request must independently observe the new source.
+func TestFreshLaunchConfigurationProductionAgreement(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{
+		"name": "crew-wall", "harness": "claude", "sandbox": "on",
+		"sandbox_implementation": "tclaude-layer",
+	}).Code)
+	require.Equal(t, http.StatusOK, setGroupProfile(t, f, "crew", "crew-wall").Code)
+
+	before := getLaunchDefaults(t, f, "?group=crew")
+	require.Equal(t, "claude", before.Harness)
+	require.Equal(t, "on", before.Sandbox)
+	require.Equal(t, "tclaude-layer", before.Implementation)
+	require.Contains(t, before.ResolvedBy, `group default profile "crew-wall"`)
+
+	restore := agentd.SetBeforeExecuteSpawnForTest(func() {
+		profile, err := db.GetSpawnProfile("crew-wall")
+		require.NoError(t, err)
+		require.NotNil(t, profile)
+		profile.Sandbox = "inherit"
+		profile.SandboxImplementation = "harness-builtin"
+		require.NoError(t, db.UpdateSpawnProfile(profile))
+	})
+	t.Cleanup(restore)
+	spawn := f.AsHuman().SpawnWith("crew", map[string]any{"name": "worker"})
+	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
+	mode, ok := f.World.SpawnSandbox(spawn.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "on", mode, "the launch uses the same captured mode as the first defaults answer")
+	implementation, ok := f.World.SpawnSandboxImplementation(spawn.ConvID)
+	require.True(t, ok)
+	assert.Equal(t, "tclaude-layer", implementation,
+		"executeSpawn must not refill the captured cohort from the changed profile")
+
+	after := getLaunchDefaults(t, f, "?group=crew")
+	assert.Equal(t, "inherit", after.Sandbox)
+	assert.Equal(t, "harness-builtin", after.Implementation)
 }
