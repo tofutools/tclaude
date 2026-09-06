@@ -27,6 +27,15 @@ type testPermit struct {
 	consumed  atomic.Bool
 }
 
+type observationSink struct {
+	values []ports.PrimaryContextEvidence
+}
+
+func (s *observationSink) ObservePrimaryContext(_ context.Context, evidence ports.PrimaryContextEvidence) error {
+	s.values = append(s.values, evidence)
+	return nil
+}
+
 func (p *testPermit) ExecutionID() model.ExecutionID { return p.execution }
 func (p *testPermit) OperationID() model.OperationID { return p.operation }
 func (p *testPermit) Consume(context.Context) error {
@@ -49,7 +58,8 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 		Environment: []string{"OPENCODE_TEST_BINARY=" + os.Args[0], "OPENCODE_TEST_PROMPT=" + promptPath},
 	})
 	require.NoError(t, err)
-	request := ports.PreparationRequest{Intent: ports.StartFresh, Spec: model.ResolvedExecutionSpec{
+	observations := &observationSink{}
+	request := ports.PreparationRequest{Intent: ports.StartFresh, Observations: observations, Spec: model.ResolvedExecutionSpec{
 		ExecutionID: "execution_opencode", Harness: Name, Model: "provider/model",
 		WorkingDirectory: root, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined,
 	}}
@@ -66,6 +76,8 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, permit.consumed.Load())
 	require.Equal(t, ports.ReleaseStarted, released.State)
+	require.Len(t, observations.values, 1)
+	require.Equal(t, ports.PrimaryContextInitial, observations.values[0].Disposition)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
@@ -73,7 +85,7 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 	})
 
 	preparedRecovery, err := provider.Recover(context.Background(), ports.RecoveryRequest{
-		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: description.Evidence,
+		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: description.Evidence, Observations: observations,
 	})
 	require.NoError(t, err)
 	require.Equal(t, ports.RecoveryControlled, preparedRecovery.State,
@@ -107,7 +119,7 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 	require.False(t, observation.AttachmentActive)
 
 	recovered, err := provider.Recover(context.Background(), ports.RecoveryRequest{
-		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: released.Evidence,
+		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: released.Evidence, Observations: observations,
 	})
 	require.NoError(t, err)
 	require.Equal(t, ports.RecoveryControlled, recovered.State)
@@ -145,7 +157,7 @@ func TestContinuationReappliesSupervisedApproval(t *testing.T) {
 		Environment: []string{"OPENCODE_TEST_BINARY=" + os.Args[0]}})
 	require.NoError(t, err)
 
-	automatic := ports.PreparationRequest{Intent: ports.StartFresh, Spec: model.ResolvedExecutionSpec{
+	automatic := ports.PreparationRequest{Intent: ports.StartFresh, Observations: &observationSink{}, Spec: model.ResolvedExecutionSpec{
 		ExecutionID: "execution_automatic", Harness: Name, WorkingDirectory: root,
 		Approval: model.ApprovalAutomatic, Sandbox: model.SandboxUnconfined,
 	}}
@@ -161,7 +173,7 @@ func TestContinuationReappliesSupervisedApproval(t *testing.T) {
 	prior, err := decodeEvidence(first.Evidence)
 	require.NoError(t, err)
 	supervised := ports.PreparationRequest{
-		Intent: ports.StartContinue,
+		Intent: ports.StartContinue, Observations: &observationSink{},
 		Spec: model.ResolvedExecutionSpec{ExecutionID: "execution_supervised", Harness: Name,
 			WorkingDirectory: root, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined},
 		Continuation:  &model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: "ses_test"},
@@ -185,7 +197,7 @@ func TestContinuationReappliesSupervisedApproval(t *testing.T) {
 	var recovered ports.RecoveryResult
 	require.Eventually(t, func() bool {
 		recovered, err = provider.Recover(context.Background(), ports.RecoveryRequest{
-			ExecutionID: supervised.Spec.ExecutionID, Spec: supervised.Spec, Evidence: description.Evidence,
+			ExecutionID: supervised.Spec.ExecutionID, Spec: supervised.Spec, Evidence: description.Evidence, Observations: &observationSink{},
 		})
 		return err == nil && recovered.State == ports.RecoveryControlled
 	}, 2*time.Second, 20*time.Millisecond,
@@ -234,7 +246,7 @@ func TestOpenCodeServerHelper(t *testing.T) {
 				_ = json.NewEncoder(writer).Encode([]any{})
 				return
 			}
-			_ = json.NewEncoder(writer).Encode([]any{map[string]any{"id": "ses_test", "permission": permissions}})
+			_ = json.NewEncoder(writer).Encode([]any{map[string]any{"id": "ses_test", "directory": request.URL.Query().Get("directory"), "permission": permissions}})
 			return
 		}
 		var body struct {
@@ -242,7 +254,7 @@ func TestOpenCodeServerHelper(t *testing.T) {
 		}
 		_ = json.NewDecoder(request.Body).Decode(&body)
 		writeHelperPermission(body.Permission)
-		_ = json.NewEncoder(writer).Encode(map[string]any{"id": "ses_test", "permission": body.Permission})
+		_ = json.NewEncoder(writer).Encode(map[string]any{"id": "ses_test", "directory": request.URL.Query().Get("directory"), "permission": body.Permission})
 	})
 	mux.HandleFunc("/session/", func(writer http.ResponseWriter, request *http.Request) {
 		if !validBasicAuth(request, password) {
@@ -263,10 +275,10 @@ func TestOpenCodeServerHelper(t *testing.T) {
 			}
 			_ = json.NewDecoder(request.Body).Decode(&body)
 			writeHelperPermission(body.Permission)
-			_ = json.NewEncoder(writer).Encode(map[string]any{"id": "ses_test", "permission": body.Permission})
+			_ = json.NewEncoder(writer).Encode(map[string]any{"id": "ses_test", "directory": request.URL.Query().Get("directory"), "permission": body.Permission})
 			return
 		}
-		_ = json.NewEncoder(writer).Encode(map[string]any{"id": "ses_test", "permission": readHelperPermission()})
+		_ = json.NewEncoder(writer).Encode(map[string]any{"id": "ses_test", "directory": request.URL.Query().Get("directory"), "permission": readHelperPermission()})
 	})
 	require.NoError(t, http.Serve(listener, mux))
 }
