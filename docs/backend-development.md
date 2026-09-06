@@ -152,3 +152,28 @@ grants and owner assignments carry explicit harness, model, working-directory,
 approval, and sandbox bounds. An owner role is a visible scoped assignment, not
 an operator bypass. The API exposes access state/revision without credential
 material or provider recovery evidence.
+
+The development composition accepts `--harness claude,codex,opencode,copilot`.
+Only selected providers are registered, and their native executables must be
+available on `PATH`. Omitting `--harness` still permits offline catalog use.
+
+Codex and Copilot use a durable native home under the selected development state:
+`<state-dir>/codex/native-home` and `<state-dir>/copilot/native-home`. These homes
+hold native login and history state independently of execution terminals,
+observation resources and backend-agent credentials. The backend does not import
+or copy credentials from the user's existing native home. For native account
+login, initialize the development directory first, then explicitly log in using
+that provider's home. For example, with an absolute `state_dir` already chosen:
+
+```bash
+mkdir -p -m 700 "$state_dir/codex/native-home" "$state_dir/copilot/native-home"
+CODEX_HOME="$state_dir/codex/native-home" codex login
+COPILOT_HOME="$state_dir/copilot/native-home" copilot login
+```
+
+Native login is an operator setup step; these commands are not run by backend
+launch or by automated tests. Native token environment authentication can also be
+used where supported by the installed harness. Stopping an execution does not
+remove the shared native home or log the operator out. A new replacement state
+may require native login again. Do not delete its native home as execution
+cleanup.
