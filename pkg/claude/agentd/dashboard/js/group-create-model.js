@@ -274,6 +274,8 @@ export function groupCreateRequest(draft, template, parentGroup = '') {
       descr: text(draft.descr).trim(),
       default_cwd: text(draft.workspaceMode === 'clone' ? draft.cloneDestination : draft.cwd).trim(),
       default_context: text(draft.context),
+      attachment_url: text(draft.attachmentURL).trim(),
+      attachment_label: text(draft.attachmentLabel).trim(),
       max_members: Number.parseInt(text(draft.maxMembers), 10) || 0,
       ...(draft.workspaceMode === 'clone' ? { repository_clone: {
         repository: text(draft.repository).trim(), transport: draft.cloneTransport,

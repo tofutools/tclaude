@@ -11968,10 +11968,11 @@ body.wizard #group-create-modal .cron-create-modal h3 {
   text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
 }
 body.wizard #group-create-modal .cron-create-label { color: #b39ddb; }
-/* Max members is a number input; the others are text / textarea — theme all
-   three so no field stays a bright default-dark against the violet surface. */
+/* Max members is a number input and the attachment link is a URL input; theme
+   every field so none stays a bright default-dark against the violet surface. */
 body.wizard #group-create-modal .cron-create-row input[type=text],
 body.wizard #group-create-modal .cron-create-row input[type=number],
+body.wizard #group-create-modal .cron-create-row input[type=url],
 body.wizard #group-create-modal .cron-create-row textarea {
   background: #140f28;
   border-color: rgba(122, 93, 176, 0.5);
@@ -11979,6 +11980,7 @@ body.wizard #group-create-modal .cron-create-row textarea {
 }
 body.wizard #group-create-modal .cron-create-row input[type=text]:focus,
 body.wizard #group-create-modal .cron-create-row input[type=number]:focus,
+body.wizard #group-create-modal .cron-create-row input[type=url]:focus,
 body.wizard #group-create-modal .cron-create-row textarea:focus {
   border-color: #a97bd6;
 }

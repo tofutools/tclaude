@@ -1070,6 +1070,7 @@ func TestDashboardHTML_WizardGroupCreateDialog(t *testing.T) {
 	// The number (Max members) input is re-skinned alongside the text/textarea
 	// fields so no field stays a bright default-dark against the violet.
 	must("body.wizard #group-create-modal .cron-create-row input[type=number]", "the number field is re-skinned")
+	must("body.wizard #group-create-modal .cron-create-row input[type=url]", "the attachment URL field is re-skinned")
 	// Non-primary buttons (Cancel / Browse…) get the secondary arcane skin.
 	must("body.wizard #group-create-modal button:not(.primary)", "non-primary buttons get the secondary arcane skin")
 }
