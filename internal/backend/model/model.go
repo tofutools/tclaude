@@ -45,12 +45,13 @@ type Agent struct {
 }
 
 type Group struct {
-	ID        GroupID
-	Name      string
-	Members   []AgentID
-	Revision  Revision
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           GroupID
+	Name         string
+	Members      []AgentID
+	OwnerAgentID AgentID
+	Revision     Revision
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type DesiredConfiguration struct {
@@ -121,6 +122,8 @@ type Execution struct {
 	ConversationID     ConversationID
 	Spec               ResolvedExecutionSpec
 	State              ExecutionState
+	Attempt            AttemptGeneration
+	ContextReadiness   ContextReadiness
 	Evidence           ProviderEvidence
 	NativeConversation *NativeConversationEvidence
 	Revision           Revision
