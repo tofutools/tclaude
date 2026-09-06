@@ -17,6 +17,7 @@ type Handler struct {
 	application app.API
 	agents      app.AgentAPI
 	authority   app.AuthorityAdminAPI
+	journey     app.JourneyAPI
 	auth        Authenticator
 	mux         *http.ServeMux
 }
@@ -138,6 +139,7 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 type executionView struct {
+	Workload         model.ExecutionWorkloadKind `json:"workload"`
 	ID               model.ExecutionID           `json:"id"`
 	AgentID          model.AgentID               `json:"agent_id,omitempty"`
 	ConversationID   model.ConversationID        `json:"conversation_id,omitempty"`
@@ -150,7 +152,7 @@ type executionView struct {
 }
 
 func projectExecution(e model.Execution) executionView {
-	return executionView{ID: e.ID, AgentID: e.AgentID, ConversationID: e.ConversationID,
+	return executionView{Workload: e.Workload, ID: e.ID, AgentID: e.AgentID, ConversationID: e.ConversationID,
 		Spec: e.Spec, State: e.State, ContextReadiness: e.ContextReadiness, Revision: e.Revision, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt}
 }
 
@@ -172,6 +174,16 @@ func (h *Handler) snapshot(w http.ResponseWriter, r *http.Request) {
 	for _, operation := range s.Operations {
 		operations = append(operations, projectOperation(operation))
 	}
+	workRuns := make([]workResultView, 0, len(s.WorkRuns))
+	for _, run := range s.WorkRuns {
+		result := app.WorkRunResult{Run: run}
+		for _, evidence := range s.WorkEvidence {
+			if evidence.WorkRunID == run.ID {
+				result.Evidence = append(result.Evidence, evidence)
+			}
+		}
+		workRuns = append(workRuns, projectWork(result))
+	}
 	writeJSON(w, http.StatusOK, struct {
 		Conversations []model.Conversation            `json:"conversations"`
 		Associations  []model.ConversationAssociation `json:"associations"`
@@ -181,5 +193,8 @@ func (h *Handler) snapshot(w http.ResponseWriter, r *http.Request) {
 		Executions    []executionView                 `json:"executions"`
 		Operations    []operationView                 `json:"operations"`
 		Messages      []model.Message                 `json:"messages"`
-	}{s.Conversations, s.Associations, s.Revision, s.Agents, s.Groups, views, operations, s.Messages})
+		Workspaces    []app.WorkspaceView             `json:"workspaces"`
+		WorkspaceUses []model.WorkspaceUse            `json:"workspace_uses"`
+		WorkRuns      []workResultView                `json:"work_runs"`
+	}{s.Conversations, s.Associations, s.Revision, s.Agents, s.Groups, views, operations, s.Messages, s.Workspaces, s.WorkspaceUses, workRuns})
 }
