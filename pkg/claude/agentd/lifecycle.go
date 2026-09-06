@@ -7254,10 +7254,6 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 						"label", label, "error", projectionErr)
 				}
 				openCodeBoundaryProjected = projected
-				if !projected {
-					sleepSpawnPoll(deadline)
-					continue
-				}
 			}
 			// Arm best-known remote-control on the row the moment it
 			// materialises (JOH-258). The --remote-control launch flag already

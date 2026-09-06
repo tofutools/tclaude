@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -389,24 +390,33 @@ func openCodeLaunchFromRuntime(runtime db.OpenCodeRuntime) *openCodeLaunch {
 	}
 }
 
-var openCodePaneServerAuthority = func(tmuxSession string) (string, string, bool) {
-	read := func(name string) (string, bool) {
-		out, err := clcommon.TmuxCommand(
-			"-N", "show-environment", "-t", tmuxSession, name,
-		).CombinedOutput()
-		if err != nil {
-			return "", false
-		}
-		value := strings.TrimSpace(string(out))
-		prefix := name + "="
-		if !strings.HasPrefix(value, prefix) {
-			return "", false
-		}
-		return strings.TrimPrefix(value, prefix), true
+var openCodePaneLaunchMarkerObserved = func(target db.SessionExitLaunchIdentity, marker string) bool {
+	if target.TmuxSession == "" || target.PaneID == "" || marker == "" {
+		return false
 	}
-	serverURL, urlOK := read("TCLAUDE_OPENCODE_SERVER_URL")
-	password, passwordOK := read("OPENCODE_SERVER_PASSWORD")
-	return serverURL, password, urlOK && passwordOK
+	out, err := clcommon.TmuxCommand(
+		"-N", "display-message", "-p", "-t", target.PaneID,
+		"#{session_name}\t#{pane_id}\t#{pane_start_command}",
+	).Output()
+	if err != nil {
+		return false
+	}
+	parts := strings.SplitN(strings.TrimSpace(string(out)), "\t", 3)
+	if len(parts) != 3 || parts[0] != target.TmuxSession || parts[1] != target.PaneID {
+		return false
+	}
+	words, ok := codexApprovalRenderedWords(parts[2])
+	if !ok || len(words) < 3 || !clcommon.IsBootstrapShellWord(words[0]) {
+		return false
+	}
+	scriptIndex := 1
+	if filepath.Base(words[0]) == "bash" && words[1] == "-p" {
+		scriptIndex++
+	}
+	if len(words) <= scriptIndex+1 || !codexApprovalLaunchScriptWord(words[scriptIndex]) {
+		return false
+	}
+	return slices.Contains(words[scriptIndex+1:], marker)
 }
 
 // projectOpenCodeExecutionBoundary binds the exact authoritative server
@@ -415,6 +425,17 @@ var openCodePaneServerAuthority = func(tmuxSession string) (string, string, bool
 // delayed predecessor cannot populate a stable session id reused by a successor.
 func projectOpenCodeExecutionBoundary(launch *openCodeLaunch, row *db.SessionRow) (bool, error) {
 	if launch == nil || row == nil || row.ID != launch.SessionID {
+		return false, nil
+	}
+	// Freeze the target attempt before endpoint ownership and pane launch
+	// probes. Those are external observations and may block long enough for a
+	// successor to replace the stable row. The final CAS must use this original
+	// tuple, never re-read a generation after the proof.
+	target, err := db.GetSessionExitLaunchIdentity(row.ID)
+	if err != nil {
+		return false, err
+	}
+	if target.Generation == "" || target.TmuxSession != row.TmuxSession || target.PaneID == "" {
 		return false, nil
 	}
 	runtime, err := db.GetOpenCodeRuntime(launch.SessionID)
@@ -431,15 +452,8 @@ func projectOpenCodeExecutionBoundary(launch *openCodeLaunch, row *db.SessionRow
 		runtime.PID == os.Getpid() || !openCodeRuntimeVerified(*runtime) {
 		return false, nil
 	}
-	serverURL, password, observed := openCodePaneServerAuthority(row.TmuxSession)
-	if !observed || serverURL != launch.ServerURL || password != launch.Password {
-		return false, nil
-	}
-	identity, err := db.GetSessionExitLaunchIdentity(row.ID)
-	if err != nil {
-		return false, err
-	}
-	if identity.Generation == "" || identity.TmuxSession != row.TmuxSession || identity.PaneID == "" {
+	marker := clcommon.OpenCodeLaunchProjectionMarker(launch.ServerURL, launch.Password)
+	if !openCodePaneLaunchMarkerObserved(target, marker) {
 		return false, nil
 	}
 	var boundary session.ExecutionBoundary
@@ -457,13 +471,13 @@ func projectOpenCodeExecutionBoundary(launch *openCodeLaunch, row *db.SessionRow
 		}, *boundary.StateStoreIdentity) != nil {
 		return false, nil
 	}
-	boundary.LaunchGeneration = identity.Generation
+	boundary.LaunchGeneration = target.Generation
 	raw, err := json.Marshal(&boundary)
 	if err != nil {
 		return false, err
 	}
 	return db.SetSessionExecutionBoundaryForLaunch(
-		row.ID, identity.Generation, identity.TmuxSession, identity.PaneID, string(raw))
+		row.ID, target.Generation, target.TmuxSession, target.PaneID, string(raw))
 }
 
 func resolveOpenCodeLaunchAuthority(

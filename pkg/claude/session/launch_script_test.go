@@ -237,7 +237,9 @@ func TestOpenCodeCredentialReachesPaneOnlyThroughPrivateBootstrap(t *testing.T) 
 		ServerURL: "http://127.0.0.1:43210", SessionID: "ses_test",
 		EnvExports: clcommon.BuildEnvExports(nil),
 	})
-	require.NoError(t, launchDetachedTmuxSession("spwn-opencode", cwd, cmd))
+	marker := clcommon.OpenCodeLaunchProjectionMarker(
+		"http://127.0.0.1:43210", "private-password")
+	require.NoError(t, launchDetachedTmuxSession("spwn-opencode", cwd, cmd, marker))
 	launches := rec.newSessions()
 	require.Len(t, launches, 1)
 	argv := strings.Join(launches[0], " ")
@@ -246,10 +248,11 @@ func TestOpenCodeCredentialReachesPaneOnlyThroughPrivateBootstrap(t *testing.T) 
 
 	pane := parseNewSession(t, launches[0]).pane
 	shell := clcommon.BootstrapShellArgv()
-	require.Len(t, pane, len(shell)+1, "pane argv must be exactly `<shell> <script>`")
+	require.Len(t, pane, len(shell)+2, "pane argv must be exactly `<shell> <script> <proof marker>`")
 	require.Equal(t, shell, pane[:len(shell)],
 		"pane command must run the script under tclaude's pinned bootstrap shell")
 	scriptPath := pane[len(shell)]
+	assert.Equal(t, marker, pane[len(shell)+1])
 	raw, err := os.ReadFile(scriptPath)
 	require.NoError(t, err)
 	content := string(raw)
