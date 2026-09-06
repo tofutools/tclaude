@@ -196,11 +196,6 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 	if permit == nil || permit.ExecutionID() != p.request.Spec.ExecutionID {
 		return ports.ReleaseResult{}, fmt.Errorf("release permit does not match execution")
 	}
-	if p.request.Intent == ports.StartFork {
-		if err := verifyClaudeForkSelection(p.request.History); err != nil {
-			return ports.ReleaseResult{}, err
-		}
-	}
 	if err := permit.Consume(ctx); err != nil {
 		return ports.ReleaseResult{}, fmt.Errorf("consume release permit: %w", err)
 	}
@@ -254,11 +249,8 @@ func (p *prepared) runtimeEnvironment() []string {
 
 func (p *prepared) argv() []string {
 	args := make([]string, 0, 10)
-	if p.request.Intent == ports.StartContinue || p.request.Intent == ports.StartFork {
+	if p.request.Intent == ports.StartContinue {
 		args = append(args, "--resume", p.nativeID)
-		if p.request.Intent == ports.StartFork {
-			args = append(args, "--fork-session")
-		}
 	} else {
 		args = append(args, "--session-id", p.nativeID)
 	}
@@ -574,13 +566,6 @@ func (r *Runtime) consumeObservationEvents(ctx context.Context, transition *port
 			} else {
 				disposition = ports.PrimaryContextContinuity
 			}
-		case transition == nil && !r.contextReady && r.intent == ports.StartFork &&
-			(event.Source == "resume" || event.Source == "startup") && event.SessionID != r.nativeID:
-			// Claude's --fork-session resumes the selected source but reports
-			// a new native ID. The destination is this execution's initial
-			// context; fork provenance belongs to the application history model.
-			disposition = ports.PrimaryContextInitial
-			prior = nil
 		case transition == nil && r.contextReady && event.Source == "compact" && event.SessionID == r.nativeID:
 			disposition = ports.PrimaryContextContinuity
 		}
@@ -647,44 +632,10 @@ func nativeIDFor(request ports.PreparationRequest) (string, error) {
 		}
 		return request.Continuation.Reference, nil
 	case ports.StartFork:
-		if request.History == nil || request.History.Provider != Name ||
-			request.History.Native.Namespace != NativeNamespace {
-			return "", fmt.Errorf("claude fork requires an application-resolved %s history source", NativeNamespace)
-		}
-		if request.History.Point != nil && request.History.Point.Kind != model.HistoryPointHead {
-			return "", ports.ErrHistoryUnsupported
-		}
-		if _, err := uuid.Parse(request.History.Native.Reference); err != nil {
-			return "", fmt.Errorf("invalid Claude fork source: %w", err)
-		}
-		if err := verifyClaudeForkSelection(request.History); err != nil {
-			return "", err
-		}
-		return request.History.Native.Reference, nil
+		return "", ports.ErrHistoryUnsupported
 	default:
 		return "", fmt.Errorf("unsupported start intent %q", request.Intent)
 	}
-}
-
-func verifyClaudeForkSelection(selection *ports.HistorySourceSelection) error {
-	if selection == nil {
-		return fmt.Errorf("claude fork history source is required")
-	}
-	evidence, err := decodeClaudeHistoryEvidence(selection.Evidence)
-	if err != nil {
-		return err
-	}
-	if evidence.NativeID != selection.Native.Reference || evidence.Fingerprint != selection.SourceFingerprint {
-		return fmt.Errorf("claude fork evidence does not match native source")
-	}
-	revision, _, err := fingerprintFile(evidence.Path)
-	if err != nil {
-		return fmt.Errorf("verify Claude fork source: %w", err)
-	}
-	if revision != evidence.SourceRevision || revision != selection.SourceRevision {
-		return fmt.Errorf("claude fork source revision changed")
-	}
-	return nil
 }
 
 func nativeEvidence(id string) *model.NativeConversationEvidence {
