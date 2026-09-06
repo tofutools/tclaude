@@ -166,6 +166,20 @@ func TestCheckoutRefusesExistingBranchAtDifferentSelectedBase(t *testing.T) {
 	require.NoDirExists(t, path)
 }
 
+func TestCleanAbsoluteCanonicalizesAbsentPathUnderSymlinkedParent(t *testing.T) {
+	root := t.TempDir()
+	realParent := filepath.Join(root, "real")
+	require.NoError(t, os.Mkdir(realParent, 0o700))
+	aliasParent := filepath.Join(root, "alias")
+	require.NoError(t, os.Symlink(realParent, aliasParent))
+
+	got, err := cleanAbsolute(filepath.Join(aliasParent, "absent"))
+	require.NoError(t, err)
+	resolvedParent, err := filepath.EvalSymlinks(realParent)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(resolvedParent, "absent"), got)
+}
+
 func checkoutTestRepository(t *testing.T) string {
 	t.Helper()
 	repository := t.TempDir()
