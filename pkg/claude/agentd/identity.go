@@ -47,6 +47,16 @@ func spawnActionKey(actx ActionContext) spawnAuthorityActionKey {
 	}
 }
 
+// groupSpawnAuthorityAction builds the one authorization footprint shared by
+// HTTP admission and launch-time evidence consumption. Group spawn always
+// acts structurally on its target group; callers need not know or populate the
+// private structuralGroup field themselves.
+func groupSpawnAuthorityAction(group string, actx ActionContext) ActionContext {
+	actx.Group = group
+	actx.structuralGroup = group
+	return actx
+}
+
 type spawnAuthorityRefusalContext struct {
 	ConvID string
 	Slug   string
@@ -910,8 +920,7 @@ func spawnPermissionAllowsAction(r *http.Request, convID string, actx ActionCont
 // grant contributed by group policy or ownership.
 func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentGroup, actx ActionContext) (string, bool) {
 	clearAuthorizedPermission(r)
-	actx.Group = g.Name
-	actx.structuralGroup = g.Name
+	actx = groupSpawnAuthorityAction(g.Name, actx)
 	p := peerFromContext(r.Context())
 	var principal spawnAuthorityPrincipal
 	switch classify(p) {
@@ -987,8 +996,9 @@ func scopePinsDimension(r *http.Request, convID, slug string, actx ActionContext
 	if convID == "" || slug == "" {
 		return false
 	}
+	spawnActx := groupSpawnAuthorityAction(actx.Group, actx)
 	if evidence, ok := r.Context().Value(spawnAuthorityDecisionContextKey{}).(spawnAuthorityPinEvidence); ok &&
-		evidence.ConvID == convID && evidence.Slug == slug && evidence.Action == spawnActionKey(actx) {
+		evidence.ConvID == convID && evidence.Slug == slug && evidence.Action == spawnActionKey(spawnActx) {
 		return dim == ScopeDimSandboxProfile && evidence.Pinned
 	}
 	eval := evalPermissionScope(resolvePermissionVerdictForRequest(r, convID, slug), convID, actx)
