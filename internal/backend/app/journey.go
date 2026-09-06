@@ -305,7 +305,11 @@ func (s *Service) RemoveCheckout(ctx context.Context, req RemoveCheckoutRequest)
 	}
 	settleCtx, settleCancel := settlementContext(ctx)
 	defer settleCancel()
-	stored, settleErr := s.store.CompleteWorkspaceEffect(settleCtx, WorkspaceEffectCompletion{OperationID: op.ID, WorkspaceID: workspace.ID, State: state, Observation: effect.Observation, Resource: workspace.Resource, Disposition: effect.Disposition, Detail: detail, At: s.now().UTC()})
+	observation := effect.Observation
+	if observation.ActualPath == "" {
+		observation = workspace.Observation
+	}
+	stored, settleErr := s.store.CompleteWorkspaceEffect(settleCtx, WorkspaceEffectCompletion{OperationID: op.ID, WorkspaceID: workspace.ID, State: state, Observation: observation, Resource: workspace.Resource, Disposition: effect.Disposition, Detail: detail, At: s.now().UTC()})
 	if settleErr != nil {
 		return WorkspaceResult{}, settleErr
 	}
@@ -344,7 +348,7 @@ func (s *Service) RestoreCheckout(ctx context.Context, req RestoreCheckoutReques
 	}
 	workflowCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancel()
-	effect, effectErr := s.workspaceHost.CreateCheckout(workflowCtx, ports.CheckoutCreateRequest{WorkspaceID: workspace.ID, Intent: workspace.Intent}, &resourceEffectPermit{store: s.store, operationID: op.ID, now: s.now})
+	effect, effectErr := s.workspaceHost.RestoreCheckout(workflowCtx, ports.CheckoutRestoreRequest{WorkspaceID: workspace.ID, Intent: workspace.Intent, Observation: workspace.Observation, Resource: workspace.Resource}, &resourceEffectPermit{store: s.store, operationID: op.ID, now: s.now})
 	state := model.WorkspaceRemoved
 	switch effect.Disposition {
 	case ports.EffectAccepted:
