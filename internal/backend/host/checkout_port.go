@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
@@ -89,16 +92,17 @@ func (h CheckoutHost) RemoveCheckout(ctx context.Context, request ports.Checkout
 		return ports.WorkspaceEffectResult{Disposition: ports.EffectUnknown, Resource: request.Resource}, err
 	}
 	if observation.State == CheckoutEffectAbsent {
-		return ports.WorkspaceEffectResult{Disposition: ports.EffectAccepted, Resource: request.Resource}, nil
+		return ports.WorkspaceEffectResult{Disposition: ports.EffectAccepted, Observation: request.Observation, Resource: request.Resource}, nil
 	}
+	observed := workspaceObservation(observation)
 	if observation.Dirty && !request.Destructive {
-		return ports.WorkspaceEffectResult{Disposition: ports.EffectRefused, Observation: workspaceObservation(observation), Resource: request.Resource}, ErrCheckoutDirty
+		return ports.WorkspaceEffectResult{Disposition: ports.EffectRefused, Observation: observed, Resource: request.Resource}, ErrCheckoutDirty
 	}
 	if err := permit.Consume(ctx); err != nil {
-		return ports.WorkspaceEffectResult{Disposition: ports.EffectRefused, Observation: workspaceObservation(observation), Resource: request.Resource}, err
+		return ports.WorkspaceEffectResult{Disposition: ports.EffectRefused, Observation: observed, Resource: request.Resource}, err
 	}
 	removed, err := h.Remove(ctx, CheckoutRemovalRequest{Evidence: evidence, Destructive: request.Destructive})
-	result := ports.WorkspaceEffectResult{Disposition: ports.EffectAccepted, Resource: request.Resource}
+	result := ports.WorkspaceEffectResult{Disposition: ports.EffectAccepted, Observation: observed, Resource: request.Resource}
 	if err != nil || removed.State == CheckoutEffectUncertain {
 		result.Disposition = ports.EffectUnknown
 		if errors.Is(err, ErrCheckoutDirty) || errors.Is(err, ErrCheckoutNotOwned) || errors.Is(err, ErrCheckoutMain) {
@@ -106,6 +110,95 @@ func (h CheckoutHost) RemoveCheckout(ctx context.Context, request ports.Checkout
 		}
 	}
 	return result, err
+}
+
+func (h CheckoutHost) RestoreCheckout(ctx context.Context, request ports.CheckoutRestoreRequest, permit ports.EffectPermit) (ports.WorkspaceEffectResult, error) {
+	refused := func(err error) (ports.WorkspaceEffectResult, error) {
+		return ports.WorkspaceEffectResult{
+			Disposition: ports.EffectRefused,
+			Observation: request.Observation,
+			Resource:    request.Resource,
+		}, err
+	}
+	if permit == nil {
+		return refused(fmt.Errorf("checkout effect permit is required"))
+	}
+	evidence, err := decodeWorkspaceResource(request.Resource)
+	if err != nil {
+		return refused(err)
+	}
+	if evidence.Ownership != CheckoutCreated || !evidence.Linked || evidence.OwnerToken == "" ||
+		request.Intent.Provenance != model.WorkspacePlatformCreated || request.Intent.Ownership != model.WorkspaceOwned {
+		return refused(ErrCheckoutNotOwned)
+	}
+	target, err := cleanAbsolute(request.Intent.IntendedPath)
+	if err != nil || target != evidence.Path {
+		return refused(ErrCheckoutIdentityMismatch)
+	}
+	repository, err := h.repositoryRoot(ctx, request.Intent.Repository)
+	if err != nil || repository != evidence.Repository {
+		return refused(ErrCheckoutIdentityMismatch)
+	}
+	common, err := h.gitOutput(ctx, repository, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil || filepath.Clean(common) != evidence.GitCommonDir {
+		return refused(ErrCheckoutIdentityMismatch)
+	}
+	base := strings.TrimSpace(request.Intent.BaseRevision)
+	if base == "" {
+		base = "HEAD"
+	}
+	branch := strings.TrimSpace(request.Intent.Branch)
+	if branch == "" || branch != evidence.Branch || base != evidence.Base ||
+		request.Observation.ActualPath != evidence.Path ||
+		request.Observation.RepositoryRoot != evidence.Repository ||
+		request.Observation.Branch != evidence.Branch || strings.TrimSpace(request.Observation.Revision) == "" {
+		return refused(ErrCheckoutIdentityMismatch)
+	}
+	if _, err := os.Lstat(evidence.Path); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return refused(ErrCheckoutIdentityMismatch)
+	}
+	if _, err := os.Lstat(evidence.GitDir); err == nil || !errors.Is(err, os.ErrNotExist) {
+		return refused(ErrCheckoutIdentityMismatch)
+	}
+	branchRef := "refs/heads/" + evidence.Branch
+	branchCommit, err := h.gitOutput(ctx, repository, "rev-parse", "--verify", branchRef+"^{commit}")
+	if err != nil || strings.TrimSpace(branchCommit) != request.Observation.Revision {
+		return refused(ErrCheckoutIdentityMismatch)
+	}
+	if evidence.InitialCommit != "" {
+		if _, err := h.gitOutput(ctx, repository, "merge-base", "--is-ancestor", evidence.InitialCommit, branchRef); err != nil {
+			return refused(fmt.Errorf("%w: retained branch no longer descends from its initial commit", ErrCheckoutIdentityMismatch))
+		}
+	}
+	if err := permit.Consume(ctx); err != nil {
+		return refused(fmt.Errorf("consume checkout effect permit: %w", err))
+	}
+	if _, err := h.gitOutput(ctx, repository, "-c", "core.hooksPath=/dev/null", "worktree", "add", evidence.Path, evidence.Branch); err != nil {
+		return ports.WorkspaceEffectResult{Disposition: ports.EffectUnknown, Observation: request.Observation, Resource: request.Resource}, fmt.Errorf("restore Git checkout: %w", err)
+	}
+	restored, err := h.record(ctx, evidence.Path, evidence.Ownership, evidence.Base, evidence.InitialCommit, evidence.OwnerToken)
+	if err != nil || restored.Repository != evidence.Repository || restored.GitCommonDir != evidence.GitCommonDir ||
+		restored.Path != evidence.Path || restored.Branch != evidence.Branch {
+		if err == nil {
+			err = ErrCheckoutIdentityMismatch
+		}
+		return ports.WorkspaceEffectResult{Disposition: ports.EffectUnknown, Observation: request.Observation, Resource: request.Resource}, err
+	}
+	resource, encodeErr := encodeWorkspaceResource(restored)
+	if encodeErr != nil {
+		return ports.WorkspaceEffectResult{Disposition: ports.EffectUnknown, Observation: request.Observation, Resource: request.Resource}, encodeErr
+	}
+	if err := writeCheckoutOwner(restored.GitDir, restored.OwnerToken); err != nil {
+		return ports.WorkspaceEffectResult{Disposition: ports.EffectUnknown, Observation: request.Observation, Resource: resource}, err
+	}
+	observation, err := h.Inspect(ctx, restored)
+	if err != nil || observation.State != CheckoutEffectReady || observation.Commit != request.Observation.Revision {
+		if err == nil {
+			err = ErrCheckoutIdentityMismatch
+		}
+		return ports.WorkspaceEffectResult{Disposition: ports.EffectUnknown, Observation: workspaceObservation(observation), Resource: resource}, err
+	}
+	return ports.WorkspaceEffectResult{Disposition: ports.EffectAccepted, Observation: workspaceObservation(observation), Resource: resource}, nil
 }
 
 func workspaceObservation(value CheckoutObservation) model.WorkspaceObservation {
