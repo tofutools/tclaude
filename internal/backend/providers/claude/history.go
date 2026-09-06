@@ -59,7 +59,9 @@ func (historyReader) Capabilities() ports.HistoryCapabilities {
 	return ports.HistoryCapabilities{
 		MetadataDiscovery: true, ContentRead: true,
 		ContinuationPrecision: ports.HistoryPrecisionHead,
-		ForkPrecision:         ports.HistoryPrecisionHead,
+		// Claude Code accepts only a mutable session head for --fork-session;
+		// it cannot consume the immutable revision selected by the application.
+		ForkPrecision: ports.HistoryPrecisionNone,
 	}
 }
 

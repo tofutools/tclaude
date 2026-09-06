@@ -240,14 +240,36 @@ func (h CheckoutHost) Restore(ctx context.Context, evidence CheckoutEvidence) (C
 	if verifyErr := verifyCheckoutOwner(evidence.GitDir, evidence.OwnerToken); verifyErr != nil {
 		return CheckoutCreateResult{State: CheckoutEffectUncertain, Evidence: evidence}, verifyErr
 	}
-	// Forget only the exact missing registration proven by the ownership
-	// marker, then recreate from recorded repository/branch intent.
-	_, _ = h.gitOutput(ctx, evidence.Repository, "worktree", "remove", "--force", evidence.Path)
-	result, createErr := h.Create(ctx, CheckoutIntent{
-		Repository: evidence.Repository, Path: evidence.Path,
-		Branch: evidence.Branch, Base: evidence.InitialCommit,
-	})
-	return result, createErr
+	if evidence.Branch == "" || evidence.Branch == "HEAD" || !h.refExists(ctx, evidence.Repository, "refs/heads/"+evidence.Branch) {
+		return CheckoutCreateResult{State: CheckoutEffectUncertain, Evidence: evidence}, ErrCheckoutIdentityMismatch
+	}
+	if evidence.InitialCommit != "" {
+		if _, err := h.gitOutput(ctx, evidence.Repository, "merge-base", "--is-ancestor", evidence.InitialCommit, "refs/heads/"+evidence.Branch); err != nil {
+			return CheckoutCreateResult{State: CheckoutEffectUncertain, Evidence: evidence}, fmt.Errorf("%w: retained branch no longer descends from its initial commit", ErrCheckoutIdentityMismatch)
+		}
+	}
+	// Git --force repairs the exact missing registration while checking out the
+	// retained branch at its current committed head. Unlike remove+Create this
+	// does not compare an advanced worker branch to its creation commit.
+	if _, err := h.gitOutput(ctx, evidence.Repository, "worktree", "add", "--force", evidence.Path, evidence.Branch); err != nil {
+		// Some Git failures replace the admin directory before returning. Keep
+		// the previously validated receipt recoverable whenever its exact admin
+		// identity still exists.
+		_ = writeCheckoutOwner(evidence.GitDir, evidence.OwnerToken)
+		return CheckoutCreateResult{State: CheckoutEffectUncertain, Evidence: evidence}, fmt.Errorf("restore Git checkout: %w", err)
+	}
+	restored, err := h.record(ctx, evidence.Path, evidence.Ownership, evidence.Base, evidence.InitialCommit, evidence.OwnerToken)
+	if err != nil || !sameCheckoutIdentity(evidence, restored) {
+		_ = writeCheckoutOwner(evidence.GitDir, evidence.OwnerToken)
+		if err == nil {
+			err = ErrCheckoutIdentityMismatch
+		}
+		return CheckoutCreateResult{State: CheckoutEffectUncertain, Evidence: evidence}, err
+	}
+	if err := writeCheckoutOwner(restored.GitDir, evidence.OwnerToken); err != nil {
+		return CheckoutCreateResult{State: CheckoutEffectUncertain, Evidence: restored}, err
+	}
+	return CheckoutCreateResult{State: CheckoutEffectReady, Evidence: restored}, nil
 }
 
 func (h CheckoutHost) Remove(ctx context.Context, request CheckoutRemovalRequest) (CheckoutRemovalResult, error) {
