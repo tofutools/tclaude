@@ -488,11 +488,24 @@ func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTr
 	if transition.Execution != nil {
 		if transition.Execution.AgentID != "" {
 			var agentRevision model.Revision
-			if err = tx.QueryRowContext(ctx, `SELECT revision FROM agents WHERE id=?`, transition.Execution.AgentID).Scan(&agentRevision); err != nil {
+			var primary model.ExecutionID
+			if err = tx.QueryRowContext(ctx, `SELECT revision,primary_execution_id FROM agents WHERE id=?`, transition.Execution.AgentID).Scan(&agentRevision, &primary); err != nil {
 				return app.WorkRunRecord{}, classify(err)
 			}
 			if transition.AgentExpected == 0 || agentRevision != transition.AgentExpected {
 				return app.WorkRunRecord{}, app.ErrConflict
+			}
+			if primary != "" {
+				var primaryState model.ExecutionState
+				if err = tx.QueryRowContext(ctx, `SELECT state FROM executions WHERE id=?`, primary).Scan(&primaryState); err != nil {
+					return app.WorkRunRecord{}, classify(err)
+				}
+				if primaryState != model.ExecutionExited && primaryState != model.ExecutionFailed {
+					return app.WorkRunRecord{}, app.ErrConflict
+				}
+				if _, err = tx.ExecContext(ctx, `UPDATE execution_accesses SET state=?,revoked_at=?,revision=revision+1 WHERE execution_id=? AND state NOT IN (?,?)`, model.ExecutionAccessRevoked, nanos(transition.At), primary, model.ExecutionAccessRevoked, model.ExecutionAccessExpired); err != nil {
+					return app.WorkRunRecord{}, err
+				}
 			}
 			if err = insertConversationAndAssociation(ctx, tx, transition.Execution.AgentID, transition.Execution.ConversationID, transition.At); err != nil {
 				return app.WorkRunRecord{}, err
