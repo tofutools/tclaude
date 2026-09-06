@@ -87,34 +87,6 @@ type messageRefusal struct {
 func (r *messageRefusal) Error() string { return r.detail }
 
 func acceptMessage(principal messagePrincipal, target messageTarget, content messageContent, cause messageCause) (*acceptedMessage, *messageRefusal) {
-	if cause.kind == messageCauseTrigger {
-		prior, err := db.GetTriggerActionOutcome(cause.firingID, cause.actionIndex)
-		if err != nil {
-			return nil, &messageRefusal{code: "queue_failed", detail: err.Error()}
-		}
-		if prior != nil {
-			if prior.ActionType != db.TriggerActionMessage {
-				return nil, &messageRefusal{code: "queue_failed", detail: fmt.Sprintf("trigger action identity conflict at firing %d action %d: stored %q, requested %q", cause.firingID, cause.actionIndex, prior.ActionType, db.TriggerActionMessage), outcomeCommitted: true}
-			}
-			if prior.Outcome != "queued" || prior.MessageID == 0 {
-				return nil, &messageRefusal{code: prior.Outcome, detail: prior.Detail, outcomeCommitted: true}
-			}
-			m, err := db.GetAgentMessage(prior.MessageID)
-			if err != nil || m == nil {
-				if err == nil {
-					err = fmt.Errorf("accepted trigger message %d is missing", prior.MessageID)
-				}
-				return nil, &messageRefusal{code: "queue_failed", detail: err.Error(), outcomeCommitted: true}
-			}
-			audience := messageAudience{conversation: m.ToConv, routeConv: m.ToConv, originalTo: m.OriginalToConv, pinned: m.PinGen, groupID: m.GroupID}
-			audience.agentID, _ = db.AgentIDForConv(m.ToConv)
-			enqueueDeliveryForConv(m.ToConv)
-			return &acceptedMessage{
-				messageIDs: []int64{prior.MessageID}, resolvedAudience: audience,
-				notification: messageNotificationArmed, duplicate: true, outcomeCommitted: true,
-			}, nil
-		}
-	}
 	audience, refusal := resolveMessageAudience(target)
 	if refusal != nil {
 		return nil, refusal
@@ -123,7 +95,7 @@ func acceptMessage(principal messagePrincipal, target messageTarget, content mes
 		if strings.TrimSpace(principal.conv) == "" {
 			return nil, &messageRefusal{code: "auth", detail: "message sender is unavailable"}
 		}
-		if principal.conv == audience.conversation {
+		if cause.kind == messageCauseDirect && principal.conv == audience.conversation {
 			return nil, &messageRefusal{code: "invalid_arg", detail: "cannot message self"}
 		}
 		via, _, err := db.CanSenderReachTarget(principal.conv, audience.routeConv)

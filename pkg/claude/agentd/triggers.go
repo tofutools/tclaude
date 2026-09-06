@@ -938,6 +938,11 @@ func SetManagedWorkerBeforePromotionForTest(fn func(int64)) func() {
 }
 
 func executeTriggerMessage(rule *db.TriggerRule, firingID int64, actionIndex int, spec *db.TriggerMessageAction, event db.TriggerPREvent) (string, string, int64, bool) {
+	if prior, found, err := recoverTriggerMessageOutcome(firingID, actionIndex); err != nil {
+		return "queue_failed", err.Error(), 0, found
+	} else if found {
+		return prior.Outcome, prior.Detail, prior.MessageID, true
+	}
 	if spec == nil {
 		return "invalid_action", "missing message payload", 0, false
 	}
@@ -980,6 +985,33 @@ func executeTriggerMessage(rule *db.TriggerRule, firingID int64, actionIndex int
 		return refused.code, refused.detail, 0, refused.outcomeCommitted
 	}
 	return "queued", "", accepted.messageIDs[0], accepted.outcomeCommitted
+}
+
+// recoverTriggerMessageOutcome is the source-specific interrupted-call
+// recovery path. It is deliberately private to the trigger adapter: ordinary
+// admissions cannot select a firing/action identity or read its result.
+func recoverTriggerMessageOutcome(firingID int64, actionIndex int) (*db.TriggerActionOutcome, bool, error) {
+	prior, err := db.GetTriggerActionOutcome(firingID, actionIndex)
+	if err != nil || prior == nil {
+		return nil, false, err
+	}
+	if prior.ActionType != db.TriggerActionMessage {
+		return nil, true, fmt.Errorf("trigger action identity conflict at firing %d action %d: stored %q, requested %q", firingID, actionIndex, prior.ActionType, db.TriggerActionMessage)
+	}
+	if prior.Outcome == "queued" {
+		if prior.MessageID == 0 {
+			return nil, true, errors.New("queued trigger action has no accepted message")
+		}
+		message, err := db.GetAgentMessage(prior.MessageID)
+		if err != nil {
+			return nil, true, err
+		}
+		if message == nil {
+			return nil, true, fmt.Errorf("accepted trigger message %d is missing", prior.MessageID)
+		}
+		enqueueDeliveryForConv(message.ToConv)
+	}
+	return prior, true, nil
 }
 
 func reconcileTriggerWorkers(now time.Time) {
