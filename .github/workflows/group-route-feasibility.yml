@@ -2,7 +2,7 @@ name: Group-route feasibility
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, refactor/platform-v2]
     paths:
       - .github/workflows/group-route-feasibility.yml
       - scripts/group-route-feasibility/**
