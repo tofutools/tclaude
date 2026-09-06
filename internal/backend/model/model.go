@@ -124,6 +124,7 @@ type Execution struct {
 	State              ExecutionState
 	Attempt            AttemptGeneration
 	ContextReadiness   ContextReadiness
+	ContextOrder       string
 	Evidence           ProviderEvidence
 	NativeConversation *NativeConversationEvidence
 	Revision           Revision

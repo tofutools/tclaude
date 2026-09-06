@@ -122,6 +122,17 @@ type RevokeExecutionAccessRequest struct {
 	ExpectedRevision model.Revision
 }
 
+type RenewExecutionAccessRequest struct {
+	ExecutionID      model.ExecutionID
+	ExpectedRevision model.Revision
+}
+
+// ExecutionAccessLifecycle is a trusted composition port for the host renewal
+// worker. It is not registered on the public agent API.
+type ExecutionAccessLifecycle interface {
+	RenewExecutionAccess(context.Context, RenewExecutionAccessRequest) (ExecutionAccessStatusResult, error)
+}
+
 type AuthorityExplanationRequest struct {
 	Principal              model.Principal
 	Action                 model.Action
