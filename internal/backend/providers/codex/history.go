@@ -39,7 +39,7 @@ func (h historyReader) Discover(ctx context.Context, request ports.HistoryDiscov
 	if err := ctx.Err(); err != nil {
 		return ports.HistoryDiscoveryResult{}, err
 	}
-	statesRoot := filepath.Join(h.provider.privateRoot, "states")
+	statesRoot := h.provider.nativeHome
 	var found []ports.DiscoveredHistory
 	partial := false
 	err := filepath.WalkDir(statesRoot, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -50,12 +50,7 @@ func (h historyReader) Discover(ctx context.Context, request ports.HistoryDiscov
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".jsonl") {
 			return nil
 		}
-		stateRoot, ok := owningStateRoot(statesRoot, path)
-		if !ok {
-			partial = true
-			return nil
-		}
-		item, itemErr := discoverRollout(stateRoot, path, request.Scope)
+		item, itemErr := discoverRollout(statesRoot, path, request.Scope)
 		if itemErr != nil {
 			partial = true
 		} else if item != nil {
@@ -75,17 +70,6 @@ func (h historyReader) Discover(ctx context.Context, request ports.HistoryDiscov
 		coverage.Metadata = model.HistoryCoveragePartial
 	}
 	return ports.HistoryDiscoveryResult{Histories: found, Coverage: coverage}, nil
-}
-func owningStateRoot(statesRoot, transcript string) (string, bool) {
-	rel, err := filepath.Rel(statesRoot, transcript)
-	if err != nil || rel == "." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", false
-	}
-	first := strings.Split(rel, string(filepath.Separator))[0]
-	if first == "" {
-		return "", false
-	}
-	return filepath.Join(statesRoot, first), true
 }
 func discoverRollout(stateRoot, transcript string, scope ports.HistoryDiscoveryScope) (*ports.DiscoveredHistory, error) {
 	raw, err := os.ReadFile(transcript)
@@ -177,7 +161,7 @@ func (h historyReader) Read(ctx context.Context, selection ports.HistorySourceSe
 	if err != nil {
 		return ports.HistoryReadResult{}, err
 	}
-	if !pathWithin(filepath.Join(h.provider.privateRoot, "states"), token.StateRoot) || !pathWithin(token.StateRoot, token.Transcript) || token.SessionID != selection.Native.Reference {
+	if filepath.Clean(token.StateRoot) != h.provider.nativeHome || !pathWithin(token.StateRoot, token.Transcript) || token.SessionID != selection.Native.Reference {
 		return ports.HistoryReadResult{}, fmt.Errorf("Codex history source is outside provider storage")
 	}
 	raw, err := verifyHistorySelection(selection, token)

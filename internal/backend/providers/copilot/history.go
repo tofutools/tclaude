@@ -40,8 +40,8 @@ func (h historyReader) Discover(ctx context.Context, request ports.HistoryDiscov
 	if err := ctx.Err(); err != nil {
 		return ports.HistoryDiscoveryResult{}, err
 	}
-	root := filepath.Join(h.provider.privateRoot, "states")
-	entries, err := os.ReadDir(root)
+	root := h.provider.nativeHome
+	entries, err := os.ReadDir(filepath.Join(root, "session-state"))
 	if errors.Is(err, fs.ErrNotExist) {
 		return ports.HistoryDiscoveryResult{Histories: []ports.DiscoveredHistory{}, Coverage: partialCoverage("")}, nil
 	}
@@ -54,27 +54,13 @@ func (h historyReader) Discover(ctx context.Context, request ports.HistoryDiscov
 		if !state.IsDir() {
 			continue
 		}
-		sessions := filepath.Join(root, state.Name(), "session-state")
-		dirs, readErr := os.ReadDir(sessions)
-		if errors.Is(readErr, fs.ErrNotExist) {
-			continue
-		}
-		if readErr != nil {
+		item, itemErr := discoverSession(root, state.Name(), request.Scope)
+		if itemErr != nil {
 			partial = true
 			continue
 		}
-		for _, dir := range dirs {
-			if !dir.IsDir() {
-				continue
-			}
-			item, itemErr := discoverSession(filepath.Join(root, state.Name()), dir.Name(), request.Scope)
-			if itemErr != nil {
-				partial = true
-				continue
-			}
-			if item != nil {
-				found = append(found, *item)
-			}
+		if item != nil {
+			found = append(found, *item)
 		}
 	}
 	sort.Slice(found, func(i, j int) bool { return found[i].ModifiedAt.After(found[j].ModifiedAt) })
@@ -122,7 +108,7 @@ func (h historyReader) Read(ctx context.Context, selection ports.HistorySourceSe
 	if err != nil {
 		return ports.HistoryReadResult{}, err
 	}
-	if !pathWithin(filepath.Join(h.provider.privateRoot, "states"), token.StateRoot) || token.SessionID != selection.Native.Reference {
+	if filepath.Clean(token.StateRoot) != h.provider.nativeHome || token.SessionID != selection.Native.Reference {
 		return ports.HistoryReadResult{}, fmt.Errorf("Copilot history source is outside provider storage")
 	}
 	if err := verifyHistorySelection(selection, token); err != nil {

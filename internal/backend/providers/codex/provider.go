@@ -32,6 +32,7 @@ type Config struct {
 	Executable     string
 	TmuxExecutable string
 	PrivateRoot    string
+	NativeHome     string
 	AgentSocket    string
 	TurnForker     TurnForker
 }
@@ -39,11 +40,13 @@ type Config struct {
 type Provider struct {
 	executable      string
 	privateRoot     string
+	nativeHome      string
 	terminal        host.TerminalHost
 	credentials     host.ActionCredentialHost
 	agentSocket     string
 	observationRoot string
 	turnForker      TurnForker
+	stateMu         sync.Mutex
 }
 
 func New(config Config) (*Provider, error) {
@@ -58,12 +61,19 @@ func New(config Config) (*Provider, error) {
 	if !filepath.IsAbs(config.PrivateRoot) {
 		return nil, fmt.Errorf("codex private root must be absolute")
 	}
+	nativeHome := config.NativeHome
+	if nativeHome == "" {
+		nativeHome = filepath.Join(config.PrivateRoot, "native-home")
+	}
+	if !filepath.IsAbs(nativeHome) || !pathWithin(config.PrivateRoot, nativeHome) {
+		return nil, fmt.Errorf("codex native home must be an absolute provider-owned path inside private root")
+	}
 	forker := config.TurnForker
 	if forker == nil {
 		forker = nativeTurnForker{executable: resolved}
 	}
 	return &Provider{
-		executable: resolved, privateRoot: config.PrivateRoot,
+		executable: resolved, privateRoot: config.PrivateRoot, nativeHome: filepath.Clean(nativeHome),
 		terminal:    host.TerminalHost{Executable: config.TmuxExecutable, PrivateRoot: filepath.Join(config.PrivateRoot, "terminals")},
 		credentials: host.ActionCredentialHost{PrivateRoot: filepath.Join(config.PrivateRoot, "action-credentials")},
 		agentSocket: config.AgentSocket, observationRoot: filepath.Join(config.PrivateRoot, "observations"), turnForker: forker,
@@ -184,13 +194,13 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 func (p *Provider) prepareHistory(request ports.PreparationRequest) (string, string, bool, error) {
 	switch request.Intent {
 	case ports.StartFresh:
-		return "", filepath.Join(p.privateRoot, "states", "state-"+uuid.NewString()), true, nil
+		return "", p.nativeHome, false, nil
 	case ports.StartContinue, ports.StartFork:
 		if request.History == nil || request.History.Provider != Name || request.History.Native.Namespace != NativeNamespace {
 			return "", "", false, fmt.Errorf("codex continuation or fork requires application-resolved history")
 		}
 		token, err := decodeSourceToken(request.History.SourceToken)
-		if err != nil || token.SessionID != request.History.Native.Reference || !pathWithin(filepath.Join(p.privateRoot, "states"), token.StateRoot) {
+		if err != nil || token.SessionID != request.History.Native.Reference || filepath.Clean(token.StateRoot) != p.nativeHome {
 			return "", "", false, fmt.Errorf("codex continuation history evidence is invalid")
 		}
 		if _, err := verifyHistorySelection(*request.History, token); err != nil {
@@ -206,6 +216,8 @@ func (p *Provider) prepareHistory(request ports.PreparationRequest) (string, str
 }
 
 func (p *Provider) prepareStateRoot(root, _ string) error {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
 	if err := os.MkdirAll(filepath.Join(root, "hooks"), 0o700); err != nil {
 		return err
 	}
@@ -320,7 +332,7 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	if err != nil {
 		return ports.RecoveryResult{}, err
 	}
-	if recorded.ExecutionID != string(request.ExecutionID) || !pathWithin(filepath.Join(p.privateRoot, "states"), recorded.StateRoot) {
+	if recorded.ExecutionID != string(request.ExecutionID) || filepath.Clean(recorded.StateRoot) != p.nativeHome {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
 	}
 	var terminal *host.Terminal
