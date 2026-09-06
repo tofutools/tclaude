@@ -13,10 +13,11 @@ var ErrHistoryUnsupported = errors.New("provider history capability unsupported"
 type HistoryPrecision string
 
 const (
-	HistoryPrecisionNone    HistoryPrecision = "none"
-	HistoryPrecisionHead    HistoryPrecision = "head"
-	HistoryPrecisionMessage HistoryPrecision = "message"
-	HistoryPrecisionTurn    HistoryPrecision = "turn"
+	HistoryPrecisionNone          HistoryPrecision = "none"
+	HistoryPrecisionHead          HistoryPrecision = "head"
+	HistoryPrecisionMessage       HistoryPrecision = "message"
+	HistoryPrecisionBeforeMessage HistoryPrecision = "before_message"
+	HistoryPrecisionTurn          HistoryPrecision = "turn"
 )
 
 type HistoryCapabilities struct {
@@ -44,15 +45,16 @@ type ProviderHistoryPoint struct {
 }
 
 type DiscoveredHistory struct {
-	Native        model.NativeConversationEvidence
-	SourceToken   string
-	Title         string
-	WorkspaceHint string
-	ModifiedAt    time.Time
-	Availability  model.HistoryAvailability
-	Coverage      model.HistoryCoverage
-	Points        []ProviderHistoryPoint
-	Evidence      model.ProviderEvidence
+	Native            model.NativeConversationEvidence
+	SourceToken       string
+	SourceFingerprint string
+	Title             string
+	WorkspaceHint     string
+	ModifiedAt        time.Time
+	Availability      model.HistoryAvailability
+	Coverage          model.HistoryCoverage
+	Points            []ProviderHistoryPoint
+	Evidence          model.ProviderEvidence
 }
 
 type HistoryDiscoveryResult struct {
@@ -63,14 +65,15 @@ type HistoryDiscoveryResult struct {
 // HistorySourceSelection is resolved by application persistence from a public
 // ConversationID/HistoryPointID revision check. Callers never construct it.
 type HistorySourceSelection struct {
-	ConversationID model.ConversationID
-	Provider       string
-	Native         model.NativeConversationEvidence
-	SourceToken    string
-	SourceRevision string
-	Point          *ProviderHistoryPoint
-	Evidence       model.ProviderEvidence
-	UseClaim       *model.HistoryUseClaim
+	ConversationID    model.ConversationID
+	Provider          string
+	Native            model.NativeConversationEvidence
+	SourceToken       string
+	SourceRevision    string
+	SourceFingerprint string
+	Point             *ProviderHistoryPoint
+	Evidence          model.ProviderEvidence
+	UseClaim          *model.HistoryUseClaim
 }
 
 type HistoryPartKind string
