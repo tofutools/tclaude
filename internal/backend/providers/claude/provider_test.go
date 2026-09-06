@@ -84,7 +84,8 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 	provider, err := New(Config{Executable: executable, PrivateRoot: root, AgentSocket: agentSocket})
 	require.NoError(t, err)
 	request := ports.PreparationRequest{
-		Intent: ports.StartFresh,
+		Intent:       ports.StartFresh,
+		InitialInput: &ports.PreparedInitialInput{Body: "prepared claude brief", Correlation: "brief-claude", RequiredBeforeFirstWork: true},
 		ActionCredential: &ports.ActionCredentialMaterial{
 			ExecutionID: "execution_claude", Generation: 1, DeliveryID: "delivery-claude",
 			Secret: []byte("claude-provider-secret"), ExpiresAt: time.Now().Add(time.Hour),
@@ -102,6 +103,7 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 	require.True(t, description.EffectivePolicy.SandboxEnforced)
 	require.Len(t, description.Resources, 1)
 	require.NotNil(t, description.AccessDelivery)
+	require.Equal(t, &ports.PreparedInitialInputDescription{Correlation: "brief-claude", Supported: true}, description.InitialInput)
 	require.NotContains(t, string(description.Evidence.Payload), "claude-provider-secret")
 	access := &model.ExecutionAccessBinding{ExecutionID: request.Spec.ExecutionID, Generation: 1,
 		DeliveryID: "delivery-claude", State: model.ExecutionAccessSuspended, ExpiresAt: request.ActionCredential.ExpiresAt}
@@ -130,7 +132,7 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 	require.Eventually(t, func() bool {
 		value, readErr := os.ReadFile(argvPath)
 		return readErr == nil && strings.Contains(string(value), "--session-id") &&
-			strings.Contains(string(value), "--permission-mode\nmanual")
+			strings.Contains(string(value), "--permission-mode\nmanual") && strings.Contains(string(value), "prepared claude brief")
 	}, time.Second, 10*time.Millisecond)
 	require.Eventually(t, func() bool {
 		value, readErr := os.ReadFile(bootstrapPath)

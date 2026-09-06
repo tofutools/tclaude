@@ -1,6 +1,9 @@
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type HistoryAvailability string
 
@@ -267,6 +270,15 @@ type WorkRun struct {
 	CancellationReason    string
 	State                 WorkRunState
 	Attempts              []WorkStepAttempt
+	Graph                 *WorkGraph
+	DefinitionClosure     []DefinitionRef
+	Parameters            map[string]json.RawMessage
+	Scope                 WorkScope
+	AuthorizedPrograms    []ProgramProfileRef
+	ControlState          WorkControlState
+	Outcome               WorkOutcome
+	Deadline              time.Time
+	NodeAttempts          []WorkNodeAttempt
 	Revision              Revision
 	CreatedAt             time.Time
 	UpdatedAt             time.Time

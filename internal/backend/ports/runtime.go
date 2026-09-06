@@ -37,6 +37,18 @@ type PreparedDescription struct {
 	Resources       []ResourceClaim
 	Evidence        model.ProviderEvidence
 	AccessDelivery  *ActionCredentialReceipt
+	InitialInput    *PreparedInitialInputDescription
+}
+
+type PreparedInitialInput struct {
+	Body                    string
+	Correlation             string
+	RequiredBeforeFirstWork bool
+}
+
+type PreparedInitialInputDescription struct {
+	Correlation string
+	Supported   bool
 }
 
 // ActionCredentialMaterial is application-issued and transient. A cohesive
@@ -148,8 +160,19 @@ type PreparedAttempt interface {
 
 type Provider interface {
 	Name() string
+	Capabilities() ProviderCapabilities
 	Prepare(context.Context, PreparationRequest) (PreparedAttempt, error)
 	Recover(context.Context, RecoveryRequest) (RecoveryResult, error)
+}
+
+type ProviderCapabilities struct {
+	PreparedInitialInput bool
+	NativeGuidance       []NativeGuidanceCapability
+}
+
+type NativeGuidanceCapability struct {
+	EventKind string
+	Timing    model.StandingOrderTiming
 }
 
 type StartIntent string
@@ -171,6 +194,9 @@ type PreparationRequest struct {
 	ActionCredential *ActionCredentialMaterial
 	Observations     PrimaryObservationSink
 	AgentAPIEndpoint string
+	InitialInput     *PreparedInitialInput
+	NativeGuidance   NativeGuidanceEvaluator
+	CallbackIngress  CallbackIngress
 }
 
 type ProviderRegistry interface {
@@ -184,6 +210,8 @@ type RecoveryRequest struct {
 	Attempt          model.AttemptGeneration
 	Access           *model.ExecutionAccessBinding
 	Observations     PrimaryObservationSink
+	NativeGuidance   NativeGuidanceEvaluator
+	CallbackIngress  CallbackIngress
 	AgentAPIEndpoint string
 }
 
@@ -301,6 +329,18 @@ type AttachmentRequest struct {
 type Attachment interface {
 	io.ReadWriteCloser
 	Kind() AttachmentKind
+}
+
+type TerminalSize struct {
+	Columns uint16
+	Rows    uint16
+}
+
+// ResizableAttachment is an optional focused view. Fixed-size attachments do
+// not implement it; implementations reject zero or unreasonably large sizes.
+type ResizableAttachment interface {
+	Attachment
+	Resize(context.Context, TerminalSize) error
 }
 
 type AttachmentResult struct {
