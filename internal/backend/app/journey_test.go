@@ -177,12 +177,17 @@ func TestShellOwnsExactWorkspaceUntilStopped(t *testing.T) {
 	stopped, err := service.Stop(ctx, app.StopRequest{RequestContext: request(operator, "stop_shell"), ExecutionID: started.Execution.ID})
 	require.NoError(t, err)
 	require.Equal(t, model.ExecutionExited, stopped.Execution.State)
-	removed, err := service.RemoveCheckout(ctx, app.RemoveCheckoutRequest{Context: request(operator, "remove_stopped_shell"), WorkspaceID: workspace.Workspace.ID, ExpectedRevision: workspace.Workspace.Revision})
+	observed, err := service.InspectWorkspace(ctx, app.InspectWorkspaceRequest{Principal: operator, WorkspaceID: workspace.Workspace.ID})
+	require.NoError(t, err)
+	require.Equal(t, "worker-commit", observed.Workspace.Observation.Revision)
+	removed, err := service.RemoveCheckout(ctx, app.RemoveCheckoutRequest{Context: request(operator, "remove_stopped_shell"), WorkspaceID: workspace.Workspace.ID, ExpectedRevision: observed.Workspace.Revision})
 	require.NoError(t, err)
 	restored, err := service.RestoreCheckout(ctx, app.RestoreCheckoutRequest{Context: request(operator, "restore_stopped_shell"), WorkspaceID: workspace.Workspace.ID, ExpectedRevision: removed.Workspace.Revision})
 	require.NoError(t, err)
 	require.Equal(t, model.WorkspaceAvailable, restored.Workspace.State)
-	require.Equal(t, 2, host.creates)
+	require.Equal(t, 1, host.creates)
+	require.Equal(t, 1, host.restores)
+	require.Equal(t, "worker-commit", host.lastRestore.Observation.Revision)
 }
 
 func TestCancelledUncertainWorkRemainsResolvable(t *testing.T) {
@@ -295,7 +300,10 @@ func (*journeyHistoryReader) Read(context.Context, ports.HistorySourceSelection)
 	return ports.HistoryReadResult{Turns: []ports.HistoryTurn{{Role: "user", Parts: []ports.HistoryPart{{Kind: ports.HistoryPartText, Text: "earlier work"}}}}, Coverage: coverage, Evidence: model.ProviderEvidence{Provider: "journey", Version: 1}}, nil
 }
 
-type journeyWorkspaceHost struct{ creates, removes int }
+type journeyWorkspaceHost struct {
+	creates, removes, restores int
+	lastRestore                ports.CheckoutRestoreRequest
+}
 
 func (h *journeyWorkspaceHost) CreateCheckout(ctx context.Context, req ports.CheckoutCreateRequest, permit ports.EffectPermit) (ports.WorkspaceEffectResult, error) {
 	if err := permit.Consume(ctx); err != nil {
@@ -342,8 +350,11 @@ func (*journeyHostRuntime) StopHost(context.Context, ports.StopRequest) (ports.H
 func modelShellEvidence() ports.ShellResourceEvidence {
 	return ports.ShellResourceEvidence{Owner: "shell-host", Version: 1, Payload: []byte("private-shell-receipt")}
 }
-func (h *journeyWorkspaceHost) InspectWorkspace(context.Context, model.Workspace) (ports.WorkspaceEffectResult, error) {
-	return ports.WorkspaceEffectResult{Disposition: ports.EffectAccepted}, nil
+func (h *journeyWorkspaceHost) InspectWorkspace(_ context.Context, workspace model.Workspace) (ports.WorkspaceEffectResult, error) {
+	observation := workspace.Observation
+	observation.Revision = "worker-commit"
+	observation.ObservedAt = time.Now()
+	return ports.WorkspaceEffectResult{Disposition: ports.EffectAccepted, Observation: observation, Resource: workspace.Resource}, nil
 }
 func (h *journeyWorkspaceHost) RemoveCheckout(ctx context.Context, req ports.CheckoutRemoveRequest, permit ports.EffectPermit) (ports.WorkspaceEffectResult, error) {
 	if err := permit.Consume(ctx); err != nil {
@@ -354,6 +365,18 @@ func (h *journeyWorkspaceHost) RemoveCheckout(ctx context.Context, req ports.Che
 	}
 	h.removes++
 	return ports.WorkspaceEffectResult{Disposition: ports.EffectAccepted, Observation: req.Observation, Resource: req.Resource}, nil
+}
+func (h *journeyWorkspaceHost) RestoreCheckout(ctx context.Context, req ports.CheckoutRestoreRequest, permit ports.EffectPermit) (ports.WorkspaceEffectResult, error) {
+	if err := permit.Consume(ctx); err != nil {
+		return ports.WorkspaceEffectResult{}, err
+	}
+	h.restores++
+	h.lastRestore = req
+	observation := req.Observation
+	observation.ActualPath = req.Intent.IntendedPath
+	observation.Branch = req.Intent.Branch
+	observation.ObservedAt = time.Now()
+	return ports.WorkspaceEffectResult{Disposition: ports.EffectAccepted, Observation: observation, Resource: model.WorkspaceResourceEvidence{Owner: "journey-host", Version: 1, Payload: []byte("restored-ownership-marker")}}, nil
 }
 
 func request(principal model.Principal, id model.RequestID) app.RequestContext {
