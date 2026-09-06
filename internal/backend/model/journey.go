@@ -48,6 +48,7 @@ type HistoryPointKind string
 const (
 	HistoryPointHead    HistoryPointKind = "head"
 	HistoryPointMessage HistoryPointKind = "message"
+	HistoryPointTurn    HistoryPointKind = "turn"
 )
 
 // HistoryPoint identifies only a provider-supported selectable point. A
@@ -65,6 +66,31 @@ type HistorySelection struct {
 	ExpectedConversationRevision Revision
 	PointID                      HistoryPointID
 	ExpectedPointRevision        Revision
+}
+
+type HistoryUseState string
+
+const (
+	HistoryUseHeld      HistoryUseState = "held"
+	HistoryUseUncertain HistoryUseState = "uncertain"
+	HistoryUseReleased  HistoryUseState = "released"
+)
+
+// HistoryUseClaim is application-owned durable exclusion for a provider that
+// cannot fork a mutable source safely while it is shared. Unknown effects keep
+// the claim held as uncertain until explicit reconciliation.
+type HistoryUseClaim struct {
+	ID                HistoryUseID
+	ConversationID    ConversationID
+	PointID           HistoryPointID
+	OperationID       OperationID
+	WorkRunID         WorkRunID
+	SourceRevision    string
+	SourceFingerprint string
+	State             HistoryUseState
+	Revision          Revision
+	CreatedAt         time.Time
+	SettledAt         *time.Time
 }
 
 type WorkspaceProvenance string
@@ -110,11 +136,20 @@ type WorkspaceObservation struct {
 	ObservedAt     time.Time
 }
 
+// WorkspaceResourceEvidence is an opaque host-issued ownership receipt. The
+// application persists and returns it to the host but never interprets Payload.
+type WorkspaceResourceEvidence struct {
+	Owner   string
+	Version uint32
+	Payload []byte
+}
+
 type Workspace struct {
 	ID          WorkspaceID
 	Intent      WorkspaceIntent
 	State       WorkspaceState
 	Observation WorkspaceObservation
+	Resource    WorkspaceResourceEvidence
 	Revision    Revision
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -165,11 +200,42 @@ const (
 )
 
 type WorkRunSpec struct {
+	SourceMode    WorkSourceMode
 	History       HistorySelection
+	FreshHandoff  string
 	WorkspaceID   WorkspaceID
 	WorkerAgentID AgentID
+	WorkerDesired DesiredConfiguration
 	Brief         string
-	ArtifactRef   string
+	Outcome       WorkOutcomePolicy
+}
+
+type WorkSourceMode string
+
+const (
+	WorkSourceFork         WorkSourceMode = "fork"
+	WorkSourceFreshHandoff WorkSourceMode = "fresh_handoff"
+)
+
+type WorkOutcomeMode string
+
+const (
+	WorkOutcomeHumanDecision WorkOutcomeMode = "human_decision"
+	WorkOutcomeVerification  WorkOutcomeMode = "verification"
+)
+
+type WorkVerification struct {
+	Command          []string
+	ArtifactRef      string
+	ExpectedExitCode int
+}
+
+// WorkOutcomePolicy pins what may settle this run. Human decisions still need
+// current decision authority; verification evidence must match the exact
+// attempt and artifact revision.
+type WorkOutcomePolicy struct {
+	Mode         WorkOutcomeMode
+	Verification *WorkVerification
 }
 
 type WorkStepAttempt struct {
@@ -183,16 +249,20 @@ type WorkStepAttempt struct {
 }
 
 type WorkRun struct {
-	ID         WorkRunID
-	Requester  Principal
-	Authority  AuthoritySubject
-	Delegation *AutomationDelegation
-	Spec       WorkRunSpec
-	State      WorkRunState
-	Attempts   []WorkStepAttempt
-	Revision   Revision
-	CreatedAt  time.Time
-	UpdatedAt  time.Time
+	ID                WorkRunID
+	RequestID         RequestID
+	Requester         Principal
+	Authority         AuthoritySubject
+	Delegation        *AutomationDelegation
+	Spec              WorkRunSpec
+	WorkspaceUseID    WorkspaceUseID
+	HistoryUseID      HistoryUseID
+	WorkerExecutionID ExecutionID
+	State             WorkRunState
+	Attempts          []WorkStepAttempt
+	Revision          Revision
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type WorkEvidenceKind string
@@ -216,6 +286,7 @@ type WorkEvidence struct {
 	Passed           *bool
 	Detail           string
 	RecordedAt       time.Time
+	Revision         Revision
 }
 
 type WorkDecisionKind string
@@ -234,4 +305,5 @@ type WorkDecision struct {
 	Decider   Principal
 	Reason    string
 	DecidedAt time.Time
+	Revision  Revision
 }
