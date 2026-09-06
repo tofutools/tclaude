@@ -110,5 +110,6 @@ func command() *cobra.Command {
 		return call(cmd, "POST", "/v2/inbox/"+args[0]+"/read", map[string]string{"request_id": readID})
 	}
 	root.AddCommand(read)
+	registerControls(root, call)
 	return root
 }
