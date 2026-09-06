@@ -50,7 +50,7 @@ func registerJourney(root *cobra.Command, call journeyCall) {
 	read.RunE = func(cmd *cobra.Command, args []string) error {
 		return call(cmd, "POST", "/v2/history/read", map[string]any{"selection": map[string]any{"ConversationID": args[0], "ExpectedConversationRevision": conversationRevision, "PointID": point, "ExpectedPointRevision": pointRevision}})
 	}
-	history.AddCommand(search, refresh, read)
+	history.AddCommand(search, refresh, read, journeyFileCommand("metadata", "Set a conversation title and archive state at an expected revision", "/v2/history/metadata", call))
 	root.AddCommand(history)
 
 	workspaceCmd := boa.CmdT[struct{}]{Use: "workspace", Short: "Manage explicit workspace ownership and retained checkouts"}.ToCobra()
@@ -89,7 +89,7 @@ func registerJourney(root *cobra.Command, call journeyCall) {
 	remove.RunE = func(cmd *cobra.Command, args []string) error {
 		return call(cmd, "POST", "/v2/workspaces/remove", map[string]any{"request_id": removalID, "workspace_id": args[0], "expected_revision": workspaceRevision, "destructive": destructive})
 	}
-	workspaceCmd.AddCommand(inspectWorkspace, remove)
+	workspaceCmd.AddCommand(inspectWorkspace, remove, journeyFileCommand("restore", "Restore a retained owned checkout at an expected revision", "/v2/workspaces/restore", call))
 	root.AddCommand(workspaceCmd)
 	var shellRequest, shellSandbox string
 	var shellRevision uint64
@@ -169,7 +169,7 @@ func registerWorkSettlement(work *cobra.Command, call journeyCall) {
 	cancel.RunE = func(cmd *cobra.Command, args []string) error {
 		return call(cmd, "POST", "/v2/work/cancel", map[string]any{"request_id": requestID, "work_run_id": args[0], "expected_revision": revision, "reason": reason})
 	}
-	work.AddCommand(evidence, decision, cancel)
+	work.AddCommand(evidence, decision, cancel, journeyFileCommand("resolve", "Operator confirmation that an uncertain effect did not occur; never retries", "/v2/work/resolve", call))
 }
 
 func readJourneyJSON(path string) (json.RawMessage, error) {
@@ -187,4 +187,20 @@ func readJourneyJSON(path string) (json.RawMessage, error) {
 		return nil, fmt.Errorf("input must be valid JSON no larger than 1 MiB")
 	}
 	return json.RawMessage(data), nil
+}
+
+func journeyFileCommand(name, description, path string, call journeyCall) *cobra.Command {
+	var file string
+	cmd := boa.CmdT[struct{}]{Use: name, Short: description}.ToCobra()
+	cmd.Args = cobra.NoArgs
+	cmd.Flags().StringVar(&file, "file", "", "Request JSON including request_id and expected_revision")
+	_ = cmd.MarkFlagRequired("file")
+	cmd.RunE = func(cmd *cobra.Command, _ []string) error {
+		body, err := readJourneyJSON(file)
+		if err != nil {
+			return err
+		}
+		return call(cmd, "POST", path, body)
+	}
+	return cmd
 }

@@ -191,3 +191,18 @@ func TestJourneySnapshotKeepsRetainedWorkDiscoverableWithoutRecoveryDetails(t *t
 		}
 	}
 }
+
+func TestJourneyRecoveryCommandsRejectClaimedOperator(t *testing.T) {
+	h := testHandler(t, &applicationProbe{})
+	if err := h.RegisterJourneyAPI(&journeyProbe{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/v2/work/resolve", "/v2/workspaces/restore", "/v2/history/metadata"} {
+		if got := request(h, "POST", path, `{}`, "").Code; got != 401 {
+			t.Fatalf("%s without authentication: %d", path, got)
+		}
+		if got := request(h, "POST", path, `{"request_id":"r","principal":{"Kind":"operator"}}`, testCredential).Code; got != 400 {
+			t.Fatalf("%s accepted claimed principal: %d", path, got)
+		}
+	}
+}
