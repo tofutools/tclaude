@@ -247,6 +247,23 @@ func TestClientCancellationDuringEffectDoesNotCancelSettlement(t *testing.T) {
 	require.Equal(t, model.OperationSucceeded, persisted.Operations[len(persisted.Operations)-1].State)
 }
 
+func TestClientCancellationAfterContextAdmissionDoesNotStrandOperation(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	provider := newFakeProvider()
+	service := testService(store, provider)
+	agent := createAgent(t, ctx, service, model.OperatorPrincipal(), "agent_context_disconnect")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(model.OperatorPrincipal(), "request_context_disconnect_launch"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	requestCtx, cancelRequest := context.WithCancel(ctx)
+	service = testService(cancelAfterAdmissionStore{Store: store, cancel: cancelRequest}, provider)
+	result, err := service.ChangeContext(requestCtx, app.ChangeContextRequest{RequestContext: effect(model.OperatorPrincipal(), "request_context_disconnect"), ExecutionID: launched.Execution.ID, Intent: ports.ContextClear, ExpectedConversationID: launched.Execution.ConversationID, ExpectedAssociationRevision: 1})
+	require.NoError(t, err)
+	require.Equal(t, model.OperationSucceeded, result.Operation.State)
+}
+
 func TestContextChangeAndResumeUseStoredNativeEvidence(t *testing.T) {
 	ctx := context.Background()
 	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
@@ -311,6 +328,19 @@ type fakeRegistry struct{ provider ports.Provider }
 
 func (r fakeRegistry) Provider(harness string) (ports.Provider, bool) {
 	return r.provider, harness == "fake"
+}
+
+type cancelAfterAdmissionStore struct {
+	app.Store
+	cancel context.CancelFunc
+}
+
+func (s cancelAfterAdmissionStore) AdmitExecutionOperation(ctx context.Context, admission app.ExecutionOperationAdmission) (app.AdmissionResult, error) {
+	result, err := s.Store.AdmitExecutionOperation(ctx, admission)
+	if err == nil {
+		s.cancel()
+	}
+	return result, err
 }
 
 type fakeProvider struct {
