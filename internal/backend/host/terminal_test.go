@@ -58,7 +58,10 @@ func TestPreparedTerminalAbortRemovesPrivateResource(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux is unavailable")
 	}
-	prepared, err := (TerminalHost{PrivateRoot: t.TempDir()}).Prepare("exec_abort")
+	root, err := os.MkdirTemp("/tmp", "tclaude-host-abort-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
+	prepared, err := (TerminalHost{PrivateRoot: root}).Prepare("exec_abort")
 	require.NoError(t, err)
 	directory := prepared.directory
 	require.NoError(t, prepared.Abort())
