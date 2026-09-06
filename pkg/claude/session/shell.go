@@ -10,6 +10,7 @@ import (
 
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/platform/execution"
 )
 
 // ShellHarnessName is the sentinel `--harness` value that starts a plain,
@@ -125,7 +126,7 @@ func startShellSession(params *NewParams) (ShellSession, error) {
 	// TCLAUDE_SESSION_ID is a stable session-row/routing key for local session
 	// operations. It is caller-controlled compatibility state, never proof of
 	// daemon caller identity.
-	exitGeneration := newExitLaunchGeneration(sessionID, tmuxSession)
+	exitGeneration := execution.NewID().String()
 	additionalEnv := map[string]string{
 		"TCLAUDE_SESSION_ID":      sessionID,
 		"TCLAUDE_EXIT_GENERATION": exitGeneration,
