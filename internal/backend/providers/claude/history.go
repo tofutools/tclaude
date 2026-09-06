@@ -135,14 +135,14 @@ func (historyReader) Read(ctx context.Context, selection ports.HistorySourceSele
 		return ports.HistoryReadResult{}, err
 	}
 	if evidence.NativeID != selection.Native.Reference || evidence.Fingerprint != selection.SourceFingerprint {
-		return ports.HistoryReadResult{}, fmt.Errorf("Claude history evidence does not match native source")
+		return ports.HistoryReadResult{}, fmt.Errorf("claude history evidence does not match native source")
 	}
 	revision, _, err := fingerprintFile(evidence.Path)
 	if err != nil {
 		return ports.HistoryReadResult{}, err
 	}
 	if revision != evidence.SourceRevision || selection.SourceRevision != revision {
-		return ports.HistoryReadResult{}, fmt.Errorf("Claude history source revision changed")
+		return ports.HistoryReadResult{}, fmt.Errorf("claude history source revision changed")
 	}
 	file, err := os.Open(evidence.Path)
 	if err != nil {
@@ -229,7 +229,7 @@ func discoverClaudeFile(path, root, id string, info os.FileInfo, refreshed time.
 	}
 	relative, err := filepath.Rel(root, path)
 	if err != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return ports.DiscoveredHistory{}, fmt.Errorf("Claude history is outside configured root")
+		return ports.DiscoveredHistory{}, fmt.Errorf("claude history is outside configured root")
 	}
 	fingerprint := claudeSourceFingerprint(path, id)
 	evidence, err := encodeClaudeHistoryEvidence(historyEvidence{Path: path, NativeID: id, SourceRevision: revision, Size: size, Fingerprint: fingerprint})
@@ -288,7 +288,7 @@ func normalizeClaudeTurn(record claudeRecord, line int) (ports.HistoryTurn, bool
 func historyRoot(value string) (string, error) {
 	root, err := filepath.Abs(strings.TrimSpace(value))
 	if err != nil || strings.TrimSpace(value) == "" {
-		return "", fmt.Errorf("Claude history root is required")
+		return "", fmt.Errorf("claude history root is required")
 	}
 	return filepath.Clean(root), nil
 }

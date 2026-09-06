@@ -649,7 +649,7 @@ func nativeIDFor(request ports.PreparationRequest) (string, error) {
 	case ports.StartFork:
 		if request.History == nil || request.History.Provider != Name ||
 			request.History.Native.Namespace != NativeNamespace {
-			return "", fmt.Errorf("Claude fork requires an application-resolved %s history source", NativeNamespace)
+			return "", fmt.Errorf("claude fork requires an application-resolved %s history source", NativeNamespace)
 		}
 		if request.History.Point != nil && request.History.Point.Kind != model.HistoryPointHead {
 			return "", ports.ErrHistoryUnsupported
@@ -668,21 +668,21 @@ func nativeIDFor(request ports.PreparationRequest) (string, error) {
 
 func verifyClaudeForkSelection(selection *ports.HistorySourceSelection) error {
 	if selection == nil {
-		return fmt.Errorf("Claude fork history source is required")
+		return fmt.Errorf("claude fork history source is required")
 	}
 	evidence, err := decodeClaudeHistoryEvidence(selection.Evidence)
 	if err != nil {
 		return err
 	}
 	if evidence.NativeID != selection.Native.Reference || evidence.Fingerprint != selection.SourceFingerprint {
-		return fmt.Errorf("Claude fork evidence does not match native source")
+		return fmt.Errorf("claude fork evidence does not match native source")
 	}
 	revision, _, err := fingerprintFile(evidence.Path)
 	if err != nil {
 		return fmt.Errorf("verify Claude fork source: %w", err)
 	}
 	if revision != evidence.SourceRevision || revision != selection.SourceRevision {
-		return fmt.Errorf("Claude fork source revision changed")
+		return fmt.Errorf("claude fork source revision changed")
 	}
 	return nil
 }
