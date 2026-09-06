@@ -9365,6 +9365,15 @@ func appendRemoteControlFlag(args []string, remoteControl bool) []string {
 // can be unit-tested without forking a subprocess.
 func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	args := []string{"session", "new", "--managed-launch", "-r", a.ConvID, "-d", "--global"}
+	if a.ExecutionID != "" {
+		args = append(args, "--execution-id", a.ExecutionID)
+	}
+	if a.ResumeOperationID != "" {
+		args = append(args, "--resume-operation-id", a.ResumeOperationID)
+	}
+	if a.ResumeClaimFD != 0 {
+		args = append(args, "--resume-claim-fd", strconv.Itoa(a.ResumeClaimFD))
+	}
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
 	}

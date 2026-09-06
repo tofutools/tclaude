@@ -34,6 +34,12 @@ import (
 )
 
 type NewParams struct {
+	// ExecutionID is the exact preallocated managed Resume attempt. It is only
+	// valid with --managed-launch; ordinary CLI callers cannot pin an attempt.
+	ExecutionID       string `long:"execution-id" optional:"true" help:"Internal: preallocated managed execution identity"`
+	ResumeOperationID string `long:"resume-operation-id" optional:"true" help:"Internal: durable managed resume operation correlation"`
+	ResumeClaimFD     int    `long:"resume-claim-fd" optional:"true" help:"Internal: inherited one-shot managed resume claim descriptor"`
+
 	// ManagedLaunch marks agentd's forked session wrapper. The daemon already
 	// resolved profile precedence, so the child must use the exact passed shape.
 	ManagedLaunch bool `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
@@ -406,6 +412,9 @@ func NewCmd() *cobra.Command {
 	// Allow arbitrary args so post-'--' args pass through to claude without cobra rejecting them.
 	cmd.Args = cobra.ArbitraryArgs
 	_ = cmd.Flags().MarkHidden("managed-launch")
+	_ = cmd.Flags().MarkHidden("execution-id")
+	_ = cmd.Flags().MarkHidden("resume-operation-id")
+	_ = cmd.Flags().MarkHidden("resume-claim-fd")
 	_ = cmd.Flags().MarkHidden("allow-unenforced-sandbox")
 	_ = cmd.Flags().MarkHidden("sandbox-continuation")
 	_ = cmd.Flags().MarkHidden("cwd-write-proof")
@@ -529,6 +538,18 @@ var ErrNoAutomaticGroupMatch = errors.New("no automatic group match")
 func runNew(params *NewParams) error {
 	timing := config.StartupTiming("session_new", "label", params.Label, "harness", params.Harness)
 	defer timing("return")
+	if strings.TrimSpace(params.ExecutionID) != "" && !params.ManagedLaunch {
+		return errors.New("execution identity is restricted to managed launch")
+	}
+	if strings.TrimSpace(params.ExecutionID) != "" && strings.TrimSpace(params.Resume) == "" {
+		return errors.New("execution identity is restricted to managed resume")
+	}
+	if strings.TrimSpace(params.ResumeOperationID) != "" && !params.ManagedLaunch {
+		return errors.New("resume operation identity is restricted to managed launch")
+	}
+	if params.ResumeClaimFD != 0 && !params.ManagedLaunch {
+		return errors.New("resume claim handoff is restricted to managed launch")
+	}
 	if params.HelpContextFeatures {
 		harness.PrintContextFeatureCatalog(os.Stdout)
 		return nil
@@ -1249,6 +1270,13 @@ func runNew(params *NewParams) error {
 	// authorizes callers from Unix-socket peer credentials and recorded PIDs.
 	// Build the harness command with all environment variables forwarded.
 	exitGeneration := execution.NewID().String()
+	if strings.TrimSpace(params.ExecutionID) != "" {
+		pinned, err := execution.ParseID(strings.TrimSpace(params.ExecutionID))
+		if err != nil {
+			return fmt.Errorf("invalid managed execution identity: %w", err)
+		}
+		exitGeneration = pinned.String()
+	}
 	var routeHelper *TclaudeLayerRouteHelper
 	if params.RouteHelperAgentID != "" || params.RouteHelperConvID != "" || params.RouteHelperLaunchGeneration != "" || params.RouteHelperCredentialHandoffSocketPath != "" || len(params.RouteHelperGroupIDs) > 0 {
 		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
