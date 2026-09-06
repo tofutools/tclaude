@@ -247,6 +247,15 @@ func authorizeTx(ctx context.Context, q queryer, request model.AuthorityRequest,
 	if err != nil {
 		return decision, err
 	}
+	if request.Principal.Kind == model.PrincipalAutomation {
+		if !automationDelegates(ctx, q, request, at) {
+			return decision, nil
+		}
+		if subject.Kind == model.AuthorityOperator {
+			decision.Allowed, decision.SourceKind, decision.SourceID = true, model.AuthorityDefault, "automation:"+request.Principal.AutomationRun
+			return decision, nil
+		}
+	}
 	if defaultAuthority(request.Principal, request.Action, request.Resource) && request.RequestedConfiguration == nil {
 		decision.Allowed, decision.SourceKind, decision.SourceID = true, model.AuthorityDefault, "execution_self"
 		return decision, nil
@@ -327,8 +336,18 @@ func authoritySubject(ctx context.Context, q queryer, principal model.Principal,
 		}
 		return model.AuthoritySubject{Kind: model.AuthorityExecution, ExecutionID: access.ExecutionID}, nil
 	case model.PrincipalAutomation:
-		if principal.AutomationRun == "" || principal.Authority.Kind == "" {
+		if principal.AutomationRun == "" || principal.Authority.Kind == "" || principal.Delegation == nil {
 			return model.AuthoritySubject{}, app.ErrUnauthorized
+		}
+		if principal.Authority.Kind == model.AuthorityExecution {
+			access, err := executionAccessRow(q.QueryRowContext(ctx, accessSelect+` WHERE execution_id=?`, principal.Authority.ExecutionID))
+			if err != nil || access.State != model.ExecutionAccessActive || !at.Before(access.ExpiresAt) || access.AgentID != "" {
+				return model.AuthoritySubject{}, app.ErrUnauthorized
+			}
+			var state model.ExecutionState
+			if err := q.QueryRowContext(ctx, `SELECT state FROM executions WHERE id=?`, principal.Authority.ExecutionID).Scan(&state); err != nil || state == model.ExecutionExited || state == model.ExecutionFailed || state == model.ExecutionUnknown {
+				return model.AuthoritySubject{}, app.ErrUnauthorized
+			}
 		}
 		return principal.Authority, nil
 	case model.PrincipalAgent: // Transitional in-process callers; never bearer-authenticated.
@@ -336,6 +355,19 @@ func authoritySubject(ctx context.Context, q queryer, principal model.Principal,
 	default:
 		return model.AuthoritySubject{}, app.ErrUnauthorized
 	}
+}
+
+func automationDelegates(ctx context.Context, q queryer, request model.AuthorityRequest, at time.Time) bool {
+	delegation := request.Principal.Delegation
+	if delegation == nil || delegation.ExpiresAt.IsZero() || !at.Before(delegation.ExpiresAt) || !slices.Contains(delegation.Actions, request.Action) || !configurationMatches(delegation.Bounds, request.RequestedConfiguration) {
+		return false
+	}
+	for _, resource := range delegation.Resources {
+		if resourceMatches(ctx, q, request.Principal, resource, request.Resource) {
+			return true
+		}
+	}
+	return false
 }
 
 func defaultAuthority(principal model.Principal, action model.Action, resource model.ResourceSelector) bool {
@@ -562,8 +594,8 @@ func insertOperationAuthority(ctx context.Context, tx *sql.Tx, operationID model
 func operationAuthority(ctx context.Context, tx *sql.Tx, operationID model.OperationID) (model.AuthorityRequest, bool, error) {
 	var request model.AuthorityRequest
 	var subjectKind, subjectID, rk, rid string
-	var configuration []byte
-	err := tx.QueryRowContext(ctx, `SELECT o.principal_kind,o.principal_agent_id,o.principal_execution_id,o.principal_generation,o.principal_automation_run,o.authority_subject_kind,o.authority_subject_id,a.action,a.resource_kind,a.resource_id,a.requested_configuration_json FROM operations o JOIN operation_authority a ON a.operation_id=o.id WHERE o.id=?`, operationID).Scan(&request.Principal.Kind, &request.Principal.AgentID, &request.Principal.ExecutionID, &request.Principal.Generation, &request.Principal.AutomationRun, &subjectKind, &subjectID, &request.Action, &rk, &rid, &configuration)
+	var configuration, delegation []byte
+	err := tx.QueryRowContext(ctx, `SELECT o.principal_kind,o.principal_agent_id,o.principal_execution_id,o.principal_generation,o.principal_automation_run,o.automation_delegation_json,o.authority_subject_kind,o.authority_subject_id,a.action,a.resource_kind,a.resource_id,a.requested_configuration_json FROM operations o JOIN operation_authority a ON a.operation_id=o.id WHERE o.id=?`, operationID).Scan(&request.Principal.Kind, &request.Principal.AgentID, &request.Principal.ExecutionID, &request.Principal.Generation, &request.Principal.AutomationRun, &delegation, &subjectKind, &subjectID, &request.Action, &rk, &rid, &configuration)
 	if errors.Is(err, sql.ErrNoRows) {
 		return request, false, nil
 	}
@@ -571,6 +603,12 @@ func operationAuthority(ctx context.Context, tx *sql.Tx, operationID model.Opera
 		return request, false, err
 	}
 	request.Principal.Authority = makeSubject(subjectKind, subjectID)
+	if len(delegation) != 0 {
+		request.Principal.Delegation = new(model.AutomationDelegation)
+		if err := json.Unmarshal(delegation, request.Principal.Delegation); err != nil {
+			return request, false, err
+		}
+	}
 	request.Resource = makeResource(rk, rid)
 	if len(configuration) != 0 {
 		request.RequestedConfiguration = new(model.DesiredConfiguration)
@@ -650,14 +688,21 @@ func subjectParts(subject model.AuthoritySubject) (string, string) {
 	if subject.Kind == model.AuthorityAgent {
 		return string(subject.Kind), string(subject.AgentID)
 	}
+	if subject.Kind == model.AuthorityOperator {
+		return string(subject.Kind), ""
+	}
 	return string(subject.Kind), string(subject.ExecutionID)
 }
 
 func makeSubject(kind, id string) model.AuthoritySubject {
-	if model.AuthoritySubjectKind(kind) == model.AuthorityAgent {
+	switch model.AuthoritySubjectKind(kind) {
+	case model.AuthorityOperator:
+		return model.AuthoritySubject{Kind: model.AuthorityOperator}
+	case model.AuthorityAgent:
 		return model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: model.AgentID(id)}
+	default:
+		return model.AuthoritySubject{Kind: model.AuthorityExecution, ExecutionID: model.ExecutionID(id)}
 	}
-	return model.AuthoritySubject{Kind: model.AuthorityExecution, ExecutionID: model.ExecutionID(id)}
 }
 
 func resourceParts(resource model.ResourceSelector) (string, string) {
