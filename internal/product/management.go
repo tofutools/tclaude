@@ -18,6 +18,11 @@ func registerManagement(root *cobra.Command, call apiCall) {
 	agent := boa.CmdT[struct{}]{Use: "agent", Short: "Create and configure durable agents"}.ToCobra()
 	agent.AddCommand(managementFileCommand("create", "Create an agent with explicit desired configuration", "POST", "/v2/agents", false, call))
 	agent.AddCommand(managementFileCommand("update ID", "Update desired configuration at the expected revision", "PUT", "/v2/agents/", true, call))
+	for _, action := range []string{"retire", "reactivate"} {
+		command := managementFileCommand(action+" ID", "Change the durable lifecycle at the expected revision", "POST", "/v2/agents/", true, call)
+		command.Annotations = map[string]string{"path-suffix": "/" + action}
+		agent.AddCommand(command)
+	}
 	group := boa.CmdT[struct{}]{Use: "group", Short: "Organize agents and visible ownership"}.ToCobra()
 	group.AddCommand(managementFileCommand("create", "Create a group with explicit members", "POST", "/v2/groups", false, call))
 	owner := managementFileCommand("owner ID", "Assign the visible bounded owner role", "PUT", "/v2/groups/", true, call)

@@ -33,6 +33,7 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	h.mux.HandleFunc("GET /v2/attach", h.attach)
 	h.mux.HandleFunc("POST /v2/observe", h.observe)
 	h.registerCommands()
+	h.registerCollaboration()
 	if catalog, ok := application.(app.ConfigurationCatalogAPI); ok {
 		h.registerConfigurationCatalog(catalog)
 	}
@@ -54,7 +55,11 @@ func (h *Handler) caller(w http.ResponseWriter, r *http.Request) (model.Principa
 }
 
 func decodeRequest(w http.ResponseWriter, r *http.Request, target any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
+	return decodeBoundedRequest(w, r, target, maxRequestBytes)
+}
+
+func decodeBoundedRequest(w http.ResponseWriter, r *http.Request, target any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(target); err != nil {
@@ -105,7 +110,13 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
+		TaskReference      string                             `json:"task_reference"`
+		ParentAgentID      model.AgentID                      `json:"parent_agent_id"`
+		CloneSourceAgentID model.AgentID                      `json:"clone_source_agent_id"`
+		Notifications      model.AgentNotificationPreferences `json:"notifications"`
+
 		ConfigurationProfile *model.ConfigurationProfileRef `json:"configuration_profile"`
+		ConfigurationDefault string                         `json:"configuration_default"`
 		ID                   model.AgentID                  `json:"id"`
 		Name                 string                         `json:"name"`
 		Desired              model.DesiredConfiguration     `json:"desired"`
@@ -113,12 +124,12 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 	if !decodeRequest(w, r, &req) {
 		return
 	}
-	result, err := h.application.CreateAgent(r.Context(), app.CreateAgentRequest{Context: p, ID: req.ID, Name: req.Name, Desired: req.Desired, ConfigurationProfile: req.ConfigurationProfile})
+	result, err := h.application.CreateAgent(r.Context(), app.CreateAgentRequest{Context: p, ID: req.ID, Name: req.Name, Desired: req.Desired, ConfigurationProfile: req.ConfigurationProfile, ConfigurationDefault: req.ConfigurationDefault, TaskReference: req.TaskReference, ParentAgentID: req.ParentAgentID, CloneSourceAgentID: req.CloneSourceAgentID, Notifications: req.Notifications})
 	if err != nil {
 		applicationError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, result.Agent)
+	writeJSON(w, http.StatusCreated, projectAgent(result.Agent))
 }
 
 func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
@@ -192,13 +203,13 @@ func (h *Handler) snapshot(w http.ResponseWriter, r *http.Request) {
 		Conversations []model.Conversation            `json:"conversations"`
 		Associations  []model.ConversationAssociation `json:"associations"`
 		Revision      model.Revision                  `json:"revision"`
-		Agents        []model.Agent                   `json:"agents"`
+		Agents        []agentView                     `json:"agents"`
 		Groups        []model.Group                   `json:"groups"`
 		Executions    []executionView                 `json:"executions"`
 		Operations    []operationView                 `json:"operations"`
-		Messages      []model.Message                 `json:"messages"`
+		Messages      []messageView                   `json:"messages"`
 		Workspaces    []app.WorkspaceView             `json:"workspaces"`
 		WorkspaceUses []model.WorkspaceUse            `json:"workspace_uses"`
 		WorkRuns      []workResultView                `json:"work_runs"`
-	}{s.Conversations, s.Associations, s.Revision, s.Agents, s.Groups, views, operations, s.Messages, s.Workspaces, s.WorkspaceUses, workRuns})
+	}{s.Conversations, s.Associations, s.Revision, projectAgents(s.Agents), s.Groups, views, operations, projectMessages(s.Messages), s.Workspaces, s.WorkspaceUses, workRuns})
 }

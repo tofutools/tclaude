@@ -21,5 +21,9 @@ func registerConfigurationCatalog(root *cobra.Command, call apiCall) {
 		return call(cmd, "GET", "/v2/configuration-profiles/"+url.PathEscape(args[0])+"?revision_id="+url.QueryEscape(revision), nil)
 	}
 	catalog.AddCommand(list, get)
-	root.AddCommand(catalog)
+	defaults := boa.CmdT[struct{}]{Use: "configuration-defaults", Short: "Read or replace pinned global and harness defaults"}.ToCobra()
+	defaults.Args = cobra.NoArgs
+	defaults.RunE = func(cmd *cobra.Command, _ []string) error { return call(cmd, "GET", "/v2/configuration-defaults", nil) }
+	defaults.AddCommand(managementFileCommand("save", "Replace defaults using an expected revision", "POST", "/v2/configuration-defaults", false, call))
+	root.AddCommand(catalog, defaults)
 }

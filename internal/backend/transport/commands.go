@@ -135,7 +135,11 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
+		TaskReference string                             `json:"task_reference"`
+		Notifications model.AgentNotificationPreferences `json:"notifications"`
+
 		ConfigurationProfile *model.ConfigurationProfileRef `json:"configuration_profile"`
+		ConfigurationDefault string                         `json:"configuration_default"`
 		ExpectedRevision     model.Revision                 `json:"expected_revision"`
 		Name                 string                         `json:"name"`
 		Desired              model.DesiredConfiguration     `json:"desired"`
@@ -144,12 +148,12 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.application.UpdateAgent(r.Context(), app.UpdateAgentRequest{Context: p, ID: model.AgentID(r.PathValue("id")),
-		ExpectedRevision: body.ExpectedRevision, Name: body.Name, Desired: body.Desired, ConfigurationProfile: body.ConfigurationProfile})
+		ExpectedRevision: body.ExpectedRevision, Name: body.Name, Desired: body.Desired, ConfigurationProfile: body.ConfigurationProfile, ConfigurationDefault: body.ConfigurationDefault, TaskReference: body.TaskReference, Notifications: body.Notifications})
 	if err != nil {
 		applicationError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, result.Agent)
+	writeJSON(w, http.StatusOK, projectAgent(result.Agent))
 }
 
 func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
@@ -159,18 +163,23 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		commandIdentity
-		Recipients []model.AgentID `json:"recipients"`
-		Body       string          `json:"body"`
+		Subject         string                `json:"subject"`
+		ParentMessageID model.MessageID       `json:"parent_message_id"`
+		To              model.MessageAudience `json:"to"`
+		CC              model.MessageAudience `json:"cc"`
+		Attachments     []app.AttachmentInput `json:"attachments"`
+		Recipients      []model.AgentID       `json:"recipients"`
+		Body            string                `json:"body"`
 	}
-	if !decodeRequest(w, r, &body) {
+	if !decodeBoundedRequest(w, r, &body, 16<<20) {
 		return
 	}
-	result, err := h.application.SendMessage(r.Context(), app.SendMessageRequest{RequestContext: body.context(p), RecipientAgentIDs: body.Recipients, Body: body.Body})
+	result, err := h.application.SendMessage(r.Context(), app.SendMessageRequest{RequestContext: body.context(p), RecipientAgentIDs: body.Recipients, Body: body.Body, Subject: body.Subject, ParentMessageID: body.ParentMessageID, To: body.To, CC: body.CC, Attachments: body.Attachments})
 	if err != nil {
 		applicationError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusAccepted, result.Message)
+	writeJSON(w, http.StatusAccepted, projectMessage(result.Message))
 }
 
 func (h *Handler) markMessageRead(w http.ResponseWriter, r *http.Request) {
@@ -179,6 +188,7 @@ func (h *Handler) markMessageRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
+		Operator bool `json:"operator"`
 		commandIdentity
 		AgentID model.AgentID `json:"agent_id"`
 	}
@@ -186,12 +196,12 @@ func (h *Handler) markMessageRead(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.application.MarkMessageRead(r.Context(), app.MarkMessageReadRequest{RequestContext: body.context(p),
-		MessageID: model.MessageID(r.PathValue("id")), AgentID: body.AgentID})
+		MessageID: model.MessageID(r.PathValue("id")), AgentID: body.AgentID, Operator: body.Operator})
 	if err != nil {
 		applicationError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, result.Message)
+	writeJSON(w, http.StatusOK, projectMessage(result.Message))
 }
 
 func (h *Handler) recover(w http.ResponseWriter, r *http.Request) {
