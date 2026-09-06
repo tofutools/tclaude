@@ -2668,7 +2668,7 @@ type instantiateAgentResult struct {
 // handleTemplateInstantiate creates a fresh group from a template and
 // spawns its whole agent team. Gated on templates.instantiate.
 //
-// Body: { group_name, task, cwd?, descr?, descr_override?, parent? }. group_name
+// Body: { group_name, task, cwd?, descr?, descr_override?, parent?, attachment_url?, attachment_label? }. group_name
 // doubles as the agent-name prefix — agent "PO" in the template becomes
 // "<group_name>-PO". task is the multi-line assignment, folded into the
 // group's default_context so every member's startup briefing carries
@@ -2729,6 +2729,8 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		// (non-nil ""). Existing callers (the instantiate/deploy modals) omit
 		// it and keep the template's context verbatim.
 		ContextOverride *string `json:"context_override,omitempty"`
+		AttachmentURL   string  `json:"attachment_url,omitempty"`
+		AttachmentLabel string  `json:"attachment_label,omitempty"`
 		// AgentProfiles — the deploy form's per-member launch-profile resolution;
 		// see handleTemplateDeploy's body for the full contract. Applied in
 		// runInstantiation (applyAgentProfileOverrides) only to members with no
@@ -2760,6 +2762,11 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	repositoryPlan, err := prepareGroupRepositoryClone(body.RepositoryClone)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_repository", err.Error())
+		return
+	}
+	attachmentURL, attachmentLabel, err := normalizeGroupAttachment(body.AttachmentURL, body.AttachmentLabel)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_attachment", err.Error())
 		return
 	}
 	// An existing-directory cwd uses resolveSpawnCwd so a typo cannot turn into
@@ -2849,6 +2856,8 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		agentProfiles:     body.AgentProfiles,
 		repositoryClone:   repositoryPlan,
 		attachRepository:  body.RepositoryClone != nil && body.RepositoryClone.Attach,
+		attachmentURL:     attachmentURL,
+		attachmentLabel:   attachmentLabel,
 	})
 }
 
@@ -2998,6 +3007,8 @@ type instantiateSpec struct {
 	agentProfiles    map[string]string
 	repositoryClone  *preparedGroupRepositoryClone
 	attachRepository bool
+	attachmentURL    string
+	attachmentLabel  string
 }
 
 // applyAgentProfileOverrides returns the roster with the deploy form's per-member
@@ -3207,7 +3218,8 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		g = spec.intoExisting
 		gid = g.ID
 	} else {
-		gid, err = db.CreateAgentGroupWithParent(spec.groupName, spec.descr, spec.parentGroup)
+		gid, err = db.CreateAgentGroupWithParentAndAttachment(
+			spec.groupName, spec.descr, spec.parentGroup, spec.attachmentURL, spec.attachmentLabel)
 		if err != nil {
 			if errors.Is(err, db.ErrGroupParentNotFound) {
 				writeError(w, http.StatusNotFound, "not_found", "no parent group named "+spec.parentGroup)
@@ -3531,6 +3543,8 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		// group's settings instead of the template defaults.
 		DescrOverride   *string `json:"descr_override,omitempty"`
 		ContextOverride *string `json:"context_override,omitempty"`
+		AttachmentURL   string  `json:"attachment_url,omitempty"`
+		AttachmentLabel string  `json:"attachment_label,omitempty"`
 		// AgentProfiles carries the dashboard deploy form's per-member launch-profile
 		// selection (JOH-…): keyed by template-agent name, each value the spawn
 		// profile the deploy dialog resolved for a member that carried NO profile of
@@ -3580,6 +3594,11 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 	}
 	parentGroup, ok := validateInstantiationParent(w, groupName, body.Parent)
 	if !ok {
+		return
+	}
+	attachmentURL, attachmentLabel, err := normalizeGroupAttachment(body.AttachmentURL, body.AttachmentLabel)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_attachment", err.Error())
 		return
 	}
 
@@ -3641,6 +3660,8 @@ func handleTemplateDeploy(w http.ResponseWriter, r *http.Request) {
 		parentGroup:       parentGroup,
 		contextOverride:   body.ContextOverride,
 		agentProfiles:     body.AgentProfiles,
+		attachmentURL:     attachmentURL,
+		attachmentLabel:   attachmentLabel,
 		// Only frame as a deployed force when there IS a mission; a mission-less
 		// cast records source_template but no mission and no "deployed" response.
 		deployed: mission != "",

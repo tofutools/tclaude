@@ -28,6 +28,8 @@ function sourcePrefill(template, source) {
       context: text(template?.default_context),
       cwd: '',
       cwdOrigin: '',
+      attachmentURL: '',
+      attachmentLabel: '',
     };
   }
   return {
@@ -38,6 +40,8 @@ function sourcePrefill(template, source) {
     ),
     cwd: text(source.default_cwd),
     cwdOrigin: 'source',
+    attachmentURL: text(source.attachment_url),
+    attachmentLabel: text(source.attachment_label_override),
   };
 }
 
@@ -50,6 +54,8 @@ function parentPrefill(template, parent) {
     ),
     cwd: text(parent?.default_cwd),
     cwdOrigin: parent ? 'parent' : '',
+    attachmentURL: text(parent?.attachment_url),
+    attachmentLabel: text(parent?.attachment_label_override),
   };
 }
 
@@ -76,6 +82,8 @@ export function createGroupCreateDraft({
     cloneDestination: '',
     attachRepository: true,
     context: prefill.context,
+    attachmentURL: prefill.attachmentURL,
+    attachmentLabel: prefill.attachmentLabel,
     task: '',
     maxMembers: '',
   };
@@ -95,6 +103,7 @@ export function selectGroupCreateTemplate(draft, templateName, {
       descr: '', context: '',
       cwd: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwd,
       cwdOrigin: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwdOrigin,
+      attachmentURL: '', attachmentLabel: '',
     };
     return {
       ...draft,
@@ -114,6 +123,7 @@ export function selectGroupCreateTemplate(draft, templateName, {
           context: text(template.default_context),
           cwd: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwd,
           cwdOrigin: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwdOrigin,
+          attachmentURL: '', attachmentLabel: '',
         };
   return {
     ...draft,
@@ -137,6 +147,7 @@ export function selectGroupCreateSource(draft, sourceName, {
         context: text(template.default_context),
         cwd: draft.cwdOrigin === 'source' ? '' : draft.cwd,
         cwdOrigin: draft.cwdOrigin === 'source' ? '' : draft.cwdOrigin,
+        attachmentURL: '', attachmentLabel: '',
       };
   return {
     ...draft,
@@ -158,6 +169,7 @@ export function groupCreateDraftIsDirty(draft, baseline) {
     'template', 'name', 'source', 'nested', 'descr', 'cwd',
     'workspaceMode', 'repository', 'cloneTransport', 'cloneDestination',
     'attachRepository',
+    'attachmentURL', 'attachmentLabel',
     'context', 'task', 'maxMembers',
   ];
   return keys.some((key) => draft[key] !== baseline[key]);
@@ -198,6 +210,10 @@ export function groupCreateRequest(draft, template, parentGroup = '') {
         descr: text(draft.descr).trim(),
         default_cwd: cwd,
         default_context: text(draft.context).trim(),
+        ...(text(draft.attachmentURL).trim() ? {
+          attachment_url: text(draft.attachmentURL).trim(),
+          attachment_label: text(draft.attachmentLabel).trim(),
+        } : {}),
         max_members: Number.parseInt(text(draft.maxMembers).trim(), 10) || 0,
         ...(repositoryClone ? { repository_clone: repositoryClone } : {}),
       },
@@ -210,6 +226,10 @@ export function groupCreateRequest(draft, template, parentGroup = '') {
     descr_override: text(draft.descr).trim(),
     context_override: text(draft.context),
   };
+  if (text(draft.attachmentURL).trim()) {
+    body.attachment_url = text(draft.attachmentURL).trim();
+    body.attachment_label = text(draft.attachmentLabel).trim();
+  }
   if (repositoryClone) body.repository_clone = repositoryClone;
   if (parentGroup) body.parent = parentGroup;
   else if (draft.source && draft.nested) body.parent = draft.source;
