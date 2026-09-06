@@ -1823,7 +1823,29 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 	if harnessName == harness.CodexName {
 		fastModeAtLaunch = codexFastModeAtLaunch(launchConfig.FastMode, launchConfig.CodexStateRoot)
 	}
-	if err := SpawnDetachedTclaudeResume(clcommon.SpawnArgs{
+	operationKind := "manual_resume"
+	if recoveryClaim != nil {
+		operationKind = "recovery_resume"
+	}
+	admission, admissionErr := admitManagedResume(convID, operationKind, recoveryClaim)
+	if admissionErr != nil {
+		res.Action = "error"
+		res.Detail = "admit resume operation: " + admissionErr.Error()
+		return res
+	}
+	var claimReadEnd *os.File
+	if admission != nil {
+		claimReadEnd, admissionErr = admission.claimPipe()
+		if admissionErr != nil {
+			_ = db.TransitionResumeOperation(admission.operation.ID, admission.operation.Revision,
+				platformexec.ResumeFailed, "claim_pipe_failed", admissionErr.Error())
+			res.Action = "error"
+			res.Detail = "prepare resume child claim: " + admissionErr.Error()
+			return res
+		}
+		defer claimReadEnd.Close()
+	}
+	spawnArgs := clcommon.SpawnArgs{
 		EffectiveSandbox:       effectiveSandbox,
 		AgentID:                persistedAgentID,
 		ConvID:                 convID,
@@ -1848,7 +1870,17 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 		CodexAppServer:         launchConfig.CodexAppServer,
 		CodexStateRoot:         launchConfig.CodexStateRoot,
 		FastMode:               launchConfig.FastMode,
-	}); err != nil {
+	}
+	if admission != nil {
+		spawnArgs.ExecutionID = admission.operation.Attempt.ExecutionID.String()
+		spawnArgs.ResumeOperationID = admission.operation.ID.String()
+		spawnArgs.ResumeClaimFD = int(claimReadEnd.Fd())
+	}
+	if err := SpawnDetachedTclaudeResume(spawnArgs); err != nil {
+		if admission != nil {
+			_ = db.TransitionResumeOperation(admission.operation.ID, admission.operation.Revision,
+				platformexec.ResumeFailed, "spawn_failed", err.Error())
+		}
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
 		if !launchConfig.TemporaryHarnessBuiltinMode && resumePolicy != nil && resumePolicy.Previous != nil && effectiveSandbox != nil {
@@ -1865,7 +1897,15 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 				res.Detail += "; restore previous sandbox snapshot: " + restoreErr.Error()
 			}
 		}
-	} else if launchConfig.CodexAppServer && !awaitCodexAppServerReady(convID) {
+	} else {
+		if admission != nil {
+			if err := db.TransitionResumeOperation(admission.operation.ID, admission.operation.Revision,
+				platformexec.ResumeStarted, "started", ""); err != nil {
+				slog.Warn("resume: persist started operation evidence failed", "operation", admission.operation.ID, "error", err)
+			}
+		}
+	}
+	if launchConfig.CodexAppServer && !awaitCodexAppServerReady(convID) {
 		failedTmux := ""
 		if failedSession := pickAliveSession(convID); failedSession != nil {
 			failedTmux = failedSession.TmuxSession
@@ -9372,7 +9412,9 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 		args = append(args, "--resume-operation-id", a.ResumeOperationID)
 	}
 	if a.ResumeClaimFD != 0 {
-		args = append(args, "--resume-claim-fd", strconv.Itoa(a.ResumeClaimFD))
+		// exec.Cmd.ExtraFiles maps the inherited descriptor to fd 3 in the
+		// child regardless of the parent's descriptor number.
+		args = append(args, "--resume-claim-fd", "3")
 	}
 	if a.Cwd != "" {
 		args = append(args, "-C", a.Cwd)
@@ -9980,6 +10022,13 @@ func liveSpawnResume(a clcommon.SpawnArgs) error {
 	cmd := exec.Command("tclaude", args...)
 	cmd.Stdin = nil
 	cmd.Stdout = nil
+	if a.ResumeClaimFD > 0 {
+		claim := os.NewFile(uintptr(a.ResumeClaimFD), "tclaude-resume-claim")
+		if claim == nil {
+			return fmt.Errorf("resume claim descriptor is invalid")
+		}
+		cmd.ExtraFiles = []*os.File{claim}
+	}
 	stderr := newSpawnStderrCapture()
 	cmd.Stderr = stderr
 	// Spawned agents must not inherit the human's operator token.

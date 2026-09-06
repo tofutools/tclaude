@@ -1,7 +1,9 @@
 package db
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,6 +11,14 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/platform/execution"
 )
+
+// ResumeClaimHash returns the persisted digest of a private one-shot child
+// credential. The credential itself must travel through an inherited FD and
+// never be persisted or represented by public operation IDs.
+func ResumeClaimHash(secret []byte) string {
+	digest := sha256.Sum256(secret)
+	return hex.EncodeToString(digest[:])
+}
 
 // ResumeOperationRow is the durable host-side representation of one managed
 // Resume. ClaimHash is only a hash of the private one-shot child credential;
@@ -35,6 +45,21 @@ type ResumeOperationRow struct {
 	AcceptedAt         time.Time
 	StartedAt          time.Time
 	ReadyAt            time.Time
+}
+
+// ResumeOperationsSchemaAvailable lets binaries that predate migration 228
+// retain compatibility while the feature branch is being integrated. Once
+// v228 is registered this is always true in production.
+func ResumeOperationsSchemaAvailable() (bool, error) {
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	var count int
+	if err := d.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='execution_operations'`).Scan(&count); err != nil {
+		return false, err
+	}
+	return count == 1, nil
 }
 
 func CreateResumeOperation(row ResumeOperationRow) error {
@@ -70,6 +95,37 @@ func CreateResumeOperation(row ResumeOperationRow) error {
 		row.RecoveryAgentID, row.RecoveryGeneration, row.DispatchDetail, row.FailureDetail,
 		dbTime(row.RequestedAt))
 	return err
+}
+
+// ClaimResumeOperation consumes the private child credential and binds the
+// operation to one observed wrapper process and session identity. Public IDs
+// alone cannot claim an accepted operation, and a consumed claim cannot be
+// reused by a stale wrapper.
+func ClaimResumeOperation(id execution.OperationID, intended execution.ID, secret []byte, sessionID string, pid int, processStart string) (bool, error) {
+	if err := execution.ValidateOperationID(id); err != nil {
+		return false, err
+	}
+	if _, err := execution.ParseID(intended.String()); err != nil {
+		return false, err
+	}
+	if len(secret) == 0 || strings.TrimSpace(sessionID) == "" || pid <= 0 || strings.TrimSpace(processStart) == "" {
+		return false, errors.New("resume child claim requires secret, session, pid, and process start")
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.Exec(`UPDATE execution_operations SET
+		intended_session_id = ?, claim_hash = '', claim_pid = ?,
+		claim_process_start = ?, launch_phase = 'child_claimed', revision = revision + 1
+		WHERE id = ? AND intended_execution_id = ? AND claim_hash = ?
+		AND state = 'accepted' AND launch_phase = 'accepted'`,
+		sessionID, pid, processStart, id.String(), intended.String(), ResumeClaimHash(secret))
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n == 1, err
 }
 
 func GetResumeOperation(id execution.OperationID) (*ResumeOperationRow, error) {
