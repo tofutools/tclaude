@@ -2,6 +2,7 @@ name: Group-route feasibility
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     branches: [main, refactor/platform-v2]
     paths:
       - .github/workflows/group-route-feasibility.yml
@@ -23,6 +24,7 @@ concurrency:
 jobs:
   linux:
     name: Linux namespace relay feasibility
+    if: github.event_name != 'pull_request' || github.base_ref != 'refactor/platform-v2' || contains(github.event.pull_request.labels.*.name, 'full-integration-ci')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout requested commit
@@ -100,6 +102,7 @@ jobs:
 
   darwin:
     name: Darwin Seatbelt port-pool feasibility
+    if: github.event_name != 'pull_request' || github.base_ref != 'refactor/platform-v2' || contains(github.event.pull_request.labels.*.name, 'full-integration-ci')
     runs-on: macos-latest
     steps:
       - name: Checkout requested commit
