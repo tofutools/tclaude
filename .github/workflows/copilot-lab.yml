@@ -32,6 +32,7 @@ name: Copilot lab
 on:
   workflow_dispatch:
   pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
     # Same set as ci.yml's, so a PR cannot get the lab without the smoke.
     branches: [main, main-codex, implement-stable-agent-identity, dnd-palette, refactor/platform-v2]
     paths:
@@ -70,6 +71,7 @@ jobs:
   #     argument for the arm existing.
   lab:
     name: Copilot CLI lab (${{ matrix.platform }})
+    if: github.event_name != 'pull_request' || github.base_ref != 'refactor/platform-v2' || contains(github.event.pull_request.labels.*.name, 'full-integration-ci')
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
