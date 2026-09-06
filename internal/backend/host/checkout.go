@@ -23,6 +23,7 @@ var (
 	ErrCheckoutInUse            = errors.New("checkout is in use")
 	ErrCheckoutShared           = errors.New("checkout is shared")
 	ErrCheckoutMain             = errors.New("main checkout cannot be removed")
+	ErrCheckoutBaseConflict     = errors.New("existing checkout branch does not match selected base")
 )
 
 type CheckoutOwnership string
@@ -160,9 +161,19 @@ func (h CheckoutHost) Create(ctx context.Context, intent CheckoutIntent) (Checko
 	branchExists := h.refExists(ctx, repository, "refs/heads/"+branch)
 	args := []string{"-c", "core.hooksPath=/dev/null", "worktree", "add"}
 	if branchExists {
+		branchCommit, resolveErr := h.gitOutput(ctx, repository, "rev-parse", "--verify", "refs/heads/"+branch+"^{commit}")
+		if resolveErr != nil {
+			return CheckoutCreateResult{}, resolveErr
+		}
+		if strings.TrimSpace(branchCommit) != provisional.InitialCommit {
+			return CheckoutCreateResult{}, fmt.Errorf("%w: branch %q is at %s, selected base is %s",
+				ErrCheckoutBaseConflict, branch, strings.TrimSpace(branchCommit), provisional.InitialCommit)
+		}
 		args = append(args, target, branch)
 	} else {
-		args = append(args, "-b", branch, target, base)
+		// Pin the resolved commit rather than passing mutable base spelling
+		// across the effect boundary.
+		args = append(args, "-b", branch, target, provisional.InitialCommit)
 	}
 	if _, err := h.gitOutput(ctx, repository, args...); err != nil {
 		// Git may have created the branch or checkout before returning an
