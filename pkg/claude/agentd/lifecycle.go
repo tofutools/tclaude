@@ -7171,6 +7171,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	var convID string
 	paneObserved := false
 	openCodeBoundaryProjected := openCodeLaunch == nil
+	openCodeBoundaryContinuationStarted := false
 	var lastDiscoveryScan time.Time
 	remoteArmed := false
 	pendingLaunchMarked := false
@@ -7254,6 +7255,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 						"label", label, "error", projectionErr)
 				}
 				openCodeBoundaryProjected = projected
+				if !projected && !openCodeBoundaryContinuationStarted {
+					continueOpenCodeExecutionBoundaryProjection(openCodeLaunch, s)
+					openCodeBoundaryContinuationStarted = true
+				}
 			}
 			// Arm best-known remote-control on the row the moment it
 			// materialises (JOH-258). The --remote-control launch flag already
