@@ -39,6 +39,40 @@ function TemplatePreview({ template, name }) {
     dangerouslySetInnerHTML=${{ __html: markup }} />`;
 }
 
+function GroupSourceSummary({ source, cloneMode, withAgents, copyOwners }) {
+  if (!source) return null;
+  const members = (source.members || []).filter(
+    (member) => member && !(member.role === 'owner' && !member.descr),
+  );
+  const owners = (source.members || []).filter((member) => member?.owner);
+  const row = (key, value, muted = false) => html`<div class="gcp-row">
+    <span class="gcp-key">${key}</span>
+    <span class=${`gcp-val${muted ? ' muted' : ''}`}>${value}</span>
+  </div>`;
+  return html`<div class="group-clone-preview group-create-source-summary"
+    id="group-create-source-summary">
+    <div class="gcp-title">${cloneMode ? 'Settings carried to the new group' : `Prefilled from ${source.name}`}</div>
+    ${row('📁 directory', source.default_cwd || 'none', !source.default_cwd)}
+    ${row('📝 description', source.descr || 'none', !source.descr)}
+    ${row('📋 startup context', source.default_context
+      ? `${source.default_context.length} chars` : 'none', !source.default_context)}
+    ${row('📎 attachment / link',
+      source.attachment_label || source.attachment_label_override || source.attachment_url || 'none',
+      !source.attachment_url)}
+    ${cloneMode ? html`${row('🧠 profile', source.default_profile || 'none', !source.default_profile)}
+      ${row('🔑 group permissions', source.permissions?.length
+        ? String(source.permissions.length) : 'none', !source.permissions?.length)}
+      ${row('👥 max members', source.max_members ? String(source.max_members) : 'unlimited', !source.max_members)}
+      ${row('🔔 notifications', source.notify_enabled ? 'on' : 'off')}
+      ${row('👤 owners', owners.length
+        ? `${owners.length} — ${copyOwners ? 'copied' : 'skipped'}` : 'none',
+      !owners.length || !copyOwners)}
+      ${row('🤖 member agents', members.length
+        ? `${members.length} (${members.filter((member) => member.online).length} online) — ${withAgents ? 'cloned with history' : 'skipped'}` : 'none',
+      !members.length || !withAgents)}` : null}
+  </div>`;
+}
+
 function GroupCreateDialog({
   current, state, actions, confirmDiscard, words,
 }) {
@@ -48,6 +82,9 @@ function GroupCreateDialog({
     groups: current.groups,
     presetTemplate: current.presetTemplate,
     parentGroup: current.parentGroup,
+    cloneGroup: current.cloneGroup,
+    defaultName: current.defaultName,
+    placement: current.placement,
     cloneTransport: actions.cloneTransport(),
   }), [current]);
   const [draft, setDraft] = useState(baseline);
@@ -61,6 +98,15 @@ function GroupCreateDialog({
   const directoryReturn = useRef(0);
   const template = findGroupCreateTemplate(templates, draft.template);
   const templateMode = !!template;
+  const cloneMode = !!draft.cloneGroup;
+  const sourceGroupName = cloneMode ? draft.cloneGroup
+    : (current.parentGroup || draft.source);
+  const sourceGroup = current.groups.find((group) => group?.name === sourceGroupName) || null;
+  const originLabel = cloneMode
+    ? `Group · ${sourceGroupName}`
+    : templateMode
+      ? `Template · ${template.name}${sourceGroup ? ` + Group · ${sourceGroupName}` : ''}`
+      : sourceGroup ? `Group · ${sourceGroupName}` : 'Blank group';
   const dirty = groupCreateDraftIsDirty(draft, baseline);
 
   useEffect(() => () => {
@@ -193,10 +239,14 @@ function GroupCreateDialog({
     }
   };
 
-  const regularTitle = current.parentGroup
+  const regularTitle = cloneMode
+    ? 'Clone group'
+    : current.parentGroup
     ? `Create a subgroup under ${current.parentGroup}`
     : 'Create a new agent group';
-  const wizardTitle = current.parentGroup
+  const wizardTitle = cloneMode
+    ? '⧉ Mirror the party'
+    : current.parentGroup
     ? `⚔ Form a sub-party under ${current.parentGroup}`
     : '⚔ Form a party';
   const sourceVisible = templateMode && !current.parentGroup;
@@ -205,6 +255,7 @@ function GroupCreateDialog({
 
   return html`<${Overlay}
     id="group-create-modal"
+    overlayClass=${cloneMode ? 'group-create-clone-mode' : ''}
     labelledby="group-create-title"
     onClose=${state.close}
     onSubmitHotkey=${submit}
@@ -219,7 +270,11 @@ function GroupCreateDialog({
       plain=${regularTitle}
       wizard=${wizardTitle}
     /></h3>
-    <label class="cron-create-row">
+    <div class="cron-create-row group-create-origin-row">
+      <span class="cron-create-label">Start from</span>
+      <div class="group-create-origin-value">${originLabel}</div>
+    </div>
+    ${cloneMode ? null : html`<label class="cron-create-row">
       <span class="cron-create-label"><${Words}
         plain="Group template" wizard="Summoning circle" /></span>
       <select id="group-create-template" value=${draft.template} disabled=${disabled}
@@ -235,18 +290,38 @@ function GroupCreateDialog({
         )}
         onClick=${manageTemplates}><${Words}
           plain="⧉ manage templates…" wizard="⧉ manage circles…" /></button>
-    </label>
-    <div class="cron-create-row" id="group-create-template-preview-row" hidden=${!templateMode}>
+    </label>`}
+    <div class="cron-create-row" id="group-create-template-preview-row" hidden=${cloneMode || !templateMode}>
       <span class="cron-create-label"><${Words} plain="Roster" wizard="Party" /></span>
       <${TemplatePreview} template=${template} name=${draft.name} />
     </div>
+    <${GroupSourceSummary} source=${sourceGroup} cloneMode=${cloneMode}
+      withAgents=${draft.withAgents} copyOwners=${draft.copyOwners} />
     <label class="cron-create-row">
-      <span class="cron-create-label">Name</span>
+      <span class="cron-create-label">${cloneMode ? 'New name' : 'Name'}</span>
       <input ref=${nameRef} id="group-create-name" type="text" value=${draft.name}
         disabled=${disabled} onInput=${(event) => setField('name', event.currentTarget.value)}
         onKeyDown=${submitOnEnter} placeholder="kebab-or-snake-case label"
+        data-select-on-focus=${cloneMode || undefined}
         autocomplete="off" spellcheck="false" />
     </label>
+    ${(cloneMode || current.parentGroup) ? html`<div class="cron-create-row group-create-placement-row">
+      <span class="cron-create-label">Place under</span>
+      <div class="group-create-origin-value">${(cloneMode
+        ? draft.clonePlacement?.parent : current.parentGroup) || 'Top level'}</div>
+    </div>` : null}
+    ${cloneMode ? html`
+      <label class="cron-create-enabled">
+        <input id="group-create-with-agents" type="checkbox" checked=${draft.withAgents}
+          disabled=${disabled} onChange=${(event) => setField('withAgents', event.currentTarget.checked)} />
+        Clone member agents too
+      </label>
+      <label class="cron-create-enabled">
+        <input id="group-create-copy-owners" type="checkbox" checked=${draft.copyOwners}
+          disabled=${disabled} onChange=${(event) => setField('copyOwners', event.currentTarget.checked)} />
+        Copy source owners too
+      </label>
+    ` : null}
     <label class="cron-create-row" id="group-create-source-row" hidden=${!sourceVisible}>
       <span class="cron-create-label">Mirror settings</span>
       <select id="group-create-source" value=${draft.source} disabled=${disabled}
@@ -261,14 +336,14 @@ function GroupCreateDialog({
         disabled=${disabled} onChange=${(event) => setField('nested', event.currentTarget.checked)} />
       <span>Deploy as subgroup under the mirrored group</span>
     </label>
-    <label class="cron-create-row group-create-descr-row">
+    ${cloneMode ? null : html`<label class="cron-create-row group-create-descr-row">
       <span class="cron-create-label">Descr</span>
       <input id="group-create-descr" type="text" value=${draft.descr} disabled=${disabled}
         onInput=${(event) => setField('descr', event.currentTarget.value)}
         onKeyDown=${submitOnEnter} placeholder="optional one-line description"
         autocomplete="off" spellcheck="false" />
-    </label>
-    <fieldset class="group-create-workspace">
+    </label>`}
+    ${cloneMode ? null : html`<fieldset class="group-create-workspace">
       <legend>Workspace</legend>
       <div class="group-create-workspace-modes" role="group" aria-label="Workspace source">
         <button type="button" class=${draft.workspaceMode === 'existing' ? 'selected' : ''}
@@ -326,16 +401,16 @@ function GroupCreateDialog({
         </label>
         <div class="group-create-clone-hint">The checkout becomes this group’s default working directory.</div>
       `}
-    </fieldset>
-    <label class="cron-create-row">
+    </fieldset>`}
+    ${cloneMode ? null : html`<label class="cron-create-row">
       <span class="cron-create-label">Startup context</span>
       <textarea id="group-create-context" class="modal-context-textarea" rows="5"
         value=${draft.context} disabled=${disabled}
         onInput=${(event) => setField('context', event.currentTarget.value)}
         placeholder="optional — shared guidance delivered to the inbox of every agent spawned into this group (multi-line OK)"
         spellcheck="false"></textarea>
-    </label>
-    <label class="cron-create-row" id="group-create-task-row" hidden=${!templateMode}>
+    </label>`}
+    <label class="cron-create-row" id="group-create-task-row" hidden=${cloneMode || !templateMode}>
       <span class="cron-create-label">Task / project</span>
       <textarea id="group-create-task" class="modal-context-textarea" rows="4"
         value=${draft.task} disabled=${disabled}
@@ -346,7 +421,7 @@ function GroupCreateDialog({
         )}
         spellcheck="false"></textarea>
     </label>
-    <label class="cron-create-row" id="group-create-max-members-row" hidden=${templateMode}>
+    <label class="cron-create-row" id="group-create-max-members-row" hidden=${cloneMode || templateMode}>
       <span class="cron-create-label">Max members</span>
       <input id="group-create-max-members" type="number" min="0" step="1"
         value=${draft.maxMembers} disabled=${disabled}
@@ -358,11 +433,14 @@ function GroupCreateDialog({
     <div class="modal-buttons">
       <button id="group-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>
       <span class="spacer"></span>
-      <button id="group-create-submit" class="primary" type="button" disabled=${busy}
+      <button class="primary" type="button" disabled=${busy}
         aria-busy=${busy ? 'true' : undefined}
+        id=${cloneMode ? 'group-create-clone-submit' : 'group-create-submit'}
         onClick=${() => { void submit(); }}>${busy
-          ? (draft.workspaceMode === 'clone' ? 'Cloning & creating…' : (templateMode ? 'Creating & spawning…' : 'Creating…'))
-          : (draft.workspaceMode === 'clone' ? (templateMode ? 'Clone, create & spawn' : 'Clone & create') : (templateMode ? 'Create & spawn' : 'Create'))}</button>
+          ? (cloneMode ? 'Cloning…' :
+            (draft.workspaceMode === 'clone' ? 'Cloning & creating…' : (templateMode ? 'Creating & spawning…' : 'Creating…')))
+          : (cloneMode ? 'Clone group' :
+            (draft.workspaceMode === 'clone' ? (templateMode ? 'Clone, create & spawn' : 'Clone & create') : (templateMode ? 'Create & spawn' : 'Create')))}</button>
     </div>
   </${Overlay}>`;
 }
@@ -383,7 +461,7 @@ export function GroupCreateApp(props) {
 export function mountGroupCreateIsland({
   host, state, actions, confirmDiscard, words, registerCleanup,
 }) {
-  const controller = Object.freeze({ open: state.open });
+  const controller = Object.freeze({ open: state.open, openClone: state.openClone });
   const unregister = registerGroupCreateController(controller);
   const toolbar = document.querySelector('#group-create-open');
   const openFromToolbar = () => openGroupCreateModal();

@@ -25,7 +25,7 @@ import { lineDiff } from './line-diff.js';
 import { useDialogFocus } from './dialog-focus.js';
 import { wizWord } from './slop.js';
 import { ManagementOverlay as Overlay, useGuardedOverlayClose } from './management-overlay.js';
-import { GroupCloneDialog, GroupContextDialog, GroupImportDialog, TemplateDeployDialog, TemplateDuplicateDialog, TemplateEditor, TemplateFromGroupDialog, TemplateImportDialog, TemplateManager, TemplateStartersDialog } from './template-management-island.js';
+import { GroupContextDialog, GroupImportDialog, TemplateDeployDialog, TemplateDuplicateDialog, TemplateEditor, TemplateFromGroupDialog, TemplateImportDialog, TemplateManager, TemplateStartersDialog } from './template-management-island.js';
 import { approvalPolicyLabel, approvalReviewerHelp, approvalReviewerOptions } from './approval-controls.js';
 import { HelpDisclosure, HelpField } from './help-field.js';
 import { SandboxImplHint } from './sandbox-impl-hint.js';
@@ -2266,8 +2266,6 @@ function DialogSlot({ state, actions, confirmDiscard, openProfilePermissions, op
       return html`<${GroupImportDialog} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'group-context':
       return html`<${GroupContextDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
-    case 'group-clone':
-      return html`<${GroupCloneDialog} descriptor=${descriptor} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
     case 'template-deploy': {
       const current = { templates: state.templates.value || [], templateGroups: state.templateGroups.value || [], profiles: state.profiles.value || [] };
       return html`<${TemplateDeployDialog} descriptor=${descriptor} current=${current} state=${state} actions=${actions} confirmDiscard=${confirmDiscard}/>`;
@@ -2301,7 +2299,7 @@ export function mountManagementIsland({ host, state, actions, confirm, confirmDi
     openTemplateDuplicate: actions.openTemplateDuplicate, openTemplateFromGroup: actions.openTemplateFromGroup,
     openTemplateImport: actions.openTemplateImport, openTemplateStarters: actions.openTemplateStarters,
     openTemplateDeploy: actions.openTemplateDeploy,
-    openGroupImport: actions.openGroupImport, openGroupContext: actions.openGroupContext, openGroupClone: actions.openGroupClone,
+    openGroupImport: actions.openGroupImport, openGroupContext: actions.openGroupContext,
   };
   const unregister = registerManagementController(controller);
   render(html`<${ManagementApp} state=${state} actions=${actions} confirm=${confirm} confirmDiscard=${confirmDiscard} openProfilePermissions=${openProfilePermissions} openProfileContextFeatures=${openProfileContextFeatures}/>` , host);

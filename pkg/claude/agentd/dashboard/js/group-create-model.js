@@ -61,6 +61,7 @@ function parentPrefill(template, parent) {
 
 export function createGroupCreateDraft({
   templates = [], groups = [], presetTemplate = '', parentGroup = '',
+  cloneGroup = '', defaultName = '', placement = null,
   cloneTransport = 'ssh',
 } = {}) {
   const template = findGroupCreateTemplate(templates, presetTemplate);
@@ -70,9 +71,14 @@ export function createGroupCreateDraft({
     : sourcePrefill(template, null);
   return {
     template: template?.name || '',
-    name: '',
+    name: cloneGroup ? text(defaultName) : '',
     source: '',
     nested: false,
+    cloneGroup: text(cloneGroup),
+    cloneDefaultName: text(defaultName),
+    clonePlacement: placement,
+    withAgents: false,
+    copyOwners: false,
     descr: prefill.descr,
     cwd: prefill.cwd,
     cwdOrigin: prefill.cwdOrigin,
@@ -167,6 +173,7 @@ export function reconcileGroupCreateTemplates(draft, options = {}) {
 export function groupCreateDraftIsDirty(draft, baseline) {
   const keys = [
     'template', 'name', 'source', 'nested', 'descr', 'cwd',
+    'withAgents', 'copyOwners',
     'workspaceMode', 'repository', 'cloneTransport', 'cloneDestination',
     'attachRepository',
     'attachmentURL', 'attachmentLabel',
@@ -177,6 +184,7 @@ export function groupCreateDraftIsDirty(draft, baseline) {
 
 export function validateGroupCreateDraft(draft, { templateMode = false } = {}) {
   if (!text(draft.name).trim()) return 'name is required';
+  if (draft.cloneGroup && !text(draft.cloneGroup).trim()) return 'source group is required';
   if (draft.workspaceMode === 'clone') {
     if (!text(draft.repository).trim()) return 'repository is required';
     if (!text(draft.cloneDestination).trim()) return 'clone destination is required';
@@ -192,6 +200,23 @@ export function validateGroupCreateDraft(draft, { templateMode = false } = {}) {
 
 export function groupCreateRequest(draft, template, parentGroup = '') {
   const name = text(draft.name).trim();
+  if (draft.cloneGroup) {
+    const body = {
+      no_clone_members: !draft.withAgents,
+      copy_owners: !!draft.copyOwners,
+    };
+    if (name !== text(draft.cloneDefaultName)) body.new_name = name;
+    if (draft.clonePlacement) body.parent = text(draft.clonePlacement.parent);
+    return {
+      kind: 'clone', name,
+      source: text(draft.cloneGroup),
+      placement: draft.clonePlacement,
+      withAgents: !!draft.withAgents,
+      copyOwners: !!draft.copyOwners,
+      url: `/api/groups/${encodeURIComponent(draft.cloneGroup)}/clone`,
+      body,
+    };
+  }
   const cloning = draft.workspaceMode === 'clone';
   const cwd = cloning ? text(draft.cloneDestination).trim() : text(draft.cwd).trim();
   const repositoryClone = cloning ? {

@@ -1833,11 +1833,12 @@ func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 	must(`content: "📜 Inscribe it!"`, "the context submit lever reads Inscribe it in wizard mode")
 
 	// Clone.
-	must("body.wizard #group-clone-modal .cron-create-modal", "the clone dialog surface is re-skinned")
-	must(`<${Words} plain="Clone group" wizard="⧉ Mirror the party"/>`, "the clone title ships both voices")
+	must("body.wizard #group-create-modal .cron-create-modal", "the shared group dialog surface is re-skinned")
+	must("? 'Clone group'", "the shared dialog ships the clone title")
+	must("? '⧉ Mirror the party'", "the shared dialog ships the wizard clone title")
 	must(`content: "⧉ Mirror it!"`, "the clone submit lever reads Mirror it in wizard mode")
 	must(`content: "⧉ Mirroring…"`, "the busy clone submit reads Mirroring in wizard mode")
-	must("body.wizard #group-clone-modal .group-clone-preview", "the clone-will-carry preview is re-skinned")
+	must("body.wizard #group-create-modal .group-clone-preview", "the shared source summary is re-skinned")
 }
 
 // TestDashboardHTML_WizardActionDialogs pins the scoped wizard chrome and

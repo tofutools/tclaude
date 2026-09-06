@@ -50,6 +50,8 @@ test('group-create model preserves compatible prefill and clears stale source-ow
   const blank = model.createGroupCreateDraft({ templates, groups });
   assert.deepEqual(blank, {
     template: '', name: '', source: '', nested: false, descr: '', cwd: '',
+    cloneGroup: '', cloneDefaultName: '', clonePlacement: null,
+    withAgents: false, copyOwners: false,
     cwdOrigin: '', workspaceMode: 'existing', repository: '', cloneTransport: 'ssh',
     cloneDestination: '', attachRepository: true, context: '', task: '', maxMembers: '',
     attachmentURL: '', attachmentLabel: '',
@@ -145,6 +147,22 @@ test('group-create model validates and builds exact blank, template, and nested 
     },
   });
   assert.equal(model.derivedCloneDestination('git@github.com:acme/payments.git'), '~/git/payments');
+
+  const groupClone = model.groupCreateRequest({
+    ...base, cloneGroup: 'alpha', cloneDefaultName: 'alpha-c-1',
+    clonePlacement: { parent: 'root', anchor: 'alpha', before: true },
+    name: 'alpha-copy', withAgents: true, copyOwners: true,
+  }, null);
+  assert.deepEqual(groupClone, {
+    kind: 'clone', name: 'alpha-copy', source: 'alpha',
+    placement: { parent: 'root', anchor: 'alpha', before: true },
+    withAgents: true, copyOwners: true,
+    url: '/api/groups/alpha/clone',
+    body: {
+      no_clone_members: false, copy_owners: true,
+      new_name: 'alpha-copy', parent: 'root',
+    },
+  });
 });
 
 test('group-create state snapshots each open and invalidates closed generations', async (t) => {
@@ -164,6 +182,13 @@ test('group-create state snapshots each open and invalidates closed generations'
   state.open();
   assert.equal(state.dialog.value.templates.length, 0, 'reopen starts from the latest snapshot');
   assert.notEqual(state.dialog.value.generation, first.generation);
+  snapshot = { templates, groups: [...groups, { name: 'alpha-c-1' }] };
+  state.openClone('alpha');
+  assert.equal(state.dialog.value.cloneGroup, 'alpha');
+  assert.equal(state.dialog.value.defaultName, 'alpha-c-2');
+  assert.deepEqual(state.dialog.value.placement, {
+    parent: '', anchor: 'alpha', before: false,
+  });
 });
 
 test('group-create actions preserve HTTP errors, partial outcome toasts, expansion, and refresh', async (t) => {
@@ -300,6 +325,45 @@ test('Preact group-create clone workspace derives destination and remembers tran
   await flush(harness);
   assert.ok(calls.some(([kind, value]) => kind === 'transport' && value === 'https'));
   assert.match(host.querySelector('#group-create-submit').textContent, /Clone & create/);
+  await mounted.cleanup();
+});
+
+test('Preact group-create owns clone mode and makes inherited attachment visible', async (t) => {
+  let submitted;
+  const mounted = await mountGroupCreate(t, {
+    submit: async (draft, template) => {
+      submitted = { draft, template };
+      return {
+        kind: 'clone', name: draft.name, source: draft.cloneGroup,
+        withAgents: draft.withAgents, copyOwners: draft.copyOwners,
+        placement: draft.clonePlacement, response: { group: draft.name, members: [] },
+      };
+    },
+  });
+  const { harness, host, state } = mounted;
+  state.openClone('alpha');
+  await flush(harness);
+  assert.match(host.querySelector('#group-create-title').textContent, /Clone group/);
+  assert.equal(host.querySelector('#group-create-name').value, 'alpha-c-1');
+  assert.equal(host.querySelector('#group-create-name').hasAttribute('data-select-on-focus'), true);
+  assert.match(host.querySelector('#group-create-source-summary').textContent, /Alpha project/);
+  assert.match(host.querySelector('#group-create-source-summary').textContent, /attachment \/ link/);
+  assert.equal(host.querySelector('#group-create-template'), null);
+  const withAgents = host.querySelector('#group-create-with-agents');
+  const copyOwners = host.querySelector('#group-create-copy-owners');
+  withAgents.checked = true;
+  copyOwners.checked = true;
+  await harness.act(() => {
+    harness.fireEvent(withAgents, 'change');
+    harness.fireEvent(copyOwners, 'change');
+  });
+  host.querySelector('#group-create-clone-submit').click();
+  await flush(harness);
+  assert.equal(submitted.template, null);
+  assert.equal(submitted.draft.cloneGroup, 'alpha');
+  assert.equal(submitted.draft.withAgents, true);
+  assert.equal(submitted.draft.copyOwners, true);
+  assertAbsent(host.querySelector('#group-create-modal'));
   await mounted.cleanup();
 });
 
