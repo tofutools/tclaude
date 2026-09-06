@@ -70,7 +70,7 @@ func testNativeProviderJourney(
 ) {
 	t.Helper()
 	ctx := context.Background()
-	root, err := os.MkdirTemp("/tmp", "tcl-provider-journey-")
+	root, err := os.MkdirTemp("/tmp", "tcl-pj-")
 	require.NoError(t, err)
 	root, err = filepath.EvalSymlinks(root)
 	require.NoError(t, err)
