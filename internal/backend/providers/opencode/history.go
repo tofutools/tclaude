@@ -65,6 +65,15 @@ type exportedHistory struct {
 	} `json:"messages"`
 }
 
+type listedSession struct {
+	ID        string `json:"id"`
+	Title     string `json:"title"`
+	Directory string `json:"directory"`
+	Time      struct {
+		Updated int64 `json:"updated"`
+	} `json:"time"`
+}
+
 func (p *Provider) History() ports.HistoryReader { return historyReader{provider: p} }
 
 func (historyReader) Capabilities() ports.HistoryCapabilities {
@@ -77,6 +86,9 @@ func (historyReader) Capabilities() ports.HistoryCapabilities {
 }
 
 func (r historyReader) Discover(ctx context.Context, request ports.HistoryDiscoveryRequest) (ports.HistoryDiscoveryResult, error) {
+	if strings.TrimSpace(request.Scope.Source) != "" {
+		return r.discoverNativeRoot(ctx, request)
+	}
 	root, err := r.configuredRoot(request.Scope.Source)
 	if err != nil {
 		return ports.HistoryDiscoveryResult{}, err
@@ -149,6 +161,67 @@ func (r historyReader) Discover(ctx context.Context, request ports.HistoryDiscov
 	return result, nil
 }
 
+// discoverNativeRoot reads an ordinary composition-selected OpenCode XDG
+// state root through the official CLI. It needs no platform manifest and does
+// not copy configuration or account state into provider-owned storage.
+func (r historyReader) discoverNativeRoot(ctx context.Context, request ports.HistoryDiscoveryRequest) (ports.HistoryDiscoveryResult, error) {
+	root, err := r.configuredRoot(request.Scope.Source)
+	if err != nil {
+		return ports.HistoryDiscoveryResult{}, err
+	}
+	cmd := exec.CommandContext(ctx, r.provider.executable, "session", "list", "--format", "json")
+	cmd.Dir = root
+	cmd.Env = host.MergeEnvironment(os.Environ(), r.provider.runtimeEnvironment(root))
+	raw, err := cmd.Output()
+	if err != nil {
+		return ports.HistoryDiscoveryResult{}, fmt.Errorf("list OpenCode history: %w", err)
+	}
+	var sessions []listedSession
+	if err := json.Unmarshal(raw, &sessions); err != nil {
+		return ports.HistoryDiscoveryResult{}, fmt.Errorf("decode OpenCode history list: %w", err)
+	}
+	refreshed := time.Now().UTC()
+	result := ports.HistoryDiscoveryResult{Coverage: model.HistoryCoverage{
+		Metadata: model.HistoryCoverageComplete, Content: model.HistoryCoverageComplete, RefreshedAt: refreshed,
+	}}
+	for _, session := range sessions {
+		if !strings.HasPrefix(session.ID, "ses_") || !filepath.IsAbs(session.Directory) {
+			result.Coverage.Metadata = model.HistoryCoveragePartial
+			continue
+		}
+		if request.Scope.WorkspaceHint != "" && filepath.Clean(request.Scope.WorkspaceHint) != filepath.Clean(session.Directory) {
+			continue
+		}
+		exported, _, revision, exportErr := r.export(ctx, root, session.ID, session.Directory)
+		if exportErr != nil {
+			result.Coverage.Content = model.HistoryCoveragePartial
+			continue
+		}
+		updated := milliseconds(exported.Info.Time.Updated)
+		if !request.Scope.ModifiedAfter.IsZero() && !updated.After(request.Scope.ModifiedAfter) {
+			continue
+		}
+		evidence, encodeErr := encodeHistoryEvidence(historyEvidence{StateRoot: root, NativeID: session.ID, SourceRevision: revision})
+		if encodeErr != nil {
+			return ports.HistoryDiscoveryResult{}, encodeErr
+		}
+		points := make([]ports.ProviderHistoryPoint, 0, len(exported.Messages)+1)
+		for _, message := range exported.Messages {
+			points = append(points, ports.ProviderHistoryPoint{Token: message.Info.ID, Kind: model.HistoryPointMessage, OccurredAt: milliseconds(message.Info.Time.Created)})
+		}
+		points = append(points, ports.ProviderHistoryPoint{Token: "head", Kind: model.HistoryPointHead, OccurredAt: updated})
+		result.Histories = append(result.Histories, ports.DiscoveredHistory{
+			Native:      model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: session.ID, ObservedAt: refreshed},
+			SourceToken: session.ID, Title: exported.Info.Title, WorkspaceHint: exported.Info.Directory,
+			ModifiedAt: updated, Availability: model.HistoryContent, Points: points, Evidence: evidence,
+			Coverage: model.HistoryCoverage{Metadata: model.HistoryCoverageComplete, Content: model.HistoryCoverageComplete,
+				SourceRevision: revision, RefreshedAt: refreshed},
+		})
+	}
+	sort.Slice(result.Histories, func(i, j int) bool { return result.Histories[i].ModifiedAt.After(result.Histories[j].ModifiedAt) })
+	return result, nil
+}
+
 func (r historyReader) Read(ctx context.Context, selection ports.HistorySourceSelection) (ports.HistoryReadResult, error) {
 	exported, raw, revision, evidence, err := r.readSelection(ctx, selection)
 	if err != nil {
@@ -193,14 +266,29 @@ func (r historyReader) readSelection(ctx context.Context, selection ports.Histor
 	if err != nil {
 		return exportedHistory{}, nil, "", historyEvidence{}, err
 	}
-	if evidence.NativeID != selection.Native.Reference || !pathWithin(r.provider.privateRoot, evidence.StateRoot) {
+	if evidence.NativeID != selection.Native.Reference {
 		return exportedHistory{}, nil, "", historyEvidence{}, fmt.Errorf("OpenCode history evidence does not match selected source")
 	}
-	manifest, err := readHistoryManifest(evidence.StateRoot)
-	if err != nil || manifest.NativeID != evidence.NativeID {
-		return exportedHistory{}, nil, "", historyEvidence{}, fmt.Errorf("OpenCode history manifest does not match selected source")
+	cwd := ""
+	if manifest, manifestErr := readHistoryManifest(evidence.StateRoot); manifestErr == nil && manifest.NativeID == evidence.NativeID {
+		cwd = manifest.CWD
+	} else {
+		// Ordinary configured roots have no platform manifest. Resolve cwd from
+		// the official export and then re-run the strict binding check below.
+		cmd := exec.CommandContext(ctx, r.provider.executable, "export", evidence.NativeID)
+		cmd.Dir = evidence.StateRoot
+		cmd.Env = host.MergeEnvironment(os.Environ(), r.provider.runtimeEnvironment(evidence.StateRoot))
+		raw, outputErr := cmd.Output()
+		if outputErr != nil {
+			return exportedHistory{}, nil, "", historyEvidence{}, fmt.Errorf("export OpenCode history: %w", outputErr)
+		}
+		var probe exportedHistory
+		if json.Unmarshal(raw, &probe) != nil || probe.Info.ID != evidence.NativeID || !filepath.IsAbs(probe.Info.Directory) {
+			return exportedHistory{}, nil, "", historyEvidence{}, fmt.Errorf("OpenCode history source is unavailable")
+		}
+		cwd = probe.Info.Directory
 	}
-	exported, raw, revision, err := r.export(ctx, evidence.StateRoot, evidence.NativeID, manifest.CWD)
+	exported, raw, revision, err := r.export(ctx, evidence.StateRoot, evidence.NativeID, cwd)
 	if err != nil {
 		return exportedHistory{}, nil, "", historyEvidence{}, err
 	}
@@ -211,7 +299,9 @@ func (r historyReader) readSelection(ctx context.Context, selection ports.Histor
 }
 
 func (r historyReader) export(ctx context.Context, stateRoot, nativeID, cwd string) (exportedHistory, []byte, string, error) {
-	if !pathWithin(r.provider.privateRoot, stateRoot) || !strings.HasPrefix(nativeID, "ses_") {
+	root, rootErr := filepath.Abs(stateRoot)
+	info, statErr := os.Stat(root)
+	if rootErr != nil || statErr != nil || !info.IsDir() || root == string(filepath.Separator) || !strings.HasPrefix(nativeID, "ses_") {
 		return exportedHistory{}, nil, "", fmt.Errorf("invalid OpenCode history source")
 	}
 	cmd := exec.CommandContext(ctx, r.provider.executable, "export", nativeID)
@@ -237,10 +327,14 @@ func (r historyReader) configuredRoot(source string) (string, error) {
 		return r.provider.privateRoot, nil
 	}
 	root, err := filepath.Abs(source)
-	if err != nil || filepath.Clean(root) != r.provider.privateRoot {
-		return "", fmt.Errorf("OpenCode history root is not the configured provider root")
+	if err != nil || root == string(filepath.Separator) {
+		return "", fmt.Errorf("OpenCode history root is invalid")
 	}
-	return r.provider.privateRoot, nil
+	info, err := os.Stat(root)
+	if err != nil || !info.IsDir() {
+		return "", fmt.Errorf("OpenCode history root is unavailable")
+	}
+	return filepath.Clean(root), nil
 }
 
 func writeHistoryManifest(stateRoot string, manifest historyManifest) error {
