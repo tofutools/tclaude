@@ -33,6 +33,7 @@ type Service struct {
 	newID            IDGenerator
 	accessLease      time.Duration
 	agentAPIEndpoint string
+	callbackIngress  ports.CallbackIngress
 
 	runtimeMu    sync.RWMutex
 	runtimes     map[model.ExecutionID]ports.Runtime
@@ -76,6 +77,11 @@ func (s *Service) WithAccessLease(lease time.Duration) *Service {
 // cohesive provider exposes to its exact workload as TCLAUDE_BACKEND_SOCKET.
 func (s *Service) WithAgentAPIEndpoint(endpoint string) *Service {
 	s.agentAPIEndpoint = endpoint
+	return s
+}
+
+func (s *Service) WithCallbackIngress(ingress ports.CallbackIngress) *Service {
+	s.callbackIngress = ingress
 	return s
 }
 
@@ -264,7 +270,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancelWorkflow()
 
-	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: intent, Continuation: continuation, History: options.history, PriorEvidence: priorEvidence, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, spec.Attempt, provider.Name()), AgentAPIEndpoint: s.agentAPIEndpoint})
+	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: intent, Continuation: continuation, History: options.history, PriorEvidence: priorEvidence, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, spec.Attempt, provider.Name()), AgentAPIEndpoint: s.agentAPIEndpoint, CallbackIngress: s.callbackIngress})
 	if err != nil {
 		settlementCtx, cancelSettlement := settlementContext(ctx)
 		defer cancelSettlement()
@@ -733,7 +739,7 @@ func (s *Service) Recover(ctx context.Context, req RecoverRequest) (RecoveryRepo
 			binding := accessBinding(access)
 			accessBindingValue = &binding
 		}
-		result, recoverErr := provider.Recover(ctx, ports.RecoveryRequest{ExecutionID: execution.ID, Spec: execution.Spec, Evidence: execution.Evidence, Attempt: execution.Attempt, Access: accessBindingValue, Observations: s.primaryObservationSink(execution.ID, execution.Attempt, provider.Name()), AgentAPIEndpoint: s.agentAPIEndpoint})
+		result, recoverErr := provider.Recover(ctx, ports.RecoveryRequest{ExecutionID: execution.ID, Spec: execution.Spec, Evidence: execution.Evidence, Attempt: execution.Attempt, Access: accessBindingValue, Observations: s.primaryObservationSink(execution.ID, execution.Attempt, provider.Name()), AgentAPIEndpoint: s.agentAPIEndpoint, CallbackIngress: s.callbackIngress})
 		if recoverErr != nil || result.State == ports.RecoveryUnknown {
 			report.Unknown = append(report.Unknown, execution.ID)
 			if _, err := s.store.RecordRecovery(ctx, execution.ID, model.ExecutionUnknown, nil, result.Evidence, s.now().UTC()); err != nil {
