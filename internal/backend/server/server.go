@@ -115,6 +115,8 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry) err
 		return err
 	}
 	defer listener.Close()
+	stopRenewal := startAccessRenewal(ctx, application)
+	defer stopRenewal() // Join before the deferred store close and lock release.
 	requests := &requestDrain{handler: handler}
 	requestCtx, cancelRequests := context.WithCancel(ctx)
 	defer cancelRequests()
