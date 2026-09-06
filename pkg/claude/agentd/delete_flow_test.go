@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -10,6 +11,34 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
+
+// A failed soft-exit dispatch does not outweigh later proof that the selected
+// workload closed. Destructive cleanup may proceed once the synchronous wait
+// observes that closure, while the dispatch failure remains available in the
+// operation detail for diagnostics.
+func TestDelete_FailedSoftExitThenNaturalCloseProceeds(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	f := newFlow(t)
+
+	const conv = "dfnc-1111-2222-3333-4444"
+	const tmuxSession = "tmux-dfnc"
+	f.HaveConvWithTitle(conv, "closing-worker")
+	f.HaveAliveSession(conv, "spwn-dfnc", tmuxSession, f.TestCwd("dfnc"))
+	f.HaveEnrolledAgent(conv)
+	cc := f.World.CCs.GetByConvID(conv)
+	require.NotNil(t, cc)
+	f.World.Tmux.FailNextCommand("send-keys")
+	var once sync.Once
+	cleanupAfterBackgroundDrain(t, agentd.SetSoftExitEscalationPollForTest(func() {
+		once.Do(cc.MarkDead)
+	}))
+
+	req := agentd.AsHumanPeer(testharness.JSONRequest(t,
+		http.MethodDelete, "/v1/agent/"+conv+"/delete?force=1", nil))
+	rec := testharness.Serve(f.Mux, req)
+	assert.False(t, f.World.Tmux.IsAlive(tmuxSession))
+	assert.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
 
 // Scenario: the human permanently deletes an agent.
 //
