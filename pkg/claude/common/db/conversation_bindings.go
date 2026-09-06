@@ -223,8 +223,8 @@ func AdmitConversationBinding(a conversation.Admission) (conversation.Decision, 
 		var authorized string
 		err := tx.QueryRow(`SELECT logical_conversation_id FROM execution_operations
 			WHERE intended_execution_id=? AND intended_session_id=? AND conv_id=?
-			AND tmux_session=? AND pane_id=? AND state IN ('started','unknown')
-			AND launch_phase='released'`, a.Attempt.ExecutionID, a.Attempt.LegacySessionID,
+			AND tmux_session=? AND pane_id=? AND state IN ('accepted','started','unknown')
+			AND launch_phase IN ('release_granted','released')`, a.Attempt.ExecutionID, a.Attempt.LegacySessionID,
 			a.Reference.Value, a.Evidence.TmuxSession, a.Evidence.PaneID).Scan(&authorized)
 		if errors.Is(err, sql.ErrNoRows) || strings.TrimSpace(authorized) == "" {
 			decision := conversation.Decision{Outcome: conversation.Ambiguous, Reason: "resume requires an authorized logical Conversation target"}
@@ -237,6 +237,19 @@ func AdmitConversationBinding(a conversation.Admission) (conversation.Decision, 
 			return conversation.Decision{}, err
 		}
 		resumeConversation = conversation.ID(authorized)
+	}
+	if !found && a.Transition != conversation.Resume {
+		var pendingResume int
+		err := tx.QueryRow(`SELECT COUNT(*) FROM execution_operations
+			WHERE intended_execution_id=? AND intended_session_id=?
+			AND state IN ('requested','accepted','started','unknown','cancelling')`,
+			a.Attempt.ExecutionID, a.Attempt.LegacySessionID).Scan(&pendingResume)
+		if err != nil {
+			return conversation.Decision{}, err
+		}
+		if pendingResume != 0 {
+			return conversation.Decision{Outcome: conversation.Ambiguous, Reason: "pending resume requires exact SessionStart(resume) continuity evidence"}, nil
+		}
 	}
 
 	owner, err := loadLiveReferenceOwner(tx, a)
@@ -315,8 +328,11 @@ func AdmitConversationBinding(a conversation.Admission) (conversation.Decision, 
 	if a.Transition == conversation.Resume {
 		result, updateErr := tx.Exec(`UPDATE execution_operations SET state='ready', launch_phase='ready',
 			ready_at=?, revision=revision+1 WHERE intended_execution_id=? AND intended_session_id=?
-			AND logical_conversation_id=? AND state IN ('started','unknown') AND launch_phase='released'`,
-			stamp, a.Attempt.ExecutionID, a.Attempt.LegacySessionID, conversationID)
+			AND logical_conversation_id=? AND tmux_session=? AND pane_id=?
+			AND state IN ('accepted','started','unknown')
+			AND launch_phase IN ('release_granted','released')`,
+			stamp, a.Attempt.ExecutionID, a.Attempt.LegacySessionID, conversationID,
+			a.Evidence.TmuxSession, a.Evidence.PaneID)
 		if updateErr != nil {
 			return conversation.Decision{}, updateErr
 		}

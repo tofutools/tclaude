@@ -191,9 +191,11 @@ func TestAdmitConversationBindingResumeRequiresExactOperationAndPreservesLogical
 	granted, err := GrantResumeRelease(opID, execution.ID(successor), "resume-successor", "tmux-managed", "%7", "/private/resume-gate")
 	require.NoError(t, err)
 	require.True(t, granted)
-	started, err := MarkResumeReleased(opID, execution.ID(successor), "resume-successor", "tmux-managed", "%7")
+	ordinary := managedBindingAdmission("resume-successor", successor, "resume-ordinary-evidence", convID, 0)
+	ordinary.Transition = conversation.Continue
+	refused, err := AdmitConversationBinding(ordinary)
 	require.NoError(t, err)
-	require.True(t, started)
+	assert.Equal(t, conversation.Ambiguous, refused.Outcome)
 
 	resume := managedBindingAdmission("resume-successor", successor, "resume-successor-evidence", convID, 0)
 	resume.Transition = conversation.Resume
@@ -205,6 +207,9 @@ func TestAdmitConversationBindingResumeRequiresExactOperationAndPreservesLogical
 	require.NoError(t, err)
 	require.NotNil(t, op)
 	assert.Equal(t, execution.ResumeReady, op.State)
+	started, err := MarkResumeReleased(opID, execution.ID(successor), "resume-successor", "tmux-managed", "%7")
+	require.NoError(t, err)
+	assert.True(t, started, "late wrapper bookkeeping must accept exact ready evidence")
 }
 
 func TestBindManagedAttemptMainPIDIsGenerationAndExitFenced(t *testing.T) {

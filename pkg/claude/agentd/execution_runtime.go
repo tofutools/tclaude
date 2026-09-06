@@ -68,7 +68,7 @@ func (r *executionRuntime) stopUnderLaunchLock(
 	lifecycleAction, relatedEventID string,
 	waitPolicy stopWaitPolicy,
 ) stopOperationResult {
-	cancelManagedResumes(convID, "lifecycle stop requested")
+	cancelErr := cancelManagedResumes(convID, "lifecycle stop requested")
 	ctx := &stopOperationContext{outcome: platformexec.StopOutcome{State: platformexec.StopFailed}}
 	legacy, waited := stopOneConvEffectUnderLaunchLock(
 		convID, force, lifecycleAction, relatedEventID, waitPolicy, ctx,
@@ -92,6 +92,11 @@ func (r *executionRuntime) stopUnderLaunchLock(
 	}
 	if !waitPolicy.wait && outcome.State == platformexec.StopFailed && ctx.convergenceScheduled {
 		outcome.State = platformexec.StopAccepted
+	}
+	if cancelErr != nil {
+		legacy.Action = "error"
+		legacy.Detail = joinDetail(legacy.Detail, "could not revoke pending Resume: "+cancelErr.Error())
+		outcome.State = platformexec.StopUnresolved
 	}
 	reconcileResumeOperations(time.Now(), false)
 	return stopOperationResult{legacy: legacy, wait: waited, stop: outcome}
