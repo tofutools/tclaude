@@ -37,9 +37,9 @@ import (
 type NewParams struct {
 	// ExecutionID is the exact preallocated managed Resume attempt. It is only
 	// valid with --managed-launch; ordinary CLI callers cannot pin an attempt.
-	ExecutionID       string `long:"execution-id" optional:"true" help:"Internal: preallocated managed execution identity"`
-	ResumeOperationID string `long:"resume-operation-id" optional:"true" help:"Internal: durable managed resume operation correlation"`
-	ResumeClaimFD     int    `long:"resume-claim-fd" optional:"true" help:"Internal: inherited one-shot managed resume claim descriptor"`
+	ExecutionID       string `short:"E" long:"execution-id" optional:"true" help:"Internal: preallocated managed execution identity"`
+	ResumeOperationID string `short:"O" long:"resume-operation-id" optional:"true" help:"Internal: durable managed resume operation correlation"`
+	ResumeClaimFD     int    `short:"F" long:"resume-claim-fd" optional:"true" help:"Internal: inherited one-shot managed resume claim descriptor"`
 
 	// ManagedLaunch marks agentd's forked session wrapper. The daemon already
 	// resolved profile precedence, so the child must use the exact passed shape.

@@ -2,6 +2,7 @@ package agentd
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -17,28 +18,60 @@ import (
 
 // cancelManagedResumes is called under the stable-agent launch lock. SQLite,
 // not that in-process lock, arbitrates with the already-forked child.
-func cancelManagedResumes(convID, detail string) {
-	operations, err := db.ActiveResumeOperations()
+var resumeCancellationBeforeCAS = func(db.ResumeOperationRow) {}
+var activeResumeOperationsForCancellation = db.ActiveResumeOperations
+
+func cancelManagedResumes(convID, detail string) error {
+	operations, err := activeResumeOperationsForCancellation()
 	if err != nil {
-		slog.Warn("resume: list operations for cancellation failed", "conv", convID, "error", err)
-		return
+		return fmt.Errorf("list active Resume operations: %w", err)
 	}
+	var cancellationErrs []error
 	for _, op := range operations {
 		if op.ConvID != convID || op.State == platformexec.ResumeCancelling {
 			continue
 		}
-		var won bool
-		if op.LaunchPhase == "release_granted" || op.LaunchPhase == "released" {
-			won, err = db.RequestReleasedResumeCancellation(op.ID, op.Revision, detail)
-		} else {
-			won, err = db.RequestResumeCancellation(op.ID, op.Revision, detail)
+		converged := false
+		for range 8 { // child claim/register/release has fewer revision edges
+			current, loadErr := db.GetResumeOperation(op.ID)
+			if loadErr != nil {
+				cancellationErrs = append(cancellationErrs,
+					fmt.Errorf("reload Resume operation %s: %w", op.ID, loadErr))
+				break
+			}
+			if current == nil {
+				converged = true
+				break
+			}
+			if current.State == platformexec.ResumeCancelling || current.State == platformexec.ResumeReady ||
+				current.State == platformexec.ResumeRejected || current.State == platformexec.ResumeFailed || current.State == platformexec.ResumeCancelled {
+				converged = true
+				break
+			}
+			resumeCancellationBeforeCAS(*current)
+			var won bool
+			if current.LaunchPhase == "release_granted" || current.LaunchPhase == "released" {
+				won, err = db.RequestReleasedResumeCancellation(current.ID, current.Revision, detail)
+			} else {
+				won, err = db.RequestResumeCancellation(current.ID, current.Revision, detail)
+			}
+			if err != nil {
+				cancellationErrs = append(cancellationErrs,
+					fmt.Errorf("cancel Resume operation %s: %w", current.ID, err))
+				break
+			}
+			if won {
+				slog.Info("resume: cancellation requested", "operation", current.ID, "phase", current.LaunchPhase)
+				converged = true
+				break
+			}
 		}
-		if err != nil {
-			slog.Warn("resume: cancellation CAS failed", "operation", op.ID, "error", err)
-		} else if won {
-			slog.Info("resume: cancellation requested", "operation", op.ID, "phase", op.LaunchPhase)
+		if !converged {
+			cancellationErrs = append(cancellationErrs,
+				fmt.Errorf("Resume operation %s cancellation did not converge", op.ID))
 		}
 	}
+	return errors.Join(cancellationErrs...)
 }
 
 // reconcileResumeOperations owns crash edges for manual and recovery Resume
@@ -57,6 +90,16 @@ func reconcileResumeOperations(now time.Time, dispatchExactStop bool) {
 
 func reconcileResumeOperation(op db.ResumeOperationRow, now time.Time, dispatchExactStop bool) {
 	switch op.State {
+	case platformexec.ResumeRequested:
+		// No child can claim requested. Once the acceptor's bounded startup
+		// window has elapsed, revocation plus absent process/pane is proof that
+		// this crash edge cannot produce a workload.
+		if !op.RequestedAt.IsZero() && now.Sub(op.RequestedAt) > 2*time.Minute {
+			won, err := db.RequestResumeCancellation(op.ID, op.Revision, "reconciler revoked stale requested operation")
+			if err == nil && won {
+				_, _ = db.FinalizeResumeFailed(op.ID, op.Revision+1, "request was never accepted; no workload can emerge")
+			}
+		}
 	case platformexec.ResumeCancelling:
 		if (op.LaunchPhase == "release_granted" || op.LaunchPhase == "released") &&
 			dispatchExactStop && resumeAttemptIsCurrent(op) {

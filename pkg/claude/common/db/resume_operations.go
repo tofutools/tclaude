@@ -220,7 +220,17 @@ func MarkResumeReleased(id execution.OperationID, intended execution.ID, session
 		return false, err
 	}
 	n, err := res.RowsAffected()
-	return n == 1, err
+	if err != nil || n == 1 {
+		return n == 1, err
+	}
+	// An exact SessionStart may reach the daemon after gate acknowledgement but
+	// before the wrapper records it. That stronger main-workload evidence marks
+	// ready transactionally; the late bookkeeping call is then idempotent.
+	var ready int
+	err = d.QueryRow(`SELECT COUNT(*) FROM execution_operations WHERE id=?
+		AND intended_execution_id=? AND intended_session_id=? AND tmux_session=? AND pane_id=?
+		AND state='ready' AND launch_phase='ready'`, id.String(), intended.String(), sessionID, tmuxSession, paneID).Scan(&ready)
+	return ready == 1, err
 }
 
 // RequestResumeCancellation revokes the unused private claim and arbitrates
