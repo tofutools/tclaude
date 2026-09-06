@@ -266,6 +266,7 @@ type NotificationOutcome string
 const (
 	NotificationNotRequested NotificationOutcome = "not_requested"
 	NotificationPending      NotificationOutcome = "pending"
+	NotificationUnknown      NotificationOutcome = "unknown"
 	NotificationDelivered    NotificationOutcome = "delivered"
 	NotificationUnavailable  NotificationOutcome = "unavailable"
 	NotificationFailed       NotificationOutcome = "failed"
