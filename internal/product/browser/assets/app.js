@@ -42,6 +42,7 @@ function agentRow(agent){
  const execution=(snapshot.executions||[]).find(e=>e.id===agent.PrimaryExecutionID);
  row.append(el('span',execution?`${execution.state} · context ${execution.context_readiness}`:'offline','status'));
  row.append(el('span',`${agent.Desired.Harness} / ${agent.Desired.Model}`,'muted'));
+ if(agent.ConfigurationProfile)row.append(el('span','Saved configuration revision','muted'));
  const actions=el('div',undefined,'actions');
  actions.append(button('Configure',()=>edit('Configure agent',desiredFields({...agent.Desired,name:agent.Name}),f=>api(`/v2/agents/${encodeURIComponent(agent.ID)}`,{name:f.name,desired:configuration(f),expected_revision:agent.Revision},'PUT'))));
  if(!execution || ['exited','failed'].includes(execution.state)){
@@ -84,6 +85,7 @@ function render(){
 async function selectTab(tab){
  for(const n of document.querySelectorAll('main > section'))n.hidden=n.id!==tab;
  for(const n of document.querySelectorAll('[data-tab]'))n.setAttribute('aria-current',String(n.dataset.tab===tab));
+ if(tab==='configurations')await renderConfigurations();
  if(tab==='access'){
   const data=await api('/v2/authority');const list=$('access-list');list.replaceChildren();
   for(const grant of data.Grants||[]){const row=el('div',undefined,'row');row.append(el('strong',grant.Action),el('span',grant.Subject.AgentID||grant.Subject.Kind),el('span',grant.Resource.Kind),button('Revoke',async()=>{await api(`/v2/authority/grants/${encodeURIComponent(grant.ID)}`,{expected_revision:grant.Revision},'DELETE');await selectTab('access')}));list.append(row)}
@@ -182,3 +184,23 @@ $('new-grant').onclick=()=>edit('Grant agent permission',[
  {name:'action',label:'Action',options:['message.send','status.read','execution.stop','execution.interact','execution.attach']},
  {name:'target',label:'Target agent',options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}
 ],async f=>{await api(`/v2/authority/grants/${encodeURIComponent(f.requestID)}`,{subject:{Kind:'agent',AgentID:f.subject},action:f.action,resource:{Kind:'agent',AgentID:f.target},expected_revision:0},'PUT');await selectTab('access')});
+
+async function renderConfigurations(){
+ const entries=await api('/v2/configuration-profiles'),list=$('configuration-list');list.replaceChildren();
+ for(const profile of entries){
+  const card=el('article',undefined,'card');card.append(el('strong',profile.Name),el('p',`Revision ${profile.Revision}`,'muted'));
+  card.append(button('Create agent',async()=>{
+   const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
+   edit('Create agent from configuration',[{name:'name',label:'Agent name',value:profile.Name}],f=>api('/v2/agents',{id:f.requestID,name:f.name,configuration_profile:selected.Revision.Ref}));
+  }),button('Edit configuration',async()=>{
+   const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
+   edit('Save new configuration revision',desiredFields({...selected.Revision.Desired,name:profile.Name}),async f=>{
+    await api('/v2/configuration-profiles',{request_id:f.requestID,id:profile.ID,revision_id:f.requestID,expected_revision:profile.Revision,name:f.name,desired:configuration(f)});await renderConfigurations();
+   });
+  }));list.append(card);
+ }
+ if(!entries.length)empty(list,'No saved configurations. Save one to reuse its exact settings for new agents.');
+}
+$('new-configuration').onclick=()=>edit('Save configuration',desiredFields(),async f=>{
+ await api('/v2/configuration-profiles',{request_id:f.requestID,id:f.requestID,revision_id:f.requestID,name:f.name,desired:configuration(f)});await renderConfigurations();
+});

@@ -135,15 +135,16 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		ExpectedRevision model.Revision             `json:"expected_revision"`
-		Name             string                     `json:"name"`
-		Desired          model.DesiredConfiguration `json:"desired"`
+		ConfigurationProfile *model.ConfigurationProfileRef `json:"configuration_profile"`
+		ExpectedRevision     model.Revision                 `json:"expected_revision"`
+		Name                 string                         `json:"name"`
+		Desired              model.DesiredConfiguration     `json:"desired"`
 	}
 	if !decodeRequest(w, r, &body) {
 		return
 	}
 	result, err := h.application.UpdateAgent(r.Context(), app.UpdateAgentRequest{Context: p, ID: model.AgentID(r.PathValue("id")),
-		ExpectedRevision: body.ExpectedRevision, Name: body.Name, Desired: body.Desired})
+		ExpectedRevision: body.ExpectedRevision, Name: body.Name, Desired: body.Desired, ConfigurationProfile: body.ConfigurationProfile})
 	if err != nil {
 		applicationError(w, err)
 		return

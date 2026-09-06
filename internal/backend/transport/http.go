@@ -33,6 +33,9 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	h.mux.HandleFunc("GET /v2/attach", h.attach)
 	h.mux.HandleFunc("POST /v2/observe", h.observe)
 	h.registerCommands()
+	if catalog, ok := application.(app.ConfigurationCatalogAPI); ok {
+		h.registerConfigurationCatalog(catalog)
+	}
 	return h, nil
 }
 
@@ -102,14 +105,15 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ID      model.AgentID              `json:"id"`
-		Name    string                     `json:"name"`
-		Desired model.DesiredConfiguration `json:"desired"`
+		ConfigurationProfile *model.ConfigurationProfileRef `json:"configuration_profile"`
+		ID                   model.AgentID                  `json:"id"`
+		Name                 string                         `json:"name"`
+		Desired              model.DesiredConfiguration     `json:"desired"`
 	}
 	if !decodeRequest(w, r, &req) {
 		return
 	}
-	result, err := h.application.CreateAgent(r.Context(), app.CreateAgentRequest{Context: p, ID: req.ID, Name: req.Name, Desired: req.Desired})
+	result, err := h.application.CreateAgent(r.Context(), app.CreateAgentRequest{Context: p, ID: req.ID, Name: req.Name, Desired: req.Desired, ConfigurationProfile: req.ConfigurationProfile})
 	if err != nil {
 		applicationError(w, err)
 		return
