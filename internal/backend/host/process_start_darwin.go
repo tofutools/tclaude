@@ -24,3 +24,11 @@ func processStartToken(pid int) (string, error) {
 	}
 	return token, nil
 }
+
+func processParentPID(pid int) (int, error) {
+	out, err := exec.Command("ps", "-o", "ppid=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return 0, err
+	}
+	return strconv.Atoi(strings.TrimSpace(string(out)))
+}
