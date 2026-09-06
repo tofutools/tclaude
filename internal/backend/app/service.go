@@ -90,12 +90,6 @@ func (s *Service) CreateAgent(ctx context.Context, req CreateAgentRequest) (Agen
 }
 
 func (s *Service) UpdateAgent(ctx context.Context, req UpdateAgentRequest) (AgentResult, error) {
-	if req.Context.Kind != model.PrincipalOperator {
-		request := model.AuthorityRequest{Principal: req.Context, Action: model.ActionUpdateConfiguration, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: req.ID}, RequestedConfiguration: &req.Desired}
-		if err := s.requireAuthority(ctx, request, s.now().UTC()); err != nil {
-			return AgentResult{}, err
-		}
-	}
 	if req.ExpectedRevision == 0 {
 		return AgentResult{}, fail(ErrInvalid, "expected revision is required")
 	}
@@ -105,7 +99,8 @@ func (s *Service) UpdateAgent(ctx context.Context, req UpdateAgentRequest) (Agen
 	if err := validateDesired(req.Desired); err != nil {
 		return AgentResult{}, err
 	}
-	agent, err := s.store.UpdateAgent(ctx, req.ID, req.ExpectedRevision, req.Name, req.Desired, s.now().UTC())
+	authority := model.AuthorityRequest{Principal: req.Context, Action: model.ActionUpdateConfiguration, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: req.ID}, RequestedConfiguration: &req.Desired}
+	agent, err := s.store.UpdateAgent(ctx, req.ID, req.ExpectedRevision, req.Name, req.Desired, authority, s.now().UTC())
 	return AgentResult{Agent: agent}, err
 }
 
@@ -584,14 +579,15 @@ func (s *Service) MarkMessageRead(ctx context.Context, req MarkMessageReadReques
 	agentID := req.AgentID
 	if req.Principal.Kind != model.PrincipalOperator {
 		agentID = req.Principal.AgentID
+		if req.Principal.Kind == model.PrincipalAutomation && req.Principal.Authority.Kind == model.AuthorityAgent {
+			agentID = req.Principal.Authority.AgentID
+		}
 		if agentID == "" {
 			return MessageResult{}, fail(ErrUnsupported, "standalone execution has no agent inbox")
 		}
-		if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Principal, Action: model.ActionMarkInboxRead, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agentID}}, s.now().UTC()); err != nil {
-			return MessageResult{}, err
-		}
 	}
-	message, err := s.store.MarkMessageRead(ctx, req.MessageID, agentID, s.now().UTC())
+	authority := model.AuthorityRequest{Principal: req.Principal, Action: model.ActionMarkInboxRead, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agentID}}
+	message, err := s.store.MarkMessageRead(ctx, req.MessageID, agentID, authority, s.now().UTC())
 	if req.Principal.Kind != model.PrincipalOperator {
 		message = messageForRecipient(message, agentID)
 	}

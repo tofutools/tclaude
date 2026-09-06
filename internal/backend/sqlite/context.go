@@ -48,9 +48,6 @@ func (s *Store) AdmitPrimaryContext(ctx context.Context, in app.PrimaryContextAd
 			return model.Execution{}, app.ErrConflict
 		}
 	case ports.PrimaryContextContinuity:
-		if !bindingEqual(execution.NativeConversation, evidence.NextBinding) {
-			return model.Execution{}, app.ErrConflict
-		}
 	case ports.PrimaryContextReset, ports.PrimaryContextUnresolved:
 	default:
 		return model.Execution{}, app.ErrInvalid

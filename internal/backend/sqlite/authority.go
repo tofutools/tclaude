@@ -509,8 +509,8 @@ func (s *Store) RecordAccessDelivery(ctx context.Context, id model.ExecutionID, 
 	return s.ExecutionAccess(ctx, id)
 }
 
-func (s *Store) RotateExecutionAccess(ctx context.Context, id model.ExecutionID, expected model.AccessGeneration, expectedRevision model.Revision, digest []byte, receipt ports.ActionCredentialReceipt, issuedAt, expiresAt time.Time) (model.ExecutionAccess, error) {
-	result, err := s.db.ExecContext(ctx, `UPDATE execution_accesses SET generation=?,credential_digest=?,delivery_id=?,file_identity=?,issued_at=?,expires_at=?,revoked_at=NULL,revision=revision+1 WHERE execution_id=? AND generation=? AND revision=? AND state IN (?,?)`, receipt.Generation, digest, receipt.DeliveryID, receipt.FileIdentity, nanos(issuedAt), nanos(expiresAt), id, expected, expectedRevision, model.ExecutionAccessActive, model.ExecutionAccessSuspended)
+func (s *Store) RotateExecutionAccess(ctx context.Context, id model.ExecutionID, expected model.AccessGeneration, expectedRevision model.Revision, digest []byte, receipt ports.ActionCredentialReceipt, issuedAt, expiresAt, checkedAt time.Time) (model.ExecutionAccess, error) {
+	result, err := s.db.ExecContext(ctx, `UPDATE execution_accesses SET generation=?,credential_digest=?,delivery_id=?,file_identity=?,issued_at=?,expires_at=?,revoked_at=NULL,revision=revision+1 WHERE execution_id=? AND generation=? AND revision=? AND state IN (?,?) AND expires_at>? AND ?>?`, receipt.Generation, digest, receipt.DeliveryID, receipt.FileIdentity, nanos(issuedAt), nanos(expiresAt), id, expected, expectedRevision, model.ExecutionAccessActive, model.ExecutionAccessSuspended, nanos(checkedAt), nanos(expiresAt), nanos(checkedAt))
 	if err != nil {
 		return model.ExecutionAccess{}, classify(err)
 	}
