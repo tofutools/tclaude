@@ -3341,35 +3341,6 @@ func decodeSpawnBody(w http.ResponseWriter, r *http.Request, body *agent.SpawnRe
 	return string(raw), true
 }
 
-// resolvedSpawnProfileNameForScope answers "which named spawn profile will
-// this request launch with", for the spawn_profile scope dimension only. It
-// mirrors the profile precedence the full resolution below applies —
-// request profile → group default → global default — and returns the profile's
-// CANONICAL name, so a grant scoped to a profile still matches a request that
-// reached it through an alias.
-//
-// It returns "" whenever no named profile resolves, including for a request
-// naming one that does not exist. A scoped grant then finds the dimension
-// undescribed and fails closed, so a scoped caller sees 403 rather than the
-// ordinary invalid_profile 400 the unscoped caller still gets further down.
-// That ordering is deliberate: the gate must not leak which profile names
-// exist to a caller that is not allowed to spawn with them anyway.
-func resolvedSpawnProfileNameForScope(g *db.AgentGroup, requested string) string {
-	if name := strings.TrimSpace(requested); name != "" {
-		prof, err := db.ResolveSpawnProfile(name)
-		if err != nil || prof == nil {
-			return ""
-		}
-		return prof.Name
-	}
-	for _, prof := range []*db.SpawnProfile{groupDefaultProfile(g), globalDefaultProfile()} {
-		if prof != nil {
-			return prof.Name
-		}
-	}
-	return ""
-}
-
 // resolvedSandboxProfileNameForScope answers "which named sandbox profile will
 // this spawn run under", for the sandbox_profile scope dimension only.
 //
@@ -3391,11 +3362,10 @@ func resolvedSpawnProfileNameForScope(g *db.AgentGroup, requested string) string
 // the launch mode did not omit sandbox profiles outright — see
 // sandboxProfilesDisabled — because an ambient tier that gets dropped must not
 // keep authorizing the spawn it no longer applies to.
-// The explicit branch deliberately does NOT round-trip the name through the
-// registry the way resolvedSpawnProfileNameForScope does. That sibling
-// canonicalizes because spawn profiles have alternate handles — a
-// spawn_profile_aliases table ResolveSpawnProfile joins — so the requested
-// handle and the profile's name can legitimately differ. Sandbox profiles have
+// The explicit branch deliberately does NOT round-trip the name through its
+// registry. Spawn configuration capture must canonicalize aliases because a
+// requested spawn-profile handle and the row's name can legitimately differ;
+// sandbox profiles have
 // no alias table at all: `sandbox_profiles.name` is the key, declared
 // `TEXT NOT NULL UNIQUE` with no NOCASE collation, and the launch itself
 // selects the explicit profile by `WHERE name = ?`. The requested string IS the
@@ -3467,6 +3437,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if !decoded {
 		return
 	}
+	// Capture the authored configuration sources once for this fresh launch.
+	// Named-profile failures are intentionally held until after the authority
+	// gate below, preserving the endpoint's existing information boundary.
+	configurationCapture := captureFreshLaunchConfiguration(g, body.Profile,
+		freshLaunchConfigurationRequest{
+			Harness: body.Harness, HarnessBuiltinMode: body.HarnessBuiltinMode,
+			SandboxImplementation: body.SandboxImplementation,
+		})
 	// Preserve the caller's decoded wire parameters before profile/default
 	// resolution, generated-name assignment, normalization, or permission
 	// attenuation mutates body below. Resolved and running launch state have
@@ -3486,7 +3464,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// launch modes that would drop that inherited tier again.
 	sandboxProfileForScope := resolvedSandboxProfileNameForScope(g, body.SandboxProfile)
 	spawnActionContext := ActionContext{
-		Group: g.Name, SpawnProfile: resolvedSpawnProfileNameForScope(g, body.Profile),
+		Group: g.Name, SpawnProfile: configurationCapture.canonicalSpawnProfile(),
 		SandboxProfile: sandboxProfileForScope,
 	}
 	spawnerConvID, ok := requireSpawnPermission(w, r, g, spawnActionContext)
@@ -3653,59 +3631,30 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		body.Cwd = g.DefaultCwd
 	}
 
-	// Resolve the harness independently through the complete chain. Other launch
-	// fields never pin it: explicit request > named CLI profile > group default
-	// profile > global default profile > Claude. Field candidates are validated
-	// against this resolved harness below.
-	var namedProfile *db.SpawnProfile
-	namedProfileHandle := ""
-	if name := strings.TrimSpace(body.Profile); name != "" {
-		var profileErr error
-		namedProfileHandle = name
-		namedProfile, profileErr = db.ResolveSpawnProfile(name)
-		if profileErr != nil || namedProfile == nil {
-			writeError(w, http.StatusBadRequest, "invalid_profile", fmt.Sprintf("spawn profile %q does not exist", name))
-			return
-		}
-		if fail := profileSpawnFailure(namedProfile, spawnerConvID); fail != nil {
-			writeError(w, fail.Status, fail.Kind, fail.Msg)
-			return
-		}
+	// Reuse the captured rows for the still-unmigrated fields as well, so this
+	// incremental cutover does not quietly re-read a different profile stack.
+	// The named-profile issue was retained across authorization specifically so
+	// a scoped caller cannot use this lookup to probe profile existence.
+	if configurationCapture.Issue != nil {
+		writeError(w, http.StatusBadRequest, "invalid_profile",
+			fmt.Sprintf("spawn profile %q does not exist", configurationCapture.Issue.Handle))
+		return
 	}
-	groupProfile := groupDefaultProfile(g)
-	globalProfile := globalDefaultProfile()
+	namedProfileHandle := configurationCapture.Input.NamedProfileHandle
+	namedProfile := configurationCapture.profile(capturedNamedProfile)
+	groupProfile := configurationCapture.profile(capturedGroupProfile)
+	globalProfile := configurationCapture.profile(capturedGlobalProfile)
+	profileTiers := configurationCapture.legacyProfileTiers()
+	if fail := profileSpawnFailure(namedProfile, spawnerConvID); fail != nil {
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
+		return
+	}
 	for _, prof := range []*db.SpawnProfile{groupProfile, globalProfile} {
 		if fail := profileSpawnFailure(prof, spawnerConvID); fail != nil {
 			writeError(w, fail.Status, fail.Kind, fail.Msg)
 			return
 		}
 	}
-	namedProfileSource := profileSource(namedProfile, agent.ProvCLIProfileSource)
-	if namedProfile != nil && namedProfileHandle != namedProfile.Name {
-		namedProfileSource = fmt.Sprintf(`profile %q via alias %q`, namedProfile.Name, namedProfileHandle)
-	}
-	profileTiers := []launchProfileTier{
-		{profile: namedProfile, source: namedProfileSource},
-		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource),
-			defaultTier: true},
-		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource),
-			defaultTier: true},
-	}
-	harnessSource := agent.ProvExplicit
-	if strings.TrimSpace(body.Harness) == "" {
-		harnessSource = agent.ProvHarnessDefault
-		for _, tier := range profileTiers {
-			if tier.profile != nil {
-				body.Harness = harnessOrDefault(tier.profile.Harness)
-				harnessSource = tier.source
-				break
-			}
-		}
-	}
-	if strings.TrimSpace(body.Harness) == "" {
-		body.Harness = harness.DefaultName
-	}
-
 	// Validate the requested cwd before doing any work. Expands "~",
 	// makes the path absolute, and confirms it exists as a directory.
 	// Catching a bad cwd here turns what used to be a silent 30s
@@ -3737,11 +3686,17 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// effort/model below, so a Codex spawn is checked against Codex's
 	// rules (rejects Claude Code slugs, accepts effort levels) instead of
 	// Claude Code's.
-	h, harnessErr := resolveSpawnHarness(body.Harness)
-	if harnessErr != nil {
-		writeError(w, http.StatusBadRequest, "invalid_harness", harnessErr.Error())
+	resolvedConfiguration, configurationRefusal := resolveFreshLaunchConfiguration(configurationCapture.Input)
+	if configurationRefusal != nil {
+		fail := freshLaunchRefusalSpawnFailure(configurationRefusal)
+		writeError(w, fail.Status, fail.Kind, fail.Msg)
 		return
 	}
+	h := resolvedConfiguration.Harness
+	body.Harness = h.Name
+	body.HarnessBuiltinMode = resolvedConfiguration.HarnessBuiltinMode.Selected
+	body.SandboxImplementation = resolvedConfiguration.SandboxImplementation.Selected
+	harnessSource := resolvedConfiguration.HarnessSelection.Source
 	// Cross-harness spawn policy is evaluated only after the complete profile
 	// stack has resolved the target vendor. That closes the indirect path where
 	// an agent omits --harness but a group/global default profile flips it.
@@ -3809,14 +3764,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// The tier that chose the sandbox is kept, not discarded: it is the only
 	// party that can say a global/group default profile forced the containment,
 	// and the badge would otherwise credit "this launch" — i.e. the operator.
-	var sandboxSource string
-	body.HarnessBuiltinMode, sandboxSource, sandboxNote, fieldFail = resolveStringLaunchField(
-		"sandbox", body.HarnessBuiltinMode, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Sandbox },
-		func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(h, raw) })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
+	sandboxSource := resolvedConfiguration.HarnessBuiltinMode.Source
+	sandboxNote = freshLaunchSelectionNote(resolvedConfiguration.HarnessBuiltinMode)
 	body.ApprovalPolicy, _, approvalNote, fieldFail = resolveStringLaunchField(
 		"approval", body.ApprovalPolicy, h.Name, profileTiers, func(p *db.SpawnProfile) string { return p.Approval },
 		func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
@@ -3871,16 +3820,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// loudly. Whether the HOST can run the layer is a separate gate below,
 	// because tier fallthrough would turn "no bwrap on this box" into a silent
 	// downgrade to harness-builtin. See sandbox_implementation.go.
-	var sandboxImplNote string
-	var sandboxImplSource string
-	body.SandboxImplementation, sandboxImplSource, sandboxImplNote, fieldFail = resolveStringLaunchField(
-		sandboxImplementationField, body.SandboxImplementation, h.Name, profileTiers,
-		func(p *db.SpawnProfile) string { return p.SandboxImplementation },
-		func(raw string) (string, error) { return validateSandboxImplementationForHarness(h, raw) })
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
+	sandboxImplSource := resolvedConfiguration.SandboxImplementation.Source
+	sandboxImplNote := freshLaunchSelectionNote(resolvedConfiguration.SandboxImplementation)
 	// Host gate, on the RESOLVED value and whichever tier supplied it. Never
 	// falls through; refuses naming the missing capability. Probed live, so an
 	// operator who just installed bwrap is not refused by a stale answer.
@@ -4305,26 +4246,14 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// resolveStringLaunchField already validated and normalized both values.
 	effort, model := body.Effort, body.Model
 
-	// Resolve the sandbox mode for the chosen harness: a Codex agent gets its
-	// secure default (the managed tclaude-agent profile) when unset, a Claude
-	// agent gets its inherit default (normalized to "" — no `--settings`
-	// override), and an explicit mode is validated per-harness. Then the
-	// cwd-safety guard: a writable Codex sandbox confines writes to the cwd
+	// The captured resolver already applied the chosen harness's secure default
+	// and the implementation's native-mode projection. The remaining
+	// cwd-safety guard judges that exact resolved value: a writable Codex sandbox confines writes to the cwd
 	// subtree, so a cwd at/above $HOME would expose ~/.tclaude / ~/.codex /
 	// ~/.claude — refuse here with a clean 400 rather than after the forked
 	// session times out. (Claude's `on` block protects those dirs via settings,
 	// so this Codex-specific guard doesn't apply to it.)
-	harnessBuiltinMode, sbErr := harness.ResolveHarnessBuiltinMode(h, body.HarnessBuiltinMode)
-	if sbErr != nil {
-		writeError(w, http.StatusBadRequest, "invalid_sandbox", sbErr.Error())
-		return
-	}
-	harnessBuiltinMode, fieldFail = resolveSandboxImplementationMode(
-		h, harnessBuiltinMode, body.SandboxImplementation)
-	if fieldFail != nil {
-		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
-		return
-	}
+	harnessBuiltinMode := resolvedConfiguration.HarnessBuiltinMode.Effective
 	if h.UsesAuthoritativeServer() &&
 		body.SandboxImplementation == string(sandboxpolicy.ImplementationTclaudeLayer) {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes,
@@ -4807,6 +4736,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		HarnessBuiltinMode:          harnessBuiltinMode,
 		HarnessBuiltinModeSource:    sandboxSource,
 		SandboxImplementation:       body.SandboxImplementation,
+		FreshConfigurationResolved:  true,
 		AllowUnenforcedSandbox:      body.AllowUnenforcedSandbox,
 		AskUserQuestionTimeout:      askTimeout,
 		ApprovalPolicy:              approvalPolicy,
@@ -5043,6 +4973,10 @@ type spawnParams struct {
 	// the spawn boundary (handleGroupSpawn) before building the params; it
 	// forwards to `tclaude session new --sandbox <mode>`.
 	HarnessBuiltinMode string
+	// FreshConfigurationResolved marks harness/mode/implementation as one
+	// captured decision. executeSpawn still late-fills unmigrated fields for
+	// legacy callers, but must not re-read these three from newer defaults.
+	FreshConfigurationResolved bool
 	// HarnessBuiltinModeSource names the resolution tier that CHOSE HarnessBuiltinMode — an
 	// explicit request field, or the named / group-default / global-default
 	// spawn profile that carried it. It forwards to `tclaude session new
@@ -6190,13 +6124,15 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 	}
 	noteLaunch()
 	p.EffortSource = preferResolvedSource(p.EffortSource, fieldSource)
-	p.HarnessBuiltinMode, _, fieldNote, fail = resolveStringLaunchField("sandbox", p.HarnessBuiltinMode, h.Name, tiers,
-		func(prof *db.SpawnProfile) string { return prof.Sandbox },
-		func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(h, raw) })
-	if fail != nil {
-		return fail
+	if !p.FreshConfigurationResolved {
+		p.HarnessBuiltinMode, _, fieldNote, fail = resolveStringLaunchField("sandbox", p.HarnessBuiltinMode, h.Name, tiers,
+			func(prof *db.SpawnProfile) string { return prof.Sandbox },
+			func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(h, raw) })
+		if fail != nil {
+			return fail
+		}
+		noteLaunch()
 	}
-	noteLaunch()
 	p.ApprovalPolicy, _, fieldNote, fail = resolveStringLaunchField("approval", p.ApprovalPolicy, h.Name, tiers,
 		func(prof *db.SpawnProfile) string { return prof.Approval },
 		func(raw string) (string, error) { return harness.ValidateApprovalPolicy(h, raw) })
@@ -6237,15 +6173,17 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		p.ProfileContext, fieldNote = resolveProfileStartupContext(h.Name, tiers)
 		noteLaunch()
 	}
-	p.SandboxImplementation, fieldSource, fieldNote, fail = resolveStringLaunchField(
-		sandboxImplementationField, p.SandboxImplementation, h.Name, tiers,
-		func(prof *db.SpawnProfile) string { return prof.SandboxImplementation },
-		func(raw string) (string, error) { return validateSandboxImplementationForHarness(h, raw) })
-	if fail != nil {
-		return fail
+	if !p.FreshConfigurationResolved {
+		p.SandboxImplementation, fieldSource, fieldNote, fail = resolveStringLaunchField(
+			sandboxImplementationField, p.SandboxImplementation, h.Name, tiers,
+			func(prof *db.SpawnProfile) string { return prof.SandboxImplementation },
+			func(raw string) (string, error) { return validateSandboxImplementationForHarness(h, raw) })
+		if fail != nil {
+			return fail
+		}
+		noteLaunch()
+		p.SandboxImplementationSource = preferResolvedSource(p.SandboxImplementationSource, fieldSource)
 	}
-	noteLaunch()
-	p.SandboxImplementationSource = preferResolvedSource(p.SandboxImplementationSource, fieldSource)
 	// The host gate belongs here too, not only at the HTTP boundary. This
 	// function is the safety net every non-HTTP caller passes through — the
 	// template deploy path builds spawnParams directly — so a group or global

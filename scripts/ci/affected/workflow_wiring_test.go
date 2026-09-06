@@ -90,6 +90,7 @@ func TestPlatformV2FocusedPolicyWiring(t *testing.T) {
 		{"TestSpawnAuthority", "agentd", []string{"TestSpawnAuthority"}},
 		{"TestCronSpawn", "agentd", []string{"TestCronSpawn"}},
 		{"TestTriggerSpawn", "agentd", []string{"TestTriggerSpawn"}},
+		{"TestFreshLaunchConfiguration", "agentd", []string{"TestFreshLaunchConfiguration"}},
 		{"TestObserveBackgroundWork", "agentd", []string{"TestObserveBackgroundWork"}},
 		{"TestResolveBackgroundObservation", "agentd", []string{"TestResolveBackgroundObservation"}},
 		{"TestDashboardAndTerminalStatusShareReadOnlyBackgroundObservation", "agentd", []string{"TestDashboardAndTerminalStatusShareReadOnlyBackgroundObservation"}},
