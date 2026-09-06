@@ -129,6 +129,14 @@ func (s *Store) CreateAttachmentClaim(ctx context.Context, claim model.Attachmen
 			return app.ErrUnauthorized
 		}
 	}
+	if claim.Owner.Kind == model.PrincipalAutomation {
+		// Preparing private bytes does not select the final audience. Require
+		// at least one currently authorized delegated message destination;
+		// message admission later checks every concrete destination atomically.
+		if err := requireDelegatedAttachmentAction(ctx, tx, claim.Owner, model.ActionSendMessage, claim.Owner.Delegation.Resources, claim.CreatedAt); err != nil {
+			return err
+		}
+	}
 	if err := insertAttachment(ctx, tx, claim.Attachment, claim.Owner, content); err != nil {
 		return err
 	}
@@ -223,6 +231,41 @@ func (s *Store) AttachmentContent(ctx context.Context, id model.AttachmentID, pr
 				return model.Attachment{}, nil, err
 			}
 			allowed = count != 0
+		}
+	}
+	if allowed && principal.Kind == model.PrincipalAutomation {
+		resources := []model.ResourceSelector{}
+		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT mr.address_kind,mr.agent_id FROM message_attachments ma JOIN message_recipients mr ON mr.message_id=ma.message_id WHERE ma.attachment_id=?`, id)
+		if err != nil {
+			return model.Attachment{}, nil, err
+		}
+		for rows.Next() {
+			var kind model.MessageAddressKind
+			var agentID model.AgentID
+			if err := rows.Scan(&kind, &agentID); err != nil {
+				rows.Close()
+				return model.Attachment{}, nil, err
+			}
+			if kind == model.MessageAddressOperator {
+				resources = append(resources, model.ResourceSelector{Kind: model.ResourceOperator})
+			} else {
+				resources = append(resources, model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agentID})
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return model.Attachment{}, nil, err
+		}
+		if err := rows.Close(); err != nil {
+			return model.Attachment{}, nil, err
+		}
+		// An uncommitted private claim has no message audience yet. Its owner
+		// still needs a live explicit read delegation; ownership alone is insufficient.
+		if len(resources) == 0 {
+			resources = principal.Delegation.Resources
+		}
+		if err := requireDelegatedAttachmentAction(ctx, tx, principal, model.ActionReadAttachment, resources, at); err != nil {
+			return model.Attachment{}, nil, err
 		}
 	}
 	if !allowed {
@@ -460,4 +503,17 @@ func (s *Store) ResolveMessageAudience(ctx context.Context, audience model.Messa
 	}
 	sort.Slice(resolved, func(i, j int) bool { return resolved[i] < resolved[j] })
 	return resolved, nil
+}
+
+func requireDelegatedAttachmentAction(ctx context.Context, q queryer, principal model.Principal, action model.Action, resources []model.ResourceSelector, at time.Time) error {
+	for _, resource := range resources {
+		decision, err := authorizeTx(ctx, q, model.AuthorityRequest{Principal: principal, Action: action, Resource: resource}, at)
+		if err != nil {
+			return err
+		}
+		if decision.Allowed {
+			return nil
+		}
+	}
+	return app.ErrUnauthorized
 }
