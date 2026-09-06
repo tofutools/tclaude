@@ -227,6 +227,26 @@ func TestLateObservationCannotResurrectExitedExecution(t *testing.T) {
 	require.Equal(t, model.ExecutionExited, observed.Execution.State)
 }
 
+func TestClientCancellationDuringEffectDoesNotCancelSettlement(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	provider := newFakeProvider()
+	service := testService(store, provider)
+	agent := createAgent(t, ctx, service, model.OperatorPrincipal(), "agent_disconnect")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(model.OperatorPrincipal(), "request_disconnect_launch"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	requestCtx, cancelRequest := context.WithCancel(ctx)
+	provider.runtime.onInteract = cancelRequest
+	result, err := service.Interact(requestCtx, app.InteractRequest{RequestContext: effect(model.OperatorPrincipal(), "request_disconnect_interact"), ExecutionID: launched.Execution.ID, Text: "continue after disconnect"})
+	require.NoError(t, err)
+	require.Equal(t, model.OperationSucceeded, result.Operation.State)
+	persisted, err := store.Snapshot(ctx)
+	require.NoError(t, err)
+	require.Equal(t, model.OperationSucceeded, persisted.Operations[len(persisted.Operations)-1].State)
+}
+
 func TestContextChangeAndResumeUseStoredNativeEvidence(t *testing.T) {
 	ctx := context.Background()
 	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
