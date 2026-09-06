@@ -24,6 +24,7 @@ const (
 type AuthoritySubjectKind string
 
 const (
+	AuthorityOperator  AuthoritySubjectKind = "operator"
 	AuthorityAgent     AuthoritySubjectKind = "agent"
 	AuthorityExecution AuthoritySubjectKind = "execution"
 )
@@ -123,6 +124,16 @@ type AuthorityRequest struct {
 	Action                 Action
 	Resource               ResourceSelector
 	RequestedConfiguration *DesiredConfiguration
+}
+
+// AutomationDelegation is an application-authenticated run fixture, not a
+// scheduler. Its accepted scope is intersected with the authority subject's
+// current grants for every effect.
+type AutomationDelegation struct {
+	Actions   []Action
+	Resources []ResourceSelector
+	Bounds    ConfigurationBounds
+	ExpiresAt time.Time
 }
 
 // ConfigurationBounds are an allow-list, not advisory metadata. Delegated

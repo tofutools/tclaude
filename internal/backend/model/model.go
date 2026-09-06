@@ -20,6 +20,11 @@ type Principal struct {
 	Generation    AccessGeneration
 	AutomationRun string
 	Authority     AuthoritySubject
+	Delegation    *AutomationDelegation
+}
+
+func AutomationPrincipal(run string, authority AuthoritySubject, delegation AutomationDelegation) Principal {
+	return Principal{Kind: PrincipalAutomation, AutomationRun: run, Authority: authority, Delegation: &delegation}
 }
 
 func OperatorPrincipal() Principal { return Principal{Kind: PrincipalOperator} }
