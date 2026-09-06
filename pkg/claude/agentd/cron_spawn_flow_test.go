@@ -366,7 +366,8 @@ func TestCronSpawnScopedSandboxProfileMustBindTheManagedWorker(t *testing.T) {
 			Cwd: f.World.HomeDir, Status: "running", Harness: harness.CodexName,
 			HarnessBuiltinMode: harness.SandboxDangerFull, ApprovalPolicy: "never",
 		}))
-		if scope == "owner" || scope == "owner-with-global-grant" {
+		switch scope {
+		case "owner", "owner-with-global-grant":
 			require.NoError(t, db.AddAgentGroupOwner(g.ID, owner, "test"))
 			narrowOwnerBypass(t, f, g.Name, map[string]any{
 				agentd.PermGroupsMembersSpawn: map[string]any{"sandbox_profile": []string{"locked"}},
@@ -374,9 +375,9 @@ func TestCronSpawnScopedSandboxProfileMustBindTheManagedWorker(t *testing.T) {
 			if scope == "owner-with-global-grant" {
 				require.NoError(t, db.GrantAgentPermission(owner, agentd.PermAgentSpawn, "test"))
 			}
-		} else if scope == "" {
+		case "":
 			require.NoError(t, db.GrantAgentPermission(owner, agentd.PermGroupsMembersSpawn, "test"))
-		} else {
+		default:
 			require.NoError(t, db.GrantAgentPermissionWithScope(owner,
 				agentd.PermGroupsMembersSpawn, scope, "test"))
 		}
