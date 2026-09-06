@@ -155,6 +155,63 @@ func TestAdmitConversationBindingCASReplayAndImmutableHistory(t *testing.T) {
 	}, history)
 }
 
+func TestAdmitConversationBindingResumeRequiresExactOperationAndPreservesLogicalConversation(t *testing.T) {
+	setupTestDB(t)
+	const (
+		predecessor = "31313131313131313131313131313131"
+		successor   = "32323232323232323232323232323232"
+		convID      = "resume-logical-conv"
+	)
+	seedManagedBindingSession(t, "resume-predecessor", predecessor, "tmux-managed", "%7", "claude", 4242)
+	first := managedBindingAdmission("resume-predecessor", predecessor, "resume-predecessor-evidence", convID, 0)
+	accepted, err := AdmitConversationBinding(first)
+	require.NoError(t, err)
+	require.Equal(t, conversation.Accepted, accepted.Outcome)
+	preRow, err := LoadSession("resume-predecessor")
+	require.NoError(t, err)
+	_, err = MarkSessionExitedIfUnchanged(preRow.ID, preRow.Status, preRow.UpdatedAt, "resume")
+	require.NoError(t, err)
+
+	seedManagedBindingSession(t, "resume-successor", successor, "tmux-managed", "%7", "claude", 4242)
+	opID := execution.NewOperationID()
+	secret := []byte("resume-logical-secret")
+	require.NoError(t, CreateResumeOperation(ResumeOperationRow{
+		ID: opID, Kind: "manual_resume", ConvID: convID,
+		Attempt:               execution.AttemptRef{ExecutionID: execution.ID(successor)},
+		LogicalConversationID: string(accepted.Selection.Conversation), ClaimHash: ResumeClaimHash(secret),
+		State: execution.ResumeRequested, LaunchPhase: "requested", Revision: 1,
+	}))
+	require.NoError(t, TransitionResumeOperation(opID, 1, execution.ResumeAccepted, "accepted", ""))
+	claimed, err := ClaimResumeOperation(opID, execution.ID(successor), secret, convID, "resume-successor", 77, "start-77")
+	require.NoError(t, err)
+	require.True(t, claimed)
+	registered, err := RegisterResumeLaunch(opID, execution.ID(successor), convID, "resume-successor", "tmux-managed", "%7", "/private/resume-gate", 77, "start-77")
+	require.NoError(t, err)
+	require.True(t, registered)
+	granted, err := GrantResumeRelease(opID, execution.ID(successor), "resume-successor", "tmux-managed", "%7", "/private/resume-gate")
+	require.NoError(t, err)
+	require.True(t, granted)
+	ordinary := managedBindingAdmission("resume-successor", successor, "resume-ordinary-evidence", convID, 0)
+	ordinary.Transition = conversation.Continue
+	refused, err := AdmitConversationBinding(ordinary)
+	require.NoError(t, err)
+	assert.Equal(t, conversation.Ambiguous, refused.Outcome)
+
+	resume := managedBindingAdmission("resume-successor", successor, "resume-successor-evidence", convID, 0)
+	resume.Transition = conversation.Resume
+	ready, err := AdmitConversationBinding(resume)
+	require.NoError(t, err)
+	require.Equal(t, conversation.Accepted, ready.Outcome)
+	assert.Equal(t, accepted.Selection.Conversation, ready.Selection.Conversation)
+	op, err := GetResumeOperation(opID)
+	require.NoError(t, err)
+	require.NotNil(t, op)
+	assert.Equal(t, execution.ResumeReady, op.State)
+	started, err := MarkResumeReleased(opID, execution.ID(successor), "resume-successor", "tmux-managed", "%7")
+	require.NoError(t, err)
+	assert.True(t, started, "late wrapper bookkeeping must accept exact ready evidence")
+}
+
 func TestBindManagedAttemptMainPIDIsGenerationAndExitFenced(t *testing.T) {
 	setupTestDB(t)
 	const generation = "11111111111111111111111111111111"

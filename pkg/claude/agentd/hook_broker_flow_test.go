@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/platform/execution"
 	"github.com/tofutools/tclaude/pkg/claude/session"
+	"github.com/tofutools/tclaude/pkg/claude/statusbar"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -95,6 +97,114 @@ type dbSelection struct {
 	Conversation string
 	Reference    string
 	Revision     int64
+}
+
+func TestManagedHookAdmission_ResumeBeforeWrapperBookkeepingPreservesContinuity(t *testing.T) {
+	f := newFlow(t)
+	const (
+		convID           = "b0000000-1111-2222-3333-919191919191"
+		predecessorLabel = "spwn-resume-predecessor"
+		successorLabel   = "spwn-resume-successor"
+		predecessorTmux  = "tmux-resume-predecessor"
+		successorTmux    = "tmux-resume-successor"
+		predecessorPane  = 7004
+	)
+	haveLayerSession(t, f, convID, predecessorLabel, predecessorTmux, predecessorPane)
+	restorePredecessorTree := agentd.SetProcTreeForTest(
+		map[int]string{7000: "tclaude", 7001: "node", 7002: "sh", 7003: "bwrap", 7004: "sh"},
+		map[int]int{7000: 7001, 7001: 7002, 7002: 7003, 7003: 7004},
+	)
+	code, _ := postBrokeredHook(t, f, 7000, session.BrokeredHookRequest{
+		ClaimedSessionID: predecessorLabel,
+		Input: session.HookCallbackInput{
+			ConvID: convID, HookEventName: "SessionStart", Source: "startup",
+		},
+	})
+	require.Equal(t, http.StatusOK, code)
+	_, predecessor := managedSelection(t, predecessorLabel)
+	restorePredecessorTree()
+	predecessorRow, err := db.LoadSession(predecessorLabel)
+	require.NoError(t, err)
+	exited, err := db.MarkSessionExitedIfUnchanged(
+		predecessorRow.ID, predecessorRow.Status, predecessorRow.UpdatedAt, "resume")
+	require.NoError(t, err)
+	require.True(t, exited)
+
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, convID, successorLabel, successorTmux, brokerPanePID)
+	identity, err := db.GetSessionExitLaunchIdentity(successorLabel)
+	require.NoError(t, err)
+	executionID, err := execution.ParseID(identity.Generation)
+	require.NoError(t, err)
+	opID := execution.NewOperationID()
+	secret := []byte("early-production-hook")
+	require.NoError(t, db.CreateResumeOperation(db.ResumeOperationRow{
+		ID: opID, Kind: "manual_resume", ConvID: convID,
+		Attempt:               execution.AttemptRef{ExecutionID: executionID},
+		LogicalConversationID: predecessor.Conversation,
+		ClaimHash:             db.ResumeClaimHash(secret), State: execution.ResumeRequested,
+		LaunchPhase: "requested", Revision: 1,
+	}))
+	require.NoError(t, db.TransitionResumeOperation(opID, 1, execution.ResumeAccepted, "accepted", ""))
+	claimed, err := db.ClaimResumeOperation(opID, executionID, secret, convID, successorLabel, 7105, "claim-start")
+	require.NoError(t, err)
+	require.True(t, claimed)
+	registered, err := db.RegisterResumeLaunch(opID, executionID, convID, successorLabel, successorTmux, "%1", "/private/early-gate", 7105, "claim-start")
+	require.NoError(t, err)
+	require.True(t, registered)
+	granted, err := db.GrantResumeRelease(opID, executionID, successorLabel, successorTmux, "%1", "/private/early-gate")
+	require.NoError(t, err)
+	require.True(t, granted)
+	code, _ = postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+		ClaimedSessionID: successorLabel,
+		Input:            session.HookCallbackInput{ConvID: convID, HookEventName: "UserPromptSubmit"},
+	})
+	require.Equal(t, http.StatusOK, code)
+	_, found, err := db.CurrentConversationSelection(executionID)
+	require.NoError(t, err)
+	assert.False(t, found, "ordinary cadence cannot initialize a replacement while Resume is pending")
+
+	// This is the authentic race: the gate has acknowledged, so Claude can
+	// emit SessionStart(resume), while the wrapper has not marked released.
+	code, _ = postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+		ClaimedSessionID: successorLabel,
+		Input: session.HookCallbackInput{
+			ConvID: convID, HookEventName: "SessionStart", Source: "resume",
+		},
+	})
+	require.Equal(t, http.StatusOK, code)
+	_, resumed := managedSelection(t, successorLabel)
+	assert.Equal(t, predecessor.Conversation, resumed.Conversation)
+	op, err := db.GetResumeOperation(opID)
+	require.NoError(t, err)
+	require.NotNil(t, op)
+	assert.Equal(t, execution.ResumeReady, op.State)
+	agentd.ReconcileResumeOperationsForTest(time.Now(), true)
+	_, afterCrashReconcile := managedSelection(t, successorLabel)
+	assert.Equal(t, resumed, afterCrashReconcile,
+		"ready hook evidence survives a crashed wrapper and the production reconciler")
+
+	// Ordinary hooks and statusline cadence must replay that same selection;
+	// neither may initialize a replacement logical conversation.
+	code, _ = postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+		ClaimedSessionID: successorLabel,
+		Input:            session.HookCallbackInput{ConvID: convID, HookEventName: "UserPromptSubmit"},
+	})
+	require.Equal(t, http.StatusOK, code)
+	statusCode, render := postBrokeredRender(t, f, callerPID, statusbar.BrokeredRenderRequest{
+		ClaimedSessionID: successorLabel,
+		RenderConvID:     convID,
+		Payload:          statuslinePayload(convID, "Opus 5", "claude-opus-5", "high", 12, 10, 2, 200000, 0),
+		ApplyWrites:      true,
+	})
+	require.Equal(t, http.StatusOK, statusCode)
+	assert.True(t, render.Owned)
+	_, afterCadence := managedSelection(t, successorLabel)
+	assert.Equal(t, resumed, afterCadence)
+
+	started, err := db.MarkResumeReleased(opID, executionID, successorLabel, successorTmux, "%1")
+	require.NoError(t, err)
+	assert.True(t, started, "late wrapper bookkeeping is idempotent after ready evidence")
 }
 
 func TestManagedHookAdmission_RotatesReferenceAndLogicalConversation(t *testing.T) {

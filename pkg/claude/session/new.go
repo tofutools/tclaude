@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -34,6 +35,12 @@ import (
 )
 
 type NewParams struct {
+	// ExecutionID is the exact preallocated managed Resume attempt. It is only
+	// valid with --managed-launch; ordinary CLI callers cannot pin an attempt.
+	ExecutionID       string `short:"E" long:"execution-id" optional:"true" help:"Internal: preallocated managed execution identity"`
+	ResumeOperationID string `short:"O" long:"resume-operation-id" optional:"true" help:"Internal: durable managed resume operation correlation"`
+	ResumeClaimFD     int    `short:"F" long:"resume-claim-fd" optional:"true" help:"Internal: inherited one-shot managed resume claim descriptor"`
+
 	// ManagedLaunch marks agentd's forked session wrapper. The daemon already
 	// resolved profile precedence, so the child must use the exact passed shape.
 	ManagedLaunch bool `long:"managed-launch" help:"Internal: launch parameters were resolved by agentd"`
@@ -389,6 +396,21 @@ type NewParams struct {
 	RouteHelperProxyOnly                   bool    `long:"route-helper-proxy-only" optional:"true" help:"Internal: carry route authority to the Darwin filtering proxy without a namespace helper"`
 }
 
+// processInstanceIdentity is an observational process-start marker used by
+// the managed claim adapter. Linux exposes a kernel start tick; other hosts
+// retain a per-process monotonic marker so inherited descriptors cannot be
+// mistaken for a fresh process.
+func processInstanceIdentity() string {
+	pid := os.Getpid()
+	if b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err == nil {
+		fields := strings.Fields(string(b))
+		if len(fields) > 21 {
+			return fields[21]
+		}
+	}
+	return fmt.Sprintf("pid:%d", pid)
+}
+
 func NewCmd() *cobra.Command {
 	cmd := boa.CmdT[NewParams]{
 		Use:         "new",
@@ -406,6 +428,9 @@ func NewCmd() *cobra.Command {
 	// Allow arbitrary args so post-'--' args pass through to claude without cobra rejecting them.
 	cmd.Args = cobra.ArbitraryArgs
 	_ = cmd.Flags().MarkHidden("managed-launch")
+	_ = cmd.Flags().MarkHidden("execution-id")
+	_ = cmd.Flags().MarkHidden("resume-operation-id")
+	_ = cmd.Flags().MarkHidden("resume-claim-fd")
 	_ = cmd.Flags().MarkHidden("allow-unenforced-sandbox")
 	_ = cmd.Flags().MarkHidden("sandbox-continuation")
 	_ = cmd.Flags().MarkHidden("cwd-write-proof")
@@ -529,6 +554,18 @@ var ErrNoAutomaticGroupMatch = errors.New("no automatic group match")
 func runNew(params *NewParams) error {
 	timing := config.StartupTiming("session_new", "label", params.Label, "harness", params.Harness)
 	defer timing("return")
+	if strings.TrimSpace(params.ExecutionID) != "" && !params.ManagedLaunch {
+		return errors.New("execution identity is restricted to managed launch")
+	}
+	if strings.TrimSpace(params.ExecutionID) != "" && strings.TrimSpace(params.Resume) == "" {
+		return errors.New("execution identity is restricted to managed resume")
+	}
+	if strings.TrimSpace(params.ResumeOperationID) != "" && !params.ManagedLaunch {
+		return errors.New("resume operation identity is restricted to managed launch")
+	}
+	if params.ResumeClaimFD != 0 && !params.ManagedLaunch {
+		return errors.New("resume claim handoff is restricted to managed launch")
+	}
 	if params.HelpContextFeatures {
 		harness.PrintContextFeatureCatalog(os.Stdout)
 		return nil
@@ -1214,6 +1251,38 @@ func runNew(params *NewParams) error {
 		}
 		defer release()
 	}
+	// A managed resume must consume its private one-shot admission claim before
+	// any tmux/process side effect. Public operation and execution IDs alone are
+	// never sufficient authority.
+	if params.ResumeOperationID != "" {
+		if params.ResumeClaimFD <= 0 || strings.TrimSpace(params.ExecutionID) == "" {
+			return errors.New("managed resume admission claim is missing")
+		}
+		claimFile := os.NewFile(uintptr(params.ResumeClaimFD), "tclaude-resume-claim")
+		if claimFile == nil {
+			return errors.New("managed resume admission claim descriptor is invalid")
+		}
+		claim, readErr := io.ReadAll(io.LimitReader(claimFile, 4096))
+		_ = claimFile.Close()
+		if readErr != nil || len(claim) == 0 {
+			if readErr == nil {
+				readErr = errors.New("empty claim")
+			}
+			return fmt.Errorf("read managed resume admission claim: %w", readErr)
+		}
+		execID, parseErr := execution.ParseID(strings.TrimSpace(params.ExecutionID))
+		if parseErr != nil {
+			return fmt.Errorf("invalid managed execution identity: %w", parseErr)
+		}
+		opID := execution.OperationID(strings.TrimSpace(params.ResumeOperationID))
+		claimed, claimErr := db.ClaimResumeOperation(opID, execID, claim, fullConvID, sessionID, os.Getpid(), processInstanceIdentity())
+		if claimErr != nil {
+			return fmt.Errorf("managed resume admission claim: %w", claimErr)
+		}
+		if !claimed {
+			return errors.New("managed resume admission claim rejected")
+		}
+	}
 
 	// The session PK is now final (priority above: label > resumed conv UUID >
 	// random synthetic). Reject if a LIVE session already owns it. The tmux
@@ -1249,6 +1318,13 @@ func runNew(params *NewParams) error {
 	// authorizes callers from Unix-socket peer credentials and recorded PIDs.
 	// Build the harness command with all environment variables forwarded.
 	exitGeneration := execution.NewID().String()
+	if strings.TrimSpace(params.ExecutionID) != "" {
+		pinned, err := execution.ParseID(strings.TrimSpace(params.ExecutionID))
+		if err != nil {
+			return fmt.Errorf("invalid managed execution identity: %w", err)
+		}
+		exitGeneration = pinned.String()
+	}
 	var routeHelper *TclaudeLayerRouteHelper
 	if params.RouteHelperAgentID != "" || params.RouteHelperConvID != "" || params.RouteHelperLaunchGeneration != "" || params.RouteHelperCredentialHandoffSocketPath != "" || len(params.RouteHelperGroupIDs) > 0 {
 		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
@@ -2486,14 +2562,27 @@ func runNew(params *NewParams) error {
 	}
 	exitGuard, err := newExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
 	if err != nil {
+		if params.ResumeOperationID != "" {
+			return fmt.Errorf("managed resume exit-launch gate unavailable: %w", err)
+		}
 		slog.Warn("exit audit: private launch setup unavailable; continuing without callback",
 			"session_id", sessionID, "tmux_session", tmuxSession, "error", err)
 		exitGuard = disabledExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
 	} else if err := db.MarkSessionExitLaunchPending(sessionID, exitGeneration); err != nil {
+		if params.ResumeOperationID != "" {
+			exitGuard.abort()
+			return fmt.Errorf("managed resume exit-launch state unavailable: %w", err)
+		}
 		slog.Warn("exit audit: launch gate state unavailable; continuing without callback",
 			"session_id", sessionID, "tmux_session", tmuxSession, "error", err)
 		exitGuard.abort()
 		exitGuard = disabledExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
+	}
+	if params.ResumeOperationID != "" {
+		exitGuard.resumeOperationID = execution.OperationID(strings.TrimSpace(params.ResumeOperationID))
+		exitGuard.resumeConversation = fullConvID
+		exitGuard.resumeClaimPID = os.Getpid()
+		exitGuard.resumeClaimProcessStart = processInstanceIdentity()
 	}
 	defer exitGuard.abort()
 	// The existing cwd proof remains the outer bootstrap below so it can report
@@ -2597,6 +2686,20 @@ func runNew(params *NewParams) error {
 	timing("stacked_binding_checked")
 	exitGuard.armPaneHook()
 	exitGuard.bind()
+	if params.ResumeOperationID != "" && !exitGuard.bound {
+		exitGuard.abort()
+		return errors.New("managed resume exit-launch binding unavailable")
+	}
+	if params.ResumeOperationID != "" {
+		registered, registerErr := exitGuard.registerResumeLaunch()
+		if registerErr != nil || !registered {
+			killLaunchPane()
+			if registerErr != nil {
+				return fmt.Errorf("register managed resume launch: %w", registerErr)
+			}
+			return errors.New("managed resume launch was cancelled before registration")
+		}
+	}
 	if proofReadyPath != "" {
 		if err := waitForSpawnCwdReadiness(proofReadyPath); err != nil {
 			killLaunchPane()
