@@ -1047,12 +1047,12 @@ func TestDashboardHTML_WizardGroupCreateDialog(t *testing.T) {
 		}
 	}
 
-	// Title: a pure-CSS span swap, "Create a new agent group" → "⚔ Form a
+	// Title: a pure-CSS span swap, "Create group" → "⚔ Form a
 	// party" (echoing the button, like the cron title echoes its opener). Both
 	// spans + the swap rules must be present.
 	must(`classPrefix="group-create-title"`, "the title uses the scoped regular/wizard span pair")
-	must(`: 'Create a new agent group';`, "the default group-create title copy")
-	must(`: '⚔ Form a party';`, "the wizard group-create title copy")
+	must(`const regularTitle = 'Create group';`, "the default group-create title copy")
+	must(`const wizardTitle = '⚔ Form a party';`, "the wizard group-create title copy")
 	// The default-hide rule is load-bearing: without it the wizard title has no
 	// rule in the default/slop theme and BOTH titles render side by side.
 	must(".group-create-title-wizard { display: none; }", "the default theme hides the wizard title")
