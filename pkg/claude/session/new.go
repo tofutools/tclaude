@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -393,6 +394,21 @@ type NewParams struct {
 	RouteHelperCredentialHandoffSocketPath string  `long:"route-helper-credential-handoff-socket" optional:"true" help:"Internal: one-shot credential FD handoff socket for the Linux group-route helper"`
 	RouteHelperGroupIDs                    []int64 `long:"route-helper-group-id" optional:"true" help:"Internal: explicit route-enabled group for the Linux group-route helper"`
 	RouteHelperProxyOnly                   bool    `long:"route-helper-proxy-only" optional:"true" help:"Internal: carry route authority to the Darwin filtering proxy without a namespace helper"`
+}
+
+// processInstanceIdentity is an observational process-start marker used by
+// the managed claim adapter. Linux exposes a kernel start tick; other hosts
+// retain a per-process monotonic marker so inherited descriptors cannot be
+// mistaken for a fresh process.
+func processInstanceIdentity() string {
+	pid := os.Getpid()
+	if b, err := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); err == nil {
+		fields := strings.Fields(string(b))
+		if len(fields) > 21 {
+			return fields[21]
+		}
+	}
+	return fmt.Sprintf("pid:%d", pid)
 }
 
 func NewCmd() *cobra.Command {
@@ -1234,6 +1250,38 @@ func runNew(params *NewParams) error {
 			return reject
 		}
 		defer release()
+	}
+	// A managed resume must consume its private one-shot admission claim before
+	// any tmux/process side effect. Public operation and execution IDs alone are
+	// never sufficient authority.
+	if params.ResumeOperationID != "" {
+		if params.ResumeClaimFD <= 0 || strings.TrimSpace(params.ExecutionID) == "" {
+			return errors.New("managed resume admission claim is missing")
+		}
+		claimFile := os.NewFile(uintptr(params.ResumeClaimFD), "tclaude-resume-claim")
+		if claimFile == nil {
+			return errors.New("managed resume admission claim descriptor is invalid")
+		}
+		claim, readErr := io.ReadAll(io.LimitReader(claimFile, 4096))
+		_ = claimFile.Close()
+		if readErr != nil || len(claim) == 0 {
+			if readErr == nil {
+				readErr = errors.New("empty claim")
+			}
+			return fmt.Errorf("read managed resume admission claim: %w", readErr)
+		}
+		execID, parseErr := execution.ParseID(strings.TrimSpace(params.ExecutionID))
+		if parseErr != nil {
+			return fmt.Errorf("invalid managed execution identity: %w", parseErr)
+		}
+		opID := execution.OperationID(strings.TrimSpace(params.ResumeOperationID))
+		claimed, claimErr := db.ClaimResumeOperation(opID, execID, claim, sessionID, os.Getpid(), processInstanceIdentity())
+		if claimErr != nil {
+			return fmt.Errorf("managed resume admission claim: %w", claimErr)
+		}
+		if !claimed {
+			return errors.New("managed resume admission claim rejected")
+		}
 	}
 
 	// The session PK is now final (priority above: label > resumed conv UUID >

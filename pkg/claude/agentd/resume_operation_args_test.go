@@ -17,7 +17,7 @@ func TestSessionResumeArgsCarryManagedOperationCorrelation(t *testing.T) {
 	for _, want := range []string{
 		"--execution-id", "11111111111111111111111111111111",
 		"--resume-operation-id", "op_11111111111111111111111111111111",
-		"--resume-claim-fd", "7",
+		"--resume-claim-fd", "3",
 	} {
 		if !slices.Contains(args, want) {
 			t.Errorf("resume argv missing %q: %v", want, args)

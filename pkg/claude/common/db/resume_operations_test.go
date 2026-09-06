@@ -55,3 +55,27 @@ func TestResumeOperationStoreTransitionsAndReconcilesUnknown(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, active)
 }
+
+func TestClaimResumeOperationIsPrivateAndOneShot(t *testing.T) {
+	setupResumeOperationSchema(t)
+	opID := execution.NewOperationID()
+	eID := execution.ID("22222222222222222222222222222222")
+	secret := []byte("private-child-claim")
+	require.NoError(t, CreateResumeOperation(ResumeOperationRow{
+		ID: opID, Kind: "manual_resume", ConvID: "resume-claim-conv",
+		Attempt: execution.AttemptRef{ExecutionID: eID}, ClaimHash: ResumeClaimHash(secret),
+		State: execution.ResumeRequested, LaunchPhase: "requested", Revision: 1,
+	}))
+	require.NoError(t, TransitionResumeOperation(opID, 1, execution.ResumeAccepted, "accepted", ""))
+	claimed, err := ClaimResumeOperation(opID, eID, secret, "resume-claim-session", 1234, "proc-start-1")
+	require.NoError(t, err)
+	assert.True(t, claimed)
+	claimed, err = ClaimResumeOperation(opID, eID, secret, "resume-claim-session-2", 1235, "proc-start-2")
+	require.NoError(t, err)
+	assert.False(t, claimed, "consumed child claim must not be reusable")
+	row, err := GetResumeOperation(opID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Empty(t, row.ClaimHash)
+	assert.Equal(t, "child_claimed", row.LaunchPhase)
+}
