@@ -1,31 +1,29 @@
-// Command tclaude-agentd is the standalone agent-coordination daemon. It
-// exposes exactly what `tclaude agentd` does, one level higher up: run
-// `tclaude-agentd serve` instead of `tclaude agentd serve`. Both entry points
-// call the same code in pkg/claude/agentd, so the daemon behaves identically
-// whichever binary starts it.
-//
-// This binary is not a replacement for installing tclaude. The daemon still
-// runs tclaude subcommands out of process — it forks `tclaude session new` to
-// spawn agents, `tclaude setup` from the tray, and builds `tclaude session
-// attach` command lines for the dashboard's terminal links — so keep tclaude
-// on PATH beside it.
+// Command tclaude-agentd runs the same backend as tclaude agentd.
 package main
 
 import (
-	"github.com/tofutools/tclaude/pkg/claude/agentd"
-	"github.com/tofutools/tclaude/pkg/claude/cli"
-	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/tofutools/tclaude/internal/product"
 )
 
 func main() {
-	// The daemon builds command lines that run tclaude subcommands (session
-	// attach, session exit-callback). Declare that this executable is not the
-	// tclaude CLI so those resolve to a real tclaude rather than to us.
-	clcommon.MarkSelfNotTclaude()
-	cli.Main(version, agentd.RootCmd)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	command := product.DaemonCommand()
+	command.Version = version
+	if command.Version == "" {
+		command.Version = "development"
+	}
+	if err := command.ExecuteContext(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
 
-// version, when non-empty, is the version stamped at build time via
-// -ldflags "-X main.version=...". The GoReleaser release builds inject it. It
-// is empty for a plain `go build`.
+// Stamped by release builds with -ldflags "-X main.version=...".
 var version string
