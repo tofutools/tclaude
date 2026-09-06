@@ -84,6 +84,23 @@ func TestBrowserOfflineAgentGroupAndMessageFlow(t *testing.T) {
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
 	page.MustElementR("#message-list pre", "Durable browser message")
+	// Seed an authored human-decision process through the same authenticated API,
+	// then answer it through browser controls (no simulated decision handler).
+	page.MustEval(`async () => {
+	 await api('/v2/processes', {request_id:'browser_process_start',id:'browser_process',start:{Deadline:new Date(Date.now()+60000).toISOString(),InlineGraph:{CompilerVersion:'1',EntryNodeID:'approve',Nodes:[{ID:'approve',Name:'Approve browser outcome',Kind:'decision',Decision:{Kind:'work',Audience:[{Subject:{Kind:'operator'}}],PermittedAnswers:['approve'],ExpiresAfter:60000000000}},{ID:'done',Kind:'end',End:{Outcome:'verified'}}],Edges:[{From:'approve',To:'done'}]}}});
+	}`)
+	page.MustElement("[data-tab=decisions]").MustClick()
+	page.MustElementR("#decision-list button", "Answer").MustClick()
+	page.MustElement("[name=reason]").MustInput("Browser evidence inspected")
+	page.MustElement("#editor button[type=submit]").MustClick()
+	page.MustElement("#editor").MustWaitInvisible()
+	page.MustElement("[data-tab=work]").MustClick()
+	page.MustElementR("#work-list .card", "browser_process")
+	require.Eventually(t, func() bool {
+		value, err := page.Eval(`async () => {await refresh();return document.getElementById('work-list').textContent;}`)
+		return err == nil && strings.Contains(value.Value.Str(), "succeeded")
+	}, 5*time.Second, 100*time.Millisecond)
+
 	require.False(t, page.MustElement("#error").MustVisible())
 	// The fragment was removed after exchanging the one-use login credential.
 	require.NotContains(t, page.MustInfo().URL, "login=")
