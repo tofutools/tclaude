@@ -24,9 +24,24 @@ import (
 // wire projection and the client's renewed-resource read are production code.
 type deliveredLifecycleProvider struct {
 	lifecycleProvider
-	delivery host.ActionCredentialHost
+	delivery ports.ActionCredentialDelivery
 	receipts map[model.ExecutionID]ports.ActionCredentialReceipt
 	runtimes map[model.ExecutionID]*lifecycleRuntime
+}
+
+// Cancellation is injected only after production host replacement succeeds.
+// SQLite settlement must outlive it, or the resource and database generations diverge.
+type cancelAfterRotation struct {
+	ports.ActionCredentialDelivery
+	cancel context.CancelFunc
+}
+
+func (d cancelAfterRotation) RotateActionCredential(ctx context.Context, current ports.ActionCredentialReceipt, material ports.ActionCredentialMaterial) (ports.ActionCredentialReceipt, error) {
+	receipt, err := d.ActionCredentialDelivery.RotateActionCredential(ctx, current, material)
+	if err == nil {
+		d.cancel()
+	}
+	return receipt, err
 }
 
 func (p *deliveredLifecycleProvider) ActionCredentials() ports.ActionCredentialDelivery {
@@ -169,14 +184,51 @@ func TestExecutionClientCredentialRenewalRevocationAndRestart(t *testing.T) {
 	mail := map[string]any{"request_id": "agent-mail", "recipients": []model.AgentID{recipient.ID}, "body": "accepted once across renewal"}
 	var accepted model.Message
 	call(agentClient, "POST", "/v2/messages", mail, &accepted)
+	// A manager must obtain the peer's association revision through the same
+	// scoped public status route used by the client, without an operator snapshot.
+	var peerLaunch struct{ Execution executionView }
+	call(operator, "POST", "/v2/launch", map[string]any{"request_id": "launch-peer", "target": map[string]any{"agent": map[string]any{"agent_id": recipient.ID, "expected_revision": recipient.Revision}}}, &peerLaunch)
+	for grantID, action := range map[string]model.Action{"peer-status": model.ActionReadStatus, "peer-context": model.ActionChangeContext} {
+		resource := model.ResourceSelector{Kind: model.ResourceAgent, AgentID: recipient.ID}
+		if action == model.ActionChangeContext {
+			resource = model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: peerLaunch.Execution.ID}
+		}
+		call(operator, "PUT", "/v2/authority/grants/"+grantID, map[string]any{"subject": model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: agent.ID}, "action": action, "resource": resource, "expected_revision": 0}, nil)
+	}
+	var peerStatus struct {
+		Executions   []executionView
+		Associations []model.ConversationAssociation
+	}
+	call(agentClient, "POST", "/v2/status", map[string]any{"target": model.ResourceSelector{Kind: model.ResourceAgent, AgentID: recipient.ID}}, &peerStatus)
+	if len(peerStatus.Associations) != 1 || peerStatus.Associations[0].AgentID != recipient.ID || peerStatus.Associations[0].Revision == 0 || len(peerStatus.Executions) != 1 || peerStatus.Executions[0].ContextReadiness != model.ContextReadinessReady {
+		t.Fatalf("scoped peer selection missing or leaks another agent: %+v", peerStatus)
+	}
+	selected := peerStatus.Associations[0]
+	var changed struct{ Operation operationView }
+	call(agentClient, "POST", "/v2/context", map[string]any{"request_id": "peer-context", "execution_id": peerLaunch.Execution.ID, "intent": "reset", "expected_conversation_id": selected.ConversationID, "expected_association_revision": selected.Revision}, &changed)
+	if changed.Operation.State != model.OperationSucceeded {
+		t.Fatalf("context from public peer revision did not settle: %+v", changed)
+	}
+	call(agentClient, "POST", "/v2/status", map[string]any{"target": model.ResourceSelector{Kind: model.ResourceAgent, AgentID: recipient.ID}}, &peerStatus)
+	if len(peerStatus.Associations) != 1 || peerStatus.Associations[0].ConversationID == selected.ConversationID || peerStatus.Associations[0].Revision <= selected.Revision {
+		t.Fatalf("peer's revised selection unavailable: %+v", peerStatus)
+	}
 	oldCredential, err := os.ReadFile(credentialFile)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var access accessView
 	call(operator, "GET", "/v2/executions/"+string(launch.Execution.ID)+"/access", nil, &access)
-	if _, err := service.RenewExecutionAccess(ctx, app.RenewExecutionAccessRequest{ExecutionID: launch.Execution.ID, ExpectedRevision: access.Revision}); err != nil {
+	renewalContext, cancelRenewal := context.WithCancel(ctx)
+	defer cancelRenewal()
+	delivery := provider.delivery
+	provider.delivery = cancelAfterRotation{ActionCredentialDelivery: delivery, cancel: cancelRenewal}
+	if _, err := service.RenewExecutionAccess(renewalContext, app.RenewExecutionAccessRequest{ExecutionID: launch.Execution.ID, ExpectedRevision: access.Revision}); err != nil {
 		t.Fatal(err)
+	}
+	provider.delivery = delivery
+	if renewalContext.Err() == nil {
+		t.Fatal("test did not cancel after successful host rotation")
 	}
 	call(agentClient, "GET", "/v2/identity", nil, &identity)
 	var repeated model.Message

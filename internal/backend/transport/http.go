@@ -138,19 +138,20 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 type executionView struct {
-	ID             model.ExecutionID           `json:"id"`
-	AgentID        model.AgentID               `json:"agent_id,omitempty"`
-	ConversationID model.ConversationID        `json:"conversation_id,omitempty"`
-	Spec           model.ResolvedExecutionSpec `json:"spec"`
-	State          model.ExecutionState        `json:"state"`
-	Revision       model.Revision              `json:"revision"`
-	CreatedAt      time.Time                   `json:"created_at"`
-	UpdatedAt      time.Time                   `json:"updated_at"`
+	ID               model.ExecutionID           `json:"id"`
+	AgentID          model.AgentID               `json:"agent_id,omitempty"`
+	ConversationID   model.ConversationID        `json:"conversation_id,omitempty"`
+	Spec             model.ResolvedExecutionSpec `json:"spec"`
+	State            model.ExecutionState        `json:"state"`
+	ContextReadiness model.ContextReadiness      `json:"context_readiness"`
+	Revision         model.Revision              `json:"revision"`
+	CreatedAt        time.Time                   `json:"created_at"`
+	UpdatedAt        time.Time                   `json:"updated_at"`
 }
 
 func projectExecution(e model.Execution) executionView {
 	return executionView{ID: e.ID, AgentID: e.AgentID, ConversationID: e.ConversationID,
-		Spec: e.Spec, State: e.State, Revision: e.Revision, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt}
+		Spec: e.Spec, State: e.State, ContextReadiness: e.ContextReadiness, Revision: e.Revision, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt}
 }
 
 func (h *Handler) snapshot(w http.ResponseWriter, r *http.Request) {

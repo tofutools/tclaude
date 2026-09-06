@@ -120,9 +120,10 @@ func (h *Handler) scopedStatus(w http.ResponseWriter, r *http.Request) {
 		executions = append(executions, projectExecution(execution))
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Agents     []model.Agent   `json:"agents"`
-		Executions []executionView `json:"executions"`
-	}{result.Agents, executions})
+		Agents       []model.Agent                   `json:"agents"`
+		Executions   []executionView                 `json:"executions"`
+		Associations []model.ConversationAssociation `json:"associations"`
+	}{result.Agents, executions, result.Associations})
 }
 
 func (h *Handler) explainAuthority(w http.ResponseWriter, r *http.Request) {

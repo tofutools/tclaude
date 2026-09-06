@@ -132,8 +132,11 @@ Inside that execution, the commands are:
 requires a logical conversation ID and `--expected-association-revision`.
 `context EXECUTION_ID` requires `--intent clear|reset`,
 `--expected-conversation`, and `--expected-association-revision`. All three
-commands require `--request-id`. Read current revisions from identity/status or
-an authorized snapshot; stale selections are refused. Available operations are
+commands require `--request-id`. Scoped status includes the selected agents'
+current `associations` and each execution's `context_readiness`, so an authorized
+manager can obtain a peer's conversation and association revision without a global
+snapshot. Read current revisions from identity/status or an authorized snapshot;
+stale selections are refused. Available operations are
 subject to current scoped authority and provider capabilities.
 
 The application issues HTTP-safe credentials, and the host atomically replaces
