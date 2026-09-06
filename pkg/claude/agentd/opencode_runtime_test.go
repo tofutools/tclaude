@@ -435,6 +435,114 @@ func TestOpenCodePaneLaunchMarkerRequiresExactPaneCommand(t *testing.T) {
 		"the captured pane must carry the exact launch-authenticated marker")
 }
 
+func TestOpenCodeBoundaryProjectionContinuesAfterLatePaneBinding(t *testing.T) {
+	setupTestDB(t)
+	const (
+		sessionID  = "spwn-opencode-late-binding"
+		generation = "11111111111111111111111111111111"
+		paneID     = "%7"
+	)
+	root := t.TempDir()
+	boundaryRaw, err := json.Marshal(session.ExecutionBoundary{
+		Version:               session.ExecutionBoundaryVersion,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		Harness:               session.ExecutionHarness{Name: harness.OpenCodeName},
+		OuterLayerRenderInput: &session.TclaudeLayerLaunchSpec{
+			Version: session.TclaudeLayerLaunchSpecVersion,
+			Contract: session.TclaudeLayerLaunchContract{
+				HarnessName: harness.OpenCodeName, StateRoot: root,
+			},
+		},
+		StateStoreIdentity: &harness.StateStoreIdentity{
+			Harness: harness.OpenCodeName, Namespace: "host-path:" + root,
+			StateRoot: root, Source: "explicit launch allocation",
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: sessionID, ConvID: "ses_late_binding", TmuxSession: "tmux-late-binding",
+		Harness: harness.OpenCodeName, Status: "working", CreatedAt: time.Now().UTC(),
+	}))
+	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, generation))
+	runtime := db.OpenCodeRuntime{
+		SessionID: sessionID, ConvID: "ses_late_binding", ServerURL: "http://127.0.0.1:1234",
+		Password: "launch-secret", PID: 4242, Cwd: root,
+		SandboxImplementation: string(sandboxpolicy.ImplementationTclaudeLayer),
+		ExecutionBoundaryJSON: string(boundaryRaw), Transport: db.OpenCodeTransportLoopbackTCP,
+	}
+	require.NoError(t, db.UpsertOpenCodeRuntime(runtime))
+	launch := openCodeLaunchFromRuntime(runtime)
+	previousVerified := openCodeRuntimeVerified
+	previousMarker := openCodePaneLaunchMarkerObserved
+	openCodeRuntimeVerified = func(db.OpenCodeRuntime) bool { return true }
+	openCodePaneLaunchMarkerObserved = func(target db.SessionExitLaunchIdentity, marker string) bool {
+		return target.PaneID == paneID &&
+			marker == clcommon.OpenCodeLaunchProjectionMarker(launch.ServerURL, launch.Password)
+	}
+	t.Cleanup(func() {
+		openCodeRuntimeVerified = previousVerified
+		openCodePaneLaunchMarkerObserved = previousMarker
+		openCodeProcesses.Lock()
+		delete(openCodeProcesses.bySession, sessionID)
+		openCodeProcesses.Unlock()
+	})
+	process := &openCodeProcess{pid: runtime.PID, done: make(chan error, 1)}
+	openCodeProcesses.Lock()
+	openCodeProcesses.bySession[sessionID] = process
+	openCodeProcesses.Unlock()
+	row, err := db.LoadSession(sessionID)
+	require.NoError(t, err)
+	projected, err := projectOpenCodeExecutionBoundary(launch, row)
+	require.NoError(t, err)
+	require.False(t, projected, "the first live-pane sample precedes durable pane binding")
+
+	continueOpenCodeExecutionBoundaryProjection(launch, row)
+	openCodeProcesses.Lock()
+	done := process.projectionDone
+	openCodeProcesses.Unlock()
+	require.NotNil(t, done, "supported frozen evidence starts an owned continuation")
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		sessionID, generation, strings.Repeat("a", 64), paneID))
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("late-binding projection did not finish")
+	}
+	stored, err := db.SessionExecutionBoundary(sessionID)
+	require.NoError(t, err)
+	var projectedBoundary session.ExecutionBoundary
+	require.NoError(t, json.Unmarshal([]byte(stored), &projectedBoundary))
+	assert.Equal(t, generation, projectedBoundary.LaunchGeneration)
+
+	// A continuation owned by a replaced server generation must stop without
+	// ever retargeting the replacement's later pane binding.
+	const successor = "22222222222222222222222222222222"
+	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, successor))
+	owned := &openCodeProcess{pid: runtime.PID, done: make(chan error, 1)}
+	openCodeProcesses.Lock()
+	openCodeProcesses.bySession[sessionID] = owned
+	openCodeProcesses.Unlock()
+	continueOpenCodeExecutionBoundaryProjection(launch, row)
+	openCodeProcesses.Lock()
+	replacedDone := owned.projectionDone
+	openCodeProcesses.bySession[sessionID] = &openCodeProcess{
+		pid: runtime.PID + 1, done: make(chan error, 1),
+	}
+	openCodeProcesses.Unlock()
+	require.NotNil(t, replacedDone)
+	select {
+	case <-replacedDone:
+	case <-time.After(time.Second):
+		t.Fatal("replaced launch projection did not cancel")
+	}
+	require.NoError(t, db.SetSessionExitLaunchBinding(
+		sessionID, successor, strings.Repeat("b", 64), "%8"))
+	stored, err = db.SessionExecutionBoundary(sessionID)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal([]byte(stored), &projectedBoundary))
+	assert.Equal(t, generation, projectedBoundary.LaunchGeneration)
+}
+
 func TestReconcileOpenCodeRuntimeVerifiesPermissionOnHealthyServer(t *testing.T) {
 	setupTestDB(t)
 	const password = "private-password"
