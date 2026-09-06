@@ -1102,6 +1102,81 @@ func (s *Store) Snapshot(ctx context.Context) (app.Snapshot, error) {
 		}
 		snapshot.Messages = append(snapshot.Messages, message)
 	}
+	history, err := s.SearchHistory(ctx, app.HistorySearchFilter{})
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.History = history.Entries
+	for _, entry := range snapshot.History {
+		points, pointErr := s.HistoryPoints(ctx, entry.ConversationID)
+		if pointErr != nil {
+			return snapshot, pointErr
+		}
+		snapshot.HistoryPoints = append(snapshot.HistoryPoints, points...)
+	}
+	rows, err = s.db.QueryContext(ctx, `SELECT id FROM workspaces ORDER BY created_at`)
+	if err != nil {
+		return snapshot, err
+	}
+	var workspaceIDs []model.WorkspaceID
+	for rows.Next() {
+		var id model.WorkspaceID
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return snapshot, err
+		}
+		workspaceIDs = append(workspaceIDs, id)
+	}
+	rows.Close()
+	for _, id := range workspaceIDs {
+		workspace, workspaceErr := s.Workspace(ctx, id)
+		if workspaceErr != nil {
+			return snapshot, workspaceErr
+		}
+		snapshot.Workspaces = append(snapshot.Workspaces, app.WorkspaceView{ID: workspace.ID, Intent: workspace.Intent, State: workspace.State, Observation: workspace.Observation, Revision: workspace.Revision})
+	}
+	rows, err = s.db.QueryContext(ctx, `SELECT id,workspace_id,execution_id,work_run_id,released_at,created_at FROM workspace_uses ORDER BY created_at`)
+	if err != nil {
+		return snapshot, err
+	}
+	for rows.Next() {
+		var use model.WorkspaceUse
+		var released sql.NullInt64
+		var created int64
+		if err = rows.Scan(&use.ID, &use.WorkspaceID, &use.ExecutionID, &use.WorkRunID, &released, &created); err != nil {
+			rows.Close()
+			return snapshot, err
+		}
+		use.CreatedAt = fromNanos(created)
+		if released.Valid {
+			value := fromNanos(released.Int64)
+			use.ReleasedAt = &value
+		}
+		snapshot.WorkspaceUses = append(snapshot.WorkspaceUses, use)
+	}
+	rows.Close()
+	rows, err = s.db.QueryContext(ctx, `SELECT id FROM work_runs ORDER BY created_at`)
+	if err != nil {
+		return snapshot, err
+	}
+	var workIDs []model.WorkRunID
+	for rows.Next() {
+		var id model.WorkRunID
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return snapshot, err
+		}
+		workIDs = append(workIDs, id)
+	}
+	rows.Close()
+	for _, id := range workIDs {
+		record, workErr := s.WorkRun(ctx, id)
+		if workErr != nil {
+			return snapshot, workErr
+		}
+		snapshot.WorkRuns = append(snapshot.WorkRuns, record.Run)
+		snapshot.WorkEvidence = append(snapshot.WorkEvidence, record.Evidence...)
+	}
 	return snapshot, nil
 }
 
