@@ -133,6 +133,7 @@ type exitSessionMeta struct {
 type SessionExitLaunchIdentity struct {
 	Generation  string
 	TmuxSession string
+	PaneID      string
 	GateState   string
 }
 
@@ -316,9 +317,9 @@ func GetSessionExitLaunchIdentity(sessionID string) (SessionExitLaunchIdentity, 
 		return SessionExitLaunchIdentity{}, err
 	}
 	var out SessionExitLaunchIdentity
-	err = d.QueryRow(`SELECT exit_callback_generation, tmux_session,
+	err = d.QueryRow(`SELECT exit_callback_generation, tmux_session, exit_callback_pane_id,
 		exit_launch_gate_state FROM sessions WHERE id = ?`, sessionID).
-		Scan(&out.Generation, &out.TmuxSession, &out.GateState)
+		Scan(&out.Generation, &out.TmuxSession, &out.PaneID, &out.GateState)
 	return out, err
 }
 

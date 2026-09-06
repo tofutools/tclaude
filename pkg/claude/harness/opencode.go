@@ -23,6 +23,7 @@ func init() {
 		LaunchEnrollment:         true,
 		ServerAuthoritative:      true,
 		AwaitingInputObservation: true,
+		StateStore:               openCodeStateStoreIdentity(),
 
 		// Verbatim the sentence this refusal has always carried; it moved onto
 		// the descriptor when Copilot needed a different one.

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 const ExecutionBoundaryVersion = 1
@@ -18,18 +19,19 @@ const ExecutionBoundaryVersion = 1
 // snapshot: this records launch-adapter additions such as executable mounts,
 // constructed-root entries, PATH injection, and user-namespace identity.
 type ExecutionBoundary struct {
-	Version               int                       `json:"version"`
-	LaunchGeneration      string                    `json:"launch_generation,omitempty"`
-	SandboxImplementation string                    `json:"sandbox_implementation"`
-	Platform              string                    `json:"platform"`
-	Harness               ExecutionHarness          `json:"harness"`
-	Tclaude               *ExecutionBinary          `json:"tclaude,omitempty"`
-	Launcher              *ExecutionBinary          `json:"launcher,omitempty"`
-	PATH                  ExecutionPATH             `json:"path"`
-	Identity              ExecutionIdentityMapping  `json:"identity"`
-	RootMode              string                    `json:"root_mode"`
-	AutomaticEntries      []ExecutionNamespaceEntry `json:"automatic_namespace_entries"`
-	OuterLayerRenderInput *TclaudeLayerLaunchSpec   `json:"outer_layer_render_input,omitempty"`
+	Version               int                         `json:"version"`
+	LaunchGeneration      string                      `json:"launch_generation,omitempty"`
+	SandboxImplementation string                      `json:"sandbox_implementation"`
+	Platform              string                      `json:"platform"`
+	Harness               ExecutionHarness            `json:"harness"`
+	Tclaude               *ExecutionBinary            `json:"tclaude,omitempty"`
+	Launcher              *ExecutionBinary            `json:"launcher,omitempty"`
+	PATH                  ExecutionPATH               `json:"path"`
+	Identity              ExecutionIdentityMapping    `json:"identity"`
+	RootMode              string                      `json:"root_mode"`
+	AutomaticEntries      []ExecutionNamespaceEntry   `json:"automatic_namespace_entries"`
+	OuterLayerRenderInput *TclaudeLayerLaunchSpec     `json:"outer_layer_render_input,omitempty"`
+	StateStoreIdentity    *harness.StateStoreIdentity `json:"state_store_identity,omitempty"`
 }
 
 type ExecutionHarness struct {
@@ -96,6 +98,7 @@ type ExecutionBoundaryInput struct {
 	Environment               map[string]string
 	PreLaunch                 []sandboxpolicy.PreLaunchBlock
 	LayerSpec                 *TclaudeLayerLaunchSpec
+	StateStoreIdentity        *harness.StateStoreIdentity
 }
 
 // BuildExecutionBoundary freezes the launch-adapter facts that are otherwise
@@ -124,6 +127,10 @@ func BuildExecutionBoundary(input ExecutionBoundaryInput) (*ExecutionBoundary, e
 		},
 		RootMode:         "host-inherited",
 		AutomaticEntries: []ExecutionNamespaceEntry{},
+	}
+	if input.StateStoreIdentity != nil {
+		identity := *input.StateStoreIdentity
+		out.StateStoreIdentity = &identity
 	}
 	if executable := strings.TrimSpace(input.HarnessExecutable); executable != "" {
 		resolved, err := resolveRecordedExecutionPath(executable, input.HarnessExecutableResolved)

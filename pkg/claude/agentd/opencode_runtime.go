@@ -389,6 +389,83 @@ func openCodeLaunchFromRuntime(runtime db.OpenCodeRuntime) *openCodeLaunch {
 	}
 }
 
+var openCodePaneServerAuthority = func(tmuxSession string) (string, string, bool) {
+	read := func(name string) (string, bool) {
+		out, err := clcommon.TmuxCommand(
+			"-N", "show-environment", "-t", tmuxSession, name,
+		).CombinedOutput()
+		if err != nil {
+			return "", false
+		}
+		value := strings.TrimSpace(string(out))
+		prefix := name + "="
+		if !strings.HasPrefix(value, prefix) {
+			return "", false
+		}
+		return strings.TrimPrefix(value, prefix), true
+	}
+	serverURL, urlOK := read("TCLAUDE_OPENCODE_SERVER_URL")
+	password, passwordOK := read("OPENCODE_SERVER_PASSWORD")
+	return serverURL, password, urlOK && passwordOK
+}
+
+// projectOpenCodeExecutionBoundary binds the exact authoritative server
+// started for a spawn to the exact pane execution that subsequently appeared.
+// Both durable identities are re-read and the final write is CAS-fenced, so a
+// delayed predecessor cannot populate a stable session id reused by a successor.
+func projectOpenCodeExecutionBoundary(launch *openCodeLaunch, row *db.SessionRow) (bool, error) {
+	if launch == nil || row == nil || row.ID != launch.SessionID {
+		return false, nil
+	}
+	runtime, err := db.GetOpenCodeRuntime(launch.SessionID)
+	if err != nil || runtime == nil {
+		return false, err
+	}
+	if runtime.SessionID != launch.SessionID || runtime.ConvID != launch.ConvID ||
+		runtime.ServerURL != launch.ServerURL || runtime.Password != launch.Password ||
+		runtime.PID != launch.PID || runtime.Transport != launch.Transport ||
+		runtime.ControlSocketPath != launch.ControlSocketPath ||
+		runtime.ControlSocketDevice != launch.ControlSocketDevice ||
+		runtime.ControlSocketInode != launch.ControlSocketInode ||
+		strings.TrimSpace(runtime.ExecutionBoundaryJSON) == "" ||
+		runtime.PID == os.Getpid() || !openCodeRuntimeVerified(*runtime) {
+		return false, nil
+	}
+	serverURL, password, observed := openCodePaneServerAuthority(row.TmuxSession)
+	if !observed || serverURL != launch.ServerURL || password != launch.Password {
+		return false, nil
+	}
+	identity, err := db.GetSessionExitLaunchIdentity(row.ID)
+	if err != nil {
+		return false, err
+	}
+	if identity.Generation == "" || identity.TmuxSession != row.TmuxSession || identity.PaneID == "" {
+		return false, nil
+	}
+	var boundary session.ExecutionBoundary
+	if err := json.Unmarshal([]byte(runtime.ExecutionBoundaryJSON), &boundary); err != nil {
+		return false, nil
+	}
+	if boundary.StateStoreIdentity == nil || boundary.OuterLayerRenderInput == nil {
+		return false, nil
+	}
+	h, ok := harness.Get(harness.OpenCodeName)
+	if !ok || h.StateStore == nil || h.StateStore.ValidateStateStoreIdentity(
+		harness.FrozenStateStoreContract{
+			HarnessName: boundary.OuterLayerRenderInput.Contract.HarnessName,
+			StateRoot:   boundary.OuterLayerRenderInput.Contract.StateRoot,
+		}, *boundary.StateStoreIdentity) != nil {
+		return false, nil
+	}
+	boundary.LaunchGeneration = identity.Generation
+	raw, err := json.Marshal(&boundary)
+	if err != nil {
+		return false, err
+	}
+	return db.SetSessionExecutionBoundaryForLaunch(
+		row.ID, identity.Generation, identity.TmuxSession, identity.PaneID, string(raw))
+}
+
 func resolveOpenCodeLaunchAuthority(
 	spec *session.TclaudeLayerLaunchSpec,
 ) (openCodeLaunchAuthority, error) {
@@ -464,6 +541,26 @@ func buildOpenCodeExecutionBoundary(
 			environment[name] = value
 		}
 	}
+	var stateStoreIdentity *harness.StateStoreIdentity
+	if spec != nil {
+		h, ok := harness.Get(harness.OpenCodeName)
+		if !ok || h.StateStore == nil {
+			return "", fmt.Errorf("OpenCode state-store identity adapter is unavailable")
+		}
+		captured, captureErr := h.StateStore.CaptureStateStoreIdentity(harness.StateStoreLaunch{
+			ExplicitStateRoot: spec.Contract.StateRoot,
+		})
+		if captureErr != nil {
+			return "", captureErr
+		}
+		if validateErr := h.StateStore.ValidateStateStoreIdentity(harness.FrozenStateStoreContract{
+			HarnessName: spec.Contract.HarnessName,
+			StateRoot:   spec.Contract.StateRoot,
+		}, captured); validateErr != nil {
+			return "", validateErr
+		}
+		stateStoreIdentity = &captured
+	}
 	boundary, err := session.BuildExecutionBoundary(session.ExecutionBoundaryInput{
 		SandboxImplementation:     implementation,
 		HarnessName:               harness.OpenCodeName,
@@ -475,6 +572,7 @@ func buildOpenCodeExecutionBoundary(
 		Cwd:                       cwd,
 		Environment:               environment,
 		LayerSpec:                 spec,
+		StateStoreIdentity:        stateStoreIdentity,
 	})
 	if err != nil {
 		return "", err

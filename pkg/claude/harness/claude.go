@@ -50,6 +50,7 @@ func init() {
 		BuiltinOSSandbox:   true,
 		NestedSandbox:      claudeNestedSandbox{},
 		HostControlSandbox: claudeTmuxHostControlSandbox{},
+		StateStore:         claudeStateStoreIdentity(),
 		// Claude Code's approval posture IS its permission mode; claudeApproval
 		// carries the `--permission-mode` enum (+ an inherit default that adds
 		// nothing) through the harness-agnostic Approval field, translated by

@@ -13,6 +13,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/platform/execution"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -248,20 +249,25 @@ func TestManagedHookAdmission_CodexNamespaceMustBeDurablyKnown(t *testing.T) {
 			return fmt.Sprintf("test-process-start:%d:1", pid), pid > 1
 		}))
 		if recordRoot {
-			agentID, _, err := db.EnsureAgentForConv(convID, "test")
-			require.NoError(t, err)
 			root := filepath.Join(f.World.HomeDir, "custom-codex-state")
-			source := "CODEX_HOME"
-			require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
-				Version:        db.RelaunchProfileVersion,
-				CodexStateRoot: &root, CodexStateRootSource: &source,
-			}))
+			recordLayerStateStoreIdentity(t, label, row.ExitLaunchGeneration, harness.CodexName, root)
 		}
 		return f, brokerHookPID
 	}
 
 	t.Run("recorded custom root remains a distinct namespace", func(t *testing.T) {
 		f, callerPID := setup(t, true)
+		// Mutable relaunch defaults belong to a future launch and cannot relabel
+		// the already-frozen execution boundary.
+		agentID, _, err := db.EnsureAgentForConv(convID, "test")
+		require.NoError(t, err)
+		futureRoot := filepath.Join(f.World.HomeDir, "future-codex-state")
+		futureSource := "CODEX_HOME"
+		require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
+			Version: db.RelaunchProfileVersion, CodexStateRoot: &futureRoot,
+			CodexStateRootSource: &futureSource,
+		}))
+		t.Setenv("CODEX_HOME", futureRoot)
 		code, _ := postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
 			ClaimedSessionID: label,
 			Input: session.HookCallbackInput{
@@ -299,6 +305,52 @@ func TestManagedHookAdmission_CodexNamespaceMustBeDurablyKnown(t *testing.T) {
 		require.NoError(t, err)
 		assert.False(t, found)
 	})
+}
+
+func TestManagedHookAdmission_CopilotCustomRootsRemainDistinct(t *testing.T) {
+	f := newFlow(t)
+	const (
+		convA = "c0000000-1111-2222-3333-111111111111"
+		convB = "c0000000-1111-2222-3333-222222222222"
+	)
+	type launched struct {
+		label, tmux, conv, root   string
+		caller, main, bwrap, pane int
+	}
+	launches := []launched{
+		{label: "spwn-copilot-a", tmux: "tmux-copilot-a", conv: convA,
+			root: filepath.Join(f.World.HomeDir, "copilot-a"), caller: 7500, main: 7501, bwrap: 7502, pane: 7503},
+		{label: "spwn-copilot-b", tmux: "tmux-copilot-b", conv: convB,
+			root: filepath.Join(f.World.HomeDir, "copilot-b"), caller: 7600, main: 7601, bwrap: 7602, pane: 7603},
+	}
+	names := map[int]string{}
+	parents := map[int]int{}
+	for _, launch := range launches {
+		haveLayerHarnessSession(t, f, launch.conv, launch.label, launch.tmux,
+			launch.pane, harness.CopilotName, launch.root)
+		names[launch.caller] = "tclaude"
+		names[launch.main] = "copilot"
+		names[launch.bwrap] = "bwrap"
+		names[launch.pane] = "sh"
+		parents[launch.caller] = launch.main
+		parents[launch.main] = launch.bwrap
+		parents[launch.bwrap] = launch.pane
+	}
+	t.Cleanup(agentd.SetProcTreeForTest(names, parents))
+	for _, launch := range launches {
+		code, _ := postBrokeredHook(t, f, launch.caller, session.BrokeredHookRequest{
+			ClaimedSessionID: launch.label,
+			Input: session.HookCallbackInput{
+				ConvID: launch.conv, HookEventName: "SessionStart", Source: "startup",
+			},
+		})
+		require.Equal(t, http.StatusOK, code)
+		executionID, _ := managedSelection(t, launch.label)
+		selection, found, err := db.CurrentConversationSelection(executionID)
+		require.NoError(t, err)
+		require.True(t, found)
+		assert.Equal(t, "host-path:"+launch.root, selection.Reference.Namespace)
+	}
 }
 
 func TestManagedHookAdmission_RefusesStaleNestedAndInsufficientEvidence(t *testing.T) {
@@ -408,6 +460,17 @@ func TestManagedHookAdmission_LateDuplicateCannotReviveExitedAttempt(t *testing.
 // launch and keyed by the pane pid, which is what the ancestor walk has
 // to cross the bwrap wrappers to reach.
 func haveLayerSession(t *testing.T, f *testharness.Flow, conv, label, tmux string, panePID int) {
+	haveLayerHarnessSession(t, f, conv, label, tmux, panePID, harness.DefaultName,
+		filepath.Join(f.World.HomeDir, ".claude"))
+}
+
+func haveLayerHarnessSession(
+	t *testing.T,
+	f *testharness.Flow,
+	conv, label, tmux string,
+	panePID int,
+	harnessName, stateRoot string,
+) {
 	t.Helper()
 	t.Cleanup(agentd.SetBrokerProcessInstanceForTest(func(pid int) (string, bool) {
 		if pid <= 1 {
@@ -421,6 +484,7 @@ func haveLayerSession(t *testing.T, f *testharness.Flow, conv, label, tmux strin
 	require.NoError(t, err, "LoadSession(%s)", label)
 	require.NotNil(t, row, "session row %s should exist", label)
 	row.PID = panePID
+	row.Harness = harnessName
 	row.SandboxImplementation = "tclaude-layer"
 	row.ExitLaunchGeneration = generation
 	require.NoError(t, db.SaveSession(row), "record the layer launch")
@@ -429,6 +493,29 @@ func haveLayerSession(t *testing.T, f *testharness.Flow, conv, label, tmux strin
 	require.NoError(t, db.SetSessionExitLaunchBinding(
 		label, generation, fmt.Sprintf("%064x", panePID), "%1"),
 		"bind the durable pane identity")
+	recordLayerStateStoreIdentity(t, label, generation, harnessName, stateRoot)
+}
+
+func recordLayerStateStoreIdentity(t *testing.T, label, generation, harnessName, root string) {
+	t.Helper()
+	boundary := session.ExecutionBoundary{
+		Version: session.ExecutionBoundaryVersion, LaunchGeneration: generation,
+		SandboxImplementation: "tclaude-layer",
+		Harness:               session.ExecutionHarness{Name: harnessName},
+		OuterLayerRenderInput: &session.TclaudeLayerLaunchSpec{
+			Version: session.TclaudeLayerLaunchSpecVersion,
+			Contract: session.TclaudeLayerLaunchContract{
+				HarnessName: harnessName, StateRoot: root,
+			},
+		},
+		StateStoreIdentity: &harness.StateStoreIdentity{
+			Harness: harnessName, Namespace: "host-path:" + root,
+			StateRoot: root, Source: "test launch",
+		},
+	}
+	raw, err := json.Marshal(&boundary)
+	require.NoError(t, err)
+	require.NoError(t, db.SetSessionExecutionBoundary(label, string(raw)))
 }
 
 // postBrokeredHook drives POST /v1/whoami/hook as a caller at callerPID.
@@ -444,8 +531,9 @@ func postBrokeredHook(t *testing.T, f *testharness.Flow, callerPID int, body ses
 	}
 	if body.ExitGeneration == "" && body.AckToken == "" {
 		identity, err := db.GetSessionExitLaunchIdentity(body.ClaimedSessionID)
-		require.NoError(t, err)
-		body.ExitGeneration = identity.Generation
+		if err == nil {
+			body.ExitGeneration = identity.Generation
+		}
 	}
 	req := testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/hook", body)
 	req = agentd.AsAgentPeerWithPID(req, "", callerPID)
@@ -768,14 +856,7 @@ func TestHookBroker_TranscriptPathIsScopedToTheCallersOwnRollout(t *testing.T) {
 		f := newFlow(t)
 
 		f.HaveAliveCodexSession(brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", f.World.HomeDir)
-		agentID, _, err := db.EnsureAgentForConv(brokerLayerConv, "test")
-		require.NoError(t, err)
 		codexRoot := filepath.Join(f.World.HomeDir, ".codex")
-		codexSource := "HOME"
-		require.NoError(t, db.SetAgentRelaunchProfile(agentID, db.AgentRelaunchProfile{
-			Version:        db.RelaunchProfileVersion,
-			CodexStateRoot: &codexRoot, CodexStateRootSource: &codexSource,
-		}))
 		row, err := db.LoadSession(brokerLayerLabel)
 		require.NoError(t, err)
 		require.NotNil(t, row)
@@ -788,6 +869,8 @@ func TestHookBroker_TranscriptPathIsScopedToTheCallersOwnRollout(t *testing.T) {
 		require.NoError(t, db.SetSessionExitLaunchBinding(
 			brokerLayerLabel, row.ExitLaunchGeneration,
 			fmt.Sprintf("%064x", brokerPanePID), "%1"))
+		recordLayerStateStoreIdentity(t, brokerLayerLabel, row.ExitLaunchGeneration,
+			harness.CodexName, codexRoot)
 		t.Cleanup(agentd.SetBrokerProcessInstanceForTest(func(pid int) (string, bool) {
 			return fmt.Sprintf("test-process-start:%d:1", pid), pid > 1
 		}))
