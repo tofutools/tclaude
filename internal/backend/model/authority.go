@@ -19,6 +19,20 @@ const (
 	ActionChangeContext       Action = "execution.context.change"
 	ActionUpdateConfiguration Action = "agent.configuration.update"
 	ActionManageMembership    Action = "group.membership.manage"
+	ActionReadHistory         Action = "history.read"
+	ActionRefreshHistory      Action = "history.refresh"
+	ActionSetHistoryMetadata  Action = "history.metadata.set"
+	ActionRegisterWorkspace   Action = "workspace.register"
+	ActionCreateWorkspace     Action = "workspace.create"
+	ActionInspectWorkspace    Action = "workspace.inspect"
+	ActionRemoveWorkspace     Action = "workspace.remove"
+	ActionRestoreWorkspace    Action = "workspace.restore"
+	ActionStartWork           Action = "work.start"
+	ActionRecordWorkEvidence  Action = "work.evidence.record"
+	ActionDecideWork          Action = "work.decide"
+	ActionCancelWork          Action = "work.cancel"
+	ActionResolveWork         Action = "work.resolve"
+	ActionStartShell          Action = "shell.start"
 )
 
 type AuthoritySubjectKind string
@@ -41,20 +55,26 @@ type AuthoritySubject struct {
 type ResourceSelectorKind string
 
 const (
-	ResourceSelf       ResourceSelectorKind = "self"
-	ResourceAgent      ResourceSelectorKind = "agent"
-	ResourceExecution  ResourceSelectorKind = "execution"
-	ResourceGroup      ResourceSelectorKind = "group"
-	ResourceGroupPeers ResourceSelectorKind = "group_members"
+	ResourceSelf         ResourceSelectorKind = "self"
+	ResourceAgent        ResourceSelectorKind = "agent"
+	ResourceExecution    ResourceSelectorKind = "execution"
+	ResourceGroup        ResourceSelectorKind = "group"
+	ResourceGroupPeers   ResourceSelectorKind = "group_members"
+	ResourceConversation ResourceSelectorKind = "conversation"
+	ResourceWorkspace    ResourceSelectorKind = "workspace"
+	ResourceWorkRun      ResourceSelectorKind = "work_run"
 )
 
 // ResourceSelector is deliberately typed. Exactly the field named by Kind is
 // populated; Self expands from the authenticated caller at evaluation time.
 type ResourceSelector struct {
-	Kind        ResourceSelectorKind
-	AgentID     AgentID
-	ExecutionID ExecutionID
-	GroupID     GroupID
+	Kind           ResourceSelectorKind
+	AgentID        AgentID
+	ExecutionID    ExecutionID
+	GroupID        GroupID
+	ConversationID ConversationID
+	WorkspaceID    WorkspaceID
+	WorkRunID      WorkRunID
 }
 
 type GrantID string

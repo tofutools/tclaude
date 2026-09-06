@@ -14,6 +14,12 @@ type (
 	MessageID      string
 	RecipientID    string
 	RequestID      string
+	HistoryPointID string
+	HistoryUseID   string
+	WorkspaceID    string
+	WorkspaceUseID string
+	WorkRunID      string
+	WorkEvidenceID string
 )
 
 var stableIDPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
@@ -33,3 +39,9 @@ func (id OperationID) Validate() error    { return ValidateStableID("operation i
 func (id MessageID) Validate() error      { return ValidateStableID("message id", string(id)) }
 func (id RecipientID) Validate() error    { return ValidateStableID("recipient id", string(id)) }
 func (id RequestID) Validate() error      { return ValidateStableID("request id", string(id)) }
+func (id HistoryPointID) Validate() error { return ValidateStableID("history point id", string(id)) }
+func (id HistoryUseID) Validate() error   { return ValidateStableID("history use id", string(id)) }
+func (id WorkspaceID) Validate() error    { return ValidateStableID("workspace id", string(id)) }
+func (id WorkspaceUseID) Validate() error { return ValidateStableID("workspace use id", string(id)) }
+func (id WorkRunID) Validate() error      { return ValidateStableID("work run id", string(id)) }
+func (id WorkEvidenceID) Validate() error { return ValidateStableID("work evidence id", string(id)) }

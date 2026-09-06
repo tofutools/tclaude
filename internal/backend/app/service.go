@@ -26,25 +26,44 @@ const (
 type Service struct {
 	store            Store
 	providers        ports.ProviderRegistry
+	workspaceHost    ports.WorkspaceHost
+	historySources   ports.HistorySourceRegistry
+	shellHost        ports.ShellHost
 	now              func() time.Time
 	newID            IDGenerator
 	accessLease      time.Duration
 	agentAPIEndpoint string
 
-	runtimeMu sync.RWMutex
-	runtimes  map[model.ExecutionID]ports.Runtime
+	runtimeMu    sync.RWMutex
+	runtimes     map[model.ExecutionID]ports.Runtime
+	hostRuntimes map[model.ExecutionID]ports.HostRuntime
 }
 
 func New(store Store, providers ports.ProviderRegistry) *Service {
 	return &Service{
 		store: store, providers: providers, now: time.Now, newID: randomID, accessLease: 24 * time.Hour,
-		runtimes: make(map[model.ExecutionID]ports.Runtime),
+		runtimes: make(map[model.ExecutionID]ports.Runtime), hostRuntimes: make(map[model.ExecutionID]ports.HostRuntime),
 	}
 }
 
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
 
 func (s *Service) WithIDGenerator(generate IDGenerator) *Service { s.newID = generate; return s }
+
+func (s *Service) WithWorkspaceHost(host ports.WorkspaceHost) *Service {
+	s.workspaceHost = host
+	return s
+}
+
+func (s *Service) WithHistorySources(sources ports.HistorySourceRegistry) *Service {
+	s.historySources = sources
+	return s
+}
+
+func (s *Service) WithShellHost(host ports.ShellHost) *Service {
+	s.shellHost = host
+	return s
+}
 
 func (s *Service) WithAccessLease(lease time.Duration) *Service {
 	if lease > 0 {
@@ -138,10 +157,16 @@ func (s *Service) CreateGroup(ctx context.Context, req CreateGroupRequest) (Grou
 }
 
 func (s *Service) Launch(ctx context.Context, req LaunchRequest) (OperationResult, error) {
-	return s.launch(ctx, req, model.OperationLaunch, nil)
+	return s.launch(ctx, req, model.OperationLaunch, nil, launchOptions{})
 }
 
-func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.OperationKind, continuationRecord *ContinuationRecord) (OperationResult, error) {
+type launchOptions struct {
+	intent      ports.StartIntent
+	history     *ports.HistorySourceSelection
+	operationID model.OperationID
+}
+
+func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.OperationKind, continuationRecord *ContinuationRecord, options launchOptions) (OperationResult, error) {
 	if err := validateEffectContext(req.RequestContext); err != nil {
 		return OperationResult{}, err
 	}
@@ -195,7 +220,13 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		conversationID, intent, continuation, priorEvidence = continuationRecord.Conversation.ConversationID, ports.StartContinue, &continuationRecord.Native, continuationRecord.Evidence
 		expectedConversationRevision = continuationRecord.Conversation.Revision
 	}
-	operationID := model.OperationID(s.newID("op_"))
+	if options.intent != "" {
+		intent = options.intent
+	}
+	operationID := options.operationID
+	if operationID == "" {
+		operationID = model.OperationID(s.newID("op_"))
+	}
 	spec := resolvedSpec(executionID, agent.ID, desired, conversationID)
 	authorityResource := model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: executionID}
 	if agent.ID != "" {
@@ -233,7 +264,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancelWorkflow()
 
-	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: intent, Continuation: continuation, PriorEvidence: priorEvidence, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, spec.Attempt, provider.Name()), AgentAPIEndpoint: s.agentAPIEndpoint})
+	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: intent, Continuation: continuation, History: options.history, PriorEvidence: priorEvidence, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, spec.Attempt, provider.Name()), AgentAPIEndpoint: s.agentAPIEndpoint})
 	if err != nil {
 		settlementCtx, cancelSettlement := settlementContext(ctx)
 		defer cancelSettlement()
@@ -338,6 +369,22 @@ func (s *Service) Observe(ctx context.Context, req ObserveRequest) (ObservationR
 	if err != nil {
 		return ObservationResult{}, err
 	}
+	if execution.Workload == model.ExecutionWorkloadShell {
+		runtime, runtimeErr := s.hostRuntimeFor(execution)
+		if runtimeErr != nil {
+			return ObservationResult{}, runtimeErr
+		}
+		hostObservation, observeErr := runtime.ObserveHost(ctx)
+		if observeErr != nil {
+			return ObservationResult{}, observeErr
+		}
+		observation := ports.Observation{ObservedAt: hostObservation.ObservedAt, Workload: hostObservation.Workload}
+		updated, persistErr := s.store.RecordRecovery(ctx, execution.ID, stateFromObservation(observation), nil, model.ProviderEvidence{}, s.now().UTC())
+		if persistErr != nil {
+			return ObservationResult{}, persistErr
+		}
+		return ObservationResult{Execution: updated, Observation: observation}, nil
+	}
 	runtime, err := s.runtimeFor(ctx, execution)
 	if err != nil {
 		return ObservationResult{}, err
@@ -364,7 +411,14 @@ func (s *Service) Interact(ctx context.Context, req InteractRequest) (OperationR
 }
 
 func (s *Service) Attach(ctx context.Context, req AttachRequest) (AttachmentResult, error) {
-	admission, runtime, err := s.admitRuntimeEffect(ctx, req.RequestContext, req.ExecutionID, model.OperationAttach)
+	execution, err := s.store.Execution(ctx, req.ExecutionID)
+	if err != nil {
+		return AttachmentResult{}, err
+	}
+	if execution.Workload == model.ExecutionWorkloadShell {
+		return s.attachShell(ctx, req, execution)
+	}
+	admission, runtime, err := s.admitRuntimeEffect(ctx, req.RequestContext, req.ExecutionID, model.OperationAttach, "")
 	if err != nil {
 		return AttachmentResult{}, err
 	}
@@ -414,6 +468,13 @@ func (s *Service) Attach(ctx context.Context, req AttachRequest) (AttachmentResu
 }
 
 func (s *Service) Stop(ctx context.Context, req StopRequest) (OperationResult, error) {
+	execution, err := s.store.Execution(ctx, req.ExecutionID)
+	if err != nil {
+		return OperationResult{}, err
+	}
+	if execution.Workload == model.ExecutionWorkloadShell {
+		return s.stopShell(ctx, req, execution)
+	}
 	return s.withRuntimeEffect(ctx, req.RequestContext, req.ExecutionID, model.OperationStop, func(workflowCtx context.Context, runtime ports.Runtime) (ports.EffectDisposition, model.ProviderEvidence, string, error) {
 		result, err := runtime.Stop(workflowCtx, ports.StopRequest{Force: req.Force})
 		code := "stop_acknowledged"
@@ -428,7 +489,7 @@ func (s *Service) ChangeContext(ctx context.Context, req ChangeContextRequest) (
 	if err := validateEffectContext(req.RequestContext); err != nil {
 		return OperationResult{}, err
 	}
-	admission, runtime, err := s.admitRuntimeEffect(ctx, req.RequestContext, req.ExecutionID, model.OperationChangeContext)
+	admission, runtime, err := s.admitRuntimeEffect(ctx, req.RequestContext, req.ExecutionID, model.OperationChangeContext, "")
 	if err != nil {
 		return OperationResult{}, err
 	}
@@ -531,7 +592,7 @@ func (s *Service) Resume(ctx context.Context, req ResumeRequest) (OperationResul
 		return OperationResult{}, err
 	}
 	launch := LaunchRequest{RequestContext: req.RequestContext, Target: req.Target}
-	return s.launch(ctx, launch, model.OperationResume, &continuation)
+	return s.launch(ctx, launch, model.OperationResume, &continuation, launchOptions{})
 }
 
 func (s *Service) SendMessage(ctx context.Context, req SendMessageRequest) (MessageResult, error) {
@@ -615,6 +676,50 @@ func (s *Service) Recover(ctx context.Context, req RecoverRequest) (RecoveryRepo
 	}
 	var report RecoveryReport
 	for _, execution := range executions {
+		if execution.Workload == model.ExecutionWorkloadShell {
+			record, recordErr := s.store.ShellRecovery(ctx, execution.ID)
+			if recordErr != nil || s.shellHost == nil {
+				report.Unknown = append(report.Unknown, execution.ID)
+				if _, persistErr := s.store.RecordShellRecovery(ctx, execution.ID, model.ExecutionUnknown, ports.ShellResourceEvidence{}, s.now().UTC()); persistErr != nil {
+					return RecoveryReport{}, persistErr
+				}
+				continue
+			}
+			result, recoverErr := s.shellHost.RecoverShell(ctx, ports.ShellRecoveryRequest{ExecutionID: execution.ID, Attempt: execution.Attempt, WorkspaceID: record.WorkspaceID, Evidence: record.Evidence})
+			if recoverErr != nil || result.State == ports.RecoveryUnknown || result.Evidence.Owner == "" {
+				report.Unknown = append(report.Unknown, execution.ID)
+				if _, persistErr := s.store.RecordShellRecovery(ctx, execution.ID, model.ExecutionUnknown, result.Evidence, s.now().UTC()); persistErr != nil {
+					return RecoveryReport{}, persistErr
+				}
+				continue
+			}
+			if result.State == ports.RecoveryExited {
+				report.Exited = append(report.Exited, execution.ID)
+				if _, persistErr := s.store.RecordShellRecovery(ctx, execution.ID, model.ExecutionExited, result.Evidence, s.now().UTC()); persistErr != nil {
+					return RecoveryReport{}, persistErr
+				}
+				continue
+			}
+			if result.Runtime == nil || result.Runtime.ExecutionID() != execution.ID {
+				report.Unknown = append(report.Unknown, execution.ID)
+				if _, persistErr := s.store.RecordShellRecovery(ctx, execution.ID, model.ExecutionUnknown, result.Evidence, s.now().UTC()); persistErr != nil {
+					return RecoveryReport{}, persistErr
+				}
+				continue
+			}
+			s.runtimeMu.Lock()
+			s.hostRuntimes[execution.ID] = result.Runtime
+			s.runtimeMu.Unlock()
+			report.Controlled = append(report.Controlled, execution.ID)
+			state := model.ExecutionRunning
+			if result.Observation.Workload == ports.WorkloadExited {
+				state = model.ExecutionExited
+			}
+			if _, persistErr := s.store.RecordShellRecovery(ctx, execution.ID, state, result.Evidence, s.now().UTC()); persistErr != nil {
+				return RecoveryReport{}, persistErr
+			}
+			continue
+		}
 		provider, ok := s.providers.Provider(execution.Spec.Harness)
 		if !ok {
 			report.Unknown = append(report.Unknown, execution.ID)
@@ -665,7 +770,11 @@ func (s *Service) Recover(ctx context.Context, req RecoverRequest) (RecoveryRepo
 }
 
 func (s *Service) withRuntimeEffect(ctx context.Context, request RequestContext, executionID model.ExecutionID, kind model.OperationKind, effect func(context.Context, ports.Runtime) (ports.EffectDisposition, model.ProviderEvidence, string, error)) (OperationResult, error) {
-	admission, runtime, err := s.admitRuntimeEffect(ctx, request, executionID, kind)
+	return s.withRuntimeEffectID(ctx, request, executionID, kind, "", effect)
+}
+
+func (s *Service) withRuntimeEffectID(ctx context.Context, request RequestContext, executionID model.ExecutionID, kind model.OperationKind, operationID model.OperationID, effect func(context.Context, ports.Runtime) (ports.EffectDisposition, model.ProviderEvidence, string, error)) (OperationResult, error) {
+	admission, runtime, err := s.admitRuntimeEffect(ctx, request, executionID, kind, operationID)
 	if err != nil {
 		return OperationResult{}, err
 	}
@@ -698,12 +807,15 @@ func (s *Service) withRuntimeEffect(ctx context.Context, request RequestContext,
 	return operationResult(finished), nil
 }
 
-func (s *Service) admitRuntimeEffect(ctx context.Context, request RequestContext, executionID model.ExecutionID, kind model.OperationKind) (AdmissionResult, ports.Runtime, error) {
+func (s *Service) admitRuntimeEffect(ctx context.Context, request RequestContext, executionID model.ExecutionID, kind model.OperationKind, operationID model.OperationID) (AdmissionResult, ports.Runtime, error) {
 	if err := validateEffectContext(request); err != nil {
 		return AdmissionResult{}, nil, err
 	}
 	now := s.now().UTC()
-	operation := model.Operation{ID: model.OperationID(s.newID("op_")), RequestID: request.RequestID, Kind: kind, Principal: request.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	if operationID == "" {
+		operationID = model.OperationID(s.newID("op_"))
+	}
+	operation := model.Operation{ID: operationID, RequestID: request.RequestID, Kind: kind, Principal: request.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	authority := model.AuthorityRequest{Principal: request.Principal, Action: actionForOperation(kind), Resource: model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: executionID}}
 	admission, err := s.store.AdmitExecutionOperation(ctx, ExecutionOperationAdmission{Operation: operation, Authority: authority})
 	if err != nil || admission.Repeated {
@@ -736,6 +848,89 @@ func (s *Service) rememberRuntime(runtime ports.Runtime) {
 	s.runtimeMu.Unlock()
 }
 
+func (s *Service) hostRuntimeFor(execution model.Execution) (ports.HostRuntime, error) {
+	s.runtimeMu.RLock()
+	runtime := s.hostRuntimes[execution.ID]
+	s.runtimeMu.RUnlock()
+	if runtime == nil {
+		return nil, fail(ErrUnavailable, "shell execution %s requires explicit recovery", execution.ID)
+	}
+	return runtime, nil
+}
+
+func (s *Service) admitHostEffect(ctx context.Context, request RequestContext, execution model.Execution, kind model.OperationKind) (AdmissionResult, error) {
+	if err := validateEffectContext(request); err != nil {
+		return AdmissionResult{}, err
+	}
+	now := s.now().UTC()
+	op := model.Operation{ID: model.OperationID(s.newID("op_")), RequestID: request.RequestID, Kind: kind, Principal: request.Principal, ExecutionID: execution.ID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	authority := model.AuthorityRequest{Principal: request.Principal, Action: actionForOperation(kind), Resource: model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: execution.ID}}
+	return s.store.AdmitExecutionOperation(ctx, ExecutionOperationAdmission{Operation: op, Authority: authority})
+}
+
+func (s *Service) attachShell(ctx context.Context, req AttachRequest, execution model.Execution) (AttachmentResult, error) {
+	admission, err := s.admitHostEffect(ctx, req.RequestContext, execution, model.OperationAttach)
+	if err != nil || admission.Repeated {
+		return AttachmentResult{Operation: admission.Operation}, err
+	}
+	runtime, err := s.hostRuntimeFor(execution)
+	if err != nil {
+		return AttachmentResult{}, err
+	}
+	workflowCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	if err = s.store.ConsumeExecutionEffect(workflowCtx, admission.Operation.ID, s.now().UTC()); err != nil {
+		cancel()
+		return AttachmentResult{}, err
+	}
+	result, effectErr := runtime.AttachHost(workflowCtx, ports.AttachmentRequest{Kind: req.Kind})
+	state := model.OperationSucceeded
+	if result.Disposition == ports.EffectUnknown {
+		state = model.OperationUncertain
+	} else if result.Disposition != ports.EffectAccepted {
+		state = model.OperationRefused
+	}
+	finished, persistErr := s.store.CompleteShell(context.WithoutCancel(ctx), OperationCompletion{OperationID: admission.Operation.ID, OperationState: state, ResultCode: "attachment", ExecutionID: execution.ID, At: s.now().UTC()}, result.Evidence)
+	if persistErr != nil {
+		cancel()
+		return AttachmentResult{}, persistErr
+	}
+	if effectErr != nil || result.Attachment == nil {
+		cancel()
+		return AttachmentResult{Operation: finished.Operation}, effectErr
+	}
+	return AttachmentResult{Operation: finished.Operation, Attachment: &ownedAttachment{Attachment: result.Attachment, cancel: cancel}}, nil
+}
+
+func (s *Service) stopShell(ctx context.Context, req StopRequest, execution model.Execution) (OperationResult, error) {
+	admission, err := s.admitHostEffect(ctx, req.RequestContext, execution, model.OperationStop)
+	if err != nil || admission.Repeated {
+		return operationResult(admission), err
+	}
+	runtime, err := s.hostRuntimeFor(execution)
+	if err != nil {
+		return OperationResult{}, err
+	}
+	workflowCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
+	defer cancel()
+	if err = s.store.ConsumeExecutionEffect(workflowCtx, admission.Operation.ID, s.now().UTC()); err != nil {
+		return OperationResult{}, err
+	}
+	result, effectErr := runtime.StopHost(workflowCtx, ports.StopRequest{Force: req.Force})
+	opState, executionState, update := model.OperationSucceeded, execution.State, false
+	if result.Disposition == ports.EffectUnknown {
+		opState, executionState, update = model.OperationUncertain, model.ExecutionUnknown, true
+	} else if result.Disposition != ports.EffectAccepted {
+		opState = model.OperationRefused
+	} else if result.Exited {
+		executionState, update = model.ExecutionExited, true
+	}
+	finished, persistErr := s.store.CompleteShell(context.WithoutCancel(ctx), OperationCompletion{OperationID: admission.Operation.ID, OperationState: opState, ResultCode: "stop", ExecutionID: execution.ID, ExecutionState: executionState, UpdateExecutionState: update, At: s.now().UTC()}, result.Evidence)
+	if persistErr != nil {
+		return OperationResult{}, persistErr
+	}
+	return operationResult(finished), effectErr
+}
+
 func operationResult(result AdmissionResult) OperationResult {
 	execution := result.Execution
 	return OperationResult{Operation: result.Operation, Execution: &execution, Repeated: result.Repeated}
@@ -765,7 +960,7 @@ func completionFromDisposition(operation model.Operation, execution model.Execut
 }
 
 func resolvedSpec(executionID model.ExecutionID, agentID model.AgentID, desired model.DesiredConfiguration, conversationID model.ConversationID) model.ResolvedExecutionSpec {
-	return model.ResolvedExecutionSpec{ExecutionID: executionID, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox}
+	return model.ResolvedExecutionSpec{ExecutionID: executionID, Workload: model.ExecutionWorkloadHarness, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox}
 }
 
 func actionForOperation(kind model.OperationKind) model.Action {
