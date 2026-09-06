@@ -25,22 +25,25 @@ CREATE TABLE IF NOT EXISTS usage_observations (
   observed_at INTEGER NOT NULL, collected_at INTEGER NOT NULL, counters_json BLOB NOT NULL,
   cost_amount TEXT, cost_currency TEXT, cost_kind TEXT,
   counter_coverage TEXT NOT NULL, cost_coverage TEXT NOT NULL, coverage_reason TEXT NOT NULL DEFAULT '',
-  cumulative INTEGER NOT NULL, historical INTEGER NOT NULL DEFAULT 0,
+  cumulative INTEGER NOT NULL, historical INTEGER NOT NULL DEFAULT 0, provenance TEXT NOT NULL DEFAULT '',
   UNIQUE(source_key, source_revision)
 );
 CREATE INDEX IF NOT EXISTS usage_by_execution ON usage_observations(execution_id,observed_at DESC,id);
 CREATE INDEX IF NOT EXISTS usage_by_conversation ON usage_observations(conversation_id,observed_at DESC,id);
 `
 
-func (s *Store) ensureUsageSchema(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, usageSchema)
+func (s *Store) initializeUsageActivity(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, usageSchema); err != nil {
+		return err
+	}
+	if err := s.ensureColumn(ctx, "usage_observations", "provenance", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, activitySchema)
 	return err
 }
 
 func (s *Store) ResolveUsageTarget(ctx context.Context, target app.UsageTarget, authority model.AuthorityRequest, at time.Time) (app.UsageTargetRecord, error) {
-	if err := s.ensureUsageSchema(ctx); err != nil {
-		return app.UsageTargetRecord{}, err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return app.UsageTargetRecord{}, err
@@ -82,9 +85,20 @@ func (s *Store) ResolveUsageTarget(ctx context.Context, target app.UsageTarget, 
 }
 
 func (s *Store) RecordUsage(ctx context.Context, write app.UsageWrite) (model.UsageObservation, bool, error) {
-	if err := s.ensureUsageSchema(ctx); err != nil {
-		return model.UsageObservation{}, false, err
+	return s.recordUsage(ctx, write)
+}
+
+func (s *Store) ImportHistoricalUsage(ctx context.Context, write app.HistoricalUsageWrite) (model.UsageObservation, bool, error) {
+	if !write.Observation.Historical || strings.TrimSpace(write.Observation.Provenance) == "" || strings.TrimSpace(write.SourceKey) == "" || strings.TrimSpace(write.Observation.SourceRevision) == "" || write.Observation.ObservedAt.IsZero() || write.Observation.CollectedAt.IsZero() {
+		return model.UsageObservation{}, false, app.ErrInvalid
 	}
+	if write.Observation.Cost != nil && write.Observation.Cost.Kind != model.UsageCostHistoricalEstimate && write.Observation.Cost.Kind != model.UsageCostNativeReported {
+		return model.UsageObservation{}, false, app.ErrInvalid
+	}
+	return s.recordUsage(ctx, app.UsageWrite{Observation: write.Observation, SourceKey: write.SourceKey, Cumulative: write.Cumulative})
+}
+
+func (s *Store) recordUsage(ctx context.Context, write app.UsageWrite) (model.UsageObservation, bool, error) {
 	counters, err := json.Marshal(write.Observation.Counters)
 	if err != nil {
 		return model.UsageObservation{}, false, err
@@ -93,18 +107,29 @@ func (s *Store) RecordUsage(ctx context.Context, write app.UsageWrite) (model.Us
 	if write.Observation.Cost != nil {
 		amount, currency, kind = write.Observation.Cost.Amount, write.Observation.Cost.Currency, write.Observation.Cost.Kind
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO usage_observations(id,agent_id,conversation_id,execution_id,attribution_precision,harness,source_key,source,source_revision,observed_at,collected_at,counters_json,cost_amount,cost_currency,cost_kind,counter_coverage,cost_coverage,coverage_reason,cumulative,historical) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.UsageObservation{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `INSERT INTO usage_observations(id,agent_id,conversation_id,execution_id,attribution_precision,harness,source_key,source,source_revision,observed_at,collected_at,counters_json,cost_amount,cost_currency,cost_kind,counter_coverage,cost_coverage,coverage_reason,cumulative,historical,provenance) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		write.Observation.ID, write.Observation.Attribution.AgentID, write.Observation.Attribution.ConversationID, write.Observation.Attribution.ExecutionID,
 		write.Observation.Attribution.Precision, write.Observation.Harness, write.SourceKey, write.Observation.Source, write.Observation.SourceRevision, nanos(write.Observation.ObservedAt), nanos(write.Observation.CollectedAt), counters,
-		amount, currency, kind, write.Observation.Coverage.Counters, write.Observation.Coverage.Cost, write.Observation.Coverage.Reason, write.Cumulative, write.Observation.Historical)
+		amount, currency, kind, write.Observation.Coverage.Counters, write.Observation.Coverage.Cost, write.Observation.Coverage.Reason, write.Cumulative, write.Observation.Historical, write.Observation.Provenance)
 	if err == nil {
-		if bumpErr := s.bump(ctx); bumpErr != nil {
+		if bumpErr := bumpTx(ctx, tx); bumpErr != nil {
 			return model.UsageObservation{}, false, bumpErr
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return model.UsageObservation{}, false, commitErr
 		}
 		return write.Observation, false, nil
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "unique") {
 		return model.UsageObservation{}, false, classify(err)
+	}
+	if rollbackErr := tx.Rollback(); rollbackErr != nil {
+		return model.UsageObservation{}, false, rollbackErr
 	}
 	existing, cumulative, readErr := s.usageBySourceRevision(ctx, write.SourceKey, write.Observation.SourceRevision)
 	if readErr != nil {
@@ -119,9 +144,6 @@ func (s *Store) RecordUsage(ctx context.Context, write app.UsageWrite) (model.Us
 }
 
 func (s *Store) QueryUsage(ctx context.Context, filter app.UsageFilter, authority model.AuthorityRequest, at time.Time) (app.UsageResult, error) {
-	if err := s.ensureUsageSchema(ctx); err != nil {
-		return app.UsageResult{}, err
-	}
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 50
@@ -146,12 +168,12 @@ func (s *Store) QueryUsage(ctx context.Context, filter app.UsageFilter, authorit
 		}
 		return app.UsageResult{}, err
 	}
-	query := `SELECT id,agent_id,conversation_id,execution_id,attribution_precision,harness,source,source_revision,observed_at,collected_at,counters_json,cost_amount,cost_currency,cost_kind,counter_coverage,cost_coverage,coverage_reason,historical,cumulative
+	query := `SELECT id,agent_id,conversation_id,execution_id,attribution_precision,harness,source,source_revision,observed_at,collected_at,counters_json,cost_amount,cost_currency,cost_kind,counter_coverage,cost_coverage,coverage_reason,historical,provenance,cumulative
 FROM usage_observations u WHERE (cumulative=0 OR NOT EXISTS(SELECT 1 FROM usage_observations newer WHERE newer.source_key=u.source_key AND (newer.observed_at>u.observed_at OR (newer.observed_at=u.observed_at AND newer.collected_at>u.collected_at))))`
 	args := []any{}
 	if filter.Target.ExecutionID != "" {
-		query += ` AND execution_id=?`
-		args = append(args, filter.Target.ExecutionID)
+		query += ` AND (execution_id=? OR (attribution_precision=? AND conversation_id=?))`
+		args = append(args, filter.Target.ExecutionID, model.UsageAttributionConversation, resolved.ConversationID)
 	} else {
 		query += ` AND conversation_id=?`
 		args = append(args, filter.Target.ConversationID)
@@ -202,7 +224,7 @@ FROM usage_observations u WHERE (cumulative=0 OR NOT EXISTS(SELECT 1 FROM usage_
 }
 
 func (s *Store) usageBySourceRevision(ctx context.Context, key, revision string) (model.UsageObservation, bool, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,agent_id,conversation_id,execution_id,attribution_precision,harness,source,source_revision,observed_at,collected_at,counters_json,cost_amount,cost_currency,cost_kind,counter_coverage,cost_coverage,coverage_reason,historical,cumulative FROM usage_observations WHERE source_key=? AND source_revision=?`, key, revision)
+	row := s.db.QueryRowContext(ctx, `SELECT id,agent_id,conversation_id,execution_id,attribution_precision,harness,source,source_revision,observed_at,collected_at,counters_json,cost_amount,cost_currency,cost_kind,counter_coverage,cost_coverage,coverage_reason,historical,provenance,cumulative FROM usage_observations WHERE source_key=? AND source_revision=?`, key, revision)
 	return scanUsage(row)
 }
 
@@ -212,7 +234,7 @@ func scanUsage(row scanner) (model.UsageObservation, bool, error) {
 	var counters []byte
 	var amount, currency, kind sql.NullString
 	var cumulative bool
-	if err := row.Scan(&out.ID, &out.Attribution.AgentID, &out.Attribution.ConversationID, &out.Attribution.ExecutionID, &out.Attribution.Precision, &out.Harness, &out.Source, &out.SourceRevision, &observed, &collected, &counters, &amount, &currency, &kind, &out.Coverage.Counters, &out.Coverage.Cost, &out.Coverage.Reason, &out.Historical, &cumulative); err != nil {
+	if err := row.Scan(&out.ID, &out.Attribution.AgentID, &out.Attribution.ConversationID, &out.Attribution.ExecutionID, &out.Attribution.Precision, &out.Harness, &out.Source, &out.SourceRevision, &observed, &collected, &counters, &amount, &currency, &kind, &out.Coverage.Counters, &out.Coverage.Cost, &out.Coverage.Reason, &out.Historical, &out.Provenance, &cumulative); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return out, false, classify(err)
 		}

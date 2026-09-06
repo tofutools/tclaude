@@ -25,15 +25,7 @@ CREATE TABLE IF NOT EXISTS historical_activity (
 CREATE INDEX IF NOT EXISTS historical_activity_started ON historical_activity(started_at DESC,id);
 `
 
-func (s *Store) ensureActivitySchema(ctx context.Context) error {
-	_, err := s.db.ExecContext(ctx, activitySchema)
-	return err
-}
-
 func (s *Store) ImportHistoricalActivity(ctx context.Context, write app.HistoricalActivityWrite) (model.ActivityRecord, bool, error) {
-	if err := s.ensureActivitySchema(ctx); err != nil {
-		return model.ActivityRecord{}, false, err
-	}
 	if !write.Record.Historical || strings.TrimSpace(write.SourceKey) == "" || strings.TrimSpace(write.SourceRevision) == "" || strings.TrimSpace(write.Record.Provenance) == "" || write.Record.StartedAt.IsZero() {
 		return model.ActivityRecord{}, false, app.ErrInvalid
 	}
@@ -41,17 +33,28 @@ func (s *Store) ImportHistoricalActivity(ctx context.Context, write app.Historic
 	if write.Record.FinishedAt != nil {
 		finished = nanos(*write.Record.FinishedAt)
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO historical_activity(id,source_key,source_revision,kind,actor_kind,actor_agent_id,actor_execution_id,actor_automation_run,agent_id,conversation_id,execution_id,work_run_id,outcome,reason,started_at,finished_at,provenance) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.ActivityRecord{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `INSERT INTO historical_activity(id,source_key,source_revision,kind,actor_kind,actor_agent_id,actor_execution_id,actor_automation_run,agent_id,conversation_id,execution_id,work_run_id,outcome,reason,started_at,finished_at,provenance) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		write.Record.ID, write.SourceKey, write.SourceRevision, write.Record.Kind, write.Record.Actor.Kind, write.Record.Actor.AgentID, write.Record.Actor.ExecutionID, write.Record.Actor.AutomationRun,
 		write.Record.AgentID, write.Record.ConversationID, write.Record.ExecutionID, write.Record.WorkRunID, write.Record.Outcome, write.Record.Reason, nanos(write.Record.StartedAt), finished, write.Record.Provenance)
 	if err == nil {
-		if bumpErr := s.bump(ctx); bumpErr != nil {
+		if bumpErr := bumpTx(ctx, tx); bumpErr != nil {
 			return model.ActivityRecord{}, false, bumpErr
+		}
+		if commitErr := tx.Commit(); commitErr != nil {
+			return model.ActivityRecord{}, false, commitErr
 		}
 		return write.Record, false, nil
 	}
 	if !strings.Contains(strings.ToLower(err.Error()), "unique") {
 		return model.ActivityRecord{}, false, classify(err)
+	}
+	if rollbackErr := tx.Rollback(); rollbackErr != nil {
+		return model.ActivityRecord{}, false, rollbackErr
 	}
 	existing, readErr := s.historicalActivity(ctx, write.SourceKey, write.SourceRevision)
 	if readErr != nil {
@@ -82,13 +85,16 @@ UNION ALL
 SELECT 'decision:'||d.work_run_id,'decision','json','','','',d.decider_json,COALESCE(NULLIF(e.agent_id,''),json_extract(d.decider_json,'$.AgentID'),''),COALESCE(e.conversation_id,''),COALESCE(e.id,''),d.work_run_id,d.decision,d.reason,d.decided_at,d.decided_at,0,'work_decision'
 FROM work_decisions d JOIN work_runs w ON w.id=d.work_run_id LEFT JOIN executions e ON e.id=w.worker_execution_id
 UNION ALL
+SELECT 'decision:'||d.decision_id||':'||d.request_id,'decision','json','','','',d.actor_json,
+ COALESCE(NULLIF(e.agent_id,''),json_extract(d.actor_json,'$.AgentID'),''),COALESCE(e.conversation_id,''),COALESCE(e.id,''),w.id,
+ d.answer,d.reason,d.submitted_at,d.submitted_at,0,'decision_submission'
+FROM decision_submissions d JOIN decision_windows window ON window.id=d.decision_id
+ JOIN work_runs w ON w.id=window.work_run_id LEFT JOIN executions e ON e.id=w.worker_execution_id
+UNION ALL
 SELECT h.id,h.kind,h.actor_kind,h.actor_agent_id,h.actor_execution_id,h.actor_automation_run,'',h.agent_id,h.conversation_id,h.execution_id,h.work_run_id,h.outcome,h.reason,h.started_at,h.finished_at,1,h.provenance
 FROM historical_activity h`
 
 func (s *Store) QueryActivity(ctx context.Context, filter app.ActivityFilter, authority model.AuthorityRequest, at time.Time) (app.ActivityResult, error) {
-	if err := s.ensureActivitySchema(ctx); err != nil {
-		return app.ActivityResult{}, err
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return app.ActivityResult{}, err
