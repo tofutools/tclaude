@@ -109,6 +109,10 @@ type ProgramRuntime interface {
 	ExecutionID() model.ExecutionID
 	ObserveProgram(context.Context) (ProgramObservation, error)
 	StopProgram(context.Context, StopRequest) (StopResult, error)
+	// ReleaseProgramResources is called only after the application durably
+	// records the exact observation evidence. Natural exit and recovery retain
+	// bounded output resources until this acknowledgement closes the crash gap.
+	ReleaseProgramResources(context.Context, model.ProviderEvidence) error
 }
 
 type ProgramRecoveryRequest struct {
