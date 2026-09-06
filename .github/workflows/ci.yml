@@ -966,12 +966,10 @@ jobs:
           # no base and run every shard in full on the merge commit.
           diff-base: ${{ github.event_name == 'pull_request' && 'HEAD^1' || '' }}
 
-  # The long-lived platform rewrite deliberately defers the full mixed agentd
-  # suite between integration milestones, but its architectural seam and the
-  # production identity/authority/lifecycle paths stay mandatory on both
-  # supported platforms. New packages under pkg/claude/platform are included
-  # automatically; focused agentd/session regressions are named by stable
-  # behavioral prefixes rather than by source-file implementation details.
+  # The intentional replacement owns its contracts in internal/backend and its
+  # public composition in internal/product. Exercise the whole replacement on
+  # both supported platforms without affected-package filtering. The explicit
+  # full-integration-ci label also retains the superseded implementation checks.
   platform-v2-core:
     name: Platform v2 core (${{ matrix.os }})
     if: github.event_name == 'pull_request' && github.base_ref == 'refactor/platform-v2'
@@ -989,10 +987,15 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Test platform contracts
-        run: go test ./pkg/claude/platform/...
+      - name: Test replacement backend and product
+        run: go test -race ./internal/backend/... ./internal/product/... -count=1
 
-      - name: Test focused identity, authority, lifecycle, and observation regressions
+      - name: Test legacy platform contracts at explicit integration milestones
+        if: contains(github.event.pull_request.labels.*.name, 'full-integration-ci')
+        run: go test ./pkg/claude/platform/... -count=1
+
+      - name: Test legacy identity, authority, lifecycle, and observation regressions
+        if: contains(github.event.pull_request.labels.*.name, 'full-integration-ci')
         shell: bash
         run: |
           go test ./pkg/claude/agentd \
