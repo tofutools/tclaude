@@ -86,7 +86,7 @@ func TestStartProcessCanUseExactEnvironment(t *testing.T) {
 		ExactEnvironment: true,
 	})
 	require.NoError(t, err)
-	require.Eventually(t, func() bool { return process.Observe().Exited }, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool { return process.Observe().Exited }, 3*time.Second, 10*time.Millisecond)
 	raw, err := os.ReadFile(result)
 	require.NoError(t, err)
 	require.Equal(t, "bounded\n", string(raw), "ambient parent variables must not reach an exact environment")

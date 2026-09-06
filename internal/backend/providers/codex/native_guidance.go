@@ -33,6 +33,12 @@ func (n *codexNativeNormalizer) Matches(value string) bool {
 	return n.nativeID != "" && value == n.nativeID
 }
 
+func (n *codexNativeNormalizer) Set(nativeID string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.nativeID = nativeID
+}
+
 func (n *codexNativeNormalizer) Normalize(raw ports.RawNativeCallback) (ports.NormalizedNativeEvent, string, error) {
 	var input nativeHookInput
 	if len(raw.Body) == 0 || len(raw.Body) > 1<<20 || !json.Valid(raw.Body) || json.Unmarshal(raw.Body, &input) != nil {

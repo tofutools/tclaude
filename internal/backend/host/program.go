@@ -27,6 +27,7 @@ const (
 	programEvidenceOwner         = "host.program"
 	programEvidenceVersion       = uint32(1)
 	programAttemptEnvironmentKey = "TCLAUDE_PROGRAM_ATTEMPT"
+	programSpoolEnvironmentKey   = "TCLAUDE_PROGRAM_OUTPUT_SPOOL"
 	maxProgramArguments          = 256
 	maxProgramArgumentBytes      = 32 << 10
 	maxProgramArgumentsBytes     = 256 << 10
@@ -42,7 +43,23 @@ const (
 	programStderrFile          = "stderr"
 	programStdoutTruncatedFile = "stdout.truncated"
 	programStderrTruncatedFile = "stderr.truncated"
+	programStdoutCompleteFile  = "stdout.complete"
+	programStderrCompleteFile  = "stderr.complete"
 )
+
+const programSpoolScript = `set -eu
+umask 077
+"$1" -c "$4" >"$5"
+"$2" bs=1 count=1 of="$6" 2>/dev/null || true
+"$3" >/dev/null
+: >"$7"`
+
+type programSpoolerTools struct {
+	shell string
+	head  string
+	dd    string
+	cat   string
+}
 
 // ProgramProcessHost owns non-terminal program processes and their bounded,
 // private output resources. Policy, workspace selection and retries remain in
@@ -67,6 +84,8 @@ type programEvidence struct {
 	OutputLimit      int64                          `json:"output_limit"`
 	Deadline         time.Time                      `json:"deadline"`
 	Process          *ProcessIdentity               `json:"process,omitempty"`
+	StdoutSpooler    *ProcessIdentity               `json:"stdout_spooler,omitempty"`
+	StderrSpooler    *ProcessIdentity               `json:"stderr_spooler,omitempty"`
 }
 
 type preparedProgram struct {
@@ -77,6 +96,7 @@ type preparedProgram struct {
 	executable  string
 	arguments   []string
 	environment []string
+	spoolers    programSpoolerTools
 
 	mu       sync.Mutex
 	released bool
@@ -84,13 +104,15 @@ type preparedProgram struct {
 }
 
 type programRuntime struct {
-	host     ProgramProcessHost
-	process  *Process
-	evidence programEvidence
-	envelope model.ProviderEvidence
+	host          ProgramProcessHost
+	process       *Process
+	stdoutSpooler *Process
+	stderrSpooler *Process
+	evidence      programEvidence
+	envelope      model.ProviderEvidence
 
-	stdout *boundedTailFile
-	stderr *boundedTailFile
+	stdout *boundedOutputFile
+	stderr *boundedOutputFile
 }
 
 func (h ProgramProcessHost) PrepareProgram(ctx context.Context, request ports.ProgramPreparationRequest) (ports.PreparedProgram, error) {
@@ -98,6 +120,10 @@ func (h ProgramProcessHost) PrepareProgram(ctx context.Context, request ports.Pr
 		return nil, err
 	}
 	executable, arguments, environment, deadline, err := validateProgramPreparation(request)
+	if err != nil {
+		return nil, err
+	}
+	spoolers, err := resolveProgramSpoolerTools()
 	if err != nil {
 		return nil, err
 	}
@@ -147,7 +173,7 @@ func (h ProgramProcessHost) PrepareProgram(ctx context.Context, request ports.Pr
 	}
 	return &preparedProgram{
 		host: h, request: request, description: description, evidence: value,
-		executable: executable, arguments: arguments, environment: environment,
+		executable: executable, arguments: arguments, environment: environment, spoolers: spoolers,
 	}, nil
 }
 
@@ -175,38 +201,56 @@ func (p *preparedProgram) Release(ctx context.Context, permit ports.ReleasePermi
 	if permit == nil || permit.ExecutionID() != p.request.Execution.ID {
 		return ports.ProgramReleaseResult{}, fmt.Errorf("release permit does not match program execution")
 	}
-	input, err := ReadProtectedFile(filepath.Join(p.evidence.ResourceRoot, programInputFile), maxProgramInputBytes)
+	inputPath := filepath.Join(p.evidence.ResourceRoot, programInputFile)
+	if _, err := ReadProtectedFile(inputPath, maxProgramInputBytes); err != nil {
+		_ = removeProgramResource(p.host.PrivateRoot, p.evidence.ResourceRoot)
+		return ports.ProgramReleaseResult{}, err
+	}
+	input, err := os.Open(inputPath)
 	if err != nil {
 		_ = removeProgramResource(p.host.PrivateRoot, p.evidence.ResourceRoot)
 		return ports.ProgramReleaseResult{}, err
 	}
-	stdout, err := openBoundedTailFile(p.evidence.ResourceRoot, programStdoutFile, programStdoutTruncatedFile, p.evidence.OutputLimit)
-	if err != nil {
-		_ = removeProgramResource(p.host.PrivateRoot, p.evidence.ResourceRoot)
-		return ports.ProgramReleaseResult{}, err
-	}
-	stderr, err := openBoundedTailFile(p.evidence.ResourceRoot, programStderrFile, programStderrTruncatedFile, p.evidence.OutputLimit)
-	if err != nil {
-		_ = removeProgramResource(p.host.PrivateRoot, p.evidence.ResourceRoot)
-		return ports.ProgramReleaseResult{}, err
-	}
+	defer input.Close()
+	stdout := newBoundedOutputFile(p.evidence.ResourceRoot, programStdoutFile, programStdoutTruncatedFile, programStdoutCompleteFile, p.evidence.OutputLimit)
+	stderr := newBoundedOutputFile(p.evidence.ResourceRoot, programStderrFile, programStderrTruncatedFile, programStderrCompleteFile, p.evidence.OutputLimit)
 	if err := permit.Consume(ctx); err != nil {
 		return ports.ProgramReleaseResult{}, fmt.Errorf("consume program release permit: %w", err)
 	}
 	p.released = true
-	process, err := StartProcess(ProcessSpec{
-		Executable: p.executable, Args: p.arguments, Directory: p.evidence.WorkingDirectory,
-		Env:              append(append([]string(nil), p.environment...), programAttemptEnvironmentKey+"="+p.evidence.AttemptMarker),
-		ExactEnvironment: true, Stdin: bytes.NewReader(input), Stdout: stdout, Stderr: stderr,
-	})
+	stdoutSpooler, stdoutWriter, err := startProgramSpooler(p.spoolers, p.evidence, "stdout", stdout)
 	if err != nil {
 		_ = removeProgramResource(p.host.PrivateRoot, p.evidence.ResourceRoot)
 		return ports.ProgramReleaseResult{}, err
 	}
+	stderrSpooler, stderrWriter, err := startProgramSpooler(p.spoolers, p.evidence, "stderr", stderr)
+	if err != nil {
+		_ = stdoutWriter.Close()
+		stopProcessNow(stdoutSpooler)
+		_ = removeProgramResource(p.host.PrivateRoot, p.evidence.ResourceRoot)
+		return ports.ProgramReleaseResult{}, err
+	}
+	process, err := StartProcess(ProcessSpec{
+		Executable: p.executable, Args: p.arguments, Directory: p.evidence.WorkingDirectory,
+		Env:              append(append([]string(nil), p.environment...), programAttemptEnvironmentKey+"="+p.evidence.AttemptMarker),
+		ExactEnvironment: true, Stdin: input, Stdout: stdoutWriter, Stderr: stderrWriter,
+	})
+	_ = stdoutWriter.Close()
+	_ = stderrWriter.Close()
+	if err != nil {
+		stopProcessNow(stdoutSpooler)
+		stopProcessNow(stderrSpooler)
+		_ = removeProgramResource(p.host.PrivateRoot, p.evidence.ResourceRoot)
+		return ports.ProgramReleaseResult{}, err
+	}
 	identity := process.Identity()
+	stdoutIdentity := stdoutSpooler.Identity()
+	stderrIdentity := stderrSpooler.Identity()
 	p.evidence.Process = &identity
+	p.evidence.StdoutSpooler = &stdoutIdentity
+	p.evidence.StderrSpooler = &stderrIdentity
 	envelope, encodeErr := encodeProgramEvidence(p.evidence)
-	runtime := &programRuntime{host: p.host, process: process, evidence: p.evidence, envelope: envelope, stdout: stdout, stderr: stderr}
+	runtime := &programRuntime{host: p.host, process: process, stdoutSpooler: stdoutSpooler, stderrSpooler: stderrSpooler, evidence: p.evidence, envelope: envelope, stdout: stdout, stderr: stderr}
 	runtime.enforceDeadline()
 	if encodeErr != nil {
 		return ports.ProgramReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime}, encodeErr
@@ -225,12 +269,12 @@ func (h ProgramProcessHost) RecoverProgram(ctx context.Context, request ports.Pr
 	if err := validateProgramRecovery(h.PrivateRoot, request, value); err != nil {
 		return ports.ProgramRecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, err
 	}
-	stdout, err := openBoundedTailFile(value.ResourceRoot, programStdoutFile, programStdoutTruncatedFile, value.OutputLimit)
-	if err != nil {
+	stdout := newBoundedOutputFile(value.ResourceRoot, programStdoutFile, programStdoutTruncatedFile, programStdoutCompleteFile, value.OutputLimit)
+	stderr := newBoundedOutputFile(value.ResourceRoot, programStderrFile, programStderrTruncatedFile, programStderrCompleteFile, value.OutputLimit)
+	if _, _, err := stdout.snapshot(); err != nil {
 		return ports.ProgramRecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, err
 	}
-	stderr, err := openBoundedTailFile(value.ResourceRoot, programStderrFile, programStderrTruncatedFile, value.OutputLimit)
-	if err != nil {
+	if _, _, err := stderr.snapshot(); err != nil {
 		return ports.ProgramRecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, err
 	}
 	var process *Process
@@ -243,10 +287,34 @@ func (h ProgramProcessHost) RecoverProgram(ctx context.Context, request ports.Pr
 			value.Process = &identity
 		}
 	}
+	stdoutSpooler, stdoutErr := recoverProgramSpooler(value.StdoutSpooler, value.AttemptMarker+":stdout", stdout)
+	stderrSpooler, stderrErr := recoverProgramSpooler(value.StderrSpooler, value.AttemptMarker+":stderr", stderr)
+	if stdoutErr != nil || stderrErr != nil {
+		return ports.ProgramRecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, errors.Join(stdoutErr, stderrErr)
+	}
+	if value.StdoutSpooler == nil && stdoutSpooler != nil {
+		identity := stdoutSpooler.Identity()
+		value.StdoutSpooler = &identity
+	}
+	if value.StderrSpooler == nil && stderrSpooler != nil {
+		identity := stderrSpooler.Identity()
+		value.StderrSpooler = &identity
+	}
 	if errors.Is(err, ErrProcessIdentityNotLive) {
-		runtime := &programRuntime{host: h, evidence: value, envelope: request.Evidence, stdout: stdout, stderr: stderr}
+		envelope, encodeErr := encodeProgramEvidence(value)
+		if encodeErr != nil {
+			return ports.ProgramRecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, encodeErr
+		}
+		runtime := &programRuntime{host: h, stdoutSpooler: stdoutSpooler, stderrSpooler: stderrSpooler, evidence: value, envelope: envelope, stdout: stdout, stderr: stderr}
 		observation, observeErr := runtime.ObserveProgram(ctx)
-		return ports.ProgramRecoveryResult{State: ports.RecoveryExited, Runtime: runtime, Observation: observation, Evidence: request.Evidence}, observeErr
+		state := ports.RecoveryControlled
+		switch observation.Workload {
+		case ports.WorkloadExited:
+			state = ports.RecoveryExited
+		case ports.WorkloadUnknown:
+			state = ports.RecoveryUnknown
+		}
+		return ports.ProgramRecoveryResult{State: state, Runtime: runtime, Observation: observation, Evidence: envelope}, observeErr
 	}
 	if err != nil {
 		return ports.ProgramRecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, err
@@ -255,7 +323,7 @@ func (h ProgramProcessHost) RecoverProgram(ctx context.Context, request ports.Pr
 	if err != nil {
 		return ports.ProgramRecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, err
 	}
-	runtime := &programRuntime{host: h, process: process, evidence: value, envelope: envelope, stdout: stdout, stderr: stderr}
+	runtime := &programRuntime{host: h, process: process, stdoutSpooler: stdoutSpooler, stderrSpooler: stderrSpooler, evidence: value, envelope: envelope, stdout: stdout, stderr: stderr}
 	runtime.enforceDeadline()
 	observation, observeErr := runtime.ObserveProgram(ctx)
 	state := ports.RecoveryControlled
@@ -271,6 +339,8 @@ func (h ProgramProcessHost) RecoverProgram(ctx context.Context, request ports.Pr
 func (r *programRuntime) ExecutionID() model.ExecutionID { return r.evidence.ExecutionID }
 
 func (r *programRuntime) ObserveProgram(context.Context) (ports.ProgramObservation, error) {
+	stdoutPending, stdoutStateErr := outputPending(r.stdoutSpooler, r.stdout)
+	stderrPending, stderrStateErr := outputPending(r.stderrSpooler, r.stderr)
 	stdout, stdoutTruncated, stdoutErr := r.stdout.snapshot()
 	stderr, stderrTruncated, stderrErr := r.stderr.snapshot()
 	result := ports.ProgramObservation{
@@ -289,17 +359,52 @@ func (r *programRuntime) ObserveProgram(context.Context) (ports.ProgramObservati
 			result.Workload = ports.WorkloadUnknown
 		}
 	}
-	return result, errors.Join(stdoutErr, stderrErr)
+	stateErr := errors.Join(stdoutStateErr, stderrStateErr)
+	if stateErr != nil {
+		result.Workload = ports.WorkloadUnknown
+		result.ExitCode = nil
+	} else if result.Workload == ports.WorkloadExited && (stdoutPending || stderrPending) {
+		// The workload has closed its descriptors, but an independent spooler
+		// still owns unread pipe bytes. Keep the runtime observable until its
+		// bounded durable output is complete.
+		result.Workload = ports.WorkloadRunning
+		result.ExitCode = nil
+	}
+	return result, errors.Join(stateErr, stdoutErr, stderrErr)
 }
 
 func (r *programRuntime) StopProgram(ctx context.Context, request ports.StopRequest) (ports.StopResult, error) {
-	if r.process == nil {
-		return ports.StopResult{Disposition: ports.EffectAccepted, Exited: true, Evidence: r.envelope}, nil
+	var acknowledged bool
+	exited := true
+	var err error
+	if r.process != nil {
+		acknowledged, exited, err = r.process.Stop(ctx, request.Force)
 	}
-	acknowledged, exited, err := r.process.Stop(ctx, request.Force)
 	disposition := ports.EffectAccepted
 	if err != nil {
 		disposition = ports.EffectUnknown
+	}
+	if exited {
+		for {
+			stdoutPending, stdoutErr := outputPending(r.stdoutSpooler, r.stdout)
+			stderrPending, stderrErr := outputPending(r.stderrSpooler, r.stderr)
+			if stdoutErr != nil || stderrErr != nil {
+				err = errors.Join(err, stdoutErr, stderrErr)
+				disposition, exited = ports.EffectUnknown, false
+				break
+			}
+			if !stdoutPending && !stderrPending {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				err = errors.Join(err, ctx.Err())
+				disposition, exited = ports.EffectUnknown, false
+			case <-time.After(10 * time.Millisecond):
+				continue
+			}
+			break
+		}
 	}
 	return ports.StopResult{Disposition: disposition, Acknowledged: acknowledged, Exited: exited, Evidence: r.envelope}, err
 }
@@ -310,6 +415,11 @@ func (r *programRuntime) ReleaseProgramResources(_ context.Context, evidence mod
 	}
 	if r.process != nil && r.process.Observe().Running {
 		return fmt.Errorf("cannot release resources for a running program")
+	}
+	stdoutPending, stdoutErr := outputPending(r.stdoutSpooler, r.stdout)
+	stderrPending, stderrErr := outputPending(r.stderrSpooler, r.stderr)
+	if stdoutErr != nil || stderrErr != nil || stdoutPending || stderrPending {
+		return errors.Join(fmt.Errorf("cannot release incomplete program output resources"), stdoutErr, stderrErr)
 	}
 	return removeProgramResource(r.host.PrivateRoot, r.evidence.ResourceRoot)
 }
@@ -331,6 +441,34 @@ func (r *programRuntime) enforceDeadline() {
 		defer cancel()
 		_, _, _ = process.Stop(ctx, true)
 	}()
+}
+
+func resolveProgramSpoolerTools() (programSpoolerTools, error) {
+	resolve := func(name string) (string, error) {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			return "", fmt.Errorf("resolve program output helper %q: %w", name, err)
+		}
+		if !filepath.IsAbs(path) {
+			return "", fmt.Errorf("program output helper %q did not resolve to an absolute path", name)
+		}
+		return path, nil
+	}
+	var tools programSpoolerTools
+	var err error
+	if tools.shell, err = resolve("sh"); err != nil {
+		return programSpoolerTools{}, err
+	}
+	if tools.head, err = resolve("head"); err != nil {
+		return programSpoolerTools{}, err
+	}
+	if tools.dd, err = resolve("dd"); err != nil {
+		return programSpoolerTools{}, err
+	}
+	if tools.cat, err = resolve("cat"); err != nil {
+		return programSpoolerTools{}, err
+	}
+	return tools, nil
 }
 
 func validateProgramPreparation(request ports.ProgramPreparationRequest) (string, []string, []string, time.Time, error) {
@@ -453,7 +591,7 @@ func validateProgramEnvironment(values map[string]string) ([]string, error) {
 	total := 0
 	for _, key := range keys {
 		value := values[key]
-		if key == "" || key == programAttemptEnvironmentKey || strings.ContainsAny(key, "=\x00") || strings.ContainsRune(value, 0) {
+		if key == "" || key == programAttemptEnvironmentKey || key == programSpoolEnvironmentKey || strings.ContainsAny(key, "=\x00") || strings.ContainsRune(value, 0) {
 			return nil, fmt.Errorf("program environment contains invalid key %q", key)
 		}
 		total += len(key) + len(value) + 1
@@ -559,60 +697,107 @@ func decodeProgramEvidence(envelope model.ProviderEvidence) (programEvidence, er
 	return value, nil
 }
 
-type boundedTailFile struct {
-	path       string
-	markerPath string
-	limit      int64
-
-	mu        sync.Mutex
-	data      []byte
-	truncated bool
+type boundedOutputFile struct {
+	path         string
+	markerPath   string
+	completePath string
+	limit        int64
 }
 
-func openBoundedTailFile(root, name, marker string, limit int64) (*boundedTailFile, error) {
-	path := filepath.Join(root, name)
-	data, err := ReadProtectedFile(path, limit)
+func newBoundedOutputFile(root, name, marker, complete string, limit int64) *boundedOutputFile {
+	return &boundedOutputFile{
+		path: filepath.Join(root, name), markerPath: filepath.Join(root, marker),
+		completePath: filepath.Join(root, complete), limit: limit,
+	}
+}
+
+func (f *boundedOutputFile) snapshot() ([]byte, bool, error) {
+	data, err := ReadProtectedFile(f.path, f.limit)
 	if err != nil {
+		return nil, false, err
+	}
+	info, markerErr := os.Lstat(f.markerPath)
+	if markerErr != nil && !errors.Is(markerErr, os.ErrNotExist) {
+		return nil, false, markerErr
+	}
+	return data, markerErr == nil && info.Mode().IsRegular() && info.Size() > 0, nil
+}
+
+func (f *boundedOutputFile) complete() (bool, error) {
+	info, err := os.Lstat(f.completePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("program output completion marker is not a regular file")
+	}
+	return true, nil
+}
+
+func startProgramSpooler(tools programSpoolerTools, evidence programEvidence, stream string, output *boundedOutputFile) (*Process, *os.File, error) {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	process, err := StartProcess(ProcessSpec{
+		Executable: tools.shell,
+		Args: []string{"-c", programSpoolScript, "program-output-spooler", tools.head, tools.dd, tools.cat,
+			fmt.Sprintf("%d", evidence.OutputLimit), output.path, output.markerPath, output.completePath},
+		Directory:        evidence.ResourceRoot,
+		Env:              []string{programSpoolEnvironmentKey + "=" + evidence.AttemptMarker + ":" + stream},
+		ExactEnvironment: true,
+		Stdin:            reader,
+	})
+	_ = reader.Close()
+	if err != nil {
+		_ = writer.Close()
+		return nil, nil, fmt.Errorf("start %s program output spooler: %w", stream, err)
+	}
+	return process, writer, nil
+}
+
+func recoverProgramSpooler(identity *ProcessIdentity, marker string, output *boundedOutputFile) (*Process, error) {
+	complete, err := output.complete()
+	if err != nil || complete {
 		return nil, err
 	}
-	_, markerErr := os.Lstat(filepath.Join(root, marker))
-	if markerErr != nil && !errors.Is(markerErr, os.ErrNotExist) {
-		return nil, markerErr
-	}
-	return &boundedTailFile{path: path, markerPath: filepath.Join(root, marker), limit: limit, data: data, truncated: markerErr == nil}, nil
-}
-
-func (w *boundedTailFile) Write(value []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	count := len(value)
-	if int64(len(value)) >= w.limit {
-		w.data = append(w.data[:0], value[len(value)-int(w.limit):]...)
-		w.truncated = true
+	var process *Process
+	if identity != nil {
+		process, err = RecoverProcess(*identity)
 	} else {
-		overflow := int64(len(w.data)+len(value)) - w.limit
-		if overflow > 0 {
-			w.data = append(w.data[:0], w.data[int(overflow):]...)
-			w.truncated = true
-		}
-		w.data = append(w.data, value...)
+		process, err = RecoverProcessByEnvironment(programSpoolEnvironmentKey, marker)
 	}
-	if err := WriteProtectedFile(w.path, w.data); err != nil {
-		return 0, err
+	if err != nil {
+		return nil, fmt.Errorf("recover incomplete program output spooler: %w", err)
 	}
-	if w.truncated {
-		if err := WriteProtectedFile(w.markerPath, []byte("truncated\n")); err != nil {
-			return 0, err
-		}
-	}
-	return count, nil
+	return process, nil
 }
 
-func (w *boundedTailFile) snapshot() ([]byte, bool, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	data, err := ReadProtectedFile(w.path, w.limit)
-	return data, w.truncated, err
+func outputPending(process *Process, output *boundedOutputFile) (bool, error) {
+	complete, err := output.complete()
+	if err != nil || complete {
+		return false, err
+	}
+	if process == nil {
+		return false, fmt.Errorf("program output spooler completion is unprovable")
+	}
+	observation := process.Observe()
+	if observation.Running {
+		return true, nil
+	}
+	return false, fmt.Errorf("program output spooler exited without durable completion")
+}
+
+func stopProcessNow(process *Process) {
+	if process == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, _, _ = process.Stop(ctx, true)
 }
 
 var _ ports.ProgramHost = ProgramProcessHost{}

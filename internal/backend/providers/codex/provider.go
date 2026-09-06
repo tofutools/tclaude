@@ -116,6 +116,7 @@ type prepared struct {
 	callback        *nativeguidance.CallbackResource
 	guidance        *nativeguidance.Runtime
 	handler         *nativeguidance.CallbackHandler
+	normalizer      *codexNativeNormalizer
 	callbackCommand string
 	description     ports.PreparedDescription
 }
@@ -155,6 +156,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	}
 	var guidance *nativeguidance.Runtime
 	var handler *nativeguidance.CallbackHandler
+	var normalizer *codexNativeNormalizer
 	var callbackCommand string
 	if request.NativeGuidance != nil {
 		if request.CallbackIngress == nil {
@@ -163,7 +165,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		}
 		callback, err = nativeguidance.PrepareCallback(filepath.Join(p.privateRoot, "native-callbacks"))
 		if err == nil {
-			normalizer := newCodexNativeNormalizer(nativeID)
+			normalizer = newCodexNativeNormalizer(nativeID)
 			guidance = &nativeguidance.Runtime{Evaluator: request.NativeGuidance, Kinds: map[string]struct{}{"session_start": {}, "user_prompt": {}}, Correlation: normalizer.Matches}
 			handler = &nativeguidance.CallbackHandler{Normalize: normalizer.Normalize, Encode: encodeCodexGuidance}
 			err = callback.Register(ctx, request.CallbackIngress, request.Spec.ExecutionID, request.Spec.Attempt, handler)
@@ -246,7 +248,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		}
 		return nil, err
 	}
-	return &prepared{provider: p, request: request, nativeID: nativeID, stateRoot: stateRoot, removeOnAbort: removeOnAbort, terminal: terminal, spool: spool, access: access, callback: callback, guidance: guidance, handler: handler, callbackCommand: callbackCommand,
+	return &prepared{provider: p, request: request, nativeID: nativeID, stateRoot: stateRoot, removeOnAbort: removeOnAbort, terminal: terminal, spool: spool, access: access, callback: callback, guidance: guidance, handler: handler, normalizer: normalizer, callbackCommand: callbackCommand,
 		description: ports.PreparedDescription{ExecutionID: request.Spec.ExecutionID, Attempt: request.Spec.Attempt, Topology: ports.TopologyTerminalAuthoritative,
 			Requirements:    ports.RuntimeRequirements{Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory, PrivateStorage: true, Terminal: &ports.TerminalRequirement{Interactive: true}, Policy: ports.PolicyRequirements{SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxReadOnly, model.SandboxWorkspaceWrite, model.SandboxUnconfined}}},
 			EffectivePolicy: ports.EffectivePolicy{Approval: request.Spec.Approval, Sandbox: request.Spec.Sandbox, ApprovalEnforced: true, SandboxEnforced: true},
@@ -368,6 +370,9 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 			return ports.ReleaseResult{}, forkErr
 		}
 		p.nativeID = forkedID
+		if p.normalizer != nil {
+			p.normalizer.Set(forkedID)
+		}
 	}
 	terminal, err := p.terminal.Release(host.ProcessSpec{Executable: p.provider.executable, Args: p.argv(), Directory: p.request.Spec.WorkingDirectory, Env: p.runtimeEnvironment()})
 	if err != nil {
