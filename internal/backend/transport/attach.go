@@ -67,6 +67,15 @@ func (h *Handler) attach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
+	closed := make(chan struct{})
+	defer close(closed)
+	go func() {
+		select {
+		case <-r.Context().Done():
+			_ = conn.Close()
+		case <-closed:
+		}
+	}()
 	conn.SetReadLimit(maxRequestBytes)
 	outputDone := make(chan struct{})
 	inputDone := make(chan struct{})

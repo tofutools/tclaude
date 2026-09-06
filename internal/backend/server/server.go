@@ -1,0 +1,129 @@
+// Package server composes the replacement application and transport. It never
+// opens the legacy database or imports the legacy daemon.
+package server
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/tofutools/tclaude/internal/backend/app"
+	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/ports"
+	"github.com/tofutools/tclaude/internal/backend/sqlite"
+	"github.com/tofutools/tclaude/internal/backend/transport"
+	"golang.org/x/sys/unix"
+)
+
+const marker = "tclaude replacement backend development state v1\n"
+
+// Initialize requires a new directory: existing data is never adopted implicitly.
+func Initialize(dir string) error {
+	if !filepath.IsAbs(dir) {
+		return errors.New("state directory must be absolute")
+	}
+	if err := os.Mkdir(dir, 0700); err != nil {
+		return fmt.Errorf("create new state directory: %w", err)
+	}
+	var token [32]byte
+	if _, err := rand.Read(token[:]); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(dir, "operator.token"), []byte(hex.EncodeToString(token[:])), 0600); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "FORMAT"), []byte(marker), 0600)
+}
+
+// Serve holds a single-process lock and leaves durable executions recoverable on
+// shutdown. Disconnecting clients or stopping this HTTP server does not stop work.
+func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry) error {
+	if !filepath.IsAbs(dir) {
+		return errors.New("state directory must be absolute")
+	}
+	info, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+		return errors.New("state directory must be private and must not be a symlink")
+	}
+	format, err := os.ReadFile(filepath.Join(dir, "FORMAT"))
+	if err != nil || string(format) != marker {
+		return errors.New("state directory was not initialized for the replacement backend")
+	}
+	lock, err := os.OpenFile(filepath.Join(dir, "daemon.lock"), os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		return errors.New("replacement backend is already running for this state directory")
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+	credential, err := os.ReadFile(filepath.Join(dir, "operator.token"))
+	if err != nil {
+		return err
+	}
+	auth, err := transport.NewOperatorToken(string(credential))
+	if err != nil {
+		return err
+	}
+	store, err := sqlite.Open(filepath.Join(dir, "backend.sqlite"))
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	application := app.New(store, registry)
+	if _, err := application.Recover(ctx, app.RecoverRequest{Principal: model.OperatorPrincipal()}); err != nil {
+		return fmt.Errorf("recover backend: %w", err)
+	}
+	handler, err := transport.NewHandler(application, auth)
+	if err != nil {
+		return err
+	}
+	socket := filepath.Join(dir, "api.sock")
+	// Holding the state-directory lock makes this a stale socket from our own
+	// previous process. Refuse other file types rather than deleting arbitrary data.
+	if info, err := os.Lstat(socket); err == nil {
+		if info.Mode()&os.ModeSocket == 0 {
+			return errors.New("API socket path contains a non-socket file")
+		}
+		if err := os.Remove(socket); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second,
+		BaseContext: func(net.Listener) context.Context { return ctx }}
+	completed := make(chan error, 1)
+	go func() { completed <- server.Serve(listener) }()
+	select {
+	case err := <-completed:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdown); err != nil {
+			_ = server.Close()
+			return err
+		}
+		return nil
+	}
+}
