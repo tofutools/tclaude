@@ -211,16 +211,19 @@ const (
 // bound by composition to an exact attempt; payload IDs remain correlation and
 // are checked again by application before a durable transition.
 type PrimaryContextEvidence struct {
-	ExecutionID           model.ExecutionID
-	Attempt               model.AttemptGeneration
-	Provider              string
-	PrimaryCorrelation    string
-	Disposition           PrimaryContextDisposition
-	PriorBinding          *model.NativeBinding
-	NextBinding           *model.NativeBinding
-	TransitionCorrelation string
-	ProviderOrder         string
-	ObservedAt            time.Time
+	ExecutionID                 model.ExecutionID
+	Attempt                     model.AttemptGeneration
+	Provider                    string
+	PrimaryCorrelation          string
+	Disposition                 PrimaryContextDisposition
+	PriorBinding                *model.NativeBinding
+	NextBinding                 *model.NativeBinding
+	TransitionCorrelation       string
+	ExpectedConversation        model.ConversationID
+	ExpectedAssociationRevision model.Revision
+	PriorProviderOrder          string
+	ProviderOrder               string
+	ObservedAt                  time.Time
 }
 
 type PrimaryObservationSink interface {
@@ -311,6 +314,7 @@ type ContextChange struct {
 	Intent                      ContextChangeIntent
 	ExpectedConversation        model.ConversationID
 	ExpectedAssociationRevision model.Revision
+	TransitionCorrelation       string
 }
 
 type ContextChangeResult struct {
