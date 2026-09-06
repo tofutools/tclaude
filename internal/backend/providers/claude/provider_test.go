@@ -29,6 +29,20 @@ func (s *observationSink) ObservePrimaryContext(_ context.Context, evidence port
 	return nil
 }
 
+type failOnceObservationSink struct {
+	calls    int
+	accepted int
+}
+
+func (s *failOnceObservationSink) ObservePrimaryContext(_ context.Context, _ ports.PrimaryContextEvidence) error {
+	s.calls++
+	if s.calls == 1 {
+		return os.ErrInvalid
+	}
+	s.accepted++
+	return nil
+}
+
 type testPermit struct {
 	execution model.ExecutionID
 	operation model.OperationID
@@ -146,9 +160,27 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+	controlled := recovered.Runtime.(*Runtime)
+	_, exited, err := controlled.terminal.Stop(ctx, true)
+	require.NoError(t, err)
+	require.True(t, exited)
+	observation, err = recovered.Runtime.Observe(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, ports.WorkloadExited, observation.Workload)
+	recorded, err := decodeEvidence(released.Evidence)
+	require.NoError(t, err)
+	require.NoFileExists(t, description.AccessDelivery.Resource)
+	require.NoDirExists(t, recorded.ObservationSpool)
+	afterCleanup, err := provider.Recover(context.Background(), ports.RecoveryRequest{
+		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: released.Evidence,
+		Attempt: request.Spec.Attempt, Access: access,
+	})
+	require.NoError(t, err)
+	require.Equal(t, ports.RecoveryExited, afterCleanup.State,
+		"confirmed exit remains recoverable after resource cleanup")
 	stopped, err := recovered.Runtime.Stop(ctx, ports.StopRequest{Force: true})
 	require.NoError(t, err)
-	require.True(t, stopped.Acknowledged)
+	require.True(t, stopped.Exited)
 }
 
 func TestProviderRefusesUnsupportedReadOnlyConfinement(t *testing.T) {
@@ -235,6 +267,64 @@ func TestClaudeClearRequiresPendingTransitionBeforeRotatingNativeBinding(t *test
 	require.Equal(t, model.ConversationID("conversation_old"), sink.values[1].ExpectedConversation)
 	require.Equal(t, model.Revision(7), sink.values[1].ExpectedAssociationRevision)
 	require.Equal(t, sink.values[0].ProviderOrder, sink.values[1].PriorProviderOrder)
+}
+
+func TestClaudeObservationRetriesAfterSinkFailure(t *testing.T) {
+	spool, err := host.PrepareObservationSpool(filepath.Join(t.TempDir(), "observations"))
+	require.NoError(t, err)
+	sink := &failOnceObservationSink{}
+	id := "43e874eb-4827-4b22-b1b8-376a5e5e553f"
+	runtime := &Runtime{executionID: "execution_retry", attempt: 1, nativeID: id,
+		intent: ports.StartFresh, observations: sink, spool: spool}
+	writeClaudeHookEvent(t, spool.Directory(), sessionStartEvent{
+		SessionID: id, HookEventName: "SessionStart", Source: "startup",
+	})
+
+	_, err = runtime.consumeObservationEvents(context.Background(), nil)
+	require.Error(t, err)
+	_, err = runtime.consumeObservationEvents(context.Background(), nil)
+	require.NoError(t, err)
+	require.True(t, runtime.contextReady)
+	require.Equal(t, 1, sink.accepted)
+}
+
+func TestClaudeQueuedClearCannotConfirmNewRequest(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is unavailable")
+	}
+	root, err := os.MkdirTemp("/tmp", "tclaude-claude-transition-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
+	terminalHost := host.TerminalHost{PrivateRoot: root}
+	preparedTerminal, err := terminalHost.Prepare("transition-test")
+	require.NoError(t, err)
+	terminal, err := preparedTerminal.Release(host.ProcessSpec{
+		Executable: "/bin/sh", Args: []string{"-c", "while IFS= read -r line; do :; done"}, Directory: root,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, _, _ = terminal.Stop(ctx, true)
+	})
+	spool, err := host.PrepareObservationSpool(filepath.Join(root, "observations"))
+	require.NoError(t, err)
+	sink := &observationSink{}
+	runtime := &Runtime{executionID: "execution_transition", attempt: 1,
+		nativeID: "43e874eb-4827-4b22-b1b8-376a5e5e553f", contextReady: true,
+		intent: ports.StartFresh, observations: sink, spool: spool, terminal: terminal}
+	writeClaudeHookEvent(t, spool.Directory(), sessionStartEvent{
+		SessionID: "27277385-c996-4311-98b8-e3f677660207", HookEventName: "SessionStart", Source: "clear",
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	result, _ := runtime.ChangeContext(ctx, ports.ContextChange{
+		Intent: ports.ContextReset, TransitionCorrelation: "new-request",
+	})
+	require.NotEqual(t, ports.EffectAccepted, result.Disposition)
+	require.Len(t, sink.values, 1)
+	require.Equal(t, ports.PrimaryContextUnresolved, sink.values[0].Disposition)
 }
 
 func writeClaudeHookEvent(t *testing.T, directory string, event sessionStartEvent) {

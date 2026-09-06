@@ -431,6 +431,33 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		filepath.Clean(recorded.PasswordFile) != serverCredentialPath(recorded.StateRoot, recorded.AttemptMark) {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
 	}
+	var process *host.Process
+	if recorded.Process != nil {
+		process, err = host.RecoverProcess(*recorded.Process)
+	} else {
+		process, err = host.RecoverProcessByEnvironment(attemptMarkerKey, recorded.AttemptMark)
+	}
+	if errors.Is(err, host.ErrProcessIdentityNotLive) {
+		cleanupErr := removeProtectedFile(recorded.PasswordFile)
+		if recorded.Access != nil {
+			cleanupErr = errors.Join(cleanupErr, p.credentials.RemoveActionCredential(ctx, *recorded.Access))
+		}
+		if recorded.EphemeralState {
+			cleanupErr = errors.Join(cleanupErr, os.RemoveAll(recorded.StateRoot))
+		}
+		return ports.RecoveryResult{
+			State: ports.RecoveryExited, Evidence: request.Evidence,
+			Observation: ports.Observation{ObservedAt: time.Now(), Workload: ports.WorkloadExited,
+				Context: ports.ContextUnknown, NativeConversation: nativeEvidence(recorded.NativeID)},
+		}, cleanupErr
+	}
+	if err != nil {
+		return ports.RecoveryResult{
+			State: ports.RecoveryUnknown, Evidence: request.Evidence,
+			Observation: ports.Observation{ObservedAt: time.Now(), Workload: ports.WorkloadUnknown,
+				Context: ports.ContextUnknown, NativeConversation: nativeEvidence(recorded.NativeID)},
+		}, nil
+	}
 	passwordBytes, passwordErr := host.ReadProtectedFile(recorded.PasswordFile, 4<<10)
 	if passwordErr != nil || len(passwordBytes) == 0 {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, passwordErr
@@ -445,30 +472,6 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, inspectErr
 		}
 		accessProof = &proof
-	}
-	var process *host.Process
-	if recorded.Process != nil {
-		process, err = host.RecoverProcess(*recorded.Process)
-	} else {
-		process, err = host.RecoverProcessByEnvironment(attemptMarkerKey, recorded.AttemptMark)
-	}
-	if errors.Is(err, host.ErrProcessIdentityNotLive) {
-		_ = removeProtectedFile(recorded.PasswordFile)
-		if recorded.EphemeralState {
-			_ = os.RemoveAll(recorded.StateRoot)
-		}
-		return ports.RecoveryResult{
-			State: ports.RecoveryExited, Evidence: request.Evidence,
-			Observation: ports.Observation{ObservedAt: time.Now(), Workload: ports.WorkloadExited,
-				Context: ports.ContextUnknown, NativeConversation: nativeEvidence(recorded.NativeID)},
-		}, nil
-	}
-	if err != nil {
-		return ports.RecoveryResult{
-			State: ports.RecoveryUnknown, Evidence: request.Evidence,
-			Observation: ports.Observation{ObservedAt: time.Now(), Workload: ports.WorkloadUnknown,
-				Context: ports.ContextUnknown, NativeConversation: nativeEvidence(recorded.NativeID)},
-		}, nil
 	}
 	runtime := &Runtime{
 		provider: p, executionID: request.ExecutionID, process: process,
@@ -527,6 +530,8 @@ type Runtime struct {
 	contextReady        bool
 	observationSequence uint64
 	providerOrder       string
+	cleanupOnce         sync.Once
+	cleanupErr          error
 
 	mu               sync.Mutex
 	nativeID         string
@@ -544,6 +549,7 @@ func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
 	switch {
 	case process.Exited:
 		result.Workload, result.ExitCode = ports.WorkloadExited, process.ExitCode
+		r.cleanupResources(ctx)
 	case process.Unknown:
 		result.Workload = ports.WorkloadUnknown
 	case process.Running:
@@ -559,7 +565,7 @@ func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
 		return ports.Observation{}, err
 	}
 	result.Evidence = evidence
-	return result, nil
+	return result, r.cleanupErr
 }
 
 func (r *Runtime) Interact(ctx context.Context, interaction ports.Interaction) (ports.InteractionResult, error) {
@@ -638,11 +644,9 @@ func (r *Runtime) Stop(ctx context.Context, request ports.StopRequest) (ports.St
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	acknowledged, exited, err := r.process.Stop(ctx, request.Force)
-	if exited && r.access != nil {
-		err = errors.Join(err, r.provider.credentials.RemoveActionCredential(ctx, *r.access))
-	}
 	if exited {
-		err = errors.Join(err, removeProtectedFile(r.passwordFile))
+		r.cleanupResources(ctx)
+		err = errors.Join(err, r.cleanupErr)
 	}
 	evidence, evidenceErr := r.providerEvidenceLocked()
 	if evidenceErr != nil && err == nil {
@@ -653,6 +657,15 @@ func (r *Runtime) Stop(ctx context.Context, request ports.StopRequest) (ports.St
 		disposition = ports.EffectUnknown
 	}
 	return ports.StopResult{Disposition: disposition, Acknowledged: acknowledged, Exited: exited, Evidence: evidence}, err
+}
+
+func (r *Runtime) cleanupResources(ctx context.Context) {
+	r.cleanupOnce.Do(func() {
+		if r.access != nil {
+			r.cleanupErr = errors.Join(r.cleanupErr, r.provider.credentials.RemoveActionCredential(ctx, *r.access))
+		}
+		r.cleanupErr = errors.Join(r.cleanupErr, removeProtectedFile(r.passwordFile))
+	})
 }
 
 func (r *Runtime) awaitHealthy(ctx context.Context) error {

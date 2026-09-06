@@ -119,7 +119,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 			return nil, fmt.Errorf("action credential does not match Claude execution")
 		}
 		if !filepath.IsAbs(p.agentSocket) {
-			return nil, fmt.Errorf("Claude agent API socket must be absolute for credential delivery")
+			return nil, fmt.Errorf("claude agent API socket must be absolute for credential delivery")
 		}
 		receipt, deliveryErr := p.credentials.PrepareActionCredential(ctx, *request.ActionCredential)
 		if deliveryErr != nil {
@@ -290,10 +290,6 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	if recorded.ExecutionID != string(request.ExecutionID) {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
 	}
-	spool, spoolErr := host.RecoverObservationSpool(p.observationRoot, recorded.ObservationSpool)
-	if spoolErr != nil {
-		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, spoolErr
-	}
 	var terminal *host.Terminal
 	if recorded.Terminal != nil {
 		terminal, err = host.RecoverTerminal(p.terminal, *recorded.Terminal)
@@ -303,11 +299,15 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
 	}
 	if errors.Is(err, os.ErrProcessDone) {
+		cleanupErr := host.RemoveObservationSpool(p.observationRoot, recorded.ObservationSpool)
+		if recorded.Access != nil {
+			cleanupErr = errors.Join(cleanupErr, p.credentials.RemoveActionCredential(ctx, *recorded.Access))
+		}
 		return ports.RecoveryResult{
 			State: ports.RecoveryExited, Evidence: request.Evidence,
 			Observation: ports.Observation{ObservedAt: time.Now(), Workload: ports.WorkloadExited,
 				Context: ports.ContextUnknown, NativeConversation: nativeEvidence(recorded.NativeID)},
-		}, nil
+		}, cleanupErr
 	}
 	if err != nil {
 		return ports.RecoveryResult{
@@ -315,6 +315,10 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 			Observation: ports.Observation{ObservedAt: time.Now(), Workload: ports.WorkloadUnknown,
 				Context: ports.ContextUnknown, NativeConversation: nativeEvidence(recorded.NativeID)},
 		}, nil
+	}
+	spool, spoolErr := host.RecoverObservationSpool(p.observationRoot, recorded.ObservationSpool)
+	if spoolErr != nil {
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, spoolErr
 	}
 	var accessProof *ports.ActionCredentialRecoveryProof
 	if request.Access != nil {
@@ -346,6 +350,8 @@ type Runtime struct {
 	spool         *host.ObservationSpool
 	contextReady  bool
 	providerOrder string
+	cleanupOnce   sync.Once
+	cleanupErr    error
 	mu            sync.Mutex
 }
 
@@ -372,6 +378,7 @@ func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
 	case observation.Exited:
 		result.Workload = ports.WorkloadExited
 		result.ExitCode = observation.ExitCode
+		r.cleanupResources(ctx)
 	case observation.Unknown:
 		result.Workload = ports.WorkloadUnknown
 	}
@@ -380,7 +387,7 @@ func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
 		return ports.Observation{}, err
 	}
 	result.Evidence = evidence
-	return result, nil
+	return result, r.cleanupErr
 }
 
 func (r *Runtime) Interact(ctx context.Context, interaction ports.Interaction) (ports.InteractionResult, error) {
@@ -423,6 +430,10 @@ func (r *Runtime) ChangeContext(ctx context.Context, change ports.ContextChange)
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if _, err := r.consumeObservationEvents(ctx, nil); err != nil {
+		evidence, _ := r.providerEvidenceUnlocked()
+		return ports.ContextChangeResult{Disposition: ports.EffectUnknown, Evidence: evidence}, err
+	}
 	if err := r.terminal.SendLiteral(ctx, "/clear"); err != nil {
 		evidence, _ := r.providerEvidenceUnlocked()
 		return ports.ContextChangeResult{Disposition: ports.EffectUnknown, Evidence: evidence}, err
@@ -451,11 +462,9 @@ func (r *Runtime) Stop(ctx context.Context, request ports.StopRequest) (ports.St
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	acknowledged, exited, err := r.terminal.Stop(ctx, request.Force)
-	if exited && r.access != nil {
-		err = errors.Join(err, r.provider.credentials.RemoveActionCredential(ctx, *r.access))
-	}
-	if exited && r.spool != nil {
-		err = errors.Join(err, r.spool.Remove())
+	if exited {
+		r.cleanupResources(ctx)
+		err = errors.Join(err, r.cleanupErr)
 	}
 	evidence, evidenceErr := r.providerEvidenceUnlocked()
 	if evidenceErr != nil && err == nil {
@@ -481,6 +490,17 @@ func (r *Runtime) providerEvidenceUnlocked() (model.ProviderEvidence, error) {
 		Access: r.access, ObservationSpool: r.spool.Directory()})
 }
 
+func (r *Runtime) cleanupResources(ctx context.Context) {
+	r.cleanupOnce.Do(func() {
+		if r.access != nil {
+			r.cleanupErr = errors.Join(r.cleanupErr, r.provider.credentials.RemoveActionCredential(ctx, *r.access))
+		}
+		if r.spool != nil {
+			r.cleanupErr = errors.Join(r.cleanupErr, r.spool.Remove())
+		}
+	})
+}
+
 type sessionStartEvent struct {
 	SessionID     string `json:"session_id"`
 	Transcript    string `json:"transcript_path"`
@@ -493,17 +513,29 @@ func (r *Runtime) consumeObservationEvents(ctx context.Context, transition *port
 	if r.spool == nil || r.observations == nil {
 		return false, nil
 	}
-	events, err := r.spool.Drain()
+	events, err := r.spool.ReadPending()
 	if err != nil {
 		return false, err
 	}
 	confirmed := false
 	for _, spooled := range events {
+		if spooled.Order == r.providerOrder {
+			if err := r.spool.Acknowledge(spooled.Order); err != nil {
+				return false, err
+			}
+			continue
+		}
 		var event sessionStartEvent
 		if err := json.Unmarshal(spooled.Payload, &event); err != nil || event.HookEventName != "SessionStart" || event.AgentID != "" {
+			if err := r.spool.Acknowledge(spooled.Order); err != nil {
+				return false, err
+			}
 			continue
 		}
 		if _, err := uuid.Parse(event.SessionID); err != nil {
+			if err := r.spool.Acknowledge(spooled.Order); err != nil {
+				return false, err
+			}
 			continue
 		}
 		prior := nativeBinding(r.nativeID)
@@ -540,6 +572,9 @@ func (r *Runtime) consumeObservationEvents(ctx context.Context, transition *port
 			return false, err
 		}
 		r.providerOrder = spooled.Order
+		if err := r.spool.Acknowledge(spooled.Order); err != nil {
+			return false, err
+		}
 		if disposition == ports.PrimaryContextInitial || disposition == ports.PrimaryContextContinuity || disposition == ports.PrimaryContextReset {
 			r.nativeID = event.SessionID
 			r.contextReady = true
