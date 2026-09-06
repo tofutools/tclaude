@@ -13,6 +13,7 @@ import (
 
 func TestMessageAdmissionDirectPreservesHTTPAttributionAndCapacity(t *testing.T) {
 	f := newFlow(t)
+	defer agentd.WaitForBackgroundForTest()
 	f.HaveGroup("admission-direct")
 	const sender, target = "admission-sender", "admission-target"
 	f.HaveMember("admission-direct", sender)
@@ -31,6 +32,7 @@ func TestMessageAdmissionDirectPreservesHTTPAttributionAndCapacity(t *testing.T)
 
 func TestMessageAdmissionTriggerCommitsOutcomeAndBypassesRegularCapacity(t *testing.T) {
 	f := triggerFlow(t)
+	defer agentd.WaitForBackgroundForTest()
 	g := f.HaveGroup("admission-trigger")
 	const target = "admission-trigger-target"
 	f.HaveConvWithTitle(target, "target")
@@ -73,6 +75,7 @@ func TestMessageAdmissionTriggerCommitsOutcomeAndBypassesRegularCapacity(t *test
 
 func TestMessageAdmissionAgentOwnedTriggerMayNotifyOwnPRAuthor(t *testing.T) {
 	f := triggerFlow(t)
+	defer agentd.WaitForBackgroundForTest()
 	g := f.HaveGroup("admission-self-trigger")
 	const owner = "admission-self-trigger-owner"
 	f.HaveConvWithTitle(owner, "owner")

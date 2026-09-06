@@ -11,6 +11,7 @@ import (
 
 func TestMessageAdmissionTriggerRecoversCommittedAcceptanceWithoutReresolvingTarget(t *testing.T) {
 	setupTestDB(t)
+	defer WaitForBackgroundForTest()
 	const targetConv = "message-admission-recovery-target"
 	targetAgent, _, err := db.EnsureAgentForConv(targetConv, "test")
 	require.NoError(t, err)
