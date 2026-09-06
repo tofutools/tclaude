@@ -15,6 +15,8 @@ const maxRequestBytes = 1 << 20
 
 type Handler struct {
 	application app.API
+	agents      app.AgentAPI
+	authority   app.AuthorityAdminAPI
 	auth        Authenticator
 	mux         *http.ServeMux
 }
