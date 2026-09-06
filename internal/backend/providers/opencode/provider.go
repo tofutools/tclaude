@@ -375,13 +375,9 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 	} else if err := runtime.verifySession(ctx); err != nil {
 		return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime, Evidence: currentEvidence}, err
 	}
-	disposition := ports.PrimaryContextInitial
-	var prior *model.NativeBinding
-	if p.request.Intent == ports.StartContinue {
-		disposition = ports.PrimaryContextContinuity
-		prior = bindingFor(p.request.Continuation)
-	}
-	if err := runtime.publishContext(ctx, disposition, prior, nativeBinding(runtime.nativeID), nil); err != nil {
+	// Continuation chooses native history for a new execution; it does not
+	// establish a prior binding within that execution's observation sequence.
+	if err := runtime.publishContext(ctx, ports.PrimaryContextInitial, nil, nativeBinding(runtime.nativeID), nil); err != nil {
 		return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime, Evidence: currentEvidence}, err
 	}
 	currentEvidence, evidenceErr = runtime.providerEvidence()
@@ -493,7 +489,12 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Runtime: runtime,
 			Observation: observation, Evidence: request.Evidence}, reconcileErr
 	}
-	if err := runtime.publishContext(ctx, ports.PrimaryContextContinuity, nativeBinding(runtime.nativeID), nativeBinding(runtime.nativeID), nil); err != nil {
+	disposition, prior := ports.PrimaryContextContinuity, nativeBinding(runtime.nativeID)
+	if runtime.providerOrder == "" {
+		// Prepared evidence can be recovered before any observation was admitted.
+		disposition, prior = ports.PrimaryContextInitial, nil
+	}
+	if err := runtime.publishContext(ctx, disposition, prior, nativeBinding(runtime.nativeID), nil); err != nil {
 		observation, _ := runtime.Observe(ctx)
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Runtime: runtime, Observation: observation,
 			Evidence: request.Evidence, Attempt: request.Attempt}, err
@@ -1018,13 +1019,6 @@ func nativeBinding(id string) *model.NativeBinding {
 		return nil
 	}
 	return &model.NativeBinding{Namespace: NativeNamespace, Reference: id}
-}
-
-func bindingFor(evidence *model.NativeConversationEvidence) *model.NativeBinding {
-	if evidence == nil {
-		return nil
-	}
-	return &model.NativeBinding{Namespace: evidence.Namespace, Reference: evidence.Reference}
 }
 
 func validateDirectory(path string) error {
