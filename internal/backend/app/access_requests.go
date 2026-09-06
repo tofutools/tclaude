@@ -88,6 +88,13 @@ func (s *Service) RequestAccess(ctx context.Context, req RequestAccessRequest) (
 	if req.Lifetime < time.Second || req.Lifetime > MaxAccessRequestLifetime {
 		return AccessRequestResult{}, fail(ErrInvalid, "access request lifetime must be between 1 second and %s", MaxAccessRequestLifetime)
 	}
+	if req.RequestedConfiguration != nil {
+		if err := validateDesired(*req.RequestedConfiguration); err != nil {
+			return AccessRequestResult{}, err
+		}
+	} else if AccessRequestConfigurationRequired(req.Action) {
+		return AccessRequestResult{}, fail(ErrInvalid, "%s requires an exact requested configuration and complete bounds", req.Action)
+	}
 	store, err := s.accessRequestStore()
 	if err != nil {
 		return AccessRequestResult{}, err
@@ -147,9 +154,16 @@ func (s *Service) DecideAccessRequest(ctx context.Context, req DecideAccessReque
 	if err != nil {
 		return AccessRequestResult{}, err
 	}
+	now := s.now().UTC()
 	return store.DecideAccessRequest(ctx, model.AccessDecisionSubmission{
 		RequestID: req.Context.RequestID, DecisionID: req.DecisionID,
 		ExpectedWindowRevision: req.ExpectedWindowRevision, Answer: req.Answer,
-		Reason: req.Reason, Actor: req.Context.Principal, SubmittedAt: s.now().UTC(),
-	}, s.now().UTC())
+		Reason: req.Reason, Actor: req.Context.Principal, SubmittedAt: now,
+	}, now)
+}
+
+// AccessRequestConfigurationRequired identifies application actions whose
+// ordinary effects always carry DesiredConfiguration to the evaluator.
+func AccessRequestConfigurationRequired(action model.Action) bool {
+	return action == model.ActionLaunch || action == model.ActionUpdateConfiguration || action == model.ActionStartWork
 }

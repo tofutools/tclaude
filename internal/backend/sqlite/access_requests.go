@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/app"
@@ -47,6 +48,9 @@ func (s *Store) CreateAccessRequest(ctx context.Context, request model.AccessReq
 		return app.AccessRequestResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err = expireAccessRequestsTx(ctx, tx, at); err != nil {
+		return app.AccessRequestResult{}, err
+	}
 	var priorID model.AccessRequestID
 	err = tx.QueryRowContext(ctx, `SELECT id FROM access_requests WHERE request_scope=? AND request_id=?`, requestScope(request.Requester), request.RequestID).Scan(&priorID)
 	if err == nil {
@@ -83,7 +87,7 @@ func (s *Store) CreateAccessRequest(ctx context.Context, request model.AccessReq
 		return app.AccessRequestResult{}, err
 	}
 	request.Subject = subject
-	if !validResourceSelector(request.Resource) || !configurationMatches(request.Bounds, request.RequestedConfiguration) {
+	if !validResourceSelector(request.Resource) || app.AccessRequestConfigurationRequired(request.Action) && request.RequestedConfiguration == nil || !configurationMatches(request.Bounds, request.RequestedConfiguration) {
 		return app.AccessRequestResult{}, app.ErrInvalid
 	}
 	grant := accessGrant(request, at)
@@ -97,7 +101,7 @@ func (s *Store) CreateAccessRequest(ctx context.Context, request model.AccessReq
 	if decision.Allowed {
 		return app.AccessRequestResult{}, app.ErrConflict
 	}
-	requestedConfiguration, err := optionalJSON(request.RequestedConfiguration)
+	requestedConfiguration, err := optionalDesiredConfigurationJSON(request.RequestedConfiguration)
 	if err != nil {
 		return app.AccessRequestResult{}, err
 	}
@@ -130,6 +134,9 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 }
 
 func (s *Store) ListAccessRequests(ctx context.Context, principal model.Principal, pendingOnly bool, at time.Time) ([]app.AccessRequestResult, error) {
+	if principal.Kind != model.PrincipalOperator && principal.Kind != model.PrincipalExecution {
+		return nil, app.ErrUnauthorized
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -190,6 +197,9 @@ func (s *Store) ListAccessRequests(ctx context.Context, principal model.Principa
 }
 
 func (s *Store) AccessRequest(ctx context.Context, id model.AccessRequestID, principal model.Principal, at time.Time) (app.AccessRequestResult, error) {
+	if principal.Kind != model.PrincipalOperator && principal.Kind != model.PrincipalExecution {
+		return app.AccessRequestResult{}, app.ErrUnauthorized
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return app.AccessRequestResult{}, err
@@ -334,6 +344,9 @@ func accessRequestRecord(ctx context.Context, q queryer, id model.AccessRequestI
 		}
 		submission.Actor.Kind = actorKind
 		submission.SubmittedAt = fromNanos(submitted)
+		if submission.Actor.Kind != model.PrincipalOperator || submission.RequestID.Validate() != nil || submission.ExpectedWindowRevision != decision.SourceRevision || strings.TrimSpace(submission.Reason) == "" || submission.Answer == model.AccessAnswerApprove && request.State != model.AccessRequestApproved || submission.Answer == model.AccessAnswerDeny && request.State != model.AccessRequestDenied || submission.Answer != model.AccessAnswerApprove && submission.Answer != model.AccessAnswerDeny {
+			return app.AccessRequestResult{}, app.ErrInvalid
+		}
 		decision.Submission = &submission
 	}
 	return app.AccessRequestResult{Request: request, Decision: decision}, nil
@@ -363,6 +376,9 @@ func scanAccessRequest(row scanner) (model.AccessRequest, error) {
 	}
 	request.RequestedLifetime = time.Duration(lifetime)
 	request.ExpiresAt, request.CreatedAt, request.UpdatedAt = fromNanos(expires), fromNanos(created), fromNanos(updated)
+	if !validStoredAccessRequest(request) {
+		return request, app.ErrInvalid
+	}
 	return request, nil
 }
 
@@ -393,11 +409,43 @@ func accessGrant(request model.AccessRequest, at time.Time) model.AuthorityGrant
 	return model.AuthorityGrant{ID: request.GrantID, Subject: request.Subject, Action: request.Action, Resource: request.Resource, Bounds: request.Bounds, ExpiresAt: &expires, Revision: 1, CreatedAt: at, UpdatedAt: at}
 }
 
-func optionalJSON(value any) ([]byte, error) {
-	if value == nil || reflect.ValueOf(value).IsNil() {
+func optionalDesiredConfigurationJSON(value *model.DesiredConfiguration) ([]byte, error) {
+	if value == nil {
 		return nil, nil
 	}
 	return json.Marshal(value)
+}
+
+func validStoredAccessRequest(request model.AccessRequest) bool {
+	if request.ID.Validate() != nil || request.DecisionID.Validate() != nil || request.RequestID.Validate() != nil || request.GrantID.Validate() != nil {
+		return false
+	}
+	if request.Requester.Kind != model.PrincipalExecution || request.Requester.ExecutionID.Validate() != nil || request.Requester.Generation == 0 {
+		return false
+	}
+	if request.Subject.Kind == model.AuthorityAgent {
+		if request.Subject.AgentID.Validate() != nil || request.Requester.AgentID != request.Subject.AgentID {
+			return false
+		}
+	} else if request.Subject.Kind == model.AuthorityExecution {
+		if request.Subject.ExecutionID.Validate() != nil || request.Requester.AgentID != "" || request.Requester.ExecutionID != request.Subject.ExecutionID {
+			return false
+		}
+	} else {
+		return false
+	}
+	if request.Action == "" || !validResourceSelector(request.Resource) || strings.TrimSpace(request.Reason) == "" || len(request.Reason) > 1024 {
+		return false
+	}
+	if request.RequestedLifetime < time.Second || request.RequestedLifetime > app.MaxAccessRequestLifetime || request.ExpiresAt.Sub(request.CreatedAt) != request.RequestedLifetime || request.UpdatedAt.Before(request.CreatedAt) {
+		return false
+	}
+	switch request.State {
+	case model.AccessRequestPending, model.AccessRequestApproved, model.AccessRequestDenied, model.AccessRequestExpired:
+	default:
+		return false
+	}
+	return (!app.AccessRequestConfigurationRequired(request.Action) || request.RequestedConfiguration != nil) && configurationMatches(request.Bounds, request.RequestedConfiguration) && app.ValidateAuthorityGrant(accessGrant(request, request.UpdatedAt)) == nil
 }
 
 func sameAccessRequestIntent(left, right model.AccessRequest) bool {
