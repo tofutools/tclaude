@@ -169,13 +169,27 @@ func TestContinuationReappliesSupervisedApproval(t *testing.T) {
 	}
 	secondPrepared, err := provider.Prepare(context.Background(), supervised)
 	require.NoError(t, err)
-	second, err := secondPrepared.Release(context.Background(), &testPermit{execution: supervised.Spec.ExecutionID, operation: "operation_second"})
-	require.NoError(t, err)
+	description := secondPrepared.Describe()
+	releaseCtx, releaseCancel := context.WithCancel(context.Background())
+	releaseCancel()
+	second, err := secondPrepared.Release(releaseCtx, &testPermit{execution: supervised.Spec.ExecutionID, operation: "operation_second"})
+	require.Error(t, err)
+	require.Equal(t, ports.ReleaseUncertain, second.State)
+	require.NotNil(t, second.Runtime)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		_, _ = second.Runtime.Stop(ctx, ports.StopRequest{Force: true})
 	})
+
+	var recovered ports.RecoveryResult
+	require.Eventually(t, func() bool {
+		recovered, err = provider.Recover(context.Background(), ports.RecoveryRequest{
+			ExecutionID: supervised.Spec.ExecutionID, Spec: supervised.Spec, Evidence: description.Evidence,
+		})
+		return err == nil && recovered.State == ports.RecoveryControlled
+	}, 2*time.Second, 20*time.Millisecond,
+		"prepared continuation recovery must enforce policy before returning controlled: %v", err)
 
 	data, err := os.ReadFile(filepath.Join(prior.StateRoot, "data", "permission.json"))
 	require.NoError(t, err)
