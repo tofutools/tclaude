@@ -147,6 +147,8 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry, jou
 	defer listener.Close()
 	stopRenewal := startAccessRenewal(ctx, application)
 	defer stopRenewal() // Join before the deferred store close and lock release.
+	stopNotifications := startMessageNotifications(ctx, application)
+	defer stopNotifications() // Join native notice settlement before store/lock release.
 	stopWork := startWorkReconciliation(ctx, application)
 	defer stopWork() // Join application work before closing its store.
 	requests := &requestDrain{handler: handler}
