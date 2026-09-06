@@ -198,6 +198,16 @@ func (p *Provider) prepareHistory(request ports.PreparationRequest) (string, str
 	case ports.StartFresh:
 		return "", p.nativeHome, false, nil
 	case ports.StartContinue, ports.StartFork:
+		if request.Intent == ports.StartContinue && request.History == nil {
+			if request.Continuation == nil || request.Continuation.Namespace != NativeNamespace || request.Continuation.Reference == "" {
+				return "", "", false, fmt.Errorf("codex continuation requires native conversation evidence")
+			}
+			prior, priorErr := decodeEvidence(request.PriorEvidence)
+			if priorErr != nil || prior.NativeID != request.Continuation.Reference || filepath.Clean(prior.StateRoot) != p.nativeHome {
+				return "", "", false, fmt.Errorf("codex continuation evidence does not match provider-owned native state")
+			}
+			return prior.NativeID, prior.StateRoot, false, nil
+		}
 		if request.History == nil || request.History.Provider != Name || request.History.Native.Namespace != NativeNamespace {
 			return "", "", false, fmt.Errorf("codex continuation or fork requires application-resolved history")
 		}
@@ -305,9 +315,10 @@ func (p *prepared) argv() []string {
 	if p.request.Spec.Approval == model.ApprovalAutomatic {
 		args[2] = "never"
 	}
-	if p.request.Intent == ports.StartContinue {
+	switch p.request.Intent {
+	case ports.StartContinue:
 		args = append(args, "resume", p.nativeID)
-	} else if p.request.Intent == ports.StartFork {
+	case ports.StartFork:
 		args = append(args, "resume", p.nativeID)
 	}
 	if p.request.Spec.Model != "" {
@@ -492,6 +503,7 @@ type sessionStartEvent struct {
 	SessionID     string `json:"session_id"`
 	HookEventName string `json:"hook_event_name"`
 	Source        string `json:"source"`
+	AgentID       string `json:"agent_id"`
 }
 
 func (r *Runtime) consumeObservations(ctx context.Context) error {
@@ -504,25 +516,29 @@ func (r *Runtime) consumeObservations(ctx context.Context) error {
 	}
 	for _, sp := range events {
 		var event sessionStartEvent
-		if json.Unmarshal(sp.Payload, &event) != nil || event.HookEventName != "SessionStart" {
+		if json.Unmarshal(sp.Payload, &event) != nil || event.HookEventName != "SessionStart" || event.AgentID != "" {
 			_ = r.spool.Acknowledge(sp.Order)
 			continue
 		}
+		if _, parseErr := uuid.Parse(event.SessionID); parseErr != nil {
+			_ = r.spool.Acknowledge(sp.Order)
+			continue
+		}
+		var priorBinding *model.NativeBinding
+		unexpectedPrimary := false
 		if r.nativeID == "" && r.intent == ports.StartFresh {
-			if _, parseErr := uuid.Parse(event.SessionID); parseErr != nil {
-				_ = r.spool.Acknowledge(sp.Order)
-				continue
-			}
 			r.nativeID = event.SessionID
 		} else if event.SessionID != r.nativeID {
-			_ = r.spool.Acknowledge(sp.Order)
-			continue
+			priorBinding = nativeBinding(r.nativeID)
+			r.nativeID = event.SessionID
+			r.contextReady = false
+			unexpectedPrimary = true
 		}
 		disposition := ports.PrimaryContextUnresolved
-		if !r.contextReady && ((r.intent == ports.StartFresh && event.Source == "startup") || (r.intent == ports.StartContinue && event.Source == "resume") || (r.intent == ports.StartFork && (event.Source == "fork" || event.Source == "resume"))) {
+		if !unexpectedPrimary && !r.contextReady && ((r.intent == ports.StartFresh && event.Source == "startup") || (r.intent == ports.StartContinue && event.Source == "resume") || (r.intent == ports.StartFork && (event.Source == "fork" || event.Source == "resume"))) {
 			disposition = ports.PrimaryContextInitial
 		}
-		e := ports.PrimaryContextEvidence{ExecutionID: r.executionID, Attempt: r.attempt, Provider: Name, PrimaryCorrelation: r.primaryCorrelation(), Disposition: disposition, NextBinding: nativeBinding(r.nativeID), PriorProviderOrder: r.providerOrder, ProviderOrder: sp.Order, ObservedAt: time.Now().UTC()}
+		e := ports.PrimaryContextEvidence{ExecutionID: r.executionID, Attempt: r.attempt, Provider: Name, PrimaryCorrelation: r.primaryCorrelation(), Disposition: disposition, PriorBinding: priorBinding, NextBinding: nativeBinding(r.nativeID), PriorProviderOrder: r.providerOrder, ProviderOrder: sp.Order, ObservedAt: time.Now().UTC()}
 		if err := r.observations.ObservePrimaryContext(ctx, e); err != nil {
 			return err
 		}

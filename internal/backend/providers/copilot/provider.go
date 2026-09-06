@@ -20,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
+	legacyharness "github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 const (
@@ -195,6 +196,16 @@ func (p *Provider) prepareHistory(request ports.PreparationRequest) (string, str
 	case ports.StartFresh:
 		return uuid.NewString(), p.nativeHome, false, nil
 	case ports.StartContinue:
+		if request.History == nil {
+			if request.Continuation == nil || request.Continuation.Namespace != NativeNamespace || request.Continuation.Reference == "" {
+				return "", "", false, fmt.Errorf("copilot continuation requires native conversation evidence")
+			}
+			prior, priorErr := decodeEvidence(request.PriorEvidence)
+			if priorErr != nil || prior.NativeID != request.Continuation.Reference || filepath.Clean(prior.StateRoot) != p.nativeHome {
+				return "", "", false, fmt.Errorf("copilot continuation evidence does not match provider-owned native state")
+			}
+			return prior.NativeID, prior.StateRoot, false, nil
+		}
 		if request.History == nil || request.History.Provider != Name || request.History.Native.Namespace != NativeNamespace {
 			return "", "", false, fmt.Errorf("copilot continuation requires application-resolved history")
 		}
@@ -230,29 +241,12 @@ func (p *Provider) prepareStateRoot(root, cwd string) error {
 	if err := host.WriteProtectedFile(filepath.Join(root, "hooks", "tclaude-observation.json"), raw); err != nil {
 		return err
 	}
-	trusted := []string{cwd}
-	settingsPath := filepath.Join(root, "settings.json")
-	if existing, readErr := os.ReadFile(settingsPath); readErr == nil {
-		var prior struct {
-			TrustedFolders []string `json:"trustedFolders"`
+	return legacyharness.EnsureCopilotDirTrustedForLaunch(func(key string) string {
+		if key == "COPILOT_HOME" {
+			return root
 		}
-		if json.Unmarshal(existing, &prior) == nil {
-			seen := map[string]bool{filepath.Clean(cwd): true}
-			for _, folder := range prior.TrustedFolders {
-				clean := filepath.Clean(folder)
-				if filepath.IsAbs(clean) && !seen[clean] {
-					trusted = append(trusted, clean)
-					seen[clean] = true
-				}
-			}
-		}
-	}
-	settings := map[string]any{"trustedFolders": trusted, "remoteExport": false}
-	raw, err = json.Marshal(settings)
-	if err != nil {
-		return err
-	}
-	return host.WriteProtectedFile(settingsPath, raw)
+		return ""
+	}, filepath.Dir(root), cwd)
 }
 
 func (p *prepared) Describe() ports.PreparedDescription { return p.description }
@@ -486,9 +480,11 @@ func (r *Runtime) cleanup(ctx context.Context) {
 }
 
 type sessionStartEvent struct {
-	SessionID     string `json:"sessionId"`
-	HookEventName string `json:"hookEventName"`
-	Source        string `json:"source"`
+	SessionID          string `json:"sessionId"`
+	SnakeSessionID     string `json:"session_id"`
+	HookEventName      string `json:"hookEventName"`
+	SnakeHookEventName string `json:"hook_event_name"`
+	Source             string `json:"source"`
 }
 
 func (r *Runtime) consumeObservations(ctx context.Context) error {
@@ -501,12 +497,24 @@ func (r *Runtime) consumeObservations(ctx context.Context) error {
 	}
 	for _, sp := range events {
 		var event sessionStartEvent
-		if json.Unmarshal(sp.Payload, &event) != nil || event.HookEventName != "sessionStart" || event.SessionID != r.nativeID {
+		if json.Unmarshal(sp.Payload, &event) != nil {
+			_ = r.spool.Acknowledge(sp.Order)
+			continue
+		}
+		nativeID := event.SessionID
+		if nativeID == "" {
+			nativeID = event.SnakeSessionID
+		}
+		hookName := event.HookEventName
+		if hookName == "" {
+			hookName = event.SnakeHookEventName
+		}
+		if (hookName != "" && !strings.EqualFold(hookName, "SessionStart")) || nativeID != r.nativeID {
 			_ = r.spool.Acknowledge(sp.Order)
 			continue
 		}
 		disposition := ports.PrimaryContextUnresolved
-		if !r.contextReady && ((r.intent == ports.StartFresh && event.Source == "startup") || (r.intent == ports.StartContinue && event.Source == "resume")) {
+		if !r.contextReady && ((r.intent == ports.StartFresh && (event.Source == "new" || event.Source == "startup")) || (r.intent == ports.StartContinue && event.Source == "resume")) {
 			disposition = ports.PrimaryContextInitial
 		}
 		e := ports.PrimaryContextEvidence{ExecutionID: r.executionID, Attempt: r.attempt, Provider: Name, PrimaryCorrelation: r.primaryCorrelation(), Disposition: disposition, NextBinding: nativeBinding(r.nativeID), PriorProviderOrder: r.providerOrder, ProviderOrder: sp.Order, ObservedAt: time.Now().UTC()}
