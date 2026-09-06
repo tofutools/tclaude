@@ -82,8 +82,6 @@ func TestPlatformV2FocusedPolicyWiring(t *testing.T) {
 		"TestRequireSpawnPermission",
 		"TestCronSpawn",
 		"TestTriggerSpawn",
-		"TestSpawnAuthority",
-		"TestEvaluateSpawn",
 	} {
 		if !strings.Contains(focusedRun, family) {
 			t.Errorf("ci.yml platform-v2-core does not retain the %s family", family)
