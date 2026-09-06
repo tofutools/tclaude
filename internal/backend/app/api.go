@@ -47,10 +47,12 @@ type UpdateAgentRequest struct {
 type AgentResult struct{ Agent model.Agent }
 
 type CreateGroupRequest struct {
-	Context model.Principal
-	ID      model.GroupID
-	Name    string
-	Members []model.AgentID
+	Context      model.Principal
+	ID           model.GroupID
+	Name         string
+	Members      []model.AgentID
+	OwnerAgentID model.AgentID
+	OwnerBounds  model.ConfigurationBounds
 }
 
 type GroupResult struct{ Group model.Group }
