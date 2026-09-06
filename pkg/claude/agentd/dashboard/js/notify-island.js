@@ -97,6 +97,10 @@ export function NotifyApp({ state, actions, documentRef = document }) {
         <input type="checkbox" id="notify-pop-access" checked=${settings.accessRequests}
           onChange=${(event) => { void actions.setAccessRequests(event.currentTarget.checked); }} /> Requests access
       </label>
+      <label class="notify-pop-row" title="A \`tclaude agent present-pr\` presentation also raises a notification carrying the PR URL (it always appears on the agent's row regardless).">
+        <input type="checkbox" id="notify-pop-presentpr" checked=${settings.presentPR}
+          onChange=${(event) => { void actions.setPresentPR(event.currentTarget.checked); }} /> Presents a pull request
+      </label>
       <div class="notify-pop-sep"></div>
       <label class="notify-pop-row notify-pop-delivery" title="Where a notification is raised. Desktop uses this machine's notifier; Browser raises it from any open dashboard tab (reaches you when you're remote); Both does each.">
         <span>Deliver via</span>

@@ -83,7 +83,8 @@ other notification — the desktop, a dashboard tab, or both — so under
 The per-agent and per-group filters apply as well, so a muted agent's PR
 still appears on the dashboard row, it just raises nothing. Only presenting
 a PR notifies — `--handled` retires one silently. The Config tab has a
-checkbox for this under Notifications → Presented PRs.
+checkbox for this under Notifications → Presented PRs, and so does the
+header bell's popover ("Presents a pull request").
 
 The PR URL is the part that has to survive: a banner body is capped, and
 when the whole message does not fit, the summary and group are dropped and a

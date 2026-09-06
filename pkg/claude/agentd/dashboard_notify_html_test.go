@@ -78,6 +78,8 @@ func TestDashboardHTML_NotifyBellsWired(t *testing.T) {
 	must(`id="notify-pop-human"`, "the human-message knob exists in the popover")
 	must(`id="notify-pop-access"`, "the access-request knob exists in the popover")
 	must("{ access_requests: !!enabled }", "the access-request knob posts its state")
+	must(`id="notify-pop-presentpr"`, "the present-pr knob exists in the popover")
+	must("{ present_pr: !!enabled }", "the present-pr knob posts its state")
 	must(`id="notify-pop-delivery"`, "the delivery quick-selector exists in the popover")
 	must("actions.setDelivery(event.currentTarget.value)", "the delivery selector drives setDelivery")
 	must("{ delivery }", "the delivery selector posts its channel")

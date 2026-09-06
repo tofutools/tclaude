@@ -1637,6 +1637,7 @@ func notificationsStateJSON(cfg *config.Config) map[string]any {
 		"types":           types,
 		"human_messages":  n.HumanMessagesIntent(),
 		"access_requests": cfg.AccessRequestSystemNotification(),
+		"present_pr":      cfg.PresentPRNotification(),
 		"delivery":        delivery,
 	}
 }
@@ -1645,9 +1646,10 @@ func notificationsStateJSON(cfg *config.Config) map[string]any {
 // the lightweight twin of the Config tab's full-config editor for the
 // notifications block in ~/.tclaude/config.json).
 //
-//	GET  → {enabled, types{state:bool…}, human_messages, access_requests, delivery}
-//	POST → any subset of {enabled?, types?{state:bool…}, human_messages?, access_requests?, delivery?};
-//	       only the provided fields change, response echoes the new state.
+//	GET  → {enabled, types{state:bool…}, human_messages, access_requests, present_pr, delivery}
+//	POST → any subset of {enabled?, types?{state:bool…}, human_messages?,
+//	       access_requests?, present_pr?, delivery?}; only the provided
+//	       fields change, response echoes the new state.
 //
 // The master `enabled` sits ABOVE the per-group/per-agent filters — off
 // means nothing notifies, anywhere. The per-type `types` map toggles the
@@ -1655,7 +1657,9 @@ func notificationsStateJSON(cfg *config.Config) map[string]any {
 // non-canonical "advanced" rules are preserved untouched (see
 // config.SetNotifyType). `human_messages` is the notify-human OS-banner
 // knob, default-on within an enabled block. `access_requests` is the
-// --ask-human OS-banner knob under agent config, default-off.
+// --ask-human banner knob under agent config, default-off, and
+// `present_pr` is the present-pr banner knob beside it, likewise
+// default-off.
 func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 	if !checkDashboardAuth(w, r) {
 		return
@@ -1674,14 +1678,16 @@ func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 			Types          map[string]bool `json:"types"`
 			HumanMessages  *bool           `json:"human_messages"`
 			AccessRequests *bool           `json:"access_requests"`
+			PresentPR      *bool           `json:"present_pr"`
 			Delivery       *string         `json:"delivery"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, "expected body {enabled?, types?, human_messages?, access_requests?, delivery?}", http.StatusBadRequest)
+			http.Error(w, "expected body {enabled?, types?, human_messages?, access_requests?, present_pr?, delivery?}", http.StatusBadRequest)
 			return
 		}
-		if body.Enabled == nil && body.Types == nil && body.HumanMessages == nil && body.AccessRequests == nil && body.Delivery == nil {
-			http.Error(w, "no recognised field; expected one of enabled, types, human_messages, access_requests, delivery", http.StatusBadRequest)
+		if body.Enabled == nil && body.Types == nil && body.HumanMessages == nil &&
+			body.AccessRequests == nil && body.PresentPR == nil && body.Delivery == nil {
+			http.Error(w, "no recognised field; expected one of enabled, types, human_messages, access_requests, present_pr, delivery", http.StatusBadRequest)
 			return
 		}
 		// Reject an unknown channel up front — a clean 400 rather than a
@@ -1730,13 +1736,20 @@ func handleDashboardNotificationsAPI(w http.ResponseWriter, r *http.Request) {
 					n.HumanMessages = &off
 				}
 			}
-			if body.AccessRequests != nil {
-				if cfg.Agent == nil {
-					if *body.AccessRequests {
-						cfg.Agent = &config.AgentConfig{AccessRequestSystemNotification: true}
-					}
-				} else {
+			// Both agent-block knobs are default-off, so an absent block
+			// already means "both off": materialise it only when something
+			// is actually being switched ON, rather than growing the saved
+			// config an empty section meaning what its absence meant.
+			on := func(p *bool) bool { return p != nil && *p }
+			if cfg.Agent == nil && (on(body.AccessRequests) || on(body.PresentPR)) {
+				cfg.Agent = &config.AgentConfig{}
+			}
+			if cfg.Agent != nil {
+				if body.AccessRequests != nil {
 					cfg.Agent.AccessRequestSystemNotification = *body.AccessRequests
+				}
+				if body.PresentPR != nil {
+					cfg.Agent.PresentPRNotification = *body.PresentPR
 				}
 			}
 			if body.Delivery != nil {
