@@ -11,6 +11,7 @@ import (
 // as execution callers. Selecting a command never selects a stronger principal.
 func registerManagement(root *cobra.Command, call apiCall) {
 	registerConfigurationCatalog(root, call)
+	registerUsage(root, call)
 	snapshot := boa.CmdT[struct{}]{Use: "snapshot", Short: "Read the operator's complete work overview"}.ToCobra()
 	snapshot.Args = cobra.NoArgs
 	snapshot.RunE = func(cmd *cobra.Command, _ []string) error { return call(cmd, "GET", "/v2/snapshot", nil) }

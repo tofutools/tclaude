@@ -34,6 +34,9 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	h.mux.HandleFunc("POST /v2/observe", h.observe)
 	h.registerCommands()
 	h.registerCollaboration()
+	if usage, ok := application.(usageAPI); ok {
+		h.registerUsage(usage)
+	}
 	if catalog, ok := application.(app.ConfigurationCatalogAPI); ok {
 		h.registerConfigurationCatalog(catalog)
 	}

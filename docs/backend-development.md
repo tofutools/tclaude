@@ -394,3 +394,17 @@ or the browser composer. Operator inbox receipts use `read --operator MESSAGE`.
 Retiring an agent requires an offline terminal execution state; reactivation is
 explicit and does not restart its previous execution. Cloning configuration
 creates a distinct agent and does not copy grants or ownership.
+
+`usage refresh --conversation ID` explicitly collects supported native usage;
+`usage query --conversation ID` reads durable observations. An execution target
+is also accepted, with exact execution attribution only when the source proves
+it. Conversation-wide counters are reported separately. Coverage distinguishes
+complete, partial, unknown and unsupported data; cost retains its reported
+currency and whether it is native or a historical estimate. Refreshing a source
+again must not duplicate its totals. The browser Usage view shows observations
+without adding successive cumulative samples together.
+
+`activity --agent ID` (or `--conversation`, `--execution`, `--work`) reads
+attributed operations and outcomes for exactly one authorized target. The
+browser offers the same view from an agent row. These reads do not reconcile or
+restart workloads, and historical imports do not confer operational authority.
