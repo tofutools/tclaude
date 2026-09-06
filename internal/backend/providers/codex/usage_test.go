@@ -19,3 +19,12 @@ func TestCollectCodexUsageUsesLatestNativeCumulativeCheckpoint(t *testing.T) {
 		{Unit: model.UsageCacheReadTokens, Value: 90}, {Unit: model.UsageCacheWriteTokens, Value: 7}, {Unit: model.UsageReasoningTokens, Value: 8},
 	}, counters)
 }
+
+func TestCodexMissingUsageIsNotKnownZero(t *testing.T) {
+	counters, _, partial := collectCodexUsage([]byte(`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{}}}}`))
+	require.Empty(t, counters)
+	require.True(t, partial)
+	counters, _, partial = collectCodexUsage([]byte(`{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":0,"output_tokens":0}}}}`))
+	require.NotEmpty(t, counters)
+	require.False(t, partial)
+}

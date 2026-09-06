@@ -156,11 +156,23 @@ func (s *Store) QueryUsage(ctx context.Context, filter app.UsageFilter, authorit
 		return app.UsageResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	resolved, err := resolveUsageExecution(ctx, tx, filter.Target)
-	if err != nil {
-		return app.UsageResult{}, err
+	var resolved model.Execution
+	if filter.Target.ExecutionID != "" {
+		resolved, err = resolveUsageExecution(ctx, tx, filter.Target)
+		if err != nil {
+			return app.UsageResult{}, err
+		}
+		authority.Resource = model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: resolved.ID}
+	} else {
+		if filter.Target.ConversationID == "" {
+			return app.UsageResult{}, app.ErrInvalid
+		}
+		var exists int
+		if err = tx.QueryRowContext(ctx, `SELECT 1 FROM conversations WHERE id=?`, filter.Target.ConversationID).Scan(&exists); err != nil {
+			return app.UsageResult{}, classify(err)
+		}
+		authority.Resource = model.ResourceSelector{Kind: model.ResourceConversation, ConversationID: filter.Target.ConversationID}
 	}
-	authority.Resource = model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: resolved.ID}
 	decision, err := authorizeTx(ctx, tx, authority, at)
 	if err != nil || !decision.Allowed {
 		if err == nil {
