@@ -37,6 +37,18 @@ type PreparedDescription struct {
 	Resources       []ResourceClaim
 	Evidence        model.ProviderEvidence
 	AccessDelivery  *ActionCredentialReceipt
+	InitialInput    *PreparedInitialInputDescription
+}
+
+type PreparedInitialInput struct {
+	Body                    string
+	Correlation             string
+	RequiredBeforeFirstWork bool
+}
+
+type PreparedInitialInputDescription struct {
+	Correlation string
+	Supported   bool
 }
 
 // ActionCredentialMaterial is application-issued and transient. A cohesive
@@ -148,8 +160,19 @@ type PreparedAttempt interface {
 
 type Provider interface {
 	Name() string
+	Capabilities() ProviderCapabilities
 	Prepare(context.Context, PreparationRequest) (PreparedAttempt, error)
 	Recover(context.Context, RecoveryRequest) (RecoveryResult, error)
+}
+
+type ProviderCapabilities struct {
+	PreparedInitialInput bool
+	NativeGuidance       []NativeGuidanceCapability
+}
+
+type NativeGuidanceCapability struct {
+	EventKind string
+	Timing    model.StandingOrderTiming
 }
 
 type StartIntent string
@@ -171,6 +194,8 @@ type PreparationRequest struct {
 	ActionCredential *ActionCredentialMaterial
 	Observations     PrimaryObservationSink
 	AgentAPIEndpoint string
+	InitialInput     *PreparedInitialInput
+	NativeGuidance   NativeGuidanceEvaluator
 }
 
 type ProviderRegistry interface {
