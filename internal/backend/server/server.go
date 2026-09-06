@@ -49,6 +49,7 @@ type JourneyServices struct {
 	Workspaces ports.WorkspaceHost
 	Shells     ports.ShellHost
 	History    ports.HistorySourceRegistry
+	Programs   ports.ProgramHost
 }
 
 // Serve holds a single-process lock and leaves durable executions recoverable on
@@ -102,7 +103,7 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry, jou
 	application := app.New(store, registry).WithAgentAPIEndpoint(socket).WithCallbackIngress(callbacks)
 	if len(journey) == 1 {
 		services := journey[0]
-		application.WithWorkspaceHost(services.Workspaces).WithShellHost(services.Shells).WithHistorySources(services.History)
+		application.WithWorkspaceHost(services.Workspaces).WithShellHost(services.Shells).WithHistorySources(services.History).WithProgramHost(services.Programs)
 	}
 	if _, err := application.Recover(ctx, app.RecoverRequest{Principal: model.OperatorPrincipal()}); err != nil {
 		return fmt.Errorf("recover backend: %w", err)
@@ -122,6 +123,9 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry, jou
 		return err
 	}
 	if err := handler.RegisterJourneyAPI(application); err != nil {
+		return err
+	}
+	if err := handler.RegisterOrchestrationAPI(application); err != nil {
 		return err
 	}
 	// Holding the state-directory lock makes this a stale socket from our own

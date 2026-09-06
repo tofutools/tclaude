@@ -361,3 +361,26 @@ nonzero exit status after printing the report. The plan includes deterministic
 identity/reference mappings and preservation decisions; it does not activate
 legacy authority, replay unfinished work, or perform the final target import.
 No source directory or manifest is inferred from the current user's home.
+
+### Process and team operations
+
+The same authenticated client exposes `definition validate|save|list|inspect`,
+`program-profile save|list|inspect`, `process start|inspect|evidence`,
+`decision list|inspect|submit`, `automation save|list|inspect|run|occurrences`,
+and `team deploy|inspect`. Mutations take `--file` with an explicit request ID
+and the expected revision required by the operation. They do not retry native
+work automatically. Program profiles declare an executable, argument prefix,
+bounded output, timeout, confinement, and workspace execution authority.
+
+A process start selects an immutable definition reference (definition ID,
+revision ID, content hash, and kind `process`) or an explicit graph. Its deadline,
+workspace scope, parameters, performer bindings, and authorized program profile
+revisions are part of the request. `GET /v2/work/{id}` includes exact node attempts
+and decision IDs; decision submission uses the current window revision and one
+of its permitted answers. Reconnecting clients can read these records before
+submitting an answer. Browser Processes and Decisions views use these same APIs.
+
+The daemon composes a program host under its private state directory. Work runs
+through the instance-owned reconciliation worker; an HTTP handler admits the
+operation rather than owning its lifetime. Private host resource receipts and
+execution authentication generations are not public process projections.
