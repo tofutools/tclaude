@@ -371,6 +371,7 @@ var allActions = []model.Action{
 	model.ActionChangeContext, model.ActionUpdateConfiguration, model.ActionRetireAgent, model.ActionReactivateAgent,
 	model.ActionManageMembership, model.ActionReadAttachment,
 	model.ActionReadHistory, model.ActionRefreshHistory, model.ActionSetHistoryMetadata, model.ActionRegisterWorkspace,
+	model.ActionReadUsage, model.ActionRefreshUsage, model.ActionReadActivity,
 	model.ActionCreateWorkspace, model.ActionInspectWorkspace, model.ActionRemoveWorkspace,
 	model.ActionRestoreWorkspace,
 	model.ActionStartWork, model.ActionRecordWorkEvidence, model.ActionDecideWork, model.ActionCancelWork, model.ActionResolveWork,
