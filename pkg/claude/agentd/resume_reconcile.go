@@ -68,7 +68,7 @@ func cancelManagedResumes(convID, detail string) error {
 		}
 		if !converged {
 			cancellationErrs = append(cancellationErrs,
-				fmt.Errorf("Resume operation %s cancellation did not converge", op.ID))
+				fmt.Errorf("resume operation %s cancellation did not converge", op.ID))
 		}
 	}
 	return errors.Join(cancellationErrs...)
