@@ -86,12 +86,28 @@ func TestPlatformV2FocusedPolicyWiring(t *testing.T) {
 		"TestSpawnAuthority",
 		"TestCronSpawn",
 		"TestTriggerSpawn",
+		"TestObserveBackgroundWork",
+		"TestResolveBackgroundObservation",
+		"TestDashboardAndTerminalStatusShareReadOnlyBackgroundObservation",
+		"TestSessionReaper_(ProjectsFinishedShellWithoutDashboard|RefreshesLiveBackgroundLedgerBeforeStopWithoutDashboard|ExpiredBackgroundShellWithUnknownScanDoesNotEstablishIdle)",
+		"TestReconcileBackground",
+		"TestProjectSessionBackgroundLedgers",
+		"TestSetSessionStatusFromBackgroundProjection",
 	} {
 		if !strings.Contains(focusedRun, family) {
 			t.Errorf("ci.yml platform-v2-core does not retain the %s family", family)
 		}
 		if !testFamilyExists(t, filepath.Join(root, "pkg", "claude", "agentd"), family) {
 			t.Errorf("ci.yml platform-v2-core names %s, but no real test has that prefix", family)
+		}
+	}
+	for _, packagePath := range []string{
+		"./pkg/claude/agentd",
+		"./pkg/claude/session",
+		"./pkg/claude/common/db",
+	} {
+		if !strings.Contains(focusedRun, packagePath) {
+			t.Errorf("ci.yml platform-v2-core does not run focused package %s", packagePath)
 		}
 	}
 	shards, ok := ci.Jobs["test"].Strategy.Matrix.Shard.(string)

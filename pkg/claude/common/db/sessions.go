@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
+	platformexec "github.com/tofutools/tclaude/pkg/claude/platform/execution"
 )
 
 // SessionRow represents a session row in the database.
@@ -115,6 +116,11 @@ type SessionRow struct {
 	// the conversation-owned resume profile; lifecycle reads that durable owner,
 	// not this prunable audit copy (schema v131/v145).
 	ResumeProvenance string
+	// ExecutionID is the current runtime-attempt identity read from the
+	// historical exit_callback_generation column. It is observation input,
+	// not a SaveSession writer; launch code continues to use the separate
+	// write-only ExitLaunchGeneration field below.
+	ExecutionID platformexec.ID
 	// AskUserQuestionTimeout is the resolved Claude Code AskUserQuestion
 	// idle-timeout (inherit|never|60s|5m|10m) the session was spawned under,
 	// recorded once at spawn by `session new` so a relaunch (resume / clone /
@@ -391,7 +397,7 @@ func LoadSession(id string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE id = ?`, id)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance, exit_callback_generation FROM sessions WHERE id = ?`, id)
 	return scanSession(row)
 }
 
@@ -430,7 +436,7 @@ func ListSessions() ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions`)
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance, exit_callback_generation FROM sessions`)
 	if err != nil {
 		return nil, err
 	}
@@ -448,7 +454,7 @@ func FindSessionByConvID(convID string) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance, exit_callback_generation FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC LIMIT 1`, convID)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -481,7 +487,7 @@ func FindSessionsByPID(pid int) ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance, exit_callback_generation FROM sessions WHERE pid = ?
 		ORDER BY updated_at DESC`, pid)
 	if err != nil {
 		return nil, err
@@ -526,7 +532,7 @@ func FindSessionByPID(pid int) (*SessionRow, error) {
 		return nil, err
 	}
 	row := db.QueryRow(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE pid = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance, exit_callback_generation FROM sessions WHERE pid = ?
 		ORDER BY updated_at DESC LIMIT 1`, pid)
 	s, err := scanSession(row)
 	if err == sql.ErrNoRows {
@@ -648,7 +654,7 @@ func FindSessionsByConvID(convID string) ([]*SessionRow, error) {
 		return nil, err
 	}
 	rows, err := db.Query(`SELECT id, tmux_session, pid, cwd, conv_id, status, status_detail, subagent_count, subagents_json, bg_shells_json, monitors_json,
-		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance FROM sessions WHERE conv_id = ?
+		auto_registered, created_at, updated_at, last_hook, harness, sandbox_mode, sandbox_implementation, sandbox_mode_source, os_sandbox_state, os_sandbox_source, os_sandbox_unverified, ask_user_question_timeout, effective_sandbox_config, remote_control, auto_memory, peer_messaging, context_features, auto_compact_window, approval_policy, approval_auto_review, resume_provenance, exit_callback_generation FROM sessions WHERE conv_id = ?
 		ORDER BY updated_at DESC`, convID)
 	if err != nil {
 		return nil, err
@@ -821,7 +827,7 @@ func scanSessionRow(s rowScanner) (*SessionRow, error) {
 	var createdAt, updatedAt, lastHook dbTimestamp
 	var effectiveSandbox, contextFeatures string
 	if err := s.Scan(&row.ID, &row.TmuxSession, &row.PID, &row.Cwd, &row.ConvID,
-		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &row.MonitorsJSON, &autoReg, &createdAt, &updatedAt, &lastHook, &row.Harness, &row.HarnessBuiltinMode, &row.SandboxImplementation, &row.HarnessBuiltinModeSource, &row.OSSandboxState, &row.OSSandboxSource, &osSandboxUnverified, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &peerMessaging, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance); err != nil {
+		&row.Status, &row.StatusDetail, &row.SubagentCount, &row.SubagentsJSON, &row.BgShellsJSON, &row.MonitorsJSON, &autoReg, &createdAt, &updatedAt, &lastHook, &row.Harness, &row.HarnessBuiltinMode, &row.SandboxImplementation, &row.HarnessBuiltinModeSource, &row.OSSandboxState, &row.OSSandboxSource, &osSandboxUnverified, &row.AskUserQuestionTimeout, &effectiveSandbox, &remoteCtl, &autoMemory, &peerMessaging, &contextFeatures, &row.AutoCompactWindow, &row.ApprovalPolicy, &approvalAutoReview, &row.ResumeProvenance, &row.ExecutionID); err != nil {
 		return nil, err
 	}
 	row.AutoRegistered = autoReg != 0
@@ -1704,71 +1710,6 @@ func UpdateStatuslineSnapshot(sessionID, rawJSON string) error {
 	}
 	_, err = db.Exec(`UPDATE sessions SET last_statusline_json = ? WHERE id = ?`, rawJSON, sessionID)
 	return err
-}
-
-// SetSessionBgShellsIfUnchanged writes the background-shell ledger for a
-// session, but only while the stored value still matches `prev` — the
-// compare-and-set form of "persist what the liveness reconcile concluded".
-//
-// The reconcile runs on the daemon's dashboard read path while the hook
-// callback keeps writing the same column from the agent's own process. A
-// blind UPDATE would race: a reconcile that started before a hook added a
-// freshly launched shell would write its pre-launch view back over it and
-// the new shell would never appear. Guarding on the value the reconcile
-// actually read makes the loser of that race a no-op instead, and the next
-// poll (a second later) re-derives from the winner's state.
-//
-// Reports whether the write landed. A false return is normal contention,
-// not an error.
-func SetSessionBgShellsIfUnchanged(sessionID, prev, next string) (bool, error) {
-	if sessionID == "" || prev == next {
-		return false, nil
-	}
-	db, err := Open()
-	if err != nil {
-		return false, err
-	}
-	res, err := db.Exec(
-		`UPDATE sessions SET bg_shells_json = ? WHERE id = ? AND bg_shells_json = ?`,
-		next, sessionID, prev)
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
-}
-
-// SetSessionMonitorsIfUnchanged writes the monitor ledger for a session,
-// but only while the stored value still matches `prev`. It is the exact
-// sibling of SetSessionBgShellsIfUnchanged above and exists for the same
-// race: the daemon's liveness reconcile writes this column from the
-// dashboard read path while the hook callback writes it from the agent's
-// own process.
-//
-// Reports whether the write landed. A false return is normal contention,
-// not an error.
-func SetSessionMonitorsIfUnchanged(sessionID, prev, next string) (bool, error) {
-	if sessionID == "" || prev == next {
-		return false, nil
-	}
-	db, err := Open()
-	if err != nil {
-		return false, err
-	}
-	res, err := db.Exec(
-		`UPDATE sessions SET monitors_json = ? WHERE id = ? AND monitors_json = ?`,
-		next, sessionID, prev)
-	if err != nil {
-		return false, err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return n > 0, nil
 }
 
 // SetSessionRemoteControl records tclaude's best-known remote-control state
