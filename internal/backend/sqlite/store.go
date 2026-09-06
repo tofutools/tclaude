@@ -958,6 +958,19 @@ func (s *Store) CreateMessage(ctx context.Context, in app.MessageAdmission) (app
 			return app.MessageAdmissionResult{}, app.ErrUnauthorized
 		}
 	}
+	// The concrete audience must still be eligible at the same transaction
+	// boundary as fresh admission. An exact retry above remains an immutable read.
+	for _, recipient := range in.Message.Recipients {
+		if recipient.AddressKind == model.MessageAddressAgent {
+			var state model.AgentLifecycleState
+			if err := tx.QueryRowContext(ctx, `SELECT lifecycle_state FROM agents WHERE id=?`, recipient.AgentID).Scan(&state); err != nil {
+				return app.MessageAdmissionResult{}, classify(err)
+			}
+			if state != model.AgentActive {
+				return app.MessageAdmissionResult{}, app.ErrConflict
+			}
+		}
+	}
 	if in.Message.ParentMessageID != "" {
 		parent, err := messageTx(ctx, tx, in.Message.ParentMessageID)
 		if err != nil {
