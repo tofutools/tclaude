@@ -209,6 +209,7 @@ type RecoveryRequest struct {
 	Attempt          model.AttemptGeneration
 	Access           *model.ExecutionAccessBinding
 	Observations     PrimaryObservationSink
+	NativeGuidance   NativeGuidanceEvaluator
 	AgentAPIEndpoint string
 }
 
