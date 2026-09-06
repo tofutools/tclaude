@@ -2,6 +2,7 @@ package agentd_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -299,6 +300,50 @@ func TestGroupsClone_OwnersCopied(t *testing.T) {
 // of them. Runs --no-agents so the assertion is purely about the group
 // row (no live-session plumbing needed). notify defaults to true, so
 // setting it false proves the value is copied rather than re-defaulted.
+func TestGroupsClone_EditableSettings(t *testing.T) {
+	for _, clear := range []bool{false, true} {
+		t.Run(fmt.Sprintf("clear=%v", clear), func(t *testing.T) {
+			f := newFlow(t)
+			f.HaveGroup("team")
+			_, err := db.SetAgentGroupDefaultContext("team", "original context")
+			require.NoError(t, err)
+			_, err = db.SetAgentGroupMaxMembers("team", 7)
+			require.NoError(t, err)
+			descr, context, cwd, cap := "edited description", "edited context", f.TestCwd("edited"), 3
+			if clear {
+				descr, context, cwd, cap = "", "", "", 0
+			}
+			resp := groupCloneRequest(t, f, "team", map[string]any{
+				"no_clone_members": true, "descr": descr, "default_context": context,
+				"default_cwd": cwd, "max_members": cap,
+			})
+			clone, err := db.GetAgentGroupByName(resp.Group)
+			require.NoError(t, err)
+			require.NotNil(t, clone)
+			assert.Equal(t, descr, clone.Descr)
+			assert.Equal(t, context, clone.DefaultContext)
+			assert.Equal(t, cwd, clone.DefaultCwd)
+			assert.Equal(t, cap, clone.MaxMembers)
+			source, err := db.GetAgentGroupByName("team")
+			require.NoError(t, err)
+			assert.Equal(t, "original context", source.DefaultContext)
+			assert.Equal(t, 7, source.MaxMembers)
+		})
+	}
+}
+
+func TestGroupsClone_RejectsInvalidSettingsBeforeCreation(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("team")
+	r := agentd.AsHumanPeer(testharness.JSONRequest(t, http.MethodPost,
+		"/v1/groups/team/clone", map[string]any{"new_name": "bad-clone", "max_members": -1}))
+	rec := testharness.Serve(f.Mux, r)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	clone, err := db.GetAgentGroupByName("bad-clone")
+	require.NoError(t, err)
+	require.Nil(t, clone)
+}
+
 func TestGroupsClone_CopiesAllSettings(t *testing.T) {
 	f := newFlow(t)
 	source := f.HaveGroup("team")

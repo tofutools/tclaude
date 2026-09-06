@@ -108,7 +108,7 @@ export function createGroupCreateDraft({
     attachmentURL: prefill.attachmentURL,
     attachmentLabel: prefill.attachmentLabel,
     task: '',
-    maxMembers: '',
+    maxMembers: cloneSource ? String(cloneSource.max_members || 0) : '',
   };
 }
 
@@ -174,6 +174,7 @@ export function selectGroupCreateSource(draft, sourceName, {
       } : draft.clonePlacement,
       name: exactClone && source ? cloneDefaultName : draft.name,
       nested: false,
+      ...(exactClone ? { maxMembers: String(source?.max_members || 0) } : {}),
       ...sourcePrefill(null, source),
     };
   }
@@ -270,6 +271,14 @@ export function groupCreateRequest(draft, template, parentGroup = '') {
     const body = {
       no_clone_members: !draft.withAgents,
       copy_owners: !!draft.copyOwners,
+      descr: text(draft.descr).trim(),
+      default_cwd: text(draft.workspaceMode === 'clone' ? draft.cloneDestination : draft.cwd).trim(),
+      default_context: text(draft.context),
+      max_members: Number.parseInt(text(draft.maxMembers), 10) || 0,
+      ...(draft.workspaceMode === 'clone' ? { repository_clone: {
+        repository: text(draft.repository).trim(), transport: draft.cloneTransport,
+        destination: text(draft.cloneDestination).trim(), attach: !!draft.attachRepository,
+      } } : {}),
     };
     if (name !== text(draft.cloneDefaultName)) body.new_name = name;
     body.parent = parent;

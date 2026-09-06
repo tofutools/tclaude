@@ -51,6 +51,12 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		// Parent optionally chooses the clone's tree scope. Omitted preserves
 		// the source parent; an explicit empty string makes the clone top-level.
 		Parent *string `json:"parent,omitempty"`
+		// Omitted fields inherit the source; explicit empty/zero values clear it.
+		Descr           *string               `json:"descr,omitempty"`
+		DefaultCwd      *string               `json:"default_cwd,omitempty"`
+		DefaultContext  *string               `json:"default_context,omitempty"`
+		MaxMembers      *int                  `json:"max_members,omitempty"`
+		RepositoryClone *groupRepositoryClone `json:"repository_clone,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -101,6 +107,52 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 	// keeps the one-line header invariant on the clone too.
 	srcSettings := *src
 	srcSettings.Descr = normalizeGroupDescr(src.Descr)
+	if body.Descr != nil {
+		srcSettings.Descr = normalizeGroupDescr(*body.Descr)
+	}
+	if body.DefaultCwd != nil {
+		cwd, err := resolveGroupDefaultCwd(*body.DefaultCwd)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_cwd", err.Error())
+			return
+		}
+		srcSettings.DefaultCwd = cwd
+	}
+	if body.DefaultContext != nil {
+		context, err := normalizeGroupContext(*body.DefaultContext)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
+		srcSettings.DefaultContext = context
+	}
+	if body.MaxMembers != nil {
+		if *body.MaxMembers < 0 {
+			writeError(w, http.StatusBadRequest, "invalid_arg", "max members must be non-negative")
+			return
+		}
+		srcSettings.MaxMembers = *body.MaxMembers
+	}
+	if body.RepositoryClone != nil && caller != "" {
+		writeError(w, http.StatusForbidden, "human_required", "repository cloning during group creation is available only to the dashboard human")
+		return
+	}
+	repositoryPlan, err := prepareGroupRepositoryClone(body.RepositoryClone)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_repository", err.Error())
+		return
+	}
+	if repositoryPlan != nil {
+		if body.DefaultCwd != nil && srcSettings.DefaultCwd != "" && srcSettings.DefaultCwd != repositoryPlan.Destination {
+			writeError(w, http.StatusBadRequest, "invalid_cwd", "default_cwd must match the repository clone destination")
+			return
+		}
+		srcSettings.DefaultCwd = repositoryPlan.Destination
+		if body.RepositoryClone.Attach {
+			srcSettings.AttachmentURL = repositoryPlan.WebURL
+			srcSettings.AttachmentLabel = repositoryPlan.Label
+		}
+	}
 	if body.Parent != nil {
 		parentName := strings.TrimSpace(*body.Parent)
 		srcSettings.ParentGroupID = nil
@@ -117,6 +169,10 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			parentID := parent.ID
 			srcSettings.ParentGroupID = &parentID
 		}
+	}
+	if err := cloneGroupRepository(repositoryPlan); err != nil {
+		writeError(w, http.StatusBadGateway, "clone_failed", err.Error())
+		return
 	}
 	newGroupID, err := db.CreateAgentGroupFrom(newName, srcSettings)
 	if err != nil {

@@ -52,7 +52,7 @@ function GroupSourceSummary({ source, cloneMode, withAgents, copyOwners }) {
   </div>`;
   return html`<div class="group-clone-preview group-create-source-summary"
     id="group-create-source-summary">
-    <div class="gcp-title">${cloneMode ? 'Settings carried to the new group' : `Prefilled from ${source.name}`}</div>
+    <div class="gcp-title">${`Prefilled from ${source.name}`}</div>
     ${row('📁 directory', source.default_cwd || 'none', !source.default_cwd)}
     ${row('📝 description', source.descr || 'none', !source.descr)}
     ${row('📋 startup context', source.default_context
@@ -331,9 +331,6 @@ function GroupCreateDialog({
         Copy source owners too
       </label>
     ` : null}
-    <details class="group-create-details">
-      <summary>${cloneMode ? 'Review copied settings' : 'Review or edit settings'}</summary>
-    ${cloneMode ? html`<p class="modal-hint">All settings shown above are copied as-is.</p>` : html`
     <div class="cron-create-row" id="group-create-template-preview-row" hidden=${!templateMode}>
       <span class="cron-create-label"><${Words} plain="Roster" wizard="Party" /></span>
       <${TemplatePreview} template=${template} name=${draft.name} />
@@ -440,8 +437,6 @@ function GroupCreateDialog({
         placeholder="optional — 0 = unlimited; a spawn that would exceed it is refused"
         autocomplete="off" />
     </label>
-    `}
-    </details>
     <div class="cron-create-error" id="group-create-error" role=${error ? 'alert' : undefined}>${error}</div>
     <div class="modal-buttons">
       <button id="group-create-cancel" type="button" disabled=${busy} onClick=${() => { void requestClose(); }}>Cancel</button>

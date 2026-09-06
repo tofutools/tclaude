@@ -4186,11 +4186,8 @@ body.wizard .subgroup-btn .subgroup-ico { display: none; }
    brings it back (refresh.js toggles the class off the snapshot each poll). */
 .group-descr { display: none; }
 body.show-group-description .group-descr { display: inline; }
-/* The group-create dialog's Descr input follows the same deprecation: no point
-   offering a field for a description that's hidden everywhere else. Hidden by
-   default, restored under the same opt-in body class. */
-.group-create-descr-row { display: none; }
-body.show-group-description .group-create-descr-row { display: flex; }
+/* Creation settings remain editable regardless of header display preferences. */
+.group-create-descr-row { display: flex; }
 .group-create-origin-options {
   display: grid; grid-template-columns: repeat(3, 1fr); flex: 1;
   padding: 2px; border: 1px solid #2a3340; border-radius: 5px; background: #0d1117;
@@ -4202,13 +4199,6 @@ body.show-group-description .group-create-descr-row { display: flex; }
 .group-create-origin-options button.selected {
   background: #1f3f67; color: #79c0ff; box-shadow: inset 0 0 0 1px #1f6feb;
 }
-.group-create-details {
-  border-top: 1px solid #2a3340; padding-top: 8px;
-}
-.group-create-details > summary {
-  color: #79c0ff; cursor: pointer; font-size: 12px; user-select: none;
-}
-.group-create-details[open] > summary { margin-bottom: 10px; }
 .group-create-source-summary { margin: 0; }
 .group-create-workspace {
   margin: 2px 0; padding: 10px 10px 9px; min-width: 0;
@@ -12084,8 +12074,6 @@ body.wizard #group-create-modal .group-clone-preview {
 body.wizard #group-create-modal .group-create-origin-options button.selected {
   background: #3a2a63; color: #e5d3ff; box-shadow: inset 0 0 0 1px #a97bd6;
 }
-body.wizard #group-create-modal .group-create-details { border-top-color: rgba(122, 93, 176, 0.4); }
-body.wizard #group-create-modal .group-create-details > summary { color: #d9b45a; }
 body.wizard #group-create-modal .group-clone-preview .gcp-title { color: #f3e6c0; }
 body.wizard #group-create-modal .group-clone-preview .gcp-key { color: #b39ddb; }
 body.wizard #group-create-modal .group-clone-preview .gcp-val { color: #e7d9f5; }
