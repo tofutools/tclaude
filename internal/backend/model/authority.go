@@ -21,6 +21,7 @@ const (
 	ActionManageMembership    Action = "group.membership.manage"
 	ActionReadHistory         Action = "history.read"
 	ActionRefreshHistory      Action = "history.refresh"
+	ActionSetHistoryMetadata  Action = "history.metadata.set"
 	ActionRegisterWorkspace   Action = "workspace.register"
 	ActionCreateWorkspace     Action = "workspace.create"
 	ActionInspectWorkspace    Action = "workspace.inspect"

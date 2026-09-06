@@ -58,7 +58,7 @@ func (s *Service) RefreshHistory(ctx context.Context, req RefreshHistoryRequest)
 		}
 		writes = append(writes, HistoryCatalogWrite{Entry: entry, Native: found.Native, SourceToken: found.SourceToken, SourceFingerprint: found.SourceFingerprint, Evidence: found.Evidence, Points: points})
 	}
-	entries, err := s.store.CatalogHistory(ctx, writes, result.Coverage, s.now().UTC())
+	entries, err := s.store.CatalogHistory(ctx, provider.Name(), req.SourceName, writes, result.Coverage, s.now().UTC())
 	if err != nil {
 		return HistorySearchResult{}, err
 	}
@@ -121,14 +121,30 @@ func (s *Service) ReadHistory(ctx context.Context, req ReadHistoryRequest) (Hist
 		}
 		turns = append(turns, view)
 	}
-	if err := s.store.IndexHistoryRead(ctx, resolved.Entry.ConversationID, strings.Join(textParts, "\n"), read.Coverage, s.now().UTC()); err != nil {
+	updatedEntry, err := s.store.IndexHistoryRead(ctx, resolved.Entry.ConversationID, strings.Join(textParts, "\n"), read.Coverage, s.now().UTC())
+	if err != nil {
 		return HistoryReadResult{}, err
 	}
 	points, err := s.store.HistoryPoints(ctx, resolved.Entry.ConversationID)
 	if err != nil {
 		return HistoryReadResult{}, err
 	}
-	return HistoryReadResult{Entry: resolved.Entry, Point: resolved.Point, Points: points, Turns: turns, Coverage: read.Coverage}, nil
+	return HistoryReadResult{Entry: updatedEntry, Point: resolved.Point, Points: points, Turns: turns, Coverage: read.Coverage}, nil
+}
+
+func (s *Service) SetConversationMetadata(ctx context.Context, req SetConversationMetadataRequest) (HistorySearchResult, error) {
+	if err := validateEffectContext(req.Context); err != nil {
+		return HistorySearchResult{}, err
+	}
+	if req.ExpectedRevision == 0 {
+		return HistorySearchResult{}, fail(ErrInvalid, "expected revision is required")
+	}
+	authority := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionSetHistoryMetadata, Resource: model.ResourceSelector{Kind: model.ResourceConversation, ConversationID: req.ConversationID}}
+	entry, err := s.store.SetHistoryMetadata(ctx, req.ConversationID, req.ExpectedRevision, req.Title, req.Archived, req.Context.RequestID, authority, s.now().UTC())
+	if err != nil {
+		return HistorySearchResult{}, err
+	}
+	return HistorySearchResult{Entries: []model.HistoryCatalogEntry{entry}, Coverage: entry.Coverage}, nil
 }
 
 func (s *Service) RegisterWorkspace(ctx context.Context, req RegisterWorkspaceRequest) (WorkspaceResult, error) {
@@ -174,9 +190,10 @@ func (s *Service) createWorkspace(ctx context.Context, request RequestContext, i
 	permit := &resourceEffectPermit{store: s.store, operationID: op.ID, now: s.now}
 	effect, effectErr := s.workspaceHost.CreateCheckout(workflowCtx, ports.CheckoutCreateRequest{WorkspaceID: id, Intent: intent}, permit)
 	state := model.WorkspacePending
-	if effect.Disposition == ports.EffectAccepted {
+	switch effect.Disposition {
+	case ports.EffectAccepted:
 		state = model.WorkspaceAvailable
-	} else if effect.Disposition == ports.EffectUnknown {
+	case ports.EffectUnknown:
 		state = model.WorkspaceUncertain
 	}
 	if effect.Disposition == ports.EffectAccepted && (effect.Resource.Owner == "" || effect.Resource.Version == 0 || len(effect.Resource.Payload) == 0) {
@@ -276,9 +293,10 @@ func (s *Service) RemoveCheckout(ctx context.Context, req RemoveCheckoutRequest)
 	defer cancel()
 	effect, effectErr := s.workspaceHost.RemoveCheckout(workflowCtx, ports.CheckoutRemoveRequest{WorkspaceID: workspace.ID, Observation: workspace.Observation, Resource: workspace.Resource, Destructive: req.Destructive}, &resourceEffectPermit{store: s.store, operationID: op.ID, now: s.now})
 	state := model.WorkspaceAvailable
-	if effect.Disposition == ports.EffectAccepted {
+	switch effect.Disposition {
+	case ports.EffectAccepted:
 		state = model.WorkspaceRemoved
-	} else if effect.Disposition == ports.EffectUnknown {
+	case ports.EffectUnknown:
 		state = model.WorkspaceUncertain
 	}
 	detail := ""
@@ -434,7 +452,8 @@ func (s *Service) StartWork(ctx context.Context, req StartWorkRequest) (WorkRunR
 	settled := now
 	run.Attempts = []model.WorkStepAttempt{{Step: model.WorkStepPrepareWorkspace, Attempt: 1, State: model.WorkAttemptSucceeded, StartedAt: now, SettledAt: &settled}, {Step: model.WorkStepPrepareHistory, Attempt: 1, State: model.WorkAttemptSucceeded, StartedAt: now, SettledAt: &settled}, {Step: model.WorkStepLaunchWorker, Attempt: 1, OperationID: model.OperationID(s.newID("op_")), State: model.WorkAttemptPending, StartedAt: now}, {Step: model.WorkStepDeliverRequest, Attempt: 1, OperationID: model.OperationID(s.newID("op_")), State: model.WorkAttemptPending, StartedAt: now}, {Step: model.WorkStepAwaitEvidence, Attempt: 1, State: model.WorkAttemptPending, StartedAt: now}, {Step: model.WorkStepEvaluate, Attempt: 1, State: model.WorkAttemptPending, StartedAt: now}}
 	var claim *model.HistoryUseClaim
-	if req.Spec.SourceMode == model.WorkSourceFork {
+	switch req.Spec.SourceMode {
+	case model.WorkSourceFork:
 		resolved, resolveErr := s.store.ResolveHistory(ctx, req.Spec.History)
 		if resolveErr != nil {
 			return WorkRunResult{}, resolveErr
@@ -458,11 +477,11 @@ func (s *Service) StartWork(ctx context.Context, req StartWorkRequest) (WorkRunR
 			}
 			run.HistoryUseID = claim.ID
 		}
-	} else if req.Spec.SourceMode == model.WorkSourceFreshHandoff {
+	case model.WorkSourceFreshHandoff:
 		if strings.TrimSpace(req.Spec.FreshHandoff) == "" {
 			return WorkRunResult{}, fail(ErrInvalid, "fresh handoff is required")
 		}
-	} else {
+	default:
 		return WorkRunResult{}, fail(ErrInvalid, "work source mode is required")
 	}
 	created, _, err := s.store.CreateWorkRun(ctx, run, claim)
@@ -473,7 +492,7 @@ func (s *Service) StartWork(ctx context.Context, req StartWorkRequest) (WorkRunR
 	if err != nil {
 		return WorkRunResult{}, err
 	}
-	return WorkRunResult{Run: record.Run, Evidence: record.Evidence, Decision: record.Decision}, nil
+	return WorkRunResult(record), nil
 }
 
 func (s *Service) InspectWork(ctx context.Context, req InspectWorkRequest) (WorkRunResult, error) {
@@ -484,14 +503,14 @@ func (s *Service) InspectWork(ctx context.Context, req InspectWorkRequest) (Work
 	if err = s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Principal, Action: model.ActionReadStatus, Resource: model.ResourceSelector{Kind: model.ResourceWorkRun, WorkRunID: req.WorkRunID}}, s.now().UTC()); err != nil {
 		return WorkRunResult{}, err
 	}
-	return WorkRunResult{Run: record.Run, Evidence: record.Evidence, Decision: record.Decision}, nil
+	return WorkRunResult(record), nil
 }
 
 func (s *Service) RecordWorkEvidence(ctx context.Context, req RecordWorkEvidenceRequest) (WorkRunResult, error) {
 	if err := validateEffectContext(req.Context); err != nil {
 		return WorkRunResult{}, err
 	}
-	evidence := model.WorkEvidence{ID: model.WorkEvidenceID(s.newID("evidence_")), WorkRunID: req.WorkRunID, Step: req.Step, Attempt: req.Attempt, Kind: req.Kind, Reporter: req.Context.Principal, ArtifactRevision: req.ArtifactRevision, Passed: req.Passed, Detail: req.Detail, RecordedAt: s.now().UTC(), Revision: 1}
+	evidence := model.WorkEvidence{ID: model.WorkEvidenceID(s.newID("evidence_")), RequestID: req.Context.RequestID, WorkRunID: req.WorkRunID, Step: req.Step, Attempt: req.Attempt, Kind: req.Kind, Reporter: req.Context.Principal, ArtifactRevision: req.ArtifactRevision, Passed: req.Passed, Detail: req.Detail, RecordedAt: s.now().UTC(), Revision: 1}
 	if err := evidence.ID.Validate(); err != nil {
 		return WorkRunResult{}, fail(ErrInvalid, "%v", err)
 	}
@@ -500,7 +519,7 @@ func (s *Service) RecordWorkEvidence(ctx context.Context, req RecordWorkEvidence
 	if err != nil {
 		return WorkRunResult{}, err
 	}
-	return WorkRunResult{Run: record.Run, Evidence: record.Evidence, Decision: record.Decision}, nil
+	return WorkRunResult(record), nil
 }
 
 func (s *Service) DecideWork(ctx context.Context, req DecideWorkRequest) (WorkRunResult, error) {
@@ -526,13 +545,13 @@ func (s *Service) DecideWork(ctx context.Context, req DecideWorkRequest) (WorkRu
 			return WorkRunResult{}, fail(ErrConflict, "matching successful verification evidence is required")
 		}
 	}
-	decision := model.WorkDecision{WorkRunID: req.WorkRunID, Step: req.Step, Attempt: req.Attempt, Decision: req.Decision, Decider: req.Context.Principal, Reason: req.Reason, DecidedAt: s.now().UTC(), Revision: 1}
+	decision := model.WorkDecision{WorkRunID: req.WorkRunID, RequestID: req.Context.RequestID, Step: req.Step, Attempt: req.Attempt, Decision: req.Decision, Decider: req.Context.Principal, Reason: req.Reason, DecidedAt: s.now().UTC(), Revision: 1}
 	authority := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionDecideWork, Resource: model.ResourceSelector{Kind: model.ResourceWorkRun, WorkRunID: req.WorkRunID}}
 	updated, err := s.store.DecideWork(ctx, decision, req.ExpectedRunRevision, authority, decision.DecidedAt)
 	if err != nil {
 		return WorkRunResult{}, err
 	}
-	return WorkRunResult{Run: updated.Run, Evidence: updated.Evidence, Decision: updated.Decision}, nil
+	return WorkRunResult(updated), nil
 }
 
 func (s *Service) CancelWork(ctx context.Context, req CancelWorkRequest) (WorkRunResult, error) {
@@ -544,7 +563,7 @@ func (s *Service) CancelWork(ctx context.Context, req CancelWorkRequest) (WorkRu
 	if err != nil {
 		return WorkRunResult{}, err
 	}
-	return WorkRunResult{Run: record.Run, Evidence: record.Evidence, Decision: record.Decision}, nil
+	return WorkRunResult(record), nil
 }
 
 // ReconcilePendingWork is the bounded server-owned worker sweep. Each native
