@@ -10,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/platform/execution"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/statusbar"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -138,6 +139,59 @@ func TestStatuslineBroker_PopulatesTheDashboardForAWrappedAgent(t *testing.T) {
 	assert.Equal(t, "feature/sandbox", ws.Branch,
 		"the workspace snapshot drives the dashboard's location cells")
 	assert.Equal(t, "/home/agent/proj", ws.Cwd)
+}
+
+func TestStatuslineBroker_CannotInitializeManagedConversation(t *testing.T) {
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, slLayerConv, slLayerLabel, "tmux-sl-layer", brokerPanePID)
+
+	code, resp := postBrokeredRender(t, f, callerPID, statusbar.BrokeredRenderRequest{
+		RenderConvID: slLayerConv,
+		Payload:      statuslinePayload(slLayerConv, "Opus 5", "opus-5", "high", 33, 70000, 11000, 200000, 1.4),
+		ApplyWrites:  true,
+	})
+	require.Equal(t, http.StatusOK, code)
+	assert.False(t, resp.Applied)
+	identity, err := db.GetSessionExitLaunchIdentity(slLayerLabel)
+	require.NoError(t, err)
+	executionID, err := execution.ParseID(identity.Generation)
+	require.NoError(t, err)
+	_, found, err := db.CurrentConversationSelection(executionID)
+	require.NoError(t, err)
+	assert.False(t, found, "statusline cadence is replay-only")
+}
+
+func TestStatuslineBroker_CannotInitializeAfterRefusedResume(t *testing.T) {
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, slLayerConv, slLayerLabel, "tmux-sl-layer", brokerPanePID)
+
+	code, _ := postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+		ClaimedSessionID: slLayerLabel,
+		Input: session.HookCallbackInput{
+			ConvID: slLayerConv, HookEventName: "SessionStart", Source: "resume",
+		},
+	})
+	require.Equal(t, http.StatusOK, code)
+	identity, err := db.GetSessionExitLaunchIdentity(slLayerLabel)
+	require.NoError(t, err)
+	executionID, err := execution.ParseID(identity.Generation)
+	require.NoError(t, err)
+	_, found, err := db.CurrentConversationSelection(executionID)
+	require.NoError(t, err)
+	require.False(t, found, "resume has no authorized target in this slice")
+
+	code, resp := postBrokeredRender(t, f, callerPID, statusbar.BrokeredRenderRequest{
+		RenderConvID: slLayerConv,
+		Payload:      statuslinePayload(slLayerConv, "Opus 5", "opus-5", "high", 33, 70000, 11000, 200000, 1.4),
+		ApplyWrites:  true,
+	})
+	require.Equal(t, http.StatusOK, code)
+	assert.False(t, resp.Applied)
+	_, found, err = db.CurrentConversationSelection(executionID)
+	require.NoError(t, err)
+	assert.False(t, found, "statusline must not route around a refused transition")
 }
 
 // Identity comes from the process ancestry the daemon walks, never from

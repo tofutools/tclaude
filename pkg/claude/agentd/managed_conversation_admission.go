@@ -35,7 +35,7 @@ func admitManagedHookConversation(
 		return conversation.Decision{Outcome: conversation.Ambiguous, Reason: "managed hook did not name a conversation"}, nil
 	}
 	transition := managedHookTransition(req.Input)
-	return admitManagedConversation(row, callerPID, harnessPID, req.ExitGeneration, ref, transition)
+	return admitManagedConversation(row, callerPID, harnessPID, req.ExitGeneration, ref, transition, true)
 }
 
 // admitManagedStatuslineConversation replays an already-current admission.
@@ -57,7 +57,7 @@ func admitManagedStatuslineConversation(
 	if ref.Value == "" {
 		return conversation.Decision{Outcome: conversation.Ambiguous, Reason: "managed statusline did not name a conversation"}, nil
 	}
-	return admitManagedConversation(row, callerPID, harnessPID, exitGeneration, ref, conversation.Unspecified)
+	return admitManagedConversation(row, callerPID, harnessPID, exitGeneration, ref, conversation.Unspecified, false)
 }
 
 func managedConversationReference(row *db.SessionRow, value string) (conversation.Reference, bool, error) {
@@ -143,6 +143,7 @@ func admitManagedConversation(
 	rawGeneration string,
 	ref conversation.Reference,
 	transition conversation.Transition,
+	allowInitial bool,
 ) (conversation.Decision, error) {
 	if row == nil {
 		return conversation.Decision{Outcome: conversation.Ambiguous, Reason: "managed main process is unavailable"}, nil
@@ -199,6 +200,9 @@ func admitManagedConversation(
 	if found && transition == conversation.Unspecified {
 		return conversation.Decision{Outcome: conversation.Ambiguous, Reason: "changed conversation was not classified by a managed transition"}, nil
 	}
+	if !found && !allowInitial {
+		return conversation.Decision{Outcome: conversation.Ambiguous, Reason: "managed observation cannot initialize a conversation binding"}, nil
+	}
 	if !found && transition == conversation.Unspecified {
 		// The first trustworthy hook may follow a missed SessionStart. With no
 		// predecessor selection there is nothing to confuse with a child rotation.
@@ -216,7 +220,7 @@ func admitManagedConversation(
 		Reference:        ref,
 		Transition:       transition,
 		Evidence: conversation.Evidence{
-			ID:              managedEvidenceID(executionID, ref, transition, expected),
+			ID:              managedEvidenceID(executionID, ref, transition),
 			ProcessInstance: processInstance,
 			MainProcess:     true,
 			Strength:        conversation.VerifiedMainProcess,
@@ -292,9 +296,13 @@ func managedEvidenceID(
 	executionID execution.ID,
 	ref conversation.Reference,
 	transition conversation.Transition,
-	expected conversation.Revision,
 ) string {
-	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s\x00%d",
-		executionID, ref.Harness, ref.Namespace, ref.Value, transition, expected)))
+	// The broker transport has no harness-issued event ID. This conservative
+	// identity is therefore stable for the lifetime of the attempt and must not
+	// include mutable store state such as ExpectedRevision. In particular, an
+	// old clear replayed after a later clear must resolve to its original
+	// history row rather than being laundered into a fresh transition.
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%s\x00%s\x00%s\x00%s",
+		executionID, ref.Harness, ref.Namespace, ref.Value, transition)))
 	return "hook-" + hex.EncodeToString(sum[:16])
 }
