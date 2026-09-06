@@ -891,6 +891,11 @@ func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentG
 			if evalErr == nil && decision.Outcome == spawnAuthorityAllowed {
 				recordAuditPermissionScope(r, decision.AuthorizedSlug, decision.Matched)
 				recordAuthorizedPermission(r, decision.AuthorizedSlug, decision.LoadBearingSudo)
+				if decision.MatchedDims[ScopeDimSandboxProfile] {
+					r.Header.Set("X-Tclaude-Internal-Sandbox-Scope-Pinned", "1")
+				} else {
+					r.Header.Del("X-Tclaude-Internal-Sandbox-Scope-Pinned")
+				}
 				return p.ConvID, true
 			}
 			if allowed, slug, matched, authErr := spawnPermissionAllowsAction(r, p.ConvID, actx); authErr == nil && allowed {
@@ -935,6 +940,9 @@ func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentG
 func scopePinsDimension(r *http.Request, convID, slug string, actx ActionContext, dim ScopeDim) bool {
 	if convID == "" || slug == "" {
 		return false
+	}
+	if dim == ScopeDimSandboxProfile && r.Header.Get("X-Tclaude-Internal-Sandbox-Scope-Pinned") == "1" {
+		return true
 	}
 	eval := evalPermissionScope(resolvePermissionVerdictForRequest(r, convID, slug), convID, actx)
 	if eval.Unscoped || !eval.Satisfied {
