@@ -365,6 +365,11 @@ func validateGrant(grant model.AuthorityGrant) error {
 	return nil
 }
 
+// ValidateAuthorityGrant is shared with authority-owned transactional stores
+// that must create a pre-authorized grant in the same commit as its decision.
+// Persistence still validates the typed selector and configuration bounds.
+func ValidateAuthorityGrant(grant model.AuthorityGrant) error { return validateGrant(grant) }
+
 var allActions = []model.Action{
 	model.ActionReadIdentity, model.ActionReadStatus, model.ActionReadInbox, model.ActionMarkInboxRead,
 	model.ActionSendMessage, model.ActionLaunch, model.ActionInteract, model.ActionAttach, model.ActionStop,
