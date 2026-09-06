@@ -48,7 +48,10 @@ type HistoryPointKind string
 const (
 	HistoryPointHead    HistoryPointKind = "head"
 	HistoryPointMessage HistoryPointKind = "message"
-	HistoryPointTurn    HistoryPointKind = "turn"
+	// HistoryPointBeforeMessage is an exclusive boundary: the selected
+	// message itself is not included in the read/fork prefix.
+	HistoryPointBeforeMessage HistoryPointKind = "before_message"
+	HistoryPointTurn          HistoryPointKind = "turn"
 )
 
 // HistoryPoint identifies only a provider-supported selectable point. A
@@ -200,14 +203,16 @@ const (
 )
 
 type WorkRunSpec struct {
-	SourceMode    WorkSourceMode
-	History       HistorySelection
-	FreshHandoff  string
-	WorkspaceID   WorkspaceID
-	WorkerAgentID AgentID
-	WorkerDesired DesiredConfiguration
-	Brief         string
-	Outcome       WorkOutcomePolicy
+	SourceMode          WorkSourceMode
+	History             HistorySelection
+	FreshHandoff        string
+	WorkspaceID         WorkspaceID
+	WorkspaceRevision   Revision
+	WorkerAgentID       AgentID
+	WorkerAgentRevision Revision
+	WorkerDesired       DesiredConfiguration
+	Brief               string
+	Outcome             WorkOutcomePolicy
 }
 
 type WorkSourceMode string
