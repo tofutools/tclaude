@@ -28,6 +28,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/ratelimit"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/platform/execution"
 	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 	"github.com/tofutools/tclaude/pkg/common"
 )
@@ -1247,7 +1248,7 @@ func runNew(params *NewParams) error {
 	// compatibility state, not proof of daemon caller identity; agentd
 	// authorizes callers from Unix-socket peer credentials and recorded PIDs.
 	// Build the harness command with all environment variables forwarded.
-	exitGeneration := newExitLaunchGeneration(sessionID, tmuxSession)
+	exitGeneration := execution.NewID().String()
 	var routeHelper *TclaudeLayerRouteHelper
 	if params.RouteHelperAgentID != "" || params.RouteHelperConvID != "" || params.RouteHelperLaunchGeneration != "" || params.RouteHelperCredentialHandoffSocketPath != "" || len(params.RouteHelperGroupIDs) > 0 {
 		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
