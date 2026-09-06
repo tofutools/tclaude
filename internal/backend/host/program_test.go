@@ -4,9 +4,11 @@ package host
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -48,7 +50,7 @@ func TestProgramHostRunsBoundedArgvWithExactEnvironmentAndDurableOutput(t *testi
 	require.True(t, observation.Stderr.Truncated)
 	require.Len(t, observation.Stdout.Data, 64)
 	require.Len(t, observation.Stderr.Data, 64)
-	require.Equal(t, strings.Repeat("o", 64), string(observation.Stdout.Data))
+	require.Equal(t, "ambient=\n"+strings.Repeat("o", 55), string(observation.Stdout.Data))
 	require.Equal(t, strings.Repeat("e", 64), string(observation.Stderr.Data))
 	require.NotContains(t, string(observation.Stdout.Data), "must-not-leak")
 
@@ -65,24 +67,17 @@ func TestProgramHostRecoversCrashWindowByExactAttemptMarker(t *testing.T) {
 	request := programRequest(root, "wait", 128)
 	prepared, err := host.PrepareProgram(context.Background(), request)
 	require.NoError(t, err)
-	owned := prepared.(*preparedProgram)
-	stdout, err := openBoundedTailFile(owned.evidence.ResourceRoot, programStdoutFile, programStdoutTruncatedFile, owned.evidence.OutputLimit)
+	preparedEvidence := prepared.Describe().Evidence
+	released, err := prepared.Release(context.Background(), &programTestPermit{execution: request.Execution.ID})
 	require.NoError(t, err)
-	stderr, err := openBoundedTailFile(owned.evidence.ResourceRoot, programStderrFile, programStderrTruncatedFile, owned.evidence.OutputLimit)
-	require.NoError(t, err)
-	process, err := StartProcess(ProcessSpec{
-		Executable: os.Args[0], Args: []string{"-test.run=TestProgramHostHelper", "--", "wait"},
-		Env:              []string{"TCLAUDE_PROGRAM_HOST_HELPER=1", programAttemptEnvironmentKey + "=" + owned.evidence.AttemptMarker},
-		ExactEnvironment: true, Stdout: stdout, Stderr: stderr,
-	})
-	require.NoError(t, err)
+	process := released.Runtime.(*programRuntime).process
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
-		_, _, _ = process.Stop(ctx, true)
+		_, _ = released.Runtime.StopProgram(ctx, ports.StopRequest{Force: true})
 	})
 
-	recovered, err := host.RecoverProgram(context.Background(), programRecoveryRequest(request, prepared.Describe().Evidence))
+	recovered, err := host.RecoverProgram(context.Background(), programRecoveryRequest(request, preparedEvidence))
 	require.NoError(t, err)
 	require.Equal(t, ports.RecoveryControlled, recovered.State)
 	require.Equal(t, process.Identity(), recovered.Runtime.(*programRuntime).process.Identity())
@@ -91,6 +86,41 @@ func TestProgramHostRecoversCrashWindowByExactAttemptMarker(t *testing.T) {
 	stopped, err := recovered.Runtime.StopProgram(ctx, ports.StopRequest{Force: true})
 	require.NoError(t, err)
 	require.True(t, stopped.Exited)
+	require.NoError(t, recovered.Runtime.ReleaseProgramResources(context.Background(), recovered.Evidence))
+}
+
+func TestProgramOutputCaptureSurvivesHostProcessExit(t *testing.T) {
+	root := t.TempDir()
+	evidencePath := filepath.Join(root, "released-evidence.json")
+	completionPath := filepath.Join(root, "workload-complete")
+	owner := exec.Command(os.Args[0], "-test.run=TestProgramCrashOwnerHelper", "--", root, evidencePath, completionPath)
+	owner.Env = MergeEnvironment(os.Environ(), []string{"TCLAUDE_PROGRAM_CRASH_OWNER_HELPER=1"})
+	require.NoError(t, owner.Run())
+	var evidence model.ProviderEvidence
+	raw, err := os.ReadFile(evidencePath)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(raw, &evidence))
+	request := programRequest(root, "delayed-output", 128)
+	request.Arguments = append(request.Arguments, completionPath)
+	host := ProgramProcessHost{PrivateRoot: filepath.Join(root, "private")}
+	recovered, err := host.RecoverProgram(context.Background(), programRecoveryRequest(request, evidence))
+	require.NoError(t, err)
+	require.Equal(t, ports.RecoveryControlled, recovered.State)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, _ = recovered.Runtime.StopProgram(ctx, ports.StopRequest{Force: true})
+	})
+	require.Eventually(t, func() bool {
+		_, statErr := os.Stat(completionPath)
+		return statErr == nil
+	}, 3*time.Second, 10*time.Millisecond)
+	var observation ports.ProgramObservation
+	require.Eventually(t, func() bool {
+		observation, err = recovered.Runtime.ObserveProgram(context.Background())
+		return err == nil && observation.Workload == ports.WorkloadExited
+	}, 3*time.Second, 10*time.Millisecond)
+	require.Contains(t, string(observation.Stdout.Data), "after-restart")
 	require.NoError(t, recovered.Runtime.ReleaseProgramResources(context.Background(), recovered.Evidence))
 }
 
@@ -193,6 +223,36 @@ func TestProgramHostHelper(t *testing.T) {
 		os.Exit(7)
 	case "wait":
 		waitForTestProcessStop()
+	case "delayed-output":
+		time.Sleep(500 * time.Millisecond)
+		_, _ = fmt.Fprint(os.Stdout, "after-restart")
+		if err := os.WriteFile(args[1], []byte("complete"), 0o600); err != nil {
+			os.Exit(10)
+		}
+		os.Exit(0)
 	}
 	os.Exit(9)
+}
+
+func TestProgramCrashOwnerHelper(t *testing.T) {
+	if os.Getenv("TCLAUDE_PROGRAM_CRASH_OWNER_HELPER") != "1" {
+		return
+	}
+	args := processHelperArgsAfterDoubleDash(os.Args)
+	request := programRequest(args[0], "delayed-output", 128)
+	request.Arguments = append(request.Arguments, args[2])
+	host := ProgramProcessHost{PrivateRoot: filepath.Join(args[0], "private")}
+	prepared, err := host.PrepareProgram(context.Background(), request)
+	if err != nil {
+		os.Exit(20)
+	}
+	released, err := prepared.Release(context.Background(), &programTestPermit{execution: request.Execution.ID})
+	if err != nil {
+		os.Exit(21)
+	}
+	raw, err := json.Marshal(released.Evidence)
+	if err != nil || os.WriteFile(args[1], raw, 0o600) != nil {
+		os.Exit(22)
+	}
+	os.Exit(0)
 }

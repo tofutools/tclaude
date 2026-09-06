@@ -21,4 +21,7 @@ func TestCodexNativeGuidanceCodecLearnsOnlyInitialExactThread(t *testing.T) {
 	require.True(t, json.Valid(response))
 	_, _, err = normalizer.Normalize(ports.RawNativeCallback{ReceivedAt: time.Now(), Body: []byte(`{"thread_id":"thread-successor","hook_event_name":"UserPromptSubmit"}`)})
 	require.Error(t, err)
+	normalizer.Set("thread-successor")
+	_, _, err = normalizer.Normalize(ports.RawNativeCallback{ReceivedAt: time.Now(), Body: []byte(`{"thread_id":"thread-successor","hook_event_name":"SessionStart"}`)})
+	require.NoError(t, err, "fork release rebinds callbacks before the forked terminal starts")
 }
