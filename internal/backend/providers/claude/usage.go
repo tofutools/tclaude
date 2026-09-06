@@ -46,6 +46,10 @@ func (usageReader) Collect(ctx context.Context, request ports.UsageCollectionReq
 	if partial {
 		coverage.Counters = model.UsageCoveragePartial
 	}
+	if len(counters) == 0 {
+		coverage.Counters = model.UsageCoverageUnknown
+		coverage.Reason = "transcript contains no usable usage observation"
+	}
 	if observed.IsZero() {
 		observed = request.Native.ObservedAt
 	}
@@ -74,10 +78,10 @@ func collectClaudeUsage(raw []byte) ([]model.UsageCounter, time.Time, bool) {
 			Message   struct {
 				Role  string `json:"role"`
 				Usage *struct {
-					Input      int64 `json:"input_tokens"`
-					Output     int64 `json:"output_tokens"`
-					CacheRead  int64 `json:"cache_read_input_tokens"`
-					CacheWrite int64 `json:"cache_creation_input_tokens"`
+					Input      *int64 `json:"input_tokens"`
+					Output     *int64 `json:"output_tokens"`
+					CacheRead  int64  `json:"cache_read_input_tokens"`
+					CacheWrite int64  `json:"cache_creation_input_tokens"`
 				} `json:"usage"`
 			} `json:"message"`
 		}
@@ -85,7 +89,11 @@ func collectClaudeUsage(raw []byte) ([]model.UsageCounter, time.Time, bool) {
 			partial = true
 			continue
 		}
-		if row.Type != "assistant" || row.Message.Role != "assistant" || row.Message.Usage == nil {
+		if row.Type != "assistant" || row.Message.Role != "assistant" {
+			continue
+		}
+		if row.Message.Usage == nil || row.Message.Usage.Input == nil || row.Message.Usage.Output == nil {
+			partial = true
 			continue
 		}
 		rowNumber++
@@ -96,7 +104,7 @@ func collectClaudeUsage(raw []byte) ([]model.UsageCounter, time.Time, bool) {
 		if key == "" {
 			key = fmt.Sprintf("row:%d", rowNumber)
 		}
-		call := callUsage{row.Message.Usage.Input, row.Message.Usage.Output, row.Message.Usage.CacheRead, row.Message.Usage.CacheWrite}
+		call := callUsage{*row.Message.Usage.Input, *row.Message.Usage.Output, row.Message.Usage.CacheRead, row.Message.Usage.CacheWrite}
 		values := []struct {
 			unit  model.UsageUnit
 			value int64
