@@ -13,9 +13,9 @@ import (
 
 func TestHistoryDiscoversTurnPointsReadsAndRevisionFences(t *testing.T) {
 	root := t.TempDir()
-	provider, err := New(Config{Executable: os.Args[0], PrivateRoot: root})
-	require.NoError(t, err)
 	stateRoot := filepath.Join(root, "states", "state-one")
+	provider, err := New(Config{Executable: os.Args[0], PrivateRoot: root, NativeHome: stateRoot})
+	require.NoError(t, err)
 	transcript := filepath.Join(stateRoot, "sessions", "2026", "09", "06", "rollout-test.jsonl")
 	require.NoError(t, os.MkdirAll(filepath.Dir(transcript), 0o700))
 	lines := "{\"timestamp\":\"2026-09-06T10:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"00000000-0000-4000-8000-000000000001\",\"timestamp\":\"2026-09-06T10:00:00Z\",\"cwd\":\"" + root + "\"}}\n" +
