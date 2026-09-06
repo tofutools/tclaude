@@ -37,6 +37,7 @@ func init() {
 		Spawn:       copilotSpawner{},
 		Models:      copilotModels{},
 		Life:        copilotLifecycle{},
+		StateStore:  copilotStateStoreIdentity(),
 
 		// TCL-994: the one-shot `tclaude ask` surface, buffered only. The
 		// headless `-p` form was measured to put the answer ALONE on stdout, to

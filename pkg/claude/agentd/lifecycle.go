@@ -7209,6 +7209,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	deadline := launchedAt.Add(pollBudget)
 	var convID string
 	paneObserved := false
+	openCodeBoundaryProjected := openCodeLaunch == nil
+	openCodeBoundaryContinuationStarted := false
 	var lastDiscoveryScan time.Time
 	remoteArmed := false
 	pendingLaunchMarked := false
@@ -7285,6 +7287,18 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			}
 			tmuxSession = s.TmuxSession
 			focusSpawn() // pane is up — open it now, conv-id or not
+			if !openCodeBoundaryProjected {
+				projected, projectionErr := projectOpenCodeExecutionBoundary(openCodeLaunch, s)
+				if projectionErr != nil {
+					slog.Warn("spawn: OpenCode execution boundary projection failed",
+						"label", label, "error", projectionErr)
+				}
+				openCodeBoundaryProjected = projected
+				if !projected && !openCodeBoundaryContinuationStarted {
+					continueOpenCodeExecutionBoundaryProjection(openCodeLaunch, s)
+					openCodeBoundaryContinuationStarted = true
+				}
+			}
 			// Arm best-known remote-control on the row the moment it
 			// materialises (JOH-258). The --remote-control launch flag already
 			// turned CC's Remote Access on; this records tclaude's best-known
