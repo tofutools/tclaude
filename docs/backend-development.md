@@ -384,3 +384,13 @@ The daemon composes a program host under its private state directory. Work runs
 through the instance-owned reconciliation worker; an HTTP handler admits the
 operation rather than owning its lifetime. Private host resource receipts and
 execution authentication generations are not public process projections.
+
+Message delivery commits the inbox entry before attempting a native notification.
+The daemon sends a fixed inbox notice to a currently controlled primary execution
+only when the recipient still requests notifications and the sender still has
+message authority for that recipient. It does not inject the message body into the
+terminal. A notice accepted by the native runtime is `delivered`; this is neither
+an inbox read nor work completion. Offline recipients and an unconfigured native
+operator notification channel are `unavailable`, with the message still retained.
+A crash or uncertain native result after dispatch leaves `unknown` and is never
+replayed automatically. The API exposes these outcomes on each message recipient.
