@@ -1878,7 +1878,11 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 	}
 	if err := SpawnDetachedTclaudeResume(spawnArgs); err != nil {
 		if admission != nil {
-			_ = db.TransitionResumeOperation(admission.operation.ID, admission.operation.Revision,
+			rev := admission.operation.Revision
+			if row, getErr := db.GetResumeOperation(admission.operation.ID); getErr == nil {
+				rev = row.Revision
+			}
+			_ = db.TransitionResumeOperation(admission.operation.ID, rev,
 				platformexec.ResumeFailed, "spawn_failed", err.Error())
 		}
 		res.Action = "error"
@@ -1899,7 +1903,11 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 		}
 	} else {
 		if admission != nil {
-			if err := db.TransitionResumeOperation(admission.operation.ID, admission.operation.Revision,
+			rev := admission.operation.Revision
+			if row, getErr := db.GetResumeOperation(admission.operation.ID); getErr == nil {
+				rev = row.Revision
+			}
+			if err := db.TransitionResumeOperation(admission.operation.ID, rev,
 				platformexec.ResumeStarted, "started", ""); err != nil {
 				slog.Warn("resume: persist started operation evidence failed", "operation", admission.operation.ID, "error", err)
 			}
