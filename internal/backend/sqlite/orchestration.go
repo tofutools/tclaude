@@ -473,6 +473,17 @@ func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTr
 		}
 		authorityDecision = decision
 	}
+	additionalDecisions := make([]model.AuthorityDecision, len(transition.AdditionalAuthority))
+	for i, request := range transition.AdditionalAuthority {
+		decision, authorizeErr := authorizeTx(ctx, tx, request, transition.At)
+		if authorizeErr != nil {
+			return app.WorkRunRecord{}, authorizeErr
+		}
+		if !decision.Allowed {
+			return app.WorkRunRecord{}, app.ErrUnauthorized
+		}
+		additionalDecisions[i] = decision
+	}
 	var currentRevision model.Revision
 	var cancelled bool
 	var deadline sql.NullInt64
@@ -538,6 +549,11 @@ func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTr
 				return app.WorkRunRecord{}, err
 			}
 		}
+		for i, request := range transition.AdditionalAuthority {
+			if err = insertAdditionalOperationAuthority(ctx, tx, transition.Operation.ID, i, request, additionalDecisions[i]); err != nil {
+				return app.WorkRunRecord{}, err
+			}
+		}
 		if transition.Execution == nil && transition.Authority.Action != "" {
 			if _, err = tx.ExecContext(ctx, `INSERT INTO effect_permits(operation_id) VALUES(?)`, transition.Operation.ID); err != nil {
 				return app.WorkRunRecord{}, classify(err)
@@ -553,7 +569,8 @@ func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTr
 	for _, update := range transition.Updates {
 		var issuance model.WorkIssuanceID
 		var state model.WorkNodeAttemptState
-		err = tx.QueryRowContext(ctx, `SELECT issuance_id,state FROM work_node_attempts WHERE work_run_id=? AND node_id=? AND activation_id=? AND attempt=?`, update.Ref.RunID, update.Ref.NodeID, update.Ref.ActivationID, update.Ref.Attempt).Scan(&issuance, &state)
+		var decisionID model.DecisionID
+		err = tx.QueryRowContext(ctx, `SELECT issuance_id,state,decision_id FROM work_node_attempts WHERE work_run_id=? AND node_id=? AND activation_id=? AND attempt=?`, update.Ref.RunID, update.Ref.NodeID, update.Ref.ActivationID, update.Ref.Attempt).Scan(&issuance, &state, &decisionID)
 		if err != nil {
 			return app.WorkRunRecord{}, classify(err)
 		}
@@ -574,6 +591,11 @@ func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTr
 		}
 		if count, _ := result.RowsAffected(); count != 1 {
 			return app.WorkRunRecord{}, app.ErrConflict
+		}
+		if decisionID != "" && terminalNodeAttempt(update.State) {
+			if _, err = tx.ExecContext(ctx, `UPDATE decision_windows SET state=?,revision=revision+1,updated_at=? WHERE id=? AND state=?`, model.DecisionExpired, nanos(transition.At), decisionID, model.DecisionOpen); err != nil {
+				return app.WorkRunRecord{}, err
+			}
 		}
 	}
 	if transition.Evidence != nil {
@@ -762,7 +784,7 @@ func (s *Store) AutomationRule(ctx context.Context, id model.AutomationRuleID) (
 	}
 	record.Rule.CreatedAt, record.Rule.UpdatedAt = fromNanos(created), fromNanos(updated)
 	record.Head, err = s.AutomationRuleRevision(ctx, record.Rule.HeadRevisionID)
-	return record, nil
+	return record, err
 }
 
 func (s *Store) AutomationRuleRevision(ctx context.Context, id model.AutomationRuleRevisionID) (model.AutomationRuleRevision, error) {

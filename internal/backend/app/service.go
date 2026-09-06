@@ -241,6 +241,10 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		operationID = model.OperationID(s.newID("op_"))
 	}
 	spec := resolvedSpec(executionID, agent.ID, desired, conversationID)
+	execution := model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, State: model.ExecutionReserved, Attempt: 1, ContextReadiness: model.ContextReadinessPending, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	if err := s.requireNativeGuidanceComposition(ctx, execution); err != nil {
+		return OperationResult{}, err
+	}
 	authorityResource := model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: executionID}
 	if agent.ID != "" {
 		authorityResource = model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agent.ID}
@@ -264,7 +268,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	}
 	admission, err := s.store.AdmitLaunch(ctx, LaunchAdmission{
 		Operation: model.Operation{ID: operationID, RequestID: req.RequestID, Kind: kind, Principal: req.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now},
-		Execution: model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, State: model.ExecutionReserved, Attempt: 1, ContextReadiness: model.ContextReadinessPending, Revision: 1, CreatedAt: now, UpdatedAt: now},
+		Execution: execution,
 		AgentID:   agent.ID, Expected: expected, ExpectedConversationRevision: expectedConversationRevision,
 		Authority: authority, Access: access,
 	})
@@ -746,6 +750,9 @@ func (s *Service) Recover(ctx context.Context, req RecoverRequest) (RecoveryRepo
 				return RecoveryReport{}, err
 			}
 			continue
+		}
+		if err := s.requireNativeGuidanceComposition(ctx, execution); err != nil {
+			return report, err
 		}
 		var accessBindingValue *model.ExecutionAccessBinding
 		if access, accessErr := s.store.ExecutionAccess(ctx, execution.ID); accessErr == nil {

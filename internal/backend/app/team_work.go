@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"sort"
 	"strings"
 
@@ -13,8 +12,19 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 	if err := validateEffectContext(req.Context); err != nil {
 		return TeamDeploymentResult{}, err
 	}
-	if err := requireOperator(req.Context.Principal); err != nil {
-		return TeamDeploymentResult{}, err
+	var automationRuleID model.AutomationRuleID
+	if req.Context.Principal.Kind != model.PrincipalOperator {
+		if req.Context.Principal.Kind != model.PrincipalAutomation {
+			return TeamDeploymentResult{}, ErrUnauthorized
+		}
+		occurrence, err := s.store.Occurrence(ctx, model.OccurrenceID(req.Context.Principal.AutomationRun))
+		if err != nil {
+			return TeamDeploymentResult{}, err
+		}
+		automationRuleID = occurrence.Occurrence.RuleID
+		if err = s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionRunAutomation, Resource: model.ResourceSelector{Kind: model.ResourceAutomationRule, AutomationRuleID: occurrence.Occurrence.RuleID}}, s.now().UTC()); err != nil {
+			return TeamDeploymentResult{}, err
+		}
 	}
 	if err := req.DeploymentID.Validate(); err != nil {
 		return TeamDeploymentResult{}, fail(ErrInvalid, "%v", err)
@@ -30,7 +40,8 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 	if ref.Kind != model.DefinitionTeam || revision.Team == nil || revision.DefinitionID != ref.DefinitionID || revision.ContentHash != ref.ContentHash {
 		return TeamDeploymentResult{}, fail(ErrConflict, "team definition is not the pinned revision")
 	}
-	if err = validateParameterValues(revision.Parameters, req.Instantiation.Parameters); err != nil {
+	parameters := materializeParameterValues(revision.Parameters, req.Instantiation.Parameters)
+	if err = validateParameterValues(revision.Parameters, parameters); err != nil {
 		return TeamDeploymentResult{}, err
 	}
 	now := s.now().UTC()
@@ -54,13 +65,18 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 	for _, automation := range revision.Team.Automation {
 		automationIDs = append(automationIDs, automation.RuleID)
 	}
-	deployment := model.TeamDeployment{ID: req.DeploymentID, Definition: ref, DependencyClosure: append([]model.DefinitionRef(nil), revision.Dependencies...), Mission: strings.TrimSpace(req.Instantiation.Mission), Parameters: cloneRawMap(req.Instantiation.Parameters), GroupID: group.ID, Members: members, AutomationRuleIDs: automationIDs, WorkRunID: workRunID, State: model.DeploymentDeploying, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	deployment := model.TeamDeployment{ID: req.DeploymentID, Definition: ref, DependencyClosure: append([]model.DefinitionRef(nil), revision.Dependencies...), Mission: strings.TrimSpace(req.Instantiation.Mission), Parameters: parameters, GroupID: group.ID, Members: members, AutomationRuleIDs: automationIDs, WorkRunID: workRunID, State: model.DeploymentDeploying, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	stored, _, err := s.store.CreateTeamDeployment(ctx, deployment, group, agents)
 	if err != nil {
 		return TeamDeploymentResult{}, err
 	}
 	graph := teamDeploymentGraph(*revision.Team, stored)
-	_, err = s.StartProcess(ctx, StartProcessRequest{Context: RequestContext{Principal: req.Context.Principal, RequestID: model.RequestID(deterministicOrchestrationID("request_", string(req.DeploymentID)))}, ID: workRunID, Start: model.WorkStart{InlineGraph: &graph, Scope: model.WorkScope{GroupID: group.ID, DeploymentID: deployment.ID}, Deadline: now.Add(admittedEffectTimeout)}})
+	scope := model.WorkScope{GroupID: group.ID, DeploymentID: deployment.ID}
+	if req.Context.Principal.Kind == model.PrincipalAutomation {
+		occurrenceID := model.OccurrenceID(req.Context.Principal.AutomationRun)
+		scope.RuleID, scope.OccurrenceID = automationRuleID, occurrenceID
+	}
+	_, err = s.StartProcess(ctx, StartProcessRequest{Context: RequestContext{Principal: req.Context.Principal, RequestID: model.RequestID(deterministicOrchestrationID("request_", string(req.DeploymentID)))}, ID: workRunID, Start: model.WorkStart{InlineGraph: &graph, Scope: scope, Deadline: now.Add(admittedEffectTimeout)}})
 	if err != nil {
 		partial, updateErr := s.store.UpdateTeamDeployment(ctx, stored.ID, stored.Revision, model.DeploymentPartial, stored.AdvisoryPhase, s.now().UTC())
 		if updateErr == nil {
@@ -150,7 +166,7 @@ func teamDeploymentGraph(team model.TeamDefinition, deployment model.TeamDeploym
 				}
 			}
 			nodeID := model.WorkNodeID("member_" + key)
-			nodes = append(nodes, model.WorkNode{ID: nodeID, Kind: model.WorkNodeTask, Input: map[string]json.RawMessage{"deployment_launch": json.RawMessage("true")}, Performer: &model.Performer{Kind: model.PerformerAgent, Agent: &model.AgentPerformer{AgentID: deployment.Members[key], ContextPolicy: model.AgentContextFresh, Brief: brief}}})
+			nodes = append(nodes, model.WorkNode{ID: nodeID, Kind: model.WorkNodeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Agent: &model.AgentPerformer{AgentID: deployment.Members[key], ContextPolicy: model.AgentContextFresh, Brief: brief}}})
 			if predecessor != "" {
 				edges = append(edges, model.WorkEdge{From: predecessor, To: nodeID})
 			}
@@ -203,5 +219,5 @@ func teamDeploymentGraph(team model.TeamDefinition, deployment model.TeamDeploym
 		edges = append(edges, model.WorkEdge{From: finalJoin, To: endID})
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
-	return model.WorkGraph{CompilerVersion: orchestrationCompilerVersion, EntryNodeID: entryID, Nodes: nodes, Edges: edges, Outcome: model.WorkGraphOutcomePolicy{ArtifactRevision: deployment.Definition.ContentHash}}
+	return model.WorkGraph{CompilerVersion: orchestrationCompilerVersion, EntryNodeID: entryID, Nodes: nodes, Edges: edges}
 }
