@@ -266,8 +266,13 @@ func TestSpawnAuthorityHTTPUsesCapturedPinnedAndUnpinnedEvidence(t *testing.T) {
 			caller, ok := requireSpawnPermission(w, r, &db.AgentGroup{Name: "team"}, action)
 			require.True(t, ok, "body=%s", w.Body.String())
 			assert.Equal(t, "http-conv", caller)
+			// Simulate the admission source disappearing before launch. The DB
+			// also has no corresponding grant, so any fallback reread loses the
+			// pin and makes the pinned case fail.
+			reader.snapshot = spawnAuthorityFactsSnapshot{PrincipalVerified: true, Sources: capturedSpawnSources(), Defaults: map[string]bool{}}
 			assert.Equal(t, tc.pinned, scopePinsDimension(r, caller, PermGroupsMembersSpawn,
-				ActionContext{Group: "team", SpawnProfile: "worker", SandboxProfile: "strict", structuralGroup: "team"}, ScopeDimSandboxProfile))
+				action, ScopeDimSandboxProfile),
+				"the production caller's original action must consume captured evidence")
 			assert.Equal(t, 1, reader.reads, "launch evidence must not reread authority facts")
 			assert.False(t, scopePinsDimension(r, caller, PermGroupsMembersSpawn,
 				ActionContext{Group: "other", SpawnProfile: "worker", SandboxProfile: "strict", structuralGroup: "other"}, ScopeDimSandboxProfile),
