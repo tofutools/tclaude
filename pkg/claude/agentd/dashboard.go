@@ -2040,7 +2040,7 @@ type agentState struct {
 	// MonitorCount is how many monitors (Claude Code `Monitor` watches)
 	// the agent still has running — the dashboard's "👁+N" badge. It is
 	// reconciled on the same read pass, and against the same process list,
-	// as BgShellCount. See backgroundCountsOnRead / db.MonitorSet.
+	// as BgShellCount. See backgroundResolutionOnRead / db.MonitorSet.
 	MonitorCount int    `json:"monitor_count,omitempty"`
 	LastHook     string `json:"last_hook,omitempty"`
 	Cwd          string `json:"cwd,omitempty"`
@@ -2502,7 +2502,7 @@ func stateForConvInSessionsBatched(
 		// trustworthy because of this step, since the hook stream announces
 		// a launch of either kind but never its end.
 		var background backgroundCounts
-		timed(rowWorkBgReconcile, func() { background = backgroundCountsOnRead(pick, alive) })
+		timed(rowWorkBgReconcile, func() { background = backgroundResolutionOnRead(pick, alive).Counts })
 		out.BgShellCount = background.Shells
 		out.MonitorCount = background.Monitors
 		// Keep the status consistent with the reconciled counts. The stored

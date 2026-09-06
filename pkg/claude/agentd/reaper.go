@@ -236,18 +236,31 @@ func (r *sessionReaper) reconcileBackgroundIdle(st *session.SessionState, now ti
 	}
 
 	subagents := db.ParseSubagentSet(row.SubagentsJSON).LiveCount(now)
-	background := backgroundCountsOnReadAt(row, true, now)
-	active := subagents > 0 || background.any()
+	observation := observeBackgroundWork(row, true, now)
+	background := resolveBackgroundObservation(observation)
+	projection := backgroundProjectionResult{
+		ShellOutput: row.BgShellsJSON, MonitorOutput: row.MonitorsJSON,
+	}
+	if observation.Validity == backgroundObservationKnown {
+		projection = projectBackgroundObservation(observation, now)
+		if !projection.Current {
+			return
+		}
+	}
+	active := subagents > 0 || background.Counts.any()
 
 	if active {
 		delete(r.pendingIdle, st.ID)
 		if st.Status != session.StatusIdle {
 			return
 		}
-		_, err := db.SetSessionStatusIfUnchanged(
-			st.ID, st.Status, st.Updated,
+		_, err := db.SetSessionStatusFromBackgroundProjection(
+			observation.Subject.ProjectionRef,
+			st.Status, st.Updated,
+			projection.ShellOutput, projection.MonitorOutput,
 			session.StatusMainAgentIdle,
-			session.BackgroundActivityDetail(subagents, background.Shells, background.Monitors),
+			session.BackgroundActivityDetail(
+				subagents, background.Counts.Shells, background.Counts.Monitors),
 			now,
 		)
 		if err != nil {
@@ -257,9 +270,15 @@ func (r *sessionReaper) reconcileBackgroundIdle(st *session.SessionState, now ti
 		return
 	}
 
+	if !background.ConfirmedIdle {
+		return
+	}
+
 	if st.Status == session.StatusMainAgentIdle {
-		settled, err := db.SetSessionStatusIfUnchanged(
-			st.ID, st.Status, st.Updated,
+		settled, err := db.SetSessionStatusFromBackgroundProjection(
+			observation.Subject.ProjectionRef,
+			st.Status, st.Updated,
+			projection.ShellOutput, projection.MonitorOutput,
 			session.StatusIdle, "", now,
 		)
 		if err != nil {
@@ -298,8 +317,14 @@ func (r *sessionReaper) reconcileBackgroundIdle(st *session.SessionState, now ti
 	if err != nil || latest == nil ||
 		latest.Status != session.StatusIdle ||
 		!latest.UpdatedAt.Equal(st.Updated) ||
-		db.ParseSubagentSet(latest.SubagentsJSON).LiveCount(now) > 0 ||
-		backgroundCountsOnReadAt(latest, true, now).any() {
+		db.ParseSubagentSet(latest.SubagentsJSON).LiveCount(now) > 0 {
+		delete(r.pendingIdle, st.ID)
+		return
+	}
+	latestObservation := observeBackgroundWork(latest, true, now)
+	latestBackground := resolveBackgroundObservation(latestObservation)
+	latestProjection := projectBackgroundObservation(latestObservation, now)
+	if latestBackground.Counts.any() || !latestBackground.ConfirmedIdle || !latestProjection.Current {
 		delete(r.pendingIdle, st.ID)
 		return
 	}

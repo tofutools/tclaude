@@ -103,8 +103,69 @@ func TestSessionReaper_BackgroundActivityGatesStableIdleNotification(t *testing.
 		"a later sweep may announce the unchanged, activity-free idle state")
 }
 
-func TestSessionReaper_ExpiredBackgroundShellSettlesBeforeIdleNotification(t *testing.T) {
+func TestSessionReaper_ProjectsFinishedShellWithoutDashboard(t *testing.T) {
+	t.Cleanup(agentd.ResetBgShellReconcileCacheForTest)
+	t.Cleanup(agentd.SetBackgroundMainProcessInstanceForTest(func(int) (string, bool) {
+		return "no-dashboard-process", true
+	}))
+	commands := []string{"/bin/sh -c npm run dev"}
+	t.Cleanup(agentd.SetBgShellDescendantCommandLinesForTest(func(int) ([]string, bool) {
+		return append([]string(nil), commands...), true
+	}))
+
 	f := newFlow(t)
+	const (
+		conv      = "idle-nodash-1111-2222-333333333333"
+		sessionID = "spwn-idle-nodash"
+	)
+	f.HaveAliveSession(conv, sessionID, "tmux-idle-nodash", f.TestCwd("idle-nodash"))
+	cwd := f.TestCwd("idle-nodash")
+	require.NoError(t, session.ApplyHook(
+		bgLaunchHook(conv, cwd, "npm run dev", "shell-no-dashboard"), sessionID))
+	require.NoError(t, session.ApplyHook(
+		session.HookCallbackInput{HookEventName: "Stop", ConvID: conv, Cwd: cwd}, sessionID))
+
+	row, err := db.LoadSession(sessionID)
+	require.NoError(t, err)
+	require.NotEmpty(t, row.BgShellsJSON)
+
+	var idleNotifications []string
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	reaper.SetIdleNotify(func(convID, _ string) {
+		idleNotifications = append(idleNotifications, convID)
+	})
+	reaper.TickAt(row.UpdatedAt.Add(time.Second))
+	assert.Equal(t, session.StatusMainAgentIdle, statusOf(t, sessionID))
+
+	// The process ends with no hook and no dashboard GET. The next daemon
+	// sweep owns both ledger repair and the stable-idle transition.
+	commands = nil
+	agentd.ResetBgShellReconcileCacheForTest()
+	settledAt := row.UpdatedAt.Add(2 * time.Second)
+	reaper.TickAt(settledAt)
+	projected, err := db.LoadSession(sessionID)
+	require.NoError(t, err)
+	assert.Empty(t, projected.BgShellsJSON)
+	assert.Equal(t, session.StatusIdle, projected.Status)
+	assert.Empty(t, idleNotifications)
+
+	reaper.TickAt(settledAt.Add(6 * time.Second))
+	assert.Equal(t, []string{conv}, idleNotifications,
+		"the unchanged projected idle state is announced once after dwell")
+	reaper.TickAt(settledAt.Add(12 * time.Second))
+	assert.Equal(t, []string{conv}, idleNotifications,
+		"the projected transition has a single notification claim")
+}
+
+func TestSessionReaper_ExpiredBackgroundShellWithUnknownScanDoesNotEstablishIdle(t *testing.T) {
+	f := newFlow(t)
+	t.Cleanup(agentd.ResetBgShellReconcileCacheForTest)
+	t.Cleanup(agentd.SetBackgroundMainProcessInstanceForTest(func(int) (string, bool) {
+		return "test-process", true
+	}))
+	t.Cleanup(agentd.SetBgShellDescendantCommandLinesForTest(func(int) ([]string, bool) {
+		return nil, false
+	}))
 
 	const (
 		conv      = "idleshell-1111-2222-3333-444444444444"
@@ -134,13 +195,15 @@ func TestSessionReaper_ExpiredBackgroundShellSettlesBeforeIdleNotification(t *te
 
 	settledAt := row.UpdatedAt.Add(time.Second)
 	reaper.TickAt(settledAt)
-	assert.Equal(t, session.StatusIdle, statusOf(t, sessionID))
+	assert.Equal(t, session.StatusMainAgentIdle, statusOf(t, sessionID),
+		"TTL expiry plus an unavailable process scan is not confirmed idle")
 	assert.Empty(t, idleNotifications,
-		"the first shell-free observation only starts the stability window")
+		"unknown evidence must not start the notification stability window")
 
 	reaper.TickAt(settledAt.Add(6 * time.Second))
-	assert.Equal(t, []string{conv}, idleNotifications,
-		"an unchanged shell-free idle row is announced on the later sweep")
+	assert.Equal(t, session.StatusMainAgentIdle, statusOf(t, sessionID))
+	assert.Empty(t, idleNotifications,
+		"an expired display fallback never becomes confirmed idle through dwell alone")
 }
 
 func TestSessionReaper_StartupDoesNotNotifyHistoricalIdleRows(t *testing.T) {
