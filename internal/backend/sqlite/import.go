@@ -641,7 +641,7 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 		"work_runs", "work_attempts", "work_evidence", "work_decisions", "program_profiles", "program_profile_revisions",
 		"work_node_attempts", "work_node_evidence", "decision_windows", "decision_submissions", "automation_occurrences",
 		"automation_occurrence_recipients", "automation_condition_state", "team_deployments", "configuration_defaults_requests",
-		"configuration_profile_requests",
+		"configuration_profile_requests", "access_requests", "access_request_decisions", "message_notifications",
 	} {
 		expected[table] = 0
 	}
