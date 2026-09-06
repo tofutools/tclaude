@@ -150,7 +150,7 @@ func (s *Store) CreateGroup(ctx context.Context, group model.Group) error {
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO groups(id,name,revision,created_at,updated_at) VALUES(?,?,?,?,?)`, group.ID, group.Name, group.Revision, nanos(group.CreatedAt), nanos(group.UpdatedAt)); err != nil {
 		return classify(err)
 	}
@@ -193,7 +193,7 @@ func (s *Store) AdmitLaunch(ctx context.Context, in app.LaunchAdmission) (app.Ad
 	if err != nil {
 		return app.AdmissionResult{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if repeated, ok, err := admissionByRequest(ctx, tx, in.Operation.RequestID); err != nil {
 		return app.AdmissionResult{}, err
 	} else if ok {
@@ -247,7 +247,7 @@ func (s *Store) AdmitExecutionOperation(ctx context.Context, in app.ExecutionOpe
 	if err != nil {
 		return app.AdmissionResult{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if repeated, ok, err := admissionByRequest(ctx, tx, in.Operation.RequestID); err != nil {
 		return app.AdmissionResult{}, err
 	} else if ok {
@@ -275,7 +275,7 @@ func (s *Store) RecordPrepared(ctx context.Context, executionID model.ExecutionI
 	if err != nil {
 		return model.Execution{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	result, err := tx.ExecContext(ctx, `UPDATE executions SET state=?,evidence_provider=?,evidence_version=?,evidence_payload=?,revision=revision+1,updated_at=? WHERE id=? AND state=?`, model.ExecutionPrepared, evidence.Provider, evidence.Version, evidence.Payload, nanos(at), executionID, model.ExecutionReserved)
 	if err != nil {
 		return model.Execution{}, err
@@ -311,7 +311,7 @@ func (s *Store) CompleteOperation(ctx context.Context, in app.OperationCompletio
 	if err != nil {
 		return app.AdmissionResult{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	result, err := tx.ExecContext(ctx, `UPDATE operations SET state=?,result_code=?,detail=?,revision=revision+1,updated_at=? WHERE id=? AND state=?`, in.OperationState, in.ResultCode, in.Detail, nanos(in.At), in.OperationID, model.OperationAdmitted)
 	if err != nil {
 		return app.AdmissionResult{}, err
@@ -436,7 +436,7 @@ func (s *Store) CreateMessage(ctx context.Context, message model.Message, reques
 	if err != nil {
 		return app.MessageAdmissionResult{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	if existing, ok, err := messageByRequest(ctx, tx, requestID); err != nil {
 		return app.MessageAdmissionResult{}, err
 	} else if ok {
@@ -572,7 +572,7 @@ func (s *Store) AssociateConversation(ctx context.Context, in app.ContextAssocia
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var currentID model.ConversationID
 	var currentRevision model.Revision
 	err = tx.QueryRowContext(ctx, `SELECT conversation_id,revision FROM agent_conversations WHERE agent_id=? AND current=1`, in.AgentID).Scan(&currentID, &currentRevision)
