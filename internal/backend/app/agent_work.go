@@ -63,7 +63,7 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	input := &ports.PreparedInitialInput{Body: performer.Brief, Correlation: string(issuanceID), RequiredBeforeFirstWork: true}
 	workflowCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancel()
-	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: ports.StartFresh, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, 1, provider.Name()), AgentAPIEndpoint: s.agentAPIEndpoint, InitialInput: input, CallbackIngress: s.callbackIngress})
+	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: ports.StartFresh, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, 1, provider.Name()), NativeGuidance: s.boundNativeGuidance(execution), AgentAPIEndpoint: s.agentAPIEndpoint, InitialInput: input, CallbackIngress: s.callbackIngress})
 	if err != nil {
 		return s.failAgentOperation(ctx, admitted, admittedAttempt, "prepare_failed", err)
 	}
