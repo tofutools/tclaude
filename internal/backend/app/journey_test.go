@@ -31,6 +31,13 @@ func TestJourneyPersistsScopedHistoryOwnedWorkspaceAndExactOutcome(t *testing.T)
 	require.Len(t, refreshed.Entries, 1)
 	require.Equal(t, model.HistoryCoverageComplete, refreshed.Coverage.Metadata)
 	entry := refreshed.Entries[0]
+	metadataRequest := app.SetConversationMetadataRequest{Context: request(operator, "set_history_metadata"), ConversationID: entry.ConversationID, ExpectedRevision: entry.Revision, Title: "Renamed prior work", Archived: false}
+	metadata, err := service.SetConversationMetadata(ctx, metadataRequest)
+	require.NoError(t, err)
+	repeatedMetadata, err := service.SetConversationMetadata(ctx, metadataRequest)
+	require.NoError(t, err)
+	require.Equal(t, metadata.Entries[0].Revision, repeatedMetadata.Entries[0].Revision)
+	entry = metadata.Entries[0]
 	resolved, err := store.ResolveHistory(ctx, model.HistorySelection{ConversationID: entry.ConversationID, ExpectedConversationRevision: entry.Revision})
 	require.NoError(t, err)
 	require.NotEmpty(t, resolved.Source.SourceToken, "provider source token is private but durably resolvable")
@@ -76,8 +83,14 @@ func TestJourneyPersistsScopedHistoryOwnedWorkspaceAndExactOutcome(t *testing.T)
 
 	recorded, err := service.RecordWorkEvidence(ctx, app.RecordWorkEvidenceRequest{Context: request(operator, "report_evidence"), WorkRunID: "work_one", Step: model.WorkStepAwaitEvidence, Attempt: 1, Kind: model.WorkEvidenceWorkerReport, ArtifactRevision: "abc", Detail: "done", ExpectedRunRevision: run.Run.Revision})
 	require.NoError(t, err)
+	repeatedEvidence, err := service.RecordWorkEvidence(ctx, app.RecordWorkEvidenceRequest{Context: request(operator, "report_evidence"), WorkRunID: "work_one", Step: model.WorkStepAwaitEvidence, Attempt: 1, Kind: model.WorkEvidenceWorkerReport, ArtifactRevision: "abc", Detail: "done", ExpectedRunRevision: run.Run.Revision})
+	require.NoError(t, err)
+	require.Equal(t, recorded.Run.Revision, repeatedEvidence.Run.Revision)
 	decided, err := service.DecideWork(ctx, app.DecideWorkRequest{Context: request(operator, "decide_report"), WorkRunID: "work_one", Step: model.WorkStepAwaitEvidence, Attempt: 1, Decision: model.WorkDecisionAccept, Reason: "authorized human review", ExpectedRunRevision: recorded.Run.Revision})
 	require.NoError(t, err)
+	repeatedDecision, err := service.DecideWork(ctx, app.DecideWorkRequest{Context: request(operator, "decide_report"), WorkRunID: "work_one", Step: model.WorkStepAwaitEvidence, Attempt: 1, Decision: model.WorkDecisionAccept, Reason: "authorized human review", ExpectedRunRevision: recorded.Run.Revision})
+	require.NoError(t, err)
+	require.Equal(t, decided.Run.Revision, repeatedDecision.Run.Revision)
 	require.Equal(t, model.WorkRunSucceeded, decided.Run.State)
 	require.NotNil(t, decided.Decision)
 
