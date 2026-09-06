@@ -361,3 +361,19 @@ nonzero exit status after printing the report. The plan includes deterministic
 identity/reference mappings and preservation decisions; it does not activate
 legacy authority, replay unfinished work, or perform the final target import.
 No source directory or manifest is inferred from the current user's home.
+
+Saved configuration profiles have immutable revisions. Use
+`configuration-profile save --file profile.json` with `request_id`, `id`,
+`revision_id`, `name`, `desired`, and `expected_revision` (zero for a new
+profile). `configuration-profile list` lists the current entries;
+`configuration-profile get ID --revision REVISION` reads a selected revision.
+The browser's Configurations page offers the same save and create-agent flow.
+
+To create or update an agent from a saved revision, supply
+`configuration_profile` containing the returned `ProfileID`, `RevisionID`, and
+`ContentHash`, and omit `desired`. Supplying both is rejected. The application
+resolves the exact stored configuration and records the selected revision on
+the agent. Launch freezes that provenance and configuration on the execution.
+Editing a profile or updating an agent cannot change an existing execution.
+Catalog administration currently requires the explicit operator identity;
+updates to an agent still require the caller's current configuration authority.
