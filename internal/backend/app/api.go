@@ -35,6 +35,7 @@ type JourneyAPI interface {
 	CreateCheckout(context.Context, CreateCheckoutRequest) (WorkspaceResult, error)
 	InspectWorkspace(context.Context, InspectWorkspaceRequest) (WorkspaceResult, error)
 	RemoveCheckout(context.Context, RemoveCheckoutRequest) (WorkspaceResult, error)
+	StartShell(context.Context, StartShellRequest) (OperationResult, error)
 	StartWork(context.Context, StartWorkRequest) (WorkRunResult, error)
 	InspectWork(context.Context, InspectWorkRequest) (WorkRunResult, error)
 	RecordWorkEvidence(context.Context, RecordWorkEvidenceRequest) (WorkRunResult, error)
@@ -256,6 +257,13 @@ type RemoveCheckoutRequest struct {
 	WorkspaceID      model.WorkspaceID
 	ExpectedRevision model.Revision
 	Destructive      bool
+}
+
+type StartShellRequest struct {
+	Context          RequestContext
+	WorkspaceID      model.WorkspaceID
+	ExpectedRevision model.Revision
+	Sandbox          model.SandboxMode
 }
 
 type WorkspaceView struct {
