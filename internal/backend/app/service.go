@@ -891,16 +891,6 @@ func requireOperator(principal model.Principal) error {
 	return nil
 }
 
-func requireSelfOrOperator(principal model.Principal, agentID model.AgentID) error {
-	if principal.Kind == model.PrincipalOperator {
-		return nil
-	}
-	if principal.Kind == model.PrincipalAgent && principal.AgentID == agentID {
-		return nil
-	}
-	return fail(ErrUnauthorized, "principal cannot control agent %s", agentID)
-}
-
 func stateFromObservation(observation ports.Observation) model.ExecutionState {
 	switch observation.Workload {
 	case ports.WorkloadRunning, ports.WorkloadStarting:
