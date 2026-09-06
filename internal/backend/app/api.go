@@ -197,9 +197,9 @@ type RecoveryReport struct {
 }
 
 type RefreshHistoryRequest struct {
-	Principal model.Principal
-	Harness   string
-	Scope     ports.HistoryDiscoveryScope
+	Principal  model.Principal
+	Harness    string
+	SourceName string
 }
 
 type SearchHistoryRequest struct {
@@ -223,6 +223,7 @@ type ReadHistoryRequest struct {
 type HistoryReadResult struct {
 	Entry    model.HistoryCatalogEntry
 	Point    *model.HistoryPoint
+	Points   []model.HistoryPoint
 	Turns    []HistoryTurn
 	Coverage model.HistoryCoverage
 }
@@ -268,11 +269,9 @@ type WorkspaceView struct {
 type WorkspaceResult struct{ Workspace WorkspaceView }
 
 type StartWorkRequest struct {
-	Context    RequestContext
-	ID         model.WorkRunID
-	Spec       model.WorkRunSpec
-	Authority  model.AuthoritySubject
-	Delegation *model.AutomationDelegation
+	Context RequestContext
+	ID      model.WorkRunID
+	Spec    model.WorkRunSpec
 }
 
 type InspectWorkRequest struct {
@@ -287,14 +286,24 @@ type WorkRunResult struct {
 }
 
 type RecordWorkEvidenceRequest struct {
-	Context             model.Principal
-	Evidence            model.WorkEvidence
+	Context             RequestContext
+	WorkRunID           model.WorkRunID
+	Step                model.WorkStep
+	Attempt             uint64
+	Kind                model.WorkEvidenceKind
+	ArtifactRevision    string
+	Passed              *bool
+	Detail              string
 	ExpectedRunRevision model.Revision
 }
 
 type DecideWorkRequest struct {
-	Context             model.Principal
-	Decision            model.WorkDecision
+	Context             RequestContext
+	WorkRunID           model.WorkRunID
+	Step                model.WorkStep
+	Attempt             uint64
+	Decision            model.WorkDecisionKind
+	Reason              string
 	ExpectedRunRevision model.Revision
 }
 

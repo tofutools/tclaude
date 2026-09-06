@@ -37,6 +37,12 @@ type HistoryDiscoveryScope struct {
 
 type HistoryDiscoveryRequest struct{ Scope HistoryDiscoveryScope }
 
+// HistorySourceRegistry resolves caller-selected names to composition-owned
+// provider scope. Paths and provider evidence never cross the public API.
+type HistorySourceRegistry interface {
+	HistorySource(harness, name string) (HistoryDiscoveryScope, bool)
+}
+
 type ProviderHistoryPoint struct {
 	Token      string
 	Kind       model.HistoryPointKind
