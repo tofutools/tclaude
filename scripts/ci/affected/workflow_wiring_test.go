@@ -124,19 +124,20 @@ func TestPlatformV2FocusedPolicyWiring(t *testing.T) {
 
 func testFamilyExists(t *testing.T, dir, prefix string) bool {
 	t.Helper()
-	packages, err := parser.ParseDir(token.NewFileSet(), dir, func(info os.FileInfo) bool {
-		return strings.HasSuffix(info.Name(), "_test.go")
-	}, 0)
+	paths, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
 	if err != nil {
-		t.Fatalf("parse test files under %s: %v", dir, err)
+		t.Fatalf("list test files under %s: %v", dir, err)
 	}
-	for _, pkg := range packages {
-		for _, file := range pkg.Files {
-			for _, decl := range file.Decls {
-				fn, ok := decl.(*ast.FuncDecl)
-				if ok && fn.Recv == nil && strings.HasPrefix(fn.Name.Name, prefix) {
-					return true
-				}
+	fset := token.NewFileSet()
+	for _, path := range paths {
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if ok && fn.Recv == nil && strings.HasPrefix(fn.Name.Name, prefix) {
+				return true
 			}
 		}
 	}
