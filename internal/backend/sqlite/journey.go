@@ -590,8 +590,10 @@ func (s *Store) CreateWorkRun(ctx context.Context, run model.WorkRun, claim *mod
 func (s *Store) WorkRun(ctx context.Context, id model.WorkRunID) (app.WorkRunRecord, error) {
 	var record app.WorkRunRecord
 	var requester, authority, delegation, spec []byte
+	var graph, closure, parameters, scope, programs []byte
+	var deadline sql.NullInt64
 	var created, updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,request_id,requester_json,authority_json,delegation_json,spec_json,state,worker_execution_id,cancellation_requested,cancellation_reason,revision,created_at,updated_at FROM work_runs WHERE id=?`, id).Scan(&record.Run.ID, &record.Run.RequestID, &requester, &authority, &delegation, &spec, &record.Run.State, &record.Run.WorkerExecutionID, &record.Run.CancellationRequested, &record.Run.CancellationReason, &record.Run.Revision, &created, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT id,request_id,requester_json,authority_json,delegation_json,spec_json,state,worker_execution_id,cancellation_requested,cancellation_reason,revision,created_at,updated_at,graph_json,definition_closure_json,parameters_json,scope_json,authorized_programs_json,control_state,outcome,deadline FROM work_runs WHERE id=?`, id).Scan(&record.Run.ID, &record.Run.RequestID, &requester, &authority, &delegation, &spec, &record.Run.State, &record.Run.WorkerExecutionID, &record.Run.CancellationRequested, &record.Run.CancellationReason, &record.Run.Revision, &created, &updated, &graph, &closure, &parameters, &scope, &programs, &record.Run.ControlState, &record.Run.Outcome, &deadline)
 	if err != nil {
 		return record, classify(err)
 	}
@@ -609,6 +611,35 @@ func (s *Store) WorkRun(ctx context.Context, id model.WorkRunID) (app.WorkRunRec
 	}
 	if err = json.Unmarshal(spec, &record.Run.Spec); err != nil {
 		return record, err
+	}
+	if len(graph) > 0 && string(graph) != "null" {
+		record.Run.Graph = new(model.WorkGraph)
+		if err = json.Unmarshal(graph, record.Run.Graph); err != nil {
+			return record, err
+		}
+	}
+	if len(closure) > 0 {
+		if err = json.Unmarshal(closure, &record.Run.DefinitionClosure); err != nil {
+			return record, err
+		}
+	}
+	if len(parameters) > 0 {
+		if err = json.Unmarshal(parameters, &record.Run.Parameters); err != nil {
+			return record, err
+		}
+	}
+	if len(scope) > 0 {
+		if err = json.Unmarshal(scope, &record.Run.Scope); err != nil {
+			return record, err
+		}
+	}
+	if len(programs) > 0 {
+		if err = json.Unmarshal(programs, &record.Run.AuthorizedPrograms); err != nil {
+			return record, err
+		}
+	}
+	if deadline.Valid {
+		record.Run.Deadline = fromNanos(deadline.Int64)
 	}
 	record.Run.CreatedAt, record.Run.UpdatedAt = fromNanos(created), fromNanos(updated)
 	_ = s.db.QueryRowContext(ctx, `SELECT id FROM workspace_uses WHERE work_run_id=? AND released_at IS NULL`, id).Scan(&record.Run.WorkspaceUseID)
@@ -633,6 +664,42 @@ func (s *Store) WorkRun(ctx context.Context, id model.WorkRunID) (app.WorkRunRec
 		record.Run.Attempts = append(record.Run.Attempts, a)
 	}
 	rows.Close()
+	nrows, err := s.db.QueryContext(ctx, `SELECT node_id,activation_id,attempt,issuance_id,state,performer_json,operation_id,execution_id,ready_at,retry_at,deadline,retry_budget,join_winner,decision_id,outcome,detail,created_at,updated_at,settled_at FROM work_node_attempts WHERE work_run_id=? ORDER BY created_at,node_id,activation_id,attempt`, id)
+	if err != nil {
+		return record, err
+	}
+	for nrows.Next() {
+		var attempt model.WorkNodeAttempt
+		var performer []byte
+		var readyAt, deadlineAt, createdAt, updatedAt int64
+		var retryAt, settledAt sql.NullInt64
+		attempt.Ref.RunID = id
+		if err = nrows.Scan(&attempt.Ref.NodeID, &attempt.Ref.ActivationID, &attempt.Ref.Attempt, &attempt.Ref.IssuanceID, &attempt.State, &performer, &attempt.OperationID, &attempt.ExecutionID, &readyAt, &retryAt, &deadlineAt, &attempt.RetryBudget, &attempt.JoinWinner, &attempt.DecisionID, &attempt.Outcome, &attempt.Detail, &createdAt, &updatedAt, &settledAt); err != nil {
+			nrows.Close()
+			return record, err
+		}
+		if len(performer) > 0 && string(performer) != "null" {
+			attempt.Performer = new(model.Performer)
+			if err = json.Unmarshal(performer, attempt.Performer); err != nil {
+				nrows.Close()
+				return record, err
+			}
+		}
+		attempt.ReadyAt, attempt.Deadline = fromNanos(readyAt), fromNanos(deadlineAt)
+		attempt.CreatedAt, attempt.UpdatedAt = fromNanos(createdAt), fromNanos(updatedAt)
+		if retryAt.Valid {
+			value := fromNanos(retryAt.Int64)
+			attempt.RetryAt = &value
+		}
+		if settledAt.Valid {
+			value := fromNanos(settledAt.Int64)
+			attempt.SettledAt = &value
+		}
+		record.Run.NodeAttempts = append(record.Run.NodeAttempts, attempt)
+	}
+	if err = nrows.Close(); err != nil {
+		return record, err
+	}
 	erows, err := s.db.QueryContext(ctx, `SELECT id,request_id,work_run_id,step,attempt,kind,reporter_json,artifact_revision,passed,detail,recorded_at,revision FROM work_evidence WHERE work_run_id=? ORDER BY recorded_at`, id)
 	if err != nil {
 		return record, err
@@ -665,6 +732,29 @@ func (s *Store) WorkRun(ctx context.Context, id model.WorkRunID) (app.WorkRunRec
 		record.Decision = &d
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return record, err
+	}
+	decisionRows, err := s.db.QueryContext(ctx, `SELECT id FROM decision_windows WHERE work_run_id=? ORDER BY created_at,id`, id)
+	if err != nil {
+		return record, err
+	}
+	var decisionIDs []model.DecisionID
+	for decisionRows.Next() {
+		var decisionID model.DecisionID
+		if err = decisionRows.Scan(&decisionID); err != nil {
+			decisionRows.Close()
+			return record, err
+		}
+		decisionIDs = append(decisionIDs, decisionID)
+	}
+	if err = decisionRows.Close(); err != nil {
+		return record, err
+	}
+	for _, decisionID := range decisionIDs {
+		decisionRecord, readErr := s.Decision(ctx, decisionID)
+		if readErr != nil {
+			return record, readErr
+		}
+		record.Decisions = append(record.Decisions, decisionRecord.Window)
 	}
 	return record, nil
 }

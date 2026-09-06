@@ -177,6 +177,8 @@ const (
 	OperationStartWork        OperationKind = "start_work"
 	OperationCancelWork       OperationKind = "cancel_work"
 	OperationStartShell       OperationKind = "start_shell"
+	OperationRunProgram       OperationKind = "run_program"
+	OperationAssignWork       OperationKind = "assign_work"
 )
 
 type OperationState string
