@@ -412,7 +412,7 @@ func (s *Service) SendMessage(ctx context.Context, req SendMessageRequest) (Mess
 }
 
 func (s *Service) MarkMessageRead(ctx context.Context, req MarkMessageReadRequest) (MessageResult, error) {
-	if req.Principal.Kind != model.PrincipalOperator && !(req.Principal.Kind == model.PrincipalAgent && req.Principal.AgentID == req.AgentID) {
+	if req.Principal.Kind != model.PrincipalOperator && (req.Principal.Kind != model.PrincipalAgent || req.Principal.AgentID != req.AgentID) {
 		return MessageResult{}, fail(ErrUnauthorized, "principal cannot acknowledge this recipient")
 	}
 	message, err := s.store.MarkMessageRead(ctx, req.MessageID, req.AgentID, s.now().UTC())
