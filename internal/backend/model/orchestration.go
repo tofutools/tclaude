@@ -67,6 +67,7 @@ type DefinitionRevision struct {
 	Process         *ProcessDefinition
 	Dependencies    []DefinitionRef
 	Author          Principal
+	RequestID       RequestID
 	CreatedAt       time.Time
 }
 
@@ -221,6 +222,7 @@ type RetryPolicy struct {
 
 type DecisionNode struct {
 	Kind             DecisionKind
+	Audience         []DecisionAudience
 	PermittedAnswers []string
 	ExpiresAfter     time.Duration
 }
@@ -278,6 +280,7 @@ type ProgramProfileRevision struct {
 	OutputLimitBytes int64
 	EffectAuthority  []ProgramEffectRequirement
 	Author           Principal
+	RequestID        RequestID
 	CreatedAt        time.Time
 }
 
@@ -405,7 +408,7 @@ type DecisionWindow struct {
 	Kind             DecisionKind
 	SourceRevision   Revision
 	Attempt          WorkAttemptRef
-	Audience         []AuthoritySubject
+	Audience         []DecisionAudience
 	Question         string
 	PermittedAnswers []string
 	EvidenceRefs     []WorkEvidenceID
@@ -414,6 +417,12 @@ type DecisionWindow struct {
 	Revision         Revision
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
+}
+
+type DecisionAudience struct {
+	Subject AuthoritySubject
+	RoleID  RoleID
+	GroupID GroupID
 }
 
 type DecisionSubmission struct {
@@ -491,6 +500,7 @@ type AutomationRuleRevision struct {
 	Policy       OccurrencePolicy
 	Dependencies []DefinitionRef
 	Author       Principal
+	RequestID    RequestID
 	CreatedAt    time.Time
 }
 
@@ -615,6 +625,8 @@ type AutomationOccurrence struct {
 	RuleID              AutomationRuleID
 	RuleRevisionID      AutomationRuleRevisionID
 	SourceOccurrenceKey string
+	RequestID           RequestID
+	Requester           Principal
 	ScheduledAt         time.Time
 	EventAt             time.Time
 	EligibleAt          time.Time
