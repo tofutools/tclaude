@@ -213,16 +213,6 @@ func stopWaitForExit(deadline time.Duration) stopWaitPolicy {
 	return stopWaitPolicy{wait: true, deadline: deadline}
 }
 
-// stopOneConvWithIntentUnderLaunchLock is stopOneConvWithIntent after the
-// caller has acquired the conversation launch lock. Compound lifecycle
-// operations use it to keep stop → posture mutation → resume indivisible from
-// other daemon wake/stop requests.
-func stopOneConvWithIntentUnderLaunchLock(convID string, force bool, lifecycleAction, relatedEventID string) memberOpResult {
-	return managedExecutionRuntime.stopUnderLaunchLock(
-		convID, force, lifecycleAction, relatedEventID, stopNoWait,
-	).legacy
-}
-
 // stopOneConvAndWait soft-stops convID and does not return until its pane
 // process has actually gone away — the full ladder run inline: the delivered
 // exit command plus its bounded re-injections get `deadline` to work, then

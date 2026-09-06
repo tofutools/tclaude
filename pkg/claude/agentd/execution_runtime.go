@@ -75,9 +75,10 @@ func (r *executionRuntime) stopUnderLaunchLock(
 	if waitPolicy.wait && outcome.State != platformexec.StopNoExecution {
 		switch waited {
 		case softExitClosed:
-			if outcome.State != platformexec.StopFailed {
-				outcome.State = platformexec.StopCompleted
-			}
+			// Observation wins over dispatch: a failed exit injection can race
+			// with the workload closing naturally. Keep the legacy dispatch
+			// detail, but report the confirmed lifecycle result as completed.
+			outcome.State = platformexec.StopCompleted
 		case softExitEscalated:
 			outcome.State = platformexec.StopCompleted
 			outcome.Escalated = true

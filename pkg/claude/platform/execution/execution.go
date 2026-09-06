@@ -88,7 +88,7 @@ func ParseID(raw string) (ID, error) {
 		return "", fmt.Errorf("execution id must be %d lowercase hexadecimal characters", encodedIDLength)
 	}
 	for _, c := range raw {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return "", fmt.Errorf("execution id must be %d lowercase hexadecimal characters", encodedIDLength)
 		}
 	}
