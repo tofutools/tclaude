@@ -13,6 +13,8 @@ type (
 	OperationID              string
 	MessageID                string
 	RecipientID              string
+	AttachmentID             string
+	AttachmentClaimID        string
 	RequestID                string
 	HistoryPointID           string
 	HistoryUseID             string
@@ -50,6 +52,10 @@ func (id ExecutionID) Validate() error    { return ValidateStableID("execution i
 func (id OperationID) Validate() error    { return ValidateStableID("operation id", string(id)) }
 func (id MessageID) Validate() error      { return ValidateStableID("message id", string(id)) }
 func (id RecipientID) Validate() error    { return ValidateStableID("recipient id", string(id)) }
+func (id AttachmentID) Validate() error   { return ValidateStableID("attachment id", string(id)) }
+func (id AttachmentClaimID) Validate() error {
+	return ValidateStableID("attachment claim id", string(id))
+}
 func (id RequestID) Validate() error      { return ValidateStableID("request id", string(id)) }
 func (id HistoryPointID) Validate() error { return ValidateStableID("history point id", string(id)) }
 func (id HistoryUseID) Validate() error   { return ValidateStableID("history use id", string(id)) }
