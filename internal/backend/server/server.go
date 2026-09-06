@@ -128,6 +128,9 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry, jou
 	if err := handler.RegisterOrchestrationAPI(application); err != nil {
 		return err
 	}
+	if err := handler.RegisterAccessRequestAPI(application); err != nil {
+		return err
+	}
 	// Holding the state-directory lock makes this a stale socket from our own
 	// previous process. Refuse other file types rather than deleting arbitrary data.
 	if info, err := os.Lstat(socket); err == nil {
@@ -147,6 +150,8 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry, jou
 	defer listener.Close()
 	stopRenewal := startAccessRenewal(ctx, application)
 	defer stopRenewal() // Join before the deferred store close and lock release.
+	stopNotifications := startMessageNotifications(ctx, application)
+	defer stopNotifications() // Join native notice settlement before store/lock release.
 	stopWork := startWorkReconciliation(ctx, application)
 	defer stopWork() // Join application work before closing its store.
 	requests := &requestDrain{handler: handler}
