@@ -43,10 +43,15 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize replacement backend schema: %w", err)
 	}
+	if _, err := s.db.ExecContext(ctx, configurationCatalogSchema); err != nil {
+		return err
+	}
 	if err := s.initializeUsageActivity(ctx); err != nil {
 		return fmt.Errorf("initialize usage and activity schema: %w", err)
 	}
 	for _, migration := range []struct{ table, column, definition string }{
+		{"agents", "configuration_profile_json", "BLOB"},
+		{"executions", "configuration_profile_json", "BLOB"},
 		{"groups", "owner_agent_id", "TEXT NOT NULL DEFAULT ''"},
 		{"agents", "lifecycle_state", "TEXT NOT NULL DEFAULT 'active'"},
 		{"agents", "task_reference", "TEXT NOT NULL DEFAULT ''"},
@@ -558,15 +563,15 @@ func (s *Store) CreateAgent(ctx context.Context, agent model.Agent) error {
 	if agent.Notifications.DirectMessage == "" {
 		agent.Notifications.DirectMessage = model.NotificationIfAvailable
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO agents(id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,direct_notification_intent,harness,model,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		agent.ID, agent.Name, agent.TaskReference, agent.ParentAgentID, agent.CloneSourceAgentID, agent.Lifecycle, agent.Notifications.DirectMessage, agent.Desired.Harness, agent.Desired.Model, agent.Desired.WorkingDirectory, agent.Desired.Approval, agent.Desired.Sandbox, agent.PrimaryExecutionID, agent.Revision, nanos(agent.CreatedAt), nanos(agent.UpdatedAt))
+	_, err := s.db.ExecContext(ctx, `INSERT INTO agents(configuration_profile_json,id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,direct_notification_intent,harness,model,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		configurationProfileJSON(agent.ConfigurationProfile), agent.ID, agent.Name, agent.TaskReference, agent.ParentAgentID, agent.CloneSourceAgentID, agent.Lifecycle, agent.Notifications.DirectMessage, agent.Desired.Harness, agent.Desired.Model, agent.Desired.WorkingDirectory, agent.Desired.Approval, agent.Desired.Sandbox, agent.PrimaryExecutionID, agent.Revision, nanos(agent.CreatedAt), nanos(agent.UpdatedAt))
 	if err != nil {
 		return classify(err)
 	}
 	return s.bump(ctx)
 }
 
-func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected model.Revision, name, taskReference string, notifications model.AgentNotificationPreferences, desired model.DesiredConfiguration, authority model.AuthorityRequest, at time.Time) (model.Agent, error) {
+func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected model.Revision, name, taskReference string, notifications model.AgentNotificationPreferences, desired model.DesiredConfiguration, profile *model.ConfigurationProfileRef, authority model.AuthorityRequest, at time.Time) (model.Agent, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return model.Agent{}, err
@@ -579,8 +584,8 @@ func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected mode
 	if !decision.Allowed {
 		return model.Agent{}, app.ErrUnauthorized
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE agents SET name=?,task_reference=?,direct_notification_intent=?,harness=?,model=?,working_directory=?,approval=?,sandbox=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND lifecycle_state=?`,
-		name, taskReference, notifications.DirectMessage, desired.Harness, desired.Model, desired.WorkingDirectory, desired.Approval, desired.Sandbox, nanos(at), id, expected, model.AgentActive)
+	result, err := tx.ExecContext(ctx, `UPDATE agents SET configuration_profile_json=?,name=?,task_reference=?,direct_notification_intent=?,harness=?,model=?,working_directory=?,approval=?,sandbox=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND lifecycle_state=?`,
+		configurationProfileJSON(profile), name, taskReference, notifications.DirectMessage, desired.Harness, desired.Model, desired.WorkingDirectory, desired.Approval, desired.Sandbox, nanos(at), id, expected, model.AgentActive)
 	if err != nil {
 		return model.Agent{}, classify(err)
 	}
@@ -1482,19 +1487,25 @@ func completeOperationTx(ctx context.Context, tx *sql.Tx, in app.OperationComple
 	return err
 }
 
-const executionSelect = `SELECT id,workload_kind,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,native_namespace,native_reference,native_observed_at,revision,created_at,updated_at FROM executions`
+const executionSelect = `SELECT configuration_profile_json,id,workload_kind,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,native_namespace,native_reference,native_observed_at,revision,created_at,updated_at FROM executions`
 const operationSelect = `SELECT id,request_id,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,automation_delegation_json,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at FROM operations`
-const agentSelect = `SELECT id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,retired_at,retired_by_kind,retired_by_agent_id,retired_by_execution_id,retirement_reason,direct_notification_intent,harness,model,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at FROM agents`
+const agentSelect = `SELECT configuration_profile_json,id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,retired_at,retired_by_kind,retired_by_agent_id,retired_by_execution_id,retirement_reason,direct_notification_intent,harness,model,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at FROM agents`
 
 type scanner interface{ Scan(...any) error }
 
 func scanAgent(row scanner) (model.Agent, error) {
 	var a model.Agent
+	var profile []byte
 	var retired sql.NullInt64
 	var created, updated int64
-	err := row.Scan(&a.ID, &a.Name, &a.TaskReference, &a.ParentAgentID, &a.CloneSourceAgentID, &a.Lifecycle, &retired, &a.RetiredBy.Kind, &a.RetiredBy.AgentID, &a.RetiredBy.ExecutionID, &a.RetirementReason, &a.Notifications.DirectMessage, &a.Desired.Harness, &a.Desired.Model, &a.Desired.WorkingDirectory, &a.Desired.Approval, &a.Desired.Sandbox, &a.PrimaryExecutionID, &a.Revision, &created, &updated)
+	err := row.Scan(&profile, &a.ID, &a.Name, &a.TaskReference, &a.ParentAgentID, &a.CloneSourceAgentID, &a.Lifecycle, &retired, &a.RetiredBy.Kind, &a.RetiredBy.AgentID, &a.RetiredBy.ExecutionID, &a.RetirementReason, &a.Notifications.DirectMessage, &a.Desired.Harness, &a.Desired.Model, &a.Desired.WorkingDirectory, &a.Desired.Approval, &a.Desired.Sandbox, &a.PrimaryExecutionID, &a.Revision, &created, &updated)
 	if err != nil {
 		return a, classify(err)
+	}
+	if len(profile) != 0 {
+		if err := json.Unmarshal(profile, &a.ConfigurationProfile); err != nil {
+			return a, err
+		}
 	}
 	a.CreatedAt, a.UpdatedAt = fromNanos(created), fromNanos(updated)
 	if retired.Valid {
@@ -1505,12 +1516,18 @@ func scanAgent(row scanner) (model.Agent, error) {
 }
 func scanExecution(row scanner) (model.Execution, error) {
 	var e model.Execution
+	var profile []byte
 	var observed sql.NullInt64
 	var namespace, reference string
 	var created, updated int64
-	err := row.Scan(&e.ID, &e.Workload, &e.AgentID, &e.ConversationID, &e.Spec.Harness, &e.Spec.Model, &e.Spec.WorkingDirectory, &e.Spec.Approval, &e.Spec.Sandbox, &e.State, &e.Attempt, &e.ContextReadiness, &e.ContextOrder, &e.Evidence.Provider, &e.Evidence.Version, &e.Evidence.Payload, &namespace, &reference, &observed, &e.Revision, &created, &updated)
+	err := row.Scan(&profile, &e.ID, &e.Workload, &e.AgentID, &e.ConversationID, &e.Spec.Harness, &e.Spec.Model, &e.Spec.WorkingDirectory, &e.Spec.Approval, &e.Spec.Sandbox, &e.State, &e.Attempt, &e.ContextReadiness, &e.ContextOrder, &e.Evidence.Provider, &e.Evidence.Version, &e.Evidence.Payload, &namespace, &reference, &observed, &e.Revision, &created, &updated)
 	if err != nil {
 		return e, classify(err)
+	}
+	if len(profile) != 0 {
+		if err := json.Unmarshal(profile, &e.Spec.ConfigurationProfile); err != nil {
+			return e, err
+		}
 	}
 	e.Spec.ExecutionID, e.Spec.Workload, e.Spec.AgentID, e.Spec.ConversationID, e.Spec.Attempt = e.ID, e.Workload, e.AgentID, e.ConversationID, e.Attempt
 	e.CreatedAt, e.UpdatedAt = fromNanos(created), fromNanos(updated)
@@ -1542,7 +1559,7 @@ func scanOperation(row scanner) (model.Operation, error) {
 }
 
 func insertExecution(ctx context.Context, tx *sql.Tx, e model.Execution) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO executions(id,workload_kind,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, e.ID, e.Workload, e.AgentID, e.ConversationID, e.Spec.Harness, e.Spec.Model, e.Spec.WorkingDirectory, e.Spec.Approval, e.Spec.Sandbox, e.State, e.Attempt, e.ContextReadiness, e.ContextOrder, e.Evidence.Provider, e.Evidence.Version, e.Evidence.Payload, e.Revision, nanos(e.CreatedAt), nanos(e.UpdatedAt))
+	_, err := tx.ExecContext(ctx, `INSERT INTO executions(configuration_profile_json,id,workload_kind,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, configurationProfileJSON(e.Spec.ConfigurationProfile), e.ID, e.Workload, e.AgentID, e.ConversationID, e.Spec.Harness, e.Spec.Model, e.Spec.WorkingDirectory, e.Spec.Approval, e.Spec.Sandbox, e.State, e.Attempt, e.ContextReadiness, e.ContextOrder, e.Evidence.Provider, e.Evidence.Version, e.Evidence.Payload, e.Revision, nanos(e.CreatedAt), nanos(e.UpdatedAt))
 	return classify(err)
 }
 func insertOperation(ctx context.Context, tx *sql.Tx, o model.Operation) error {

@@ -104,6 +104,16 @@ func (s *Service) CreateAgent(ctx context.Context, req CreateAgentRequest) (Agen
 	if err := requireOperator(req.Context); err != nil {
 		return AgentResult{}, err
 	}
+	var selectionErr error
+	req.ConfigurationProfile, selectionErr = s.selectConfigurationDefault(ctx, req.ConfigurationDefault, req.Desired, req.ConfigurationProfile)
+	if selectionErr != nil {
+		return AgentResult{}, selectionErr
+	}
+	req.Desired, req.ConfigurationProfile, selectionErr = s.resolveConfigurationSelection(ctx, req.Desired, req.ConfigurationProfile)
+	if selectionErr != nil {
+		return AgentResult{}, selectionErr
+	}
+
 	if err := req.ID.Validate(); err != nil {
 		return AgentResult{}, fail(ErrInvalid, "%v", err)
 	}
@@ -130,7 +140,7 @@ func (s *Service) CreateAgent(ctx context.Context, req CreateAgentRequest) (Agen
 		req.Notifications.DirectMessage = model.NotificationIfAvailable
 	}
 	now := s.now().UTC()
-	agent := model.Agent{ID: req.ID, Name: req.Name, TaskReference: req.TaskReference, ParentAgentID: req.ParentAgentID, CloneSourceAgentID: req.CloneSourceAgentID, Lifecycle: model.AgentActive, Notifications: req.Notifications, Desired: req.Desired, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	agent := model.Agent{ID: req.ID, Name: req.Name, TaskReference: req.TaskReference, ParentAgentID: req.ParentAgentID, CloneSourceAgentID: req.CloneSourceAgentID, Lifecycle: model.AgentActive, Notifications: req.Notifications, Desired: req.Desired, ConfigurationProfile: req.ConfigurationProfile, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.CreateAgent(ctx, agent); err != nil {
 		return AgentResult{}, err
 	}
@@ -138,6 +148,16 @@ func (s *Service) CreateAgent(ctx context.Context, req CreateAgentRequest) (Agen
 }
 
 func (s *Service) UpdateAgent(ctx context.Context, req UpdateAgentRequest) (AgentResult, error) {
+	var selectionErr error
+	req.ConfigurationProfile, selectionErr = s.selectConfigurationDefault(ctx, req.ConfigurationDefault, req.Desired, req.ConfigurationProfile)
+	if selectionErr != nil {
+		return AgentResult{}, selectionErr
+	}
+	req.Desired, req.ConfigurationProfile, selectionErr = s.resolveConfigurationSelection(ctx, req.Desired, req.ConfigurationProfile)
+	if selectionErr != nil {
+		return AgentResult{}, selectionErr
+	}
+
 	if req.ExpectedRevision == 0 {
 		return AgentResult{}, fail(ErrInvalid, "expected revision is required")
 	}
@@ -158,7 +178,7 @@ func (s *Service) UpdateAgent(ctx context.Context, req UpdateAgentRequest) (Agen
 		req.Notifications = current.Notifications
 	}
 	authority := model.AuthorityRequest{Principal: req.Context, Action: model.ActionUpdateConfiguration, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: req.ID}, RequestedConfiguration: &req.Desired}
-	agent, err := s.store.UpdateAgent(ctx, req.ID, req.ExpectedRevision, req.Name, req.TaskReference, req.Notifications, req.Desired, authority, s.now().UTC())
+	agent, err := s.store.UpdateAgent(ctx, req.ID, req.ExpectedRevision, req.Name, req.TaskReference, req.Notifications, req.Desired, req.ConfigurationProfile, authority, s.now().UTC())
 	return AgentResult{Agent: agent}, err
 }
 
@@ -267,6 +287,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		operationID = model.OperationID(s.newID("op_"))
 	}
 	spec := resolvedSpec(executionID, agent.ID, desired, conversationID)
+	spec.ConfigurationProfile = agent.ConfigurationProfile
 	execution := model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, State: model.ExecutionReserved, Attempt: 1, ContextReadiness: model.ContextReadinessPending, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	if err := s.requireNativeGuidanceComposition(ctx, execution); err != nil {
 		return OperationResult{}, err

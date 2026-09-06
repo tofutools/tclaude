@@ -31,6 +31,7 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	executionID := model.ExecutionID(s.newID("exe_"))
 	conversationID := model.ConversationID(s.newID("con_"))
 	spec := resolvedSpec(executionID, agent.ID, agent.Desired, conversationID)
+	spec.ConfigurationProfile = agent.ConfigurationProfile
 	execution := model.Execution{ID: executionID, Workload: model.ExecutionWorkloadHarness, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, State: model.ExecutionReserved, Attempt: 1, ContextReadiness: model.ContextReadinessPending, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	if err = s.requireNativeGuidanceComposition(ctx, execution); err != nil {
 		return record, err
