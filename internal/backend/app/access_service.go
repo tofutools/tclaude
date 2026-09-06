@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"strings"
 	"time"
@@ -95,8 +94,18 @@ func (s *Service) ReadStatus(ctx context.Context, req ReadStatusRequest) (Status
 		return StatusResult{}, err
 	}
 	var result StatusResult
+	groupMembers := map[model.AgentID]bool{}
+	if req.Target.Kind == model.ResourceGroup || req.Target.Kind == model.ResourceGroupPeers {
+		for _, group := range snapshot.Groups {
+			if group.ID == req.Target.GroupID {
+				for _, member := range group.Members {
+					groupMembers[member] = true
+				}
+			}
+		}
+	}
 	for _, agent := range snapshot.Agents {
-		if req.Target.Kind == model.ResourceAgent && agent.ID == req.Target.AgentID || req.Target.Kind == model.ResourceSelf && agent.ID == req.Principal.AgentID {
+		if req.Target.Kind == model.ResourceAgent && agent.ID == req.Target.AgentID || req.Target.Kind == model.ResourceSelf && agent.ID == req.Principal.AgentID || groupMembers[agent.ID] {
 			result.Agents = append(result.Agents, agent)
 		}
 	}
@@ -104,6 +113,7 @@ func (s *Service) ReadStatus(ctx context.Context, req ReadStatusRequest) (Status
 		visible := req.Target.Kind == model.ResourceExecution && execution.ID == req.Target.ExecutionID
 		visible = visible || req.Target.Kind == model.ResourceAgent && execution.AgentID == req.Target.AgentID
 		visible = visible || req.Target.Kind == model.ResourceSelf && execution.ID == req.Principal.ExecutionID
+		visible = visible || groupMembers[execution.AgentID]
 		if visible {
 			execution.Evidence = model.ProviderEvidence{}
 			result.Executions = append(result.Executions, execution)
@@ -206,18 +216,34 @@ func (s *Service) RevokeExecutionAccess(ctx context.Context, req RevokeExecution
 	if err := requireOperator(req.Principal); err != nil {
 		return ExecutionAccessStatusResult{}, err
 	}
+	existing, err := s.store.ExecutionAccess(ctx, req.ExecutionID)
+	if err != nil {
+		return ExecutionAccessStatusResult{}, err
+	}
+	var delivery ports.ActionCredentialDelivery
+	var receipt ports.ActionCredentialReceipt
+	if execution, executionErr := s.store.Execution(ctx, req.ExecutionID); executionErr == nil {
+		if provider, ok := s.providers.Provider(execution.Spec.Harness); ok {
+			if credentialProvider, ok := provider.(ports.ActionCredentialProvider); ok {
+				delivery = credentialProvider.ActionCredentials()
+				proof, inspectErr := delivery.InspectActionCredential(ctx, accessBinding(existing))
+				if inspectErr != nil {
+					return ExecutionAccessStatusResult{}, inspectErr
+				}
+				if err := validateAccessProof(existing, proof); err != nil {
+					return ExecutionAccessStatusResult{}, err
+				}
+				receipt = ports.ActionCredentialReceipt{ExecutionID: proof.ExecutionID, Generation: proof.Generation, DeliveryID: proof.DeliveryID, Resource: proof.Resource, FileIdentity: proof.FileIdentity}
+			}
+		}
+	}
 	access, err := s.store.RevokeExecutionAccess(ctx, req.ExecutionID, req.ExpectedRevision, s.now().UTC())
 	if err != nil {
 		return ExecutionAccessStatusResult{}, err
 	}
-	if execution, executionErr := s.store.Execution(ctx, req.ExecutionID); executionErr == nil {
-		if provider, ok := s.providers.Provider(execution.Spec.Harness); ok {
-			if credentialProvider, ok := provider.(ports.ActionCredentialProvider); ok {
-				receipt := ports.ActionCredentialReceipt{ExecutionID: access.ExecutionID, Generation: access.Generation, DeliveryID: access.DeliveryID, FileIdentity: access.FileIdentity}
-				if cleanupErr := credentialProvider.ActionCredentials().RemoveActionCredential(ctx, receipt); cleanupErr != nil {
-					return ExecutionAccessStatusResult{Access: accessBinding(access)}, cleanupErr
-				}
-			}
+	if delivery != nil {
+		if cleanupErr := delivery.RemoveActionCredential(ctx, receipt); cleanupErr != nil {
+			return ExecutionAccessStatusResult{Access: accessBinding(access)}, cleanupErr
 		}
 	}
 	return ExecutionAccessStatusResult{Access: accessBinding(access)}, nil
@@ -243,14 +269,21 @@ func (s *Service) RenewExecutionAccess(ctx context.Context, req RenewExecutionAc
 	if !ok {
 		return ExecutionAccessStatusResult{}, fail(ErrUnsupported, "provider does not support execution credentials")
 	}
-	secret := make([]byte, 32)
-	if _, err := rand.Read(secret); err != nil {
+	proof, err := credentialProvider.ActionCredentials().InspectActionCredential(ctx, accessBinding(access))
+	if err != nil {
+		return ExecutionAccessStatusResult{}, err
+	}
+	if err := validateAccessProof(access, proof); err != nil {
+		return ExecutionAccessStatusResult{}, err
+	}
+	secret, err := generateActionCredential()
+	if err != nil {
 		return ExecutionAccessStatusResult{}, err
 	}
 	defer clear(secret)
 	now := s.now().UTC()
 	material := ports.ActionCredentialMaterial{ExecutionID: execution.ID, Generation: access.Generation + 1, DeliveryID: access.DeliveryID, Secret: secret, ExpiresAt: now.Add(s.accessLease)}
-	current := ports.ActionCredentialReceipt{ExecutionID: execution.ID, Generation: access.Generation, DeliveryID: access.DeliveryID, FileIdentity: access.FileIdentity}
+	current := ports.ActionCredentialReceipt{ExecutionID: proof.ExecutionID, Generation: proof.Generation, DeliveryID: proof.DeliveryID, Resource: proof.Resource, FileIdentity: proof.FileIdentity}
 	receipt, err := credentialProvider.ActionCredentials().RotateActionCredential(ctx, current, material)
 	if err != nil {
 		return ExecutionAccessStatusResult{}, err
@@ -261,6 +294,13 @@ func (s *Service) RenewExecutionAccess(ctx context.Context, req RenewExecutionAc
 	digest := sha256.Sum256(secret)
 	rotated, err := s.store.RotateExecutionAccess(ctx, execution.ID, access.Generation, access.Revision, digest[:], receipt, now, material.ExpiresAt)
 	return ExecutionAccessStatusResult{Access: accessBinding(rotated)}, err
+}
+
+func validateAccessProof(access model.ExecutionAccess, proof ports.ActionCredentialRecoveryProof) error {
+	if proof.ExecutionID != access.ExecutionID || proof.Generation != access.Generation || proof.DeliveryID != access.DeliveryID || proof.Resource == "" || proof.FileIdentity == "" {
+		return fail(ErrInvalid, "host returned mismatched execution credential proof")
+	}
+	return nil
 }
 
 func (s *Service) requireAuthority(ctx context.Context, request model.AuthorityRequest, at time.Time) error {

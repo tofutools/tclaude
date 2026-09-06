@@ -207,8 +207,8 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		if strings.TrimSpace(s.agentAPIEndpoint) == "" {
 			return OperationResult{}, fail(ErrUnavailable, "agent API endpoint is required for credential-capable provider")
 		}
-		secret := make([]byte, 32)
-		if _, err := rand.Read(secret); err != nil {
+		secret, err := generateActionCredential()
+		if err != nil {
 			return OperationResult{}, fail(ErrUnavailable, "generate execution credential: %v", err)
 		}
 		digest := sha256.Sum256(secret)
@@ -315,6 +315,17 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		return OperationResult{}, err
 	}
 	return operationResult(finished), nil
+}
+
+func generateActionCredential() ([]byte, error) {
+	var random [32]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return nil, err
+	}
+	encoded := make([]byte, hex.EncodedLen(len(random)))
+	hex.Encode(encoded, random[:])
+	clear(random[:])
+	return encoded, nil
 }
 
 func (s *Service) Observe(ctx context.Context, req ObserveRequest) (ObservationResult, error) {
