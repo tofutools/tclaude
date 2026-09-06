@@ -299,10 +299,19 @@ func importNanos(value time.Time) int64 {
 }
 
 func (s *Store) ImportReceipt(ctx context.Context) (model.ImportReceipt, error) {
+	return queryImportReceipt(ctx, s.db)
+}
+
+type importQueryer interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func queryImportReceipt(ctx context.Context, queryer importQueryer) (model.ImportReceipt, error) {
 	var out model.ImportReceipt
 	var counts []byte
 	var completedAt int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,source_schema_version,source_database_sha256,manifest_sha256,importer_format_version,plan_format_version,target_schema_version,plan_sha256,semantic_sha256,metadata_only_attachments,counts_json,completed_at FROM import_receipts LIMIT 1`).Scan(
+	err := queryer.QueryRowContext(ctx, `SELECT id,source_schema_version,source_database_sha256,manifest_sha256,importer_format_version,plan_format_version,target_schema_version,plan_sha256,semantic_sha256,metadata_only_attachments,counts_json,completed_at FROM import_receipts LIMIT 1`).Scan(
 		&out.ID, &out.SourceSchemaVersion, &out.SourceDatabaseSHA256, &out.ManifestSHA256, &out.ImporterFormatVersion, &out.PlanFormatVersion, &out.TargetSchemaVersion, &out.PlanSHA256, &out.SemanticSHA256, &out.MetadataOnlyAttachments, &counts, &completedAt)
 	if err != nil {
 		return out, classify(err)
@@ -310,6 +319,75 @@ func (s *Store) ImportReceipt(ctx context.Context) (model.ImportReceipt, error) 
 	out.CompletedAt = fromNanos(completedAt)
 	err = json.Unmarshal(counts, &out.Counts)
 	return out, err
+}
+
+func (s *Store) ImportReport(ctx context.Context) (model.ImportReport, error) {
+	return ReadImportReport(ctx, s.db)
+}
+
+// ReadImportReport reads the redacted report through a consistent read-only
+// transaction. Callers that only have a database path should open it with
+// mode=ro and query_only before passing the connection here.
+func ReadImportReport(ctx context.Context, db *sql.DB) (model.ImportReport, error) {
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return model.ImportReport{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	report := model.ImportReport{}
+	report.Receipt, err = queryImportReceipt(ctx, tx)
+	if err != nil {
+		return model.ImportReport{}, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT source_namespace,source_table,source_key,target_kind,target_id FROM import_id_map ORDER BY source_namespace,source_table,source_key,target_kind`)
+	if err != nil {
+		return model.ImportReport{}, err
+	}
+	for rows.Next() {
+		var mapping model.ImportIDMapping
+		if err := rows.Scan(&mapping.SourceNamespace, &mapping.SourceTable, &mapping.SourceKey, &mapping.TargetKind, &mapping.TargetID); err != nil {
+			_ = rows.Close()
+			return model.ImportReport{}, err
+		}
+		report.IDMappings = append(report.IDMappings, mapping)
+	}
+	if err := rows.Close(); err != nil {
+		return model.ImportReport{}, err
+	}
+	rows, err = tx.QueryContext(ctx, `SELECT severity,code,source_table,source_key,source_path,detail FROM imported_diagnostics ORDER BY ordinal`)
+	if err != nil {
+		return model.ImportReport{}, err
+	}
+	for rows.Next() {
+		var diagnostic model.ImportedDiagnostic
+		if err := rows.Scan(&diagnostic.Severity, &diagnostic.Code, &diagnostic.SourceTable, &diagnostic.SourceKey, &diagnostic.SourcePath, &diagnostic.Detail); err != nil {
+			_ = rows.Close()
+			return model.ImportReport{}, err
+		}
+		report.Diagnostics = append(report.Diagnostics, diagnostic)
+	}
+	if err := rows.Close(); err != nil {
+		return model.ImportReport{}, err
+	}
+	rows, err = tx.QueryContext(ctx, `SELECT source_table,source_key,source_path,class,conversion,reason_code,payload_sha256 FROM imported_source_records ORDER BY source_table,source_key`)
+	if err != nil {
+		return model.ImportReport{}, err
+	}
+	for rows.Next() {
+		var record model.ImportedRecordDisposition
+		if err := rows.Scan(&record.SourceTable, &record.SourceKey, &record.SourcePath, &record.Class, &record.Conversion, &record.ReasonCode, &record.PayloadSHA256); err != nil {
+			_ = rows.Close()
+			return model.ImportReport{}, err
+		}
+		report.Records = append(report.Records, record)
+	}
+	if err := rows.Close(); err != nil {
+		return model.ImportReport{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return model.ImportReport{}, err
+	}
+	return report, nil
 }
 
 func (s *Store) ImportedSourceRecords(ctx context.Context, table string) ([]model.ImportedSourceRecord, error) {
@@ -370,6 +448,24 @@ func (s *Store) VerifyImport(ctx context.Context, batch app.ImportBatch) error {
 	if receipt.SemanticSHA256 != batch.Receipt.SemanticSHA256 || !reflect.DeepEqual(receipt.Counts, batch.Receipt.Counts) {
 		return fmt.Errorf("import receipt does not match translated batch")
 	}
+	expectedReport := model.ImportReport{Receipt: receipt, IDMappings: batch.IDMappings, Diagnostics: batch.Diagnostics}
+	for _, record := range batch.SourceRecords {
+		expectedReport.Records = append(expectedReport.Records, model.ImportedRecordDisposition{
+			SourceTable: record.SourceTable, SourceKey: record.SourceKey, SourcePath: record.SourcePath,
+			Class: record.Class, Conversion: record.Conversion, ReasonCode: record.ReasonCode, PayloadSHA256: record.PayloadSHA256,
+		})
+	}
+	report, err := s.ImportReport(ctx)
+	if err != nil || !reflect.DeepEqual(report, expectedReport) {
+		return fmt.Errorf("verify imported report: %w", err)
+	}
+	sourceRecords, err := s.ImportedSourceRecords(ctx, "")
+	if err != nil || !reflect.DeepEqual(sourceRecords, batch.SourceRecords) {
+		return fmt.Errorf("verify retained source records: %w", err)
+	}
+	if err := s.verifyImportCounts(ctx, batch); err != nil {
+		return err
+	}
 	for _, expected := range batch.Agents {
 		actual, err := s.Agent(ctx, expected.ID)
 		if err != nil || !reflect.DeepEqual(actual, expected) {
@@ -390,6 +486,21 @@ func (s *Store) VerifyImport(ctx context.Context, batch app.ImportBatch) error {
 		expected.Sender.Authority = model.AuthoritySubject{}
 		if err != nil || !reflect.DeepEqual(actual, expected) {
 			return fmt.Errorf("verify imported message %s: actual=%#v expected=%#v: %w", expected.ID, actual, expected, err)
+		}
+	}
+	for _, expected := range batch.MessageEnvelopes {
+		actual, err := s.ImportedMessageEnvelope(ctx, expected.MessageID)
+		if err != nil || !reflect.DeepEqual(actual, expected) {
+			return fmt.Errorf("verify imported message envelope %s: %w", expected.MessageID, err)
+		}
+	}
+	for _, expected := range batch.ImportedAttachments {
+		actual, err := s.ImportedAttachment(ctx, expected.AttachmentID)
+		if len(actual.Content) == 0 && len(expected.Content) == 0 {
+			actual.Content, expected.Content = nil, nil
+		}
+		if err != nil || !reflect.DeepEqual(actual, expected) {
+			return fmt.Errorf("verify imported attachment %s: actual=%#v expected=%#v: %v", expected.AttachmentID, actual, expected, err)
 		}
 	}
 	for _, expected := range batch.ConfigurationProfiles {
@@ -422,6 +533,47 @@ func (s *Store) VerifyImport(ctx context.Context, batch app.ImportBatch) error {
 			return fmt.Errorf("verify imported workspace %s: %w", expected.ID, err)
 		}
 	}
+	for _, expected := range batch.Usage {
+		actual, cumulative, err := s.usageBySourceRevision(ctx, expected.SourceKey, expected.Observation.SourceRevision)
+		if err != nil || cumulative != expected.Cumulative || !reflect.DeepEqual(actual, expected.Observation) {
+			return fmt.Errorf("verify imported usage %s: %w", expected.Observation.ID, err)
+		}
+	}
+	for _, expected := range batch.Activity {
+		actual, err := s.historicalActivity(ctx, expected.SourceKey, expected.SourceRevision)
+		if err != nil || !reflect.DeepEqual(actual, expected.Record) {
+			return fmt.Errorf("verify imported activity %s: %w", expected.Record.ID, err)
+		}
+	}
+	for _, expected := range batch.Conversations {
+		var actual model.Conversation
+		var created, updated int64
+		err := s.db.QueryRowContext(ctx, `SELECT id,revision,created_at,updated_at FROM conversations WHERE id=?`, expected.ID).Scan(&actual.ID, &actual.Revision, &created, &updated)
+		actual.CreatedAt, actual.UpdatedAt = fromNanos(created), fromNanos(updated)
+		if err != nil || !reflect.DeepEqual(actual, expected) {
+			return fmt.Errorf("verify imported conversation %s: %w", expected.ID, err)
+		}
+	}
+	for _, expected := range batch.ConversationLinks {
+		var actual model.ConversationAssociation
+		var associated int64
+		var replaced sql.NullInt64
+		err := s.db.QueryRowContext(ctx, `SELECT agent_id,conversation_id,current,revision,associated_at,replaced_at FROM agent_conversations WHERE agent_id=? AND conversation_id=?`, expected.AgentID, expected.ConversationID).Scan(&actual.AgentID, &actual.ConversationID, &actual.Current, &actual.Revision, &associated, &replaced)
+		actual.AssociatedAt = fromNanos(associated)
+		if replaced.Valid {
+			value := fromNanos(replaced.Int64)
+			actual.ReplacedAt = &value
+		}
+		if err != nil || !reflect.DeepEqual(actual, expected) {
+			return fmt.Errorf("verify imported conversation association %s/%s: %w", expected.AgentID, expected.ConversationID, err)
+		}
+	}
+	for _, expected := range batch.History {
+		actual, err := scanHistoryEntry(s.db.QueryRowContext(ctx, `SELECT conversation_id,harness,title,workspace_id,workspace_hint,archived,availability,metadata_coverage,content_coverage,source_revision,refreshed_at,modified_at,revision FROM history_catalog WHERE conversation_id=?`, expected.ConversationID))
+		if err != nil || !reflect.DeepEqual(actual, expected) {
+			return fmt.Errorf("verify imported history %s: %w", expected.ConversationID, err)
+		}
+	}
 	var integrity string
 	if err := s.db.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&integrity); err != nil || integrity != "ok" {
 		return fmt.Errorf("verify imported database integrity: %s: %w", integrity, err)
@@ -435,6 +587,49 @@ func (s *Store) VerifyImport(ctx context.Context, batch app.ImportBatch) error {
 		return fmt.Errorf("imported database has foreign-key violations")
 	}
 	return rows.Err()
+}
+
+// VerifyImportDatabase performs exact import verification without Store
+// initialization. The supplied connection may be opened mode=ro/query_only.
+func VerifyImportDatabase(ctx context.Context, db *sql.DB, batch app.ImportBatch) error {
+	return (&Store{db: db}).VerifyImport(ctx, batch)
+}
+
+func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) error {
+	memberCount, recipientCount := 0, 0
+	for _, group := range batch.Groups {
+		memberCount += len(group.Members)
+	}
+	for _, message := range batch.Messages {
+		recipientCount += len(message.Recipients)
+	}
+	defaults := 0
+	if batch.ConfigurationDefaults != nil {
+		defaults = 1
+	}
+	expected := map[string]int{
+		"agents": len(batch.Agents), "groups": len(batch.Groups), "group_members": memberCount,
+		"conversations": len(batch.Conversations), "agent_conversations": len(batch.ConversationLinks), "history_catalog": len(batch.History),
+		"messages": len(batch.Messages), "operations": len(batch.Messages), "message_recipients": recipientCount,
+		"attachments": len(batch.ImportedAttachments), "message_attachments": len(batch.ImportedAttachments),
+		"import_id_map": len(batch.IDMappings), "imported_source_records": len(batch.SourceRecords),
+		"imported_diagnostics": len(batch.Diagnostics), "imported_message_envelopes": len(batch.MessageEnvelopes),
+		"imported_attachment_availability": len(batch.ImportedAttachments),
+		"configuration_profiles":           len(batch.ConfigurationProfiles), "configuration_profile_revisions": len(batch.ConfigurationProfiles),
+		"configuration_defaults": defaults, "definitions": len(batch.Definitions), "definition_revisions": len(batch.Definitions),
+		"automation_rules": len(batch.AutomationRules), "automation_rule_revisions": len(batch.AutomationRules),
+		"workspaces": len(batch.Workspaces), "usage_observations": len(batch.Usage), "historical_activity": len(batch.Activity),
+	}
+	for table, want := range expected {
+		var got int
+		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&got); err != nil {
+			return fmt.Errorf("count imported %s: %w", table, err)
+		}
+		if got != want {
+			return fmt.Errorf("verify imported %s count: got %d want %d", table, got, want)
+		}
+	}
+	return nil
 }
 
 var _ app.ImportStore = (*Store)(nil)

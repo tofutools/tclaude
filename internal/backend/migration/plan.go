@@ -154,6 +154,12 @@ func Plan(inspection Inspection) (MigrationPlan, error) {
 			plan.Records = append(plan.Records, RecordDisposition{SourceTable: table, SourceKey: row.Key, Classification: rule.class, Conversion: conversion, ReasonCode: reason})
 		}
 	}
+	if _, ok := inactiveDefaultPermissions(inspection.Snapshot.Config); ok {
+		plan.Records = append(plan.Records, RecordDisposition{
+			SourceTable: "authored_config", SourceKey: "agent.default_permissions",
+			Classification: Inactive, Conversion: ConversionReady, ReasonCode: "authority_preserved_inactive",
+		})
+	}
 	sort.Slice(plan.Records, func(i, j int) bool {
 		if plan.Records[i].SourceTable != plan.Records[j].SourceTable {
 			return plan.Records[i].SourceTable < plan.Records[j].SourceTable

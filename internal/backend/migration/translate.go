@@ -152,12 +152,49 @@ func (t *translator) translateEvidence(batch *app.ImportBatch) {
 			})
 		}
 	}
+	if payload, ok := inactiveDefaultPermissions(t.inspection.Snapshot.Config); ok {
+		batch.SourceRecords = append(batch.SourceRecords, model.ImportedSourceRecord{
+			SourceTable: "authored_config", SourceKey: "agent.default_permissions", SourcePath: "config.agent.default_permissions",
+			Class: string(Inactive), Conversion: string(ConversionReady), ReasonCode: "authority_preserved_inactive",
+			Payload: append([]byte(nil), payload...), PayloadSHA256: digest(payload),
+		})
+		batch.Diagnostics = append(batch.Diagnostics, model.ImportedDiagnostic{
+			Severity: string(SeverityWarning), Code: "authority_preserved_inactive", SourceTable: "authored_config",
+			SourceKey: "agent.default_permissions", SourcePath: "config.agent.default_permissions",
+			Detail: "legacy default permissions are retained as inactive authored evidence",
+		})
+	}
+	if hasUnsupportedAuthoredConfig(t.inspection.Snapshot.Config) {
+		batch.Diagnostics = append(batch.Diagnostics, model.ImportedDiagnostic{
+			Severity: string(SeverityWarning), Code: "authored_config_fields_excluded", SourceTable: "authored_config",
+			SourcePath: "config", Detail: "authored fields outside supported inactive configuration were excluded from retained values",
+		})
+	}
 	for _, mapping := range t.plan.Identities {
 		batch.IDMappings = append(batch.IDMappings, model.ImportIDMapping{SourceNamespace: "tclaude-v228", SourceTable: mapping.SourceTable, SourceKey: mapping.SourceKey, TargetKind: mapping.TargetKind, TargetID: mapping.TargetID})
 	}
 	for _, diagnostic := range t.plan.Diagnostics {
 		batch.Diagnostics = append(batch.Diagnostics, model.ImportedDiagnostic{Severity: string(diagnostic.Severity), Code: diagnostic.Code, SourceTable: diagnostic.Table, SourcePath: sourcePath(diagnostic.Table, "*"), Detail: diagnostic.Detail})
 	}
+	sort.Slice(batch.SourceRecords, func(i, j int) bool {
+		if batch.SourceRecords[i].SourceTable != batch.SourceRecords[j].SourceTable {
+			return batch.SourceRecords[i].SourceTable < batch.SourceRecords[j].SourceTable
+		}
+		return batch.SourceRecords[i].SourceKey < batch.SourceRecords[j].SourceKey
+	})
+	sort.Slice(batch.IDMappings, func(i, j int) bool {
+		a, b := batch.IDMappings[i], batch.IDMappings[j]
+		if a.SourceNamespace != b.SourceNamespace {
+			return a.SourceNamespace < b.SourceNamespace
+		}
+		if a.SourceTable != b.SourceTable {
+			return a.SourceTable < b.SourceTable
+		}
+		if a.SourceKey != b.SourceKey {
+			return a.SourceKey < b.SourceKey
+		}
+		return a.TargetKind < b.TargetKind
+	})
 }
 
 func (t *translator) translateAgents(batch *app.ImportBatch) {
@@ -403,43 +440,31 @@ func (t *translator) translateMessages(batch *app.ImportBatch) error {
 			id := messageBySource[table+"\x1f"+key]
 			senderID := model.AgentID(t.id("agents", sourcev228.String(row.Values["from_agent"])))
 			sender := model.OperatorPrincipal()
-			if senderID != "" {
+			if senderID != "" && !operatorMessages[key] {
 				sender = model.AgentPrincipal(senderID)
 			}
-			message := model.Message{ID: id, Sender: sender, SenderConversationID: model.ConversationID(t.id("agent_conversations", sourcev228.String(row.Values["from_conv"]))), Subject: firstNonEmpty(sourcev228.String(row.Values["subject"]), "Message"), Body: sourcev228.String(row.Values["body"]), CreatedAt: timeValue(row.Values["created_at"])}
+			message := model.Message{ID: id, Sender: sender, SenderConversationID: t.conversationID(sourcev228.String(row.Values["from_conv"])), Subject: firstNonEmpty(sourcev228.String(row.Values["subject"]), "Message"), Body: sourcev228.String(row.Values["body"]), CreatedAt: timeValue(row.Values["created_at"])}
 			envelope := model.ImportedMessageEnvelope{MessageID: id, SourceTable: table, SourceKey: row.Key, OriginalParent: sourcev228.String(row.Values["parent_id"]), OriginalGroup: sourcev228.String(row.Values["group_id"]), DeliveredAt: optionalTime(row.Values["delivered_at"]), ReadAt: optionalTime(row.Values["read_at"]), ProcessedAt: optionalTime(row.Values["processed_at"]), NudgeAttemptedAt: optionalTime(firstNonNil(row.Values["nudge_sent_at"], row.Values["nudge_attempted_at"])), Origin: origins[key]}
 			if parent := sourcev228.String(row.Values["parent_id"]); parent != "" {
 				message.ParentMessageID = messageBySource["agent_messages\x1f"+parent]
 			}
-			if table == "human_messages" || operatorMessages[key] {
+			if table == "human_messages" {
 				message.Recipients = append(message.Recipients, recipientFor(t.inspection.Source.DatabaseHash, id, model.MessageAddressOperator, "", model.MessageAudienceTo, row))
-				envelope.Addresses = append(envelope.Addresses, model.ImportedMessageAddress{Audience: model.MessageAudienceTo, Resolved: true})
+				envelope.Addresses = append(envelope.Addresses, model.ImportedMessageAddress{
+					AddressKind:   model.MessageAddressOperator,
+					Audience:      model.MessageAudienceTo,
+					OriginalAgent: "operator",
+					Resolved:      true,
+				})
 			} else {
 				envelope.Addresses = append(envelope.Addresses, t.envelopeAddresses(row, model.MessageAudienceTo, "to_recipients", "to_recipient_agents", "to_conv", "to_agent")...)
 				envelope.Addresses = append(envelope.Addresses, t.envelopeAddresses(row, model.MessageAudienceCC, "cc_recipients", "cc_recipient_agents", "", "")...)
-				recipients := audienceAgents(row, "to_recipient_agents")
-				if len(recipients) == 0 {
-					recipients = append(recipients, sourcev228.String(row.Values["to_agent"]))
+				agentKey := sourcev228.String(row.Values["to_agent"])
+				if agentKey == "" {
+					agentKey = t.conversationOwner(sourcev228.String(row.Values["to_conv"]))
 				}
-				if len(recipients) == 1 && recipients[0] == "" {
-					recipients[0] = t.conversationOwner(sourcev228.String(row.Values["to_conv"]))
-				}
-				seen := map[string]bool{}
-				for _, agentKey := range recipients {
-					target := t.id("agents", agentKey)
-					if target == "" || seen[target] {
-						continue
-					}
-					seen[target] = true
-					message.Recipients = append(message.Recipients, recipientFor(t.inspection.Source.DatabaseHash, id, model.MessageAddressAgent, model.AgentID(target), model.MessageAudienceTo, row))
-				}
-				for _, agentKey := range audienceAgents(row, "cc_recipient_agents") {
-					target := t.id("agents", agentKey)
-					if target == "" || seen[target] {
-						continue
-					}
-					seen[target] = true
-					message.Recipients = append(message.Recipients, recipientFor(t.inspection.Source.DatabaseHash, id, model.MessageAddressAgent, model.AgentID(target), model.MessageAudienceCC, row))
+				if target := model.AgentID(t.id("agents", agentKey)); target != "" {
+					message.Recipients = append(message.Recipients, recipientFor(t.inspection.Source.DatabaseHash, id, model.MessageAddressAgent, target, canonicalAudience(row), row))
 				}
 			}
 			batch.Messages = append(batch.Messages, message)
@@ -522,14 +547,21 @@ func (t *translator) envelopeAddresses(row sourcev228.Row, audience model.Messag
 			agent = t.conversationOwner(conversation)
 		}
 		target := model.AgentID(t.id("agents", agent))
-		out = append(out, model.ImportedMessageAddress{Audience: audience, OriginalConversation: conversation, OriginalAgent: agent, TargetAgentID: target, Resolved: target != ""})
+		out = append(out, model.ImportedMessageAddress{
+			AddressKind:          model.MessageAddressAgent,
+			Audience:             audience,
+			OriginalConversation: conversation,
+			OriginalAgent:        agent,
+			TargetAgentID:        target,
+			Resolved:             target != "",
+		})
 	}
 	return out
 }
 
 func (t *translator) translateUsageAndActivity(batch *app.ImportBatch) {
 	for _, row := range t.inspection.Snapshot.Rows["session_cost_daily"] {
-		conversationID := model.ConversationID(t.id("agent_conversations", sourcev228.String(row.Values["conv_id"])))
+		conversationID := t.conversationID(sourcev228.String(row.Values["conv_id"]))
 		if conversationID == "" {
 			continue
 		}
@@ -559,7 +591,7 @@ func (t *translator) translateUsageAndActivity(batch *app.ImportBatch) {
 		if actorID != "" {
 			kind = model.PrincipalAgent
 		}
-		batch.Activity = append(batch.Activity, app.HistoricalActivityWrite{Record: model.ActivityRecord{ID: stableImportID("act", t.inspection.Source.DatabaseHash, row.Key), Kind: model.ActivityHistorical, Actor: model.ActivityActor{Kind: kind, AgentID: actorID}, AgentID: model.AgentID(t.id("agents", sourcev228.String(row.Values["target_agent"]))), ConversationID: model.ConversationID(t.id("agent_conversations", sourcev228.String(row.Values["target_conv"]))), Outcome: strconv.FormatInt(mustInt64(row.Values["status"]), 10), Reason: sourcev228.String(row.Values["verb"]), StartedAt: at, Historical: true, Provenance: sourcePath("audit_log", row.Key)}, SourceKey: row.Key, SourceRevision: digest([]byte(row.Key))})
+		batch.Activity = append(batch.Activity, app.HistoricalActivityWrite{Record: model.ActivityRecord{ID: stableImportID("act", t.inspection.Source.DatabaseHash, row.Key), Kind: model.ActivityHistorical, Actor: model.ActivityActor{Kind: kind, AgentID: actorID}, AgentID: model.AgentID(t.id("agents", sourcev228.String(row.Values["target_agent"]))), ConversationID: t.conversationID(sourcev228.String(row.Values["target_conv"])), Outcome: strconv.FormatInt(mustInt64(row.Values["status"]), 10), Reason: sourcev228.String(row.Values["verb"]), StartedAt: at, Historical: true, Provenance: sourcePath("audit_log", row.Key)}, SourceKey: row.Key, SourceRevision: digest([]byte(row.Key))})
 	}
 	for _, row := range t.inspection.Snapshot.Rows["execution_operations"] {
 		at := timeValue(row.Values["requested_at"])
@@ -570,7 +602,7 @@ func (t *translator) translateUsageAndActivity(batch *app.ImportBatch) {
 		if !terminalOperation(state) {
 			state = "interrupted_unresolved"
 		}
-		batch.Activity = append(batch.Activity, app.HistoricalActivityWrite{Record: model.ActivityRecord{ID: stableImportID("act", t.inspection.Source.DatabaseHash, "execution_operations\x00"+row.Key), Kind: model.ActivityHistorical, AgentID: model.AgentID(t.id("agents", sourcev228.String(row.Values["agent_id"]))), ConversationID: model.ConversationID(t.id("agent_conversations", sourcev228.String(row.Values["conv_id"]))), Outcome: state, Reason: sourcev228.String(row.Values["kind"]), StartedAt: at, Historical: true, Provenance: sourcePath("execution_operations", row.Key)}, SourceKey: "execution_operations\x1f" + row.Key, SourceRevision: digest([]byte(row.Key))})
+		batch.Activity = append(batch.Activity, app.HistoricalActivityWrite{Record: model.ActivityRecord{ID: stableImportID("act", t.inspection.Source.DatabaseHash, "execution_operations\x00"+row.Key), Kind: model.ActivityHistorical, AgentID: model.AgentID(t.id("agents", sourcev228.String(row.Values["agent_id"]))), ConversationID: t.conversationID(sourcev228.String(row.Values["conv_id"])), Outcome: state, Reason: sourcev228.String(row.Values["kind"]), StartedAt: at, Historical: true, Provenance: sourcePath("execution_operations", row.Key)}, SourceKey: "execution_operations\x1f" + row.Key, SourceRevision: digest([]byte(row.Key))})
 	}
 	sort.Slice(batch.Usage, func(i, j int) bool { return batch.Usage[i].Observation.ID < batch.Usage[j].Observation.ID })
 	sort.Slice(batch.Activity, func(i, j int) bool { return batch.Activity[i].Record.ID < batch.Activity[j].Record.ID })
@@ -581,6 +613,15 @@ func (t *translator) id(table, key string) string {
 		return ""
 	}
 	return t.ids[table+"\x1f"+key]
+}
+
+func (t *translator) conversationID(key string) model.ConversationID {
+	for _, table := range []string{"agent_conversations", "conv_index", "logical_conversations"} {
+		if id := t.id(table, key); id != "" {
+			return model.ConversationID(id)
+		}
+	}
+	return ""
 }
 
 func (t *translator) conversationOwner(conv string) string {
@@ -653,6 +694,18 @@ func audienceAgents(row sourcev228.Row, field string) []string {
 	var values []string
 	_ = json.Unmarshal([]byte(sourcev228.String(row.Values[field])), &values)
 	return values
+}
+
+func canonicalAudience(row sourcev228.Row) model.MessageAudienceKind {
+	conversation := sourcev228.String(row.Values["to_conv"])
+	agent := sourcev228.String(row.Values["to_agent"])
+	ccConversations, ccAgents := audienceAgents(row, "cc_recipients"), audienceAgents(row, "cc_recipient_agents")
+	for index := 0; index < len(ccConversations) || index < len(ccAgents); index++ {
+		if (index < len(ccConversations) && ccConversations[index] == conversation) || (agent != "" && index < len(ccAgents) && ccAgents[index] == agent) {
+			return model.MessageAudienceCC
+		}
+	}
+	return model.MessageAudienceTo
 }
 
 func sourcePath(table, key string) string {
@@ -760,11 +813,20 @@ func messageCreatedAt(messages []model.Message, id model.MessageID) time.Time {
 }
 
 func importCounts(batch app.ImportBatch) map[string]int64 {
+	var availableAttachments, metadataOnlyAttachments int64
+	for _, attachment := range batch.ImportedAttachments {
+		if attachment.Availability == model.ImportedAttachmentAvailable {
+			availableAttachments++
+		} else {
+			metadataOnlyAttachments++
+		}
+	}
 	return map[string]int64{
 		"agents": int64(len(batch.Agents)), "groups": int64(len(batch.Groups)),
 		"conversations": int64(len(batch.Conversations)), "messages": int64(len(batch.Messages)),
 		"message_envelopes": int64(len(batch.MessageEnvelopes)),
-		"attachments":       int64(len(batch.ImportedAttachments)), "configuration_profiles": int64(len(batch.ConfigurationProfiles)),
+		"attachments_total": int64(len(batch.ImportedAttachments)), "attachments_available": availableAttachments,
+		"attachments_metadata_only": metadataOnlyAttachments, "configuration_profiles": int64(len(batch.ConfigurationProfiles)),
 		"definitions": int64(len(batch.Definitions)), "automation_rules": int64(len(batch.AutomationRules)),
 		"workspaces": int64(len(batch.Workspaces)), "usage": int64(len(batch.Usage)),
 		"activity": int64(len(batch.Activity)), "retained_source_records": int64(len(batch.SourceRecords)),

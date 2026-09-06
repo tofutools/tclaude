@@ -51,6 +51,29 @@ type ImportedDiagnostic struct {
 	Detail      string
 }
 
+// ImportedRecordDisposition is the safe report projection of a retained
+// source record. The authored payload is intentionally available only through
+// the separate ImportedSourceRecords API.
+type ImportedRecordDisposition struct {
+	SourceTable   string
+	SourceKey     string
+	SourcePath    string
+	Class         string
+	Conversion    string
+	ReasonCode    string
+	PayloadSHA256 string
+}
+
+// ImportReport is the default operator-facing provenance view. It contains
+// enough information to audit conversion decisions without exposing retained
+// authored values or attachment content.
+type ImportReport struct {
+	Receipt     ImportReceipt
+	IDMappings  []ImportIDMapping
+	Diagnostics []ImportedDiagnostic
+	Records     []ImportedRecordDisposition
+}
+
 type ImportedAttachmentAvailability string
 
 const (
@@ -72,6 +95,7 @@ type ImportedAttachment struct {
 }
 
 type ImportedMessageAddress struct {
+	AddressKind          MessageAddressKind
 	Audience             MessageAudienceKind
 	OriginalConversation string
 	OriginalAgent        string

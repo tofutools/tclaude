@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -100,6 +101,18 @@ func TestImportSnapshotSemanticRoundTripAndExactRetry(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, usage.Observations, 1)
 	require.Equal(t, "1.2500", usage.Observations[0].Cost.Amount)
+	report, err := store.ImportReport(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, result.Receipt, report.Receipt)
+	require.NotEmpty(t, report.IDMappings)
+	require.NotEmpty(t, report.Records)
+	require.NotEmpty(t, report.Diagnostics)
+	require.NotEmpty(t, report.Records[0].SourcePath)
+	require.NotEmpty(t, report.Records[0].PayloadSHA256)
+	reportJSON, err := json.Marshal(report)
+	require.NoError(t, err)
+	require.NotContains(t, string(reportJSON), "message-secret", "default report must not expose retained source payloads")
+	require.NotContains(t, string(reportJSON), "YXR0YWNobWVudA==", "default report must not expose attachment content")
 
 	raw, err := sql.Open("sqlite", destination)
 	require.NoError(t, err)
@@ -112,6 +125,14 @@ func TestImportSnapshotSemanticRoundTripAndExactRetry(t *testing.T) {
 	importedAttachment, err := store.ImportedAttachment(context.Background(), messages[0].Attachments[0].ID)
 	require.NoError(t, err)
 	require.Equal(t, []byte("attachment"), importedAttachment.Content)
+	beforeReport, err := os.ReadFile(destination)
+	require.NoError(t, err)
+	readOnlyReport, err := ReadImportReport(context.Background(), destination)
+	require.NoError(t, err)
+	require.Equal(t, report, readOnlyReport)
+	afterReport, err := os.ReadFile(destination)
+	require.NoError(t, err)
+	require.Equal(t, beforeReport, afterReport, "read-only report must not mutate the completed database")
 	envelope, err := store.ImportedMessageEnvelope(context.Background(), messages[0].ID)
 	require.NoError(t, err)
 	var unresolvedPlain bool
@@ -158,6 +179,95 @@ func TestImportSnapshotMetadataOnlyLossIsExplicit(t *testing.T) {
 	require.Equal(t, string(model.ImportedAttachmentMissing), availability)
 	require.Equal(t, "operator_selected_metadata_only_loss", reason)
 	require.Empty(t, content)
+}
+
+func TestImportSnapshotPreservesOperatorMessageDirectionAndCanonicalFanoutCopy(t *testing.T) {
+	bundle := buildFixture(t, fixtureOptions{})
+	alterFixture(t, bundle, `
+		INSERT INTO agents(agent_id,current_conv_id,created_at,initial_spawn_config) VALUES('agt_second','second',1,'{}');
+		INSERT INTO agent_conversations(conv_id,agent_id,linked_at) VALUES('second','agt_second',1);
+		ALTER TABLE agent_messages ADD COLUMN to_recipients TEXT;
+		ALTER TABLE agent_messages ADD COLUMN to_recipient_agents TEXT;
+		UPDATE agent_messages SET from_agent='',from_conv='',to_recipients='["native-conv","second"]',to_recipient_agents='["agt_fixture","agt_second"]';
+		INSERT INTO operator_agent_messages(message_id) VALUES('1');
+		INSERT INTO agent_messages(id,from_conv,to_conv,body,created_at,from_agent,to_agent,to_recipients,to_recipient_agents)
+		VALUES('2','native-conv','second','fanout-copy',1,'agt_fixture','agt_second','["native-conv","second"]','["agt_fixture","agt_second"]')`)
+	inspection, err := Inspect(context.Background(), bundle)
+	require.NoError(t, err)
+	plan, err := Plan(inspection)
+	require.NoError(t, err)
+	destination := filepath.Join(t.TempDir(), "messages.sqlite")
+	_, err = ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: destination})
+	require.NoError(t, err)
+	store, err := backendsqlite.Open(destination)
+	require.NoError(t, err)
+	defer store.Close()
+	first := model.AgentID(findIdentity(t, plan, "agents", "agt_fixture").TargetID)
+	second := model.AgentID(findIdentity(t, plan, "agents", "agt_second").TargetID)
+	firstMessages, err := store.MessagesForAgent(context.Background(), first, false)
+	require.NoError(t, err)
+	require.Len(t, firstMessages, 1, "operator authorship must not reverse the canonical recipient")
+	require.Equal(t, model.PrincipalOperator, firstMessages[0].Sender.Kind)
+	secondMessages, err := store.MessagesForAgent(context.Background(), second, false)
+	require.NoError(t, err)
+	require.Len(t, secondMessages, 1, "display audience must not expand each delivery copy")
+}
+
+func TestImportSnapshotRetainsInactiveConfigAndCatalogOnlyUsage(t *testing.T) {
+	bundle := buildFixture(t, fixtureOptions{config: `{"agent":{"default_permissions":["message.direct"]},"runtime_secret":"excluded"}`})
+	alterFixture(t, bundle, `
+		INSERT INTO conv_index(conv_id,harness) VALUES('plain-history','codex');
+		ALTER TABLE session_cost_daily ADD COLUMN conv_id TEXT;
+		INSERT INTO session_cost_daily(session_id,day,conv_id,cost_usd,agent_id,harness) VALUES('s','2026-08-31','plain-history','2.5','','codex')`)
+	destination := filepath.Join(t.TempDir(), "history.sqlite")
+	result, err := ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: destination})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, result.Receipt.Counts["usage"])
+	store, err := backendsqlite.Open(destination)
+	require.NoError(t, err)
+	defer store.Close()
+	records, err := store.ImportedSourceRecords(context.Background(), "authored_config")
+	require.NoError(t, err)
+	require.Len(t, records, 1)
+	require.JSONEq(t, `["message.direct"]`, string(records[0].Payload))
+	require.NotContains(t, string(records[0].Payload), "runtime_secret")
+}
+
+func TestImportSnapshotRejectsChangedCompletedDestination(t *testing.T) {
+	bundle := buildFixture(t, fixtureOptions{attachment: true})
+	destination := filepath.Join(t.TempDir(), "changed.sqlite")
+	_, err := ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: destination})
+	require.NoError(t, err)
+	db, err := sql.Open("sqlite", destination)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE messages SET body='changed'; UPDATE attachments SET content=x'00'; DELETE FROM imported_source_records`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	_, err = ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: destination})
+	require.Error(t, err, "a receipt alone must not qualify a changed destination as an exact retry")
+}
+
+func TestImportSnapshotDoesNotSwallowPostLinkSyncFailure(t *testing.T) {
+	bundle := buildFixture(t, fixtureOptions{})
+	destination := filepath.Join(t.TempDir(), "sync-failure.sqlite")
+	originalSync := syncPublishedDirectory
+	failed := false
+	syncPublishedDirectory = func(path string) error {
+		if !failed {
+			failed = true
+			return errors.New("injected directory sync failure")
+		}
+		return originalSync(path)
+	}
+	t.Cleanup(func() { syncPublishedDirectory = originalSync })
+	_, err := ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: destination})
+	require.ErrorContains(t, err, "injected directory sync failure")
+	_, reportErr := ReadImportReport(context.Background(), destination)
+	require.NoError(t, reportErr, "post-link failure may expose only the complete verified database")
+	syncPublishedDirectory = originalSync
+	repeated, err := ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: destination})
+	require.NoError(t, err)
+	require.True(t, repeated.Repeated)
 }
 
 func TestImportSnapshotConcurrentPublicationAndReplacementRefusal(t *testing.T) {
