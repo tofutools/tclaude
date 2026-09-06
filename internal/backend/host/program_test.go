@@ -124,6 +124,24 @@ func TestProgramOutputCaptureSurvivesHostProcessExit(t *testing.T) {
 	require.NoError(t, recovered.Runtime.ReleaseProgramResources(context.Background(), recovered.Evidence))
 }
 
+func TestProgramOutputCaptureCountsDelayedShortWritesAsBytes(t *testing.T) {
+	root := t.TempDir()
+	host := ProgramProcessHost{PrivateRoot: filepath.Join(root, "private")}
+	request := programRequest(root, "delayed-short-output", 4096)
+	prepared, err := host.PrepareProgram(context.Background(), request)
+	require.NoError(t, err)
+	released, err := prepared.Release(context.Background(), &programTestPermit{execution: request.Execution.ID})
+	require.NoError(t, err)
+	var observation ports.ProgramObservation
+	require.Eventually(t, func() bool {
+		observation, err = released.Runtime.ObserveProgram(context.Background())
+		return err == nil && observation.Workload == ports.WorkloadExited
+	}, 2*time.Second, 10*time.Millisecond)
+	require.Equal(t, "ab", string(observation.Stdout.Data))
+	require.False(t, observation.Stdout.Truncated)
+	require.NoError(t, released.Runtime.ReleaseProgramResources(context.Background(), released.Evidence))
+}
+
 func TestProgramHostRecoveryRejectsMismatchedWorkspaceUse(t *testing.T) {
 	root := t.TempDir()
 	host := ProgramProcessHost{PrivateRoot: filepath.Join(root, "private")}
@@ -229,6 +247,11 @@ func TestProgramHostHelper(t *testing.T) {
 		if err := os.WriteFile(args[1], []byte("complete"), 0o600); err != nil {
 			os.Exit(10)
 		}
+		os.Exit(0)
+	case "delayed-short-output":
+		_, _ = fmt.Fprint(os.Stdout, "a")
+		time.Sleep(200 * time.Millisecond)
+		_, _ = fmt.Fprint(os.Stdout, "b")
 		os.Exit(0)
 	}
 	os.Exit(9)
