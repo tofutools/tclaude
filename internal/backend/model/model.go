@@ -116,6 +116,7 @@ type ExecutionWorkloadKind string
 const (
 	ExecutionWorkloadHarness ExecutionWorkloadKind = "harness"
 	ExecutionWorkloadShell   ExecutionWorkloadKind = "shell"
+	ExecutionWorkloadProgram ExecutionWorkloadKind = "program"
 )
 
 const (

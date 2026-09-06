@@ -12,6 +12,9 @@ import (
 type registryProvider string
 
 func (p registryProvider) Name() string { return string(p) }
+func (p registryProvider) Capabilities() ports.ProviderCapabilities {
+	return ports.ProviderCapabilities{}
+}
 func (registryProvider) Prepare(context.Context, ports.PreparationRequest) (ports.PreparedAttempt, error) {
 	return nil, nil
 }
