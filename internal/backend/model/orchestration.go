@@ -83,7 +83,7 @@ type TeamDefinition struct {
 	Briefings       []TeamBriefing
 	WorkspacePolicy WorkspacePolicy
 	AdvisoryPhases  []string
-	Automation      []DefinitionRef
+	Automation      []AutomationRuleRef
 }
 
 type TeamMemberSpec struct {
@@ -471,6 +471,12 @@ type AutomationRule struct {
 	Revision       Revision
 	CreatedAt      time.Time
 	UpdatedAt      time.Time
+}
+
+type AutomationRuleRef struct {
+	RuleID      AutomationRuleID
+	RevisionID  AutomationRuleRevisionID
+	ContentHash string
 }
 
 type AutomationRuleRevision struct {
