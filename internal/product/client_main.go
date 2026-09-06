@@ -110,6 +110,7 @@ func ClientCommand() *cobra.Command {
 		return call(cmd, "POST", "/v2/inbox/"+args[0]+"/read", map[string]string{"request_id": readID})
 	}
 	root.AddCommand(read)
+	root.AddCommand(browserCommand())
 	registerManagement(root, call)
 	registerControls(root, call)
 	registerJourney(root, call)
