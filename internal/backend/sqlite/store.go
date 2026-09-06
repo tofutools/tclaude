@@ -509,6 +509,49 @@ func (s *Store) Snapshot(ctx context.Context) (app.Snapshot, error) {
 	if err := s.db.QueryRowContext(ctx, `SELECT revision FROM backend_meta WHERE singleton=1`).Scan(&snapshot.Revision); err != nil {
 		return snapshot, err
 	}
+	conversationRows, err := s.db.QueryContext(ctx, `SELECT id,revision,created_at,updated_at FROM conversations ORDER BY id`)
+	if err != nil {
+		return snapshot, err
+	}
+	for conversationRows.Next() {
+		var conversation model.Conversation
+		var created, updated int64
+		if err := conversationRows.Scan(&conversation.ID, &conversation.Revision, &created, &updated); err != nil {
+			conversationRows.Close()
+			return snapshot, err
+		}
+		conversation.CreatedAt, conversation.UpdatedAt = fromNanos(created), fromNanos(updated)
+		snapshot.Conversations = append(snapshot.Conversations, conversation)
+	}
+	if err := conversationRows.Err(); err != nil {
+		conversationRows.Close()
+		return snapshot, err
+	}
+	conversationRows.Close()
+	associationRows, err := s.db.QueryContext(ctx, `SELECT agent_id,conversation_id,current,revision,associated_at,replaced_at FROM agent_conversations ORDER BY agent_id,associated_at`)
+	if err != nil {
+		return snapshot, err
+	}
+	for associationRows.Next() {
+		var association model.ConversationAssociation
+		var associated int64
+		var replaced sql.NullInt64
+		if err := associationRows.Scan(&association.AgentID, &association.ConversationID, &association.Current, &association.Revision, &associated, &replaced); err != nil {
+			associationRows.Close()
+			return snapshot, err
+		}
+		association.AssociatedAt = fromNanos(associated)
+		if replaced.Valid {
+			value := fromNanos(replaced.Int64)
+			association.ReplacedAt = &value
+		}
+		snapshot.Associations = append(snapshot.Associations, association)
+	}
+	if err := associationRows.Err(); err != nil {
+		associationRows.Close()
+		return snapshot, err
+	}
+	associationRows.Close()
 	rows, err := s.db.QueryContext(ctx, `SELECT id,name,harness,model,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at FROM agents ORDER BY id`)
 	if err != nil {
 		return snapshot, err

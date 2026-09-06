@@ -306,9 +306,25 @@ func (s *Service) Attach(ctx context.Context, req AttachRequest) (AttachmentResu
 	if admission.Repeated {
 		return AttachmentResult{Operation: admission.Operation}, nil
 	}
-	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
-	defer cancelWorkflow()
-	result, effectErr := runtime.Attach(workflowCtx, ports.AttachmentRequest{Kind: req.Kind})
+	// The native attachment client belongs to the returned connection, not the
+	// setup call. Bound setup without imposing that deadline on the live view.
+	attachmentCtx, cancelAttachment := context.WithCancel(context.WithoutCancel(ctx))
+	setupTimer := time.AfterFunc(admittedEffectTimeout, cancelAttachment)
+	result, effectErr := runtime.Attach(attachmentCtx, ports.AttachmentRequest{Kind: req.Kind})
+	setupTimer.Stop()
+	transferred := false
+	defer func() {
+		if !transferred {
+			cancelAttachment()
+			if result.Attachment != nil {
+				_ = result.Attachment.Close()
+			}
+		}
+	}()
+	if effectErr == nil && attachmentCtx.Err() != nil {
+		effectErr = attachmentCtx.Err()
+	}
+
 	completion := completionFromDisposition(admission.Operation, admission.Execution, result.Disposition, result.Evidence, "attachment", effectErr, s.now().UTC())
 	settlementCtx, cancelSettlement := settlementContext(ctx)
 	defer cancelSettlement()
@@ -319,7 +335,11 @@ func (s *Service) Attach(ctx context.Context, req AttachRequest) (AttachmentResu
 	if effectErr != nil {
 		return AttachmentResult{Operation: finished.Operation}, effectErr
 	}
-	return AttachmentResult{Operation: finished.Operation, Attachment: result.Attachment}, nil
+	if result.Attachment == nil {
+		return AttachmentResult{Operation: finished.Operation}, nil
+	}
+	transferred = true
+	return AttachmentResult{Operation: finished.Operation, Attachment: &ownedAttachment{Attachment: result.Attachment, cancel: cancelAttachment}}, nil
 }
 
 func (s *Service) Stop(ctx context.Context, req StopRequest) (OperationResult, error) {
@@ -498,6 +518,18 @@ func (s *Service) Snapshot(ctx context.Context, req SnapshotRequest) (Snapshot, 
 	for _, execution := range snapshot.Executions {
 		if execution.AgentID == id {
 			filtered.Executions = append(filtered.Executions, execution)
+		}
+	}
+	visibleConversations := map[model.ConversationID]bool{}
+	for _, association := range snapshot.Associations {
+		if association.AgentID == id {
+			filtered.Associations = append(filtered.Associations, association)
+			visibleConversations[association.ConversationID] = true
+		}
+	}
+	for _, conversation := range snapshot.Conversations {
+		if visibleConversations[conversation.ID] {
+			filtered.Conversations = append(filtered.Conversations, conversation)
 		}
 	}
 	for _, operation := range snapshot.Operations {
@@ -801,4 +833,17 @@ func stateFromObservation(observation ports.Observation) model.ExecutionState {
 	default:
 		return model.ExecutionUnknown
 	}
+}
+
+// ownedAttachment transfers native-client cancellation to connection Close.
+type ownedAttachment struct {
+	ports.Attachment
+	cancel   context.CancelFunc
+	once     sync.Once
+	closeErr error
+}
+
+func (a *ownedAttachment) Close() error {
+	a.once.Do(func() { a.cancel(); a.closeErr = a.Attachment.Close() })
+	return a.closeErr
 }
