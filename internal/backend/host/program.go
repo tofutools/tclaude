@@ -49,14 +49,18 @@ const (
 
 const programSpoolScript = `set -eu
 umask 077
-"$1" -c "$4" >"$5"
-"$2" bs=1 count=1 of="$6" 2>/dev/null || true
-"$3" >/dev/null
-: >"$7"`
+blocks=$(($3 / 4096))
+remainder=$(($3 % 4096))
+{
+  if [ "$blocks" -gt 0 ]; then "$1" bs=4096 count="$blocks" 2>/dev/null || true; fi
+  if [ "$remainder" -gt 0 ]; then "$1" bs=1 count="$remainder" 2>/dev/null || true; fi
+} >"$4"
+"$1" bs=1 count=1 of="$5" 2>/dev/null || true
+"$2" >/dev/null
+: >"$6"`
 
 type programSpoolerTools struct {
 	shell string
-	head  string
 	dd    string
 	cat   string
 }
@@ -459,9 +463,6 @@ func resolveProgramSpoolerTools() (programSpoolerTools, error) {
 	if tools.shell, err = resolve("sh"); err != nil {
 		return programSpoolerTools{}, err
 	}
-	if tools.head, err = resolve("head"); err != nil {
-		return programSpoolerTools{}, err
-	}
 	if tools.dd, err = resolve("dd"); err != nil {
 		return programSpoolerTools{}, err
 	}
@@ -744,7 +745,7 @@ func startProgramSpooler(tools programSpoolerTools, evidence programEvidence, st
 	}
 	process, err := StartProcess(ProcessSpec{
 		Executable: tools.shell,
-		Args: []string{"-c", programSpoolScript, "program-output-spooler", tools.head, tools.dd, tools.cat,
+		Args: []string{"-c", programSpoolScript, "program-output-spooler", tools.dd, tools.cat,
 			fmt.Sprintf("%d", evidence.OutputLimit), output.path, output.markerPath, output.completePath},
 		Directory:        evidence.ResourceRoot,
 		Env:              []string{programSpoolEnvironmentKey + "=" + evidence.AttemptMarker + ":" + stream},
