@@ -32,16 +32,19 @@ type Config struct {
 	Executable     string
 	TmuxExecutable string
 	PrivateRoot    string
+	NativeHome     string
 	AgentSocket    string
 }
 
 type Provider struct {
 	executable      string
 	privateRoot     string
+	nativeHome      string
 	terminal        host.TerminalHost
 	credentials     host.ActionCredentialHost
 	agentSocket     string
 	observationRoot string
+	stateMu         sync.Mutex
 }
 
 func New(config Config) (*Provider, error) {
@@ -56,8 +59,15 @@ func New(config Config) (*Provider, error) {
 	if !filepath.IsAbs(config.PrivateRoot) {
 		return nil, fmt.Errorf("copilot private root must be absolute")
 	}
+	nativeHome := config.NativeHome
+	if nativeHome == "" {
+		nativeHome = filepath.Join(config.PrivateRoot, "native-home")
+	}
+	if !filepath.IsAbs(nativeHome) || !pathWithin(config.PrivateRoot, nativeHome) {
+		return nil, fmt.Errorf("copilot native home must be an absolute provider-owned path inside private root")
+	}
 	return &Provider{
-		executable: resolved, privateRoot: config.PrivateRoot,
+		executable: resolved, privateRoot: config.PrivateRoot, nativeHome: filepath.Clean(nativeHome),
 		terminal:    host.TerminalHost{Executable: config.TmuxExecutable, PrivateRoot: filepath.Join(config.PrivateRoot, "terminals")},
 		credentials: host.ActionCredentialHost{PrivateRoot: filepath.Join(config.PrivateRoot, "action-credentials")},
 		agentSocket: config.AgentSocket, observationRoot: filepath.Join(config.PrivateRoot, "observations"),
@@ -181,13 +191,13 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 func (p *Provider) prepareHistory(request ports.PreparationRequest) (string, string, bool, error) {
 	switch request.Intent {
 	case ports.StartFresh:
-		return uuid.NewString(), filepath.Join(p.privateRoot, "states", "state-"+uuid.NewString()), true, nil
+		return uuid.NewString(), p.nativeHome, false, nil
 	case ports.StartContinue:
 		if request.History == nil || request.History.Provider != Name || request.History.Native.Namespace != NativeNamespace {
 			return "", "", false, fmt.Errorf("copilot continuation requires application-resolved history")
 		}
 		token, err := decodeSourceToken(request.History.SourceToken)
-		if err != nil || token.SessionID != request.History.Native.Reference || !pathWithin(filepath.Join(p.privateRoot, "states"), token.StateRoot) {
+		if err != nil || token.SessionID != request.History.Native.Reference || filepath.Clean(token.StateRoot) != p.nativeHome {
 			return "", "", false, fmt.Errorf("copilot continuation history evidence is invalid")
 		}
 		if err := verifyHistorySelection(*request.History, token); err != nil {
@@ -202,6 +212,8 @@ func (p *Provider) prepareHistory(request ports.PreparationRequest) (string, str
 }
 
 func (p *Provider) prepareStateRoot(root, cwd string) error {
+	p.stateMu.Lock()
+	defer p.stateMu.Unlock()
 	if err := os.MkdirAll(filepath.Join(root, "hooks"), 0o700); err != nil {
 		return err
 	}
@@ -216,12 +228,29 @@ func (p *Provider) prepareStateRoot(root, cwd string) error {
 	if err := host.WriteProtectedFile(filepath.Join(root, "hooks", "tclaude-observation.json"), raw); err != nil {
 		return err
 	}
-	settings := map[string]any{"trustedFolders": []string{cwd}, "remoteExport": false}
+	trusted := []string{cwd}
+	settingsPath := filepath.Join(root, "settings.json")
+	if existing, readErr := os.ReadFile(settingsPath); readErr == nil {
+		var prior struct {
+			TrustedFolders []string `json:"trustedFolders"`
+		}
+		if json.Unmarshal(existing, &prior) == nil {
+			seen := map[string]bool{filepath.Clean(cwd): true}
+			for _, folder := range prior.TrustedFolders {
+				clean := filepath.Clean(folder)
+				if filepath.IsAbs(clean) && !seen[clean] {
+					trusted = append(trusted, clean)
+					seen[clean] = true
+				}
+			}
+		}
+	}
+	settings := map[string]any{"trustedFolders": trusted, "remoteExport": false}
 	raw, err = json.Marshal(settings)
 	if err != nil {
 		return err
 	}
-	return host.WriteProtectedFile(filepath.Join(root, "settings.json"), raw)
+	return host.WriteProtectedFile(settingsPath, raw)
 }
 
 func (p *prepared) Describe() ports.PreparedDescription { return p.description }
@@ -300,7 +329,7 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	if err != nil {
 		return ports.RecoveryResult{}, err
 	}
-	if recorded.ExecutionID != string(request.ExecutionID) || !pathWithin(filepath.Join(p.privateRoot, "states"), recorded.StateRoot) {
+	if recorded.ExecutionID != string(request.ExecutionID) || filepath.Clean(recorded.StateRoot) != p.nativeHome {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
 	}
 	var terminal *host.Terminal
