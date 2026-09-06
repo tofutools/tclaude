@@ -62,7 +62,15 @@ type UsageAttribution struct {
 	AgentID        AgentID
 	ConversationID ConversationID
 	ExecutionID    ExecutionID
+	Precision      UsageAttributionPrecision
 }
+
+type UsageAttributionPrecision string
+
+const (
+	UsageAttributionConversation UsageAttributionPrecision = "conversation"
+	UsageAttributionExecution    UsageAttributionPrecision = "execution"
+)
 
 // UsageObservation is the public durable view. Provider paths, native tokens,
 // and receipts are intentionally absent.

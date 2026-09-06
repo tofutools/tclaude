@@ -17,7 +17,7 @@ const (
 type ActivityRecord struct {
 	ID             string
 	Kind           ActivityKind
-	Actor          Principal
+	Actor          ActivityActor
 	AgentID        AgentID
 	ConversationID ConversationID
 	ExecutionID    ExecutionID
@@ -28,4 +28,13 @@ type ActivityRecord struct {
 	FinishedAt     *time.Time
 	Historical     bool
 	Provenance     string
+}
+
+// ActivityActor is identity for display and filtering, never an authority
+// credential or delegation snapshot.
+type ActivityActor struct {
+	Kind          PrincipalKind
+	AgentID       AgentID
+	ExecutionID   ExecutionID
+	AutomationRun string
 }
