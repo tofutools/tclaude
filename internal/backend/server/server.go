@@ -132,6 +132,9 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry, jou
 	if err := handler.RegisterOrchestrationAPI(application); err != nil {
 		return err
 	}
+	if err := handler.RegisterAccessRequestAPI(application); err != nil {
+		return err
+	}
 	// Holding the state-directory lock makes this a stale socket from our own
 	// previous process. Refuse other file types rather than deleting arbitrary data.
 	if info, err := os.Lstat(socket); err == nil {
