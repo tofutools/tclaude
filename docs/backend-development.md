@@ -362,6 +362,53 @@ identity/reference mappings and preservation decisions; it does not activate
 legacy authority, replay unfinished work, or perform the final target import.
 No source directory or manifest is inferred from the current user's home.
 
+Saved configuration profiles have immutable revisions. Use
+`configuration-profile save --file profile.json` with `request_id`, `id`,
+`revision_id`, `name`, `desired`, and `expected_revision` (zero for a new
+profile). `configuration-profile list` lists the current entries;
+`configuration-profile get ID --revision REVISION` reads a selected revision.
+The browser's Configurations page offers the same save and create-agent flow.
+
+To create or update an agent from a saved revision, supply
+`configuration_profile` containing the returned `ProfileID`, `RevisionID`, and
+`ContentHash`, and omit `desired`. Supplying both is rejected. The application
+resolves the exact stored configuration and records the selected revision on
+the agent. Launch freezes that provenance and configuration on the execution.
+Editing a profile or updating an agent cannot change an existing execution.
+Catalog administration currently requires the explicit operator identity;
+updates to an agent still require the caller's current configuration authority.
+
+Saved defaults use exact configuration revisions. Read them with
+`configuration-defaults`, and replace them using `configuration-defaults save
+--file defaults.json`, including `request_id`, `expected_revision`, `global`
+and `harnesses`. Each selection contains the profile ID, revision ID and content
+hash returned by the configuration catalog. A new agent can select
+`configuration_default: "global"` or a harness name instead of inline desired
+settings or an explicit profile. Changing a default does not change existing
+agents or executions. The browser Configurations page can set and clear these
+defaults and create agents from a displayed saved revision.
+
+Correspondence supports subjects, reply threads, To/CC audiences and bounded
+attachments. Use `send --to AGENT --cc-operator --subject SUBJECT --attach FILE`,
+or the browser composer. Operator inbox receipts use `read --operator MESSAGE`.
+Retiring an agent requires an offline terminal execution state; reactivation is
+explicit and does not restart its previous execution. Cloning configuration
+creates a distinct agent and does not copy grants or ownership.
+
+`usage refresh --conversation ID` explicitly collects supported native usage;
+`usage query --conversation ID` reads durable observations. An execution target
+is also accepted, with exact execution attribution only when the source proves
+it. Conversation-wide counters are reported separately. Coverage distinguishes
+complete, partial, unknown and unsupported data; cost retains its reported
+currency and whether it is native or a historical estimate. Refreshing a source
+again must not duplicate its totals. The browser Usage view shows observations
+without adding successive cumulative samples together.
+
+`activity --agent ID` (or `--conversation`, `--execution`, `--work`) reads
+attributed operations and outcomes for exactly one authorized target. The
+browser offers the same view from an agent row. These reads do not reconcile or
+restart workloads, and historical imports do not confer operational authority.
+
 ### Process and team operations
 
 The same authenticated client exposes `definition validate|save|list|inspect`,

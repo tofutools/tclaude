@@ -42,15 +42,20 @@ func (h *Handler) identity(w http.ResponseWriter, r *http.Request) {
 		applicationError(w, err)
 		return
 	}
+	var agent *agentView
+	if result.Agent != nil {
+		view := projectAgent(*result.Agent)
+		agent = &view
+	}
 	writeJSON(w, http.StatusOK, struct {
 		Kind         model.PrincipalKind            `json:"kind"`
-		Agent        *model.Agent                   `json:"agent,omitempty"`
+		Agent        *agentView                     `json:"agent,omitempty"`
 		Execution    executionView                  `json:"execution"`
 		Conversation *model.ConversationAssociation `json:"conversation,omitempty"`
 		Context      model.ContextReadiness         `json:"context"`
 		Actions      []model.Action                 `json:"actions"`
 		EvaluatedAt  time.Time                      `json:"evaluated_at"`
-	}{result.Principal.Kind, result.Agent, projectExecution(result.Execution), result.CurrentConversation, result.ContextReadiness, result.EffectiveActions, result.EvaluatedAt})
+	}{result.Principal.Kind, agent, projectExecution(result.Execution), result.CurrentConversation, result.ContextReadiness, result.EffectiveActions, result.EvaluatedAt})
 }
 
 func (h *Handler) inbox(w http.ResponseWriter, r *http.Request) {
@@ -78,8 +83,8 @@ func (h *Handler) inbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Messages []model.Message `json:"messages"`
-	}{result.Messages})
+		Messages []messageView `json:"messages"`
+	}{projectMessages(result.Messages)})
 }
 
 func (h *Handler) readOwnMessage(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +101,7 @@ func (h *Handler) readOwnMessage(w http.ResponseWriter, r *http.Request) {
 		applicationError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, result.Message)
+	writeJSON(w, http.StatusOK, projectMessage(result.Message))
 }
 
 func (h *Handler) scopedStatus(w http.ResponseWriter, r *http.Request) {
@@ -120,10 +125,10 @@ func (h *Handler) scopedStatus(w http.ResponseWriter, r *http.Request) {
 		executions = append(executions, projectExecution(execution))
 	}
 	writeJSON(w, http.StatusOK, struct {
-		Agents       []model.Agent                   `json:"agents"`
+		Agents       []agentView                     `json:"agents"`
 		Executions   []executionView                 `json:"executions"`
 		Associations []model.ConversationAssociation `json:"associations"`
-	}{result.Agents, executions, result.Associations})
+	}{projectAgents(result.Agents), executions, result.Associations})
 }
 
 func (h *Handler) explainAuthority(w http.ResponseWriter, r *http.Request) {

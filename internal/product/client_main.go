@@ -89,25 +89,19 @@ func ClientCommand() *cobra.Command {
 	}
 	root.AddCommand(status)
 
-	var recipients []string
-	var sendID string
-	send := boa.CmdT[struct{}]{Use: "send TEXT", Short: "Accept a durable message to authorized agents"}.ToCobra()
-	send.Args = cobra.ExactArgs(1)
-	send.Flags().StringSliceVar(&recipients, "to", nil, "Recipient agent IDs")
-	send.Flags().StringVar(&sendID, "request-id", "", "Stable identity for this exact message request")
-	_ = send.MarkFlagRequired("to")
-	_ = send.MarkFlagRequired("request-id")
-	send.RunE = func(cmd *cobra.Command, args []string) error {
-		return call(cmd, "POST", "/v2/messages", map[string]any{"request_id": sendID, "recipients": recipients, "body": args[0]})
-	}
-	root.AddCommand(send)
+	registerCorrespondence(root, call)
 
 	var readID string
+	var readOperator bool
 	read := boa.CmdT[struct{}]{Use: "read MESSAGE_ID", Short: "Acknowledge a message in this agent's own inbox"}.ToCobra()
 	read.Args = cobra.ExactArgs(1)
+	read.Flags().BoolVar(&readOperator, "operator", false, "Acknowledge the local operator recipient")
 	read.Flags().StringVar(&readID, "request-id", "", "Stable identity for this acknowledgement")
 	_ = read.MarkFlagRequired("request-id")
 	read.RunE = func(cmd *cobra.Command, args []string) error {
+		if readOperator {
+			return call(cmd, "POST", "/v2/messages/"+args[0]+"/read", map[string]any{"request_id": readID, "operator": true})
+		}
 		return call(cmd, "POST", "/v2/inbox/"+args[0]+"/read", map[string]string{"request_id": readID})
 	}
 	root.AddCommand(read)
