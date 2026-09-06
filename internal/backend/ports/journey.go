@@ -16,6 +16,7 @@ const (
 	HistoryPrecisionNone    HistoryPrecision = "none"
 	HistoryPrecisionHead    HistoryPrecision = "head"
 	HistoryPrecisionMessage HistoryPrecision = "message"
+	HistoryPrecisionTurn    HistoryPrecision = "turn"
 )
 
 type HistoryCapabilities struct {
@@ -69,7 +70,7 @@ type HistorySourceSelection struct {
 	SourceRevision string
 	Point          *ProviderHistoryPoint
 	Evidence       model.ProviderEvidence
-	ExclusiveUse   bool
+	UseClaim       *model.HistoryUseClaim
 }
 
 type HistoryPartKind string
@@ -125,13 +126,14 @@ type CheckoutCreateRequest struct {
 type CheckoutRemoveRequest struct {
 	WorkspaceID model.WorkspaceID
 	Observation model.WorkspaceObservation
+	Resource    model.WorkspaceResourceEvidence
 	Destructive bool
 }
 
 type WorkspaceEffectResult struct {
 	Disposition EffectDisposition
 	Observation model.WorkspaceObservation
-	Evidence    model.ProviderEvidence
+	Resource    model.WorkspaceResourceEvidence
 }
 
 // WorkspaceHost owns filesystem/Git mechanics. Application code owns durable
