@@ -31,7 +31,7 @@ func TestHistoryDiscoversTurnPointsReadsAndRevisionFences(t *testing.T) {
 	require.Equal(t, "hello", item.Title)
 	require.Len(t, item.Points, 1)
 	require.Equal(t, model.HistoryPointTurn, item.Points[0].Kind)
-	selection := ports.HistorySourceSelection{ConversationID: "conversation", Provider: Name, Native: item.Native, SourceToken: item.SourceToken, SourceRevision: item.Coverage.SourceRevision, Point: &item.Points[0], Evidence: item.Evidence}
+	selection := ports.HistorySourceSelection{ConversationID: "conversation", Provider: Name, Native: item.Native, SourceToken: item.SourceToken, SourceRevision: item.Coverage.SourceRevision, SourceFingerprint: item.SourceFingerprint, Point: &item.Points[0], Evidence: item.Evidence}
 	read, err := provider.History().Read(context.Background(), selection)
 	require.NoError(t, err)
 	require.Len(t, read.Turns, 2)

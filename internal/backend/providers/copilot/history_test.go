@@ -30,7 +30,7 @@ func TestHistoryDiscoversReadsAndRevisionFencesLocalSession(t *testing.T) {
 	item := discovered.Histories[0]
 	require.Equal(t, model.HistoryCoveragePartial, discovered.Coverage.Content, "local provider storage cannot claim complete cloud history")
 	require.Equal(t, model.HistoryPointHead, item.Points[0].Kind)
-	selection := ports.HistorySourceSelection{ConversationID: "conversation", Provider: Name, Native: item.Native, SourceToken: item.SourceToken, SourceRevision: item.Coverage.SourceRevision, Point: &item.Points[0], Evidence: item.Evidence}
+	selection := ports.HistorySourceSelection{ConversationID: "conversation", Provider: Name, Native: item.Native, SourceToken: item.SourceToken, SourceRevision: item.Coverage.SourceRevision, SourceFingerprint: item.SourceFingerprint, Point: &item.Points[0], Evidence: item.Evidence}
 	read, err := provider.History().Read(context.Background(), selection)
 	require.NoError(t, err)
 	require.Len(t, read.Turns, 2)

@@ -98,7 +98,8 @@ func discoverRollout(stateRoot, transcript string, scope ports.HistoryDiscoveryS
 		content = model.HistoryCoveragePartial
 	}
 	ev, _ := model.NewProviderEvidence(Name, evidenceVersion, tokenRaw)
-	return &ports.DiscoveredHistory{Native: model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: head.ID, ObservedAt: time.Now().UTC()}, SourceToken: string(tokenRaw), Title: head.Title, WorkspaceHint: head.CWD, ModifiedAt: modified, Availability: model.HistoryContent, Coverage: model.HistoryCoverage{Metadata: model.HistoryCoverageComplete, Content: content, SourceRevision: revision, RefreshedAt: time.Now().UTC()}, Points: head.Points, Evidence: ev}, nil
+	token := sourceToken{StateRoot: stateRoot, SessionID: head.ID, Transcript: transcript}
+	return &ports.DiscoveredHistory{Native: model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: head.ID, ObservedAt: time.Now().UTC()}, SourceToken: string(tokenRaw), SourceFingerprint: sourceFingerprint(token), Title: head.Title, WorkspaceHint: head.CWD, ModifiedAt: modified, Availability: model.HistoryContent, Coverage: model.HistoryCoverage{Metadata: model.HistoryCoverageComplete, Content: content, SourceRevision: revision, RefreshedAt: time.Now().UTC()}, Points: head.Points, Evidence: ev}, nil
 }
 func parseRolloutHead(raw []byte) (rolloutHead, bool) {
 	var result rolloutHead
@@ -163,6 +164,9 @@ func (h historyReader) Read(ctx context.Context, selection ports.HistorySourceSe
 	}
 	if filepath.Clean(token.StateRoot) != h.provider.nativeHome || !pathWithin(token.StateRoot, token.Transcript) || token.SessionID != selection.Native.Reference {
 		return ports.HistoryReadResult{}, fmt.Errorf("Codex history source is outside provider storage")
+	}
+	if selection.SourceFingerprint != sourceFingerprint(token) {
+		return ports.HistoryReadResult{}, fmt.Errorf("Codex history source fingerprint changed")
 	}
 	raw, err := verifyHistorySelection(selection, token)
 	if err != nil {
@@ -273,6 +277,9 @@ func decodeSourceToken(raw string) (sourceToken, error) {
 	return token, nil
 }
 func digest(raw []byte) string { sum := sha256.Sum256(raw); return hex.EncodeToString(sum[:]) }
+func sourceFingerprint(token sourceToken) string {
+	return digest([]byte(Name + "\x00" + NativeNamespace + "\x00" + filepath.Clean(token.StateRoot) + "\x00" + token.SessionID + "\x00" + filepath.Clean(token.Transcript)))
+}
 func parseTime(value string) time.Time {
 	parsed, _ := time.Parse(time.RFC3339Nano, value)
 	return parsed.UTC()
