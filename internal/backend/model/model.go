@@ -111,6 +111,13 @@ type NativeConversationEvidence struct {
 
 type ExecutionState string
 
+type ExecutionWorkloadKind string
+
+const (
+	ExecutionWorkloadAgent ExecutionWorkloadKind = "agent"
+	ExecutionWorkloadShell ExecutionWorkloadKind = "shell"
+)
+
 const (
 	ExecutionReserved ExecutionState = "reserved"
 	ExecutionPrepared ExecutionState = "prepared"
@@ -123,6 +130,7 @@ const (
 
 type Execution struct {
 	ID                 ExecutionID
+	Workload           ExecutionWorkloadKind
 	AgentID            AgentID
 	ConversationID     ConversationID
 	Spec               ResolvedExecutionSpec
@@ -141,6 +149,7 @@ type Execution struct {
 // implementations consume it but must not reinterpret desired configuration.
 type ResolvedExecutionSpec struct {
 	ExecutionID      ExecutionID
+	Workload         ExecutionWorkloadKind
 	Attempt          AttemptGeneration
 	AgentID          AgentID
 	ConversationID   ConversationID
