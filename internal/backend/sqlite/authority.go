@@ -385,7 +385,7 @@ func defaultAuthority(principal model.Principal, action model.Action, resource m
 	if principal.Kind != model.PrincipalExecution && principal.Kind != model.PrincipalAgent {
 		return false
 	}
-	if action != model.ActionReadIdentity && action != model.ActionReadStatus && action != model.ActionReadInbox && action != model.ActionMarkInboxRead {
+	if action != model.ActionReadIdentity && action != model.ActionReadStatus && action != model.ActionReadInbox && action != model.ActionMarkInboxRead && action != model.ActionReadUsage && action != model.ActionRefreshUsage && action != model.ActionReadActivity {
 		return false
 	}
 	switch resource.Kind {
