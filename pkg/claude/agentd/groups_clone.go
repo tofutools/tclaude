@@ -132,6 +132,18 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			return
 		}
 		srcSettings.MaxMembers = *body.MaxMembers
+		if !body.NoCloneMembers && *body.MaxMembers > 0 {
+			liveMembers := 0
+			for _, member := range srcMembers {
+				if pickAliveSession(member.ConvID) != nil {
+					liveMembers++
+				}
+			}
+			if liveMembers > *body.MaxMembers {
+				writeError(w, http.StatusBadRequest, "invalid_arg", "max members is smaller than the number of source agents to clone")
+				return
+			}
+		}
 	}
 	if body.RepositoryClone != nil && caller != "" {
 		writeError(w, http.StatusForbidden, "human_required", "repository cloning during group creation is available only to the dashboard human")
