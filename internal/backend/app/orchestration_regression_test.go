@@ -430,9 +430,9 @@ type disableMessageAdmissionStore struct {
 	before func()
 }
 
-func (s disableMessageAdmissionStore) CreateMessage(ctx context.Context, message model.Message, requestID model.RequestID, operationID model.OperationID, authority []model.AuthorityRequest) (app.MessageAdmissionResult, error) {
+func (s disableMessageAdmissionStore) CreateMessage(ctx context.Context, admission app.MessageAdmission) (app.MessageAdmissionResult, error) {
 	s.before()
-	return s.Store.CreateMessage(ctx, message, requestID, operationID, authority)
+	return s.Store.CreateMessage(ctx, admission)
 }
 
 type disableTeamAdmissionStore struct {
