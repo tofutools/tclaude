@@ -383,6 +383,13 @@ func cleanAbsolute(path string) (string, error) {
 	}
 	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
 		abs = resolved
+	} else if errors.Is(err, os.ErrNotExist) {
+		// A checkout target is normally absent. Resolve its existing parent so
+		// macOS /var and /private/var (and equivalent symlinked parents) have
+		// one stable identity before creation and again after removal.
+		if parent, parentErr := filepath.EvalSymlinks(filepath.Dir(abs)); parentErr == nil {
+			abs = filepath.Join(parent, filepath.Base(abs))
+		}
 	}
 	return abs, nil
 }
