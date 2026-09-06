@@ -38,9 +38,15 @@ func command() *cobra.Command {
 	var state string
 	var initialize bool
 	var harnesses []string
+	var sources []string
+	var workspaces bool
+	var shell string
 	cmd.Flags().StringVar(&state, "state-dir", "", "Absolute private development state directory (required)")
 	cmd.Flags().BoolVar(&initialize, "init", false, "Initialize a new directory and exit")
 	cmd.Flags().StringSliceVar(&harnesses, "harness", nil, "Providers to register: claude,codex,opencode,copilot; omit for offline catalog only")
+	cmd.Flags().StringArrayVar(&sources, "history-source", nil, "Named native history source: harness:name=/absolute/path")
+	cmd.Flags().BoolVar(&workspaces, "workspaces", false, "Enable owned Git checkout operations")
+	cmd.Flags().StringVar(&shell, "shell", "", "Enable standalone shells with this operator-selected executable")
 	_ = cmd.MarkFlagRequired("state-dir")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) != 0 {
@@ -53,7 +59,11 @@ func command() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return server.Serve(cmd.Context(), state, registry)
+		journey, err := journeyServices(state, harnesses, sources, workspaces, shell)
+		if err != nil {
+			return err
+		}
+		return server.Serve(cmd.Context(), state, registry, journey)
 	}
 	return cmd
 }
