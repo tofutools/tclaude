@@ -112,6 +112,9 @@ func bgLaunchHook(conv, cwd, command, taskID string) session.HookCallbackInput {
 // launch real child processes and keep exercising production enumeration.
 func stubLiveBgShellCommands(t *testing.T, commands ...string) {
 	t.Helper()
+	t.Cleanup(agentd.SetBackgroundMainProcessInstanceForTest(func(pid int) (string, bool) {
+		return fmt.Sprintf("test-process:%d", pid), true
+	}))
 	t.Cleanup(agentd.SetBgShellDescendantCommandLinesForTest(func(int) ([]string, bool) {
 		return append([]string(nil), commands...), true
 	}))
@@ -252,12 +255,20 @@ func TestDashboardSnapshot_BgShellReconcileRetiresAFinishedCommand(t *testing.T)
 	assert.Equal(t, session.StatusMainAgentIdle, got.State.Status,
 		"the surviving command still keeps the agent off plain idle")
 
-	// The retirement is persisted, not just filtered at read time, so the
-	// ghost is gone for good rather than re-derived every poll.
+	// Dashboard reads report the fresh observation without mutating SQLite.
 	row, err := db.LoadSession(label)
 	require.NoError(t, err)
 	stored := db.ParseBgShellSet(row.BgShellsJSON)
-	assert.Len(t, stored, 1, "the dead entry was removed from the stored ledger")
+	assert.Len(t, stored, 2, "a GET must not mutate the stored ledger")
+
+	// The existing daemon reaper owns durable projection even when no
+	// dashboard is open; it may reuse the reader's immutable sample.
+	reaper := agentd.NewSessionReaperForTest(0, func(string, string) {})
+	reaper.TickAt(time.Now())
+	row, err = db.LoadSession(label)
+	require.NoError(t, err)
+	stored = db.ParseBgShellSet(row.BgShellsJSON)
+	assert.Len(t, stored, 1, "the daemon projector removes the dead entry")
 	_, ghostKept := stored["task-finished"]
 	assert.False(t, ghostKept)
 
@@ -275,6 +286,12 @@ func TestDashboardSnapshot_BgShellReconcileRetiresAFinishedCommand(t *testing.T)
 		"a finished background command clears the badge with no exit hook involved")
 	assert.Equal(t, session.StatusIdle, got.State.Status,
 		"and the agent settles to idle once nothing is left running")
+	agentd.ResetBgShellReconcileCacheForTest()
+	reaper.TickAt(time.Now().Add(time.Second))
+	row, err = db.LoadSession(label)
+	require.NoError(t, err)
+	assert.Empty(t, db.ParseBgShellSet(row.BgShellsJSON),
+		"the no-dashboard owner eventually persists the final completion")
 }
 
 // The dashboard polls every agent on every tick. A running background

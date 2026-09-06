@@ -992,17 +992,17 @@ jobs:
       - name: Test platform contracts
         run: go test ./pkg/claude/platform/...
 
-      - name: Test focused identity, authority, and lifecycle regressions
+      - name: Test focused identity, authority, lifecycle, and observation regressions
         shell: bash
         run: |
           go test ./pkg/claude/agentd \
-            -run '^(TestAgentIdentityForPID|TestManagedHookAdmission_|TestHookBroker_|TestStatuslineBroker_|TestRequireCrossAgentPermission|TestRequireSpawnPermission|TestSpawnAuthority|TestCronSpawn|TestTriggerSpawn|TestFreshLaunchConfiguration|TestLifecycleInheritedAuthority_(ResumePinsTargetOwnedDirectory|UsesLivePanePhysicalCwd|ReadOnlyCwdNeedsNoDaemonMarker)|TestExecutionRuntime|TestResumeReconcile_|TestHandleAgentStop_(SkipsOfflineTarget|NoSlugDenies)|TestDelete_FailedSoftExitThenNaturalCloseProceeds)' \
+            -run '^(TestAgentIdentityForPID|TestManagedHookAdmission_|TestHookBroker_|TestStatuslineBroker_|TestRequireCrossAgentPermission|TestRequireSpawnPermission|TestSpawnAuthority|TestCronSpawn|TestTriggerSpawn|TestFreshLaunchConfiguration|TestLifecycleInheritedAuthority_(ResumePinsTargetOwnedDirectory|UsesLivePanePhysicalCwd|ReadOnlyCwdNeedsNoDaemonMarker)|TestExecutionRuntime|TestResumeReconcile_|TestHandleAgentStop_(SkipsOfflineTarget|NoSlugDenies)|TestDelete_FailedSoftExitThenNaturalCloseProceeds|TestObserveBackgroundWork|TestResolveBackgroundObservation|TestDashboardAndTerminalStatusShareReadOnlyBackgroundObservation|TestSessionReaper_(ProjectsFinishedShellWithoutDashboard|RefreshesLiveBackgroundLedgerBeforeStopWithoutDashboard|ExpiredBackgroundShellWithUnknownScanDoesNotEstablishIdle))' \
             -count=1
           go test ./pkg/claude/session \
-            -run '^(TestExecutionIDResetsPredecessorAuthorityBeforePrivateTokenFailure|TestManagedResumeGate_)' \
+            -run '^(TestExecutionIDResetsPredecessorAuthorityBeforePrivateTokenFailure|TestManagedResumeGate_|TestReconcileBackground)' \
             -count=1
           go test ./pkg/claude/common/db \
-            -run '^(TestMigrateV227toV228|TestResumeOperation|TestResumeGate|TestClaimResumeOperation|TestAdmitConversationBindingResume)' \
+            -run '^(TestMigrateV227toV228|TestResumeOperation|TestResumeGate|TestClaimResumeOperation|TestAdmitConversationBindingResume|TestProjectSessionBackgroundLedgers|TestSetSessionStatusFromBackgroundProjection)' \
             -count=1
 
   # Credential-free GitHub Copilot CLI regression smoke (TCL-1046).
