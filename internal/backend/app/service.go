@@ -29,21 +29,23 @@ type Service struct {
 	workspaceHost    ports.WorkspaceHost
 	historySources   ports.HistorySourceRegistry
 	shellHost        ports.ShellHost
+	programHost      ports.ProgramHost
 	now              func() time.Time
 	newID            IDGenerator
 	accessLease      time.Duration
 	agentAPIEndpoint string
 	callbackIngress  ports.CallbackIngress
 
-	runtimeMu    sync.RWMutex
-	runtimes     map[model.ExecutionID]ports.Runtime
-	hostRuntimes map[model.ExecutionID]ports.HostRuntime
+	runtimeMu       sync.RWMutex
+	runtimes        map[model.ExecutionID]ports.Runtime
+	hostRuntimes    map[model.ExecutionID]ports.HostRuntime
+	programRuntimes map[model.ExecutionID]ports.ProgramRuntime
 }
 
 func New(store Store, providers ports.ProviderRegistry) *Service {
 	return &Service{
 		store: store, providers: providers, now: time.Now, newID: randomID, accessLease: 24 * time.Hour,
-		runtimes: make(map[model.ExecutionID]ports.Runtime), hostRuntimes: make(map[model.ExecutionID]ports.HostRuntime),
+		runtimes: make(map[model.ExecutionID]ports.Runtime), hostRuntimes: make(map[model.ExecutionID]ports.HostRuntime), programRuntimes: make(map[model.ExecutionID]ports.ProgramRuntime),
 	}
 }
 
@@ -63,6 +65,11 @@ func (s *Service) WithHistorySources(sources ports.HistorySourceRegistry) *Servi
 
 func (s *Service) WithShellHost(host ports.ShellHost) *Service {
 	s.shellHost = host
+	return s
+}
+
+func (s *Service) WithProgramHost(host ports.ProgramHost) *Service {
+	s.programHost = host
 	return s
 }
 
@@ -682,6 +689,12 @@ func (s *Service) Recover(ctx context.Context, req RecoverRequest) (RecoveryRepo
 	}
 	var report RecoveryReport
 	for _, execution := range executions {
+		if execution.Workload == model.ExecutionWorkloadProgram {
+			if err := s.recoverProgramExecution(ctx, execution, &report); err != nil {
+				return RecoveryReport{}, err
+			}
+			continue
+		}
 		if execution.Workload == model.ExecutionWorkloadShell {
 			record, recordErr := s.store.ShellRecovery(ctx, execution.ID)
 			if recordErr != nil || s.shellHost == nil {

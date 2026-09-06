@@ -421,9 +421,10 @@ CREATE TABLE IF NOT EXISTS work_node_attempts (
   retry_budget INTEGER NOT NULL, join_winner TEXT NOT NULL DEFAULT '', decision_id TEXT NOT NULL DEFAULT '',
   outcome TEXT NOT NULL DEFAULT '', detail TEXT NOT NULL DEFAULT '', created_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL, settled_at INTEGER,
-  PRIMARY KEY(work_run_id,node_id,activation_id,attempt), UNIQUE(issuance_id)
+  PRIMARY KEY(work_run_id,node_id,activation_id,attempt)
 );
 CREATE INDEX IF NOT EXISTS work_node_attempts_ready ON work_node_attempts(state,ready_at,retry_at);
+CREATE UNIQUE INDEX IF NOT EXISTS work_node_attempts_issuance ON work_node_attempts(issuance_id) WHERE issuance_id <> '';
 CREATE TABLE IF NOT EXISTS work_node_evidence (
   id TEXT PRIMARY KEY, request_scope TEXT NOT NULL, request_id TEXT NOT NULL,
   work_run_id TEXT NOT NULL, node_id TEXT NOT NULL, activation_id TEXT NOT NULL,
@@ -896,7 +897,7 @@ func (s *Store) Execution(ctx context.Context, id model.ExecutionID) (model.Exec
 }
 
 func (s *Store) RecoverableExecutions(ctx context.Context) ([]model.Execution, error) {
-	rows, err := s.db.QueryContext(ctx, executionSelect+` WHERE state IN (?,?,?,?) ORDER BY created_at`, model.ExecutionPrepared, model.ExecutionReleased, model.ExecutionRunning, model.ExecutionUnknown)
+	rows, err := s.db.QueryContext(ctx, executionSelect+` WHERE state IN (?,?,?,?) OR (workload_kind=? AND state IN (?,?) AND EXISTS(SELECT 1 FROM workspace_uses u WHERE u.execution_id=executions.id AND u.released_at IS NULL)) ORDER BY created_at`, model.ExecutionPrepared, model.ExecutionReleased, model.ExecutionRunning, model.ExecutionUnknown, model.ExecutionWorkloadProgram, model.ExecutionExited, model.ExecutionFailed)
 	if err != nil {
 		return nil, err
 	}

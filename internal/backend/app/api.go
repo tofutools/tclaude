@@ -62,6 +62,7 @@ type OrchestrationAPI interface {
 	GetProgramProfile(context.Context, GetProgramProfileRequest) (ProgramProfileResult, error)
 	ListProgramProfiles(context.Context, ListProgramProfilesRequest) ([]model.ProgramProfile, error)
 	StartProcess(context.Context, StartProcessRequest) (WorkRunResult, error)
+	RecordNodeEvidence(context.Context, RecordNodeEvidenceRequest) (WorkRunResult, error)
 	GetDecision(context.Context, GetDecisionRequest) (DecisionResult, error)
 	ListPendingDecisions(context.Context, ListPendingDecisionsRequest) ([]DecisionResult, error)
 	SubmitDecision(context.Context, SubmitDecisionRequest) (DecisionResult, error)
@@ -69,6 +70,9 @@ type OrchestrationAPI interface {
 	GetAutomationRule(context.Context, GetAutomationRuleRequest) (AutomationRuleResult, error)
 	ListAutomationRules(context.Context, ListAutomationRulesRequest) ([]model.AutomationRule, error)
 	RunRuleNow(context.Context, RunRuleNowRequest) (OccurrenceResult, error)
+	ObserveAutomationFact(context.Context, ObserveAutomationFactRequest) ([]OccurrenceResult, error)
+	DeployTeam(context.Context, DeployTeamRequest) (TeamDeploymentResult, error)
+	GetTeamDeployment(context.Context, GetTeamDeploymentRequest) (TeamDeploymentResult, error)
 	ListOccurrences(context.Context, ListOccurrencesRequest) ([]OccurrenceResult, error)
 }
 
@@ -149,6 +153,17 @@ type StartProcessRequest struct {
 	Start   model.WorkStart
 }
 
+type RecordNodeEvidenceRequest struct {
+	Context             RequestContext
+	Attempt             model.WorkAttemptRef
+	ExpectedRunRevision model.Revision
+	Kind                model.WorkEvidenceKind
+	ArtifactRevision    string
+	Passed              *bool
+	Disposition         model.WorkOutcome
+	Detail              string
+}
+
 type GetDecisionRequest struct {
 	Principal  model.Principal
 	DecisionID model.DecisionID
@@ -208,6 +223,24 @@ type RunRuleNowRequest struct {
 	SourceOccurrenceKey  string
 	Recipients           []model.AgentID
 }
+
+type ObserveAutomationFactRequest struct {
+	Principal model.Principal
+	Fact      model.NormalizedFact
+}
+
+type DeployTeamRequest struct {
+	Context       RequestContext
+	DeploymentID  model.DeploymentID
+	Instantiation model.TeamInstantiation
+}
+
+type GetTeamDeploymentRequest struct {
+	Principal    model.Principal
+	DeploymentID model.DeploymentID
+}
+
+type TeamDeploymentResult struct{ Deployment model.TeamDeployment }
 
 type OccurrenceResult struct{ Occurrence model.AutomationOccurrence }
 
@@ -517,6 +550,7 @@ type ResolveWorkUncertaintyRequest struct {
 }
 
 type WorkReconcileReport struct {
-	Pending   []model.WorkRunID
-	Uncertain []model.WorkRunID
+	Pending     []model.WorkRunID
+	Uncertain   []model.WorkRunID
+	Occurrences []model.OccurrenceID
 }
