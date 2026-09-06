@@ -3,11 +3,10 @@ package agentd
 import "testing"
 
 // TestDashboardHTML_GroupCloneModal pins clone-group wiring into the shared
-// group-creation modal.
-// the embedded dashboard source. Clicking ⧉ clone… in a group's ⚙ cog
-// menu opens the Preact-owned parameters modal: an editable new-name (prefilled
-// with the computed <source>-c-N default), clone-scope checkboxes, and a live
-// preview of every setting the clone will carry.
+// group-creation modal. Clicking ⧉ clone… in a group's ⚙ cog menu opens
+// the same source-first Preact form as every other group-create entry point,
+// prefilled with the source, placement, next clone name, clone-scope controls,
+// and a live preview of every setting the clone will carry.
 func TestDashboardHTML_GroupCloneModal(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -26,12 +25,15 @@ func TestDashboardHTML_GroupCloneModal(t *testing.T) {
 	must(`id="group-create-with-agents"`, "clone mode has a clone-agents checkbox")
 	must(`id="group-create-copy-owners"`, "clone mode has an explicit copy-owners checkbox")
 	must(`id="group-create-source-summary"`, "the shared modal has a source summary panel")
-	must(`id=${cloneMode ? 'group-create-clone-submit'`, "clone mode has a distinct submit button")
+	must(`class="group-create-origin-options"`, "the shared modal exposes the source-first selector")
+	must(`id="group-create-group-source"`, "the source group is visibly selectable")
+	must(`id="group-create-placement"`, "placement is editable in every create flow")
+	must(`id="group-create-submit"`, "clone mode uses the shared create submit button")
 	// The Preact-controlled `checked=${withAgents}` attribute is dynamic, so its
 	// unchecked initial value is asserted behaviorally in the JS component test.
 
 	// The JS behaviour: default-name computation, preview render, and the POST.
-	must("defaultName: `${prefix}${suffix}`", "client computes the <source>-c-N default name")
+	must("defaultName: nextGroupCloneName(groups, groupName)", "client computes the <source>-c-N default name")
 	must("function GroupSourceSummary(", "the shared Preact modal renders a source summary")
 	must("source.attachment_url", "the preview discloses the attachment copied with group settings")
 	must("no_clone_members", "submit sends the with/without-agents flag")

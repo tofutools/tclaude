@@ -84,12 +84,12 @@ func TestDashboardHTML_OptionsMenu(t *testing.T) {
     onClose=${state.close}
     onSubmitHotkey=${submit}`,
 		"the subgroup create dialog submits through the shared Ctrl/Cmd+Enter hotkey")
-	must(`parent ? parentPrefill(null, parent)`,
-		"switching a subgroup form back to blank restores the parent's editable defaults")
-	must(`parentPrefill(template, parent)`,
-		"selecting a template keeps the pinned parent authoritative and combines its startup context")
-	must(`const sourceVisible = templateMode && !current.parentGroup;`,
-		"a pinned subgroup hides the template mirror-source selector that cannot affect its inherited defaults")
+	must(`? parentPrefill(template, parent)`,
+		"the subgroup entry point initializes editable defaults from its parent")
+	must(`const source = findGroupCreateSource(groups, draft.source);`,
+		"later template changes derive their source from mutable draft state")
+	must(`const sourceVisible = templateMode;`,
+		"template mirroring remains editable after entering through the subgroup shortcut")
 	must(".spawn-btn {", "the .spawn-btn CSS rule ships with the dashboard — without it the chip falls back to bare browser styling")
 	must("details[open] > summary .spawn-btn { opacity: 1; }",
 		"spawn-btn fades with the rest of the group-action chips when the group is collapsed, brightens on hover / when open")

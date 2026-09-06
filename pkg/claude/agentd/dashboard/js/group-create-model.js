@@ -21,6 +21,18 @@ export function findGroupCreateSource(groups, name) {
   return (groups || []).find((group) => group?.name === name) || null;
 }
 
+export function nextGroupCloneName(groups, groupName) {
+  const match = /^(.*?)-(?:c|clone)-\d+$/.exec(text(groupName));
+  const prefix = `${match ? match[1] : text(groupName)}-c-`;
+  const used = new Set((groups || [])
+    .filter((item) => item?.name?.startsWith(prefix))
+    .map((item) => Number.parseInt(item.name.slice(prefix.length), 10))
+    .filter(Number.isInteger));
+  let suffix = 1;
+  while (used.has(suffix)) suffix += 1;
+  return `${prefix}${suffix}`;
+}
+
 function sourcePrefill(template, source) {
   if (!source) {
     return {
@@ -66,17 +78,22 @@ export function createGroupCreateDraft({
 } = {}) {
   const template = findGroupCreateTemplate(templates, presetTemplate);
   const parent = findGroupCreateSource(groups, parentGroup);
+  const cloneSource = findGroupCreateSource(groups, cloneGroup);
   const prefill = parent
     ? parentPrefill(template, parent)
-    : sourcePrefill(template, null);
+    : sourcePrefill(template, cloneSource);
+  const origin = cloneGroup ? 'group' : template ? 'template' : parentGroup ? 'group' : 'blank';
   return {
+    origin,
     template: template?.name || '',
     name: cloneGroup ? text(defaultName) : '',
-    source: '',
+    source: text(cloneGroup || parentGroup),
     nested: false,
     cloneGroup: text(cloneGroup),
+    clonePreset: !!cloneGroup,
     cloneDefaultName: text(defaultName),
     clonePlacement: placement,
+    parent: text(placement?.parent ?? parentGroup),
     withAgents: false,
     copyOwners: false,
     descr: prefill.descr,
@@ -100,12 +117,11 @@ export function createGroupCreateDraft({
 // template-to-template switches. A source- or parent-derived cwd is replaced
 // with the new source's value instead of leaking into an incompatible mode.
 export function selectGroupCreateTemplate(draft, templateName, {
-  templates = [], groups = [], parentGroup = '',
+  templates = [], groups = [],
 } = {}) {
   const template = findGroupCreateTemplate(templates, templateName);
-  const parent = findGroupCreateSource(groups, parentGroup);
   if (!template) {
-    const prefill = parent ? parentPrefill(null, parent) : {
+    const prefill = {
       descr: '', context: '',
       cwd: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwd,
       cwdOrigin: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwdOrigin,
@@ -113,16 +129,13 @@ export function selectGroupCreateTemplate(draft, templateName, {
     };
     return {
       ...draft,
-      template: '', source: '', nested: false, task: '',
+      origin: 'blank', template: '', source: '', nested: false, task: '',
+      cloneGroup: '', clonePreset: false,
       ...prefill,
     };
   }
-  const source = parent
-    ? null
-    : findGroupCreateSource(groups, draft.source);
-  const prefill = parent
-    ? parentPrefill(template, parent)
-    : source
+  const source = findGroupCreateSource(groups, draft.source);
+  const prefill = source
       ? sourcePrefill(template, source)
       : {
           descr: text(template.descr),
@@ -133,19 +146,38 @@ export function selectGroupCreateTemplate(draft, templateName, {
         };
   return {
     ...draft,
+    origin: 'template',
     template: template.name,
-    source: parent ? '' : source?.name || '',
-    nested: parent ? false : !!source && draft.nested,
+    source: source?.name || '',
+    cloneGroup: '', clonePreset: false,
+    nested: !!source && draft.nested,
     ...prefill,
   };
 }
 
 export function selectGroupCreateSource(draft, sourceName, {
-  templates = [], groups = [], parentGroup = '',
+  templates = [], groups = [],
 } = {}) {
   const template = findGroupCreateTemplate(templates, draft.template);
-  if (!template || parentGroup) return { ...draft, source: '', nested: false };
   const source = findGroupCreateSource(groups, sourceName);
+  if (draft.origin === 'group') {
+    const exactClone = draft.clonePreset;
+    const cloneDefaultName = exactClone && source
+      ? nextGroupCloneName(groups, source.name) : draft.cloneDefaultName;
+    return {
+      ...draft,
+      source: source?.name || '',
+      cloneGroup: exactClone ? source?.name || '' : '',
+      cloneDefaultName,
+      clonePlacement: exactClone ? {
+        ...(draft.clonePlacement || {}), anchor: source?.name || '',
+      } : draft.clonePlacement,
+      name: exactClone && source ? cloneDefaultName : draft.name,
+      nested: false,
+      ...sourcePrefill(null, source),
+    };
+  }
+  if (!template) return { ...draft, source: '', nested: false };
   const prefill = source
     ? sourcePrefill(template, source)
     : {
@@ -163,6 +195,37 @@ export function selectGroupCreateSource(draft, sourceName, {
   };
 }
 
+export function selectGroupCreateOrigin(draft, origin, {
+  templates = [], groups = [],
+} = {}) {
+  if (origin === 'template') {
+    const templateName = draft.template || templates[0]?.name || '';
+    if (!templateName) {
+      return { ...draft, origin: 'template', cloneGroup: '', clonePreset: false };
+    }
+    return selectGroupCreateTemplate({ ...draft, cloneGroup: '' }, templateName, {
+      templates, groups,
+    });
+  }
+  if (origin === 'group') {
+    const sourceName = draft.source || draft.parent || groups[0]?.name || '';
+    return selectGroupCreateSource({
+      ...draft, origin: 'group', template: '', task: '',
+    }, sourceName, { templates, groups });
+  }
+  const prefill = {
+    descr: '', context: '',
+    cwd: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwd,
+    cwdOrigin: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwdOrigin,
+    attachmentURL: '', attachmentLabel: '',
+  };
+  return {
+    ...draft,
+    origin: 'blank', template: '', source: '', nested: false, task: '',
+    cloneGroup: '', clonePreset: false, ...prefill,
+  };
+}
+
 export function reconcileGroupCreateTemplates(draft, options = {}) {
   if (!draft.template || findGroupCreateTemplate(options.templates, draft.template)) {
     return draft;
@@ -172,7 +235,7 @@ export function reconcileGroupCreateTemplates(draft, options = {}) {
 
 export function groupCreateDraftIsDirty(draft, baseline) {
   const keys = [
-    'template', 'name', 'source', 'nested', 'descr', 'cwd',
+    'origin', 'template', 'name', 'source', 'nested', 'parent', 'descr', 'cwd',
     'withAgents', 'copyOwners',
     'workspaceMode', 'repository', 'cloneTransport', 'cloneDestination',
     'attachRepository',
@@ -184,7 +247,8 @@ export function groupCreateDraftIsDirty(draft, baseline) {
 
 export function validateGroupCreateDraft(draft, { templateMode = false } = {}) {
   if (!text(draft.name).trim()) return 'name is required';
-  if (draft.cloneGroup && !text(draft.cloneGroup).trim()) return 'source group is required';
+  if (draft.origin === 'group' && !text(draft.source).trim()) return 'source group is required';
+  if (draft.origin === 'template' && !text(draft.template).trim()) return 'group template is required';
   if (draft.workspaceMode === 'clone') {
     if (!text(draft.repository).trim()) return 'repository is required';
     if (!text(draft.cloneDestination).trim()) return 'clone destination is required';
@@ -200,17 +264,21 @@ export function validateGroupCreateDraft(draft, { templateMode = false } = {}) {
 
 export function groupCreateRequest(draft, template, parentGroup = '') {
   const name = text(draft.name).trim();
+  const parent = Object.prototype.hasOwnProperty.call(draft, 'parent')
+    ? text(draft.parent) : text(parentGroup);
   if (draft.cloneGroup) {
     const body = {
       no_clone_members: !draft.withAgents,
       copy_owners: !!draft.copyOwners,
     };
     if (name !== text(draft.cloneDefaultName)) body.new_name = name;
-    if (draft.clonePlacement) body.parent = text(draft.clonePlacement.parent);
+    body.parent = parent;
     return {
       kind: 'clone', name,
       source: text(draft.cloneGroup),
-      placement: draft.clonePlacement,
+      placement: draft.clonePlacement ? {
+        ...draft.clonePlacement, parent,
+      } : null,
       withAgents: !!draft.withAgents,
       copyOwners: !!draft.copyOwners,
       url: `/api/groups/${encodeURIComponent(draft.cloneGroup)}/clone`,
@@ -231,7 +299,7 @@ export function groupCreateRequest(draft, template, parentGroup = '') {
       url: '/api/groups',
       body: {
         name,
-        parent: text(parentGroup),
+        parent,
         descr: text(draft.descr).trim(),
         default_cwd: cwd,
         default_context: text(draft.context).trim(),
@@ -256,7 +324,7 @@ export function groupCreateRequest(draft, template, parentGroup = '') {
     body.attachment_label = text(draft.attachmentLabel).trim();
   }
   if (repositoryClone) body.repository_clone = repositoryClone;
-  if (parentGroup) body.parent = parentGroup;
+  if (parent) body.parent = parent;
   else if (draft.source && draft.nested) body.parent = draft.source;
   return {
     kind: 'template', name,
