@@ -54,7 +54,7 @@ func TestDarwinListenerHelper(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:"+args[0])
 	require.NoError(t, err)
 	defer listener.Close()
-	select {}
+	waitForTestProcessStop()
 }
 
 func argumentsAfterDoubleDash(args []string) []string {
