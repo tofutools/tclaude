@@ -26,6 +26,7 @@ const (
 type Service struct {
 	store            Store
 	providers        ports.ProviderRegistry
+	workspaceHost    ports.WorkspaceHost
 	now              func() time.Time
 	newID            IDGenerator
 	accessLease      time.Duration
@@ -45,6 +46,11 @@ func New(store Store, providers ports.ProviderRegistry) *Service {
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
 
 func (s *Service) WithIDGenerator(generate IDGenerator) *Service { s.newID = generate; return s }
+
+func (s *Service) WithWorkspaceHost(host ports.WorkspaceHost) *Service {
+	s.workspaceHost = host
+	return s
+}
 
 func (s *Service) WithAccessLease(lease time.Duration) *Service {
 	if lease > 0 {

@@ -15,6 +15,7 @@ type (
 	RecipientID    string
 	RequestID      string
 	HistoryPointID string
+	HistoryUseID   string
 	WorkspaceID    string
 	WorkspaceUseID string
 	WorkRunID      string
@@ -39,6 +40,7 @@ func (id MessageID) Validate() error      { return ValidateStableID("message id"
 func (id RecipientID) Validate() error    { return ValidateStableID("recipient id", string(id)) }
 func (id RequestID) Validate() error      { return ValidateStableID("request id", string(id)) }
 func (id HistoryPointID) Validate() error { return ValidateStableID("history point id", string(id)) }
+func (id HistoryUseID) Validate() error   { return ValidateStableID("history use id", string(id)) }
 func (id WorkspaceID) Validate() error    { return ValidateStableID("workspace id", string(id)) }
 func (id WorkspaceUseID) Validate() error { return ValidateStableID("workspace use id", string(id)) }
 func (id WorkRunID) Validate() error      { return ValidateStableID("work run id", string(id)) }
