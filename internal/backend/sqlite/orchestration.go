@@ -503,10 +503,11 @@ func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTr
 		if transition.Execution.AgentID != "" {
 			var agentRevision model.Revision
 			var primary model.ExecutionID
-			if err = tx.QueryRowContext(ctx, `SELECT revision,primary_execution_id FROM agents WHERE id=?`, transition.Execution.AgentID).Scan(&agentRevision, &primary); err != nil {
+			var lifecycle model.AgentLifecycleState
+			if err = tx.QueryRowContext(ctx, `SELECT revision,primary_execution_id,lifecycle_state FROM agents WHERE id=?`, transition.Execution.AgentID).Scan(&agentRevision, &primary, &lifecycle); err != nil {
 				return app.WorkRunRecord{}, classify(err)
 			}
-			if transition.AgentExpected == 0 || agentRevision != transition.AgentExpected {
+			if transition.AgentExpected == 0 || agentRevision != transition.AgentExpected || lifecycle != model.AgentActive {
 				return app.WorkRunRecord{}, app.ErrConflict
 			}
 			if primary != "" {
