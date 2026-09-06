@@ -292,7 +292,7 @@ async function renderActivity(cursor='',append=false){
 }
 
 async function renderDecisions(){
- const results=await api('/v2/decisions'),list=$('decision-list');list.replaceChildren();
+ const [results,access]=await Promise.all([api('/v2/decisions'),api('/v2/access-requests')]),list=$('decision-list');list.replaceChildren();
  for(const result of results||[]){
   const window=result.Window,card=el('article',undefined,'card');
   card.append(el('h2',window.Question||'Decision'),el('p',`${window.Attempt.RunID} · ${window.Attempt.NodeID}`),el('p',`Expires ${new Date(window.ExpiresAt).toLocaleString()}`,'muted'));
@@ -301,7 +301,19 @@ async function renderDecisions(){
   })));
   list.append(card);
  }
- if(!results?.length)empty(list,'No decisions awaiting your answer.');
+ for(const item of access.requests||[]){
+  const request=item.request,decision=item.decision,card=el('article',undefined,'card');
+  card.dataset.accessRequest=request.id;
+  card.append(el('h2','Access request'),el('strong',request.action),el('p',`${request.requester.agent_id||request.requester.execution_id} · ${request.state}`),el('p',request.reason));
+  card.append(el('p',`Expires ${new Date(request.expires_at).toLocaleString()}`,'muted'),el('pre',JSON.stringify({resource:request.resource,bounds:request.bounds,requested_configuration:request.requested_configuration},null,2)));
+  if(decision.state==='open')card.append(button('Decide access',()=>edit('Decide exact access request',[
+   {name:'answer',label:'Decision',options:[{value:'deny',label:'Deny'},{value:'approve',label:'Approve requested access'}]},
+   {name:'reason',label:'Reason',multiline:true}
+  ],async f=>{await api(`/v2/access-requests/${encodeURIComponent(request.id)}/decision`,{request_id:f.requestID,expected_window_revision:decision.revision,answer:f.answer,reason:f.reason});await renderDecisions()})));
+  if(decision.submission)card.append(el('p',`${decision.submission.answer} · ${decision.submission.actor.kind}: ${decision.submission.reason}`));
+  list.append(card);
+ }
+ if(!list.childNodes.length)empty(list,'No decisions or access requests.');
 }
 async function renderDefinitions(){
  const definitions=await api('/v2/definitions'),list=$('definition-list');list.replaceChildren();
