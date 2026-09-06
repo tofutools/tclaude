@@ -36,6 +36,8 @@ func TestFreshLaunchConfigurationResolvesAliasAndCapturedPrecedence(t *testing.T
 	require.NotNil(t, got.Harness)
 	assert.Equal(t, "claude", got.Harness.Name)
 	assert.Equal(t, input.Profiles[0].Source, got.HarnessSelection.Source)
+	assert.Equal(t, int64(41), got.HarnessSelection.ProfileID)
+	assert.Equal(t, updated, got.HarnessSelection.ProfileUpdatedAt)
 	assert.Equal(t, "on", got.HarnessBuiltinMode.Selected)
 	assert.Equal(t, "on", got.HarnessBuiltinMode.Effective)
 	assert.Equal(t, "harness-builtin", got.SandboxImplementation.Selected)
