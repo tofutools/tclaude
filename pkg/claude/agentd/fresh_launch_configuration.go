@@ -85,17 +85,21 @@ const (
 )
 
 type freshLaunchSkippedChoice struct {
-	Source string
-	Field  string
-	Reason string
+	Source           string
+	Field            string
+	Reason           string
+	ProfileID        int64
+	ProfileUpdatedAt time.Time
 }
 
 type freshLaunchSelection struct {
-	Selected  string
-	Effective string
-	Source    string
-	State     freshLaunchValueState
-	Skipped   []freshLaunchSkippedChoice
+	Selected         string
+	Effective        string
+	Source           string
+	State            freshLaunchValueState
+	ProfileID        int64
+	ProfileUpdatedAt time.Time
+	Skipped          []freshLaunchSkippedChoice
 }
 
 type freshLaunchRefusalKind string
@@ -294,6 +298,8 @@ func resolveFreshLaunchConfiguration(
 	harnessName := harness.DefaultName
 	harnessSource := agent.ProvHarnessDefault
 	harnessState := freshLaunchInherited
+	var harnessProfileID int64
+	var harnessProfileUpdatedAt time.Time
 	if input.Request.Harness != "" {
 		harnessName, harnessSource = harnessOrDefault(input.Request.Harness), agent.ProvExplicit
 		harnessState = freshLaunchSelected
@@ -301,6 +307,8 @@ func resolveFreshLaunchConfiguration(
 		harnessName = harnessOrDefault(input.Profiles[0].Profile.Harness)
 		harnessSource = input.Profiles[0].Source
 		harnessState = freshLaunchSelected
+		harnessProfileID = input.Profiles[0].ID
+		harnessProfileUpdatedAt = input.Profiles[0].UpdatedAt
 	}
 	h, err := resolveSpawnHarness(harnessName)
 	if err != nil {
@@ -346,6 +354,7 @@ func resolveFreshLaunchConfiguration(
 		Harness: h,
 		HarnessSelection: freshLaunchSelection{
 			Selected: h.Name, Effective: h.Name, Source: harnessSource, State: harnessState,
+			ProfileID: harnessProfileID, ProfileUpdatedAt: harnessProfileUpdatedAt,
 		},
 		HarnessBuiltinMode: mode, SandboxImplementation: implementation,
 	}, nil
@@ -375,6 +384,7 @@ func resolveFreshLaunchString(
 		value, err := validate(raw)
 		if err == nil {
 			selection.Selected, selection.Source, selection.State = value, tier.Source, freshLaunchSelected
+			selection.ProfileID, selection.ProfileUpdatedAt = tier.ID, tier.UpdatedAt
 			return selection, nil
 		}
 		if profileMatchesHarness(&tier.Profile, harnessName) {
@@ -383,7 +393,8 @@ func resolveFreshLaunchString(
 		}
 		selection.Skipped = append(selection.Skipped, freshLaunchSkippedChoice{
 			Source: tier.Source, Field: field,
-			Reason: fmt.Sprintf("not valid for %s", harnessName),
+			Reason:    fmt.Sprintf("not valid for %s", harnessName),
+			ProfileID: tier.ID, ProfileUpdatedAt: tier.UpdatedAt,
 		})
 	}
 	return selection, nil
