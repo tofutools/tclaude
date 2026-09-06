@@ -30,6 +30,12 @@ import (
 type peerKey struct{}
 
 type permissionDefaultsKey struct{}
+type spawnAuthorityDecisionContextKey struct{}
+
+type spawnAuthorityPinEvidence struct {
+	Present bool
+	Pinned  bool
+}
 
 // withPermissionDefaults snapshots config-backed defaults before a caller
 // enters a global mutation lock. DB-backed grants/denies are still evaluated
@@ -884,19 +890,19 @@ func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	if classify(p) == classAgent {
 		state, err := db.AgentState(p.ConvID)
 		if err == nil && state != db.AgentStateRetired {
-			agentID, _ := db.AgentIDForConv(p.ConvID)
+			agentID, agentErr := db.AgentIDForConv(p.ConvID)
+			if agentErr != nil || agentID == "" {
+				writeError(w, http.StatusForbidden, "auth", "could not verify caller agent identity")
+				return "", false
+			}
 			decision, evalErr := (spawnAuthorityEvaluator{}).EvaluateSpawn(r.Context(), spawnAuthorityRequest{
 				Principal: spawnAuthorityPrincipal{Kind: authorityPrincipalAgent, AgentID: agentID, ConvID: p.ConvID},
 				Origin:    spawnAuthorityOrigin{Kind: "http"}, Action: actx,
 			}, permissionReadLegacy)
 			if evalErr == nil && decision.Outcome == spawnAuthorityAllowed {
+				*r = *r.WithContext(context.WithValue(r.Context(), spawnAuthorityDecisionContextKey{}, spawnAuthorityPinEvidence{Present: true, Pinned: decision.MatchedDims[ScopeDimSandboxProfile]}))
 				recordAuditPermissionScope(r, decision.AuthorizedSlug, decision.Matched)
 				recordAuthorizedPermission(r, decision.AuthorizedSlug, decision.LoadBearingSudo)
-				if decision.MatchedDims[ScopeDimSandboxProfile] {
-					r.Header.Set("X-Tclaude-Internal-Sandbox-Scope-Pinned", "1")
-				} else {
-					r.Header.Del("X-Tclaude-Internal-Sandbox-Scope-Pinned")
-				}
 				return p.ConvID, true
 			}
 			if allowed, slug, matched, authErr := spawnPermissionAllowsAction(r, p.ConvID, actx); authErr == nil && allowed {
@@ -942,8 +948,8 @@ func scopePinsDimension(r *http.Request, convID, slug string, actx ActionContext
 	if convID == "" || slug == "" {
 		return false
 	}
-	if dim == ScopeDimSandboxProfile && r.Header.Get("X-Tclaude-Internal-Sandbox-Scope-Pinned") == "1" {
-		return true
+	if evidence, ok := r.Context().Value(spawnAuthorityDecisionContextKey{}).(spawnAuthorityPinEvidence); ok && evidence.Present {
+		return dim == ScopeDimSandboxProfile && evidence.Pinned
 	}
 	eval := evalPermissionScope(resolvePermissionVerdictForRequest(r, convID, slug), convID, actx)
 	if eval.Unscoped || !eval.Satisfied {
