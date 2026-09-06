@@ -3,7 +3,9 @@
 package claude
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,9 +15,19 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
 )
+
+type observationSink struct {
+	values []ports.PrimaryContextEvidence
+}
+
+func (s *observationSink) ObservePrimaryContext(_ context.Context, evidence ports.PrimaryContextEvidence) error {
+	s.values = append(s.values, evidence)
+	return nil
+}
 
 type testPermit struct {
 	execution model.ExecutionID
@@ -130,4 +142,85 @@ func TestProviderRefusesUnsupportedReadOnlyConfinement(t *testing.T) {
 			WorkingDirectory: root, Approval: model.ApprovalSupervised, Sandbox: model.SandboxReadOnly},
 	})
 	require.ErrorContains(t, err, "does not enforce")
+}
+
+func TestClaudeSessionStartIngressClassifiesPrimaryAndRejectsNestedEvents(t *testing.T) {
+	spool, err := host.PrepareObservationSpool(filepath.Join(t.TempDir(), "observations"))
+	require.NoError(t, err)
+	sink := &observationSink{}
+	initialID := "43e874eb-4827-4b22-b1b8-376a5e5e553f"
+	runtime := &Runtime{
+		executionID: "execution_observed", attempt: 4, nativeID: initialID,
+		intent: ports.StartFresh, observations: sink, spool: spool,
+	}
+
+	writeClaudeHookEvent(t, spool.Directory(), sessionStartEvent{
+		SessionID: initialID, HookEventName: "SessionStart", Source: "startup",
+	})
+	_, err = runtime.consumeObservationEvents(context.Background(), nil)
+	require.NoError(t, err)
+	require.True(t, runtime.contextReady)
+	require.Len(t, sink.values, 1)
+	require.Equal(t, ports.PrimaryContextInitial, sink.values[0].Disposition)
+	require.Equal(t, model.AttemptGeneration(4), sink.values[0].Attempt)
+
+	writeClaudeHookEvent(t, spool.Directory(), sessionStartEvent{
+		SessionID: initialID, HookEventName: "SessionStart", Source: "startup", AgentID: "nested-agent",
+	})
+	_, err = runtime.consumeObservationEvents(context.Background(), nil)
+	require.NoError(t, err)
+	require.Len(t, sink.values, 1, "subagent hook input must not become primary evidence")
+
+	unexpectedID := "27277385-c996-4311-98b8-e3f677660207"
+	writeClaudeHookEvent(t, spool.Directory(), sessionStartEvent{
+		SessionID: unexpectedID, HookEventName: "SessionStart", Source: "resume",
+	})
+	_, err = runtime.consumeObservationEvents(context.Background(), nil)
+	require.NoError(t, err)
+	require.Equal(t, initialID, runtime.nativeID)
+	require.Equal(t, ports.PrimaryContextUnresolved, sink.values[1].Disposition)
+}
+
+func TestClaudeClearRequiresPendingTransitionBeforeRotatingNativeBinding(t *testing.T) {
+	spool, err := host.PrepareObservationSpool(filepath.Join(t.TempDir(), "observations"))
+	require.NoError(t, err)
+	sink := &observationSink{}
+	initialID := "43e874eb-4827-4b22-b1b8-376a5e5e553f"
+	nextID := "27277385-c996-4311-98b8-e3f677660207"
+	runtime := &Runtime{
+		executionID: "execution_reset", attempt: 8, nativeID: initialID, contextReady: true,
+		intent: ports.StartFresh, observations: sink, spool: spool,
+	}
+
+	writeClaudeHookEvent(t, spool.Directory(), sessionStartEvent{
+		SessionID: nextID, HookEventName: "SessionStart", Source: "clear",
+	})
+	confirmed, err := runtime.consumeObservationEvents(context.Background(), nil)
+	require.NoError(t, err)
+	require.False(t, confirmed)
+	require.Equal(t, initialID, runtime.nativeID)
+	require.Equal(t, ports.PrimaryContextUnresolved, sink.values[0].Disposition)
+
+	writeClaudeHookEvent(t, spool.Directory(), sessionStartEvent{
+		SessionID: nextID, HookEventName: "SessionStart", Source: "clear",
+	})
+	confirmed, err = runtime.consumeObservationEvents(context.Background(), &ports.ContextChange{
+		Intent: ports.ContextReset, ExpectedConversation: "conversation_old", ExpectedAssociationRevision: 7,
+	})
+	require.NoError(t, err)
+	require.True(t, confirmed)
+	require.Equal(t, nextID, runtime.nativeID)
+	require.Equal(t, ports.PrimaryContextReset, sink.values[1].Disposition)
+	require.Equal(t, "conversation_old:7", sink.values[1].TransitionCorrelation)
+}
+
+func writeClaudeHookEvent(t *testing.T, directory string, event sessionStartEvent) {
+	t.Helper()
+	payload, err := json.Marshal(event)
+	require.NoError(t, err)
+	command := exec.Command("/bin/sh", "-c", claudeObservationCommand)
+	command.Env = host.MergeEnvironment(os.Environ(), []string{"TCLAUDE_OBSERVATION_SPOOL=" + directory})
+	command.Stdin = bytes.NewReader(payload)
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
 }
