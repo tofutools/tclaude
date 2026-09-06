@@ -329,6 +329,18 @@ type Attachment interface {
 	Kind() AttachmentKind
 }
 
+type TerminalSize struct {
+	Columns uint16
+	Rows    uint16
+}
+
+// ResizableAttachment is an optional focused view. Fixed-size attachments do
+// not implement it; implementations reject zero or unreasonably large sizes.
+type ResizableAttachment interface {
+	Attachment
+	Resize(context.Context, TerminalSize) error
+}
+
 type AttachmentResult struct {
 	Disposition EffectDisposition
 	Attachment  Attachment
