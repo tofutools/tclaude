@@ -17,6 +17,7 @@ type Handler struct {
 	application app.API
 	agents      app.AgentAPI
 	authority   app.AuthorityAdminAPI
+	journey     app.JourneyAPI
 	auth        Authenticator
 	mux         *http.ServeMux
 }

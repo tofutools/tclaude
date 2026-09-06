@@ -111,5 +111,6 @@ func command() *cobra.Command {
 	}
 	root.AddCommand(read)
 	registerControls(root, call)
+	registerJourney(root, call)
 	return root
 }
