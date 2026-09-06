@@ -43,6 +43,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize replacement backend schema: %w", err)
 	}
+	if err := s.initializeUsageActivity(ctx); err != nil {
+		return fmt.Errorf("initialize usage and activity schema: %w", err)
+	}
 	for _, migration := range []struct{ table, column, definition string }{
 		{"groups", "owner_agent_id", "TEXT NOT NULL DEFAULT ''"},
 		{"agents", "lifecycle_state", "TEXT NOT NULL DEFAULT 'active'"},
