@@ -1566,6 +1566,19 @@ func proveTclaudeLayerCaller(callerPID int, claimedID string) (row *db.SessionRo
 // generation-bearing probe as lifecycle mutations.
 var brokerLivePaneProbe = probeLifecyclePane
 
+// brokerProcessInstance is the host-observed process birth identity paired
+// with the proved main harness PID. A PID alone is reusable and therefore
+// never sufficient evidence for managed conversation admission.
+var brokerProcessInstance = hostProcessInstance
+
+// SetBrokerProcessInstanceForTest replaces the OS process-instance observer.
+// The returned function restores the prior observer.
+func SetBrokerProcessInstanceForTest(fn func(int) (string, bool)) func() {
+	previous := brokerProcessInstance
+	brokerProcessInstance = fn
+	return func() { brokerProcessInstance = previous }
+}
+
 // sessionRowByPID resolves the session row recorded against a host pid,
 // preferring a candidate whose tmux session is still alive.
 //
