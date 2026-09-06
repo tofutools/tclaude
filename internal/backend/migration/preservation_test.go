@@ -127,3 +127,18 @@ func TestJSONSpawnIntentEmptyLegacyDefault(t *testing.T) {
 	sourcev228.ValidateJSON(&s)
 	require.Empty(t, s.Malformed)
 }
+
+func TestPreflightMessageActorSentinelsAndAttribution(t *testing.T) {
+	b := buildFixture(t, fixtureOptions{})
+	alterFixture(t, b, `ALTER TABLE agent_messages ADD COLUMN cc_recipients TEXT; ALTER TABLE agent_messages ADD COLUMN cc_recipient_agents TEXT; INSERT INTO conv_index(conv_id,harness) VALUES('plain-conv','claude'); UPDATE agent_messages SET cc_recipients='["plain-conv"]',cc_recipient_agents='[""]'`)
+	p := inspectPlan(t, b)
+	require.True(t, p.PreflightValid, p.Diagnostics)
+	alterFixture(t, b, `INSERT INTO agents(agent_id,current_conv_id,initial_spawn_config) VALUES('agt_other','other-conv','{}'); INSERT INTO agent_conversations(conv_id,agent_id) VALUES('other-conv','agt_other'); UPDATE agent_messages SET from_agent='agt_other'`)
+	p = inspectPlan(t, b)
+	require.False(t, p.PreflightValid)
+	requireDiagnostic(t, p.Diagnostics, "conflicting_message_attribution")
+	alterFixture(t, b, `UPDATE agent_messages SET from_agent='agt_fixture',cc_recipients='["native-conv"]',cc_recipient_agents='["agt_other"]'`)
+	p = inspectPlan(t, b)
+	require.False(t, p.PreflightValid)
+	requireDiagnostic(t, p.Diagnostics, "conflicting_message_attribution")
+}
