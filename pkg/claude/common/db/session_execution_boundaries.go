@@ -73,6 +73,36 @@ func SetSessionExecutionBoundaryForLaunch(
 	return n == 1, err
 }
 
+// ClearSessionExecutionBoundaryForLaunch removes a boundary only while the
+// session still names the exact launch that published it. Launch rollback uses
+// this when a newly created session had no predecessor boundary; a delayed
+// rollback must never erase a successor's evidence.
+func ClearSessionExecutionBoundaryForLaunch(
+	sessionID, generation, tmuxSession, paneID string,
+) (bool, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	generation = strings.TrimSpace(generation)
+	tmuxSession = strings.TrimSpace(tmuxSession)
+	paneID = strings.TrimSpace(paneID)
+	if sessionID == "" || generation == "" || tmuxSession == "" || paneID == "" {
+		return false, errors.New("execution boundary launch identity is incomplete")
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	result, err := d.Exec(`DELETE FROM session_execution_boundaries
+		WHERE session_id = ? AND EXISTS (
+			SELECT 1 FROM sessions WHERE id = ? AND exit_callback_generation = ?
+				AND tmux_session = ? AND exit_callback_pane_id = ? AND status <> 'exited'
+		)`, sessionID, sessionID, generation, tmuxSession, paneID)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	return n == 1, err
+}
+
 func SessionExecutionBoundary(sessionID string) (string, error) {
 	d, err := Open()
 	if err != nil {

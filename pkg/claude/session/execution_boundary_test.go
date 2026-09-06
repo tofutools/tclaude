@@ -93,6 +93,35 @@ func TestBuildExecutionBoundaryFreezesStateStoreIdentity(t *testing.T) {
 		"the execution boundary must own a copy of launch identity")
 }
 
+func TestPublishManagedBoundaryBeforeReleaseFailsClosedOnCASRefusal(t *testing.T) {
+	released := false
+	published, err := publishManagedBoundaryBeforeRelease(
+		func() (bool, error) { return false, nil },
+		func() error {
+			released = true
+			return nil
+		},
+	)
+	require.ErrorContains(t, err, "launch identity CAS refused")
+	assert.False(t, published)
+	assert.False(t, released, "a failed namespace CAS must never open the workload gate")
+
+	order := []string{}
+	published, err = publishManagedBoundaryBeforeRelease(
+		func() (bool, error) {
+			order = append(order, "boundary")
+			return true, nil
+		},
+		func() error {
+			order = append(order, "release")
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	assert.True(t, published)
+	assert.Equal(t, []string{"boundary", "release"}, order)
+}
+
 func TestBuildExecutionBoundaryResolvesHarnessFromInjectedPATH(t *testing.T) {
 	root := t.TempDir()
 	bin := filepath.Join(root, "bin")

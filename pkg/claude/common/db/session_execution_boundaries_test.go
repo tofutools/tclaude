@@ -62,3 +62,42 @@ func TestSessionExecutionBoundaryLaunchCASRejectsSuccessorAndExitedRows(t *testi
 	require.NoError(t, err)
 	assert.False(t, stored)
 }
+
+func TestClearSessionExecutionBoundaryForLaunchIsSuccessorFenced(t *testing.T) {
+	setupTestDB(t)
+	const (
+		sessionID     = "spwn-boundary-clear"
+		first         = "11111111111111111111111111111111"
+		successor     = "22222222222222222222222222222222"
+		firstBoundary = "{\"version\":1}"
+	)
+	require.NoError(t, SaveSession(&SessionRow{
+		ID: sessionID, TmuxSession: "tmux-boundary-clear", Status: "working",
+		CreatedAt: time.Now().UTC(),
+	}))
+	require.NoError(t, SetSessionExitLaunchGeneration(sessionID, first))
+	require.NoError(t, SetSessionExitLaunchBinding(
+		sessionID, first, strings.Repeat("a", 64), "%7"))
+	stored, err := SetSessionExecutionBoundaryForLaunch(
+		sessionID, first, "tmux-boundary-clear", "%7", firstBoundary)
+	require.NoError(t, err)
+	require.True(t, stored)
+	require.NoError(t, SetSessionExitLaunchGeneration(sessionID, successor))
+	require.NoError(t, SetSessionExitLaunchBinding(
+		sessionID, successor, strings.Repeat("b", 64), "%8"))
+
+	cleared, err := ClearSessionExecutionBoundaryForLaunch(
+		sessionID, first, "tmux-boundary-clear", "%7")
+	require.NoError(t, err)
+	assert.False(t, cleared, "a delayed predecessor rollback cannot erase successor evidence")
+	boundary, err := SessionExecutionBoundary(sessionID)
+	require.NoError(t, err)
+	assert.Equal(t, firstBoundary, boundary)
+	cleared, err = ClearSessionExecutionBoundaryForLaunch(
+		sessionID, successor, "tmux-boundary-clear", "%8")
+	require.NoError(t, err)
+	assert.True(t, cleared)
+	boundary, err = SessionExecutionBoundary(sessionID)
+	require.NoError(t, err)
+	assert.Empty(t, boundary)
+}
