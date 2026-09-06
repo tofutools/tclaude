@@ -351,6 +351,24 @@ function GroupCreateDialog({
         onKeyDown=${submitOnEnter} placeholder="optional one-line description"
         autocomplete="off" spellcheck="false" />
     </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label"><${Words}
+        plain="Link / attachment" wizard="Quest portal" /></span>
+      <input id="group-create-attachment-url" type="url" value=${draft.attachmentURL}
+        disabled=${disabled}
+        onInput=${(event) => setField('attachmentURL', event.currentTarget.value)}
+        onKeyDown=${submitOnEnter} placeholder="https://…"
+        autocomplete="off" spellcheck="false" />
+    </label>
+    <label class="cron-create-row">
+      <span class="cron-create-label"><${Words}
+        plain="Link label" wizard="Portal name" /></span>
+      <input id="group-create-attachment-label" type="text" value=${draft.attachmentLabel}
+        disabled=${disabled}
+        onInput=${(event) => setField('attachmentLabel', event.currentTarget.value)}
+        onKeyDown=${submitOnEnter} placeholder="optional display name / alias"
+        autocomplete="off" spellcheck="false" />
+    </label>
     <fieldset class="group-create-workspace">
       <legend>Workspace</legend>
       <div class="group-create-workspace-modes" role="group" aria-label="Workspace source">

@@ -55,6 +55,8 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		Descr           *string               `json:"descr,omitempty"`
 		DefaultCwd      *string               `json:"default_cwd,omitempty"`
 		DefaultContext  *string               `json:"default_context,omitempty"`
+		AttachmentURL   *string               `json:"attachment_url,omitempty"`
+		AttachmentLabel *string               `json:"attachment_label,omitempty"`
 		MaxMembers      *int                  `json:"max_members,omitempty"`
 		RepositoryClone *groupRepositoryClone `json:"repository_clone,omitempty"`
 	}
@@ -125,6 +127,23 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			return
 		}
 		srcSettings.DefaultContext = context
+	}
+	if body.AttachmentURL != nil || body.AttachmentLabel != nil {
+		attachmentURL := srcSettings.AttachmentURL
+		attachmentLabel := srcSettings.AttachmentLabel
+		if body.AttachmentURL != nil {
+			attachmentURL = *body.AttachmentURL
+		}
+		if body.AttachmentLabel != nil {
+			attachmentLabel = *body.AttachmentLabel
+		}
+		attachmentURL, attachmentLabel, err = normalizeGroupAttachment(attachmentURL, attachmentLabel)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_attachment", err.Error())
+			return
+		}
+		srcSettings.AttachmentURL = attachmentURL
+		srcSettings.AttachmentLabel = attachmentLabel
 	}
 	if body.MaxMembers != nil {
 		if *body.MaxMembers < 0 {

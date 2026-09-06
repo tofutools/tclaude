@@ -179,6 +179,7 @@ test('group-create model validates and builds exact blank, template, and nested 
     body: {
       no_clone_members: false, copy_owners: true,
       descr: '', default_cwd: '', default_context: '', max_members: 0,
+      attachment_url: '', attachment_label: '',
       new_name: 'alpha-copy', parent: 'root',
     },
   });
@@ -420,7 +421,11 @@ test('Preact group-create owns clone mode and makes inherited attachment visible
   assert.equal(host.querySelector('#group-create-descr').value, 'alpha descr');
   assert.equal(host.querySelector('#group-create-cwd').value, '/alpha');
   assert.equal(host.querySelector('#group-create-context').value, 'alpha context');
+  assert.equal(host.querySelector('#group-create-attachment-url').value,
+    'https://linear.app/acme/project/alpha');
+  assert.equal(host.querySelector('#group-create-attachment-label').value, 'Alpha project');
   await harness.input(host.querySelector('#group-create-context'), 'edited clone context');
+  await harness.input(host.querySelector('#group-create-attachment-label'), 'Alpha tracker');
   assert.equal(host.querySelector('#group-create-name').hasAttribute('data-select-on-focus'), true);
   assert.match(host.querySelector('#group-create-source-summary').textContent, /Alpha project/);
   assert.match(host.querySelector('#group-create-source-summary').textContent, /attachment \/ link/);
@@ -438,6 +443,7 @@ test('Preact group-create owns clone mode and makes inherited attachment visible
   assert.equal(submitted.template, null);
   assert.equal(submitted.draft.cloneGroup, 'alpha');
   assert.equal(submitted.draft.context, 'edited clone context');
+  assert.equal(submitted.draft.attachmentLabel, 'Alpha tracker');
   assert.equal(submitted.draft.withAgents, true);
   assert.equal(submitted.draft.copyOwners, true);
   assertAbsent(host.querySelector('#group-create-modal'));
