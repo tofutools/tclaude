@@ -258,6 +258,12 @@ func (t ownerImpliedTier) satisfiedBy(convID, slug string, actx ActionContext) b
 // An agent that owns NOTHING still yields a nil tier — the pre-existing
 // reading, and the one delegation depends on (permissions.grant is recursive).
 func ownerImpliedTierFor(convID string) ownerImpliedTier {
+	owned, err := db.ListOwnedGroupScopes(convID)
+	return ownerImpliedTierFrom(owned, err)
+}
+
+// ownerImpliedTierFrom evaluates captured ownership rows without rereading policy.
+func ownerImpliedTierFrom(owned []db.OwnedGroupScopes, readErr error) ownerImpliedTier {
 	implied := OwnerImpliedSlugs()
 	degradedTier := func() ownerImpliedTier {
 		tier := ownerImpliedTier{}
@@ -266,13 +272,12 @@ func ownerImpliedTierFor(convID string) ownerImpliedTier {
 		}
 		return tier
 	}
-	owned, err := db.ListOwnedGroupScopes(convID)
-	if err != nil {
+	if readErr != nil {
 		// We do not know WHETHER this agent owns groups, let alone what they
 		// narrow. Degrading to "not an owner" would be a guess in the widening
 		// direction for every owner-implied slug.
 		slog.Warn("permissions: owned-group lookup failed (owner tier degraded)",
-			"conv", convID, "error", err)
+			"error", readErr)
 		return degradedTier()
 	}
 	if len(owned) == 0 {
