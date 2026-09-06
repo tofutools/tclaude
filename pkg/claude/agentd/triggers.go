@@ -699,7 +699,10 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 	sandboxProfileForScope := ambientSandboxProfileName(g)
 	sandboxScopePinned := false
 	if ownerConv != "" {
-		agentID, _ := db.AgentIDForConv(ownerConv)
+		agentID, agentErr := db.AgentIDForConv(ownerConv)
+		if agentErr != nil || agentID == "" {
+			return "permission_denied", "owning agent identity could not be verified", ""
+		}
 		originKind := "trigger"
 		if source.CronJobID != 0 {
 			originKind = "cron"
