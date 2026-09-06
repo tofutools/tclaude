@@ -29,7 +29,7 @@ func TestPublicCheckoutShellSurvivesBackendRestart(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git unavailable")
 	}
-	root, err := os.MkdirTemp("", "journey-")
+	root, err := os.MkdirTemp("/tmp", "tcl-sj-")
 	require.NoError(t, err)
 	defer os.RemoveAll(root)
 	repo := filepath.Join(root, "repo")

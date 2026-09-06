@@ -28,13 +28,13 @@ func DaemonCommand() *cobra.Command {
 	var sources []string
 	var workspaces bool
 	var shell string
-	cmd.Flags().StringVar(&state, "state-dir", "", "Absolute private development state directory (required)")
-	cmd.Flags().BoolVar(&initialize, "init", false, "Initialize a new directory and exit")
-	cmd.Flags().StringSliceVar(&harnesses, "harness", nil, "Providers to register: claude,codex,opencode,copilot; omit for offline catalog only")
-	cmd.Flags().StringArrayVar(&sources, "history-source", nil, "Named native history source: harness:name=/absolute/path")
-	cmd.Flags().BoolVar(&workspaces, "workspaces", false, "Enable owned Git checkout operations")
-	cmd.Flags().StringVar(&shell, "shell", "", "Enable standalone shells with this operator-selected executable")
-	_ = cmd.MarkFlagRequired("state-dir")
+	cmd.PersistentFlags().StringVar(&state, "state-dir", "", "Absolute private state directory (required)")
+	cmd.PersistentFlags().BoolVar(&initialize, "init", false, "Initialize a new directory and exit")
+	cmd.PersistentFlags().StringSliceVar(&harnesses, "harness", nil, "Providers to register: claude,codex,opencode,copilot; omit for offline catalog only")
+	cmd.PersistentFlags().StringArrayVar(&sources, "history-source", nil, "Named native history source: harness:name=/absolute/path")
+	cmd.PersistentFlags().BoolVar(&workspaces, "workspaces", false, "Enable owned Git checkout operations")
+	cmd.PersistentFlags().StringVar(&shell, "shell", "", "Enable standalone shells with this operator-selected executable")
+	_ = cmd.MarkPersistentFlagRequired("state-dir")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) != 0 {
 			return fmt.Errorf("unexpected positional arguments")
@@ -52,6 +52,10 @@ func DaemonCommand() *cobra.Command {
 		}
 		return server.Serve(cmd.Context(), state, registry, journey)
 	}
+	serve := boa.CmdT[struct{}]{Use: "serve", Short: "Serve the initialized agentic work backend"}.ToCobra()
+	serve.Args = cobra.NoArgs
+	serve.RunE = cmd.RunE
+	cmd.AddCommand(serve)
 	return cmd
 }
 
