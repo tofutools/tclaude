@@ -60,24 +60,26 @@ type RequestContext struct {
 }
 
 type CreateAgentRequest struct {
-	Context            model.Principal
-	ID                 model.AgentID
-	Name               string
-	TaskReference      string
-	ParentAgentID      model.AgentID
-	CloneSourceAgentID model.AgentID
-	Notifications      model.AgentNotificationPreferences
-	Desired            model.DesiredConfiguration
+	ConfigurationProfile *model.ConfigurationProfileRef
+	Context              model.Principal
+	ID                   model.AgentID
+	Name                 string
+	TaskReference        string
+	ParentAgentID        model.AgentID
+	CloneSourceAgentID   model.AgentID
+	Notifications        model.AgentNotificationPreferences
+	Desired              model.DesiredConfiguration
 }
 
 type UpdateAgentRequest struct {
-	Context          model.Principal
-	ID               model.AgentID
-	ExpectedRevision model.Revision
-	Name             string
-	TaskReference    string
-	Notifications    model.AgentNotificationPreferences
-	Desired          model.DesiredConfiguration
+	ConfigurationProfile *model.ConfigurationProfileRef
+	Context              model.Principal
+	ID                   model.AgentID
+	ExpectedRevision     model.Revision
+	Name                 string
+	TaskReference        string
+	Notifications        model.AgentNotificationPreferences
+	Desired              model.DesiredConfiguration
 }
 
 type RetireAgentRequest struct {
