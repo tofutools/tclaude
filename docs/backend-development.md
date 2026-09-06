@@ -1,21 +1,21 @@
-# Replacement backend development server
+# Operating tclaude
 
-`tclaude-backend-dev` composes the replacement application, SQLite store, HTTP
-API, and harness providers. It runs independently of the existing daemon. Its
+`tclaude-agentd` composes the replacement application, SQLite store, HTTP
+API, and harness providers. Its
 state directory must be new and explicitly initialized; it does not import the
 existing database or adopt its live agents.
 
 Build without installing or restarting the existing daemon:
 
 ```bash
-go build -o /tmp/tclaude-backend-dev ./cmd/tclaude-backend-dev
-/tmp/tclaude-backend-dev --state-dir /tmp/backend-example --init
-/tmp/tclaude-backend-dev --state-dir /tmp/backend-example
+go build -o /tmp/tclaude-agentd ./cmd/tclaude-agentd
+/tmp/tclaude-agentd --state-dir /tmp/backend-example --init
+/tmp/tclaude-agentd --state-dir /tmp/backend-example
 ```
 
 Omitting `--harness` provides an offline catalog. Register installed providers
 with `--harness claude,opencode`. Registration resolves their executables; it
-does not launch a workload. The development server targets Linux and macOS.
+does not launch a workload. The daemon targets Linux and macOS.
 
 Initialization creates a private directory and `operator.token`. The API listens
 on `api.sock` inside that directory. Treat the token as an operator credential;
@@ -79,15 +79,14 @@ Native recovery evidence and raw provider diagnostics are not exposed by the API
 An attachment uses `execution_id` and `request_id` query parameters plus the same
 Authorization header. Text and binary WebSocket frames carry terminal bytes.
 Closing the attachment disconnects that view without stopping the workload.
-Stopping the development server also leaves workloads for later recovery.
+Stopping the daemon also leaves workloads for later recovery.
 
 Current provider support is explicit: Claude uses a terminal workload and reports
 unresolved context when its private native observation channel cannot establish
 continuity. Context changes require correlated native evidence; dispatch alone
 does not confirm a reset. OpenCode uses an independent server and currently requires an
 explicit `unconfined` sandbox selection. Native approval rules do not provide OS
-confinement; constrained OpenCode launches are refused. This development server
-has no legacy data importer or production deployment integration.
+confinement; constrained OpenCode launches are refused. Legacy state is imported only from an explicit offline snapshot; starting the daemon never discovers or migrates it.
 
 Focused verification:
 
@@ -107,7 +106,7 @@ revisions; use the current association revision for context/resume requests.
 Build the thin client without installing it:
 
 ```bash
-go build -o /tmp/tclaude-backend-agent ./cmd/tclaude-backend-agent
+go build -o /tmp/tclaude .
 ```
 
 Credential-capable providers deliver a protected action credential file to each
@@ -119,13 +118,13 @@ operator-token fallback and never opens the database.
 Inside that execution, the commands are:
 
 ```bash
-/tmp/tclaude-backend-agent whoami
-/tmp/tclaude-backend-agent inbox --unread
-/tmp/tclaude-backend-agent status
-/tmp/tclaude-backend-agent send 'Please review the change' --to AGENT_ID --request-id review-request-1
-/tmp/tclaude-backend-agent read MESSAGE_ID --request-id read-message-1
-/tmp/tclaude-backend-agent interact EXECUTION_ID 'Continue the task' --request-id continue-1
-/tmp/tclaude-backend-agent stop EXECUTION_ID --request-id stop-1
+/tmp/tclaude whoami
+/tmp/tclaude inbox --unread
+/tmp/tclaude status
+/tmp/tclaude send 'Please review the change' --to AGENT_ID --request-id review-request-1
+/tmp/tclaude read MESSAGE_ID --request-id read-message-1
+/tmp/tclaude interact EXECUTION_ID 'Continue the task' --request-id continue-1
+/tmp/tclaude stop EXECUTION_ID --request-id stop-1
 ```
 
 `launch` requires an agent ID and `--expected-revision`. `resume` additionally
@@ -153,16 +152,16 @@ approval, and sandbox bounds. An owner role is a visible scoped assignment, not
 an operator bypass. The API exposes access state/revision without credential
 material or provider recovery evidence.
 
-The development composition accepts `--harness claude,codex,opencode,copilot`.
+The daemon composition accepts `--harness claude,codex,opencode,copilot`.
 Only selected providers are registered, and their native executables must be
 available on `PATH`. Omitting `--harness` still permits offline catalog use.
 
-Codex and Copilot use a durable native home under the selected development state:
+Codex and Copilot use a durable native home under the selected private state:
 `<state-dir>/codex/native-home` and `<state-dir>/copilot/native-home`. These homes
 hold native login and history state independently of execution terminals,
 observation resources and backend-agent credentials. The backend does not import
 or copy credentials from the user's existing native home. For native account
-login, initialize the development directory first, then explicitly log in using
+login, initialize the private directory first, then explicitly log in using
 that provider's home. For example, with an absolute `state_dir` already chosen:
 
 ```bash
@@ -180,10 +179,10 @@ cleanup.
 
 ## History, workspaces, and bounded work
 
-Enable host operations explicitly when starting the development server:
+Enable host operations explicitly when starting the daemon:
 
 ```bash
-/tmp/tclaude-backend-dev --state-dir "$state_dir" --harness opencode \
+/tmp/tclaude-agentd --state-dir "$state_dir" --harness opencode \
   --workspaces --shell /bin/sh \
   --history-source opencode:previous=/absolute/native/xdg-root
 ```
@@ -203,9 +202,9 @@ unreadable history is not presented as a complete empty result.
 Using the client with an explicit authorized credential/socket:
 
 ```bash
-/tmp/tclaude-backend-agent history refresh previous --harness opencode
-/tmp/tclaude-backend-agent history search --query 'earlier work'
-/tmp/tclaude-backend-agent history read CONVERSATION_ID --revision REVISION
+/tmp/tclaude history refresh previous --harness opencode
+/tmp/tclaude history search --query 'earlier work'
+/tmp/tclaude history read CONVERSATION_ID --revision REVISION
 ```
 
 Read results expose selectable points and their revisions. Point precision is a
@@ -274,19 +273,17 @@ the effect. Use it only after establishing what happened outside the backend.
 
 ## Shared product commands
 
-The development binaries now use the shared command builders in
-`internal/product`. The client always goes through the authenticated Unix API;
+Both shipped binaries use the shared command builders in `internal/product`. The client always goes through the authenticated Unix API;
 selecting a management command does not make an execution caller an operator.
-The production entrypoints still use the existing backend until the replacement
-product and offline migration are ready for cutover.
+`tclaude agentd serve` and `tclaude-agentd serve` invoke the same daemon command.
 
 For an explicitly initialized replacement directory, an operator can run:
 
 ```sh
-tclaude-backend-agent --operator-state /absolute/new-state snapshot
-tclaude-backend-agent --operator-state /absolute/new-state agent create --file agent.json
-tclaude-backend-agent --operator-state /absolute/new-state agent update worker --file update.json
-tclaude-backend-agent --operator-state /absolute/new-state authority list
+tclaude --operator-state /absolute/new-state snapshot
+tclaude --operator-state /absolute/new-state agent create --file agent.json
+tclaude --operator-state /absolute/new-state agent update worker --file update.json
+tclaude --operator-state /absolute/new-state authority list
 ```
 
 `agent.json` contains `id`, `name` and `desired`; `update.json` contains `name`,
