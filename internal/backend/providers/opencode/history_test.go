@@ -27,7 +27,7 @@ func TestOpenCodeHistoryDiscoverReadAndMessagePoint(t *testing.T) {
 		Environment: []string{"OPENCODE_EXPORT_FIXTURE=" + exportPath}})
 	require.NoError(t, err)
 	reader := provider.History()
-	require.Equal(t, ports.HistoryPrecisionMessage, reader.Capabilities().ForkPrecision)
+	require.Equal(t, ports.HistoryPrecisionBeforeMessage, reader.Capabilities().ForkPrecision)
 	require.True(t, reader.Capabilities().ForkRequiresExclusive)
 
 	discovered, err := reader.Discover(context.Background(), ports.HistoryDiscoveryRequest{})
@@ -37,11 +37,12 @@ func TestOpenCodeHistoryDiscoverReadAndMessagePoint(t *testing.T) {
 	source := discovered.Histories[0]
 	require.Equal(t, "Fixture history", source.Title)
 	require.Len(t, source.Points, 3)
-	require.Equal(t, model.HistoryPointMessage, source.Points[0].Kind)
+	require.Equal(t, model.HistoryPointBeforeMessage, source.Points[0].Kind)
 	require.Equal(t, model.HistoryPointHead, source.Points[2].Kind)
 
 	selection := ports.HistorySourceSelection{Provider: Name, Native: source.Native,
-		SourceRevision: source.Coverage.SourceRevision, Evidence: source.Evidence, Point: &source.Points[0]}
+		SourceRevision: source.Coverage.SourceRevision, SourceFingerprint: source.SourceFingerprint,
+		Evidence: source.Evidence, Point: &source.Points[0]}
 	read, err := reader.Read(context.Background(), selection)
 	require.NoError(t, err)
 	require.Empty(t, read.Turns)
@@ -101,7 +102,8 @@ func TestOpenCodeHistoryDiscoversOrdinaryConfiguredNativeRoot(t *testing.T) {
 	require.Equal(t, "ses_native", discovered.Histories[0].Native.Reference)
 	read, err := provider.History().Read(context.Background(), ports.HistorySourceSelection{
 		Provider: Name, Native: discovered.Histories[0].Native,
-		SourceRevision: discovered.Histories[0].Coverage.SourceRevision, Evidence: discovered.Histories[0].Evidence,
+		SourceRevision:    discovered.Histories[0].Coverage.SourceRevision,
+		SourceFingerprint: discovered.Histories[0].SourceFingerprint, Evidence: discovered.Histories[0].Evidence,
 	})
 	require.NoError(t, err)
 	require.Len(t, read.Turns, 2)

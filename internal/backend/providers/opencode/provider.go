@@ -298,7 +298,7 @@ func (p *Provider) prepareHistory(ctx context.Context, request ports.Preparation
 			return "", false, "", err
 		}
 		if request.History.Point != nil && request.History.Point.Kind != model.HistoryPointHead &&
-			request.History.Point.Kind != model.HistoryPointMessage {
+			request.History.Point.Kind != model.HistoryPointBeforeMessage {
 			return "", false, "", ports.ErrHistoryUnsupported
 		}
 		history, raw, _, _, readErr := (historyReader{provider: p}).readSelection(ctx, *request.History)
@@ -448,7 +448,7 @@ func validateHistoryUseClaim(selection ports.HistorySourceSelection) error {
 	claim := selection.UseClaim
 	if claim == nil || claim.State != model.HistoryUseHeld || claim.ID == "" || claim.OperationID == "" ||
 		claim.ConversationID != selection.ConversationID || claim.SourceRevision != selection.SourceRevision ||
-		claim.SourceFingerprint != selection.SourceToken {
+		claim.SourceFingerprint != selection.SourceFingerprint {
 		return fmt.Errorf("OpenCode fork requires a held application history use claim bound to the selected source")
 	}
 	return nil
@@ -493,7 +493,7 @@ func importOpenCodeHistory(ctx context.Context, p *Provider, targetRoot, cwd str
 	if exported.Info.ID != expected.Info.ID || !reflect.DeepEqual(exported.Messages, expected.Messages) {
 		return fmt.Errorf("imported OpenCode history content does not match selected source")
 	}
-	if selection.Point != nil && selection.Point.Kind == model.HistoryPointMessage {
+	if selection.Point != nil && selection.Point.Kind == model.HistoryPointBeforeMessage {
 		found := false
 		for _, message := range exported.Messages {
 			if message.Info.ID == selection.Point.Token {
