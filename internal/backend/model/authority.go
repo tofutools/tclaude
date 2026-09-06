@@ -24,6 +24,7 @@ const (
 type AuthoritySubjectKind string
 
 const (
+	AuthorityOperator  AuthoritySubjectKind = "operator"
 	AuthorityAgent     AuthoritySubjectKind = "agent"
 	AuthorityExecution AuthoritySubjectKind = "execution"
 )
@@ -68,6 +69,7 @@ type AuthorityGrant struct {
 	Subject   AuthoritySubject
 	Action    Action
 	Resource  ResourceSelector
+	Bounds    ConfigurationBounds
 	ExpiresAt *time.Time
 	Revision  Revision
 	CreatedAt time.Time
@@ -93,6 +95,7 @@ type RoleAssignment struct {
 	RoleID    RoleID
 	Subject   AuthoritySubject
 	Resource  ResourceSelector
+	Bounds    ConfigurationBounds
 	Revision  Revision
 	CreatedAt time.Time
 	UpdatedAt time.Time
@@ -113,6 +116,36 @@ type AuthorityDecision struct {
 	SourceKind AuthoritySourceKind
 	SourceID   string
 	Revision   Revision
+	Bounds     ConfigurationBounds
+}
+
+type AuthorityRequest struct {
+	Principal              Principal
+	Action                 Action
+	Resource               ResourceSelector
+	RequestedConfiguration *DesiredConfiguration
+}
+
+// AutomationDelegation is an application-authenticated run fixture, not a
+// scheduler. Its accepted scope is intersected with the authority subject's
+// current grants for every effect.
+type AutomationDelegation struct {
+	Actions   []Action
+	Resources []ResourceSelector
+	Bounds    ConfigurationBounds
+	ExpiresAt time.Time
+}
+
+// ConfigurationBounds are an allow-list, not advisory metadata. Delegated
+// launch/configuration authority must match every populated dimension. Empty
+// bounds grant no configuration-bearing effect; operator authority is the only
+// unbounded case.
+type ConfigurationBounds struct {
+	Harnesses             []string
+	Models                []string
+	WorkingDirectoryRoots []string
+	ApprovalModes         []ApprovalMode
+	SandboxModes          []SandboxMode
 }
 
 type AccessGeneration uint64
@@ -136,6 +169,7 @@ type ExecutionAccess struct {
 	Generation       AccessGeneration
 	CredentialDigest []byte
 	DeliveryID       string
+	FileIdentity     string
 	State            ExecutionAccessState
 	IssuedAt         time.Time
 	ExpiresAt        time.Time
@@ -151,4 +185,5 @@ type ExecutionAccessBinding struct {
 	DeliveryID  string
 	State       ExecutionAccessState
 	ExpiresAt   time.Time
+	Revision    Revision
 }
