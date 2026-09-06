@@ -85,15 +85,16 @@ func (*Provider) Name() string                                        { return N
 func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 
 type evidence struct {
-	ExecutionID    string                         `json:"execution_id"`
-	NativeID       string                         `json:"native_id,omitempty"`
-	Endpoint       string                         `json:"endpoint"`
-	Password       string                         `json:"password"`
-	StateRoot      string                         `json:"state_root"`
-	Process        *host.ProcessIdentity          `json:"process,omitempty"`
-	AttemptMark    string                         `json:"attempt_marker"`
-	EphemeralState bool                           `json:"ephemeral_state,omitempty"`
-	Access         *ports.ActionCredentialReceipt `json:"access,omitempty"`
+	ExecutionID         string                         `json:"execution_id"`
+	NativeID            string                         `json:"native_id,omitempty"`
+	Endpoint            string                         `json:"endpoint"`
+	Password            string                         `json:"password"`
+	StateRoot           string                         `json:"state_root"`
+	Process             *host.ProcessIdentity          `json:"process,omitempty"`
+	AttemptMark         string                         `json:"attempt_marker"`
+	EphemeralState      bool                           `json:"ephemeral_state,omitempty"`
+	Access              *ports.ActionCredentialReceipt `json:"access,omitempty"`
+	ObservationSequence uint64                         `json:"observation_sequence,omitempty"`
 }
 
 type prepared struct {
@@ -446,6 +447,7 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		cwd: request.Spec.WorkingDirectory, nativeID: recorded.NativeID,
 		approval: request.Spec.Approval, sandbox: request.Spec.Sandbox, model: request.Spec.Model,
 		attemptMark: recorded.AttemptMark, access: recorded.Access,
+		observationSequence: recorded.ObservationSequence,
 	}
 	var reconcileErr error
 	if runtime.nativeID == "" {
@@ -477,21 +479,22 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 }
 
 type Runtime struct {
-	provider     *Provider
-	executionID  model.ExecutionID
-	attempt      model.AttemptGeneration
-	observations ports.PrimaryObservationSink
-	process      *host.Process
-	endpoint     string
-	password     string
-	stateRoot    string
-	cwd          string
-	approval     model.ApprovalMode
-	sandbox      model.SandboxMode
-	model        string
-	attemptMark  string
-	access       *ports.ActionCredentialReceipt
-	contextReady bool
+	provider            *Provider
+	executionID         model.ExecutionID
+	attempt             model.AttemptGeneration
+	observations        ports.PrimaryObservationSink
+	process             *host.Process
+	endpoint            string
+	password            string
+	stateRoot           string
+	cwd                 string
+	approval            model.ApprovalMode
+	sandbox             model.SandboxMode
+	model               string
+	attemptMark         string
+	access              *ports.ActionCredentialReceipt
+	contextReady        bool
+	observationSequence uint64
 
 	mu               sync.Mutex
 	nativeID         string
@@ -686,7 +689,8 @@ func (r *Runtime) createSession(ctx context.Context) error {
 // reconcileFreshSession resolves the crash window between starting the private
 // server and persisting its newly-created native session id. A fresh attempt
 // owns an isolated state root, so zero sessions means creation never completed
-// and one session is the exact result to retain; any larger set is ambiguous.
+// and one top-level session is the exact result to retain. Nested sessions are
+// not primary evidence; multiple top-level sessions are ambiguous.
 func (r *Runtime) reconcileFreshSession(ctx context.Context) error {
 	if err := r.health(ctx); err != nil {
 		return err
@@ -753,13 +757,12 @@ func (r *Runtime) verifySession(ctx context.Context) error {
 	if updated.StatusCode != http.StatusOK {
 		return fmt.Errorf("apply OpenCode continuation permission returned HTTP %d", updated.StatusCode)
 	}
-	var result struct {
-		Permission []permissionRule `json:"permission"`
-	}
+	var result sessionRecord
 	if err := json.NewDecoder(io.LimitReader(updated.Body, 1<<20)).Decode(&result); err != nil {
 		return fmt.Errorf("decode applied OpenCode continuation permission: %w", err)
 	}
-	if !permissionHasSuffix(result.Permission, expected) {
+	if result.ID != r.nativeID || result.ParentID != nil || filepath.Clean(result.Directory) != filepath.Clean(r.cwd) ||
+		!permissionHasSuffix(result.Permission, expected) {
 		return fmt.Errorf("OpenCode continuation did not retain the requested permission policy")
 	}
 	return nil
@@ -814,7 +817,7 @@ func (r *Runtime) providerEvidenceLocked() (model.ProviderEvidence, error) {
 	return encodeEvidence(evidence{
 		ExecutionID: string(r.executionID), NativeID: r.nativeID, Endpoint: r.endpoint,
 		Password: r.password, StateRoot: r.stateRoot, Process: &identity, AttemptMark: r.attemptMark,
-		Access: r.access,
+		Access: r.access, ObservationSequence: r.observationSequence,
 	})
 }
 
@@ -828,13 +831,14 @@ func (r *Runtime) publishContextLocked(ctx context.Context, disposition ports.Pr
 	if r.observations == nil {
 		return nil
 	}
+	r.observationSequence++
 	identity := r.process.Identity()
 	digest := sha256.Sum256([]byte(fmt.Sprintf("%s\x00%d\x00%s\x00%s", r.executionID, r.attempt, r.attemptMark, identity.StartToken)))
 	evidence := ports.PrimaryContextEvidence{
 		ExecutionID: r.executionID, Attempt: r.attempt, Provider: Name,
 		PrimaryCorrelation: fmt.Sprintf("server:%x", digest[:16]), Disposition: disposition,
 		PriorBinding: prior, NextBinding: next, TransitionCorrelation: transition,
-		ProviderOrder: "session:" + r.nativeID, ObservedAt: time.Now().UTC(),
+		ProviderOrder: fmt.Sprintf("%020d:%s", r.observationSequence, r.nativeID), ObservedAt: time.Now().UTC(),
 	}
 	if err := r.observations.ObservePrimaryContext(ctx, evidence); err != nil {
 		return err
