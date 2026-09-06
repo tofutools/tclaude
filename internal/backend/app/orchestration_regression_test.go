@@ -187,7 +187,7 @@ func TestScheduledAutomationDeploysTeamThroughDelegatedEffects(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	now := time.Date(2026, 9, 6, 20, 0, 0, 0, time.UTC)
 	provider := &preparedWorkProvider{}
-	service := app.New(store, providers.NewRegistry(provider)).WithClock(func() time.Time { return now })
+	service := app.New(lostTeamLinkReplyStore{Store: store}, providers.NewRegistry(provider)).WithClock(func() time.Time { return now })
 	directory := t.TempDir()
 	desired := model.DesiredConfiguration{Harness: "prepared-work", Model: "test", WorkingDirectory: directory, Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}
 	team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{{Key: "builder", Name: "builder", Desired: desired, Required: true}}, Waves: []model.TeamWave{{ID: "build", MemberKeys: []string{"builder"}, RequiredReady: true}}}
@@ -195,9 +195,16 @@ func TestScheduledAutomationDeploysTeamThroughDelegatedEffects(t *testing.T) {
 	require.NoError(t, err)
 	teamRef := model.DefinitionRef{DefinitionID: definition.Definition.ID, RevisionID: definition.Revision.ID, ContentHash: definition.Revision.ContentHash, Kind: model.DefinitionTeam}
 	delegation := model.AutomationDelegation{Actions: []model.Action{model.ActionRunAutomation, model.ActionStartWork, model.ActionLaunch}, Resources: []model.ResourceSelector{{Kind: model.ResourceAutomationRule, AutomationRuleID: "deploy_rule"}, {Kind: model.ResourceGroupPeers, GroupID: "deployed_group"}}, Bounds: model.ConfigurationBounds{Harnesses: []string{desired.Harness}, Models: []string{desired.Model}, WorkingDirectoryRoots: []string{directory}, ApprovalModes: []model.ApprovalMode{desired.Approval}, SandboxModes: []model.SandboxMode{desired.Sandbox}}, ExpiresAt: now.Add(time.Hour)}
-	_, err = service.SaveAutomationRule(ctx, app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "rule"}, ID: "deploy_rule", RevisionID: "deploy_rule_v1", Name: "deploy", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Delegation: delegation, Condition: model.AutomationCondition{Kind: model.AutomationSchedule, Schedule: &model.ScheduleCondition{Timezone: "UTC", Interval: time.Minute, Anchor: now.Add(time.Minute)}}, Action: model.AutomationAction{Kind: model.AutomationDeployTeam, Team: &model.TeamInstantiation{Definition: teamRef, Mission: "ship", GroupID: "deployed_group"}}, Policy: regressionOccurrencePolicy(), Dependencies: []model.DefinitionRef{teamRef}})
+	ruleRequest := app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "rule"}, ID: "deploy_rule", RevisionID: "deploy_rule_v1", Name: "deploy", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Delegation: delegation, Condition: model.AutomationCondition{Kind: model.AutomationSchedule, Schedule: &model.ScheduleCondition{Timezone: "UTC", Interval: time.Minute, Anchor: now.Add(time.Minute)}}, Action: model.AutomationAction{Kind: model.AutomationDeployTeam, Team: &model.TeamInstantiation{Definition: teamRef, Mission: "ship", GroupID: "deployed_group"}}, Policy: regressionOccurrencePolicy(), Dependencies: []model.DefinitionRef{teamRef}}
+	rule, err := service.SaveAutomationRule(ctx, ruleRequest)
 	require.NoError(t, err)
 	now = now.Add(time.Minute)
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	service = app.New(store, providers.NewRegistry(provider)).WithClock(func() time.Time { return now })
+	ruleRequest.Context.RequestID, ruleRequest.RevisionID, ruleRequest.ExpectedRevision, ruleRequest.Enabled = "disable", "deploy_rule_v2", rule.Rule.Revision, false
+	_, err = service.SaveAutomationRule(ctx, ruleRequest)
+	require.NoError(t, err)
 	for range 3 {
 		_, err = service.ReconcilePendingWork(ctx)
 		require.NoError(t, err)
@@ -352,6 +359,16 @@ func (s disableMessageAdmissionStore) CreateMessage(ctx context.Context, message
 type disableTeamAdmissionStore struct {
 	app.Store
 	before func()
+}
+
+type lostTeamLinkReplyStore struct{ app.Store }
+
+func (s lostTeamLinkReplyStore) UpdateOccurrence(ctx context.Context, id model.OccurrenceID, revision model.Revision, state model.OccurrenceState, operationID model.OperationID, workRunID model.WorkRunID, deploymentID model.DeploymentID, recipients []model.OccurrenceRecipient, at time.Time) (app.OccurrenceRecord, error) {
+	record, err := s.Store.UpdateOccurrence(ctx, id, revision, state, operationID, workRunID, deploymentID, recipients, at)
+	if err == nil && state == model.OccurrenceAdmitted && deploymentID != "" {
+		return record, context.DeadlineExceeded
+	}
+	return record, err
 }
 
 func (s disableTeamAdmissionStore) CreateTeamDeployment(ctx context.Context, deployment model.TeamDeployment, group model.Group, agents []model.Agent, principal model.Principal, at time.Time) (model.TeamDeployment, bool, error) {
