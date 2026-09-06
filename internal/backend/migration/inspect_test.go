@@ -142,8 +142,8 @@ func TestPlanOrchestrationQuarantineDiagnostics(t *testing.T) {
 	requireDiagnostic(t, plan.Diagnostics, "ambiguous_occurrence_issuance")
 }
 
-func TestV228SignatureMatchesRepositorySchema(t *testing.T) {
-	schema, err := os.ReadFile(filepath.Join("..", "..", "..", "pkg", "claude", "common", "db", "schema.sql"))
+func TestV228SignatureMatchesFrozenSourceSchema(t *testing.T) {
+	schema, err := os.ReadFile(filepath.Join("source", "v228", "testdata", "schema.sql"))
 	require.NoError(t, err)
 	db, err := sql.Open("sqlite", ":memory:")
 	require.NoError(t, err)
