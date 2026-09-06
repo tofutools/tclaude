@@ -23,6 +23,11 @@ func (s *Store) CatalogHistory(ctx context.Context, harness, sourceName string, 
 	if _, err := tx.ExecContext(ctx, `INSERT INTO history_refreshes(harness,source_name,metadata_coverage,content_coverage,source_revision,refreshed_at) VALUES(?,?,?,?,?,?) ON CONFLICT(harness,source_name) DO UPDATE SET metadata_coverage=excluded.metadata_coverage,content_coverage=excluded.content_coverage,source_revision=excluded.source_revision,refreshed_at=excluded.refreshed_at`, harness, sourceName, coverage.Metadata, coverage.Content, coverage.SourceRevision, nanos(coverage.RefreshedAt)); err != nil {
 		return nil, err
 	}
+	if coverage.Metadata == model.HistoryCoverageComplete {
+		if _, err := tx.ExecContext(ctx, `UPDATE history_catalog SET availability=?,revision=revision+1 WHERE harness=? AND source_name=?`, model.HistoryAbsent, harness, sourceName); err != nil {
+			return nil, err
+		}
+	}
 	for _, write := range writes {
 		var id model.ConversationID
 		err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM history_catalog WHERE harness=? AND native_namespace=? AND native_reference=?`, write.Entry.Harness, write.Native.Namespace, write.Native.Reference).Scan(&id)
@@ -88,6 +93,7 @@ func (s *Store) searchHistory(ctx context.Context, filter app.HistorySearchFilte
 	}
 	query += ` ORDER BY modified_at DESC,conversation_id`
 	result := app.HistorySearchResult{Coverage: model.HistoryCoverage{Metadata: model.HistoryCoverageUnknown, Content: model.HistoryCoverageUnknown}}
+	coverageSeen := false
 	coverageQuery := `SELECT metadata_coverage,content_coverage,source_revision,refreshed_at FROM history_refreshes WHERE 1=1`
 	var coverageArgs []any
 	if filter.Harness != "" {
@@ -110,8 +116,13 @@ func (s *Store) searchHistory(ctx context.Context, filter app.HistorySearchFilte
 			coverageRows.Close()
 			return result, err
 		}
-		result.Coverage.Metadata = mergeCoverage(result.Coverage.Metadata, metadata)
-		result.Coverage.Content = mergeCoverage(result.Coverage.Content, content)
+		if !coverageSeen {
+			result.Coverage.Metadata, result.Coverage.Content = metadata, content
+			coverageSeen = true
+		} else {
+			result.Coverage.Metadata = mergeCoverage(result.Coverage.Metadata, metadata)
+			result.Coverage.Content = mergeCoverage(result.Coverage.Content, content)
+		}
 		result.Coverage.RefreshedAt = later(result.Coverage.RefreshedAt, fromNanos(refreshed))
 		if result.Coverage.SourceRevision == "" {
 			result.Coverage.SourceRevision = revision
@@ -527,6 +538,9 @@ func (s *Store) CreateWorkRun(ctx context.Context, run model.WorkRun, claim *mod
 	err := s.db.QueryRowContext(ctx, `SELECT id FROM work_runs WHERE request_scope=? AND request_id=?`, scope, requestID).Scan(&existing)
 	if err == nil {
 		stored, e := s.WorkRun(ctx, existing)
+		if e == nil && (stored.Run.ID != run.ID || !reflect.DeepEqual(stored.Run.Spec, run.Spec) || !reflect.DeepEqual(stored.Run.Requester, run.Requester)) {
+			return model.WorkRun{}, false, app.ErrConflict
+		}
 		return stored.Run, true, e
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -743,9 +757,11 @@ func (s *Store) RecordWorkEvidence(ctx context.Context, e model.WorkEvidence, ex
 	var existingAttempt uint64
 	var existingKind model.WorkEvidenceKind
 	var existingArtifact, existingDetail string
-	err = tx.QueryRowContext(ctx, `SELECT work_run_id,step,attempt,kind,artifact_revision,detail FROM work_evidence WHERE request_scope=? AND request_id=?`, requestScope(e.Reporter), e.RequestID).Scan(&existingRun, &existingStep, &existingAttempt, &existingKind, &existingArtifact, &existingDetail)
+	var existingPassed sql.NullBool
+	err = tx.QueryRowContext(ctx, `SELECT work_run_id,step,attempt,kind,artifact_revision,passed,detail FROM work_evidence WHERE request_scope=? AND request_id=?`, requestScope(e.Reporter), e.RequestID).Scan(&existingRun, &existingStep, &existingAttempt, &existingKind, &existingArtifact, &existingPassed, &existingDetail)
 	if err == nil {
-		if existingRun != e.WorkRunID || existingStep != e.Step || existingAttempt != e.Attempt || existingKind != e.Kind || existingArtifact != e.ArtifactRevision || existingDetail != e.Detail {
+		passedMatches := (e.Passed == nil && !existingPassed.Valid) || (e.Passed != nil && existingPassed.Valid && *e.Passed == existingPassed.Bool)
+		if existingRun != e.WorkRunID || existingStep != e.Step || existingAttempt != e.Attempt || existingKind != e.Kind || existingArtifact != e.ArtifactRevision || !passedMatches || existingDetail != e.Detail {
 			return app.WorkRunRecord{}, app.ErrConflict
 		}
 		if err = tx.Commit(); err != nil {
@@ -799,10 +815,12 @@ func (s *Store) DecideWork(ctx context.Context, d model.WorkDecision, expected m
 	defer func() { _ = tx.Rollback() }()
 	var existingRun model.WorkRunID
 	var existingDecision model.WorkDecisionKind
+	var existingStep model.WorkStep
+	var existingAttempt uint64
 	var existingReason string
-	err = tx.QueryRowContext(ctx, `SELECT work_run_id,decision,reason FROM work_decisions WHERE request_scope=? AND request_id=?`, requestScope(d.Decider), d.RequestID).Scan(&existingRun, &existingDecision, &existingReason)
+	err = tx.QueryRowContext(ctx, `SELECT work_run_id,step,attempt,decision,reason FROM work_decisions WHERE request_scope=? AND request_id=?`, requestScope(d.Decider), d.RequestID).Scan(&existingRun, &existingStep, &existingAttempt, &existingDecision, &existingReason)
 	if err == nil {
-		if existingRun != d.WorkRunID || existingDecision != d.Decision || existingReason != d.Reason {
+		if existingRun != d.WorkRunID || existingStep != d.Step || existingAttempt != d.Attempt || existingDecision != d.Decision || existingReason != d.Reason {
 			return app.WorkRunRecord{}, app.ErrConflict
 		}
 		if err = tx.Commit(); err != nil {
@@ -854,12 +872,27 @@ func (s *Store) DecideWork(ctx context.Context, d model.WorkDecision, expected m
 	return s.WorkRun(ctx, d.WorkRunID)
 }
 
-func (s *Store) CancelWork(ctx context.Context, id model.WorkRunID, expected model.Revision, reason string, authority model.AuthorityRequest, at time.Time) (app.WorkRunRecord, error) {
+func (s *Store) CancelWork(ctx context.Context, id model.WorkRunID, expected model.Revision, reason string, requestID model.RequestID, authority model.AuthorityRequest, at time.Time) (app.WorkRunRecord, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return app.WorkRunRecord{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var existingRun model.WorkRunID
+	var existingReason string
+	err = tx.QueryRowContext(ctx, `SELECT work_run_id,reason FROM work_decisions WHERE request_scope=? AND request_id=?`, requestScope(authority.Principal), requestID).Scan(&existingRun, &existingReason)
+	if err == nil {
+		if existingRun != id || existingReason != reason {
+			return app.WorkRunRecord{}, app.ErrConflict
+		}
+		if err = tx.Commit(); err != nil {
+			return app.WorkRunRecord{}, err
+		}
+		return s.WorkRun(ctx, id)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return app.WorkRunRecord{}, err
+	}
 	decision, err := authorizeTx(ctx, tx, authority, at)
 	if err != nil || !decision.Allowed {
 		if err == nil {
@@ -872,7 +905,7 @@ func (s *Store) CancelWork(ctx context.Context, id model.WorkRunID, expected mod
 		return app.WorkRunRecord{}, classify(err)
 	}
 	decider, _ := json.Marshal(authority.Principal)
-	_, err = tx.ExecContext(ctx, `INSERT INTO work_decisions(work_run_id,step,attempt,decision,decider_json,reason,decided_at,revision) VALUES(?,?,?,?,?,?,?,1)`, id, model.WorkStepEvaluate, 1, model.WorkDecisionCancel, decider, reason, nanos(at))
+	_, err = tx.ExecContext(ctx, `INSERT INTO work_decisions(work_run_id,request_scope,request_id,step,attempt,decision,decider_json,reason,decided_at,revision) VALUES(?,?,?,?,?,?,?,?,?,1)`, id, requestScope(authority.Principal), requestID, model.WorkStepEvaluate, 1, model.WorkDecisionCancel, decider, reason, nanos(at))
 	if err != nil {
 		return app.WorkRunRecord{}, classify(err)
 	}
@@ -978,6 +1011,13 @@ func (s *Store) AdmitShell(ctx context.Context, in app.ShellAdmission) (app.Admi
 		return app.AdmissionResult{}, err
 	} else if ok {
 		if repeated.Execution.Workload != model.ExecutionWorkloadShell || repeated.Execution.Spec.WorkingDirectory != in.Execution.Spec.WorkingDirectory || repeated.Execution.Spec.Sandbox != in.Execution.Spec.Sandbox {
+			return app.AdmissionResult{}, app.ErrConflict
+		}
+		var workspaceID model.WorkspaceID
+		if err := tx.QueryRowContext(ctx, `SELECT workspace_id FROM workspace_uses WHERE execution_id=?`, repeated.Execution.ID).Scan(&workspaceID); err != nil {
+			return app.AdmissionResult{}, classify(err)
+		}
+		if workspaceID != in.WorkspaceUse.WorkspaceID {
 			return app.AdmissionResult{}, app.ErrConflict
 		}
 		_ = tx.Commit()
