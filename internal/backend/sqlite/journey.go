@@ -824,7 +824,7 @@ func (s *Store) WorkRunByRequest(ctx context.Context, principal model.Principal,
 }
 
 func (s *Store) PendingWorkRuns(ctx context.Context) ([]app.WorkRunRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM work_runs WHERE state IN (?,?,?) OR (state=? AND control_state=?) ORDER BY created_at`, model.WorkRunPending, model.WorkRunRunning, model.WorkRunUncertain, model.WorkRunCancelled, model.WorkControlDraining)
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM work_runs WHERE state IN (?,?,?,?) OR (state IN (?,?) AND control_state=?) ORDER BY created_at`, model.WorkRunPending, model.WorkRunRunning, model.WorkRunWaiting, model.WorkRunUncertain, model.WorkRunFailed, model.WorkRunCancelled, model.WorkControlDraining)
 	if err != nil {
 		return nil, err
 	}
