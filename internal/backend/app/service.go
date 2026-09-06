@@ -157,6 +157,12 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	var desired model.DesiredConfiguration
 	var expected model.Revision
 	if req.Target.Agent != nil {
+		resource := model.ResourceSelector{Kind: model.ResourceAgent, AgentID: req.Target.Agent.AgentID}
+		if req.Principal.Kind != model.PrincipalOperator {
+			if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Principal, Action: model.ActionLaunch, Resource: resource}, s.now().UTC()); err != nil {
+				return OperationResult{}, err
+			}
+		}
 		var err error
 		agent, err = s.store.Agent(ctx, req.Target.Agent.AgentID)
 		if err != nil {
@@ -212,8 +218,9 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 			return OperationResult{}, fail(ErrUnavailable, "generate execution credential: %v", err)
 		}
 		digest := sha256.Sum256(secret)
-		access = model.ExecutionAccess{ExecutionID: executionID, AgentID: agent.ID, Generation: 1, CredentialDigest: digest[:], State: model.ExecutionAccessInactive, IssuedAt: now, ExpiresAt: now.Add(s.accessLease), Revision: 1}
-		credential = &ports.ActionCredentialMaterial{ExecutionID: executionID, Generation: access.Generation, Secret: secret, ExpiresAt: access.ExpiresAt}
+		deliveryID := s.newID("delivery_")
+		access = model.ExecutionAccess{ExecutionID: executionID, AgentID: agent.ID, Generation: 1, CredentialDigest: digest[:], DeliveryID: deliveryID, State: model.ExecutionAccessInactive, IssuedAt: now, ExpiresAt: now.Add(s.accessLease), Revision: 1}
+		credential = &ports.ActionCredentialMaterial{ExecutionID: executionID, Generation: access.Generation, DeliveryID: deliveryID, Secret: secret, ExpiresAt: access.ExpiresAt}
 		defer clear(secret)
 	}
 	admission, err := s.store.AdmitLaunch(ctx, LaunchAdmission{
@@ -253,7 +260,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		return operationResult(finished), err
 	}
 	if credential != nil {
-		if description.AccessDelivery == nil || description.AccessDelivery.ExecutionID != executionID || description.AccessDelivery.Generation != credential.Generation || description.AccessDelivery.DeliveryID == "" || description.AccessDelivery.FileIdentity == "" {
+		if description.AccessDelivery == nil || description.AccessDelivery.ExecutionID != executionID || description.AccessDelivery.Generation != credential.Generation || description.AccessDelivery.DeliveryID != credential.DeliveryID || description.AccessDelivery.Resource == "" || description.AccessDelivery.FileIdentity == "" {
 			_ = prepared.Abort(workflowCtx)
 			return OperationResult{}, fail(ErrInvalid, "provider did not prove protected credential delivery")
 		}
@@ -329,11 +336,11 @@ func generateActionCredential() ([]byte, error) {
 }
 
 func (s *Service) Observe(ctx context.Context, req ObserveRequest) (ObservationResult, error) {
-	execution, err := s.store.Execution(ctx, req.ExecutionID)
-	if err != nil {
+	if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Principal, Action: model.ActionReadStatus, Resource: model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: req.ExecutionID}}, s.now().UTC()); err != nil {
 		return ObservationResult{}, err
 	}
-	if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Principal, Action: model.ActionReadStatus, Resource: model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: execution.ID}}, s.now().UTC()); err != nil {
+	execution, err := s.store.Execution(ctx, req.ExecutionID)
+	if err != nil {
 		return ObservationResult{}, err
 	}
 	runtime, err := s.runtimeFor(ctx, execution)
@@ -426,19 +433,19 @@ func (s *Service) ChangeContext(ctx context.Context, req ChangeContextRequest) (
 	if err := validateEffectContext(req.RequestContext); err != nil {
 		return OperationResult{}, err
 	}
-	execution, err := s.store.Execution(ctx, req.ExecutionID)
-	if err != nil {
-		return OperationResult{}, err
-	}
-	if execution.AgentID == "" {
-		return OperationResult{}, fail(ErrUnsupported, "standalone context associations are not revisioned")
-	}
 	admission, runtime, err := s.admitRuntimeEffect(ctx, req.RequestContext, req.ExecutionID, model.OperationChangeContext)
 	if err != nil {
 		return OperationResult{}, err
 	}
 	if admission.Repeated {
 		return operationResult(admission), nil
+	}
+	execution := admission.Execution
+	if execution.AgentID == "" {
+		settlementCtx, cancelSettlement := settlementContext(ctx)
+		defer cancelSettlement()
+		_, _ = s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: admission.Operation.ID, OperationState: model.OperationRefused, ResultCode: "not_applicable", Detail: "standalone context associations are not revisioned", ExecutionID: execution.ID, At: s.now().UTC()})
+		return OperationResult{}, fail(ErrUnsupported, "standalone context associations are not revisioned")
 	}
 	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancelWorkflow()
@@ -508,6 +515,12 @@ func (s *Service) Resume(ctx context.Context, req ResumeRequest) (OperationResul
 	var agentID model.AgentID
 	if req.Target.Agent != nil {
 		agentID = req.Target.Agent.AgentID
+		resource := model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agentID}
+		if req.Principal.Kind != model.PrincipalOperator {
+			if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Principal, Action: model.ActionLaunch, Resource: resource}, s.now().UTC()); err != nil {
+				return OperationResult{}, err
+			}
+		}
 		agent, err := s.store.Agent(ctx, agentID)
 		if err != nil {
 			return OperationResult{}, err
@@ -554,9 +567,6 @@ func (s *Service) SendMessage(ctx context.Context, req SendMessageRequest) (Mess
 			return MessageResult{}, fail(ErrInvalid, "duplicate recipient %s", id)
 		}
 		seen[id] = struct{}{}
-		if _, err := s.store.Agent(ctx, id); err != nil {
-			return MessageResult{}, err
-		}
 		recipients = append(recipients, model.MessageRecipient{ID: model.RecipientID(s.newID("rcp_")), AgentID: id})
 		authority = append(authority, model.AuthorityRequest{Principal: req.Principal, Action: model.ActionSendMessage, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: id}})
 	}
@@ -696,10 +706,6 @@ func (s *Service) admitRuntimeEffect(ctx context.Context, request RequestContext
 	if err := validateEffectContext(request); err != nil {
 		return AdmissionResult{}, nil, err
 	}
-	execution, err := s.store.Execution(ctx, executionID)
-	if err != nil {
-		return AdmissionResult{}, nil, err
-	}
 	now := s.now().UTC()
 	operation := model.Operation{ID: model.OperationID(s.newID("op_")), RequestID: request.RequestID, Kind: kind, Principal: request.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	authority := model.AuthorityRequest{Principal: request.Principal, Action: actionForOperation(kind), Resource: model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: executionID}}
@@ -709,11 +715,11 @@ func (s *Service) admitRuntimeEffect(ctx context.Context, request RequestContext
 	}
 	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancelWorkflow()
-	runtime, err := s.runtimeFor(workflowCtx, execution)
+	runtime, err := s.runtimeFor(workflowCtx, admission.Execution)
 	if err != nil {
 		settlementCtx, cancelSettlement := settlementContext(ctx)
 		defer cancelSettlement()
-		_, _ = s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: operation.ID, OperationState: model.OperationRefused, ResultCode: "runtime_unavailable", Detail: err.Error(), ExecutionID: execution.ID, ExecutionState: execution.State, At: s.now().UTC()})
+		_, _ = s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: operation.ID, OperationState: model.OperationRefused, ResultCode: "runtime_unavailable", Detail: err.Error(), ExecutionID: admission.Execution.ID, ExecutionState: admission.Execution.State, At: s.now().UTC()})
 	}
 	return admission, runtime, err
 }
@@ -878,8 +884,23 @@ func validateEffectContext(request RequestContext) error {
 			return fail(ErrUnauthorized, "invalid execution principal")
 		}
 	}
-	if request.Principal.Kind == model.PrincipalAutomation && (request.Principal.AutomationRun == "" || request.Principal.Authority.Kind == "") {
-		return fail(ErrUnauthorized, "invalid automation principal")
+	if request.Principal.Kind == model.PrincipalAutomation {
+		if request.Principal.AutomationRun == "" || request.Principal.Delegation == nil {
+			return fail(ErrUnauthorized, "invalid automation principal")
+		}
+		switch request.Principal.Authority.Kind {
+		case model.AuthorityOperator:
+		case model.AuthorityAgent:
+			if err := request.Principal.Authority.AgentID.Validate(); err != nil {
+				return fail(ErrUnauthorized, "invalid automation owner")
+			}
+		case model.AuthorityExecution:
+			if err := request.Principal.Authority.ExecutionID.Validate(); err != nil {
+				return fail(ErrUnauthorized, "invalid automation owner")
+			}
+		default:
+			return fail(ErrUnauthorized, "invalid automation owner")
+		}
 	}
 	return nil
 }
