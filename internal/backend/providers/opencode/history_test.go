@@ -79,6 +79,34 @@ func TestOpenCodeHistoryDiscoveryReportsUnreadableSourceAsUnknown(t *testing.T) 
 	require.Equal(t, model.HistoryCoveragePartial, discovered.Coverage.Metadata)
 }
 
+func TestOpenCodeHistoryDiscoversOrdinaryConfiguredNativeRoot(t *testing.T) {
+	providerRoot := t.TempDir()
+	nativeRoot := t.TempDir()
+	workspace := t.TempDir()
+	exportPath := filepath.Join(providerRoot, "export.json")
+	writeOpenCodeExport(t, exportPath, "ses_native", workspace, "ordinary answer")
+	listPath := filepath.Join(providerRoot, "sessions.json")
+	require.NoError(t, os.WriteFile(listPath, []byte(`[{"id":"ses_native","title":"Native","directory":"`+workspace+`"}]`), 0o600))
+	executable := filepath.Join(providerRoot, "opencode-fake")
+	script := "#!/bin/sh\nif [ \"$1\" = session ]; then cat \"$OPENCODE_LIST_FIXTURE\"; exit; fi\nif [ \"$1\" = export ]; then cat \"$OPENCODE_EXPORT_FIXTURE\"; exit; fi\nexit 2\n"
+	require.NoError(t, os.WriteFile(executable, []byte(script), 0o700))
+	provider, err := New(Config{Executable: executable, PrivateRoot: providerRoot,
+		Environment: []string{"OPENCODE_LIST_FIXTURE=" + listPath, "OPENCODE_EXPORT_FIXTURE=" + exportPath}})
+	require.NoError(t, err)
+	discovered, err := provider.History().Discover(context.Background(), ports.HistoryDiscoveryRequest{
+		Scope: ports.HistoryDiscoveryScope{Source: nativeRoot},
+	})
+	require.NoError(t, err)
+	require.Len(t, discovered.Histories, 1)
+	require.Equal(t, "ses_native", discovered.Histories[0].Native.Reference)
+	read, err := provider.History().Read(context.Background(), ports.HistorySourceSelection{
+		Provider: Name, Native: discovered.Histories[0].Native,
+		SourceRevision: discovered.Histories[0].Coverage.SourceRevision, Evidence: discovered.Histories[0].Evidence,
+	})
+	require.NoError(t, err)
+	require.Len(t, read.Turns, 2)
+}
+
 func mustManifest(t *testing.T, root string) historyManifest {
 	t.Helper()
 	manifest, err := readHistoryManifest(root)
