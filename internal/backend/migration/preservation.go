@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -61,6 +62,53 @@ func validConfig(data []byte) bool {
 		} `json:"agent"`
 	}
 	return len(data) > 0 && strings.HasPrefix(strings.TrimSpace(string(data)), "{") && json.Unmarshal(data, &config) == nil
+}
+
+func inactiveDefaultPermissions(data []byte) ([]byte, bool) {
+	var root struct {
+		Agent json.RawMessage `json:"agent"`
+	}
+	if json.Unmarshal(data, &root) != nil || len(root.Agent) == 0 {
+		return nil, false
+	}
+	var agent map[string]json.RawMessage
+	if json.Unmarshal(root.Agent, &agent) != nil {
+		return nil, false
+	}
+	raw, ok := agent["default_permissions"]
+	if !ok {
+		return nil, false
+	}
+	var permissions []string
+	if json.Unmarshal(raw, &permissions) != nil {
+		return nil, false
+	}
+	var compact bytes.Buffer
+	if json.Compact(&compact, raw) != nil {
+		return nil, false
+	}
+	return compact.Bytes(), true
+}
+
+func hasUnsupportedAuthoredConfig(data []byte) bool {
+	var root map[string]json.RawMessage
+	if json.Unmarshal(data, &root) != nil {
+		return false
+	}
+	for key, raw := range root {
+		if key != "agent" {
+			return true
+		}
+		var agent map[string]json.RawMessage
+		if json.Unmarshal(raw, &agent) != nil {
+			continue
+		}
+		delete(agent, "default_permissions")
+		if len(agent) != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func appendPreservationChecks(plan *MigrationPlan, snapshot sourcev228.Snapshot, lookup map[string]string) {
