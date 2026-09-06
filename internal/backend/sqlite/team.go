@@ -11,7 +11,7 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
 
-func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamDeployment, group model.Group, agents []model.Agent) (model.TeamDeployment, bool, error) {
+func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamDeployment, group model.Group, agents []model.Agent, principal model.Principal, at time.Time) (model.TeamDeployment, bool, error) {
 	if prior, err := s.TeamDeployment(ctx, deployment.ID); err == nil {
 		if prior.Definition != deployment.Definition || prior.GroupID != deployment.GroupID || prior.Mission != deployment.Mission || !reflect.DeepEqual(prior.Members, deployment.Members) {
 			return model.TeamDeployment{}, false, app.ErrConflict
@@ -25,6 +25,9 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 		return model.TeamDeployment{}, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err = requirePendingAutomationAction(ctx, tx, principal, model.AutomationDeployTeam, "", at); err != nil {
+		return model.TeamDeployment{}, false, err
+	}
 	for _, agent := range agents {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO agents(id,name,harness,model,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, agent.ID, agent.Name, agent.Desired.Harness, agent.Desired.Model, agent.Desired.WorkingDirectory, agent.Desired.Approval, agent.Desired.Sandbox, agent.PrimaryExecutionID, agent.Revision, nanos(agent.CreatedAt), nanos(agent.UpdatedAt)); err != nil {
 			return model.TeamDeployment{}, false, classify(err)

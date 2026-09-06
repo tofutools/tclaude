@@ -159,12 +159,15 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 		case model.AutomationDeployTeam:
 			deploymentID := model.DeploymentID(deterministicOrchestrationID("deployment_", string(occurrence.Occurrence.ID)))
 			deployed, deployErr := s.DeployTeam(ctx, DeployTeamRequest{Context: RequestContext{Principal: occurrence.Occurrence.Requester, RequestID: occurrence.Occurrence.RequestID}, DeploymentID: deploymentID, Instantiation: *revision.Action.Team})
-			state := model.OccurrenceAdmitted
-			if deployErr != nil {
-				state = model.OccurrenceDenied
-			}
-			if _, err = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, state, "", "", deployed.Deployment.ID, occurrence.Occurrence.Recipients, now); err != nil {
-				return touched, err
+			if deployed.Deployment.ID == "" {
+				if _, err = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, model.OccurrenceDenied, "", "", "", occurrence.Occurrence.Recipients, now); err != nil {
+					return touched, err
+				}
+			} else if deployErr != nil {
+				// The deployment action was durably admitted before its child
+				// process failed. Its normal deployment reconciliation owns the
+				// resulting partial/denied disposition.
+				continue
 			}
 		}
 		touched = append(touched, occurrence.Occurrence.ID)

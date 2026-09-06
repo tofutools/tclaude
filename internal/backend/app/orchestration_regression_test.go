@@ -117,14 +117,67 @@ func TestDisabledRuleSuppressesUnadmittedOccurrence(t *testing.T) {
 	occurrence, err := service.RunRuleNow(ctx, app.RunRuleNowRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "fire"}, RuleID: rule.Rule.ID, ExpectedRuleRevision: rule.Rule.Revision, OccurrenceID: "occurrence", SourceOccurrenceKey: "click"})
 	require.NoError(t, err)
 	request.Context.RequestID, request.RevisionID, request.ExpectedRevision, request.Enabled = "disable", "rule_v2", rule.Rule.Revision, false
-	_, err = service.SaveAutomationRule(ctx, request)
-	require.NoError(t, err)
+	base := service
+	service = app.New(disableGraphAdmissionStore{Store: store, before: func() {
+		_, disableErr := base.SaveAutomationRule(ctx, request)
+		require.NoError(t, disableErr)
+	}}, providers.NewRegistry()).WithClock(func() time.Time { return now })
 	_, err = service.ReconcilePendingWork(ctx)
 	require.NoError(t, err)
 	got, err := store.Occurrence(ctx, occurrence.Occurrence.ID)
 	require.NoError(t, err)
 	require.Equal(t, model.OccurrenceDenied, got.Occurrence.State)
 	require.Empty(t, got.Occurrence.WorkRunID)
+}
+
+func TestDisabledRuleCannotRaceMessageAdmission(t *testing.T) {
+	ctx := context.Background()
+	store, service, now := regressionService(t)
+	createAgent(t, ctx, service, model.OperatorPrincipal(), "recipient")
+	request := app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "save"}, ID: "rule", RevisionID: "rule_v1", Name: "rule", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Delegation: model.AutomationDelegation{Actions: []model.Action{model.ActionSendMessage}, Resources: []model.ResourceSelector{{Kind: model.ResourceAgent, AgentID: "recipient"}}, ExpiresAt: now.Add(time.Hour)}, Condition: model.AutomationCondition{Kind: model.AutomationSchedule, Schedule: &model.ScheduleCondition{Timezone: "UTC", Interval: time.Minute, Anchor: now.Add(time.Hour)}}, Action: model.AutomationAction{Kind: model.AutomationSendMessage, Message: &model.AutomationMessageAction{Body: "check", AgentIDs: []model.AgentID{"recipient"}}}, Policy: regressionOccurrencePolicy()}
+	rule, err := service.SaveAutomationRule(ctx, request)
+	require.NoError(t, err)
+	occurrence, err := service.RunRuleNow(ctx, app.RunRuleNowRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "fire"}, RuleID: rule.Rule.ID, ExpectedRuleRevision: rule.Rule.Revision, OccurrenceID: "occurrence", SourceOccurrenceKey: "click", Recipients: []model.AgentID{"recipient"}})
+	require.NoError(t, err)
+	request.Context.RequestID, request.RevisionID, request.ExpectedRevision, request.Enabled = "disable", "rule_v2", rule.Rule.Revision, false
+	base := service
+	service = app.New(disableMessageAdmissionStore{Store: store, before: func() {
+		_, disableErr := base.SaveAutomationRule(ctx, request)
+		require.NoError(t, disableErr)
+	}}, providers.NewRegistry()).WithClock(func() time.Time { return now })
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	got, err := store.Occurrence(ctx, occurrence.Occurrence.ID)
+	require.NoError(t, err)
+	require.Equal(t, model.OccurrenceDenied, got.Occurrence.State)
+	require.Empty(t, got.Occurrence.OperationID)
+}
+
+func TestDisabledRuleCannotRaceTeamAdmission(t *testing.T) {
+	ctx := context.Background()
+	store, service, now := regressionService(t)
+	desired := model.DesiredConfiguration{Harness: "prepared-work", Model: "test", WorkingDirectory: t.TempDir(), Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}
+	team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{{Key: "builder", Name: "builder", Desired: desired, Required: true}}, Waves: []model.TeamWave{{ID: "build", MemberKeys: []string{"builder"}, RequiredReady: true}}}
+	definition, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "team"}, Draft: app.DefinitionDraft{ID: "team", RevisionID: "team_v1", Name: "team", Kind: model.DefinitionTeam, SchemaVersion: 1, Source: "team", Team: &team}})
+	require.NoError(t, err)
+	teamRef := model.DefinitionRef{DefinitionID: definition.Definition.ID, RevisionID: definition.Revision.ID, ContentHash: definition.Revision.ContentHash, Kind: model.DefinitionTeam}
+	request := app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "save"}, ID: "rule", RevisionID: "rule_v1", Name: "rule", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Delegation: model.AutomationDelegation{Actions: []model.Action{model.ActionRunAutomation, model.ActionStartWork, model.ActionLaunch}, Resources: []model.ResourceSelector{{Kind: model.ResourceAutomationRule, AutomationRuleID: "rule"}, {Kind: model.ResourceGroupPeers, GroupID: "group"}}, Bounds: model.ConfigurationBounds{Harnesses: []string{desired.Harness}, Models: []string{desired.Model}, WorkingDirectoryRoots: []string{desired.WorkingDirectory}, ApprovalModes: []model.ApprovalMode{desired.Approval}, SandboxModes: []model.SandboxMode{desired.Sandbox}}, ExpiresAt: now.Add(time.Hour)}, Condition: model.AutomationCondition{Kind: model.AutomationSchedule, Schedule: &model.ScheduleCondition{Timezone: "UTC", Interval: time.Minute, Anchor: now.Add(time.Hour)}}, Action: model.AutomationAction{Kind: model.AutomationDeployTeam, Team: &model.TeamInstantiation{Definition: teamRef, Mission: "ship", GroupID: "group"}}, Policy: regressionOccurrencePolicy(), Dependencies: []model.DefinitionRef{teamRef}}
+	rule, err := service.SaveAutomationRule(ctx, request)
+	require.NoError(t, err)
+	occurrence, err := service.RunRuleNow(ctx, app.RunRuleNowRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "fire"}, RuleID: rule.Rule.ID, ExpectedRuleRevision: rule.Rule.Revision, OccurrenceID: "occurrence", SourceOccurrenceKey: "click"})
+	require.NoError(t, err)
+	request.Context.RequestID, request.RevisionID, request.ExpectedRevision, request.Enabled = "disable", "rule_v2", rule.Rule.Revision, false
+	base := service
+	service = app.New(disableTeamAdmissionStore{Store: store, before: func() {
+		_, disableErr := base.SaveAutomationRule(ctx, request)
+		require.NoError(t, disableErr)
+	}}, providers.NewRegistry()).WithClock(func() time.Time { return now })
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	got, err := store.Occurrence(ctx, occurrence.Occurrence.ID)
+	require.NoError(t, err)
+	require.Equal(t, model.OccurrenceDenied, got.Occurrence.State)
+	require.Empty(t, got.Occurrence.DeploymentID)
 }
 
 func TestScheduledAutomationDeploysTeamThroughDelegatedEffects(t *testing.T) {
@@ -274,6 +327,36 @@ type graphConflictStore struct{ app.Store }
 
 func (graphConflictStore) ApplyGraphTransition(context.Context, app.GraphTransition) (app.WorkRunRecord, error) {
 	return app.WorkRunRecord{}, app.ErrConflict
+}
+
+type disableGraphAdmissionStore struct {
+	app.Store
+	before func()
+}
+
+func (s disableGraphAdmissionStore) CreateGraphWorkRun(ctx context.Context, run model.WorkRun, windows []model.DecisionWindow) (app.WorkRunRecord, bool, error) {
+	s.before()
+	return s.Store.CreateGraphWorkRun(ctx, run, windows)
+}
+
+type disableMessageAdmissionStore struct {
+	app.Store
+	before func()
+}
+
+func (s disableMessageAdmissionStore) CreateMessage(ctx context.Context, message model.Message, requestID model.RequestID, operationID model.OperationID, authority []model.AuthorityRequest) (app.MessageAdmissionResult, error) {
+	s.before()
+	return s.Store.CreateMessage(ctx, message, requestID, operationID, authority)
+}
+
+type disableTeamAdmissionStore struct {
+	app.Store
+	before func()
+}
+
+func (s disableTeamAdmissionStore) CreateTeamDeployment(ctx context.Context, deployment model.TeamDeployment, group model.Group, agents []model.Agent, principal model.Principal, at time.Time) (model.TeamDeployment, bool, error) {
+	s.before()
+	return s.Store.CreateTeamDeployment(ctx, deployment, group, agents, principal, at)
 }
 
 func ptr[T any](value T) *T { return &value }
