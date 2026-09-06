@@ -114,8 +114,8 @@ type ExecutionState string
 type ExecutionWorkloadKind string
 
 const (
-	ExecutionWorkloadAgent ExecutionWorkloadKind = "agent"
-	ExecutionWorkloadShell ExecutionWorkloadKind = "shell"
+	ExecutionWorkloadHarness ExecutionWorkloadKind = "harness"
+	ExecutionWorkloadShell   ExecutionWorkloadKind = "shell"
 )
 
 const (
