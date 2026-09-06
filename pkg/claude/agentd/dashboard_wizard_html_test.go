@@ -1811,7 +1811,7 @@ func TestDashboardHTML_WizardTemplateFromGroup(t *testing.T) {
 // TestDashboardHTML_WizardGroupDialogs pins the wizard re-skins of the three
 // remaining group dialogs in the templates family (modal-templates.js):
 // import ("⤒ Unseal a party archive"), startup context ("📜 The party's
-// lore") and clone ("⧉ Mirror the party").
+// lore") and the source-first group creation form ("⚔ Form a party").
 func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -1832,12 +1832,12 @@ func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 	must(`<${Words} plain="Group startup context" wizard="📜 The party's lore"/>`, "the context title ships both voices")
 	must(`content: "📜 Inscribe it!"`, "the context submit lever reads Inscribe it in wizard mode")
 
-	// Clone.
+	// Group creation. Clone is one prefilled state of this same surface.
 	must("body.wizard #group-create-modal .cron-create-modal", "the shared group dialog surface is re-skinned")
-	must("? 'Clone group'", "the shared dialog ships the clone title")
-	must("? '⧉ Mirror the party'", "the shared dialog ships the wizard clone title")
-	must(`content: "⧉ Mirror it!"`, "the clone submit lever reads Mirror it in wizard mode")
-	must(`content: "⧉ Mirroring…"`, "the busy clone submit reads Mirroring in wizard mode")
+	must("const regularTitle = 'Create group'", "every preset uses the common regular title")
+	must("const wizardTitle = '⚔ Form a party'", "every preset uses the common wizard title")
+	must(`content: "⚔ Form the party!"`, "the common submit lever reads Form the party in wizard mode")
+	must(`content: "⚔ Gathering the party…"`, "the common busy submit reads Gathering in wizard mode")
 	must("body.wizard #group-create-modal .group-clone-preview", "the shared source summary is re-skinned")
 }
 
