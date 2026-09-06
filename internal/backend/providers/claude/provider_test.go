@@ -53,22 +53,30 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
 	argvPath := filepath.Join(root, "argv")
 	inputPath := filepath.Join(root, "input")
+	bootstrapPath := filepath.Join(root, "bootstrap")
 	executable := filepath.Join(root, "claude-fake")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CLAUDE_TEST_ARGV\"\nwhile IFS= read -r line; do\n  printf '%s\\n' \"$line\" >> \"$CLAUDE_TEST_INPUT\"\ndone\n"
+	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CLAUDE_TEST_ARGV\"\nprintf '%s\\n' \"$TCLAUDE_BACKEND_SOCKET\" > \"$CLAUDE_TEST_BOOTSTRAP\"\ncat \"$TCLAUDE_BACKEND_CREDENTIAL_FILE\" >> \"$CLAUDE_TEST_BOOTSTRAP\"\nwhile IFS= read -r line; do\n  printf '%s\\n' \"$line\" >> \"$CLAUDE_TEST_INPUT\"\ndone\n"
 	require.NoError(t, os.WriteFile(executable, []byte(script), 0o700))
 	require.NoError(t, os.Setenv("CLAUDE_TEST_ARGV", argvPath))
 	require.NoError(t, os.Setenv("CLAUDE_TEST_INPUT", inputPath))
+	require.NoError(t, os.Setenv("CLAUDE_TEST_BOOTSTRAP", bootstrapPath))
 	t.Cleanup(func() {
 		_ = os.Unsetenv("CLAUDE_TEST_ARGV")
 		_ = os.Unsetenv("CLAUDE_TEST_INPUT")
+		_ = os.Unsetenv("CLAUDE_TEST_BOOTSTRAP")
 	})
 
-	provider, err := New(Config{Executable: executable, PrivateRoot: root})
+	agentSocket := filepath.Join(root, "backend.sock")
+	provider, err := New(Config{Executable: executable, PrivateRoot: root, AgentSocket: agentSocket})
 	require.NoError(t, err)
 	request := ports.PreparationRequest{
 		Intent: ports.StartFresh,
+		ActionCredential: &ports.ActionCredentialMaterial{
+			ExecutionID: "execution_claude", Generation: 1, DeliveryID: "delivery-claude",
+			Secret: []byte("claude-provider-secret"), ExpiresAt: time.Now().Add(time.Hour),
+		},
 		Spec: model.ResolvedExecutionSpec{
-			ExecutionID: "execution_claude", Harness: Name, Model: "test-model",
+			ExecutionID: "execution_claude", Attempt: 2, Harness: Name, Model: "test-model",
 			WorkingDirectory: root, Approval: model.ApprovalSupervised,
 			Sandbox: model.SandboxWorkspaceWrite,
 		},
@@ -79,6 +87,10 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 	require.Equal(t, ports.TopologyTerminalAuthoritative, description.Topology)
 	require.True(t, description.EffectivePolicy.SandboxEnforced)
 	require.Len(t, description.Resources, 1)
+	require.NotNil(t, description.AccessDelivery)
+	require.NotContains(t, string(description.Evidence.Payload), "claude-provider-secret")
+	access := &model.ExecutionAccessBinding{ExecutionID: request.Spec.ExecutionID, Generation: 1,
+		DeliveryID: "delivery-claude", State: model.ExecutionAccessSuspended, ExpiresAt: request.ActionCredential.ExpiresAt}
 
 	permit := &testPermit{execution: request.Spec.ExecutionID, operation: "operation_launch"}
 	released, err := prepared.Release(context.Background(), permit)
@@ -94,15 +106,21 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 
 	preparedRecovery, err := provider.Recover(context.Background(), ports.RecoveryRequest{
 		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: description.Evidence,
+		Attempt: request.Spec.Attempt, Access: access,
 	})
 	require.NoError(t, err)
 	require.Equal(t, ports.RecoveryControlled, preparedRecovery.State,
 		"the evidence persisted before release must recover a start completed before receipt persistence")
+	require.NotNil(t, preparedRecovery.AccessProof)
 
 	require.Eventually(t, func() bool {
 		value, readErr := os.ReadFile(argvPath)
 		return readErr == nil && strings.Contains(string(value), "--session-id") &&
 			strings.Contains(string(value), "--permission-mode\nmanual")
+	}, time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		value, readErr := os.ReadFile(bootstrapPath)
+		return readErr == nil && string(value) == agentSocket+"\nclaude-provider-secret"
 	}, time.Second, 10*time.Millisecond)
 
 	interaction, err := released.Runtime.Interact(context.Background(), ports.Interaction{Text: "literal $(touch nope); `false`"})
@@ -116,6 +134,7 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 
 	recovered, err := provider.Recover(context.Background(), ports.RecoveryRequest{
 		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: released.Evidence,
+		Attempt: request.Spec.Attempt, Access: access,
 	})
 	require.NoError(t, err)
 	require.Equal(t, ports.RecoveryControlled, recovered.State)
