@@ -996,7 +996,7 @@ jobs:
         shell: bash
         run: |
           go test ./pkg/claude/agentd \
-            -run '^(TestAgentIdentityForPID|TestRequireCrossAgentPermission|TestRequireSpawnPermission|TestCronSpawn|TestTriggerSpawn|TestLifecycleInheritedAuthority_(ResumePinsTargetOwnedDirectory|UsesLivePanePhysicalCwd|ReadOnlyCwdNeedsNoDaemonMarker)|TestExecutionRuntime|TestHandleAgentStop_(SkipsOfflineTarget|NoSlugDenies)|TestDelete_FailedSoftExitThenNaturalCloseProceeds)' \
+            -run '^(TestAgentIdentityForPID|TestManagedHookAdmission_|TestHookBroker_|TestStatuslineBroker_|TestRequireCrossAgentPermission|TestRequireSpawnPermission|TestCronSpawn|TestTriggerSpawn|TestLifecycleInheritedAuthority_(ResumePinsTargetOwnedDirectory|UsesLivePanePhysicalCwd|ReadOnlyCwdNeedsNoDaemonMarker)|TestExecutionRuntime|TestHandleAgentStop_(SkipsOfflineTarget|NoSlugDenies)|TestDelete_FailedSoftExitThenNaturalCloseProceeds)' \
             -count=1
           go test ./pkg/claude/session \
             -run '^TestExecutionIDResetsPredecessorAuthorityBeforePrivateTokenFailure$' \
