@@ -108,7 +108,31 @@ func appendPreservationChecks(plan *MigrationPlan, snapshot sourcev228.Snapshot,
 			selected = target
 		}
 	}
+	checkActor := func(actor, conversation string) {
+		if owner := owners[conversation]; actor != "" && owner != "" && actor != owner {
+			add("conflicting_message_attribution", "agent_messages", "message actor disagrees with known conversation association owner")
+		}
+	}
+	for _, table := range []string{"agent_messages", "human_messages"} {
+		for _, row := range snapshot.Rows[table] {
+			checkActor(sourcev228.String(row.Values["from_agent"]), sourcev228.String(row.Values["from_conv"]))
+			checkActor(sourcev228.String(row.Values["to_agent"]), sourcev228.String(row.Values["to_conv"]))
+		}
+	}
 	for _, row := range snapshot.Rows["agent_messages"] {
+		for _, pair := range [][2]string{{"to_recipients", "to_recipient_agents"}, {"cc_recipients", "cc_recipient_agents"}} {
+			var conversations, actors []string
+			_ = json.Unmarshal([]byte(sourcev228.String(row.Values[pair[0]])), &conversations)
+			_ = json.Unmarshal([]byte(sourcev228.String(row.Values[pair[1]])), &actors)
+			if len(actors) > 0 && len(actors) != len(conversations) {
+				add("conflicting_message_attribution", "agent_messages", "message audience actor and conversation positions disagree")
+			}
+			for index, actor := range actors {
+				if index < len(conversations) {
+					checkActor(actor, conversations[index])
+				}
+			}
+		}
 		for _, spec := range []struct{ field, table, kind string }{
 			{"to_recipients", "agent_conversations", "conversation"}, {"cc_recipients", "agent_conversations", "conversation"},
 			{"to_recipient_agents", "agents", "agent"}, {"cc_recipient_agents", "agents", "agent"},
@@ -123,6 +147,11 @@ func appendPreservationChecks(plan *MigrationPlan, snapshot sourcev228.Snapshot,
 				continue
 			}
 			for index, value := range recipients {
+				// v228 actor arrays are positionally paired; empty means a plain
+				// conversation with no actor, not a broken actor reference.
+				if spec.kind == "agent" && value == "" {
+					continue
+				}
 				target := lookup[spec.table+"\x1f"+strings.TrimSpace(value)]
 				plan.References = append(plan.References, ReferenceMapping{SourceTable: "agent_messages", SourceKey: row.Key, Field: fmt.Sprintf("%s[%d]", spec.field, index), TargetKind: spec.kind, TargetID: target, Resolved: target != ""})
 				if target == "" {
