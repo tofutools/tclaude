@@ -95,7 +95,8 @@ func discoverSession(stateRoot, id string, scope ports.HistoryDiscoveryScope) (*
 	tokenRaw, _ := json.Marshal(sourceToken{StateRoot: stateRoot, SessionID: id})
 	point := ports.ProviderHistoryPoint{Token: revision, Kind: model.HistoryPointHead, OccurredAt: updated}
 	evidence, _ := model.NewProviderEvidence(Name, evidenceVersion, tokenRaw)
-	return &ports.DiscoveredHistory{Native: model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: id, ObservedAt: time.Now().UTC()}, SourceToken: string(tokenRaw), Title: meta.Name, WorkspaceHint: meta.CWD, ModifiedAt: updated, Availability: model.HistoryContent, Coverage: model.HistoryCoverage{Metadata: model.HistoryCoverageComplete, Content: model.HistoryCoverageComplete, SourceRevision: revision, RefreshedAt: time.Now().UTC()}, Points: []ports.ProviderHistoryPoint{point}, Evidence: evidence}, nil
+	token := sourceToken{StateRoot: stateRoot, SessionID: id}
+	return &ports.DiscoveredHistory{Native: model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: id, ObservedAt: time.Now().UTC()}, SourceToken: string(tokenRaw), SourceFingerprint: sourceFingerprint(token), Title: meta.Name, WorkspaceHint: meta.CWD, ModifiedAt: updated, Availability: model.HistoryContent, Coverage: model.HistoryCoverage{Metadata: model.HistoryCoverageComplete, Content: model.HistoryCoverageComplete, SourceRevision: revision, RefreshedAt: time.Now().UTC()}, Points: []ports.ProviderHistoryPoint{point}, Evidence: evidence}, nil
 }
 func (h historyReader) Read(ctx context.Context, selection ports.HistorySourceSelection) (ports.HistoryReadResult, error) {
 	if err := ctx.Err(); err != nil {
@@ -110,6 +111,9 @@ func (h historyReader) Read(ctx context.Context, selection ports.HistorySourceSe
 	}
 	if filepath.Clean(token.StateRoot) != h.provider.nativeHome || token.SessionID != selection.Native.Reference {
 		return ports.HistoryReadResult{}, fmt.Errorf("Copilot history source is outside provider storage")
+	}
+	if selection.SourceFingerprint != sourceFingerprint(token) {
+		return ports.HistoryReadResult{}, fmt.Errorf("Copilot history source fingerprint changed")
 	}
 	if err := verifyHistorySelection(selection, token); err != nil {
 		return ports.HistoryReadResult{}, err
@@ -200,6 +204,9 @@ func decodeSourceToken(raw string) (sourceToken, error) {
 	return token, nil
 }
 func digest(raw []byte) string { sum := sha256.Sum256(raw); return hex.EncodeToString(sum[:]) }
+func sourceFingerprint(token sourceToken) string {
+	return digest([]byte(Name + "\x00" + NativeNamespace + "\x00" + filepath.Clean(token.StateRoot) + "\x00" + token.SessionID))
+}
 func parseTime(value string) time.Time {
 	parsed, _ := time.Parse(time.RFC3339Nano, value)
 	return parsed.UTC()
