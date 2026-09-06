@@ -85,6 +85,8 @@ func TestBrowserPinnedProcessBindsNamedAgent(t *testing.T) {
 	page.MustElementR("#roster h2", "Review team")
 	page.MustElement("[data-tab=messages]").MustClick()
 	page.MustElement("#compose").MustClick()
+	page.MustElement("[name=to]").MustSelect("Browser worker")
+	page.MustElement("[name=subject]").MustInput("Process binding review")
 	page.MustElement("[name=body]").MustInput("Durable browser message")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()

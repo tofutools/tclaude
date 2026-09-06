@@ -12,8 +12,9 @@ import (
 // effects atomically create the Operation and reserve its exact target.
 type Store interface {
 	OrchestrationStore
+	ConfigurationCatalogStore
 	CreateAgent(context.Context, model.Agent) error
-	UpdateAgent(context.Context, model.AgentID, model.Revision, string, string, model.AgentNotificationPreferences, model.DesiredConfiguration, model.AuthorityRequest, time.Time) (model.Agent, error)
+	UpdateAgent(context.Context, model.AgentID, model.Revision, string, string, model.AgentNotificationPreferences, model.DesiredConfiguration, *model.ConfigurationProfileRef, model.AuthorityRequest, time.Time) (model.Agent, error)
 	RetireAgent(context.Context, model.AgentID, model.Revision, model.Principal, string, time.Time) (model.Agent, error)
 	ReactivateAgent(context.Context, model.AgentID, model.Revision, model.Principal, time.Time) (model.Agent, error)
 	Agent(context.Context, model.AgentID) (model.Agent, error)
