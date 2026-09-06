@@ -122,7 +122,7 @@ CREATE TABLE "sessions" (
 			auto_registered INTEGER NOT NULL DEFAULT 0,
 			created_at      INTEGER NOT NULL,
 			updated_at      INTEGER NOT NULL
-		, context_pct REAL NOT NULL DEFAULT 0, subagent_count INTEGER NOT NULL DEFAULT 0, last_hook INTEGER, tokens_input INTEGER NOT NULL DEFAULT 0, tokens_output INTEGER NOT NULL DEFAULT 0, context_window_size INTEGER NOT NULL DEFAULT 0, nudged_pct REAL NOT NULL DEFAULT 0, exit_reason TEXT, model TEXT NOT NULL DEFAULT '', effort_level TEXT NOT NULL DEFAULT '', pending_conv TEXT NOT NULL DEFAULT '', cost_usd REAL NOT NULL DEFAULT 0, model_id TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT 'claude', sandbox_mode TEXT NOT NULL DEFAULT '', remote_control INTEGER NOT NULL DEFAULT 0, virtual_cost_usd REAL NOT NULL DEFAULT 0, agent_id TEXT NOT NULL DEFAULT '', last_statusline_json TEXT NOT NULL DEFAULT '', subagents_json TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', approval_policy TEXT NOT NULL DEFAULT '', approval_auto_review INTEGER NOT NULL DEFAULT 0, resume_provenance TEXT NOT NULL DEFAULT '', exit_intent TEXT NOT NULL DEFAULT '', exit_intent_event_id TEXT NOT NULL DEFAULT '', exit_intent_generation TEXT NOT NULL DEFAULT '', exit_intent_at INTEGER, exit_callback_generation TEXT NOT NULL DEFAULT '', exit_callback_token_hash TEXT NOT NULL DEFAULT '', exit_callback_pane_id TEXT NOT NULL DEFAULT '', exit_callback_used_at INTEGER, exit_launch_gate_state TEXT NOT NULL DEFAULT '', auto_memory INTEGER NOT NULL DEFAULT 0, bg_shells_json TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', os_sandbox_state TEXT NOT NULL DEFAULT '', os_sandbox_source TEXT NOT NULL DEFAULT '', os_sandbox_unverified INTEGER NOT NULL DEFAULT 0, sandbox_mode_source TEXT NOT NULL DEFAULT '', sandbox_implementation TEXT NOT NULL DEFAULT 'harness-builtin', monitors_json TEXT NOT NULL DEFAULT '', peer_messaging INTEGER NOT NULL DEFAULT 0) STRICT;
+		, context_pct REAL NOT NULL DEFAULT 0, subagent_count INTEGER NOT NULL DEFAULT 0, last_hook INTEGER, tokens_input INTEGER NOT NULL DEFAULT 0, tokens_output INTEGER NOT NULL DEFAULT 0, context_window_size INTEGER NOT NULL DEFAULT 0, nudged_pct REAL NOT NULL DEFAULT 0, exit_reason TEXT, model TEXT NOT NULL DEFAULT '', effort_level TEXT NOT NULL DEFAULT '', pending_conv TEXT NOT NULL DEFAULT '', cost_usd REAL NOT NULL DEFAULT 0, model_id TEXT NOT NULL DEFAULT '', harness TEXT NOT NULL DEFAULT 'claude', sandbox_mode TEXT NOT NULL DEFAULT '', remote_control INTEGER NOT NULL DEFAULT 0, virtual_cost_usd REAL NOT NULL DEFAULT 0, agent_id TEXT NOT NULL DEFAULT '', last_statusline_json TEXT NOT NULL DEFAULT '', subagents_json TEXT NOT NULL DEFAULT '', ask_user_question_timeout TEXT NOT NULL DEFAULT '', effective_sandbox_config TEXT NOT NULL DEFAULT '', approval_policy TEXT NOT NULL DEFAULT '', approval_auto_review INTEGER NOT NULL DEFAULT 0, resume_provenance TEXT NOT NULL DEFAULT '', exit_intent TEXT NOT NULL DEFAULT '', exit_intent_event_id TEXT NOT NULL DEFAULT '', exit_intent_generation TEXT NOT NULL DEFAULT '', exit_intent_at INTEGER, exit_callback_generation TEXT NOT NULL DEFAULT '', exit_callback_token_hash TEXT NOT NULL DEFAULT '', exit_callback_pane_id TEXT NOT NULL DEFAULT '', exit_callback_used_at INTEGER, exit_launch_gate_state TEXT NOT NULL DEFAULT '', auto_memory INTEGER NOT NULL DEFAULT 0, bg_shells_json TEXT NOT NULL DEFAULT '', context_features TEXT NOT NULL DEFAULT '', auto_compact_window TEXT NOT NULL DEFAULT '', os_sandbox_state TEXT NOT NULL DEFAULT '', os_sandbox_source TEXT NOT NULL DEFAULT '', os_sandbox_unverified INTEGER NOT NULL DEFAULT 0, sandbox_mode_source TEXT NOT NULL DEFAULT '', sandbox_implementation TEXT NOT NULL DEFAULT 'harness-builtin', monitors_json TEXT NOT NULL DEFAULT '', peer_messaging INTEGER NOT NULL DEFAULT 0, resume_operation_id TEXT NOT NULL DEFAULT '') STRICT;
 
 CREATE INDEX idx_sessions_conv_id ON sessions(conv_id);
 
@@ -1500,3 +1500,39 @@ CREATE TABLE conversation_reference_bindings (
 ) STRICT;
 
 CREATE INDEX conversation_external_lookup ON conversation_reference_bindings(harness, namespace, external_ref);
+
+CREATE TABLE execution_operations (
+		id TEXT PRIMARY KEY,
+		kind TEXT NOT NULL,
+		agent_id TEXT NOT NULL DEFAULT '',
+		conv_id TEXT NOT NULL,
+		predecessor_execution_id TEXT NOT NULL DEFAULT '',
+		predecessor_session_id TEXT NOT NULL DEFAULT '',
+		intended_execution_id TEXT NOT NULL,
+		intended_session_id TEXT NOT NULL DEFAULT '',
+		logical_conversation_id TEXT NOT NULL DEFAULT '',
+		claim_hash TEXT NOT NULL DEFAULT '',
+		claim_pid INTEGER NOT NULL DEFAULT 0,
+		claim_process_start TEXT NOT NULL DEFAULT '',
+		tmux_session TEXT NOT NULL DEFAULT '',
+		pane_id TEXT NOT NULL DEFAULT '',
+		gate_path TEXT NOT NULL DEFAULT '',
+		state TEXT NOT NULL,
+		launch_phase TEXT NOT NULL,
+		revision INTEGER NOT NULL,
+		recovery_agent_id TEXT NOT NULL DEFAULT '',
+		recovery_generation TEXT NOT NULL DEFAULT '',
+		dispatch_detail TEXT NOT NULL DEFAULT '',
+		failure_detail TEXT NOT NULL DEFAULT '',
+		requested_at INTEGER NOT NULL,
+		accepted_at INTEGER,
+		started_at INTEGER,
+		ready_at INTEGER
+	) STRICT;
+
+CREATE INDEX execution_operations_active
+		ON execution_operations(state, requested_at);
+
+CREATE UNIQUE INDEX execution_operations_one_active_conv
+		ON execution_operations(conv_id)
+		WHERE state NOT IN ('ready', 'rejected', 'failed', 'cancelled');
