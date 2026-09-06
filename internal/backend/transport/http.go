@@ -27,6 +27,7 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	h.mux.HandleFunc("POST /v2/agents", h.createAgent)
 	h.mux.HandleFunc("POST /v2/groups", h.createGroup)
 	h.mux.HandleFunc("GET /v2/snapshot", h.snapshot)
+	h.registerCommands()
 	return h, nil
 }
 
@@ -146,6 +147,11 @@ type executionView struct {
 	UpdatedAt      time.Time                   `json:"updated_at"`
 }
 
+func projectExecution(e model.Execution) executionView {
+	return executionView{ID: e.ID, AgentID: e.AgentID, ConversationID: e.ConversationID,
+		Spec: e.Spec, State: e.State, Revision: e.Revision, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt}
+}
+
 func (h *Handler) snapshot(w http.ResponseWriter, r *http.Request) {
 	p, ok := h.caller(w, r)
 	if !ok {
@@ -158,7 +164,7 @@ func (h *Handler) snapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]executionView, 0, len(s.Executions))
 	for _, e := range s.Executions {
-		views = append(views, executionView{e.ID, e.AgentID, e.ConversationID, e.Spec, e.State, e.Revision, e.CreatedAt, e.UpdatedAt})
+		views = append(views, projectExecution(e))
 	}
 	writeJSON(w, http.StatusOK, struct {
 		Revision   model.Revision    `json:"revision"`
