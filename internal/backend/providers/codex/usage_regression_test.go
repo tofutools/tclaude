@@ -20,7 +20,7 @@ func TestUsageRegressionStableSourceKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, "rollout.jsonl")
-	raw := []byte("{\"type\":\"session_meta\",\"payload\":{\"id\":\"native-session\"}}\n{\"timestamp\":\"2026-09-07T01:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100}}}}\n")
+	raw := []byte("{\"type\":\"session_meta\",\"payload\":{\"id\":\"native-session\"}}\n{\"timestamp\":\"2026-09-07T01:00:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\",\"info\":{\"total_token_usage\":{\"input_tokens\":100,\"output_tokens\":20}}}}\n")
 	if err := os.WriteFile(path, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -36,6 +36,9 @@ func TestUsageRegressionStableSourceKey(t *testing.T) {
 	b, err := reader.Collect(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if a.Coverage.Counters != model.UsageCoverageComplete || len(a.Counters) == 0 {
+		t.Fatalf("expected usable nonzero observation: %+v", a)
 	}
 	if a.SourceKey != b.SourceKey {
 		t.Fatalf("same rollout/revision uses different keys: %s -> %s (revision equal=%v)", a.SourceKey, b.SourceKey, a.SourceRevision == b.SourceRevision)
