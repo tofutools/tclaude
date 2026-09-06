@@ -24,9 +24,13 @@ func migrateV227toV228(d *sql.DB) error {
 		predecessor_session_id TEXT NOT NULL DEFAULT '',
 		intended_execution_id TEXT NOT NULL,
 		intended_session_id TEXT NOT NULL DEFAULT '',
+		logical_conversation_id TEXT NOT NULL DEFAULT '',
 		claim_hash TEXT NOT NULL DEFAULT '',
 		claim_pid INTEGER NOT NULL DEFAULT 0,
 		claim_process_start TEXT NOT NULL DEFAULT '',
+		tmux_session TEXT NOT NULL DEFAULT '',
+		pane_id TEXT NOT NULL DEFAULT '',
+		gate_path TEXT NOT NULL DEFAULT '',
 		state TEXT NOT NULL,
 		launch_phase TEXT NOT NULL,
 		revision INTEGER NOT NULL,
@@ -44,6 +48,11 @@ func migrateV227toV228(d *sql.DB) error {
 	if _, err := tx.Exec(`CREATE INDEX IF NOT EXISTS execution_operations_active
 		ON execution_operations(state, requested_at)`); err != nil {
 		return fmt.Errorf("migrate v227→v228 (resume operations index): %w", err)
+	}
+	if _, err := tx.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS execution_operations_one_active_conv
+		ON execution_operations(conv_id)
+		WHERE state NOT IN ('ready', 'rejected', 'failed', 'cancelled')`); err != nil {
+		return fmt.Errorf("migrate v227→v228 (resume active conversation index): %w", err)
 	}
 	var haveSessions int
 	if err := tx.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sessions'`).Scan(&haveSessions); err != nil {

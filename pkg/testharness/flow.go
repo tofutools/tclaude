@@ -3,6 +3,7 @@ package testharness
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -18,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	platformexec "github.com/tofutools/tclaude/pkg/claude/platform/execution"
 	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
@@ -399,10 +401,16 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 		return err
 	}
 	if args.Harness == codexHarnessName {
-		return s.spawnResumeCodex(args)
+		if err := s.spawnResumeCodex(args); err != nil {
+			return err
+		}
+		return completeManagedResumeSimulation(args)
 	}
 	if args.Harness == copilotHarnessName {
-		return s.spawnResumeCopilot(args)
+		if err := s.spawnResumeCopilot(args); err != nil {
+			return err
+		}
+		return completeManagedResumeSimulation(args)
 	}
 	convID := args.ConvID
 	cc := s.w.CCs.GetByConvID(convID)
@@ -501,7 +509,54 @@ func (s *simSpawner) SpawnResume(args clcommon.SpawnArgs) error {
 	}
 	s.w.Tmux.Register(label, cc.Cwd, cc)
 	s.w.CCs.Set(label, cc)
-	return nil
+	return completeManagedResumeSimulation(args)
+}
+
+// completeManagedResumeSimulation models the production child claim, closed
+// gate registration/release, and exact readiness boundary. Flow tests replace
+// the external process boundary only; without this, a successful simulated
+// launch would leave an accepted operation that correctly blocks replay.
+func completeManagedResumeSimulation(args clcommon.SpawnArgs) error {
+	if args.ResumeOperationID == "" || args.ResumeClaimFD <= 0 || args.ExecutionID == "" {
+		return nil
+	}
+	claimFile := os.NewFile(uintptr(args.ResumeClaimFD), "sim-resume-claim")
+	if claimFile == nil {
+		return fmt.Errorf("sim resume claim descriptor is invalid")
+	}
+	secret, err := io.ReadAll(claimFile)
+	if err != nil {
+		return err
+	}
+	row, err := db.FindSessionByConvID(args.ConvID)
+	if err != nil || row == nil {
+		if err == nil {
+			err = fmt.Errorf("sim resumed session row missing")
+		}
+		return err
+	}
+	eID, err := platformexec.ParseID(args.ExecutionID)
+	if err != nil {
+		return err
+	}
+	opID := platformexec.OperationID(args.ResumeOperationID)
+	claimed, err := db.ClaimResumeOperation(opID, eID, secret, args.ConvID, row.ID, os.Getpid(), "sim-process")
+	if err != nil || !claimed {
+		return err
+	}
+	registered, err := db.RegisterResumeLaunch(opID, eID, args.ConvID, row.ID, row.TmuxSession, "%sim", "/sim/resume-gate", os.Getpid(), "sim-process")
+	if err != nil || !registered {
+		return err
+	}
+	granted, err := db.GrantResumeRelease(opID, eID, row.ID, row.TmuxSession, "%sim", "/sim/resume-gate")
+	if err != nil || !granted {
+		return err
+	}
+	started, err := db.MarkResumeReleased(opID, eID, row.ID, row.TmuxSession, "%sim")
+	if err != nil || !started {
+		return err
+	}
+	return db.TransitionResumeOperation(opID, 6, platformexec.ResumeReady, "ready", "simulated exact harness readiness")
 }
 
 func checkSpawnDirProofMarker(args clcommon.SpawnArgs) error {

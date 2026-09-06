@@ -3,6 +3,7 @@ package agentd
 import (
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	platformexec "github.com/tofutools/tclaude/pkg/claude/platform/execution"
@@ -67,6 +68,7 @@ func (r *executionRuntime) stopUnderLaunchLock(
 	lifecycleAction, relatedEventID string,
 	waitPolicy stopWaitPolicy,
 ) stopOperationResult {
+	cancelManagedResumes(convID, "lifecycle stop requested")
 	ctx := &stopOperationContext{outcome: platformexec.StopOutcome{State: platformexec.StopFailed}}
 	legacy, waited := stopOneConvEffectUnderLaunchLock(
 		convID, force, lifecycleAction, relatedEventID, waitPolicy, ctx,
@@ -91,5 +93,6 @@ func (r *executionRuntime) stopUnderLaunchLock(
 	if !waitPolicy.wait && outcome.State == platformexec.StopFailed && ctx.convergenceScheduled {
 		outcome.State = platformexec.StopAccepted
 	}
+	reconcileResumeOperations(time.Now(), false)
 	return stopOperationResult{legacy: legacy, wait: waited, stop: outcome}
 }

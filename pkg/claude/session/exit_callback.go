@@ -18,6 +18,7 @@ import (
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/platform/execution"
 )
 
 const exitLaunchBarrierPolls = 3000 // 30s at 10ms: bounded parent-failure fallback
@@ -30,17 +31,21 @@ const (
 )
 
 type exitLaunchGuard struct {
-	sessionID       string
-	tmuxSession     string
-	generation      string
-	token           string
-	tokenHash       string
-	barrierPath     string
-	paneID          string
-	callbackEnabled bool
-	enabled         bool
-	released        bool
-	bound           bool
+	sessionID               string
+	tmuxSession             string
+	generation              string
+	token                   string
+	tokenHash               string
+	barrierPath             string
+	paneID                  string
+	callbackEnabled         bool
+	enabled                 bool
+	released                bool
+	bound                   bool
+	resumeOperationID       execution.OperationID
+	resumeConversation      string
+	resumeClaimPID          int
+	resumeClaimProcessStart string
 }
 
 func newExitLaunchGuard(sessionID, tmuxSession, generation string) (*exitLaunchGuard, error) {
@@ -255,9 +260,36 @@ func (g *exitLaunchGuard) bind() {
 	}
 }
 
+func (g *exitLaunchGuard) registerResumeLaunch() (bool, error) {
+	if g == nil || g.resumeOperationID == "" {
+		return true, nil
+	}
+	executionID, err := execution.ParseID(g.generation)
+	if err != nil {
+		return false, err
+	}
+	return db.RegisterResumeLaunch(g.resumeOperationID, executionID, g.resumeConversation,
+		g.sessionID, g.tmuxSession, g.paneID, g.barrierPath,
+		g.resumeClaimPID, g.resumeClaimProcessStart)
+}
+
 func (g *exitLaunchGuard) release() error {
 	if g == nil || !g.enabled {
 		return nil
+	}
+	if g.resumeOperationID != "" {
+		executionID, err := execution.ParseID(g.generation)
+		if err != nil {
+			return err
+		}
+		granted, err := db.GrantResumeRelease(g.resumeOperationID, executionID,
+			g.sessionID, g.tmuxSession, g.paneID, g.barrierPath)
+		if err != nil {
+			return fmt.Errorf("grant resume release: %w", err)
+		}
+		if !granted {
+			return errors.New("managed resume release was revoked")
+		}
 	}
 	releasingDurable := true
 	if err := db.MarkSessionExitLaunchReleasing(g.sessionID, g.generation); err != nil {
@@ -289,6 +321,20 @@ func (g *exitLaunchGuard) release() error {
 			"session_id", g.sessionID, "tmux_session", g.tmuxSession, "error", err)
 	}
 	g.released = true
+	if g.resumeOperationID != "" {
+		executionID, err := execution.ParseID(g.generation)
+		if err != nil {
+			return err
+		}
+		started, err := db.MarkResumeReleased(g.resumeOperationID, executionID,
+			g.sessionID, g.tmuxSession, g.paneID)
+		if err != nil {
+			return fmt.Errorf("record managed resume gate acknowledgement: %w", err)
+		}
+		if !started {
+			return errors.New("managed resume gate acknowledgement lost exact operation CAS")
+		}
+	}
 	return nil
 }
 
