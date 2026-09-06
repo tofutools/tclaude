@@ -67,7 +67,7 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry) err
 	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		return errors.New("replacement backend is already running for this state directory")
 	}
-	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+	// Closing lock releases the advisory lock after all server resources close.
 	credential, err := os.ReadFile(filepath.Join(dir, "operator.token"))
 	if err != nil {
 		return err
@@ -80,7 +80,7 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry) err
 	if err != nil {
 		return err
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 	application := app.New(store, registry)
 	if _, err := application.Recover(ctx, app.RecoverRequest{Principal: model.OperatorPrincipal()}); err != nil {
 		return fmt.Errorf("recover backend: %w", err)
