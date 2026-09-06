@@ -86,4 +86,5 @@ type UsageObservation struct {
 	Cost           *UsageCost
 	Coverage       UsageCoverage
 	Historical     bool
+	Provenance     string
 }

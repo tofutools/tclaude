@@ -79,8 +79,11 @@ func (r usageReader) rollout(ctx context.Context, request ports.UsageCollectionR
 }
 
 func collectCodexUsage(raw []byte) ([]model.UsageCounter, time.Time, bool) {
+	// total_token_usage is Codex's cumulative session checkpoint. Cached input
+	// and reasoning output are breakdowns, not addends to input/output.
+	// Contract: https://github.com/openai/codex/blob/main/codex-rs/tui/src/token_usage.rs
 	var latest *struct {
-		Input, Cached, Output, Reasoning, Total int64
+		Input, Cached, CacheWrite, Output, Reasoning, Total int64
 	}
 	var observed time.Time
 	partial := false
@@ -103,19 +106,20 @@ func collectCodexUsage(raw []byte) ([]model.UsageCounter, time.Time, bool) {
 			Type string `json:"type"`
 			Info *struct {
 				Total *struct {
-					Input     int64 `json:"input_tokens"`
-					Cached    int64 `json:"cached_input_tokens"`
-					Output    int64 `json:"output_tokens"`
-					Reasoning int64 `json:"reasoning_output_tokens"`
-					Total     int64 `json:"total_tokens"`
+					Input      int64 `json:"input_tokens"`
+					Cached     int64 `json:"cached_input_tokens"`
+					CacheWrite int64 `json:"cache_write_input_tokens"`
+					Output     int64 `json:"output_tokens"`
+					Reasoning  int64 `json:"reasoning_output_tokens"`
+					Total      int64 `json:"total_tokens"`
 				} `json:"total_token_usage"`
 			} `json:"info"`
 		}
 		if json.Unmarshal(envelope.Payload, &event) != nil || event.Type != "token_count" || event.Info == nil || event.Info.Total == nil {
 			continue
 		}
-		candidate := struct{ Input, Cached, Output, Reasoning, Total int64 }{event.Info.Total.Input, event.Info.Total.Cached, event.Info.Total.Output, event.Info.Total.Reasoning, event.Info.Total.Total}
-		if candidate.Input < 0 || candidate.Cached < 0 || candidate.Output < 0 || candidate.Reasoning < 0 {
+		candidate := struct{ Input, Cached, CacheWrite, Output, Reasoning, Total int64 }{event.Info.Total.Input, event.Info.Total.Cached, event.Info.Total.CacheWrite, event.Info.Total.Output, event.Info.Total.Reasoning, event.Info.Total.Total}
+		if candidate.Input < 0 || candidate.Cached < 0 || candidate.CacheWrite < 0 || candidate.Output < 0 || candidate.Reasoning < 0 {
 			partial = true
 			continue
 		}
@@ -128,7 +132,7 @@ func collectCodexUsage(raw []byte) ([]model.UsageCounter, time.Time, bool) {
 	if latest == nil {
 		return nil, observed, partial
 	}
-	return []model.UsageCounter{{Unit: model.UsageInputTokens, Value: latest.Input}, {Unit: model.UsageOutputTokens, Value: latest.Output}, {Unit: model.UsageCacheReadTokens, Value: latest.Cached}, {Unit: model.UsageReasoningTokens, Value: latest.Reasoning}}, observed, partial
+	return []model.UsageCounter{{Unit: model.UsageInputTokens, Value: latest.Input}, {Unit: model.UsageOutputTokens, Value: latest.Output}, {Unit: model.UsageCacheReadTokens, Value: latest.Cached}, {Unit: model.UsageCacheWriteTokens, Value: latest.CacheWrite}, {Unit: model.UsageReasoningTokens, Value: latest.Reasoning}}, observed, partial
 }
 
 var _ ports.UsageProvider = (*Provider)(nil)
