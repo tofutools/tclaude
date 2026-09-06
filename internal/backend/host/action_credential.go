@@ -21,9 +21,10 @@ const actionCredentialFilename = "credential"
 const actionCredentialBindingFilename = "binding.json"
 
 type actionCredentialBinding struct {
-	ExecutionID model.ExecutionID      `json:"execution_id"`
-	Generation  model.AccessGeneration `json:"generation"`
-	DeliveryID  string                 `json:"delivery_id"`
+	ExecutionID  model.ExecutionID      `json:"execution_id"`
+	Generation   model.AccessGeneration `json:"generation"`
+	DeliveryID   string                 `json:"delivery_id"`
+	FileIdentity string                 `json:"file_identity"`
 }
 
 // ActionCredentialHost owns renewable bearer delivery resources. The bearer is
@@ -79,8 +80,14 @@ func (h ActionCredentialHost) PrepareActionCredential(_ context.Context, materia
 	if err != nil {
 		return ports.ActionCredentialReceipt{}, err
 	}
+	identity, err := resource.fileIdentity()
+	if err != nil {
+		_ = resource.Remove()
+		return ports.ActionCredentialReceipt{}, err
+	}
 	if err := resource.writeBinding(actionCredentialBinding{
 		ExecutionID: material.ExecutionID, Generation: material.Generation, DeliveryID: material.DeliveryID,
+		FileIdentity: identity,
 	}); err != nil {
 		_ = resource.Remove()
 		return ports.ActionCredentialReceipt{}, err
@@ -109,14 +116,24 @@ func (h ActionCredentialHost) RotateActionCredential(_ context.Context, current 
 	if err != nil {
 		return ports.ActionCredentialReceipt{}, err
 	}
-	if identity != current.FileIdentity {
+	stored, err := resource.readBinding()
+	if err != nil {
+		return ports.ActionCredentialReceipt{}, err
+	}
+	if identity != current.FileIdentity || stored.ExecutionID != current.ExecutionID ||
+		stored.Generation != current.Generation || stored.DeliveryID != current.DeliveryID || stored.FileIdentity != identity {
 		return ports.ActionCredentialReceipt{}, fmt.Errorf("action credential rotation has stale file identity")
 	}
 	if err := resource.Replace(material.Secret); err != nil {
 		return ports.ActionCredentialReceipt{}, err
 	}
+	identity, err = resource.fileIdentity()
+	if err != nil {
+		return ports.ActionCredentialReceipt{}, err
+	}
 	if err := resource.writeBinding(actionCredentialBinding{
 		ExecutionID: material.ExecutionID, Generation: material.Generation, DeliveryID: material.DeliveryID,
+		FileIdentity: identity,
 	}); err != nil {
 		return ports.ActionCredentialReceipt{}, err
 	}
@@ -136,12 +153,13 @@ func (h ActionCredentialHost) InspectActionCredential(_ context.Context, binding
 	if err != nil {
 		return ports.ActionCredentialRecoveryProof{}, err
 	}
-	if stored.ExecutionID != binding.ExecutionID || stored.Generation != binding.Generation || stored.DeliveryID != binding.DeliveryID {
-		return ports.ActionCredentialRecoveryProof{}, fmt.Errorf("action credential resource does not match recovery binding")
-	}
 	identity, err := resource.fileIdentity()
 	if err != nil {
 		return ports.ActionCredentialRecoveryProof{}, err
+	}
+	if stored.ExecutionID != binding.ExecutionID || stored.Generation != binding.Generation ||
+		stored.DeliveryID != binding.DeliveryID || stored.FileIdentity != identity {
+		return ports.ActionCredentialRecoveryProof{}, fmt.Errorf("action credential resource does not match recovery binding")
 	}
 	return ports.ActionCredentialRecoveryProof{
 		ExecutionID: binding.ExecutionID, Generation: binding.Generation, DeliveryID: binding.DeliveryID,

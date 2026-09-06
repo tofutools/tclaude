@@ -78,6 +78,16 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 		"the explicit absence of confinement is preserved without claiming native rules are a sandbox")
 	require.NotNil(t, description.AccessDelivery)
 	require.NotContains(t, string(description.Evidence.Payload), "provider-secret-value")
+	recorded, err := decodeEvidence(description.Evidence)
+	require.NoError(t, err)
+	require.NotEmpty(t, recorded.PasswordFile)
+	serverPassword, err := os.ReadFile(recorded.PasswordFile)
+	require.NoError(t, err)
+	require.NotEmpty(t, serverPassword)
+	require.NotContains(t, string(description.Evidence.Payload), string(serverPassword))
+	info, err := os.Stat(recorded.PasswordFile)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	access := &model.ExecutionAccessBinding{ExecutionID: request.Spec.ExecutionID, Generation: 1,
 		DeliveryID: "delivery-opencode", State: model.ExecutionAccessSuspended, ExpiresAt: request.ActionCredential.ExpiresAt}
 
@@ -174,6 +184,7 @@ func TestOpenCodeResetPublishesConfirmedPrimaryRotation(t *testing.T) {
 
 	changed, err := released.Runtime.ChangeContext(context.Background(), ports.ContextChange{
 		Intent: ports.ContextReset, ExpectedConversation: "conversation_before", ExpectedAssociationRevision: 5,
+		TransitionCorrelation: "transition-issued-by-app",
 	})
 	require.NoError(t, err)
 	require.Equal(t, ports.EffectAccepted, changed.Disposition)
@@ -182,7 +193,10 @@ func TestOpenCodeResetPublishesConfirmedPrimaryRotation(t *testing.T) {
 	require.Equal(t, ports.PrimaryContextReset, sink.values[1].Disposition)
 	require.Equal(t, "ses_1", sink.values[1].PriorBinding.Reference)
 	require.Equal(t, "ses_2", sink.values[1].NextBinding.Reference)
-	require.Equal(t, "conversation_before:5", sink.values[1].TransitionCorrelation)
+	require.Equal(t, "transition-issued-by-app", sink.values[1].TransitionCorrelation)
+	require.Equal(t, model.ConversationID("conversation_before"), sink.values[1].ExpectedConversation)
+	require.Equal(t, model.Revision(5), sink.values[1].ExpectedAssociationRevision)
+	require.Equal(t, sink.values[0].ProviderOrder, sink.values[1].PriorProviderOrder)
 }
 
 func TestOpenCodeRejectsNestedSessionAsPrimary(t *testing.T) {

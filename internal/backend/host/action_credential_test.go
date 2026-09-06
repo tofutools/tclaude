@@ -136,6 +136,25 @@ func TestActionCredentialDeliveryImplementsSharedLifecycle(t *testing.T) {
 	require.NoFileExists(t, second.Resource)
 }
 
+func TestActionCredentialRecoveryRejectsBearerPublishedBeforeBinding(t *testing.T) {
+	host := ActionCredentialHost{PrivateRoot: filepath.Join(t.TempDir(), "private")}
+	expires := time.Now().Add(time.Hour)
+	receipt, err := host.PrepareActionCredential(context.Background(), ports.ActionCredentialMaterial{
+		ExecutionID: "execution_crash", Generation: 1, DeliveryID: "delivery-crash",
+		Secret: []byte("first"), ExpiresAt: expires,
+	})
+	require.NoError(t, err)
+
+	resource, err := host.Recover(receipt.Resource)
+	require.NoError(t, err)
+	require.NoError(t, resource.Replace([]byte("second")), "simulate a crash before renewed binding publication")
+	_, err = host.InspectActionCredential(context.Background(), model.ExecutionAccessBinding{
+		ExecutionID: "execution_crash", Generation: 1, DeliveryID: "delivery-crash",
+		State: model.ExecutionAccessSuspended, ExpiresAt: expires,
+	})
+	require.ErrorContains(t, err, "does not match recovery binding")
+}
+
 func mustReadCredential(t *testing.T, path string) []byte {
 	t.Helper()
 	value, err := os.ReadFile(path)

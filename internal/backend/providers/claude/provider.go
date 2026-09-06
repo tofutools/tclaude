@@ -74,6 +74,9 @@ func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p
 type evidence struct {
 	ExecutionID      string                         `json:"execution_id"`
 	NativeID         string                         `json:"native_id"`
+	Intent           ports.StartIntent              `json:"intent"`
+	ContextReady     bool                           `json:"context_ready,omitempty"`
+	ProviderOrder    string                         `json:"provider_order,omitempty"`
 	Prepared         *host.PreparedTerminalIdentity `json:"prepared,omitempty"`
 	Terminal         *host.TerminalIdentity         `json:"terminal,omitempty"`
 	Access           *ports.ActionCredentialReceipt `json:"access,omitempty"`
@@ -140,7 +143,8 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		return nil, err
 	}
 	preparedIdentity := terminal.Identity()
-	initial, err := encodeEvidence(evidence{ExecutionID: string(request.Spec.ExecutionID), NativeID: nativeID, Prepared: &preparedIdentity, Access: access, ObservationSpool: spool.Directory()})
+	initial, err := encodeEvidence(evidence{ExecutionID: string(request.Spec.ExecutionID), NativeID: nativeID, Intent: request.Intent,
+		Prepared: &preparedIdentity, Access: access, ObservationSpool: spool.Directory()})
 	if err != nil {
 		_ = terminal.Abort()
 		_ = spool.Remove()
@@ -230,7 +234,11 @@ func (p *prepared) runtime(terminal *host.Terminal) *Runtime {
 }
 
 func (p *prepared) runtimeEnvironment() []string {
-	result := []string{"TCLAUDE_OBSERVATION_SPOOL=" + p.spool.Directory()}
+	result := []string{
+		"TCLAUDE_OBSERVATION_SPOOL=" + p.spool.Directory(),
+		"TCLAUDE_BACKEND_CREDENTIAL_FILE=",
+		"TCLAUDE_BACKEND_SOCKET=",
+	}
 	if p.access != nil {
 		result = append(result,
 			"TCLAUDE_BACKEND_CREDENTIAL_FILE="+p.access.Resource,
@@ -320,23 +328,25 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		accessProof = &proof
 	}
 	runtime := &Runtime{provider: p, executionID: request.ExecutionID, attempt: request.Attempt, terminal: terminal,
-		nativeID: recorded.NativeID, intent: ports.StartContinue, observations: request.Observations, access: recorded.Access, spool: spool}
+		nativeID: recorded.NativeID, intent: recorded.Intent, observations: request.Observations, access: recorded.Access, spool: spool,
+		contextReady: recorded.ContextReady, providerOrder: recorded.ProviderOrder}
 	observation, _ := runtime.Observe(ctx)
 	return ports.RecoveryResult{State: ports.RecoveryControlled, Runtime: runtime, Observation: observation, Evidence: request.Evidence, Attempt: request.Attempt, AccessProof: accessProof}, nil
 }
 
 type Runtime struct {
-	provider     *Provider
-	executionID  model.ExecutionID
-	attempt      model.AttemptGeneration
-	terminal     *host.Terminal
-	nativeID     string
-	intent       ports.StartIntent
-	observations ports.PrimaryObservationSink
-	access       *ports.ActionCredentialReceipt
-	spool        *host.ObservationSpool
-	contextReady bool
-	mu           sync.Mutex
+	provider      *Provider
+	executionID   model.ExecutionID
+	attempt       model.AttemptGeneration
+	terminal      *host.Terminal
+	nativeID      string
+	intent        ports.StartIntent
+	observations  ports.PrimaryObservationSink
+	access        *ports.ActionCredentialReceipt
+	spool         *host.ObservationSpool
+	contextReady  bool
+	providerOrder string
+	mu            sync.Mutex
 }
 
 func (r *Runtime) ExecutionID() model.ExecutionID { return r.executionID }
@@ -467,6 +477,7 @@ func (r *Runtime) providerEvidence() (model.ProviderEvidence, error) {
 func (r *Runtime) providerEvidenceUnlocked() (model.ProviderEvidence, error) {
 	identity := r.terminal.Identity()
 	return encodeEvidence(evidence{ExecutionID: string(r.executionID), NativeID: r.nativeID, Terminal: &identity,
+		Intent: r.intent, ContextReady: r.contextReady, ProviderOrder: r.providerOrder,
 		Access: r.access, ObservationSpool: r.spool.Directory()})
 }
 
@@ -499,10 +510,14 @@ func (r *Runtime) consumeObservationEvents(ctx context.Context, transition *port
 		next := nativeBinding(event.SessionID)
 		disposition := ports.PrimaryContextUnresolved
 		transitionCorrelation := ""
+		var expectedConversation model.ConversationID
+		var expectedRevision model.Revision
 		switch {
 		case transition != nil && event.Source == "clear":
 			disposition = ports.PrimaryContextReset
-			transitionCorrelation = fmt.Sprintf("%s:%d", transition.ExpectedConversation, transition.ExpectedAssociationRevision)
+			transitionCorrelation = transition.TransitionCorrelation
+			expectedConversation = transition.ExpectedConversation
+			expectedRevision = transition.ExpectedAssociationRevision
 		case transition == nil && !r.contextReady && event.SessionID == r.nativeID &&
 			((r.intent == ports.StartFresh && event.Source == "startup") || (r.intent == ports.StartContinue && event.Source == "resume")):
 			if r.intent == ports.StartFresh {
@@ -518,11 +533,13 @@ func (r *Runtime) consumeObservationEvents(ctx context.Context, transition *port
 			ExecutionID: r.executionID, Attempt: r.attempt, Provider: Name,
 			PrimaryCorrelation: r.primaryCorrelation(), Disposition: disposition,
 			PriorBinding: prior, NextBinding: next, TransitionCorrelation: transitionCorrelation,
-			ProviderOrder: spooled.Order, ObservedAt: time.Now().UTC(),
+			ExpectedConversation: expectedConversation, ExpectedAssociationRevision: expectedRevision,
+			PriorProviderOrder: r.providerOrder, ProviderOrder: spooled.Order, ObservedAt: time.Now().UTC(),
 		}
 		if err := r.observations.ObservePrimaryContext(ctx, evidence); err != nil {
 			return false, err
 		}
+		r.providerOrder = spooled.Order
 		if disposition == ports.PrimaryContextInitial || disposition == ports.PrimaryContextContinuity || disposition == ports.PrimaryContextReset {
 			r.nativeID = event.SessionID
 			r.contextReady = true
