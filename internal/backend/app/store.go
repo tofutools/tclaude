@@ -57,11 +57,12 @@ type Store interface {
 	Snapshot(context.Context) (Snapshot, error)
 	AssociateConversation(context.Context, ContextAssociation) error
 
-	CatalogHistory(context.Context, []HistoryCatalogWrite, model.HistoryCoverage, time.Time) ([]model.HistoryCatalogEntry, error)
+	CatalogHistory(context.Context, string, string, []HistoryCatalogWrite, model.HistoryCoverage, time.Time) ([]model.HistoryCatalogEntry, error)
 	SearchHistory(context.Context, HistorySearchFilter) (HistorySearchResult, error)
 	ResolveHistory(context.Context, model.HistorySelection) (HistorySelectionRecord, error)
 	HistoryPoints(context.Context, model.ConversationID) ([]model.HistoryPoint, error)
-	IndexHistoryRead(context.Context, model.ConversationID, string, model.HistoryCoverage, time.Time) error
+	IndexHistoryRead(context.Context, model.ConversationID, string, model.HistoryCoverage, time.Time) (model.HistoryCatalogEntry, error)
+	SetHistoryMetadata(context.Context, model.ConversationID, model.Revision, string, bool, model.RequestID, model.AuthorityRequest, time.Time) (model.HistoryCatalogEntry, error)
 
 	RegisterWorkspace(context.Context, model.Workspace) error
 	Workspace(context.Context, model.WorkspaceID) (model.Workspace, error)
