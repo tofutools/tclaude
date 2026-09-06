@@ -680,6 +680,9 @@ func (s *Service) ResolveWorkUncertainty(ctx context.Context, req ResolveWorkUnc
 // that operation and settles the Work attempt; uncertain operations are never
 // replayed.
 func (s *Service) ReconcilePendingWork(ctx context.Context) (WorkReconcileReport, error) {
+	if err := s.reconcileProgramResourceCleanup(ctx); err != nil {
+		return WorkReconcileReport{}, err
+	}
 	if err := s.reconcileTeamDeployments(ctx); err != nil {
 		return WorkReconcileReport{}, err
 	}
