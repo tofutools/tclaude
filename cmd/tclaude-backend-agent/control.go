@@ -32,6 +32,23 @@ func registerControls(root *cobra.Command, call apiCall) {
 	}
 	root.AddCommand(stop)
 
+	var contextID, conversationID, intent string
+	var contextRevision uint64
+	change := boa.CmdT[struct{}]{Use: "context EXECUTION_ID", Short: "Request an in-place change of logical context"}.ToCobra()
+	change.Args = cobra.ExactArgs(1)
+	change.Flags().StringVar(&contextID, "request-id", "", "Stable identity for this context request")
+	change.Flags().StringVar(&conversationID, "expected-conversation", "", "Current logical conversation ID")
+	change.Flags().Uint64Var(&contextRevision, "expected-association-revision", 0, "Current association revision")
+	change.Flags().StringVar(&intent, "intent", "", "Requested context change: clear or reset")
+	for _, flag := range []string{"request-id", "expected-conversation", "expected-association-revision", "intent"} {
+		_ = change.MarkFlagRequired(flag)
+	}
+	change.RunE = func(cmd *cobra.Command, args []string) error {
+		return call(cmd, "POST", "/v2/context", map[string]any{"request_id": contextID, "execution_id": args[0],
+			"expected_conversation_id": conversationID, "expected_association_revision": contextRevision, "intent": intent})
+	}
+	root.AddCommand(change)
+
 	for _, resume := range []bool{false, true} {
 		name, usage, description := "launch", "launch AGENT_ID", "Start an authorized agent with its current desired configuration"
 		if resume {
