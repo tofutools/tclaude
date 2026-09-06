@@ -66,9 +66,22 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 		automationIDs = append(automationIDs, automation.RuleID)
 	}
 	deployment := model.TeamDeployment{ID: req.DeploymentID, Definition: ref, DependencyClosure: append([]model.DefinitionRef(nil), revision.Dependencies...), Mission: strings.TrimSpace(req.Instantiation.Mission), Parameters: parameters, GroupID: group.ID, Members: members, AutomationRuleIDs: automationIDs, WorkRunID: workRunID, State: model.DeploymentDeploying, Revision: 1, CreatedAt: now, UpdatedAt: now}
-	stored, _, err := s.store.CreateTeamDeployment(ctx, deployment, group, agents)
+	stored, _, err := s.store.CreateTeamDeployment(ctx, deployment, group, agents, req.Context.Principal, now)
 	if err != nil {
 		return TeamDeploymentResult{}, err
+	}
+	if req.Context.Principal.Kind == model.PrincipalAutomation {
+		occurrence, occurrenceErr := s.store.Occurrence(ctx, model.OccurrenceID(req.Context.Principal.AutomationRun))
+		if occurrenceErr != nil {
+			return TeamDeploymentResult{Deployment: stored}, occurrenceErr
+		}
+		if occurrence.Occurrence.DeploymentID == "" {
+			if _, occurrenceErr = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, model.OccurrenceAdmitted, occurrence.Occurrence.OperationID, occurrence.Occurrence.WorkRunID, stored.ID, occurrence.Occurrence.Recipients, now); occurrenceErr != nil {
+				return TeamDeploymentResult{Deployment: stored}, occurrenceErr
+			}
+		} else if occurrence.Occurrence.DeploymentID != stored.ID {
+			return TeamDeploymentResult{Deployment: stored}, ErrConflict
+		}
 	}
 	graph := teamDeploymentGraph(*revision.Team, stored)
 	scope := model.WorkScope{GroupID: group.ID, DeploymentID: deployment.ID}

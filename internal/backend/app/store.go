@@ -118,7 +118,7 @@ type OrchestrationStore interface {
 	OccurrencesForRule(context.Context, model.AutomationRuleID) ([]OccurrenceRecord, error)
 	PendingOccurrences(context.Context) ([]OccurrenceRecord, error)
 	UpdateOccurrence(context.Context, model.OccurrenceID, model.Revision, model.OccurrenceState, model.OperationID, model.WorkRunID, model.DeploymentID, []model.OccurrenceRecipient, time.Time) (OccurrenceRecord, error)
-	CreateTeamDeployment(context.Context, model.TeamDeployment, model.Group, []model.Agent) (model.TeamDeployment, bool, error)
+	CreateTeamDeployment(context.Context, model.TeamDeployment, model.Group, []model.Agent, model.Principal, time.Time) (model.TeamDeployment, bool, error)
 	TeamDeployment(context.Context, model.DeploymentID) (model.TeamDeployment, error)
 	PendingTeamDeployments(context.Context) ([]model.TeamDeployment, error)
 	UpdateTeamDeployment(context.Context, model.DeploymentID, model.Revision, model.DeploymentState, uint32, time.Time) (model.TeamDeployment, error)

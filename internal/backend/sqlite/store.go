@@ -1010,6 +1010,15 @@ func (s *Store) CreateMessage(ctx context.Context, message model.Message, reques
 		return app.MessageAdmissionResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if existing, ok, err := messageByRequest(ctx, tx, requestID, message); err != nil {
+		return app.MessageAdmissionResult{}, err
+	} else if ok {
+		_ = tx.Commit()
+		return existing, nil
+	}
+	if err = requirePendingAutomationAction(ctx, tx, message.Sender, model.AutomationSendMessage, "", message.CreatedAt); err != nil {
+		return app.MessageAdmissionResult{}, err
+	}
 	for _, request := range authority {
 		decision, err := authorizeTx(ctx, tx, request, message.CreatedAt)
 		if err != nil {
@@ -1018,12 +1027,6 @@ func (s *Store) CreateMessage(ctx context.Context, message model.Message, reques
 		if !decision.Allowed {
 			return app.MessageAdmissionResult{}, app.ErrUnauthorized
 		}
-	}
-	if existing, ok, err := messageByRequest(ctx, tx, requestID, message); err != nil {
-		return app.MessageAdmissionResult{}, err
-	} else if ok {
-		_ = tx.Commit()
-		return existing, nil
 	}
 	op := model.Operation{ID: operationID, RequestID: requestID, Kind: model.OperationSendMessage, Principal: message.Sender, State: model.OperationSucceeded, ResultCode: "committed", Revision: 1, CreatedAt: message.CreatedAt, UpdatedAt: message.CreatedAt}
 	if err := insertOperation(ctx, tx, op); err != nil {
