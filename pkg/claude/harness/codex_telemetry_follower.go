@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	codexTelemetryCheckpointVersion  = 7
+	codexTelemetryCheckpointVersion  = 8
 	codexTelemetryAnchorBytes        = 64
 	maxCodexTelemetryCheckpointBytes = 1 << 20
 )

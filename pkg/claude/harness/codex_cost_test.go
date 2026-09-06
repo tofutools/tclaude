@@ -45,6 +45,8 @@ func TestCodexVirtualCostFromRollout_PricesFlagshipModels(t *testing.T) {
 		output        int
 		want          float64
 	}{
+		{name: "gpt-6-astra short", model: "gpt-6-astra", contextWindow: 1050000, input: 200000, cached: 100000, output: 100000, want: 6.10},
+		{name: "gpt-6-astra long", model: "gpt-6-astra", contextWindow: 1050000, input: 300000, cached: 100000, output: 100000, want: 11.70},
 		{name: "gpt-5.6-sol short", model: "gpt-5.6-sol", contextWindow: 1050000, input: 200000, cached: 100000, output: 100000, want: 3.55},
 		{name: "gpt-5.6-sol long", model: "gpt-5.6-sol", contextWindow: 1050000, input: 300000, cached: 100000, output: 100000, want: 6.60},
 		{name: "gpt-5.6-terra short", model: "gpt-5.6-terra", contextWindow: 1050000, input: 200000, cached: 100000, output: 100000, want: 1.42},
@@ -122,10 +124,10 @@ func TestCodexVirtualCostFromRollout_AccumulatesMixedContextTiersPerTurn(t *test
 
 }
 
-func TestCodexVirtualCostFromRollout_FastModeDoublesEveryTokenCategory(t *testing.T) {
+func TestCodexVirtualCostFromRollout_FastModeDoublesAstraEveryTokenCategory(t *testing.T) {
 	home := codexTestHome(t)
 	cx := testharness.NewCodexSim(t, home, "/home/u/proj")
-	cx.Model = "gpt-5.3-codex"
+	cx.Model = "gpt-6-astra"
 	require.NoError(t, cx.Start())
 	require.NoError(t, cx.WriteThreadSettingsApplied("priority"))
 
@@ -138,7 +140,7 @@ func TestCodexVirtualCostFromRollout_FastModeDoublesEveryTokenCategory(t *testin
 	cost, ok, err := harness.CodexVirtualCostFromRollout(cx.RolloutPath, "")
 	require.NoError(t, err)
 	require.True(t, ok)
-	assert.InDelta(t, 0.003885, cost.CostUSD, 1e-12,
+	assert.InDelta(t, 0.0207, cost.CostUSD, 1e-12,
 		"Fast doubles uncached input, cached input, and output")
 }
 

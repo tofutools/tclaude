@@ -101,6 +101,73 @@ sharing a checkout would otherwise write into one shared per-project store.
 Re-enable per launch with `--auto-memory`. See
 [Harnesses](harnesses.md#claude-code).
 
+## Claude Code peer messaging
+
+Claude Code has its own cross-session messaging mesh: each session binds an
+inbox socket, discovers your other sessions with the `ListAgents` tool, and
+delivers plain-text messages to them with `SendMessage`. Where the feature is
+present it is on with nothing to enable.
+
+**tclaude turns it off by default.** That mesh is a second, unmanaged
+coordination channel running alongside the one tclaude owns — none of the
+group membership, permission slugs, audit trail, or dashboard visibility that
+`tclaude agent send` provides applies to it, and two agents you deliberately
+put in different groups can still find each other and talk with nothing
+recording that it happened.
+
+Every Claude Code session tclaude launches therefore carries these three
+settings, delivered in the same per-session `--settings` payload as the
+sandbox block, so tclaude never edits your own `settings.json`:
+
+```json
+{
+  "crossSessionInbound": "refuse",
+  "isolatePeerMachines": true,
+  "permissions": { "deny": ["ListAgents"] }
+}
+```
+
+Which yields:
+
+| Direction | Effect |
+| --- | --- |
+| Inbound from peer sessions | Hard off — messages are dropped, never delivered |
+| Peer discovery | Off — `ListAgents` is denied, so peers cannot be listed |
+| Sends beyond this machine | Require your explicit approval |
+| **In-harness subagents** | **Unaffected — spawn, message, and reply all work** |
+
+That last row is the constraint the design is built around. Claude Code's own
+docs note that denying `SendMessage` "also removes messaging to subagents and
+agent-team teammates, since the same tool serves both", and tclaude relies on
+in-harness subagents (the cold-review fallback, for one). So the deny names
+`ListAgents` instead: messaging a subagent addresses it by the agent ID the
+Agent tool returned, never via a peer lookup, so it keeps working.
+
+The consequence is a deliberate asymmetry — inbound is hard off, outbound is
+only discovery-off. It matters less than it reads, because the default is
+fleet-wide: when every tclaude-launched agent refuses inbound, no tclaude
+agent can be *reached* by another whatever a sender attempts. What remains is
+a send toward a non-tclaude session you started by hand, and
+`isolatePeerMachines` covers that whenever it would leave the machine.
+
+Opt back in per launch, per spawn, or per profile:
+
+```bash
+tclaude session new --peer-messaging
+tclaude agent spawn <group> --peer-messaging
+```
+
+Opting in injects **nothing at all**, leaving Claude Code's own defaults and
+your `settings.json` in charge — rather than forcing the feature on. That is
+deliberate: with no `crossSessionInbound` set, Claude Code decides per message
+from the two sessions' permission modes, holding a message for approval when
+the sender bypasses permission prompts and the receiver does not. That default
+is more careful than a blunt `accept`, so an operator opting back in gets it.
+
+Claude-Code-only; asking for it on Codex, OpenCode, or Copilot is an error
+rather than a silent no-op. The posture is recorded per session, so a resume,
+clone, or reincarnation reproduces what the agent actually launched with.
+
 ## tclaude db
 
 Inspects tclaude's own SQLite database at `~/.tclaude/data/db.sqlite`. (A

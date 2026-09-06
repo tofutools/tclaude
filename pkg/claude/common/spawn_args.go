@@ -272,6 +272,16 @@ type SpawnArgs struct {
 	// Harnesses with no auto-memory system (Codex) ignore it.
 	AutoMemory bool
 
+	// PeerMessaging keeps Claude Code's own cross-session messaging mesh
+	// available to the launch, forwarded as `tclaude session new
+	// --peer-messaging`. false (the default) means tclaude injects the refusal
+	// instead (crossSessionInbound=refuse, isolatePeerMachines=true and a
+	// ListAgents deny), so agents coordinate through `tclaude agent send` rather
+	// than a channel outside tclaude's groups, permissions and audit trail.
+	// Only ever true via an explicit opt-in (profile field or spawn request).
+	// Harnesses with no cross-session messaging system (Codex) ignore it.
+	PeerMessaging bool
+
 	// ContextFeatures is the resolved per-agent startup-context trim map (slug →
 	// "on" | "off"; see harness.ContextFeatures and TCL-597), forwarded as
 	// `tclaude session new --context-features <slug>=<state>,…`. Sparse: only

@@ -17,6 +17,21 @@ type groupAttachmentView struct {
 	LabelOverride string `json:"attachment_label_override,omitempty"`
 }
 
+func normalizeGroupAttachment(url, label string) (string, string, error) {
+	url = strings.TrimSpace(url)
+	label = strings.TrimSpace(label)
+	if url == "" {
+		return "", "", nil
+	}
+	if err := validateTaskRefURL(url); err != nil {
+		return "", "", err
+	}
+	if err := validateTaskRefLabel(label); err != nil {
+		return "", "", err
+	}
+	return url, label, nil
+}
+
 func groupAttachmentViewFor(g *db.AgentGroup) groupAttachmentView {
 	if g == nil || strings.TrimSpace(g.AttachmentURL) == "" {
 		return groupAttachmentView{}

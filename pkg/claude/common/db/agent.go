@@ -1005,6 +1005,13 @@ func CreateAgentGroup(name, descr string) (int64, error) {
 // CreateAgentGroupWithParent inserts a new group, optionally nested under an
 // existing parent group. parentName == "" creates a top-level group.
 func CreateAgentGroupWithParent(name, descr, parentName string) (int64, error) {
+	return CreateAgentGroupWithParentAndAttachment(name, descr, parentName, "", "")
+}
+
+// CreateAgentGroupWithParentAndAttachment inserts a new group with its optional
+// persistent reference in the same transaction, so callers never expose a
+// successfully created group that is missing requested attachment metadata.
+func CreateAgentGroupWithParentAndAttachment(name, descr, parentName, attachmentURL, attachmentLabel string) (int64, error) {
 	db, err := Open()
 	if err != nil {
 		return 0, err
@@ -1028,8 +1035,11 @@ func CreateAgentGroupWithParent(name, descr, parentName string) (int64, error) {
 		parentID.Valid = true
 	}
 
-	res, err := tx.Exec(`INSERT INTO agent_groups (name, descr, created_at, parent_id) VALUES (?, ?, ?, ?)`,
-		name, descr, dbTime(time.Now()), parentID)
+	res, err := tx.Exec(`
+		INSERT INTO agent_groups
+			(name, descr, created_at, parent_id, attachment_url, attachment_label)
+		VALUES (?, ?, ?, ?, ?, ?)`,
+		name, descr, dbTime(time.Now()), parentID, attachmentURL, attachmentLabel)
 	if err != nil {
 		return 0, err
 	}

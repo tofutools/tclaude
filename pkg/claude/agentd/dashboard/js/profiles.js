@@ -245,6 +245,7 @@ function profileSummary(p, { status = true } = {}) {
   if (p.trust_dir != null) parts.push(`trust-dir ${p.trust_dir ? 'on' : 'off'}`);
   if (p.remote_control != null) parts.push(`remote-control ${p.remote_control ? 'on' : 'off'}`);
   if (p.auto_memory != null) parts.push(`auto-memory ${p.auto_memory ? 'on' : 'off'}`);
+  if (p.peer_messaging != null) parts.push(`peer-messaging ${p.peer_messaging ? 'on' : 'off'}`);
   if (p.ssh_workaround != null) parts.push(`ssh-workaround ${p.ssh_workaround ? 'on' : 'off'}`);
   // The drive names the mode rather than on/off: "copilot-api off" would read as
   // a disabled feature instead of the send-keys path it actually selects.
@@ -304,6 +305,7 @@ function profileDetailChips(p) {
   toggle('trust-dir', p.trust_dir);
   toggle('remote-control', p.remote_control);
   toggle('auto-memory', p.auto_memory);
+  toggle('peer-messaging', p.peer_messaging);
   toggle('ssh-workaround', p.ssh_workaround);
   if (p.copilot_api != null) parts.push(`drive ${p.copilot_api ? 'api' : 'send-keys'}`);
   if (p.codex_app_server != null) parts.push(`drive ${p.codex_app_server ? 'app-server' : 'send-keys'}`);

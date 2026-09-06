@@ -293,7 +293,7 @@ func TestPlainCLIResumeLeavesTheRecordedCopilotDriveAlone(t *testing.T) {
 		ApprovalPolicy: harness.CopilotApprovalInherit,
 	}))
 	session.RecordLaunchPosture(resumedSession, copilotHarness(t),
-		resumeLaunchPosture(false, nil, "", false))
+		resumeLaunchPosture(false, false, nil, "", false))
 
 	api, err := db.CopilotAPIForConv(driveConv)
 	require.NoError(t, err)
@@ -349,7 +349,7 @@ func TestPlainCLIResumeStillLosesAPinnedCodexTier(t *testing.T) {
 		ID: resumedSession, ConvID: driveConvOther, Cwd: cwd, Harness: harness.CodexName,
 	}))
 	session.RecordLaunchPosture(resumedSession, codex,
-		resumeLaunchPosture(false, nil, "", false))
+		resumeLaunchPosture(false, false, nil, "", false))
 
 	after, err := db.RecordedLaunchPostureForConv(driveConvOther)
 	require.NoError(t, err)

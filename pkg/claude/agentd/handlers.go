@@ -3496,11 +3496,13 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var body struct {
-			Name           string `json:"name"`
-			Parent         string `json:"parent,omitempty"`
-			Descr          string `json:"descr,omitempty"`
-			DefaultCwd     string `json:"default_cwd,omitempty"`
-			DefaultContext string `json:"default_context,omitempty"`
+			Name            string `json:"name"`
+			Parent          string `json:"parent,omitempty"`
+			Descr           string `json:"descr,omitempty"`
+			DefaultCwd      string `json:"default_cwd,omitempty"`
+			DefaultContext  string `json:"default_context,omitempty"`
+			AttachmentURL   string `json:"attachment_url,omitempty"`
+			AttachmentLabel string `json:"attachment_label,omitempty"`
 			// DefaultProfile names the spawn profile (JOH-210) whose launch
 			// fields fill blank spawn fields for this group's agents. "" = none.
 			DefaultProfile string `json:"default_profile,omitempty"`
@@ -3561,6 +3563,11 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
 		}
+		attachmentURL, attachmentLabel, err := normalizeGroupAttachment(body.AttachmentURL, body.AttachmentLabel)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_attachment", err.Error())
+			return
+		}
 		// The default profile (JOH-210) replaces the Claude-only default_model
 		// gate: validate only that the referenced profile exists — its launch
 		// fields were already validated against their own harness at save, so a
@@ -3587,7 +3594,8 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "exists", "group already exists")
 			return
 		}
-		id, err := db.CreateAgentGroupWithParent(body.Name, groupDescr, body.Parent)
+		id, err := db.CreateAgentGroupWithParentAndAttachment(
+			body.Name, groupDescr, body.Parent, attachmentURL, attachmentLabel)
 		if errors.Is(err, db.ErrGroupParentNotFound) {
 			writeError(w, http.StatusNotFound, "not_found", err.Error())
 			return

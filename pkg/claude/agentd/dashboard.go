@@ -285,6 +285,7 @@ func registerDashboardRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/usage-history/point", handleDashboardUsageHistoryPoint)
 	mux.HandleFunc("/api/audit", handleDashboardAudit)
 	mux.HandleFunc("/api/logs", handleDashboardLogs)
+	mux.HandleFunc("/api/spawn-timing", handleDashboardSpawnTiming)
 	// The Processes tab consumes the same versioned REST surface as other
 	// clients. Dashboard auth wraps it before the dynamic feature gate.
 	mux.HandleFunc("GET /v1/process/templates", dashboardProcessRoute(handleProcessTemplates))
@@ -1375,6 +1376,9 @@ type dashboardHarness struct {
 	// without it (Codex). The spawn dialog and profile editor gate their
 	// auto-memory controls on this.
 	CanAutoMemory bool `json:"can_auto_memory"`
+	// CanPeerMessaging mirrors Harness.CanPeerMessaging — true only for a
+	// harness with a cross-session messaging system tclaude can steer.
+	CanPeerMessaging bool `json:"can_peer_messaging"`
 	// CanSSHWorkaround is true for Linux harnesses. Codex's managed sandbox and
 	// every harness in tclaude's packet sandbox can need an ownership-safe copy
 	// of the host SSH client configuration.
@@ -1469,6 +1473,7 @@ func buildHarnessCatalog() []dashboardHarness {
 			CanRemoteControl:        h.CanRemoteControl(),
 			CanObserveAwaitingInput: h.SupportsAwaitingInputObservation(),
 			CanAutoMemory:           h.CanAutoMemory(),
+			CanPeerMessaging:        h.CanPeerMessaging(),
 			CanSSHWorkaround:        h.CanSSHWorkaround(),
 
 			CanContextFeatures:         h.CanContextFeatures(),

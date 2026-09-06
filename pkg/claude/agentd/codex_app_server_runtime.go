@@ -19,6 +19,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/codexappserver"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
 	"github.com/tofutools/tclaude/pkg/claude/session"
@@ -281,6 +282,8 @@ func startCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 }
 
 func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
+	timing := config.StartupTiming("codex_bootstrap", "label", args.Label, "generation", args.CodexAppServerGeneration)
+	defer timing("return")
 	ctx, cancel := context.WithTimeout(context.Background(), codexAppServerStartupTimeout)
 	defer cancel()
 	runtime, err := db.GetCodexAppServerRuntime(args.CodexAppServerGeneration)
@@ -300,6 +303,7 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		fail(err)
 		return
 	}
+	timing("version_available")
 	runtime.CodexVersion = version
 
 	pid, err := codexAppServerServerPID(ctx, runtime.SocketPath, args.CodexAppServerPIDFile)
@@ -307,6 +311,7 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		fail(err)
 		return
 	}
+	timing("server_pid_available")
 	runtime.ServerPID = pid
 	relayPID, err := codexAppServerRelayPID(ctx, runtime.SocketPath)
 	if err != nil {
@@ -332,6 +337,7 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		fail(fmt.Errorf("record Codex app-server listener proof: %w", err))
 		return
 	}
+	timing("listener_proved")
 	// Do not dial before the TUI hook has proved that a FRESH thread exists and is
 	// bound. In Codex 0.147 a fresh thread auto-subscribes every connection that
 	// is already initialized, even if it never calls thread/resume. Waiting
@@ -354,6 +360,7 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 			return
 		}
 	}
+	timing("tui_bound", "conv", threadID)
 	clientOptions, err := codexAppServerClientOptions(*runtime)
 	if err != nil {
 		fail(err)
@@ -364,6 +371,7 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		fail(err)
 		return
 	}
+	timing("client_initialized")
 	thread, err := client.ReadThread(ctx, codexappserver.ThreadReadParams{ThreadID: threadID})
 	if err != nil || thread.ID != threadID {
 		_ = client.Close()
@@ -373,6 +381,7 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		fail(err)
 		return
 	}
+	timing("thread_read")
 	runtime.ConvID = threadID
 	runtime.ThreadID = threadID
 	launchAlive := codexAppServerLaunchAlive(*runtime)
@@ -389,6 +398,7 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 		fail(fmt.Errorf("validate native Codex permission registry before ready: %w", err))
 		return
 	}
+	timing("registry_validated")
 	runtime.State = db.CodexAppServerReady
 	runtime.Detail = ""
 	completed, err := db.CompleteCodexAppServerRuntimeBootstrap(*runtime)
@@ -403,6 +413,7 @@ func runCodexAppServerBootstrap(args clcommon.SpawnArgs) {
 			"generation", runtime.Generation)
 		return
 	}
+	timing("ready", "conv", threadID)
 	handle := registerCodexAppServerHandle(*runtime, client)
 	projectCodexAppServerRawStatus(handle, thread.Status, time.Now().UTC(), "app-server snapshot")
 	if err := reconcileCodexNativePermissionRegistryForGeneration(runtime.Generation); err != nil {
@@ -1121,7 +1132,9 @@ var (
 	awaitCodexAppServerLaunchReady = awaitCodexAppServerLaunch
 )
 
-func awaitCodexAppServerLaunch(convID, launchID string) bool {
+func awaitCodexAppServerLaunch(convID, launchID string) (ready bool) {
+	timing := config.StartupTiming("codex_await_ready", "conv", convID, "label", launchID)
+	defer func() { timing("return", "ready", ready) }()
 	deadline := time.Now().Add(codexAppServerStartupTimeout)
 	for time.Now().Before(deadline) {
 		if codexAppServerReady(convID) {

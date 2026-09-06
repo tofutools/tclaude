@@ -69,6 +69,37 @@ func TestCloneGroupRepositoryCreatesMissingParents(t *testing.T) {
 	}))
 }
 
+func TestGroupCloneUsesEditedRepositoryWorkspace(t *testing.T) {
+	setupTestDB(t)
+	_, err := db.CreateAgentGroup("source", "source description")
+	require.NoError(t, err)
+	source, err := db.GetAgentGroupByName("source")
+	require.NoError(t, err)
+	destination := filepath.Join(t.TempDir(), "checkout")
+	previous := runGroupRepositoryClone
+	t.Cleanup(func() { runGroupRepositoryClone = previous })
+	runGroupRepositoryClone = func(_ context.Context, _, gotDestination string) ([]byte, error) {
+		require.Equal(t, destination, gotDestination)
+		return nil, os.Mkdir(gotDestination, 0o755)
+	}
+	body, err := json.Marshal(map[string]any{
+		"new_name": "copy", "no_clone_members": true,
+		"repository_clone": map[string]any{
+			"repository": "acme/repo", "transport": "https",
+			"destination": destination, "attach": true,
+		},
+	})
+	require.NoError(t, err)
+	w := httptest.NewRecorder()
+	handleGroupClone(w, AsHumanPeer(httptest.NewRequest(http.MethodPost, "/v1/groups/source/clone", bytes.NewReader(body))), source)
+	require.Equal(t, http.StatusOK, w.Code, "%s", w.Body.String())
+	clone, err := db.GetAgentGroupByName("copy")
+	require.NoError(t, err)
+	require.NotNil(t, clone)
+	assert.Equal(t, destination, clone.DefaultCwd)
+	assert.Equal(t, "https://github.com/acme/repo", clone.AttachmentURL)
+}
+
 func TestDashboardCreateGroupClonesAndAttachesRepository(t *testing.T) {
 	setupTestDB(t)
 	withDashboardAuth(t)

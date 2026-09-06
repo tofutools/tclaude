@@ -49,19 +49,12 @@ test('template actions keep starter requests ordered and preserve mutation paylo
     ]);
   const pending = [];
   const saves = [];
-  const clones = [];
   let refreshes = 0;
   const templateAPI = {
     loadStarters: () => new Promise((resolve) => pending.push(resolve)),
     async saveTemplate(original, payload) {
       saves.push([original, payload]);
       return {};
-    },
-  };
-  const groupAPI = {
-    async cloneGroup(name, body) {
-      clones.push([name, body]);
-      return { group: 'team-c-1', members: [] };
     },
   };
   const state = createManagementState();
@@ -78,7 +71,6 @@ test('template actions keep starter requests ordered and preserve mutation paylo
       groups: state.templateGroups.value,
     }),
     templateAPI,
-    groupAPI,
   });
   const first = actions.openTemplateStarters();
   const second = actions.openTemplateStarters();
@@ -99,19 +91,7 @@ test('template actions keep starter requests ordered and preserve mutation paylo
   assert.equal(saves[0][1].name, 'force-copy');
   assert.equal('created_at' in saves[0][1], false);
   assert.equal('updated_at' in saves[0][1], false);
-  await actions.cloneGroup('team', 'team-c-1', 'team-copy', true, false);
-  assert.deepEqual(clones[0], [
-    'team',
-    { no_clone_members: false, copy_owners: false, new_name: 'team-copy' },
-  ]);
-  await actions.cloneGroup('team', 'team-c-1', 'team-c-1', false, false, {
-    parent: 'parent', anchor: 'team', before: false,
-  });
-  assert.deepEqual(clones[1], [
-    'team',
-    { no_clone_members: true, copy_owners: false, parent: 'parent' },
-  ]);
-  assert.equal(refreshes, 3);
+  assert.equal(refreshes, 1);
 });
 
 test('template manager and editor retain native markup, wizard variants, nested draft state, and stacking', async (t) => {
@@ -318,6 +298,9 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     default_context: 'group lore',
     default_cwd: '/repo',
     default_profile: 'fast',
+    attachment_url: 'https://linear.app/acme/project/team',
+    attachment_label: 'Team project',
+    attachment_label_override: 'Team project',
     members: [{ name: 'lead', owner: true, online: true }],
   };
   const staleProfileGroup = {
@@ -435,6 +418,8 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
   await harness.act(() => Promise.resolve());
   assert.equal(deployed[0][1], 'deploy');
   assert.equal(deployed[0][2].group_name, 'ship-the-release');
+  assert.equal(deployed[0][2].attachment_url, 'https://linear.app/acme/project/team');
+  assert.equal(deployed[0][2].attachment_label, 'Team project');
 
   state.openDialog({
     kind: 'template-deploy',
@@ -546,20 +531,6 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     'a deleted profile is never submitted invisibly',
   );
 
-  state.openDialog({
-    kind: 'group-clone',
-    group: 'team',
-    source: group,
-    defaultName: 'team-c-1',
-  });
-  await harness.act(() => Promise.resolve());
-  assert.equal(host.querySelector('#group-clone-with-agents').type, 'checkbox');
-  assert.notEqual(host.querySelector('#group-clone-with-agents').checked, true);
-  assert.notEqual(host.querySelector('#group-clone-copy-owners').checked, true);
-  assert.match(
-    host.querySelector('#group-clone-preview').textContent,
-    /settings|member agents/i,
-  );
   state.openDialog({ kind: 'group-context', group: 'team', context: 'old' });
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelector('#group-context-text').value, 'old');

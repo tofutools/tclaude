@@ -342,3 +342,97 @@ daemon, and `--repair` recreates your own deleted startup directory
 Cross-cutting conveniences that ride on the same identity — head aliases,
 tags, task links, `present-pr`, exports, and the human-clipboard bridge —
 are covered in [Teams at scale](teams-at-scale.md).
+
+### Diagnosing slow startup
+
+Enable **Config → Logging → Startup timings** and save, or set
+`"startup_timing": true` in `~/.tclaude/data/config.json`. Changes apply to new
+traces immediately, without restarting agentd. Traces already running finish
+with the setting they started with, preserving complete measurements. The
+session wrapper reads the same config, so new launches also pick up changes.
+
+Install both binaries from the diagnostic branch with `go install . ./cmd/...`
+and restart the daemon once to load the updated code. Subsequent setting
+changes need no restart.
+
+The legacy `TCLAUDE_STARTUP_TIMING=1` environment switch still works when the
+config key is absent. An explicit config `true` or `false` overrides it; saving
+the dashboard checkbox writes an explicit value. The checkbox displays the
+saved config value, not an inherited environment setting.
+
+Filter the dashboard's Logs tab for `startup timing`, or inspect those JSON
+records in `~/.tclaude/data/output.log`. These are info-level records, so no
+log-level change is needed with the default configuration. Each record has a
+component, process ID, per-process trace number, milestone, total `elapsed_ms`,
+and `step_ms` since that trace's previous milestone. Labels join the daemon
+and session wrapper; `child_pid` joins wrapper dispatch to `session_new` and
+effective-config probes. Conversation IDs join background enrollment/post-init
+and Codex bootstrap. Traces overlap: do not add their totals together. A
+`return` milestone means the function exited, not necessarily that startup
+succeeded; check the readiness/failure fields and adjacent error logs.
+
+Useful boundaries:
+
+- `spawn_request` includes request validation and daemon preflight;
+  `spawn` measures launch preparation and conversation polling.
+- `spawn_wrapper` records the child PID; `spawn_wrapper_exit` includes the
+  wrapper's wait duration. `session_new` separates launch preparation, Codex
+  version checking, tmux creation, and pane/directory gates.
+- `codex_effective_config` separates launching the preflight Codex app-server,
+  waiting for `config/read`, and process teardown. This probe runs separately
+  from the agent's actual Codex process and can occur in either daemon or wrapper.
+- `codex_bootstrap` separates version/PID availability, listener ownership
+  proof, the TUI's thread binding, client initialization, and verified readiness.
+  `codex_await_ready`, `spawn_backfill`, and `spawn_post_init` cover later work.
+
+An asynchronous spawn response can precede readiness: Codex's inline response
+window is 750 ms, and conversation-store discovery starts after a 1-second
+grace with scans at most once per second. The timings measure tclaude's observed
+milestones, not Codex's internal plugin/MCP initialization or first model-token
+latency. A long wait for TUI binding narrows the investigation to that interval
+but does not establish which Codex subsystem caused it.
+
+Uncheck **Startup timings** and save (or set `"startup_timing": false`) to
+disable new traces, even if the environment switch is enabled.
+Timing records contain identifiers and durations, not prompts, environment
+values, provider config, or capability tokens.
+
+Startup timing details also include:
+
+- `spawn_dialog`: browser-measured offsets from the Spawn click through
+  preparation (including auto-name confirmation), worktree resolution,
+  attachment upload, request dispatch, response receipt, and dialog close
+  request. All `*_ms` values are cumulative; subtract adjacent values for
+  phase durations. `elapsed_ms` ends at the close request, not the browser's
+  next paint. Reports arrive asynchronously after closing, so their log
+  timestamp is the receipt time. Failed submits report `submit_failed` and
+  may lack later milestones (shown as zero). Validation rejections and canceled
+  auto-name confirmations do not report a completed submit.
+- `spawn_discovery`: each conversation-store scan, with the launch label,
+  time since launch, store-list duration/count, and whether a conversation
+  matched. The one-second initial grace and scan interval remain unchanged.
+- `spawn_post_init`: `pane_alive` is distinct from keystroke settling and
+  control readiness. Codex skips the fixed settling sleep when its welcome
+  arrived through the launch seed or its app-server provides explicit control
+  readiness. Legacy keystroke welcome delivery retains the settling delay.
+
+For newly created worktrees, `spawn_dialog` also reports `worktree_http_ms`
+(the worktree POST through response parsing), `worktree_progress_cleanup_ms`
+(waiting for the progress poll to stop), and `worktree_total_ms`. These three
+are durations, unlike the cumulative click offsets above. They are zero when
+no worktree creation ran during that submit, including reuse of a cached result.
+The `worktree_progress_id` joins that browser report to daemon records:
+
+- `worktree_request`: repository resolution, fetch phase, creation phase,
+  and response handling.
+- `worktree_fetch` / `worktree_fetch_isolated`: upstream resolution, proxy
+  session setup, remote resolution, isolated transfer-repository creation,
+  ref seeding, network fetch, ref import, and cleanup.
+- `worktree_create`: config-lock inspection, initial worktree add (including
+  Git's automatic tracking setup), explicit upstream repair, retry waits,
+  checkout retries, and fallback without tracking.
+
+Each trace's `step_ms` covers work since its previous milestone. Nested traces
+measure overlapping work, so do not sum their totals. Git errors still appear
+through the existing error paths; timing records contain no URLs, credentials,
+repository paths, or Git output. A `return` milestone alone is not success.

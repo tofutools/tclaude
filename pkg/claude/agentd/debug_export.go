@@ -88,6 +88,7 @@ type agentDebugLatestLaunch struct {
 	AskUserQuestionTimeout    string                     `json:"ask_user_question_timeout,omitempty"`
 	RemoteControl             bool                       `json:"remote_control"`
 	AutoMemory                bool                       `json:"auto_memory"`
+	PeerMessaging             bool                       `json:"peer_messaging"`
 	ContextFeatures           map[string]string          `json:"context_features,omitempty"`
 	AutoCompactWindow         string                     `json:"auto_compact_window,omitempty"`
 	Model                     string                     `json:"model,omitempty"`
@@ -220,7 +221,7 @@ func buildAgentDebugExport(convID string) (*agentDebugExport, error) {
 			OSSandboxSource: s.OSSandboxSource, OSSandboxUnverified: s.OSSandboxUnverified,
 			ApprovalPolicy: s.ApprovalPolicy, ApprovalAutoReview: s.ApprovalAutoReview,
 			AskUserQuestionTimeout: s.AskUserQuestionTimeout, RemoteControl: s.RemoteControl,
-			AutoMemory: s.AutoMemory, ContextFeatures: s.ContextFeatures,
+			AutoMemory: s.AutoMemory, PeerMessaging: s.PeerMessaging, ContextFeatures: s.ContextFeatures,
 			AutoCompactWindow: s.AutoCompactWindow, Model: context.Model, ModelID: context.ModelID,
 			Effort: context.EffortLevel, ContextWindowSize: context.ContextWindowSize,
 			EffectiveSandbox:          s.EffectiveSandbox,

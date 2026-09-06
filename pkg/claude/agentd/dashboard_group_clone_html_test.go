@@ -2,11 +2,11 @@ package agentd
 
 import "testing"
 
-// TestDashboardHTML_GroupCloneModal pins the clone-group modal wiring in
-// the embedded dashboard source. Clicking ⧉ clone… in a group's ⚙ cog
-// menu opens the Preact-owned parameters modal: an editable new-name (prefilled
-// with the computed <source>-c-N default), clone-scope checkboxes, and a live
-// preview of every setting the clone will carry.
+// TestDashboardHTML_GroupCloneModal pins clone-group wiring into the shared
+// group-creation modal. Clicking ⧉ clone… in a group's ⚙ cog menu opens
+// the same source-first Preact form as every other group-create entry point,
+// prefilled with the source, placement, next clone name, clone-scope controls,
+// and a live preview of every setting the clone will carry.
 func TestDashboardHTML_GroupCloneModal(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -19,22 +19,28 @@ func TestDashboardHTML_GroupCloneModal(t *testing.T) {
 	must("case 'clone-group':", "row-actions.js dispatches the clone-group action")
 	must("openGroupCloneModal(group)", "the dispatcher opens the clone modal")
 
-	// The modal shell + its controls.
-	must(`id: 'group-clone-modal'`, "the clone modal overlay exists")
-	must(`id="group-clone-name"`, "the modal has an editable new-name field")
-	must(`id="group-clone-with-agents"`, "the modal has a clone-agents checkbox")
-	must(`id="group-clone-copy-owners"`, "the modal has an explicit copy-owners checkbox")
-	must(`id="group-clone-preview"`, "the modal has a settings preview panel")
-	must(`id="group-clone-submit"`, "the modal has a submit button")
+	// The shared modal shell + clone-only controls.
+	must(`id="group-create-modal"`, "the shared group creation overlay exists")
+	must(`id="group-create-name"`, "the shared modal has an editable name field")
+	must(`id="group-create-with-agents"`, "clone mode has a clone-agents checkbox")
+	must(`id="group-create-copy-owners"`, "clone mode has an explicit copy-owners checkbox")
+	must(`id="group-create-attachment-url"`, "the shared modal has an editable attachment link")
+	must(`id="group-create-attachment-label"`, "the shared modal has an editable attachment label")
+	must(`id="group-create-source-summary"`, "the shared modal has a source summary panel")
+	must(`class="group-create-origin-options"`, "the shared modal exposes the source-first selector")
+	must(`id="group-create-group-source"`, "the source group is visibly selectable")
+	must(`id="group-create-placement"`, "placement is editable in every create flow")
+	must(`id="group-create-submit"`, "clone mode uses the shared create submit button")
 	// The Preact-controlled `checked=${withAgents}` attribute is dynamic, so its
 	// unchecked initial value is asserted behaviorally in the JS component test.
 
 	// The JS behaviour: default-name computation, preview render, and the POST.
-	must("defaultName: `${prefix}${suffix}`", "client computes the <source>-c-N default name")
-	must("function GroupClonePreview(", "the Preact modal renders a settings preview")
+	must("defaultName: nextGroupCloneName(groups, groupName)", "client computes the <source>-c-N default name")
+	must("function GroupSourceSummary(", "the shared Preact modal renders a source summary")
+	must("source.attachment_url", "the preview discloses the attachment copied with group settings")
 	must("no_clone_members", "submit sends the with/without-agents flag")
 	must("copy_owners", "submit sends the owner-copy opt-in flag")
-	must("/clone`", "submit POSTs to the group clone endpoint")
+	must("/clone`", "shared submit POSTs to the group clone endpoint")
 
 	// The preview's CSS ships with the page.
 	must(".group-clone-preview {", "the preview panel has a CSS rule")

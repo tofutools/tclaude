@@ -136,6 +136,8 @@ func TestTaskForceDeploy_MirroredSettingsCanNestUnderParent(t *testing.T) {
 			"parent":           "parent",
 			"context_override": "mirrored deploy context",
 			"descr_override":   "mirrored descr",
+			"attachment_url":   "https://linear.app/acme/project/parent",
+			"attachment_label": "Parent project",
 		})
 	require.Equalf(t, http.StatusCreated, rec.Code, "deploy mirrored subgroup: %s", rec.Body.String())
 	agentd.WaitForBackgroundForTest()
@@ -146,6 +148,8 @@ func TestTaskForceDeploy_MirroredSettingsCanNestUnderParent(t *testing.T) {
 	require.NotNil(t, g.ParentGroupID, "new task force is nested")
 	assert.Equal(t, parentID, *g.ParentGroupID)
 	assert.Equal(t, "mirrored descr", g.Descr)
+	assert.Equal(t, "https://linear.app/acme/project/parent", g.AttachmentURL)
+	assert.Equal(t, "Parent project", g.AttachmentLabel)
 	assert.Contains(t, g.DefaultContext, "mirrored deploy context")
 	assert.Contains(t, g.DefaultContext, "## Mission")
 	assert.NotContains(t, g.DefaultContext, "template context should be replaced")

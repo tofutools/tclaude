@@ -115,7 +115,9 @@ func TestClaudeSandbox_HarnessResolution(t *testing.T) {
 // operator's own settings.json.
 func TestClaudeSpawner_Sandbox(t *testing.T) {
 	spawn := func(mode string) string {
-		return claudeSpawner{}.BuildCommand(SpawnSpec{HarnessBuiltinMode: mode})
+		// PeerMessaging: true keeps this test about the sandbox alone — the
+		// default OFF posture contributes its own keys to every payload.
+		return claudeSpawner{}.BuildCommand(SpawnSpec{HarnessBuiltinMode: mode, PeerMessaging: true})
 	}
 
 	// inherit / unset → no --settings anywhere.
@@ -209,7 +211,7 @@ func TestClaudeSandboxOnBlock_MatchesHardening(t *testing.T) {
 func TestClaudeSettingsGitWorktreeWriteDirs(t *testing.T) {
 	dirs := []string{"/home/dev/git", "/home/dev/git/project", "/home/dev/git/project/.git"}
 	for _, mode := range []string{ClaudeSandboxInherit, ClaudeSandboxOn} {
-		payload := claudeSettingsJSON(SpawnSpec{HarnessBuiltinMode: mode, SandboxWriteDirs: dirs})
+		payload := claudeSettingsJSON(SpawnSpec{HarnessBuiltinMode: mode, SandboxWriteDirs: dirs, PeerMessaging: true})
 		var settings map[string]any
 		if err := json.Unmarshal([]byte(payload), &settings); err != nil {
 			t.Fatalf("mode %s payload is invalid JSON: %v", mode, err)
@@ -232,7 +234,7 @@ func TestClaudeSettingsGitWorktreeWriteDirs(t *testing.T) {
 		}
 	}
 
-	if got := claudeSettingsJSON(SpawnSpec{HarnessBuiltinMode: ClaudeSandboxOff, SandboxWriteDirs: dirs}); got != `{"sandbox":{"enabled":false}}` {
+	if got := claudeSettingsJSON(SpawnSpec{HarnessBuiltinMode: ClaudeSandboxOff, SandboxWriteDirs: dirs, PeerMessaging: true}); got != `{"sandbox":{"enabled":false}}` {
 		t.Fatalf("off must not carry irrelevant write grants, got %s", got)
 	}
 }

@@ -15,6 +15,14 @@ const groups = [{
   descr: 'alpha descr',
   default_cwd: '/alpha',
   default_context: 'alpha context',
+  attachment_url: 'https://linear.app/acme/project/alpha',
+  attachment_label: 'Alpha project',
+  attachment_label_override: 'Alpha project',
+}, {
+  name: 'beta',
+  descr: 'beta descr',
+  default_cwd: '/beta',
+  default_context: 'beta context',
 }];
 
 function deferred() {
@@ -46,9 +54,14 @@ test('group-create model preserves compatible prefill and clears stale source-ow
 
   const blank = model.createGroupCreateDraft({ templates, groups });
   assert.deepEqual(blank, {
-    template: '', name: '', source: '', nested: false, descr: '', cwd: '',
+    origin: 'blank', template: '', name: '', source: '', nested: false,
+    parent: '', descr: '', cwd: '',
+    cloneGroup: '', cloneDefaultName: '', clonePlacement: null,
+    clonePreset: false,
+    withAgents: false, copyOwners: false,
     cwdOrigin: '', workspaceMode: 'existing', repository: '', cloneTransport: 'ssh',
     cloneDestination: '', attachRepository: true, context: '', task: '', maxMembers: '',
+    attachmentURL: '', attachmentLabel: '',
   });
 
   let draft = model.createGroupCreateDraft({
@@ -61,26 +74,33 @@ test('group-create model preserves compatible prefill and clears stale source-ow
   assert.equal(draft.cwd, '/alpha');
   assert.equal(draft.context,
     '## Mirrored group context\n\nalpha context\n\n## Template context\n\ntemplate context');
+  assert.equal(draft.attachmentURL, 'https://linear.app/acme/project/alpha');
+  assert.equal(draft.attachmentLabel, 'Alpha project');
   draft = { ...draft, nested: true };
   draft = model.selectGroupCreateSource(draft, '', { templates, groups });
   assert.equal(draft.descr, 'template descr');
   assert.equal(draft.cwd, '', 'source-owned cwd cannot leak into top-level template mode');
   assert.equal(draft.context, 'template context');
+  assert.equal(draft.attachmentURL, '');
   assert.equal(draft.nested, false);
 
   const pinned = model.createGroupCreateDraft({
     templates, groups, presetTemplate: 'builders', parentGroup: 'alpha',
   });
+  assert.equal(pinned.origin, 'template',
+    'an explicit template preset stays visible even when placement is prefilled');
   assert.equal(pinned.descr, 'alpha descr');
   assert.equal(pinned.cwd, '/alpha');
   assert.equal(pinned.context,
     '## Mirrored group context\n\nalpha context\n\n## Template context\n\ntemplate context');
+  assert.equal(pinned.attachmentURL, 'https://linear.app/acme/project/alpha');
   const pinnedBlank = model.selectGroupCreateTemplate(pinned, '', {
     templates, groups, parentGroup: 'alpha',
   });
-  assert.equal(pinnedBlank.descr, 'alpha descr');
-  assert.equal(pinnedBlank.cwd, '/alpha');
-  assert.equal(pinnedBlank.context, 'alpha context');
+  assert.equal(pinnedBlank.descr, '');
+  assert.equal(pinnedBlank.cwd, '');
+  assert.equal(pinnedBlank.context, '');
+  assert.equal(pinnedBlank.parent, 'alpha', 'source changes do not alter placement');
 });
 
 test('group-create model validates and builds exact blank, template, and nested requests', async (t) => {
@@ -97,22 +117,37 @@ test('group-create model validates and builds exact blank, template, and nested 
   'a hidden blank-group cap cannot block template instantiation');
 
   const blank = model.groupCreateRequest({
-    ...base, name: '  new-group ', descr: ' desc ', cwd: ' /repo ',
+    ...base, name: '  new-group ', parent: 'alpha', descr: ' desc ', cwd: ' /repo ',
     context: ' context ', maxMembers: '4',
+    attachmentURL: ' https://linear.app/acme/project/alpha ',
+    attachmentLabel: ' Alpha project ',
   }, null, 'alpha');
   assert.deepEqual(blank.body, {
     name: 'new-group', parent: 'alpha', descr: 'desc', default_cwd: '/repo',
     default_context: 'context', max_members: 4,
+    attachment_url: 'https://linear.app/acme/project/alpha',
+    attachment_label: 'Alpha project',
   });
+
+  const topLevel = model.groupCreateRequest({
+    ...model.createGroupCreateDraft({ groups, parentGroup: 'alpha' }),
+    name: 'moved-to-top', parent: '',
+  }, null, 'alpha');
+  assert.equal(topLevel.body.parent, '',
+    'clearing an editable placement cannot fall back to the entry-point preset');
 
   const instantiated = model.groupCreateRequest({
     ...base, name: 'party', source: 'alpha', nested: true,
     descr: ' desc ', cwd: ' /repo ', context: ' context\n', task: ' ship\n',
+    attachmentURL: 'https://linear.app/acme/project/alpha',
+    attachmentLabel: 'Alpha project',
   }, templates[0]);
   assert.equal(instantiated.url, '/api/templates/builders/instantiate');
   assert.deepEqual(instantiated.body, {
     group_name: 'party', task: ' ship\n', cwd: '/repo', descr_override: 'desc',
     context_override: ' context\n', parent: 'alpha',
+    attachment_url: 'https://linear.app/acme/project/alpha',
+    attachment_label: 'Alpha project',
   });
 
   const cloned = model.groupCreateRequest({
@@ -129,6 +164,25 @@ test('group-create model validates and builds exact blank, template, and nested 
     },
   });
   assert.equal(model.derivedCloneDestination('git@github.com:acme/payments.git'), '~/git/payments');
+
+  const groupClone = model.groupCreateRequest({
+    ...base, cloneGroup: 'alpha', cloneDefaultName: 'alpha-c-1',
+    clonePlacement: { parent: 'root', anchor: 'alpha', before: true },
+    parent: 'root',
+    name: 'alpha-copy', withAgents: true, copyOwners: true,
+  }, null);
+  assert.deepEqual(groupClone, {
+    kind: 'clone', name: 'alpha-copy', source: 'alpha',
+    placement: { parent: 'root', anchor: 'alpha', before: true },
+    withAgents: true, copyOwners: true,
+    url: '/api/groups/alpha/clone',
+    body: {
+      no_clone_members: false, copy_owners: true,
+      descr: '', default_cwd: '', default_context: '', max_members: 0,
+      attachment_url: '', attachment_label: '',
+      new_name: 'alpha-copy', parent: 'root',
+    },
+  });
 });
 
 test('group-create state snapshots each open and invalidates closed generations', async (t) => {
@@ -148,6 +202,13 @@ test('group-create state snapshots each open and invalidates closed generations'
   state.open();
   assert.equal(state.dialog.value.templates.length, 0, 'reopen starts from the latest snapshot');
   assert.notEqual(state.dialog.value.generation, first.generation);
+  snapshot = { templates, groups: [...groups, { name: 'alpha-c-1' }] };
+  state.openClone('alpha');
+  assert.equal(state.dialog.value.cloneGroup, 'alpha');
+  assert.equal(state.dialog.value.defaultName, 'alpha-c-2');
+  assert.deepEqual(state.dialog.value.placement, {
+    parent: '', anchor: 'alpha', before: false,
+  });
 });
 
 test('group-create actions preserve HTTP errors, partial outcome toasts, expansion, and refresh', async (t) => {
@@ -262,10 +323,61 @@ test('Preact group-create owner renders preset/mirror/pinned paths and reconcile
   state.close();
   state.open('builders', 'alpha');
   await flush(harness);
-  assert.match(host.querySelector('#group-create-title').textContent, /subgroup under alpha/);
+  assert.match(host.querySelector('#group-create-title').textContent, /Create group/);
+  assert.equal(host.querySelector('.group-create-origin-options .selected').textContent, 'Template');
+  assert.equal(host.querySelector('#group-create-placement').dataset.currentValue, 'alpha');
   assert.equal(host.querySelector('#group-create-descr').value, 'alpha descr');
   assert.equal(host.querySelector('#group-create-cwd').value, '/alpha');
-  assert.equal(host.querySelector('#group-create-source-row').hidden, true);
+  assert.equal(host.querySelector('#group-create-source-row').hidden, false);
+  await mounted.cleanup();
+});
+
+test('subgroup entry metadata only prefills later Group and Template choices', async (t) => {
+  const mounted = await mountGroupCreate(t);
+  const { harness, host, state } = mounted;
+  state.open('', 'alpha');
+  await flush(harness);
+
+  const groupSource = host.querySelector('#group-create-group-source');
+  choose(groupSource, 'beta');
+  await harness.act(() => harness.fireEvent(groupSource, 'change'));
+  choose(host.querySelector('#group-create-placement'), '');
+  await harness.act(() => harness.fireEvent(host.querySelector('#group-create-placement'), 'change'));
+
+  [...host.querySelectorAll('.group-create-origin-options button')][2].click();
+  await flush(harness);
+  assert.match(host.querySelector('#group-create-source-summary').textContent, /Prefilled from beta/);
+  assert.equal(host.querySelector('#group-create-cwd').value, '/beta');
+  assert.equal(host.querySelector('#group-create-placement').dataset.currentValue, '');
+  assert.equal(host.querySelector('#group-create-source-row').hidden, false,
+    'the entry route cannot permanently pin template mirroring');
+  await mounted.cleanup();
+});
+
+test('Preact group-create switches Blank, Group, and Template in one visible form', async (t) => {
+  const mounted = await mountGroupCreate(t);
+  const { harness, host, state } = mounted;
+  state.open();
+  await flush(harness);
+  const form = host.querySelector('#group-create-modal');
+  const origins = [...form.querySelectorAll('.group-create-origin-options button')];
+  assert.deepEqual(origins.map((button) => button.textContent), ['Blank', 'Group', 'Template']);
+  assert.equal(origins[0].getAttribute('aria-pressed'), 'true');
+  assert.equal(form.querySelector('#group-create-group-source'), null);
+  const nameNode = form.querySelector('#group-create-name');
+
+  origins[1].click();
+  await flush(harness);
+  assert.equal(form.querySelector('#group-create-group-source').dataset.currentValue, 'alpha');
+  assert.match(form.querySelector('#group-create-source-summary').textContent, /Alpha project/);
+  assert.equal(form.querySelector('#group-create-name').isSameNode(nameNode),
+  true, 'switching sources keeps the same form mounted');
+
+  [...form.querySelectorAll('.group-create-origin-options button')][2].click();
+  await flush(harness);
+  assert.equal(form.querySelector('#group-create-template').dataset.currentValue, 'builders');
+  assert.equal(form.querySelector('#group-create-group-source'), null);
+  assert.equal(form.querySelector('#group-create-placement').dataset.currentValue, '');
   await mounted.cleanup();
 });
 
@@ -283,7 +395,90 @@ test('Preact group-create clone workspace derives destination and remembers tran
   transports[1].click();
   await flush(harness);
   assert.ok(calls.some(([kind, value]) => kind === 'transport' && value === 'https'));
-  assert.match(host.querySelector('#group-create-submit').textContent, /Clone & create/);
+  assert.equal(host.querySelector('#group-create-submit').textContent, 'Create group');
+  await mounted.cleanup();
+});
+
+test('Preact group-create owns clone mode and makes inherited attachment visible', async (t) => {
+  let submitted;
+  const mounted = await mountGroupCreate(t, {
+    submit: async (draft, template) => {
+      submitted = { draft, template };
+      return {
+        kind: 'clone', name: draft.name, source: draft.cloneGroup,
+        withAgents: draft.withAgents, copyOwners: draft.copyOwners,
+        placement: draft.clonePlacement, response: { group: draft.name, members: [] },
+      };
+    },
+  });
+  const { harness, host, state } = mounted;
+  state.openClone('alpha');
+  await flush(harness);
+  assert.match(host.querySelector('#group-create-title').textContent, /Create group/);
+  assert.equal(host.querySelector('.group-create-origin-options .selected').textContent, 'Group');
+  assert.equal(host.querySelector('#group-create-name').value, 'alpha-c-1');
+  assert.equal(host.querySelector('details'), null, 'settings are never collapsed');
+  assert.equal(host.querySelector('#group-create-descr').value, 'alpha descr');
+  assert.equal(host.querySelector('#group-create-cwd').value, '/alpha');
+  assert.equal(host.querySelector('#group-create-context').value, 'alpha context');
+  assert.equal(host.querySelector('#group-create-attachment-url').value,
+    'https://linear.app/acme/project/alpha');
+  assert.equal(host.querySelector('#group-create-attachment-label').value, 'Alpha project');
+  await harness.input(host.querySelector('#group-create-context'), 'edited clone context');
+  await harness.input(host.querySelector('#group-create-attachment-label'), 'Alpha tracker');
+  assert.equal(host.querySelector('#group-create-name').hasAttribute('data-select-on-focus'), true);
+  assert.match(host.querySelector('#group-create-source-summary').textContent, /Alpha project/);
+  assert.match(host.querySelector('#group-create-source-summary').textContent, /attachment \/ link/);
+  assert.equal(host.querySelector('#group-create-template'), null);
+  const withAgents = host.querySelector('#group-create-with-agents');
+  const copyOwners = host.querySelector('#group-create-copy-owners');
+  withAgents.checked = true;
+  copyOwners.checked = true;
+  await harness.act(() => {
+    harness.fireEvent(withAgents, 'change');
+    harness.fireEvent(copyOwners, 'change');
+  });
+  host.querySelector('#group-create-submit').click();
+  await flush(harness);
+  assert.equal(submitted.template, null);
+  assert.equal(submitted.draft.cloneGroup, 'alpha');
+  assert.equal(submitted.draft.context, 'edited clone context');
+  assert.equal(submitted.draft.attachmentLabel, 'Alpha tracker');
+  assert.equal(submitted.draft.withAgents, true);
+  assert.equal(submitted.draft.copyOwners, true);
+  assertAbsent(host.querySelector('#group-create-modal'));
+  await mounted.cleanup();
+});
+
+test('leaving a clone preset does not silently restore clone semantics', async (t) => {
+  const mounted = await mountGroupCreate(t);
+  const { harness, host, state } = mounted;
+  state.openClone('alpha');
+  await flush(harness);
+
+  let origins = [...host.querySelectorAll('.group-create-origin-options button')];
+  origins[0].click();
+  await flush(harness);
+  origins = [...host.querySelectorAll('.group-create-origin-options button')];
+  origins[1].click();
+  await flush(harness);
+
+  assert.equal(host.querySelector('#group-create-with-agents'), null);
+  const model = await harness.importDashboardModule('js/group-create-model.js');
+  const groupSource = host.querySelector('#group-create-group-source');
+  choose(groupSource, 'beta');
+  await harness.act(() => harness.fireEvent(groupSource, 'change'));
+  await harness.input(host.querySelector('#group-create-name'), 'beta-prefill');
+
+  let submitted;
+  mounted.actions.submit = async (draft, template) => {
+    submitted = model.groupCreateRequest(draft, template);
+    return { kind: 'blank', name: draft.name, response: {} };
+  };
+  host.querySelector('#group-create-submit').click();
+  await flush(harness);
+  assert.equal(submitted.kind, 'blank');
+  assert.equal(submitted.body.descr, 'beta descr');
   await mounted.cleanup();
 });
 

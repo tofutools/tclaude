@@ -532,6 +532,11 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
         </${ConfigSelect}>
       </div>
       <div class="cfg-field">
+        <span class="cfg-label">Startup timings</span>
+        <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-startup-timing" /> log agent startup timings</label>
+        <span class="cfg-hint">Applies to new timing traces as soon as you save; no restart needed. Traces already running finish. Filter Logs for “startup timing” (info level). Saving this setting overrides TCLAUDE_STARTUP_TIMING.</span>
+      </div>
+      <div class="cfg-field">
         <span class="cfg-label">Record hooks</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-record-hooks" /> log every hook callback payload</label>
         <span class="cfg-hint">Debugging aid — verbose; leave off for normal use.</span>

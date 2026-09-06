@@ -61,6 +61,7 @@ func fullClaudePosture() *db.AgentRelaunchProfile {
 		AskUserQuestionTimeout:     ptr("5m"),
 		RemoteControl:              ptr(true),
 		AutoMemory:                 ptr(true),
+		PeerMessaging:              ptr(true),
 		ContextFeatures:            &features,
 		AutoCompactWindow:          ptr("450000"),
 		ConfiguredContextWindowMax: ptr(int64(100000)),

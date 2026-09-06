@@ -1831,6 +1831,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 		ToolGovernance:         launchConfig.ToolGovernance,
 		RemoteControl:          remoteControl,
 		AutoMemory:             launchConfig.AutoMemory,
+		PeerMessaging:          launchConfig.PeerMessaging,
 		ContextFeatures:        launchConfig.ContextFeatures,
 		AutoCompactWindow:      launchConfig.AutoCompactWindow,
 		ContextWindowMax:       launchConfig.ContextWindowMax,
@@ -1949,7 +1950,7 @@ func recoverMissingConversationResumeProfile(convID string, recreateMissingDir b
 		HarnessBuiltinMode: &empty, ApprovalPolicy: &approval,
 		ApprovalAutoReview: &no, ModelID: &empty, Effort: &empty,
 		ContextWindowSize: &zero, AskUserQuestionTimeout: &empty,
-		RemoteControl: &no, AutoMemory: &no, AutoCompactWindow: &empty,
+		RemoteControl: &no, AutoMemory: &no, PeerMessaging: &no, AutoCompactWindow: &empty,
 		SSHWorkaround: &sshWorkaround,
 	}
 	profile := db.ConversationResumeProfile{
@@ -3166,6 +3167,7 @@ func spawnAuditProfileSnapshot(p *db.SpawnProfile) any {
 		"trust_dir":                     p.TrustDir,
 		"remote_control":                p.RemoteControl,
 		"auto_memory":                   p.AutoMemory,
+		"peer_messaging":                p.PeerMessaging,
 		"ssh_workaround":                p.SSHWorkaround,
 		"context_features":              p.ContextFeatures,
 		"agent_name":                    p.AgentName,
@@ -3231,6 +3233,7 @@ func spawnAuditResolution(p spawnParams, launch *agent.ResolvedLaunch, requested
 			"trust_dir":                 p.TrustDir,
 			"remote_control":            p.RemoteControl,
 			"auto_memory":               p.AutoMemory,
+			"peer_messaging":            p.PeerMessaging,
 			"context_features":          features,
 			"auto_compact_window":       p.AutoCompactWindow,
 			"context_window_max":        p.ContextWindowMax,
@@ -3391,6 +3394,8 @@ func ambientSandboxProfileName(g *db.AgentGroup) string {
 }
 
 func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) {
+	timing := config.StartupTiming("spawn_request")
+	defer timing("return")
 	// requireGroupPermission also hands back the caller's conv-id: a real
 	// agent (e.g. a PO orchestrating workers) resolves to its conv-id,
 	// the human resolves to "". It is the default reply-to target for
@@ -3844,7 +3849,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	var autoReviewSet, trustDirSet, sshWorkaroundSet bool
-	var autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote string
+	var autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote string
 	body.AutoReview, autoReviewSet, _, autoReviewNote, fieldFail = resolveBoolLaunchField(
 		"auto_review", body.AutoReview, body.AutoReviewSpecified(), h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.AutoReview }, func(v bool) (bool, error) { return harness.ResolveAutoReview(h, v) })
@@ -3881,6 +3886,21 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		"auto_memory", body.AutoMemory != nil && *body.AutoMemory, body.AutoMemory != nil, h.Name, profileTiers,
 		func(p *db.SpawnProfile) *bool { return p.AutoMemory },
 		func(v bool) (bool, error) { return harness.ResolveAutoMemory(h, &v) })
+	if fieldFail != nil {
+		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
+		return
+	}
+	// peer_messaging rides the same tier stack with the same fallback, and for a
+	// closely related reason: unset everywhere resolves to FALSE, and false here
+	// means tclaude injects the refusal. Claude Code's own cross-session
+	// messaging is a second coordination channel with none of tclaude's group
+	// membership, permission slugs or audit trail, so only an explicit opt-in
+	// (spawn body or a matching profile) reopens it.
+	var peerMessaging bool
+	peerMessaging, _, _, peerMessagingNote, fieldFail = resolveBoolLaunchField(
+		"peer_messaging", body.PeerMessaging != nil && *body.PeerMessaging, body.PeerMessaging != nil, h.Name, profileTiers,
+		func(p *db.SpawnProfile) *bool { return p.PeerMessaging },
+		func(v bool) (bool, error) { return harness.ResolvePeerMessaging(h, &v) })
 	if fieldFail != nil {
 		writeError(w, fieldFail.Status, fieldFail.Kind, fieldFail.Msg)
 		return
@@ -4228,7 +4248,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	if body.SandboxImplementation == "" && sandboxImplNote != "" {
 		resolvedLaunch.Notes = append(resolvedLaunch.Notes, sandboxImplNote)
 	}
-	for _, note := range append([]string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, codexAppServerNote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
+	for _, note := range append([]string{sandboxNote, approvalNote, toolsNote, askTimeoutNote, autoCompactWindowNote, contextWindowMaxNote, copilotAPINote, codexAppServerNote, fastModeNote, autoReviewNote, trustDirNote, autoMemoryNote, peerMessagingNote, sshWorkaroundNote, contextFeaturesNote, profileContextNote, includeGroupContextNote}, identityNotes...) {
 		if note != "" {
 			resolvedLaunch.Notes = append(resolvedLaunch.Notes, note)
 		}
@@ -4749,6 +4769,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		TrustDirSet:                 trustDirSet,
 		RemoteControl:               remoteControl,
 		AutoMemory:                  autoMemory,
+		PeerMessaging:               peerMessaging,
 		ContextFeatures:             contextFeatures,
 		AutoCompactWindow:           autoCompactWindow,
 		ContextWindowMax:            body.ContextWindowMax,
@@ -5046,6 +5067,15 @@ type spawnParams struct {
 	// (handleGroupSpawn → harness.ResolveAutoMemory); a harness with no
 	// auto-memory system (Codex) rejects a true value.
 	AutoMemory bool
+	// PeerMessaging keeps Claude Code's own cross-session messaging ON for the
+	// new agent, forwarding `--peer-messaging` to `tclaude session new`. false
+	// (the default, and what an unset profile resolves to) instead has the
+	// launch inject the refusal, so agents coordinate through `tclaude agent
+	// send` rather than a channel outside tclaude's groups, permissions and
+	// audit trail. Gated at the spawn boundary (handleGroupSpawn →
+	// harness.ResolvePeerMessaging); a harness with no cross-session messaging
+	// system (Codex) rejects a true value.
+	PeerMessaging bool
 	// ContextFeatures is the resolved per-agent startup-context trim map (slug →
 	// "on" | "off"), forwarding `--context-features <slug>=<state>,…` to `tclaude
 	// session new`; nil/empty omits the flag so the agent keeps Claude Code's own
@@ -6307,6 +6337,10 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 // an Async PENDING success the outcome carries an empty conv-id and the agent
 // is enrolled later by the sweeper.
 func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failure *spawnFailure) {
+	timing := config.StartupTiming("spawn", "name", p.Name, "harness", p.Harness, "async", p.Async)
+	defer func() {
+		timing("return", "failed", failure != nil)
+	}()
 	groupName := spawnGroupName(g)
 	// Stamped here, once, rather than at each of the six spawnOutcome literals
 	// below: an echo that has to be repeated at every return is an echo that will
@@ -6669,6 +6703,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		TrustDir:                   p.TrustDir,
 		RemoteControl:              p.RemoteControl,
 		AutoMemory:                 p.AutoMemory,
+		PeerMessaging:              p.PeerMessaging,
 		ContextFeatures:            p.ContextFeatures,
 		AutoCompactWindow:          p.AutoCompactWindow,
 		ContextWindowMax:           p.ContextWindowMax,
@@ -7026,10 +7061,12 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	// is deliberately short and can collide with durable predecessor state;
 	// recording the boundary before the child starts lets non-preset harnesses
 	// reject such a row, while launch enrollment has the stronger conv-id proof.
+	timing("launch_prepared", "label", label)
 	launchedAt := time.Now()
 	if err := SpawnDetachedTclaudeNew(spawnArgs); err != nil {
 		return launchFailed(err)
 	}
+	timing("session_wrapper_dispatched", "label", label)
 	agentDirectoriesLaunched = true
 	privateAttachmentsLaunched = true
 	if openCodeLaunch != nil {
@@ -7123,6 +7160,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 	}
 	deadline := launchedAt.Add(pollBudget)
 	var convID string
+	paneObserved := false
 	var lastDiscoveryScan time.Time
 	remoteArmed := false
 	pendingLaunchMarked := false
@@ -7193,6 +7231,10 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 				sleepSpawnPoll(deadline)
 				continue
 			}
+			if !paneObserved {
+				timing("pane_observed", "label", label)
+				paneObserved = true
+			}
 			tmuxSession = s.TmuxSession
 			focusSpawn() // pane is up — open it now, conv-id or not
 			// Arm best-known remote-control on the row the moment it
@@ -7226,7 +7268,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		if !launchEnroll && tmuxSession != "" && time.Since(launchedAt) >= convStoreDiscoveryGrace &&
 			time.Since(lastDiscoveryScan) >= convStoreDiscoveryScanInterval {
 			lastDiscoveryScan = time.Now()
-			if id := discoverSpawnedConvID(spawnHarness, p.Cwd, launchedAt); id != "" {
+			if id := discoverSpawnedConvID(spawnHarness, p.Cwd, launchedAt, label); id != "" {
 				if err := db.SetSessionConvID(label, id); err != nil {
 					slog.Warn("spawn: failed to persist discovered conv-id",
 						"label", label, "conv", id, "error", err)
@@ -7237,6 +7279,8 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 		}
 		sleepSpawnPoll(deadline)
 	}
+
+	timing("conversation_poll_finished", "label", label, "conv", convID, "budget_ms", pollBudget.Milliseconds())
 
 	// Launch-enrollment path: the conv-id was PRESET and enrollment ran before
 	// the fork. Return it only after tmux has proved a live pane. A slow or
@@ -7709,7 +7753,7 @@ func backfillPendingSpawnInline(g *db.AgentGroup, p spawnParams, label string, h
 		if convID == "" && s.TmuxSession != "" && time.Since(launchedAt) >= convStoreDiscoveryGrace &&
 			time.Since(lastDiscoveryScan) >= convStoreDiscoveryScanInterval {
 			lastDiscoveryScan = time.Now()
-			if id := discoverSpawnedConvID(h, p.Cwd, launchedAt); id != "" {
+			if id := discoverSpawnedConvID(h, p.Cwd, launchedAt, label); id != "" {
 				if err := db.SetSessionConvID(label, id); err != nil {
 					slog.Warn("spawn: failed to persist discovered conv-id during pending back-fill",
 						"label", label, "conv", id, "error", err)
@@ -7816,6 +7860,8 @@ func sleepSpawnPoll(deadline time.Time) {
 }
 
 func completePendingSpawnBackfill(g *db.AgentGroup, p spawnParams, label, convID string) {
+	timing := config.StartupTiming("spawn_backfill", "label", label, "conv", convID)
+	defer timing("return")
 	ps, err := db.GetPendingSpawn(label)
 	if err != nil {
 		slog.Warn("spawn: pending inline back-fill lookup failed",
@@ -8432,7 +8478,9 @@ func markBriefingConsumed(convID string, msgID int64, inlined bool) {
 // ("" for a human-initiated one); it is resolved to a display name
 // here so the welcome's attribution line names the real spawner.
 func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextMsgID int64, hasInitialMessage bool, worktreePath, worktreeBranch, spawnedByConv, spawnedByAgent string, welcomeInSeed bool) {
-	if !waitForConvAlive(convID) {
+	timing := config.StartupTiming("spawn_post_init", "conv", convID)
+	defer timing("return")
+	if !waitForConvPaneAlive(convID) {
 		slog.Warn("spawn: new conv never came online; post-init injection abandoned",
 			"conv", convID)
 		return
@@ -8441,6 +8489,7 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 		slog.Warn("spawn: no alive tmux session for post-init injection", "conv", convID)
 		return
 	}
+	timing("pane_alive")
 	h := harnessForConv(convID)
 	codexSelected := false
 	if h.Name == harness.CodexName {
@@ -8451,6 +8500,19 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 				"conv", convID, "error", err)
 			return
 		}
+	}
+
+	// Codex's seed-delivered welcome and out-of-band title update need no
+	// keystrokes. Its app-server path has an explicit control-readiness wait.
+	// Preserve the historical settling delay for other paths, including a
+	// legacy Codex welcome that still needs to be typed into the pane.
+	skipKeystrokeDelay := h.Name == harness.CodexName && (welcomeInSeed || codexSelected)
+	if !skipKeystrokeDelay {
+		timing("keystroke_delay_begin", "delay_ms", reincarnateReadyDelay.Milliseconds())
+		time.Sleep(reincarnateReadyDelay)
+		timing("keystroke_delay_complete")
+	} else {
+		timing("keystroke_delay_skipped")
 	}
 
 	// An API-driven Copilot launch is not ready for post-init the moment its
@@ -8474,6 +8536,8 @@ func runSpawnPostInit(convID, name, role, descr, groupName string, spawnContextM
 			"conv", convID, "budget", codexAppServerStartupTimeout)
 		return
 	}
+
+	timing("control_ready")
 
 	// Re-resolved AFTER the wait, not before it. The liveness check above is
 	// the precondition for waiting at all; the tmux target is an address the
@@ -9111,6 +9175,7 @@ func sessionNewArgs(a clcommon.SpawnArgs) []string {
 	args = appendTrustDirFlag(args, a.TrustDir)
 	args = appendRemoteControlFlag(args, a.RemoteControl)
 	args = appendAutoMemoryFlag(args, a.AutoMemory)
+	args = appendPeerMessagingFlag(args, a.PeerMessaging)
 	args = appendContextFeaturesFlag(args, a.ContextFeatures)
 	args = appendAutoCompactWindowFlag(args, a.AutoCompactWindow)
 	args = appendContextWindowMaxFlag(args, a.ContextWindowMax)
@@ -9244,6 +9309,19 @@ func appendAutoMemoryFlag(args []string, autoMemory bool) []string {
 	return args
 }
 
+// appendPeerMessagingFlag adds `--peer-messaging` to a `tclaude session new`
+// argv when the spawn opted back INTO Claude Code's own cross-session
+// messaging. false omits it, which is the recommended posture and makes the
+// forked `session new` inject the refusal. Bare boolean flag; the forked
+// `session new` re-validates it against the harness (a non-Claude harness
+// rejects an explicit opt-in).
+func appendPeerMessagingFlag(args []string, peerMessaging bool) []string {
+	if peerMessaging {
+		args = append(args, "--peer-messaging")
+	}
+	return args
+}
+
 // appendAskTimeoutFlag adds `--ask-user-question-timeout <v>` to a `tclaude
 // session new` argv when the spawn chose a Claude Code AskUserQuestion
 // idle-timeout override (never|60s|5m|10m). "" omits it. The forked `session
@@ -9363,6 +9441,7 @@ func sessionResumeArgs(a clcommon.SpawnArgs) []string {
 	// Omitted when false, which is the recommended posture and makes the forked
 	// `session new -r` inject CLAUDE_CODE_DISABLE_AUTO_MEMORY=1.
 	args = appendAutoMemoryFlag(args, a.AutoMemory)
+	args = appendPeerMessagingFlag(args, a.PeerMessaging)
 	args = appendContextFeaturesFlag(args, a.ContextFeatures)
 	// Preserve the SOURCE conv's pinned auto-compaction window across the
 	// relaunch — otherwise the successor to an agent deliberately compacting at
@@ -9617,6 +9696,8 @@ func SignalSpawnWrapperFailureForTest(label string, err error) {
 // in SQLite once the conv-id materialises). It must be unique in the
 // sessions table.
 func liveSpawnNew(a clcommon.SpawnArgs) error {
+	timing := config.StartupTiming("spawn_wrapper", "label", a.Label)
+	defer timing("dispatch_return")
 	var cleanup func()
 	var err error
 	a, cleanup, err = spawnArgsWithSandboxHandoff(a)
@@ -9672,9 +9753,18 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 		return err
 	}
 	pid := cmd.Process.Pid
+	timing("process_started", "child_pid", pid)
+	waitStarted := time.Now()
+	waitWrapper := func() error {
+		err := cmd.Wait()
+		// A separate trace: the asynchronous wait can overlap dispatch_return.
+		mark := config.StartupTiming("spawn_wrapper_exit", "label", label, "child_pid", pid)
+		mark("exited", "wait_ms", time.Since(waitStarted).Milliseconds(), "failed", err != nil)
+		return err
+	}
 	if a.CwdWriteProof != "" || a.DirWriteProof != "" {
 		defer cleanup()
-		if err := cmd.Wait(); err != nil {
+		if err := waitWrapper(); err != nil {
 			routeCredentialCleanup()
 			slog.Error("spawn subprocess exited with error",
 				"label", label, "pid", pid, "err", err,
@@ -9685,7 +9775,7 @@ func liveSpawnNew(a clcommon.SpawnArgs) error {
 	}
 	go func() {
 		defer cleanup()
-		if err := cmd.Wait(); err != nil {
+		if err := waitWrapper(); err != nil {
 			routeCredentialCleanup()
 			slog.Error("spawn subprocess exited with error",
 				"label", label, "pid", pid, "err", err,

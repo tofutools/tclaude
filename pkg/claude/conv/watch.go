@@ -2518,6 +2518,16 @@ func resumeLaunchCmdWithStackedProof(
 		return "", "", nil, fmt.Errorf("load auto-memory posture for conversation %s: %w", convID, err)
 	}
 	session.ApplyAutoMemoryEnv(h, autoMemory, resumeEnv)
+	// Mirror the spawn path's peer-messaging posture for the same reason, though
+	// this one rides the `--settings` payload the spec builds rather than the
+	// env: a session that explicitly opted INTO Claude Code's own messaging mesh
+	// must not silently lose it on resume, and a conv with nothing recorded
+	// reads false — tclaude's default, and the posture such a session already
+	// ran with.
+	peerMessaging, err := db.PeerMessagingForConv(convID)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("load peer-messaging posture for conversation %s: %w", convID, err)
+	}
 	// Likewise for the startup-context trims: a deliberately lean agent must come
 	// back lean. Reading the recorded map back (rather than re-resolving from a
 	// profile that may since have changed) is what makes the resumed pane the same
@@ -2758,6 +2768,8 @@ func resumeLaunchCmdWithStackedProof(
 		// relaunch profile and a template re-snapshot all still reported them
 		// trimmed — the misreporting being worse than the lost trim.
 		ContextFeatures: contextFeatures,
+		// Rides the spec, not the env: the refusal is a `--settings` payload.
+		PeerMessaging: peerMessaging,
 	}
 	cleanupPath := ""
 	var splitCapability *harness.CodexSplitPolicyCapability
@@ -3073,17 +3085,20 @@ func resumeSandboxChosenBy(convID string) string {
 // resumeAskTimeout's: these values are written straight back onto the resumed
 // row, so recording a default on a failed read would ASSERT that default and
 // erase the record.
-func resumeContextPosture(convID string) (autoMemory bool, contextFeatures map[string]string, autoCompactWindow string, err error) {
+func resumeContextPosture(convID string) (autoMemory bool, peerMessaging bool, contextFeatures map[string]string, autoCompactWindow string, err error) {
 	if autoMemory, err = db.AutoMemoryForConv(convID); err != nil {
-		return false, nil, "", fmt.Errorf("load recorded auto-memory posture for conversation %s: %w", convID, err)
+		return false, false, nil, "", fmt.Errorf("load recorded auto-memory posture for conversation %s: %w", convID, err)
+	}
+	if peerMessaging, err = db.PeerMessagingForConv(convID); err != nil {
+		return false, false, nil, "", fmt.Errorf("load recorded peer-messaging posture for conversation %s: %w", convID, err)
 	}
 	if contextFeatures, err = db.ContextFeaturesForConv(convID); err != nil {
-		return false, nil, "", fmt.Errorf("load recorded startup-context trims for conversation %s: %w", convID, err)
+		return false, false, nil, "", fmt.Errorf("load recorded startup-context trims for conversation %s: %w", convID, err)
 	}
 	if autoCompactWindow, err = db.AutoCompactWindowForConv(convID); err != nil {
-		return false, nil, "", fmt.Errorf("load recorded auto-compaction window for conversation %s: %w", convID, err)
+		return false, false, nil, "", fmt.Errorf("load recorded auto-compaction window for conversation %s: %w", convID, err)
 	}
-	return autoMemory, contextFeatures, autoCompactWindow, nil
+	return autoMemory, peerMessaging, contextFeatures, autoCompactWindow, nil
 }
 
 // resumeLaunchPosture is the record a plain-CLI resume writes onto the fresh
@@ -3118,12 +3133,19 @@ func resumeContextPosture(convID string) (autoMemory bool, contextFeatures map[s
 // than a nil that reads as fixed.
 func resumeLaunchPosture(
 	autoMemory bool,
+	peerMessaging bool,
 	contextFeatures map[string]string,
 	autoCompactWindow string,
 	remoteControl bool,
 ) session.LaunchPosture {
 	return session.LaunchPosture{
-		AutoMemory:        autoMemory,
+		AutoMemory: autoMemory,
+		// Read back off the recorded posture (resumeContextPosture), exactly
+		// like AutoMemory beside it: this resume RESOLVED the value, so it may
+		// assert it including the false that means "tclaude closes Claude Code's
+		// own messaging mesh". Re-asserting is what keeps an opt-in alive across
+		// repeated resumes rather than decaying it to the column default.
+		PeerMessaging:     peerMessaging,
 		ContextFeatures:   contextFeatures,
 		AutoCompactWindow: autoCompactWindow,
 		RemoteControl:     remoteControl,
@@ -3399,7 +3421,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	if err != nil {
 		return err
 	}
-	autoMemory, contextFeatures, autoCompactWindow, err := resumeContextPosture(conv.SessionID)
+	autoMemory, peerMessaging, contextFeatures, autoCompactWindow, err := resumeContextPosture(conv.SessionID)
 	if err != nil {
 		return err
 	}
@@ -3482,7 +3504,7 @@ func createSessionForConv(conv *SessionEntry) error {
 	// otherwise reports "nothing recorded". What this surface may and may not
 	// assert lives in resumeLaunchPosture, shared with `tclaude conv resume`.
 	session.RecordLaunchPosture(sessionID, h,
-		resumeLaunchPosture(autoMemory, contextFeatures, autoCompactWindow, remoteControl))
+		resumeLaunchPosture(autoMemory, peerMessaging, contextFeatures, autoCompactWindow, remoteControl))
 
 	fmt.Printf("Created session %s\n", tmuxSession)
 	fmt.Println("Attaching... (Ctrl+B D to detach)")

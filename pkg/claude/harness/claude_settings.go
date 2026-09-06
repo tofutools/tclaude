@@ -102,6 +102,17 @@ func claudeSettingsJSON(spec SpawnSpec) string {
 	for key, disabled := range ContextFeatureSettings(spec.ContextFeatures) {
 		settings[key] = disabled
 	}
+	// Claude Code's own cross-session messaging mesh (TCL-812). OFF — the
+	// default — writes the inbound refusal, the cross-machine approval
+	// requirement, and the ListAgents deny; ON writes nothing. See
+	// peer_messaging.go for why the opt-in direction is silent, and why the deny
+	// names ListAgents rather than SendMessage.
+	if keys, denyRules := PeerMessagingSettings(spec.PeerMessaging); len(keys) > 0 {
+		for key, value := range keys {
+			settings[key] = value
+		}
+		appendClaudePermissionDeny(settings, denyRules)
+	}
 	if len(settings) == 0 {
 		return ""
 	}

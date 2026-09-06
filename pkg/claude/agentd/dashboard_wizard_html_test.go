@@ -1047,12 +1047,12 @@ func TestDashboardHTML_WizardGroupCreateDialog(t *testing.T) {
 		}
 	}
 
-	// Title: a pure-CSS span swap, "Create a new agent group" → "⚔ Form a
+	// Title: a pure-CSS span swap, "Create group" → "⚔ Form a
 	// party" (echoing the button, like the cron title echoes its opener). Both
 	// spans + the swap rules must be present.
 	must(`classPrefix="group-create-title"`, "the title uses the scoped regular/wizard span pair")
-	must(`: 'Create a new agent group';`, "the default group-create title copy")
-	must(`: '⚔ Form a party';`, "the wizard group-create title copy")
+	must(`const regularTitle = 'Create group';`, "the default group-create title copy")
+	must(`const wizardTitle = '⚔ Form a party';`, "the wizard group-create title copy")
 	// The default-hide rule is load-bearing: without it the wizard title has no
 	// rule in the default/slop theme and BOTH titles render side by side.
 	must(".group-create-title-wizard { display: none; }", "the default theme hides the wizard title")
@@ -1070,6 +1070,7 @@ func TestDashboardHTML_WizardGroupCreateDialog(t *testing.T) {
 	// The number (Max members) input is re-skinned alongside the text/textarea
 	// fields so no field stays a bright default-dark against the violet.
 	must("body.wizard #group-create-modal .cron-create-row input[type=number]", "the number field is re-skinned")
+	must("body.wizard #group-create-modal .cron-create-row input[type=url]", "the attachment URL field is re-skinned")
 	// Non-primary buttons (Cancel / Browse…) get the secondary arcane skin.
 	must("body.wizard #group-create-modal button:not(.primary)", "non-primary buttons get the secondary arcane skin")
 }
@@ -1811,7 +1812,7 @@ func TestDashboardHTML_WizardTemplateFromGroup(t *testing.T) {
 // TestDashboardHTML_WizardGroupDialogs pins the wizard re-skins of the three
 // remaining group dialogs in the templates family (modal-templates.js):
 // import ("⤒ Unseal a party archive"), startup context ("📜 The party's
-// lore") and clone ("⧉ Mirror the party").
+// lore") and the source-first group creation form ("⚔ Form a party").
 func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()
@@ -1832,12 +1833,13 @@ func TestDashboardHTML_WizardGroupDialogs(t *testing.T) {
 	must(`<${Words} plain="Group startup context" wizard="📜 The party's lore"/>`, "the context title ships both voices")
 	must(`content: "📜 Inscribe it!"`, "the context submit lever reads Inscribe it in wizard mode")
 
-	// Clone.
-	must("body.wizard #group-clone-modal .cron-create-modal", "the clone dialog surface is re-skinned")
-	must(`<${Words} plain="Clone group" wizard="⧉ Mirror the party"/>`, "the clone title ships both voices")
-	must(`content: "⧉ Mirror it!"`, "the clone submit lever reads Mirror it in wizard mode")
-	must(`content: "⧉ Mirroring…"`, "the busy clone submit reads Mirroring in wizard mode")
-	must("body.wizard #group-clone-modal .group-clone-preview", "the clone-will-carry preview is re-skinned")
+	// Group creation. Clone is one prefilled state of this same surface.
+	must("body.wizard #group-create-modal .cron-create-modal", "the shared group dialog surface is re-skinned")
+	must("const regularTitle = 'Create group'", "every preset uses the common regular title")
+	must("const wizardTitle = '⚔ Form a party'", "every preset uses the common wizard title")
+	must(`content: "⚔ Form the party!"`, "the common submit lever reads Form the party in wizard mode")
+	must(`content: "⚔ Gathering the party…"`, "the common busy submit reads Gathering in wizard mode")
+	must("body.wizard #group-create-modal .group-clone-preview", "the shared source summary is re-skinned")
 }
 
 // TestDashboardHTML_WizardActionDialogs pins the scoped wizard chrome and

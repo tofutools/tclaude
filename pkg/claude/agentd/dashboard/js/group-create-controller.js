@@ -13,3 +13,7 @@ function requireController() {
 export function openGroupCreateModal(presetTemplate, parentGroup) {
   return requireController().open(presetTemplate, parentGroup);
 }
+
+export function openGroupCloneModal(groupName, placement = null) {
+  return requireController().openClone(groupName, placement);
+}

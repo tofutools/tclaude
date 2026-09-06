@@ -62,7 +62,7 @@ func taskRefViewFor(ref db.AgentTaskRef) taskRefView {
 
 // effectiveTaskLabel returns the label to display for a task ref: the
 // human's explicit label when non-empty, otherwise one derived from the
-// URL (Linear/AWB issue id, GitHub #number, else the host).
+// URL (Linear/AWB issue id, GitHub repository/#number, else the host).
 func effectiveTaskLabel(ref db.AgentTaskRef) string {
 	if l := strings.TrimSpace(ref.Label); l != "" {
 		return l
@@ -77,7 +77,8 @@ var linearIssueRe = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*-[0-9]+$`)
 // deriveTaskLabel produces a compact display label from a task URL:
 //   - Linear  (linear.app/…/issue/JOH-353/slug) → "JOH-353"
 //   - AWB     (any.host/…#/issues/tcl-536325) → "tcl-536325"
-//   - GitHub  (github.com/owner/repo/issues|pull/42) → "#42"
+//   - GitHub issue/PR (github.com/owner/repo/issues|pull/42) → "#42"
+//   - GitHub repository (github.com/owner/repo) → "gh:owner/repo"
 //   - anything else → the host with a leading "www." stripped
 //
 // Returns "" only for an unparseable/empty URL — the caller then falls
@@ -104,6 +105,9 @@ func deriveTaskLabel(rawURL string) string {
 			}
 		}
 	case host == "github.com":
+		if len(segs) == 2 {
+			return "gh:" + segs[0] + "/" + segs[1]
+		}
 		// owner/repo/(issues|pull)/<n> — the trailing numeric segment.
 		for i, s := range segs {
 			if (s == "issues" || s == "pull") && i+1 < len(segs) && isAllDigits(segs[i+1]) {

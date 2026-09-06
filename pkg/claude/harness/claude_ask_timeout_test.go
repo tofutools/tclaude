@@ -111,7 +111,9 @@ func TestClaudeAskTimeout_HarnessResolution(t *testing.T) {
 // operator's own settings.json.
 func TestClaudeSpawner_AskTimeout(t *testing.T) {
 	spawn := func(v string) string {
-		return claudeSpawner{}.BuildCommand(SpawnSpec{AskUserQuestionTimeout: v})
+		// PeerMessaging: true keeps this test about the ask timeout alone — the
+		// default OFF posture contributes its own keys to every payload.
+		return claudeSpawner{}.BuildCommand(SpawnSpec{AskUserQuestionTimeout: v, PeerMessaging: true})
 	}
 
 	for _, v := range []string{"", "inherit"} {
@@ -126,7 +128,7 @@ func TestClaudeSpawner_AskTimeout(t *testing.T) {
 	}
 
 	// The payload carries the value under the askUserQuestionTimeout key.
-	s := claudeSettingsJSON(SpawnSpec{AskUserQuestionTimeout: "5m"})
+	s := claudeSettingsJSON(SpawnSpec{AskUserQuestionTimeout: "5m", PeerMessaging: true})
 	var wrap map[string]any
 	if err := json.Unmarshal([]byte(s), &wrap); err != nil {
 		t.Fatalf("claudeSettingsJSON is not valid JSON (%v): %q", err, s)
@@ -142,7 +144,7 @@ func TestClaudeSpawner_AskTimeout(t *testing.T) {
 // together when both are set — and BuildCommand must carry exactly one
 // --settings flag.
 func TestClaudeSettingsJSON_Merge(t *testing.T) {
-	spec := SpawnSpec{HarnessBuiltinMode: "on", AskUserQuestionTimeout: "5m"}
+	spec := SpawnSpec{HarnessBuiltinMode: "on", AskUserQuestionTimeout: "5m", PeerMessaging: true}
 
 	s := claudeSettingsJSON(spec)
 	var wrap map[string]any
@@ -162,8 +164,9 @@ func TestClaudeSettingsJSON_Merge(t *testing.T) {
 		t.Fatalf("BuildCommand must emit exactly one --settings (got %d): %q", n, cmd)
 	}
 
-	// Neither key set → no payload at all.
-	if got := claudeSettingsJSON(SpawnSpec{}); got != "" {
+	// Neither key set → no payload at all. PeerMessaging: true because the
+	// default OFF posture would otherwise contribute keys of its own here.
+	if got := claudeSettingsJSON(SpawnSpec{PeerMessaging: true}); got != "" {
 		t.Fatalf("empty spec must yield no --settings payload, got %q", got)
 	}
 }
