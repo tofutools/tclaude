@@ -9,6 +9,7 @@ import (
 	"sort"
 	"time"
 
+	cronv3 "github.com/robfig/cron/v3"
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
 
@@ -27,23 +28,21 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 		if readErr != nil {
 			return touched, readErr
 		}
-		if revision.Condition.Kind != model.AutomationSchedule || revision.Condition.Schedule == nil || revision.Condition.Schedule.Interval <= 0 {
+		if revision.Condition.Kind != model.AutomationSchedule || revision.Condition.Schedule == nil {
 			continue
 		}
-		anchor := revision.Condition.Schedule.Anchor.UTC()
-		if anchor.IsZero() {
-			anchor = revision.CreatedAt.UTC()
-		}
-		if now.Before(anchor) {
-			continue
-		}
-		interval := revision.Condition.Schedule.Interval
-		scheduled := anchor.Add(time.Duration(now.Sub(anchor)/interval) * interval)
 		existing, listErr := s.store.OccurrencesForRule(ctx, rule.ID)
 		if listErr != nil {
 			return touched, listErr
 		}
 		if revision.Policy.Overlap != model.OverlapAllow && hasActiveOccurrence(existing) {
+			continue
+		}
+		scheduled, due, scheduleErr := latestScheduleTick(revision, existing, now)
+		if scheduleErr != nil {
+			return touched, scheduleErr
+		}
+		if !due {
 			continue
 		}
 		key := fmt.Sprintf("schedule:%d", scheduled.UnixNano())
@@ -131,6 +130,45 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 		touched = append(touched, occurrence.Occurrence.ID)
 	}
 	return uniqueOccurrenceIDs(touched), nil
+}
+
+func latestScheduleTick(revision model.AutomationRuleRevision, existing []OccurrenceRecord, now time.Time) (time.Time, bool, error) {
+	condition := revision.Condition.Schedule
+	anchor := condition.Anchor.UTC()
+	if anchor.IsZero() {
+		anchor = revision.CreatedAt.UTC()
+	}
+	if now.Before(anchor) {
+		return time.Time{}, false, nil
+	}
+	if condition.Interval > 0 {
+		return anchor.Add(time.Duration(now.Sub(anchor)/condition.Interval) * condition.Interval), true, nil
+	}
+	location, err := time.LoadLocation(condition.Timezone)
+	if err != nil {
+		return time.Time{}, false, fail(ErrInvalid, "schedule timezone is unavailable: %v", err)
+	}
+	schedule, err := cronv3.ParseStandard(condition.Cron)
+	if err != nil {
+		return time.Time{}, false, fail(ErrInvalid, "cron schedule is invalid: %v", err)
+	}
+	cursor := anchor.In(location)
+	for _, occurrence := range existing {
+		if occurrence.Occurrence.ScheduledAt.After(cursor) {
+			cursor = occurrence.Occurrence.ScheduledAt.In(location)
+		}
+	}
+	var latest time.Time
+	// Standard cron cannot fire more than once per minute. Five leap-aware
+	// years bounds cold-start catch-up while covering annual and Feb-29 rules.
+	for range 5*366*24*60 + 1 {
+		next := schedule.Next(cursor)
+		if next.After(now.In(location)) {
+			return latest.UTC(), !latest.IsZero(), nil
+		}
+		latest, cursor = next, next
+	}
+	return time.Time{}, false, fail(ErrInvalid, "cron catch-up exceeds bounded five-year window")
 }
 
 func (s *Service) automationRecipients(ctx context.Context, action model.AutomationAction) ([]model.OccurrenceRecipient, error) {
