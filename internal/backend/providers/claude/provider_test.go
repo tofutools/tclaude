@@ -225,12 +225,16 @@ func TestClaudeClearRequiresPendingTransitionBeforeRotatingNativeBinding(t *test
 	})
 	confirmed, err = runtime.consumeObservationEvents(context.Background(), &ports.ContextChange{
 		Intent: ports.ContextReset, ExpectedConversation: "conversation_old", ExpectedAssociationRevision: 7,
+		TransitionCorrelation: "transition-issued-by-app",
 	})
 	require.NoError(t, err)
 	require.True(t, confirmed)
 	require.Equal(t, nextID, runtime.nativeID)
 	require.Equal(t, ports.PrimaryContextReset, sink.values[1].Disposition)
-	require.Equal(t, "conversation_old:7", sink.values[1].TransitionCorrelation)
+	require.Equal(t, "transition-issued-by-app", sink.values[1].TransitionCorrelation)
+	require.Equal(t, model.ConversationID("conversation_old"), sink.values[1].ExpectedConversation)
+	require.Equal(t, model.Revision(7), sink.values[1].ExpectedAssociationRevision)
+	require.Equal(t, sink.values[0].ProviderOrder, sink.values[1].PriorProviderOrder)
 }
 
 func writeClaudeHookEvent(t *testing.T, directory string, event sessionStartEvent) {
