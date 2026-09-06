@@ -20,6 +20,11 @@ type Principal struct {
 	Generation    AccessGeneration
 	AutomationRun string
 	Authority     AuthoritySubject
+	Delegation    *AutomationDelegation
+}
+
+func AutomationPrincipal(run string, authority AuthoritySubject, delegation AutomationDelegation) Principal {
+	return Principal{Kind: PrincipalAutomation, AutomationRun: run, Authority: authority, Delegation: &delegation}
 }
 
 func OperatorPrincipal() Principal { return Principal{Kind: PrincipalOperator} }
@@ -45,12 +50,13 @@ type Agent struct {
 }
 
 type Group struct {
-	ID        GroupID
-	Name      string
-	Members   []AgentID
-	Revision  Revision
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID           GroupID
+	Name         string
+	Members      []AgentID
+	OwnerAgentID AgentID
+	Revision     Revision
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 type DesiredConfiguration struct {
@@ -121,6 +127,9 @@ type Execution struct {
 	ConversationID     ConversationID
 	Spec               ResolvedExecutionSpec
 	State              ExecutionState
+	Attempt            AttemptGeneration
+	ContextReadiness   ContextReadiness
+	ContextOrder       string
 	Evidence           ProviderEvidence
 	NativeConversation *NativeConversationEvidence
 	Revision           Revision

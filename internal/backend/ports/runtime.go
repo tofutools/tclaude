@@ -166,6 +166,7 @@ type PreparationRequest struct {
 	PriorEvidence    model.ProviderEvidence
 	ActionCredential *ActionCredentialMaterial
 	Observations     PrimaryObservationSink
+	AgentAPIEndpoint string
 }
 
 type ProviderRegistry interface {
@@ -173,12 +174,13 @@ type ProviderRegistry interface {
 }
 
 type RecoveryRequest struct {
-	ExecutionID  model.ExecutionID
-	Spec         model.ResolvedExecutionSpec
-	Evidence     model.ProviderEvidence
-	Attempt      model.AttemptGeneration
-	Access       *model.ExecutionAccessBinding
-	Observations PrimaryObservationSink
+	ExecutionID      model.ExecutionID
+	Spec             model.ResolvedExecutionSpec
+	Evidence         model.ProviderEvidence
+	Attempt          model.AttemptGeneration
+	Access           *model.ExecutionAccessBinding
+	Observations     PrimaryObservationSink
+	AgentAPIEndpoint string
 }
 
 type RecoveryState string
