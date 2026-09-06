@@ -276,7 +276,7 @@ function GroupCreateDialog({
     </div>
     ${cloneMode ? null : html`<label class="cron-create-row">
       <span class="cron-create-label"><${Words}
-        plain="Template" wizard="Summoning circle" /></span>
+        plain="Group template" wizard="Summoning circle" /></span>
       <select id="group-create-template" value=${draft.template} disabled=${disabled}
         onChange=${(event) => changeTemplate(event.currentTarget.value)}>
         <option value="">${words('(blank group)', '(no circle — a blank party)')}</option>
