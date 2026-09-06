@@ -366,7 +366,15 @@ func TestCronSpawnScopedSandboxProfileMustBindTheManagedWorker(t *testing.T) {
 			Cwd: f.World.HomeDir, Status: "running", Harness: harness.CodexName,
 			HarnessBuiltinMode: harness.SandboxDangerFull, ApprovalPolicy: "never",
 		}))
-		if scope == "" {
+		if scope == "owner" || scope == "owner-with-global-grant" {
+			require.NoError(t, db.AddAgentGroupOwner(g.ID, owner, "test"))
+			narrowOwnerBypass(t, f, g.Name, map[string]any{
+				agentd.PermGroupsMembersSpawn: map[string]any{"sandbox_profile": []string{"locked"}},
+			})
+			if scope == "owner-with-global-grant" {
+				require.NoError(t, db.GrantAgentPermission(owner, agentd.PermAgentSpawn, "test"))
+			}
+		} else if scope == "" {
 			require.NoError(t, db.GrantAgentPermission(owner, agentd.PermGroupsMembersSpawn, "test"))
 		} else {
 			require.NoError(t, db.GrantAgentPermissionWithScope(owner,
@@ -388,6 +396,21 @@ func TestCronSpawnScopedSandboxProfileMustBindTheManagedWorker(t *testing.T) {
 		assert.Equal(t, "permission_denied", status)
 		assert.Contains(t, detail, "would not enforce it",
 			"the binding check must be what refuses, not an unrelated guardrail")
+	})
+
+	t.Run("owner-derived sandbox constraint is enforced", func(t *testing.T) {
+		f, id := setup(t, "owner")
+		status, detail := runCronNowWithDetail(t, f, id)
+		assert.Equal(t, "permission_denied", status)
+		assert.Contains(t, detail, "would not enforce it")
+		workers, err := db.ListActiveCronWorkers(id)
+		require.NoError(t, err)
+		assert.Empty(t, workers)
+	})
+
+	t.Run("independent global authority is not narrowed by ownership", func(t *testing.T) {
+		f, id := setup(t, "owner-with-global-grant")
+		assert.Equal(t, "spawned", runCronNow(t, f, id))
 	})
 
 	t.Run("unscoped owner still fires", func(t *testing.T) {

@@ -656,7 +656,10 @@ type overridePermSource struct {
 // slug — the fail-closed shape for an empty conv-id, an unknown or
 // retired agent, or an unreadable DB.
 type permSources struct {
-	resolvable bool
+	resolvable   bool
+	diagnostics  []permissionReadDiagnostic
+	ownedGroups  []db.OwnedGroupScopes
+	ownerReadErr error
 	// sudo maps slug → active grant id (soonest-expiring wins, matching
 	// db.LookupActiveSudoGrantID's ORDER BY).
 	sudo map[string]sudoPermSource
@@ -674,7 +677,7 @@ type permSources struct {
 // degrade to "this source said nothing", exactly as the per-slug queries
 // did — except an unresolvable agent, which stays fail-closed.
 func loadPermSources(convID string) permSources {
-	src, _ := loadPermSourcesWithReadPolicy(convID, false)
+	src, _ := loadPermSourcesWithReadPolicy(convID, permissionReadLegacy)
 	return src
 }
 
@@ -683,13 +686,13 @@ func loadPermSources(convID string) permSources {
 // callers preserve the ordinary best-effort source reads; a group-bound route
 // gate asks to fail closed if the override or group tier cannot be read, since
 // treating either as absent could expose a lower group/default allow.
-func loadPermSourcesWithReadPolicy(convID string, failOnTierReadError bool) (permSources, error) {
+func loadPermSourcesWithReadPolicy(convID string, readPolicy permissionReadPolicy) (permSources, error) {
 	if convID == "" {
 		return permSources{}, nil
 	}
 	state, err := db.AgentState(convID)
 	if err != nil {
-		if failOnTierReadError {
+		if readPolicy == permissionReadRoute {
 			return permSources{}, fmt.Errorf("read agent state: %w", err)
 		}
 		return permSources{}, nil
@@ -715,22 +718,31 @@ func loadPermSourcesWithReadPolicy(convID string, failOnTierReadError bool) (per
 				out.sudo[g.Slug] = sudoPermSource{ID: g.ID, ScopeJSON: g.ScopeJSON}
 			}
 		}
+	} else {
+		out.diagnostics = append(out.diagnostics, permissionReadDiagnostic{"sudo", err})
 	}
 	if overrides, err := db.ListAgentPermissionOverrideRowsForConv(convID); err == nil {
 		for _, row := range overrides {
 			out.override[row.Slug] = overridePermSource{Effect: row.Effect, ScopeJSON: row.ScopeJSON}
 		}
-	} else if failOnTierReadError {
-		return permSources{}, fmt.Errorf("read permission overrides: %w", err)
+	} else {
+		out.diagnostics = append(out.diagnostics, permissionReadDiagnostic{"override", err})
+		if readPolicy == permissionReadRoute {
+			return out, fmt.Errorf("read permission overrides: %w", err)
+		}
 	}
 	if grants, err := db.ListAgentGroupPermissionRowsForConv(convID); err == nil {
 		for _, grant := range grants {
 			out.group[grant.Slug] = append(out.group[grant.Slug], grant.ScopeJSON)
 			out.groupRows[grant.Slug] = append(out.groupRows[grant.Slug], grant)
 		}
-	} else if failOnTierReadError {
-		return permSources{}, fmt.Errorf("read group permission grants: %w", err)
+	} else {
+		out.diagnostics = append(out.diagnostics, permissionReadDiagnostic{"group", err})
+		if readPolicy == permissionReadRoute {
+			return out, fmt.Errorf("read group permission grants: %w", err)
+		}
 	}
+	out.ownedGroups, out.ownerReadErr = db.ListOwnedGroupScopes(convID)
 	return out, nil
 }
 
@@ -740,7 +752,7 @@ func loadPermSourcesWithReadPolicy(convID string, failOnTierReadError bool) (per
 // and a grant from alpha must never authorize the same verb in beta. Sudo,
 // per-agent overrides and defaults remain actor-wide and are unchanged.
 func resolveGroupBoundPermissionVerdictForRequest(r *http.Request, convID, slug string, targetGroupID int64) (permVerdict, error) {
-	src, err := loadPermSourcesWithReadPolicy(convID, true)
+	src, err := loadPermSourcesWithReadPolicy(convID, permissionReadRoute)
 	if err != nil {
 		return permVerdict{}, err
 	}
@@ -872,6 +884,15 @@ func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentG
 	if classify(p) == classAgent {
 		state, err := db.AgentState(p.ConvID)
 		if err == nil && state != db.AgentStateRetired {
+			decision, evalErr := (spawnAuthorityEvaluator{}).EvaluateSpawn(r.Context(), spawnAuthorityRequest{
+				Principal: spawnAuthorityPrincipal{Kind: authorityPrincipalAgent, ConvID: p.ConvID},
+				Origin:    spawnAuthorityOrigin{Kind: "http"}, Action: actx,
+			}, permissionReadLegacy)
+			if evalErr == nil && decision.Outcome == spawnAuthorityAllowed {
+				recordAuditPermissionScope(r, decision.AuthorizedSlug, decision.Matched)
+				recordAuthorizedPermission(r, decision.AuthorizedSlug, decision.LoadBearingSudo)
+				return p.ConvID, true
+			}
 			if allowed, slug, matched, authErr := spawnPermissionAllowsAction(r, p.ConvID, actx); authErr == nil && allowed {
 				recordAuditPermissionScope(r, slug, matched)
 				recordAuthorizedPermission(r, slug, loadBearingSudoGrantID(r, p.ConvID, slug, actx))
@@ -917,6 +938,18 @@ func scopePinsDimension(r *http.Request, convID, slug string, actx ActionContext
 	}
 	eval := evalPermissionScope(resolvePermissionVerdictForRequest(r, convID, slug), convID, actx)
 	if eval.Unscoped || !eval.Satisfied {
+		// Structural owner grants are a real positive source, and may carry
+		// the same load-bearing sandbox pin as a standing row. Evaluate the
+		// captured owner scope for this action instead of treating the
+		// context-free verdict as evidence that no pin exists.
+		if slug == PermGroupsMembersSpawn {
+			src := loadPermSources(convID)
+			for _, scope := range ownerImpliedTierFrom(src.ownedGroups, src.ownerReadErr)[slug].Scopes {
+				if permissionScopeSatisfied(convID, scope, actx) && scope[dim] != nil {
+					return true
+				}
+			}
+		}
 		return false
 	}
 	return eval.MatchedDims[dim]
