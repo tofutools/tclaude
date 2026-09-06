@@ -440,11 +440,15 @@ func (t *translator) translateMessages(batch *app.ImportBatch) error {
 			id := messageBySource[table+"\x1f"+key]
 			senderID := model.AgentID(t.id("agents", sourcev228.String(row.Values["from_agent"])))
 			sender := model.OperatorPrincipal()
-			if senderID != "" && !operatorMessages[key] {
+			if senderID != "" && (table != "agent_messages" || !operatorMessages[key]) {
 				sender = model.AgentPrincipal(senderID)
 			}
+			origin := ""
+			if table == "agent_messages" {
+				origin = origins[key]
+			}
 			message := model.Message{ID: id, Sender: sender, SenderConversationID: t.conversationID(sourcev228.String(row.Values["from_conv"])), Subject: firstNonEmpty(sourcev228.String(row.Values["subject"]), "Message"), Body: sourcev228.String(row.Values["body"]), CreatedAt: timeValue(row.Values["created_at"])}
-			envelope := model.ImportedMessageEnvelope{MessageID: id, SourceTable: table, SourceKey: row.Key, OriginalParent: sourcev228.String(row.Values["parent_id"]), OriginalGroup: sourcev228.String(row.Values["group_id"]), DeliveredAt: optionalTime(row.Values["delivered_at"]), ReadAt: optionalTime(row.Values["read_at"]), ProcessedAt: optionalTime(row.Values["processed_at"]), NudgeAttemptedAt: optionalTime(firstNonNil(row.Values["nudge_sent_at"], row.Values["nudge_attempted_at"])), Origin: origins[key]}
+			envelope := model.ImportedMessageEnvelope{MessageID: id, SourceTable: table, SourceKey: row.Key, OriginalParent: sourcev228.String(row.Values["parent_id"]), OriginalGroup: sourcev228.String(row.Values["group_id"]), DeliveredAt: optionalTime(row.Values["delivered_at"]), ReadAt: optionalTime(row.Values["read_at"]), ProcessedAt: optionalTime(row.Values["processed_at"]), NudgeAttemptedAt: optionalTime(firstNonNil(row.Values["nudge_sent_at"], row.Values["nudge_attempted_at"])), Origin: origin}
 			if parent := sourcev228.String(row.Values["parent_id"]); parent != "" {
 				message.ParentMessageID = messageBySource["agent_messages\x1f"+parent]
 			}

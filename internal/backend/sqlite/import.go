@@ -466,6 +466,9 @@ func (s *Store) VerifyImport(ctx context.Context, batch app.ImportBatch) error {
 	if err := s.verifyImportCounts(ctx, batch); err != nil {
 		return err
 	}
+	if err := s.verifyImportedOperations(ctx, batch.Messages); err != nil {
+		return err
+	}
 	for _, expected := range batch.Agents {
 		actual, err := s.Agent(ctx, expected.ID)
 		if err != nil || !reflect.DeepEqual(actual, expected) {
@@ -501,6 +504,11 @@ func (s *Store) VerifyImport(ctx context.Context, batch app.ImportBatch) error {
 		}
 		if err != nil || !reflect.DeepEqual(actual, expected) {
 			return fmt.Errorf("verify imported attachment %s: actual=%#v expected=%#v: %v", expected.AttachmentID, actual, expected, err)
+		}
+		var ownerMatches int
+		err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM attachments WHERE id=? AND owner_kind=? AND owner_agent_id='' AND owner_execution_id='' AND owner_generation=0 AND owner_automation_run=''`, expected.AttachmentID, model.PrincipalOperator).Scan(&ownerMatches)
+		if err != nil || ownerMatches != 1 {
+			return fmt.Errorf("verify imported attachment %s inert owner fields: %w", expected.AttachmentID, err)
 		}
 	}
 	for _, expected := range batch.ConfigurationProfiles {
@@ -573,6 +581,12 @@ func (s *Store) VerifyImport(ctx context.Context, batch app.ImportBatch) error {
 		if err != nil || !reflect.DeepEqual(actual, expected) {
 			return fmt.Errorf("verify imported history %s: %w", expected.ConversationID, err)
 		}
+		var provenanceMatches int
+		err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM history_catalog WHERE conversation_id=? AND source_name='offline-v228' AND native_namespace='offline-v228-metadata' AND native_reference=? AND native_observed_at=? AND source_token='' AND source_fingerprint=? AND evidence_provider='' AND evidence_version=0 AND evidence_payload IS NULL AND search_text=''`,
+			expected.ConversationID, expected.ConversationID, importNanos(expected.ModifiedAt), expected.Coverage.SourceRevision).Scan(&provenanceMatches)
+		if err != nil || provenanceMatches != 1 {
+			return fmt.Errorf("verify imported history %s provenance fields: %w", expected.ConversationID, err)
+		}
 	}
 	var integrity string
 	if err := s.db.QueryRowContext(ctx, `PRAGMA integrity_check`).Scan(&integrity); err != nil || integrity != "ok" {
@@ -620,6 +634,17 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 		"automation_rules": len(batch.AutomationRules), "automation_rule_revisions": len(batch.AutomationRules),
 		"workspaces": len(batch.Workspaces), "usage_observations": len(batch.Usage), "historical_activity": len(batch.Activity),
 	}
+	for _, table := range []string{
+		"executions", "release_permits", "attachment_claims", "execution_accesses", "authority_grants", "role_assignments",
+		"operation_authority", "operation_additional_authority", "effect_permits", "pending_context_transitions", "native_binding_history",
+		"history_refreshes", "history_metadata_requests", "history_points", "history_use_claims", "workspace_uses",
+		"work_runs", "work_attempts", "work_evidence", "work_decisions", "program_profiles", "program_profile_revisions",
+		"work_node_attempts", "work_node_evidence", "decision_windows", "decision_submissions", "automation_occurrences",
+		"automation_occurrence_recipients", "automation_condition_state", "team_deployments", "configuration_defaults_requests",
+		"configuration_profile_requests",
+	} {
+		expected[table] = 0
+	}
 	for table, want := range expected {
 		var got int
 		if err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM `+table).Scan(&got); err != nil {
@@ -627,6 +652,35 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 		}
 		if got != want {
 			return fmt.Errorf("verify imported %s count: got %d want %d", table, got, want)
+		}
+	}
+	var backendRevision int
+	if err := s.db.QueryRowContext(ctx, `SELECT revision FROM backend_meta WHERE singleton=1`).Scan(&backendRevision); err != nil {
+		return fmt.Errorf("read imported backend revision: %w", err)
+	}
+	if backendRevision != 1 {
+		return fmt.Errorf("verify imported backend revision: got %d want 1", backendRevision)
+	}
+	return nil
+}
+
+func (s *Store) verifyImportedOperations(ctx context.Context, messages []model.Message) error {
+	for _, message := range messages {
+		operationID, requestID := importedMessageOperationIDs(message.ID)
+		var matches int
+		err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM operations o JOIN messages m ON m.operation_id=o.id WHERE
+			o.id=? AND m.id=? AND m.request_digest=? AND o.request_id=? AND o.request_scope='migration:v228' AND o.kind=?
+			AND o.principal_kind=? AND o.principal_agent_id=? AND o.principal_execution_id='' AND o.principal_generation=0
+			AND o.principal_automation_run='' AND o.automation_delegation_json IS NULL AND o.authority_subject_kind=''
+			AND o.authority_subject_id='' AND o.execution_id='' AND o.state=? AND o.result_code='imported_admission'
+			AND o.detail='historical accepted message; no notification replay' AND o.revision=1 AND o.created_at=? AND o.updated_at=?`,
+			operationID, message.ID, requestID, requestID, model.OperationSendMessage, message.Sender.Kind, message.Sender.AgentID,
+			model.OperationSucceeded, importNanos(message.CreatedAt), importNanos(message.CreatedAt)).Scan(&matches)
+		if err != nil {
+			return fmt.Errorf("verify imported operation %s: %w", operationID, err)
+		}
+		if matches != 1 {
+			return fmt.Errorf("verify imported operation %s semantic fields", operationID)
 		}
 	}
 	return nil

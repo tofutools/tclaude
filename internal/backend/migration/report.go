@@ -43,7 +43,7 @@ func openReadOnlyDatabase(ctx context.Context, databasePath string) (*sql.DB, er
 		return nil, fmt.Errorf("replacement backend database is not a regular file")
 	}
 	u := url.URL{Scheme: "file", Path: path}
-	db, err := sql.Open("sqlite", u.String()+"?mode=ro&immutable=1")
+	db, err := sql.Open("sqlite", u.String()+"?mode=ro")
 	if err != nil {
 		return nil, err
 	}

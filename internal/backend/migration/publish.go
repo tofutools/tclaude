@@ -3,12 +3,10 @@ package migration
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -88,6 +86,9 @@ func ImportSnapshot(ctx context.Context, bundle Bundle, options ImportOptions) (
 	}
 	directory := filepath.Dir(destination)
 	if exists {
+		if err := refuseActiveTargetSidecars(destination); err != nil {
+			return ImportResult{}, err
+		}
 		if err := verifyExistingImport(ctx, destination, existing, batch); err != nil {
 			return ImportResult{}, fmt.Errorf("replacement destination is not the exact completed import: %w", err)
 		}
@@ -134,7 +135,10 @@ func ImportSnapshot(ctx context.Context, bundle Bundle, options ImportOptions) (
 		if errors.Is(err, errPublicationCollision) {
 			racingReceipt, collisionExists, readErr := readPublishedReceipt(ctx, destination)
 			if readErr == nil && collisionExists && receiptMatchesPlan(racingReceipt, inspection, plan, options.MetadataOnlyAttachments) {
-				if verifyErr := verifyExistingImport(ctx, destination, racingReceipt, batch); verifyErr == nil {
+				if sidecarErr := refuseActiveTargetSidecars(destination); sidecarErr == nil {
+					if verifyErr := verifyExistingImport(ctx, destination, racingReceipt, batch); verifyErr != nil {
+						return ImportResult{}, err
+					}
 					if syncErr := syncFile(destination); syncErr != nil {
 						return ImportResult{}, syncErr
 					}
@@ -260,8 +264,7 @@ func readPublishedReceipt(ctx context.Context, path string) (model.ImportReceipt
 	if !info.Mode().IsRegular() {
 		return model.ImportReceipt{}, true, fmt.Errorf("existing replacement destination is not a regular file")
 	}
-	u := url.URL{Scheme: "file", Path: path}
-	db, err := sql.Open("sqlite", u.String()+"?mode=ro&immutable=1")
+	db, err := openReadOnlyDatabase(ctx, path)
 	if err != nil {
 		return model.ImportReceipt{}, true, err
 	}
@@ -284,6 +287,17 @@ func readPublishedReceipt(ctx context.Context, path string) (model.ImportReceipt
 		return model.ImportReceipt{}, true, err
 	}
 	return out, true, nil
+}
+
+func refuseActiveTargetSidecars(path string) error {
+	for _, suffix := range []string{"-wal", "-journal"} {
+		if _, err := os.Lstat(path + suffix); err == nil {
+			return fmt.Errorf("exact retry requires an offline target without SQLite write sidecars")
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	return nil
 }
 
 func receiptMatchesPlan(receipt model.ImportReceipt, inspection Inspection, plan MigrationPlan, metadataOnly bool) bool {

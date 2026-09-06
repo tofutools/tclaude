@@ -213,6 +213,29 @@ func TestImportSnapshotPreservesOperatorMessageDirectionAndCanonicalFanoutCopy(t
 	require.Len(t, secondMessages, 1, "display audience must not expand each delivery copy")
 }
 
+func TestTranslateKeepsMessageMarkerNamespacesSeparate(t *testing.T) {
+	bundle := buildFixture(t, fixtureOptions{})
+	alterFixture(t, bundle, `
+		UPDATE agent_messages SET from_agent='',from_conv='';
+		INSERT INTO operator_agent_messages(message_id) VALUES('1');
+		INSERT INTO human_messages(id,from_conv,from_agent,body,created_at) VALUES('1','native-conv','agt_fixture','notification',1)`)
+	inspection, err := Inspect(context.Background(), bundle)
+	require.NoError(t, err)
+	plan, err := Plan(inspection)
+	require.NoError(t, err)
+	batch, err := Translate(inspection, plan, nil, TranslationOptions{})
+	require.NoError(t, err)
+	humanID := model.MessageID(findIdentity(t, plan, "human_messages", "1").TargetID)
+	for _, message := range batch.Messages {
+		if message.ID == humanID {
+			require.Equal(t, model.PrincipalAgent, message.Sender.Kind)
+			require.Equal(t, model.AgentID("agt_fixture"), message.Sender.AgentID)
+			return
+		}
+	}
+	t.Fatal("translated human message not found")
+}
+
 func TestImportSnapshotRetainsInactiveConfigAndCatalogOnlyUsage(t *testing.T) {
 	bundle := buildFixture(t, fixtureOptions{config: `{"agent":{"default_permissions":["message.direct"]},"runtime_secret":"excluded"}`})
 	alterFixture(t, bundle, `
@@ -247,6 +270,35 @@ func TestImportSnapshotRejectsChangedCompletedDestination(t *testing.T) {
 	require.Error(t, err, "a receipt alone must not qualify a changed destination as an exact retry")
 }
 
+func TestImportSnapshotExactRetryRejectsSemanticAndActiveTargetChanges(t *testing.T) {
+	for name, query := range map[string]string{
+		"operation semantics": `UPDATE operations SET state='failed',result_code='changed'`,
+		"active authority":    `INSERT INTO authority_grants(id,subject_kind,subject_id,action,resource_kind,resource_id,bounds_json,revision,created_at,updated_at) VALUES('grant_added','agent','agt_fixture','execution.launch','agent','agt_fixture','{}',1,1,1)`,
+		"wal message":         `PRAGMA journal_mode=WAL; UPDATE messages SET body='changed in WAL'`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			bundle := buildFixture(t, fixtureOptions{})
+			destination := filepath.Join(t.TempDir(), "target.sqlite")
+			_, err := ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: destination})
+			require.NoError(t, err)
+			db, err := sql.Open("sqlite", destination)
+			require.NoError(t, err)
+			_, err = db.Exec(query)
+			require.NoError(t, err)
+			if name != "wal message" {
+				require.NoError(t, db.Close())
+			} else {
+				defer db.Close()
+				var body string
+				require.NoError(t, db.QueryRow(`SELECT body FROM messages LIMIT 1`).Scan(&body))
+				require.Equal(t, "changed in WAL", body)
+			}
+			_, err = ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: destination})
+			require.Error(t, err, "a changed target must not qualify as an exact retry")
+		})
+	}
+}
+
 func TestImportSnapshotDoesNotSwallowPostLinkSyncFailure(t *testing.T) {
 	bundle := buildFixture(t, fixtureOptions{})
 	destination := filepath.Join(t.TempDir(), "sync-failure.sqlite")
@@ -268,6 +320,35 @@ func TestImportSnapshotDoesNotSwallowPostLinkSyncFailure(t *testing.T) {
 	repeated, err := ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: destination})
 	require.NoError(t, err)
 	require.True(t, repeated.Repeated)
+}
+
+func TestReadImportReportIsRedactedAndNonMutating(t *testing.T) {
+	bundle := buildFixture(t, fixtureOptions{attachment: true, config: `{"agent":{"default_permissions":["message.direct"]},"operator_token":"report-secret"}`})
+	directory := t.TempDir()
+	destination := filepath.Join(directory, "target.sqlite")
+	_, err := ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: destination})
+	require.NoError(t, err)
+	before, err := os.ReadFile(destination)
+	require.NoError(t, err)
+	report, err := ReadImportReport(context.Background(), destination)
+	require.NoError(t, err)
+	after, err := os.ReadFile(destination)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	encoded, err := json.Marshal(report)
+	require.NoError(t, err)
+	for _, secret := range []string{"report-secret", "message-secret", "message.direct", "YXR0YWNobWVudA=="} {
+		require.NotContains(t, string(encoded), secret)
+	}
+	require.EqualValues(t, 1, report.Receipt.Counts["attachments_available"])
+	entries, err := os.ReadDir(directory)
+	require.NoError(t, err)
+	require.Len(t, entries, 1, "read-only reporting must not create SQLite sidecars")
+	missing := filepath.Join(directory, "missing.sqlite")
+	_, err = ReadImportReport(context.Background(), missing)
+	require.Error(t, err)
+	_, err = os.Stat(missing)
+	require.True(t, os.IsNotExist(err))
 }
 
 func TestImportSnapshotConcurrentPublicationAndReplacementRefusal(t *testing.T) {
