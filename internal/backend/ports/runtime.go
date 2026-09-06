@@ -157,12 +157,16 @@ type StartIntent string
 const (
 	StartFresh    StartIntent = "fresh"
 	StartContinue StartIntent = "continue"
+	StartFork     StartIntent = "fork"
 )
 
 type PreparationRequest struct {
-	Spec             model.ResolvedExecutionSpec
-	Intent           StartIntent
-	Continuation     *model.NativeConversationEvidence
+	Spec         model.ResolvedExecutionSpec
+	Intent       StartIntent
+	Continuation *model.NativeConversationEvidence
+	// History is the application-resolved source for continuation or fork.
+	// Public callers select platform catalog IDs and revisions instead.
+	History          *HistorySourceSelection
 	PriorEvidence    model.ProviderEvidence
 	ActionCredential *ActionCredentialMaterial
 	Observations     PrimaryObservationSink

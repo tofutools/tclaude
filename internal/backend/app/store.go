@@ -56,6 +56,120 @@ type Store interface {
 	MessagesForAgent(context.Context, model.AgentID, bool) ([]model.Message, error)
 	Snapshot(context.Context) (Snapshot, error)
 	AssociateConversation(context.Context, ContextAssociation) error
+
+	CatalogHistory(context.Context, string, string, []HistoryCatalogWrite, model.HistoryCoverage, time.Time) ([]model.HistoryCatalogEntry, error)
+	SearchHistory(context.Context, HistorySearchFilter) (HistorySearchResult, error)
+	ResolveHistory(context.Context, model.HistorySelection) (HistorySelectionRecord, error)
+	HistoryPoints(context.Context, model.ConversationID) ([]model.HistoryPoint, error)
+	IndexHistoryRead(context.Context, model.ConversationID, string, model.HistoryCoverage, time.Time) (model.HistoryCatalogEntry, error)
+	SetHistoryMetadata(context.Context, model.ConversationID, model.Revision, string, bool, model.RequestID, model.AuthorityRequest, time.Time) (model.HistoryCatalogEntry, error)
+
+	RegisterWorkspace(context.Context, model.Workspace) error
+	Workspace(context.Context, model.WorkspaceID) (model.Workspace, error)
+	AdmitWorkspaceEffect(context.Context, WorkspaceEffectAdmission) (WorkspaceEffectAdmissionResult, error)
+	CompleteWorkspaceEffect(context.Context, WorkspaceEffectCompletion) (model.Workspace, error)
+	UpdateWorkspaceObservation(context.Context, model.WorkspaceID, model.Revision, model.WorkspaceState, model.WorkspaceObservation, model.WorkspaceResourceEvidence, time.Time) (model.Workspace, error)
+	ActiveWorkspaceUses(context.Context, model.WorkspaceID) ([]model.WorkspaceUse, error)
+	AcquireHistoryUse(context.Context, model.HistoryUseClaim) error
+	SettleHistoryUse(context.Context, model.HistoryUseID, model.Revision, model.HistoryUseState, time.Time) (model.HistoryUseClaim, error)
+	HistoryUse(context.Context, model.HistoryUseID) (model.HistoryUseClaim, error)
+	AdmitShell(context.Context, ShellAdmission) (AdmissionResult, error)
+	RecordShellPrepared(context.Context, model.ExecutionID, model.OperationID, ports.ShellResourceEvidence, time.Time) (model.Execution, error)
+	CompleteShell(context.Context, OperationCompletion, ports.ShellResourceEvidence) (AdmissionResult, error)
+	ShellRecovery(context.Context, model.ExecutionID) (ShellRecoveryRecord, error)
+	RecordShellRecovery(context.Context, model.ExecutionID, model.ExecutionState, ports.ShellResourceEvidence, time.Time) (model.Execution, error)
+
+	CreateWorkRun(context.Context, model.WorkRun, *model.HistoryUseClaim) (model.WorkRun, bool, error)
+	WorkRun(context.Context, model.WorkRunID) (WorkRunRecord, error)
+	WorkRunByRequest(context.Context, model.Principal, model.RequestID) (WorkRunRecord, error)
+	PendingWorkRuns(context.Context) ([]WorkRunRecord, error)
+	RecordWorkProgress(context.Context, WorkProgress) (WorkRunRecord, error)
+	RecordWorkEvidence(context.Context, model.WorkEvidence, model.Revision, model.AuthorityRequest, time.Time) (WorkRunRecord, error)
+	DecideWork(context.Context, model.WorkDecision, model.Revision, model.AuthorityRequest, time.Time) (WorkRunRecord, error)
+	CancelWork(context.Context, model.WorkRunID, model.Revision, string, model.RequestID, model.AuthorityRequest, time.Time) (WorkRunRecord, error)
+	ResolveWorkUncertainty(context.Context, model.WorkDecision, model.Revision, model.AuthorityRequest, time.Time) (WorkRunRecord, error)
+}
+
+type ShellAdmission struct {
+	Operation         model.Operation
+	Execution         model.Execution
+	WorkspaceUse      model.WorkspaceUse
+	WorkspaceRevision model.Revision
+	Authority         model.AuthorityRequest
+}
+
+type ShellRecoveryRecord struct {
+	WorkspaceID model.WorkspaceID
+	Evidence    ports.ShellResourceEvidence
+}
+
+type HistoryPointWrite struct {
+	Point model.HistoryPoint
+	Token string
+}
+
+type HistoryCatalogWrite struct {
+	Entry             model.HistoryCatalogEntry
+	Native            model.NativeConversationEvidence
+	SourceToken       string
+	SourceFingerprint string
+	Evidence          model.ProviderEvidence
+	Points            []HistoryPointWrite
+}
+
+type HistorySearchFilter struct {
+	Harness     string
+	WorkspaceID model.WorkspaceID
+	Query       string
+	Archived    *bool
+}
+
+type HistorySelectionRecord struct {
+	Entry  model.HistoryCatalogEntry
+	Point  *model.HistoryPoint
+	Source ports.HistorySourceSelection
+}
+
+type WorkspaceEffectAdmission struct {
+	Operation model.Operation
+	Workspace model.Workspace
+	Authority model.AuthorityRequest
+}
+
+type WorkspaceEffectAdmissionResult struct {
+	Operation model.Operation
+	Workspace model.Workspace
+	Repeated  bool
+}
+
+type WorkspaceEffectCompletion struct {
+	OperationID model.OperationID
+	WorkspaceID model.WorkspaceID
+	State       model.WorkspaceState
+	Observation model.WorkspaceObservation
+	Resource    model.WorkspaceResourceEvidence
+	Disposition ports.EffectDisposition
+	Detail      string
+	At          time.Time
+}
+
+type WorkRunRecord struct {
+	Run      model.WorkRun
+	Evidence []model.WorkEvidence
+	Decision *model.WorkDecision
+}
+
+type WorkProgress struct {
+	WorkRunID         model.WorkRunID
+	ExpectedRevision  model.Revision
+	Step              model.WorkStep
+	Attempt           uint64
+	OperationID       model.OperationID
+	AttemptState      model.WorkAttemptState
+	RunState          model.WorkRunState
+	WorkerExecutionID model.ExecutionID
+	Detail            string
+	At                time.Time
 }
 
 type LaunchAdmission struct {

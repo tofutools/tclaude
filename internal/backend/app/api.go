@@ -24,6 +24,32 @@ type API interface {
 	Recover(context.Context, RecoverRequest) (RecoveryReport, error)
 }
 
+// JourneyAPI is the focused public application surface for history,
+// workspaces, and bounded work. Provider tokens and host receipts stay behind
+// this boundary.
+type JourneyAPI interface {
+	RefreshHistory(context.Context, RefreshHistoryRequest) (HistorySearchResult, error)
+	SearchHistory(context.Context, SearchHistoryRequest) (HistorySearchResult, error)
+	ReadHistory(context.Context, ReadHistoryRequest) (HistoryReadResult, error)
+	SetConversationMetadata(context.Context, SetConversationMetadataRequest) (HistorySearchResult, error)
+	RegisterWorkspace(context.Context, RegisterWorkspaceRequest) (WorkspaceResult, error)
+	CreateCheckout(context.Context, CreateCheckoutRequest) (WorkspaceResult, error)
+	InspectWorkspace(context.Context, InspectWorkspaceRequest) (WorkspaceResult, error)
+	RemoveCheckout(context.Context, RemoveCheckoutRequest) (WorkspaceResult, error)
+	RestoreCheckout(context.Context, RestoreCheckoutRequest) (WorkspaceResult, error)
+	StartShell(context.Context, StartShellRequest) (OperationResult, error)
+	StartWork(context.Context, StartWorkRequest) (WorkRunResult, error)
+	InspectWork(context.Context, InspectWorkRequest) (WorkRunResult, error)
+	RecordWorkEvidence(context.Context, RecordWorkEvidenceRequest) (WorkRunResult, error)
+	DecideWork(context.Context, DecideWorkRequest) (WorkRunResult, error)
+	CancelWork(context.Context, CancelWorkRequest) (WorkRunResult, error)
+	ResolveWorkUncertainty(context.Context, ResolveWorkUncertaintyRequest) (WorkRunResult, error)
+}
+
+type WorkReconciler interface {
+	ReconcilePendingWork(context.Context) (WorkReconcileReport, error)
+}
+
 type RequestContext struct {
 	Principal model.Principal
 	RequestID model.RequestID
@@ -158,6 +184,12 @@ type Snapshot struct {
 	Executions    []model.Execution
 	Operations    []model.Operation
 	Messages      []model.Message
+	History       []model.HistoryCatalogEntry
+	HistoryPoints []model.HistoryPoint
+	Workspaces    []WorkspaceView
+	WorkspaceUses []model.WorkspaceUse
+	WorkRuns      []model.WorkRun
+	WorkEvidence  []model.WorkEvidence
 }
 
 type RecoverRequest struct{ Principal model.Principal }
@@ -166,4 +198,157 @@ type RecoveryReport struct {
 	Controlled []model.ExecutionID
 	Exited     []model.ExecutionID
 	Unknown    []model.ExecutionID
+}
+
+type RefreshHistoryRequest struct {
+	Principal  model.Principal
+	Harness    string
+	SourceName string
+}
+
+type SearchHistoryRequest struct {
+	Principal   model.Principal
+	Harness     string
+	WorkspaceID model.WorkspaceID
+	Query       string
+	Archived    *bool
+}
+
+type HistorySearchResult struct {
+	Entries  []model.HistoryCatalogEntry
+	Coverage model.HistoryCoverage
+}
+
+type ReadHistoryRequest struct {
+	Principal model.Principal
+	Selection model.HistorySelection
+}
+
+type SetConversationMetadataRequest struct {
+	Context          RequestContext
+	ConversationID   model.ConversationID
+	ExpectedRevision model.Revision
+	Title            string
+	Archived         bool
+}
+
+type HistoryReadResult struct {
+	Entry    model.HistoryCatalogEntry
+	Point    *model.HistoryPoint
+	Points   []model.HistoryPoint
+	Turns    []HistoryTurn
+	Coverage model.HistoryCoverage
+}
+
+type HistoryTurn struct {
+	PointID model.HistoryPointID
+	Role    string
+	Parts   []ports.HistoryPart
+}
+
+type RegisterWorkspaceRequest struct {
+	Context RequestContext
+	ID      model.WorkspaceID
+	Intent  model.WorkspaceIntent
+}
+
+type CreateCheckoutRequest struct {
+	Context RequestContext
+	ID      model.WorkspaceID
+	Intent  model.WorkspaceIntent
+}
+
+type InspectWorkspaceRequest struct {
+	Principal   model.Principal
+	WorkspaceID model.WorkspaceID
+}
+
+type RemoveCheckoutRequest struct {
+	Context          RequestContext
+	WorkspaceID      model.WorkspaceID
+	ExpectedRevision model.Revision
+	Destructive      bool
+}
+
+type RestoreCheckoutRequest struct {
+	Context          RequestContext
+	WorkspaceID      model.WorkspaceID
+	ExpectedRevision model.Revision
+}
+
+type StartShellRequest struct {
+	Context          RequestContext
+	WorkspaceID      model.WorkspaceID
+	ExpectedRevision model.Revision
+	Sandbox          model.SandboxMode
+}
+
+type WorkspaceView struct {
+	ID          model.WorkspaceID
+	Intent      model.WorkspaceIntent
+	State       model.WorkspaceState
+	Observation model.WorkspaceObservation
+	Revision    model.Revision
+}
+
+type WorkspaceResult struct{ Workspace WorkspaceView }
+
+type StartWorkRequest struct {
+	Context RequestContext
+	ID      model.WorkRunID
+	Spec    model.WorkRunSpec
+}
+
+type InspectWorkRequest struct {
+	Principal model.Principal
+	WorkRunID model.WorkRunID
+}
+
+type WorkRunResult struct {
+	Run      model.WorkRun
+	Evidence []model.WorkEvidence
+	Decision *model.WorkDecision
+}
+
+type RecordWorkEvidenceRequest struct {
+	Context             RequestContext
+	WorkRunID           model.WorkRunID
+	Step                model.WorkStep
+	Attempt             uint64
+	Kind                model.WorkEvidenceKind
+	ArtifactRevision    string
+	Passed              *bool
+	Detail              string
+	ExpectedRunRevision model.Revision
+}
+
+type DecideWorkRequest struct {
+	Context             RequestContext
+	WorkRunID           model.WorkRunID
+	Step                model.WorkStep
+	Attempt             uint64
+	Decision            model.WorkDecisionKind
+	Reason              string
+	ExpectedRunRevision model.Revision
+}
+
+type CancelWorkRequest struct {
+	Context             RequestContext
+	WorkRunID           model.WorkRunID
+	ExpectedRunRevision model.Revision
+	Reason              string
+}
+
+// ResolveWorkUncertaintyRequest is an explicit operator conclusion that the
+// uncertain external effect did not occur. It never replays that effect.
+type ResolveWorkUncertaintyRequest struct {
+	Context             RequestContext
+	WorkRunID           model.WorkRunID
+	ExpectedRunRevision model.Revision
+	Reason              string
+}
+
+type WorkReconcileReport struct {
+	Pending   []model.WorkRunID
+	Uncertain []model.WorkRunID
 }

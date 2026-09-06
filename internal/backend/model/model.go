@@ -111,6 +111,13 @@ type NativeConversationEvidence struct {
 
 type ExecutionState string
 
+type ExecutionWorkloadKind string
+
+const (
+	ExecutionWorkloadHarness ExecutionWorkloadKind = "harness"
+	ExecutionWorkloadShell   ExecutionWorkloadKind = "shell"
+)
+
 const (
 	ExecutionReserved ExecutionState = "reserved"
 	ExecutionPrepared ExecutionState = "prepared"
@@ -123,6 +130,7 @@ const (
 
 type Execution struct {
 	ID                 ExecutionID
+	Workload           ExecutionWorkloadKind
 	AgentID            AgentID
 	ConversationID     ConversationID
 	Spec               ResolvedExecutionSpec
@@ -141,6 +149,7 @@ type Execution struct {
 // implementations consume it but must not reinterpret desired configuration.
 type ResolvedExecutionSpec struct {
 	ExecutionID      ExecutionID
+	Workload         ExecutionWorkloadKind
 	Attempt          AttemptGeneration
 	AgentID          AgentID
 	ConversationID   ConversationID
@@ -154,13 +163,19 @@ type ResolvedExecutionSpec struct {
 type OperationKind string
 
 const (
-	OperationLaunch        OperationKind = "launch"
-	OperationInteract      OperationKind = "interact"
-	OperationAttach        OperationKind = "attach"
-	OperationStop          OperationKind = "stop"
-	OperationResume        OperationKind = "resume"
-	OperationChangeContext OperationKind = "change_context"
-	OperationSendMessage   OperationKind = "send_message"
+	OperationLaunch           OperationKind = "launch"
+	OperationInteract         OperationKind = "interact"
+	OperationAttach           OperationKind = "attach"
+	OperationStop             OperationKind = "stop"
+	OperationResume           OperationKind = "resume"
+	OperationChangeContext    OperationKind = "change_context"
+	OperationSendMessage      OperationKind = "send_message"
+	OperationCreateWorkspace  OperationKind = "create_workspace"
+	OperationRemoveWorkspace  OperationKind = "remove_workspace"
+	OperationRestoreWorkspace OperationKind = "restore_workspace"
+	OperationStartWork        OperationKind = "start_work"
+	OperationCancelWork       OperationKind = "cancel_work"
+	OperationStartShell       OperationKind = "start_shell"
 )
 
 type OperationState string
