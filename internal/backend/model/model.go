@@ -40,21 +40,22 @@ func ExecutionPrincipal(executionID ExecutionID, agentID AgentID, generation Acc
 }
 
 type Agent struct {
-	ID                 AgentID
-	Name               string
-	TaskReference      string
-	ParentAgentID      AgentID
-	CloneSourceAgentID AgentID
-	Lifecycle          AgentLifecycleState
-	RetiredAt          *time.Time
-	RetiredBy          Principal
-	RetirementReason   string
-	Notifications      AgentNotificationPreferences
-	Desired            DesiredConfiguration
-	PrimaryExecutionID ExecutionID
-	Revision           Revision
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
+	ID                   AgentID
+	Name                 string
+	TaskReference        string
+	ParentAgentID        AgentID
+	CloneSourceAgentID   AgentID
+	Lifecycle            AgentLifecycleState
+	RetiredAt            *time.Time
+	RetiredBy            Principal
+	RetirementReason     string
+	Notifications        AgentNotificationPreferences
+	Desired              DesiredConfiguration
+	ConfigurationProfile *ConfigurationProfileRef
+	PrimaryExecutionID   ExecutionID
+	Revision             Revision
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
 }
 
 type AgentLifecycleState string
@@ -168,16 +169,17 @@ type Execution struct {
 // ResolvedExecutionSpec is immutable after an Execution is admitted. Provider
 // implementations consume it but must not reinterpret desired configuration.
 type ResolvedExecutionSpec struct {
-	ExecutionID      ExecutionID
-	Workload         ExecutionWorkloadKind
-	Attempt          AttemptGeneration
-	AgentID          AgentID
-	ConversationID   ConversationID
-	Harness          string
-	Model            string
-	WorkingDirectory string
-	Approval         ApprovalMode
-	Sandbox          SandboxMode
+	ConfigurationProfile *ConfigurationProfileRef
+	ExecutionID          ExecutionID
+	Workload             ExecutionWorkloadKind
+	Attempt              AttemptGeneration
+	AgentID              AgentID
+	ConversationID       ConversationID
+	Harness              string
+	Model                string
+	WorkingDirectory     string
+	Approval             ApprovalMode
+	Sandbox              SandboxMode
 }
 
 type OperationKind string

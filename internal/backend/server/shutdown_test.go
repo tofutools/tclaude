@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -59,26 +61,46 @@ func TestShutdownJoinsAdmittedWorkflowBeforeReleasingState(t *testing.T) {
 		return (&net.Dialer{}).DialContext(ctx, "unix", filepath.Join(dir, "api.sock"))
 	}}}
 	defer client.CloseIdleConnections()
-	for n := 0; n < 100; n++ {
+	readyDeadline := time.NewTimer(10 * time.Second)
+	defer readyDeadline.Stop()
+	readyTick := time.NewTicker(10 * time.Millisecond)
+	defer readyTick.Stop()
+waitReady:
+	for {
 		if _, err := os.Stat(filepath.Join(dir, "api.sock")); err == nil {
-			break
+			break waitReady
 		}
-		time.Sleep(10 * time.Millisecond)
+		select {
+		case err := <-done:
+			t.Fatalf("server exited before readiness: %v", err)
+		case <-readyDeadline.C:
+			t.Fatal("server socket did not become ready")
+		case <-readyTick.C:
+		}
 	}
 	requestDone := make(chan struct{})
+	requestFailure := make(chan error, 1)
 	go func() {
 		defer close(requestDone)
 		req, _ := http.NewRequest("POST", "http://backend/v2/launch", strings.NewReader(`{"request_id":"slow-launch","target":{"standalone":{"desired":{"Harness":"review-slow","WorkingDirectory":"/tmp","Approval":"supervised","Sandbox":"unconfined"}}}}`))
 		req.Header.Set("Authorization", "Bearer "+string(token))
 		res, err := client.Do(req)
-		if err == nil {
-			res.Body.Close()
+		if err != nil {
+			requestFailure <- err
+			return
+		}
+		defer res.Body.Close()
+		if res.StatusCode >= 400 {
+			body, _ := io.ReadAll(io.LimitReader(res.Body, 4096))
+			requestFailure <- fmt.Errorf("launch HTTP %d: %s", res.StatusCode, body)
 		}
 	}()
 	select {
 	case <-p.entered:
-	case <-time.After(3 * time.Second):
-		t.Fatal("prepare did not start")
+	case err := <-requestFailure:
+		t.Fatalf("launch failed before preparation: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("prepare did not start after server readiness")
 	}
 	cancel()
 	select {

@@ -21,10 +21,11 @@ function edit(title,fields,save){
   const label=el('label',field.label);let input;
   if(field.options){input=el('select');for(const option of field.options){const o=el('option',typeof option==='string'?option:option.label);o.value=typeof option==='string'?option:option.value;input.append(o)}}
   else input=el(field.multiline?'textarea':'input');
-  if(field.multiple)input.multiple=true;input.name=field.name;input.setAttribute('aria-label',field.label);if(field.value!==undefined || !field.options)input.value=field.value??'';input.required=field.required!==false;label.append(input);$('editor-fields').append(label);
+  if(field.file)input.type='file';
+  if(field.multiple)input.multiple=true;input.name=field.name;input.setAttribute('aria-label',field.label);if(!field.file&&(field.value!==undefined || !field.options))input.value=field.value??'';input.required=field.required!==false;label.append(input);$('editor-fields').append(label);
  }
  $('editor-form').onsubmit=async e=>{e.preventDefault();if(submitting)return;submitting=true;const submit=e.submitter;if(submit)submit.disabled=true;
-  try{const data=new FormData(e.target),form=Object.fromEntries(data);for(const field of fields)if(field.multiple)form[field.name]=data.getAll(field.name);const next=JSON.stringify(form);if(fingerprint!==next){fingerprint=next;submissionID=requestID()}form.requestID=submissionID;await save(form);$('editor').close();await refresh()}catch(error){showError(error)}finally{submitting=false;if(submit)submit.disabled=false}
+  try{const data=new FormData(e.target),form=Object.fromEntries(data);for(const field of fields)if(field.multiple)form[field.name]=data.getAll(field.name);const next=JSON.stringify(form,(_,value)=>value instanceof File?{name:value.name,size:value.size,modified:value.lastModified}:value);if(fingerprint!==next){fingerprint=next;submissionID=requestID()}form.requestID=submissionID;await save(form);$('editor').close();await refresh()}catch(error){showError(error)}finally{submitting=false;if(submit)submit.disabled=false}
  };
  $('editor').showModal();
 }
@@ -42,9 +43,14 @@ function agentRow(agent){
  const execution=(snapshot.executions||[]).find(e=>e.id===agent.PrimaryExecutionID);
  row.append(el('span',execution?`${execution.state} · context ${execution.context_readiness}`:'offline','status'));
  row.append(el('span',`${agent.Desired.Harness} / ${agent.Desired.Model}`,'muted'));
+ if(agent.ConfigurationProfile)row.append(el('span','Saved configuration revision','muted'));
  const actions=el('div',undefined,'actions');
- actions.append(button('Configure',()=>edit('Configure agent',desiredFields({...agent.Desired,name:agent.Name}),f=>api(`/v2/agents/${encodeURIComponent(agent.ID)}`,{name:f.name,desired:configuration(f),expected_revision:agent.Revision},'PUT'))));
+ actions.append(button('Activity',async()=>{activityTarget={AgentID:agent.ID};await selectTab('activity')}));
+ if(execution?.conversation_id)actions.append(button('Usage',async()=>{usageTarget={ConversationID:execution.conversation_id};await selectTab('usage')}));
+ if(agent.Lifecycle==='retired'){row.append(el('span','retired','status'));actions.append(button('Reactivate',async()=>{await api(`/v2/agents/${encodeURIComponent(agent.ID)}/reactivate`,{expected_revision:agent.Revision});await refresh()}));row.append(actions);return row}
+ actions.append(button('Configure',()=>edit('Configure agent',[...desiredFields({...agent.Desired,name:agent.Name}),...agentMetadataFields(agent)],f=>api(`/v2/agents/${encodeURIComponent(agent.ID)}`,{name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify},expected_revision:agent.Revision},'PUT'))));
  if(!execution || ['exited','failed'].includes(execution.state)){
+  actions.append(button('Retire',()=>edit('Retire agent',[{name:'reason',label:'Reason',multiline:true}],f=>api(`/v2/agents/${encodeURIComponent(agent.ID)}/retire`,{expected_revision:agent.Revision,reason:f.reason}))));
   actions.append(button('Start',async id=>{await api('/v2/launch',{request_id:id,target:{agent:{agent_id:agent.ID,expected_revision:agent.Revision}}});await refresh()}));
   const associations=(snapshot.associations||[]).filter(a=>a.AgentID===agent.ID);
   if(associations.length)actions.append(button('Resume',()=>edit('Resume history',[{name:'conversation',label:'Conversation',options:associations.map(a=>({value:a.ConversationID,label:a.ConversationID}))}],async f=>{
@@ -57,6 +63,7 @@ function agentRow(agent){
   actions.append(button('Send input',()=>edit('Send input',[{name:'text',label:'Input',multiline:true}],f=>api('/v2/interact',{request_id:f.requestID,execution_id:execution.id,text:f.text}))));
   actions.append(button('Stop',async id=>{await api('/v2/stop',{request_id:id,execution_id:execution.id,force:false});await refresh()}));
  }
+ actions.append(button('Clone configuration',()=>edit('Create independent agent',[{name:'name',label:'Name',value:agent.Name+' copy'}],f=>api('/v2/agents',{id:f.requestID,name:f.name,clone_source_agent_id:agent.ID,...(agent.ConfigurationProfile?{configuration_profile:agent.ConfigurationProfile}:{desired:agent.Desired})}))));
  row.append(actions);return row;
 }
 function render(){
@@ -76,14 +83,23 @@ function render(){
  if(!snapshot.work_runs?.length)empty(work,'No work runs.');
  const messages=$('message-list');messages.replaceChildren();
  for(const message of [...snapshot.messages||[]].reverse()){
-  const card=el('article',undefined,'card');card.append(el('strong',message.Sender.AgentID||message.Sender.Kind),el('p',new Date(message.CreatedAt).toLocaleString(),'muted'),el('pre',message.Body));
-  card.append(el('p',(message.Recipients||[]).map(r=>`${r.AgentID} · ${r.ReadAt?'read':'unread'}`).join(', '),'muted'));messages.append(card)
+  const card=el('article',undefined,'card');card.append(el('strong',message.Subject||'Message'),el('p',`${message.Sender.AgentID||message.Sender.Kind} · ${new Date(message.CreatedAt).toLocaleString()}`,'muted'),el('pre',message.Body));
+  card.append(el('p',(message.Recipients||[]).map(r=>`${r.Audience==='cc'?'CC':'To'} ${r.AddressKind==='operator'?'Operator':r.AgentID} · ${r.ReadAt?'read':'unread'}`).join(', '),'muted'));
+  if(message.ParentMessageID)card.append(el('p','Reply in an existing thread','muted'));
+  card.append(button('Reply all',()=>composeMessage(message)));
+  if((message.Recipients||[]).some(r=>r.AddressKind==='operator'&&!r.ReadAt))card.append(button('Mark read',async id=>{await api(`/v2/messages/${encodeURIComponent(message.ID)}/read`,{request_id:id,operator:true});await refresh()}));
+  for(const attachment of message.Attachments||[])card.append(button(`Download ${attachment.Filename}`,()=>downloadAttachment(attachment)));
+  messages.append(card);
  }
  if(!snapshot.messages?.length)empty(messages,'No messages.');
 }
 async function selectTab(tab){
  for(const n of document.querySelectorAll('main > section'))n.hidden=n.id!==tab;
  for(const n of document.querySelectorAll('[data-tab]'))n.setAttribute('aria-current',String(n.dataset.tab===tab));
+ if(tab==='configurations')await renderConfigurations();
+ if(tab==='usage')await renderUsage();
+ if(tab==='activity')await renderActivity();
+
  if(tab==='processes')await renderDefinitions();
  if(tab==='decisions')await renderDecisions();
  if(tab==='access'){
@@ -97,9 +113,9 @@ $('refresh').onclick=()=>refresh().catch(showError);
 $('cancel').onclick=()=>$('editor').close();
 $('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');closeTerminal();snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
 for(const tab of document.querySelectorAll('[data-tab]'))tab.onclick=()=>selectTab(tab.dataset.tab).catch(showError);
-$('new-agent').onclick=()=>edit('New agent',desiredFields(),f=>api('/v2/agents',{id:f.requestID,name:f.name,desired:configuration(f)}));
+$('new-agent').onclick=()=>edit('New agent',[...desiredFields(),...agentMetadataFields()],f=>api('/v2/agents',{id:f.requestID,name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify}}));
 $('new-group').onclick=()=>edit('New group',[{name:'name',label:'Name'},{name:'members',label:'Members',multiple:true,required:false,options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}],f=>api('/v2/groups',{id:f.requestID,name:f.name,members:f.members}));
-$('compose').onclick=()=>edit('Compose message',[{name:'recipient',label:'Recipient',options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))},{name:'body',label:'Message',multiline:true}],f=>api('/v2/messages',{request_id:f.requestID,recipients:[f.recipient],body:f.body}));
+$('compose').onclick=()=>composeMessage();
 $('search-history').onsubmit=async e=>{e.preventDefault();try{
  const data=await api('/v2/history/search',{query:new FormData(e.target).get('query')});const list=$('histories');list.replaceChildren();
  for(const entry of data.Entries||[])list.append(historyCard(entry));
@@ -187,6 +203,93 @@ $('new-grant').onclick=()=>edit('Grant agent permission',[
  {name:'action',label:'Action',options:['message.send','status.read','execution.stop','execution.interact','execution.attach']},
  {name:'target',label:'Target agent',options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}
 ],async f=>{await api(`/v2/authority/grants/${encodeURIComponent(f.requestID)}`,{subject:{Kind:'agent',AgentID:f.subject},action:f.action,resource:{Kind:'agent',AgentID:f.target},expected_revision:0},'PUT');await selectTab('access')});
+
+async function renderConfigurations(){
+ const [entries,defaults]=await Promise.all([api('/v2/configuration-profiles'),api('/v2/configuration-defaults')]),list=$('configuration-list');list.replaceChildren();
+ const choices=[...(defaults.Global?[['global',defaults.Global]]:[]),...Object.entries(defaults.Harnesses||{})];
+ if(choices.length){const card=el('article',undefined,'card');card.append(el('strong','Defaults'),el('p','Defaults select a saved revision for new agents. Existing agents keep their settings.','muted'));
+ for(const [name,ref] of choices){const row=el('div',undefined,'row');const profile=entries.find(p=>p.ID===ref.ProfileID);row.append(el('span',`${name}: ${profile?.Name||ref.ProfileID}`));
+ row.append(button('Create from '+name,()=>edit('Create agent from default',[{name:'name',label:'Agent name'}],f=>api('/v2/agents',{id:f.requestID,name:f.name,configuration_profile:ref}))));
+ row.append(button('Clear '+name,async id=>{const harnesses={...(defaults.Harnesses||{})};delete harnesses[name];await api('/v2/configuration-defaults',{request_id:id,expected_revision:defaults.Revision,global:name==='global'?null:defaults.Global,harnesses});await renderConfigurations()}));card.append(row)}list.append(card)}
+ for(const profile of entries){
+  const card=el('article',undefined,'card');card.append(el('strong',profile.Name),el('p',`Revision ${profile.Revision}`,'muted'));
+  card.append(button('Create agent',async()=>{
+   const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
+   edit('Create agent from configuration',[{name:'name',label:'Agent name',value:profile.Name}],f=>api('/v2/agents',{id:f.requestID,name:f.name,configuration_profile:selected.Revision.Ref}));
+  }),button('Edit configuration',async()=>{
+   const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
+   edit('Save new configuration revision',desiredFields({...selected.Revision.Desired,name:profile.Name}),async f=>{
+    await api('/v2/configuration-profiles',{request_id:f.requestID,id:profile.ID,revision_id:f.requestID,expected_revision:profile.Revision,name:f.name,desired:configuration(f)});await renderConfigurations();
+   });
+  }),button('Use as default',async()=>{
+   const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
+   edit('Set default configuration',[{name:'scope',label:'Default scope',options:[{value:'global',label:'Global'},{value:selected.Revision.Desired.Harness,label:selected.Revision.Desired.Harness}]}],async f=>{
+    const harnesses={...(defaults.Harnesses||{})};if(f.scope!=='global')harnesses[f.scope]=selected.Revision.Ref;
+    await api('/v2/configuration-defaults',{request_id:f.requestID,expected_revision:defaults.Revision,global:f.scope==='global'?selected.Revision.Ref:defaults.Global,harnesses});await renderConfigurations();
+   });
+  }));list.append(card);
+ }
+ if(!entries.length)empty(list,'No saved configurations. Save one to reuse its exact settings for new agents.');
+}
+$('new-configuration').onclick=()=>edit('Save configuration',desiredFields(),async f=>{
+ await api('/v2/configuration-profiles',{request_id:f.requestID,id:f.requestID,revision_id:f.requestID,name:f.name,desired:configuration(f)});await renderConfigurations();
+});
+
+function agentMetadataFields(agent={}){return[
+ {name:'task',label:'Task reference',value:agent.TaskReference||'',required:false},
+ {name:'notify',label:'Message notification',value:agent.Notifications?.DirectMessage||'if_available',options:[{value:'if_available',label:'Notify when available'},{value:'none',label:'Inbox only'}]}
+]}
+function audienceSelection(values){return{AgentIDs:values.filter(v=>v!=='operator'),Operator:values.includes('operator')}}
+function composeMessage(parent){
+ const available=(snapshot.agents||[]).filter(a=>a.Lifecycle!=='retired'),options=[{value:'operator',label:'Operator'},...available.map(a=>({value:a.ID,label:a.Name}))];
+ const cache=new Map();
+ edit(parent?'Reply to thread':'Compose message',[
+  {name:'to',label:'To',options,multiple:true,required:false},
+  {name:'cc',label:'CC',options,multiple:true,required:false},
+  {name:'subject',label:'Subject',value:parent?(parent.Subject.startsWith('Re: ')?parent.Subject:'Re: '+parent.Subject):''},
+  {name:'body',label:'Message',multiline:true},
+  {name:'files',label:'Attachments (up to four; 5 MiB each)',file:true,multiple:true,required:false}
+ ],async f=>{
+  const files=f.files.filter(file=>file instanceof File&&file.name);if(files.length>4||files.some(file=>file.size>5*1024*1024)||files.reduce((sum,file)=>sum+file.size,0)>10*1024*1024)throw new Error('Attachments exceed the displayed size limits.');
+  const attachments=[];
+  for(const file of files){
+   const data=await file.arrayBuffer(),hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),v=>v.toString(16).padStart(2,'0')).join(''),key=JSON.stringify([file.name,file.type,hash]);
+   let claim=cache.get(key);
+   if(!claim){const content=await new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result).split(',')[1]);reader.onerror=reject;reader.readAsDataURL(file)});claim=await api('/v2/attachment-claims',{filename:file.name,media_type:file.type||'application/octet-stream',content});cache.set(key,claim)}
+   attachments.push({Claim:{ClaimID:claim.ID,AttachmentID:claim.Attachment.ID,Filename:claim.Attachment.Filename,MediaType:claim.Attachment.MediaType,Size:claim.Attachment.Size,SHA256:claim.Attachment.SHA256}});
+  }
+  await api('/v2/messages',{request_id:f.requestID,subject:f.subject,parent_message_id:parent?.ID||'',to:audienceSelection(f.to),cc:audienceSelection(f.cc),body:f.body,attachments});
+ });
+ if(parent){const recipients=new Set((parent.Recipients||[]).filter(r=>r.AddressKind==='agent').map(r=>r.AgentID));if(parent.Sender.AgentID)recipients.add(parent.Sender.AgentID);for(const option of $('editor-fields').querySelector('[name=to]').options)option.selected=recipients.has(option.value)}
+}
+async function downloadAttachment(attachment){
+ const result=await api(`/v2/attachments/${encodeURIComponent(attachment.ID)}`),bytes=Uint8Array.from(atob(result.Content),c=>c.charCodeAt(0));
+ const url=URL.createObjectURL(new Blob([bytes],{type:'application/octet-stream'})),link=el('a');link.href=url;link.download=attachment.Filename;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+
+let usageTarget=null,activityTarget=null;
+function targetFields(kind){return[{name:'kind',label:'Target type',options:kind==='usage'?['ConversationID','ExecutionID']:['AgentID','ConversationID','ExecutionID','WorkRunID']},{name:'id',label:'Target ID'}]}
+$('select-usage').onclick=()=>edit('Select usage target',targetFields('usage'),async f=>{usageTarget={[f.kind]:f.id};await renderUsage()});
+$('select-activity').onclick=()=>edit('Select activity target',targetFields('activity'),async f=>{activityTarget={[f.kind]:f.id};await renderActivity()});
+async function renderUsage(cursor='',append=false){
+ const list=$('usage-list');if(!append)list.replaceChildren();if(!usageTarget){empty(list,'Select a conversation or execution to inspect its usage.');return}
+ const result=await api('/v2/usage/query',{filter:{Target:usageTarget,Limit:25,Cursor:cursor}});
+ if(!append)list.append(button('Refresh native usage',async()=>{await api('/v2/usage/refresh',{target:usageTarget});await renderUsage()}));
+ for(const observation of result.Observations||[]){const card=el('article',undefined,'card');
+ card.append(el('strong',`${observation.Harness} · ${observation.Attribution.Precision}`),el('p',`${observation.Source} · ${new Date(observation.ObservedAt).toLocaleString()}`,'muted'));
+ for(const counter of observation.Counters||[])card.append(el('p',`${counter.Unit.replaceAll('_',' ')}: ${counter.Value}`));
+ if(observation.Cost)card.append(el('p',`${observation.Cost.Amount} ${observation.Cost.Currency} · ${observation.Cost.Kind.replaceAll('_',' ')}`));
+ card.append(el('p',`Counters: ${observation.Coverage.Counters}; cost: ${observation.Coverage.Cost}`,'muted'));if(observation.Coverage.Reason)card.append(el('p',observation.Coverage.Reason));list.append(card)}
+ if(!result.Observations?.length)empty(list,'No recorded observations. Missing usage is not zero usage.');
+ if(result.NextCursor)list.append(button('More observations',async()=>renderUsage(result.NextCursor,true)));
+}
+async function renderActivity(cursor='',append=false){
+ const list=$('activity-list');if(!append)list.replaceChildren();if(!activityTarget){empty(list,'Select an agent, conversation, execution or Work Run.');return}
+ const result=await api('/v2/activity/query',{filter:{Target:activityTarget,Limit:25,Cursor:cursor}});
+ for(const record of result.Records||[]){const card=el('article',undefined,'card');card.append(el('strong',`${record.Kind.replaceAll('_',' ')} · ${record.Outcome}`),el('p',`${record.Actor.AgentID||record.Actor.Kind} · ${new Date(record.StartedAt).toLocaleString()}`,'muted'));if(record.Reason)card.append(el('p',record.Reason));if(record.Historical)card.append(el('p','Imported historical record','muted'));list.append(card)}
+ if(!result.Records?.length)empty(list,'No recorded activity for this target.');
+ if(result.NextCursor)list.append(button('More activity',async()=>renderActivity(result.NextCursor,true)));
+}
 
 async function renderDecisions(){
  const results=await api('/v2/decisions'),list=$('decision-list');list.replaceChildren();
