@@ -5,6 +5,7 @@ package claude
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -32,6 +33,9 @@ func (p *testPermit) Consume(context.Context) error {
 }
 
 func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is unavailable")
+	}
 	root, err := os.MkdirTemp("/tmp", "tclaude-claude-provider-")
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
