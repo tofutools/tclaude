@@ -676,6 +676,50 @@ func (s *Service) Recover(ctx context.Context, req RecoverRequest) (RecoveryRepo
 	}
 	var report RecoveryReport
 	for _, execution := range executions {
+		if execution.Workload == model.ExecutionWorkloadShell {
+			record, recordErr := s.store.ShellRecovery(ctx, execution.ID)
+			if recordErr != nil || s.shellHost == nil {
+				report.Unknown = append(report.Unknown, execution.ID)
+				if _, persistErr := s.store.RecordShellRecovery(ctx, execution.ID, model.ExecutionUnknown, ports.ShellResourceEvidence{}, s.now().UTC()); persistErr != nil {
+					return RecoveryReport{}, persistErr
+				}
+				continue
+			}
+			result, recoverErr := s.shellHost.RecoverShell(ctx, ports.ShellRecoveryRequest{ExecutionID: execution.ID, Attempt: execution.Attempt, WorkspaceID: record.WorkspaceID, Evidence: record.Evidence})
+			if recoverErr != nil || result.State == ports.RecoveryUnknown || result.Evidence.Owner == "" {
+				report.Unknown = append(report.Unknown, execution.ID)
+				if _, persistErr := s.store.RecordShellRecovery(ctx, execution.ID, model.ExecutionUnknown, result.Evidence, s.now().UTC()); persistErr != nil {
+					return RecoveryReport{}, persistErr
+				}
+				continue
+			}
+			if result.State == ports.RecoveryExited {
+				report.Exited = append(report.Exited, execution.ID)
+				if _, persistErr := s.store.RecordShellRecovery(ctx, execution.ID, model.ExecutionExited, result.Evidence, s.now().UTC()); persistErr != nil {
+					return RecoveryReport{}, persistErr
+				}
+				continue
+			}
+			if result.Runtime == nil || result.Runtime.ExecutionID() != execution.ID {
+				report.Unknown = append(report.Unknown, execution.ID)
+				if _, persistErr := s.store.RecordShellRecovery(ctx, execution.ID, model.ExecutionUnknown, result.Evidence, s.now().UTC()); persistErr != nil {
+					return RecoveryReport{}, persistErr
+				}
+				continue
+			}
+			s.runtimeMu.Lock()
+			s.hostRuntimes[execution.ID] = result.Runtime
+			s.runtimeMu.Unlock()
+			report.Controlled = append(report.Controlled, execution.ID)
+			state := model.ExecutionRunning
+			if result.Observation.Workload == ports.WorkloadExited {
+				state = model.ExecutionExited
+			}
+			if _, persistErr := s.store.RecordShellRecovery(ctx, execution.ID, state, result.Evidence, s.now().UTC()); persistErr != nil {
+				return RecoveryReport{}, persistErr
+			}
+			continue
+		}
 		provider, ok := s.providers.Provider(execution.Spec.Harness)
 		if !ok {
 			report.Unknown = append(report.Unknown, execution.ID)

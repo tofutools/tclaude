@@ -76,6 +76,8 @@ type Store interface {
 	AdmitShell(context.Context, ShellAdmission) (AdmissionResult, error)
 	RecordShellPrepared(context.Context, model.ExecutionID, model.OperationID, ports.ShellResourceEvidence, time.Time) (model.Execution, error)
 	CompleteShell(context.Context, OperationCompletion, ports.ShellResourceEvidence) (AdmissionResult, error)
+	ShellRecovery(context.Context, model.ExecutionID) (ShellRecoveryRecord, error)
+	RecordShellRecovery(context.Context, model.ExecutionID, model.ExecutionState, ports.ShellResourceEvidence, time.Time) (model.Execution, error)
 
 	CreateWorkRun(context.Context, model.WorkRun, *model.HistoryUseClaim) (model.WorkRun, bool, error)
 	WorkRun(context.Context, model.WorkRunID) (WorkRunRecord, error)
@@ -93,6 +95,11 @@ type ShellAdmission struct {
 	WorkspaceUse      model.WorkspaceUse
 	WorkspaceRevision model.Revision
 	Authority         model.AuthorityRequest
+}
+
+type ShellRecoveryRecord struct {
+	WorkspaceID model.WorkspaceID
+	Evidence    ports.ShellResourceEvidence
 }
 
 type HistoryPointWrite struct {

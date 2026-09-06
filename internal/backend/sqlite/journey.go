@@ -1104,3 +1104,36 @@ func (s *Store) CompleteShell(ctx context.Context, in app.OperationCompletion, e
 	}
 	return s.OperationResult(ctx, in.OperationID)
 }
+
+func (s *Store) ShellRecovery(ctx context.Context, executionID model.ExecutionID) (app.ShellRecoveryRecord, error) {
+	var record app.ShellRecoveryRecord
+	err := s.db.QueryRowContext(ctx, `SELECT u.workspace_id,e.shell_evidence_owner,e.shell_evidence_version,e.shell_evidence_payload FROM executions e JOIN workspace_uses u ON u.execution_id=e.id AND u.released_at IS NULL WHERE e.id=? AND e.workload_kind=?`, executionID, model.ExecutionWorkloadShell).Scan(&record.WorkspaceID, &record.Evidence.Owner, &record.Evidence.Version, &record.Evidence.Payload)
+	return record, classify(err)
+}
+
+func (s *Store) RecordShellRecovery(ctx context.Context, executionID model.ExecutionID, state model.ExecutionState, evidence ports.ShellResourceEvidence, at time.Time) (model.Execution, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.Execution{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	result, err := tx.ExecContext(ctx, `UPDATE executions SET state=?,shell_evidence_owner=CASE WHEN ?='' THEN shell_evidence_owner ELSE ? END,shell_evidence_version=CASE WHEN ?='' THEN shell_evidence_version ELSE ? END,shell_evidence_payload=CASE WHEN ?='' THEN shell_evidence_payload ELSE ? END,revision=revision+1,updated_at=? WHERE id=? AND workload_kind=?`, state, evidence.Owner, evidence.Owner, evidence.Owner, evidence.Version, evidence.Owner, evidence.Payload, nanos(at), executionID, model.ExecutionWorkloadShell)
+	if err != nil {
+		return model.Execution{}, err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return model.Execution{}, app.ErrConflict
+	}
+	if state == model.ExecutionExited || state == model.ExecutionFailed {
+		if _, err = tx.ExecContext(ctx, `UPDATE workspace_uses SET released_at=? WHERE execution_id=? AND released_at IS NULL`, nanos(at), executionID); err != nil {
+			return model.Execution{}, err
+		}
+	}
+	if err = bumpTx(ctx, tx); err != nil {
+		return model.Execution{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return model.Execution{}, err
+	}
+	return s.Execution(ctx, executionID)
+}
