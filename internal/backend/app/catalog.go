@@ -90,3 +90,24 @@ func (s *Service) ListConfigurationProfiles(ctx context.Context, principal model
 	}
 	return s.store.ConfigurationProfiles(ctx)
 }
+
+// resolveConfigurationSelection accepts either authored fields or an exact
+// immutable catalog selection. A caller cannot attach provenance to unrelated
+// configuration values, and a later catalog edit cannot change this selection.
+func (s *Service) resolveConfigurationSelection(ctx context.Context, desired model.DesiredConfiguration, selected *model.ConfigurationProfileRef) (model.DesiredConfiguration, *model.ConfigurationProfileRef, error) {
+	if selected == nil {
+		return desired, nil, nil
+	}
+	if desired != (model.DesiredConfiguration{}) || selected.ProfileID == "" || selected.RevisionID == "" || selected.ContentHash == "" {
+		return desired, nil, fail(ErrInvalid, "select an exact configuration profile or supply desired fields")
+	}
+	result, err := s.store.ConfigurationProfile(ctx, selected.ProfileID, selected.RevisionID)
+	if err != nil {
+		return desired, nil, err
+	}
+	if result.Revision.Ref != *selected {
+		return desired, nil, ErrConflict
+	}
+	ref := result.Revision.Ref
+	return result.Revision.Desired, &ref, nil
+}

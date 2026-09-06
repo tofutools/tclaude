@@ -128,3 +128,11 @@ func (s *Store) ConfigurationProfiles(ctx context.Context) ([]model.Configuratio
 	}
 	return result, rows.Err()
 }
+
+func configurationProfileJSON(ref *model.ConfigurationProfileRef) []byte {
+	if ref == nil {
+		return nil
+	}
+	data, _ := json.Marshal(ref)
+	return data
+}
