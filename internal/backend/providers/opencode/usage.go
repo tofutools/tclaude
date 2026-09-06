@@ -60,16 +60,9 @@ func (r usageReader) Collect(ctx context.Context, request ports.UsageCollectionR
 		}
 		key = "opencode:" + historySourceFingerprint(stateRoot, manifest.NativeID)
 	}
-	counters, cost, observed, partial, err := collectOpenCodeUsage(raw)
+	counters, cost, observed, coverage, err := parseOpenCodeUsage(raw)
 	if err != nil {
 		return ports.CollectedUsage{}, err
-	}
-	coverage := model.UsageCoverage{Counters: model.UsageCoverageComplete, Cost: model.UsageCoverageComplete}
-	if cost == nil {
-		coverage.Cost, coverage.Reason = model.UsageCoverageUnknown, "exported messages did not report native cost"
-	}
-	if partial {
-		coverage.Counters, coverage.Cost, coverage.Reason = model.UsageCoveragePartial, model.UsageCoveragePartial, "some exported usage fields were invalid"
 	}
 	if observed.IsZero() {
 		observed = request.Execution.UpdatedAt
@@ -79,6 +72,10 @@ func (r usageReader) Collect(ctx context.Context, request ports.UsageCollectionR
 }
 
 func collectOpenCodeUsage(raw []byte) ([]model.UsageCounter, *model.UsageCost, time.Time, bool, error) {
+	counters, cost, observed, coverage, err := parseOpenCodeUsage(raw)
+	return counters, cost, observed, coverage.Counters != model.UsageCoverageComplete || coverage.Cost != model.UsageCoverageComplete, err
+}
+func parseOpenCodeUsage(raw []byte) ([]model.UsageCounter, *model.UsageCost, time.Time, model.UsageCoverage, error) {
 	// OpenCode's exported Assistant message schema owns cost and token fields;
 	// cost is already native USD accounting and is never recomputed here.
 	// Contract: https://github.com/anomalyco/opencode/blob/dev/packages/core/src/session.ts
@@ -95,57 +92,75 @@ func collectOpenCodeUsage(raw []byte) ([]model.UsageCounter, *model.UsageCost, t
 				Role   string      `json:"role"`
 				Cost   json.Number `json:"cost"`
 				Tokens struct {
-					Input     int64 `json:"input"`
-					Output    int64 `json:"output"`
-					Reasoning int64 `json:"reasoning"`
+					Input     *int64 `json:"input"`
+					Output    *int64 `json:"output"`
+					Reasoning *int64 `json:"reasoning"`
 					Cache     struct {
-						Read  int64 `json:"read"`
-						Write int64 `json:"write"`
+						Read  *int64 `json:"read"`
+						Write *int64 `json:"write"`
 					} `json:"cache"`
 				} `json:"tokens"`
 			} `json:"info"`
 		} `json:"messages"`
 	}
 	if err := decoder.Decode(&value); err != nil {
-		return nil, nil, time.Time{}, false, err
+		return nil, nil, time.Time{}, model.UsageCoverage{}, err
 	}
 	totals := map[model.UsageUnit]int64{}
 	cost := new(big.Rat)
-	haveCost, partial := false, false
+	haveCost, counterPartial, costPartial := false, false, false
 	for _, message := range value.Messages {
 		if message.Info.Role != "assistant" {
 			continue
 		}
 		values := []struct {
 			unit  model.UsageUnit
-			value int64
+			value *int64
 		}{{model.UsageInputTokens, message.Info.Tokens.Input}, {model.UsageOutputTokens, message.Info.Tokens.Output}, {model.UsageReasoningTokens, message.Info.Tokens.Reasoning}, {model.UsageCacheReadTokens, message.Info.Tokens.Cache.Read}, {model.UsageCacheWriteTokens, message.Info.Tokens.Cache.Write}}
 		for _, value := range values {
-			if value.value < 0 {
-				partial = true
+			if value.value == nil || *value.value < 0 {
+				counterPartial = true
 				continue
 			}
-			totals[value.unit] += value.value
+			totals[value.unit] += *value.value
 		}
 		if spelling := string(message.Info.Cost); spelling != "" {
 			part, ok := new(big.Rat).SetString(spelling)
 			if !ok || part.Sign() < 0 {
-				partial = true
+				costPartial = true
 			} else {
 				cost.Add(cost, part)
 				haveCost = true
 			}
+		} else {
+			costPartial = true
 		}
 	}
 	var nativeCost *model.UsageCost
 	if haveCost {
 		amount, err := finiteDecimal(cost)
 		if err != nil {
-			return nil, nil, time.Time{}, partial, err
+			return nil, nil, time.Time{}, model.UsageCoverage{}, err
 		}
 		nativeCost = &model.UsageCost{Amount: amount, Currency: "USD", Kind: model.UsageCostNativeReported}
 	}
-	return orderedOpenCodeCounters(totals), nativeCost, milliseconds(value.Info.Time.Updated), partial, nil
+	coverage := model.UsageCoverage{Counters: model.UsageCoverageComplete, Cost: model.UsageCoverageComplete}
+	if counterPartial {
+		coverage.Counters = model.UsageCoveragePartial
+	}
+	if costPartial {
+		coverage.Cost = model.UsageCoveragePartial
+	}
+	if len(totals) == 0 {
+		coverage.Counters = model.UsageCoverageUnknown
+	}
+	if !haveCost {
+		coverage.Cost = model.UsageCoverageUnknown
+	}
+	if coverage.Counters != model.UsageCoverageComplete || coverage.Cost != model.UsageCoverageComplete {
+		coverage.Reason = "some exported usage fields were missing or invalid"
+	}
+	return orderedOpenCodeCounters(totals), nativeCost, milliseconds(value.Info.Time.Updated), coverage, nil
 }
 
 func finiteDecimal(value *big.Rat) (string, error) {
@@ -165,7 +180,11 @@ func finiteDecimal(value *big.Rat) (string, error) {
 	if denominator.Cmp(big.NewInt(1)) != 0 {
 		return "", fmt.Errorf("native cost is not a finite decimal")
 	}
-	return strings.TrimRight(strings.TrimRight(value.FloatString(max(twos, fives)), "0"), "."), nil
+	amount := value.FloatString(max(twos, fives))
+	if strings.Contains(amount, ".") {
+		amount = strings.TrimRight(strings.TrimRight(amount, "0"), ".")
+	}
+	return amount, nil
 }
 
 func orderedOpenCodeCounters(values map[model.UsageUnit]int64) []model.UsageCounter {

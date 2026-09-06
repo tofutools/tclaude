@@ -21,3 +21,12 @@ not-json
 		{Unit: model.UsageCacheReadTokens, Value: 35}, {Unit: model.UsageCacheWriteTokens, Value: 5},
 	}, counters)
 }
+
+func TestClaudeMissingUsageIsNotKnownZero(t *testing.T) {
+	counters, _, partial := collectClaudeUsage([]byte(`{"type":"assistant","message":{"role":"assistant","usage":{}}}`))
+	require.Empty(t, counters)
+	require.True(t, partial)
+	counters, _, partial = collectClaudeUsage([]byte(`{"type":"assistant","message":{"role":"assistant","usage":{"input_tokens":0,"output_tokens":0}}}`))
+	require.NotEmpty(t, counters)
+	require.False(t, partial)
+}
