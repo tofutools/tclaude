@@ -182,6 +182,23 @@ func AdmitConversationBinding(a conversation.Admission) (conversation.Decision, 
 		}
 		return conversation.Decision{Outcome: conversation.Historical, Reason: "exact replay belongs to a superseded binding revision", Selection: selection}, nil
 	}
+	if found && current.reference != a.Reference {
+		prior, priorFound, err := loadReferenceHistory(tx, a.Attempt.ExecutionID, a.Reference)
+		if err != nil {
+			return conversation.Decision{}, err
+		}
+		if priorFound {
+			// The managed hook transport does not carry a harness-issued event
+			// identity. Once a reference has been superseded, a later observation
+			// naming it cannot prove that it is a new transition rather than a
+			// delayed retry. Preserve the append-only history and fail closed.
+			return conversation.Decision{
+				Outcome:   conversation.Historical,
+				Reason:    "reference belongs to a superseded binding revision",
+				Selection: selectionFromRecord(prior),
+			}, nil
+		}
+	}
 	if ended {
 		if found {
 			return conversation.Decision{Outcome: conversation.Historical, Reason: "managed attempt has durably exited", Selection: selectionFromRecord(current)}, nil
@@ -376,6 +393,25 @@ func loadBindingReplay(tx *sql.Tx, executionID execution.ID, evidenceID string) 
 		harness, namespace, external_ref, transition, process_instance, main_process,
 		evidence_strength, evidence_source, observed_pid, observed_tmux_session, observed_pane_id
 		FROM conversation_reference_bindings WHERE execution_id=? AND evidence_id=?`, executionID, evidenceID).
+		Scan(&r.revision, &r.expectedRevision, &r.evidenceID, &r.sessionID, &r.conversationID,
+			&r.reference.Harness, &r.reference.Namespace, &r.reference.Value, &r.transition, &r.processInstance, &mainProcess,
+			&r.strength, &r.source, &r.pid, &r.tmuxSession, &r.paneID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return bindingRecord{}, false, nil
+	}
+	r.mainProcess = mainProcess != 0
+	return r, err == nil, err
+}
+
+func loadReferenceHistory(tx *sql.Tx, executionID execution.ID, ref conversation.Reference) (bindingRecord, bool, error) {
+	var r bindingRecord
+	var mainProcess int
+	err := tx.QueryRow(`SELECT revision, expected_revision, evidence_id, session_id, conversation_id,
+		harness, namespace, external_ref, transition, process_instance, main_process,
+		evidence_strength, evidence_source, observed_pid, observed_tmux_session, observed_pane_id
+		FROM conversation_reference_bindings
+		WHERE execution_id=? AND harness=? AND namespace=? AND external_ref=?
+		ORDER BY revision DESC LIMIT 1`, executionID, ref.Harness, ref.Namespace, ref.Value).
 		Scan(&r.revision, &r.expectedRevision, &r.evidenceID, &r.sessionID, &r.conversationID,
 			&r.reference.Harness, &r.reference.Namespace, &r.reference.Value, &r.transition, &r.processInstance, &mainProcess,
 			&r.strength, &r.source, &r.pid, &r.tmuxSession, &r.paneID)

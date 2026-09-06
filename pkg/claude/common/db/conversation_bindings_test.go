@@ -199,6 +199,36 @@ func TestAdmitConversationBindingClearMintsNextConversation(t *testing.T) {
 	assert.Equal(t, []int{2, 1, 2}, func() []int { a, b, c := bindingTableCounts(t); return []int{a, b, c} }())
 }
 
+func TestAdmitConversationBindingRefusesSupersededReferenceWithFreshEvidence(t *testing.T) {
+	setupTestDB(t)
+	const generation = "11111111111111111111111111111111"
+	seedManagedBindingSession(t, "spwn-managed", generation, "tmux-managed", "%7", "claude", 4242)
+
+	first := managedBindingAdmission("spwn-managed", generation, "evidence-a", "ref-a", 0)
+	first.Transition = conversation.Clear
+	accepted, err := AdmitConversationBinding(first)
+	require.NoError(t, err)
+	require.Equal(t, conversation.Accepted, accepted.Outcome)
+
+	second := managedBindingAdmission("spwn-managed", generation, "evidence-b", "ref-b", 1)
+	second.Transition = conversation.Clear
+	current, err := AdmitConversationBinding(second)
+	require.NoError(t, err)
+	require.Equal(t, conversation.Accepted, current.Outcome)
+
+	stale := managedBindingAdmission("spwn-managed", generation, "fresh-but-unproven-event", "ref-a", 2)
+	stale.Transition = conversation.Clear
+	decision, err := AdmitConversationBinding(stale)
+	require.NoError(t, err)
+	assert.Equal(t, conversation.Historical, decision.Outcome)
+	assert.False(t, decision.Admitted())
+	selection, found, err := CurrentConversationSelection(execution.ID(generation))
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, current.Selection, selection)
+	assert.Equal(t, []int{2, 1, 2}, func() []int { a, b, c := bindingTableCounts(t); return []int{a, b, c} }())
+}
+
 func TestAdmitConversationBindingDoesNotAdvanceAfterDurableExit(t *testing.T) {
 	setupTestDB(t)
 	const generation = "11111111111111111111111111111111"

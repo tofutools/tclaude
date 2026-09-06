@@ -146,6 +146,38 @@ func TestManagedHookAdmission_RotatesReferenceAndLogicalConversation(t *testing.
 		"compact advances the external reference while preserving logical history")
 }
 
+func TestManagedHookAdmission_DelayedClearCannotRestoreSupersededReference(t *testing.T) {
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, brokerLayerConv, brokerLayerLabel, "tmux-broker-layer", brokerPanePID)
+
+	sendStart := func(convID, source string) {
+		t.Helper()
+		code, _ := postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{Input: session.HookCallbackInput{
+			ConvID: convID, HookEventName: "SessionStart", Source: source,
+		}})
+		require.Equal(t, http.StatusOK, code)
+	}
+
+	sendStart(brokerLayerConv, "startup")
+	sendStart("b0000000-1111-2222-3333-555555555555", "clear")
+	const currentRef = "b0000000-1111-2222-3333-666666666666"
+	sendStart(currentRef, "clear")
+	_, before := managedSelection(t, brokerLayerLabel)
+	require.Equal(t, currentRef, before.Reference)
+	require.EqualValues(t, 3, before.Revision)
+
+	// This is the original clear-B observation arriving again after clear-C.
+	// The transport has no event ID, so it must remain historical rather than
+	// being assigned the current revision and treated as a new clear.
+	sendStart("b0000000-1111-2222-3333-555555555555", "clear")
+	_, after := managedSelection(t, brokerLayerLabel)
+	assert.Equal(t, before, after)
+	row, err := db.LoadSession(brokerLayerLabel)
+	require.NoError(t, err)
+	assert.Equal(t, currentRef, row.ConvID, "legacy projection must not roll back either")
+}
+
 func TestManagedHookAdmission_RecognizesVersionNamedClaudeMain(t *testing.T) {
 	f := newFlow(t)
 	const (
