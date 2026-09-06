@@ -147,6 +147,10 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		return nil, fmt.Errorf("OpenCode requires explicitly selected %q policy; native tool rules do not enforce %q confinement",
 			model.SandboxUnconfined, request.Spec.Sandbox)
 	}
+	initialInput, err := preparedInitialInput(request.InitialInput)
+	if err != nil {
+		return nil, err
+	}
 	var access *ports.ActionCredentialReceipt
 	if request.ActionCredential != nil {
 		if request.ActionCredential.ExecutionID != request.Spec.ExecutionID {
@@ -256,7 +260,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 				{Kind: ports.ResourceServer, Key: endpoint},
 				{Kind: ports.ResourceProcess, Key: stateRoot},
 			},
-			Evidence: initial, AccessDelivery: access,
+			Evidence: initial, AccessDelivery: access, InitialInput: initialInput,
 		},
 	}, nil
 }
@@ -439,6 +443,12 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 	// establish a prior binding within that execution's observation sequence.
 	if err := runtime.publishContext(ctx, ports.PrimaryContextInitial, nil, nativeBinding(runtime.nativeID), nil); err != nil {
 		return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime, Evidence: currentEvidence}, err
+	}
+	if p.request.InitialInput != nil {
+		if err := runtime.deliverPreparedInitialInput(ctx, *p.request.InitialInput); err != nil {
+			currentEvidence, _ = runtime.providerEvidence()
+			return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime, Evidence: currentEvidence}, err
+		}
 	}
 	currentEvidence, evidenceErr = runtime.providerEvidence()
 	if evidenceErr != nil {
@@ -727,6 +737,36 @@ func (r *Runtime) Interact(ctx context.Context, interaction ports.Interaction) (
 			fmt.Errorf("OpenCode prompt returned HTTP %d", response.StatusCode)
 	}
 	return ports.InteractionResult{Disposition: ports.EffectAccepted, Evidence: evidence}, nil
+}
+
+func (r *Runtime) deliverPreparedInitialInput(ctx context.Context, input ports.PreparedInitialInput) error {
+	if strings.TrimSpace(input.Body) == "" || strings.TrimSpace(input.Correlation) == "" || r.nativeID == "" {
+		return fmt.Errorf("OpenCode prepared initial input is incomplete")
+	}
+	body := map[string]any{"parts": []map[string]string{{"type": "text", "text": input.Body}}}
+	if providerID, modelID, ok := strings.Cut(r.model, "/"); ok && providerID != "" && modelID != "" {
+		body["model"] = map[string]string{"providerID": providerID, "modelID": modelID}
+	}
+	response, err := r.do(ctx, http.MethodPost, "/session/"+url.PathEscape(r.nativeID)+
+		"/prompt_async?directory="+url.QueryEscape(r.cwd), body)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("OpenCode prepared initial input returned HTTP %d", response.StatusCode)
+	}
+	return nil
+}
+
+func preparedInitialInput(input *ports.PreparedInitialInput) (*ports.PreparedInitialInputDescription, error) {
+	if input == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(input.Body) == "" || strings.TrimSpace(input.Correlation) == "" {
+		return nil, fmt.Errorf("OpenCode prepared initial input requires body and correlation")
+	}
+	return &ports.PreparedInitialInputDescription{Correlation: input.Correlation, Supported: true}, nil
 }
 
 func (r *Runtime) Attach(ctx context.Context, request ports.AttachmentRequest) (ports.AttachmentResult, error) {
@@ -1144,9 +1184,23 @@ type terminalAttachment struct {
 	once   sync.Once
 }
 
+var _ ports.ResizableAttachment = (*terminalAttachment)(nil)
+
 func (*terminalAttachment) Kind() ports.AttachmentKind        { return ports.AttachmentTerminal }
 func (a *terminalAttachment) Read(value []byte) (int, error)  { return a.file.Read(value) }
 func (a *terminalAttachment) Write(value []byte) (int, error) { return a.file.Write(value) }
+func (a *terminalAttachment) Resize(ctx context.Context, size ports.TerminalSize) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if size.Columns == 0 || size.Rows == 0 || size.Columns > 1000 || size.Rows > 1000 {
+		return fmt.Errorf("terminal size must be between 1 and 1000 columns and rows")
+	}
+	if err := pty.Setsize(a.file, &pty.Winsize{Cols: size.Columns, Rows: size.Rows}); err != nil {
+		return fmt.Errorf("resize terminal PTY: %w", err)
+	}
+	return nil
+}
 func (a *terminalAttachment) Close() error {
 	var err error
 	a.once.Do(func() {
