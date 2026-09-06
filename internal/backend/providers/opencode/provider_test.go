@@ -285,10 +285,11 @@ func TestOpenCodeForkCreatesIndependentStateAndMessagePoint(t *testing.T) {
 	require.Len(t, discovered.Histories, 1)
 	source := discovered.Histories[0]
 	selection := &ports.HistorySourceSelection{ConversationID: "conversation_source", Provider: Name, Native: source.Native,
-		SourceToken: source.SourceToken, SourceRevision: source.Coverage.SourceRevision, Point: &source.Points[0], Evidence: source.Evidence}
+		SourceToken: source.SourceToken, SourceRevision: source.Coverage.SourceRevision,
+		SourceFingerprint: source.SourceFingerprint, Point: &source.Points[0], Evidence: source.Evidence}
 	selection.UseClaim = &model.HistoryUseClaim{ID: "history_use", ConversationID: selection.ConversationID,
 		OperationID: "operation_fork", SourceRevision: selection.SourceRevision,
-		SourceFingerprint: selection.SourceToken, State: model.HistoryUseHeld}
+		SourceFingerprint: selection.SourceFingerprint, State: model.HistoryUseHeld}
 	request := ports.PreparationRequest{Intent: ports.StartFork, History: selection,
 		Spec: model.ResolvedExecutionSpec{ExecutionID: "execution_fork", Harness: Name,
 			WorkingDirectory: workspace, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined}}
@@ -298,6 +299,10 @@ func TestOpenCodeForkCreatesIndependentStateAndMessagePoint(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, sourceRoot, preparedEvidence.StateRoot)
 	require.FileExists(t, importPath)
+	wrongPermit := &testPermit{execution: request.Spec.ExecutionID, operation: "operation_other"}
+	_, err = prepared.Release(context.Background(), wrongPermit)
+	require.ErrorContains(t, err, "history use claim")
+	require.False(t, wrongPermit.consumed.Load())
 	result, err := prepared.Release(context.Background(), &testPermit{execution: request.Spec.ExecutionID, operation: "operation_fork"})
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -309,10 +314,26 @@ func TestOpenCodeForkCreatesIndependentStateAndMessagePoint(t *testing.T) {
 	observed, err := result.Runtime.Observe(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "ses_fork", observed.NativeConversation.Reference)
+	resultEvidence, err := decodeEvidence(result.Evidence)
+	require.NoError(t, err)
+	require.Equal(t, "ses_source", resultEvidence.ForkSourceID)
+	require.Empty(t, resultEvidence.ParentID, "OpenCode native fork is top-level; platform retains lineage")
 	point, err := os.ReadFile(forkPointPath)
 	require.NoError(t, err)
 	require.Equal(t, "msg_one", string(point))
 	require.Equal(t, "source answer", mustExportSecondText(t, exportPath), "source export remains unchanged")
+}
+
+func TestOpenCodeForkUseClaimBindsRevisionAndFingerprint(t *testing.T) {
+	selection := ports.HistorySourceSelection{ConversationID: "conversation_source", SourceRevision: "revision",
+		SourceFingerprint: "fingerprint", UseClaim: &model.HistoryUseClaim{ID: "history_use",
+			ConversationID: "conversation_source", OperationID: "operation_fork", SourceRevision: "revision",
+			SourceFingerprint: "different", State: model.HistoryUseHeld}}
+	require.Error(t, validateHistoryUseClaim(selection))
+	selection.UseClaim.SourceFingerprint = selection.SourceFingerprint
+	require.NoError(t, validateHistoryUseClaim(selection))
+	selection.UseClaim.State = model.HistoryUseReleased
+	require.Error(t, validateHistoryUseClaim(selection))
 }
 
 func TestContinuationReappliesSupervisedApproval(t *testing.T) {
