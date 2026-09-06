@@ -1,0 +1,171 @@
+package transport
+
+import (
+	"encoding/json"
+	"errors"
+	"io"
+	"net/http"
+	"time"
+
+	"github.com/tofutools/tclaude/internal/backend/app"
+	"github.com/tofutools/tclaude/internal/backend/model"
+)
+
+const maxRequestBytes = 1 << 20
+
+type Handler struct {
+	application app.API
+	auth        Authenticator
+	mux         *http.ServeMux
+}
+
+func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
+	if application == nil || auth == nil {
+		return nil, errors.New("application and authenticator are required")
+	}
+	h := &Handler{application: application, auth: auth, mux: http.NewServeMux()}
+	h.mux.HandleFunc("POST /v2/agents", h.createAgent)
+	h.mux.HandleFunc("POST /v2/groups", h.createGroup)
+	h.mux.HandleFunc("GET /v2/snapshot", h.snapshot)
+	return h, nil
+}
+
+func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	h.mux.ServeHTTP(w, r)
+}
+
+func (h *Handler) caller(w http.ResponseWriter, r *http.Request) (model.Principal, bool) {
+	p, err := h.auth.Authenticate(r)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "unauthenticated")
+		return model.Principal{}, false
+	}
+	return p, true
+}
+
+func decodeRequest(w http.ResponseWriter, r *http.Request, target any) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBytes)
+	d := json.NewDecoder(r.Body)
+	d.DisallowUnknownFields()
+	if err := d.Decode(target); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request")
+		return false
+	}
+	if err := d.Decode(new(any)); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid_request")
+		return false
+	}
+	return true
+}
+
+func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(value)
+}
+
+func writeError(w http.ResponseWriter, status int, code string) {
+	writeJSON(w, status, struct {
+		Code string `json:"code"`
+	}{code})
+}
+
+// Application errors require a stable public code before transport exposes
+// details. Native error text is never returned merely because it is an error.
+func applicationError(w http.ResponseWriter, err error) {
+	var coded interface{ Code() string }
+	if errors.As(err, &coded) {
+		switch code := coded.Code(); code {
+		case "forbidden":
+			writeError(w, http.StatusForbidden, code)
+		case "not_found":
+			writeError(w, http.StatusNotFound, code)
+		case "conflict":
+			writeError(w, http.StatusConflict, code)
+		case "invalid_request", "unsupported":
+			writeError(w, http.StatusUnprocessableEntity, code)
+		default:
+			writeError(w, http.StatusInternalServerError, "internal_error")
+		}
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "internal_error")
+}
+
+func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
+	p, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		ID      model.AgentID              `json:"id"`
+		Name    string                     `json:"name"`
+		Desired model.DesiredConfiguration `json:"desired"`
+	}
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	result, err := h.application.CreateAgent(r.Context(), app.CreateAgentRequest{Context: p, ID: req.ID, Name: req.Name, Desired: req.Desired})
+	if err != nil {
+		applicationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, result.Agent)
+}
+
+func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
+	p, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		ID      model.GroupID   `json:"id"`
+		Name    string          `json:"name"`
+		Members []model.AgentID `json:"members"`
+	}
+	if !decodeRequest(w, r, &req) {
+		return
+	}
+	result, err := h.application.CreateGroup(r.Context(), app.CreateGroupRequest{Context: p, ID: req.ID, Name: req.Name, Members: req.Members})
+	if err != nil {
+		applicationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, result.Group)
+}
+
+type executionView struct {
+	ID             model.ExecutionID           `json:"id"`
+	AgentID        model.AgentID               `json:"agent_id,omitempty"`
+	ConversationID model.ConversationID        `json:"conversation_id,omitempty"`
+	Spec           model.ResolvedExecutionSpec `json:"spec"`
+	State          model.ExecutionState        `json:"state"`
+	Revision       model.Revision              `json:"revision"`
+	CreatedAt      time.Time                   `json:"created_at"`
+	UpdatedAt      time.Time                   `json:"updated_at"`
+}
+
+func (h *Handler) snapshot(w http.ResponseWriter, r *http.Request) {
+	p, ok := h.caller(w, r)
+	if !ok {
+		return
+	}
+	s, err := h.application.Snapshot(r.Context(), app.SnapshotRequest{Principal: p})
+	if err != nil {
+		applicationError(w, err)
+		return
+	}
+	views := make([]executionView, 0, len(s.Executions))
+	for _, e := range s.Executions {
+		views = append(views, executionView{e.ID, e.AgentID, e.ConversationID, e.Spec, e.State, e.Revision, e.CreatedAt, e.UpdatedAt})
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Revision   model.Revision    `json:"revision"`
+		Agents     []model.Agent     `json:"agents"`
+		Groups     []model.Group     `json:"groups"`
+		Executions []executionView   `json:"executions"`
+		Operations []model.Operation `json:"operations"`
+		Messages   []model.Message   `json:"messages"`
+	}{s.Revision, s.Agents, s.Groups, views, s.Operations, s.Messages})
+}
