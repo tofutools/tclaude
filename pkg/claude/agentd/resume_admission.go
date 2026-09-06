@@ -22,15 +22,6 @@ type managedResumeAdmission struct {
 }
 
 func admitManagedResume(convID, kind string, recovery *db.AgentRecovery) (*managedResumeAdmission, error) {
-	available, err := db.ResumeOperationsSchemaAvailable()
-	if err != nil {
-		return nil, err
-	}
-	if !available {
-		// Compatibility while the identity 227 + Resume 228 migration chain is
-		// being integrated. Production enables this path once the table exists.
-		return nil, nil
-	}
 	if convID == "" {
 		return nil, errors.New("managed resume requires conversation")
 	}
@@ -45,6 +36,11 @@ func admitManagedResume(convID, kind string, recovery *db.AgentRecovery) (*manag
 		ClaimHash: db.ResumeClaimHash(secret[:]), State: execution.ResumeRequested,
 		LaunchPhase: "requested", Revision: 1, RequestedAt: time.Now().UTC(),
 	}
+	if agentID, err := db.AgentIDForConv(convID); err != nil {
+		return nil, fmt.Errorf("resolve resume agent identity: %w", err)
+	} else {
+		operation.AgentID = agentID
+	}
 	if recovery != nil {
 		operation.RecoveryAgentID = recovery.AgentID
 		operation.RecoveryGeneration = recovery.PredecessorGeneration
@@ -54,10 +50,21 @@ func admitManagedResume(convID, kind string, recovery *db.AgentRecovery) (*manag
 		if identity, identityErr := db.GetSessionExitLaunchIdentity(predecessor); identityErr == nil {
 			if parsed, parseErr := execution.ParseID(identity.Generation); parseErr == nil {
 				operation.Predecessor.ExecutionID = parsed
+				if selection, found, selectionErr := db.CurrentConversationSelection(parsed); selectionErr != nil {
+					return nil, fmt.Errorf("capture resume logical conversation: %w", selectionErr)
+				} else if found && selection.Reference.Value == convID {
+					operation.LogicalConversationID = string(selection.Conversation)
+				}
 			}
 		}
 	} else if err != nil {
 		return nil, fmt.Errorf("capture resume predecessor: %w", err)
+	}
+	if operation.LogicalConversationID == "" {
+		// Legacy predecessors predate binding history. The operation still owns
+		// an explicit logical target; the exact resumed SessionStart is the first
+		// authoritative reference admitted into it.
+		operation.LogicalConversationID = string(db.NewLogicalConversationID())
 	}
 	if err := db.CreateResumeOperation(*operation); err != nil {
 		return nil, fmt.Errorf("persist resume request: %w", err)

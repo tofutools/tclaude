@@ -218,12 +218,25 @@ func AdmitConversationBinding(a conversation.Admission) (conversation.Decision, 
 		return decision, nil
 	}
 
+	resumeConversation := conversation.ID("")
 	if a.Transition == conversation.Resume {
-		decision := conversation.Decision{Outcome: conversation.Ambiguous, Reason: "resume requires an authorized target conversation"}
-		if found {
-			decision.Selection = selectionFromRecord(current)
+		var authorized string
+		err := tx.QueryRow(`SELECT logical_conversation_id FROM execution_operations
+			WHERE intended_execution_id=? AND intended_session_id=? AND conv_id=?
+			AND tmux_session=? AND pane_id=? AND state IN ('started','unknown')
+			AND launch_phase='released'`, a.Attempt.ExecutionID, a.Attempt.LegacySessionID,
+			a.Reference.Value, a.Evidence.TmuxSession, a.Evidence.PaneID).Scan(&authorized)
+		if errors.Is(err, sql.ErrNoRows) || strings.TrimSpace(authorized) == "" {
+			decision := conversation.Decision{Outcome: conversation.Ambiguous, Reason: "resume requires an authorized logical Conversation target"}
+			if found {
+				decision.Selection = selectionFromRecord(current)
+			}
+			return decision, nil
 		}
-		return decision, nil
+		if err != nil {
+			return conversation.Decision{}, err
+		}
+		resumeConversation = conversation.ID(authorized)
 	}
 
 	owner, err := loadLiveReferenceOwner(tx, a)
@@ -235,7 +248,9 @@ func AdmitConversationBinding(a conversation.Admission) (conversation.Decision, 
 	}
 
 	conversationID := conversation.ID("")
-	if found && a.Transition == conversation.Continue {
+	if a.Transition == conversation.Resume {
+		conversationID = resumeConversation
+	} else if found && a.Transition == conversation.Continue {
 		conversationID = current.conversationID
 	} else {
 		conversationID = NewLogicalConversationID()
@@ -296,6 +311,33 @@ func AdmitConversationBinding(a conversation.Admission) (conversation.Decision, 
 		a.Evidence.Strength, a.Evidence.Source, a.Evidence.PID, a.Evidence.TmuxSession, a.Evidence.PaneID, stamp)
 	if err != nil {
 		return conversation.Decision{}, err
+	}
+	if a.Transition == conversation.Resume {
+		result, updateErr := tx.Exec(`UPDATE execution_operations SET state='ready', launch_phase='ready',
+			ready_at=?, revision=revision+1 WHERE intended_execution_id=? AND intended_session_id=?
+			AND logical_conversation_id=? AND state IN ('started','unknown') AND launch_phase='released'`,
+			stamp, a.Attempt.ExecutionID, a.Attempt.LegacySessionID, conversationID)
+		if updateErr != nil {
+			return conversation.Decision{}, updateErr
+		}
+		if n, rowsErr := result.RowsAffected(); rowsErr != nil || n != 1 {
+			if rowsErr != nil {
+				return conversation.Decision{}, rowsErr
+			}
+			return conversation.Decision{Outcome: conversation.Conflict, Reason: "resume readiness operation changed during admission"}, nil
+		}
+		// Recovery is optional. When the operation references one, readiness and
+		// lease confirmation commit in this transaction.
+		_, updateErr = tx.Exec(`UPDATE agent_recovery SET status='recovered', reason_code='',
+			next_attempt_at=NULL, lease_token='', lease_expires_at=NULL,
+			successor_session_id=?, successor_generation=?, recovered_at=?, healthy_since=?, updated_at=?
+			WHERE agent_id=(SELECT recovery_agent_id FROM execution_operations WHERE intended_execution_id=?)
+			AND predecessor_generation=(SELECT recovery_generation FROM execution_operations WHERE intended_execution_id=?)
+			AND status='restarting'`, a.Attempt.LegacySessionID, a.Attempt.ExecutionID,
+			stamp, stamp, stamp, a.Attempt.ExecutionID, a.Attempt.ExecutionID)
+		if updateErr != nil {
+			return conversation.Decision{}, updateErr
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return conversation.Decision{}, err

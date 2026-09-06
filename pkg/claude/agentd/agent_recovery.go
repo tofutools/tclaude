@@ -9,6 +9,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/notify"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	platformexec "github.com/tofutools/tclaude/pkg/claude/platform/execution"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -130,6 +131,19 @@ func reconcileAgentRecovery(r db.AgentRecovery, now time.Time) {
 		if r.Status != db.AgentRecoveryStatusRestarting {
 			cancelStaleRecovery(r, now, "successor_race")
 			return
+		}
+		if executionID, parseErr := platformexec.ParseID(generation); parseErr == nil {
+			op, operationErr := db.ResumeOperationForExecution(executionID)
+			if operationErr != nil {
+				slog.Warn("agent recovery: load referenced resume operation failed", "agent_id", r.AgentID, "error", operationErr)
+				return
+			}
+			if op != nil && op.RecoveryAgentID == r.AgentID &&
+				op.RecoveryGeneration == r.PredecessorGeneration && op.State != platformexec.ResumeReady {
+				// Tmux/session receipt is not readiness. The exact managed hook
+				// transaction confirms this referenced recovery when it marks ready.
+				return
+			}
 		}
 		confirmedAt := time.Now()
 		if changed, err := db.ConfirmAgentRecovery(r, successor.ID, generation, confirmedAt); err != nil {

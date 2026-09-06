@@ -1275,7 +1275,7 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("invalid managed execution identity: %w", parseErr)
 		}
 		opID := execution.OperationID(strings.TrimSpace(params.ResumeOperationID))
-		claimed, claimErr := db.ClaimResumeOperation(opID, execID, claim, sessionID, os.Getpid(), processInstanceIdentity())
+		claimed, claimErr := db.ClaimResumeOperation(opID, execID, claim, fullConvID, sessionID, os.Getpid(), processInstanceIdentity())
 		if claimErr != nil {
 			return fmt.Errorf("managed resume admission claim: %w", claimErr)
 		}
@@ -2546,6 +2546,12 @@ func runNew(params *NewParams) error {
 		exitGuard.abort()
 		exitGuard = disabledExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
 	}
+	if params.ResumeOperationID != "" {
+		exitGuard.resumeOperationID = execution.OperationID(strings.TrimSpace(params.ResumeOperationID))
+		exitGuard.resumeConversation = fullConvID
+		exitGuard.resumeClaimPID = os.Getpid()
+		exitGuard.resumeClaimProcessStart = processInstanceIdentity()
+	}
 	defer exitGuard.abort()
 	// The existing cwd proof remains the outer bootstrap below so it can report
 	// readiness to the parent; the actual harness stays behind this private,
@@ -2646,6 +2652,16 @@ func runNew(params *NewParams) error {
 	if params.ResumeOperationID != "" && !exitGuard.bound {
 		exitGuard.abort()
 		return errors.New("managed resume exit-launch binding unavailable")
+	}
+	if params.ResumeOperationID != "" {
+		registered, registerErr := exitGuard.registerResumeLaunch()
+		if registerErr != nil || !registered {
+			killLaunchPane()
+			if registerErr != nil {
+				return fmt.Errorf("register managed resume launch: %w", registerErr)
+			}
+			return errors.New("managed resume launch was cancelled before registration")
+		}
 	}
 	if proofReadyPath != "" {
 		if err := waitForSpawnCwdReadiness(proofReadyPath); err != nil {

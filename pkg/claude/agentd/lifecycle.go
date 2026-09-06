@@ -1837,8 +1837,11 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 	if admission != nil {
 		claimReadEnd, admissionErr = admission.claimPipe()
 		if admissionErr != nil {
-			_ = db.TransitionResumeOperation(admission.operation.ID, admission.operation.Revision,
-				platformexec.ResumeFailed, "claim_pipe_failed", admissionErr.Error())
+			if won, _ := db.RequestResumeCancellation(admission.operation.ID, admission.operation.Revision,
+				"private claim pipe unavailable"); won {
+				_, _ = db.FinalizeResumeFailed(admission.operation.ID, admission.operation.Revision+1,
+					admissionErr.Error())
+			}
 			res.Action = "error"
 			res.Detail = "prepare resume child claim: " + admissionErr.Error()
 			return res
@@ -1883,7 +1886,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 				rev = row.Revision
 			}
 			_ = db.TransitionResumeOperation(admission.operation.ID, rev,
-				platformexec.ResumeFailed, "spawn_failed", err.Error())
+				platformexec.ResumeUnknown, "dispatch_unknown", err.Error())
 		}
 		res.Action = "error"
 		res.Detail = "spawn: " + err.Error()
@@ -1901,19 +1904,7 @@ func resumeOneConvUnderLaunchLock(convID string, recreateMissingDir bool, recove
 				res.Detail += "; restore previous sandbox snapshot: " + restoreErr.Error()
 			}
 		}
-	} else {
-		if admission != nil {
-			rev := admission.operation.Revision
-			if row, getErr := db.GetResumeOperation(admission.operation.ID); getErr == nil {
-				rev = row.Revision
-			}
-			if err := db.TransitionResumeOperation(admission.operation.ID, rev,
-				platformexec.ResumeStarted, "started", ""); err != nil {
-				slog.Warn("resume: persist started operation evidence failed", "operation", admission.operation.ID, "error", err)
-			}
-		}
-	}
-	if launchConfig.CodexAppServer && !awaitCodexAppServerReady(convID) {
+	} else if launchConfig.CodexAppServer && !awaitCodexAppServerReady(convID) {
 		failedTmux := ""
 		if failedSession := pickAliveSession(convID); failedSession != nil {
 			failedTmux = failedSession.TmuxSession
