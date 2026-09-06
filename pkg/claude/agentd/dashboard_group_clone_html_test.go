@@ -32,6 +32,7 @@ func TestDashboardHTML_GroupCloneModal(t *testing.T) {
 	// The JS behaviour: default-name computation, preview render, and the POST.
 	must("defaultName: `${prefix}${suffix}`", "client computes the <source>-c-N default name")
 	must("function GroupClonePreview(", "the Preact modal renders a settings preview")
+	must("source.attachment_url", "the preview discloses the attachment copied with group settings")
 	must("no_clone_members", "submit sends the with/without-agents flag")
 	must("copy_owners", "submit sends the owner-copy opt-in flag")
 	must("/clone`", "submit POSTs to the group clone endpoint")

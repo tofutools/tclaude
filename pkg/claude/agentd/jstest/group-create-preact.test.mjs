@@ -15,6 +15,9 @@ const groups = [{
   descr: 'alpha descr',
   default_cwd: '/alpha',
   default_context: 'alpha context',
+  attachment_url: 'https://linear.app/acme/project/alpha',
+  attachment_label: 'Alpha project',
+  attachment_label_override: 'Alpha project',
 }];
 
 function deferred() {
@@ -49,6 +52,7 @@ test('group-create model preserves compatible prefill and clears stale source-ow
     template: '', name: '', source: '', nested: false, descr: '', cwd: '',
     cwdOrigin: '', workspaceMode: 'existing', repository: '', cloneTransport: 'ssh',
     cloneDestination: '', attachRepository: true, context: '', task: '', maxMembers: '',
+    attachmentURL: '', attachmentLabel: '',
   });
 
   let draft = model.createGroupCreateDraft({
@@ -61,11 +65,14 @@ test('group-create model preserves compatible prefill and clears stale source-ow
   assert.equal(draft.cwd, '/alpha');
   assert.equal(draft.context,
     '## Mirrored group context\n\nalpha context\n\n## Template context\n\ntemplate context');
+  assert.equal(draft.attachmentURL, 'https://linear.app/acme/project/alpha');
+  assert.equal(draft.attachmentLabel, 'Alpha project');
   draft = { ...draft, nested: true };
   draft = model.selectGroupCreateSource(draft, '', { templates, groups });
   assert.equal(draft.descr, 'template descr');
   assert.equal(draft.cwd, '', 'source-owned cwd cannot leak into top-level template mode');
   assert.equal(draft.context, 'template context');
+  assert.equal(draft.attachmentURL, '');
   assert.equal(draft.nested, false);
 
   const pinned = model.createGroupCreateDraft({
@@ -75,6 +82,7 @@ test('group-create model preserves compatible prefill and clears stale source-ow
   assert.equal(pinned.cwd, '/alpha');
   assert.equal(pinned.context,
     '## Mirrored group context\n\nalpha context\n\n## Template context\n\ntemplate context');
+  assert.equal(pinned.attachmentURL, 'https://linear.app/acme/project/alpha');
   const pinnedBlank = model.selectGroupCreateTemplate(pinned, '', {
     templates, groups, parentGroup: 'alpha',
   });
@@ -99,20 +107,28 @@ test('group-create model validates and builds exact blank, template, and nested 
   const blank = model.groupCreateRequest({
     ...base, name: '  new-group ', descr: ' desc ', cwd: ' /repo ',
     context: ' context ', maxMembers: '4',
+    attachmentURL: ' https://linear.app/acme/project/alpha ',
+    attachmentLabel: ' Alpha project ',
   }, null, 'alpha');
   assert.deepEqual(blank.body, {
     name: 'new-group', parent: 'alpha', descr: 'desc', default_cwd: '/repo',
     default_context: 'context', max_members: 4,
+    attachment_url: 'https://linear.app/acme/project/alpha',
+    attachment_label: 'Alpha project',
   });
 
   const instantiated = model.groupCreateRequest({
     ...base, name: 'party', source: 'alpha', nested: true,
     descr: ' desc ', cwd: ' /repo ', context: ' context\n', task: ' ship\n',
+    attachmentURL: 'https://linear.app/acme/project/alpha',
+    attachmentLabel: 'Alpha project',
   }, templates[0]);
   assert.equal(instantiated.url, '/api/templates/builders/instantiate');
   assert.deepEqual(instantiated.body, {
     group_name: 'party', task: ' ship\n', cwd: '/repo', descr_override: 'desc',
     context_override: ' context\n', parent: 'alpha',
+    attachment_url: 'https://linear.app/acme/project/alpha',
+    attachment_label: 'Alpha project',
   });
 
   const cloned = model.groupCreateRequest({

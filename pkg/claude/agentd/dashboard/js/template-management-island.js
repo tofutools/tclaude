@@ -1107,6 +1107,10 @@ function GroupClonePreview({ source, withAgents, copyOwners }) {
       source.default_profile || 'none',
       !source.default_profile,
     )}${row(
+      '📎 attachment',
+      source.attachment_label || source.attachment_url || 'none',
+      !source.attachment_url,
+    )}${row(
       '🔑 group permissions',
       source.permissions?.length ? String(source.permissions.length) : 'none',
       !source.permissions?.length,
@@ -1615,6 +1619,8 @@ export function TemplateDeployDialog({
           group_name: groupName.trim(),
           context_override: context,
           descr_override: descr.trim(),
+          attachment_url: dropGroup.attachment_url || '',
+          attachment_label: dropGroup.attachment_label_override || '',
         };
         if (mission.trim()) payload.task = mission.trim();
         if (mode === 'subgroup') payload.parent = dropGroup.name;
@@ -1632,6 +1638,8 @@ export function TemplateDeployDialog({
         if (source) {
           payload.descr_override = descr.trim();
           payload.context_override = context;
+          payload.attachment_url = mirror?.attachment_url || '';
+          payload.attachment_label = mirror?.attachment_label_override || '';
           if (parent) payload.parent = source;
         }
         await applyWorktree(payload);

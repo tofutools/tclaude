@@ -318,6 +318,9 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     default_context: 'group lore',
     default_cwd: '/repo',
     default_profile: 'fast',
+    attachment_url: 'https://linear.app/acme/project/team',
+    attachment_label: 'Team project',
+    attachment_label_override: 'Team project',
     members: [{ name: 'lead', owner: true, online: true }],
   };
   const staleProfileGroup = {
@@ -435,6 +438,8 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
   await harness.act(() => Promise.resolve());
   assert.equal(deployed[0][1], 'deploy');
   assert.equal(deployed[0][2].group_name, 'ship-the-release');
+  assert.equal(deployed[0][2].attachment_url, 'https://linear.app/acme/project/team');
+  assert.equal(deployed[0][2].attachment_label, 'Team project');
 
   state.openDialog({
     kind: 'template-deploy',
@@ -560,6 +565,7 @@ test('deploy and group dialogs preserve native controls, collision preview, and 
     host.querySelector('#group-clone-preview').textContent,
     /settings|member agents/i,
   );
+  assert.match(host.querySelector('#group-clone-preview').textContent, /Team project/);
   state.openDialog({ kind: 'group-context', group: 'team', context: 'old' });
   await harness.act(() => Promise.resolve());
   assert.equal(host.querySelector('#group-context-text').value, 'old');

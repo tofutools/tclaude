@@ -110,6 +110,28 @@ func TestGroupAttachment_RepositoryLabel(t *testing.T) {
 	}
 }
 
+func TestGroupAttachment_SubgroupCreateCarriesParentReference(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("parent")
+
+	const refURL = "https://linear.app/acme/project/platform"
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(
+		t, http.MethodPost, "/v1/groups",
+		map[string]any{
+			"name":             "child",
+			"parent":           "parent",
+			"attachment_url":   refURL,
+			"attachment_label": "Platform project",
+		})))
+	require.Equalf(t, http.StatusCreated, rec.Code, "create subgroup body=%s", rec.Body.String())
+
+	child, err := db.GetAgentGroupByName("child")
+	require.NoError(t, err)
+	require.NotNil(t, child)
+	assert.Equal(t, refURL, child.AttachmentURL)
+	assert.Equal(t, "Platform project", child.AttachmentLabel)
+}
+
 func TestGroupAttachment_DerivesLabelAndRejectsUnsafeURL(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")

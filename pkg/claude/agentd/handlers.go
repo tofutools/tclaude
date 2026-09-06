@@ -3496,11 +3496,13 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var body struct {
-			Name           string `json:"name"`
-			Parent         string `json:"parent,omitempty"`
-			Descr          string `json:"descr,omitempty"`
-			DefaultCwd     string `json:"default_cwd,omitempty"`
-			DefaultContext string `json:"default_context,omitempty"`
+			Name            string `json:"name"`
+			Parent          string `json:"parent,omitempty"`
+			Descr           string `json:"descr,omitempty"`
+			DefaultCwd      string `json:"default_cwd,omitempty"`
+			DefaultContext  string `json:"default_context,omitempty"`
+			AttachmentURL   string `json:"attachment_url,omitempty"`
+			AttachmentLabel string `json:"attachment_label,omitempty"`
 			// DefaultProfile names the spawn profile (JOH-210) whose launch
 			// fields fill blank spawn fields for this group's agents. "" = none.
 			DefaultProfile string `json:"default_profile,omitempty"`
@@ -3559,6 +3561,11 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		groupContext, err := normalizeGroupContext(body.DefaultContext)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
+			return
+		}
+		attachmentURL, attachmentLabel, err := normalizeGroupAttachment(body.AttachmentURL, body.AttachmentLabel)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_attachment", err.Error())
 			return
 		}
 		// The default profile (JOH-210) replaces the Claude-only default_model
@@ -3620,6 +3627,12 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		if groupCwd != "" {
 			if _, err := db.SetAgentGroupDefaultCwd(body.Name, groupCwd); err != nil {
 				slog.Warn("groups create: failed to set default cwd",
+					"group", body.Name, "error", err)
+			}
+		}
+		if attachmentURL != "" {
+			if _, err := db.SetAgentGroupAttachment(body.Name, attachmentURL, attachmentLabel); err != nil {
+				slog.Warn("groups create: failed to set attachment",
 					"group", body.Name, "error", err)
 			}
 		}
