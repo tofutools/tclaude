@@ -3607,6 +3607,17 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "io", err.Error())
 			return
 		}
+		// A requested attachment is part of the create contract, not a
+		// best-effort decoration. Persist it while the group is still empty and
+		// rollback-safe, before repository cloning introduces host-side state.
+		if err := setNewGroupAttachment(body.Name, attachmentURL, attachmentLabel); err != nil {
+			if deleteErr := db.DeleteAgentGroup(body.Name); deleteErr != nil {
+				slog.Error("groups create: attachment failed and empty group rollback failed",
+					"group", body.Name, "error", deleteErr)
+			}
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
 		// The group row reserves its unique name and validates its parent before
 		// host-side cloning begins. It is still empty here, so a clone failure can
 		// safely roll it back and leave the dialog retryable without an orphaned
@@ -3627,12 +3638,6 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		if groupCwd != "" {
 			if _, err := db.SetAgentGroupDefaultCwd(body.Name, groupCwd); err != nil {
 				slog.Warn("groups create: failed to set default cwd",
-					"group", body.Name, "error", err)
-			}
-		}
-		if attachmentURL != "" {
-			if _, err := db.SetAgentGroupAttachment(body.Name, attachmentURL, attachmentLabel); err != nil {
-				slog.Warn("groups create: failed to set attachment",
 					"group", body.Name, "error", err)
 			}
 		}

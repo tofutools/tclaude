@@ -3231,6 +3231,18 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 			writeError(w, http.StatusInternalServerError, "io", "create group: "+err.Error())
 			return
 		}
+		// The attachment is part of the requested group settings. Commit it while
+		// the group is still empty so a failed or zero-row write can be rolled
+		// back cleanly before cloning a repository or spawning any agents.
+		if err := setNewGroupAttachment(spec.groupName, spec.attachmentURL, spec.attachmentLabel); err != nil {
+			if deleteErr := db.DeleteAgentGroup(spec.groupName); deleteErr != nil {
+				slog.Error("instantiate: attachment failed and empty group rollback failed",
+					"group", spec.groupName, "error", deleteErr)
+			}
+			cleanupDirWriteProofMarkers(spec.proofToken, spec.proofDirs)
+			writeError(w, http.StatusInternalServerError, "io", err.Error())
+			return
+		}
 		// Reserve the authoritative group name and validate its parent before
 		// cloning. The row has no members or settings yet, so clone failure can
 		// roll it back safely and leave the operator's dialog retryable.
@@ -3260,11 +3272,6 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 		if spec.cwd != "" {
 			if _, err := db.SetAgentGroupDefaultCwd(spec.groupName, spec.cwd); err != nil {
 				slog.Warn("instantiate: set default cwd failed", "group", spec.groupName, "error", err)
-			}
-		}
-		if spec.attachmentURL != "" {
-			if _, err := db.SetAgentGroupAttachment(spec.groupName, spec.attachmentURL, spec.attachmentLabel); err != nil {
-				slog.Warn("instantiate: set attachment failed", "group", spec.groupName, "error", err)
 			}
 		}
 		if spec.repositoryClone != nil && spec.attachRepository {
