@@ -34,6 +34,7 @@ type ImportBatch struct {
 type ImportStore interface {
 	ApplyImport(context.Context, ImportBatch) error
 	ImportReceipt(context.Context) (model.ImportReceipt, error)
+	ImportReport(context.Context) (model.ImportReport, error)
 	ImportedSourceRecords(context.Context, string) ([]model.ImportedSourceRecord, error)
 	ImportedMessageEnvelope(context.Context, model.MessageID) (model.ImportedMessageEnvelope, error)
 	ImportedAttachment(context.Context, model.AttachmentID) (model.ImportedAttachment, error)
