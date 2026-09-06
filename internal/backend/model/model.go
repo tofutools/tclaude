@@ -7,18 +7,32 @@ type Revision uint64
 type PrincipalKind string
 
 const (
-	PrincipalOperator PrincipalKind = "operator"
-	PrincipalAgent    PrincipalKind = "agent"
+	PrincipalOperator   PrincipalKind = "operator"
+	PrincipalAgent      PrincipalKind = "agent"
+	PrincipalExecution  PrincipalKind = "execution"
+	PrincipalAutomation PrincipalKind = "automation"
 )
 
 type Principal struct {
-	Kind    PrincipalKind
-	AgentID AgentID
+	Kind          PrincipalKind
+	AgentID       AgentID
+	ExecutionID   ExecutionID
+	Generation    AccessGeneration
+	AutomationRun string
+	Authority     AuthoritySubject
 }
 
 func OperatorPrincipal() Principal { return Principal{Kind: PrincipalOperator} }
 
 func AgentPrincipal(id AgentID) Principal { return Principal{Kind: PrincipalAgent, AgentID: id} }
+
+func ExecutionPrincipal(executionID ExecutionID, agentID AgentID, generation AccessGeneration) Principal {
+	subject := AuthoritySubject{Kind: AuthorityExecution, ExecutionID: executionID}
+	if agentID != "" {
+		subject = AuthoritySubject{Kind: AuthorityAgent, AgentID: agentID}
+	}
+	return Principal{Kind: PrincipalExecution, AgentID: agentID, ExecutionID: executionID, Generation: generation, Authority: subject}
+}
 
 type Agent struct {
 	ID                 AgentID
@@ -118,6 +132,7 @@ type Execution struct {
 // implementations consume it but must not reinterpret desired configuration.
 type ResolvedExecutionSpec struct {
 	ExecutionID      ExecutionID
+	Attempt          AttemptGeneration
 	AgentID          AgentID
 	ConversationID   ConversationID
 	Harness          string
