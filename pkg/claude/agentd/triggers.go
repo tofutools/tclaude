@@ -1,6 +1,7 @@
 package agentd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -663,6 +664,22 @@ type managedWorkerSource struct {
 	OwnerConv     string
 }
 
+func managedSpawnPrincipal(rule *db.TriggerRule, ownerConv string) (spawnAuthorityPrincipal, bool) {
+	if rule == nil {
+		return spawnAuthorityPrincipal{}, false
+	}
+	if rule.OperatorAuthored {
+		if rule.OwnerAgent != "" || ownerConv != "" {
+			return spawnAuthorityPrincipal{}, false
+		}
+		return spawnAuthorityPrincipal{Kind: authorityPrincipalOperator}, true
+	}
+	if rule.OwnerAgent == "" || ownerConv == "" {
+		return spawnAuthorityPrincipal{}, false
+	}
+	return spawnAuthorityPrincipal{Kind: authorityPrincipalAgent, AgentID: rule.OwnerAgent, ConvID: ownerConv}, true
+}
+
 func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnAction, event db.TriggerPREvent, now time.Time, source managedWorkerSource) (string, string, string) {
 	if spec == nil {
 		return "invalid_action", "missing spawn payload", ""
@@ -697,21 +714,33 @@ func executeManagedSpawn(rule *db.TriggerRule, index int, spec *db.TriggerSpawnA
 	// undescribed and fail closed on every firing.
 	sandboxProfileForScope := ambientSandboxProfileName(g)
 	sandboxScopePinned := false
-	if ownerConv != "" {
-		req, _ := http.NewRequest(http.MethodPost, "http://trigger.invalid", nil)
-		ctx := ActionContext{Group: g.Name, SpawnProfile: profile.Name,
-			SandboxProfile: sandboxProfileForScope, structuralGroup: g.Name}
-		allowed, authorizedSlug, _, authErr := spawnPermissionAllowsAction(req, ownerConv, ctx)
-		if authErr != nil {
-			return "io", authErr.Error(), ""
-		}
-		if !allowed {
-			return "permission_denied", fmt.Sprintf("owner lacks %s or %s for group %s and spawn profile %s", PermAgentSpawn, PermGroupsMembersSpawn, g.Name, profile.Name), ""
-		}
-		allowAnyGroup = authorizedSlug == PermAgentSpawn
-		sandboxScopePinned = scopePinsDimension(req, ownerConv, authorizedSlug,
-			ctx, ScopeDimSandboxProfile)
+	principal, principalOK := managedSpawnPrincipal(rule, ownerConv)
+	if !principalOK {
+		return "permission_denied", "owning agent identity could not be verified", ""
 	}
+	origin := spawnAuthorityOrigin{
+		Kind: spawnAuthorityOriginTrigger, RuleID: rule.ID,
+		FiringID: source.FiringID, ActionIndex: index,
+	}
+	if source.CronJobID != 0 {
+		origin = spawnAuthorityOrigin{
+			Kind: spawnAuthorityOriginCron, RuleID: rule.ID,
+			CronJobID: source.CronJobID, CronRunID: source.CronRunID, ActionIndex: index,
+		}
+	}
+	ctx := ActionContext{Group: g.Name, SpawnProfile: profile.Name,
+		SandboxProfile: sandboxProfileForScope, structuralGroup: g.Name}
+	decision, authErr := newSpawnAuthorityEvaluator().EvaluateSpawn(context.Background(), spawnAuthorityRequest{
+		Principal: principal, Origin: origin, Action: ctx,
+	}, permissionReadLegacy)
+	if authErr != nil {
+		return "io", authErr.Error(), ""
+	}
+	if decision.Outcome != spawnAuthorityAllowed {
+		return "permission_denied", fmt.Sprintf("owner lacks %s or %s for group %s and spawn profile %s", PermAgentSpawn, PermGroupsMembersSpawn, g.Name, profile.Name), ""
+	}
+	allowAnyGroup = decision.AllowAnyGroup
+	sandboxScopePinned = decision.MatchedDims[ScopeDimSandboxProfile]
 	if n, err := db.CountLiveManagedWorkers(source.RuleID, source.CronJobID, index); err != nil {
 		return "io", err.Error(), ""
 	} else if n >= spec.MaxLiveWorkers {

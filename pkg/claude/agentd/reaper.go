@@ -409,6 +409,7 @@ func enrollOnlineSession(st *session.SessionState) {
 // disagree with the terminal view — and CAS-writes "exited" on the ones
 // that died. Returns the number of sessions reaped this sweep.
 func (r *sessionReaper) tick(now time.Time) (reaped int) {
+	reconcileResumeOperations(now, true)
 	// Queue health runs first and is DB-only, so the target/msg/elapsed WARNs
 	// still emit even if the subsequent tmux sweep blocks or fails. Order
 	// within the trio matters: lease recovery first, so a row whose orphaned

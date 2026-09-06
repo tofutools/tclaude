@@ -1,6 +1,9 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -78,20 +81,38 @@ func TestPlatformV2FocusedPolicyWiring(t *testing.T) {
 	for _, step := range ci.Jobs["platform-v2-core"].Steps {
 		focusedRun += step.Run
 	}
-	for _, family := range []string{
-		"TestRequireSpawnPermission",
-		"TestCronSpawn",
-		"TestTriggerSpawn",
-		"TestObserveBackgroundWork",
-		"TestResolveBackgroundObservation",
-		"TestDashboardAndTerminalStatusShareReadOnlyBackgroundObservation",
-		"TestSessionReaper_(ProjectsFinishedShellWithoutDashboard|RefreshesLiveBackgroundLedgerBeforeStopWithoutDashboard|ExpiredBackgroundShellWithUnknownScanDoesNotEstablishIdle)",
-		"TestReconcileBackground",
-		"TestProjectSessionBackgroundLedgers",
-		"TestSetSessionStatusFromBackgroundProjection",
+	for _, family := range []struct {
+		fragment string
+		dir      string
+		prefixes []string
+	}{
+		{"TestRequireSpawnPermission", "agentd", []string{"TestRequireSpawnPermission"}},
+		{"TestSpawnAuthority", "agentd", []string{"TestSpawnAuthority"}},
+		{"TestCronSpawn", "agentd", []string{"TestCronSpawn"}},
+		{"TestTriggerSpawn", "agentd", []string{"TestTriggerSpawn"}},
+		{"TestObserveBackgroundWork", "agentd", []string{"TestObserveBackgroundWork"}},
+		{"TestResolveBackgroundObservation", "agentd", []string{"TestResolveBackgroundObservation"}},
+		{"TestDashboardAndTerminalStatusShareReadOnlyBackgroundObservation", "agentd", []string{"TestDashboardAndTerminalStatusShareReadOnlyBackgroundObservation"}},
+		{
+			"TestSessionReaper_(ProjectsFinishedShellWithoutDashboard|RefreshesLiveBackgroundLedgerBeforeStopWithoutDashboard|ExpiredBackgroundShellWithUnknownScanDoesNotEstablishIdle)",
+			"agentd",
+			[]string{
+				"TestSessionReaper_ProjectsFinishedShellWithoutDashboard",
+				"TestSessionReaper_RefreshesLiveBackgroundLedgerBeforeStopWithoutDashboard",
+				"TestSessionReaper_ExpiredBackgroundShellWithUnknownScanDoesNotEstablishIdle",
+			},
+		},
+		{"TestReconcileBackground", "session", []string{"TestReconcileBackground"}},
+		{"TestProjectSessionBackgroundLedgers", filepath.Join("common", "db"), []string{"TestProjectSessionBackgroundLedgers"}},
+		{"TestSetSessionStatusFromBackgroundProjection", filepath.Join("common", "db"), []string{"TestSetSessionStatusFromBackgroundProjection"}},
 	} {
-		if !strings.Contains(focusedRun, family) {
-			t.Errorf("ci.yml platform-v2-core does not retain the %s family", family)
+		if !strings.Contains(focusedRun, family.fragment) {
+			t.Errorf("ci.yml platform-v2-core does not retain the %s family", family.fragment)
+		}
+		for _, prefix := range family.prefixes {
+			if !testFamilyExists(t, filepath.Join(root, "pkg", "claude", family.dir), prefix) {
+				t.Errorf("ci.yml platform-v2-core names %s, but no real test has that prefix", prefix)
+			}
 		}
 	}
 	for _, packagePath := range []string{
@@ -129,6 +150,28 @@ func TestPlatformV2FocusedPolicyWiring(t *testing.T) {
 			}
 		}
 	}
+}
+
+func testFamilyExists(t *testing.T, dir, prefix string) bool {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
+	if err != nil {
+		t.Fatalf("list test files under %s: %v", dir, err)
+	}
+	fset := token.NewFileSet()
+	for _, path := range paths {
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if ok && fn.Recv == nil && strings.HasPrefix(fn.Name.Name, prefix) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 type workflowPolicy struct {

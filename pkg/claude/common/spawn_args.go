@@ -36,6 +36,17 @@ const SpawnDirWriteProofPrefix = ".tclaude-write-proof-"
 //     (handleGroupSpawn / the `agent spawn` CLI); the forked `tclaude session
 //     new` re-validates.
 type SpawnArgs struct {
+	// ExecutionID pins the intended managed resume attempt. It is accepted only
+	// by a daemon-managed child after private operation admission; it is not an
+	// authority token and direct launches must leave it empty.
+	ExecutionID string
+	// ResumeOperationID correlates a managed resume with durable operation
+	// evidence. The child must authenticate separately before consuming it.
+	ResumeOperationID string
+	// ResumeClaimFD is the inherited one-shot private child-claim descriptor.
+	// Zero means no managed operation handoff.
+	ResumeClaimFD int
+
 	// EffectiveSandbox is the frozen additive capability payload. Production
 	// serializes it to a private one-shot file before forking session new.
 	EffectiveSandbox *sandboxpolicy.Snapshot
