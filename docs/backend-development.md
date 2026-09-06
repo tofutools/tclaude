@@ -439,3 +439,13 @@ verdicts, including the requested scope, reason and expiry. An operator approves
 denies that exact request; approval cannot edit it into broader authority. The
 requesting client then retries the ordinary operation explicitly. Approval does
 not replay a failed command, and an access decision cannot complete a work stage.
+
+Message delivery commits the inbox entry before attempting a native notification.
+The daemon sends a fixed inbox notice to a currently controlled primary execution
+only when the recipient still requests notifications and the sender still has
+message authority for that recipient. It does not inject the message body into the
+terminal. A notice accepted by the native runtime is `delivered`; this is neither
+an inbox read nor work completion. Offline recipients and an unconfigured native
+operator notification channel are `unavailable`, with the message still retained.
+A crash or uncertain native result after dispatch leaves `unknown` and is never
+replayed automatically. The API exposes these outcomes on each message recipient.
