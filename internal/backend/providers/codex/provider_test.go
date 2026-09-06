@@ -53,13 +53,17 @@ func TestProviderOwnsTerminalCredentialAndRecovery(t *testing.T) {
 	argvPath := filepath.Join(root, "argv")
 	inputPath := filepath.Join(root, "input")
 	bootstrapPath := filepath.Join(root, "bootstrap")
+	nativeHome := filepath.Join(root, "native-home")
+	require.NoError(t, os.MkdirAll(nativeHome, 0o700))
+	authPath := filepath.Join(nativeHome, "auth.json")
+	require.NoError(t, os.WriteFile(authPath, []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"fixture-only"}}`), 0o600))
 	executable := filepath.Join(root, "codex-fake")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CODEX_TEST_ARGV\"\nprintf '%s\\n' \"$CODEX_HOME\" \"$TCLAUDE_BACKEND_SOCKET\" > \"$CODEX_TEST_BOOTSTRAP\"\ncat \"$TCLAUDE_BACKEND_CREDENTIAL_FILE\" >> \"$CODEX_TEST_BOOTSTRAP\"\nwhile IFS= read -r line; do printf '%s\\n' \"$line\" >> \"$CODEX_TEST_INPUT\"; done\n"
 	require.NoError(t, os.WriteFile(executable, []byte(script), 0o700))
 	t.Setenv("CODEX_TEST_ARGV", argvPath)
 	t.Setenv("CODEX_TEST_INPUT", inputPath)
 	t.Setenv("CODEX_TEST_BOOTSTRAP", bootstrapPath)
-	provider, err := New(Config{Executable: executable, PrivateRoot: root, AgentSocket: filepath.Join(root, "agent.sock")})
+	provider, err := New(Config{Executable: executable, PrivateRoot: root, NativeHome: nativeHome, AgentSocket: filepath.Join(root, "agent.sock")})
 	require.NoError(t, err)
 	expires := time.Now().Add(time.Hour)
 	request := ports.PreparationRequest{Intent: ports.StartFresh, Spec: model.ResolvedExecutionSpec{ExecutionID: "execution_codex", Attempt: 3, Harness: Name, Model: "test-model", WorkingDirectory: root, Approval: model.ApprovalAutomatic, Sandbox: model.SandboxUnconfined}, ActionCredential: &ports.ActionCredentialMaterial{ExecutionID: "execution_codex", Generation: 1, DeliveryID: "delivery", Secret: []byte("codex-secret"), ExpiresAt: expires}}
@@ -89,6 +93,9 @@ func TestProviderOwnsTerminalCredentialAndRecovery(t *testing.T) {
 		return readErr == nil && strings.Contains(string(raw), "literal $(touch nope); `false`")
 	}, time.Second, 10*time.Millisecond)
 	require.NoFileExists(t, filepath.Join(root, "nope"))
+	auth, err := os.ReadFile(authPath)
+	require.NoError(t, err)
+	require.Contains(t, string(auth), "fixture-only", "provider-owned native login resource remains native-managed")
 	access := &model.ExecutionAccessBinding{ExecutionID: request.Spec.ExecutionID, Generation: 1, DeliveryID: "delivery", State: model.ExecutionAccessSuspended, ExpiresAt: expires}
 	recovered, err := provider.Recover(context.Background(), ports.RecoveryRequest{ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: released.Evidence, Attempt: request.Spec.Attempt, Access: access})
 	require.NoError(t, err)

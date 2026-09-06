@@ -13,9 +13,9 @@ import (
 
 func TestHistoryDiscoversReadsAndRevisionFencesLocalSession(t *testing.T) {
 	root := t.TempDir()
-	provider, err := New(Config{Executable: os.Args[0], PrivateRoot: root})
-	require.NoError(t, err)
 	stateRoot := filepath.Join(root, "states", "state-one")
+	provider, err := New(Config{Executable: os.Args[0], PrivateRoot: root, NativeHome: stateRoot})
+	require.NoError(t, err)
 	sessionID := "00000000-0000-4000-8000-000000000001"
 	dir := filepath.Join(stateRoot, "session-state", sessionID)
 	require.NoError(t, os.MkdirAll(dir, 0o700))
