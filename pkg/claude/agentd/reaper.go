@@ -211,8 +211,9 @@ func defaultReaperIdleNotify(st *session.SessionState, prevStatus string) {
 	notify.OnStateTransition(st.ID, st.ConvID, prevStatus, session.StatusIdle, st.Cwd, agent.FreshTitle(st.ConvID), st.Harness)
 }
 
-// reconcileBackgroundIdle projects the live activity ledgers onto the stored
-// idle status. Hooks provide the fast path, but their stream is deliberately
+// reconcileBackgroundIdle maintains live activity ledgers for every online
+// session, then projects them onto the stored idle status when the main agent
+// is idle. Hooks provide the fast path, but their stream is deliberately
 // conservative and lossy: SubagentStop may be absent, and background shells
 // have no exit hook at all. The daemon can use TTL-filtered sub-agent evidence
 // and the descendant-process shell reconcile to close both gaps.
@@ -222,10 +223,6 @@ func defaultReaperIdleNotify(st *session.SessionState, prevStatus string) {
 // row for idleNotificationStablePeriod. That makes the eventual "Idle" banner
 // a stable observation rather than a momentary gap between hooks.
 func (r *sessionReaper) reconcileBackgroundIdle(st *session.SessionState, now time.Time) {
-	if st.Status != session.StatusIdle && st.Status != session.StatusMainAgentIdle {
-		delete(r.pendingIdle, st.ID)
-		return
-	}
 	row, err := db.LoadSession(st.ID)
 	if err != nil || row == nil {
 		if err != nil {
@@ -246,6 +243,14 @@ func (r *sessionReaper) reconcileBackgroundIdle(st *session.SessionState, now ti
 		if !projection.Current {
 			return
 		}
+	}
+	// Ledger maintenance is independent of idle-notification eligibility. A
+	// background process can remain live throughout a long working or awaiting
+	// turn, and its durable sighting must not expire before the later Stop hook
+	// consults the ledger. Never interpret those statuses as idle here.
+	if st.Status != session.StatusIdle && st.Status != session.StatusMainAgentIdle {
+		delete(r.pendingIdle, st.ID)
+		return
 	}
 	active := subagents > 0 || background.Counts.any()
 
