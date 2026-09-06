@@ -282,6 +282,7 @@ const (
 // attributed input to settlement, never an outcome by itself.
 type WorkEvidence struct {
 	ID               WorkEvidenceID
+	RequestID        RequestID
 	WorkRunID        WorkRunID
 	Step             WorkStep
 	Attempt          uint64
@@ -304,6 +305,7 @@ const (
 
 type WorkDecision struct {
 	WorkRunID WorkRunID
+	RequestID RequestID
 	Step      WorkStep
 	Attempt   uint64
 	Decision  WorkDecisionKind
