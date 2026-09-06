@@ -169,6 +169,45 @@ func TestStandaloneLaunchDoesNotManufactureAgent(t *testing.T) {
 	require.Len(t, snapshot.Executions, 1)
 }
 
+func TestResetDropsPriorNativeContinuationEvidence(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	provider := newFakeProvider()
+	provider.runtime.omitNativeOnChange = true
+	service := testService(store, provider)
+	agent := createAgent(t, ctx, service, model.OperatorPrincipal(), "agent_reset")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(model.OperatorPrincipal(), "request_reset_launch"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	changed, err := service.ChangeContext(ctx, app.ChangeContextRequest{RequestContext: effect(model.OperatorPrincipal(), "request_reset"), ExecutionID: launched.Execution.ID, Intent: ports.ContextReset, ExpectedConversationID: launched.Execution.ConversationID, ExpectedAssociationRevision: 1})
+	require.NoError(t, err)
+	persisted, err := store.Execution(ctx, changed.Execution.ID)
+	require.NoError(t, err)
+	require.Nil(t, persisted.NativeConversation)
+}
+
+func TestLateInteractionCannotResurrectExitedExecution(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	provider := newFakeProvider()
+	service := testService(store, provider)
+	agent := createAgent(t, ctx, service, model.OperatorPrincipal(), "agent_ordering")
+	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(model.OperatorPrincipal(), "request_order_launch"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}})
+	require.NoError(t, err)
+	provider.runtime.onInteract = func() {
+		_, stopErr := service.Stop(ctx, app.StopRequest{RequestContext: effect(model.OperatorPrincipal(), "request_nested_stop"), ExecutionID: launched.Execution.ID})
+		require.NoError(t, stopErr)
+	}
+	_, err = service.Interact(ctx, app.InteractRequest{RequestContext: effect(model.OperatorPrincipal(), "request_late_interact"), ExecutionID: launched.Execution.ID, Text: "hello"})
+	require.NoError(t, err)
+	persisted, err := store.Execution(ctx, launched.Execution.ID)
+	require.NoError(t, err)
+	require.Equal(t, model.ExecutionExited, persisted.State)
+}
+
 func TestContextChangeAndResumeUseStoredNativeEvidence(t *testing.T) {
 	ctx := context.Background()
 	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "replacement.db"))
@@ -183,6 +222,9 @@ func TestContextChangeAndResumeUseStoredNativeEvidence(t *testing.T) {
 	changed, err := service.ChangeContext(ctx, app.ChangeContextRequest{RequestContext: effect(model.OperatorPrincipal(), "request_context_change"), ExecutionID: launched.Execution.ID, Intent: ports.ContextClear, ExpectedConversationID: oldConversation, ExpectedAssociationRevision: 1})
 	require.NoError(t, err)
 	require.NotEqual(t, oldConversation, changed.Execution.ConversationID)
+	repeated, err := service.ChangeContext(ctx, app.ChangeContextRequest{RequestContext: effect(model.OperatorPrincipal(), "request_context_change"), ExecutionID: launched.Execution.ID, Intent: ports.ContextClear, ExpectedConversationID: oldConversation, ExpectedAssociationRevision: 1})
+	require.NoError(t, err)
+	require.True(t, repeated.Repeated)
 	_, err = service.ChangeContext(ctx, app.ChangeContextRequest{RequestContext: effect(model.OperatorPrincipal(), "request_stale_context"), ExecutionID: launched.Execution.ID, Intent: ports.ContextClear, ExpectedConversationID: oldConversation, ExpectedAssociationRevision: 1})
 	require.ErrorIs(t, err, app.ErrConflict)
 	require.Equal(t, 1, provider.runtime.contextChanges)
@@ -293,6 +335,8 @@ type fakeRuntime struct {
 	native                                    model.NativeConversationEvidence
 	interactions, attachments, contextChanges int
 	stopped                                   bool
+	omitNativeOnChange                        bool
+	onInteract                                func()
 }
 
 func (r *fakeRuntime) ExecutionID() model.ExecutionID { return r.id }
@@ -304,6 +348,9 @@ func (r *fakeRuntime) Observe(context.Context) (ports.Observation, error) {
 }
 func (r *fakeRuntime) Interact(context.Context, ports.Interaction) (ports.InteractionResult, error) {
 	r.interactions++
+	if r.onInteract != nil {
+		r.onInteract()
+	}
 	return ports.InteractionResult{Disposition: ports.EffectAccepted, Evidence: r.evidence}, nil
 }
 func (r *fakeRuntime) Attach(context.Context, ports.AttachmentRequest) (ports.AttachmentResult, error) {
@@ -312,6 +359,9 @@ func (r *fakeRuntime) Attach(context.Context, ports.AttachmentRequest) (ports.At
 }
 func (r *fakeRuntime) ChangeContext(context.Context, ports.ContextChange) (ports.ContextChangeResult, error) {
 	r.contextChanges++
+	if r.omitNativeOnChange {
+		return ports.ContextChangeResult{Disposition: ports.EffectAccepted, Evidence: r.evidence}, nil
+	}
 	r.native = model.NativeConversationEvidence{Namespace: "fake", Reference: "native_rotated", ObservedAt: time.Now()}
 	return ports.ContextChangeResult{Disposition: ports.EffectAccepted, NativeConversation: &r.native, Evidence: r.evidence}, nil
 }
