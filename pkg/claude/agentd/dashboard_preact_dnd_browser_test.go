@@ -251,7 +251,7 @@ return (async function(){
   Object.defineProperty(outsideEnd, 'dataTransfer', {value:{dropEffect:'copy'}});
   source.dispatchEvent(outsideEnd);
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  if (document.querySelector('#group-clone-modal.show')) throw new Error('outside copy dragend consumed a stale clone plan');
+  if (document.querySelector('#group-create-modal.show')) throw new Error('outside copy dragend consumed a stale clone plan');
 
   fire(source, 'dragstart');
   fire(target, 'dragover', {metaKey:true, clientX:rect.left + rect.width / 2, clientY:rect.top + rect.height / 2});
@@ -260,7 +260,7 @@ return (async function(){
   Object.defineProperty(cancelEnd, 'dataTransfer', {value:{dropEffect:'none'}});
   source.dispatchEvent(cancelEnd);
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  if (document.querySelector('#group-clone-modal.show')) throw new Error('Escape dragend consumed a cancelled clone plan');
+  if (document.querySelector('#group-create-modal.show')) throw new Error('Escape dragend consumed a cancelled clone plan');
 
   var platformDescriptor = Object.getOwnPropertyDescriptor(navigator, 'platform');
   var userAgentDescriptor = Object.getOwnPropertyDescriptor(navigator, 'userAgent');
@@ -275,7 +275,7 @@ return (async function(){
   Object.defineProperty(edgeEnd, 'dataTransfer', {value:{dropEffect:'none'}});
   source.dispatchEvent(edgeEnd);
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  if (document.querySelector('#group-clone-modal.show')) throw new Error('macOS Edge zero-event bypassed ordinary exit cleanup');
+  if (document.querySelector('#group-create-modal.show')) throw new Error('macOS Edge zero-event bypassed ordinary exit cleanup');
 
   Object.defineProperty(navigator, 'userAgent', {value:originalUserAgent, configurable:true});
   fire(source, 'dragstart');
@@ -284,17 +284,17 @@ return (async function(){
   // used by this smoke must keep the ordinary outside-document behavior above.
   fire(target, 'dragleave', {relatedTarget:null, clientX:0, clientY:0, screenX:0, screenY:0});
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  if (!document.querySelector('#group-clone-modal.show')) throw new Error('macOS zero-event did not immediately finish the green clone plan');
+  if (!document.querySelector('#group-create-modal.show')) throw new Error('macOS zero-event did not immediately finish the green clone plan');
   var dragend = new DragEvent('dragend', {bubbles:true, cancelable:false, dataTransfer:transfer});
   Object.defineProperty(dragend, 'dataTransfer', {value:{dropEffect:'none'}});
   source.dispatchEvent(dragend);
   await new Promise(function(resolve){ requestAnimationFrame(function(){ requestAnimationFrame(resolve); }); });
-  if (document.querySelectorAll('#group-clone-modal.show').length !== 1) throw new Error('delayed dragend duplicated the clone dialog');
+  if (document.querySelectorAll('#group-create-modal.show').length !== 1) throw new Error('delayed dragend duplicated the clone dialog');
   if (platformDescriptor) Object.defineProperty(navigator, 'platform', platformDescriptor);
   else delete navigator.platform;
   if (userAgentDescriptor) Object.defineProperty(navigator, 'userAgent', userAgentDescriptor);
   else delete navigator.userAgent;
-  document.querySelector('#group-clone-cancel').click();
+  document.querySelector('#group-create-cancel').click();
 })();`,
 	}
 }

@@ -4191,6 +4191,12 @@ body.show-group-description .group-descr { display: inline; }
    default, restored under the same opt-in body class. */
 .group-create-descr-row { display: none; }
 body.show-group-description .group-create-descr-row { display: flex; }
+.group-create-origin-value {
+  flex: 1; min-width: 0; padding: 6px 8px;
+  border: 1px solid #2a3340; border-radius: 4px;
+  background: #0d1117; color: #c9d1d9;
+}
+.group-create-source-summary { margin: 0; }
 .group-create-workspace {
   margin: 2px 0; padding: 10px 10px 9px; min-width: 0;
   border: 1px solid #2a3340; border-radius: 6px; background: #12171e;
@@ -6193,10 +6199,9 @@ button.perm-scope-twisty:hover { color: #c9d1d9; }
    recolor them (an inline style would always win). */
 .modal-hint { margin: 4px 0; font-size: 12px; color: #7d8590; }
 .modal-hint-small { margin: 4px 0 0 0; font-size: 11px; }
-/* Clone-group modal: a compact preview of the source settings the clone
-   will carry (directory, descr, context, profile, cap, notify, owners,
-   member agents). Populated by openGroupCloneModal in modal-templates.js;
-   the member-agents row updates live with the "clone agents" checkbox. */
+/* The shared group-creation modal uses this compact source summary for both
+   inherited subgroup fields and exact group clones. Clone-only rows update
+   live with the member and owner checkboxes. */
 .group-clone-preview {
   margin-top: 6px;
   border: 1px solid #2a3340; border-radius: 4px;
@@ -12059,6 +12064,42 @@ body.wizard #group-create-modal .template-preview .tp-meta { color: #b39ddb; }
 body.wizard #group-create-modal .template-preview .tp-owner { color: #d9b45a; }
 body.wizard #group-create-modal .template-preview .tp-empty { color: #b39ddb; }
 body.wizard #group-create-modal .template-preview .tp-badges .tc-count { color: #b39ddb; }
+body.wizard #group-create-modal .group-create-origin-value,
+body.wizard #group-create-modal .group-clone-preview {
+  background: #140f28; border-color: rgba(122, 93, 176, 0.4); color: #e7d9f5;
+}
+body.wizard #group-create-modal .group-clone-preview .gcp-title { color: #f3e6c0; }
+body.wizard #group-create-modal .group-clone-preview .gcp-key { color: #b39ddb; }
+body.wizard #group-create-modal .group-clone-preview .gcp-val { color: #e7d9f5; }
+body.wizard #group-create-modal .group-clone-preview .gcp-val.muted { color: #8a7fa8; }
+body.wizard #group-create-modal.group-create-clone-mode #group-create-clone-submit {
+  font-size: 0;
+  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
+  color: #f3e6c0;
+  border: 2px solid #d9b45a;
+  border-radius: 6px;
+  padding: 6px 16px;
+  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
+  letter-spacing: 1px;
+  font-weight: 700;
+  position: relative;
+  transition: transform 0.08s ease;
+}
+body.wizard #group-create-modal.group-create-clone-mode #group-create-clone-submit::before {
+  content: "⧉ Mirror it!";
+  font-size: 14px;
+  letter-spacing: 1px;
+}
+body.wizard #group-create-modal.group-create-clone-mode #group-create-clone-submit:hover {
+  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
+  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
+}
+body.wizard #group-create-modal.group-create-clone-mode #group-create-clone-submit:active {
+  transform: translateY(2px);
+  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
+}
+body.wizard #group-create-modal.group-create-clone-mode #group-create-clone-submit:disabled { opacity: 0.7; }
+body.wizard #group-create-modal.group-create-clone-mode #group-create-clone-submit:disabled::before { content: "⧉ Mirroring…"; }
 
 /* ─── Wizard reply dialog — "✒ Answer the familiar" ─────────────────
    The Human folder's reply dialog re-skinned arcane: answering a familiar's
@@ -14761,78 +14802,6 @@ body.wizard #group-context-modal #group-context-submit:active {
 }
 body.wizard #group-context-modal #group-context-submit:disabled { opacity: 0.7; }
 body.wizard #group-context-modal #group-context-submit:disabled::before { content: "📜 Inscribing…"; }
-
-/* ─── Wizard mirror dialog — "⧉ Mirror the party" ────────────────────
-   Group clone: conjure a mirror-image of a party (optionally with its
-   familiars). Scoped to #group-clone-modal. */
-body.wizard #group-clone-modal .cron-create-modal {
-  background: linear-gradient(180deg, #1c1436 0%, #140f28 100%);
-  border: 1px solid #7a5db0;
-  box-shadow: 0 0 32px rgba(122, 93, 176, 0.35);
-  color: #e7d9f5;
-}
-body.wizard #group-clone-modal .cron-create-modal h3 {
-  color: #f3e6c0;
-  font-family: Papyrus, Luminari, 'Palatino Linotype', 'Book Antiqua', Palatino, serif;
-  letter-spacing: 1px;
-  text-shadow: 0 0 8px rgba(169, 123, 214, 0.6), 0 1px 0 #1e1640;
-}
-body.wizard #group-clone-modal .cron-create-label,
-body.wizard #group-clone-modal .modal-hint { color: #b39ddb; }
-body.wizard #group-clone-modal .cron-create-enabled { color: #e7d9f5; }
-body.wizard #group-clone-modal .modal-meta {
-  background: #140f28;
-  border-left-color: #d9b45a;
-  color: #b39ddb;
-}
-body.wizard #group-clone-modal .cron-create-row input[type=text] {
-  background: #140f28;
-  border-color: rgba(122, 93, 176, 0.5);
-  color: #f3e6c0;
-}
-body.wizard #group-clone-modal .cron-create-row input[type=text]:focus { border-color: #a97bd6; }
-/* The "clone will carry" preview: violet void, gilt title, violet keys. */
-body.wizard #group-clone-modal .group-clone-preview {
-  background: #140f28; border-color: rgba(122, 93, 176, 0.4);
-}
-body.wizard #group-clone-modal .group-clone-preview .gcp-title { color: #f3e6c0; }
-body.wizard #group-clone-modal .group-clone-preview .gcp-key { color: #b39ddb; }
-body.wizard #group-clone-modal .group-clone-preview .gcp-val { color: #e7d9f5; }
-body.wizard #group-clone-modal .group-clone-preview .gcp-val.muted { color: #8a7fa8; }
-body.wizard #group-clone-modal button:not(#group-clone-submit) {
-  background: #241b3d; border: 1px solid #d9b45a; color: #f3e6c0;
-}
-body.wizard #group-clone-modal button:not(#group-clone-submit):hover { background: #3a2a63; }
-body.wizard #group-clone-modal .modal-buttons { border-top-color: rgba(122, 93, 176, 0.4); }
-/* Clone group = ⧉ Mirror it! — gilded lever; in-flight "⧉ Mirroring…". */
-body.wizard #group-clone-modal #group-clone-submit {
-  font-size: 0;
-  background: linear-gradient(180deg, #7a5db0 0%, #3a2a63 100%);
-  color: #f3e6c0;
-  border: 2px solid #d9b45a;
-  border-radius: 6px;
-  padding: 6px 16px;
-  box-shadow: 0 4px 0 #1e1640, 0 0 8px rgba(169, 123, 214, 0.5);
-  letter-spacing: 1px;
-  font-weight: 700;
-  position: relative;
-  transition: transform 0.08s ease;
-}
-body.wizard #group-clone-modal #group-clone-submit::before {
-  content: "⧉ Mirror it!";
-  font-size: 14px;
-  letter-spacing: 1px;
-}
-body.wizard #group-clone-modal #group-clone-submit:hover {
-  background: linear-gradient(180deg, #8f6fca 0%, #4a367d 100%);
-  box-shadow: 0 4px 0 #1e1640, 0 0 14px rgba(169, 123, 214, 0.8);
-}
-body.wizard #group-clone-modal #group-clone-submit:active {
-  transform: translateY(2px);
-  box-shadow: 0 2px 0 #1e1640, 0 0 6px rgba(169, 123, 214, 0.4);
-}
-body.wizard #group-clone-modal #group-clone-submit:disabled { opacity: 0.7; }
-body.wizard #group-clone-modal #group-clone-submit:disabled::before { content: "⧉ Mirroring…"; }
 
 /* ─── Wizard permissions editor — binding a familiar's powers ────────
    The 🧙 re-skin of the permanent-permissions tri-state editor
