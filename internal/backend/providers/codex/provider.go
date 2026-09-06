@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
+	"github.com/tofutools/tclaude/internal/backend/providers/nativeguidance"
 )
 
 const (
@@ -82,34 +82,43 @@ func New(config Config) (*Provider, error) {
 	}, nil
 }
 
-func (*Provider) Name() string                                        { return Name }
+func (*Provider) Name() string { return Name }
+func (*Provider) Capabilities() ports.ProviderCapabilities {
+	return ports.ProviderCapabilities{PreparedInitialInput: true, NativeGuidance: []ports.NativeGuidanceCapability{{EventKind: "session_start", Timing: model.StandingOrderSameContinuation}, {EventKind: "user_prompt", Timing: model.StandingOrderSameContinuation}}}
+}
 func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 func (p *Provider) History() ports.HistoryReader                      { return historyReader{provider: p} }
 
 type evidence struct {
-	ExecutionID      string                         `json:"execution_id"`
-	NativeID         string                         `json:"native_id"`
-	Intent           ports.StartIntent              `json:"intent"`
-	StateRoot        string                         `json:"state_root"`
-	RemoveOnAbort    bool                           `json:"remove_on_abort,omitempty"`
-	ContextReady     bool                           `json:"context_ready,omitempty"`
-	ProviderOrder    string                         `json:"provider_order,omitempty"`
-	Prepared         *host.PreparedTerminalIdentity `json:"prepared,omitempty"`
-	Terminal         *host.TerminalIdentity         `json:"terminal,omitempty"`
-	Access           *ports.ActionCredentialReceipt `json:"access,omitempty"`
-	ObservationSpool string                         `json:"observation_spool"`
+	ExecutionID      string                           `json:"execution_id"`
+	NativeID         string                           `json:"native_id"`
+	Intent           ports.StartIntent                `json:"intent"`
+	StateRoot        string                           `json:"state_root"`
+	RemoveOnAbort    bool                             `json:"remove_on_abort,omitempty"`
+	ContextReady     bool                             `json:"context_ready,omitempty"`
+	ProviderOrder    string                           `json:"provider_order,omitempty"`
+	Prepared         *host.PreparedTerminalIdentity   `json:"prepared,omitempty"`
+	Terminal         *host.TerminalIdentity           `json:"terminal,omitempty"`
+	Access           *ports.ActionCredentialReceipt   `json:"access,omitempty"`
+	ObservationSpool string                           `json:"observation_spool"`
+	Callback         *nativeguidance.CallbackEvidence `json:"native_callback,omitempty"`
 }
 
 type prepared struct {
-	provider      *Provider
-	request       ports.PreparationRequest
-	nativeID      string
-	stateRoot     string
-	removeOnAbort bool
-	terminal      *host.PreparedTerminal
-	spool         *host.ObservationSpool
-	access        *ports.ActionCredentialReceipt
-	description   ports.PreparedDescription
+	provider        *Provider
+	request         ports.PreparationRequest
+	nativeID        string
+	stateRoot       string
+	removeOnAbort   bool
+	terminal        *host.PreparedTerminal
+	spool           *host.ObservationSpool
+	access          *ports.ActionCredentialReceipt
+	callback        *nativeguidance.CallbackResource
+	guidance        *nativeguidance.Runtime
+	handler         *nativeguidance.CallbackHandler
+	normalizer      *codexNativeNormalizer
+	callbackCommand string
+	description     ports.PreparedDescription
 }
 
 func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest) (ports.PreparedAttempt, error) {
@@ -128,16 +137,61 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if request.Spec.Sandbox != model.SandboxReadOnly && request.Spec.Sandbox != model.SandboxWorkspaceWrite && request.Spec.Sandbox != model.SandboxUnconfined {
 		return nil, fmt.Errorf("codex provider does not support sandbox mode %q", request.Spec.Sandbox)
 	}
+	initialInput, err := preparedInitialInput(request.InitialInput)
+	if err != nil {
+		return nil, err
+	}
 	nativeID, stateRoot, removeOnAbort, err := p.prepareHistory(request)
 	if err != nil {
 		return nil, err
 	}
+	var callback *nativeguidance.CallbackResource
 	cleanupState := func() {
+		if callback != nil {
+			_ = callback.Remove(context.Background())
+		}
 		if removeOnAbort {
 			_ = os.RemoveAll(stateRoot)
 		}
 	}
-	if err := p.prepareStateRoot(stateRoot, request.Spec.WorkingDirectory); err != nil {
+	var guidance *nativeguidance.Runtime
+	var handler *nativeguidance.CallbackHandler
+	var normalizer *codexNativeNormalizer
+	var callbackCommand string
+	if request.NativeGuidance != nil {
+		if request.CallbackIngress == nil {
+			cleanupState()
+			return nil, fmt.Errorf("codex native guidance requires callback ingress")
+		}
+		callback, err = nativeguidance.PrepareCallback(filepath.Join(p.privateRoot, "native-callbacks"))
+		if err == nil {
+			normalizer = newCodexNativeNormalizer(nativeID)
+			guidance = &nativeguidance.Runtime{Evaluator: request.NativeGuidance, Kinds: map[string]struct{}{"session_start": {}, "user_prompt": {}}, Correlation: normalizer.Matches}
+			handler = &nativeguidance.CallbackHandler{Normalize: normalizer.Normalize, Encode: encodeCodexGuidance}
+			err = callback.Register(ctx, request.CallbackIngress, request.Spec.ExecutionID, request.Spec.Attempt, handler)
+		}
+		if err == nil {
+			var client string
+			client, err = exec.LookPath("curl")
+			if err == nil {
+				callbackCommand, err = callback.Command(client)
+				if err == nil {
+					callbackCommand, err = callback.WriteCommandScript(callbackCommand)
+				}
+			}
+		}
+		if err != nil {
+			if callback != nil {
+				_ = callback.Remove(context.Background())
+			}
+			cleanupState()
+			return nil, err
+		}
+	}
+	if err := p.prepareStateRoot(stateRoot, callbackCommand); err != nil {
+		if callback != nil {
+			_ = callback.Remove(context.Background())
+		}
 		cleanupState()
 		return nil, err
 	}
@@ -176,21 +230,29 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		return nil, err
 	}
 	preparedIdentity := terminal.Identity()
-	initial, err := encodeEvidence(evidence{ExecutionID: string(request.Spec.ExecutionID), NativeID: nativeID, Intent: request.Intent, StateRoot: stateRoot, RemoveOnAbort: removeOnAbort, Prepared: &preparedIdentity, Access: access, ObservationSpool: spool.Directory()})
+	var callbackEvidence *nativeguidance.CallbackEvidence
+	if callback != nil {
+		value := callback.Evidence()
+		callbackEvidence = &value
+	}
+	initial, err := encodeEvidence(evidence{ExecutionID: string(request.Spec.ExecutionID), NativeID: nativeID, Intent: request.Intent, StateRoot: stateRoot, RemoveOnAbort: removeOnAbort, Prepared: &preparedIdentity, Access: access, ObservationSpool: spool.Directory(), Callback: callbackEvidence})
 	if err != nil {
 		_ = terminal.Abort()
 		_ = spool.Remove()
+		if callback != nil {
+			_ = callback.Remove(context.Background())
+		}
 		cleanupState()
 		if access != nil {
 			_ = p.credentials.RemoveActionCredential(context.Background(), *access)
 		}
 		return nil, err
 	}
-	return &prepared{provider: p, request: request, nativeID: nativeID, stateRoot: stateRoot, removeOnAbort: removeOnAbort, terminal: terminal, spool: spool, access: access,
+	return &prepared{provider: p, request: request, nativeID: nativeID, stateRoot: stateRoot, removeOnAbort: removeOnAbort, terminal: terminal, spool: spool, access: access, callback: callback, guidance: guidance, handler: handler, normalizer: normalizer, callbackCommand: callbackCommand,
 		description: ports.PreparedDescription{ExecutionID: request.Spec.ExecutionID, Attempt: request.Spec.Attempt, Topology: ports.TopologyTerminalAuthoritative,
 			Requirements:    ports.RuntimeRequirements{Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory, PrivateStorage: true, Terminal: &ports.TerminalRequirement{Interactive: true}, Policy: ports.PolicyRequirements{SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxReadOnly, model.SandboxWorkspaceWrite, model.SandboxUnconfined}}},
 			EffectivePolicy: ports.EffectivePolicy{Approval: request.Spec.Approval, Sandbox: request.Spec.Sandbox, ApprovalEnforced: true, SandboxEnforced: true},
-			Resources:       []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: terminal.ResourceKey()}, {Kind: ports.ResourceProcess, Key: stateRoot}}, Evidence: initial, AccessDelivery: access}}, nil
+			Resources:       []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: terminal.ResourceKey()}, {Kind: ports.ResourceProcess, Key: stateRoot}}, Evidence: initial, AccessDelivery: access, InitialInput: initialInput}}, nil
 }
 
 func (p *Provider) prepareHistory(request ports.PreparationRequest) (string, string, bool, error) {
@@ -243,7 +305,20 @@ func (p *Provider) prepareStateRoot(root, _ string) error {
 	if err := os.Chmod(hookScript, 0o700); err != nil {
 		return err
 	}
-	hooks := map[string]any{"hooks": map[string]any{"SessionStart": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": hookScript}}}}}}
+	callbackDispatcher := filepath.Join(root, "hooks", "tclaude-native-callback")
+	if err := host.WriteProtectedFile(callbackDispatcher, []byte("#!/bin/sh\n"+codexCallbackDispatchCommand+"\n")); err != nil {
+		return err
+	}
+	if err := os.Chmod(callbackDispatcher, 0o700); err != nil {
+		return err
+	}
+	callback := map[string]any{"type": "command", "command": callbackDispatcher}
+	sessionHooks := []any{map[string]any{"type": "command", "command": hookScript}, callback}
+	hookGroups := map[string]any{
+		"SessionStart":     []any{map[string]any{"hooks": sessionHooks}},
+		"UserPromptSubmit": []any{map[string]any{"hooks": []any{callback}}},
+	}
+	hooks := map[string]any{"hooks": hookGroups}
 	raw, err := json.Marshal(hooks)
 	if err != nil {
 		return err
@@ -258,6 +333,9 @@ func (p *prepared) Describe() ports.PreparedDescription { return p.description }
 func (p *prepared) Abort(ctx context.Context) error {
 	err := p.terminal.Abort()
 	err = errors.Join(err, p.spool.Remove())
+	if p.callback != nil {
+		err = errors.Join(err, p.callback.Remove(ctx))
+	}
 	if p.access != nil {
 		err = errors.Join(err, p.provider.credentials.RemoveActionCredential(ctx, *p.access))
 	}
@@ -269,6 +347,12 @@ func (p *prepared) Abort(ctx context.Context) error {
 func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (ports.ReleaseResult, error) {
 	if permit == nil || permit.ExecutionID() != p.request.Spec.ExecutionID {
 		return ports.ReleaseResult{}, fmt.Errorf("release permit does not match execution")
+	}
+	if p.guidance != nil {
+		p.guidance.Evidence = func() (model.ProviderEvidence, error) { return p.description.Evidence, nil }
+		if err := p.handler.Bind(p.guidance); err != nil {
+			return ports.ReleaseResult{}, err
+		}
 	}
 	if err := permit.Consume(ctx); err != nil {
 		return ports.ReleaseResult{}, fmt.Errorf("consume release permit: %w", err)
@@ -286,6 +370,9 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 			return ports.ReleaseResult{}, forkErr
 		}
 		p.nativeID = forkedID
+		if p.normalizer != nil {
+			p.normalizer.Set(forkedID)
+		}
 	}
 	terminal, err := p.terminal.Release(host.ProcessSpec{Executable: p.provider.executable, Args: p.argv(), Directory: p.request.Spec.WorkingDirectory, Env: p.runtimeEnvironment()})
 	if err != nil {
@@ -295,6 +382,9 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 			return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: r, Evidence: evidence}, err
 		}
 		_ = p.spool.Remove()
+		if p.callback != nil {
+			_ = p.callback.Remove(context.Background())
+		}
 		if p.access != nil {
 			_ = p.provider.credentials.RemoveActionCredential(context.Background(), *p.access)
 		}
@@ -324,17 +414,33 @@ func (p *prepared) argv() []string {
 	if p.request.Spec.Model != "" {
 		args = append(args, "--model", p.request.Spec.Model)
 	}
+	if p.request.InitialInput != nil {
+		args = append(args, p.request.InitialInput.Body)
+	}
 	return args
 }
+
+func preparedInitialInput(input *ports.PreparedInitialInput) (*ports.PreparedInitialInputDescription, error) {
+	if input == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(input.Body) == "" || strings.TrimSpace(input.Correlation) == "" {
+		return nil, fmt.Errorf("codex prepared initial input requires body and correlation")
+	}
+	return &ports.PreparedInitialInputDescription{Correlation: input.Correlation, Supported: true}, nil
+}
 func (p *prepared) runtimeEnvironment() []string {
-	result := []string{"CODEX_HOME=" + p.stateRoot, "TCLAUDE_OBSERVATION_SPOOL=" + p.spool.Directory(), "TCLAUDE_BACKEND_CREDENTIAL_FILE=", "TCLAUDE_BACKEND_SOCKET="}
+	result := []string{"CODEX_HOME=" + p.stateRoot, "TCLAUDE_OBSERVATION_SPOOL=" + p.spool.Directory(), "TCLAUDE_BACKEND_CREDENTIAL_FILE=", "TCLAUDE_BACKEND_SOCKET=", "TCLAUDE_NATIVE_CALLBACK_SCRIPT="}
 	if p.access != nil {
 		result = append(result, "TCLAUDE_BACKEND_CREDENTIAL_FILE="+p.access.Resource, "TCLAUDE_BACKEND_SOCKET="+p.provider.agentSocket)
+	}
+	if p.callbackCommand != "" {
+		result = append(result, "TCLAUDE_NATIVE_CALLBACK_SCRIPT="+p.callbackCommand)
 	}
 	return result
 }
 func (p *prepared) runtime(t *host.Terminal) *Runtime {
-	return &Runtime{provider: p.provider, executionID: p.request.Spec.ExecutionID, attempt: p.request.Spec.Attempt, terminal: t, nativeID: p.nativeID, intent: p.request.Intent, stateRoot: p.stateRoot, observations: p.request.Observations, access: p.access, spool: p.spool}
+	return &Runtime{provider: p.provider, executionID: p.request.Spec.ExecutionID, attempt: p.request.Spec.Attempt, terminal: t, nativeID: p.nativeID, intent: p.request.Intent, stateRoot: p.stateRoot, observations: p.request.Observations, access: p.access, spool: p.spool, guidance: p.guidance, callback: p.callback}
 }
 
 func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (ports.RecoveryResult, error) {
@@ -358,6 +464,13 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	}
 	if errors.Is(err, os.ErrProcessDone) {
 		cleanup := host.RemoveObservationSpool(p.observationRoot, recorded.ObservationSpool)
+		if recorded.Callback != nil {
+			if resource, callbackErr := nativeguidance.RecoverCallback(filepath.Join(p.privateRoot, "native-callbacks"), *recorded.Callback); callbackErr == nil {
+				cleanup = errors.Join(cleanup, resource.Remove(ctx))
+			} else {
+				cleanup = errors.Join(cleanup, callbackErr)
+			}
+		}
 		if recorded.Access != nil {
 			cleanup = errors.Join(cleanup, p.credentials.RemoveActionCredential(ctx, *recorded.Access))
 		}
@@ -381,7 +494,39 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		}
 		proof = &v
 	}
-	r := &Runtime{provider: p, executionID: request.ExecutionID, attempt: request.Attempt, terminal: terminal, nativeID: recorded.NativeID, intent: recorded.Intent, stateRoot: recorded.StateRoot, observations: request.Observations, access: recorded.Access, spool: spool, contextReady: recorded.ContextReady, providerOrder: recorded.ProviderOrder}
+	var callback *nativeguidance.CallbackResource
+	var guidance *nativeguidance.Runtime
+	if recorded.Callback != nil {
+		if request.NativeGuidance == nil || request.CallbackIngress == nil {
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, nil
+		}
+		callback, err = nativeguidance.RecoverCallback(filepath.Join(p.privateRoot, "native-callbacks"), *recorded.Callback)
+		if err != nil {
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, err
+		}
+		normalizer := newCodexNativeNormalizer(recorded.NativeID)
+		handler := &nativeguidance.CallbackHandler{Normalize: normalizer.Normalize, Encode: encodeCodexGuidance}
+		if err := callback.Register(ctx, request.CallbackIngress, request.ExecutionID, request.Attempt, handler); err != nil {
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, err
+		}
+		client, clientErr := exec.LookPath("curl")
+		command, commandErr := callback.Command(client)
+		if clientErr == nil && commandErr == nil {
+			_, commandErr = callback.WriteCommandScript(command)
+		}
+		if clientErr != nil || commandErr != nil {
+			_ = callback.CloseRegistration(context.Background())
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, errors.Join(clientErr, commandErr)
+		}
+		guidance = &nativeguidance.Runtime{Evaluator: request.NativeGuidance, Evidence: func() (model.ProviderEvidence, error) { return request.Evidence, nil }, Kinds: map[string]struct{}{"session_start": {}, "user_prompt": {}}, Correlation: normalizer.Matches}
+		if err := handler.Bind(guidance); err != nil {
+			_ = callback.CloseRegistration(context.Background())
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, err
+		}
+	} else if request.NativeGuidance != nil {
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, nil
+	}
+	r := &Runtime{provider: p, executionID: request.ExecutionID, attempt: request.Attempt, terminal: terminal, nativeID: recorded.NativeID, intent: recorded.Intent, stateRoot: recorded.StateRoot, observations: request.Observations, access: recorded.Access, spool: spool, contextReady: recorded.ContextReady, providerOrder: recorded.ProviderOrder, guidance: guidance, callback: callback}
 	obs, _ := r.Observe(ctx)
 	return ports.RecoveryResult{State: ports.RecoveryControlled, Runtime: r, Observation: obs, Evidence: request.Evidence, Attempt: request.Attempt, AccessProof: proof}, nil
 }
@@ -399,12 +544,20 @@ type Runtime struct {
 	spool         *host.ObservationSpool
 	contextReady  bool
 	providerOrder string
+	guidance      *nativeguidance.Runtime
+	callback      *nativeguidance.CallbackResource
 	cleanupOnce   sync.Once
 	cleanupErr    error
 	mu            sync.Mutex
 }
 
 func (r *Runtime) ExecutionID() model.ExecutionID { return r.executionID }
+func (r *Runtime) HandleNativeEvent(ctx context.Context, event ports.NormalizedNativeEvent, responder ports.NativeGuidanceResponder) (ports.NativeGuidanceSettlement, error) {
+	if r.guidance == nil {
+		return ports.NativeGuidanceSettlement{Disposition: ports.EffectUnsupported}, nil
+	}
+	return r.guidance.HandleNativeEvent(ctx, event, responder)
+}
 func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -486,10 +639,22 @@ func (r *Runtime) providerEvidence() (model.ProviderEvidence, error) {
 }
 func (r *Runtime) providerEvidenceUnlocked() (model.ProviderEvidence, error) {
 	id := r.terminal.Identity()
-	return encodeEvidence(evidence{ExecutionID: string(r.executionID), NativeID: r.nativeID, Intent: r.intent, StateRoot: r.stateRoot, ContextReady: r.contextReady, ProviderOrder: r.providerOrder, Terminal: &id, Access: r.access, ObservationSpool: r.spool.Directory()})
+	var callbackEvidence *nativeguidance.CallbackEvidence
+	if r.callback != nil {
+		value := r.callback.Evidence()
+		callbackEvidence = &value
+	}
+	return encodeEvidence(evidence{ExecutionID: string(r.executionID), NativeID: r.nativeID, Intent: r.intent, StateRoot: r.stateRoot, ContextReady: r.contextReady, ProviderOrder: r.providerOrder, Terminal: &id, Access: r.access, ObservationSpool: r.spool.Directory(), Callback: callbackEvidence})
 }
 func (r *Runtime) cleanup(ctx context.Context) {
 	r.cleanupOnce.Do(func() {
+		if r.callback != nil {
+			if err := r.callback.Remove(ctx); err != nil {
+				r.cleanupErr = errors.Join(r.cleanupErr, err)
+			} else {
+				r.callback = nil
+			}
+		}
 		if r.access != nil {
 			r.cleanupErr = errors.Join(r.cleanupErr, r.provider.credentials.RemoveActionCredential(ctx, *r.access))
 		}
@@ -565,9 +730,18 @@ cat >"$tmp"
 name=${tmp##*/}; name=${name#.event-}
 mv "$tmp" "$TCLAUDE_OBSERVATION_SPOOL/event-$name"`
 
-type terminalAttachment struct{ io.ReadWriteCloser }
+const codexCallbackDispatchCommand = `set -eu
+if [ -z "${TCLAUDE_NATIVE_CALLBACK_SCRIPT:-}" ]; then exit 0; fi
+exec "$TCLAUDE_NATIVE_CALLBACK_SCRIPT"`
+
+type terminalAttachment struct{ host.TerminalAttachment }
+
+var _ ports.ResizableAttachment = terminalAttachment{}
 
 func (terminalAttachment) Kind() ports.AttachmentKind { return ports.AttachmentTerminal }
+func (a terminalAttachment) Resize(ctx context.Context, size ports.TerminalSize) error {
+	return a.TerminalAttachment.Resize(ctx, size.Columns, size.Rows)
+}
 func nativeBinding(id string) *model.NativeBinding {
 	if id == "" {
 		return nil

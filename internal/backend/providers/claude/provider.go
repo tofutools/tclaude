@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +20,7 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
+	"github.com/tofutools/tclaude/internal/backend/providers/nativeguidance"
 )
 
 const (
@@ -42,6 +42,7 @@ type Provider struct {
 	credentials     host.ActionCredentialHost
 	agentSocket     string
 	observationRoot string
+	callbackRoot    string
 }
 
 func New(config Config) (*Provider, error) {
@@ -65,32 +66,41 @@ func New(config Config) (*Provider, error) {
 		credentials:     host.ActionCredentialHost{PrivateRoot: filepath.Join(config.PrivateRoot, "action-credentials")},
 		agentSocket:     config.AgentSocket,
 		observationRoot: filepath.Join(config.PrivateRoot, "observations"),
+		callbackRoot:    filepath.Join(config.PrivateRoot, "native-callbacks"),
 	}, nil
 }
 
-func (*Provider) Name() string                                        { return Name }
+func (*Provider) Name() string { return Name }
+func (*Provider) Capabilities() ports.ProviderCapabilities {
+	return ports.ProviderCapabilities{PreparedInitialInput: true, NativeGuidance: []ports.NativeGuidanceCapability{{EventKind: "session_start", Timing: model.StandingOrderSameContinuation}, {EventKind: "user_prompt", Timing: model.StandingOrderSameContinuation}}}
+}
 func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 
 type evidence struct {
-	ExecutionID      string                         `json:"execution_id"`
-	NativeID         string                         `json:"native_id"`
-	Intent           ports.StartIntent              `json:"intent"`
-	ContextReady     bool                           `json:"context_ready,omitempty"`
-	ProviderOrder    string                         `json:"provider_order,omitempty"`
-	Prepared         *host.PreparedTerminalIdentity `json:"prepared,omitempty"`
-	Terminal         *host.TerminalIdentity         `json:"terminal,omitempty"`
-	Access           *ports.ActionCredentialReceipt `json:"access,omitempty"`
-	ObservationSpool string                         `json:"observation_spool,omitempty"`
+	ExecutionID      string                           `json:"execution_id"`
+	NativeID         string                           `json:"native_id"`
+	Intent           ports.StartIntent                `json:"intent"`
+	ContextReady     bool                             `json:"context_ready,omitempty"`
+	ProviderOrder    string                           `json:"provider_order,omitempty"`
+	Prepared         *host.PreparedTerminalIdentity   `json:"prepared,omitempty"`
+	Terminal         *host.TerminalIdentity           `json:"terminal,omitempty"`
+	Access           *ports.ActionCredentialReceipt   `json:"access,omitempty"`
+	ObservationSpool string                           `json:"observation_spool,omitempty"`
+	Callback         *nativeguidance.CallbackEvidence `json:"native_callback,omitempty"`
 }
 
 type prepared struct {
-	provider *Provider
-	request  ports.PreparationRequest
-	nativeID string
-	terminal *host.PreparedTerminal
-	describe ports.PreparedDescription
-	access   *ports.ActionCredentialReceipt
-	spool    *host.ObservationSpool
+	provider        *Provider
+	request         ports.PreparationRequest
+	nativeID        string
+	terminal        *host.PreparedTerminal
+	describe        ports.PreparedDescription
+	access          *ports.ActionCredentialReceipt
+	spool           *host.ObservationSpool
+	callback        *nativeguidance.CallbackResource
+	guidance        *nativeguidance.Runtime
+	handler         *nativeguidance.CallbackHandler
+	callbackCommand string
 }
 
 func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest) (ports.PreparedAttempt, error) {
@@ -108,6 +118,10 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	}
 	if request.Spec.Approval != model.ApprovalSupervised && request.Spec.Approval != model.ApprovalAutomatic {
 		return nil, fmt.Errorf("claude provider does not support approval mode %q", request.Spec.Approval)
+	}
+	initialInput, err := preparedInitialInput(request.InitialInput)
+	if err != nil {
+		return nil, err
 	}
 	nativeID, err := nativeIDFor(request)
 	if err != nil {
@@ -142,12 +156,61 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		}
 		return nil, err
 	}
+	var callback *nativeguidance.CallbackResource
+	var guidance *nativeguidance.Runtime
+	var handler *nativeguidance.CallbackHandler
+	var callbackCommand string
+	if request.NativeGuidance != nil {
+		if request.CallbackIngress == nil {
+			_ = terminal.Abort()
+			_ = spool.Remove()
+			if access != nil {
+				_ = p.credentials.RemoveActionCredential(context.Background(), *access)
+			}
+			return nil, fmt.Errorf("claude native guidance requires callback ingress")
+		}
+		callback, err = nativeguidance.PrepareCallback(p.callbackRoot)
+		if err == nil {
+			guidance = &nativeguidance.Runtime{Evaluator: request.NativeGuidance, Kinds: map[string]struct{}{"session_start": {}, "user_prompt": {}}, Correlation: func(value string) bool { return value == nativeID }}
+			handler = &nativeguidance.CallbackHandler{Normalize: claudeNativeNormalizer(nativeID), Encode: encodeClaudeGuidance}
+			err = callback.Register(ctx, request.CallbackIngress, request.Spec.ExecutionID, request.Spec.Attempt, handler)
+		}
+		if err == nil {
+			var client string
+			client, err = exec.LookPath("curl")
+			if err == nil {
+				callbackCommand, err = callback.Command(client)
+				if err == nil {
+					callbackCommand, err = callback.WriteCommandScript(callbackCommand)
+				}
+			}
+		}
+		if err != nil {
+			if callback != nil {
+				_ = callback.Remove(context.Background())
+			}
+			_ = terminal.Abort()
+			_ = spool.Remove()
+			if access != nil {
+				_ = p.credentials.RemoveActionCredential(context.Background(), *access)
+			}
+			return nil, err
+		}
+	}
 	preparedIdentity := terminal.Identity()
+	var callbackEvidence *nativeguidance.CallbackEvidence
+	if callback != nil {
+		value := callback.Evidence()
+		callbackEvidence = &value
+	}
 	initial, err := encodeEvidence(evidence{ExecutionID: string(request.Spec.ExecutionID), NativeID: nativeID, Intent: request.Intent,
-		Prepared: &preparedIdentity, Access: access, ObservationSpool: spool.Directory()})
+		Prepared: &preparedIdentity, Access: access, ObservationSpool: spool.Directory(), Callback: callbackEvidence})
 	if err != nil {
 		_ = terminal.Abort()
 		_ = spool.Remove()
+		if callback != nil {
+			_ = callback.Remove(context.Background())
+		}
 		if access != nil {
 			_ = p.credentials.RemoveActionCredential(context.Background(), *access)
 		}
@@ -155,7 +218,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	}
 	return &prepared{
 		provider: p, request: request, nativeID: nativeID, terminal: terminal,
-		access: access, spool: spool, describe: ports.PreparedDescription{
+		access: access, spool: spool, callback: callback, guidance: guidance, handler: handler, callbackCommand: callbackCommand, describe: ports.PreparedDescription{
 			ExecutionID: request.Spec.ExecutionID,
 			Attempt:     request.Spec.Attempt,
 			Topology:    ports.TopologyTerminalAuthoritative,
@@ -175,6 +238,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 			Resources:      []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: terminal.ResourceKey()}},
 			Evidence:       initial,
 			AccessDelivery: access,
+			InitialInput:   initialInput,
 		},
 	}, nil
 }
@@ -189,12 +253,21 @@ func (p *prepared) Abort(ctx context.Context) error {
 	if p.access != nil {
 		err = errors.Join(err, p.provider.credentials.RemoveActionCredential(ctx, *p.access))
 	}
+	if p.callback != nil {
+		err = errors.Join(err, p.callback.Remove(ctx))
+	}
 	return err
 }
 
 func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (ports.ReleaseResult, error) {
 	if permit == nil || permit.ExecutionID() != p.request.Spec.ExecutionID {
 		return ports.ReleaseResult{}, fmt.Errorf("release permit does not match execution")
+	}
+	if p.guidance != nil {
+		p.guidance.Evidence = func() (model.ProviderEvidence, error) { return p.describe.Evidence, nil }
+		if err := p.handler.Bind(p.guidance); err != nil {
+			return ports.ReleaseResult{}, err
+		}
 	}
 	if err := permit.Consume(ctx); err != nil {
 		return ports.ReleaseResult{}, fmt.Errorf("consume release permit: %w", err)
@@ -212,6 +285,9 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 			return ports.ReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime, Evidence: evidence}, err
 		}
 		_ = p.spool.Remove()
+		if p.callback != nil {
+			_ = p.callback.Remove(context.Background())
+		}
 		if p.access != nil {
 			_ = p.provider.credentials.RemoveActionCredential(context.Background(), *p.access)
 		}
@@ -230,6 +306,7 @@ func (p *prepared) runtime(terminal *host.Terminal) *Runtime {
 		provider: p.provider, executionID: p.request.Spec.ExecutionID, attempt: p.request.Spec.Attempt,
 		terminal: terminal, nativeID: p.nativeID, intent: p.request.Intent, observations: p.request.Observations,
 		access: p.access, spool: p.spool,
+		guidance: p.guidance, callback: p.callback,
 	}
 }
 
@@ -268,15 +345,35 @@ func (p *prepared) argv() []string {
 			"allowUnsandboxedCommands": false,
 			"filesystem":               map[string]any{"allowWrite": []string{p.request.Spec.WorkingDirectory}},
 		},
-		"hooks": map[string]any{"SessionStart": []any{map[string]any{
-			"matcher": "startup|resume|clear|compact",
-			"hooks": []any{map[string]any{
-				"type": "command", "command": "/bin/sh", "args": []string{"-c", claudeObservationCommand},
-			}},
-		}}},
+		"hooks": p.hooks(),
 	})
 	args = append(args, "--settings", string(settings))
+	if p.request.InitialInput != nil {
+		args = append(args, p.request.InitialInput.Body)
+	}
 	return args
+}
+
+func (p *prepared) hooks() map[string]any {
+	sessionHooks := []any{map[string]any{"type": "command", "command": "/bin/sh", "args": []string{"-c", claudeObservationCommand}}}
+	result := map[string]any{"SessionStart": []any{map[string]any{"matcher": "startup|resume|clear|compact", "hooks": sessionHooks}}}
+	if p.callbackCommand != "" {
+		callback := map[string]any{"type": "command", "command": p.callbackCommand}
+		sessionHooks = append(sessionHooks, callback)
+		result["SessionStart"] = []any{map[string]any{"matcher": "startup|resume|clear|compact", "hooks": sessionHooks}}
+		result["UserPromptSubmit"] = []any{map[string]any{"hooks": []any{callback}}}
+	}
+	return result
+}
+
+func preparedInitialInput(input *ports.PreparedInitialInput) (*ports.PreparedInitialInputDescription, error) {
+	if input == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(input.Body) == "" || strings.TrimSpace(input.Correlation) == "" {
+		return nil, fmt.Errorf("claude prepared initial input requires body and correlation")
+	}
+	return &ports.PreparedInitialInputDescription{Correlation: input.Correlation, Supported: true}, nil
 }
 
 func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (ports.RecoveryResult, error) {
@@ -300,6 +397,13 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	}
 	if errors.Is(err, os.ErrProcessDone) {
 		cleanupErr := host.RemoveObservationSpool(p.observationRoot, recorded.ObservationSpool)
+		if recorded.Callback != nil {
+			if resource, callbackErr := nativeguidance.RecoverCallback(p.callbackRoot, *recorded.Callback); callbackErr == nil {
+				cleanupErr = errors.Join(cleanupErr, resource.Remove(ctx))
+			} else {
+				cleanupErr = errors.Join(cleanupErr, callbackErr)
+			}
+		}
 		if recorded.Access != nil {
 			cleanupErr = errors.Join(cleanupErr, p.credentials.RemoveActionCredential(ctx, *recorded.Access))
 		}
@@ -331,9 +435,40 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		}
 		accessProof = &proof
 	}
+	var callback *nativeguidance.CallbackResource
+	var guidance *nativeguidance.Runtime
+	if recorded.Callback != nil {
+		if request.NativeGuidance == nil || request.CallbackIngress == nil {
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, nil
+		}
+		callback, err = nativeguidance.RecoverCallback(p.callbackRoot, *recorded.Callback)
+		if err != nil {
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, err
+		}
+		handler := &nativeguidance.CallbackHandler{Normalize: claudeNativeNormalizer(recorded.NativeID), Encode: encodeClaudeGuidance}
+		if err := callback.Register(ctx, request.CallbackIngress, request.ExecutionID, request.Attempt, handler); err != nil {
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, err
+		}
+		client, clientErr := exec.LookPath("curl")
+		command, commandErr := callback.Command(client)
+		if clientErr == nil && commandErr == nil {
+			_, commandErr = callback.WriteCommandScript(command)
+		}
+		if clientErr != nil || commandErr != nil {
+			_ = callback.CloseRegistration(context.Background())
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, errors.Join(clientErr, commandErr)
+		}
+		guidance = &nativeguidance.Runtime{Evaluator: request.NativeGuidance, Evidence: func() (model.ProviderEvidence, error) { return request.Evidence, nil }, Kinds: map[string]struct{}{"session_start": {}, "user_prompt": {}}, Correlation: func(value string) bool { return value == recorded.NativeID }}
+		if err := handler.Bind(guidance); err != nil {
+			_ = callback.CloseRegistration(context.Background())
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, err
+		}
+	} else if request.NativeGuidance != nil {
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, nil
+	}
 	runtime := &Runtime{provider: p, executionID: request.ExecutionID, attempt: request.Attempt, terminal: terminal,
 		nativeID: recorded.NativeID, intent: recorded.Intent, observations: request.Observations, access: recorded.Access, spool: spool,
-		contextReady: recorded.ContextReady, providerOrder: recorded.ProviderOrder}
+		contextReady: recorded.ContextReady, providerOrder: recorded.ProviderOrder, guidance: guidance, callback: callback}
 	observation, _ := runtime.Observe(ctx)
 	return ports.RecoveryResult{State: ports.RecoveryControlled, Runtime: runtime, Observation: observation, Evidence: request.Evidence, Attempt: request.Attempt, AccessProof: accessProof}, nil
 }
@@ -350,12 +485,21 @@ type Runtime struct {
 	spool         *host.ObservationSpool
 	contextReady  bool
 	providerOrder string
+	guidance      *nativeguidance.Runtime
+	callback      *nativeguidance.CallbackResource
 	cleanupOnce   sync.Once
 	cleanupErr    error
 	mu            sync.Mutex
 }
 
 func (r *Runtime) ExecutionID() model.ExecutionID { return r.executionID }
+
+func (r *Runtime) HandleNativeEvent(ctx context.Context, event ports.NormalizedNativeEvent, responder ports.NativeGuidanceResponder) (ports.NativeGuidanceSettlement, error) {
+	if r.guidance == nil {
+		return ports.NativeGuidanceSettlement{Disposition: ports.EffectUnsupported}, nil
+	}
+	return r.guidance.HandleNativeEvent(ctx, event, responder)
+}
 
 func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
 	r.mu.Lock()
@@ -427,7 +571,7 @@ func (r *Runtime) Attach(ctx context.Context, request ports.AttachmentRequest) (
 	}
 	return ports.AttachmentResult{
 		Disposition: ports.EffectAccepted,
-		Attachment:  terminalAttachment{ReadWriteCloser: attachment},
+		Attachment:  terminalAttachment{TerminalAttachment: attachment},
 		Evidence:    evidence,
 	}, nil
 }
@@ -493,13 +637,25 @@ func (r *Runtime) providerEvidence() (model.ProviderEvidence, error) {
 
 func (r *Runtime) providerEvidenceUnlocked() (model.ProviderEvidence, error) {
 	identity := r.terminal.Identity()
+	var callbackEvidence *nativeguidance.CallbackEvidence
+	if r.callback != nil {
+		value := r.callback.Evidence()
+		callbackEvidence = &value
+	}
 	return encodeEvidence(evidence{ExecutionID: string(r.executionID), NativeID: r.nativeID, Terminal: &identity,
 		Intent: r.intent, ContextReady: r.contextReady, ProviderOrder: r.providerOrder,
-		Access: r.access, ObservationSpool: r.spool.Directory()})
+		Access: r.access, ObservationSpool: r.spool.Directory(), Callback: callbackEvidence})
 }
 
 func (r *Runtime) cleanupResources(ctx context.Context) {
 	r.cleanupOnce.Do(func() {
+		if r.callback != nil {
+			if err := r.callback.Remove(ctx); err != nil {
+				r.cleanupErr = errors.Join(r.cleanupErr, err)
+			} else {
+				r.callback = nil
+			}
+		}
 		if r.access != nil {
 			r.cleanupErr = errors.Join(r.cleanupErr, r.provider.credentials.RemoveActionCredential(ctx, *r.access))
 		}
@@ -615,9 +771,14 @@ name=${tmp##*/}
 name=${name#.event-}
 mv "$tmp" "$TCLAUDE_OBSERVATION_SPOOL/event-$name"`
 
-type terminalAttachment struct{ io.ReadWriteCloser }
+type terminalAttachment struct{ host.TerminalAttachment }
+
+var _ ports.ResizableAttachment = terminalAttachment{}
 
 func (terminalAttachment) Kind() ports.AttachmentKind { return ports.AttachmentTerminal }
+func (a terminalAttachment) Resize(ctx context.Context, size ports.TerminalSize) error {
+	return a.TerminalAttachment.Resize(ctx, size.Columns, size.Rows)
+}
 
 func nativeIDFor(request ports.PreparationRequest) (string, error) {
 	switch request.Intent {
