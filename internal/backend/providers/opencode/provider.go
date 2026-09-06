@@ -468,7 +468,7 @@ func importOpenCodeHistory(ctx context.Context, p *Provider, targetRoot, cwd str
 		return err
 	}
 	path := temporary.Name()
-	defer os.Remove(path)
+	defer func() { _ = os.Remove(path) }()
 	if err := temporary.Chmod(0o600); err != nil {
 		_ = temporary.Close()
 		return err
@@ -480,7 +480,7 @@ func importOpenCodeHistory(ctx context.Context, p *Provider, targetRoot, cwd str
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, p.executable, "import", path)
+	cmd := exec.CommandContext(ctx, p.executable, "import", path, "--pure")
 	cmd.Dir = cwd
 	cmd.Env = host.MergeEnvironment(os.Environ(), p.runtimeEnvironment(targetRoot))
 	if output, err := cmd.CombinedOutput(); err != nil {
