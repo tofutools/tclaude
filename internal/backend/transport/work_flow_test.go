@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
@@ -128,9 +129,11 @@ func TestPublicWorkHistoryHandoffOutcomeAndRestart(t *testing.T) {
 	call("POST", "/v2/history/read", map[string]any{"selection": model.HistorySelection{ConversationID: history.Entries[0].ConversationID, ExpectedConversationRevision: history.Entries[0].Revision}}, &read)
 	require.Equal(t, "Earlier design conclusion", read.Turns[0].Parts[0].Text)
 	var workspace app.WorkspaceResult
-	path := filepath.Join(root, "checkout")
+	alias := filepath.Join(root, "checkout-parent")
+	require.NoError(t, os.Symlink(root, alias))
+	path := filepath.Join(alias, "checkout")
 	call("POST", "/v2/workspaces/create", map[string]any{"request_id": "create", "id": "workspace_work", "intent": model.WorkspaceIntent{Repository: repo, IntendedPath: path, BaseRevision: "main", Branch: "worker"}}, &workspace)
-	desired := model.DesiredConfiguration{Harness: "test-native", WorkingDirectory: path, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined}
+	desired := model.DesiredConfiguration{Harness: "test-native", WorkingDirectory: workspace.Workspace.Observation.ActualPath, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined}
 	var agent model.Agent
 	call("POST", "/v2/agents", map[string]any{"id": "worker", "name": "Worker", "desired": desired}, &agent)
 	spec := model.WorkRunSpec{SourceMode: model.WorkSourceFreshHandoff, FreshHandoff: read.Turns[0].Parts[0].Text, WorkspaceID: workspace.Workspace.ID, WorkspaceRevision: workspace.Workspace.Revision, WorkerAgentID: agent.ID, WorkerAgentRevision: agent.Revision, WorkerDesired: desired, Brief: "Implement bounded result", Outcome: model.WorkOutcomePolicy{Mode: model.WorkOutcomeHumanDecision}}

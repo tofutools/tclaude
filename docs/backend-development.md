@@ -219,6 +219,8 @@ Create a checkout using `workspace create WORKSPACE_ID --request-id REQUEST_ID
 `BaseRevision`, and `Branch`. Registering an existing path is a separate
 `workspace register` operation and does not grant destructive ownership.
 `workspace inspect ID` returns the revision needed by subsequent commands.
+Use its observed actual path for the worker working directory; it can differ
+from the requested spelling when a parent directory is a symlink.
 
 A work specification pins the existing worker agent and workspace revisions,
 desired configuration, source mode, brief and outcome policy. For example:
