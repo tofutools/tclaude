@@ -171,7 +171,7 @@ func (r historyReader) discoverNativeRoot(ctx context.Context, request ports.His
 	if err != nil {
 		return ports.HistoryDiscoveryResult{}, err
 	}
-	cmd := exec.CommandContext(ctx, r.provider.executable, "session", "list", "--format", "json")
+	cmd := exec.CommandContext(ctx, r.provider.executable, "session", "list", "--format", "json", "--pure")
 	cmd.Dir = root
 	cmd.Env = host.MergeEnvironment(os.Environ(), r.provider.runtimeEnvironment(root))
 	raw, err := cmd.Output()
@@ -278,7 +278,7 @@ func (r historyReader) readSelection(ctx context.Context, selection ports.Histor
 	} else {
 		// Ordinary configured roots have no platform manifest. Resolve cwd from
 		// the official export and then re-run the strict binding check below.
-		cmd := exec.CommandContext(ctx, r.provider.executable, "export", evidence.NativeID)
+		cmd := exec.CommandContext(ctx, r.provider.executable, "export", evidence.NativeID, "--pure")
 		cmd.Dir = evidence.StateRoot
 		cmd.Env = host.MergeEnvironment(os.Environ(), r.provider.runtimeEnvironment(evidence.StateRoot))
 		raw, outputErr := cmd.Output()
@@ -307,7 +307,7 @@ func (r historyReader) export(ctx context.Context, stateRoot, nativeID, cwd stri
 	if rootErr != nil || statErr != nil || !info.IsDir() || root == string(filepath.Separator) || !strings.HasPrefix(nativeID, "ses_") {
 		return exportedHistory{}, nil, "", fmt.Errorf("invalid OpenCode history source")
 	}
-	cmd := exec.CommandContext(ctx, r.provider.executable, "export", nativeID)
+	cmd := exec.CommandContext(ctx, r.provider.executable, "export", nativeID, "--pure")
 	cmd.Dir = stateRoot
 	cmd.Env = host.MergeEnvironment(os.Environ(), r.provider.runtimeEnvironment(stateRoot))
 	raw, err := cmd.Output()
@@ -354,7 +354,7 @@ func writeHistoryManifest(stateRoot string, manifest historyManifest) error {
 		return err
 	}
 	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = os.Remove(temporaryPath) }()
 	if err := temporary.Chmod(0o600); err != nil {
 		_ = temporary.Close()
 		return err
