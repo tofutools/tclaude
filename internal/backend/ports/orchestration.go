@@ -34,7 +34,14 @@ type CallbackRegistration struct {
 // authenticated the private route credential. Generic transport does not
 // interpret provider payloads or manufacture normalized provenance.
 type NativeCallbackHandler interface {
-	HandleNativeCallback(context.Context, RawNativeCallback) (RawNativeCallbackResponse, error)
+	HandleNativeCallback(context.Context, RawNativeCallback, RawNativeCallbackResponder) error
+}
+
+// RawNativeCallbackResponder owns the actual synchronous response write.
+// Providers consume their guidance permit immediately before invoking it and
+// settle only after its returned disposition.
+type RawNativeCallbackResponder interface {
+	Respond(context.Context, RawNativeCallbackResponse) (EffectDisposition, error)
 }
 
 type RawNativeCallback struct {
