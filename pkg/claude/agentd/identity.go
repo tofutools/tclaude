@@ -31,6 +31,9 @@ type peerKey struct{}
 
 type permissionDefaultsKey struct{}
 type spawnAuthorityDecisionContextKey struct{}
+type spawnAuthorityRefusalContextKey struct{}
+
+type spawnAuthorityRefusalContext struct{ Slug string }
 
 type spawnAuthorityPinEvidence struct {
 	Present bool
@@ -905,11 +908,16 @@ func requireSpawnPermission(w http.ResponseWriter, r *http.Request, g *db.AgentG
 				recordAuthorizedPermission(r, decision.AuthorizedSlug, decision.LoadBearingSudo)
 				return p.ConvID, true
 			}
-			if allowed, slug, matched, authErr := spawnPermissionAllowsAction(r, p.ConvID, actx); authErr == nil && allowed {
-				recordAuditPermissionScope(r, slug, matched)
-				recordAuthorizedPermission(r, slug, loadBearingSudoGrantID(r, p.ConvID, slug, actx))
-				return p.ConvID, true
+			if evalErr != nil {
+				writeError(w, http.StatusInternalServerError, "io", evalErr.Error())
+				return "", false
 			}
+			fallback := PermGroupsMembersSpawn
+			if alt, ok := decision.Alternatives[PermAgentSpawn]; ok && alt.Resolution != permUndecided {
+				fallback = PermAgentSpawn
+			}
+			*r = *r.WithContext(context.WithValue(r.Context(), spawnAuthorityRefusalContextKey{}, spawnAuthorityRefusalContext{Slug: fallback}))
+			return requirePermissionEx(w, r, fallback, actx)
 		}
 	}
 	// Let the shared gate handle humans, identity/state failures, one-shot
@@ -1173,12 +1181,13 @@ func requirePermissionEx(w http.ResponseWriter, r *http.Request, perm string, ac
 	// authoritative and (like an undecided with no derived grant) falls through
 	// to the popup-or-403 path below.
 	allowed := false
+	_, preRefused := r.Context().Value(spawnAuthorityRefusalContextKey{}).(spawnAuthorityRefusalContext)
 	if hasWriteProofApprovalContinuation(r, p.ConvID, perm, p.ConvID) ||
 		hasHumanApprovalContinuation(r, perm, p.ConvID) {
 		// A human already approved this exact operation; the standing
 		// grants (and their scopes) are not consulted at all.
 		allowed = true
-	} else {
+	} else if !preRefused {
 		actionCtx := actionContextOf(actx)
 		var matched string
 		var evalErr error
