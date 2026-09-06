@@ -12,7 +12,7 @@ import (
 const (
 	BundleFormatVersion = 1
 	SourceSchemaVersion = 228
-	PlanFormatVersion   = 1
+	PlanFormatVersion   = 2
 )
 
 // Bundle names an operator-created snapshot bundle. Both paths are required;
@@ -105,6 +105,14 @@ type TableDisposition struct {
 	ReasonCode     string          `json:"reason_code"`
 }
 
+type RecordDisposition struct {
+	SourceTable    string          `json:"source_table"`
+	SourceKey      string          `json:"source_key"`
+	Classification Classification  `json:"classification"`
+	Conversion     ConversionState `json:"conversion"`
+	ReasonCode     string          `json:"reason_code"`
+}
+
 type IdentityMapping struct {
 	SourceTable string `json:"source_table"`
 	SourceKey   string `json:"source_key"`
@@ -123,15 +131,16 @@ type ReferenceMapping struct {
 }
 
 type MigrationPlan struct {
-	FormatVersion        int                `json:"format_version"`
-	Source               SourceSummary      `json:"source"`
-	PlanHash             string             `json:"plan_sha256"`
-	PreflightValid       bool               `json:"preflight_valid"`
-	ExecutableConversion bool               `json:"executable_conversion"`
-	Dispositions         []TableDisposition `json:"dispositions"`
-	Identities           []IdentityMapping  `json:"identities"`
-	References           []ReferenceMapping `json:"references"`
-	Diagnostics          []Diagnostic       `json:"diagnostics,omitempty"`
+	FormatVersion        int                 `json:"format_version"`
+	Source               SourceSummary       `json:"source"`
+	PlanHash             string              `json:"plan_sha256"`
+	PreflightValid       bool                `json:"preflight_valid"`
+	ExecutableConversion bool                `json:"executable_conversion"`
+	Dispositions         []TableDisposition  `json:"dispositions"`
+	Records              []RecordDisposition `json:"records"`
+	Identities           []IdentityMapping   `json:"identities"`
+	References           []ReferenceMapping  `json:"references"`
+	Diagnostics          []Diagnostic        `json:"diagnostics,omitempty"`
 }
 
 // Inspector is convenient for product composition and easy to substitute in
