@@ -21,33 +21,34 @@ func TestMessageAdmissionTriggerRecoversCommittedAcceptanceWithoutReresolvingTar
 	events, err := db.ListPendingTriggerPREvents(10)
 	require.NoError(t, err)
 	require.NotEmpty(t, events)
-	ruleID, err := db.InsertTriggerRule(&db.TriggerRule{
+	rule := &db.TriggerRule{
 		Name: "message-recovery", Enabled: true, OperatorAuthored: true,
 		ScopeKind: db.TriggerScopeGlobal, Source: db.TriggerSourcePROpened,
 		DraftFilter: db.TriggerDraftInclude, Actions: []db.TriggerAction{{
 			Type: db.TriggerActionMessage, Message: &db.TriggerMessageAction{BodyTemplate: "recover"},
 		}},
-	})
+	}
+	ruleID, err := db.InsertTriggerRule(rule)
 	require.NoError(t, err)
+	rule.ID = ruleID
 	firingID, inserted, err := db.InsertTriggerFiring(ruleID, 1, events[0].ID, events[0].EventRef, "running", "", time.Now().UTC())
 	require.NoError(t, err)
 	require.True(t, inserted)
-	cause := messageCause{kind: messageCauseTrigger, firingID: firingID, actionIndex: 0}
-
-	first, refused := acceptMessage(messagePrincipal{kind: messagePrincipalOperator},
-		messageTarget{agentID: targetAgent}, messageContent{body: "recover"}, cause)
-	require.Nil(t, refused)
-	require.False(t, first.duplicate)
-	require.Len(t, first.messageIDs, 1)
+	outcome, detail, firstID, recorded := executeTriggerMessage(rule, firingID, 0, rule.Actions[0].Message, events[0])
+	require.Equal(t, "queued", outcome, detail)
+	require.True(t, recorded)
+	require.NotZero(t, firstID)
 
 	// Model loss of the caller's result after commit. A retry must consult the
-	// action outcome first: even an unusable selector cannot cause a reread or
-	// a second inbox effect once acceptance is durable.
-	recovered, refused := acceptMessage(messagePrincipal{},
-		messageTarget{agentID: "now-missing"}, messageContent{body: "duplicate"}, cause)
-	require.Nil(t, refused)
-	require.True(t, recovered.duplicate)
-	assert.Equal(t, first.messageIDs, recovered.messageIDs)
+	// action outcome first: even unusable owner and target sources cannot cause
+	// a reread or a second inbox effect once acceptance is durable.
+	rule.OperatorAuthored = false
+	rule.OwnerAgent = "now-missing"
+	events[0].PRAuthorAgent = "also-missing"
+	outcome, detail, recoveredID, recorded := executeTriggerMessage(rule, firingID, 0, nil, events[0])
+	require.Equal(t, "queued", outcome, detail)
+	require.True(t, recorded)
+	assert.Equal(t, firstID, recoveredID)
 	messages, err := db.ListAgentMessagesForConv(targetConv, 10)
 	require.NoError(t, err)
 	assert.Len(t, messages, 1)
