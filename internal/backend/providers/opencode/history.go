@@ -37,6 +37,7 @@ type historyEvidence struct {
 	StateRoot      string `json:"state_root"`
 	NativeID       string `json:"native_id"`
 	SourceRevision string `json:"source_revision"`
+	Fingerprint    string `json:"fingerprint"`
 }
 
 type exportedHistory struct {
@@ -80,7 +81,7 @@ func (historyReader) Capabilities() ports.HistoryCapabilities {
 	return ports.HistoryCapabilities{
 		MetadataDiscovery: true, ContentRead: true,
 		ContinuationPrecision: ports.HistoryPrecisionHead,
-		ForkPrecision:         ports.HistoryPrecisionMessage,
+		ForkPrecision:         ports.HistoryPrecisionBeforeMessage,
 		ForkRequiresExclusive: true,
 	}
 }
@@ -140,19 +141,20 @@ func (r historyReader) Discover(ctx context.Context, request ports.HistoryDiscov
 		if !request.Scope.ModifiedAfter.IsZero() && !milliseconds(exported.Info.Time.Updated).After(request.Scope.ModifiedAfter) {
 			continue
 		}
-		evidence, err := encodeHistoryEvidence(historyEvidence{StateRoot: stateRoot, NativeID: manifest.NativeID, SourceRevision: revision})
+		fingerprint := historySourceFingerprint(stateRoot, manifest.NativeID)
+		evidence, err := encodeHistoryEvidence(historyEvidence{StateRoot: stateRoot, NativeID: manifest.NativeID, SourceRevision: revision, Fingerprint: fingerprint})
 		if err != nil {
 			return ports.HistoryDiscoveryResult{}, err
 		}
 		points := make([]ports.ProviderHistoryPoint, 0, len(exported.Messages)+1)
 		for _, message := range exported.Messages {
-			points = append(points, ports.ProviderHistoryPoint{Token: message.Info.ID, Kind: model.HistoryPointMessage, OccurredAt: milliseconds(message.Info.Time.Created)})
+			points = append(points, ports.ProviderHistoryPoint{Token: message.Info.ID, Kind: model.HistoryPointBeforeMessage, OccurredAt: milliseconds(message.Info.Time.Created)})
 		}
 		updated := milliseconds(exported.Info.Time.Updated)
 		points = append(points, ports.ProviderHistoryPoint{Token: "head", Kind: model.HistoryPointHead, OccurredAt: updated})
 		result.Histories = append(result.Histories, ports.DiscoveredHistory{
 			Native:      model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: manifest.NativeID, ObservedAt: refreshed},
-			SourceToken: entry.Name(), Title: exported.Info.Title, WorkspaceHint: exported.Info.Directory,
+			SourceToken: entry.Name(), SourceFingerprint: fingerprint, Title: exported.Info.Title, WorkspaceHint: exported.Info.Directory,
 			ModifiedAt: updated, Availability: model.HistoryContent, Points: points, Evidence: evidence,
 			Coverage: model.HistoryCoverage{Metadata: model.HistoryCoverageComplete, Content: model.HistoryCoverageComplete, SourceRevision: revision, RefreshedAt: refreshed},
 		})
@@ -201,18 +203,19 @@ func (r historyReader) discoverNativeRoot(ctx context.Context, request ports.His
 		if !request.Scope.ModifiedAfter.IsZero() && !updated.After(request.Scope.ModifiedAfter) {
 			continue
 		}
-		evidence, encodeErr := encodeHistoryEvidence(historyEvidence{StateRoot: root, NativeID: session.ID, SourceRevision: revision})
+		fingerprint := historySourceFingerprint(root, session.ID)
+		evidence, encodeErr := encodeHistoryEvidence(historyEvidence{StateRoot: root, NativeID: session.ID, SourceRevision: revision, Fingerprint: fingerprint})
 		if encodeErr != nil {
 			return ports.HistoryDiscoveryResult{}, encodeErr
 		}
 		points := make([]ports.ProviderHistoryPoint, 0, len(exported.Messages)+1)
 		for _, message := range exported.Messages {
-			points = append(points, ports.ProviderHistoryPoint{Token: message.Info.ID, Kind: model.HistoryPointMessage, OccurredAt: milliseconds(message.Info.Time.Created)})
+			points = append(points, ports.ProviderHistoryPoint{Token: message.Info.ID, Kind: model.HistoryPointBeforeMessage, OccurredAt: milliseconds(message.Info.Time.Created)})
 		}
 		points = append(points, ports.ProviderHistoryPoint{Token: "head", Kind: model.HistoryPointHead, OccurredAt: updated})
 		result.Histories = append(result.Histories, ports.DiscoveredHistory{
 			Native:      model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: session.ID, ObservedAt: refreshed},
-			SourceToken: session.ID, Title: exported.Info.Title, WorkspaceHint: exported.Info.Directory,
+			SourceToken: session.ID, SourceFingerprint: fingerprint, Title: exported.Info.Title, WorkspaceHint: exported.Info.Directory,
 			ModifiedAt: updated, Availability: model.HistoryContent, Points: points, Evidence: evidence,
 			Coverage: model.HistoryCoverage{Metadata: model.HistoryCoverageComplete, Content: model.HistoryCoverageComplete,
 				SourceRevision: revision, RefreshedAt: refreshed},
@@ -235,7 +238,7 @@ func (r historyReader) Read(ctx context.Context, selection ports.HistorySourceSe
 	for _, message := range exported.Messages {
 		// OpenCode's native fork messageID is an exclusive boundary: the
 		// selected message is the first message omitted from the fork.
-		if selection.Point != nil && selection.Point.Kind == model.HistoryPointMessage && selection.Point.Token == message.Info.ID {
+		if selection.Point != nil && selection.Point.Kind == model.HistoryPointBeforeMessage && selection.Point.Token == message.Info.ID {
 			return result, nil
 		}
 		turn := ports.HistoryTurn{Role: message.Info.Role, Point: ports.ProviderHistoryPoint{
@@ -251,7 +254,7 @@ func (r historyReader) Read(ctx context.Context, selection ports.HistorySourceSe
 		}
 		result.Turns = append(result.Turns, turn)
 	}
-	if selection.Point != nil && selection.Point.Kind == model.HistoryPointMessage {
+	if selection.Point != nil && selection.Point.Kind == model.HistoryPointBeforeMessage {
 		return ports.HistoryReadResult{}, fmt.Errorf("OpenCode history point is absent from selected source")
 	}
 	_ = evidence
@@ -266,7 +269,7 @@ func (r historyReader) readSelection(ctx context.Context, selection ports.Histor
 	if err != nil {
 		return exportedHistory{}, nil, "", historyEvidence{}, err
 	}
-	if evidence.NativeID != selection.Native.Reference {
+	if evidence.NativeID != selection.Native.Reference || evidence.Fingerprint != selection.SourceFingerprint {
 		return exportedHistory{}, nil, "", historyEvidence{}, fmt.Errorf("OpenCode history evidence does not match selected source")
 	}
 	cwd := ""
@@ -397,10 +400,15 @@ func decodeHistoryEvidence(envelope model.ProviderEvidence) (historyEvidence, er
 	if err := json.Unmarshal(envelope.Payload, &value); err != nil {
 		return historyEvidence{}, err
 	}
-	if value.StateRoot == "" || value.NativeID == "" || value.SourceRevision == "" {
+	if value.StateRoot == "" || value.NativeID == "" || value.SourceRevision == "" || value.Fingerprint == "" {
 		return historyEvidence{}, fmt.Errorf("incomplete OpenCode history evidence")
 	}
 	return value, nil
+}
+
+func historySourceFingerprint(stateRoot, nativeID string) string {
+	digest := sha256.Sum256([]byte(filepath.Clean(stateRoot) + "\x00" + nativeID))
+	return hex.EncodeToString(digest[:])
 }
 
 func milliseconds(value int64) time.Time {

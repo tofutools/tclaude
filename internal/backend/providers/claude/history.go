@@ -29,6 +29,7 @@ type historyEvidence struct {
 	NativeID       string `json:"native_id"`
 	SourceRevision string `json:"source_revision"`
 	Size           int64  `json:"size"`
+	Fingerprint    string `json:"fingerprint"`
 }
 
 type claudeRecord struct {
@@ -133,7 +134,7 @@ func (historyReader) Read(ctx context.Context, selection ports.HistorySourceSele
 	if err != nil {
 		return ports.HistoryReadResult{}, err
 	}
-	if evidence.NativeID != selection.Native.Reference {
+	if evidence.NativeID != selection.Native.Reference || evidence.Fingerprint != selection.SourceFingerprint {
 		return ports.HistoryReadResult{}, fmt.Errorf("Claude history evidence does not match native source")
 	}
 	revision, _, err := fingerprintFile(evidence.Path)
@@ -230,13 +231,14 @@ func discoverClaudeFile(path, root, id string, info os.FileInfo, refreshed time.
 	if err != nil || relative == "." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 		return ports.DiscoveredHistory{}, fmt.Errorf("Claude history is outside configured root")
 	}
-	evidence, err := encodeClaudeHistoryEvidence(historyEvidence{Path: path, NativeID: id, SourceRevision: revision, Size: size})
+	fingerprint := claudeSourceFingerprint(path, id)
+	evidence, err := encodeClaudeHistoryEvidence(historyEvidence{Path: path, NativeID: id, SourceRevision: revision, Size: size, Fingerprint: fingerprint})
 	if err != nil {
 		return ports.DiscoveredHistory{}, err
 	}
 	return ports.DiscoveredHistory{
 		Native:      model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: id, ObservedAt: refreshed},
-		SourceToken: filepath.ToSlash(relative), Title: title, WorkspaceHint: cwd,
+		SourceToken: filepath.ToSlash(relative), SourceFingerprint: fingerprint, Title: title, WorkspaceHint: cwd,
 		ModifiedAt: info.ModTime().UTC(), Availability: model.HistoryContent,
 		Coverage: model.HistoryCoverage{Metadata: model.HistoryCoverageComplete, Content: model.HistoryCoverageComplete, SourceRevision: revision, RefreshedAt: refreshed},
 		Points:   []ports.ProviderHistoryPoint{{Token: "head", Kind: model.HistoryPointHead, OccurredAt: info.ModTime().UTC()}},
@@ -305,6 +307,11 @@ func fingerprintFile(path string) (string, int64, error) {
 	return hex.EncodeToString(digest.Sum(nil)), size, nil
 }
 
+func claudeSourceFingerprint(path, nativeID string) string {
+	digest := sha256.Sum256([]byte(filepath.Clean(path) + "\x00" + nativeID))
+	return hex.EncodeToString(digest[:])
+}
+
 func encodeClaudeHistoryEvidence(value historyEvidence) (model.ProviderEvidence, error) {
 	payload, err := json.Marshal(value)
 	if err != nil {
@@ -321,7 +328,7 @@ func decodeClaudeHistoryEvidence(envelope model.ProviderEvidence) (historyEviden
 	if err := json.Unmarshal(envelope.Payload, &value); err != nil {
 		return historyEvidence{}, err
 	}
-	if value.Path == "" || value.NativeID == "" || value.SourceRevision == "" {
+	if value.Path == "" || value.NativeID == "" || value.SourceRevision == "" || value.Fingerprint == "" {
 		return historyEvidence{}, fmt.Errorf("incomplete Claude history evidence")
 	}
 	return value, nil

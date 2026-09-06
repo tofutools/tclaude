@@ -37,7 +37,8 @@ func TestClaudeHistoryDiscoverReadAndRevisionGuard(t *testing.T) {
 
 	selection := ports.HistorySourceSelection{
 		Provider: Name, Native: source.Native, SourceToken: source.SourceToken,
-		SourceRevision: source.Coverage.SourceRevision, Point: &source.Points[0], Evidence: source.Evidence,
+		SourceRevision: source.Coverage.SourceRevision, SourceFingerprint: source.SourceFingerprint,
+		Point: &source.Points[0], Evidence: source.Evidence,
 	}
 	read, err := reader.Read(context.Background(), selection)
 	require.NoError(t, err)
@@ -66,7 +67,8 @@ func TestClaudeForkUsesNativeHeadAndNewSessionObservation(t *testing.T) {
 	require.NoError(t, err)
 	source := discovered.Histories[0]
 	selection := &ports.HistorySourceSelection{Provider: Name, Native: source.Native,
-		SourceRevision: source.Coverage.SourceRevision, Point: &source.Points[0], Evidence: source.Evidence}
+		SourceRevision: source.Coverage.SourceRevision, SourceFingerprint: source.SourceFingerprint,
+		Point: &source.Points[0], Evidence: source.Evidence}
 	request := ports.PreparationRequest{Intent: ports.StartFork, History: selection,
 		Spec: model.ResolvedExecutionSpec{ExecutionID: "execution_fork", Harness: Name}}
 	nativeID, err := nativeIDFor(request)
