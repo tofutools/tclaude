@@ -22,6 +22,9 @@ type lifecycleProvider struct {
 }
 
 func (*lifecycleProvider) Name() string { return "test-native" }
+func (*lifecycleProvider) Capabilities() ports.ProviderCapabilities {
+	return ports.ProviderCapabilities{}
+}
 func (p *lifecycleProvider) Prepare(_ context.Context, r ports.PreparationRequest) (ports.PreparedAttempt, error) {
 	return &preparedLifecycle{p: p, spec: r.Spec, sink: r.Observations}, nil
 }

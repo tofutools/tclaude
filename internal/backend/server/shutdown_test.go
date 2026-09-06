@@ -24,6 +24,9 @@ type reviewSlowProvider struct {
 }
 
 func (*reviewSlowProvider) Name() string { return "review-slow" }
+func (*reviewSlowProvider) Capabilities() ports.ProviderCapabilities {
+	return ports.ProviderCapabilities{}
+}
 func (p *reviewSlowProvider) Prepare(ctx context.Context, _ ports.PreparationRequest) (ports.PreparedAttempt, error) {
 	close(p.entered)
 	defer close(p.exited)
