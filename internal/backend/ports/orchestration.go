@@ -50,7 +50,14 @@ type NativeGuidanceSettlement struct {
 // NativeGuidanceRuntime is an optional focused view on a cohesive provider
 // runtime. Provider-specific hook transports remain private.
 type NativeGuidanceRuntime interface {
-	HandleNativeEvent(context.Context, NormalizedNativeEvent) (NativeGuidanceSettlement, error)
+	HandleNativeEvent(context.Context, NormalizedNativeEvent, NativeGuidanceResponder) (NativeGuidanceSettlement, error)
+}
+
+// NativeGuidanceResponder is the provider-owned write boundary for one native
+// callback. Generic transport supplies the response mechanism but never
+// constructs provenance or receives an unconsumed admission.
+type NativeGuidanceResponder interface {
+	RespondNativeGuidance(context.Context, string) (EffectDisposition, error)
 }
 
 type ProgramEffectivePolicy struct {
