@@ -118,6 +118,24 @@ func TestCheckoutRejectsFabricatedOwnershipEvidence(t *testing.T) {
 	require.DirExists(t, path)
 }
 
+func TestCheckoutRefusesExistingBranchAtDifferentSelectedBase(t *testing.T) {
+	repository := checkoutTestRepository(t)
+	checkoutGit(t, repository, "branch", "existing", "HEAD")
+	require.NoError(t, os.WriteFile(filepath.Join(repository, "second.txt"), []byte("second\n"), 0o600))
+	checkoutGit(t, repository, "add", "second.txt")
+	checkoutGit(t, repository, "commit", "-m", "second")
+	host, err := NewCheckoutHost("git")
+	require.NoError(t, err)
+
+	path := filepath.Join(t.TempDir(), "worker")
+	result, err := host.Create(context.Background(), CheckoutIntent{
+		Repository: repository, Path: path, Branch: "existing", Base: "HEAD",
+	})
+	require.ErrorIs(t, err, ErrCheckoutBaseConflict)
+	require.Empty(t, result.Evidence.Path)
+	require.NoDirExists(t, path)
+}
+
 func checkoutTestRepository(t *testing.T) string {
 	t.Helper()
 	repository := t.TempDir()
