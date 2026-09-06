@@ -77,7 +77,7 @@ func (s *Service) ReadInbox(ctx context.Context, req ReadInboxRequest) (InboxRes
 func messageForRecipient(message model.Message, agentID model.AgentID) model.Message {
 	recipients := message.Recipients[:0]
 	for _, recipient := range message.Recipients {
-		if recipient.AgentID == agentID {
+		if recipient.AddressKind == model.MessageAddressAgent && recipient.AgentID == agentID {
 			recipients = append(recipients, recipient)
 		}
 	}
@@ -367,7 +367,8 @@ func validateGrant(grant model.AuthorityGrant) error {
 var allActions = []model.Action{
 	model.ActionReadIdentity, model.ActionReadStatus, model.ActionReadInbox, model.ActionMarkInboxRead,
 	model.ActionSendMessage, model.ActionLaunch, model.ActionInteract, model.ActionAttach, model.ActionStop,
-	model.ActionChangeContext, model.ActionUpdateConfiguration, model.ActionManageMembership,
+	model.ActionChangeContext, model.ActionUpdateConfiguration, model.ActionRetireAgent, model.ActionReactivateAgent,
+	model.ActionManageMembership, model.ActionReadAttachment,
 	model.ActionReadHistory, model.ActionRefreshHistory, model.ActionSetHistoryMetadata, model.ActionRegisterWorkspace,
 	model.ActionCreateWorkspace, model.ActionInspectWorkspace, model.ActionRemoveWorkspace,
 	model.ActionRestoreWorkspace,
