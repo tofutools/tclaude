@@ -220,6 +220,21 @@ type RetryPolicy struct {
 	AttemptBudget time.Duration
 }
 
+const (
+	RetryableProgramFailure = "program_failed"
+	RetryableAgentRejection = "agent_rejected"
+	RetryableHumanRejection = "human_rejected"
+)
+
+type BlockedResolutionAction string
+
+const (
+	BlockedRetry  BlockedResolutionAction = "retry"
+	BlockedRework BlockedResolutionAction = "rework"
+	BlockedWaive  BlockedResolutionAction = "waive"
+	BlockedCancel BlockedResolutionAction = "cancel"
+)
+
 type DecisionNode struct {
 	Kind             DecisionKind
 	Audience         []DecisionAudience
@@ -519,11 +534,57 @@ type ScheduleCondition struct {
 }
 
 type TriggerCondition struct {
+	SourceID  string
+	Resource  AutomationFactResource
 	FactKind  string
 	Dwell     time.Duration
 	Cooldown  time.Duration
 	Debounce  time.Duration
 	Freshness time.Duration
+}
+
+type AutomationFactResourceKind string
+
+const (
+	FactResourceOperation         AutomationFactResourceKind = "operation"
+	FactResourceMessage           AutomationFactResourceKind = "message"
+	FactResourceWork              AutomationFactResourceKind = "work"
+	FactResourceAgent             AutomationFactResourceKind = "agent"
+	FactResourceRepositoryPullReq AutomationFactResourceKind = "repository_pull_request"
+)
+
+type AutomationFactResource struct {
+	Kind        AutomationFactResourceKind
+	ID          string
+	Repository  string
+	PullRequest uint64
+}
+
+const (
+	AutomationSourceApplication = "application"
+	FactOperationSucceeded      = "operation.succeeded"
+	FactOperationFailed         = "operation.failed"
+	FactMessageDelivered        = "message.delivered"
+	FactMessageDenied           = "message.denied"
+	FactWorkSucceeded           = "work.succeeded"
+	FactWorkFailed              = "work.failed"
+	FactWorkCancelled           = "work.cancelled"
+	FactAgentAwaitingInput      = "agent.awaiting_input"
+	FactPullRequestChanged      = "pull_request.changed"
+	FactCICompleted             = "ci.completed"
+)
+
+type AutomationProductFact struct {
+	Sequence           uint64
+	SourceID           string
+	EventID            string
+	Kind               string
+	Value              string
+	Resource           AutomationFactResource
+	OccurredAt         time.Time
+	ObservedAt         time.Time
+	ParentOccurrenceID OccurrenceID
+	CausalDepth        uint32
 }
 
 type StandingOrderTiming string

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"time"
 
@@ -589,7 +590,7 @@ func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTr
 		if update.NewIssuanceID != "" {
 			newIssuance = update.NewIssuanceID
 		}
-		result, updateErr := tx.ExecContext(ctx, `UPDATE work_node_attempts SET issuance_id=?,operation_id=CASE WHEN ?='' THEN operation_id ELSE ? END,execution_id=CASE WHEN ?='' THEN execution_id ELSE ? END,state=?,outcome=?,detail=?,updated_at=?,settled_at=? WHERE work_run_id=? AND node_id=? AND activation_id=? AND attempt=? AND issuance_id=?`, newIssuance, update.OperationID, update.OperationID, update.ExecutionID, update.ExecutionID, update.State, update.Outcome, update.Detail, nanos(transition.At), settled, update.Ref.RunID, update.Ref.NodeID, update.Ref.ActivationID, update.Ref.Attempt, update.Ref.IssuanceID)
+		result, updateErr := tx.ExecContext(ctx, `UPDATE work_node_attempts SET issuance_id=?,operation_id=CASE WHEN ?='' THEN operation_id ELSE ? END,execution_id=CASE WHEN ?='' THEN execution_id ELSE ? END,decision_id=CASE WHEN ?='' THEN decision_id ELSE ? END,state=?,outcome=?,detail=?,updated_at=?,settled_at=? WHERE work_run_id=? AND node_id=? AND activation_id=? AND attempt=? AND issuance_id=?`, newIssuance, update.OperationID, update.OperationID, update.ExecutionID, update.ExecutionID, update.DecisionID, update.DecisionID, update.State, update.Outcome, update.Detail, nanos(transition.At), settled, update.Ref.RunID, update.Ref.NodeID, update.Ref.ActivationID, update.Ref.Attempt, update.Ref.IssuanceID)
 		if updateErr != nil {
 			return app.WorkRunRecord{}, updateErr
 		}
@@ -935,6 +936,9 @@ func (s *Store) MaterializeOccurrence(ctx context.Context, occurrence model.Auto
 	if !errors.Is(err, sql.ErrNoRows) {
 		return app.OccurrenceRecord{}, false, err
 	}
+	if err = applyOccurrenceOverlapTx(ctx, tx, &occurrence); err != nil {
+		return app.OccurrenceRecord{}, false, err
+	}
 	requester, _ := json.Marshal(occurrence.Requester)
 	_, err = tx.ExecContext(ctx, `INSERT INTO automation_occurrences(id,rule_id,rule_revision_id,source_occurrence_key,request_scope,request_id,requester_json,scheduled_at,event_at,eligible_at,expires_at,state,operation_id,work_run_id,deployment_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, occurrence.ID, occurrence.RuleID, occurrence.RuleRevisionID, occurrence.SourceOccurrenceKey, requestScopeValue, occurrence.RequestID, requester, nullableTime(occurrence.ScheduledAt), nullableTime(occurrence.EventAt), nanos(occurrence.EligibleAt), nanos(occurrence.ExpiresAt), occurrence.State, occurrence.OperationID, occurrence.WorkRunID, occurrence.DeploymentID, occurrence.Revision, nanos(occurrence.CreatedAt), nanos(occurrence.UpdatedAt))
 	if err != nil {
@@ -953,6 +957,123 @@ func (s *Store) MaterializeOccurrence(ctx context.Context, occurrence model.Auto
 	}
 	record, err := s.Occurrence(ctx, occurrence.ID)
 	return record, false, err
+}
+
+func (s *Store) ScheduleCursor(ctx context.Context, ruleID model.AutomationRuleID) (time.Time, model.Revision, error) {
+	var raw string
+	var revision model.Revision
+	err := s.db.QueryRowContext(ctx, `SELECT source_cursor,revision FROM automation_condition_state WHERE rule_id=?`, ruleID).Scan(&raw, &revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, 0, nil
+	}
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	value, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, 0, fmt.Errorf("decode schedule cursor: %w", err)
+	}
+	return value.UTC(), revision, nil
+}
+
+// AdvanceSchedule owns the schedule cursor and optional occurrence insertion in
+// one transaction. A nil occurrence records an intentionally skipped set of
+// missed ticks; a non-nil occurrence is the sole coalesced/admitted tick.
+func (s *Store) AdvanceSchedule(ctx context.Context, occurrence *model.AutomationOccurrence, ruleID model.AutomationRuleID, expectedRule, expectedCursor model.Revision, consideredThrough time.Time) (app.OccurrenceRecord, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return app.OccurrenceRecord{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var currentRule model.Revision
+	var head model.AutomationRuleRevisionID
+	var enabled bool
+	if err = tx.QueryRowContext(ctx, `SELECT revision,head_revision_id,enabled FROM automation_rules WHERE id=?`, ruleID).Scan(&currentRule, &head, &enabled); err != nil {
+		return app.OccurrenceRecord{}, false, classify(err)
+	}
+	if currentRule != expectedRule || !enabled || occurrence != nil && head != occurrence.RuleRevisionID {
+		return app.OccurrenceRecord{}, false, app.ErrConflict
+	}
+	var currentCursor string
+	var currentCursorRevision model.Revision
+	cursorErr := tx.QueryRowContext(ctx, `SELECT source_cursor,revision FROM automation_condition_state WHERE rule_id=?`, ruleID).Scan(&currentCursor, &currentCursorRevision)
+	if errors.Is(cursorErr, sql.ErrNoRows) {
+		if expectedCursor != 0 {
+			return app.OccurrenceRecord{}, false, app.ErrConflict
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO automation_condition_state(rule_id,source_cursor,observed_at,revision) VALUES(?,?,?,1)`, ruleID, consideredThrough.UTC().Format(time.RFC3339Nano), nanos(consideredThrough))
+	} else if cursorErr != nil {
+		return app.OccurrenceRecord{}, false, cursorErr
+	} else {
+		if currentCursorRevision != expectedCursor {
+			return app.OccurrenceRecord{}, false, app.ErrConflict
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE automation_condition_state SET source_cursor=?,observed_at=?,revision=revision+1 WHERE rule_id=? AND revision=?`, consideredThrough.UTC().Format(time.RFC3339Nano), nanos(consideredThrough), ruleID, expectedCursor)
+	}
+	if err != nil {
+		return app.OccurrenceRecord{}, false, classify(err)
+	}
+	if occurrence == nil {
+		if err = bumpTx(ctx, tx); err != nil {
+			return app.OccurrenceRecord{}, false, err
+		}
+		return app.OccurrenceRecord{}, false, tx.Commit()
+	}
+	if err = applyOccurrenceOverlapTx(ctx, tx, occurrence); err != nil {
+		return app.OccurrenceRecord{}, false, err
+	}
+	requester, _ := json.Marshal(occurrence.Requester)
+	requestScopeValue := requestScope(occurrence.Requester)
+	_, err = tx.ExecContext(ctx, `INSERT INTO automation_occurrences(id,rule_id,rule_revision_id,source_occurrence_key,request_scope,request_id,requester_json,scheduled_at,event_at,eligible_at,expires_at,state,operation_id,work_run_id,deployment_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, occurrence.ID, occurrence.RuleID, occurrence.RuleRevisionID, occurrence.SourceOccurrenceKey, requestScopeValue, occurrence.RequestID, requester, nullableTime(occurrence.ScheduledAt), nullableTime(occurrence.EventAt), nanos(occurrence.EligibleAt), nanos(occurrence.ExpiresAt), occurrence.State, occurrence.OperationID, occurrence.WorkRunID, occurrence.DeploymentID, occurrence.Revision, nanos(occurrence.CreatedAt), nanos(occurrence.UpdatedAt))
+	if err != nil {
+		return app.OccurrenceRecord{}, false, classify(err)
+	}
+	for _, recipient := range occurrence.Recipients {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO automation_occurrence_recipients(occurrence_id,agent_id,disposition,operation_id,detail) VALUES(?,?,?,?,?)`, occurrence.ID, recipient.AgentID, recipient.Disposition, recipient.OperationID, recipient.Detail); err != nil {
+			return app.OccurrenceRecord{}, false, classify(err)
+		}
+	}
+	if err = bumpTx(ctx, tx); err != nil {
+		return app.OccurrenceRecord{}, false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return app.OccurrenceRecord{}, false, err
+	}
+	record, err := s.Occurrence(ctx, occurrence.ID)
+	return record, false, err
+}
+
+func applyOccurrenceOverlapTx(ctx context.Context, tx *sql.Tx, occurrence *model.AutomationOccurrence) error {
+	var policyJSON []byte
+	if err := tx.QueryRowContext(ctx, `SELECT policy_json FROM automation_rule_revisions WHERE id=?`, occurrence.RuleRevisionID).Scan(&policyJSON); err != nil {
+		return classify(err)
+	}
+	var policy model.OccurrencePolicy
+	if err := json.Unmarshal(policyJSON, &policy); err != nil {
+		return err
+	}
+	var active uint32
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM automation_occurrences WHERE rule_id=? AND id<>? AND state IN (?,?,?,?,?)`, occurrence.RuleID, occurrence.ID, model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceParked, model.OccurrenceUncertain).Scan(&active); err != nil {
+		return err
+	}
+	switch policy.Overlap {
+	case model.OverlapForbid:
+		if active > 0 {
+			occurrence.State = model.OccurrenceDenied
+			for i := range occurrence.Recipients {
+				occurrence.Recipients[i].Disposition, occurrence.Recipients[i].Detail = model.RecipientSkipped, "forbidden by active occurrence"
+			}
+		}
+	case model.OverlapAllow:
+		if active >= policy.MaxActive {
+			occurrence.State = model.OccurrenceParked
+		}
+	case model.OverlapReplace:
+		if active > 0 {
+			occurrence.State = model.OccurrenceParked
+		}
+	}
+	return nil
 }
 
 func (s *Store) Occurrence(ctx context.Context, id model.OccurrenceID) (app.OccurrenceRecord, error) {
@@ -1019,7 +1140,7 @@ func (s *Store) OccurrencesForRule(ctx context.Context, id model.AutomationRuleI
 }
 
 func (s *Store) PendingOccurrences(ctx context.Context) ([]app.OccurrenceRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM automation_occurrences WHERE state IN (?,?,?,?) ORDER BY eligible_at,id`, model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceUncertain)
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM automation_occurrences WHERE state IN (?,?,?,?,?) ORDER BY eligible_at,id`, model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceParked, model.OccurrenceUncertain)
 	if err != nil {
 		return nil, err
 	}
