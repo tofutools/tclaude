@@ -12,6 +12,7 @@ type API interface {
 	UpdateAgent(context.Context, UpdateAgentRequest) (AgentResult, error)
 	CreateGroup(context.Context, CreateGroupRequest) (GroupResult, error)
 	Launch(context.Context, LaunchRequest) (OperationResult, error)
+	Observe(context.Context, ObserveRequest) (ObservationResult, error)
 	Interact(context.Context, InteractRequest) (OperationResult, error)
 	Attach(context.Context, AttachRequest) (AttachmentResult, error)
 	Stop(context.Context, StopRequest) (OperationResult, error)
@@ -78,6 +79,16 @@ type InteractRequest struct {
 	RequestContext
 	ExecutionID model.ExecutionID
 	Text        string
+}
+
+type ObserveRequest struct {
+	Principal   model.Principal
+	ExecutionID model.ExecutionID
+}
+
+type ObservationResult struct {
+	Execution   model.Execution
+	Observation ports.Observation
 }
 
 type AttachRequest struct {
