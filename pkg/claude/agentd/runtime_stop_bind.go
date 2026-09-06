@@ -46,24 +46,37 @@ func bindStopRuntime(convID string) (platformruntime.StopRuntime, *db.SessionRow
 			return nil, row, keyErr
 		}
 		if row.Harness == harness.OpenCodeName {
+			var attachment *lifecycleTarget
+			if row.TmuxSession != "" && session.IsTmuxSessionAlive(row.TmuxSession) {
+				if target, captureErr := captureLifecycleTarget(row); captureErr == nil && target.attempt.ExecutionID == executionID {
+					attachment = target
+				}
+			}
 			runtimeRow, runtimeErr := db.GetOpenCodeRuntime(row.ID)
 			if runtimeErr != nil {
 				return nil, row, runtimeErr
 			}
-			if runtimeRow == nil || !openCodeRuntimeBoundToExecution(*runtimeRow, row, executionID) {
-				if runtimeRow != nil {
-					unprovable = true
+			if runtimeRow == nil {
+				// The authoritative server is already absent, but its exact attach
+				// pane may still need cleanup before Resume can start a successor.
+				if attachment != nil {
+					return &openCodeStopRuntime{key: key, row: *row, attachment: attachment}, row, nil
 				}
 				continue
 			}
-			if !session.IsProcessAlive(runtimeRow.PID) {
-				continue
-			}
-			if !verifyOpenCodeRuntimeForStop(*runtimeRow) {
+			if !openCodeRuntimeBoundToExecution(*runtimeRow, row, executionID) {
 				unprovable = true
 				continue
 			}
-			return &openCodeStopRuntime{key: key, row: *row, runtime: *runtimeRow}, row, nil
+			// A dead exact server is still a bound execution: its durable runtime
+			// row is restart authority. Return the handle so Stop can retire that
+			// authority before the reaper resurrects the workload. Live processes
+			// still require endpoint/process ownership proof before control.
+			if session.IsProcessAlive(runtimeRow.PID) && !verifyOpenCodeRuntimeForStop(*runtimeRow) {
+				unprovable = true
+				continue
+			}
+			return &openCodeStopRuntime{key: key, row: *row, runtime: runtimeRow, attachment: attachment}, row, nil
 		}
 		factory := terminalStopRuntimeFactories[row.Harness]
 		if factory == nil {

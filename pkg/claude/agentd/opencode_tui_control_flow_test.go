@@ -57,11 +57,16 @@ func TestOpenCodeStopEndsAuthoritativeServerWithoutAttachmentControl(t *testing.
 		t.Fatalf("Stop controlled the attachment instead of the server: %q", command)
 	case <-time.After(20 * time.Millisecond):
 	}
-	assert.True(t, f.World.Tmux.IsAlive(tmux), "attachment lifetime is separate from server Stop")
+	assert.False(t, f.World.Tmux.IsAlive(tmux), "Stop releases the selected server's owned attachment after server teardown")
+	agentd.WaitForBackgroundForTest()
 	stored, err := db.GetOpenCodeRuntime("spwn-oc-exit-api")
 	require.NoError(t, err)
 	assert.Nil(t, stored, "the selected authoritative server must be stopped")
 	assert.Empty(t, f.World.Tmux.Sent(), "OpenCode server Stop must not use tmux send-keys")
+	row, err := db.LoadSession("spwn-oc-exit-api")
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	assert.Equal(t, session.StatusExited, row.Status)
 }
 
 func TestOpenCodeStopWithoutLiveAttachmentStillEndsExactServer(t *testing.T) {
@@ -90,6 +95,75 @@ func TestOpenCodeStopWithoutLiveAttachmentStillEndsExactServer(t *testing.T) {
 		t.Fatalf("server-only Stop dispatched attachment control: %q", command)
 	default:
 	}
+}
+
+func TestOpenCodeStopDeadServerRemovesRestartAuthority(t *testing.T) {
+	f := newFlow(t)
+	const (
+		conv  = "ses_opencode_dead_server_stop"
+		tmux  = "tmux-opencode-dead-server-stop"
+		label = "spwn-oc-dead-server-stop"
+	)
+	_, server := openCodeTUICommandServer(t, f, tmux, false)
+	defer server.Close()
+	haveOpenCodeControlSession(t, f, conv, label, tmux, server.URL)
+	runtimeRow, err := db.GetOpenCodeRuntime(label)
+	require.NoError(t, err)
+	require.NotNil(t, runtimeRow)
+	runtimeRow.PID = 1 << 30 // deterministically absent on supported hosts
+	require.NoError(t, db.UpsertOpenCodeRuntime(*runtimeRow))
+	t.Cleanup(agentd.SetVerifyOpenCodeRuntimeForStopTest(func(db.OpenCodeRuntime) bool {
+		t.Fatal("a dead exact server must not require live endpoint proof to retire restart authority")
+		return false
+	}))
+	called := false
+	t.Cleanup(agentd.SetStopExactOpenCodeRuntimeForTest(func(runtime db.OpenCodeRuntime, _ bool) (bool, error) {
+		called = true
+		return true, db.DeleteOpenCodeRuntime(runtime.SessionID)
+	}))
+
+	action := agentd.StopOneConvWithIntentForTest(conv, db.AgentExitActionStop)
+	require.Equal(t, "soft_stopped", action)
+	assert.True(t, called, "the exact dead attempt must be torn down, not reported as no execution")
+	stored, err := db.GetOpenCodeRuntime(label)
+	require.NoError(t, err)
+	assert.Nil(t, stored, "Stop must remove the durable authority that lets the reaper restart the server")
+	assert.False(t, f.World.Tmux.IsAlive(tmux), "the dead server's owned attachment is cleaned with its restart authority")
+	_ = agentd.RunReaperTickForTest(time.Now())
+	stored, err = db.GetOpenCodeRuntime(label)
+	require.NoError(t, err)
+	assert.Nil(t, stored, "a later production reaper sweep must not resurrect the stopped server")
+}
+
+func TestOpenCodeStopThenImmediateResumeUsesAuthoritativeCompletion(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	spawn := f.AsHuman().SpawnHarness("crew", "OpenCode stop resume", harness.OpenCodeName)
+	_, server := openCodeTUICommandServer(t, f, spawn.TmuxSession, false)
+	defer server.Close()
+	row, err := db.FindSessionByConvID(spawn.ConvID)
+	require.NoError(t, err)
+	require.NotNil(t, row)
+	boundary, err := json.Marshal(session.ExecutionBoundary{
+		Version: session.ExecutionBoundaryVersion, LaunchGeneration: row.ExecutionID.String(),
+		Harness: session.ExecutionHarness{Name: harness.OpenCodeName},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.UpsertOpenCodeRuntime(db.OpenCodeRuntime{
+		SessionID: row.ID, ConvID: row.ConvID, ServerURL: server.URL,
+		Password: "test-password", PID: os.Getpid(), Cwd: row.Cwd,
+		ExecutionBoundaryJSON: string(boundary),
+	}))
+	t.Cleanup(agentd.SetVerifyOpenCodeRuntimeForStopTest(func(db.OpenCodeRuntime) bool { return true }))
+	t.Cleanup(agentd.SetStopExactOpenCodeRuntimeForTest(func(runtime db.OpenCodeRuntime, _ bool) (bool, error) {
+		return true, db.DeleteOpenCodeRuntime(runtime.SessionID)
+	}))
+
+	require.Equal(t, "soft_stopped", agentd.StopOneConvWithIntentForTest(spawn.ConvID, db.AgentExitActionStop))
+	agentd.WaitForBackgroundForTest()
+	resumed := f.AsHuman().Resume(spawn.ConvID)
+	assert.Equal(t, "resumed", resumed.Action,
+		"authoritative server completion and attachment cleanup must admit the immediate successor: %s", resumed.Detail)
 }
 
 func TestOpenCodeStopRefusesRuntimeFromDifferentExecution(t *testing.T) {

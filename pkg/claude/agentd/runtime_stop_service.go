@@ -9,6 +9,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	platformexec "github.com/tofutools/tclaude/pkg/claude/platform/execution"
 	platformruntime "github.com/tofutools/tclaude/pkg/claude/platform/runtime"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 func stopBoundRuntime(convID string, force bool, lifecycleAction, relatedEventID string, waitPolicy stopWaitPolicy, operation *stopOperationContext) (memberOpResult, softExitOutcome) {
@@ -68,7 +69,7 @@ func stopBoundRuntime(convID string, force bool, lifecycleAction, relatedEventID
 			}
 		}
 	case platformruntime.ControlNoEffect:
-		if bound.Observe(operationCtx).Workload == platformruntime.WorkloadExited {
+		if boundRuntimeStopped(bound.Observe(operationCtx)) {
 			operation.outcome.State = platformexec.StopCompleted
 			res.Action = "skipped:already_offline"
 			cancel()
@@ -112,6 +113,16 @@ func stopBoundRuntime(convID string, force bool, lifecycleAction, relatedEventID
 			}
 			return res, outcome
 		}
+		// Keep the operation context alive for the adapter's bounded retries,
+		// even though this unattributed legacy shape does not authorize force
+		// escalation. Observation ends the operation early when the workload
+		// exits; otherwise the ordinary graceful budget owns cancellation.
+		operation.convergenceScheduled = true
+		goBackground(func() {
+			defer cancel()
+			defer settleBoundRuntime(bound)
+			_ = waitForBoundRuntime(bound, softExitEscalationDeadline)
+		})
 		return res, softExitClosed
 	}
 
@@ -153,8 +164,12 @@ func waitForBoundRuntime(bound platformruntime.StopRuntime, window time.Duration
 		if softExitEscalationPollForTest != nil {
 			softExitEscalationPollForTest()
 		}
-		switch bound.Observe(context.Background()).Workload {
+		observation := bound.Observe(context.Background())
+		switch observation.Workload {
 		case platformruntime.WorkloadExited:
+			if !boundRuntimeStopped(observation) {
+				break
+			}
 			return softExitClosed
 		case platformruntime.WorkloadUnknown:
 			// Unknown remains unresolved until the application-owned budget ends.
@@ -169,6 +184,11 @@ func waitForBoundRuntime(bound platformruntime.StopRuntime, window time.Duration
 		}
 		time.Sleep(delay)
 	}
+}
+
+func boundRuntimeStopped(observation platformruntime.Observation) bool {
+	return observation.Workload == platformruntime.WorkloadExited &&
+		observation.Attachment == platformruntime.AttachmentAbsent
 }
 
 func convergeBoundRuntime(ctx context.Context, bound platformruntime.StopRuntime, row *db.SessionRow, force bool, grace time.Duration, lifecycleAction, relatedEventID string, res *memberOpResult) softExitOutcome {
@@ -203,14 +223,65 @@ func convergeBoundRuntime(ctx context.Context, bound platformruntime.StopRuntime
 }
 
 func reconcileBoundRuntimeStop(bound platformruntime.StopRuntime, row *db.SessionRow, lifecycleAction, relatedEventID, reason string, res *memberOpResult) {
-	terminal, ok := bound.(*terminalStopRuntime)
-	if !ok {
+	var target *lifecycleTarget
+	switch runtime := bound.(type) {
+	case *terminalStopRuntime:
+		target = runtime.target
+	case *openCodeStopRuntime:
+		target = runtime.attachment
+		if target == nil && row != nil && (row.TmuxSession == "" || !session.IsTmuxSessionAlive(row.TmuxSession)) {
+			if err := reconcileStoppedOpenCodeRow(runtime, lifecycleAction, relatedEventID, reason); err != nil {
+				res.Action = "error"
+				res.Detail = joinDetail(res.Detail, fmt.Sprintf("OpenCode server stopped but recording exited state failed: %v", err))
+			}
+			return
+		}
+	}
+	if target == nil {
 		return
 	}
-	if err := reconcileStoppedLifecycleTarget(terminal.target, lifecycleAction, relatedEventID, reason); err != nil {
+	if err := reconcileStoppedLifecycleTarget(target, lifecycleAction, relatedEventID, reason); err != nil {
 		res.Action = "error"
 		res.Detail = joinDetail(res.Detail, fmt.Sprintf("session stopped but recording exited state failed: %v", err))
 	}
+}
+
+func reconcileStoppedOpenCodeRow(runtime *openCodeStopRuntime, lifecycleAction, relatedEventID, reason string) error {
+	if runtime == nil {
+		return nil
+	}
+	for attempt := 0; attempt < 3; attempt++ {
+		row, err := db.LoadSession(runtime.row.ID)
+		if err != nil {
+			return err
+		}
+		if row == nil || row.Status == session.StatusExited {
+			return nil
+		}
+		identity, err := db.GetSessionExitLaunchIdentity(row.ID)
+		if err != nil {
+			return err
+		}
+		if identity.Generation != runtime.key.Execution.String() {
+			return nil
+		}
+		ok, _, err := db.MarkSessionExitedAndRecordObservationIfUnchanged(
+			row.ID, row.Status, row.UpdatedAt, reason,
+			db.AgentExitObservation{
+				At: time.Now(), SessionID: row.ID, TmuxSession: row.TmuxSession,
+				Observer: db.AgentExitObserverReconcile, CauseKind: db.AgentExitCauseDisappeared,
+				LifecycleAction: lifecycleAction, RelatedEventID: relatedEventID,
+				ExpectedGeneration: runtime.key.Execution.String(),
+			},
+		)
+		if err != nil {
+			return err
+		}
+		if ok {
+			return nil
+		}
+	}
+	return fmt.Errorf("session row kept changing after the OpenCode server exited")
 }
 
 func settleBoundRuntime(bound platformruntime.StopRuntime) {

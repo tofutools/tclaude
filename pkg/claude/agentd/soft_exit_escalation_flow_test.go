@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -153,9 +154,16 @@ func TestSoftExitEscalation_KillsPaneWhoseInjectionFailed(t *testing.T) {
 	require.NoError(t, d.QueryRow(
 		"SELECT exit_intent, COALESCE(exit_reason, '') FROM sessions WHERE id = ?",
 		"spwn-escc").Scan(&intent, &exitReason))
-	assert.Equal(t, db.AgentExitActionStop, intent,
-		"the escalation re-arms the attribution the failed injection cleared")
+	assert.Empty(t, intent,
+		"settled convergence clears transient intent after durable exit observation")
 	assert.Equal(t, "daemon_kill", exitReason)
+	stored, err := db.LoadSession("spwn-escc")
+	require.NoError(t, err)
+	require.NotNil(t, stored)
+	assert.Equal(t, session.StatusExited, stored.Status)
+	exit := auditRowByVerb(t, db.AuditVerbAgentExit)
+	assert.Equal(t, db.AgentExitActionStop, exit.LifecycleAction,
+		"the durable exit observation retains the settled Stop attribution")
 }
 
 // Scenario: tmux reports the kill succeeded and the process is still there —

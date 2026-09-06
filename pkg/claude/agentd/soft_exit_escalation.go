@@ -161,16 +161,6 @@ func reconcileStoppedLifecycleTarget(target *lifecycleTarget, lifecycleAction, r
 	return fmt.Errorf("session row kept changing after the managed pane exited")
 }
 
-// paneScreenTailLines and paneScreenTailClip bound what a pre-kill screen
-// capture may add to one warn line. The clip is sized so a full 12-line tail
-// survives at the canonical pane width (TCL-1136: 12 × 200-col lines plus
-// separators ≈ 2.4 KB) — an undersized clip would eat the tail's HEAD, which
-// is where the harness's last real output sits.
-const (
-	paneScreenTailLines = 12
-	paneScreenTailClip  = 3000
-)
-
 // waitForPaneProcessGone polls the pane process until it is gone or the grace
 // closes. The tmux session disappearing counts: a pane whose session tmux no
 // longer lists took its process with it, and a pid that has already been
