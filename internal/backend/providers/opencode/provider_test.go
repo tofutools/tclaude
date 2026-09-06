@@ -260,6 +260,82 @@ func TestProviderRefusesConfinementInsteadOfDowngrading(t *testing.T) {
 	}
 }
 
+func TestOpenCodeForkCreatesIndependentStateAndMessagePoint(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "tclaude-opencode-fork-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
+	workspace := filepath.Join(root, "workspace")
+	require.NoError(t, os.Mkdir(workspace, 0o700))
+	sourceRoot := filepath.Join(root, "execution-source")
+	require.NoError(t, os.Mkdir(sourceRoot, 0o700))
+	require.NoError(t, writeHistoryManifest(sourceRoot, historyManifest{NativeID: "ses_source", CWD: workspace}))
+	exportPath := filepath.Join(root, "export.json")
+	writeOpenCodeExport(t, exportPath, "ses_source", workspace, "source answer")
+	forkPointPath := filepath.Join(root, "fork-point")
+	importPath := filepath.Join(root, "imported")
+	executable := filepath.Join(root, "opencode-fake")
+	script := "#!/bin/sh\nif [ \"$1\" = export ]; then cat \"$OPENCODE_EXPORT_FIXTURE\"; exit; fi\nif [ \"$1\" = import ]; then printf imported > \"$OPENCODE_TEST_IMPORT\"; exit; fi\nexec \"$OPENCODE_TEST_BINARY\" -test.run=TestOpenCodeServerHelper -- \"$@\"\n"
+	require.NoError(t, os.WriteFile(executable, []byte(script), 0o700))
+	provider, err := New(Config{Executable: executable, PrivateRoot: root,
+		Environment: []string{"OPENCODE_TEST_BINARY=" + os.Args[0], "OPENCODE_EXPORT_FIXTURE=" + exportPath,
+			"OPENCODE_TEST_IMPORT=" + importPath, "OPENCODE_TEST_FORK_POINT=" + forkPointPath}})
+	require.NoError(t, err)
+	discovered, err := provider.History().Discover(context.Background(), ports.HistoryDiscoveryRequest{})
+	require.NoError(t, err)
+	require.Len(t, discovered.Histories, 1)
+	source := discovered.Histories[0]
+	selection := &ports.HistorySourceSelection{ConversationID: "conversation_source", Provider: Name, Native: source.Native,
+		SourceToken: source.SourceToken, SourceRevision: source.Coverage.SourceRevision,
+		SourceFingerprint: source.SourceFingerprint, Point: &source.Points[0], Evidence: source.Evidence}
+	selection.UseClaim = &model.HistoryUseClaim{ID: "history_use", ConversationID: selection.ConversationID,
+		OperationID: "operation_fork", SourceRevision: selection.SourceRevision,
+		SourceFingerprint: selection.SourceFingerprint, State: model.HistoryUseHeld}
+	request := ports.PreparationRequest{Intent: ports.StartFork, History: selection,
+		Spec: model.ResolvedExecutionSpec{ExecutionID: "execution_fork", Harness: Name,
+			WorkingDirectory: workspace, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined}}
+	prepared, err := provider.Prepare(context.Background(), request)
+	require.NoError(t, err)
+	preparedEvidence, err := decodeEvidence(prepared.Describe().Evidence)
+	require.NoError(t, err)
+	require.NotEqual(t, sourceRoot, preparedEvidence.StateRoot)
+	require.FileExists(t, importPath)
+	wrongPermit := &testPermit{execution: request.Spec.ExecutionID, operation: "operation_other"}
+	_, err = prepared.Release(context.Background(), wrongPermit)
+	require.ErrorContains(t, err, "history use claim")
+	require.False(t, wrongPermit.consumed.Load())
+	result, err := prepared.Release(context.Background(), &testPermit{execution: request.Spec.ExecutionID, operation: "operation_fork"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, _ = result.Runtime.Stop(ctx, ports.StopRequest{Force: true})
+	})
+	require.Equal(t, ports.ReleaseStarted, result.State)
+	observed, err := result.Runtime.Observe(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "ses_fork", observed.NativeConversation.Reference)
+	resultEvidence, err := decodeEvidence(result.Evidence)
+	require.NoError(t, err)
+	require.Equal(t, "ses_source", resultEvidence.ForkSourceID)
+	require.Empty(t, resultEvidence.ParentID, "OpenCode native fork is top-level; platform retains lineage")
+	point, err := os.ReadFile(forkPointPath)
+	require.NoError(t, err)
+	require.Equal(t, "msg_one", string(point))
+	require.Equal(t, "source answer", mustExportSecondText(t, exportPath), "source export remains unchanged")
+}
+
+func TestOpenCodeForkUseClaimBindsRevisionAndFingerprint(t *testing.T) {
+	selection := ports.HistorySourceSelection{ConversationID: "conversation_source", SourceRevision: "revision",
+		SourceFingerprint: "fingerprint", UseClaim: &model.HistoryUseClaim{ID: "history_use",
+			ConversationID: "conversation_source", OperationID: "operation_fork", SourceRevision: "revision",
+			SourceFingerprint: "different", State: model.HistoryUseHeld}}
+	require.Error(t, validateHistoryUseClaim(selection))
+	selection.UseClaim.SourceFingerprint = selection.SourceFingerprint
+	require.NoError(t, validateHistoryUseClaim(selection))
+	selection.UseClaim.State = model.HistoryUseReleased
+	require.Error(t, validateHistoryUseClaim(selection))
+}
+
 func TestContinuationReappliesSupervisedApproval(t *testing.T) {
 	root, err := os.MkdirTemp("/tmp", "tclaude-opencode-continuation-")
 	require.NoError(t, err)
@@ -395,6 +471,15 @@ func TestOpenCodeServerHelper(t *testing.T) {
 			writer.WriteHeader(http.StatusNoContent)
 			return
 		}
+		if strings.HasSuffix(request.URL.Path, "/fork") {
+			var body struct {
+				MessageID string `json:"messageID"`
+			}
+			_ = json.NewDecoder(request.Body).Decode(&body)
+			_ = os.WriteFile(os.Getenv("OPENCODE_TEST_FORK_POINT"), []byte(body.MessageID), 0o600)
+			_ = json.NewEncoder(writer).Encode(helperSession(request, "ses_fork", readHelperPermission()))
+			return
+		}
 		if request.Method == http.MethodPatch {
 			var body struct {
 				Permission []permissionRule `json:"permission"`
@@ -407,6 +492,15 @@ func TestOpenCodeServerHelper(t *testing.T) {
 		_ = json.NewEncoder(writer).Encode(helperSession(request, helperSessionIDFromPath(request.URL.Path), readHelperPermission()))
 	})
 	require.NoError(t, http.Serve(listener, mux))
+}
+
+func mustExportSecondText(t *testing.T, path string) string {
+	t.Helper()
+	value, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var exported exportedHistory
+	require.NoError(t, json.Unmarshal(value, &exported))
+	return exported.Messages[1].Parts[0].Text
 }
 
 func helperSession(request *http.Request, id string, permission []permissionRule) map[string]any {

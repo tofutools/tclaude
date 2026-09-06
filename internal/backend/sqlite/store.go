@@ -48,6 +48,19 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"executions", "attempt_generation", "INTEGER NOT NULL DEFAULT 1"},
 		{"executions", "context_readiness", "TEXT NOT NULL DEFAULT 'pending'"},
 		{"executions", "context_provider_order", "TEXT NOT NULL DEFAULT ''"},
+		{"executions", "workload_kind", "TEXT NOT NULL DEFAULT 'harness'"},
+		{"executions", "shell_evidence_owner", "TEXT NOT NULL DEFAULT ''"},
+		{"executions", "shell_evidence_version", "INTEGER NOT NULL DEFAULT 0"},
+		{"executions", "shell_evidence_payload", "BLOB"},
+		{"history_catalog", "source_name", "TEXT NOT NULL DEFAULT ''"},
+		{"work_evidence", "request_scope", "TEXT NOT NULL DEFAULT ''"},
+		{"work_evidence", "request_id", "TEXT NOT NULL DEFAULT ''"},
+		{"work_decisions", "request_scope", "TEXT NOT NULL DEFAULT ''"},
+		{"work_decisions", "request_id", "TEXT NOT NULL DEFAULT ''"},
+		{"work_runs", "cancellation_requested", "INTEGER NOT NULL DEFAULT 0"},
+		{"work_runs", "cancellation_reason", "TEXT NOT NULL DEFAULT ''"},
+		{"work_runs", "cancel_request_scope", "TEXT NOT NULL DEFAULT ''"},
+		{"work_runs", "cancel_request_id", "TEXT NOT NULL DEFAULT ''"},
 		{"operations", "principal_execution_id", "TEXT NOT NULL DEFAULT ''"},
 		{"operations", "request_scope", "TEXT NOT NULL DEFAULT 'operator'"},
 		{"operations", "principal_generation", "INTEGER NOT NULL DEFAULT 0"},
@@ -70,6 +83,12 @@ func (s *Store) initialize(ctx context.Context) error {
 	}
 	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS operations_scoped_request ON operations(request_scope,request_id)`); err != nil {
 		return fmt.Errorf("index scoped operation requests: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS work_evidence_scoped_request ON work_evidence(request_scope,request_id) WHERE request_id<>''`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS work_decisions_scoped_request ON work_decisions(request_scope,request_id) WHERE request_id<>''`); err != nil {
+		return err
 	}
 	// Access is always suspended across a backend process boundary. Recovery is
 	// the only workflow that can reactivate the exact proven runtime.
@@ -193,6 +212,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS agent_current_conversation
 
 CREATE TABLE IF NOT EXISTS executions (
   id TEXT PRIMARY KEY, agent_id TEXT NOT NULL DEFAULT '', conversation_id TEXT NOT NULL,
+  workload_kind TEXT NOT NULL DEFAULT 'harness',
   harness TEXT NOT NULL, model TEXT NOT NULL, working_directory TEXT NOT NULL,
   approval TEXT NOT NULL, sandbox TEXT NOT NULL, state TEXT NOT NULL,
   attempt_generation INTEGER NOT NULL DEFAULT 1,
@@ -200,6 +220,8 @@ CREATE TABLE IF NOT EXISTS executions (
   context_provider_order TEXT NOT NULL DEFAULT '',
   evidence_provider TEXT NOT NULL DEFAULT '', evidence_version INTEGER NOT NULL DEFAULT 0,
   evidence_payload BLOB,
+  shell_evidence_owner TEXT NOT NULL DEFAULT '', shell_evidence_version INTEGER NOT NULL DEFAULT 0,
+  shell_evidence_payload BLOB,
   native_namespace TEXT NOT NULL DEFAULT '', native_reference TEXT NOT NULL DEFAULT '', native_observed_at INTEGER,
   revision INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
@@ -285,6 +307,76 @@ CREATE TABLE IF NOT EXISTS native_binding_history (
   prior_provider_order TEXT NOT NULL DEFAULT '', provider_order TEXT NOT NULL,
   observed_at INTEGER NOT NULL, recorded_at INTEGER NOT NULL,
   PRIMARY KEY(execution_id, attempt_generation, provider, provider_order)
+);
+CREATE TABLE IF NOT EXISTS history_catalog (
+  conversation_id TEXT PRIMARY KEY REFERENCES conversations(id), harness TEXT NOT NULL, source_name TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '', workspace_id TEXT NOT NULL DEFAULT '', workspace_hint TEXT NOT NULL DEFAULT '',
+  archived INTEGER NOT NULL DEFAULT 0, availability TEXT NOT NULL,
+  metadata_coverage TEXT NOT NULL, content_coverage TEXT NOT NULL,
+  source_revision TEXT NOT NULL, refreshed_at INTEGER NOT NULL, modified_at INTEGER NOT NULL,
+  native_namespace TEXT NOT NULL, native_reference TEXT NOT NULL, native_observed_at INTEGER NOT NULL,
+  source_token TEXT NOT NULL, source_fingerprint TEXT NOT NULL, evidence_provider TEXT NOT NULL, evidence_version INTEGER NOT NULL,
+  evidence_payload BLOB, search_text TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL,
+  UNIQUE(harness,native_namespace,native_reference)
+);
+CREATE TABLE IF NOT EXISTS history_refreshes (
+  harness TEXT NOT NULL, source_name TEXT NOT NULL, metadata_coverage TEXT NOT NULL,
+  content_coverage TEXT NOT NULL, source_revision TEXT NOT NULL, refreshed_at INTEGER NOT NULL,
+  PRIMARY KEY(harness,source_name)
+);
+CREATE TABLE IF NOT EXISTS history_metadata_requests (
+  request_scope TEXT NOT NULL, request_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+  title TEXT NOT NULL, archived INTEGER NOT NULL, PRIMARY KEY(request_scope,request_id)
+);
+CREATE TABLE IF NOT EXISTS history_points (
+  id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL, provider_token TEXT NOT NULL, occurred_at INTEGER NOT NULL, revision INTEGER NOT NULL,
+  UNIQUE(conversation_id,provider_token)
+);
+CREATE TABLE IF NOT EXISTS history_use_claims (
+  id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id), point_id TEXT NOT NULL DEFAULT '',
+  operation_id TEXT NOT NULL, work_run_id TEXT NOT NULL DEFAULT '', source_revision TEXT NOT NULL,
+  source_fingerprint TEXT NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL,
+  created_at INTEGER NOT NULL, settled_at INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS history_active_use ON history_use_claims(conversation_id)
+  WHERE state IN ('held','uncertain');
+CREATE TABLE IF NOT EXISTS workspaces (
+  id TEXT PRIMARY KEY, intent_json BLOB NOT NULL, state TEXT NOT NULL,
+  observation_json BLOB NOT NULL, resource_owner TEXT NOT NULL DEFAULT '', resource_version INTEGER NOT NULL DEFAULT 0,
+  resource_payload BLOB, revision INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS workspace_uses (
+  id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL REFERENCES workspaces(id), execution_id TEXT NOT NULL DEFAULT '',
+  work_run_id TEXT NOT NULL DEFAULT '', released_at INTEGER, created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS workspace_active_uses ON workspace_uses(workspace_id,released_at);
+CREATE TABLE IF NOT EXISTS work_runs (
+  id TEXT PRIMARY KEY, request_scope TEXT NOT NULL, request_id TEXT NOT NULL, requester_json BLOB NOT NULL,
+  authority_json BLOB NOT NULL, delegation_json BLOB, spec_json BLOB NOT NULL, state TEXT NOT NULL,
+  worker_execution_id TEXT NOT NULL DEFAULT '',
+  cancellation_requested INTEGER NOT NULL DEFAULT 0, cancellation_reason TEXT NOT NULL DEFAULT '',
+  cancel_request_scope TEXT NOT NULL DEFAULT '', cancel_request_id TEXT NOT NULL DEFAULT '',
+  revision INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  UNIQUE(request_scope,request_id)
+);
+CREATE TABLE IF NOT EXISTS work_attempts (
+  work_run_id TEXT NOT NULL REFERENCES work_runs(id) ON DELETE CASCADE, step TEXT NOT NULL,
+  attempt INTEGER NOT NULL, operation_id TEXT NOT NULL DEFAULT '', state TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '',
+  started_at INTEGER NOT NULL, settled_at INTEGER, PRIMARY KEY(work_run_id,step,attempt)
+);
+CREATE TABLE IF NOT EXISTS work_evidence (
+  id TEXT PRIMARY KEY, work_run_id TEXT NOT NULL REFERENCES work_runs(id) ON DELETE CASCADE,
+  request_scope TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '',
+  step TEXT NOT NULL, attempt INTEGER NOT NULL, kind TEXT NOT NULL, reporter_json BLOB NOT NULL,
+  artifact_revision TEXT NOT NULL, passed INTEGER, detail TEXT NOT NULL, recorded_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS work_decisions (
+  work_run_id TEXT PRIMARY KEY REFERENCES work_runs(id) ON DELETE CASCADE, step TEXT NOT NULL,
+  request_scope TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '',
+  attempt INTEGER NOT NULL, decision TEXT NOT NULL, decider_json BLOB NOT NULL,
+  reason TEXT NOT NULL, decided_at INTEGER NOT NULL, revision INTEGER NOT NULL
 );
 INSERT OR IGNORE INTO roles(id,name,actions_json,revision,created_at,updated_at)
 VALUES('group_owner','Owner','["status.read","inbox.read","inbox.mark_read","message.send","execution.launch","execution.interact","execution.attach","execution.stop","execution.context.change","agent.configuration.update","group.membership.manage"]',1,0,0);
@@ -1016,6 +1108,81 @@ func (s *Store) Snapshot(ctx context.Context) (app.Snapshot, error) {
 		}
 		snapshot.Messages = append(snapshot.Messages, message)
 	}
+	history, err := s.SearchHistory(ctx, app.HistorySearchFilter{})
+	if err != nil {
+		return snapshot, err
+	}
+	snapshot.History = history.Entries
+	for _, entry := range snapshot.History {
+		points, pointErr := s.HistoryPoints(ctx, entry.ConversationID)
+		if pointErr != nil {
+			return snapshot, pointErr
+		}
+		snapshot.HistoryPoints = append(snapshot.HistoryPoints, points...)
+	}
+	rows, err = s.db.QueryContext(ctx, `SELECT id FROM workspaces ORDER BY created_at`)
+	if err != nil {
+		return snapshot, err
+	}
+	var workspaceIDs []model.WorkspaceID
+	for rows.Next() {
+		var id model.WorkspaceID
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return snapshot, err
+		}
+		workspaceIDs = append(workspaceIDs, id)
+	}
+	rows.Close()
+	for _, id := range workspaceIDs {
+		workspace, workspaceErr := s.Workspace(ctx, id)
+		if workspaceErr != nil {
+			return snapshot, workspaceErr
+		}
+		snapshot.Workspaces = append(snapshot.Workspaces, app.WorkspaceView{ID: workspace.ID, Intent: workspace.Intent, State: workspace.State, Observation: workspace.Observation, Revision: workspace.Revision})
+	}
+	rows, err = s.db.QueryContext(ctx, `SELECT id,workspace_id,execution_id,work_run_id,released_at,created_at FROM workspace_uses ORDER BY created_at`)
+	if err != nil {
+		return snapshot, err
+	}
+	for rows.Next() {
+		var use model.WorkspaceUse
+		var released sql.NullInt64
+		var created int64
+		if err = rows.Scan(&use.ID, &use.WorkspaceID, &use.ExecutionID, &use.WorkRunID, &released, &created); err != nil {
+			rows.Close()
+			return snapshot, err
+		}
+		use.CreatedAt = fromNanos(created)
+		if released.Valid {
+			value := fromNanos(released.Int64)
+			use.ReleasedAt = &value
+		}
+		snapshot.WorkspaceUses = append(snapshot.WorkspaceUses, use)
+	}
+	rows.Close()
+	rows, err = s.db.QueryContext(ctx, `SELECT id FROM work_runs ORDER BY created_at`)
+	if err != nil {
+		return snapshot, err
+	}
+	var workIDs []model.WorkRunID
+	for rows.Next() {
+		var id model.WorkRunID
+		if err = rows.Scan(&id); err != nil {
+			rows.Close()
+			return snapshot, err
+		}
+		workIDs = append(workIDs, id)
+	}
+	rows.Close()
+	for _, id := range workIDs {
+		record, workErr := s.WorkRun(ctx, id)
+		if workErr != nil {
+			return snapshot, workErr
+		}
+		snapshot.WorkRuns = append(snapshot.WorkRuns, record.Run)
+		snapshot.WorkEvidence = append(snapshot.WorkEvidence, record.Evidence...)
+	}
 	return snapshot, nil
 }
 
@@ -1084,13 +1251,16 @@ func completeOperationTx(ctx context.Context, tx *sql.Tx, in app.OperationComple
 	_, err = tx.ExecContext(ctx, `UPDATE executions SET state=CASE WHEN ? THEN ? ELSE state END,evidence_provider=CASE WHEN ?='' THEN evidence_provider ELSE ? END,evidence_version=CASE WHEN ?='' THEN evidence_version ELSE ? END,evidence_payload=CASE WHEN ?='' THEN evidence_payload ELSE ? END,native_namespace=CASE WHEN ?='' THEN native_namespace ELSE ? END,native_reference=CASE WHEN ?='' THEN native_reference ELSE ? END,native_observed_at=CASE WHEN ?='' THEN native_observed_at ELSE ? END,revision=revision+1,updated_at=? WHERE id=?`, in.UpdateExecutionState, in.ExecutionState, in.Evidence.Provider, in.Evidence.Provider, in.Evidence.Provider, in.Evidence.Version, in.Evidence.Provider, in.Evidence.Payload, reference, namespace, reference, reference, reference, observed, nanos(in.At), in.ExecutionID)
 	if err == nil && in.UpdateExecutionState && (in.ExecutionState == model.ExecutionExited || in.ExecutionState == model.ExecutionFailed) {
 		_, err = tx.ExecContext(ctx, `UPDATE execution_accesses SET state=?,revoked_at=?,revision=revision+1 WHERE execution_id=? AND state NOT IN (?,?)`, model.ExecutionAccessRevoked, nanos(in.At), in.ExecutionID, model.ExecutionAccessRevoked, model.ExecutionAccessExpired)
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `UPDATE workspace_uses SET released_at=? WHERE execution_id=? AND released_at IS NULL`, nanos(in.At), in.ExecutionID)
+		}
 	} else if err == nil && in.UpdateExecutionState && in.ExecutionState == model.ExecutionUnknown {
 		_, err = tx.ExecContext(ctx, `UPDATE execution_accesses SET state=?,revision=revision+1 WHERE execution_id=? AND state=?`, model.ExecutionAccessSuspended, in.ExecutionID, model.ExecutionAccessActive)
 	}
 	return err
 }
 
-const executionSelect = `SELECT id,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,native_namespace,native_reference,native_observed_at,revision,created_at,updated_at FROM executions`
+const executionSelect = `SELECT id,workload_kind,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,native_namespace,native_reference,native_observed_at,revision,created_at,updated_at FROM executions`
 const operationSelect = `SELECT id,request_id,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,automation_delegation_json,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at FROM operations`
 
 type scanner interface{ Scan(...any) error }
@@ -1110,11 +1280,11 @@ func scanExecution(row scanner) (model.Execution, error) {
 	var observed sql.NullInt64
 	var namespace, reference string
 	var created, updated int64
-	err := row.Scan(&e.ID, &e.AgentID, &e.ConversationID, &e.Spec.Harness, &e.Spec.Model, &e.Spec.WorkingDirectory, &e.Spec.Approval, &e.Spec.Sandbox, &e.State, &e.Attempt, &e.ContextReadiness, &e.ContextOrder, &e.Evidence.Provider, &e.Evidence.Version, &e.Evidence.Payload, &namespace, &reference, &observed, &e.Revision, &created, &updated)
+	err := row.Scan(&e.ID, &e.Workload, &e.AgentID, &e.ConversationID, &e.Spec.Harness, &e.Spec.Model, &e.Spec.WorkingDirectory, &e.Spec.Approval, &e.Spec.Sandbox, &e.State, &e.Attempt, &e.ContextReadiness, &e.ContextOrder, &e.Evidence.Provider, &e.Evidence.Version, &e.Evidence.Payload, &namespace, &reference, &observed, &e.Revision, &created, &updated)
 	if err != nil {
 		return e, classify(err)
 	}
-	e.Spec.ExecutionID, e.Spec.AgentID, e.Spec.ConversationID, e.Spec.Attempt = e.ID, e.AgentID, e.ConversationID, e.Attempt
+	e.Spec.ExecutionID, e.Spec.Workload, e.Spec.AgentID, e.Spec.ConversationID, e.Spec.Attempt = e.ID, e.Workload, e.AgentID, e.ConversationID, e.Attempt
 	e.CreatedAt, e.UpdatedAt = fromNanos(created), fromNanos(updated)
 	if reference != "" {
 		e.NativeConversation = &model.NativeConversationEvidence{Namespace: namespace, Reference: reference, ObservedAt: fromNanos(observed.Int64)}
@@ -1144,7 +1314,7 @@ func scanOperation(row scanner) (model.Operation, error) {
 }
 
 func insertExecution(ctx context.Context, tx *sql.Tx, e model.Execution) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO executions(id,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, e.ID, e.AgentID, e.ConversationID, e.Spec.Harness, e.Spec.Model, e.Spec.WorkingDirectory, e.Spec.Approval, e.Spec.Sandbox, e.State, e.Attempt, e.ContextReadiness, e.ContextOrder, e.Evidence.Provider, e.Evidence.Version, e.Evidence.Payload, e.Revision, nanos(e.CreatedAt), nanos(e.UpdatedAt))
+	_, err := tx.ExecContext(ctx, `INSERT INTO executions(id,workload_kind,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, e.ID, e.Workload, e.AgentID, e.ConversationID, e.Spec.Harness, e.Spec.Model, e.Spec.WorkingDirectory, e.Spec.Approval, e.Spec.Sandbox, e.State, e.Attempt, e.ContextReadiness, e.ContextOrder, e.Evidence.Provider, e.Evidence.Version, e.Evidence.Payload, e.Revision, nanos(e.CreatedAt), nanos(e.UpdatedAt))
 	return classify(err)
 }
 func insertOperation(ctx context.Context, tx *sql.Tx, o model.Operation) error {

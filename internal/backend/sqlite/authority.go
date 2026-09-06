@@ -713,6 +713,12 @@ func resourceParts(resource model.ResourceSelector) (string, string) {
 		return string(resource.Kind), string(resource.ExecutionID)
 	case model.ResourceGroup, model.ResourceGroupPeers:
 		return string(resource.Kind), string(resource.GroupID)
+	case model.ResourceConversation:
+		return string(resource.Kind), string(resource.ConversationID)
+	case model.ResourceWorkspace:
+		return string(resource.Kind), string(resource.WorkspaceID)
+	case model.ResourceWorkRun:
+		return string(resource.Kind), string(resource.WorkRunID)
 	default:
 		return string(resource.Kind), ""
 	}
@@ -727,6 +733,12 @@ func makeResource(kind, id string) model.ResourceSelector {
 		resource.ExecutionID = model.ExecutionID(id)
 	case model.ResourceGroup, model.ResourceGroupPeers:
 		resource.GroupID = model.GroupID(id)
+	case model.ResourceConversation:
+		resource.ConversationID = model.ConversationID(id)
+	case model.ResourceWorkspace:
+		resource.WorkspaceID = model.WorkspaceID(id)
+	case model.ResourceWorkRun:
+		resource.WorkRunID = model.WorkRunID(id)
 	}
 	return resource
 }
