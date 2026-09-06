@@ -342,16 +342,18 @@ func (s *Service) ChangeContext(ctx context.Context, req ChangeContextRequest) (
 	result, effectErr := runtime.ChangeContext(context.WithoutCancel(ctx), ports.ContextChange{Intent: req.Intent, ExpectedConversation: req.ExpectedConversationID, ExpectedAssociationRevision: req.ExpectedAssociationRevision})
 	completion := completionFromDisposition(admission.Operation, admission.Execution, result.Disposition, result.Evidence, "context_changed", effectErr, s.now().UTC())
 	completion.Native = result.NativeConversation
-	finished, err := s.store.CompleteOperation(ctx, completion)
-	if err != nil {
-		return OperationResult{}, err
-	}
+	var finished AdmissionResult
 	if result.Disposition == ports.EffectAccepted && admission.Execution.AgentID != "" {
 		conversationID := model.ConversationID(s.newID("con_"))
-		if err := s.store.AssociateConversation(ctx, ContextAssociation{ExecutionID: req.ExecutionID, AgentID: admission.Execution.AgentID, ConversationID: conversationID, ExpectedRevision: req.ExpectedAssociationRevision, Native: result.NativeConversation, At: s.now().UTC()}); err != nil {
+		finished, err = s.store.CompleteContextOperation(ctx, completion, ContextAssociation{ExecutionID: req.ExecutionID, AgentID: admission.Execution.AgentID, ConversationID: conversationID, ExpectedRevision: req.ExpectedAssociationRevision, Native: result.NativeConversation, At: s.now().UTC()})
+		if err != nil {
 			return OperationResult{}, err
 		}
-		finished.Execution.ConversationID = conversationID
+	} else {
+		finished, err = s.store.CompleteOperation(ctx, completion)
+		if err != nil {
+			return OperationResult{}, err
+		}
 	}
 	if effectErr != nil {
 		return operationResult(finished), effectErr

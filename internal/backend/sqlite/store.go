@@ -202,11 +202,21 @@ func (s *Store) AdmitLaunch(ctx context.Context, in app.LaunchAdmission) (app.Ad
 	}
 	if in.AgentID != "" {
 		var revision model.Revision
-		if err := tx.QueryRowContext(ctx, `SELECT revision FROM agents WHERE id=?`, in.AgentID).Scan(&revision); err != nil {
+		var primary model.ExecutionID
+		if err := tx.QueryRowContext(ctx, `SELECT revision,primary_execution_id FROM agents WHERE id=?`, in.AgentID).Scan(&revision, &primary); err != nil {
 			return app.AdmissionResult{}, classify(err)
 		}
 		if revision != in.Expected {
 			return app.AdmissionResult{}, app.ErrConflict
+		}
+		if primary != "" {
+			var state model.ExecutionState
+			if err := tx.QueryRowContext(ctx, `SELECT state FROM executions WHERE id=?`, primary).Scan(&state); err != nil {
+				return app.AdmissionResult{}, classify(err)
+			}
+			if state != model.ExecutionExited && state != model.ExecutionFailed {
+				return app.AdmissionResult{}, app.ErrConflict
+			}
 		}
 		if in.ExpectedConversationRevision != 0 {
 			var associationRevision model.Revision
@@ -312,20 +322,7 @@ func (s *Store) CompleteOperation(ctx context.Context, in app.OperationCompletio
 		return app.AdmissionResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	result, err := tx.ExecContext(ctx, `UPDATE operations SET state=?,result_code=?,detail=?,revision=revision+1,updated_at=? WHERE id=? AND state=?`, in.OperationState, in.ResultCode, in.Detail, nanos(in.At), in.OperationID, model.OperationAdmitted)
-	if err != nil {
-		return app.AdmissionResult{}, err
-	}
-	if affected, _ := result.RowsAffected(); affected != 1 {
-		return app.AdmissionResult{}, app.ErrConflict
-	}
-	var namespace, reference string
-	var observed any
-	if in.Native != nil {
-		namespace, reference, observed = in.Native.Namespace, in.Native.Reference, nanos(in.Native.ObservedAt)
-	}
-	_, err = tx.ExecContext(ctx, `UPDATE executions SET state=?,evidence_provider=CASE WHEN ?='' THEN evidence_provider ELSE ? END,evidence_version=CASE WHEN ?='' THEN evidence_version ELSE ? END,evidence_payload=CASE WHEN ?='' THEN evidence_payload ELSE ? END,native_namespace=CASE WHEN ?='' THEN native_namespace ELSE ? END,native_reference=CASE WHEN ?='' THEN native_reference ELSE ? END,native_observed_at=CASE WHEN ?='' THEN native_observed_at ELSE ? END,revision=revision+1,updated_at=? WHERE id=?`, in.ExecutionState, in.Evidence.Provider, in.Evidence.Provider, in.Evidence.Provider, in.Evidence.Version, in.Evidence.Provider, in.Evidence.Payload, reference, namespace, reference, reference, reference, observed, nanos(in.At), in.ExecutionID)
-	if err != nil {
+	if err := completeOperationTx(ctx, tx, in); err != nil {
 		return app.AdmissionResult{}, err
 	}
 	if err := bumpTx(ctx, tx); err != nil {
@@ -336,6 +333,35 @@ func (s *Store) CompleteOperation(ctx context.Context, in app.OperationCompletio
 		return app.AdmissionResult{}, err
 	}
 	execution, err := executionTx(ctx, tx, in.ExecutionID)
+	if err != nil {
+		return app.AdmissionResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return app.AdmissionResult{}, err
+	}
+	return app.AdmissionResult{Operation: operation, Execution: execution}, nil
+}
+
+func (s *Store) CompleteContextOperation(ctx context.Context, completion app.OperationCompletion, association app.ContextAssociation) (app.AdmissionResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return app.AdmissionResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := completeOperationTx(ctx, tx, completion); err != nil {
+		return app.AdmissionResult{}, err
+	}
+	if err := associateConversationTx(ctx, tx, association); err != nil {
+		return app.AdmissionResult{}, err
+	}
+	if err := bumpTx(ctx, tx); err != nil {
+		return app.AdmissionResult{}, err
+	}
+	operation, err := operationTx(ctx, tx, completion.OperationID)
+	if err != nil {
+		return app.AdmissionResult{}, err
+	}
+	execution, err := executionTx(ctx, tx, completion.ExecutionID)
 	if err != nil {
 		return app.AdmissionResult{}, err
 	}
@@ -573,9 +599,19 @@ func (s *Store) AssociateConversation(ctx context.Context, in app.ContextAssocia
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := associateConversationTx(ctx, tx, in); err != nil {
+		return err
+	}
+	if err := bumpTx(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func associateConversationTx(ctx context.Context, tx *sql.Tx, in app.ContextAssociation) error {
 	var currentID model.ConversationID
 	var currentRevision model.Revision
-	err = tx.QueryRowContext(ctx, `SELECT conversation_id,revision FROM agent_conversations WHERE agent_id=? AND current=1`, in.AgentID).Scan(&currentID, &currentRevision)
+	err := tx.QueryRowContext(ctx, `SELECT conversation_id,revision FROM agent_conversations WHERE agent_id=? AND current=1`, in.AgentID).Scan(&currentID, &currentRevision)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -603,10 +639,24 @@ func (s *Store) AssociateConversation(ctx context.Context, in app.ContextAssocia
 			return err
 		}
 	}
-	if err := bumpTx(ctx, tx); err != nil {
+	return nil
+}
+
+func completeOperationTx(ctx context.Context, tx *sql.Tx, in app.OperationCompletion) error {
+	result, err := tx.ExecContext(ctx, `UPDATE operations SET state=?,result_code=?,detail=?,revision=revision+1,updated_at=? WHERE id=? AND state=?`, in.OperationState, in.ResultCode, in.Detail, nanos(in.At), in.OperationID, model.OperationAdmitted)
+	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if affected, _ := result.RowsAffected(); affected != 1 {
+		return app.ErrConflict
+	}
+	var namespace, reference string
+	var observed any
+	if in.Native != nil {
+		namespace, reference, observed = in.Native.Namespace, in.Native.Reference, nanos(in.Native.ObservedAt)
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE executions SET state=?,evidence_provider=CASE WHEN ?='' THEN evidence_provider ELSE ? END,evidence_version=CASE WHEN ?='' THEN evidence_version ELSE ? END,evidence_payload=CASE WHEN ?='' THEN evidence_payload ELSE ? END,native_namespace=CASE WHEN ?='' THEN native_namespace ELSE ? END,native_reference=CASE WHEN ?='' THEN native_reference ELSE ? END,native_observed_at=CASE WHEN ?='' THEN native_observed_at ELSE ? END,revision=revision+1,updated_at=? WHERE id=?`, in.ExecutionState, in.Evidence.Provider, in.Evidence.Provider, in.Evidence.Provider, in.Evidence.Version, in.Evidence.Provider, in.Evidence.Payload, reference, namespace, reference, reference, reference, observed, nanos(in.At), in.ExecutionID)
+	return err
 }
 
 const executionSelect = `SELECT id,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,evidence_provider,evidence_version,evidence_payload,native_namespace,native_reference,native_observed_at,revision,created_at,updated_at FROM executions`
