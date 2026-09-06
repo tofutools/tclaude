@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	platformexec "github.com/tofutools/tclaude/pkg/claude/platform/execution"
 	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/testharness"
@@ -402,9 +403,97 @@ func TestHandleAgentResume_GroupOwnershipAuthority(t *testing.T) {
 // handlers rely on.
 func TestStopOneConv_OfflineConvSkips(t *testing.T) {
 	setupTestDB(t)
-	res := stopOneConv("nonexistent-conv-id", false)
+	operation := managedExecutionRuntime.stop(
+		"nonexistent-conv-id", false, db.AgentExitActionStop, "", stopNoWait,
+	)
+	res := operation.legacy
 	assert.Equal(t, "skipped:already_offline", res.Action, "action")
 	assert.Equal(t, "nonexistent-conv-id", res.ConvID, "ConvID should round-trip input")
+	assert.Equal(t, platformexec.StopNoExecution, operation.stop.State)
+	assert.Empty(t, operation.stop.Attempt)
+}
+
+func TestExecutionRuntimeStopReportsSelectedAttemptAndDelivery(t *testing.T) {
+	w := testharness.New(t)
+	prevTmux := clcommon.Default
+	clcommon.Default = w.Tmux
+	t.Cleanup(func() { clcommon.Default = prevTmux })
+	const (
+		convID     = "execution-stop-conv-12345678"
+		sessionID  = "execution-stop-session"
+		tmuxName   = "execution-stop-tmux"
+		generation = "45454545454545454545454545454545"
+	)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: tmuxName,
+		Status: "working", CreatedAt: time.Now(),
+	}))
+	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, generation))
+	w.Tmux.MarkAlive(tmuxName)
+
+	operation := managedExecutionRuntime.stop(
+		convID, true, db.AgentExitActionForceStop, "", stopNoWait,
+	)
+	assert.Equal(t, "killed", operation.legacy.Action)
+	assert.Equal(t, platformexec.StopEffectDelivered, operation.stop.State)
+	assert.Equal(t, platformexec.StopEffectKill, operation.stop.Effect)
+	assert.False(t, w.Tmux.IsAlive(tmuxName),
+		"the no-wait operation reports delivery rather than inferring completion from the effect")
+	assert.Equal(t, platformexec.AttemptRef{
+		ExecutionID:     platformexec.ID(generation),
+		LegacySessionID: sessionID,
+	}, operation.stop.Attempt)
+}
+
+func TestExecutionRuntimeStopTreatsMalformedLegacyGenerationAsUnknown(t *testing.T) {
+	w := testharness.New(t)
+	prevTmux := clcommon.Default
+	clcommon.Default = w.Tmux
+	t.Cleanup(func() { clcommon.Default = prevTmux })
+	const (
+		convID    = "execution-unknown-conv-12345678"
+		sessionID = "execution-unknown-session"
+		tmuxName  = "execution-unknown-tmux"
+	)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: tmuxName,
+		Status: "working", CreatedAt: time.Now(),
+	}))
+	// A blank legacy generation can still be controlled through exact pane/PID
+	// fencing, but it must never be promoted to a shared execution identity.
+	w.Tmux.MarkAlive(tmuxName)
+
+	operation := managedExecutionRuntime.stop(
+		convID, true, db.AgentExitActionForceStop, "", stopNoWait,
+	)
+	assert.Equal(t, platformexec.StopEffectDelivered, operation.stop.State)
+	assert.Empty(t, operation.stop.Attempt.ExecutionID)
+	assert.Equal(t, sessionID, operation.stop.Attempt.LegacySessionID)
+}
+
+func TestExecutionRuntimeWaitingStopRequiresObservedCompletion(t *testing.T) {
+	w := testharness.New(t)
+	prevTmux := clcommon.Default
+	clcommon.Default = w.Tmux
+	t.Cleanup(func() { clcommon.Default = prevTmux })
+	const (
+		convID     = "execution-wait-conv-12345678"
+		sessionID  = "execution-wait-session"
+		tmuxName   = "execution-wait-tmux"
+		generation = "56565656565656565656565656565656"
+	)
+	require.NoError(t, db.SaveSession(&db.SessionRow{
+		ID: sessionID, ConvID: convID, TmuxSession: tmuxName,
+		Status: "working", CreatedAt: time.Now(),
+	}))
+	require.NoError(t, db.SetSessionExitLaunchGeneration(sessionID, generation))
+	w.Tmux.MarkAlive(tmuxName)
+
+	operation := managedExecutionRuntime.stop(
+		convID, true, db.AgentExitActionForceStop, "", stopWaitForExit(0),
+	)
+	assert.Equal(t, platformexec.StopCompleted, operation.stop.State)
+	assert.False(t, w.Tmux.IsAlive(tmuxName))
 }
 
 func TestStopOneConvWithIntent_FailedKillClearsAttribution(t *testing.T) {

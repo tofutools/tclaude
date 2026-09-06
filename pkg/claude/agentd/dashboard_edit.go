@@ -16,6 +16,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/conv"
+	platformexec "github.com/tofutools/tclaude/pkg/claude/platform/execution"
 	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
@@ -1205,9 +1206,10 @@ func dashboardStopAgent(w http.ResponseWriter, r *http.Request, convSelector str
 	}
 	var out memberOpResult
 	if body.Wait {
-		var outcome softExitOutcome
-		out, outcome = stopOneConvAndWait(res.ConvID, body.Force, action, auditRequestEventID(r), 0)
-		if out.Action != "error" && (outcome == softExitStuck || outcome == softExitUnattempted) {
+		operation := stopOperationAndWait(res.ConvID, body.Force, action, auditRequestEventID(r), 0)
+		out = operation.legacy
+		if out.Action != "error" && (operation.stop.State == platformexec.StopUnresolved ||
+			operation.stop.State == platformexec.StopFailed) {
 			// The waiting contract's answer is the process being gone. A stop
 			// that ran the whole ladder and left the agent alive is a failure
 			// the dialog must show (with its retry / force-kill affordances),

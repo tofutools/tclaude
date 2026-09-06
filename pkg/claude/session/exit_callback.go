@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -102,21 +101,7 @@ func disabledExitLaunchGuard(sessionID, tmuxSession, generation string) *exitLau
 	}
 }
 
-var exitGenerationFallbackCounter atomic.Uint64
 var exitRandomRead = rand.Read
-
-// newExitLaunchGeneration creates non-secret launch identity independently of
-// the private barrier/token setup. crypto/rand is preferred; the hash fallback
-// remains fresh enough to invalidate predecessor authority even on RNG failure.
-func newExitLaunchGeneration(sessionID, tmuxSession string) string {
-	if generation, err := randomExitHex(16); err == nil {
-		return generation
-	}
-	seed := fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%d", sessionID, tmuxSession,
-		time.Now().UnixNano(), os.Getpid(), exitGenerationFallbackCounter.Add(1))
-	hash := sha256.Sum256([]byte(seed))
-	return hex.EncodeToString(hash[:16])
-}
 
 func randomExitHex(n int) (string, error) {
 	b := make([]byte, n)
