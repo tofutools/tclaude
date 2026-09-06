@@ -43,9 +43,20 @@ func Initialize(dir string) error {
 	return os.WriteFile(filepath.Join(dir, "FORMAT"), []byte(marker), 0600)
 }
 
+// JourneyServices are composition-owned resources; requests never select host
+// executables, provider roots, or native credentials.
+type JourneyServices struct {
+	Workspaces ports.WorkspaceHost
+	Shells     ports.ShellHost
+	History    ports.HistorySourceRegistry
+}
+
 // Serve holds a single-process lock and leaves durable executions recoverable on
 // shutdown. Disconnecting clients or stopping this HTTP server does not stop work.
-func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry) error {
+func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry, journey ...JourneyServices) error {
+	if len(journey) > 1 {
+		return errors.New("only one journey service configuration is allowed")
+	}
 	if !filepath.IsAbs(dir) {
 		return errors.New("state directory must be absolute")
 	}
@@ -84,6 +95,10 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry) err
 	defer func() { _ = store.Close() }()
 	socket := filepath.Join(dir, "api.sock")
 	application := app.New(store, registry).WithAgentAPIEndpoint(socket)
+	if len(journey) == 1 {
+		services := journey[0]
+		application.WithWorkspaceHost(services.Workspaces).WithShellHost(services.Shells).WithHistorySources(services.History)
+	}
 	if _, err := application.Recover(ctx, app.RecoverRequest{Principal: model.OperatorPrincipal()}); err != nil {
 		return fmt.Errorf("recover backend: %w", err)
 	}
@@ -96,6 +111,9 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry) err
 		return err
 	}
 	if err := handler.RegisterAgentAPI(application, application); err != nil {
+		return err
+	}
+	if err := handler.RegisterJourneyAPI(application); err != nil {
 		return err
 	}
 	// Holding the state-directory lock makes this a stale socket from our own
@@ -117,6 +135,8 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry) err
 	defer listener.Close()
 	stopRenewal := startAccessRenewal(ctx, application)
 	defer stopRenewal() // Join before the deferred store close and lock release.
+	stopWork := startWorkReconciliation(ctx, application)
+	defer stopWork() // Join application work before closing its store.
 	requests := &requestDrain{handler: handler}
 	requestCtx, cancelRequests := context.WithCancel(ctx)
 	defer cancelRequests()

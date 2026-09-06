@@ -152,3 +152,122 @@ grants and owner assignments carry explicit harness, model, working-directory,
 approval, and sandbox bounds. An owner role is a visible scoped assignment, not
 an operator bypass. The API exposes access state/revision without credential
 material or provider recovery evidence.
+
+The development composition accepts `--harness claude,codex,opencode,copilot`.
+Only selected providers are registered, and their native executables must be
+available on `PATH`. Omitting `--harness` still permits offline catalog use.
+
+Codex and Copilot use a durable native home under the selected development state:
+`<state-dir>/codex/native-home` and `<state-dir>/copilot/native-home`. These homes
+hold native login and history state independently of execution terminals,
+observation resources and backend-agent credentials. The backend does not import
+or copy credentials from the user's existing native home. For native account
+login, initialize the development directory first, then explicitly log in using
+that provider's home. For example, with an absolute `state_dir` already chosen:
+
+```bash
+mkdir -p -m 700 "$state_dir/codex/native-home" "$state_dir/copilot/native-home"
+CODEX_HOME="$state_dir/codex/native-home" codex login
+COPILOT_HOME="$state_dir/copilot/native-home" copilot login
+```
+
+Native login is an operator setup step; these commands are not run by backend
+launch or by automated tests. Native token environment authentication can also be
+used where supported by the installed harness. Stopping an execution does not
+remove the shared native home or log the operator out. A new replacement state
+may require native login again. Do not delete its native home as execution
+cleanup.
+
+## History, workspaces, and bounded work
+
+Enable host operations explicitly when starting the development server:
+
+```bash
+/tmp/tclaude-backend-dev --state-dir "$state_dir" --harness opencode \
+  --workspaces --shell /bin/sh \
+  --history-source opencode:previous=/absolute/native/xdg-root
+```
+
+`--workspaces` enables Git checkout operations. `--shell` selects the executable
+for standalone shells; the current host supports only explicit `unconfined`
+policy. A shell has an Execution and workspace use, with no fabricated Agent or
+Conversation. Existing attach, observe and stop operations apply to it.
+
+History requests select configured source names, never native filesystem roots.
+OpenCode, Codex and Copilot expose `owned` for their provider-owned history.
+Claude requires an explicit `--history-source claude:NAME=/absolute/projects-root`.
+OpenCode also accepts an explicit native XDG root. Codex and Copilot currently
+support their owned native homes only. Each refresh reports coverage; partial or
+unreadable history is not presented as a complete empty result.
+
+Using the client with an explicit authorized credential/socket:
+
+```bash
+/tmp/tclaude-backend-agent history refresh previous --harness opencode
+/tmp/tclaude-backend-agent history search --query 'earlier work'
+/tmp/tclaude-backend-agent history read CONVERSATION_ID --revision REVISION
+```
+
+Read results expose selectable points and their revisions. Point precision is a
+provider capability: an OpenCode `before_message` point excludes the selected
+message; it is not an inclusive message checkpoint. Claude exact fork is currently
+unsupported. Explicit `fresh_handoff` starts a new context from supplied text and
+is never reported as an exact native fork.
+
+Create a checkout using `workspace create WORKSPACE_ID --request-id REQUEST_ID
+--intent-file intent.json`. The intent contains `Repository`, `IntendedPath`,
+`BaseRevision`, and `Branch`. Registering an existing path is a separate
+`workspace register` operation and does not grant destructive ownership.
+`workspace inspect ID` returns the revision needed by subsequent commands.
+Use its observed actual path for the worker working directory; it can differ
+from the requested spelling when a parent directory is a symlink.
+
+A work specification pins the existing worker agent and workspace revisions,
+desired configuration, source mode, brief and outcome policy. For example:
+
+```json
+{
+  "SourceMode": "fresh_handoff",
+  "FreshHandoff": "The prior investigation established ...",
+  "WorkspaceID": "workspace-example",
+  "WorkspaceRevision": 1,
+  "WorkerAgentID": "worker-example",
+  "WorkerAgentRevision": 1,
+  "WorkerDesired": {
+    "Harness": "opencode",
+    "WorkingDirectory": "/absolute/owned/checkout",
+    "Approval": "supervised",
+    "Sandbox": "unconfined"
+  },
+  "Brief": "Implement the bounded change and report its commit.",
+  "Outcome": {"Mode": "human_decision"}
+}
+```
+
+Use actual current revisions and the worker's exact desired configuration rather
+than copying the example revisions. Start with `work start WORK_ID --request-id
+REQUEST_ID --spec-file work.json`, then inspect with `work inspect WORK_ID`.
+The server advances durable work; HTTP reads do not drive the workflow. Restart
+reconciles admitted operations instead of blindly launching or delivering again.
+
+`work evidence --file evidence.json` records an exact work attempt and artifact
+revision; `work decide --file decision.json` records an authorized outcome.
+Both require `request_id`, `work_run_id`, `expected_revision`, `step`, and
+`attempt`. Evidence adds `kind`, `artifact_revision` and `detail`; a decision adds
+`decision` and `reason`. Caller identity is derived from authentication, not JSON.
+The initial outcome mode is human decision; worker-reported success is not an
+independently executed verification result.
+
+Outcome and cancellation do not release a checkout while its worker remains
+live. Stop the execution before explicit removal. `workspace remove` requires the
+workspace revision; `workspace restore --file request.json` restores an owned
+removed checkout from its recorded branch tip and private ownership evidence.
+The restore request contains `request_id`, `workspace_id`, and
+`expected_revision`. A moved retained branch is refused rather than silently
+restoring different work.
+
+An uncertain work effect is not retried automatically. `work resolve --file
+request.json` is an operator-only confirmation that the effect did not occur,
+with `request_id`, `work_run_id`, `expected_revision`, and a required `reason`.
+It records that conclusion and releases the relevant claims; it does not replay
+the effect. Use it only after establishing what happened outside the backend.
