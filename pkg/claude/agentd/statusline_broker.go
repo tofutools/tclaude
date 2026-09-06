@@ -113,10 +113,12 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "rate", "too many identity proof attempts")
 		return
 	}
-	provedRow, _, layerClaim := proveTclaudeLayerCaller(p.PID, claimed)
+	provedRow, provedHarnessPID, layerClaim := proveTclaudeLayerCaller(p.PID, claimed)
+	harnessPID := 0
 	switch {
 	case layerClaim && provedRow != nil:
 		row = provedRow
+		harnessPID = provedHarnessPID
 	case layerClaim:
 		if row != nil {
 			brokerRefusals.recordClaimMismatch(row.ID,
@@ -155,6 +157,24 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "body",
 			"conversation id must be a single path-safe segment")
 		return
+	}
+	if layerClaim {
+		decision, err := admitManagedStatuslineConversation(
+			row, p.PID, harnessPID, req.ExitGeneration, req.RenderConvID,
+		)
+		if err != nil {
+			slog.Warn("statusline broker: managed conversation admission failed",
+				"session", row.ID, "error", err, "module", "hooks")
+			writeError(w, http.StatusInternalServerError, "statusline", "managed conversation admission failed")
+			return
+		}
+		if !decision.Admitted() {
+			slog.Debug("statusline broker: refusing managed writes after conversation admission",
+				"session", row.ID, "outcome", decision.Outcome,
+				"reason", decision.Reason, "module", "hooks")
+			writeJSON(w, http.StatusOK, statusbar.BrokeredRenderResponse{Applied: false})
+			return
+		}
 	}
 
 	resp, err := statusbar.ApplyBrokeredRender(req, row.ID, row.ConvID)

@@ -10,6 +10,8 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/platform/execution"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 	"github.com/tofutools/tclaude/pkg/claude/statusbar"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -61,6 +63,12 @@ func postBrokeredRender(t *testing.T, f *testharness.Flow, callerPID int, body s
 	if body.ClaimedSessionID == "" {
 		body.ClaimedSessionID = slLayerLabel
 	}
+	if body.ExitGeneration == "" {
+		identity, err := db.GetSessionExitLaunchIdentity(body.ClaimedSessionID)
+		if err == nil {
+			body.ExitGeneration = identity.Generation
+		}
+	}
 	req := testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/statusline", body)
 	req = agentd.AsAgentPeerWithPID(req, "", callerPID)
 	rec := testharness.Serve(f.Mux, req)
@@ -69,6 +77,17 @@ func postBrokeredRender(t *testing.T, f *testharness.Flow, callerPID int, body s
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out), "decode broker response")
 	}
 	return rec.Code, out
+}
+
+func admitLayerConversation(t *testing.T, f *testharness.Flow, callerPID int, label, convID string) {
+	t.Helper()
+	code, _ := postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+		ClaimedSessionID: label,
+		Input: session.HookCallbackInput{
+			ConvID: convID, HookEventName: "SessionStart", Source: "startup",
+		},
+	})
+	require.Equal(t, http.StatusOK, code)
 }
 
 // A wrapped agent's status line must reach the dashboard exactly like an
@@ -82,6 +101,7 @@ func TestStatuslineBroker_PopulatesTheDashboardForAWrappedAgent(t *testing.T) {
 	f := newFlow(t)
 	callerPID := layerProcTree(t)
 	haveLayerSession(t, f, slLayerConv, slLayerLabel, "tmux-sl-layer", brokerPanePID)
+	admitLayerConversation(t, f, callerPID, slLayerLabel, slLayerConv)
 	f.HaveEnrolledAgent(slLayerConv)
 
 	code, resp := postBrokeredRender(t, f, callerPID, statusbar.BrokeredRenderRequest{
@@ -119,6 +139,59 @@ func TestStatuslineBroker_PopulatesTheDashboardForAWrappedAgent(t *testing.T) {
 	assert.Equal(t, "feature/sandbox", ws.Branch,
 		"the workspace snapshot drives the dashboard's location cells")
 	assert.Equal(t, "/home/agent/proj", ws.Cwd)
+}
+
+func TestStatuslineBroker_CannotInitializeManagedConversation(t *testing.T) {
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, slLayerConv, slLayerLabel, "tmux-sl-layer", brokerPanePID)
+
+	code, resp := postBrokeredRender(t, f, callerPID, statusbar.BrokeredRenderRequest{
+		RenderConvID: slLayerConv,
+		Payload:      statuslinePayload(slLayerConv, "Opus 5", "opus-5", "high", 33, 70000, 11000, 200000, 1.4),
+		ApplyWrites:  true,
+	})
+	require.Equal(t, http.StatusOK, code)
+	assert.False(t, resp.Applied)
+	identity, err := db.GetSessionExitLaunchIdentity(slLayerLabel)
+	require.NoError(t, err)
+	executionID, err := execution.ParseID(identity.Generation)
+	require.NoError(t, err)
+	_, found, err := db.CurrentConversationSelection(executionID)
+	require.NoError(t, err)
+	assert.False(t, found, "statusline cadence is replay-only")
+}
+
+func TestStatuslineBroker_CannotInitializeAfterRefusedResume(t *testing.T) {
+	f := newFlow(t)
+	callerPID := layerProcTree(t)
+	haveLayerSession(t, f, slLayerConv, slLayerLabel, "tmux-sl-layer", brokerPanePID)
+
+	code, _ := postBrokeredHook(t, f, callerPID, session.BrokeredHookRequest{
+		ClaimedSessionID: slLayerLabel,
+		Input: session.HookCallbackInput{
+			ConvID: slLayerConv, HookEventName: "SessionStart", Source: "resume",
+		},
+	})
+	require.Equal(t, http.StatusOK, code)
+	identity, err := db.GetSessionExitLaunchIdentity(slLayerLabel)
+	require.NoError(t, err)
+	executionID, err := execution.ParseID(identity.Generation)
+	require.NoError(t, err)
+	_, found, err := db.CurrentConversationSelection(executionID)
+	require.NoError(t, err)
+	require.False(t, found, "resume has no authorized target in this slice")
+
+	code, resp := postBrokeredRender(t, f, callerPID, statusbar.BrokeredRenderRequest{
+		RenderConvID: slLayerConv,
+		Payload:      statuslinePayload(slLayerConv, "Opus 5", "opus-5", "high", 33, 70000, 11000, 200000, 1.4),
+		ApplyWrites:  true,
+	})
+	require.Equal(t, http.StatusOK, code)
+	assert.False(t, resp.Applied)
+	_, found, err = db.CurrentConversationSelection(executionID)
+	require.NoError(t, err)
+	assert.False(t, found, "statusline must not route around a refused transition")
 }
 
 // Identity comes from the process ancestry the daemon walks, never from
@@ -165,6 +238,7 @@ func TestStatuslineBroker_ForeignRenderWritesNothing(t *testing.T) {
 	f := newFlow(t)
 	callerPID := layerProcTree(t)
 	haveLayerSession(t, f, slLayerConv, slLayerLabel, "tmux-sl-layer", brokerPanePID)
+	admitLayerConversation(t, f, callerPID, slLayerLabel, slLayerConv)
 	f.HaveEnrolledAgent(slLayerConv)
 
 	const foreignConv = "f0000000-1111-2222-3333-444444444444"
@@ -242,6 +316,7 @@ func TestStatuslineBroker_ReadsOnlyRenderRecordsNothing(t *testing.T) {
 	f := newFlow(t)
 	callerPID := layerProcTree(t)
 	haveLayerSession(t, f, slLayerConv, slLayerLabel, "tmux-sl-layer", brokerPanePID)
+	admitLayerConversation(t, f, callerPID, slLayerLabel, slLayerConv)
 	f.HaveEnrolledAgent(slLayerConv)
 
 	code, resp := postBrokeredRender(t, f, callerPID, statusbar.BrokeredRenderRequest{
@@ -272,6 +347,7 @@ func TestStatuslineBroker_ReturnsTheRowsPinnedWindow(t *testing.T) {
 	f := newFlow(t)
 	callerPID := layerProcTree(t)
 	haveLayerSession(t, f, slLayerConv, slLayerLabel, "tmux-sl-layer", brokerPanePID)
+	admitLayerConversation(t, f, callerPID, slLayerLabel, slLayerConv)
 	require.NoError(t, db.UpdateSessionAutoCompactWindow(slLayerLabel, "450000"),
 		"record a pin on the row, as a pinned launch would")
 
@@ -306,6 +382,7 @@ func TestStatuslineBroker_RateLimitIsShadowUntilTheOperatorEnablesIt(t *testing.
 	f := newFlow(t)
 	callerPID := layerProcTree(t)
 	haveLayerSession(t, f, slLayerConv, slLayerLabel, "tmux-sl-layer", brokerPanePID)
+	admitLayerConversation(t, f, callerPID, slLayerLabel, slLayerConv)
 
 	render := statusbar.BrokeredRenderRequest{
 		RenderConvID: slLayerConv,
@@ -365,19 +442,10 @@ func TestStatuslineBroker_RefusesAnOverCapBody(t *testing.T) {
 			"the reader has already truncated it, so there is nothing left to apply")
 }
 
-// A payload that names NO conversation is accepted as the resolved row's
-// own. This pins a deliberate fail-soft rather than an oversight: Claude
-// Code versions predating session_id emit exactly this, and refusing them
-// would cost real agents their telemetry to guard against a case there is
-// no evidence for.
-//
-// It is not an escalation, and the reason is worth stating because the
-// identity half of the gate makes it true: the only row a brokered render
-// can reach is the one the daemon resolved from the caller's OWN process
-// ancestry, which that caller's legitimate status line already writes.
-// A caller gains nothing by omitting the field that it does not already
-// have by sending the field correctly.
-func TestStatuslineBroker_PayloadWithNoConversationWritesTheCallersOwnRow(t *testing.T) {
+// Managed statusline traffic without a harness reference cannot prove which
+// logical history it describes. Unlike the legacy direct path it therefore
+// fails closed and leaves the durable row untouched.
+func TestStatuslineBroker_PayloadWithNoConversationWritesNothing(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 
 	f := newFlow(t)
@@ -391,20 +459,19 @@ func TestStatuslineBroker_PayloadWithNoConversationWritesTheCallersOwnRow(t *tes
 		ApplyWrites:  true,
 	})
 	require.Equal(t, http.StatusOK, code)
-	assert.True(t, resp.Owned, "an old payload with no conversation is fail-soft, as on the direct path")
+	assert.False(t, resp.Owned)
+	assert.False(t, resp.Applied, "insufficient managed evidence remains retryable")
 
 	own, err := db.GetContextSnapshot(slLayerLabel)
 	require.NoError(t, err)
-	assert.Equal(t, "Opus 5", own.Model, "it writes the caller's OWN resolved row")
+	assert.Empty(t, own.Model, "no managed status effect may precede a binding")
 
 	victim, err := db.GetContextSnapshot(slVictimLabel)
 	require.NoError(t, err)
 	assert.Empty(t, victim.Model,
 		"and reaches no other row — identity, not the payload, chose the target")
 
-	// The workspace key falls back to the row's own conversation rather
-	// than to the empty string the caller sent.
 	ws, err := db.GetAgentWorkspace(slLayerConv)
 	require.NoError(t, err)
-	assert.Equal(t, slLayerConv, ws.ConvID)
+	assert.Empty(t, ws.ConvID)
 }
