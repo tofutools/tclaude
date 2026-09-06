@@ -209,6 +209,9 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	evidence := released.Evidence
 	if evidence.Provider == "" {
 		evidence = description.Evidence
+	} else if err := validateEvidence(provider.Name(), evidence); err != nil {
+		releaseErr = err
+		evidence = description.Evidence
 	}
 	if releaseErr != nil || released.State == ports.ReleaseUncertain || released.Runtime == nil {
 		detail := "provider reported uncertain release"
@@ -309,12 +312,18 @@ func (s *Service) Stop(ctx context.Context, req StopRequest) (OperationResult, e
 }
 
 func (s *Service) ChangeContext(ctx context.Context, req ChangeContextRequest) (OperationResult, error) {
+	if err := validateEffectContext(req.RequestContext); err != nil {
+		return OperationResult{}, err
+	}
 	execution, err := s.store.Execution(ctx, req.ExecutionID)
 	if err != nil {
 		return OperationResult{}, err
 	}
 	if execution.AgentID == "" {
 		return OperationResult{}, fail(ErrUnsupported, "standalone context associations are not revisioned")
+	}
+	if err := requireSelfOrOperator(req.Principal, execution.AgentID); err != nil {
+		return OperationResult{}, err
 	}
 	association, err := s.store.CurrentConversation(ctx, execution.AgentID)
 	if err != nil {
@@ -351,6 +360,9 @@ func (s *Service) ChangeContext(ctx context.Context, req ChangeContextRequest) (
 }
 
 func (s *Service) Resume(ctx context.Context, req ResumeRequest) (OperationResult, error) {
+	if err := validateEffectContext(req.RequestContext); err != nil {
+		return OperationResult{}, err
+	}
 	var agentID model.AgentID
 	if req.Target.Agent != nil {
 		agentID = req.Target.Agent.AgentID
@@ -626,8 +638,8 @@ func validatePrepared(provider string, spec model.ResolvedExecutionSpec, descrip
 	if description.ExecutionID != spec.ExecutionID {
 		return fail(ErrInvalid, "provider prepared execution %s, want %s", description.ExecutionID, spec.ExecutionID)
 	}
-	if description.Evidence.Provider != provider {
-		return fail(ErrInvalid, "evidence provider %q does not match %q", description.Evidence.Provider, provider)
+	if err := validateEvidence(provider, description.Evidence); err != nil {
+		return err
 	}
 	if description.Requirements.WorkingDirectory != "" && description.Requirements.WorkingDirectory != spec.WorkingDirectory {
 		return fail(ErrInvalid, "provider changed working directory")
@@ -643,6 +655,16 @@ func validatePrepared(provider string, spec model.ResolvedExecutionSpec, descrip
 	}
 	if description.EffectivePolicy.Sandbox != spec.Sandbox || !description.EffectivePolicy.SandboxEnforced {
 		return fail(ErrInvalid, "provider cannot enforce requested sandbox policy")
+	}
+	return nil
+}
+
+func validateEvidence(provider string, evidence model.ProviderEvidence) error {
+	if evidence.Provider != provider {
+		return fail(ErrInvalid, "evidence provider %q does not match %q", evidence.Provider, provider)
+	}
+	if err := evidence.Validate(); err != nil {
+		return fail(ErrInvalid, "invalid provider evidence: %v", err)
 	}
 	return nil
 }
