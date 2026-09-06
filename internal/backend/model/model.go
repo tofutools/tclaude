@@ -57,6 +57,9 @@ const (
 type SandboxMode string
 
 const (
+	// SandboxUnconfined is an explicit operator-selected absence of OS
+	// confinement. It is never an implicit fallback from a confined mode.
+	SandboxUnconfined     SandboxMode = "unconfined"
 	SandboxReadOnly       SandboxMode = "read_only"
 	SandboxWorkspaceWrite SandboxMode = "workspace_write"
 )
