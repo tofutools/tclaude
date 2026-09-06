@@ -63,6 +63,7 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 	require.NoError(t, err)
 	observations := &observationSink{}
 	request := ports.PreparationRequest{Intent: ports.StartFresh, Observations: observations,
+		InitialInput: &ports.PreparedInitialInput{Body: "prepared opencode brief", Correlation: "brief-opencode", RequiredBeforeFirstWork: true},
 		ActionCredential: &ports.ActionCredentialMaterial{ExecutionID: "execution_opencode", Generation: 1,
 			DeliveryID: "delivery-opencode", Secret: []byte("provider-secret-value"), ExpiresAt: time.Now().Add(time.Hour)},
 		Spec: model.ResolvedExecutionSpec{
@@ -77,6 +78,7 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 	require.True(t, description.EffectivePolicy.SandboxEnforced,
 		"the explicit absence of confinement is preserved without claiming native rules are a sandbox")
 	require.NotNil(t, description.AccessDelivery)
+	require.Equal(t, &ports.PreparedInitialInputDescription{Correlation: "brief-opencode", Supported: true}, description.InitialInput)
 	require.NotContains(t, string(description.Evidence.Payload), "provider-secret-value")
 	recorded, err := decodeEvidence(description.Evidence)
 	require.NoError(t, err)
@@ -98,6 +100,10 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 	require.Equal(t, ports.ReleaseStarted, released.State)
 	require.Len(t, observations.values, 1)
 	require.Equal(t, ports.PrimaryContextInitial, observations.values[0].Disposition)
+	require.Eventually(t, func() bool {
+		value, readErr := os.ReadFile(promptPath)
+		return readErr == nil && strings.Contains(string(value), "prepared opencode brief")
+	}, time.Second, 10*time.Millisecond)
 	require.Eventually(t, func() bool {
 		value, readErr := os.ReadFile(bootstrapPath)
 		return readErr == nil && strings.Contains(string(value), agentSocket) &&

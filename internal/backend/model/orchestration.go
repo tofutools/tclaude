@@ -425,7 +425,6 @@ type DecisionAudience struct {
 	RoleID  RoleID
 	GroupID GroupID
 }
-
 type DecisionSubmission struct {
 	RequestID              RequestID
 	DecisionID             DecisionID

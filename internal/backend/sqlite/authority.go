@@ -341,7 +341,8 @@ func authoritySubject(ctx context.Context, q queryer, principal model.Principal,
 		}
 		if access.AgentID != "" {
 			var primary model.ExecutionID
-			if err := q.QueryRowContext(ctx, `SELECT primary_execution_id FROM agents WHERE id=?`, access.AgentID).Scan(&primary); err != nil || primary != access.ExecutionID {
+			var lifecycle model.AgentLifecycleState
+			if err := q.QueryRowContext(ctx, `SELECT primary_execution_id,lifecycle_state FROM agents WHERE id=?`, access.AgentID).Scan(&primary, &lifecycle); err != nil || primary != access.ExecutionID || lifecycle != model.AgentActive {
 				return model.AuthoritySubject{}, app.ErrUnauthorized
 			}
 			return model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: access.AgentID}, nil
@@ -361,8 +362,18 @@ func authoritySubject(ctx context.Context, q queryer, principal model.Principal,
 				return model.AuthoritySubject{}, app.ErrUnauthorized
 			}
 		}
+		if principal.Authority.Kind == model.AuthorityAgent {
+			var lifecycle model.AgentLifecycleState
+			if err := q.QueryRowContext(ctx, `SELECT lifecycle_state FROM agents WHERE id=?`, principal.Authority.AgentID).Scan(&lifecycle); err != nil || lifecycle != model.AgentActive {
+				return model.AuthoritySubject{}, app.ErrUnauthorized
+			}
+		}
 		return principal.Authority, nil
 	case model.PrincipalAgent: // Transitional in-process callers; never bearer-authenticated.
+		var lifecycle model.AgentLifecycleState
+		if err := q.QueryRowContext(ctx, `SELECT lifecycle_state FROM agents WHERE id=?`, principal.AgentID).Scan(&lifecycle); err != nil || lifecycle != model.AgentActive {
+			return model.AuthoritySubject{}, app.ErrUnauthorized
+		}
 		return model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: principal.AgentID}, nil
 	default:
 		return model.AuthoritySubject{}, app.ErrUnauthorized
@@ -823,8 +834,8 @@ func makeResource(kind, id string) model.ResourceSelector {
 }
 
 func validResourceSelector(resource model.ResourceSelector) bool {
-	if resource.Kind == model.ResourceSelf {
-		return resource == (model.ResourceSelector{Kind: model.ResourceSelf})
+	if resource.Kind == model.ResourceSelf || resource.Kind == model.ResourceOperator {
+		return resource == (model.ResourceSelector{Kind: resource.Kind})
 	}
 	kind, id := resourceParts(resource)
 	switch resource.Kind {

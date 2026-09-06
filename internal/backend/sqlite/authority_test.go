@@ -29,6 +29,7 @@ func TestOrchestrationResourceSelectorsRoundTripWithoutAuthorityWidening(t *test
 			t.Cleanup(func() { _ = store.Close() })
 			now := time.Now().UTC()
 			subject := model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: "worker"}
+			require.NoError(t, store.CreateAgent(ctx, model.Agent{ID: subject.AgentID, Name: "worker", Desired: model.DesiredConfiguration{Harness: "fake", Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined}, Revision: 1, CreatedAt: now, UpdatedAt: now}))
 			grant, err := store.PutGrant(ctx, model.AuthorityGrant{ID: "grant", Subject: subject, Action: model.ActionReadIdentity, Resource: test.first, CreatedAt: now, UpdatedAt: now}, 0)
 			require.NoError(t, err)
 			require.Equal(t, test.first, grant.Resource)

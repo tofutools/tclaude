@@ -13,7 +13,9 @@ import (
 type Store interface {
 	OrchestrationStore
 	CreateAgent(context.Context, model.Agent) error
-	UpdateAgent(context.Context, model.AgentID, model.Revision, string, model.DesiredConfiguration, model.AuthorityRequest, time.Time) (model.Agent, error)
+	UpdateAgent(context.Context, model.AgentID, model.Revision, string, string, model.AgentNotificationPreferences, model.DesiredConfiguration, model.AuthorityRequest, time.Time) (model.Agent, error)
+	RetireAgent(context.Context, model.AgentID, model.Revision, model.Principal, string, time.Time) (model.Agent, error)
+	ReactivateAgent(context.Context, model.AgentID, model.Revision, model.Principal, time.Time) (model.Agent, error)
 	Agent(context.Context, model.AgentID) (model.Agent, error)
 	CreateGroup(context.Context, model.Group, model.ConfigurationBounds) error
 	Group(context.Context, model.GroupID) (model.Group, error)
@@ -52,9 +54,15 @@ type Store interface {
 	ReactivateExecutionAccess(context.Context, model.ExecutionID, model.AccessGeneration, ports.ActionCredentialRecoveryProof, time.Time) (model.ExecutionAccess, error)
 	RevokeExecutionAccess(context.Context, model.ExecutionID, model.Revision, time.Time) (model.ExecutionAccess, error)
 
-	CreateMessage(context.Context, model.Message, model.RequestID, model.OperationID, []model.AuthorityRequest) (MessageAdmissionResult, error)
-	MarkMessageRead(context.Context, model.MessageID, model.AgentID, model.AuthorityRequest, time.Time) (model.Message, error)
+	ResolveMessageAudience(context.Context, model.MessageAudience) ([]model.AgentID, error)
+	MessageByRequest(context.Context, model.Principal, model.RequestID, string) (MessageAdmissionResult, bool, error)
+	PurgeExpiredAttachmentClaims(context.Context, time.Time) (int64, error)
+	CreateAttachmentClaim(context.Context, model.AttachmentClaim, []byte) error
+	CreateMessage(context.Context, MessageAdmission) (MessageAdmissionResult, error)
+	MarkMessageRead(context.Context, model.MessageID, model.MessageAddressKind, model.AgentID, model.AuthorityRequest, time.Time) (model.Message, error)
+	RecordMessageNotification(context.Context, model.RecipientID, model.NotificationOutcome, string, time.Time) (model.Message, error)
 	MessagesForAgent(context.Context, model.AgentID, bool) ([]model.Message, error)
+	AttachmentContent(context.Context, model.AttachmentID, model.Principal, time.Time) (model.Attachment, []byte, error)
 	Snapshot(context.Context) (Snapshot, error)
 	AssociateConversation(context.Context, ContextAssociation) error
 
@@ -316,6 +324,34 @@ type MessageAdmissionResult struct {
 	Operation model.Operation
 	Message   model.Message
 	Repeated  bool
+}
+
+type MessageAdmission struct {
+	Message       model.Message
+	RequestID     model.RequestID
+	OperationID   model.OperationID
+	RequestDigest string
+	Authority     []model.AuthorityRequest
+	Attachments   []MessageAttachmentAdmission
+}
+
+type MessageAttachmentAdmission struct {
+	Attachment model.Attachment
+	Content    []byte
+	ClaimID    model.AttachmentClaimID
+}
+
+// MessageNotificationRecorder is the narrow application-owned completion
+// boundary for an optional notifier. Message acceptance never depends on it.
+type MessageNotificationRecorder interface {
+	RecordMessageNotification(context.Context, MessageNotificationUpdate) (MessageResult, error)
+}
+
+type MessageNotificationUpdate struct {
+	RecipientID model.RecipientID
+	Outcome     model.NotificationOutcome
+	Detail      string
+	At          time.Time
 }
 
 type ContextAssociation struct {

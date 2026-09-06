@@ -102,7 +102,7 @@ func (c *Client) Call(ctx context.Context, method, path string, body, result any
 		}
 		return &Error{Status: response.StatusCode, Code: failure.Code}
 	}
-	if result == nil {
+	if result == nil || response.StatusCode == http.StatusNoContent {
 		return nil
 	}
 	if err := json.Unmarshal(content, result); err != nil {
