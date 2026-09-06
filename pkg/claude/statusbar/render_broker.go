@@ -94,6 +94,11 @@ type BrokeredRenderRequest struct {
 	// agentd proves against the socket peer PID and generation-bound live pane.
 	ClaimedSessionID string `json:"claimed_session_id,omitempty"`
 
+	// ExitGeneration is the exact launch generation exported by tclaude.
+	// Agentd parses and compares it with the durable session before allowing
+	// managed conversation-scoped statusline writes.
+	ExitGeneration string `json:"exit_generation,omitempty"`
+
 	// RenderConvID is Claude Code's session_id from the payload: the
 	// conversation this render describes. It is the input to the
 	// attribution gate, which the DAEMON runs.
@@ -180,6 +185,7 @@ func brokeredHostState(req renderRequest) renderFacts {
 
 	resp, err := postRenderToDaemon(BrokeredRenderRequest{
 		ClaimedSessionID: req.EnvSessionID,
+		ExitGeneration:   os.Getenv("TCLAUDE_EXIT_GENERATION"),
 		RenderConvID:     req.RenderConvID,
 		EnvPinnedWindow:  req.EnvPinnedWindow,
 		Payload:          req.Payload,

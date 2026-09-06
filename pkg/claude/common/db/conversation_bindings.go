@@ -22,6 +22,90 @@ func NewLogicalConversationID() conversation.ID {
 	return conversation.ID("cvn_" + hex.EncodeToString(b[:]))
 }
 
+// CurrentConversationAdmission returns the immutable admission that produced
+// an execution's current selection. Replaying this value through
+// AdmitConversationBinding is the only way a recurring managed observation
+// (notably hook and statusline ticks) can obtain a current Duplicate verdict
+// without manufacturing a new revision.
+func CurrentConversationAdmission(executionID execution.ID) (conversation.Admission, bool, error) {
+	d, err := Open()
+	if err != nil {
+		return conversation.Admission{}, false, err
+	}
+	var a conversation.Admission
+	var mainProcess int
+	err = d.QueryRow(`SELECT h.expected_revision, h.evidence_id, h.session_id,
+		h.harness, h.namespace, h.external_ref, h.transition,
+		h.process_instance, h.main_process, h.evidence_strength, h.evidence_source,
+		h.observed_pid, h.observed_tmux_session, h.observed_pane_id
+		FROM conversation_attempt_bindings b
+		JOIN conversation_reference_bindings h
+		  ON h.execution_id=b.execution_id AND h.revision=b.revision
+		WHERE b.execution_id=?`, executionID).
+		Scan(&a.ExpectedRevision, &a.Evidence.ID, &a.Attempt.LegacySessionID,
+			&a.Reference.Harness, &a.Reference.Namespace, &a.Reference.Value, &a.Transition,
+			&a.Evidence.ProcessInstance, &mainProcess, &a.Evidence.Strength, &a.Evidence.Source,
+			&a.Evidence.PID, &a.Evidence.TmuxSession, &a.Evidence.PaneID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return conversation.Admission{}, false, nil
+	}
+	if err != nil {
+		return conversation.Admission{}, false, err
+	}
+	a.Origin = conversation.Managed
+	a.Attempt.ExecutionID = executionID
+	a.Evidence.MainProcess = mainProcess != 0
+	return a, true, nil
+}
+
+// CurrentConversationSelection reads the platform-owned current selection for
+// an execution without consulting the legacy sessions.conv_id projection.
+func CurrentConversationSelection(executionID execution.ID) (conversation.Selection, bool, error) {
+	d, err := Open()
+	if err != nil {
+		return conversation.Selection{}, false, err
+	}
+	var s conversation.Selection
+	err = d.QueryRow(`SELECT conversation_id, harness, namespace, external_ref, revision
+		FROM conversation_attempt_bindings WHERE execution_id=?`, executionID).
+		Scan(&s.Conversation, &s.Reference.Harness, &s.Reference.Namespace,
+			&s.Reference.Value, &s.Revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return conversation.Selection{}, false, nil
+	}
+	return s, err == nil, err
+}
+
+// BindManagedAttemptMainPID promotes the launch-time pane-shell PID to the
+// main harness PID proved by the host adapter. The compare-and-swap includes
+// the entire durable launch attachment, so it cannot repair a successor or an
+// exited attempt. Conversation admission subsequently rechecks this promoted
+// association in its own transaction.
+func BindManagedAttemptMainPID(
+	attempt execution.AttemptRef,
+	tmuxSession, paneID string,
+	observedPID, mainPID int,
+) (bool, error) {
+	if strings.TrimSpace(attempt.LegacySessionID) == "" || observedPID <= 0 || mainPID <= 0 ||
+		strings.TrimSpace(tmuxSession) == "" || strings.TrimSpace(paneID) == "" {
+		return false, nil
+	}
+	d, err := Open()
+	if err != nil {
+		return false, err
+	}
+	res, err := d.Exec(`UPDATE sessions SET pid=?
+		WHERE id=? AND exit_callback_generation=? AND tmux_session=?
+		  AND exit_callback_pane_id=? AND status<>'exited' AND pid IN (?, ?)`,
+		mainPID, attempt.LegacySessionID, attempt.ExecutionID, tmuxSession,
+		paneID, observedPID, mainPID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
 type bindingRecord struct {
 	revision         conversation.Revision
 	expectedRevision conversation.Revision
