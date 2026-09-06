@@ -76,6 +76,13 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 		_, _ = released.Runtime.Stop(ctx, ports.StopRequest{Force: true})
 	})
 
+	preparedRecovery, err := provider.Recover(context.Background(), ports.RecoveryRequest{
+		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: description.Evidence,
+	})
+	require.NoError(t, err)
+	require.Equal(t, ports.RecoveryControlled, preparedRecovery.State,
+		"the evidence persisted before release must recover a start completed before receipt persistence")
+
 	require.Eventually(t, func() bool {
 		value, readErr := os.ReadFile(argvPath)
 		return readErr == nil && strings.Contains(string(value), "--session-id") &&
