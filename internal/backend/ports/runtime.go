@@ -29,11 +29,12 @@ type ResourceClaim struct {
 }
 
 type PreparedDescription struct {
-	ExecutionID  model.ExecutionID
-	Topology     WorkloadTopology
-	Requirements RuntimeRequirements
-	Resources    []ResourceClaim
-	Evidence     model.ProviderEvidence
+	ExecutionID     model.ExecutionID
+	Topology        WorkloadTopology
+	Requirements    RuntimeRequirements
+	EffectivePolicy EffectivePolicy
+	Resources       []ResourceClaim
+	Evidence        model.ProviderEvidence
 }
 
 type RuntimeRequirements struct {
@@ -42,6 +43,7 @@ type RuntimeRequirements struct {
 	PrivateStorage   bool
 	Terminal         *TerminalRequirement
 	Loopback         *LoopbackRequirement
+	Policy           PolicyRequirements
 }
 
 type TerminalRequirement struct {
@@ -52,11 +54,25 @@ type LoopbackRequirement struct {
 	Protocol string
 }
 
-// ReleasePermit is minted by the application only after the matching durable
-// operation and prepared evidence have been committed.
-type ReleasePermit struct {
-	ExecutionID model.ExecutionID
-	OperationID model.OperationID
+type PolicyRequirements struct {
+	SupportedApproval []model.ApprovalMode
+	SupportedSandbox  []model.SandboxMode
+}
+
+type EffectivePolicy struct {
+	Approval         model.ApprovalMode
+	Sandbox          model.SandboxMode
+	ApprovalEnforced bool
+	SandboxEnforced  bool
+}
+
+// ReleasePermit is application-owned one-shot authority. Release must call
+// Consume immediately before its first irreversible effect. Public IDs are
+// correlation only and cannot authorize release by themselves.
+type ReleasePermit interface {
+	ExecutionID() model.ExecutionID
+	OperationID() model.OperationID
+	Consume(context.Context) error
 }
 
 type ReleaseState string
@@ -80,8 +96,22 @@ type PreparedAttempt interface {
 
 type Provider interface {
 	Name() string
-	Prepare(context.Context, model.ResolvedExecutionSpec) (PreparedAttempt, error)
+	Prepare(context.Context, PreparationRequest) (PreparedAttempt, error)
 	Recover(context.Context, RecoveryRequest) (RecoveryResult, error)
+}
+
+type StartIntent string
+
+const (
+	StartFresh    StartIntent = "fresh"
+	StartContinue StartIntent = "continue"
+)
+
+type PreparationRequest struct {
+	Spec          model.ResolvedExecutionSpec
+	Intent        StartIntent
+	Continuation  *model.NativeConversationEvidence
+	PriorEvidence model.ProviderEvidence
 }
 
 type ProviderRegistry interface {
@@ -127,16 +157,6 @@ const (
 	WorkloadUnknown  WorkloadObservedState = "unknown"
 )
 
-type ServerObservedState string
-
-const (
-	ServerNotApplicable ServerObservedState = "not_applicable"
-	ServerStarting      ServerObservedState = "starting"
-	ServerRunning       ServerObservedState = "running"
-	ServerExited        ServerObservedState = "exited"
-	ServerUnknown       ServerObservedState = "unknown"
-)
-
 type ContextObservedState string
 
 const (
@@ -148,18 +168,11 @@ const (
 type Observation struct {
 	ObservedAt         time.Time
 	Workload           WorkloadObservedState
-	Server             ServerObservedState
 	Context            ContextObservedState
 	AttachmentActive   bool
 	ExitCode           *int
-	NativeConversation *NativeConversationEvidence
+	NativeConversation *model.NativeConversationEvidence
 	Evidence           model.ProviderEvidence
-}
-
-type NativeConversationEvidence struct {
-	Namespace  string
-	Reference  string
-	ObservedAt time.Time
 }
 
 type Interaction struct {
@@ -199,20 +212,22 @@ type AttachmentResult struct {
 	Evidence    model.ProviderEvidence
 }
 
-type ContextChangeMode string
+type ContextChangeIntent string
 
 const (
-	ContextRotate ContextChangeMode = "rotate"
-	ContextReset  ContextChangeMode = "reset"
+	ContextClear ContextChangeIntent = "clear"
+	ContextReset ContextChangeIntent = "reset"
 )
 
 type ContextChange struct {
-	Mode ContextChangeMode
+	Intent                      ContextChangeIntent
+	ExpectedConversation        model.ConversationID
+	ExpectedAssociationRevision model.Revision
 }
 
 type ContextChangeResult struct {
 	Disposition        EffectDisposition
-	NativeConversation *NativeConversationEvidence
+	NativeConversation *model.NativeConversationEvidence
 	Evidence           model.ProviderEvidence
 }
 
