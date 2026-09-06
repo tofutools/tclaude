@@ -423,15 +423,16 @@ func validStoredAccessRequest(request model.AccessRequest) bool {
 	if request.Requester.Kind != model.PrincipalExecution || request.Requester.ExecutionID.Validate() != nil || request.Requester.Generation == 0 {
 		return false
 	}
-	if request.Subject.Kind == model.AuthorityAgent {
+	switch request.Subject.Kind {
+	case model.AuthorityAgent:
 		if request.Subject.AgentID.Validate() != nil || request.Requester.AgentID != request.Subject.AgentID {
 			return false
 		}
-	} else if request.Subject.Kind == model.AuthorityExecution {
+	case model.AuthorityExecution:
 		if request.Subject.ExecutionID.Validate() != nil || request.Requester.AgentID != "" || request.Requester.ExecutionID != request.Subject.ExecutionID {
 			return false
 		}
-	} else {
+	default:
 		return false
 	}
 	if request.Action == "" || !validResourceSelector(request.Resource) || strings.TrimSpace(request.Reason) == "" || len(request.Reason) > 1024 {
@@ -461,7 +462,8 @@ func accessRequestSubjectCurrent(ctx context.Context, q queryer, request model.A
 	if err = q.QueryRowContext(ctx, `SELECT state FROM executions WHERE id=?`, request.Requester.ExecutionID).Scan(&state); err != nil || state == model.ExecutionExited || state == model.ExecutionFailed || state == model.ExecutionUnknown {
 		return false
 	}
-	if request.Subject.Kind == model.AuthorityAgent {
+	switch request.Subject.Kind {
+	case model.AuthorityAgent:
 		var primary model.ExecutionID
 		var lifecycle model.AgentLifecycleState
 		return q.QueryRowContext(ctx, `SELECT primary_execution_id,lifecycle_state FROM agents WHERE id=?`, request.Subject.AgentID).Scan(&primary, &lifecycle) == nil && primary == request.Requester.ExecutionID && lifecycle == model.AgentActive
