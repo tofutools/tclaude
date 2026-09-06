@@ -230,23 +230,24 @@ type GraphAttemptUpdate struct {
 }
 
 type GraphTransition struct {
-	WorkRunID        model.WorkRunID
-	ExpectedRevision model.Revision
-	Authority        model.AuthorityRequest
-	Evidence         *model.WorkNodeEvidence
-	Decision         *model.DecisionSubmission
-	Operation        *model.Operation
-	Execution        *model.Execution
-	WorkspaceUse     *model.WorkspaceUse
-	AgentExpected    model.Revision
-	Access           *model.ExecutionAccess
-	Updates          []GraphAttemptUpdate
-	Activations      []model.WorkNodeAttempt
-	DecisionWindows  []model.DecisionWindow
-	RunState         model.WorkRunState
-	ControlState     model.WorkControlState
-	RunOutcome       model.WorkOutcome
-	At               time.Time
+	WorkRunID           model.WorkRunID
+	ExpectedRevision    model.Revision
+	Authority           model.AuthorityRequest
+	AdditionalAuthority []model.AuthorityRequest
+	Evidence            *model.WorkNodeEvidence
+	Decision            *model.DecisionSubmission
+	Operation           *model.Operation
+	Execution           *model.Execution
+	WorkspaceUse        *model.WorkspaceUse
+	AgentExpected       model.Revision
+	Access              *model.ExecutionAccess
+	Updates             []GraphAttemptUpdate
+	Activations         []model.WorkNodeAttempt
+	DecisionWindows     []model.DecisionWindow
+	RunState            model.WorkRunState
+	ControlState        model.WorkControlState
+	RunOutcome          model.WorkOutcome
+	At                  time.Time
 }
 
 type WorkProgress struct {

@@ -162,6 +162,34 @@ func TestProgramOutputCleanupRetriesAfterDurableExit(t *testing.T) {
 	require.Equal(t, 2, host.runtime.releaseAttempts)
 }
 
+func TestTimedWaitResumesFromDurableWaitingRun(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "backend.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Date(2026, 9, 6, 21, 45, 0, 0, time.UTC)
+	host := &programHostFake{}
+	service := app.New(store, providers.NewRegistry()).WithProgramHost(host).WithClock(func() time.Time { return now })
+	operator := model.OperatorPrincipal()
+	require.NoError(t, store.RegisterWorkspace(ctx, model.Workspace{ID: "workspace", State: model.WorkspaceAvailable, Observation: model.WorkspaceObservation{ActualPath: t.TempDir(), ObservedAt: now}, Revision: 1, CreatedAt: now, UpdatedAt: now}))
+	profile, err := service.SaveProgramProfile(ctx, app.SaveProgramProfileRequest{Context: app.RequestContext{Principal: operator, RequestID: "profile"}, ID: "check", RevisionID: "check_v1", Name: "check", Executable: "check", Sandbox: model.SandboxWorkspaceWrite, Timeout: time.Minute, OutputLimitBytes: 1024, EffectAuthority: []model.ProgramEffectRequirement{{Action: model.ActionExecuteProgram, Resource: model.ResourceSelector{Kind: model.ResourceWorkspace}}}})
+	require.NoError(t, err)
+	graph := model.WorkGraph{CompilerVersion: "1", EntryNodeID: "program", Nodes: []model.WorkNode{{ID: "program", Kind: model.WorkNodeTask, Performer: &model.Performer{Kind: model.PerformerProgram, Program: &model.ProgramPerformer{Profile: model.ProgramProfileRef{ProfileID: profile.Profile.ID, RevisionID: profile.Revision.ID, ContentHash: profile.Revision.ContentHash}}}}, {ID: "delay", Kind: model.WorkNodeWait, Wait: &model.WaitPolicy{Duration: time.Minute}}, {ID: "done", Kind: model.WorkNodeEnd, End: &model.EndPolicy{Outcome: model.WorkOutcomeVerified}}}, Edges: []model.WorkEdge{{From: "program", To: "delay"}, {From: "delay", To: "done"}}}
+	run, err := service.StartProcess(ctx, app.StartProcessRequest{Context: app.RequestContext{Principal: operator, RequestID: "start"}, ID: "wait_run", Start: model.WorkStart{InlineGraph: &graph, Scope: model.WorkScope{WorkspaceID: "workspace"}, AuthorizedProgramProfiles: []model.ProgramProfileRef{{ProfileID: profile.Profile.ID, RevisionID: profile.Revision.ID, ContentHash: profile.Revision.ContentHash}}, Deadline: now.Add(time.Hour)}})
+	require.NoError(t, err)
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	waiting, err := service.InspectWork(ctx, app.InspectWorkRequest{Principal: operator, WorkRunID: run.Run.ID})
+	require.NoError(t, err)
+	require.Equal(t, model.WorkRunRunning, waiting.Run.State)
+	now = now.Add(time.Minute)
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	finished, err := service.InspectWork(ctx, app.InspectWorkRequest{Principal: operator, WorkRunID: run.Run.ID})
+	require.NoError(t, err)
+	require.Equal(t, model.WorkRunSucceeded, finished.Run.State)
+}
+
 func TestAgentPreparedWorkThenHumanDecisionAdvancesExactGraph(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "backend.sqlite"))
@@ -169,11 +197,11 @@ func TestAgentPreparedWorkThenHumanDecisionAdvancesExactGraph(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	now := time.Date(2026, 9, 6, 22, 0, 0, 0, time.UTC)
 	provider := &preparedWorkProvider{}
-	service := app.New(store, providers.NewRegistry(provider)).WithClock(func() time.Time { return now })
+	service := app.New(store, providers.NewRegistry(provider)).WithClock(func() time.Time { return now }).WithCallbackIngress(noopCallbackIngress{})
 	operator := model.OperatorPrincipal()
 	_, err = service.CreateAgent(ctx, app.CreateAgentRequest{Context: operator, ID: "worker", Name: "worker", Desired: model.DesiredConfiguration{Harness: "prepared-work", Model: "test", WorkingDirectory: t.TempDir(), Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}})
 	require.NoError(t, err)
-	_, err = service.SaveAutomationRule(ctx, app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: operator, RequestID: "standing_rule"}, ID: "standing", RevisionID: "standing_v1", Name: "standing", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Delegation: model.AutomationDelegation{Actions: []model.Action{model.ActionRunAutomation}, Resources: []model.ResourceSelector{{Kind: model.ResourceAutomationRule, AutomationRuleID: "standing"}}, ExpiresAt: now.Add(time.Hour)}, Condition: model.AutomationCondition{Kind: model.AutomationStandingOrder, StandingOrder: &model.StandingOrderCondition{FactKind: "user_prompt", Pattern: "review", Timing: model.StandingOrderSameContinuation, DispatchDeadline: time.Minute}}, Action: model.AutomationAction{Kind: model.AutomationSendMessage, Message: &model.AutomationMessageAction{Body: "apply the standing guidance"}}, Policy: model.OccurrencePolicy{MissedTicks: model.MissedTickSkip, OfflineDelivery: model.OfflineSkip, ExpiresAfter: time.Hour, Overlap: model.OverlapForbid, MaxActive: 1, Deadline: time.Minute, Retry: model.RetryPolicy{MaxAttempts: 1}}})
+	_, err = service.SaveAutomationRule(ctx, app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: operator, RequestID: "standing_rule"}, ID: "standing", RevisionID: "standing_v1", Name: "standing", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Delegation: model.AutomationDelegation{Actions: []model.Action{model.ActionInteract}, Resources: []model.ResourceSelector{{Kind: model.ResourceAgent, AgentID: "worker"}}, ExpiresAt: now.Add(time.Hour)}, Condition: model.AutomationCondition{Kind: model.AutomationStandingOrder, StandingOrder: &model.StandingOrderCondition{FactKind: "user_prompt", Pattern: "review", Timing: model.StandingOrderSameContinuation, DispatchDeadline: time.Minute}}, Action: model.AutomationAction{Kind: model.AutomationSendMessage, Message: &model.AutomationMessageAction{Body: "apply the standing guidance", AgentIDs: []model.AgentID{"worker"}}}, Policy: model.OccurrencePolicy{MissedTicks: model.MissedTickSkip, OfflineDelivery: model.OfflineSkip, ExpiresAfter: time.Hour, Overlap: model.OverlapForbid, MaxActive: 1, Deadline: time.Minute, Retry: model.RetryPolicy{MaxAttempts: 1}}})
 	require.NoError(t, err)
 	graph := model.WorkGraph{CompilerVersion: "1", EntryNodeID: "work", Nodes: []model.WorkNode{
 		{ID: "work", Kind: model.WorkNodeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Agent: &model.AgentPerformer{AgentID: "worker", ContextPolicy: model.AgentContextFresh, Brief: "review the exact change"}}},
@@ -401,6 +429,12 @@ func programEvidence() model.ProviderEvidence {
 type preparedWorkProvider struct {
 	preparation  ports.PreparationRequest
 	preparations []ports.PreparationRequest
+}
+
+type noopCallbackIngress struct{}
+
+func (noopCallbackIngress) RegisterCallback(_ context.Context, registration ports.CallbackRegistration) (ports.CallbackBinding, error) {
+	return ports.CallbackBinding{RegistrationID: registration.RegistrationID, ExecutionID: registration.ExecutionID, Attempt: registration.Attempt}, nil
 }
 
 func (*preparedWorkProvider) Name() string { return "prepared-work" }

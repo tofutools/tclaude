@@ -62,6 +62,9 @@ func (s *Store) AuthorityState(ctx context.Context) (app.AuthorityStateResult, e
 }
 
 func (s *Store) PutGrant(ctx context.Context, grant model.AuthorityGrant, expected model.Revision) (model.AuthorityGrant, error) {
+	if !validResourceSelector(grant.Resource) {
+		return model.AuthorityGrant{}, app.ErrInvalid
+	}
 	bounds, err := json.Marshal(grant.Bounds)
 	if err != nil {
 		return model.AuthorityGrant{}, err
@@ -129,6 +132,9 @@ func (s *Store) PutRole(ctx context.Context, role model.Role, expected model.Rev
 }
 
 func (s *Store) PutRoleAssignment(ctx context.Context, assignment model.RoleAssignment, expected model.Revision) (model.RoleAssignment, error) {
+	if !validResourceSelector(assignment.Resource) {
+		return model.RoleAssignment{}, app.ErrInvalid
+	}
 	bounds, err := json.Marshal(assignment.Bounds)
 	if err != nil {
 		return model.RoleAssignment{}, err
@@ -156,6 +162,9 @@ func (s *Store) PutRoleAssignment(ctx context.Context, assignment model.RoleAssi
 }
 
 func (s *Store) DeleteRoleAssignment(ctx context.Context, assignment model.RoleAssignment, expected model.Revision) error {
+	if !validResourceSelector(assignment.Resource) {
+		return app.ErrInvalid
+	}
 	sk, sid := subjectParts(assignment.Subject)
 	rk, rid := resourceParts(assignment.Resource)
 	result, err := s.db.ExecContext(ctx, `DELETE FROM role_assignments WHERE role_id=? AND subject_kind=? AND subject_id=? AND resource_kind=? AND resource_id=? AND revision=?`, assignment.RoleID, sk, sid, rk, rid, expected)
@@ -239,6 +248,9 @@ type queryer interface {
 
 func authorizeTx(ctx context.Context, q queryer, request model.AuthorityRequest, at time.Time) (model.AuthorityDecision, error) {
 	decision := model.AuthorityDecision{Action: request.Action, Resource: request.Resource}
+	if !validResourceSelector(request.Resource) {
+		return decision, app.ErrInvalid
+	}
 	if request.Principal.Kind == model.PrincipalOperator {
 		decision.Allowed, decision.SourceKind, decision.SourceID = true, model.AuthorityDefault, "operator"
 		return decision, nil
@@ -390,6 +402,9 @@ func defaultAuthority(principal model.Principal, action model.Action, resource m
 }
 
 func resourceMatches(ctx context.Context, q queryer, principal model.Principal, granted, requested model.ResourceSelector) bool {
+	if !validResourceSelector(granted) || !validResourceSelector(requested) {
+		return false
+	}
 	if granted.Kind == model.ResourceSelf {
 		switch principal.Authority.Kind {
 		case model.AuthorityAgent:
@@ -578,6 +593,14 @@ func insertExecutionAccess(ctx context.Context, tx *sql.Tx, access model.Executi
 }
 
 func insertOperationAuthority(ctx context.Context, tx *sql.Tx, operationID model.OperationID, request model.AuthorityRequest, decision model.AuthorityDecision) error {
+	return insertOperationAuthorityAt(ctx, tx, "operation_authority", operationID, 0, request, decision)
+}
+
+func insertAdditionalOperationAuthority(ctx context.Context, tx *sql.Tx, operationID model.OperationID, position int, request model.AuthorityRequest, decision model.AuthorityDecision) error {
+	return insertOperationAuthorityAt(ctx, tx, "operation_additional_authority", operationID, position, request, decision)
+}
+
+func insertOperationAuthorityAt(ctx context.Context, tx *sql.Tx, table string, operationID model.OperationID, position int, request model.AuthorityRequest, decision model.AuthorityDecision) error {
 	rk, rid := resourceParts(request.Resource)
 	var configuration any
 	if request.RequestedConfiguration != nil {
@@ -587,8 +610,43 @@ func insertOperationAuthority(ctx context.Context, tx *sql.Tx, operationID model
 		}
 		configuration = encoded
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO operation_authority(operation_id,action,resource_kind,resource_id,requested_configuration_json,admitted_source_kind,admitted_source_id,admitted_revision) VALUES(?,?,?,?,?,?,?,?)`, operationID, request.Action, rk, rid, configuration, decision.SourceKind, decision.SourceID, decision.Revision)
+	query := `INSERT INTO operation_authority(operation_id,action,resource_kind,resource_id,requested_configuration_json,admitted_source_kind,admitted_source_id,admitted_revision) VALUES(?,?,?,?,?,?,?,?)`
+	args := []any{operationID, request.Action, rk, rid, configuration, decision.SourceKind, decision.SourceID, decision.Revision}
+	if table == "operation_additional_authority" {
+		query = `INSERT INTO operation_additional_authority(operation_id,position,action,resource_kind,resource_id,requested_configuration_json,admitted_source_kind,admitted_source_id,admitted_revision) VALUES(?,?,?,?,?,?,?,?,?)`
+		args = []any{operationID, position, request.Action, rk, rid, configuration, decision.SourceKind, decision.SourceID, decision.Revision}
+	}
+	_, err := tx.ExecContext(ctx, query, args...)
 	return err
+}
+
+func additionalOperationAuthorities(ctx context.Context, tx *sql.Tx, operationID model.OperationID, principal model.Principal) ([]model.AuthorityRequest, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT action,resource_kind,resource_id,requested_configuration_json FROM operation_additional_authority WHERE operation_id=? ORDER BY position`, operationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var requests []model.AuthorityRequest
+	for rows.Next() {
+		request := model.AuthorityRequest{Principal: principal}
+		var rk, rid string
+		var configuration []byte
+		if err = rows.Scan(&request.Action, &rk, &rid, &configuration); err != nil {
+			return nil, err
+		}
+		request.Resource = makeResource(rk, rid)
+		if !validResourceSelector(request.Resource) {
+			return nil, app.ErrInvalid
+		}
+		if len(configuration) != 0 {
+			request.RequestedConfiguration = new(model.DesiredConfiguration)
+			if err = json.Unmarshal(configuration, request.RequestedConfiguration); err != nil {
+				return nil, err
+			}
+		}
+		requests = append(requests, request)
+	}
+	return requests, rows.Err()
 }
 
 func operationAuthority(ctx context.Context, tx *sql.Tx, operationID model.OperationID) (model.AuthorityRequest, bool, error) {
@@ -610,6 +668,9 @@ func operationAuthority(ctx context.Context, tx *sql.Tx, operationID model.Opera
 		}
 	}
 	request.Resource = makeResource(rk, rid)
+	if !validResourceSelector(request.Resource) {
+		return request, false, app.ErrInvalid
+	}
 	if len(configuration) != 0 {
 		request.RequestedConfiguration = new(model.DesiredConfiguration)
 		if err := json.Unmarshal(configuration, request.RequestedConfiguration); err != nil {
@@ -633,6 +694,9 @@ func scanGrant(row scanner) (model.AuthorityGrant, error) {
 		return grant, classify(err)
 	}
 	grant.Subject, grant.Resource = makeSubject(sk, sid), makeResource(rk, rid)
+	if !validResourceSelector(grant.Resource) {
+		return grant, app.ErrInvalid
+	}
 	grant.CreatedAt, grant.UpdatedAt = fromNanos(created), fromNanos(updated)
 	if expires.Valid {
 		value := fromNanos(expires.Int64)
@@ -677,6 +741,9 @@ func scanAssignment(row scanner) (model.RoleAssignment, error) {
 		return assignment, classify(err)
 	}
 	assignment.Subject, assignment.Resource = makeSubject(sk, sid), makeResource(rk, rid)
+	if !validResourceSelector(assignment.Resource) {
+		return assignment, app.ErrInvalid
+	}
 	assignment.CreatedAt, assignment.UpdatedAt = fromNanos(created), fromNanos(updated)
 	if err := json.Unmarshal(bounds, &assignment.Bounds); err != nil {
 		return assignment, err
@@ -719,6 +786,12 @@ func resourceParts(resource model.ResourceSelector) (string, string) {
 		return string(resource.Kind), string(resource.WorkspaceID)
 	case model.ResourceWorkRun:
 		return string(resource.Kind), string(resource.WorkRunID)
+	case model.ResourceDefinition:
+		return string(resource.Kind), string(resource.DefinitionID)
+	case model.ResourceProgramProfile:
+		return string(resource.Kind), string(resource.ProgramProfileID)
+	case model.ResourceAutomationRule:
+		return string(resource.Kind), string(resource.AutomationRuleID)
 	default:
 		return string(resource.Kind), ""
 	}
@@ -739,8 +812,29 @@ func makeResource(kind, id string) model.ResourceSelector {
 		resource.WorkspaceID = model.WorkspaceID(id)
 	case model.ResourceWorkRun:
 		resource.WorkRunID = model.WorkRunID(id)
+	case model.ResourceDefinition:
+		resource.DefinitionID = model.DefinitionID(id)
+	case model.ResourceProgramProfile:
+		resource.ProgramProfileID = model.ProgramProfileID(id)
+	case model.ResourceAutomationRule:
+		resource.AutomationRuleID = model.AutomationRuleID(id)
 	}
 	return resource
+}
+
+func validResourceSelector(resource model.ResourceSelector) bool {
+	if resource.Kind == model.ResourceSelf {
+		return resource == (model.ResourceSelector{Kind: model.ResourceSelf})
+	}
+	kind, id := resourceParts(resource)
+	switch resource.Kind {
+	case model.ResourceAgent, model.ResourceExecution, model.ResourceGroup, model.ResourceGroupPeers,
+		model.ResourceConversation, model.ResourceWorkspace, model.ResourceWorkRun, model.ResourceDefinition,
+		model.ResourceProgramProfile, model.ResourceAutomationRule:
+		return id != "" && model.ValidateStableID("resource id", id) == nil && resource == makeResource(kind, id)
+	default:
+		return false
+	}
 }
 
 func requestScope(principal model.Principal) string {

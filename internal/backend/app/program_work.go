@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
@@ -18,13 +19,29 @@ func (s *Service) advanceGraphWork(ctx context.Context, record WorkRunRecord) (W
 	if record.Run.Graph == nil {
 		return record, nil
 	}
+	now := s.now().UTC()
+	if record.Run.State != model.WorkRunFailed && record.Run.State != model.WorkRunCancelled && record.Run.State != model.WorkRunUncertain && !now.Before(record.Run.Deadline) {
+		return s.expireGraphWork(ctx, record, now)
+	}
+	for _, attempt := range record.Run.NodeAttempts {
+		if attempt.State != model.NodeAttemptWaiting || attempt.DecisionID == "" {
+			continue
+		}
+		decision, err := s.store.Decision(ctx, attempt.DecisionID)
+		if err != nil {
+			return record, err
+		}
+		if decision.Submission != nil {
+			return s.applyAnsweredDecision(ctx, record, attempt, *decision.Submission)
+		}
+	}
 	for _, attempt := range record.Run.NodeAttempts {
 		if attempt.State != model.NodeAttemptReady {
 			continue
 		}
 		node := graphNode(*record.Run.Graph, attempt.Ref.NodeID)
 		if node.Kind == model.WorkNodeWait {
-			if s.now().UTC().Before(attempt.ReadyAt.Add(node.Wait.Duration)) {
+			if now.Before(attempt.ReadyAt.Add(node.Wait.Duration)) {
 				continue
 			}
 			transition := s.graphOutcomeTransition(record, attempt, model.WorkOutcomeVerified, "wait elapsed")
@@ -53,7 +70,33 @@ func (s *Service) advanceGraphWork(ctx context.Context, record WorkRunRecord) (W
 			return s.reconcileAgentAttempt(ctx, record, attempt)
 		}
 	}
+	if record.Run.State == model.WorkRunFailed && record.Run.ControlState == model.WorkControlDraining && !hasOwnedGraphEffects(record.Run.NodeAttempts) {
+		transition := GraphTransition{WorkRunID: record.Run.ID, ExpectedRevision: record.Run.Revision, RunState: record.Run.State, ControlState: model.WorkControlSettled, RunOutcome: record.Run.Outcome, At: now}
+		return s.store.ApplyGraphTransition(ctx, transition)
+	}
 	return record, nil
+}
+
+func (s *Service) expireGraphWork(ctx context.Context, record WorkRunRecord, now time.Time) (WorkRunRecord, error) {
+	transition := GraphTransition{WorkRunID: record.Run.ID, ExpectedRevision: record.Run.Revision, RunState: model.WorkRunFailed, ControlState: model.WorkControlSettled, RunOutcome: model.WorkOutcomeExpired, At: now}
+	for _, attempt := range record.Run.NodeAttempts {
+		switch attempt.State {
+		case model.NodeAttemptReady, model.NodeAttemptRetryWait, model.NodeAttemptBlocked, model.NodeAttemptWaiting:
+			transition.Updates = append(transition.Updates, GraphAttemptUpdate{Ref: attempt.Ref, State: model.NodeAttemptSuppressed, Outcome: model.WorkOutcomeExpired, Detail: "suppressed after work deadline"})
+		case model.NodeAttemptAdmitted, model.NodeAttemptRunning, model.NodeAttemptUncertain:
+			transition.ControlState = model.WorkControlDraining
+		}
+	}
+	return s.store.ApplyGraphTransition(ctx, transition)
+}
+
+func hasOwnedGraphEffects(attempts []model.WorkNodeAttempt) bool {
+	for _, attempt := range attempts {
+		if attempt.State == model.NodeAttemptAdmitted || attempt.State == model.NodeAttemptRunning || attempt.State == model.NodeAttemptUncertain {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) recoverProgramExecution(ctx context.Context, execution model.Execution, report *RecoveryReport) error {
@@ -205,11 +248,15 @@ func (s *Service) admitAndRunProgram(ctx context.Context, record WorkRunRecord, 
 		return record, fail(ErrInvalid, "program profile has no effect authority")
 	}
 	var executeRequirement model.ProgramEffectRequirement
+	var additionalAuthority []model.AuthorityRequest
 	for _, requirement := range profile.EffectAuthority {
 		if requirement.Action == model.ActionExecuteProgram && requirement.Resource.Kind == model.ResourceWorkspace {
 			executeRequirement = requirement
-			break
+			continue
 		}
+		bound := bindProgramAuthority(requirement, workspace.ID)
+		bound.Principal = record.Run.Requester
+		additionalAuthority = append(additionalAuthority, bound)
 	}
 	authority := bindProgramAuthority(executeRequirement, workspace.ID)
 	authority.Principal = record.Run.Requester
@@ -225,7 +272,7 @@ func (s *Service) admitAndRunProgram(ctx context.Context, record WorkRunRecord, 
 	operation := model.Operation{ID: operationID, RequestID: model.RequestID(issuanceID), Kind: model.OperationRunProgram, Principal: record.Run.Requester, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	use := model.WorkspaceUse{ID: model.WorkspaceUseID(s.newID("workspace_use_")), WorkspaceID: workspace.ID, ExecutionID: executionID, WorkRunID: record.Run.ID, CreatedAt: now}
 	transition := GraphTransition{
-		WorkRunID: record.Run.ID, ExpectedRevision: record.Run.Revision, Authority: authority,
+		WorkRunID: record.Run.ID, ExpectedRevision: record.Run.Revision, Authority: authority, AdditionalAuthority: additionalAuthority,
 		Operation: &operation, Execution: &execution, WorkspaceUse: &use,
 		Updates:  []GraphAttemptUpdate{{Ref: attempt.Ref, NewIssuanceID: issuanceID, OperationID: operationID, ExecutionID: executionID, State: model.NodeAttemptAdmitted}},
 		RunState: model.WorkRunRunning, ControlState: model.WorkControlActive, At: now,

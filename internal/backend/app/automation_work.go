@@ -99,6 +99,36 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 			}
 			continue
 		}
+		if occurrence.Occurrence.DeploymentID != "" {
+			deployment, deploymentErr := s.store.TeamDeployment(ctx, occurrence.Occurrence.DeploymentID)
+			if deploymentErr != nil {
+				return touched, deploymentErr
+			}
+			state := occurrence.Occurrence.State
+			switch deployment.State {
+			case model.DeploymentReady:
+				state = model.OccurrenceDelivered
+			case model.DeploymentPartial, model.DeploymentStopped:
+				state = model.OccurrenceDenied
+			}
+			if state != occurrence.Occurrence.State {
+				if _, err = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, state, occurrence.Occurrence.OperationID, occurrence.Occurrence.WorkRunID, deployment.ID, occurrence.Occurrence.Recipients, now); err != nil {
+					return touched, err
+				}
+			}
+			continue
+		}
+		currentRule, ruleErr := s.store.AutomationRule(ctx, occurrence.Occurrence.RuleID)
+		if ruleErr != nil {
+			return touched, ruleErr
+		}
+		if occurrence.Occurrence.State == model.OccurrencePending && !currentRule.Rule.Enabled {
+			if _, err = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, model.OccurrenceDenied, "", "", "", occurrence.Occurrence.Recipients, now); err != nil {
+				return touched, err
+			}
+			touched = append(touched, occurrence.Occurrence.ID)
+			continue
+		}
 		switch revision.Action.Kind {
 		case model.AutomationStartWork:
 			start := *revision.Action.Work
@@ -124,6 +154,16 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 				state, recipients = model.OccurrenceDenied, deniedRecipients(occurrence.Occurrence.Recipients, sendErr.Error())
 			}
 			if _, err = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, state, "", "", "", recipients, now); err != nil {
+				return touched, err
+			}
+		case model.AutomationDeployTeam:
+			deploymentID := model.DeploymentID(deterministicOrchestrationID("deployment_", string(occurrence.Occurrence.ID)))
+			deployed, deployErr := s.DeployTeam(ctx, DeployTeamRequest{Context: RequestContext{Principal: occurrence.Occurrence.Requester, RequestID: occurrence.Occurrence.RequestID}, DeploymentID: deploymentID, Instantiation: *revision.Action.Team})
+			state := model.OccurrenceAdmitted
+			if deployErr != nil {
+				state = model.OccurrenceDenied
+			}
+			if _, err = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, state, "", "", deployed.Deployment.ID, occurrence.Occurrence.Recipients, now); err != nil {
 				return touched, err
 			}
 		}
