@@ -2530,10 +2530,17 @@ func runNew(params *NewParams) error {
 	}
 	exitGuard, err := newExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
 	if err != nil {
+		if params.ResumeOperationID != "" {
+			return fmt.Errorf("managed resume exit-launch gate unavailable: %w", err)
+		}
 		slog.Warn("exit audit: private launch setup unavailable; continuing without callback",
 			"session_id", sessionID, "tmux_session", tmuxSession, "error", err)
 		exitGuard = disabledExitLaunchGuard(sessionID, tmuxSession, exitGeneration)
 	} else if err := db.MarkSessionExitLaunchPending(sessionID, exitGeneration); err != nil {
+		if params.ResumeOperationID != "" {
+			exitGuard.abort()
+			return fmt.Errorf("managed resume exit-launch state unavailable: %w", err)
+		}
 		slog.Warn("exit audit: launch gate state unavailable; continuing without callback",
 			"session_id", sessionID, "tmux_session", tmuxSession, "error", err)
 		exitGuard.abort()
@@ -2636,6 +2643,10 @@ func runNew(params *NewParams) error {
 	timing("stacked_binding_checked")
 	exitGuard.armPaneHook()
 	exitGuard.bind()
+	if params.ResumeOperationID != "" && !exitGuard.bound {
+		exitGuard.abort()
+		return errors.New("managed resume exit-launch binding unavailable")
+	}
 	if proofReadyPath != "" {
 		if err := waitForSpawnCwdReadiness(proofReadyPath); err != nil {
 			killLaunchPane()

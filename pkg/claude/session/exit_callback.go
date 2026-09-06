@@ -40,6 +40,7 @@ type exitLaunchGuard struct {
 	callbackEnabled bool
 	enabled         bool
 	released        bool
+	bound           bool
 }
 
 func newExitLaunchGuard(sessionID, tmuxSession, generation string) (*exitLaunchGuard, error) {
@@ -238,6 +239,9 @@ func (g *exitLaunchGuard) bind() {
 	var bindErr error
 	if g.callbackEnabled {
 		bindErr = db.SetSessionExitLaunchBinding(g.sessionID, g.generation, g.tokenHash, g.paneID)
+		if bindErr == nil {
+			g.bound = true
+		}
 	}
 	g.token = ""
 	if bindErr != nil {
