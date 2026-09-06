@@ -84,7 +84,7 @@ function render(){
  const messages=$('message-list');messages.replaceChildren();
  for(const message of [...snapshot.messages||[]].reverse()){
   const card=el('article',undefined,'card');card.append(el('strong',message.Subject||'Message'),el('p',`${message.Sender.AgentID||message.Sender.Kind} · ${new Date(message.CreatedAt).toLocaleString()}`,'muted'),el('pre',message.Body));
-  card.append(el('p',(message.Recipients||[]).map(r=>`${r.Audience==='cc'?'CC':'To'} ${r.AddressKind==='operator'?'Operator':r.AgentID} · ${r.ReadAt?'read':'unread'}`).join(', '),'muted'));
+  card.append(el('p',(message.Recipients||[]).map(r=>`${r.Audience==='cc'?'CC':'To'} ${r.AddressKind==='operator'?'Operator':r.AgentID} · ${r.ReadAt?'read':'unread'}${r.NotificationOutcome?' · notice '+r.NotificationOutcome.replaceAll('_',' '):''}`).join(', '),'muted'));
   if(message.ParentMessageID)card.append(el('p','Reply in an existing thread','muted'));
   card.append(button('Reply all',()=>composeMessage(message)));
   if((message.Recipients||[]).some(r=>r.AddressKind==='operator'&&!r.ReadAt))card.append(button('Mark read',async id=>{await api(`/v2/messages/${encodeURIComponent(message.ID)}/read`,{request_id:id,operator:true});await refresh()}));
