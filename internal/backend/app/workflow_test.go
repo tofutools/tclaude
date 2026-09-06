@@ -363,7 +363,8 @@ type fakeProvider struct {
 func newFakeProvider() *fakeProvider {
 	return &fakeProvider{runtime: &fakeRuntime{}, enforceSandbox: true, preparedTopology: ports.TopologyIndependentServer}
 }
-func (p *fakeProvider) Name() string { return "fake" }
+func (p *fakeProvider) Name() string                             { return "fake" }
+func (p *fakeProvider) Capabilities() ports.ProviderCapabilities { return ports.ProviderCapabilities{} }
 func (p *fakeProvider) Prepare(_ context.Context, request ports.PreparationRequest) (ports.PreparedAttempt, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
