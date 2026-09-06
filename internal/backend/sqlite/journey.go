@@ -555,7 +555,7 @@ func (s *Store) CreateWorkRun(ctx context.Context, run model.WorkRun, claim *mod
 		return model.WorkRun{}, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	_, err = tx.ExecContext(ctx, `INSERT INTO work_runs(id,request_scope,request_id,requester_json,authority_json,delegation_json,spec_json,state,worker_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, run.ID, scope, requestID, requester, authority, delegation, spec, run.State, run.WorkerExecutionID, run.Revision, nanos(run.CreatedAt), nanos(run.UpdatedAt))
+	_, err = tx.ExecContext(ctx, `INSERT INTO work_runs(id,request_scope,request_id,requester_json,authority_json,delegation_json,spec_json,state,worker_execution_id,cancellation_requested,cancellation_reason,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.ID, scope, requestID, requester, authority, delegation, spec, run.State, run.WorkerExecutionID, run.CancellationRequested, run.CancellationReason, run.Revision, nanos(run.CreatedAt), nanos(run.UpdatedAt))
 	if err != nil {
 		return model.WorkRun{}, false, classify(err)
 	}
@@ -591,7 +591,7 @@ func (s *Store) WorkRun(ctx context.Context, id model.WorkRunID) (app.WorkRunRec
 	var record app.WorkRunRecord
 	var requester, authority, delegation, spec []byte
 	var created, updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,request_id,requester_json,authority_json,delegation_json,spec_json,state,worker_execution_id,revision,created_at,updated_at FROM work_runs WHERE id=?`, id).Scan(&record.Run.ID, &record.Run.RequestID, &requester, &authority, &delegation, &spec, &record.Run.State, &record.Run.WorkerExecutionID, &record.Run.Revision, &created, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT id,request_id,requester_json,authority_json,delegation_json,spec_json,state,worker_execution_id,cancellation_requested,cancellation_reason,revision,created_at,updated_at FROM work_runs WHERE id=?`, id).Scan(&record.Run.ID, &record.Run.RequestID, &requester, &authority, &delegation, &spec, &record.Run.State, &record.Run.WorkerExecutionID, &record.Run.CancellationRequested, &record.Run.CancellationReason, &record.Run.Revision, &created, &updated)
 	if err != nil {
 		return record, classify(err)
 	}
@@ -667,6 +667,15 @@ func (s *Store) WorkRun(ctx context.Context, id model.WorkRunID) (app.WorkRunRec
 		return record, err
 	}
 	return record, nil
+}
+
+func (s *Store) WorkRunByRequest(ctx context.Context, principal model.Principal, requestID model.RequestID) (app.WorkRunRecord, error) {
+	var id model.WorkRunID
+	err := s.db.QueryRowContext(ctx, `SELECT id FROM work_runs WHERE request_scope=? AND request_id=?`, requestScope(principal), requestID).Scan(&id)
+	if err != nil {
+		return app.WorkRunRecord{}, classify(err)
+	}
+	return s.WorkRun(ctx, id)
 }
 
 func (s *Store) PendingWorkRuns(ctx context.Context) ([]app.WorkRunRecord, error) {
@@ -784,7 +793,7 @@ func (s *Store) RecordWorkEvidence(ctx context.Context, e model.WorkEvidence, ex
 	if e.Passed != nil {
 		passed = *e.Passed
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO work_evidence(id,request_scope,request_id,work_run_id,step,attempt,kind,reporter_json,artifact_revision,passed,detail,recorded_at,revision) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,1 WHERE EXISTS(SELECT 1 FROM work_runs r JOIN work_attempts a ON a.work_run_id=r.id WHERE r.id=? AND r.revision=? AND r.state IN (?,?) AND a.step=? AND a.attempt=?)`, e.ID, requestScope(e.Reporter), e.RequestID, e.WorkRunID, e.Step, e.Attempt, e.Kind, reporter, e.ArtifactRevision, passed, e.Detail, nanos(e.RecordedAt), e.WorkRunID, expected, model.WorkRunRunning, model.WorkRunWaiting, e.Step, e.Attempt)
+	result, err := tx.ExecContext(ctx, `INSERT INTO work_evidence(id,request_scope,request_id,work_run_id,step,attempt,kind,reporter_json,artifact_revision,passed,detail,recorded_at,revision) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,1 WHERE EXISTS(SELECT 1 FROM work_runs r JOIN work_attempts a ON a.work_run_id=r.id WHERE r.id=? AND r.revision=? AND r.state=? AND a.step=? AND a.attempt=? AND a.step=? AND a.state=?)`, e.ID, requestScope(e.Reporter), e.RequestID, e.WorkRunID, e.Step, e.Attempt, e.Kind, reporter, e.ArtifactRevision, passed, e.Detail, nanos(e.RecordedAt), e.WorkRunID, expected, model.WorkRunWaiting, e.Step, e.Attempt, model.WorkStepAwaitEvidence, model.WorkAttemptPending)
 	if err != nil {
 		return app.WorkRunRecord{}, classify(err)
 	}
@@ -857,7 +866,7 @@ func (s *Store) DecideWork(ctx context.Context, d model.WorkDecision, expected m
 	if n, _ := result.RowsAffected(); n != 1 {
 		return app.WorkRunRecord{}, app.ErrConflict
 	}
-	if _, err = tx.ExecContext(ctx, `UPDATE workspace_uses SET released_at=? WHERE work_run_id=? AND released_at IS NULL`, nanos(at), d.WorkRunID); err != nil {
+	if _, err = tx.ExecContext(ctx, `UPDATE workspace_uses SET released_at=? WHERE work_run_id=? AND released_at IS NULL AND (execution_id='' OR EXISTS(SELECT 1 FROM executions e WHERE e.id=workspace_uses.execution_id AND e.state IN (?,?)))`, nanos(at), d.WorkRunID, model.ExecutionExited, model.ExecutionFailed); err != nil {
 		return app.WorkRunRecord{}, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE history_use_claims SET state=?,revision=revision+1,settled_at=? WHERE work_run_id=? AND state=?`, model.HistoryUseReleased, nanos(at), d.WorkRunID, model.HistoryUseHeld); err != nil {
@@ -880,7 +889,7 @@ func (s *Store) CancelWork(ctx context.Context, id model.WorkRunID, expected mod
 	defer func() { _ = tx.Rollback() }()
 	var existingRun model.WorkRunID
 	var existingReason string
-	err = tx.QueryRowContext(ctx, `SELECT work_run_id,reason FROM work_decisions WHERE request_scope=? AND request_id=?`, requestScope(authority.Principal), requestID).Scan(&existingRun, &existingReason)
+	err = tx.QueryRowContext(ctx, `SELECT id,cancellation_reason FROM work_runs WHERE cancel_request_scope=? AND cancel_request_id=?`, requestScope(authority.Principal), requestID).Scan(&existingRun, &existingReason)
 	if err == nil {
 		if existingRun != id || existingReason != reason {
 			return app.WorkRunRecord{}, app.ErrConflict
@@ -904,12 +913,16 @@ func (s *Store) CancelWork(ctx context.Context, id model.WorkRunID, expected mod
 	if err = tx.QueryRowContext(ctx, `SELECT state FROM work_runs WHERE id=? AND revision=?`, id, expected).Scan(&priorState); err != nil {
 		return app.WorkRunRecord{}, classify(err)
 	}
-	decider, _ := json.Marshal(authority.Principal)
-	_, err = tx.ExecContext(ctx, `INSERT INTO work_decisions(work_run_id,request_scope,request_id,step,attempt,decision,decider_json,reason,decided_at,revision) VALUES(?,?,?,?,?,?,?,?,?,1)`, id, requestScope(authority.Principal), requestID, model.WorkStepEvaluate, 1, model.WorkDecisionCancel, decider, reason, nanos(at))
-	if err != nil {
-		return app.WorkRunRecord{}, classify(err)
+	nextState := model.WorkRunCancelled
+	if priorState == model.WorkRunUncertain {
+		nextState = model.WorkRunUncertain
+	} else {
+		decider, _ := json.Marshal(authority.Principal)
+		if _, err = tx.ExecContext(ctx, `INSERT INTO work_decisions(work_run_id,request_scope,request_id,step,attempt,decision,decider_json,reason,decided_at,revision) VALUES(?,?,?,?,?,?,?,?,?,1)`, id, requestScope(authority.Principal), requestID, model.WorkStepEvaluate, 1, model.WorkDecisionCancel, decider, reason, nanos(at)); err != nil {
+			return app.WorkRunRecord{}, classify(err)
+		}
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE work_runs SET state=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND state IN (?,?,?,?)`, model.WorkRunCancelled, nanos(at), id, expected, model.WorkRunPending, model.WorkRunRunning, model.WorkRunWaiting, model.WorkRunUncertain)
+	result, err := tx.ExecContext(ctx, `UPDATE work_runs SET state=?,cancellation_requested=1,cancellation_reason=?,cancel_request_scope=?,cancel_request_id=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND state IN (?,?,?,?)`, nextState, reason, requestScope(authority.Principal), requestID, nanos(at), id, expected, model.WorkRunPending, model.WorkRunRunning, model.WorkRunWaiting, model.WorkRunUncertain)
 	if err != nil {
 		return app.WorkRunRecord{}, err
 	}
@@ -917,7 +930,7 @@ func (s *Store) CancelWork(ctx context.Context, id model.WorkRunID, expected mod
 		return app.WorkRunRecord{}, app.ErrConflict
 	}
 	if priorState != model.WorkRunUncertain {
-		if _, err = tx.ExecContext(ctx, `UPDATE workspace_uses SET released_at=? WHERE work_run_id=? AND released_at IS NULL`, nanos(at), id); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE workspace_uses SET released_at=? WHERE work_run_id=? AND released_at IS NULL AND (execution_id='' OR EXISTS(SELECT 1 FROM executions e WHERE e.id=workspace_uses.execution_id AND e.state IN (?,?)))`, nanos(at), id, model.ExecutionExited, model.ExecutionFailed); err != nil {
 			return app.WorkRunRecord{}, err
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE history_use_claims SET state=?,revision=revision+1,settled_at=? WHERE work_run_id=? AND state=?`, model.HistoryUseReleased, nanos(at), id, model.HistoryUseHeld); err != nil {
