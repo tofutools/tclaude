@@ -72,6 +72,8 @@ func testNativeProviderJourney(
 	ctx := context.Background()
 	root, err := os.MkdirTemp("/tmp", "tcl-provider-journey-")
 	require.NoError(t, err)
+	root, err = filepath.EvalSymlinks(root)
+	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
 
 	repository := filepath.Join(root, "repository")

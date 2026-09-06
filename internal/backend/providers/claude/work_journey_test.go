@@ -33,6 +33,8 @@ func TestClaudeFreshHandoffRunsDurableWorkJourney(t *testing.T) {
 	}
 	root, err := os.MkdirTemp("/tmp", "tclaude-claude-work-")
 	require.NoError(t, err)
+	root, err = filepath.EvalSymlinks(root)
+	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
 	repository := filepath.Join(root, "repository")
 	require.NoError(t, os.Mkdir(repository, 0o700))
