@@ -269,6 +269,7 @@ func TestNotificationFilters_PerType(t *testing.T) {
 	}
 	assert.Equal(t, true, state["human_messages"], "human messages default on")
 	assert.Equal(t, false, state["access_requests"], "access-request notification default off")
+	assert.Equal(t, false, state["present_pr"], "present-pr notification default off")
 
 	// Baseline: an exit transition notifies.
 	assert.True(t, notifiedTransition(t, "pt-exit-1", conv, "working", "exited"),
@@ -308,6 +309,19 @@ func TestNotificationFilters_PerType(t *testing.T) {
 	accessOn := postState(map[string]any{"access_requests": true})
 	assert.Equal(t, true, accessOn["access_requests"], "access-request notifications on echoed")
 	assert.Equal(t, true, getState()["access_requests"], "and persisted")
+
+	// The present-pr knob is the second agent-block knob on this endpoint,
+	// so it must round-trip on its own AND leave its neighbour alone —
+	// both live under config.agent, which the popover writes field by field.
+	prOn := postState(map[string]any{"present_pr": true})
+	assert.Equal(t, true, prOn["present_pr"], "present-pr notifications on echoed")
+	assert.Equal(t, true, getState()["present_pr"], "and persisted")
+	assert.Equal(t, true, getState()["access_requests"], "the neighbouring agent knob survived")
+
+	prOff := postState(map[string]any{"present_pr": false})
+	assert.Equal(t, false, prOff["present_pr"], "present-pr notifications off echoed")
+	assert.Equal(t, false, getState()["present_pr"], "and persisted")
+	assert.Equal(t, true, getState()["access_requests"], "turning one off leaves the other on")
 
 	// The delivery channel round-trips through the same endpoint — this is
 	// what the header bell's quick selector writes.

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
@@ -336,6 +337,83 @@ func SendAccessRequest(senderSessionID, fromTitle, group, perm, path string) {
 		b.WriteString(g)
 	}
 	dispatch(senderSessionID, title, truncate(b.String(), notifyBodyMaxLen))
+}
+
+// SendPresentedPR raises an optional OS notification for a `tclaude agent
+// present-pr` presentation — the desktop companion to the PR badge on the
+// agent's dashboard row, so the human sees a review request off the busy
+// terminal. It no-ops unless notifications.enabled and
+// agent.present_pr_notification are both true; the dashboard badge remains
+// the primary surface either way.
+//
+// agentSessionID, when non-empty, makes the notification click-to-focus the
+// presenting agent's terminal. agentTitle/group attribute the PR to the
+// agent whose row carries it — which, when a manager presents on another
+// agent's behalf, is the target rather than the caller.
+func SendPresentedPR(agentSessionID, agentTitle, group, prURL, summary string) {
+	cfg, err := config.Load()
+	if err != nil || cfg.Notifications == nil || !cfg.Notifications.Enabled || !cfg.PresentPRNotification() {
+		return
+	}
+	title, notifBody := formatPresentedPR(agentTitle, group, prURL, summary)
+	slog.Debug("sending presented-PR notification",
+		"agentSessionID", agentSessionID, "agent", agentTitle, "group", group, "url", prURL)
+	dispatch(agentSessionID, title, notifBody)
+}
+
+// formatPresentedPR builds the title/body of a presented-PR notification.
+// The body leads with who presented, then the URL, then the optional
+// summary and group. who falls back to a generic phrase when the agent
+// title is unknown.
+//
+// The URL is the point of the banner — it is what the human copies and
+// acts on — so a half-truncated one is worthless. A presented URL may be
+// up to maxAgentPRURLLen (2048) bytes while a banner body caps at
+// notifyBodyMaxLen (1024) runes, so the optional trailers are appended
+// only while they still fit whole, rather than pushing the URL past the
+// cut. Nothing can save a URL that is itself over the cap; a banner cannot
+// display one at all.
+func formatPresentedPR(agentTitle, group, prURL, summary string) (title, notifBody string) {
+	who := strings.TrimSpace(agentTitle)
+	if who == "" {
+		who = "An agent"
+	}
+	title = truncate("Claude: pull request", notifyTitleMaxLen)
+
+	// The URL is reserved its room FIRST. An agent title is free text (a
+	// /rename can make it arbitrarily long), and letting the attribution
+	// take unlimited space would push a perfectly short URL past the cut,
+	// leaving a banner that names who but cannot be acted on.
+	attribution := who + " presented a pull request"
+	body := attribution
+	if u := strings.TrimSpace(prURL); u != "" {
+		urlLine := "\n" + u
+		switch budget := notifyBodyMaxLen - utf8.RuneCountInString(urlLine); {
+		case budget <= 0:
+			// The URL alone fills the banner; no attribution can fit in
+			// front of it, so give the URL every rune there is.
+			body = u
+		default:
+			body = truncate(attribution, budget) + urlLine
+		}
+	}
+	// Each trailer is all-or-nothing: a summary too long to fit is skipped
+	// rather than truncated mid-word, and skipping it still leaves room for
+	// the (short) group line behind it.
+	for _, trailer := range []struct{ prefix, value string }{
+		{"\n", strings.TrimSpace(summary)},
+		{"\n— ", strings.TrimSpace(group)},
+	} {
+		if trailer.value == "" {
+			continue
+		}
+		line := trailer.prefix + trailer.value
+		if utf8.RuneCountInString(body)+utf8.RuneCountInString(line) > notifyBodyMaxLen {
+			continue
+		}
+		body += line
+	}
+	return title, truncate(body, notifyBodyMaxLen)
 }
 
 // formatHumanMessage builds the title/body of a human-message

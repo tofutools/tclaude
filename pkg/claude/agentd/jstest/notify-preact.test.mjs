@@ -22,6 +22,7 @@ const enabledSettings = {
   },
   human_messages: false,
   access_requests: true,
+  present_pr: true,
   delivery: 'both',
 };
 
@@ -34,6 +35,7 @@ test('notification state normalizes daemon settings and keeps the bell on snapsh
   assert.equal(normalized.types.idle, true);
   assert.equal(normalized.types.exited, false);
   assert.equal(normalized.humanMessages, true, 'human messages default on unless explicitly false');
+  assert.equal(normalized.presentPR, false, 'present-pr banners stay off until switched on');
   assert.equal(normalized.delivery, 'os', 'absent delivery is the desktop default');
   assert.equal(normalizeNotifySettings({ delivery: 'browser' }).delivery, 'browser');
   assert.equal(normalizeNotifySettings({ delivery: 'carrier-pigeon' }).delivery, 'os',
@@ -50,6 +52,7 @@ test('notification state normalizes daemon settings and keeps the bell on snapsh
   assert.equal(state.commitRequest(requestId, enabledSettings), true);
   assert.equal(state.view.value.settings.humanMessages, false);
   assert.equal(state.view.value.settings.accessRequests, true);
+  assert.equal(state.view.value.settings.presentPR, true);
   assert.equal(state.commitRequest(requestId - 1, {}), false, 'stale responses cannot repaint state');
 });
 
@@ -206,9 +209,11 @@ test('notification island preserves markup, dismisses outside/Escape, and cleans
   assert.equal(pop.querySelectorAll('[data-notify-type]').length, 5);
   assert.equal(pop.querySelector('#notify-pop-human').hasAttribute('checked'), false);
   assert.equal(pop.querySelector('#notify-pop-access').hasAttribute('checked'), true);
+  assert.equal(pop.querySelector('#notify-pop-presentpr').hasAttribute('checked'), true);
   assert.match(pop.querySelector('.notify-pop-master').title, /master switch/);
   assert.match(pop.querySelector('#notify-pop-human').parentElement.title, /notify-human/);
   assert.match(pop.querySelector('#notify-pop-access').parentElement.title, /--ask-human/);
+  assert.match(pop.querySelector('#notify-pop-presentpr').parentElement.title, /present-pr/);
   assert.match(pop.querySelector('#notify-pop-config').title, /full notifications settings/);
   // Delivery selector reflects the committed setting and drives setDelivery.
   const delivery = pop.querySelector('#notify-pop-delivery');

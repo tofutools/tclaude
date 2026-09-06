@@ -357,6 +357,151 @@ func TestPresentPR_OwnerPresentsWorkerWithoutSlug(t *testing.T) {
 	assert.Equal(t, 125, resp.PR.Number)
 }
 
+// enablePresentPRNotifications turns on the two gates the feature needs and
+// routes delivery to the browser channel, so a flow test observes the
+// notification through the dashboard's own poll endpoint rather than a
+// swapped-out internal callback. Nothing below dispatch is mocked: the
+// production notify path runs end to end.
+func enablePresentPRNotifications(t *testing.T) {
+	t.Helper()
+	pinBrowserNotifyOrigin(t)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.Notifications.Enabled = true
+	cfg.Notifications.Delivery = config.NotifyDeliveryBrowser
+	if cfg.Agent == nil {
+		cfg.Agent = &config.AgentConfig{}
+	}
+	cfg.Agent.PresentPRNotification = true
+	require.NoError(t, config.Save(cfg))
+}
+
+// presentedPRBanners drains the background dispatch and reads whatever
+// reached the browser queue through /api/browser-notifications.
+func presentedPRBanners(t *testing.T) []db.BrowserNotification {
+	t.Helper()
+	agentd.WaitForBackgroundForTest() // the notification fires on goBackground
+	return fetchBrowserNotifications(t, agentd.BuildDashboardHandlerForTest(), "?since=0").Notifications
+}
+
+// Presenting a PR raises the opt-in notification, carrying the PR URL — the
+// thing the human acts on — plus the presenting agent's session for
+// click-to-focus.
+func TestPresentPR_RaisesNotification(t *testing.T) {
+	f := newFlow(t)
+	enablePresentPRNotifications(t)
+
+	const (
+		worker = "pprn-aaaa-bbbb-cccc-dddd"
+		prURL  = "https://github.com/tofutools/tclaude/pull/321"
+	)
+	f.HaveGroup("squad")
+	f.HaveConvWithTitle(worker, "worker")
+	f.HaveAliveSession(worker, "lbl-pprn", "tmux-pprn", f.TestCwd("not-a-repo"))
+	f.HaveMember("squad", worker)
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs",
+			map[string]any{"url": prURL, "summary": "notify on present-pr"}), worker))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	got := presentedPRBanners(t)
+	require.Len(t, got, 1, "one presentation raises exactly one notification")
+	assert.Equal(t, "Claude: pull request", got[0].Title)
+	assert.Contains(t, got[0].Body, prURL, "the PR URL is what the human acts on")
+	assert.Contains(t, got[0].Body, "notify on present-pr", "the summary rides along")
+	assert.Contains(t, got[0].Body, "worker")
+	assert.Contains(t, got[0].Body, "squad")
+	assert.Equal(t, "lbl-pprn", got[0].SessionID,
+		"the banner click-to-focuses the presenting agent's session")
+}
+
+// The knob is opt-in: an operator who never set it must not start getting
+// banners just because notifications are enabled.
+func TestPresentPR_SilentUntilTheOperatorOptsIn(t *testing.T) {
+	f := newFlow(t)
+	pinBrowserNotifyOrigin(t)
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	cfg.Notifications.Enabled = true
+	cfg.Notifications.Delivery = config.NotifyDeliveryBrowser
+	require.NoError(t, config.Save(cfg)) // no agent.present_pr_notification
+
+	const worker = "pprd-aaaa-bbbb-cccc-dddd"
+	f.HaveConvWithTitle(worker, "worker")
+	f.HaveAliveSession(worker, "lbl-pprd", "tmux-pprd", f.TestCwd("not-a-repo"))
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs",
+			map[string]any{"url": "https://github.com/tofutools/tclaude/pull/324"}), worker))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	assert.Empty(t, presentedPRBanners(t), "the PR still lands on the dashboard row; only the banner is off")
+}
+
+// Marking a PR handled is cleanup the human already asked for, not a new
+// thing to look at — it must not raise a second notification.
+func TestPresentPR_MarkingHandledDoesNotNotify(t *testing.T) {
+	f := newFlow(t)
+	enablePresentPRNotifications(t)
+
+	const (
+		worker = "pprh-aaaa-bbbb-cccc-dddd"
+		prURL  = "https://github.com/tofutools/tclaude/pull/322"
+	)
+	f.HaveConvWithTitle(worker, "worker")
+	f.HaveAliveSession(worker, "lbl-pprh", "tmux-pprh", f.TestCwd("not-a-repo"))
+	require.NoError(t, db.SetAgentPermissionOverride(worker, agentd.PermSelfPR, db.PermEffectGrant, "test"))
+
+	for _, body := range []map[string]any{
+		{"url": prURL},
+		{"url": prURL, "handled": true},
+	} {
+		rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+			testharness.JSONRequest(t, http.MethodPost, "/v1/whoami/prs", body), worker))
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	got := presentedPRBanners(t)
+	require.Len(t, got, 1, "only the presentation notifies; marking handled is silent")
+	assert.Contains(t, got[0].Body, prURL)
+}
+
+// When a lead presents on a worker's behalf, the notification points the
+// human at the WORKER — whose dashboard row carries the badge — not at the
+// caller.
+func TestPresentPR_NotificationAttributesTargetNotCaller(t *testing.T) {
+	f := newFlow(t)
+	enablePresentPRNotifications(t)
+
+	const (
+		lead   = "pprb-aaaa-bbbb-cccc-dddd"
+		worker = "pprv-aaaa-bbbb-cccc-dddd"
+		prURL  = "https://github.com/tofutools/tclaude/pull/323"
+	)
+	g := f.HaveGroup("squad")
+	f.HaveConvWithTitle(worker, "worker")
+	f.HaveAliveSession(worker, "lbl-pprv", "tmux-pprv", f.TestCwd("worker-dir"))
+	f.HaveConvWithTitle(lead, "lead")
+	f.HaveAliveSession(lead, "lbl-pprb", "tmux-pprb", f.TestCwd("lead-dir"))
+	f.HaveMember("squad", worker)
+	require.NoError(t, db.AddAgentGroupOwner(g.ID, lead, "test"), "seed owner")
+
+	rec := testharness.Serve(f.Mux, agentd.AsAgentPeer(
+		testharness.JSONRequest(t, http.MethodPost, "/v1/agent/"+worker+"/prs",
+			map[string]any{"url": prURL}), lead))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	got := presentedPRBanners(t)
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0].Body, "worker presented", "the PR belongs to the worker")
+	assert.NotContains(t, got[0].Body, "lead presented")
+	assert.Equal(t, "lbl-pprv", got[0].SessionID, "the banner focuses the worker's session")
+	assert.Contains(t, got[0].Body, prURL)
+}
+
 func presentedPRTestRepo(t *testing.T, f *testharness.Flow, name, remote string, allowed ...string) string {
 	t.Helper()
 	repo := f.TestCwd(name)

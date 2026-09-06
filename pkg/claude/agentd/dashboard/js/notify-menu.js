@@ -102,6 +102,7 @@ export function createNotifyActions({
     setType: (type, enabled) => post({ types: { [type]: !!enabled } }),
     setHumanMessages: (enabled) => post({ human_messages: !!enabled }),
     setAccessRequests: (enabled) => post({ access_requests: !!enabled }),
+    setPresentPR: (enabled) => post({ present_pr: !!enabled }),
     // Choosing a channel that includes the browser also asks the browser
     // for permission (from this real click) so the very next notification
     // can actually be raised — the daemon persists the routing, but the

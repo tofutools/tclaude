@@ -21,6 +21,9 @@ export function normalizeNotifySettings(value) {
     // desktop banners for messages sent through human.notify.
     humanMessages: source.human_messages !== false,
     accessRequests: !!source.access_requests,
+    // Likewise opt-in and default-off: an absent key is the feature never
+    // having been switched on, not a missing value to guess at.
+    presentPR: !!source.present_pr,
     // Where a decided notification is raised. Absent / unrecognised → 'os',
     // the historical desktop-only behaviour.
     delivery: NOTIFY_DELIVERIES.includes(source.delivery) ? source.delivery : 'os',
