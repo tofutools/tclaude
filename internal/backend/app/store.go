@@ -21,6 +21,7 @@ type Store interface {
 	RecordPrepared(context.Context, model.ExecutionID, model.OperationID, model.ProviderEvidence, time.Time) (model.Execution, error)
 	ConsumeRelease(context.Context, model.ExecutionID, model.OperationID, time.Time) error
 	CompleteOperation(context.Context, OperationCompletion) (AdmissionResult, error)
+	CompleteContextOperation(context.Context, OperationCompletion, ContextAssociation) (AdmissionResult, error)
 	Execution(context.Context, model.ExecutionID) (model.Execution, error)
 	RecoverableExecutions(context.Context) ([]model.Execution, error)
 	RecordRecovery(context.Context, model.ExecutionID, model.ExecutionState, *model.NativeConversationEvidence, model.ProviderEvidence, time.Time) (model.Execution, error)
@@ -52,15 +53,16 @@ type AdmissionResult struct {
 }
 
 type OperationCompletion struct {
-	OperationID    model.OperationID
-	OperationState model.OperationState
-	ResultCode     string
-	Detail         string
-	ExecutionID    model.ExecutionID
-	ExecutionState model.ExecutionState
-	Evidence       model.ProviderEvidence
-	Native         *model.NativeConversationEvidence
-	At             time.Time
+	OperationID          model.OperationID
+	OperationState       model.OperationState
+	ResultCode           string
+	Detail               string
+	ExecutionID          model.ExecutionID
+	ExecutionState       model.ExecutionState
+	UpdateExecutionState bool
+	Evidence             model.ProviderEvidence
+	Native               *model.NativeConversationEvidence
+	At                   time.Time
 }
 
 type MessageAdmissionResult struct {
