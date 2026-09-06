@@ -31,6 +31,7 @@ type JourneyAPI interface {
 	RefreshHistory(context.Context, RefreshHistoryRequest) (HistorySearchResult, error)
 	SearchHistory(context.Context, SearchHistoryRequest) (HistorySearchResult, error)
 	ReadHistory(context.Context, ReadHistoryRequest) (HistoryReadResult, error)
+	SetConversationMetadata(context.Context, SetConversationMetadataRequest) (HistorySearchResult, error)
 	RegisterWorkspace(context.Context, RegisterWorkspaceRequest) (WorkspaceResult, error)
 	CreateCheckout(context.Context, CreateCheckoutRequest) (WorkspaceResult, error)
 	InspectWorkspace(context.Context, InspectWorkspaceRequest) (WorkspaceResult, error)
@@ -219,6 +220,14 @@ type HistorySearchResult struct {
 type ReadHistoryRequest struct {
 	Principal model.Principal
 	Selection model.HistorySelection
+}
+
+type SetConversationMetadataRequest struct {
+	Context          RequestContext
+	ConversationID   model.ConversationID
+	ExpectedRevision model.Revision
+	Title            string
+	Archived         bool
 }
 
 type HistoryReadResult struct {

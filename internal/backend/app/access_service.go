@@ -368,7 +368,7 @@ var allActions = []model.Action{
 	model.ActionReadIdentity, model.ActionReadStatus, model.ActionReadInbox, model.ActionMarkInboxRead,
 	model.ActionSendMessage, model.ActionLaunch, model.ActionInteract, model.ActionAttach, model.ActionStop,
 	model.ActionChangeContext, model.ActionUpdateConfiguration, model.ActionManageMembership,
-	model.ActionReadHistory, model.ActionRefreshHistory, model.ActionRegisterWorkspace,
+	model.ActionReadHistory, model.ActionRefreshHistory, model.ActionSetHistoryMetadata, model.ActionRegisterWorkspace,
 	model.ActionCreateWorkspace, model.ActionInspectWorkspace, model.ActionRemoveWorkspace,
 	model.ActionStartWork, model.ActionRecordWorkEvidence, model.ActionDecideWork, model.ActionCancelWork,
 	model.ActionStartShell,

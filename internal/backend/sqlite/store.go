@@ -52,6 +52,11 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"executions", "shell_evidence_owner", "TEXT NOT NULL DEFAULT ''"},
 		{"executions", "shell_evidence_version", "INTEGER NOT NULL DEFAULT 0"},
 		{"executions", "shell_evidence_payload", "BLOB"},
+		{"history_catalog", "source_name", "TEXT NOT NULL DEFAULT ''"},
+		{"work_evidence", "request_scope", "TEXT NOT NULL DEFAULT ''"},
+		{"work_evidence", "request_id", "TEXT NOT NULL DEFAULT ''"},
+		{"work_decisions", "request_scope", "TEXT NOT NULL DEFAULT ''"},
+		{"work_decisions", "request_id", "TEXT NOT NULL DEFAULT ''"},
 		{"operations", "principal_execution_id", "TEXT NOT NULL DEFAULT ''"},
 		{"operations", "request_scope", "TEXT NOT NULL DEFAULT 'operator'"},
 		{"operations", "principal_generation", "INTEGER NOT NULL DEFAULT 0"},
@@ -74,6 +79,12 @@ func (s *Store) initialize(ctx context.Context) error {
 	}
 	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS operations_scoped_request ON operations(request_scope,request_id)`); err != nil {
 		return fmt.Errorf("index scoped operation requests: %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS work_evidence_scoped_request ON work_evidence(request_scope,request_id) WHERE request_id<>''`); err != nil {
+		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS work_decisions_scoped_request ON work_decisions(request_scope,request_id) WHERE request_id<>''`); err != nil {
+		return err
 	}
 	// Access is always suspended across a backend process boundary. Recovery is
 	// the only workflow that can reactivate the exact proven runtime.
@@ -294,7 +305,7 @@ CREATE TABLE IF NOT EXISTS native_binding_history (
   PRIMARY KEY(execution_id, attempt_generation, provider, provider_order)
 );
 CREATE TABLE IF NOT EXISTS history_catalog (
-  conversation_id TEXT PRIMARY KEY REFERENCES conversations(id), harness TEXT NOT NULL,
+  conversation_id TEXT PRIMARY KEY REFERENCES conversations(id), harness TEXT NOT NULL, source_name TEXT NOT NULL DEFAULT '',
   title TEXT NOT NULL DEFAULT '', workspace_id TEXT NOT NULL DEFAULT '', workspace_hint TEXT NOT NULL DEFAULT '',
   archived INTEGER NOT NULL DEFAULT 0, availability TEXT NOT NULL,
   metadata_coverage TEXT NOT NULL, content_coverage TEXT NOT NULL,
@@ -303,6 +314,15 @@ CREATE TABLE IF NOT EXISTS history_catalog (
   source_token TEXT NOT NULL, source_fingerprint TEXT NOT NULL, evidence_provider TEXT NOT NULL, evidence_version INTEGER NOT NULL,
   evidence_payload BLOB, search_text TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL,
   UNIQUE(harness,native_namespace,native_reference)
+);
+CREATE TABLE IF NOT EXISTS history_refreshes (
+  harness TEXT NOT NULL, source_name TEXT NOT NULL, metadata_coverage TEXT NOT NULL,
+  content_coverage TEXT NOT NULL, source_revision TEXT NOT NULL, refreshed_at INTEGER NOT NULL,
+  PRIMARY KEY(harness,source_name)
+);
+CREATE TABLE IF NOT EXISTS history_metadata_requests (
+  request_scope TEXT NOT NULL, request_id TEXT NOT NULL, conversation_id TEXT NOT NULL,
+  title TEXT NOT NULL, archived INTEGER NOT NULL, PRIMARY KEY(request_scope,request_id)
 );
 CREATE TABLE IF NOT EXISTS history_points (
   id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
@@ -341,12 +361,14 @@ CREATE TABLE IF NOT EXISTS work_attempts (
 );
 CREATE TABLE IF NOT EXISTS work_evidence (
   id TEXT PRIMARY KEY, work_run_id TEXT NOT NULL REFERENCES work_runs(id) ON DELETE CASCADE,
+  request_scope TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '',
   step TEXT NOT NULL, attempt INTEGER NOT NULL, kind TEXT NOT NULL, reporter_json BLOB NOT NULL,
   artifact_revision TEXT NOT NULL, passed INTEGER, detail TEXT NOT NULL, recorded_at INTEGER NOT NULL,
   revision INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS work_decisions (
   work_run_id TEXT PRIMARY KEY REFERENCES work_runs(id) ON DELETE CASCADE, step TEXT NOT NULL,
+  request_scope TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '',
   attempt INTEGER NOT NULL, decision TEXT NOT NULL, decider_json BLOB NOT NULL,
   reason TEXT NOT NULL, decided_at INTEGER NOT NULL, revision INTEGER NOT NULL
 );
