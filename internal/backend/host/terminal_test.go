@@ -52,6 +52,9 @@ func TestPrivateTerminalExecutesLiteralInputAndRecovers(t *testing.T) {
 	acknowledged, _, err := recovered.Stop(ctx, true)
 	require.NoError(t, err)
 	require.True(t, acknowledged)
+	require.Eventually(t, func() bool { return recovered.Observe().Exited }, time.Second, 10*time.Millisecond)
+	_, err = RecoverTerminal(TerminalHost{}, terminal.Identity())
+	require.ErrorIs(t, err, os.ErrProcessDone)
 }
 
 func TestPreparedTerminalAbortRemovesPrivateResource(t *testing.T) {
@@ -67,6 +70,24 @@ func TestPreparedTerminalAbortRemovesPrivateResource(t *testing.T) {
 	require.NoError(t, prepared.Abort())
 	_, err = os.Stat(directory)
 	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestTerminalNaturalExitSurvivesStaleTmuxSocket(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is unavailable")
+	}
+	root, err := os.MkdirTemp("/tmp", "tclaude-host-exit-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
+	prepared, err := (TerminalHost{PrivateRoot: root}).Prepare("exec_exit")
+	require.NoError(t, err)
+	terminal, err := prepared.Release(ProcessSpec{Executable: "/bin/sh", Args: []string{"-c", "sleep 0.1; exit 7"}})
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return terminal.Observe().Exited }, time.Second, 10*time.Millisecond)
+	_, statErr := os.Lstat(terminal.Identity().SocketPath)
+	require.NoError(t, statErr, "tmux leaves its exact stale socket, which must not imply unknown workload")
+	_, err = RecoverTerminal(TerminalHost{}, terminal.Identity())
+	require.ErrorIs(t, err, os.ErrProcessDone)
 }
 
 func TestTerminalHelper(t *testing.T) {

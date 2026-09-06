@@ -33,6 +33,12 @@ type TerminalIdentity struct {
 	PaneStart  string         `json:"pane_start"`
 }
 
+type PreparedTerminalIdentity struct {
+	Directory  string `json:"directory"`
+	SocketPath string `json:"socket_path"`
+	Session    string `json:"session"`
+}
+
 type TerminalObservation struct {
 	Running  bool
 	Exited   bool
@@ -105,6 +111,9 @@ func (h TerminalHost) Prepare(executionID string) (*PreparedTerminal, error) {
 }
 
 func (p *PreparedTerminal) ResourceKey() string { return p.socketPath + ":" + p.session }
+func (p *PreparedTerminal) Identity() PreparedTerminalIdentity {
+	return PreparedTerminalIdentity{Directory: p.directory, SocketPath: p.socketPath, Session: p.session}
+}
 
 func (p *PreparedTerminal) Abort() error {
 	p.mu.Lock()
@@ -205,6 +214,26 @@ func RecoverTerminal(h TerminalHost, identity TerminalIdentity) (*Terminal, erro
 	return t, nil
 }
 
+// RecoverPreparedTerminal reconciles the identity persisted before Release.
+// It finds an exact session if start happened before the backend crashed, and
+// reports absence when release never reached the native effect.
+func RecoverPreparedTerminal(h TerminalHost, identity PreparedTerminalIdentity) (*Terminal, error) {
+	if h.Executable == "" {
+		h.Executable = "tmux"
+	}
+	resolved, err := exec.LookPath(h.Executable)
+	if err != nil {
+		return nil, err
+	}
+	h.Executable = resolved
+	root := filepath.Clean(h.PrivateRoot)
+	if !pathWithin(root, identity.Directory) || filepath.Clean(identity.SocketPath) != filepath.Join(filepath.Clean(identity.Directory), "tmux.sock") {
+		return nil, fmt.Errorf("prepared terminal evidence is outside private storage")
+	}
+	prepared := &PreparedTerminal{host: h, directory: identity.Directory, socketPath: identity.SocketPath, session: identity.Session, released: true}
+	return prepared.reconcile()
+}
+
 func (t *Terminal) Identity() TerminalIdentity { return t.identity }
 func (t *Terminal) AttachmentActive() bool     { return t.attached.Load() > 0 }
 
@@ -226,7 +255,12 @@ func (t *Terminal) Observe() TerminalObservation {
 	out, err := t.tmux("display-message", "-p", "-t", t.identity.Pane,
 		"#{session_name}\t#{pane_id}\t#{pane_pid}\t#{pane_dead}\t#{pane_dead_status}").Output()
 	if err != nil {
-		if !socketExists(t.identity.SocketPath) {
+		// tmux deliberately leaves a stale socket entry when the last session
+		// exits. The pane process start token, not pathname existence, proves
+		// whether the selected workload is gone or merely unobservable.
+		start, startErr := processStartToken(t.identity.PanePID)
+		if errors.Is(startErr, os.ErrNotExist) || errors.Is(startErr, syscall.ESRCH) ||
+			(startErr == nil && start != t.identity.PaneStart) {
 			return TerminalObservation{Exited: true}
 		}
 		return TerminalObservation{Unknown: true}
@@ -365,15 +399,15 @@ func statSocket(path string) (SocketIdentity, error) {
 	return SocketIdentity{Device: uint64(stat.Dev), Inode: stat.Ino}, nil
 }
 
-func socketExists(path string) bool {
-	_, err := os.Lstat(path)
-	return err == nil
-}
-
 func randomToken(bytes int) (string, error) {
 	value := make([]byte, bytes)
 	if _, err := rand.Read(value); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(value), nil
+}
+
+func pathWithin(root, path string) bool {
+	relative, err := filepath.Rel(filepath.Clean(root), filepath.Clean(path))
+	return err == nil && relative != "." && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
 }

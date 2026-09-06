@@ -63,9 +63,10 @@ func New(config Config) (*Provider, error) {
 func (*Provider) Name() string { return Name }
 
 type evidence struct {
-	ExecutionID string                 `json:"execution_id"`
-	NativeID    string                 `json:"native_id"`
-	Terminal    *host.TerminalIdentity `json:"terminal,omitempty"`
+	ExecutionID string                         `json:"execution_id"`
+	NativeID    string                         `json:"native_id"`
+	Prepared    *host.PreparedTerminalIdentity `json:"prepared,omitempty"`
+	Terminal    *host.TerminalIdentity         `json:"terminal,omitempty"`
 }
 
 type prepared struct {
@@ -100,7 +101,8 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if err != nil {
 		return nil, err
 	}
-	initial, err := encodeEvidence(evidence{ExecutionID: string(request.Spec.ExecutionID), NativeID: nativeID})
+	preparedIdentity := terminal.Identity()
+	initial, err := encodeEvidence(evidence{ExecutionID: string(request.Spec.ExecutionID), NativeID: nativeID, Prepared: &preparedIdentity})
 	if err != nil {
 		_ = terminal.Abort()
 		return nil, err
@@ -197,10 +199,17 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	if err != nil {
 		return ports.RecoveryResult{}, err
 	}
-	if recorded.ExecutionID != string(request.ExecutionID) || recorded.Terminal == nil {
+	if recorded.ExecutionID != string(request.ExecutionID) {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
 	}
-	terminal, err := host.RecoverTerminal(p.terminal, *recorded.Terminal)
+	var terminal *host.Terminal
+	if recorded.Terminal != nil {
+		terminal, err = host.RecoverTerminal(p.terminal, *recorded.Terminal)
+	} else if recorded.Prepared != nil {
+		terminal, err = host.RecoverPreparedTerminal(p.terminal, *recorded.Prepared)
+	} else {
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
+	}
 	if errors.Is(err, os.ErrProcessDone) {
 		return ports.RecoveryResult{
 			State: ports.RecoveryExited, Evidence: request.Evidence,

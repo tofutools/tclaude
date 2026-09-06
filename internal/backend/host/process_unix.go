@@ -104,6 +104,53 @@ func RecoverProcess(identity ProcessIdentity) (*Process, error) {
 	return &Process{identity: identity}, nil
 }
 
+// RecoverProcessByEnvironment finds the one live process carrying a
+// provider-private attempt marker and captures its exact identity. It closes
+// the crash window between native start and persistence of the returned PID.
+func RecoverProcessByEnvironment(key, value string) (*Process, error) {
+	if key == "" || value == "" || strings.ContainsAny(key, "=\x00") || strings.ContainsRune(value, '\x00') {
+		return nil, fmt.Errorf("invalid process environment marker")
+	}
+	pids, err := processIDsWithEnvironment(key, value)
+	if err != nil {
+		return nil, err
+	}
+	if len(pids) == 0 {
+		return nil, ErrProcessIdentityNotLive
+	}
+	marked := make(map[int]bool, len(pids))
+	for _, pid := range pids {
+		marked[pid] = true
+	}
+	roots := make([]int, 0, len(pids))
+	for _, pid := range pids {
+		parent, parentErr := processParentPID(pid)
+		if parentErr == nil && !marked[parent] {
+			roots = append(roots, pid)
+		}
+	}
+	if len(roots) != 1 {
+		return nil, fmt.Errorf("process environment marker matched %d root processes", len(roots))
+	}
+	identity, err := identifyProcess(roots[0])
+	if err != nil {
+		return nil, err
+	}
+	return RecoverProcess(identity)
+}
+
+func identifyProcess(pid int) (ProcessIdentity, error) {
+	pgid, err := syscall.Getpgid(pid)
+	if err != nil {
+		return ProcessIdentity{}, err
+	}
+	token, err := processStartToken(pid)
+	if err != nil {
+		return ProcessIdentity{}, err
+	}
+	return ProcessIdentity{PID: pid, ProcessGroup: pgid, StartToken: token}, nil
+}
+
 // OwnsLoopbackPort proves that the exact retained process (or one of its
 // descendants) owns the loopback listener before a provider sends secrets.
 func (p *Process) OwnsLoopbackPort(port int) (bool, error) {

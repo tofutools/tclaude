@@ -32,10 +32,11 @@ import (
 )
 
 const (
-	Name                   = "opencode"
-	NativeNamespace        = "opencode"
-	serverUsername         = "opencode"
-	evidenceVersion uint32 = 1
+	Name                    = "opencode"
+	NativeNamespace         = "opencode"
+	serverUsername          = "opencode"
+	evidenceVersion  uint32 = 1
+	attemptMarkerKey        = "TCLAUDE_RUNTIME_ATTEMPT"
 )
 
 type Config struct {
@@ -77,12 +78,14 @@ func New(config Config) (*Provider, error) {
 func (*Provider) Name() string { return Name }
 
 type evidence struct {
-	ExecutionID string                `json:"execution_id"`
-	NativeID    string                `json:"native_id,omitempty"`
-	Endpoint    string                `json:"endpoint"`
-	Password    string                `json:"password"`
-	StateRoot   string                `json:"state_root"`
-	Process     *host.ProcessIdentity `json:"process,omitempty"`
+	ExecutionID    string                `json:"execution_id"`
+	NativeID       string                `json:"native_id,omitempty"`
+	Endpoint       string                `json:"endpoint"`
+	Password       string                `json:"password"`
+	StateRoot      string                `json:"state_root"`
+	Process        *host.ProcessIdentity `json:"process,omitempty"`
+	AttemptMark    string                `json:"attempt_marker"`
+	EphemeralState bool                  `json:"ephemeral_state,omitempty"`
 }
 
 type prepared struct {
@@ -92,6 +95,7 @@ type prepared struct {
 	endpoint      string
 	password      string
 	stateRoot     string
+	attemptMark   string
 	removeOnAbort bool
 	description   ports.PreparedDescription
 	mu            sync.Mutex
@@ -136,9 +140,18 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		}
 		return nil, err
 	}
+	attemptMark, err := randomPassword()
+	if err != nil {
+		_ = listener.Close()
+		if removeOnAbort {
+			_ = os.RemoveAll(stateRoot)
+		}
+		return nil, err
+	}
 	initial, err := encodeEvidence(evidence{
 		ExecutionID: string(request.Spec.ExecutionID), NativeID: nativeID,
-		Endpoint: endpoint, Password: password, StateRoot: stateRoot,
+		Endpoint: endpoint, Password: password, StateRoot: stateRoot, AttemptMark: attemptMark,
+		EphemeralState: removeOnAbort,
 	})
 	if err != nil {
 		_ = listener.Close()
@@ -149,7 +162,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	}
 	return &prepared{
 		provider: p, request: request, listener: listener, endpoint: endpoint,
-		password: password, stateRoot: stateRoot, removeOnAbort: removeOnAbort,
+		password: password, stateRoot: stateRoot, attemptMark: attemptMark, removeOnAbort: removeOnAbort,
 		description: ports.PreparedDescription{
 			ExecutionID: request.Spec.ExecutionID,
 			Topology:    ports.TopologyIndependentServer,
@@ -257,7 +270,8 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 		Directory:  p.request.Spec.WorkingDirectory,
 		Env: append(p.provider.runtimeEnvironment(p.stateRoot),
 			"OPENCODE_SERVER_USERNAME="+serverUsername,
-			"OPENCODE_SERVER_PASSWORD="+p.password),
+			"OPENCODE_SERVER_PASSWORD="+p.password,
+			attemptMarkerKey+"="+p.attemptMark),
 	})
 	if err != nil {
 		return ports.ReleaseResult{}, fmt.Errorf("start OpenCode server: %w", err)
@@ -267,7 +281,7 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 		process: process, endpoint: p.endpoint, password: p.password,
 		stateRoot: p.stateRoot, cwd: p.request.Spec.WorkingDirectory,
 		nativeID: p.descriptionNativeID(), approval: p.request.Spec.Approval,
-		sandbox: p.request.Spec.Sandbox, model: p.request.Spec.Model,
+		sandbox: p.request.Spec.Sandbox, model: p.request.Spec.Model, attemptMark: p.attemptMark,
 	}
 	currentEvidence, evidenceErr := runtime.providerEvidence()
 	if evidenceErr != nil {
@@ -312,11 +326,20 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	if err != nil {
 		return ports.RecoveryResult{}, err
 	}
-	if recorded.ExecutionID != string(request.ExecutionID) || recorded.Process == nil {
+	if recorded.ExecutionID != string(request.ExecutionID) || recorded.AttemptMark == "" ||
+		recorded.Password == "" || !pathWithin(p.privateRoot, recorded.StateRoot) {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
 	}
-	process, err := host.RecoverProcess(*recorded.Process)
+	var process *host.Process
+	if recorded.Process != nil {
+		process, err = host.RecoverProcess(*recorded.Process)
+	} else {
+		process, err = host.RecoverProcessByEnvironment(attemptMarkerKey, recorded.AttemptMark)
+	}
 	if errors.Is(err, host.ErrProcessIdentityNotLive) {
+		if recorded.EphemeralState {
+			_ = os.RemoveAll(recorded.StateRoot)
+		}
 		return ports.RecoveryResult{
 			State: ports.RecoveryExited, Evidence: request.Evidence,
 			Observation: ports.Observation{ObservedAt: time.Now(), Workload: ports.WorkloadExited,
@@ -335,12 +358,25 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		endpoint: recorded.Endpoint, password: recorded.Password, stateRoot: recorded.StateRoot,
 		cwd: request.Spec.WorkingDirectory, nativeID: recorded.NativeID,
 		approval: request.Spec.Approval, sandbox: request.Spec.Sandbox, model: request.Spec.Model,
+		attemptMark: recorded.AttemptMark,
+	}
+	if runtime.nativeID == "" {
+		if err := runtime.reconcileFreshSession(ctx); err != nil {
+			observation, _ := runtime.Observe(ctx)
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Runtime: runtime,
+				Observation: observation, Evidence: request.Evidence}, err
+		}
 	}
 	observation, observeErr := runtime.Observe(ctx)
 	if observeErr != nil || observation.Workload == ports.WorkloadUnknown {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Runtime: runtime, Observation: observation, Evidence: request.Evidence}, observeErr
 	}
-	return ports.RecoveryResult{State: ports.RecoveryControlled, Runtime: runtime, Observation: observation, Evidence: request.Evidence}, nil
+	currentEvidence, evidenceErr := runtime.providerEvidence()
+	if evidenceErr != nil {
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Runtime: runtime, Observation: observation,
+			Evidence: request.Evidence}, evidenceErr
+	}
+	return ports.RecoveryResult{State: ports.RecoveryControlled, Runtime: runtime, Observation: observation, Evidence: currentEvidence}, nil
 }
 
 type Runtime struct {
@@ -354,6 +390,7 @@ type Runtime struct {
 	approval    model.ApprovalMode
 	sandbox     model.SandboxMode
 	model       string
+	attemptMark string
 
 	mu               sync.Mutex
 	nativeID         string
@@ -511,7 +548,8 @@ func (r *Runtime) health(ctx context.Context) error {
 }
 
 func (r *Runtime) createSession(ctx context.Context) error {
-	body := map[string]any{"permission": permissionRules(r.approval, r.sandbox)}
+	expected := permissionRules(r.approval, r.sandbox)
+	body := map[string]any{"permission": expected}
 	response, err := r.do(ctx, http.MethodPost, "/session?directory="+url.QueryEscape(r.cwd), body)
 	if err != nil {
 		return fmt.Errorf("create OpenCode session: %w", err)
@@ -521,7 +559,8 @@ func (r *Runtime) createSession(ctx context.Context) error {
 		return fmt.Errorf("create OpenCode session returned HTTP %d", response.StatusCode)
 	}
 	var created struct {
-		ID string `json:"id"`
+		ID         string           `json:"id"`
+		Permission []permissionRule `json:"permission"`
 	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&created); err != nil {
 		return fmt.Errorf("decode OpenCode session: %w", err)
@@ -529,11 +568,51 @@ func (r *Runtime) createSession(ctx context.Context) error {
 	if !strings.HasPrefix(created.ID, "ses_") {
 		return fmt.Errorf("OpenCode returned invalid native session %q", created.ID)
 	}
+	if !permissionHasSuffix(created.Permission, expected) {
+		return fmt.Errorf("OpenCode session did not retain the requested permission policy")
+	}
 	r.nativeID = created.ID
 	return nil
 }
 
+// reconcileFreshSession resolves the crash window between starting the private
+// server and persisting its newly-created native session id. A fresh attempt
+// owns an isolated state root, so zero sessions means creation never completed
+// and one session is the exact result to retain; any larger set is ambiguous.
+func (r *Runtime) reconcileFreshSession(ctx context.Context) error {
+	if err := r.health(ctx); err != nil {
+		return err
+	}
+	response, err := r.do(ctx, http.MethodGet, "/session?directory="+url.QueryEscape(r.cwd), nil)
+	if err != nil {
+		return fmt.Errorf("list private OpenCode sessions: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("list private OpenCode sessions returned HTTP %d", response.StatusCode)
+	}
+	var sessions []struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&sessions); err != nil {
+		return fmt.Errorf("decode private OpenCode sessions: %w", err)
+	}
+	switch len(sessions) {
+	case 0:
+		return r.createSession(ctx)
+	case 1:
+		if !strings.HasPrefix(sessions[0].ID, "ses_") {
+			return fmt.Errorf("OpenCode returned invalid private session %q", sessions[0].ID)
+		}
+		r.nativeID = sessions[0].ID
+		return r.verifySession(ctx)
+	default:
+		return fmt.Errorf("private OpenCode attempt has %d sessions; native identity is ambiguous", len(sessions))
+	}
+}
+
 func (r *Runtime) verifySession(ctx context.Context) error {
+	expected := permissionRules(r.approval, r.sandbox)
 	response, err := r.do(ctx, http.MethodGet, "/session/"+url.PathEscape(r.nativeID)+
 		"?directory="+url.QueryEscape(r.cwd), nil)
 	if err != nil {
@@ -542,6 +621,33 @@ func (r *Runtime) verifySession(ctx context.Context) error {
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		return fmt.Errorf("OpenCode continuation returned HTTP %d", response.StatusCode)
+	}
+	var current struct {
+		Permission []permissionRule `json:"permission"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&current); err != nil {
+		return fmt.Errorf("decode OpenCode continuation: %w", err)
+	}
+	if permissionHasSuffix(current.Permission, expected) {
+		return nil
+	}
+	updated, err := r.do(ctx, http.MethodPatch, "/session/"+url.PathEscape(r.nativeID)+
+		"?directory="+url.QueryEscape(r.cwd), map[string]any{"permission": expected})
+	if err != nil {
+		return fmt.Errorf("apply OpenCode continuation permission: %w", err)
+	}
+	defer updated.Body.Close()
+	if updated.StatusCode != http.StatusOK {
+		return fmt.Errorf("apply OpenCode continuation permission returned HTTP %d", updated.StatusCode)
+	}
+	var result struct {
+		Permission []permissionRule `json:"permission"`
+	}
+	if err := json.NewDecoder(io.LimitReader(updated.Body, 1<<20)).Decode(&result); err != nil {
+		return fmt.Errorf("decode applied OpenCode continuation permission: %w", err)
+	}
+	if !permissionHasSuffix(result.Permission, expected) {
+		return fmt.Errorf("OpenCode continuation did not retain the requested permission policy")
 	}
 	return nil
 }
@@ -594,7 +700,7 @@ func (r *Runtime) providerEvidenceLocked() (model.ProviderEvidence, error) {
 	identity := r.process.Identity()
 	return encodeEvidence(evidence{
 		ExecutionID: string(r.executionID), NativeID: r.nativeID, Endpoint: r.endpoint,
-		Password: r.password, StateRoot: r.stateRoot, Process: &identity,
+		Password: r.password, StateRoot: r.stateRoot, Process: &identity, AttemptMark: r.attemptMark,
 	})
 }
 
@@ -617,6 +723,19 @@ func permissionRules(approval model.ApprovalMode, sandbox model.SandboxMode) []p
 		}
 	}
 	return rules
+}
+
+func permissionHasSuffix(current, expected []permissionRule) bool {
+	if len(expected) == 0 || len(current) < len(expected) {
+		return false
+	}
+	offset := len(current) - len(expected)
+	for index := range expected {
+		if current[offset+index] != expected[index] {
+			return false
+		}
+	}
+	return true
 }
 
 type terminalAttachment struct {

@@ -72,6 +72,14 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 		_, _ = released.Runtime.Stop(ctx, ports.StopRequest{Force: true})
 	})
 
+	preparedRecovery, err := provider.Recover(context.Background(), ports.RecoveryRequest{
+		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: description.Evidence,
+	})
+	require.NoError(t, err)
+	require.Equal(t, ports.RecoveryControlled, preparedRecovery.State,
+		"the evidence persisted before release must rediscover the marked server and its private session")
+	require.Equal(t, "ses_test", preparedRecovery.Observation.NativeConversation.Reference)
+
 	observation, err := released.Runtime.Observe(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, ports.WorkloadRunning, observation.Workload)
@@ -126,6 +134,57 @@ func TestProviderRefusesConfinementInsteadOfDowngrading(t *testing.T) {
 	}
 }
 
+func TestContinuationReappliesSupervisedApproval(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "tclaude-opencode-continuation-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
+	executable := filepath.Join(root, "opencode-fake")
+	script := "#!/bin/sh\nexec \"$OPENCODE_TEST_BINARY\" -test.run=TestOpenCodeServerHelper -- \"$@\"\n"
+	require.NoError(t, os.WriteFile(executable, []byte(script), 0o700))
+	provider, err := New(Config{Executable: executable, PrivateRoot: root,
+		Environment: []string{"OPENCODE_TEST_BINARY=" + os.Args[0]}})
+	require.NoError(t, err)
+
+	automatic := ports.PreparationRequest{Intent: ports.StartFresh, Spec: model.ResolvedExecutionSpec{
+		ExecutionID: "execution_automatic", Harness: Name, WorkingDirectory: root,
+		Approval: model.ApprovalAutomatic, Sandbox: model.SandboxUnconfined,
+	}}
+	firstPrepared, err := provider.Prepare(context.Background(), automatic)
+	require.NoError(t, err)
+	first, err := firstPrepared.Release(context.Background(), &testPermit{execution: automatic.Spec.ExecutionID, operation: "operation_first"})
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	_, err = first.Runtime.Stop(ctx, ports.StopRequest{Force: true})
+	cancel()
+	require.NoError(t, err)
+
+	prior, err := decodeEvidence(first.Evidence)
+	require.NoError(t, err)
+	supervised := ports.PreparationRequest{
+		Intent: ports.StartContinue,
+		Spec: model.ResolvedExecutionSpec{ExecutionID: "execution_supervised", Harness: Name,
+			WorkingDirectory: root, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined},
+		Continuation:  &model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: "ses_test"},
+		PriorEvidence: first.Evidence,
+	}
+	secondPrepared, err := provider.Prepare(context.Background(), supervised)
+	require.NoError(t, err)
+	second, err := secondPrepared.Release(context.Background(), &testPermit{execution: supervised.Spec.ExecutionID, operation: "operation_second"})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, _ = second.Runtime.Stop(ctx, ports.StopRequest{Force: true})
+	})
+
+	data, err := os.ReadFile(filepath.Join(prior.StateRoot, "data", "permission.json"))
+	require.NoError(t, err)
+	var rules []permissionRule
+	require.NoError(t, json.Unmarshal(data, &rules))
+	require.Contains(t, rules, permissionRule{Permission: "bash", Pattern: "*", Action: "ask"})
+	require.NotContains(t, rules, permissionRule{Permission: "bash", Pattern: "*", Action: "allow"})
+}
+
 func TestOpenCodeServerHelper(t *testing.T) {
 	args := argumentsAfterDoubleDash(os.Args)
 	if len(args) == 0 {
@@ -155,7 +214,21 @@ func TestOpenCodeServerHelper(t *testing.T) {
 			writer.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		_ = json.NewEncoder(writer).Encode(map[string]string{"id": "ses_test"})
+		if request.Method == http.MethodGet {
+			permissions := readHelperPermission()
+			if len(permissions) == 0 {
+				_ = json.NewEncoder(writer).Encode([]any{})
+				return
+			}
+			_ = json.NewEncoder(writer).Encode([]any{map[string]any{"id": "ses_test", "permission": permissions}})
+			return
+		}
+		var body struct {
+			Permission []permissionRule `json:"permission"`
+		}
+		_ = json.NewDecoder(request.Body).Decode(&body)
+		writeHelperPermission(body.Permission)
+		_ = json.NewEncoder(writer).Encode(map[string]any{"id": "ses_test", "permission": body.Permission})
 	})
 	mux.HandleFunc("/session/", func(writer http.ResponseWriter, request *http.Request) {
 		if !validBasicAuth(request, password) {
@@ -170,9 +243,35 @@ func TestOpenCodeServerHelper(t *testing.T) {
 			writer.WriteHeader(http.StatusNoContent)
 			return
 		}
-		_ = json.NewEncoder(writer).Encode(map[string]string{"id": "ses_test"})
+		if request.Method == http.MethodPatch {
+			var body struct {
+				Permission []permissionRule `json:"permission"`
+			}
+			_ = json.NewDecoder(request.Body).Decode(&body)
+			writeHelperPermission(body.Permission)
+			_ = json.NewEncoder(writer).Encode(map[string]any{"id": "ses_test", "permission": body.Permission})
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{"id": "ses_test", "permission": readHelperPermission()})
 	})
 	require.NoError(t, http.Serve(listener, mux))
+}
+
+func helperPermissionPath() string {
+	return filepath.Join(os.Getenv("XDG_DATA_HOME"), "permission.json")
+}
+
+func writeHelperPermission(rules []permissionRule) {
+	_ = os.MkdirAll(filepath.Dir(helperPermissionPath()), 0o700)
+	data, _ := json.Marshal(rules)
+	_ = os.WriteFile(helperPermissionPath(), data, 0o600)
+}
+
+func readHelperPermission() []permissionRule {
+	data, _ := os.ReadFile(helperPermissionPath())
+	var rules []permissionRule
+	_ = json.Unmarshal(data, &rules)
+	return rules
 }
 
 func argumentsAfterDoubleDash(args []string) []string {
