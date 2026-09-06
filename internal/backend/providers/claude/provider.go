@@ -360,10 +360,18 @@ func (r *Runtime) ExecutionID() model.ExecutionID { return r.executionID }
 func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if _, err := r.consumeObservationEvents(ctx, nil); err != nil {
-		return ports.Observation{}, err
-	}
 	observation := r.terminal.Observe()
+	var observationErr error
+	if observation.Running {
+		if _, err := r.consumeObservationEvents(ctx, nil); err != nil {
+			observationErr = err
+			if afterIngress := r.terminal.Observe(); afterIngress.Exited {
+				observation = afterIngress
+			} else {
+				return ports.Observation{}, err
+			}
+		}
+	}
 	result := ports.Observation{
 		ObservedAt: time.Now(), Context: ports.ContextUnknown,
 		NativeConversation: nativeEvidence(r.nativeID),
@@ -387,7 +395,7 @@ func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
 		return ports.Observation{}, err
 	}
 	result.Evidence = evidence
-	return result, r.cleanupErr
+	return result, errors.Join(observationErr, r.cleanupErr)
 }
 
 func (r *Runtime) Interact(ctx context.Context, interaction ports.Interaction) (ports.InteractionResult, error) {
