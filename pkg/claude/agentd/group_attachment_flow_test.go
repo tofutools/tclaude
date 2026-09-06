@@ -132,6 +132,22 @@ func TestGroupAttachment_SubgroupCreateCarriesParentReference(t *testing.T) {
 	assert.Equal(t, "Platform project", child.AttachmentLabel)
 }
 
+func TestGroupAttachment_GroupCreateRejectsUnsafeReference(t *testing.T) {
+	f := newFlow(t)
+
+	rec := testharness.Serve(f.Mux, agentd.AsHumanPeer(testharness.JSONRequest(
+		t, http.MethodPost, "/v1/groups",
+		map[string]any{
+			"name":           "unsafe-child",
+			"attachment_url": "javascript:alert(1)",
+		})))
+	assert.Equal(t, http.StatusBadRequest, rec.Code, "unsafe attachment must fail before create; body=%s", rec.Body.String())
+
+	group, err := db.GetAgentGroupByName("unsafe-child")
+	require.NoError(t, err)
+	assert.Nil(t, group)
+}
+
 func TestGroupAttachment_DerivesLabelAndRejectsUnsafeURL(t *testing.T) {
 	f := newFlow(t)
 	f.HaveGroup("alpha")
