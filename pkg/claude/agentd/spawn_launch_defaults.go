@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
@@ -58,108 +57,48 @@ type launchDefaults struct {
 func resolveLaunchDefaults(
 	groupName, profileHandle, requestedHarness string,
 ) (launchDefaults, *spawnFailure, error) {
-	var namedProfile *db.SpawnProfile
-	if handle := strings.TrimSpace(profileHandle); handle != "" {
-		resolved, err := db.ResolveSpawnProfile(handle)
-		if err != nil {
-			return launchDefaults{}, nil, err
-		}
-		if resolved == nil {
-			return launchDefaults{}, &spawnFailure{
-				http.StatusBadRequest, "not_found",
-				fmt.Sprintf("no such spawn profile %q", handle),
-			}, nil
-		}
-		namedProfile = resolved
-	}
-	var groupProfile *db.SpawnProfile
+	var group *db.AgentGroup
 	if strings.TrimSpace(groupName) != "" {
-		group, err := db.GetAgentGroupByName(strings.TrimSpace(groupName))
+		var err error
+		group, err = db.GetAgentGroupByName(strings.TrimSpace(groupName))
 		if err != nil {
 			return launchDefaults{}, nil, err
 		}
-		groupProfile = groupDefaultProfile(group)
 	}
-	globalProfile := globalDefaultProfile()
-	// Same order as handleGroupSpawn's profileTiers, including the alias form of
-	// the named tier's provenance, so resolved_by reads identically to the
-	// provenance a real spawn records.
-	namedProfileSource := profileSource(namedProfile, agent.ProvCLIProfileSource)
-	if namedProfile != nil && strings.TrimSpace(profileHandle) != namedProfile.Name {
-		namedProfileSource = fmt.Sprintf(`profile %q via alias %q`,
-			namedProfile.Name, strings.TrimSpace(profileHandle))
-	}
-	// The two default tiers are marked as such even though this path resolves
-	// only non-pinned fields today: the preview's whole promise is that it walks
-	// the tiers a real spawn walks, so an unmarked tier here would silently
-	// diverge from the launch the moment a harness-pinned field (model, effort)
-	// joins the preview.
-	tiers := []launchProfileTier{
-		{profile: namedProfile, source: namedProfileSource},
-		{profile: groupProfile, source: profileSource(groupProfile, agent.ProvGroupProfileSource),
-			defaultTier: true},
-		{profile: globalProfile, source: profileSource(globalProfile, agent.ProvGlobalProfileSource),
-			defaultTier: true},
-	}
-
-	harnessName := harness.DefaultName
-	harnessSource := agent.ProvHarnessDefault
-	if explicit := strings.TrimSpace(requestedHarness); explicit != "" {
-		harnessName = harnessOrDefault(explicit)
-		harnessSource = agent.ProvExplicit
-	} else {
-		for _, tier := range tiers {
-			if tier.profile != nil {
-				harnessName = harnessOrDefault(tier.profile.Harness)
-				harnessSource = tier.source
-				break
-			}
-		}
-	}
-	resolvedHarness, err := harness.Resolve(harnessName)
-	if err != nil {
-		// Only the caller can have supplied a name nothing resolves; a tier's
-		// harness came out of harnessOrDefault and is always known.
-		if strings.TrimSpace(requestedHarness) != "" {
+	capture := captureFreshLaunchConfiguration(group, profileHandle,
+		freshLaunchConfigurationRequest{Harness: requestedHarness})
+	if capture.Issue != nil {
+		if capture.Issue.Kind == freshLaunchProfileMissing {
 			return launchDefaults{}, &spawnFailure{
-				http.StatusBadRequest, "invalid_harness", err.Error(),
-			}, nil
+				http.StatusBadRequest, "not_found", capture.Issue.Message}, nil
 		}
-		return launchDefaults{}, nil, err
+		return launchDefaults{}, nil, fmt.Errorf("%s: %w", capture.Issue.Message, capture.Issue.Err)
 	}
-
-	requestedSandbox, sandboxSource, _, fail := resolveStringLaunchField(
-		"sandbox", "", resolvedHarness.Name, tiers,
-		func(profile *db.SpawnProfile) string { return profile.Sandbox },
-		func(raw string) (string, error) { return harness.ValidateHarnessBuiltinMode(resolvedHarness, raw) },
-	)
-	if fail != nil {
-		return launchDefaults{}, fail, nil
-	}
-	requestedImplementation, implementationSource, _, fail := resolveStringLaunchField(
-		sandboxImplementationField, "", resolvedHarness.Name, tiers,
-		func(profile *db.SpawnProfile) string { return profile.SandboxImplementation },
-		func(raw string) (string, error) {
-			return validateSandboxImplementationForHarness(resolvedHarness, raw)
-		},
-	)
-	if fail != nil {
-		return launchDefaults{}, fail, nil
-	}
-	implementation, err := sandboxpolicy.NormalizeImplementation(requestedImplementation)
-	if err != nil {
-		return launchDefaults{}, nil, err
-	}
-	harnessBuiltinMode, err := harness.ResolveHarnessBuiltinMode(resolvedHarness, requestedSandbox)
-	if err != nil {
-		return launchDefaults{}, nil, err
+	resolved, refusal := resolveFreshLaunchConfiguration(capture.Input)
+	if refusal != nil {
+		return launchDefaults{}, freshLaunchRefusalSpawnFailure(refusal), nil
 	}
 	return launchDefaults{
-		harness:        resolvedHarness,
-		sandbox:        harnessBuiltinMode,
-		implementation: implementation,
-		resolvedBy:     joinProvenanceSources(harnessSource, sandboxSource, implementationSource),
+		harness:        resolved.Harness,
+		sandbox:        resolved.HarnessBuiltinMode.Effective,
+		implementation: sandboxpolicy.Implementation(resolved.SandboxImplementation.Effective),
+		resolvedBy: joinProvenanceSources(
+			resolved.HarnessSelection.Source,
+			resolved.HarnessBuiltinMode.Source,
+			resolved.SandboxImplementation.Source,
+		),
 	}, nil, nil
+}
+
+func freshLaunchRefusalSpawnFailure(refusal *freshLaunchConfigurationRefusal) *spawnFailure {
+	if refusal == nil {
+		return nil
+	}
+	status := http.StatusBadRequest
+	if refusal.Kind == freshLaunchInvalidImplementation {
+		status = sandboxImplementationValidationStatus(refusal.Err)
+	}
+	return &spawnFailure{status, string(refusal.Kind), refusal.Error()}
 }
 
 // joinProvenanceSources renders the distinct tiers a set of fields resolved
