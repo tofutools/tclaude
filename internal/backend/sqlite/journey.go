@@ -13,12 +13,15 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/ports"
 )
 
-func (s *Store) CatalogHistory(ctx context.Context, writes []app.HistoryCatalogWrite, coverage model.HistoryCoverage, at time.Time) ([]model.HistoryCatalogEntry, error) {
+func (s *Store) CatalogHistory(ctx context.Context, harness, sourceName string, writes []app.HistoryCatalogWrite, coverage model.HistoryCoverage, at time.Time) ([]model.HistoryCatalogEntry, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO history_refreshes(harness,source_name,metadata_coverage,content_coverage,source_revision,refreshed_at) VALUES(?,?,?,?,?,?) ON CONFLICT(harness,source_name) DO UPDATE SET metadata_coverage=excluded.metadata_coverage,content_coverage=excluded.content_coverage,source_revision=excluded.source_revision,refreshed_at=excluded.refreshed_at`, harness, sourceName, coverage.Metadata, coverage.Content, coverage.SourceRevision, nanos(coverage.RefreshedAt)); err != nil {
+		return nil, err
+	}
 	for _, write := range writes {
 		var id model.ConversationID
 		err := tx.QueryRowContext(ctx, `SELECT conversation_id FROM history_catalog WHERE harness=? AND native_namespace=? AND native_reference=?`, write.Entry.Harness, write.Native.Namespace, write.Native.Reference).Scan(&id)
@@ -30,9 +33,9 @@ func (s *Store) CatalogHistory(ctx context.Context, writes []app.HistoryCatalogW
 			if _, err := tx.ExecContext(ctx, `INSERT INTO conversations(id,revision,created_at,updated_at) VALUES(?,1,?,?)`, id, nanos(at), nanos(at)); err != nil {
 				return nil, classify(err)
 			}
-			_, err = tx.ExecContext(ctx, `INSERT INTO history_catalog(conversation_id,harness,title,workspace_id,workspace_hint,archived,availability,metadata_coverage,content_coverage,source_revision,refreshed_at,modified_at,native_namespace,native_reference,native_observed_at,source_token,source_fingerprint,evidence_provider,evidence_version,evidence_payload,revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`, id, write.Entry.Harness, write.Entry.Title, write.Entry.WorkspaceID, write.Entry.WorkspaceHint, write.Entry.Archived, write.Entry.Availability, write.Entry.Coverage.Metadata, write.Entry.Coverage.Content, write.Entry.Coverage.SourceRevision, nanos(write.Entry.Coverage.RefreshedAt), nanos(write.Entry.ModifiedAt), write.Native.Namespace, write.Native.Reference, nanos(write.Native.ObservedAt), write.SourceToken, write.SourceFingerprint, write.Evidence.Provider, write.Evidence.Version, write.Evidence.Payload)
+			_, err = tx.ExecContext(ctx, `INSERT INTO history_catalog(conversation_id,harness,source_name,title,workspace_id,workspace_hint,archived,availability,metadata_coverage,content_coverage,source_revision,refreshed_at,modified_at,native_namespace,native_reference,native_observed_at,source_token,source_fingerprint,evidence_provider,evidence_version,evidence_payload,revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)`, id, write.Entry.Harness, sourceName, write.Entry.Title, write.Entry.WorkspaceID, write.Entry.WorkspaceHint, write.Entry.Archived, write.Entry.Availability, write.Entry.Coverage.Metadata, write.Entry.Coverage.Content, write.Entry.Coverage.SourceRevision, nanos(write.Entry.Coverage.RefreshedAt), nanos(write.Entry.ModifiedAt), write.Native.Namespace, write.Native.Reference, nanos(write.Native.ObservedAt), write.SourceToken, write.SourceFingerprint, write.Evidence.Provider, write.Evidence.Version, write.Evidence.Payload)
 		} else {
-			_, err = tx.ExecContext(ctx, `UPDATE history_catalog SET title=?,workspace_id=?,workspace_hint=?,availability=?,metadata_coverage=?,content_coverage=?,source_revision=?,refreshed_at=?,modified_at=?,native_observed_at=?,source_token=?,source_fingerprint=?,evidence_provider=?,evidence_version=?,evidence_payload=?,revision=revision+1 WHERE conversation_id=?`, write.Entry.Title, write.Entry.WorkspaceID, write.Entry.WorkspaceHint, write.Entry.Availability, write.Entry.Coverage.Metadata, write.Entry.Coverage.Content, write.Entry.Coverage.SourceRevision, nanos(write.Entry.Coverage.RefreshedAt), nanos(write.Entry.ModifiedAt), nanos(write.Native.ObservedAt), write.SourceToken, write.SourceFingerprint, write.Evidence.Provider, write.Evidence.Version, write.Evidence.Payload, id)
+			_, err = tx.ExecContext(ctx, `UPDATE history_catalog SET source_name=?,title=?,workspace_id=?,workspace_hint=?,availability=?,metadata_coverage=?,content_coverage=?,source_revision=?,refreshed_at=?,modified_at=?,native_observed_at=?,source_token=?,source_fingerprint=?,evidence_provider=?,evidence_version=?,evidence_payload=?,revision=revision+1 WHERE conversation_id=?`, sourceName, write.Entry.Title, write.Entry.WorkspaceID, write.Entry.WorkspaceHint, write.Entry.Availability, write.Entry.Coverage.Metadata, write.Entry.Coverage.Content, write.Entry.Coverage.SourceRevision, nanos(write.Entry.Coverage.RefreshedAt), nanos(write.Entry.ModifiedAt), nanos(write.Native.ObservedAt), write.SourceToken, write.SourceFingerprint, write.Evidence.Provider, write.Evidence.Version, write.Evidence.Payload, id)
 		}
 		if err != nil {
 			return nil, err
@@ -50,16 +53,24 @@ func (s *Store) CatalogHistory(ctx context.Context, writes []app.HistoryCatalogW
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	result, err := s.SearchHistory(ctx, app.HistorySearchFilter{})
+	result, err := s.searchHistory(ctx, app.HistorySearchFilter{Harness: harness}, sourceName)
 	return result.Entries, err
 }
 
 func (s *Store) SearchHistory(ctx context.Context, filter app.HistorySearchFilter) (app.HistorySearchResult, error) {
+	return s.searchHistory(ctx, filter, "")
+}
+
+func (s *Store) searchHistory(ctx context.Context, filter app.HistorySearchFilter, sourceName string) (app.HistorySearchResult, error) {
 	query := `SELECT conversation_id,harness,title,workspace_id,workspace_hint,archived,availability,metadata_coverage,content_coverage,source_revision,refreshed_at,modified_at,revision FROM history_catalog WHERE 1=1`
 	var args []any
 	if filter.Harness != "" {
 		query += ` AND harness=?`
 		args = append(args, filter.Harness)
+	}
+	if sourceName != "" {
+		query += ` AND source_name=?`
+		args = append(args, sourceName)
 	}
 	if filter.WorkspaceID != "" {
 		query += ` AND workspace_id=?`
@@ -75,25 +86,52 @@ func (s *Store) SearchHistory(ctx context.Context, filter app.HistorySearchFilte
 		args = append(args, term, term)
 	}
 	query += ` ORDER BY modified_at DESC,conversation_id`
+	result := app.HistorySearchResult{Coverage: model.HistoryCoverage{Metadata: model.HistoryCoverageUnknown, Content: model.HistoryCoverageUnknown}}
+	coverageQuery := `SELECT metadata_coverage,content_coverage,source_revision,refreshed_at FROM history_refreshes WHERE 1=1`
+	var coverageArgs []any
+	if filter.Harness != "" {
+		coverageQuery += ` AND harness=?`
+		coverageArgs = append(coverageArgs, filter.Harness)
+	}
+	if sourceName != "" {
+		coverageQuery += ` AND source_name=?`
+		coverageArgs = append(coverageArgs, sourceName)
+	}
+	coverageRows, coverageErr := s.db.QueryContext(ctx, coverageQuery, coverageArgs...)
+	if coverageErr != nil {
+		return result, coverageErr
+	}
+	for coverageRows.Next() {
+		var metadata, content model.HistoryCoverageState
+		var revision string
+		var refreshed int64
+		if err := coverageRows.Scan(&metadata, &content, &revision, &refreshed); err != nil {
+			coverageRows.Close()
+			return result, err
+		}
+		result.Coverage.Metadata = mergeCoverage(result.Coverage.Metadata, metadata)
+		result.Coverage.Content = mergeCoverage(result.Coverage.Content, content)
+		result.Coverage.RefreshedAt = later(result.Coverage.RefreshedAt, fromNanos(refreshed))
+		if result.Coverage.SourceRevision == "" {
+			result.Coverage.SourceRevision = revision
+		} else if result.Coverage.SourceRevision != revision {
+			result.Coverage.SourceRevision = ""
+		}
+	}
+	if err := coverageRows.Close(); err != nil {
+		return result, err
+	}
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return app.HistorySearchResult{}, err
 	}
 	defer rows.Close()
-	result := app.HistorySearchResult{Coverage: model.HistoryCoverage{Metadata: model.HistoryCoverageComplete, Content: model.HistoryCoverageComplete}}
 	for rows.Next() {
 		entry, err := scanHistoryEntry(rows)
 		if err != nil {
 			return result, err
 		}
 		result.Entries = append(result.Entries, entry)
-		result.Coverage.RefreshedAt = later(result.Coverage.RefreshedAt, entry.Coverage.RefreshedAt)
-		if entry.Coverage.Metadata != model.HistoryCoverageComplete {
-			result.Coverage.Metadata = entry.Coverage.Metadata
-		}
-		if entry.Coverage.Content != model.HistoryCoverageComplete {
-			result.Coverage.Content = entry.Coverage.Content
-		}
 	}
 	return result, rows.Err()
 }
@@ -151,23 +189,97 @@ func (s *Store) HistoryPoints(ctx context.Context, id model.ConversationID) ([]m
 	return points, rows.Err()
 }
 
-func (s *Store) IndexHistoryRead(ctx context.Context, id model.ConversationID, text string, coverage model.HistoryCoverage, at time.Time) error {
+func (s *Store) IndexHistoryRead(ctx context.Context, id model.ConversationID, text string, coverage model.HistoryCoverage, at time.Time) (model.HistoryCatalogEntry, error) {
 	result, err := s.db.ExecContext(ctx, `UPDATE history_catalog SET search_text=?,content_coverage=?,source_revision=?,refreshed_at=?,revision=revision+1 WHERE conversation_id=?`, text, coverage.Content, coverage.SourceRevision, nanos(at), id)
 	if err != nil {
-		return err
+		return model.HistoryCatalogEntry{}, err
 	}
 	if n, _ := result.RowsAffected(); n != 1 {
-		return app.ErrNotFound
+		return model.HistoryCatalogEntry{}, app.ErrNotFound
 	}
-	return s.bump(ctx)
+	if err := s.bump(ctx); err != nil {
+		return model.HistoryCatalogEntry{}, err
+	}
+	var entry model.HistoryCatalogEntry
+	err = scanHistoryEntryInto(s.db.QueryRowContext(ctx, `SELECT conversation_id,harness,title,workspace_id,workspace_hint,archived,availability,metadata_coverage,content_coverage,source_revision,refreshed_at,modified_at,revision FROM history_catalog WHERE conversation_id=?`, id), &entry)
+	return entry, err
+}
+
+func (s *Store) SetHistoryMetadata(ctx context.Context, id model.ConversationID, expected model.Revision, title string, archived bool, requestID model.RequestID, authority model.AuthorityRequest, at time.Time) (model.HistoryCatalogEntry, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.HistoryCatalogEntry{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var priorID model.ConversationID
+	var priorTitle string
+	var priorArchived bool
+	err = tx.QueryRowContext(ctx, `SELECT conversation_id,title,archived FROM history_metadata_requests WHERE request_scope=? AND request_id=?`, requestScope(authority.Principal), requestID).Scan(&priorID, &priorTitle, &priorArchived)
+	if err == nil {
+		if priorID != id || priorTitle != title || priorArchived != archived {
+			return model.HistoryCatalogEntry{}, app.ErrConflict
+		}
+		if err = tx.Commit(); err != nil {
+			return model.HistoryCatalogEntry{}, err
+		}
+		var entry model.HistoryCatalogEntry
+		err = scanHistoryEntryInto(s.db.QueryRowContext(ctx, `SELECT conversation_id,harness,title,workspace_id,workspace_hint,archived,availability,metadata_coverage,content_coverage,source_revision,refreshed_at,modified_at,revision FROM history_catalog WHERE conversation_id=?`, id), &entry)
+		return entry, err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return model.HistoryCatalogEntry{}, err
+	}
+	decision, err := authorizeTx(ctx, tx, authority, at)
+	if err != nil {
+		return model.HistoryCatalogEntry{}, err
+	}
+	if !decision.Allowed {
+		return model.HistoryCatalogEntry{}, app.ErrUnauthorized
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE history_catalog SET title=?,archived=?,revision=revision+1 WHERE conversation_id=? AND revision=?`, title, archived, id, expected)
+	if err != nil {
+		return model.HistoryCatalogEntry{}, err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return model.HistoryCatalogEntry{}, app.ErrConflict
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO history_metadata_requests(request_scope,request_id,conversation_id,title,archived) VALUES(?,?,?,?,?)`, requestScope(authority.Principal), requestID, id, title, archived); err != nil {
+		return model.HistoryCatalogEntry{}, classify(err)
+	}
+	if err = bumpTx(ctx, tx); err != nil {
+		return model.HistoryCatalogEntry{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return model.HistoryCatalogEntry{}, err
+	}
+	var entry model.HistoryCatalogEntry
+	err = scanHistoryEntryInto(s.db.QueryRowContext(ctx, `SELECT conversation_id,harness,title,workspace_id,workspace_hint,archived,availability,metadata_coverage,content_coverage,source_revision,refreshed_at,modified_at,revision FROM history_catalog WHERE conversation_id=?`, id), &entry)
+	return entry, err
+}
+
+func mergeCoverage(current, next model.HistoryCoverageState) model.HistoryCoverageState {
+	if current == model.HistoryCoverageUnknown {
+		return next
+	}
+	if current == model.HistoryCoveragePartial || next == model.HistoryCoveragePartial {
+		return model.HistoryCoveragePartial
+	}
+	if current == model.HistoryCoverageUnknown || next == model.HistoryCoverageUnknown {
+		return model.HistoryCoverageUnknown
+	}
+	return model.HistoryCoverageComplete
 }
 
 func scanHistoryEntry(row scanner) (model.HistoryCatalogEntry, error) {
 	var entry model.HistoryCatalogEntry
+	err := scanHistoryEntryInto(row, &entry)
+	return entry, err
+}
+func scanHistoryEntryInto(row scanner, entry *model.HistoryCatalogEntry) error {
 	var refreshed, modified int64
 	err := row.Scan(&entry.ConversationID, &entry.Harness, &entry.Title, &entry.WorkspaceID, &entry.WorkspaceHint, &entry.Archived, &entry.Availability, &entry.Coverage.Metadata, &entry.Coverage.Content, &entry.Coverage.SourceRevision, &refreshed, &modified, &entry.Revision)
 	entry.Coverage.RefreshedAt, entry.ModifiedAt = fromNanos(refreshed), fromNanos(modified)
-	return entry, classify(err)
+	return classify(err)
 }
 
 func (s *Store) RegisterWorkspace(ctx context.Context, workspace model.Workspace) error {
@@ -283,11 +395,12 @@ func (s *Store) CompleteWorkspaceEffect(ctx context.Context, in app.WorkspaceEff
 	}
 	defer func() { _ = tx.Rollback() }()
 	opState := model.OperationFailed
-	if in.Disposition == ports.EffectAccepted {
+	switch in.Disposition {
+	case ports.EffectAccepted:
 		opState = model.OperationSucceeded
-	} else if in.Disposition == ports.EffectUnknown {
+	case ports.EffectUnknown:
 		opState = model.OperationUncertain
-	} else if in.Disposition == ports.EffectRefused || in.Disposition == ports.EffectUnsupported {
+	case ports.EffectRefused, ports.EffectUnsupported:
 		opState = model.OperationRefused
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE operations SET state=?,detail=?,revision=revision+1,updated_at=? WHERE id=? AND state=?`, opState, in.Detail, nanos(in.At), in.OperationID, model.OperationAdmitted)
@@ -502,7 +615,7 @@ func (s *Store) WorkRun(ctx context.Context, id model.WorkRunID) (app.WorkRunRec
 		record.Run.Attempts = append(record.Run.Attempts, a)
 	}
 	rows.Close()
-	erows, err := s.db.QueryContext(ctx, `SELECT id,work_run_id,step,attempt,kind,reporter_json,artifact_revision,passed,detail,recorded_at,revision FROM work_evidence WHERE work_run_id=? ORDER BY recorded_at`, id)
+	erows, err := s.db.QueryContext(ctx, `SELECT id,request_id,work_run_id,step,attempt,kind,reporter_json,artifact_revision,passed,detail,recorded_at,revision FROM work_evidence WHERE work_run_id=? ORDER BY recorded_at`, id)
 	if err != nil {
 		return record, err
 	}
@@ -511,7 +624,7 @@ func (s *Store) WorkRun(ctx context.Context, id model.WorkRunID) (app.WorkRunRec
 		var reporter []byte
 		var passed sql.NullBool
 		var at int64
-		if err := erows.Scan(&e.ID, &e.WorkRunID, &e.Step, &e.Attempt, &e.Kind, &reporter, &e.ArtifactRevision, &passed, &e.Detail, &at, &e.Revision); err != nil {
+		if err := erows.Scan(&e.ID, &e.RequestID, &e.WorkRunID, &e.Step, &e.Attempt, &e.Kind, &reporter, &e.ArtifactRevision, &passed, &e.Detail, &at, &e.Revision); err != nil {
 			erows.Close()
 			return record, err
 		}
@@ -527,7 +640,7 @@ func (s *Store) WorkRun(ctx context.Context, id model.WorkRunID) (app.WorkRunRec
 	var d model.WorkDecision
 	var decider []byte
 	var at int64
-	err = s.db.QueryRowContext(ctx, `SELECT work_run_id,step,attempt,decision,decider_json,reason,decided_at,revision FROM work_decisions WHERE work_run_id=?`, id).Scan(&d.WorkRunID, &d.Step, &d.Attempt, &d.Decision, &decider, &d.Reason, &at, &d.Revision)
+	err = s.db.QueryRowContext(ctx, `SELECT work_run_id,request_id,step,attempt,decision,decider_json,reason,decided_at,revision FROM work_decisions WHERE work_run_id=?`, id).Scan(&d.WorkRunID, &d.RequestID, &d.Step, &d.Attempt, &d.Decision, &decider, &d.Reason, &at, &d.Revision)
 	if err == nil {
 		_ = json.Unmarshal(decider, &d.Decider)
 		d.DecidedAt = fromNanos(at)
@@ -621,6 +734,24 @@ func (s *Store) RecordWorkEvidence(ctx context.Context, e model.WorkEvidence, ex
 		return app.WorkRunRecord{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var existingRun model.WorkRunID
+	var existingStep model.WorkStep
+	var existingAttempt uint64
+	var existingKind model.WorkEvidenceKind
+	var existingArtifact, existingDetail string
+	err = tx.QueryRowContext(ctx, `SELECT work_run_id,step,attempt,kind,artifact_revision,detail FROM work_evidence WHERE request_scope=? AND request_id=?`, requestScope(e.Reporter), e.RequestID).Scan(&existingRun, &existingStep, &existingAttempt, &existingKind, &existingArtifact, &existingDetail)
+	if err == nil {
+		if existingRun != e.WorkRunID || existingStep != e.Step || existingAttempt != e.Attempt || existingKind != e.Kind || existingArtifact != e.ArtifactRevision || existingDetail != e.Detail {
+			return app.WorkRunRecord{}, app.ErrConflict
+		}
+		if err = tx.Commit(); err != nil {
+			return app.WorkRunRecord{}, err
+		}
+		return s.WorkRun(ctx, e.WorkRunID)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return app.WorkRunRecord{}, err
+	}
 	decision, err := authorizeTx(ctx, tx, authority, at)
 	if err != nil || !decision.Allowed {
 		if err == nil {
@@ -633,7 +764,7 @@ func (s *Store) RecordWorkEvidence(ctx context.Context, e model.WorkEvidence, ex
 	if e.Passed != nil {
 		passed = *e.Passed
 	}
-	result, err := tx.ExecContext(ctx, `INSERT INTO work_evidence(id,work_run_id,step,attempt,kind,reporter_json,artifact_revision,passed,detail,recorded_at,revision) SELECT ?,?,?,?,?,?,?,?,?,?,1 WHERE EXISTS(SELECT 1 FROM work_runs r JOIN work_attempts a ON a.work_run_id=r.id WHERE r.id=? AND r.revision=? AND r.state IN (?,?) AND a.step=? AND a.attempt=?)`, e.ID, e.WorkRunID, e.Step, e.Attempt, e.Kind, reporter, e.ArtifactRevision, passed, e.Detail, nanos(e.RecordedAt), e.WorkRunID, expected, model.WorkRunRunning, model.WorkRunWaiting, e.Step, e.Attempt)
+	result, err := tx.ExecContext(ctx, `INSERT INTO work_evidence(id,request_scope,request_id,work_run_id,step,attempt,kind,reporter_json,artifact_revision,passed,detail,recorded_at,revision) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,1 WHERE EXISTS(SELECT 1 FROM work_runs r JOIN work_attempts a ON a.work_run_id=r.id WHERE r.id=? AND r.revision=? AND r.state IN (?,?) AND a.step=? AND a.attempt=?)`, e.ID, requestScope(e.Reporter), e.RequestID, e.WorkRunID, e.Step, e.Attempt, e.Kind, reporter, e.ArtifactRevision, passed, e.Detail, nanos(e.RecordedAt), e.WorkRunID, expected, model.WorkRunRunning, model.WorkRunWaiting, e.Step, e.Attempt)
 	if err != nil {
 		return app.WorkRunRecord{}, classify(err)
 	}
@@ -662,6 +793,22 @@ func (s *Store) DecideWork(ctx context.Context, d model.WorkDecision, expected m
 		return app.WorkRunRecord{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var existingRun model.WorkRunID
+	var existingDecision model.WorkDecisionKind
+	var existingReason string
+	err = tx.QueryRowContext(ctx, `SELECT work_run_id,decision,reason FROM work_decisions WHERE request_scope=? AND request_id=?`, requestScope(d.Decider), d.RequestID).Scan(&existingRun, &existingDecision, &existingReason)
+	if err == nil {
+		if existingRun != d.WorkRunID || existingDecision != d.Decision || existingReason != d.Reason {
+			return app.WorkRunRecord{}, app.ErrConflict
+		}
+		if err = tx.Commit(); err != nil {
+			return app.WorkRunRecord{}, err
+		}
+		return s.WorkRun(ctx, d.WorkRunID)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return app.WorkRunRecord{}, err
+	}
 	decision, err := authorizeTx(ctx, tx, authority, at)
 	if err != nil || !decision.Allowed {
 		if err == nil {
@@ -670,13 +817,14 @@ func (s *Store) DecideWork(ctx context.Context, d model.WorkDecision, expected m
 		return app.WorkRunRecord{}, err
 	}
 	state := model.WorkRunFailed
-	if d.Decision == model.WorkDecisionAccept {
+	switch d.Decision {
+	case model.WorkDecisionAccept:
 		state = model.WorkRunSucceeded
-	} else if d.Decision == model.WorkDecisionCancel {
+	case model.WorkDecisionCancel:
 		state = model.WorkRunCancelled
 	}
 	decider, _ := json.Marshal(d.Decider)
-	_, err = tx.ExecContext(ctx, `INSERT INTO work_decisions(work_run_id,step,attempt,decision,decider_json,reason,decided_at,revision) VALUES(?,?,?,?,?,?,?,1)`, d.WorkRunID, d.Step, d.Attempt, d.Decision, decider, d.Reason, nanos(d.DecidedAt))
+	_, err = tx.ExecContext(ctx, `INSERT INTO work_decisions(work_run_id,request_scope,request_id,step,attempt,decision,decider_json,reason,decided_at,revision) VALUES(?,?,?,?,?,?,?,?,?,1)`, d.WorkRunID, requestScope(d.Decider), d.RequestID, d.Step, d.Attempt, d.Decision, decider, d.Reason, nanos(d.DecidedAt))
 	if err != nil {
 		return app.WorkRunRecord{}, classify(err)
 	}
