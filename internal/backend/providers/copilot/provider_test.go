@@ -126,6 +126,61 @@ func TestSessionStartObservationRequiresExpectedPrimarySession(t *testing.T) {
 	require.True(t, runtime.contextReady)
 }
 
+func TestConcurrentExecutionsKeepPolicyAndSpoolsExecutionScoped(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is unavailable")
+	}
+	root, err := os.MkdirTemp("/tmp", "tcl-copilot-concurrent-")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
+	nativeHome := filepath.Join(root, "native-home")
+	require.NoError(t, os.MkdirAll(nativeHome, 0o700))
+	authPath := filepath.Join(nativeHome, "config.json")
+	require.NoError(t, os.WriteFile(authPath, []byte("fixture-auth"), 0o600))
+	executable := filepath.Join(root, "copilot-fake")
+	require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$PWD/argv\"\nwhile IFS= read -r line; do :; done\n"), 0o700))
+	provider, err := New(Config{Executable: executable, PrivateRoot: root, NativeHome: nativeHome})
+	require.NoError(t, err)
+	cwdOne, cwdTwo := filepath.Join(root, "one"), filepath.Join(root, "two")
+	require.NoError(t, os.Mkdir(cwdOne, 0o700))
+	require.NoError(t, os.Mkdir(cwdTwo, 0o700))
+	launch := func(id model.ExecutionID, cwd string, approval model.ApprovalMode) ports.ReleaseResult {
+		prepared, prepareErr := provider.Prepare(context.Background(), ports.PreparationRequest{Intent: ports.StartFresh, Spec: model.ResolvedExecutionSpec{ExecutionID: id, Attempt: 1, Harness: Name, WorkingDirectory: cwd, Approval: approval, Sandbox: model.SandboxUnconfined}})
+		require.NoError(t, prepareErr)
+		released, releaseErr := prepared.Release(context.Background(), &testPermit{execution: id})
+		require.NoError(t, releaseErr)
+		return released
+	}
+	one := launch("execution_one", cwdOne, model.ApprovalAutomatic)
+	two := launch("execution_two", cwdTwo, model.ApprovalSupervised)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, _ = two.Runtime.Stop(ctx, ports.StopRequest{Force: true})
+	})
+	require.Eventually(t, func() bool {
+		first, e1 := os.ReadFile(filepath.Join(cwdOne, "argv"))
+		second, e2 := os.ReadFile(filepath.Join(cwdTwo, "argv"))
+		return e1 == nil && e2 == nil && strings.Contains(string(first), "--allow-all-tools") && strings.Contains(string(first), "--no-ask-user") && !strings.Contains(string(second), "--allow-all-tools")
+	}, time.Second, 10*time.Millisecond)
+	oneEvidence, err := decodeEvidence(one.Evidence)
+	require.NoError(t, err)
+	twoEvidence, err := decodeEvidence(two.Evidence)
+	require.NoError(t, err)
+	require.NotEqual(t, oneEvidence.ObservationSpool, twoEvidence.ObservationSpool)
+	require.Equal(t, nativeHome, oneEvidence.StateRoot)
+	require.Equal(t, nativeHome, twoEvidence.StateRoot)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err = one.Runtime.Stop(ctx, ports.StopRequest{Force: true})
+	require.NoError(t, err)
+	require.FileExists(t, authPath)
+	recovered, err := provider.Recover(context.Background(), ports.RecoveryRequest{ExecutionID: "execution_two", Spec: model.ResolvedExecutionSpec{ExecutionID: "execution_two", Harness: Name, WorkingDirectory: cwdTwo, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined}, Evidence: two.Evidence, Attempt: 1})
+	require.NoError(t, err)
+	require.Equal(t, ports.RecoveryControlled, recovered.State)
+	require.FileExists(t, authPath)
+}
+
 func writeHookEvent(t *testing.T, directory string, event sessionStartEvent) {
 	t.Helper()
 	raw, err := json.Marshal(event)

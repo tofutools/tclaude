@@ -32,8 +32,10 @@ type Config struct {
 	Executable     string
 	TmuxExecutable string
 	PrivateRoot    string
-	NativeHome     string
-	AgentSocket    string
+	// NativeHome is a durable provider-owned COPILOT_HOME. Empty selects
+	// PrivateRoot/native-home; an override must remain inside PrivateRoot.
+	NativeHome  string
+	AgentSocket string
 }
 
 type Provider struct {

@@ -32,9 +32,11 @@ type Config struct {
 	Executable     string
 	TmuxExecutable string
 	PrivateRoot    string
-	NativeHome     string
-	AgentSocket    string
-	TurnForker     TurnForker
+	// NativeHome is a durable provider-owned CODEX_HOME. Empty selects
+	// PrivateRoot/native-home; an override must remain inside PrivateRoot.
+	NativeHome  string
+	AgentSocket string
+	TurnForker  TurnForker
 }
 
 type Provider struct {
