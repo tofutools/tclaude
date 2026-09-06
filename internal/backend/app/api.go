@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
@@ -48,6 +49,204 @@ type JourneyAPI interface {
 
 type WorkReconciler interface {
 	ReconcilePendingWork(context.Context) (WorkReconcileReport, error)
+}
+
+// OrchestrationAPI is the semantic application surface for authoring and
+// durable admission. Transport registration is deliberately owned elsewhere.
+type OrchestrationAPI interface {
+	ValidateDefinition(context.Context, ValidateDefinitionRequest) (DefinitionResult, error)
+	SaveDefinition(context.Context, SaveDefinitionRequest) (DefinitionResult, error)
+	GetDefinition(context.Context, GetDefinitionRequest) (DefinitionResult, error)
+	ListDefinitions(context.Context, ListDefinitionsRequest) ([]model.Definition, error)
+	SaveProgramProfile(context.Context, SaveProgramProfileRequest) (ProgramProfileResult, error)
+	GetProgramProfile(context.Context, GetProgramProfileRequest) (ProgramProfileResult, error)
+	ListProgramProfiles(context.Context, ListProgramProfilesRequest) ([]model.ProgramProfile, error)
+	StartProcess(context.Context, StartProcessRequest) (WorkRunResult, error)
+	RecordNodeEvidence(context.Context, RecordNodeEvidenceRequest) (WorkRunResult, error)
+	GetDecision(context.Context, GetDecisionRequest) (DecisionResult, error)
+	ListPendingDecisions(context.Context, ListPendingDecisionsRequest) ([]DecisionResult, error)
+	SubmitDecision(context.Context, SubmitDecisionRequest) (DecisionResult, error)
+	SaveAutomationRule(context.Context, SaveAutomationRuleRequest) (AutomationRuleResult, error)
+	GetAutomationRule(context.Context, GetAutomationRuleRequest) (AutomationRuleResult, error)
+	ListAutomationRules(context.Context, ListAutomationRulesRequest) ([]model.AutomationRule, error)
+	RunRuleNow(context.Context, RunRuleNowRequest) (OccurrenceResult, error)
+	ObserveAutomationFact(context.Context, ObserveAutomationFactRequest) ([]OccurrenceResult, error)
+	DeployTeam(context.Context, DeployTeamRequest) (TeamDeploymentResult, error)
+	GetTeamDeployment(context.Context, GetTeamDeploymentRequest) (TeamDeploymentResult, error)
+	ListOccurrences(context.Context, ListOccurrencesRequest) ([]OccurrenceResult, error)
+}
+
+type DefinitionDraft struct {
+	ID            model.DefinitionID
+	RevisionID    model.DefinitionRevisionID
+	Name          string
+	Kind          model.DefinitionKind
+	SchemaVersion uint32
+	Source        string
+	Parameters    []model.ParameterDeclaration
+	Team          *model.TeamDefinition
+	Process       *model.ProcessDefinition
+	Dependencies  []model.DefinitionRef
+}
+
+type ValidateDefinitionRequest struct {
+	Principal model.Principal
+	Draft     DefinitionDraft
+}
+
+type SaveDefinitionRequest struct {
+	Context          RequestContext
+	Draft            DefinitionDraft
+	ExpectedRevision model.Revision
+}
+
+type GetDefinitionRequest struct {
+	Principal    model.Principal
+	DefinitionID model.DefinitionID
+}
+
+type ListDefinitionsRequest struct {
+	Principal         model.Principal
+	Kind              model.DefinitionKind
+	IncludeTombstoned bool
+}
+
+type DefinitionResult struct {
+	Definition model.Definition
+	Revision   model.DefinitionRevision
+}
+
+type SaveProgramProfileRequest struct {
+	Context          RequestContext
+	ID               model.ProgramProfileID
+	RevisionID       model.ProgramProfileRevisionID
+	Name             string
+	ExpectedRevision model.Revision
+	Executable       string
+	ArgumentPrefix   []string
+	Environment      map[string]string
+	WorkingDirectory string
+	Sandbox          model.SandboxMode
+	Timeout          time.Duration
+	OutputLimitBytes int64
+	EffectAuthority  []model.ProgramEffectRequirement
+}
+
+type ProgramProfileResult struct {
+	Profile  model.ProgramProfile
+	Revision model.ProgramProfileRevision
+}
+
+type GetProgramProfileRequest struct {
+	Principal model.Principal
+	ID        model.ProgramProfileID
+}
+
+type ListProgramProfilesRequest struct {
+	Principal         model.Principal
+	IncludeTombstoned bool
+}
+
+type StartProcessRequest struct {
+	Context RequestContext
+	ID      model.WorkRunID
+	Start   model.WorkStart
+}
+
+type RecordNodeEvidenceRequest struct {
+	Context             RequestContext
+	Attempt             model.WorkAttemptRef
+	ExpectedRunRevision model.Revision
+	Kind                model.WorkEvidenceKind
+	ArtifactRevision    string
+	Passed              *bool
+	Disposition         model.WorkOutcome
+	Detail              string
+}
+
+type GetDecisionRequest struct {
+	Principal  model.Principal
+	DecisionID model.DecisionID
+}
+
+type ListPendingDecisionsRequest struct{ Principal model.Principal }
+
+type SubmitDecisionRequest struct {
+	Context                RequestContext
+	DecisionID             model.DecisionID
+	ExpectedWindowRevision model.Revision
+	Answer                 string
+	Reason                 string
+	EvidenceRefs           []model.WorkEvidenceID
+}
+
+type DecisionResult struct {
+	Window     model.DecisionWindow
+	Submission *model.DecisionSubmission
+}
+
+type SaveAutomationRuleRequest struct {
+	Context          RequestContext
+	ID               model.AutomationRuleID
+	RevisionID       model.AutomationRuleRevisionID
+	Name             string
+	ExpectedRevision model.Revision
+	Enabled          bool
+	Owner            model.AuthoritySubject
+	Delegation       model.AutomationDelegation
+	Condition        model.AutomationCondition
+	Action           model.AutomationAction
+	Policy           model.OccurrencePolicy
+	Dependencies     []model.DefinitionRef
+}
+
+type AutomationRuleResult struct {
+	Rule     model.AutomationRule
+	Revision model.AutomationRuleRevision
+}
+
+type GetAutomationRuleRequest struct {
+	Principal model.Principal
+	ID        model.AutomationRuleID
+}
+
+type ListAutomationRulesRequest struct {
+	Principal         model.Principal
+	IncludeTombstoned bool
+}
+
+type RunRuleNowRequest struct {
+	Context              RequestContext
+	RuleID               model.AutomationRuleID
+	ExpectedRuleRevision model.Revision
+	OccurrenceID         model.OccurrenceID
+	SourceOccurrenceKey  string
+	Recipients           []model.AgentID
+}
+
+type ObserveAutomationFactRequest struct {
+	Principal model.Principal
+	Fact      model.NormalizedFact
+}
+
+type DeployTeamRequest struct {
+	Context       RequestContext
+	DeploymentID  model.DeploymentID
+	Instantiation model.TeamInstantiation
+}
+
+type GetTeamDeploymentRequest struct {
+	Principal    model.Principal
+	DeploymentID model.DeploymentID
+}
+
+type TeamDeploymentResult struct{ Deployment model.TeamDeployment }
+
+type OccurrenceResult struct{ Occurrence model.AutomationOccurrence }
+
+type ListOccurrencesRequest struct {
+	Principal model.Principal
+	RuleID    model.AutomationRuleID
 }
 
 type RequestContext struct {
@@ -305,9 +504,11 @@ type InspectWorkRequest struct {
 }
 
 type WorkRunResult struct {
-	Run      model.WorkRun
-	Evidence []model.WorkEvidence
-	Decision *model.WorkDecision
+	Run          model.WorkRun
+	Evidence     []model.WorkEvidence
+	Decision     *model.WorkDecision
+	NodeEvidence []model.WorkNodeEvidence
+	Decisions    []model.DecisionWindow
 }
 
 type RecordWorkEvidenceRequest struct {
@@ -349,6 +550,7 @@ type ResolveWorkUncertaintyRequest struct {
 }
 
 type WorkReconcileReport struct {
-	Pending   []model.WorkRunID
-	Uncertain []model.WorkRunID
+	Pending     []model.WorkRunID
+	Uncertain   []model.WorkRunID
+	Occurrences []model.OccurrenceID
 }
