@@ -24,7 +24,7 @@ var tableRules = rules(
 	[]string{"agent_groups", "agent_group_members", "agent_group_owners", "agent_group_links", "agent_tags", "agent_permissions", "agent_group_permissions", "agent_sudo_grants", "roles", "spawn_profiles", "spawn_profile_aliases", "sandbox_profiles", "sandbox_profile_global_assignment", "spawn_harness_rules", "codex_native_permission_profiles", "group_templates", "group_template_agents", "process_snippets", "process_snippet_library", "group_process_state", "group_process_transitions", "group_wave_choreography", "process_runs", "agent_cron_jobs", "trigger_rules", "agent_standing_orders", "agent_standing_order_group_scopes", "agent_standing_order_hook_selectors", "agent_standing_order_turn_origins", "agent_standing_order_debounce", "trigger_dwell_states", "agent_routes", "conversation_resume_profiles", "pending_spawns"}, dispositionRule{Inactive, ConversionPending, "preserved_inactive_pending_validation"},
 	[]string{"execution_operations", "session_execution_boundaries"}, dispositionRule{Preserve, ConversionInterrupted, "historical_effect_preserved_without_replay"},
 	[]string{"sessions", "agent_route_leases", "darwin_route_launches", "darwin_route_slot_claims", "notify_state", "browser_notifications", "dashboard_session_grace", "ask_threads", "agentd_idempotency", "opencode_runtimes", "opencode_agent_state_allocations", "copilot_api_runtimes", "codex_app_server_runtimes", "codex_app_server_capabilities"}, dispositionRule{Reset, ConversionNotApplicable, "runtime_fact_or_claim_reset"},
-	[]string{"conv_embeddings", "usage_cache", "git_cache", "codex_usage_cache", "codex_telemetry_checkpoints", "copilot_usage_snapshots", "opencode_usage_activity", "opencode_usage_step_removals", "copilot_model_catalog", "dashboard_prefs", "agent_notify_prefs", "dashboard_session_grace"}, dispositionRule{Rebuild, ConversionNotApplicable, "derived_or_presentation_state_rebuilt"},
+	[]string{"conv_embeddings", "usage_cache", "git_cache", "codex_usage_cache", "codex_telemetry_checkpoints", "opencode_usage_step_removals", "copilot_model_catalog", "dashboard_prefs", "agent_notify_prefs", "dashboard_session_grace"}, dispositionRule{Rebuild, ConversionNotApplicable, "derived_or_presentation_state_rebuilt"},
 )
 
 func rules(groups ...any) map[string]dispositionRule {
@@ -34,6 +34,11 @@ func rules(groups ...any) map[string]dispositionRule {
 			out[table] = groups[i+1].(dispositionRule)
 		}
 	}
+	for _, table := range []string{"copilot_usage_snapshots", "opencode_usage_activity"} {
+		out[table] = dispositionRule{Preserve, ConversionPending, "provider_observation_history_preserved"}
+	}
+	out["dashboard_prefs"] = dispositionRule{Inactive, ConversionPending, "authored_global_profile_selection_preserved"}
+	out["execution_operations"] = dispositionRule{Preserve, ConversionPending, "terminal_and_unresolved_effect_history_preserved"}
 	out["schema_version"] = dispositionRule{Preserve, ConversionNotApplicable, "source_version_evidence"}
 	return out
 }
@@ -116,7 +121,28 @@ func Plan(inspection Inspection) (MigrationPlan, error) {
 			rule = dispositionRule{Quarantine, ConversionPending, "unclassified_source_table"}
 			plan.Diagnostics = append(plan.Diagnostics, Diagnostic{Severity: SeverityBlocking, Code: "unclassified_source_table", Table: table, Count: inspection.Counts[table], Detail: "source table has no reviewed preservation rule"})
 		}
-		plan.Dispositions = append(plan.Dispositions, TableDisposition{Table: table, Rows: inspection.Counts[table], Classification: rule.class, Conversion: rule.conversion, ReasonCode: rule.reason})
+		count := inspection.Counts[table]
+		if table == "dashboard_prefs" {
+			count = int64(len(inspection.Snapshot.Rows[table]))
+			if omitted := inspection.Counts[table] - count; omitted > 0 {
+				plan.Dispositions = append(plan.Dispositions, TableDisposition{Table: table, Rows: omitted, Classification: Rebuild, Conversion: ConversionNotApplicable, ReasonCode: "presentation_preferences_rebuilt"})
+			}
+		}
+		if table == "execution_operations" {
+			var unresolved int64
+			for _, row := range inspection.Snapshot.Rows[table] {
+				if !terminalOperation(sourcev228.String(row.Values["state"])) {
+					unresolved++
+				}
+			}
+			if unresolved > 0 {
+				plan.Dispositions = append(plan.Dispositions, TableDisposition{Table: table, Rows: unresolved, Classification: Preserve, Conversion: ConversionInterrupted, ReasonCode: "unresolved_effect_without_replay"})
+			}
+			count -= unresolved
+		}
+		if count > 0 || inspection.Counts[table] == 0 {
+			plan.Dispositions = append(plan.Dispositions, TableDisposition{Table: table, Rows: count, Classification: rule.class, Conversion: rule.conversion, ReasonCode: rule.reason})
+		}
 	}
 
 	lookup := map[string]string{}
@@ -155,8 +181,12 @@ func Plan(inspection Inspection) (MigrationPlan, error) {
 
 	for _, spec := range referenceSpecs {
 		for _, row := range inspection.Snapshot.Rows[spec.table] {
-			value := sourcev228.String(row.Values[spec.field])
-			if value == "" && spec.allowEmpty {
+			raw, exists := row.Values[spec.field]
+			if !exists {
+				continue
+			}
+			value := sourcev228.String(raw)
+			if (value == "" || value == "0") && spec.allowEmpty {
 				continue
 			}
 			target, ok := lookup[spec.targetTable+"\x1f"+value]
@@ -166,6 +196,7 @@ func Plan(inspection Inspection) (MigrationPlan, error) {
 			}
 		}
 	}
+	appendPreservationChecks(&plan, inspection.Snapshot, lookup)
 	sort.Slice(plan.References, func(i, j int) bool {
 		a, b := plan.References[i], plan.References[j]
 		if a.SourceTable != b.SourceTable {
@@ -192,38 +223,62 @@ func Plan(inspection Inspection) (MigrationPlan, error) {
 }
 
 func mapLegacyConversations(plan *MigrationPlan, snapshot sourcev228.Snapshot, databaseHash string, lookup map[string]string) {
-	byReference := map[string]map[string]bool{}
-	for _, table := range []string{"conversation_attempt_bindings", "conversation_reference_bindings"} {
+	// A catalog ID alone is not a qualified native identity. v228 catalogs
+	// lack namespace evidence; keep a separate historical identity, and quarantine
+	// potential binding joins rather than borrowing a different provider's ID.
+	catalogs := map[string]sourcev228.Row{}
+	for _, row := range snapshot.Rows["conv_index"] {
+		catalogs[sourcev228.String(row.Values["conv_id"])] = row
+	}
+	mapped := map[string]string{}
+	for _, table := range []string{"conv_index", "agent_conversations"} {
 		for _, row := range snapshot.Rows[table] {
-			reference := sourcev228.String(row.Values["external_ref"])
-			logical := sourcev228.String(row.Values["conversation_id"])
-			if reference == "" || logical == "" {
+			reference := sourcev228.String(row.Values["conv_id"])
+			if reference == "" {
 				continue
 			}
-			if byReference[reference] == nil {
-				byReference[reference] = map[string]bool{}
+			target := mapped[reference]
+			if target == "" {
+				catalog := catalogs[reference]
+				harness := sourcev228.String(catalog.Values["harness"])
+				namespace := sourcev228.String(catalog.Values["namespace"])
+				candidates := map[string]bool{}
+				unproven := false
+				for _, bt := range []string{"conversation_attempt_bindings", "conversation_reference_bindings"} {
+					for _, binding := range snapshot.Rows[bt] {
+						if sourcev228.String(binding.Values["external_ref"]) != reference {
+							continue
+						}
+						bh := sourcev228.String(binding.Values["harness"])
+						if harness != "" && bh != "" && harness != bh {
+							continue
+						}
+						if harness == "" || bh == "" || namespace == "" {
+							unproven = true
+							continue
+						}
+						if namespace == sourcev228.String(binding.Values["namespace"]) {
+							candidates[sourcev228.String(binding.Values["conversation_id"])] = true
+						}
+					}
+				}
+				if unproven || len(candidates) > 1 {
+					plan.Diagnostics = append(plan.Diagnostics, Diagnostic{Severity: SeverityBlocking, Code: "unproven_conversation_namespace", Table: table, Count: 1, Detail: "catalog identity cannot be joined to native bindings without qualified namespace evidence"})
+				} else if len(candidates) == 1 {
+					for logical := range candidates {
+						target = lookup["logical_conversations\x1f"+logical]
+					}
+				}
+				if target == "" {
+					target = deterministicID("cvn", databaseHash, "legacy_catalog", reference)
+				}
+				mapped[reference] = target
 			}
-			byReference[reference][logical] = true
+			lookup[table+"\x1f"+reference] = target
+			// Catalog-only histories can satisfy historical conversation references.
+			lookup["agent_conversations\x1f"+reference] = target
+			plan.Identities = append(plan.Identities, IdentityMapping{SourceTable: table, SourceKey: reference, TargetKind: "conversation", TargetID: target})
 		}
-	}
-	for _, row := range snapshot.Rows["agent_conversations"] {
-		reference := sourcev228.String(row.Values["conv_id"])
-		if reference == "" {
-			continue
-		}
-		var target string
-		if candidates := byReference[reference]; len(candidates) == 1 {
-			for logical := range candidates {
-				target = lookup["logical_conversations\x1f"+logical]
-			}
-		} else if len(candidates) > 1 {
-			plan.Diagnostics = append(plan.Diagnostics, Diagnostic{Severity: SeverityBlocking, Code: "ambiguous_conversation_reference", Table: "agent_conversations", Count: 1, Detail: "native conversation reference maps to multiple logical conversations"})
-		}
-		if target == "" {
-			target = deterministicID("cvn", databaseHash, "agent_conversations", reference)
-		}
-		lookup["agent_conversations\x1f"+reference] = target
-		plan.Identities = append(plan.Identities, IdentityMapping{SourceTable: "agent_conversations", SourceKey: reference, TargetKind: "conversation", TargetID: target, Retained: false})
 	}
 }
 
@@ -257,7 +312,7 @@ func appendMeaningDiagnostics(plan *MigrationPlan, snapshot sourcev228.Snapshot)
 	var uncertain int64
 	for _, row := range snapshot.Rows["execution_operations"] {
 		state := strings.ToLower(sourcev228.String(row.Values["state"]))
-		if state != "ready" && state != "failed" && state != "exited" && state != "succeeded" {
+		if state != "failed" && state != "exited" && state != "succeeded" && state != "rejected" && state != "cancelled" {
 			uncertain++
 		}
 	}
