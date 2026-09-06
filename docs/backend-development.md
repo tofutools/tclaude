@@ -345,3 +345,19 @@ TCLAUDE_BROWSER_SMOKE=1 go test ./internal/product/browser -run TestBrowserOffli
 The test uses new disposable backend state, not the operator's database, and
 launches no native model workload. Ordinary browser session/proxy and WebSocket
 lifetime tests run without Chrome under `go test ./internal/product/browser`.
+
+### Offline migration preflight
+
+The shared client can inspect an explicit operator-created schema-v228 snapshot
+bundle without contacting a daemon or writing a target database:
+
+```sh
+tclaude migration inspect --bundle /absolute/snapshot-bundle --manifest manifest.json
+tclaude migration plan --bundle /absolute/snapshot-bundle --manifest manifest.json
+```
+
+Both commands print redacted JSON reports. Blocking diagnostics produce a
+nonzero exit status after printing the report. The plan includes deterministic
+identity/reference mappings and preservation decisions; it does not activate
+legacy authority, replay unfinished work, or perform the final target import.
+No source directory or manifest is inferred from the current user's home.

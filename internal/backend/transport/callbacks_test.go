@@ -125,3 +125,41 @@ func TestNativeCallbackBoundsAndCleanupFence(t *testing.T) {
 	require.Equal(t, 503, w.Code)
 	require.Equal(t, 1, calls)
 }
+
+func TestNativeCallbackNoGuidanceRespondsNoContent(t *testing.T) {
+	c, err := NewCallbackRegistry("/tmp/callback-fixture.sock")
+	require.NoError(t, err)
+	defer c.Close()
+	secret := strings.Repeat("s", 64)
+	digest := sha256.Sum256([]byte(secret))
+	binding, err := c.RegisterCallback(context.Background(), ports.CallbackRegistration{RegistrationID: "native_no_guidance", ExecutionID: "execution_one", Attempt: 1, CredentialDigest: ports.CallbackCredentialDigest(digest), MaxRequestBytes: 128, MaxResponseBytes: 128, Handler: rawCallbackFunc(func(ctx context.Context, _ ports.RawNativeCallback, sink ports.RawNativeCallbackResponder) error {
+		result, err := sink.Respond(ctx, ports.RawNativeCallbackResponse{StatusCode: http.StatusNoContent})
+		require.NoError(t, err)
+		require.Equal(t, ports.EffectAccepted, result)
+		return nil
+	})})
+	require.NoError(t, err)
+	req := httptest.NewRequest("POST", binding.Route, strings.NewReader("{}"))
+	req.Header.Set("Authorization", "Native "+secret)
+	w := httptest.NewRecorder()
+	c.ServeHTTP(w, req)
+	require.Equal(t, http.StatusNoContent, w.Code)
+	require.Empty(t, w.Body.String())
+}
+
+func TestNativeCallbackRepeatedRecoveryReplacesOnlyExactRegistration(t *testing.T) {
+	c, err := NewCallbackRegistry("/tmp/callback-fixture.sock")
+	require.NoError(t, err)
+	defer c.Close()
+	digest := sha256.Sum256([]byte(strings.Repeat("s", 64)))
+	r := ports.CallbackRegistration{RegistrationID: "recovered_registration", ExecutionID: "execution_recovered", Attempt: 1, CredentialDigest: ports.CallbackCredentialDigest(digest), MaxRequestBytes: 128, MaxResponseBytes: 128, Handler: rawCallbackFunc(func(context.Context, ports.RawNativeCallback, ports.RawNativeCallbackResponder) error { return nil })}
+	first, err := c.RegisterCallback(context.Background(), r)
+	require.NoError(t, err)
+	second, err := c.RegisterCallback(context.Background(), r)
+	require.NoError(t, err)
+	require.NoError(t, first.Cleanup.Close(context.Background()))
+	require.Same(t, second.Cleanup, c.entries[r.RegistrationID])
+	r.ExecutionID = "other_execution"
+	_, err = c.RegisterCallback(context.Background(), r)
+	require.Error(t, err)
+}

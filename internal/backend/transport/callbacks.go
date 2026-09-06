@@ -54,8 +54,20 @@ func (c *CallbackRegistry) RegisterCallback(ctx context.Context, r ports.Callbac
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.closed || c.entries[r.RegistrationID] != nil {
+	if c.closed {
 		return ports.CallbackBinding{}, errors.New("callback registration unavailable")
+	}
+	if prior := c.entries[r.RegistrationID]; prior != nil {
+		// Proven recovery can replace the handler for the same private resource.
+		// It cannot borrow a registration from another execution/attempt/secret.
+		old := prior.registration
+		if old.ExecutionID != r.ExecutionID || old.Attempt != r.Attempt || old.CredentialDigest != r.CredentialDigest {
+			return ports.CallbackBinding{}, errors.New("callback registration identity conflict")
+		}
+		prior.mu.Lock()
+		prior.closed = true
+		prior.cancel()
+		prior.mu.Unlock()
 	}
 	lifetime, cancel := context.WithCancel(context.Background())
 	entry := &callbackEntry{registry: c, registration: r, ctx: lifetime, cancel: cancel}
@@ -153,7 +165,8 @@ func (s *callbackResponse) Respond(ctx context.Context, response ports.RawNative
 	if s.written || s.entry.closed || ctx.Err() != nil || s.ctx.Err() != nil {
 		return ports.EffectRefused, errors.New("callback response no longer available")
 	}
-	if len(response.Body) > int(s.entry.registration.MaxResponseBytes) || response.StatusCode < 200 || response.StatusCode > 599 || (response.ContentType != "application/json" && response.ContentType != "text/plain") {
+	noContent := response.StatusCode == http.StatusNoContent && len(response.Body) == 0 && response.ContentType == ""
+	if len(response.Body) > int(s.entry.registration.MaxResponseBytes) || response.StatusCode < 200 || response.StatusCode > 599 || (!noContent && response.ContentType != "application/json" && response.ContentType != "text/plain") {
 		return ports.EffectRefused, errors.New("invalid callback response")
 	}
 	s.written = true
@@ -165,7 +178,11 @@ func (s *callbackResponse) Respond(ctx context.Context, response ports.RawNative
 	_ = controller.SetWriteDeadline(deadline)
 	s.w.Header().Set("Content-Type", response.ContentType)
 	s.w.WriteHeader(response.StatusCode)
-	n, err := s.w.Write(response.Body)
+	var n int
+	var err error
+	if !noContent {
+		n, err = s.w.Write(response.Body)
+	}
 	if err != nil || n != len(response.Body) {
 		return ports.EffectUnknown, errors.New("callback write uncertain")
 	}
