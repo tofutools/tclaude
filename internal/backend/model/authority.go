@@ -1,0 +1,154 @@
+package model
+
+import "time"
+
+// Action names an application capability. Providers and hosts transport
+// admitted effects but never interpret actions or grants.
+type Action string
+
+const (
+	ActionReadIdentity        Action = "identity.read"
+	ActionReadStatus          Action = "status.read"
+	ActionReadInbox           Action = "inbox.read"
+	ActionMarkInboxRead       Action = "inbox.mark_read"
+	ActionSendMessage         Action = "message.send"
+	ActionLaunch              Action = "execution.launch"
+	ActionInteract            Action = "execution.interact"
+	ActionAttach              Action = "execution.attach"
+	ActionStop                Action = "execution.stop"
+	ActionChangeContext       Action = "execution.context.change"
+	ActionUpdateConfiguration Action = "agent.configuration.update"
+	ActionManageMembership    Action = "group.membership.manage"
+)
+
+type AuthoritySubjectKind string
+
+const (
+	AuthorityAgent     AuthoritySubjectKind = "agent"
+	AuthorityExecution AuthoritySubjectKind = "execution"
+)
+
+// AuthoritySubject is stable Agent authority or authority scoped to one
+// standalone Execution. Managed execution callers derive their subject from
+// their immutable Agent association.
+type AuthoritySubject struct {
+	Kind        AuthoritySubjectKind
+	AgentID     AgentID
+	ExecutionID ExecutionID
+}
+
+type ResourceSelectorKind string
+
+const (
+	ResourceSelf       ResourceSelectorKind = "self"
+	ResourceAgent      ResourceSelectorKind = "agent"
+	ResourceExecution  ResourceSelectorKind = "execution"
+	ResourceGroup      ResourceSelectorKind = "group"
+	ResourceGroupPeers ResourceSelectorKind = "group_members"
+)
+
+// ResourceSelector is deliberately typed. Exactly the field named by Kind is
+// populated; Self expands from the authenticated caller at evaluation time.
+type ResourceSelector struct {
+	Kind        ResourceSelectorKind
+	AgentID     AgentID
+	ExecutionID ExecutionID
+	GroupID     GroupID
+}
+
+type GrantID string
+
+func (id GrantID) Validate() error { return ValidateStableID("grant id", string(id)) }
+
+// AuthorityGrant is an additive, operator-authored capability. Group
+// membership and expiry are evaluated live; a stored grant is not an access
+// token and providers never receive it.
+type AuthorityGrant struct {
+	ID        GrantID
+	Subject   AuthoritySubject
+	Action    Action
+	Resource  ResourceSelector
+	ExpiresAt *time.Time
+	Revision  Revision
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type RoleID string
+
+func (id RoleID) Validate() error { return ValidateStableID("role id", string(id)) }
+
+const GroupOwnerRole RoleID = "group_owner"
+
+type Role struct {
+	ID        RoleID
+	Name      string
+	Actions   []Action
+	Revision  Revision
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type RoleAssignment struct {
+	RoleID    RoleID
+	Subject   AuthoritySubject
+	Resource  ResourceSelector
+	Revision  Revision
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+type AuthoritySourceKind string
+
+const (
+	AuthorityDefault AuthoritySourceKind = "default"
+	AuthorityDirect  AuthoritySourceKind = "grant"
+	AuthorityRole    AuthoritySourceKind = "role"
+)
+
+type AuthorityDecision struct {
+	Allowed    bool
+	Action     Action
+	Resource   ResourceSelector
+	SourceKind AuthoritySourceKind
+	SourceID   string
+	Revision   Revision
+}
+
+type AccessGeneration uint64
+
+type ExecutionAccessState string
+
+const (
+	ExecutionAccessInactive  ExecutionAccessState = "inactive"
+	ExecutionAccessActive    ExecutionAccessState = "active"
+	ExecutionAccessSuspended ExecutionAccessState = "suspended"
+	ExecutionAccessRevoked   ExecutionAccessState = "revoked"
+	ExecutionAccessExpired   ExecutionAccessState = "expired"
+)
+
+// ExecutionAccess is durable credential lifecycle state. CredentialDigest is
+// never returned through public application queries; bearer plaintext is not
+// durable domain state.
+type ExecutionAccess struct {
+	ExecutionID      ExecutionID
+	AgentID          AgentID
+	Generation       AccessGeneration
+	CredentialDigest []byte
+	DeliveryID       string
+	State            ExecutionAccessState
+	IssuedAt         time.Time
+	ExpiresAt        time.Time
+	RevokedAt        *time.Time
+	Revision         Revision
+}
+
+// ExecutionAccessBinding is the non-secret lifecycle view shared with the
+// host/provider boundary.
+type ExecutionAccessBinding struct {
+	ExecutionID ExecutionID
+	Generation  AccessGeneration
+	DeliveryID  string
+	State       ExecutionAccessState
+	ExpiresAt   time.Time
+}
