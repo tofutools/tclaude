@@ -356,8 +356,13 @@ func (s *Service) ChangeContext(ctx context.Context, req ChangeContextRequest) (
 	}
 	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancelWorkflow()
-	association, err := s.store.CurrentConversation(ctx, execution.AgentID)
+	association, err := s.store.CurrentConversation(workflowCtx, execution.AgentID)
 	if err != nil {
+		settlementCtx, cancelSettlement := settlementContext(ctx)
+		defer cancelSettlement()
+		if _, persistErr := s.store.CompleteOperation(settlementCtx, OperationCompletion{OperationID: admission.Operation.ID, OperationState: model.OperationFailed, ResultCode: "context_read_failed", Detail: err.Error(), ExecutionID: execution.ID, ExecutionState: execution.State, At: s.now().UTC()}); persistErr != nil {
+			return OperationResult{}, persistErr
+		}
 		return OperationResult{}, err
 	}
 	if association.ConversationID != req.ExpectedConversationID || association.Revision != req.ExpectedAssociationRevision {
