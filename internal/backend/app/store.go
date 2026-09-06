@@ -53,15 +53,16 @@ type AdmissionResult struct {
 }
 
 type OperationCompletion struct {
-	OperationID    model.OperationID
-	OperationState model.OperationState
-	ResultCode     string
-	Detail         string
-	ExecutionID    model.ExecutionID
-	ExecutionState model.ExecutionState
-	Evidence       model.ProviderEvidence
-	Native         *model.NativeConversationEvidence
-	At             time.Time
+	OperationID          model.OperationID
+	OperationState       model.OperationState
+	ResultCode           string
+	Detail               string
+	ExecutionID          model.ExecutionID
+	ExecutionState       model.ExecutionState
+	UpdateExecutionState bool
+	Evidence             model.ProviderEvidence
+	Native               *model.NativeConversationEvidence
+	At                   time.Time
 }
 
 type MessageAdmissionResult struct {
