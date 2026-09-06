@@ -174,4 +174,5 @@ type ExecutionAccessBinding struct {
 	DeliveryID  string
 	State       ExecutionAccessState
 	ExpiresAt   time.Time
+	Revision    Revision
 }
