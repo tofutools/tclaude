@@ -33,7 +33,7 @@ on:
   workflow_dispatch:
   pull_request:
     # Same set as ci.yml's, so a PR cannot get the lab without the smoke.
-    branches: [main, main-codex, implement-stable-agent-identity, dnd-palette]
+    branches: [main, main-codex, implement-stable-agent-identity, dnd-palette, refactor/platform-v2]
     paths:
       - 'pkg/claude/harness/copilotfixture/**'
       - 'pkg/claude/harness/copilot*.go'
