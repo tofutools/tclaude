@@ -1,0 +1,49 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+func TestRegisteredProvidersComposeAllHarnessesWithoutLaunching(t *testing.T) {
+	bin := t.TempDir()
+	for _, name := range []string{"claude", "codex", "opencode", "copilot"} {
+		// Constructors resolve native executables, but must not start a workload.
+		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\nexit 91\n"), 0700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	state := t.TempDir()
+	registry, err := registeredProviders(state, []string{"claude", "codex", "opencode", "copilot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"claude", "codex", "opencode", "copilot"} {
+		p, ok := registry.Provider(name)
+		if !ok || p.Name() != name {
+			t.Fatalf("provider %s not composed", name)
+		}
+	}
+	if _, err := registeredProviders(state, []string{"codex", "codex"}); err == nil {
+		t.Fatal("duplicate registration accepted")
+	}
+	if _, err := registeredProviders(state, []string{"unknown"}); err == nil {
+		t.Fatal("unknown provider accepted")
+	}
+}
+
+func TestDevelopmentInitializationDoesNotRequireNativeExecutables(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "new")
+	cmd := command()
+	cmd.SetArgs([]string{"--init", "--state-dir", state, "--harness", "codex,copilot"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"codex", "copilot"} {
+		if _, err := os.Stat(filepath.Join(state, name)); !os.IsNotExist(err) {
+			t.Fatalf("initialization created native state for %s: %v", name, err)
+		}
+	}
+}
