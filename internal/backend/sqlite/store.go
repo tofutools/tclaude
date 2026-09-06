@@ -57,6 +57,10 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"work_evidence", "request_id", "TEXT NOT NULL DEFAULT ''"},
 		{"work_decisions", "request_scope", "TEXT NOT NULL DEFAULT ''"},
 		{"work_decisions", "request_id", "TEXT NOT NULL DEFAULT ''"},
+		{"work_runs", "cancellation_requested", "INTEGER NOT NULL DEFAULT 0"},
+		{"work_runs", "cancellation_reason", "TEXT NOT NULL DEFAULT ''"},
+		{"work_runs", "cancel_request_scope", "TEXT NOT NULL DEFAULT ''"},
+		{"work_runs", "cancel_request_id", "TEXT NOT NULL DEFAULT ''"},
 		{"operations", "principal_execution_id", "TEXT NOT NULL DEFAULT ''"},
 		{"operations", "request_scope", "TEXT NOT NULL DEFAULT 'operator'"},
 		{"operations", "principal_generation", "INTEGER NOT NULL DEFAULT 0"},
@@ -351,6 +355,8 @@ CREATE TABLE IF NOT EXISTS work_runs (
   id TEXT PRIMARY KEY, request_scope TEXT NOT NULL, request_id TEXT NOT NULL, requester_json BLOB NOT NULL,
   authority_json BLOB NOT NULL, delegation_json BLOB, spec_json BLOB NOT NULL, state TEXT NOT NULL,
   worker_execution_id TEXT NOT NULL DEFAULT '',
+  cancellation_requested INTEGER NOT NULL DEFAULT 0, cancellation_reason TEXT NOT NULL DEFAULT '',
+  cancel_request_scope TEXT NOT NULL DEFAULT '', cancel_request_id TEXT NOT NULL DEFAULT '',
   revision INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
   UNIQUE(request_scope,request_id)
 );
@@ -1245,6 +1251,9 @@ func completeOperationTx(ctx context.Context, tx *sql.Tx, in app.OperationComple
 	_, err = tx.ExecContext(ctx, `UPDATE executions SET state=CASE WHEN ? THEN ? ELSE state END,evidence_provider=CASE WHEN ?='' THEN evidence_provider ELSE ? END,evidence_version=CASE WHEN ?='' THEN evidence_version ELSE ? END,evidence_payload=CASE WHEN ?='' THEN evidence_payload ELSE ? END,native_namespace=CASE WHEN ?='' THEN native_namespace ELSE ? END,native_reference=CASE WHEN ?='' THEN native_reference ELSE ? END,native_observed_at=CASE WHEN ?='' THEN native_observed_at ELSE ? END,revision=revision+1,updated_at=? WHERE id=?`, in.UpdateExecutionState, in.ExecutionState, in.Evidence.Provider, in.Evidence.Provider, in.Evidence.Provider, in.Evidence.Version, in.Evidence.Provider, in.Evidence.Payload, reference, namespace, reference, reference, reference, observed, nanos(in.At), in.ExecutionID)
 	if err == nil && in.UpdateExecutionState && (in.ExecutionState == model.ExecutionExited || in.ExecutionState == model.ExecutionFailed) {
 		_, err = tx.ExecContext(ctx, `UPDATE execution_accesses SET state=?,revoked_at=?,revision=revision+1 WHERE execution_id=? AND state NOT IN (?,?)`, model.ExecutionAccessRevoked, nanos(in.At), in.ExecutionID, model.ExecutionAccessRevoked, model.ExecutionAccessExpired)
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `UPDATE workspace_uses SET released_at=? WHERE execution_id=? AND released_at IS NULL`, nanos(in.At), in.ExecutionID)
+		}
 	} else if err == nil && in.UpdateExecutionState && in.ExecutionState == model.ExecutionUnknown {
 		_, err = tx.ExecContext(ctx, `UPDATE execution_accesses SET state=?,revision=revision+1 WHERE execution_id=? AND state=?`, model.ExecutionAccessSuspended, in.ExecutionID, model.ExecutionAccessActive)
 	}

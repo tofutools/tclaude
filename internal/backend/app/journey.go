@@ -470,6 +470,14 @@ func (s *Service) StartWork(ctx context.Context, req StartWorkRequest) (WorkRunR
 	if err := validateOutcomePolicy(req.Spec.Outcome); err != nil {
 		return WorkRunResult{}, err
 	}
+	if existing, lookupErr := s.store.WorkRunByRequest(ctx, req.Context.Principal, req.Context.RequestID); lookupErr == nil {
+		if existing.Run.ID != req.ID || !reflect.DeepEqual(existing.Run.Spec, req.Spec) || !reflect.DeepEqual(existing.Run.Requester, req.Context.Principal) {
+			return WorkRunResult{}, ErrConflict
+		}
+		return WorkRunResult(existing), nil
+	} else if !errors.Is(lookupErr, ErrNotFound) {
+		return WorkRunResult{}, lookupErr
+	}
 	workspace, err := s.store.Workspace(ctx, req.Spec.WorkspaceID)
 	if err != nil {
 		return WorkRunResult{}, err

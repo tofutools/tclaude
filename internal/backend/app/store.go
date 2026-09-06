@@ -81,6 +81,7 @@ type Store interface {
 
 	CreateWorkRun(context.Context, model.WorkRun, *model.HistoryUseClaim) (model.WorkRun, bool, error)
 	WorkRun(context.Context, model.WorkRunID) (WorkRunRecord, error)
+	WorkRunByRequest(context.Context, model.Principal, model.RequestID) (WorkRunRecord, error)
 	PendingWorkRuns(context.Context) ([]WorkRunRecord, error)
 	RecordWorkProgress(context.Context, WorkProgress) (WorkRunRecord, error)
 	RecordWorkEvidence(context.Context, model.WorkEvidence, model.Revision, model.AuthorityRequest, time.Time) (WorkRunRecord, error)
