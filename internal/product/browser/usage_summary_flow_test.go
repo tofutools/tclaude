@@ -46,6 +46,16 @@ func TestBrowserUsageSummaryRetainsExactSourceTotalsAndGaps(t *testing.T) {
 	var response app.UsageSummaryResult
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/usage/summary", map[string]any{"filter": app.UsageSummaryFilter{After: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Before: time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)}}, &response))
 	require.Equal(t, 3, response.Observations)
+	// Empty calendar days stay on the axis and are unknown, not zero.
+	page.MustEval(`()=>{document.querySelector('[aria-label="Observed from (UTC)"]').value='2026-01-02';document.querySelector('[aria-label="Observed before (UTC, exclusive)"]').value='2026-04-02'}`)
+	page.MustElementR("#usage-summary button", "^Load summary$").MustClick()
+	page.MustElementR("#usage-summary [role=status]", "3 source observations")
+	page.MustElement("#usage-summary [aria-label='Accounting source']").MustSelect("claude · fixture · native · event readings · conversation")
+	page.MustWait(`()=>document.querySelectorAll('#usage-summary .cost-col').length===90`)
+	require.Len(t, page.MustElements("#usage-summary .cost-col.unknown"), 89)
+	require.Contains(t, *page.MustElement("#usage-summary [data-day='2026-01-03']").MustAttribute("aria-label"), "Unknown")
+	require.Empty(t, page.MustElements("#usage-summary [data-day='2026-01-03'] .cost-seg"))
+	require.Contains(t, *page.MustElement("#usage-summary [data-day='2026-01-02']").MustAttribute("aria-label"), "9007199254740993")
 	page.MustElement("#logout").MustClick()
 	page.MustWait(`()=>document.querySelector('#connection').textContent==='Signed out'`)
 	require.NotContains(t, page.MustElement("#usage-summary").MustText(), "9007199254740993")

@@ -15,25 +15,21 @@ function tooltipRows(day){const fragment=document.createDocumentFragment();fragm
 // and listeners, returning one disposer that removes all of them together.
 function mount(host, chart) {
  const fmtAxisUSD=value=>new Intl.NumberFormat('en-US',{notation:'compact',maximumSignificantDigits:3}).format(value);
- const fmtUSD=value=>String(value);
  const isWeekendKey=key=>[0,6].includes(new Date(key+'T12:00:00Z').getUTCDay());
   host.replaceChildren();
   if (!chart?.days?.length) {
     host.append(element('div', 'empty', 'No days in span.'));
     return () => host.replaceChildren();
   }
-  if (!(chart.scaleMax > 0)) {
-    host.append(element('div', 'empty', 'No positive recorded change for the selected metric. Missing coverage is shown separately.'));
-    return () => host.replaceChildren();
-  }
+  const scaleMax = chart.scaleMax > 0 ? chart.scaleMax : 1;
 
   const shell = element('div', 'cost-chart');
   const axis = element('div', 'cost-yaxis');
   const yArea = element('div', 'cost-yarea');
   const ticks = [
-    { pct: 100, label: fmtAxisUSD(chart.scaleMax) },
-    { pct: 50, label: fmtAxisUSD(chart.scaleMax / 2) },
-    { pct: 0, label: '$0' },
+    { pct: 100, label: fmtAxisUSD(scaleMax) },
+    { pct: 50, label: fmtAxisUSD(scaleMax / 2) },
+    { pct: 0, label: '0' },
   ];
   for (const tick of ticks) {
     const label = element('div', 'cost-ytick', tick.label);
@@ -58,24 +54,20 @@ function mount(host, chart) {
   chart.days.forEach((day, index) => {
     byDay.set(day.day, day);
     const column = element('div', `cost-col${isWeekendKey(day.day) ? ' weekend' : ''}${day.projected ? ' projected' : ''}`);
-    if (day.cost > 0) {
-      const hasWhatIf = day.segments?.some((segment) => segment.kind === 'what_if');
-      column.dataset.tip = day.projected
-        ? `${day.day} — projected ~${fmtUSD(day.cost)}${day.includesWhatIf ? ' · includes WHAT-IF estimates' : ''}`
-        : `${day.day} — ${fmtUSD(day.cost)}${hasWhatIf ? ' · includes WHAT-IF estimates' : ''}`;
-      column.dataset.day = day.day;
- column.dataset.tip=day.day+" — "+day.exact;
- column.title=column.dataset.tip;column.tabIndex=0;column.setAttribute("aria-label",column.dataset.tip);
-    }
+    column.dataset.day = day.day;
+    column.dataset.tip = day.day + ' — ' + day.exact;
+    column.title = column.dataset.tip; column.tabIndex = 0;
+    column.setAttribute('aria-label', column.dataset.tip);
+    if (day.cost === null) column.classList.add('unknown');
     const area = element('div', 'cost-bararea');
     if (day.projected) {
       const bar = element('div', 'cost-bar');
-      bar.style.height = Math.max(day.cost > 0 ? 2 : 0, Math.round(day.cost / chart.scaleMax * 100)) + '%';
+      bar.style.height = Math.max(day.cost > 0 ? 2 : 0, Math.round(day.cost / scaleMax * 100)) + '%';
       area.append(bar);
     } else {
       for (const segment of day.segments) {
         const bar = element('div', `cost-seg ${segment.className}`);
-        bar.style.height = Math.max(segment.cost > 0 ? 1 : 0, segment.cost / chart.scaleMax * 100).toFixed(3) + '%';
+        bar.style.height = Math.max(segment.cost > 0 ? 1 : 0, segment.cost / scaleMax * 100).toFixed(3) + '%';
         area.append(bar);
       }
     }

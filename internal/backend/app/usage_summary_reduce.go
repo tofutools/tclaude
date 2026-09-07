@@ -15,6 +15,12 @@ type summaryKey struct {
 	Historical           bool
 	Attribution          model.UsageAttribution
 }
+type summaryBaselineKey struct {
+	SourceKey, Harness, Source string
+	Cumulative, Historical     bool
+	Attribution                model.UsageAttribution
+}
+
 type summaryCostKey struct {
 	Currency string
 	Kind     model.UsageCostKind
@@ -27,12 +33,13 @@ type summaryAccumulator struct {
 
 func summarizeUsage(filter UsageSummaryFilter, samples []UsageSummarySample) (UsageSummaryResult, error) {
 	result := UsageSummaryResult{Filter: filter, Basis: "Observed changes in UTC; cumulative readings require a compatible prior baseline. Gaps are excluded from totals. Source and historical ledgers remain separate."}
-	previous := map[string]UsageSummarySample{}
+	previous := map[summaryBaselineKey]UsageSummarySample{}
 	rows := map[summaryKey]*summaryAccumulator{}
 	for _, sample := range samples {
 		current := sample.Observation
-		prior, hasPrior := previous[sample.SourceKey]
-		previous[sample.SourceKey] = sample
+		baselineKey := summaryBaselineKey{sample.SourceKey, current.Harness, current.Source, sample.Cumulative, current.Historical, current.Attribution}
+		prior, hasPrior := previous[baselineKey]
+		previous[baselineKey] = sample
 		if current.ObservedAt.Before(filter.After) {
 			continue
 		}

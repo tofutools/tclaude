@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -98,4 +99,62 @@ func TestUsageSummaryKeepsResetUnknownAndHistoricalLedgersSeparate(t *testing.T)
 		}
 	}
 	require.Len(t, result.Gaps, 3)
+}
+
+func TestUsageSummaryBaselineSurvivesInterveningIncompatibleLedger(t *testing.T) {
+	for _, inside := range []bool{false, true} {
+		for _, dimension := range []string{"event", "harness", "source", "historical", "attribution"} {
+			t.Run(fmt.Sprintf("%s/inside=%t", dimension, inside), func(t *testing.T) {
+				ctx := context.Background()
+				store, err := sqlite.Open(filepath.Join(t.TempDir(), "backend.db"))
+				require.NoError(t, err)
+				defer store.Close()
+				start := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+				baseline := model.UsageObservation{ID: "baseline", SourceRevision: "baseline", Harness: "fixture", Source: "native", Attribution: model.UsageAttribution{ConversationID: "conversation", Precision: model.UsageAttributionConversation}, ObservedAt: start.Add(-2 * time.Hour), CollectedAt: start.Add(-2 * time.Hour), Counters: []model.UsageCounter{{Unit: model.UsageInputTokens, Value: 10}}, Coverage: model.UsageCoverage{Counters: model.UsageCoverageComplete}}
+				write := func(observation model.UsageObservation, cumulative bool) {
+					_, _, err := store.RecordUsage(ctx, app.UsageWrite{SourceKey: "shared-source-key", Cumulative: cumulative, Observation: observation})
+					require.NoError(t, err)
+				}
+				write(baseline, true)
+				other := baseline
+				other.ID = "other"
+				other.SourceRevision = "other"
+				other.Counters = []model.UsageCounter{{Unit: model.UsageInputTokens, Value: 2}}
+				other.ObservedAt = start.Add(-time.Hour)
+				if inside {
+					other.ObservedAt = start.Add(30 * time.Minute)
+				}
+				other.CollectedAt = other.ObservedAt
+				switch dimension {
+				case "harness":
+					other.Harness = "other"
+				case "source":
+					other.Source = "other"
+				case "historical":
+					other.Historical = true
+				case "attribution":
+					other.Attribution.ConversationID = "other"
+				}
+				write(other, dimension != "event")
+				current := baseline
+				current.ID = "current"
+				current.SourceRevision = "current"
+				current.ObservedAt = start.Add(time.Hour)
+				current.CollectedAt = current.ObservedAt
+				current.Counters = []model.UsageCounter{{Unit: model.UsageInputTokens, Value: 15}}
+				write(current, true)
+				result, err := app.New(store, providers.NewRegistry()).SummarizeUsage(ctx, app.UsageSummaryRequest{Principal: model.OperatorPrincipal(), Filter: app.UsageSummaryFilter{After: start, Before: start.Add(24 * time.Hour)}})
+				require.NoError(t, err)
+				found := false
+				for _, row := range result.Rows {
+					if row.Cumulative && row.Harness == baseline.Harness && row.Source == baseline.Source && !row.Historical && row.Attribution == baseline.Attribution {
+						require.Equal(t, []app.ExactUsageCounter{{Unit: model.UsageInputTokens, Value: "5"}}, row.Counters)
+						require.Zero(t, row.MissingBaselines)
+						found = true
+					}
+				}
+				require.True(t, found)
+			})
+		}
+	}
 }

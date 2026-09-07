@@ -39,12 +39,12 @@ func (s *Store) UsageSummarySamples(ctx context.Context, principal model.Princip
 			args = append(args, part.value)
 		}
 	}
-	// Include one prior cumulative sample per selected source. It establishes a
+	// Include one prior cumulative sample per complete compatible ledger. It establishes a
 	// baseline without exposing private source identities through the public API.
 	query := `WITH selected AS (SELECT * FROM usage_observations WHERE ` + strings.Join(filters, " AND ") + `), baseline AS (
  SELECT u.* FROM usage_observations u WHERE u.cumulative=1 AND u.observed_at<?
- AND EXISTS(SELECT 1 FROM selected v WHERE v.source_key=u.source_key AND v.cumulative=1)
- AND NOT EXISTS(SELECT 1 FROM usage_observations newer WHERE newer.source_key=u.source_key AND newer.observed_at<? AND (newer.observed_at>u.observed_at OR (newer.observed_at=u.observed_at AND newer.collected_at>u.collected_at) OR (newer.observed_at=u.observed_at AND newer.collected_at=u.collected_at AND newer.id>u.id)))
+ AND EXISTS(SELECT 1 FROM selected v WHERE v.source_key=u.source_key AND v.cumulative=u.cumulative AND v.harness=u.harness AND v.source=u.source AND v.historical=u.historical AND v.agent_id=u.agent_id AND v.conversation_id=u.conversation_id AND v.execution_id=u.execution_id AND v.attribution_precision=u.attribution_precision AND v.cumulative=1)
+ AND NOT EXISTS(SELECT 1 FROM usage_observations newer WHERE newer.source_key=u.source_key AND newer.cumulative=u.cumulative AND newer.harness=u.harness AND newer.source=u.source AND newer.historical=u.historical AND newer.agent_id=u.agent_id AND newer.conversation_id=u.conversation_id AND newer.execution_id=u.execution_id AND newer.attribution_precision=u.attribution_precision AND newer.observed_at<? AND (newer.observed_at>u.observed_at OR (newer.observed_at=u.observed_at AND newer.collected_at>u.collected_at) OR (newer.observed_at=u.observed_at AND newer.collected_at=u.collected_at AND newer.id>u.id)))
  ) SELECT source_key,` + summaryUsageColumns + ` FROM (SELECT * FROM selected UNION ALL SELECT * FROM baseline) ORDER BY source_key,observed_at,collected_at,id LIMIT ?`
 	args = append(args, nanos(f.After), nanos(f.After), maxSummarySamples+1)
 	rows, err := tx.QueryContext(ctx, query, args...)

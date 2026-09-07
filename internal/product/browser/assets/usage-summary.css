@@ -123,3 +123,5 @@
   margin-left: 16px; color: #d4d4d4; font-variant-numeric: tabular-nums;
 }
 .cost-tip-row .cost-tip-amt, .cost-tip-total .cost-tip-amt { margin-left: auto; }
+
+.cost-col.unknown .cost-bararea { background: repeating-linear-gradient(135deg, transparent, transparent 5px, color-mix(in srgb, currentColor 12%, transparent) 5px, color-mix(in srgb, currentColor 12%, transparent) 6px); }
