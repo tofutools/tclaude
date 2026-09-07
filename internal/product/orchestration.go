@@ -33,6 +33,9 @@ func registerOrchestration(root *cobra.Command, call apiCall) {
 		}, "/v2/automation/rules", "/v2/automation/rules/"},
 		{"team", "Deploy pinned team definitions", []struct{ verb, path, description string }{
 			{"deploy", "/v2/teams/deploy", "Deploy explicitly pinned members and dependency waves"},
+			{"rebrief", "/v2/teams/rebrief", "Send a selected pinned briefing revision to a deployment"},
+			{"advance-phase", "/v2/teams/advance-phase", "Advance an advisory checklist without completing work"},
+			{"stand-down", "/v2/teams/stand-down", "Stop a deployment while retaining owned checkouts and history"},
 		}, "", "/v2/teams/deployments/"},
 	} {
 		cmd := boa.CmdT[struct{}]{Use: group.name, Short: group.description}.ToCobra()

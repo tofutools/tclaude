@@ -118,6 +118,32 @@ func (h *Handler) RegisterOrchestrationAPI(api app.OrchestrationAPI) error {
 		result, err := api.DeployTeam(ctx, app.DeployTeamRequest{Context: b.context(p), DeploymentID: b.DeploymentID, Instantiation: b.Instantiation})
 		return projectOrchestration(result), err
 	}))
+	h.mux.HandleFunc("POST /v2/teams/rebrief", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
+		commandIdentity
+		DeploymentID     model.DeploymentID  `json:"deployment_id"`
+		ExpectedRevision model.Revision      `json:"expected_revision"`
+		Definition       model.DefinitionRef `json:"definition"`
+	}) (any, error) {
+		result, err := api.RebriefDeployment(ctx, app.RebriefDeploymentRequest{Context: b.context(p), DeploymentID: b.DeploymentID, ExpectedRevision: b.ExpectedRevision, Definition: b.Definition})
+		return projectOrchestration(result), err
+	}))
+	h.mux.HandleFunc("POST /v2/teams/advance-phase", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
+		commandIdentity
+		DeploymentID     model.DeploymentID `json:"deployment_id"`
+		ExpectedRevision model.Revision     `json:"expected_revision"`
+	}) (any, error) {
+		result, err := api.AdvanceAdvisoryPhase(ctx, app.AdvanceAdvisoryPhaseRequest{Context: b.context(p), DeploymentID: b.DeploymentID, ExpectedRevision: b.ExpectedRevision})
+		return projectOrchestration(result), err
+	}))
+	h.mux.HandleFunc("POST /v2/teams/stand-down", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
+		commandIdentity
+		DeploymentID     model.DeploymentID `json:"deployment_id"`
+		ExpectedRevision model.Revision     `json:"expected_revision"`
+		Reason           string             `json:"reason"`
+	}) (any, error) {
+		result, err := api.StandDownDeployment(ctx, app.StandDownDeploymentRequest{Context: b.context(p), DeploymentID: b.DeploymentID, ExpectedRevision: b.ExpectedRevision, Reason: b.Reason})
+		return projectOrchestration(result), err
+	}))
 	h.mux.HandleFunc("GET /v2/definitions/{id}", func(w http.ResponseWriter, r *http.Request) {
 		p, ok := h.caller(w, r)
 		if !ok {
