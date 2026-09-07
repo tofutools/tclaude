@@ -8,6 +8,7 @@ const requestID = () => 'r_' + crypto.randomUUID();
 const terminals = new TerminalWorkspace({requestID});
 const navigation = new WorkspaceNavigation({select:tab=>selectTab(tab,false),report:showError});
 const presentation = new PresentationWorkspace({api});
+const terminalTools = new TerminalTools({host:$('terminal-tools'),workspace:terminals,el,button});
 const authorityWorkspace = new AuthorityWorkspace({host:$('access-list'),api,el,button,edit,getSnapshot:()=>snapshot,report:showError});
 const messageWorkspace = new MessageWorkspace({host:$('message-list'),el,button,api,refresh,card:messageCard});
 const rosterWorkspace = new RosterWorkspace({host:$('roster'),api,el,button,edit,refresh});
@@ -143,7 +144,7 @@ async function attach(execution,{record=true}={}){
  const agent=(snapshot.agents||[]).find(a=>a.PrimaryExecutionID===execution.id);
  terminals.open(execution,agent?.Name||execution.id);
 }
-function closeTerminal(){terminals.closeAll()}
+function closeTerminal(){terminals.closeAll();terminalTools.clear()}
 window.addEventListener('pagehide',()=>terminals.suspend());
 
 function workspaceCard(space){
