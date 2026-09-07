@@ -6,6 +6,7 @@ for(const tab of document.querySelectorAll('[data-tab]'))tab.disabled=true;
 document.querySelector('main').inert=true;
 const requestID = () => 'r_' + crypto.randomUUID();
 const terminals = new TerminalWorkspace({requestID});
+const navigation = new WorkspaceNavigation({select:tab=>selectTab(tab,false),report:showError});
 const presentation = new PresentationWorkspace({api});
 const messageWorkspace = new MessageWorkspace({host:$('message-list'),el,button,api,refresh,card:messageCard});
 const historyWorkspace = new HistoryWorkspace({host:$('histories'),api,el,button,edit,startWork,selection});
@@ -98,7 +99,9 @@ function render(){
  if(!snapshot.work_runs?.length)empty(work,'No work runs.');
  messageWorkspace.update(snapshot);
 }
-async function selectTab(tab){
+async function selectTab(tab,record=true){
+ if(!navigation.tabs().some(n=>n.dataset.tab===tab))tab="groups";
+ if(record)navigation.record(tab,record==='replace');
  for(const n of document.querySelectorAll('main > section'))n.hidden=n.id!==tab;
  for(const n of document.querySelectorAll('[data-tab]'))n.setAttribute('aria-current',String(n.dataset.tab===tab));
  if(tab==='configurations')await renderConfigurations();
@@ -131,13 +134,13 @@ $('compose').onclick=()=>composeMessage();
   const execution=(snapshot.executions||[]).find(e=>e.id===requested);if(!execution)throw new Error('This execution is not available in the current workspace.');
   const nonce=fragment.get('handoff');
   terminals.onAttached=entry=>{if(nonce&&entry.id===requested)window.opener?.postMessage({type:'terminal-attached',nonce,executionID:entry.id},location.origin)};
-  await attach(execution);
- }else{terminals.restore(snapshot.executions||[],snapshot.agents||[]);await selectTab('groups')}
+  await attach(execution,{record:false});
+ }else{terminals.restore(snapshot.executions||[],snapshot.agents||[]);await selectTab(navigation.initialTab(),'replace')}
 
 })().catch(e=>{$('connection').textContent='Not connected';showError(e)}).finally(()=>{for(const tab of document.querySelectorAll('[data-tab]'))tab.disabled=false;document.querySelector('main').inert=false});
 
-async function attach(execution){
- await selectTab('terminals');
+async function attach(execution,{record=true}={}){
+ await selectTab('terminals',record);
  const agent=(snapshot.agents||[]).find(a=>a.PrimaryExecutionID===execution.id);
  terminals.open(execution,agent?.Name||execution.id);
 }
