@@ -58,3 +58,24 @@ test('group rename leaves unrelated and malformed aggregate preferences unchange
   assert.equal(prefs.getItem('tclaude.dash.spawn.lastGroup'), 'beta');
   assert.equal(prefs.getItem('tclaude.dash.mail.mailbox'), 'group:beta');
 });
+
+test('group rename clears stale destination state and keeps the source order position', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { migrateGroupRenamePrefs } = await harness.importDashboardModule('js/group-rename-prefs.js');
+  const prefs = memoryPrefs({
+    'tclaude.dash.quickpin.delta': '1',
+    'tclaude.dash.forcefold.delta': '1',
+    'tclaude.dash.groupOrder': JSON.stringify(['gamma', 'delta', 'beta', 'alpha', 'omega']),
+    'tclaude.dash.spawn.lastGroup': 'delta',
+    'tclaude.dash.mail.mailbox': 'group:delta',
+  });
+
+  migrateGroupRenamePrefs('alpha', 'delta', prefs);
+
+  assert.equal(prefs.getItem('tclaude.dash.quickpin.delta'), null);
+  assert.equal(prefs.getItem('tclaude.dash.forcefold.delta'), null);
+  assert.deepEqual(JSON.parse(prefs.getItem('tclaude.dash.groupOrder')),
+    ['gamma', 'beta', 'delta', 'omega']);
+  assert.equal(prefs.getItem('tclaude.dash.spawn.lastGroup'), null);
+  assert.equal(prefs.getItem('tclaude.dash.mail.mailbox'), null);
+});

@@ -14,9 +14,11 @@ const GROUP_KEY_PREFIXES = Object.freeze([
 
 function movePref(prefs, oldKey, newKey) {
   const value = prefs.getItem(oldKey);
-  if (value === null) return;
-  prefs.removeItem(oldKey);
-  prefs.setItem(newKey, value);
+  if (value === null) prefs.removeItem(newKey);
+  else {
+    prefs.removeItem(oldKey);
+    prefs.setItem(newKey, value);
+  }
 }
 
 // Group names are embedded in several durable dashboard preferences. Keep all
@@ -32,18 +34,21 @@ export function migrateGroupRenamePrefs(oldName, newName, prefs = dashPrefs) {
   if (rawOrder) {
     try {
       const order = JSON.parse(rawOrder);
-      if (Array.isArray(order) && order.includes(oldName)) {
+      if (Array.isArray(order) && (order.includes(oldName) || order.includes(newName))) {
         const renamed = [];
-        for (const name of order.map((name) => name === oldName ? newName : name)) {
-          if (!renamed.includes(name)) renamed.push(name);
+        for (const name of order) {
+          if (name === newName) continue;
+          renamed.push(name === oldName ? newName : name);
         }
         prefs.setItem(GROUP_ORDER_KEY, JSON.stringify(renamed));
       }
     } catch (_) { /* leave malformed preferences for their owning reader */ }
   }
 
-  if (prefs.getItem(LAST_GROUP_KEY) === oldName) prefs.setItem(LAST_GROUP_KEY, newName);
-  if (prefs.getItem(MAILBOX_KEY) === `group:${oldName}`) {
-    prefs.setItem(MAILBOX_KEY, `group:${newName}`);
-  }
+  const lastGroup = prefs.getItem(LAST_GROUP_KEY);
+  if (lastGroup === oldName) prefs.setItem(LAST_GROUP_KEY, newName);
+  else if (lastGroup === newName) prefs.removeItem(LAST_GROUP_KEY);
+  const mailbox = prefs.getItem(MAILBOX_KEY);
+  if (mailbox === `group:${oldName}`) prefs.setItem(MAILBOX_KEY, `group:${newName}`);
+  else if (mailbox === `group:${newName}`) prefs.removeItem(MAILBOX_KEY);
 }
