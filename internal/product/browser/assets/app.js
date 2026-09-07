@@ -72,6 +72,7 @@ function agentRow(agent){
  if(!execution || ['exited','failed'].includes(execution.state)){
   actions.append(button('Retire',()=>edit('Retire agent',[{name:'reason',label:'Reason',multiline:true}],f=>api(`/v2/agents/${encodeURIComponent(agent.ID)}/retire`,{expected_revision:agent.Revision,reason:f.reason}))));
   actions.append(button('Start',async id=>{await api('/v2/launch',{request_id:id,target:{agent:{agent_id:agent.ID,expected_revision:agent.Revision}}});await refresh()}));
+  actions.append(button('Start with brief',()=>edit('Start with initial brief',[{name:'brief',label:'Initial brief (delivered before first work, at most 32 KiB)',multiline:true}],f=>{if(new TextEncoder().encode(f.brief).length>32768||f.brief.includes('\0'))throw new Error('Initial brief must be at most 32768 UTF-8 bytes without NUL.');return api('/v2/launch',{request_id:f.requestID,initial_message:f.brief,target:{agent:{agent_id:agent.ID,expected_revision:agent.Revision}}})})));
   const associations=(snapshot.associations||[]).filter(a=>a.AgentID===agent.ID);
   if(associations.length)actions.append(button('Resume',()=>edit('Resume history',[{name:'conversation',label:'Conversation',options:associations.map(a=>({value:a.ConversationID,label:a.ConversationID}))}],async f=>{
    const a=associations.find(a=>a.ConversationID===f.conversation);

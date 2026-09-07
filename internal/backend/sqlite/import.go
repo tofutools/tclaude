@@ -673,7 +673,7 @@ func (s *Store) verifyImportedOperations(ctx context.Context, messages []model.M
 			o.id=? AND m.id=? AND m.request_digest=? AND o.request_id=? AND o.request_scope='migration:v228' AND o.kind=?
 			AND o.principal_kind=? AND o.principal_agent_id=? AND o.principal_execution_id='' AND o.principal_generation=0
 			AND o.principal_automation_run='' AND o.automation_delegation_json IS NULL AND o.authority_subject_kind=''
-			AND o.authority_subject_id='' AND o.execution_id='' AND o.state=? AND o.result_code='imported_admission'
+			AND o.authority_subject_id='' AND o.execution_id='' AND o.initial_message_digest='' AND o.state=? AND o.result_code='imported_admission'
 			AND o.detail='historical accepted message; no notification replay' AND o.revision=1 AND o.created_at=? AND o.updated_at=?`,
 			operationID, message.ID, requestID, requestID, model.OperationSendMessage, message.Sender.Kind, message.Sender.AgentID,
 			model.OperationSucceeded, importNanos(message.CreatedAt), importNanos(message.CreatedAt)).Scan(&matches)

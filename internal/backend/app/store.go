@@ -33,6 +33,7 @@ type Store interface {
 	DeleteRoleAssignment(context.Context, model.RoleAssignment, model.Revision) error
 	Authorize(context.Context, model.AuthorityRequest, time.Time) (model.AuthorityDecision, error)
 
+	FindLaunchAdmission(context.Context, LaunchRetryLookup) (AdmissionResult, bool, error)
 	AdmitLaunch(context.Context, LaunchAdmission) (AdmissionResult, error)
 	AdmitExecutionOperation(context.Context, ExecutionOperationAdmission) (AdmissionResult, error)
 	ConsumeExecutionEffect(context.Context, model.OperationID, time.Time) error
@@ -296,6 +297,7 @@ type WorkProgress struct {
 }
 
 type LaunchAdmission struct {
+	InitialMessageDigest         string
 	Operation                    model.Operation
 	Execution                    model.Execution
 	AgentID                      model.AgentID
@@ -397,4 +399,12 @@ type ContinuationRecord struct {
 	Conversation model.ConversationAssociation
 	Native       model.NativeConversationEvidence
 	Evidence     model.ProviderEvidence
+}
+
+type LaunchRetryLookup struct {
+	Context              RequestContext
+	At                   time.Time
+	Kind                 model.OperationKind
+	AgentID              model.AgentID
+	InitialMessageDigest string
 }

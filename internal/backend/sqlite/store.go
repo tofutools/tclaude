@@ -60,6 +60,7 @@ func (s *Store) initialize(ctx context.Context) error {
 	}
 	for _, migration := range []struct{ table, column, definition string }{
 		{"definition_revisions", "editor_layout_json", "BLOB"},
+		{"operations", "initial_message_digest", "TEXT NOT NULL DEFAULT ''"},
 		{"agents", "effort", "TEXT NOT NULL DEFAULT ''"},
 		{"executions", "effort", "TEXT NOT NULL DEFAULT ''"},
 		{"agents", "configuration_profile_json", "BLOB"},
@@ -220,7 +221,7 @@ func (s *Store) migrateOperationRequestScope(ctx context.Context) error {
 		return fmt.Errorf("scope existing operations: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `CREATE TABLE operations_replacement (
- id TEXT PRIMARY KEY, request_id TEXT NOT NULL, request_scope TEXT NOT NULL, kind TEXT NOT NULL,
+ id TEXT PRIMARY KEY, initial_message_digest TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL, request_scope TEXT NOT NULL, kind TEXT NOT NULL,
  principal_kind TEXT NOT NULL, principal_agent_id TEXT NOT NULL DEFAULT '',
  principal_execution_id TEXT NOT NULL DEFAULT '', principal_generation INTEGER NOT NULL DEFAULT 0,
  principal_automation_run TEXT NOT NULL DEFAULT '', automation_delegation_json BLOB,
@@ -231,8 +232,8 @@ func (s *Store) migrateOperationRequestScope(ctx context.Context) error {
 )`); err != nil {
 		return fmt.Errorf("create scoped operations replacement: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO operations_replacement(id,request_id,request_scope,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,automation_delegation_json,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at)
-	 SELECT id,request_id,request_scope,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,automation_delegation_json,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at FROM operations`); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO operations_replacement(id,initial_message_digest,request_id,request_scope,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,automation_delegation_json,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at)
+	 SELECT id,initial_message_digest,request_id,request_scope,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,automation_delegation_json,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at FROM operations`); err != nil {
 		return fmt.Errorf("copy scoped operations: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DROP TABLE operations`); err != nil {
@@ -762,6 +763,13 @@ func (s *Store) AdmitLaunch(ctx context.Context, in app.LaunchAdmission) (app.Ad
 	if repeated, ok, err := admissionByRequest(ctx, tx, in.Operation, in.AgentID, false); err != nil {
 		return app.AdmissionResult{}, err
 	} else if ok {
+		var digest string
+		if err := tx.QueryRowContext(ctx, `SELECT initial_message_digest FROM operations WHERE id=?`, repeated.Operation.ID).Scan(&digest); err != nil {
+			return app.AdmissionResult{}, err
+		}
+		if digest != in.InitialMessageDigest {
+			return app.AdmissionResult{}, app.ErrConflict
+		}
 		_ = tx.Commit()
 		return repeated, nil
 	}
@@ -803,6 +811,9 @@ func (s *Store) AdmitLaunch(ctx context.Context, in app.LaunchAdmission) (app.Ad
 		return app.AdmissionResult{}, err
 	}
 	if err := insertOperation(ctx, tx, in.Operation); err != nil {
+		return app.AdmissionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE operations SET initial_message_digest=? WHERE id=?`, in.InitialMessageDigest, in.Operation.ID); err != nil {
 		return app.AdmissionResult{}, err
 	}
 	if in.Access.ExecutionID != "" {
@@ -1792,4 +1803,37 @@ func classify(err error) error {
 		return app.ErrNotFound
 	}
 	return err
+}
+
+func (s *Store) FindLaunchAdmission(ctx context.Context, in app.LaunchRetryLookup) (app.AdmissionResult, bool, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return app.AdmissionResult{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	prior, found, err := admissionByRequest(ctx, tx, model.Operation{Principal: in.Context.Principal, RequestID: in.Context.RequestID, Kind: in.Kind}, in.AgentID, false)
+	if err != nil || !found {
+		return prior, found, err
+	}
+	var digest string
+	if err = tx.QueryRowContext(ctx, `SELECT initial_message_digest FROM operations WHERE id=?`, prior.Operation.ID).Scan(&digest); err != nil {
+		return app.AdmissionResult{}, false, err
+	}
+	if digest != in.InitialMessageDigest {
+		return app.AdmissionResult{}, false, app.ErrConflict
+	}
+	resource := model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: prior.Execution.ID}
+	if prior.Execution.AgentID != "" {
+		resource = model.ResourceSelector{Kind: model.ResourceAgent, AgentID: prior.Execution.AgentID}
+	}
+	spec := prior.Execution.Spec
+	desired := model.DesiredConfiguration{Harness: spec.Harness, Model: spec.Model, Effort: spec.Effort, WorkingDirectory: spec.WorkingDirectory, Approval: spec.Approval, Sandbox: spec.Sandbox}
+	decision, err := authorizeTx(ctx, tx, model.AuthorityRequest{Principal: in.Context.Principal, Action: model.ActionLaunch, Resource: resource, RequestedConfiguration: &desired}, in.At)
+	if err != nil {
+		return app.AdmissionResult{}, false, err
+	}
+	if !decision.Allowed {
+		return app.AdmissionResult{}, false, app.ErrUnauthorized
+	}
+	return prior, true, nil
 }
