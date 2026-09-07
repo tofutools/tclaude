@@ -655,3 +655,12 @@ selects the Tavern for wizard mode and the Vegas lounge otherwise. Audio starts
 only with Play and does not restart on a page reload. SomaFM streams require an
 internet connection; the authenticated metadata route accepts only catalogued
 stations and shows an unavailable message on failure.
+
+History offers active/archived and harness filters, title/indexed-text search,
+ordering and paged conversation lists. Reads replace the current transcript;
+role/text filters help inspect it without changing the selected native point.
+Coverage and omitted parts remain visible, including in text exports. Archive
+and title changes use the displayed catalog revision and retain edits on conflict.
+Archive is catalog metadata, not deletion of native conversation content. Only
+provider-advertised points can be selected, and starting work still requires
+explicit worker/workspace and history-use choices.

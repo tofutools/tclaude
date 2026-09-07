@@ -8,6 +8,7 @@ const requestID = () => 'r_' + crypto.randomUUID();
 const terminals = new TerminalWorkspace({requestID});
 const presentation = new PresentationWorkspace({api});
 const messageWorkspace = new MessageWorkspace({host:$('message-list'),el,button,api,refresh,card:messageCard});
+const historyWorkspace = new HistoryWorkspace({host:$('histories'),api,el,button,edit,startWork,selection});
 const rosterWorkspace = new RosterWorkspace({host:$('roster'),api,el,button,edit,refresh});
 function showError(error) { const target=$('editor').open?$('editor-error'):$('error');target.textContent=error.message || String(error);target.hidden=false; }
 async function api(path, body, method) {
@@ -101,6 +102,7 @@ async function selectTab(tab){
  for(const n of document.querySelectorAll('main > section'))n.hidden=n.id!==tab;
  for(const n of document.querySelectorAll('[data-tab]'))n.setAttribute('aria-current',String(n.dataset.tab===tab));
  if(tab==='configurations')await renderConfigurations();
+ if(tab==='history')await historyWorkspace.load();
  if(tab==='usage')await renderUsage();
  if(tab==='activity')await renderActivity();
 
@@ -116,16 +118,11 @@ async function selectTab(tab){
 }
 $('refresh').onclick=()=>refresh().catch(showError);
 $('cancel').onclick=()=>$('editor').close();
-$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');closeTerminal();presentation.stop();snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
+$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');closeTerminal();presentation.stop();historyWorkspace.clear();snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
 for(const tab of document.querySelectorAll('[data-tab]'))tab.onclick=()=>selectTab(tab.dataset.tab).catch(showError);
 $('new-agent').onclick=()=>edit('New agent',[...desiredFields(),...agentMetadataFields()],f=>api('/v2/agents',{id:f.requestID,name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify}}));
 $('new-group').onclick=()=>edit('New group',[{name:'name',label:'Name'},{name:'members',label:'Members',multiple:true,required:false,options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}],f=>api('/v2/groups',{id:f.requestID,name:f.name,members:f.members}));
 $('compose').onclick=()=>composeMessage();
-$('search-history').onsubmit=async e=>{e.preventDefault();try{
- const data=await api('/v2/history/search',{query:new FormData(e.target).get('query')});const list=$('histories');list.replaceChildren();
- for(const entry of data.Entries||[])list.append(historyCard(entry));
- if(!data.Entries?.length)empty(list,'No matching catalogued histories. Source coverage may be incomplete.');
-}catch(error){showError(error)}};
 (async()=>{
  const fragment=new URLSearchParams(location.hash.slice(1));const token=fragment.get('login'),requested=new URLSearchParams(location.search).get('terminal');history.replaceState(null,'',location.pathname+location.search);
  if(token)await api('/session',{token});await presentation.load();await refresh();
@@ -163,14 +160,6 @@ $('create-checkout').onclick=()=>edit('Create owned checkout',workspaceFields,f=
 $('register-workspace').onclick=()=>edit('Register existing directory',[{name:'path',label:'Directory path'}],f=>api('/v2/workspaces/register',{request_id:f.requestID,id:f.requestID,intent:{IntendedPath:f.path,Provenance:'registered',Ownership:'external',RetainOnFinish:true}}));
 $('refresh-history').onclick=()=>edit('Refresh configured history source',[{name:'harness',label:'Harness',options:['claude','codex','opencode','copilot']},{name:'source',label:'Configured source name'}],f=>api('/v2/history/refresh',{harness:f.harness,source:f.source}));
 function selection(entry,point){return{ConversationID:entry.ConversationID,ExpectedConversationRevision:entry.Revision,PointID:point?.ID||'',ExpectedPointRevision:point?.Revision||0}}
-function historyCard(entry){
- const card=el('article',undefined,'card');card.append(el('strong',entry.Title||entry.ConversationID),el('p',`${entry.Harness} · ${entry.Availability||'unknown'}`));
- card.append(button('Read',async()=>{
-  const read=await api('/v2/history/read',{selection:selection(entry)});const content=el('div');
-  for(const turn of read.Turns||[]){const text=(turn.Parts||[]).map(p=>p.Text||'').join('\n');content.append(el('strong',turn.Role),el('pre',text))}
-  card.append(content,button('Start work from this history',()=>startWork(read)));
- }),button('Edit title',()=>edit('History title',[{name:'title',label:'Title',value:entry.Title||'',required:false}],f=>api('/v2/history/metadata',{request_id:f.requestID,conversation_id:entry.ConversationID,expected_revision:entry.Revision,title:f.title,archived:!!entry.Archived}))));return card;
-}
 function startWork(read){
  const spaces=(snapshot.workspaces||[]).filter(s=>s.State==='available');const agents=(snapshot.agents||[]).filter(a=>{const e=(snapshot.executions||[]).find(e=>e.id===a.PrimaryExecutionID);return !e||['exited','failed'].includes(e.state)});
  if(!spaces.length||!agents.length)throw new Error('Create an available workspace and an offline worker first.');

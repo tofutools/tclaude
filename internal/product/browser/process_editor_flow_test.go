@@ -24,6 +24,11 @@ import (
 
 func processEditorBrowser(t *testing.T, cohort ...ports.Provider) (context.Context, *rod.Page, *client.Client) {
 	t.Helper()
+	return processEditorBrowserWithHistory(t, nil, cohort...)
+}
+
+func processEditorBrowserWithHistory(t *testing.T, history ports.HistorySourceRegistry, cohort ...ports.Provider) (context.Context, *rod.Page, *client.Client) {
+	t.Helper()
 	if os.Getenv("TCLAUDE_BROWSER_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_BROWSER_SMOKE=1 for installed-Chrome product acceptance")
 	}
@@ -43,7 +48,7 @@ func processEditorBrowser(t *testing.T, cohort ...ports.Provider) (context.Conte
 	checkout, err := host.NewCheckoutHost("")
 	require.NoError(t, err)
 	go func() {
-		backendDone <- backend.Serve(ctx, state, providers.NewRegistry(cohort...), backend.JourneyServices{Workspaces: checkout})
+		backendDone <- backend.Serve(ctx, state, providers.NewRegistry(cohort...), backend.JourneyServices{Workspaces: checkout, History: history})
 	}()
 	require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(state, "api.sock")); return err == nil }, 5*time.Second, 10*time.Millisecond)
 	operator, err := client.New(filepath.Join(state, "api.sock"), filepath.Join(state, "operator.token"))
