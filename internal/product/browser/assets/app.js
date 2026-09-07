@@ -2,6 +2,8 @@
 const $ = id => document.getElementById(id);
 const el = (tag, text, cls) => { const n=document.createElement(tag); if(text!==undefined)n.textContent=text; if(cls)n.className=cls; return n; };
 let snapshot = {}, submitting = false;
+for(const tab of document.querySelectorAll('[data-tab]'))tab.disabled=true;
+document.querySelector('main').inert=true;
 const requestID = () => 'r_' + crypto.randomUUID();
 const terminals = new TerminalWorkspace({requestID});
 function showError(error) { const target=$('editor').open?$('editor-error'):$('error');target.textContent=error.message || String(error);target.hidden=false; }
@@ -130,7 +132,7 @@ $('search-history').onsubmit=async e=>{e.preventDefault();try{
 (async()=>{
  const fragment=new URLSearchParams(location.hash.slice(1));const token=fragment.get('login');history.replaceState(null,'',location.pathname);
  if(token)await api('/session',{token});await refresh();await selectTab('groups');
-})().catch(e=>{$('connection').textContent='Not connected';showError(e)});
+})().catch(e=>{$('connection').textContent='Not connected';showError(e)}).finally(()=>{for(const tab of document.querySelectorAll('[data-tab]'))tab.disabled=false;document.querySelector('main').inert=false});
 
 async function attach(execution){
  await selectTab('terminals');
