@@ -18,6 +18,7 @@ const attachmentPreview = new AttachmentPreview({api,el,button});
 const messageWorkspace = new MessageWorkspace({host:$('message-list'),el,button,api,refresh,card:messageCard});
 const attention = new AttentionWorkspace({host:$('attention'),api,el,button,refresh,select:tab=>selectTab(tab)});
 
+const usageSummary = new UsageSummaryWorkspace({host:$('usage-summary'),api,el,button,getSnapshot:()=>snapshot});
 const usageWorkspace = new UsageWorkspace({host:$('usage-list'),api,el,button,getSnapshot:()=>snapshot,setTarget:target=>{usageTarget=target}});
 
 const historyWorkspace = new HistoryWorkspace({host:$('histories'),api,el,button,edit,startWork,selection});
