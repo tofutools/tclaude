@@ -225,6 +225,28 @@ func ListPendingSpawns() ([]*PendingSpawn, error) {
 	return out, rows.Err()
 }
 
+// GetPendingSpawnByAgentID returns the durable pre-enrollment reservation for
+// an actor, or nil. It lets restart recovery distinguish an already-launched
+// pending spawn from an identity that has never reached the spawn core.
+func GetPendingSpawnByAgentID(agentID string) (*PendingSpawn, error) {
+	d, err := Open()
+	if err != nil {
+		return nil, err
+	}
+	row := d.QueryRow(`
+		SELECT label, agent_id, launching, group_id, role, descr, name, initial_message, group_context, profile_context,
+			reply_to_conv, spawned_by_conv, reply_to_agent, spawned_by_agent,
+			worktree_path, worktree_branch, is_owner, permission_overrides, process_command_id,
+			task_url, task_label, codex_app_server, codex_app_server_source, codex_state_root, codex_state_root_source, fast_mode_at_launch, ssh_workaround,
+			effective_sandbox_config, created_at
+		FROM pending_spawns WHERE agent_id = ? LIMIT 1`, strings.TrimSpace(agentID))
+	p, err := scanPendingSpawn(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	return p, err
+}
+
 // DeletePendingSpawn removes a pending spawn by label. Deleting a missing
 // label is a no-op — the sweeper deletes after a successful enrollment and
 // must tolerate a concurrent delete (e.g. the human retired the agent).

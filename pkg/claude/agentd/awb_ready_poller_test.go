@@ -14,6 +14,17 @@ func TestValidateAWBReadyPolling(t *testing.T) {
 	d, err := validateAWBReadyPolling(policy, "tcl", base)
 	assert.NoError(t, err)
 	assert.Equal(t, time.Minute, d)
+	base.Interval = "15s"
+	d, err = validateAWBReadyPolling(policy, "tcl", base)
+	assert.NoError(t, err)
+	assert.Equal(t, 15*time.Second, d)
+	base.Interval = ""
+	badGroup := base
+	badGroup.Group = ""
+	_, err = validateAWBReadyPolling(policy, "tcl", badGroup)
+	assert.ErrorContains(t, err, "group")
+	_, err = validateAWBReadyPolling(policy, "TCL", base)
+	assert.ErrorContains(t, err, "lowercase")
 	bad := base
 	bad.Cwd = "relative"
 	_, err = validateAWBReadyPolling(policy, "tcl", bad)
@@ -27,4 +38,12 @@ func TestValidateAWBReadyPolling(t *testing.T) {
 	policy.AllowWrite = false
 	_, err = validateAWBReadyPolling(policy, "tcl", base)
 	assert.ErrorContains(t, err, "allow_write")
+	policy.AllowWrite = true
+	policy.Username = ""
+	_, err = validateAWBReadyPolling(policy, "tcl", base)
+	assert.ErrorContains(t, err, "username")
+	policy.Username = "worker"
+	policy.URL = "file:///tmp/awb"
+	_, err = validateAWBReadyPolling(policy, "tcl", base)
+	assert.ErrorContains(t, err, "invalid url")
 }

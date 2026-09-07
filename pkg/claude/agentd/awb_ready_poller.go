@@ -45,18 +45,22 @@ func startAWBReadyPollers(stop <-chan struct{}, cfg *config.Config) error {
 	}
 	for workspace, polling := range policy.ReadyPolling {
 		interval, _ := validateAWBReadyPolling(policy, workspace, polling)
+		base, _ := validateAWBBaseURL(policy.URL)
 		w := awbReadyWorker{workspace: workspace, config: polling, interval: interval,
-			session: &awbProxySession{policy: policy, base: strings.TrimRight(policy.URL, "/"), workspaces: []string{workspace}}}
-		goBackground(func() { w.run(stop) })
+			session: &awbProxySession{policy: policy, base: base, workspaces: []string{workspace}}}
+		go w.run(stop)
 	}
 	return nil
 }
 
 func validateAWBReadyPolling(policy config.AWBProxyConfig, workspace string, p config.AWBReadyPollingConfig) (time.Duration, error) {
-	if awbWorkspaceKeyShapeErr(workspace) != nil {
-		return 0, awbWorkspaceKeyShapeErr(workspace)
+	if err := awbWorkspaceKeyShapeErr(workspace); err != nil {
+		return 0, err
 	}
-	if policy.URL == "" || policy.Username == "" || !policy.AllowWrite {
+	if _, fault := validateAWBBaseURL(policy.URL); fault != nil {
+		return 0, fmt.Errorf("invalid url: %s", fault.Msg)
+	}
+	if policy.Username == "" || !policy.AllowWrite {
 		return 0, fmt.Errorf("ready polling requires url, username, and allow_write=true")
 	}
 	if !policy.AWBWorkspaceAllowed(workspace) {
@@ -122,6 +126,9 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		if dispatch == nil {
+			return nil
+		}
 	}
 	issue, err := w.show(ctx, dispatch.IssueID)
 	if err != nil {
@@ -141,9 +148,19 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 		_, err = db.UpdateAWBReadyDispatch(w.workspace, dispatch.IssueID, "spawned", "")
 		return err
 	}
+	if pending, pendingErr := db.GetPendingSpawnByAgentID(dispatch.AgentID); pendingErr != nil {
+		return pendingErr
+	} else if pending != nil {
+		_, err = db.UpdateAWBReadyDispatch(w.workspace, dispatch.IssueID, "spawned", "")
+		return err
+	}
 	if !containsFold(issue.Assignees, w.session.policy.Username) {
-		if issue, err = w.claim(ctx, dispatch.IssueID); err != nil {
-			return err
+		claimed, claimErr := w.claim(ctx, dispatch.IssueID)
+		if claimErr != nil {
+			return claimErr
+		}
+		if !containsFold(claimed.Assignees, w.session.policy.Username) {
+			return fmt.Errorf("AWB claim response did not assign issue to configured account")
 		}
 	}
 	if _, err = db.UpdateAWBReadyDispatch(w.workspace, dispatch.IssueID, "claimed", ""); err != nil {
@@ -205,8 +222,10 @@ func (w awbReadyWorker) ready(ctx context.Context) (*awbIssue, error) {
 	q := url.Values{"workspace": {w.workspace}, "limit": {"1"}}
 	_, f := w.session.exec(ctx, awbCall{Method: http.MethodGet, Path: "/api/ready", Query: q}, &issues)
 	if f != nil {
+		w.audit("awb.ready", "", f.Status)
 		return nil, fmt.Errorf("%s", f.Msg)
 	}
+	w.audit("awb.ready", "", http.StatusOK)
 	if len(issues) == 0 {
 		return nil, nil
 	}
@@ -219,8 +238,10 @@ func (w awbReadyWorker) show(ctx context.Context, id string) (*awbIssue, error) 
 	var i awbIssue
 	_, f := w.session.exec(ctx, awbCall{Method: http.MethodGet, Path: "/api/issues/" + awbSegment(id)}, &i)
 	if f != nil {
+		w.audit("awb.show", id, f.Status)
 		return nil, fmt.Errorf("%s", f.Msg)
 	}
+	w.audit("awb.show", id, http.StatusOK)
 	if f = w.session.enforceIssueWorkspace(&i); f != nil {
 		return nil, fmt.Errorf("%s", f.Msg)
 	}
@@ -230,12 +251,18 @@ func (w awbReadyWorker) claim(ctx context.Context, id string) (*awbIssue, error)
 	if f := w.session.requireWrite(); f != nil {
 		return nil, fmt.Errorf("%s", f.Msg)
 	}
-	body, _ := json.Marshal(awbClaimBody{Assignee: w.session.policy.Username, Force: true})
+	assignee, fault := validateAWBAssignee(w.session.policy.Username)
+	if fault != nil {
+		return nil, fmt.Errorf("%s", fault.Msg)
+	}
+	body, _ := json.Marshal(awbClaimBody{Assignee: assignee, Force: true})
 	var i awbIssue
 	_, f := w.session.exec(ctx, awbCall{Method: http.MethodPost, Path: "/api/issues/" + awbSegment(id) + "/claim", Body: body, ContentType: "application/json"}, &i)
 	if f != nil {
+		w.audit("awb.claim", id, f.Status)
 		return nil, fmt.Errorf("%s", f.Msg)
 	}
+	w.audit("awb.claim", id, http.StatusOK)
 	if f = w.session.enforceIssueWorkspace(&i); f != nil {
 		return nil, fmt.Errorf("%s", f.Msg)
 	}
@@ -243,6 +270,13 @@ func (w awbReadyWorker) claim(ctx context.Context, id string) (*awbIssue, error)
 }
 
 func (w awbReadyWorker) spawn(issueID, reservedAgentID string) (string, error) {
+	g, err := db.GetAgentGroupByName(w.config.Group)
+	if err != nil {
+		return "", fmt.Errorf("load group %q: %w", w.config.Group, err)
+	}
+	if g == nil {
+		return "", fmt.Errorf("group %q no longer exists", w.config.Group)
+	}
 	cwd, wtPath, wtBranch, discard := w.config.Cwd, "", "", ""
 	if w.config.Worktree {
 		body := agent.WorktreePrepareRequest{Repo: w.config.Cwd, Group: w.config.Group, Branch: issueID}
@@ -254,7 +288,6 @@ func (w awbReadyWorker) spawn(issueID, reservedAgentID string) (string, error) {
 	}
 	scope := fmt.Sprintf(`{"awb_workspace":[%q]}`, w.workspace)
 	body := agent.SpawnRequest{Name: issueID, Cwd: cwd, WorktreePath: wtPath, WorktreeBranch: wtBranch, Profile: w.config.Profile, SandboxProfile: w.config.SandboxProfile, Harness: w.config.Harness, TaskURL: strings.TrimRight(w.session.base, "/") + "/#/issues/" + issueID, TaskLabel: issueID, InitialMessage: fmt.Sprintf("Fetch %s with `tclaude proxy awb show %s`, work it to completion, record progress through the AWB proxy, and close it when complete.", issueID, issueID), PermissionOverrides: map[string]db.PermissionOverride{PermAWBRead: db.ScopedOverride(db.PermEffectGrant, scope), PermAWBWrite: db.ScopedOverride(db.PermEffectGrant, scope)}}
-	g, _ := db.GetAgentGroupByName(w.config.Group)
 	raw, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/v1/groups/"+url.PathEscape(w.config.Group)+"/spawn", bytes.NewReader(raw))
 	req.SetPathValue("name", w.config.Group)
@@ -266,11 +299,16 @@ func (w awbReadyWorker) spawn(issueID, reservedAgentID string) (string, error) {
 		if discard != "" {
 			_ = internalHumanJSON(handleWorktreeDiscard, "/v1/worktrees/discard", agent.WorktreeDiscardRequest{Token: discard}, nil)
 		}
+		w.audit("spawn", issueID, rec.Code)
 		return "", fmt.Errorf("spawn failed: HTTP %d: %s", rec.Code, strings.TrimSpace(rec.Body.String()))
 	}
+	w.audit("spawn", issueID, rec.Code)
 	var out agent.SpawnResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		return "", err
+	}
+	if strings.TrimSpace(out.AgentID) == "" {
+		return "", fmt.Errorf("spawn response contained no agent id")
 	}
 	return out.AgentID, nil
 }
@@ -296,4 +334,14 @@ func containsFold(values []string, want string) bool {
 		}
 	}
 	return false
+}
+
+func (w awbReadyWorker) audit(verb, issue string, status int) {
+	if _, err := db.InsertAuditLog(db.AuditLogEntry{ActorKind: db.AuditActorSystem,
+		ActorLabel: "agentd AWB ready poller", Verb: verb, TargetLabel: issue,
+		GroupName: w.config.Group, Detail: "workspace=" + w.workspace,
+		Method: http.MethodPost, Path: "internal://awb-ready-poller", Status: status,
+		Source: db.AuditSourceReconcile}); err != nil {
+		slog.Warn("awb ready polling: failed to record audit", "workspace", w.workspace, "verb", verb, "error", err)
+	}
 }

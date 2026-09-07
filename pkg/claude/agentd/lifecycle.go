@@ -7519,7 +7519,9 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 		return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
 			"could not build OpenCode access-control policy: " + err.Error()}
 	}
-	p.AgentID = db.NewAgentID()
+	if p.AgentID == "" {
+		p.AgentID = db.NewAgentID()
+	}
 	implementation, err := sandboxpolicy.NormalizeImplementation(p.SandboxImplementation)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity,
