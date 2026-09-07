@@ -28,21 +28,36 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 		if readErr != nil {
 			return touched, readErr
 		}
+		if revision.Condition.Kind == model.AutomationTrigger && revision.Condition.Trigger != nil {
+			triggered, triggerErr := s.reconcileTriggerRule(ctx, rule, revision, now)
+			if triggerErr != nil {
+				return touched, triggerErr
+			}
+			touched = append(touched, triggered...)
+			continue
+		}
 		if revision.Condition.Kind != model.AutomationSchedule || revision.Condition.Schedule == nil {
 			continue
 		}
-		existing, listErr := s.store.OccurrencesForRule(ctx, rule.ID)
-		if listErr != nil {
-			return touched, listErr
+		cursor, cursorRevision, cursorErr := s.store.ScheduleCursor(ctx, rule.ID)
+		if cursorErr != nil {
+			return touched, cursorErr
 		}
-		if revision.Policy.Overlap != model.OverlapAllow && hasActiveOccurrence(existing) {
-			continue
+		initial := cursor.IsZero()
+		if initial {
+			cursor = revision.CreatedAt.UTC()
 		}
-		scheduled, due, scheduleErr := latestScheduleTick(revision, existing, now)
+		scheduled, dueCount, scheduleErr := scheduleTicksAfter(revision, cursor, now, initial)
 		if scheduleErr != nil {
 			return touched, scheduleErr
 		}
-		if !due {
+		if dueCount == 0 {
+			continue
+		}
+		if revision.Policy.MissedTicks == model.MissedTickSkip && dueCount > 1 {
+			if _, _, scheduleErr = s.store.AdvanceSchedule(ctx, nil, rule.ID, rule.Revision, cursorRevision, scheduled); scheduleErr != nil && !errors.Is(scheduleErr, ErrConflict) {
+				return touched, scheduleErr
+			}
 			continue
 		}
 		key := fmt.Sprintf("schedule:%d", scheduled.UnixNano())
@@ -54,11 +69,13 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 			return touched, recipientErr
 		}
 		occurrence := model.AutomationOccurrence{ID: occurrenceID, RuleID: rule.ID, RuleRevisionID: revision.ID, SourceOccurrenceKey: key, RequestID: requestID, Requester: requester, ScheduledAt: scheduled, EligibleAt: scheduled, ExpiresAt: scheduled.Add(revision.Policy.ExpiresAfter), State: model.OccurrencePending, Recipients: recipients, Revision: 1, CreatedAt: now, UpdatedAt: now}
-		_, _, materializeErr := s.store.MaterializeOccurrence(ctx, occurrence, rule.Revision)
+		created, _, materializeErr := s.store.AdvanceSchedule(ctx, &occurrence, rule.ID, rule.Revision, cursorRevision, scheduled)
 		if materializeErr != nil && !errors.Is(materializeErr, ErrConflict) {
 			return touched, materializeErr
 		}
-		touched = append(touched, occurrenceID)
+		if materializeErr == nil {
+			touched = append(touched, created.Occurrence.ID)
+		}
 	}
 	pending, err := s.store.PendingOccurrences(ctx)
 	if err != nil {
@@ -77,6 +94,16 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 		revision, readErr := s.store.AutomationRuleRevision(ctx, occurrence.Occurrence.RuleRevisionID)
 		if readErr != nil {
 			return touched, readErr
+		}
+		if occurrence.Occurrence.State == model.OccurrenceParked {
+			var ready bool
+			occurrence, ready, readErr = s.prepareParkedOccurrence(ctx, occurrence, revision, now)
+			if readErr != nil {
+				return touched, readErr
+			}
+			if !ready {
+				continue
+			}
 		}
 		if occurrence.Occurrence.WorkRunID != "" {
 			work, workErr := s.store.WorkRun(ctx, occurrence.Occurrence.WorkRunID)
@@ -194,43 +221,98 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 	return uniqueOccurrenceIDs(touched), nil
 }
 
-func latestScheduleTick(revision model.AutomationRuleRevision, existing []OccurrenceRecord, now time.Time) (time.Time, bool, error) {
+func (s *Service) prepareParkedOccurrence(ctx context.Context, current OccurrenceRecord, revision model.AutomationRuleRevision, now time.Time) (OccurrenceRecord, bool, error) {
+	records, err := s.store.OccurrencesForRule(ctx, current.Occurrence.RuleID)
+	if err != nil {
+		return current, false, err
+	}
+	var active []OccurrenceRecord
+	for _, candidate := range records {
+		if candidate.Occurrence.ID != current.Occurrence.ID && occurrenceActive(candidate.Occurrence.State) {
+			active = append(active, candidate)
+		}
+	}
+	if revision.Policy.Overlap == model.OverlapAllow {
+		if uint32(len(active)) >= revision.Policy.MaxActive {
+			return current, false, nil
+		}
+		updated, updateErr := s.store.UpdateOccurrence(ctx, current.Occurrence.ID, current.Occurrence.Revision, model.OccurrencePending, current.Occurrence.OperationID, current.Occurrence.WorkRunID, current.Occurrence.DeploymentID, current.Occurrence.Recipients, now)
+		return updated, updateErr == nil, updateErr
+	}
+	if revision.Policy.Overlap != model.OverlapReplace {
+		return current, false, nil
+	}
+	for _, prior := range active {
+		if prior.Occurrence.WorkRunID == "" {
+			if prior.Occurrence.State == model.OccurrencePending || prior.Occurrence.State == model.OccurrenceParked {
+				if _, err = s.store.UpdateOccurrence(ctx, prior.Occurrence.ID, prior.Occurrence.Revision, model.OccurrenceDenied, prior.Occurrence.OperationID, prior.Occurrence.WorkRunID, prior.Occurrence.DeploymentID, deniedRecipients(prior.Occurrence.Recipients, "replaced by "+string(current.Occurrence.ID)), now); err != nil && !errors.Is(err, ErrConflict) {
+					return current, false, err
+				}
+			}
+			continue
+		}
+		work, workErr := s.store.WorkRun(ctx, prior.Occurrence.WorkRunID)
+		if workErr != nil {
+			return current, false, workErr
+		}
+		if work.Run.State == model.WorkRunSucceeded || work.Run.State == model.WorkRunFailed || work.Run.State == model.WorkRunCancelled {
+			continue
+		}
+		_, workErr = s.CancelWork(ctx, CancelWorkRequest{Context: RequestContext{Principal: current.Occurrence.Requester, RequestID: model.RequestID(deterministicOrchestrationID("request_", string(current.Occurrence.ID)+":replace:"+string(prior.Occurrence.ID)))}, WorkRunID: work.Run.ID, ExpectedRunRevision: work.Run.Revision, Reason: "replaced by occurrence " + string(current.Occurrence.ID)})
+		if workErr != nil && !errors.Is(workErr, ErrConflict) {
+			_, updateErr := s.store.UpdateOccurrence(ctx, current.Occurrence.ID, current.Occurrence.Revision, model.OccurrenceDenied, current.Occurrence.OperationID, current.Occurrence.WorkRunID, current.Occurrence.DeploymentID, deniedRecipients(current.Occurrence.Recipients, "replacement stop denied: "+workErr.Error()), now)
+			return current, false, updateErr
+		}
+	}
+	if len(active) != 0 {
+		return current, false, nil
+	}
+	updated, err := s.store.UpdateOccurrence(ctx, current.Occurrence.ID, current.Occurrence.Revision, model.OccurrencePending, current.Occurrence.OperationID, current.Occurrence.WorkRunID, current.Occurrence.DeploymentID, current.Occurrence.Recipients, now)
+	return updated, err == nil, err
+}
+
+func scheduleTicksAfter(revision model.AutomationRuleRevision, cursor, now time.Time, initial bool) (time.Time, uint64, error) {
 	condition := revision.Condition.Schedule
 	anchor := condition.Anchor.UTC()
 	if anchor.IsZero() {
 		anchor = revision.CreatedAt.UTC()
 	}
 	if now.Before(anchor) {
-		return time.Time{}, false, nil
+		return time.Time{}, 0, nil
 	}
 	if condition.Interval > 0 {
-		return anchor.Add(time.Duration(now.Sub(anchor)/condition.Interval) * condition.Interval), true, nil
+		first := anchor
+		if cursor.After(anchor) || !initial {
+			steps := cursor.Sub(anchor)/condition.Interval + 1
+			first = anchor.Add(steps * condition.Interval)
+		}
+		if first.After(now) {
+			return time.Time{}, 0, nil
+		}
+		count := uint64(now.Sub(first)/condition.Interval) + 1
+		return first.Add(time.Duration(count-1) * condition.Interval), count, nil
 	}
 	location, err := time.LoadLocation(condition.Timezone)
 	if err != nil {
-		return time.Time{}, false, fail(ErrInvalid, "schedule timezone is unavailable: %v", err)
+		return time.Time{}, 0, fail(ErrInvalid, "schedule timezone is unavailable: %v", err)
 	}
 	schedule, err := cronv3.ParseStandard(condition.Cron)
 	if err != nil {
-		return time.Time{}, false, fail(ErrInvalid, "cron schedule is invalid: %v", err)
+		return time.Time{}, 0, fail(ErrInvalid, "cron schedule is invalid: %v", err)
 	}
-	cursor := anchor.In(location)
-	for _, occurrence := range existing {
-		if occurrence.Occurrence.ScheduledAt.After(cursor) {
-			cursor = occurrence.Occurrence.ScheduledAt.In(location)
-		}
-	}
+	cursor = cursor.In(location)
 	var latest time.Time
+	var count uint64
 	// Standard cron cannot fire more than once per minute. Five leap-aware
 	// years bounds cold-start catch-up while covering annual and Feb-29 rules.
 	for range 5*366*24*60 + 1 {
 		next := schedule.Next(cursor)
 		if next.After(now.In(location)) {
-			return latest.UTC(), !latest.IsZero(), nil
+			return latest.UTC(), count, nil
 		}
-		latest, cursor = next, next
+		latest, cursor, count = next, next, count+1
 	}
-	return time.Time{}, false, fail(ErrInvalid, "cron catch-up exceeds bounded five-year window")
+	return time.Time{}, 0, fail(ErrInvalid, "cron catch-up exceeds bounded five-year window")
 }
 
 func (s *Service) automationRecipients(ctx context.Context, action model.AutomationAction) ([]model.OccurrenceRecipient, error) {
@@ -258,12 +340,20 @@ func (s *Service) automationRecipients(ctx context.Context, action model.Automat
 
 func hasActiveOccurrence(records []OccurrenceRecord) bool {
 	for _, record := range records {
-		switch record.Occurrence.State {
-		case model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceUncertain:
+		if occurrenceActive(record.Occurrence.State) {
 			return true
 		}
 	}
 	return false
+}
+
+func occurrenceActive(state model.OccurrenceState) bool {
+	switch state {
+	case model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceParked, model.OccurrenceUncertain:
+		return true
+	default:
+		return false
+	}
 }
 
 func deterministicOrchestrationID(prefix, source string) string {
