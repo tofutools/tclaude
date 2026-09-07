@@ -24,10 +24,20 @@ import (
 
 func processEditorBrowser(t *testing.T, cohort ...ports.Provider) (context.Context, *rod.Page, *client.Client) {
 	t.Helper()
-	return processEditorBrowserWithHistory(t, nil, cohort...)
+	return processEditorBrowserConfigured(t, nil, nil, cohort...)
+}
+
+func processEditorBrowserWithSetup(t *testing.T, setup func(string), cohort ...ports.Provider) (context.Context, *rod.Page, *client.Client) {
+	t.Helper()
+	return processEditorBrowserConfigured(t, nil, setup, cohort...)
 }
 
 func processEditorBrowserWithHistory(t *testing.T, history ports.HistorySourceRegistry, cohort ...ports.Provider) (context.Context, *rod.Page, *client.Client) {
+	t.Helper()
+	return processEditorBrowserConfigured(t, history, nil, cohort...)
+}
+
+func processEditorBrowserConfigured(t *testing.T, history ports.HistorySourceRegistry, setup func(string), cohort ...ports.Provider) (context.Context, *rod.Page, *client.Client) {
 	t.Helper()
 	if os.Getenv("TCLAUDE_BROWSER_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_BROWSER_SMOKE=1 for installed-Chrome product acceptance")
@@ -42,6 +52,9 @@ func processEditorBrowserWithHistory(t *testing.T, history ports.HistorySourceRe
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	state := filepath.Join(root, "state")
 	require.NoError(t, backend.Initialize(state))
+	if setup != nil {
+		setup(state)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.Cleanup(cancel)
 	backendDone := make(chan error, 1)

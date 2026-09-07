@@ -10,6 +10,8 @@ const navigation = new WorkspaceNavigation({select:tab=>selectTab(tab,false),rep
 const presentation = new PresentationWorkspace({api});
 const authorityWorkspace = new AuthorityWorkspace({host:$('access-list'),api,el,button,edit,getSnapshot:()=>snapshot,report:showError});
 const messageWorkspace = new MessageWorkspace({host:$('message-list'),el,button,api,refresh,card:messageCard});
+const usageWorkspace = new UsageWorkspace({host:$('usage-list'),api,el,button,getSnapshot:()=>snapshot,setTarget:target=>{usageTarget=target}});
+
 const historyWorkspace = new HistoryWorkspace({host:$('histories'),api,el,button,edit,startWork,selection});
 const rosterWorkspace = new RosterWorkspace({host:$('roster'),api,el,button,edit,refresh});
 function showError(error) { const target=$('editor').open?$('editor-error'):$('error');target.textContent=error.message || String(error);target.hidden=false; }
@@ -117,7 +119,7 @@ async function selectTab(tab,record=true){
 }
 $('refresh').onclick=()=>refresh().catch(showError);
 $('cancel').onclick=()=>$('editor').close();
-$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');closeTerminal();presentation.stop();historyWorkspace.clear();snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
+$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');closeTerminal();presentation.stop();usageWorkspace.clear();historyWorkspace.clear();snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
 for(const tab of document.querySelectorAll('[data-tab]'))tab.onclick=()=>selectTab(tab.dataset.tab).catch(showError);
 $('new-agent').onclick=()=>edit('New agent',[...desiredFields(),...agentMetadataFields()],f=>api('/v2/agents',{id:f.requestID,name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify}}));
 $('new-group').onclick=()=>edit('New group',[{name:'name',label:'Name'},{name:'members',label:'Members',multiple:true,required:false,options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}],f=>api('/v2/groups',{id:f.requestID,name:f.name,members:f.members}));
@@ -258,18 +260,7 @@ let usageTarget=null,activityTarget=null;
 function targetFields(kind){return[{name:'kind',label:'Target type',options:kind==='usage'?['ConversationID','ExecutionID']:['AgentID','ConversationID','ExecutionID','WorkRunID']},{name:'id',label:'Target ID'}]}
 $('select-usage').onclick=()=>edit('Select usage target',targetFields('usage'),async f=>{usageTarget={[f.kind]:f.id};await renderUsage()});
 $('select-activity').onclick=()=>edit('Select activity target',targetFields('activity'),async f=>{activityTarget={[f.kind]:f.id};await renderActivity()});
-async function renderUsage(cursor='',append=false){
- const list=$('usage-list');if(!append)list.replaceChildren();if(!usageTarget){empty(list,'Select a conversation or execution to inspect its usage.');return}
- const result=await api('/v2/usage/query',{filter:{Target:usageTarget,Limit:25,Cursor:cursor}});
- if(!append)list.append(button('Refresh native usage',async()=>{await api('/v2/usage/refresh',{target:usageTarget});await renderUsage()}));
- for(const observation of result.Observations||[]){const card=el('article',undefined,'card');
- card.append(el('strong',`${observation.Harness} · ${observation.Attribution.Precision}`),el('p',`${observation.Source} · ${new Date(observation.ObservedAt).toLocaleString()}`,'muted'));
- for(const counter of observation.Counters||[])card.append(el('p',`${counter.Unit.replaceAll('_',' ')}: ${counter.Value}`));
- if(observation.Cost)card.append(el('p',`${observation.Cost.Amount} ${observation.Cost.Currency} · ${observation.Cost.Kind.replaceAll('_',' ')}`));
- card.append(el('p',`Counters: ${observation.Coverage.Counters}; cost: ${observation.Coverage.Cost}`,'muted'));if(observation.Coverage.Reason)card.append(el('p',observation.Coverage.Reason));list.append(card)}
- if(!result.Observations?.length)empty(list,'No recorded observations. Missing usage is not zero usage.');
- if(result.NextCursor)list.append(button('More observations',async()=>renderUsage(result.NextCursor,true)));
-}
+async function renderUsage(){await usageWorkspace.show(usageTarget)}
 async function renderActivity(cursor='',append=false){
  const list=$('activity-list');if(!append)list.replaceChildren();if(!activityTarget){empty(list,'Select an agent, conversation, execution or Work Run.');return}
  const result=await api('/v2/activity/query',{filter:{Target:activityTarget,Limit:25,Cursor:cursor}});
