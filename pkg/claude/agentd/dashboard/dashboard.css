@@ -2423,7 +2423,7 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 /* Fixed mode is a normal, in-flow group quick item at the far right of the
    header. Its link/ticket label uses the same .qo-text accordion as the other
    group quick items, leaving the paperclip visible while the label is folded.
-   A blue status dot distinguishes a saved attachment from the dim empty/add
+   A small status dot distinguishes a saved attachment from the dim empty/add
    paperclip while that label is folded. Only the edit pencil is hover-revealed. */
 .group-attachment-fixed {
   position: static; z-index: auto;
@@ -2453,7 +2453,7 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .group-attachment-status {
   position: absolute; inset-block-start: -1px; inset-inline-end: -4px;
   width: 5px; height: 5px; border-radius: 50%;
-  background: #58a6ff; box-shadow: 0 0 0 1px #0d1117;
+  background: currentColor; box-shadow: 0 0 0 1px #0d1117;
   pointer-events: none;
 }
 .group-attachment-fixed > a,
@@ -2484,7 +2484,6 @@ body.wizard .group-attachment a,
 body.wizard .group-attachment button { color: #b39ddb; }
 body.wizard .group-attachment a:hover,
 body.wizard .group-attachment button:hover { color: #f3e6c0; }
-body.wizard .group-attachment-status { background: #b39ddb; }
 
 /* ── Group activity bots ──────────────────────────────────────────────
    The deduped per-status robot row (group-activity.js → ActivityModes)
@@ -4027,15 +4026,14 @@ details[open] > summary .group-actions { opacity: 1; }
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:has(.group-header-cog .action-menu.open) .group-header-cog {
     opacity: 1;
   }
-  /* Keep the status dot bright enough to carry state while the surrounding
-     quick-option cluster rests dimmed. The paperclip itself follows the same
-     dim/reveal rhythm as those options. */
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-attachment-set .group-attachment-icon {
+  /* Dim the marker as one unit so its status dot matches the paperclip's color
+     and intensity through the same reveal rhythm as the other quick options. */
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-attachment-set .group-attachment-marker {
     opacity: 0.4;
   }
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-attachment-set .group-attachment-icon,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .group-attachment-set .group-attachment-icon,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-attachment-set .group-attachment-icon {
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-attachment-set .group-attachment-marker,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .group-attachment-set .group-attachment-marker,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-attachment-set .group-attachment-marker {
     opacity: 1;
   }
 }
