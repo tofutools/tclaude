@@ -28,7 +28,7 @@ func registerManagement(root *cobra.Command, call apiCall) {
 	group.AddCommand(managementFileCommand("create", "Create a group with explicit members", "POST", "/v2/groups", false, call))
 	owner := managementFileCommand("owner ID", "Assign the visible bounded owner role", "PUT", "/v2/groups/", true, call)
 	owner.Annotations = map[string]string{"path-suffix": "/owner"}
-	group.AddCommand(owner)
+	group.AddCommand(owner, managementFileCommand("update ID", "Update group name and ordered members at the expected revision", "PUT", "/v2/groups/", true, call))
 	root.AddCommand(agent, group)
 	authority := boa.CmdT[struct{}]{Use: "authority", Short: "Inspect and administer explicit scoped authority"}.ToCobra()
 	list := boa.CmdT[struct{}]{Use: "list", Short: "List visible grants, roles and assignments"}.ToCobra()

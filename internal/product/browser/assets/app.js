@@ -75,6 +75,7 @@ function agentRow(agent){
  row.append(actions);return row;
 }
 function render(){
+ renderGroupControls(snapshot,{host:$('group-management'),el,button,edit,api,refresh});
  rosterWorkspace.update(snapshot,agentRow);
  const spaces=$('workspace-list');spaces.replaceChildren();
  for(const workspace of snapshot.workspaces||[])spaces.append(workspaceCard(workspace));

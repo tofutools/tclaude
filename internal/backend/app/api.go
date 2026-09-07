@@ -14,6 +14,7 @@ type API interface {
 	RetireAgent(context.Context, RetireAgentRequest) (AgentResult, error)
 	ReactivateAgent(context.Context, ReactivateAgentRequest) (AgentResult, error)
 	CreateGroup(context.Context, CreateGroupRequest) (GroupResult, error)
+	UpdateGroup(context.Context, UpdateGroupRequest) (GroupResult, error)
 	Launch(context.Context, LaunchRequest) (OperationResult, error)
 	Observe(context.Context, ObserveRequest) (ObservationResult, error)
 	Interact(context.Context, InteractRequest) (OperationResult, error)
