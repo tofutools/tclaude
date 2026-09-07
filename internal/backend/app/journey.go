@@ -184,7 +184,15 @@ func (s *Service) createWorkspace(ctx context.Context, request RequestContext, i
 		return WorkspaceResult{}, err
 	}
 	if admitted.Repeated {
-		return workspaceResult(admitted.Workspace), nil
+		result := workspaceResult(admitted.Workspace)
+		switch admitted.Operation.State {
+		case model.OperationSucceeded:
+			return result, nil
+		case model.OperationRefused, model.OperationFailed:
+			return result, fail(ErrUnavailable, "workspace effect was refused or failed")
+		default:
+			return result, fail(ErrUncertain, "workspace effect has not conclusively succeeded")
+		}
 	}
 	workflowCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancel()
@@ -196,11 +204,13 @@ func (s *Service) createWorkspace(ctx context.Context, request RequestContext, i
 		// The existing inspection port returns its private registration receipt;
 		// it does not create a worktree or write a Git ownership marker.
 		effectErr = permit.Consume(workflowCtx)
-		if effectErr == nil {
-			effect, effectErr = s.workspaceHost.InspectWorkspace(workflowCtx, workspace)
-		}
-		if effectErr != nil || effect.Disposition != ports.EffectAccepted {
+		if effectErr != nil {
 			effect.Disposition = ports.EffectRefused
+		} else {
+			effect, effectErr = s.workspaceHost.InspectWorkspace(workflowCtx, workspace)
+			if effect.Disposition == "" {
+				effect.Disposition = ports.EffectUnknown
+			}
 		}
 	} else {
 		effect, effectErr = s.workspaceHost.CreateCheckout(workflowCtx, ports.CheckoutCreateRequest{WorkspaceID: id, Intent: intent}, permit)
@@ -227,11 +237,11 @@ func (s *Service) createWorkspace(ctx context.Context, request RequestContext, i
 	if settleErr != nil {
 		return WorkspaceResult{}, settleErr
 	}
+	if effect.Disposition == ports.EffectUnknown {
+		return workspaceResult(stored), fail(ErrUncertain, "workspace effect is uncertain: %s", detail)
+	}
 	if effectErr != nil {
 		return workspaceResult(stored), effectErr
-	}
-	if effect.Disposition == ports.EffectUnknown {
-		return workspaceResult(stored), fail(ErrUncertain, "workspace effect is uncertain")
 	}
 	if effect.Disposition != ports.EffectAccepted {
 		return workspaceResult(stored), fail(ErrUnavailable, "workspace creation refused")
