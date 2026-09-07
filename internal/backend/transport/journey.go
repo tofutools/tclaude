@@ -197,6 +197,7 @@ type workAttemptView struct {
 	SettledAt   *time.Time             `json:"settled_at,omitempty"`
 }
 type workRunView struct {
+	Scope                 model.WorkScope         `json:"scope"`
 	Graph                 *model.WorkGraph        `json:"graph,omitempty"`
 	DefinitionClosure     []model.DefinitionRef   `json:"definition_closure,omitempty"`
 	NodeAttempts          []model.WorkNodeAttempt `json:"node_attempts,omitempty"`
@@ -270,7 +271,7 @@ func projectWork(result app.WorkRunResult) workResultView {
 	for _, e := range result.Evidence {
 		evidence = append(evidence, workEvidenceView{e.ID, e.WorkRunID, e.Step, e.Attempt, e.Kind, projectWorkActor(e.Reporter), e.ArtifactRevision, e.Passed, e.Detail, e.RecordedAt, e.Revision})
 	}
-	view := workResultView{Run: workRunView{ID: run.ID, RequestID: run.RequestID, Requester: projectWorkActor(run.Requester), Spec: run.Spec, WorkspaceUseID: run.WorkspaceUseID, WorkerExecutionID: run.WorkerExecutionID, State: run.State, Attempts: attempts, Revision: run.Revision, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt, Graph: run.Graph, DefinitionClosure: run.DefinitionClosure, NodeAttempts: run.NodeAttempts, ControlState: run.ControlState, Outcome: run.Outcome, Deadline: run.Deadline, CancellationRequested: run.CancellationRequested}, Evidence: evidence}
+	view := workResultView{Run: workRunView{Scope: run.Scope, ID: run.ID, RequestID: run.RequestID, Requester: projectWorkActor(run.Requester), Spec: run.Spec, WorkspaceUseID: run.WorkspaceUseID, WorkerExecutionID: run.WorkerExecutionID, State: run.State, Attempts: attempts, Revision: run.Revision, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt, Graph: run.Graph, DefinitionClosure: run.DefinitionClosure, NodeAttempts: run.NodeAttempts, ControlState: run.ControlState, Outcome: run.Outcome, Deadline: run.Deadline, CancellationRequested: run.CancellationRequested}, Evidence: evidence}
 	view.NodeEvidence = make([]workNodeEvidenceView, 0, len(result.NodeEvidence))
 	for _, e := range result.NodeEvidence {
 		view.NodeEvidence = append(view.NodeEvidence, workNodeEvidenceView{e.ID, e.RequestID, e.Attempt, projectWorkActor(e.Reporter), e.Kind, e.ArtifactRevision, e.Passed, e.Disposition, e.Detail, e.RecordedAt, e.Revision})
