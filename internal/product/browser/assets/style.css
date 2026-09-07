@@ -5,4 +5,8 @@
 #terminal-tabs [data-connection="disconnected"], #terminal-tabs [data-connection="unavailable"] { color: #9da7b5; }
 .terminal-panel { overflow: auto; }
 .terminal-panel[hidden] { display: none; }
+
+#terminal[data-layout=split]{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:12px}#terminal[data-layout=split] .terminal-panel{min-width:0;overflow:auto;max-height:70vh;border:2px solid #2a3340;padding:4px}#terminal[data-layout=split] .terminal-panel.selected{border-color:#79b8ff}#terminals>.toolbar{flex-wrap:wrap}
+
+#terminal-dashboard-link{display:none}.terminal-window header,.terminal-window nav{display:none}.terminal-window #terminal-dashboard-link{display:inline}.terminal-window main{padding:12px;max-width:none}
 #roster>.toolbar{flex-wrap:wrap;margin:12px 0}#roster [aria-label='Search agents']{min-width:180px;flex:1}#roster [role=status] p{overflow-wrap:anywhere}
