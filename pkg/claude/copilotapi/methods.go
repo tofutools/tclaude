@@ -28,6 +28,7 @@ const (
 	// events, which is why they are modelled together — see the "state" section
 	// of the package docs.
 	MethodSessionIsProcessing = "session.metadata.isProcessing"
+	MethodSessionTasksList    = "session.tasks.list"
 	MethodSessionActivity     = "session.metadata.activity"
 	MethodSessionPermissions  = "session.permissions.pendingRequests"
 )
@@ -301,4 +302,13 @@ func (c *Client) PendingPermissionRequests(
 		return nil, err
 	}
 	return result.Items, nil
+}
+
+// Tasks returns the session's current task registry, including finished tasks.
+func (c *Client) Tasks(ctx context.Context, sessionID string) ([]Task, error) {
+	var result struct {
+		Tasks []Task `json:"tasks"`
+	}
+	err := c.Call(ctx, MethodSessionTasksList, map[string]string{"sessionId": sessionID}, &result)
+	return result.Tasks, err
 }

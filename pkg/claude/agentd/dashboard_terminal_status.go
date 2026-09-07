@@ -71,6 +71,7 @@ func terminalStatusForSessions(
 		} else {
 			out.SubagentCount = pick.SubagentCount
 		}
+		out.SubagentCount = copilotAPISubagentCount(pick, out.SubagentCount)
 		background := backgroundCountsOnRead(pick, true)
 		out.BgShellCount = background.Shells
 		out.MonitorCount = background.Monitors
