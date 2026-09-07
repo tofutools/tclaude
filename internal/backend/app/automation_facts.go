@@ -3,15 +3,21 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/ports"
 )
 
-const maxAutomationCausalDepth = 8
+const (
+	maxAutomationCausalDepth  = 8
+	maxAutomationCollectPages = 4
+	automationCollectPageSize = 64
+)
 
 // IngestTrustedAutomationFacts is intentionally not part of the public API.
 // Only composition-owned read-only collectors receive this narrow interface.
@@ -30,6 +36,156 @@ func (s *Service) IngestTrustedAutomationFacts(ctx context.Context, source strin
 		normalized[i] = fact
 	}
 	return s.store.AppendAutomationFacts(ctx, source, normalized)
+}
+
+// ReportAutomationSourceFailure is a composition-only negative-evidence seam.
+// It clears an in-progress dwell/debounce episode for the exact configured
+// source and target without fabricating a positive fact or changing cooldown.
+func (s *Service) ReportAutomationSourceFailure(ctx context.Context, source string, resource model.AutomationFactResource, observedAt time.Time) error {
+	if source == "" || source == model.AutomationSourceApplication || observedAt.IsZero() || observedAt.After(s.now().UTC().Add(time.Minute)) {
+		return ErrInvalid
+	}
+	if err := validateAutomationFactResource(resource); err != nil {
+		return err
+	}
+	return s.resetAutomationTriggerEpisodes(ctx, source, resource, observedAt.UTC())
+}
+
+func (s *Service) resetAutomationTriggerEpisodes(ctx context.Context, source string, resource model.AutomationFactResource, observedAt time.Time) error {
+	rules, err := s.store.ListAutomationRules(ctx, false)
+	if err != nil {
+		return err
+	}
+	var resetErrors []error
+	for _, rule := range rules {
+		if !rule.Enabled {
+			continue
+		}
+		revision, readErr := s.store.AutomationRuleRevision(ctx, rule.HeadRevisionID)
+		if readErr != nil {
+			resetErrors = append(resetErrors, readErr)
+			continue
+		}
+		condition := revision.Condition.Trigger
+		if revision.Condition.Kind != model.AutomationTrigger || condition == nil || condition.SourceID != source || condition.Resource != resource {
+			continue
+		}
+		state, stateErr := s.store.AutomationConditionState(ctx, rule.ID)
+		if stateErr != nil {
+			resetErrors = append(resetErrors, stateErr)
+			continue
+		}
+		expected := state.Revision
+		state.DwellEpisodeID = ""
+		state.DwellSince, state.DebounceAt, state.DebouncePayload = nil, nil, nil
+		state.ObservedAt = observedAt
+		if _, _, advanceErr := s.store.AdvanceTrigger(ctx, state, nil, rule.Revision, expected); advanceErr != nil {
+			resetErrors = append(resetErrors, advanceErr)
+		}
+	}
+	return errors.Join(resetErrors...)
+}
+
+func (s *Service) collectAutomationFacts(ctx context.Context) error {
+	if len(s.automationFacts) == 0 {
+		return nil
+	}
+	sources := make(map[string]ports.AutomationFactSource, len(s.automationFacts))
+	for _, source := range s.automationFacts {
+		if source != nil && strings.TrimSpace(source.SourceID()) != "" {
+			if _, exists := sources[source.SourceID()]; !exists {
+				sources[source.SourceID()] = source
+			}
+		}
+	}
+	rules, err := s.store.ListAutomationRules(ctx, false)
+	if err != nil {
+		return err
+	}
+	type target struct {
+		source   string
+		resource model.AutomationFactResource
+	}
+	targets := make(map[target]struct{})
+	for _, rule := range rules {
+		if !rule.Enabled {
+			continue
+		}
+		revision, readErr := s.store.AutomationRuleRevision(ctx, rule.HeadRevisionID)
+		if readErr != nil {
+			return readErr
+		}
+		condition := revision.Condition.Trigger
+		if revision.Condition.Kind == model.AutomationTrigger && condition != nil && condition.SourceID != model.AutomationSourceApplication {
+			targets[target{source: condition.SourceID, resource: condition.Resource}] = struct{}{}
+		}
+	}
+	var collectionErrors []error
+	for configured := range targets {
+		source := sources[configured.source]
+		if source == nil {
+			if resetErr := s.resetAutomationTriggerEpisodes(ctx, configured.source, configured.resource, s.now().UTC()); resetErr != nil {
+				collectionErrors = append(collectionErrors, resetErr)
+			}
+			continue
+		}
+		cursor := ""
+		seenCursor := map[string]bool{"": true}
+		collected := false
+		failed := false
+		complete := false
+		for page := 0; page < maxAutomationCollectPages; page++ {
+			batch, collectErr := source.CollectAutomationFacts(ctx, ports.AutomationFactCollectRequest{Resource: configured.resource, Cursor: cursor, Limit: automationCollectPageSize, Now: s.now().UTC()})
+			if collectErr != nil {
+				failed = true
+				break
+			}
+			if len(batch.Facts) > automationCollectPageSize {
+				collectionErrors = append(collectionErrors, fail(ErrInvalid, "automation fact source %s exceeded its bounded page", configured.source))
+				failed = true
+				break
+			}
+			for _, fact := range batch.Facts {
+				if fact.Resource != configured.resource {
+					collectionErrors = append(collectionErrors, fail(ErrInvalid, "automation fact source %s returned an unconfigured resource", configured.source))
+					failed = true
+					break
+				}
+			}
+			if failed {
+				break
+			}
+			if len(batch.Facts) > 0 {
+				collected = true
+				if ingestErr := s.IngestTrustedAutomationFacts(ctx, configured.source, batch.Facts); ingestErr != nil {
+					collectionErrors = append(collectionErrors, ingestErr)
+					failed = true
+					break
+				}
+			}
+			if batch.NextCursor == "" {
+				complete = true
+				break
+			}
+			if seenCursor[batch.NextCursor] {
+				collectionErrors = append(collectionErrors, fail(ErrInvalid, "automation fact source %s repeated its cursor", configured.source))
+				failed = true
+				break
+			}
+			seenCursor[batch.NextCursor] = true
+			cursor = batch.NextCursor
+		}
+		if !complete && !failed {
+			collectionErrors = append(collectionErrors, fail(ErrConflict, "automation fact source %s exceeded bounded catch-up", configured.source))
+			failed = true
+		}
+		if failed || !collected {
+			if resetErr := s.resetAutomationTriggerEpisodes(ctx, configured.source, configured.resource, s.now().UTC()); resetErr != nil {
+				collectionErrors = append(collectionErrors, resetErr)
+			}
+		}
+	}
+	return errors.Join(collectionErrors...)
 }
 
 func validateNormalizedAutomationFact(fact model.NormalizedFact, application bool) error {
@@ -110,10 +266,12 @@ func (s *Service) reconcileTriggerRule(ctx context.Context, rule model.Automatio
 	for _, fact := range facts {
 		expected := state.Revision
 		state.SourceCursor = strconv.FormatUint(fact.Sequence, 10)
-		state.ObservedAt = fact.ObservedAt.UTC()
 		matchingKind := fact.Kind == condition.FactKind
 		matchingValue := containsString(condition.Values, fact.Value)
 		fresh := !fact.ObservedAt.After(now.Add(time.Minute)) && now.Sub(fact.ObservedAt.UTC()) <= condition.Freshness
+		if matchingKind {
+			state.ObservedAt = fact.ObservedAt.UTC()
+		}
 		if matchingKind && (!matchingValue || !fresh) {
 			state.DwellSince, state.DebounceAt, state.DebouncePayload = nil, nil, nil
 			state.DwellEpisodeID = ""
@@ -121,7 +279,7 @@ func (s *Service) reconcileTriggerRule(ctx context.Context, rule model.Automatio
 			if condition.Dwell > 0 {
 				if state.DwellEpisodeID == "" {
 					start := fact.ObservedAt.UTC()
-					state.DwellEpisodeID, state.DwellSince = fact.EventID, &start
+					state.DwellEpisodeID, state.DwellSince = fact.EventID+":"+start.Format(time.RFC3339Nano), &start
 				}
 				if state.DwellSince != nil {
 					fireAt := state.DwellSince.Add(condition.Dwell)
@@ -203,6 +361,12 @@ func (s *Service) dueTriggerOccurrence(ctx context.Context, rule model.Automatio
 	}
 	occurrence := &model.AutomationOccurrence{ID: id, RuleID: rule.ID, RuleRevisionID: revision.ID, SourceOccurrenceKey: key, RequestID: requestID, Requester: model.AutomationPrincipal(string(id), revision.Owner, revision.Delegation), ParentOccurrenceID: fact.ParentOccurrenceID, CausalDepth: fact.CausalDepth, EventAt: fact.OccurredAt.UTC(), EligibleAt: now, ExpiresAt: now.Add(revision.Policy.ExpiresAfter), State: occurrenceState, Recipients: recipients, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	state.DebounceAt, state.DebouncePayload = nil, nil
+	if condition.Dwell > 0 {
+		// A continuous true observation fires once. The episode identifier is
+		// retained until negative/stale evidence resets it; nil DwellSince marks
+		// the current episode as already emitted.
+		state.DwellSince = nil
+	}
 	cooldown := now.Add(condition.Cooldown)
 	state.CooldownUntil = &cooldown
 	return occurrence, nil
