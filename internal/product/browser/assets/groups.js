@@ -19,6 +19,14 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
   {name:'label',label:'Link label',required:false,value:details.LinkLabel||''}
  ],f=>api('/v2/groups/'+encodeURIComponent(group.ID)+'/details',{expected_revision:group.Revision,details:{Description:f.description,Mission:f.mission,LinkURL:f.url,LinkLabel:f.label}},'PUT'),{skipUnchanged:true})));
 
+ controls.append(button('Save group as team template',async()=>{
+  const capturedGroup=structuredClone(group),capturedAgents=structuredClone(agents);
+  const {openTeamEditor,teamDraftFromGroup}=await import('/team-editor.js');
+  if(!card.isConnected)return;
+  const draft=teamDraftFromGroup(capturedGroup,capturedAgents);
+  await openTeamEditor({api,draft,canOpen:()=>card.isConnected,onSaved:refresh});
+ }));
+
  controls.append(button('Clone group',async()=>{
   const [current,profiles]=await Promise.all([api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration'),api('/v2/configuration-profiles')]);if(!card.isConnected)return;
   const members=(group.Members||[]).map(id=>agents.find(a=>a.ID===id)),active=members.filter(a=>a?.Lifecycle==='active');

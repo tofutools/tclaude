@@ -6,17 +6,34 @@ const opt = (value, label = value) => ({value, label});
 const draftOf = ({Definition: d, Revision: r}) => ({ID: d.ID, Name: d.Name, Kind: 'team', SchemaVersion: r.SchemaVersion, Source: r.Source, Parameters: clone(r.Parameters || []), Dependencies: clone(r.Dependencies || []), Team: clone(r.Team)});
 const blank = () => ({ID: freshID('definition_'), Name: 'New team', Kind: 'team', SchemaVersion: 1, Source: 'Created in the team editor.', Parameters: [], Dependencies: [], Team: {Members: [], Waves: [], Briefings: [], WorkspacePolicy: 'shared', AdvisoryPhases: [], Automation: []}});
 
-export async function openTeamEditor({api, result, onSaved}) {
+export function teamDraftFromGroup(group, agents) {
+  const draft = blank(), byID = new Map(agents.map(agent => [agent.ID, agent]));
+  const members = (group.Members || []).map(id => {
+    const agent = byID.get(id);
+    if (!agent) throw new Error('Reload the group before capturing its member settings.');
+    return agent;
+  }).filter(agent => agent.Lifecycle === 'active');
+  draft.Name = group.Name + ' team';
+  draft.Source = `Captured displayed group ${group.ID} at revision ${group.Revision}. Member settings are independent copies; review before saving.\n` +
+    [group.Details?.Description, group.Details?.Mission].filter(Boolean).join('\n');
+  draft.Team.Members = members.map((agent, index) => ({Key: 'member_' + (index + 1), Name: agent.Name, Desired: clone(agent.Desired), Roles: [], Owner: false, Required: true, BriefingIDs: []}));
+  draft.Team.Waves = members.length ? [{ID: 'initial', MemberKeys: draft.Team.Members.map(member => member.Key), DependsOn: [], RequiredReady: true, RequiredBriefs: true}] : [];
+  draft.Team.WorkspacePolicy = 'per_member';
+  return draft;
+}
+
+export async function openTeamEditor({api, result, draft, onSaved, canOpen = () => true}) {
   const [authority, profiles, rules] = await Promise.all([api('/v2/authority'), api('/v2/configuration-profiles'), api('/v2/automation/rules')]);
   const configurations = await Promise.all((profiles || []).filter(p => !p.Archived).map(p => api('/v2/configuration-profiles/' + encodeURIComponent(p.ID) + '?revision_id=' + encodeURIComponent(p.CurrentRevisionID))));
   const rhythms = await Promise.all((rules || []).filter(r => !r.Tombstoned).map(r => api('/v2/automation/rules/' + encodeURIComponent(r.ID))));
-  return new TeamEditor({api, result, onSaved, roles: authority.Roles || [], configurations, rhythms});
+  if (!canOpen()) return;
+  return new TeamEditor({api, result, draft, onSaved, roles: authority.Roles || [], configurations, rhythms});
 }
 
 class TeamEditor {
-  constructor({api, result, onSaved, roles, configurations, rhythms}) {
+  constructor({api, result, draft, onSaved, roles, configurations, rhythms}) {
     Object.assign(this, {api, onSaved, roles, configurations, rhythms});
-    this.adopt(result ? draftOf(result) : blank(), result?.Definition.Revision || 0);
+    this.adopt(result ? draftOf(result) : draft || blank(), result?.Definition.Revision || 0);
     this.tab = 'Members'; this.unapplied = false; this.busy = false;
     this.dialog = el('dialog'); this.dialog.id = 'team-editor'; this.dialog.setAttribute('aria-labelledby', 'team-editor-heading');
     const title = el('h2', 'Team template editor'); title.id = 'team-editor-heading';
@@ -30,7 +47,9 @@ class TeamEditor {
     const tabs = el('nav'); tabs.className = 'process-toolbar'; tabs.setAttribute('aria-label', 'Team authoring sections');
     for (const name of ['Members', 'Waves', 'Briefings', 'Workspace and phases', 'Parameters', 'Rhythms', 'Source']) tabs.append(button(name, () => { if (this.discard()) { this.tab = name; this.render(); } }));
     this.content = el('div'); this.content.id = 'team-editor-content';
-    this.dialog.append(title, this.toolbar, tabs, this.status, this.error, this.content); document.body.append(this.dialog); this.dialog.showModal();
+    const captureNotice = el('p');
+    if (draft) captureNotice.textContent = 'Captured active direct members in displayed order, with independent desired settings. Retired members, child groups, owner and role authority, running work, messages and rhythms are not copied. Description and mission are retained as source notes, not sent as briefings. Review owner, roles, workspaces and briefings here before saving. Nothing starts when you save.';
+    this.dialog.append(title, captureNotice, this.toolbar, tabs, this.status, this.error, this.content); document.body.append(this.dialog); this.dialog.showModal();
     this.dialog.addEventListener('cancel', e => { e.preventDefault(); this.close(); });
     this.beforeUnload = e => { if (this.dirty() || this.unapplied) { e.preventDefault(); e.returnValue = ''; } };
     window.addEventListener('beforeunload', this.beforeUnload); this.render();
