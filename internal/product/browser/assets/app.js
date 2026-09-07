@@ -161,7 +161,7 @@ function workspaceCard(space){
 const workspaceFields=[{name:'repository',label:'Repository path'},{name:'path',label:'Checkout path'},{name:'base',label:'Base commit or branch',value:'HEAD'},{name:'branch',label:'Worker branch'}];
 $('create-checkout').onclick=()=>edit('Create owned checkout',workspaceFields,f=>api('/v2/workspaces/create',{request_id:f.requestID,id:f.requestID,intent:{Repository:f.repository,IntendedPath:f.path,BaseRevision:f.base,Branch:f.branch,Provenance:'platform_created',Ownership:'owned',RetainOnFinish:true}}));
 $('register-workspace').onclick=()=>edit('Register existing directory',[{name:'path',label:'Directory path'}],f=>api('/v2/workspaces/register',{request_id:f.requestID,id:f.requestID,intent:{IntendedPath:f.path,Provenance:'registered',Ownership:'external',RetainOnFinish:true}}));
-$('refresh-history').onclick=()=>edit('Refresh configured history source',[{name:'harness',label:'Harness',options:['claude','codex','opencode','copilot']},{name:'source',label:'Configured source name'}],f=>api('/v2/history/refresh',{harness:f.harness,source:f.source}));
+$('refresh-history').onclick=()=>edit('Refresh configured history source',[{name:'harness',label:'Harness',options:['claude','codex','opencode','copilot']},{name:'source',label:'Configured source name'}],async f=>{await api('/v2/history/refresh',{harness:f.harness,source:f.source});await historyWorkspace.load()});
 function selection(entry,point){return{ConversationID:entry.ConversationID,ExpectedConversationRevision:entry.Revision,PointID:point?.ID||'',ExpectedPointRevision:point?.Revision||0}}
 function startWork(read){
  const spaces=(snapshot.workspaces||[]).filter(s=>s.State==='available');const agents=(snapshot.agents||[]).filter(a=>{const e=(snapshot.executions||[]).find(e=>e.id===a.PrimaryExecutionID);return !e||['exited','failed'].includes(e.state)});
@@ -170,7 +170,7 @@ function startWork(read){
   {name:'workspace',label:'Workspace',options:spaces.map(s=>({value:s.ID,label:s.Observation.ActualPath||s.ID}))},
   {name:'worker',label:'Worker',options:agents.map(a=>({value:a.ID,label:a.Name}))},
   {name:'mode',label:'History use',options:[{value:'fresh_handoff',label:'Fresh conversation with handoff'},{value:'fork',label:'Exact fork (requires provider support)'}]},
-  {name:'point',label:'History point',options:[{value:'',label:'Persisted head'},...(read.Points||[]).map(p=>({value:p.ID,label:`${p.Kind} · ${p.ID}`}))]},
+  {name:'point',label:'History point',value:read.Point?.ID||'',options:[{value:'',label:'Persisted head'},...(read.Points||[]).map(p=>({value:p.ID,label:`${p.Kind} · ${p.ID}`}))]},
   {name:'handoff',label:'Handoff context (used for fresh conversation)',multiline:true,required:false},
   {name:'brief',label:'Work request and acceptance criteria',multiline:true}
  ],f=>{const space=spaces.find(s=>s.ID===f.workspace),worker=agents.find(a=>a.ID===f.worker),point=(read.Points||[]).find(p=>p.ID===f.point);return api('/v2/work',{request_id:f.requestID,id:f.requestID,spec:{SourceMode:f.mode,History:selection(read.Entry,point),FreshHandoff:f.handoff,WorkspaceID:space.ID,WorkspaceRevision:space.Revision,WorkerAgentID:worker.ID,WorkerAgentRevision:worker.Revision,WorkerDesired:{...worker.Desired,WorkingDirectory:space.Observation.ActualPath},Brief:f.brief,Outcome:{Mode:'human_decision'}}})});

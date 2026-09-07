@@ -32,7 +32,7 @@ class HistoryWorkspace {
  metadata(entry,toggle){return this.edit(toggle?(entry.Archived?'Restore conversation':'Archive conversation'):'History title',toggle?[{name:'confirm',label:'Conversation',options:[{value:entry.ConversationID,label:`${entry.Title||entry.ConversationID} · ${entry.ConversationID}`}]}]:[{name:'title',label:'Title',value:entry.Title||'',required:false}],async f=>{await this.api('/v2/history/metadata',{request_id:f.requestID,conversation_id:entry.ConversationID,expected_revision:entry.Revision,title:toggle?entry.Title:f.title,archived:toggle?!entry.Archived:!!entry.Archived});await this.load()})}
  async read(entry,point){
   const ticket=(this.readGeneration||0)+1;this.readGeneration=ticket;
-  const read=await this.api('/v2/history/read',{selection:this.selection(entry,point)});if(ticket!==this.readGeneration)return;this.showRead(read);
+  const read=await this.api('/v2/history/read',{selection:this.selection(entry,point)});if(ticket!==this.readGeneration)return;this.entries=this.entries.map(e=>e.ConversationID===read.Entry.ConversationID?read.Entry:e);this.render();this.showRead(read);
  }
  partText(part){if(part.Omitted)return `[${part.Kind||'part'} omitted${part.MediaType?' · '+part.MediaType:''}]`;return part.Text||`[${part.Kind||'unsupported'}${part.MediaType?' · '+part.MediaType:''}]`}
  exportText(read){return [`${read.Entry.Title||read.Entry.ConversationID}\n${read.Entry.ConversationID}\n${this.coverageText(read.Coverage)}`,read.Point?`Selected ${read.Point.Kind} · ${read.Point.ID}`:'Selected persisted head',...(read.Turns||[]).map(t=>`${t.Role}\n${(t.Parts||[]).map(p=>this.partText(p)).join('\n')}`)].join('\n\n')}

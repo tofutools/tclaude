@@ -2,6 +2,7 @@ package browser
 
 import (
 	"context"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -51,9 +52,13 @@ func (historyBrowserReader) Read(_ context.Context, selection ports.HistorySourc
 
 func TestBrowserHistoryFiltersReadsArchivesAndPreservesConflicts(t *testing.T) {
 	ctx, page, operator := processEditorBrowserWithHistory(t, historyBrowserSources{}, historyBrowserProvider{})
-	var refreshed app.HistorySearchResult
-	require.NoError(t, operator.Call(ctx, "POST", "/v2/history/refresh", map[string]any{"harness": "codex", "source": "fixture"}, &refreshed))
 	page.MustElement("[data-tab=history]").MustClick()
+	page.MustElementR("#histories [role=status]", "0 conversations")
+	page.MustElement("#refresh-history").MustClick()
+	page.MustElement("#editor [name=harness]").MustSelect("codex")
+	page.MustElement("#editor [name=source]").MustInput("fixture")
+	page.MustElementR("#editor button", "^Save$").MustClick()
+	page.MustElement("#editor").MustWaitInvisible()
 	page.MustElementR("#histories [role=status]", "2 conversations")
 	page.MustElement("[aria-label='History harness']").MustSelect("claude")
 	page.MustElementR("#histories [role=status]", "0 conversations")
@@ -79,8 +84,32 @@ func TestBrowserHistoryFiltersReadsArchivesAndPreservesConflicts(t *testing.T) {
 	page.MustElementR("#histories button", "^Read selected point$").MustClick()
 	page.MustElementR("#histories p", "1 matching turns of 1")
 	require.Len(t, page.MustElements(".history-turn"), 1)
-	// Refresh the catalog's revision after indexing the native read.
-	page.MustElementR("#histories form button", "^Search$").MustClick()
+	// The displayed native point remains selected in the real public work request.
+	repo := t.TempDir()
+	for _, args := range [][]string{{"init", "-b", "main", repo}, {"-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "base"}} {
+		output, err := exec.Command("git", args...).CombinedOutput()
+		require.NoError(t, err, "%s", output)
+	}
+	var workspace app.WorkspaceResult
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/workspaces/register", map[string]any{"request_id": "workspace", "id": "workspace", "intent": model.WorkspaceIntent{IntendedPath: repo, Provenance: model.WorkspaceRegistered, Ownership: model.WorkspaceExternal, RetainOnFinish: true}}, &workspace))
+	desired := model.DesiredConfiguration{Harness: "codex", Model: "fixture", WorkingDirectory: workspace.Workspace.Observation.ActualPath, Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/agents", map[string]any{"id": "history_worker", "name": "History worker", "desired": desired}, nil))
+	page.MustElement("#refresh").MustClick()
+	page.MustElementR("#roster", "History worker")
+	pointID := page.MustElement("[aria-label='History read point']").MustProperty("value").Str()
+	page.MustElementR("#histories button", "^Start work from this history$").MustClick()
+	require.Equal(t, pointID, page.MustElement("#editor [name=point]").MustProperty("value").Str())
+	page.MustElement("#editor [name=mode]").MustSelect("Exact fork (requires provider support)")
+	page.MustElement("#editor [name=brief]").MustInput("Review this selected point")
+	page.MustEval(`() => {const original=window.fetch;window.workRequest=null;window.fetch=(url,options)=>{if(url==='/v2/work')window.workRequest=JSON.parse(options.body);return original(url,options)}}`)
+	page.MustElementR("#editor button", "^Save$").MustClick()
+	page.MustElementR("#editor-error", "not supported")
+	require.Equal(t, pointID, page.MustEval(`() => window.workRequest.spec.History.PointID`).Str())
+	page.MustElement("#cancel").MustClick()
+	// A native read updates the displayed catalog revision without a manual search.
+	page.MustElementR("#histories button", "^Close conversation$").MustClick()
+	page.MustElementR("#histories button", "^Read conversation$").MustClick()
+	page.MustElementR("#histories p", "2 matching turns of 2")
 	page.MustElementR("#histories button", "^Edit title$").MustClick()
 	page.MustElement("#editor [name=title]").MustSelectAllText().MustInput("Local edit")
 	var current app.HistorySearchResult
