@@ -1,7 +1,8 @@
 'use strict';
-function renderGroupControls(snapshot,{host,el,button,edit,api,refresh}) {
- host.replaceChildren();const agents=snapshot.agents||[],groups=snapshot.groups||[],cards=new Map();
- for(const group of snapshot.groups||[]){
+function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentation}) {
+ host.replaceChildren();const agents=snapshot.agents||[],groups=[...(snapshot.groups||[])],cards=new Map(),rank=new Map((presentation?.prefs.GroupOrder||[]).map((id,index)=>[id,index]));groups.sort((a,b)=>(rank.get(a.ID)??Number.MAX_SAFE_INTEGER)-(rank.get(b.ID)??Number.MAX_SAFE_INTEGER));
+ const orderStatus=el('p',presentation?.saved.textContent||'','muted');orderStatus.id='group-order-status';orderStatus.setAttribute('role','status');host.append(orderStatus);if(presentation)host.append(button('Reload saved group order',()=>presentation.load(false)));
+ for(const group of groups){
   const card=el('article',undefined,'card');card.dataset.groupId=group.ID;cards.set(group.ID,card);card.append(el('h3',group.Name),el('code',group.ID));
  const parent=groups.find(g=>g.ID===group.ParentGroupID);card.append(el('p',parent?'Parent: '+parent.Name+' · '+parent.ID:'Top level'));
  card.append(button('Move group',()=>{edit('Move group',[{name:'parent',label:'Parent group (organization only; no inherited authority)',required:false,value:group.ParentGroupID||'',options:[{value:'',label:'Top level'},...groups.filter(g=>g.ID!==group.ID).map(g=>({value:g.ID,label:g.Name+' · '+g.ID}))]}],f=>{return api('/v2/groups/'+encodeURIComponent(group.ID)+'/parent',{request_id:f.requestID,parent_group_id:f.parent,expected_revision:group.Revision},'PUT')},{skipUnchanged:true})}));
@@ -19,6 +20,8 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh}) {
   document.getElementById('editor-fields').append(el('p',saved.Revision.Desired.Harness+' · '+saved.Revision.Desired.Model+' · '+saved.Revision.Desired.WorkingDirectory+' — creates the agent and membership; start remains explicit.'));
  }));
 
+ const siblings=groups.filter(g=>(g.ParentGroupID||'')===(group.ParentGroupID||'')),position=siblings.findIndex(g=>g.ID===group.ID);
+ for(const [label,delta] of [['Move group earlier',-1],['Move group later',1]]){const move=button(label,async()=>{const ids=groups.map(g=>g.ID),a=ids.indexOf(group.ID),b=ids.indexOf(siblings[position+delta].ID);[ids[a],ids[b]]=[ids[b],ids[a]];await presentation.change({GroupOrder:ids})});move.disabled=!presentation?.loaded||position+delta<0||position+delta>=siblings.length;controls.append(move)}
   controls.append(button('Edit name and members',()=>{
    const ordered=[...(group.Members||[]).map(id=>agents.find(a=>a.ID===id)).filter(Boolean),...agents.filter(a=>!group.Members?.includes(a.ID)&&a.Lifecycle!=='retired')];
    edit('Edit group',[{name:'name',label:'Group name',value:group.Name},{name:'members',label:'Members (removing a member does not stop or retire it)',multiple:true,required:false,value:group.Members||[],options:ordered.map(a=>({value:a.ID,label:a.Name+(a.ID===group.OwnerAgentID?' (owner)':'')}))}],f=>{

@@ -27,12 +27,20 @@ func TestPresentationPreferencesRequireOperatorCASAndSurviveReopen(t *testing.T)
 	p.MusicVolume = .42
 	p.SoundEnabled = true
 	p.NeutralTerminals = true
+	p.GroupOrder = []model.GroupID{"second", "first"}
 	_, err = service.PutPresentation(ctx, app.PutPresentationRequest{Principal: model.AgentPrincipal("agent"), Preferences: p})
 	require.ErrorIs(t, err, app.ErrUnauthorized)
 	saved, err := service.PutPresentation(ctx, app.PutPresentationRequest{Principal: operator, Preferences: p})
 	require.NoError(t, err)
 	_, err = service.PutPresentation(ctx, app.PutPresentationRequest{Principal: operator, Preferences: p})
 	require.ErrorIs(t, err, app.ErrConflict)
+	invalid := p
+	invalid.GroupOrder = []model.GroupID{"same", "same"}
+	_, err = service.PutPresentation(ctx, app.PutPresentationRequest{Principal: operator, Preferences: invalid, ExpectedRevision: 1})
+	require.ErrorIs(t, err, app.ErrInvalid)
+	invalid.GroupOrder = []model.GroupID{"bad/id"}
+	_, err = service.PutPresentation(ctx, app.PutPresentationRequest{Principal: operator, Preferences: invalid, ExpectedRevision: 1})
+	require.ErrorIs(t, err, app.ErrInvalid)
 	p.Channel = "https://untrusted.invalid"
 	_, err = service.PutPresentation(ctx, app.PutPresentationRequest{Principal: operator, Preferences: p, ExpectedRevision: 1})
 	require.ErrorIs(t, err, app.ErrInvalid)
