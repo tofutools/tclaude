@@ -577,3 +577,35 @@ Tool activity, user input and uncertain activity invalidate those conditions.
 Process liveness or an empty queue never establishes idle. Other providers
 currently report unknown activity for these conditions. Unsupported or stale
 observations break dwell eligibility.
+
+## Browser automation
+
+The Automation tab lists schedules, triggers, and standing orders. Create a
+message rule directly or select a saved process/team template. Templates remain
+pinned to their selected immutable revision when you reopen an existing rule.
+Choose explicit recipients, an authority owner, allowed actions and targets,
+configuration bounds, and an authority expiry. These bounds do not grant new
+permissions: each effect still needs the owner's current authority.
+
+Schedules accept a five-field cron expression with an IANA timezone or an
+interval. Trigger rules select a configured source, exact resource, matching
+values and freshness/dwell settings. Standing orders require a harness with
+same-continuation guidance support. Enable/disable preserves the authored
+revision and source cursor. Occurrence history shows per-recipient results and
+links to any resulting work; Run now admits a separate deduplicated occurrence.
+Process deadlines are relative to each occurrence's eligibility time.
+
+A team rule can reinforce an existing group or name a new group explicitly.
+A new-group ID is a fixed target, so a later occurrence cannot recreate it while
+it already exists. Workspace selections remain exact, including retained
+creation intents; editing a rule does not silently refresh its workspace pins.
+
+The CLI exposes the same activation mutation:
+
+```bash
+tclaude automation set-enabled RULE_ID --file activation.json
+```
+
+The file contains `request_id`, `expected_revision`, and `enabled`. Repeating
+that exact request is safe after a lost response; a changed request under the
+same ID is rejected.

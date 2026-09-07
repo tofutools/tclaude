@@ -74,6 +74,19 @@ func (s *Service) GetDefinition(ctx context.Context, req GetDefinitionRequest) (
 		}
 	}
 	record, err := s.store.Definition(ctx, req.DefinitionID)
+	if err != nil {
+		return DefinitionResult{}, err
+	}
+	if req.RevisionID != "" {
+		revision, readErr := s.store.DefinitionRevision(ctx, req.RevisionID)
+		if readErr != nil {
+			return DefinitionResult{}, readErr
+		}
+		if revision.DefinitionID != req.DefinitionID {
+			return DefinitionResult{}, ErrNotFound
+		}
+		record.Head = revision
+	}
 	return DefinitionResult{Definition: record.Definition, Revision: record.Head}, err
 }
 

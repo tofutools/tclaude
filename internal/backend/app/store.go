@@ -119,6 +119,7 @@ type OrchestrationStore interface {
 	SubmitDecision(context.Context, model.DecisionSubmission, model.AuthorityRequest, time.Time) (DecisionRecord, error)
 	ApplyGraphTransition(context.Context, GraphTransition) (WorkRunRecord, error)
 	SaveAutomationRule(context.Context, model.AutomationRule, model.AutomationRuleRevision, model.Revision) (AutomationRuleRecord, error)
+	SetAutomationEnabled(context.Context, SetAutomationEnabledRequest, time.Time) (model.AutomationRule, error)
 	SetAutomationRuleEnabled(context.Context, model.AutomationRuleID, model.Revision, bool, model.Principal, time.Time) (AutomationRuleRecord, error)
 	AutomationRule(context.Context, model.AutomationRuleID) (AutomationRuleRecord, error)
 	AutomationRuleRevision(context.Context, model.AutomationRuleRevisionID) (model.AutomationRuleRevision, error)

@@ -177,6 +177,12 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 		switch revision.Action.Kind {
 		case model.AutomationStartWork:
 			start := *revision.Action.Work
+			// Every occurrence owns its own fixed work deadline. The authored template
+			// may predate this tick; response-loss retries must reuse the same deadline.
+			start.Deadline = occurrence.Occurrence.EligibleAt.Add(revision.Policy.Deadline)
+			if start.Deadline.After(occurrence.Occurrence.ExpiresAt) {
+				start.Deadline = occurrence.Occurrence.ExpiresAt
+			}
 			start.RequestID = occurrence.Occurrence.RequestID
 			start.Scope.RuleID, start.Scope.OccurrenceID = occurrence.Occurrence.RuleID, occurrence.Occurrence.ID
 			workID := model.WorkRunID(deterministicOrchestrationID("work_", string(occurrence.Occurrence.ID)))

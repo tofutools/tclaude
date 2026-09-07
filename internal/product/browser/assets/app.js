@@ -16,17 +16,21 @@ function empty(parent,text){parent.append(el('p',text,'empty'))}
 async function refresh(){
  snapshot=await api('/v2/snapshot');render();$('connection').textContent=`Updated ${new Date().toLocaleTimeString()}`;
 }
-function edit(title,fields,save){
+function edit(title,fields,save,{skipUnchanged=false}={}){
  $('editor-title').textContent=title;$('editor-fields').replaceChildren();$('editor-error').hidden=true;let fingerprint='',submissionID='';
  for(const field of fields){
   const label=el('label',field.label);let input;
   if(field.options){input=el('select');for(const option of field.options){const o=el('option',typeof option==='string'?option:option.label);o.value=typeof option==='string'?option:option.value;input.append(o)}}
   else input=el(field.multiline?'textarea':'input');
   if(field.file)input.type='file';
-  if(field.multiple)input.multiple=true;input.name=field.name;input.setAttribute('aria-label',field.label);if(!field.file&&(field.value!==undefined || !field.options))input.value=field.value??'';input.required=field.required!==false;label.append(input);$('editor-fields').append(label);
+  if(field.multiple)input.multiple=true;input.name=field.name;input.setAttribute('aria-label',field.label);
+  if(field.options&&field.value!==undefined){const values=field.multiple?(field.value||[]):[String(field.value)];for(const value of values){if(!Array.from(input.options).some(o=>o.value===String(value))){const o=el('option','Retained: '+value);o.value=value;input.append(o)}}if(field.multiple){for(const o of input.options)o.selected=values.includes(o.value)}else input.value=field.value}
+  else if(!field.file&&!field.options)input.value=field.value??'';
+  input.required=field.required!==false;label.append(input);$('editor-fields').append(label);
  }
+ const readForm=()=>{const data=new FormData($('editor-form')),form=Object.fromEntries(data);for(const field of fields)if(field.multiple)form[field.name]=data.getAll(field.name);return form};const initial=JSON.stringify(readForm());
  $('editor-form').onsubmit=async e=>{e.preventDefault();if(submitting)return;submitting=true;const submit=e.submitter;if(submit)submit.disabled=true;
-  try{const data=new FormData(e.target),form=Object.fromEntries(data);for(const field of fields)if(field.multiple)form[field.name]=data.getAll(field.name);const next=JSON.stringify(form,(_,value)=>value instanceof File?{name:value.name,size:value.size,modified:value.lastModified}:value);if(fingerprint!==next){fingerprint=next;submissionID=requestID()}form.requestID=submissionID;await save(form);$('editor').close();await refresh()}catch(error){showError(error)}finally{submitting=false;if(submit)submit.disabled=false}
+  try{const form=readForm();if(skipUnchanged&&JSON.stringify(form)===initial){$('editor').close();return}const next=JSON.stringify(form,(_,value)=>value instanceof File?{name:value.name,size:value.size,modified:value.lastModified}:value);if(fingerprint!==next){fingerprint=next;submissionID=requestID()}form.requestID=submissionID;await save(form);$('editor').close();await refresh()}catch(error){showError(error)}finally{submitting=false;if(submit)submit.disabled=false}
  };
  $('editor').showModal();
 }
@@ -102,6 +106,7 @@ async function selectTab(tab){
  if(tab==='activity')await renderActivity();
 
  if(tab==='processes')await renderDefinitions();
+ if(tab==='automation')await renderAutomation();
  if(tab==='decisions')await renderDecisions();
  if(tab==='access'){
   const data=await api('/v2/authority');const list=$('access-list');list.replaceChildren();
@@ -396,3 +401,9 @@ function parameterValues(parameters,form){const values={};parameters.forEach((p,
  const valid=p.Type==='string'?typeof value==='string':p.Type==='number'?typeof value==='number'&&Number.isFinite(value):p.Type==='boolean'?typeof value==='boolean':p.Type==='array'?Array.isArray(value):value!==null&&typeof value==='object'&&!Array.isArray(value);
  if(!valid)throw new Error(`Enter a valid ${p.Type} for ${p.Name}.`);values[p.Name]=value;
 });return values}
+
+let automationUI;
+async function renderAutomation(){
+ if(!automationUI){const {automationWorkspace}=await import('/automation.js');automationUI=automationWorkspace({api,el,button,edit,getSnapshot:()=>snapshot,openWork:async id=>{const result=await api('/v2/work/'+encodeURIComponent(id));await selectTab('work');$('work-list').replaceChildren(workCard(result));}})}
+ await automationUI.render($('automation-list'));
+}
