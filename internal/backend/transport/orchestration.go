@@ -121,6 +121,15 @@ func (h *Handler) RegisterOrchestrationAPI(api app.OrchestrationAPI) error {
 			return api.SetAutomationEnabled(ctx, app.SetAutomationEnabledRequest{Context: b.context(p), ID: model.AutomationRuleID(r.PathValue("id")), ExpectedRevision: b.ExpectedRevision, Enabled: b.Enabled})
 		})(w, r)
 	})
+	h.mux.HandleFunc("POST /v2/automation/rules/{id}/archived", func(w http.ResponseWriter, r *http.Request) {
+		journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
+			commandIdentity
+			ExpectedRevision model.Revision `json:"expected_revision"`
+			Archived         bool           `json:"archived"`
+		}) (any, error) {
+			return api.SetAutomationArchived(ctx, app.SetAutomationArchivedRequest{Context: b.context(p), ID: model.AutomationRuleID(r.PathValue("id")), ExpectedRevision: b.ExpectedRevision, Archived: b.Archived})
+		})(w, r)
+	})
 	h.mux.HandleFunc("POST /v2/automation/run", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
 		commandIdentity
 		RuleID               model.AutomationRuleID `json:"rule_id"`

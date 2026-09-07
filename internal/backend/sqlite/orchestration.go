@@ -770,7 +770,7 @@ func (s *Store) SaveAutomationRule(ctx context.Context, rule model.AutomationRul
 		rule.Revision, revision.Number = 1, 1
 		_, err = tx.ExecContext(ctx, `INSERT INTO automation_rules(id,name,head_revision_id,enabled,tombstoned,deployment_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, rule.ID, rule.Name, revision.ID, rule.Enabled, rule.Tombstoned, rule.DeploymentID, rule.Revision, nanos(rule.CreatedAt), nanos(rule.UpdatedAt))
 	} else {
-		result, updateErr := tx.ExecContext(ctx, `UPDATE automation_rules SET name=?,head_revision_id=?,enabled=?,tombstoned=?,deployment_id=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND deployment_id=?`, rule.Name, revision.ID, rule.Enabled, rule.Tombstoned, rule.DeploymentID, nanos(rule.UpdatedAt), rule.ID, expected, rule.DeploymentID)
+		result, updateErr := tx.ExecContext(ctx, `UPDATE automation_rules SET name=?,head_revision_id=?,enabled=?,tombstoned=?,deployment_id=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND deployment_id=? AND tombstoned=0`, rule.Name, revision.ID, rule.Enabled, rule.Tombstoned, rule.DeploymentID, nanos(rule.UpdatedAt), rule.ID, expected, rule.DeploymentID)
 		if updateErr != nil {
 			return app.AutomationRuleRecord{}, updateErr
 		}

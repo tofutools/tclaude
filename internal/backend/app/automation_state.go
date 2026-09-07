@@ -18,3 +18,16 @@ func (s *Service) SetAutomationEnabled(ctx context.Context, req SetAutomationEna
 	}
 	return s.store.SetAutomationEnabled(ctx, req, s.now().UTC())
 }
+
+func (s *Service) SetAutomationArchived(ctx context.Context, req SetAutomationArchivedRequest) (model.AutomationRule, error) {
+	if err := validateEffectContext(req.Context); err != nil {
+		return model.AutomationRule{}, err
+	}
+	if err := req.ID.Validate(); err != nil {
+		return model.AutomationRule{}, ErrInvalid
+	}
+	if req.ExpectedRevision == 0 {
+		return model.AutomationRule{}, ErrInvalid
+	}
+	return s.store.SetAutomationArchived(ctx, req, s.now().UTC())
+}

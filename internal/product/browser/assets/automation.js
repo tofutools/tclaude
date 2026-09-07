@@ -10,7 +10,7 @@ export function automationWorkspace({api, el, button, edit, getSnapshot, openWor
   let query = '', kindFilter = '', stateFilter = '', parent;
   async function render(target = parent) {
     parent = target;
-    const [rules, definitions, authority] = await Promise.all([api('/v2/automation/rules'), api('/v2/definitions'), api('/v2/authority')]);
+    const [rules, definitions, authority] = await Promise.all([api('/v2/automation/rules?include_tombstoned=true'), api('/v2/definitions'), api('/v2/authority')]);
     parent.replaceChildren();
     const toolbar = el('div', undefined, 'toolbar');
     for (const kind of ['schedule', 'trigger', 'standing_order']) toolbar.append(button('New ' + kind.replaceAll('_', ' '), () => open(null, kind, null, authority)));
@@ -25,25 +25,27 @@ export function automationWorkspace({api, el, button, edit, getSnapshot, openWor
     const text = el('input'); text.value = query; text.placeholder = 'Search automation'; text.setAttribute('aria-label', 'Search automation');
     const kind = el('select'), state = el('select'); kind.setAttribute('aria-label', 'Automation kind'); state.setAttribute('aria-label', 'Automation state');
     for (const value of ['', 'schedule', 'trigger', 'standing_order']) { const o = el('option', value || 'All kinds'); o.value = value; kind.append(o); } kind.value = kindFilter;
-    for (const value of ['', 'enabled', 'disabled']) { const o = el('option', value || 'All states'); o.value = value; state.append(o); } state.value = stateFilter;
+    for (const value of ['', 'enabled', 'disabled', 'archived', 'all']) { const o = el('option', value === 'all' ? 'All including archived' : value || 'Active catalog'); o.value = value; state.append(o); } state.value = stateFilter;
     const submit = el('button', 'Filter'); filter.append(text, kind, state, submit);
     filter.onsubmit = e => { e.preventDefault(); query = text.value; kindFilter = kind.value; stateFilter = state.value; render().catch(error => { parent.append(el('p', error.message)); }); }; parent.append(filter);
     const records = await Promise.all((rules || []).filter(r => r.Name.toLowerCase().includes(query.toLowerCase())).map(r => api('/v2/automation/rules/' + encodeURIComponent(r.ID))));
     let count = 0;
     for (const result of records) {
       const r = result.Rule, revision = result.Revision;
-      if (kindFilter && revision.Condition.Kind !== kindFilter || stateFilter && r.Enabled !== (stateFilter === 'enabled')) continue;
+      if (kindFilter && revision.Condition.Kind !== kindFilter) continue;
+      if (stateFilter === 'archived' ? !r.Tombstoned : stateFilter !== 'all' && (r.Tombstoned || stateFilter && r.Enabled !== (stateFilter === 'enabled'))) continue;
       count++;
       const card = el('article', undefined, 'card'); card.dataset.rule = r.ID;
-      card.append(el('h2', r.Name), el('p', `${revision.Condition.Kind.replaceAll('_', ' ')} · ${r.Enabled ? 'enabled' : 'disabled'} · revision ${r.Revision}`));
+      card.append(el('h2', r.Name), el('p', `${revision.Condition.Kind.replaceAll('_', ' ')} · ${r.Tombstoned ? 'archived' : r.Enabled ? 'enabled' : 'disabled'} · revision ${r.Revision}`));
       const c = revision.Condition;
       card.append(el('p', c.Schedule ? `${c.Schedule.Cron || 'Every ' + c.Schedule.Interval / 1e9 + ' seconds'} · ${c.Schedule.Timezone}` : c.Trigger ? `${c.Trigger.SourceID} · ${c.Trigger.FactKind} · ${(c.Trigger.Values || []).join(', ')}` : `${c.StandingOrder.FactKind} · ${c.StandingOrder.Pattern || 'any'} · same continuation`));
       card.append(el('p', `Action: ${revision.Action.Kind} · authority expires ${new Date(revision.Delegation.ExpiresAt).toLocaleString()}`));
       if (r.DeploymentID) card.append(el('p', 'Managed by deployment ' + r.DeploymentID));
-      else card.append(button('Edit rule', () => open(result, c.Kind, null, authority)), button(r.Enabled ? 'Disable' : 'Enable', async id => {
+      else if (!r.Tombstoned) card.append(button('Edit rule', () => open(result, c.Kind, null, authority)), button(r.Enabled ? 'Disable' : 'Enable', async id => {
         await api('/v2/automation/rules/' + encodeURIComponent(r.ID) + '/enabled', {request_id: id, expected_revision: r.Revision, enabled: !r.Enabled}); await render();
       }));
-      if (r.Enabled && c.Kind !== 'standing_order') card.append(button('Run now', async id => {
+      if (!r.DeploymentID) card.append(button(r.Tombstoned ? 'Restore rule' : 'Archive rule', () => edit(r.Tombstoned ? 'Restore archived rule' : 'Archive automation rule', [field('confirm', r.Tombstoned ? 'Type rule ID to restore disabled' : 'Type rule ID to stop fresh dispatch and archive (admitted work continues)', '', {required:true})], async f => {if(f.confirm!==r.ID)throw new Error('Rule ID does not match');await api('/v2/automation/rules/'+encodeURIComponent(r.ID)+'/archived',{request_id:f.requestID,expected_revision:r.Revision,archived:!r.Tombstoned});await render()})));
+      if (!r.Tombstoned && r.Enabled && c.Kind !== 'standing_order') card.append(button('Run now', async id => {
         await api('/v2/automation/run', {request_id: id, rule_id: r.ID, expected_rule_revision: r.Revision, occurrence_id: id, source_occurrence_key: 'browser:' + id}); await history(r, card);
       }));
       card.append(button('Occurrence history', () => history(r, card))); parent.append(card);
