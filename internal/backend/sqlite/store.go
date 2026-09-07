@@ -43,6 +43,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize replacement backend schema: %w", err)
 	}
+	if _, err := s.db.ExecContext(ctx, groupHierarchySchema); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, terminalFileSchema); err != nil {
 		return err
 	}
@@ -733,15 +736,23 @@ func (s *Store) CreateGroup(ctx context.Context, group model.Group, ownerBounds 
 	return tx.Commit()
 }
 
+type groupReader interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
 func (s *Store) Group(ctx context.Context, id model.GroupID) (model.Group, error) {
+	return readGroup(ctx, s.db, id)
+}
+func readGroup(ctx context.Context, q groupReader, id model.GroupID) (model.Group, error) {
 	var group model.Group
 	var created, updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,owner_agent_id,revision,created_at,updated_at FROM groups WHERE id=?`, id).Scan(&group.ID, &group.Name, &group.OwnerAgentID, &group.Revision, &created, &updated)
+	err := q.QueryRowContext(ctx, `SELECT id,name,owner_agent_id,revision,created_at,updated_at,COALESCE((SELECT parent_id FROM group_parents WHERE group_id=groups.id),'') FROM groups WHERE id=?`, id).Scan(&group.ID, &group.Name, &group.OwnerAgentID, &group.Revision, &created, &updated, &group.ParentGroupID)
 	if err != nil {
 		return model.Group{}, classify(err)
 	}
 	group.CreatedAt, group.UpdatedAt = fromNanos(created), fromNanos(updated)
-	rows, err := s.db.QueryContext(ctx, `SELECT agent_id FROM group_members WHERE group_id=? ORDER BY position`, id)
+	rows, err := q.QueryContext(ctx, `SELECT agent_id FROM group_members WHERE group_id=? ORDER BY position`, id)
 	if err != nil {
 		return model.Group{}, err
 	}

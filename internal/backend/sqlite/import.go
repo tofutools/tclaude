@@ -57,6 +57,9 @@ CREATE TABLE IF NOT EXISTS imported_message_envelopes (
 // intentionally bypasses live admission APIs: imported history has no current
 // authority, permit, access, claim, route, notification, or replay effect.
 func (s *Store) ApplyImport(ctx context.Context, batch app.ImportBatch) error {
+	if err := model.ValidateGroupHierarchy(batch.Groups); err != nil {
+		return err
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -139,6 +142,14 @@ func insertImportEntities(ctx context.Context, tx *sql.Tx, batch app.ImportBatch
 			}
 		}
 	}
+	for _, g := range batch.Groups {
+		if g.ParentGroupID != "" {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO group_parents(group_id,parent_id) VALUES(?,?)`, g.ID, g.ParentGroupID); err != nil {
+				return err
+			}
+		}
+	}
+
 	for _, conversation := range batch.Conversations {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO conversations(id,revision,created_at,updated_at) VALUES(?,?,?,?)`, conversation.ID, conversation.Revision, importNanos(conversation.CreatedAt), importNanos(conversation.UpdatedAt)); err != nil {
 			return fmt.Errorf("import conversation %s: %w", conversation.ID, err)
@@ -610,9 +621,12 @@ func VerifyImportDatabase(ctx context.Context, db *sql.DB, batch app.ImportBatch
 }
 
 func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) error {
-	memberCount, recipientCount := 0, 0
+	memberCount, recipientCount, parentCount := 0, 0, 0
 	for _, group := range batch.Groups {
 		memberCount += len(group.Members)
+		if group.ParentGroupID != "" {
+			parentCount++
+		}
 	}
 	for _, message := range batch.Messages {
 		recipientCount += len(message.Recipients)
@@ -622,7 +636,7 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 		defaults = 1
 	}
 	expected := map[string]int{
-		"agents": len(batch.Agents), "groups": len(batch.Groups), "group_members": memberCount,
+		"agents": len(batch.Agents), "groups": len(batch.Groups), "group_members": memberCount, "group_parents": parentCount,
 		"conversations": len(batch.Conversations), "agent_conversations": len(batch.ConversationLinks), "history_catalog": len(batch.History),
 		"messages": len(batch.Messages), "operations": len(batch.Messages), "message_recipients": recipientCount,
 		"attachments": len(batch.ImportedAttachments), "message_attachments": len(batch.ImportedAttachments),
@@ -635,7 +649,7 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 		"workspaces": len(batch.Workspaces), "usage_observations": len(batch.Usage), "historical_activity": len(batch.Activity),
 	}
 	for _, table := range []string{
-		"executions", "release_permits", "attachment_claims", "execution_accesses", "authority_grants", "role_assignments",
+		"group_parent_requests", "executions", "release_permits", "attachment_claims", "execution_accesses", "authority_grants", "role_assignments",
 		"operation_authority", "operation_additional_authority", "effect_permits", "pending_context_transitions", "native_binding_history",
 		"history_refreshes", "history_metadata_requests", "history_points", "history_use_claims", "workspace_uses",
 		"work_runs", "work_attempts", "work_evidence", "work_decisions", "program_profiles", "program_profile_revisions",
