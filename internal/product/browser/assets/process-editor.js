@@ -136,7 +136,9 @@ class ProcessEditor {
       return stageContext ? stageContext.kind === 'Checks' ? parent.Stages.Checks.find(s => s.ID === stageContext.id) : parent.Stages[stageContext.kind] : parent;
     };
     const update = edit => this.change(draft => edit(resolve(draft)));
-    const fields = [{name: 'name', label: 'Node name', value: node.Name, required: true}];
+    const fields = [{name: 'name', label: 'Node name', value: node.Name, required: true},
+      {name: 'description', label: 'Description', value: node.Description || '', multiline: true},
+      {name: 'doc', label: 'Documentation', value: node.Doc || '', multiline: true}];
     const changes = [];
     if (node.Kind === 'wait') {
       fields.push({name: 'duration', label: 'Wait seconds', type: 'number', min: 0.001, step: 'any', value: (node.Wait?.Duration || 0) / 1e9, required: true});
@@ -203,6 +205,8 @@ class ProcessEditor {
     }
     this.form(`${node.Kind} · ${node.Name || "Unnamed"}`, fields, values => update(n => {
       n.Name = values.name;
+      if(values.description) n.Description = values.description; else delete n.Description;
+      if(values.doc) n.Doc = values.doc; else delete n.Doc;
       for (const apply of changes) apply(n, values);
       if (stageContext) delete n.Waivable;
     }));

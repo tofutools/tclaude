@@ -101,6 +101,8 @@ func TestBrowserProcessEditorAuthorsSavesReopensAndPreservesConflicts(t *testing
 	page.MustElementR("#process-editor button", "^Add wait$").MustClick()
 	page.MustElement("#process-inspector [name=name]").MustSelectAllText().MustInput("Pause")
 	page.MustElement("#process-inspector [name=duration]").MustSelectAllText().MustInput("1")
+	page.MustElement("#process-inspector [name=description]").MustInput("Wait for the release window")
+	page.MustElement("#process-inspector [name=doc]").MustInput("<script>throw 'never execute'</script>\nKeep this literal note.")
 	page.MustElementR("#process-inspector button", "^Apply changes$").MustClick()
 	page.MustElementR("#process-inspector button", "^Make entry$").MustClick()
 	page.MustElementR("#process-inspector button", "^Connect$").MustClick()
@@ -132,6 +134,8 @@ func TestBrowserProcessEditorAuthorsSavesReopensAndPreservesConflicts(t *testing
 	page.MustElementR("#process-editor-message", "Revision 1 · saved")
 	page.MustElement("#process-editor-canvas .process-node[aria-label='Pause, wait']").MustClick()
 	require.Equal(t, "1", page.MustElement("#process-inspector [name=duration]").MustProperty("value").Str())
+	require.Equal(t, "Wait for the release window", page.MustElement("#process-inspector [name=description]").MustProperty("value").Str())
+	require.Equal(t, "<script>throw 'never execute'</script>\nKeep this literal note.", page.MustElement("#process-inspector [name=doc]").MustProperty("value").Str())
 	page.MustElement("[aria-label='Process name']").MustSelectAllText().MustInput("Focused draft name")
 	require.True(t, page.MustEval(`() => { const event = new Event('beforeunload', {cancelable:true}); window.dispatchEvent(event); return event.defaultPrevented; }`).Bool())
 	// A second operator writes while this browser keeps an edited stale draft.

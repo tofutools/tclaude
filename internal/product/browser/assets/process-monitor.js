@@ -41,6 +41,8 @@ export async function openProcessMonitor(id, {api, el, button, openDecisions}) {
       detail.append(el('p', `Deadline ${new Date(run.deadline).toLocaleString()}`)); return;
     }
     detail.append(el('h3', node.Name || node.ID), el('p', `${node.ID} · ${node.Kind}`));
+    if(node.Description) detail.append(el('h4', 'Description'), el('pre', node.Description));
+    if(node.Doc) detail.append(el('h4', 'Documentation'), el('pre', node.Doc));
     const group = (run.graph.TaskGroups || []).find(g => [g.ID,g.Plan,g.Approval,g.Work,g.Review,...(g.Checks || [])].includes(node.ID));
     if (group) detail.append(el('p', 'Task: ' + (run.graph.Nodes.find(n=>n.ID===group.ID)?.Name || group.ID) + (group.ID===node.ID?' · completion after all stages':' · stage history is retained across rework')));
     const attempts = (run.node_attempts || []).filter(a => a.Ref.NodeID === node.ID);

@@ -161,18 +161,21 @@ const (
 )
 
 type WorkNode struct {
-	ID        WorkNodeID
-	Kind      WorkNodeKind
-	Name      string
-	Performer *Performer
-	Input     map[string]json.RawMessage
-	Retry     RetryPolicy
-	Decision  *DecisionNode
-	Join      *JoinPolicy
-	Wait      *WaitPolicy
-	End       *EndPolicy
-	Waivable  bool
-	Stages    *TaskStages `json:",omitempty"`
+	// Notes describe authored intent; they are not performer input or authority.
+	Description string `json:",omitempty"`
+	Doc         string `json:",omitempty"`
+	ID          WorkNodeID
+	Kind        WorkNodeKind
+	Name        string
+	Performer   *Performer
+	Input       map[string]json.RawMessage
+	Retry       RetryPolicy
+	Decision    *DecisionNode
+	Join        *JoinPolicy
+	Wait        *WaitPolicy
+	End         *EndPolicy
+	Waivable    bool
+	Stages      *TaskStages `json:",omitempty"`
 }
 
 // TaskStages retain the author's compound task rather than encoding feedback as
@@ -185,10 +188,12 @@ type TaskStages struct {
 }
 
 type TaskStage struct {
-	ID        string
-	Name      string
-	Performer Performer
-	Retry     RetryPolicy
+	Description string `json:",omitempty"`
+	Doc         string `json:",omitempty"`
+	ID          string
+	Name        string
+	Performer   Performer
+	Retry       RetryPolicy
 }
 
 type CompiledTaskGroup struct {
