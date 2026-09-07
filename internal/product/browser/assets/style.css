@@ -10,3 +10,5 @@
 
 #terminal-dashboard-link{display:none}.terminal-window header,.terminal-window nav{display:none}.terminal-window #terminal-dashboard-link{display:inline}.terminal-window main{padding:12px;max-width:none}
 #roster>.toolbar{flex-wrap:wrap;margin:12px 0}#roster [aria-label='Search agents']{min-width:180px;flex:1}#roster [role=status] p{overflow-wrap:anywhere}
+
+#command-picker{width:min(36rem,90vw)}#command-picker>input{box-sizing:border-box;width:100%;margin-bottom:12px}.command-results{display:flex;flex-direction:column;gap:6px;max-height:55vh;overflow:auto;margin-bottom:12px}.command-results button{text-align:left;padding:10px}.command-results button:focus{outline:2px solid #79b8ff;outline-offset:1px}

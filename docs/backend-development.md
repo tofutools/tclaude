@@ -631,3 +631,11 @@ Removing membership does not stop or retire the agent. An owner must be changed
 or cleared through the existing owner endpoint before removing that member.
 New members must be active; retired members already in the group can be retained
 or removed. The CLI exposes the same request as `group update ID --file FILE`.
+
+Workspace navigation keeps the selected tab in the `tab` URL parameter and in
+this browser tab’s session preferences. Reload and browser back/forward restore
+that workspace; unknown tab values fall back to Groups. The Commands picker
+(Ctrl/Cmd+K) searches visible workspaces and common authoring actions. It opens
+the same forms as their normal buttons and does not execute a workload by
+itself. Alt+1 through Alt+9 select the corresponding visible workspace tab;
+these shortcuts do not intercept typing in form controls.
