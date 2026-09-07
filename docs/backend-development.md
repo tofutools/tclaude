@@ -927,3 +927,25 @@ Offline conversion preserves legacy group parent IDs through the existing identi
 mapping and verifies the resulting topology on exact retry. Invalid source trees
 are refused before target publication. No hierarchy mutation receipt or authority
 is imported.
+
+### Files referenced by terminals
+
+The terminal download panel reads an explicit relative path or an absolute path
+inside the selected active execution's working directory. Embedded OSC8 `file:`
+links and absolute local paths use the same download path on Ctrl/⌘-click. Ordinary
+HTTP(S) links require the same modifier gesture and open without an opener;
+unsupported schemes and remote file hosts are refused. No output automatically
+starts a download or sends input.
+
+`GET /v2/execution-files?execution_id=...&path=...` requires distinct current
+`execution.file.read` authority on that execution. The backend resolves the
+working directory, confines reads to it, rejects escapes and nonregular files,
+and bounds a file to 32 MiB. It rechecks current authority and execution identity
+before returning bytes as an attachment with an inert content type. Stopped,
+replaced, unavailable and unauthorized executions fail visibly. Private provider
+upload directories and files outside the execution directory are not implicitly
+readable through this route.
+
+The browser discards pending file reads after a pane switch, reconnect, pagehide
+or sign-out. Downloaded files are not rendered inline. These are bounded current
+filesystem reads, not immutable native-history artifacts.
