@@ -679,3 +679,30 @@ on the currently selected connected pane. Scrollback search, selection copy,
 text export and font size controls operate on the selected pane's current buffer,
 not the complete native conversation history. Text-file loading is not a native
 attachment upload.
+
+Attention shows unread operator messages and current work/access decisions.
+Opening an attention item navigates to its workspace without marking it read or
+approving it. The dashboard checks for changes every ten seconds while visible;
+it also checks in the background when this window's desktop notifications are
+enabled. Desktop permission is requested only from the explicit enable button.
+Only newly observed operator messages notify, never the initial backlog, and
+sign-out stops checks and closes this window's notices. Unchanged snapshots do
+not rebuild workspace controls; current API revisions still protect mutations.
+
+Usage can be selected from recorded executions/conversations or by an explicit
+historical target ID. Observed-time range filters, per-unit reading bars and
+paged JSON export preserve the source coverage and attribution. The query keeps
+only the current version of a cumulative source reading; a chart point is not
+spend or tokens consumed during that time interval. Conversation-wide readings
+stay labelled as such even under an execution target, and reported decimal costs
+are shown without repricing or currency conversion. Exports identify whether
+additional pages remain unloaded.
+
+History offers active/archived and harness filters, title/indexed-text search,
+ordering and paged conversation lists. Reads replace the current transcript;
+role/text filters help inspect it without changing the selected native point.
+Coverage and omitted parts remain visible, including in text exports. Archive
+and title changes use the displayed catalog revision and retain edits on conflict.
+Archive is catalog metadata, not deletion of native conversation content. Only
+provider-advertised points can be selected, and starting work still requires
+explicit worker/workspace and history-use choices.
