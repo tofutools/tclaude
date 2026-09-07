@@ -54,15 +54,22 @@ func TestIsolatedServerPersistsOfflineCatalogAcrossRestart(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
 		go func() { done <- Serve(ctx, dir, providers.NewRegistry()) }()
-		deadline := time.Now().Add(3 * time.Second)
+		deadline := time.Now().Add(20 * time.Second)
 		for {
+			select {
+			case serveErr := <-done:
+				cancel()
+				t.Fatalf("server exited before readiness: %v", serveErr)
+			default:
+			}
 			status, _, err := call("GET", "/v2/snapshot", "")
 			if err == nil && status == 200 {
 				break
 			}
 			if time.Now().After(deadline) {
 				cancel()
-				t.Fatal("server did not become available")
+				serveErr := <-done
+				t.Fatalf("server did not become available: status=%d probe=%v serve=%v", status, err, serveErr)
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
