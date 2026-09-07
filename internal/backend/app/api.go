@@ -90,6 +90,7 @@ type DefinitionDraft struct {
 	Name          string
 	Kind          model.DefinitionKind
 	SchemaVersion uint32
+	EditorLayout  *model.DefinitionEditorLayout `json:",omitempty"`
 	Source        string
 	Parameters    []model.ParameterDeclaration
 	Team          *model.TeamDefinition

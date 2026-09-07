@@ -1,0 +1,264 @@
+/* === Shared process graph core (process-graph.js) ==========================
+   The SVG uses currentColor + these component variables so editor and viewer
+   share one vocabulary. Explicit data-color-scheme values make the standalone
+   component correct on light hosts even though today's dashboard is dark. */
+.process-graph {
+  --pg-bg: #0d1117;
+  --pg-panel: #161b22;
+  --pg-node: #1d2631;
+  --pg-node-strong: #263445;
+  --pg-border: #718096;
+  --pg-text: #e6edf3;
+  --pg-muted: #8b949e;
+  --pg-edge: #7d8da3;
+  --pg-accent: #58a6ff;
+  --pg-return: #e3a341;
+  --pg-focus: #79c0ff;
+  --pg-error: #f85149;
+  --pg-warn: #e3a341;
+  --pg-valid: #3fb950;
+  --pg-invalid: #ff7b72;
+  position: relative;
+  min-height: 320px;
+  height: 100%;
+  overflow: hidden;
+  color: var(--pg-text);
+  background: var(--pg-bg);
+  border: 1px solid #30363d;
+  border-radius: 10px;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+}
+.process-graph[data-color-scheme="light"] {
+  --pg-bg: #f7f9fc;
+  --pg-panel: #ffffff;
+  --pg-node: #ffffff;
+  --pg-node-strong: #eef4fb;
+  --pg-border: #526173;
+  --pg-text: #182230;
+  --pg-muted: #657386;
+  --pg-edge: #617185;
+  --pg-accent: #0969da;
+  --pg-return: #9a5b00;
+  --pg-focus: #0550ae;
+  --pg-error: #cf222e;
+  --pg-warn: #9a5b00;
+  --pg-valid: #1a7f37;
+  --pg-invalid: #cf222e;
+  border-color: #c9d2dd;
+}
+.process-graph:focus-visible { box-shadow: 0 0 0 2px var(--pg-focus); }
+.process-graph-svg { width: 100%; height: 100%; min-height: inherit; display: block; cursor: grab; }
+.process-graph.is-space-pan .process-graph-svg { cursor: grab; }
+.process-graph.is-space-pan .process-node { cursor: grab; }
+.process-graph-svg:active { cursor: grabbing; }
+.process-marquee {
+  fill: var(--pg-accent);
+  fill-opacity: .14;
+  stroke: var(--pg-accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 7 4;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+.process-node { cursor: pointer; color: var(--pg-text); outline: none; }
+.process-node-shape, .process-end-inner {
+  fill: var(--pg-node);
+  stroke: var(--pg-border);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+.process-shape-compound { fill: var(--pg-node-strong); stroke-width: 2.5; }
+.process-shape-start { fill: var(--pg-bg); stroke-width: 2; }
+.process-shape-end { fill: var(--pg-bg); stroke-width: 4; }
+.process-end-inner { fill: none; stroke-width: 1.5; }
+.process-shape-decision { fill: var(--pg-node-strong); }
+.process-shape-parallel { fill: var(--pg-node-strong); }
+.process-parallel-mark {
+  fill: none; stroke: currentColor; stroke-width: 4; stroke-linecap: round;
+  vector-effect: non-scaling-stroke; pointer-events: none;
+}
+.process-node:hover .process-node-shape,
+.process-node:focus .process-node-shape,
+.process-node.is-focus-copy .process-node-shape,
+.process-node.is-selected .process-node-shape { stroke: var(--pg-accent); }
+.process-node.is-selected .process-node-shape { stroke-width: 4; }
+.process-node-label { fill: currentColor; font-size: 13px; font-weight: 650; pointer-events: none; }
+.process-node-label-inside { dominant-baseline: auto; }
+.process-node-label-compact { font-size: 10px; }
+.process-node-label-small { font-size: 9px; }
+.process-node-label-compound { font-size: 12px; }
+.process-clock-face, .process-clock-hand {
+  fill: none; stroke: currentColor; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none;
+}
+.process-clock-hand { stroke-linecap: round; stroke-linejoin: round; }
+.process-stage-stack, .process-expand-plus {
+  fill: none; stroke: var(--pg-muted); stroke-width: 1.7; stroke-linecap: round; vector-effect: non-scaling-stroke;
+}
+.process-expand-ring { fill: var(--pg-bg); stroke: var(--pg-muted); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.process-stage-count { fill: var(--pg-muted); font-size: 9px; }
+.process-port {
+  fill: var(--pg-bg); stroke: var(--pg-accent); stroke-width: 2; vector-effect: non-scaling-stroke;
+  opacity: 0.28; cursor: crosshair;
+}
+.process-node-ports.is-node-hover .process-port,
+.process-node-ports:hover .process-port, .process-port:hover, .process-port:active { opacity: 1; }
+.process-port:focus, .process-port.is-focus-copy, .process-port.is-keyboard-source { opacity: 1; stroke-width: 4; outline: none; }
+.process-port.is-keyboard-source { fill: var(--pg-accent); }
+.process-port.is-action-disabled {
+  opacity: .5; stroke: var(--pg-invalid); stroke-dasharray: 3 2; cursor: help;
+}
+.process-port.is-action-disabled:hover,
+.process-port.is-action-disabled:focus { opacity: 1; stroke-width: 3; }
+.process-graph.is-connecting .process-port { opacity: .72; }
+.process-graph.is-connecting .process-node-shape { opacity: .78; }
+.process-graph.is-connecting .process-node.is-connection-valid .process-node-shape,
+.process-graph.is-connecting .process-port.is-connection-valid {
+  opacity: 1; stroke: var(--pg-valid); stroke-width: 4; stroke-dasharray: none;
+}
+.process-graph.is-connecting .process-node.is-connection-invalid .process-node-shape,
+.process-graph.is-connecting .process-port.is-connection-invalid {
+  opacity: .58; stroke: var(--pg-invalid); stroke-width: 3; stroke-dasharray: 5 3;
+}
+.process-graph.is-connecting .process-port.is-connection-source {
+  opacity: 1; fill: var(--pg-accent); stroke: var(--pg-focus); stroke-width: 4; stroke-dasharray: none;
+}
+.process-graph.is-connecting .is-connection-hover.process-node .process-node-shape,
+.process-graph.is-connecting .process-port.is-connection-hover { filter: drop-shadow(0 0 5px currentcolor); }
+.process-graph.is-connection-canvas-valid::after,
+.process-graph.is-connection-canvas-invalid::after {
+  content: ""; position: absolute; inset: 5px; border: 2px solid var(--pg-valid);
+  border-radius: 7px; pointer-events: none; opacity: .55;
+}
+.process-graph.is-connection-canvas-invalid::after {
+  border-color: var(--pg-invalid); border-style: dashed;
+}
+.process-action-tooltip {
+  position: absolute; z-index: 35; box-sizing: border-box; width: max-content;
+  max-width: min(300px, calc(100% - 16px)); padding: 7px 9px;
+  color: var(--pg-text); background: var(--pg-panel); border: 1px solid var(--pg-border);
+  border-radius: 6px; box-shadow: 0 5px 18px rgba(0, 0, 0, .42);
+  font: 600 12px/1.35 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  white-space: normal; overflow-wrap: anywhere; pointer-events: none;
+  opacity: 0; visibility: hidden; transition: opacity 100ms ease;
+}
+.process-action-tooltip[data-state="valid"] { border-color: var(--pg-valid); }
+.process-action-tooltip[data-state="invalid"],
+.process-action-tooltip[data-state="disabled"] { border-color: var(--pg-invalid); }
+.process-action-tooltip.is-visible { opacity: 1; visibility: visible; }
+.process-edge { color: var(--pg-edge); cursor: pointer; outline: none; }
+.process-edge-path {
+  stroke: currentColor; stroke-width: 2; vector-effect: non-scaling-stroke; pointer-events: none;
+}
+.process-edge-hit { stroke: transparent; stroke-width: 18; vector-effect: non-scaling-stroke; pointer-events: stroke; }
+.process-edge:hover, .process-edge:focus, .process-edge.is-selected { color: var(--pg-accent); }
+.process-edge.is-selected .process-edge-path { stroke-width: 4; }
+.process-edge-back { color: var(--pg-return); }
+.process-edge-back .process-edge-path { stroke-dasharray: 8 6; }
+.process-arrowhead { fill: var(--pg-edge); }
+.process-arrowhead-back { fill: var(--pg-return); }
+.process-edge-label text { fill: currentColor; font-size: 11px; font-weight: 650; paint-order: stroke; stroke: var(--pg-bg); stroke-width: 5; stroke-linejoin: round; }
+.process-overlay-anchor { pointer-events: none; }
+.process-overlay-anchor.has-overlay { pointer-events: all; cursor: help; }
+.process-overlay-anchor:not(.has-overlay) { opacity: 0.38; }
+.process-overlay-ring {
+  fill: var(--pg-node); stroke: var(--pg-muted); stroke-width: 1.5; stroke-dasharray: 2 2; vector-effect: non-scaling-stroke;
+}
+.process-overlay-anchor.has-overlay .process-overlay-ring { stroke: var(--pg-accent); stroke-dasharray: none; }
+.process-overlay-glyph { fill: var(--pg-text); font-size: 11px; font-weight: 800; }
+.process-overlay-detail, .process-overlay-badge, .process-overlay-status { fill: var(--pg-text); font-size: 10px; font-weight: 700; }
+.process-overlay-badge { fill: var(--pg-return); }
+.process-overlay-tooltip { display: none; pointer-events: none; }
+.process-overlay-anchor:hover .process-overlay-tooltip,
+.process-node:focus .process-overlay-tooltip,
+.process-node:focus-visible .process-overlay-tooltip,
+.process-node.is-focus-copy .process-overlay-tooltip,
+.process-edge:hover .process-overlay-tooltip,
+.process-edge:focus .process-overlay-tooltip,
+.process-edge:focus-visible .process-overlay-tooltip { display: block; }
+.process-overlay-tooltip rect {
+  fill: var(--pg-panel); stroke: var(--pg-border); stroke-width: 1; vector-effect: non-scaling-stroke;
+}
+.process-overlay-tooltip text { fill: var(--pg-text); font-size: 11px; font-weight: 550; }
+/* Validation severities on the badge anchor: glyph-coded in the renderer,
+   color-coded here (both, never color-only). */
+.process-overlay-anchor.overlay-error .process-overlay-ring { stroke: var(--pg-error); fill: var(--pg-bg); }
+.process-overlay-anchor.overlay-error .process-overlay-glyph,
+.process-overlay-anchor.overlay-error .process-overlay-badge { fill: var(--pg-error); }
+.process-overlay-anchor.overlay-warning .process-overlay-ring { stroke: var(--pg-warn); fill: var(--pg-bg); }
+.process-overlay-anchor.overlay-warning .process-overlay-glyph,
+.process-overlay-anchor.overlay-warning .process-overlay-badge { fill: var(--pg-warn); }
+.process-edge-badge {
+  font-size: 12px; font-weight: 800;
+  paint-order: stroke; stroke: var(--pg-bg); stroke-width: 5; stroke-linejoin: round;
+}
+.process-edge-badge-error { fill: var(--pg-error); }
+.process-edge-badge-warning { fill: var(--pg-warn); }
+.process-edge-badge-info { fill: var(--pg-accent); }
+.process-graph-controls { position: absolute; top: 10px; right: 10px; display: flex; gap: 6px; }
+.process-fit-button {
+  appearance: none;
+  background: var(--pg-panel);
+  color: var(--pg-text);
+  border: 1px solid var(--pg-border);
+  border-radius: 6px;
+  padding: 5px 11px;
+  font: 600 12px/1.25 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.24);
+}
+.process-fit-button:hover { border-color: var(--pg-accent); background: var(--pg-node-strong); }
+.process-fit-button:focus-visible { outline: 2px solid var(--pg-focus); outline-offset: 2px; }
+
+/* Wizard keeps the same semantic shapes and non-colour state anchors, with a
+   parchment/violet skin. Controls are explicitly themed (never UA-white). */
+body.wizard .process-graph {
+  --pg-bg: #100c1b;
+  --pg-panel: #211832;
+  --pg-node: #20172f;
+  --pg-node-strong: #2c2042;
+  --pg-border: #a28bd4;
+  --pg-text: #f3e6c0;
+  --pg-muted: #b39ddb;
+  --pg-edge: #a997cc;
+  --pg-accent: #d4af37;
+  --pg-return: #e78a9c;
+  --pg-focus: #d4af37;
+  --pg-error: #ff7b72;
+  --pg-warn: #e3a341;
+  --pg-valid: #56d364;
+  --pg-invalid: #ff7b72;
+
+  border-color: #4a3d6b;
+  background-image: radial-gradient(circle at 50% 10%, rgba(98, 69, 145, 0.16), transparent 55%);
+}
+body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5); }
+@media (prefers-reduced-motion: reduce) {
+  .process-graph *, .process-graph *::before, .process-graph *::after { transition: none !important; animation: none !important; }
+}
+@media (hover: none), (pointer: coarse) {
+  .process-node-ports .process-port { opacity: .72; }
+  .process-node-ports .process-port.is-action-disabled { opacity: .48; }
+}
+
+
+/* Editor chrome adapts the existing graph component to v2 authoring. */
+#process-editor { width: 96vw; max-width: 1600px; height: 92vh; box-sizing: border-box; padding: 16px; overflow: auto; }
+#process-editor h2 { margin: 0 0 8px; }
+.process-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 8px 0; }
+.process-toolbar label { display: flex; align-items: center; gap: 8px; margin: 0; }
+.process-toolbar input { width: min(24em, 70vw); }
+.process-editor-body { display: grid; grid-template-columns: minmax(0, 1fr) 340px; height: calc(100% - 160px); min-height: 420px; gap: 12px; }
+#process-editor-canvas { min-width: 0; min-height: 420px; }
+#process-inspector { overflow: auto; padding: 0 12px; border-left: 1px solid #42516a; }
+#process-inspector input[type=checkbox] { width: auto; display: inline-block; }
+#process-inspector select[multiple] { min-height: 90px; }
+#process-editor-errors:empty { display: none; }
+#process-editor-errors { color: #ffb3ab; max-height: 100px; overflow: auto; }
+.process-editor-band { stroke: #79b8ff; stroke-width: 2px; pointer-events: none; }
+@media (max-width: 800px) {
+  .process-editor-body { grid-template-columns: 1fr; height: auto; }
+  #process-editor-canvas { height: 420px; }
+  #process-inspector { max-height: 55vh; border-left: none; }
+}

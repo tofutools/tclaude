@@ -131,6 +131,9 @@ func (s *Service) compileDefinition(ctx context.Context, draft DefinitionDraft, 
 	default:
 		return model.DefinitionRevision{}, fail(ErrInvalid, "definition kind is required")
 	}
+	if err := validateEditorLayout(draft); err != nil {
+		return model.DefinitionRevision{}, err
+	}
 	closure, err := s.definitionClosure(ctx, draft.ID, draft.Dependencies)
 	if err != nil {
 		return model.DefinitionRevision{}, err
@@ -144,8 +147,9 @@ func (s *Service) compileDefinition(ctx context.Context, draft DefinitionDraft, 
 		Team          *model.TeamDefinition
 		Process       *model.ProcessDefinition
 		Dependencies  []model.DefinitionRef
-	}{strings.TrimSpace(draft.Name), draft.Kind, draft.SchemaVersion, draft.Source, draft.Parameters, draft.Team, draft.Process, closure}
-	return model.DefinitionRevision{ID: draft.RevisionID, DefinitionID: draft.ID, ContentHash: contentHash(hashInput), SchemaVersion: draft.SchemaVersion, CompilerVersion: orchestrationCompilerVersion, Source: draft.Source, Parameters: append([]model.ParameterDeclaration(nil), draft.Parameters...), Team: draft.Team, Process: draft.Process, Dependencies: closure, Author: author}, nil
+		EditorLayout  *model.DefinitionEditorLayout `json:",omitempty"`
+	}{strings.TrimSpace(draft.Name), draft.Kind, draft.SchemaVersion, draft.Source, draft.Parameters, draft.Team, draft.Process, closure, draft.EditorLayout}
+	return model.DefinitionRevision{ID: draft.RevisionID, DefinitionID: draft.ID, ContentHash: contentHash(hashInput), SchemaVersion: draft.SchemaVersion, CompilerVersion: orchestrationCompilerVersion, Source: draft.Source, EditorLayout: draft.EditorLayout, Parameters: append([]model.ParameterDeclaration(nil), draft.Parameters...), Team: draft.Team, Process: draft.Process, Dependencies: closure, Author: author}, nil
 }
 
 func (s *Service) definitionClosure(ctx context.Context, owner model.DefinitionID, direct []model.DefinitionRef) ([]model.DefinitionRef, error) {

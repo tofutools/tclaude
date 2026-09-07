@@ -460,6 +460,22 @@ and the expected revision required by the operation. They do not retry native
 work automatically. Program profiles declare an executable, argument prefix,
 bounded output, timeout, confinement, and workspace execution authority.
 
+In the browser, open **Processes → New process** to author a graph, or choose
+**Edit process** on a saved definition. The editor provides task, decision,
+fork/join, wait and end nodes. Drag nodes to arrange them, connect their ports
+(or use the connection form), and edit the selected node in the side panel.
+Tasks can bind a worker at launch, select an existing agent, pin a saved program
+profile, or address human work. Decision connections name the permitted answer.
+
+The Parameters and Outcome controls edit typed inputs/defaults and required
+evidence. Undo/redo and node copy/paste operate on the local draft. **Validate**
+checks the draft through the application; **Save revision** writes an immutable
+revision with the graph positions. A stale save keeps local edits available for
+export and offers an explicit reload. Source text is preserved separately from
+the executable graph and is editable through Source. Export/Import copy transfers
+a v2 process JSON document; importing creates a new definition identity. It does
+not activate a process or import an old YAML template implicitly.
+
 A process start selects an immutable definition reference (definition ID,
 revision ID, content hash, and kind `process`) or an explicit graph. Its deadline,
 workspace scope, parameters, performer bindings, and authorized program profile
