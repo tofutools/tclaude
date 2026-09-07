@@ -1,6 +1,7 @@
 import { clonePayload } from './clone-payload.js';
 import { findSpawnHarness, sandboxImplOptionsFor } from './agent-spawn-model.js';
 import { pickDirectory as defaultPickDirectory } from './helpers.js';
+import { dashPrefs } from './prefs.js';
 
 const CLONE_TIMEOUT_MS = 35_000;
 const EXPORT_POLL_INTERVAL_MS = 2_000;
@@ -193,6 +194,8 @@ export function createActionDialogActions({
       await refresh();
     },
 		async saveGroupSettings({ group, values }, owner) {
+			const newName = String(values.name || '').trim();
+			if (!newName) throw new Error('name is required');
 			const patch = {
 				descr: values.descr.trim(), default_cwd: values.defaultCwd.trim(),
 				default_context: values.defaultContext, default_profile: values.defaultProfile,
@@ -212,8 +215,17 @@ export function createActionDialogActions({
 				method: 'POST', headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify(values.attachmentURL.trim() ? { url: values.attachmentURL.trim(), label: values.attachmentLabel.trim() } : { clear: true }),
 			});
+			if (newName !== group) {
+				await requestJSON(fetchImpl, `/api/groups/${encodeURIComponent(group)}/rename`, {
+					method: 'POST', headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ new_name: newName }),
+				});
+				const disclosure = dashPrefs.getItem(`tclaude.dash.group.${group}`);
+				dashPrefs.removeItem(`tclaude.dash.group.${group}`);
+				if (disclosure !== null) dashPrefs.setItem(`tclaude.dash.group.${newName}`, disclosure);
+			}
 			state.close(owner);
-			notify(`${group}: settings saved`);
+			notify(`${newName}: settings saved`);
 			await refresh();
 		},
     async clonePreset({ source, create, name }, owner) {
