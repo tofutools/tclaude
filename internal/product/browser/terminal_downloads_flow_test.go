@@ -4,7 +4,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/go-rod/rod/lib/proto"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
@@ -48,7 +50,15 @@ func TestBrowserTerminalDownloadsConfineFilesAndDiscardStaleResponses(t *testing
 	require.Zero(t, page.MustEval(`() => window.linkOpen.length`).Int())
 	page.MustEval(`() => terminals.selected.terminal.options.linkHandler.activate({ctrlKey:true},'https://example.invalid/report')`)
 	require.Equal(t, "noopener,noreferrer", page.MustEval(`() => window.linkOpen[0][2]`).Str())
-	page.MustEval(`path => terminals.selected.terminal.options.linkHandler.activate({ctrlKey:true},'file://'+path)`, filepath.Join(root, "report.txt"))
+	// Feed a real OSC8 sequence through xterm's parser and hit-test the rendered
+	// link. Calling activate directly would miss xterm's protocol filtering.
+	page.MustEval(`path => new Promise(resolve => {const t=terminals.selected.terminal;t.reset();t.write('\x1b[H\x1b]8;;file://'+path+'\x07Download report\x1b]8;;\x07',resolve)})`, filepath.Join(root, "report.txt"))
+	point := page.MustEval(`() => {const t=terminals.selected.terminal;const screen=t.element.querySelector('.xterm-screen');screen.scrollIntoView({block:'center'});const r=screen.getBoundingClientRect();return {x:r.left+r.width/t.cols*3,y:r.top+r.height/t.rows/2}}`)
+	x, y := point.Get("x").Num(), point.Get("y").Num()
+	require.NoError(t, (proto.InputDispatchMouseEvent{Type: proto.InputDispatchMouseEventTypeMouseMoved, X: x, Y: y, Modifiers: 2}).Call(page))
+	page.Timeout(5 * time.Second).MustWait(`() => !!terminals.selected.terminal.element.querySelector('.xterm-cursor-pointer') || terminals.selected.terminal.element.classList.contains('xterm-cursor-pointer')`)
+	require.NoError(t, (proto.InputDispatchMouseEvent{Type: proto.InputDispatchMouseEventTypeMousePressed, X: x, Y: y, Modifiers: 2, Button: proto.InputMouseButtonLeft, ClickCount: 1}).Call(page))
+	require.NoError(t, (proto.InputDispatchMouseEvent{Type: proto.InputDispatchMouseEventTypeMouseReleased, X: x, Y: y, Modifiers: 2, Button: proto.InputMouseButtonLeft, ClickCount: 1}).Call(page))
 	page.MustWait(`() => window.downloaded.length===2`)
 	page.MustEval(`() => {const original=fetch;window.fetch=async (...args)=>{const response=await original(...args);if(String(args[0]).startsWith('/v2/execution-files?'))await new Promise(resolve=>window.finishDownload=resolve);return response}}`)
 	page.MustElement("[aria-label='Download execution file path']").MustSelectAllText().MustInput("report.txt")
