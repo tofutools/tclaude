@@ -1037,3 +1037,8 @@ unsupported selections are refused by source preflight or retained with a
 `group_default_retained_unmapped` diagnostic; conversion never guesses another
 profile. Exact import retries verify both the configuration row and pinned
 profile reference and refuse changed targets.
+
+Imported profile references preserve their source namespace: stable row IDs,
+profile names and aliases are resolved separately. A numeric profile name does
+not select the same-numbered row. The global default's stable-ID preference takes
+precedence over its retained name; aliases resolve their exact profile ID.
