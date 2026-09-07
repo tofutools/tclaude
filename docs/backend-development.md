@@ -1203,3 +1203,13 @@ The editor explains the capture boundary: retired members and child groups are o
 ### Team member environment editing
 
 The team member editor includes the same literal environment variable rows as launch configurations. Copying a saved configuration replaces the member draft's environment by value, including clearing it when the saved configuration has none. Apply commits the edited rows to the local team draft; Save persists a new immutable team revision. Existing agents, executions and source configurations are unaffected. Add/remove changes participate in unapplied-change protection, and the application refuses invalid or reserved environment names before saving the team definition.
+
+### Program configurations in the browser
+
+Processes includes a Program configurations panel for creating and editing saved
+command revisions. Arguments are a JSON string array and environment values are
+literal strings; neither is shell-expanded by the editor. Set the command timeout,
+output limit, sandbox mode and required effect authority explicitly. Saving creates
+no work. A process selects and pins a saved revision, so later configuration edits
+do not alter existing process definitions or runs. Concurrent edits return a
+conflict and retain the local form for inspection or copying.
