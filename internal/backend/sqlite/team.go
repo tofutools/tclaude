@@ -57,7 +57,7 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 		pins[pin.RoleID] = pin
 	}
 	for _, agent := range agents {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO agents(id,name,harness,model,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, agent.ID, agent.Name, agent.Desired.Harness, agent.Desired.Model, agent.Desired.WorkingDirectory, agent.Desired.Approval, agent.Desired.Sandbox, agent.PrimaryExecutionID, agent.Revision, nanos(agent.CreatedAt), nanos(agent.UpdatedAt)); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO agents(id,name,harness,model,effort,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, agent.ID, agent.Name, agent.Desired.Harness, agent.Desired.Model, agent.Desired.Effort, agent.Desired.WorkingDirectory, agent.Desired.Approval, agent.Desired.Sandbox, agent.PrimaryExecutionID, agent.Revision, nanos(agent.CreatedAt), nanos(agent.UpdatedAt)); err != nil {
 			return model.TeamDeployment{}, false, classify(err)
 		}
 	}

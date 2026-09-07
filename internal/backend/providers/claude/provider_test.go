@@ -91,7 +91,7 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 			Secret: []byte("claude-provider-secret"), ExpiresAt: time.Now().Add(time.Hour),
 		},
 		Spec: model.ResolvedExecutionSpec{
-			ExecutionID: "execution_claude", Attempt: 2, Harness: Name, Model: "test-model",
+			ExecutionID: "execution_claude", Attempt: 2, Harness: Name, Model: "test-model", Effort: "high",
 			WorkingDirectory: root, Approval: model.ApprovalSupervised,
 			Sandbox: model.SandboxWorkspaceWrite,
 		},
@@ -132,7 +132,7 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 	require.Eventually(t, func() bool {
 		value, readErr := os.ReadFile(argvPath)
 		return readErr == nil && strings.Contains(string(value), "--session-id") &&
-			strings.Contains(string(value), "--permission-mode\nmanual") && strings.Contains(string(value), "prepared claude brief")
+			strings.Contains(string(value), "--permission-mode\nmanual") && strings.Contains(string(value), "prepared claude brief") && strings.Contains(string(value), "--effort\nhigh")
 	}, time.Second, 10*time.Millisecond)
 	require.Eventually(t, func() bool {
 		value, readErr := os.ReadFile(bootstrapPath)
