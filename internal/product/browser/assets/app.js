@@ -355,6 +355,32 @@ async function renderDefinitions(){
   list.append(card);
  }
  if(!definitions?.length)empty(list,'No saved definitions. Author a definition with the definition save command.');
+ const deployments=await api('/v2/teams/deployments');
+ if(deployments?.length)list.append(el('h2','Deployed teams'));
+ for(const result of deployments||[]){
+  const d=result.Deployment,card=el('article',undefined,'card');card.dataset.deployment=d.ID;
+  card.append(el('h3',d.Mission||d.ID),el('p',`${d.State} · group ${d.GroupID} · phase ${d.AdvisoryPhase} · revision ${d.Revision}`));
+  card.append(el('p',Object.entries(d.Members||{}).map(([key,id])=>`${key}: ${id}`).join(' · ')));
+  card.append(el('p',`${Object.keys(d.Workspaces||{}).length} workspace bindings · ${(d.OwnedAutomationRuleIDs||[]).length} owned rhythms · ${(d.Rebriefs||[]).length} rebriefs`,'muted'));
+  if(d.State!=='stopped'){
+   card.append(button('Stand down',()=>edit('Stand down team',[{name:'reason',label:'Reason',multiline:true}],async f=>{
+    await api('/v2/teams/stand-down',{request_id:f.requestID,deployment_id:d.ID,expected_revision:d.Revision,reason:f.reason});await renderDefinitions();
+   })));
+  }
+  if(d.State==='ready'){
+   card.append(button('Advance advisory phase',()=>edit('Advance advisory phase',[],async f=>{
+    await api('/v2/teams/advance-phase',{request_id:f.requestID,deployment_id:d.ID,expected_revision:d.Revision});await renderDefinitions();
+   })));
+   card.append(button('Rebrief',async()=>{
+    const selected=await api('/v2/definitions/'+encodeURIComponent(d.Definition.DefinitionID)),r=selected.Revision;
+    edit('Rebrief revision '+r.ID,[],async f=>{
+     await api('/v2/teams/rebrief',{request_id:f.requestID,deployment_id:d.ID,expected_revision:d.Revision,definition:{DefinitionID:r.DefinitionID,RevisionID:r.ID,ContentHash:r.ContentHash,Kind:'team'}});await renderDefinitions();
+    });
+   }));
+  }
+  list.append(card);
+ }
+
 }
 
 function parameterFields(parameters){return parameters.map((p,index)=>{

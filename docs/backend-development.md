@@ -446,9 +446,9 @@ restart workloads, and historical imports do not confer operational authority.
 ### Process and team operations
 
 The same authenticated client exposes `definition validate|save|list|inspect`,
-`program-profile save|list|inspect`, `process start|inspect|evidence`,
+`program-profile save|list|inspect`, `process start|inspect|evidence|resolve-blocked`,
 `decision list|inspect|submit`, `automation save|list|inspect|run|occurrences`,
-and `team deploy|inspect`. Mutations take `--file` with an explicit request ID
+and `team deploy|list|inspect|rebrief|advance-phase|stand-down`. Mutations take `--file` with an explicit request ID
 and the expected revision required by the operation. They do not retry native
 work automatically. Program profiles declare an executable, argument prefix,
 bounded output, timeout, confinement, and workspace execution authority.
@@ -483,3 +483,62 @@ an inbox read nor work completion. Offline recipients and an unconfigured native
 operator notification channel are `unavailable`, with the message still retained.
 A crash or uncertain native result after dispatch leaves `unknown` and is never
 replayed automatically. The API exposes these outcomes on each message recipient.
+
+
+### Blocked work and deployed teams
+
+A bounded retry policy parks an exhausted attempt in a blocked decision window.
+`process resolve-blocked --file resolution.json` supplies `decision_id`, the exact
+`attempt`, `expected_window_revision`, `expected_run_revision`, `action`, `reason`,
+and optional `evidence_refs`. Choose only an action offered by the window: retry,
+rework, waive, or cancel. Keep the entire request and request ID unchanged when
+retrying after a lost response. A waiver records an explicit exception; it does
+not satisfy required verified evidence. The browser Decisions view uses this
+same operation for blocked work.
+
+Team deployment selects a pinned team definition and an explicit target:
+`new_group` creates a group; `existing_group` reinforces the selected group with
+new deployment-owned members. Workspace selection supplies either a shared
+workspace or a member-key map, according to the definition. Existing workspaces
+require their exact revisions; new checkouts require explicit creation intent.
+The Processes and teams view offers existing available workspaces. The CLI/API
+also supports explicit new-checkout intent.
+
+`team list` and `team inspect ID` show the admitted roster, workspace ownership,
+briefing operations, owned rhythms, phases and rebrief history after restart.
+Rebrief explicitly selects another compatible immutable definition revision;
+it does not replace running configurations or silently follow the latest version.
+An advisory phase advances a checklist, not work evidence. Standdown stops and
+retires only the deployment's roster, with current group management and each
+stop/retirement permission checked independently. Checkouts and history remain
+available; removal is a separate operation.
+
+### Trusted pull request and activity conditions
+
+Register each GitHub pull request at daemon startup, for example:
+
+```sh
+tclaude-agentd serve --state-dir /absolute/private/state \
+  --github-source review=owner/repository#42 \
+  --github-token-file /absolute/private/github.token
+```
+
+The credential file must be a private regular file. Omit it for unauthenticated
+public reads. Up to four exact sources may be configured. Rules select the
+configured source name and exact repository/pull-request resource; they cannot
+provide a URL or credential. Collection is read-only and runs through the
+existing reconciliation worker, polling each source at most once per minute.
+
+`pull_request.changed` reports open, draft, closed or merged. `ci.completed`
+reports succeeded, failed, pending or unknown for the selected head's observed
+check runs and commit statuses. This is not a claim about branch protection or
+required-check approval. Empty, partial, failed or stale reads cannot establish
+positive completion or continuous dwell. Source identity remains stable across
+repeated snapshots; an unchanged cached observation does not gain freshness.
+
+Claude's protected native callback can report idle and awaiting-input activity
+from its Notification hooks, retaining the original observation timestamp.
+Tool activity, user input and uncertain activity invalidate those conditions.
+Process liveness or an empty queue never establishes idle. Other providers
+currently report unknown activity for these conditions. Unsupported or stale
+observations break dwell eligibility.
