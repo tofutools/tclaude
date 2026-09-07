@@ -1152,6 +1152,9 @@ func (s *Store) CreateMessage(ctx context.Context, in app.MessageAdmission) (app
 	if err := insertMessageAttachments(ctx, tx, in); err != nil {
 		return app.MessageAdmissionResult{}, err
 	}
+	if err := insertTerminalOperationFactsTx(ctx, tx, app.OperationCompletion{OperationID: op.ID, OperationState: op.State, At: op.UpdatedAt}); err != nil {
+		return app.MessageAdmissionResult{}, err
+	}
 	if err := bumpTx(ctx, tx); err != nil {
 		return app.MessageAdmissionResult{}, err
 	}
