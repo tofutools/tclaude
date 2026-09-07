@@ -160,6 +160,10 @@ class ProcessEditor {
       changes.push((n, f) => { n.Decision = {...n.Decision, Audience: f.audience.map(value => JSON.parse(value)), PermittedAnswers: lines(f.answers), ExpiresAfter: seconds(f.expires)}; });
     }
     if (node.Kind === 'task') {
+      if(!stageContext) {
+        fields.push({name:'captures',label:'Published output names (authoring only; one per line)',multiline:true,value:(node.Captures||[]).join('\n')});
+        changes.push((n,f)=>{const names=[...new Set(lines(f.captures))];if(names.length)n.Captures=names;else delete n.Captures;});
+      }
       const performer = node.Performer;
       const select = element('select'); select.setAttribute('aria-label', 'Performer kind');
       for (const kind of ['agent', 'program', 'human']) { const o = element('option', kind); o.value = kind; select.append(o); }
@@ -211,6 +215,7 @@ class ProcessEditor {
       if (stageContext) delete n.Waivable;
     }));
     if (node.Kind === 'task') this.inspector.prepend(this.performerSelect);
+    if(node.Captures?.length) this.inspector.append(element('p','Output names are retained for authoring and export. Running this process is unavailable until capture execution is supported.'));
     if (stageContext) { this.inspector.append(action('Back to task stages', () => this.render())); return; }
     if (node.Kind === 'task') this.stageControls(node);
     this.inspector.append(action('Make entry', () => this.change(d => { d.Process.Graph.EntryNodeID = node.ID; })));
