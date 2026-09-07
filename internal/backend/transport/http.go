@@ -39,6 +39,9 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	h.mux.HandleFunc("GET /v2/snapshot", h.snapshot)
 	h.mux.HandleFunc("GET /v2/attach", h.attach)
 	h.mux.HandleFunc("POST /v2/observe", h.observe)
+	if browser, ok := application.(app.DirectoryAPI); ok {
+		h.registerDirectoryBrowser(browser)
+	}
 	h.registerCommands()
 	h.registerCollaboration()
 	if usage, ok := application.(usageAPI); ok {
