@@ -62,6 +62,9 @@ func (s *Store) AuthorityState(ctx context.Context) (app.AuthorityStateResult, e
 }
 
 func (s *Store) PutGrant(ctx context.Context, grant model.AuthorityGrant, expected model.Revision) (model.AuthorityGrant, error) {
+	if grant.Bounds.ValidateEnvironments() != nil {
+		return model.AuthorityGrant{}, app.ErrInvalid
+	}
 	if !validResourceSelector(grant.Resource) {
 		return model.AuthorityGrant{}, app.ErrInvalid
 	}
@@ -132,6 +135,9 @@ func (s *Store) PutRole(ctx context.Context, role model.Role, expected model.Rev
 }
 
 func (s *Store) PutRoleAssignment(ctx context.Context, assignment model.RoleAssignment, expected model.Revision) (model.RoleAssignment, error) {
+	if assignment.Bounds.ValidateEnvironments() != nil {
+		return model.RoleAssignment{}, app.ErrInvalid
+	}
 	if !validResourceSelector(assignment.Resource) {
 		return model.RoleAssignment{}, app.ErrInvalid
 	}
@@ -178,6 +184,9 @@ func (s *Store) DeleteRoleAssignment(ctx context.Context, assignment model.RoleA
 }
 
 func (s *Store) SetGroupOwner(ctx context.Context, groupID model.GroupID, owner model.AgentID, bounds model.ConfigurationBounds, expected model.Revision, at time.Time) (model.Group, error) {
+	if bounds.ValidateEnvironments() != nil {
+		return model.Group{}, app.ErrInvalid
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return model.Group{}, err

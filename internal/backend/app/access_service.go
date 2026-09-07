@@ -187,6 +187,9 @@ func (s *Service) PutRole(ctx context.Context, req PutRoleRequest) (RoleResult, 
 }
 
 func (s *Service) PutRoleAssignment(ctx context.Context, req PutRoleAssignmentRequest) (RoleAssignmentResult, error) {
+	if err := req.Assignment.Bounds.ValidateEnvironments(); err != nil {
+		return RoleAssignmentResult{}, fail(ErrInvalid, "%v", err)
+	}
 	if err := requireOperator(req.Principal); err != nil {
 		return RoleAssignmentResult{}, err
 	}
@@ -208,6 +211,9 @@ func (s *Service) DeleteRoleAssignment(ctx context.Context, req DeleteRoleAssign
 }
 
 func (s *Service) SetGroupOwner(ctx context.Context, req SetGroupOwnerRequest) (GroupResult, error) {
+	if err := req.Bounds.ValidateEnvironments(); err != nil {
+		return GroupResult{}, fail(ErrInvalid, "%v", err)
+	}
 	if err := requireOperator(req.Principal); err != nil {
 		return GroupResult{}, err
 	}
@@ -353,6 +359,9 @@ func accessBinding(access model.ExecutionAccess) model.ExecutionAccessBinding {
 }
 
 func validateGrant(grant model.AuthorityGrant) error {
+	if err := grant.Bounds.ValidateEnvironments(); err != nil {
+		return fail(ErrInvalid, "%v", err)
+	}
 	if err := grant.ID.Validate(); err != nil {
 		return fail(ErrInvalid, "%v", err)
 	}

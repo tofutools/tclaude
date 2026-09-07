@@ -76,6 +76,9 @@ func (s *Service) accessRequestStore() (AccessRequestStore, error) {
 }
 
 func (s *Service) RequestAccess(ctx context.Context, req RequestAccessRequest) (AccessRequestResult, error) {
+	if err := req.Bounds.ValidateEnvironments(); err != nil {
+		return AccessRequestResult{}, fail(ErrInvalid, "%v", err)
+	}
 	if req.Context.Principal.Kind != model.PrincipalExecution {
 		return AccessRequestResult{}, fail(ErrUnauthorized, "execution identity required")
 	}

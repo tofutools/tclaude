@@ -22,6 +22,11 @@ func TestBrowserLaunchEnvironmentComposesLiteralPinnedValues(t *testing.T) {
 		row.MustElement("input").MustInput(name)
 		row.MustElement("textarea").MustInput(value)
 	}
+	add("HOME", "/alternate")
+	page.MustElement("#editor button[type=submit]").MustClick()
+	require.Contains(t, page.MustElement("#editor").MustText(), "reserved for runtime control")
+	require.True(t, page.MustElement("#editor").MustVisible())
+	page.MustElement("#editor .launch-environment-row button").MustClick()
 	add("SHARED", "profile")
 	add("PROFILE_ONLY", "literal $HOME\nwith=equals")
 	page.MustElement("#editor button[type=submit]").MustClick()

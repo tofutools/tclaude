@@ -29,7 +29,18 @@ class LaunchEnvironment {
    if(Object.hasOwn(out,name))throw new Error('Duplicate environment name: '+name);
    out[name]=row.value;
   }
-  return out;
+  LaunchEnvironment.validate(out);return out;
+ }
+ static validate(values){
+  const entries=Object.entries(values),encoder=new TextEncoder();let total=0;
+  if(entries.length>128)throw new Error('Environment has more than 128 entries.');
+  for(const [name,value] of entries){
+   if(['HOME','PATH','SHELL','TMPDIR','TMP','TEMP','ENV','BASH_ENV','TMUX','TMUX_PANE','CLAUDE_CONFIG_DIR'].includes(name)||/^(TCLAUDE_|CLAUDE_CODE_|CODEX_|COPILOT_|OPENCODE_|XDG_|LD_|DYLD_)/.test(name))throw new Error('Environment name is reserved for runtime control: '+name);
+   const bytes=encoder.encode(value).length;
+   if(bytes>16384||value.includes('\0')||!value.isWellFormed())throw new Error('Invalid environment value for '+name);
+   total+=encoder.encode(name).length+bytes;
+  }
+  if(total>65536)throw new Error('Environment exceeds 65536 bytes.');
  }
  preview(){
   try{const values={...this.inherited,...this.read()};this.effective.textContent=Object.keys(values).length?'Effective configured environment (literal values):\n'+Object.keys(values).sort().map(k=>k+' = '+JSON.stringify(values[k])).join('\n'):'No configured environment variables.'}

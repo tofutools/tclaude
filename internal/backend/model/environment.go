@@ -113,3 +113,14 @@ func (e *Environment) UnmarshalJSON(data []byte) error {
 	*e = decoded
 	return nil
 }
+
+// ValidateEnvironments rejects authored allow-lists that can never match a valid
+// launch. Absence remains compatible with the historical empty environment.
+func (b ConfigurationBounds) ValidateEnvironments() error {
+	for _, environment := range b.Environments {
+		if err := environment.Validate(); err != nil {
+			return err
+		}
+	}
+	return nil
+}

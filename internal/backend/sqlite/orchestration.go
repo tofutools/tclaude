@@ -754,6 +754,9 @@ func decisionAudienceAllows(audience []model.DecisionAudience, principal model.P
 }
 
 func (s *Store) SaveAutomationRule(ctx context.Context, rule model.AutomationRule, revision model.AutomationRuleRevision, expected model.Revision) (app.AutomationRuleRecord, error) {
+	if revision.Delegation.Bounds.ValidateEnvironments() != nil {
+		return app.AutomationRuleRecord{}, app.ErrInvalid
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return app.AutomationRuleRecord{}, err
