@@ -103,6 +103,22 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 			return model.TeamDeployment{}, false, classify(err)
 		}
 	}
+	groupMembers := make(map[model.AgentID]bool, len(group.Members))
+	for _, member := range group.Members {
+		groupMembers[member] = true
+	}
+	for _, assignment := range assignments {
+		if _, ok := pins[assignment.RoleID]; !ok || assignment.Subject.Kind != model.AuthorityAgent || !groupMembers[assignment.Subject.AgentID] || assignment.Resource.Kind != model.ResourceGroupPeers || assignment.Resource.GroupID != group.ID {
+			return model.TeamDeployment{}, false, app.ErrInvalid
+		}
+		bounds, encodeErr := json.Marshal(assignment.Bounds)
+		if encodeErr != nil {
+			return model.TeamDeployment{}, false, encodeErr
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO role_assignments(role_id,subject_kind,subject_id,resource_kind,resource_id,bounds_json,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?)`, assignment.RoleID, model.AuthorityAgent, assignment.Subject.AgentID, model.ResourceGroupPeers, group.ID, bounds, nanos(assignment.CreatedAt), nanos(assignment.UpdatedAt)); err != nil {
+			return model.TeamDeployment{}, false, classify(err)
+		}
+	}
 	definition, _ := json.Marshal(deployment.Definition)
 	closure, _ := json.Marshal(deployment.DependencyClosure)
 	parameters, _ := json.Marshal(deployment.Parameters)

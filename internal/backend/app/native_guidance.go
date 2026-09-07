@@ -81,21 +81,30 @@ func (e *nativeGuidanceEvaluator) EvaluateNativeGuidance(ctx context.Context, ev
 		if matchErr != nil || !matched {
 			continue
 		}
+		key := string(revision.ID) + ":" + string(e.execution.ID) + ":" + event.EventID + ":" + event.NativeCorrelation
+		issuanceID := model.WorkIssuanceID(deterministicOrchestrationID("issuance_", key))
+		operationID := model.OperationID(deterministicOrchestrationID("op_", key))
+		eligible := true
+		if _, priorErr := e.service.store.OperationResult(ctx, operationID); errors.Is(priorErr, ErrNotFound) {
+			var eligibilityErr error
+			eligible, eligibilityErr = e.targetsExecution(ctx, *revision.Action.Message)
+			if eligibilityErr != nil {
+				return ports.NativeGuidanceAdmission{}, eligibilityErr
+			}
+			if !eligible {
+				continue
+			}
+		} else if priorErr != nil {
+			return ports.NativeGuidanceAdmission{}, priorErr
+		}
 		deadline := event.ObservedAt.Add(condition.DispatchDeadline)
 		if !deadline.After(e.service.now().UTC()) {
 			return ports.NativeGuidanceAdmission{}, fail(ErrConflict, "native guidance deadline elapsed")
 		}
-		key := string(revision.ID) + ":" + string(e.execution.ID) + ":" + event.EventID + ":" + event.NativeCorrelation
-		issuanceID := model.WorkIssuanceID(deterministicOrchestrationID("issuance_", key))
-		operationID := model.OperationID(deterministicOrchestrationID("op_", key))
 		principal := model.AutomationPrincipal(string(issuanceID), revision.Owner, revision.Delegation)
 		now := e.service.now().UTC()
 		operation := model.Operation{ID: operationID, RequestID: model.RequestID(deterministicOrchestrationID("request_", key)), Kind: model.OperationInteract, Principal: principal, ExecutionID: e.execution.ID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
 		authority := model.AuthorityRequest{Principal: principal, Action: model.ActionInteract, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: e.execution.AgentID}}
-		eligible, eligibilityErr := e.targetsExecution(ctx, *revision.Action.Message)
-		if eligibilityErr != nil {
-			return ports.NativeGuidanceAdmission{}, eligibilityErr
-		}
 		audience := automationMessageAudience(*revision.Action.Message)
 		admitted, admitErr := e.service.store.AdmitExecutionOperation(ctx, ExecutionOperationAdmission{Operation: operation, Authority: authority, Eligibility: &audience})
 		if admitErr != nil {

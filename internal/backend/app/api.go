@@ -183,6 +183,7 @@ type SubmitDecisionRequest struct {
 	Context                RequestContext
 	DecisionID             model.DecisionID
 	ExpectedWindowRevision model.Revision
+	ExpectedRunRevision    model.Revision
 	Answer                 string
 	Reason                 string
 	EvidenceRefs           []model.WorkEvidenceID

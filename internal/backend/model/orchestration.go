@@ -445,6 +445,7 @@ type DecisionSubmission struct {
 	RequestID              RequestID
 	DecisionID             DecisionID
 	ExpectedWindowRevision Revision
+	ExpectedRunRevision    Revision
 	Answer                 string
 	Reason                 string
 	EvidenceRefs           []WorkEvidenceID
@@ -748,6 +749,8 @@ const (
 )
 
 type AutomationOccurrence struct {
+	RequestScope        string `json:"-"`
+	RequestFingerprint  string `json:"-"`
 	ID                  OccurrenceID
 	RuleID              AutomationRuleID
 	RuleRevisionID      AutomationRuleRevisionID

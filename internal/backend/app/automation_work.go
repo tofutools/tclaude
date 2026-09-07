@@ -94,6 +94,17 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 		if readErr != nil {
 			return touched, readErr
 		}
+		currentRule, ruleErr := s.store.AutomationRule(ctx, occurrence.Occurrence.RuleID)
+		if ruleErr != nil {
+			return touched, ruleErr
+		}
+		if (occurrence.Occurrence.State == model.OccurrencePending || occurrence.Occurrence.State == model.OccurrenceParked) && !currentRule.Rule.Enabled {
+			if _, err = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, model.OccurrenceDenied, occurrence.Occurrence.OperationID, occurrence.Occurrence.WorkRunID, occurrence.Occurrence.DeploymentID, deniedRecipients(occurrence.Occurrence.Recipients, "automation rule disabled"), now); err != nil {
+				return touched, err
+			}
+			touched = append(touched, occurrence.Occurrence.ID)
+			continue
+		}
 		if occurrence.Occurrence.State == model.OccurrenceParked {
 			var ready bool
 			occurrence, ready, readErr = s.prepareParkedOccurrence(ctx, occurrence, revision, now)
@@ -161,17 +172,6 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 					return touched, err
 				}
 			}
-			continue
-		}
-		currentRule, ruleErr := s.store.AutomationRule(ctx, occurrence.Occurrence.RuleID)
-		if ruleErr != nil {
-			return touched, ruleErr
-		}
-		if occurrence.Occurrence.State == model.OccurrencePending && !currentRule.Rule.Enabled {
-			if _, err = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, model.OccurrenceDenied, "", "", "", occurrence.Occurrence.Recipients, now); err != nil {
-				return touched, err
-			}
-			touched = append(touched, occurrence.Occurrence.ID)
 			continue
 		}
 		switch revision.Action.Kind {
@@ -264,7 +264,7 @@ func (s *Service) prepareParkedOccurrence(ctx context.Context, current Occurrenc
 	}
 	var active []OccurrenceRecord
 	for _, candidate := range records {
-		if candidate.Occurrence.ID != current.Occurrence.ID && occurrenceActive(candidate.Occurrence.State) {
+		if candidate.Occurrence.ID != current.Occurrence.ID && occurrenceConsumesOverlapSlot(candidate.Occurrence.State) {
 			active = append(active, candidate)
 		}
 	}
@@ -277,6 +277,19 @@ func (s *Service) prepareParkedOccurrence(ctx context.Context, current Occurrenc
 	}
 	if revision.Policy.Overlap != model.OverlapReplace {
 		return current, false, nil
+	}
+	for _, candidate := range records {
+		if candidate.Occurrence.ID == current.Occurrence.ID || candidate.Occurrence.State != model.OccurrenceParked {
+			continue
+		}
+		candidateIsNewer := candidate.Occurrence.CreatedAt.After(current.Occurrence.CreatedAt) || candidate.Occurrence.CreatedAt.Equal(current.Occurrence.CreatedAt) && candidate.Occurrence.ID > current.Occurrence.ID
+		if candidateIsNewer {
+			updated, updateErr := s.store.UpdateOccurrence(ctx, current.Occurrence.ID, current.Occurrence.Revision, model.OccurrenceDenied, current.Occurrence.OperationID, current.Occurrence.WorkRunID, current.Occurrence.DeploymentID, deniedRecipients(current.Occurrence.Recipients, "superseded by "+string(candidate.Occurrence.ID)), now)
+			return updated, false, updateErr
+		}
+		if _, updateErr := s.store.UpdateOccurrence(ctx, candidate.Occurrence.ID, candidate.Occurrence.Revision, model.OccurrenceDenied, candidate.Occurrence.OperationID, candidate.Occurrence.WorkRunID, candidate.Occurrence.DeploymentID, deniedRecipients(candidate.Occurrence.Recipients, "superseded by "+string(current.Occurrence.ID)), now); updateErr != nil && !errors.Is(updateErr, ErrConflict) {
+			return current, false, updateErr
+		}
 	}
 	for _, prior := range active {
 		if prior.Occurrence.WorkRunID == "" {
@@ -442,6 +455,15 @@ func hasActiveOccurrence(records []OccurrenceRecord) bool {
 func occurrenceActive(state model.OccurrenceState) bool {
 	switch state {
 	case model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceParked, model.OccurrenceUncertain:
+		return true
+	default:
+		return false
+	}
+}
+
+func occurrenceConsumesOverlapSlot(state model.OccurrenceState) bool {
+	switch state {
+	case model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceUncertain:
 		return true
 	default:
 		return false
