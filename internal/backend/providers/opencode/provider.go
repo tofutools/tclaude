@@ -131,6 +131,10 @@ type sessionRecord struct {
 }
 
 func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest) (ports.PreparedAttempt, error) {
+	if err := request.Spec.Environment.Validate(); err != nil {
+		return nil, err
+	}
+	request.Spec.Environment = request.Spec.Environment.Clone()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -390,7 +394,7 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 		Executable: p.provider.executable,
 		Args:       []string{"serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port), "--pure"},
 		Directory:  p.request.Spec.WorkingDirectory,
-		Env: append(p.provider.runtimeEnvironment(p.stateRoot),
+		Env: append(append(p.provider.runtimeEnvironment(p.stateRoot), p.request.Spec.Environment.Entries()...),
 			"OPENCODE_SERVER_USERNAME="+serverUsername,
 			"OPENCODE_SERVER_PASSWORD="+p.password,
 			attemptMarkerKey+"="+p.attemptMark,

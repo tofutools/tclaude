@@ -109,6 +109,10 @@ type prepared struct {
 }
 
 func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest) (ports.PreparedAttempt, error) {
+	if err := request.Spec.Environment.Validate(); err != nil {
+		return nil, err
+	}
+	request.Spec.Environment = request.Spec.Environment.Clone()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -330,7 +334,7 @@ func (p *prepared) runtimeEnvironment() []string {
 	if p.access != nil {
 		result = append(result, "TCLAUDE_BACKEND_CREDENTIAL_FILE="+p.access.Resource, "TCLAUDE_BACKEND_SOCKET="+p.provider.agentSocket)
 	}
-	return result
+	return append(p.request.Spec.Environment.Entries(), result...)
 }
 func (p *prepared) runtime(t *host.Terminal) *Runtime {
 	return &Runtime{provider: p.provider, executionID: p.request.Spec.ExecutionID, attempt: p.request.Spec.Attempt, terminal: t, nativeID: p.nativeID, intent: p.request.Intent, stateRoot: p.stateRoot, observations: p.request.Observations, access: p.access, spool: p.spool}

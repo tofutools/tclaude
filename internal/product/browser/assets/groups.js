@@ -22,11 +22,11 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
  controls.append(button('Clone group',async()=>{
   const [current,profiles]=await Promise.all([api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration'),api('/v2/configuration-profiles')]);if(!card.isConnected)return;
   const members=(group.Members||[]).map(id=>agents.find(a=>a.ID===id)),active=members.filter(a=>a?.Lifecycle==='active');
-  const available=ref=>!ref||profiles.some(p=>p.ID===ref.ProfileID&&!p.Archived),blocked=active.filter(a=>!available(a.ConfigurationProfile)),canCopy=!blocked.length&&members.every(Boolean),canDefault=current.Profile&&available(current.Profile);
+  const available=ref=>!ref||profiles.some(p=>p.ID===ref.ProfileID&&!p.Archived),blocked=active.filter(a=>!available(a.ConfigurationProfile)),canCopy=!blocked.length&&members.every(Boolean),canDefault=available(current.Profile)&&(current.Profile||Object.keys(current.Environment||{}).length);
   edit('Clone group',[
    {name:'name',label:'New group name',value:group.Name+' copy'},
    {name:'members',label:'Member configurations',value:canCopy?'copy':'none',options:[...(canCopy?[{value:'copy',label:'Copy active members as new offline agents'}]:[]),{value:'none',label:'Create an empty group'}]},
-   {name:'defaults',label:'Group launch default',value:'none',options:[{value:'none',label:'No default'},...(canDefault?[{value:'copy',label:'Copy pinned '+current.Profile.ProfileID+' · '+current.Profile.RevisionID}]:[])]},
+   {name:'defaults',label:'Group launch default',value:'none',options:[{value:'none',label:'No default'},...(canDefault?[{value:'copy',label:current.Profile?'Copy pinned '+current.Profile.ProfileID+' · '+current.Profile.RevisionID+' and group environment':'Copy group environment'}]:[])]},
    {name:'limit',label:'Maximum active direct members (0 = no configured limit)',type:'number',value:String(cap)}
   ],f=>{
    const limit=Number(f.limit),copy=f.members==='copy';if(!Number.isInteger(limit)||limit<0||limit>2147483647)throw new Error('Enter a whole number from 0 to 2147483647');
@@ -44,11 +44,11 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
   if(!card.isConnected)return;
   const choices=profiles.filter(p=>!p.Archived).map(p=>({key:'current:'+p.ID,label:p.Name+' · '+p.ID,ref:{ProfileID:p.ID,RevisionID:p.CurrentRevisionID}}));let value='';
   if(current.Profile){const exact=choices.find(p=>p.ref.ProfileID===current.Profile.ProfileID&&p.ref.RevisionID===current.Profile.RevisionID);if(exact)value=exact.key;else{value='pinned';choices.push({key:value,label:'Pinned '+current.Profile.ProfileID+' · '+current.Profile.RevisionID,ref:current.Profile})}}
-  edit('Group launch defaults',[{name:'profile',label:'Saved configuration for new members (existing agents keep their settings)',required:false,value,options:[{value:'',label:'No group default'},...choices.map(p=>({value:p.key,label:p.label}))]}],async f=>{let profile=null;if(f.profile){const selected=choices.find(p=>p.key===f.profile);if(!selected)throw new Error('Select a listed configuration');profile=(await api('/v2/configuration-profiles/'+encodeURIComponent(selected.ref.ProfileID)+'?revision_id='+encodeURIComponent(selected.ref.RevisionID))).Revision.Ref}return api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration',{profile,expected_revision:current.Revision},'PUT')},{skipUnchanged:true});
+  edit('Group launch defaults',[{name:'environment',label:'Group environment (saved configuration and explicit member values override matching names)',environment:true,value:current.Environment||{}},{name:'profile',label:'Saved configuration for new members (existing agents keep their settings)',required:false,value,options:[{value:'',label:'No group default'},...choices.map(p=>({value:p.key,label:p.label}))]}],async f=>{let profile=null;if(f.profile){const selected=choices.find(p=>p.key===f.profile);if(!selected)throw new Error('Select a listed configuration');profile=(await api('/v2/configuration-profiles/'+encodeURIComponent(selected.ref.ProfileID)+'?revision_id='+encodeURIComponent(selected.ref.RevisionID))).Revision.Ref}return api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration',{profile,environment:f.environment,expected_revision:current.Revision},'PUT')},{skipUnchanged:true});
  }),button('Create member from default',async()=>{
   const current=await api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration');if(!card.isConnected)return;if(!current.Profile)throw new Error('Choose a group launch default first.');
   const saved=await api('/v2/configuration-profiles/'+encodeURIComponent(current.Profile.ProfileID)+'?revision_id='+encodeURIComponent(current.Profile.RevisionID));if(!card.isConnected)return;
-  edit('Create group member',[{name:'name',label:'Agent name · '+saved.Profile.Name+' · '+current.Profile.RevisionID,value:saved.Revision.Startup?.AgentName||saved.Profile.Name}],f=>api('/v2/groups/'+encodeURIComponent(group.ID)+'/agents',{request_id:f.requestID,id:f.requestID,name:f.name,expected_group_revision:group.Revision,expected_default_revision:current.Revision}));
+  edit('Create group member',[{name:'environment',label:'Explicit environment overrides',environment:true,value:{},inherited:{...current.Environment,...saved.Revision.Desired.Environment}},{name:'name',label:'Agent name · '+saved.Profile.Name+' · '+current.Profile.RevisionID,value:saved.Revision.Startup?.AgentName||saved.Profile.Name}],f=>api('/v2/groups/'+encodeURIComponent(group.ID)+'/agents',{request_id:f.requestID,id:f.requestID,name:f.name,environment:f.environment,expected_group_revision:group.Revision,expected_default_revision:current.Revision}));
   document.getElementById('editor-fields').append(el('p',saved.Revision.Desired.Harness+' · '+saved.Revision.Desired.Model+' · '+saved.Revision.Desired.WorkingDirectory+' — creates the agent and membership; start remains explicit.'));
  }));
 
@@ -72,9 +72,10 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
     {name:'models',label:'Allowed models, one per line (required for launch/configuration authority)',multiline:true,required:false,value:lines(prior.Models)},
     {name:'roots',label:'Working directory roots, one per line (required for launch/configuration authority)',multiline:true,required:false,value:lines(prior.WorkingDirectoryRoots)},
     {name:'approvals',label:'Approval modes (required for launch/configuration authority)',multiple:true,required:false,value:prior.ApprovalModes||[],options:['supervised','automatic']},
+    {name:'environments',label:'Exact allowed launch environments',environmentSets:true,value:prior.Environments||[]},
     {name:'sandboxes',label:'Confinement modes (required for launch/configuration authority)',multiple:true,required:false,value:prior.SandboxModes||[],options:['read_only','workspace_write','unconfined']}
    ],f=>{const split=v=>v.split('\n').map(x=>x.trim()).filter(Boolean);let bounds={};
-    if(f.configuration==='listed'){bounds={Harnesses:split(f.harnesses),Models:split(f.models),WorkingDirectoryRoots:split(f.roots),ApprovalModes:f.approvals,SandboxModes:f.sandboxes};if(Object.values(bounds).some(values=>!values.length))throw new Error('Supply all five allow-lists, or choose no launch or configuration changes.');}
+    if(f.configuration==='listed'){bounds={Harnesses:split(f.harnesses),Models:split(f.models),WorkingDirectoryRoots:split(f.roots),ApprovalModes:f.approvals,SandboxModes:f.sandboxes};if(Object.values(bounds).some(values=>!values.length))throw new Error('Supply all five allow-lists, or choose no launch or configuration changes.');bounds.Environments=f.environments;}
     return api('/v2/groups/'+encodeURIComponent(group.ID)+'/owner',{owner_agent_id:f.owner,expected_revision:group.Revision,bounds},'PUT')},{skipUnchanged:true});
   }));card.append(controls);
   for(const [index,id]of (group.Members||[]).entries()){

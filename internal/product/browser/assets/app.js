@@ -40,6 +40,7 @@ function edit(title,fields,save,{skipUnchanged=false}={}){
  $('editor-title').textContent=presentation.label(title);$('editor-fields').replaceChildren();$('editor-error').hidden=true;let fingerprint='',submissionID='';
  for(const field of fields){
   const label=el('label',field.label);let input;
+  if(field.environment||field.environmentSets){field.control=field.environmentSets?new LaunchEnvironmentSets(field.value):new LaunchEnvironment(field.value,{inherited:field.inherited||{}});const container=el('fieldset');container.append(el('legend',field.label),field.control.host);$('editor-fields').append(container);continue}
   if(field.options){input=el('select');for(const option of field.options){const o=el('option',typeof option==='string'?option:option.label);o.value=typeof option==='string'?option:option.value;input.append(o)}}
   else input=el(field.multiline?'textarea':'input');
   if(field.file)input.type='file';
@@ -49,7 +50,7 @@ function edit(title,fields,save,{skipUnchanged=false}={}){
   input.required=field.required!==false;label.append(input);$('editor-fields').append(label);
   if(field.name==='cwd')label.append(button('Browse directories',async()=>{const {pickDirectory}=await import('./directory-picker.js');if(!input.isConnected||!$('editor').open)return;const selected=await pickDirectory({api,initial:input.value});if(selected!==null&&input.isConnected&&$('editor').open){input.value=selected;input.dispatchEvent(new Event('input',{bubbles:true}));}}));
  }
- const readForm=()=>{const data=new FormData($('editor-form')),form=Object.fromEntries(data);for(const field of fields)if(field.multiple)form[field.name]=data.getAll(field.name);return form};const initial=JSON.stringify(readForm());
+ const readForm=()=>{const data=new FormData($('editor-form')),form=Object.fromEntries(data);for(const field of fields){if(field.multiple)form[field.name]=data.getAll(field.name);if(field.environment||field.environmentSets)form[field.name]=field.control.read();}return form};const initial=JSON.stringify(readForm());
  $('editor-form').onsubmit=async e=>{e.preventDefault();if(submitting)return;submitting=true;const submit=e.submitter;if(submit)submit.disabled=true;
   try{const form=readForm();if(skipUnchanged&&JSON.stringify(form)===initial){$('editor').close();return}const next=JSON.stringify(form,(_,value)=>value instanceof File?{name:value.name,size:value.size,modified:value.lastModified}:value);if(fingerprint!==next){fingerprint=next;submissionID=requestID()}form.requestID=submissionID;await save(form);$('editor').close();await refresh()}catch(error){showError(error)}finally{submitting=false;if(submit)submit.disabled=false}
  };
@@ -59,12 +60,13 @@ function desiredFields(desired={}){return[
  {name:'name',label:'Name',value:desired.name},
  {name:'harness',label:'Harness',value:desired.Harness||'claude',options:['claude','codex','opencode','copilot']},
  {name:'model',label:'Model',value:desired.Model},
+ {name:'environment',label:'Environment — literal values for future launches',environment:true,value:desired.Environment||{}},
  {name:'effort',label:'Requested native effort / variant (optional)',value:desired.Effort||'',required:false},
  {name:'cwd',label:'Working directory',value:desired.WorkingDirectory},
  {name:'approval',label:'Approval',value:desired.Approval||'supervised',options:['supervised','automatic']},
  {name:'sandbox',label:'Confinement',value:desired.Sandbox||'workspace_write',options:['read_only','workspace_write','unconfined']}
 ]}
-function configuration(form){if(form.effort&&!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(form.effort))throw new Error('Requested native effort must start with a letter or digit and contain at most 64 lowercase letters, digits, underscores or hyphens.');return{Harness:form.harness,Model:form.model,Effort:form.effort,WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
+function configuration(form){if(form.effort&&!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(form.effort))throw new Error('Requested native effort must start with a letter or digit and contain at most 64 lowercase letters, digits, underscores or hyphens.');return{Environment:form.environment||{},Harness:form.harness,Model:form.model,Effort:form.effort,WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
 async function startWithBrief(agent){
  const ref=agent.ConfigurationProfile;
  const saved=ref?await api(`/v2/configuration-profiles/${encodeURIComponent(ref.ProfileID)}?revision_id=${encodeURIComponent(ref.RevisionID)}`):null;

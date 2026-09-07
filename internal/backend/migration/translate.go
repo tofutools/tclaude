@@ -245,6 +245,7 @@ func (t *translator) translateAgents(batch *app.ImportBatch) {
 			Notifications: model.AgentNotificationPreferences{DirectMessage: model.NotificationIfAvailable},
 			Desired:       desiredFromRow(row.Values), Revision: 1, CreatedAt: created, UpdatedAt: updated,
 		}
+		agent.Desired.Environment = t.launchEnvironment(batch, "agents", row)
 		if model.ValidateEffort(agent.Desired.Effort) != nil {
 			t.launchMetadataDiagnostic(batch, "agents", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
 		}
@@ -392,6 +393,7 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "profile_disabled_unrecognized", "unrecognized disabled state is retained as archived pending explicit operator review")
 		}
 		desired := desiredFromRow(row.Values)
+		desired.Environment = t.launchEnvironment(batch, "spawn_profiles", row)
 		if model.ValidateEffort(desired.Effort) != nil {
 			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
 		}

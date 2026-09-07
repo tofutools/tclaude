@@ -58,7 +58,7 @@ func TestProviderOwnsTerminalCredentialAndRecovery(t *testing.T) {
 	authPath := filepath.Join(nativeHome, "auth.json")
 	require.NoError(t, os.WriteFile(authPath, []byte(`{"auth_mode":"chatgpt","tokens":{"access_token":"fixture-only"}}`), 0o600))
 	executable := filepath.Join(root, "codex-fake")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CODEX_TEST_ARGV\"\nprintf '%s\\n' \"$CODEX_HOME\" \"$TCLAUDE_BACKEND_SOCKET\" > \"$CODEX_TEST_BOOTSTRAP\"\ncat \"$TCLAUDE_BACKEND_CREDENTIAL_FILE\" >> \"$CODEX_TEST_BOOTSTRAP\"\nwhile IFS= read -r line; do printf '%s\\n' \"$line\" >> \"$CODEX_TEST_INPUT\"; done\n"
+	script := "#!/bin/sh\nprintf '%s' \"$APP_ENV_PROBE\" > \"$APP_ENV_OUTPUT\"\nprintf '%s\\n' \"$@\" > \"$CODEX_TEST_ARGV\"\nprintf '%s\\n' \"$CODEX_HOME\" \"$TCLAUDE_BACKEND_SOCKET\" > \"$CODEX_TEST_BOOTSTRAP\"\ncat \"$TCLAUDE_BACKEND_CREDENTIAL_FILE\" >> \"$CODEX_TEST_BOOTSTRAP\"\nwhile IFS= read -r line; do printf '%s\\n' \"$line\" >> \"$CODEX_TEST_INPUT\"; done\n"
 	require.NoError(t, os.WriteFile(executable, []byte(script), 0o700))
 	t.Setenv("CODEX_TEST_ARGV", argvPath)
 	t.Setenv("CODEX_TEST_INPUT", inputPath)
@@ -67,6 +67,7 @@ func TestProviderOwnsTerminalCredentialAndRecovery(t *testing.T) {
 	require.NoError(t, err)
 	expires := time.Now().Add(time.Hour)
 	request := ports.PreparationRequest{Intent: ports.StartFresh, InitialInput: &ports.PreparedInitialInput{Body: "prepared codex brief", Correlation: "brief-codex", RequiredBeforeFirstWork: true}, Spec: model.ResolvedExecutionSpec{ExecutionID: "execution_codex", Attempt: 3, Harness: Name, Model: "test-model", Effort: "high", WorkingDirectory: root, Approval: model.ApprovalAutomatic, Sandbox: model.SandboxUnconfined}, ActionCredential: &ports.ActionCredentialMaterial{ExecutionID: "execution_codex", Generation: 1, DeliveryID: "delivery", Secret: []byte("codex-secret"), ExpiresAt: expires}}
+	request.Spec.Environment = model.Environment{"APP_ENV_PROBE": "literal $HOME\nwith=equals", "APP_ENV_OUTPUT": filepath.Join(root, "environment")}
 	prepared, err := provider.Prepare(context.Background(), request)
 	require.NoError(t, err)
 	description := prepared.Describe()
@@ -77,6 +78,11 @@ func TestProviderOwnsTerminalCredentialAndRecovery(t *testing.T) {
 	permit := &testPermit{execution: request.Spec.ExecutionID}
 	released, err := prepared.Release(context.Background(), permit)
 	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		raw, err := os.ReadFile(filepath.Join(root, "environment"))
+		return err == nil && string(raw) == "literal $HOME\nwith=equals"
+	}, 5*time.Second, 10*time.Millisecond)
+
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()

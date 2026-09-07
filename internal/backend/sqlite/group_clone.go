@@ -89,7 +89,7 @@ func (s *Store) AdmitGroupClone(ctx context.Context, in app.CloneGroupRequest, c
 				continue
 			}
 			clone, ok := copied[id]
-			if !ok || clone.ID.Validate() != nil || clone.ID == id || clone.Name != agent.Name || clone.TaskReference != agent.TaskReference || clone.Desired != agent.Desired || clone.Notifications != agent.Notifications || !reflect.DeepEqual(clone.ConfigurationProfile, agent.ConfigurationProfile) || clone.PrimaryExecutionID != "" || clone.ParentAgentID != "" || clone.Lifecycle != model.AgentActive || clone.Revision != 1 {
+			if !ok || clone.ID.Validate() != nil || clone.ID == id || clone.Name != agent.Name || clone.TaskReference != agent.TaskReference || !clone.Desired.Equal(agent.Desired) || clone.Notifications != agent.Notifications || !reflect.DeepEqual(clone.ConfigurationProfile, agent.ConfigurationProfile) || clone.PrimaryExecutionID != "" || clone.ParentAgentID != "" || clone.Lifecycle != model.AgentActive || clone.Revision != 1 {
 				return out, app.ErrConflict
 			}
 			if err = createAgentTx(ctx, tx, clone); err != nil {
@@ -130,14 +130,17 @@ func (s *Store) AdmitGroupClone(ctx context.Context, in app.CloneGroupRequest, c
 		if err != nil {
 			return out, err
 		}
-		if defaults.Revision != in.ExpectedDefaultRevision || defaults.Profile == nil {
+		if defaults.Revision != in.ExpectedDefaultRevision || defaults.Profile == nil && len(defaults.Environment) == 0 {
 			return out, app.ErrConflict
 		}
 		if err = requireActiveConfigurationProfileTx(ctx, tx, defaults.Profile); err != nil {
 			return out, err
 		}
-		ref := defaults.Profile
-		if _, err = tx.ExecContext(ctx, `INSERT INTO group_configurations(group_id,profile_id,revision_id,content_hash,revision,updated_at) VALUES(?,?,?,?,1,?)`, group.ID, ref.ProfileID, ref.RevisionID, ref.ContentHash, nanos(at)); err != nil {
+		var ref model.ConfigurationProfileRef
+		if defaults.Profile != nil {
+			ref = *defaults.Profile
+		}
+		if _, err = tx.ExecContext(ctx, `INSERT INTO group_configurations(environment_json,group_id,profile_id,revision_id,content_hash,revision,updated_at) VALUES(?,?,?,?,?,1,?)`, environmentJSON(defaults.Environment), group.ID, ref.ProfileID, ref.RevisionID, ref.ContentHash, nanos(at)); err != nil {
 			return out, err
 		}
 	}

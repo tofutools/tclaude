@@ -17,9 +17,13 @@ func readGroupConfiguration(ctx context.Context, q groupReader, id model.GroupID
 	var out model.GroupConfiguration
 	var ref model.ConfigurationProfileRef
 	var updated int64
-	err := q.QueryRowContext(ctx, `SELECT g.id,COALESCE(c.profile_id,''),COALESCE(c.revision_id,''),COALESCE(c.content_hash,''),COALESCE(c.revision,0),COALESCE(c.updated_at,0) FROM groups g LEFT JOIN group_configurations c ON c.group_id=g.id WHERE g.id=?`, id).Scan(&out.GroupID, &ref.ProfileID, &ref.RevisionID, &ref.ContentHash, &out.Revision, &updated)
+	var environment []byte
+	err := q.QueryRowContext(ctx, `SELECT g.id,COALESCE(c.profile_id,''),COALESCE(c.revision_id,''),COALESCE(c.content_hash,''),COALESCE(c.revision,0),COALESCE(c.updated_at,0),COALESCE(c.environment_json,'{}') FROM groups g LEFT JOIN group_configurations c ON c.group_id=g.id WHERE g.id=?`, id).Scan(&out.GroupID, &ref.ProfileID, &ref.RevisionID, &ref.ContentHash, &out.Revision, &updated, &environment)
 	if err != nil {
 		return out, classify(err)
+	}
+	if err := json.Unmarshal(environment, &out.Environment); err != nil {
+		return out, err
 	}
 	if ref.ProfileID != "" {
 		out.Profile = &ref
@@ -56,10 +60,14 @@ func (s *Store) SetGroupConfiguration(ctx context.Context, in app.SetGroupConfig
 	if in.Profile != nil {
 		ref = *in.Profile
 	}
+	if in.Environment.Validate() != nil {
+		return out, app.ErrInvalid
+	}
+	out.Environment = in.Environment.Clone()
 	out.Profile = in.Profile
 	out.Revision++
 	out.UpdatedAt = at
-	if _, err = tx.ExecContext(ctx, `INSERT INTO group_configurations(group_id,profile_id,revision_id,content_hash,revision,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET profile_id=excluded.profile_id,revision_id=excluded.revision_id,content_hash=excluded.content_hash,revision=excluded.revision,updated_at=excluded.updated_at`, in.GroupID, ref.ProfileID, ref.RevisionID, ref.ContentHash, out.Revision, nanos(at)); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO group_configurations(environment_json,group_id,profile_id,revision_id,content_hash,revision,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET environment_json=excluded.environment_json,profile_id=excluded.profile_id,revision_id=excluded.revision_id,content_hash=excluded.content_hash,revision=excluded.revision,updated_at=excluded.updated_at`, environmentJSON(in.Environment), in.GroupID, ref.ProfileID, ref.RevisionID, ref.ContentHash, out.Revision, nanos(at)); err != nil {
 		return out, err
 	}
 	if err = bumpTx(ctx, tx); err != nil {
@@ -69,11 +77,12 @@ func (s *Store) SetGroupConfiguration(ctx context.Context, in app.SetGroupConfig
 }
 func groupMemberIntent(in app.CreateGroupMemberRequest) []byte {
 	data, _ := json.Marshal(struct {
+		Environment                    model.Environment `json:",omitempty"`
 		GroupID                        model.GroupID
 		ID                             model.AgentID
 		Name                           string
 		GroupRevision, DefaultRevision model.Revision
-	}{in.GroupID, in.ID, in.Name, in.ExpectedGroupRevision, in.ExpectedDefaultRevision})
+	}{in.Environment, in.GroupID, in.ID, in.Name, in.ExpectedGroupRevision, in.ExpectedDefaultRevision})
 	return data
 }
 func findGroupMemberAdmission(ctx context.Context, q groupReader, in app.CreateGroupMemberRequest) (app.GroupMemberResult, bool, error) {
@@ -135,7 +144,12 @@ func (s *Store) AdmitGroupMember(ctx context.Context, in app.CreateGroupMemberRe
 	if err = json.Unmarshal(data, &revision); err != nil {
 		return out, err
 	}
-	if revision.Desired != agent.Desired || revision.Ref != *defaults.Profile {
+	expected := revision.Desired
+	expected.Environment, err = model.MergeEnvironment(defaults.Environment, expected.Environment, in.Environment)
+	if err != nil {
+		return out, app.ErrInvalid
+	}
+	if !expected.Equal(agent.Desired) || revision.Ref != *defaults.Profile {
 		return out, app.ErrConflict
 	}
 	if err = createAgentTx(ctx, tx, agent); err != nil {

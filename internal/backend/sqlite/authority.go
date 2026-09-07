@@ -62,6 +62,9 @@ func (s *Store) AuthorityState(ctx context.Context) (app.AuthorityStateResult, e
 }
 
 func (s *Store) PutGrant(ctx context.Context, grant model.AuthorityGrant, expected model.Revision) (model.AuthorityGrant, error) {
+	if grant.Bounds.ValidateEnvironments() != nil {
+		return model.AuthorityGrant{}, app.ErrInvalid
+	}
 	if !validResourceSelector(grant.Resource) {
 		return model.AuthorityGrant{}, app.ErrInvalid
 	}
@@ -132,6 +135,9 @@ func (s *Store) PutRole(ctx context.Context, role model.Role, expected model.Rev
 }
 
 func (s *Store) PutRoleAssignment(ctx context.Context, assignment model.RoleAssignment, expected model.Revision) (model.RoleAssignment, error) {
+	if assignment.Bounds.ValidateEnvironments() != nil {
+		return model.RoleAssignment{}, app.ErrInvalid
+	}
 	if !validResourceSelector(assignment.Resource) {
 		return model.RoleAssignment{}, app.ErrInvalid
 	}
@@ -178,6 +184,9 @@ func (s *Store) DeleteRoleAssignment(ctx context.Context, assignment model.RoleA
 }
 
 func (s *Store) SetGroupOwner(ctx context.Context, groupID model.GroupID, owner model.AgentID, bounds model.ConfigurationBounds, expected model.Revision, at time.Time) (model.Group, error) {
+	if bounds.ValidateEnvironments() != nil {
+		return model.Group{}, app.ErrInvalid
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return model.Group{}, err
@@ -463,6 +472,9 @@ func executionBelongsTo(ctx context.Context, q queryer, executionID model.Execut
 func configurationMatches(bounds model.ConfigurationBounds, requested *model.DesiredConfiguration) bool {
 	if requested == nil {
 		return true
+	}
+	if !environmentMatches(bounds.Environments, requested.Environment) {
+		return false
 	}
 	if len(bounds.Harnesses) == 0 || len(bounds.Models) == 0 || len(bounds.WorkingDirectoryRoots) == 0 || len(bounds.ApprovalModes) == 0 || len(bounds.SandboxModes) == 0 {
 		return false
@@ -863,4 +875,19 @@ func requestScope(principal model.Principal) string {
 
 func sameRequester(left, right model.Principal) bool {
 	return left.Kind == right.Kind && left.AgentID == right.AgentID && left.ExecutionID == right.ExecutionID && left.AutomationRun == right.AutomationRun && left.Authority == right.Authority
+}
+
+func environmentMatches(allowed []model.Environment, requested model.Environment) bool {
+	if requested.Validate() != nil {
+		return false
+	}
+	if len(allowed) == 0 {
+		return len(requested) == 0
+	}
+	for _, candidate := range allowed {
+		if candidate.Validate() == nil && candidate.Equal(requested) {
+			return true
+		}
+	}
+	return false
 }

@@ -87,7 +87,7 @@ func (s *Store) CreateAccessRequest(ctx context.Context, request model.AccessReq
 		return app.AccessRequestResult{}, err
 	}
 	request.Subject = subject
-	if !validResourceSelector(request.Resource) || app.AccessRequestConfigurationRequired(request.Action) && request.RequestedConfiguration == nil || !configurationMatches(request.Bounds, request.RequestedConfiguration) {
+	if request.Bounds.ValidateEnvironments() != nil || !validResourceSelector(request.Resource) || app.AccessRequestConfigurationRequired(request.Action) && request.RequestedConfiguration == nil || !configurationMatches(request.Bounds, request.RequestedConfiguration) {
 		return app.AccessRequestResult{}, app.ErrInvalid
 	}
 	grant := accessGrant(request, at)

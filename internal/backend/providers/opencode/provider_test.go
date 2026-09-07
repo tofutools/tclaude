@@ -50,7 +50,7 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
 	executable := filepath.Join(root, "opencode-fake")
-	script := "#!/bin/sh\nexec \"$OPENCODE_TEST_BINARY\" -test.run=TestOpenCodeServerHelper -- \"$@\"\n"
+	script := "#!/bin/sh\nprintf '%s' \"$APP_ENV_PROBE\" > \"$APP_ENV_OUTPUT\"\nexec \"$OPENCODE_TEST_BINARY\" -test.run=TestOpenCodeServerHelper -- \"$@\"\n"
 	require.NoError(t, os.WriteFile(executable, []byte(script), 0o700))
 	promptPath := filepath.Join(root, "prompt")
 	bootstrapPath := filepath.Join(root, "bootstrap")
@@ -70,6 +70,7 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 			ExecutionID: "execution_opencode", Harness: Name, Model: "provider/model", Effort: "high",
 			WorkingDirectory: root, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined,
 		}}
+	request.Spec.Environment = model.Environment{"APP_ENV_PROBE": "literal $HOME\nwith=equals", "APP_ENV_OUTPUT": filepath.Join(root, "environment")}
 	prepared, err := provider.Prepare(context.Background(), request)
 	require.NoError(t, err)
 	description := prepared.Describe()
@@ -96,6 +97,11 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 	permit := &testPermit{execution: request.Spec.ExecutionID, operation: "operation_launch"}
 	released, err := prepared.Release(context.Background(), permit)
 	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		raw, err := os.ReadFile(filepath.Join(root, "environment"))
+		return err == nil && string(raw) == "literal $HOME\nwith=equals"
+	}, 5*time.Second, 10*time.Millisecond)
+
 	require.True(t, permit.consumed.Load())
 	require.Equal(t, ports.ReleaseStarted, released.State)
 	require.Len(t, observations.values, 1)

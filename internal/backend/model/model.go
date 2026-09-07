@@ -83,8 +83,9 @@ type Group struct {
 }
 
 type DesiredConfiguration struct {
-	Harness string
-	Model   string
+	Environment Environment `json:",omitempty"`
+	Harness     string
+	Model       string
 	// Effort is the requested native reasoning effort or variant, not observed effective effort.
 	Effort           string `json:",omitempty"`
 	WorkingDirectory string
@@ -174,6 +175,7 @@ type Execution struct {
 // ResolvedExecutionSpec is immutable after an Execution is admitted. Provider
 // implementations consume it but must not reinterpret desired configuration.
 type ResolvedExecutionSpec struct {
+	Environment          Environment `json:",omitempty"`
 	ConfigurationProfile *ConfigurationProfileRef
 	ExecutionID          ExecutionID
 	Workload             ExecutionWorkloadKind

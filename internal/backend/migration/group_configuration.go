@@ -7,6 +7,12 @@ import (
 )
 
 func (t *translator) translateGroupConfiguration(batch *app.ImportBatch, row sourcev228.Row, group model.Group) {
+	configuration := model.GroupConfiguration{GroupID: group.ID, Environment: t.launchEnvironment(batch, "agent_groups", row), Revision: 1, UpdatedAt: group.UpdatedAt}
+	defer func() {
+		if configuration.Profile != nil || len(configuration.Environment) != 0 {
+			batch.GroupConfigurations = append(batch.GroupConfigurations, configuration)
+		}
+	}()
 	sourceID := sourcev228.String(row.Values["default_profile_id"])
 	if sourceID == "" {
 		if sourcev228.String(row.Values["default_profile"]) != "" {
@@ -20,7 +26,7 @@ func (t *translator) translateGroupConfiguration(batch *app.ImportBatch, row sou
 	for _, profile := range batch.ConfigurationProfiles {
 		if id != "" && profile.Profile.ID == id {
 			ref := profile.Revision.Ref
-			batch.GroupConfigurations = append(batch.GroupConfigurations, model.GroupConfiguration{GroupID: group.ID, Profile: &ref, Revision: 1, UpdatedAt: group.UpdatedAt})
+			configuration.Profile = &ref
 			return
 		}
 	}

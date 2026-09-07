@@ -132,7 +132,7 @@ func (s *Service) resolveConfigurationSelection(ctx context.Context, desired mod
 	if selected == nil {
 		return desired, nil, nil
 	}
-	if desired != (model.DesiredConfiguration{}) || selected.ProfileID == "" || selected.RevisionID == "" || selected.ContentHash == "" {
+	if !desired.Equal(model.DesiredConfiguration{}) || selected.ProfileID == "" || selected.RevisionID == "" || selected.ContentHash == "" {
 		return desired, nil, fail(ErrInvalid, "select an exact configuration profile or supply desired fields")
 	}
 	result, err := s.store.ConfigurationProfile(ctx, selected.ProfileID, selected.RevisionID)
@@ -207,7 +207,7 @@ func (s *Service) selectConfigurationDefault(ctx context.Context, name string, d
 	if name == "" {
 		return ref, nil
 	}
-	if desired != (model.DesiredConfiguration{}) || ref != nil {
+	if !desired.Equal(model.DesiredConfiguration{}) || ref != nil {
 		return nil, fail(ErrInvalid, "select a default, a profile, or explicit settings")
 	}
 	defaults, err := s.store.ConfigurationDefaults(ctx)
