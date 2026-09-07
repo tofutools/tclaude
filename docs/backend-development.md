@@ -689,3 +689,9 @@ and title changes use the displayed catalog revision and retain edits on conflic
 Archive is catalog metadata, not deletion of native conversation content. Only
 provider-advertised points can be selected, and starting work still requires
 explicit worker/workspace and history-use choices.
+
+Activity provides recorded target selection, kind and started-time filters, paged
+inspection and JSON export. Text search covers only pages already loaded; export
+includes the applied API filter and whether more pages remain. Stable record and
+actor IDs, outcomes, reasons and imported provenance remain visible. Reading or
+exporting activity does not acknowledge messages or decide work.
