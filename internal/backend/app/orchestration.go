@@ -1150,6 +1150,9 @@ func (s *Service) SaveAutomationRule(ctx context.Context, req SaveAutomationRule
 }
 
 func (s *Service) saveAutomationRule(ctx context.Context, req SaveAutomationRuleRequest, deploymentID model.DeploymentID) (AutomationRuleResult, error) {
+	if err := req.Delegation.Bounds.ValidateEnvironments(); err != nil {
+		return AutomationRuleResult{}, fail(ErrInvalid, "%v", err)
+	}
 	if err := validateEffectContext(req.Context); err != nil {
 		return AutomationRuleResult{}, err
 	}
