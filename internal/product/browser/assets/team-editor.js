@@ -40,7 +40,7 @@ class TeamEditor {
     for (const key of ['Members', 'Waves', 'Briefings', 'AdvisoryPhases', 'Automation']) t[key] ||= [];
     this.revision = revision; this.saved = JSON.stringify(this.draft); this.past = []; this.future = []; this.pending = null;
   }
-  dirty() { return !this.revision || JSON.stringify(this.draft) !== this.saved; }
+  dirty() { return (this.name && this.name.value !== this.draft.Name) || !this.revision || JSON.stringify(this.draft) !== this.saved; }
   discard() { if (this.busy || (this.unapplied && !confirm('Discard unapplied field changes?'))) return false; this.unapplied = false; return true; }
   change(edit, redraw = true) {
     if (this.busy) return;
@@ -110,7 +110,7 @@ class TeamEditor {
       {key: 'sandbox', label: 'Confinement', options: ['read_only', 'workspace_write', 'unconfined'].map(v => opt(v)), value: desired.Sandbox || 'workspace_write'},
       {key: 'roles', label: 'Roles', multiple: true, options: this.roles.map(r => opt(r.ID, r.Name || r.ID)), value: m.Roles || []},
       {key: 'owner', label: 'Group owner', type: 'checkbox', value: m.Owner}, {key: 'required', label: 'Required member', type: 'checkbox', value: m.Required},
-      {key: 'briefs', label: 'Additional briefings', multiple: true, options: this.draft.Team.Briefings.map(b => opt(b.ID)), value: m.BriefingIDs || []}
+      {key: 'briefs', label: 'Additional briefings', multiple: true, options: this.draft.Team.Briefings.map(b => opt(b.ID)), value: [...new Set([...(m.BriefingIDs || []), ...this.draft.Team.Briefings.filter(b => b.MemberKeys?.includes(m.Key)).map(b => b.ID)])]}
     ];
     const form = this.form('Member', fields, f => {
       if (this.draft.Team.Members.some(x => x.Key === f.key && x.Key !== original?.Key)) throw new Error('Member keys must be unique.');
@@ -119,6 +119,10 @@ class TeamEditor {
       this.change(d => {
         const i = d.Team.Members.findIndex(x => x.Key === original?.Key); if (i < 0) d.Team.Members.push(member); else d.Team.Members[i] = member;
         if (original && original.Key !== f.key) { for (const w of d.Team.Waves) w.MemberKeys = w.MemberKeys.map(k => k === original.Key ? f.key : k); for (const b of d.Team.Briefings) b.MemberKeys = (b.MemberKeys || []).map(k => k === original.Key ? f.key : k); }
+        for (const b of d.Team.Briefings) {
+          b.MemberKeys = (b.MemberKeys || []).filter(key => key !== f.key);
+          if (f.briefs.includes(b.ID)) b.MemberKeys.push(f.key);
+        }
         if (!d.Team.Waves.length) d.Team.Waves.push({ID: 'initial', MemberKeys: [f.key], DependsOn: [], RequiredReady: true, RequiredBriefs: true});
         else if (!original) d.Team.Waves[0].MemberKeys.push(f.key);
       });
@@ -160,13 +164,13 @@ class TeamEditor {
       });
   }
   briefing(original) {
-    const b = original || {ID: '', Body: '', Timing: 'before_first_work', Required: true, MemberKeys: []};
+    const b = original || {ID: '', Body: '', Timing: 'before_first_work', Required: true, MemberKeys: this.draft.Team.Members.map(m => m.Key)};
     this.form('Briefing', [{key: 'id', label: 'Briefing key', value: b.ID, required: true}, {key: 'body', label: 'Briefing text', text: true, value: b.Body, required: true},
       {key: 'timing', label: 'Deliver briefing', options: [opt('before_first_work', 'Before first work'), opt('after_ready', 'After ready')], value: b.Timing},
       {key: 'required', label: 'Required briefing', type: 'checkbox', value: b.Required},
-      {key: 'members', label: 'Recipients (none means all members)', multiple: true, options: this.draft.Team.Members.map(m => opt(m.Key, m.Name)), value: b.MemberKeys || []}], f => {
+      {key: 'members', label: 'Briefing recipients', required: true, multiple: true, options: this.draft.Team.Members.map(m => opt(m.Key, m.Name)), value: [...new Set([...(b.MemberKeys || []), ...this.draft.Team.Members.filter(m => m.BriefingIDs?.includes(b.ID)).map(m => m.Key)])]}], f => {
         if (this.draft.Team.Briefings.some(x => x.ID === f.id && x.ID !== original?.ID)) throw new Error('Briefing keys must be unique.');
-        this.change(d => { const brief = {...b, ID: f.id, Body: f.body, Timing: f.timing, Required: f.required, MemberKeys: f.members}; const i = d.Team.Briefings.findIndex(x => x.ID === original?.ID); if (i < 0) d.Team.Briefings.push(brief); else d.Team.Briefings[i] = brief; if (original) for (const m of d.Team.Members) m.BriefingIDs = (m.BriefingIDs || []).map(id => id === original.ID ? f.id : id); });
+        this.change(d => { const brief = {...b, ID: f.id, Body: f.body, Timing: f.timing, Required: f.required, MemberKeys: f.members}; const i = d.Team.Briefings.findIndex(x => x.ID === original?.ID); if (i < 0) d.Team.Briefings.push(brief); else d.Team.Briefings[i] = brief; for (const m of d.Team.Members) { m.BriefingIDs = (m.BriefingIDs || []).filter(id => id !== original?.ID && id !== f.id); if (f.members.includes(m.Key)) m.BriefingIDs.push(f.id); } });
       });
   }
   settings() {

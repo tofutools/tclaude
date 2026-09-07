@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"github.com/go-rod/rod"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/internal/backend/app"
 	"github.com/tofutools/tclaude/internal/backend/model"
@@ -31,6 +32,7 @@ func TestBrowserTeamEditorAuthorsRosterWavesBriefingsAndReopens(t *testing.T) {
 	page.MustElementR("#team-editor button", "^Add briefing$").MustClick()
 	page.MustElement("#team-editor [name=id]").MustInput("review-brief")
 	page.MustElement("#team-editor [name=body]").MustInput("Review the implementation and report concrete findings.")
+	require.NoError(t, page.MustElement("#team-editor [name=members]").Select([]string{"Builder"}, false, rod.SelectorTypeText))
 	page.MustElement("#team-editor [name=members]").MustSelect("Reviewer")
 	page.MustElementR("#team-editor button", "^Apply changes$").MustClick()
 	page.MustElementR("#team-editor nav button", "^Workspace and phases$").MustClick()
@@ -48,6 +50,8 @@ func TestBrowserTeamEditorAuthorsRosterWavesBriefingsAndReopens(t *testing.T) {
 	require.Len(t, team.Members, 2)
 	require.Len(t, team.Waves, 2)
 	require.Len(t, team.Briefings, 1)
+	require.Equal(t, []string{"review-brief"}, team.Members[1].BriefingIDs)
+	require.Empty(t, team.Members[0].BriefingIDs)
 	require.Equal(t, []string{"builder"}, team.Waves[0].MemberKeys)
 	require.Equal(t, []string{"initial"}, team.Waves[1].DependsOn)
 	require.Equal(t, []string{"reviewer"}, team.Briefings[0].MemberKeys)

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -344,14 +345,6 @@ func teamDeploymentGraph(team model.TeamDefinition, deployment model.TeamDeploym
 			completion[wave.ID] = model.WorkNodeID("wave_done_" + wave.ID)
 		}
 	}
-	briefs := make(map[string]model.TeamBriefing, len(team.Briefings))
-	for _, brief := range team.Briefings {
-		briefs[brief.ID] = brief
-	}
-	memberSpecs := make(map[string]model.TeamMemberSpec, len(team.Members))
-	for _, member := range team.Members {
-		memberSpecs[member.Key] = member
-	}
 	for _, wave := range team.Waves {
 		var predecessor model.WorkNodeID
 		if len(wave.DependsOn) == 1 {
@@ -364,11 +357,9 @@ func teamDeploymentGraph(team model.TeamDefinition, deployment model.TeamDeploym
 			}
 		}
 		for _, key := range wave.MemberKeys {
-			spec := memberSpecs[key]
 			brief := deployment.Mission
-			for _, id := range spec.BriefingIDs {
-				item := briefs[id]
-				if item.Timing == model.BriefingBeforeFirstWork {
+			for _, item := range team.Briefings {
+				if item.Timing == model.BriefingBeforeFirstWork && slices.Contains(teamBriefRecipients(team, item), key) {
 					brief = strings.TrimSpace(brief + "\n\n" + item.Body)
 				}
 			}
@@ -483,4 +474,16 @@ func (s *Service) reconcileDeferredTeamBriefings(ctx context.Context, deployment
 		}
 	}
 	return nil
+}
+
+// Both authored targeting forms mean explicit recipients. Empty means none;
+// clients that offer "all" materialize the exact roster in their revision.
+func teamBriefRecipients(team model.TeamDefinition, brief model.TeamBriefing) []string {
+	recipients := append([]string(nil), brief.MemberKeys...)
+	for _, member := range team.Members {
+		if slices.Contains(member.BriefingIDs, brief.ID) && !slices.Contains(recipients, member.Key) {
+			recipients = append(recipients, member.Key)
+		}
+	}
+	return recipients
 }
