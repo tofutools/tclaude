@@ -1,3 +1,4 @@
+import {ProcessSnippetLibrary} from './process-snippets.js';
 import {ProcessGraphAdapter} from './processgraph/process-graph-adapter.js';
 import {clone, freshID, edgeID, seconds, lines, newProcess, draftFromResult, defaultNode, graphView, ProcessDraft, validationMessages} from './process-model.js';
 
@@ -34,7 +35,7 @@ class ProcessEditor {
       action('Export', () => this.export()), action('Import copy', () => this.import()), action('Close editor', () => this.close()));
     const palette = element('div'); palette.className = 'process-toolbar'; palette.setAttribute('aria-label', 'Node palette');
     for (const kind of ['task', 'decision', 'fork', 'join', 'wait', 'end']) palette.append(action('Add ' + kind, () => this.add(kind)));
-    palette.append(action('Copy nodes', () => this.copy()), action('Paste nodes', () => this.paste()), action('Delete selected', () => this.remove()),
+    palette.append(action('Saved snippets', () => this.snippets()), action('Copy nodes', () => this.copy()), action('Paste nodes', () => this.paste()), action('Delete selected', () => this.remove()),
       action('Parameters', () => this.parameters()), action('Outcome', () => this.outcome()), action('Source', () => this.source()));
     this.entry = element('select'); this.entry.setAttribute('aria-label', 'Entry node'); this.entry.onchange = () => this.change(draft => { draft.Process.Graph.EntryNodeID = this.entry.value; });
     const label = element('label', 'Entry'); label.append(this.entry); palette.append(label);
@@ -245,17 +246,22 @@ class ProcessEditor {
     this.inspector.append(action('Delete connection', () => this.change(d => d.Process.Graph.Edges.splice(index, 1))));
   }
   remove() { if (this.busy || !this.discardUnapplied()) return; this.model.remove(this.selection); this.selection.clear(); this.render(); }
+  snippets() {
+    if (this.busy || !this.discardUnapplied()) return;
+    this.copy();
+    this.snippetLibrary = new ProcessSnippetLibrary({api:this.api,selection:{version:1,...clone(this.clipboard)},insert:selection=>{this.clipboard=selection;this.paste();}});
+  }
   copy() {
     const draft = this.model.value;
     this.clipboard = {nodes: clone(draft.Process.Graph.Nodes.filter(n => this.selection.has(n.ID))),
-      edges: clone(draft.Process.Graph.Edges.filter(e => this.selection.has(e.From) && this.selection.has(e.To))), positions: clone(draft.EditorLayout.Nodes)};
+      edges: clone(draft.Process.Graph.Edges.filter(e => this.selection.has(e.From) && this.selection.has(e.To))), positions: Object.fromEntries([...this.selection].filter(id=>draft.EditorLayout.Nodes[id]).map(id=>[id,clone(draft.EditorLayout.Nodes[id])]))};
   }
   paste() {
     if (!this.clipboard?.nodes.length || !this.discardUnapplied()) return;
     const ids = new Map(this.clipboard.nodes.map(n => [n.ID, freshID('node_')])); this.selection = new Set(ids.values());
     this.change(d => {
       for (const original of this.clipboard.nodes) {
-        const node = clone(original); node.ID = ids.get(original.ID); node.Name += ' copy'; d.Process.Graph.Nodes.push(node);
+        const node = clone(original); node.ID = ids.get(original.ID); node.Name = (node.Name || node.Kind) + ' copy'; d.Process.Graph.Nodes.push(node);
         const p = this.clipboard.positions[original.ID]; d.EditorLayout.Nodes[node.ID] = {X: (p?.X || 200) + 40, Y: (p?.Y || 150) + 40};
       }
       for (const edge of this.clipboard.edges) d.Process.Graph.Edges.push({...edge, From: ids.get(edge.From), To: ids.get(edge.To)});
@@ -371,6 +377,6 @@ class ProcessEditor {
   close() {
     if (this.busy) return;
     if ((this.dirty() || this.unapplied) && !confirm('Discard unsaved process changes?')) return;
-    window.removeEventListener('beforeunload', this.beforeUnload); this.graph.dispose(); this.dialog.close(); this.dialog.remove();
+    this.snippetLibrary?.close(); window.removeEventListener('beforeunload', this.beforeUnload); this.graph.dispose(); this.dialog.close(); this.dialog.remove();
   }
 }

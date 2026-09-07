@@ -852,3 +852,21 @@ Deployment-owned rhythms remain controlled by their deployment lifecycle.
 The API is `POST /v2/automation/rules/{id}/archived` with `request_id`,
 `expected_revision` and `archived`; exact command retries return their stored
 result without repeating the state change, after current authority is checked.
+
+### Reuse process snippets
+
+Saved snippets in the process editor stores selected nodes, internal connections
+and their positions in the backend catalog. Insert copies them into the current
+draft with new node IDs and supports Undo; it does not save a definition or start
+work. Complete graph validation remains required, and retained performer/profile
+references may need updating before save. Rename and Delete use displayed revisions;
+conflicts retain the draft and require reloading the catalog. Unknown or corrupt
+stored formats remain visible for management but cannot be inserted.
+
+The operator-only API is `GET /v2/process-snippets` and
+`POST /v2/process-snippets/{id}` with `request_id`, `action` (`create`, `rename`,
+`delete`), `expected_revision`, and the applicable `name` and version-1 `selection`.
+Selections are bounded to 100 nodes, 300 internal edges and 256 KiB; the active
+catalog is bounded to 1,000 entries and 8 MiB of selections. Exact mutation retries
+return the original admission without resurrecting deleted entries. Legacy imported
+snippet records remain retained evidence; automatic typed conversion is separate.
