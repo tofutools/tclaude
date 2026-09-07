@@ -36,6 +36,7 @@ export function automationWorkspace({api, el, button, edit, getSnapshot, openWor
       if (stateFilter === 'archived' ? !r.Tombstoned : stateFilter !== 'all' && (r.Tombstoned || stateFilter && r.Enabled !== (stateFilter === 'enabled'))) continue;
       count++;
       const card = el('article', undefined, 'card'); card.dataset.rule = r.ID;
+      const identity=el('code',r.ID);identity.setAttribute('aria-label','Automation rule ID');card.append(identity);
       card.append(el('h2', r.Name), el('p', `${revision.Condition.Kind.replaceAll('_', ' ')} · ${r.Tombstoned ? 'archived' : r.Enabled ? 'enabled' : 'disabled'} · revision ${r.Revision}`));
       const c = revision.Condition;
       card.append(el('p', c.Schedule ? `${c.Schedule.Cron || 'Every ' + c.Schedule.Interval / 1e9 + ' seconds'} · ${c.Schedule.Timezone}` : c.Trigger ? `${c.Trigger.SourceID} · ${c.Trigger.FactKind} · ${(c.Trigger.Values || []).join(', ')}` : `${c.StandingOrder.FactKind} · ${c.StandingOrder.Pattern || 'any'} · same continuation`));
@@ -44,7 +45,7 @@ export function automationWorkspace({api, el, button, edit, getSnapshot, openWor
       else if (!r.Tombstoned) card.append(button('Edit rule', () => open(result, c.Kind, null, authority)), button(r.Enabled ? 'Disable' : 'Enable', async id => {
         await api('/v2/automation/rules/' + encodeURIComponent(r.ID) + '/enabled', {request_id: id, expected_revision: r.Revision, enabled: !r.Enabled}); await render();
       }));
-      if (!r.DeploymentID) card.append(button(r.Tombstoned ? 'Restore rule' : 'Archive rule', () => edit(r.Tombstoned ? 'Restore archived rule' : 'Archive automation rule', [field('confirm', r.Tombstoned ? 'Type rule ID to restore disabled' : 'Type rule ID to stop fresh dispatch and archive (admitted work continues)', '', {required:true})], async f => {if(f.confirm!==r.ID)throw new Error('Rule ID does not match');await api('/v2/automation/rules/'+encodeURIComponent(r.ID)+'/archived',{request_id:f.requestID,expected_revision:r.Revision,archived:!r.Tombstoned});await render()})));
+      if (!r.DeploymentID) card.append(button(r.Tombstoned ? 'Restore rule' : 'Archive rule', () => edit(r.Tombstoned ? 'Restore archived rule' : 'Archive automation rule', [field('confirm', r.Tombstoned ? `Type ${r.ID} to restore disabled` : `Type ${r.ID} to stop fresh dispatch and archive (admitted work continues)`, '', {required:true})], async f => {if(f.confirm!==r.ID)throw new Error('Rule ID does not match');await api('/v2/automation/rules/'+encodeURIComponent(r.ID)+'/archived',{request_id:f.requestID,expected_revision:r.Revision,archived:!r.Tombstoned});await render()})));
       if (!r.Tombstoned && r.Enabled && c.Kind !== 'standing_order') card.append(button('Run now', async id => {
         await api('/v2/automation/run', {request_id: id, rule_id: r.ID, expected_rule_revision: r.Revision, occurrence_id: id, source_occurrence_key: 'browser:' + id}); await history(r, card);
       }));
