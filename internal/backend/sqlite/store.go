@@ -93,6 +93,7 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"work_runs", "control_state", "TEXT NOT NULL DEFAULT ''"},
 		{"work_runs", "outcome", "TEXT NOT NULL DEFAULT ''"},
 		{"work_runs", "deadline", "INTEGER"},
+		{"automation_occurrences", "request_fingerprint", "TEXT NOT NULL DEFAULT ''"},
 		{"operations", "principal_execution_id", "TEXT NOT NULL DEFAULT ''"},
 		{"operations", "request_scope", "TEXT NOT NULL DEFAULT 'operator'"},
 		{"operations", "principal_generation", "INTEGER NOT NULL DEFAULT 0"},
