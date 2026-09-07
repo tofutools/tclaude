@@ -693,6 +693,8 @@ const (
 )
 
 type AutomationOccurrence struct {
+	RequestScope        string `json:"-"`
+	RequestFingerprint  string `json:"-"`
 	ID                  OccurrenceID
 	RuleID              AutomationRuleID
 	RuleRevisionID      AutomationRuleRevisionID
