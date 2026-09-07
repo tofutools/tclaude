@@ -176,7 +176,27 @@ func TestReinforcementStandDownDoesNotRetireSharedMembers(t *testing.T) {
 	}
 	current, err := service.GetTeamDeployment(ctx, app.GetTeamDeploymentRequest{Principal: operator, DeploymentID: deployed.Deployment.ID})
 	require.NoError(t, err)
-	stopped, err := service.StandDownDeployment(ctx, app.StandDownDeploymentRequest{Context: app.RequestContext{Principal: operator, RequestID: "stop_reinforcement"}, DeploymentID: current.Deployment.ID, ExpectedRevision: current.Deployment.Revision, Reason: "reinforcement done"})
+	manager := model.Agent{ID: "lifecycle_manager", Name: "manager", Lifecycle: model.AgentActive, Desired: shared.Desired, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	require.NoError(t, store.CreateAgent(ctx, manager))
+	managedMember, err := store.Agent(ctx, current.Deployment.Members["reinforcement"])
+	require.NoError(t, err)
+	putGrant := func(id model.GrantID, action model.Action, resource model.ResourceSelector) model.AuthorityGrant {
+		grant, grantErr := store.PutGrant(ctx, model.AuthorityGrant{ID: id, Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: manager.ID}, Action: action, Resource: resource, Revision: 1, CreatedAt: now, UpdatedAt: now}, 0)
+		require.NoError(t, grantErr)
+		return grant
+	}
+	putGrant("manage_reinforcement", model.ActionManageMembership, model.ResourceSelector{Kind: model.ResourceGroup, GroupID: current.Deployment.GroupID})
+	putGrant("stop_reinforcement", model.ActionStop, model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: managedMember.PrimaryExecutionID})
+	revokedRetirement := putGrant("retire_reinforcement_revoked", model.ActionRetireAgent, model.ResourceSelector{Kind: model.ResourceAgent, AgentID: managedMember.ID})
+	require.NoError(t, store.DeleteGrant(ctx, revokedRetirement.ID, revokedRetirement.Revision))
+	standDownRequest := app.StandDownDeploymentRequest{Context: app.RequestContext{Principal: model.AgentPrincipal(manager.ID), RequestID: "stop_reinforcement"}, DeploymentID: current.Deployment.ID, ExpectedRevision: current.Deployment.Revision, Reason: "reinforcement done"}
+	_, err = service.StandDownDeployment(ctx, standDownRequest)
+	require.ErrorIs(t, err, app.ErrUnauthorized, "revoked exact retirement authority blocks cleanup after the admitted stand-down")
+	standingDown, err := service.GetTeamDeployment(ctx, app.GetTeamDeploymentRequest{Principal: operator, DeploymentID: current.Deployment.ID})
+	require.NoError(t, err)
+	require.Equal(t, model.DeploymentStandingDown, standingDown.Deployment.State)
+	putGrant("retire_reinforcement", model.ActionRetireAgent, model.ResourceSelector{Kind: model.ResourceAgent, AgentID: managedMember.ID})
+	stopped, err := service.StandDownDeployment(ctx, standDownRequest)
 	require.NoError(t, err)
 	require.Equal(t, model.DeploymentStopped, stopped.Deployment.State)
 	sharedAfter, err := store.Agent(ctx, shared.ID)
