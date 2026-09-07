@@ -589,24 +589,28 @@ func TestRoleTargetedMessagePinsRecipientsAndRechecksEligibility(t *testing.T) {
 	first, err := service.RunRuleNow(ctx, app.RunRuleNowRequest{Context: app.RequestContext{Principal: operator, RequestID: "fire_one"}, RuleID: rule.Rule.ID, ExpectedRuleRevision: rule.Rule.Revision, OccurrenceID: "role_occurrence_one", SourceOccurrenceKey: "one"})
 	require.NoError(t, err)
 	require.Equal(t, []model.OccurrenceRecipient{{AgentID: "reviewer", Disposition: model.RecipientPending}}, first.Occurrence.Recipients)
-	_, err = service.ReconcilePendingWork(ctx)
-	require.NoError(t, err)
-	snapshot, err := service.Snapshot(ctx, app.SnapshotRequest{Principal: operator})
+	crashing := app.New(&failRecipientOccurrenceUpdateStore{Store: store, fail: true}, providers.NewRegistry()).WithClock(func() time.Time { return now })
+	_, err = crashing.ReconcilePendingWork(ctx)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	snapshot, err := crashing.Snapshot(ctx, app.SnapshotRequest{Principal: operator})
 	require.NoError(t, err)
 	require.Len(t, snapshot.Messages, 1)
-	occurrences, err := service.ListOccurrences(ctx, app.ListOccurrencesRequest{Principal: operator, RuleID: rule.Rule.ID})
-	require.NoError(t, err)
-	require.Equal(t, model.RecipientQueued, occurrences[0].Occurrence.Recipients[0].Disposition)
-	require.NotEmpty(t, occurrences[0].Occurrence.Recipients[0].OperationID)
 
 	require.NoError(t, store.Close())
 	store, service = open()
 	defer store.Close()
+	pending, readErr := service.ListOccurrences(ctx, app.ListOccurrencesRequest{Principal: operator, RuleID: rule.Rule.ID})
+	require.NoError(t, readErr)
+	require.Equal(t, model.Revision(1), pending[0].Occurrence.Revision)
 	_, err = service.ReconcilePendingWork(ctx)
 	require.NoError(t, err)
 	snapshot, err = service.Snapshot(ctx, app.SnapshotRequest{Principal: operator})
 	require.NoError(t, err)
 	require.Len(t, snapshot.Messages, 1, "restart must reuse the pinned recipient effect")
+	occurrences, err := service.ListOccurrences(ctx, app.ListOccurrencesRequest{Principal: operator, RuleID: rule.Rule.ID})
+	require.NoError(t, err)
+	require.Equal(t, model.RecipientQueued, occurrences[0].Occurrence.Recipients[0].Disposition)
+	require.NotEmpty(t, occurrences[0].Occurrence.Recipients[0].OperationID)
 
 	second, err := service.RunRuleNow(ctx, app.RunRuleNowRequest{Context: app.RequestContext{Principal: operator, RequestID: "fire_two"}, RuleID: rule.Rule.ID, ExpectedRuleRevision: rule.Rule.Revision, OccurrenceID: "role_occurrence_two", SourceOccurrenceKey: "two"})
 	require.NoError(t, err)
@@ -620,6 +624,23 @@ func TestRoleTargetedMessagePinsRecipientsAndRechecksEligibility(t *testing.T) {
 	snapshot, err = service.Snapshot(ctx, app.SnapshotRequest{Principal: operator})
 	require.NoError(t, err)
 	require.Len(t, snapshot.Messages, 1, "removed role must prevent the fresh effect")
+}
+
+type failRecipientOccurrenceUpdateStore struct {
+	app.Store
+	fail bool
+}
+
+func (s *failRecipientOccurrenceUpdateStore) UpdateOccurrence(ctx context.Context, id model.OccurrenceID, revision model.Revision, state model.OccurrenceState, operationID model.OperationID, workRunID model.WorkRunID, deploymentID model.DeploymentID, recipients []model.OccurrenceRecipient, at time.Time) (app.OccurrenceRecord, error) {
+	if s.fail {
+		for _, recipient := range recipients {
+			if recipient.OperationID != "" {
+				s.fail = false
+				return app.OccurrenceRecord{}, context.DeadlineExceeded
+			}
+		}
+	}
+	return s.Store.UpdateOccurrence(ctx, id, revision, state, operationID, workRunID, deploymentID, recipients, at)
 }
 
 func TestHumanDecisionWindowIsExactVersionedAndIdempotent(t *testing.T) {
