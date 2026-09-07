@@ -81,7 +81,7 @@ func TestSelectedProfileIsFrozenOnAgentAndExecution(t *testing.T) {
 	provider := newFakeProvider()
 	service := testService(store, provider)
 	operator := model.OperatorPrincipal()
-	desired := model.DesiredConfiguration{Harness: "fake", Model: "first", WorkingDirectory: t.TempDir(), Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined}
+	desired := model.DesiredConfiguration{Harness: "fake", Model: "first", Effort: "low", WorkingDirectory: t.TempDir(), Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined}
 	req := app.SaveConfigurationProfileRequest{Context: effect(operator, "profile_first"), ID: "profile", RevisionID: "first", Name: "Worker", Desired: desired}
 	profile, err := service.SaveConfigurationProfile(ctx, req)
 	require.NoError(t, err)
@@ -95,10 +95,12 @@ func TestSelectedProfileIsFrozenOnAgentAndExecution(t *testing.T) {
 	launched, err := service.Launch(ctx, app.LaunchRequest{RequestContext: effect(operator, "launch_selected"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: worker.Agent.ID, ExpectedRevision: worker.Agent.Revision}}})
 	require.NoError(t, err)
 	require.Equal(t, &profile.Revision.Ref, launched.Execution.Spec.ConfigurationProfile)
+	require.Equal(t, "low", provider.lastPreparation.Spec.Effort)
 	req.Context.RequestID = "profile_second"
 	req.RevisionID = "second"
 	req.ExpectedRevision = 1
 	req.Desired.Model = "second"
+	req.Desired.Effort = "high"
 	newer, err := service.SaveConfigurationProfile(ctx, req)
 	require.NoError(t, err)
 	current, err := store.Agent(ctx, worker.Agent.ID)
@@ -113,8 +115,10 @@ func TestSelectedProfileIsFrozenOnAgentAndExecution(t *testing.T) {
 	durableAgent, err := store.Agent(ctx, worker.Agent.ID)
 	require.NoError(t, err)
 	require.Equal(t, &newer.Revision.Ref, durableAgent.ConfigurationProfile)
+	require.Equal(t, "high", durableAgent.Desired.Effort)
 	execution, err := store.Execution(ctx, launched.Execution.ID)
 	require.NoError(t, err)
 	require.Equal(t, "first", execution.Spec.Model)
+	require.Equal(t, "low", execution.Spec.Effort)
 	require.Equal(t, &profile.Revision.Ref, execution.Spec.ConfigurationProfile)
 }

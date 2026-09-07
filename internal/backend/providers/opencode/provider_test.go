@@ -67,7 +67,7 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 		ActionCredential: &ports.ActionCredentialMaterial{ExecutionID: "execution_opencode", Generation: 1,
 			DeliveryID: "delivery-opencode", Secret: []byte("provider-secret-value"), ExpiresAt: time.Now().Add(time.Hour)},
 		Spec: model.ResolvedExecutionSpec{
-			ExecutionID: "execution_opencode", Harness: Name, Model: "provider/model",
+			ExecutionID: "execution_opencode", Harness: Name, Model: "provider/model", Effort: "high",
 			WorkingDirectory: root, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined,
 		}}
 	prepared, err := provider.Prepare(context.Background(), request)
@@ -102,7 +102,7 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 	require.Equal(t, ports.PrimaryContextInitial, observations.values[0].Disposition)
 	require.Eventually(t, func() bool {
 		value, readErr := os.ReadFile(promptPath)
-		return readErr == nil && strings.Contains(string(value), "prepared opencode brief")
+		return readErr == nil && strings.Contains(string(value), "prepared opencode brief") && strings.Contains(string(value), `"variant":"high"`)
 	}, time.Second, 10*time.Millisecond)
 	require.Eventually(t, func() bool {
 		value, readErr := os.ReadFile(bootstrapPath)
@@ -138,7 +138,7 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 	require.Equal(t, ports.EffectAccepted, interaction.Disposition)
 	require.Eventually(t, func() bool {
 		value, readErr := os.ReadFile(promptPath)
-		return readErr == nil && strings.Contains(string(value), "perform work") && strings.Contains(string(value), "providerID")
+		return readErr == nil && strings.Contains(string(value), "perform work") && strings.Contains(string(value), "providerID") && strings.Contains(string(value), `"variant":"high"`)
 	}, time.Second, 10*time.Millisecond)
 
 	attachment, err := released.Runtime.Attach(context.Background(), ports.AttachmentRequest{Kind: ports.AttachmentTerminal})

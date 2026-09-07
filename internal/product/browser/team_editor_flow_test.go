@@ -19,6 +19,7 @@ func TestBrowserTeamEditorAuthorsRosterWavesBriefingsAndReopens(t *testing.T) {
 		page.MustElement("#team-editor [name=name]").MustInput(member.name)
 		page.MustElement("#team-editor [name=harness]").MustSelect("codex")
 		page.MustElement("#team-editor [name=model]").MustInput("fixture-model")
+		page.MustElement("#team-editor [name=effort]").MustInput("high")
 		page.MustElement("#team-editor [name=cwd]").MustInput("/tmp")
 		page.MustElementR("#team-editor button", "^Apply changes$").MustClick()
 	}
@@ -48,6 +49,7 @@ func TestBrowserTeamEditorAuthorsRosterWavesBriefingsAndReopens(t *testing.T) {
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/definitions/"+string(definitions[0].ID), nil, &result))
 	team := result.Revision.Team
 	require.Len(t, team.Members, 2)
+	require.Equal(t, "high", team.Members[1].Desired.Effort)
 	require.Len(t, team.Waves, 2)
 	require.Len(t, team.Briefings, 1)
 	require.Equal(t, []string{"review-brief"}, team.Members[1].BriefingIDs)
@@ -61,6 +63,7 @@ func TestBrowserTeamEditorAuthorsRosterWavesBriefingsAndReopens(t *testing.T) {
 	page.MustElementR("#definition-list button", "^Edit team template$").MustClick()
 	page.MustElementR("#team-editor button", "^Edit Reviewer$").MustClick()
 	require.Equal(t, "fixture-model", page.MustElement("#team-editor [name=model]").MustProperty("value").Str())
+	require.Equal(t, "high", page.MustElement("#team-editor [name=effort]").MustProperty("value").Str())
 	page.MustElement("#team-editor [name=key]").MustSelectAllText().MustInput("checker")
 	page.MustElementR("#team-editor button", "^Apply changes$").MustClick()
 	page.MustElementR("#team-editor button", "^Save team revision$").MustClick()

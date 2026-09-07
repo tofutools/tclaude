@@ -137,6 +137,9 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if request.Spec.Harness != Name {
 		return nil, fmt.Errorf("OpenCode provider cannot prepare harness %q", request.Spec.Harness)
 	}
+	if err := model.ValidateEffort(request.Spec.Effort); err != nil {
+		return nil, err
+	}
 	if err := validateDirectory(request.Spec.WorkingDirectory); err != nil {
 		return nil, err
 	}
@@ -412,7 +415,7 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 		stateRoot:    p.stateRoot, cwd: p.request.Spec.WorkingDirectory,
 		nativeID: p.descriptionNativeID(), intent: p.request.Intent,
 		forkSourceID: forkSourceID(p.request), forkPoint: forkPoint(p.request), approval: p.request.Spec.Approval,
-		sandbox: p.request.Spec.Sandbox, model: p.request.Spec.Model, attemptMark: p.attemptMark, access: p.access,
+		sandbox: p.request.Spec.Sandbox, model: p.request.Spec.Model, effort: p.request.Spec.Effort, attemptMark: p.attemptMark, access: p.access,
 	}
 	currentEvidence, evidenceErr := runtime.providerEvidence()
 	if evidenceErr != nil {
@@ -609,7 +612,7 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		endpoint: recorded.Endpoint, password: string(passwordBytes), passwordFile: recorded.PasswordFile, stateRoot: recorded.StateRoot,
 		cwd: request.Spec.WorkingDirectory, nativeID: recorded.NativeID, parentID: recorded.ParentID,
 		intent: recorded.Intent, forkSourceID: recorded.ForkSourceID, forkPoint: recorded.ForkPoint,
-		approval: request.Spec.Approval, sandbox: request.Spec.Sandbox, model: request.Spec.Model,
+		approval: request.Spec.Approval, sandbox: request.Spec.Sandbox, model: request.Spec.Model, effort: request.Spec.Effort,
 		attemptMark: recorded.AttemptMark, access: recorded.Access,
 		observationSequence: recorded.ObservationSequence, providerOrder: recorded.ProviderOrder,
 	}
@@ -668,6 +671,7 @@ type Runtime struct {
 	approval            model.ApprovalMode
 	sandbox             model.SandboxMode
 	model               string
+	effort              string
 	intent              ports.StartIntent
 	forkSourceID        string
 	forkPoint           string
@@ -722,6 +726,9 @@ func (r *Runtime) Interact(ctx context.Context, interaction ports.Interaction) (
 		return ports.InteractionResult{Disposition: ports.EffectRefused}, nil
 	}
 	body := map[string]any{"parts": []map[string]string{{"type": "text", "text": interaction.Text}}}
+	if r.effort != "" {
+		body["variant"] = r.effort
+	}
 	if providerID, modelID, ok := strings.Cut(r.model, "/"); ok && providerID != "" && modelID != "" {
 		body["model"] = map[string]string{"providerID": providerID, "modelID": modelID}
 	}
@@ -744,6 +751,9 @@ func (r *Runtime) deliverPreparedInitialInput(ctx context.Context, input ports.P
 		return fmt.Errorf("OpenCode prepared initial input is incomplete")
 	}
 	body := map[string]any{"parts": []map[string]string{{"type": "text", "text": input.Body}}}
+	if r.effort != "" {
+		body["variant"] = r.effort
+	}
 	if providerID, modelID, ok := strings.Cut(r.model, "/"); ok && providerID != "" && modelID != "" {
 		body["model"] = map[string]string{"providerID": providerID, "modelID": modelID}
 	}
