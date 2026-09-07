@@ -799,3 +799,24 @@ CLI JSON files use the same shape. Startup suggestions participate in immutable
 content hashes and request identity. Name is limited to 256 UTF-8 bytes; combined
 context and message to 32 KiB, without NUL. An absent/empty startup object preserves
 the content hash of older native-settings-only profiles.
+
+### Imported launch metadata
+
+Offline v228 importer format 2 maps requested effort into agent/profile settings,
+valid saved agent-name/context/brief fields into profile startup suggestions, and
+the explicit disabled flag into the archived lifecycle. A pinned initial spawn
+configuration's blank effort remains blank; it does not inherit a later row value.
+No native effort aliases or role/permission grants are inferred.
+
+Malformed UTF-8 SQLite text blocks conversion before target publication because
+JSON cannot retain those bytes exactly. The source snapshot remains untouched.
+Startup text that violates other target limits stays in the exact retained source record
+and is identified by `profile_startup_retained_unmapped` in the redacted report.
+Invalid effort is preserved verbatim with `requested_effort_requires_review`;
+normal launch validation still refuses it. An unrecognized disabled flag archives
+the profile and emits `profile_disabled_unrecognized` for explicit operator review.
+
+Format-1 import destinations are not overwritten or accepted as format-2 exact
+retries. Use a new destination for a new conversion. Exact format-2 retries still
+verify the complete typed target, including effort, startup text and archive state.
+This development change does not run an import against any live installation.

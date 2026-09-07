@@ -9,13 +9,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/internal/backend/app"
 	sourcev228 "github.com/tofutools/tclaude/internal/backend/migration/source/v228"
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
 
-const ImporterFormatVersion = 1
+const ImporterFormatVersion = 2
 const TargetSchemaVersion = 1
 
 type AttachmentPayload struct {
@@ -64,7 +65,9 @@ func Translate(inspection Inspection, plan MigrationPlan, attachments []Attachme
 		t.payloads[payload.SourceTable+"\x1f"+payload.SourceID] = payload
 	}
 	batch := app.ImportBatch{}
-	t.translateEvidence(&batch)
+	if err := t.translateEvidence(&batch); err != nil {
+		return app.ImportBatch{}, err
+	}
 	t.translateProfiles(&batch)
 	t.translateAgents(&batch)
 	t.translateGroups(&batch)
@@ -119,7 +122,7 @@ func conversionAllowed(plan MigrationPlan, metadataOnly bool) bool {
 	return true
 }
 
-func (t *translator) translateEvidence(batch *app.ImportBatch) {
+func (t *translator) translateEvidence(batch *app.ImportBatch) error {
 	disposition := map[string]TableDisposition{}
 	for _, value := range t.plan.Dispositions {
 		if _, ok := disposition[value.Table]; !ok || value.Conversion == ConversionInterrupted {
@@ -135,7 +138,23 @@ func (t *translator) translateEvidence(batch *app.ImportBatch) {
 		rows := append([]sourcev228.Row(nil), t.inspection.Snapshot.Rows[table]...)
 		sort.Slice(rows, func(i, j int) bool { return rows[i].Key < rows[j].Key })
 		for _, row := range rows {
-			payload, _ := json.Marshal(row.Values)
+			// JSON replaces malformed UTF-8 in strings. Refuse conversion rather
+			// than publish evidence that silently changes source text.
+			if !utf8.ValidString(row.Key) {
+				return fmt.Errorf("source text is not valid UTF-8; offline conversion refused")
+			}
+			for key, value := range row.Values {
+				if !utf8.ValidString(key) {
+					return fmt.Errorf("source text is not valid UTF-8; offline conversion refused")
+				}
+				if text, ok := value.(string); ok && !utf8.ValidString(text) {
+					return fmt.Errorf("source text is not valid UTF-8; offline conversion refused")
+				}
+			}
+			payload, err := json.Marshal(row.Values)
+			if err != nil {
+				return fmt.Errorf("source evidence cannot be encoded; offline conversion refused")
+			}
 			d := disposition[table]
 			conversion := d.Conversion
 			reason := d.ReasonCode
@@ -195,6 +214,7 @@ func (t *translator) translateEvidence(batch *app.ImportBatch) {
 		}
 		return a.TargetKind < b.TargetKind
 	})
+	return nil
 }
 
 func (t *translator) translateAgents(batch *app.ImportBatch) {
@@ -220,6 +240,9 @@ func (t *translator) translateAgents(batch *app.ImportBatch) {
 			RetiredAt: retiredAt, RetirementReason: sourcev228.String(row.Values["retire_reason"]),
 			Notifications: model.AgentNotificationPreferences{DirectMessage: model.NotificationIfAvailable},
 			Desired:       desiredFromRow(row.Values), Revision: 1, CreatedAt: created, UpdatedAt: updated,
+		}
+		if model.ValidateEffort(agent.Desired.Effort) != nil {
+			t.launchMetadataDiagnostic(batch, "agents", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
 		}
 		profileName := firstNonEmpty(sourcev228.String(row.Values["relaunch_profile"]), spawnProfileName(row.Values["initial_spawn_config"]))
 		if ref, ok := t.profileRefs[profileName]; ok {
@@ -312,9 +335,26 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 		ref := model.ConfigurationProfileRef{ProfileID: id, RevisionID: revisionID, ContentHash: digest(payload)}
 		t.profileRefs[sourcev228.String(row.Values["name"])] = ref
 		t.profileRefs[key] = ref
+		startup := &model.ProfileStartup{AgentName: sourcev228.String(row.Values["agent_name"]), Context: sourcev228.String(row.Values["startup_context"]), InitialMessage: sourcev228.String(row.Values["initial_message"])}
+		if *startup == (model.ProfileStartup{}) {
+			startup = nil
+		} else if model.ValidateProfileStartup(*startup) != nil {
+			startup = nil
+			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "profile_startup_retained_unmapped", "startup suggestions exceed target text constraints; exact original fields remain in the source record")
+		}
+		disabled, validDisabled := sourcev228.Int64(row.Values["disabled"])
+		archived := disabled != 0
+		if row.Values["disabled"] != nil && !validDisabled {
+			archived = true
+			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "profile_disabled_unrecognized", "unrecognized disabled state is retained as archived pending explicit operator review")
+		}
+		desired := desiredFromRow(row.Values)
+		if model.ValidateEffort(desired.Effort) != nil {
+			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
+		}
 		batch.ConfigurationProfiles = append(batch.ConfigurationProfiles, app.ConfigurationProfileResult{
-			Profile:  model.ConfigurationProfile{ID: id, Name: firstNonEmpty(sourcev228.String(row.Values["name"]), key), CurrentRevisionID: revisionID, Revision: 1, CreatedAt: at, UpdatedAt: at},
-			Revision: model.ConfigurationProfileRevision{Ref: ref, Desired: desiredFromRow(row.Values), CreatedAt: at},
+			Profile:  model.ConfigurationProfile{Archived: archived, ID: id, Name: firstNonEmpty(sourcev228.String(row.Values["name"]), key), CurrentRevisionID: revisionID, Revision: 1, CreatedAt: at, UpdatedAt: at},
+			Revision: model.ConfigurationProfileRevision{Ref: ref, Desired: desired, Startup: startup, CreatedAt: at},
 		})
 	}
 	for _, row := range t.inspection.Snapshot.Rows["spawn_profile_aliases"] {
@@ -332,6 +372,10 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 	sort.Slice(batch.ConfigurationProfiles, func(i, j int) bool {
 		return batch.ConfigurationProfiles[i].Profile.ID < batch.ConfigurationProfiles[j].Profile.ID
 	})
+}
+
+func (t *translator) launchMetadataDiagnostic(batch *app.ImportBatch, table, key, code, detail string) {
+	batch.Diagnostics = append(batch.Diagnostics, model.ImportedDiagnostic{Severity: string(SeverityWarning), Code: code, SourceTable: table, SourceKey: key, SourcePath: sourcePath(table, key), Detail: detail})
 }
 
 func (t *translator) translateAuthoredOrchestration(batch *app.ImportBatch) {
@@ -638,12 +682,13 @@ func (t *translator) conversationOwner(conv string) string {
 }
 
 func desiredFromRow(values map[string]any) model.DesiredConfiguration {
-	desired := model.DesiredConfiguration{Harness: sourcev228.String(values["harness"]), Model: sourcev228.String(values["model"]), WorkingDirectory: firstNonEmpty(sourcev228.String(values["working_directory"]), sourcev228.String(values["cwd"]))}
+	desired := model.DesiredConfiguration{Harness: sourcev228.String(values["harness"]), Model: sourcev228.String(values["model"]), Effort: sourcev228.String(values["effort"]), WorkingDirectory: firstNonEmpty(sourcev228.String(values["working_directory"]), sourcev228.String(values["cwd"]))}
 	if raw := sourcev228.String(values["initial_spawn_config"]); raw != "" {
 		var config map[string]any
 		if json.Unmarshal([]byte(raw), &config) == nil {
 			desired.Harness = firstNonEmpty(stringMap(config, "harness"), desired.Harness)
 			desired.Model = firstNonEmpty(stringMap(config, "model"), desired.Model)
+			desired.Effort = stringMap(config, "effort")
 			desired.WorkingDirectory = firstNonEmpty(stringMap(config, "working_directory"), stringMap(config, "cwd"), desired.WorkingDirectory)
 			values = config
 		}
