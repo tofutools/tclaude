@@ -3,8 +3,10 @@ package transport
 import (
 	"context"
 	"net/http"
+	"strconv"
 
 	"github.com/tofutools/tclaude/internal/backend/app"
+	"github.com/tofutools/tclaude/internal/backend/model"
 )
 
 type usageAPI interface {
@@ -30,7 +32,10 @@ func (h *Handler) registerUsage(api usageAPI) {
 			applicationError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, result)
+		writeJSON(w, http.StatusOK, struct {
+			app.RefreshUsageResult
+			Observation usageObservationView
+		}{result, projectUsage(result.Observation)})
 	})
 	h.mux.HandleFunc("POST /v2/usage/query", func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := h.caller(w, r)
@@ -48,7 +53,14 @@ func (h *Handler) registerUsage(api usageAPI) {
 			applicationError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, result)
+		observations := make([]usageObservationView, 0, len(result.Observations))
+		for _, observation := range result.Observations {
+			observations = append(observations, projectUsage(observation))
+		}
+		writeJSON(w, http.StatusOK, struct {
+			Observations []usageObservationView
+			NextCursor   string
+		}{observations, result.NextCursor})
 	})
 	h.mux.HandleFunc("POST /v2/activity/query", func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := h.caller(w, r)
@@ -68,4 +80,23 @@ func (h *Handler) registerUsage(api usageAPI) {
 		}
 		writeJSON(w, http.StatusOK, result)
 	})
+}
+
+// ExactValue preserves int64 source readings for clients whose JSON number type
+// cannot represent every integer. Value remains for existing numeric clients.
+type usageCounterView struct {
+	model.UsageCounter
+	ExactValue string
+}
+type usageObservationView struct {
+	model.UsageObservation
+	Counters []usageCounterView
+}
+
+func projectUsage(observation model.UsageObservation) usageObservationView {
+	out := usageObservationView{UsageObservation: observation, Counters: make([]usageCounterView, 0, len(observation.Counters))}
+	for _, counter := range observation.Counters {
+		out.Counters = append(out.Counters, usageCounterView{counter, strconv.FormatInt(counter.Value, 10)})
+	}
+	return out
 }

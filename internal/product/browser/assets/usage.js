@@ -12,6 +12,7 @@ class UsageWorkspace {
  clear(){this.generation++;this.records=[];this.activeTarget=null;this.content.replaceChildren();this.target.replaceChildren();this.status.textContent='Signed out'}
  async show(target){
   const {el}=this,snapshot=this.getSnapshot(),choices=new Map();
+  for(const c of snapshot.conversations||[])choices.set(JSON.stringify({ConversationID:c.ID}),`Conversation: ${c.ID}`);
   for(const e of snapshot.executions||[]){const a=(snapshot.agents||[]).find(a=>a.ID===e.agent_id);choices.set(JSON.stringify({ExecutionID:e.id}),`Execution: ${a?.Name||e.id} · ${e.id}`);if(e.conversation_id)choices.set(JSON.stringify({ConversationID:e.conversation_id}),`Conversation: ${e.conversation_id}`)}
   if(target&&!choices.has(JSON.stringify(target)))choices.set(JSON.stringify(target),`Selected: ${Object.values(target).join(' · ')}`);
   this.target.replaceChildren();const empty=el('option','Choose a recorded target');empty.value='';this.target.append(empty);for(const [value,text] of choices){const o=el('option',text);o.value=value;this.target.append(o)}
@@ -24,13 +25,15 @@ class UsageWorkspace {
  }
  async page(generation,cursor){
   const result=await this.api('/v2/usage/query',{filter:{...this.filter,Cursor:cursor}});if(generation!==this.generation)return;
-  const seen=new Set(this.records.map(r=>r.ID));for(const r of result.Observations||[])if(!seen.has(r.ID)){this.records.push(r);seen.add(r.ID)}this.next=result.NextCursor||'';
+  const seen=new Set(this.records.map(r=>r.ID));for(const r of result.Observations||[])if(!seen.has(r.ID)){this.records.push({...r,Counters:(r.Counters||[]).map(c=>({Unit:c.Unit,Value:c.ExactValue??String(c.Value)}))});seen.add(r.ID)}this.next=result.NextCursor||'';
   const selected=this.unit.value,units=[...new Set(this.records.flatMap(r=>(r.Counters||[]).map(c=>c.Unit)))];this.unit.replaceChildren();for(const u of units){const o=this.el('option',u.replaceAll('_',' '));o.value=u;this.unit.append(o)}if(units.includes(selected))this.unit.value=selected;this.render();
  }
  render(){
   const {el,button}=this;this.content.replaceChildren();const n=this.records.length,complete=this.records.filter(r=>r.Coverage?.Counters==='complete').length;this.status.textContent=`${n} recorded readings loaded · ${complete} with complete counter coverage${this.next?' · more available':''}`;
   const selectedTarget={...this.activeTarget},generation=this.generation;
-  this.content.append(button('Refresh native usage',async()=>{this.status.textContent='Refreshing native usage…';try{await this.api('/v2/usage/refresh',{target:selectedTarget});if(generation===this.generation)await this.load()}catch(e){if(generation===this.generation)this.error(e);throw e}}));
+  const canRefresh=(this.getSnapshot().executions||[]).some(e=>selectedTarget.ExecutionID?e.id===selectedTarget.ExecutionID:e.conversation_id===selectedTarget.ConversationID);
+  if(canRefresh)this.content.append(button('Refresh native usage',async()=>{this.status.textContent='Refreshing native usage…';try{await this.api('/v2/usage/refresh',{target:selectedTarget});if(generation===this.generation)await this.load()}catch(e){if(generation===this.generation)this.error(e);throw e}}));
+  if(!canRefresh)this.content.append(el('p','Native refresh is unavailable: this historical conversation has no recorded execution. Its imported readings remain available.'));
   if(!n)this.content.append(el('p','No recorded observations in this observed-time range. Missing usage is not zero usage.'));
   const values=this.records.map(r=>({r,c:(r.Counters||[]).find(c=>c.Unit===this.unit.value)})).filter(x=>x.c);
   if(values.length){const chart=el('figure'),title=el('figcaption',`${this.unit.value.replaceAll('_',' ')} by source observation (not consumption per interval)`);chart.append(title);const max=values.reduce((max,x)=>Math.max(max,Number(x.c.Value)),1);for(const {r,c} of values){const row=el('div',undefined,'usage-reading');row.append(el('span',`${new Date(r.ObservedAt).toLocaleString()} · ${r.Source}: ${c.Value}`));const meter=el('meter');meter.min=0;meter.max=max;meter.value=c.Value;meter.setAttribute('aria-label',`${r.ID} ${c.Unit}`);row.append(meter);chart.append(row)}this.content.append(chart)}
