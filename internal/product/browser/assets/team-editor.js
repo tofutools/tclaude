@@ -8,7 +8,7 @@ const blank = () => ({ID: freshID('definition_'), Name: 'New team', Kind: 'team'
 
 export async function openTeamEditor({api, result, onSaved}) {
   const [authority, profiles, rules] = await Promise.all([api('/v2/authority'), api('/v2/configuration-profiles'), api('/v2/automation/rules')]);
-  const configurations = await Promise.all((profiles || []).map(p => api('/v2/configuration-profiles/' + encodeURIComponent(p.ID) + '?revision_id=' + encodeURIComponent(p.CurrentRevisionID))));
+  const configurations = await Promise.all((profiles || []).filter(p => !p.Archived).map(p => api('/v2/configuration-profiles/' + encodeURIComponent(p.ID) + '?revision_id=' + encodeURIComponent(p.CurrentRevisionID))));
   const rhythms = await Promise.all((rules || []).filter(r => !r.Tombstoned).map(r => api('/v2/automation/rules/' + encodeURIComponent(r.ID))));
   return new TeamEditor({api, result, onSaved, roles: authority.Roles || [], configurations, rhythms});
 }

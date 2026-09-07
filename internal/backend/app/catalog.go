@@ -12,6 +12,7 @@ import (
 )
 
 type ConfigurationCatalogStore interface {
+	SetConfigurationProfileArchived(context.Context, ConfigurationProfileArchiveWrite) (model.ConfigurationProfile, error)
 	SaveConfigurationDefaults(context.Context, ConfigurationDefaultsWrite) (model.ConfigurationDefaults, error)
 	ConfigurationDefaults(context.Context) (model.ConfigurationDefaults, error)
 	SaveConfigurationProfile(context.Context, ConfigurationProfileWrite) (ConfigurationProfileResult, error)
@@ -43,6 +44,7 @@ type SaveConfigurationProfileRequest struct {
 }
 
 type ConfigurationCatalogAPI interface {
+	SetConfigurationProfileArchived(context.Context, SetConfigurationProfileArchivedRequest) (model.ConfigurationProfile, error)
 	SaveConfigurationDefaults(context.Context, SaveConfigurationDefaultsRequest) (model.ConfigurationDefaults, error)
 	GetConfigurationDefaults(context.Context, model.Principal) (model.ConfigurationDefaults, error)
 	SaveConfigurationProfile(context.Context, SaveConfigurationProfileRequest) (ConfigurationProfileResult, error)
@@ -109,7 +111,7 @@ func (s *Service) resolveConfigurationSelection(ctx context.Context, desired mod
 	if err != nil {
 		return desired, nil, err
 	}
-	if result.Revision.Ref != *selected {
+	if result.Profile.Archived || result.Revision.Ref != *selected {
 		return desired, nil, ErrConflict
 	}
 	ref := result.Revision.Ref
@@ -196,4 +198,35 @@ func (s *Service) selectConfigurationDefault(ctx context.Context, name string, d
 		return nil, ErrNotFound
 	}
 	return &selected, nil
+}
+
+type SetConfigurationProfileArchivedRequest struct {
+	Context          RequestContext
+	ID               model.ConfigurationProfileID
+	ExpectedRevision model.Revision
+	Archived         bool
+}
+type ConfigurationProfileArchiveWrite struct {
+	ID               model.ConfigurationProfileID
+	ExpectedRevision model.Revision
+	Archived         bool
+	RequestID        model.RequestID
+	Fingerprint      string
+	At               time.Time
+}
+
+func (s *Service) SetConfigurationProfileArchived(ctx context.Context, req SetConfigurationProfileArchivedRequest) (model.ConfigurationProfile, error) {
+	if err := requireOperator(req.Context.Principal); err != nil {
+		return model.ConfigurationProfile{}, err
+	}
+	if req.Context.RequestID.Validate() != nil || model.ValidateStableID("configuration profile", string(req.ID)) != nil || req.ExpectedRevision == 0 {
+		return model.ConfigurationProfile{}, ErrInvalid
+	}
+	payload, _ := json.Marshal(struct {
+		ID       model.ConfigurationProfileID
+		Expected model.Revision
+		Archived bool
+	}{req.ID, req.ExpectedRevision, req.Archived})
+	digest := sha256.Sum256(payload)
+	return s.store.SetConfigurationProfileArchived(ctx, ConfigurationProfileArchiveWrite{ID: req.ID, ExpectedRevision: req.ExpectedRevision, Archived: req.Archived, RequestID: req.Context.RequestID, Fingerprint: hex.EncodeToString(digest[:]), At: s.now().UTC()})
 }

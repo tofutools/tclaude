@@ -632,12 +632,23 @@ func (s *Store) CreateAgent(ctx context.Context, agent model.Agent) error {
 	if agent.Notifications.DirectMessage == "" {
 		agent.Notifications.DirectMessage = model.NotificationIfAvailable
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO agents(configuration_profile_json,id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,direct_notification_intent,harness,model,effort,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = requireActiveConfigurationProfileTx(ctx, tx, agent.ConfigurationProfile); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO agents(configuration_profile_json,id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,direct_notification_intent,harness,model,effort,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		configurationProfileJSON(agent.ConfigurationProfile), agent.ID, agent.Name, agent.TaskReference, agent.ParentAgentID, agent.CloneSourceAgentID, agent.Lifecycle, agent.Notifications.DirectMessage, agent.Desired.Harness, agent.Desired.Model, agent.Desired.Effort, agent.Desired.WorkingDirectory, agent.Desired.Approval, agent.Desired.Sandbox, agent.PrimaryExecutionID, agent.Revision, nanos(agent.CreatedAt), nanos(agent.UpdatedAt))
 	if err != nil {
 		return classify(err)
 	}
-	return s.bump(ctx)
+	if err := bumpTx(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected model.Revision, name, taskReference string, notifications model.AgentNotificationPreferences, desired model.DesiredConfiguration, profile *model.ConfigurationProfileRef, authority model.AuthorityRequest, at time.Time) (model.Agent, error) {
@@ -652,6 +663,9 @@ func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected mode
 	}
 	if !decision.Allowed {
 		return model.Agent{}, app.ErrUnauthorized
+	}
+	if err := requireActiveConfigurationProfileTx(ctx, tx, profile); err != nil {
+		return model.Agent{}, err
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE agents SET configuration_profile_json=?,name=?,task_reference=?,direct_notification_intent=?,harness=?,model=?,effort=?,working_directory=?,approval=?,sandbox=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND lifecycle_state=?`,
 		configurationProfileJSON(profile), name, taskReference, notifications.DirectMessage, desired.Harness, desired.Model, desired.Effort, desired.WorkingDirectory, desired.Approval, desired.Sandbox, nanos(at), id, expected, model.AgentActive)

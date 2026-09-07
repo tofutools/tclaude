@@ -746,3 +746,20 @@ or constrain the request; the stored value describes the request, not a measured
 effective setting. Tokens must start with a lowercase letter or digit and contain
 at most 64 lowercase letters, digits, underscores or hyphens. This setting does
 not change approval or sandbox authority.
+
+### Archiving saved configurations
+
+Configurations can be filtered as active, archived or all. Archive hides fresh
+selection actions while retaining every saved revision and all existing agent
+and execution settings. Restore explicitly makes the entry selectable again.
+Profiles still selected as global or harness defaults must be cleared or replaced
+in Defaults first. Editing cannot silently restore an archived entry.
+
+`POST /v2/configuration-profiles/{id}/archive` requires operator authentication,
+`request_id`, `expected_revision` and an explicit `archived` boolean. The
+`configuration-profile archive ID --file FILE` command sends the same request. Exact
+retries return their stored result; changed intent or a stale revision conflicts.
+Fresh agent configuration/default selection checks active status in the storage
+transaction. Existing agents may still run their pinned configuration, and Clone
+configuration copies those exact settings into an independent agent. Archive does
+not stop workloads, delete native history, or discard immutable profile revisions.
