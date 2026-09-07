@@ -622,7 +622,8 @@ func (s *Service) Attach(ctx context.Context, req AttachRequest) (AttachmentResu
 		return AttachmentResult{Operation: finished.Operation}, nil
 	}
 	transferred = true
-	return AttachmentResult{Operation: finished.Operation, Attachment: ownAttachment(result.Attachment, cancelAttachment)}, nil
+	_, canStageFile := runtime.(ports.TerminalFileStager)
+	return AttachmentResult{Operation: finished.Operation, Attachment: ownAttachment(result.Attachment, cancelAttachment), CanStageFile: canStageFile}, nil
 }
 
 func (s *Service) Stop(ctx context.Context, req StopRequest) (OperationResult, error) {
@@ -1005,7 +1006,8 @@ func (s *Service) attachShell(ctx context.Context, req AttachRequest, execution 
 		cancel()
 		return AttachmentResult{Operation: finished.Operation}, effectErr
 	}
-	return AttachmentResult{Operation: finished.Operation, Attachment: ownAttachment(result.Attachment, cancel)}, nil
+	_, canStageFile := runtime.(ports.TerminalFileStager)
+	return AttachmentResult{Operation: finished.Operation, Attachment: ownAttachment(result.Attachment, cancel), CanStageFile: canStageFile}, nil
 }
 
 func (s *Service) stopShell(ctx context.Context, req StopRequest, execution model.Execution) (OperationResult, error) {

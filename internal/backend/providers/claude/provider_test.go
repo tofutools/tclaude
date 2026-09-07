@@ -120,6 +120,15 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 		_, _ = released.Runtime.Stop(ctx, ports.StopRequest{Force: true})
 	})
 
+	filePermit := &testPermit{execution: request.Spec.ExecutionID, operation: "operation_file"}
+	staged, err := released.Runtime.(ports.TerminalFileStager).StageTerminalFile(context.Background(), ports.StageTerminalFileRequest{ExecutionID: request.Spec.ExecutionID, OperationID: filePermit.OperationID(), Filename: "drawing.png", Content: []byte("native user file"), Permit: filePermit})
+	require.NoError(t, err)
+	require.Equal(t, ports.EffectAccepted, staged.Disposition)
+	userFile, err := os.ReadFile(staged.NativePath)
+	require.NoError(t, err)
+	require.Equal(t, "native user file", string(userFile))
+	require.Equal(t, filepath.Join(root, "uploads"), filepath.Dir(staged.NativePath))
+
 	preparedRecovery, err := provider.Recover(context.Background(), ports.RecoveryRequest{
 		ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: description.Evidence,
 		Attempt: request.Spec.Attempt, Access: access,

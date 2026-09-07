@@ -81,7 +81,7 @@ func (h *Handler) attach(w http.ResponseWriter, r *http.Request) {
 	resizable, canResize := result.Attachment.(ports.ResizableAttachment)
 	framed := conn.Subprotocol() == "tclaude.terminal.v1"
 	if framed {
-		if err := conn.WriteJSON(map[string]any{"type": "capabilities", "resize": canResize}); err != nil {
+		if err := conn.WriteJSON(map[string]any{"type": "capabilities", "resize": canResize, "file_stage": result.CanStageFile}); err != nil {
 			return
 		}
 	}
