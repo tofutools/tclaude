@@ -19,6 +19,23 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
   {name:'label',label:'Link label',required:false,value:details.LinkLabel||''}
  ],f=>api('/v2/groups/'+encodeURIComponent(group.ID)+'/details',{expected_revision:group.Revision,details:{Description:f.description,Mission:f.mission,LinkURL:f.url,LinkLabel:f.label}},'PUT'),{skipUnchanged:true})));
 
+ controls.append(button('Clone group',async()=>{
+  const current=await api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration');if(!card.isConnected)return;
+  const members=(group.Members||[]).map(id=>agents.find(a=>a.ID===id));
+  edit('Clone group',[
+   {name:'name',label:'New group name',value:group.Name+' copy'},
+   {name:'members',label:'Member configurations',value:'copy',options:[{value:'copy',label:'Copy active members as new offline agents'},{value:'none',label:'Create an empty group'}]},
+   {name:'defaults',label:'Group launch default',value:'none',options:[{value:'none',label:'No default'},...(current.Profile?[{value:'copy',label:'Copy pinned '+current.Profile.ProfileID+' · '+current.Profile.RevisionID}]:[])]},
+   {name:'limit',label:'Maximum active direct members (0 = no configured limit)',type:'number',value:String(cap)}
+  ],f=>{
+   const limit=Number(f.limit),copy=f.members==='copy';if(!Number.isInteger(limit)||limit<0||limit>2147483647)throw new Error('Enter a whole number from 0 to 2147483647');
+   if(copy&&members.some(a=>!a))throw new Error('Reload the group before copying its members.');
+   return api('/v2/groups/'+encodeURIComponent(group.ID)+'/clone',{request_id:f.requestID,id:f.requestID,name:f.name,expected_group_revision:group.Revision,expected_default_revision:f.defaults==='copy'?current.Revision:0,expected_members:copy?Object.fromEntries(members.map(a=>[a.ID,a.Revision])):{},copy_members:copy,copy_default:f.defaults==='copy',max_active_members:limit});
+  });
+  document.getElementById('editor-fields').append(el('p','Creates a separate top-level group. Details and selected configurations are copied; retired members are skipped. Ownership, permissions, running work, messages and automation are not copied. Nothing starts.'));
+  const preview=el('ul');for(const member of members.filter(a=>a?.Lifecycle==='active'))preview.append(el('li',member.Name+' · '+member.ID));document.getElementById('editor-fields').append(el('p','Active members available to copy:'),preview);
+ }));
+
  controls.append(button('Launch defaults',async()=>{
   const [current,profiles]=await Promise.all([api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration'),api('/v2/configuration-profiles')]);
   if(!card.isConnected)return;

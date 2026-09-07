@@ -1037,3 +1037,23 @@ unsupported selections are refused by source preflight or retained with a
 `group_default_retained_unmapped` diagnostic; conversion never guesses another
 profile. Exact import retries verify both the configuration row and pinned
 profile reference and refuse changed targets.
+
+### Clone a group without starting work
+
+Group settings → **Clone group** creates a separate top-level group. Choose
+whether to copy active members as new offline agents and whether to retain the
+source's exact pinned launch default. Descriptions, mission, links and the
+selected member limit are copied; retired members are skipped. The new agents
+keep their copied desired configuration and source lineage. Source groups and
+shared memberships remain unchanged.
+
+The copy has no owner or copied permissions, executions, messages, workspaces,
+or automation. Starting work and assigning authority remain explicit actions.
+Archived configuration selections cannot be used to create fresh copies.
+
+`POST /v2/groups/{id}/clone` accepts a request ID, new group ID/name, source group
+revision, exact member revisions when copying members, and the default revision
+when copying the default. Admission checks the snapshot and commits the complete
+copy atomically. An identical retry returns its stored result, including after
+restart or later source changes; changed intent conflicts. Stale source changes
+or rejected configurations leave no partial copy.
