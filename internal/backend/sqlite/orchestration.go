@@ -787,6 +787,12 @@ func (s *Store) SaveAutomationRule(ctx context.Context, rule model.AutomationRul
 	if err != nil {
 		return app.AutomationRuleRecord{}, classify(err)
 	}
+	// Condition state is meaningful only for the immutable head revision that
+	// produced it. A new revision starts with a new cursor/episode; in
+	// particular, a trigger sequence must never be parsed as a schedule time.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM automation_condition_state WHERE rule_id=?`, rule.ID); err != nil {
+		return app.AutomationRuleRecord{}, err
+	}
 	if err = bumpTx(ctx, tx); err != nil {
 		return app.AutomationRuleRecord{}, err
 	}

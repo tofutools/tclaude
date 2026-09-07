@@ -698,6 +698,7 @@ func (s *Service) ReconcilePendingWork(ctx context.Context) (WorkReconcileReport
 		return WorkReconcileReport{}, err
 	}
 	report := WorkReconcileReport{Occurrences: occurrences}
+	var firstAdvanceErr error
 	for _, record := range records {
 		if record.Run.State == model.WorkRunUncertain {
 			report.Uncertain = append(report.Uncertain, record.Run.ID)
@@ -711,7 +712,16 @@ func (s *Service) ReconcilePendingWork(ctx context.Context) (WorkReconcileReport
 			updated, advanceErr = s.advanceWork(ctx, record)
 		}
 		if advanceErr != nil && updated.Run.State != model.WorkRunFailed && updated.Run.State != model.WorkRunUncertain {
-			return report, advanceErr
+			// A temporarily unavailable provider is local to this run. Keep the
+			// honest pending state, but finish the bounded sweep so an unrelated
+			// run cannot be starved behind it. Return the first error after all
+			// independent records have had their turn.
+			if !errors.Is(advanceErr, ErrUnavailable) {
+				return report, advanceErr
+			}
+			if firstAdvanceErr == nil {
+				firstAdvanceErr = advanceErr
+			}
 		}
 		switch updated.Run.State {
 		case model.WorkRunUncertain:
@@ -723,7 +733,7 @@ func (s *Service) ReconcilePendingWork(ctx context.Context) (WorkReconcileReport
 	if err := s.reconcileTeamDeployments(ctx); err != nil {
 		return report, err
 	}
-	return report, nil
+	return report, firstAdvanceErr
 }
 
 func (s *Service) advanceWork(ctx context.Context, record WorkRunRecord) (WorkRunRecord, error) {

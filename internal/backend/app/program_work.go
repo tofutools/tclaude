@@ -37,9 +37,14 @@ func (s *Service) advanceGraphWork(ctx context.Context, record WorkRunRecord) (W
 	}
 	for _, attempt := range record.Run.NodeAttempts {
 		if attempt.State == model.NodeAttemptRetryWait && attempt.RetryAt != nil && !now.Before(*attempt.RetryAt) {
+			node := graphNode(*record.Run.Graph, attempt.Ref.NodeID)
+			ready := attempt
+			ready.State, ready.RetryAt, ready.UpdatedAt = model.NodeAttemptReady, nil, now
+			ready, windows := s.attachDecisionWindow(record.Run, node, ready, now)
 			transition := GraphTransition{WorkRunID: record.Run.ID, ExpectedRevision: record.Run.Revision,
-				Updates:  []GraphAttemptUpdate{{Ref: attempt.Ref, State: model.NodeAttemptReady}},
-				RunState: model.WorkRunRunning, ControlState: model.WorkControlActive, RunOutcome: record.Run.Outcome, At: now}
+				Updates:         []GraphAttemptUpdate{{Ref: attempt.Ref, State: ready.State, DecisionID: ready.DecisionID}},
+				DecisionWindows: windows,
+				RunState:        model.WorkRunRunning, ControlState: model.WorkControlActive, RunOutcome: record.Run.Outcome, At: now}
 			return s.store.ApplyGraphTransition(ctx, transition)
 		}
 	}
