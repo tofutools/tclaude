@@ -128,6 +128,9 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if request.Spec.Harness != Name {
 		return nil, fmt.Errorf("codex provider cannot prepare harness %q", request.Spec.Harness)
 	}
+	if err := model.ValidateEffort(request.Spec.Effort); err != nil {
+		return nil, err
+	}
 	if err := validateDirectory(request.Spec.WorkingDirectory); err != nil {
 		return nil, err
 	}
@@ -410,6 +413,10 @@ func (p *prepared) argv() []string {
 		args = append(args, "resume", p.nativeID)
 	case ports.StartFork:
 		args = append(args, "resume", p.nativeID)
+	}
+	if p.request.Spec.Effort != "" {
+		encoded, _ := json.Marshal(p.request.Spec.Effort)
+		args = append(args, "-c", "model_reasoning_effort="+string(encoded))
 	}
 	if p.request.Spec.Model != "" {
 		args = append(args, "--model", p.request.Spec.Model)

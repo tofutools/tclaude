@@ -105,6 +105,7 @@ class TeamEditor {
     const fields = [
       {key: 'key', label: 'Stable member key', value: m.Key, required: true}, {key: 'name', label: 'Member name', value: m.Name, required: true},
       {key: 'harness', label: 'Harness', options: [opt('', 'Choose harness'), ...['claude', 'codex', 'opencode', 'copilot'].map(v => opt(v))], value: desired.Harness, required: true},
+      {key: 'effort', label: 'Requested native effort / variant (optional)', value: desired.Effort || ''},
       {key: 'model', label: 'Model', value: desired.Model, required: true}, {key: 'cwd', label: 'Configuration working directory', value: desired.WorkingDirectory, required: true},
       {key: 'approval', label: 'Approval', options: ['supervised', 'automatic'].map(v => opt(v)), value: desired.Approval || 'supervised'},
       {key: 'sandbox', label: 'Confinement', options: ['read_only', 'workspace_write', 'unconfined'].map(v => opt(v)), value: desired.Sandbox || 'workspace_write'},
@@ -115,7 +116,8 @@ class TeamEditor {
     const form = this.form('Member', fields, f => {
       if (this.draft.Team.Members.some(x => x.Key === f.key && x.Key !== original?.Key)) throw new Error('Member keys must be unique.');
       if (f.owner && this.draft.Team.Members.some(x => x.Owner && x.Key !== original?.Key)) throw new Error('Choose only one group owner.');
-      const member = {...m, Key: f.key, Name: f.name, Desired: {...desired, Harness: f.harness, Model: f.model, WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
+      if (f.effort && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(f.effort)) throw new Error('Requested effort must be a lowercase native level or variant, at most 64 characters.');
+      const member = {...m, Key: f.key, Name: f.name, Desired: {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
       this.change(d => {
         const i = d.Team.Members.findIndex(x => x.Key === original?.Key); if (i < 0) d.Team.Members.push(member); else d.Team.Members[i] = member;
         if (original && original.Key !== f.key) { for (const w of d.Team.Waves) w.MemberKeys = w.MemberKeys.map(k => k === original.Key ? f.key : k); for (const b of d.Team.Briefings) b.MemberKeys = (b.MemberKeys || []).map(k => k === original.Key ? f.key : k); }
@@ -133,7 +135,7 @@ class TeamEditor {
     select.onchange = () => {
       if (select.value === '') return;
       const d = this.configurations[Number(select.value)].Revision.Desired;
-      for (const [key, property] of Object.entries({harness: 'Harness', model: 'Model', cwd: 'WorkingDirectory', approval: 'Approval', sandbox: 'Sandbox'})) form.elements[key].value = d[property];
+      for (const [key, property] of Object.entries({harness: 'Harness', model: 'Model', effort: 'Effort', cwd: 'WorkingDirectory', approval: 'Approval', sandbox: 'Sandbox'})) form.elements[key].value = d[property] || '';
       this.unapplied = true;
     };
     this.content.prepend(select, el('p', 'Settings are copied into this immutable team revision. Deployment binds each member to the explicitly selected workspace; it does not follow later profile edits.'));

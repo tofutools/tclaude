@@ -728,3 +728,21 @@ return the admitted outcome without another native preparation, including an
 uncertain outcome. The text is not added to aggregate execution snapshots.
 Initial briefs apply to explicit fresh launches; Resume does not replay them.
 This request-level control does not yet define saved-profile startup context.
+
+### Requested effort in launch configurations
+
+Agent configuration, saved configuration revisions and team members accept an
+optional `Effort` string. The browser exposes it as “Requested native effort /
+variant”. Copying a saved configuration into a team copies this value too.
+Blank leaves the native default in effect. A profile edit changes future selections;
+existing agents and executions retain their pinned configuration, including effort.
+JSON-based CLI/API configuration requests use the same `Effort` field.
+
+Providers forward the request without translating level names: Claude uses
+`--effort`, Codex uses `model_reasoning_effort`, Copilot uses `--effort=`, and
+OpenCode uses the prompt's `variant`. Use a level or variant supported by the
+selected native model. Native versions, model support and native policy can reject
+or constrain the request; the stored value describes the request, not a measured
+effective setting. Tokens must start with a lowercase letter or digit and contain
+at most 64 lowercase letters, digits, underscores or hyphens. This setting does
+not change approval or sandbox authority.

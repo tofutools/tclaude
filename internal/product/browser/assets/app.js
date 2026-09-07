@@ -52,11 +52,12 @@ function desiredFields(desired={}){return[
  {name:'name',label:'Name',value:desired.name},
  {name:'harness',label:'Harness',value:desired.Harness||'claude',options:['claude','codex','opencode','copilot']},
  {name:'model',label:'Model',value:desired.Model},
+ {name:'effort',label:'Requested native effort / variant (optional)',value:desired.Effort||'',required:false},
  {name:'cwd',label:'Working directory',value:desired.WorkingDirectory},
  {name:'approval',label:'Approval',value:desired.Approval||'supervised',options:['supervised','automatic']},
  {name:'sandbox',label:'Confinement',value:desired.Sandbox||'workspace_write',options:['read_only','workspace_write','unconfined']}
 ]}
-function configuration(form){return{Harness:form.harness,Model:form.model,WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
+function configuration(form){if(form.effort&&!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(form.effort))throw new Error('Requested native effort must start with a letter or digit and contain at most 64 lowercase letters, digits, underscores or hyphens.');return{Harness:form.harness,Model:form.model,Effort:form.effort,WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
 function agentRow(agent){
  const row=el('div',undefined,'row');row.append(el('span',agent.Name,'name'));
  const execution=(snapshot.executions||[]).find(e=>e.id===agent.PrimaryExecutionID);
