@@ -7,6 +7,7 @@ document.querySelector('main').inert=true;
 const requestID = () => 'r_' + crypto.randomUUID();
 const terminals = new TerminalWorkspace({requestID});
 const messageWorkspace = new MessageWorkspace({host:$('message-list'),el,button,api,refresh,card:messageCard});
+const rosterWorkspace = new RosterWorkspace({host:$('roster'),api,el,button,edit,refresh});
 function showError(error) { const target=$('editor').open?$('editor-error'):$('error');target.textContent=error.message || String(error);target.hidden=false; }
 async function api(path, body, method) {
  const response=await fetch(path,{method:method || (body===undefined?'GET':'POST'),credentials:'same-origin',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
@@ -84,14 +85,8 @@ function messageCard(message){
  return card;
 }
 function render(){
- const roster=$('roster');roster.replaceChildren();const agents=snapshot.agents||[];const groups=snapshot.groups||[];
- const grouped=new Set(groups.flatMap(g=>g.Members||[]));
- for(const group of [...groups,{Name:'Ungrouped',Members:agents.filter(a=>!grouped.has(a.ID)).map(a=>a.ID)}]){
-  if(!group.Members?.length && !group.ID)continue;
-  const card=el('div',undefined,'group');card.append(el('h2',group.Name));
-  for(const id of group.Members||[]){const a=agents.find(a=>a.ID===id);if(a)card.append(agentRow(a))}roster.append(card);
- }
- if(!agents.length)empty(roster,'No agents yet. Create an agent to save its configuration before starting work.');
+ renderGroupControls(snapshot,{host:$('group-management'),el,button,edit,api,refresh});
+ rosterWorkspace.update(snapshot,agentRow);
  const spaces=$('workspace-list');spaces.replaceChildren();
  for(const workspace of snapshot.workspaces||[])spaces.append(workspaceCard(workspace));
  if(!snapshot.workspaces?.length)empty(spaces,'No registered workspaces.');
@@ -130,8 +125,16 @@ $('search-history').onsubmit=async e=>{e.preventDefault();try{
  if(!data.Entries?.length)empty(list,'No matching catalogued histories. Source coverage may be incomplete.');
 }catch(error){showError(error)}};
 (async()=>{
- const fragment=new URLSearchParams(location.hash.slice(1));const token=fragment.get('login');history.replaceState(null,'',location.pathname);
- if(token)await api('/session',{token});await refresh();await selectTab('groups');
+ const fragment=new URLSearchParams(location.hash.slice(1));const token=fragment.get('login'),requested=new URLSearchParams(location.search).get('terminal');history.replaceState(null,'',location.pathname+location.search);
+ if(token)await api('/session',{token});await refresh();
+ if(requested){
+  document.body.classList.add('terminal-window');
+  const execution=(snapshot.executions||[]).find(e=>e.id===requested);if(!execution)throw new Error('This execution is not available in the current workspace.');
+  const nonce=fragment.get('handoff');
+  terminals.onAttached=entry=>{if(nonce&&entry.id===requested)window.opener?.postMessage({type:'terminal-attached',nonce,executionID:entry.id},location.origin)};
+  await attach(execution);
+ }else{terminals.restore(snapshot.executions||[],snapshot.agents||[]);await selectTab('groups')}
+
 })().catch(e=>{$('connection').textContent='Not connected';showError(e)}).finally(()=>{for(const tab of document.querySelectorAll('[data-tab]'))tab.disabled=false;document.querySelector('main').inert=false});
 
 async function attach(execution){
@@ -140,7 +143,7 @@ async function attach(execution){
  terminals.open(execution,agent?.Name||execution.id);
 }
 function closeTerminal(){terminals.closeAll()}
-window.addEventListener('pagehide',closeTerminal);
+window.addEventListener('pagehide',()=>terminals.suspend());
 
 function workspaceCard(space){
  const card=el('div',undefined,'card');card.append(el('strong',space.ID),el('p',space.Observation?.ActualPath||space.Intent?.IntendedPath||''),el('span',space.State,'status'));
