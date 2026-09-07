@@ -450,9 +450,9 @@ func (s lostTeamLinkReplyStore) UpdateOccurrence(ctx context.Context, id model.O
 	return record, err
 }
 
-func (s disableTeamAdmissionStore) CreateTeamDeployment(ctx context.Context, deployment model.TeamDeployment, group model.Group, agents []model.Agent, principal model.Principal, at time.Time) (model.TeamDeployment, bool, error) {
+func (s disableTeamAdmissionStore) CreateTeamDeployment(ctx context.Context, deployment model.TeamDeployment, group model.Group, agents []model.Agent, assignments []model.RoleAssignment, principal model.Principal, at time.Time) (model.TeamDeployment, bool, error) {
 	s.before()
-	return s.Store.CreateTeamDeployment(ctx, deployment, group, agents, principal, at)
+	return s.Store.CreateTeamDeployment(ctx, deployment, group, agents, assignments, principal, at)
 }
 
 func ptr[T any](value T) *T { return &value }

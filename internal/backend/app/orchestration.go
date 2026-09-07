@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -1115,6 +1116,29 @@ func (s *Service) RunRuleNow(ctx context.Context, req RunRuleNowRequest) (Occurr
 	if strings.TrimSpace(req.SourceOccurrenceKey) == "" {
 		return OccurrenceResult{}, fail(ErrInvalid, "manual occurrence key is required")
 	}
+	requestedRecipients := append([]model.AgentID(nil), req.Recipients...)
+	sort.Slice(requestedRecipients, func(i, j int) bool { return requestedRecipients[i] < requestedRecipients[j] })
+	unique := requestedRecipients[:0]
+	for _, id := range requestedRecipients {
+		if len(unique) == 0 || unique[len(unique)-1] != id {
+			unique = append(unique, id)
+		}
+	}
+	fingerprint := contentHash(struct {
+		Scope      string
+		RuleID     model.AutomationRuleID
+		Expected   model.Revision
+		Key        string
+		Recipients []model.AgentID
+	}{requestScopeForDigest(req.Context.Principal), req.RuleID, req.ExpectedRuleRevision, req.SourceOccurrenceKey, unique})
+	if stored, readErr := s.store.Occurrence(ctx, req.OccurrenceID); readErr == nil {
+		if stored.Occurrence.RequestID != req.Context.RequestID || stored.Occurrence.RequestFingerprint != fingerprint {
+			return OccurrenceResult{}, ErrConflict
+		}
+		return OccurrenceResult(stored), nil
+	} else if !errors.Is(readErr, ErrNotFound) {
+		return OccurrenceResult{}, readErr
+	}
 	record, err := s.store.AutomationRule(ctx, req.RuleID)
 	if err != nil {
 		return OccurrenceResult{}, err
@@ -1130,16 +1154,23 @@ func (s *Service) RunRuleNow(ctx context.Context, req RunRuleNowRequest) (Occurr
 	now := s.now().UTC()
 	expires := now.Add(record.Head.Policy.ExpiresAfter)
 	recipients := make([]model.OccurrenceRecipient, 0, len(req.Recipients))
-	seen := make(map[model.AgentID]bool, len(req.Recipients))
-	for _, id := range req.Recipients {
-		if seen[id] {
-			continue
+	if len(req.Recipients) == 0 {
+		recipients, err = s.automationRecipients(ctx, record.Head.Action)
+		if err != nil {
+			return OccurrenceResult{}, err
 		}
-		seen[id] = true
-		recipients = append(recipients, model.OccurrenceRecipient{AgentID: id, Disposition: model.RecipientPending})
+	} else {
+		seen := make(map[model.AgentID]bool, len(req.Recipients))
+		for _, id := range req.Recipients {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			recipients = append(recipients, model.OccurrenceRecipient{AgentID: id, Disposition: model.RecipientPending})
+		}
 	}
 	requester := model.AutomationPrincipal(string(req.OccurrenceID), record.Head.Owner, record.Head.Delegation)
-	occurrence := model.AutomationOccurrence{ID: req.OccurrenceID, RuleID: req.RuleID, RuleRevisionID: record.Head.ID, SourceOccurrenceKey: "manual:" + req.SourceOccurrenceKey, RequestID: req.Context.RequestID, Requester: requester, ScheduledAt: now, EligibleAt: now, ExpiresAt: expires, State: model.OccurrencePending, Recipients: recipients, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	occurrence := model.AutomationOccurrence{RequestFingerprint: fingerprint, RequestScope: requestScopeForDigest(req.Context.Principal), ID: req.OccurrenceID, RuleID: req.RuleID, RuleRevisionID: record.Head.ID, SourceOccurrenceKey: "manual:" + req.SourceOccurrenceKey, RequestID: req.Context.RequestID, Requester: requester, ScheduledAt: now, EligibleAt: now, ExpiresAt: expires, State: model.OccurrencePending, Recipients: recipients, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	created, _, err := s.store.MaterializeOccurrence(ctx, occurrence, req.ExpectedRuleRevision)
 	return OccurrenceResult(created), err
 }
