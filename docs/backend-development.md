@@ -623,3 +623,11 @@ one exact execution in a separate window and disconnects the original only
 after the new authenticated attachment confirms readiness. Closing either view
 never stops the workload. Scrollback remains local to the view and is not
 persisted across reloads.
+Group settings in the browser support renaming, membership selection, member
+ordering and changing the bounded owner role. `PUT /v2/groups/{id}` accepts
+`name`, ordered `members`, and `expected_revision`; it checks current
+`group.membership.manage` authority in the same transaction as the update.
+Removing membership does not stop or retire the agent. An owner must be changed
+or cleared through the existing owner endpoint before removing that member.
+New members must be active; retired members already in the group can be retained
+or removed. The CLI exposes the same request as `group update ID --file FILE`.

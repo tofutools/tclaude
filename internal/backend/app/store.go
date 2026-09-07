@@ -20,6 +20,7 @@ type Store interface {
 	Agent(context.Context, model.AgentID) (model.Agent, error)
 	CreateGroup(context.Context, model.Group, model.ConfigurationBounds) error
 	Group(context.Context, model.GroupID) (model.Group, error)
+	UpdateGroup(context.Context, UpdateGroupRequest, time.Time) (model.Group, error)
 	SetGroupOwner(context.Context, model.GroupID, model.AgentID, model.ConfigurationBounds, model.Revision, time.Time) (model.Group, error)
 
 	AuthorityState(context.Context) (AuthorityStateResult, error)

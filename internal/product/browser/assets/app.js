@@ -6,6 +6,7 @@ for(const tab of document.querySelectorAll('[data-tab]'))tab.disabled=true;
 document.querySelector('main').inert=true;
 const requestID = () => 'r_' + crypto.randomUUID();
 const terminals = new TerminalWorkspace({requestID});
+const rosterWorkspace = new RosterWorkspace({host:$('roster'),api,el,button,edit,refresh});
 function showError(error) { const target=$('editor').open?$('editor-error'):$('error');target.textContent=error.message || String(error);target.hidden=false; }
 async function api(path, body, method) {
  const response=await fetch(path,{method:method || (body===undefined?'GET':'POST'),credentials:'same-origin',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
@@ -74,14 +75,8 @@ function agentRow(agent){
  row.append(actions);return row;
 }
 function render(){
- const roster=$('roster');roster.replaceChildren();const agents=snapshot.agents||[];const groups=snapshot.groups||[];
- const grouped=new Set(groups.flatMap(g=>g.Members||[]));
- for(const group of [...groups,{Name:'Ungrouped',Members:agents.filter(a=>!grouped.has(a.ID)).map(a=>a.ID)}]){
-  if(!group.Members?.length && !group.ID)continue;
-  const card=el('div',undefined,'group');card.append(el('h2',group.Name));
-  for(const id of group.Members||[]){const a=agents.find(a=>a.ID===id);if(a)card.append(agentRow(a))}roster.append(card);
- }
- if(!agents.length)empty(roster,'No agents yet. Create an agent to save its configuration before starting work.');
+ renderGroupControls(snapshot,{host:$('group-management'),el,button,edit,api,refresh});
+ rosterWorkspace.update(snapshot,agentRow);
  const spaces=$('workspace-list');spaces.replaceChildren();
  for(const workspace of snapshot.workspaces||[])spaces.append(workspaceCard(workspace));
  if(!snapshot.workspaces?.length)empty(spaces,'No registered workspaces.');
