@@ -366,14 +366,15 @@ func (s *Store) SubmitDecision(ctx context.Context, submission model.DecisionSub
 	defer func() { _ = tx.Rollback() }()
 	var priorDecision model.DecisionID
 	var priorAnswer, priorReason string
+	var priorRunRevision model.Revision
 	var priorEvidence []byte
-	lookupErr := tx.QueryRowContext(ctx, `SELECT decision_id,answer,reason,evidence_refs_json FROM decision_submissions WHERE request_scope=? AND request_id=?`, requestScope(submission.Actor), submission.RequestID).Scan(&priorDecision, &priorAnswer, &priorReason, &priorEvidence)
+	lookupErr := tx.QueryRowContext(ctx, `SELECT decision_id,expected_run_revision,answer,reason,evidence_refs_json FROM decision_submissions WHERE request_scope=? AND request_id=?`, requestScope(submission.Actor), submission.RequestID).Scan(&priorDecision, &priorRunRevision, &priorAnswer, &priorReason, &priorEvidence)
 	if lookupErr == nil {
 		var refs []model.WorkEvidenceID
 		if err = json.Unmarshal(priorEvidence, &refs); err != nil {
 			return app.DecisionRecord{}, err
 		}
-		if priorDecision != submission.DecisionID || priorAnswer != submission.Answer || priorReason != submission.Reason || !reflect.DeepEqual(refs, submission.EvidenceRefs) {
+		if priorDecision != submission.DecisionID || priorRunRevision != submission.ExpectedRunRevision || priorAnswer != submission.Answer || priorReason != submission.Reason || !reflect.DeepEqual(refs, submission.EvidenceRefs) {
 			return app.DecisionRecord{}, app.ErrConflict
 		}
 		if err = tx.Commit(); err != nil {
@@ -390,6 +391,15 @@ func (s *Store) SubmitDecision(ctx context.Context, submission model.DecisionSub
 	}
 	if record.Window.State != model.DecisionOpen || record.Window.Revision != submission.ExpectedWindowRevision {
 		return app.DecisionRecord{}, app.ErrConflict
+	}
+	if submission.ExpectedRunRevision != 0 {
+		var runRevision model.Revision
+		if err = tx.QueryRowContext(ctx, `SELECT revision FROM work_runs WHERE id=?`, record.Window.Attempt.RunID).Scan(&runRevision); err != nil {
+			return app.DecisionRecord{}, classify(err)
+		}
+		if runRevision != submission.ExpectedRunRevision {
+			return app.DecisionRecord{}, app.ErrConflict
+		}
 	}
 	if !record.Window.ExpiresAt.After(at) {
 		if _, err = tx.ExecContext(ctx, `UPDATE decision_windows SET state=?,revision=revision+1,updated_at=? WHERE id=? AND state=? AND revision=?`, model.DecisionExpired, nanos(at), submission.DecisionID, model.DecisionOpen, submission.ExpectedWindowRevision); err != nil {
@@ -419,7 +429,7 @@ func (s *Store) SubmitDecision(ctx context.Context, submission model.DecisionSub
 	}
 	evidence, _ := json.Marshal(submission.EvidenceRefs)
 	actor, _ := json.Marshal(submission.Actor)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO decision_submissions(decision_id,request_scope,request_id,expected_window_revision,answer,reason,evidence_refs_json,actor_json,submitted_at) VALUES(?,?,?,?,?,?,?,?,?)`, submission.DecisionID, requestScope(submission.Actor), submission.RequestID, submission.ExpectedWindowRevision, submission.Answer, submission.Reason, evidence, actor, nanos(submission.SubmittedAt)); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO decision_submissions(decision_id,request_scope,request_id,expected_window_revision,expected_run_revision,answer,reason,evidence_refs_json,actor_json,submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, submission.DecisionID, requestScope(submission.Actor), submission.RequestID, submission.ExpectedWindowRevision, submission.ExpectedRunRevision, submission.Answer, submission.Reason, evidence, actor, nanos(submission.SubmittedAt)); err != nil {
 		return app.DecisionRecord{}, classify(err)
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE decision_windows SET state=?,revision=revision+1,updated_at=? WHERE id=? AND state=? AND revision=?`, model.DecisionAnswered, nanos(at), submission.DecisionID, model.DecisionOpen, submission.ExpectedWindowRevision)
@@ -682,13 +692,13 @@ func decisionRecord(ctx context.Context, query decisionQuery, id model.DecisionI
 	}
 	record.Window.ExpiresAt, record.Window.CreatedAt, record.Window.UpdatedAt = fromNanos(expires), fromNanos(created), fromNanos(updated)
 	var requestID model.RequestID
-	var expected model.Revision
+	var expected, expectedRun model.Revision
 	var answer, reason string
 	var submissionEvidence, actor []byte
 	var submitted int64
-	err = query.QueryRowContext(ctx, `SELECT request_id,expected_window_revision,answer,reason,evidence_refs_json,actor_json,submitted_at FROM decision_submissions WHERE decision_id=?`, id).Scan(&requestID, &expected, &answer, &reason, &submissionEvidence, &actor, &submitted)
+	err = query.QueryRowContext(ctx, `SELECT request_id,expected_window_revision,expected_run_revision,answer,reason,evidence_refs_json,actor_json,submitted_at FROM decision_submissions WHERE decision_id=?`, id).Scan(&requestID, &expected, &expectedRun, &answer, &reason, &submissionEvidence, &actor, &submitted)
 	if err == nil {
-		submission := &model.DecisionSubmission{RequestID: requestID, DecisionID: id, ExpectedWindowRevision: expected, Answer: answer, Reason: reason, SubmittedAt: fromNanos(submitted)}
+		submission := &model.DecisionSubmission{RequestID: requestID, DecisionID: id, ExpectedWindowRevision: expected, ExpectedRunRevision: expectedRun, Answer: answer, Reason: reason, SubmittedAt: fromNanos(submitted)}
 		if err = json.Unmarshal(submissionEvidence, &submission.EvidenceRefs); err != nil {
 			return record, err
 		}

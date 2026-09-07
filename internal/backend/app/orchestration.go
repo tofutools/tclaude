@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -882,7 +883,7 @@ func (s *Service) SubmitDecision(ctx context.Context, req SubmitDecisionRequest)
 	if err != nil {
 		return DecisionResult{}, err
 	}
-	submission := model.DecisionSubmission{RequestID: req.Context.RequestID, DecisionID: req.DecisionID, ExpectedWindowRevision: req.ExpectedWindowRevision, Answer: req.Answer, Reason: req.Reason, EvidenceRefs: append([]model.WorkEvidenceID(nil), req.EvidenceRefs...), Actor: req.Context.Principal, SubmittedAt: s.now().UTC()}
+	submission := model.DecisionSubmission{RequestID: req.Context.RequestID, DecisionID: req.DecisionID, ExpectedWindowRevision: req.ExpectedWindowRevision, ExpectedRunRevision: req.ExpectedRunRevision, Answer: req.Answer, Reason: req.Reason, EvidenceRefs: append([]model.WorkEvidenceID(nil), req.EvidenceRefs...), Actor: req.Context.Principal, SubmittedAt: s.now().UTC()}
 	authority := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionDecideWork, Resource: model.ResourceSelector{Kind: model.ResourceWorkRun, WorkRunID: window.Window.Attempt.RunID}}
 	record, err := s.store.SubmitDecision(ctx, submission, authority, s.now().UTC())
 	if err != nil {
@@ -979,23 +980,31 @@ func (s *Service) ResolveBlocked(ctx context.Context, req ResolveBlockedRequest)
 	if err != nil {
 		return WorkRunResult{}, err
 	}
-	if window.Window.Kind != model.DecisionBlocked || window.Window.Attempt != req.Attempt || window.Window.Revision != req.ExpectedWindowRevision {
+	if window.Window.Kind != model.DecisionBlocked || window.Window.Attempt != req.Attempt {
 		return WorkRunResult{}, ErrConflict
 	}
 	run, err := s.store.WorkRun(ctx, req.Attempt.RunID)
 	if err != nil {
 		return WorkRunResult{}, err
 	}
-	if run.Run.Revision != req.ExpectedRunRevision {
+	replay := blockedResolutionReplay(window.Submission, req)
+	if !replay && (window.Window.Revision != req.ExpectedWindowRevision || run.Run.Revision != req.ExpectedRunRevision) {
 		return WorkRunResult{}, ErrConflict
 	}
 	_, err = s.SubmitDecision(ctx, SubmitDecisionRequest{Context: req.Context, DecisionID: req.DecisionID,
-		ExpectedWindowRevision: req.ExpectedWindowRevision, Answer: string(req.Action), Reason: req.Reason, EvidenceRefs: req.EvidenceRefs})
+		ExpectedWindowRevision: req.ExpectedWindowRevision, ExpectedRunRevision: req.ExpectedRunRevision, Answer: string(req.Action), Reason: req.Reason, EvidenceRefs: req.EvidenceRefs})
 	if err != nil {
 		return WorkRunResult{}, err
 	}
 	updated, err := s.store.WorkRun(ctx, req.Attempt.RunID)
 	return WorkRunResult(updated), err
+}
+
+func blockedResolutionReplay(prior *model.DecisionSubmission, req ResolveBlockedRequest) bool {
+	if prior == nil || prior.RequestID != req.Context.RequestID || prior.DecisionID != req.DecisionID || prior.ExpectedWindowRevision != req.ExpectedWindowRevision || prior.ExpectedRunRevision != req.ExpectedRunRevision || prior.Answer != string(req.Action) || prior.Reason != req.Reason || !reflect.DeepEqual(prior.EvidenceRefs, req.EvidenceRefs) {
+		return false
+	}
+	return reflect.DeepEqual(prior.Actor, req.Context.Principal)
 }
 
 func (s *Service) validateProgramBindings(ctx context.Context, graph model.WorkGraph, authorized []model.ProgramProfileRef, principal model.Principal, scope model.WorkScope) error {

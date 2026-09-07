@@ -62,6 +62,11 @@ func TestGraphRetryBackoffParksOnlyFailedBranchAndWaiverIsNotVerification(t *tes
 	require.Equal(t, model.NodeAttemptBlocked, blocked.State)
 	require.Equal(t, model.NodeAttemptSucceeded, attemptFor(t, parked, "sibling", 1).State)
 	require.Len(t, parked.Decisions, 1)
+	// Simulate response loss after the decision transaction commits but before
+	// the application applies its graph transition. The exact request replay
+	// must finish reconciliation; it must not buy a second resolution window.
+	_, err = store.SubmitDecision(ctx, model.DecisionSubmission{RequestID: "waive", DecisionID: parked.Decisions[0].ID, ExpectedWindowRevision: parked.Decisions[0].Revision, ExpectedRunRevision: parked.Run.Revision, Answer: string(model.BlockedWaive), Reason: "operator accepts missing flaky branch", Actor: operator, SubmittedAt: now}, model.AuthorityRequest{Principal: operator, Action: model.ActionDecideWork, Resource: model.ResourceSelector{Kind: model.ResourceWorkRun, WorkRunID: parked.Run.ID}}, now)
+	require.NoError(t, err)
 	resolved, err := service.ResolveBlocked(ctx, app.ResolveBlockedRequest{Context: app.RequestContext{Principal: operator, RequestID: "waive"}, DecisionID: parked.Decisions[0].ID, Attempt: blocked.Ref, ExpectedWindowRevision: parked.Decisions[0].Revision, ExpectedRunRevision: parked.Run.Revision, Action: model.BlockedWaive, Reason: "operator accepts missing flaky branch"})
 	require.NoError(t, err)
 	require.Equal(t, model.WorkRunFailed, resolved.Run.State, "waiver stays distinct and cannot satisfy required verification")

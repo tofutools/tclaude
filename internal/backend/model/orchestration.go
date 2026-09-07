@@ -444,6 +444,7 @@ type DecisionSubmission struct {
 	RequestID              RequestID
 	DecisionID             DecisionID
 	ExpectedWindowRevision Revision
+	ExpectedRunRevision    Revision
 	Answer                 string
 	Reason                 string
 	EvidenceRefs           []WorkEvidenceID
