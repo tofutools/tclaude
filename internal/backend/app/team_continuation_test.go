@@ -200,16 +200,16 @@ func TestTeamUnmaterializedRhythmAllowsRetainingCleanup(t *testing.T) {
 	defer store.Close()
 	checkout, err := host.NewCheckoutHost("git")
 	require.NoError(t, err)
-	service := app.New(store, providers.NewRegistry(&preparedWorkProvider{})).WithWorkspaceHost(checkout)
+	service := app.New(&rhythmMaterializationFailureStore{Store: store}, providers.NewRegistry(&preparedWorkProvider{})).WithWorkspaceHost(checkout)
 	operator := model.OperatorPrincipal()
-	rhythm, err := service.SaveAutomationRule(ctx, app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: operator, RequestID: "source"}, ID: "source", RevisionID: "source_v1", Name: "source", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Condition: model.AutomationCondition{Kind: model.AutomationSchedule, Schedule: &model.ScheduleCondition{Timezone: "UTC", Interval: time.Minute, Anchor: time.Now().Add(time.Hour)}}, Action: model.AutomationAction{Kind: model.AutomationSendMessage, Message: &model.AutomationMessageAction{Body: "hello", GroupID: "group"}}, Policy: model.OccurrencePolicy{MissedTicks: model.MissedTickSkip, OfflineDelivery: model.OfflineQueue, ExpiresAfter: time.Hour, Overlap: model.OverlapReplace, MaxActive: 1, Deadline: time.Minute, Retry: model.RetryPolicy{MaxAttempts: 1}}})
+	rhythm, err := service.SaveAutomationRule(ctx, app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: operator, RequestID: "source"}, ID: "source", RevisionID: "source_v1", Name: "source", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Condition: model.AutomationCondition{Kind: model.AutomationSchedule, Schedule: &model.ScheduleCondition{Timezone: "UTC", Interval: time.Minute, Anchor: time.Now().Add(time.Hour)}}, Action: model.AutomationAction{Kind: model.AutomationSendMessage, Message: &model.AutomationMessageAction{Body: "hello", GroupID: "group"}}, Policy: model.OccurrencePolicy{MissedTicks: model.MissedTickSkip, OfflineDelivery: model.OfflineQueue, ExpiresAfter: time.Hour, Overlap: model.OverlapSkip, MaxActive: 1, Deadline: time.Minute, Retry: model.RetryPolicy{MaxAttempts: 1}}})
 	require.NoError(t, err)
 	team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{{Key: "worker", Name: "worker", Desired: model.DesiredConfiguration{Harness: "prepared-work", Model: "test", WorkingDirectory: "/placeholder", Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}, Required: true}}, Waves: []model.TeamWave{{ID: "wave", MemberKeys: []string{"worker"}, RequiredReady: true}}, Automation: []model.AutomationRuleRef{{RuleID: rhythm.Rule.ID, RevisionID: rhythm.Revision.ID, ContentHash: rhythm.Revision.ContentHash}}}
 	definition, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: operator, RequestID: "save"}, Draft: app.DefinitionDraft{ID: "team", RevisionID: "team_v1", Name: "team", Kind: model.DefinitionTeam, SchemaVersion: 1, Source: "fixture", Team: &team}})
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "checkout")
 	deployed, err := service.DeployTeam(ctx, app.DeployTeamRequest{Context: app.RequestContext{Principal: operator, RequestID: "deploy"}, DeploymentID: "deployment", Instantiation: model.TeamInstantiation{Definition: model.DefinitionRef{DefinitionID: definition.Definition.ID, RevisionID: definition.Revision.ID, ContentHash: definition.Revision.ContentHash, Kind: model.DefinitionTeam}, Target: model.TeamDeploymentTarget{Kind: model.TeamTargetNewGroup, GroupID: "group"}, Workspaces: model.TeamWorkspaceSelection{Shared: &model.TeamWorkspaceInput{WorkspaceID: "workspace", CreateIntent: &model.WorkspaceIntent{Repository: lifecycleRepository(t), IntendedPath: path, BaseRevision: "HEAD", Branch: "team-worker", RetainOnFinish: true}}}}})
-	require.ErrorIs(t, err, app.ErrInvalid)
+	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, model.DeploymentPartial, deployed.Deployment.State)
 	stopped, err := service.StandDownDeployment(ctx, app.StandDownDeploymentRequest{Context: app.RequestContext{Principal: operator, RequestID: "stop"}, DeploymentID: deployed.Deployment.ID, ExpectedRevision: deployed.Deployment.Revision, Reason: "abandon partial creation"})
 	require.NoError(t, err)
@@ -248,4 +248,15 @@ func TestTeamUnavailableDeferredBriefLeavesIndependentDeploymentRunnable(t *test
 	after, err := store.TeamDeployment(ctx, second.Deployment.ID)
 	require.NoError(t, err)
 	require.Equal(t, model.DeploymentReady, after.State, "unavailable deferred briefing must not block unrelated fresh deployment")
+}
+
+// Fail only the derived rhythm write after the real deployment admission;
+// source authoring and durable deployment/checkout operations remain production paths.
+type rhythmMaterializationFailureStore struct{ app.Store }
+
+func (s *rhythmMaterializationFailureStore) SaveAutomationRule(ctx context.Context, rule model.AutomationRule, revision model.AutomationRuleRevision, expected model.Revision) (app.AutomationRuleRecord, error) {
+	if rule.ID != "source" {
+		return app.AutomationRuleRecord{}, context.Canceled
+	}
+	return s.Store.SaveAutomationRule(ctx, rule, revision, expected)
 }
