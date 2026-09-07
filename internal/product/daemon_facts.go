@@ -10,6 +10,7 @@ import (
 
 	"github.com/tofutools/tclaude/internal/backend/ports"
 	githubsource "github.com/tofutools/tclaude/internal/backend/sources/github"
+	"golang.org/x/sys/unix"
 )
 
 // Sources are operator-selected composition, never rule-authored URLs or secrets.
@@ -25,7 +26,7 @@ func configuredGitHubSources(specs []string, tokenFile string) ([]ports.Automati
 		if !filepath.IsAbs(tokenFile) {
 			return nil, errors.New("GitHub credential file must be absolute")
 		}
-		f, err := os.Open(tokenFile)
+		f, err := os.OpenFile(tokenFile, os.O_RDONLY|unix.O_NONBLOCK|unix.O_NOFOLLOW, 0)
 		if err != nil {
 			return nil, errors.New("cannot open GitHub credential file")
 		}
