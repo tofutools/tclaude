@@ -271,3 +271,5 @@ body.wizard .process-fit-button { box-shadow: 0 2px 12px rgba(75, 48, 119, 0.5);
 #team-editor-content textarea { min-height: 110px; }
 #team-editor-content article p { white-space: pre-wrap; }
 #team-editor-error { color: #ffb3ab; }
+
+.process-monitor{width:min(96vw,1500px);height:88vh;max-width:none}.process-monitor header{display:flex;align-items:center;gap:1rem}.process-monitor header h2{flex:1;overflow-wrap:anywhere}.process-monitor-body{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);height:calc(100% - 110px);gap:1rem}.process-monitor-canvas{min-height:320px;height:100%;min-width:0}.process-monitor-canvas>.process-graph{height:100%}.process-monitor aside{overflow:auto;overflow-wrap:anywhere}.process-monitor pre{white-space:pre-wrap}@media(max-width:760px){.process-monitor-body{grid-template-columns:1fr;overflow:auto}.process-monitor-canvas{height:400px}}
