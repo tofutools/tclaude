@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/app"
@@ -58,25 +57,25 @@ func (s *Store) AutomationFactsAfter(ctx context.Context, source string, resourc
 
 func insertAutomationFactTx(ctx context.Context, tx *sql.Tx, fact model.NormalizedFact) error {
 	resource, _ := json.Marshal(fact.Resource)
-	_, err := tx.ExecContext(ctx, `INSERT INTO automation_product_facts(source_id,event_id,kind,value,resource_json,occurred_at,observed_at,parent_occurrence_id,causal_depth) VALUES(?,?,?,?,?,?,?,?,?)`, fact.Source, fact.EventID, fact.Kind, fact.Value, resource, nanos(fact.OccurredAt), nanos(fact.ObservedAt), fact.ParentOccurrenceID, fact.CausalDepth)
-	if err == nil {
-		return nil
-	}
 	var stored model.NormalizedFact
 	var storedResource []byte
-	var occurred, observed int64
-	readErr := tx.QueryRowContext(ctx, `SELECT kind,value,resource_json,occurred_at,observed_at,parent_occurrence_id,causal_depth FROM automation_product_facts WHERE source_id=? AND event_id=?`, fact.Source, fact.EventID).Scan(&stored.Kind, &stored.Value, &storedResource, &occurred, &observed, &stored.ParentOccurrenceID, &stored.CausalDepth)
-	if readErr != nil {
+	var occurred int64
+	readErr := tx.QueryRowContext(ctx, `SELECT kind,value,resource_json,occurred_at,parent_occurrence_id,causal_depth FROM automation_product_facts WHERE source_id=? AND event_id=? ORDER BY sequence LIMIT 1`, fact.Source, fact.EventID).Scan(&stored.Kind, &stored.Value, &storedResource, &occurred, &stored.ParentOccurrenceID, &stored.CausalDepth)
+	if readErr == nil {
+		stored.Source, stored.EventID = fact.Source, fact.EventID
+		stored.OccurredAt = fromNanos(occurred)
+		if decodeErr := json.Unmarshal(storedResource, &stored.Resource); decodeErr != nil {
+			return decodeErr
+		}
+		if stored.Kind != fact.Kind || stored.Value != fact.Value || stored.Resource != fact.Resource || !stored.OccurredAt.Equal(fact.OccurredAt) || stored.ParentOccurrenceID != fact.ParentOccurrenceID || stored.CausalDepth != fact.CausalDepth {
+			return app.ErrConflict
+		}
+	} else if !errors.Is(readErr, sql.ErrNoRows) {
+		return readErr
+	}
+	_, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO automation_product_facts(source_id,event_id,kind,value,resource_json,occurred_at,observed_at,parent_occurrence_id,causal_depth) VALUES(?,?,?,?,?,?,?,?,?)`, fact.Source, fact.EventID, fact.Kind, fact.Value, resource, nanos(fact.OccurredAt), nanos(fact.ObservedAt), fact.ParentOccurrenceID, fact.CausalDepth)
+	if err != nil {
 		return classify(err)
-	}
-	stored.Source, stored.EventID = fact.Source, fact.EventID
-	stored.OccurredAt, stored.ObservedAt = fromNanos(occurred), fromNanos(observed)
-	if decodeErr := json.Unmarshal(storedResource, &stored.Resource); decodeErr != nil {
-		return decodeErr
-	}
-	fact.Sequence, stored.Sequence = 0, 0
-	if !reflect.DeepEqual(stored, fact) {
-		return app.ErrConflict
 	}
 	return nil
 }

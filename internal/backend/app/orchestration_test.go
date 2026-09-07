@@ -362,11 +362,15 @@ type programHostFake struct {
 	prepares         int
 	uncertainRelease bool
 	runtime          programRuntimeFake
+	exitCodes        []int
 }
 
 func (h *programHostFake) PrepareProgram(_ context.Context, request ports.ProgramPreparationRequest) (ports.PreparedProgram, error) {
 	h.prepares++
 	h.runtime.id = request.Execution.ID
+	if len(h.exitCodes) > 0 {
+		h.runtime.exitCode, h.exitCodes = h.exitCodes[0], h.exitCodes[1:]
+	}
 	return &preparedProgramFake{host: h, request: request}, nil
 }
 
@@ -400,11 +404,12 @@ type programRuntimeFake struct {
 	releasedResources bool
 	releaseFailures   int
 	releaseAttempts   int
+	exitCode          int
 }
 
 func (r *programRuntimeFake) ExecutionID() model.ExecutionID { return r.id }
 func (r *programRuntimeFake) ObserveProgram(context.Context) (ports.ProgramObservation, error) {
-	code := 0
+	code := r.exitCode
 	return ports.ProgramObservation{ObservedAt: time.Now(), Workload: ports.WorkloadExited, ExitCode: &code, Stdout: ports.ProgramOutput{Data: []byte("ok"), MediaType: "text/plain"}, Evidence: programEvidence()}, nil
 }
 func (r *programRuntimeFake) StopProgram(context.Context, ports.StopRequest) (ports.StopResult, error) {

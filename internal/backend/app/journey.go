@@ -683,6 +683,9 @@ func (s *Service) ReconcilePendingWork(ctx context.Context) (WorkReconcileReport
 	if err := s.reconcileProgramResourceCleanup(ctx); err != nil {
 		return WorkReconcileReport{}, err
 	}
+	if err := s.collectAutomationFacts(ctx); err != nil {
+		return WorkReconcileReport{}, err
+	}
 	if err := s.reconcileTeamDeployments(ctx); err != nil {
 		return WorkReconcileReport{}, err
 	}

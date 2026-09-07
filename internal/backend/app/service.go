@@ -35,6 +35,7 @@ type Service struct {
 	accessLease      time.Duration
 	agentAPIEndpoint string
 	callbackIngress  ports.CallbackIngress
+	automationFacts  []ports.AutomationFactSource
 
 	runtimeMu       sync.RWMutex
 	runtimes        map[model.ExecutionID]ports.Runtime
@@ -89,6 +90,14 @@ func (s *Service) WithAgentAPIEndpoint(endpoint string) *Service {
 
 func (s *Service) WithCallbackIngress(ingress ports.CallbackIngress) *Service {
 	s.callbackIngress = ingress
+	return s
+}
+
+// WithAutomationFactSources registers composition-owned read-only collectors.
+// Collection runs inside the existing bounded reconciliation worker; it does
+// not create another scheduler or expose fact ingestion over the public API.
+func (s *Service) WithAutomationFactSources(sources ...ports.AutomationFactSource) *Service {
+	s.automationFacts = append([]ports.AutomationFactSource(nil), sources...)
 	return s
 }
 
@@ -455,14 +464,21 @@ func (s *Service) Observe(ctx context.Context, req ObserveRequest) (ObservationR
 	}
 	observation, err := runtime.Observe(ctx)
 	if err != nil {
+		if execution.AgentID != "" {
+			resetErr := s.resetAutomationTriggerEpisodes(ctx, model.AutomationSourceApplication, model.AutomationFactResource{Kind: model.FactResourceAgent, ID: string(execution.AgentID)}, s.now().UTC())
+			if resetErr != nil {
+				return ObservationResult{}, errors.Join(err, resetErr)
+			}
+		}
 		return ObservationResult{}, err
 	}
 	updated, err := s.store.RecordRecovery(ctx, execution.ID, stateFromObservation(observation), nil, observation.Evidence, s.now().UTC())
 	if err != nil {
 		return ObservationResult{}, err
 	}
-	if updated.AgentID != "" && !observation.AgentActivityObservedAt.IsZero() {
+	if updated.AgentID != "" {
 		idle, awaiting := "unknown", "unknown"
+		activityAt := observation.AgentActivityObservedAt.UTC()
 		switch observation.AgentActivity {
 		case ports.AgentActivityActive:
 			idle, awaiting = "false", "false"
@@ -471,10 +487,18 @@ func (s *Service) Observe(ctx context.Context, req ObserveRequest) (ObservationR
 		case ports.AgentActivityAwaitingInput:
 			idle, awaiting = "false", "true"
 		}
+		if activityAt.IsZero() {
+			activityAt = observation.ObservedAt.UTC()
+			if activityAt.IsZero() {
+				activityAt = s.now().UTC()
+			}
+			idle, awaiting = "unknown", "unknown"
+		}
 		resource := model.AutomationFactResource{Kind: model.FactResourceAgent, ID: string(updated.AgentID)}
+		identity := fmt.Sprintf("execution:%s:activity:%s:%s", updated.ID, observation.AgentActivity, activityAt.Format(time.RFC3339Nano))
 		facts := []model.NormalizedFact{
-			internalAutomationFact(model.FactAgentIdle, idle, resource, fmt.Sprintf("execution:%s:%d:idle", updated.ID, updated.Revision), observation.AgentActivityObservedAt.UTC(), "", 0),
-			internalAutomationFact(model.FactAgentAwaitingInput, awaiting, resource, fmt.Sprintf("execution:%s:%d:awaiting", updated.ID, updated.Revision), observation.AgentActivityObservedAt.UTC(), "", 0),
+			internalAutomationFact(model.FactAgentIdle, idle, resource, identity+":idle", activityAt, "", 0),
+			internalAutomationFact(model.FactAgentAwaitingInput, awaiting, resource, identity+":awaiting", activityAt, "", 0),
 		}
 		if err = s.store.AppendAutomationFacts(ctx, model.AutomationSourceApplication, facts); err != nil {
 			return ObservationResult{}, err
