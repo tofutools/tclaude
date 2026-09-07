@@ -1063,6 +1063,28 @@ copy atomically. An identical retry returns its stored result, including after
 restart or later source changes; changed intent conflicts. Stale source changes
 or rejected configurations leave no partial copy.
 
+### Transfer saved configurations
+
+Configurations → **Export configurations** selects a portable JSON bundle.
+**Import configurations** accepts a file or pasted bundle, previews its entries,
+then lets the operator select entries, rename copies, or replace exact displayed
+configuration IDs/revisions. The dialogs adapt the old dashboard's profile
+transfer components. Up to 128 entries and 1 MiB are accepted.
+
+Import commits all selected entries and its retry receipt atomically. A stale
+replacement or an attempt to archive a selected default leaves the entire batch
+unchanged. An identical lost-response retry returns the stored outcome; changing
+choices starts a new command. Archived state and startup suggestions are retained;
+replacements create immutable revisions and do not change existing agent pins,
+launch work, copy authority, or change default selections.
+
+The bundle format is `tclaude-configuration-profiles`, version 1. Preview and
+import use operator-only `POST /v2/configuration-transfer/inspect` and `/import`.
+Legacy spawn-profile bundles with fields outside the replacement catalog are
+explicitly unsupported, rather than silently losing their settings. Close,
+page exit, and sign-out invalidate pending dialog responses; unsaved pasted or
+loaded input has discard/unload protection.
+
 ### Save an agent's settings for reuse
 
 An active agent row's **Save settings as configuration** opens the ordinary

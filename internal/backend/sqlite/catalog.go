@@ -11,6 +11,7 @@ import (
 )
 
 const configurationCatalogSchema = `
+CREATE TABLE IF NOT EXISTS configuration_bundle_requests(request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS configuration_profile_lifecycle_requests(request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS configuration_defaults(id INTEGER PRIMARY KEY CHECK(id=1), record BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS configuration_defaults_requests(request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result BLOB NOT NULL);
@@ -39,8 +40,27 @@ func (s *Store) SaveConfigurationProfile(ctx context.Context, w app.Configuratio
 	if !errors.Is(err, sql.ErrNoRows) {
 		return app.ConfigurationProfileResult{}, err
 	}
+	result, err := saveConfigurationProfileTx(ctx, tx, w, false)
+	if err != nil {
+		return app.ConfigurationProfileResult{}, err
+	}
+	resultJSON, err := json.Marshal(result)
+	if err != nil {
+		return app.ConfigurationProfileResult{}, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO configuration_profile_requests(request_id,fingerprint,result) VALUES(?,?,?)`, w.RequestID, w.RequestFingerprint, resultJSON); err != nil {
+		return app.ConfigurationProfileResult{}, classify(err)
+	}
+	if err = tx.Commit(); err != nil {
+		return app.ConfigurationProfileResult{}, err
+	}
+	return result, nil
+}
+
+func saveConfigurationProfileTx(ctx context.Context, tx *sql.Tx, w app.ConfigurationProfileWrite, allowArchived bool) (app.ConfigurationProfileResult, error) {
+	var payload []byte
 	var current model.ConfigurationProfile
-	err = tx.QueryRowContext(ctx, `SELECT record FROM configuration_profiles WHERE id=?`, w.Profile.ID).Scan(&payload)
+	err := tx.QueryRowContext(ctx, `SELECT record FROM configuration_profiles WHERE id=?`, w.Profile.ID).Scan(&payload)
 	if err == nil {
 		if err = json.Unmarshal(payload, &current); err != nil {
 			return app.ConfigurationProfileResult{}, err
@@ -48,7 +68,7 @@ func (s *Store) SaveConfigurationProfile(ctx context.Context, w app.Configuratio
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return app.ConfigurationProfileResult{}, err
 	}
-	if current.Archived || current.Revision != w.ExpectedRevision {
+	if (!allowArchived && current.Archived) || current.Revision != w.ExpectedRevision {
 		return app.ConfigurationProfileResult{}, app.ErrConflict
 	}
 	w.Profile.Revision = current.Revision + 1
@@ -72,16 +92,6 @@ func (s *Store) SaveConfigurationProfile(ctx context.Context, w app.Configuratio
 		return app.ConfigurationProfileResult{}, err
 	}
 	result := app.ConfigurationProfileResult{Profile: w.Profile, Revision: w.Revision}
-	resultJSON, err := json.Marshal(result)
-	if err != nil {
-		return app.ConfigurationProfileResult{}, err
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO configuration_profile_requests(request_id,fingerprint,result) VALUES(?,?,?)`, w.RequestID, w.RequestFingerprint, resultJSON); err != nil {
-		return app.ConfigurationProfileResult{}, classify(err)
-	}
-	if err = tx.Commit(); err != nil {
-		return app.ConfigurationProfileResult{}, err
-	}
 	return result, nil
 }
 
@@ -268,28 +278,7 @@ func (s *Store) SetConfigurationProfileArchived(ctx context.Context, w app.Confi
 		return profile, app.ErrConflict
 	}
 	if w.Archived {
-		var selected int
-		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM group_configurations WHERE profile_id=?`, w.ID).Scan(&selected); err != nil {
-			return profile, err
-		}
-		if selected > 0 {
-			return profile, app.ErrConflict
-		}
-		err = tx.QueryRowContext(ctx, `SELECT record FROM configuration_defaults WHERE id=1`).Scan(&data)
-		if err == nil {
-			var defaults model.ConfigurationDefaults
-			if err = json.Unmarshal(data, &defaults); err != nil {
-				return profile, err
-			}
-			if defaults.Global != nil && defaults.Global.ProfileID == w.ID {
-				return profile, app.ErrConflict
-			}
-			for _, ref := range defaults.Harnesses {
-				if ref.ProfileID == w.ID {
-					return profile, app.ErrConflict
-				}
-			}
-		} else if !errors.Is(err, sql.ErrNoRows) {
+		if err = requireProfileUnselected(ctx, tx, w.ID); err != nil {
 			return profile, err
 		}
 	}
@@ -310,4 +299,33 @@ func (s *Store) SetConfigurationProfileArchived(ctx context.Context, w app.Confi
 		return profile, err
 	}
 	return profile, nil
+}
+
+func requireProfileUnselected(ctx context.Context, tx *sql.Tx, id model.ConfigurationProfileID) error {
+	var data []byte
+	var selected int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM group_configurations WHERE profile_id=?`, id).Scan(&selected); err != nil {
+		return err
+	}
+	if selected > 0 {
+		return app.ErrConflict
+	}
+	err := tx.QueryRowContext(ctx, `SELECT record FROM configuration_defaults WHERE id=1`).Scan(&data)
+	if err == nil {
+		var defaults model.ConfigurationDefaults
+		if err = json.Unmarshal(data, &defaults); err != nil {
+			return err
+		}
+		if defaults.Global != nil && defaults.Global.ProfileID == id {
+			return app.ErrConflict
+		}
+		for _, ref := range defaults.Harnesses {
+			if ref.ProfileID == id {
+				return app.ErrConflict
+			}
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	return nil
 }
