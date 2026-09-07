@@ -46,13 +46,14 @@ func Translate(inspection Inspection, plan MigrationPlan, attachments []Attachme
 		completedAt = time.Now().UTC()
 	}
 	t := translator{
-		inspection:  inspection,
-		plan:        plan,
-		ids:         make(map[string]string),
-		payloads:    make(map[string]AttachmentPayload),
-		profileRefs: make(map[string]model.ConfigurationProfileRef),
-		revisionIDs: make(map[string]string),
-		options:     options,
+		inspection:   inspection,
+		plan:         plan,
+		ids:          make(map[string]string),
+		payloads:     make(map[string]AttachmentPayload),
+		profileNames: make(map[string]model.ConfigurationProfileRef),
+		profileIDs:   make(map[string]model.ConfigurationProfileRef),
+		revisionIDs:  make(map[string]string),
+		options:      options,
 	}
 	for _, mapping := range plan.Identities {
 		if strings.HasSuffix(mapping.TargetKind, "_revision") {
@@ -102,13 +103,14 @@ func Translate(inspection Inspection, plan MigrationPlan, attachments []Attachme
 }
 
 type translator struct {
-	inspection  Inspection
-	plan        MigrationPlan
-	ids         map[string]string
-	payloads    map[string]AttachmentPayload
-	profileRefs map[string]model.ConfigurationProfileRef
-	revisionIDs map[string]string
-	options     TranslationOptions
+	inspection   Inspection
+	plan         MigrationPlan
+	ids          map[string]string
+	payloads     map[string]AttachmentPayload
+	profileNames map[string]model.ConfigurationProfileRef
+	profileIDs   map[string]model.ConfigurationProfileRef
+	revisionIDs  map[string]string
+	options      TranslationOptions
 }
 
 func conversionAllowed(plan MigrationPlan, metadataOnly bool) bool {
@@ -247,7 +249,7 @@ func (t *translator) translateAgents(batch *app.ImportBatch) {
 			t.launchMetadataDiagnostic(batch, "agents", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
 		}
 		profileName := firstNonEmpty(sourcev228.String(row.Values["relaunch_profile"]), spawnProfileName(row.Values["initial_spawn_config"]))
-		if ref, ok := t.profileRefs[profileName]; ok {
+		if ref, ok := t.profileNames[profileName]; ok && profileName != "" {
 			copy := ref
 			agent.ConfigurationProfile = &copy
 		}
@@ -374,8 +376,8 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 		revisionID := model.ConfigurationProfileRevisionID(stableImportID("cpr", t.inspection.Source.DatabaseHash, "spawn_profiles\x00"+key+"\x00"+digest(payload)))
 		at := timeValue(row.Values["created_at"])
 		ref := model.ConfigurationProfileRef{ProfileID: id, RevisionID: revisionID, ContentHash: digest(payload)}
-		t.profileRefs[sourcev228.String(row.Values["name"])] = ref
-		t.profileRefs[key] = ref
+		t.profileNames[sourcev228.String(row.Values["name"])] = ref
+		t.profileIDs[key] = ref
 		startup := &model.ProfileStartup{AgentName: sourcev228.String(row.Values["agent_name"]), Context: sourcev228.String(row.Values["startup_context"]), InitialMessage: sourcev228.String(row.Values["initial_message"])}
 		if *startup == (model.ProfileStartup{}) {
 			startup = nil
@@ -399,15 +401,36 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 		})
 	}
 	for _, row := range t.inspection.Snapshot.Rows["spawn_profile_aliases"] {
-		if ref, ok := t.profileRefs[sourcev228.String(row.Values["profile_id"])]; ok {
-			t.profileRefs[sourcev228.String(row.Values["alias"])] = ref
+		if ref, ok := t.profileIDs[sourcev228.String(row.Values["profile_id"])]; ok {
+			alias := sourcev228.String(row.Values["alias"])
+			if _, named := t.profileNames[alias]; !named {
+				t.profileNames[alias] = ref
+			}
 		}
 	}
-	for _, row := range t.inspection.Snapshot.Rows["dashboard_prefs"] {
-		if ref, ok := t.profileRefs[sourcev228.String(row.Values["value"])]; ok {
-			copy := ref
-			batch.ConfigurationDefaults = &model.ConfigurationDefaults{Global: &copy, Harnesses: map[string]model.ConfigurationProfileRef{}, Revision: 1, UpdatedAt: timeValue(row.Values["updated_at"])}
-			break
+	// Preserve the namespace of the authored reference. Numeric profile names
+	// remain names; only the stable-ID preference selects by source row ID.
+globalDefault:
+	for _, key := range []string{"tclaude.dash.default_profile_id", "tclaude.dash.default_profile"} {
+		for _, row := range t.inspection.Snapshot.Rows["dashboard_prefs"] {
+			if sourcev228.String(row.Values["key"]) != key {
+				continue
+			}
+			value := sourcev228.String(row.Values["value"])
+			// Preflight treats empty and zero stable IDs as absent.
+			if key == "tclaude.dash.default_profile_id" && (value == "" || value == "0") {
+				continue
+			}
+			ref, ok := t.profileIDs[value]
+			if key == "tclaude.dash.default_profile" {
+				ref, ok = t.profileNames[value]
+			}
+			if ok && value != "" && (key != "tclaude.dash.default_profile_id" || value != "0") {
+				copy := ref
+				batch.ConfigurationDefaults = &model.ConfigurationDefaults{Global: &copy, Harnesses: map[string]model.ConfigurationProfileRef{}, Revision: 1, UpdatedAt: timeValue(row.Values["updated_at"])}
+			}
+			// An explicit stable-ID selection never falls back to a coincidental name.
+			break globalDefault
 		}
 	}
 	sort.Slice(batch.ConfigurationProfiles, func(i, j int) bool {
