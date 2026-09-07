@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
@@ -22,6 +23,9 @@ const (
 // Runtime owns the synchronous native-guidance effect sequence. It is bound
 // to one exact execution attempt by its evaluator and evidence closure.
 type Runtime struct {
+	activityMu  sync.Mutex
+	activity    ports.AgentActivityObservedState
+	activityAt  time.Time
 	Evaluator   ports.NativeGuidanceEvaluator
 	Evidence    func() (model.ProviderEvidence, error)
 	Kinds       map[string]struct{}
@@ -29,7 +33,7 @@ type Runtime struct {
 	Now         func() time.Time
 }
 
-func (r Runtime) HandleNativeEvent(ctx context.Context, event ports.NormalizedNativeEvent, responder ports.NativeGuidanceResponder) (ports.NativeGuidanceSettlement, error) {
+func (r *Runtime) HandleNativeEvent(ctx context.Context, event ports.NormalizedNativeEvent, responder ports.NativeGuidanceResponder) (ports.NativeGuidanceSettlement, error) {
 	if r.Evaluator == nil || responder == nil {
 		return ports.NativeGuidanceSettlement{Disposition: ports.EffectUnsupported}, nil
 	}
@@ -82,7 +86,7 @@ func (r Runtime) HandleNativeEvent(ctx context.Context, event ports.NormalizedNa
 	return settlement, errors.Join(responseErr, settleErr)
 }
 
-func (r Runtime) validate(event ports.NormalizedNativeEvent) error {
+func (r *Runtime) validate(event ports.NormalizedNativeEvent) error {
 	if _, ok := r.Kinds[event.Kind]; !ok || event.Timing != model.StandingOrderSameContinuation {
 		return fmt.Errorf("unsupported native guidance event %q at timing %q", event.Kind, event.Timing)
 	}
@@ -98,7 +102,7 @@ func (r Runtime) validate(event ports.NormalizedNativeEvent) error {
 	return nil
 }
 
-func (r Runtime) now() time.Time {
+func (r *Runtime) now() time.Time {
 	if r.Now != nil {
 		return r.Now().UTC()
 	}

@@ -53,6 +53,19 @@ func (h *Handler) RegisterOrchestrationAPI(api app.OrchestrationAPI) error {
 		result, err := api.RecordNodeEvidence(ctx, app.RecordNodeEvidenceRequest{Context: b.context(p), Attempt: b.Attempt, ExpectedRunRevision: b.ExpectedRunRevision, Kind: b.Kind, ArtifactRevision: b.ArtifactRevision, Passed: b.Passed, Disposition: b.Disposition, Detail: b.Detail})
 		return projectWork(result), err
 	}))
+	h.mux.HandleFunc("POST /v2/processes/resolve-blocked", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
+		commandIdentity
+		DecisionID             model.DecisionID              `json:"decision_id"`
+		Attempt                model.WorkAttemptRef          `json:"attempt"`
+		ExpectedWindowRevision model.Revision                `json:"expected_window_revision"`
+		ExpectedRunRevision    model.Revision                `json:"expected_run_revision"`
+		Action                 model.BlockedResolutionAction `json:"action"`
+		Reason                 string                        `json:"reason"`
+		EvidenceRefs           []model.WorkEvidenceID        `json:"evidence_refs"`
+	}) (any, error) {
+		result, err := api.ResolveBlocked(ctx, app.ResolveBlockedRequest{Context: b.context(p), DecisionID: b.DecisionID, Attempt: b.Attempt, ExpectedWindowRevision: b.ExpectedWindowRevision, ExpectedRunRevision: b.ExpectedRunRevision, Action: b.Action, Reason: b.Reason, EvidenceRefs: b.EvidenceRefs})
+		return projectWork(result), err
+	}))
 	h.mux.HandleFunc("POST /v2/decisions/submit", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
 		commandIdentity
 		DecisionID             model.DecisionID       `json:"decision_id"`

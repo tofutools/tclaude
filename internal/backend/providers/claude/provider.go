@@ -362,6 +362,10 @@ func (p *prepared) hooks() map[string]any {
 		sessionHooks = append(sessionHooks, callback)
 		result["SessionStart"] = []any{map[string]any{"matcher": "startup|resume|clear|compact", "hooks": sessionHooks}}
 		result["UserPromptSubmit"] = []any{map[string]any{"hooks": []any{callback}}}
+		result["Notification"] = []any{map[string]any{"matcher": "idle_prompt|permission_prompt|elicitation_dialog", "hooks": []any{callback}}}
+		for _, event := range []string{"PreToolUse", "PostToolUse", "Stop"} {
+			result[event] = []any{map[string]any{"hooks": []any{callback}}}
+		}
 	}
 	return result
 }
@@ -523,6 +527,9 @@ func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
 	switch {
 	case observation.Running:
 		result.Workload = ports.WorkloadRunning
+		if r.guidance != nil {
+			result.AgentActivity, result.AgentActivityObservedAt = r.guidance.ActivityObservation()
+		}
 		result.AttachmentActive = r.terminal.AttachmentActive()
 		if r.contextReady {
 			result.Context = ports.ContextReady
@@ -547,6 +554,9 @@ func (r *Runtime) Interact(ctx context.Context, interaction ports.Interaction) (
 	defer r.mu.Unlock()
 	if strings.TrimSpace(interaction.Text) == "" {
 		return ports.InteractionResult{Disposition: ports.EffectRefused}, nil
+	}
+	if r.guidance != nil {
+		r.guidance.InvalidateActivity()
 	}
 	if err := r.terminal.SendLiteral(ctx, interaction.Text); err != nil {
 		evidence, _ := r.providerEvidenceUnlocked()
@@ -585,6 +595,9 @@ func (r *Runtime) ChangeContext(ctx context.Context, change ports.ContextChange)
 	if _, err := r.consumeObservationEvents(ctx, nil); err != nil {
 		evidence, _ := r.providerEvidenceUnlocked()
 		return ports.ContextChangeResult{Disposition: ports.EffectUnknown, Evidence: evidence}, err
+	}
+	if r.guidance != nil {
+		r.guidance.InvalidateActivity()
 	}
 	if err := r.terminal.SendLiteral(ctx, "/clear"); err != nil {
 		evidence, _ := r.providerEvidenceUnlocked()

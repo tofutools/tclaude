@@ -296,9 +296,15 @@ async function renderDecisions(){
  for(const result of results||[]){
   const window=result.Window,card=el('article',undefined,'card');
   card.append(el('h2',window.Question||'Decision'),el('p',`${window.Attempt.RunID} · ${window.Attempt.NodeID}`),el('p',`Expires ${new Date(window.ExpiresAt).toLocaleString()}`,'muted'));
-  card.append(button('Answer',()=>edit('Answer decision',[{name:'answer',label:'Answer',options:window.PermittedAnswers||[]},{name:'reason',label:'Reason',multiline:true}],async f=>{
-   await api('/v2/decisions/submit',{request_id:f.requestID,decision_id:window.ID,expected_window_revision:window.Revision,answer:f.answer,reason:f.reason});await renderDecisions();
-  })));
+  card.append(button('Answer',async()=>{
+   const blocked=window.Kind==='blocked',work=blocked?await api(`/v2/work/${encodeURIComponent(window.Attempt.RunID)}`):null;
+   edit(blocked?'Resolve blocked work':'Answer decision',[{name:'answer',label:'Answer',options:window.PermittedAnswers||[]},{name:'reason',label:'Reason',multiline:true}],async f=>{
+    const body={request_id:f.requestID,decision_id:window.ID,expected_window_revision:window.Revision,reason:f.reason};
+    if(blocked){Object.assign(body,{attempt:window.Attempt,expected_run_revision:work.run.revision,action:f.answer});}
+    else body.answer=f.answer;
+    await api(blocked?'/v2/processes/resolve-blocked':'/v2/decisions/submit',body);await renderDecisions();
+   });
+  }));
   list.append(card);
  }
  for(const item of access.requests||[]){

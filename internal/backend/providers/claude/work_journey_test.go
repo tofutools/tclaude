@@ -136,7 +136,13 @@ func TestClaudeFreshHandoffRunsDurableWorkJourney(t *testing.T) {
 	require.Equal(t, model.PrincipalOperator, decided.Decision.Decider.Kind)
 	stopped, err := service.Stop(context.Background(), app.StopRequest{RequestContext: claudeWorkRequest(operator, "stop"), ExecutionID: run.Run.WorkerExecutionID, Force: true})
 	require.NoError(t, err)
-	require.Equal(t, model.ExecutionExited, stopped.Execution.State)
+	require.Eventually(t, func() bool {
+		if stopped.Execution.State == model.ExecutionExited {
+			return true
+		}
+		observed, observeErr := service.Observe(context.Background(), app.ObserveRequest{Principal: operator, ExecutionID: stopped.Execution.ID})
+		return observeErr == nil && observed.Execution.State == model.ExecutionExited
+	}, time.Second, 10*time.Millisecond, "acknowledged stop must become a confirmed exit")
 	require.DirExists(t, checkoutPath, "stopping accepted work retains its owned checkout")
 }
 

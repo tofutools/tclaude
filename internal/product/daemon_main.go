@@ -26,6 +26,8 @@ func DaemonCommand() *cobra.Command {
 	var initialize bool
 	var harnesses []string
 	var sources []string
+	var githubSources []string
+	var githubTokenFile string
 	var workspaces bool
 	var shell string
 	cmd.PersistentFlags().StringVar(&state, "state-dir", "", "Absolute private state directory (required)")
@@ -34,6 +36,8 @@ func DaemonCommand() *cobra.Command {
 	cmd.PersistentFlags().StringArrayVar(&sources, "history-source", nil, "Named native history source: harness:name=/absolute/path")
 	cmd.PersistentFlags().BoolVar(&workspaces, "workspaces", false, "Enable owned Git checkout operations")
 	cmd.PersistentFlags().StringVar(&shell, "shell", "", "Enable standalone shells with this operator-selected executable")
+	cmd.PersistentFlags().StringArrayVar(&githubSources, "github-source", nil, "Read-only exact pull request source: name=owner/repository#number (maximum four)")
+	cmd.PersistentFlags().StringVar(&githubTokenFile, "github-token-file", "", "Private credential file for configured GitHub sources; omit for public unauthenticated reads")
 	_ = cmd.MarkPersistentFlagRequired("state-dir")
 	cmd.RunE = func(cmd *cobra.Command, args []string) error {
 		if len(args) != 0 {
@@ -47,6 +51,10 @@ func DaemonCommand() *cobra.Command {
 			return err
 		}
 		journey, err := journeyServices(state, harnesses, sources, workspaces, shell)
+		if err != nil {
+			return err
+		}
+		journey.FactSources, err = configuredGitHubSources(githubSources, githubTokenFile)
 		if err != nil {
 			return err
 		}
