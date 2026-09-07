@@ -909,6 +909,12 @@ func (s *Store) MaterializeOccurrence(ctx context.Context, occurrence model.Auto
 	}
 	defer func() { _ = tx.Rollback() }()
 	requestScopeValue := requestScope(occurrence.Requester)
+	if occurrence.RequestFingerprint != "" {
+		if occurrence.RequestScope == "" {
+			return app.OccurrenceRecord{}, false, app.ErrInvalid
+		}
+		requestScopeValue = occurrence.RequestScope
+	}
 	var requestedID model.OccurrenceID
 	requestErr := tx.QueryRowContext(ctx, `SELECT id FROM automation_occurrences WHERE request_scope=? AND request_id=?`, requestScopeValue, occurrence.RequestID).Scan(&requestedID)
 	if requestErr == nil {
@@ -919,7 +925,7 @@ func (s *Store) MaterializeOccurrence(ctx context.Context, occurrence model.Auto
 		if readErr != nil {
 			return app.OccurrenceRecord{}, false, readErr
 		}
-		if requestedID != occurrence.ID || stored.Occurrence.RuleRevisionID != occurrence.RuleRevisionID || stored.Occurrence.SourceOccurrenceKey != occurrence.SourceOccurrenceKey || !reflect.DeepEqual(stored.Occurrence.Recipients, occurrence.Recipients) {
+		if requestedID != occurrence.ID || stored.Occurrence.RuleRevisionID != occurrence.RuleRevisionID || stored.Occurrence.SourceOccurrenceKey != occurrence.SourceOccurrenceKey || stored.Occurrence.RequestFingerprint != occurrence.RequestFingerprint || (occurrence.RequestFingerprint == "" && !reflect.DeepEqual(stored.Occurrence.Recipients, occurrence.Recipients)) {
 			return app.OccurrenceRecord{}, false, app.ErrConflict
 		}
 		return stored, true, nil
@@ -956,7 +962,7 @@ func (s *Store) MaterializeOccurrence(ctx context.Context, occurrence model.Auto
 		return app.OccurrenceRecord{}, false, err
 	}
 	requester, _ := json.Marshal(occurrence.Requester)
-	_, err = tx.ExecContext(ctx, `INSERT INTO automation_occurrences(id,rule_id,rule_revision_id,source_occurrence_key,request_scope,request_id,requester_json,parent_occurrence_id,causal_depth,scheduled_at,event_at,eligible_at,expires_at,state,operation_id,work_run_id,deployment_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, occurrence.ID, occurrence.RuleID, occurrence.RuleRevisionID, occurrence.SourceOccurrenceKey, requestScopeValue, occurrence.RequestID, requester, occurrence.ParentOccurrenceID, occurrence.CausalDepth, nullableTime(occurrence.ScheduledAt), nullableTime(occurrence.EventAt), nanos(occurrence.EligibleAt), nanos(occurrence.ExpiresAt), occurrence.State, occurrence.OperationID, occurrence.WorkRunID, occurrence.DeploymentID, occurrence.Revision, nanos(occurrence.CreatedAt), nanos(occurrence.UpdatedAt))
+	_, err = tx.ExecContext(ctx, `INSERT INTO automation_occurrences(id,rule_id,rule_revision_id,source_occurrence_key,request_scope,request_id,requester_json,parent_occurrence_id,causal_depth,scheduled_at,event_at,eligible_at,expires_at,state,operation_id,work_run_id,deployment_id,revision,created_at,updated_at,request_fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, occurrence.ID, occurrence.RuleID, occurrence.RuleRevisionID, occurrence.SourceOccurrenceKey, requestScopeValue, occurrence.RequestID, requester, occurrence.ParentOccurrenceID, occurrence.CausalDepth, nullableTime(occurrence.ScheduledAt), nullableTime(occurrence.EventAt), nanos(occurrence.EligibleAt), nanos(occurrence.ExpiresAt), occurrence.State, occurrence.OperationID, occurrence.WorkRunID, occurrence.DeploymentID, occurrence.Revision, nanos(occurrence.CreatedAt), nanos(occurrence.UpdatedAt), occurrence.RequestFingerprint)
 	if err != nil {
 		return app.OccurrenceRecord{}, false, classify(err)
 	}
@@ -1197,7 +1203,7 @@ func (s *Store) Occurrence(ctx context.Context, id model.OccurrenceID) (app.Occu
 	var scheduled, event sql.NullInt64
 	var requester []byte
 	var eligible, expires, created, updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,rule_id,rule_revision_id,source_occurrence_key,request_id,requester_json,parent_occurrence_id,causal_depth,scheduled_at,event_at,eligible_at,expires_at,state,operation_id,work_run_id,deployment_id,revision,created_at,updated_at FROM automation_occurrences WHERE id=?`, id).Scan(&record.Occurrence.ID, &record.Occurrence.RuleID, &record.Occurrence.RuleRevisionID, &record.Occurrence.SourceOccurrenceKey, &record.Occurrence.RequestID, &requester, &record.Occurrence.ParentOccurrenceID, &record.Occurrence.CausalDepth, &scheduled, &event, &eligible, &expires, &record.Occurrence.State, &record.Occurrence.OperationID, &record.Occurrence.WorkRunID, &record.Occurrence.DeploymentID, &record.Occurrence.Revision, &created, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT id,rule_id,rule_revision_id,source_occurrence_key,request_id,requester_json,parent_occurrence_id,causal_depth,scheduled_at,event_at,eligible_at,expires_at,state,operation_id,work_run_id,deployment_id,revision,created_at,updated_at,request_fingerprint,request_scope FROM automation_occurrences WHERE id=?`, id).Scan(&record.Occurrence.ID, &record.Occurrence.RuleID, &record.Occurrence.RuleRevisionID, &record.Occurrence.SourceOccurrenceKey, &record.Occurrence.RequestID, &requester, &record.Occurrence.ParentOccurrenceID, &record.Occurrence.CausalDepth, &scheduled, &event, &eligible, &expires, &record.Occurrence.State, &record.Occurrence.OperationID, &record.Occurrence.WorkRunID, &record.Occurrence.DeploymentID, &record.Occurrence.Revision, &created, &updated, &record.Occurrence.RequestFingerprint, &record.Occurrence.RequestScope)
 	if err != nil {
 		return record, classify(err)
 	}

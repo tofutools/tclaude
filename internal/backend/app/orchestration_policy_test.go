@@ -67,10 +67,18 @@ func TestGraphRetryBackoffParksOnlyFailedBranchAndWaiverIsNotVerification(t *tes
 	// must finish reconciliation; it must not buy a second resolution window.
 	_, err = store.SubmitDecision(ctx, model.DecisionSubmission{RequestID: "waive", DecisionID: parked.Decisions[0].ID, ExpectedWindowRevision: parked.Decisions[0].Revision, ExpectedRunRevision: parked.Run.Revision, Answer: string(model.BlockedWaive), Reason: "operator accepts missing flaky branch", Actor: operator, SubmittedAt: now}, model.AuthorityRequest{Principal: operator, Action: model.ActionDecideWork, Resource: model.ResourceSelector{Kind: model.ResourceWorkRun, WorkRunID: parked.Run.ID}}, now)
 	require.NoError(t, err)
-	resolved, err := service.ResolveBlocked(ctx, app.ResolveBlockedRequest{Context: app.RequestContext{Principal: operator, RequestID: "waive"}, DecisionID: parked.Decisions[0].ID, Attempt: blocked.Ref, ExpectedWindowRevision: parked.Decisions[0].Revision, ExpectedRunRevision: parked.Run.Revision, Action: model.BlockedWaive, Reason: "operator accepts missing flaky branch"})
+	resolution := app.ResolveBlockedRequest{Context: app.RequestContext{Principal: operator, RequestID: "waive"}, DecisionID: parked.Decisions[0].ID, Attempt: blocked.Ref, ExpectedWindowRevision: parked.Decisions[0].Revision, ExpectedRunRevision: parked.Run.Revision, Action: model.BlockedWaive, Reason: "operator accepts missing flaky branch"}
+	resolved, err := service.ResolveBlocked(ctx, resolution)
 	require.NoError(t, err)
 	require.Equal(t, model.WorkRunFailed, resolved.Run.State, "waiver stays distinct and cannot satisfy required verification")
 	require.Equal(t, model.NodeAttemptWaived, attemptFor(t, resolved, "flaky", 2).State)
+	replayed, err := service.ResolveBlocked(ctx, resolution)
+	require.NoError(t, err, "an unchanged response-loss retry returns the settled result")
+	require.Equal(t, resolved.Run.Revision, replayed.Run.Revision)
+	changed := resolution
+	changed.Action = model.BlockedCancel
+	_, err = service.ResolveBlocked(ctx, changed)
+	require.ErrorIs(t, err, app.ErrConflict, "the request id cannot be reused to change the resolution")
 }
 
 type automationFactSourceFake struct {

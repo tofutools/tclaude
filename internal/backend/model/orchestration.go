@@ -470,6 +470,7 @@ type TeamDeployment struct {
 	Parameters        map[string]json.RawMessage
 	GroupID           GroupID
 	Members           map[string]AgentID
+	RolePins          []TeamRolePin
 	AutomationRuleIDs []AutomationRuleID
 	WorkRunID         WorkRunID
 	AdvisoryPhase     uint32
@@ -477,6 +478,15 @@ type TeamDeployment struct {
 	Revision          Revision
 	CreatedAt         time.Time
 	UpdatedAt         time.Time
+}
+
+// TeamRolePin records the exact operator-authored role definition accepted by
+// a deployment. Later role edits remain live authority semantics, but do not
+// rewrite what the deployment admitted.
+type TeamRolePin struct {
+	RoleID   RoleID
+	Revision Revision
+	Actions  []Action
 }
 
 type AutomationConditionKind string
@@ -677,6 +687,8 @@ const (
 )
 
 type AutomationOccurrence struct {
+	RequestScope        string `json:"-"`
+	RequestFingerprint  string `json:"-"`
 	ID                  OccurrenceID
 	RuleID              AutomationRuleID
 	RuleRevisionID      AutomationRuleRevisionID
