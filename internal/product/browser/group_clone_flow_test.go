@@ -68,3 +68,46 @@ func TestBrowserClonesGroupAsOfflineIndependentMembers(t *testing.T) {
 	page.MustElementR("summary", "^Group settings$").MustClick()
 	page.MustElementR("#group-management h3", "^Independent copy$")
 }
+
+func TestBrowserGroupCloneExplainsArchivedMemberAndAllowsEmptyCopy(t *testing.T) {
+	ctx, page, operator := processEditorBrowser(t)
+	desired := model.DesiredConfiguration{Harness: "codex", Model: "pinned", WorkingDirectory: t.TempDir(), Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/configuration-profiles", map[string]any{"request_id": "profile", "id": "archived_profile", "revision_id": "one", "name": "Worker", "desired": desired}, nil))
+	var saved struct {
+		Revision struct{ Ref model.ConfigurationProfileRef }
+	}
+	require.NoError(t, operator.Call(ctx, "GET", "/v2/configuration-profiles/archived_profile", nil, &saved))
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/agents", map[string]any{"id": "active", "name": "Active member", "configuration_profile": saved.Revision.Ref}, nil))
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/groups", map[string]any{"id": "source", "name": "Source", "members": []string{"active"}}, nil))
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/configuration-profiles/archived_profile/archive", map[string]any{"request_id": "archive", "expected_revision": 1, "archived": true}, nil))
+	page.MustElement("#refresh").MustClick()
+	page.MustElementR("summary", "^Group settings$").MustClick()
+	page.MustElementR("#group-management [data-group-id=source] button", "^Clone group$").MustClick()
+	page.MustElement("#editor").MustWaitVisible()
+	require.Equal(t, "none", page.MustElement("#editor [name=members]").MustProperty("value").Str())
+	require.False(t, page.MustEval(`() => !!document.querySelector('#editor [name=members] option[value=copy]')`).Bool())
+	page.MustElementR("#editor li", "Active member · active.*archived_profile")
+	page.MustElementR("#editor p", "Restore the listed archived configurations")
+	page.MustElement("#editor [name=name]").MustSelectAllText().MustInput("Empty copy")
+	page.MustElement("#editor button[type=submit]").MustClick()
+	page.MustElement("#editor").MustWaitInvisible()
+	var snapshot struct {
+		Agents     []model.Agent     `json:"agents"`
+		Groups     []model.Group     `json:"groups"`
+		Executions []model.Execution `json:"executions"`
+	}
+	require.NoError(t, operator.Call(ctx, "GET", "/v2/snapshot", nil, &snapshot))
+	require.Len(t, snapshot.Agents, 1)
+	require.Len(t, snapshot.Groups, 2)
+	require.Empty(t, snapshot.Executions)
+	for _, group := range snapshot.Groups {
+		if group.ID != "source" {
+			require.Empty(t, group.Members)
+		}
+	}
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/configuration-profiles/archived_profile/archive", map[string]any{"request_id": "restore", "expected_revision": 2, "archived": false}, nil))
+	page.MustElementR("#group-management [data-group-id=source] button", "^Clone group$").MustClick()
+	page.MustElement("#editor").MustWaitVisible()
+	require.Equal(t, "copy", page.MustElement("#editor [name=members]").MustProperty("value").Str())
+	page.MustElement("#editor button[value=cancel]").MustClick()
+}
