@@ -62,17 +62,17 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 }`},
 		{"dashboard.css", `.group-attachment-fixed.group-attachment-empty .group-attachment-icon { opacity: 0.4; }`},
 		{"dashboard.css", `.group-attachment-status {`},
-		{"dashboard.css", `background: #58a6ff; box-shadow: 0 0 0 1px #0d1117;`},
-		{"dashboard.css", `.group-attachment-set .group-attachment-icon {`},
+		{"dashboard.css", `background: currentColor; box-shadow: 0 0 0 1px #0d1117;`},
+		{"dashboard.css", `.group-attachment-set .group-attachment-marker {`},
 		{"dashboard.css", `.group-attachment-fixed.group-attachment-empty:hover .group-attachment-icon { opacity: 1; }`},
 		{"dashboard.css", `.group-attachment-fixed.group-attachment-empty:focus-visible {
   outline: 1px solid #58a6ff; outline-offset: 1px;
 }`},
 		{"dashboard.css", `.group-attachment-label {`},
 		{"dashboard.css", `.group-attachment-fixed:hover .group-attachment-edit`},
-		{"dashboard.css", `summary:hover .group-attachment-set .group-attachment-icon`},
-		{"dashboard.css", `summary:focus-within .group-attachment-set .group-attachment-icon`},
-		{"dashboard.css", `.quick-hover > summary .group-attachment-set .group-attachment-icon`},
+		{"dashboard.css", `summary:hover .group-attachment-set .group-attachment-marker`},
+		{"dashboard.css", `summary:focus-within .group-attachment-set .group-attachment-marker`},
+		{"dashboard.css", `.quick-hover > summary .group-attachment-set .group-attachment-marker`},
 		{"dashboard.css", `[open] > summary .group-attachment-fixed`},
 	} {
 		source := dashboardAssetFile(t, c.file)
