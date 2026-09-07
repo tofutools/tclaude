@@ -443,24 +443,6 @@ func automationMessageOccurrenceState(recipients []model.OccurrenceRecipient) mo
 	return model.OccurrencePartial
 }
 
-func hasActiveOccurrence(records []OccurrenceRecord) bool {
-	for _, record := range records {
-		if occurrenceActive(record.Occurrence.State) {
-			return true
-		}
-	}
-	return false
-}
-
-func occurrenceActive(state model.OccurrenceState) bool {
-	switch state {
-	case model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceParked, model.OccurrenceUncertain:
-		return true
-	default:
-		return false
-	}
-}
-
 func occurrenceConsumesOverlapSlot(state model.OccurrenceState) bool {
 	switch state {
 	case model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceUncertain:
