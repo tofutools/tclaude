@@ -72,11 +72,18 @@ func (i *SandboxPathInspector) InspectSandboxPaths(ctx context.Context, rules []
 			return nil, err
 		}
 		observation := ports.SandboxPathObservation{Index: index, State: "unknown"}
-		if rule.Access != model.SandboxFilesystemDeny && i.protectedSpelling(rule.GuestPath) {
-			observation.State = "refused"
-			observation.Detail = "Guest mount path intersects protected host state."
-			out = append(out, observation)
-			continue
+		if rule.Access != model.SandboxFilesystemDeny && rule.GuestPath != "" {
+			refused, checkErr := i.guestPathProtected(ctx, rule.GuestPath)
+			if checkErr != nil || refused {
+				if checkErr != nil {
+					observation.Detail = "Guest path ancestry could not be inspected."
+				} else {
+					observation.State = "refused"
+					observation.Detail = "Guest mount path intersects protected host state."
+				}
+				out = append(out, observation)
+				continue
+			}
 		}
 		canonical, err := filepath.EvalSymlinks(rule.HostPath)
 		if err != nil {
@@ -270,4 +277,17 @@ func (i *SandboxPathInspector) missingPathProtected(projected, ancestor string) 
 			return false, nil
 		}
 	}
+}
+
+// Guest paths remain authored namespace paths. Host resolution is used only
+// for conservative protected-state comparisons, never to rewrite the mount.
+func (i *SandboxPathInspector) guestPathProtected(ctx context.Context, path string) (bool, error) {
+	if i.protectedSpelling(path) {
+		return true, nil
+	}
+	projected, ancestor, err := resolveMissingSandboxPath(ctx, path, 0)
+	if err != nil {
+		return false, err
+	}
+	return i.missingPathProtected(projected, ancestor)
 }
