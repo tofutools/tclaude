@@ -19,6 +19,7 @@ func TestBrowserMessageThreadsFilterReadAndExport(t *testing.T) {
 		require.NoError(t, operator.Call(ctx, "POST", "/v2/messages", request, &result))
 		return result
 	}
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/agents", map[string]any{"id": "reader_twin", "name": "Review familiar", "desired": model.DesiredConfiguration{Harness: "codex", Model: "fixture", WorkingDirectory: "/tmp", Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}}, nil))
 	root := send("root", "Review patch", "Root context", "", true)
 	reply := send("reply", "Re: Review patch", "needle reply", root.ID, false)
 	other := send("other", "Different topic", "Separate thread", "", false)
@@ -26,7 +27,14 @@ func TestBrowserMessageThreadsFilterReadAndExport(t *testing.T) {
 	page.MustElement("[data-tab=messages]").MustClick()
 	page.MustElementR("#message-list p", "3 matching messages · 2 threads")
 	search := page.MustElement("[aria-label='Search messages']")
-	search.MustInput("needle")
+	search.MustInput("reader")
+	page.MustElementR("#message-list p", "3 matching messages")
+	page.MustElement("[aria-label='Message agent']").MustSelect("Review familiar · reader_twin")
+	page.MustElementR("#message-list p", "0 matching messages")
+	page.MustElement("[aria-label='Message agent']").MustSelect("Review familiar · reader")
+	page.MustElementR("#message-list p", "3 matching messages")
+	page.MustElement("[aria-label='Message agent']").MustSelect("Any agent")
+	search.MustSelectAllText().MustInput("needle")
 	page.MustElementR("#message-list p", "1 matching messages · 1 threads")
 	require.Len(t, page.MustElements(".message-thread [data-message]"), 2)
 	page.MustElementR(".message-thread p", "Thread context")

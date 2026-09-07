@@ -15,12 +15,12 @@ class MessageWorkspace {
   host.replaceChildren(controls,this.count,this.read,this.report,this.list);
  }
  update(snapshot){this.snapshot=snapshot;const prior=this.agent.value;this.agent.replaceChildren();
-  const options=[['','Any agent'],...(snapshot.agents||[]).map(a=>[a.ID,a.Name])];for(const[value,label]of options){const option=this.el('option',label);option.value=value;this.agent.append(option)}if(options.some(([id])=>id===prior))this.agent.value=prior;this.draw();
+  const options=[['','Any agent'],...(snapshot.agents||[]).map(a=>[a.ID,`${a.Name} · ${a.ID}`])];for(const[value,label]of options){const option=this.el('option',label);option.value=value;this.agent.append(option)}if(options.some(([id])=>id===prior))this.agent.value=prior;this.draw();
  }
- draw(){if(!this.snapshot)return;const messages=this.snapshot.messages||[],query=this.search.value.trim().toLowerCase(),names=new Map((this.snapshot.agents||[]).map(a=>[a.ID,a.Name]));
+ draw(){if(!this.snapshot)return;const messages=this.snapshot.messages||[],query=this.search.value.trim().toLowerCase(),names=new Map((this.snapshot.agents||[]).map(a=>[a.ID,`${a.Name} · ${a.ID}`]));
   this.matches=messages.filter(m=>{
    const operator=(m.Recipients||[]).filter(r=>r.AddressKind==='operator');
-   return(!query||[m.Subject,m.Body,m.Sender.AgentID,m.Sender.Kind,names.get(m.Sender.AgentID),...(m.Recipients||[]).map(r=>names.get(r.AgentID)),...(m.Attachments||[]).map(a=>a.Filename)].join(' ').toLowerCase().includes(query))&&
+   return(!query||[m.Subject,m.Body,m.Sender.AgentID,m.Sender.Kind,names.get(m.Sender.AgentID),...(m.Recipients||[]).flatMap(r=>[r.AgentID,names.get(r.AgentID)]),...(m.Attachments||[]).map(a=>a.Filename)].join(' ').toLowerCase().includes(query))&&
     (this.audience.value==='all'||operator.some(r=>this.audience.value==='operator'||!r.ReadAt))&&
     (!this.agent.value||m.Sender.AgentID===this.agent.value||(m.Recipients||[]).some(r=>r.AgentID===this.agent.value))&&(!this.attachments.checked||m.Attachments?.length);
   });
