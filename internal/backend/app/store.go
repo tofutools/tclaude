@@ -127,7 +127,7 @@ type OrchestrationStore interface {
 	OccurrencesForRule(context.Context, model.AutomationRuleID) ([]OccurrenceRecord, error)
 	PendingOccurrences(context.Context) ([]OccurrenceRecord, error)
 	UpdateOccurrence(context.Context, model.OccurrenceID, model.Revision, model.OccurrenceState, model.OperationID, model.WorkRunID, model.DeploymentID, []model.OccurrenceRecipient, time.Time) (OccurrenceRecord, error)
-	CreateTeamDeployment(context.Context, model.TeamDeployment, model.Group, []model.Agent, model.Principal, time.Time) (model.TeamDeployment, bool, error)
+	CreateTeamDeployment(context.Context, model.TeamDeployment, model.Group, []model.Agent, []model.RoleAssignment, model.Principal, time.Time) (model.TeamDeployment, bool, error)
 	TeamDeployment(context.Context, model.DeploymentID) (model.TeamDeployment, error)
 	PendingTeamDeployments(context.Context) ([]model.TeamDeployment, error)
 	UpdateTeamDeployment(context.Context, model.DeploymentID, model.Revision, model.DeploymentState, uint32, time.Time) (model.TeamDeployment, error)
@@ -285,6 +285,10 @@ type LaunchAdmission struct {
 type ExecutionOperationAdmission struct {
 	Operation model.Operation
 	Authority model.AuthorityRequest
+	// Eligibility is persisted with a native effect permit so group/role
+	// eligibility can be rechecked both at admission and immediately before the
+	// effect is released.
+	Eligibility *model.MessageAudience
 }
 
 type PrimaryContextAdmission struct {
@@ -334,6 +338,8 @@ type MessageAdmission struct {
 	RequestDigest string
 	Authority     []model.AuthorityRequest
 	Attachments   []MessageAttachmentAdmission
+	Eligibility   []model.MessageAudience
+	ResultCode    string
 }
 
 type MessageAttachmentAdmission struct {

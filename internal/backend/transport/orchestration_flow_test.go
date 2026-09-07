@@ -76,6 +76,44 @@ func TestPublicProcessDecisionSurvivesRestart(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, forbidden.Code)
 }
 
+func TestPublicRoleOnlyAutomationMaterializesAndDispatches(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "state.sqlite"))
+	require.NoError(t, err)
+	defer store.Close()
+	now := time.Date(2026, 9, 7, 10, 0, 0, 0, time.UTC)
+	service := app.New(store, providers.NewRegistry()).WithClock(func() time.Time { return now })
+	handler := testHandler(t, service)
+	require.NoError(t, handler.RegisterJourneyAPI(service))
+	require.NoError(t, handler.RegisterOrchestrationAPI(service))
+	operator := model.OperatorPrincipal()
+	_, err = service.CreateAgent(ctx, app.CreateAgentRequest{Context: operator, ID: "public_reviewer", Name: "reviewer", Desired: model.DesiredConfiguration{Harness: "fake", Model: "test", WorkingDirectory: t.TempDir(), Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}})
+	require.NoError(t, err)
+	_, err = service.PutRole(ctx, app.PutRoleRequest{Principal: operator, Role: model.Role{ID: "public_review_role", Name: "Reviewer", Actions: []model.Action{model.ActionReadStatus}}})
+	require.NoError(t, err)
+	_, err = service.PutRoleAssignment(ctx, app.PutRoleAssignmentRequest{Principal: operator, Assignment: model.RoleAssignment{RoleID: "public_review_role", Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: "public_reviewer"}, Resource: model.ResourceSelector{Kind: model.ResourceSelf}}})
+	require.NoError(t, err)
+	policy := model.OccurrencePolicy{MissedTicks: model.MissedTickSkip, OfflineDelivery: model.OfflineQueue, ExpiresAfter: time.Hour, Overlap: model.OverlapForbid, MaxActive: 1, Deadline: time.Minute, Retry: model.RetryPolicy{MaxAttempts: 1}}
+	save := map[string]any{"request_id": "save_public_role", "id": "public_role_rule", "revision_id": "public_role_rule_v1", "name": "public role rule", "enabled": true, "owner": model.AuthoritySubject{Kind: model.AuthorityOperator}, "delegation": model.AutomationDelegation{Actions: []model.Action{model.ActionSendMessage}, Resources: []model.ResourceSelector{{Kind: model.ResourceAgent, AgentID: "public_reviewer"}}, ExpiresAt: now.Add(time.Hour)}, "condition": model.AutomationCondition{Kind: model.AutomationSchedule, Schedule: &model.ScheduleCondition{Timezone: "UTC", Interval: time.Minute, Anchor: now.Add(time.Hour)}}, "action": model.AutomationAction{Kind: model.AutomationSendMessage, Message: &model.AutomationMessageAction{Body: "public review", RoleID: "public_review_role"}}, "policy": policy}
+	data, err := json.Marshal(save)
+	require.NoError(t, err)
+	response := request(handler, http.MethodPost, "/v2/automation/rules", string(data), testCredential)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	var saved struct{ Rule model.AutomationRule }
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &saved))
+	run, err := json.Marshal(map[string]any{"request_id": "run_public_role", "rule_id": saved.Rule.ID, "expected_rule_revision": saved.Rule.Revision, "occurrence_id": "public_role_occurrence", "source_occurrence_key": "click"})
+	require.NoError(t, err)
+	response = request(handler, http.MethodPost, "/v2/automation/run", string(run), testCredential)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), "public_reviewer")
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	response = request(handler, http.MethodGet, "/v2/automation/occurrences?rule_id=public_role_rule", "", testCredential)
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), `"Disposition":"queued"`)
+	require.NotContains(t, response.Body.String(), "Authority")
+}
+
 func TestPublicProgramGraphRunsRealHostAndReleasesWorkspace(t *testing.T) {
 	ctx := context.Background()
 	root := t.TempDir()

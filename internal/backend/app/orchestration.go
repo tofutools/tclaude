@@ -949,13 +949,20 @@ func (s *Service) RunRuleNow(ctx context.Context, req RunRuleNowRequest) (Occurr
 	now := s.now().UTC()
 	expires := now.Add(record.Head.Policy.ExpiresAfter)
 	recipients := make([]model.OccurrenceRecipient, 0, len(req.Recipients))
-	seen := make(map[model.AgentID]bool, len(req.Recipients))
-	for _, id := range req.Recipients {
-		if seen[id] {
-			continue
+	if len(req.Recipients) == 0 {
+		recipients, err = s.automationRecipients(ctx, record.Head.Action)
+		if err != nil {
+			return OccurrenceResult{}, err
 		}
-		seen[id] = true
-		recipients = append(recipients, model.OccurrenceRecipient{AgentID: id, Disposition: model.RecipientPending})
+	} else {
+		seen := make(map[model.AgentID]bool, len(req.Recipients))
+		for _, id := range req.Recipients {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+			recipients = append(recipients, model.OccurrenceRecipient{AgentID: id, Disposition: model.RecipientPending})
+		}
 	}
 	requester := model.AutomationPrincipal(string(req.OccurrenceID), record.Head.Owner, record.Head.Delegation)
 	occurrence := model.AutomationOccurrence{ID: req.OccurrenceID, RuleID: req.RuleID, RuleRevisionID: record.Head.ID, SourceOccurrenceKey: "manual:" + req.SourceOccurrenceKey, RequestID: req.Context.RequestID, Requester: requester, ScheduledAt: now, EligibleAt: now, ExpiresAt: expires, State: model.OccurrencePending, Recipients: recipients, Revision: 1, CreatedAt: now, UpdatedAt: now}

@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"sort"
 	"time"
 
 	cronv3 "github.com/robfig/cron/v3"
@@ -165,13 +164,50 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 				return touched, err
 			}
 		case model.AutomationSendMessage:
-			ids := recipientIDs(occurrence.Occurrence.Recipients)
-			_, sendErr := s.SendMessage(ctx, SendMessageRequest{RequestContext: RequestContext{Principal: occurrence.Occurrence.Requester, RequestID: occurrence.Occurrence.RequestID}, RecipientAgentIDs: ids, Body: revision.Action.Message.Body})
-			state := model.OccurrenceDelivered
-			recipients := deliveredRecipients(occurrence.Occurrence.Recipients)
-			if sendErr != nil {
-				state, recipients = model.OccurrenceDenied, deniedRecipients(occurrence.Occurrence.Recipients, sendErr.Error())
+			recipients := append([]model.OccurrenceRecipient(nil), occurrence.Occurrence.Recipients...)
+			if !hasPendingRecipient(recipients) {
+				continue
 			}
+			audience := automationMessageAudience(*revision.Action.Message)
+			for i := range recipients {
+				if recipients[i].Disposition != model.RecipientPending {
+					continue
+				}
+				requestID := model.RequestID(deterministicOrchestrationID("request_", string(occurrence.Occurrence.ID)+":"+string(recipients[i].AgentID)))
+				send := SendMessageRequest{RequestContext: RequestContext{Principal: occurrence.Occurrence.Requester, RequestID: requestID}, To: model.MessageAudience{AgentIDs: []model.AgentID{recipients[i].AgentID}}, RecipientEligibility: &audience, Body: revision.Action.Message.Body}
+				digest, digestErr := authoredMessageRequestDigest(send)
+				if digestErr != nil {
+					return touched, digestErr
+				}
+				if repeated, ok, repeatErr := s.store.MessageByRequest(ctx, send.Principal, requestID, digest); repeatErr != nil {
+					return touched, repeatErr
+				} else if ok {
+					recipients[i].OperationID = repeated.Operation.ID
+					recipients[i].Disposition, recipients[i].Detail = automationMessageDisposition(repeated.Operation.ResultCode)
+					continue
+				}
+				online, onlineErr := s.automationRecipientOnline(ctx, recipients[i].AgentID)
+				if onlineErr != nil {
+					recipients[i].Disposition, recipients[i].Detail = model.RecipientDenied, onlineErr.Error()
+					continue
+				}
+				if !online && revision.Policy.OfflineDelivery == model.OfflineSkip {
+					recipients[i].Disposition, recipients[i].Detail = model.RecipientSkipped, "recipient offline; skipped by policy"
+					continue
+				}
+				send.AdmissionResultCode = "automation_delivered"
+				if !online {
+					send.AdmissionResultCode = "automation_queued"
+				}
+				sent, sendErr := s.SendMessage(ctx, send)
+				if sendErr != nil {
+					recipients[i].Disposition, recipients[i].Detail = model.RecipientDenied, sendErr.Error()
+					continue
+				}
+				recipients[i].OperationID = sent.Operation.ID
+				recipients[i].Disposition, recipients[i].Detail = automationMessageDisposition(sent.Operation.ResultCode)
+			}
+			state := automationMessageOccurrenceState(recipients)
 			if _, err = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, state, "", "", "", recipients, now); err != nil {
 				return touched, err
 			}
@@ -237,23 +273,79 @@ func (s *Service) automationRecipients(ctx context.Context, action model.Automat
 	if action.Message == nil {
 		return nil, nil
 	}
-	ids := append([]model.AgentID(nil), action.Message.AgentIDs...)
-	if action.Message.GroupID != "" {
-		group, err := s.store.Group(ctx, action.Message.GroupID)
-		if err != nil {
-			return nil, err
-		}
-		ids = append(ids, group.Members...)
+	ids, err := s.store.ResolveMessageAudience(ctx, automationMessageAudience(*action.Message))
+	if err != nil {
+		return nil, err
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	result := make([]model.OccurrenceRecipient, 0, len(ids))
-	for i, id := range ids {
-		if i > 0 && id == ids[i-1] {
-			continue
-		}
+	for _, id := range ids {
 		result = append(result, model.OccurrenceRecipient{AgentID: id, Disposition: model.RecipientPending})
 	}
 	return result, nil
+}
+
+func automationMessageAudience(action model.AutomationMessageAction) model.MessageAudience {
+	return model.MessageAudience{AgentIDs: append([]model.AgentID(nil), action.AgentIDs...), GroupID: action.GroupID, RoleID: action.RoleID}
+}
+
+func (s *Service) automationRecipientOnline(ctx context.Context, id model.AgentID) (bool, error) {
+	agent, err := s.store.Agent(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if agent.Lifecycle != model.AgentActive || agent.PrimaryExecutionID == "" {
+		return false, nil
+	}
+	execution, err := s.store.Execution(ctx, agent.PrimaryExecutionID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return execution.State == model.ExecutionReleased || execution.State == model.ExecutionRunning, nil
+}
+
+func automationMessageDisposition(resultCode string) (model.RecipientDisposition, string) {
+	if resultCode == "automation_queued" {
+		return model.RecipientQueued, "recipient offline; durable message queued"
+	}
+	return model.RecipientDelivered, "message admitted"
+}
+
+func hasPendingRecipient(recipients []model.OccurrenceRecipient) bool {
+	for _, recipient := range recipients {
+		if recipient.Disposition == model.RecipientPending {
+			return true
+		}
+	}
+	return false
+}
+
+func automationMessageOccurrenceState(recipients []model.OccurrenceRecipient) model.OccurrenceState {
+	var delivered, queued, denied, skipped int
+	for _, recipient := range recipients {
+		switch recipient.Disposition {
+		case model.RecipientDelivered:
+			delivered++
+		case model.RecipientQueued:
+			queued++
+		case model.RecipientDenied:
+			denied++
+		case model.RecipientSkipped:
+			skipped++
+		}
+	}
+	if queued > 0 && denied == 0 && skipped == 0 {
+		return model.OccurrenceAdmitted
+	}
+	if denied == len(recipients) || skipped == len(recipients) || denied+skipped == len(recipients) {
+		return model.OccurrenceDenied
+	}
+	if delivered == len(recipients) {
+		return model.OccurrenceDelivered
+	}
+	return model.OccurrencePartial
 }
 
 func hasActiveOccurrence(records []OccurrenceRecord) bool {
@@ -269,22 +361,6 @@ func hasActiveOccurrence(records []OccurrenceRecord) bool {
 func deterministicOrchestrationID(prefix, source string) string {
 	sum := sha256.Sum256([]byte(source))
 	return prefix + hex.EncodeToString(sum[:12])
-}
-
-func recipientIDs(recipients []model.OccurrenceRecipient) []model.AgentID {
-	ids := make([]model.AgentID, len(recipients))
-	for i := range recipients {
-		ids[i] = recipients[i].AgentID
-	}
-	return ids
-}
-
-func deliveredRecipients(in []model.OccurrenceRecipient) []model.OccurrenceRecipient {
-	out := append([]model.OccurrenceRecipient(nil), in...)
-	for i := range out {
-		out[i].Disposition = model.RecipientDelivered
-	}
-	return out
 }
 
 func deniedRecipients(in []model.OccurrenceRecipient, detail string) []model.OccurrenceRecipient {
