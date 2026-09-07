@@ -2,8 +2,11 @@ package app
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
@@ -46,6 +49,7 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 	}
 	now := s.now().UTC()
 	members := make(map[string]model.AgentID, len(revision.Team.Members))
+	roleMembers := make(map[model.RoleID][]model.AgentID)
 	agents := make([]model.Agent, 0, len(revision.Team.Members))
 	group := model.Group{ID: req.Instantiation.GroupID, Name: "team " + string(req.DeploymentID), Revision: 1, CreatedAt: now, UpdatedAt: now}
 	for _, spec := range revision.Team.Members {
@@ -56,6 +60,9 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 		members[spec.Key] = id
 		agents = append(agents, model.Agent{ID: id, Name: spec.Name, Desired: spec.Desired, Revision: 1, CreatedAt: now, UpdatedAt: now})
 		group.Members = append(group.Members, id)
+		for _, roleID := range spec.Roles {
+			roleMembers[roleID] = append(roleMembers[roleID], id)
+		}
 		if spec.Owner {
 			group.OwnerAgentID = id
 		}
@@ -66,9 +73,24 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 		automationIDs = append(automationIDs, automation.RuleID)
 	}
 	deployment := model.TeamDeployment{ID: req.DeploymentID, Definition: ref, DependencyClosure: append([]model.DefinitionRef(nil), revision.Dependencies...), Mission: strings.TrimSpace(req.Instantiation.Mission), Parameters: parameters, GroupID: group.ID, Members: members, AutomationRuleIDs: automationIDs, WorkRunID: workRunID, State: model.DeploymentDeploying, Revision: 1, CreatedAt: now, UpdatedAt: now}
-	stored, _, err := s.store.CreateTeamDeployment(ctx, deployment, group, agents, req.Context.Principal, now)
-	if err != nil {
-		return TeamDeploymentResult{}, err
+	var stored model.TeamDeployment
+	if prior, priorErr := s.store.TeamDeployment(ctx, deployment.ID); priorErr == nil {
+		if prior.Definition != deployment.Definition || prior.GroupID != deployment.GroupID || prior.Mission != deployment.Mission || !reflect.DeepEqual(prior.Parameters, deployment.Parameters) || !reflect.DeepEqual(prior.Members, deployment.Members) {
+			return TeamDeploymentResult{}, ErrConflict
+		}
+		stored = prior
+	} else if !errors.Is(priorErr, ErrNotFound) {
+		return TeamDeploymentResult{}, priorErr
+	} else {
+		assignments, pins, roleErr := s.teamRoleAdmissions(ctx, req.Context.Principal, group.ID, roleMembers, now)
+		if roleErr != nil {
+			return TeamDeploymentResult{}, roleErr
+		}
+		deployment.RolePins = pins
+		stored, _, err = s.store.CreateTeamDeployment(ctx, deployment, group, agents, assignments, req.Context.Principal, now)
+		if err != nil {
+			return TeamDeploymentResult{}, err
+		}
 	}
 	if req.Context.Principal.Kind == model.PrincipalAutomation {
 		occurrence, occurrenceErr := s.store.Occurrence(ctx, model.OccurrenceID(req.Context.Principal.AutomationRun))
@@ -92,6 +114,49 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 		return TeamDeploymentResult{Deployment: stored}, err
 	}
 	return TeamDeploymentResult{Deployment: stored}, nil
+}
+
+func (s *Service) teamRoleAdmissions(ctx context.Context, principal model.Principal, groupID model.GroupID, members map[model.RoleID][]model.AgentID, now time.Time) ([]model.RoleAssignment, []model.TeamRolePin, error) {
+	if len(members) == 0 {
+		return nil, nil, nil
+	}
+	if err := requireOperator(principal); err != nil {
+		return nil, nil, fail(ErrUnauthorized, "team role activation requires operator authority")
+	}
+	state, err := s.store.AuthorityState(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	roles := make(map[model.RoleID]model.Role, len(state.Roles))
+	for _, role := range state.Roles {
+		roles[role.ID] = role
+	}
+	ids := make([]model.RoleID, 0, len(members))
+	for id := range members {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	var assignments []model.RoleAssignment
+	pins := make([]model.TeamRolePin, 0, len(ids))
+	for _, id := range ids {
+		if err := id.Validate(); err != nil {
+			return nil, nil, fail(ErrInvalid, "%v", err)
+		}
+		role, ok := roles[id]
+		if !ok {
+			return nil, nil, fail(ErrInvalid, "team role %s does not exist", id)
+		}
+		pins = append(pins, model.TeamRolePin{RoleID: id, Revision: role.Revision, Actions: append([]model.Action(nil), role.Actions...)})
+		agents := append([]model.AgentID(nil), members[id]...)
+		sort.Slice(agents, func(i, j int) bool { return agents[i] < agents[j] })
+		for i, agentID := range agents {
+			if i > 0 && agentID == agents[i-1] {
+				continue
+			}
+			assignments = append(assignments, model.RoleAssignment{RoleID: id, Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: agentID}, Resource: model.ResourceSelector{Kind: model.ResourceGroupPeers, GroupID: groupID}, Bounds: model.ConfigurationBounds{}, Revision: 1, CreatedAt: now, UpdatedAt: now})
+		}
+	}
+	return assignments, pins, nil
 }
 
 func (s *Service) startTeamDeploymentProcess(ctx context.Context, deployment model.TeamDeployment, team model.TeamDefinition, principal model.Principal, ruleID model.AutomationRuleID) error {

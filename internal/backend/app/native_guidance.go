@@ -98,7 +98,8 @@ func (e *nativeGuidanceEvaluator) EvaluateNativeGuidance(ctx context.Context, ev
 		now := e.service.now().UTC()
 		operation := model.Operation{ID: operationID, RequestID: model.RequestID(deterministicOrchestrationID("request_", key)), Kind: model.OperationInteract, Principal: principal, ExecutionID: e.execution.ID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
 		authority := model.AuthorityRequest{Principal: principal, Action: model.ActionInteract, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: e.execution.AgentID}}
-		admitted, admitErr := e.service.store.AdmitExecutionOperation(ctx, ExecutionOperationAdmission{Operation: operation, Authority: authority})
+		audience := automationMessageAudience(*revision.Action.Message)
+		admitted, admitErr := e.service.store.AdmitExecutionOperation(ctx, ExecutionOperationAdmission{Operation: operation, Authority: authority, Eligibility: &audience})
 		if admitErr != nil {
 			return ports.NativeGuidanceAdmission{}, admitErr
 		}
@@ -114,25 +115,15 @@ func (e *nativeGuidanceEvaluator) EvaluateNativeGuidance(ctx context.Context, ev
 }
 
 func (e *nativeGuidanceEvaluator) targetsExecution(ctx context.Context, action model.AutomationMessageAction) (bool, error) {
-	for _, id := range action.AgentIDs {
+	ids, err := e.service.store.ResolveMessageAudience(ctx, automationMessageAudience(action))
+	if err != nil {
+		return false, err
+	}
+	for _, id := range ids {
 		if id == e.execution.AgentID {
 			return true, nil
 		}
 	}
-	if action.GroupID != "" {
-		group, err := e.service.store.Group(ctx, action.GroupID)
-		if err != nil {
-			return false, err
-		}
-		for _, id := range group.Members {
-			if id == e.execution.AgentID {
-				return true, nil
-			}
-		}
-	}
-	// Role targeting is resolved by the collaboration-owned audience resolver.
-	// Until that durable seam is present, a role-only standing order is never a
-	// wildcard and therefore cannot affect an unrelated continuation.
 	return false, nil
 }
 
