@@ -1193,3 +1193,13 @@ spend, and no token prices or currency conversions are inferred.
 Groups offers **Save group as team template**. It opens the existing team editor with independent copies of the displayed active direct members, retaining order, names and desired launch settings including effort and environment. Stable template member keys are generated independently of names. Nothing is written until **Save team revision**, and saving does not launch work. Cancelling leaves the group and definition catalog unchanged.
 
 The editor explains the capture boundary: retired members and child groups are omitted; live owner/role authority, messages, runtime state and rhythms are not copied. Description and mission are retained as source notes rather than delivered briefings. Review owner, roles, workspace policy and briefings explicitly in the draft. Separate member workspaces are selected initially. Later source group, member or saved-configuration edits do not alter the captured draft or saved team.
+
+### Program configurations in the browser
+
+Processes includes a Program configurations panel for creating and editing saved
+command revisions. Arguments are a JSON string array and environment values are
+literal strings; neither is shell-expanded by the editor. Set the command timeout,
+output limit, sandbox mode and required effect authority explicitly. Saving creates
+no work. A process selects and pins a saved revision, so later configuration edits
+do not alter existing process definitions or runs. Concurrent edits return a
+conflict and retain the local form for inspection or copying.
