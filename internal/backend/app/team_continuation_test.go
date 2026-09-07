@@ -223,3 +223,29 @@ func TestTeamUnmaterializedRhythmAllowsRetainingCleanup(t *testing.T) {
 	_, err = service.ReconcilePendingWork(ctx)
 	require.NoError(t, err)
 }
+
+func TestTeamUnavailableDeferredBriefLeavesIndependentDeploymentRunnable(t *testing.T) {
+	ctx := context.Background()
+	provider := &continuationDelayedProvider{}
+	service, store, first, now := continuationFixture(t, provider, false)
+	for range 4 {
+		_, err := service.ReconcilePendingWork(ctx)
+		require.NoError(t, err)
+	}
+	// Recovery cannot establish the old runtime; unrelated work must still advance.
+	service = app.New(store, providers.NewRegistry(provider)).WithClock(func() time.Time { return now })
+	_, err := service.Recover(ctx, app.RecoverRequest{Principal: model.OperatorPrincipal()})
+	require.NoError(t, err)
+	second, err := service.DeployTeam(ctx, app.DeployTeamRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "second"}, DeploymentID: "second", Instantiation: model.TeamInstantiation{Definition: first.Deployment.Definition, Target: model.TeamDeploymentTarget{Kind: model.TeamTargetNewGroup, GroupID: "second"}, Workspaces: model.TeamWorkspaceSelection{Shared: &model.TeamWorkspaceInput{WorkspaceID: "workspace", ExpectedRevision: 1}}}})
+	require.NoError(t, err)
+	for range 4 {
+		_, err = service.ReconcilePendingWork(ctx)
+		require.NoError(t, err)
+	}
+	firstAfter, err := store.TeamDeployment(ctx, first.Deployment.ID)
+	require.NoError(t, err)
+	require.Empty(t, firstAfter.BriefingOperationIDs, "unknown runtime does not fabricate delivery")
+	after, err := store.TeamDeployment(ctx, second.Deployment.ID)
+	require.NoError(t, err)
+	require.Equal(t, model.DeploymentReady, after.State, "unavailable deferred briefing must not block unrelated fresh deployment")
+}
