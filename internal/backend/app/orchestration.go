@@ -1075,6 +1075,10 @@ func (s *Service) validateProgramBindings(ctx context.Context, graph model.WorkG
 }
 
 func (s *Service) SaveAutomationRule(ctx context.Context, req SaveAutomationRuleRequest) (AutomationRuleResult, error) {
+	return s.saveAutomationRule(ctx, req, "")
+}
+
+func (s *Service) saveAutomationRule(ctx context.Context, req SaveAutomationRuleRequest, deploymentID model.DeploymentID) (AutomationRuleResult, error) {
 	if err := validateEffectContext(req.Context); err != nil {
 		return AutomationRuleResult{}, err
 	}
@@ -1114,7 +1118,7 @@ func (s *Service) SaveAutomationRule(ctx context.Context, req SaveAutomationRule
 		Dependencies []model.DefinitionRef
 	}{strings.TrimSpace(req.Name), req.Enabled, req.Owner, req.Delegation, req.Condition, req.Action, req.Policy, closure}
 	revision := model.AutomationRuleRevision{ID: req.RevisionID, RuleID: req.ID, ContentHash: contentHash(hashInput), Owner: req.Owner, Delegation: req.Delegation, Condition: req.Condition, Action: req.Action, Policy: req.Policy, Dependencies: closure, Author: req.Context.Principal, RequestID: req.Context.RequestID, CreatedAt: now}
-	rule := model.AutomationRule{ID: req.ID, Name: strings.TrimSpace(req.Name), HeadRevisionID: req.RevisionID, Enabled: req.Enabled, Revision: req.ExpectedRevision + 1, CreatedAt: now, UpdatedAt: now}
+	rule := model.AutomationRule{ID: req.ID, Name: strings.TrimSpace(req.Name), HeadRevisionID: req.RevisionID, Enabled: req.Enabled, DeploymentID: deploymentID, Revision: req.ExpectedRevision + 1, CreatedAt: now, UpdatedAt: now}
 	record, err := s.store.SaveAutomationRule(ctx, rule, revision, req.ExpectedRevision)
 	return AutomationRuleResult{Rule: record.Rule, Revision: record.Head}, err
 }

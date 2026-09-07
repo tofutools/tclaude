@@ -123,6 +123,16 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"effect_permits", "eligibility_audience_json", "BLOB"},
 		{"effect_permits", "eligibility_agent_id", "TEXT NOT NULL DEFAULT ''"},
 		{"team_deployments", "role_pins_json", "BLOB NOT NULL DEFAULT '[]'"},
+		{"team_deployments", "target_kind", "TEXT NOT NULL DEFAULT 'new_group'"},
+		{"team_deployments", "workspaces_json", "BLOB NOT NULL DEFAULT '{}'"},
+		{"team_deployments", "owned_workspace_ids_json", "BLOB NOT NULL DEFAULT '[]'"},
+		{"team_deployments", "owned_automation_rule_ids_json", "BLOB NOT NULL DEFAULT '[]'"},
+		{"team_deployments", "briefing_operation_ids_json", "BLOB NOT NULL DEFAULT '{}'"},
+		{"team_deployments", "request_scope", "TEXT NOT NULL DEFAULT ''"},
+		{"team_deployments", "request_id", "TEXT NOT NULL DEFAULT ''"},
+		{"team_deployments", "request_digest", "TEXT NOT NULL DEFAULT ''"},
+		{"team_deployments", "requester_json", "BLOB"},
+		{"automation_rules", "deployment_id", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.definition); err != nil {
 			return err
@@ -142,6 +152,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	}
 	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS work_decisions_scoped_request ON work_decisions(request_scope,request_id) WHERE request_id<>''`); err != nil {
 		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS team_deployments_scoped_request ON team_deployments(request_scope,request_id) WHERE request_id<>''`); err != nil {
+		return fmt.Errorf("index scoped team deployment requests: %w", err)
 	}
 	// Access is always suspended across a backend process boundary. Recovery is
 	// the only workflow that can reactivate the exact proven runtime.
@@ -573,8 +586,28 @@ CREATE TABLE IF NOT EXISTS team_deployments (
   id TEXT PRIMARY KEY, definition_json BLOB NOT NULL, dependency_closure_json BLOB NOT NULL,
   mission TEXT NOT NULL, parameters_json BLOB NOT NULL, group_id TEXT NOT NULL,
 	members_json BLOB NOT NULL, role_pins_json BLOB NOT NULL DEFAULT '[]', automation_rule_ids_json BLOB NOT NULL, work_run_id TEXT NOT NULL,
+	target_kind TEXT NOT NULL DEFAULT 'new_group', workspaces_json BLOB NOT NULL DEFAULT '{}',
+	owned_workspace_ids_json BLOB NOT NULL DEFAULT '[]', owned_automation_rule_ids_json BLOB NOT NULL DEFAULT '[]',
+	briefing_operation_ids_json BLOB NOT NULL DEFAULT '{}', request_scope TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '', request_digest TEXT NOT NULL DEFAULT '', requester_json BLOB,
   advisory_phase INTEGER NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS team_continuations (
+  deployment_id TEXT NOT NULL REFERENCES team_deployments(id), kind TEXT NOT NULL,
+  request_scope TEXT NOT NULL, request_id TEXT NOT NULL, request_json BLOB NOT NULL,
+  PRIMARY KEY(deployment_id,kind,request_scope,request_id)
+);
+CREATE TABLE IF NOT EXISTS team_rebriefs (
+  deployment_id TEXT NOT NULL REFERENCES team_deployments(id), request_scope TEXT NOT NULL,
+  request_id TEXT NOT NULL, request_digest TEXT NOT NULL, definition_json BLOB NOT NULL,
+  recipient_operations_json BLOB NOT NULL DEFAULT '{}', state TEXT NOT NULL,
+  created_at INTEGER NOT NULL, completed_at INTEGER,
+  PRIMARY KEY(request_scope,request_id)
+);
+CREATE TABLE IF NOT EXISTS team_lifecycle_requests (
+  request_scope TEXT NOT NULL, request_id TEXT NOT NULL, deployment_id TEXT NOT NULL,
+  kind TEXT NOT NULL, request_digest TEXT NOT NULL, created_at INTEGER NOT NULL,
+  PRIMARY KEY(request_scope,request_id)
 );
 INSERT OR IGNORE INTO roles(id,name,actions_json,revision,created_at,updated_at)
 VALUES('group_owner','Owner','["status.read","inbox.read","inbox.mark_read","message.send","execution.launch","execution.interact","execution.attach","execution.stop","execution.context.change","agent.configuration.update","group.membership.manage"]',1,0,0);

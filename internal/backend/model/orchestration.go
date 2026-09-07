@@ -190,6 +190,7 @@ const (
 type AgentPerformer struct {
 	AgentID       AgentID
 	MemberKey     string
+	WorkspaceID   WorkspaceID
 	CreateDesired *DesiredConfiguration
 	ContextPolicy AgentContextPolicy
 	Brief         string
@@ -463,21 +464,50 @@ const (
 )
 
 type TeamDeployment struct {
-	ID                DeploymentID
-	Definition        DefinitionRef
-	DependencyClosure []DefinitionRef
-	Mission           string
-	Parameters        map[string]json.RawMessage
-	GroupID           GroupID
-	Members           map[string]AgentID
-	RolePins          []TeamRolePin
-	AutomationRuleIDs []AutomationRuleID
-	WorkRunID         WorkRunID
-	AdvisoryPhase     uint32
-	State             DeploymentState
-	Revision          Revision
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                     DeploymentID
+	Definition             DefinitionRef
+	DependencyClosure      []DefinitionRef
+	Mission                string
+	Parameters             map[string]json.RawMessage
+	GroupID                GroupID
+	TargetKind             TeamDeploymentTargetKind
+	Members                map[string]AgentID
+	RolePins               []TeamRolePin
+	AutomationRuleIDs      []AutomationRuleID
+	OwnedAutomationRuleIDs []AutomationRuleID
+	Workspaces             map[string]TeamWorkspaceBinding
+	OwnedWorkspaceIDs      []WorkspaceID
+	BriefingOperationIDs   map[string][]OperationID
+	Rebriefs               []TeamRebrief
+	WorkRunID              WorkRunID
+	AdvisoryPhase          uint32
+	State                  DeploymentState
+	Revision               Revision
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+}
+
+type TeamWorkspaceBinding struct {
+	WorkspaceID      WorkspaceID
+	SelectedRevision Revision
+	Owned            bool
+}
+
+type TeamRebriefState string
+
+const (
+	TeamRebriefDelivering TeamRebriefState = "delivering"
+	TeamRebriefCompleted  TeamRebriefState = "completed"
+)
+
+// TeamRebrief is the safe deployment projection. Attribution and exact
+// request digests remain in the store's private admission record.
+type TeamRebrief struct {
+	Definition          DefinitionRef
+	RecipientOperations map[string][]OperationID
+	State               TeamRebriefState
+	CreatedAt           time.Time
+	CompletedAt         *time.Time
 }
 
 // TeamRolePin records the exact operator-authored role definition accepted by
@@ -502,6 +532,7 @@ type AutomationRule struct {
 	Name           string
 	HeadRevisionID AutomationRuleRevisionID
 	Enabled        bool
+	DeploymentID   DeploymentID
 	Tombstoned     bool
 	Revision       Revision
 	CreatedAt      time.Time
@@ -627,7 +658,38 @@ type TeamInstantiation struct {
 	Definition DefinitionRef
 	Mission    string
 	Parameters map[string]json.RawMessage
-	GroupID    GroupID
+	// Target makes reinforcement explicit. A legacy GroupID without Target is
+	// accepted only as a new-group request; it never selects an existing group.
+	Target     TeamDeploymentTarget
+	Workspaces TeamWorkspaceSelection
+	// GroupID is the temporary new-group compatibility input.
+	GroupID GroupID
+}
+
+type TeamDeploymentTargetKind string
+
+const (
+	TeamTargetNewGroup      TeamDeploymentTargetKind = "new_group"
+	TeamTargetExistingGroup TeamDeploymentTargetKind = "existing_group"
+)
+
+type TeamDeploymentTarget struct {
+	Kind    TeamDeploymentTargetKind
+	GroupID GroupID
+}
+
+// TeamWorkspaceInput authors either a new owned checkout or use of an exact
+// existing workspace revision. These choices are mutually exclusive; the
+// application never derives a filesystem path from a team or member name.
+type TeamWorkspaceInput struct {
+	WorkspaceID      WorkspaceID
+	ExpectedRevision Revision
+	CreateIntent     *WorkspaceIntent
+}
+
+type TeamWorkspaceSelection struct {
+	Shared  *TeamWorkspaceInput
+	Members map[string]TeamWorkspaceInput
 }
 
 type MissedTickPolicy string
