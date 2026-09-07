@@ -73,6 +73,13 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"dashboard.css", `summary:hover .group-attachment-set .group-attachment-marker`},
 		{"dashboard.css", `summary:focus-within .group-attachment-set .group-attachment-marker`},
 		{"dashboard.css", `.quick-hover > summary .group-attachment-set .group-attachment-marker`},
+		{"dashboard.css", `opacity: 0; transition: opacity 0.48s ease;`},
+		{"dashboard.css", `> summary .group-attachment-set .group-attachment-status {
+    opacity: 1;
+  }`},
+		{"dashboard.css", `.quick-hover > summary .group-attachment-set .group-attachment-status {
+    opacity: 0;
+  }`},
 		{"dashboard.css", `[open] > summary .group-attachment-fixed`},
 	} {
 		source := dashboardAssetFile(t, c.file)

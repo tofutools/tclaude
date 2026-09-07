@@ -2424,7 +2424,9 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
    header. Its link/ticket label uses the same .qo-text accordion as the other
    group quick items, leaving the paperclip visible while the label is folded.
    A small status dot distinguishes a saved attachment from the dim empty/add
-   paperclip while that label is folded. Only the edit pencil is hover-revealed. */
+   paperclip while that label is FOLDED — once the label itself is rendered the
+   dot carries no information the text doesn't, so it fades out with the
+   accordion. Only the edit pencil is hover-revealed. */
 .group-attachment-fixed {
   position: static; z-index: auto;
   display: inline-flex; align-items: center; gap: 3px; vertical-align: middle;
@@ -2450,10 +2452,15 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .group-attachment-marker {
   position: relative; display: inline-flex; align-items: center; justify-content: center;
 }
+/* Hidden by default: the dot is a stand-in for a folded label, so it only
+   appears in the fold branch below (expanded mode, a pinned or open group, and
+   touch devices all render the label and never light it). It fades on the same
+   0.48s curve as .qo-text so the two cross-fade instead of overlapping. */
 .group-attachment-status {
   position: absolute; inset-block-start: -1px; inset-inline-end: -4px;
   width: 5px; height: 5px; border-radius: 50%;
   background: currentColor; box-shadow: 0 0 0 1px #0d1117;
+  opacity: 0; transition: opacity 0.48s ease;
   pointer-events: none;
 }
 .group-attachment-fixed > a,
@@ -4036,6 +4043,17 @@ details[open] > summary .group-actions { opacity: 1; }
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-attachment-set .group-attachment-marker {
     opacity: 1;
   }
+  /* The dot only stands in for the folded label: light it while the label is
+     collapsed, and drop it again on the same reveal triggers that slide the
+     label open, so the rendered link never carries a redundant dot. */
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-attachment-set .group-attachment-status {
+    opacity: 1;
+  }
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-attachment-set .group-attachment-status,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .group-attachment-set .group-attachment-status,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-attachment-set .group-attachment-status {
+    opacity: 0;
+  }
 }
 .group-actions button:hover { color: #d4d4d4; border-color: #58a6ff; }
 .group-actions button.danger:hover { color: #f85149; border-color: #f85149; }
@@ -4478,6 +4496,7 @@ body.wizard .force-fold-label-wizard { display: inline; }
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .qo-text {
     transition: none;
   }
+  .group-attachment-status { transition: none; }
 }
 
 /* Don't spread the header chips out when the group is EXPANDED (operator
