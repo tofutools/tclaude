@@ -85,4 +85,19 @@ func TestGroupEnvironmentPrecedencePinsAndRetriesAcrossRestart(t *testing.T) {
 	require.Len(t, snapshot.Agents, 1)
 	require.Empty(t, snapshot.Executions)
 	require.Equal(t, []model.AgentID{"member"}, snapshot.Groups[0].Members)
+	environmentOnly, err := svc.SetGroupConfiguration(ctx, app.SetGroupConfigurationRequest{Principal: op, GroupID: "group", ExpectedRevision: current.Revision, Environment: model.Environment{"ONLY": "group"}})
+	require.NoError(t, err)
+	cloneRequest := app.CloneGroupRequest{Context: app.RequestContext{Principal: op, RequestID: "clone"}, SourceID: "group", ID: "copy", Name: "Copy", ExpectedGroupRevision: snapshot.Groups[0].Revision, ExpectedDefaultRevision: environmentOnly.Revision, CopyDefault: true}
+	_, err = svc.CloneGroup(ctx, cloneRequest)
+	require.NoError(t, err)
+	copied, err := svc.GetGroupConfiguration(ctx, op, "copy")
+	require.NoError(t, err)
+	require.Nil(t, copied.Profile)
+	require.Equal(t, environmentOnly.Environment, copied.Environment)
+	_, err = svc.SetGroupConfiguration(ctx, app.SetGroupConfigurationRequest{Principal: op, GroupID: "group", ExpectedRevision: environmentOnly.Revision})
+	require.NoError(t, err)
+	cloneRetry, err := svc.CloneGroup(ctx, cloneRequest)
+	require.NoError(t, err)
+	require.True(t, cloneRetry.Repeated)
+
 }

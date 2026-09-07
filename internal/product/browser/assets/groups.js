@@ -22,11 +22,11 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
  controls.append(button('Clone group',async()=>{
   const [current,profiles]=await Promise.all([api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration'),api('/v2/configuration-profiles')]);if(!card.isConnected)return;
   const members=(group.Members||[]).map(id=>agents.find(a=>a.ID===id)),active=members.filter(a=>a?.Lifecycle==='active');
-  const available=ref=>!ref||profiles.some(p=>p.ID===ref.ProfileID&&!p.Archived),blocked=active.filter(a=>!available(a.ConfigurationProfile)),canCopy=!blocked.length&&members.every(Boolean),canDefault=current.Profile&&available(current.Profile);
+  const available=ref=>!ref||profiles.some(p=>p.ID===ref.ProfileID&&!p.Archived),blocked=active.filter(a=>!available(a.ConfigurationProfile)),canCopy=!blocked.length&&members.every(Boolean),canDefault=available(current.Profile)&&(current.Profile||Object.keys(current.Environment||{}).length);
   edit('Clone group',[
    {name:'name',label:'New group name',value:group.Name+' copy'},
    {name:'members',label:'Member configurations',value:canCopy?'copy':'none',options:[...(canCopy?[{value:'copy',label:'Copy active members as new offline agents'}]:[]),{value:'none',label:'Create an empty group'}]},
-   {name:'defaults',label:'Group launch default',value:'none',options:[{value:'none',label:'No default'},...(canDefault?[{value:'copy',label:'Copy pinned '+current.Profile.ProfileID+' · '+current.Profile.RevisionID}]:[])]},
+   {name:'defaults',label:'Group launch default',value:'none',options:[{value:'none',label:'No default'},...(canDefault?[{value:'copy',label:current.Profile?'Copy pinned '+current.Profile.ProfileID+' · '+current.Profile.RevisionID+' and group environment':'Copy group environment'}]:[])]},
    {name:'limit',label:'Maximum active direct members (0 = no configured limit)',type:'number',value:String(cap)}
   ],f=>{
    const limit=Number(f.limit),copy=f.members==='copy';if(!Number.isInteger(limit)||limit<0||limit>2147483647)throw new Error('Enter a whole number from 0 to 2147483647');
