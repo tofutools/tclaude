@@ -302,12 +302,12 @@ func (s *Service) reconcileTriggerRule(ctx context.Context, rule model.Automatio
 		if dueErr != nil {
 			return touched, dueErr
 		}
-		created, _, advanceErr := s.store.AdvanceTrigger(ctx, state, occurrence, rule.Revision, expected)
+		created, repeated, advanceErr := s.store.AdvanceTrigger(ctx, state, occurrence, rule.Revision, expected)
 		if advanceErr != nil {
 			return touched, advanceErr
 		}
 		state.Revision = expected + 1
-		if occurrence != nil {
+		if occurrence != nil && !repeated {
 			touched = append(touched, created.Occurrence.ID)
 		}
 	}
@@ -318,11 +318,11 @@ func (s *Service) reconcileTriggerRule(ctx context.Context, rule model.Automatio
 			return touched, dueErr
 		}
 		if occurrence != nil || state.DebounceAt == nil {
-			created, _, advanceErr := s.store.AdvanceTrigger(ctx, state, occurrence, rule.Revision, expected)
+			created, repeated, advanceErr := s.store.AdvanceTrigger(ctx, state, occurrence, rule.Revision, expected)
 			if advanceErr != nil {
 				return touched, advanceErr
 			}
-			if occurrence != nil {
+			if occurrence != nil && !repeated {
 				touched = append(touched, created.Occurrence.ID)
 			}
 		}
