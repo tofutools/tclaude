@@ -1198,3 +1198,8 @@ Agent and configuration forms and the team member editor show the configured ada
 Groups offers **Save group as team template**. It opens the existing team editor with independent copies of the displayed active direct members, retaining order, names and desired launch settings including effort and environment. Stable template member keys are generated independently of names. Nothing is written until **Save team revision**, and saving does not launch work. Cancelling leaves the group and definition catalog unchanged.
 
 The editor explains the capture boundary: retired members and child groups are omitted; live owner/role authority, messages, runtime state and rhythms are not copied. Description and mission are retained as source notes rather than delivered briefings. Review owner, roles, workspace policy and briefings explicitly in the draft. Separate member workspaces are selected initially. Later source group, member or saved-configuration edits do not alter the captured draft or saved team.
+
+
+### Team member environment editing
+
+The team member editor includes the same literal environment variable rows as launch configurations. Copying a saved configuration replaces the member draft's environment by value, including clearing it when the saved configuration has none. Apply commits the edited rows to the local team draft; Save persists a new immutable team revision. Existing agents, executions and source configurations are unaffected. Add/remove changes participate in unapplied-change protection, and the application refuses invalid or reserved environment names before saving the team definition.
