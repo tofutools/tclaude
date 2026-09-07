@@ -23,6 +23,7 @@ func registerOrchestration(root *cobra.Command, call apiCall) {
 		{"process", "Start pinned process graphs and report exact node evidence", []struct{ verb, path, description string }{
 			{"start", "/v2/processes", "Start a process using a pinned definition or explicit graph"},
 			{"evidence", "/v2/processes/evidence", "Record evidence for an exact issued node attempt"},
+			{"resolve-blocked", "/v2/processes/resolve-blocked", "Resolve an exact parked attempt by retry, rework, waiver, or cancellation"},
 		}, "", "/v2/work/"},
 		{"decision", "Read and answer authorized decision windows", []struct{ verb, path, description string }{
 			{"submit", "/v2/decisions/submit", "Submit an answer at the expected decision window revision"},

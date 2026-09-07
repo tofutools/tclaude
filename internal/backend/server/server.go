@@ -50,10 +50,11 @@ func initialize(dir, format string) error {
 // JourneyServices are composition-owned resources; requests never select host
 // executables, provider roots, or native credentials.
 type JourneyServices struct {
-	Workspaces ports.WorkspaceHost
-	Shells     ports.ShellHost
-	History    ports.HistorySourceRegistry
-	Programs   ports.ProgramHost
+	Workspaces  ports.WorkspaceHost
+	Shells      ports.ShellHost
+	History     ports.HistorySourceRegistry
+	Programs    ports.ProgramHost
+	FactSources []ports.AutomationFactSource
 }
 
 // Serve holds a single-process lock and leaves durable executions recoverable on
@@ -107,7 +108,7 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry, jou
 	application := app.New(store, registry).WithAgentAPIEndpoint(socket).WithCallbackIngress(callbacks)
 	if len(journey) == 1 {
 		services := journey[0]
-		application.WithWorkspaceHost(services.Workspaces).WithShellHost(services.Shells).WithHistorySources(services.History).WithProgramHost(services.Programs)
+		application.WithWorkspaceHost(services.Workspaces).WithShellHost(services.Shells).WithHistorySources(services.History).WithProgramHost(services.Programs).WithAutomationFactSources(services.FactSources...)
 	}
 	if _, err := application.Recover(ctx, app.RecoverRequest{Principal: model.OperatorPrincipal()}); err != nil {
 		return fmt.Errorf("recover backend: %w", err)
