@@ -986,3 +986,18 @@ context. Choosing a group in the roster filter still selects only its direct
 members; parentage does not expand membership. Group filter labels include stable
 IDs to distinguish duplicate names. Select visible selects matching agent IDs,
 not ancestor groups or implicit descendants.
+
+## Group descriptions and task links
+
+Edit group details stores a description, descriptive mission and optional task
+or repository link on the exact group. Both Group settings and the main roster
+show the metadata. Text is rendered literally; links require HTTP(S), open only
+on explicit navigation, and are never fetched or previewed by the backend.
+Mission text is descriptive and is not automatically sent to agents.
+
+`PUT /v2/groups/{id}/details` is operator-only and checks the group's current
+revision. Concurrent name, membership, parent or detail changes cause a visible
+conflict instead of overwriting the edited state. Empty details clear the record;
+ordinary group mutations preserve it. Offline import maps valid legacy details
+and verifies them on exact retries. Unsupported text or link values remain in
+retained source evidence with a `group_details_retained_unmapped` diagnostic.

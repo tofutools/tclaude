@@ -20,11 +20,9 @@ func (s *Store) UpdateGroup(ctx context.Context, in app.UpdateGroupRequest, at t
 	if !decision.Allowed {
 		return model.Group{}, app.ErrUnauthorized
 	}
-	var group model.Group
-	var created, updated int64
-	err = tx.QueryRowContext(ctx, `SELECT id,name,owner_agent_id,revision,created_at,updated_at,COALESCE((SELECT parent_id FROM group_parents WHERE group_id=groups.id),'') FROM groups WHERE id=?`, in.ID).Scan(&group.ID, &group.Name, &group.OwnerAgentID, &group.Revision, &created, &updated, &group.ParentGroupID)
+	group, err := readGroup(ctx, tx, in.ID)
 	if err != nil {
-		return model.Group{}, classify(err)
+		return model.Group{}, err
 	}
 	if group.Revision != in.ExpectedRevision {
 		return model.Group{}, app.ErrConflict
@@ -67,7 +65,6 @@ func (s *Store) UpdateGroup(ctx context.Context, in app.UpdateGroupRequest, at t
 	group.Name = in.Name
 	group.Members = append([]model.AgentID(nil), in.Members...)
 	group.Revision++
-	group.CreatedAt = fromNanos(created)
 	group.UpdatedAt = at
 	return group, nil
 }

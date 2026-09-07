@@ -70,7 +70,8 @@ type AgentNotificationPreferences struct {
 }
 
 type Group struct {
-	ParentGroupID GroupID `json:",omitempty"`
+	Details       *GroupDetails `json:",omitempty"`
+	ParentGroupID GroupID       `json:",omitempty"`
 	ID            GroupID
 	Name          string
 	Members       []AgentID
