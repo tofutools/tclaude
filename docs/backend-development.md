@@ -672,6 +672,15 @@ only with Play and does not restart on a page reload. SomaFM streams require an
 internet connection; the authenticated metadata route accepts only catalogued
 stations and shows an unavailable message on failure.
 
+Attention shows unread operator messages and current work/access decisions.
+Opening an attention item navigates to its workspace without marking it read or
+approving it. The dashboard checks for changes every ten seconds while visible;
+it also checks in the background when this window's desktop notifications are
+enabled. Desktop permission is requested only from the explicit enable button.
+Only newly observed operator messages notify, never the initial backlog, and
+sign-out stops checks and closes this window's notices. Unchanged snapshots do
+not rebuild workspace controls; current API revisions still protect mutations.
+
 Usage can be selected from recorded executions/conversations or by an explicit
 historical target ID. Observed-time range filters, per-unit reading bars and
 paged JSON export preserve the source coverage and attribution. The query keeps

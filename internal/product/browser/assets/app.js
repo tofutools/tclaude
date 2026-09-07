@@ -1,7 +1,7 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const el = (tag, text, cls) => { const n=document.createElement(tag); if(text!==undefined)n.textContent=text; if(cls)n.className=cls; return n; };
-let snapshot = {}, submitting = false;
+let snapshot = {}, submitting = false, refreshSequence=0;
 for(const tab of document.querySelectorAll('[data-tab]'))tab.disabled=true;
 document.querySelector('main').inert=true;
 const requestID = () => 'r_' + crypto.randomUUID();
@@ -10,6 +10,8 @@ const navigation = new WorkspaceNavigation({select:tab=>selectTab(tab,false),rep
 const presentation = new PresentationWorkspace({api});
 const authorityWorkspace = new AuthorityWorkspace({host:$('access-list'),api,el,button,edit,getSnapshot:()=>snapshot,report:showError});
 const messageWorkspace = new MessageWorkspace({host:$('message-list'),el,button,api,refresh,card:messageCard});
+const attention = new AttentionWorkspace({host:$('attention'),api,el,button,refresh,select:tab=>selectTab(tab)});
+
 const usageWorkspace = new UsageWorkspace({host:$('usage-list'),api,el,button,getSnapshot:()=>snapshot,setTarget:target=>{usageTarget=target}});
 
 const historyWorkspace = new HistoryWorkspace({host:$('histories'),api,el,button,edit,startWork,selection});
@@ -23,8 +25,8 @@ async function api(path, body, method) {
 }
 function button(text, action) { const b=el('button',presentation.label(text));b.dataset.uiText=text;const id=requestID();b.type='button';b.onclick=async()=>{b.disabled=true;$('error').hidden=true;try{await action(id)}catch(e){showError(e)}finally{b.disabled=false}};return b; }
 function empty(parent,text){parent.append(el('p',text,'empty'))}
-async function refresh(){
- snapshot=await api('/v2/snapshot');render();$('connection').textContent=`Updated ${new Date().toLocaleTimeString()}`;
+async function refresh({automatic=false}={}){
+ const sequence=++refreshSequence,data=await api('/v2/snapshot');if(sequence!==refreshSequence)return;const changed=data.revision!==snapshot.revision;snapshot=data;if(!automatic||changed)render();attention.update(snapshot);$('connection').textContent=`Updated ${new Date().toLocaleTimeString()}`;
 }
 function edit(title,fields,save,{skipUnchanged=false}={}){
  $('editor-title').textContent=presentation.label(title);$('editor-fields').replaceChildren();$('editor-error').hidden=true;let fingerprint='',submissionID='';
@@ -119,7 +121,7 @@ async function selectTab(tab,record=true){
 }
 $('refresh').onclick=()=>refresh().catch(showError);
 $('cancel').onclick=()=>$('editor').close();
-$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');closeTerminal();presentation.stop();usageWorkspace.clear();historyWorkspace.clear();snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
+$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');closeTerminal();presentation.stop();attention.clear();usageWorkspace.clear();historyWorkspace.clear();refreshSequence++;snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
 for(const tab of document.querySelectorAll('[data-tab]'))tab.onclick=()=>selectTab(tab.dataset.tab).catch(showError);
 $('new-agent').onclick=()=>edit('New agent',[...desiredFields(),...agentMetadataFields()],f=>api('/v2/agents',{id:f.requestID,name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify}}));
 $('new-group').onclick=()=>edit('New group',[{name:'name',label:'Name'},{name:'members',label:'Members',multiple:true,required:false,options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}],f=>api('/v2/groups',{id:f.requestID,name:f.name,members:f.members}));
@@ -133,7 +135,7 @@ $('compose').onclick=()=>composeMessage();
   const nonce=fragment.get('handoff');
   terminals.onAttached=entry=>{if(nonce&&entry.id===requested)window.opener?.postMessage({type:'terminal-attached',nonce,executionID:entry.id},location.origin)};
   await attach(execution,{record:false});
- }else{terminals.restore(snapshot.executions||[],snapshot.agents||[]);await selectTab(navigation.initialTab(),'replace')}
+ }else{terminals.restore(snapshot.executions||[],snapshot.agents||[]);await selectTab(navigation.initialTab(),'replace');attention.start()}
 
 })().catch(e=>{$('connection').textContent='Not connected';showError(e)}).finally(()=>{for(const tab of document.querySelectorAll('[data-tab]'))tab.disabled=false;document.querySelector('main').inert=false});
 
@@ -143,7 +145,8 @@ async function attach(execution,{record=true}={}){
  terminals.open(execution,agent?.Name||execution.id);
 }
 function closeTerminal(){terminals.closeAll()}
-window.addEventListener('pagehide',()=>terminals.suspend());
+window.addEventListener('pagehide',()=>{terminals.suspend();attention.stop()});
+window.addEventListener('pageshow',event=>{if(event.persisted&&snapshot.revision!==undefined&&!document.body.classList.contains('terminal-window'))attention.start()});
 
 function workspaceCard(space){
  const card=el('div',undefined,'card');card.append(el('strong',space.ID),el('p',space.Observation?.ActualPath||space.Intent?.IntendedPath||''),el('span',space.State,'status'));
