@@ -63,7 +63,7 @@ func processEditorBrowserConfigured(t *testing.T, history ports.HistorySourceReg
 	go func() {
 		backendDone <- backend.Serve(ctx, state, providers.NewRegistry(cohort...), backend.JourneyServices{Workspaces: checkout, History: history})
 	}()
-	require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(state, "api.sock")); return err == nil }, 5*time.Second, 10*time.Millisecond)
+	waitBrowserBackend(t, state, cancel, backendDone)
 	operator, err := client.New(filepath.Join(state, "api.sock"), filepath.Join(state, "operator.token"))
 	require.NoError(t, err)
 	t.Cleanup(func() { operator.Close() })
@@ -229,4 +229,29 @@ func TestBrowserProcessEditorWorkerDecisionAndDraftHistory(t *testing.T) {
 	go func() { defer close(done); wait(); handle(true, "") }()
 	page.MustElementR("#process-editor button", "^Close editor$").MustClick()
 	<-done
+}
+
+// Schema initialization and recovery can exceed five seconds on contended race runners.
+// Wait before browser assertions, and join failed startup before temporary cleanup.
+func waitBrowserBackend(t *testing.T, state string, cancel context.CancelFunc, done <-chan error) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		select {
+		case err := <-done:
+			cancel()
+			t.Fatalf("backend exited before readiness: %v", err)
+		default:
+		}
+		_, err := os.Stat(filepath.Join(state, "api.sock"))
+		if err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			cancel()
+			serveErr := <-done
+			t.Fatalf("backend readiness: probe=%v; Serve=%v", err, serveErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }

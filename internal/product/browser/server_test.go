@@ -34,6 +34,7 @@ func TestBrowserSessionAuthenticatesUnixBackendAndRejectsForeignRequests(t *test
 	defer cancel()
 	backDone := make(chan error, 1)
 	go func() { backDone <- backend.Serve(ctx, state, providers.NewRegistry()) }()
+	waitBrowserBackend(t, state, cancel, backDone)
 	view, err := Open(state, "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
