@@ -631,3 +631,20 @@ Removing membership does not stop or retire the agent. An owner must be changed
 or cleared through the existing owner endpoint before removing that member.
 New members must be active; retired members already in the group can be retained
 or removed. The CLI exposes the same request as `group update ID --file FILE`.
+
+The browser's **Presentation and sound** controls select regular, wizard or
+slop-machine mode. Wizard mode restores the tower/party/rite vocabulary,
+purple-and-gold styling, casting and cursor effects, and the Tavern radio
+collection. Effects respect reduced-motion preferences; labels and decoration
+never alter product permissions or reported execution state. `dashboard
+--wizard` and `dashboard --slop` open directly in a mode, as do `?wizard=1` and
+`?slop=1`. Ctrl/Cmd+Alt+Shift+W or S toggles the respective mode.
+
+Operator presentation preferences are saved with revision checks through
+`GET/PUT /v2/presentation`. The preferences include mode, master sound,
+separate music/effects volumes, radio in regular mode and an optional explicit
+station. A saved station survives mode changes; “Use mode’s default station”
+selects the Tavern for wizard mode and the Vegas lounge otherwise. Audio starts
+only with Play and does not restart on a page reload. SomaFM streams require an
+internet connection; the authenticated metadata route accepts only catalogued
+stations and shows an unavailable message on failure.
