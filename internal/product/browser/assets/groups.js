@@ -14,14 +14,18 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh}) {
    const authority=await api('/v2/authority');
    const prior=(authority.Assignments||[]).find(a=>a.RoleID==='group_owner'&&a.Subject?.Kind==='agent'&&a.Resource?.Kind==='group_members'&&a.Subject?.AgentID===group.OwnerAgentID&&a.Resource?.GroupID===group.ID)?.Bounds||{};
    const lines=value=>(value||[]).join('\n');
+   const enabled=['Harnesses','Models','WorkingDirectoryRoots','ApprovalModes','SandboxModes'].every(key=>prior[key]?.length);
    edit('Group owner and launch limits',[
     {name:'owner',label:'Owner (replaces this group’s owner role)',value:group.OwnerAgentID||'',required:false,options:[{value:'',label:'No owner'},...(group.Members||[]).map(id=>({value:id,label:agents.find(a=>a.ID===id)?.Name||id}))]},
-    {name:'harnesses',label:'Allowed harnesses, one per line (empty means unrestricted)',multiline:true,required:false,value:lines(prior.Harnesses)},
-    {name:'models',label:'Allowed models, one per line (empty means unrestricted)',multiline:true,required:false,value:lines(prior.Models)},
-    {name:'roots',label:'Working directory roots, one per line (empty means unrestricted)',multiline:true,required:false,value:lines(prior.WorkingDirectoryRoots)},
-    {name:'approvals',label:'Approval modes (empty means unrestricted)',multiple:true,required:false,value:prior.ApprovalModes||[],options:['supervised','automatic']},
-    {name:'sandboxes',label:'Confinement modes (empty means unrestricted)',multiple:true,required:false,value:prior.SandboxModes||[],options:['read_only','workspace_write','unconfined']}
-   ],f=>{const split=v=>v.split('\n').map(x=>x.trim()).filter(Boolean);return api('/v2/groups/'+encodeURIComponent(group.ID)+'/owner',{owner_agent_id:f.owner,expected_revision:group.Revision,bounds:{Harnesses:split(f.harnesses),Models:split(f.models),WorkingDirectoryRoots:split(f.roots),ApprovalModes:f.approvals,SandboxModes:f.sandboxes}},'PUT')},{skipUnchanged:true});
+    {name:'configuration',label:'Owner launch and configuration authority',value:enabled?'listed':'disabled',options:[{value:'disabled',label:'No launch or configuration changes'},{value:'listed',label:'Allow only the complete lists below'}]},
+    {name:'harnesses',label:'Allowed harnesses, one per line (required for launch/configuration authority)',multiline:true,required:false,value:lines(prior.Harnesses)},
+    {name:'models',label:'Allowed models, one per line (required for launch/configuration authority)',multiline:true,required:false,value:lines(prior.Models)},
+    {name:'roots',label:'Working directory roots, one per line (required for launch/configuration authority)',multiline:true,required:false,value:lines(prior.WorkingDirectoryRoots)},
+    {name:'approvals',label:'Approval modes (required for launch/configuration authority)',multiple:true,required:false,value:prior.ApprovalModes||[],options:['supervised','automatic']},
+    {name:'sandboxes',label:'Confinement modes (required for launch/configuration authority)',multiple:true,required:false,value:prior.SandboxModes||[],options:['read_only','workspace_write','unconfined']}
+   ],f=>{const split=v=>v.split('\n').map(x=>x.trim()).filter(Boolean);let bounds={};
+    if(f.configuration==='listed'){bounds={Harnesses:split(f.harnesses),Models:split(f.models),WorkingDirectoryRoots:split(f.roots),ApprovalModes:f.approvals,SandboxModes:f.sandboxes};if(Object.values(bounds).some(values=>!values.length))throw new Error('Supply all five allow-lists, or choose no launch or configuration changes.');}
+    return api('/v2/groups/'+encodeURIComponent(group.ID)+'/owner',{owner_agent_id:f.owner,expected_revision:group.Revision,bounds},'PUT')},{skipUnchanged:true});
   }));card.append(controls);
   for(const [index,id]of (group.Members||[]).entries()){
    const row=el('div',undefined,'row');row.append(el('span',(agents.find(a=>a.ID===id)?.Name||id)+(id===group.OwnerAgentID?' · owner':'')));
