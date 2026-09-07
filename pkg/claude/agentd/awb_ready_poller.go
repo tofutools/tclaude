@@ -291,7 +291,7 @@ func (w awbReadyWorker) spawn(issueID, reservedAgentID string) (string, error) {
 		cwd, wtPath, wtBranch, discard = out.Path, out.Path, issueID, out.DiscardToken
 	}
 	scope := fmt.Sprintf(`{"awb_workspace":[%q]}`, w.workspace)
-	body := agent.SpawnRequest{Name: issueID, Cwd: cwd, WorktreePath: wtPath, WorktreeBranch: wtBranch, Profile: w.config.Profile, SandboxProfile: w.config.SandboxProfile, Harness: w.config.Harness, TaskURL: strings.TrimRight(w.session.base, "/") + "/#/issues/" + issueID, TaskLabel: issueID, InitialMessage: fmt.Sprintf("Fetch %s with `tclaude proxy awb show %s`, work it to completion, record progress through the AWB proxy, and close it when complete.", issueID, issueID), PermissionOverrides: map[string]db.PermissionOverride{PermAWBRead: db.ScopedOverride(db.PermEffectGrant, scope), PermAWBWrite: db.ScopedOverride(db.PermEffectGrant, scope)}}
+	body := agent.SpawnRequest{Name: issueID, Cwd: cwd, WorktreePath: wtPath, WorktreeBranch: wtBranch, Profile: w.config.Profile, SandboxProfile: w.config.SandboxProfile, Harness: w.config.Harness, TaskURL: strings.TrimRight(w.session.base, "/") + "/#/issues/" + issueID, TaskLabel: issueID, InitialMessage: awbReadyInitialMessage(issueID), PermissionOverrides: map[string]db.PermissionOverride{PermAWBRead: db.ScopedOverride(db.PermEffectGrant, scope), PermAWBWrite: db.ScopedOverride(db.PermEffectGrant, scope)}}
 	raw, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/v1/groups/"+url.PathEscape(w.config.Group)+"/spawn", bytes.NewReader(raw))
 	req.SetPathValue("name", w.config.Group)
@@ -315,6 +315,10 @@ func (w awbReadyWorker) spawn(issueID, reservedAgentID string) (string, error) {
 		return "", fmt.Errorf("spawn response contained no agent id")
 	}
 	return out.AgentID, nil
+}
+
+func awbReadyInitialMessage(issueID string) string {
+	return fmt.Sprintf("Fetch %s with `tclaude proxy awb show %s`, work it to completion, and record progress through the AWB proxy. Leave closing the issue to the operator.", issueID, issueID)
 }
 
 func internalHumanJSON(handler http.HandlerFunc, path string, in, out any) error {

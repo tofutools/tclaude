@@ -1,12 +1,21 @@
 package agentd
 
 import (
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
+
+func TestAWBReadyInitialMessageLeavesClosureToOperator(t *testing.T) {
+	message := awbReadyInitialMessage("tcl-a1")
+	assert.Contains(t, message, "tclaude proxy awb show tcl-a1")
+	assert.Contains(t, message, "record progress")
+	assert.Contains(t, message, "Leave closing the issue to the operator")
+	assert.NotContains(t, strings.ToLower(message), "close it")
+}
 
 func TestValidateAWBReadyPolling(t *testing.T) {
 	policy := config.AWBProxyConfig{URL: "https://awb.example", Username: "worker", AllowWrite: true, AllowedWorkspaces: []string{"tcl"}}
