@@ -2423,7 +2423,8 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 /* Fixed mode is a normal, in-flow group quick item at the far right of the
    header. Its link/ticket label uses the same .qo-text accordion as the other
    group quick items, leaving the paperclip visible while the label is folded.
-   Only the edit pencil is hover-revealed. */
+   A blue status dot distinguishes a saved attachment from the dim empty/add
+   paperclip while that label is folded. Only the edit pencil is hover-revealed. */
 .group-attachment-fixed {
   position: static; z-index: auto;
   display: inline-flex; align-items: center; gap: 3px; vertical-align: middle;
@@ -2445,6 +2446,15 @@ details[data-group-key][open] > summary .group-name::before { content: "▼ "; }
 .group-attachment-fixed.group-attachment-empty:hover .group-attachment-icon { opacity: 1; }
 .group-attachment-fixed.group-attachment-empty:focus-visible {
   outline: 1px solid #58a6ff; outline-offset: 1px;
+}
+.group-attachment-marker {
+  position: relative; display: inline-flex; align-items: center; justify-content: center;
+}
+.group-attachment-status {
+  position: absolute; inset-block-start: -1px; inset-inline-end: -4px;
+  width: 5px; height: 5px; border-radius: 50%;
+  background: #58a6ff; box-shadow: 0 0 0 1px #0d1117;
+  pointer-events: none;
 }
 .group-attachment-fixed > a,
 .group-attachment-fixed > button {
@@ -2474,6 +2484,7 @@ body.wizard .group-attachment a,
 body.wizard .group-attachment button { color: #b39ddb; }
 body.wizard .group-attachment a:hover,
 body.wizard .group-attachment button:hover { color: #f3e6c0; }
+body.wizard .group-attachment-status { background: #b39ddb; }
 
 /* ── Group activity bots ──────────────────────────────────────────────
    The deduped per-status robot row (group-activity.js → ActivityModes)
@@ -3976,7 +3987,7 @@ details[open] > summary .group-actions { opacity: 1; }
 .group-header-cog .action-menu { left: 0; right: auto; }
 /* Collapsed-header dim: on a collapsed, un-hovered, un-pinned group in fold
    mode, the group's option affordances — the quick-option chips (descr / cwd /
-   cap / sandbox / links / fixed attachment) AND the ⚙ cog — fade together to
+   cap / sandbox / links) AND the ⚙ cog — fade together to
    0.4, brightening to full on hover / the JS-stamped .quick-hover / while the
    cog's own menu is open. This keeps the whole options row one consistent quiet
    cluster (the group name and the activity bots stay full — name for
@@ -3992,7 +4003,6 @@ details[open] > summary .group-actions { opacity: 1; }
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-max-members,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-sandbox-profile,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-link-chips,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-attachment-fixed:not(.group-attachment-empty),
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-header-cog {
     opacity: 0.4;
   }
@@ -4001,14 +4011,12 @@ details[open] > summary .group-actions { opacity: 1; }
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-max-members,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-sandbox-profile,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-link-chips,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-attachment-fixed:not(.group-attachment-empty),
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-header-cog,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-descr,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-default-cwd,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-max-members,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-sandbox-profile,
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-link-chips,
-  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-attachment-fixed:not(.group-attachment-empty),
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-header-cog,
   /* Cog-menu-open brighten: must out-specify the 0.4 dim rule above, so it
      carries the SAME collapsed/unpinned fold prefix as the hover branches
@@ -4017,6 +4025,17 @@ details[open] > summary .group-actions { opacity: 1; }
      the dimmed .group-header-cog, would then composite at 40%). Scoping it to
      the fold context is exact: that's the only place the cog ever dims. */
   body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:has(.group-header-cog .action-menu.open) .group-header-cog {
+    opacity: 1;
+  }
+  /* Keep the status dot bright enough to carry state while the surrounding
+     quick-option cluster rests dimmed. The paperclip itself follows the same
+     dim/reveal rhythm as those options. */
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary .group-attachment-set .group-attachment-icon {
+    opacity: 0.4;
+  }
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:hover .group-attachment-set .group-attachment-icon,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]) > summary:focus-within .group-attachment-set .group-attachment-icon,
+  body.group-quick-fold details[data-group-key]:not(.quick-pinned):not([open]).quick-hover > summary .group-attachment-set .group-attachment-icon {
     opacity: 1;
   }
 }

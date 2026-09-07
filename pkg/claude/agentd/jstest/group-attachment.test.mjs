@@ -144,6 +144,10 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     'a set fixed attachment keeps a paperclip beside its link text');
   assert.equal(fixedSafe.querySelector('.group-attachment-label')?.textContent, 'Safe project',
     'fixed mode keeps the link/ticket label in the DOM');
+  assert.ok(fixedSafe.querySelector('.group-attachment-status'),
+    'a set fixed attachment carries a visible status marker');
+  assert.equal(fixedSafe.querySelector('.group-attachment-marker')?.getAttribute('aria-hidden'), 'true',
+    'the decorative paperclip and status marker do not duplicate the explicit link label');
   assertSameNode(fixedSafe.querySelector('.qo-text'), fixedSafe.querySelector('.group-attachment-label'),
     'the fixed label participates in quick-item auto-folding');
   const safeSummary = host.querySelector('details[data-group-key="safe"] > summary');
@@ -156,6 +160,8 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
     'an unset fixed attachment stays paperclip-only');
   assert.equal(fixedEmpty.querySelector('.group-attachment-icon')?.textContent, '📎',
     'the empty paperclip has its own dimmable glyph without dimming the button');
+  assertAbsent(fixedEmpty.querySelector('.group-attachment-status'),
+    'an empty attachment affordance has no saved-state marker');
   assertAbsent(fixedEmpty.querySelector('.group-attachment-label'));
   fixedEmpty.focus();
   fixedEmpty.click();
@@ -170,6 +176,8 @@ test('group attachments enforce http(s) again at the render boundary', async (t)
   assertAbsent(fixedHostless.querySelector('a'), 'http(s) without a host must remain inert in fixed mode');
   assert.equal(fixedHostless.querySelector('.group-attachment-invalid')?.textContent, '📎No host',
     'a set but unsafe fixed attachment keeps a paperclip beside its text');
+  assert.ok(fixedHostless.querySelector('.group-attachment-status'),
+    'a persisted but unsafe attachment still reports that stored state');
   assertTabReachable(fixedHostless.querySelector('.group-attachment-invalid'));
   await mounted.unmount();
 });
