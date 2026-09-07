@@ -41,6 +41,7 @@ function edit(title,fields,save,{skipUnchanged=false}={}){
   if(field.options&&field.value!==undefined){const values=field.multiple?(field.value||[]):[String(field.value)];for(const value of values){if(!Array.from(input.options).some(o=>o.value===String(value))){const o=el('option','Retained: '+value);o.value=value;input.append(o)}}if(field.multiple){for(const o of input.options)o.selected=values.includes(o.value)}else input.value=field.value}
   else if(!field.file&&!field.options)input.value=field.value??'';
   input.required=field.required!==false;label.append(input);$('editor-fields').append(label);
+  if(field.name==='cwd')label.append(button('Browse directories',async()=>{const {pickDirectory}=await import('./directory-picker.js');if(!input.isConnected||!$('editor').open)return;const selected=await pickDirectory({api,initial:input.value});if(selected!==null&&input.isConnected&&$('editor').open){input.value=selected;input.dispatchEvent(new Event('input',{bubbles:true}));}}));
  }
  const readForm=()=>{const data=new FormData($('editor-form')),form=Object.fromEntries(data);for(const field of fields)if(field.multiple)form[field.name]=data.getAll(field.name);return form};const initial=JSON.stringify(readForm());
  $('editor-form').onsubmit=async e=>{e.preventDefault();if(submitting)return;submitting=true;const submit=e.submitter;if(submit)submit.disabled=true;
@@ -124,7 +125,7 @@ async function selectTab(tab,record=true){
 }
 $('refresh').onclick=()=>refresh().catch(showError);
 $('cancel').onclick=()=>$('editor').close();
-$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');closeTerminal();presentation.stop();attention.clear();usageWorkspace.clear();activityWorkspace.clear();historyWorkspace.clear();refreshSequence++;snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
+$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');document.dispatchEvent(new Event('workspace-signout'));closeTerminal();presentation.stop();attention.clear();usageWorkspace.clear();activityWorkspace.clear();historyWorkspace.clear();refreshSequence++;snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
 for(const tab of document.querySelectorAll('[data-tab]'))tab.onclick=()=>selectTab(tab.dataset.tab).catch(showError);
 $('new-agent').onclick=()=>edit('New agent',[...desiredFields(),...agentMetadataFields()],f=>api('/v2/agents',{id:f.requestID,name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify}}));
 $('new-group').onclick=()=>edit('New group',[{name:'name',label:'Name'},{name:'members',label:'Members',multiple:true,required:false,options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}],f=>api('/v2/groups',{id:f.requestID,name:f.name,members:f.members}));

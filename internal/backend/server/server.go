@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/app"
+	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
 	"github.com/tofutools/tclaude/internal/backend/sqlite"
@@ -105,7 +106,7 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry, jou
 		return err
 	}
 	defer callbacks.Close()
-	application := app.New(store, registry).WithAgentAPIEndpoint(socket).WithCallbackIngress(callbacks)
+	application := app.New(store, registry).WithDirectoryBrowser(host.DirectoryBrowser{}).WithAgentAPIEndpoint(socket).WithCallbackIngress(callbacks)
 	if len(journey) == 1 {
 		services := journey[0]
 		application.WithWorkspaceHost(services.Workspaces).WithShellHost(services.Shells).WithHistorySources(services.History).WithProgramHost(services.Programs).WithAutomationFactSources(services.FactSources...)

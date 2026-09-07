@@ -24,6 +24,7 @@ const (
 )
 
 type Service struct {
+	directoryBrowser ports.DirectoryBrowser
 	store            Store
 	providers        ports.ProviderRegistry
 	workspaceHost    ports.WorkspaceHost
