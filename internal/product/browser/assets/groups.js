@@ -6,7 +6,15 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
   const card=el('article',undefined,'card');card.dataset.groupId=group.ID;cards.set(group.ID,card);card.append(el('h3',group.Name),el('code',group.ID));
  const parent=groups.find(g=>g.ID===group.ParentGroupID);card.append(el('p',parent?'Parent: '+parent.Name+' · '+parent.ID:'Top level'));
  card.append(button('Move group',()=>{edit('Move group',[{name:'parent',label:'Parent group (organization only; no inherited authority)',required:false,value:group.ParentGroupID||'',options:[{value:'',label:'Top level'},...groups.filter(g=>g.ID!==group.ID).map(g=>({value:g.ID,label:g.Name+' · '+g.ID}))]}],f=>{return api('/v2/groups/'+encodeURIComponent(group.ID)+'/parent',{request_id:f.requestID,parent_group_id:f.parent,expected_revision:group.Revision},'PUT')},{skipUnchanged:true})}));
+ const details=group.Details||{};appendGroupDetails(card,details,el);
   const controls=el('div',undefined,'toolbar');
+ controls.append(button('Edit group details',()=>edit('Group details',[
+  {name:'description',label:'Description',multiline:true,required:false,value:details.Description||''},
+  {name:'mission',label:'Mission (descriptive; not sent to agents)',multiline:true,required:false,value:details.Mission||''},
+  {name:'url',label:'Task or repository link (HTTP/HTTPS)',required:false,value:details.LinkURL||''},
+  {name:'label',label:'Link label',required:false,value:details.LinkLabel||''}
+ ],f=>api('/v2/groups/'+encodeURIComponent(group.ID)+'/details',{expected_revision:group.Revision,details:{Description:f.description,Mission:f.mission,LinkURL:f.url,LinkLabel:f.label}},'PUT'),{skipUnchanged:true})));
+
  controls.append(button('Launch defaults',async()=>{
   const [current,profiles]=await Promise.all([api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration'),api('/v2/configuration-profiles')]);
   if(!card.isConnected)return;
@@ -53,4 +61,9 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
  }
  for(const group of groups){const card=cards.get(group.ID),parent=cards.get(group.ParentGroupID);if(parent&&parent!==card){let children=parent.querySelector(':scope > .group-children');if(!children){children=el('div',undefined,'group-children');children.style.marginInlineStart='1rem';parent.append(children)}children.append(card)}else host.append(card)}
  if(!snapshot.groups?.length)host.append(el('p','Create a group to organize agents.'));
+}
+
+function appendGroupDetails(host,details,el){
+ for(const value of [details.Description,details.Mission])if(value){const p=el('p',value);p.style.whiteSpace='pre-wrap';host.append(p)}
+ if(details.LinkURL&&/^https?:\/\//.test(details.LinkURL)){const link=el('a',details.LinkLabel||details.LinkURL);link.href=details.LinkURL;link.target='_blank';link.rel='noopener noreferrer';host.append(link)}
 }

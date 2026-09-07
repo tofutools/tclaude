@@ -34,7 +34,7 @@ class RosterWorkspace {
     this.list.replaceChildren();
     for(const g of [...groups,{ID:'__ungrouped',Name:'Ungrouped',Members:agents.filter(a=>!grouped.has(a.ID)).map(a=>a.ID)}]){
       if(group&&g.ID!==group)continue;const shown=this.visible.filter(a=>(g.Members||[]).includes(a.ID));if(!shown.length&&(search||this.harness.value||this.state.value||g.ID==='__ungrouped'))continue;
-      const card=el('div',undefined,'group');card.append(el('h2',g.Name));
+      const card=el('div',undefined,'group');card.append(el('h2',g.Name));appendGroupDetails(card,g.Details||{},el);
       for(const a of shown){const row=this.row(a),check=el('input');check.type='checkbox';check.checked=this.selected.has(a.ID);check.disabled=this.busy;check.setAttribute('aria-label','Select '+a.Name);check.onchange=()=>{check.checked?this.selected.add(a.ID):this.selected.delete(a.ID);this.draw()};row.prepend(check);card.append(row)}this.list.append(card);
     }
     if(!this.visible.length)this.list.append(el('p',agents.length?'No agents match these filters.':'No agents yet. Create an agent to save its configuration before starting work.'));

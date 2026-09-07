@@ -143,6 +143,18 @@ func insertImportEntities(ctx context.Context, tx *sql.Tx, batch app.ImportBatch
 		}
 	}
 	for _, g := range batch.Groups {
+		if g.Details != nil {
+			if err := model.ValidateGroupDetails(*g.Details); err != nil {
+				return app.ErrInvalid
+			}
+			data, err := json.Marshal(g.Details)
+			if err != nil {
+				return err
+			}
+			if _, err = tx.ExecContext(ctx, `INSERT INTO group_details(group_id,record) VALUES(?,?)`, g.ID, data); err != nil {
+				return err
+			}
+		}
 		if g.ParentGroupID != "" {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO group_parents(group_id,parent_id) VALUES(?,?)`, g.ID, g.ParentGroupID); err != nil {
 				return err
@@ -621,9 +633,12 @@ func VerifyImportDatabase(ctx context.Context, db *sql.DB, batch app.ImportBatch
 }
 
 func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) error {
-	memberCount, recipientCount, parentCount := 0, 0, 0
+	memberCount, recipientCount, parentCount, detailsCount := 0, 0, 0, 0
 	for _, group := range batch.Groups {
 		memberCount += len(group.Members)
+		if group.Details != nil {
+			detailsCount++
+		}
 		if group.ParentGroupID != "" {
 			parentCount++
 		}
@@ -636,7 +651,7 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 		defaults = 1
 	}
 	expected := map[string]int{
-		"agents": len(batch.Agents), "groups": len(batch.Groups), "group_members": memberCount, "group_parents": parentCount,
+		"agents": len(batch.Agents), "groups": len(batch.Groups), "group_members": memberCount, "group_parents": parentCount, "group_details": detailsCount,
 		"conversations": len(batch.Conversations), "agent_conversations": len(batch.ConversationLinks), "history_catalog": len(batch.History),
 		"messages": len(batch.Messages), "operations": len(batch.Messages), "message_recipients": recipientCount,
 		"attachments": len(batch.ImportedAttachments), "message_attachments": len(batch.ImportedAttachments),

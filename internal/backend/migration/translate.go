@@ -284,6 +284,14 @@ func (t *translator) translateGroups(batch *app.ImportBatch) error {
 			return items[i].key < items[j].key
 		})
 		group := model.Group{ID: model.GroupID(t.id("agent_groups", key)), Name: firstNonEmpty(sourcev228.String(row.Values["name"]), key), Revision: 1, CreatedAt: created, UpdatedAt: firstTime(timeValue(row.Values["archived_at"]), created)}
+		details := model.GroupDetails{Description: sourcev228.String(row.Values["descr"]), Mission: sourcev228.String(row.Values["mission"]), LinkURL: sourcev228.String(row.Values["attachment_url"]), LinkLabel: sourcev228.String(row.Values["attachment_label"])}
+		if details != (model.GroupDetails{}) {
+			if model.ValidateGroupDetails(details) == nil {
+				group.Details = &details
+			} else {
+				t.launchMetadataDiagnostic(batch, "agent_groups", row.Key, "group_details_retained_unmapped", "unsupported group detail text or link remains in the exact retained source record")
+			}
+		}
 		if parent := sourcev228.String(row.Values["parent_id"]); parent != "" {
 			group.ParentGroupID = model.GroupID(t.id("agent_groups", parent))
 			if group.ParentGroupID == "" {
