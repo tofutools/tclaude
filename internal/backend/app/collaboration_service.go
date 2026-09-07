@@ -35,9 +35,6 @@ func validateAgentMetadata(taskReference string, preferences model.AgentNotifica
 }
 
 func (s *Service) RetireAgent(ctx context.Context, req RetireAgentRequest) (AgentResult, error) {
-	if err := requireOperator(req.Context); err != nil {
-		return AgentResult{}, err
-	}
 	if req.ExpectedRevision == 0 {
 		return AgentResult{}, fail(ErrInvalid, "expected revision is required")
 	}
@@ -97,7 +94,7 @@ func (s *Service) SendMessage(ctx context.Context, req SendMessageRequest) (Mess
 	if repeated, ok, err := s.store.MessageByRequest(ctx, req.Principal, req.RequestID, requestDigest); err != nil {
 		return MessageResult{}, err
 	} else if ok {
-		return MessageResult{Message: repeated.Message}, nil
+		return MessageResult{Message: repeated.Message, Operation: repeated.Operation}, nil
 	}
 	if err := s.validateMessageSender(ctx, req.Principal); err != nil {
 		return MessageResult{}, err
@@ -181,11 +178,19 @@ func (s *Service) SendMessage(ctx context.Context, req SendMessageRequest) (Mess
 	for _, item := range prepared {
 		message.Attachments = append(message.Attachments, item.Attachment)
 	}
-	result, err := s.store.CreateMessage(ctx, MessageAdmission{Message: message, RequestID: req.RequestID, OperationID: model.OperationID(s.newID("op_")), RequestDigest: requestDigest, Authority: authority, Attachments: prepared})
+	eligibility := []model.MessageAudience{req.To, req.CC}
+	if req.RecipientEligibility != nil {
+		eligibility = []model.MessageAudience{*req.RecipientEligibility}
+	}
+	resultCode := req.AdmissionResultCode
+	if resultCode == "" {
+		resultCode = "committed"
+	}
+	result, err := s.store.CreateMessage(ctx, MessageAdmission{Message: message, RequestID: req.RequestID, OperationID: model.OperationID(s.newID("op_")), RequestDigest: requestDigest, Authority: authority, Attachments: prepared, Eligibility: eligibility, ResultCode: resultCode})
 	if err != nil {
 		return MessageResult{}, err
 	}
-	return MessageResult{Message: result.Message}, nil
+	return MessageResult{Message: result.Message, Operation: result.Operation}, nil
 }
 
 func (s *Service) MarkMessageRead(ctx context.Context, req MarkMessageReadRequest) (MessageResult, error) {

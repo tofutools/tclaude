@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -173,6 +174,43 @@ func TestRetirementRefusesLivePrimaryThenRevokesAndBlocksNewEffects(t *testing.T
 	require.NoError(t, err)
 	require.Len(t, snapshot.Executions, 1, "retirement retains execution history")
 	require.Equal(t, model.AgentRetired, findAgent(t, snapshot.Agents, agent.ID).Lifecycle)
+}
+
+func TestDelegatedRetirementRequiresCurrentExactAgentAuthority(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "delegated-retire.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	service := testService(store, newFakeProvider())
+	operator := model.OperatorPrincipal()
+	manager := createAgent(t, ctx, service, operator, "retirement_manager")
+	permitted := createAgent(t, ctx, service, operator, "permitted_target")
+	denied := createAgent(t, ctx, service, operator, "denied_target")
+	revoked := createAgent(t, ctx, service, operator, "revoked_target")
+	now := time.Now().UTC()
+
+	putRetirementGrant := func(id model.GrantID, target model.AgentID) model.AuthorityGrant {
+		grant, putErr := store.PutGrant(ctx, model.AuthorityGrant{
+			ID: id, Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: manager.ID},
+			Action: model.ActionRetireAgent, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: target},
+			Revision: 1, CreatedAt: now, UpdatedAt: now,
+		}, 0)
+		require.NoError(t, putErr)
+		return grant
+	}
+
+	putRetirementGrant("permit_retirement", permitted.ID)
+	retired, err := service.RetireAgent(ctx, app.RetireAgentRequest{Context: model.AgentPrincipal(manager.ID), ID: permitted.ID, ExpectedRevision: permitted.Revision, Reason: "delegated cleanup"})
+	require.NoError(t, err)
+	require.Equal(t, model.AgentRetired, retired.Agent.Lifecycle)
+
+	_, err = service.RetireAgent(ctx, app.RetireAgentRequest{Context: model.AgentPrincipal(manager.ID), ID: denied.ID, ExpectedRevision: denied.Revision, Reason: "must be denied"})
+	require.ErrorIs(t, err, app.ErrUnauthorized)
+
+	revokedGrant := putRetirementGrant("revoke_retirement", revoked.ID)
+	require.NoError(t, store.DeleteGrant(ctx, revokedGrant.ID, revokedGrant.Revision))
+	_, err = service.RetireAgent(ctx, app.RetireAgentRequest{Context: model.AgentPrincipal(manager.ID), ID: revoked.ID, ExpectedRevision: revoked.Revision, Reason: "revoked before retirement"})
+	require.ErrorIs(t, err, app.ErrUnauthorized, "retirement rechecks the live grant in its mutation transaction")
 }
 
 func findAgent(t *testing.T, agents []model.Agent, id model.AgentID) model.Agent {

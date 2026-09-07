@@ -255,13 +255,14 @@ func TestScheduledAutomationDeploysTeamThroughDelegatedEffects(t *testing.T) {
 	provider := &preparedWorkProvider{}
 	service := app.New(lostTeamLinkReplyStore{Store: store}, providers.NewRegistry(provider)).WithClock(func() time.Time { return now })
 	directory := t.TempDir()
+	require.NoError(t, store.RegisterWorkspace(ctx, model.Workspace{ID: "deployed_workspace", State: model.WorkspaceAvailable, Observation: model.WorkspaceObservation{ActualPath: directory, ObservedAt: now}, Revision: 1, CreatedAt: now, UpdatedAt: now}))
 	desired := model.DesiredConfiguration{Harness: "prepared-work", Model: "test", WorkingDirectory: directory, Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}
 	team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{{Key: "builder", Name: "builder", Desired: desired, Required: true}}, Waves: []model.TeamWave{{ID: "build", MemberKeys: []string{"builder"}, RequiredReady: true}}}
 	definition, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "team"}, Draft: app.DefinitionDraft{ID: "team", RevisionID: "team_v1", Name: "team", Kind: model.DefinitionTeam, SchemaVersion: 1, Source: "team", Team: &team}})
 	require.NoError(t, err)
 	teamRef := model.DefinitionRef{DefinitionID: definition.Definition.ID, RevisionID: definition.Revision.ID, ContentHash: definition.Revision.ContentHash, Kind: model.DefinitionTeam}
-	delegation := model.AutomationDelegation{Actions: []model.Action{model.ActionRunAutomation, model.ActionStartWork, model.ActionLaunch}, Resources: []model.ResourceSelector{{Kind: model.ResourceAutomationRule, AutomationRuleID: "deploy_rule"}, {Kind: model.ResourceGroupPeers, GroupID: "deployed_group"}}, Bounds: model.ConfigurationBounds{Harnesses: []string{desired.Harness}, Models: []string{desired.Model}, WorkingDirectoryRoots: []string{directory}, ApprovalModes: []model.ApprovalMode{desired.Approval}, SandboxModes: []model.SandboxMode{desired.Sandbox}}, ExpiresAt: now.Add(time.Hour)}
-	ruleRequest := app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "rule"}, ID: "deploy_rule", RevisionID: "deploy_rule_v1", Name: "deploy", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Delegation: delegation, Condition: model.AutomationCondition{Kind: model.AutomationSchedule, Schedule: &model.ScheduleCondition{Timezone: "UTC", Interval: time.Minute, Anchor: now.Add(time.Minute)}}, Action: model.AutomationAction{Kind: model.AutomationDeployTeam, Team: &model.TeamInstantiation{Definition: teamRef, Mission: "ship", GroupID: "deployed_group"}}, Policy: regressionOccurrencePolicy(), Dependencies: []model.DefinitionRef{teamRef}}
+	delegation := model.AutomationDelegation{Actions: []model.Action{model.ActionRunAutomation, model.ActionStartWork, model.ActionLaunch, model.ActionInspectWorkspace}, Resources: []model.ResourceSelector{{Kind: model.ResourceAutomationRule, AutomationRuleID: "deploy_rule"}, {Kind: model.ResourceGroupPeers, GroupID: "deployed_group"}, {Kind: model.ResourceWorkspace, WorkspaceID: "deployed_workspace"}}, Bounds: model.ConfigurationBounds{Harnesses: []string{desired.Harness}, Models: []string{desired.Model}, WorkingDirectoryRoots: []string{directory}, ApprovalModes: []model.ApprovalMode{desired.Approval}, SandboxModes: []model.SandboxMode{desired.Sandbox}}, ExpiresAt: now.Add(time.Hour)}
+	ruleRequest := app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "rule"}, ID: "deploy_rule", RevisionID: "deploy_rule_v1", Name: "deploy", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Delegation: delegation, Condition: model.AutomationCondition{Kind: model.AutomationSchedule, Schedule: &model.ScheduleCondition{Timezone: "UTC", Interval: time.Minute, Anchor: now.Add(time.Minute)}}, Action: model.AutomationAction{Kind: model.AutomationDeployTeam, Team: &model.TeamInstantiation{Definition: teamRef, Mission: "ship", GroupID: "deployed_group", Workspaces: model.TeamWorkspaceSelection{Shared: &model.TeamWorkspaceInput{WorkspaceID: "deployed_workspace", ExpectedRevision: 1}}}}, Policy: regressionOccurrencePolicy(), Dependencies: []model.DefinitionRef{teamRef}}
 	rule, err := service.SaveAutomationRule(ctx, ruleRequest)
 	require.NoError(t, err)
 	now = now.Add(time.Minute)
@@ -450,9 +451,9 @@ func (s lostTeamLinkReplyStore) UpdateOccurrence(ctx context.Context, id model.O
 	return record, err
 }
 
-func (s disableTeamAdmissionStore) CreateTeamDeployment(ctx context.Context, deployment model.TeamDeployment, group model.Group, agents []model.Agent, principal model.Principal, at time.Time) (model.TeamDeployment, bool, error) {
+func (s disableTeamAdmissionStore) CreateTeamDeployment(ctx context.Context, deployment model.TeamDeployment, group model.Group, agents []model.Agent, assignments []model.RoleAssignment, principal model.Principal, requestID model.RequestID, digest string, at time.Time) (model.TeamDeployment, bool, error) {
 	s.before()
-	return s.Store.CreateTeamDeployment(ctx, deployment, group, agents, principal, at)
+	return s.Store.CreateTeamDeployment(ctx, deployment, group, agents, assignments, principal, requestID, digest, at)
 }
 
 func ptr[T any](value T) *T { return &value }

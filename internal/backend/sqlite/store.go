@@ -118,6 +118,19 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"message_recipients", "notified_at", "INTEGER"},
 		{"automation_occurrences", "parent_occurrence_id", "TEXT NOT NULL DEFAULT ''"},
 		{"automation_occurrences", "causal_depth", "INTEGER NOT NULL DEFAULT 0"},
+		{"effect_permits", "eligibility_audience_json", "BLOB"},
+		{"effect_permits", "eligibility_agent_id", "TEXT NOT NULL DEFAULT ''"},
+		{"team_deployments", "role_pins_json", "BLOB NOT NULL DEFAULT '[]'"},
+		{"team_deployments", "target_kind", "TEXT NOT NULL DEFAULT 'new_group'"},
+		{"team_deployments", "workspaces_json", "BLOB NOT NULL DEFAULT '{}'"},
+		{"team_deployments", "owned_workspace_ids_json", "BLOB NOT NULL DEFAULT '[]'"},
+		{"team_deployments", "owned_automation_rule_ids_json", "BLOB NOT NULL DEFAULT '[]'"},
+		{"team_deployments", "briefing_operation_ids_json", "BLOB NOT NULL DEFAULT '{}'"},
+		{"team_deployments", "request_scope", "TEXT NOT NULL DEFAULT ''"},
+		{"team_deployments", "request_id", "TEXT NOT NULL DEFAULT ''"},
+		{"team_deployments", "request_digest", "TEXT NOT NULL DEFAULT ''"},
+		{"team_deployments", "requester_json", "BLOB"},
+		{"automation_rules", "deployment_id", "TEXT NOT NULL DEFAULT ''"},
 	} {
 		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.definition); err != nil {
 			return err
@@ -137,6 +150,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	}
 	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS work_decisions_scoped_request ON work_decisions(request_scope,request_id) WHERE request_id<>''`); err != nil {
 		return err
+	}
+	if _, err := s.db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS team_deployments_scoped_request ON team_deployments(request_scope,request_id) WHERE request_id<>''`); err != nil {
+		return fmt.Errorf("index scoped team deployment requests: %w", err)
 	}
 	// Access is always suspended across a backend process boundary. Recovery is
 	// the only workflow that can reactivate the exact proven runtime.
@@ -371,6 +387,7 @@ CREATE TABLE IF NOT EXISTS operation_additional_authority (
 );
 CREATE TABLE IF NOT EXISTS effect_permits (
   operation_id TEXT PRIMARY KEY REFERENCES operations(id) ON DELETE CASCADE,
+	eligibility_audience_json BLOB, eligibility_agent_id TEXT NOT NULL DEFAULT '',
   consumed_at INTEGER
 );
 CREATE TABLE IF NOT EXISTS pending_context_transitions (
@@ -565,9 +582,24 @@ CREATE TABLE IF NOT EXISTS automation_condition_state (
 CREATE TABLE IF NOT EXISTS team_deployments (
   id TEXT PRIMARY KEY, definition_json BLOB NOT NULL, dependency_closure_json BLOB NOT NULL,
   mission TEXT NOT NULL, parameters_json BLOB NOT NULL, group_id TEXT NOT NULL,
-  members_json BLOB NOT NULL, automation_rule_ids_json BLOB NOT NULL, work_run_id TEXT NOT NULL,
+	members_json BLOB NOT NULL, role_pins_json BLOB NOT NULL DEFAULT '[]', automation_rule_ids_json BLOB NOT NULL, work_run_id TEXT NOT NULL,
+	target_kind TEXT NOT NULL DEFAULT 'new_group', workspaces_json BLOB NOT NULL DEFAULT '{}',
+	owned_workspace_ids_json BLOB NOT NULL DEFAULT '[]', owned_automation_rule_ids_json BLOB NOT NULL DEFAULT '[]',
+	briefing_operation_ids_json BLOB NOT NULL DEFAULT '{}', request_scope TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL DEFAULT '', request_digest TEXT NOT NULL DEFAULT '', requester_json BLOB,
   advisory_phase INTEGER NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS team_rebriefs (
+  deployment_id TEXT NOT NULL REFERENCES team_deployments(id), request_scope TEXT NOT NULL,
+  request_id TEXT NOT NULL, request_digest TEXT NOT NULL, definition_json BLOB NOT NULL,
+  recipient_operations_json BLOB NOT NULL DEFAULT '{}', state TEXT NOT NULL,
+  created_at INTEGER NOT NULL, completed_at INTEGER,
+  PRIMARY KEY(request_scope,request_id)
+);
+CREATE TABLE IF NOT EXISTS team_lifecycle_requests (
+  request_scope TEXT NOT NULL, request_id TEXT NOT NULL, deployment_id TEXT NOT NULL,
+  kind TEXT NOT NULL, request_digest TEXT NOT NULL, created_at INTEGER NOT NULL,
+  PRIMARY KEY(request_scope,request_id)
 );
 INSERT OR IGNORE INTO roles(id,name,actions_json,revision,created_at,updated_at)
 VALUES('group_owner','Owner','["status.read","inbox.read","inbox.mark_read","message.send","execution.launch","execution.interact","execution.attach","execution.stop","execution.context.change","agent.configuration.update","group.membership.manage"]',1,0,0);
@@ -777,15 +809,6 @@ func (s *Store) AdmitExecutionOperation(ctx context.Context, in app.ExecutionOpe
 		return app.AdmissionResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if in.Authority.Action != "" {
-		decision, err := authorizeTx(ctx, tx, in.Authority, in.Operation.CreatedAt)
-		if err != nil {
-			return app.AdmissionResult{}, err
-		}
-		if !decision.Allowed {
-			return app.AdmissionResult{}, app.ErrUnauthorized
-		}
-	}
 	if repeated, ok, err := admissionByRequest(ctx, tx, in.Operation, "", true); err != nil {
 		return app.AdmissionResult{}, err
 	} else if ok {
@@ -795,6 +818,15 @@ func (s *Store) AdmitExecutionOperation(ctx context.Context, in app.ExecutionOpe
 	execution, err := executionTx(ctx, tx, in.Operation.ExecutionID)
 	if err != nil {
 		return app.AdmissionResult{}, err
+	}
+	if in.Eligibility != nil {
+		eligible, eligibilityErr := audienceIncludesAgent(ctx, tx, *in.Eligibility, execution.AgentID)
+		if eligibilityErr != nil {
+			return app.AdmissionResult{}, eligibilityErr
+		}
+		if !eligible {
+			return app.AdmissionResult{}, app.ErrConflict
+		}
 	}
 	if err := insertOperation(ctx, tx, in.Operation); err != nil {
 		return app.AdmissionResult{}, err
@@ -810,7 +842,16 @@ func (s *Store) AdmitExecutionOperation(ctx context.Context, in app.ExecutionOpe
 		if err := insertOperationAuthority(ctx, tx, in.Operation.ID, in.Authority, decision); err != nil {
 			return app.AdmissionResult{}, err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO effect_permits(operation_id) VALUES(?)`, in.Operation.ID); err != nil {
+		var audienceJSON any
+		var eligibilityAgent model.AgentID
+		if in.Eligibility != nil {
+			encoded, encodeErr := json.Marshal(in.Eligibility)
+			if encodeErr != nil {
+				return app.AdmissionResult{}, encodeErr
+			}
+			audienceJSON, eligibilityAgent = encoded, execution.AgentID
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO effect_permits(operation_id,eligibility_audience_json,eligibility_agent_id) VALUES(?,?,?)`, in.Operation.ID, audienceJSON, eligibilityAgent); err != nil {
 			return app.AdmissionResult{}, err
 		}
 	}
@@ -913,6 +954,24 @@ func (s *Store) ConsumeExecutionEffect(ctx context.Context, operationID model.Op
 	}
 	if !decision.Allowed {
 		return app.ErrUnauthorized
+	}
+	var audienceJSON []byte
+	var eligibilityAgent model.AgentID
+	if err := tx.QueryRowContext(ctx, `SELECT eligibility_audience_json,eligibility_agent_id FROM effect_permits WHERE operation_id=?`, operationID).Scan(&audienceJSON, &eligibilityAgent); err != nil {
+		return classify(err)
+	}
+	if len(audienceJSON) != 0 {
+		var audience model.MessageAudience
+		if err := json.Unmarshal(audienceJSON, &audience); err != nil {
+			return err
+		}
+		eligible, err := audienceIncludesAgent(ctx, tx, audience, eligibilityAgent)
+		if err != nil {
+			return err
+		}
+		if !eligible {
+			return app.ErrConflict
+		}
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE effect_permits SET consumed_at=? WHERE operation_id=? AND consumed_at IS NULL`, nanos(at), operationID)
 	if err != nil {
@@ -1122,6 +1181,22 @@ func (s *Store) CreateMessage(ctx context.Context, in app.MessageAdmission) (app
 			if state != model.AgentActive {
 				return app.MessageAdmissionResult{}, app.ErrConflict
 			}
+			if len(in.Eligibility) != 0 {
+				eligible := false
+				for _, audience := range in.Eligibility {
+					included, includeErr := audienceIncludesAgent(ctx, tx, audience, recipient.AgentID)
+					if includeErr != nil {
+						return app.MessageAdmissionResult{}, includeErr
+					}
+					if included {
+						eligible = true
+						break
+					}
+				}
+				if !eligible {
+					return app.MessageAdmissionResult{}, app.ErrConflict
+				}
+			}
 		}
 	}
 	if in.Message.ParentMessageID != "" {
@@ -1136,7 +1211,11 @@ func (s *Store) CreateMessage(ctx context.Context, in app.MessageAdmission) (app
 	} else {
 		in.Message.ThreadID = in.Message.ID
 	}
-	op := model.Operation{ID: in.OperationID, RequestID: in.RequestID, Kind: model.OperationSendMessage, Principal: in.Message.Sender, State: model.OperationSucceeded, ResultCode: "committed", Revision: 1, CreatedAt: in.Message.CreatedAt, UpdatedAt: in.Message.CreatedAt}
+	resultCode := in.ResultCode
+	if resultCode == "" {
+		resultCode = "committed"
+	}
+	op := model.Operation{ID: in.OperationID, RequestID: in.RequestID, Kind: model.OperationSendMessage, Principal: in.Message.Sender, State: model.OperationSucceeded, ResultCode: resultCode, Revision: 1, CreatedAt: in.Message.CreatedAt, UpdatedAt: in.Message.CreatedAt}
 	if err := insertOperation(ctx, tx, op); err != nil {
 		return app.MessageAdmissionResult{}, err
 	}

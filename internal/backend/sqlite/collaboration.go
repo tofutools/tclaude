@@ -366,9 +366,6 @@ func (s *Store) migrateMessageRecipients(ctx context.Context) error {
 }
 
 func (s *Store) RetireAgent(ctx context.Context, id model.AgentID, expected model.Revision, principal model.Principal, reason string, at time.Time) (model.Agent, error) {
-	if principal.Kind != model.PrincipalOperator {
-		return model.Agent{}, app.ErrUnauthorized
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return model.Agent{}, err
@@ -382,6 +379,13 @@ func (s *Store) RetireAgent(ctx context.Context, id model.AgentID, expected mode
 	}
 	if state != model.AgentActive || revision != expected {
 		return model.Agent{}, app.ErrConflict
+	}
+	decision, err := authorizeTx(ctx, tx, model.AuthorityRequest{Principal: principal, Action: model.ActionRetireAgent, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: id}}, at)
+	if err != nil {
+		return model.Agent{}, err
+	}
+	if !decision.Allowed {
+		return model.Agent{}, app.ErrUnauthorized
 	}
 	if primary != "" {
 		var executionState model.ExecutionState
@@ -448,12 +452,31 @@ func (s *Store) ReactivateAgent(ctx context.Context, id model.AgentID, expected 
 // the exact active agents that a message effect may pin. It deliberately does
 // not treat an empty or unresolved role as a wildcard.
 func (s *Store) ResolveMessageAudience(ctx context.Context, audience model.MessageAudience) ([]model.AgentID, error) {
+	return resolveMessageAudience(ctx, s.db, audience)
+}
+
+func resolveMessageAudience(ctx context.Context, q queryer, audience model.MessageAudience) ([]model.AgentID, error) {
 	selected := make(map[model.AgentID]struct{}, len(audience.AgentIDs))
 	for _, id := range audience.AgentIDs {
 		selected[id] = struct{}{}
 	}
 	if audience.GroupID != "" {
-		rows, err := s.db.QueryContext(ctx, `SELECT agent_id FROM group_members WHERE group_id=?`, audience.GroupID)
+		var exists int
+		if err := q.QueryRowContext(ctx, `SELECT 1 FROM groups WHERE id=?`, audience.GroupID).Scan(&exists); err != nil {
+			return nil, classify(err)
+		}
+		query := `SELECT agent_id FROM group_members WHERE group_id=?`
+		args := []any{audience.GroupID}
+		if audience.RoleID != "" {
+			query = `SELECT gm.agent_id FROM group_members gm
+				WHERE gm.group_id=? AND EXISTS (
+					SELECT 1 FROM role_assignments ra
+					WHERE ra.role_id=? AND ra.subject_kind=? AND ra.subject_id=gm.agent_id
+					AND ra.resource_kind IN (?,?) AND ra.resource_id=?
+				)`
+			args = []any{audience.GroupID, audience.RoleID, model.AuthorityAgent, model.ResourceGroup, model.ResourceGroupPeers, audience.GroupID}
+		}
+		rows, err := q.QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, err
 		}
@@ -469,8 +492,8 @@ func (s *Store) ResolveMessageAudience(ctx context.Context, audience model.Messa
 			return nil, err
 		}
 	}
-	if audience.RoleID != "" {
-		rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT subject_id FROM role_assignments WHERE role_id=? AND subject_kind=?`, audience.RoleID, model.AuthorityAgent)
+	if audience.RoleID != "" && audience.GroupID == "" {
+		rows, err := q.QueryContext(ctx, `SELECT DISTINCT subject_id FROM role_assignments WHERE role_id=? AND subject_kind=?`, audience.RoleID, model.AuthorityAgent)
 		if err != nil {
 			return nil, err
 		}
@@ -490,7 +513,7 @@ func (s *Store) ResolveMessageAudience(ctx context.Context, audience model.Messa
 	resolved := make([]model.AgentID, 0, len(selected))
 	for id := range selected {
 		var state string
-		if err := s.db.QueryRowContext(ctx, `SELECT lifecycle_state FROM agents WHERE id=?`, id).Scan(&state); err != nil {
+		if err := q.QueryRowContext(ctx, `SELECT lifecycle_state FROM agents WHERE id=?`, id).Scan(&state); err != nil {
 			if classified := classify(err); errors.Is(classified, app.ErrNotFound) {
 				continue
 			} else {
@@ -503,6 +526,19 @@ func (s *Store) ResolveMessageAudience(ctx context.Context, audience model.Messa
 	}
 	sort.Slice(resolved, func(i, j int) bool { return resolved[i] < resolved[j] })
 	return resolved, nil
+}
+
+func audienceIncludesAgent(ctx context.Context, q queryer, audience model.MessageAudience, id model.AgentID) (bool, error) {
+	resolved, err := resolveMessageAudience(ctx, q, audience)
+	if err != nil {
+		return false, err
+	}
+	for _, candidate := range resolved {
+		if candidate == id {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func requireDelegatedAttachmentAction(ctx context.Context, q queryer, principal model.Principal, action model.Action, resources []model.ResourceSelector, at time.Time) error {
