@@ -57,11 +57,19 @@ func (s *Service) SaveConfigurationProfile(ctx context.Context, req SaveConfigur
 	if err := requireOperator(req.Context.Principal); err != nil {
 		return ConfigurationProfileResult{}, err
 	}
+	w, err := prepareConfigurationProfile(req, s.now())
+	if err != nil {
+		return ConfigurationProfileResult{}, err
+	}
+	return s.store.SaveConfigurationProfile(ctx, w)
+}
+
+func prepareConfigurationProfile(req SaveConfigurationProfileRequest, at time.Time) (ConfigurationProfileWrite, error) {
 	if model.ValidateStableID("configuration profile", string(req.ID)) != nil || model.ValidateStableID("configuration revision", string(req.RevisionID)) != nil || req.Context.RequestID.Validate() != nil || strings.TrimSpace(req.Name) == "" || len(req.Name) > 256 {
-		return ConfigurationProfileResult{}, ErrInvalid
+		return ConfigurationProfileWrite{}, ErrInvalid
 	}
 	if err := validateDesired(req.Desired); err != nil {
-		return ConfigurationProfileResult{}, err
+		return ConfigurationProfileWrite{}, err
 	}
 	if req.Startup != nil {
 		startup := *req.Startup
@@ -69,7 +77,7 @@ func (s *Service) SaveConfigurationProfile(ctx context.Context, req SaveConfigur
 			req.Startup = nil
 		} else {
 			if model.ValidateProfileStartup(startup) != nil {
-				return ConfigurationProfileResult{}, ErrInvalid
+				return ConfigurationProfileWrite{}, ErrInvalid
 			}
 			req.Startup = &startup
 		}
@@ -92,12 +100,12 @@ func (s *Service) SaveConfigurationProfile(ctx context.Context, req SaveConfigur
 		Startup    *model.ProfileStartup `json:",omitempty"`
 	}{req.ID, req.RevisionID, req.Name, req.Desired, req.ExpectedRevision, req.Startup})
 	fingerprint := sha256.Sum256(input)
-	now := s.now().UTC()
-	return s.store.SaveConfigurationProfile(ctx, ConfigurationProfileWrite{
+	now := at.UTC()
+	return ConfigurationProfileWrite{
 		Profile:          model.ConfigurationProfile{ID: req.ID, Name: req.Name, CurrentRevisionID: req.RevisionID},
 		Revision:         model.ConfigurationProfileRevision{Ref: model.ConfigurationProfileRef{ProfileID: req.ID, RevisionID: req.RevisionID, ContentHash: hex.EncodeToString(digest[:])}, Desired: req.Desired, Startup: req.Startup, CreatedAt: now},
 		ExpectedRevision: req.ExpectedRevision, RequestID: req.Context.RequestID, RequestFingerprint: hex.EncodeToString(fingerprint[:]), At: now,
-	})
+	}, nil
 }
 
 func (s *Service) GetConfigurationProfile(ctx context.Context, principal model.Principal, ref model.ConfigurationProfileRef) (ConfigurationProfileResult, error) {

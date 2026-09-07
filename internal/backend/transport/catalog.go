@@ -8,6 +8,9 @@ import (
 )
 
 func (h *Handler) registerConfigurationCatalog(catalog app.ConfigurationCatalogAPI) {
+	if transfer, ok := catalog.(app.ConfigurationTransferAPI); ok {
+		h.registerConfigurationTransfer(transfer)
+	}
 	h.mux.HandleFunc("POST /v2/configuration-profiles/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := h.caller(w, r)
 		if !ok {
