@@ -130,8 +130,16 @@ $('search-history').onsubmit=async e=>{e.preventDefault();try{
  if(!data.Entries?.length)empty(list,'No matching catalogued histories. Source coverage may be incomplete.');
 }catch(error){showError(error)}};
 (async()=>{
- const fragment=new URLSearchParams(location.hash.slice(1));const token=fragment.get('login');history.replaceState(null,'',location.pathname);
- if(token)await api('/session',{token});await refresh();await selectTab('groups');
+ const fragment=new URLSearchParams(location.hash.slice(1));const token=fragment.get('login'),requested=new URLSearchParams(location.search).get('terminal');history.replaceState(null,'',location.pathname+location.search);
+ if(token)await api('/session',{token});await refresh();
+ if(requested){
+  document.body.classList.add('terminal-window');
+  const execution=(snapshot.executions||[]).find(e=>e.id===requested);if(!execution)throw new Error('This execution is not available in the current workspace.');
+  const nonce=fragment.get('handoff');
+  terminals.onAttached=entry=>{if(nonce&&entry.id===requested)window.opener?.postMessage({type:'terminal-attached',nonce,executionID:entry.id},location.origin)};
+  await attach(execution);
+ }else{terminals.restore(snapshot.executions||[],snapshot.agents||[]);await selectTab('groups')}
+
 })().catch(e=>{$('connection').textContent='Not connected';showError(e)}).finally(()=>{for(const tab of document.querySelectorAll('[data-tab]'))tab.disabled=false;document.querySelector('main').inert=false});
 
 async function attach(execution){
@@ -140,7 +148,7 @@ async function attach(execution){
  terminals.open(execution,agent?.Name||execution.id);
 }
 function closeTerminal(){terminals.closeAll()}
-window.addEventListener('pagehide',closeTerminal);
+window.addEventListener('pagehide',()=>terminals.suspend());
 
 function workspaceCard(space){
  const card=el('div',undefined,'card');card.append(el('strong',space.ID),el('p',space.Observation?.ActualPath||space.Intent?.IntendedPath||''),el('span',space.State,'status'));
