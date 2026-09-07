@@ -411,6 +411,24 @@ func (s *Service) StartShell(ctx context.Context, req StartShellRequest) (Operat
 	if err := validateEffectContext(req.Context); err != nil {
 		return OperationResult{}, err
 	}
+	if req.Environment.Validate() != nil {
+		return OperationResult{}, ErrInvalid
+	}
+	if req.Group != nil {
+		if err := requireOperator(req.Context.Principal); err != nil {
+			return OperationResult{}, err
+		}
+	}
+	if requests, ok := s.store.(ShellRequestStore); ok {
+		prior, found, err := requests.FindShellAdmission(ctx, req, s.now().UTC())
+		if found || err != nil {
+			return operationResult(prior), err
+		}
+	}
+	environment, err := s.shellEnvironment(ctx, req)
+	if err != nil {
+		return OperationResult{}, err
+	}
 	if s.shellHost == nil {
 		return OperationResult{}, fail(ErrUnavailable, "shell host is unavailable")
 	}
@@ -427,11 +445,12 @@ func (s *Service) StartShell(ctx context.Context, req StartShellRequest) (Operat
 	now := s.now().UTC()
 	executionID := model.ExecutionID(s.newID("exec_"))
 	operationID := model.OperationID(s.newID("op_"))
-	execution := model.Execution{ID: executionID, Workload: model.ExecutionWorkloadShell, Spec: model.ResolvedExecutionSpec{ExecutionID: executionID, Workload: model.ExecutionWorkloadShell, Attempt: 1, WorkingDirectory: workspace.Observation.ActualPath, Sandbox: req.Sandbox}, State: model.ExecutionReserved, Attempt: 1, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	execution := model.Execution{ID: executionID, Workload: model.ExecutionWorkloadShell, Spec: model.ResolvedExecutionSpec{ExecutionID: executionID, Workload: model.ExecutionWorkloadShell, Attempt: 1, WorkingDirectory: workspace.Observation.ActualPath, Sandbox: req.Sandbox, Environment: environment.Clone(), ShellGroup: req.Group}, State: model.ExecutionReserved, Attempt: 1, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	operation := model.Operation{ID: operationID, RequestID: req.Context.RequestID, Kind: model.OperationStartShell, Principal: req.Context.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	authority := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionStartShell, Resource: model.ResourceSelector{Kind: model.ResourceWorkspace, WorkspaceID: workspace.ID}}
+	authority.RequestedEnvironment = &environment
 	use := model.WorkspaceUse{ID: model.WorkspaceUseID(s.newID("use_")), WorkspaceID: workspace.ID, ExecutionID: executionID, CreatedAt: now}
-	admitted, err := s.store.AdmitShell(ctx, ShellAdmission{Operation: operation, Execution: execution, WorkspaceUse: use, WorkspaceRevision: req.ExpectedRevision, Authority: authority})
+	admitted, err := s.store.AdmitShell(ctx, ShellAdmission{Request: &req, Operation: operation, Execution: execution, WorkspaceUse: use, WorkspaceRevision: req.ExpectedRevision, Authority: authority})
 	if err != nil {
 		return OperationResult{}, err
 	}
@@ -440,7 +459,7 @@ func (s *Service) StartShell(ctx context.Context, req StartShellRequest) (Operat
 	}
 	workflowCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancel()
-	prepared, err := s.shellHost.PrepareShell(workflowCtx, ports.ShellPreparationRequest{ExecutionID: executionID, Attempt: 1, WorkspaceID: workspace.ID, WorkingDirectory: workspace.Observation.ActualPath, Sandbox: req.Sandbox})
+	prepared, err := s.shellHost.PrepareShell(workflowCtx, ports.ShellPreparationRequest{ExecutionID: executionID, Attempt: 1, WorkspaceID: workspace.ID, WorkingDirectory: workspace.Observation.ActualPath, Sandbox: req.Sandbox, Environment: environment.Clone()})
 	if err != nil {
 		settled, persistErr := s.store.CompleteShell(context.WithoutCancel(ctx), OperationCompletion{OperationID: operationID, OperationState: model.OperationFailed, ResultCode: "prepare_failed", Detail: err.Error(), ExecutionID: executionID, ExecutionState: model.ExecutionFailed, UpdateExecutionState: true, At: s.now().UTC()}, ports.ShellResourceEvidence{})
 		if persistErr != nil {

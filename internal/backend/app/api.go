@@ -574,6 +574,8 @@ type RestoreCheckoutRequest struct {
 }
 
 type StartShellRequest struct {
+	Environment      model.Environment          `json:",omitempty"`
+	Group            *model.ShellGroupSelection `json:",omitempty"`
 	Context          RequestContext
 	WorkspaceID      model.WorkspaceID
 	ExpectedRevision model.Revision

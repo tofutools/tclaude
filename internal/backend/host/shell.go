@@ -74,6 +74,10 @@ func NewShellHost(config ShellConfig) (*ShellTerminalHost, error) {
 }
 
 func (h *ShellTerminalHost) PrepareShell(_ context.Context, request ports.ShellPreparationRequest) (ports.PreparedShell, error) {
+	if err := request.Environment.Validate(); err != nil {
+		return nil, err
+	}
+	request.Environment = request.Environment.Clone()
 	if err := request.ExecutionID.Validate(); err != nil {
 		return nil, err
 	}
@@ -123,7 +127,7 @@ func (p *preparedShell) Release(ctx context.Context, permit ports.ReleasePermit)
 		return ports.ShellReleaseResult{}, fmt.Errorf("consume shell release permit: %w", err)
 	}
 	terminal, err := p.terminal.Release(ProcessSpec{Executable: p.host.executable,
-		Directory: p.request.WorkingDirectory, Env: p.host.environment})
+		Directory: p.request.WorkingDirectory, Env: append(append([]string(nil), p.host.environment...), p.request.Environment.Entries()...)})
 	if terminal == nil {
 		return ports.ShellReleaseResult{}, err
 	}
