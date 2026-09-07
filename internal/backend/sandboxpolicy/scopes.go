@@ -90,6 +90,9 @@ func ComposeScopes(ctx context.Context, selections []ScopeSelection, reader Revi
 			return ScopeComposition{}, err
 		}
 	}
+	if err := validateCompositionValues(out.Combined.Values); err != nil {
+		return ScopeComposition{}, err
+	}
 	return out, nil
 }
 func scopeRank(scope ProfileScope) int {
