@@ -83,6 +83,8 @@ export function validationMessages(draft) {
   const incoming = new Map(), outgoing = new Map();
   for (const edge of graph.Edges || []) {
     if (!nodes.has(edge.From) || !nodes.has(edge.To) || edge.From === edge.To) messages.push('Connections must join two different existing nodes.');
+    const source = nodes.get(edge.From);
+    if (source?.Kind === 'decision' && edge.Verdict && !source.Decision.PermittedAnswers.includes(edge.Verdict)) messages.push(`${source.Name || source.ID}: connection answer "${edge.Verdict}" is no longer permitted. Edit or delete that connection.`);
     incoming.set(edge.To, (incoming.get(edge.To) || 0) + 1);
     outgoing.set(edge.From, [...(outgoing.get(edge.From) || []), edge]);
   }
