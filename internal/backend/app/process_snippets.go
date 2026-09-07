@@ -34,12 +34,13 @@ type ProcessSnippetAPI interface {
 // ValidateProcessSelection checks a bounded fragment, not graph executability.
 // References and incomplete nodes are intentionally preserved for later authoring.
 func ValidateProcessSelection(data json.RawMessage) error {
-	_, err := normalizeProcessSelection(data)
+	_, err := CanonicalProcessSelection(data)
 	return err
 }
 
-// Canonical typed keys match the case-sensitive browser representation.
-func normalizeProcessSelection(data json.RawMessage) (json.RawMessage, error) {
+// CanonicalProcessSelection validates and normalizes keys for case-sensitive browser reads
+// and comparison of retained pre-normalization request receipts.
+func CanonicalProcessSelection(data json.RawMessage) (json.RawMessage, error) {
 	if len(data) == 0 || len(data) > 256<<10 || !utf8.Valid(data) {
 		return nil, ErrInvalid
 	}
@@ -87,7 +88,7 @@ func (s *Service) ListProcessSnippets(ctx context.Context, p model.Principal) ([
 	}
 	snippets, err := store.ListProcessSnippets(ctx)
 	for i := range snippets {
-		normalized, normalizeErr := normalizeProcessSelection(snippets[i].Selection)
+		normalized, normalizeErr := CanonicalProcessSelection(snippets[i].Selection)
 		snippets[i].Selection = normalized
 		snippets[i].Available = normalizeErr == nil
 		if !snippets[i].Available {
@@ -105,7 +106,7 @@ func (s *Service) WriteProcessSnippet(ctx context.Context, in ProcessSnippetRequ
 	}
 	switch in.Action {
 	case "create":
-		normalized, normalizeErr := normalizeProcessSelection(in.Selection)
+		normalized, normalizeErr := CanonicalProcessSelection(in.Selection)
 		if in.ExpectedRevision != 0 || normalizeErr != nil {
 			return model.ProcessSnippet{}, ErrInvalid
 		}
@@ -131,7 +132,7 @@ func (s *Service) WriteProcessSnippet(ctx context.Context, in ProcessSnippetRequ
 		return model.ProcessSnippet{}, ErrUnsupported
 	}
 	result, err := store.WriteProcessSnippet(ctx, in, s.now().UTC())
-	normalized, normalizeErr := normalizeProcessSelection(result.Selection)
+	normalized, normalizeErr := CanonicalProcessSelection(result.Selection)
 	result.Selection = normalized
 	result.Available = !result.Deleted && normalizeErr == nil
 	if !result.Available {

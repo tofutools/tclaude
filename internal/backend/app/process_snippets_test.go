@@ -131,3 +131,37 @@ func TestProcessSnippetCanonicalizesAcceptedKeysOnWriteAndRead(t *testing.T) {
 	require.Len(t, listed, 1)
 	require.JSONEq(t, string(saved.Selection), string(listed[0].Selection))
 }
+
+func TestProcessSnippetLegacyReceiptRetriesAfterReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := backendsqlite.Open(path)
+	require.NoError(t, err)
+	service := app.New(store, providers.NewRegistry())
+	raw := json.RawMessage(`{"Version":1,"Nodes":[{"id":"node_a","kind":"end"}],"Edges":[],"Positions":{}}`)
+	req := app.ProcessSnippetRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "legacy"}, ID: "snippet_legacy", Action: "create", Name: "Legacy", Selection: raw}
+	saved, err := service.WriteProcessSnippet(ctx, req)
+	require.NoError(t, err)
+	legacyIntent, err := json.Marshal(struct {
+		ID, Action, Name string
+		Selection        json.RawMessage
+		Revision         model.Revision
+	}{req.ID, req.Action, req.Name, raw, 0})
+	require.NoError(t, err)
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE process_snippet_requests SET intent=? WHERE request_id=?`, legacyIntent, req.Context.RequestID)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	require.NoError(t, store.Close())
+	store, err = backendsqlite.Open(path)
+	require.NoError(t, err)
+	defer store.Close()
+	service = app.New(store, providers.NewRegistry())
+	replay, err := service.WriteProcessSnippet(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, saved, replay)
+	req.Name = "Changed"
+	_, err = service.WriteProcessSnippet(ctx, req)
+	require.ErrorIs(t, err, app.ErrConflict)
+}

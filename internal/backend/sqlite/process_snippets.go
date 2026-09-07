@@ -1,11 +1,14 @@
 package sqlite
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"io"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/internal/backend/app"
 	"github.com/tofutools/tclaude/internal/backend/model"
@@ -55,7 +58,7 @@ func (s *Store) WriteProcessSnippet(ctx context.Context, in app.ProcessSnippetRe
 	var prior, stored []byte
 	err = tx.QueryRowContext(ctx, `SELECT intent,result FROM process_snippet_requests WHERE scope=? AND request_id=?`, requestScope(in.Context.Principal), in.Context.RequestID).Scan(&prior, &stored)
 	if err == nil {
-		if string(prior) != string(intent) {
+		if !sameProcessSnippetIntent(prior, intent) {
 			return out, app.ErrConflict
 		}
 		err = json.Unmarshal(stored, &out)
@@ -112,4 +115,35 @@ func (s *Store) WriteProcessSnippet(ctx context.Context, in app.ProcessSnippetRe
 		return out, err
 	}
 	return out, tx.Commit()
+}
+
+// Canonicalize old raw selection receipts before comparison. Other identity and
+// intent fields remain exact; a replay returns its original stored outcome.
+func sameProcessSnippetIntent(left, right []byte) bool {
+	normalize := func(data []byte) ([]byte, error) {
+		var intent struct {
+			ID, Action, Name string
+			Selection        json.RawMessage
+			Revision         model.Revision
+		}
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if !utf8.Valid(data) || decoder.Decode(&intent) != nil || decoder.Decode(new(any)) != io.EOF {
+			return nil, app.ErrConflict
+		}
+		if intent.Action == "create" {
+			selection, err := app.CanonicalProcessSelection(intent.Selection)
+			if err != nil {
+				return nil, err
+			}
+			intent.Selection = selection
+		}
+		return json.Marshal(intent)
+	}
+	a, err := normalize(left)
+	if err != nil {
+		return false
+	}
+	b, err := normalize(right)
+	return err == nil && string(a) == string(b)
 }
