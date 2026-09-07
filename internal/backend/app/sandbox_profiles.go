@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"math"
 	"strings"
 	"time"
@@ -87,7 +88,11 @@ func (s *Service) InspectSandboxClosure(ctx context.Context, principal model.Pri
 	if err := requireOperator(principal); err != nil {
 		return sandboxpolicy.Closure{}, err
 	}
-	return sandboxpolicy.Resolve(ctx, ref, s.store)
+	closure, err := sandboxpolicy.Resolve(ctx, ref, s.store)
+	if errors.Is(err, sandboxpolicy.ErrInvalidClosure) {
+		return sandboxpolicy.Closure{}, fail(ErrInvalid, "%v", err)
+	}
+	return closure, err
 }
 
 type SetSandboxProfileArchivedRequest struct {

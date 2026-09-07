@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/app"
@@ -60,6 +61,9 @@ func (s *Store) SaveSandboxProfile(ctx context.Context, req app.SaveSandboxProfi
 	// fresh revision. A missing include cannot leave a partial profile or receipt.
 	reader := sandboxRevisionReader{query: tx, proposedRef: ref, proposed: req.Policy}
 	if _, err = sandboxpolicy.Resolve(ctx, ref, reader); err != nil {
+		if errors.Is(err, sandboxpolicy.ErrInvalidClosure) {
+			return app.SandboxProfileResult{}, fmt.Errorf("%w: %v", app.ErrInvalid, err)
+		}
 		return app.SandboxProfileResult{}, err
 	}
 	profile := model.SandboxProfile{ID: req.ID, Name: req.Name, HeadRevisionID: revisionID, Revision: req.ExpectedRevision + 1, CreatedAt: now, UpdatedAt: now}

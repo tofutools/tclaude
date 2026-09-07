@@ -41,6 +41,7 @@ func TestPublicSandboxProfilesPreserveAuthoredPolicyAndRejectClaimedAuthority(t 
 	} {
 		require.Equal(t, 400, request(handler, "POST", "/v2/sandbox-profiles", invalid, testCredential).Code)
 	}
+	require.Equal(t, 422, request(handler, "POST", "/v2/sandbox-profiles/inspect", `{"ref":{"ProfileID":"sandbox_profile","RevisionID":"sandbox_revision","ContentHash":"invalid"}}`, testCredential).Code)
 	agentHandler, err := NewHandler(service, fixedCaller{model.AgentPrincipal("agent")})
 	require.NoError(t, err)
 	require.Equal(t, 403, request(agentHandler, "POST", "/v2/sandbox-profiles", body, "").Code)
