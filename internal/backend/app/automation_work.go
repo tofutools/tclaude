@@ -174,13 +174,13 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 					continue
 				}
 				requestID := model.RequestID(deterministicOrchestrationID("request_", string(occurrence.Occurrence.ID)+":"+string(recipients[i].AgentID)))
-				send := SendMessageRequest{RequestContext: RequestContext{Principal: occurrence.Occurrence.Requester, RequestID: requestID}, To: model.MessageAudience{AgentIDs: []model.AgentID{recipients[i].AgentID}}, RecipientEligibility: &audience, Body: revision.Action.Message.Body}
+				send := SendMessageRequest{RequestContext: RequestContext{Principal: occurrence.Occurrence.Requester, RequestID: requestID}, Subject: "Message", To: model.MessageAudience{AgentIDs: []model.AgentID{recipients[i].AgentID}}, RecipientEligibility: &audience, Body: revision.Action.Message.Body}
 				digest, digestErr := authoredMessageRequestDigest(send)
 				if digestErr != nil {
 					return touched, digestErr
 				}
 				if repeated, ok, repeatErr := s.store.MessageByRequest(ctx, send.Principal, requestID, digest); repeatErr != nil {
-					return touched, repeatErr
+					return touched, fmt.Errorf("recover automation recipient %s: %w", recipients[i].AgentID, repeatErr)
 				} else if ok {
 					recipients[i].OperationID = repeated.Operation.ID
 					recipients[i].Disposition, recipients[i].Detail = automationMessageDisposition(repeated.Operation.ResultCode)
@@ -209,7 +209,7 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 			}
 			state := automationMessageOccurrenceState(recipients)
 			if _, err = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, state, "", "", "", recipients, now); err != nil {
-				return touched, err
+				return touched, fmt.Errorf("record automation recipient dispositions: %w", err)
 			}
 		case model.AutomationDeployTeam:
 			deploymentID := model.DeploymentID(deterministicOrchestrationID("deployment_", string(occurrence.Occurrence.ID)))
@@ -361,14 +361,6 @@ func hasActiveOccurrence(records []OccurrenceRecord) bool {
 func deterministicOrchestrationID(prefix, source string) string {
 	sum := sha256.Sum256([]byte(source))
 	return prefix + hex.EncodeToString(sum[:12])
-}
-
-func deniedRecipients(in []model.OccurrenceRecipient, detail string) []model.OccurrenceRecipient {
-	out := append([]model.OccurrenceRecipient(nil), in...)
-	for i := range out {
-		out[i].Disposition, out[i].Detail = model.RecipientDenied, detail
-	}
-	return out
 }
 
 func expiredRecipients(in []model.OccurrenceRecipient) []model.OccurrenceRecipient {
