@@ -1,4 +1,4 @@
-import {clone, freshID, lines, seconds} from './process-model.js';
+import {clone, freshID, lines, seconds, taskPerformers} from './process-model.js';
 
 const refOf = r => ({DefinitionID: r.Definition.ID, RevisionID: r.Revision.ID, ContentHash: r.Revision.ContentHash, Kind: r.Definition.Kind});
 const field = (name, label, value = '', extra = {}) => ({name, label, value, required: false, ...extra});
@@ -94,10 +94,10 @@ export function automationWorkspace({api, el, button, edit, getSnapshot, openWor
       for (const [i, p] of parameters.entries()) { const v = start.Parameters?.[p.Name] ?? p.Default; fields.push(field('param_' + i, p.Description || p.Name, v === undefined || v === null ? '' : p.Type === 'string' ? v : JSON.stringify(v), {required: p.Required, multiline: p.Type === 'object' || p.Type === 'array'})); }
       const params = f => Object.fromEntries(parameters.flatMap((p, i) => f['param_' + i] === '' ? [] : [[p.Name, p.Type === 'string' ? f['param_' + i] : JSON.parse(f['param_' + i])]]));
       if (action === 'process') {
-        const graph = r?.Process.Graph || start.InlineGraph, keys = [...new Set((graph?.Nodes || []).map(n => n.Performer?.Agent?.MemberKey).filter(Boolean))];
+        const graph = r?.Process.Graph || start.InlineGraph, keys = [...new Set(taskPerformers(graph).map(p => p.Agent?.MemberKey).filter(Boolean))];
         fields.push(field('workspace', 'Process workspace', start.Scope?.WorkspaceID || spaces[0]?.ID || '', {required: true, options: spaces.map(w => choice(w.ID, w.Intent.Name || w.Observation.ActualPath))}));
         for (const [i, key] of keys.entries()) fields.push(field('bind_' + i, 'Worker for ' + key, start.PerformerBindings?.[key]?.Agent?.AgentID || agents[0]?.ID || '', {required: true, options: agents.map(a => choice(a.ID, a.Name))}));
-        buildAction = f => ({Kind: 'work', Work: {...start, ...(selected ? {Definition: refOf(selected)} : {}), Scope: {...start.Scope, WorkspaceID: f.workspace}, Parameters: params(f), PerformerBindings: {...start.PerformerBindings, ...Object.fromEntries(keys.map((key, i) => [key, {Kind: 'agent', Agent: {AgentID: f['bind_' + i]}}]))}, AuthorizedProgramProfiles: (graph?.Nodes || []).filter(n => n.Performer?.Program).map(n => n.Performer.Program.Profile)}});
+        buildAction = f => ({Kind: 'work', Work: {...start, ...(selected ? {Definition: refOf(selected)} : {}), Scope: {...start.Scope, WorkspaceID: f.workspace}, Parameters: params(f), PerformerBindings: {...start.PerformerBindings, ...Object.fromEntries(keys.map((key, i) => [key, {Kind: 'agent', Agent: {AgentID: f['bind_' + i]}}]))}, AuthorizedProgramProfiles: taskPerformers(graph).filter(p => p.Program).map(p => p.Program.Profile)}});
       } else {
         fields.push(field('team_member_scope', 'Allow selected effects on members of the target team', 'no', {options: [choice('no', 'No additional team-member authority'), choice('yes', 'Include members of the explicit target group')]}), field('team_target', 'Team target', start.Target?.Kind || (start.GroupID ? 'new_group' : 'existing_group'), {options: ['existing_group', 'new_group']}), field('new_group', 'New group ID (only for new-group deployment)', start.Target?.Kind === 'new_group' ? start.Target.GroupID : start.GroupID || ''), field('mission', 'Team mission', start.Mission, {required: true, multiline: true}), field('team_group', 'Existing group (only for reinforcement)', start.Target?.Kind === 'existing_group' ? start.Target.GroupID : '', {options: [choice('', 'Select group'), ...groups.map(g => choice(g.ID, g.Name))]}));
         const shared = r.Team.WorkspacePolicy === 'shared', members = shared ? [{Key: 'shared', Name: 'Shared team'}] : r.Team.Members;

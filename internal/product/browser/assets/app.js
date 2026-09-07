@@ -355,14 +355,17 @@ async function renderDefinitions(){
  if(definition.Kind==='process')card.append(button('Start process',async()=>{
    const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID));
    const revision=result.Revision;
-   const memberKeys=[...new Set((revision.Process.Graph.Nodes||[]).map(n=>n.Performer?.Agent?.MemberKey).filter(Boolean))];
+   const {taskPerformers}=await import("./process-model.js");
+   const performers=taskPerformers(revision.Process.Graph);
+   const memberKeys=[...new Set(performers.map(p=>p.Agent?.MemberKey).filter(Boolean))];
    const agents=(snapshot.agents||[]).filter(a=>a.Lifecycle!=='retired');
    if(memberKeys.length&&!agents.length)throw new Error('Create an active agent before binding this process.');
    const bindingFields=memberKeys.map(key=>({name:'binding_'+key,label:'Agent for '+key,options:agents.map(a=>({value:a.ID,label:a.Name}))}));
-   const fields=[{name:'workspace',label:'Workspace',options:(snapshot.workspaces||[]).filter(w=>w.State==='available').map(w=>({value:w.ID,label:w.Intent.Name||w.Observation.ActualPath||w.ID}))},{name:'minutes',label:'Maximum run time in minutes',value:'60'},...parameterFields(revision.Parameters||[]),...bindingFields];
+   const needsWorkspace=performers.some(p=>p.Program);
+   const fields=[{name:'workspace',label:'Workspace',required:needsWorkspace,options:[...(needsWorkspace?[]:[{value:'',label:'No shared workspace'}]),...(snapshot.workspaces||[]).filter(w=>w.State==='available').map(w=>({value:w.ID,label:w.Intent.Name||w.Observation.ActualPath||w.ID}))]},{name:'minutes',label:'Maximum run time in minutes',value:'60'},...parameterFields(revision.Parameters||[]),...bindingFields];
    edit('Start pinned process',fields,async f=>{
     const minutes=Number(f.minutes);if(!Number.isFinite(minutes)||minutes<=0||minutes>10080)throw new Error('Choose a run duration between 1 and 10080 minutes.');
-    const programs=(revision.Process.Graph.Nodes||[]).filter(n=>n.Performer?.Program).map(n=>n.Performer.Program.Profile);
+    const programs=performers.filter(p=>p.Program).map(p=>p.Program.Profile);
     await api('/v2/processes',{request_id:f.requestID,id:f.requestID,start:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'process'},Scope:{WorkspaceID:f.workspace},Parameters:parameterValues(revision.Parameters||[],f),PerformerBindings:Object.fromEntries(memberKeys.map(key=>[key,{Kind:'agent',Agent:{AgentID:f['binding_'+key]}}])),AuthorizedProgramProfiles:programs,Deadline:new Date(Date.now()+minutes*60000).toISOString()}});
    });
   }));

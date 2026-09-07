@@ -548,6 +548,12 @@ CREATE TABLE IF NOT EXISTS work_node_attempts (
 );
 CREATE INDEX IF NOT EXISTS work_node_attempts_ready ON work_node_attempts(state,ready_at,retry_at);
 CREATE UNIQUE INDEX IF NOT EXISTS work_node_attempts_issuance ON work_node_attempts(issuance_id) WHERE issuance_id <> '';
+CREATE TABLE IF NOT EXISTS work_agent_interactions (
+ operation_id TEXT PRIMARY KEY REFERENCES operations(id),
+ work_run_id TEXT NOT NULL REFERENCES work_runs(id), node_id TEXT NOT NULL,
+ activation_id TEXT NOT NULL, attempt INTEGER NOT NULL, issuance_id TEXT NOT NULL,
+ execution_id TEXT NOT NULL REFERENCES executions(id), owner TEXT NOT NULL DEFAULT '', consumed_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS work_node_evidence (
   id TEXT PRIMARY KEY, request_scope TEXT NOT NULL, request_id TEXT NOT NULL,
   work_run_id TEXT NOT NULL, node_id TEXT NOT NULL, activation_id TEXT NOT NULL,

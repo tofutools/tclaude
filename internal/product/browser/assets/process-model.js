@@ -38,7 +38,7 @@ export function graphView(draft) {
   const graph = draft.Process.Graph;
   return {nodes: graph.Nodes.map(node => {
     const position = draft.EditorLayout?.Nodes?.[node.ID];
-    return {id: node.ID, type: ['fork', 'join'].includes(node.Kind) ? 'parallel' : node.Kind,
+    return {id: node.ID, type: ['fork', 'join'].includes(node.Kind) ? 'parallel' : node.Kind === 'task_complete' ? 'task' : node.Kind,
       label: node.Name || node.ID, subtitle: node.ID === graph.EntryNodeID ? 'Entry' : node.Kind,
       pinned: position ? {x: position.X, y: position.Y} : undefined};
   }), edges: (graph.Edges || []).map((edge, index) => ({id: edgeID(edge, index), from: edge.From,
@@ -104,8 +104,16 @@ export function validationMessages(draft) {
     if (node.Kind === 'join' && (incoming.get(node.ID) || 0) < 2) messages.push(`${name}: a join needs at least two incoming branches.`);
     if (node.Kind === 'end' && outgoing.has(node.ID)) messages.push(`${name}: an end cannot have outgoing connections.`);
     if (node.Kind === 'wait' && (!(node.Wait?.Duration > 0) || node.Wait?.Until)) messages.push(`${name}: set a positive wait duration.`);
-    if (node.Performer?.Kind === 'agent' && !node.Performer.Agent?.Brief?.trim()) messages.push(`${name}: add the worker brief.`);
+    for (const performer of taskPerformers({Nodes:[node]})) {
+      if (performer.Kind === 'agent' && !performer.Agent?.Brief?.trim()) messages.push(`${name}: add every worker brief, including task stages.`);
+      if (performer.Kind === 'human' && !performer.Human?.Prompt?.trim()) messages.push(`${name}: add every human stage prompt.`);
+    }
     if (node.Kind === 'decision' && !node.Decision?.PermittedAnswers?.length) messages.push(`${name}: add at least one permitted answer.`);
   }
   return [...new Set(messages)];
+}
+
+// Stage performers participate in the same launch binding/authority controls as work.
+export function taskPerformers(graph) {
+  return (graph?.Nodes || []).flatMap(node => [node.Performer, node.Stages?.Plan?.Performer, ...(node.Stages?.Checks || []).map(s => s.Performer), node.Stages?.Review?.Performer].filter(Boolean));
 }
