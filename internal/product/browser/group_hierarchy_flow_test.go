@@ -11,7 +11,9 @@ func TestBrowserGroupHierarchyUsesStableParentsAndCanUnnest(t *testing.T) {
 	for _, id := range []string{"parent", "child", "other"} {
 		require.NoError(t, operator.Call(ctx, "POST", "/v2/groups", map[string]any{"id": id, "name": "Same label"}, nil))
 	}
+	page.MustElement("main:not([inert])")
 	page.MustElement("#refresh").MustClick()
+	page.MustWait(`()=>!!document.querySelector("#group-management [data-group-id=child]")`)
 	page.MustElementR("summary", "^Group settings$").MustClick()
 	page.MustElementR("#group-management [data-group-id=child] button", "^Move group$").MustClick()
 	page.MustElement("#editor [name=parent]").MustSelect("Same label · parent")
