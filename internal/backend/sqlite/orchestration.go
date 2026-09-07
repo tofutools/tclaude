@@ -1070,7 +1070,20 @@ func (s *Store) AdvanceTrigger(ctx context.Context, state model.AutomationCondit
 	if err != nil {
 		return app.OccurrenceRecord{}, false, classify(err)
 	}
+	repeated := false
 	if occurrence != nil {
+		var existing model.OccurrenceID
+		lookupErr := tx.QueryRowContext(ctx, `SELECT id FROM automation_occurrences WHERE rule_revision_id=? AND source_occurrence_key=?`, occurrence.RuleRevisionID, occurrence.SourceOccurrenceKey).Scan(&existing)
+		if lookupErr == nil {
+			if existing != occurrence.ID {
+				return app.OccurrenceRecord{}, false, app.ErrConflict
+			}
+			repeated = true
+		} else if !errors.Is(lookupErr, sql.ErrNoRows) {
+			return app.OccurrenceRecord{}, false, lookupErr
+		}
+	}
+	if occurrence != nil && !repeated {
 		if err = applyOccurrenceOverlapTx(ctx, tx, occurrence); err != nil {
 			return app.OccurrenceRecord{}, false, err
 		}
@@ -1095,7 +1108,7 @@ func (s *Store) AdvanceTrigger(ctx context.Context, state model.AutomationCondit
 		return app.OccurrenceRecord{}, false, nil
 	}
 	record, err := s.Occurrence(ctx, occurrence.ID)
-	return record, false, err
+	return record, repeated, err
 }
 
 // AdvanceSchedule owns the schedule cursor and optional occurrence insertion in

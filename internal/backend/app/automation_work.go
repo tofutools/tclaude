@@ -488,7 +488,7 @@ func expiredRecipients(in []model.OccurrenceRecipient) []model.OccurrenceRecipie
 func deniedRecipients(in []model.OccurrenceRecipient, detail string) []model.OccurrenceRecipient {
 	out := append([]model.OccurrenceRecipient(nil), in...)
 	for i := range out {
-		if out[i].Disposition == model.RecipientPending || out[i].Disposition == model.RecipientQueued {
+		if out[i].Disposition == model.RecipientPending {
 			out[i].Disposition, out[i].Detail = model.RecipientDenied, detail
 		}
 	}
