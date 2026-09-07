@@ -24,7 +24,7 @@ func (s *Service) advanceGraphWork(ctx context.Context, record WorkRunRecord) (W
 		return s.expireGraphWork(ctx, record, now)
 	}
 	for _, attempt := range record.Run.NodeAttempts {
-		if attempt.State != model.NodeAttemptWaiting || attempt.DecisionID == "" {
+		if (attempt.State != model.NodeAttemptWaiting && attempt.State != model.NodeAttemptBlocked) || attempt.DecisionID == "" {
 			continue
 		}
 		decision, err := s.store.Decision(ctx, attempt.DecisionID)
@@ -33,6 +33,14 @@ func (s *Service) advanceGraphWork(ctx context.Context, record WorkRunRecord) (W
 		}
 		if decision.Submission != nil {
 			return s.applyAnsweredDecision(ctx, record, attempt, *decision.Submission)
+		}
+	}
+	for _, attempt := range record.Run.NodeAttempts {
+		if attempt.State == model.NodeAttemptRetryWait && attempt.RetryAt != nil && !now.Before(*attempt.RetryAt) {
+			transition := GraphTransition{WorkRunID: record.Run.ID, ExpectedRevision: record.Run.Revision,
+				Updates:  []GraphAttemptUpdate{{Ref: attempt.Ref, State: model.NodeAttemptReady}},
+				RunState: model.WorkRunRunning, ControlState: model.WorkControlActive, RunOutcome: record.Run.Outcome, At: now}
+			return s.store.ApplyGraphTransition(ctx, transition)
 		}
 	}
 	for _, attempt := range record.Run.NodeAttempts {
