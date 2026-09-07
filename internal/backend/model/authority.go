@@ -184,6 +184,8 @@ type AutomationDelegation struct {
 // bounds grant no configuration-bearing effect; operator authority is the only
 // unbounded case.
 type ConfigurationBounds struct {
+	// Environments permits exact authored sets; absent permits only empty environment.
+	Environments          []Environment `json:",omitempty"`
 	Harnesses             []string
 	Models                []string
 	WorkingDirectoryRoots []string

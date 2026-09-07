@@ -464,6 +464,9 @@ func configurationMatches(bounds model.ConfigurationBounds, requested *model.Des
 	if requested == nil {
 		return true
 	}
+	if !environmentMatches(bounds.Environments, requested.Environment) {
+		return false
+	}
 	if len(bounds.Harnesses) == 0 || len(bounds.Models) == 0 || len(bounds.WorkingDirectoryRoots) == 0 || len(bounds.ApprovalModes) == 0 || len(bounds.SandboxModes) == 0 {
 		return false
 	}
@@ -863,4 +866,19 @@ func requestScope(principal model.Principal) string {
 
 func sameRequester(left, right model.Principal) bool {
 	return left.Kind == right.Kind && left.AgentID == right.AgentID && left.ExecutionID == right.ExecutionID && left.AutomationRun == right.AutomationRun && left.Authority == right.Authority
+}
+
+func environmentMatches(allowed []model.Environment, requested model.Environment) bool {
+	if requested.Validate() != nil {
+		return false
+	}
+	if len(allowed) == 0 {
+		return len(requested) == 0
+	}
+	for _, candidate := range allowed {
+		if candidate.Validate() == nil && candidate.Equal(requested) {
+			return true
+		}
+	}
+	return false
 }

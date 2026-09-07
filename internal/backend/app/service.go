@@ -1071,7 +1071,7 @@ func completionFromDisposition(operation model.Operation, execution model.Execut
 }
 
 func resolvedSpec(executionID model.ExecutionID, agentID model.AgentID, desired model.DesiredConfiguration, conversationID model.ConversationID) model.ResolvedExecutionSpec {
-	return model.ResolvedExecutionSpec{ExecutionID: executionID, Workload: model.ExecutionWorkloadHarness, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, Effort: desired.Effort, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox}
+	return model.ResolvedExecutionSpec{ExecutionID: executionID, Workload: model.ExecutionWorkloadHarness, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, Effort: desired.Effort, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox, Environment: desired.Environment.Clone()}
 }
 
 func actionForOperation(kind model.OperationKind) model.Action {
@@ -1154,6 +1154,9 @@ func settlementContext(requestContext context.Context) (context.Context, context
 }
 
 func validateDesired(desired model.DesiredConfiguration) error {
+	if err := desired.Environment.Validate(); err != nil {
+		return fail(ErrInvalid, "%v", err)
+	}
 	if err := model.ValidateEffort(desired.Effort); err != nil {
 		return fail(ErrInvalid, "%v", err)
 	}

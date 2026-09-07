@@ -90,12 +90,23 @@ func TestBrowserRoleAssignmentAndGrantScopeRemainExact(t *testing.T) {
 	page.MustElement("#editor [name=roots]").MustInput("/tmp")
 	page.MustElement("#editor [name=approvals]").MustSelect("supervised")
 	page.MustElement("#editor [name=sandboxes]").MustSelect("workspace_write")
+	page.MustElementR("#editor button", "^Add allowed environment$").MustClick()
+	page.MustElementR("#editor button", "^Add variable$").MustClick()
+	page.MustElement("#editor .launch-environment-row input").MustInput("APP_CHOICE")
+	page.MustElement("#editor .launch-environment-row textarea").MustInput("allowed")
+	desired.Environment = model.Environment{"APP_CHOICE": "allowed"}
+
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
 	require.NoError(t, actor.Call(ctx, "PUT", "/v2/agents/beta", map[string]any{"name": "beta updated", "desired": desired, "expected_revision": 1}, nil))
 	outside := desired
 	outside.Model = "outside"
 	require.ErrorAs(t, actor.Call(ctx, "PUT", "/v2/agents/beta", map[string]any{"name": "beta outside", "desired": outside, "expected_revision": 2}, nil), &denied)
+	require.Equal(t, 403, denied.Status)
+
+	outside = desired
+	outside.Environment = model.Environment{"APP_CHOICE": "outside"}
+	require.ErrorAs(t, actor.Call(ctx, "PUT", "/v2/agents/beta", map[string]any{"name": "beta outside environment", "desired": outside, "expected_revision": 2}, nil), &denied)
 	require.Equal(t, 403, denied.Status)
 
 }

@@ -1094,3 +1094,29 @@ configuration. Opening or cancelling writes nothing. The source agent, its
 saved-profile selection and any running execution remain unchanged. This copies
 authored desired settings; it does not probe effective native settings or copy
 runtime state, authority, messages or launch intent.
+
+### Configured launch environments
+
+Agent settings and saved configurations expose literal environment name/value
+rows. Group Launch defaults can supply shared values; Create member from default
+shows the effective configured environment and accepts explicit overrides. The
+precedence is group, pinned saved configuration, then explicit member overrides.
+The resulting agent settings are copied into each admitted execution. Later
+profile or group edits do not change that execution or existing agent settings.
+
+The typed `Environment` map carries only explicitly configured values. The API
+never reads the backend's ambient environment into this projection. Values are
+not interpolated as shell expressions. Provider-owned credential, home, callback,
+loader, and policy control names are reserved. All four provider adapters validate
+and copy the values before preparation and pass them through the process boundary.
+
+Configuration authority includes exact allowed `Environments` sets alongside the
+existing harness/model/directory/approval/confinement lists. Omitting the new list
+permits only an empty configured environment, preserving the scope of old grants.
+The Access, group owner, and automation editors can author exact sets. Current
+release and durable launch retry checks use the admitted environment.
+
+Offline conversion preserves valid legacy profile, agent, and group environment
+rows. An unsupported or ambiguous set remains in retained source evidence with a
+`launch_environment_retained_unmapped` diagnostic. Conversion creates no execution
+or active grant. Group environment does not dynamically inherit from parent groups.

@@ -69,7 +69,7 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 	inputPath := filepath.Join(root, "input")
 	bootstrapPath := filepath.Join(root, "bootstrap")
 	executable := filepath.Join(root, "claude-fake")
-	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CLAUDE_TEST_ARGV\"\nprintf '%s\\n' \"$TCLAUDE_BACKEND_SOCKET\" > \"$CLAUDE_TEST_BOOTSTRAP\"\ncat \"$TCLAUDE_BACKEND_CREDENTIAL_FILE\" >> \"$CLAUDE_TEST_BOOTSTRAP\"\nwhile IFS= read -r line; do\n  printf '%s\\n' \"$line\" >> \"$CLAUDE_TEST_INPUT\"\ndone\n"
+	script := "#!/bin/sh\nprintf '%s' \"$APP_ENV_PROBE\" > \"$APP_ENV_OUTPUT\"\nprintf '%s\\n' \"$@\" > \"$CLAUDE_TEST_ARGV\"\nprintf '%s\\n' \"$TCLAUDE_BACKEND_SOCKET\" > \"$CLAUDE_TEST_BOOTSTRAP\"\ncat \"$TCLAUDE_BACKEND_CREDENTIAL_FILE\" >> \"$CLAUDE_TEST_BOOTSTRAP\"\nwhile IFS= read -r line; do\n  printf '%s\\n' \"$line\" >> \"$CLAUDE_TEST_INPUT\"\ndone\n"
 	require.NoError(t, os.WriteFile(executable, []byte(script), 0o700))
 	require.NoError(t, os.Setenv("CLAUDE_TEST_ARGV", argvPath))
 	require.NoError(t, os.Setenv("CLAUDE_TEST_INPUT", inputPath))
@@ -96,6 +96,7 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 			Sandbox: model.SandboxWorkspaceWrite,
 		},
 	}
+	request.Spec.Environment = model.Environment{"APP_ENV_PROBE": "literal $HOME\nwith=equals", "APP_ENV_OUTPUT": filepath.Join(root, "environment")}
 	prepared, err := provider.Prepare(context.Background(), request)
 	require.NoError(t, err)
 	description := prepared.Describe()
@@ -111,6 +112,11 @@ func TestProviderOwnsTerminalLaunchInteractionRecoveryAndStop(t *testing.T) {
 	permit := &testPermit{execution: request.Spec.ExecutionID, operation: "operation_launch"}
 	released, err := prepared.Release(context.Background(), permit)
 	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		raw, err := os.ReadFile(filepath.Join(root, "environment"))
+		return err == nil && string(raw) == "literal $HOME\nwith=equals"
+	}, 5*time.Second, 10*time.Millisecond)
+
 	require.True(t, permit.consumed.Load())
 	require.Equal(t, ports.ReleaseStarted, released.State)
 	require.NotNil(t, released.Runtime)

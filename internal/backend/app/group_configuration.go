@@ -10,12 +10,14 @@ import (
 )
 
 type SetGroupConfigurationRequest struct {
+	Environment      model.Environment
 	Principal        model.Principal
 	GroupID          model.GroupID
 	Profile          *model.ConfigurationProfileRef
 	ExpectedRevision model.Revision
 }
 type CreateGroupMemberRequest struct {
+	Environment             model.Environment
 	Context                 RequestContext
 	GroupID                 model.GroupID
 	ID                      model.AgentID
@@ -57,7 +59,7 @@ func (s *Service) SetGroupConfiguration(ctx context.Context, in SetGroupConfigur
 	if err := requireOperator(in.Principal); err != nil {
 		return model.GroupConfiguration{}, err
 	}
-	if in.GroupID.Validate() != nil || in.ExpectedRevision >= math.MaxInt64 {
+	if in.Environment.Validate() != nil || in.GroupID.Validate() != nil || in.ExpectedRevision >= math.MaxInt64 {
 		return model.GroupConfiguration{}, ErrInvalid
 	}
 	if in.Profile != nil {
@@ -79,7 +81,7 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	if err := requireOperator(in.Context.Principal); err != nil {
 		return GroupMemberResult{}, err
 	}
-	if in.Context.RequestID.Validate() != nil || in.GroupID.Validate() != nil || in.ID.Validate() != nil || strings.TrimSpace(in.Name) == "" || len(in.Name) > 1024 || !utf8.ValidString(in.Name) || in.ExpectedGroupRevision == 0 || in.ExpectedGroupRevision >= math.MaxInt64 || in.ExpectedDefaultRevision == 0 || in.ExpectedDefaultRevision >= math.MaxInt64 {
+	if in.Environment.Validate() != nil || in.Context.RequestID.Validate() != nil || in.GroupID.Validate() != nil || in.ID.Validate() != nil || strings.TrimSpace(in.Name) == "" || len(in.Name) > 1024 || !utf8.ValidString(in.Name) || in.ExpectedGroupRevision == 0 || in.ExpectedGroupRevision >= math.MaxInt64 || in.ExpectedDefaultRevision == 0 || in.ExpectedDefaultRevision >= math.MaxInt64 {
 		return GroupMemberResult{}, ErrInvalid
 	}
 	store, ok := s.store.(GroupConfigurationStore)
@@ -99,6 +101,10 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	desired, ref, err := s.resolveConfigurationSelection(ctx, model.DesiredConfiguration{}, defaults.Profile)
 	if err != nil {
 		return GroupMemberResult{}, err
+	}
+	desired.Environment, err = model.MergeEnvironment(defaults.Environment, desired.Environment, in.Environment)
+	if err != nil {
+		return GroupMemberResult{}, fail(ErrInvalid, "%v", err)
 	}
 	if err = validateDesired(desired); err != nil {
 		return GroupMemberResult{}, err
