@@ -70,11 +70,11 @@ type OrchestrationAPI interface {
 	GetDecision(context.Context, GetDecisionRequest) (DecisionResult, error)
 	ListPendingDecisions(context.Context, ListPendingDecisionsRequest) ([]DecisionResult, error)
 	SubmitDecision(context.Context, SubmitDecisionRequest) (DecisionResult, error)
+	ResolveBlocked(context.Context, ResolveBlockedRequest) (WorkRunResult, error)
 	SaveAutomationRule(context.Context, SaveAutomationRuleRequest) (AutomationRuleResult, error)
 	GetAutomationRule(context.Context, GetAutomationRuleRequest) (AutomationRuleResult, error)
 	ListAutomationRules(context.Context, ListAutomationRulesRequest) ([]model.AutomationRule, error)
 	RunRuleNow(context.Context, RunRuleNowRequest) (OccurrenceResult, error)
-	ObserveAutomationFact(context.Context, ObserveAutomationFactRequest) ([]OccurrenceResult, error)
 	DeployTeam(context.Context, DeployTeamRequest) (TeamDeploymentResult, error)
 	GetTeamDeployment(context.Context, GetTeamDeploymentRequest) (TeamDeploymentResult, error)
 	ListTeamDeployments(context.Context, ListTeamDeploymentsRequest) ([]TeamDeploymentResult, error)
@@ -183,6 +183,7 @@ type SubmitDecisionRequest struct {
 	Context                RequestContext
 	DecisionID             model.DecisionID
 	ExpectedWindowRevision model.Revision
+	ExpectedRunRevision    model.Revision
 	Answer                 string
 	Reason                 string
 	EvidenceRefs           []model.WorkEvidenceID
@@ -230,11 +231,6 @@ type RunRuleNowRequest struct {
 	OccurrenceID         model.OccurrenceID
 	SourceOccurrenceKey  string
 	Recipients           []model.AgentID
-}
-
-type ObserveAutomationFactRequest struct {
-	Principal model.Principal
-	Fact      model.NormalizedFact
 }
 
 type DeployTeamRequest struct {
@@ -646,4 +642,15 @@ type WorkReconcileReport struct {
 	Pending     []model.WorkRunID
 	Uncertain   []model.WorkRunID
 	Occurrences []model.OccurrenceID
+}
+
+type ResolveBlockedRequest struct {
+	Context                RequestContext
+	DecisionID             model.DecisionID
+	Attempt                model.WorkAttemptRef
+	ExpectedWindowRevision model.Revision
+	ExpectedRunRevision    model.Revision
+	Action                 model.BlockedResolutionAction
+	Reason                 string
+	EvidenceRefs           []model.WorkEvidenceID
 }
