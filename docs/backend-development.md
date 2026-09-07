@@ -322,6 +322,13 @@ fresh handoff when an exact fork is unsupported. Removing a dirty checkout needs
 an explicit discard selection and workspace confirmation. Cancelling a work run
 does not imply its worker stopped.
 
+Opening another terminal keeps existing attachments in the Terminals tab. Select
+a terminal tab to switch without losing its output; use the arrow keys, Home or
+End while a tab has focus to switch with the keyboard. Disconnect retains the
+local scrollback and offers Reconnect. Close tab removes that view. Each tab
+targets the exact execution originally selected; it does not follow a replacement
+execution automatically.
+
 Disconnecting a terminal or closing the browser server closes the attachment
 view, not its workload. Terminal resize is advertised only when the attachment
 supports it. The negotiated `tclaude.terminal.v1` WebSocket protocol uses binary
