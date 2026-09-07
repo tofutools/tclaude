@@ -24,6 +24,7 @@ type ImportBatch struct {
 	ImportedAttachments   []model.ImportedAttachment
 	ConfigurationProfiles []ConfigurationProfileResult
 	ConfigurationDefaults *model.ConfigurationDefaults
+	GroupConfigurations   []model.GroupConfiguration `json:",omitempty"`
 	Definitions           []DefinitionRecord
 	AutomationRules       []AutomationRuleRecord
 	Workspaces            []model.Workspace

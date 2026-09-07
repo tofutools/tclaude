@@ -1022,3 +1022,18 @@ Offline import preserves supported legacy limits and verifies them on exact
 retry. Unsupported values remain in retained source evidence with a
 `group_capacity_retained_unmapped` diagnostic. Imported membership remains intact
 even if it already exceeds a configured limit.
+
+## Imported group launch defaults
+
+Offline conversion preserves each group's legacy default profile ID as an exact
+immutable group configuration reference. Source IDs are resolved independently
+of profile names and aliases. Import does not create a new member, start work,
+or restore legacy authority. The regular Launch defaults and Create member from
+default controls read the imported selection through the same application API.
+
+Archived profile selections remain inspectable, but cannot create fresh members
+until the operator explicitly restores or replaces that profile. Missing or
+unsupported selections are refused by source preflight or retained with a
+`group_default_retained_unmapped` diagnostic; conversion never guesses another
+profile. Exact import retries verify both the configuration row and pinned
+profile reference and refuse changed targets.
