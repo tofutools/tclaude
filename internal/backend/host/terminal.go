@@ -154,7 +154,11 @@ func (p *PreparedTerminal) Release(spec ProcessSpec) (*Terminal, error) {
 	args = append(args, "--", spec.Executable)
 	args = append(args, spec.Args...)
 	cmd := exec.Command(p.host.Executable, args...)
-	cmd.Env = MergeEnvironment(os.Environ(), spec.Env)
+	if spec.ExactEnvironment {
+		cmd.Env = MergeEnvironment(nil, spec.Env)
+	} else {
+		cmd.Env = MergeEnvironment(os.Environ(), spec.Env)
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		terminal, reconcileErr := p.reconcile()
