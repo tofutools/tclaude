@@ -148,10 +148,11 @@ func (s *Service) SetConversationMetadata(ctx context.Context, req SetConversati
 }
 
 func (s *Service) RegisterWorkspace(ctx context.Context, req RegisterWorkspaceRequest) (WorkspaceResult, error) {
-	req.Intent.Provenance = model.WorkspaceRegistered
-	if req.Intent.Ownership == "" {
-		req.Intent.Ownership = model.WorkspaceExternal
+	if req.Intent.Ownership != "" && req.Intent.Ownership != model.WorkspaceExternal {
+		return WorkspaceResult{}, fail(ErrInvalid, "registration cannot take ownership of an existing checkout")
 	}
+	req.Intent.Provenance = model.WorkspaceRegistered
+	req.Intent.Ownership = model.WorkspaceExternal
 	return s.createWorkspace(ctx, req.Context, req.ID, req.Intent, model.ActionRegisterWorkspace)
 }
 
@@ -188,7 +189,22 @@ func (s *Service) createWorkspace(ctx context.Context, request RequestContext, i
 	workflowCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancel()
 	permit := &resourceEffectPermit{store: s.store, operationID: op.ID, now: s.now}
-	effect, effectErr := s.workspaceHost.CreateCheckout(workflowCtx, ports.CheckoutCreateRequest{WorkspaceID: id, Intent: intent}, permit)
+	var effect ports.WorkspaceEffectResult
+	var effectErr error
+	if action == model.ActionRegisterWorkspace {
+		// Registration reads an existing checkout and retains external ownership.
+		// The existing inspection port returns its private registration receipt;
+		// it does not create a worktree or write a Git ownership marker.
+		effectErr = permit.Consume(workflowCtx)
+		if effectErr == nil {
+			effect, effectErr = s.workspaceHost.InspectWorkspace(workflowCtx, workspace)
+		}
+		if effectErr != nil || effect.Disposition != ports.EffectAccepted {
+			effect.Disposition = ports.EffectRefused
+		}
+	} else {
+		effect, effectErr = s.workspaceHost.CreateCheckout(workflowCtx, ports.CheckoutCreateRequest{WorkspaceID: id, Intent: intent}, permit)
+	}
 	state := model.WorkspacePending
 	switch effect.Disposition {
 	case ports.EffectAccepted:
