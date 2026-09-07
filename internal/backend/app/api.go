@@ -77,6 +77,9 @@ type OrchestrationAPI interface {
 	ObserveAutomationFact(context.Context, ObserveAutomationFactRequest) ([]OccurrenceResult, error)
 	DeployTeam(context.Context, DeployTeamRequest) (TeamDeploymentResult, error)
 	GetTeamDeployment(context.Context, GetTeamDeploymentRequest) (TeamDeploymentResult, error)
+	RebriefDeployment(context.Context, RebriefDeploymentRequest) (TeamDeploymentResult, error)
+	AdvanceAdvisoryPhase(context.Context, AdvanceAdvisoryPhaseRequest) (TeamDeploymentResult, error)
+	StandDownDeployment(context.Context, StandDownDeploymentRequest) (TeamDeploymentResult, error)
 	ListOccurrences(context.Context, ListOccurrencesRequest) ([]OccurrenceResult, error)
 }
 
