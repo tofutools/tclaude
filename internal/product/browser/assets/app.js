@@ -184,6 +184,7 @@ function workCard(result){
  for(const decision of result.decisions||[])card.append(el('p',`${decision.Question||decision.ID}: ${decision.State}`));
  if(result.decision)card.append(el('strong',`${result.decision.decision}: ${result.decision.reason}`));
  const actions=el('div',undefined,'actions');
+ if(run.graph)actions.append(button('Inspect process graph',async()=>{const {openProcessMonitor}=await import('/process-monitor.js');await openProcessMonitor(run.id,{api,el,button,openDecisions:()=>selectTab('decisions')})}));
  const pending=(run.attempts||[]).find(a=>a.step==='await_evidence'&&a.state==='pending');
  if(run.state==='waiting'&&pending)actions.append(button('Record evidence',()=>edit('Record attributed evidence',[{name:'detail',label:'Evidence',multiline:true},{name:'artifact',label:'Artifact revision',required:false}],f=>api('/v2/work/evidence',{request_id:f.requestID,work_run_id:run.id,expected_revision:run.revision,step:pending.step,attempt:pending.attempt,kind:'artifact',detail:f.detail,artifact_revision:f.artifact}))));
  const evaluate=(run.attempts||[]).find(a=>a.step==='evaluate'&&a.state==='pending');

@@ -609,3 +609,9 @@ tclaude automation set-enabled RULE_ID --file activation.json
 The file contains `request_id`, `expected_revision`, and `enabled`. Repeating
 that exact request is safe after a lost response; a changed request under the
 same ID is rejected.
+
+Process work cards provide **Inspect process graph**. The viewer uses the run's
+pinned graph and durable node states, including nodes that have not activated.
+Select a node to inspect all of its activations and attempts, retry times,
+execution/operation identifiers, decisions, and attributed evidence. Refresh
+reads the current run revision; it does not restart work or infer completion.
