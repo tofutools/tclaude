@@ -11,6 +11,7 @@ import (
 // Store exposes application-owned persistence operations. Methods that admit
 // effects atomically create the Operation and reserve its exact target.
 type Store interface {
+	SandboxProfileStore
 	ReadPresentation(context.Context) (model.PresentationPreferences, error)
 	PutPresentation(context.Context, model.PresentationPreferences, model.Revision) (model.PresentationPreferences, error)
 	OrchestrationStore
