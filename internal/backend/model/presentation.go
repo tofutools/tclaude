@@ -2,7 +2,8 @@ package model
 
 // PresentationPreferences are operator UI choices; they confer no agent authority.
 type PresentationPreferences struct {
-	NeutralTerminals bool `json:",omitempty"`
+	GroupOrder       []GroupID `json:",omitempty"`
+	NeutralTerminals bool      `json:",omitempty"`
 	Mode             string
 	SoundEnabled     bool
 	RadioInRegular   bool

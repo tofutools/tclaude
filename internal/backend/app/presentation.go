@@ -31,6 +31,16 @@ func (s *Service) PutPresentation(ctx context.Context, in PutPresentationRequest
 		return PresentationResult{}, ErrInvalid
 	}
 	p := in.Preferences
+	if len(p.GroupOrder) > 10000 {
+		return PresentationResult{}, ErrInvalid
+	}
+	seen := map[model.GroupID]bool{}
+	for _, id := range p.GroupOrder {
+		if id.Validate() != nil || seen[id] {
+			return PresentationResult{}, ErrInvalid
+		}
+		seen[id] = true
+	}
 	if p.Mode != "regular" && p.Mode != "slop" && p.Mode != "wizard" {
 		return PresentationResult{}, ErrInvalid
 	}

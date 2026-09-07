@@ -949,3 +949,12 @@ readable through this route.
 The browser discards pending file reads after a pane switch, reconnect, pagehide
 or sign-out. Downloaded files are not rendered inline. These are bounded current
 filesystem reads, not immutable native-history artifacts.
+
+### Saved group order
+
+Move group earlier/later in Group settings orders siblings without changing their
+parent, direct member order or authority. The flat stable-ID order is saved in
+operator presentation preferences and applies at every nesting level. New groups
+follow saved entries in snapshot order. Reload saved group order also reloads the
+saved presentation preferences; conflicting saves remain visibly unsaved until
+reloaded. Preferences are revision-checked and do not start or stop workloads.
