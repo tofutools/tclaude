@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"strings"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
@@ -34,7 +35,7 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	}
 	provider, ok := s.providers.Provider(desired.Harness)
 	if !ok {
-		return record, fail(ErrUnavailable, "harness %q has no provider", desired.Harness)
+		return s.recordGraphAttemptUnavailable(ctx, record, attempt, fail(ErrUnavailable, "harness %q has no provider", desired.Harness))
 	}
 	if !provider.Capabilities().PreparedInitialInput {
 		return record, fail(ErrUnsupported, "provider %q cannot prepare required first work", provider.Name())
@@ -47,7 +48,9 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	spec := resolvedSpec(executionID, agent.ID, desired, conversationID)
 	spec.ConfigurationProfile = agent.ConfigurationProfile
 	execution := model.Execution{ID: executionID, Workload: model.ExecutionWorkloadHarness, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, State: model.ExecutionReserved, Attempt: 1, ContextReadiness: model.ContextReadinessPending, Revision: 1, CreatedAt: now, UpdatedAt: now}
-	if err = s.requireNativeGuidanceComposition(ctx, execution); err != nil {
+	if err = s.requireNativeGuidanceComposition(ctx, execution); errors.Is(err, ErrUnavailable) {
+		return s.recordGraphAttemptUnavailable(ctx, record, attempt, err)
+	} else if err != nil {
 		return record, err
 	}
 	operation := model.Operation{ID: operationID, RequestID: model.RequestID(issuanceID), Kind: model.OperationAssignWork, Principal: record.Run.Requester, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
@@ -59,7 +62,7 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	var credential *ports.ActionCredentialMaterial
 	if _, capable := provider.(ports.ActionCredentialProvider); capable {
 		if strings.TrimSpace(s.agentAPIEndpoint) == "" {
-			return record, fail(ErrUnavailable, "agent API endpoint is required for credential-capable provider")
+			return s.recordGraphAttemptUnavailable(ctx, record, attempt, fail(ErrUnavailable, "agent API endpoint is required for credential-capable provider"))
 		}
 		secret, generateErr := generateActionCredential()
 		if generateErr != nil {
