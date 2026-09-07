@@ -279,3 +279,18 @@ func TestProgramCrashOwnerHelper(t *testing.T) {
 	}
 	os.Exit(0)
 }
+
+func TestProgramOutputCompletionDuringExitObservation(t *testing.T) {
+	output := newBoundedOutputFile(t.TempDir(), "stdout", "truncated", "complete", 128)
+	pending, err := observeOutputPending(func() ProcessObservation {
+		// The spooler completes and exits after the first filesystem read but
+		// before the process observation returns.
+		require.NoError(t, os.WriteFile(output.completePath, nil, 0600))
+		return ProcessObservation{Exited: true}
+	}, output)
+	require.NoError(t, err)
+	require.False(t, pending)
+	require.NoError(t, os.Remove(output.completePath))
+	_, err = observeOutputPending(func() ProcessObservation { return ProcessObservation{Exited: true} }, output)
+	require.ErrorContains(t, err, "without durable completion")
+}

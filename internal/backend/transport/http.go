@@ -45,6 +45,9 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	if files, ok := application.(app.TerminalFileAPI); ok {
 		h.registerTerminalFiles(files)
 	}
+	if clone, ok := application.(app.GroupCloneAPI); ok {
+		h.registerGroupClone(clone)
+	}
 	if capacity, ok := application.(app.GroupCapacityAPI); ok {
 		h.registerGroupCapacity(capacity)
 	}

@@ -1042,3 +1042,23 @@ Imported profile references preserve their source namespace: stable row IDs,
 profile names and aliases are resolved separately. A numeric profile name does
 not select the same-numbered row. The global default's stable-ID preference takes
 precedence over its retained name; aliases resolve their exact profile ID.
+
+### Clone a group without starting work
+
+Group settings → **Clone group** creates a separate top-level group. Choose
+whether to copy active members as new offline agents and whether to retain the
+source's exact pinned launch default. Descriptions, mission, links and the
+selected member limit are copied; retired members are skipped. The new agents
+keep their copied desired configuration and source lineage. Source groups and
+shared memberships remain unchanged.
+
+The copy has no owner or copied permissions, executions, messages, workspaces,
+or automation. Starting work and assigning authority remain explicit actions.
+Archived configuration selections cannot be used to create fresh copies.
+
+`POST /v2/groups/{id}/clone` accepts a request ID, new group ID/name, source group
+revision, exact member revisions when copying members, and the default revision
+when copying the default. Admission checks the snapshot and commits the complete
+copy atomically. An identical retry returns its stored result, including after
+restart or later source changes; changed intent conflicts. Stale source changes
+or rejected configurations leave no partial copy.

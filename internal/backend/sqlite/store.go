@@ -43,6 +43,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize replacement backend schema: %w", err)
 	}
+	if _, err := s.db.ExecContext(ctx, groupCloneSchema); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, groupCapacitySchema); err != nil {
 		return err
 	}

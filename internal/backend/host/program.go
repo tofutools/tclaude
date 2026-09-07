@@ -773,16 +773,30 @@ func recoverProgramSpooler(identity *ProcessIdentity, marker string, output *bou
 }
 
 func outputPending(process *Process, output *boundedOutputFile) (bool, error) {
+	var observe func() ProcessObservation
+	if process != nil {
+		observe = process.Observe
+	}
+	return observeOutputPending(observe, output)
+}
+
+func observeOutputPending(observe func() ProcessObservation, output *boundedOutputFile) (bool, error) {
 	complete, err := output.complete()
 	if err != nil || complete {
 		return false, err
 	}
-	if process == nil {
+	if observe == nil {
 		return false, fmt.Errorf("program output spooler completion is unprovable")
 	}
-	observation := process.Observe()
+	observation := observe()
 	if observation.Running {
 		return true, nil
+	}
+	// Completion may have been published between the first marker read and
+	// the process observation. Re-read after exit before reporting lost output.
+	complete, err = output.complete()
+	if err != nil || complete {
+		return false, err
 	}
 	return false, fmt.Errorf("program output spooler exited without durable completion")
 }
