@@ -43,7 +43,7 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize replacement backend schema: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, groupCloneSchema); err != nil {
+	if _, err := s.db.ExecContext(ctx, shellRequestSchema+groupCloneSchema); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, groupCapacitySchema); err != nil {
@@ -82,8 +82,11 @@ func (s *Store) initialize(ctx context.Context) error {
 	for _, migration := range []struct{ table, column, definition string }{
 		{"definition_revisions", "editor_layout_json", "BLOB"},
 		{"operations", "initial_message_digest", "TEXT NOT NULL DEFAULT ''"},
+		{"operation_authority", "requested_environment_json", "BLOB"},
+		{"operation_additional_authority", "requested_environment_json", "BLOB"},
 		{"group_configurations", "environment_json", "BLOB NOT NULL DEFAULT '{}'"},
 		{"agents", "environment_json", "BLOB NOT NULL DEFAULT '{}'"},
+		{"executions", "shell_group_json", "BLOB"},
 		{"executions", "environment_json", "BLOB NOT NULL DEFAULT '{}'"},
 		{"agents", "effort", "TEXT NOT NULL DEFAULT ''"},
 		{"executions", "effort", "TEXT NOT NULL DEFAULT ''"},
@@ -1702,7 +1705,7 @@ func completeOperationTx(ctx context.Context, tx *sql.Tx, in app.OperationComple
 	return insertTerminalOperationFactsTx(ctx, tx, in)
 }
 
-const executionSelect = `SELECT environment_json,configuration_profile_json,id,workload_kind,agent_id,conversation_id,harness,model,effort,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,native_namespace,native_reference,native_observed_at,revision,created_at,updated_at FROM executions`
+const executionSelect = `SELECT shell_group_json,environment_json,configuration_profile_json,id,workload_kind,agent_id,conversation_id,harness,model,effort,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,native_namespace,native_reference,native_observed_at,revision,created_at,updated_at FROM executions`
 const operationSelect = `SELECT id,request_id,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,automation_delegation_json,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at FROM operations`
 const agentSelect = `SELECT environment_json,configuration_profile_json,id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,retired_at,retired_by_kind,retired_by_agent_id,retired_by_execution_id,retirement_reason,direct_notification_intent,harness,model,effort,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at FROM agents`
 
@@ -1734,13 +1737,18 @@ func scanAgent(row scanner) (model.Agent, error) {
 }
 func scanExecution(row scanner) (model.Execution, error) {
 	var e model.Execution
-	var profile, environment []byte
+	var profile, environment, shellGroup []byte
 	var observed sql.NullInt64
 	var namespace, reference string
 	var created, updated int64
-	err := row.Scan(&environment, &profile, &e.ID, &e.Workload, &e.AgentID, &e.ConversationID, &e.Spec.Harness, &e.Spec.Model, &e.Spec.Effort, &e.Spec.WorkingDirectory, &e.Spec.Approval, &e.Spec.Sandbox, &e.State, &e.Attempt, &e.ContextReadiness, &e.ContextOrder, &e.Evidence.Provider, &e.Evidence.Version, &e.Evidence.Payload, &namespace, &reference, &observed, &e.Revision, &created, &updated)
+	err := row.Scan(&shellGroup, &environment, &profile, &e.ID, &e.Workload, &e.AgentID, &e.ConversationID, &e.Spec.Harness, &e.Spec.Model, &e.Spec.Effort, &e.Spec.WorkingDirectory, &e.Spec.Approval, &e.Spec.Sandbox, &e.State, &e.Attempt, &e.ContextReadiness, &e.ContextOrder, &e.Evidence.Provider, &e.Evidence.Version, &e.Evidence.Payload, &namespace, &reference, &observed, &e.Revision, &created, &updated)
 	if err != nil {
 		return e, classify(err)
+	}
+	if len(shellGroup) != 0 {
+		if err := json.Unmarshal(shellGroup, &e.Spec.ShellGroup); err != nil {
+			return e, err
+		}
 	}
 	if len(profile) != 0 {
 		if err := json.Unmarshal(profile, &e.Spec.ConfigurationProfile); err != nil {
@@ -1783,7 +1791,7 @@ func insertExecution(ctx context.Context, tx *sql.Tx, e model.Execution) error {
 	if err := e.Spec.Environment.Validate(); err != nil {
 		return app.ErrInvalid
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO executions(environment_json,configuration_profile_json,id,workload_kind,agent_id,conversation_id,harness,model,effort,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, environmentJSON(e.Spec.Environment), configurationProfileJSON(e.Spec.ConfigurationProfile), e.ID, e.Workload, e.AgentID, e.ConversationID, e.Spec.Harness, e.Spec.Model, e.Spec.Effort, e.Spec.WorkingDirectory, e.Spec.Approval, e.Spec.Sandbox, e.State, e.Attempt, e.ContextReadiness, e.ContextOrder, e.Evidence.Provider, e.Evidence.Version, e.Evidence.Payload, e.Revision, nanos(e.CreatedAt), nanos(e.UpdatedAt))
+	_, err := tx.ExecContext(ctx, `INSERT INTO executions(shell_group_json,environment_json,configuration_profile_json,id,workload_kind,agent_id,conversation_id,harness,model,effort,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, shellGroupJSON(e.Spec.ShellGroup), environmentJSON(e.Spec.Environment), configurationProfileJSON(e.Spec.ConfigurationProfile), e.ID, e.Workload, e.AgentID, e.ConversationID, e.Spec.Harness, e.Spec.Model, e.Spec.Effort, e.Spec.WorkingDirectory, e.Spec.Approval, e.Spec.Sandbox, e.State, e.Attempt, e.ContextReadiness, e.ContextOrder, e.Evidence.Provider, e.Evidence.Version, e.Evidence.Payload, e.Revision, nanos(e.CreatedAt), nanos(e.UpdatedAt))
 	return classify(err)
 }
 func insertOperation(ctx context.Context, tx *sql.Tx, o model.Operation) error {

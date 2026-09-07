@@ -81,3 +81,27 @@ func (p *shellPermit) Consume(context.Context) error {
 	p.consumed = true
 	return nil
 }
+
+func TestShellHostPassesAuthoredEnvironmentLiterally(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux is unavailable")
+	}
+	root, err := os.MkdirTemp("/tmp", "shell-env-")
+	require.NoError(t, err)
+	defer os.RemoveAll(root)
+	script := root + "/shell-fixture"
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nprintf '%s' \"$APP_LITERAL\" > \"$APP_OUTPUT\"\nexec /bin/sh\n"), 0700))
+	shell, err := NewShellHost(ShellConfig{Terminal: TerminalHost{PrivateRoot: root + "/terminal"}, Executable: script})
+	require.NoError(t, err)
+	literal := "literal $HOME\nwith=equals"
+	prepared, err := shell.PrepareShell(context.Background(), ports.ShellPreparationRequest{ExecutionID: "literal-shell", Attempt: 1, WorkspaceID: "workspace", WorkingDirectory: root, Sandbox: model.SandboxUnconfined, Environment: model.Environment{"APP_LITERAL": literal, "APP_OUTPUT": root + "/observed"}})
+	require.NoError(t, err)
+	released, err := prepared.Release(context.Background(), &shellPermit{execution: "literal-shell", operation: "literal-operation"})
+	require.NoError(t, err)
+	require.NotNil(t, released.Runtime)
+	defer func() { _, _ = released.Runtime.StopHost(context.Background(), ports.StopRequest{Force: true}) }()
+	require.Eventually(t, func() bool {
+		data, err := os.ReadFile(root + "/observed")
+		return err == nil && string(data) == literal
+	}, 5*time.Second, 10*time.Millisecond)
+}

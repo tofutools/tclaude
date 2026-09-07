@@ -141,15 +141,15 @@ func TestJourneyShellUsesWorkspaceWithoutManufacturedAgentOrNativeInput(t *testi
 	for _, body := range []string{
 		`{"request_id":"shell-request","workspace_id":"workspace-a","expected_revision":3,"sandbox":"unconfined","executable":"/caller-program"}`,
 		`{"request_id":"shell-request","workspace_id":"workspace-a","expected_revision":3,"sandbox":"unconfined","agent_id":"agent-a"}`,
-		`{"request_id":"shell-request","workspace_id":"workspace-a","expected_revision":3,"sandbox":"unconfined","environment":{"KEY":"value"}}`,
+		`{"request_id":"shell-request","workspace_id":"workspace-a","expected_revision":3,"sandbox":"unconfined","initial_message":"caller command"}`,
 	} {
 		w := request(h, "POST", "/v2/shells", body, testCredential)
 		if w.Code != 400 || p.request != nil {
 			t.Fatalf("caller native input accepted: %d", w.Code)
 		}
 	}
-	w := request(h, "POST", "/v2/shells", `{"request_id":"shell-request","workspace_id":"workspace-a","expected_revision":3,"sandbox":"unconfined"}`, testCredential)
-	if w.Code != 202 || p.request == nil || p.request.Context.Principal.Kind != model.PrincipalOperator || p.request.ExpectedRevision != 3 {
+	w := request(h, "POST", "/v2/shells", `{"request_id":"shell-request","workspace_id":"workspace-a","expected_revision":3,"sandbox":"unconfined","environment":{"KEY":"literal $HOME"},"group":{"GroupID":"group-a","Revision":2,"ConfigurationRevision":4}}`, testCredential)
+	if w.Code != 202 || p.request == nil || p.request.Context.Principal.Kind != model.PrincipalOperator || p.request.ExpectedRevision != 3 || p.request.Environment["KEY"] != "literal $HOME" || p.request.Group == nil || p.request.Group.GroupID != "group-a" || p.request.Group.ConfigurationRevision != 4 {
 		t.Fatalf("shell admission: %d %+v", w.Code, p.request)
 	}
 	var body struct {

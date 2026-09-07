@@ -1146,6 +1146,25 @@ rows. An unsupported or ambiguous set remains in retained source evidence with a
 `launch_environment_retained_unmapped` diagnostic. Conversion creates no execution
 or active grant. Group environment does not dynamically inherit from parent groups.
 
+### Group shells
+
+Group settings offers **Open group shell** for an explicitly selected available
+checkout. The dialog previews the group's configured environment and accepts
+literal per-shell overrides; an agent launch profile does not apply to a shell.
+The shell is explicitly unconfined, retains its group/configuration revisions and
+effective environment, and appears on that exact group's card for attachment or
+ordinary stop. Group edits never modify an existing shell.
+
+`POST /v2/shells` accepts `environment` and optional `group` with `GroupID`,
+`Revision`, and `ConfigurationRevision`. Selecting group configuration requires
+the operator. Ordinary delegated shell starts must match current workspace
+start-shell authority and an exact environment allow-list, including the empty
+set. Admission and release recheck authority. An exact request retry checks
+current authority and returns the durable operation before mutable workspace,
+group, or provider preparation; changing the authored request conflicts. An
+admitted or uncertain operation is never started again by retrying. The normal
+workspace-use claim remains until shell exit is observed.
+
 ### Usage and cost overview
 
 Usage includes an expandable overview with UTC date presets/month navigation,

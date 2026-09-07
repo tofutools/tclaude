@@ -16,6 +16,7 @@ type ShellResourceEvidence struct {
 }
 
 type ShellPreparationRequest struct {
+	Environment      model.Environment
 	ExecutionID      model.ExecutionID
 	Attempt          model.AttemptGeneration
 	WorkspaceID      model.WorkspaceID
