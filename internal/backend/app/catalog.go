@@ -35,6 +35,7 @@ type ConfigurationProfileResult struct {
 }
 
 type SaveConfigurationProfileRequest struct {
+	Startup          *model.ProfileStartup
 	Context          RequestContext
 	ID               model.ConfigurationProfileID
 	RevisionID       model.ConfigurationProfileRevisionID
@@ -62,7 +63,25 @@ func (s *Service) SaveConfigurationProfile(ctx context.Context, req SaveConfigur
 	if err := validateDesired(req.Desired); err != nil {
 		return ConfigurationProfileResult{}, err
 	}
+	if req.Startup != nil {
+		startup := *req.Startup
+		if startup == (model.ProfileStartup{}) {
+			req.Startup = nil
+		} else {
+			if model.ValidateProfileStartup(startup) != nil {
+				return ConfigurationProfileResult{}, ErrInvalid
+			}
+			req.Startup = &startup
+		}
+	}
 	payload, _ := json.Marshal(req.Desired)
+	// Preserve the original content hash for profiles with no startup suggestions.
+	if req.Startup != nil {
+		payload, _ = json.Marshal(struct {
+			Desired model.DesiredConfiguration
+			Startup *model.ProfileStartup
+		}{req.Desired, req.Startup})
+	}
 	digest := sha256.Sum256(payload)
 	input, _ := json.Marshal(struct {
 		ID         model.ConfigurationProfileID
@@ -70,12 +89,13 @@ func (s *Service) SaveConfigurationProfile(ctx context.Context, req SaveConfigur
 		Name       string
 		Desired    model.DesiredConfiguration
 		Expected   model.Revision
-	}{req.ID, req.RevisionID, req.Name, req.Desired, req.ExpectedRevision})
+		Startup    *model.ProfileStartup `json:",omitempty"`
+	}{req.ID, req.RevisionID, req.Name, req.Desired, req.ExpectedRevision, req.Startup})
 	fingerprint := sha256.Sum256(input)
 	now := s.now().UTC()
 	return s.store.SaveConfigurationProfile(ctx, ConfigurationProfileWrite{
 		Profile:          model.ConfigurationProfile{ID: req.ID, Name: req.Name, CurrentRevisionID: req.RevisionID},
-		Revision:         model.ConfigurationProfileRevision{Ref: model.ConfigurationProfileRef{ProfileID: req.ID, RevisionID: req.RevisionID, ContentHash: hex.EncodeToString(digest[:])}, Desired: req.Desired, CreatedAt: now},
+		Revision:         model.ConfigurationProfileRevision{Ref: model.ConfigurationProfileRef{ProfileID: req.ID, RevisionID: req.RevisionID, ContentHash: hex.EncodeToString(digest[:])}, Desired: req.Desired, Startup: req.Startup, CreatedAt: now},
 		ExpectedRevision: req.ExpectedRevision, RequestID: req.Context.RequestID, RequestFingerprint: hex.EncodeToString(fingerprint[:]), At: now,
 	})
 }

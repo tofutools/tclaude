@@ -78,11 +78,12 @@ func (h *Handler) registerConfigurationCatalog(catalog app.ConfigurationCatalogA
 			ExpectedRevision model.Revision                       `json:"expected_revision"`
 			Name             string                               `json:"name"`
 			Desired          model.DesiredConfiguration           `json:"desired"`
+			Startup          *model.ProfileStartup                `json:"startup"`
 		}
 		if !decodeRequest(w, r, &body) {
 			return
 		}
-		result, err := catalog.SaveConfigurationProfile(r.Context(), app.SaveConfigurationProfileRequest{Context: body.context(principal), ID: body.ID, RevisionID: body.RevisionID, ExpectedRevision: body.ExpectedRevision, Name: body.Name, Desired: body.Desired})
+		result, err := catalog.SaveConfigurationProfile(r.Context(), app.SaveConfigurationProfileRequest{Context: body.context(principal), ID: body.ID, RevisionID: body.RevisionID, ExpectedRevision: body.ExpectedRevision, Name: body.Name, Desired: body.Desired, Startup: body.Startup})
 		if err != nil {
 			applicationError(w, err)
 			return

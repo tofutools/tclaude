@@ -19,11 +19,17 @@ import (
 // credentials, current delegation, workspace host, application and SQLite are real.
 type automationTeamProvider struct {
 	ports.Provider
+	name     string
 	delivery host.ActionCredentialHost
 	briefs   chan string
 }
 
-func (*automationTeamProvider) Name() string { return "team-fixture" }
+func (p *automationTeamProvider) Name() string {
+	if p.name != "" {
+		return p.name
+	}
+	return "team-fixture"
+}
 func (*automationTeamProvider) Capabilities() ports.ProviderCapabilities {
 	return ports.ProviderCapabilities{PreparedInitialInput: true}
 }
@@ -46,7 +52,7 @@ type automationTeamPrepared struct {
 
 func (p *automationTeamPrepared) Describe() ports.PreparedDescription {
 	d := p.accessBrowserPrepared.Describe()
-	d.Evidence.Provider = "team-fixture"
+	d.Evidence.Provider = p.spec.Harness
 	d.Requirements.WorkingDirectory = p.spec.WorkingDirectory
 	d.InitialInput = &ports.PreparedInitialInputDescription{Supported: true, Correlation: p.input.Correlation}
 	return d
