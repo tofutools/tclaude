@@ -494,7 +494,7 @@ func (s *Service) Observe(ctx context.Context, req ObserveRequest) (ObservationR
 			return ObservationResult{}, errors.Join(observeErr, s.resetAgentActivityEpisodes(ctx, execution, s.now().UTC()))
 		}
 		observation := ports.Observation{ObservedAt: hostObservation.ObservedAt, Workload: hostObservation.Workload}
-		updated, persistErr := s.store.RecordRecovery(ctx, execution.ID, stateFromObservation(observation), nil, model.ProviderEvidence{}, s.now().UTC())
+		updated, persistErr := s.store.RecordShellRecovery(ctx, execution.ID, stateFromObservation(observation), hostObservation.Evidence, s.now().UTC())
 		if persistErr != nil {
 			return ObservationResult{}, persistErr
 		}
