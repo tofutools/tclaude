@@ -60,7 +60,7 @@ class ProcessEditor {
     this.render(); this.graph.fit();
   }
 
-  dirty() { return this.saved !== JSON.stringify(this.model.value) || this.baseRevision === 0; }
+  dirty() { return (this.name && this.name.value !== this.model.value.Name) || this.saved !== JSON.stringify(this.model.value) || this.baseRevision === 0; }
   discardUnapplied() { if (this.unapplied && !confirm('Discard unapplied field changes?')) return false; this.unapplied = false; return true; }
   change(edit) {
     if (this.busy) return;
@@ -320,6 +320,7 @@ class ProcessEditor {
   }
   async save() {
     if (this.busy) return;
+    if (!this.dirty() && !this.unapplied) return;
     this.setBusy(true);
     try {
       const validated = await this.checkDraft(); if (!validated) return;

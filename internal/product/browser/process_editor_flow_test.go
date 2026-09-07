@@ -107,6 +107,8 @@ func TestBrowserProcessEditorAuthorsSavesReopensAndPreservesConflicts(t *testing
 	page.MustElementR("#process-editor-message", "Revision 1 · saved")
 	page.MustElement("#process-editor-canvas .process-node[aria-label='Pause, wait']").MustClick()
 	require.Equal(t, "1", page.MustElement("#process-inspector [name=duration]").MustProperty("value").Str())
+	page.MustElement("[aria-label='Process name']").MustSelectAllText().MustInput("Focused draft name")
+	require.True(t, page.MustEval(`() => { const event = new Event('beforeunload', {cancelable:true}); window.dispatchEvent(event); return event.defaultPrevented; }`).Bool())
 	// A second operator writes while this browser keeps an edited stale draft.
 	draft := app.DefinitionDraft{ID: first.Definition.ID, RevisionID: "external-revision", Name: "Remote name", Kind: model.DefinitionProcess, SchemaVersion: 1, Source: first.Revision.Source, Process: first.Revision.Process, EditorLayout: first.Revision.EditorLayout}
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/definitions", map[string]any{"request_id": "external-save", "expected_revision": 1, "draft": draft}, nil))
@@ -189,5 +191,17 @@ func TestBrowserProcessEditorWorkerDecisionAndDraftHistory(t *testing.T) {
 	page.MustElementR("#process-editor button", "^Parameters$").MustClick()
 	page.MustElementR("#process-inspector button", "^Edit attempts$").MustClick()
 	require.Equal(t, "3", page.MustElement("#process-inspector [name=default]").MustProperty("value").Str())
+	page.MustElement("#process-editor-canvas [aria-label='Review, decision']").MustClick()
+	page.MustElement("#process-inspector [name=answers]").MustSelectAllText().MustInput("yes\nno")
+	page.MustElementR("#process-inspector button", "^Apply changes$").MustClick()
+	page.MustElementR("#process-editor button", "^Validate$").MustClick()
+	page.MustElementR("#process-editor-errors", "no longer permitted")
+	var unchanged app.DefinitionResult
+	require.NoError(t, operator.Call(ctx, "GET", "/v2/definitions/"+string(definitions[0].ID), nil, &unchanged))
+	require.Equal(t, model.Revision(1), unchanged.Definition.Revision)
+	wait, handle := page.MustHandleDialog()
+	done := make(chan struct{})
+	go func() { defer close(done); wait(); handle(true, "") }()
 	page.MustElementR("#process-editor button", "^Close editor$").MustClick()
+	<-done
 }
