@@ -46,6 +46,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, terminalFileSchema); err != nil {
 		return err
 	}
+	if _, err := s.db.ExecContext(ctx, processSnippetSchema); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, presentationSchema); err != nil {
 		return err
 	}
