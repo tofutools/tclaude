@@ -20,3 +20,7 @@ body.slop{background:#150d1c;color:#f9e9ad}body.slop header,body.slop nav{backgr
 
 #command-picker{width:min(36rem,90vw)}#command-picker>input{box-sizing:border-box;width:100%;margin-bottom:12px}.command-results{display:flex;flex-direction:column;gap:6px;max-height:55vh;overflow:auto;margin-bottom:12px}.command-results button{text-align:left;padding:10px}.command-results button:focus{outline:2px solid #79b8ff;outline-offset:1px}
 .terminal-window #presentation-controls,.terminal-window #presentation-marquee{display:none}
+
+#terminal-tools{padding:.6rem;border-top:1px solid var(--border,#777)}#terminal-tools textarea{width:100%;min-height:6rem;box-sizing:border-box}#terminal-tools .toolbar{flex-wrap:wrap}
+
+#attention{padding:.5rem 1rem;border-bottom:1px solid var(--border,#777)}#attention>div{max-height:20rem;overflow:auto}.terminal-window #attention{display:none}
