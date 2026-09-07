@@ -66,6 +66,9 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	if files, ok := application.(app.ExecutionFileAPI); ok {
 		h.registerExecutionFiles(files)
 	}
+	if summary, ok := application.(usageSummaryAPI); ok {
+		h.registerUsageSummary(summary)
+	}
 	h.registerCommands()
 	h.registerCollaboration()
 	if usage, ok := application.(usageAPI); ok {
