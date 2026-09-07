@@ -5,3 +5,5 @@
 #terminal-tabs [data-connection="disconnected"], #terminal-tabs [data-connection="unavailable"] { color: #9da7b5; }
 .terminal-panel { overflow: auto; }
 .terminal-panel[hidden] { display: none; }
+
+#message-list>.toolbar{flex-wrap:wrap}#message-list input[aria-label="Search messages"]{flex:1;min-width:180px}#message-list .toolbar label{display:flex;align-items:center;gap:6px}.message-thread{border:1px solid #2a3340;border-radius:7px;padding:12px;margin:14px 0}.message-thread>summary{cursor:pointer;font-weight:600;margin-bottom:10px}
