@@ -9,6 +9,9 @@ import (
 
 func registerConfigurationCatalog(root *cobra.Command, call apiCall) {
 	catalog := boa.CmdT[struct{}]{Use: "configuration-profile", Short: "Save and select immutable launch configurations"}.ToCobra()
+	archive := managementFileCommand("archive ID", "Archive or restore a profile with expected_revision and archived in the JSON file", "POST", "/v2/configuration-profiles/", true, call)
+	archive.Annotations = map[string]string{"path-suffix": "/archive"}
+	catalog.AddCommand(archive)
 	catalog.AddCommand(managementFileCommand("save", "Save a revision without changing existing agents", "POST", "/v2/configuration-profiles", false, call))
 	list := boa.CmdT[struct{}]{Use: "list", Short: "List saved launch configurations"}.ToCobra()
 	list.Args = cobra.NoArgs

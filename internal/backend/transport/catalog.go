@@ -8,6 +8,31 @@ import (
 )
 
 func (h *Handler) registerConfigurationCatalog(catalog app.ConfigurationCatalogAPI) {
+	h.mux.HandleFunc("POST /v2/configuration-profiles/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := h.caller(w, r)
+		if !ok {
+			return
+		}
+		var body struct {
+			commandIdentity
+			ExpectedRevision model.Revision `json:"expected_revision"`
+			Archived         *bool          `json:"archived"`
+		}
+		if !decodeRequest(w, r, &body) {
+			return
+		}
+		if body.Archived == nil {
+			applicationError(w, app.ErrInvalid)
+			return
+		}
+		result, err := catalog.SetConfigurationProfileArchived(r.Context(), app.SetConfigurationProfileArchivedRequest{Context: body.context(principal), ID: model.ConfigurationProfileID(r.PathValue("id")), ExpectedRevision: body.ExpectedRevision, Archived: *body.Archived})
+		if err != nil {
+			applicationError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
+
 	h.mux.HandleFunc("GET /v2/configuration-defaults", func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := h.caller(w, r)
 		if !ok {

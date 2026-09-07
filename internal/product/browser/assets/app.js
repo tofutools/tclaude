@@ -83,7 +83,7 @@ function agentRow(agent){
   actions.append(button('Send input',()=>edit('Send input',[{name:'text',label:'Input',multiline:true}],f=>api('/v2/interact',{request_id:f.requestID,execution_id:execution.id,text:f.text}))));
   actions.append(button('Stop',async id=>{await api('/v2/stop',{request_id:id,execution_id:execution.id,force:false});await refresh()}));
  }
- actions.append(button('Clone configuration',()=>edit('Create independent agent',[{name:'name',label:'Name',value:agent.Name+' copy'}],f=>api('/v2/agents',{id:f.requestID,name:f.name,clone_source_agent_id:agent.ID,...(agent.ConfigurationProfile?{configuration_profile:agent.ConfigurationProfile}:{desired:agent.Desired})}))));
+ actions.append(button('Clone configuration',()=>edit('Create independent agent',[{name:'name',label:'Name',value:agent.Name+' copy'}],f=>api('/v2/agents',{id:f.requestID,name:f.name,clone_source_agent_id:agent.ID,desired:agent.Desired}))));
  row.append(actions);return row;
 }
 function messageCard(message){
@@ -199,15 +199,21 @@ function workCard(result){
 
 
 
+let configurationStatus='active';
 async function renderConfigurations(){
  const [entries,defaults]=await Promise.all([api('/v2/configuration-profiles'),api('/v2/configuration-defaults')]),list=$('configuration-list');list.replaceChildren();
+ const status=el('select');status.setAttribute('aria-label','Configuration status');for(const value of ['active','archived','all']){const option=el('option',value[0].toUpperCase()+value.slice(1));option.value=value;status.append(option)}status.value=configurationStatus;status.onchange=()=>{configurationStatus=status.value;renderConfigurations().catch(showError)};list.append(status);
  const choices=[...(defaults.Global?[['global',defaults.Global]]:[]),...Object.entries(defaults.Harnesses||{})];
  if(choices.length){const card=el('article',undefined,'card');card.append(el('strong','Defaults'),el('p','Defaults select a saved revision for new agents. Existing agents keep their settings.','muted'));
  for(const [name,ref] of choices){const row=el('div',undefined,'row');const profile=entries.find(p=>p.ID===ref.ProfileID);row.append(el('span',`${name}: ${profile?.Name||ref.ProfileID}`));
  row.append(button('Create from '+name,()=>edit('Create agent from default',[{name:'name',label:'Agent name'}],f=>api('/v2/agents',{id:f.requestID,name:f.name,configuration_profile:ref}))));
  row.append(button('Clear '+name,async id=>{const harnesses={...(defaults.Harnesses||{})};delete harnesses[name];await api('/v2/configuration-defaults',{request_id:id,expected_revision:defaults.Revision,global:name==='global'?null:defaults.Global,harnesses});await renderConfigurations()}));card.append(row)}list.append(card)}
- for(const profile of entries){
+ const shown=entries.filter(p=>configurationStatus==='all'||Boolean(p.Archived)===(configurationStatus==='archived'));
+ for(const profile of shown){
   const card=el('article',undefined,'card');card.append(el('strong',profile.Name),el('p',`Revision ${profile.Revision}`,'muted'));
+  card.append(button('Inspect saved revision',async()=>{const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);let detail=card.querySelector('pre');if(!detail){detail=el('pre');card.append(detail)}detail.textContent=JSON.stringify(selected.Revision,null,2)}));
+  if(profile.Archived){card.append(el('p','Archived · existing agents retain their pinned settings.','muted'),button('Restore configuration',async id=>{await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}/archive`,{request_id:id,expected_revision:profile.Revision,archived:false});await renderConfigurations()}));list.append(card);continue}
+  const isDefault=choices.some(([,ref])=>ref.ProfileID===profile.ID),archive=button('Archive configuration',async id=>{await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}/archive`,{request_id:id,expected_revision:profile.Revision,archived:true});await renderConfigurations()});archive.disabled=isDefault;card.append(archive);if(isDefault)card.append(el('p','Clear or replace its default selections before archiving.','muted'));
   card.append(button('Create agent',async()=>{
    const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
    edit('Create agent from configuration',[{name:'name',label:'Agent name',value:profile.Name}],f=>api('/v2/agents',{id:f.requestID,name:f.name,configuration_profile:selected.Revision.Ref}));
@@ -224,7 +230,7 @@ async function renderConfigurations(){
    });
   }));list.append(card);
  }
- if(!entries.length)empty(list,'No saved configurations. Save one to reuse its exact settings for new agents.');
+ if(!shown.length)list.append(el('p','No '+configurationStatus+' configurations. Archived revisions remain available for inspection and restoration.'));
 }
 $('new-configuration').onclick=()=>edit('Save configuration',desiredFields(),async f=>{
  await api('/v2/configuration-profiles',{request_id:f.requestID,id:f.requestID,revision_id:f.requestID,name:f.name,desired:configuration(f)});await renderConfigurations();
