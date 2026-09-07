@@ -33,19 +33,20 @@ func validateNetwork(n *model.SandboxNetwork) error {
 	if len(n.Allow) > 128 || len(n.Deny) > 128 || len(n.Packs) > 32 || len(n.DenyPacks) > 32 {
 		return fmt.Errorf("network rule or pack limit exceeded")
 	}
-	packs := map[string]bool{}
-	for _, id := range n.Packs {
-		if len(id) > 128 || !setupName.MatchString(id) {
-			return fmt.Errorf("invalid network pack identifier")
-		}
-		packs[id] = true
+	known := map[string]bool{}
+	for _, pack := range networkPacks {
+		known[pack.ID] = true
 	}
-	for _, id := range n.DenyPacks {
-		if len(id) > 128 || !setupName.MatchString(id) {
-			return fmt.Errorf("invalid network pack identifier")
-		}
-		if packs[id] {
-			return fmt.Errorf("network pack appears in both allow and deny sets")
+	packs := map[string]bool{}
+	for _, ids := range [][]string{n.Packs, n.DenyPacks} {
+		for _, id := range ids {
+			if !known[id] {
+				return fmt.Errorf("unknown network pack %q", id)
+			}
+			if packs[id] {
+				return fmt.Errorf("network pack %q is duplicated or appears in both allow and deny sets", id)
+			}
+			packs[id] = true
 		}
 	}
 	for _, entries := range [][]model.SandboxDestination{n.Allow, n.Deny} {
