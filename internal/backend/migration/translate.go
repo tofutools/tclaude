@@ -285,13 +285,26 @@ func (t *translator) translateGroups(batch *app.ImportBatch) error {
 		})
 		group := model.Group{ID: model.GroupID(t.id("agent_groups", key)), Name: firstNonEmpty(sourcev228.String(row.Values["name"]), key), Revision: 1, CreatedAt: created, UpdatedAt: firstTime(timeValue(row.Values["archived_at"]), created)}
 		details := model.GroupDetails{Description: sourcev228.String(row.Values["descr"]), Mission: sourcev228.String(row.Values["mission"]), LinkURL: sourcev228.String(row.Values["attachment_url"]), LinkLabel: sourcev228.String(row.Values["attachment_label"])}
-		if details != (model.GroupDetails{}) {
-			if model.ValidateGroupDetails(details) == nil {
-				group.Details = &details
-			} else {
-				t.launchMetadataDiagnostic(batch, "agent_groups", row.Key, "group_details_retained_unmapped", "unsupported group detail text or link remains in the exact retained source record")
-			}
+		supported := model.GroupDetails{}
+		if model.ValidateGroupDetails(model.GroupDetails{Description: details.Description}) == nil {
+			supported.Description = details.Description
 		}
+		if model.ValidateGroupDetails(model.GroupDetails{Mission: details.Mission}) == nil {
+			supported.Mission = details.Mission
+		}
+		if model.ValidateGroupDetails(model.GroupDetails{LinkURL: details.LinkURL}) == nil {
+			supported.LinkURL = details.LinkURL
+		}
+		if model.ValidateGroupDetails(model.GroupDetails{LinkURL: supported.LinkURL, LinkLabel: details.LinkLabel}) == nil {
+			supported.LinkLabel = details.LinkLabel
+		}
+		if supported != (model.GroupDetails{}) {
+			group.Details = &supported
+		}
+		if supported != details {
+			t.launchMetadataDiagnostic(batch, "agent_groups", row.Key, "group_details_retained_unmapped", "unsupported group detail fields remain in the exact retained source record; supported fields were preserved")
+		}
+
 		if parent := sourcev228.String(row.Values["parent_id"]); parent != "" {
 			group.ParentGroupID = model.GroupID(t.id("agent_groups", parent))
 			if group.ParentGroupID == "" {
