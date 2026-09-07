@@ -15,7 +15,7 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
 
-const ImporterFormatVersion = 1
+const ImporterFormatVersion = 2
 const TargetSchemaVersion = 1
 
 type AttachmentPayload struct {
@@ -221,6 +221,9 @@ func (t *translator) translateAgents(batch *app.ImportBatch) {
 			Notifications: model.AgentNotificationPreferences{DirectMessage: model.NotificationIfAvailable},
 			Desired:       desiredFromRow(row.Values), Revision: 1, CreatedAt: created, UpdatedAt: updated,
 		}
+		if model.ValidateEffort(agent.Desired.Effort) != nil {
+			t.launchMetadataDiagnostic(batch, "agents", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
+		}
 		profileName := firstNonEmpty(sourcev228.String(row.Values["relaunch_profile"]), spawnProfileName(row.Values["initial_spawn_config"]))
 		if ref, ok := t.profileRefs[profileName]; ok {
 			copy := ref
@@ -312,9 +315,26 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 		ref := model.ConfigurationProfileRef{ProfileID: id, RevisionID: revisionID, ContentHash: digest(payload)}
 		t.profileRefs[sourcev228.String(row.Values["name"])] = ref
 		t.profileRefs[key] = ref
+		startup := &model.ProfileStartup{AgentName: sourcev228.String(row.Values["agent_name"]), Context: sourcev228.String(row.Values["startup_context"]), InitialMessage: sourcev228.String(row.Values["initial_message"])}
+		if *startup == (model.ProfileStartup{}) {
+			startup = nil
+		} else if model.ValidateProfileStartup(*startup) != nil {
+			startup = nil
+			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "profile_startup_retained_unmapped", "startup suggestions exceed target text constraints; exact original fields remain in the source record")
+		}
+		disabled, validDisabled := sourcev228.Int64(row.Values["disabled"])
+		archived := disabled != 0
+		if row.Values["disabled"] != nil && !validDisabled {
+			archived = true
+			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "profile_disabled_unrecognized", "unrecognized disabled state is retained as archived pending explicit operator review")
+		}
+		desired := desiredFromRow(row.Values)
+		if model.ValidateEffort(desired.Effort) != nil {
+			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
+		}
 		batch.ConfigurationProfiles = append(batch.ConfigurationProfiles, app.ConfigurationProfileResult{
-			Profile:  model.ConfigurationProfile{ID: id, Name: firstNonEmpty(sourcev228.String(row.Values["name"]), key), CurrentRevisionID: revisionID, Revision: 1, CreatedAt: at, UpdatedAt: at},
-			Revision: model.ConfigurationProfileRevision{Ref: ref, Desired: desiredFromRow(row.Values), CreatedAt: at},
+			Profile:  model.ConfigurationProfile{Archived: archived, ID: id, Name: firstNonEmpty(sourcev228.String(row.Values["name"]), key), CurrentRevisionID: revisionID, Revision: 1, CreatedAt: at, UpdatedAt: at},
+			Revision: model.ConfigurationProfileRevision{Ref: ref, Desired: desired, Startup: startup, CreatedAt: at},
 		})
 	}
 	for _, row := range t.inspection.Snapshot.Rows["spawn_profile_aliases"] {
@@ -332,6 +352,10 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 	sort.Slice(batch.ConfigurationProfiles, func(i, j int) bool {
 		return batch.ConfigurationProfiles[i].Profile.ID < batch.ConfigurationProfiles[j].Profile.ID
 	})
+}
+
+func (t *translator) launchMetadataDiagnostic(batch *app.ImportBatch, table, key, code, detail string) {
+	batch.Diagnostics = append(batch.Diagnostics, model.ImportedDiagnostic{Severity: string(SeverityWarning), Code: code, SourceTable: table, SourceKey: key, SourcePath: sourcePath(table, key), Detail: detail})
 }
 
 func (t *translator) translateAuthoredOrchestration(batch *app.ImportBatch) {
@@ -638,12 +662,13 @@ func (t *translator) conversationOwner(conv string) string {
 }
 
 func desiredFromRow(values map[string]any) model.DesiredConfiguration {
-	desired := model.DesiredConfiguration{Harness: sourcev228.String(values["harness"]), Model: sourcev228.String(values["model"]), WorkingDirectory: firstNonEmpty(sourcev228.String(values["working_directory"]), sourcev228.String(values["cwd"]))}
+	desired := model.DesiredConfiguration{Harness: sourcev228.String(values["harness"]), Model: sourcev228.String(values["model"]), Effort: sourcev228.String(values["effort"]), WorkingDirectory: firstNonEmpty(sourcev228.String(values["working_directory"]), sourcev228.String(values["cwd"]))}
 	if raw := sourcev228.String(values["initial_spawn_config"]); raw != "" {
 		var config map[string]any
 		if json.Unmarshal([]byte(raw), &config) == nil {
 			desired.Harness = firstNonEmpty(stringMap(config, "harness"), desired.Harness)
 			desired.Model = firstNonEmpty(stringMap(config, "model"), desired.Model)
+			desired.Effort = stringMap(config, "effort")
 			desired.WorkingDirectory = firstNonEmpty(stringMap(config, "working_directory"), stringMap(config, "cwd"), desired.WorkingDirectory)
 			values = config
 		}
