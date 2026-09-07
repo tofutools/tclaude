@@ -8,6 +8,7 @@ const requestID = () => 'r_' + crypto.randomUUID();
 const terminals = new TerminalWorkspace({requestID});
 const navigation = new WorkspaceNavigation({select:tab=>selectTab(tab,false),report:showError});
 const presentation = new PresentationWorkspace({api});
+const messageWorkspace = new MessageWorkspace({host:$('message-list'),el,button,api,refresh,card:messageCard});
 const rosterWorkspace = new RosterWorkspace({host:$('roster'),api,el,button,edit,refresh});
 function showError(error) { const target=$('editor').open?$('editor-error'):$('error');target.textContent=error.message || String(error);target.hidden=false; }
 async function api(path, body, method) {
@@ -76,6 +77,15 @@ function agentRow(agent){
  actions.append(button('Clone configuration',()=>edit('Create independent agent',[{name:'name',label:'Name',value:agent.Name+' copy'}],f=>api('/v2/agents',{id:f.requestID,name:f.name,clone_source_agent_id:agent.ID,...(agent.ConfigurationProfile?{configuration_profile:agent.ConfigurationProfile}:{desired:agent.Desired})}))));
  row.append(actions);return row;
 }
+function messageCard(message){
+  const card=el('article',undefined,'card');card.append(el('strong',message.Subject||'Message'),el('p',`${message.Sender.AgentID||message.Sender.Kind} · ${new Date(message.CreatedAt).toLocaleString()}`,'muted'),el('pre',message.Body));
+  card.append(el('p',(message.Recipients||[]).map(r=>`${r.Audience==='cc'?'CC':'To'} ${r.AddressKind==='operator'?'Operator':r.AgentID} · ${r.ReadAt?'read':'unread'}${r.NotificationOutcome?' · notice '+r.NotificationOutcome.replaceAll('_',' '):''}`).join(', '),'muted'));
+  if(message.ParentMessageID)card.append(el('p','Reply in an existing thread','muted'));
+  card.append(button('Reply all',()=>composeMessage(message)));
+  if((message.Recipients||[]).some(r=>r.AddressKind==='operator'&&!r.ReadAt))card.append(button('Mark read',async id=>{await api(`/v2/messages/${encodeURIComponent(message.ID)}/read`,{request_id:id,operator:true});await refresh()}));
+  for(const attachment of message.Attachments||[])card.append(button(`Download ${attachment.Filename}`,()=>downloadAttachment(attachment)));
+ return card;
+}
 function render(){
  presentation.update(snapshot);
  renderGroupControls(snapshot,{host:$('group-management'),el,button,edit,api,refresh});
@@ -86,17 +96,7 @@ function render(){
  const work=$('work-list');work.replaceChildren();
  for(const result of snapshot.work_runs||[])work.append(workCard(result));
  if(!snapshot.work_runs?.length)empty(work,'No work runs.');
- const messages=$('message-list');messages.replaceChildren();
- for(const message of [...snapshot.messages||[]].reverse()){
-  const card=el('article',undefined,'card');card.append(el('strong',message.Subject||'Message'),el('p',`${message.Sender.AgentID||message.Sender.Kind} · ${new Date(message.CreatedAt).toLocaleString()}`,'muted'),el('pre',message.Body));
-  card.append(el('p',(message.Recipients||[]).map(r=>`${r.Audience==='cc'?'CC':'To'} ${r.AddressKind==='operator'?'Operator':r.AgentID} · ${r.ReadAt?'read':'unread'}${r.NotificationOutcome?' · notice '+r.NotificationOutcome.replaceAll('_',' '):''}`).join(', '),'muted'));
-  if(message.ParentMessageID)card.append(el('p','Reply in an existing thread','muted'));
-  card.append(button('Reply all',()=>composeMessage(message)));
-  if((message.Recipients||[]).some(r=>r.AddressKind==='operator'&&!r.ReadAt))card.append(button('Mark read',async id=>{await api(`/v2/messages/${encodeURIComponent(message.ID)}/read`,{request_id:id,operator:true});await refresh()}));
-  for(const attachment of message.Attachments||[])card.append(button(`Download ${attachment.Filename}`,()=>downloadAttachment(attachment)));
-  messages.append(card);
- }
- if(!snapshot.messages?.length)empty(messages,'No messages.');
+ messageWorkspace.update(snapshot);
 }
 async function selectTab(tab,record=true){
  if(!navigation.tabs().some(n=>n.dataset.tab===tab))tab="groups";
