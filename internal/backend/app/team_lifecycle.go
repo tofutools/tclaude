@@ -110,9 +110,6 @@ func (s *Service) StandDownDeployment(ctx context.Context, req StandDownDeployme
 	if err := validateEffectContext(req.Context); err != nil {
 		return TeamDeploymentResult{}, err
 	}
-	if err := requireOperator(req.Context.Principal); err != nil {
-		return TeamDeploymentResult{}, err
-	}
 	if req.ExpectedRevision == 0 || strings.TrimSpace(req.Reason) == "" {
 		return TeamDeploymentResult{}, fail(ErrInvalid, "expected deployment revision and reason are required")
 	}

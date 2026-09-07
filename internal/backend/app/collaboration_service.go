@@ -35,9 +35,6 @@ func validateAgentMetadata(taskReference string, preferences model.AgentNotifica
 }
 
 func (s *Service) RetireAgent(ctx context.Context, req RetireAgentRequest) (AgentResult, error) {
-	if err := requireOperator(req.Context); err != nil {
-		return AgentResult{}, err
-	}
 	if req.ExpectedRevision == 0 {
 		return AgentResult{}, fail(ErrInvalid, "expected revision is required")
 	}

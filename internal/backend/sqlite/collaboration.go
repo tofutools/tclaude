@@ -366,9 +366,6 @@ func (s *Store) migrateMessageRecipients(ctx context.Context) error {
 }
 
 func (s *Store) RetireAgent(ctx context.Context, id model.AgentID, expected model.Revision, principal model.Principal, reason string, at time.Time) (model.Agent, error) {
-	if principal.Kind != model.PrincipalOperator {
-		return model.Agent{}, app.ErrUnauthorized
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return model.Agent{}, err
@@ -382,6 +379,13 @@ func (s *Store) RetireAgent(ctx context.Context, id model.AgentID, expected mode
 	}
 	if state != model.AgentActive || revision != expected {
 		return model.Agent{}, app.ErrConflict
+	}
+	decision, err := authorizeTx(ctx, tx, model.AuthorityRequest{Principal: principal, Action: model.ActionRetireAgent, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: id}}, at)
+	if err != nil {
+		return model.Agent{}, err
+	}
+	if !decision.Allowed {
+		return model.Agent{}, app.ErrUnauthorized
 	}
 	if primary != "" {
 		var executionState model.ExecutionState
