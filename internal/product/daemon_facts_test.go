@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
+	"golang.org/x/sys/unix"
 )
 
 func TestGitHubCompositionPinsSourceAndKeepsCredentialPrivate(t *testing.T) {
@@ -32,4 +33,11 @@ func TestGitHubCompositionPinsSourceAndKeepsCredentialPrivate(t *testing.T) {
 	require.ErrorContains(t, err, "private regular")
 	_, err = configuredGitHubSources(nil, credential)
 	require.Error(t, err)
+}
+
+func TestGitHubCredentialRejectsSpecialFilesWithoutBlocking(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "pipe")
+	require.NoError(t, unix.Mkfifo(path, 0600))
+	_, err := configuredGitHubSources([]string{"checks=owner/repo#42"}, path)
+	require.ErrorContains(t, err, "private regular")
 }

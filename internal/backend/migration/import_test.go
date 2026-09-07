@@ -272,9 +272,12 @@ func TestImportSnapshotRejectsChangedCompletedDestination(t *testing.T) {
 
 func TestImportSnapshotExactRetryRejectsSemanticAndActiveTargetChanges(t *testing.T) {
 	for name, query := range map[string]string{
-		"operation semantics": `UPDATE operations SET state='failed',result_code='changed'`,
-		"active authority":    `INSERT INTO authority_grants(id,subject_kind,subject_id,action,resource_kind,resource_id,bounds_json,revision,created_at,updated_at) VALUES('grant_added','agent','agt_fixture','execution.launch','agent','agt_fixture','{}',1,1,1)`,
-		"wal message":         `PRAGMA journal_mode=WAL; UPDATE messages SET body='changed in WAL'`,
+		"operation semantics":    `UPDATE operations SET state='failed',result_code='changed'`,
+		"active trigger fact":    `INSERT INTO automation_product_facts(source_id,event_id,kind,value,resource_json,occurred_at,observed_at) VALUES('fixture','event','ci.completed','succeeded','{}',1,1)`,
+		"team lifecycle receipt": `INSERT INTO team_lifecycle_requests(request_scope,request_id,deployment_id,kind,request_digest,created_at) VALUES('operator','request','deployment','stand_down','digest',1)`,
+		"team rebrief receipt":   `INSERT INTO team_rebriefs(deployment_id,request_scope,request_id,request_digest,definition_json,state,created_at) VALUES('deployment','operator','request','digest','{}','delivering',1)`,
+		"active authority":       `INSERT INTO authority_grants(id,subject_kind,subject_id,action,resource_kind,resource_id,bounds_json,revision,created_at,updated_at) VALUES('grant_added','agent','agt_fixture','execution.launch','agent','agt_fixture','{}',1,1,1)`,
+		"wal message":            `PRAGMA journal_mode=WAL; UPDATE messages SET body='changed in WAL'`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			bundle := buildFixture(t, fixtureOptions{})
