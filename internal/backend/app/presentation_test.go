@@ -26,6 +26,7 @@ func TestPresentationPreferencesRequireOperatorCASAndSurviveReopen(t *testing.T)
 	p.Channel = "thistle"
 	p.MusicVolume = .42
 	p.SoundEnabled = true
+	p.NeutralTerminals = true
 	_, err = service.PutPresentation(ctx, app.PutPresentationRequest{Principal: model.AgentPrincipal("agent"), Preferences: p})
 	require.ErrorIs(t, err, app.ErrUnauthorized)
 	saved, err := service.PutPresentation(ctx, app.PutPresentationRequest{Principal: operator, Preferences: p})

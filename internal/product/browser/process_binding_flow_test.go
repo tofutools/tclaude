@@ -41,15 +41,7 @@ func TestBrowserPinnedProcessBindsNamedAgent(t *testing.T) {
 	go func() {
 		backendDone <- backend.Serve(ctx, state, providers.NewRegistry(), backend.JourneyServices{Workspaces: workspaceHost, Programs: host.ProgramProcessHost{PrivateRoot: filepath.Join(state, "programs")}})
 	}()
-	require.Eventually(t, func() bool {
-		select {
-		case err := <-backendDone:
-			t.Fatalf("backend exited before readiness: %v", err)
-		default:
-		}
-		_, err := os.Stat(filepath.Join(state, "api.sock"))
-		return err == nil
-	}, 5*time.Second, 10*time.Millisecond)
+	waitBrowserBackend(t, state, cancel, backendDone)
 	view, err := Open(state, "127.0.0.1:0")
 	require.NoError(t, err)
 	viewDone := make(chan error, 1)
