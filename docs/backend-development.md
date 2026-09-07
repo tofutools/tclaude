@@ -1234,3 +1234,13 @@ restrictive. A shared include is composed separately within each sibling before
 those siblings combine. These observations and composed values are not an
 enforcement receipt. The editor currently authors policies independently of launch settings;
 custom profile selection and actual host enforcement are not yet connected.
+
+
+### Sandbox destination packs
+
+The sandbox editor lists the retained destination-pack catalog with exact domains,
+ports and a content hash. Select allow and deny packs independently, or inspect
+their entries before adding them. Both selections survive save and reopen; the
+catalog does not silently include extra provider destinations or subdomains.
+Packs are authoring conveniences, not guarantees of complete provider connectivity.
+Saving a pack reference does not grant network access or launch a workload.

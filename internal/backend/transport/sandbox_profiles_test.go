@@ -48,6 +48,13 @@ func TestPublicSandboxProfilesPreserveAuthoredPolicyAndRejectClaimedAuthority(t 
 	require.NoError(t, err)
 	require.Equal(t, 403, request(agentHandler, "POST", "/v2/sandbox-profiles", body, "").Code)
 	require.Equal(t, 403, request(agentHandler, "GET", "/v2/sandbox-profiles", "", "").Code)
+	require.Equal(t, 401, request(handler, "GET", "/v2/sandbox-network-packs", "", "").Code)
+	require.Equal(t, 403, request(agentHandler, "GET", "/v2/sandbox-network-packs", "", "").Code)
+	packs := request(handler, "GET", "/v2/sandbox-network-packs", "", testCredential)
+	require.Equal(t, 200, packs.Code)
+	require.Contains(t, packs.Body.String(), "api.anthropic.com")
+	require.Contains(t, packs.Body.String(), "ContentHash")
+
 	require.Equal(t, 422, request(handler, "GET", "/v2/sandbox-profiles?include_archived=perhaps", "", testCredential).Code)
 	archive := request(handler, "POST", "/v2/sandbox-profiles/sandbox_profile/archive", `{"request_id":"archive","expected_revision":1,"archived":true}`, testCredential)
 	require.Equal(t, 200, archive.Code, archive.Body.String())
