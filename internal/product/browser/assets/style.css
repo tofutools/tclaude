@@ -26,3 +26,4 @@ body.slop{background:#150d1c;color:#f9e9ad}body.slop header,body.slop nav{backgr
 #attention{padding:.5rem 1rem;border-bottom:1px solid var(--border,#777)}#attention>div{max-height:20rem;overflow:auto}.terminal-window #attention{display:none}
 
 #directory-picker{width:min(42rem,90vw)}#directory-picker .directory-list{display:flex;flex-direction:column;align-items:stretch;gap:.3rem;max-height:40vh;overflow:auto;margin:.7rem 0}#directory-picker .directory-list button{text-align:left;overflow-wrap:anywhere}
+#workspace-list .toolbar{flex-wrap:wrap}#workspace-list dl{display:grid;grid-template-columns:minmax(7rem,auto) 1fr;gap:.3rem 1rem}#workspace-list dt{color:#9da7b5}#workspace-list dd{margin:0;overflow-wrap:anywhere}#workspace-list .actions{flex-wrap:wrap}
