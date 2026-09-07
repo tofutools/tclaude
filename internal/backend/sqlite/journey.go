@@ -1289,6 +1289,15 @@ func (s *Store) RecordShellRecovery(ctx context.Context, executionID model.Execu
 		return model.Execution{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	var current model.ExecutionState
+	if err = tx.QueryRowContext(ctx, `SELECT state FROM executions WHERE id=? AND workload_kind=?`, executionID, model.ExecutionWorkloadShell).Scan(&current); err != nil {
+		return model.Execution{}, classify(err)
+	}
+	if current == model.ExecutionExited || current == model.ExecutionFailed {
+		state = current
+		evidence = ports.ShellResourceEvidence{}
+	}
+
 	result, err := tx.ExecContext(ctx, `UPDATE executions SET state=?,shell_evidence_owner=CASE WHEN ?='' THEN shell_evidence_owner ELSE ? END,shell_evidence_version=CASE WHEN ?='' THEN shell_evidence_version ELSE ? END,shell_evidence_payload=CASE WHEN ?='' THEN shell_evidence_payload ELSE ? END,revision=revision+1,updated_at=? WHERE id=? AND workload_kind=?`, state, evidence.Owner, evidence.Owner, evidence.Owner, evidence.Version, evidence.Owner, evidence.Payload, nanos(at), executionID, model.ExecutionWorkloadShell)
 	if err != nil {
 		return model.Execution{}, err
@@ -1297,6 +1306,10 @@ func (s *Store) RecordShellRecovery(ctx context.Context, executionID model.Execu
 		return model.Execution{}, app.ErrConflict
 	}
 	if state == model.ExecutionExited || state == model.ExecutionFailed {
+		if _, err = tx.ExecContext(ctx, `UPDATE execution_accesses SET state=?,revoked_at=?,revision=revision+1 WHERE execution_id=? AND state NOT IN (?,?)`, model.ExecutionAccessRevoked, nanos(at), executionID, model.ExecutionAccessRevoked, model.ExecutionAccessExpired); err != nil {
+			return model.Execution{}, err
+		}
+
 		if _, err = tx.ExecContext(ctx, `UPDATE workspace_uses SET released_at=? WHERE execution_id=? AND released_at IS NULL`, nanos(at), executionID); err != nil {
 			return model.Execution{}, err
 		}
