@@ -639,6 +639,15 @@ or cleared through the existing owner endpoint before removing that member.
 New members must be active; retired members already in the group can be retained
 or removed. The CLI exposes the same request as `group update ID --file FILE`.
 
+The Access workspace exposes role creation and action editing, exact scoped
+assignments, assignment limit updates/removal, and direct grant editing/revocation.
+Each save uses the displayed revision, so a concurrent authority change is a
+conflict to review. Group-owner assignments stay under Group settings.
+Configuration-bearing permissions require complete harness/model/directory/
+approval/confinement allow-lists; the explicit disabled choice grants no such
+authority. Grants remain subject to the owning operation's current authority and
+lifecycle checks; declaring an action does not override an operator-only boundary.
+
 Workspace navigation keeps the selected tab in the `tab` URL parameter and in
 this browser tab’s session preferences. Reload and browser back/forward restore
 that workspace; unknown tab values fall back to Groups. The Commands picker
