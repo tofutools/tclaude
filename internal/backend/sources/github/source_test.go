@@ -59,6 +59,8 @@ func setup(t *testing.T, override func(http.ResponseWriter, *http.Request) bool)
 
 func TestCollectorExactSnapshotStableIdentityAndFreshObservation(t *testing.T) {
 	source := setup(t, nil)
+	clock := testTime
+	source.clock = func() time.Time { return clock }
 	first, err := source.CollectAutomationFacts(context.Background(), request())
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +70,7 @@ func TestCollectorExactSnapshotStableIdentityAndFreshObservation(t *testing.T) {
 	}
 	next := request()
 	next.Now = next.Now.Add(time.Minute)
+	clock = next.Now
 	next.Cursor = first.NextCursor
 	second, err := source.CollectAutomationFacts(context.Background(), next)
 	if err != nil {
