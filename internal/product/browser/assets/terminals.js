@@ -99,7 +99,7 @@ class TerminalWorkspace {
     if (!entry || entry.socket) return;
     if (!entry.terminal) {
       entry.terminal = new Terminal({cols: entry.columns, rows: entry.rows,
-        convertEol: false, theme: {...this.theme}});
+        convertEol: false, theme: {...this.theme}, linkHandler:{activate:(event,text)=>this.onLink?.(entry,event,text)}});
       entry.panel.replaceChildren();
       entry.terminal.open(entry.panel);
       entry.terminal.onData(data => {

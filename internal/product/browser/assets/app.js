@@ -9,6 +9,7 @@ const terminals = new TerminalWorkspace({requestID});
 const navigation = new WorkspaceNavigation({select:tab=>selectTab(tab,false),report:showError});
 const presentation = new PresentationWorkspace({api});
 const terminalTools = new TerminalTools({host:$('terminal-tools'),workspace:terminals,el,button});
+const terminalDownloads = new TerminalDownloads({host:$('terminal-downloads'),workspace:terminals,el,button});
 const terminalFiles = new TerminalFiles({host:$('terminal-files'),workspace:terminals,tools:terminalTools,api,el,button,requestID});
 const authorityWorkspace = new AuthorityWorkspace({host:$('access-list'),api,el,button,edit,getSnapshot:()=>snapshot,report:showError});
 const attachmentPreview = new AttachmentPreview({api,el,button});
