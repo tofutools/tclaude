@@ -25,7 +25,7 @@ func TestBrowserSandboxAuthoringPreservesLiteralRulesAndPinnedIncludes(t *testin
 	page.MustElementR("#sandbox-profiles button", "^New sandbox profile$").MustClick()
 	page.MustElement(".sandbox-editor [aria-label='Sandbox profile name']").MustInput("Isolated coding")
 	page.MustElementR(".sandbox-editor summary", "^Included profiles").MustClick()
-	page.MustElement(".sandbox-editor [aria-label='Include sandbox profile']").MustSelect("Shared rules · sandbox_parent · revision 1")
+	page.MustElement(".sandbox-editor [aria-label='Include sandbox profile']").MustSelect("Shared rules · sandbox_parent · policy " + string(parent.Revision.Ref.RevisionID))
 	page.MustElementR(".sandbox-editor button", "^Add included revision$").MustClick()
 	page.MustElementR(".sandbox-editor code", string(parent.Revision.Ref.RevisionID))
 	page.MustElementR(".sandbox-editor summary", "^Filesystem").MustClick()
@@ -126,6 +126,8 @@ func TestBrowserSandboxCopyArchiveAndDraftDiscardRemainOffline(t *testing.T) {
 	page.MustWait(`()=>!submitting`)
 	page.MustElement("#sandbox-profiles [aria-label='Sandbox profile status']").MustSelect("active")
 	page.MustElementR("#sandbox-profiles article", "Independent copy").MustElementR("button", "^Edit sandbox profile$").MustClick()
+	page.MustElementR(".sandbox-editor p", "Policy revision 1 · Lifecycle revision 3")
+	page.MustElementR("#sandbox-profiles article", "Independent copy").MustElementR("p", "Policy revision "+string(copied.HeadRevisionID))
 	page.MustElementR(".sandbox-editor summary", "^Temporary filesystems").MustClick()
 	page.MustElementR(".sandbox-editor button", "^Add tmpfs mount$").MustClick()
 	// A button-only row addition must participate in discard protection.
@@ -138,6 +140,9 @@ func TestBrowserSandboxCopyArchiveAndDraftDiscardRemainOffline(t *testing.T) {
 	page.MustWait(`()=>!document.querySelector('.sandbox-editor')`)
 	var read app.SandboxProfileResult
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/sandbox-profiles/"+string(copied.ID), nil, &read))
+	require.Equal(t, copied.HeadRevisionID, read.Revision.Ref.RevisionID)
+	require.Equal(t, model.Revision(1), read.Revision.Number)
+	require.Equal(t, model.Revision(3), read.Profile.Revision)
 	require.Empty(t, read.Revision.Policy.Tmpfs)
 	require.Equal(t, "copy", read.Revision.Policy.Environment["VALUE"])
 	require.Equal(t, source.Revision.Policy.Resources, read.Revision.Policy.Resources)

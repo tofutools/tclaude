@@ -15,8 +15,9 @@ import (
 )
 
 type sandboxProtectedRoot struct {
-	path     string
-	identity os.FileInfo
+	path           string
+	configuredPath string
+	identity       os.FileInfo
 }
 
 type SandboxPathInspector struct{ roots []sandboxProtectedRoot }
@@ -44,7 +45,7 @@ func NewSandboxPathInspector(protectedRoots []string) (*SandboxPathInspector, er
 		if !info.IsDir() {
 			return nil, fmt.Errorf("protected sandbox root must be a directory")
 		}
-		inspector.roots = append(inspector.roots, sandboxProtectedRoot{canonical, info})
+		inspector.roots = append(inspector.roots, sandboxProtectedRoot{path: canonical, configuredPath: root, identity: info})
 	}
 	return inspector, nil
 }
@@ -71,11 +72,33 @@ func (i *SandboxPathInspector) InspectSandboxPaths(ctx context.Context, rules []
 			return nil, err
 		}
 		observation := ports.SandboxPathObservation{Index: index, State: "unknown"}
+		if rule.Access != model.SandboxFilesystemDeny && i.protectedSpelling(rule.GuestPath) {
+			observation.State = "refused"
+			observation.Detail = "Guest mount path intersects protected host state."
+			out = append(out, observation)
+			continue
+		}
 		canonical, err := filepath.EvalSymlinks(rule.HostPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				observation.State = "missing"
-				observation.Detail = "Host path does not exist; no directory was created."
+				projected, ancestor, resolveErr := resolveMissingSandboxPath(ctx, rule.HostPath, 0)
+				if resolveErr != nil {
+					observation.Detail = "Missing path ancestry could not be resolved."
+				} else {
+					observation.CanonicalPath = projected
+					observation.State = "missing"
+					observation.Detail = "Host path does not exist; no directory was created."
+					if rule.Access != model.SandboxFilesystemDeny {
+						refused, checkErr := i.missingPathProtected(projected, ancestor)
+						if checkErr != nil {
+							observation.State = "unknown"
+							observation.Detail = "Missing path ancestry could not be inspected."
+						} else if refused {
+							observation.State = "refused"
+							observation.Detail = "Missing grant intersects protected host state."
+						}
+					}
+				}
 			} else {
 				observation.Detail = "Host path could not be resolved."
 			}
@@ -113,7 +136,7 @@ func (i *SandboxPathInspector) InspectSandboxPaths(ctx context.Context, rules []
 				// Conservative folded spelling guards preserve the legacy protection for
 				// case aliases. Identity ancestry additionally covers existing aliases on
 				// case-insensitive/normalizing filesystems without guessing their spelling.
-				if rule.GuestPath != "" && sandboxPathSpellingIntersects(rule.GuestPath, root.path) {
+				if rule.GuestPath != "" && (sandboxPathSpellingIntersects(rule.GuestPath, root.path) || sandboxPathSpellingIntersects(rule.GuestPath, root.configuredPath)) {
 					observation.State = "refused"
 					observation.Detail = "Guest mount path intersects protected host state."
 					break
@@ -172,4 +195,79 @@ func sandboxPathSpellingIntersects(a, b string) bool {
 		return child == parent || strings.HasPrefix(child, strings.TrimRight(parent, string(filepath.Separator))+string(filepath.Separator))
 	}
 	return within(left, right) || within(right, left)
+}
+
+func (i *SandboxPathInspector) protectedSpelling(path string) bool {
+	if path == "" {
+		return false
+	}
+	for _, root := range i.roots {
+		if sandboxPathSpellingIntersects(path, root.path) || sandboxPathSpellingIntersects(path, root.configuredPath) {
+			return true
+		}
+	}
+	return false
+}
+
+// Resolve only existing ancestors. A dangling symlink must still contribute its
+// target spelling; stripping it as if it were an ordinary absent child would
+// lose a private target. No directory is created and symlink recursion is bounded.
+func resolveMissingSandboxPath(ctx context.Context, path string, links int) (string, string, error) {
+	if links > 40 {
+		return "", "", fmt.Errorf("too many symlinks")
+	}
+	candidate := path
+	suffix := []string{}
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", "", err
+		}
+		canonical, err := filepath.EvalSymlinks(candidate)
+		if err == nil {
+			parts := append([]string{canonical}, suffix...)
+			return filepath.Join(parts...), canonical, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", "", err
+		}
+		info, statErr := os.Lstat(candidate)
+		if statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(candidate)
+			if err != nil {
+				return "", "", err
+			}
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(candidate), target)
+			}
+			return resolveMissingSandboxPath(ctx, filepath.Join(append([]string{target}, suffix...)...), links+1)
+		}
+		parent := filepath.Dir(candidate)
+		if parent == candidate {
+			return "", "", err
+		}
+		suffix = append([]string{filepath.Base(candidate)}, suffix...)
+		candidate = parent
+	}
+}
+func (i *SandboxPathInspector) missingPathProtected(projected, ancestor string) (bool, error) {
+	if i.protectedSpelling(projected) {
+		return true, nil
+	}
+	// Only test whether the existing ancestor is within private state. Testing
+	// the reverse would incorrectly refuse an ordinary missing sibling merely
+	// because its existing parent also contains the private directory.
+	for current := ancestor; ; current = filepath.Dir(current) {
+		info, err := os.Stat(current)
+		if err != nil {
+			return false, err
+		}
+		for _, root := range i.roots {
+			if os.SameFile(info, root.identity) {
+				return true, nil
+			}
+		}
+		if filepath.Dir(current) == current {
+			return false, nil
+		}
+	}
 }
