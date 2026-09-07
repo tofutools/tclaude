@@ -24,3 +24,5 @@ body.slop{background:#150d1c;color:#f9e9ad}body.slop header,body.slop nav{backgr
 #terminal-tools{padding:.6rem;border-top:1px solid var(--border,#777)}#terminal-tools textarea{width:100%;min-height:6rem;box-sizing:border-box}#terminal-tools .toolbar{flex-wrap:wrap}
 
 #attention{padding:.5rem 1rem;border-bottom:1px solid var(--border,#777)}#attention>div{max-height:20rem;overflow:auto}.terminal-window #attention{display:none}
+
+#directory-picker{width:min(42rem,90vw)}#directory-picker .directory-list{display:flex;flex-direction:column;align-items:stretch;gap:.3rem;max-height:40vh;overflow:auto;margin:.7rem 0}#directory-picker .directory-list button{text-align:left;overflow-wrap:anywhere}

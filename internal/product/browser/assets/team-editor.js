@@ -90,6 +90,7 @@ class TeamEditor {
       if (f.type === 'checkbox') input.checked = !!f.value;
       input.name = f.key; input.setAttribute('aria-label', f.label); input.required = !!f.required;
       label.append(input); form.append(label);
+      if (f.key === 'cwd') label.append(button('Browse directories', async () => { const {pickDirectory} = await import('./directory-picker.js'); if (!input.isConnected || !this.dialog.open) return; const selected = await pickDirectory({api: this.api, initial: input.value}); if (selected !== null && input.isConnected && this.dialog.open) { input.value = selected; input.dispatchEvent(new Event('input', {bubbles: true})); } }));
     }
     form.oninput = () => { this.unapplied = true; };
     const submit = el('button', 'Apply changes'); submit.type = 'submit'; form.append(submit, button('Back to ' + this.tab, () => { if (this.discard()) this.render(); }));

@@ -747,6 +747,21 @@ effective setting. Tokens must start with a lowercase letter or digit and contai
 at most 64 lowercase letters, digits, underscores or hyphens. This setting does
 not change approval or sandbox authority.
 
+### Working-directory browser
+
+Launch configuration and team member forms can browse directories on the backend
+host. Enter an explicit absolute path, open a child or parent directory, and
+choose **Use this directory** to fill the current form. Cancel leaves the field
+unchanged. Selection does not save configuration, create a workspace, or launch
+an agent; those operations retain their ordinary validation and authority checks.
+
+The operator-only `GET /v2/directories?path=...` endpoint returns directory names,
+canonical current/parent paths, and an optional `NextAfter` cursor. It reads no
+file contents and performs no filesystem mutations. Hidden directories require
+`hidden=true`; `limit` defaults to 100 and is capped at 200. Each read inventories
+at most 8192 entries and refuses larger directories. Pages reflect the live
+filesystem, so concurrent renames or removals can change subsequent results.
+
 ### Archiving saved configurations
 
 Configurations can be filtered as active, archived or all. Archive hides fresh
