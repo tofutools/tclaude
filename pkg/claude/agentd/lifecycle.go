@@ -4718,6 +4718,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// same function in a loop. handleGroupSpawn keeps only the HTTP
 	// shape — decode + validate above, error/JSON mapping below.
 	p := spawnParams{
+		AgentID:                    reservedAgentIDFromContext(r.Context()),
 		EffectiveSandbox:           &effectiveSandbox,
 		Name:                       body.Name,
 		Role:                       body.Role,
@@ -7518,7 +7519,9 @@ func executeServerSpawnDeferred(g *db.AgentGroup, p spawnParams, syncProofCleanu
 		return nil, &spawnFailure{http.StatusUnprocessableEntity, "invalid_opencode_permission_policy",
 			"could not build OpenCode access-control policy: " + err.Error()}
 	}
-	p.AgentID = db.NewAgentID()
+	if p.AgentID == "" {
+		p.AgentID = db.NewAgentID()
+	}
 	implementation, err := sandboxpolicy.NormalizeImplementation(p.SandboxImplementation)
 	if err != nil {
 		return nil, &spawnFailure{http.StatusUnprocessableEntity,

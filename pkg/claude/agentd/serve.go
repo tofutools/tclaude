@@ -653,6 +653,9 @@ func runServe(p *serveParams) error {
 	startStandingOrderDebounceScheduler(cronStop)
 	startTriggerScheduler(cronStop)
 	startTriggerSourcePollers(cronStop)
+	if err := startAWBReadyPollers(cronStop, cfg); err != nil {
+		return err
+	}
 	// Processes runtime: one bounded startup page plus a coarse fallback sweep.
 	// Each actively advancing run is claimed by exactly one daemon-owned drive;
 	// SQLite remains the only authoritative checkpoint writer.

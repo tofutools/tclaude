@@ -2081,6 +2081,26 @@ type AWBProxyConfig struct {
 	// `proxy.awb.write` permission slug still gates the caller on top of this:
 	// the config is the operator's ceiling, the slug is the per-agent grant.
 	AllowWrite bool `json:"allow_write,omitempty"`
+
+	// ReadyPolling opts agentd into dispatching AWB's first matching ready
+	// issue. Keys are process names; each entry names its AWB workspace and one
+	// serial worker is started for each entry.
+	ReadyPolling map[string]AWBReadyPollingConfig `json:"ready_polling,omitempty"`
+}
+
+// AWBReadyPollingConfig describes one named ready-issue polling process.
+// Interval is a duration string so config files remain readable; an omitted
+// value resolves to one minute.
+type AWBReadyPollingConfig struct {
+	Workspace      string   `json:"workspace"`
+	Labels         []string `json:"labels,omitempty"`
+	Group          string   `json:"group"`
+	Cwd            string   `json:"cwd"`
+	Interval       string   `json:"interval,omitempty"`
+	Profile        string   `json:"profile,omitempty"`
+	SandboxProfile string   `json:"sandbox_profile,omitempty"`
+	Harness        string   `json:"harness,omitempty"`
+	Worktree       bool     `json:"worktree,omitempty"`
 }
 
 // LinearProxyConfig is the operator's policy for the daemon-mediated Linear
@@ -2391,6 +2411,20 @@ func (c *Config) ResolvedAWBProxy() AWBProxyConfig {
 		allowed := append(append([]string{}, src.AllowedWorkspaces...), src.LegacyAllowedProjects...)
 		out.AllowedWorkspaces = normalizeGitProxyPatterns(allowed)
 		out.AllowWrite = src.AllowWrite
+		if len(src.ReadyPolling) > 0 {
+			out.ReadyPolling = make(map[string]AWBReadyPollingConfig, len(src.ReadyPolling))
+			for key, polling := range src.ReadyPolling {
+				polling.Workspace = strings.ToLower(strings.TrimSpace(polling.Workspace))
+				polling.Labels = append([]string(nil), polling.Labels...)
+				polling.Group = strings.TrimSpace(polling.Group)
+				polling.Cwd = strings.TrimSpace(polling.Cwd)
+				polling.Interval = strings.TrimSpace(polling.Interval)
+				polling.Profile = strings.TrimSpace(polling.Profile)
+				polling.SandboxProfile = strings.TrimSpace(polling.SandboxProfile)
+				polling.Harness = strings.TrimSpace(polling.Harness)
+				out.ReadyPolling[strings.ToLower(strings.TrimSpace(key))] = polling
+			}
+		}
 	}
 	return out
 }
@@ -3363,6 +3397,28 @@ func Validate(c *Config) []string {
 
 	if c.Agent != nil {
 		a := c.Agent
+		if a.AWBProxy != nil && len(a.AWBProxy.ReadyPolling) > 0 {
+			seen := make(map[string]string, len(a.AWBProxy.ReadyPolling))
+			for key := range a.AWBProxy.ReadyPolling {
+				normalized := strings.ToLower(strings.TrimSpace(key))
+				if previous, ok := seen[normalized]; ok {
+					errs = append(errs, fmt.Sprintf("agent.awb_proxy.ready_polling process names %q and %q normalize to the same process %q", previous, key, normalized))
+					continue
+				}
+				seen[normalized] = key
+			}
+			processes := make(map[string][]AWBReadyPollingConfig)
+			for _, polling := range a.AWBProxy.ReadyPolling {
+				workspace := strings.ToLower(strings.TrimSpace(polling.Workspace))
+				for _, other := range processes[workspace] {
+					if len(polling.Labels) == 0 || len(other.Labels) == 0 || stringSlicesOverlapFold(polling.Labels, other.Labels) {
+						errs = append(errs, fmt.Sprintf("agent.awb_proxy.ready_polling processes for workspace %q must have disjoint non-empty label filters", workspace))
+						break
+					}
+				}
+				processes[workspace] = append(processes[workspace], polling)
+			}
+		}
 		if dir := strings.TrimSpace(a.ResourceDelegationDir); dir != "" && !filepath.IsAbs(dir) {
 			errs = append(errs, fmt.Sprintf("agent.resource_delegation_dir %q must be an absolute path", dir))
 		}
@@ -3540,6 +3596,19 @@ func Validate(c *Config) []string {
 	}
 
 	return errs
+}
+
+func stringSlicesOverlapFold(a, b []string) bool {
+	seen := make(map[string]struct{}, len(a))
+	for _, value := range a {
+		seen[value] = struct{}{}
+	}
+	for _, value := range b {
+		if _, ok := seen[value]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // validateSudo reports duration-parse problems in a SudoConfig and its
