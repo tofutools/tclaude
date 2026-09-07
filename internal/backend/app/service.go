@@ -445,66 +445,75 @@ func (s *Service) Observe(ctx context.Context, req ObserveRequest) (ObservationR
 	if execution.Workload == model.ExecutionWorkloadShell {
 		runtime, runtimeErr := s.hostRuntimeFor(execution)
 		if runtimeErr != nil {
-			return ObservationResult{}, runtimeErr
+			return ObservationResult{}, errors.Join(runtimeErr, s.resetAgentActivityEpisodes(ctx, execution, s.now().UTC()))
 		}
 		hostObservation, observeErr := runtime.ObserveHost(ctx)
 		if observeErr != nil {
-			return ObservationResult{}, observeErr
+			return ObservationResult{}, errors.Join(observeErr, s.resetAgentActivityEpisodes(ctx, execution, s.now().UTC()))
 		}
 		observation := ports.Observation{ObservedAt: hostObservation.ObservedAt, Workload: hostObservation.Workload}
 		updated, persistErr := s.store.RecordRecovery(ctx, execution.ID, stateFromObservation(observation), nil, model.ProviderEvidence{}, s.now().UTC())
 		if persistErr != nil {
 			return ObservationResult{}, persistErr
 		}
+		if factErr := s.appendAgentActivityFacts(ctx, updated, observation); factErr != nil {
+			return ObservationResult{}, factErr
+		}
 		return ObservationResult{Execution: updated, Observation: observation}, nil
 	}
 	runtime, err := s.runtimeFor(ctx, execution)
 	if err != nil {
-		return ObservationResult{}, err
+		return ObservationResult{}, errors.Join(err, s.resetAgentActivityEpisodes(ctx, execution, s.now().UTC()))
 	}
 	observation, err := runtime.Observe(ctx)
 	if err != nil {
-		if execution.AgentID != "" {
-			resetErr := s.resetAutomationTriggerEpisodes(ctx, model.AutomationSourceApplication, model.AutomationFactResource{Kind: model.FactResourceAgent, ID: string(execution.AgentID)}, s.now().UTC())
-			if resetErr != nil {
-				return ObservationResult{}, errors.Join(err, resetErr)
-			}
-		}
-		return ObservationResult{}, err
+		return ObservationResult{}, errors.Join(err, s.resetAgentActivityEpisodes(ctx, execution, s.now().UTC()))
 	}
 	updated, err := s.store.RecordRecovery(ctx, execution.ID, stateFromObservation(observation), nil, observation.Evidence, s.now().UTC())
 	if err != nil {
 		return ObservationResult{}, err
 	}
-	if updated.AgentID != "" {
-		idle, awaiting := "unknown", "unknown"
-		activityAt := observation.AgentActivityObservedAt.UTC()
-		switch observation.AgentActivity {
-		case ports.AgentActivityActive:
-			idle, awaiting = "false", "false"
-		case ports.AgentActivityIdle:
-			idle, awaiting = "true", "false"
-		case ports.AgentActivityAwaitingInput:
-			idle, awaiting = "false", "true"
-		}
-		if activityAt.IsZero() {
-			activityAt = observation.ObservedAt.UTC()
-			if activityAt.IsZero() {
-				activityAt = s.now().UTC()
-			}
-			idle, awaiting = "unknown", "unknown"
-		}
-		resource := model.AutomationFactResource{Kind: model.FactResourceAgent, ID: string(updated.AgentID)}
-		identity := fmt.Sprintf("execution:%s:activity:%s:%s", updated.ID, observation.AgentActivity, activityAt.Format(time.RFC3339Nano))
-		facts := []model.NormalizedFact{
-			internalAutomationFact(model.FactAgentIdle, idle, resource, identity+":idle", activityAt, "", 0),
-			internalAutomationFact(model.FactAgentAwaitingInput, awaiting, resource, identity+":awaiting", activityAt, "", 0),
-		}
-		if err = s.store.AppendAutomationFacts(ctx, model.AutomationSourceApplication, facts); err != nil {
-			return ObservationResult{}, err
-		}
+	if err = s.appendAgentActivityFacts(ctx, updated, observation); err != nil {
+		return ObservationResult{}, err
 	}
 	return ObservationResult{Execution: updated, Observation: observation}, nil
+}
+
+func (s *Service) resetAgentActivityEpisodes(ctx context.Context, execution model.Execution, observedAt time.Time) error {
+	if execution.AgentID == "" {
+		return nil
+	}
+	return s.resetAutomationTriggerEpisodes(ctx, model.AutomationSourceApplication, model.AutomationFactResource{Kind: model.FactResourceAgent, ID: string(execution.AgentID)}, observedAt)
+}
+
+func (s *Service) appendAgentActivityFacts(ctx context.Context, execution model.Execution, observation ports.Observation) error {
+	if execution.AgentID == "" {
+		return nil
+	}
+	idle, awaiting := "unknown", "unknown"
+	activityAt := observation.AgentActivityObservedAt.UTC()
+	switch observation.AgentActivity {
+	case ports.AgentActivityActive:
+		idle, awaiting = "false", "false"
+	case ports.AgentActivityIdle:
+		idle, awaiting = "true", "false"
+	case ports.AgentActivityAwaitingInput:
+		idle, awaiting = "false", "true"
+	}
+	if activityAt.IsZero() {
+		activityAt = observation.ObservedAt.UTC()
+		if activityAt.IsZero() {
+			activityAt = s.now().UTC()
+		}
+		idle, awaiting = "unknown", "unknown"
+	}
+	resource := model.AutomationFactResource{Kind: model.FactResourceAgent, ID: string(execution.AgentID)}
+	identity := fmt.Sprintf("execution:%s:activity:%s:%s", execution.ID, observation.AgentActivity, activityAt.Format(time.RFC3339Nano))
+	facts := []model.NormalizedFact{
+		internalAutomationFact(model.FactAgentIdle, idle, resource, identity+":idle", activityAt, "", 0),
+		internalAutomationFact(model.FactAgentAwaitingInput, awaiting, resource, identity+":awaiting", activityAt, "", 0),
+	}
+	return s.store.AppendAutomationFacts(ctx, model.AutomationSourceApplication, facts)
 }
 
 func (s *Service) Interact(ctx context.Context, req InteractRequest) (OperationResult, error) {
