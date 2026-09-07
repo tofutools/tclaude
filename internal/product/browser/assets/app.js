@@ -6,6 +6,7 @@ for(const tab of document.querySelectorAll('[data-tab]'))tab.disabled=true;
 document.querySelector('main').inert=true;
 const requestID = () => 'r_' + crypto.randomUUID();
 const terminals = new TerminalWorkspace({requestID});
+const presentation = new PresentationWorkspace({api});
 const messageWorkspace = new MessageWorkspace({host:$('message-list'),el,button,api,refresh,card:messageCard});
 const rosterWorkspace = new RosterWorkspace({host:$('roster'),api,el,button,edit,refresh});
 function showError(error) { const target=$('editor').open?$('editor-error'):$('error');target.textContent=error.message || String(error);target.hidden=false; }
@@ -15,13 +16,13 @@ async function api(path, body, method) {
  if(response.status===204)return;
  return response.json();
 }
-function button(text, action) { const b=el('button',text);const id=requestID();b.type='button';b.onclick=async()=>{b.disabled=true;$('error').hidden=true;try{await action(id)}catch(e){showError(e)}finally{b.disabled=false}};return b; }
+function button(text, action) { const b=el('button',presentation.label(text));b.dataset.uiText=text;const id=requestID();b.type='button';b.onclick=async()=>{b.disabled=true;$('error').hidden=true;try{await action(id)}catch(e){showError(e)}finally{b.disabled=false}};return b; }
 function empty(parent,text){parent.append(el('p',text,'empty'))}
 async function refresh(){
  snapshot=await api('/v2/snapshot');render();$('connection').textContent=`Updated ${new Date().toLocaleTimeString()}`;
 }
 function edit(title,fields,save,{skipUnchanged=false}={}){
- $('editor-title').textContent=title;$('editor-fields').replaceChildren();$('editor-error').hidden=true;let fingerprint='',submissionID='';
+ $('editor-title').textContent=presentation.label(title);$('editor-fields').replaceChildren();$('editor-error').hidden=true;let fingerprint='',submissionID='';
  for(const field of fields){
   const label=el('label',field.label);let input;
   if(field.options){input=el('select');for(const option of field.options){const o=el('option',typeof option==='string'?option:option.label);o.value=typeof option==='string'?option:option.value;input.append(o)}}
@@ -85,6 +86,7 @@ function messageCard(message){
  return card;
 }
 function render(){
+ presentation.update(snapshot);
  renderGroupControls(snapshot,{host:$('group-management'),el,button,edit,api,refresh});
  rosterWorkspace.update(snapshot,agentRow);
  const spaces=$('workspace-list');spaces.replaceChildren();
@@ -114,7 +116,7 @@ async function selectTab(tab){
 }
 $('refresh').onclick=()=>refresh().catch(showError);
 $('cancel').onclick=()=>$('editor').close();
-$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');closeTerminal();snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
+$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');closeTerminal();presentation.stop();snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
 for(const tab of document.querySelectorAll('[data-tab]'))tab.onclick=()=>selectTab(tab.dataset.tab).catch(showError);
 $('new-agent').onclick=()=>edit('New agent',[...desiredFields(),...agentMetadataFields()],f=>api('/v2/agents',{id:f.requestID,name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify}}));
 $('new-group').onclick=()=>edit('New group',[{name:'name',label:'Name'},{name:'members',label:'Members',multiple:true,required:false,options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}],f=>api('/v2/groups',{id:f.requestID,name:f.name,members:f.members}));
@@ -126,7 +128,7 @@ $('search-history').onsubmit=async e=>{e.preventDefault();try{
 }catch(error){showError(error)}};
 (async()=>{
  const fragment=new URLSearchParams(location.hash.slice(1));const token=fragment.get('login'),requested=new URLSearchParams(location.search).get('terminal');history.replaceState(null,'',location.pathname+location.search);
- if(token)await api('/session',{token});await refresh();
+ if(token)await api('/session',{token});await presentation.load();await refresh();
  if(requested){
   document.body.classList.add('terminal-window');
   const execution=(snapshot.executions||[]).find(e=>e.id===requested);if(!execution)throw new Error('This execution is not available in the current workspace.');

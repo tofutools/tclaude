@@ -146,6 +146,12 @@ func TestPublicCheckoutShellSurvivesBackendRestart(t *testing.T) {
 	require.Empty(t, snapshot.Conversations)
 	call("POST", "/v2/stop", map[string]any{"request_id": "stop", "execution_id": launch.Execution.ID, "force": true}, nil)
 	require.DirExists(t, path, "stopping a shell must retain its checkout")
+	// Stop acceptance can precede process exit. Observe the terminal state before
+	// asking removal to release an actively claimed checkout.
+	require.Eventually(t, func() bool {
+		call("POST", "/v2/observe", map[string]any{"execution_id": launch.Execution.ID}, &observation)
+		return observation.Workload == "exited"
+	}, 5*time.Second, 20*time.Millisecond)
 	call("GET", "/v2/workspaces/workspace_public", nil, &workspace)
 	call("POST", "/v2/workspaces/remove", map[string]any{"request_id": "remove", "workspace_id": workspace.Workspace.ID, "expected_revision": workspace.Workspace.Revision, "destructive": false}, nil)
 	require.NoDirExists(t, path)
