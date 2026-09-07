@@ -403,6 +403,7 @@ type ContinuationRecord struct {
 
 type LaunchRetryLookup struct {
 	Context              RequestContext
+	At                   time.Time
 	Kind                 model.OperationKind
 	AgentID              model.AgentID
 	InitialMessageDigest string

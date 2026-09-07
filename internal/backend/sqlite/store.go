@@ -1808,5 +1808,18 @@ func (s *Store) FindLaunchAdmission(ctx context.Context, in app.LaunchRetryLooku
 	if digest != in.InitialMessageDigest {
 		return app.AdmissionResult{}, false, app.ErrConflict
 	}
+	resource := model.ResourceSelector{Kind: model.ResourceExecution, ExecutionID: prior.Execution.ID}
+	if prior.Execution.AgentID != "" {
+		resource = model.ResourceSelector{Kind: model.ResourceAgent, AgentID: prior.Execution.AgentID}
+	}
+	spec := prior.Execution.Spec
+	desired := model.DesiredConfiguration{Harness: spec.Harness, Model: spec.Model, Effort: spec.Effort, WorkingDirectory: spec.WorkingDirectory, Approval: spec.Approval, Sandbox: spec.Sandbox}
+	decision, err := authorizeTx(ctx, tx, model.AuthorityRequest{Principal: in.Context.Principal, Action: model.ActionLaunch, Resource: resource, RequestedConfiguration: &desired}, in.At)
+	if err != nil {
+		return app.AdmissionResult{}, false, err
+	}
+	if !decision.Allowed {
+		return app.AdmissionResult{}, false, app.ErrUnauthorized
+	}
 	return prior, true, nil
 }

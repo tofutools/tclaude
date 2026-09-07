@@ -261,7 +261,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 				return OperationResult{}, ErrInvalid
 			}
 		}
-		prior, repeated, err := s.store.FindLaunchAdmission(ctx, LaunchRetryLookup{Context: req.RequestContext, Kind: kind, AgentID: targetAgent, InitialMessageDigest: initialDigest})
+		prior, repeated, err := s.store.FindLaunchAdmission(ctx, LaunchRetryLookup{Context: req.RequestContext, At: s.now().UTC(), Kind: kind, AgentID: targetAgent, InitialMessageDigest: initialDigest})
 		if err != nil {
 			return OperationResult{}, err
 		}
