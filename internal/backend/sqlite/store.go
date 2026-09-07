@@ -43,6 +43,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize replacement backend schema: %w", err)
 	}
+	if _, err := s.db.ExecContext(ctx, groupCapacitySchema); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, groupDetailsSchema); err != nil {
 		return err
 	}
@@ -763,6 +766,9 @@ func readGroup(ctx context.Context, q groupReader, id model.GroupID) (model.Grou
 	err := q.QueryRowContext(ctx, `SELECT id,name,owner_agent_id,revision,created_at,updated_at,COALESCE((SELECT parent_id FROM group_parents WHERE group_id=groups.id),'') FROM groups WHERE id=?`, id).Scan(&group.ID, &group.Name, &group.OwnerAgentID, &group.Revision, &created, &updated, &group.ParentGroupID)
 	if err != nil {
 		return model.Group{}, classify(err)
+	}
+	if err = q.QueryRowContext(ctx, `SELECT COALESCE((SELECT max_active_members FROM group_capacity WHERE group_id=?),0)`, id).Scan(&group.MaxActiveMembers); err != nil {
+		return model.Group{}, err
 	}
 	var details []byte
 	if err = q.QueryRowContext(ctx, `SELECT COALESCE((SELECT record FROM group_details WHERE group_id=?),'null')`, id).Scan(&details); err != nil {

@@ -284,6 +284,13 @@ func (t *translator) translateGroups(batch *app.ImportBatch) error {
 			return items[i].key < items[j].key
 		})
 		group := model.Group{ID: model.GroupID(t.id("agent_groups", key)), Name: firstNonEmpty(sourcev228.String(row.Values["name"]), key), Revision: 1, CreatedAt: created, UpdatedAt: firstTime(timeValue(row.Values["archived_at"]), created)}
+		if raw := row.Values["max_members"]; raw != nil {
+			if cap, ok := sourcev228.Int64(raw); ok && model.ValidGroupCapacity(cap) {
+				group.MaxActiveMembers = cap
+			} else {
+				t.launchMetadataDiagnostic(batch, "agent_groups", row.Key, "group_capacity_retained_unmapped", "unsupported legacy capacity remains in exact retained source evidence; no capacity activated")
+			}
+		}
 		details := model.GroupDetails{Description: sourcev228.String(row.Values["descr"]), Mission: sourcev228.String(row.Values["mission"]), LinkURL: sourcev228.String(row.Values["attachment_url"]), LinkLabel: sourcev228.String(row.Values["attachment_label"])}
 		supported := model.GroupDetails{}
 		if model.ValidateGroupDetails(model.GroupDetails{Description: details.Description}) == nil {

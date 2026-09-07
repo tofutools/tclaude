@@ -1001,3 +1001,24 @@ conflict instead of overwriting the edited state. Empty details clear the record
 ordinary group mutations preserve it. Offline import maps valid legacy details
 and verifies them on exact retries. Unsupported text or link values remain in
 retained source evidence with a `group_details_retained_unmapped` diagnostic.
+
+## Group member limits
+
+Group settings exposes an operator-controlled member limit. The count includes
+active, non-retired agents directly in that group, whether or not an execution is
+running. It excludes child groups and retained retired members. Zero removes the
+configured limit; existing technical membership bounds still apply. Accepted
+limits are whole numbers from zero to 2147483647.
+
+`PUT /v2/groups/{id}/capacity` takes `max_active_members` and the exact
+`expected_revision`. Lowering the limit never stops or retires agents. Over-limit
+groups can still be renamed, reordered, and have members removed. Fresh additions,
+creation from group defaults, and team reinforcement check capacity atomically
+with their durable admission; failure creates no partial agent or deployment.
+Reactivation also checks every direct group retaining that agent. Group hierarchy
+neither shares nor inherits capacity.
+
+Offline import preserves supported legacy limits and verifies them on exact
+retry. Unsupported values remain in retained source evidence with a
+`group_capacity_retained_unmapped` diagnostic. Imported membership remains intact
+even if it already exceeds a configured limit.

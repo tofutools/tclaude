@@ -13,7 +13,7 @@ func TestBrowserGroupHierarchyUsesStableParentsAndCanUnnest(t *testing.T) {
 	}
 	page.MustElement("#refresh").MustClick()
 	page.MustElementR("summary", "^Group settings$").MustClick()
-	page.MustElement("#group-management [data-group-id=child]").MustElementR("button", "^Move group$").MustClick()
+	page.MustElementR("#group-management [data-group-id=child] button", "^Move group$").MustClick()
 	page.MustElement("#editor [name=parent]").MustSelect("Same label · parent")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
@@ -37,7 +37,7 @@ func TestBrowserGroupHierarchyUsesStableParentsAndCanUnnest(t *testing.T) {
 	page.MustElementR("#connection", "Updated ")
 	page.MustElementR("summary", "^Group settings$").MustClick()
 	page.MustElement("#group-management [data-group-id=parent] > .group-children > [data-group-id=child]")
-	page.MustElement("#group-management [data-group-id=child]").MustElementR("button", "^Move group$").MustClick()
+	page.MustElementR("#group-management [data-group-id=child] button", "^Move group$").MustClick()
 	page.MustElement("#editor [name=parent]").MustSelect("Top level")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()

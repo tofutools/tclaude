@@ -87,6 +87,11 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 		}
 		position++
 	}
+	if len(ownedMembers) > 0 {
+		if err = requireGroupCapacity(ctx, tx, group.ID); err != nil {
+			return model.TeamDeployment{}, false, err
+		}
+	}
 	groupMembers := make(map[model.AgentID]bool, len(group.Members))
 	for _, member := range group.Members {
 		groupMembers[member] = true

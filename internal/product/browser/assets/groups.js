@@ -7,7 +7,11 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
  const parent=groups.find(g=>g.ID===group.ParentGroupID);card.append(el('p',parent?'Parent: '+parent.Name+' · '+parent.ID:'Top level'));
  card.append(button('Move group',()=>{edit('Move group',[{name:'parent',label:'Parent group (organization only; no inherited authority)',required:false,value:group.ParentGroupID||'',options:[{value:'',label:'Top level'},...groups.filter(g=>g.ID!==group.ID).map(g=>({value:g.ID,label:g.Name+' · '+g.ID}))]}],f=>{return api('/v2/groups/'+encodeURIComponent(group.ID)+'/parent',{request_id:f.requestID,parent_group_id:f.parent,expected_revision:group.Revision},'PUT')},{skipUnchanged:true})}));
  const details=group.Details||{};appendGroupDetails(card,details,el);
+ const activeMembers=(group.Members||[]).filter(id=>agents.some(a=>a.ID===id&&a.Lifecycle==='active')).length,cap=group.MaxActiveMembers||0;
+ card.append(el('p',`${activeMembers} active direct members · ${cap?'limit '+cap:'no configured limit'}${cap&&activeMembers>cap?' · over limit':''}`));
   const controls=el('div',undefined,'toolbar');
+ controls.append(button('Member limit',()=>edit('Group member limit',[{name:'limit',label:'Maximum active direct members (0 = no configured limit)',type:'number',value:String(cap)}],f=>{const value=Number(f.limit);if(!Number.isInteger(value)||value<0||value>2147483647)throw new Error('Enter a whole number from 0 to 2147483647');return api('/v2/groups/'+encodeURIComponent(group.ID)+'/capacity',{max_active_members:value,expected_revision:group.Revision},'PUT')},{skipUnchanged:true})));
+
  controls.append(button('Edit group details',()=>edit('Group details',[
   {name:'description',label:'Description',multiline:true,required:false,value:details.Description||''},
   {name:'mission',label:'Mission (descriptive; not sent to agents)',multiline:true,required:false,value:details.Mission||''},
