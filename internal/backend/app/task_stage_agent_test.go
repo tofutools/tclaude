@@ -126,11 +126,17 @@ func (p *stageAgentPreparation) Release(ctx context.Context, permit ports.Releas
 
 type stageAgentRuntime struct {
 	ports.Runtime
-	inputs  []string
-	stopped bool
+	inputs       []string
+	stopped      bool
+	inputEntered chan struct{}
+	inputRelease <-chan struct{}
 }
 
 func (r *stageAgentRuntime) Interact(_ context.Context, in ports.Interaction) (ports.InteractionResult, error) {
+	if r.inputEntered != nil {
+		close(r.inputEntered)
+		<-r.inputRelease
+	}
 	r.inputs = append(r.inputs, in.Text)
 	return ports.InteractionResult{Disposition: ports.EffectAccepted}, nil
 }

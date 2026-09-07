@@ -39,7 +39,8 @@ type Service struct {
 	callbackIngress  ports.CallbackIngress
 	automationFacts  []ports.AutomationFactSource
 
-	graphInteractionOwner string
+	graphInteractionMu sync.Mutex
+	graphInteractions  map[model.OperationID]bool
 
 	runtimeMu       sync.RWMutex
 	runtimes        map[model.ExecutionID]ports.Runtime
@@ -49,7 +50,7 @@ type Service struct {
 
 func New(store Store, providers ports.ProviderRegistry) *Service {
 	return &Service{
-		graphInteractionOwner: randomID("worker_"), store: store, providers: providers, now: time.Now, newID: randomID, accessLease: 24 * time.Hour,
+		store: store, providers: providers, now: time.Now, newID: randomID, accessLease: 24 * time.Hour,
 		runtimes: make(map[model.ExecutionID]ports.Runtime), hostRuntimes: make(map[model.ExecutionID]ports.HostRuntime), programRuntimes: make(map[model.ExecutionID]ports.ProgramRuntime),
 	}
 }

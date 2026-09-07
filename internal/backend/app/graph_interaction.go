@@ -63,6 +63,25 @@ func (s *Service) admitGraphInteraction(ctx context.Context, record WorkRunRecor
 }
 
 func (s *Service) dispatchGraphInteraction(ctx context.Context, record WorkRunRecord, attempt model.WorkNodeAttempt, operation model.Operation) (WorkRunRecord, error) {
+	// Only one dispatch may be in flight for this exact operation in a service.
+	// After this call returns, a later claim has a different owner and can settle
+	// a consumed input whose completion write failed, without sending it again.
+	s.graphInteractionMu.Lock()
+	if s.graphInteractions[operation.ID] {
+		s.graphInteractionMu.Unlock()
+		return record, nil
+	}
+	if s.graphInteractions == nil {
+		s.graphInteractions = make(map[model.OperationID]bool)
+	}
+	s.graphInteractions[operation.ID] = true
+	s.graphInteractionMu.Unlock()
+	defer func() {
+		s.graphInteractionMu.Lock()
+		delete(s.graphInteractions, operation.ID)
+		s.graphInteractionMu.Unlock()
+	}()
+	owner := randomID("dispatch_")
 	store, ok := s.store.(GraphInteractionStore)
 	if !ok {
 		return record, ErrUnsupported
@@ -75,7 +94,7 @@ func (s *Service) dispatchGraphInteraction(ctx context.Context, record WorkRunRe
 	if err != nil {
 		return record, err
 	}
-	claimed, err := store.ClaimGraphInteraction(ctx, operation.ID, s.graphInteractionOwner, s.now().UTC())
+	claimed, err := store.ClaimGraphInteraction(ctx, operation.ID, owner, s.now().UTC())
 	if err != nil {
 		if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrConflict) {
 			settlement, finish := settlementContext(ctx)

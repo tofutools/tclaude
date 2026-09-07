@@ -55,8 +55,9 @@ func insertGraphInteraction(ctx context.Context, tx *sql.Tx, in app.GraphInterac
 }
 
 // ClaimGraphInteraction consumes once immediately before native input. A new
-// service instance encountering another owner's consumed input records uncertainty
-// rather than sending it again. Concurrent sweeps in the same instance wait.
+// dispatch encountering another owner's consumed input records uncertainty
+// rather than sending it again. The application serializes in-flight dispatches
+// per operation; an owner belongs to one dispatch, not the service lifetime.
 func (s *Store) ClaimGraphInteraction(ctx context.Context, id model.OperationID, owner string, at time.Time) (bool, error) {
 	if owner == "" {
 		return false, app.ErrInvalid
