@@ -50,7 +50,25 @@ export async function openProcessMonitor(id, {api, el, button, openDecisions}) {
       if (a.ExecutionID) card.append(el('p', 'Execution ' + a.ExecutionID));
       if (a.OperationID) card.append(el('p', 'Operation ' + a.OperationID));
       if (a.RetryAt) card.append(el('p', 'Retry at ' + new Date(a.RetryAt).toLocaleString()));
-      if (a.DecisionID) card.append(button('Open decisions for ' + node.ID, () => { dialog.close(); return openDecisions(); }));
+      if (a.DecisionID) {
+        const saved = (result.decisions || []).find(d => d.ID === a.DecisionID);
+        card.append(el('p', `Decision ${a.DecisionID}${saved ? ' · ' + saved.State : ''}`));
+        const decision = el('div'); card.append(decision);
+        card.append(button('Inspect decision', async () => {
+          try {
+            const record = await api('/v2/decisions/' + encodeURIComponent(a.DecisionID));
+            if (closed || !decision.isConnected) return;
+            const window = record.Window;
+            decision.replaceChildren(el('h4', window.Question || 'Decision'), el('p', `${window.ID} · ${window.State}`), el('p', 'Expires ' + new Date(window.ExpiresAt).toLocaleString()));
+            if (record.Submission) {
+              const s = record.Submission;
+              decision.append(el('strong', 'Answer: ' + s.Answer), el('pre', s.Reason), el('p', 'Decided by ' + (s.Actor.agent_id || s.Actor.kind)));
+              for (const id of s.EvidenceRefs || []) decision.append(el('p', 'Evidence ' + id));
+            }
+            if (window.State === 'open') decision.append(button('Answer pending decision', () => { dialog.close(); return openDecisions(); }));
+          } catch (e) { if (!closed && decision.isConnected) decision.replaceChildren(el('p', e.message)); }
+        }));
+      }
       for (const e of result.node_evidence || []) {
         if (e.attempt.NodeID !== a.Ref.NodeID || e.attempt.ActivationID !== a.Ref.ActivationID || e.attempt.Attempt !== a.Ref.Attempt) continue;
         card.append(el('strong', `Evidence ${e.id}`), el('p', `${e.kind} · ${e.reporter.agent_id || e.reporter.kind}`), el('pre', e.detail));
