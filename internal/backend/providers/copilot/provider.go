@@ -19,7 +19,6 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
-	legacyharness "github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 const (
@@ -247,12 +246,7 @@ func (p *Provider) prepareStateRoot(root, cwd string) error {
 	if err := host.WriteProtectedFile(filepath.Join(root, "hooks", "tclaude-observation.json"), raw); err != nil {
 		return err
 	}
-	return legacyharness.EnsureCopilotDirTrustedForLaunch(func(key string) string {
-		if key == "COPILOT_HOME" {
-			return root
-		}
-		return ""
-	}, filepath.Dir(root), cwd)
+	return ensureCopilotDirTrustedInHome(root, cwd)
 }
 
 func (p *prepared) Describe() ports.PreparedDescription { return p.description }

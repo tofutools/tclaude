@@ -8,7 +8,6 @@ import (
 
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
-	legacyharness "github.com/tofutools/tclaude/pkg/claude/harness"
 )
 
 type usageReader struct{ provider *Provider }
@@ -20,8 +19,8 @@ func (usageReader) Capabilities() ports.UsageCapabilities {
 
 func (r usageReader) Collect(ctx context.Context, request ports.UsageCollectionRequest) (ports.CollectedUsage, error) {
 	key := "copilot:" + request.Native.Reference
-	store, err := legacyharness.OpenCopilotUsageStore(r.provider.nativeHome)
-	if errors.Is(err, legacyharness.ErrCopilotUsageStoreAbsent) {
+	store, err := OpenCopilotUsageStore(r.provider.nativeHome)
+	if errors.Is(err, ErrCopilotUsageStoreAbsent) {
 		return ports.CollectedUsage{SourceKey: key, Source: "copilot.assistant_usage_events", SourceRevision: "unresolved-v1", ObservedAt: request.Execution.UpdatedAt,
 			Coverage: model.UsageCoverage{Counters: model.UsageCoverageUnknown, Cost: model.UsageCoverageUnsupported, Reason: "Copilot usage store is unavailable; nano-AIU has no monetary currency"}, Cumulative: true, Attribution: model.UsageAttributionConversation}, nil
 	}
@@ -33,7 +32,7 @@ func (r usageReader) Collect(ctx context.Context, request ports.UsageCollectionR
 	var after int64
 	var observed time.Time
 	for {
-		calls, err := store.Calls(ctx, []legacyharness.CopilotUsageCursor{{SessionID: request.Native.Reference, AfterEventID: after}}, 500)
+		calls, err := store.Calls(ctx, []CopilotUsageCursor{{SessionID: request.Native.Reference, AfterEventID: after}}, 500)
 		if err != nil {
 			return ports.CollectedUsage{}, err
 		}

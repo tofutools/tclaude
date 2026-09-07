@@ -1,158 +1,63 @@
 # Architecture
 
-This page is the mental model. Every other page documents one part of the
-system; this one explains how the parts fit together and why the design looks
-the way it does.
+The daemon owns durable work. CLI and browser clients ask the application to
+perform operations; neither client edits storage or chooses its authenticated
+identity in a request body.
 
-## What tclaude is
+## Common concepts
 
-Running one coding agent in a terminal is easy. Running many — across
-repositories, branches, and vendors — turns you into a window manager, a
-librarian, and a security team. tclaude is the operations layer that absorbs
-that work: a Go CLI plus a daemon that wrap agentic coding CLIs in tmux and
-add durable sessions, conversation history and search, an operations
-dashboard, agent-to-agent mail, teams, identity and permissions with an audit
-trail, sandboxing, and network egress control.
+| Concept | Meaning |
+|---|---|
+| Agent | Stable worker identity, desired configuration, lineage and mailbox |
+| Conversation | Logical history independent of a particular running process |
+| Execution | One concrete attempt to run a harness or standalone shell |
+| Workspace | An owned checkout with separate resource and use lifetimes |
+| Work run | Pinned assignment or graph, exact attempts, evidence and decisions |
+| Definition | Immutable revision of a reusable process, team or profile |
+| Operation | Admitted effect with attribution, authority and durable settlement |
+| Decision | Revision-checked answer to an exact access request or work question |
 
-Everything runs on machines you control. The daemon, the state, the dashboard,
-and every gate and guardrail are local and open source; the model providers
-behind the harnesses are the only external part.
+A provider's native session ID is private evidence about a conversation. It is
+not the identity of an agent, execution or work run. An inherited action
+credential represents its execution; it does not prove native primary-session
+provenance. Provider-owned observation ingress establishes that separate fact
+within its disclosed native trust boundary.
 
-## Harnesses
+## Code ownership
 
-A *harness* is a wrapped coding CLI. tclaude supports four:
-[Claude Code](https://claude.ai/code) (the default),
-[OpenAI Codex CLI](https://developers.openai.com/codex/cli),
-[OpenCode](https://opencode.ai), and
-[GitHub Copilot CLI](https://github.com/features/copilot/cli). A group can mix
-them freely, and the same commands drive all of them.
+`internal/backend/model` defines durable concepts. `app` owns workflows,
+authority admission and settlement. `sqlite` implements their transactional
+storage. `ports` defines the focused host/provider contracts those workflows
+need. Cohesive implementations under `providers` own native formats, launch and
+history semantics. `host` owns processes, terminal resources and Git checkouts.
 
-Harnesses do not expose identical primitives, so tclaude is built around
-*capability contracts*: each harness registers a descriptor composed of
-narrow contracts (spawning, asking, conversation storage, lifecycle commands,
-sandbox and approval catalogs, and so on). A missing contract means the
-capability is honestly absent — callers gate on it and refuse or degrade
-rather than pretend. An unknown harness fails closed. The practical result is
-visible all over the docs: phrases like "Claude Code only" or "not
-packet-filtered" are contract facts, not editorial hedges. See
-[Harnesses](harnesses.md) for the capability matrix.
+`transport` projects public DTOs and authenticates requests. `server` composes
+those layers and owns background-worker cancellation and join. `internal/product`
+contains the shared CLI commands and local browser. The two root binaries only
+establish their process lifetime and execute those commands.
 
-`--harness shell` also exists, but it is not a harness — just a convenient
-hack to bring up a plain terminal in a managed tmux session.
+Providers expose capabilities such as history, attachment and native guidance
+when supported. The application pins the selected configuration and history
+revision, admits current authority immediately before an effect, and settles the
+result independently of a disconnected caller. Recovery uses exact retained
+resource evidence. Unknown effects stay uncertain until observed or explicitly
+resolved; restarting does not replay them.
 
-## Sessions, conversations, agents
+## Why these boundaries exist
 
-Three nouns cover most of tclaude:
+The earlier backend grew around session management. A session row, tmux pane,
+native conversation, agent and running task accumulated overlapping lifecycle
+responsibilities. Harness differences and coordination policy often appeared in
+the same command or daemon path.
 
-- A **session** is a live harness instance in an isolated tmux server. It can
-  be attached, detached, watched, and stopped. See [Sessions](sessions.md).
-- A **conversation** is the persisted thread: transcript, title, working
-  directory, and — importantly — the harness that owns it. Resuming a
-  conversation relaunches it through the recorded harness with its recorded
-  launch posture. See [Conversations](conversations.md).
-- An **agent** is a conversation registered with the daemon. It has a stable
-  identity (`agt_…`), group memberships, a mailbox, permissions, and a
-  lifecycle. A session becomes an agent by being spawned into a group or
-  promoted later. See [Agents and groups](agents-and-groups.md).
+The current model separates those lifetimes and owners. A cancelled work outcome
+can still own a running execution and checkout. A retired agent keeps historical
+attribution. A configuration update describes the next launch without silently
+changing a current process. A native reset changes context only when correlated
+evidence confirms it. These distinctions are part of the application contract,
+shared by every client and harness.
 
-State lives in SQLite under `~/.tclaude/data/db.sqlite`. The sibling
-`~/.tclaude/api/` tree carries only the daemon's agent-reachable socket;
-private daemon state stays under `~/.tclaude/data/`.
-
-## The daemon: `agentd`
-
-One daemon sits underneath everything multi-agent: `tclaude agentd serve`
-(also shipped as the standalone `tclaude-agentd` binary). The CLI can do
-nothing agent-related on its own — there is no direct-database fallback, so
-killing the daemon disables the features rather than bypassing their gates.
-
-`agentd` has two faces:
-
-- a **Unix socket** (`~/.tclaude/api/agentd-socket/agentd.sock`) for agents, and
-- a **web API** on loopback for the human, hosting the
-  [dashboard](dashboard.md).
-
-Every agent-to-agent message, every permissioned operation, every spawn, and
-every sandbox decision routes through it — which is what makes identity,
-gating, and audit possible at all.
-
-### Identity without tokens
-
-The daemon resolves every socket request's caller from kernel peer
-credentials: it takes the connecting process, walks the process tree, and
-looks for a known harness *binary* (the executable path, not the process
-name). The verdict is agent, human, or refused — there is no fail-open path,
-and the human's credentials are ignored for anything with a harness ancestor.
-There is no token an agent could steal, because identity is not a token.
-
-Agent identity is deliberately more durable than any single conversation: it
-survives `/clear`, context compaction, and
-[reincarnation](spawning-and-lifecycle.md), so grants, group memberships, and
-queued mail follow the agent rather than the transcript.
-
-## Teams: groups, mail, guardrails
-
-A **group** is the team unit and the allow-list: members may message each
-other, and coordination topology is a design choice rather than an accident
-of who spawned whom. The human is a first-class participant on the same
-rails — the dashboard's Messages tab is a mailbox like any agent's, and
-delivery is durable-first: the inbox row lands before any notification is
-attempted.
-
-Agents can spawn agents, behind guardrails enforced by the daemon — group
-restriction, rate limits, a cross-harness matrix, group size caps, and two
-lineage rules: a child may never be *less confined* than its parent, and may
-never *auto-approve more* than its parent. Where the child would live is
-verified by a write-proof challenge answered by the caller's own sandbox. See
-[Spawning and lifecycle](spawning-and-lifecycle.md).
-
-Above single spawns sit reusable libraries — spawn profiles, roles, and group
-templates that deploy a whole roster against one mission — plus scheduling
-and standing automation. See [Teams at scale](teams-at-scale.md).
-
-## Permissions and audit
-
-Permissioned operations are gated on **slugs** (`self.rename`,
-`groups.members.stop`, `human.notify`, …), optionally narrowed by scopes.
-Grants can be scoped; denies never are. Time-bounded `sudo` elevations and
-`--ask-human` escalations bring the human into the loop, with timeout meaning
-deny. Every daemon-proxied operation lands in the audit trail — including
-denials, so the record answers "who *tried* to do what", not only what
-happened. See [Permissions and audit](permissions-and-audit.md).
-
-## Confinement
-
-Sandboxing is split into two questions, asked per launch:
-
-- **What does the harness's own sandbox do?** (`--sandbox`, per-harness
-  modes.)
-- **Who enforces containment?** (`--sandbox-impl`: the harness's built-in
-  sandbox, tclaude's own layer — bubblewrap on Linux, Seatbelt on macOS — an
-  experimental stacked combination, a resource-only cgroup, or off.)
-
-Policy comes from declarative JSON **sandbox profiles** — filesystem grants
-with carve-outs in both directions, environment, resources, and network —
-attached globally, per group, or per launch. When a backend cannot faithfully
-enforce what a profile demands, tclaude refuses to launch rather than
-silently degrading. Network egress gets its own engines: a Linux packet
-engine and a name-based filtering proxy engine. See
-[Sandboxing](sandboxing.md) and [Network filtering](network-filtering.md).
-For agents that should hold no credentials at all, daemon-side
-[credential proxies](proxies.md) perform git, GitHub, and Linear operations
-on their behalf, bounded by operator allow-lists.
-
-## Design principles
-
-The same few principles repeat everywhere and are worth naming once:
-
-- **Fail closed.** Unknown harness, missing capability, unreachable daemon,
-  unverifiable identity — each refuses rather than guesses.
-- **Honest capability gaps.** Features gate on contracts; the docs and the
-  CLI report differences instead of pretending.
-- **Durable first.** Mail, identity, grants, and history persist in SQLite
-  and survive restarts, `/clear`, and reincarnation. tmux keystroke injection
-  is only ever a best-effort notifier, never the transport.
-- **The human stays in the loop.** Approvals, sudo, audit, and the dashboard
-  exist so autonomy comes with a defensible trail.
-- **Self-hosted, no lock-in.** Vendors are pluggable at the harness seam;
-  everything else is yours.
+Offline migration reads a frozen versioned source schema and translates important
+durable meaning into these types. Old runtime handles and ambiguous authority do
+not become active. Original inactive authoring and conversion diagnostics remain
+explicitly inspectable.
