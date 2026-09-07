@@ -1188,6 +1188,11 @@ precision, currencies and native/estimate cost kinds stay separate. Conversation
 usage does not inherit an agent identity. Missing or unpriced usage is not zero
 spend, and no token prices or currency conversions are inferred.
 
+### Configured launch support
+
+Agent and configuration forms and the team member editor show the configured adapter's supported approval/confinement choices. Changing harness or policy refreshes this read-only explanation without altering authored values. Unsupported or unavailable-provider settings can still be saved as offline intent; they require correction or provider configuration before launch.
+
+`GET /v2/launch-support?harness=<name>` is operator-only and reads the adapter's static declaration. It reports whether that provider is configured, whether policy support is known, supported approval and sandbox modes, and prepared-initial-input capability. It performs no native preparation, credential delivery, storage write or execution. This is not an installation, authentication, authority or runtime readiness check. Providers that omit the declaration remain explicitly unknown. The actual preparation and release gates remain authoritative.
 ### Capture a group as a team template
 
 Groups offers **Save group as team template**. It opens the existing team editor with independent copies of the displayed active direct members, retaining order, names and desired launch settings including effort and environment. Stable template member keys are generated independently of names. Nothing is written until **Save team revision**, and saving does not launch work. Cancelling leaves the group and definition catalog unchanged.

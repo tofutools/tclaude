@@ -166,6 +166,10 @@ type Provider interface {
 }
 
 type ProviderCapabilities struct {
+	// LaunchPolicy is the static adapter contract, not a readiness or authority check.
+	// Nil means that the provider does not publish this capability.
+	LaunchPolicy *PolicyRequirements
+
 	PreparedInitialInput bool
 	NativeGuidance       []NativeGuidanceCapability
 }

@@ -72,7 +72,8 @@ func New(config Config) (*Provider, error) {
 
 func (*Provider) Name() string { return Name }
 func (*Provider) Capabilities() ports.ProviderCapabilities {
-	return ports.ProviderCapabilities{PreparedInitialInput: true, NativeGuidance: []ports.NativeGuidanceCapability{{EventKind: "session_start", Timing: model.StandingOrderSameContinuation}, {EventKind: "user_prompt", Timing: model.StandingOrderSameContinuation}}}
+	policy := supportedLaunchPolicy()
+	return ports.ProviderCapabilities{LaunchPolicy: &policy, PreparedInitialInput: true, NativeGuidance: []ports.NativeGuidanceCapability{{EventKind: "session_start", Timing: model.StandingOrderSameContinuation}, {EventKind: "user_prompt", Timing: model.StandingOrderSameContinuation}}}
 }
 func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 
@@ -233,10 +234,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 				Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory,
 				PrivateStorage: true,
 				Terminal:       &ports.TerminalRequirement{Interactive: true},
-				Policy: ports.PolicyRequirements{
-					SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic},
-					SupportedSandbox:  []model.SandboxMode{model.SandboxWorkspaceWrite},
-				},
+				Policy:         supportedLaunchPolicy(),
 			},
 			EffectivePolicy: ports.EffectivePolicy{
 				Approval: request.Spec.Approval, Sandbox: request.Spec.Sandbox,
@@ -866,3 +864,7 @@ var _ ports.Provider = (*Provider)(nil)
 var _ ports.ActionCredentialProvider = (*Provider)(nil)
 var _ ports.PreparedAttempt = (*prepared)(nil)
 var _ ports.Runtime = (*Runtime)(nil)
+
+func supportedLaunchPolicy() ports.PolicyRequirements {
+	return ports.PolicyRequirements{SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxWorkspaceWrite}}
+}

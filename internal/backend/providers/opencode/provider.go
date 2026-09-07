@@ -84,7 +84,8 @@ func New(config Config) (*Provider, error) {
 
 func (*Provider) Name() string { return Name }
 func (*Provider) Capabilities() ports.ProviderCapabilities {
-	return ports.ProviderCapabilities{PreparedInitialInput: true}
+	policy := supportedLaunchPolicy()
+	return ports.ProviderCapabilities{LaunchPolicy: &policy, PreparedInitialInput: true}
 }
 func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 
@@ -252,10 +253,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 				Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory,
 				PrivateStorage: true,
 				Loopback:       &ports.LoopbackRequirement{Protocol: "http"},
-				Policy: ports.PolicyRequirements{
-					SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic},
-					SupportedSandbox:  []model.SandboxMode{model.SandboxUnconfined},
-				},
+				Policy:         supportedLaunchPolicy(),
 			},
 			// SandboxEnforced means the explicit absence of confinement was
 			// preserved, never that OpenCode's permission rules are an OS sandbox.
@@ -1309,3 +1307,7 @@ var _ ports.Provider = (*Provider)(nil)
 var _ ports.ActionCredentialProvider = (*Provider)(nil)
 var _ ports.PreparedAttempt = (*prepared)(nil)
 var _ ports.Runtime = (*Runtime)(nil)
+
+func supportedLaunchPolicy() ports.PolicyRequirements {
+	return ports.PolicyRequirements{SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxUnconfined}}
+}
