@@ -647,6 +647,14 @@ Configuration-bearing permissions require complete harness/model/directory/
 approval/confinement allow-lists; the explicit disabled choice grants no such
 authority. Grants remain subject to the owning operation's current authority and
 lifecycle checks; declaring an action does not override an operator-only boundary.
+
+Workspace navigation keeps the selected tab in the `tab` URL parameter and in
+this browser tab’s session preferences. Reload and browser back/forward restore
+that workspace; unknown tab values fall back to Groups. The Commands picker
+(Ctrl/Cmd+K) searches visible workspaces and common authoring actions. It opens
+the same forms as their normal buttons and does not execute a workload by
+itself. Alt+1 through Alt+9 select the corresponding visible workspace tab;
+these shortcuts do not intercept typing in form controls.
 The browser's **Presentation and sound** controls select regular, wizard or
 slop-machine mode. Wizard mode restores the tower/party/rite vocabulary,
 purple-and-gold styling, casting and cursor effects, and the Tavern radio
