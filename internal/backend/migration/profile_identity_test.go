@@ -61,3 +61,31 @@ func TestImportedNumericProfileNameDoesNotBecomeAnID(t *testing.T) {
 	require.NotNil(t, agent.ConfigurationProfile)
 	require.Equal(t, wanted, agent.ConfigurationProfile.ProfileID)
 }
+
+func TestImportedProfileSentinelIDRetainsNamedDefault(t *testing.T) {
+	for _, value := range []string{"", "0"} {
+		t.Run("id_"+value, func(t *testing.T) {
+			ctx := context.Background()
+			bundle := buildFixture(t, fixtureOptions{})
+			alterFixture(t, bundle, `INSERT INTO spawn_profiles(id,name,permission_overrides,environment_json,role_refs) VALUES('7','Selected','[]','[]','[]'); ALTER TABLE dashboard_prefs ADD COLUMN value TEXT; INSERT INTO dashboard_prefs(key,value) VALUES('tclaude.dash.default_profile','Selected'),('tclaude.dash.default_profile_id','`+value+`');`)
+			inspection, err := Inspect(ctx, bundle)
+			require.NoError(t, err)
+			plan, err := Plan(inspection)
+			require.NoError(t, err)
+			wanted := model.ConfigurationProfileID(findIdentity(t, plan, "spawn_profiles", "7").TargetID)
+			path := filepath.Join(t.TempDir(), "db")
+			_, err = ImportSnapshot(ctx, bundle, ImportOptions{DestinationPath: path})
+			require.NoError(t, err)
+			store, err := db.Open(path)
+			require.NoError(t, err)
+			defaults, err := store.ConfigurationDefaults(ctx)
+			require.NoError(t, err)
+			require.NotNil(t, defaults.Global)
+			require.Equal(t, wanted, defaults.Global.ProfileID)
+			require.NoError(t, store.Close())
+			retry, err := ImportSnapshot(ctx, bundle, ImportOptions{DestinationPath: path})
+			require.NoError(t, err)
+			require.True(t, retry.Repeated)
+		})
+	}
+}

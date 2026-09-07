@@ -417,6 +417,10 @@ globalDefault:
 				continue
 			}
 			value := sourcev228.String(row.Values["value"])
+			// Preflight treats empty and zero stable IDs as absent.
+			if key == "tclaude.dash.default_profile_id" && (value == "" || value == "0") {
+				continue
+			}
 			ref, ok := t.profileIDs[value]
 			if key == "tclaude.dash.default_profile" {
 				ref, ok = t.profileNames[value]
