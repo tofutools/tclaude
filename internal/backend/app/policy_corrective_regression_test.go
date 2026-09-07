@@ -288,4 +288,9 @@ func TestUnavailableRunDoesNotStarveLaterIndependentRun(t *testing.T) {
 	_, err = service.ReconcilePendingWork(ctx)
 	require.ErrorIs(t, err, app.ErrUnavailable)
 	require.Equal(t, 1, host.prepares)
+	offline, err := service.InspectWork(ctx, app.InspectWorkRequest{Principal: model.OperatorPrincipal(), WorkRunID: "offline_run"})
+	require.NoError(t, err)
+	require.Equal(t, model.NodeAttemptReady, attemptFor(t, offline, "agent", 1).State)
+	require.Contains(t, attemptFor(t, offline, "agent", 1).Detail, "has no provider")
+	require.Empty(t, attemptFor(t, offline, "agent", 1).Ref.IssuanceID)
 }
