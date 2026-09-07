@@ -662,3 +662,12 @@ selects the Tavern for wizard mode and the Vegas lounge otherwise. Audio starts
 only with Play and does not restart on a page reload. SomaFM streams require an
 internet connection; the authenticated metadata route accepts only catalogued
 stations and shows an unavailable message on failure.
+
+Usage can be selected from recorded executions/conversations or by an explicit
+historical target ID. Observed-time range filters, per-unit reading bars and
+paged JSON export preserve the source coverage and attribution. The query keeps
+only the current version of a cumulative source reading; a chart point is not
+spend or tokens consumed during that time interval. Conversation-wide readings
+stay labelled as such even under an execution target, and reported decimal costs
+are shown without repricing or currency conversion. Exports identify whether
+additional pages remain unloaded.
