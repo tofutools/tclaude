@@ -1213,3 +1213,20 @@ output limit, sandbox mode and required effect authority explicitly. Saving crea
 no work. A process selects and pins a saved revision, so later configuration edits
 do not alter existing process definitions or runs. Concurrent edits return a
 conflict and retain the local form for inspection or copying.
+
+### Sandbox profile editor and path preview
+
+Configurations includes a Sandbox profiles panel. Create, copy, edit, inspect,
+archive and restore policies through the authenticated authoring API. Expand the
+filesystem, network, environment, resource and setup sections to edit literal
+rules. Includes select exact immutable revisions; later edits to an included
+profile do not change a saved selection. Save conflicts retain the draft, and an
+unchanged retry after a lost response returns the original result.
+
+Preview validates the draft and pinned includes and observes filesystem paths
+without creating missing directories or running setup scripts. It reports path
+kind, canonical spelling, missing paths and grants intersecting the backend's
+protected state directory. Included observations retain their source revision.
+These observations are neither an effective merged policy nor an enforcement
+receipt. The editor currently authors policies independently of launch settings;
+custom profile selection and actual host enforcement are not yet connected.

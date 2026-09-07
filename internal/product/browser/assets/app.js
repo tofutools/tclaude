@@ -14,6 +14,7 @@ const terminalTools = new TerminalTools({host:$('terminal-tools'),workspace:term
 const terminalDownloads = new TerminalDownloads({host:$('terminal-downloads'),workspace:terminals,el,button});
 const terminalFiles = new TerminalFiles({host:$('terminal-files'),workspace:terminals,tools:terminalTools,api,el,button,requestID});
 const authorityWorkspace = new AuthorityWorkspace({host:$('access-list'),api,el,button,edit,getSnapshot:()=>snapshot,report:showError});
+const sandboxProfiles = new SandboxProfilesWorkspace({host:$('sandbox-profiles'),api,el,button,edit,requestID});
 const programProfiles = new ProgramProfilesWorkspace({host:$('program-profiles'),api,el,button,edit,requestID});
 const attachmentPreview = new AttachmentPreview({api,el,button});
 const messageWorkspace = new MessageWorkspace({host:$('message-list'),el,button,api,refresh,card:messageCard});
@@ -139,7 +140,7 @@ async function selectTab(tab,record=true){
  if(record)navigation.record(tab,record==='replace');
  for(const n of document.querySelectorAll('main > section'))n.hidden=n.id!==tab;
  for(const n of document.querySelectorAll('[data-tab]'))n.setAttribute('aria-current',String(n.dataset.tab===tab));
- if(tab==='configurations')await renderConfigurations();
+ if(tab==='configurations'){await renderConfigurations();await sandboxProfiles.load();}
  if(tab==='history')await historyWorkspace.load();
  if(tab==='usage')await renderUsage();
  if(tab==='activity')await renderActivity();
@@ -151,7 +152,7 @@ async function selectTab(tab,record=true){
 }
 $('refresh').onclick=()=>refresh().catch(showError);
 $('cancel').onclick=()=>$('editor').close();
-$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');document.dispatchEvent(new Event('workspace-signout'));closeTerminal();presentation.stop();attention.clear();usageWorkspace.clear();activityWorkspace.clear();programProfiles.clear();historyWorkspace.clear();workspaceBrowser.clear();refreshSequence++;snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
+$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');document.dispatchEvent(new Event('workspace-signout'));closeTerminal();presentation.stop();attention.clear();usageWorkspace.clear();activityWorkspace.clear();programProfiles.clear();sandboxProfiles.clear();historyWorkspace.clear();workspaceBrowser.clear();refreshSequence++;snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
 for(const tab of document.querySelectorAll('[data-tab]'))tab.onclick=()=>selectTab(tab.dataset.tab).catch(showError);
 $('new-agent').onclick=()=>edit('New agent',[...desiredFields(),...agentMetadataFields()],f=>api('/v2/agents',{id:f.requestID,name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify}}));
 $('new-group').onclick=()=>edit('New group',[{name:'name',label:'Name'},{name:'members',label:'Members',multiple:true,required:false,options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}],f=>api('/v2/groups',{id:f.requestID,name:f.name,members:f.members}));
