@@ -143,6 +143,14 @@ func insertImportEntities(ctx context.Context, tx *sql.Tx, batch app.ImportBatch
 		}
 	}
 	for _, g := range batch.Groups {
+		if !model.ValidGroupCapacity(g.MaxActiveMembers) {
+			return app.ErrInvalid
+		}
+		if g.MaxActiveMembers > 0 {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO group_capacity(group_id,max_active_members) VALUES(?,?)`, g.ID, g.MaxActiveMembers); err != nil {
+				return err
+			}
+		}
 		if g.Details != nil {
 			if err := model.ValidateGroupDetails(*g.Details); err != nil {
 				return app.ErrInvalid
@@ -633,9 +641,12 @@ func VerifyImportDatabase(ctx context.Context, db *sql.DB, batch app.ImportBatch
 }
 
 func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) error {
-	memberCount, recipientCount, parentCount, detailsCount := 0, 0, 0, 0
+	memberCount, recipientCount, parentCount, detailsCount, capacityCount := 0, 0, 0, 0, 0
 	for _, group := range batch.Groups {
 		memberCount += len(group.Members)
+		if group.MaxActiveMembers > 0 {
+			capacityCount++
+		}
 		if group.Details != nil {
 			detailsCount++
 		}
@@ -651,7 +662,7 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 		defaults = 1
 	}
 	expected := map[string]int{
-		"agents": len(batch.Agents), "groups": len(batch.Groups), "group_members": memberCount, "group_parents": parentCount, "group_details": detailsCount,
+		"agents": len(batch.Agents), "groups": len(batch.Groups), "group_members": memberCount, "group_parents": parentCount, "group_details": detailsCount, "group_capacity": capacityCount,
 		"conversations": len(batch.Conversations), "agent_conversations": len(batch.ConversationLinks), "history_catalog": len(batch.History),
 		"messages": len(batch.Messages), "operations": len(batch.Messages), "message_recipients": recipientCount,
 		"attachments": len(batch.ImportedAttachments), "message_attachments": len(batch.ImportedAttachments),

@@ -435,6 +435,9 @@ func (s *Store) ReactivateAgent(ctx context.Context, id model.AgentID, expected 
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return model.Agent{}, app.ErrConflict
 	}
+	if err := requireReactivationCapacity(ctx, tx, id); err != nil {
+		return model.Agent{}, err
+	}
 	if err := bumpTx(ctx, tx); err != nil {
 		return model.Agent{}, err
 	}

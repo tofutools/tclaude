@@ -147,6 +147,9 @@ func (s *Store) AdmitGroupMember(ctx context.Context, in app.CreateGroupMemberRe
 	if _, err = tx.ExecContext(ctx, `UPDATE groups SET revision=revision+1,updated_at=? WHERE id=?`, nanos(at), group.ID); err != nil {
 		return out, err
 	}
+	if err = requireGroupCapacity(ctx, tx, group.ID); err != nil {
+		return out, err
+	}
 	group.Members = append(group.Members, agent.ID)
 	group.Revision++
 	group.UpdatedAt = at
