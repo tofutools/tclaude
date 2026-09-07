@@ -93,6 +93,7 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"work_runs", "control_state", "TEXT NOT NULL DEFAULT ''"},
 		{"work_runs", "outcome", "TEXT NOT NULL DEFAULT ''"},
 		{"work_runs", "deadline", "INTEGER"},
+		{"automation_occurrences", "request_fingerprint", "TEXT NOT NULL DEFAULT ''"},
 		{"operations", "principal_execution_id", "TEXT NOT NULL DEFAULT ''"},
 		{"operations", "request_scope", "TEXT NOT NULL DEFAULT 'operator'"},
 		{"operations", "principal_generation", "INTEGER NOT NULL DEFAULT 0"},
@@ -118,6 +119,7 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"message_recipients", "notified_at", "INTEGER"},
 		{"automation_occurrences", "parent_occurrence_id", "TEXT NOT NULL DEFAULT ''"},
 		{"automation_occurrences", "causal_depth", "INTEGER NOT NULL DEFAULT 0"},
+		{"decision_submissions", "expected_run_revision", "INTEGER NOT NULL DEFAULT 0"},
 		{"effect_permits", "eligibility_audience_json", "BLOB"},
 		{"effect_permits", "eligibility_agent_id", "TEXT NOT NULL DEFAULT ''"},
 		{"team_deployments", "role_pins_json", "BLOB NOT NULL DEFAULT '[]'"},
@@ -533,7 +535,7 @@ CREATE TABLE IF NOT EXISTS decision_windows (
 );
 CREATE TABLE IF NOT EXISTS decision_submissions (
   decision_id TEXT PRIMARY KEY REFERENCES decision_windows(id), request_scope TEXT NOT NULL,
-  request_id TEXT NOT NULL, expected_window_revision INTEGER NOT NULL, answer TEXT NOT NULL,
+  request_id TEXT NOT NULL, expected_window_revision INTEGER NOT NULL, expected_run_revision INTEGER NOT NULL DEFAULT 0, answer TEXT NOT NULL,
   reason TEXT NOT NULL, evidence_refs_json BLOB NOT NULL, actor_json BLOB NOT NULL,
   submitted_at INTEGER NOT NULL, UNIQUE(request_scope,request_id)
 );
@@ -555,6 +557,7 @@ CREATE TABLE IF NOT EXISTS automation_occurrences (
   rule_revision_id TEXT NOT NULL REFERENCES automation_rule_revisions(id), source_occurrence_key TEXT NOT NULL,
 	request_scope TEXT NOT NULL, request_id TEXT NOT NULL, requester_json BLOB NOT NULL,
 	parent_occurrence_id TEXT NOT NULL DEFAULT '', causal_depth INTEGER NOT NULL DEFAULT 0,
+	request_fingerprint TEXT NOT NULL DEFAULT '',
   scheduled_at INTEGER, event_at INTEGER, eligible_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
   state TEXT NOT NULL, operation_id TEXT NOT NULL DEFAULT '', work_run_id TEXT NOT NULL DEFAULT '',
   deployment_id TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL,

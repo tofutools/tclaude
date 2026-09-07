@@ -119,6 +119,13 @@ func insertTerminalOperationFactsTx(ctx context.Context, tx *sql.Tx, in app.Oper
 	if op.Kind != model.OperationSendMessage {
 		return nil
 	}
+	// Queue admission is a successful durable operation, but it is not a
+	// delivery observation. The later delivery owner must emit that edge when
+	// it has conclusive evidence; do not turn durable queueing into a false
+	// message.delivered fact.
+	if in.OperationState == model.OperationSucceeded && op.ResultCode == "automation_queued" {
+		return nil
+	}
 	var messageID model.MessageID
 	if err = tx.QueryRowContext(ctx, `SELECT id FROM messages WHERE operation_id=?`, op.ID).Scan(&messageID); errors.Is(err, sql.ErrNoRows) {
 		return nil
