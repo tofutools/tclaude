@@ -32,7 +32,9 @@ func (h *Handler) registerConfigurationTransfer(api app.ConfigurationTransferAPI
 			Bundle     app.ConfigurationBundle            `json:"bundle"`
 			Selections []app.ConfigurationImportSelection `json:"selections"`
 		}
-		if !decodeRequest(w, r, &body) {
+		// The logical bundle retains its 1 MiB application limit. Allow bounded
+		// transport headroom for up to 128 selections and command identity.
+		if !decodeBoundedRequest(w, r, &body, 2*app.ConfigurationBundleMaxBytes) {
 			return
 		}
 		result, err := api.ImportConfigurations(r.Context(), app.ImportConfigurationsRequest{Context: body.context(p), Bundle: body.Bundle, Selections: body.Selections})

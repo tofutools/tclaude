@@ -13,6 +13,7 @@ import (
 
 const ConfigurationBundleFormat = "tclaude-configuration-profiles"
 const ConfigurationBundleLimit = 128
+const ConfigurationBundleMaxBytes = 1 << 20
 
 type ConfigurationBundle struct {
 	Format   string                     `json:"format"`
@@ -64,7 +65,7 @@ func (s *Service) InspectConfigurationBundle(_ context.Context, principal model.
 		return ConfigurationBundle{}, fail(ErrInvalid, "unsupported configuration bundle format/version or entry count")
 	}
 	data, err := json.Marshal(bundle)
-	if err != nil || len(data) > 1<<20 {
+	if err != nil || len(data) > ConfigurationBundleMaxBytes {
 		return ConfigurationBundle{}, ErrInvalid
 	}
 	seen := map[string]bool{}
