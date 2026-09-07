@@ -390,7 +390,16 @@ type SendMessageRequest struct {
 	// RecipientAgentIDs is the temporary transport adapter for the existing
 	// client. New callers author To/CC explicitly.
 	RecipientAgentIDs []model.AgentID
-	Body              string
+	// RecipientEligibility is an application-internal constraint used when an
+	// already-pinned automation recipient must still match its authored
+	// group/role selector at fresh admission. Exact request retries precede the
+	// live check and return the effect that was already admitted.
+	RecipientEligibility *model.MessageAudience
+	// AdmissionResultCode is internal effect metadata used by durable automation
+	// to recover whether an exact recipient effect was queued or delivered if a
+	// crash happens before the occurrence disposition is updated.
+	AdmissionResultCode string
+	Body                string
 }
 
 type AttachmentInput struct {
@@ -437,7 +446,10 @@ type MarkMessageReadRequest struct {
 	Operator  bool
 }
 
-type MessageResult struct{ Message model.Message }
+type MessageResult struct {
+	Message   model.Message
+	Operation model.Operation
+}
 
 type OperationResult struct {
 	Operation model.Operation
