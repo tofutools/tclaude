@@ -1244,3 +1244,21 @@ their entries before adding them. Both selections survive save and reopen; the
 catalog does not silently include extra provider destinations or subdomains.
 Packs are authoring conveniences, not guarantees of complete provider connectivity.
 Saving a pack reference does not grant network access or launch a workload.
+
+### Sandbox profile transfer
+
+Each sandbox catalog card can export its exact immutable revision and complete
+include graph as a versioned JSON bundle. Import accepts a file or pasted JSON,
+validates all hashes and dependencies without host lookup, and previews each
+revision before creating independent named copies. Every included revision gets
+a new profile identity, including when the source graph pins different revisions
+of the same profile. Include references are remapped to those exact copies.
+The whole graph and original-result retry receipt commit in one transaction;
+existing target identities cause a conflict without partial publication.
+
+Transfer preserves authored policy text and pack IDs. It does not import grants,
+defaults, executions or enforcement receipts, and does not run setup scripts or
+create host directories. It accepts the replacement bundle format only; legacy
+files are not silently interpreted as equivalent policies. The logical bundle
+limit is 16 MiB, with a separately bounded transport envelope. Source profile
+names are export-time labels; exact revision references identify policy content.
