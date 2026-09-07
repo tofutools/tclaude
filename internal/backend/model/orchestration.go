@@ -448,21 +448,50 @@ const (
 )
 
 type TeamDeployment struct {
-	ID                DeploymentID
-	Definition        DefinitionRef
-	DependencyClosure []DefinitionRef
-	Mission           string
-	Parameters        map[string]json.RawMessage
-	GroupID           GroupID
-	Members           map[string]AgentID
-	RolePins          []TeamRolePin
-	AutomationRuleIDs []AutomationRuleID
-	WorkRunID         WorkRunID
-	AdvisoryPhase     uint32
-	State             DeploymentState
-	Revision          Revision
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	ID                     DeploymentID
+	Definition             DefinitionRef
+	DependencyClosure      []DefinitionRef
+	Mission                string
+	Parameters             map[string]json.RawMessage
+	GroupID                GroupID
+	TargetKind             TeamDeploymentTargetKind
+	Members                map[string]AgentID
+	RolePins               []TeamRolePin
+	AutomationRuleIDs      []AutomationRuleID
+	OwnedAutomationRuleIDs []AutomationRuleID
+	Workspaces             map[string]TeamWorkspaceBinding
+	OwnedWorkspaceIDs      []WorkspaceID
+	BriefingOperationIDs   map[string][]OperationID
+	Rebriefs               []TeamRebrief
+	WorkRunID              WorkRunID
+	AdvisoryPhase          uint32
+	State                  DeploymentState
+	Revision               Revision
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+}
+
+type TeamWorkspaceBinding struct {
+	WorkspaceID      WorkspaceID
+	SelectedRevision Revision
+	Owned            bool
+}
+
+type TeamRebriefState string
+
+const (
+	TeamRebriefDelivering TeamRebriefState = "delivering"
+	TeamRebriefCompleted  TeamRebriefState = "completed"
+)
+
+// TeamRebrief is the safe deployment projection. Attribution and exact
+// request digests remain in the store's private admission record.
+type TeamRebrief struct {
+	Definition          DefinitionRef
+	RecipientOperations map[string][]OperationID
+	State               TeamRebriefState
+	CreatedAt           time.Time
+	CompletedAt         *time.Time
 }
 
 // TeamRolePin records the exact operator-authored role definition accepted by
@@ -487,6 +516,7 @@ type AutomationRule struct {
 	Name           string
 	HeadRevisionID AutomationRuleRevisionID
 	Enabled        bool
+	DeploymentID   DeploymentID
 	Tombstoned     bool
 	Revision       Revision
 	CreatedAt      time.Time
