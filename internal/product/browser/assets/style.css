@@ -30,3 +30,5 @@ body.slop{background:#150d1c;color:#f9e9ad}body.slop header,body.slop nav{backgr
 #attachment-preview{max-width:min(90vw,1000px)}#attachment-preview pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:65vh;overflow:auto}.attachment-preview-image{display:block;max-width:100%;max-height:65vh;object-fit:contain}
 
 #workspace-list .toolbar{flex-wrap:wrap}#workspace-list dl{display:grid;grid-template-columns:minmax(7rem,auto) 1fr;gap:.3rem 1rem}#workspace-list dt{color:#9da7b5}#workspace-list dd{margin:0;overflow-wrap:anywhere}#workspace-list .actions{flex-wrap:wrap}
+
+.terminal-file-drop{border:1px dashed var(--muted);padding:1rem;margin:.5rem 0}#terminal-files [role=status]{overflow-wrap:anywhere}

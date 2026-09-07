@@ -47,6 +47,13 @@ func TestShellHostLaunchesRecoversAndStopsOwnedTerminal(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, ports.RecoveryControlled, recovered.State)
+	filePermit := &shellPermit{execution: request.ExecutionID, operation: "operation_file"}
+	staged, err := recovered.Runtime.(ports.TerminalFileStager).StageTerminalFile(context.Background(), ports.StageTerminalFileRequest{ExecutionID: request.ExecutionID, OperationID: filePermit.OperationID(), Filename: "input.txt", Content: []byte("shell user file"), Permit: filePermit})
+	require.NoError(t, err)
+	require.Equal(t, ports.EffectAccepted, staged.Disposition)
+	userFile, err := os.ReadFile(staged.NativePath)
+	require.NoError(t, err)
+	require.Equal(t, "shell user file", string(userFile))
 	stopped, err := recovered.Runtime.StopHost(context.Background(), ports.StopRequest{Force: true})
 	require.NoError(t, err)
 	require.True(t, stopped.Acknowledged)

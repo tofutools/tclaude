@@ -263,3 +263,10 @@ func decodeShellEvidence(evidence ports.ShellResourceEvidence) (shellEvidence, e
 var _ ports.ShellHost = (*ShellTerminalHost)(nil)
 var _ ports.PreparedShell = (*preparedShell)(nil)
 var _ ports.HostRuntime = (*shellRuntime)(nil)
+
+func (r *shellRuntime) StageTerminalFile(ctx context.Context, in ports.StageTerminalFileRequest) (ports.StageTerminalFileResult, error) {
+	if r.terminal == nil || !r.terminal.Observe().Running {
+		return ports.StageTerminalFileResult{Disposition: ports.EffectRefused}, nil
+	}
+	return StageTerminalFile(ctx, r.host.terminal.PrivateRoot, r.execution, in)
+}

@@ -66,7 +66,7 @@ class TerminalWorkspace {
       panel.textContent = 'Disconnected. Select this pane and reconnect to attach.';
       panel.addEventListener('pointerdown', () => this.select(entry, false));
       entry = {id: execution.id, label, tab, panel, socket: null, terminal: null,
-        state: 'disconnected', canResize: false, columns: 80, rows: 24};
+        state: 'disconnected', canResize: false, canStageFile: false, columns: 80, rows: 24};
       tab.onclick = () => this.select(entry);
       this.entries.set(entry.id, entry);
       this.tabs.append(tab);
@@ -117,6 +117,7 @@ class TerminalWorkspace {
     entry.socket = socket;
     entry.state = 'connecting';
     entry.canResize = false;
+    entry.canStageFile = false;
     this.renderStatus();
     if (this.selected === entry) entry.terminal.focus();
     socket.onopen = () => {
@@ -134,10 +135,11 @@ class TerminalWorkspace {
       }
       try {
         const control = JSON.parse(event.data);
-        if (control.type !== 'capabilities' || typeof control.resize !== 'boolean') {
+        if (control.type !== 'capabilities' || typeof control.resize !== 'boolean' || (control.file_stage !== undefined && typeof control.file_stage !== 'boolean')) {
           throw new Error('Invalid terminal capabilities');
         }
         entry.canResize = control.resize;
+        entry.canStageFile = control.file_stage === true;
         this.onAttached?.(entry);
         if (control.resize) {
           socket.send(JSON.stringify({type: 'resize', columns: entry.columns, rows: entry.rows}));
@@ -154,6 +156,7 @@ class TerminalWorkspace {
       if (entry.socket !== socket) return;
       entry.socket = null;
       entry.canResize = false;
+    entry.canStageFile = false;
       entry.state = 'disconnected';
       this.renderStatus();
     };
@@ -164,6 +167,7 @@ class TerminalWorkspace {
     const socket = entry.socket;
     entry.socket = null;
     entry.canResize = false;
+    entry.canStageFile = false;
     entry.state = state;
     socket?.close();
     this.renderStatus();

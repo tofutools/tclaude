@@ -188,21 +188,22 @@ type ResolvedExecutionSpec struct {
 type OperationKind string
 
 const (
-	OperationLaunch           OperationKind = "launch"
-	OperationInteract         OperationKind = "interact"
-	OperationAttach           OperationKind = "attach"
-	OperationStop             OperationKind = "stop"
-	OperationResume           OperationKind = "resume"
-	OperationChangeContext    OperationKind = "change_context"
-	OperationSendMessage      OperationKind = "send_message"
-	OperationCreateWorkspace  OperationKind = "create_workspace"
-	OperationRemoveWorkspace  OperationKind = "remove_workspace"
-	OperationRestoreWorkspace OperationKind = "restore_workspace"
-	OperationStartWork        OperationKind = "start_work"
-	OperationCancelWork       OperationKind = "cancel_work"
-	OperationStartShell       OperationKind = "start_shell"
-	OperationRunProgram       OperationKind = "run_program"
-	OperationAssignWork       OperationKind = "assign_work"
+	OperationLaunch            OperationKind = "launch"
+	OperationInteract          OperationKind = "interact"
+	OperationStageTerminalFile OperationKind = "stage_terminal_file"
+	OperationAttach            OperationKind = "attach"
+	OperationStop              OperationKind = "stop"
+	OperationResume            OperationKind = "resume"
+	OperationChangeContext     OperationKind = "change_context"
+	OperationSendMessage       OperationKind = "send_message"
+	OperationCreateWorkspace   OperationKind = "create_workspace"
+	OperationRemoveWorkspace   OperationKind = "remove_workspace"
+	OperationRestoreWorkspace  OperationKind = "restore_workspace"
+	OperationStartWork         OperationKind = "start_work"
+	OperationCancelWork        OperationKind = "cancel_work"
+	OperationStartShell        OperationKind = "start_shell"
+	OperationRunProgram        OperationKind = "run_program"
+	OperationAssignWork        OperationKind = "assign_work"
 )
 
 type OperationState string

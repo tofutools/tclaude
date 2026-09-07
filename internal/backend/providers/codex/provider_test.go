@@ -86,6 +86,15 @@ func TestProviderOwnsTerminalCredentialAndRecovery(t *testing.T) {
 		raw, readErr := os.ReadFile(argvPath)
 		return readErr == nil && strings.Contains(string(raw), "never") && strings.Contains(string(raw), "danger-full-access") && strings.Contains(string(raw), "prepared codex brief") && strings.Contains(string(raw), `model_reasoning_effort="high"`)
 	}, time.Second, 10*time.Millisecond)
+	filePermit := &testPermit{execution: request.Spec.ExecutionID}
+	staged, err := released.Runtime.(ports.TerminalFileStager).StageTerminalFile(context.Background(), ports.StageTerminalFileRequest{ExecutionID: request.Spec.ExecutionID, OperationID: filePermit.OperationID(), Filename: "drawing.png", Content: []byte("native user file"), Permit: filePermit})
+	require.NoError(t, err)
+	require.Equal(t, ports.EffectAccepted, staged.Disposition)
+	userFile, err := os.ReadFile(staged.NativePath)
+	require.NoError(t, err)
+	require.Equal(t, "native user file", string(userFile))
+	require.Equal(t, filepath.Join(root, "terminals", "uploads"), filepath.Dir(staged.NativePath))
+
 	interaction, err := released.Runtime.Interact(context.Background(), ports.Interaction{Text: "literal $(touch nope); `false`"})
 	require.NoError(t, err)
 	require.Equal(t, ports.EffectAccepted, interaction.Disposition)

@@ -862,3 +862,32 @@ Deployment-owned rhythms remain controlled by their deployment lifecycle.
 The API is `POST /v2/automation/rules/{id}/archived` with `request_id`,
 `expected_revision` and `archived`; exact command retries return their stored
 result without repeating the state change, after current authority is checked.
+
+### Terminal file uploads
+
+The terminal's file panel accepts a selected file, one dropped file, or a pasted
+image of up to 8 MiB. Selection does not upload. **Upload to selected execution**
+stages the bytes in the provider's private upload directory and shows the exact
+execution, file size, SHA-256 and historical path receipt. **Insert uploaded path
+into draft** only fills the terminal draft; sending that draft is another explicit
+action. Switching, disconnecting, reconnecting, closing the page or signing out
+invalidates the local file selection and path insertion target. An upload already
+admitted by the backend may still finish after the browser disconnects.
+
+`POST /v2/terminal-files` takes `request_id`, `execution_id`, `filename` and
+base64 `content`. It requires current `execution.file.stage` authority on that
+exact execution, independently of terminal interaction permission. The response
+contains an operation and file receipt; clients must inspect the operation state,
+including `refused`, `admitted` and `uncertain`, before using any path. Identical
+retries return the recorded outcome under current authority without publishing
+again. Changed bytes or names conflict under the same request ID. Each execution
+has a limit of 100 admitted files and 128 MiB in total.
+
+Claude, Codex, Copilot, OpenCode and shell runtimes expose the focused staging
+capability. Unsupported views omit it. Files are published with exclusive names
+and private permissions after a current execution/authority check; uncertain
+publication never causes automatic input or re-publication. Uploaded content is
+retained separately from runtime stop cleanup. A receipt does not promise the
+file remains present forever, and this API does not download arbitrary native
+paths. The configured harness's own access policy still governs reading a staged
+path once the operator sends it.

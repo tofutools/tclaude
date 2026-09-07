@@ -365,8 +365,9 @@ type AttachRequest struct {
 }
 
 type AttachmentResult struct {
-	Operation  model.Operation
-	Attachment ports.Attachment
+	Operation    model.Operation
+	Attachment   ports.Attachment
+	CanStageFile bool
 }
 
 type StopRequest struct {
