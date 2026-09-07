@@ -1159,7 +1159,7 @@ func applyOccurrenceOverlapTx(ctx context.Context, tx *sql.Tx, occurrence *model
 		return err
 	}
 	var active uint32
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM automation_occurrences WHERE rule_id=? AND id<>? AND state IN (?,?,?,?,?)`, occurrence.RuleID, occurrence.ID, model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceParked, model.OccurrenceUncertain).Scan(&active); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM automation_occurrences WHERE rule_id=? AND id<>? AND state IN (?,?,?,?)`, occurrence.RuleID, occurrence.ID, model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceUncertain).Scan(&active); err != nil {
 		return err
 	}
 	switch policy.Overlap {
