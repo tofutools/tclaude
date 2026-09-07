@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
@@ -69,14 +68,7 @@ func (s *Service) SaveConfigurationProfile(ctx context.Context, req SaveConfigur
 		if startup == (model.ProfileStartup{}) {
 			req.Startup = nil
 		} else {
-			if len(startup.AgentName) > 256 || !utf8.ValidString(startup.AgentName) || strings.ContainsAny(startup.AgentName, "\x00\r\n") || (startup.AgentName != "" && strings.TrimSpace(startup.AgentName) == "") || !utf8.ValidString(startup.Context) || !utf8.ValidString(startup.InitialMessage) || strings.ContainsRune(startup.Context, 0) || strings.ContainsRune(startup.InitialMessage, 0) {
-				return ConfigurationProfileResult{}, ErrInvalid
-			}
-			combined := startup.Context + startup.InitialMessage
-			if startup.Context != "" && startup.InitialMessage != "" {
-				combined += "\n\n"
-			}
-			if len(combined) > 32768 {
+			if model.ValidateProfileStartup(startup) != nil {
 				return ConfigurationProfileResult{}, ErrInvalid
 			}
 			req.Startup = &startup
