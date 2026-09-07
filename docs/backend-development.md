@@ -680,3 +680,12 @@ spend or tokens consumed during that time interval. Conversation-wide readings
 stay labelled as such even under an execution target, and reported decimal costs
 are shown without repricing or currency conversion. Exports identify whether
 additional pages remain unloaded.
+
+History offers active/archived and harness filters, title/indexed-text search,
+ordering and paged conversation lists. Reads replace the current transcript;
+role/text filters help inspect it without changing the selected native point.
+Coverage and omitted parts remain visible, including in text exports. Archive
+and title changes use the displayed catalog revision and retain edits on conflict.
+Archive is catalog metadata, not deletion of native conversation content. Only
+provider-advertised points can be selected, and starting work still requires
+explicit worker/workspace and history-use choices.

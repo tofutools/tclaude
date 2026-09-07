@@ -220,7 +220,12 @@ func testNativeProviderJourney(
 		RequestContext: request(operator, "stop_worker"), ExecutionID: run.Run.WorkerExecutionID, Force: true,
 	})
 	require.NoError(t, err)
-	require.Equal(t, model.ExecutionExited, stopped.Execution.State)
+	require.NotNil(t, stopped.Execution)
+	// An accepted stop is not necessarily an observed native exit yet.
+	require.Eventually(t, func() bool {
+		observed, observeErr := service.Observe(ctx, app.ObserveRequest{Principal: operator, ExecutionID: run.Run.WorkerExecutionID})
+		return observeErr == nil && observed.Execution.State == model.ExecutionExited
+	}, 15*time.Second, 20*time.Millisecond, "worker must exit before checkout removal")
 	workerStopped = true
 	removed, err := service.RemoveCheckout(ctx, app.RemoveCheckoutRequest{
 		Context: request(operator, "remove_stopped_workspace"), WorkspaceID: workspace.Workspace.ID,
