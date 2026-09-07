@@ -3,37 +3,53 @@ package app
 import (
 	"context"
 	"errors"
-	"reflect"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/ports"
 )
 
 func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDeploymentResult, error) {
 	if err := validateEffectContext(req.Context); err != nil {
 		return TeamDeploymentResult{}, err
 	}
+	if err := req.DeploymentID.Validate(); err != nil {
+		return TeamDeploymentResult{}, fail(ErrInvalid, "%v", err)
+	}
+	target, err := normalizeTeamTarget(req.Instantiation)
+	if err != nil {
+		return TeamDeploymentResult{}, fail(ErrInvalid, "%v", err)
+	}
+	req.Instantiation.Target, req.Instantiation.GroupID = target, ""
+	requestDigest := contentHash(struct {
+		DeploymentID  model.DeploymentID
+		Instantiation model.TeamInstantiation
+	}{req.DeploymentID, req.Instantiation})
+	// Exact retries precede occurrence, definition, group, role, workspace, and
+	// authority reads. Changed payload under one request identity conflicts.
+	if prior, ok, readErr := s.store.TeamDeploymentByRequest(ctx, req.Context.Principal, req.Context.RequestID, requestDigest); readErr != nil {
+		return TeamDeploymentResult{}, readErr
+	} else if ok {
+		if linkErr := s.attributeDeploymentOccurrence(ctx, prior, req.Context.Principal); linkErr != nil {
+			return TeamDeploymentResult{Deployment: prior}, linkErr
+		}
+		return TeamDeploymentResult{Deployment: prior}, nil
+	}
 	var automationRuleID model.AutomationRuleID
 	if req.Context.Principal.Kind != model.PrincipalOperator {
 		if req.Context.Principal.Kind != model.PrincipalAutomation {
 			return TeamDeploymentResult{}, ErrUnauthorized
 		}
-		occurrence, err := s.store.Occurrence(ctx, model.OccurrenceID(req.Context.Principal.AutomationRun))
-		if err != nil {
-			return TeamDeploymentResult{}, err
+		occurrence, occurrenceErr := s.store.Occurrence(ctx, model.OccurrenceID(req.Context.Principal.AutomationRun))
+		if occurrenceErr != nil {
+			return TeamDeploymentResult{}, occurrenceErr
 		}
 		automationRuleID = occurrence.Occurrence.RuleID
 		if err = s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionRunAutomation, Resource: model.ResourceSelector{Kind: model.ResourceAutomationRule, AutomationRuleID: occurrence.Occurrence.RuleID}}, s.now().UTC()); err != nil {
 			return TeamDeploymentResult{}, err
 		}
-	}
-	if err := req.DeploymentID.Validate(); err != nil {
-		return TeamDeploymentResult{}, fail(ErrInvalid, "%v", err)
-	}
-	if err := req.Instantiation.GroupID.Validate(); err != nil {
-		return TeamDeploymentResult{}, fail(ErrInvalid, "%v", err)
 	}
 	ref := req.Instantiation.Definition
 	revision, err := s.store.DefinitionRevision(ctx, ref.RevisionID)
@@ -51,7 +67,13 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 	members := make(map[string]model.AgentID, len(revision.Team.Members))
 	roleMembers := make(map[model.RoleID][]model.AgentID)
 	agents := make([]model.Agent, 0, len(revision.Team.Members))
-	group := model.Group{ID: req.Instantiation.GroupID, Name: "team " + string(req.DeploymentID), Revision: 1, CreatedAt: now, UpdatedAt: now}
+	group := model.Group{ID: target.GroupID, Name: "team " + string(req.DeploymentID), Revision: 1, CreatedAt: now, UpdatedAt: now}
+	if target.Kind == model.TeamTargetExistingGroup {
+		group, err = s.store.Group(ctx, target.GroupID)
+		if err != nil {
+			return TeamDeploymentResult{}, err
+		}
+	}
 	for _, spec := range revision.Team.Members {
 		if err = validateDesired(spec.Desired); err != nil {
 			return TeamDeploymentResult{}, fail(ErrInvalid, "member %s: %v", spec.Key, err)
@@ -63,57 +85,70 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 		for _, roleID := range spec.Roles {
 			roleMembers[roleID] = append(roleMembers[roleID], id)
 		}
+		if spec.Owner && target.Kind == model.TeamTargetExistingGroup {
+			return TeamDeploymentResult{}, fail(ErrInvalid, "reinforcement cannot replace the existing group owner")
+		}
 		if spec.Owner {
 			group.OwnerAgentID = id
 		}
 	}
+	workspaceBindings, ownedWorkspaceIDs, err := s.prepareTeamWorkspaces(ctx, req, *revision.Team)
+	if err != nil {
+		return TeamDeploymentResult{}, err
+	}
 	workRunID := model.WorkRunID(deterministicOrchestrationID("work_", string(req.DeploymentID)))
-	var automationIDs []model.AutomationRuleID
+	var automationIDs, ownedAutomationIDs []model.AutomationRuleID
 	for _, automation := range revision.Team.Automation {
 		automationIDs = append(automationIDs, automation.RuleID)
+		ownedAutomationIDs = append(ownedAutomationIDs, model.AutomationRuleID(deterministicOrchestrationID("rule_", string(req.DeploymentID)+":"+string(automation.RuleID))))
 	}
-	deployment := model.TeamDeployment{ID: req.DeploymentID, Definition: ref, DependencyClosure: append([]model.DefinitionRef(nil), revision.Dependencies...), Mission: strings.TrimSpace(req.Instantiation.Mission), Parameters: parameters, GroupID: group.ID, Members: members, AutomationRuleIDs: automationIDs, WorkRunID: workRunID, State: model.DeploymentDeploying, Revision: 1, CreatedAt: now, UpdatedAt: now}
-	var stored model.TeamDeployment
-	if prior, priorErr := s.store.TeamDeployment(ctx, deployment.ID); priorErr == nil {
-		if prior.Definition != deployment.Definition || prior.GroupID != deployment.GroupID || prior.Mission != deployment.Mission || !reflect.DeepEqual(prior.Parameters, deployment.Parameters) || !reflect.DeepEqual(prior.Members, deployment.Members) {
-			return TeamDeploymentResult{}, ErrConflict
-		}
-		stored = prior
-	} else if !errors.Is(priorErr, ErrNotFound) {
-		return TeamDeploymentResult{}, priorErr
-	} else {
-		assignments, pins, roleErr := s.teamRoleAdmissions(ctx, req.Context.Principal, group.ID, roleMembers, now)
-		if roleErr != nil {
-			return TeamDeploymentResult{}, roleErr
-		}
-		deployment.RolePins = pins
-		stored, _, err = s.store.CreateTeamDeployment(ctx, deployment, group, agents, assignments, req.Context.Principal, now)
-		if err != nil {
-			return TeamDeploymentResult{}, err
-		}
+	deployment := model.TeamDeployment{ID: req.DeploymentID, Definition: ref, DependencyClosure: append([]model.DefinitionRef(nil), revision.Dependencies...), Mission: strings.TrimSpace(req.Instantiation.Mission), Parameters: parameters, GroupID: group.ID, TargetKind: target.Kind, Members: members, AutomationRuleIDs: automationIDs, OwnedAutomationRuleIDs: ownedAutomationIDs, Workspaces: workspaceBindings, OwnedWorkspaceIDs: ownedWorkspaceIDs, BriefingOperationIDs: map[string][]model.OperationID{}, WorkRunID: workRunID, State: model.DeploymentDeploying, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	assignments, pins, roleErr := s.teamRoleAdmissions(ctx, req.Context.Principal, group.ID, roleMembers, now)
+	if roleErr != nil {
+		return TeamDeploymentResult{}, roleErr
 	}
-	if req.Context.Principal.Kind == model.PrincipalAutomation {
-		occurrence, occurrenceErr := s.store.Occurrence(ctx, model.OccurrenceID(req.Context.Principal.AutomationRun))
-		if occurrenceErr != nil {
-			return TeamDeploymentResult{Deployment: stored}, occurrenceErr
-		}
-		if occurrence.Occurrence.DeploymentID == "" {
-			if _, occurrenceErr = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, model.OccurrenceAdmitted, occurrence.Occurrence.OperationID, occurrence.Occurrence.WorkRunID, stored.ID, occurrence.Occurrence.Recipients, now); occurrenceErr != nil {
-				return TeamDeploymentResult{Deployment: stored}, occurrenceErr
-			}
-		} else if occurrence.Occurrence.DeploymentID != stored.ID {
-			return TeamDeploymentResult{Deployment: stored}, ErrConflict
-		}
+	deployment.RolePins = pins
+	stored, _, err := s.store.CreateTeamDeployment(ctx, deployment, group, agents, assignments, req.Context.Principal, req.Context.RequestID, requestDigest, now)
+	if err != nil {
+		return TeamDeploymentResult{}, err
+	}
+	if err = s.attributeDeploymentOccurrence(ctx, stored, req.Context.Principal); err != nil {
+		return TeamDeploymentResult{Deployment: stored}, err
+	}
+	if err = s.materializeDeploymentRhythms(ctx, stored, *revision.Team, req.Context); err != nil {
+		return s.markDeploymentPartial(ctx, stored, err)
 	}
 	err = s.startTeamDeploymentProcess(ctx, stored, *revision.Team, req.Context.Principal, automationRuleID)
 	if err != nil {
-		partial, updateErr := s.store.UpdateTeamDeployment(ctx, stored.ID, stored.Revision, model.DeploymentPartial, stored.AdvisoryPhase, s.now().UTC())
-		if updateErr == nil {
-			stored = partial
-		}
-		return TeamDeploymentResult{Deployment: stored}, err
+		return s.markDeploymentPartial(ctx, stored, err)
 	}
 	return TeamDeploymentResult{Deployment: stored}, nil
+}
+
+func (s *Service) attributeDeploymentOccurrence(ctx context.Context, deployment model.TeamDeployment, principal model.Principal) error {
+	if principal.Kind != model.PrincipalAutomation {
+		return nil
+	}
+	occurrence, err := s.store.Occurrence(ctx, model.OccurrenceID(principal.AutomationRun))
+	if err != nil {
+		return err
+	}
+	if occurrence.Occurrence.DeploymentID == deployment.ID {
+		return nil
+	}
+	if occurrence.Occurrence.DeploymentID != "" {
+		return ErrConflict
+	}
+	_, err = s.store.UpdateOccurrence(ctx, occurrence.Occurrence.ID, occurrence.Occurrence.Revision, model.OccurrenceAdmitted, occurrence.Occurrence.OperationID, occurrence.Occurrence.WorkRunID, deployment.ID, occurrence.Occurrence.Recipients, s.now().UTC())
+	return err
+}
+
+func (s *Service) markDeploymentPartial(ctx context.Context, deployment model.TeamDeployment, cause error) (TeamDeploymentResult, error) {
+	partial, updateErr := s.store.UpdateTeamDeployment(ctx, deployment.ID, deployment.Revision, model.DeploymentPartial, deployment.AdvisoryPhase, s.now().UTC())
+	if updateErr == nil {
+		deployment = partial
+	}
+	return TeamDeploymentResult{Deployment: deployment}, cause
 }
 
 func (s *Service) teamRoleAdmissions(ctx context.Context, principal model.Principal, groupID model.GroupID, members map[model.RoleID][]model.AgentID, now time.Time) ([]model.RoleAssignment, []model.TeamRolePin, error) {
@@ -184,24 +219,113 @@ func (s *Service) GetTeamDeployment(ctx context.Context, req GetTeamDeploymentRe
 }
 
 func (s *Service) reconcileTeamDeployments(ctx context.Context) error {
+	requests, err := s.store.PendingTeamRebriefs(ctx)
+	if err != nil {
+		return err
+	}
+	for _, request := range requests {
+		if _, err = s.RebriefDeployment(ctx, request); err != nil {
+			return err
+		}
+	}
+
 	deployments, err := s.store.PendingTeamDeployments(ctx)
 	if err != nil {
 		return err
 	}
 	for _, deployment := range deployments {
-		run, readErr := s.store.WorkRun(ctx, deployment.WorkRunID)
-		if readErr != nil {
+		if deployment.State == model.DeploymentStandingDown {
+			request, principalErr := s.store.TeamStandDownRequest(ctx, deployment.ID)
+			if principalErr != nil {
+				return principalErr
+			}
+			if _, standDownErr := s.continueTeamStandDown(ctx, deployment, request.Context.Principal, request.Reason); standDownErr != nil {
+				return standDownErr
+			}
 			continue
+		}
+		if deployment.State == model.DeploymentReady {
+			if err = s.reconcileDeferredTeamBriefings(ctx, deployment); err != nil {
+				return err
+			}
+			continue
+		}
+		run, readErr := s.store.WorkRun(ctx, deployment.WorkRunID)
+		if errors.Is(readErr, ErrNotFound) {
+			definition, definitionErr := s.store.DefinitionRevision(ctx, deployment.Definition.RevisionID)
+			if definitionErr != nil || definition.Team == nil || definition.DefinitionID != deployment.Definition.DefinitionID || definition.ContentHash != deployment.Definition.ContentHash {
+				if definitionErr == nil {
+					definitionErr = ErrConflict
+				}
+				return definitionErr
+			}
+			principal, principalErr := s.store.TeamDeploymentRequester(ctx, deployment.ID)
+			if principalErr != nil {
+				return principalErr
+			}
+			if materializeErr := s.materializeDeploymentRhythms(ctx, deployment, *definition.Team, RequestContext{Principal: principal}); materializeErr != nil {
+				if deployment.State == model.DeploymentDeploying {
+					_, _ = s.store.UpdateTeamDeployment(ctx, deployment.ID, deployment.Revision, model.DeploymentPartial, deployment.AdvisoryPhase, s.now().UTC())
+				}
+				return materializeErr
+			}
+			var ruleID model.AutomationRuleID
+			if principal.Kind == model.PrincipalAutomation {
+				occurrence, occurrenceErr := s.store.Occurrence(ctx, model.OccurrenceID(principal.AutomationRun))
+				if occurrenceErr != nil {
+					return occurrenceErr
+				}
+				ruleID = occurrence.Occurrence.RuleID
+				if occurrenceErr = s.attributeDeploymentOccurrence(ctx, deployment, principal); occurrenceErr != nil {
+					return occurrenceErr
+				}
+			}
+			if startErr := s.startTeamDeploymentProcess(ctx, deployment, *definition.Team, principal, ruleID); startErr != nil {
+				if deployment.State == model.DeploymentDeploying {
+					_, _ = s.store.UpdateTeamDeployment(ctx, deployment.ID, deployment.Revision, model.DeploymentPartial, deployment.AdvisoryPhase, s.now().UTC())
+				}
+				return startErr
+			}
+			run, readErr = s.store.WorkRun(ctx, deployment.WorkRunID)
+		}
+		if readErr != nil {
+			return readErr
 		}
 		state := deployment.State
 		switch run.Run.State {
 		case model.WorkRunSucceeded:
-			state = model.DeploymentReady
+			if enableErr := s.enableDeploymentRhythms(ctx, deployment); enableErr != nil {
+				state = model.DeploymentPartial
+			} else {
+				state = model.DeploymentReady
+			}
 		case model.WorkRunFailed, model.WorkRunCancelled, model.WorkRunUncertain:
 			state = model.DeploymentPartial
 		}
 		if state != deployment.State {
 			if _, err = s.store.UpdateTeamDeployment(ctx, deployment.ID, deployment.Revision, state, deployment.AdvisoryPhase, s.now().UTC()); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Service) enableDeploymentRhythms(ctx context.Context, deployment model.TeamDeployment) error {
+	principal, err := s.store.TeamDeploymentRequester(ctx, deployment.ID)
+	if err != nil {
+		return err
+	}
+	for _, id := range deployment.OwnedAutomationRuleIDs {
+		record, readErr := s.store.AutomationRule(ctx, id)
+		if readErr != nil {
+			return readErr
+		}
+		if record.Rule.DeploymentID != deployment.ID {
+			return ErrConflict
+		}
+		if !record.Rule.Enabled {
+			if _, err = s.store.SetAutomationRuleEnabled(ctx, id, record.Rule.Revision, true, principal, s.now().UTC()); err != nil {
 				return err
 			}
 		}
@@ -249,7 +373,7 @@ func teamDeploymentGraph(team model.TeamDefinition, deployment model.TeamDeploym
 				}
 			}
 			nodeID := model.WorkNodeID("member_" + key)
-			nodes = append(nodes, model.WorkNode{ID: nodeID, Kind: model.WorkNodeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Agent: &model.AgentPerformer{AgentID: deployment.Members[key], ContextPolicy: model.AgentContextFresh, Brief: brief}}})
+			nodes = append(nodes, model.WorkNode{ID: nodeID, Kind: model.WorkNodeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Agent: &model.AgentPerformer{AgentID: deployment.Members[key], WorkspaceID: deployment.Workspaces[key].WorkspaceID, ContextPolicy: model.AgentContextFresh, Brief: brief}}})
 			if predecessor != "" {
 				edges = append(edges, model.WorkEdge{From: predecessor, To: nodeID})
 			}
@@ -303,4 +427,60 @@ func teamDeploymentGraph(team model.TeamDefinition, deployment model.TeamDeploym
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
 	return model.WorkGraph{CompilerVersion: orchestrationCompilerVersion, EntryNodeID: entryID, Nodes: nodes, Edges: edges}
+}
+
+func (s *Service) reconcileDeferredTeamBriefings(ctx context.Context, deployment model.TeamDeployment) error {
+	revision, err := s.store.DefinitionRevision(ctx, deployment.Definition.RevisionID)
+	if err != nil {
+		return err
+	}
+	if revision.Team == nil {
+		return ErrConflict
+	}
+	for _, key := range sortedMemberKeys(deployment.Members) {
+		if !memberHasAfterReadyBrief(*revision.Team, key) || len(deployment.BriefingOperationIDs[key]) >= teamAfterReadyBriefCount(*revision.Team, key) {
+			continue
+		}
+		// The briefing belongs to this deployment's admitted execution, not
+		// a later primary execution that happens to use the same agent identity.
+		run, err := s.store.WorkRun(ctx, deployment.WorkRunID)
+		if err != nil {
+			return err
+		}
+		var executionID model.ExecutionID
+		for _, attempt := range run.Run.NodeAttempts {
+			if attempt.Performer != nil && attempt.Performer.Agent != nil && attempt.Performer.Agent.AgentID == deployment.Members[key] && attempt.ExecutionID != "" {
+				executionID = attempt.ExecutionID
+				break
+			}
+		}
+		if executionID == "" {
+			continue
+		}
+		execution, err := s.store.Execution(ctx, executionID)
+		if err != nil {
+			return err
+		}
+		if execution.State == model.ExecutionExited || execution.State == model.ExecutionFailed {
+			continue
+		}
+		runtime, err := s.runtimeFor(ctx, execution)
+		if err != nil {
+			// The durable briefing stays pending until explicit runtime recovery.
+			// It must not prevent independent deployments or work from advancing.
+			continue
+		}
+		observation, err := runtime.Observe(ctx)
+		if err != nil {
+			continue
+		}
+		if observation.Context != ports.ContextReady {
+			continue
+		}
+		deployment, err = s.deliverAfterReadyBriefings(ctx, deployment, key, *revision.Team)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -294,10 +294,11 @@ func TestPinnedTeamDeploymentLaunchesWavesWithPreparedBriefings(t *testing.T) {
 	service := app.New(store, providers.NewRegistry(provider)).WithClock(func() time.Time { return now })
 	operator := model.OperatorPrincipal()
 	desired := model.DesiredConfiguration{Harness: "prepared-work", Model: "test", WorkingDirectory: t.TempDir(), Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}
+	require.NoError(t, store.RegisterWorkspace(ctx, model.Workspace{ID: "team_workspace", State: model.WorkspaceAvailable, Observation: model.WorkspaceObservation{ActualPath: desired.WorkingDirectory, ObservedAt: now}, Revision: 1, CreatedAt: now, UpdatedAt: now}))
 	team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{{Key: "builder", Name: "builder", Desired: desired, Required: true, BriefingIDs: []string{"mission"}}, {Key: "reviewer", Name: "reviewer", Desired: desired, Required: true, BriefingIDs: []string{"mission"}}}, Waves: []model.TeamWave{{ID: "build", MemberKeys: []string{"builder"}, RequiredReady: true, RequiredBriefs: true}, {ID: "review", MemberKeys: []string{"reviewer"}, DependsOn: []string{"build"}, RequiredReady: true, RequiredBriefs: true}}, Briefings: []model.TeamBriefing{{ID: "mission", Body: "use the pinned definition", Timing: model.BriefingBeforeFirstWork, Required: true, MemberKeys: []string{"builder", "reviewer"}}}}
 	definition, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: operator, RequestID: "save_team"}, Draft: app.DefinitionDraft{ID: "team", RevisionID: "team_v1", Name: "team", Kind: model.DefinitionTeam, SchemaVersion: 1, Source: "team", Team: &team}})
 	require.NoError(t, err)
-	deployed, err := service.DeployTeam(ctx, app.DeployTeamRequest{Context: app.RequestContext{Principal: operator, RequestID: "deploy"}, DeploymentID: "deployment", Instantiation: model.TeamInstantiation{Definition: model.DefinitionRef{DefinitionID: definition.Definition.ID, RevisionID: definition.Revision.ID, ContentHash: definition.Revision.ContentHash, Kind: model.DefinitionTeam}, Mission: "ship safely", GroupID: "deployment_group"}})
+	deployed, err := service.DeployTeam(ctx, app.DeployTeamRequest{Context: app.RequestContext{Principal: operator, RequestID: "deploy"}, DeploymentID: "deployment", Instantiation: model.TeamInstantiation{Definition: model.DefinitionRef{DefinitionID: definition.Definition.ID, RevisionID: definition.Revision.ID, ContentHash: definition.Revision.ContentHash, Kind: model.DefinitionTeam}, Mission: "ship safely", GroupID: "deployment_group", Workspaces: model.TeamWorkspaceSelection{Shared: &model.TeamWorkspaceInput{WorkspaceID: "team_workspace", ExpectedRevision: 1}}}})
 	require.NoError(t, err)
 	require.Equal(t, model.DeploymentDeploying, deployed.Deployment.State)
 	for range 3 {
@@ -531,10 +532,12 @@ func TestTeamDeploymentPinsAndMaterializesAuthoredRoles(t *testing.T) {
 	role, err := service.PutRole(ctx, app.PutRoleRequest{Principal: operator, Role: model.Role{ID: "team_reviewer", Name: "Team reviewer", Actions: []model.Action{model.ActionReadStatus, model.ActionSendMessage}}})
 	require.NoError(t, err)
 	desired := model.DesiredConfiguration{Harness: "prepared-work", Model: "test", WorkingDirectory: t.TempDir(), Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}
+	require.NoError(t, store.RegisterWorkspace(ctx, model.Workspace{ID: "role_workspace", State: model.WorkspaceAvailable, Observation: model.WorkspaceObservation{ActualPath: desired.WorkingDirectory, ObservedAt: now}, Revision: 1, CreatedAt: now, UpdatedAt: now}))
 	team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{{Key: "reviewer", Name: "reviewer", Desired: desired, Roles: []model.RoleID{"team_reviewer"}, Required: true}}, Waves: []model.TeamWave{{ID: "review", MemberKeys: []string{"reviewer"}, RequiredReady: true}}}
 	definition, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: operator, RequestID: "save_role_team"}, Draft: app.DefinitionDraft{ID: "role_team", RevisionID: "role_team_v1", Name: "role team", Kind: model.DefinitionTeam, SchemaVersion: 1, Source: "operator fixture", Team: &team}})
 	require.NoError(t, err)
-	deployed, err := service.DeployTeam(ctx, app.DeployTeamRequest{Context: app.RequestContext{Principal: operator, RequestID: "deploy_role_team"}, DeploymentID: "role_deployment", Instantiation: model.TeamInstantiation{Definition: model.DefinitionRef{DefinitionID: definition.Definition.ID, RevisionID: definition.Revision.ID, ContentHash: definition.Revision.ContentHash, Kind: model.DefinitionTeam}, Mission: "review", GroupID: "role_group"}})
+	workspaceSelection := model.TeamWorkspaceSelection{Shared: &model.TeamWorkspaceInput{WorkspaceID: "role_workspace", ExpectedRevision: 1}}
+	deployed, err := service.DeployTeam(ctx, app.DeployTeamRequest{Context: app.RequestContext{Principal: operator, RequestID: "deploy_role_team"}, DeploymentID: "role_deployment", Instantiation: model.TeamInstantiation{Definition: model.DefinitionRef{DefinitionID: definition.Definition.ID, RevisionID: definition.Revision.ID, ContentHash: definition.Revision.ContentHash, Kind: model.DefinitionTeam}, Mission: "review", GroupID: "role_group", Workspaces: workspaceSelection}})
 	require.NoError(t, err)
 	require.Equal(t, []model.TeamRolePin{{RoleID: role.Role.ID, Revision: role.Role.Revision, Actions: role.Role.Actions}}, deployed.Deployment.RolePins)
 	memberID := deployed.Deployment.Members["reviewer"]
@@ -542,7 +545,7 @@ func TestTeamDeploymentPinsAndMaterializesAuthoredRoles(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []model.AgentID{memberID}, resolved)
 
-	replayed, err := service.DeployTeam(ctx, app.DeployTeamRequest{Context: app.RequestContext{Principal: operator, RequestID: "deploy_role_team"}, DeploymentID: "role_deployment", Instantiation: model.TeamInstantiation{Definition: deployed.Deployment.Definition, Mission: "review", GroupID: "role_group"}})
+	replayed, err := service.DeployTeam(ctx, app.DeployTeamRequest{Context: app.RequestContext{Principal: operator, RequestID: "deploy_role_team"}, DeploymentID: "role_deployment", Instantiation: model.TeamInstantiation{Definition: deployed.Deployment.Definition, Mission: "review", GroupID: "role_group", Workspaces: workspaceSelection}})
 	require.NoError(t, err)
 	require.Equal(t, deployed.Deployment.RolePins, replayed.Deployment.RolePins)
 }

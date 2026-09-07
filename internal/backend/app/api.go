@@ -77,6 +77,10 @@ type OrchestrationAPI interface {
 	RunRuleNow(context.Context, RunRuleNowRequest) (OccurrenceResult, error)
 	DeployTeam(context.Context, DeployTeamRequest) (TeamDeploymentResult, error)
 	GetTeamDeployment(context.Context, GetTeamDeploymentRequest) (TeamDeploymentResult, error)
+	ListTeamDeployments(context.Context, ListTeamDeploymentsRequest) ([]TeamDeploymentResult, error)
+	RebriefDeployment(context.Context, RebriefDeploymentRequest) (TeamDeploymentResult, error)
+	AdvanceAdvisoryPhase(context.Context, AdvanceAdvisoryPhaseRequest) (TeamDeploymentResult, error)
+	StandDownDeployment(context.Context, StandDownDeploymentRequest) (TeamDeploymentResult, error)
 	ListOccurrences(context.Context, ListOccurrencesRequest) ([]OccurrenceResult, error)
 }
 
@@ -238,6 +242,11 @@ type DeployTeamRequest struct {
 type GetTeamDeploymentRequest struct {
 	Principal    model.Principal
 	DeploymentID model.DeploymentID
+}
+
+type ListTeamDeploymentsRequest struct {
+	Principal model.Principal
+	GroupID   model.GroupID
 }
 
 type TeamDeploymentResult struct{ Deployment model.TeamDeployment }
