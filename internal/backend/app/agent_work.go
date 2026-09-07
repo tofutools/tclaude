@@ -19,6 +19,19 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	if err != nil {
 		return record, err
 	}
+	if performer.ContextPolicy == model.AgentContextReuse && agent.PrimaryExecutionID != "" {
+		return s.admitGraphInteraction(ctx, record, attempt, agent)
+	}
+	if grouped, ok := taskGroup(*record.Run.Graph, attempt.Ref.NodeID); ok && agent.PrimaryExecutionID != "" {
+		ready, cleanupErr := s.prepareFreshTaskAgent(ctx, record, attempt, agent, grouped)
+		if cleanupErr != nil || !ready {
+			return record, cleanupErr
+		}
+		agent, err = s.store.Agent(ctx, agent.ID)
+		if err != nil {
+			return record, err
+		}
+	}
 	desired := agent.Desired
 	var workspaceUse *model.WorkspaceUse
 	var additionalAuthority []model.AuthorityRequest
@@ -146,6 +159,9 @@ func (s *Service) reconcileAgentAttempt(ctx context.Context, record WorkRunRecor
 	result, err := s.store.OperationResult(ctx, attempt.OperationID)
 	if err != nil {
 		return record, err
+	}
+	if result.Operation.Kind == model.OperationInteract && result.Operation.State == model.OperationAdmitted {
+		return s.dispatchGraphInteraction(ctx, record, attempt, result.Operation)
 	}
 	switch result.Operation.State {
 	case model.OperationUncertain:

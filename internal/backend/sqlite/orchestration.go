@@ -582,6 +582,14 @@ func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTr
 			}
 		}
 	}
+	if transition.Interaction != nil {
+		if transition.Operation == nil || transition.Execution != nil {
+			return app.WorkRunRecord{}, app.ErrInvalid
+		}
+		if err = insertGraphInteraction(ctx, tx, *transition.Interaction, *transition.Operation); err != nil {
+			return app.WorkRunRecord{}, err
+		}
+	}
 	if transition.WorkspaceUse != nil {
 		use := transition.WorkspaceUse
 		if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_uses(id,workspace_id,execution_id,work_run_id,created_at) VALUES(?,?,?,?,?)`, use.ID, use.WorkspaceID, use.ExecutionID, use.WorkRunID, nanos(use.CreatedAt)); err != nil {

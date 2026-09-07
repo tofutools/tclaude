@@ -123,7 +123,7 @@ func (s *Service) compileDefinition(ctx context.Context, draft DefinitionDraft, 
 		if draft.Process == nil || draft.Team != nil {
 			return model.DefinitionRevision{}, fail(ErrInvalid, "process definition requires exactly one process spec")
 		}
-		if err := validateWorkGraph(draft.Process.Graph); err != nil {
+		if _, err := compileTaskStages(draft.Process.Graph); err != nil {
 			return model.DefinitionRevision{}, err
 		}
 	case model.DefinitionTeam:
@@ -330,7 +330,11 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 		}
 		graph = *req.Start.InlineGraph
 	}
-	graph, err := materializePerformerBindings(graph, req.Start.PerformerBindings)
+	graph, err := compileTaskStages(graph)
+	if err != nil {
+		return WorkRunResult{}, err
+	}
+	graph, err = materializePerformerBindings(graph, req.Start.PerformerBindings)
 	if err != nil {
 		return WorkRunResult{}, err
 	}
@@ -344,8 +348,11 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 		return WorkRunResult{}, err
 	}
 	authority := req.Context.Principal.Authority
-	if req.Context.Principal.Kind == model.PrincipalOperator {
+	switch req.Context.Principal.Kind {
+	case model.PrincipalOperator:
 		authority = model.AuthoritySubject{Kind: model.AuthorityOperator}
+	case model.PrincipalAgent:
+		authority = model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: req.Context.Principal.AgentID}
 	}
 	if req.Context.Principal.Kind != model.PrincipalOperator {
 		resource := model.ResourceSelector{Kind: model.ResourceWorkRun, WorkRunID: req.ID}
@@ -471,6 +478,9 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 		return transition
 	}
 	if outcome == model.WorkOutcomeRejected {
+		if retried, ok := s.taskGateFailure(record, current, detail, transition); ok {
+			return retried
+		}
 		if retried, ok := s.retryFailureTransition(record, current, detail, transition); ok {
 			return retried
 		}
@@ -518,8 +528,18 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 			}
 		}
 		attempt, windows := s.initialActivation(record.Run.ID, record.Run.Scope, node, now, record.Run.Deadline)
-		if node.Kind == model.WorkNodeFork || node.Kind == model.WorkNodeJoin || node.Kind == model.WorkNodeEnd {
+		inheritTaskActivation(graph, current, &attempt, windows)
+		taskStageFeedback(record, current, &attempt, detail)
+		for i := range windows {
+			if attempt.Performer != nil && attempt.Performer.Human != nil {
+				windows[i].Question = attempt.Performer.Human.Prompt
+			}
+		}
+		if node.Kind == model.WorkNodeFork || node.Kind == model.WorkNodeJoin || node.Kind == model.WorkNodeEnd || node.Kind == model.WorkNodeTaskComplete {
 			attempt.State, attempt.Outcome = model.NodeAttemptSucceeded, model.WorkOutcomeVerified
+			if node.Kind == model.WorkNodeTaskComplete && taskCompletionWaived(graph, virtual, current) {
+				attempt.State, attempt.Outcome = model.NodeAttemptWaived, model.WorkOutcomeWaived
+			}
 			if node.Kind == model.WorkNodeEnd && node.End != nil {
 				attempt.Outcome = node.End.Outcome
 				if node.End.Outcome == model.WorkOutcomeRejected || node.End.Outcome == model.WorkOutcomeCancelled || node.End.Outcome == model.WorkOutcomeExpired {
@@ -532,7 +552,7 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 		}
 		transition.Activations = append(transition.Activations, attempt)
 		transition.DecisionWindows = append(transition.DecisionWindows, windows...)
-		if node.Kind == model.WorkNodeFork || node.Kind == model.WorkNodeJoin {
+		if node.Kind == model.WorkNodeFork || node.Kind == model.WorkNodeJoin || node.Kind == model.WorkNodeTaskComplete {
 			for _, next := range outgoingNodes(graph, nodeID) {
 				activate(next, attempt.Ref.ActivationID)
 			}
@@ -555,7 +575,7 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 			hasUncertain = true
 		}
 	}
-	hasFailure := hasUnsupersededGraphFailure(combined)
+	hasFailure := hasUnsupersededGraphFailure(graph, combined)
 	if hasFailure {
 		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunFailed, model.WorkControlSettled, model.WorkOutcomeRejected
 		for _, attempt := range combined {
@@ -575,14 +595,17 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 	return transition
 }
 
-func hasUnsupersededGraphFailure(attempts []model.WorkNodeAttempt) bool {
+func hasUnsupersededGraphFailure(graph model.WorkGraph, attempts []model.WorkNodeAttempt) bool {
 	for _, failed := range attempts {
 		if failed.State != model.NodeAttemptFailed {
 			continue
 		}
 		superseded := false
 		for _, candidate := range attempts {
-			if candidate.Ref.NodeID == failed.Ref.NodeID && candidate.Ref.ActivationID == failed.Ref.ActivationID && candidate.Ref.Attempt > failed.Ref.Attempt {
+			failedGroup, grouped := taskGroup(graph, failed.Ref.NodeID)
+			candidateGroup, candidateGrouped := taskGroup(graph, candidate.Ref.NodeID)
+			sameScope := candidate.Ref.NodeID == failed.Ref.NodeID || grouped && candidateGrouped && failedGroup.ID == candidateGroup.ID
+			if sameScope && candidate.Ref.ActivationID == failed.Ref.ActivationID && candidate.Ref.Attempt > failed.Ref.Attempt {
 				superseded = true
 				break
 			}
@@ -650,8 +673,21 @@ func (s *Service) retryFailureTransition(record WorkRunRecord, current model.Wor
 	if node.Retry.MaxAttempts == 0 || !containsString(node.Retry.Retryable, class) {
 		return GraphTransition{}, false
 	}
-	if current.Ref.Attempt < current.RetryBudget {
+	used := current.Ref.Attempt
+	if _, grouped := taskGroup(*record.Run.Graph, current.Ref.NodeID); grouped {
+		_, used = taskStageAttempts(record.Run, current.Ref.ActivationID, current.Ref.NodeID)
+	}
+	if used < current.RetryBudget {
 		next, windows := s.retryActivation(record.Run, current, node, transition.At, current.RetryBudget)
+		if _, grouped := taskGroup(*record.Run.Graph, current.Ref.NodeID); grouped {
+			next.Performer = node.Performer
+			taskStageFeedback(record, current, &next, detail)
+			for i := range windows {
+				if next.Performer.Human != nil {
+					windows[i].Question = next.Performer.Human.Prompt
+				}
+			}
+		}
 		transition.Activations = append(transition.Activations, next)
 		transition.DecisionWindows = append(transition.DecisionWindows, windows...)
 		return transition, true
@@ -861,7 +897,10 @@ func (s *Service) attachDecisionWindow(run model.WorkRun, node model.WorkNode, a
 		audience, question, answers = append([]model.DecisionAudience(nil), node.Decision.Audience...), node.Name, append([]string(nil), node.Decision.PermittedAnswers...)
 		expires = now.Add(node.Decision.ExpiresAfter)
 	} else if node.Kind == model.WorkNodeTask && node.Performer != nil && node.Performer.Kind == model.PerformerHuman {
-		human := node.Performer.Human
+		human := attempt.Performer.Human
+		if human.Operator {
+			audience = append(audience, model.DecisionAudience{Subject: model.AuthoritySubject{Kind: model.AuthorityOperator}})
+		}
 		if human.AgentID != "" {
 			audience = append(audience, model.DecisionAudience{Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: human.AgentID}})
 		}
@@ -969,6 +1008,9 @@ func (s *Service) applyAnsweredDecision(ctx context.Context, run WorkRunRecord, 
 	if attempt.State == model.NodeAttemptBlocked {
 		return s.applyBlockedResolution(ctx, run, attempt, submission)
 	}
+	if group, grouped := taskGroup(*run.Run.Graph, attempt.Ref.NodeID); grouped && attempt.Ref.NodeID == group.Approval && submission.Answer == "rework" {
+		return s.reworkTaskPlan(ctx, run, attempt, submission, group)
+	}
 	outcome := model.WorkOutcomeVerified
 	verdict := submission.Answer
 	switch submission.Answer {
@@ -1012,6 +1054,9 @@ func (s *Service) applyBlockedResolution(ctx context.Context, run WorkRunRecord,
 		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunCancelled, model.WorkControlSettled, model.WorkOutcomeCancelled
 		return s.store.ApplyGraphTransition(ctx, transition)
 	case model.BlockedRetry, model.BlockedRework:
+		if group, grouped := taskGroup(*run.Run.Graph, attempt.Ref.NodeID); grouped && (attempt.Ref.NodeID == group.Review || slices.Contains(group.Checks, attempt.Ref.NodeID)) {
+			return s.resolveTaskGate(ctx, run, attempt, submission, group)
+		}
 		window := normalizedAttempts(node.Retry.MaxAttempts)
 		if attempt.RetryBudget >= maxWorkAttempts || window > maxWorkAttempts-attempt.RetryBudget {
 			return run, fail(ErrConflict, "node %s cannot extend retry budget beyond %d attempts", node.ID, maxWorkAttempts)
@@ -1592,6 +1637,10 @@ func validateWorkNode(node model.WorkNode) error {
 		if node.Decision == nil || len(node.Decision.Audience) == 0 || len(node.Decision.PermittedAnswers) == 0 || node.Decision.ExpiresAfter <= 0 {
 			return fail(ErrInvalid, "decision node %s requires bounded declared answers", node.ID)
 		}
+	case model.WorkNodeTaskComplete:
+		if node.Performer != nil || node.Decision != nil || node.Join != nil || node.Wait != nil || node.End != nil || node.Stages != nil {
+			return fail(ErrInvalid, "task completion node has incompatible configuration")
+		}
 	case model.WorkNodeFork:
 		if node.Join != nil || node.Wait != nil || node.End != nil || node.Performer != nil {
 			return fail(ErrInvalid, "fork node %s has incompatible configuration", node.ID)
@@ -1646,7 +1695,10 @@ func validatePerformer(performer model.Performer) error {
 			}
 		}
 	case model.PerformerHuman:
-		if performer.Human == nil || (performer.Human.AgentID == "" && performer.Human.RoleID == "") || strings.TrimSpace(performer.Human.Prompt) == "" {
+		if performer.Human != nil && performer.Human.Operator && (performer.Human.AgentID != "" || performer.Human.RoleID != "") {
+			return fail(ErrInvalid, "choose operator or agent/role human audience")
+		}
+		if performer.Human == nil || (!performer.Human.Operator && performer.Human.AgentID == "" && performer.Human.RoleID == "") || strings.TrimSpace(performer.Human.Prompt) == "" {
 			return fail(ErrInvalid, "human performer requires audience and prompt")
 		}
 	default:

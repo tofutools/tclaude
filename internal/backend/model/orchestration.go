@@ -144,17 +144,20 @@ type WorkGraph struct {
 	Nodes           []WorkNode
 	Edges           []WorkEdge
 	Outcome         WorkGraphOutcomePolicy
+	// TaskGroups are compiler output, never accepted as authored input.
+	TaskGroups []CompiledTaskGroup `json:",omitempty"`
 }
 
 type WorkNodeKind string
 
 const (
-	WorkNodeTask     WorkNodeKind = "task"
-	WorkNodeDecision WorkNodeKind = "decision"
-	WorkNodeFork     WorkNodeKind = "fork"
-	WorkNodeJoin     WorkNodeKind = "join"
-	WorkNodeWait     WorkNodeKind = "wait"
-	WorkNodeEnd      WorkNodeKind = "end"
+	WorkNodeTask         WorkNodeKind = "task"
+	WorkNodeDecision     WorkNodeKind = "decision"
+	WorkNodeFork         WorkNodeKind = "fork"
+	WorkNodeJoin         WorkNodeKind = "join"
+	WorkNodeWait         WorkNodeKind = "wait"
+	WorkNodeEnd          WorkNodeKind = "end"
+	WorkNodeTaskComplete WorkNodeKind = "task_complete"
 )
 
 type WorkNode struct {
@@ -169,6 +172,33 @@ type WorkNode struct {
 	Wait      *WaitPolicy
 	End       *EndPolicy
 	Waivable  bool
+	Stages    *TaskStages `json:",omitempty"`
+}
+
+// TaskStages retain the author's compound task rather than encoding feedback as
+// cyclic graph edges. The application owns their compilation and retry semantics.
+type TaskStages struct {
+	Plan         *TaskStage
+	PlanApproval *DecisionNode
+	Checks       []TaskStage
+	Review       *TaskStage
+}
+
+type TaskStage struct {
+	ID        string
+	Name      string
+	Performer Performer
+	Retry     RetryPolicy
+}
+
+type CompiledTaskGroup struct {
+	ID       WorkNodeID
+	Plan     WorkNodeID
+	Approval WorkNodeID
+	Work     WorkNodeID
+	Checks   []WorkNodeID
+	Review   WorkNodeID
+	Entry    WorkNodeID
 }
 
 type WorkEdge struct {
@@ -221,9 +251,10 @@ type ProgramPerformer struct {
 }
 
 type HumanPerformer struct {
-	AgentID AgentID
-	RoleID  RoleID
-	Prompt  string
+	Operator bool `json:",omitempty"`
+	AgentID  AgentID
+	RoleID   RoleID
+	Prompt   string
 }
 
 type RetryPolicy struct {

@@ -467,6 +467,31 @@ fork/join, wait and end nodes. Drag nodes to arrange them, connect their ports
 Tasks can bind a worker at launch, select an existing agent, pin a saved program
 profile, or address human work. Decision connections name the permitted answer.
 
+A task can also contain a **Plan**, explicit plan approval, ordered **Checks**,
+and a **Review**. Edit each stage with the same agent/program/human performer
+controls; human work may explicitly address the operator. Move checks up or down
+to change their execution order. Saving, exporting, copying and reopening retain
+the authored task and its stages as one unit. Starting the process binds every
+stage's named workers and authorizes every pinned program, including nested ones.
+The application compiles the task into a bounded graph; the original task's
+completion waits for all its stages.
+
+Plan approval offers **approve** or **rework**. Rework opens a new plan attempt
+and approval window without spending the work budget. A rejected check or review
+restarts work and its downstream checks, retaining the accepted plan and earlier
+results. Checks and review share the task's work attempt limit; exhausting it
+opens a blocked decision whose retry/rework action extends the work budget.
+The monitor shows each stage, activation, attempt, decision and retained evidence.
+
+For native agent stages, **Fresh context** stops only a concluded execution owned
+by that exact task activation, using ordinary stop authority, and waits for
+observed exit before launching again. **Reuse context** requires a live primary
+execution and current interaction authority. Its input is admitted and consumed
+once; a restart with a consumed but unsettled input reports uncertainty instead
+of replaying it. Agent and human stages receive bounded recorded stage feedback;
+program input keeps its declared JSON shape. These controls do not import legacy
+YAML stages or add implicit timeout/contact policies.
+
 The Parameters and Outcome controls edit typed inputs/defaults and required
 evidence. Undo/redo and node copy/paste operate on the local draft. **Validate**
 checks the draft through the application; **Save revision** writes an immutable
