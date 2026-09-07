@@ -197,6 +197,9 @@ func (s *Service) UpdateAgent(ctx context.Context, req UpdateAgentRequest) (Agen
 }
 
 func (s *Service) CreateGroup(ctx context.Context, req CreateGroupRequest) (GroupResult, error) {
+	if err := req.OwnerBounds.ValidateEnvironments(); err != nil {
+		return GroupResult{}, fail(ErrInvalid, "%v", err)
+	}
 	if err := requireOperator(req.Context); err != nil {
 		return GroupResult{}, err
 	}

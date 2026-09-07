@@ -742,6 +742,9 @@ func (s *Store) Agent(ctx context.Context, id model.AgentID) (model.Agent, error
 }
 
 func (s *Store) CreateGroup(ctx context.Context, group model.Group, ownerBounds model.ConfigurationBounds) error {
+	if ownerBounds.ValidateEnvironments() != nil {
+		return app.ErrInvalid
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

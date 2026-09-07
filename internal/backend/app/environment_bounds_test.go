@@ -24,6 +24,8 @@ func TestEnvironmentBoundsRejectUnusableAuthorityAtAuthoring(t *testing.T) {
 	for name, environment := range map[string]model.Environment{"reserved": {"HOME": "/alternate"}, "oversized": {"APP_VALUE": strings.Repeat("x", 16385)}, "nul": {"APP_VALUE": "a\x00b"}} {
 		t.Run(name, func(t *testing.T) {
 			bounds := model.ConfigurationBounds{Environments: []model.Environment{environment}}
+			_, createErr := service.CreateGroup(ctx, app.CreateGroupRequest{Context: operator, ID: "group", Name: "Group", OwnerBounds: bounds})
+			require.ErrorIs(t, createErr, app.ErrInvalid)
 			_, err := service.PutGrant(ctx, app.PutGrantRequest{Principal: operator, Grant: model.AuthorityGrant{ID: "grant", Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: "caller"}, Action: model.ActionLaunch, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: "target"}, Bounds: bounds}})
 			require.ErrorIs(t, err, app.ErrInvalid)
 			_, err = service.PutRoleAssignment(ctx, app.PutRoleAssignmentRequest{Principal: operator, Assignment: model.RoleAssignment{Bounds: bounds}})
