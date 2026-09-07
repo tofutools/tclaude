@@ -164,7 +164,11 @@ func (s *Service) reconcileAgentAttempt(ctx context.Context, record WorkRunRecor
 				return latest, deploymentErr
 			}
 			if deploymentLaunch {
-				return s.store.ApplyGraphTransition(ctx, s.graphOutcomeTransition(latest, current, model.WorkOutcomeVerified, "member launched with prepared briefing"))
+				deployment, deploymentErr := s.store.TeamDeployment(ctx, latest.Run.Scope.DeploymentID)
+				if deploymentErr != nil {
+					return latest, deploymentErr
+				}
+				return s.reconcileDeploymentMember(ctx, latest, current, deployment)
 			}
 			runState, controlState, runOutcome := model.WorkRunRunning, model.WorkControlActive, model.WorkOutcomeNone
 			if latest.Run.State == model.WorkRunFailed && latest.Run.ControlState == model.WorkControlDraining {
