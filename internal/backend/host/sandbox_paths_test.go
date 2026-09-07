@@ -77,7 +77,10 @@ func TestSandboxPathPreviewRetainsConfiguredProtectedSpelling(t *testing.T) {
 	require.NoError(t, os.WriteFile(public, []byte("public"), 0600))
 	inspector, err := host.NewSandboxPathInspector([]string{configured})
 	require.NoError(t, err)
-	for _, guest := range []string{configured, filepath.Join(configured, "child"), private, filepath.Join(private, "child")} {
+	parentAlias := filepath.Join(root, "parent-alias")
+	require.NoError(t, os.Symlink(root, parentAlias))
+	viaParent := filepath.Join(parentAlias, "canonical-private")
+	for _, guest := range []string{configured, filepath.Join(configured, "child"), private, filepath.Join(private, "child"), viaParent, filepath.Join(viaParent, "missing")} {
 		observations, err := inspector.InspectSandboxPaths(context.Background(), []model.SandboxFilesystemRule{{HostPath: public, GuestPath: guest, Access: model.SandboxFilesystemRead}})
 		require.NoError(t, err)
 		require.Equal(t, "refused", observations[0].State, guest)
