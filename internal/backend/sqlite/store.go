@@ -116,6 +116,8 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"message_recipients", "notification_outcome", "TEXT NOT NULL DEFAULT 'not_requested'"},
 		{"message_recipients", "notification_detail", "TEXT NOT NULL DEFAULT ''"},
 		{"message_recipients", "notified_at", "INTEGER"},
+		{"automation_occurrences", "parent_occurrence_id", "TEXT NOT NULL DEFAULT ''"},
+		{"automation_occurrences", "causal_depth", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.definition); err != nil {
 			return err
@@ -535,12 +537,21 @@ CREATE TABLE IF NOT EXISTS automation_occurrences (
   id TEXT PRIMARY KEY, rule_id TEXT NOT NULL REFERENCES automation_rules(id),
   rule_revision_id TEXT NOT NULL REFERENCES automation_rule_revisions(id), source_occurrence_key TEXT NOT NULL,
 	request_scope TEXT NOT NULL, request_id TEXT NOT NULL, requester_json BLOB NOT NULL,
+	parent_occurrence_id TEXT NOT NULL DEFAULT '', causal_depth INTEGER NOT NULL DEFAULT 0,
   scheduled_at INTEGER, event_at INTEGER, eligible_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
   state TEXT NOT NULL, operation_id TEXT NOT NULL DEFAULT '', work_run_id TEXT NOT NULL DEFAULT '',
   deployment_id TEXT NOT NULL DEFAULT '', revision INTEGER NOT NULL,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
 	UNIQUE(rule_revision_id,source_occurrence_key), UNIQUE(request_scope,request_id)
 );
+CREATE TABLE IF NOT EXISTS automation_product_facts (
+  sequence INTEGER PRIMARY KEY AUTOINCREMENT, source_id TEXT NOT NULL, event_id TEXT NOT NULL,
+  kind TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', resource_json BLOB NOT NULL,
+  occurred_at INTEGER NOT NULL, observed_at INTEGER NOT NULL,
+  parent_occurrence_id TEXT NOT NULL DEFAULT '', causal_depth INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(source_id,event_id)
+);
+CREATE INDEX IF NOT EXISTS automation_product_facts_scan ON automation_product_facts(source_id,sequence);
 CREATE TABLE IF NOT EXISTS automation_occurrence_recipients (
   occurrence_id TEXT NOT NULL REFERENCES automation_occurrences(id) ON DELETE CASCADE,
   agent_id TEXT NOT NULL, disposition TEXT NOT NULL, operation_id TEXT NOT NULL DEFAULT '',
@@ -1490,7 +1501,10 @@ func completeOperationTx(ctx context.Context, tx *sql.Tx, in app.OperationComple
 	} else if err == nil && in.UpdateExecutionState && in.ExecutionState == model.ExecutionUnknown {
 		_, err = tx.ExecContext(ctx, `UPDATE execution_accesses SET state=?,revision=revision+1 WHERE execution_id=? AND state=?`, model.ExecutionAccessSuspended, in.ExecutionID, model.ExecutionAccessActive)
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	return insertTerminalOperationFactsTx(ctx, tx, in)
 }
 
 const executionSelect = `SELECT configuration_profile_json,id,workload_kind,agent_id,conversation_id,harness,model,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,native_namespace,native_reference,native_observed_at,revision,created_at,updated_at FROM executions`

@@ -23,7 +23,7 @@ type AutomationFactCollectRequest struct {
 }
 
 type AutomationFactBatch struct {
-	Facts      []model.AutomationProductFact
+	Facts      []model.NormalizedFact
 	NextCursor string
 }
 
@@ -31,5 +31,5 @@ type AutomationFactBatch struct {
 // configured collector. It is deliberately absent from the public API and
 // accepts only the bounded normalized fact vocabulary.
 type TrustedAutomationFactIngress interface {
-	IngestTrustedAutomationFacts(context.Context, string, []model.AutomationProductFact) error
+	IngestTrustedAutomationFacts(context.Context, string, []model.NormalizedFact) error
 }

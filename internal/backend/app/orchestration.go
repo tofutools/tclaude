@@ -1629,8 +1629,18 @@ func validateAutomation(condition model.AutomationCondition, action model.Automa
 			}
 		}
 	case model.AutomationTrigger:
-		if condition.Trigger == nil || strings.TrimSpace(condition.Trigger.FactKind) == "" || condition.Trigger.Freshness <= 0 {
-			return fail(ErrInvalid, "trigger requires fact kind and bounded freshness")
+		if condition.Trigger == nil || strings.TrimSpace(condition.Trigger.SourceID) == "" || strings.TrimSpace(condition.Trigger.FactKind) == "" || len(condition.Trigger.Values) == 0 || condition.Trigger.Freshness <= 0 || condition.Trigger.Dwell < 0 || condition.Trigger.Cooldown < 0 || condition.Trigger.Debounce < 0 {
+			return fail(ErrInvalid, "trigger requires named source, exact resource, values and bounded timing")
+		}
+		if err := validateAutomationFactResource(condition.Trigger.Resource); err != nil {
+			return err
+		}
+		seenValues := map[string]bool{}
+		for _, value := range condition.Trigger.Values {
+			if strings.TrimSpace(value) == "" || seenValues[value] || condition.Trigger.FactKind == model.FactCICompleted && (value == "pending" || value == "unknown") {
+				return fail(ErrInvalid, "trigger values must be unique conclusive values")
+			}
+			seenValues[value] = true
 		}
 	case model.AutomationStandingOrder:
 		if condition.StandingOrder == nil || strings.TrimSpace(condition.StandingOrder.FactKind) == "" || condition.StandingOrder.DispatchDeadline <= 0 || condition.StandingOrder.Timing != model.StandingOrderSameContinuation {
