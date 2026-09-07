@@ -414,11 +414,6 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 		state = model.NodeAttemptUncertain
 	}
 	transition.Updates = append(transition.Updates, GraphAttemptUpdate{Ref: current.Ref, State: state, Outcome: outcome, Detail: detail})
-	if outcome == model.WorkOutcomeRejected {
-		if retried, ok := s.retryFailureTransition(record, current, detail, transition); ok {
-			return retried
-		}
-	}
 	if record.Run.State == model.WorkRunFailed && record.Run.ControlState == model.WorkControlDraining {
 		transition.RunState, transition.RunOutcome = model.WorkRunFailed, record.Run.Outcome
 		transition.ControlState = model.WorkControlSettled
@@ -456,6 +451,11 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 	if outcome == model.WorkOutcomeUnknown {
 		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunUncertain, model.WorkControlDraining, model.WorkOutcomeUnknown
 		return transition
+	}
+	if outcome == model.WorkOutcomeRejected {
+		if retried, ok := s.retryFailureTransition(record, current, detail, transition); ok {
+			return retried
+		}
 	}
 	if outcome == model.WorkOutcomeRejected {
 		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunFailed, model.WorkControlSettled, model.WorkOutcomeRejected
@@ -633,8 +633,9 @@ func (s *Service) retryFailureTransition(record WorkRunRecord, current model.Wor
 		return GraphTransition{}, false
 	}
 	if current.Ref.Attempt < current.RetryBudget {
-		next := retryAttempt(current, node, transition.At, current.RetryBudget)
+		next, windows := s.retryActivation(record.Run, current, node, transition.At, current.RetryBudget)
 		transition.Activations = append(transition.Activations, next)
+		transition.DecisionWindows = append(transition.DecisionWindows, windows...)
 		return transition, true
 	}
 	decisionID := model.DecisionID(s.newID("decision_"))
@@ -662,7 +663,7 @@ func (s *Service) retryFailureTransition(record WorkRunRecord, current model.Wor
 	return transition, true
 }
 
-func retryAttempt(current model.WorkNodeAttempt, node model.WorkNode, now time.Time, budget uint32) model.WorkNodeAttempt {
+func (s *Service) retryActivation(run model.WorkRun, current model.WorkNodeAttempt, node model.WorkNode, now time.Time, budget uint32) (model.WorkNodeAttempt, []model.DecisionWindow) {
 	readyAt := now
 	state := model.NodeAttemptReady
 	var retryAt *time.Time
@@ -674,11 +675,15 @@ func retryAttempt(current model.WorkNodeAttempt, node model.WorkNode, now time.T
 	if node.Retry.AttemptBudget > 0 && now.Add(node.Retry.AttemptBudget).Before(deadline) {
 		deadline = now.Add(node.Retry.AttemptBudget)
 	}
-	return model.WorkNodeAttempt{
+	attempt := model.WorkNodeAttempt{
 		Ref:   model.WorkAttemptRef{RunID: current.Ref.RunID, NodeID: current.Ref.NodeID, ActivationID: current.Ref.ActivationID, Attempt: current.Ref.Attempt + 1},
 		State: state, Performer: current.Performer, ReadyAt: readyAt, RetryAt: retryAt,
 		Deadline: deadline, RetryBudget: budget, CreatedAt: now, UpdatedAt: now,
 	}
+	if state == model.NodeAttemptRetryWait {
+		return attempt, nil
+	}
+	return s.attachDecisionWindow(run, node, attempt, now)
 }
 
 func retryFailureClass(node model.WorkNode) string {
@@ -798,6 +803,11 @@ func onlyWaiting(attempts []model.WorkNodeAttempt) bool {
 
 func (s *Service) initialActivation(runID model.WorkRunID, scope model.WorkScope, node model.WorkNode, now, deadline time.Time) (model.WorkNodeAttempt, []model.DecisionWindow) {
 	attempt := model.WorkNodeAttempt{Ref: model.WorkAttemptRef{RunID: runID, NodeID: node.ID, ActivationID: model.WorkActivationID(s.newID("activation_")), Attempt: 1}, State: model.NodeAttemptReady, Performer: node.Performer, ReadyAt: now, Deadline: deadline, RetryBudget: normalizedAttempts(node.Retry.MaxAttempts), CreatedAt: now, UpdatedAt: now}
+	run := model.WorkRun{ID: runID, Scope: scope, Deadline: deadline, Revision: 1}
+	return s.attachDecisionWindow(run, node, attempt, now)
+}
+
+func (s *Service) attachDecisionWindow(run model.WorkRun, node model.WorkNode, attempt model.WorkNodeAttempt, now time.Time) (model.WorkNodeAttempt, []model.DecisionWindow) {
 	var audience []model.DecisionAudience
 	var question string
 	var answers []string
@@ -811,16 +821,19 @@ func (s *Service) initialActivation(runID model.WorkRunID, scope model.WorkScope
 			audience = append(audience, model.DecisionAudience{Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: human.AgentID}})
 		}
 		if human.RoleID != "" {
-			audience = append(audience, model.DecisionAudience{RoleID: human.RoleID, GroupID: scope.GroupID})
+			audience = append(audience, model.DecisionAudience{RoleID: human.RoleID, GroupID: run.Scope.GroupID})
 		}
-		question, answers, expires = human.Prompt, []string{"complete", "reject"}, deadline
+		question, answers, expires = human.Prompt, []string{"complete", "reject"}, attempt.Deadline
 	}
 	if len(audience) == 0 {
 		return attempt, nil
 	}
 	decisionID := model.DecisionID(s.newID("decision_"))
 	attempt.State, attempt.DecisionID = model.NodeAttemptWaiting, decisionID
-	window := model.DecisionWindow{ID: decisionID, Kind: model.DecisionWork, SourceRevision: 1, Attempt: attempt.Ref, Audience: audience, Question: question, PermittedAnswers: answers, ExpiresAt: expires, State: model.DecisionOpen, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	if expires.After(attempt.Deadline) {
+		expires = attempt.Deadline
+	}
+	window := model.DecisionWindow{ID: decisionID, Kind: model.DecisionWork, SourceRevision: run.Revision, Attempt: attempt.Ref, Audience: audience, Question: question, PermittedAnswers: answers, ExpiresAt: expires, State: model.DecisionOpen, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	return attempt, []model.DecisionWindow{window}
 }
 
@@ -959,11 +972,11 @@ func (s *Service) applyBlockedResolution(ctx context.Context, run WorkRunRecord,
 			return run, fail(ErrConflict, "node %s cannot extend retry budget beyond %d attempts", node.ID, maxWorkAttempts)
 		}
 		budget := attempt.RetryBudget + window
-		next := retryAttempt(attempt, node, now, budget)
+		next, windows := s.retryActivation(run.Run, attempt, node, now, budget)
 		transition := GraphTransition{WorkRunID: run.Run.ID, ExpectedRevision: run.Run.Revision,
 			Updates:     []GraphAttemptUpdate{{Ref: attempt.Ref, State: model.NodeAttemptFailed, Outcome: model.WorkOutcomeRejected, Detail: submission.Reason}},
 			Activations: []model.WorkNodeAttempt{next}, RunState: model.WorkRunRunning,
-			ControlState: model.WorkControlActive, RunOutcome: run.Run.Outcome, At: now}
+			ControlState: model.WorkControlActive, RunOutcome: run.Run.Outcome, DecisionWindows: windows, At: now}
 		return s.store.ApplyGraphTransition(ctx, transition)
 	default:
 		return run, fail(ErrInvalid, "blocked resolution action is unsupported")
