@@ -14,6 +14,7 @@ const (
 	ActionSendMessage          Action = "message.send"
 	ActionLaunch               Action = "execution.launch"
 	ActionInteract             Action = "execution.interact"
+	ActionReadExecutionFile    Action = "execution.file.read"
 	ActionStageTerminalFile    Action = "execution.file.stage"
 	ActionAttach               Action = "execution.attach"
 	ActionStop                 Action = "execution.stop"
