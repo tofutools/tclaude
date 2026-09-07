@@ -21,7 +21,9 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"js/groups-list.js", `class="group-attachment-label qo-text"`},
 		{"js/groups-list.js", `tabindex=${fixed ? '-1' : undefined}`},
 		{"js/groups-list.js", `group-attachment-empty`},
+		{"js/groups-list.js", `class="group-attachment-marker" aria-hidden="true"`},
 		{"js/groups-list.js", `class="group-attachment-icon"`},
+		{"js/groups-list.js", `class="group-attachment-status"`},
 		{"js/groups-list.js", `>${visibleIcon}${visibleLabel}</a>`},
 		{"js/groups-list.js", `class="group-attachment-invalid"`},
 		{"js/groups-list.js", `/^https?:\/\/[^/\\?#\s]/i.test(raw)`},
@@ -59,14 +61,18 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
   color: #58a6ff; border-color: #58a6ff;
 }`},
 		{"dashboard.css", `.group-attachment-fixed.group-attachment-empty .group-attachment-icon { opacity: 0.4; }`},
+		{"dashboard.css", `.group-attachment-status {`},
+		{"dashboard.css", `background: #58a6ff; box-shadow: 0 0 0 1px #0d1117;`},
+		{"dashboard.css", `.group-attachment-set .group-attachment-icon {`},
 		{"dashboard.css", `.group-attachment-fixed.group-attachment-empty:hover .group-attachment-icon { opacity: 1; }`},
 		{"dashboard.css", `.group-attachment-fixed.group-attachment-empty:focus-visible {
   outline: 1px solid #58a6ff; outline-offset: 1px;
 }`},
 		{"dashboard.css", `.group-attachment-label {`},
 		{"dashboard.css", `.group-attachment-fixed:hover .group-attachment-edit`},
-		{"dashboard.css", `summary:hover .group-attachment-fixed`},
-		{"dashboard.css", `.quick-hover > summary .group-attachment-fixed`},
+		{"dashboard.css", `summary:hover .group-attachment-set .group-attachment-icon`},
+		{"dashboard.css", `summary:focus-within .group-attachment-set .group-attachment-icon`},
+		{"dashboard.css", `.quick-hover > summary .group-attachment-set .group-attachment-icon`},
 		{"dashboard.css", `[open] > summary .group-attachment-fixed`},
 	} {
 		source := dashboardAssetFile(t, c.file)
@@ -75,7 +81,7 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		}
 	}
 	css := dashboardAssetFile(t, "dashboard.css")
-	if strings.Contains(css, `summary:focus-within .group-attachment`) {
+	if strings.Contains(css, `summary:focus-within .group-attachment-float`) {
 		t.Error("group focus must not pin the attachment overlay open")
 	}
 }
