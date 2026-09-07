@@ -476,6 +476,18 @@ the executable graph and is editable through Source. Export/Import copy transfer
 a v2 process JSON document; importing creates a new definition identity. It does
 not activate a process or import an old YAML template implicitly.
 
+Choose **New team template** or **Edit team template** in Processes to configure
+members, roles, workspace policy, launch waves, briefing timing, typed parameters,
+advisory phases and pinned automation revisions. A member can copy settings from
+a saved configuration; these settings are stored in the team revision rather
+than following later profile changes. Renaming a member updates wave and briefing
+references in the draft. Each member must belong to exactly one wave.
+
+Saving a template does not deploy it. Use **Deploy team** on the saved card to
+select the mission, target group, workspaces and parameter values. Existing
+deployments keep their pinned definition; **Rebrief** explicitly selects a newer
+revision. Team export/import-copy uses v2 JSON and creates a separate identity.
+
 A process start selects an immutable definition reference (definition ID,
 revision ID, content hash, and kind `process`) or an explicit graph. Its deadline,
 workspace scope, parameters, performer bindings, and authorized program profile
