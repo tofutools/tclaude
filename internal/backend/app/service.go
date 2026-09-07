@@ -461,7 +461,7 @@ func (s *Service) Observe(ctx context.Context, req ObserveRequest) (ObservationR
 	if err != nil {
 		return ObservationResult{}, err
 	}
-	if updated.AgentID != "" && !observation.ObservedAt.IsZero() {
+	if updated.AgentID != "" && !observation.AgentActivityObservedAt.IsZero() {
 		idle, awaiting := "unknown", "unknown"
 		switch observation.AgentActivity {
 		case ports.AgentActivityActive:
@@ -473,8 +473,8 @@ func (s *Service) Observe(ctx context.Context, req ObserveRequest) (ObservationR
 		}
 		resource := model.AutomationFactResource{Kind: model.FactResourceAgent, ID: string(updated.AgentID)}
 		facts := []model.NormalizedFact{
-			internalAutomationFact(model.FactAgentIdle, idle, resource, fmt.Sprintf("execution:%s:%d:idle", updated.ID, updated.Revision), observation.ObservedAt.UTC(), "", 0),
-			internalAutomationFact(model.FactAgentAwaitingInput, awaiting, resource, fmt.Sprintf("execution:%s:%d:awaiting", updated.ID, updated.Revision), observation.ObservedAt.UTC(), "", 0),
+			internalAutomationFact(model.FactAgentIdle, idle, resource, fmt.Sprintf("execution:%s:%d:idle", updated.ID, updated.Revision), observation.AgentActivityObservedAt.UTC(), "", 0),
+			internalAutomationFact(model.FactAgentAwaitingInput, awaiting, resource, fmt.Sprintf("execution:%s:%d:awaiting", updated.ID, updated.Revision), observation.AgentActivityObservedAt.UTC(), "", 0),
 		}
 		if err = s.store.AppendAutomationFacts(ctx, model.AutomationSourceApplication, facts); err != nil {
 			return ObservationResult{}, err
