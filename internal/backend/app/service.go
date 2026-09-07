@@ -11,6 +11,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
@@ -235,6 +236,13 @@ type launchOptions struct {
 }
 
 func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.OperationKind, continuationRecord *ContinuationRecord, options launchOptions) (OperationResult, error) {
+	if len(req.InitialMessage) > 32*1024 || !utf8.ValidString(req.InitialMessage) || strings.ContainsRune(req.InitialMessage, 0) {
+		return OperationResult{}, fail(ErrInvalid, "initial message must be valid UTF-8 without NUL and at most 32768 bytes")
+	}
+	if req.InitialMessage != "" && (kind != model.OperationLaunch || continuationRecord != nil) {
+		return OperationResult{}, fail(ErrInvalid, "initial message is only supported for an explicit fresh launch")
+	}
+
 	if err := validateEffectContext(req.RequestContext); err != nil {
 		return OperationResult{}, err
 	}
@@ -272,6 +280,10 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	provider, ok := s.providers.Provider(desired.Harness)
 	if !ok {
 		return OperationResult{}, fail(ErrUnavailable, "harness %q has no provider", desired.Harness)
+	}
+
+	if req.InitialMessage != "" && !provider.Capabilities().PreparedInitialInput {
+		return OperationResult{}, fail(ErrUnsupported, "provider cannot prepare an initial message before first work")
 	}
 
 	now := s.now().UTC()
@@ -322,10 +334,17 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		credential = &ports.ActionCredentialMaterial{ExecutionID: executionID, Generation: access.Generation, DeliveryID: deliveryID, Secret: secret, ExpiresAt: access.ExpiresAt}
 		defer clear(secret)
 	}
+	var initialInput *ports.PreparedInitialInput
+	var initialDigest string
+	if req.InitialMessage != "" {
+		initialInput = &ports.PreparedInitialInput{Body: req.InitialMessage, Correlation: string(operationID), RequiredBeforeFirstWork: true}
+		initialDigest = fmt.Sprintf("%x", sha256.Sum256([]byte(req.InitialMessage)))
+	}
 	admission, err := s.store.AdmitLaunch(ctx, LaunchAdmission{
-		Operation: model.Operation{ID: operationID, RequestID: req.RequestID, Kind: kind, Principal: req.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now},
-		Execution: execution,
-		AgentID:   agent.ID, Expected: expected, ExpectedConversationRevision: expectedConversationRevision,
+		InitialMessageDigest: initialDigest,
+		Operation:            model.Operation{ID: operationID, RequestID: req.RequestID, Kind: kind, Principal: req.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now},
+		Execution:            execution,
+		AgentID:              agent.ID, Expected: expected, ExpectedConversationRevision: expectedConversationRevision,
 		Authority: authority, Access: access,
 	})
 	if err != nil {
@@ -337,7 +356,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancelWorkflow()
 
-	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: intent, Continuation: continuation, History: options.history, PriorEvidence: priorEvidence, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, spec.Attempt, provider.Name()), NativeGuidance: s.boundNativeGuidance(model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, Attempt: spec.Attempt}), AgentAPIEndpoint: s.agentAPIEndpoint, CallbackIngress: s.callbackIngress})
+	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: intent, Continuation: continuation, History: options.history, InitialInput: initialInput, PriorEvidence: priorEvidence, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, spec.Attempt, provider.Name()), NativeGuidance: s.boundNativeGuidance(model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, Attempt: spec.Attempt}), AgentAPIEndpoint: s.agentAPIEndpoint, CallbackIngress: s.callbackIngress})
 	if err != nil {
 		settlementCtx, cancelSettlement := settlementContext(ctx)
 		defer cancelSettlement()
@@ -348,7 +367,11 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		return operationResult(finished), err
 	}
 	description := prepared.Describe()
-	if err := validatePrepared(provider.Name(), spec, description); err != nil {
+	preparationErr := validatePrepared(provider.Name(), spec, description)
+	if preparationErr == nil && initialInput != nil && (description.InitialInput == nil || !description.InitialInput.Supported || description.InitialInput.Correlation != initialInput.Correlation) {
+		preparationErr = fail(ErrUnsupported, "provider did not confirm exact prepared initial message")
+	}
+	if err := preparationErr; err != nil {
 		_ = prepared.Abort(workflowCtx)
 		settlementCtx, cancelSettlement := settlementContext(ctx)
 		defer cancelSettlement()

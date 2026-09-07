@@ -296,6 +296,7 @@ type WorkProgress struct {
 }
 
 type LaunchAdmission struct {
+	InitialMessageDigest         string
 	Operation                    model.Operation
 	Execution                    model.Execution
 	AgentID                      model.AgentID

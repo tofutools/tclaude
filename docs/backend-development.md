@@ -712,3 +712,19 @@ inspection and JSON export. Text search covers only pages already loaded; export
 includes the applied API filter and whether more pages remain. Stable record and
 actor IDs, outcomes, reasons and imported provenance remain visible. Reading or
 exporting activity does not acknowledge messages or decide work.
+
+### Starting with an initial brief
+
+An offline agent's **Start with brief** action sends an explicit initial message
+through `POST /v2/launch` (`initial_message`). Ordinary Start and bulk Start keep
+their existing behavior. The brief is delivered through the provider's prepared
+input path before workload release, rather than a later terminal or message send.
+Providers must advertise this capability and prove the exact input correlation
+before release. Input is limited to 32 KiB of UTF-8 without NUL.
+
+The launch operation retains a private digest for retry comparison. Reusing its
+request ID with different or removed brief text is a conflict; exact retries
+return the admitted outcome without another native preparation, including an
+uncertain outcome. The text is not added to aggregate execution snapshots.
+Initial briefs apply to explicit fresh launches; Resume does not replay them.
+This request-level control does not yet define saved-profile startup context.

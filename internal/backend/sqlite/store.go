@@ -60,6 +60,7 @@ func (s *Store) initialize(ctx context.Context) error {
 	}
 	for _, migration := range []struct{ table, column, definition string }{
 		{"definition_revisions", "editor_layout_json", "BLOB"},
+		{"operations", "initial_message_digest", "TEXT NOT NULL DEFAULT ''"},
 		{"agents", "configuration_profile_json", "BLOB"},
 		{"executions", "configuration_profile_json", "BLOB"},
 		{"groups", "owner_agent_id", "TEXT NOT NULL DEFAULT ''"},
@@ -746,6 +747,13 @@ func (s *Store) AdmitLaunch(ctx context.Context, in app.LaunchAdmission) (app.Ad
 	if repeated, ok, err := admissionByRequest(ctx, tx, in.Operation, in.AgentID, false); err != nil {
 		return app.AdmissionResult{}, err
 	} else if ok {
+		var digest string
+		if err := tx.QueryRowContext(ctx, `SELECT initial_message_digest FROM operations WHERE id=?`, repeated.Operation.ID).Scan(&digest); err != nil {
+			return app.AdmissionResult{}, err
+		}
+		if digest != in.InitialMessageDigest {
+			return app.AdmissionResult{}, app.ErrConflict
+		}
 		_ = tx.Commit()
 		return repeated, nil
 	}
@@ -787,6 +795,9 @@ func (s *Store) AdmitLaunch(ctx context.Context, in app.LaunchAdmission) (app.Ad
 		return app.AdmissionResult{}, err
 	}
 	if err := insertOperation(ctx, tx, in.Operation); err != nil {
+		return app.AdmissionResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE operations SET initial_message_digest=? WHERE id=?`, in.InitialMessageDigest, in.Operation.ID); err != nil {
 		return app.AdmissionResult{}, err
 	}
 	if in.Access.ExecutionID != "" {
