@@ -631,3 +631,12 @@ Removing membership does not stop or retire the agent. An owner must be changed
 or cleared through the existing owner endpoint before removing that member.
 New members must be active; retired members already in the group can be retained
 or removed. The CLI exposes the same request as `group update ID --file FILE`.
+
+The Access workspace exposes role creation and action editing, exact scoped
+assignments, assignment limit updates/removal, and direct grant editing/revocation.
+Each save uses the displayed revision, so a concurrent authority change is a
+conflict to review. Group-owner assignments stay under Group settings.
+Configuration-bearing permissions require complete harness/model/directory/
+approval/confinement allow-lists; the explicit disabled choice grants no such
+authority. Grants remain subject to the owning operation's current authority and
+lifecycle checks; declaring an action does not override an operator-only boundary.

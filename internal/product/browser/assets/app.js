@@ -6,6 +6,7 @@ for(const tab of document.querySelectorAll('[data-tab]'))tab.disabled=true;
 document.querySelector('main').inert=true;
 const requestID = () => 'r_' + crypto.randomUUID();
 const terminals = new TerminalWorkspace({requestID});
+const authorityWorkspace = new AuthorityWorkspace({host:$('access-list'),api,el,button,edit,getSnapshot:()=>snapshot,report:showError});
 const rosterWorkspace = new RosterWorkspace({host:$('roster'),api,el,button,edit,refresh});
 function showError(error) { const target=$('editor').open?$('editor-error'):$('error');target.textContent=error.message || String(error);target.hidden=false; }
 async function api(path, body, method) {
@@ -105,12 +106,7 @@ async function selectTab(tab){
  if(tab==='processes')await renderDefinitions();
  if(tab==='automation')await renderAutomation();
  if(tab==='decisions')await renderDecisions();
- if(tab==='access'){
-  const data=await api('/v2/authority');const list=$('access-list');list.replaceChildren();
-  for(const grant of data.Grants||[]){const row=el('div',undefined,'row');row.append(el('strong',grant.Action),el('span',grant.Subject.AgentID||grant.Subject.Kind),el('span',grant.Resource.Kind),button('Revoke',async()=>{await api(`/v2/authority/grants/${encodeURIComponent(grant.ID)}`,{expected_revision:grant.Revision},'DELETE');await selectTab('access')}));list.append(row)}
-  for(const role of data.Roles||[]){const card=el('div',undefined,'card');card.append(el('strong',role.Name),el('p',(role.Actions||[]).join(', ')));list.append(card)}
-  if(!list.childNodes.length)empty(list,'No grants or roles.');
- }
+ if(tab==='access')await authorityWorkspace.render();
 }
 $('refresh').onclick=()=>refresh().catch(showError);
 $('cancel').onclick=()=>$('editor').close();
@@ -199,11 +195,7 @@ function workCard(result){
  card.append(actions);return card;
 }
 
-$('new-grant').onclick=()=>edit('Grant agent permission',[
- {name:'subject',label:'Agent receiving permission',options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))},
- {name:'action',label:'Action',options:['message.send','status.read','execution.stop','execution.interact','execution.attach']},
- {name:'target',label:'Target agent',options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}
-],async f=>{await api(`/v2/authority/grants/${encodeURIComponent(f.requestID)}`,{subject:{Kind:'agent',AgentID:f.subject},action:f.action,resource:{Kind:'agent',AgentID:f.target},expected_revision:0},'PUT');await selectTab('access')});
+
 
 async function renderConfigurations(){
  const [entries,defaults]=await Promise.all([api('/v2/configuration-profiles'),api('/v2/configuration-defaults')]),list=$('configuration-list');list.replaceChildren();
