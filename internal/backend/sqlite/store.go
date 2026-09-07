@@ -549,7 +549,7 @@ CREATE TABLE IF NOT EXISTS automation_product_facts (
   kind TEXT NOT NULL, value TEXT NOT NULL DEFAULT '', resource_json BLOB NOT NULL,
   occurred_at INTEGER NOT NULL, observed_at INTEGER NOT NULL,
   parent_occurrence_id TEXT NOT NULL DEFAULT '', causal_depth INTEGER NOT NULL DEFAULT 0,
-  UNIQUE(source_id,event_id)
+  UNIQUE(source_id,event_id,observed_at)
 );
 CREATE INDEX IF NOT EXISTS automation_product_facts_scan ON automation_product_facts(source_id,sequence);
 CREATE TABLE IF NOT EXISTS automation_occurrence_recipients (

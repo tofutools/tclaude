@@ -985,8 +985,9 @@ func (s *Store) ScheduleCursor(ctx context.Context, ruleID model.AutomationRuleI
 func (s *Store) AutomationConditionState(ctx context.Context, ruleID model.AutomationRuleID) (model.AutomationConditionState, error) {
 	var state model.AutomationConditionState
 	var dwellSince, cooldownUntil, debounceAt sql.NullInt64
+	var debouncePayload []byte
 	var observed int64
-	err := s.db.QueryRowContext(ctx, `SELECT rule_id,source_cursor,dwell_episode_id,dwell_since,cooldown_until,debounce_at,debounce_payload,observed_at,revision FROM automation_condition_state WHERE rule_id=?`, ruleID).Scan(&state.RuleID, &state.SourceCursor, &state.DwellEpisodeID, &dwellSince, &cooldownUntil, &debounceAt, &state.DebouncePayload, &observed, &state.Revision)
+	err := s.db.QueryRowContext(ctx, `SELECT rule_id,source_cursor,dwell_episode_id,dwell_since,cooldown_until,debounce_at,debounce_payload,observed_at,revision FROM automation_condition_state WHERE rule_id=?`, ruleID).Scan(&state.RuleID, &state.SourceCursor, &state.DwellEpisodeID, &dwellSince, &cooldownUntil, &debounceAt, &debouncePayload, &observed, &state.Revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.AutomationConditionState{RuleID: ruleID}, nil
 	}
@@ -994,6 +995,7 @@ func (s *Store) AutomationConditionState(ctx context.Context, ruleID model.Autom
 		return state, err
 	}
 	state.ObservedAt = fromNanos(observed)
+	state.DebouncePayload = debouncePayload
 	if dwellSince.Valid {
 		value := fromNanos(dwellSince.Int64)
 		state.DwellSince = &value

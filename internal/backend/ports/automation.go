@@ -32,4 +32,5 @@ type AutomationFactBatch struct {
 // accepts only the bounded normalized fact vocabulary.
 type TrustedAutomationFactIngress interface {
 	IngestTrustedAutomationFacts(context.Context, string, []model.NormalizedFact) error
+	ReportAutomationSourceFailure(context.Context, string, model.AutomationFactResource, time.Time) error
 }
