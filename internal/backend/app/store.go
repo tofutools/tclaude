@@ -119,6 +119,7 @@ type OrchestrationStore interface {
 	SubmitDecision(context.Context, model.DecisionSubmission, model.AuthorityRequest, time.Time) (DecisionRecord, error)
 	ApplyGraphTransition(context.Context, GraphTransition) (WorkRunRecord, error)
 	SaveAutomationRule(context.Context, model.AutomationRule, model.AutomationRuleRevision, model.Revision) (AutomationRuleRecord, error)
+	SetAutomationRuleEnabled(context.Context, model.AutomationRuleID, model.Revision, bool, model.Principal, time.Time) (AutomationRuleRecord, error)
 	AutomationRule(context.Context, model.AutomationRuleID) (AutomationRuleRecord, error)
 	AutomationRuleRevision(context.Context, model.AutomationRuleRevisionID) (model.AutomationRuleRevision, error)
 	ListAutomationRules(context.Context, bool) ([]model.AutomationRule, error)
@@ -133,10 +134,19 @@ type OrchestrationStore interface {
 	OccurrencesForRule(context.Context, model.AutomationRuleID) ([]OccurrenceRecord, error)
 	PendingOccurrences(context.Context) ([]OccurrenceRecord, error)
 	UpdateOccurrence(context.Context, model.OccurrenceID, model.Revision, model.OccurrenceState, model.OperationID, model.WorkRunID, model.DeploymentID, []model.OccurrenceRecipient, time.Time) (OccurrenceRecord, error)
-	CreateTeamDeployment(context.Context, model.TeamDeployment, model.Group, []model.Agent, model.Principal, time.Time) (model.TeamDeployment, bool, error)
+	CreateTeamDeployment(context.Context, model.TeamDeployment, model.Group, []model.Agent, []model.RoleAssignment, model.Principal, model.RequestID, string, time.Time) (model.TeamDeployment, bool, error)
 	TeamDeployment(context.Context, model.DeploymentID) (model.TeamDeployment, error)
+	TeamDeploymentRequester(context.Context, model.DeploymentID) (model.Principal, error)
+	TeamDeploymentByRequest(context.Context, model.Principal, model.RequestID, string) (model.TeamDeployment, bool, error)
+	ListTeamDeployments(context.Context, model.GroupID) ([]model.TeamDeployment, error)
 	PendingTeamDeployments(context.Context) ([]model.TeamDeployment, error)
 	UpdateTeamDeployment(context.Context, model.DeploymentID, model.Revision, model.DeploymentState, uint32, time.Time) (model.TeamDeployment, error)
+	RecordTeamBriefingOperations(context.Context, model.DeploymentID, model.Revision, string, []model.OperationID, time.Time) (model.TeamDeployment, error)
+	BeginTeamRebrief(context.Context, model.DeploymentID, model.Revision, model.DefinitionRef, model.Principal, model.RequestID, string, time.Time) (model.TeamDeployment, model.TeamRebrief, bool, error)
+	CompleteTeamRebrief(context.Context, model.DeploymentID, model.Principal, model.RequestID, map[string][]model.OperationID, time.Time) (model.TeamDeployment, error)
+	AdvanceTeamAdvisoryPhase(context.Context, model.DeploymentID, model.Revision, model.Principal, model.RequestID, string, time.Time) (model.TeamDeployment, error)
+	BeginTeamStandDown(context.Context, model.DeploymentID, model.Revision, model.Principal, model.RequestID, string, time.Time) (model.TeamDeployment, error)
+	RecordExecutionReadiness(context.Context, model.ExecutionID, model.AttemptGeneration, model.ContextReadiness, time.Time) (model.Execution, error)
 }
 
 type ShellAdmission struct {
@@ -292,6 +302,10 @@ type LaunchAdmission struct {
 type ExecutionOperationAdmission struct {
 	Operation model.Operation
 	Authority model.AuthorityRequest
+	// Eligibility is persisted with a native effect permit so group/role
+	// eligibility can be rechecked both at admission and immediately before the
+	// effect is released.
+	Eligibility *model.MessageAudience
 }
 
 type PrimaryContextAdmission struct {
@@ -341,6 +355,8 @@ type MessageAdmission struct {
 	RequestDigest string
 	Authority     []model.AuthorityRequest
 	Attachments   []MessageAttachmentAdmission
+	Eligibility   []model.MessageAudience
+	ResultCode    string
 }
 
 type MessageAttachmentAdmission struct {

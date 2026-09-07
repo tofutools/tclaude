@@ -752,9 +752,9 @@ func (s *Store) SaveAutomationRule(ctx context.Context, rule model.AutomationRul
 	}
 	if expected == 0 {
 		rule.Revision, revision.Number = 1, 1
-		_, err = tx.ExecContext(ctx, `INSERT INTO automation_rules(id,name,head_revision_id,enabled,tombstoned,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, rule.ID, rule.Name, revision.ID, rule.Enabled, rule.Tombstoned, rule.Revision, nanos(rule.CreatedAt), nanos(rule.UpdatedAt))
+		_, err = tx.ExecContext(ctx, `INSERT INTO automation_rules(id,name,head_revision_id,enabled,tombstoned,deployment_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, rule.ID, rule.Name, revision.ID, rule.Enabled, rule.Tombstoned, rule.DeploymentID, rule.Revision, nanos(rule.CreatedAt), nanos(rule.UpdatedAt))
 	} else {
-		result, updateErr := tx.ExecContext(ctx, `UPDATE automation_rules SET name=?,head_revision_id=?,enabled=?,tombstoned=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, rule.Name, revision.ID, rule.Enabled, rule.Tombstoned, nanos(rule.UpdatedAt), rule.ID, expected)
+		result, updateErr := tx.ExecContext(ctx, `UPDATE automation_rules SET name=?,head_revision_id=?,enabled=?,tombstoned=?,deployment_id=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND deployment_id=?`, rule.Name, revision.ID, rule.Enabled, rule.Tombstoned, rule.DeploymentID, nanos(rule.UpdatedAt), rule.ID, expected, rule.DeploymentID)
 		if updateErr != nil {
 			return app.AutomationRuleRecord{}, updateErr
 		}
@@ -789,13 +789,49 @@ func (s *Store) SaveAutomationRule(ctx context.Context, rule model.AutomationRul
 func (s *Store) AutomationRule(ctx context.Context, id model.AutomationRuleID) (app.AutomationRuleRecord, error) {
 	var record app.AutomationRuleRecord
 	var created, updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,name,head_revision_id,enabled,tombstoned,revision,created_at,updated_at FROM automation_rules WHERE id=?`, id).Scan(&record.Rule.ID, &record.Rule.Name, &record.Rule.HeadRevisionID, &record.Rule.Enabled, &record.Rule.Tombstoned, &record.Rule.Revision, &created, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT id,name,head_revision_id,enabled,tombstoned,deployment_id,revision,created_at,updated_at FROM automation_rules WHERE id=?`, id).Scan(&record.Rule.ID, &record.Rule.Name, &record.Rule.HeadRevisionID, &record.Rule.Enabled, &record.Rule.Tombstoned, &record.Rule.DeploymentID, &record.Rule.Revision, &created, &updated)
 	if err != nil {
 		return record, classify(err)
 	}
 	record.Rule.CreatedAt, record.Rule.UpdatedAt = fromNanos(created), fromNanos(updated)
 	record.Head, err = s.AutomationRuleRevision(ctx, record.Rule.HeadRevisionID)
 	return record, err
+}
+
+func (s *Store) SetAutomationRuleEnabled(ctx context.Context, id model.AutomationRuleID, expected model.Revision, enabled bool, principal model.Principal, at time.Time) (app.AutomationRuleRecord, error) {
+	current, err := s.AutomationRule(ctx, id)
+	if err != nil {
+		return app.AutomationRuleRecord{}, err
+	}
+	if current.Rule.Enabled == enabled {
+		return current, nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return app.AutomationRuleRecord{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	decision, err := authorizeTx(ctx, tx, model.AuthorityRequest{Principal: principal, Action: model.ActionManageAutomation, Resource: model.ResourceSelector{Kind: model.ResourceAutomationRule, AutomationRuleID: id}}, at)
+	if err != nil {
+		return app.AutomationRuleRecord{}, err
+	}
+	if !decision.Allowed {
+		return app.AutomationRuleRecord{}, app.ErrUnauthorized
+	}
+	result, err := tx.ExecContext(ctx, `UPDATE automation_rules SET enabled=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND tombstoned=0`, enabled, nanos(at), id, expected)
+	if err != nil {
+		return app.AutomationRuleRecord{}, err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return app.AutomationRuleRecord{}, app.ErrConflict
+	}
+	if err = bumpTx(ctx, tx); err != nil {
+		return app.AutomationRuleRecord{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return app.AutomationRuleRecord{}, err
+	}
+	return s.AutomationRule(ctx, id)
 }
 
 func (s *Store) AutomationRuleRevision(ctx context.Context, id model.AutomationRuleRevisionID) (model.AutomationRuleRevision, error) {
@@ -874,7 +910,7 @@ func requirePendingAutomationAction(ctx context.Context, tx *sql.Tx, principal m
 }
 
 func (s *Store) ListAutomationRules(ctx context.Context, includeTombstoned bool) ([]model.AutomationRule, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,head_revision_id,enabled,tombstoned,revision,created_at,updated_at FROM automation_rules WHERE (? OR tombstoned=0) ORDER BY name,id`, includeTombstoned)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,head_revision_id,enabled,tombstoned,deployment_id,revision,created_at,updated_at FROM automation_rules WHERE (? OR tombstoned=0) ORDER BY name,id`, includeTombstoned)
 	if err != nil {
 		return nil, err
 	}
@@ -883,7 +919,7 @@ func (s *Store) ListAutomationRules(ctx context.Context, includeTombstoned bool)
 	for rows.Next() {
 		var rule model.AutomationRule
 		var created, updated int64
-		if err = rows.Scan(&rule.ID, &rule.Name, &rule.HeadRevisionID, &rule.Enabled, &rule.Tombstoned, &rule.Revision, &created, &updated); err != nil {
+		if err = rows.Scan(&rule.ID, &rule.Name, &rule.HeadRevisionID, &rule.Enabled, &rule.Tombstoned, &rule.DeploymentID, &rule.Revision, &created, &updated); err != nil {
 			return nil, err
 		}
 		rule.CreatedAt, rule.UpdatedAt = fromNanos(created), fromNanos(updated)
