@@ -1164,3 +1164,10 @@ current authority and returns the durable operation before mutable workspace,
 group, or provider preparation; changing the authored request conflicts. An
 admitted or uncertain operation is never started again by retrying. The normal
 workspace-use claim remains until shell exit is observed.
+
+
+### Capture a group as a team template
+
+Groups offers **Save group as team template**. It opens the existing team editor with independent copies of the displayed active direct members, retaining order, names and desired launch settings including effort and environment. Stable template member keys are generated independently of names. Nothing is written until **Save team revision**, and saving does not launch work. Cancelling leaves the group and definition catalog unchanged.
+
+The editor explains the capture boundary: retired members and child groups are omitted; live owner/role authority, messages, runtime state and rhythms are not copied. Description and mission are retained as source notes rather than delivered briefings. Review owner, roles, workspace policy and briefings explicitly in the draft. Separate member workspaces are selected initially. Later source group, member or saved-configuration edits do not alter the captured draft or saved team.
