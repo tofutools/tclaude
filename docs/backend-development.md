@@ -672,6 +672,14 @@ only with Play and does not restart on a page reload. SomaFM streams require an
 internet connection; the authenticated metadata route accepts only catalogued
 stations and shows an unavailable message on failure.
 
+Terminal tools can prepare bounded text drafts or load a local text file into a
+draft without sending it. Explicitly bind the draft to a connected pane before
+sending; switching panes or reconnecting requires a new binding. Key buttons act
+on the currently selected connected pane. Scrollback search, selection copy,
+text export and font size controls operate on the selected pane's current buffer,
+not the complete native conversation history. Text-file loading is not a native
+attachment upload.
+
 Attention shows unread operator messages and current work/access decisions.
 Opening an attention item navigates to its workspace without marking it read or
 approving it. The dashboard checks for changes every ten seconds while visible;
