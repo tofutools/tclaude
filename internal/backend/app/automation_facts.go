@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
@@ -373,11 +372,4 @@ func (s *Service) dueTriggerOccurrence(ctx context.Context, rule model.Automatio
 	cooldown := now.Add(condition.Cooldown)
 	state.CooldownUntil = &cooldown
 	return occurrence, nil
-}
-
-func triggerResourceString(resource model.AutomationFactResource) string {
-	if resource.Kind == model.FactResourceRepositoryPullReq {
-		return fmt.Sprintf("%s#%d", resource.Repository, resource.PullRequest)
-	}
-	return resource.ID
 }
