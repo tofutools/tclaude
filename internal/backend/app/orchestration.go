@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -771,7 +772,15 @@ func outgoingNodesForVerdict(graph model.WorkGraph, id model.WorkNodeID, verdict
 	if len(matching) > 0 {
 		return matching
 	}
-	return outgoingNodes(graph, id)
+	// Unlabelled edges are defaults. A missing match never authorizes routes
+	// labelled for another answer, including in already-persisted older graphs.
+	var defaults []model.WorkNodeID
+	for _, edge := range graph.Edges {
+		if edge.From == id && edge.Verdict == "" {
+			defaults = append(defaults, edge.To)
+		}
+	}
+	return defaults
 }
 
 func hasVerdictEdge(graph model.WorkGraph, id model.WorkNodeID, verdict string) bool {
@@ -1466,6 +1475,9 @@ func validateWorkGraph(graph model.WorkGraph) error {
 	for _, edge := range graph.Edges {
 		if nodes[edge.From].ID == "" || nodes[edge.To].ID == "" || edge.From == edge.To {
 			return fail(ErrInvalid, "work edge references an unknown or identical node")
+		}
+		if source := nodes[edge.From]; source.Kind == model.WorkNodeDecision && edge.Verdict != "" && !slices.Contains(source.Decision.PermittedAnswers, edge.Verdict) {
+			return fail(ErrInvalid, "decision %s route %q is not a permitted answer", source.ID, edge.Verdict)
 		}
 		adjacency[edge.From] = append(adjacency[edge.From], edge.To)
 		incoming[edge.To]++
