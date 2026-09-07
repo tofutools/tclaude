@@ -832,6 +832,15 @@ retries. Use a new destination for a new conversion. Exact format-2 retries stil
 verify the complete typed target, including effort, startup text and archive state.
 This development change does not run an import against any live installation.
 
+### Preview message attachments
+
+Message attachments offer explicit Preview for PNG, JPEG, GIF, WebP and text.
+Images require matching format signatures; text is rendered inertly and capped
+at the first 64 KiB. Preview does not mark a message read. Unsupported content
+remains available through the separate authenticated Download action. Closing,
+signing out or leaving the page discards pending results and releases image URLs.
+This is message attachment viewing; native terminal file staging is separate.
+
 ### Archive obsolete automation
 
 Standalone schedules, triggers and standing orders can be archived from Automation.
