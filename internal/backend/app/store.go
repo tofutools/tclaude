@@ -11,6 +11,8 @@ import (
 // Store exposes application-owned persistence operations. Methods that admit
 // effects atomically create the Operation and reserve its exact target.
 type Store interface {
+	ReadPresentation(context.Context) (model.PresentationPreferences, error)
+	PutPresentation(context.Context, model.PresentationPreferences, model.Revision) (model.PresentationPreferences, error)
 	OrchestrationStore
 	ConfigurationCatalogStore
 	CreateAgent(context.Context, model.Agent) error

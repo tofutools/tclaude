@@ -29,6 +29,8 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 		return nil, errors.New("application and authenticator are required")
 	}
 	h := &Handler{application: application, auth: auth, mux: http.NewServeMux()}
+	h.mux.HandleFunc("GET /v2/presentation", h.presentation)
+	h.mux.HandleFunc("PUT /v2/presentation", h.presentation)
 	h.mux.HandleFunc("POST /v2/agents", h.createAgent)
 	h.mux.HandleFunc("POST /v2/groups", h.createGroup)
 	h.mux.HandleFunc("PUT /v2/groups/{id}", h.updateGroup)

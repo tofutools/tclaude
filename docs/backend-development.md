@@ -640,3 +640,19 @@ Configuration-bearing permissions require complete harness/model/directory/
 approval/confinement allow-lists; the explicit disabled choice grants no such
 authority. Grants remain subject to the owning operation's current authority and
 lifecycle checks; declaring an action does not override an operator-only boundary.
+The browser's **Presentation and sound** controls select regular, wizard or
+slop-machine mode. Wizard mode restores the tower/party/rite vocabulary,
+purple-and-gold styling, casting and cursor effects, and the Tavern radio
+collection. Effects respect reduced-motion preferences; labels and decoration
+never alter product permissions or reported execution state. `dashboard
+--wizard` and `dashboard --slop` open directly in a mode, as do `?wizard=1` and
+`?slop=1`. Ctrl/Cmd+Alt+Shift+W or S toggles the respective mode.
+
+Operator presentation preferences are saved with revision checks through
+`GET/PUT /v2/presentation`. The preferences include mode, master sound,
+separate music/effects volumes, radio in regular mode and an optional explicit
+station. A saved station survives mode changes; “Use mode’s default station”
+selects the Tavern for wizard mode and the Vegas lounge otherwise. Audio starts
+only with Play and does not restart on a page reload. SomaFM streams require an
+internet connection; the authenticated metadata route accepts only catalogued
+stations and shows an unavailable message on failure.
