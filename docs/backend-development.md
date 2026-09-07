@@ -799,3 +799,14 @@ CLI JSON files use the same shape. Startup suggestions participate in immutable
 content hashes and request identity. Name is limited to 256 UTF-8 bytes; combined
 context and message to 32 KiB, without NUL. An absent/empty startup object preserves
 the content hash of older native-settings-only profiles.
+
+### Workspace inventory
+
+The Workspaces tab filters and sorts registered resources by ownership, lifecycle,
+path, repository, branch and recorded Git status. Status includes its observation
+time; use Inspect or the bounded Inspect visible action to refresh it explicitly.
+Export writes only the filtered inventory and its active claims to a local JSON
+file. Active execution/work claims are shown by exact identity and block the
+cleanup control. Owned checkout removal still requires explicit confirmation and
+refuses dirty files by default; external directories have no removal action.
+Restore recreates a removed owned checkout from its retained branch.
