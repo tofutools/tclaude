@@ -126,13 +126,6 @@ func (s *Service) StandDownDeployment(ctx context.Context, req StandDownDeployme
 	return TeamDeploymentResult{Deployment: deployment}, err
 }
 
-func (s *Service) authorizeTeamLifecycle(ctx context.Context, principal model.Principal, deployment model.TeamDeployment) error {
-	if principal.Kind == model.PrincipalOperator {
-		return nil
-	}
-	return s.requireAuthority(ctx, model.AuthorityRequest{Principal: principal, Action: model.ActionManageMembership, Resource: model.ResourceSelector{Kind: model.ResourceGroup, GroupID: deployment.GroupID}}, s.now().UTC())
-}
-
 func compatibleRebriefRoster(deployment model.TeamDeployment, team model.TeamDefinition) error {
 	if len(deployment.Members) != len(team.Members) {
 		return fail(ErrConflict, "rebrief definition changes the stable member roster")
