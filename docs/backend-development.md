@@ -1165,6 +1165,28 @@ group, or provider preparation; changing the authored request conflicts. An
 admitted or uncertain operation is never started again by retrying. The normal
 workspace-use claim remains until shell exit is observed.
 
+### Usage and cost overview
+
+Usage includes an expandable overview with UTC date presets/month navigation,
+harness and exact-agent filters, source selection, daily charts, attributed
+readings, coverage details, and JSON export. The chart adapts the previous Costs
+renderer; labels, totals and export preserve exact integer/decimal values.
+
+`POST /v2/usage/summary` is an operator-only read of recorded observations. Its
+`filter` requires an inclusive `After` and exclusive `Before` (at most 366 days),
+with optional `Harness`, `AgentID`, and `ConversationID`. It does not collect new
+native usage. A bounded query includes each cumulative source's prior baseline
+in the same read transaction and refuses an oversized result instead of silently
+truncating totals.
+
+Daily values represent changes observed on that UTC day, rather than invented
+consumption timing. Compatible complete cumulative readings contribute their
+difference; event readings contribute their value. Missing baselines, resets,
+unit/currency changes and incomplete coverage produce visible exclusions.
+Sources, cumulative/event accounting, native/historical records, attribution
+precision, currencies and native/estimate cost kinds stay separate. Conversation
+usage does not inherit an agent identity. Missing or unpriced usage is not zero
+spend, and no token prices or currency conversions are inferred.
 
 ### Configured launch support
 

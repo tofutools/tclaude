@@ -1,0 +1,117 @@
+'use strict';
+// Adapted from the legacy Costs imperative chart at 68a5eb9. Geometry alone
+// uses Number; labels and exports retain the API's exact values.
+const mountUsageSummaryChart=(()=>{
+function element(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function tooltipRows(day){const fragment=document.createDocumentFragment();fragment.append(element('div','cost-tip-day',day.day));for(const segment of day.segments){const row=element('div','cost-tip-row');row.append(element('span','cost-tip-name',segment.harness),element('span','cost-tip-amt',segment.exact));fragment.append(row)}return fragment;}
+// This is the Costs island's sole imperative boundary. Preact owns the stable
+// host; this adapter owns every chart descendant plus its body-level tooltip
+// and listeners, returning one disposer that removes all of them together.
+function mount(host, chart) {
+ const fmtAxisUSD=value=>new Intl.NumberFormat('en-US',{notation:'compact',maximumSignificantDigits:3}).format(value);
+ const isWeekendKey=key=>[0,6].includes(new Date(key+'T12:00:00Z').getUTCDay());
+  host.replaceChildren();
+  if (!chart?.days?.length) {
+    host.append(element('div', 'empty', 'No days in span.'));
+    return () => host.replaceChildren();
+  }
+  const scaleMax = chart.scaleMax > 0 ? chart.scaleMax : 1;
+
+  const shell = element('div', 'cost-chart');
+  const axis = element('div', 'cost-yaxis');
+  const yArea = element('div', 'cost-yarea');
+  const ticks = [
+    { pct: 100, label: fmtAxisUSD(scaleMax) },
+    { pct: 50, label: fmtAxisUSD(scaleMax / 2) },
+    { pct: 0, label: '0' },
+  ];
+  for (const tick of ticks) {
+    const label = element('div', 'cost-ytick', tick.label);
+    label.style.bottom = tick.pct + '%';
+    yArea.append(label);
+  }
+  axis.append(yArea, element('div', 'cost-day'));
+  const plot = element('div', 'cost-plot');
+  const grid = element('div', 'cost-grid');
+  for (const tick of ticks) {
+    const line = element('div', 'cost-gridline');
+    line.style.bottom = tick.pct + '%';
+    grid.append(line);
+  }
+  const columns = element('div', 'cost-cols');
+  const byDay = new Map();
+  const spanHarnesses = new Set(chart.days.flatMap((day) =>
+    (day.segments || []).map((segment) => segment.harness)));
+  const showHarnessBreakdown = spanHarnesses.size > 1 || chart.days.some((day) =>
+    (day.segments || []).some((segment) => segment.kind === 'what_if'));
+  const labelEvery = chart.days.length > 62 ? 7 : chart.days.length > 35 ? 2 : 1;
+  chart.days.forEach((day, index) => {
+    byDay.set(day.day, day);
+    const column = element('div', `cost-col${isWeekendKey(day.day) ? ' weekend' : ''}${day.projected ? ' projected' : ''}`);
+    column.dataset.day = day.day;
+    column.dataset.tip = day.day + ' — ' + day.exact;
+    column.title = column.dataset.tip; column.tabIndex = 0;
+    column.setAttribute('aria-label', column.dataset.tip);
+    if (day.cost === null) column.classList.add('unknown');
+    const area = element('div', 'cost-bararea');
+    if (day.projected) {
+      const bar = element('div', 'cost-bar');
+      bar.style.height = Math.max(day.cost > 0 ? 2 : 0, Math.round(day.cost / scaleMax * 100)) + '%';
+      area.append(bar);
+    } else {
+      for (const segment of day.segments) {
+        const bar = element('div', `cost-seg ${segment.className}`);
+        bar.style.height = Math.max(segment.cost > 0 ? 1 : 0, segment.cost / scaleMax * 100).toFixed(3) + '%';
+        area.append(bar);
+      }
+    }
+    const date = new Date(day.day + 'T12:00:00');
+    column.append(area, element('div', 'cost-day', index % labelEvery === 0 ? String(date.getDate()) : ''));
+    columns.append(column);
+  });
+  plot.append(grid, columns);
+  shell.append(axis, plot);
+  host.append(shell);
+
+  let tooltip = null;
+  const hide = () => { if (tooltip) tooltip.style.display = 'none'; };
+  const move = (event) => {
+    const column = event.target.closest?.('.cost-col[data-tip]');
+    if (!column) { hide(); return; }
+    if (!tooltip) {
+      tooltip = element('div', 'cost-tip');
+      document.body.append(tooltip);
+    }
+    const day = byDay.get(column.dataset.day);
+    tooltip.replaceChildren();
+    if (showHarnessBreakdown && day?.segments?.length) tooltip.append(tooltipRows(day));
+    else tooltip.textContent = column.dataset.tip;
+    tooltip.style.display = 'block';
+    const pad = 14;
+    const rect = tooltip.getBoundingClientRect();
+    let left = event.clientX + pad;
+    let top = event.clientY + pad;
+    if (left + rect.width > window.innerWidth - 4) left = event.clientX - pad - rect.width;
+    if (top + rect.height > window.innerHeight - 4) top = event.clientY - pad - rect.height;
+    tooltip.style.left = Math.max(4, left) + 'px';
+    tooltip.style.top = Math.max(4, top) + 'px';
+  };
+  host.addEventListener('mousemove', move);
+  host.addEventListener('mouseleave', hide);
+  return () => {
+    host.removeEventListener('mousemove', move);
+    host.removeEventListener('mouseleave', hide);
+    tooltip?.remove();
+    host.replaceChildren();
+  };
+}
+
+
+return mount;
+})();
