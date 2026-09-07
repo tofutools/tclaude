@@ -24,8 +24,11 @@ import {
   templateReadbackBadges,
   templateRosterRowsHTML,
 } from './template-readback.js';
+import { HelpDisclosure } from './help-field.js';
 
 const html = htm.bind(h);
+const GROUP_ENVIRONMENT_HELP = 'Inherited by fresh spawns and group terminals; profile and per-spawn values override matching names.';
+const GROUP_ENVIRONMENT_HELP_WIZARD = 'Inherited by newly summoned familiars and sanctum terminals; pattern and per-summon runes override matching names.';
 
 function Words({ plain, wizard, classPrefix = 'tpl-word' }) {
   return html`<span class=${`${classPrefix}-regular`}>${plain}</span
@@ -57,6 +60,9 @@ function GroupSourceSummary({ source, cloneMode, withAgents, copyOwners }) {
     ${row('📝 description', source.descr || 'none', !source.descr)}
     ${row('📋 startup context', source.default_context
       ? `${source.default_context.length} chars` : 'none', !source.default_context)}
+    ${row('🌐 environment', source.environment?.length
+      ? `${source.environment.length} variable${source.environment.length === 1 ? '' : 's'}` : 'none',
+    !source.environment?.length)}
     ${row('📎 attachment / link',
       source.attachment_label || source.attachment_label_override || source.attachment_url || 'none',
       !source.attachment_url)}
@@ -93,6 +99,7 @@ function GroupCreateDialog({
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [browseBusy, setBrowseBusy] = useState(false);
+  const [environmentHelpOpen, setEnvironmentHelpOpen] = useState('');
   const nameRef = useRef(null);
   const submitLock = useRef(false);
   const templateRefresh = useRef(0);
@@ -418,6 +425,35 @@ function GroupCreateDialog({
         placeholder="optional — shared guidance delivered to the inbox of every agent spawned into this group (multi-line OK)"
         spellcheck="false"></textarea>
     </label>
+    <div class="cron-create-row" id="group-create-environment-row">
+      <span class="cron-create-label"><${Words} plain="Environment" wizard="Summoning runes" /></span>
+      <div class="cron-create-target">
+        <div class="sbx-rows">${draft.environment.map((entry, index) => html`
+          <div key=${index} class="sbx-row sbx-environment-row">
+            <input class="sbx-env-name" placeholder="NAME" value=${entry.name}
+              disabled=${disabled}
+              onInput=${(event) => setField('environment', draft.environment.map((row, rowIndex) =>
+                rowIndex === index ? { ...row, name: event.currentTarget.value } : row))} />
+            <input class="sbx-env-value" placeholder="value" value=${entry.value}
+              disabled=${disabled}
+              onInput=${(event) => setField('environment', draft.environment.map((row, rowIndex) =>
+                rowIndex === index ? { ...row, value: event.currentTarget.value } : row))} />
+            <button type="button" disabled=${disabled}
+              onClick=${() => setField('environment', draft.environment.filter((_, rowIndex) => rowIndex !== index))}>×</button>
+          </div>`)}
+        </div>
+        <div class="sbx-add-row-help">
+          <button type="button" class="sbx-add-row" disabled=${disabled}
+            onClick=${() => setField('environment', [...draft.environment, { name: '', value: '' }])}>
+            <${Words} plain="＋ add variable" wizard="✦ bind rune" />
+          </button>
+          <${HelpDisclosure} id="group-create-environment-help" label="Group environment variables"
+            help=${GROUP_ENVIRONMENT_HELP}
+            content=${html`<${Words} plain=${GROUP_ENVIRONMENT_HELP} wizard=${GROUP_ENVIRONMENT_HELP_WIZARD} />`}
+            open=${environmentHelpOpen === 'group-create-environment-help'} setOpen=${setEnvironmentHelpOpen} />
+        </div>
+      </div>
+    </div>
     <label class="cron-create-row" id="group-create-task-row" hidden=${!templateMode}>
       <span class="cron-create-label">Task / project</span>
       <textarea id="group-create-task" class="modal-context-textarea" rows="4"

@@ -3496,13 +3496,14 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		var body struct {
-			Name            string `json:"name"`
-			Parent          string `json:"parent,omitempty"`
-			Descr           string `json:"descr,omitempty"`
-			DefaultCwd      string `json:"default_cwd,omitempty"`
-			DefaultContext  string `json:"default_context,omitempty"`
-			AttachmentURL   string `json:"attachment_url,omitempty"`
-			AttachmentLabel string `json:"attachment_label,omitempty"`
+			Name            string                            `json:"name"`
+			Parent          string                            `json:"parent,omitempty"`
+			Descr           string                            `json:"descr,omitempty"`
+			DefaultCwd      string                            `json:"default_cwd,omitempty"`
+			DefaultContext  string                            `json:"default_context,omitempty"`
+			Environment     *[]sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
+			AttachmentURL   string                            `json:"attachment_url,omitempty"`
+			AttachmentLabel string                            `json:"attachment_label,omitempty"`
 			// DefaultProfile names the spawn profile (JOH-210) whose launch
 			// fields fill blank spawn fields for this group's agents. "" = none.
 			DefaultProfile string `json:"default_profile,omitempty"`
@@ -3562,6 +3563,14 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "invalid_arg", err.Error())
 			return
+		}
+		var groupEnvironment []sandboxpolicy.EnvironmentEntry
+		if body.Environment != nil {
+			groupEnvironment, err = sandboxpolicy.NormalizeEnvironment(*body.Environment)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_environment", err.Error())
+				return
+			}
 		}
 		attachmentURL, attachmentLabel, err := normalizeGroupAttachment(body.AttachmentURL, body.AttachmentLabel)
 		if err != nil {
@@ -3640,6 +3649,12 @@ func handleGroups(w http.ResponseWriter, r *http.Request) {
 		if groupContext != "" {
 			if _, err := db.SetAgentGroupDefaultContext(body.Name, groupContext); err != nil {
 				slog.Warn("groups create: failed to set default context",
+					"group", body.Name, "error", err)
+			}
+		}
+		if body.Environment != nil {
+			if _, err := db.SetAgentGroupEnvironment(body.Name, groupEnvironment); err != nil {
+				slog.Warn("groups create: failed to set environment",
 					"group", body.Name, "error", err)
 			}
 		}

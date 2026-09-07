@@ -11,6 +11,7 @@ import (
 
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 )
 
 // handleGroupClone clones an entire group: snapshots source members +
@@ -52,13 +53,14 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 		// the source parent; an explicit empty string makes the clone top-level.
 		Parent *string `json:"parent,omitempty"`
 		// Omitted fields inherit the source; explicit empty/zero values clear it.
-		Descr           *string               `json:"descr,omitempty"`
-		DefaultCwd      *string               `json:"default_cwd,omitempty"`
-		DefaultContext  *string               `json:"default_context,omitempty"`
-		AttachmentURL   *string               `json:"attachment_url,omitempty"`
-		AttachmentLabel *string               `json:"attachment_label,omitempty"`
-		MaxMembers      *int                  `json:"max_members,omitempty"`
-		RepositoryClone *groupRepositoryClone `json:"repository_clone,omitempty"`
+		Descr           *string                           `json:"descr,omitempty"`
+		DefaultCwd      *string                           `json:"default_cwd,omitempty"`
+		DefaultContext  *string                           `json:"default_context,omitempty"`
+		Environment     *[]sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
+		AttachmentURL   *string                           `json:"attachment_url,omitempty"`
+		AttachmentLabel *string                           `json:"attachment_label,omitempty"`
+		MaxMembers      *int                              `json:"max_members,omitempty"`
+		RepositoryClone *groupRepositoryClone             `json:"repository_clone,omitempty"`
 	}
 	if r.ContentLength > 0 {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -127,6 +129,14 @@ func handleGroupClone(w http.ResponseWriter, r *http.Request, src *db.AgentGroup
 			return
 		}
 		srcSettings.DefaultContext = context
+	}
+	if body.Environment != nil {
+		environment, err := sandboxpolicy.NormalizeEnvironment(*body.Environment)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_environment", err.Error())
+			return
+		}
+		srcSettings.Environment = environment
 	}
 	if body.AttachmentURL != nil || body.AttachmentLabel != nil {
 		attachmentURL := srcSettings.AttachmentURL

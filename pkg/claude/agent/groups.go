@@ -1231,7 +1231,7 @@ func groupsCloneCmd() *cobra.Command {
 			"source's conversation history. Owners stay as the same conv-id (no clone). " +
 			"Per-conv permissions on each member are copied to the clone (best-effort).\n\n" +
 			"The new group always carries every source setting — default directory, " +
-			"description, startup context, attachment, default profile, max-members cap and the notify " +
+			"description, startup context, environment, attachment, default profile, max-members cap and the notify " +
 			"switch.\n\n" +
 			"Pass --no-agents to clone only the group's settings + owners and skip the " +
 			"member agents entirely (the new group comes up with no members).",

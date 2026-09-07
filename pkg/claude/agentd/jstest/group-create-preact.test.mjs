@@ -18,6 +18,7 @@ const groups = [{
   attachment_url: 'https://linear.app/acme/project/alpha',
   attachment_label: 'Alpha project',
   attachment_label_override: 'Alpha project',
+  environment: [{ name: 'TEAM', value: 'alpha' }, { name: 'CACHE', value: '/alpha/cache' }],
 }, {
   name: 'beta',
   descr: 'beta descr',
@@ -62,6 +63,7 @@ test('group-create model preserves compatible prefill and clears stale source-ow
     cwdOrigin: '', workspaceMode: 'existing', repository: '', cloneTransport: 'ssh',
     cloneDestination: '', attachRepository: true, context: '', task: '', maxMembers: '',
     attachmentURL: '', attachmentLabel: '',
+    environment: [],
   });
 
   let draft = model.createGroupCreateDraft({
@@ -76,12 +78,14 @@ test('group-create model preserves compatible prefill and clears stale source-ow
     '## Mirrored group context\n\nalpha context\n\n## Template context\n\ntemplate context');
   assert.equal(draft.attachmentURL, 'https://linear.app/acme/project/alpha');
   assert.equal(draft.attachmentLabel, 'Alpha project');
+  assert.deepEqual(draft.environment, groups[0].environment);
   draft = { ...draft, nested: true };
   draft = model.selectGroupCreateSource(draft, '', { templates, groups });
   assert.equal(draft.descr, 'template descr');
   assert.equal(draft.cwd, '', 'source-owned cwd cannot leak into top-level template mode');
   assert.equal(draft.context, 'template context');
   assert.equal(draft.attachmentURL, '');
+  assert.deepEqual(draft.environment, []);
   assert.equal(draft.nested, false);
 
   const pinned = model.createGroupCreateDraft({
@@ -94,12 +98,14 @@ test('group-create model preserves compatible prefill and clears stale source-ow
   assert.equal(pinned.context,
     '## Mirrored group context\n\nalpha context\n\n## Template context\n\ntemplate context');
   assert.equal(pinned.attachmentURL, 'https://linear.app/acme/project/alpha');
+  assert.deepEqual(pinned.environment, groups[0].environment);
   const pinnedBlank = model.selectGroupCreateTemplate(pinned, '', {
     templates, groups, parentGroup: 'alpha',
   });
   assert.equal(pinnedBlank.descr, '');
   assert.equal(pinnedBlank.cwd, '');
   assert.equal(pinnedBlank.context, '');
+  assert.deepEqual(pinnedBlank.environment, []);
   assert.equal(pinnedBlank.parent, 'alpha', 'source changes do not alter placement');
 });
 
@@ -119,12 +125,14 @@ test('group-create model validates and builds exact blank, template, and nested 
   const blank = model.groupCreateRequest({
     ...base, name: '  new-group ', parent: 'alpha', descr: ' desc ', cwd: ' /repo ',
     context: ' context ', maxMembers: '4',
+    environment: [{ name: ' TEAM ', value: 'alpha' }, { name: '', value: '' }],
     attachmentURL: ' https://linear.app/acme/project/alpha ',
     attachmentLabel: ' Alpha project ',
   }, null, 'alpha');
   assert.deepEqual(blank.body, {
     name: 'new-group', parent: 'alpha', descr: 'desc', default_cwd: '/repo',
     default_context: 'context', max_members: 4,
+    environment: [{ name: 'TEAM', value: 'alpha' }],
     attachment_url: 'https://linear.app/acme/project/alpha',
     attachment_label: 'Alpha project',
   });
@@ -146,6 +154,7 @@ test('group-create model validates and builds exact blank, template, and nested 
   assert.deepEqual(instantiated.body, {
     group_name: 'party', task: ' ship\n', cwd: '/repo', descr_override: 'desc',
     context_override: ' context\n', parent: 'alpha',
+    environment: [],
     attachment_url: 'https://linear.app/acme/project/alpha',
     attachment_label: 'Alpha project',
   });
@@ -157,7 +166,7 @@ test('group-create model validates and builds exact blank, template, and nested 
   }, null);
   assert.deepEqual(cloned.body, {
     name: 'cloned', parent: '', descr: '', default_cwd: '~/git/repo',
-    default_context: '', max_members: 0,
+    default_context: '', environment: [], max_members: 0,
     repository_clone: {
       repository: 'github.com/acme/repo', transport: 'https',
       destination: '~/git/repo', attach: true,
@@ -179,6 +188,7 @@ test('group-create model validates and builds exact blank, template, and nested 
     body: {
       no_clone_members: false, copy_owners: true,
       descr: '', default_cwd: '', default_context: '', max_members: 0,
+      environment: [],
       attachment_url: '', attachment_label: '',
       new_name: 'alpha-copy', parent: 'root',
     },
@@ -424,8 +434,14 @@ test('Preact group-create owns clone mode and makes inherited attachment visible
   assert.equal(host.querySelector('#group-create-attachment-url').value,
     'https://linear.app/acme/project/alpha');
   assert.equal(host.querySelector('#group-create-attachment-label').value, 'Alpha project');
+  const environmentRows = [...host.querySelectorAll('#group-create-environment-row .sbx-environment-row')];
+  assert.deepEqual(environmentRows.map((row) => [
+    row.querySelector('.sbx-env-name').value,
+    row.querySelector('.sbx-env-value').value,
+  ]), [['TEAM', 'alpha'], ['CACHE', '/alpha/cache']]);
   await harness.input(host.querySelector('#group-create-context'), 'edited clone context');
   await harness.input(host.querySelector('#group-create-attachment-label'), 'Alpha tracker');
+  await harness.input(environmentRows[0].querySelector('.sbx-env-value'), 'clone');
   assert.equal(host.querySelector('#group-create-name').hasAttribute('data-select-on-focus'), true);
   assert.match(host.querySelector('#group-create-source-summary').textContent, /Alpha project/);
   assert.match(host.querySelector('#group-create-source-summary').textContent, /attachment \/ link/);
@@ -444,6 +460,9 @@ test('Preact group-create owns clone mode and makes inherited attachment visible
   assert.equal(submitted.draft.cloneGroup, 'alpha');
   assert.equal(submitted.draft.context, 'edited clone context');
   assert.equal(submitted.draft.attachmentLabel, 'Alpha tracker');
+  assert.deepEqual(submitted.draft.environment, [
+    { name: 'TEAM', value: 'clone' }, { name: 'CACHE', value: '/alpha/cache' },
+  ]);
   assert.equal(submitted.draft.withAgents, true);
   assert.equal(submitted.draft.copyOwners, true);
   assertAbsent(host.querySelector('#group-create-modal'));
