@@ -20,23 +20,25 @@ class RosterWorkspace {
     host.replaceChildren(controls,this.actions,this.report,this.list);
   }
   options(select,options){const prior=select.value;select.replaceChildren();for(const[value,label]of options){const o=this.el('option',label);o.value=value;select.append(o)}if(options.some(([value])=>value===prior))select.value=prior}
-  update(snapshot,row){this.snapshot=snapshot;this.row=row;const agents=snapshot.agents||[];
+  update(snapshot,row,order=[]){this.snapshot=snapshot;this.row=row;const rank=new Map(order.map((id,i)=>[id,i]));this.groups=[...(snapshot.groups||[])].sort((a,b)=>(rank.get(a.ID)??Number.MAX_SAFE_INTEGER)-(rank.get(b.ID)??Number.MAX_SAFE_INTEGER));const agents=snapshot.agents||[];
     this.options(this.harness,[['','All harnesses'],...[...new Set(agents.map(a=>a.Desired.Harness))].sort().map(h=>[h,h])]);
-    this.options(this.group,[['','All groups'],['__ungrouped','Ungrouped'],...(snapshot.groups||[]).map(g=>[g.ID,g.Name])]);
+    this.options(this.group,[['','All groups'],['__ungrouped','Ungrouped'],...this.groups.map(g=>[g.ID,g.Name+' · '+g.ID])]);
     const ids=new Set(agents.map(a=>a.ID));for(const id of this.selected)if(!ids.has(id))this.selected.delete(id);this.draw();
   }
-  draw(){if(!this.snapshot)return;const{el,button}=this,agents=this.snapshot.agents||[],groups=this.snapshot.groups||[],grouped=new Set(groups.flatMap(g=>g.Members||[]));
+  draw(){if(!this.snapshot)return;const{el,button}=this,agents=this.snapshot.agents||[],groups=this.groups||[],grouped=new Set(groups.flatMap(g=>g.Members||[]));
     const state=a=>a.Lifecycle==='retired'?'retired':(this.snapshot.executions||[]).find(e=>e.id===a.PrimaryExecutionID)?.state||'offline';
     const group=this.group.value,search=this.query.value.trim().toLowerCase(),members=groups.find(g=>g.ID===group)?.Members||[];
     this.visible=agents.filter(a=>(!search||[a.Name,a.ID,a.TaskReference,a.Desired.Harness,a.Desired.Model].join(' ').toLowerCase().includes(search))&&(!this.harness.value||a.Desired.Harness===this.harness.value)&&(!this.state.value||state(a)===this.state.value)&&(!group||(group==='__ungrouped'?!grouped.has(a.ID):members.includes(a.ID))));
     const field=a=>this.sort.value==='harness'?a.Desired.Harness:this.sort.value==='model'?a.Desired.Model:a.Name;
     this.visible.sort((a,b)=>(this.sort.value==='newest'?Date.parse(b.CreatedAt)-Date.parse(a.CreatedAt):field(a).localeCompare(field(b)))||a.ID.localeCompare(b.ID));
     this.list.replaceChildren();
-    for(const g of [...groups,{ID:'__ungrouped',Name:'Ungrouped',Members:agents.filter(a=>!grouped.has(a.ID)).map(a=>a.ID)}]){
-      if(group&&g.ID!==group)continue;const shown=this.visible.filter(a=>(g.Members||[]).includes(a.ID));if(!shown.length&&(search||this.harness.value||this.state.value||g.ID==='__ungrouped'))continue;
-      const card=el('div',undefined,'group');card.append(el('h2',g.Name));appendGroupDetails(card,g.Details||{},el);
-      for(const a of shown){const row=this.row(a),check=el('input');check.type='checkbox';check.checked=this.selected.has(a.ID);check.disabled=this.busy;check.setAttribute('aria-label','Select '+a.Name);check.onchange=()=>{check.checked?this.selected.add(a.ID):this.selected.delete(a.ID);this.draw()};row.prepend(check);card.append(row)}this.list.append(card);
+    const ungrouped={ID:'__ungrouped',Name:'Ungrouped',Members:agents.filter(a=>!grouped.has(a.ID)).map(a=>a.ID)},all=[...groups,ungrouped],byID=new Map(groups.map(g=>[g.ID,g])),keep=new Set(),cards=new Map();
+    for(const g of all){if(group&&g.ID!==group)continue;const shown=this.visible.some(a=>(g.Members||[]).includes(a.ID));if(shown||(!search&&!this.harness.value&&!this.state.value&&g.ID!=='__ungrouped'))keep.add(g.ID)}
+    for(const id of [...keep]){let parent=byID.get(id)?.ParentGroupID;const seen=new Set([id]);while(parent&&byID.has(parent)&&!seen.has(parent)){seen.add(parent);keep.add(parent);parent=byID.get(parent).ParentGroupID}}
+    for(const g of all){if(!keep.has(g.ID))continue;const card=el('div',undefined,'group');card.dataset.groupId=g.ID;card.append(el('h2',g.Name));appendGroupDetails(card,g.Details||{},el);if(g.ID!=='__ungrouped')card.append(el('code',g.ID));
+      for(const a of (group&&g.ID!==group?[]:this.visible.filter(a=>(g.Members||[]).includes(a.ID)))){const row=this.row(a),check=el('input');check.type='checkbox';check.checked=this.selected.has(a.ID);check.disabled=this.busy;check.setAttribute('aria-label','Select '+a.Name);check.onchange=()=>{check.checked?this.selected.add(a.ID):this.selected.delete(a.ID);this.draw()};row.prepend(check);card.append(row)}cards.set(g.ID,card);
     }
+    for(const g of all){const card=cards.get(g.ID);if(!card)continue;const parent=cards.get(g.ParentGroupID);if(parent&&parent!==card){let children=parent.querySelector(':scope > .roster-children');if(!children){children=el('div',undefined,'roster-children');children.style.marginInlineStart='1rem';parent.append(children)}children.append(card)}else this.list.append(card)}
     if(!this.visible.length)this.list.append(el('p',agents.length?'No agents match these filters.':'No agents yet. Create an agent to save its configuration before starting work.'));
     this.count.textContent=`${this.visible.length} visible · ${this.selected.size} selected`;
     for(const b of this.actions.querySelectorAll('button'))b.disabled=this.busy;
