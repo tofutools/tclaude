@@ -800,6 +800,17 @@ content hashes and request identity. Name is limited to 256 UTF-8 bytes; combine
 context and message to 32 KiB, without NUL. An absent/empty startup object preserves
 the content hash of older native-settings-only profiles.
 
+### Workspace inventory
+
+The Workspaces tab filters and sorts registered resources by ownership, lifecycle,
+path, repository, branch and recorded Git status. Status includes its observation
+time; use Inspect or the bounded Inspect visible action to refresh it explicitly.
+Export writes only the filtered inventory and its active claims to a local JSON
+file. Active execution/work claims are shown by exact identity and block the
+cleanup control. Owned checkout removal still requires explicit confirmation and
+refuses dirty files by default; external directories have no removal action.
+Restore recreates a removed owned checkout from its retained branch.
+
 ### Imported launch metadata
 
 Offline v228 importer format 2 maps requested effort into agent/profile settings,
@@ -829,3 +840,15 @@ at the first 64 KiB. Preview does not mark a message read. Unsupported content
 remains available through the separate authenticated Download action. Closing,
 signing out or leaving the page discards pending results and releases image URLs.
 This is message attachment viewing; native terminal file staging is separate.
+
+### Archive obsolete automation
+
+Standalone schedules, triggers and standing orders can be archived from Automation.
+Archiving confirms the exact rule ID, checks current management authority and
+revision, and disables fresh dispatch while retaining authored revisions, cursors,
+occurrences and already-admitted work. The archived filter keeps history inspectable.
+Restore leaves the rule disabled; Enable is a separate explicit action.
+Deployment-owned rhythms remain controlled by their deployment lifecycle.
+The API is `POST /v2/automation/rules/{id}/archived` with `request_id`,
+`expected_revision` and `archived`; exact command retries return their stored
+result without repeating the state change, after current authority is checked.

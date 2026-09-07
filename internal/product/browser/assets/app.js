@@ -18,6 +18,7 @@ const usageWorkspace = new UsageWorkspace({host:$('usage-list'),api,el,button,ge
 
 const historyWorkspace = new HistoryWorkspace({host:$('histories'),api,el,button,edit,startWork,selection});
 const activityWorkspace = new ActivityWorkspace({host:$('activity-list'),api,el,button,getSnapshot:()=>snapshot,setTarget:target=>{activityTarget=target}});
+const workspaceBrowser = new WorkspaceBrowser({host:$('workspace-list'),api,el,button,refresh,row:workspaceCard});
 const rosterWorkspace = new RosterWorkspace({host:$('roster'),api,el,button,edit,refresh});
 function showError(error) { const target=$('editor').open?$('editor-error'):$('error');target.textContent=error.message || String(error);target.hidden=false; }
 async function api(path, body, method) {
@@ -117,9 +118,7 @@ function render(){
  presentation.update(snapshot);
  renderGroupControls(snapshot,{host:$('group-management'),el,button,edit,api,refresh});
  rosterWorkspace.update(snapshot,agentRow);
- const spaces=$('workspace-list');spaces.replaceChildren();
- for(const workspace of snapshot.workspaces||[])spaces.append(workspaceCard(workspace));
- if(!snapshot.workspaces?.length)empty(spaces,'No registered workspaces.');
+ workspaceBrowser.update(snapshot);
  const work=$('work-list');work.replaceChildren();
  for(const result of snapshot.work_runs||[])work.append(workCard(result));
  if(!snapshot.work_runs?.length)empty(work,'No work runs.');
@@ -142,7 +141,7 @@ async function selectTab(tab,record=true){
 }
 $('refresh').onclick=()=>refresh().catch(showError);
 $('cancel').onclick=()=>$('editor').close();
-$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');document.dispatchEvent(new Event('workspace-signout'));closeTerminal();presentation.stop();attention.clear();usageWorkspace.clear();activityWorkspace.clear();historyWorkspace.clear();refreshSequence++;snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
+$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');document.dispatchEvent(new Event('workspace-signout'));closeTerminal();presentation.stop();attention.clear();usageWorkspace.clear();activityWorkspace.clear();historyWorkspace.clear();workspaceBrowser.clear();refreshSequence++;snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
 for(const tab of document.querySelectorAll('[data-tab]'))tab.onclick=()=>selectTab(tab.dataset.tab).catch(showError);
 $('new-agent').onclick=()=>edit('New agent',[...desiredFields(),...agentMetadataFields()],f=>api('/v2/agents',{id:f.requestID,name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify}}));
 $('new-group').onclick=()=>edit('New group',[{name:'name',label:'Name'},{name:'members',label:'Members',multiple:true,required:false,options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}],f=>api('/v2/groups',{id:f.requestID,name:f.name,members:f.members}));
@@ -171,13 +170,17 @@ window.addEventListener('pageshow',event=>{if(event.persisted&&snapshot.revision
 
 function workspaceCard(space){
  const card=el('div',undefined,'card');card.append(el('strong',space.ID),el('p',space.Observation?.ActualPath||space.Intent?.IntendedPath||''),el('span',space.State,'status'));
+ card.dataset.workspaceId=space.ID;
+ const observed=space.Observation||{},claims=(snapshot.workspace_uses||[]).filter(u=>u.WorkspaceID===space.ID&&!u.ReleasedAt),hasObservation=Date.parse(observed.ObservedAt)>0;
+ const details=el('dl');for(const[label,value]of [['Ownership',space.Intent.Ownership],['Repository',observed.RepositoryRoot||space.Intent.Repository||'Not recorded'],['Branch',observed.Branch||space.Intent.Branch||'Not recorded'],['Base',space.Intent.BaseRevision||'Not recorded'],['Commit',observed.Revision||'Not recorded'],['Git status',!observed.RepositoryRoot||!hasObservation?'Not observed':observed.Dirty?'Changes observed':'Clean when observed'],['Observed',hasObservation?new Date(observed.ObservedAt).toLocaleString():'Not yet observed'],['Retain on finish',space.Intent.RetainOnFinish?'Yes':'No']])details.append(el('dt',label),el('dd',value));card.append(details);
+ for(const use of claims)card.append(el('p',`Active claim ${use.ID} · execution ${use.ExecutionID||'not issued'} · work ${use.WorkRunID||'none'}`));
  const actions=el('div',undefined,'actions');
  actions.append(button('Inspect',async()=>{await api(`/v2/workspaces/${encodeURIComponent(space.ID)}`);await refresh()}));
  if(space.State==='available'){
   actions.append(button('Open shell',()=>edit('Open unconfined shell',[{name:'confirm',label:'This shell runs without OS confinement',options:['Start unconfined shell']}],f=>api('/v2/shells',{request_id:f.requestID,workspace_id:space.ID,expected_revision:space.Revision,sandbox:'unconfined'}))));
-  if(space.Intent?.Ownership==='owned')actions.append(button('Remove checkout',()=>edit('Remove checkout',[{name:'confirm',label:'Type the workspace ID to confirm removal'},{name:'dirty',label:'Uncommitted changes',options:[{value:'false',label:'Refuse if dirty'},{value:'true',label:'Discard uncommitted changes'}]}],f=>{if(f.confirm!==space.ID)throw new Error('Workspace ID does not match');return api('/v2/workspaces/remove',{request_id:f.requestID,workspace_id:space.ID,expected_revision:space.Revision,destructive:f.dirty==='true'})})));
+  if(space.Intent?.Ownership==='owned'){const remove=button('Remove checkout',()=>edit('Remove checkout',[{name:'confirm',label:'Type the workspace ID to confirm removal'},{name:'dirty',label:'Uncommitted changes',options:[{value:'false',label:'Refuse if dirty'},{value:'true',label:'Discard uncommitted changes'}]}],f=>{if(f.confirm!==space.ID)throw new Error('Workspace ID does not match');return api('/v2/workspaces/remove',{request_id:f.requestID,workspace_id:space.ID,expected_revision:space.Revision,destructive:f.dirty==='true'})}));remove.disabled=claims.length>0;actions.append(remove);if(claims.length)card.append(el('p','Cleanup is blocked by active claims. Stop or settle the owning work before removal.'));}
  }else if(space.State==='removed')actions.append(button('Restore checkout',async id=>{await api('/v2/workspaces/restore',{request_id:id,workspace_id:space.ID,expected_revision:space.Revision});await refresh()}));
- for(const execution of snapshot.executions||[]){if((snapshot.workspace_uses||[]).some(u=>u.WorkspaceID===space.ID&&u.ExecutionID===execution.id&&!u.ReleasedAt)&& !['exited','failed'].includes(execution.state))actions.append(button('Attach shell',()=>attach(execution)),button('Stop shell',async id=>{await api('/v2/stop',{request_id:id,execution_id:execution.id,force:false});await refresh()}))}
+ for(const execution of snapshot.executions||[]){if((snapshot.workspace_uses||[]).some(u=>u.WorkspaceID===space.ID&&u.ExecutionID===execution.id&&!u.ReleasedAt)&& !['exited','failed'].includes(execution.state))actions.append(button(execution.workload==='shell'?'Attach shell':'Attach terminal',()=>attach(execution)),button(execution.workload==='shell'?'Stop shell':'Stop execution',async id=>{await api('/v2/stop',{request_id:id,execution_id:execution.id,force:false});await refresh()}))}
  card.append(actions);return card;
 }
 const workspaceFields=[{name:'repository',label:'Repository path'},{name:'path',label:'Checkout path'},{name:'base',label:'Base commit or branch',value:'HEAD'},{name:'branch',label:'Worker branch'}];
