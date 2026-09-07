@@ -31,6 +31,7 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	h := &Handler{application: application, auth: auth, mux: http.NewServeMux()}
 	h.mux.HandleFunc("POST /v2/agents", h.createAgent)
 	h.mux.HandleFunc("POST /v2/groups", h.createGroup)
+	h.mux.HandleFunc("PUT /v2/groups/{id}", h.updateGroup)
 	h.mux.HandleFunc("GET /v2/snapshot", h.snapshot)
 	h.mux.HandleFunc("GET /v2/attach", h.attach)
 	h.mux.HandleFunc("POST /v2/observe", h.observe)

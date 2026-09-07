@@ -74,6 +74,7 @@ function agentRow(agent){
  row.append(actions);return row;
 }
 function render(){
+ renderGroupControls(snapshot,{host:$('group-management'),el,button,edit,api,refresh});
  const roster=$('roster');roster.replaceChildren();const agents=snapshot.agents||[];const groups=snapshot.groups||[];
  const grouped=new Set(groups.flatMap(g=>g.Members||[]));
  for(const group of [...groups,{Name:'Ungrouped',Members:agents.filter(a=>!grouped.has(a.ID)).map(a=>a.ID)}]){
