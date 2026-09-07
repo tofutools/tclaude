@@ -266,6 +266,24 @@ func (s *Service) reconcileTriggerRule(ctx context.Context, rule model.Automatio
 	}
 	var touched []model.OccurrenceID
 	for _, fact := range facts {
+		// Advance a pending episode only through the next durable observation.
+		// This preserves event-time ordering during catch-up: evidence that
+		// arrived before the deadline is applied before wall-clock dispatch.
+		if state.DebounceAt != nil && !state.DebounceAt.After(fact.ObservedAt.UTC()) {
+			expected := state.Revision
+			occurrence, dueErr := s.dueTriggerOccurrence(ctx, rule, revision, &state, fact.ObservedAt.UTC(), now)
+			if dueErr != nil {
+				return touched, dueErr
+			}
+			created, repeated, advanceErr := s.store.AdvanceTrigger(ctx, state, occurrence, rule.Revision, expected)
+			if advanceErr != nil {
+				return touched, advanceErr
+			}
+			state.Revision = expected + 1
+			if occurrence != nil && !repeated {
+				touched = append(touched, created.Occurrence.ID)
+			}
+		}
 		expected := state.Revision
 		state.SourceCursor = strconv.FormatUint(fact.Sequence, 10)
 		matchingKind := fact.Kind == condition.FactKind
@@ -297,7 +315,7 @@ func (s *Service) reconcileTriggerRule(ctx context.Context, rule model.Automatio
 				state.DebouncePayload, _ = json.Marshal(fact)
 			}
 		}
-		occurrence, dueErr := s.dueTriggerOccurrence(ctx, rule, revision, &state, now)
+		occurrence, dueErr := s.dueTriggerOccurrence(ctx, rule, revision, &state, fact.ObservedAt.UTC(), now)
 		if dueErr != nil {
 			return touched, dueErr
 		}
@@ -310,9 +328,12 @@ func (s *Service) reconcileTriggerRule(ctx context.Context, rule model.Automatio
 			touched = append(touched, created.Occurrence.ID)
 		}
 	}
-	if len(facts) == 0 && state.DebounceAt != nil {
+	// A short page proves that there is no older unread evidence. A full page
+	// persists its cursor as a bounded continuation and defers wall-clock
+	// dispatch until a following sweep has inspected the next page.
+	if len(facts) < 256 && state.DebounceAt != nil {
 		expected := state.Revision
-		occurrence, dueErr := s.dueTriggerOccurrence(ctx, rule, revision, &state, now)
+		occurrence, dueErr := s.dueTriggerOccurrence(ctx, rule, revision, &state, now, now)
 		if dueErr != nil {
 			return touched, dueErr
 		}
@@ -329,12 +350,12 @@ func (s *Service) reconcileTriggerRule(ctx context.Context, rule model.Automatio
 	return touched, nil
 }
 
-func (s *Service) dueTriggerOccurrence(ctx context.Context, rule model.AutomationRule, revision model.AutomationRuleRevision, state *model.AutomationConditionState, now time.Time) (*model.AutomationOccurrence, error) {
-	if state.DebounceAt == nil || state.DebounceAt.After(now) || len(state.DebouncePayload) == 0 {
+func (s *Service) dueTriggerOccurrence(ctx context.Context, rule model.AutomationRule, revision model.AutomationRuleRevision, state *model.AutomationConditionState, eligibleThrough, freshnessAt time.Time) (*model.AutomationOccurrence, error) {
+	if state.DebounceAt == nil || state.DebounceAt.After(eligibleThrough) || len(state.DebouncePayload) == 0 {
 		return nil, nil
 	}
 	condition := revision.Condition.Trigger
-	if state.ObservedAt.IsZero() || now.Sub(state.ObservedAt) > condition.Freshness {
+	if state.ObservedAt.IsZero() || freshnessAt.Sub(state.ObservedAt) > condition.Freshness {
 		state.DwellSince, state.DebounceAt, state.DebouncePayload = nil, nil, nil
 		state.DwellEpisodeID = ""
 		return nil, nil
@@ -347,6 +368,7 @@ func (s *Service) dueTriggerOccurrence(ctx context.Context, rule model.Automatio
 	if condition.Dwell > 0 {
 		keyID = state.DwellEpisodeID
 	}
+	eligibleAt := state.DebounceAt.UTC()
 	key := "trigger:" + fact.Source + ":" + keyID
 	id := model.OccurrenceID(deterministicOrchestrationID("occurrence_", string(revision.ID)+":"+key))
 	requestID := model.RequestID(deterministicOrchestrationID("request_", string(revision.ID)+":"+key))
@@ -361,7 +383,7 @@ func (s *Service) dueTriggerOccurrence(ctx context.Context, rule model.Automatio
 			recipients[i].Disposition, recipients[i].Detail = model.RecipientDenied, "automation causal depth exceeded"
 		}
 	}
-	occurrence := &model.AutomationOccurrence{ID: id, RuleID: rule.ID, RuleRevisionID: revision.ID, SourceOccurrenceKey: key, RequestID: requestID, Requester: model.AutomationPrincipal(string(id), revision.Owner, revision.Delegation), ParentOccurrenceID: fact.ParentOccurrenceID, CausalDepth: fact.CausalDepth, EventAt: fact.OccurredAt.UTC(), EligibleAt: now, ExpiresAt: now.Add(revision.Policy.ExpiresAfter), State: occurrenceState, Recipients: recipients, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	occurrence := &model.AutomationOccurrence{ID: id, RuleID: rule.ID, RuleRevisionID: revision.ID, SourceOccurrenceKey: key, RequestID: requestID, Requester: model.AutomationPrincipal(string(id), revision.Owner, revision.Delegation), ParentOccurrenceID: fact.ParentOccurrenceID, CausalDepth: fact.CausalDepth, EventAt: fact.OccurredAt.UTC(), EligibleAt: eligibleAt, ExpiresAt: eligibleAt.Add(revision.Policy.ExpiresAfter), State: occurrenceState, Recipients: recipients, Revision: 1, CreatedAt: freshnessAt, UpdatedAt: freshnessAt}
 	state.DebounceAt, state.DebouncePayload = nil, nil
 	if condition.Dwell > 0 {
 		// A continuous true observation fires once. The episode identifier is
@@ -369,7 +391,7 @@ func (s *Service) dueTriggerOccurrence(ctx context.Context, rule model.Automatio
 		// the current episode as already emitted.
 		state.DwellSince = nil
 	}
-	cooldown := now.Add(condition.Cooldown)
+	cooldown := eligibleAt.Add(condition.Cooldown)
 	state.CooldownUntil = &cooldown
 	return occurrence, nil
 }
