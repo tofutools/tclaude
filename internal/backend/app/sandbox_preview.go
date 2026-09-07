@@ -20,10 +20,11 @@ type SandboxPolicyPathPreview struct {
 }
 
 type SandboxPolicyPreview struct {
-	ContentHash string
-	Composition sandboxpolicy.Composition
-	Includes    []sandboxpolicy.ClosureEntry
-	Paths       []SandboxPolicyPathPreview
+	ContentHash     string
+	Composition     sandboxpolicy.Composition
+	Materialization sandboxpolicy.PolicyMaterialization
+	Includes        []sandboxpolicy.ClosureEntry
+	Paths           []SandboxPolicyPathPreview
 }
 
 func (s *Service) WithSandboxPathInspector(inspector ports.SandboxPathInspector) *Service {
@@ -68,14 +69,15 @@ func (s *Service) PreviewSandboxPolicy(ctx context.Context, principal model.Prin
 			result.Paths = append(result.Paths, SandboxPolicyPathPreview{Source: source, Observation: observation})
 		}
 	}
-	composition, err := sandboxpolicy.ComposeIncludes(ctx, draft, sandboxDraftReader{store: s.store, ref: draft, policy: policy}, s.sandboxPaths)
+	composition, err := sandboxpolicy.MaterializeIncludes(ctx, draft, sandboxDraftReader{store: s.store, ref: draft, policy: policy}, s.sandboxPaths)
 	if err != nil {
 		if errors.Is(err, sandboxpolicy.ErrInvalidClosure) {
 			return SandboxPolicyPreview{}, fail(ErrInvalid, "%v", err)
 		}
 		return SandboxPolicyPreview{}, fail(ErrUnavailable, "sandbox composition could not be resolved: %v", err)
 	}
-	result.Composition = composition
+	result.Composition = composition.Composition
+	result.Materialization = composition
 	return result, nil
 }
 
