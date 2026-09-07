@@ -112,6 +112,15 @@ func (h *Handler) RegisterOrchestrationAPI(api app.OrchestrationAPI) error {
 		result, err := api.SaveAutomationRule(ctx, app.SaveAutomationRuleRequest{Context: b.context(p), ID: b.ID, RevisionID: b.RevisionID, Name: b.Name, ExpectedRevision: b.ExpectedRevision, Enabled: b.Enabled, Owner: b.Owner, Delegation: b.Delegation, Condition: b.Condition, Action: b.Action, Policy: b.Policy, Dependencies: b.Dependencies})
 		return projectOrchestration(result), err
 	}))
+	h.mux.HandleFunc("POST /v2/automation/rules/{id}/enabled", func(w http.ResponseWriter, r *http.Request) {
+		journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
+			commandIdentity
+			ExpectedRevision model.Revision `json:"expected_revision"`
+			Enabled          bool           `json:"enabled"`
+		}) (any, error) {
+			return api.SetAutomationEnabled(ctx, app.SetAutomationEnabledRequest{Context: b.context(p), ID: model.AutomationRuleID(r.PathValue("id")), ExpectedRevision: b.ExpectedRevision, Enabled: b.Enabled})
+		})(w, r)
+	})
 	h.mux.HandleFunc("POST /v2/automation/run", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
 		commandIdentity
 		RuleID               model.AutomationRuleID `json:"rule_id"`
@@ -162,7 +171,7 @@ func (h *Handler) RegisterOrchestrationAPI(api app.OrchestrationAPI) error {
 		if !ok {
 			return
 		}
-		result, err := api.GetDefinition(r.Context(), app.GetDefinitionRequest{Principal: p, DefinitionID: model.DefinitionID(r.PathValue("id"))})
+		result, err := api.GetDefinition(r.Context(), app.GetDefinitionRequest{Principal: p, DefinitionID: model.DefinitionID(r.PathValue("id")), RevisionID: model.DefinitionRevisionID(r.URL.Query().Get("revision_id"))})
 		journeyResult(w, projectOrchestration(result), err)
 	})
 	h.mux.HandleFunc("GET /v2/definitions", func(w http.ResponseWriter, r *http.Request) {

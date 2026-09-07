@@ -56,6 +56,9 @@ func registerOrchestration(root *cobra.Command, call apiCall) {
 		}
 		cmd.AddCommand(inspect)
 		if group.name == "automation" {
+			activation := managementFileCommand("set-enabled RULE", "Enable or disable a rule at an expected revision without changing its authored revision", "POST", "/v2/automation/rules/", true, call)
+			activation.Annotations = map[string]string{"path-suffix": "/enabled"}
+			cmd.AddCommand(activation)
 			occurrences := boa.CmdT[struct{}]{Use: "occurrences RULE", Short: "Read durable occurrence outcomes for a rule"}.ToCobra()
 			occurrences.Args = cobra.ExactArgs(1)
 			occurrences.RunE = func(cmd *cobra.Command, args []string) error {
