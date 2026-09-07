@@ -315,9 +315,13 @@ async function launchProcessEditor(result){
  const {openProcessEditor}=await import('/process-editor.js');
  await openProcessEditor({api,result,agents:(snapshot.agents||[]).filter(a=>a.Lifecycle!=='retired'),onSaved:renderDefinitions});
 }
+async function launchTeamEditor(result){
+ const {openTeamEditor}=await import('/team-editor.js');
+ await openTeamEditor({api,result,onSaved:renderDefinitions});
+}
 async function renderDefinitions(){
  const definitions=await api('/v2/definitions'),list=$('definition-list');list.replaceChildren();
- list.append(button('New process',()=>launchProcessEditor()));
+ list.append(button('New process',()=>launchProcessEditor()),button('New team template',()=>launchTeamEditor()));
  for(const definition of definitions||[]){
   const card=el('article',undefined,'card');card.append(el('h2',definition.Name),el('p',`${definition.Kind} · revision ${definition.Revision}`,'muted'));
   card.append(button('Inspect definition',async()=>{const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID));card.append(el('pre',result.Revision.Source))}));
@@ -336,6 +340,7 @@ async function renderDefinitions(){
     await api('/v2/processes',{request_id:f.requestID,id:f.requestID,start:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'process'},Scope:{WorkspaceID:f.workspace},Parameters:parameterValues(revision.Parameters||[],f),PerformerBindings:Object.fromEntries(memberKeys.map(key=>[key,{Kind:'agent',Agent:{AgentID:f['binding_'+key]}}])),AuthorizedProgramProfiles:programs,Deadline:new Date(Date.now()+minutes*60000).toISOString()}});
    });
   }));
+  if(definition.Kind==='team')card.append(button('Edit team template',async()=>launchTeamEditor(await api('/v2/definitions/'+encodeURIComponent(definition.ID)))));
   if(definition.Kind==='team')card.append(button('Deploy team',async()=>{
    const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID)),revision=result.Revision;
    const spaces=(snapshot.workspaces||[]).filter(w=>w.State==='available');
