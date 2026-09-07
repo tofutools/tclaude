@@ -43,6 +43,9 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize replacement backend schema: %w", err)
 	}
+	if _, err := s.db.ExecContext(ctx, groupConfigurationSchema); err != nil {
+		return err
+	}
 	if _, err := s.db.ExecContext(ctx, groupHierarchySchema); err != nil {
 		return err
 	}
@@ -651,18 +654,25 @@ func (s *Store) CreateAgent(ctx context.Context, agent model.Agent) error {
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if err = requireActiveConfigurationProfileTx(ctx, tx, agent.ConfigurationProfile); err != nil {
+	if err := createAgentTx(ctx, tx, agent); err != nil {
 		return err
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO agents(configuration_profile_json,id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,direct_notification_intent,harness,model,effort,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		configurationProfileJSON(agent.ConfigurationProfile), agent.ID, agent.Name, agent.TaskReference, agent.ParentAgentID, agent.CloneSourceAgentID, agent.Lifecycle, agent.Notifications.DirectMessage, agent.Desired.Harness, agent.Desired.Model, agent.Desired.Effort, agent.Desired.WorkingDirectory, agent.Desired.Approval, agent.Desired.Sandbox, agent.PrimaryExecutionID, agent.Revision, nanos(agent.CreatedAt), nanos(agent.UpdatedAt))
-	if err != nil {
-		return classify(err)
 	}
 	if err := bumpTx(ctx, tx); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func createAgentTx(ctx context.Context, tx *sql.Tx, agent model.Agent) error {
+	if err := requireActiveConfigurationProfileTx(ctx, tx, agent.ConfigurationProfile); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO agents(configuration_profile_json,id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,direct_notification_intent,harness,model,effort,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		configurationProfileJSON(agent.ConfigurationProfile), agent.ID, agent.Name, agent.TaskReference, agent.ParentAgentID, agent.CloneSourceAgentID, agent.Lifecycle, agent.Notifications.DirectMessage, agent.Desired.Harness, agent.Desired.Model, agent.Desired.Effort, agent.Desired.WorkingDirectory, agent.Desired.Approval, agent.Desired.Sandbox, agent.PrimaryExecutionID, agent.Revision, nanos(agent.CreatedAt), nanos(agent.UpdatedAt))
+	if err != nil {
+		return classify(err)
+	}
+	return nil
 }
 
 func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected model.Revision, name, taskReference string, notifications model.AgentNotificationPreferences, desired model.DesiredConfiguration, profile *model.ConfigurationProfileRef, authority model.AuthorityRequest, at time.Time) (model.Agent, error) {
