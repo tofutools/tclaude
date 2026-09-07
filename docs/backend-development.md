@@ -616,6 +616,13 @@ Select a node to inspect all of its activations and attempts, retry times,
 execution/operation identifiers, decisions, and attributed evidence. Refresh
 reads the current run revision; it does not restart work or infer completion.
 
+The message workspace groups visible messages into chronological threads and
+supports subject/body/agent/attachment search, operator inbox/unread and agent
+filters, and attachment-only filtering. A matching thread includes its available
+reply context. Bulk marking changes only the operator recipient on the matching
+messages, never another agent's read status or unmatched context messages.
+Thread text export includes sender, recipients, body and attachment metadata;
+attachment contents remain available through their separate download controls.
 Terminal panes support tabbed or split layout and explicit pane ordering. The
 current browser tab remembers execution IDs, sizes, selection and layout across
 reloads; restored panes remain disconnected until reconnected. Pop-out opens
