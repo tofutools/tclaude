@@ -110,15 +110,59 @@ func handleDashboardTermWS(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no known "+which+" directory for "+short8(res.ConvID), http.StatusNotFound)
 		return
 	}
-	name := termSessionName(res.ConvID, which)
+	groupName := strings.TrimSpace(r.URL.Query().Get("group"))
+	environment, err := terminalGroupEnvironment(res.ConvID, groupName)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := termSessionNameForGroup(res.ConvID, which, groupName)
 	if err := session.RequireExternalTmuxServer(); err != nil {
 		http.Error(w, err.Error(), http.StatusServiceUnavailable)
 		return
 	}
 	clientFlags := strings.TrimSpace(webTerminalTmuxFlags() + " " + session.ExternalTmuxNoStartFlag())
-	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s",
-		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(name), shellSingleQuote(dir))
+	paneCommand := ""
+	if len(environment) > 0 {
+		bootstrap := groupTerminalBootstrap(environment)
+		scriptPath, cleanupScript, writeErr := session.WriteLaunchScript(bootstrap)
+		if writeErr != nil {
+			http.Error(w, "prepare terminal: "+writeErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		defer cleanupScript()
+		paneCommand = " " + clcommon.BootstrapShellCommandPrefix() + " " + shellSingleQuote(scriptPath)
+	}
+	cmd := fmt.Sprintf("tmux -L %s %s new-session -A -s %s -c %s%s",
+		clcommon.TmuxSocketName, clientFlags, shellSingleQuote(name), shellSingleQuote(dir), paneCommand)
 	runPTYOverWS(w, r, cmd, name, "", nil)
+}
+
+func termSessionNameForGroup(convID, which, group string) string {
+	if group == "" {
+		return termSessionName(convID, which)
+	}
+	sum := sha256.Sum256([]byte(convID + "\x00" + group))
+	return fmt.Sprintf("tclaude-term-%x-%s", sum[:8], which)
+}
+
+// terminalGroupEnvironment resolves the group explicitly carried by a roster
+// action and refuses stale or forged group/agent combinations.
+func terminalGroupEnvironment(convID, groupName string) ([]sandboxpolicy.EnvironmentEntry, error) {
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" {
+		return nil, nil
+	}
+	groups, err := db.ListGroupsForConv(convID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve terminal group: %w", err)
+	}
+	for _, group := range groups {
+		if group.Name == groupName {
+			return append([]sandboxpolicy.EnvironmentEntry(nil), group.Environment...), nil
+		}
+	}
+	return nil, fmt.Errorf("agent %s is not a member of group %q", short8(convID), groupName)
 }
 
 // groupTermSessionName builds the tmux session name backing an ad hoc
@@ -205,9 +249,16 @@ func handleDashboardGroupTermWS(w http.ResponseWriter, r *http.Request) {
 }
 
 func groupTerminalBootstrap(environment []sandboxpolicy.EnvironmentEntry) string {
+	return groupTerminalBootstrapAtDir(environment, "")
+}
+
+func groupTerminalBootstrapAtDir(environment []sandboxpolicy.EnvironmentEntry, dir string) string {
 	var command strings.Builder
 	for _, entry := range environment {
 		fmt.Fprintf(&command, "export %s=%s\n", entry.Name, clcommon.ShellQuoteArg(entry.Value))
+	}
+	if dir != "" {
+		fmt.Fprintf(&command, "cd %s\n", clcommon.ShellQuoteArg(dir))
 	}
 	shell := os.Getenv("SHELL")
 	if shell == "" {

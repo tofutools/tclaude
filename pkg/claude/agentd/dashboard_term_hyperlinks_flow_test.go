@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
+	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -53,6 +55,19 @@ func TestWebTermWSRequestsHyperlinkPassthrough(t *testing.T) {
 	require.GreaterOrEqual(t, flagAt, 0, "no hyperlink opt-in in %q", command)
 	assert.Less(t, flagAt, strings.Index(command, "new-session"),
 		"client flags must precede the tmux command word: %q", command)
+}
+
+func TestWebTermWSIncludesClickedGroupEnvironment(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("dev")
+	_, err := db.SetAgentGroupEnvironment("dev", []sandboxpolicy.EnvironmentEntry{{Name: "TEAM", Value: "platform"}})
+	require.NoError(t, err)
+	spawned := f.Spawn("dev", "worker")
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+
+	command := captureWebTermCommand(t, "/api/term-ws/"+spawned.ConvID+"?which=start&group=dev")
+	assert.Contains(t, command, "launch-scripts", "group terminal should use a private bootstrap")
+	assert.NotContains(t, command, "TEAM=platform", "environment must not leak into tmux argv")
 }
 
 // "Open window" is the dashboard's console on a live agent — the terminal that

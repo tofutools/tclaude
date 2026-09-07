@@ -875,7 +875,9 @@ func TestDashboardAssets_DefaultTerminalWired(t *testing.T) {
 		"if (webTerminalDefault()) { openWebWindowPane(agent, label, { ...terminalPaneOptions, harness }); toast(",
 		"if (webTerminalDefault()) { openWebTermPane(agent, label, chooseTerminalDirectory(label)); return; }",
 		"if (webTerminalDefault()) { openWebWindowPane(agent, label, { harness }); return; }",
-		"if (webTerminalDefault()) { openWebTermPane(agent, label, which); return; }",
+		"if (webTerminalDefault()) { openWebTermPane(agent, label, which, { group }); return; }",
+		"data-group=${group?.name}",
+		"body: JSON.stringify({ which, group })",
 		// palette.js — the shell-owned command palette passes the snapshot-derived
 		// preference into the command's "focus window" action.
 		"if (preferWebTerminal) { openWebWindowPane(conv, label, { harness }); toast(",

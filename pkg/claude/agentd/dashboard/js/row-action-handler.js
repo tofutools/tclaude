@@ -481,11 +481,11 @@ export async function handleRowAction(action) {
         // With web terminals as the default (config dashboard.default_terminal
         // = "web"), open a browser web-term pane in that directory instead of
         // a native window. The dir is already known, so no picker promise.
-        if (webTerminalDefault()) { openWebTermPane(agent, label, which); return; }
+        if (webTerminalDefault()) { openWebTermPane(agent, label, which, { group }); return; }
         const r = await fetch(`/api/term/${encodeURIComponent(agent)}`, {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ which }),
+          body: JSON.stringify({ which, group }),
         });
         if (!r.ok) { toast(`Open terminal failed: ${await r.text()}`, true); return; }
         const info = await r.json().catch(() => ({}));
