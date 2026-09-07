@@ -268,6 +268,13 @@ func (s *Store) SetConfigurationProfileArchived(ctx context.Context, w app.Confi
 		return profile, app.ErrConflict
 	}
 	if w.Archived {
+		var selected int
+		if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM group_configurations WHERE profile_id=?`, w.ID).Scan(&selected); err != nil {
+			return profile, err
+		}
+		if selected > 0 {
+			return profile, app.ErrConflict
+		}
 		err = tx.QueryRowContext(ctx, `SELECT record FROM configuration_defaults WHERE id=1`).Scan(&data)
 		if err == nil {
 			var defaults model.ConfigurationDefaults

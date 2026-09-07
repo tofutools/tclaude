@@ -949,3 +949,25 @@ readable through this route.
 The browser discards pending file reads after a pane switch, reconnect, pagehide
 or sign-out. Downloaded files are not rendered inline. These are bounded current
 filesystem reads, not immutable native-history artifacts.
+
+
+## Group launch defaults
+
+Group settings can pin an exact saved launch configuration revision and create a
+member from it. The pin includes the working directory and saved startup
+suggestions. Editing the saved configuration later does not change that pin or
+existing agents. Clear a group's default before archiving the selected profile.
+Parent groups do not supply implicit defaults or authority.
+
+Creating a member commits the agent and ordered group membership together. A
+lost response can be retried with the same request and returns the original
+result, including after the default changes. Changed intent under the same
+request ID is rejected. Creation does not launch a process. **Start with brief**
+lets the operator review the pinned context and initial message before launching.
+
+Operator routes are `GET`/`PUT /v2/groups/{id}/configuration` and
+`POST /v2/groups/{id}/agents`. Default updates use their own expected revision;
+member creation checks both group and default revisions. Refresh after a lost
+default-update response before editing again. Legacy group default settings
+remain retained import evidence; offline conversion does not activate these new
+group defaults or member-creation receipts.

@@ -6,6 +6,19 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh}) {
  const parent=groups.find(g=>g.ID===group.ParentGroupID);card.append(el('p',parent?'Parent: '+parent.Name+' · '+parent.ID:'Top level'));
  card.append(button('Move group',()=>{edit('Move group',[{name:'parent',label:'Parent group (organization only; no inherited authority)',required:false,value:group.ParentGroupID||'',options:[{value:'',label:'Top level'},...groups.filter(g=>g.ID!==group.ID).map(g=>({value:g.ID,label:g.Name+' · '+g.ID}))]}],f=>{return api('/v2/groups/'+encodeURIComponent(group.ID)+'/parent',{request_id:f.requestID,parent_group_id:f.parent,expected_revision:group.Revision},'PUT')},{skipUnchanged:true})}));
   const controls=el('div',undefined,'toolbar');
+ controls.append(button('Launch defaults',async()=>{
+  const [current,profiles]=await Promise.all([api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration'),api('/v2/configuration-profiles')]);
+  if(!card.isConnected)return;
+  const choices=profiles.filter(p=>!p.Archived).map(p=>({key:'current:'+p.ID,label:p.Name+' · '+p.ID,ref:{ProfileID:p.ID,RevisionID:p.CurrentRevisionID}}));let value='';
+  if(current.Profile){const exact=choices.find(p=>p.ref.ProfileID===current.Profile.ProfileID&&p.ref.RevisionID===current.Profile.RevisionID);if(exact)value=exact.key;else{value='pinned';choices.push({key:value,label:'Pinned '+current.Profile.ProfileID+' · '+current.Profile.RevisionID,ref:current.Profile})}}
+  edit('Group launch defaults',[{name:'profile',label:'Saved configuration for new members (existing agents keep their settings)',required:false,value,options:[{value:'',label:'No group default'},...choices.map(p=>({value:p.key,label:p.label}))]}],async f=>{let profile=null;if(f.profile){const selected=choices.find(p=>p.key===f.profile);if(!selected)throw new Error('Select a listed configuration');profile=(await api('/v2/configuration-profiles/'+encodeURIComponent(selected.ref.ProfileID)+'?revision_id='+encodeURIComponent(selected.ref.RevisionID))).Revision.Ref}return api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration',{profile,expected_revision:current.Revision},'PUT')},{skipUnchanged:true});
+ }),button('Create member from default',async()=>{
+  const current=await api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration');if(!card.isConnected)return;if(!current.Profile)throw new Error('Choose a group launch default first.');
+  const saved=await api('/v2/configuration-profiles/'+encodeURIComponent(current.Profile.ProfileID)+'?revision_id='+encodeURIComponent(current.Profile.RevisionID));if(!card.isConnected)return;
+  edit('Create group member',[{name:'name',label:'Agent name · '+saved.Profile.Name+' · '+current.Profile.RevisionID,value:saved.Revision.Startup?.AgentName||saved.Profile.Name}],f=>api('/v2/groups/'+encodeURIComponent(group.ID)+'/agents',{request_id:f.requestID,id:f.requestID,name:f.name,expected_group_revision:group.Revision,expected_default_revision:current.Revision}));
+  document.getElementById('editor-fields').append(el('p',saved.Revision.Desired.Harness+' · '+saved.Revision.Desired.Model+' · '+saved.Revision.Desired.WorkingDirectory+' — creates the agent and membership; start remains explicit.'));
+ }));
+
   controls.append(button('Edit name and members',()=>{
    const ordered=[...(group.Members||[]).map(id=>agents.find(a=>a.ID===id)).filter(Boolean),...agents.filter(a=>!group.Members?.includes(a.ID)&&a.Lifecycle!=='retired')];
    edit('Edit group',[{name:'name',label:'Group name',value:group.Name},{name:'members',label:'Members (removing a member does not stop or retire it)',multiple:true,required:false,value:group.Members||[],options:ordered.map(a=>({value:a.ID,label:a.Name+(a.ID===group.OwnerAgentID?' (owner)':'')}))}],f=>{
