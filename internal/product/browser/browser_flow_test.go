@@ -107,12 +107,12 @@ func TestBrowserOfflineAgentGroupAndMessageFlow(t *testing.T) {
 	page.MustElement("#editor").MustWaitInvisible()
 	page.MustElementR("#message-list pre", "Thread reply")
 	page.MustElement("[data-tab=groups]").MustClick()
-	page.MustElementR("#roster button", "Retire").MustClick()
+	page.MustElementR("#roster .row button", "^Retire$").MustClick()
 	page.MustElement("[name=reason]").MustInput("Finished browser fixture")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
-	page.MustElementR("#roster button", "Reactivate").MustClick()
-	page.MustElementR("#roster button", "Retire")
+	page.MustElementR("#roster .row button", "^Reactivate$").MustClick()
+	page.MustElementR("#roster .row button", "^Retire$")
 
 	// Seed an authored human-decision process through the same authenticated API,
 	// then answer it through browser controls (no simulated decision handler).

@@ -9,7 +9,7 @@ class RosterWorkspace {
     this.state=el('select');this.state.setAttribute('aria-label','State filter');
     this.group=el('select');this.group.setAttribute('aria-label','Group filter');
     this.sort=el('select');this.sort.setAttribute('aria-label','Sort agents');
-    this.options(this.state,[['','All states'],['offline','Offline'],['running','Running'],['starting','Starting'],['stopping','Stopping'],['uncertain','Uncertain'],['exited','Exited'],['failed','Failed'],['retired','Retired']]);
+    this.options(this.state,[['','All states'],['offline','Offline'],['running','Running'],['reserved','Reserved'],['prepared','Prepared'],['released','Released'],['unknown','Unknown'],['exited','Exited'],['failed','Failed'],['retired','Retired']]);
     this.options(this.sort,[['name','Name'],['harness','Harness'],['model','Model'],['newest','Newest']]);
     controls.append(this.query,this.harness,this.state,this.group,this.sort);
     controls.onsubmit=e=>e.preventDefault();for(const control of controls.children)control.addEventListener('input',()=>this.draw());
@@ -58,7 +58,9 @@ class RosterWorkspace {
   async run(records){if(this.busy)return;this.busy=true;this.draw();
     try{for(const r of records){r.status='Pending';r.detail='';this.draw();try{
       if(r.action==='stop'&&!r.body.execution_id)throw new Error('No selected primary execution to stop.');
-      const result=await this.api(r.path,r.body);r.status='Accepted';r.detail=result?.execution?.state||result?.agent?.Lifecycle||'';
+      const result=await this.api(r.path,r.body),state=result?.operation?.state;
+      r.status=!state||state==='succeeded'?'Accepted':['refused','failed'].includes(state)?'Failed':state==='uncertain'?'Uncertain':'Pending';
+      r.detail=[state,result?.operation?.detail,result?.execution?.state||result?.Lifecycle].filter(Boolean).join(' · ');
     }catch(e){r.status='Failed';r.detail=e.message}this.draw()}}
     finally{this.busy=false;await this.refresh();this.draw()}
   }

@@ -14,6 +14,9 @@ import (
 
 func TestBrowserRosterFiltersAndBulkRetirementPreserveConcurrentChanges(t *testing.T) {
 	ctx, page, operator := processEditorBrowser(t)
+	for _, state := range []model.ExecutionState{model.ExecutionReserved, model.ExecutionPrepared, model.ExecutionReleased, model.ExecutionRunning, model.ExecutionExited, model.ExecutionFailed, model.ExecutionUnknown} {
+		require.True(t, page.MustEval(`state => Array.from(document.querySelector('[aria-label="State filter"]').options).some(option=>option.value===state)`, string(state)).Bool(), "missing execution state %s", state)
+	}
 	desired := model.DesiredConfiguration{Harness: "codex", Model: "fixture", WorkingDirectory: "/tmp", Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}
 	for _, name := range []string{"Alpha", "Beta", "Gamma"} {
 		d := desired
