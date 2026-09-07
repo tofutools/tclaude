@@ -16,6 +16,7 @@ const attention = new AttentionWorkspace({host:$('attention'),api,el,button,refr
 const usageWorkspace = new UsageWorkspace({host:$('usage-list'),api,el,button,getSnapshot:()=>snapshot,setTarget:target=>{usageTarget=target}});
 
 const historyWorkspace = new HistoryWorkspace({host:$('histories'),api,el,button,edit,startWork,selection});
+const activityWorkspace = new ActivityWorkspace({host:$('activity-list'),api,el,button,getSnapshot:()=>snapshot,setTarget:target=>{activityTarget=target}});
 const rosterWorkspace = new RosterWorkspace({host:$('roster'),api,el,button,edit,refresh});
 function showError(error) { const target=$('editor').open?$('editor-error'):$('error');target.textContent=error.message || String(error);target.hidden=false; }
 async function api(path, body, method) {
@@ -122,7 +123,7 @@ async function selectTab(tab,record=true){
 }
 $('refresh').onclick=()=>refresh().catch(showError);
 $('cancel').onclick=()=>$('editor').close();
-$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');closeTerminal();presentation.stop();attention.clear();usageWorkspace.clear();historyWorkspace.clear();refreshSequence++;snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
+$('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');closeTerminal();presentation.stop();attention.clear();usageWorkspace.clear();activityWorkspace.clear();historyWorkspace.clear();refreshSequence++;snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
 for(const tab of document.querySelectorAll('[data-tab]'))tab.onclick=()=>selectTab(tab.dataset.tab).catch(showError);
 $('new-agent').onclick=()=>edit('New agent',[...desiredFields(),...agentMetadataFields()],f=>api('/v2/agents',{id:f.requestID,name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify}}));
 $('new-group').onclick=()=>edit('New group',[{name:'name',label:'Name'},{name:'members',label:'Members',multiple:true,required:false,options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}],f=>api('/v2/groups',{id:f.requestID,name:f.name,members:f.members}));
@@ -265,13 +266,7 @@ function targetFields(kind){return[{name:'kind',label:'Target type',options:kind
 $('select-usage').onclick=()=>edit('Select usage target',targetFields('usage'),async f=>{usageTarget={[f.kind]:f.id};await renderUsage()});
 $('select-activity').onclick=()=>edit('Select activity target',targetFields('activity'),async f=>{activityTarget={[f.kind]:f.id};await renderActivity()});
 async function renderUsage(){await usageWorkspace.show(usageTarget)}
-async function renderActivity(cursor='',append=false){
- const list=$('activity-list');if(!append)list.replaceChildren();if(!activityTarget){empty(list,'Select an agent, conversation, execution or Work Run.');return}
- const result=await api('/v2/activity/query',{filter:{Target:activityTarget,Limit:25,Cursor:cursor}});
- for(const record of result.Records||[]){const card=el('article',undefined,'card');card.append(el('strong',`${record.Kind.replaceAll('_',' ')} · ${record.Outcome}`),el('p',`${record.Actor.AgentID||record.Actor.Kind} · ${new Date(record.StartedAt).toLocaleString()}`,'muted'));if(record.Reason)card.append(el('p',record.Reason));if(record.Historical)card.append(el('p','Imported historical record','muted'));list.append(card)}
- if(!result.Records?.length)empty(list,'No recorded activity for this target.');
- if(result.NextCursor)list.append(button('More activity',async()=>renderActivity(result.NextCursor,true)));
-}
+async function renderActivity(){await activityWorkspace.show(activityTarget)}
 
 async function renderDecisions(){
  const [results,access]=await Promise.all([api('/v2/decisions'),api('/v2/access-requests')]),list=$('decision-list');list.replaceChildren();
