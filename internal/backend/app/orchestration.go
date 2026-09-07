@@ -522,7 +522,7 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 		activate(next, current.Ref.ActivationID)
 	}
 	combined := append(virtual, transition.Activations...)
-	hasEnd, hasActive, hasUncertain, hasFailure := false, false, false, false
+	hasEnd, hasActive, hasUncertain := false, false, false
 	for _, attempt := range combined {
 		node := graphNode(graph, attempt.Ref.NodeID)
 		if node.Kind == model.WorkNodeEnd && attempt.State == model.NodeAttemptSucceeded {
@@ -533,10 +533,9 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 			hasActive = true
 		case model.NodeAttemptUncertain:
 			hasUncertain = true
-		case model.NodeAttemptFailed:
-			hasFailure = true
 		}
 	}
+	hasFailure := hasUnsupersededGraphFailure(combined)
 	if hasFailure {
 		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunFailed, model.WorkControlSettled, model.WorkOutcomeRejected
 		for _, attempt := range combined {
@@ -554,6 +553,25 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 		transition.RunState, transition.ControlState = model.WorkRunWaiting, model.WorkControlWaiting
 	}
 	return transition
+}
+
+func hasUnsupersededGraphFailure(attempts []model.WorkNodeAttempt) bool {
+	for _, failed := range attempts {
+		if failed.State != model.NodeAttemptFailed {
+			continue
+		}
+		superseded := false
+		for _, candidate := range attempts {
+			if candidate.Ref.NodeID == failed.Ref.NodeID && candidate.Ref.ActivationID == failed.Ref.ActivationID && candidate.Ref.Attempt > failed.Ref.Attempt {
+				superseded = true
+				break
+			}
+		}
+		if !superseded {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) enforceOutcomePolicy(record WorkRunRecord, transition *GraphTransition, prospective *model.WorkNodeEvidence, humanJudgment bool) {
