@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -452,6 +453,11 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 		return transition
 	}
 	if outcome == model.WorkOutcomeRejected {
+		if retried, ok := s.retryFailureTransition(record, current, detail, transition); ok {
+			return retried
+		}
+	}
+	if outcome == model.WorkOutcomeRejected {
 		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunFailed, model.WorkControlSettled, model.WorkOutcomeRejected
 		for _, attempt := range record.Run.NodeAttempts {
 			if attempt.Ref == current.Ref {
@@ -518,7 +524,7 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 		activate(next, current.Ref.ActivationID)
 	}
 	combined := append(virtual, transition.Activations...)
-	hasEnd, hasActive, hasUncertain, hasFailure := false, false, false, false
+	hasEnd, hasActive, hasUncertain := false, false, false
 	for _, attempt := range combined {
 		node := graphNode(graph, attempt.Ref.NodeID)
 		if node.Kind == model.WorkNodeEnd && attempt.State == model.NodeAttemptSucceeded {
@@ -529,10 +535,9 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 			hasActive = true
 		case model.NodeAttemptUncertain:
 			hasUncertain = true
-		case model.NodeAttemptFailed:
-			hasFailure = true
 		}
 	}
+	hasFailure := hasUnsupersededGraphFailure(combined)
 	if hasFailure {
 		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunFailed, model.WorkControlSettled, model.WorkOutcomeRejected
 		for _, attempt := range combined {
@@ -552,6 +557,25 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 	return transition
 }
 
+func hasUnsupersededGraphFailure(attempts []model.WorkNodeAttempt) bool {
+	for _, failed := range attempts {
+		if failed.State != model.NodeAttemptFailed {
+			continue
+		}
+		superseded := false
+		for _, candidate := range attempts {
+			if candidate.Ref.NodeID == failed.Ref.NodeID && candidate.Ref.ActivationID == failed.Ref.ActivationID && candidate.Ref.Attempt > failed.Ref.Attempt {
+				superseded = true
+				break
+			}
+		}
+		if !superseded {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Service) enforceOutcomePolicy(record WorkRunRecord, transition *GraphTransition, prospective *model.WorkNodeEvidence, humanJudgment bool) {
 	if transition.RunState != model.WorkRunSucceeded || record.Run.Graph == nil {
 		return
@@ -568,7 +592,7 @@ func (s *Service) enforceOutcomePolicy(record WorkRunRecord, transition *GraphTr
 	policy := record.Run.Graph.Outcome
 	accepted := true
 	for _, required := range policy.RequiredNodes {
-		accepted = accepted && nodeConcludedSuccessfully(attempts, required)
+		accepted = accepted && nodeConcludedVerified(attempts, required)
 	}
 	if policy.ArtifactRevision != "" {
 		artifactAccepted := false
@@ -602,6 +626,85 @@ func (s *Service) enforceOutcomePolicy(record WorkRunRecord, transition *GraphTr
 	}
 }
 
+func (s *Service) retryFailureTransition(record WorkRunRecord, current model.WorkNodeAttempt, detail string, transition GraphTransition) (GraphTransition, bool) {
+	node := graphNode(*record.Run.Graph, current.Ref.NodeID)
+	class := retryFailureClass(node)
+	if node.Retry.MaxAttempts == 0 || !containsString(node.Retry.Retryable, class) {
+		return GraphTransition{}, false
+	}
+	if current.Ref.Attempt < current.RetryBudget {
+		next, windows := s.retryActivation(record.Run, current, node, transition.At, current.RetryBudget)
+		transition.Activations = append(transition.Activations, next)
+		transition.DecisionWindows = append(transition.DecisionWindows, windows...)
+		return transition, true
+	}
+	decisionID := model.DecisionID(s.newID("decision_"))
+	answers := []string{string(model.BlockedRetry), string(model.BlockedRework), string(model.BlockedCancel)}
+	if node.Waivable {
+		answers = append(answers, string(model.BlockedWaive))
+	}
+	transition.Updates[0] = GraphAttemptUpdate{Ref: current.Ref, DecisionID: decisionID, State: model.NodeAttemptBlocked, Outcome: model.WorkOutcomeRejected, Detail: detail}
+	transition.DecisionWindows = append(transition.DecisionWindows, model.DecisionWindow{
+		ID: decisionID, Kind: model.DecisionBlocked, SourceRevision: record.Run.Revision,
+		Attempt: current.Ref, Audience: []model.DecisionAudience{{Subject: record.Run.Authority}},
+		Question: "Retry, rework, waive, or cancel the exhausted branch?", PermittedAnswers: answers,
+		ExpiresAt: record.Run.Deadline, State: model.DecisionOpen, Revision: 1,
+		CreatedAt: transition.At, UpdatedAt: transition.At,
+	})
+	virtual := append([]model.WorkNodeAttempt(nil), record.Run.NodeAttempts...)
+	for i := range virtual {
+		if virtual[i].Ref == current.Ref {
+			virtual[i].State = model.NodeAttemptBlocked
+		}
+	}
+	if onlyWaiting(virtual) {
+		transition.RunState, transition.ControlState = model.WorkRunWaiting, model.WorkControlWaiting
+	}
+	return transition, true
+}
+
+func (s *Service) retryActivation(run model.WorkRun, current model.WorkNodeAttempt, node model.WorkNode, now time.Time, budget uint32) (model.WorkNodeAttempt, []model.DecisionWindow) {
+	readyAt := now
+	state := model.NodeAttemptReady
+	var retryAt *time.Time
+	if node.Retry.Backoff > 0 {
+		value := now.Add(node.Retry.Backoff)
+		readyAt, retryAt, state = value, &value, model.NodeAttemptRetryWait
+	}
+	deadline := current.Deadline
+	if node.Retry.AttemptBudget > 0 && now.Add(node.Retry.AttemptBudget).Before(deadline) {
+		deadline = now.Add(node.Retry.AttemptBudget)
+	}
+	attempt := model.WorkNodeAttempt{
+		Ref:   model.WorkAttemptRef{RunID: current.Ref.RunID, NodeID: current.Ref.NodeID, ActivationID: current.Ref.ActivationID, Attempt: current.Ref.Attempt + 1},
+		State: state, Performer: current.Performer, ReadyAt: readyAt, RetryAt: retryAt,
+		Deadline: deadline, RetryBudget: budget, CreatedAt: now, UpdatedAt: now,
+	}
+	if state == model.NodeAttemptRetryWait {
+		return attempt, nil
+	}
+	return s.attachDecisionWindow(run, node, attempt, now)
+}
+
+func retryFailureClass(node model.WorkNode) string {
+	if node.Kind == model.WorkNodeDecision || node.Performer != nil && node.Performer.Kind == model.PerformerHuman {
+		return model.RetryableHumanRejection
+	}
+	if node.Performer != nil && node.Performer.Kind == model.PerformerAgent {
+		return model.RetryableAgentRejection
+	}
+	return model.RetryableProgramFailure
+}
+
+func containsString(values []string, wanted string) bool {
+	for _, value := range values {
+		if value == wanted {
+			return true
+		}
+	}
+	return false
+}
+
 func acceptedArtifactEvidence(evidence model.WorkNodeEvidence, revision string) bool {
 	if evidence.ArtifactRevision != revision || evidence.Disposition != model.WorkOutcomeVerified {
 		return false
@@ -616,6 +719,25 @@ func graphAttempt(run model.WorkRun, ref model.WorkAttemptRef) (model.WorkNodeAt
 		}
 	}
 	return model.WorkNodeAttempt{}, false
+}
+
+func (s *Service) recordGraphAttemptUnavailable(ctx context.Context, record WorkRunRecord, attempt model.WorkNodeAttempt, cause error) (WorkRunRecord, error) {
+	detail := cause.Error()
+	if attempt.Detail == detail {
+		return record, cause
+	}
+	updated, err := s.store.ApplyGraphTransition(ctx, GraphTransition{
+		WorkRunID: record.Run.ID, ExpectedRevision: record.Run.Revision,
+		Updates:      []GraphAttemptUpdate{{Ref: attempt.Ref, State: attempt.State, Outcome: attempt.Outcome, Detail: detail}},
+		RunState:     record.Run.State,
+		ControlState: record.Run.ControlState,
+		RunOutcome:   record.Run.Outcome,
+		At:           s.now().UTC(),
+	})
+	if err != nil {
+		return record, err
+	}
+	return updated, cause
 }
 
 func graphAttemptTerminal(state model.WorkNodeAttemptState) bool {
@@ -676,6 +798,15 @@ func nodeConcludedSuccessfully(attempts []model.WorkNodeAttempt, nodeID model.Wo
 	return false
 }
 
+func nodeConcludedVerified(attempts []model.WorkNodeAttempt, nodeID model.WorkNodeID) bool {
+	for _, attempt := range attempts {
+		if attempt.Ref.NodeID == nodeID && attempt.State == model.NodeAttemptSucceeded && attempt.Outcome == model.WorkOutcomeVerified {
+			return true
+		}
+	}
+	return false
+}
+
 func onlyWaiting(attempts []model.WorkNodeAttempt) bool {
 	found := false
 	for _, attempt := range attempts {
@@ -691,6 +822,11 @@ func onlyWaiting(attempts []model.WorkNodeAttempt) bool {
 
 func (s *Service) initialActivation(runID model.WorkRunID, scope model.WorkScope, node model.WorkNode, now, deadline time.Time) (model.WorkNodeAttempt, []model.DecisionWindow) {
 	attempt := model.WorkNodeAttempt{Ref: model.WorkAttemptRef{RunID: runID, NodeID: node.ID, ActivationID: model.WorkActivationID(s.newID("activation_")), Attempt: 1}, State: model.NodeAttemptReady, Performer: node.Performer, ReadyAt: now, Deadline: deadline, RetryBudget: normalizedAttempts(node.Retry.MaxAttempts), CreatedAt: now, UpdatedAt: now}
+	run := model.WorkRun{ID: runID, Scope: scope, Deadline: deadline, Revision: 1}
+	return s.attachDecisionWindow(run, node, attempt, now)
+}
+
+func (s *Service) attachDecisionWindow(run model.WorkRun, node model.WorkNode, attempt model.WorkNodeAttempt, now time.Time) (model.WorkNodeAttempt, []model.DecisionWindow) {
 	var audience []model.DecisionAudience
 	var question string
 	var answers []string
@@ -704,16 +840,19 @@ func (s *Service) initialActivation(runID model.WorkRunID, scope model.WorkScope
 			audience = append(audience, model.DecisionAudience{Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: human.AgentID}})
 		}
 		if human.RoleID != "" {
-			audience = append(audience, model.DecisionAudience{RoleID: human.RoleID, GroupID: scope.GroupID})
+			audience = append(audience, model.DecisionAudience{RoleID: human.RoleID, GroupID: run.Scope.GroupID})
 		}
-		question, answers, expires = human.Prompt, []string{"complete", "reject"}, deadline
+		question, answers, expires = human.Prompt, []string{"complete", "reject"}, attempt.Deadline
 	}
 	if len(audience) == 0 {
 		return attempt, nil
 	}
 	decisionID := model.DecisionID(s.newID("decision_"))
 	attempt.State, attempt.DecisionID = model.NodeAttemptWaiting, decisionID
-	window := model.DecisionWindow{ID: decisionID, Kind: model.DecisionWork, SourceRevision: 1, Attempt: attempt.Ref, Audience: audience, Question: question, PermittedAnswers: answers, ExpiresAt: expires, State: model.DecisionOpen, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	if expires.After(attempt.Deadline) {
+		expires = attempt.Deadline
+	}
+	window := model.DecisionWindow{ID: decisionID, Kind: model.DecisionWork, SourceRevision: run.Revision, Attempt: attempt.Ref, Audience: audience, Question: question, PermittedAnswers: answers, ExpiresAt: expires, State: model.DecisionOpen, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	return attempt, []model.DecisionWindow{window}
 }
 
@@ -777,7 +916,7 @@ func (s *Service) SubmitDecision(ctx context.Context, req SubmitDecisionRequest)
 	if err != nil {
 		return DecisionResult{}, err
 	}
-	submission := model.DecisionSubmission{RequestID: req.Context.RequestID, DecisionID: req.DecisionID, ExpectedWindowRevision: req.ExpectedWindowRevision, Answer: req.Answer, Reason: req.Reason, EvidenceRefs: append([]model.WorkEvidenceID(nil), req.EvidenceRefs...), Actor: req.Context.Principal, SubmittedAt: s.now().UTC()}
+	submission := model.DecisionSubmission{RequestID: req.Context.RequestID, DecisionID: req.DecisionID, ExpectedWindowRevision: req.ExpectedWindowRevision, ExpectedRunRevision: req.ExpectedRunRevision, Answer: req.Answer, Reason: req.Reason, EvidenceRefs: append([]model.WorkEvidenceID(nil), req.EvidenceRefs...), Actor: req.Context.Principal, SubmittedAt: s.now().UTC()}
 	authority := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionDecideWork, Resource: model.ResourceSelector{Kind: model.ResourceWorkRun, WorkRunID: window.Window.Attempt.RunID}}
 	record, err := s.store.SubmitDecision(ctx, submission, authority, s.now().UTC())
 	if err != nil {
@@ -801,6 +940,9 @@ func (s *Service) SubmitDecision(ctx context.Context, req SubmitDecisionRequest)
 }
 
 func (s *Service) applyAnsweredDecision(ctx context.Context, run WorkRunRecord, attempt model.WorkNodeAttempt, submission model.DecisionSubmission) (WorkRunRecord, error) {
+	if attempt.State == model.NodeAttemptBlocked {
+		return s.applyBlockedResolution(ctx, run, attempt, submission)
+	}
 	outcome := model.WorkOutcomeVerified
 	verdict := submission.Answer
 	switch submission.Answer {
@@ -825,6 +967,77 @@ func (s *Service) applyAnsweredDecision(ctx context.Context, run WorkRunRecord, 
 	}
 	s.enforceOutcomePolicy(run, &transition, nil, true)
 	return s.store.ApplyGraphTransition(ctx, transition)
+}
+
+func (s *Service) applyBlockedResolution(ctx context.Context, run WorkRunRecord, attempt model.WorkNodeAttempt, submission model.DecisionSubmission) (WorkRunRecord, error) {
+	node := graphNode(*run.Run.Graph, attempt.Ref.NodeID)
+	now := s.now().UTC()
+	switch model.BlockedResolutionAction(submission.Answer) {
+	case model.BlockedWaive:
+		if !node.Waivable {
+			return run, fail(ErrUnauthorized, "node %s does not permit waiver", node.ID)
+		}
+		transition := s.graphOutcomeTransitionForVerdict(run, attempt, model.WorkOutcomeWaived, submission.Reason, "")
+		s.enforceOutcomePolicy(run, &transition, nil, true)
+		return s.store.ApplyGraphTransition(ctx, transition)
+	case model.BlockedCancel:
+		transition := s.graphOutcomeTransitionForVerdict(run, attempt, model.WorkOutcomeCancelled, submission.Reason, "")
+		transition.Updates[0].State = model.NodeAttemptFailed
+		transition.RunState, transition.ControlState, transition.RunOutcome = model.WorkRunCancelled, model.WorkControlSettled, model.WorkOutcomeCancelled
+		return s.store.ApplyGraphTransition(ctx, transition)
+	case model.BlockedRetry, model.BlockedRework:
+		window := normalizedAttempts(node.Retry.MaxAttempts)
+		if attempt.RetryBudget >= maxWorkAttempts || window > maxWorkAttempts-attempt.RetryBudget {
+			return run, fail(ErrConflict, "node %s cannot extend retry budget beyond %d attempts", node.ID, maxWorkAttempts)
+		}
+		budget := attempt.RetryBudget + window
+		next, windows := s.retryActivation(run.Run, attempt, node, now, budget)
+		transition := GraphTransition{WorkRunID: run.Run.ID, ExpectedRevision: run.Run.Revision,
+			Updates:     []GraphAttemptUpdate{{Ref: attempt.Ref, State: model.NodeAttemptFailed, Outcome: model.WorkOutcomeRejected, Detail: submission.Reason}},
+			Activations: []model.WorkNodeAttempt{next}, RunState: model.WorkRunRunning,
+			ControlState: model.WorkControlActive, RunOutcome: run.Run.Outcome, DecisionWindows: windows, At: now}
+		return s.store.ApplyGraphTransition(ctx, transition)
+	default:
+		return run, fail(ErrInvalid, "blocked resolution action is unsupported")
+	}
+}
+
+func (s *Service) ResolveBlocked(ctx context.Context, req ResolveBlockedRequest) (WorkRunResult, error) {
+	if err := validateEffectContext(req.Context); err != nil {
+		return WorkRunResult{}, err
+	}
+	if req.DecisionID == "" || req.Attempt.RunID == "" || req.Attempt.NodeID == "" || req.Attempt.ActivationID == "" || req.Attempt.Attempt == 0 || req.ExpectedWindowRevision == 0 || req.ExpectedRunRevision == 0 || strings.TrimSpace(req.Reason) == "" {
+		return WorkRunResult{}, fail(ErrInvalid, "exact blocked decision, attempt, revisions, action and reason are required")
+	}
+	window, err := s.store.Decision(ctx, req.DecisionID)
+	if err != nil {
+		return WorkRunResult{}, err
+	}
+	if window.Window.Kind != model.DecisionBlocked || window.Window.Attempt != req.Attempt {
+		return WorkRunResult{}, ErrConflict
+	}
+	run, err := s.store.WorkRun(ctx, req.Attempt.RunID)
+	if err != nil {
+		return WorkRunResult{}, err
+	}
+	replay := blockedResolutionReplay(window.Submission, req)
+	if !replay && (window.Window.Revision != req.ExpectedWindowRevision || run.Run.Revision != req.ExpectedRunRevision) {
+		return WorkRunResult{}, ErrConflict
+	}
+	_, err = s.SubmitDecision(ctx, SubmitDecisionRequest{Context: req.Context, DecisionID: req.DecisionID,
+		ExpectedWindowRevision: req.ExpectedWindowRevision, ExpectedRunRevision: req.ExpectedRunRevision, Answer: string(req.Action), Reason: req.Reason, EvidenceRefs: req.EvidenceRefs})
+	if err != nil {
+		return WorkRunResult{}, err
+	}
+	updated, err := s.store.WorkRun(ctx, req.Attempt.RunID)
+	return WorkRunResult(updated), err
+}
+
+func blockedResolutionReplay(prior *model.DecisionSubmission, req ResolveBlockedRequest) bool {
+	if prior == nil || prior.RequestID != req.Context.RequestID || prior.DecisionID != req.DecisionID || prior.ExpectedWindowRevision != req.ExpectedWindowRevision || prior.ExpectedRunRevision != req.ExpectedRunRevision || prior.Answer != string(req.Action) || prior.Reason != req.Reason || !reflect.DeepEqual(prior.EvidenceRefs, req.EvidenceRefs) {
+		return false
+	}
+	return reflect.DeepEqual(prior.Actor, req.Context.Principal)
 }
 
 func (s *Service) validateProgramBindings(ctx context.Context, graph model.WorkGraph, authorized []model.ProgramProfileRef, principal model.Principal, scope model.WorkScope) error {
@@ -992,75 +1205,6 @@ func (s *Service) RunRuleNow(ctx context.Context, req RunRuleNowRequest) (Occurr
 	occurrence := model.AutomationOccurrence{RequestFingerprint: fingerprint, RequestScope: requestScopeForDigest(req.Context.Principal), ID: req.OccurrenceID, RuleID: req.RuleID, RuleRevisionID: record.Head.ID, SourceOccurrenceKey: "manual:" + req.SourceOccurrenceKey, RequestID: req.Context.RequestID, Requester: requester, ScheduledAt: now, EligibleAt: now, ExpiresAt: expires, State: model.OccurrencePending, Recipients: recipients, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	created, _, err := s.store.MaterializeOccurrence(ctx, occurrence, req.ExpectedRuleRevision)
 	return OccurrenceResult(created), err
-}
-
-// ObserveAutomationFact accepts application-trusted normalized facts. Each
-// matching rule pins its current immutable revision and uses the native event
-// identity as the durable occurrence key, so redelivery and restart cannot
-// manufacture a second action.
-func (s *Service) ObserveAutomationFact(ctx context.Context, req ObserveAutomationFactRequest) ([]OccurrenceResult, error) {
-	if err := requireOperator(req.Principal); err != nil {
-		return nil, err
-	}
-	if strings.TrimSpace(req.Fact.Source) == "" || strings.TrimSpace(req.Fact.EventID) == "" || strings.TrimSpace(req.Fact.Kind) == "" || req.Fact.OccurredAt.IsZero() {
-		return nil, fail(ErrInvalid, "fact source, event id, kind and occurrence time are required")
-	}
-	now := s.now().UTC()
-	rules, err := s.store.ListAutomationRules(ctx, false)
-	if err != nil {
-		return nil, err
-	}
-	var results []OccurrenceResult
-	for _, rule := range rules {
-		if !rule.Enabled {
-			continue
-		}
-		revision, readErr := s.store.AutomationRuleRevision(ctx, rule.HeadRevisionID)
-		if readErr != nil {
-			return nil, readErr
-		}
-		condition := revision.Condition.Trigger
-		if revision.Condition.Kind != model.AutomationTrigger || condition == nil || condition.FactKind != req.Fact.Kind {
-			continue
-		}
-		if now.Sub(req.Fact.OccurredAt.UTC()) > condition.Freshness || req.Fact.OccurredAt.After(now.Add(time.Minute)) {
-			continue
-		}
-		existing, listErr := s.store.OccurrencesForRule(ctx, rule.ID)
-		if listErr != nil {
-			return nil, listErr
-		}
-		if revision.Policy.Overlap != model.OverlapAllow && hasActiveOccurrence(existing) {
-			continue
-		}
-		if condition.Cooldown > 0 {
-			var mostRecent time.Time
-			for _, prior := range existing {
-				if prior.Occurrence.EventAt.After(mostRecent) {
-					mostRecent = prior.Occurrence.EventAt
-				}
-			}
-			if !mostRecent.IsZero() && req.Fact.OccurredAt.Sub(mostRecent) < condition.Cooldown {
-				continue
-			}
-		}
-		key := "trigger:" + req.Fact.Source + ":" + req.Fact.EventID
-		occurrenceID := model.OccurrenceID(deterministicOrchestrationID("occurrence_", string(revision.ID)+":"+key))
-		requestID := model.RequestID(deterministicOrchestrationID("request_", string(revision.ID)+":"+key))
-		requester := model.AutomationPrincipal(string(occurrenceID), revision.Owner, revision.Delegation)
-		recipients, recipientErr := s.automationRecipients(ctx, revision.Action)
-		if recipientErr != nil {
-			return nil, recipientErr
-		}
-		eligible := now.Add(condition.Dwell + condition.Debounce)
-		occurrence := model.AutomationOccurrence{ID: occurrenceID, RuleID: rule.ID, RuleRevisionID: revision.ID, SourceOccurrenceKey: key, RequestID: requestID, Requester: requester, EventAt: req.Fact.OccurredAt.UTC(), EligibleAt: eligible, ExpiresAt: eligible.Add(revision.Policy.ExpiresAfter), State: model.OccurrencePending, Recipients: recipients, Revision: 1, CreatedAt: now, UpdatedAt: now}
-		created, _, materializeErr := s.store.MaterializeOccurrence(ctx, occurrence, rule.Revision)
-		if materializeErr != nil {
-			return nil, materializeErr
-		}
-		results = append(results, OccurrenceResult(created))
-	}
-	return results, nil
 }
 
 func (s *Service) ListOccurrences(ctx context.Context, req ListOccurrencesRequest) ([]OccurrenceResult, error) {
@@ -1298,6 +1442,9 @@ func validateWorkGraph(graph model.WorkGraph) error {
 		if node.Retry.MaxAttempts > maxWorkAttempts {
 			return fail(ErrInvalid, "work node %s exceeds retry cap %d", node.ID, maxWorkAttempts)
 		}
+		if err := validateRetryPolicy(node); err != nil {
+			return err
+		}
 		if err := validateWorkNode(node); err != nil {
 			return err
 		}
@@ -1367,6 +1514,35 @@ func validateWorkGraph(graph model.WorkGraph) error {
 	for _, id := range graph.Outcome.RequiredNodes {
 		if nodes[id].ID == "" {
 			return fail(ErrInvalid, "outcome references unknown node %s", id)
+		}
+	}
+	return nil
+}
+
+func validateRetryPolicy(node model.WorkNode) error {
+	retry := node.Retry
+	if retry.Backoff < 0 || retry.AttemptBudget < 0 {
+		return fail(ErrInvalid, "work node %s retry timing cannot be negative", node.ID)
+	}
+	if retry.MaxAttempts == 0 {
+		if retry.Backoff != 0 || retry.AttemptBudget != 0 || len(retry.Retryable) != 0 {
+			return fail(ErrInvalid, "work node %s retry fields require max attempts", node.ID)
+		}
+		return nil
+	}
+	if len(retry.Retryable) == 0 {
+		return fail(ErrInvalid, "work node %s retry requires explicit failure classes", node.ID)
+	}
+	seen := make(map[string]bool, len(retry.Retryable))
+	for _, class := range retry.Retryable {
+		if seen[class] {
+			return fail(ErrInvalid, "work node %s retry failure classes must be unique", node.ID)
+		}
+		seen[class] = true
+		switch class {
+		case model.RetryableProgramFailure, model.RetryableAgentRejection, model.RetryableHumanRejection:
+		default:
+			return fail(ErrInvalid, "work node %s has unsupported retry failure class %q", node.ID, class)
 		}
 	}
 	return nil
@@ -1474,8 +1650,18 @@ func validateAutomation(condition model.AutomationCondition, action model.Automa
 			}
 		}
 	case model.AutomationTrigger:
-		if condition.Trigger == nil || strings.TrimSpace(condition.Trigger.FactKind) == "" || condition.Trigger.Freshness <= 0 {
-			return fail(ErrInvalid, "trigger requires fact kind and bounded freshness")
+		if condition.Trigger == nil || strings.TrimSpace(condition.Trigger.SourceID) == "" || strings.TrimSpace(condition.Trigger.FactKind) == "" || len(condition.Trigger.Values) == 0 || condition.Trigger.Freshness <= 0 || condition.Trigger.Dwell < 0 || condition.Trigger.Cooldown < 0 || condition.Trigger.Debounce < 0 {
+			return fail(ErrInvalid, "trigger requires named source, exact resource, values and bounded timing")
+		}
+		if err := validateAutomationFactResource(condition.Trigger.Resource); err != nil {
+			return err
+		}
+		seenValues := map[string]bool{}
+		for _, value := range condition.Trigger.Values {
+			if strings.TrimSpace(value) == "" || seenValues[value] || condition.Trigger.FactKind == model.FactCICompleted && (value == "pending" || value == "unknown") {
+				return fail(ErrInvalid, "trigger values must be unique conclusive values")
+			}
+			seenValues[value] = true
 		}
 	case model.AutomationStandingOrder:
 		if condition.StandingOrder == nil || strings.TrimSpace(condition.StandingOrder.FactKind) == "" || condition.StandingOrder.DispatchDeadline <= 0 || condition.StandingOrder.Timing != model.StandingOrderSameContinuation {
@@ -1533,6 +1719,9 @@ func validateAutomation(condition model.AutomationCondition, action model.Automa
 		}
 	default:
 		return fail(ErrInvalid, "overlap policy is required")
+	}
+	if policy.Overlap == model.OverlapReplace && action.Kind != model.AutomationStartWork {
+		return fail(ErrInvalid, "replace overlap is currently supported only for work actions")
 	}
 	if policy.MissedTicks != model.MissedTickSkip && policy.MissedTicks != model.MissedTickCoalesce {
 		return fail(ErrInvalid, "missed tick policy is required")
