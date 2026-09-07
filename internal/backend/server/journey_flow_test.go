@@ -76,8 +76,16 @@ func TestPublicCheckoutShellSurvivesBackendRestart(t *testing.T) {
 		done := make(chan error, 1)
 		go func() { done <- Serve(ctx, state, providers.NewRegistry(), services) }()
 		stop := func() { cancel(); require.NoError(t, <-done); client.CloseIdleConnections() }
-		deadline := time.Now().Add(3 * time.Second)
+		// Schema initialization and recovery run before listen; allow the same
+		// bounded startup budget under a contended race-suite runner.
+		deadline := time.Now().Add(20 * time.Second)
 		for {
+			select {
+			case err := <-done:
+				cancel()
+				t.Fatalf("server exited before readiness: %v", err)
+			default:
+			}
 			req, _ := http.NewRequest("GET", "http://backend/v2/snapshot", nil)
 			req.Header.Set("Authorization", "Bearer "+string(token))
 			res, err := client.Do(req)
@@ -88,8 +96,10 @@ func TestPublicCheckoutShellSurvivesBackendRestart(t *testing.T) {
 				}
 			}
 			if time.Now().After(deadline) {
-				stop()
-				t.Fatal("server unavailable")
+				cancel()
+				serverErr := <-done
+				client.CloseIdleConnections()
+				t.Fatalf("server unavailable after startup budget: probe=%v server=%v", err, serverErr)
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
