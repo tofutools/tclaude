@@ -10,6 +10,7 @@ const navigation = new WorkspaceNavigation({select:tab=>selectTab(tab,false),rep
 const presentation = new PresentationWorkspace({api});
 const terminalTools = new TerminalTools({host:$('terminal-tools'),workspace:terminals,el,button});
 const authorityWorkspace = new AuthorityWorkspace({host:$('access-list'),api,el,button,edit,getSnapshot:()=>snapshot,report:showError});
+const attachmentPreview = new AttachmentPreview({api,el,button});
 const messageWorkspace = new MessageWorkspace({host:$('message-list'),el,button,api,refresh,card:messageCard});
 const attention = new AttentionWorkspace({host:$('attention'),api,el,button,refresh,select:tab=>selectTab(tab)});
 
@@ -110,7 +111,7 @@ function messageCard(message){
   if(message.ParentMessageID)card.append(el('p','Reply in an existing thread','muted'));
   card.append(button('Reply all',()=>composeMessage(message)));
   if((message.Recipients||[]).some(r=>r.AddressKind==='operator'&&!r.ReadAt))card.append(button('Mark read',async id=>{await api(`/v2/messages/${encodeURIComponent(message.ID)}/read`,{request_id:id,operator:true});await refresh()}));
-  for(const attachment of message.Attachments||[])card.append(button(`Download ${attachment.Filename}`,()=>downloadAttachment(attachment)));
+  for(const attachment of message.Attachments||[]){if(attachmentPreview.kind(attachment))card.append(button(`Preview ${attachment.Filename}`,()=>attachmentPreview.open(attachment)));card.append(button(`Download ${attachment.Filename}`,()=>downloadAttachment(attachment)));}
  return card;
 }
 function render(){
