@@ -79,7 +79,9 @@ type copilotContextRefreshState struct {
 	// contextTier is the latest durable session.start/model_change tier. It is
 	// read by the independent Copilot usage-store poller, so access stays under
 	// copilotContextRefreshMu even while the rest of this state is claimed.
-	contextTier string
+	contextTier          string
+	subagentCount        int
+	backgroundObservedAt time.Time
 }
 
 var copilotContextRefreshMu struct {
@@ -130,6 +132,10 @@ func refreshCopilotContextSnapshotOnRead(sess *db.SessionRow, alive bool) {
 		return
 	}
 	setCopilotContextTier(state, snap.ContextTier)
+	copilotContextRefreshMu.Lock()
+	state.subagentCount = snap.SubagentCount
+	state.backgroundObservedAt = time.Now()
+	copilotContextRefreshMu.Unlock()
 
 	persistCopilotContextSnapshot(sess, state, snap)
 	persistCopilotCheckpoint(sess, state)
@@ -401,4 +407,18 @@ func stopCopilotContextRefreshes() {
 	defer copilotContextRefreshMu.Unlock()
 	copilotContextRefreshMu.stopping = true
 	copilotContextRefreshMu.states = nil
+}
+
+// copilotLogSubagentCount supplies non-API sessions with the durable lifecycle
+// projection. Successful unchanged-file reads keep it fresh; an unreadable or
+// missing log cannot leave a permanent badge behind.
+func copilotLogSubagentCount(sess *db.SessionRow, fallback int) int {
+	copilotContextRefreshMu.Lock()
+	defer copilotContextRefreshMu.Unlock()
+	state := copilotContextRefreshMu.states[sess.ID]
+	if state == nil || state.convID != sess.ConvID || !state.createdAt.Equal(sess.CreatedAt) ||
+		time.Since(state.backgroundObservedAt) > copilotAPIStateFreshness {
+		return fallback
+	}
+	return state.subagentCount
 }

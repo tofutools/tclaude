@@ -45,12 +45,11 @@ type CopilotTelemetryFollower struct {
 }
 
 const (
-	copilotTelemetryCheckpointVersion = 2
+	copilotTelemetryCheckpointVersion = 3
 	copilotTelemetryAnchorBytes       = 64
 	// maxCopilotTelemetryCheckpointBytes bounds the durable blob. This
-	// checkpoint holds no unbounded collections — only scalars, one usage
-	// struct and one bounded error message — so the cap is a corruption guard
-	// rather than a budget that real state can approach.
+	// checkpoint includes active subagent IDs. If it exceeds the cap, the
+	// follower keeps working in memory and rebuilds from the log after restart.
 	maxCopilotTelemetryCheckpointBytes = 64 << 10
 )
 
@@ -82,6 +81,7 @@ type copilotTelemetryCheckpoint struct {
 	Inode           uint64 `json:"inode,omitempty"`
 	Anchor          []byte `json:"anchor"`
 
+	Subagents             map[string]struct{}      `json:"subagents,omitempty"`
 	Model                 string                   `json:"model,omitempty"`
 	Effort                string                   `json:"effort,omitempty"`
 	ContextTier           string                   `json:"context_tier,omitempty"`
@@ -124,6 +124,7 @@ func (f *CopilotTelemetryFollower) RestoreCheckpoint(data []byte) error {
 	}
 
 	state := newCopilotRuntimeScanState()
+	state.subagents = cp.Subagents
 	state.model = cp.Model
 	state.effort = cp.Effort
 	state.contextTier = cp.ContextTier
@@ -177,6 +178,7 @@ func (f *CopilotTelemetryFollower) Checkpoint() ([]byte, bool, error) {
 	}
 	cp := copilotTelemetryCheckpoint{
 		Version:               copilotTelemetryCheckpointVersion,
+		Subagents:             f.state.subagents,
 		Home:                  f.home,
 		ConvID:                f.convID,
 		Path:                  f.path,

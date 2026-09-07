@@ -3,6 +3,7 @@ package harness
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"regexp"
 	"strings"
 )
@@ -153,6 +154,10 @@ type CopilotErrorObservation struct {
 
 // CopilotRuntimeSnapshot is one projection of a session's durable event log.
 type CopilotRuntimeSnapshot struct {
+	// SubagentCount is the number of started agents without a completion or failure
+	// in this CLI lifetime. A resume or shutdown clears the prior lifetime.
+	SubagentCount int
+
 	// Model is the model in force at the end of the scanned prefix.
 	Model string
 	// Effort is Copilot's reasoningEffort, when it discloses one.
@@ -209,6 +214,9 @@ const maxCopilotEventLineBytes = 8 << 20
 // Copilot to escape plain ASCII in its type discriminator, which its
 // machine-written log does not do.
 var copilotTelemetryPrefilters = [][]byte{
+	[]byte("subagent.started"),
+	[]byte("subagent.completed"),
+	[]byte("subagent.failed"),
 	[]byte("session.start"),
 	[]byte("session.resume"),
 	[]byte("session.model_change"),
@@ -238,8 +246,10 @@ func copilotTelemetryLineOfInterest(line []byte) bool {
 // difference matters (cost), and collapse where it does not (token counts).
 // Unknown keys are ignored: a future CLI adding fields must not stop the scan.
 type copilotTelemetryEvent struct {
-	Type string `json:"type"`
-	Data struct {
+	Type    string `json:"type"`
+	AgentID string `json:"agentId"`
+	Data    struct {
+		ToolCallID string `json:"toolCallId"`
 		// session.start / session.resume
 		SelectedModel  string          `json:"selectedModel"`
 		CopilotVersion string          `json:"copilotVersion"`
@@ -299,6 +309,7 @@ type copilotShutdownModel struct {
 // checkpointable in full: resuming at byte N with an empty state would produce
 // a different answer from scanning [0,N) first.
 type copilotRuntimeScanState struct {
+	subagents             map[string]struct{}
 	model                 string
 	effort                string
 	contextTier           string
@@ -327,6 +338,7 @@ func newCopilotRuntimeScanState() copilotRuntimeScanState { return copilotRuntim
 // its writes back into the committed state.
 func (s copilotRuntimeScanState) clone() copilotRuntimeScanState {
 	out := s
+	out.subagents = maps.Clone(s.subagents)
 	if s.usage != nil {
 		usage := *s.usage
 		out.usage = &usage
@@ -340,6 +352,7 @@ func (s copilotRuntimeScanState) clone() copilotRuntimeScanState {
 
 func (s copilotRuntimeScanState) snapshot() CopilotRuntimeSnapshot {
 	snap := CopilotRuntimeSnapshot{
+		SubagentCount:         len(s.subagents),
 		Model:                 s.model,
 		Effort:                s.effort,
 		ContextTier:           s.contextTier,
@@ -381,7 +394,19 @@ func (s *copilotRuntimeScanState) consumeLine(line []byte) bool {
 		return false
 	}
 	switch event.Type {
+	case "subagent.started":
+		if event.Data.ToolCallID != "" {
+			if s.subagents == nil {
+				s.subagents = map[string]struct{}{}
+			}
+			s.subagents[event.Data.ToolCallID] = struct{}{}
+		}
+	case "subagent.completed", "subagent.failed":
+		delete(s.subagents, event.Data.ToolCallID)
 	case "session.start", "session.resume":
+		if event.AgentID == "" {
+			s.subagents = nil
+		}
 		s.lifetimes++
 		if event.Data.SelectedModel != "" {
 			s.model = event.Data.SelectedModel
@@ -442,6 +467,9 @@ func (s *copilotRuntimeScanState) consumeLine(line []byte) bool {
 			Source:             "truncation",
 		})
 	case "session.shutdown":
+		if event.AgentID == "" {
+			s.subagents = nil
+		}
 		if event.Data.CurrentModel != "" {
 			s.model = event.Data.CurrentModel
 		}

@@ -34,7 +34,7 @@ type dashboardTerminalAgentStatus struct {
 
 // terminalStatusForSessions is the status-only counterpart of
 // stateForConvInSessions. It deliberately skips context/model/cost telemetry,
-// harness catalogs, broker accounting, and Codex/Copilot read-through work.
+// harness catalogs, broker accounting, and full Codex telemetry. Copilot log following supplies background counts.
 // The pieces retained below are exactly those consumed by terminalTabStatus:
 // live hook status, reconciled background counts, exit reason, and recovery.
 func terminalStatusForSessions(
@@ -62,6 +62,7 @@ func terminalStatusForSessions(
 		StatusDetail: pick.StatusDetail,
 	}
 	if online {
+		refreshCopilotContextSnapshotOnRead(pick, true)
 		codexInterruptedSubagents := refreshCodexInterruptedSubagentsForStatus(pick, true)
 		if set := db.ParseSubagentSet(pick.SubagentsJSON); set != nil {
 			for id := range codexInterruptedSubagents {
@@ -71,6 +72,7 @@ func terminalStatusForSessions(
 		} else {
 			out.SubagentCount = pick.SubagentCount
 		}
+		out.SubagentCount = copilotAPISubagentCount(pick, out.SubagentCount)
 		background := backgroundCountsOnRead(pick, true)
 		out.BgShellCount = background.Shells
 		out.MonitorCount = background.Monitors

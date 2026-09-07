@@ -48,7 +48,8 @@ import (
 //
 // It owns the CONTEXT reading (occupancy, the window, and the percentage
 // between them) and the waiting-for-permission state. It does not own busy/idle
-// and does not write it.
+// and does not write it. Running task counts supplement the hook status at
+// display time, using the existing background-work reconciliation.
 //
 // That boundary is measured, not assumed. tclaude's own Copilot hooks were
 // verified to fire for a session created over the RPC API — UserPromptSubmit
@@ -78,7 +79,7 @@ import (
 //
 // The cost is also per-agent rather than shared: every API-driven agent has its
 // own copilot process and its own embedded server, so a fleet does not
-// concentrate these reads anywhere. What a single Copilot server sees is three
+// concentrate these reads anywhere. What a single Copilot server sees is four
 // small local calls, at most once per window.
 
 const (
@@ -151,13 +152,12 @@ const (
 // entry here was observed firing tens of times within a single turn while
 // carrying nothing but a delta of text already accounted for elsewhere.
 var copilotAPIStateNoisyEvents = map[string]bool{
-	"assistant.streaming_delta":        true,
-	"assistant.message_delta":          true,
-	"assistant.reasoning_delta":        true,
-	"assistant.tool_call_delta":        true,
-	"tool.execution_partial_result":    true,
-	"tool.execution_progress":          true,
-	"session.background_tasks_changed": true,
+	"assistant.streaming_delta":     true,
+	"assistant.message_delta":       true,
+	"assistant.reasoning_delta":     true,
+	"assistant.tool_call_delta":     true,
+	"tool.execution_partial_result": true,
+	"tool.execution_progress":       true,
 }
 
 // copilotAPIStateReading is one authoritative observation of a conversation's
@@ -196,7 +196,8 @@ type copilotAPIStateReading struct {
 // shape of value this series keeps being bitten by.
 var copilotAPIStates struct {
 	sync.Mutex
-	readings map[string]copilotAPIStateReading
+	readings   map[string]copilotAPIStateReading
+	background map[string]copilotAPIBackgroundReading
 }
 
 // publishCopilotAPIState records a fresh reading for a conversation.
@@ -221,6 +222,7 @@ func dropCopilotAPIState(convID string) {
 	copilotAPIStates.Lock()
 	defer copilotAPIStates.Unlock()
 	delete(copilotAPIStates.readings, convID)
+	delete(copilotAPIStates.background, convID)
 }
 
 // retireCopilotAPIStateConsumer removes a consumer and, only if it was still
@@ -554,6 +556,25 @@ func (c *copilotAPIStateConsumer) refresh() {
 	} else {
 		c.lastPermissionRead = time.Now()
 		c.applyPermissions(ctx, handle, row, len(pending) > 0)
+	}
+
+	// Task status has its own freshness: a missing context reading must not hide
+	// running agents, and a failed task read must not refresh an old count.
+	if tasks, err := handle.Client.Tasks(ctx, c.sessionID); err != nil {
+		c.warn("tasks", "copilot-api-state: task read failed", err)
+	} else {
+		count := 0
+		for _, task := range tasks {
+			if task.Type == "agent" && task.Status == "running" {
+				count++
+			}
+		}
+		copilotAPIStates.Lock()
+		if copilotAPIStates.background == nil {
+			copilotAPIStates.background = map[string]copilotAPIBackgroundReading{}
+		}
+		copilotAPIStates.background[c.convID] = copilotAPIBackgroundReading{ObservedAt: time.Now(), SubagentCount: count}
+		copilotAPIStates.Unlock()
 	}
 
 	info, err := handle.Client.ContextInfo(ctx, copilotapi.ContextInfoParams{SessionID: c.sessionID})
@@ -892,4 +913,24 @@ func (c *copilotAPIStateConsumer) warn(reason, message string, err error) {
 	c.warnedAt[reason] = now
 	slog.Warn(message, "conv_id", c.convID, "session_id", c.sessionID,
 		"reason", reason, "error", err, "module", "agentd")
+}
+
+// Background counts are connection-scoped just like context readings, but expire
+// independently when the task endpoint stops answering.
+type copilotAPIBackgroundReading struct {
+	ObservedAt    time.Time
+	SubagentCount int
+}
+
+func copilotAPISubagentCount(row *db.SessionRow, fallback int) int {
+	if row.Harness != harness.CopilotName {
+		return fallback
+	}
+	copilotAPIStates.Lock()
+	reading, ok := copilotAPIStates.background[row.ConvID]
+	copilotAPIStates.Unlock()
+	if !ok || time.Since(reading.ObservedAt) > copilotAPIStateFreshness {
+		return copilotLogSubagentCount(row, fallback)
+	}
+	return reading.SubagentCount
 }

@@ -397,3 +397,10 @@ func (n Notification) Lifecycle() (LifecycleNotification, error) {
 	err := json.Unmarshal(n.Params, &decoded)
 	return decoded, err
 }
+
+// Task is the status projection of the task union returned by session.tasks.list
+// (Copilot 1.0.83). Other task-specific fields are intentionally not decoded.
+type Task struct {
+	Type   string `json:"type"`
+	Status string `json:"status"`
+}

@@ -61,6 +61,7 @@ func resetCopilotAPIStateForTest() {
 	copilotAPIStateConsumers.Unlock()
 	copilotAPIStates.Lock()
 	copilotAPIStates.readings = nil
+	copilotAPIStates.background = nil
 	copilotAPIStates.Unlock()
 }
 

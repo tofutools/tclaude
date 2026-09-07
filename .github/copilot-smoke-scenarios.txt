@@ -24,6 +24,8 @@ TestCopilotDirTrustProductionSeedingClearsTheModal
 TestCopilotHooksFireFromTheInstalledFile
 # Our conv-store reads a real session-state database.
 TestCopilotConvStoreReadsRealSessionState
+# Our log follower tracks background agents through real lifecycle records.
+TestCopilotBackgroundEventLog
 # Caller-chosen --session-id is honoured and --resume continues it.
 TestCopilotSessionEnrollmentAndResume
 # Our `tclaude ask` capture: clean stdout, and an exact resume.

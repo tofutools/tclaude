@@ -2495,6 +2495,7 @@ func stateForConvInSessionsBatched(
 		} else {
 			out.SubagentCount = pick.SubagentCount
 		}
+		out.SubagentCount = copilotAPISubagentCount(pick, out.SubagentCount)
 		// Background shells are children of the harness process and
 		// monitors belong to it, so a dead session has neither. For a live
 		// row this re-derives both ledgers from the agent's actual
