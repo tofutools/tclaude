@@ -2081,6 +2081,23 @@ type AWBProxyConfig struct {
 	// `proxy.awb.write` permission slug still gates the caller on top of this:
 	// the config is the operator's ceiling, the slug is the per-agent grant.
 	AllowWrite bool `json:"allow_write,omitempty"`
+
+	// ReadyPolling opts agentd into dispatching AWB's first ready issue. Keys
+	// are workspace names; one serial worker is started for each entry.
+	ReadyPolling map[string]AWBReadyPollingConfig `json:"ready_polling,omitempty"`
+}
+
+// AWBReadyPollingConfig describes the launch policy for one AWB workspace.
+// Interval is a duration string so config files remain readable; an omitted
+// value resolves to one minute.
+type AWBReadyPollingConfig struct {
+	Group          string `json:"group"`
+	Cwd            string `json:"cwd"`
+	Interval       string `json:"interval,omitempty"`
+	Profile        string `json:"profile,omitempty"`
+	SandboxProfile string `json:"sandbox_profile,omitempty"`
+	Harness        string `json:"harness,omitempty"`
+	Worktree       bool   `json:"worktree,omitempty"`
 }
 
 // LinearProxyConfig is the operator's policy for the daemon-mediated Linear
@@ -2391,6 +2408,18 @@ func (c *Config) ResolvedAWBProxy() AWBProxyConfig {
 		allowed := append(append([]string{}, src.AllowedWorkspaces...), src.LegacyAllowedProjects...)
 		out.AllowedWorkspaces = normalizeGitProxyPatterns(allowed)
 		out.AllowWrite = src.AllowWrite
+		if len(src.ReadyPolling) > 0 {
+			out.ReadyPolling = make(map[string]AWBReadyPollingConfig, len(src.ReadyPolling))
+			for key, polling := range src.ReadyPolling {
+				polling.Group = strings.TrimSpace(polling.Group)
+				polling.Cwd = strings.TrimSpace(polling.Cwd)
+				polling.Interval = strings.TrimSpace(polling.Interval)
+				polling.Profile = strings.TrimSpace(polling.Profile)
+				polling.SandboxProfile = strings.TrimSpace(polling.SandboxProfile)
+				polling.Harness = strings.TrimSpace(polling.Harness)
+				out.ReadyPolling[strings.ToLower(strings.TrimSpace(key))] = polling
+			}
+		}
 	}
 	return out
 }

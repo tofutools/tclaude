@@ -1423,6 +1423,18 @@ func TestAWBProxyLegacyAllowedProjectsRemainEffectiveAndRoundTrip(t *testing.T) 
 		"saving an older config must not silently discard its allow-list")
 }
 
+func TestAWBReadyPollingNormalizesWorkspaceAndRoundTrips(t *testing.T) {
+	var cfg Config
+	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"url":"https://awb.example/","username":"worker","allow_write":true,"allowed_workspaces":["TCL"],"ready_polling":{" TCL ":{"group":"builders","cwd":"/repo","worktree":true}}}}}`), &cfg))
+	resolved := cfg.ResolvedAWBProxy()
+	require.Contains(t, resolved.ReadyPolling, "tcl")
+	assert.Equal(t, "builders", resolved.ReadyPolling["tcl"].Group)
+	assert.Equal(t, "https://awb.example", resolved.URL)
+	raw, err := json.Marshal(&cfg)
+	require.NoError(t, err)
+	assert.Contains(t, string(raw), `"ready_polling"`)
+}
+
 // PresentPRNotification is the opt-in gate for the present-pr desktop
 // banner: absent config, absent agent block, and an absent key all mean
 // off, so an existing config file cannot start notifying on upgrade.

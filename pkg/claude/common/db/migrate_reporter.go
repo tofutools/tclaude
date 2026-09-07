@@ -244,6 +244,7 @@ var migrationSteps = []migrationStep{
 	{224, migrateV223toV224},
 	{225, migrateV224toV225},
 	{226, migrateV225toV226},
+	{227, migrateV226toV227},
 }
 
 // MigrationReporter carries optional callbacks that migrate() invokes as it

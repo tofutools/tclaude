@@ -4718,6 +4718,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	// same function in a loop. handleGroupSpawn keeps only the HTTP
 	// shape — decode + validate above, error/JSON mapping below.
 	p := spawnParams{
+		AgentID:                    reservedAgentIDFromContext(r.Context()),
 		EffectiveSandbox:           &effectiveSandbox,
 		Name:                       body.Name,
 		Role:                       body.Role,

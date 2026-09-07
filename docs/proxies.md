@@ -253,6 +253,34 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
   credential. The password is never a field of `config.json` itself.
 - `allowed_workspaces` — workspace keys, case-insensitive, no wildcard by design.
 - `allow_write` — default false.
+- `ready_polling` — optional map keyed by workspace. Each entry starts one
+  serial daemon worker which immediately asks AWB for the first ready issue,
+  claims it, and spawns an agent into the configured group and absolute `cwd`.
+  The worker does not advance until that exact issue is `closed`, even if the
+  agent exits or the issue is released or reassigned. Configuration is read at
+  agentd startup; restart agentd after changing it.
+
+  Each entry requires `group` and an absolute `cwd`. `interval` defaults to
+  `1m`; `profile`, `sandbox_profile`, `harness`, and `worktree` are optional.
+  Polling additionally requires `url`, a non-empty `username`,
+  `allow_write: true`, and inclusion of the workspace in
+  `allowed_workspaces`. With `worktree: true`, the issue ID is used verbatim as
+  the branch name. Spawned agents receive workspace-scoped `proxy.awb.read`
+  and `proxy.awb.write` grants.
+
+```json
+"ready_polling": {
+  "tcl": {
+    "group": "builders",
+    "cwd": "/absolute/path/to/repo",
+    "interval": "1m",
+    "profile": "worker",
+    "sandbox_profile": "repo-write",
+    "harness": "codex",
+    "worktree": true
+  }
+}
+```
 
 AWB applies its own authorization underneath: the daemon's account works in the
 workspaces it is a member of, and one it holds no access to answers `404`. That

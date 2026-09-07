@@ -1466,3 +1466,13 @@ CREATE TABLE session_execution_boundaries (
 		session_id    TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
 		boundary_json TEXT NOT NULL
 	) STRICT;
+
+CREATE TABLE awb_ready_dispatches (
+		workspace TEXT PRIMARY KEY,
+		issue_id TEXT NOT NULL,
+		phase TEXT NOT NULL CHECK (phase IN ('selected','claimed','spawned')),
+		agent_id TEXT NOT NULL,
+		latest_error TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL,
+		updated_at INTEGER NOT NULL
+	) STRICT;
