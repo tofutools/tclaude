@@ -322,7 +322,8 @@ type GroupResult struct{ Group model.Group }
 
 type LaunchRequest struct {
 	RequestContext
-	Target LaunchTarget
+	InitialMessage string
+	Target         LaunchTarget
 }
 
 type LaunchTarget struct {

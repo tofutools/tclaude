@@ -45,7 +45,8 @@ func (t launchTarget) application() app.LaunchTarget {
 
 type launchBody struct {
 	commandIdentity
-	Target launchTarget `json:"target"`
+	InitialMessage string       `json:"initial_message,omitempty"`
+	Target         launchTarget `json:"target"`
 }
 
 type resumeBody struct {
@@ -107,7 +108,7 @@ func operationHandler[Body any](h *Handler, call func(context.Context, model.Pri
 
 func (h *Handler) registerCommands() {
 	h.mux.HandleFunc("POST /v2/launch", operationHandler(h, func(ctx context.Context, p model.Principal, b launchBody) (app.OperationResult, error) {
-		return h.application.Launch(ctx, app.LaunchRequest{RequestContext: b.context(p), Target: b.Target.application()})
+		return h.application.Launch(ctx, app.LaunchRequest{RequestContext: b.context(p), InitialMessage: b.InitialMessage, Target: b.Target.application()})
 	}))
 	h.mux.HandleFunc("POST /v2/resume", operationHandler(h, func(ctx context.Context, p model.Principal, b resumeBody) (app.OperationResult, error) {
 		return h.application.Resume(ctx, app.ResumeRequest{RequestContext: b.context(p), Target: b.Target.application(),

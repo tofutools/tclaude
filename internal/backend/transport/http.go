@@ -1,11 +1,13 @@
 package transport
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/internal/backend/app"
 	"github.com/tofutools/tclaude/internal/backend/model"
@@ -71,7 +73,12 @@ func decodeRequest(w http.ResponseWriter, r *http.Request, target any) bool {
 
 func decodeBoundedRequest(w http.ResponseWriter, r *http.Request, target any, limit int64) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, limit)
-	d := json.NewDecoder(r.Body)
+	data, err := io.ReadAll(r.Body)
+	if err != nil || !utf8.Valid(data) {
+		writeError(w, http.StatusBadRequest, "invalid_request")
+		return false
+	}
+	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if err := d.Decode(target); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request")
