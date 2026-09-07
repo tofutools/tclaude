@@ -18,7 +18,7 @@ func TestDashboardAssets_GroupAttachmentWired(t *testing.T) {
 		{"js/groups-list.js", `snapshot?.group_attachments_mode === 'fixed'`},
 		{"js/groups-list.js", `placement="float"`},
 		{"js/groups-list.js", `placement="fixed"`},
-		{"js/groups-list.js", `class="group-attachment-label"`},
+		{"js/groups-list.js", `class="group-attachment-label qo-text"`},
 		{"js/groups-list.js", `tabindex=${fixed ? '-1' : undefined}`},
 		{"js/groups-list.js", `group-attachment-empty`},
 		{"js/groups-list.js", `class="group-attachment-icon"`},

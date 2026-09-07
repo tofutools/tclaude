@@ -636,7 +636,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
           <option value="float">Float above group title</option>
           <option value="fixed">Fixed group quick item</option>
         </${ConfigSelect}>
-        <span class="cfg-hint">Off by default while this interaction is refined. <strong>Float</strong> shows the paperclip overlay only while the title is hovered. <strong>Fixed</strong> keeps the paperclip and link/ticket label visible as the last group quick item; only its edit pencil appears on hover. Turning the feature off only hides the controls—existing stored attachments remain intact. Takes effect on the next dashboard refresh. Stored as <code>features.group_attachments</code>.</span>
+        <span class="cfg-hint">Off by default while this interaction is refined. <strong>Float</strong> shows the paperclip overlay only while the title is hovered. <strong>Fixed</strong> keeps the paperclip as the last group quick item and folds its link/ticket label with the other quick details; only its edit pencil appears on hover. Turning the feature off only hides the controls—existing stored attachments remain intact. Takes effect on the next dashboard refresh. Stored as <code>features.group_attachments</code>.</span>
       </div>
       <div class="cfg-field">
         <span class="cfg-label">Command palette in terminals</span>
