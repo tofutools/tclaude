@@ -930,7 +930,7 @@ func copilotAPISubagentCount(row *db.SessionRow, fallback int) int {
 	reading, ok := copilotAPIStates.background[row.ConvID]
 	copilotAPIStates.Unlock()
 	if !ok || time.Since(reading.ObservedAt) > copilotAPIStateFreshness {
-		return fallback
+		return copilotLogSubagentCount(row, fallback)
 	}
 	return reading.SubagentCount
 }
