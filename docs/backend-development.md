@@ -1187,3 +1187,9 @@ Sources, cumulative/event accounting, native/historical records, attribution
 precision, currencies and native/estimate cost kinds stay separate. Conversation
 usage does not inherit an agent identity. Missing or unpriced usage is not zero
 spend, and no token prices or currency conversions are inferred.
+
+### Capture a group as a team template
+
+Groups offers **Save group as team template**. It opens the existing team editor with independent copies of the displayed active direct members, retaining order, names and desired launch settings including effort and environment. Stable template member keys are generated independently of names. Nothing is written until **Save team revision**, and saving does not launch work. Cancelling leaves the group and definition catalog unchanged.
+
+The editor explains the capture boundary: retired members and child groups are omitted; live owner/role authority, messages, runtime state and rhythms are not copied. Description and mission are retained as source notes rather than delivered briefings. Review owner, roles, workspace policy and briefings explicitly in the draft. Separate member workspaces are selected initially. Later source group, member or saved-configuration edits do not alter the captured draft or saved team.
