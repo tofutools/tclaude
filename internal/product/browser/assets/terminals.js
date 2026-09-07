@@ -6,6 +6,8 @@ class TerminalWorkspace {
   constructor({requestID}) {
     this.requestID = requestID;
     this.entries = new Map();
+    this.theme = TERMINAL_THEME;
+    document.addEventListener('terminal-theme',event=>{this.theme=terminalThemeFor(event.detail.wizard,event.detail.enabled);for(const entry of this.entries.values())if(entry.terminal)entry.terminal.options.theme={...this.theme};});
     this.selected = null;
     this.sequence = 0;
     this.layout = 'tabs';
@@ -97,7 +99,7 @@ class TerminalWorkspace {
     if (!entry || entry.socket) return;
     if (!entry.terminal) {
       entry.terminal = new Terminal({cols: entry.columns, rows: entry.rows,
-        convertEol: false, theme: {background: '#0f1419', foreground: '#d4d4d4'}});
+        convertEol: false, theme: {...this.theme}});
       entry.panel.replaceChildren();
       entry.terminal.open(entry.panel);
       entry.terminal.onData(data => {

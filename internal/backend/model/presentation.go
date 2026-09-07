@@ -2,13 +2,14 @@ package model
 
 // PresentationPreferences are operator UI choices; they confer no agent authority.
 type PresentationPreferences struct {
-	Mode           string
-	SoundEnabled   bool
-	RadioInRegular bool
-	Channel        string
-	MusicVolume    float64
-	EffectsVolume  float64
-	Revision       Revision
+	NeutralTerminals bool `json:",omitempty"`
+	Mode             string
+	SoundEnabled     bool
+	RadioInRegular   bool
+	Channel          string
+	MusicVolume      float64
+	EffectsVolume    float64
+	Revision         Revision
 }
 type RadioChannel struct{ ID, Name, Description, Group, StreamURL, HomeURL string }
 

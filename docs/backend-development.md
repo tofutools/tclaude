@@ -831,3 +831,14 @@ Format-1 import destinations are not overwritten or accepted as format-2 exact
 retries. Use a new destination for a new conversion. Exact format-2 retries still
 verify the complete typed target, including effort, startup text and archive state.
 This development change does not run an import against any live installation.
+
+### Wizard terminal palette
+
+Wizard mode uses the retained arcane terminal palette, including conventional
+red/green/yellow ANSI meanings. Select Neutral terminal colours in wizard mode
+to keep the regular palette. This operator preference is saved with presentation
+settings and applies to current and newly opened terminal panes without reconnecting
+or sending input. Same-origin pop-outs re-read saved preferences when another
+window announces a successful save; the announcement contains no preference values
+and cannot authorize a write. Reload saved preferences remains available when
+BroadcastChannel is unavailable. Radio playback still requires local intent.
