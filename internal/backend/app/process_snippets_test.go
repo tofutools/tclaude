@@ -40,7 +40,7 @@ func TestProcessSnippetsPreserveFragmentsCASRetryReopenAndUnavailable(t *testing
 	renamed, err := service.WriteProcessSnippet(ctx, rename)
 	require.NoError(t, err)
 	require.Equal(t, model.Revision(2), renamed.Revision)
-	require.JSONEq(t, string(selection), string(renamed.Selection))
+	require.JSONEq(t, string(first.Selection), string(renamed.Selection))
 	stale := rename
 	stale.Context.RequestID = "stale"
 	_, err = service.WriteProcessSnippet(ctx, stale)
@@ -98,4 +98,36 @@ func TestProcessSelectionRejectsInvalidFragments(t *testing.T) {
 	for _, raw := range []string{`null`, `{"version":2,"nodes":[{"ID":"n","Kind":"end"}]}`, `{"version":1,"nodes":[{"ID":"n","Kind":"end"},{"ID":"n","Kind":"end"}]}`, `{"version":1,"nodes":[{"ID":"n","Kind":"end"}],"edges":[{"From":"n","To":"missing"}]}`, `{"version":1,"nodes":[{"ID":"n","Kind":"end"}],"positions":{"missing":{"X":0,"Y":0}}}`, `{"version":1,"nodes":[{"ID":"n","Kind":"unknown"}]}`, `{"version":1,"nodes":[{"ID":"n","Kind":"end","Secret":"not supported"}]}`} {
 		require.ErrorIs(t, app.ValidateProcessSelection(json.RawMessage(raw)), app.ErrInvalid, raw)
 	}
+}
+
+func TestProcessSnippetCanonicalizesAcceptedKeysOnWriteAndRead(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state.db")
+	store, err := backendsqlite.Open(path)
+	require.NoError(t, err)
+	defer store.Close()
+	service := app.New(store, providers.NewRegistry())
+	raw := json.RawMessage(`{"Version":1,"Nodes":[{"ID":"discarded","id":"node_a","kind":"end"}],"Edges":[],"Positions":{"node_a":{"x":0,"y":0}}}`)
+	req := app.ProcessSnippetRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "canonical"}, ID: "snippet_canonical", Action: "create", Name: "Canonical", Selection: raw}
+	saved, err := service.WriteProcessSnippet(ctx, req)
+	require.NoError(t, err)
+	require.True(t, saved.Available)
+	var wire map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(saved.Selection, &wire))
+	require.Contains(t, wire, "nodes")
+	require.NotContains(t, wire, "Nodes")
+	var nodes []map[string]any
+	require.NoError(t, json.Unmarshal(wire["nodes"], &nodes))
+	require.Equal(t, "node_a", nodes[0]["ID"])
+	require.Equal(t, "end", nodes[0]["Kind"])
+	require.NotContains(t, nodes[0], "id")
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	defer db.Close()
+	_, err = db.Exec(`UPDATE process_snippets SET selection=? WHERE id=?`, []byte(raw), req.ID)
+	require.NoError(t, err)
+	listed, err := service.ListProcessSnippets(ctx, model.OperatorPrincipal())
+	require.NoError(t, err)
+	require.Len(t, listed, 1)
+	require.JSONEq(t, string(saved.Selection), string(listed[0].Selection))
 }

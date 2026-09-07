@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -58,4 +59,24 @@ func TestBrowserProcessSnippetsReopenInsertUndoAndDelete(t *testing.T) {
 	page.MustWait(`() => typeof window.releaseSnippetRead==='function'`)
 	page.MustEval(`() => {document.dispatchEvent(new Event('workspace-signout'));window.releaseSnippetRead()}`)
 	page.MustWait(`() => !document.getElementById('process-snippets')`)
+}
+
+func TestBrowserProcessSnippetCanonicalKeysAndZeroLayout(t *testing.T) {
+	ctx, page, operator := processEditorBrowser(t)
+	selection := json.RawMessage(`{"Version":1,"Nodes":[{"id":"left","kind":"end","name":"Left"},{"id":"right","kind":"end","name":"Right"}],"Edges":[{"from":"left","to":"right"}],"Positions":{"left":{"x":0,"y":0},"right":{"x":200,"y":0}}}`)
+	var saved model.ProcessSnippet
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/process-snippets/zero", map[string]any{"request_id": "zero", "action": "create", "name": "Zero layout", "selection": selection}, &saved))
+	page.MustElement("[data-tab=processes]").MustClick()
+	page.MustElementR("#definition-list button", "^New process$").MustClick()
+	page.MustElement("#process-editor-canvas svg")
+	page.MustElementR("#process-editor button", "^Saved snippets$").MustClick()
+	page.MustElementR("#process-snippets button", "^Insert Zero layout$").MustClick()
+	page.MustElement("#process-editor-canvas .process-node[aria-label='Left copy, end']")
+	page.MustElement("#process-editor-canvas .process-node[aria-label='Right copy, end']")
+	page.MustEval(`() => {const original=URL.createObjectURL;URL.createObjectURL=blob=>{blob.text().then(text=>window.exportedSnippetDraft=JSON.parse(text).draft);return original(blob)}}`)
+	page.MustElementR("#process-editor button", "^Export$").MustClick()
+	page.MustWait(`() => !!window.exportedSnippetDraft`)
+	require.True(t, page.MustEval(`() => {const d=window.exportedSnippetDraft,g=d.Process.Graph,left=g.Nodes.find(n=>n.Name==='Left copy'),right=g.Nodes.find(n=>n.Name==='Right copy');return left.ID!=='left'&&right.ID!=='right'&&left.ID!==right.ID&&d.EditorLayout.Nodes[left.ID].X===40&&d.EditorLayout.Nodes[left.ID].Y===40&&d.EditorLayout.Nodes[right.ID].X===240&&d.EditorLayout.Nodes[right.ID].Y===40&&g.Edges.some(e=>e.From===left.ID&&e.To===right.ID)}`).Bool())
+	page.MustElementR("#process-editor button", "^Undo$").MustClick()
+	require.Len(t, page.MustElements("#process-editor-canvas .process-node"), 1)
 }

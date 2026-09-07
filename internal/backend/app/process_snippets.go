@@ -34,38 +34,48 @@ type ProcessSnippetAPI interface {
 // ValidateProcessSelection checks a bounded fragment, not graph executability.
 // References and incomplete nodes are intentionally preserved for later authoring.
 func ValidateProcessSelection(data json.RawMessage) error {
+	_, err := normalizeProcessSelection(data)
+	return err
+}
+
+// Canonical typed keys match the case-sensitive browser representation.
+func normalizeProcessSelection(data json.RawMessage) (json.RawMessage, error) {
 	if len(data) == 0 || len(data) > 256<<10 || !utf8.Valid(data) {
-		return ErrInvalid
+		return nil, ErrInvalid
 	}
 	var selection model.ProcessSelection
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if d.Decode(&selection) != nil || d.Decode(new(any)) != io.EOF || selection.Version != 1 || selection.Edges == nil || selection.Positions == nil || len(selection.Nodes) == 0 || len(selection.Nodes) > 100 || len(selection.Edges) > 300 || len(selection.Positions) > 100 {
-		return ErrInvalid
+		return nil, ErrInvalid
 	}
 	ids := map[model.WorkNodeID]bool{}
 	for _, n := range selection.Nodes {
 		if model.ValidateStableID("node", string(n.ID)) != nil || ids[n.ID] {
-			return ErrInvalid
+			return nil, ErrInvalid
 		}
 		ids[n.ID] = true
 		switch n.Kind {
 		case model.WorkNodeTask, model.WorkNodeDecision, model.WorkNodeFork, model.WorkNodeJoin, model.WorkNodeWait, model.WorkNodeEnd:
 		default:
-			return ErrInvalid
+			return nil, ErrInvalid
 		}
 	}
 	for _, e := range selection.Edges {
 		if !ids[e.From] || !ids[e.To] {
-			return ErrInvalid
+			return nil, ErrInvalid
 		}
 	}
 	for id, p := range selection.Positions {
 		if !ids[id] || math.IsNaN(p.X) || math.IsNaN(p.Y) || math.IsInf(p.X, 0) || math.IsInf(p.Y, 0) || math.Abs(p.X) > 1e7 || math.Abs(p.Y) > 1e7 {
-			return ErrInvalid
+			return nil, ErrInvalid
 		}
 	}
-	return nil
+	out, err := json.Marshal(selection)
+	if err != nil || len(out) > 256<<10 {
+		return nil, ErrInvalid
+	}
+	return out, nil
 }
 func (s *Service) ListProcessSnippets(ctx context.Context, p model.Principal) ([]model.ProcessSnippet, error) {
 	if err := requireOperator(p); err != nil {
@@ -77,7 +87,9 @@ func (s *Service) ListProcessSnippets(ctx context.Context, p model.Principal) ([
 	}
 	snippets, err := store.ListProcessSnippets(ctx)
 	for i := range snippets {
-		snippets[i].Available = ValidateProcessSelection(snippets[i].Selection) == nil
+		normalized, normalizeErr := normalizeProcessSelection(snippets[i].Selection)
+		snippets[i].Selection = normalized
+		snippets[i].Available = normalizeErr == nil
 		if !snippets[i].Available {
 			snippets[i].Selection = nil
 		}
@@ -93,9 +105,11 @@ func (s *Service) WriteProcessSnippet(ctx context.Context, in ProcessSnippetRequ
 	}
 	switch in.Action {
 	case "create":
-		if in.ExpectedRevision != 0 || ValidateProcessSelection(in.Selection) != nil {
+		normalized, normalizeErr := normalizeProcessSelection(in.Selection)
+		if in.ExpectedRevision != 0 || normalizeErr != nil {
 			return model.ProcessSnippet{}, ErrInvalid
 		}
+		in.Selection = normalized
 	case "rename", "delete":
 		if in.ExpectedRevision == 0 || len(in.Selection) != 0 {
 			return model.ProcessSnippet{}, ErrInvalid
@@ -117,7 +131,9 @@ func (s *Service) WriteProcessSnippet(ctx context.Context, in ProcessSnippetRequ
 		return model.ProcessSnippet{}, ErrUnsupported
 	}
 	result, err := store.WriteProcessSnippet(ctx, in, s.now().UTC())
-	result.Available = !result.Deleted && ValidateProcessSelection(result.Selection) == nil
+	normalized, normalizeErr := normalizeProcessSelection(result.Selection)
+	result.Selection = normalized
+	result.Available = !result.Deleted && normalizeErr == nil
 	if !result.Available {
 		result.Selection = nil
 	}

@@ -262,7 +262,7 @@ class ProcessEditor {
     this.change(d => {
       for (const original of this.clipboard.nodes) {
         const node = clone(original); node.ID = ids.get(original.ID); node.Name = (node.Name || node.Kind) + ' copy'; d.Process.Graph.Nodes.push(node);
-        const p = this.clipboard.positions[original.ID]; d.EditorLayout.Nodes[node.ID] = {X: (p?.X || 200) + 40, Y: (p?.Y || 150) + 40};
+        const p = this.clipboard.positions[original.ID]; d.EditorLayout.Nodes[node.ID] = {X: (p?.X ?? 200) + 40, Y: (p?.Y ?? 150) + 40};
       }
       for (const edge of this.clipboard.edges) d.Process.Graph.Edges.push({...edge, From: ids.get(edge.From), To: ids.get(edge.To)});
     });
