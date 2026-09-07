@@ -9,7 +9,7 @@ const terminals = new TerminalWorkspace({requestID});
 const navigation = new WorkspaceNavigation({select:tab=>selectTab(tab,false),report:showError});
 const presentation = new PresentationWorkspace({api});
 document.addEventListener('presentation-save-state',()=>{const status=$('group-order-status');if(status)status.textContent=presentation.saved.textContent});
-document.addEventListener('group-order-changed',()=>renderGroupControls(snapshot,{host:$('group-management'),el,button,edit,api,refresh,presentation}));
+document.addEventListener('group-order-changed',()=>{renderGroupControls(snapshot,{host:$('group-management'),el,button,edit,api,refresh,presentation});rosterWorkspace.update(snapshot,agentRow,presentation.prefs.GroupOrder||[])});
 const terminalTools = new TerminalTools({host:$('terminal-tools'),workspace:terminals,el,button});
 const terminalDownloads = new TerminalDownloads({host:$('terminal-downloads'),workspace:terminals,el,button});
 const terminalFiles = new TerminalFiles({host:$('terminal-files'),workspace:terminals,tools:terminalTools,api,el,button,requestID});
@@ -121,7 +121,7 @@ function messageCard(message){
 function render(){
  presentation.update(snapshot);
  renderGroupControls(snapshot,{host:$('group-management'),el,button,edit,api,refresh,presentation});
- rosterWorkspace.update(snapshot,agentRow);
+ rosterWorkspace.update(snapshot,agentRow,presentation.prefs.GroupOrder||[]);
  workspaceBrowser.update(snapshot);
  const work=$('work-list');work.replaceChildren();
  for(const result of snapshot.work_runs||[])work.append(workCard(result));
