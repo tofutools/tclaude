@@ -51,6 +51,7 @@ func TestBrowserAutomationScheduleToggleRunAndRecipientHistory(t *testing.T) {
 	page.MustElementR("#automation-list button", "^Occurrence history$").MustClick()
 	page.MustElementR("#automation-list .occurrence-history", "Scheduled recipient: queued")
 	page.MustElementR("#automation-list button", "^Edit rule$").MustClick()
+	require.False(t, page.MustHas("#editor [name=enabled]"))
 	require.Equal(t, "recipient", page.MustElement("#editor [name=recipients]").MustProperty("value").Str())
 	require.Equal(t, "message.send", page.MustElement("#editor [name=allowed_actions]").MustProperty("value").Str())
 	page.MustElement("#editor [name=body]").MustSelectAllText().MustInput("Please review the updated change.")

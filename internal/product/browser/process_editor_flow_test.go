@@ -15,12 +15,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/internal/backend/app"
 	"github.com/tofutools/tclaude/internal/backend/client"
+	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/ports"
 	"github.com/tofutools/tclaude/internal/backend/providers"
 	backend "github.com/tofutools/tclaude/internal/backend/server"
 )
 
-func processEditorBrowser(t *testing.T) (context.Context, *rod.Page, *client.Client) {
+func processEditorBrowser(t *testing.T, cohort ...ports.Provider) (context.Context, *rod.Page, *client.Client) {
 	t.Helper()
 	if os.Getenv("TCLAUDE_BROWSER_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_BROWSER_SMOKE=1 for installed-Chrome product acceptance")
@@ -38,7 +40,11 @@ func processEditorBrowser(t *testing.T) (context.Context, *rod.Page, *client.Cli
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	t.Cleanup(cancel)
 	backendDone := make(chan error, 1)
-	go func() { backendDone <- backend.Serve(ctx, state, providers.NewRegistry()) }()
+	checkout, err := host.NewCheckoutHost("")
+	require.NoError(t, err)
+	go func() {
+		backendDone <- backend.Serve(ctx, state, providers.NewRegistry(cohort...), backend.JourneyServices{Workspaces: checkout})
+	}()
 	require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(state, "api.sock")); return err == nil }, 5*time.Second, 10*time.Millisecond)
 	operator, err := client.New(filepath.Join(state, "api.sock"), filepath.Join(state, "operator.token"))
 	require.NoError(t, err)
@@ -64,6 +70,7 @@ func processEditorBrowser(t *testing.T) (context.Context, *rod.Page, *client.Cli
 	require.NoError(t, browser.Connect())
 	t.Cleanup(func() { _ = browser.Close() })
 	page := browser.MustPage(view.URL())
+	page.MustElementR("#connection", "^Updated ")
 	return ctx, page, operator
 }
 
