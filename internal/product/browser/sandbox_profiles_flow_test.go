@@ -50,6 +50,10 @@ func TestBrowserSandboxAuthoringPreservesLiteralRulesAndPinnedIncludes(t *testin
 	page.MustElement(".sandbox-editor [aria-label='Export names (one per line) 1']").MustInput("PATH\nTOOLS")
 	page.MustElementR(".sandbox-editor button", "^Inspect host paths$").MustClick()
 	page.MustElementR("[aria-label='Sandbox path preview']", "available")
+	page.MustElementR(".sandbox-editor summary", "^Combined include policy$").MustClick()
+	page.MustElementR(".sandbox-editor code", "^PARENT$")
+	page.MustElementR(".sandbox-editor pre", "^first$")
+
 	require.NoFileExists(t, marker)
 	page.MustEval(`()=>{const original=window.fetch.bind(window);window.fetch=async(...args)=>{const result=await original(...args);if(String(args[0]).endsWith('/v2/sandbox-profiles')&&args[1]?.method==='POST'){window.fetch=original;throw new Error('simulated sandbox response loss')}return result}}`)
 	page.MustElementR(".sandbox-editor button", "^Save sandbox profile$").MustClick()

@@ -1227,6 +1227,10 @@ Preview validates the draft and pinned includes and observes filesystem paths
 without creating missing directories or running setup scripts. It reports path
 kind, canonical spelling, missing paths and grants intersecting the backend's
 protected state directory. Included observations retain their source revision.
-These observations are neither an effective merged policy nor an enforcement
-receipt. The editor currently authors policies independently of launch settings;
+The combined include preview shows filesystem/environment overrides, ordered
+setup, and each independent network/socket constraint. Engine choice has explicit
+include precedence; private namespace and harness configuration floors remain
+restrictive. A shared include is composed separately within each sibling before
+those siblings combine. These observations and composed values are not an
+enforcement receipt. The editor currently authors policies independently of launch settings;
 custom profile selection and actual host enforcement are not yet connected.

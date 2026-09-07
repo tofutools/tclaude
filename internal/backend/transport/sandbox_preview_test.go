@@ -45,6 +45,10 @@ func TestPublicSandboxPreviewObservesPathsWithoutPublishingOrCreating(t *testing
 	require.Equal(t, &parent.Revision.Ref, preview.Paths[0].Source)
 	require.Equal(t, "missing", preview.Paths[1].Observation.State)
 	require.Nil(t, preview.Paths[1].Source)
+	require.Len(t, preview.Composition.Values.Filesystem, 2)
+	require.Equal(t, policy.PreLaunch, preview.Composition.Values.PreLaunch)
+	require.Empty(t, preview.Composition.Values.Includes)
+
 	require.NoDirExists(t, missing)
 	catalog, err := service.ListSandboxProfiles(context.Background(), model.OperatorPrincipal(), true)
 	require.NoError(t, err)
