@@ -270,5 +270,6 @@ class TerminalWorkspace {
     this.status.textContent = entry
       ? `${states[entry.state]} · ${entry.label} · ${entry.id}. Disconnecting or closing a tab leaves the workload running.`
       : 'No attachment open. Choose Attach on a running agent or workspace shell.';
+    this.onStatus?.();
   }
 }
