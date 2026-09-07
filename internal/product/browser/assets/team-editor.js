@@ -118,7 +118,7 @@ class TeamEditor {
       try { const data = new FormData(form), values = Object.fromEntries(data); for (const f of fields) { if (f.multiple) values[f.key] = data.getAll(f.key); if (f.type === 'checkbox') values[f.key] = form.elements[f.key].checked; } this.unapplied = false; apply(values); }
       catch (error) { this.unapplied = true; this.fail(error); }
     };
-    this.content.append(form); return form;
+    this.content.append(form); attachLaunchSupportPreview({host:form,api:this.api}); return form;
   }
   member(original) {
     const m = original || {Key: '', Name: '', Desired: {}, Roles: [], Required: true, Owner: false, BriefingIDs: []}, desired = m.Desired;
@@ -166,6 +166,7 @@ class TeamEditor {
       const d = this.configurations[Number(select.value)].Revision.Desired;
       for (const [key, property] of Object.entries({harness: 'Harness', model: 'Model', effort: 'Effort', cwd: 'WorkingDirectory', approval: 'Approval', sandbox: 'Sandbox'})) form.elements[key].value = d[property] || '';
       showEnvironment(d.Environment);
+      form.elements.harness.dispatchEvent(new Event('change', {bubbles: true}));
       this.unapplied = true;
     };
     this.content.prepend(select, el('p', 'Settings are copied into this immutable team revision. Deployment binds each member to the explicitly selected workspace; it does not follow later profile edits.'));

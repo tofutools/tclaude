@@ -84,7 +84,8 @@ func New(config Config) (*Provider, error) {
 
 func (*Provider) Name() string { return Name }
 func (*Provider) Capabilities() ports.ProviderCapabilities {
-	return ports.ProviderCapabilities{PreparedInitialInput: true, NativeGuidance: []ports.NativeGuidanceCapability{{EventKind: "session_start", Timing: model.StandingOrderSameContinuation}, {EventKind: "user_prompt", Timing: model.StandingOrderSameContinuation}}}
+	policy := supportedLaunchPolicy()
+	return ports.ProviderCapabilities{LaunchPolicy: &policy, PreparedInitialInput: true, NativeGuidance: []ports.NativeGuidanceCapability{{EventKind: "session_start", Timing: model.StandingOrderSameContinuation}, {EventKind: "user_prompt", Timing: model.StandingOrderSameContinuation}}}
 }
 func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 func (p *Provider) History() ports.HistoryReader                      { return historyReader{provider: p} }
@@ -257,7 +258,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	}
 	return &prepared{provider: p, request: request, nativeID: nativeID, stateRoot: stateRoot, removeOnAbort: removeOnAbort, terminal: terminal, spool: spool, access: access, callback: callback, guidance: guidance, handler: handler, normalizer: normalizer, callbackCommand: callbackCommand,
 		description: ports.PreparedDescription{ExecutionID: request.Spec.ExecutionID, Attempt: request.Spec.Attempt, Topology: ports.TopologyTerminalAuthoritative,
-			Requirements:    ports.RuntimeRequirements{Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory, PrivateStorage: true, Terminal: &ports.TerminalRequirement{Interactive: true}, Policy: ports.PolicyRequirements{SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxReadOnly, model.SandboxWorkspaceWrite, model.SandboxUnconfined}}},
+			Requirements:    ports.RuntimeRequirements{Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory, PrivateStorage: true, Terminal: &ports.TerminalRequirement{Interactive: true}, Policy: supportedLaunchPolicy()},
 			EffectivePolicy: ports.EffectivePolicy{Approval: request.Spec.Approval, Sandbox: request.Spec.Sandbox, ApprovalEnforced: true, SandboxEnforced: true},
 			Resources:       []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: terminal.ResourceKey()}, {Kind: ports.ResourceProcess, Key: stateRoot}}, Evidence: initial, AccessDelivery: access, InitialInput: initialInput}}, nil
 }
@@ -817,3 +818,7 @@ var _ ports.HistoryProvider = (*Provider)(nil)
 var _ ports.ActionCredentialProvider = (*Provider)(nil)
 var _ ports.PreparedAttempt = (*prepared)(nil)
 var _ ports.Runtime = (*Runtime)(nil)
+
+func supportedLaunchPolicy() ports.PolicyRequirements {
+	return ports.PolicyRequirements{SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxReadOnly, model.SandboxWorkspaceWrite, model.SandboxUnconfined}}
+}
