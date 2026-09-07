@@ -302,14 +302,15 @@ const (
 )
 
 type Observation struct {
-	ObservedAt         time.Time
-	Workload           WorkloadObservedState
-	Context            ContextObservedState
-	AgentActivity      AgentActivityObservedState
-	AttachmentActive   bool
-	ExitCode           *int
-	NativeConversation *model.NativeConversationEvidence
-	Evidence           model.ProviderEvidence
+	ObservedAt              time.Time
+	Workload                WorkloadObservedState
+	Context                 ContextObservedState
+	AgentActivity           AgentActivityObservedState
+	AgentActivityObservedAt time.Time
+	AttachmentActive        bool
+	ExitCode                *int
+	NativeConversation      *model.NativeConversationEvidence
+	Evidence                model.ProviderEvidence
 }
 
 type Interaction struct {
