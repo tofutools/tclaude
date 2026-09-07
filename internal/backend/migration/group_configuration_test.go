@@ -99,3 +99,42 @@ func TestImportedGroupDefaultPinsSourceIdentityAndRequiresExplicitCreation(t *te
 		})
 	}
 }
+
+func TestImportedGroupDefaultNameWithoutIDIsDiagnosedWithoutGuessing(t *testing.T) {
+	ctx := context.Background()
+	bundle := buildFixture(t, fixtureOptions{})
+	alterFixture(t, bundle, `ALTER TABLE agent_groups ADD COLUMN default_profile TEXT;
+ INSERT INTO spawn_profiles(id,name,permission_overrides,environment_json,role_refs) VALUES('7','Selected','[]','[]','[]');
+ UPDATE agent_groups SET default_profile='Selected',default_profile_id=NULL;`)
+	path := filepath.Join(t.TempDir(), "db")
+	_, err := ImportSnapshot(ctx, bundle, ImportOptions{DestinationPath: path})
+	require.NoError(t, err)
+	inspection, err := Inspect(ctx, bundle)
+	require.NoError(t, err)
+	plan, err := Plan(inspection)
+	require.NoError(t, err)
+	store, err := db.Open(path)
+	require.NoError(t, err)
+	svc := app.New(store, providers.NewRegistry())
+	defaults, err := svc.GetGroupConfiguration(ctx, model.OperatorPrincipal(), model.GroupID(findIdentity(t, plan, "agent_groups", "1").TargetID))
+	require.NoError(t, err)
+	require.Nil(t, defaults.Profile)
+	require.Zero(t, defaults.Revision)
+	report, err := store.ImportReport(ctx)
+	require.NoError(t, err)
+	found := false
+	for _, d := range report.Diagnostics {
+		if d.Code == "group_default_retained_unmapped" {
+			found = true
+		}
+	}
+	require.True(t, found)
+	rows, err := store.ImportedSourceRecords(ctx, "agent_groups")
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Contains(t, string(rows[0].Payload), "Selected")
+	require.NoError(t, store.Close())
+	repeated, err := ImportSnapshot(ctx, bundle, ImportOptions{DestinationPath: path})
+	require.NoError(t, err)
+	require.True(t, repeated.Repeated)
+}
