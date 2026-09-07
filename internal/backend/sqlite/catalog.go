@@ -11,6 +11,7 @@ import (
 )
 
 const configurationCatalogSchema = `
+CREATE TABLE IF NOT EXISTS configuration_profile_lifecycle_requests(request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS configuration_defaults(id INTEGER PRIMARY KEY CHECK(id=1), record BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS configuration_defaults_requests(request_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, result BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS configuration_profiles(id TEXT PRIMARY KEY, record BLOB NOT NULL);
@@ -47,7 +48,7 @@ func (s *Store) SaveConfigurationProfile(ctx context.Context, w app.Configuratio
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return app.ConfigurationProfileResult{}, err
 	}
-	if current.Revision != w.ExpectedRevision {
+	if current.Archived || current.Revision != w.ExpectedRevision {
 		return app.ConfigurationProfileResult{}, app.ErrConflict
 	}
 	w.Profile.Revision = current.Revision + 1
@@ -183,6 +184,16 @@ func (s *Store) SaveConfigurationDefaults(ctx context.Context, w app.Configurati
 	if old.Revision != w.ExpectedRevision {
 		return old, app.ErrConflict
 	}
+	if w.Defaults.Global != nil {
+		if err := requireActiveConfigurationProfileTx(ctx, tx, w.Defaults.Global); err != nil {
+			return old, err
+		}
+	}
+	for _, ref := range w.Defaults.Harnesses {
+		if err := requireActiveConfigurationProfileTx(ctx, tx, &ref); err != nil {
+			return old, err
+		}
+	}
 	w.Defaults.Revision = old.Revision + 1
 	data, err = json.Marshal(w.Defaults)
 	if err != nil {
@@ -198,4 +209,98 @@ func (s *Store) SaveConfigurationDefaults(ctx context.Context, w app.Configurati
 		return old, err
 	}
 	return w.Defaults, nil
+}
+
+func requireActiveConfigurationProfileTx(ctx context.Context, tx *sql.Tx, ref *model.ConfigurationProfileRef) error {
+	if ref == nil {
+		return nil
+	}
+	var data []byte
+	if err := tx.QueryRowContext(ctx, `SELECT record FROM configuration_profiles WHERE id=?`, ref.ProfileID).Scan(&data); err != nil {
+		return classify(err)
+	}
+	var profile model.ConfigurationProfile
+	if err := json.Unmarshal(data, &profile); err != nil {
+		return err
+	}
+	if profile.Archived {
+		return app.ErrConflict
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT record FROM configuration_profile_revisions WHERE profile_id=? AND revision_id=?`, ref.ProfileID, ref.RevisionID).Scan(&data); err != nil {
+		return classify(err)
+	}
+	var revision model.ConfigurationProfileRevision
+	if err := json.Unmarshal(data, &revision); err != nil {
+		return err
+	}
+	if revision.Ref != *ref {
+		return app.ErrConflict
+	}
+	return nil
+}
+func (s *Store) SetConfigurationProfileArchived(ctx context.Context, w app.ConfigurationProfileArchiveWrite) (model.ConfigurationProfile, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.ConfigurationProfile{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var profile model.ConfigurationProfile
+	var fingerprint string
+	var data []byte
+	err = tx.QueryRowContext(ctx, `SELECT fingerprint,result FROM configuration_profile_lifecycle_requests WHERE request_id=?`, w.RequestID).Scan(&fingerprint, &data)
+	if err == nil {
+		if fingerprint != w.Fingerprint {
+			return profile, app.ErrConflict
+		}
+		err = json.Unmarshal(data, &profile)
+		return profile, err
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return profile, err
+	}
+	if err = tx.QueryRowContext(ctx, `SELECT record FROM configuration_profiles WHERE id=?`, w.ID).Scan(&data); err != nil {
+		return profile, classify(err)
+	}
+	if err = json.Unmarshal(data, &profile); err != nil {
+		return profile, err
+	}
+	if profile.Revision != w.ExpectedRevision {
+		return profile, app.ErrConflict
+	}
+	if w.Archived {
+		err = tx.QueryRowContext(ctx, `SELECT record FROM configuration_defaults WHERE id=1`).Scan(&data)
+		if err == nil {
+			var defaults model.ConfigurationDefaults
+			if err = json.Unmarshal(data, &defaults); err != nil {
+				return profile, err
+			}
+			if defaults.Global != nil && defaults.Global.ProfileID == w.ID {
+				return profile, app.ErrConflict
+			}
+			for _, ref := range defaults.Harnesses {
+				if ref.ProfileID == w.ID {
+					return profile, app.ErrConflict
+				}
+			}
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return profile, err
+		}
+	}
+	profile.Archived = w.Archived
+	profile.Revision++
+	profile.UpdatedAt = w.At
+	data, err = json.Marshal(profile)
+	if err != nil {
+		return profile, err
+	}
+	if _, err = tx.ExecContext(ctx, `UPDATE configuration_profiles SET record=? WHERE id=?`, data, w.ID); err != nil {
+		return profile, err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO configuration_profile_lifecycle_requests(request_id,fingerprint,result) VALUES(?,?,?)`, w.RequestID, w.Fingerprint, data); err != nil {
+		return profile, classify(err)
+	}
+	if err = tx.Commit(); err != nil {
+		return profile, err
+	}
+	return profile, nil
 }
