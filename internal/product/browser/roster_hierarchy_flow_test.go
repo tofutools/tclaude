@@ -46,6 +46,7 @@ func TestBrowserRosterHierarchyOrderAndDirectMemberFiltering(t *testing.T) {
 	page.MustElement("[aria-label='Group filter']").MustSelect("Team · parent")
 	require.Empty(t, page.MustElements("#roster input[type=checkbox]"), "parent filter must not inherit child membership")
 	page.MustElement("[aria-label='Group filter']").MustSelect("Team · child_b")
+	page.MustElement("#roster [data-group-id=parent] > .roster-children > [data-group-id=child_b]")
 	require.Len(t, page.MustElements("#roster input[type=checkbox]"), 1)
 	require.Equal(t, "beta", page.MustElement("#roster .name").MustText())
 	var snapshot struct {
@@ -62,4 +63,15 @@ func TestBrowserRosterHierarchyOrderAndDirectMemberFiltering(t *testing.T) {
 			require.Equal(t, model.GroupID("parent"), g.ParentGroupID)
 		}
 	}
+	// An agent may also belong directly to an ancestor. Filtering the child
+	// retains that heading, but must not duplicate its selectable row there.
+	require.NoError(t, operator.Call(ctx, "PUT", "/v2/groups/parent", map[string]any{"name": "Team", "members": []string{"beta"}, "expected_revision": 1}, nil))
+	page.MustEval(`() => {window.oldRosterChild=document.querySelector('#roster [data-group-id=child_b]')}`)
+	page.MustElement("#refresh").MustClick()
+	page.MustWait(`() => !window.oldRosterChild.isConnected`)
+	page.MustElement("#roster [data-group-id=parent] > .roster-children > [data-group-id=child_b]")
+	require.Len(t, page.MustElements("#roster input[type=checkbox]"), 1)
+	require.Empty(t, page.MustElements("#roster [data-group-id=parent] > .row"))
+	require.Len(t, page.MustElements("#roster [data-group-id=child_b] > .row"), 1)
+
 }
