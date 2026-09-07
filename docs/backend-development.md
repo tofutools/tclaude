@@ -1164,3 +1164,10 @@ current authority and returns the durable operation before mutable workspace,
 group, or provider preparation; changing the authored request conflicts. An
 admitted or uncertain operation is never started again by retrying. The normal
 workspace-use claim remains until shell exit is observed.
+
+
+### Configured launch support
+
+Agent and configuration forms and the team member editor show the configured adapter's supported approval/confinement choices. Changing harness or policy refreshes this read-only explanation without altering authored values. Unsupported or unavailable-provider settings can still be saved as offline intent; they require correction or provider configuration before launch.
+
+`GET /v2/launch-support?harness=<name>` is operator-only and reads the adapter's static declaration. It reports whether that provider is configured, whether policy support is known, supported approval and sandbox modes, and prepared-initial-input capability. It performs no native preparation, credential delivery, storage write or execution. This is not an installation, authentication, authority or runtime readiness check. Providers that omit the declaration remain explicitly unknown. The actual preparation and release gates remain authoritative.

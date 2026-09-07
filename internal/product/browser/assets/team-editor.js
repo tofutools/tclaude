@@ -99,7 +99,7 @@ class TeamEditor {
       try { const data = new FormData(form), values = Object.fromEntries(data); for (const f of fields) { if (f.multiple) values[f.key] = data.getAll(f.key); if (f.type === 'checkbox') values[f.key] = form.elements[f.key].checked; } this.unapplied = false; apply(values); }
       catch (error) { this.unapplied = true; this.fail(error); }
     };
-    this.content.append(form); return form;
+    this.content.append(form); attachLaunchSupportPreview({host:form,api:this.api}); return form;
   }
   member(original) {
     const m = original || {Key: '', Name: '', Desired: {}, Roles: [], Required: true, Owner: false, BriefingIDs: []}, desired = m.Desired;
