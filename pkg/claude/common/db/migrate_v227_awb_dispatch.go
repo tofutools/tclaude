@@ -12,13 +12,15 @@ func migrateV226toV227(d *sql.DB) error {
 	}
 	defer func() { _ = tx.Rollback() }()
 	if _, err = tx.Exec(`CREATE TABLE IF NOT EXISTS awb_ready_dispatches (
-		workspace TEXT PRIMARY KEY,
+		process TEXT PRIMARY KEY,
+		workspace TEXT NOT NULL,
 		issue_id TEXT NOT NULL,
 		phase TEXT NOT NULL CHECK (phase IN ('selected','claimed','spawned')),
 		agent_id TEXT NOT NULL,
 		latest_error TEXT NOT NULL DEFAULT '',
 		created_at INTEGER NOT NULL,
-		updated_at INTEGER NOT NULL
+		updated_at INTEGER NOT NULL,
+		UNIQUE(workspace, issue_id)
 	) STRICT`); err != nil {
 		return fmt.Errorf("migrate v226→v227: create awb_ready_dispatches: %w", err)
 	}

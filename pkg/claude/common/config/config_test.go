@@ -1425,22 +1425,36 @@ func TestAWBProxyLegacyAllowedProjectsRemainEffectiveAndRoundTrip(t *testing.T) 
 
 func TestAWBReadyPollingNormalizesWorkspaceAndRoundTrips(t *testing.T) {
 	var cfg Config
-	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"url":"https://awb.example/","username":"worker","allow_write":true,"allowed_workspaces":["TCL"],"ready_polling":{" TCL ":{"group":"builders","cwd":"/repo","worktree":true}}}}}`), &cfg))
+	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"url":"https://awb.example/","username":"worker","allow_write":true,"allowed_workspaces":["TCL"],"ready_polling":{" Builders ":{"workspace":" TCL ","labels":["backend","urgent"],"group":"builders","cwd":"/repo","worktree":true}}}}}`), &cfg))
 	resolved := cfg.ResolvedAWBProxy()
-	require.Contains(t, resolved.ReadyPolling, "tcl")
-	assert.Equal(t, "builders", resolved.ReadyPolling["tcl"].Group)
+	require.Contains(t, resolved.ReadyPolling, "builders")
+	assert.Equal(t, "tcl", resolved.ReadyPolling["builders"].Workspace)
+	assert.Equal(t, []string{"backend", "urgent"}, resolved.ReadyPolling["builders"].Labels)
+	assert.Equal(t, "builders", resolved.ReadyPolling["builders"].Group)
 	assert.Equal(t, "https://awb.example", resolved.URL)
 	raw, err := json.Marshal(&cfg)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"ready_polling"`)
 }
 
-func TestValidateAWBReadyPollingRejectsDuplicateNormalizedWorkspaces(t *testing.T) {
+func TestValidateAWBReadyPollingRejectsDuplicateNormalizedProcesses(t *testing.T) {
 	var cfg Config
-	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"ready_polling":{"TCL":{"group":"one","cwd":"/one"}," tcl ":{"group":"two","cwd":"/two"}}}}}`), &cfg))
+	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"ready_polling":{"BUILD":{"workspace":"tcl","group":"one","cwd":"/one"}," build ":{"workspace":"tcl","group":"two","cwd":"/two"}}}}}`), &cfg))
 	errs := Validate(&cfg)
 	require.NotEmpty(t, errs)
-	assert.Contains(t, strings.Join(errs, " | "), "normalize to the same workspace")
+	assert.Contains(t, strings.Join(errs, " | "), "normalize to the same process")
+}
+
+func TestValidateAWBReadyPollingAllowsDisjointLabelsForSameWorkspace(t *testing.T) {
+	var cfg Config
+	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"ready_polling":{"backend":{"workspace":"tcl","labels":["backend"],"group":"one","cwd":"/one"},"frontend":{"workspace":"tcl","labels":["frontend"],"group":"two","cwd":"/two"}}}}}`), &cfg))
+	assert.Empty(t, Validate(&cfg))
+}
+
+func TestValidateAWBReadyPollingRejectsOverlappingLabelsForSameWorkspace(t *testing.T) {
+	var cfg Config
+	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"ready_polling":{"one":{"workspace":"tcl","labels":["backend","urgent"],"group":"one","cwd":"/one"},"two":{"workspace":"tcl","labels":["urgent"],"group":"two","cwd":"/two"}}}}}`), &cfg))
+	assert.Contains(t, strings.Join(Validate(&cfg), " | "), "disjoint non-empty label filters")
 }
 
 // PresentPRNotification is the opt-in gate for the present-pr desktop

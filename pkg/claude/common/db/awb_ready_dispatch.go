@@ -7,19 +7,19 @@ import (
 )
 
 type AWBReadyDispatch struct {
-	Workspace, IssueID, Phase, AgentID, LatestError string
-	CreatedAt, UpdatedAt                            time.Time
+	Process, Workspace, IssueID, Phase, AgentID, LatestError string
+	CreatedAt, UpdatedAt                                     time.Time
 }
 
-func GetAWBReadyDispatch(workspace string) (*AWBReadyDispatch, error) {
+func GetAWBReadyDispatch(process string) (*AWBReadyDispatch, error) {
 	d, err := Open()
 	if err != nil {
 		return nil, err
 	}
 	var row AWBReadyDispatch
 	var created, updated int64
-	err = d.QueryRow(`SELECT workspace,issue_id,phase,agent_id,latest_error,created_at,updated_at FROM awb_ready_dispatches WHERE workspace=?`, workspace).
-		Scan(&row.Workspace, &row.IssueID, &row.Phase, &row.AgentID, &row.LatestError, &created, &updated)
+	err = d.QueryRow(`SELECT process,workspace,issue_id,phase,agent_id,latest_error,created_at,updated_at FROM awb_ready_dispatches WHERE process=?`, process).
+		Scan(&row.Process, &row.Workspace, &row.IssueID, &row.Phase, &row.AgentID, &row.LatestError, &created, &updated)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -32,14 +32,14 @@ func GetAWBReadyDispatch(workspace string) (*AWBReadyDispatch, error) {
 }
 
 // SelectAWBReadyDispatch is a compare-and-set: concurrent or duplicate workers
-// cannot replace the workspace's current issue.
-func SelectAWBReadyDispatch(workspace, issueID, agentID string) (bool, error) {
+// cannot replace the polling process's current issue.
+func SelectAWBReadyDispatch(process, workspace, issueID, agentID string) (bool, error) {
 	d, err := Open()
 	if err != nil {
 		return false, err
 	}
 	now := time.Now().UnixNano()
-	r, err := d.Exec(`INSERT OR IGNORE INTO awb_ready_dispatches(workspace,issue_id,phase,agent_id,created_at,updated_at) VALUES(?,?,'selected',?,?,?)`, workspace, issueID, agentID, now, now)
+	r, err := d.Exec(`INSERT OR IGNORE INTO awb_ready_dispatches(process,workspace,issue_id,phase,agent_id,created_at,updated_at) VALUES(?, ?,?,'selected',?,?,?)`, process, workspace, issueID, agentID, now, now)
 	if err != nil {
 		return false, err
 	}
@@ -47,13 +47,13 @@ func SelectAWBReadyDispatch(workspace, issueID, agentID string) (bool, error) {
 	return n == 1, err
 }
 
-func UpdateAWBReadyDispatch(workspace, issueID, phase, latestError string) (bool, error) {
+func UpdateAWBReadyDispatch(process, issueID, phase, latestError string) (bool, error) {
 	d, err := Open()
 	if err != nil {
 		return false, err
 	}
 	now := time.Now().UnixNano()
-	r, err := d.Exec(`UPDATE awb_ready_dispatches SET phase=?,latest_error=?,updated_at=? WHERE workspace=? AND issue_id=?`, phase, latestError, now, workspace, issueID)
+	r, err := d.Exec(`UPDATE awb_ready_dispatches SET phase=?,latest_error=?,updated_at=? WHERE process=? AND issue_id=?`, phase, latestError, now, process, issueID)
 	if err != nil {
 		return false, err
 	}
@@ -61,21 +61,21 @@ func UpdateAWBReadyDispatch(workspace, issueID, phase, latestError string) (bool
 	return n == 1, err
 }
 
-func SetAWBReadyDispatchAgent(workspace, issueID, agentID string) error {
+func SetAWBReadyDispatchAgent(process, issueID, agentID string) error {
 	d, err := Open()
 	if err != nil {
 		return err
 	}
-	_, err = d.Exec(`UPDATE awb_ready_dispatches SET agent_id=?,updated_at=? WHERE workspace=? AND issue_id=?`, agentID, time.Now().UnixNano(), workspace, issueID)
+	_, err = d.Exec(`UPDATE awb_ready_dispatches SET agent_id=?,updated_at=? WHERE process=? AND issue_id=?`, agentID, time.Now().UnixNano(), process, issueID)
 	return err
 }
 
-func ClearAWBReadyDispatch(workspace, issueID string) (bool, error) {
+func ClearAWBReadyDispatch(process, issueID string) (bool, error) {
 	d, err := Open()
 	if err != nil {
 		return false, err
 	}
-	r, err := d.Exec(`DELETE FROM awb_ready_dispatches WHERE workspace=? AND issue_id=?`, workspace, issueID)
+	r, err := d.Exec(`DELETE FROM awb_ready_dispatches WHERE process=? AND issue_id=?`, process, issueID)
 	if err != nil {
 		return false, err
 	}

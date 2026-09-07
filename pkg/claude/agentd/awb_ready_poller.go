@@ -23,6 +23,7 @@ import (
 const defaultAWBReadyPollInterval = time.Minute
 
 type awbReadyWorker struct {
+	process   string
 	workspace string
 	config    config.AWBReadyPollingConfig
 	interval  time.Duration
@@ -38,33 +39,41 @@ func reservedAgentIDFromContext(ctx context.Context) string {
 
 func startAWBReadyPollers(stop <-chan struct{}, cfg *config.Config) error {
 	policy := cfg.ResolvedAWBProxy()
-	for workspace, polling := range policy.ReadyPolling {
-		if _, err := validateAWBReadyPolling(policy, workspace, polling); err != nil {
-			return fmt.Errorf("agent.awb_proxy.ready_polling[%q]: %w", workspace, err)
+	for process, polling := range policy.ReadyPolling {
+		if _, err := validateAWBReadyPolling(policy, process, polling); err != nil {
+			return fmt.Errorf("agent.awb_proxy.ready_polling[%q]: %w", process, err)
 		}
 	}
-	for workspace, polling := range policy.ReadyPolling {
-		interval, _ := validateAWBReadyPolling(policy, workspace, polling)
+	for process, polling := range policy.ReadyPolling {
+		interval, _ := validateAWBReadyPolling(policy, process, polling)
 		base, _ := validateAWBBaseURL(policy.URL)
-		w := awbReadyWorker{workspace: workspace, config: polling, interval: interval,
-			session: &awbProxySession{policy: policy, base: base, workspaces: []string{workspace}}}
+		w := awbReadyWorker{process: process, workspace: polling.Workspace, config: polling, interval: interval,
+			session: &awbProxySession{policy: policy, base: base, workspaces: []string{polling.Workspace}}}
 		go w.run(stop)
 	}
 	return nil
 }
 
-func validateAWBReadyPolling(policy config.AWBProxyConfig, workspace string, p config.AWBReadyPollingConfig) (time.Duration, error) {
-	if err := awbWorkspaceKeyShapeErr(workspace); err != nil {
-		return 0, err
+func validateAWBReadyPolling(policy config.AWBProxyConfig, process string, p config.AWBReadyPollingConfig) (time.Duration, error) {
+	if err := awbWorkspaceKeyShapeErr(process); err != nil {
+		return 0, fmt.Errorf("invalid process name: %w", err)
+	}
+	if err := awbWorkspaceKeyShapeErr(p.Workspace); err != nil {
+		return 0, fmt.Errorf("invalid workspace: %w", err)
+	}
+	for _, label := range p.Labels {
+		if _, fault := validateAWBLabel(label); fault != nil {
+			return 0, fmt.Errorf("invalid label: %s", fault.Msg)
+		}
+	}
+	if !policy.AWBWorkspaceAllowed(p.Workspace) {
+		return 0, fmt.Errorf("workspace is not in allowed_workspaces")
 	}
 	if _, fault := validateAWBBaseURL(policy.URL); fault != nil {
 		return 0, fmt.Errorf("invalid url: %s", fault.Msg)
 	}
 	if policy.Username == "" || !policy.AllowWrite {
 		return 0, fmt.Errorf("ready polling requires url, username, and allow_write=true")
-	}
-	if !policy.AWBWorkspaceAllowed(workspace) {
-		return 0, fmt.Errorf("workspace is not in allowed_workspaces")
 	}
 	if strings.TrimSpace(p.Group) == "" {
 		return 0, fmt.Errorf("group is required")
@@ -85,11 +94,11 @@ func validateAWBReadyPolling(policy config.AWBProxyConfig, workspace string, p c
 func (w awbReadyWorker) run(stop <-chan struct{}) {
 	for {
 		if err := w.tick(context.Background()); err != nil {
-			d, _ := db.GetAWBReadyDispatch(w.workspace)
-			attrs := []any{"workspace", w.workspace, "error", err}
+			d, _ := db.GetAWBReadyDispatch(w.process)
+			attrs := []any{"process", w.process, "workspace", w.workspace, "error", err}
 			if d != nil {
 				attrs = append(attrs, "issue", d.IssueID, "phase", d.Phase, "agent_id", d.AgentID)
-				_, _ = db.UpdateAWBReadyDispatch(w.workspace, d.IssueID, d.Phase, err.Error())
+				_, _ = db.UpdateAWBReadyDispatch(w.process, d.IssueID, d.Phase, err.Error())
 			}
 			slog.Error("awb ready polling: retry", attrs...)
 		}
@@ -104,7 +113,7 @@ func (w awbReadyWorker) run(stop <-chan struct{}) {
 }
 
 func (w awbReadyWorker) tick(ctx context.Context) error {
-	dispatch, err := db.GetAWBReadyDispatch(w.workspace)
+	dispatch, err := db.GetAWBReadyDispatch(w.process)
 	if err != nil {
 		return err
 	}
@@ -118,11 +127,11 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 		if err != nil || issue == nil {
 			return err
 		}
-		selected, err := db.SelectAWBReadyDispatch(w.workspace, issue.ID, db.NewAgentID())
+		selected, err := db.SelectAWBReadyDispatch(w.process, w.workspace, issue.ID, db.NewAgentID())
 		if err != nil || !selected {
 			return err
 		}
-		dispatch, err = db.GetAWBReadyDispatch(w.workspace)
+		dispatch, err = db.GetAWBReadyDispatch(w.process)
 		if err != nil {
 			return err
 		}
@@ -138,7 +147,7 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 	// how far dispatch progressed. In particular, do not claim or spawn an
 	// issue that closed after it was selected.
 	if issue.Status == "closed" {
-		_, err = db.ClearAWBReadyDispatch(w.workspace, dispatch.IssueID)
+		_, err = db.ClearAWBReadyDispatch(w.process, dispatch.IssueID)
 		return err
 	}
 	if dispatch.Phase == "spawned" {
@@ -149,13 +158,13 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 	if existing, getErr := db.GetAgent(dispatch.AgentID); getErr != nil {
 		return getErr
 	} else if existing != nil && existing.CurrentConvID != "" {
-		_, err = db.UpdateAWBReadyDispatch(w.workspace, dispatch.IssueID, "spawned", "")
+		_, err = db.UpdateAWBReadyDispatch(w.process, dispatch.IssueID, "spawned", "")
 		return err
 	}
 	if pending, pendingErr := db.GetPendingSpawnByAgentID(dispatch.AgentID); pendingErr != nil {
 		return pendingErr
 	} else if pending != nil {
-		_, err = db.UpdateAWBReadyDispatch(w.workspace, dispatch.IssueID, "spawned", "")
+		_, err = db.UpdateAWBReadyDispatch(w.process, dispatch.IssueID, "spawned", "")
 		return err
 	}
 	if !containsFold(issue.Assignees, w.session.policy.Username) {
@@ -167,17 +176,17 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 			return fmt.Errorf("AWB claim response did not assign issue to configured account")
 		}
 	}
-	if _, err = db.UpdateAWBReadyDispatch(w.workspace, dispatch.IssueID, "claimed", ""); err != nil {
+	if _, err = db.UpdateAWBReadyDispatch(w.process, dispatch.IssueID, "claimed", ""); err != nil {
 		return err
 	}
 	agentID, err := w.spawn(dispatch.IssueID, dispatch.AgentID)
 	if err != nil {
 		return err
 	}
-	if err = db.SetAWBReadyDispatchAgent(w.workspace, dispatch.IssueID, agentID); err != nil {
+	if err = db.SetAWBReadyDispatchAgent(w.process, dispatch.IssueID, agentID); err != nil {
 		return err
 	}
-	_, err = db.UpdateAWBReadyDispatch(w.workspace, dispatch.IssueID, "spawned", "")
+	_, err = db.UpdateAWBReadyDispatch(w.process, dispatch.IssueID, "spawned", "")
 	return err
 }
 
@@ -223,7 +232,7 @@ func (w awbReadyWorker) validateRuntime() error {
 
 func (w awbReadyWorker) ready(ctx context.Context) (*awbIssue, error) {
 	var issues []awbIssue
-	q := url.Values{"workspace": {w.workspace}, "limit": {"1"}}
+	q := awbReadyQuery(w.workspace, w.config.Labels)
 	_, f := w.session.exec(ctx, awbCall{Method: http.MethodGet, Path: "/api/ready", Query: q}, &issues)
 	if f != nil {
 		w.audit("awb.ready", "", f.Status)
@@ -237,6 +246,14 @@ func (w awbReadyWorker) ready(ctx context.Context) (*awbIssue, error) {
 		return nil, fmt.Errorf("%s", f.Msg)
 	}
 	return &issues[0], nil
+}
+
+func awbReadyQuery(workspace string, labels []string) url.Values {
+	q := url.Values{"workspace": {workspace}, "limit": {"1"}}
+	for _, label := range labels {
+		q.Add("label", label)
+	}
+	return q
 }
 func (w awbReadyWorker) show(ctx context.Context, id string) (*awbIssue, error) {
 	var i awbIssue

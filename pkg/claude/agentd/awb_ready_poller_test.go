@@ -17,42 +17,55 @@ func TestAWBReadyInitialMessageLeavesClosureToOperator(t *testing.T) {
 	assert.NotContains(t, strings.ToLower(message), "close it")
 }
 
+func TestAWBReadyQueryIncludesWorkspaceLabelsAndLimit(t *testing.T) {
+	query := awbReadyQuery("tcl", []string{"backend", "urgent"})
+	assert.Equal(t, "tcl", query.Get("workspace"))
+	assert.Equal(t, "1", query.Get("limit"))
+	assert.Equal(t, []string{"backend", "urgent"}, query["label"])
+}
+
 func TestValidateAWBReadyPolling(t *testing.T) {
 	policy := config.AWBProxyConfig{URL: "https://awb.example", Username: "worker", AllowWrite: true, AllowedWorkspaces: []string{"tcl"}}
-	base := config.AWBReadyPollingConfig{Group: "builders", Cwd: "/repo"}
-	d, err := validateAWBReadyPolling(policy, "tcl", base)
+	base := config.AWBReadyPollingConfig{Workspace: "tcl", Group: "builders", Cwd: "/repo"}
+	d, err := validateAWBReadyPolling(policy, "builders", base)
 	assert.NoError(t, err)
 	assert.Equal(t, time.Minute, d)
 	base.Interval = "15s"
-	d, err = validateAWBReadyPolling(policy, "tcl", base)
+	d, err = validateAWBReadyPolling(policy, "builders", base)
 	assert.NoError(t, err)
 	assert.Equal(t, 15*time.Second, d)
 	base.Interval = ""
 	badGroup := base
 	badGroup.Group = ""
-	_, err = validateAWBReadyPolling(policy, "tcl", badGroup)
+	_, err = validateAWBReadyPolling(policy, "builders", badGroup)
 	assert.ErrorContains(t, err, "group")
-	_, err = validateAWBReadyPolling(policy, "TCL", base)
+	_, err = validateAWBReadyPolling(policy, "Builders", base)
 	assert.ErrorContains(t, err, "lowercase")
 	bad := base
 	bad.Cwd = "relative"
-	_, err = validateAWBReadyPolling(policy, "tcl", bad)
+	_, err = validateAWBReadyPolling(policy, "builders", bad)
 	assert.ErrorContains(t, err, "absolute")
 	bad = base
 	bad.Interval = "tomorrow"
-	_, err = validateAWBReadyPolling(policy, "tcl", bad)
+	_, err = validateAWBReadyPolling(policy, "builders", bad)
 	assert.ErrorContains(t, err, "invalid interval")
-	_, err = validateAWBReadyPolling(policy, "other", base)
+	bad = base
+	bad.Workspace = "other"
+	_, err = validateAWBReadyPolling(policy, "builders", bad)
 	assert.ErrorContains(t, err, "allowed_workspaces")
 	policy.AllowWrite = false
-	_, err = validateAWBReadyPolling(policy, "tcl", base)
+	_, err = validateAWBReadyPolling(policy, "builders", base)
 	assert.ErrorContains(t, err, "allow_write")
 	policy.AllowWrite = true
 	policy.Username = ""
-	_, err = validateAWBReadyPolling(policy, "tcl", base)
+	_, err = validateAWBReadyPolling(policy, "builders", base)
 	assert.ErrorContains(t, err, "username")
 	policy.Username = "worker"
+	bad = base
+	bad.Labels = []string{" bad label "}
+	_, err = validateAWBReadyPolling(policy, "builders", bad)
+	assert.ErrorContains(t, err, "invalid label")
 	policy.URL = "file:///tmp/awb"
-	_, err = validateAWBReadyPolling(policy, "tcl", base)
+	_, err = validateAWBReadyPolling(policy, "builders", base)
 	assert.ErrorContains(t, err, "invalid url")
 }
