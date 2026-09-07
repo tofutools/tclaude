@@ -32,6 +32,9 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	}
 	h := &Handler{application: application, auth: auth, mux: http.NewServeMux()}
 	h.registerLaunchSupport()
+	if sandbox, ok := application.(app.SandboxProfileAPI); ok {
+		h.registerSandboxProfiles(sandbox)
+	}
 	h.mux.HandleFunc("GET /v2/presentation", h.presentation)
 	h.mux.HandleFunc("PUT /v2/presentation", h.presentation)
 	h.mux.HandleFunc("POST /v2/agents", h.createAgent)

@@ -525,6 +525,20 @@ CREATE TABLE IF NOT EXISTS definition_revisions (
   dependencies_json BLOB NOT NULL, author_json BLOB NOT NULL, created_at INTEGER NOT NULL,
   UNIQUE(definition_id,number), UNIQUE(definition_id,content_hash), UNIQUE(request_scope,request_id)
 );
+CREATE TABLE IF NOT EXISTS sandbox_profiles (
+ id TEXT PRIMARY KEY, name TEXT NOT NULL, head_revision_id TEXT NOT NULL,
+ archived INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL, document BLOB NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sandbox_profile_revisions (
+ id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES sandbox_profiles(id),
+ number INTEGER NOT NULL, content_hash TEXT NOT NULL, document BLOB NOT NULL,
+ UNIQUE(profile_id,number)
+);
+CREATE TABLE IF NOT EXISTS sandbox_profile_requests (
+ request_scope TEXT NOT NULL, request_id TEXT NOT NULL,
+ intent BLOB NOT NULL, result BLOB NOT NULL,
+ PRIMARY KEY(request_scope,request_id)
+);
 CREATE TABLE IF NOT EXISTS program_profiles (
   id TEXT PRIMARY KEY, name TEXT NOT NULL, head_revision_id TEXT NOT NULL,
   tombstoned INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL,
