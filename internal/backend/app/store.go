@@ -158,6 +158,7 @@ type OrchestrationStore interface {
 }
 
 type ShellAdmission struct {
+	Request           *StartShellRequest
 	Operation         model.Operation
 	Execution         model.Execution
 	WorkspaceUse      model.WorkspaceUse

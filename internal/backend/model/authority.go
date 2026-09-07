@@ -167,6 +167,7 @@ type AuthorityRequest struct {
 	Action                 Action
 	Resource               ResourceSelector
 	RequestedConfiguration *DesiredConfiguration
+	RequestedEnvironment   *Environment `json:",omitempty"`
 }
 
 // AutomationDelegation is an application-authenticated run fixture, not a

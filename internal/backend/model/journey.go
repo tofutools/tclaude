@@ -328,3 +328,11 @@ type WorkDecision struct {
 	DecidedAt time.Time
 	Revision  Revision
 }
+
+// ShellGroupSelection is an explicit group context pinned at shell admission.
+// It confers no group ownership or lifecycle authority.
+type ShellGroupSelection struct {
+	GroupID               GroupID
+	Revision              Revision
+	ConfigurationRevision Revision
+}

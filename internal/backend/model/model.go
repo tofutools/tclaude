@@ -175,7 +175,8 @@ type Execution struct {
 // ResolvedExecutionSpec is immutable after an Execution is admitted. Provider
 // implementations consume it but must not reinterpret desired configuration.
 type ResolvedExecutionSpec struct {
-	Environment          Environment `json:",omitempty"`
+	ShellGroup           *ShellGroupSelection `json:",omitempty"`
+	Environment          Environment          `json:",omitempty"`
 	ConfigurationProfile *ConfigurationProfileRef
 	ExecutionID          ExecutionID
 	Workload             ExecutionWorkloadKind

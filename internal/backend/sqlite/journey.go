@@ -1172,6 +1172,11 @@ func (s *Store) AdmitShell(ctx context.Context, in app.ShellAdmission) (app.Admi
 		return app.AdmissionResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if in.Request != nil {
+		if prior, found, err := findShellAdmission(ctx, tx, *in.Request, in.Operation.CreatedAt); err != nil || found {
+			return prior, err
+		}
+	}
 	decision, err := authorizeTx(ctx, tx, in.Authority, in.Operation.CreatedAt)
 	if err != nil {
 		return app.AdmissionResult{}, err
@@ -1182,7 +1187,7 @@ func (s *Store) AdmitShell(ctx context.Context, in app.ShellAdmission) (app.Admi
 	if repeated, ok, err := admissionByRequest(ctx, tx, in.Operation, "", false); err != nil {
 		return app.AdmissionResult{}, err
 	} else if ok {
-		if repeated.Execution.Workload != model.ExecutionWorkloadShell || repeated.Execution.Spec.WorkingDirectory != in.Execution.Spec.WorkingDirectory || repeated.Execution.Spec.Sandbox != in.Execution.Spec.Sandbox {
+		if repeated.Execution.Workload != model.ExecutionWorkloadShell || repeated.Execution.Spec.WorkingDirectory != in.Execution.Spec.WorkingDirectory || repeated.Execution.Spec.Sandbox != in.Execution.Spec.Sandbox || !repeated.Execution.Spec.Environment.Equal(in.Execution.Spec.Environment) || !reflect.DeepEqual(repeated.Execution.Spec.ShellGroup, in.Execution.Spec.ShellGroup) {
 			return app.AdmissionResult{}, app.ErrConflict
 		}
 		var workspaceID model.WorkspaceID
@@ -1194,6 +1199,9 @@ func (s *Store) AdmitShell(ctx context.Context, in app.ShellAdmission) (app.Admi
 		}
 		_ = tx.Commit()
 		return repeated, nil
+	}
+	if err := validateShellRequest(ctx, tx, in); err != nil {
+		return app.AdmissionResult{}, err
 	}
 	var revision model.Revision
 	var state model.WorkspaceState
@@ -1214,6 +1222,11 @@ func (s *Store) AdmitShell(ctx context.Context, in app.ShellAdmission) (app.Admi
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO workspace_uses(id,workspace_id,execution_id,created_at) VALUES(?,?,?,?)`, in.WorkspaceUse.ID, in.WorkspaceUse.WorkspaceID, in.Execution.ID, nanos(in.WorkspaceUse.CreatedAt)); err != nil {
 		return app.AdmissionResult{}, classify(err)
+	}
+	if in.Request != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO shell_requests(scope,request_id,operation_id,intent) VALUES(?,?,?,?)`, requestScope(in.Operation.Principal), in.Operation.RequestID, in.Operation.ID, shellIntent(*in.Request)); err != nil {
+			return app.AdmissionResult{}, classify(err)
+		}
 	}
 	if err := bumpTx(ctx, tx); err != nil {
 		return app.AdmissionResult{}, err

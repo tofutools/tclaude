@@ -1,5 +1,5 @@
 'use strict';
-function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentation}) {
+function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentation,attach}) {
  host.replaceChildren();const agents=snapshot.agents||[],groups=[...(snapshot.groups||[])],cards=new Map(),rank=new Map((presentation?.prefs.GroupOrder||[]).map((id,index)=>[id,index]));groups.sort((a,b)=>(rank.get(a.ID)??Number.MAX_SAFE_INTEGER)-(rank.get(b.ID)??Number.MAX_SAFE_INTEGER));
  const orderStatus=el('p',presentation?.saved.textContent||'','muted');orderStatus.id='group-order-status';orderStatus.setAttribute('role','status');host.append(orderStatus);if(presentation)host.append(button('Reload saved group order',()=>presentation.load(false)));
  for(const group of groups){
@@ -38,6 +38,24 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
   if(!canCopy)document.getElementById('editor-fields').append(el('p','Member copying is unavailable. Restore the listed archived configurations in Configurations or update those agents to active configurations, then reopen this dialog. You can create an empty group now.'));
   if(current.Profile&&!canDefault)document.getElementById('editor-fields').append(el('p','The pinned default '+current.Profile.ProfileID+' is archived or unavailable. Restore it before copying the default, or continue with no default.'));
  }));
+
+ controls.append(button('Open group shell',async()=>{
+  const config=await api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration');if(!card.isConnected)return;
+  const workspaces=(snapshot.workspaces||[]).filter(w=>w.State==='available'&&w.Observation?.ActualPath);
+  if(!workspaces.length)throw new Error('Create or register an available checkout in Workspaces first.');
+  edit('Open group shell',[
+   {name:'workspace',label:'Checkout',options:workspaces.map(w=>({value:w.ID,label:w.Observation.ActualPath+' · '+w.ID}))},
+   {name:'environment',label:'Explicit shell environment overrides',environment:true,value:{},inherited:config.Environment||{}},
+   {name:'confirm',label:'This shell runs without OS confinement',options:['Start unconfined shell']}
+  ],f=>{const workspace=workspaces.find(w=>w.ID===f.workspace);if(!workspace)throw new Error('Select a listed checkout.');return api('/v2/shells',{request_id:f.requestID,workspace_id:workspace.ID,expected_revision:workspace.Revision,sandbox:'unconfined',environment:f.environment,group:{GroupID:group.ID,Revision:group.Revision,ConfigurationRevision:config.Revision}})});
+  document.getElementById('editor-fields').append(el('p','Uses this group’s environment plus your explicit overrides. Agent launch profiles do not apply. The shell retains these settings; later group edits do not change it.'));
+ }));
+ for(const execution of snapshot.executions||[]){
+  if(execution.workload!=='shell'||execution.spec?.ShellGroup?.GroupID!==group.ID)continue;
+  const row=el('div',undefined,'row');row.append(el('code',execution.id),el('span',execution.state+' · '+execution.spec.WorkingDirectory));
+  if(!['exited','failed'].includes(execution.state))row.append(button('Attach group shell',()=>attach(execution)),button('Stop group shell',async id=>{await api('/v2/stop',{request_id:id,execution_id:execution.id,force:false});await refresh()}));
+  card.append(row);
+ }
 
  controls.append(button('Launch defaults',async()=>{
   const [current,profiles]=await Promise.all([api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration'),api('/v2/configuration-profiles')]);

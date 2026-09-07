@@ -61,11 +61,13 @@ func (h *Handler) RegisterJourneyAPI(api app.JourneyAPI) error {
 	}))
 	h.mux.HandleFunc("POST /v2/shells", operationHandler(h, func(ctx context.Context, p model.Principal, b struct {
 		commandIdentity
-		WorkspaceID      model.WorkspaceID `json:"workspace_id"`
-		ExpectedRevision model.Revision    `json:"expected_revision"`
-		Sandbox          model.SandboxMode `json:"sandbox"`
+		Environment      model.Environment          `json:"environment"`
+		Group            *model.ShellGroupSelection `json:"group"`
+		WorkspaceID      model.WorkspaceID          `json:"workspace_id"`
+		ExpectedRevision model.Revision             `json:"expected_revision"`
+		Sandbox          model.SandboxMode          `json:"sandbox"`
 	}) (app.OperationResult, error) {
-		return api.StartShell(ctx, app.StartShellRequest{Context: b.context(p), WorkspaceID: b.WorkspaceID, ExpectedRevision: b.ExpectedRevision, Sandbox: b.Sandbox})
+		return api.StartShell(ctx, app.StartShellRequest{Context: b.context(p), WorkspaceID: b.WorkspaceID, ExpectedRevision: b.ExpectedRevision, Sandbox: b.Sandbox, Environment: b.Environment, Group: b.Group})
 	}))
 	h.mux.HandleFunc("POST /v2/work", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
 		commandIdentity
