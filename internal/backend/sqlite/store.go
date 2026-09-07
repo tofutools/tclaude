@@ -221,7 +221,7 @@ func (s *Store) migrateOperationRequestScope(ctx context.Context) error {
 		return fmt.Errorf("scope existing operations: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `CREATE TABLE operations_replacement (
- id TEXT PRIMARY KEY, request_id TEXT NOT NULL, request_scope TEXT NOT NULL, kind TEXT NOT NULL,
+ id TEXT PRIMARY KEY, initial_message_digest TEXT NOT NULL DEFAULT '', request_id TEXT NOT NULL, request_scope TEXT NOT NULL, kind TEXT NOT NULL,
  principal_kind TEXT NOT NULL, principal_agent_id TEXT NOT NULL DEFAULT '',
  principal_execution_id TEXT NOT NULL DEFAULT '', principal_generation INTEGER NOT NULL DEFAULT 0,
  principal_automation_run TEXT NOT NULL DEFAULT '', automation_delegation_json BLOB,
@@ -232,8 +232,8 @@ func (s *Store) migrateOperationRequestScope(ctx context.Context) error {
 )`); err != nil {
 		return fmt.Errorf("create scoped operations replacement: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO operations_replacement(id,request_id,request_scope,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,automation_delegation_json,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at)
-	 SELECT id,request_id,request_scope,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,automation_delegation_json,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at FROM operations`); err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO operations_replacement(id,initial_message_digest,request_id,request_scope,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,automation_delegation_json,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at)
+	 SELECT id,initial_message_digest,request_id,request_scope,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,automation_delegation_json,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at FROM operations`); err != nil {
 		return fmt.Errorf("copy scoped operations: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DROP TABLE operations`); err != nil {
@@ -1789,4 +1789,24 @@ func classify(err error) error {
 		return app.ErrNotFound
 	}
 	return err
+}
+
+func (s *Store) FindLaunchAdmission(ctx context.Context, in app.LaunchRetryLookup) (app.AdmissionResult, bool, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return app.AdmissionResult{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	prior, found, err := admissionByRequest(ctx, tx, model.Operation{Principal: in.Context.Principal, RequestID: in.Context.RequestID, Kind: in.Kind}, in.AgentID, false)
+	if err != nil || !found {
+		return prior, found, err
+	}
+	var digest string
+	if err = tx.QueryRowContext(ctx, `SELECT initial_message_digest FROM operations WHERE id=?`, prior.Operation.ID).Scan(&digest); err != nil {
+		return app.AdmissionResult{}, false, err
+	}
+	if digest != in.InitialMessageDigest {
+		return app.AdmissionResult{}, false, app.ErrConflict
+	}
+	return prior, true, nil
 }

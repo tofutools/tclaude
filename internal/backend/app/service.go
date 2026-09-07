@@ -249,6 +249,26 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	if (req.Target.Agent == nil) == (req.Target.Standalone == nil) {
 		return OperationResult{}, fail(ErrInvalid, "exactly one launch target is required")
 	}
+	var initialDigest string
+	if req.InitialMessage != "" {
+		initialDigest = fmt.Sprintf("%x", sha256.Sum256([]byte(req.InitialMessage)))
+	}
+	if kind == model.OperationLaunch {
+		var targetAgent model.AgentID
+		if req.Target.Agent != nil {
+			targetAgent = req.Target.Agent.AgentID
+			if targetAgent.Validate() != nil || req.Target.Agent.ExpectedRevision == 0 {
+				return OperationResult{}, ErrInvalid
+			}
+		}
+		prior, repeated, err := s.store.FindLaunchAdmission(ctx, LaunchRetryLookup{Context: req.RequestContext, Kind: kind, AgentID: targetAgent, InitialMessageDigest: initialDigest})
+		if err != nil {
+			return OperationResult{}, err
+		}
+		if repeated {
+			return operationResult(prior), nil
+		}
+	}
 	var agent model.Agent
 	var desired model.DesiredConfiguration
 	var expected model.Revision
@@ -335,10 +355,8 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		defer clear(secret)
 	}
 	var initialInput *ports.PreparedInitialInput
-	var initialDigest string
 	if req.InitialMessage != "" {
 		initialInput = &ports.PreparedInitialInput{Body: req.InitialMessage, Correlation: string(operationID), RequiredBeforeFirstWork: true}
-		initialDigest = fmt.Sprintf("%x", sha256.Sum256([]byte(req.InitialMessage)))
 	}
 	admission, err := s.store.AdmitLaunch(ctx, LaunchAdmission{
 		InitialMessageDigest: initialDigest,
