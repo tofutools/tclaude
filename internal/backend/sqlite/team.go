@@ -228,7 +228,7 @@ func (s *Store) ListTeamDeployments(ctx context.Context, groupID model.GroupID) 
 }
 
 func (s *Store) PendingTeamDeployments(ctx context.Context) ([]model.TeamDeployment, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM team_deployments WHERE state IN (?,?,?) ORDER BY created_at,id`, model.DeploymentDeploying, model.DeploymentPartial, model.DeploymentStandingDown)
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM team_deployments WHERE state IN (?,?,?,?) ORDER BY created_at,id`, model.DeploymentDeploying, model.DeploymentPartial, model.DeploymentStandingDown, model.DeploymentReady)
 	if err != nil {
 		return nil, err
 	}
@@ -349,6 +349,10 @@ func (s *Store) BeginTeamRebrief(ctx context.Context, id model.DeploymentID, exp
 	if !decision.Allowed {
 		return model.TeamDeployment{}, model.TeamRebrief{}, false, app.ErrUnauthorized
 	}
+	request := app.RebriefDeploymentRequest{Context: app.RequestContext{Principal: principal, RequestID: requestID}, DeploymentID: id, ExpectedRevision: expected, Definition: definition}
+	if err = saveTeamContinuation(ctx, tx, id, "rebrief", principal, requestID, request); err != nil {
+		return model.TeamDeployment{}, model.TeamRebrief{}, false, err
+	}
 	selected, _ = json.Marshal(definition)
 	if _, err = tx.ExecContext(ctx, `INSERT INTO team_rebriefs(deployment_id,request_scope,request_id,request_digest,definition_json,recipient_operations_json,state,created_at) VALUES(?,?,?,?,?,'{}',?,?)`, id, requestScope(principal), requestID, digest, selected, model.TeamRebriefDelivering, nanos(at)); err != nil {
 		return model.TeamDeployment{}, model.TeamRebrief{}, false, classify(err)
@@ -417,7 +421,7 @@ func (s *Store) AdvanceTeamAdvisoryPhase(ctx context.Context, id model.Deploymen
 	})
 }
 
-func (s *Store) BeginTeamStandDown(ctx context.Context, id model.DeploymentID, expected model.Revision, principal model.Principal, requestID model.RequestID, digest string, at time.Time) (model.TeamDeployment, error) {
+func (s *Store) BeginTeamStandDown(ctx context.Context, id model.DeploymentID, expected model.Revision, principal model.Principal, requestID model.RequestID, digest, reason string, at time.Time) (model.TeamDeployment, error) {
 	return s.mutateTeamLifecycle(ctx, id, expected, principal, requestID, "stand_down", digest, at, func(tx *sql.Tx) error {
 		result, err := tx.ExecContext(ctx, `UPDATE team_deployments SET state=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND state<>?`, model.DeploymentStandingDown, nanos(at), id, expected, model.DeploymentStopped)
 		if err != nil {
@@ -426,7 +430,13 @@ func (s *Store) BeginTeamStandDown(ctx context.Context, id model.DeploymentID, e
 		if count, _ := result.RowsAffected(); count != 1 {
 			return app.ErrConflict
 		}
-		return nil
+		// A new admitted command explicitly replaces the continuation actor; an
+		// exact retry above never changes the actor or original reason.
+		if _, err = tx.ExecContext(ctx, `DELETE FROM team_continuations WHERE deployment_id=? AND kind='stand_down'`, id); err != nil {
+			return err
+		}
+		request := app.StandDownDeploymentRequest{Context: app.RequestContext{Principal: principal, RequestID: requestID}, DeploymentID: id, ExpectedRevision: expected, Reason: reason}
+		return saveTeamContinuation(ctx, tx, id, "stand_down", principal, requestID, request)
 	})
 }
 
@@ -487,4 +497,46 @@ func (s *Store) RecordExecutionReadiness(ctx context.Context, id model.Execution
 		return model.Execution{}, err
 	}
 	return s.Execution(ctx, id)
+}
+
+// Continuation requests are private application state and never deployment DTOs.
+func saveTeamContinuation(ctx context.Context, tx *sql.Tx, id model.DeploymentID, kind string, principal model.Principal, requestID model.RequestID, request any) error {
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO team_continuations(deployment_id,kind,request_scope,request_id,request_json) VALUES(?,?,?,?,?)`, id, kind, requestScope(principal), requestID, encoded)
+	return err
+}
+
+func (s *Store) TeamStandDownRequest(ctx context.Context, id model.DeploymentID) (app.StandDownDeploymentRequest, error) {
+	var encoded []byte
+	err := s.db.QueryRowContext(ctx, `SELECT request_json FROM team_continuations WHERE deployment_id=? AND kind='stand_down'`, id).Scan(&encoded)
+	if err != nil {
+		return app.StandDownDeploymentRequest{}, classify(err)
+	}
+	var request app.StandDownDeploymentRequest
+	err = json.Unmarshal(encoded, &request)
+	return request, err
+}
+
+func (s *Store) PendingTeamRebriefs(ctx context.Context) ([]app.RebriefDeploymentRequest, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT c.request_json FROM team_continuations c JOIN team_rebriefs r ON r.request_scope=c.request_scope AND r.request_id=c.request_id AND r.deployment_id=c.deployment_id JOIN team_deployments d ON d.id=c.deployment_id WHERE c.kind='rebrief' AND r.state=? AND d.state NOT IN (?,?) ORDER BY r.created_at,r.request_id`, model.TeamRebriefDelivering, model.DeploymentStopped, model.DeploymentStandingDown)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var requests []app.RebriefDeploymentRequest
+	for rows.Next() {
+		var encoded []byte
+		if err = rows.Scan(&encoded); err != nil {
+			return nil, err
+		}
+		var request app.RebriefDeploymentRequest
+		if err = json.Unmarshal(encoded, &request); err != nil {
+			return nil, err
+		}
+		requests = append(requests, request)
+	}
+	return requests, rows.Err()
 }

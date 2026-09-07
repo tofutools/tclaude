@@ -197,6 +197,13 @@ func TestReinforcementStandDownDoesNotRetireSharedMembers(t *testing.T) {
 	standingDown, err := service.GetTeamDeployment(ctx, app.GetTeamDeploymentRequest{Principal: operator, DeploymentID: current.Deployment.ID})
 	require.NoError(t, err)
 	require.Equal(t, model.DeploymentStandingDown, standingDown.Deployment.State)
+	// Recovery must retain the manager's revoked authority, not the creator's.
+	service = app.New(store, providers.NewRegistry(provider)).WithClock(func() time.Time { return now })
+	_, err = service.ReconcilePendingWork(ctx)
+	require.ErrorIs(t, err, app.ErrUnauthorized)
+	stillActive, err := store.Agent(ctx, managedMember.ID)
+	require.NoError(t, err)
+	require.Equal(t, model.AgentActive, stillActive.Lifecycle)
 	putGrant("retire_reinforcement", model.ActionRetireAgent, model.ResourceSelector{Kind: model.ResourceAgent, AgentID: managedMember.ID})
 	stopped, err := service.StandDownDeployment(ctx, standDownRequest)
 	require.NoError(t, err)
