@@ -466,11 +466,13 @@ func (s *Service) reconcileDeferredTeamBriefings(ctx context.Context, deployment
 		}
 		runtime, err := s.runtimeFor(ctx, execution)
 		if err != nil {
-			return err
+			// The durable briefing stays pending until explicit runtime recovery.
+			// It must not prevent independent deployments or work from advancing.
+			continue
 		}
 		observation, err := runtime.Observe(ctx)
 		if err != nil {
-			return err
+			continue
 		}
 		if observation.Context != ports.ContextReady {
 			continue
