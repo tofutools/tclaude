@@ -75,6 +75,9 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 			return TeamDeploymentResult{}, err
 		}
 	}
+	if err = s.requireAvailableGroupCapacity(ctx, group, len(revision.Team.Members)); err != nil {
+		return TeamDeploymentResult{}, err
+	}
 	for _, spec := range revision.Team.Members {
 		if err = validateDesired(spec.Desired); err != nil {
 			return TeamDeploymentResult{}, fail(ErrInvalid, "member %s: %v", spec.Key, err)

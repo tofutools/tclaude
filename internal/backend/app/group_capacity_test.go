@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/internal/backend/app"
+	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/providers"
 	sqlite "github.com/tofutools/tclaude/internal/backend/sqlite"
@@ -173,4 +174,43 @@ func TestGroupCapacityRejectsDefaultMemberWithoutOrphan(t *testing.T) {
 	require.ErrorIs(t, err, app.ErrConflict)
 	_, err = store.Agent(ctx, in.ID)
 	require.ErrorIs(t, err, app.ErrNotFound)
+}
+
+func TestGroupCapacityRefusesBeforeCheckoutCreation(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "backend.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Date(2026, 9, 7, 11, 0, 0, 0, time.UTC)
+	provider := &preparedWorkProvider{}
+	checkoutHost, err := host.NewCheckoutHost("git")
+	require.NoError(t, err)
+	repository := lifecycleRepository(t)
+	checkoutPath := filepath.Join(t.TempDir(), "refused-checkout")
+	service := app.New(store, providers.NewRegistry(provider)).WithWorkspaceHost(checkoutHost).WithClock(func() time.Time { return now })
+	operator := model.OperatorPrincipal()
+	shared := model.Agent{ID: "shared_member", Name: "shared", Lifecycle: model.AgentActive, Desired: model.DesiredConfiguration{Harness: "prepared-work", Model: "test", WorkingDirectory: t.TempDir(), Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	require.NoError(t, store.CreateAgent(ctx, shared))
+	_, err = service.CreateGroup(ctx, app.CreateGroupRequest{Context: operator, ID: "existing_group", Name: "existing", Members: []model.AgentID{shared.ID}})
+	require.NoError(t, err)
+	workspacePath := t.TempDir()
+	require.NoError(t, store.RegisterWorkspace(ctx, model.Workspace{ID: "existing_workspace", Intent: model.WorkspaceIntent{IntendedPath: workspacePath, Provenance: model.WorkspaceRegistered, Ownership: model.WorkspaceExternal}, State: model.WorkspaceAvailable, Observation: model.WorkspaceObservation{ActualPath: workspacePath, ObservedAt: now}, Revision: 1, CreatedAt: now, UpdatedAt: now}))
+	team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{{Key: "reinforcement", Name: "reinforcement", Desired: shared.Desired, Required: true}}, Waves: []model.TeamWave{{ID: "join", MemberKeys: []string{"reinforcement"}, RequiredReady: true}}}
+	definition, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: operator, RequestID: "save_reinforcement"}, Draft: app.DefinitionDraft{ID: "reinforcement_team", RevisionID: "reinforcement_v1", Name: "reinforcement", Kind: model.DefinitionTeam, SchemaVersion: 1, Source: "reinforce", Team: &team}})
+	require.NoError(t, err)
+	_, err = service.SetGroupCapacity(ctx, app.SetGroupCapacityRequest{Principal: operator, ID: "existing_group", ExpectedRevision: 1, MaxActiveMembers: 1})
+	require.NoError(t, err)
+	_, err = service.DeployTeam(ctx, app.DeployTeamRequest{Context: app.RequestContext{Principal: operator, RequestID: "deploy_reinforcement"}, DeploymentID: "reinforcement_deployment", Instantiation: model.TeamInstantiation{Definition: model.DefinitionRef{DefinitionID: definition.Definition.ID, RevisionID: definition.Revision.ID, ContentHash: definition.Revision.ContentHash, Kind: model.DefinitionTeam}, Target: model.TeamDeploymentTarget{Kind: model.TeamTargetExistingGroup, GroupID: "existing_group"}, Workspaces: model.TeamWorkspaceSelection{Shared: &model.TeamWorkspaceInput{WorkspaceID: "new_workspace", CreateIntent: &model.WorkspaceIntent{Repository: repository, IntendedPath: checkoutPath, BaseRevision: "HEAD", Branch: "capacity-refused", RetainOnFinish: true}}}}})
+	require.ErrorIs(t, err, app.ErrConflict)
+	require.NoDirExists(t, checkoutPath)
+	snapshot, err := service.Snapshot(ctx, app.SnapshotRequest{Principal: operator})
+	require.NoError(t, err)
+	require.Len(t, snapshot.Agents, 1)
+	require.Empty(t, snapshot.Executions)
+	group, err := store.Group(ctx, "existing_group")
+	require.NoError(t, err)
+	require.Equal(t, []model.AgentID{shared.ID}, group.Members)
+	deployments, err := service.ListTeamDeployments(ctx, app.ListTeamDeploymentsRequest{Principal: operator})
+	require.NoError(t, err)
+	require.Empty(t, deployments)
 }

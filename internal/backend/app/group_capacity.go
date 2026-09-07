@@ -33,3 +33,25 @@ func (s *Service) SetGroupCapacity(ctx context.Context, in SetGroupCapacityReque
 	}
 	return store.SetGroupCapacity(ctx, in, s.now().UTC())
 }
+
+// Reject already-full reinforcement before preparing its external workspace
+// resources. Admission still rechecks capacity in its own write transaction.
+func (s *Service) requireAvailableGroupCapacity(ctx context.Context, group model.Group, additional int) error {
+	if group.MaxActiveMembers == 0 {
+		return nil
+	}
+	active := int64(additional)
+	for _, id := range group.Members {
+		agent, err := s.store.Agent(ctx, id)
+		if err != nil {
+			return err
+		}
+		if agent.Lifecycle == model.AgentActive {
+			active++
+		}
+	}
+	if active > group.MaxActiveMembers {
+		return ErrConflict
+	}
+	return nil
+}
