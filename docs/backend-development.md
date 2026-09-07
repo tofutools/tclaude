@@ -745,3 +745,20 @@ file contents and performs no filesystem mutations. Hidden directories require
 `hidden=true`; `limit` defaults to 100 and is capped at 200. Each read inventories
 at most 8192 entries and refuses larger directories. Pages reflect the live
 filesystem, so concurrent renames or removals can change subsequent results.
+
+### Archiving saved configurations
+
+Configurations can be filtered as active, archived or all. Archive hides fresh
+selection actions while retaining every saved revision and all existing agent
+and execution settings. Restore explicitly makes the entry selectable again.
+Profiles still selected as global or harness defaults must be cleared or replaced
+in Defaults first. Editing cannot silently restore an archived entry.
+
+`POST /v2/configuration-profiles/{id}/archive` requires operator authentication,
+`request_id`, `expected_revision` and an explicit `archived` boolean. The
+`configuration-profile archive ID --file FILE` command sends the same request. Exact
+retries return their stored result; changed intent or a stale revision conflicts.
+Fresh agent configuration/default selection checks active status in the storage
+transaction. Existing agents may still run their pinned configuration, and Clone
+configuration copies those exact settings into an independent agent. Archive does
+not stop workloads, delete native history, or discard immutable profile revisions.
