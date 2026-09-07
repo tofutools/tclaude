@@ -958,3 +958,10 @@ operator presentation preferences and applies at every nesting level. New groups
 follow saved entries in snapshot order. Reload saved group order also reloads the
 saved presentation preferences; conflicting saves remain visibly unsaved until
 reloaded. Preferences are revision-checked and do not start or stop workloads.
+
+The main roster uses the same group hierarchy and saved sibling order as Group
+settings. Filtered matching descendants retain their ancestor headings for
+context. Choosing a group in the roster filter still selects only its direct
+members; parentage does not expand membership. Group filter labels include stable
+IDs to distinguish duplicate names. Select visible selects matching agent IDs,
+not ancestor groups or implicit descendants.
