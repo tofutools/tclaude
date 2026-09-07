@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/ports"
 )
 
 func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDeploymentResult, error) {
@@ -218,18 +219,34 @@ func (s *Service) GetTeamDeployment(ctx context.Context, req GetTeamDeploymentRe
 }
 
 func (s *Service) reconcileTeamDeployments(ctx context.Context) error {
+	requests, err := s.store.PendingTeamRebriefs(ctx)
+	if err != nil {
+		return err
+	}
+	for _, request := range requests {
+		if _, err = s.RebriefDeployment(ctx, request); err != nil {
+			return err
+		}
+	}
+
 	deployments, err := s.store.PendingTeamDeployments(ctx)
 	if err != nil {
 		return err
 	}
 	for _, deployment := range deployments {
 		if deployment.State == model.DeploymentStandingDown {
-			principal, principalErr := s.store.TeamDeploymentRequester(ctx, deployment.ID)
+			request, principalErr := s.store.TeamStandDownRequest(ctx, deployment.ID)
 			if principalErr != nil {
 				return principalErr
 			}
-			if _, standDownErr := s.continueTeamStandDown(ctx, deployment, principal, "deployment standing down"); standDownErr != nil {
+			if _, standDownErr := s.continueTeamStandDown(ctx, deployment, request.Context.Principal, request.Reason); standDownErr != nil {
 				return standDownErr
+			}
+			continue
+		}
+		if deployment.State == model.DeploymentReady {
+			if err = s.reconcileDeferredTeamBriefings(ctx, deployment); err != nil {
+				return err
 			}
 			continue
 		}
@@ -410,4 +427,58 @@ func teamDeploymentGraph(team model.TeamDefinition, deployment model.TeamDeploym
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
 	return model.WorkGraph{CompilerVersion: orchestrationCompilerVersion, EntryNodeID: entryID, Nodes: nodes, Edges: edges}
+}
+
+func (s *Service) reconcileDeferredTeamBriefings(ctx context.Context, deployment model.TeamDeployment) error {
+	revision, err := s.store.DefinitionRevision(ctx, deployment.Definition.RevisionID)
+	if err != nil {
+		return err
+	}
+	if revision.Team == nil {
+		return ErrConflict
+	}
+	for _, key := range sortedMemberKeys(deployment.Members) {
+		if !memberHasAfterReadyBrief(*revision.Team, key) || len(deployment.BriefingOperationIDs[key]) >= teamAfterReadyBriefCount(*revision.Team, key) {
+			continue
+		}
+		// The briefing belongs to this deployment's admitted execution, not
+		// a later primary execution that happens to use the same agent identity.
+		run, err := s.store.WorkRun(ctx, deployment.WorkRunID)
+		if err != nil {
+			return err
+		}
+		var executionID model.ExecutionID
+		for _, attempt := range run.Run.NodeAttempts {
+			if attempt.Performer != nil && attempt.Performer.Agent != nil && attempt.Performer.Agent.AgentID == deployment.Members[key] && attempt.ExecutionID != "" {
+				executionID = attempt.ExecutionID
+				break
+			}
+		}
+		if executionID == "" {
+			continue
+		}
+		execution, err := s.store.Execution(ctx, executionID)
+		if err != nil {
+			return err
+		}
+		if execution.State == model.ExecutionExited || execution.State == model.ExecutionFailed {
+			continue
+		}
+		runtime, err := s.runtimeFor(ctx, execution)
+		if err != nil {
+			return err
+		}
+		observation, err := runtime.Observe(ctx)
+		if err != nil {
+			return err
+		}
+		if observation.Context != ports.ContextReady {
+			continue
+		}
+		deployment, err = s.deliverAfterReadyBriefings(ctx, deployment, key, *revision.Team)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
