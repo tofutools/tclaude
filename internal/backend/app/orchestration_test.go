@@ -201,7 +201,11 @@ func TestAgentPreparedWorkThenHumanDecisionAdvancesExactGraph(t *testing.T) {
 	operator := model.OperatorPrincipal()
 	_, err = service.CreateAgent(ctx, app.CreateAgentRequest{Context: operator, ID: "worker", Name: "worker", Desired: model.DesiredConfiguration{Harness: "prepared-work", Model: "test", WorkingDirectory: t.TempDir(), Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}})
 	require.NoError(t, err)
-	_, err = service.SaveAutomationRule(ctx, app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: operator, RequestID: "standing_rule"}, ID: "standing", RevisionID: "standing_v1", Name: "standing", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Delegation: model.AutomationDelegation{Actions: []model.Action{model.ActionInteract}, Resources: []model.ResourceSelector{{Kind: model.ResourceAgent, AgentID: "worker"}}, ExpiresAt: now.Add(time.Hour)}, Condition: model.AutomationCondition{Kind: model.AutomationStandingOrder, StandingOrder: &model.StandingOrderCondition{FactKind: "user_prompt", Pattern: "review", Timing: model.StandingOrderSameContinuation, DispatchDeadline: time.Minute}}, Action: model.AutomationAction{Kind: model.AutomationSendMessage, Message: &model.AutomationMessageAction{Body: "apply the standing guidance", AgentIDs: []model.AgentID{"worker"}}}, Policy: model.OccurrencePolicy{MissedTicks: model.MissedTickSkip, OfflineDelivery: model.OfflineSkip, ExpiresAfter: time.Hour, Overlap: model.OverlapForbid, MaxActive: 1, Deadline: time.Minute, Retry: model.RetryPolicy{MaxAttempts: 1}}})
+	_, err = service.PutRole(ctx, app.PutRoleRequest{Principal: operator, Role: model.Role{ID: "native_reviewer", Name: "Native reviewer", Actions: []model.Action{model.ActionReadStatus}}})
+	require.NoError(t, err)
+	nativeAssignment, err := service.PutRoleAssignment(ctx, app.PutRoleAssignmentRequest{Principal: operator, Assignment: model.RoleAssignment{RoleID: "native_reviewer", Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: "worker"}, Resource: model.ResourceSelector{Kind: model.ResourceSelf}}})
+	require.NoError(t, err)
+	_, err = service.SaveAutomationRule(ctx, app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: operator, RequestID: "standing_rule"}, ID: "standing", RevisionID: "standing_v1", Name: "standing", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Delegation: model.AutomationDelegation{Actions: []model.Action{model.ActionInteract}, Resources: []model.ResourceSelector{{Kind: model.ResourceAgent, AgentID: "worker"}}, ExpiresAt: now.Add(time.Hour)}, Condition: model.AutomationCondition{Kind: model.AutomationStandingOrder, StandingOrder: &model.StandingOrderCondition{FactKind: "user_prompt", Pattern: "review", Timing: model.StandingOrderSameContinuation, DispatchDeadline: time.Minute}}, Action: model.AutomationAction{Kind: model.AutomationSendMessage, Message: &model.AutomationMessageAction{Body: "apply the standing guidance", RoleID: "native_reviewer"}}, Policy: model.OccurrencePolicy{MissedTicks: model.MissedTickSkip, OfflineDelivery: model.OfflineSkip, ExpiresAfter: time.Hour, Overlap: model.OverlapForbid, MaxActive: 1, Deadline: time.Minute, Retry: model.RetryPolicy{MaxAttempts: 1}}})
 	require.NoError(t, err)
 	graph := model.WorkGraph{CompilerVersion: "1", EntryNodeID: "work", Nodes: []model.WorkNode{
 		{ID: "work", Kind: model.WorkNodeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Agent: &model.AgentPerformer{AgentID: "worker", ContextPolicy: model.AgentContextFresh, Brief: "review the exact change"}}},
@@ -224,6 +228,10 @@ func TestAgentPreparedWorkThenHumanDecisionAdvancesExactGraph(t *testing.T) {
 	guidance, err := provider.preparation.NativeGuidance.EvaluateNativeGuidance(ctx, ports.NormalizedNativeEvent{EventID: "native_event", Kind: "user_prompt", ObservedAt: now, OccurredAt: now, NativeCorrelation: "turn_1", Payload: json.RawMessage(`{"text":"please review"}`), Timing: model.StandingOrderSameContinuation})
 	require.NoError(t, err)
 	require.Equal(t, "apply the standing guidance", guidance.Guidance)
+	require.NoError(t, service.DeleteRoleAssignment(ctx, app.DeleteRoleAssignmentRequest{Principal: operator, Assignment: nativeAssignment.Assignment, ExpectedRevision: nativeAssignment.Assignment.Revision}))
+	require.ErrorIs(t, guidance.Permit.Consume(ctx), app.ErrConflict, "role eligibility is live at effect release")
+	_, err = service.PutRoleAssignment(ctx, app.PutRoleAssignmentRequest{Principal: operator, Assignment: nativeAssignment.Assignment})
+	require.NoError(t, err)
 	require.NoError(t, guidance.Permit.Consume(ctx))
 	require.NoError(t, provider.preparation.NativeGuidance.SettleNativeGuidance(ctx, ports.NativeGuidanceSettlement{IssuanceID: guidance.IssuanceID, Disposition: ports.EffectAccepted, Evidence: model.ProviderEvidence{Provider: "prepared-work", Version: 1, Payload: []byte("native-response")}, SettledAt: now}))
 	passed := true
@@ -503,6 +511,34 @@ func TestDefinitionValidationRejectsGraphCycleAndAcceptsRequiredPreparedBriefing
 	require.Equal(t, model.BriefingBeforeFirstWork, result.Revision.Team.Briefings[0].Timing)
 }
 
+func TestTeamDeploymentPinsAndMaterializesAuthoredRoles(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "backend.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	now := time.Date(2026, 9, 7, 9, 0, 0, 0, time.UTC)
+	provider := &preparedWorkProvider{}
+	service := app.New(store, providers.NewRegistry(provider)).WithClock(func() time.Time { return now })
+	operator := model.OperatorPrincipal()
+	role, err := service.PutRole(ctx, app.PutRoleRequest{Principal: operator, Role: model.Role{ID: "team_reviewer", Name: "Team reviewer", Actions: []model.Action{model.ActionReadStatus, model.ActionSendMessage}}})
+	require.NoError(t, err)
+	desired := model.DesiredConfiguration{Harness: "prepared-work", Model: "test", WorkingDirectory: t.TempDir(), Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}
+	team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{{Key: "reviewer", Name: "reviewer", Desired: desired, Roles: []model.RoleID{"team_reviewer"}, Required: true}}, Waves: []model.TeamWave{{ID: "review", MemberKeys: []string{"reviewer"}, RequiredReady: true}}}
+	definition, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: operator, RequestID: "save_role_team"}, Draft: app.DefinitionDraft{ID: "role_team", RevisionID: "role_team_v1", Name: "role team", Kind: model.DefinitionTeam, SchemaVersion: 1, Source: "operator fixture", Team: &team}})
+	require.NoError(t, err)
+	deployed, err := service.DeployTeam(ctx, app.DeployTeamRequest{Context: app.RequestContext{Principal: operator, RequestID: "deploy_role_team"}, DeploymentID: "role_deployment", Instantiation: model.TeamInstantiation{Definition: model.DefinitionRef{DefinitionID: definition.Definition.ID, RevisionID: definition.Revision.ID, ContentHash: definition.Revision.ContentHash, Kind: model.DefinitionTeam}, Mission: "review", GroupID: "role_group"}})
+	require.NoError(t, err)
+	require.Equal(t, []model.TeamRolePin{{RoleID: role.Role.ID, Revision: role.Role.Revision, Actions: role.Role.Actions}}, deployed.Deployment.RolePins)
+	memberID := deployed.Deployment.Members["reviewer"]
+	resolved, err := store.ResolveMessageAudience(ctx, model.MessageAudience{GroupID: deployed.Deployment.GroupID, RoleID: role.Role.ID})
+	require.NoError(t, err)
+	require.Equal(t, []model.AgentID{memberID}, resolved)
+
+	replayed, err := service.DeployTeam(ctx, app.DeployTeamRequest{Context: app.RequestContext{Principal: operator, RequestID: "deploy_role_team"}, DeploymentID: "role_deployment", Instantiation: model.TeamInstantiation{Definition: deployed.Deployment.Definition, Mission: "review", GroupID: "role_group"}})
+	require.NoError(t, err)
+	require.Equal(t, deployed.Deployment.RolePins, replayed.Deployment.RolePins)
+}
+
 func TestManualOccurrencePinsRecipientSnapshotAndDeduplicates(t *testing.T) {
 	ctx := context.Background()
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "backend.sqlite"))
@@ -525,6 +561,65 @@ func TestManualOccurrencePinsRecipientSnapshotAndDeduplicates(t *testing.T) {
 	request.OccurrenceID = "occurrence_two"
 	_, err = service.RunRuleNow(ctx, request)
 	require.ErrorIs(t, err, app.ErrConflict)
+}
+
+func TestRoleTargetedMessagePinsRecipientsAndRechecksEligibility(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "backend.sqlite")
+	now := time.Date(2026, 9, 7, 8, 0, 0, 0, time.UTC)
+	open := func() (*sqlite.Store, *app.Service) {
+		store, err := sqlite.Open(path)
+		require.NoError(t, err)
+		return store, app.New(store, providers.NewRegistry()).WithClock(func() time.Time { return now })
+	}
+	store, service := open()
+	operator := model.OperatorPrincipal()
+	desired := model.DesiredConfiguration{Harness: "fake", Model: "test", WorkingDirectory: t.TempDir(), Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}
+	_, err := service.CreateAgent(ctx, app.CreateAgentRequest{Context: operator, ID: "reviewer", Name: "reviewer", Desired: desired})
+	require.NoError(t, err)
+	_, err = service.PutRole(ctx, app.PutRoleRequest{Principal: operator, Role: model.Role{ID: "review_role", Name: "Reviewer", Actions: []model.Action{model.ActionReadStatus}}})
+	require.NoError(t, err)
+	assignment, err := service.PutRoleAssignment(ctx, app.PutRoleAssignmentRequest{Principal: operator, Assignment: model.RoleAssignment{RoleID: "review_role", Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: "reviewer"}, Resource: model.ResourceSelector{Kind: model.ResourceSelf}}})
+	require.NoError(t, err)
+	delegation := model.AutomationDelegation{Actions: []model.Action{model.ActionSendMessage}, Resources: []model.ResourceSelector{{Kind: model.ResourceAgent, AgentID: "reviewer"}}, ExpiresAt: now.Add(time.Hour)}
+	policy := model.OccurrencePolicy{MissedTicks: model.MissedTickSkip, OfflineDelivery: model.OfflineQueue, ExpiresAfter: time.Hour, Overlap: model.OverlapAllow, MaxActive: 2, Deadline: time.Minute, Retry: model.RetryPolicy{MaxAttempts: 1}}
+	rule, err := service.SaveAutomationRule(ctx, app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: operator, RequestID: "save_role_rule"}, ID: "role_rule", RevisionID: "role_rule_v1", Name: "role rule", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Delegation: delegation, Condition: model.AutomationCondition{Kind: model.AutomationSchedule, Schedule: &model.ScheduleCondition{Timezone: "UTC", Interval: time.Minute, Anchor: now.Add(time.Hour)}}, Action: model.AutomationAction{Kind: model.AutomationSendMessage, Message: &model.AutomationMessageAction{Body: "review now", RoleID: "review_role"}}, Policy: policy})
+	require.NoError(t, err)
+
+	first, err := service.RunRuleNow(ctx, app.RunRuleNowRequest{Context: app.RequestContext{Principal: operator, RequestID: "fire_one"}, RuleID: rule.Rule.ID, ExpectedRuleRevision: rule.Rule.Revision, OccurrenceID: "role_occurrence_one", SourceOccurrenceKey: "one"})
+	require.NoError(t, err)
+	require.Equal(t, []model.OccurrenceRecipient{{AgentID: "reviewer", Disposition: model.RecipientPending}}, first.Occurrence.Recipients)
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	snapshot, err := service.Snapshot(ctx, app.SnapshotRequest{Principal: operator})
+	require.NoError(t, err)
+	require.Len(t, snapshot.Messages, 1)
+	occurrences, err := service.ListOccurrences(ctx, app.ListOccurrencesRequest{Principal: operator, RuleID: rule.Rule.ID})
+	require.NoError(t, err)
+	require.Equal(t, model.RecipientQueued, occurrences[0].Occurrence.Recipients[0].Disposition)
+	require.NotEmpty(t, occurrences[0].Occurrence.Recipients[0].OperationID)
+
+	require.NoError(t, store.Close())
+	store, service = open()
+	defer store.Close()
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	snapshot, err = service.Snapshot(ctx, app.SnapshotRequest{Principal: operator})
+	require.NoError(t, err)
+	require.Len(t, snapshot.Messages, 1, "restart must reuse the pinned recipient effect")
+
+	second, err := service.RunRuleNow(ctx, app.RunRuleNowRequest{Context: app.RequestContext{Principal: operator, RequestID: "fire_two"}, RuleID: rule.Rule.ID, ExpectedRuleRevision: rule.Rule.Revision, OccurrenceID: "role_occurrence_two", SourceOccurrenceKey: "two"})
+	require.NoError(t, err)
+	require.Len(t, second.Occurrence.Recipients, 1)
+	require.NoError(t, service.DeleteRoleAssignment(ctx, app.DeleteRoleAssignmentRequest{Principal: operator, Assignment: assignment.Assignment, ExpectedRevision: assignment.Assignment.Revision}))
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	occurrences, err = service.ListOccurrences(ctx, app.ListOccurrencesRequest{Principal: operator, RuleID: rule.Rule.ID})
+	require.NoError(t, err)
+	require.Equal(t, model.RecipientDenied, occurrences[1].Occurrence.Recipients[0].Disposition)
+	snapshot, err = service.Snapshot(ctx, app.SnapshotRequest{Principal: operator})
+	require.NoError(t, err)
+	require.Len(t, snapshot.Messages, 1, "removed role must prevent the fresh effect")
 }
 
 func TestHumanDecisionWindowIsExactVersionedAndIdempotent(t *testing.T) {
