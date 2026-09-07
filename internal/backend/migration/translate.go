@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tofutools/tclaude/internal/backend/app"
 	sourcev228 "github.com/tofutools/tclaude/internal/backend/migration/source/v228"
@@ -64,7 +65,9 @@ func Translate(inspection Inspection, plan MigrationPlan, attachments []Attachme
 		t.payloads[payload.SourceTable+"\x1f"+payload.SourceID] = payload
 	}
 	batch := app.ImportBatch{}
-	t.translateEvidence(&batch)
+	if err := t.translateEvidence(&batch); err != nil {
+		return app.ImportBatch{}, err
+	}
 	t.translateProfiles(&batch)
 	t.translateAgents(&batch)
 	t.translateGroups(&batch)
@@ -119,7 +122,7 @@ func conversionAllowed(plan MigrationPlan, metadataOnly bool) bool {
 	return true
 }
 
-func (t *translator) translateEvidence(batch *app.ImportBatch) {
+func (t *translator) translateEvidence(batch *app.ImportBatch) error {
 	disposition := map[string]TableDisposition{}
 	for _, value := range t.plan.Dispositions {
 		if _, ok := disposition[value.Table]; !ok || value.Conversion == ConversionInterrupted {
@@ -135,7 +138,23 @@ func (t *translator) translateEvidence(batch *app.ImportBatch) {
 		rows := append([]sourcev228.Row(nil), t.inspection.Snapshot.Rows[table]...)
 		sort.Slice(rows, func(i, j int) bool { return rows[i].Key < rows[j].Key })
 		for _, row := range rows {
-			payload, _ := json.Marshal(row.Values)
+			// JSON replaces malformed UTF-8 in strings. Refuse conversion rather
+			// than publish evidence that silently changes source text.
+			if !utf8.ValidString(row.Key) {
+				return fmt.Errorf("source text is not valid UTF-8; offline conversion refused")
+			}
+			for key, value := range row.Values {
+				if !utf8.ValidString(key) {
+					return fmt.Errorf("source text is not valid UTF-8; offline conversion refused")
+				}
+				if text, ok := value.(string); ok && !utf8.ValidString(text) {
+					return fmt.Errorf("source text is not valid UTF-8; offline conversion refused")
+				}
+			}
+			payload, err := json.Marshal(row.Values)
+			if err != nil {
+				return fmt.Errorf("source evidence cannot be encoded; offline conversion refused")
+			}
 			d := disposition[table]
 			conversion := d.Conversion
 			reason := d.ReasonCode
@@ -195,6 +214,7 @@ func (t *translator) translateEvidence(batch *app.ImportBatch) {
 		}
 		return a.TargetKind < b.TargetKind
 	})
+	return nil
 }
 
 func (t *translator) translateAgents(batch *app.ImportBatch) {

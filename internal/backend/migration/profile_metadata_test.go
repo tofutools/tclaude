@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -127,4 +128,14 @@ func TestImportInvalidStartupRetainsOriginalAndRedactsDiagnostic(t *testing.T) {
 	records, err := store.ImportedSourceRecords(ctx, "spawn_profiles")
 	require.NoError(t, err)
 	require.Contains(t, string(records[0].Payload), "invalid-secret")
+}
+
+func TestImportInvalidUTF8StartupRefusesPublication(t *testing.T) {
+	bundle := profileMetadataBundle(t)
+	alterFixture(t, bundle, `UPDATE spawn_profiles SET initial_message=CAST(X'FF' AS TEXT);`)
+	destination := filepath.Join(t.TempDir(), "target.sqlite")
+	_, err := ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: destination})
+	require.ErrorContains(t, err, "source text is not valid UTF-8")
+	_, err = os.Stat(destination)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }

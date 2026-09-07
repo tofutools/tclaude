@@ -808,7 +808,9 @@ the explicit disabled flag into the archived lifecycle. A pinned initial spawn
 configuration's blank effort remains blank; it does not inherit a later row value.
 No native effort aliases or role/permission grants are inferred.
 
-Startup text that violates target limits stays in the exact retained source record
+Malformed UTF-8 SQLite text blocks conversion before target publication because
+JSON cannot retain those bytes exactly. The source snapshot remains untouched.
+Startup text that violates other target limits stays in the exact retained source record
 and is identified by `profile_startup_retained_unmapped` in the redacted report.
 Invalid effort is preserved verbatim with `requested_effort_requires_review`;
 normal launch validation still refuses it. An unrecognized disabled flag archives
