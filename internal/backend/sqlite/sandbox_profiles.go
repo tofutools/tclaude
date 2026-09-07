@@ -96,7 +96,17 @@ func (s *Store) SaveSandboxProfile(ctx context.Context, req app.SaveSandboxProfi
 		return app.SandboxProfileResult{}, err
 	}
 	if req.ExpectedRevision == 0 {
-		_, err = tx.ExecContext(ctx, `INSERT INTO sandbox_profiles(id,name,head_revision_id,archived,revision,document) VALUES(?,?,?,?,?,?)`, profile.ID, profile.Name, revisionID, false, profile.Revision, profileData)
+		var inserted sql.Result
+		inserted, err = tx.ExecContext(ctx, `INSERT INTO sandbox_profiles(id,name,head_revision_id,archived,revision,document) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, profile.ID, profile.Name, revisionID, false, profile.Revision, profileData)
+		if err == nil {
+			count, countErr := inserted.RowsAffected()
+			if countErr != nil {
+				return app.SandboxProfileResult{}, countErr
+			}
+			if count == 0 {
+				return app.SandboxProfileResult{}, app.ErrConflict
+			}
+		}
 	} else {
 		var update sql.Result
 		update, err = tx.ExecContext(ctx, `UPDATE sandbox_profiles SET name=?,head_revision_id=?,revision=?,document=? WHERE id=? AND revision=? AND archived=0`, profile.Name, revisionID, profile.Revision, profileData, profile.ID, req.ExpectedRevision)

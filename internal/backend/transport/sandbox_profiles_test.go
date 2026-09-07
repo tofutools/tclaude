@@ -24,6 +24,8 @@ func TestPublicSandboxProfilesPreserveAuthoredPolicyAndRejectClaimedAuthority(t 
 	require.Equal(t, 401, request(handler, "POST", "/v2/sandbox-profiles", body, "").Code)
 	response := request(handler, "POST", "/v2/sandbox-profiles", body, testCredential)
 	require.Equal(t, 200, response.Code, response.Body.String())
+	duplicate := request(handler, "POST", "/v2/sandbox-profiles", strings.Replace(body, `"request_id":"create"`, `"request_id":"another-create"`, 1), testCredential)
+	require.Equal(t, 409, duplicate.Code, duplicate.Body.String())
 	require.NotContains(t, response.Body.String(), "Generation")
 	require.NotContains(t, response.Body.String(), "Authority")
 	var saved app.SandboxProfileResult
