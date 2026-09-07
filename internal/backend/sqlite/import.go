@@ -248,6 +248,9 @@ func insertImportEntities(ctx context.Context, tx *sql.Tx, batch app.ImportBatch
 			return err
 		}
 	}
+	if err := applyImportedGroupConfigurations(ctx, tx, batch.GroupConfigurations); err != nil {
+		return err
+	}
 	if batch.ConfigurationDefaults != nil {
 		data, err := json.Marshal(batch.ConfigurationDefaults)
 		if err != nil {
@@ -548,6 +551,9 @@ func (s *Store) VerifyImport(ctx context.Context, batch app.ImportBatch) error {
 			return fmt.Errorf("verify imported configuration profile %s: %w", expected.Profile.ID, err)
 		}
 	}
+	if err := s.verifyImportedGroupConfigurations(ctx, batch.GroupConfigurations); err != nil {
+		return err
+	}
 	if batch.ConfigurationDefaults != nil {
 		actual, err := s.ConfigurationDefaults(ctx)
 		if err != nil || !reflect.DeepEqual(actual, *batch.ConfigurationDefaults) {
@@ -670,12 +676,12 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 		"imported_diagnostics": len(batch.Diagnostics), "imported_message_envelopes": len(batch.MessageEnvelopes),
 		"imported_attachment_availability": len(batch.ImportedAttachments),
 		"configuration_profiles":           len(batch.ConfigurationProfiles), "configuration_profile_revisions": len(batch.ConfigurationProfiles),
-		"configuration_defaults": defaults, "definitions": len(batch.Definitions), "definition_revisions": len(batch.Definitions),
+		"group_configurations": len(batch.GroupConfigurations), "configuration_defaults": defaults, "definitions": len(batch.Definitions), "definition_revisions": len(batch.Definitions),
 		"automation_rules": len(batch.AutomationRules), "automation_rule_revisions": len(batch.AutomationRules),
 		"workspaces": len(batch.Workspaces), "usage_observations": len(batch.Usage), "historical_activity": len(batch.Activity),
 	}
 	for _, table := range []string{
-		"group_configurations", "group_member_requests", "group_parent_requests", "executions", "release_permits", "attachment_claims", "execution_accesses", "authority_grants", "role_assignments",
+		"group_member_requests", "group_parent_requests", "executions", "release_permits", "attachment_claims", "execution_accesses", "authority_grants", "role_assignments",
 		"operation_authority", "operation_additional_authority", "effect_permits", "pending_context_transitions", "native_binding_history",
 		"history_refreshes", "history_metadata_requests", "history_points", "history_use_claims", "workspace_uses",
 		"work_runs", "work_attempts", "work_evidence", "work_decisions", "program_profiles", "program_profile_revisions",

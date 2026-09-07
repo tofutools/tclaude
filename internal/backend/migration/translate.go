@@ -321,8 +321,12 @@ func (t *translator) translateGroups(batch *app.ImportBatch) error {
 		for _, item := range items {
 			group.Members = append(group.Members, item.id)
 		}
+		t.translateGroupConfiguration(batch, row, group)
 		batch.Groups = append(batch.Groups, group)
 	}
+	sort.Slice(batch.GroupConfigurations, func(i, j int) bool {
+		return batch.GroupConfigurations[i].GroupID < batch.GroupConfigurations[j].GroupID
+	})
 	sort.Slice(batch.Groups, func(i, j int) bool { return batch.Groups[i].ID < batch.Groups[j].ID })
 	return model.ValidateGroupHierarchy(batch.Groups)
 }
@@ -907,7 +911,7 @@ func importCounts(batch app.ImportBatch) map[string]int64 {
 			metadataOnlyAttachments++
 		}
 	}
-	return map[string]int64{
+	counts := map[string]int64{
 		"agents": int64(len(batch.Agents)), "groups": int64(len(batch.Groups)),
 		"conversations": int64(len(batch.Conversations)), "messages": int64(len(batch.Messages)),
 		"message_envelopes": int64(len(batch.MessageEnvelopes)),
@@ -917,6 +921,10 @@ func importCounts(batch app.ImportBatch) map[string]int64 {
 		"workspaces": int64(len(batch.Workspaces)), "usage": int64(len(batch.Usage)),
 		"activity": int64(len(batch.Activity)), "retained_source_records": int64(len(batch.SourceRecords)),
 	}
+	if len(batch.GroupConfigurations) > 0 {
+		counts["group_configurations"] = int64(len(batch.GroupConfigurations))
+	}
+	return counts
 }
 
 func semanticDigest(batch app.ImportBatch) (string, error) {
