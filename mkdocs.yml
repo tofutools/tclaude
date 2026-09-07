@@ -36,30 +36,8 @@ markdown_extensions:
 
 nav:
   - Home: index.md
+  - Operating guide: backend-development.md
   - Architecture: architecture.md
-  - Everyday use:
-      - Harnesses: harnesses.md
-      - Sessions: sessions.md
-      - Conversations: conversations.md
-      - Ask from the shell: ask.md
-      - Git worktrees: worktrees.md
-      - Notifications: notifications.md
-  - Fleet operations:
-      - Agents and groups: agents-and-groups.md
-      - Spawning and lifecycle: spawning-and-lifecycle.md
-      - Permissions and audit: permissions-and-audit.md
-      - Teams at scale: teams-at-scale.md
-      - Group routes: group-routes.md
-      - Dashboard: dashboard.md
-      - Operating remotely: remote.md
-  - Confinement:
-      - Sandboxing: sandboxing.md
-      - Network filtering: network-filtering.md
-      - Credential proxies: proxies.md
-  - Automation:
-      - Processes: processes.md
-      - Task runner: tasks.md
-  - Reference:
-      - Utilities: utilities.md
-      - Adding a harness: adding-a-harness.md
-      - History: history.md
+  - Harness capabilities: harnesses.md
+  - Adding a harness: adding-a-harness.md
+  - History: history.md

@@ -105,7 +105,9 @@ func ClientCommand() *cobra.Command {
 		return call(cmd, "POST", "/v2/inbox/"+args[0]+"/read", map[string]string{"request_id": readID})
 	}
 	root.AddCommand(read)
-	root.AddCommand(browserCommand(), migrationCommand(migration.Service{}))
+	daemon := DaemonCommand()
+	daemon.Use = "agentd"
+	root.AddCommand(daemon, browserCommand(), migrationCommand(migration.Service{}))
 	registerManagement(root, call)
 	registerOrchestration(root, call)
 	registerControls(root, call)

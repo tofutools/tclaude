@@ -1,23 +1,29 @@
-// Command tclaude is the full tclaude CLI. The repository also builds a
-// standalone daemon binary in cmd/tclaude-agentd; both share the entry
-// sequence in pkg/claude/cli.
+// Command tclaude operates the agentic work backend through its authenticated API.
 package main
 
 import (
-	"github.com/spf13/cobra"
-	"github.com/tofutools/tclaude/pkg/claude"
-	"github.com/tofutools/tclaude/pkg/claude/cli"
+	"context"
+	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
+
+	"github.com/tofutools/tclaude/internal/product"
 )
 
 func main() {
-	cli.Main(version, func() *cobra.Command {
-		cmd := claude.Cmd()
-		cmd.Use = "tclaude"
-		return cmd
-	})
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	command := product.ClientCommand()
+	command.Version = version
+	if command.Version == "" {
+		command.Version = "development"
+	}
+	if err := command.ExecuteContext(ctx); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 }
 
-// version, when non-empty, is the version stamped at build time via
-// -ldflags "-X main.version=...". Both the GoReleaser release builds and the
-// Homebrew formula inject it. It is empty for a plain `go build`.
+// Stamped by release builds with -ldflags "-X main.version=...".
 var version string
