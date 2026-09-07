@@ -5,3 +5,4 @@
 #terminal-tabs [data-connection="disconnected"], #terminal-tabs [data-connection="unavailable"] { color: #9da7b5; }
 .terminal-panel { overflow: auto; }
 .terminal-panel[hidden] { display: none; }
+#roster>.toolbar{flex-wrap:wrap;margin:12px 0}#roster [aria-label='Search agents']{min-width:180px;flex:1}#roster [role=status] p{overflow-wrap:anywhere}
