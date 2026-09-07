@@ -126,9 +126,20 @@ func (s *Service) SetSandboxProfileArchived(ctx context.Context, req SetSandboxP
 }
 
 type SandboxProfileAPI interface {
+	ListSandboxNetworkPacks(context.Context, model.Principal) ([]sandboxpolicy.NetworkPack, error)
 	SaveSandboxProfile(context.Context, SaveSandboxProfileRequest) (SandboxProfileResult, error)
 	GetSandboxProfile(context.Context, model.Principal, model.SandboxProfileID) (SandboxProfileResult, error)
 	ListSandboxProfiles(context.Context, model.Principal, bool) ([]model.SandboxProfile, error)
 	InspectSandboxClosure(context.Context, model.Principal, model.SandboxProfileRef) (sandboxpolicy.Closure, error)
 	SetSandboxProfileArchived(context.Context, SetSandboxProfileArchivedRequest) (SandboxProfileResult, error)
+}
+
+func (s *Service) ListSandboxNetworkPacks(ctx context.Context, principal model.Principal) ([]sandboxpolicy.NetworkPack, error) {
+	if err := requireOperator(principal); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return sandboxpolicy.NetworkPackCatalog(), nil
 }

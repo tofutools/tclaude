@@ -9,6 +9,18 @@ import (
 )
 
 func (h *Handler) registerSandboxProfiles(api app.SandboxProfileAPI) {
+	h.mux.HandleFunc("GET /v2/sandbox-network-packs", func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := h.caller(w, r)
+		if !ok {
+			return
+		}
+		result, err := api.ListSandboxNetworkPacks(r.Context(), principal)
+		if err != nil {
+			applicationError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
 	h.mux.HandleFunc("GET /v2/sandbox-profiles", func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := h.caller(w, r)
 		if !ok {
