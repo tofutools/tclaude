@@ -2,6 +2,7 @@ package sandboxpolicy_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -107,4 +108,57 @@ func TestScopeUnionKeepsDenyAndTmpfsCeilingWhileExplicitValuesWin(t *testing.T) 
 	require.ErrorIs(t, err, sandboxpolicy.ErrInvalidClosure)
 	_, err = sandboxpolicy.ComposeScopes(context.Background(), []sandboxpolicy.ScopeSelection{{Scope: sandboxpolicy.ScopeGroup, Ref: global}, {Scope: sandboxpolicy.ScopeGroup, Ref: explicit}}, r, canonicalPaths{})
 	require.ErrorIs(t, err, sandboxpolicy.ErrInvalidClosure)
+}
+
+func TestSandboxCompositionRejectsExactMountCollisionButRetainsNesting(t *testing.T) {
+	for _, guest := range []string{"/guest/work", "/guest/work/cache", "/guest"} {
+		t.Run(guest, func(t *testing.T) {
+			r := newRevisions()
+			bind := r.add(t, "bind", model.SandboxPolicy{Filesystem: []model.SandboxFilesystemRule{{HostPath: "/source", GuestPath: "/guest/work", Access: model.SandboxFilesystemRead}}})
+			tmp := r.add(t, "tmp", model.SandboxPolicy{Tmpfs: []model.SandboxTmpfs{{GuestPath: guest}}})
+			combined := r.add(t, "combined", model.SandboxPolicy{Includes: []model.SandboxProfileRef{bind, tmp}})
+			_, includeErr := sandboxpolicy.ComposeIncludes(context.Background(), combined, r, canonicalPaths{})
+			_, scopeErr := sandboxpolicy.ComposeScopes(context.Background(), []sandboxpolicy.ScopeSelection{{Scope: sandboxpolicy.ScopeGlobal, Ref: bind}, {Scope: sandboxpolicy.ScopeExplicit, Ref: tmp}}, r, canonicalPaths{})
+			if guest == "/guest/work" {
+				require.ErrorIs(t, includeErr, sandboxpolicy.ErrInvalidClosure)
+				require.ErrorIs(t, scopeErr, sandboxpolicy.ErrInvalidClosure)
+			} else {
+				require.NoError(t, includeErr)
+				require.NoError(t, scopeErr)
+			}
+		})
+	}
+}
+
+func TestSandboxCompositionChecksAggregateEnvironmentAndGeneratedDirectoryLimit(t *testing.T) {
+	for _, generated := range []bool{false, true} {
+		for _, count := range []int{63, 64} {
+			r := newRevisions()
+			first := model.SandboxPolicy{Environment: model.Environment{}}
+			for n := 0; n < 65; n++ {
+				first.Environment[fmt.Sprintf("FIRST_%d", n)] = "value"
+			}
+			second := model.SandboxPolicy{Environment: model.Environment{}}
+			for n := 0; n < count; n++ {
+				name := fmt.Sprintf("SECOND_%d", n)
+				if generated {
+					second.AgentDirectories = append(second.AgentDirectories, name)
+				} else {
+					second.Environment[name] = "value"
+				}
+			}
+			firstRef := r.add(t, "first", first)
+			secondRef := r.add(t, "second", second)
+			root := r.add(t, "root", model.SandboxPolicy{Includes: []model.SandboxProfileRef{firstRef, secondRef}})
+			_, includeErr := sandboxpolicy.ComposeIncludes(context.Background(), root, r, nil)
+			_, scopeErr := sandboxpolicy.ComposeScopes(context.Background(), []sandboxpolicy.ScopeSelection{{Scope: sandboxpolicy.ScopeGlobal, Ref: firstRef}, {Scope: sandboxpolicy.ScopeGroup, Ref: secondRef}}, r, nil)
+			if count == 64 {
+				require.ErrorIs(t, includeErr, sandboxpolicy.ErrInvalidClosure)
+				require.ErrorIs(t, scopeErr, sandboxpolicy.ErrInvalidClosure)
+			} else {
+				require.NoError(t, includeErr)
+				require.NoError(t, scopeErr)
+			}
+		}
+	}
 }

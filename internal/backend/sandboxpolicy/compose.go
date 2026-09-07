@@ -98,6 +98,9 @@ func ComposeIncludes(ctx context.Context, root model.SandboxProfileRef, reader R
 		if err := mergeComposition(&out, own); err != nil {
 			return Composition{}, err
 		}
+		if err := validateCompositionValues(out.Values); err != nil {
+			return Composition{}, err
+		}
 		encoded, err := json.Marshal(out)
 		if err != nil {
 			return Composition{}, err
@@ -220,4 +223,20 @@ func configRank(value model.SandboxHarnessConfig) int {
 	default:
 		return 0
 	}
+}
+
+func validateCompositionValues(values model.SandboxPolicy) error {
+	if err := Validate(values); err != nil {
+		return invalidClosure(err.Error())
+	}
+	guests := make(map[string]bool, len(values.Filesystem))
+	for _, rule := range values.Filesystem {
+		guests[guestKey(rule)] = true
+	}
+	for _, mount := range values.Tmpfs {
+		if guests[mount.GuestPath] {
+			return invalidClosure("filesystem and tmpfs claim the same guest path")
+		}
+	}
+	return nil
 }
