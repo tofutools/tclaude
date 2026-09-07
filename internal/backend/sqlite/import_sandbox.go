@@ -28,7 +28,7 @@ func applyImportedSandboxProfiles(ctx context.Context, tx *sql.Tx, profiles []ap
 	reader := importedSandboxReader{}
 	for _, result := range profiles {
 		profile, revision := result.Profile, result.Revision
-		if profile.ID.Validate() != nil || revision.Ref.ProfileID != profile.ID || profile.HeadRevisionID != revision.Ref.RevisionID || !profile.Archived || profile.Revision != 1 || revision.Number != 1 || result.Repeated || !reflect.DeepEqual(revision.Author, model.Principal{}) || revision.RequestID != "" {
+		if profile.ID.Validate() != nil || revision.Ref.ProfileID != profile.ID || profile.HeadRevisionID != revision.Ref.RevisionID || !profile.Archived || !profile.Imported || profile.Revision != 1 || revision.Number != 1 || result.Repeated || !reflect.DeepEqual(revision.Author, model.Principal{}) || revision.RequestID != "" {
 			return app.ErrInvalid
 		}
 		if profile.Name == "" || profile.Name != strings.TrimSpace(profile.Name) || len(profile.Name) > 200 || !utf8.ValidString(profile.Name) || strings.ContainsRune(profile.Name, 0) {

@@ -25,9 +25,11 @@ type SandboxProfile struct {
 	Name           string
 	HeadRevisionID SandboxProfileRevisionID
 	Archived       bool
-	Revision       Revision
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	// Imported profiles retain source identity and can only be reused by independent copy.
+	Imported  bool `json:",omitempty"`
+	Revision  Revision
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type SandboxProfileRevision struct {

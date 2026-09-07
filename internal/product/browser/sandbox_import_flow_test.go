@@ -45,6 +45,8 @@ func TestBrowserImportedSandboxCanBeInspectedAndCopiedWithoutActivation(t *testi
 	require.False(t, page.MustHasR("#sandbox-profiles article", "Retained policy"))
 	page.MustElement("#sandbox-profiles [aria-label='Sandbox profile status']").MustSelect("archived")
 	card := page.MustElementR("#sandbox-profiles article", "Retained policy")
+	require.False(t, card.MustHasR("button", "^(Restore|Edit) sandbox profile$"))
+	require.Contains(t, card.MustText(), "independent copy")
 	card.MustElementR("button", "^Inspect sandbox profile$").MustClick()
 	page.MustElementR(".sandbox-editor summary", "^Environment and generated directories$").MustClick()
 	require.Equal(t, "literal $(never-run)", page.MustElement(".sandbox-editor [aria-label='Literal environment value 1']").MustProperty("value").String())
@@ -60,9 +62,11 @@ func TestBrowserImportedSandboxCanBeInspectedAndCopiedWithoutActivation(t *testi
 	for _, profile := range profiles {
 		if profile.Name == "Retained policy" {
 			require.True(t, profile.Archived)
+			require.True(t, profile.Imported)
 		} else {
 			require.Equal(t, "Reviewed copy", profile.Name)
 			require.False(t, profile.Archived)
+			require.False(t, profile.Imported)
 		}
 		var read app.SandboxProfileResult
 		require.NoError(t, operator.Call(ctx, "GET", "/v2/sandbox-profiles/"+string(profile.ID), nil, &read))

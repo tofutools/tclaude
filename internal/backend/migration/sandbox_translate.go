@@ -84,7 +84,7 @@ func (t *translator) translateSandboxProfiles(batch *app.ImportBatch) {
 		revisionID := model.SandboxProfileRevisionID(stableImportID("sbr", t.inspection.Source.DatabaseHash, "sandbox_profiles\x00"+row.Key+"\x00"+hash))
 		at := timeValue(row.Values["created_at"])
 		result := app.SandboxProfileResult{
-			Profile:  model.SandboxProfile{ID: id, Name: name, HeadRevisionID: revisionID, Archived: true, Revision: 1, CreatedAt: at, UpdatedAt: firstTime(timeValue(row.Values["updated_at"]), at)},
+			Profile:  model.SandboxProfile{ID: id, Name: name, HeadRevisionID: revisionID, Archived: true, Imported: true, Revision: 1, CreatedAt: at, UpdatedAt: firstTime(timeValue(row.Values["updated_at"]), at)},
 			Revision: model.SandboxProfileRevision{Ref: model.SandboxProfileRef{ProfileID: id, RevisionID: revisionID, ContentHash: hash}, Number: 1, Policy: policy, CreatedAt: at},
 		}
 		reader[result.Revision.Ref] = policy

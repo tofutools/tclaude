@@ -1298,3 +1298,5 @@ Exact retries verify both policy documents and the scalar lifecycle/revision
 indexes. A destination produced by an older evidence-only conversion is refused
 if it lacks the newly expected typed records; the importer never rewrites that
 existing destination. Use a fresh explicit destination for the new conversion.
+
+Imported sandbox profiles carry a durable imported marker. They remain archived and reject restore or same-identity edits; inspect, export, and explicit independent copy remain available. Independent copies use fresh identities and normal editable lifecycle rules.

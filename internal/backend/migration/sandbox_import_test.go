@@ -3,6 +3,7 @@ package migration
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -55,6 +56,7 @@ func TestImportedSandboxProfilesStayArchivedWithExactClosureAndRetry(t *testing.
 	var child app.SandboxProfileResult
 	for _, profile := range profiles {
 		require.True(t, profile.Archived)
+		require.True(t, profile.Imported)
 		if profile.Name == "Child" {
 			child, err = service.GetSandboxProfile(ctx, model.OperatorPrincipal(), profile.ID)
 			require.NoError(t, err)
@@ -70,6 +72,16 @@ func TestImportedSandboxProfilesStayArchivedWithExactClosureAndRetry(t *testing.
 	require.Equal(t, "closed", closure.Entries[0].Policy.UnixSockets.Mode)
 	require.Equal(t, model.SandboxNetworkDeny, closure.Entries[0].Policy.Network.Baseline)
 	require.Empty(t, child.Revision.Author.Kind)
+	for _, archived := range []bool{false, true} {
+		_, err = service.SetSandboxProfileArchived(ctx, app.SetSandboxProfileArchivedRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: model.RequestID(fmt.Sprintf("retained-archive-%v", archived))}, ID: child.Profile.ID, ExpectedRevision: child.Profile.Revision, Archived: archived})
+		require.ErrorIs(t, err, app.ErrConflict)
+	}
+	_, err = service.SaveSandboxProfile(ctx, app.SaveSandboxProfileRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "retained-edit"}, ID: child.Profile.ID, ExpectedRevision: child.Profile.Revision, Name: "Changed", Policy: child.Revision.Policy})
+	require.ErrorIs(t, err, app.ErrConflict)
+	unchanged, err := service.GetSandboxProfile(ctx, model.OperatorPrincipal(), child.Profile.ID)
+	require.NoError(t, err)
+	require.Equal(t, child, unchanged)
+
 	report, err := store.ImportReport(ctx)
 	require.NoError(t, err)
 	for _, record := range report.Records {
