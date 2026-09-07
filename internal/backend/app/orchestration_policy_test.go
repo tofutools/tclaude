@@ -137,6 +137,35 @@ func TestTrustedFactCollectionResetsFailedDwellAndFiresOncePerEpisode(t *testing
 	require.Len(t, occurrences, 1, "continuous true snapshots do not manufacture repeated trigger edges")
 }
 
+func TestRepeatedFreshSnapshotDoesNotPoisonLaterTriggerEdges(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "edge.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Date(2026, 9, 7, 10, 30, 0, 0, time.UTC)
+	resource := model.AutomationFactResource{Kind: model.FactResourceRepositoryPullReq, Repository: "tofutools/tclaude", PullRequest: 2437}
+	source := &automationFactSourceFake{id: "github", fact: model.NormalizedFact{EventID: "check-suite:99:succeeded", Kind: model.FactCICompleted, Value: "succeeded", Resource: resource, OccurredAt: now, ObservedAt: now}}
+	service := app.New(store, providers.NewRegistry()).WithClock(func() time.Time { return now }).WithAutomationFactSources(source)
+	graph := waitingDecisionGraph()
+	_, err = service.SaveAutomationRule(ctx, app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "save_edge"}, ID: "edge", RevisionID: "edge_v1", Name: "CI edge", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Delegation: automationWorkDelegation(now, "edge"), Condition: model.AutomationCondition{Kind: model.AutomationTrigger, Trigger: &model.TriggerCondition{SourceID: "github", Resource: resource, FactKind: model.FactCICompleted, Values: []string{"succeeded"}, Freshness: 5 * time.Minute}}, Action: model.AutomationAction{Kind: model.AutomationStartWork, Work: &model.WorkStart{InlineGraph: &graph, Deadline: now.Add(time.Hour)}}, Policy: occurrencePolicy(model.MissedTickCoalesce, model.OverlapAllow, 3)})
+	require.NoError(t, err)
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	now = now.Add(time.Second)
+	source.fact.ObservedAt = now
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err, "re-observing one upstream identity advances the durable cursor without duplicating its occurrence")
+	source.fact.EventID = "check-suite:100:succeeded"
+	source.fact.OccurredAt = now
+	now = now.Add(time.Second)
+	source.fact.ObservedAt = now
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	occurrences, err := service.ListOccurrences(ctx, app.ListOccurrencesRequest{Principal: model.OperatorPrincipal(), RuleID: "edge"})
+	require.NoError(t, err)
+	require.Len(t, occurrences, 2, "a later distinct upstream edge remains consumable")
+}
+
 func attemptFor(t *testing.T, run app.WorkRunResult, node model.WorkNodeID, attempt uint32) model.WorkNodeAttempt {
 	t.Helper()
 	for _, candidate := range run.Run.NodeAttempts {
