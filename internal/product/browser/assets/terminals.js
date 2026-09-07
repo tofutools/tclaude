@@ -8,6 +8,14 @@ class TerminalWorkspace {
     this.entries = new Map();
     this.selected = null;
     this.sequence = 0;
+    this.layout = 'tabs';
+    this.restoring = false;
+    this.layoutControl = document.getElementById('terminal-layout');
+    this.layoutControl.onchange = () => { this.layout = this.layoutControl.value; this.select(this.selected, false); };
+    document.getElementById('terminal-left').onclick = () => this.move(-1);
+    document.getElementById('terminal-right').onclick = () => this.move(1);
+    this.popOutButton = document.getElementById('terminal-popout');
+    this.popOutButton.onclick = () => this.popOut();
     this.tabs = document.getElementById('terminal-tabs');
     this.panels = document.getElementById('terminal');
     this.status = document.getElementById('terminal-status');
@@ -36,7 +44,7 @@ class TerminalWorkspace {
     this.renderStatus();
   }
 
-  open(execution, label) {
+  open(execution, label, connect = true) {
     let entry = this.entries.get(execution.id);
     if (!entry) {
       const id = `terminal-pane-${++this.sequence}`;
@@ -53,6 +61,8 @@ class TerminalWorkspace {
       panel.className = 'terminal-panel';
       panel.role = 'tabpanel';
       panel.setAttribute('aria-labelledby', tab.id);
+      panel.textContent = 'Disconnected. Select this pane and reconnect to attach.';
+      panel.addEventListener('pointerdown', () => this.select(entry, false));
       entry = {id: execution.id, label, tab, panel, socket: null, terminal: null,
         state: 'disconnected', canResize: false, columns: 80, rows: 24};
       tab.onclick = () => this.select(entry);
@@ -61,17 +71,22 @@ class TerminalWorkspace {
       this.panels.append(panel);
     }
     this.select(entry);
-    this.connect(entry);
+    if (connect) this.connect(entry);
+    this.persist();
   }
 
   select(entry, focus = true) {
     this.selected = entry;
     for (const candidate of this.entries.values()) {
       const active = candidate === entry;
-      candidate.panel.hidden = !active;
+      candidate.panel.hidden = this.layout === 'tabs' && !active;
+      candidate.panel.classList.toggle('selected', active);
       candidate.tab.setAttribute('aria-selected', String(active));
       candidate.tab.tabIndex = active ? 0 : -1;
     }
+    this.panels.dataset.layout = this.layout;
+    this.layoutControl.value = this.layout;
+    this.persist();
     this.size.elements.columns.value = entry?.columns ?? 80;
     this.size.elements.rows.value = entry?.rows ?? 24;
     this.renderStatus();
@@ -83,6 +98,7 @@ class TerminalWorkspace {
     if (!entry.terminal) {
       entry.terminal = new Terminal({cols: entry.columns, rows: entry.rows,
         convertEol: false, theme: {background: '#0f1419', foreground: '#d4d4d4'}});
+      entry.panel.replaceChildren();
       entry.terminal.open(entry.panel);
       entry.terminal.onData(data => {
         if (entry.socket?.readyState === WebSocket.OPEN) {
@@ -120,6 +136,7 @@ class TerminalWorkspace {
           throw new Error('Invalid terminal capabilities');
         }
         entry.canResize = control.resize;
+        this.onAttached?.(entry);
         if (control.resize) {
           socket.send(JSON.stringify({type: 'resize', columns: entry.columns, rows: entry.rows}));
         }
@@ -159,9 +176,62 @@ class TerminalWorkspace {
     entry.terminal?.dispose();
     entry.tab.remove();
     entry.panel.remove();
+    this.persist();
     if (this.selected === entry) {
       this.select(entries[index + 1] || entries[index - 1] || null);
     }
+  }
+
+  popOut() {
+    const entry=this.selected;if(!entry)return;
+    const nonce=crypto.randomUUID(),url=new URL(location.pathname,location.origin);
+    url.searchParams.set('terminal',entry.id);url.hash=new URLSearchParams({handoff:nonce}).toString();
+    const child=window.open(url,'_blank','popup,width=1100,height=760');
+    if(!child){this.status.textContent='Pop-out was blocked. Allow pop-ups to move this attachment.';return}
+    const receive=event=>{
+      if(event.origin!==location.origin||event.source!==child||event.data?.type!=='terminal-attached'||event.data.nonce!==nonce||event.data.executionID!==entry.id)return;
+      cleanup();if(this.entries.get(entry.id)===entry)this.disconnect(entry);
+    };
+    const cleanup=()=>{window.removeEventListener('message',receive);clearTimeout(timer)};
+    const timer=setTimeout(cleanup,30000);window.addEventListener('message',receive);
+  }
+
+  move(delta) {
+    const entries = [...this.entries.values()], index = entries.indexOf(this.selected), next = index + delta;
+    if(index < 0 || next < 0 || next >= entries.length) return;
+    [entries[index], entries[next]] = [entries[next], entries[index]];
+    this.entries = new Map(entries.map(entry => [entry.id, entry]));
+    for(const entry of entries){this.tabs.append(entry.tab);this.panels.append(entry.panel)}
+    this.persist();
+  }
+
+  persist() {
+    if(this.restoring) return;
+    try { sessionStorage.setItem('terminal-layout-v1', JSON.stringify({layout:this.layout, selected:this.selected?.id,
+      entries:[...this.entries.values()].map(e=>({id:e.id,columns:e.columns,rows:e.rows}))})); } catch { /* Storage may be disabled; live attachments still work. */ }
+  }
+
+  restore(executions, agents) {
+    let saved;try{saved=JSON.parse(sessionStorage.getItem('terminal-layout-v1'))}catch{return}
+    if(!saved || !Array.isArray(saved.entries)) return;
+    this.restoring = true;
+    try {
+      this.layout = saved.layout === 'split' ? 'split' : 'tabs';
+      for(const item of saved.entries.slice(0,16)){
+        const execution=executions.find(e=>e.id===item?.id);if(!execution)continue;
+        const agent=agents.find(a=>a.PrimaryExecutionID===execution.id);
+        this.open(execution,agent?.Name||execution.id,false);
+        const entry=this.entries.get(execution.id);
+        if(Number.isInteger(item.columns)&&item.columns>=1&&item.columns<=1000)entry.columns=item.columns;
+        if(Number.isInteger(item.rows)&&item.rows>=1&&item.rows<=1000)entry.rows=item.rows;
+      }
+      this.select(this.entries.get(saved.selected)||this.selected,false);
+    } finally {this.restoring=false;this.persist()}
+  }
+
+  suspend() {
+    this.persist();
+    for (const entry of this.entries.values()) this.disconnect(entry);
   }
 
   closeAll() {
@@ -178,6 +248,7 @@ class TerminalWorkspace {
     entry.terminal.resize(columns, rows);
     entry.columns = columns;
     entry.rows = rows;
+    this.persist();
   }
 
   renderStatus() {
@@ -190,6 +261,7 @@ class TerminalWorkspace {
     this.disconnectButton.disabled = !entry?.socket;
     this.reconnectButton.disabled = !entry || !!entry.socket;
     this.removeButton.disabled = !entry;
+    this.popOutButton.disabled = !entry;
     this.resizeButton.disabled = !connected || !entry.canResize;
     const states = {
       connecting: 'Connecting', connected: 'Attached', disconnected: 'Disconnected',

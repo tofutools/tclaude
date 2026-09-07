@@ -12,3 +12,9 @@ body.wizard{background:#160e25;color:#efe3bd;font-family:Georgia,'Times New Roma
 body.slop{background:#150d1c;color:#f9e9ad}body.slop header,body.slop nav{background:#2d1230}body.slop button{border-color:#c58a38}body.slop [aria-current=true]{background:#702255}body.slop #product-title{color:#ffe75a;text-shadow:0 0 8px #ff4088}body.slop #presentation-marquee{color:#ffe75a;background:#38162a;border:2px dotted #ffa855}
 .presentation-spark{position:fixed;z-index:10000;pointer-events:none;color:#f7d36d;font-size:1.15rem;animation:presentation-cast .85s ease-out forwards}@keyframes presentation-cast{from{opacity:1;transform:translate(-50%,-50%) scale(.7)}to{opacity:0;transform:translate(var(--dx),var(--dy)) scale(1.4)}}
 @media(prefers-reduced-motion:reduce){.presentation-spark{display:none}body.wizard *,body.slop *{scroll-behavior:auto!important}}
+#terminal[data-layout=split]{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:12px}#terminal[data-layout=split] .terminal-panel{min-width:0;overflow:auto;max-height:70vh;border:2px solid #2a3340;padding:4px}#terminal[data-layout=split] .terminal-panel.selected{border-color:#79b8ff}#terminals>.toolbar{flex-wrap:wrap}
+
+#terminal-dashboard-link{display:none}.terminal-window header,.terminal-window nav{display:none}.terminal-window #terminal-dashboard-link{display:inline}.terminal-window main{padding:12px;max-width:none}
+#roster>.toolbar{flex-wrap:wrap;margin:12px 0}#roster [aria-label='Search agents']{min-width:180px;flex:1}#roster [role=status] p{overflow-wrap:anywhere}
+
+.terminal-window #presentation-controls,.terminal-window #presentation-marquee{display:none}

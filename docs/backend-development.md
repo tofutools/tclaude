@@ -616,6 +616,13 @@ Select a node to inspect all of its activations and attempts, retry times,
 execution/operation identifiers, decisions, and attributed evidence. Refresh
 reads the current run revision; it does not restart work or infer completion.
 
+Terminal panes support tabbed or split layout and explicit pane ordering. The
+current browser tab remembers execution IDs, sizes, selection and layout across
+reloads; restored panes remain disconnected until reconnected. Pop-out opens
+one exact execution in a separate window and disconnects the original only
+after the new authenticated attachment confirms readiness. Closing either view
+never stops the workload. Scrollback remains local to the view and is not
+persisted across reloads.
 Group settings in the browser support renaming, membership selection, member
 ordering and changing the bounded owner role. `PUT /v2/groups/{id}` accepts
 `name`, ordered `members`, and `expected_revision`; it checks current
