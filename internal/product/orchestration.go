@@ -23,6 +23,7 @@ func registerOrchestration(root *cobra.Command, call apiCall) {
 		{"process", "Start pinned process graphs and report exact node evidence", []struct{ verb, path, description string }{
 			{"start", "/v2/processes", "Start a process using a pinned definition or explicit graph"},
 			{"evidence", "/v2/processes/evidence", "Record evidence for an exact issued node attempt"},
+			{"resolve-blocked", "/v2/processes/resolve-blocked", "Resolve an exact parked attempt by retry, rework, waiver, or cancellation"},
 		}, "", "/v2/work/"},
 		{"decision", "Read and answer authorized decision windows", []struct{ verb, path, description string }{
 			{"submit", "/v2/decisions/submit", "Submit an answer at the expected decision window revision"},
@@ -33,7 +34,10 @@ func registerOrchestration(root *cobra.Command, call apiCall) {
 		}, "/v2/automation/rules", "/v2/automation/rules/"},
 		{"team", "Deploy pinned team definitions", []struct{ verb, path, description string }{
 			{"deploy", "/v2/teams/deploy", "Deploy explicitly pinned members and dependency waves"},
-		}, "", "/v2/teams/deployments/"},
+			{"rebrief", "/v2/teams/rebrief", "Send a selected pinned briefing revision to a deployment"},
+			{"advance-phase", "/v2/teams/advance-phase", "Advance an advisory checklist without completing work"},
+			{"stand-down", "/v2/teams/stand-down", "Stop a deployment while retaining owned checkouts and history"},
+		}, "/v2/teams/deployments", "/v2/teams/deployments/"},
 	} {
 		cmd := boa.CmdT[struct{}]{Use: group.name, Short: group.description}.ToCobra()
 		for _, write := range group.writes {

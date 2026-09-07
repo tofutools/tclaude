@@ -51,6 +51,10 @@ func (h *CallbackHandler) HandleNativeCallback(ctx context.Context, raw ports.Ra
 	if err != nil {
 		return err
 	}
+	if runtime.observeActivity(event) {
+		_, err = sink.Respond(ctx, ports.RawNativeCallbackResponse{StatusCode: 204})
+		return err
+	}
 	responder := &callbackResponder{nativeKind: nativeKind, encode: h.Encode, sink: sink}
 	settlement, err := runtime.HandleNativeEvent(ctx, event, responder)
 	if err != nil {

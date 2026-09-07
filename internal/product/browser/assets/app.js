@@ -84,7 +84,7 @@ function render(){
  const messages=$('message-list');messages.replaceChildren();
  for(const message of [...snapshot.messages||[]].reverse()){
   const card=el('article',undefined,'card');card.append(el('strong',message.Subject||'Message'),el('p',`${message.Sender.AgentID||message.Sender.Kind} · ${new Date(message.CreatedAt).toLocaleString()}`,'muted'),el('pre',message.Body));
-  card.append(el('p',(message.Recipients||[]).map(r=>`${r.Audience==='cc'?'CC':'To'} ${r.AddressKind==='operator'?'Operator':r.AgentID} · ${r.ReadAt?'read':'unread'}`).join(', '),'muted'));
+  card.append(el('p',(message.Recipients||[]).map(r=>`${r.Audience==='cc'?'CC':'To'} ${r.AddressKind==='operator'?'Operator':r.AgentID} · ${r.ReadAt?'read':'unread'}${r.NotificationOutcome?' · notice '+r.NotificationOutcome.replaceAll('_',' '):''}`).join(', '),'muted'));
   if(message.ParentMessageID)card.append(el('p','Reply in an existing thread','muted'));
   card.append(button('Reply all',()=>composeMessage(message)));
   if((message.Recipients||[]).some(r=>r.AddressKind==='operator'&&!r.ReadAt))card.append(button('Mark read',async id=>{await api(`/v2/messages/${encodeURIComponent(message.ID)}/read`,{request_id:id,operator:true});await refresh()}));
@@ -296,9 +296,15 @@ async function renderDecisions(){
  for(const result of results||[]){
   const window=result.Window,card=el('article',undefined,'card');
   card.append(el('h2',window.Question||'Decision'),el('p',`${window.Attempt.RunID} · ${window.Attempt.NodeID}`),el('p',`Expires ${new Date(window.ExpiresAt).toLocaleString()}`,'muted'));
-  card.append(button('Answer',()=>edit('Answer decision',[{name:'answer',label:'Answer',options:window.PermittedAnswers||[]},{name:'reason',label:'Reason',multiline:true}],async f=>{
-   await api('/v2/decisions/submit',{request_id:f.requestID,decision_id:window.ID,expected_window_revision:window.Revision,answer:f.answer,reason:f.reason});await renderDecisions();
-  })));
+  card.append(button('Answer',async()=>{
+   const blocked=window.Kind==='blocked',work=blocked?await api(`/v2/work/${encodeURIComponent(window.Attempt.RunID)}`):null;
+   edit(blocked?'Resolve blocked work':'Answer decision',[{name:'answer',label:'Answer',options:window.PermittedAnswers||[]},{name:'reason',label:'Reason',multiline:true}],async f=>{
+    const body={request_id:f.requestID,decision_id:window.ID,expected_window_revision:window.Revision,reason:f.reason};
+    if(blocked){Object.assign(body,{attempt:window.Attempt,expected_run_revision:work.run.revision,action:f.answer});}
+    else body.answer=f.answer;
+    await api(blocked?'/v2/processes/resolve-blocked':'/v2/decisions/submit',body);await renderDecisions();
+   });
+  }));
   list.append(card);
  }
  for(const item of access.requests||[]){
@@ -336,11 +342,45 @@ async function renderDefinitions(){
   }));
   if(definition.Kind==='team')card.append(button('Deploy team',async()=>{
    const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID)),revision=result.Revision;
-   edit('Deploy pinned team',[{name:'mission',label:'Mission',multiline:true},...parameterFields(revision.Parameters||[])],f=>api('/v2/teams/deploy',{request_id:f.requestID,deployment_id:f.requestID,instantiation:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'team'},Mission:f.mission,GroupID:'group_'+f.requestID,Parameters:parameterValues(revision.Parameters||[],f)}}));
+   const spaces=(snapshot.workspaces||[]).filter(w=>w.State==='available');
+   if(!spaces.length)throw new Error('Create a checkout in Workspaces before deploying this team.');
+   const shared=revision.Team.WorkspacePolicy==='shared';
+   const workspaceFields=(shared?[{Key:'shared',Name:'Shared team'}]:revision.Team.Members).map(member=>({name:'workspace_'+member.Key,label:member.Name+' workspace',options:spaces.map(w=>({value:w.ID,label:w.Intent.Name||w.Observation.ActualPath||w.ID}))}));
+   edit('Deploy pinned team',[{name:'mission',label:'Mission',multiline:true},{name:'group',label:'Group',options:[{value:'',label:'Create a new group'},...(snapshot.groups||[]).map(g=>({value:g.ID,label:g.Name}))]},...workspaceFields,...parameterFields(revision.Parameters||[])],f=>{
+    const selection=key=>{const w=spaces.find(w=>w.ID===f['workspace_'+key]);if(!w)throw new Error('Select a current workspace.');return{WorkspaceID:w.ID,ExpectedRevision:w.Revision}};
+    const workspaces=shared?{Shared:selection('shared')}:{Members:Object.fromEntries(revision.Team.Members.map(m=>[m.Key,selection(m.Key)]))};
+    return api('/v2/teams/deploy',{request_id:f.requestID,deployment_id:f.requestID,instantiation:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'team'},Mission:f.mission,Target:{Kind:f.group?'existing_group':'new_group',GroupID:f.group||'group_'+f.requestID},Workspaces:workspaces,Parameters:parameterValues(revision.Parameters||[],f)}});
+   });
   }));
   list.append(card);
  }
  if(!definitions?.length)empty(list,'No saved definitions. Author a definition with the definition save command.');
+ const deployments=await api('/v2/teams/deployments');
+ if(deployments?.length)list.append(el('h2','Deployed teams'));
+ for(const result of deployments||[]){
+  const d=result.Deployment,card=el('article',undefined,'card');card.dataset.deployment=d.ID;
+  card.append(el('h3',d.Mission||d.ID),el('p',`${d.State} · group ${d.GroupID} · phase ${d.AdvisoryPhase} · revision ${d.Revision}`));
+  card.append(el('p',Object.entries(d.Members||{}).map(([key,id])=>`${key}: ${id}`).join(' · ')));
+  card.append(el('p',`${Object.keys(d.Workspaces||{}).length} workspace bindings · ${(d.OwnedAutomationRuleIDs||[]).length} owned rhythms · ${(d.Rebriefs||[]).length} rebriefs`,'muted'));
+  if(d.State!=='stopped'){
+   card.append(button('Stand down',()=>edit('Stand down team',[{name:'reason',label:'Reason',multiline:true}],async f=>{
+    await api('/v2/teams/stand-down',{request_id:f.requestID,deployment_id:d.ID,expected_revision:d.Revision,reason:f.reason});await renderDefinitions();
+   })));
+  }
+  if(d.State==='ready'){
+   card.append(button('Advance advisory phase',()=>edit('Advance advisory phase',[],async f=>{
+    await api('/v2/teams/advance-phase',{request_id:f.requestID,deployment_id:d.ID,expected_revision:d.Revision});await renderDefinitions();
+   })));
+   card.append(button('Rebrief',async()=>{
+    const selected=await api('/v2/definitions/'+encodeURIComponent(d.Definition.DefinitionID)),r=selected.Revision;
+    edit('Rebrief revision '+r.ID,[],async f=>{
+     await api('/v2/teams/rebrief',{request_id:f.requestID,deployment_id:d.ID,expected_revision:d.Revision,definition:{DefinitionID:r.DefinitionID,RevisionID:r.ID,ContentHash:r.ContentHash,Kind:'team'}});await renderDefinitions();
+    });
+   }));
+  }
+  list.append(card);
+ }
+
 }
 
 function parameterFields(parameters){return parameters.map((p,index)=>{

@@ -834,8 +834,8 @@ func makeResource(kind, id string) model.ResourceSelector {
 }
 
 func validResourceSelector(resource model.ResourceSelector) bool {
-	if resource.Kind == model.ResourceSelf {
-		return resource == (model.ResourceSelector{Kind: model.ResourceSelf})
+	if resource.Kind == model.ResourceSelf || resource.Kind == model.ResourceOperator {
+		return resource == (model.ResourceSelector{Kind: resource.Kind})
 	}
 	kind, id := resourceParts(resource)
 	switch resource.Kind {

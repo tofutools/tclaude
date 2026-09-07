@@ -53,6 +53,19 @@ func (h *Handler) RegisterOrchestrationAPI(api app.OrchestrationAPI) error {
 		result, err := api.RecordNodeEvidence(ctx, app.RecordNodeEvidenceRequest{Context: b.context(p), Attempt: b.Attempt, ExpectedRunRevision: b.ExpectedRunRevision, Kind: b.Kind, ArtifactRevision: b.ArtifactRevision, Passed: b.Passed, Disposition: b.Disposition, Detail: b.Detail})
 		return projectWork(result), err
 	}))
+	h.mux.HandleFunc("POST /v2/processes/resolve-blocked", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
+		commandIdentity
+		DecisionID             model.DecisionID              `json:"decision_id"`
+		Attempt                model.WorkAttemptRef          `json:"attempt"`
+		ExpectedWindowRevision model.Revision                `json:"expected_window_revision"`
+		ExpectedRunRevision    model.Revision                `json:"expected_run_revision"`
+		Action                 model.BlockedResolutionAction `json:"action"`
+		Reason                 string                        `json:"reason"`
+		EvidenceRefs           []model.WorkEvidenceID        `json:"evidence_refs"`
+	}) (any, error) {
+		result, err := api.ResolveBlocked(ctx, app.ResolveBlockedRequest{Context: b.context(p), DecisionID: b.DecisionID, Attempt: b.Attempt, ExpectedWindowRevision: b.ExpectedWindowRevision, ExpectedRunRevision: b.ExpectedRunRevision, Action: b.Action, Reason: b.Reason, EvidenceRefs: b.EvidenceRefs})
+		return projectWork(result), err
+	}))
 	h.mux.HandleFunc("POST /v2/decisions/submit", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
 		commandIdentity
 		DecisionID             model.DecisionID       `json:"decision_id"`
@@ -116,6 +129,32 @@ func (h *Handler) RegisterOrchestrationAPI(api app.OrchestrationAPI) error {
 		Instantiation model.TeamInstantiation `json:"instantiation"`
 	}) (any, error) {
 		result, err := api.DeployTeam(ctx, app.DeployTeamRequest{Context: b.context(p), DeploymentID: b.DeploymentID, Instantiation: b.Instantiation})
+		return projectOrchestration(result), err
+	}))
+	h.mux.HandleFunc("POST /v2/teams/rebrief", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
+		commandIdentity
+		DeploymentID     model.DeploymentID  `json:"deployment_id"`
+		ExpectedRevision model.Revision      `json:"expected_revision"`
+		Definition       model.DefinitionRef `json:"definition"`
+	}) (any, error) {
+		result, err := api.RebriefDeployment(ctx, app.RebriefDeploymentRequest{Context: b.context(p), DeploymentID: b.DeploymentID, ExpectedRevision: b.ExpectedRevision, Definition: b.Definition})
+		return projectOrchestration(result), err
+	}))
+	h.mux.HandleFunc("POST /v2/teams/advance-phase", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
+		commandIdentity
+		DeploymentID     model.DeploymentID `json:"deployment_id"`
+		ExpectedRevision model.Revision     `json:"expected_revision"`
+	}) (any, error) {
+		result, err := api.AdvanceAdvisoryPhase(ctx, app.AdvanceAdvisoryPhaseRequest{Context: b.context(p), DeploymentID: b.DeploymentID, ExpectedRevision: b.ExpectedRevision})
+		return projectOrchestration(result), err
+	}))
+	h.mux.HandleFunc("POST /v2/teams/stand-down", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
+		commandIdentity
+		DeploymentID     model.DeploymentID `json:"deployment_id"`
+		ExpectedRevision model.Revision     `json:"expected_revision"`
+		Reason           string             `json:"reason"`
+	}) (any, error) {
+		result, err := api.StandDownDeployment(ctx, app.StandDownDeploymentRequest{Context: b.context(p), DeploymentID: b.DeploymentID, ExpectedRevision: b.ExpectedRevision, Reason: b.Reason})
 		return projectOrchestration(result), err
 	}))
 	h.mux.HandleFunc("GET /v2/definitions/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -188,6 +227,14 @@ func (h *Handler) RegisterOrchestrationAPI(api app.OrchestrationAPI) error {
 			return
 		}
 		result, err := api.ListOccurrences(r.Context(), app.ListOccurrencesRequest{Principal: p, RuleID: model.AutomationRuleID(r.URL.Query().Get("rule_id"))})
+		journeyResult(w, projectOrchestration(result), err)
+	})
+	h.mux.HandleFunc("GET /v2/teams/deployments", func(w http.ResponseWriter, r *http.Request) {
+		p, ok := h.caller(w, r)
+		if !ok {
+			return
+		}
+		result, err := api.ListTeamDeployments(r.Context(), app.ListTeamDeploymentsRequest{Principal: p, GroupID: model.GroupID(r.URL.Query().Get("group_id"))})
 		journeyResult(w, projectOrchestration(result), err)
 	})
 	h.mux.HandleFunc("GET /v2/teams/deployments/{id}", func(w http.ResponseWriter, r *http.Request) {

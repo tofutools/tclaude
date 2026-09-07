@@ -467,16 +467,6 @@ func expiredRecipients(in []model.OccurrenceRecipient) []model.OccurrenceRecipie
 	return out
 }
 
-func deniedRecipients(in []model.OccurrenceRecipient, detail string) []model.OccurrenceRecipient {
-	out := append([]model.OccurrenceRecipient(nil), in...)
-	for i := range out {
-		if out[i].Disposition == model.RecipientPending {
-			out[i].Disposition, out[i].Detail = model.RecipientDenied, detail
-		}
-	}
-	return out
-}
-
 func uniqueOccurrenceIDs(ids []model.OccurrenceID) []model.OccurrenceID {
 	seen := make(map[model.OccurrenceID]bool, len(ids))
 	result := ids[:0]
@@ -487,4 +477,15 @@ func uniqueOccurrenceIDs(ids []model.OccurrenceID) []model.OccurrenceID {
 		}
 	}
 	return result
+}
+
+// deniedRecipients preserves already settled per-recipient effects during replacement.
+func deniedRecipients(in []model.OccurrenceRecipient, detail string) []model.OccurrenceRecipient {
+	out := append([]model.OccurrenceRecipient(nil), in...)
+	for i := range out {
+		if out[i].Disposition == model.RecipientPending {
+			out[i].Disposition, out[i].Detail = model.RecipientDenied, detail
+		}
+	}
+	return out
 }
