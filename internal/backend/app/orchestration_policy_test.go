@@ -162,6 +162,44 @@ func TestMissedTickPoliciesPersistSkipAndCoalescedOccurrence(t *testing.T) {
 	require.Equal(t, now.Add(-time.Second), coalesced[0].Occurrence.ScheduledAt)
 }
 
+func TestAllowOverlapReleasesParkedOccurrencesOneAtATime(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "overlap.sqlite"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	now := time.Date(2026, 9, 7, 11, 0, 0, 0, time.UTC)
+	service := app.New(store, providers.NewRegistry()).WithClock(func() time.Time { return now })
+	graph := waitingDecisionGraph()
+	_, err = service.SaveAutomationRule(ctx, app.SaveAutomationRuleRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "save_overlap"}, ID: "overlap", RevisionID: "overlap_v1", Name: "overlap", Enabled: true, Owner: model.AuthoritySubject{Kind: model.AuthorityOperator}, Delegation: automationWorkDelegation(now, "overlap"), Condition: model.AutomationCondition{Kind: model.AutomationSchedule, Schedule: &model.ScheduleCondition{Timezone: "UTC", Interval: time.Minute, Anchor: now}}, Action: model.AutomationAction{Kind: model.AutomationStartWork, Work: &model.WorkStart{InlineGraph: &graph, Deadline: now.Add(time.Hour)}}, Policy: occurrencePolicy(model.MissedTickCoalesce, model.OverlapAllow, 1)})
+	require.NoError(t, err)
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	now = now.Add(time.Minute)
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	now = now.Add(time.Minute)
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	occurrences, err := service.ListOccurrences(ctx, app.ListOccurrencesRequest{Principal: model.OperatorPrincipal(), RuleID: "overlap"})
+	require.NoError(t, err)
+	require.Len(t, occurrences, 3)
+	require.Equal(t, model.OccurrenceAdmitted, occurrences[0].Occurrence.State)
+	require.Equal(t, model.OccurrenceParked, occurrences[1].Occurrence.State)
+	require.Equal(t, model.OccurrenceParked, occurrences[2].Occurrence.State)
+
+	first, err := service.InspectWork(ctx, app.InspectWorkRequest{Principal: model.OperatorPrincipal(), WorkRunID: occurrences[0].Occurrence.WorkRunID})
+	require.NoError(t, err)
+	_, err = service.CancelWork(ctx, app.CancelWorkRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "cancel_first"}, WorkRunID: first.Run.ID, ExpectedRunRevision: first.Run.Revision, Reason: "release overlap slot"})
+	require.NoError(t, err)
+	_, err = service.ReconcilePendingWork(ctx)
+	require.NoError(t, err)
+	occurrences, err = service.ListOccurrences(ctx, app.ListOccurrencesRequest{Principal: model.OperatorPrincipal(), RuleID: "overlap"})
+	require.NoError(t, err)
+	require.Equal(t, model.OccurrenceDenied, occurrences[0].Occurrence.State)
+	require.Equal(t, model.OccurrenceAdmitted, occurrences[1].Occurrence.State)
+	require.Equal(t, model.OccurrenceParked, occurrences[2].Occurrence.State)
+}
+
 func waitingDecisionGraph() model.WorkGraph {
 	return model.WorkGraph{CompilerVersion: "1", EntryNodeID: "approve", Nodes: []model.WorkNode{{ID: "approve", Kind: model.WorkNodeDecision, Name: "approve", Decision: &model.DecisionNode{Kind: model.DecisionWork, Audience: []model.DecisionAudience{{Subject: model.AuthoritySubject{Kind: model.AuthorityOperator}}}, PermittedAnswers: []string{"approve"}, ExpiresAfter: time.Hour}}, {ID: "done", Kind: model.WorkNodeEnd, End: &model.EndPolicy{Outcome: model.WorkOutcomeVerified}}}, Edges: []model.WorkEdge{{From: "approve", To: "done"}}}
 }
