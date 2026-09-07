@@ -1425,6 +1425,9 @@ func validateTeam(team model.TeamDefinition) error {
 	}
 	members := make(map[string]bool, len(team.Members))
 	for _, member := range team.Members {
+		if err := member.Desired.Environment.Validate(); err != nil {
+			return fail(ErrInvalid, "team member environment: %v", err)
+		}
 		if strings.TrimSpace(member.Key) == "" || members[member.Key] {
 			return fail(ErrInvalid, "team member keys must be non-empty and unique")
 		}
