@@ -76,6 +76,7 @@ type OrchestrationAPI interface {
 	ResolveBlocked(context.Context, ResolveBlockedRequest) (WorkRunResult, error)
 	SaveAutomationRule(context.Context, SaveAutomationRuleRequest) (AutomationRuleResult, error)
 	SetAutomationEnabled(context.Context, SetAutomationEnabledRequest) (model.AutomationRule, error)
+	SetAutomationArchived(context.Context, SetAutomationArchivedRequest) (model.AutomationRule, error)
 	GetAutomationRule(context.Context, GetAutomationRuleRequest) (AutomationRuleResult, error)
 	ListAutomationRules(context.Context, ListAutomationRulesRequest) ([]model.AutomationRule, error)
 	RunRuleNow(context.Context, RunRuleNowRequest) (OccurrenceResult, error)
@@ -667,4 +668,11 @@ type SetAutomationEnabledRequest struct {
 	ID               model.AutomationRuleID
 	ExpectedRevision model.Revision
 	Enabled          bool
+}
+
+type SetAutomationArchivedRequest struct {
+	Context          RequestContext
+	ID               model.AutomationRuleID
+	ExpectedRevision model.Revision
+	Archived         bool
 }

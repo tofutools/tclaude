@@ -831,3 +831,15 @@ Format-1 import destinations are not overwritten or accepted as format-2 exact
 retries. Use a new destination for a new conversion. Exact format-2 retries still
 verify the complete typed target, including effort, startup text and archive state.
 This development change does not run an import against any live installation.
+
+### Archive obsolete automation
+
+Standalone schedules, triggers and standing orders can be archived from Automation.
+Archiving confirms the exact rule ID, checks current management authority and
+revision, and disables fresh dispatch while retaining authored revisions, cursors,
+occurrences and already-admitted work. The archived filter keeps history inspectable.
+Restore leaves the rule disabled; Enable is a separate explicit action.
+Deployment-owned rhythms remain controlled by their deployment lifecycle.
+The API is `POST /v2/automation/rules/{id}/archived` with `request_id`,
+`expected_revision` and `archived`; exact command retries return their stored
+result without repeating the state change, after current authority is checked.
