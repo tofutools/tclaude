@@ -42,6 +42,9 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	if browser, ok := application.(app.DirectoryAPI); ok {
 		h.registerDirectoryBrowser(browser)
 	}
+	if snippets, ok := application.(app.ProcessSnippetAPI); ok {
+		h.registerProcessSnippets(snippets)
+	}
 	h.registerCommands()
 	h.registerCollaboration()
 	if usage, ok := application.(usageAPI); ok {
