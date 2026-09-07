@@ -1263,3 +1263,17 @@ create host directories. It accepts the replacement bundle format only; legacy
 files are not silently interpreted as equivalent policies. The logical bundle
 limit is 16 MiB, with a separately bounded transport envelope. Source profile
 names are export-time labels; exact revision references identify policy content.
+
+### Resolved sandbox policy identity
+
+Sandbox path preview now shows a separate resolved-policy identity. The authored
+revision hash still identifies the saved document; the resolved identity also
+covers canonical host paths, exact included revisions, scope precedence and the
+expanded destination pack contents. Combined network constraints show explicit
+allow/deny destinations instead of unresolved pack names, while retaining each
+source restriction independently. Pack display labels do not affect identity.
+
+This is a bounded, versioned authoring result, not launch authorization or proof
+of isolation. No setup command runs during preview. Actual launch integration
+must recheck host identity, current authority, provider resources and enforcement
+capabilities before using a retained policy.

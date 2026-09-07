@@ -50,6 +50,7 @@ func TestBrowserSandboxAuthoringPreservesLiteralRulesAndPinnedIncludes(t *testin
 	page.MustElement(".sandbox-editor [aria-label='Export names (one per line) 1']").MustInput("PATH\nTOOLS")
 	page.MustElementR(".sandbox-editor button", "^Inspect host paths$").MustClick()
 	page.MustElementR("[aria-label='Sandbox path preview']", "available")
+	require.Len(t, page.MustElement(".sandbox-materialization-hash").MustText(), 64)
 	page.MustElementR(".sandbox-editor summary", "^Combined include policy$").MustClick()
 	page.MustElementR(".sandbox-editor code", "^PARENT$")
 	page.MustElementR(".sandbox-editor pre", "^first$")
