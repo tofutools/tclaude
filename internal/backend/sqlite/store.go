@@ -56,6 +56,7 @@ func (s *Store) initialize(ctx context.Context) error {
 		return fmt.Errorf("initialize access request schema: %w", err)
 	}
 	for _, migration := range []struct{ table, column, definition string }{
+		{"definition_revisions", "editor_layout_json", "BLOB"},
 		{"agents", "configuration_profile_json", "BLOB"},
 		{"executions", "configuration_profile_json", "BLOB"},
 		{"groups", "owner_agent_id", "TEXT NOT NULL DEFAULT ''"},

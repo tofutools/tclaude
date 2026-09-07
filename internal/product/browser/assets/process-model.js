@@ -1,0 +1,111 @@
+// Authoring state is separate from the graph renderer and from v2 execution.
+export const clone = value => structuredClone(value);
+export const freshID = prefix => prefix + crypto.randomUUID();
+export const edgeID = (edge, index) => `${index}:${edge.From}:${edge.To}:${edge.Verdict || ''}`;
+export const seconds = value => Number(value || 0) * 1e9;
+export const lines = text => text.split('\n').map(value => value.trim()).filter(Boolean);
+
+export function newProcess() {
+  const end = freshID('node_');
+  return {ID: freshID('definition_'), Name: 'New process', Kind: 'process', SchemaVersion: 1,
+    Source: 'Created in the process editor.', Parameters: [], Dependencies: [],
+    EditorLayout: {Nodes: {[end]: {X: 200, Y: 150}}},
+    Process: {Graph: {CompilerVersion: '1', EntryNodeID: end,
+      Nodes: [{ID: end, Name: 'Done', Kind: 'end', End: {Outcome: 'verified'}}], Edges: [], Outcome: {}}}};
+}
+
+export function draftFromResult(result) {
+  const r = result.Revision;
+  return {ID: result.Definition.ID, Name: result.Definition.Name, Kind: 'process',
+    SchemaVersion: r.SchemaVersion, Source: r.Source, Parameters: clone(r.Parameters || []),
+    Dependencies: clone(r.Dependencies || []), Process: clone(r.Process),
+    EditorLayout: clone(r.EditorLayout || {Nodes: {}})};
+}
+
+export function defaultNode(kind) {
+  const node = {ID: freshID('node_'), Name: kind[0].toUpperCase() + kind.slice(1), Kind: kind};
+  if (kind === 'task') node.Performer = {Kind: 'agent', Agent: {MemberKey: 'worker', ContextPolicy: 'fresh', Brief: ''}};
+  if (kind === 'decision') node.Decision = {Kind: 'work', Audience: [{Subject: {Kind: 'operator'}}], PermittedAnswers: ['approve', 'reject'], ExpiresAfter: seconds(3600)};
+  if (kind === 'wait') node.Wait = {Duration: seconds(60)};
+  if (kind === 'join') node.Join = {Mode: 'all'};
+  if (kind === 'end') node.End = {Outcome: 'verified'};
+  return node;
+}
+
+// The reused renderer receives a presentation projection, never a native session
+// or execution identity. Fork/join share its parallel shape with distinct labels.
+export function graphView(draft) {
+  const graph = draft.Process.Graph;
+  return {nodes: graph.Nodes.map(node => {
+    const position = draft.EditorLayout?.Nodes?.[node.ID];
+    return {id: node.ID, type: ['fork', 'join'].includes(node.Kind) ? 'parallel' : node.Kind,
+      label: node.Name || node.ID, subtitle: node.ID === graph.EntryNodeID ? 'Entry' : node.Kind,
+      pinned: position ? {x: position.X, y: position.Y} : undefined};
+  }), edges: (graph.Edges || []).map((edge, index) => ({id: edgeID(edge, index), from: edge.From,
+    to: edge.To, outcome: edge.Verdict || '', pinned: true}))};
+}
+
+export class ProcessDraft {
+  constructor(draft) {
+    this.value = clone(draft);
+    this.value.Parameters ||= []; this.value.Dependencies ||= [];
+    this.value.EditorLayout ||= {Nodes: {}}; this.value.EditorLayout.Nodes ||= {};
+    this.value.Process.Graph.Edges ||= []; this.value.Process.Graph.Outcome ||= {};
+    this.undoStack = []; this.redoStack = [];
+  }
+  change(edit) {
+    const before = clone(this.value), after = clone(before);
+    edit(after);
+    if (JSON.stringify(before) === JSON.stringify(after)) return;
+    this.undoStack.push(before); if (this.undoStack.length > 100) this.undoStack.shift();
+    this.redoStack = []; this.value = after;
+  }
+  undo() { if (this.undoStack.length) { this.redoStack.push(this.value); this.value = this.undoStack.pop(); } }
+  redo() { if (this.redoStack.length) { this.undoStack.push(this.value); this.value = this.redoStack.pop(); } }
+  remove(ids) {
+    this.change(draft => {
+      const graph = draft.Process.Graph;
+      graph.Nodes = graph.Nodes.filter(node => !ids.has(node.ID));
+      graph.Edges = (graph.Edges || []).filter(edge => !ids.has(edge.From) && !ids.has(edge.To));
+      graph.Outcome.RequiredNodes = (graph.Outcome.RequiredNodes || []).filter(id => !ids.has(id));
+      for (const id of ids) delete draft.EditorLayout.Nodes[id];
+      if (ids.has(graph.EntryNodeID)) graph.EntryNodeID = graph.Nodes[0]?.ID || '';
+    });
+  }
+}
+
+export function validationMessages(draft) {
+  const messages = [], graph = draft.Process?.Graph;
+  if (!draft.Name.trim()) messages.push('Give the process a name.');
+  if (!graph?.Nodes?.length) return [...messages, 'Add at least one node.'];
+  const nodes = new Map(graph.Nodes.map(n => [n.ID, n]));
+  if (!nodes.has(graph.EntryNodeID)) messages.push('Choose an entry node.');
+  const incoming = new Map(), outgoing = new Map();
+  for (const edge of graph.Edges || []) {
+    if (!nodes.has(edge.From) || !nodes.has(edge.To) || edge.From === edge.To) messages.push('Connections must join two different existing nodes.');
+    const source = nodes.get(edge.From);
+    if (source?.Kind === 'decision' && edge.Verdict && !source.Decision.PermittedAnswers.includes(edge.Verdict)) messages.push(`${source.Name || source.ID}: connection answer "${edge.Verdict}" is no longer permitted. Edit or delete that connection.`);
+    incoming.set(edge.To, (incoming.get(edge.To) || 0) + 1);
+    outgoing.set(edge.From, [...(outgoing.get(edge.From) || []), edge]);
+  }
+  const visited = new Set(), visiting = new Set();
+  function visit(id) {
+    if (visiting.has(id)) { messages.push('Ordinary connections cannot form a cycle. Use node retry settings for bounded retries.'); return; }
+    if (visited.has(id)) return;
+    visited.add(id); visiting.add(id);
+    for (const edge of outgoing.get(id) || []) visit(edge.To);
+    visiting.delete(id);
+  }
+  visit(graph.EntryNodeID);
+  for (const node of graph.Nodes) {
+    const name = node.Name || node.ID;
+    if (!visited.has(node.ID)) messages.push(`${name}: connect this node to the entry path.`);
+    if (node.Kind === 'fork' && (outgoing.get(node.ID)?.length || 0) < 2) messages.push(`${name}: a fork needs at least two outgoing branches.`);
+    if (node.Kind === 'join' && (incoming.get(node.ID) || 0) < 2) messages.push(`${name}: a join needs at least two incoming branches.`);
+    if (node.Kind === 'end' && outgoing.has(node.ID)) messages.push(`${name}: an end cannot have outgoing connections.`);
+    if (node.Kind === 'wait' && (!(node.Wait?.Duration > 0) || node.Wait?.Until)) messages.push(`${name}: set a positive wait duration.`);
+    if (node.Performer?.Kind === 'agent' && !node.Performer.Agent?.Brief?.trim()) messages.push(`${name}: add the worker brief.`);
+    if (node.Kind === 'decision' && !node.Decision?.PermittedAnswers?.length) messages.push(`${name}: add at least one permitted answer.`);
+  }
+  return [...new Set(messages)];
+}

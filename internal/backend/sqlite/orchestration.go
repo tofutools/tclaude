@@ -58,12 +58,13 @@ func (s *Store) SaveDefinition(ctx context.Context, definition model.Definition,
 	if err != nil {
 		return app.DefinitionRecord{}, classify(err)
 	}
+	layout, _ := json.Marshal(revision.EditorLayout)
 	parameters, _ := json.Marshal(revision.Parameters)
 	team, _ := json.Marshal(revision.Team)
 	process, _ := json.Marshal(revision.Process)
 	dependencies, _ := json.Marshal(revision.Dependencies)
 	author, _ := json.Marshal(revision.Author)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO definition_revisions(id,definition_id,number,request_scope,request_id,content_hash,schema_version,compiler_version,source,parameters_json,team_json,process_json,dependencies_json,author_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, revision.ID, revision.DefinitionID, revision.Number, requestScope(revision.Author), revision.RequestID, revision.ContentHash, revision.SchemaVersion, revision.CompilerVersion, revision.Source, parameters, nullableJSON(revision.Team, team), nullableJSON(revision.Process, process), dependencies, author, nanos(revision.CreatedAt)); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO definition_revisions(id,definition_id,number,request_scope,request_id,content_hash,schema_version,compiler_version,source,parameters_json,team_json,process_json,dependencies_json,author_json,created_at,editor_layout_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, revision.ID, revision.DefinitionID, revision.Number, requestScope(revision.Author), revision.RequestID, revision.ContentHash, revision.SchemaVersion, revision.CompilerVersion, revision.Source, parameters, nullableJSON(revision.Team, team), nullableJSON(revision.Process, process), dependencies, author, nanos(revision.CreatedAt), layout); err != nil {
 		return app.DefinitionRecord{}, classify(err)
 	}
 	if err = bumpTx(ctx, tx); err != nil {
@@ -89,11 +90,16 @@ func (s *Store) Definition(ctx context.Context, id model.DefinitionID) (app.Defi
 
 func (s *Store) DefinitionRevision(ctx context.Context, id model.DefinitionRevisionID) (model.DefinitionRevision, error) {
 	var revision model.DefinitionRevision
-	var parameters, team, process, dependencies, author []byte
+	var parameters, team, process, dependencies, author, layout []byte
 	var created int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,definition_id,number,request_id,content_hash,schema_version,compiler_version,source,parameters_json,team_json,process_json,dependencies_json,author_json,created_at FROM definition_revisions WHERE id=?`, id).Scan(&revision.ID, &revision.DefinitionID, &revision.Number, &revision.RequestID, &revision.ContentHash, &revision.SchemaVersion, &revision.CompilerVersion, &revision.Source, &parameters, &team, &process, &dependencies, &author, &created)
+	err := s.db.QueryRowContext(ctx, `SELECT id,definition_id,number,request_id,content_hash,schema_version,compiler_version,source,parameters_json,team_json,process_json,dependencies_json,author_json,created_at,editor_layout_json FROM definition_revisions WHERE id=?`, id).Scan(&revision.ID, &revision.DefinitionID, &revision.Number, &revision.RequestID, &revision.ContentHash, &revision.SchemaVersion, &revision.CompilerVersion, &revision.Source, &parameters, &team, &process, &dependencies, &author, &created, &layout)
 	if err != nil {
 		return revision, classify(err)
+	}
+	if len(layout) > 0 {
+		if err = json.Unmarshal(layout, &revision.EditorLayout); err != nil {
+			return revision, err
+		}
 	}
 	if err = json.Unmarshal(parameters, &revision.Parameters); err != nil {
 		return revision, err

@@ -1,0 +1,376 @@
+import {ProcessGraphAdapter} from './processgraph/process-graph-adapter.js';
+import {clone, freshID, edgeID, seconds, lines, newProcess, draftFromResult, defaultNode, graphView, ProcessDraft, validationMessages} from './process-model.js';
+
+const element = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; return node; };
+const action = (label, handler) => { const node = element('button', label); node.type = 'button'; node.onclick = handler; return node; };
+const option = (value, label = value) => ({value, label});
+
+export async function openProcessEditor({api, result, agents = [], onSaved}) {
+  const profiles = await api('/v2/program-profiles');
+  const revisions = await Promise.all((profiles || []).map(profile => api('/v2/program-profiles/' + encodeURIComponent(profile.ID))));
+  return new ProcessEditor({api, result, agents, revisions, onSaved});
+}
+
+class ProcessEditor {
+  constructor({api, result, agents, revisions, onSaved}) {
+    this.api = api; this.agents = agents; this.revisions = revisions; this.onSaved = onSaved;
+    this.model = new ProcessDraft(result ? draftFromResult(result) : newProcess());
+    this.baseRevision = result?.Definition.Revision || 0;
+    this.saved = JSON.stringify(this.model.value); this.selection = new Set(); this.clipboard = null;
+    this.pending = null; this.busy = false; this.unapplied = false;
+    this.dialog = element('dialog'); this.dialog.id = 'process-editor';
+    this.dialog.setAttribute('aria-labelledby', 'process-editor-heading');
+    const heading = element('h2', 'Process editor'); heading.id = 'process-editor-heading';
+    this.message = element('p'); this.message.id = 'process-editor-message'; this.message.role = 'status';
+    this.errors = element('ul'); this.errors.id = 'process-editor-errors'; this.errors.role = 'alert';
+    this.header = element('div'); this.header.className = 'process-toolbar';
+    this.name = element('input'); this.name.value = this.model.value.Name; this.name.setAttribute('aria-label', 'Process name');
+    this.name.onchange = () => this.change(draft => { draft.Name = this.name.value; });
+    this.undoButton = action('Undo', () => this.history('undo'));
+    this.redoButton = action('Redo', () => this.history('redo'));
+    this.validateButton = action('Validate', () => this.validate());
+    this.saveButton = action('Save revision', () => this.save());
+    this.header.append(this.name, this.undoButton, this.redoButton, this.validateButton, this.saveButton,
+      action('Export', () => this.export()), action('Import copy', () => this.import()), action('Close editor', () => this.close()));
+    const palette = element('div'); palette.className = 'process-toolbar'; palette.setAttribute('aria-label', 'Node palette');
+    for (const kind of ['task', 'decision', 'fork', 'join', 'wait', 'end']) palette.append(action('Add ' + kind, () => this.add(kind)));
+    palette.append(action('Copy nodes', () => this.copy()), action('Paste nodes', () => this.paste()), action('Delete selected', () => this.remove()),
+      action('Parameters', () => this.parameters()), action('Outcome', () => this.outcome()), action('Source', () => this.source()));
+    this.entry = element('select'); this.entry.setAttribute('aria-label', 'Entry node'); this.entry.onchange = () => this.change(draft => { draft.Process.Graph.EntryNodeID = this.entry.value; });
+    const label = element('label', 'Entry'); label.append(this.entry); palette.append(label);
+    const body = element('div'); body.className = 'process-editor-body';
+    this.canvas = element('div'); this.canvas.id = 'process-editor-canvas';
+    this.inspector = element('aside'); this.inspector.id = 'process-inspector';
+    body.append(this.canvas, this.inspector);
+    this.dialog.append(heading, this.header, palette, this.message, this.errors, body);
+    document.body.append(this.dialog); this.dialog.showModal();
+    this.graph = new ProcessGraphAdapter(this.canvas, {graph: graphView(this.model.value), ariaLabel: 'Editable process graph', events: {
+      nodeClick: ({node, event}) => this.select(node.id, event.shiftKey || event.ctrlKey || event.metaKey),
+      nodeDoubleClick: ({node}) => this.select(node.id),
+      canvasClick: () => this.select(null),
+      edgeClick: ({edge}) => this.editEdge(edge.id),
+      marqueeSelection: ({items}) => { if (!this.busy && this.discardUnapplied()) { this.selection = new Set(items.filter(i => i.type === 'node').map(i => i.id)); this.render(); } },
+      nodeDragEnd: ({starts, delta, moved}) => { if (moved) this.change(draft => { for (const start of starts) draft.EditorLayout.Nodes[start.id] = {X: start.x + delta.x, Y: start.y + delta.y}; }); },
+      portDragEnd: payload => this.connectGesture(payload),
+    }});
+    this.dialog.addEventListener('cancel', event => { event.preventDefault(); this.close(); });
+    this.dialog.addEventListener('keydown', event => this.key(event));
+    this.beforeUnload = event => { if (this.dirty() || this.unapplied) { event.preventDefault(); event.returnValue = ''; } };
+    window.addEventListener('beforeunload', this.beforeUnload);
+    this.render(); this.graph.fit();
+  }
+
+  dirty() { return (this.name && this.name.value !== this.model.value.Name) || this.saved !== JSON.stringify(this.model.value) || this.baseRevision === 0; }
+  discardUnapplied() { if (this.unapplied && !confirm('Discard unapplied field changes?')) return false; this.unapplied = false; return true; }
+  change(edit) {
+    if (this.busy) return;
+    if (this.unapplied) {
+      this.name.value = this.model.value.Name;
+      this.graph.setGraph(graphView(this.model.value));
+      this.fail(new Error('Apply the field changes before editing the graph.')); return;
+    }
+    this.model.change(edit); this.render();
+  }
+  history(method) { if (!this.busy && this.discardUnapplied()) { this.model[method](); this.render(); } }
+  select(id, extend = false) {
+    if (this.busy || !this.discardUnapplied()) return;
+    if (!extend) this.selection.clear();
+    if (id) { if (extend && this.selection.has(id)) this.selection.delete(id); else this.selection.add(id); }
+    this.render();
+  }
+  render() {
+    const draft = this.model.value, graph = draft.Process.Graph;
+    this.name.value = draft.Name;
+    this.entry.replaceChildren(...graph.Nodes.map(node => { const o = element('option', node.Name || node.ID); o.value = node.ID; return o; }));
+    this.entry.value = graph.EntryNodeID;
+    this.undoButton.disabled = !this.model.undoStack.length || this.busy;
+    this.redoButton.disabled = !this.model.redoStack.length || this.busy;
+    this.message.textContent = `${this.baseRevision ? 'Revision ' + this.baseRevision : 'New process'}${this.dirty() ? ' · unsaved changes' : ' · saved'}`;
+    this.selection = new Set([...this.selection].filter(id => graph.Nodes.some(n => n.ID === id)));
+    this.graph.setGraph(graphView(draft));
+    this.graph.setSelection({type: 'multi', items: [...this.selection].map(id => ({type: 'node', id}))});
+    this.errors.replaceChildren();
+    if (this.selection.size === 1) this.nodeForm(graph.Nodes.find(n => this.selection.has(n.ID)));
+    else {
+      this.inspector.replaceChildren(element('h3', this.selection.size ? `${this.selection.size} nodes selected` : 'Graph'));
+      this.inspector.append(element('p', 'Select a node to edit it. Drag nodes to arrange them. Drag between ports to connect, or use Connect below. Shift-click or drag a selection box to select several nodes.'));
+      this.connectionForm();
+    }
+  }
+  form(title, fields, apply, label = 'Apply changes') {
+    this.inspector.replaceChildren(element('h3', title));
+    const form = element('form');
+    for (const field of fields) {
+      const wrapper = element('label', field.label); let input;
+      if (field.options) {
+        input = element('select'); input.multiple = !!field.multiple;
+        const opts = [...field.options];
+        const wanted = field.multiple ? field.value || [] : [String(field.value ?? '')];
+        for (const value of wanted) if (value && !opts.some(o => String(o.value) === String(value))) opts.push(option(value, 'Pinned: ' + value));
+        for (const o of opts) { const node = element('option', o.label); node.value = o.value; node.selected = wanted.includes(String(o.value)); input.append(node); }
+      } else { input = element(field.multiline ? 'textarea' : 'input'); if (!field.multiline) input.type = field.type || 'text'; input.value = field.value ?? ''; }
+      if (field.type === 'checkbox') input.checked = !!field.value;
+      input.name = field.name; input.setAttribute('aria-label', field.label);
+      input.required = !!field.required; if (field.min !== undefined) input.min = field.min;
+      if (field.max !== undefined) input.max = field.max;
+      if (field.step !== undefined) input.step = field.step;
+      wrapper.append(input); form.append(wrapper);
+    }
+    form.oninput = () => { this.unapplied = true; };
+    const submit = element('button', label); submit.type = 'submit'; form.append(submit);
+    form.onsubmit = event => {
+      event.preventDefault(); if (this.busy) return;
+      try {
+        const data = new FormData(form), values = Object.fromEntries(data);
+        for (const field of fields) { if (field.multiple) values[field.name] = data.getAll(field.name); if (field.type === 'checkbox') values[field.name] = form.elements[field.name].checked; }
+        this.unapplied = false; apply(values);
+      } catch (error) { this.unapplied = true; this.fail(error); }
+    };
+    this.inspector.append(form); return form;
+  }
+  nodeForm(node) {
+    const fields = [{name: 'name', label: 'Node name', value: node.Name, required: true}];
+    const changes = [];
+    if (node.Kind === 'wait') {
+      fields.push({name: 'duration', label: 'Wait seconds', type: 'number', min: 0.001, step: 'any', value: (node.Wait?.Duration || 0) / 1e9, required: true});
+      changes.push((n, f) => { n.Wait = {Duration: seconds(f.duration)}; });
+    }
+    if (node.Kind === 'end') {
+      fields.push({name: 'outcome', label: 'End outcome', options: ['verified', 'waived', 'rejected', 'cancelled'].map(v => option(v)), value: node.End?.Outcome});
+      changes.push((n, f) => { n.End.Outcome = f.outcome; });
+    }
+    if (node.Kind === 'join') {
+      fields.push({name: 'mode', label: 'Wait for branches', options: [option('all', 'All branches'), option('any', 'First branch (others drain)')], value: node.Join.Mode});
+      changes.push((n, f) => { n.Join.Mode = f.mode; });
+    }
+    if (node.Kind === 'decision') {
+      const audience = [...new Map([{Subject: {Kind: 'operator'}}, ...(node.Decision.Audience || []), ...this.agents.map(a => ({Subject: {Kind: 'agent', AgentID: a.ID}}))].map(a => [JSON.stringify(a), a])).values()];
+      fields.push({name: 'audience', label: 'Decision audience', multiple: true, value: node.Decision.Audience.map(a => JSON.stringify(a)), options: audience.map(a => option(JSON.stringify(a), a.Subject.Kind === 'operator' ? 'Operator' : this.agents.find(agent => agent.ID === a.Subject.AgentID)?.Name || a.Subject.AgentID || a.RoleID || 'Scoped audience'))},
+        {name: 'answers', label: 'Permitted answers (one per line)', multiline: true, value: node.Decision.PermittedAnswers.join('\n'), required: true},
+        {name: 'expires', label: 'Decision expires after seconds', type: 'number', min: 1, value: node.Decision.ExpiresAfter / 1e9, required: true});
+      changes.push((n, f) => { n.Decision = {...n.Decision, Audience: f.audience.map(value => JSON.parse(value)), PermittedAnswers: lines(f.answers), ExpiresAfter: seconds(f.expires)}; });
+    }
+    if (node.Kind === 'task') {
+      const performer = node.Performer;
+      const select = element('select'); select.setAttribute('aria-label', 'Performer kind');
+      for (const kind of ['agent', 'program', 'human']) { const o = element('option', kind); o.value = kind; select.append(o); }
+      select.value = performer.Kind;
+      select.onchange = () => {
+        if (!this.discardUnapplied()) return;
+        this.change(draft => {
+          const n = draft.Process.Graph.Nodes.find(n => n.ID === node.ID);
+          n.Performer = select.value === 'agent' ? {Kind: 'agent', Agent: {MemberKey: 'worker', Brief: '', ContextPolicy: 'fresh'}}
+            : select.value === 'program' ? {Kind: 'program', Program: {Profile: {}, Arguments: []}}
+              : {Kind: 'human', Human: {AgentID: '', RoleID: '', Prompt: ''}};
+        });
+      };
+      if (performer.Kind === 'agent') {
+        const a = performer.Agent;
+        fields.push({name: 'agent', label: 'Worker', options: [option('', 'Bind worker when starting'), ...this.agents.map(a => option(a.ID, a.Name))], value: a.AgentID || ''},
+          {name: 'binding', label: 'Worker binding key', value: a.MemberKey || ''},
+          {name: 'context', label: 'Conversation context', options: [option('fresh', 'Fresh context'), option('reuse', 'Reuse context')], value: a.ContextPolicy || 'fresh'},
+          {name: 'brief', label: 'Worker brief', multiline: true, value: a.Brief, required: true});
+        changes.push((n, f) => { n.Performer.Agent = {...n.Performer.Agent, AgentID: f.agent, MemberKey: f.agent ? '' : f.binding, ContextPolicy: f.context, Brief: f.brief}; if (!f.agent && !f.binding.trim()) throw new Error('Choose a worker or a binding key.'); });
+      } else if (performer.Kind === 'program') {
+        const p = performer.Program, refs = this.revisions.map(r => ({ref: {ProfileID: r.Profile.ID, RevisionID: r.Revision.ID, ContentHash: r.Revision.ContentHash}, label: `${r.Profile.Name} · revision ${r.Revision.Number}`}));
+        if (p.Profile?.RevisionID && !refs.some(r => r.ref.RevisionID === p.Profile.RevisionID)) refs.push({ref: p.Profile, label: 'Previously pinned program revision'});
+        fields.push({name: 'profile', label: 'Program profile', options: [option('', 'Choose a saved profile'), ...refs.map(r => option(r.ref.RevisionID, r.label))], value: p.Profile?.RevisionID || '', required: true},
+          {name: 'arguments', label: 'Arguments (one per line)', multiline: true, value: (p.Arguments || []).join('\n')},
+          {name: 'input', label: 'Program input (JSON)', multiline: true, value: p.Input ? JSON.stringify(p.Input, null, 2) : ''});
+        changes.push((n, f) => { n.Performer.Program = {...n.Performer.Program, Profile: clone(refs.find(r => r.ref.RevisionID === f.profile).ref), Arguments: f.arguments ? f.arguments.split('\n') : [], Input: f.input.trim() ? JSON.parse(f.input) : null}; });
+      } else {
+        fields.push({name: 'agent', label: 'Human task recipient agent', options: [option('', 'Use role instead'), ...this.agents.map(a => option(a.ID, a.Name))], value: performer.Human.AgentID || ''},
+          {name: 'role', label: 'Human task role ID', value: performer.Human.RoleID || ''},
+          {name: 'prompt', label: 'Human task prompt', multiline: true, required: true, value: performer.Human.Prompt});
+        changes.push((n, f) => { n.Performer.Human = {...n.Performer.Human, AgentID: f.agent, RoleID: f.role, Prompt: f.prompt}; });
+      }
+      this.performerSelect = select;
+    }
+    if (node.Kind === 'task' || node.Kind === 'decision') {
+      fields.push({name: 'attempts', label: 'Maximum attempts (0 disables retries)', type: 'number', min: 0, max: 100, value: node.Retry?.MaxAttempts || 0},
+        {name: 'backoff', label: 'Retry delay seconds', type: 'number', min: 0, value: (node.Retry?.Backoff || 0) / 1e9},
+        {name: 'budget', label: 'Attempt budget seconds (0 uses run deadline)', type: 'number', min: 0, value: (node.Retry?.AttemptBudget || 0) / 1e9},
+        {name: 'retryable', label: 'Retry these outcomes', multiple: true, options: ['program_failed', 'agent_rejected', 'human_rejected'].map(v => option(v)), value: node.Retry?.Retryable || []},
+        {name: 'waivable', label: 'Allow explicit waiver when blocked', type: 'checkbox', value: node.Waivable});
+      changes.push((n, f) => { n.Waivable = f.waivable; n.Retry = Number(f.attempts) ? {MaxAttempts: Number(f.attempts), Backoff: seconds(f.backoff), AttemptBudget: seconds(f.budget), Retryable: f.retryable} : {}; });
+    }
+    this.form(`${node.Kind} · ${node.Name || "Unnamed"}`, fields, values => this.change(draft => {
+      const n = draft.Process.Graph.Nodes.find(n => n.ID === node.ID); n.Name = values.name;
+      for (const apply of changes) apply(n, values);
+    }));
+    if (node.Kind === 'task') this.inspector.prepend(this.performerSelect);
+    this.inspector.append(action('Make entry', () => this.change(d => { d.Process.Graph.EntryNodeID = node.ID; })));
+    this.connectionForm(node.ID);
+  }
+
+  add(kind) {
+    if (!this.discardUnapplied()) return;
+    const node = defaultNode(kind), center = this.graph.canvasCenter();
+    const positions = Object.values(this.model.value.EditorLayout.Nodes);
+    while (positions.some(p => Math.abs(p.X - center.x) < 180 && Math.abs(p.Y - center.y) < 160)) center.x += 220;
+    this.selection = new Set([node.ID]);
+    this.change(draft => { draft.Process.Graph.Nodes.push(node); draft.EditorLayout.Nodes[node.ID] = {X: center.x, Y: center.y}; }); this.graph.fit();
+  }
+  connectionForm(from = '') {
+    const form = element('form'); form.className = 'process-connections';
+    const nodes = this.model.value.Process.Graph.Nodes;
+    const source = element('select'), target = element('select'), verdict = element('input');
+    source.setAttribute('aria-label', 'Connect from'); target.setAttribute('aria-label', 'Connect to'); verdict.setAttribute('aria-label', 'Connection answer or outcome');
+    for (const node of nodes) for (const select of [source, target]) { const o = element('option', node.Name || node.ID); o.value = node.ID; select.append(o); }
+    if (from) source.value = from;
+    if (target.value === source.value) target.value = nodes.find(n => n.ID !== source.value)?.ID || '';
+    verdict.placeholder = 'Any successful outcome';
+    const submit = element('button', 'Connect'); submit.type = 'submit'; form.append(element('h4', 'Connection'), source, target, verdict, submit);
+    form.onsubmit = event => { event.preventDefault(); this.addEdge(source.value, target.value, verdict.value); };
+    this.inspector.append(form);
+  }
+  addEdge(from, to, verdict = '') {
+    if (!from || !to || from === to) return this.fail(new Error('Choose two different nodes.'));
+    if (this.model.value.Process.Graph.Edges.some(e => e.From === from && e.To === to && e.Verdict === verdict)) return this.fail(new Error('That connection already exists.'));
+    this.change(d => d.Process.Graph.Edges.push({From: from, To: to, Verdict: verdict}));
+  }
+  connectGesture(p) {
+    if (!p.targetNodeId || p.nodeId === p.targetNodeId || p.port === p.targetPort) return;
+    const from = p.port === 'out' ? p.nodeId : p.targetNodeId, to = p.port === 'out' ? p.targetNodeId : p.nodeId;
+    const node = this.model.value.Process.Graph.Nodes.find(n => n.ID === from);
+    if (node.Kind === 'decision') { this.select(from); this.fail(new Error('Choose the decision answer in Connection, then connect.')); return; }
+    this.addEdge(from, to);
+  }
+  editEdge(id) {
+    if (this.busy || !this.discardUnapplied()) return;
+    const edges = this.model.value.Process.Graph.Edges, index = edges.findIndex((e, i) => edgeID(e, i) === id);
+    if (index < 0) return;
+    this.selection.clear(); this.graph.setSelection({type: 'edge', id});
+    this.form('Edit connection', [{name: 'verdict', label: 'Answer or outcome (blank for any success)', value: edges[index].Verdict}], f => this.change(d => { d.Process.Graph.Edges[index].Verdict = f.verdict; }));
+    this.inspector.append(action('Delete connection', () => this.change(d => d.Process.Graph.Edges.splice(index, 1))));
+  }
+  remove() { if (this.busy || !this.discardUnapplied()) return; this.model.remove(this.selection); this.selection.clear(); this.render(); }
+  copy() {
+    const draft = this.model.value;
+    this.clipboard = {nodes: clone(draft.Process.Graph.Nodes.filter(n => this.selection.has(n.ID))),
+      edges: clone(draft.Process.Graph.Edges.filter(e => this.selection.has(e.From) && this.selection.has(e.To))), positions: clone(draft.EditorLayout.Nodes)};
+  }
+  paste() {
+    if (!this.clipboard?.nodes.length || !this.discardUnapplied()) return;
+    const ids = new Map(this.clipboard.nodes.map(n => [n.ID, freshID('node_')])); this.selection = new Set(ids.values());
+    this.change(d => {
+      for (const original of this.clipboard.nodes) {
+        const node = clone(original); node.ID = ids.get(original.ID); node.Name += ' copy'; d.Process.Graph.Nodes.push(node);
+        const p = this.clipboard.positions[original.ID]; d.EditorLayout.Nodes[node.ID] = {X: (p?.X || 200) + 40, Y: (p?.Y || 150) + 40};
+      }
+      for (const edge of this.clipboard.edges) d.Process.Graph.Edges.push({...edge, From: ids.get(edge.From), To: ids.get(edge.To)});
+    });
+  }
+  parameters() {
+    if (!this.discardUnapplied()) return;
+    this.inspector.replaceChildren(element('h3', 'Parameters'));
+    for (const p of this.model.value.Parameters) {
+      const row = element('div'); row.append(element('span', `${p.Name} · ${p.Type}${p.Required ? ' · required' : ''}`), action('Edit ' + p.Name, () => this.parameterForm(p)), action('Remove ' + p.Name, () => { this.change(d => { d.Parameters = d.Parameters.filter(q => q.Name !== p.Name); }); this.parameters(); })); this.inspector.append(row);
+    }
+    this.inspector.append(action('Add parameter', () => this.parameterForm()));
+  }
+  parameterForm(parameter) {
+    this.form('Parameter', [{name: 'name', label: 'Parameter name', value: parameter?.Name, required: true},
+      {name: 'type', label: 'Parameter type', options: ['string', 'number', 'boolean', 'object', 'array'].map(v => option(v)), value: parameter?.Type || 'string'},
+      {name: 'required', label: 'Required parameter', type: 'checkbox', value: parameter?.Required},
+      {name: 'description', label: 'Description', value: parameter?.Description},
+      {name: 'default', label: 'Default value (JSON, optional)', value: parameter?.Default === undefined ? '' : JSON.stringify(parameter.Default)}], f => {
+        if (this.model.value.Parameters.some(p => p.Name === f.name && p.Name !== parameter?.Name)) throw new Error('Parameter names must be unique.');
+        const p = {Name: f.name, Type: f.type, Required: f.required, Description: f.description}; if (f.default.trim()) p.Default = JSON.parse(f.default);
+        this.change(d => { const index = d.Parameters.findIndex(p => p.Name === parameter?.Name); if (index < 0) d.Parameters.push(p); else d.Parameters[index] = p; }); this.parameters();
+      });
+  }
+  outcome() {
+    if (!this.discardUnapplied()) return;
+    const graph = this.model.value.Process.Graph;
+    this.form('Evidence required for success', [
+      {name: 'required', label: 'Required nodes', multiple: true, options: graph.Nodes.map(n => option(n.ID, n.Name || n.ID)), value: graph.Outcome?.RequiredNodes || []},
+      {name: 'artifact', label: 'Required artifact revision', value: graph.Outcome?.ArtifactRevision},
+      {name: 'human', label: 'Require human judgment', type: 'checkbox', value: graph.Outcome?.HumanJudgment}], f => this.change(d => { d.Process.Graph.Outcome = {RequiredNodes: f.required, ArtifactRevision: f.artifact, HumanJudgment: f.human}; }));
+  }
+  source() { if (this.discardUnapplied()) this.form('Preserved authoring source', [{name: 'source', label: 'Source', multiline: true, value: this.model.value.Source, required: true}], f => this.change(d => { d.Source = f.source; })); }
+  key(event) {
+    if (event.target.closest('input,textarea,select,[contenteditable=true]')) return;
+    const modifier = event.ctrlKey || event.metaKey;
+    if (modifier && event.key.toLowerCase() === 'z') { event.preventDefault(); this.history(event.shiftKey ? 'redo' : 'undo'); }
+    if (modifier && event.key.toLowerCase() === 'c') { event.preventDefault(); this.copy(); }
+    if (modifier && event.key.toLowerCase() === 'v') { event.preventDefault(); this.paste(); }
+    if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); this.remove(); }
+  }
+  fail(error) { this.errors.replaceChildren(element('li', error.message || String(error))); }
+  setBusy(value) {
+    this.busy = value;
+    // Keep all editable fields stable while validation/save is in flight.
+    this.dialog.querySelectorAll('input,textarea,select,button').forEach(control => { control.disabled = value; });
+    if (!value) { this.undoButton.disabled = !this.model.undoStack.length; this.redoButton.disabled = !this.model.redoStack.length; }
+  }
+  async checkDraft() {
+    if (this.unapplied) throw new Error('Apply the field changes before validating or saving.');
+    const messages = validationMessages(this.model.value);
+    this.errors.replaceChildren(...messages.map(m => element('li', m)));
+    if (messages.length) return null;
+    return this.api('/v2/definitions/validate', {draft: clone(this.model.value)});
+  }
+  async validate() {
+    if (this.busy) return;
+    this.setBusy(true);
+    try { if (await this.checkDraft()) this.message.textContent = 'Validation passed'; }
+    catch (error) { this.fail(error); }
+    finally { this.setBusy(false); }
+  }
+  async save() {
+    if (this.busy) return;
+    if (!this.dirty() && !this.unapplied) return;
+    this.setBusy(true);
+    try {
+      const validated = await this.checkDraft(); if (!validated) return;
+      const fingerprint = JSON.stringify(this.model.value);
+      if (!this.pending || this.pending.fingerprint !== fingerprint) this.pending = {fingerprint, requestID: freshID('request_'), revisionID: freshID('revision_')};
+      const result = await this.api('/v2/definitions', {request_id: this.pending.requestID, expected_revision: this.baseRevision, draft: {...clone(this.model.value), RevisionID: this.pending.revisionID}});
+      // An identical lost-response retry can return a newer current head. Do not
+      // silently replace the local draft with a different author's revision.
+      if (result.Revision.ContentHash !== validated.Revision.ContentHash) {
+        const error = new Error('This save was admitted, but a newer revision is now current. Local edits are retained.'); error.code = 'conflict'; throw error;
+      }
+      this.model = new ProcessDraft(draftFromResult(result)); this.baseRevision = result.Definition.Revision;
+      this.saved = JSON.stringify(this.model.value); this.pending = null; this.render(); await this.onSaved();
+    } catch (error) {
+      this.fail(error);
+      if (error.code === 'conflict') {
+        const reload = action('Load saved revision (discard local edits)', async () => {
+          if (this.busy || !confirm('Discard local edits and load the saved revision?')) return;
+          this.setBusy(true);
+          try { const r = await this.api('/v2/definitions/' + encodeURIComponent(this.model.value.ID)); this.model = new ProcessDraft(draftFromResult(r)); this.baseRevision = r.Definition.Revision; this.saved = JSON.stringify(this.model.value); this.pending = null; this.render(); }
+          catch (e) { this.fail(e); } finally { this.setBusy(false); }
+        });
+        this.errors.append(reload);
+      }
+    } finally { this.setBusy(false); }
+  }
+  export() {
+    const blob = new Blob([JSON.stringify({format: 'tclaude-process-v2', draft: this.model.value}, null, 2)], {type: 'application/json'});
+    const url = URL.createObjectURL(blob), link = element('a'); link.href = url; link.download = 'process.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  import() {
+    if (this.busy || !this.discardUnapplied()) return;
+    const file = element('input'); file.type = 'file'; file.accept = '.json,application/json';
+    file.onchange = async () => {
+      try {
+        if (!file.files[0]) return;
+        if (file.files[0].size > 512 * 1024) throw new Error('Process import exceeds 512 KiB.');
+        const value = JSON.parse(await file.files[0].text());
+        if (value.format !== 'tclaude-process-v2' || value.draft?.Kind !== 'process' || !Array.isArray(value.draft.Process?.Graph?.Nodes)) throw new Error('Choose an exported v2 process.');
+        if (this.dirty() && !confirm('Replace this draft with an imported copy?')) return;
+        const draft = value.draft; draft.ID = freshID('definition_'); delete draft.RevisionID; draft.EditorLayout ||= {Nodes: {}};
+        this.setBusy(true);
+        const validated = await this.api('/v2/definitions/validate', {draft});
+        this.model = new ProcessDraft(draftFromResult(validated)); this.baseRevision = 0; this.pending = null; this.selection.clear(); this.render(); this.graph.fit();
+      } catch (error) { this.fail(error); } finally { this.setBusy(false); }
+    }; file.click();
+  }
+  close() {
+    if (this.busy) return;
+    if ((this.dirty() || this.unapplied) && !confirm('Discard unsaved process changes?')) return;
+    window.removeEventListener('beforeunload', this.beforeUnload); this.graph.dispose(); this.dialog.close(); this.dialog.remove();
+  }
+}

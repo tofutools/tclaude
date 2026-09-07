@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"reflect"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -131,6 +132,9 @@ func (s *Service) compileDefinition(ctx context.Context, draft DefinitionDraft, 
 	default:
 		return model.DefinitionRevision{}, fail(ErrInvalid, "definition kind is required")
 	}
+	if err := validateEditorLayout(draft); err != nil {
+		return model.DefinitionRevision{}, err
+	}
 	closure, err := s.definitionClosure(ctx, draft.ID, draft.Dependencies)
 	if err != nil {
 		return model.DefinitionRevision{}, err
@@ -144,8 +148,9 @@ func (s *Service) compileDefinition(ctx context.Context, draft DefinitionDraft, 
 		Team          *model.TeamDefinition
 		Process       *model.ProcessDefinition
 		Dependencies  []model.DefinitionRef
-	}{strings.TrimSpace(draft.Name), draft.Kind, draft.SchemaVersion, draft.Source, draft.Parameters, draft.Team, draft.Process, closure}
-	return model.DefinitionRevision{ID: draft.RevisionID, DefinitionID: draft.ID, ContentHash: contentHash(hashInput), SchemaVersion: draft.SchemaVersion, CompilerVersion: orchestrationCompilerVersion, Source: draft.Source, Parameters: append([]model.ParameterDeclaration(nil), draft.Parameters...), Team: draft.Team, Process: draft.Process, Dependencies: closure, Author: author}, nil
+		EditorLayout  *model.DefinitionEditorLayout `json:",omitempty"`
+	}{strings.TrimSpace(draft.Name), draft.Kind, draft.SchemaVersion, draft.Source, draft.Parameters, draft.Team, draft.Process, closure, draft.EditorLayout}
+	return model.DefinitionRevision{ID: draft.RevisionID, DefinitionID: draft.ID, ContentHash: contentHash(hashInput), SchemaVersion: draft.SchemaVersion, CompilerVersion: orchestrationCompilerVersion, Source: draft.Source, EditorLayout: draft.EditorLayout, Parameters: append([]model.ParameterDeclaration(nil), draft.Parameters...), Team: draft.Team, Process: draft.Process, Dependencies: closure, Author: author}, nil
 }
 
 func (s *Service) definitionClosure(ctx context.Context, owner model.DefinitionID, direct []model.DefinitionRef) ([]model.DefinitionRef, error) {
@@ -767,7 +772,15 @@ func outgoingNodesForVerdict(graph model.WorkGraph, id model.WorkNodeID, verdict
 	if len(matching) > 0 {
 		return matching
 	}
-	return outgoingNodes(graph, id)
+	// Unlabelled edges are defaults. A missing match never authorizes routes
+	// labelled for another answer, including in already-persisted older graphs.
+	var defaults []model.WorkNodeID
+	for _, edge := range graph.Edges {
+		if edge.From == id && edge.Verdict == "" {
+			defaults = append(defaults, edge.To)
+		}
+	}
+	return defaults
 }
 
 func hasVerdictEdge(graph model.WorkGraph, id model.WorkNodeID, verdict string) bool {
@@ -1462,6 +1475,9 @@ func validateWorkGraph(graph model.WorkGraph) error {
 	for _, edge := range graph.Edges {
 		if nodes[edge.From].ID == "" || nodes[edge.To].ID == "" || edge.From == edge.To {
 			return fail(ErrInvalid, "work edge references an unknown or identical node")
+		}
+		if source := nodes[edge.From]; source.Kind == model.WorkNodeDecision && edge.Verdict != "" && !slices.Contains(source.Decision.PermittedAnswers, edge.Verdict) {
+			return fail(ErrInvalid, "decision %s route %q is not a permitted answer", source.ID, edge.Verdict)
 		}
 		adjacency[edge.From] = append(adjacency[edge.From], edge.To)
 		incoming[edge.To]++

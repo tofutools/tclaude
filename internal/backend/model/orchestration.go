@@ -51,6 +51,17 @@ type Definition struct {
 	UpdatedAt      time.Time
 }
 
+// DefinitionEditorLayout preserves author-owned graph positions across revisions.
+// It is presentation metadata and has no effect on execution or authority.
+type DefinitionEditorLayout struct {
+	Nodes map[WorkNodeID]EditorPosition
+}
+
+type EditorPosition struct {
+	X float64
+	Y float64
+}
+
 // DefinitionRevision contains both preserved authoring source and the
 // normalized executable representation. Dependencies are the complete pinned
 // closure, in deterministic dependency-before-dependent order.
@@ -61,6 +72,7 @@ type DefinitionRevision struct {
 	ContentHash     string
 	SchemaVersion   uint32
 	CompilerVersion string
+	EditorLayout    *DefinitionEditorLayout `json:",omitempty"`
 	Source          string
 	Parameters      []ParameterDeclaration
 	Team            *TeamDefinition

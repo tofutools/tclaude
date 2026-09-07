@@ -7,7 +7,7 @@ const terminals = new TerminalWorkspace({requestID});
 function showError(error) { const target=$('editor').open?$('editor-error'):$('error');target.textContent=error.message || String(error);target.hidden=false; }
 async function api(path, body, method) {
  const response=await fetch(path,{method:method || (body===undefined?'GET':'POST'),credentials:'same-origin',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
- if(!response.ok){let code=await response.text();try{code=JSON.parse(code).code}catch{};throw new Error(({conflict:'The saved state changed. Refresh and review before trying again.',unsupported:'This operation is not supported by the configured provider or host.',forbidden:'Your current authority does not allow this operation.',uncertain:'The effect is uncertain. Inspect its state before attempting another operation.',invalid_request:'Some inputs are invalid. Check the values and required fields.'})[code] || code || `Request failed (${response.status})`)}
+ if(!response.ok){let code=await response.text();try{code=JSON.parse(code).code}catch{};const error=new Error(({conflict:'The saved state changed. Refresh and review before trying again.',unsupported:'This operation is not supported by the configured provider or host.',forbidden:'Your current authority does not allow this operation.',uncertain:'The effect is uncertain. Inspect its state before attempting another operation.',invalid_request:'Some inputs are invalid. Check the values and required fields.'})[code] || code || `Request failed (${response.status})`);error.code=code;error.status=response.status;throw error}
  if(response.status===204)return;
  return response.json();
 }
@@ -311,12 +311,18 @@ async function renderDecisions(){
  }
  if(!list.childNodes.length)empty(list,'No decisions or access requests.');
 }
+async function launchProcessEditor(result){
+ const {openProcessEditor}=await import('/process-editor.js');
+ await openProcessEditor({api,result,agents:(snapshot.agents||[]).filter(a=>a.Lifecycle!=='retired'),onSaved:renderDefinitions});
+}
 async function renderDefinitions(){
  const definitions=await api('/v2/definitions'),list=$('definition-list');list.replaceChildren();
+ list.append(button('New process',()=>launchProcessEditor()));
  for(const definition of definitions||[]){
   const card=el('article',undefined,'card');card.append(el('h2',definition.Name),el('p',`${definition.Kind} · revision ${definition.Revision}`,'muted'));
   card.append(button('Inspect definition',async()=>{const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID));card.append(el('pre',result.Revision.Source))}));
-  if(definition.Kind==='process')card.append(button('Start process',async()=>{
+  if(definition.Kind==='process')card.append(button('Edit process',async()=>launchProcessEditor(await api('/v2/definitions/'+encodeURIComponent(definition.ID)))));
+ if(definition.Kind==='process')card.append(button('Start process',async()=>{
    const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID));
    const revision=result.Revision;
    const memberKeys=[...new Set((revision.Process.Graph.Nodes||[]).map(n=>n.Performer?.Agent?.MemberKey).filter(Boolean))];
@@ -344,7 +350,7 @@ async function renderDefinitions(){
   }));
   list.append(card);
  }
- if(!definitions?.length)empty(list,'No saved definitions. Author a definition with the definition save command.');
+ if(!definitions?.length)empty(list,'No saved definitions. Create a process to begin authoring.');
  const deployments=await api('/v2/teams/deployments');
  if(deployments?.length)list.append(el('h2','Deployed teams'));
  for(const result of deployments||[]){
