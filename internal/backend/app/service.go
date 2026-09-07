@@ -25,6 +25,7 @@ const (
 )
 
 type Service struct {
+	sandboxPaths     ports.SandboxPathInspector
 	directoryBrowser ports.DirectoryBrowser
 	store            Store
 	providers        ports.ProviderRegistry
