@@ -135,13 +135,13 @@ $('search-history').onsubmit=async e=>{e.preventDefault();try{
   const execution=(snapshot.executions||[]).find(e=>e.id===requested);if(!execution)throw new Error('This execution is not available in the current workspace.');
   const nonce=fragment.get('handoff');
   terminals.onAttached=entry=>{if(nonce&&entry.id===requested)window.opener?.postMessage({type:'terminal-attached',nonce,executionID:entry.id},location.origin)};
-  await attach(execution);
+  await attach(execution,{record:false});
  }else{terminals.restore(snapshot.executions||[],snapshot.agents||[]);await selectTab(navigation.initialTab(),'replace')}
 
 })().catch(e=>{$('connection').textContent='Not connected';showError(e)}).finally(()=>{for(const tab of document.querySelectorAll('[data-tab]'))tab.disabled=false;document.querySelector('main').inert=false});
 
-async function attach(execution){
- await selectTab('terminals');
+async function attach(execution,{record=true}={}){
+ await selectTab('terminals',record);
  const agent=(snapshot.agents||[]).find(a=>a.PrimaryExecutionID===execution.id);
  terminals.open(execution,agent?.Name||execution.id);
 }

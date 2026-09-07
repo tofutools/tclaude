@@ -29,6 +29,8 @@ func TestBrowserNavigationURLsHistoryAndCommandPicker(t *testing.T) {
 	page.MustElementR("#command-picker button", "^History$").MustClick()
 	page.MustWait(`() => !document.querySelector('#history').hidden`)
 	require.Contains(t, page.MustInfo().URL, "tab=history")
+	page.MustEval(`() => document.body.dispatchEvent(new KeyboardEvent('keydown',{code:'Digit1',key:'¡',altKey:true,bubbles:true,cancelable:true}))`)
+	page.MustWait(`() => !document.querySelector('#groups').hidden`)
 	page.MustEval(`() => {const url=new URL(location.href);url.searchParams.set('tab','not-a-workspace');history.replaceState(null,'',url)}`)
 	page.MustReload()
 	page.MustElementR("#connection", "^Updated ")
