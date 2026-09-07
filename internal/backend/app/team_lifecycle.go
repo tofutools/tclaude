@@ -144,7 +144,7 @@ func compatibleRebriefRoster(deployment model.TeamDeployment, team model.TeamDef
 func rebriefBody(memberKey string, team model.TeamDefinition) string {
 	var bodies []string
 	for _, brief := range team.Briefings {
-		for _, key := range brief.MemberKeys {
+		for _, key := range teamBriefRecipients(team, brief) {
 			if key == memberKey {
 				bodies = append(bodies, brief.Body)
 				break
@@ -299,7 +299,7 @@ func memberHasAfterReadyBrief(team model.TeamDefinition, memberKey string) bool 
 		if brief.Timing != model.BriefingAfterReady {
 			continue
 		}
-		for _, key := range brief.MemberKeys {
+		for _, key := range teamBriefRecipients(team, brief) {
 			if key == memberKey {
 				return true
 			}
@@ -322,7 +322,7 @@ func (s *Service) deliverAfterReadyBriefings(ctx context.Context, deployment mod
 			continue
 		}
 		selected := false
-		for _, key := range brief.MemberKeys {
+		for _, key := range teamBriefRecipients(team, brief) {
 			selected = selected || key == memberKey
 		}
 		if !selected {
@@ -349,7 +349,7 @@ func requiredTeamBriefingsAdmitted(deployment model.TeamDeployment, memberKey st
 		if brief.Timing != model.BriefingAfterReady || !brief.Required {
 			continue
 		}
-		for _, key := range brief.MemberKeys {
+		for _, key := range teamBriefRecipients(team, brief) {
 			if key == memberKey {
 				required++
 				break
@@ -365,7 +365,7 @@ func teamAfterReadyBriefCount(team model.TeamDefinition, memberKey string) int {
 		if brief.Timing != model.BriefingAfterReady {
 			continue
 		}
-		for _, key := range brief.MemberKeys {
+		for _, key := range teamBriefRecipients(team, brief) {
 			if key == memberKey {
 				count++
 				break
