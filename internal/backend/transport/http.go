@@ -32,6 +32,9 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	}
 	h := &Handler{application: application, auth: auth, mux: http.NewServeMux()}
 	h.registerLaunchSupport()
+	if transfer, ok := application.(app.SandboxTransferAPI); ok {
+		h.registerSandboxTransfer(transfer)
+	}
 	if preview, ok := application.(app.SandboxPreviewAPI); ok {
 		h.registerSandboxPreview(preview)
 	}
