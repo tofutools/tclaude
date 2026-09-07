@@ -229,6 +229,14 @@ func (h *Handler) RegisterOrchestrationAPI(api app.OrchestrationAPI) error {
 		result, err := api.ListOccurrences(r.Context(), app.ListOccurrencesRequest{Principal: p, RuleID: model.AutomationRuleID(r.URL.Query().Get("rule_id"))})
 		journeyResult(w, projectOrchestration(result), err)
 	})
+	h.mux.HandleFunc("GET /v2/teams/deployments", func(w http.ResponseWriter, r *http.Request) {
+		p, ok := h.caller(w, r)
+		if !ok {
+			return
+		}
+		result, err := api.ListTeamDeployments(r.Context(), app.ListTeamDeploymentsRequest{Principal: p, GroupID: model.GroupID(r.URL.Query().Get("group_id"))})
+		journeyResult(w, projectOrchestration(result), err)
+	})
 	h.mux.HandleFunc("GET /v2/teams/deployments/{id}", func(w http.ResponseWriter, r *http.Request) {
 		p, ok := h.caller(w, r)
 		if !ok {

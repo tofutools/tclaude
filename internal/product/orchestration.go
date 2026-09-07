@@ -37,7 +37,7 @@ func registerOrchestration(root *cobra.Command, call apiCall) {
 			{"rebrief", "/v2/teams/rebrief", "Send a selected pinned briefing revision to a deployment"},
 			{"advance-phase", "/v2/teams/advance-phase", "Advance an advisory checklist without completing work"},
 			{"stand-down", "/v2/teams/stand-down", "Stop a deployment while retaining owned checkouts and history"},
-		}, "", "/v2/teams/deployments/"},
+		}, "/v2/teams/deployments", "/v2/teams/deployments/"},
 	} {
 		cmd := boa.CmdT[struct{}]{Use: group.name, Short: group.description}.ToCobra()
 		for _, write := range group.writes {

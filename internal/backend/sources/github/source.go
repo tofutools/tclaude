@@ -144,10 +144,9 @@ func (s *Source) collect(ctx context.Context, req ports.AutomationFactCollectReq
 	if facts[1].OccurredAt.IsZero() {
 		facts[1].OccurredAt = pr.UpdatedAt
 	}
-	return ports.AutomationFactBatch{Facts: facts, NextCursor: digest(factsIdentity{facts[0].EventID, facts[1].EventID})}, nil
+	// The source returns one complete snapshot; pagination is consumed privately.
+	return ports.AutomationFactBatch{Facts: facts}, nil
 }
-
-type factsIdentity struct{ Pull, CI string }
 
 func digest(v any) string {
 	b, _ := json.Marshal(v)
