@@ -28,6 +28,14 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 		if readErr != nil {
 			return touched, readErr
 		}
+		if revision.Condition.Kind == model.AutomationTrigger && revision.Condition.Trigger != nil {
+			triggered, triggerErr := s.reconcileTriggerRule(ctx, rule, revision, now)
+			if triggerErr != nil {
+				return touched, triggerErr
+			}
+			touched = append(touched, triggered...)
+			continue
+		}
 		if revision.Condition.Kind != model.AutomationSchedule || revision.Condition.Schedule == nil {
 			continue
 		}

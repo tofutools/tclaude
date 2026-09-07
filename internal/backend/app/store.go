@@ -122,6 +122,10 @@ type OrchestrationStore interface {
 	AutomationRule(context.Context, model.AutomationRuleID) (AutomationRuleRecord, error)
 	AutomationRuleRevision(context.Context, model.AutomationRuleRevisionID) (model.AutomationRuleRevision, error)
 	ListAutomationRules(context.Context, bool) ([]model.AutomationRule, error)
+	AppendAutomationFacts(context.Context, string, []model.NormalizedFact) error
+	AutomationFactsAfter(context.Context, string, model.AutomationFactResource, uint64, uint32) ([]model.NormalizedFact, error)
+	AutomationConditionState(context.Context, model.AutomationRuleID) (model.AutomationConditionState, error)
+	AdvanceTrigger(context.Context, model.AutomationConditionState, *model.AutomationOccurrence, model.Revision, model.Revision) (OccurrenceRecord, bool, error)
 	ScheduleCursor(context.Context, model.AutomationRuleID) (time.Time, model.Revision, error)
 	AdvanceSchedule(context.Context, *model.AutomationOccurrence, model.AutomationRuleID, model.Revision, model.Revision, time.Time) (OccurrenceRecord, bool, error)
 	MaterializeOccurrence(context.Context, model.AutomationOccurrence, model.Revision) (OccurrenceRecord, bool, error)

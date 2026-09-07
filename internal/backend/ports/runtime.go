@@ -290,10 +290,22 @@ const (
 	ContextUnknown ContextObservedState = "unknown"
 )
 
+// AgentActivityObservedState is provider evidence, never inferred from a
+// running process, an empty work queue, or elapsed time.
+type AgentActivityObservedState string
+
+const (
+	AgentActivityActive        AgentActivityObservedState = "active"
+	AgentActivityIdle          AgentActivityObservedState = "idle"
+	AgentActivityAwaitingInput AgentActivityObservedState = "awaiting_input"
+	AgentActivityUnknown       AgentActivityObservedState = "unknown"
+)
+
 type Observation struct {
 	ObservedAt         time.Time
 	Workload           WorkloadObservedState
 	Context            ContextObservedState
+	AgentActivity      AgentActivityObservedState
 	AttachmentActive   bool
 	ExitCode           *int
 	NativeConversation *model.NativeConversationEvidence

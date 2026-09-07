@@ -537,6 +537,7 @@ type TriggerCondition struct {
 	SourceID  string
 	Resource  AutomationFactResource
 	FactKind  string
+	Values    []string
 	Dwell     time.Duration
 	Cooldown  time.Duration
 	Debounce  time.Duration
@@ -570,22 +571,10 @@ const (
 	FactWorkFailed              = "work.failed"
 	FactWorkCancelled           = "work.cancelled"
 	FactAgentAwaitingInput      = "agent.awaiting_input"
+	FactAgentIdle               = "agent.idle"
 	FactPullRequestChanged      = "pull_request.changed"
 	FactCICompleted             = "ci.completed"
 )
-
-type AutomationProductFact struct {
-	Sequence           uint64
-	SourceID           string
-	EventID            string
-	Kind               string
-	Value              string
-	Resource           AutomationFactResource
-	OccurredAt         time.Time
-	ObservedAt         time.Time
-	ParentOccurrenceID OccurrenceID
-	CausalDepth        uint32
-}
 
 type StandingOrderTiming string
 
@@ -655,17 +644,22 @@ type OccurrencePolicy struct {
 }
 
 type NormalizedFact struct {
-	Source            string
-	EventID           string
-	Cursor            string
-	Kind              string
-	OccurredAt        time.Time
-	ObservedAt        time.Time
-	ExecutionID       ExecutionID
-	ExecutionRevision Revision
-	ContextRevision   Revision
-	ResourceRefs      []string
-	Payload           json.RawMessage
+	Sequence           uint64
+	Source             string
+	EventID            string
+	Cursor             string
+	Kind               string
+	Value              string
+	OccurredAt         time.Time
+	ObservedAt         time.Time
+	ExecutionID        ExecutionID
+	ExecutionRevision  Revision
+	ContextRevision    Revision
+	ResourceRefs       []string
+	Resource           AutomationFactResource
+	ParentOccurrenceID OccurrenceID
+	CausalDepth        uint32
+	Payload            json.RawMessage
 }
 
 type OccurrenceState string
@@ -688,6 +682,8 @@ type AutomationOccurrence struct {
 	SourceOccurrenceKey string
 	RequestID           RequestID
 	Requester           Principal
+	ParentOccurrenceID  OccurrenceID
+	CausalDepth         uint32
 	ScheduledAt         time.Time
 	EventAt             time.Time
 	EligibleAt          time.Time
