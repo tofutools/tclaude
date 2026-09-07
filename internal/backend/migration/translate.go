@@ -70,7 +70,9 @@ func Translate(inspection Inspection, plan MigrationPlan, attachments []Attachme
 	}
 	t.translateProfiles(&batch)
 	t.translateAgents(&batch)
-	t.translateGroups(&batch)
+	if err := t.translateGroups(&batch); err != nil {
+		return app.ImportBatch{}, err
+	}
 	t.translateConversations(&batch)
 	t.translateAuthoredOrchestration(&batch)
 	t.translateHistoryAndWorkspaces(&batch)
@@ -260,7 +262,7 @@ func (t *translator) translateAgents(batch *app.ImportBatch) {
 	sort.Slice(batch.Agents, func(i, j int) bool { return batch.Agents[i].ID < batch.Agents[j].ID })
 }
 
-func (t *translator) translateGroups(batch *app.ImportBatch) {
+func (t *translator) translateGroups(batch *app.ImportBatch) error {
 	type member struct {
 		id     model.AgentID
 		joined time.Time
@@ -282,12 +284,19 @@ func (t *translator) translateGroups(batch *app.ImportBatch) {
 			return items[i].key < items[j].key
 		})
 		group := model.Group{ID: model.GroupID(t.id("agent_groups", key)), Name: firstNonEmpty(sourcev228.String(row.Values["name"]), key), Revision: 1, CreatedAt: created, UpdatedAt: firstTime(timeValue(row.Values["archived_at"]), created)}
+		if parent := sourcev228.String(row.Values["parent_id"]); parent != "" {
+			group.ParentGroupID = model.GroupID(t.id("agent_groups", parent))
+			if group.ParentGroupID == "" {
+				return fmt.Errorf("import group parent identity is missing")
+			}
+		}
 		for _, item := range items {
 			group.Members = append(group.Members, item.id)
 		}
 		batch.Groups = append(batch.Groups, group)
 	}
 	sort.Slice(batch.Groups, func(i, j int) bool { return batch.Groups[i].ID < batch.Groups[j].ID })
+	return model.ValidateGroupHierarchy(batch.Groups)
 }
 
 func (t *translator) translateConversations(batch *app.ImportBatch) {

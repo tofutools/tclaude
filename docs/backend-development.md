@@ -909,3 +909,21 @@ Selections are bounded to 100 nodes, 300 internal edges and 256 KiB; the active
 catalog is bounded to 1,000 entries and 8 MiB of selections. Exact mutation retries
 return the original admission without resurrecting deleted entries. Legacy imported
 snippet records remain retained evidence; automatic typed conversion is separate.
+
+### Group hierarchy
+
+Group settings can move a group under an exact parent or return it to the top
+level. The nested inventory shows stable IDs alongside names, including duplicate
+names. This is organization only: memberships, owners, grants and lifecycle actions
+remain scoped to their existing exact groups; no authority is inherited.
+
+`PUT /v2/groups/{id}/parent` is operator-only and takes `request_id`,
+`expected_revision`, and `parent_group_id` (empty for top level). The transaction
+rejects missing parents, cycles, and hierarchies deeper than 64 levels. Exact
+request retries return the admitted result; changed intent or stale fresh writes
+conflict. Name and membership updates retain the parent relationship.
+
+Offline conversion preserves legacy group parent IDs through the existing identity
+mapping and verifies the resulting topology on exact retry. Invalid source trees
+are refused before target publication. No hierarchy mutation receipt or authority
+is imported.

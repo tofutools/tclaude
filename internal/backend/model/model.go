@@ -70,13 +70,14 @@ type AgentNotificationPreferences struct {
 }
 
 type Group struct {
-	ID           GroupID
-	Name         string
-	Members      []AgentID
-	OwnerAgentID AgentID
-	Revision     Revision
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	ParentGroupID GroupID `json:",omitempty"`
+	ID            GroupID
+	Name          string
+	Members       []AgentID
+	OwnerAgentID  AgentID
+	Revision      Revision
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 type DesiredConfiguration struct {
