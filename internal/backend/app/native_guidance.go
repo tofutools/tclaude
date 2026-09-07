@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"strings"
 	"sync"
@@ -76,13 +77,6 @@ func (e *nativeGuidanceEvaluator) EvaluateNativeGuidance(ctx context.Context, ev
 		if revision.Condition.Kind != model.AutomationStandingOrder || condition == nil || condition.FactKind != event.Kind || condition.Timing != event.Timing || revision.Action.Kind != model.AutomationSendMessage || revision.Action.Message == nil {
 			continue
 		}
-		eligible, eligibilityErr := e.targetsExecution(ctx, *revision.Action.Message)
-		if eligibilityErr != nil {
-			return ports.NativeGuidanceAdmission{}, eligibilityErr
-		}
-		if !eligible {
-			continue
-		}
 		matched, matchErr := regexp.MatchString(condition.Pattern, string(event.Payload))
 		if matchErr != nil || !matched {
 			continue
@@ -98,9 +92,16 @@ func (e *nativeGuidanceEvaluator) EvaluateNativeGuidance(ctx context.Context, ev
 		now := e.service.now().UTC()
 		operation := model.Operation{ID: operationID, RequestID: model.RequestID(deterministicOrchestrationID("request_", key)), Kind: model.OperationInteract, Principal: principal, ExecutionID: e.execution.ID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
 		authority := model.AuthorityRequest{Principal: principal, Action: model.ActionInteract, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: e.execution.AgentID}}
+		eligible, eligibilityErr := e.targetsExecution(ctx, *revision.Action.Message)
+		if eligibilityErr != nil {
+			return ports.NativeGuidanceAdmission{}, eligibilityErr
+		}
 		audience := automationMessageAudience(*revision.Action.Message)
 		admitted, admitErr := e.service.store.AdmitExecutionOperation(ctx, ExecutionOperationAdmission{Operation: operation, Authority: authority, Eligibility: &audience})
 		if admitErr != nil {
+			if !eligible && errors.Is(admitErr, ErrConflict) {
+				continue
+			}
 			return ports.NativeGuidanceAdmission{}, admitErr
 		}
 		if admitted.Repeated && admitted.Operation.State != model.OperationAdmitted {
