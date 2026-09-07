@@ -1,7 +1,7 @@
 import { clonePayload } from './clone-payload.js';
 import { findSpawnHarness, sandboxImplOptionsFor } from './agent-spawn-model.js';
 import { pickDirectory as defaultPickDirectory } from './helpers.js';
-import { dashPrefs } from './prefs.js';
+import { migrateGroupRenamePrefs } from './group-rename-prefs.js';
 
 const CLONE_TIMEOUT_MS = 35_000;
 const EXPORT_POLL_INTERVAL_MS = 2_000;
@@ -220,9 +220,7 @@ export function createActionDialogActions({
 					method: 'POST', headers: { 'Content-Type': 'application/json' },
 					body: JSON.stringify({ new_name: newName }),
 				});
-				const disclosure = dashPrefs.getItem(`tclaude.dash.group.${group}`);
-				dashPrefs.removeItem(`tclaude.dash.group.${group}`);
-				if (disclosure !== null) dashPrefs.setItem(`tclaude.dash.group.${newName}`, disclosure);
+				migrateGroupRenamePrefs(group, newName);
 			}
 			state.close(owner);
 			notify(`${newName}: settings saved`);
