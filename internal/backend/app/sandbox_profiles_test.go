@@ -145,3 +145,25 @@ func TestSandboxArchiveRetainsRevisionsAndExactRetry(t *testing.T) {
 	_, err = service.SetSandboxProfileArchived(ctx, archiveReq)
 	require.ErrorIs(t, err, app.ErrConflict)
 }
+
+func TestSandboxProfileRefusesUnresolvedOrDuplicateDestinationPacks(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "backend.sqlite"))
+	require.NoError(t, err)
+	defer store.Close()
+	service := app.New(store, providers.NewRegistry())
+	for _, network := range []model.SandboxNetwork{
+		{Baseline: model.SandboxNetworkDeny, Packs: []string{"net-typo"}},
+		{Baseline: model.SandboxNetworkDeny, Packs: []string{"net-anthropic", "net-anthropic"}},
+		{Baseline: model.SandboxNetworkAllow, DenyPacks: []string{"net-local", "net-local"}},
+	} {
+		req := app.SaveSandboxProfileRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "invalid-pack"}, ID: "invalid_pack", Name: "Invalid", Policy: model.SandboxPolicy{Network: &network}}
+		_, err = service.SaveSandboxProfile(ctx, req)
+		require.ErrorIs(t, err, app.ErrInvalid)
+		_, err = store.SaveSandboxProfile(ctx, req, "invalid_revision", time.Now())
+		require.ErrorIs(t, err, app.ErrInvalid)
+	}
+	profiles, err := service.ListSandboxProfiles(ctx, model.OperatorPrincipal(), true)
+	require.NoError(t, err)
+	require.Empty(t, profiles)
+}
