@@ -95,8 +95,10 @@ func TestTeamWorkspaceReadinessRhythmRebriefAndStandDownJourney(t *testing.T) {
 	require.Equal(t, model.DeploymentReady, ready.Deployment.State)
 	require.NotEmpty(t, ready.Deployment.BriefingOperationIDs["builder"])
 	require.Len(t, provider.preparations, 2)
+	canonicalCheckoutPath, err := filepath.EvalSymlinks(checkoutPath)
+	require.NoError(t, err)
 	for _, preparation := range provider.preparations {
-		require.Equal(t, checkoutPath, preparation.Spec.WorkingDirectory)
+		require.Equal(t, canonicalCheckoutPath, preparation.Spec.WorkingDirectory)
 	}
 	ownedRhythm, err = service.GetAutomationRule(ctx, app.GetAutomationRuleRequest{Principal: operator, ID: ready.Deployment.OwnedAutomationRuleIDs[0]})
 	require.NoError(t, err)
