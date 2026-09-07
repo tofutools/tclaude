@@ -134,11 +134,15 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if dispatch.Phase == "spawned" {
-		if issue.Status == "closed" {
-			_, err = db.ClearAWBReadyDispatch(w.workspace, dispatch.IssueID)
-		}
+	// Closure is the only condition that releases a workspace, regardless of
+	// how far dispatch progressed. In particular, do not claim or spawn an
+	// issue that closed after it was selected.
+	if issue.Status == "closed" {
+		_, err = db.ClearAWBReadyDispatch(w.workspace, dispatch.IssueID)
 		return err
+	}
+	if dispatch.Phase == "spawned" {
+		return nil
 	}
 	// A crash after the spawn committed but before the phase update is
 	// recovered through the reserved stable identity. Never launch a duplicate.

@@ -1435,6 +1435,14 @@ func TestAWBReadyPollingNormalizesWorkspaceAndRoundTrips(t *testing.T) {
 	assert.Contains(t, string(raw), `"ready_polling"`)
 }
 
+func TestValidateAWBReadyPollingRejectsDuplicateNormalizedWorkspaces(t *testing.T) {
+	var cfg Config
+	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"ready_polling":{"TCL":{"group":"one","cwd":"/one"}," tcl ":{"group":"two","cwd":"/two"}}}}}`), &cfg))
+	errs := Validate(&cfg)
+	require.NotEmpty(t, errs)
+	assert.Contains(t, strings.Join(errs, " | "), "normalize to the same workspace")
+}
+
 // PresentPRNotification is the opt-in gate for the present-pr desktop
 // banner: absent config, absent agent block, and an absent key all mean
 // off, so an existing config file cannot start notifying on upgrade.

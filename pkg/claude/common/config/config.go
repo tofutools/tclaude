@@ -3392,6 +3392,17 @@ func Validate(c *Config) []string {
 
 	if c.Agent != nil {
 		a := c.Agent
+		if a.AWBProxy != nil && len(a.AWBProxy.ReadyPolling) > 1 {
+			seen := make(map[string]string, len(a.AWBProxy.ReadyPolling))
+			for key := range a.AWBProxy.ReadyPolling {
+				normalized := strings.ToLower(strings.TrimSpace(key))
+				if previous, ok := seen[normalized]; ok {
+					errs = append(errs, fmt.Sprintf("agent.awb_proxy.ready_polling workspace keys %q and %q normalize to the same workspace %q", previous, key, normalized))
+					continue
+				}
+				seen[normalized] = key
+			}
+		}
 		if dir := strings.TrimSpace(a.ResourceDelegationDir); dir != "" && !filepath.IsAbs(dir) {
 			errs = append(errs, fmt.Sprintf("agent.resource_delegation_dir %q must be an absolute path", dir))
 		}
