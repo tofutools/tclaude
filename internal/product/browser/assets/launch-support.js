@@ -1,0 +1,34 @@
+'use strict';
+// A read-only adapter declaration. It never changes or submits authored settings.
+function attachLaunchSupportPreview({host,api}) {
+ const harness=host.querySelector('[name=harness]'),approval=host.querySelector('[name=approval]'),sandbox=host.querySelector('[name=sandbox]');
+ if(!harness||!approval||!sandbox)return;
+ const dialog=host.closest('dialog'),status=document.createElement('p');status.setAttribute('role','status');status.setAttribute('aria-label','Configured launch support');host.append(status);
+ let generation=0,disposed=false,observer;
+ const current=()=>!disposed&&host.isConnected&&(!dialog||dialog.open);
+ const update=async()=>{
+  const token=++generation,selected=harness.value;
+  if(!current())return;
+  if(!selected){status.textContent='Choose a harness to inspect configured launch policy support.';return}
+  status.textContent='Reading configured launch policy support…';
+  try{
+   const support=await api('/v2/launch-support?harness='+encodeURIComponent(selected));
+   if(token!==generation||!current())return;
+   if(support.Harness!==selected)throw new Error('The returned support does not match the selected harness.');
+   if(!support.Configured){status.textContent=selected+': no provider is configured in this backend. You can save offline settings; launching requires a configured provider.';return}
+   if(!support.PolicyKnown){status.textContent=selected+': the configured provider does not publish policy support. Launch validation remains authoritative.';return}
+   const approvals=support.ApprovalModes||[],sandboxes=support.SandboxModes||[],problems=[];
+   if(!approvals.includes(approval.value))problems.push('selected approval '+approval.value);
+   if(!sandboxes.includes(sandbox.value))problems.push('selected confinement '+sandbox.value);
+   status.textContent=selected+' adapter supports approval: '+(approvals.join(', ')||'none')+'; confinement: '+(sandboxes.join(', ')||'none')+'. '+(problems.length?'Unsupported '+problems.join(' and ')+'. Change these settings before launch. ':'Selected policy is supported by the adapter. ')+(support.PreparedInitialInput?'Prepared initial input is supported. ':'Prepared initial input is not declared. ')+support.Basis;
+  }catch(error){if(token===generation&&current())status.textContent='Launch support could not be read: '+error.message+'. Offline settings can still be saved; support is checked at launch.'}
+ };
+ const changed=e=>{if([harness,approval,sandbox].includes(e.target))update()};
+ const dispose=()=>{disposed=true;generation++;observer?.disconnect();host.removeEventListener('change',changed);document.removeEventListener('workspace-signout',dispose);dialog?.removeEventListener('close',dispose)};
+ host.addEventListener('change',changed);document.addEventListener('workspace-signout',dispose);dialog?.addEventListener('close',dispose,{once:true});
+ // Template field forms are replaced within the same dialog. Stop their listeners
+ // as soon as that form is detached, even when the editor itself remains open.
+ observer=new MutationObserver(()=>{if(!host.isConnected){dispose();observer.disconnect()}});observer.observe(dialog||document.body,{childList:true,subtree:true});
+ update();
+ return dispose;
+}

@@ -57,6 +57,7 @@ function edit(title,fields,save,{skipUnchanged=false}={}){
   try{const form=readForm();if(skipUnchanged&&JSON.stringify(form)===initial){$('editor').close();return}const next=JSON.stringify(form,(_,value)=>value instanceof File?{name:value.name,size:value.size,modified:value.lastModified}:value);if(fingerprint!==next){fingerprint=next;submissionID=requestID()}form.requestID=submissionID;await save(form);$('editor').close();await refresh()}catch(error){showError(error)}finally{submitting=false;if(submit)submit.disabled=false}
  };
  $('editor').showModal();
+ attachLaunchSupportPreview({host:$('editor-fields'),api});
 }
 function desiredFields(desired={}){return[
  {name:'name',label:'Name',value:desired.name},
