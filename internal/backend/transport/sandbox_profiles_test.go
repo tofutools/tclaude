@@ -55,6 +55,16 @@ func TestPublicSandboxProfilesPreserveAuthoredPolicyAndRejectClaimedAuthority(t 
 	require.Contains(t, packs.Body.String(), "api.anthropic.com")
 	require.Contains(t, packs.Body.String(), "ContentHash")
 
+	for _, network := range []string{
+		`{"Baseline":"deny","Packs":["net-typo"]}`,
+		`{"Baseline":"deny","Packs":["net-anthropic","net-anthropic"]}`,
+		`{"Baseline":"allow","DenyPacks":["net-local","net-local"]}`,
+		`{"Baseline":"deny","Packs":["net-local"],"DenyPacks":["net-local"]}`,
+	} {
+		invalidPack := fmt.Sprintf(`{"request_id":"invalid-pack","id":"invalid_pack","name":"Invalid","policy":{"Network":%s}}`, network)
+		require.Equal(t, 422, request(handler, "POST", "/v2/sandbox-profiles", invalidPack, testCredential).Code)
+	}
+	require.Equal(t, 404, request(handler, "GET", "/v2/sandbox-profiles/invalid_pack", "", testCredential).Code)
 	require.Equal(t, 422, request(handler, "GET", "/v2/sandbox-profiles?include_archived=perhaps", "", testCredential).Code)
 	archive := request(handler, "POST", "/v2/sandbox-profiles/sandbox_profile/archive", `{"request_id":"archive","expected_revision":1,"archived":true}`, testCredential)
 	require.Equal(t, 200, archive.Code, archive.Body.String())

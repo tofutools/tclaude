@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/internal/backend/app"
@@ -58,7 +59,12 @@ func TestSQLiteJourneyUsesRealCheckoutAndShellHosts(t *testing.T) {
 	stopped, err := service.Stop(context.Background(), app.StopRequest{RequestContext: app.RequestContext{
 		Principal: operator, RequestID: "stop_shell"}, ExecutionID: started.Execution.ID, Force: true})
 	require.NoError(t, err)
-	require.Equal(t, model.ExecutionExited, stopped.Execution.State)
+	require.NotNil(t, stopped.Execution)
+	// Stop admission can precede observed process exit under load.
+	require.Eventually(t, func() bool {
+		observed, observeErr := service.Observe(context.Background(), app.ObserveRequest{Principal: operator, ExecutionID: started.Execution.ID})
+		return observeErr == nil && observed.Execution.State == model.ExecutionExited
+	}, 15*time.Second, 20*time.Millisecond, "accepted shell stop must reach observed exit")
 }
 
 func TestSQLiteJourneyRestoresRetainedCommittedCheckout(t *testing.T) {
