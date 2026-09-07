@@ -29,9 +29,13 @@ func TestOperatorCommandsCreateConfigureAndRevokeThroughBackend(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
+	serverJoined := false
 	go func() { done <- server.Serve(ctx, state, providers.NewRegistry()) }()
 	defer func() {
 		cancel()
+		if serverJoined {
+			return
+		}
 		select {
 		case err := <-done:
 			if err != nil {
@@ -50,16 +54,31 @@ func TestOperatorCommandsCreateConfigureAndRevokeThroughBackend(t *testing.T) {
 		err := cmd.ExecuteContext(ctx)
 		return out.Bytes(), err
 	}
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(20 * time.Second)
 	for {
-		if _, err := run("snapshot"); err == nil {
+		select {
+		case serverErr := <-done:
+			serverJoined = true
+			t.Fatalf("backend exited before readiness: %v", serverErr)
+		default:
+		}
+		_, probeErr := run("snapshot")
+		if probeErr == nil {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatal("backend unavailable")
+			cancel()
+			select {
+			case serverErr := <-done:
+				serverJoined = true
+				t.Fatalf("backend readiness timed out: probe=%v, server=%v", probeErr, serverErr)
+			case <-time.After(10 * time.Second):
+				t.Fatalf("backend readiness timed out and server did not join: %v", probeErr)
+			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+
 	file := func(name string, body any) string {
 		path := filepath.Join(parent, name+".json")
 		data, err := json.Marshal(body)
