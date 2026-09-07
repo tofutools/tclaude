@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"time"
 
@@ -365,14 +366,15 @@ func (s *Store) SubmitDecision(ctx context.Context, submission model.DecisionSub
 	defer func() { _ = tx.Rollback() }()
 	var priorDecision model.DecisionID
 	var priorAnswer, priorReason string
+	var priorRunRevision model.Revision
 	var priorEvidence []byte
-	lookupErr := tx.QueryRowContext(ctx, `SELECT decision_id,answer,reason,evidence_refs_json FROM decision_submissions WHERE request_scope=? AND request_id=?`, requestScope(submission.Actor), submission.RequestID).Scan(&priorDecision, &priorAnswer, &priorReason, &priorEvidence)
+	lookupErr := tx.QueryRowContext(ctx, `SELECT decision_id,expected_run_revision,answer,reason,evidence_refs_json FROM decision_submissions WHERE request_scope=? AND request_id=?`, requestScope(submission.Actor), submission.RequestID).Scan(&priorDecision, &priorRunRevision, &priorAnswer, &priorReason, &priorEvidence)
 	if lookupErr == nil {
 		var refs []model.WorkEvidenceID
 		if err = json.Unmarshal(priorEvidence, &refs); err != nil {
 			return app.DecisionRecord{}, err
 		}
-		if priorDecision != submission.DecisionID || priorAnswer != submission.Answer || priorReason != submission.Reason || !reflect.DeepEqual(refs, submission.EvidenceRefs) {
+		if priorDecision != submission.DecisionID || priorRunRevision != submission.ExpectedRunRevision || priorAnswer != submission.Answer || priorReason != submission.Reason || !reflect.DeepEqual(refs, submission.EvidenceRefs) {
 			return app.DecisionRecord{}, app.ErrConflict
 		}
 		if err = tx.Commit(); err != nil {
@@ -389,6 +391,15 @@ func (s *Store) SubmitDecision(ctx context.Context, submission model.DecisionSub
 	}
 	if record.Window.State != model.DecisionOpen || record.Window.Revision != submission.ExpectedWindowRevision {
 		return app.DecisionRecord{}, app.ErrConflict
+	}
+	if submission.ExpectedRunRevision != 0 {
+		var runRevision model.Revision
+		if err = tx.QueryRowContext(ctx, `SELECT revision FROM work_runs WHERE id=?`, record.Window.Attempt.RunID).Scan(&runRevision); err != nil {
+			return app.DecisionRecord{}, classify(err)
+		}
+		if runRevision != submission.ExpectedRunRevision {
+			return app.DecisionRecord{}, app.ErrConflict
+		}
 	}
 	if !record.Window.ExpiresAt.After(at) {
 		if _, err = tx.ExecContext(ctx, `UPDATE decision_windows SET state=?,revision=revision+1,updated_at=? WHERE id=? AND state=? AND revision=?`, model.DecisionExpired, nanos(at), submission.DecisionID, model.DecisionOpen, submission.ExpectedWindowRevision); err != nil {
@@ -418,7 +429,7 @@ func (s *Store) SubmitDecision(ctx context.Context, submission model.DecisionSub
 	}
 	evidence, _ := json.Marshal(submission.EvidenceRefs)
 	actor, _ := json.Marshal(submission.Actor)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO decision_submissions(decision_id,request_scope,request_id,expected_window_revision,answer,reason,evidence_refs_json,actor_json,submitted_at) VALUES(?,?,?,?,?,?,?,?,?)`, submission.DecisionID, requestScope(submission.Actor), submission.RequestID, submission.ExpectedWindowRevision, submission.Answer, submission.Reason, evidence, actor, nanos(submission.SubmittedAt)); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO decision_submissions(decision_id,request_scope,request_id,expected_window_revision,expected_run_revision,answer,reason,evidence_refs_json,actor_json,submitted_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, submission.DecisionID, requestScope(submission.Actor), submission.RequestID, submission.ExpectedWindowRevision, submission.ExpectedRunRevision, submission.Answer, submission.Reason, evidence, actor, nanos(submission.SubmittedAt)); err != nil {
 		return app.DecisionRecord{}, classify(err)
 	}
 	result, err := tx.ExecContext(ctx, `UPDATE decision_windows SET state=?,revision=revision+1,updated_at=? WHERE id=? AND state=? AND revision=?`, model.DecisionAnswered, nanos(at), submission.DecisionID, model.DecisionOpen, submission.ExpectedWindowRevision)
@@ -488,9 +499,10 @@ func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTr
 		additionalDecisions[i] = decision
 	}
 	var currentRevision model.Revision
+	var currentState model.WorkRunState
 	var cancelled bool
 	var deadline sql.NullInt64
-	if err = tx.QueryRowContext(ctx, `SELECT revision,cancellation_requested,deadline FROM work_runs WHERE id=?`, transition.WorkRunID).Scan(&currentRevision, &cancelled, &deadline); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT revision,state,cancellation_requested,deadline FROM work_runs WHERE id=?`, transition.WorkRunID).Scan(&currentRevision, &currentState, &cancelled, &deadline); err != nil {
 		return app.WorkRunRecord{}, classify(err)
 	}
 	if currentRevision != transition.ExpectedRevision || (cancelled && (transition.Operation != nil || transition.Execution != nil || len(transition.Activations) > 0)) {
@@ -589,7 +601,7 @@ func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTr
 		if update.NewIssuanceID != "" {
 			newIssuance = update.NewIssuanceID
 		}
-		result, updateErr := tx.ExecContext(ctx, `UPDATE work_node_attempts SET issuance_id=?,operation_id=CASE WHEN ?='' THEN operation_id ELSE ? END,execution_id=CASE WHEN ?='' THEN execution_id ELSE ? END,state=?,outcome=?,detail=?,updated_at=?,settled_at=? WHERE work_run_id=? AND node_id=? AND activation_id=? AND attempt=? AND issuance_id=?`, newIssuance, update.OperationID, update.OperationID, update.ExecutionID, update.ExecutionID, update.State, update.Outcome, update.Detail, nanos(transition.At), settled, update.Ref.RunID, update.Ref.NodeID, update.Ref.ActivationID, update.Ref.Attempt, update.Ref.IssuanceID)
+		result, updateErr := tx.ExecContext(ctx, `UPDATE work_node_attempts SET issuance_id=?,operation_id=CASE WHEN ?='' THEN operation_id ELSE ? END,execution_id=CASE WHEN ?='' THEN execution_id ELSE ? END,decision_id=CASE WHEN ?='' THEN decision_id ELSE ? END,state=?,outcome=?,detail=?,updated_at=?,settled_at=? WHERE work_run_id=? AND node_id=? AND activation_id=? AND attempt=? AND issuance_id=?`, newIssuance, update.OperationID, update.OperationID, update.ExecutionID, update.ExecutionID, update.DecisionID, update.DecisionID, update.State, update.Outcome, update.Detail, nanos(transition.At), settled, update.Ref.RunID, update.Ref.NodeID, update.Ref.ActivationID, update.Ref.Attempt, update.Ref.IssuanceID)
 		if updateErr != nil {
 			return app.WorkRunRecord{}, updateErr
 		}
@@ -640,6 +652,11 @@ func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTr
 	if count, _ := result.RowsAffected(); count != 1 {
 		return app.WorkRunRecord{}, app.ErrConflict
 	}
+	if currentState != transition.RunState {
+		if err = insertTerminalWorkFactTx(ctx, tx, transition.WorkRunID, transition.RunState, transition.At); err != nil {
+			return app.WorkRunRecord{}, err
+		}
+	}
 	if err = bumpTx(ctx, tx); err != nil {
 		return app.WorkRunRecord{}, err
 	}
@@ -675,13 +692,13 @@ func decisionRecord(ctx context.Context, query decisionQuery, id model.DecisionI
 	}
 	record.Window.ExpiresAt, record.Window.CreatedAt, record.Window.UpdatedAt = fromNanos(expires), fromNanos(created), fromNanos(updated)
 	var requestID model.RequestID
-	var expected model.Revision
+	var expected, expectedRun model.Revision
 	var answer, reason string
 	var submissionEvidence, actor []byte
 	var submitted int64
-	err = query.QueryRowContext(ctx, `SELECT request_id,expected_window_revision,answer,reason,evidence_refs_json,actor_json,submitted_at FROM decision_submissions WHERE decision_id=?`, id).Scan(&requestID, &expected, &answer, &reason, &submissionEvidence, &actor, &submitted)
+	err = query.QueryRowContext(ctx, `SELECT request_id,expected_window_revision,expected_run_revision,answer,reason,evidence_refs_json,actor_json,submitted_at FROM decision_submissions WHERE decision_id=?`, id).Scan(&requestID, &expected, &expectedRun, &answer, &reason, &submissionEvidence, &actor, &submitted)
 	if err == nil {
-		submission := &model.DecisionSubmission{RequestID: requestID, DecisionID: id, ExpectedWindowRevision: expected, Answer: answer, Reason: reason, SubmittedAt: fromNanos(submitted)}
+		submission := &model.DecisionSubmission{RequestID: requestID, DecisionID: id, ExpectedWindowRevision: expected, ExpectedRunRevision: expectedRun, Answer: answer, Reason: reason, SubmittedAt: fromNanos(submitted)}
 		if err = json.Unmarshal(submissionEvidence, &submission.EvidenceRefs); err != nil {
 			return record, err
 		}
@@ -769,6 +786,12 @@ func (s *Store) SaveAutomationRule(ctx context.Context, rule model.AutomationRul
 	_, err = tx.ExecContext(ctx, `INSERT INTO automation_rule_revisions(id,rule_id,number,request_scope,request_id,content_hash,owner_json,delegation_json,condition_json,action_json,policy_json,dependencies_json,author_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, revision.ID, revision.RuleID, revision.Number, requestScope(revision.Author), revision.RequestID, revision.ContentHash, owner, delegation, condition, action, policy, dependencies, author, nanos(revision.CreatedAt))
 	if err != nil {
 		return app.AutomationRuleRecord{}, classify(err)
+	}
+	// Condition state is meaningful only for the immutable head revision that
+	// produced it. A new revision starts with a new cursor/episode; in
+	// particular, a trigger sequence must never be parsed as a schedule time.
+	if _, err = tx.ExecContext(ctx, `DELETE FROM automation_condition_state WHERE rule_id=?`, rule.ID); err != nil {
+		return app.AutomationRuleRecord{}, err
 	}
 	if err = bumpTx(ctx, tx); err != nil {
 		return app.AutomationRuleRecord{}, err
@@ -977,8 +1000,11 @@ func (s *Store) MaterializeOccurrence(ctx context.Context, occurrence model.Auto
 	if !errors.Is(err, sql.ErrNoRows) {
 		return app.OccurrenceRecord{}, false, err
 	}
+	if err = applyOccurrenceOverlapTx(ctx, tx, &occurrence); err != nil {
+		return app.OccurrenceRecord{}, false, err
+	}
 	requester, _ := json.Marshal(occurrence.Requester)
-	_, err = tx.ExecContext(ctx, `INSERT INTO automation_occurrences(id,rule_id,rule_revision_id,source_occurrence_key,request_scope,request_id,requester_json,scheduled_at,event_at,eligible_at,expires_at,state,operation_id,work_run_id,deployment_id,revision,created_at,updated_at,request_fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, occurrence.ID, occurrence.RuleID, occurrence.RuleRevisionID, occurrence.SourceOccurrenceKey, requestScopeValue, occurrence.RequestID, requester, nullableTime(occurrence.ScheduledAt), nullableTime(occurrence.EventAt), nanos(occurrence.EligibleAt), nanos(occurrence.ExpiresAt), occurrence.State, occurrence.OperationID, occurrence.WorkRunID, occurrence.DeploymentID, occurrence.Revision, nanos(occurrence.CreatedAt), nanos(occurrence.UpdatedAt), occurrence.RequestFingerprint)
+	_, err = tx.ExecContext(ctx, `INSERT INTO automation_occurrences(id,rule_id,rule_revision_id,source_occurrence_key,request_scope,request_id,requester_json,parent_occurrence_id,causal_depth,scheduled_at,event_at,eligible_at,expires_at,state,operation_id,work_run_id,deployment_id,revision,created_at,updated_at,request_fingerprint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, occurrence.ID, occurrence.RuleID, occurrence.RuleRevisionID, occurrence.SourceOccurrenceKey, requestScopeValue, occurrence.RequestID, requester, occurrence.ParentOccurrenceID, occurrence.CausalDepth, nullableTime(occurrence.ScheduledAt), nullableTime(occurrence.EventAt), nanos(occurrence.EligibleAt), nanos(occurrence.ExpiresAt), occurrence.State, occurrence.OperationID, occurrence.WorkRunID, occurrence.DeploymentID, occurrence.Revision, nanos(occurrence.CreatedAt), nanos(occurrence.UpdatedAt), occurrence.RequestFingerprint)
 	if err != nil {
 		return app.OccurrenceRecord{}, false, classify(err)
 	}
@@ -997,12 +1023,242 @@ func (s *Store) MaterializeOccurrence(ctx context.Context, occurrence model.Auto
 	return record, false, err
 }
 
+func (s *Store) ScheduleCursor(ctx context.Context, ruleID model.AutomationRuleID) (time.Time, model.Revision, error) {
+	var raw string
+	var revision model.Revision
+	err := s.db.QueryRowContext(ctx, `SELECT source_cursor,revision FROM automation_condition_state WHERE rule_id=?`, ruleID).Scan(&raw, &revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, 0, nil
+	}
+	if err != nil {
+		return time.Time{}, 0, err
+	}
+	value, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, 0, fmt.Errorf("decode schedule cursor: %w", err)
+	}
+	return value.UTC(), revision, nil
+}
+
+func (s *Store) AutomationConditionState(ctx context.Context, ruleID model.AutomationRuleID) (model.AutomationConditionState, error) {
+	var state model.AutomationConditionState
+	var dwellSince, cooldownUntil, debounceAt sql.NullInt64
+	var debouncePayload []byte
+	var observed int64
+	err := s.db.QueryRowContext(ctx, `SELECT rule_id,source_cursor,dwell_episode_id,dwell_since,cooldown_until,debounce_at,debounce_payload,observed_at,revision FROM automation_condition_state WHERE rule_id=?`, ruleID).Scan(&state.RuleID, &state.SourceCursor, &state.DwellEpisodeID, &dwellSince, &cooldownUntil, &debounceAt, &debouncePayload, &observed, &state.Revision)
+	if errors.Is(err, sql.ErrNoRows) {
+		return model.AutomationConditionState{RuleID: ruleID}, nil
+	}
+	if err != nil {
+		return state, err
+	}
+	state.ObservedAt = fromNanos(observed)
+	state.DebouncePayload = debouncePayload
+	if dwellSince.Valid {
+		value := fromNanos(dwellSince.Int64)
+		state.DwellSince = &value
+	}
+	if cooldownUntil.Valid {
+		value := fromNanos(cooldownUntil.Int64)
+		state.CooldownUntil = &value
+	}
+	if debounceAt.Valid {
+		value := fromNanos(debounceAt.Int64)
+		state.DebounceAt = &value
+	}
+	return state, nil
+}
+
+func (s *Store) AdvanceTrigger(ctx context.Context, state model.AutomationConditionState, occurrence *model.AutomationOccurrence, expectedRule, expectedState model.Revision) (app.OccurrenceRecord, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return app.OccurrenceRecord{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var currentRule model.Revision
+	var head model.AutomationRuleRevisionID
+	var enabled bool
+	if err = tx.QueryRowContext(ctx, `SELECT revision,head_revision_id,enabled FROM automation_rules WHERE id=?`, state.RuleID).Scan(&currentRule, &head, &enabled); err != nil {
+		return app.OccurrenceRecord{}, false, classify(err)
+	}
+	if currentRule != expectedRule || !enabled || occurrence != nil && head != occurrence.RuleRevisionID {
+		return app.OccurrenceRecord{}, false, app.ErrConflict
+	}
+	var currentState model.Revision
+	stateErr := tx.QueryRowContext(ctx, `SELECT revision FROM automation_condition_state WHERE rule_id=?`, state.RuleID).Scan(&currentState)
+	var dwellSince, cooldownUntil, debounceAt any
+	if state.DwellSince != nil {
+		dwellSince = nanos(*state.DwellSince)
+	}
+	if state.CooldownUntil != nil {
+		cooldownUntil = nanos(*state.CooldownUntil)
+	}
+	if state.DebounceAt != nil {
+		debounceAt = nanos(*state.DebounceAt)
+	}
+	if errors.Is(stateErr, sql.ErrNoRows) {
+		if expectedState != 0 {
+			return app.OccurrenceRecord{}, false, app.ErrConflict
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO automation_condition_state(rule_id,source_cursor,dwell_episode_id,dwell_since,cooldown_until,debounce_at,debounce_payload,observed_at,revision) VALUES(?,?,?,?,?,?,?,?,1)`, state.RuleID, state.SourceCursor, state.DwellEpisodeID, dwellSince, cooldownUntil, debounceAt, state.DebouncePayload, nanos(state.ObservedAt))
+	} else if stateErr != nil {
+		return app.OccurrenceRecord{}, false, stateErr
+	} else {
+		if currentState != expectedState {
+			return app.OccurrenceRecord{}, false, app.ErrConflict
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE automation_condition_state SET source_cursor=?,dwell_episode_id=?,dwell_since=?,cooldown_until=?,debounce_at=?,debounce_payload=?,observed_at=?,revision=revision+1 WHERE rule_id=? AND revision=?`, state.SourceCursor, state.DwellEpisodeID, dwellSince, cooldownUntil, debounceAt, state.DebouncePayload, nanos(state.ObservedAt), state.RuleID, expectedState)
+	}
+	if err != nil {
+		return app.OccurrenceRecord{}, false, classify(err)
+	}
+	repeated := false
+	if occurrence != nil {
+		var existing model.OccurrenceID
+		lookupErr := tx.QueryRowContext(ctx, `SELECT id FROM automation_occurrences WHERE rule_revision_id=? AND source_occurrence_key=?`, occurrence.RuleRevisionID, occurrence.SourceOccurrenceKey).Scan(&existing)
+		if lookupErr == nil {
+			if existing != occurrence.ID {
+				return app.OccurrenceRecord{}, false, app.ErrConflict
+			}
+			repeated = true
+		} else if !errors.Is(lookupErr, sql.ErrNoRows) {
+			return app.OccurrenceRecord{}, false, lookupErr
+		}
+	}
+	if occurrence != nil && !repeated {
+		if err = applyOccurrenceOverlapTx(ctx, tx, occurrence); err != nil {
+			return app.OccurrenceRecord{}, false, err
+		}
+		requester, _ := json.Marshal(occurrence.Requester)
+		_, err = tx.ExecContext(ctx, `INSERT INTO automation_occurrences(id,rule_id,rule_revision_id,source_occurrence_key,request_scope,request_id,requester_json,parent_occurrence_id,causal_depth,scheduled_at,event_at,eligible_at,expires_at,state,operation_id,work_run_id,deployment_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, occurrence.ID, occurrence.RuleID, occurrence.RuleRevisionID, occurrence.SourceOccurrenceKey, requestScope(occurrence.Requester), occurrence.RequestID, requester, occurrence.ParentOccurrenceID, occurrence.CausalDepth, nullableTime(occurrence.ScheduledAt), nullableTime(occurrence.EventAt), nanos(occurrence.EligibleAt), nanos(occurrence.ExpiresAt), occurrence.State, occurrence.OperationID, occurrence.WorkRunID, occurrence.DeploymentID, occurrence.Revision, nanos(occurrence.CreatedAt), nanos(occurrence.UpdatedAt))
+		if err != nil {
+			return app.OccurrenceRecord{}, false, classify(err)
+		}
+		for _, recipient := range occurrence.Recipients {
+			if _, err = tx.ExecContext(ctx, `INSERT INTO automation_occurrence_recipients(occurrence_id,agent_id,disposition,operation_id,detail) VALUES(?,?,?,?,?)`, occurrence.ID, recipient.AgentID, recipient.Disposition, recipient.OperationID, recipient.Detail); err != nil {
+				return app.OccurrenceRecord{}, false, classify(err)
+			}
+		}
+	}
+	if err = bumpTx(ctx, tx); err != nil {
+		return app.OccurrenceRecord{}, false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return app.OccurrenceRecord{}, false, err
+	}
+	if occurrence == nil {
+		return app.OccurrenceRecord{}, false, nil
+	}
+	record, err := s.Occurrence(ctx, occurrence.ID)
+	return record, repeated, err
+}
+
+// AdvanceSchedule owns the schedule cursor and optional occurrence insertion in
+// one transaction. A nil occurrence records an intentionally skipped set of
+// missed ticks; a non-nil occurrence is the sole coalesced/admitted tick.
+func (s *Store) AdvanceSchedule(ctx context.Context, occurrence *model.AutomationOccurrence, ruleID model.AutomationRuleID, expectedRule, expectedCursor model.Revision, consideredThrough time.Time) (app.OccurrenceRecord, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return app.OccurrenceRecord{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var currentRule model.Revision
+	var head model.AutomationRuleRevisionID
+	var enabled bool
+	if err = tx.QueryRowContext(ctx, `SELECT revision,head_revision_id,enabled FROM automation_rules WHERE id=?`, ruleID).Scan(&currentRule, &head, &enabled); err != nil {
+		return app.OccurrenceRecord{}, false, classify(err)
+	}
+	if currentRule != expectedRule || !enabled || occurrence != nil && head != occurrence.RuleRevisionID {
+		return app.OccurrenceRecord{}, false, app.ErrConflict
+	}
+	var currentCursor string
+	var currentCursorRevision model.Revision
+	cursorErr := tx.QueryRowContext(ctx, `SELECT source_cursor,revision FROM automation_condition_state WHERE rule_id=?`, ruleID).Scan(&currentCursor, &currentCursorRevision)
+	if errors.Is(cursorErr, sql.ErrNoRows) {
+		if expectedCursor != 0 {
+			return app.OccurrenceRecord{}, false, app.ErrConflict
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO automation_condition_state(rule_id,source_cursor,observed_at,revision) VALUES(?,?,?,1)`, ruleID, consideredThrough.UTC().Format(time.RFC3339Nano), nanos(consideredThrough))
+	} else if cursorErr != nil {
+		return app.OccurrenceRecord{}, false, cursorErr
+	} else {
+		if currentCursorRevision != expectedCursor {
+			return app.OccurrenceRecord{}, false, app.ErrConflict
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE automation_condition_state SET source_cursor=?,observed_at=?,revision=revision+1 WHERE rule_id=? AND revision=?`, consideredThrough.UTC().Format(time.RFC3339Nano), nanos(consideredThrough), ruleID, expectedCursor)
+	}
+	if err != nil {
+		return app.OccurrenceRecord{}, false, classify(err)
+	}
+	if occurrence == nil {
+		if err = bumpTx(ctx, tx); err != nil {
+			return app.OccurrenceRecord{}, false, err
+		}
+		return app.OccurrenceRecord{}, false, tx.Commit()
+	}
+	if err = applyOccurrenceOverlapTx(ctx, tx, occurrence); err != nil {
+		return app.OccurrenceRecord{}, false, err
+	}
+	requester, _ := json.Marshal(occurrence.Requester)
+	requestScopeValue := requestScope(occurrence.Requester)
+	_, err = tx.ExecContext(ctx, `INSERT INTO automation_occurrences(id,rule_id,rule_revision_id,source_occurrence_key,request_scope,request_id,requester_json,parent_occurrence_id,causal_depth,scheduled_at,event_at,eligible_at,expires_at,state,operation_id,work_run_id,deployment_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, occurrence.ID, occurrence.RuleID, occurrence.RuleRevisionID, occurrence.SourceOccurrenceKey, requestScopeValue, occurrence.RequestID, requester, occurrence.ParentOccurrenceID, occurrence.CausalDepth, nullableTime(occurrence.ScheduledAt), nullableTime(occurrence.EventAt), nanos(occurrence.EligibleAt), nanos(occurrence.ExpiresAt), occurrence.State, occurrence.OperationID, occurrence.WorkRunID, occurrence.DeploymentID, occurrence.Revision, nanos(occurrence.CreatedAt), nanos(occurrence.UpdatedAt))
+	if err != nil {
+		return app.OccurrenceRecord{}, false, classify(err)
+	}
+	for _, recipient := range occurrence.Recipients {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO automation_occurrence_recipients(occurrence_id,agent_id,disposition,operation_id,detail) VALUES(?,?,?,?,?)`, occurrence.ID, recipient.AgentID, recipient.Disposition, recipient.OperationID, recipient.Detail); err != nil {
+			return app.OccurrenceRecord{}, false, classify(err)
+		}
+	}
+	if err = bumpTx(ctx, tx); err != nil {
+		return app.OccurrenceRecord{}, false, err
+	}
+	if err = tx.Commit(); err != nil {
+		return app.OccurrenceRecord{}, false, err
+	}
+	record, err := s.Occurrence(ctx, occurrence.ID)
+	return record, false, err
+}
+
+func applyOccurrenceOverlapTx(ctx context.Context, tx *sql.Tx, occurrence *model.AutomationOccurrence) error {
+	var policyJSON []byte
+	if err := tx.QueryRowContext(ctx, `SELECT policy_json FROM automation_rule_revisions WHERE id=?`, occurrence.RuleRevisionID).Scan(&policyJSON); err != nil {
+		return classify(err)
+	}
+	var policy model.OccurrencePolicy
+	if err := json.Unmarshal(policyJSON, &policy); err != nil {
+		return err
+	}
+	var active uint32
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM automation_occurrences WHERE rule_id=? AND id<>? AND state IN (?,?,?,?)`, occurrence.RuleID, occurrence.ID, model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceUncertain).Scan(&active); err != nil {
+		return err
+	}
+	switch policy.Overlap {
+	case model.OverlapForbid:
+		if active > 0 {
+			occurrence.State = model.OccurrenceDenied
+			for i := range occurrence.Recipients {
+				occurrence.Recipients[i].Disposition, occurrence.Recipients[i].Detail = model.RecipientSkipped, "forbidden by active occurrence"
+			}
+		}
+	case model.OverlapAllow:
+		if active >= policy.MaxActive {
+			occurrence.State = model.OccurrenceParked
+		}
+	case model.OverlapReplace:
+		if active > 0 {
+			occurrence.State = model.OccurrenceParked
+		}
+	}
+	return nil
+}
+
 func (s *Store) Occurrence(ctx context.Context, id model.OccurrenceID) (app.OccurrenceRecord, error) {
 	var record app.OccurrenceRecord
 	var scheduled, event sql.NullInt64
 	var requester []byte
 	var eligible, expires, created, updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,rule_id,rule_revision_id,source_occurrence_key,request_id,requester_json,scheduled_at,event_at,eligible_at,expires_at,state,operation_id,work_run_id,deployment_id,revision,created_at,updated_at,request_fingerprint,request_scope FROM automation_occurrences WHERE id=?`, id).Scan(&record.Occurrence.ID, &record.Occurrence.RuleID, &record.Occurrence.RuleRevisionID, &record.Occurrence.SourceOccurrenceKey, &record.Occurrence.RequestID, &requester, &scheduled, &event, &eligible, &expires, &record.Occurrence.State, &record.Occurrence.OperationID, &record.Occurrence.WorkRunID, &record.Occurrence.DeploymentID, &record.Occurrence.Revision, &created, &updated, &record.Occurrence.RequestFingerprint, &record.Occurrence.RequestScope)
+	err := s.db.QueryRowContext(ctx, `SELECT id,rule_id,rule_revision_id,source_occurrence_key,request_id,requester_json,parent_occurrence_id,causal_depth,scheduled_at,event_at,eligible_at,expires_at,state,operation_id,work_run_id,deployment_id,revision,created_at,updated_at,request_fingerprint,request_scope FROM automation_occurrences WHERE id=?`, id).Scan(&record.Occurrence.ID, &record.Occurrence.RuleID, &record.Occurrence.RuleRevisionID, &record.Occurrence.SourceOccurrenceKey, &record.Occurrence.RequestID, &requester, &record.Occurrence.ParentOccurrenceID, &record.Occurrence.CausalDepth, &scheduled, &event, &eligible, &expires, &record.Occurrence.State, &record.Occurrence.OperationID, &record.Occurrence.WorkRunID, &record.Occurrence.DeploymentID, &record.Occurrence.Revision, &created, &updated, &record.Occurrence.RequestFingerprint, &record.Occurrence.RequestScope)
 	if err != nil {
 		return record, classify(err)
 	}
@@ -1061,7 +1317,7 @@ func (s *Store) OccurrencesForRule(ctx context.Context, id model.AutomationRuleI
 }
 
 func (s *Store) PendingOccurrences(ctx context.Context) ([]app.OccurrenceRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM automation_occurrences WHERE state IN (?,?,?,?) ORDER BY eligible_at,id`, model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceUncertain)
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM automation_occurrences WHERE state IN (?,?,?,?,?) ORDER BY eligible_at,id`, model.OccurrencePending, model.OccurrenceAdmitted, model.OccurrencePartial, model.OccurrenceParked, model.OccurrenceUncertain)
 	if err != nil {
 		return nil, err
 	}

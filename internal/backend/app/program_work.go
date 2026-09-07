@@ -24,7 +24,7 @@ func (s *Service) advanceGraphWork(ctx context.Context, record WorkRunRecord) (W
 		return s.expireGraphWork(ctx, record, now)
 	}
 	for _, attempt := range record.Run.NodeAttempts {
-		if attempt.State != model.NodeAttemptWaiting || attempt.DecisionID == "" {
+		if (attempt.State != model.NodeAttemptWaiting && attempt.State != model.NodeAttemptBlocked) || attempt.DecisionID == "" {
 			continue
 		}
 		decision, err := s.store.Decision(ctx, attempt.DecisionID)
@@ -33,6 +33,19 @@ func (s *Service) advanceGraphWork(ctx context.Context, record WorkRunRecord) (W
 		}
 		if decision.Submission != nil {
 			return s.applyAnsweredDecision(ctx, record, attempt, *decision.Submission)
+		}
+	}
+	for _, attempt := range record.Run.NodeAttempts {
+		if attempt.State == model.NodeAttemptRetryWait && attempt.RetryAt != nil && !now.Before(*attempt.RetryAt) {
+			node := graphNode(*record.Run.Graph, attempt.Ref.NodeID)
+			ready := attempt
+			ready.State, ready.RetryAt, ready.UpdatedAt = model.NodeAttemptReady, nil, now
+			ready, windows := s.attachDecisionWindow(record.Run, node, ready, now)
+			transition := GraphTransition{WorkRunID: record.Run.ID, ExpectedRevision: record.Run.Revision,
+				Updates:         []GraphAttemptUpdate{{Ref: attempt.Ref, State: ready.State, DecisionID: ready.DecisionID}},
+				DecisionWindows: windows,
+				RunState:        model.WorkRunRunning, ControlState: model.WorkControlActive, RunOutcome: record.Run.Outcome, At: now}
+			return s.store.ApplyGraphTransition(ctx, transition)
 		}
 	}
 	for _, attempt := range record.Run.NodeAttempts {
@@ -221,7 +234,7 @@ func (s *Service) reconcileProgramResourceCleanup(ctx context.Context) error {
 
 func (s *Service) admitAndRunProgram(ctx context.Context, record WorkRunRecord, attempt model.WorkNodeAttempt) (WorkRunRecord, error) {
 	if s.programHost == nil {
-		return record, fail(ErrUnavailable, "program host is unavailable")
+		return s.recordGraphAttemptUnavailable(ctx, record, attempt, fail(ErrUnavailable, "program host is unavailable"))
 	}
 	if attempt.Performer == nil || attempt.Performer.Program == nil {
 		return record, fail(ErrInvalid, "program performer is incomplete")
