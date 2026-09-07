@@ -234,7 +234,7 @@ func (s *Service) reconcileProgramResourceCleanup(ctx context.Context) error {
 
 func (s *Service) admitAndRunProgram(ctx context.Context, record WorkRunRecord, attempt model.WorkNodeAttempt) (WorkRunRecord, error) {
 	if s.programHost == nil {
-		return record, fail(ErrUnavailable, "program host is unavailable")
+		return s.recordGraphAttemptUnavailable(ctx, record, attempt, fail(ErrUnavailable, "program host is unavailable"))
 	}
 	if attempt.Performer == nil || attempt.Performer.Program == nil {
 		return record, fail(ErrInvalid, "program performer is incomplete")

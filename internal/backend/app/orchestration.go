@@ -721,6 +721,25 @@ func graphAttempt(run model.WorkRun, ref model.WorkAttemptRef) (model.WorkNodeAt
 	return model.WorkNodeAttempt{}, false
 }
 
+func (s *Service) recordGraphAttemptUnavailable(ctx context.Context, record WorkRunRecord, attempt model.WorkNodeAttempt, cause error) (WorkRunRecord, error) {
+	detail := cause.Error()
+	if attempt.Detail == detail {
+		return record, cause
+	}
+	updated, err := s.store.ApplyGraphTransition(ctx, GraphTransition{
+		WorkRunID: record.Run.ID, ExpectedRevision: record.Run.Revision,
+		Updates:      []GraphAttemptUpdate{{Ref: attempt.Ref, State: attempt.State, Outcome: attempt.Outcome, Detail: detail}},
+		RunState:     record.Run.State,
+		ControlState: record.Run.ControlState,
+		RunOutcome:   record.Run.Outcome,
+		At:           s.now().UTC(),
+	})
+	if err != nil {
+		return record, err
+	}
+	return updated, cause
+}
+
 func graphAttemptTerminal(state model.WorkNodeAttemptState) bool {
 	return state == model.NodeAttemptSucceeded || state == model.NodeAttemptFailed || state == model.NodeAttemptWaived || state == model.NodeAttemptSuppressed
 }
