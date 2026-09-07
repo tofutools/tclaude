@@ -763,3 +763,24 @@ Fresh agent configuration/default selection checks active status in the storage
 transaction. Existing agents may still run their pinned configuration, and Clone
 configuration copies those exact settings into an independent agent. Archive does
 not stop workloads, delete native history, or discard immutable profile revisions.
+
+### Reusable profile startup suggestions
+
+A saved configuration revision can carry an optional `Startup` object with
+`AgentName`, `Context`, and `InitialMessage`. Profile creation/editing exposes
+these fields; create-from-profile/default prefills the suggested agent name.
+**Start with brief** reads the agent's exact saved revision and opens its context
+and message for review. When both are present, launch combines them with one blank
+line and delivers the result through the ordinary prepared-input contract.
+
+Editing a profile does not move an existing agent's selection. Archived revisions
+remain readable for that agent. Suggested text is not included in aggregate
+snapshots and never launches on save, cancel, refresh or reload. Plain Start,
+Resume and bulk Start retain their existing behavior. Clone configuration remains
+a native-settings copy and does not acquire a live profile reference.
+
+The API's configuration-profile save body accepts `startup` alongside `desired`;
+CLI JSON files use the same shape. Startup suggestions participate in immutable
+content hashes and request identity. Name is limited to 256 UTF-8 bytes; combined
+context and message to 32 KiB, without NUL. An absent/empty startup object preserves
+the content hash of older native-settings-only profiles.

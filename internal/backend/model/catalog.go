@@ -23,7 +23,15 @@ type ConfigurationProfile struct {
 	UpdatedAt         time.Time
 }
 
+// ProfileStartup contains reusable operator-reviewed launch suggestions, not native settings.
+type ProfileStartup struct {
+	AgentName      string
+	Context        string
+	InitialMessage string
+}
+
 type ConfigurationProfileRevision struct {
+	Startup   *ProfileStartup `json:",omitempty"`
 	Ref       ConfigurationProfileRef
 	Desired   DesiredConfiguration
 	CreatedAt time.Time

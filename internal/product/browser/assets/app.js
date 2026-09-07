@@ -58,6 +58,21 @@ function desiredFields(desired={}){return[
  {name:'sandbox',label:'Confinement',value:desired.Sandbox||'workspace_write',options:['read_only','workspace_write','unconfined']}
 ]}
 function configuration(form){if(form.effort&&!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(form.effort))throw new Error('Requested native effort must start with a letter or digit and contain at most 64 lowercase letters, digits, underscores or hyphens.');return{Harness:form.harness,Model:form.model,Effort:form.effort,WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
+async function startWithBrief(agent){
+ const ref=agent.ConfigurationProfile;
+ const saved=ref?await api(`/v2/configuration-profiles/${encodeURIComponent(ref.ProfileID)}?revision_id=${encodeURIComponent(ref.RevisionID)}`):null;
+ const startup=saved?.Revision.Startup||{};
+ edit('Start with initial brief',[
+  {name:'context',label:'Startup context (review before launch)',multiline:true,value:startup.Context||'',required:false},
+  {name:'brief',label:'Initial brief (delivered before first work, at most 32 KiB)',multiline:true,value:startup.InitialMessage||'',required:false}
+ ],f=>{const body=f.context&&f.brief?f.context+'\n\n'+f.brief:f.context||f.brief;if(!body||new TextEncoder().encode(body).length>32768||body.includes('\0'))throw new Error('Context and brief together must contain 1–32768 UTF-8 bytes without NUL.');return api('/v2/launch',{request_id:f.requestID,initial_message:body,target:{agent:{agent_id:agent.ID,expected_revision:agent.Revision}}})});
+}
+function startupFields(startup={}){return[
+ {name:'startup_name',label:'Suggested agent name (optional)',value:startup.AgentName||'',required:false},
+ {name:'startup_context',label:'Suggested startup context (optional)',value:startup.Context||'',multiline:true,required:false},
+ {name:'startup_brief',label:'Suggested initial brief (optional; context and brief together at most 32 KiB)',value:startup.InitialMessage||'',multiline:true,required:false}
+]}
+function profileStartup(f){const name=f.startup_name||'',context=f.startup_context||'',brief=f.startup_brief||'',body=context&&brief?context+'\n\n'+brief:context||brief;if(new TextEncoder().encode(name).length>256||new TextEncoder().encode(body).length>32768||/[\0\r\n]/.test(name)||(name&&!name.trim())||body.includes('\0'))throw new Error('Suggested name must be at most 256 UTF-8 bytes; context and brief together at most 32768 bytes, without NUL.');return{AgentName:name,Context:context,InitialMessage:brief}}
 function agentRow(agent){
  const row=el('div',undefined,'row');row.append(el('span',agent.Name,'name'));
  const execution=(snapshot.executions||[]).find(e=>e.id===agent.PrimaryExecutionID);
@@ -72,7 +87,7 @@ function agentRow(agent){
  if(!execution || ['exited','failed'].includes(execution.state)){
   actions.append(button('Retire',()=>edit('Retire agent',[{name:'reason',label:'Reason',multiline:true}],f=>api(`/v2/agents/${encodeURIComponent(agent.ID)}/retire`,{expected_revision:agent.Revision,reason:f.reason}))));
   actions.append(button('Start',async id=>{await api('/v2/launch',{request_id:id,target:{agent:{agent_id:agent.ID,expected_revision:agent.Revision}}});await refresh()}));
-  actions.append(button('Start with brief',()=>edit('Start with initial brief',[{name:'brief',label:'Initial brief (delivered before first work, at most 32 KiB)',multiline:true}],f=>{if(new TextEncoder().encode(f.brief).length>32768||f.brief.includes('\0'))throw new Error('Initial brief must be at most 32768 UTF-8 bytes without NUL.');return api('/v2/launch',{request_id:f.requestID,initial_message:f.brief,target:{agent:{agent_id:agent.ID,expected_revision:agent.Revision}}})})));
+  actions.append(button('Start with brief',()=>startWithBrief(agent)));
   const associations=(snapshot.associations||[]).filter(a=>a.AgentID===agent.ID);
   if(associations.length)actions.append(button('Resume',()=>edit('Resume history',[{name:'conversation',label:'Conversation',options:associations.map(a=>({value:a.ConversationID,label:a.ConversationID}))}],async f=>{
    const a=associations.find(a=>a.ConversationID===f.conversation);
@@ -207,7 +222,7 @@ async function renderConfigurations(){
  const choices=[...(defaults.Global?[['global',defaults.Global]]:[]),...Object.entries(defaults.Harnesses||{})];
  if(choices.length){const card=el('article',undefined,'card');card.append(el('strong','Defaults'),el('p','Defaults select a saved revision for new agents. Existing agents keep their settings.','muted'));
  for(const [name,ref] of choices){const row=el('div',undefined,'row');const profile=entries.find(p=>p.ID===ref.ProfileID);row.append(el('span',`${name}: ${profile?.Name||ref.ProfileID}`));
- row.append(button('Create from '+name,()=>edit('Create agent from default',[{name:'name',label:'Agent name'}],f=>api('/v2/agents',{id:f.requestID,name:f.name,configuration_profile:ref}))));
+ row.append(button('Create from '+name,async()=>{const saved=await api(`/v2/configuration-profiles/${encodeURIComponent(ref.ProfileID)}?revision_id=${encodeURIComponent(ref.RevisionID)}`);edit('Create agent from default',[{name:'name',label:'Agent name',value:saved.Revision.Startup?.AgentName||''}],f=>api('/v2/agents',{id:f.requestID,name:f.name,configuration_profile:ref}))}));
  row.append(button('Clear '+name,async id=>{const harnesses={...(defaults.Harnesses||{})};delete harnesses[name];await api('/v2/configuration-defaults',{request_id:id,expected_revision:defaults.Revision,global:name==='global'?null:defaults.Global,harnesses});await renderConfigurations()}));card.append(row)}list.append(card)}
  const shown=entries.filter(p=>configurationStatus==='all'||Boolean(p.Archived)===(configurationStatus==='archived'));
  for(const profile of shown){
@@ -217,11 +232,11 @@ async function renderConfigurations(){
   const isDefault=choices.some(([,ref])=>ref.ProfileID===profile.ID),archive=button('Archive configuration',async id=>{await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}/archive`,{request_id:id,expected_revision:profile.Revision,archived:true});await renderConfigurations()});archive.disabled=isDefault;card.append(archive);if(isDefault)card.append(el('p','Clear or replace its default selections before archiving.','muted'));
   card.append(button('Create agent',async()=>{
    const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
-   edit('Create agent from configuration',[{name:'name',label:'Agent name',value:profile.Name}],f=>api('/v2/agents',{id:f.requestID,name:f.name,configuration_profile:selected.Revision.Ref}));
+   edit('Create agent from configuration',[{name:'name',label:'Agent name',value:selected.Revision.Startup?.AgentName||profile.Name}],f=>api('/v2/agents',{id:f.requestID,name:f.name,configuration_profile:selected.Revision.Ref}));
   }),button('Edit configuration',async()=>{
    const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
-   edit('Save new configuration revision',desiredFields({...selected.Revision.Desired,name:profile.Name}),async f=>{
-    await api('/v2/configuration-profiles',{request_id:f.requestID,id:profile.ID,revision_id:f.requestID,expected_revision:profile.Revision,name:f.name,desired:configuration(f)});await renderConfigurations();
+   edit('Save new configuration revision',[...desiredFields({...selected.Revision.Desired,name:profile.Name}),...startupFields(selected.Revision.Startup)],async f=>{
+    await api('/v2/configuration-profiles',{request_id:f.requestID,id:profile.ID,revision_id:f.requestID,expected_revision:profile.Revision,name:f.name,desired:configuration(f),startup:profileStartup(f)});await renderConfigurations();
    });
   }),button('Use as default',async()=>{
    const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
@@ -233,8 +248,8 @@ async function renderConfigurations(){
  }
  if(!shown.length)list.append(el('p','No '+configurationStatus+' configurations. Archived revisions remain available for inspection and restoration.'));
 }
-$('new-configuration').onclick=()=>edit('Save configuration',desiredFields(),async f=>{
- await api('/v2/configuration-profiles',{request_id:f.requestID,id:f.requestID,revision_id:f.requestID,name:f.name,desired:configuration(f)});await renderConfigurations();
+$('new-configuration').onclick=()=>edit('Save configuration',[...desiredFields(),...startupFields()],async f=>{
+ await api('/v2/configuration-profiles',{request_id:f.requestID,id:f.requestID,revision_id:f.requestID,name:f.name,desired:configuration(f),startup:profileStartup(f)});await renderConfigurations();
 });
 
 function agentMetadataFields(agent={}){return[
