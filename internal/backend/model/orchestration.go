@@ -190,6 +190,7 @@ const (
 type AgentPerformer struct {
 	AgentID       AgentID
 	MemberKey     string
+	WorkspaceID   WorkspaceID
 	CreateDesired *DesiredConfiguration
 	ContextPolicy AgentContextPolicy
 	Brief         string

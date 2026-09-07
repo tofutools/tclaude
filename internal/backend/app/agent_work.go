@@ -18,9 +18,23 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	if err != nil {
 		return record, err
 	}
-	provider, ok := s.providers.Provider(agent.Desired.Harness)
+	desired := agent.Desired
+	var workspaceUse *model.WorkspaceUse
+	var additionalAuthority []model.AuthorityRequest
+	if performer.WorkspaceID != "" {
+		workspace, readErr := s.store.Workspace(ctx, performer.WorkspaceID)
+		if readErr != nil {
+			return record, readErr
+		}
+		if workspace.State != model.WorkspaceAvailable || strings.TrimSpace(workspace.Observation.ActualPath) == "" {
+			return record, fail(ErrConflict, "agent workspace is not available")
+		}
+		desired.WorkingDirectory = workspace.Observation.ActualPath
+		additionalAuthority = append(additionalAuthority, model.AuthorityRequest{Principal: record.Run.Requester, Action: model.ActionInspectWorkspace, Resource: model.ResourceSelector{Kind: model.ResourceWorkspace, WorkspaceID: workspace.ID}})
+	}
+	provider, ok := s.providers.Provider(desired.Harness)
 	if !ok {
-		return record, fail(ErrUnavailable, "harness %q has no provider", agent.Desired.Harness)
+		return record, fail(ErrUnavailable, "harness %q has no provider", desired.Harness)
 	}
 	if !provider.Capabilities().PreparedInitialInput {
 		return record, fail(ErrUnsupported, "provider %q cannot prepare required first work", provider.Name())
@@ -30,13 +44,17 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	operationID := model.OperationID(s.newID("op_"))
 	executionID := model.ExecutionID(s.newID("exe_"))
 	conversationID := model.ConversationID(s.newID("con_"))
-	spec := resolvedSpec(executionID, agent.ID, agent.Desired, conversationID)
+	spec := resolvedSpec(executionID, agent.ID, desired, conversationID)
+	spec.ConfigurationProfile = agent.ConfigurationProfile
 	execution := model.Execution{ID: executionID, Workload: model.ExecutionWorkloadHarness, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, State: model.ExecutionReserved, Attempt: 1, ContextReadiness: model.ContextReadinessPending, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	if err = s.requireNativeGuidanceComposition(ctx, execution); err != nil {
 		return record, err
 	}
 	operation := model.Operation{ID: operationID, RequestID: model.RequestID(issuanceID), Kind: model.OperationAssignWork, Principal: record.Run.Requester, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
-	authority := model.AuthorityRequest{Principal: record.Run.Requester, Action: model.ActionLaunch, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agent.ID}, RequestedConfiguration: &agent.Desired}
+	authority := model.AuthorityRequest{Principal: record.Run.Requester, Action: model.ActionLaunch, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agent.ID}, RequestedConfiguration: &desired}
+	if performer.WorkspaceID != "" {
+		workspaceUse = &model.WorkspaceUse{ID: model.WorkspaceUseID(s.newID("workspace_use_")), WorkspaceID: performer.WorkspaceID, ExecutionID: executionID, WorkRunID: record.Run.ID, CreatedAt: now}
+	}
 	var access *model.ExecutionAccess
 	var credential *ports.ActionCredentialMaterial
 	if _, capable := provider.(ports.ActionCredentialProvider); capable {
@@ -54,7 +72,7 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 		access = &value
 		credential = &ports.ActionCredentialMaterial{ExecutionID: executionID, Generation: 1, DeliveryID: deliveryID, Secret: secret, ExpiresAt: value.ExpiresAt}
 	}
-	transition := GraphTransition{WorkRunID: record.Run.ID, ExpectedRevision: record.Run.Revision, Authority: authority, Operation: &operation, Execution: &execution, AgentExpected: agent.Revision, Access: access, Updates: []GraphAttemptUpdate{{Ref: attempt.Ref, NewIssuanceID: issuanceID, OperationID: operationID, ExecutionID: executionID, State: model.NodeAttemptAdmitted}}, RunState: model.WorkRunRunning, ControlState: model.WorkControlActive, At: now}
+	transition := GraphTransition{WorkRunID: record.Run.ID, ExpectedRevision: record.Run.Revision, Authority: authority, AdditionalAuthority: additionalAuthority, Operation: &operation, Execution: &execution, WorkspaceUse: workspaceUse, AgentExpected: agent.Revision, Access: access, Updates: []GraphAttemptUpdate{{Ref: attempt.Ref, NewIssuanceID: issuanceID, OperationID: operationID, ExecutionID: executionID, State: model.NodeAttemptAdmitted}}, RunState: model.WorkRunRunning, ControlState: model.WorkControlActive, At: now}
 	admitted, err := s.store.ApplyGraphTransition(ctx, transition)
 	if err != nil {
 		return record, err
