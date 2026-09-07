@@ -592,6 +592,11 @@ CREATE TABLE IF NOT EXISTS team_deployments (
   advisory_phase INTEGER NOT NULL, state TEXT NOT NULL, revision INTEGER NOT NULL,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS team_continuations (
+  deployment_id TEXT NOT NULL REFERENCES team_deployments(id), kind TEXT NOT NULL,
+  request_scope TEXT NOT NULL, request_id TEXT NOT NULL, request_json BLOB NOT NULL,
+  PRIMARY KEY(deployment_id,kind,request_scope,request_id)
+);
 CREATE TABLE IF NOT EXISTS team_rebriefs (
   deployment_id TEXT NOT NULL REFERENCES team_deployments(id), request_scope TEXT NOT NULL,
   request_id TEXT NOT NULL, request_digest TEXT NOT NULL, definition_json BLOB NOT NULL,

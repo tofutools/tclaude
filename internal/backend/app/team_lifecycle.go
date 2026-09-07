@@ -63,6 +63,9 @@ func (s *Service) RebriefDeployment(ctx context.Context, req RebriefDeploymentRe
 	if repeated && admitted.State == model.TeamRebriefCompleted {
 		return TeamDeploymentResult{Deployment: deployment}, nil
 	}
+	if deployment.State == model.DeploymentStandingDown || deployment.State == model.DeploymentStopped {
+		return TeamDeploymentResult{Deployment: deployment}, ErrConflict
+	}
 	operations := make(map[string][]model.OperationID, len(deployment.Members))
 	keys := sortedMemberKeys(deployment.Members)
 	for _, key := range keys {
@@ -118,7 +121,7 @@ func (s *Service) StandDownDeployment(ctx context.Context, req StandDownDeployme
 		Expected   model.Revision
 		Reason     string
 	}{req.DeploymentID, req.ExpectedRevision, strings.TrimSpace(req.Reason)})
-	deployment, err := s.store.BeginTeamStandDown(ctx, req.DeploymentID, req.ExpectedRevision, req.Context.Principal, req.Context.RequestID, digest, s.now().UTC())
+	deployment, err := s.store.BeginTeamStandDown(ctx, req.DeploymentID, req.ExpectedRevision, req.Context.Principal, req.Context.RequestID, digest, strings.TrimSpace(req.Reason), s.now().UTC())
 	if err != nil {
 		return TeamDeploymentResult{}, err
 	}
@@ -163,6 +166,9 @@ func sortedMemberKeys(members map[string]model.AgentID) []string {
 func (s *Service) continueTeamStandDown(ctx context.Context, deployment model.TeamDeployment, principal model.Principal, reason string) (model.TeamDeployment, error) {
 	for _, ruleID := range deployment.OwnedAutomationRuleIDs {
 		rule, err := s.store.AutomationRule(ctx, ruleID)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		} // Planned resource may never have been materialized.
 		if err != nil {
 			return deployment, err
 		}
@@ -190,9 +196,18 @@ func (s *Service) continueTeamStandDown(ctx context.Context, deployment model.Te
 				return deployment, readErr
 			}
 			if execution.State != model.ExecutionExited && execution.State != model.ExecutionFailed {
-				_, stopErr := s.Stop(ctx, StopRequest{RequestContext: RequestContext{Principal: principal, RequestID: model.RequestID(deterministicOrchestrationID("request_", string(deployment.ID)+":standdown:stop:"+key))}, ExecutionID: execution.ID})
+				_, stopErr := s.Stop(ctx, StopRequest{RequestContext: RequestContext{Principal: principal, RequestID: model.RequestID(deterministicOrchestrationID("request_", string(deployment.ID)+":standdown:stop:"+key+":"+string(execution.ID)))}, ExecutionID: execution.ID})
 				if stopErr != nil {
 					return deployment, stopErr
+				}
+				// Observe an admitted stop's settlement; replaying its request cannot
+				// observe an asynchronous native exit. This internal observation issues no effect.
+				if runtime, runtimeErr := s.runtimeFor(ctx, execution); runtimeErr == nil {
+					if observation, observeErr := runtime.Observe(ctx); observeErr == nil && observation.Workload == ports.WorkloadExited {
+						if _, persistErr := s.store.RecordRecovery(ctx, execution.ID, model.ExecutionExited, nil, observation.Evidence, s.now().UTC()); persistErr != nil {
+							return deployment, persistErr
+						}
+					}
 				}
 				execution, readErr = s.store.Execution(ctx, execution.ID)
 				if readErr != nil || (execution.State != model.ExecutionExited && execution.State != model.ExecutionFailed) {
@@ -294,7 +309,7 @@ func memberHasAfterReadyBrief(team model.TeamDefinition, memberKey string) bool 
 }
 
 func (s *Service) deliverAfterReadyBriefings(ctx context.Context, deployment model.TeamDeployment, memberKey string, team model.TeamDefinition) (model.TeamDeployment, error) {
-	if len(deployment.BriefingOperationIDs[memberKey]) != 0 {
+	if len(deployment.BriefingOperationIDs[memberKey]) >= teamAfterReadyBriefCount(team, memberKey) {
 		return deployment, nil
 	}
 	principal, err := s.store.TeamDeploymentRequester(ctx, deployment.ID)
@@ -322,6 +337,9 @@ func (s *Service) deliverAfterReadyBriefings(ctx context.Context, deployment mod
 		}
 		operations = append(operations, result.Operation.ID)
 	}
+	if len(operations) == 0 {
+		return deployment, nil
+	}
 	return s.store.RecordTeamBriefingOperations(ctx, deployment.ID, deployment.Revision, memberKey, operations, s.now().UTC())
 }
 
@@ -339,4 +357,20 @@ func requiredTeamBriefingsAdmitted(deployment model.TeamDeployment, memberKey st
 		}
 	}
 	return len(deployment.BriefingOperationIDs[memberKey]) >= required
+}
+
+func teamAfterReadyBriefCount(team model.TeamDefinition, memberKey string) int {
+	count := 0
+	for _, brief := range team.Briefings {
+		if brief.Timing != model.BriefingAfterReady {
+			continue
+		}
+		for _, key := range brief.MemberKeys {
+			if key == memberKey {
+				count++
+				break
+			}
+		}
+	}
+	return count
 }
