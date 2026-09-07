@@ -90,6 +90,7 @@ function agentRow(agent){
  actions.append(button('Activity',async()=>{activityTarget={AgentID:agent.ID};await selectTab('activity')}));
  if(execution?.conversation_id)actions.append(button('Usage',async()=>{usageTarget={ConversationID:execution.conversation_id};await selectTab('usage')}));
  if(agent.Lifecycle==='retired'){row.append(el('span','retired','status'));actions.append(button('Reactivate',async()=>{await api(`/v2/agents/${encodeURIComponent(agent.ID)}/reactivate`,{expected_revision:agent.Revision});await refresh()}));row.append(actions);return row}
+ actions.append(button('Save settings as configuration',()=>saveConfigurationDraft({...agent.Desired,name:agent.Name+' configuration'},{AgentName:agent.Name})));
  actions.append(button('Configure',()=>edit('Configure agent',[...desiredFields({...agent.Desired,name:agent.Name}),...agentMetadataFields(agent)],f=>api(`/v2/agents/${encodeURIComponent(agent.ID)}`,{name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify},expected_revision:agent.Revision},'PUT'))));
  if(!execution || ['exited','failed'].includes(execution.state)){
   actions.append(button('Retire',()=>edit('Retire agent',[{name:'reason',label:'Reason',multiline:true}],f=>api(`/v2/agents/${encodeURIComponent(agent.ID)}/retire`,{expected_revision:agent.Revision,reason:f.reason}))));
@@ -258,9 +259,12 @@ async function renderConfigurations(){
  }
  if(!shown.length)list.append(el('p','No '+configurationStatus+' configurations. Archived revisions remain available for inspection and restoration.'));
 }
-$('new-configuration').onclick=()=>edit('Save configuration',[...desiredFields(),...startupFields()],async f=>{
- await api('/v2/configuration-profiles',{request_id:f.requestID,id:f.requestID,revision_id:f.requestID,name:f.name,desired:configuration(f),startup:profileStartup(f)});await renderConfigurations();
-});
+function saveConfigurationDraft(desired={},startup={}){
+ edit('Save configuration',[...desiredFields(desired),...startupFields(startup)],async f=>{
+  await api('/v2/configuration-profiles',{request_id:f.requestID,id:f.requestID,revision_id:f.requestID,name:f.name,desired:configuration(f),startup:profileStartup(f)});await renderConfigurations();
+ });
+}
+$('new-configuration').onclick=()=>saveConfigurationDraft();
 
 function agentMetadataFields(agent={}){return[
  {name:'task',label:'Task reference',value:agent.TaskReference||'',required:false},

@@ -1084,3 +1084,13 @@ Legacy spawn-profile bundles with fields outside the replacement catalog are
 explicitly unsupported, rather than silently losing their settings. Close,
 page exit, and sign-out invalidate pending dialog responses; unsaved pasted or
 loaded input has discard/unload protection.
+
+### Save an agent's settings for reuse
+
+An active agent row's **Save settings as configuration** opens the ordinary
+configuration editor with its displayed desired settings and an agent-name
+suggestion. Review or edit the draft, then explicitly save a new independent
+configuration. Opening or cancelling writes nothing. The source agent, its
+saved-profile selection and any running execution remain unchanged. This copies
+authored desired settings; it does not probe effective native settings or copy
+runtime state, authority, messages or launch intent.
