@@ -34,6 +34,7 @@ type Config struct {
 	APIBaseURL  string
 	Token       string
 	Client      *http.Client
+	Clock       func() time.Time
 }
 
 type Source struct {
@@ -44,6 +45,7 @@ type Source struct {
 	name, repository, baseURL, token string
 	number                           uint64
 	client                           *http.Client
+	clock                            func() time.Time
 }
 
 var repositoryPart = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$`)
@@ -71,7 +73,11 @@ func New(c Config) (*Source, error) {
 	}
 	// A redirect must not move the configured source or its credential elsewhere.
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Source{name: c.Name, repository: strings.ToLower(c.Repository), number: c.PullRequest, baseURL: strings.TrimRight(base, "/"), token: c.Token, client: &client}, nil
+	clock := c.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+	return &Source{clock: clock, name: c.Name, repository: strings.ToLower(c.Repository), number: c.PullRequest, baseURL: strings.TrimRight(base, "/"), token: c.Token, client: &client}, nil
 }
 
 func (s *Source) SourceID() string { return s.name }
@@ -132,17 +138,27 @@ func (s *Source) collect(ctx context.Context, req ports.AutomationFactCollectReq
 		prValue = "draft"
 	}
 	ciValue, changed := ciState(checks, statuses)
+	if changed.IsZero() {
+		changed = pr.UpdatedAt
+	}
+	// Observe after the complete remote read. The worker's trusted clock is a
+	// lower bound (and supports a synthetic application clock in fixtures).
+	observed := s.clock().UTC()
+	if observed.Before(req.Now) {
+		observed = req.Now.UTC()
+	}
+	if pr.UpdatedAt.After(observed) || changed.After(observed) {
+		return ports.AutomationFactBatch{}, errors.New("GitHub snapshot has future occurrence timestamps")
+	}
 	resource := req.Resource
 	facts := []model.NormalizedFact{
-		{Source: s.name, EventID: digest(pr), Kind: model.FactPullRequestChanged, Value: prValue, Resource: resource, OccurredAt: pr.UpdatedAt, ObservedAt: req.Now.UTC()},
+		{Source: s.name, EventID: digest(pr), Kind: model.FactPullRequestChanged, Value: prValue, Resource: resource, OccurredAt: pr.UpdatedAt, ObservedAt: observed},
 		{Source: s.name, EventID: digest(struct {
-			Head     string
-			Checks   []check
-			Statuses []status
-		}{pr.Head.SHA, checks, statuses}), Kind: model.FactCICompleted, Value: ciValue, Resource: resource, OccurredAt: changed, ObservedAt: req.Now.UTC()},
-	}
-	if facts[1].OccurredAt.IsZero() {
-		facts[1].OccurredAt = pr.UpdatedAt
+			Head       string
+			OccurredAt time.Time
+			Checks     []check
+			Statuses   []status
+		}{pr.Head.SHA, changed, checks, statuses}), Kind: model.FactCICompleted, Value: ciValue, Resource: resource, OccurredAt: changed, ObservedAt: observed},
 	}
 	// The source returns one complete snapshot; pagination is consumed privately.
 	return ports.AutomationFactBatch{Facts: facts}, nil

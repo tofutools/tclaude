@@ -26,6 +26,7 @@ func TestGitHubDwellFailureRestartAndNoDuplicateWork(t *testing.T) {
 		return false
 	})
 	now := testTime
+	source.clock = func() time.Time { return now }
 	path := filepath.Join(t.TempDir(), "state.sqlite")
 	var store *sqlite.Store
 	var service *app.Service
