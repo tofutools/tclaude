@@ -264,6 +264,7 @@ type GraphAttemptUpdate struct {
 }
 
 type GraphTransition struct {
+	Interaction         *GraphInteractionAdmission
 	WorkRunID           model.WorkRunID
 	ExpectedRevision    model.Revision
 	Authority           model.AuthorityRequest

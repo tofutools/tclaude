@@ -39,6 +39,9 @@ type Service struct {
 	callbackIngress  ports.CallbackIngress
 	automationFacts  []ports.AutomationFactSource
 
+	graphInteractionMu sync.Mutex
+	graphInteractions  map[model.OperationID]bool
+
 	runtimeMu       sync.RWMutex
 	runtimes        map[model.ExecutionID]ports.Runtime
 	hostRuntimes    map[model.ExecutionID]ports.HostRuntime

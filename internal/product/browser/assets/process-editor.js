@@ -1,3 +1,4 @@
+import {addCheck, removeCheck, moveCheck} from './process-stages.js';
 import {ProcessSnippetLibrary} from './process-snippets.js';
 import {ProcessGraphAdapter} from './processgraph/process-graph-adapter.js';
 import {clone, freshID, edgeID, seconds, lines, newProcess, draftFromResult, defaultNode, graphView, ProcessDraft, validationMessages} from './process-model.js';
@@ -129,7 +130,12 @@ class ProcessEditor {
     };
     this.inspector.append(form); return form;
   }
-  nodeForm(node) {
+  nodeForm(node, stageContext = null) {
+    const resolve = draft => {
+      const parent = draft.Process.Graph.Nodes.find(n => n.ID === (stageContext?.parentID || node.ID));
+      return stageContext ? stageContext.kind === 'Checks' ? parent.Stages.Checks.find(s => s.ID === stageContext.id) : parent.Stages[stageContext.kind] : parent;
+    };
+    const update = edit => this.change(draft => edit(resolve(draft)));
     const fields = [{name: 'name', label: 'Node name', value: node.Name, required: true}];
     const changes = [];
     if (node.Kind === 'wait') {
@@ -158,12 +164,12 @@ class ProcessEditor {
       select.value = performer.Kind;
       select.onchange = () => {
         if (!this.discardUnapplied()) return;
-        this.change(draft => {
-          const n = draft.Process.Graph.Nodes.find(n => n.ID === node.ID);
+        update(n => {
           n.Performer = select.value === 'agent' ? {Kind: 'agent', Agent: {MemberKey: 'worker', Brief: '', ContextPolicy: 'fresh'}}
             : select.value === 'program' ? {Kind: 'program', Program: {Profile: {}, Arguments: []}}
-              : {Kind: 'human', Human: {AgentID: '', RoleID: '', Prompt: ''}};
+              : {Kind: 'human', Human: {Operator: true, AgentID: '', RoleID: '', Prompt: ''}};
         });
+        if (stageContext) this.showStage(stageContext);
       };
       if (performer.Kind === 'agent') {
         const a = performer.Agent;
@@ -180,28 +186,57 @@ class ProcessEditor {
           {name: 'input', label: 'Program input (JSON)', multiline: true, value: p.Input ? JSON.stringify(p.Input, null, 2) : ''});
         changes.push((n, f) => { n.Performer.Program = {...n.Performer.Program, Profile: clone(refs.find(r => r.ref.RevisionID === f.profile).ref), Arguments: f.arguments ? f.arguments.split('\n') : [], Input: f.input.trim() ? JSON.parse(f.input) : null}; });
       } else {
-        fields.push({name: 'agent', label: 'Human task recipient agent', options: [option('', 'Use role instead'), ...this.agents.map(a => option(a.ID, a.Name))], value: performer.Human.AgentID || ''},
+        fields.push({name:'operator', label:'Operator performs this task', type:'checkbox', value:performer.Human.Operator}, {name: 'agent', label: 'Human task recipient agent', options: [option('', 'Use role instead'), ...this.agents.map(a => option(a.ID, a.Name))], value: performer.Human.AgentID || ''},
           {name: 'role', label: 'Human task role ID', value: performer.Human.RoleID || ''},
           {name: 'prompt', label: 'Human task prompt', multiline: true, required: true, value: performer.Human.Prompt});
-        changes.push((n, f) => { n.Performer.Human = {...n.Performer.Human, AgentID: f.agent, RoleID: f.role, Prompt: f.prompt}; });
+        changes.push((n, f) => { n.Performer.Human = {...n.Performer.Human, Operator: f.operator, AgentID: f.operator ? '' : f.agent, RoleID: f.operator ? '' : f.role, Prompt: f.prompt}; });
       }
       this.performerSelect = select;
     }
-    if (node.Kind === 'task' || node.Kind === 'decision') {
-      fields.push({name: 'attempts', label: 'Maximum attempts (0 disables retries)', type: 'number', min: 0, max: 100, value: node.Retry?.MaxAttempts || 0},
+    if ((!stageContext || stageContext.kind === 'Plan') && (node.Kind === 'task' || node.Kind === 'decision')) {
+      fields.push({name: 'attempts', label: node.Stages ? 'Maximum work attempts (0 permits one work attempt)' : 'Maximum attempts (0 disables retries)', type: 'number', min: 0, max: 100, value: node.Retry?.MaxAttempts || 0},
         {name: 'backoff', label: 'Retry delay seconds', type: 'number', min: 0, value: (node.Retry?.Backoff || 0) / 1e9},
         {name: 'budget', label: 'Attempt budget seconds (0 uses run deadline)', type: 'number', min: 0, value: (node.Retry?.AttemptBudget || 0) / 1e9},
         {name: 'retryable', label: 'Retry these outcomes', multiple: true, options: ['program_failed', 'agent_rejected', 'human_rejected'].map(v => option(v)), value: node.Retry?.Retryable || []},
         {name: 'waivable', label: 'Allow explicit waiver when blocked', type: 'checkbox', value: node.Waivable});
       changes.push((n, f) => { n.Waivable = f.waivable; n.Retry = Number(f.attempts) ? {MaxAttempts: Number(f.attempts), Backoff: seconds(f.backoff), AttemptBudget: seconds(f.budget), Retryable: f.retryable} : {}; });
     }
-    this.form(`${node.Kind} · ${node.Name || "Unnamed"}`, fields, values => this.change(draft => {
-      const n = draft.Process.Graph.Nodes.find(n => n.ID === node.ID); n.Name = values.name;
+    this.form(`${node.Kind} · ${node.Name || "Unnamed"}`, fields, values => update(n => {
+      n.Name = values.name;
       for (const apply of changes) apply(n, values);
+      if (stageContext) delete n.Waivable;
     }));
     if (node.Kind === 'task') this.inspector.prepend(this.performerSelect);
+    if (stageContext) { this.inspector.append(action('Back to task stages', () => this.render())); return; }
+    if (node.Kind === 'task') this.stageControls(node);
     this.inspector.append(action('Make entry', () => this.change(d => { d.Process.Graph.EntryNodeID = node.ID; })));
     this.connectionForm(node.ID);
+  }
+
+
+  showStage(context) {
+    const parent = this.model.value.Process.Graph.Nodes.find(n => n.ID === context.parentID);
+    const stage = context.kind === 'Checks' ? parent.Stages.Checks.find(s => s.ID === context.id) : parent.Stages[context.kind];
+    this.nodeForm({...stage, Kind:'task'}, context);
+  }
+  stageControls(node) {
+    const host = element('section'); host.className = 'process-task-stages';
+    host.append(element('h4','Plan, checks and review'), element('p','Checks run in order. A failed check or review sends work back through the task and its checks. The work attempt limit is shared.'));
+    const edit = fn => { if (!this.discardUnapplied()) return; this.change(d => { const n=d.Process.Graph.Nodes.find(n=>n.ID===node.ID); n.Stages ||= {}; fn(n.Stages,n); }); };
+    const open = (kind,id) => { if(this.discardUnapplied()) this.showStage({parentID:node.ID,kind,id}); };
+    for (const kind of ['Plan','Review']) {
+      const stage = node.Stages?.[kind];
+      if (stage) host.append(element('p',`${kind}: ${stage.Name} · ${stage.Performer.Kind}`),action('Edit '+kind.toLowerCase(),()=>open(kind)),action('Remove '+kind.toLowerCase(),()=>edit(s=>{delete s[kind];if(kind==='Plan')delete s.PlanApproval;})));
+      else host.append(action('Add '+kind.toLowerCase(),()=>edit((s,n)=>{s[kind]={ID:kind.toLowerCase(),Name:kind,Performer:kind==='Plan'?clone(n.Performer):{Kind:'human',Human:{Operator:true,Prompt:'Review the task result'}}};})));
+    }
+    if (node.Stages?.Plan) {
+      host.append(element('p',node.Stages.PlanApproval?'Plan requires explicit approval':'Plan continues automatically'),action(node.Stages.PlanApproval?'Remove plan approval':'Require plan approval',()=>edit(s=>{if(s.PlanApproval)delete s.PlanApproval;else s.PlanApproval={Kind:'work',Audience:[{Subject:{Kind:'operator'}}],PermittedAnswers:['approve','rework'],ExpiresAfter:seconds(3600)};})));
+    }
+    for (const [i,check] of (node.Stages?.Checks || []).entries()) {
+      const row=element('div');row.append(element('span',`${i+1}. ${check.Name} · ${check.Performer.Kind}`),action('Edit check '+(i+1),()=>open('Checks',check.ID)),action('Move check '+(i+1)+' up',()=>edit(s=>moveCheck(s,i,-1))),action('Move check '+(i+1)+' down',()=>edit(s=>moveCheck(s,i,1))),action('Remove check '+(i+1),()=>edit(s=>removeCheck(s,i))));host.append(row);
+    }
+    host.append(action('Add check',()=>edit(s=>addCheck(s,{Kind:'human',Human:{Operator:true,Prompt:'Verify the task result'}}))));
+    this.inspector.append(host);
   }
 
   add(kind) {
