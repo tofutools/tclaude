@@ -118,6 +118,7 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"message_recipients", "notified_at", "INTEGER"},
 		{"automation_occurrences", "parent_occurrence_id", "TEXT NOT NULL DEFAULT ''"},
 		{"automation_occurrences", "causal_depth", "INTEGER NOT NULL DEFAULT 0"},
+		{"decision_submissions", "expected_run_revision", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.definition); err != nil {
 			return err
@@ -516,7 +517,7 @@ CREATE TABLE IF NOT EXISTS decision_windows (
 );
 CREATE TABLE IF NOT EXISTS decision_submissions (
   decision_id TEXT PRIMARY KEY REFERENCES decision_windows(id), request_scope TEXT NOT NULL,
-  request_id TEXT NOT NULL, expected_window_revision INTEGER NOT NULL, answer TEXT NOT NULL,
+  request_id TEXT NOT NULL, expected_window_revision INTEGER NOT NULL, expected_run_revision INTEGER NOT NULL DEFAULT 0, answer TEXT NOT NULL,
   reason TEXT NOT NULL, evidence_refs_json BLOB NOT NULL, actor_json BLOB NOT NULL,
   submitted_at INTEGER NOT NULL, UNIQUE(request_scope,request_id)
 );
