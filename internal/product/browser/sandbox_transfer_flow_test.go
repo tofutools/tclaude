@@ -2,6 +2,8 @@ package browser
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -51,6 +53,17 @@ func TestBrowserSandboxTransferExportsExactGraphAndRetriesIndependentImport(t *t
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/sandbox-profiles/inspect", map[string]any{"ref": copied.Revision.Ref}, &closure))
 	require.Equal(t, "literal $(text)", closure.Entries[0].Policy.Environment["VALUE"])
 	page.MustElementR("#sandbox-profiles button", "^Import sandbox profiles$").MustClick()
+	page.MustElement("[aria-label='Sandbox bundle']").MustInput(raw)
+	page.MustElementR(".sandbox-transfer button", "^Preview sandbox import$").MustClick()
+	page.MustElement(".sandbox-transfer article input")
+	badFile := filepath.Join(t.TempDir(), "invalid-utf8.json")
+	require.NoError(t, os.WriteFile(badFile, []byte{255}, 0600))
+	page.MustElement(".sandbox-transfer input[type=file]").MustSetFiles(badFile)
+	page.MustWait(`()=>!!document.querySelector('.sandbox-transfer [role=alert]').textContent`)
+	require.True(t, page.MustElementR(".sandbox-transfer button", "^Import independent copies$").MustProperty("disabled").Bool())
+	require.Empty(t, page.MustElement("[aria-label='Sandbox bundle']").MustProperty("value").Str())
+	require.NoError(t, operator.Call(ctx, "GET", "/v2/sandbox-profiles", nil, &profiles))
+	require.Len(t, profiles, 4)
 	page.MustElement("[aria-label='Sandbox bundle']").MustInput(raw)
 	page.MustEval(`()=>{const original=window.fetch;window.fetch=(...args)=>String(args[0]).endsWith('/sandbox-profiles/import/inspect')?new Promise(resolve=>{window.finishSandboxImport=()=>original(...args).then(resolve)}):original(...args)}`)
 	page.MustElementR(".sandbox-transfer button", "^Preview sandbox import$").MustClick()
