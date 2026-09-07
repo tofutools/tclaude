@@ -494,11 +494,13 @@ func (s *Service) Observe(ctx context.Context, req ObserveRequest) (ObservationR
 			return ObservationResult{}, errors.Join(observeErr, s.resetAgentActivityEpisodes(ctx, execution, s.now().UTC()))
 		}
 		observation := ports.Observation{ObservedAt: hostObservation.ObservedAt, Workload: hostObservation.Workload}
-		updated, persistErr := s.store.RecordShellRecovery(ctx, execution.ID, stateFromObservation(observation), hostObservation.Evidence, s.now().UTC())
+		settleCtx, settleCancel := settlementContext(ctx)
+		defer settleCancel()
+		updated, persistErr := s.store.RecordShellRecovery(settleCtx, execution.ID, stateFromObservation(observation), hostObservation.Evidence, s.now().UTC())
 		if persistErr != nil {
 			return ObservationResult{}, persistErr
 		}
-		if factErr := s.appendAgentActivityFacts(ctx, updated, observation); factErr != nil {
+		if factErr := s.appendAgentActivityFacts(settleCtx, updated, observation); factErr != nil {
 			return ObservationResult{}, factErr
 		}
 		return ObservationResult{Execution: updated, Observation: observation}, nil

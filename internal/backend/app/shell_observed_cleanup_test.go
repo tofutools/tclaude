@@ -16,7 +16,8 @@ import (
 type delayedExitShellHost struct{ runtime *delayedExitShellRuntime }
 type delayedExitShellRuntime struct {
 	journeyHostRuntime
-	state ports.WorkloadObservedState
+	state     ports.WorkloadObservedState
+	onObserve func()
 }
 type delayedExitPreparedShell struct {
 	journeyPreparedShell
@@ -37,12 +38,21 @@ func (p *delayedExitPreparedShell) Release(ctx context.Context, permit ports.Rel
 	return ports.ShellReleaseResult{State: ports.ReleaseStarted, Runtime: p.runtime, Evidence: modelShellEvidence()}, nil
 }
 func (r *delayedExitShellRuntime) ObserveHost(context.Context) (ports.HostObservation, error) {
+	if r.onObserve != nil {
+		r.onObserve()
+	}
 	return ports.HostObservation{Workload: r.state, ObservedAt: time.Now(), Evidence: modelShellEvidence()}, nil
 }
 func (r *delayedExitShellRuntime) StopHost(context.Context, ports.StopRequest) (ports.HostStopResult, error) {
 	return ports.HostStopResult{Disposition: ports.EffectAccepted, Acknowledged: true, Exited: false, Evidence: modelShellEvidence()}, nil
 }
 func TestObservedDelayedShellExitReleasesCheckoutAndCannotResurrect(t *testing.T) {
+	testObservedShellCleanup(t, false)
+}
+func TestObservedShellExitSettlesAfterRequestCancellation(t *testing.T) {
+	testObservedShellCleanup(t, true)
+}
+func testObservedShellCleanup(t *testing.T, cancelAtObservation bool) {
 	ctx := context.Background()
 	store, err := db.Open(filepath.Join(t.TempDir(), "db"))
 	require.NoError(t, err)
@@ -62,9 +72,15 @@ func TestObservedDelayedShellExitReleasesCheckoutAndCannotResurrect(t *testing.T
 	require.ErrorIs(t, err, app.ErrConflict)
 	require.Zero(t, host.removes)
 	shell.runtime.state = ports.WorkloadExited
-	observed, err := service.Observe(ctx, app.ObserveRequest{Principal: op, ExecutionID: launch.Execution.ID})
+	observationCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	if cancelAtObservation {
+		shell.runtime.onObserve = cancel
+	}
+	observed, err := service.Observe(observationCtx, app.ObserveRequest{Principal: op, ExecutionID: launch.Execution.ID})
 	require.NoError(t, err)
 	require.Equal(t, model.ExecutionExited, observed.Execution.State)
+	shell.runtime.onObserve = nil
 	shell.runtime.state = ports.WorkloadRunning
 	stale, err := service.Observe(ctx, app.ObserveRequest{Principal: op, ExecutionID: launch.Execution.ID})
 	require.NoError(t, err)
