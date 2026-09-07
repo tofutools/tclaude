@@ -9,6 +9,8 @@ import (
 )
 
 type API interface {
+	ReadPresentation(context.Context, model.Principal) (PresentationResult, error)
+	PutPresentation(context.Context, PutPresentationRequest) (PresentationResult, error)
 	CreateAgent(context.Context, CreateAgentRequest) (AgentResult, error)
 	UpdateAgent(context.Context, UpdateAgentRequest) (AgentResult, error)
 	RetireAgent(context.Context, RetireAgentRequest) (AgentResult, error)
