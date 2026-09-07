@@ -271,3 +271,24 @@ func (i *SandboxPathInspector) missingPathProtected(projected, ancestor string) 
 		}
 	}
 }
+
+// ResolveSandboxHostPath supplies a canonical spelling for pure composition.
+// Missing suffixes are projected through existing ancestors without creation.
+// It does not supply kind, identity, protected-root approval or launch authority.
+func (i *SandboxPathInspector) ResolveSandboxHostPath(ctx context.Context, path string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return "", fmt.Errorf("host path must be clean and absolute")
+	}
+	canonical, err := filepath.EvalSymlinks(path)
+	if err == nil {
+		return canonical, nil
+	}
+	if !os.IsNotExist(err) {
+		return "", err
+	}
+	canonical, _, err = resolveMissingSandboxPath(ctx, path, 0)
+	return canonical, err
+}

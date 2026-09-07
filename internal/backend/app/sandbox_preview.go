@@ -21,6 +21,7 @@ type SandboxPolicyPathPreview struct {
 
 type SandboxPolicyPreview struct {
 	ContentHash string
+	Composition sandboxpolicy.Composition
 	Includes    []sandboxpolicy.ClosureEntry
 	Paths       []SandboxPolicyPathPreview
 }
@@ -31,7 +32,7 @@ func (s *Service) WithSandboxPathInspector(inspector ports.SandboxPathInspector)
 }
 
 // PreviewSandboxPolicy validates the draft and its pinned includes, then reads
-// filesystem observations. It does not flatten policy or predict enforcement.
+// filesystem observations and include composition. It does not predict enforcement.
 func (s *Service) PreviewSandboxPolicy(ctx context.Context, principal model.Principal, policy model.SandboxPolicy) (SandboxPolicyPreview, error) {
 	if err := requireOperator(principal); err != nil {
 		return SandboxPolicyPreview{}, err
@@ -67,6 +68,14 @@ func (s *Service) PreviewSandboxPolicy(ctx context.Context, principal model.Prin
 			result.Paths = append(result.Paths, SandboxPolicyPathPreview{Source: source, Observation: observation})
 		}
 	}
+	composition, err := sandboxpolicy.ComposeIncludes(ctx, draft, sandboxDraftReader{store: s.store, ref: draft, policy: policy}, s.sandboxPaths)
+	if err != nil {
+		if errors.Is(err, sandboxpolicy.ErrInvalidClosure) {
+			return SandboxPolicyPreview{}, fail(ErrInvalid, "%v", err)
+		}
+		return SandboxPolicyPreview{}, fail(ErrUnavailable, "sandbox composition could not be resolved: %v", err)
+	}
+	result.Composition = composition
 	return result, nil
 }
 

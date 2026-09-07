@@ -18,5 +18,6 @@ type SandboxPathObservation struct {
 }
 
 type SandboxPathInspector interface {
+	ResolveSandboxHostPath(context.Context, string) (string, error)
 	InspectSandboxPaths(context.Context, []model.SandboxFilesystemRule) ([]SandboxPathObservation, error)
 }
