@@ -192,6 +192,9 @@ func validateNormalizedAutomationFact(fact model.NormalizedFact, application boo
 	if strings.TrimSpace(fact.Source) == "" || strings.TrimSpace(fact.EventID) == "" || fact.OccurredAt.IsZero() || fact.ObservedAt.IsZero() || fact.ObservedAt.Before(fact.OccurredAt) || fact.CausalDepth > maxAutomationCausalDepth {
 		return fail(ErrInvalid, "automation fact identity, causal depth and timestamps are invalid")
 	}
+	if !application && (fact.ParentOccurrenceID != "" || fact.CausalDepth != 0) {
+		return fail(ErrInvalid, "external automation facts must be causal roots")
+	}
 	if err := validateAutomationFactResource(fact.Resource); err != nil {
 		return err
 	}

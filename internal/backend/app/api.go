@@ -75,7 +75,6 @@ type OrchestrationAPI interface {
 	GetAutomationRule(context.Context, GetAutomationRuleRequest) (AutomationRuleResult, error)
 	ListAutomationRules(context.Context, ListAutomationRulesRequest) ([]model.AutomationRule, error)
 	RunRuleNow(context.Context, RunRuleNowRequest) (OccurrenceResult, error)
-	ObserveAutomationFact(context.Context, ObserveAutomationFactRequest) ([]OccurrenceResult, error)
 	DeployTeam(context.Context, DeployTeamRequest) (TeamDeploymentResult, error)
 	GetTeamDeployment(context.Context, GetTeamDeploymentRequest) (TeamDeploymentResult, error)
 	RebriefDeployment(context.Context, RebriefDeploymentRequest) (TeamDeploymentResult, error)
@@ -230,11 +229,6 @@ type RunRuleNowRequest struct {
 	OccurrenceID         model.OccurrenceID
 	SourceOccurrenceKey  string
 	Recipients           []model.AgentID
-}
-
-type ObserveAutomationFactRequest struct {
-	Principal model.Principal
-	Fact      model.NormalizedFact
 }
 
 type DeployTeamRequest struct {
