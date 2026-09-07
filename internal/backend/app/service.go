@@ -580,7 +580,7 @@ func (s *Service) Attach(ctx context.Context, req AttachRequest) (AttachmentResu
 		return AttachmentResult{Operation: finished.Operation}, nil
 	}
 	transferred = true
-	return AttachmentResult{Operation: finished.Operation, Attachment: &ownedAttachment{Attachment: result.Attachment, cancel: cancelAttachment}}, nil
+	return AttachmentResult{Operation: finished.Operation, Attachment: ownAttachment(result.Attachment, cancelAttachment)}, nil
 }
 
 func (s *Service) Stop(ctx context.Context, req StopRequest) (OperationResult, error) {
@@ -963,7 +963,7 @@ func (s *Service) attachShell(ctx context.Context, req AttachRequest, execution 
 		cancel()
 		return AttachmentResult{Operation: finished.Operation}, effectErr
 	}
-	return AttachmentResult{Operation: finished.Operation, Attachment: &ownedAttachment{Attachment: result.Attachment, cancel: cancel}}, nil
+	return AttachmentResult{Operation: finished.Operation, Attachment: ownAttachment(result.Attachment, cancel)}, nil
 }
 
 func (s *Service) stopShell(ctx context.Context, req StopRequest, execution model.Execution) (OperationResult, error) {
@@ -1190,4 +1190,23 @@ type ownedAttachment struct {
 func (a *ownedAttachment) Close() error {
 	a.once.Do(func() { a.cancel(); a.closeErr = a.Attachment.Close() })
 	return a.closeErr
+}
+
+// Preserve focused capabilities when transferring connection lifetime ownership.
+// Fixed-size attachments must not advertise resizing merely because we wrap them.
+func ownAttachment(attachment ports.Attachment, cancel context.CancelFunc) ports.Attachment {
+	owned := &ownedAttachment{Attachment: attachment, cancel: cancel}
+	if resizable, ok := attachment.(ports.ResizableAttachment); ok {
+		return &ownedResizableAttachment{ownedAttachment: owned, resizable: resizable}
+	}
+	return owned
+}
+
+type ownedResizableAttachment struct {
+	*ownedAttachment
+	resizable ports.ResizableAttachment
+}
+
+func (a *ownedResizableAttachment) Resize(ctx context.Context, size ports.TerminalSize) error {
+	return a.resizable.Resize(ctx, size)
 }

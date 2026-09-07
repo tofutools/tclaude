@@ -1,8 +1,9 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const el = (tag, text, cls) => { const n=document.createElement(tag); if(text!==undefined)n.textContent=text; if(cls)n.className=cls; return n; };
-let snapshot = {}, submitting = false, terminal, terminalSocket;
+let snapshot = {}, submitting = false;
 const requestID = () => 'r_' + crypto.randomUUID();
+const terminals = new TerminalWorkspace({requestID});
 function showError(error) { const target=$('editor').open?$('editor-error'):$('error');target.textContent=error.message || String(error);target.hidden=false; }
 async function api(path, body, method) {
  const response=await fetch(path,{method:method || (body===undefined?'GET':'POST'),credentials:'same-origin',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
@@ -127,24 +128,13 @@ $('search-history').onsubmit=async e=>{e.preventDefault();try{
 })().catch(e=>{$('connection').textContent='Not connected';showError(e)});
 
 async function attach(execution){
- closeTerminal();await selectTab('terminals');
- $('terminal-status').textContent=`Connecting to ${execution.id}…`;
- terminal=new Terminal({cols:80,rows:24,convertEol:false,theme:{background:'#0f1419',foreground:'#d4d4d4'}});
- terminal.open($('terminal'));terminal.focus();
- const url=new URL('/v2/attach',location.href);url.protocol=location.protocol==='https:'?'wss:':'ws:';
- url.searchParams.set('execution_id',execution.id);url.searchParams.set('request_id',requestID());
- const socket=new WebSocket(url,'tclaude.terminal.v1');terminalSocket=socket;socket.binaryType='arraybuffer';
- terminal.onData(data=>{if(socket.readyState===WebSocket.OPEN)socket.send(new TextEncoder().encode(data))});
- socket.onopen=()=>{$('terminal-status').textContent=`Attached to ${execution.id}. Disconnecting leaves the workload running.`};
- socket.onmessage=event=>{if(terminalSocket!==socket)return;if(typeof event.data==='string'){try{const info=JSON.parse(event.data);if(info.type==='capabilities')$('resize-terminal').disabled=!info.resize}catch{showError(new Error('Invalid terminal control response'))}}else terminal.write(new Uint8Array(event.data))};
- socket.onerror=()=>{if(terminalSocket===socket)$('terminal-status').textContent='Attachment unavailable. The workload state is unchanged.'};
- socket.onclose=()=>{if(terminalSocket===socket)$('terminal-status').textContent='Disconnected. Refresh the roster to inspect workload state.'};
+ await selectTab('terminals');
+ const agent=(snapshot.agents||[]).find(a=>a.PrimaryExecutionID===execution.id);
+ terminals.open(execution,agent?.Name||execution.id);
 }
-function closeTerminal(){$('resize-terminal').disabled=true;if(terminalSocket){terminalSocket.close();terminalSocket=undefined}if(terminal){terminal.dispose();terminal=undefined}$('terminal').replaceChildren();$('terminal-status').textContent='Disconnected. Workload state is unchanged.'}
-$('close-terminal').onclick=closeTerminal;
+function closeTerminal(){terminals.closeAll()}
 window.addEventListener('pagehide',closeTerminal);
 
-$('terminal-size').onsubmit=e=>{e.preventDefault();if(!terminal||!terminalSocket||terminalSocket.readyState!==WebSocket.OPEN)return;const form=new FormData(e.target),columns=Number(form.get('columns')),rows=Number(form.get('rows'));terminalSocket.send(JSON.stringify({type:'resize',columns,rows}));terminal.resize(columns,rows)};
 function workspaceCard(space){
  const card=el('div',undefined,'card');card.append(el('strong',space.ID),el('p',space.Observation?.ActualPath||space.Intent?.IntendedPath||''),el('span',space.State,'status'));
  const actions=el('div',undefined,'actions');
