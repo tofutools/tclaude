@@ -21,8 +21,9 @@ func TestImportedRouteNamesDoNotAcquireControlEffects(t *testing.T) {
 				source := fmt.Sprintf(`apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate
 id: routes
-start: work
+start: begin
 nodes:
+  begin: {type: start, next: {custom-start: work}}
   work:
     type: %s
     performer: {kind: human, ask: Continue}
@@ -35,7 +36,15 @@ layout:
 `, kind, label, label)
 				c, err := s.ConvertProcessImport(ctx, app.ConvertProcessImportRequest{Principal: model.OperatorPrincipal(), ID: "copy", Source: source, Bindings: map[string]processimport.Binding{"/nodes/work/performer": {Performer: model.Performer{Kind: model.PerformerHuman, Human: &model.HumanPerformer{Operator: true}}, DecisionTimeout: "1h"}}})
 				require.NoError(t, err)
-				require.Equal(t, label, c.Draft.Process.Graph.Edges[0].Verdict)
+				require.Equal(t, "custom-start", c.Draft.Process.Graph.Edges[0].Verdict)
+				require.Equal(t, label, c.Draft.Process.Graph.Edges[1].Verdict)
+				native := c.Draft
+				native.Process = &model.ProcessDefinition{}
+				*native.Process = *c.Draft.Process
+				native.Process.Graph.Nodes = append([]model.WorkNode(nil), c.Draft.Process.Graph.Nodes...)
+				native.Process.Graph.Nodes[0].RoutingMode = ""
+				_, nativeErr := s.ValidateDefinition(ctx, app.ValidateDefinitionRequest{Principal: model.OperatorPrincipal(), Draft: native})
+				require.ErrorIs(t, nativeErr, app.ErrInvalid, "native starts retain the unlabelled route contract")
 				require.Equal(t, label, c.Draft.EditorLayout.EdgeLabels[0].Edge.Verdict)
 				saved, err := s.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "save"}, Draft: c.Draft})
 				require.NoError(t, err)

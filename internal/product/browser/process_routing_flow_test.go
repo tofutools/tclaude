@@ -16,8 +16,9 @@ func TestBrowserImportedRouteNamesRemainLiteral(t *testing.T) {
 			source := fmt.Sprintf(`apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate
 id: literal-routes
-start: work
+start: begin
 nodes:
+  begin: {type: start, next: {custom-start: work}}
   work:
     type: %s
     name: Literal route

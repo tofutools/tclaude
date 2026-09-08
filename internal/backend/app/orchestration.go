@@ -1705,7 +1705,7 @@ func validateWorkGraph(graph model.WorkGraph) error {
 				return fail(ErrInvalid, "a graph permits one start node at its entry, with no incoming and exactly one outgoing route")
 			}
 			for _, edge := range graph.Edges {
-				if edge.From == id && edge.Verdict != "" {
+				if edge.From == id && edge.Verdict != "" && node.RoutingMode != "single-route-v1" {
 					return fail(ErrInvalid, "start route must be unlabelled")
 				}
 			}
