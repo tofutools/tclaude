@@ -145,7 +145,7 @@ class TeamEditor {
       {key: 'harness', label: 'Harness', options: [opt('', 'Choose harness'), ...['claude', 'codex', 'opencode', 'copilot'].map(v => opt(v))], value: desired.Harness, required: true},
       {key: 'effort', label: 'Requested native effort / variant (optional)', value: desired.Effort || ''},
       {key: 'model', label: 'Model', value: desired.Model, required: true}, {key: 'cwd', label: 'Configuration working directory (optional; deployment uses its selected workspace)', value: desired.WorkingDirectory, required: false},
-      {key: 'approval', label: 'Approval', options: ['supervised', 'automatic'].map(v => opt(v)), value: desired.Approval || 'supervised'},
+      {key: 'approval', label: 'Approval', options: ['supervised', 'automatic', 'deny'].map(v => opt(v)), value: desired.Approval || 'supervised'},
       {key: 'sandbox', label: 'Confinement', options: ['read_only', 'workspace_write', 'unconfined'].map(v => opt(v)), value: desired.Sandbox || 'workspace_write'},
       {key: 'roles', label: 'Roles', multiple: true, options: this.roles.map(r => opt(r.ID, r.Name || r.ID)), value: m.Roles || []},
       {key: 'owner', label: 'Group owner', type: 'checkbox', value: m.Owner}, {key: 'required', label: 'Required member', type: 'checkbox', value: m.Required},
@@ -222,9 +222,11 @@ class TeamEditor {
     form.addEventListener('launch-policy-support', event => {
       const profile = this.configurations.find(c => c.Profile.ID === form.elements.profile.value);
       const support = event.detail;
-      if (!profile || form.elements.harness.value === profile.Revision.Desired.Harness || form.elements.override_sandbox.checked) return;
+      if (!profile || form.elements.harness.value === profile.Revision.Desired.Harness) return;
       if (support.Harness !== form.elements.harness.value || !support.PolicyKnown) return;
-      if (!(support.SandboxModes || []).includes(form.elements.sandbox.value) && (support.SandboxModes || []).includes(support.DefaultSandbox)) form.elements.sandbox.value = support.DefaultSandbox;
+      for(const [field,modes,value] of [['sandbox',support.SandboxModes,support.DefaultSandbox],['approval',support.ApprovalModes,support.DefaultApproval]]) {
+        if(!form.elements['override_'+field].checked && !(modes||[]).includes(form.elements[field].value) && (modes||[]).includes(value)) form.elements[field].value=value;
+      }
     });
     updateProfile(true);
     this.content.prepend(select, el('p', 'A saved configuration uses its current settings at each new deployment. Custom settings and copied settings stay with this template. Deployment supplies the working directory.'));

@@ -1221,7 +1221,7 @@ func validateLaunchConfiguration(desired model.DesiredConfiguration) error {
 	if strings.TrimSpace(desired.Harness) == "" {
 		return fail(ErrInvalid, "harness is required")
 	}
-	if desired.Approval != model.ApprovalSupervised && desired.Approval != model.ApprovalAutomatic {
+	if desired.Approval != model.ApprovalSupervised && desired.Approval != model.ApprovalAutomatic && desired.Approval != model.ApprovalDeny {
 		return fail(ErrInvalid, "unsupported approval mode %q", desired.Approval)
 	}
 	if desired.Sandbox != model.SandboxUnconfined && desired.Sandbox != model.SandboxReadOnly && desired.Sandbox != model.SandboxWorkspaceWrite {

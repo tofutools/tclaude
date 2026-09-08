@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"maps"
 	"strings"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
@@ -12,6 +13,8 @@ type LaunchSupportRequest struct {
 	Harness   string
 }
 type LaunchSupportResult struct {
+	DefaultApproval      model.ApprovalMode
+	ApprovalDescriptions map[model.ApprovalMode]string `json:",omitempty"`
 	Harness              string
 	Configured           bool
 	PolicyKnown          bool
@@ -46,6 +49,8 @@ func (s *Service) LaunchSupport(_ context.Context, req LaunchSupportRequest) (La
 	result.HostSandbox = capabilities.HostSandbox
 	if capabilities.LaunchPolicy != nil {
 		result.PolicyKnown = true
+		result.DefaultApproval = capabilities.LaunchPolicy.DefaultApproval
+		result.ApprovalDescriptions = maps.Clone(capabilities.LaunchPolicy.ApprovalDescriptions)
 		result.DefaultSandbox = capabilities.LaunchPolicy.DefaultSandbox
 		result.ApprovalModes = append([]model.ApprovalMode(nil), capabilities.LaunchPolicy.SupportedApproval...)
 		result.SandboxModes = append([]model.SandboxMode(nil), capabilities.LaunchPolicy.SupportedSandbox...)

@@ -121,10 +121,12 @@ type LoopbackRequirement struct {
 }
 
 type PolicyRequirements struct {
+	DefaultApproval model.ApprovalMode
 	// DefaultSandbox resolves an incompatible inherited profile value only.
-	DefaultSandbox    model.SandboxMode
-	SupportedApproval []model.ApprovalMode
-	SupportedSandbox  []model.SandboxMode
+	DefaultSandbox       model.SandboxMode
+	ApprovalDescriptions map[model.ApprovalMode]string
+	SupportedApproval    []model.ApprovalMode
+	SupportedSandbox     []model.SandboxMode
 }
 
 type EffectivePolicy struct {

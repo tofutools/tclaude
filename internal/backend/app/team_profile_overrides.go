@@ -28,7 +28,11 @@ func (s *Service) resolveTeamProfile(member model.TeamMemberSpec, base model.Des
 		}
 	}
 	if !slices.Contains(policy.SupportedApproval, desired.Approval) {
-		return desired, fail(ErrInvalid, "member %s: approval %s is unsupported by %s", member.Key, desired.Approval, desired.Harness)
+		if member.Overrides.Approval == nil && slices.Contains(policy.SupportedApproval, policy.DefaultApproval) {
+			desired.Approval = policy.DefaultApproval
+		} else {
+			return desired, fail(ErrInvalid, "member %s: approval %s is unsupported by %s; choose a supported approval override", member.Key, desired.Approval, desired.Harness)
+		}
 	}
 	return desired, nil
 }
