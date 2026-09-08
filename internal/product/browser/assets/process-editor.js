@@ -1,4 +1,6 @@
-const {stringifyExact,parameterDefaultText,wireDefinitionDraft}=globalThis.ExactJSONTools;
+import {wireDefinitionDraft} from './process-durations.js';
+import {durationSeconds, applyDurationProjection} from './process-durations.js';
+const {stringifyExact,parameterDefaultText}=globalThis.ExactJSONTools;
 import {addCheck, removeCheck, moveCheck} from './process-stages.js';
 import {ProcessSnippetLibrary} from './process-snippets.js';
 import {ProcessGraphAdapter} from './processgraph/process-graph-adapter.js';
@@ -20,6 +22,7 @@ export async function openProcessEditor({api, result, draft, agents = [], onSave
 class ProcessEditor {
   constructor({api, result, draft, agents, revisions, configurations, onSaved}) {
     this.configurations=configurations; this.api = api; this.agents = agents; this.revisions = revisions; this.onSaved = onSaved;
+    if(draft?.ProcessDurationNS){draft=clone(draft);applyDurationProjection(draft.Process.Graph.Nodes,draft.ProcessDurationNS);delete draft.ProcessDurationNS;}
     this.model = new ProcessDraft(draft ? clone(draft) : result ? draftFromResult(result) : newProcess());
     this.baseRevision = result?.Definition.Revision || 0;
     this.saved = JSON.stringify(this.model.value); this.selection = new Set(); this.clipboard = null;
@@ -151,7 +154,7 @@ class ProcessEditor {
       {name: 'doc', label: 'Documentation', value: node.Doc || '', multiline: true}];
     const changes = [];
     if (node.Kind === 'wait') {
-      fields.push({name: 'duration', label: 'Wait seconds (0 when unused)', type: 'number', min: 0, step: 'any', value: (node.Wait?.Duration || 0) / 1e9},
+      fields.push({name: 'duration', label: 'Wait seconds (0 when unused)', value: durationSeconds(node.Wait?.Duration)},
         {name:'until',label:'Wait until (RFC3339, authoring only)',value:node.Wait?.Until||''},
         {name:'signal',label:'Wait for signal (authoring only)',value:node.Wait?.Signal||''});
       changes.push((n, f) => { n.Wait = {Duration: seconds(f.duration),Until:f.until};if(f.signal)n.Wait.Signal=f.signal; });
@@ -168,7 +171,7 @@ class ProcessEditor {
       const audience = [...new Map([{Subject: {Kind: 'operator'}}, ...(node.Decision.Audience || []), ...this.agents.map(a => ({Subject: {Kind: 'agent', AgentID: a.ID}}))].map(a => [JSON.stringify(a), a])).values()];
       fields.push({name:'question',label:'Decision question (optional; defaults to node name)',multiline:true,value:node.Decision.Question||''}, {name: 'audience', label: 'Decision audience', multiple: true, value: node.Decision.Audience.map(a => JSON.stringify(a)), options: audience.map(a => option(JSON.stringify(a), a.Subject.Kind === 'operator' ? 'Operator' : this.agents.find(agent => agent.ID === a.Subject.AgentID)?.Name || a.Subject.AgentID || a.RoleID || 'Scoped audience'))},
         {name: 'answers', label: 'Permitted answers (one per line)', multiline: true, value: node.Decision.PermittedAnswers.join('\n'), required: true},
-        {name: 'expires', label: 'Decision expires after seconds', type: 'number', min: 1, value: node.Decision.ExpiresAfter / 1e9, required: true});
+        {name: 'expires', label: 'Decision expires after seconds', value: durationSeconds(node.Decision.ExpiresAfter), required: true});
       changes.push((n, f) => { n.Decision = {...n.Decision, Question:f.question||undefined, Audience: f.audience.map(value => JSON.parse(value)), PermittedAnswers: lines(f.answers), ExpiresAfter: seconds(f.expires)}; });
     }
     if (node.Kind === 'task') {
@@ -240,8 +243,8 @@ class ProcessEditor {
     }
     if (!deciderContext && (node.Kind === 'task' || node.Kind === 'decision')) {
       fields.push({name: 'attempts', label: node.Stages ? 'Maximum work attempts (0 permits one work attempt)' : 'Maximum attempts (0 disables retries)', value: node.Retry?.MaxAttempts ?? '0'},
-        {name: 'backoff', label: 'Retry delay seconds', type: 'number', min: 0, value: (node.Retry?.Backoff || 0) / 1e9},
-        {name: 'budget', label: 'Attempt budget seconds (0 uses run deadline)', type: 'number', min: 0, value: (node.Retry?.AttemptBudget || 0) / 1e9},
+        {name: 'backoff', label: 'Retry delay seconds', value: durationSeconds(node.Retry?.Backoff)},
+        {name: 'budget', label: 'Attempt budget seconds (0 uses run deadline)', value: durationSeconds(node.Retry?.AttemptBudget)},
         {name:'retry_mode',label:'Retry mode',options:[option('','Default fresh attempt'),option('fresh-attempt'),option('feedback-same-session','Feedback in same session (authoring only)')],value:node.Retry?.OnFail||''},
         {name: 'retryable', label: 'Retry these outcomes', multiple: true, options: ['program_failed', 'agent_rejected', 'human_rejected'].map(v => option(v)), value: node.Retry?.Retryable || []},
         {name: 'waivable', label: 'Allow explicit waiver when blocked', type: 'checkbox', value: node.Waivable});

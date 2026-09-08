@@ -19,7 +19,11 @@ func (h *Handler) registerProcessSnippets(api app.ProcessSnippetAPI) {
 			applicationError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
+		views := make([]processSnippetView, 0, len(out))
+		for _, item := range out {
+			views = append(views, projectProcessSnippet(item))
+		}
+		writeJSON(w, http.StatusOK, views)
 	})
 	h.mux.HandleFunc("POST /v2/process-snippets/{id}", func(w http.ResponseWriter, r *http.Request) {
 		p, ok := h.caller(w, r)
@@ -41,6 +45,6 @@ func (h *Handler) registerProcessSnippets(api app.ProcessSnippetAPI) {
 			applicationError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
+		writeJSON(w, http.StatusOK, projectProcessSnippet(out))
 	})
 }

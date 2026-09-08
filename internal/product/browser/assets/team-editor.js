@@ -1,4 +1,5 @@
-const {stringifyExact,parameterDefaultText,wireDefinitionDraft}=globalThis.ExactJSONTools;
+import {wireDefinitionDraft} from './process-durations.js';
+const {stringifyExact,parameterDefaultText}=globalThis.ExactJSONTools;
 import {clone, freshID, lines} from './process-model.js';
 
 const el = (tag, text) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; return e; };

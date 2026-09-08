@@ -10,8 +10,9 @@ import (
 // and internal principal authority are replaced by public actor attribution.
 type definitionRevisionView struct {
 	model.DefinitionRevision
-	Author     workActor
-	Parameters []parameterDeclarationView
+	Author            workActor
+	Parameters        []parameterDeclarationView
+	ProcessDurationNS map[string]string
 }
 type parameterDeclarationView struct {
 	model.ParameterDeclaration
@@ -54,7 +55,7 @@ func projectOrchestration(value any) any {
 		return struct {
 			Definition model.Definition
 			Revision   definitionRevisionView
-		}{v.Definition, definitionRevisionView{v.Revision, projectWorkActor(v.Revision.Author), projectParameters(v.Revision.Parameters)}}
+		}{v.Definition, definitionRevisionView{v.Revision, projectWorkActor(v.Revision.Author), projectParameters(v.Revision.Parameters), processDurationProjection(v.Revision.Process)}}
 	case app.ProgramProfileResult:
 		return struct {
 			Profile  model.ProgramProfile

@@ -39,12 +39,14 @@ func (h *Handler) registerProcessImport(api app.ProcessImportAPI) {
 		journeyResult(w, struct {
 			Draft struct {
 				app.DefinitionDraft
-				Parameters []parameterDeclarationView
+				Parameters        []parameterDeclarationView
+				ProcessDurationNS map[string]string
 			}
 			Notices []string
 		}{Draft: struct {
 			app.DefinitionDraft
-			Parameters []parameterDeclarationView
-		}{result.Draft, projectParameters(result.Draft.Parameters)}, Notices: result.Notices}, err)
+			Parameters        []parameterDeclarationView
+			ProcessDurationNS map[string]string
+		}{result.Draft, projectParameters(result.Draft.Parameters), processDurationProjection(result.Draft.Process)}, Notices: result.Notices}, err)
 	})
 }

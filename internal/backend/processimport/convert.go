@@ -261,10 +261,6 @@ func duration(value string) (time.Duration, error) {
 	if err != nil || d <= 0 {
 		return 0, fmt.Errorf("positive Go duration required")
 	}
-	// The existing editor's numeric duration wire must not round imported intent.
-	if d > 9007199254740991 {
-		return 0, fmt.Errorf("duration needs exact editor wire support before conversion")
-	}
 	return d, nil
 }
 
