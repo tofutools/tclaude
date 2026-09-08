@@ -51,7 +51,7 @@ jobs:
         run: |
           if [[ "$RUNNER_OS" == Linux ]]; then
             sudo apt-get update
-            sudo apt-get install --yes tmux
+            sudo apt-get install --yes tmux bubblewrap
           else
             brew install tmux
           fi
@@ -63,6 +63,14 @@ jobs:
           "$RUNNER_TEMP/tclaude-agentd" --help
       - name: Full product race suite
         run: go test -race ./... -count=1 -timeout 15m
+      - name: Require real Linux sandbox enforcement
+        if: runner.os == 'Linux'
+        shell: bash
+        # The disposable runner grants namespaces to this fixture only. Do not
+        # weaken an operator host's user-namespace or AppArmor configuration.
+        run: |
+          go test -race -c ./internal/backend/host -o "$RUNNER_TEMP/sandbox-native.test"
+          sudo env TCLAUDE_REQUIRE_SANDBOX_NATIVE=1 "$RUNNER_TEMP/sandbox-native.test" -test.run '^TestSandboxDescriptor' -test.timeout 1m -test.v
   browser:
     name: Offline browser acceptance
     runs-on: ubuntu-latest

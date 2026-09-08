@@ -35,6 +35,10 @@ type ProcessSpec struct {
 	Stdin            io.Reader
 	Stdout           io.Writer
 	Stderr           io.Writer
+	// ExtraFiles are trusted host-owned descriptors inherited as child FDs 3+i.
+	// They bind sandbox sources without reopening mutable host path strings.
+	// The owner closes its copies after StartProcess returns.
+	ExtraFiles []*os.File
 }
 
 // ProcessIdentity is sufficient to reject a recycled PID or process group.
@@ -80,6 +84,7 @@ func startProcess(spec ProcessSpec, readGroup func(int) (int, error), readToken 
 		cmd.Env = MergeEnvironment(os.Environ(), spec.Env)
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = spec.Stdin, spec.Stdout, spec.Stderr
+	cmd.ExtraFiles = append([]*os.File(nil), spec.ExtraFiles...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		return nil, err
