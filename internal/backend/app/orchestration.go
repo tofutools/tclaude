@@ -1553,6 +1553,9 @@ func validateTeam(team model.TeamDefinition) error {
 	}
 	members := make(map[string]bool, len(team.Members))
 	for _, member := range team.Members {
+		if len(member.Labels.Groups) != 0 {
+			return fail(ErrInvalid, "team member labels belong to the deployed membership, not named existing groups")
+		}
 		if err := member.Labels.Validate(); err != nil {
 			return fail(ErrInvalid, "%v", err)
 		}

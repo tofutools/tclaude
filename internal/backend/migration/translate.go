@@ -387,7 +387,7 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 		ref := model.ConfigurationProfileRef{ProfileID: id, RevisionID: revisionID, ContentHash: digest(payload)}
 		t.profileNames[sourcev228.String(row.Values["name"])] = ref
 		t.profileIDs[key] = ref
-		startup := &model.ProfileStartup{AgentName: sourcev228.String(row.Values["agent_name"]), Context: sourcev228.String(row.Values["startup_context"]), InitialMessage: sourcev228.String(row.Values["initial_message"])}
+		startup := &model.ProfileStartup{Role: sourcev228.String(row.Values["role"]), Description: sourcev228.String(row.Values["descr"]), AgentName: sourcev228.String(row.Values["agent_name"]), Context: sourcev228.String(row.Values["startup_context"]), InitialMessage: sourcev228.String(row.Values["initial_message"])}
 		if *startup == (model.ProfileStartup{}) {
 			startup = nil
 		} else if model.ValidateProfileStartup(*startup) != nil {

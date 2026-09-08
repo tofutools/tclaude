@@ -29,6 +29,10 @@ func TestTeamAdvisoryProcessPreservesGuidanceAndDeliversBeforeWork(t *testing.T)
 	phases := []model.TeamPhase{{Name: "Investigate", Roles: []string{"all"}, Criteria: "Record evidence <literally>."}, {Name: "Review", Roles: []string{"reviewer"}, Criteria: "Report findings, then hand off."}}
 	team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{{Key: "worker", Name: "Worker", Labels: model.AgentLabels{Role: " Reviewer ", Description: "Member guidance"}, Desired: model.DesiredConfiguration{Harness: "prepared-work", Model: "test", WorkingDirectory: cwd, Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}, Required: true}}, Waves: []model.TeamWave{{ID: "initial", MemberKeys: []string{"worker"}, RequiredReady: true}}, AdvisoryProcess: phases}
 	draft := app.DefinitionDraft{ID: "team", RevisionID: "team_v1", Name: "Team", Kind: model.DefinitionTeam, SchemaVersion: 1, Source: "test", Team: &team}
+	team.Members[0].Labels.Groups = map[model.GroupID]model.AgentDisplayLabels{"unrelated": {Role: "wrong scope"}}
+	_, err = service.ValidateDefinition(ctx, app.ValidateDefinitionRequest{Principal: model.OperatorPrincipal(), Draft: draft})
+	require.ErrorIs(t, err, app.ErrInvalid)
+	team.Members[0].Labels.Groups = nil
 	saved, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "save_team"}, Draft: draft})
 	require.NoError(t, err)
 	require.Equal(t, phases, saved.Revision.Team.AdvisoryProcess)
@@ -40,7 +44,8 @@ func TestTeamAdvisoryProcessPreservesGuidanceAndDeliversBeforeWork(t *testing.T)
 	require.NoError(t, err)
 	member, err := store.Agent(ctx, deployed.Deployment.Members["worker"])
 	require.NoError(t, err)
-	require.Equal(t, team.Members[0].Labels, member.Labels)
+	require.Equal(t, team.Members[0].Labels.InGroup(""), member.Labels.InGroup("group"))
+	require.Empty(t, member.Labels.InGroup("other"))
 	for range 6 {
 		_, err = service.ReconcilePendingWork(ctx)
 		require.NoError(t, err)

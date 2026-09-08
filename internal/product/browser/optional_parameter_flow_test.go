@@ -44,6 +44,7 @@ func TestBrowserOptionalParametersWithoutDefaultsRemainEmptyAfterPersistence(t *
 			require.NoError(t, operator.Call(ctx, "POST", "/v2/definitions", map[string]any{"request_id": "save", "draft": draft}, nil))
 			page.MustReload()
 			page.MustElement("main:not([inert])")
+			page.MustElementR("#connection", "^Updated")
 			page.MustElement("[data-tab=processes]").MustClick()
 			editor, editLabel, closeLabel, startLabel := "#process-editor", "^Edit process$", "^Close editor$", "^Start process$"
 			if kind == model.DefinitionTeam {

@@ -116,8 +116,10 @@ func randomID(prefix string) string {
 }
 
 func (s *Service) CreateAgent(ctx context.Context, req CreateAgentRequest) (AgentResult, error) {
-	if err := req.Labels.Validate(); err != nil {
-		return AgentResult{}, fail(ErrInvalid, "%v", err)
+	if req.Labels != nil {
+		if err := req.Labels.Validate(); err != nil {
+			return AgentResult{}, fail(ErrInvalid, "%v", err)
+		}
 	}
 	if err := requireOperator(req.Context); err != nil {
 		return AgentResult{}, err
@@ -157,8 +159,12 @@ func (s *Service) CreateAgent(ctx context.Context, req CreateAgentRequest) (Agen
 	if req.Notifications.DirectMessage == "" {
 		req.Notifications.DirectMessage = model.NotificationIfAvailable
 	}
+	labels, err := s.configurationDisplayLabels(ctx, req.ConfigurationProfile, req.Labels)
+	if err != nil {
+		return AgentResult{}, err
+	}
 	now := s.now().UTC()
-	agent := model.Agent{Labels: req.Labels, ID: req.ID, Name: req.Name, TaskReference: req.TaskReference, ParentAgentID: req.ParentAgentID, CloneSourceAgentID: req.CloneSourceAgentID, Lifecycle: model.AgentActive, Notifications: req.Notifications, Desired: req.Desired, ConfigurationProfile: req.ConfigurationProfile, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	agent := model.Agent{Labels: labels, ID: req.ID, Name: req.Name, TaskReference: req.TaskReference, ParentAgentID: req.ParentAgentID, CloneSourceAgentID: req.CloneSourceAgentID, Lifecycle: model.AgentActive, Notifications: req.Notifications, Desired: req.Desired, ConfigurationProfile: req.ConfigurationProfile, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	if err := s.store.CreateAgent(ctx, agent); err != nil {
 		return AgentResult{}, err
 	}

@@ -10,7 +10,7 @@ func TestBrowserGroupDefaultsPinMembersAndRetryLostReply(t *testing.T) {
 	ctx, page, operator := processEditorBrowser(t)
 	desired := model.DesiredConfiguration{Harness: "codex", Model: "first-model", WorkingDirectory: t.TempDir(), Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}
 	for _, id := range []string{"first", "second"} {
-		require.NoError(t, operator.Call(ctx, "POST", "/v2/configuration-profiles", map[string]any{"request_id": "save_" + id, "id": id, "revision_id": "one", "name": "Worker", "desired": desired, "startup": model.ProfileStartup{AgentName: "Suggested", Context: "Pinned context", InitialMessage: "Pinned brief"}}, nil))
+		require.NoError(t, operator.Call(ctx, "POST", "/v2/configuration-profiles", map[string]any{"request_id": "save_" + id, "id": id, "revision_id": "one", "name": "Worker", "desired": desired, "startup": model.ProfileStartup{Role: "reviewer", Description: "Reviews changes", AgentName: "Suggested", Context: "Pinned context", InitialMessage: "Pinned brief"}}, nil))
 	}
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/groups", map[string]any{"id": "group", "name": "Team"}, nil))
 	page.MustElement("#refresh").MustClick()
@@ -33,6 +33,9 @@ func TestBrowserGroupDefaultsPinMembersAndRetryLostReply(t *testing.T) {
 	page.MustElement("#editor").MustWaitVisible()
 	require.Equal(t, "Suggested", page.MustElement("#editor [name=name]").MustProperty("value").Str())
 	page.MustElement("#editor [name=name]").MustSelectAllText().MustInput("Second member")
+	require.Equal(t, "reviewer", page.MustElement("#editor [name=role_label]").MustProperty("value").Str())
+	page.MustElement("#editor [name=role_label]").MustSelectAllText().MustInput("")
+	page.MustElement("#editor [name=description]").MustSelectAllText().MustInput("")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElementR("#editor-error", "lost group reply")
 	page.MustElement("#editor button[type=submit]").MustClick()
@@ -48,6 +51,13 @@ func TestBrowserGroupDefaultsPinMembersAndRetryLostReply(t *testing.T) {
 	require.Len(t, snapshot.Groups[0].Members, 2)
 	require.Empty(t, snapshot.Executions)
 	for _, a := range snapshot.Agents {
+		require.Empty(t, a.Labels.InGroup("other"))
+		if a.Name == "First member" {
+			require.Equal(t, model.AgentDisplayLabels{Role: "reviewer", Description: "Reviews changes"}, a.Labels.InGroup("group"))
+		} else {
+			require.Empty(t, a.Labels.InGroup("group"))
+			require.Contains(t, a.Labels.Groups, model.GroupID("group"))
+		}
 		require.Equal(t, "first-model", a.Desired.Model)
 		require.Equal(t, model.ConfigurationProfileID("first"), a.ConfigurationProfile.ProfileID)
 		require.Equal(t, model.ConfigurationProfileRevisionID("one"), a.ConfigurationProfile.RevisionID)

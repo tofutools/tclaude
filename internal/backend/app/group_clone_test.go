@@ -24,7 +24,7 @@ func TestGroupCloneIsAtomicOfflineAndExactlyRepeatable(t *testing.T) {
 	profile, err := svc.SaveConfigurationProfile(ctx, app.SaveConfigurationProfileRequest{Context: app.RequestContext{Principal: op, RequestID: "profile"}, ID: "profile", RevisionID: "one", Name: "Worker", Desired: desired})
 	require.NoError(t, err)
 	for _, id := range []model.AgentID{"active", "retired"} {
-		_, err = svc.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: id, Name: string(id), Labels: model.AgentLabels{Role: "engineer", Description: "literal <b>description</b>"}, TaskReference: "task", ConfigurationProfile: &profile.Revision.Ref})
+		_, err = svc.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: id, Name: string(id), Labels: &model.AgentLabels{Role: "engineer", Description: "literal <b>description</b>"}, TaskReference: "task", ConfigurationProfile: &profile.Revision.Ref})
 		require.NoError(t, err)
 	}
 	_, err = svc.CreateGroup(ctx, app.CreateGroupRequest{Context: op, ID: "source", Name: "Source", Members: []model.AgentID{"active", "retired"}, OwnerAgentID: "active"})
@@ -68,7 +68,8 @@ func TestGroupCloneIsAtomicOfflineAndExactlyRepeatable(t *testing.T) {
 	expectedDesired := desired
 	expectedDesired.HostSandbox = model.SandboxInGroup(desired.HostSandbox, "copy")
 	require.Equal(t, expectedDesired, copied.Desired)
-	require.Equal(t, model.AgentLabels{Role: "engineer", Description: "literal <b>description</b>"}, copied.Labels)
+	require.Equal(t, model.AgentDisplayLabels{Role: "engineer", Description: "literal <b>description</b>"}, copied.Labels.InGroup("copy"))
+	require.Empty(t, copied.Labels.InGroup("other"))
 	require.Equal(t, &profile.Revision.Ref, copied.ConfigurationProfile)
 	require.Equal(t, model.AgentID("active"), copied.CloneSourceAgentID)
 	require.Empty(t, copied.PrimaryExecutionID)
@@ -111,6 +112,12 @@ func TestGroupCloneIsAtomicOfflineAndExactlyRepeatable(t *testing.T) {
 		require.NotEqual(t, result.Members["active"], a.Subject.AgentID)
 		require.NotEqual(t, model.GroupID("copy"), a.Resource.GroupID)
 	}
+	_, err = svc.UpdateGroup(ctx, app.UpdateGroupRequest{Context: op, ID: "copy", Name: result.Group.Name, ExpectedRevision: result.Group.Revision})
+	require.NoError(t, err)
+	detached, err := store.Agent(ctx, copied.ID)
+	require.NoError(t, err)
+	require.Empty(t, detached.Labels.InGroup("copy"))
+	require.NotContains(t, detached.Labels.Groups, model.GroupID("copy"))
 }
 
 func TestGroupCloneRejectsStaleMembersAndArchivedConfigurations(t *testing.T) {

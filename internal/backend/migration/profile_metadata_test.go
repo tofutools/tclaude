@@ -19,6 +19,8 @@ func profileMetadataBundle(t *testing.T) Bundle {
 	t.Helper()
 	bundle := buildFixture(t, fixtureOptions{})
 	alterFixture(t, bundle, `
+ ALTER TABLE spawn_profiles ADD COLUMN role TEXT;
+ ALTER TABLE spawn_profiles ADD COLUMN descr TEXT;
  ALTER TABLE spawn_profiles ADD COLUMN effort TEXT;
  ALTER TABLE spawn_profiles ADD COLUMN agent_name TEXT;
  ALTER TABLE spawn_profiles ADD COLUMN initial_message TEXT;
@@ -26,6 +28,7 @@ func profileMetadataBundle(t *testing.T) Bundle {
  ALTER TABLE spawn_profiles ADD COLUMN disabled TEXT;
  INSERT INTO spawn_profiles(id,name,permission_overrides,environment_json,role_refs,effort,agent_name,initial_message,startup_context,disabled)
  VALUES('7','safe','[]','[]','[]','high','Imported writer','saved-private-brief','saved-private-context','1');
+ UPDATE spawn_profiles SET role='writer',descr='Drafts documentation' WHERE id='7';
  ALTER TABLE agents ADD COLUMN effort TEXT;
  UPDATE agents SET effort='low',initial_spawn_config='{"effort":"medium","harness":"codex","model":"fixture"}';
  `)
@@ -49,7 +52,7 @@ func TestImportProfileMetadataRoundTripWithoutActivation(t *testing.T) {
 	selected, err := service.GetConfigurationProfile(ctx, model.OperatorPrincipal(), model.ConfigurationProfileRef{ProfileID: profiles[0].ID})
 	require.NoError(t, err)
 	require.Equal(t, "high", selected.Revision.Desired.Effort)
-	require.Equal(t, &model.ProfileStartup{AgentName: "Imported writer", Context: "saved-private-context", InitialMessage: "saved-private-brief"}, selected.Revision.Startup)
+	require.Equal(t, &model.ProfileStartup{Role: "writer", Description: "Drafts documentation", AgentName: "Imported writer", Context: "saved-private-context", InitialMessage: "saved-private-brief"}, selected.Revision.Startup)
 	snapshot, err := service.Snapshot(ctx, app.SnapshotRequest{Principal: model.OperatorPrincipal()})
 	require.NoError(t, err)
 	require.Len(t, snapshot.Agents, 1)

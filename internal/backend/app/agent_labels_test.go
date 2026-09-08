@@ -22,7 +22,7 @@ func TestAgentLabelsSurviveReopenAndOmittedUpdatesWithoutAuthority(t *testing.T)
 	op := model.OperatorPrincipal()
 	labels := model.AgentLabels{Role: "reviewer", Description: "Literal <b>instructions</b>\nsecond line"}
 	desired := model.DesiredConfiguration{Harness: "codex", Model: "test", WorkingDirectory: t.TempDir(), Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined}
-	created, err := service.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: "worker", Name: "Worker", Desired: desired, Labels: labels})
+	created, err := service.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: "worker", Name: "Worker", Desired: desired, Labels: &labels})
 	require.NoError(t, err)
 	require.Equal(t, labels, created.Agent.Labels)
 	update := app.UpdateAgentRequest{Context: op, ID: "worker", ExpectedRevision: created.Agent.Revision, Name: "Renamed", Desired: desired}
@@ -61,7 +61,7 @@ func TestAgentGroupLabelsEndAtomicallyWithMembership(t *testing.T) {
 			op := model.OperatorPrincipal()
 			desired := model.DesiredConfiguration{Harness: "codex", Model: "test", WorkingDirectory: t.TempDir(), Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined}
 			labels := model.AgentLabels{Role: "fallback", Groups: map[model.GroupID]model.AgentDisplayLabels{"team": {Role: "reviewer", Description: "Private team context"}, "keep": {Role: "author"}}}
-			created, err := service.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: "worker", Name: "Worker", Desired: desired, Labels: labels})
+			created, err := service.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: "worker", Name: "Worker", Desired: desired, Labels: &labels})
 			require.NoError(t, err)
 			group, err := service.CreateGroup(ctx, app.CreateGroupRequest{Context: op, ID: "team", Name: "Team", Members: []model.AgentID{"worker"}})
 			require.NoError(t, err)

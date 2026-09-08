@@ -25,6 +25,8 @@ type ConfigurationProfile struct {
 
 // ProfileStartup contains reusable operator-reviewed launch suggestions, not native settings.
 type ProfileStartup struct {
+	Role           string `json:",omitempty"`
+	Description    string `json:",omitempty"`
 	AgentName      string
 	Context        string
 	InitialMessage string
