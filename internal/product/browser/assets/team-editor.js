@@ -131,7 +131,7 @@ class TeamEditor {
       {key:'description',label:'Description',text:true,value:m.Labels?.Description||''},
       {key: 'harness', label: 'Harness', options: [opt('', 'Choose harness'), ...['claude', 'codex', 'opencode', 'copilot'].map(v => opt(v))], value: desired.Harness, required: true},
       {key: 'effort', label: 'Requested native effort / variant (optional)', value: desired.Effort || ''},
-      {key: 'model', label: 'Model', value: desired.Model, required: true}, {key: 'cwd', label: 'Configuration working directory', value: desired.WorkingDirectory, required: true},
+      {key: 'model', label: 'Model', value: desired.Model, required: true}, {key: 'cwd', label: 'Configuration working directory (optional; deployment uses its selected workspace)', value: desired.WorkingDirectory, required: false},
       {key: 'approval', label: 'Approval', options: ['supervised', 'automatic'].map(v => opt(v)), value: desired.Approval || 'supervised'},
       {key: 'sandbox', label: 'Confinement', options: ['read_only', 'workspace_write', 'unconfined'].map(v => opt(v)), value: desired.Sandbox || 'workspace_write'},
       {key: 'roles', label: 'Roles', multiple: true, options: this.roles.map(r => opt(r.ID, r.Name || r.ID)), value: m.Roles || []},

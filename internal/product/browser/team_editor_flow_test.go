@@ -22,7 +22,8 @@ func TestBrowserTeamEditorAuthorsRosterWavesBriefingsAndReopens(t *testing.T) {
 		page.MustElement("#team-editor [name=harness]").MustSelect("codex")
 		page.MustElement("#team-editor [name=model]").MustInput("fixture-model")
 		page.MustElement("#team-editor [name=effort]").MustInput("high")
-		page.MustElement("#team-editor [name=cwd]").MustInput("/tmp")
+		// A portable template gets its working directory when deployed.
+		page.MustElement("#team-editor [name=cwd]").MustSelectAllText().MustInput("")
 		page.MustElement("#team-editor [name=owner]").MustClick()
 		page.MustElementR("#team-editor button", "^Apply changes$").MustClick()
 	}
@@ -67,6 +68,7 @@ func TestBrowserTeamEditorAuthorsRosterWavesBriefingsAndReopens(t *testing.T) {
 	require.Equal(t, "0.1234567890123456789", string(result.Revision.Parameters[0].Default))
 	team := result.Revision.Team
 	require.Len(t, team.Members, 2)
+	require.Empty(t, team.Members[0].Desired.WorkingDirectory)
 	require.Equal(t, model.AgentLabels{Role: "reviewer", Description: "Literal <b>member description</b>"}, team.Members[1].Labels)
 	require.True(t, team.Members[0].Owner)
 	require.True(t, team.Members[1].Owner)
