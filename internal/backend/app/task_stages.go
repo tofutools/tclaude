@@ -51,6 +51,9 @@ func compileTaskStages(authored model.WorkGraph) (model.WorkGraph, error) {
 			return model.WorkGraph{}, err
 		}
 		stages := node.Stages
+		if err := validateApprovalRetry(node); err != nil {
+			return model.WorkGraph{}, err
+		}
 		if stages.Plan == nil && stages.PlanApproval == nil && len(stages.Checks) == 0 && stages.Review == nil {
 			node.Stages = nil
 			graph.Nodes = append(graph.Nodes, node)

@@ -339,6 +339,9 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 		graph = *req.Start.InlineGraph
 	}
 	for _, node := range graph.Nodes {
+		if node.Stages != nil && node.Stages.Plan != nil && node.Stages.Plan.ApprovalRetry != nil {
+			return WorkRunResult{}, fail(ErrUnsupported, "task %s declares plan approval retries; approval retry execution is not available", node.ID)
+		}
 		if len(node.Captures) != 0 {
 			return WorkRunResult{}, fail(ErrUnsupported, "task %s declares output captures; capture execution is not available", node.ID)
 		}

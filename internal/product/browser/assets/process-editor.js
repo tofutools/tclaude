@@ -226,6 +226,12 @@ class ProcessEditor {
         {name: 'waivable', label: 'Allow explicit waiver when blocked', type: 'checkbox', value: node.Waivable});
       changes.push((n, f) => { n.Waivable = f.waivable; n.Retry = Number(f.attempts) ? {MaxAttempts: Number(f.attempts), Backoff: seconds(f.backoff), AttemptBudget: seconds(f.budget), Retryable: f.retryable} : {}; });
     }
+    if (stageContext?.kind === 'Plan' && this.model.value.Process.Graph.Nodes.find(n=>n.ID===stageContext.parentID)?.Stages?.PlanApproval) {
+      fields.push({name:'approval_attempts',label:'Maximum approval attempts (authoring only)',type:'number',min:1,max:4294967295,value:node.ApprovalRetry?.MaxAttempts??''},
+        {name:'approval_backoff',label:'Approval retry backoff (e.g. 30s)',value:node.ApprovalRetry?.Backoff||''},
+        {name:'approval_mode',label:'Approval retry mode',options:[option('','Default'),option('fresh-attempt'),option('feedback-same-session')],value:node.ApprovalRetry?.OnFail||''});
+      changes.push((n,f)=>{if(!f.approval_attempts&&!f.approval_backoff&&!f.approval_mode){delete n.ApprovalRetry;return}const attempts=Number(f.approval_attempts);if(!Number.isInteger(attempts)||attempts<1||attempts>4294967295)throw new Error('Approval retry requires positive max attempts.');n.ApprovalRetry={MaxAttempts:attempts,Backoff:f.approval_backoff,OnFail:f.approval_mode};});
+    }
     this.form(`${node.Kind} · ${node.Name || "Unnamed"}`, fields, values => update(n => {
       n.Name = values.name;
       if(values.description) n.Description = values.description; else delete n.Description;
@@ -238,6 +244,7 @@ class ProcessEditor {
     if(node.Captures?.length) this.inspector.append(element('p','Output names are retained for authoring and export. Running this process is unavailable until capture execution is supported.'));
     if(node.Performer?.Timeout) this.inspector.append(element('p',node.Performer.Kind==='program'?'Timeout starts when this program node becomes ready, includes admission delay, and cannot extend the run or saved program limit.':'Timeout is retained for authoring. Clear it to start: agent and human timeout execution is unavailable.'));
     if(node.Performer?.Contact) this.inspector.append(element('p','Contact schedules are retained for authoring and export. Clear all three contact fields to remove a schedule. Running this process is unavailable until scheduled performer contact is supported.'));
+    if(node.ApprovalRetry)this.inspector.append(element('p','Approval retry policy is retained for authoring and export. Clear its fields to run this process; approval retry execution is unavailable.'));
     if (stageContext) { this.inspector.append(action('Back to task stages', () => this.render())); return; }
     if (node.Kind === 'task') this.stageControls(node);
     this.inspector.append(action('Make entry', () => this.change(d => { d.Process.Graph.EntryNodeID = node.ID; })));
@@ -261,7 +268,7 @@ class ProcessEditor {
       else host.append(action('Add '+kind.toLowerCase(),()=>edit((s,n)=>{s[kind]={ID:kind.toLowerCase(),Name:kind,Performer:kind==='Plan'?clone(n.Performer):{Kind:'human',Human:{Operator:true,Prompt:'Review the task result'}}};})));
     }
     if (node.Stages?.Plan) {
-      host.append(element('p',node.Stages.PlanApproval?'Plan requires explicit approval':'Plan continues automatically'),action(node.Stages.PlanApproval?'Remove plan approval':'Require plan approval',()=>edit(s=>{if(s.PlanApproval)delete s.PlanApproval;else s.PlanApproval={Kind:'work',Audience:[{Subject:{Kind:'operator'}}],PermittedAnswers:['approve','rework'],ExpiresAfter:seconds(3600)};})));
+      host.append(element('p',node.Stages.PlanApproval?'Plan requires explicit approval':'Plan continues automatically'),action(node.Stages.PlanApproval?'Remove plan approval':'Require plan approval',()=>edit(s=>{if(s.PlanApproval){delete s.PlanApproval;delete s.Plan.ApprovalRetry;}else s.PlanApproval={Kind:'work',Audience:[{Subject:{Kind:'operator'}}],PermittedAnswers:['approve','rework'],ExpiresAfter:seconds(3600)};})));
     }
     for (const [i,check] of (node.Stages?.Checks || []).entries()) {
       const row=element('div');row.append(element('span',`${i+1}. ${check.Name} · ${check.Performer.Kind}`),action('Edit check '+(i+1),()=>open('Checks',check.ID)),action('Move check '+(i+1)+' up',()=>edit(s=>moveCheck(s,i,-1))),action('Move check '+(i+1)+' down',()=>edit(s=>moveCheck(s,i,1))),action('Remove check '+(i+1),()=>edit(s=>removeCheck(s,i))));host.append(row);

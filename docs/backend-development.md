@@ -1397,3 +1397,16 @@ and identifies the exact source, destination and answer/outcome tuple. Saving,
 reopening, export/import and node/snippet copies retain it; copied endpoints are
 remapped and deleted connections discard their preferences. Label visibility
 never changes an edge's routing verdict or grants execution authority.
+
+### Plan approval retry authoring
+
+A plan with explicit approval can retain an `ApprovalRetry` declaration with
+positive `MaxAttempts`, optional positive literal-duration `Backoff`, and
+`OnFail` set to default, `fresh-attempt`, or `feedback-same-session`. The plan
+inspector exposes these fields. Immutable revisions, copy/export and reopening
+preserve the declaration; removing approval clears its dependent retry policy.
+
+These declarations are authoring-only, matching the legacy runtime boundary.
+Starting any pinned revision containing one is refused before work admission;
+the runtime does not silently replace the requested policy with ordinary plan
+rework. Clear the declaration to use the existing executable approval workflow.
