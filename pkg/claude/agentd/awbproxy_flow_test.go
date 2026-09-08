@@ -481,6 +481,53 @@ func TestAWBProxy_CreateSendsAWBsOwnBody(t *testing.T) {
 		string(call.Body))
 }
 
+func TestAWBProxy_CreateClaimBacklogAndLabels(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
+	}
+
+	w.outcome(w.post("/v1/awb/issue/create", map[string]any{
+		"workspace": "awb", "title": "Claimed", "claim": true, "labels": []string{"parser"},
+	}))
+	assert.JSONEq(t, `{"workspace":"awb","title":"Claimed","assignees":["tclaude-bot"],"labels":["parser"]}`,
+		string(rec.only(t).Body))
+
+	rec.calls = nil
+	w.outcome(w.post("/v1/awb/issue/create", map[string]any{
+		"workspace": "awb", "title": "Parked", "backlog": true,
+	}))
+	assert.JSONEq(t, `{"backlog":true,"workspace":"awb","title":"Parked"}`,
+		string(rec.only(t).Body))
+
+	rec.calls = nil
+	res := w.post("/v1/awb/issue/create", map[string]any{
+		"workspace": "awb", "title": "Invalid", "backlog": true, "claim": true,
+	})
+	assert.Equal(t, http.StatusBadRequest, res.Code)
+	assert.False(t, rec.sawAnyCall())
+}
+
+func TestAWBProxy_MakeReadyUsesConditionalStatusTransition(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
+		issue := strings.Replace(awbIssueJSON("awb-a3f9c1", "awb"), `"status":"open"`, `"status":"backlog"`, 1)
+		return http.StatusOK, issue
+	}
+
+	w.outcome(w.post("/v1/awb/issue/make-ready", map[string]any{"id": "awb-a3f9c1"}))
+	calls := rec.snapshot()
+	require.Len(t, calls, 2)
+	assert.Equal(t, http.MethodGet, calls[0].Method)
+	assert.Equal(t, "https://awb.example/api/issues/awb-a3f9c1", calls[0].URL)
+	assert.Equal(t, http.MethodPut, calls[1].Method)
+	assert.Equal(t, "https://awb.example/api/issues/awb-a3f9c1/status", calls[1].URL)
+	assert.Equal(t, `"2026-08-26T09:12:03.412Z"`, calls[1].IfMatch)
+	assert.JSONEq(t, `{"status":"open"}`, string(calls[1].Body))
+}
+
 func TestAWBProxy_UpdateImplementationFields(t *testing.T) {
 	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
 	w.grant(agentd.PermAWBWrite)

@@ -684,8 +684,8 @@ var permissionRegistry = []PermSlug{
 	{
 		Slug:      PermAWBWrite,
 		ScopeDims: []ScopeDim{ScopeDimAWBWorkspace},
-		Description: "Create, update, claim, release, close, reopen and DELETE AWB issues, comment on them, label them, relate " +
-			"them, and attach files, through the daemon's AWB account (tclaude proxy awb create/update/claim/release/close/reopen/delete, " +
+		Description: "Create, update, claim, release, close, make ready, reopen and DELETE AWB issues, comment on them, label them, relate " +
+			"them, and attach files, through the daemon's AWB account (tclaude proxy awb create/update/claim/release/close/make-ready/reopen/delete, " +
 			"comment add, label add|rm, dep add|rm, attach add|delete). Everything it writes is attributed to the operator's AWB user, and it " +
 			"additionally requires agent.awb_proxy.allow_write. Note that delete is a HARD delete AWB cannot undo; it needs " +
 			"--force on top of this slug. Narrowable per agent with --scope awb_workspace=awb, on the same terms as proxy.awb.read " +

@@ -31,7 +31,7 @@ import (
 var awbVerbPaths = [][]string{
 	{"whoami"},
 	{"show"}, {"list"}, {"ready"}, {"blocked"}, {"search"},
-	{"create"}, {"update"}, {"claim"}, {"release"}, {"close"}, {"reopen"}, {"delete"},
+	{"create"}, {"update"}, {"claim"}, {"release"}, {"close"}, {"make-ready"}, {"reopen"}, {"delete"},
 	{"label", "add"}, {"label", "rm"},
 	{"dep", "add"}, {"dep", "rm"}, {"dep", "tree"},
 	{"comment", "add"}, {"comment", "list"}, {"activity"},
@@ -243,7 +243,10 @@ func parsedAWBCreate(t *testing.T, argv ...string) (*cobra.Command, *awbCreatePa
 	p.PullRequestURL = get("pull-request-url")
 	p.Workspace = get("workspace")
 	p.Type = get("type")
+	p.Claim, _ = flags.GetBool("claim")
+	p.Backlog, _ = flags.GetBool("backlog")
 	p.Assignees = getAll("assignee")
+	p.Labels = getAll("label")
 	p.HasParent = get("has-parent")
 	if flags.Changed("priority") {
 		v, err := flags.GetInt("priority")
@@ -282,7 +285,8 @@ func TestAWBCreateBody(t *testing.T) {
 		cmd, p := parsedAWBCreate(t,
 			"--workspace", "awb", "--type", "bug", "--priority", "1",
 			"--commit-hash", "01234567", "--pull-request-url", "https://github.com/acme/repo/pull/42",
-			"--assignee", "claude-1", "--assignee", "claude-2", "--has-parent", "awb-000001",
+			"--claim", "--assignee", "claude-1", "--assignee", "claude-2",
+			"--label", "parser", "--label", "backend", "--has-parent", "awb-000001",
 			"--blocked-by", "awb-000002", "--related", "awb-000003",
 			"--description", "body text", "Parser crashes")
 		body, rc := buildAWBCreateBody(p, cmd, strings.NewReader(""), os.Stderr)
@@ -290,12 +294,21 @@ func TestAWBCreateBody(t *testing.T) {
 		assert.Equal(t, "bug", body["type"])
 		assert.Equal(t, 1, body["priority"])
 		assert.Equal(t, []string{"claude-1", "claude-2"}, body["assignees"])
+		assert.Equal(t, true, body["claim"])
+		assert.Equal(t, []string{"parser", "backend"}, body["labels"])
 		assert.Equal(t, "awb-000001", body["has_parent"])
 		assert.Equal(t, []string{"awb-000002"}, body["blocked_by"])
 		assert.Equal(t, []string{"awb-000003"}, body["related"])
 		assert.Equal(t, "body text", body["description"])
 		assert.Equal(t, "01234567", body["commit_hash"])
 		assert.Equal(t, "https://github.com/acme/repo/pull/42", body["pull_request_url"])
+	})
+
+	t.Run("backlog is sent only when requested", func(t *testing.T) {
+		cmd, p := parsedAWBCreate(t, "--workspace", "awb", "--backlog", "Parked")
+		body, rc := buildAWBCreateBody(p, cmd, strings.NewReader(""), os.Stderr)
+		require.Equal(t, rcOK, rc)
+		assert.Equal(t, true, body["backlog"])
 	})
 
 	t.Run("priority 0 is a real priority", func(t *testing.T) {

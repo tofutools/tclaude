@@ -1451,6 +1451,7 @@ func buildMux() http.Handler {
 	mux.HandleFunc("POST /v1/awb/issue/claim", handleAWBProxyIssueClaim)
 	mux.HandleFunc("POST /v1/awb/issue/release", handleAWBProxyIssueRelease)
 	mux.HandleFunc("POST /v1/awb/issue/close", handleAWBProxyIssueClose)
+	mux.HandleFunc("POST /v1/awb/issue/make-ready", handleAWBProxyIssueMakeReady)
 	mux.HandleFunc("POST /v1/awb/issue/reopen", handleAWBProxyIssueReopen)
 	mux.HandleFunc("POST /v1/awb/issue/delete", handleAWBProxyIssueDelete)
 	mux.HandleFunc("POST /v1/awb/label/add", handleAWBProxyLabelAdd)

@@ -219,6 +219,7 @@ type AWBProxyRequest struct {
 	Username    string
 	Password    string
 	ContentType string
+	IfMatch     string
 	Body        []byte
 }
 
@@ -274,6 +275,9 @@ func doAWBRequest(ctx context.Context, req AWBProxyRequest) (awbHTTPResult, erro
 	}
 	if req.ContentType != "" {
 		httpReq.Header.Set("Content-Type", req.ContentType)
+	}
+	if req.IfMatch != "" {
+		httpReq.Header.Set("If-Match", req.IfMatch)
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("User-Agent", "tclaude-agentd")
@@ -629,6 +633,7 @@ type awbCall struct {
 	Query       url.Values
 	Body        []byte
 	ContentType string
+	IfMatch     string
 }
 
 // exec runs one call and unmarshals a JSON response into out.
@@ -659,6 +664,7 @@ func (s *awbProxySession) exec(ctx context.Context, call awbCall, out any) (*awb
 		Username:    username,
 		Password:    password,
 		ContentType: call.ContentType,
+		IfMatch:     call.IfMatch,
 		Body:        call.Body,
 	})
 	if err != nil {

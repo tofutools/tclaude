@@ -81,6 +81,7 @@ func awbCmd() *cobra.Command {
 			awbClaimCmd(),
 			awbReleaseCmd(),
 			awbCloseCmd(),
+			awbMakeReadyCmd(),
 			awbReopenCmd(),
 			awbDeleteCmd(),
 			awbDepCmd(),
@@ -312,6 +313,15 @@ func awbReopenCmd() *cobra.Command {
 			"working.\n\n"+
 			"Needs proxy.awb.write and the operator's agent.awb_proxy.allow_write.",
 		"/v1/awb/issue/reopen")
+}
+
+func awbMakeReadyCmd() *cobra.Command {
+	return awbIDCmd("make-ready", "Move a backlog issue to open",
+		"Make parked work active by moving it from backlog to open.\n\n"+
+			"An issue already open succeeds unchanged. In-progress and closed issues are refused. "+
+			"Blockers are left alone, so the issue may still not appear in ready.\n\n"+
+			"Needs proxy.awb.write and the operator's agent.awb_proxy.allow_write.",
+		"/v1/awb/issue/make-ready")
 }
 
 // ---------------------------------------------------------------------------
@@ -609,7 +619,10 @@ type awbCreateParams struct {
 	JSON            bool   `long:"json" optional:"true" help:"Print the stable JSON representation. This is the DEFAULT; the flag exists so an awb command line copies over unchanged."`
 	Compact         bool   `long:"compact" optional:"true" help:"Print awb's one terse line per issue instead. Cheapest output there is, and the one to prefer when you only need to see what is there."`
 	// Declared after --ask-human for the shorthand reason awbFilterParams gives.
+	Claim          bool     `long:"claim" optional:"true" help:"Atomically assign the issue to the daemon's AWB account and set status to in_progress."`
+	Backlog        bool     `long:"backlog" optional:"true" help:"Create in backlog; cannot be combined with --claim or --assignee."`
 	Assignees      []string `long:"assignee" optional:"true" help:"Create and claim in one step. Repeat to assign several people; any assignee sets status to in_progress."`
+	Labels         []string `long:"label" optional:"true" help:"Add this label. Repeat for several."`
 	HasParent      string   `long:"has-parent" optional:"true" help:"The new issue is part of decomposing this one."`
 	BlockedBy      []string `long:"blocked-by" optional:"true" help:"The new issue cannot start until this one is closed. Repeat for several."`
 	DiscoveredFrom []string `long:"discovered-from" optional:"true" help:"The new issue was found while working on this one. Repeat for several."`
@@ -691,8 +704,17 @@ func buildAWBCreateBody(
 	if p.Priority != nil {
 		body["priority"] = *p.Priority
 	}
+	if p.Claim {
+		body["claim"] = true
+	}
+	if p.Backlog {
+		body["backlog"] = true
+	}
 	if values := trimmedNonEmptyStrings(p.Assignees); len(values) > 0 {
 		body["assignees"] = values
+	}
+	if values := trimmedNonEmptyStrings(p.Labels); len(values) > 0 {
+		body["labels"] = values
 	}
 	if v := strings.TrimSpace(p.HasParent); v != "" {
 		body["has_parent"] = v

@@ -108,6 +108,8 @@ type awbCreateRequest struct {
 	PullRequestURL string   `json:"pull_request_url,omitempty"`
 	Type           string   `json:"type,omitempty"`
 	Priority       *int     `json:"priority,omitempty"`
+	Claim          bool     `json:"claim,omitempty"`
+	Backlog        bool     `json:"backlog,omitempty"`
 	Labels         []string `json:"labels,omitempty"`
 	Assignees      []string `json:"assignees,omitempty"`
 	HasParent      string   `json:"has_parent,omitempty"`
@@ -1051,6 +1053,7 @@ func (s *awbProxySession) gateAttachment(body *awbAttachNameRequest) (ref, name 
 // AWB rejects an unrecognised field rather than ignoring it, so this is spelled
 // out rather than assembled from a map.
 type awbIssueCreateBody struct {
+	Backlog        bool                 `json:"backlog,omitempty"`
 	Workspace      string               `json:"workspace"`
 	Title          string               `json:"title"`
 	Description    *string              `json:"description,omitempty"`
@@ -1151,6 +1154,7 @@ func (s *awbProxySession) buildAWBCreateBody(
 		return nil, fault
 	}
 	out := &awbIssueCreateBody{Workspace: workspace, Title: title}
+	out.Backlog = body.Backlog
 	if body.Description != nil {
 		if fault := validateAWBDescription(*body.Description); fault != nil {
 			return nil, fault
@@ -1178,6 +1182,20 @@ func (s *awbProxySession) buildAWBCreateBody(
 			return nil, assignFault
 		}
 		out.Assignees = append(out.Assignees, assignee)
+	}
+	if body.Claim {
+		assignee, identityFault := s.identity("create --claim")
+		if identityFault != nil {
+			return nil, identityFault
+		}
+		if assignee, identityFault = validateAWBAssignee(assignee); identityFault != nil {
+			return nil, identityFault
+		}
+		out.Assignees = append(out.Assignees, assignee)
+	}
+	if body.Backlog && len(out.Assignees) > 0 {
+		return nil, faultf(http.StatusBadRequest, "invalid_arg",
+			"create --backlog cannot be combined with --claim or --assignee")
 	}
 	for _, raw := range body.Labels {
 		label, fault := validateAWBLabel(raw)
@@ -1409,6 +1427,69 @@ func handleAWBProxyIssueReopen(w http.ResponseWriter, r *http.Request) {
 	s.mutateIssue(w, r, "issue.reopen", ref, body.Compact, awbCall{
 		Method: http.MethodPost, Path: "/api/issues/" + awbSegment(ref) + "/reopen",
 	}, nil, "")
+}
+
+type awbStatusBody struct {
+	Status string `json:"status"`
+}
+
+// handleAWBProxyIssueMakeReady mirrors AWB's remote make-ready transition. The
+// conditional write matters: without it, a claim landing after the read could
+// be cleared by setting the issue back to open.
+func handleAWBProxyIssueMakeReady(w http.ResponseWriter, r *http.Request) {
+	var body awbIssueRefRequest
+	s, ok := openAWBProxy(w, r, PermAWBWrite, &body)
+	if !ok {
+		return
+	}
+	ref, fault := s.gateIssueRef(body.ID)
+	if fault != nil {
+		writeProxyFault(w, fault)
+		return
+	}
+	payload, _ := json.Marshal(awbStatusBody{Status: "open"})
+	for attempt := 0; attempt < 2; attempt++ {
+		var issue awbIssue
+		if _, fault = s.exec(r.Context(), awbCall{Method: http.MethodGet,
+			Path: "/api/issues/" + awbSegment(ref)}, &issue); fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+		if fault = s.enforceIssueWorkspace(&issue); fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+		if issue.Status != "backlog" && issue.Status != "open" {
+			writeProxyFault(w, faultf(http.StatusConflict, "awb_conflict",
+				"%s is %s; make-ready accepts only backlog or open issues", issue.ID, issue.Status))
+			return
+		}
+		if issue.Status == "open" {
+			s.respond(w, r, "issue.make-ready", body.Compact, &issue, "", "issue="+issue.ID)
+			return
+		}
+		if fault = s.requireMutationBudget(); fault != nil {
+			writeProxyFault(w, fault)
+			return
+		}
+		var ready awbIssue
+		_, fault = s.exec(r.Context(), awbCall{
+			Method: http.MethodPut, Path: "/api/issues/" + awbSegment(ref) + "/status",
+			IfMatch: `"` + issue.UpdatedAt + `"`, Body: payload, ContentType: "application/json",
+		}, &ready)
+		if fault == nil {
+			if fault = s.enforceIssueWorkspace(&ready); fault != nil {
+				writeProxyFault(w, fault)
+				return
+			}
+			s.respond(w, r, "issue.make-ready", body.Compact, &ready, "", "issue="+ready.ID)
+			return
+		}
+		if fault.Status != http.StatusPreconditionFailed || attempt == 1 {
+			writeProxyFault(w, fault)
+			return
+		}
+	}
 }
 
 // handleAWBProxyIssueDelete serves POST /v1/awb/issue/delete.
