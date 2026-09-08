@@ -386,7 +386,7 @@ func (s *Service) automationRecipients(ctx context.Context, action model.Automat
 }
 
 func automationMessageAudience(action model.AutomationMessageAction) model.MessageAudience {
-	return model.MessageAudience{AgentIDs: append([]model.AgentID(nil), action.AgentIDs...), GroupID: action.GroupID, RoleID: action.RoleID}
+	return model.MessageAudience{AgentIDs: append([]model.AgentID(nil), action.AgentIDs...), GroupID: action.GroupID, RoleID: action.RoleID, RoleLabel: action.RoleLabel}
 }
 
 func (s *Service) automationRecipientOnline(ctx context.Context, id model.AgentID) (bool, error) {

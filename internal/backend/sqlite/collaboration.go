@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -459,6 +460,9 @@ func (s *Store) ResolveMessageAudience(ctx context.Context, audience model.Messa
 }
 
 func resolveMessageAudience(ctx context.Context, q queryer, audience model.MessageAudience) ([]model.AgentID, error) {
+	if err := audience.ValidateRoleLabelTarget(); err != nil {
+		return nil, fmt.Errorf("%w: %v", app.ErrInvalid, err)
+	}
 	selected := make(map[model.AgentID]struct{}, len(audience.AgentIDs))
 	for _, id := range audience.AgentIDs {
 		selected[id] = struct{}{}
@@ -516,11 +520,21 @@ func resolveMessageAudience(ctx context.Context, q queryer, audience model.Messa
 	resolved := make([]model.AgentID, 0, len(selected))
 	for id := range selected {
 		var state string
-		if err := q.QueryRowContext(ctx, `SELECT lifecycle_state FROM agents WHERE id=?`, id).Scan(&state); err != nil {
+		var rawLabels []byte
+		if err := q.QueryRowContext(ctx, `SELECT lifecycle_state,labels_json FROM agents WHERE id=?`, id).Scan(&state, &rawLabels); err != nil {
 			if classified := classify(err); errors.Is(classified, app.ErrNotFound) {
 				continue
 			} else {
 				return nil, classified
+			}
+		}
+		if audience.RoleLabel != "" {
+			var labels model.AgentLabels
+			if err := json.Unmarshal(rawLabels, &labels); err != nil {
+				return nil, err
+			}
+			if !strings.EqualFold(strings.TrimSpace(audience.RoleLabel), strings.TrimSpace(labels.InGroup(audience.GroupID).Role)) {
+				continue
 			}
 		}
 		if state == "active" {

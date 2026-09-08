@@ -31,3 +31,14 @@ func (labels AgentLabels) InGroup(id GroupID) AgentDisplayLabels {
 	}
 	return AgentDisplayLabels{Role: labels.Role, Description: labels.Description}
 }
+
+// ValidateRoleLabelTarget keeps display-role matching within an explicit group.
+func (a MessageAudience) ValidateRoleLabelTarget() error {
+	if a.RoleLabel == "" {
+		return nil
+	}
+	if a.GroupID.Validate() != nil || a.RoleID != "" || len(a.AgentIDs) > 0 || a.Operator || strings.TrimSpace(a.RoleLabel) == "" {
+		return fmt.Errorf("a display-role target requires only an explicit group and a nonempty display role")
+	}
+	return (AgentLabels{Role: a.RoleLabel}).Validate()
+}

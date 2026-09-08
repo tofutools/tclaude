@@ -1993,6 +1993,9 @@ func validateAutomation(condition model.AutomationCondition, action model.Automa
 		if action.Message == nil || strings.TrimSpace(action.Message.Body) == "" {
 			return fail(ErrInvalid, "message automation requires a body")
 		}
+		if err := automationMessageAudience(*action.Message).ValidateRoleLabelTarget(); err != nil {
+			return fail(ErrInvalid, "%v", err)
+		}
 		if condition.Kind == model.AutomationStandingOrder && len(action.Message.AgentIDs) == 0 && action.Message.GroupID == "" && action.Message.RoleID == "" {
 			return fail(ErrInvalid, "standing guidance requires an explicit agent, group or role target")
 		}

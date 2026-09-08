@@ -142,3 +142,32 @@ func TestBrowserAutomationAuthorsTriggerAndStandingOrder(t *testing.T) {
 	}
 	require.False(t, page.MustElement("#error").MustVisible())
 }
+
+func TestBrowserScheduleSelectsDisplayRoleWithinGroup(t *testing.T) {
+	ctx, page, operator := processEditorBrowser(t)
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/groups", map[string]any{"id": "review_team", "name": "Review team"}, nil))
+	page.MustElement("#refresh").MustClick()
+	page.MustElement("[data-tab=automation]").MustClick()
+	page.MustElementR("#automation-list button", "^New schedule$").MustClick()
+	page.MustElement("#editor [name=name]").MustInput("Reviewers only")
+	page.MustElement("#editor [name=body]").MustInput("Please report review progress.")
+	page.MustElement("#editor [name=role_label]").MustInput("reviewer")
+	page.MustElement("#editor [name=allowed_actions]").MustSelect("message.send")
+	page.MustElement("#editor [name=allowed_resources]").MustSelect("Members of Review team")
+	page.MustElement("#editor button[type=submit]").MustClick()
+	page.MustElementR("#editor-error", "display role requires one group")
+	page.MustElement("#editor [name=group]").MustSelect("Review team")
+	page.MustElement("#editor button[type=submit]").MustClick()
+	page.MustElement("#editor").MustWaitInvisible()
+	page.MustElementR("#automation-list button", "^Edit rule$").MustClick()
+	require.Equal(t, "reviewer", page.MustElement("#editor [name=role_label]").MustProperty("value").Str())
+	require.Equal(t, "review_team", page.MustElement("#editor [name=group]").MustProperty("value").Str())
+	var rules []model.AutomationRule
+	require.NoError(t, operator.Call(ctx, "GET", "/v2/automation/rules", nil, &rules))
+	require.Len(t, rules, 1)
+	var result app.AutomationRuleResult
+	require.NoError(t, operator.Call(ctx, "GET", "/v2/automation/rules/"+string(rules[0].ID), nil, &result))
+	require.Equal(t, "reviewer", result.Revision.Action.Message.RoleLabel)
+	require.Empty(t, result.Revision.Action.Message.RoleID)
+	require.False(t, result.Rule.Enabled)
+}
