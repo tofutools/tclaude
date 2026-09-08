@@ -53,3 +53,33 @@ func TestBrowserAgentLabelsEditCopyAndClearLiterally(t *testing.T) {
 		}
 	}
 }
+
+func TestBrowserAgentLabelsRemainIndependentBetweenGroups(t *testing.T) {
+	ctx, page, operator := processEditorBrowser(t)
+	desired := model.DesiredConfiguration{Harness: "codex", Model: "fixture", WorkingDirectory: "/tmp", Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined}
+	labels := model.AgentLabels{Role: "fallback", Groups: map[model.GroupID]model.AgentDisplayLabels{"first": {Role: "reviewer", Description: "First group"}, "second": {Role: "author", Description: "Second group"}}}
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/agents", map[string]any{"id": "shared", "name": "Shared", "desired": desired, "labels": labels}, nil))
+	for _, id := range []string{"first", "second"} {
+		require.NoError(t, operator.Call(ctx, "POST", "/v2/groups", map[string]any{"id": id, "name": id, "members": []string{"shared"}}, nil))
+	}
+	page.MustElement("#refresh").MustClick()
+	page.MustElementR(`[data-group-id="first"] .row`, "reviewer")
+	page.MustElementR(`[data-group-id="second"] .row`, "author")
+	page.MustElementR(`[data-group-id="first"] button`, "^Configure$").MustClick()
+	require.Equal(t, "reviewer", page.MustElement("#editor [name=role_label]").MustProperty("value").Str())
+	page.MustElement("#editor [name=role_label]").MustSelectAllText().MustInput("")
+	page.MustElement("#editor [name=description]").MustSelectAllText().MustInput("")
+	page.MustElement("#editor button[type=submit]").MustClick()
+	page.MustElement("#editor").MustWaitInvisible()
+	page.MustReload()
+	page.MustElementR("#connection", "^Updated ")
+	page.MustElementR(`[data-group-id="second"] .row`, "author")
+	var snapshot struct {
+		Agents []model.Agent `json:"agents"`
+	}
+	require.NoError(t, operator.Call(ctx, "GET", "/v2/snapshot", nil, &snapshot))
+	require.Len(t, snapshot.Agents, 1)
+	require.Equal(t, model.AgentDisplayLabels{}, snapshot.Agents[0].Labels.InGroup("first"))
+	require.Equal(t, labels.Groups["second"], snapshot.Agents[0].Labels.InGroup("second"))
+	require.Equal(t, "fallback", snapshot.Agents[0].Labels.Role)
+}

@@ -89,7 +89,7 @@ func (s *Service) notifyTeamPhase(ctx context.Context, req AdvanceAdvisoryPhaseR
 		}
 		for _, id := range group.Members {
 			agent, err := s.store.Agent(ctx, id)
-			if err == nil && agent.Lifecycle == model.AgentActive && strings.EqualFold(strings.TrimSpace(label), strings.TrimSpace(agent.Labels.Role)) {
+			if err == nil && agent.Lifecycle == model.AgentActive && strings.EqualFold(strings.TrimSpace(label), strings.TrimSpace(agent.Labels.InGroup(group.ID).Role)) {
 				audiences = append(audiences, model.MessageAudience{AgentIDs: []model.AgentID{id}})
 			}
 		}

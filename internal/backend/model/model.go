@@ -39,9 +39,15 @@ func ExecutionPrincipal(executionID ExecutionID, agentID AgentID, generation Acc
 	return Principal{Kind: PrincipalExecution, AgentID: agentID, ExecutionID: executionID, Generation: generation, Authority: subject}
 }
 
+type AgentDisplayLabels struct {
+	Role        string
+	Description string
+}
+
 type AgentLabels struct {
 	Role        string
 	Description string
+	Groups      map[GroupID]AgentDisplayLabels `json:",omitempty"`
 }
 
 type Agent struct {

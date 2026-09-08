@@ -18,7 +18,7 @@ export function teamDraftFromGroup(group, agents) {
   draft.Name = group.Name + ' team';
   draft.Source = `Captured displayed group ${group.ID} at revision ${group.Revision}. Member settings are independent copies; review before saving.\n` +
     [group.Details?.Description, group.Details?.Mission].filter(Boolean).join('\n');
-  draft.Team.Members = members.map((agent, index) => ({Key: 'member_' + (index + 1), Name: agent.Name, Labels:clone(agent.Labels||{}), Desired: clone(agent.Desired), Roles: [], Owner: false, Required: true, BriefingIDs: []}));
+  draft.Team.Members = members.map((agent, index) => ({Key: 'member_' + (index + 1), Name: agent.Name, Labels:clone(agent.Labels?.Groups?.[group.ID]||{Role:agent.Labels?.Role||'',Description:agent.Labels?.Description||''}), Desired: clone(agent.Desired), Roles: [], Owner: false, Required: true, BriefingIDs: []}));
   draft.Team.Waves = members.length ? [{ID: 'initial', MemberKeys: draft.Team.Members.map(member => member.Key), DependsOn: [], RequiredReady: true, RequiredBriefs: true, WaitForIdle: true, MaxWaitSeconds: 0}] : [];
   draft.Team.WorkspacePolicy = 'per_member';
   return draft;
