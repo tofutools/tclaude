@@ -1,3 +1,4 @@
+import {applyDurationProjection,wireDurationNodes} from './process-durations.js';
 import {clone, freshID} from './process-model.js';
 const node=(tag,text)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;return n};
 
@@ -17,12 +18,12 @@ export class ProcessSnippetLibrary {
  close(){this.generation++;this.dialog.close();this.dialog.remove();window.removeEventListener('pagehide',this.onLeave);document.removeEventListener('workspace-signout',this.onLeave)}
  async load(force=false){if((this.busy&&!force)||!this.dialog.isConnected)return;const generation=++this.generation;this.status.textContent='Loading snippets…';try{const items=await this.api('/v2/process-snippets');if(generation!==this.generation||!this.dialog.isConnected)return;this.render(items);this.status.textContent=items.length+' saved snippets'}catch(e){if(generation===this.generation&&this.dialog.isConnected)this.status.textContent=e.message}}
  render(items){this.list.replaceChildren();for(const item of items){const row=node('section'),title=node('h3',item.Name),id=node('code',item.ID),name=node('input');name.value=item.Name;name.maxLength=80;name.setAttribute('aria-label','Rename '+item.Name);
-  const insert=node('button','Insert '+item.Name);insert.disabled=!item.Available;insert.onclick=()=>{if(this.busy)return;this.insert(clone(item.Selection));this.close()};
+  const insert=node('button','Insert '+item.Name);insert.disabled=!item.Available;insert.onclick=()=>{if(this.busy)return;const selection=clone(item.Selection);applyDurationProjection(selection.nodes,item.ProcessDurationNS);this.insert(selection);this.close()};
   const rename=node('button','Rename snippet');rename.onclick=()=>this.write(rename,item.ID,{action:'rename',name:name.value.trim(),expected_revision:item.Revision});
   const remove=node('button','Delete snippet');remove.onclick=()=>{if(!this.busy&&confirm('Delete snippet '+item.Name+' ('+item.ID+')? Existing process drafts and revisions are retained.'))this.write(remove,item.ID,{action:'delete',expected_revision:item.Revision})};
   row.append(title,id,node('p','Revision '+item.Revision),insert,name,rename,remove);if(!item.Available)row.append(node('p','Unavailable stored format. Rename or delete this entry; it cannot be inserted.'));this.list.append(row)
  }}
  async write(button,id,body){if(this.busy||!this.dialog.isConnected)return;const fingerprint=JSON.stringify(body);if(button.intent!==fingerprint){button.intent=fingerprint;button.requestID=freshID('request_');if(body.action==='create')button.targetID=freshID('snippet_')}if(body.action==='create')id=button.targetID;
-  this.busy=true;button.disabled=true;const generation=++this.generation;this.status.textContent='Saving snippet…';try{await this.api('/v2/process-snippets/'+encodeURIComponent(id),{...body,request_id:button.requestID});if(generation!==this.generation||!this.dialog.isConnected)return;await this.load(true)}catch(e){if(generation===this.generation&&this.dialog.isConnected)this.status.textContent=e.message+' Reload to inspect current revisions; your process draft is unchanged.'}finally{this.busy=false;button.disabled=false}
+  this.busy=true;button.disabled=true;const generation=++this.generation;this.status.textContent='Saving snippet…';try{await this.api('/v2/process-snippets/'+encodeURIComponent(id),{...body,...(body.selection?{selection:{...body.selection,nodes:wireDurationNodes(body.selection.nodes)}}:{}),request_id:button.requestID});if(generation!==this.generation||!this.dialog.isConnected)return;await this.load(true)}catch(e){if(generation===this.generation&&this.dialog.isConnected)this.status.textContent=e.message+' Reload to inspect current revisions; your process draft is unchanged.'}finally{this.busy=false;button.disabled=false}
  }
 }

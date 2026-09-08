@@ -4,6 +4,7 @@ export const clone = value => structuredClone(value);
 export const freshID = prefix => prefix + crypto.randomUUID();
 export const edgeID = (edge, index) => `${index}:${edge.From}:${edge.To}:${edge.Verdict || ''}`;
 export const edgeKey = edge => JSON.stringify([edge.From, edge.To, edge.Verdict || ""]);
+import {applyDurationProjection} from './process-durations.js';
 export const seconds = value => Number(value || 0) * 1e9;
 export const lines = text => text.split('\n').map(value => value.trim()).filter(Boolean);
 
@@ -20,7 +21,7 @@ export function draftFromResult(result) {
   const r = result.Revision;
   return {ID: result.Definition.ID, Name: result.Definition.Name, Kind: 'process',
     SchemaVersion: r.SchemaVersion, Source: r.Source, Parameters: clone(r.Parameters || []),
-    Dependencies: clone(r.Dependencies || []), Process: clone(r.Process),
+    Dependencies: clone(r.Dependencies || []), Process: {...clone(r.Process), Graph: {...clone(r.Process.Graph), Nodes: applyDurationProjection(clone(r.Process.Graph.Nodes), r.ProcessDurationNS)}},
     EditorLayout: clone(r.EditorLayout || {Nodes: {}})};
 }
 

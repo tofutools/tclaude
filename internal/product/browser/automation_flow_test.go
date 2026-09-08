@@ -21,6 +21,7 @@ func TestBrowserAutomationScheduleToggleRunAndRecipientHistory(t *testing.T) {
 	page.MustElement("#editor [name=name]").MustInput("Review reminder")
 	page.MustElement("#editor [name=anchor]").MustInput(time.Now().Add(time.Hour).UTC().Format(time.RFC3339))
 	page.MustElement("#editor [name=body]").MustInput("Please review the current change.")
+	page.MustElement("#editor [name=expiry]").MustSelectAllText().MustInput("31536000")
 	page.MustElement("#editor [name=recipients]").MustSelect("Scheduled recipient")
 	page.MustElement("#editor [name=allowed_actions]").MustSelect("message.send")
 	page.MustElement("#editor [name=allowed_resources]").MustSelect("Agent: Scheduled recipient")
@@ -52,6 +53,7 @@ func TestBrowserAutomationScheduleToggleRunAndRecipientHistory(t *testing.T) {
 	page.MustElementR("#automation-list .occurrence-history", "Scheduled recipient: queued")
 	page.MustElementR("#automation-list button", "^Edit rule$").MustClick()
 	require.False(t, page.MustHas("#editor [name=enabled]"))
+	require.Equal(t, "31536000", page.MustElement("#editor [name=expiry]").MustProperty("value").String())
 	require.Equal(t, "recipient", page.MustElement("#editor [name=recipients]").MustProperty("value").Str())
 	require.Equal(t, "message.send", page.MustElement("#editor [name=allowed_actions]").MustProperty("value").Str())
 	page.MustElement("#editor [name=body]").MustSelectAllText().MustInput("Please review the updated change.")
@@ -59,6 +61,7 @@ func TestBrowserAutomationScheduleToggleRunAndRecipientHistory(t *testing.T) {
 	page.MustElement("#editor").MustWaitInvisible()
 	var updated app.AutomationRuleResult
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/automation/rules/"+string(rules[0].ID), nil, &updated))
+	require.Equal(t, 365*24*time.Hour, updated.Revision.Policy.ExpiresAfter)
 	require.Equal(t, []model.AgentID{"recipient"}, updated.Revision.Action.Message.AgentIDs)
 	require.Equal(t, []model.Action{model.ActionSendMessage}, updated.Revision.Delegation.Actions)
 	require.Equal(t, "Please review the updated change.", updated.Revision.Action.Message.Body)

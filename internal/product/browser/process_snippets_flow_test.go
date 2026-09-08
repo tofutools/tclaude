@@ -15,6 +15,7 @@ func TestBrowserProcessSnippetsReopenInsertUndoAndDelete(t *testing.T) {
 	page.MustElement("#process-editor-canvas svg")
 	page.MustElementR("#process-editor button", "^Add wait$").MustClick()
 	page.MustElement("#process-inspector [name=name]").MustSelectAllText().MustInput("Reusable pause")
+	page.MustElement("#process-inspector [name=duration]").MustSelectAllText().MustInput("9007199.254740993")
 	page.MustElementR("#process-inspector button", "^Apply changes$").MustClick()
 	page.MustElementR("#process-editor button", "^Saved snippets$").MustClick()
 	page.MustElement("#process-snippets [aria-label='New snippet name']").MustInput("Pause fragment")
@@ -24,6 +25,9 @@ func TestBrowserProcessSnippetsReopenInsertUndoAndDelete(t *testing.T) {
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/process-snippets", nil, &snippets))
 	require.Len(t, snippets, 1)
 	require.True(t, snippets[0].Available)
+	var exact model.ProcessSelection
+	require.NoError(t, json.Unmarshal(snippets[0].Selection, &exact))
+	require.EqualValues(t, 9007199254740993, exact.Nodes[0].Wait.Duration)
 	page.MustElementR("#process-snippets button", "^Close snippets$").MustClick()
 	// Discard the unsaved editor and reload; the independent library survives.
 	page.MustEval(`() => {window.confirm=()=>true}`)
@@ -36,6 +40,7 @@ func TestBrowserProcessSnippetsReopenInsertUndoAndDelete(t *testing.T) {
 	before := len(page.MustElements("#process-editor-canvas .process-node"))
 	page.MustElementR("#process-editor button", "^Saved snippets$").MustClick()
 	page.MustElementR("#process-snippets button", "^Insert Pause fragment$").MustClick()
+	require.Equal(t, "9007199.254740993", page.MustElement("#process-inspector [name=duration]").MustProperty("value").String())
 	page.MustElement("#process-editor-canvas .process-node[aria-label='Reusable pause copy, wait']")
 	require.Len(t, page.MustElements("#process-editor-canvas .process-node"), before+1)
 	page.MustElementR("#process-editor button", "^Undo$").MustClick()
