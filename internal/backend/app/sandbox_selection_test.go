@@ -48,3 +48,35 @@ func TestLaunchSandboxSelectionResolvesServerContentBeforeSavingAgent(t *testing
 	require.NoError(t, err)
 	require.Equal(t, &selected, saved.Desired.HostSandbox, "archiving a profile does not rewrite an existing pin")
 }
+
+func TestSandboxConfigurationSaveRetryDoesNotRequireFreshHostInspection(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "backend.sqlite"))
+	require.NoError(t, err)
+	defer store.Close()
+	paths, err := host.NewSandboxPathInspector([]string{t.TempDir()})
+	require.NoError(t, err)
+	service := app.New(store, providers.NewRegistry()).WithSandboxPathInspector(paths)
+	operator := model.OperatorPrincipal()
+	profile, err := service.SaveSandboxProfile(ctx, app.SaveSandboxProfileRequest{Context: app.RequestContext{Principal: operator, RequestID: "sandbox"}, ID: "sandbox", Name: "Sandbox", Policy: model.SandboxPolicy{FilesystemRoot: model.SandboxRootSeparate}})
+	require.NoError(t, err)
+	selected, err := service.ResolveLaunchSandbox(ctx, operator, []model.SandboxScopeSelection{{Scope: model.SandboxScopeExplicit, Ref: profile.Revision.Ref}})
+	require.NoError(t, err)
+	req := app.SaveConfigurationProfileRequest{Context: app.RequestContext{Principal: operator, RequestID: "configuration"}, ID: "configuration", RevisionID: "revision", Name: "Configuration", Desired: model.DesiredConfiguration{HostSandbox: &selected, Harness: "codex", Model: "test", WorkingDirectory: t.TempDir(), Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}}
+	saved, err := service.SaveConfigurationProfile(ctx, req)
+	require.NoError(t, err)
+	// Restarted application has no host inspector. The committed receipt still
+	// answers an unchanged retry, while fresh writes require normal preparation.
+	service = app.New(store, providers.NewRegistry())
+	repeated, err := service.SaveConfigurationProfile(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, saved, repeated)
+	changed := req
+	changed.Name = "Changed intent"
+	_, err = service.SaveConfigurationProfile(ctx, changed)
+	require.ErrorIs(t, err, app.ErrConflict)
+	fresh := req
+	fresh.Context.RequestID = "fresh"
+	_, err = service.SaveConfigurationProfile(ctx, fresh)
+	require.ErrorIs(t, err, app.ErrUnavailable)
+}

@@ -98,7 +98,7 @@ class TeamEditor {
   card(title, text, edit, remove) {
     const card = el('article'); card.className = 'card'; card.append(el('h3', title), el('p', text), button('Edit ' + title, edit), button('Remove ' + title, () => { if (confirm('Remove ' + title + ' and its references from this draft?')) remove(); })); this.content.append(card);
   }
-  form(title, fields, apply) {
+  form(title, fields, apply, resolve) {
     this.content.replaceChildren(el('h3', title)); const form = el('form');
     for (const f of fields) {
       const label = el('label', f.label); let input;
@@ -115,16 +115,16 @@ class TeamEditor {
     }
     form.oninput = () => { this.unapplied = true; };
     const submit = el('button', 'Apply changes'); submit.type = 'submit'; form.append(submit, button('Back to ' + this.tab, () => { if (this.discard()) this.render(); }));
-    form.onsubmit = e => {
+    form.onsubmit = async e => {
       e.preventDefault(); if (this.busy) return;
-      try { const data = new FormData(form), values = Object.fromEntries(data); for (const f of fields) { if (f.multiple) values[f.key] = data.getAll(f.key); if (f.type === 'checkbox') values[f.key] = form.elements[f.key].checked; } this.unapplied = false; apply(values); }
-      catch (error) { this.unapplied = true; this.fail(error); }
+      try { const data = new FormData(form), values = Object.fromEntries(data); for (const f of fields) { if (f.multiple) values[f.key] = data.getAll(f.key); if (f.type === 'checkbox') values[f.key] = form.elements[f.key].checked; } if(resolve){this.lock(true);await resolve(values);this.lock(false);} this.unapplied = false; apply(values); }
+      catch (error) { this.unapplied = true; this.fail(error); } finally { if(this.busy)this.lock(false); }
     };
     this.content.append(form); attachLaunchSupportPreview({host:form,api:this.api}); return form;
   }
   member(original) {
     const m = original || {Key: '', Name: '', Desired: {}, Roles: [], Required: true, Owner: false, BriefingIDs: []}, desired = m.Desired;
-    let environment;
+    let environment, sandbox;
     const fields = [
       {key: 'key', label: 'Stable member key', value: m.Key, required: true}, {key: 'name', label: 'Member name', value: m.Name, required: true},
       {key: 'harness', label: 'Harness', options: [opt('', 'Choose harness'), ...['claude', 'codex', 'opencode', 'copilot'].map(v => opt(v))], value: desired.Harness, required: true},
@@ -140,7 +140,7 @@ class TeamEditor {
       if (this.draft.Team.Members.some(x => x.Key === f.key && x.Key !== original?.Key)) throw new Error('Member keys must be unique.');
       if (f.owner && this.draft.Team.Members.some(x => x.Owner && x.Key !== original?.Key)) throw new Error('Choose only one group owner.');
       if (f.effort && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(f.effort)) throw new Error('Requested effort must be a lowercase native level or variant, at most 64 characters.');
-      const member = {...m, Key: f.key, Name: f.name, Desired: {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
+      const member = {...m, Key: f.key, Name: f.name, Desired: {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, HostSandbox: f.resolvedSandbox||undefined, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
       this.change(d => {
         const i = d.Team.Members.findIndex(x => x.Key === original?.Key); if (i < 0) d.Team.Members.push(member); else d.Team.Members[i] = member;
         if (original && original.Key !== f.key) { for (const w of d.Team.Waves) w.MemberKeys = w.MemberKeys.map(k => k === original.Key ? f.key : k); for (const b of d.Team.Briefings) b.MemberKeys = (b.MemberKeys || []).map(k => k === original.Key ? f.key : k); }
@@ -151,7 +151,7 @@ class TeamEditor {
         if (!d.Team.Waves.length) d.Team.Waves.push({ID: 'initial', MemberKeys: [f.key], DependsOn: [], RequiredReady: true, RequiredBriefs: true});
         else if (!original) d.Team.Waves[0].MemberKeys.push(f.key);
       });
-    });
+    },async f=>{f.resolvedSandbox=await sandbox.read(f.host_sandbox)});
     const environmentField = el('fieldset'); environmentField.setAttribute('aria-label', 'Member launch environment');
     const showEnvironment = values => {
       environment = new LaunchEnvironment(values || {});
@@ -160,6 +160,9 @@ class TeamEditor {
     showEnvironment(desired.Environment);
     environmentField.addEventListener('click', event => { if (event.target.closest('button')) this.unapplied = true; });
     form.insertBefore(environmentField, form.querySelector('button[type=submit]'));
+    const sandboxField=el('fieldset');sandboxField.setAttribute('aria-label','Member host sandbox');
+    const showSandbox=value=>{sandbox=new SandboxSelectionControl(this.api,value);sandbox.host.name='host_sandbox';sandbox.host.setAttribute('aria-label','Member host sandbox');sandboxField.replaceChildren(el('legend','Member host sandbox'),sandbox.host,sandbox.status)};
+    showSandbox(desired.HostSandbox);form.insertBefore(sandboxField,form.querySelector('button[type=submit]'));
     const select = el('select'); select.setAttribute('aria-label', 'Copy saved configuration');
     const placeholder = el('option', 'Copy settings from a saved configuration'); placeholder.value = ''; select.append(placeholder);
     this.configurations.forEach((c, i) => { const o = el('option', `${c.Profile.Name} · ${c.Revision.Ref.RevisionID}`); o.value = String(i); select.append(o); });
@@ -168,6 +171,7 @@ class TeamEditor {
       const d = this.configurations[Number(select.value)].Revision.Desired;
       for (const [key, property] of Object.entries({harness: 'Harness', model: 'Model', effort: 'Effort', cwd: 'WorkingDirectory', approval: 'Approval', sandbox: 'Sandbox'})) form.elements[key].value = d[property] || '';
       showEnvironment(d.Environment);
+      showSandbox(d.HostSandbox);
       form.elements.harness.dispatchEvent(new Event('change', {bubbles: true}));
       this.unapplied = true;
     };

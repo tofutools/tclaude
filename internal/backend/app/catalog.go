@@ -20,6 +20,10 @@ type ConfigurationCatalogStore interface {
 	ConfigurationProfiles(context.Context) ([]model.ConfigurationProfile, error)
 }
 
+type ConfigurationProfileRequestStore interface {
+	FindConfigurationProfileWrite(context.Context, model.RequestID, string) (ConfigurationProfileResult, bool, error)
+}
+
 type ConfigurationProfileWrite struct {
 	Profile            model.ConfigurationProfile
 	Revision           model.ConfigurationProfileRevision
@@ -57,11 +61,17 @@ func (s *Service) SaveConfigurationProfile(ctx context.Context, req SaveConfigur
 	if err := requireOperator(req.Context.Principal); err != nil {
 		return ConfigurationProfileResult{}, err
 	}
-	if err := s.verifyLaunchSandbox(ctx, req.Desired.HostSandbox); err != nil {
-		return ConfigurationProfileResult{}, err
-	}
 	w, err := prepareConfigurationProfile(req, s.now())
 	if err != nil {
+		return ConfigurationProfileResult{}, err
+	}
+	if receipts, ok := s.store.(ConfigurationProfileRequestStore); ok {
+		prior, found, err := receipts.FindConfigurationProfileWrite(ctx, w.RequestID, w.RequestFingerprint)
+		if found || err != nil {
+			return prior, err
+		}
+	}
+	if err := s.verifyLaunchSandbox(ctx, req.Desired.HostSandbox); err != nil {
 		return ConfigurationProfileResult{}, err
 	}
 	return s.store.SaveConfigurationProfile(ctx, w)
