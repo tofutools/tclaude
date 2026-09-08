@@ -3619,6 +3619,12 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-breakdown-option strong { display: block; color: #c9d1d9; }
 .cost-breakdown-option small { display: block; margin-top: 3px; color: #7d8590; line-height: 1.35; }
 .cost-breakdown-option > span:last-child { color: #9fb0c2; white-space: nowrap; }
+@media (max-width: 600px) {
+  /* Once the three selector summaries wrap, anchor every popover to the full
+     selector row instead of whichever short button happens to open it. */
+  .cost-filter-menu { position: static; }
+  .cost-filter-popover { left: 0; right: auto; }
+}
 .cost-chart-heading { display: flex; justify-content: space-between; align-items: baseline; margin: 0 2px 6px; }
 .cost-chart-heading strong { color: #c9d1d9; font-size: 12px; }
 .cost-chart-heading span { color: #8b949e; font-size: 11px; }

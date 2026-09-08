@@ -1228,6 +1228,19 @@ setTimeout(function(){
 			SettleMS: 500,
 		},
 		{
+			Key:     "bounded-costs-breakdown-narrow",
+			Title:   "Bounded Preact — Costs breakdown narrow",
+			Caption: "At 560px the three selectors wrap left and the Breakdown popover anchors to the full row without escaping the viewport.",
+			Width:   560,
+			Height:  900,
+			JS: boundedTabJS("costs", "#costs-factor", `
+setTimeout(function(){
+  var menu = document.querySelector('#filter-costs-breakdown');
+  if (menu) menu.open = true;
+}, 50);`),
+			SettleMS: 500,
+		},
+		{
 			Key:      "bounded-usage-normal",
 			Title:    "Bounded Preact — Usage forecasts",
 			Caption:  "Subscription quota history renders provider/window line charts, a detected nonzero reset, and post-reset forecasts.",
