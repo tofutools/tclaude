@@ -88,6 +88,14 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 	profile := "(version 1)\n(allow default)\n" +
 		"(deny file-read* (require-all (require-not (literal \"/\")) (require-not (require-any " + strings.Join(readRegions, " ") + "))))\n" +
 		"(deny file-write* (require-not (require-any " + strings.Join(writeRegions, " ") + ")))\n"
+	// Seatbelt checks unlink against the target vnode, so a writable subpath
+	// alone also permits removing its root. Linux individual bind mounts
+	// already prevent that; retain the same generated-directory contract here.
+	for index, pin := range bindings.pins {
+		if pin.PreserveDirectory {
+			profile += fmt.Sprintf("(deny file-write-unlink (literal (param %q)))\n", "SOURCE_"+strconv.Itoa(index))
+		}
+	}
 	if bindings.controlPort == 0 {
 		// Seatbelt mediates Unix connect as network-outbound, not file-read.
 		profile += "(deny network-outbound (remote unix-socket (require-not (require-any " + strings.Join(readRegions, " ") + "))))\n"

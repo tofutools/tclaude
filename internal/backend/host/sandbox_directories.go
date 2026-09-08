@@ -77,7 +77,7 @@ func (p *SandboxLaunchPreparer) prepareAgentDirectories(ctx context.Context, nam
 		path := filepath.Join(root, name)
 		environment[name] = path
 		if p.config.AgentDirectoriesMountIndividually {
-			resources = append(resources, SandboxProviderResource{Path: path, Access: model.SandboxFilesystemWrite, rejectAliases: true})
+			resources = append(resources, SandboxProviderResource{Path: path, Access: model.SandboxFilesystemWrite, rejectAliases: true, preserveDirectory: true})
 		}
 	}
 	if !p.config.AgentDirectoriesMountIndividually {

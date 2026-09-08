@@ -22,6 +22,7 @@ type SandboxProviderResource struct {
 	Access              model.SandboxFilesystemAccess
 	openCodeConfigState string
 	rejectAliases       bool
+	preserveDirectory   bool
 }
 
 // SandboxOpenCodeConfiguration projects a trusted native config directory only
@@ -100,6 +101,9 @@ func (i *SandboxPathInspector) BindSandboxProviderResources(ctx context.Context,
 		case info.Mode()&os.ModeSocket != 0:
 			kind = "socket"
 		}
+		if resource.preserveDirectory && kind != "directory" {
+			return nil, fmt.Errorf("retained generated directory must remain a directory")
+		}
 		if kind == "" {
 			return nil, fmt.Errorf("unsupported sandbox provider resource kind")
 		}
@@ -128,7 +132,7 @@ func (i *SandboxPathInspector) BindSandboxProviderResources(ctx context.Context,
 		if !ok {
 			return nil, fmt.Errorf("sandbox provider resource identity unavailable")
 		}
-		b.pins = append(b.pins, SandboxMountPin{Source: canonical, Guest: guest, Access: resource.Access, Kind: kind, Device: uint64(stat.Dev), Inode: uint64(stat.Ino), OpenCodeConfigState: resource.openCodeConfigState, ConfigTargetDevice: targetDevice, ConfigTargetInode: targetInode})
+		b.pins = append(b.pins, SandboxMountPin{Source: canonical, Guest: guest, Access: resource.Access, Kind: kind, Device: uint64(stat.Dev), Inode: uint64(stat.Ino), OpenCodeConfigState: resource.openCodeConfigState, ConfigTargetDevice: targetDevice, ConfigTargetInode: targetInode, PreserveDirectory: resource.preserveDirectory})
 	}
 	b.providerCount = len(b.pins)
 	success = true
@@ -142,7 +146,7 @@ func (i *SandboxPathInspector) reopenSandboxChildBindings(ctx context.Context, m
 	}
 	requested := make([]SandboxProviderResource, len(resources))
 	for index, pin := range resources {
-		requested[index] = SandboxProviderResource{Path: pin.Guest, Access: pin.Access}
+		requested[index] = SandboxProviderResource{Path: pin.Guest, Access: pin.Access, preserveDirectory: pin.PreserveDirectory}
 		if pin.OpenCodeConfigState != "" {
 			requested[index] = SandboxOpenCodeConfiguration(pin.Source, pin.OpenCodeConfigState, pin.Access)
 		}

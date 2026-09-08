@@ -28,6 +28,9 @@ type SandboxMountPin struct {
 	OpenCodeConfigState string `json:",omitempty"`
 	ConfigTargetDevice  uint64 `json:",omitempty"`
 	ConfigTargetInode   uint64 `json:",omitempty"`
+	// An individually granted generated directory may be written within,
+	// but its own directory entry must remain in place.
+	PreserveDirectory bool `json:",omitempty"`
 }
 
 // SandboxMountBindings owns the descriptors backing a prepared mount set.

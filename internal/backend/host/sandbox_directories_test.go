@@ -96,5 +96,6 @@ func TestSandboxGeneratedEnvironmentIsRetainedAndCannotBeOverridden(t *testing.T
 	require.Contains(t, input.Environment, "CACHE_000="+input.ProviderResources[0].Source)
 	for _, pin := range input.ProviderResources {
 		require.Equal(t, model.SandboxFilesystemWrite, pin.Access)
+		require.True(t, pin.PreserveDirectory)
 	}
 }
