@@ -1155,7 +1155,7 @@ func (s *awbProxySession) buildAWBCreateBody(
 	}
 	out := &awbIssueCreateBody{Workspace: workspace, Title: title}
 	out.Backlog = body.Backlog
-	if body.Backlog && body.Claim {
+	if body.Backlog && (body.Claim || len(body.Assignees) > 0) {
 		return nil, faultf(http.StatusBadRequest, "invalid_arg",
 			"create --backlog cannot be combined with --claim or --assignee")
 	}
@@ -1196,10 +1196,6 @@ func (s *awbProxySession) buildAWBCreateBody(
 			return nil, identityFault
 		}
 		out.Assignees = append(out.Assignees, assignee)
-	}
-	if body.Backlog && len(out.Assignees) > 0 {
-		return nil, faultf(http.StatusBadRequest, "invalid_arg",
-			"create --backlog cannot be combined with --claim or --assignee")
 	}
 	for _, raw := range body.Labels {
 		label, fault := validateAWBLabel(raw)

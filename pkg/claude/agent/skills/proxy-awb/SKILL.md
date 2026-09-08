@@ -202,6 +202,7 @@ Use repeatable `--label` to label the new issue atomically. `--claim` assigns it
 to the operator's AWB identity and starts it immediately; `--backlog` parks it
 instead and cannot be combined with `--claim` or `--assignee`. Activate parked
 work later with `make-ready`.
+Find parked work with `list --status backlog`.
 
 Relation flags read *"the new issue — relation — the named issue"*, the single
 convention of the whole tool. Only `blocked-by` drives readiness; `has-parent`

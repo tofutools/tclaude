@@ -527,6 +527,13 @@ func TestAWBProxy_CreateClaimBacklogAndLabels(t *testing.T) {
 	})
 	assert.Equal(t, http.StatusBadRequest, res.Code)
 	assert.False(t, rec.sawAnyCall())
+
+	res = w.post("/v1/awb/issue/create", map[string]any{
+		"workspace": "awb", "title": "Invalid", "backlog": true,
+		"assignees": []string{"tclaude-bot"},
+	})
+	assert.Equal(t, http.StatusBadRequest, res.Code)
+	assert.False(t, rec.sawAnyCall())
 }
 
 func TestAWBProxy_MakeReadyUsesConditionalStatusTransition(t *testing.T) {
