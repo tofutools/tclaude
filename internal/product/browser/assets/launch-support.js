@@ -15,6 +15,7 @@ function attachLaunchSupportPreview({host,api}) {
    const support=await api('/v2/launch-support?harness='+encodeURIComponent(selected));
    if(token!==generation||!current())return;
    if(support.Harness!==selected)throw new Error('The returned support does not match the selected harness.');
+   host.dispatchEvent(new CustomEvent('launch-policy-support',{detail:support}));
    if(!support.Configured){status.textContent=selected+': no provider is configured in this backend. You can save offline settings; launching requires a configured provider.';return}
    const hostSelection=host.querySelector('[name=host_sandbox]'),hasHostSandbox=hostSelection&&hostSelection.value&&!['none','defaults','retained:none','retained:defaults'].includes(hostSelection.value);
    const defaultSupport=['defaults','retained:defaults'].includes(hostSelection?.value)?'Global and group sandbox defaults are resolved at launch. ':'';

@@ -1826,11 +1826,25 @@ settings and startup suggestions, so a lost-response retry or resumed deployment
 does not reinterpret an already-created roster. Working directories come from
 the selected deployment workspace. Archived or missing selected profiles fail
 before workspace preparation. The editor previews the current profile and
-retains the separate custom/copy workflow. Partial field overrides and portable
-v1 registry import are subsequent compatibility work, not implemented here.
+retains the separate custom/copy workflow. Portable v1 registry import is
+subsequent compatibility work, not implemented here.
 
 Profile-backed team members include only reusable profile Context in deployment
 briefs. A saved InitialMessage remains a standalone launch suggestion and is not
 automatically sent by team deployment. Member cards show the selected saved
 configuration and current launch settings, or explicitly mark an unavailable
 selection.
+
+### Per-member saved-profile overrides
+
+Team members using a saved configuration may override harness, model, effort,
+approval or confinement independently. Only checked fields are stored as
+`Overrides`; unchecked fields continue following the current saved profile.
+An explicit empty effort clears the inherited effort. Switching harness drops
+an inherited foreign model/effort and provider-specific startup context unless
+the member authors replacement model/effort values. Custom/copy members retain
+their existing concrete settings. When an inherited confinement is incompatible
+with the selected harness, its adapter supplies the native default. The editor
+previews the same adapter declaration. Explicit confinement overrides remain
+intentional and incompatible values fail before deployment effects. No permissions
+are granted by these choices.

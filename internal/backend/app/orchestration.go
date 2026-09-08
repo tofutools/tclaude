@@ -1553,6 +1553,9 @@ func validateTeam(team model.TeamDefinition) error {
 	}
 	members := make(map[string]bool, len(team.Members))
 	for _, member := range team.Members {
+		if member.Overrides != nil && member.ProfileID == "" {
+			return fail(ErrInvalid, "member overrides require a saved profile")
+		}
 		if member.ProfileID != "" && (model.ValidateStableID("configuration profile", string(member.ProfileID)) != nil || !member.Desired.Equal(model.DesiredConfiguration{})) {
 			return fail(ErrInvalid, "team member selects a saved profile or custom launch settings")
 		}
