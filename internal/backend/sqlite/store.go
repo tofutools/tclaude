@@ -40,32 +40,10 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, `PRAGMA foreign_keys = ON`); err != nil {
 		return err
 	}
-	if _, err := s.db.ExecContext(ctx, schema); err != nil {
+	if err := s.executeSchema(ctx, schema, shellRequestSchema+groupCloneSchema+groupDisbandSchema,
+		groupCapacitySchema, groupDetailsSchema, groupConfigurationSchema, groupHierarchySchema,
+		terminalFileSchema, processSnippetSchema, presentationSchema); err != nil {
 		return fmt.Errorf("initialize replacement backend schema: %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, shellRequestSchema+groupCloneSchema+groupDisbandSchema); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, groupCapacitySchema); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, groupDetailsSchema); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, groupConfigurationSchema); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, groupHierarchySchema); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, terminalFileSchema); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, processSnippetSchema); err != nil {
-		return err
-	}
-	if _, err := s.db.ExecContext(ctx, presentationSchema); err != nil {
-		return err
 	}
 	if err := s.initializeMessageNotifications(ctx); err != nil {
 		return err
