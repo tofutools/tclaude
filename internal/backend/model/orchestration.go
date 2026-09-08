@@ -234,6 +234,7 @@ type ContactSchedule struct {
 }
 
 type Performer struct {
+	Timeout string           `json:",omitempty"`
 	Contact *ContactSchedule `json:",omitempty"`
 	Kind    PerformerKind
 	Agent   *AgentPerformer

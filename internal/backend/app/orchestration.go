@@ -341,6 +341,15 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 		return WorkRunResult{}, err
 	}
 	for _, node := range graph.Nodes {
+		if node.Performer != nil && strings.TrimSpace(node.Performer.Timeout) != "" && node.Performer.Kind != model.PerformerProgram {
+			return WorkRunResult{}, fail(ErrUnsupported, "task %s declares a performer timeout; only program timeout execution is available", node.ID)
+		}
+		if node.Performer != nil {
+			duration, _ := performerTimeout(*node.Performer)
+			if duration > time.Hour {
+				return WorkRunResult{}, fail(ErrUnsupported, "program timeout execution is bounded to one hour")
+			}
+		}
 		if node.Performer != nil && node.Performer.Contact != nil {
 			return WorkRunResult{}, fail(ErrUnsupported, "task %s declares a contact schedule; scheduled performer contact is not available", node.ID)
 		}
@@ -742,6 +751,9 @@ func (s *Service) retryActivation(run model.WorkRun, current model.WorkNodeAttem
 		readyAt, retryAt, state = value, &value, model.NodeAttemptRetryWait
 	}
 	deadline := current.Deadline
+	if node.Performer != nil && strings.TrimSpace(node.Performer.Timeout) != "" {
+		deadline = performerDeadline(node.Performer, readyAt, run.Deadline)
+	}
 	if node.Retry.AttemptBudget > 0 && now.Add(node.Retry.AttemptBudget).Before(deadline) {
 		deadline = now.Add(node.Retry.AttemptBudget)
 	}
@@ -899,6 +911,7 @@ func onlyWaiting(attempts []model.WorkNodeAttempt) bool {
 }
 
 func (s *Service) initialActivation(runID model.WorkRunID, scope model.WorkScope, node model.WorkNode, now, deadline time.Time) (model.WorkNodeAttempt, []model.DecisionWindow) {
+	deadline = performerDeadline(node.Performer, now, deadline)
 	attempt := model.WorkNodeAttempt{Ref: model.WorkAttemptRef{RunID: runID, NodeID: node.ID, ActivationID: model.WorkActivationID(s.newID("activation_")), Attempt: 1}, State: model.NodeAttemptReady, Performer: node.Performer, ReadyAt: now, Deadline: deadline, RetryBudget: normalizedAttempts(node.Retry.MaxAttempts), CreatedAt: now, UpdatedAt: now}
 	run := model.WorkRun{ID: runID, Scope: scope, Deadline: deadline, Revision: 1}
 	return s.attachDecisionWindow(run, node, attempt, now)
@@ -1701,6 +1714,9 @@ func validateWorkNode(node model.WorkNode) error {
 }
 
 func validatePerformer(performer model.Performer) error {
+	if _, err := performerTimeout(performer); err != nil {
+		return err
+	}
 	if contact := performer.Contact; contact != nil {
 		cadence, err := time.ParseDuration(contact.Cadence)
 		if err != nil || cadence <= 0 || len(contact.Cadence) > 128 || contact.Budget == 0 || contact.Budget > 10000 || strings.TrimSpace(contact.EscalationTarget) == "" || len(contact.EscalationTarget) > 1024 || !utf8.ValidString(contact.EscalationTarget) || strings.ContainsRune(contact.EscalationTarget, 0) {
