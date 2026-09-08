@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
 
@@ -322,6 +323,35 @@ func TestDir_DashboardTermButton(t *testing.T) {
 		http.MethodPost, "/api/term/"+conv, map[string]string{"which": "current"}))
 	require.Equal(t, http.StatusOK, rec.Code, "term button: body=%s", rec.Body.String())
 	assert.Contains(t, gotCmd, currentDir, "dashboard term should cd into current_dir")
+}
+
+// Scenario: the human clicks a CWD displayed inside a group roster.
+//
+// Expected: the terminal bootstrap restores that group's common environment
+// without embedding its values in the terminal launch argv.
+func TestDir_DashboardCWDIncludesGroupEnvironment(t *testing.T) {
+	f := newFlow(t)
+
+	const conv = "direnv-aaaa-bbbb-cccc-dddd"
+	const startDir = "/home/u/git"
+	f.HaveGroup("platform")
+	f.HaveMember("platform", conv)
+	f.HaveAliveSession(conv, "lbl-direnv", "tclaude-direnv", startDir)
+	_, err := db.SetAgentGroupEnvironment("platform", []sandboxpolicy.EnvironmentEntry{{Name: "TEAM", Value: "secret-ish value"}})
+	require.NoError(t, err, "set group environment")
+
+	var gotCmd string
+	t.Cleanup(agentd.SetOpenTerminalForTest(func(cmd string) error {
+		gotCmd = cmd
+		return nil
+	}))
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	dash := agentd.BuildDashboardHandlerForTest()
+	rec := testharness.Serve(dash, testharness.JSONRequest(t,
+		http.MethodPost, "/api/term/"+conv, map[string]string{"which": "start", "group": "platform"}))
+	require.Equal(t, http.StatusOK, rec.Code, "CWD terminal: body=%s", rec.Body.String())
+	assert.Contains(t, gotCmd, "launch-scripts", "group terminal should use a private bootstrap")
+	assert.NotContains(t, gotCmd, "secret-ish value", "environment must not leak into argv")
 }
 
 // Scenario: the human clicks the per-row "open window" cog item.

@@ -67,13 +67,13 @@ export function openWebWindowPane(agent, label, options) {
   }, paneOptions);
 }
 
-export function openWebTermPane(agent, label, whichOrPromise) {
+export function openWebTermPane(agent, label, whichOrPromise, { group = '' } = {}) {
   openTerminalPane(
     Promise.resolve(whichOrPromise).then((which) => (which
       ? {
-        ws: `/api/term-ws/${encodeURIComponent(agent)}?which=${encodeURIComponent(which)}`,
+        ws: `/api/term-ws/${encodeURIComponent(agent)}?which=${encodeURIComponent(which)}${group ? `&group=${encodeURIComponent(group)}` : ''}`,
         label,
-        key: `term:${agent}:${which}`,
+        key: `term:${agent}:${which}:${group}`,
         agent,
       }
       : null)),

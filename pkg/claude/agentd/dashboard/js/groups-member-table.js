@@ -994,11 +994,11 @@ function StackedLocation({ start, current, differ }) {
   return html`<div class="loc-pair"><span class="loc-row"><span class="loc-tag">init</span>${start}</span><span class="loc-row"><span class="loc-tag">now</span>${current}</span></div>`;
 }
 
-function CwdCell({ member }) {
+function CwdCell({ member, group }) {
   const startup = member.startup_dir || member.state?.cwd || '';
   const current = member.current_dir || '';
   const path = (value, which) => value
-    ? html`<span class="cwd cwd-link" data-act="term-dir" ...${memberAttrs(member)} data-which=${which} title=${`Open a terminal here — ${value}`}>${shortCwd(value)}</span>`
+    ? html`<span class="cwd cwd-link" data-act="term-dir" ...${memberAttrs(member)} data-group=${group?.name} data-which=${which} title=${`Open a terminal here — ${value}`}>${shortCwd(value)}</span>`
     : html`<span class="cwd">—</span>`;
   return html`<${StackedLocation} start=${path(startup, 'start')} current=${path(current, 'worktree')} differ=${!!current && !!startup && current !== startup} />`;
 }
@@ -1058,7 +1058,7 @@ function MemberCell({ column, member, group, snapshot, actions, grants, ungroupe
     case 'state': return html`<${StateCell} member=${member} />`;
     case 'last': return html`<td><span class="last-hook">${relTime(state.last_hook)}</span></td>`;
     case 'age': return html`<td><span class="last-hook" title=${member.created_at || ''}>${relTime(member.created_at)}</span></td>`;
-    case 'cwd': return html`<td><${CwdCell} member=${member} /></td>`;
+    case 'cwd': return html`<td><${CwdCell} member=${member} group=${group} /></td>`;
     case 'branch': return html`<td><${BranchCell} member=${member} /></td>`;
     case 'role': return html`<td><${RoleCell} member=${member} group=${group} actions=${actions} /></td>`;
     case 'task': return html`<td class="task-cell"><${TaskCell} member=${member} /></td>`;

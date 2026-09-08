@@ -13,8 +13,10 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	clcommon "github.com/tofutools/tclaude/pkg/claude/common"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
 	"github.com/tofutools/tclaude/pkg/claude/resumeprovenance"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 // --- /v1/whoami/dir and /v1/agent/{selector}/dir ---
@@ -360,6 +362,10 @@ func handleDashboardTermAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		Which string `json:"which"`
+		// Group identifies the roster row whose CWD was clicked. A terminal
+		// opened from that row inherits the group's common environment after
+		// membership is verified; blank preserves the ordinary per-agent action.
+		Group string `json:"group"`
 		// Web forces the in-browser PTY terminal even when a native GUI
 		// window could be popped — the dashboard's dedicated "web term"
 		// button sets it. The plain "term" button leaves it false and
@@ -384,6 +390,11 @@ func handleDashboardTermAPI(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no known "+which+" directory for "+short8(res.ConvID), http.StatusNotFound)
 		return
 	}
+	environment, err := terminalGroupEnvironment(res.ConvID, body.Group)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	// The "web term" button (body.Web) wants the in-browser terminal
 	// unconditionally, so skip the native attempt entirely. Otherwise try a
 	// native window first and fall back to the browser only if one can't be
@@ -391,16 +402,26 @@ func handleDashboardTermAPI(w http.ResponseWriter, r *http.Request) {
 	// failing outright.
 	useBrowser := body.Web
 	if !useBrowser {
-		if err := openTerminal(openShellCmd(dir)); err != nil {
+		cmd, cleanup, prepareErr := openShellCmdWithEnvironment(dir, environment)
+		if prepareErr != nil {
+			http.Error(w, "prepare terminal: "+prepareErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		if err := openTerminal(cmd); err != nil {
+			cleanup()
 			useBrowser = true
 		}
 	}
 	if useBrowser {
 		// The dashboard terminal shell opens a WebSocket at ws and streams a PTY attached to
 		// an ad hoc tmux session at dir (handleDashboardTermWS).
+		ws := "/api/term-ws/" + url.PathEscape(res.ConvID) + "?which=" + url.QueryEscape(which)
+		if group := strings.TrimSpace(body.Group); group != "" {
+			ws += "&group=" + url.QueryEscape(group)
+		}
 		writeJSON(w, http.StatusOK, map[string]string{
 			"dir": dir, "which": which, "mode": "browser",
-			"ws": "/api/term-ws/" + url.PathEscape(res.ConvID) + "?which=" + url.QueryEscape(which),
+			"ws": ws,
 		})
 		return
 	}
@@ -506,6 +527,24 @@ var openTerminal = terminal.OpenWithCommand
 // openShellCmdFor.
 func openShellCmd(dir string) string {
 	return openShellCmdFor(dir, terminal.ResolvedTerminal())
+}
+
+// openShellCmdWithEnvironment builds a terminal payload that restores the
+// clicked group row's common environment before starting the interactive
+// shell. Environment values live in a private self-deleting script instead of
+// argv, preserving literal values without imposing the platform argv limit.
+// On success the script removes itself when the new terminal consumes it; the
+// returned cleanup is only needed when launching the terminal fails.
+func openShellCmdWithEnvironment(dir string, environment []sandboxpolicy.EnvironmentEntry) (string, func(), error) {
+	if len(environment) == 0 {
+		return openShellCmd(dir), func() {}, nil
+	}
+	bootstrap := groupTerminalBootstrapAtDir(environment, dir)
+	scriptPath, cleanup, err := session.WriteLaunchScript(bootstrap)
+	if err != nil {
+		return "", func() {}, err
+	}
+	return "exec " + clcommon.BootstrapShellCommandPrefix() + " " + shellSingleQuote(scriptPath), cleanup, nil
 }
 
 // openShellCmdFor is openShellCmd factored to take the terminal ID so

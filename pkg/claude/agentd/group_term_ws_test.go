@@ -149,3 +149,31 @@ func TestGroupTerminalBootstrapExportsLiteralEnvironment(t *testing.T) {
 		}
 	}
 }
+
+func TestTerminalGroupEnvironmentRequiresMembership(t *testing.T) {
+	setupTestDB(t)
+	if _, err := db.CreateAgentGroup("squad", ""); err != nil {
+		t.Fatalf("CreateAgentGroup: %v", err)
+	}
+	if _, err := db.SetAgentGroupEnvironment("squad", []sandboxpolicy.EnvironmentEntry{{Name: "TEAM", Value: "platform"}}); err != nil {
+		t.Fatalf("SetAgentGroupEnvironment: %v", err)
+	}
+	const member = "term-env-member"
+	group, err := db.GetAgentGroupByName("squad")
+	if err != nil || group == nil {
+		t.Fatalf("GetAgentGroupByName: row=%v err=%v", group, err)
+	}
+	if err := db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: group.ID, ConvID: member}); err != nil {
+		t.Fatalf("AddAgentGroupMember: %v", err)
+	}
+	got, err := terminalGroupEnvironment(member, "squad")
+	if err != nil {
+		t.Fatalf("terminalGroupEnvironment(member): %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "TEAM" || got[0].Value != "platform" {
+		t.Fatalf("terminalGroupEnvironment(member) = %#v", got)
+	}
+	if _, err := terminalGroupEnvironment("term-env-outsider", "squad"); err == nil {
+		t.Fatal("terminalGroupEnvironment(outsider) succeeded, want membership error")
+	}
+}

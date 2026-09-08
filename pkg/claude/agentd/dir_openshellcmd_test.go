@@ -2,10 +2,12 @@ package agentd
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
 
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/common/terminal"
 )
 
@@ -48,6 +50,44 @@ func TestOpenShellCmdFor_NonAppleScriptCarriesKeepalive(t *testing.T) {
 				t.Errorf("openShellCmdFor(%q): got %q, want %q", id, got, want)
 			}
 		})
+	}
+}
+
+func TestOpenShellCmdWithEnvironmentUsesPrivateLiteralBootstrap(t *testing.T) {
+	t.Setenv("SHELL", "/bin/zsh")
+	cmd, cleanup, err := openShellCmdWithEnvironment("/work/it's here", []sandboxpolicy.EnvironmentEntry{
+		{Name: "PLAIN", Value: "yes"},
+		{Name: "LITERAL", Value: "spaces $(touch nope); `echo nope` 'quoted'"},
+	})
+	if err != nil {
+		t.Fatalf("openShellCmdWithEnvironment: %v", err)
+	}
+	defer cleanup()
+	if strings.Contains(cmd, "PLAIN") || strings.Contains(cmd, "LITERAL") {
+		t.Fatalf("environment leaked into terminal argv: %s", cmd)
+	}
+	end := strings.LastIndex(cmd, "'")
+	if end <= 0 {
+		t.Fatalf("terminal command has no quoted launch script: %s", cmd)
+	}
+	start := strings.LastIndex(cmd[:end], "'")
+	if start < 0 || end <= start {
+		t.Fatalf("terminal command has no quoted launch script: %s", cmd)
+	}
+	scriptPath := cmd[start+1 : end]
+	content, err := os.ReadFile(scriptPath)
+	if err != nil {
+		t.Fatalf("read launch script: %v", err)
+	}
+	for _, want := range []string{
+		"export PLAIN=yes\n",
+		"export LITERAL='spaces $(touch nope); `echo nope` '\\''quoted'\\'''\n",
+		"cd '/work/it'\\''s here'\n",
+		"exec /bin/zsh",
+	} {
+		if !strings.Contains(string(content), want) {
+			t.Errorf("launch script missing %q:\n%s", want, content)
+		}
 	}
 }
 
