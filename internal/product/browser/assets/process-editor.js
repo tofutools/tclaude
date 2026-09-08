@@ -156,10 +156,10 @@ class ProcessEditor {
     }
     if (node.Kind === 'decision') {
       const audience = [...new Map([{Subject: {Kind: 'operator'}}, ...(node.Decision.Audience || []), ...this.agents.map(a => ({Subject: {Kind: 'agent', AgentID: a.ID}}))].map(a => [JSON.stringify(a), a])).values()];
-      fields.push({name: 'audience', label: 'Decision audience', multiple: true, value: node.Decision.Audience.map(a => JSON.stringify(a)), options: audience.map(a => option(JSON.stringify(a), a.Subject.Kind === 'operator' ? 'Operator' : this.agents.find(agent => agent.ID === a.Subject.AgentID)?.Name || a.Subject.AgentID || a.RoleID || 'Scoped audience'))},
+      fields.push({name:'question',label:'Decision question (optional; defaults to node name)',multiline:true,value:node.Decision.Question||''}, {name: 'audience', label: 'Decision audience', multiple: true, value: node.Decision.Audience.map(a => JSON.stringify(a)), options: audience.map(a => option(JSON.stringify(a), a.Subject.Kind === 'operator' ? 'Operator' : this.agents.find(agent => agent.ID === a.Subject.AgentID)?.Name || a.Subject.AgentID || a.RoleID || 'Scoped audience'))},
         {name: 'answers', label: 'Permitted answers (one per line)', multiline: true, value: node.Decision.PermittedAnswers.join('\n'), required: true},
         {name: 'expires', label: 'Decision expires after seconds', type: 'number', min: 1, value: node.Decision.ExpiresAfter / 1e9, required: true});
-      changes.push((n, f) => { n.Decision = {...n.Decision, Audience: f.audience.map(value => JSON.parse(value)), PermittedAnswers: lines(f.answers), ExpiresAfter: seconds(f.expires)}; });
+      changes.push((n, f) => { n.Decision = {...n.Decision, Question:f.question||undefined, Audience: f.audience.map(value => JSON.parse(value)), PermittedAnswers: lines(f.answers), ExpiresAfter: seconds(f.expires)}; });
     }
     if (node.Kind === 'task') {
       if(!stageContext) {
@@ -324,7 +324,8 @@ class ProcessEditor {
   overview() {
     if(!this.discardUnapplied()) return;
     const graph=this.model.value.Process.Graph;
-    this.form('Process overview', [{name:'description',label:'Process description',multiline:true,value:graph.Description||''},{name:'doc',label:'Process documentation',multiline:true,value:graph.Doc||''}], f=>this.change(d=>{for(const [key,value] of [['Description',f.description],['Doc',f.doc]]){if(value)d.Process.Graph[key]=value;else delete d.Process.Graph[key];}}));
+    this.form('Process overview', [{name:'description',label:'Process description',multiline:true,value:graph.Description||''},{name:'doc',label:'Process documentation',multiline:true,value:graph.Doc||''},{name:'parameter_syntax',label:'Expand {{ params.key }} in performer input',type:'checkbox',value:this.model.value.Process.ParameterSyntax==='mustache-v1'}], f=>this.change(d=>{for(const [key,value] of [['Description',f.description],['Doc',f.doc]]){if(value)d.Process.Graph[key]=value;else delete d.Process.Graph[key];}if(f.parameter_syntax)d.Process.ParameterSyntax='mustache-v1';else delete d.Process.ParameterSyntax;}));
+    this.inspector.append(element('p','Expansion uses exact parameter keys in agent briefs, human/decision questions and individual program arguments. Configuration, routes, documentation and JSON input stay literal.'));
   }
   parameters() {
     if (!this.discardUnapplied()) return;

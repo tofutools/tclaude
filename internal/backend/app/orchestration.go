@@ -124,7 +124,11 @@ func (s *Service) compileDefinition(ctx context.Context, draft DefinitionDraft, 
 		if draft.Process == nil || draft.Team != nil {
 			return model.DefinitionRevision{}, fail(ErrInvalid, "process definition requires exactly one process spec")
 		}
-		if _, err := compileTaskStages(draft.Process.Graph); err != nil {
+		compiled, err := compileTaskStages(draft.Process.Graph)
+		if err != nil {
+			return model.DefinitionRevision{}, err
+		}
+		if err := validateProcessParameterSyntax(draft.Process.ParameterSyntax, compiled, draft.Parameters); err != nil {
 			return model.DefinitionRevision{}, err
 		}
 	case model.DefinitionTeam:
@@ -309,6 +313,8 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 		return WorkRunResult{}, fail(ErrInvalid, "exactly one pinned definition or inline graph is required")
 	}
 	var graph model.WorkGraph
+	var parameterSyntax string
+	var declarations []model.ParameterDeclaration
 	var closure []model.DefinitionRef
 	parameters := cloneRawMap(req.Start.Parameters)
 	if ref := req.Start.Definition; ref != nil {
@@ -320,6 +326,7 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 			return WorkRunResult{}, fail(ErrConflict, "process definition reference is not the pinned revision")
 		}
 		graph = revision.Process.Graph
+		parameterSyntax, declarations = revision.Process.ParameterSyntax, revision.Parameters
 		closure = append(append([]model.DefinitionRef(nil), revision.Dependencies...), *ref)
 		parameters = materializeParameterValues(revision.Parameters, parameters)
 		if err := validateParameterValues(revision.Parameters, parameters); err != nil {
@@ -348,6 +355,15 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 	graph, err = materializePerformerBindings(graph, req.Start.PerformerBindings)
 	if err != nil {
 		return WorkRunResult{}, err
+	}
+	if err := validateProcessParameterSyntax(parameterSyntax, graph, declarations); err != nil {
+		return WorkRunResult{}, err
+	}
+	if parameterSyntax != "" {
+		graph, err = expandProcessParameters(graph, declarations, parameters)
+		if err != nil {
+			return WorkRunResult{}, err
+		}
 	}
 	if err := validateWorkGraph(graph); err != nil {
 		return WorkRunResult{}, err
@@ -911,6 +927,9 @@ func (s *Service) attachDecisionWindow(run model.WorkRun, node model.WorkNode, a
 	var expires time.Time
 	if node.Kind == model.WorkNodeDecision {
 		audience, question, answers = append([]model.DecisionAudience(nil), node.Decision.Audience...), node.Name, append([]string(nil), node.Decision.PermittedAnswers...)
+		if node.Decision.QuestionResolved || node.Decision.Question != "" {
+			question = node.Decision.Question
+		}
 		expires = now.Add(node.Decision.ExpiresAfter)
 	} else if node.Kind == model.WorkNodeTask && node.Performer != nil && node.Performer.Kind == model.PerformerHuman {
 		human := attempt.Performer.Human
@@ -1336,7 +1355,7 @@ func validateParameters(parameters []model.ParameterDeclaration) error {
 		default:
 			return fail(ErrInvalid, "parameter %s has unsupported type", parameter.Name)
 		}
-		if len(parameter.Default) != 0 {
+		if hasParameterDefault(parameter.Default) {
 			if err := validateParameterValue(parameter, parameter.Default); err != nil {
 				return err
 			}
@@ -1351,7 +1370,7 @@ func validateParameterValues(declarations []model.ParameterDeclaration, values m
 		declared[declaration.Name] = declaration
 	}
 	for _, declaration := range declarations {
-		if _, ok := values[declaration.Name]; !ok && declaration.Required && len(declaration.Default) == 0 {
+		if _, ok := values[declaration.Name]; !ok && declaration.Required && !hasParameterDefault(declaration.Default) {
 			return fail(ErrInvalid, "required parameter %s is missing", declaration.Name)
 		}
 	}
@@ -1397,7 +1416,7 @@ func materializeParameterValues(declarations []model.ParameterDeclaration, suppl
 		values = make(map[string]json.RawMessage)
 	}
 	for _, declaration := range declarations {
-		if _, exists := values[declaration.Name]; !exists && len(declaration.Default) != 0 {
+		if _, exists := values[declaration.Name]; !exists && hasParameterDefault(declaration.Default) {
 			values[declaration.Name] = append(json.RawMessage(nil), declaration.Default...)
 		}
 	}
@@ -1671,6 +1690,9 @@ func validateWorkNode(node model.WorkNode) error {
 		}
 		return validatePerformer(*node.Performer)
 	case model.WorkNodeDecision:
+		if node.Decision != nil && (len(node.Decision.Question) > 128<<10 || !utf8.ValidString(node.Decision.Question) || strings.ContainsRune(node.Decision.Question, 0)) {
+			return fail(ErrInvalid, "decision question requires bounded valid text")
+		}
 		if node.Decision == nil || len(node.Decision.Audience) == 0 || len(node.Decision.PermittedAnswers) == 0 || node.Decision.ExpiresAfter <= 0 {
 			return fail(ErrInvalid, "decision node %s requires bounded declared answers", node.ID)
 		}

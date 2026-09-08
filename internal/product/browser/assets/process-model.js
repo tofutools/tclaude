@@ -78,6 +78,19 @@ export function validationMessages(draft) {
   const messages = [], graph = draft.Process?.Graph;
   if (!draft.Name.trim()) messages.push('Give the process a name.');
   if (!graph?.Nodes?.length) return [...messages, 'Add at least one node.'];
+  if (draft.Process.ParameterSyntax === 'mustache-v1') {
+    const declared = new Set((draft.Parameters || []).map(p => p.Name));
+    for (const key of declared) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) messages.push('Parameter keys must be ASCII identifiers when expansion is enabled.');
+    const texts = taskPerformers(graph).flatMap(p => [p.Agent?.Brief, p.Human?.Prompt, ...(p.Program?.Arguments || [])]);
+    for (const node of graph.Nodes) texts.push(node.Decision?.Question, node.Stages?.PlanApproval?.Question);
+    for (const text of texts.filter(v => typeof v === 'string')) {
+      const remaining = text.replace(/\{\{[ \t\r\n\f]*params\.([A-Za-z_][A-Za-z0-9_]*)[ \t\r\n\f]*\}\}/g, (_, key) => {
+        if (!declared.has(key)) messages.push(`Input references undeclared parameter ${key}.`);
+        return '';
+      });
+      if (/\{\{[ \t\r\n\f]*params\b/.test(remaining)) messages.push('Malformed parameter reference: use {{ params.key }}.');
+    }
+  }
   const nodes = new Map(graph.Nodes.map(n => [n.ID, n]));
   if (!nodes.has(graph.EntryNodeID)) messages.push('Choose an entry node.');
   const incoming = new Map(), outgoing = new Map();

@@ -137,7 +137,8 @@ type TeamBriefing struct {
 }
 
 type ProcessDefinition struct {
-	Graph WorkGraph
+	ParameterSyntax string `json:",omitempty"`
+	Graph           WorkGraph
 }
 
 type WorkGraph struct {
@@ -299,6 +300,9 @@ const (
 )
 
 type DecisionNode struct {
+	// QuestionResolved distinguishes an admitted empty expansion from legacy absence.
+	QuestionResolved bool   `json:",omitempty"`
+	Question         string `json:",omitempty"`
 	Kind             DecisionKind
 	Audience         []DecisionAudience
 	PermittedAnswers []string
