@@ -47,7 +47,7 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
   edit('Clone group',[
    {name:'name',label:'New group name',value:group.Name+' copy'},
    {name:'members',label:'Member configurations',value:canCopy?'copy':'none',options:[...(canCopy?[{value:'copy',label:'Copy active members as new offline agents'}]:[]),{value:'none',label:'Create an empty group'}]},
-   {name:'defaults',label:'Group launch default',value:'none',options:[{value:'none',label:'No default'},...(canDefault?[{value:'copy',label:current.Profile?'Copy pinned '+current.Profile.ProfileID+' · '+current.Profile.RevisionID+' and group environment':'Copy group environment'}]:[])]},
+   {name:'defaults',label:'Group launch default',value:'none',options:[{value:'none',label:'No default'},...(canDefault?[{value:'copy',label:current.Profile?'Copy selected configuration '+(profiles.find(p=>p.ID===current.Profile.ProfileID)?.Name||current.Profile.ProfileID)+' and group environment':'Copy group environment'}]:[])]},
    {name:'limit',label:'Maximum active direct members (0 = no configured limit)',type:'number',value:String(cap)}
   ],f=>{
    const limit=Number(f.limit),copy=f.members==='copy';if(!Number.isInteger(limit)||limit<0||limit>2147483647)throw new Error('Enter a whole number from 0 to 2147483647');
@@ -57,7 +57,8 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
   document.getElementById('editor-fields').append(el('p','Creates a separate top-level group. Details and selected configurations are copied; retired members are skipped. Ownership, permissions, running work, messages and automation are not copied. Nothing starts.'));
   const preview=el('ul');for(const member of active)preview.append(el('li',member.Name+' · '+member.ID+(blocked.includes(member)?' — cannot copy: archived or unavailable configuration '+member.ConfigurationProfile.ProfileID:'')));document.getElementById('editor-fields').append(el('p','Active source members:'),preview);
   if(!canCopy)document.getElementById('editor-fields').append(el('p','Member copying is unavailable. Restore the listed archived configurations in Configurations or update those agents to active configurations, then reopen this dialog. You can create an empty group now.'));
-  if(current.Profile&&!canDefault)document.getElementById('editor-fields').append(el('p','The pinned default '+current.Profile.ProfileID+' is archived or unavailable. Restore it before copying the default, or continue with no default.'));
+  if(current.Profile&&canDefault)document.getElementById('editor-fields').append(el('p','New members use the selected configuration’s current settings, including later profile edits. Copied existing members retain their settings.'));
+  if(current.Profile&&!canDefault)document.getElementById('editor-fields').append(el('p','The selected default '+current.Profile.ProfileID+' is archived or unavailable. Restore it before copying the default, or continue with no default.'));
  }));
 
  controls.append(button('Open group shell',async()=>{

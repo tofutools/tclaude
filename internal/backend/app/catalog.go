@@ -20,6 +20,10 @@ type ConfigurationCatalogStore interface {
 	ConfigurationProfiles(context.Context) ([]model.ConfigurationProfile, error)
 }
 
+type ConfigurationDefaultsRequestStore interface {
+	FindConfigurationDefaultsWrite(context.Context, model.RequestID, string) (model.ConfigurationDefaults, bool, error)
+}
+
 type ConfigurationProfileRequestStore interface {
 	FindConfigurationProfileWrite(context.Context, model.RequestID, string) (ConfigurationProfileResult, bool, error)
 }
@@ -203,7 +207,23 @@ func (s *Service) SaveConfigurationDefaults(ctx context.Context, req SaveConfigu
 	if req.Global != nil {
 		refs[""] = *req.Global
 	}
+
+	input, _ := json.Marshal(struct {
+		Global    *model.ConfigurationProfileRef
+		Harnesses map[string]model.ConfigurationProfileRef
+		Expected  model.Revision
+	}{req.Global, req.Harnesses, req.ExpectedRevision})
+	hash := sha256.Sum256(input)
+	fingerprint := hex.EncodeToString(hash[:])
+	if store, ok := s.store.(ConfigurationDefaultsRequestStore); ok {
+		if prior, found, err := store.FindConfigurationDefaultsWrite(ctx, req.Context.RequestID, fingerprint); found || err != nil {
+			return prior, err
+		}
+	}
+	var global *model.ConfigurationProfileRef
+	harnesses := map[string]model.ConfigurationProfileRef{}
 	for harness, ref := range refs {
+		// Validate the supplied reference, then use its identity's current settings.
 		desired, _, err := s.resolveConfigurationSelection(ctx, model.DesiredConfiguration{}, &ref)
 		if err != nil {
 			return model.ConfigurationDefaults{}, err
@@ -211,14 +231,17 @@ func (s *Service) SaveConfigurationDefaults(ctx context.Context, req SaveConfigu
 		if harness != "" && desired.Harness != harness {
 			return model.ConfigurationDefaults{}, fail(ErrInvalid, "default harness does not match profile")
 		}
+		current, err := s.currentConfigurationDefault(ctx, ref, harness)
+		if err != nil {
+			return model.ConfigurationDefaults{}, err
+		}
+		if harness == "" {
+			global = current
+		} else {
+			harnesses[harness] = *current
+		}
 	}
-	input, _ := json.Marshal(struct {
-		Global    *model.ConfigurationProfileRef
-		Harnesses map[string]model.ConfigurationProfileRef
-		Expected  model.Revision
-	}{req.Global, req.Harnesses, req.ExpectedRevision})
-	hash := sha256.Sum256(input)
-	return s.store.SaveConfigurationDefaults(ctx, ConfigurationDefaultsWrite{Defaults: model.ConfigurationDefaults{Global: req.Global, Harnesses: req.Harnesses, UpdatedAt: s.now().UTC()}, ExpectedRevision: req.ExpectedRevision, RequestID: req.Context.RequestID, RequestFingerprint: hex.EncodeToString(hash[:])})
+	return s.store.SaveConfigurationDefaults(ctx, ConfigurationDefaultsWrite{Defaults: model.ConfigurationDefaults{Global: global, Harnesses: harnesses, UpdatedAt: s.now().UTC()}, ExpectedRevision: req.ExpectedRevision, RequestID: req.Context.RequestID, RequestFingerprint: fingerprint})
 }
 func (s *Service) GetConfigurationDefaults(ctx context.Context, p model.Principal) (model.ConfigurationDefaults, error) {
 	if err := requireOperator(p); err != nil {
