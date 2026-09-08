@@ -821,6 +821,29 @@ func readGroup(ctx context.Context, q groupReader, id model.GroupID) (model.Grou
 		return model.Group{}, err
 	}
 	group.CreatedAt, group.UpdatedAt = fromNanos(created), fromNanos(updated)
+	owners, err := q.QueryContext(ctx, `SELECT m.agent_id FROM group_members m JOIN role_assignments r ON r.subject_id=m.agent_id WHERE m.group_id=? AND r.role_id=? AND r.subject_kind=? AND r.resource_kind=? AND r.resource_id=? ORDER BY (m.agent_id=?) DESC,m.position`, id, model.GroupOwnerRole, model.AuthorityAgent, model.ResourceGroupPeers, id, group.OwnerAgentID)
+	if err != nil {
+		return model.Group{}, err
+	}
+	for owners.Next() {
+		var owner model.AgentID
+		if err = owners.Scan(&owner); err != nil {
+			_ = owners.Close()
+			return model.Group{}, err
+		}
+		group.OwnerAgentIDs = append(group.OwnerAgentIDs, owner)
+	}
+	err = owners.Err()
+	_ = owners.Close()
+	if err != nil {
+		return model.Group{}, err
+	}
+	// The compatibility ID only orders current owners; a revoked assignment is
+	// never promoted back into ownership by a stale denormalized ID.
+	group.OwnerAgentID = ""
+	if len(group.OwnerAgentIDs) > 0 {
+		group.OwnerAgentID = group.OwnerAgentIDs[0]
+	}
 	rows, err := q.QueryContext(ctx, `SELECT agent_id FROM group_members WHERE group_id=? ORDER BY position`, id)
 	if err != nil {
 		return model.Group{}, err

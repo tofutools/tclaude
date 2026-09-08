@@ -36,7 +36,7 @@ func TestBrowserEditsGroupMembershipOrderAndBoundedOwner(t *testing.T) {
 	page.MustElement("#editor").MustWaitInvisible()
 	page.MustWait(`() => !submitting`)
 	page.MustElementR("#group-management button", "^Change owner$").MustClick()
-	page.MustElement("#editor [name=owner]").MustSelect("alpha")
+	page.MustElement("#editor [name=owners]").MustSelect("alpha", "beta")
 	page.MustElement("#editor [name=configuration]").MustSelect("Allow only the complete lists below")
 	page.MustElement("#editor [name=harnesses]").MustInput("codex")
 	page.MustElement("#editor [name=roots]").MustInput("/tmp")
@@ -50,7 +50,7 @@ func TestBrowserEditsGroupMembershipOrderAndBoundedOwner(t *testing.T) {
 	page.MustWait(`() => !submitting`)
 	var authority app.AuthorityStateResult
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/authority", nil, &authority))
-	require.Len(t, authority.Assignments, 1)
+	require.Len(t, authority.Assignments, 2)
 	require.Equal(t, []string{"codex"}, authority.Assignments[0].Bounds.Harnesses)
 	page.MustElementR("#group-management button", "^Change owner$").MustClick()
 	require.Equal(t, "codex", page.MustElement("#editor [name=harnesses]").MustProperty("value").Str())
@@ -68,6 +68,7 @@ func TestBrowserEditsGroupMembershipOrderAndBoundedOwner(t *testing.T) {
 	require.Equal(t, "Updated team", snapshot.Groups[0].Name)
 	require.Equal(t, []model.AgentID{"beta", "alpha", "gamma"}, snapshot.Groups[0].Members)
 	require.Equal(t, model.AgentID("alpha"), snapshot.Groups[0].OwnerAgentID)
+	require.ElementsMatch(t, []model.AgentID{"alpha", "beta"}, snapshot.Groups[0].OwnerAgentIDs)
 
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/launch", map[string]any{"request_id": "owner_start", "target": map[string]any{"agent": map[string]any{"agent_id": "alpha", "expected_revision": 1}}}, nil))
 	receipt := <-p.delivered

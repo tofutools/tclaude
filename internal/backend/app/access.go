@@ -104,6 +104,7 @@ type SetGroupOwnerRequest struct {
 	Principal             model.Principal
 	GroupID               model.GroupID
 	OwnerAgentID          model.AgentID
+	OwnerAgentIDs         []model.AgentID
 	Bounds                model.ConfigurationBounds
 	ExpectedGroupRevision model.Revision
 }

@@ -77,6 +77,7 @@ type Group struct {
 	Name             string
 	Members          []AgentID
 	OwnerAgentID     AgentID
+	OwnerAgentIDs    []AgentID `json:",omitempty"`
 	Revision         Revision
 	CreatedAt        time.Time
 	UpdatedAt        time.Time

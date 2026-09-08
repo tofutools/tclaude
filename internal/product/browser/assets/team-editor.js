@@ -138,7 +138,6 @@ class TeamEditor {
     ];
     const form = this.form('Member', fields, f => {
       if (this.draft.Team.Members.some(x => x.Key === f.key && x.Key !== original?.Key)) throw new Error('Member keys must be unique.');
-      if (f.owner && this.draft.Team.Members.some(x => x.Owner && x.Key !== original?.Key)) throw new Error('Choose only one group owner.');
       if (f.effort && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(f.effort)) throw new Error('Requested effort must be a lowercase native level or variant, at most 64 characters.');
       const member = {...m, Key: f.key, Name: f.name, Desired: {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, HostSandbox: f.resolvedSandbox||undefined, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
       this.change(d => {

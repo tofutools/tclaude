@@ -85,13 +85,14 @@ func (h *Handler) setGroupOwner(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		OwnerAgentID     model.AgentID             `json:"owner_agent_id"`
+		OwnerAgentIDs    []model.AgentID           `json:"owner_agent_ids"`
 		ExpectedRevision model.Revision            `json:"expected_revision"`
 		Bounds           model.ConfigurationBounds `json:"bounds"`
 	}
 	if !decodeRequest(w, r, &body) {
 		return
 	}
-	result, err := h.authority.SetGroupOwner(r.Context(), app.SetGroupOwnerRequest{Principal: p, GroupID: model.GroupID(r.PathValue("id")), OwnerAgentID: body.OwnerAgentID, ExpectedGroupRevision: body.ExpectedRevision, Bounds: body.Bounds})
+	result, err := h.authority.SetGroupOwner(r.Context(), app.SetGroupOwnerRequest{Principal: p, GroupID: model.GroupID(r.PathValue("id")), OwnerAgentID: body.OwnerAgentID, OwnerAgentIDs: body.OwnerAgentIDs, ExpectedGroupRevision: body.ExpectedRevision, Bounds: body.Bounds})
 	if err != nil {
 		applicationError(w, err)
 		return
