@@ -1360,3 +1360,11 @@ input are never expanded. Decision questions can be authored separately from
 node names; a missing question retains the node-name fallback. Parameter keys in
 this syntax begin with a letter or underscore and contain letters, digits and
 underscores. An undeclared reference is rejected before saving or starting.
+
+Process connector labels support Automatic, Always show, and Hide unless selected
+in the connection inspector. Automatic uses the graph renderer's outcome rules;
+selected connections remain readable. The preference belongs to editor layout
+and identifies the exact source, destination and answer/outcome tuple. Saving,
+reopening, export/import and node/snippet copies retain it; copied endpoints are
+remapped and deleted connections discard their preferences. Label visibility
+never changes an edge's routing verdict or grants execution authority.

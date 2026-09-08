@@ -2,6 +2,7 @@
 export const clone = value => structuredClone(value);
 export const freshID = prefix => prefix + crypto.randomUUID();
 export const edgeID = (edge, index) => `${index}:${edge.From}:${edge.To}:${edge.Verdict || ''}`;
+export const edgeKey = edge => JSON.stringify([edge.From, edge.To, edge.Verdict || ""]);
 export const seconds = value => Number(value || 0) * 1e9;
 export const lines = text => text.split('\n').map(value => value.trim()).filter(Boolean);
 
@@ -36,13 +37,14 @@ export function defaultNode(kind) {
 // or execution identity. Fork/join share its parallel shape with distinct labels.
 export function graphView(draft) {
   const graph = draft.Process.Graph;
+  const labels = new Map((draft.EditorLayout?.EdgeLabels || []).map(label => [edgeKey(label.Edge), label.Pinned]));
   return {nodes: graph.Nodes.map(node => {
     const position = draft.EditorLayout?.Nodes?.[node.ID];
     return {id: node.ID, type: ['fork', 'join'].includes(node.Kind) ? 'parallel' : node.Kind === 'task_complete' ? 'task' : node.Kind,
       label: node.Name || node.ID, subtitle: node.ID === graph.EntryNodeID ? 'Entry' : node.Kind,
       pinned: position ? {x: position.X, y: position.Y} : undefined};
   }), edges: (graph.Edges || []).map((edge, index) => ({id: edgeID(edge, index), from: edge.From,
-    to: edge.To, outcome: edge.Verdict || '', pinned: true}))};
+    to: edge.To, outcome: edge.Verdict || 'pass', pinned: labels.get(edgeKey(edge))}))};
 }
 
 export class ProcessDraft {
@@ -56,6 +58,11 @@ export class ProcessDraft {
   change(edit) {
     const before = clone(this.value), after = clone(before);
     edit(after);
+    if(after.EditorLayout?.EdgeLabels) {
+      const edges=new Set(after.Process.Graph.Edges.map(edgeKey));
+      after.EditorLayout.EdgeLabels=after.EditorLayout.EdgeLabels.filter(label=>edges.has(edgeKey(label.Edge)));
+      if(!after.EditorLayout.EdgeLabels.length)delete after.EditorLayout.EdgeLabels;
+    }
     if (JSON.stringify(before) === JSON.stringify(after)) return;
     this.undoStack.push(before); if (this.undoStack.length > 100) this.undoStack.shift();
     this.redoStack = []; this.value = after;
