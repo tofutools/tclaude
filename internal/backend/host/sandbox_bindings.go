@@ -37,6 +37,7 @@ type SandboxMountPin struct {
 type SandboxMountBindings struct {
 	providerCount int
 	controlPort   int
+	overlays      []sandboxOverlay
 	pins          []SandboxMountPin
 	files         []*os.File
 }

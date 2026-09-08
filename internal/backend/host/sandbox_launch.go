@@ -89,7 +89,7 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 	if policy.FilesystemRoot != model.SandboxRootSeparate {
 		return SandboxChildArtifact{}, fmt.Errorf("inherited sandbox root preparation is not configured")
 	}
-	if len(policy.Tmpfs) != 0 || len(policy.AgentDirectories) != 0 || len(policy.PreLaunch) != 0 || policy.Resources != (model.SandboxResources{}) || (harness == "" && policy.HarnessConfig != model.SandboxHarnessConfigDefault) || policy.DarwinAllowMachRegister {
+	if len(policy.AgentDirectories) != 0 || len(policy.PreLaunch) != 0 || policy.Resources != (model.SandboxResources{}) || (harness == "" && policy.HarnessConfig != model.SandboxHarnessConfigDefault) || policy.DarwinAllowMachRegister {
 		return SandboxChildArtifact{}, fmt.Errorf("selected sandbox requires additional native policy preparation")
 	}
 	if len(materialized.Composition.SocketAll) != 0 {
@@ -112,7 +112,15 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 	if err != nil {
 		return SandboxChildArtifact{}, err
 	}
-	rules := append(runtimeRules, policy.Filesystem...)
+	rules := runtimeRules
+	var denied []model.SandboxFilesystemRule
+	for _, rule := range policy.Filesystem {
+		if rule.Access == model.SandboxFilesystemDeny {
+			denied = append(denied, rule)
+		} else {
+			rules = append(rules, rule)
+		}
+	}
 	bindings, err := p.config.Inspector.BindSandboxMounts(ctx, rules)
 	if err != nil {
 		return SandboxChildArtifact{}, err
@@ -146,6 +154,10 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 	bindings.files = append(bindings.files, owned.files...)
 	bindings.providerCount = len(owned.pins)
 	bindings.controlPort = controlPort
+	bindings.overlays, err = p.config.Inspector.prepareSandboxOverlays(ctx, denied, policy.Tmpfs, bindings, child.Executable, child.Directory)
+	if err != nil {
+		return SandboxChildArtifact{}, err
+	}
 
 	// The launcher owns the inherited base; authored values are literal overlays.
 	child.Env = MergeEnvironment(policy.Environment.Entries(), child.Env)

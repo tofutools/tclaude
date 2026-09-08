@@ -223,6 +223,14 @@ network-isolation mechanism, matching the legacy platform limitation, rather
 than a guarantee limited to the numeric loopback address. Other TCP ports and
 UDP have no control exception.
 
+Selected sparse-root launches apply directory deny rules with explicit narrower
+read/write grants preserved. Linux hides a denied directory behind an empty,
+read-only mount; macOS denies access through Seatbelt. Linux also supports
+size-bounded writable tmpfs scratch mounts and explicit nested binds. Scratch
+contents do not persist to the underlying host directory. A scratch mount cannot
+cover protected state or launch-required paths. macOS refuses tmpfs because
+Seatbelt provides no mount namespace; it does not substitute a host directory.
+
 OpenCode's selected host-sandbox launch preserves its native XDG configuration
 read-only and seeds independent copies of `auth.json` and `mcp-auth.json` into
 fresh session data. Continuation retains its own login, including logout and

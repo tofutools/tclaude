@@ -23,6 +23,11 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 	if bindings == nil || len(bindings.files) != len(bindings.pins) || len(child.ExtraFiles) != 0 || !child.ExactEnvironment {
 		return ProcessSpec{}, nil, fmt.Errorf("sandbox invocation requires retained sources and an explicit environment")
 	}
+	for _, overlay := range bindings.overlays {
+		if overlay.Kind != "deny" {
+			return ProcessSpec{}, nil, fmt.Errorf("macOS Seatbelt cannot create temporary filesystem mounts")
+		}
+	}
 	// Authored environments already reserve loader/startup controls. Reject them
 	// here too: sandbox-exec must not load child-selected code before confinement.
 	for _, entry := range child.Env {
@@ -32,13 +37,20 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 		}
 	}
 	args := []string{}
-	readRegions := []string{`(literal "/dev/null")`, `(literal "/dev/tty")`, `(literal "/dev/random")`, `(literal "/dev/urandom")`, `(subpath "/dev/fd")`}
+	var readRegions []string
+	for _, path := range []string{"/dev/null", "/dev/tty", "/dev/random", "/dev/urandom", "/dev/fd"} {
+		kind := "literal"
+		if path == "/dev/fd" {
+			kind = "subpath"
+		}
+		readRegions = append(readRegions, sandboxDarwinRuntimeRegion(kind, path, bindings.overlays))
+	}
 	if bindings.controlPort != 0 {
 		// lsof inspects the device directory before reporting TCP ownership.
 		// Permit only that directory vnode, not its device descendants.
-		readRegions = append(readRegions, `(literal "/dev")`)
+		readRegions = append(readRegions, sandboxDarwinRuntimeRegion("literal", "/dev", bindings.overlays))
 	}
-	writeRegions := []string{`(literal "/dev/null")`, `(literal "/dev/tty")`}
+	writeRegions := []string{sandboxDarwinRuntimeRegion("literal", "/dev/null", bindings.overlays), sandboxDarwinRuntimeRegion("literal", "/dev/tty", bindings.overlays)}
 	selectors := make([]string, len(bindings.pins))
 	for index, pin := range bindings.pins {
 		guest, err := filepath.EvalSymlinks(pin.Guest)
@@ -52,7 +64,8 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 			predicate = "subpath"
 		}
 		selectors[index] = fmt.Sprintf("(%s (param %q))", predicate, name)
-		readRegions = append(readRegions, selectors[index])
+		region := sandboxDarwinDenyCarveouts(selectors[index], pin.Source, bindings.overlays, index >= len(bindings.pins)-bindings.providerCount)
+		readRegions = append(readRegions, region)
 	}
 	// Resolve positive parent/child precedence in the predicates themselves.
 	// A read-only descendant carves out its writable ancestor; an explicit
@@ -61,7 +74,7 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 		if pin.Access != model.SandboxFilesystemWrite {
 			continue
 		}
-		region := selectors[index]
+		region := sandboxDarwinDenyCarveouts(selectors[index], pin.Source, bindings.overlays, index >= len(bindings.pins)-bindings.providerCount)
 		for childIndex, descendant := range bindings.pins {
 			if descendant.Access == model.SandboxFilesystemRead && sandboxWithin(descendant.Source, pin.Source) {
 				region = "(require-all " + region + " (require-not " + selectors[childIndex] + "))"
@@ -116,6 +129,28 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 	wrapped.Executable, wrapped.Args = wrapper, args
 	wrapped.Env = MergeEnvironment(nil, child.Env)
 	return wrapped, nil, nil
+}
+
+// Each positive region excludes narrower denies. Explicit positive children
+// are separate union members, so they reopen exactly their own subtree without
+// relying on Seatbelt's rule-order precedence.
+func sandboxDarwinDenyCarveouts(region, path string, overlays []sandboxOverlay, provider bool) string {
+	for _, overlay := range overlays {
+		if sandboxWithin(overlay.Path, path) && !(provider && overlay.Path == path) {
+			region = fmt.Sprintf("(require-all %s (require-not (subpath %s)))", region, strconv.Quote(overlay.Path))
+		}
+	}
+	return region
+}
+
+func sandboxDarwinRuntimeRegion(kind, path string, overlays []sandboxOverlay) string {
+	region := fmt.Sprintf("(%s %s)", kind, strconv.Quote(path))
+	for _, overlay := range overlays {
+		if sandboxWithin(overlay.Path, path) || sandboxWithin(path, overlay.Path) {
+			region = fmt.Sprintf("(require-all %s (require-not (subpath %s)))", region, strconv.Quote(overlay.Path))
+		}
+	}
+	return region
 }
 
 func sandboxExecInvocation(wrapper string, child ProcessSpec, bindings *SandboxMountBindings, privateNetwork bool) (ProcessSpec, *os.File, error) {

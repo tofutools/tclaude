@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/sandboxpolicy"
 	"golang.org/x/sys/unix"
 )
 
@@ -44,14 +45,63 @@ func sandboxLinuxInvocation(wrapper string, child ProcessSpec, bindings *Sandbox
 	args = append(args, "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp")
 	// Ancestors must be mounted before descendants, even when a trusted
 	// provider root was appended after an authored narrower grant.
-	order := make([]int, len(bindings.pins))
-	for index := range order {
-		order[index] = index
+	type operation struct {
+		path     string
+		pin      int
+		overlay  *sandboxOverlay
+		priority int
+	}
+	var order []operation
+	for index, pin := range bindings.pins {
+		priority := 0
+		if index >= len(bindings.pins)-bindings.providerCount {
+			priority = 2 // The launch's exact resources survive equal-path denies.
+		}
+		order = append(order, operation{path: pin.Guest, pin: index, priority: priority})
+	}
+	for _, overlay := range bindings.overlays {
+		order = append(order, operation{path: overlay.Path, overlay: &overlay, priority: 1})
 	}
 	sort.SliceStable(order, func(a, b int) bool {
-		return strings.Count(bindings.pins[order[a]].Guest, string(filepath.Separator)) < strings.Count(bindings.pins[order[b]].Guest, string(filepath.Separator))
+		depth := func(path string) int {
+			if path == "/" {
+				return 0
+			}
+			return strings.Count(path, "/")
+		}
+		left, right := depth(order[a].path), depth(order[b].path)
+		if left == right {
+			return order[a].priority < order[b].priority
+		}
+		return left < right
 	})
-	for _, index := range order {
+	activeHides := map[string]bool{}
+	var hides []string
+	for _, item := range order {
+		if overlay := item.overlay; overlay != nil {
+			switch overlay.Kind {
+			case "deny":
+				if overlay.Path != "/" {
+					args = append(args, "--tmpfs", overlay.Path)
+				}
+				hides = append(hides, overlay.Path)
+				activeHides[overlay.Path] = true
+			case "tmpfs":
+				if overlay.Size != "" {
+					size, err := sandboxpolicy.ParseMemoryLimitBytes(overlay.Size)
+					if err != nil {
+						return ProcessSpec{}, nil, err
+					}
+					args = append(args, "--size", strconv.FormatUint(size, 10))
+				}
+				args = append(args, "--tmpfs", overlay.Path)
+				activeHides[overlay.Path] = false
+			default:
+				return ProcessSpec{}, nil, fmt.Errorf("unknown sandbox overlay")
+			}
+			continue
+		}
+		index := item.pin
 		pin := bindings.pins[index]
 		flag := "--ro-bind-fd"
 		if pin.Access == model.SandboxFilesystemWrite {
@@ -62,7 +112,16 @@ func sandboxLinuxInvocation(wrapper string, child ProcessSpec, bindings *Sandbox
 			fd = int(bindings.files[index].Fd())
 		}
 		args = append(args, flag, strconv.Itoa(fd), pin.Guest)
+		activeHides[pin.Guest] = false
 	}
+	// Keep hides writable only while constructing narrower mountpoints. The
+	// non-recursive remount preserves explicit writable children and scratch.
+	for _, path := range hides {
+		if activeHides[path] && path != "/" {
+			args = append(args, "--remount-ro", path)
+		}
+	}
+	args = append(args, "--remount-ro", "/")
 	args = append(args, "--clearenv")
 	for _, entry := range MergeEnvironment(nil, child.Env) {
 		name, value, found := strings.Cut(entry, "=")
