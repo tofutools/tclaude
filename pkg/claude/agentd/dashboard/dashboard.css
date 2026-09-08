@@ -3305,11 +3305,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 #usage .ucost { cursor: pointer; }
 #usage .ucost:hover .ucost-amt { text-decoration: underline; }
 #usage .uunits strong { color: #c9d1d9; font-weight: 600; }
-#usage button.usrc-toggle {
-  padding: 0; border: 0; border-bottom: 1px dotted #6e7681; border-radius: 0;
-  background: transparent; font: inherit; cursor: pointer;
-}
-#usage button.usrc-toggle:hover { color: #c9d1d9; border-bottom-color: #58a6ff; }
 #usage .usage-unit-switch {
   display: inline-flex; padding: 1px; border: 1px solid #2a3340;
   border-radius: 4px; background: #0d1117;

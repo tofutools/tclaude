@@ -172,9 +172,9 @@ The header usage island shows one line per provider (Claude / Codex / Copilot
 the 5-hour and 7-day rolling windows, Codex 5-hour and weekly, Copilot the
 monthly premium-request allowance, plus API cost month-to-date and today
 (click through to the Costs tab). When subscription what-if pricing is
-enabled, click a provider label or its compact selector to switch between
-quota percentage and estimated pay-per-token cost. Copilot also offers its
-native AIC allowance, cycling `% → ≈$ → AIC`.
+enabled, use the compact selector to switch between quota percentage and
+estimated pay-per-token cost. Copilot also offers its native AIC allowance in
+the same selector: `% / ≈$ / AIC`.
 
 ### PR and CI pills
 
