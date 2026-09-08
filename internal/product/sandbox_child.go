@@ -7,6 +7,7 @@ import (
 
 	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/providers/codex"
+	"github.com/tofutools/tclaude/internal/backend/providers/opencode"
 )
 
 // TrySandboxChild is dispatched before normal product startup in both shipped
@@ -14,6 +15,16 @@ import (
 // authenticates an API request. Inputs are the prepared host artifact or a
 // provider command already enclosed by that artifact.
 func TrySandboxChild(args []string) (bool, error) {
+	if len(args) > 0 && args[0] == opencode.ServerRelayCommand {
+		if len(args) != 2 || len(args[1]) > 1<<20 {
+			return true, fmt.Errorf("invalid OpenCode server relay command")
+		}
+		var request opencode.ServerRelayRequest
+		if err := json.Unmarshal([]byte(args[1]), &request); err != nil {
+			return true, err
+		}
+		return true, opencode.ExecuteServerRelay(context.Background(), request)
+	}
 	if len(args) > 0 && args[0] == codex.ForkTerminalCommand {
 		if len(args) != 2 || len(args[1]) > 1<<20 {
 			return true, fmt.Errorf("invalid Codex fork child command")
