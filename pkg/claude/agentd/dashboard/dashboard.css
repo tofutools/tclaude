@@ -3558,7 +3558,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .costs-header .filter-bar { margin: 0; flex-wrap: wrap; }
 .costs-summary-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
 .costs-summary-row #costs-summary { flex: 1 1 760px; min-width: 0; }
-.costs-dimension-filters { position: relative; flex: 0 0 auto; justify-content: flex-end; gap: 8px; overflow: visible; }
+.costs-dimension-filters { position: relative; flex: 0 1 auto; max-width: 100%; justify-content: flex-start; gap: 8px; overflow: visible; }
 .cost-filter-menu { position: relative; }
 .cost-filter-menu > summary {
   display: flex; align-items: center; gap: 8px; padding: 5px 9px;

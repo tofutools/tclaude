@@ -97,6 +97,7 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must(".costs-header .filter-bar {", "controls row scoped inside the header wrapper")
 	must(`<div class="costs-summary-row">`, "summary and dimension selectors share the second header row")
 	must(".costs-summary-row #costs-summary { flex: 1 1 760px; min-width: 0; }", "summary yields or wraps before overflowing the selector row")
+	must("flex: 0 1 auto; max-width: 100%; justify-content: flex-start", "wrapped dimension selectors shrink to the viewport and align left")
 
 	// dashboard.css: recorded vs projected bars are distinguishable.
 	must(".cost-bar", "bar style rule present")
