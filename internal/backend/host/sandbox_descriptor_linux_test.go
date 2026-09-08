@@ -45,12 +45,8 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "input"), []byte("approved"), 0600))
 	inspector, err := NewSandboxPathInspector([]string{private})
 	require.NoError(t, err)
-	var rules []model.SandboxFilesystemRule
-	for _, path := range []string{"/usr", "/bin", "/lib", "/lib64"} {
-		if _, err := os.Stat(path); err == nil {
-			rules = append(rules, model.SandboxFilesystemRule{HostPath: path, GuestPath: path, Access: model.SandboxFilesystemRead})
-		}
-	}
+	rules, err := SandboxRuntimeRules()
+	require.NoError(t, err)
 	executable, err := os.Executable()
 	require.NoError(t, err)
 	rules = append(rules,
