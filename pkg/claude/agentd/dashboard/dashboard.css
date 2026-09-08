@@ -3646,8 +3646,8 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-accumulated-line { fill: none; stroke: #6e9c7d; stroke-width: 2; }
 .cost-accumulated-line.projected { stroke: #d29922; stroke-dasharray: 7 5; }
 .cost-accumulated-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: crosshair; }
-.cost-line-key { display: inline-block; width: 16px; margin: 0 4px 2px 9px; border-top: 2px solid #6e9c7d; vertical-align: middle; }
-.cost-line-key.projected { border-top-color: #d29922; border-top-style: dashed; }
+.cost-line-key { display: inline-block; width: 16px; margin: 0 4px 2px 9px; border-top: 2px solid #9aa4b0; vertical-align: middle; }
+.cost-line-key.projected { border-top-style: dashed; }
 .cost-accumulated-tooltip line { stroke: #58a6ff; stroke-width: 1; opacity: .55; }
 .cost-accumulated-tooltip circle { fill: #9cc5aa; stroke: #0d1117; }
 .cost-accumulated-tooltip.projected circle { fill: #d29922; }
@@ -3815,6 +3815,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   display: inline-block; width: 9px; height: 9px; border-radius: 2px;
   margin-right: 3px; vertical-align: middle;
 }
+.cost-filter-neutral { background: #536273; }
 /* Rich hover tooltip: the per-provider split (swatch · name · $) over a
    ruled total. Rows are flex so amounts align to the right edge; the total
    carries a hidden swatch spacer so its name lines up with the rows'. */

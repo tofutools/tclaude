@@ -145,7 +145,7 @@ export function CostsAccumulatedChart({ chart }) {
         <text x=${PAD.left - 7} y=${y(chart.scaleMax * ratio) + 4} text-anchor="end">${fmtAxisUSD(chart.scaleMax * ratio)}</text>
       </g>`)}
       ${(chart.segments || []).map((segment, index) => html`<g key=${`line-${index}`}>
-        <polyline class=${`cost-accumulated-line${segment.projected ? ' projected' : ''}`} points=${line(segment.points)} />
+        ${!(chart.stacks || []).length && html`<polyline class=${`cost-accumulated-line${segment.projected ? ' projected' : ''}`} points=${line(segment.points)} />`}
         <polyline class="cost-accumulated-hit" points=${line(segment.points)}
           onmousemove=${(event) => showTooltip(event, segment)} onpointerdown=${(event) => showTooltip(event, segment, true)}
           onmouseleave=${(event) => { if (document.activeElement !== event.currentTarget.closest('svg')) setTooltip(null); }} />

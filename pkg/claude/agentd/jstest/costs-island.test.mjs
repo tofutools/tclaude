@@ -62,6 +62,8 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   const modelMenu = mounted.container.querySelector('#filter-costs-models');
   assert.match(providerMenu.querySelector('summary').textContent, /2 of 2 · \$5\.00/,
     'provider summary shows selected coverage and spend');
+  assert.equal(providerMenu.querySelectorAll('.cost-legend-sw[class*="cost-series-"]').length, 2,
+    'provider-only filter swatches share the chart series palette');
   assert.match(modelMenu.querySelector('summary').textContent, /2 of 2 · 100% spend/,
     'model summary shows selected coverage and spend share');
   const breakdownMenu = mounted.container.querySelector('#filter-costs-breakdown');
@@ -110,9 +112,13 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   assert.match(breakdownMenu.querySelector('summary').textContent, /Model/,
     'the menu summary reports the independent active grouping');
   assert.match(mounted.container.querySelector('.cost-daily-heading').textContent, /stacked by model/);
+  assert.equal(providerMenu.querySelectorAll('.cost-legend-sw.cost-filter-neutral').length, 2,
+    'provider swatches become neutral when providers no longer map one-to-one to chart series');
 
   const accumulatedHits = mounted.container.querySelectorAll('.cost-accumulated-hit');
   assert.equal(accumulatedHits.length, 2, 'recorded and projected accumulated lines are both hover targets');
+  assert.equal(mounted.container.querySelectorAll('.cost-accumulated-line').length, 0,
+    'the generic total line does not paint over colored stack boundaries');
   await harness.act(() => harness.fireEvent(accumulatedHits[0], 'mousemove', { clientX: 0 }));
   assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /recorded/);
   await harness.act(() => harness.fireEvent(accumulatedHits[1], 'pointerdown', { clientX: 1000 }));

@@ -121,12 +121,15 @@ function ProviderFilter({ state, current }) {
       <div class="cost-filter-popover-head"><strong>Providers</strong><span>cost share · agents</span></div>
       ${current.providerStats.map((entry) => {
         const share = Math.round(entry.share * 100);
+        const seriesIndex = [...current.selectedProviders].sort().indexOf(entry.provider);
+        const swatchClass = current.stackByProvider && !current.stackByModel && seriesIndex >= 0
+          ? `cost-series-${seriesIndex % 8}` : 'cost-filter-neutral';
         return html`<label class="cost-filter-option costs-provider-choice" title=${`Show ${entry.provider} cost rows`}>
           <input type="checkbox" data-provider=${entry.provider} checked=${current.selectedProviders.has(entry.provider)}
             onChange=${(event) => {
               if (!state.toggleProvider(entry.provider)) event.currentTarget.checked = !event.currentTarget.checked;
             }} />
-          <span class=${`cost-legend-sw ${providerSegmentClass(entry.provider, current.providers)}`}></span>
+          <span class=${`cost-legend-sw ${swatchClass}`}></span>
           <span class="cost-filter-option-name">${entry.provider}<small>${entry.modelCount} model${entry.modelCount === 1 ? '' : 's'} · ${entry.agentCount} agent${entry.agentCount === 1 ? '' : 's'}</small>
             <i><b style=${`width:${Math.max(share, 1)}%`}></b></i></span>
           <span class="cost-filter-option-value">${fmtUSD(entry.cost)}<small>${share}%</small></span>
