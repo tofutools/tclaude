@@ -1797,3 +1797,7 @@ Team recurring nudges and message schedules can target a display role within a g
 ### Profile display defaults
 
 Configuration profiles retain the v1 default display role and agent description. Creating an agent from a profile or group default copies these suggestions into the new agent; later profile edits do not rename or relabel existing agents. The creation dialogs expose both values for editing or clearing. Group-member creation stores them only on the creating membership, including explicit empty overrides; they do not become defaults in unrelated groups. API callers may omit labels to inherit the selected profile suggestions or send an explicit empty labels object to clear them. Saving agent settings as a configuration retains the display labels visible in that group, and migration preserves the role/description fields from legacy spawn profiles. These display values do not grant permissions.
+
+### Team and cloned member label scope
+
+Team deployment and group cloning place the member's display role and description on the new group membership. The same agent does not acquire those labels in unrelated groups, and removing the membership ends their lifetime. Team blueprints author a display pair for the future member, rather than overrides for existing group IDs.
