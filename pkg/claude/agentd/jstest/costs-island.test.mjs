@@ -88,6 +88,9 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   await harness.act(() => harness.fireEvent(accumulatedSVG, 'keydown', { key: 'ArrowRight' }));
   assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /projection/,
     'keyboard navigation crosses from the last recorded day into the projection');
+  assert.match(mounted.container.querySelector('.cost-accumulated-status').textContent,
+    /projection, .* accumulated, approximately .* that day/,
+    'the keyboard-selected value is announced through a live status region');
 
   const last7 = [...mounted.container.querySelectorAll('#costs-spans button')].find((button) => button.textContent === 'Last 7d');
   await harness.act(() => harness.fireEvent(last7, 'click'));
