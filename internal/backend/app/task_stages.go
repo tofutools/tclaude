@@ -90,6 +90,9 @@ func compileTaskStages(authored model.WorkGraph) (model.WorkGraph, error) {
 		}
 		if stages.PlanApproval != nil {
 			approval := *stages.PlanApproval
+			if approval.Decider != nil {
+				return model.WorkGraph{}, fail(ErrInvalid, "plan approval requires a manual decision")
+			}
 			if len(approval.PermittedAnswers) != 2 || !slices.Contains(approval.PermittedAnswers, "approve") || !slices.Contains(approval.PermittedAnswers, "rework") {
 				return model.WorkGraph{}, fail(ErrInvalid, "plan approval answers must be approve and rework")
 			}

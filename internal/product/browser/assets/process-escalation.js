@@ -32,7 +32,7 @@ export function processEscalations(graph) {
     const cancel = outgoing.find(item => item.edge.Verdict === 'cancel');
     const end = nodes.get(cancel?.edge.To);
     const incoming = (graph.Edges || []).filter(edge => edge.To === id);
-    if (id === graph.EntryNodeID || !validAudience(node.Decision?.Audience) || answers.length !== 2 || !answers.includes('retry') || !answers.includes('cancel') ||
+    if (id === graph.EntryNodeID || node.Decision?.Decider || !validAudience(node.Decision?.Audience) || answers.length !== 2 || !answers.includes('retry') || !answers.includes('cancel') ||
         outgoing.length !== 2 || !retry || !cancel || retry.edge.To !== source ||
         end?.Kind !== 'end' || end.End?.Outcome !== 'cancelled' ||
         incoming.some(edge => edge.From !== source || !failure(edge.Verdict))) {

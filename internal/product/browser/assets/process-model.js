@@ -145,7 +145,7 @@ export function validationMessages(draft) {
 
 // Stage performers participate in the same launch binding/authority controls as work.
 export function taskPerformers(graph) {
-  return (graph?.Nodes || []).flatMap(node => [node.Performer, node.Stages?.Plan?.Performer, ...(node.Stages?.Checks || []).map(s => s.Performer), node.Stages?.Review?.Performer].filter(Boolean));
+  return (graph?.Nodes || []).flatMap(node => [node.Performer, node.Decision?.Decider, node.Stages?.Plan?.Performer, ...(node.Stages?.Checks || []).map(s => s.Performer), node.Stages?.Review?.Performer].filter(Boolean));
 }
 
 function validWaitTimestamp(value) {

@@ -323,6 +323,7 @@ const (
 )
 
 type DecisionNode struct {
+	Decider *Performer `json:",omitempty"`
 	// QuestionResolved distinguishes an admitted empty expansion from legacy absence.
 	QuestionResolved bool   `json:",omitempty"`
 	Question         string `json:",omitempty"`

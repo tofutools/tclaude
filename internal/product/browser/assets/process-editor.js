@@ -135,7 +135,13 @@ class ProcessEditor {
       const parent = draft.Process.Graph.Nodes.find(n => n.ID === (stageContext?.parentID || node.ID));
       return stageContext ? stageContext.kind === 'Checks' ? parent.Stages.Checks.find(s => s.ID === stageContext.id) : parent.Stages[stageContext.kind] : parent;
     };
-    const update = edit => this.change(draft => edit(resolve(draft)));
+    const deciderContext = stageContext?.kind === 'Decider';
+    const update = edit => this.change(draft => {
+      if(deciderContext) {
+        const parent=draft.Process.Graph.Nodes.find(n=>n.ID===stageContext.parentID);
+        const virtual={Performer:parent.Decision.Decider}; edit(virtual); parent.Decision.Decider=virtual.Performer;
+      } else edit(resolve(draft));
+    });
     const fields = [{name: 'name', label: 'Node name', value: node.Name, required: true},
       {name: 'description', label: 'Description', value: node.Description || '', multiline: true},
       {name: 'doc', label: 'Documentation', value: node.Doc || '', multiline: true}];
@@ -174,7 +180,7 @@ class ProcessEditor {
         {name:'contact_target',label:'Escalation target (authoring only)',value:performer.Contact?.EscalationTarget||''});
       changes.push((n,f)=>{if(!f.contact_cadence&&!f.contact_budget&&!f.contact_target)delete n.Performer.Contact;else n.Performer.Contact={Cadence:f.contact_cadence,Budget:Number(f.contact_budget),EscalationTarget:f.contact_target};});
       const select = element('select'); select.setAttribute('aria-label', 'Performer kind');
-      for (const kind of ['agent', 'program', 'human']) { const o = element('option', kind); o.value = kind; select.append(o); }
+      for (const kind of (deciderContext ? ['agent','program'] : ['agent', 'program', 'human'])) { const o = element('option', kind); o.value = kind; select.append(o); }
       select.value = performer.Kind;
       select.onchange = () => {
         if (!this.discardUnapplied()) return;
@@ -218,7 +224,7 @@ class ProcessEditor {
       }
       this.performerSelect = select;
     }
-    if (node.Kind === 'task' || node.Kind === 'decision') {
+    if (!deciderContext && (node.Kind === 'task' || node.Kind === 'decision')) {
       fields.push({name: 'attempts', label: node.Stages ? 'Maximum work attempts (0 permits one work attempt)' : 'Maximum attempts (0 disables retries)', type: 'number', min: 0, max: 100, value: node.Retry?.MaxAttempts || 0},
         {name: 'backoff', label: 'Retry delay seconds', type: 'number', min: 0, value: (node.Retry?.Backoff || 0) / 1e9},
         {name: 'budget', label: 'Attempt budget seconds (0 uses run deadline)', type: 'number', min: 0, value: (node.Retry?.AttemptBudget || 0) / 1e9},
@@ -233,6 +239,7 @@ class ProcessEditor {
         {name:'approval_mode',label:'Approval retry mode',options:[option('','Default'),option('fresh-attempt'),option('feedback-same-session')],value:node.ApprovalRetry?.OnFail||''});
       changes.push((n,f)=>{if(!f.approval_attempts&&!f.approval_backoff&&!f.approval_mode){delete n.ApprovalRetry;return}if(!/^[1-9][0-9]*$/.test(f.approval_attempts)||BigInt(f.approval_attempts)>9223372036854775807n)throw new Error('Approval retry requires positive max attempts up to 9223372036854775807.');n.ApprovalRetry={MaxAttempts:f.approval_attempts,Backoff:f.approval_backoff,OnFail:f.approval_mode};});
     }
+    if(deciderContext) fields.splice(0,3);
     this.form(`${node.Kind} · ${node.Name || "Unnamed"}`, fields, values => update(n => {
       n.Name = values.name;
       if(values.description) n.Description = values.description; else delete n.Description;
@@ -245,11 +252,22 @@ class ProcessEditor {
     if(node.Captures?.length) this.inspector.append(element('p','Output names are retained for authoring and export. Running this process is unavailable until capture execution is supported.'));
     if(node.Performer?.Timeout) this.inspector.append(element('p',node.Performer.Kind==='program'?'Timeout starts when this program node becomes ready, includes admission delay, and cannot extend the run or saved program limit.':'Timeout is retained for authoring. Clear it to start: agent and human timeout execution is unavailable.'));
     if(node.Performer?.Contact) this.inspector.append(element('p','Contact schedules are retained for authoring and export. Clear all three contact fields to remove a schedule. Running this process is unavailable until scheduled performer contact is supported.'));
-    if(stageContext && stageContext.kind!=='Plan')this.inspector.append(element('p','Independent check/review retries can be authored and saved, but cannot run. Clear the retry policy to use the shared work retry budget.'));
+    if(stageContext && stageContext.kind!=='Plan' && !deciderContext)this.inspector.append(element('p','Independent check/review retries can be authored and saved, but cannot run. Clear the retry policy to use the shared work retry budget.'));
     if(node.Retry?.OnFail==='feedback-same-session')this.inspector.append(element('p','Feedback in the same session is retained for authoring only. Choose a fresh attempt to run.'));
     if(node.ApprovalRetry)this.inspector.append(element('p','Approval retry policy is retained for authoring and export. Clear its fields to run this process; approval retry execution is unavailable.'));
-    if (stageContext) { this.inspector.append(action('Back to task stages', () => this.render())); return; }
+    if (stageContext) { this.inspector.append(action(deciderContext?'Back to decision':'Back to task stages', () => this.render())); return; }
     if (node.Kind === 'task') this.stageControls(node);
+    if(node.Kind==='decision') {
+      const kind=element('select');kind.setAttribute('aria-label','Decision performer');
+      for(const [value,label] of [['manual','Human decision'],['agent','Agent decision (authoring only)'],['program','Program decision (authoring only)']]) {const o=element('option',label);o.value=value;kind.append(o);}
+      kind.value=node.Decision.Decider?.Kind||'manual';
+      kind.onchange=()=>{if(!this.discardUnapplied())return;update(n=>{if(kind.value==='manual')delete n.Decision.Decider;else n.Decision.Decider=kind.value==='agent'?{Kind:'agent',Agent:{MemberKey:'decider',Brief:'',ContextPolicy:'fresh'}}:{Kind:'program',Program:{Profile:{},Arguments:[]}};});};
+      this.inspector.append(kind);
+      if(node.Decision.Decider) {
+        this.inspector.append(element('p','Automated decisions can be saved and copied but cannot run. The retained human audience is inactive until you select Human decision.'));
+        this.inspector.append(action('Edit decision performer',()=>{if(this.discardUnapplied())this.showStage({parentID:node.ID,kind:'Decider'});}));
+      }
+    }
     this.inspector.append(action('Make entry', () => this.change(d => { d.Process.Graph.EntryNodeID = node.ID; })));
     this.connectionForm(node.ID);
   }
@@ -257,6 +275,7 @@ class ProcessEditor {
 
   showStage(context) {
     const parent = this.model.value.Process.Graph.Nodes.find(n => n.ID === context.parentID);
+    if(context.kind==='Decider'){this.nodeForm({Kind:'task',Name:parent.Name,Performer:parent.Decision.Decider},context);return;}
     const stage = context.kind === 'Checks' ? parent.Stages.Checks.find(s => s.ID === context.id) : parent.Stages[context.kind];
     this.nodeForm({...stage, Kind:'task'}, context);
   }

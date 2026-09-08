@@ -351,6 +351,11 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 	if err != nil {
 		return WorkRunResult{}, err
 	}
+	for _, node := range graph.Nodes {
+		if node.Decision != nil && node.Decision.Decider != nil {
+			return WorkRunResult{}, fail(ErrUnsupported, "automated decision performers are authoring-only")
+		}
+	}
 	if err := executableRetryDeclarations(retrySource); err != nil {
 		return WorkRunResult{}, err
 	}
@@ -1747,10 +1752,21 @@ func validateWorkNode(node model.WorkNode) error {
 		}
 		return validatePerformer(*node.Performer)
 	case model.WorkNodeDecision:
+		if node.Performer != nil {
+			return fail(ErrInvalid, "decision performers must use the decision decider field")
+		}
+		if node.Decision != nil && node.Decision.Decider != nil {
+			if node.Decision.Decider.Kind != model.PerformerAgent && node.Decision.Decider.Kind != model.PerformerProgram {
+				return fail(ErrInvalid, "automated decider requires agent or program")
+			}
+			if err := validatePerformer(*node.Decision.Decider); err != nil {
+				return err
+			}
+		}
 		if node.Decision != nil && (len(node.Decision.Question) > 128<<10 || !utf8.ValidString(node.Decision.Question) || strings.ContainsRune(node.Decision.Question, 0)) {
 			return fail(ErrInvalid, "decision question requires bounded valid text")
 		}
-		if node.Decision == nil || len(node.Decision.Audience) == 0 || len(node.Decision.PermittedAnswers) == 0 || node.Decision.ExpiresAfter <= 0 {
+		if node.Decision == nil || (node.Decision.Decider == nil && len(node.Decision.Audience) == 0) || len(node.Decision.PermittedAnswers) == 0 || node.Decision.ExpiresAfter <= 0 {
 			return fail(ErrInvalid, "decision node %s requires bounded declared answers", node.ID)
 		}
 	case model.WorkNodeTaskComplete:

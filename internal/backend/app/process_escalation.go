@@ -41,7 +41,7 @@ func processEscalationRetries(graph model.WorkGraph) ([]model.WorkEdge, error) {
 		if !escalation {
 			continue
 		}
-		if node.ID == graph.EntryNodeID || node.Decision == nil || !validEscalationAudience(node.Decision.Audience) || len(node.Decision.PermittedAnswers) != 2 || !slices.Contains(node.Decision.PermittedAnswers, "retry") || !slices.Contains(node.Decision.PermittedAnswers, "cancel") {
+		if node.ID == graph.EntryNodeID || node.Decision == nil || node.Decision.Decider != nil || !validEscalationAudience(node.Decision.Audience) || len(node.Decision.PermittedAnswers) != 2 || !slices.Contains(node.Decision.PermittedAnswers, "retry") || !slices.Contains(node.Decision.PermittedAnswers, "cancel") {
 			return nil, fail(ErrInvalid, "escalation requires a non-entry decision with exactly retry and cancel answers")
 		}
 		var retry, cancel *model.WorkEdge
