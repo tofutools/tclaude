@@ -110,6 +110,7 @@ type Store interface {
 // OrchestrationStore persists authored definitions and graph execution in the
 // same database/transaction owner as ordinary Operations and WorkRuns.
 type OrchestrationStore interface {
+	SetDefinitionArchived(context.Context, SetDefinitionArchivedRequest, time.Time) (model.Definition, error)
 	SaveDefinition(context.Context, model.Definition, model.DefinitionRevision, model.Revision) (DefinitionRecord, error)
 	Definition(context.Context, model.DefinitionID) (DefinitionRecord, error)
 	DefinitionRevision(context.Context, model.DefinitionRevisionID) (model.DefinitionRevision, error)

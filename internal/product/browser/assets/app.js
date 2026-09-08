@@ -352,12 +352,19 @@ async function launchTeamEditor(result){
  const {openTeamEditor}=await import('/team-editor.js');
  await openTeamEditor({api,result,onSaved:renderDefinitions});
 }
+let definitionStatus='active',definitionLoadSequence=0;
+document.addEventListener('workspace-signout',()=>{definitionLoadSequence++;definitionStatus='active';$('definition-list').replaceChildren()});
 async function renderDefinitions(){
- const definitions=await api('/v2/definitions'),list=$('definition-list');list.replaceChildren();
+ const sequence=++definitionLoadSequence;
+ const definitions=await api('/v2/definitions?include_tombstoned=true'),list=$('definition-list');if(sequence!==definitionLoadSequence)return;list.replaceChildren();
+ const status=el('select');status.setAttribute('aria-label','Template status');for(const value of ['active','archived','all']){const option=el('option',value[0].toUpperCase()+value.slice(1));option.value=value;status.append(option)}status.value=definitionStatus;status.onchange=()=>{definitionStatus=status.value;renderDefinitions().catch(showError)};list.append(status);
+ const shown=(definitions||[]).filter(d=>definitionStatus==='all'||Boolean(d.Tombstoned)===(definitionStatus==='archived'));
  list.append(button('New process',()=>launchProcessEditor()),button('New team template',()=>launchTeamEditor()),button('Import legacy process',async()=>{const sequence=refreshSequence;const {openLegacyProcessImport}=await import('./process-import.js');if(sequence!==refreshSequence)return;openLegacyProcessImport({api,agents:(snapshot.agents||[]).filter(a=>a.Lifecycle!=='retired'),onSaved:renderDefinitions})}));
- for(const definition of definitions||[]){
-  const card=el('article',undefined,'card');card.append(el('h2',definition.Name),el('p',`${definition.Kind} · revision ${definition.Revision}`,'muted'));
+ for(const definition of shown){
+  const card=el('article',undefined,'card');card.dataset.definition=definition.ID;card.append(el('h2',definition.Name),el('code',definition.ID),el('p',`${definition.Kind} · library revision ${definition.Revision}`,'muted'));
+  card.append(button(definition.Tombstoned?'Restore template':'Archive template',()=>edit(definition.Tombstoned?'Restore template':'Archive template',[{name:'confirm',label:'Type '+definition.ID+' to confirm'}],async f=>{if(f.confirm!==definition.ID)throw new Error('Template ID does not match');await api('/v2/definitions/'+encodeURIComponent(definition.ID)+'/archive',{request_id:f.requestID,expected_revision:definition.Revision,archived:!definition.Tombstoned});await renderDefinitions()})));
   card.append(button('Inspect definition',async()=>{const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID));card.append(el('pre',result.Revision.Source))}));
+  if(definition.Tombstoned){card.append(el('p','Archived from the library. Immutable revisions and exact pinned references remain available. Restore before editing or selecting it here.'));list.append(card);continue}
   if(definition.Kind==='process')card.append(button('Edit process',async()=>launchProcessEditor(await api('/v2/definitions/'+encodeURIComponent(definition.ID)))));
  if(definition.Kind==='process')card.append(button('Start process',async()=>{
    const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID));
@@ -392,8 +399,8 @@ async function renderDefinitions(){
   }));
   list.append(card);
  }
- if(!definitions?.length)empty(list,'No saved definitions. Create a process to begin authoring.');
- const deployments=await api('/v2/teams/deployments');
+ if(!shown.length)empty(list,'No '+definitionStatus+' templates.');
+ const deployments=await api('/v2/teams/deployments');if(sequence!==definitionLoadSequence)return;
  if(deployments?.length)list.append(el('h2','Deployed teams'));
  for(const result of deployments||[]){
   const d=result.Deployment,card=el('article',undefined,'card');card.dataset.deployment=d.ID;

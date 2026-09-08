@@ -46,7 +46,7 @@ func (s *Store) SaveDefinition(ctx context.Context, definition model.Definition,
 		if kind != definition.Kind {
 			return app.DefinitionRecord{}, app.ErrConflict
 		}
-		result, updateErr := tx.ExecContext(ctx, `UPDATE definitions SET name=?,head_revision_id=?,tombstoned=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, definition.Name, revision.ID, definition.Tombstoned, now, definition.ID, expected)
+		result, updateErr := tx.ExecContext(ctx, `UPDATE definitions SET name=?,head_revision_id=?,tombstoned=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND tombstoned=0`, definition.Name, revision.ID, definition.Tombstoned, now, definition.ID, expected)
 		if updateErr != nil {
 			return app.DefinitionRecord{}, updateErr
 		}

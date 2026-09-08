@@ -18,6 +18,18 @@ func (h *Handler) RegisterOrchestrationAPI(api app.OrchestrationAPI) error {
 		return errors.New("orchestration API already registered")
 	}
 	h.orchestration = api
+	h.mux.HandleFunc("POST /v2/definitions/{id}/archive", func(w http.ResponseWriter, r *http.Request) {
+		journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
+			commandIdentity
+			ExpectedRevision model.Revision `json:"expected_revision"`
+			Archived         *bool          `json:"archived"`
+		}) (any, error) {
+			if b.Archived == nil {
+				return nil, app.ErrInvalid
+			}
+			return api.SetDefinitionArchived(ctx, app.SetDefinitionArchivedRequest{Context: b.context(p), ID: model.DefinitionID(r.PathValue("id")), ExpectedRevision: b.ExpectedRevision, Archived: *b.Archived})
+		})(w, r)
+	})
 	if importer, ok := api.(app.ProcessImportAPI); ok {
 		h.registerProcessImport(importer)
 	}
