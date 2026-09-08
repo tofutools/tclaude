@@ -114,4 +114,8 @@ test('Saved model selection is normalized against the saved provider scope', asy
   assert.deepEqual([...state.view.value.selectedModels], ['opus'],
     'an unavailable legacy preference cannot leave the selected provider with no models');
   assert.equal(state.view.value.narrowed.total_usd, 4);
+  state.toggleProvider('codex');
+  assert.deepEqual([...state.view.value.selectedModels], ['opus'],
+    're-enabling the stale model provider retains the effective visible selection');
+  assert.equal(state.view.value.narrowed.total_usd, 4);
 });

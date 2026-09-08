@@ -183,6 +183,11 @@ export function createCostsState({
 
   function toggleProvider(provider) {
     const current = new Set(view.value.selectedProviders);
+    // Capture the effective selection before mutating the provider signal.
+    // A computed fallback may already have normalized an old, incompatible
+    // saved model preference; reading view again after the signal update would
+    // let that stale raw preference reappear as soon as its provider returns.
+    const effectiveModels = [...view.value.selectedModels];
     if (current.has(provider)) current.delete(provider); else current.add(provider);
     if (current.size === 0) return false;
     const all = view.value.providers;
@@ -193,7 +198,7 @@ export function createCostsState({
     prefs.removeItem(LEGACY_HARNESSES_KEY);
     const available = new Set(costModelStats(view.value.payload?.agents || [], current)
       .filter((entry) => entry.available).map((entry) => entry.model));
-    const retained = [...view.value.selectedModels].filter((model) => available.has(model));
+    const retained = effectiveModels.filter((model) => available.has(model));
     const nextModels = retained.length ? retained : [...available];
     selectedModels.value = nextModels;
     if (nextModels.length) prefs.setItem(MODELS_KEY, JSON.stringify(nextModels));
