@@ -17,6 +17,11 @@ func TestBrowserExplicitProcessStartPreservesIdentity(t *testing.T) {
 	page.MustElementR("#process-inspector button", "^Apply changes$").MustClick()
 	page.MustElementR("#process-inspector button", "^Make entry$").MustClick()
 	page.MustElementR("#process-inspector button", "^Connect$").MustClick()
+	page.MustElement("[aria-label='Connect from']").MustSelect("Done")
+	page.MustElement("[aria-label='Connect to']").MustSelect("Begin here")
+	page.MustElementR("#process-inspector button", "^Connect$").MustClick()
+	page.MustElementR("#process-editor-errors", "Start nodes cannot have incoming connections")
+
 	page.MustElementR("#process-editor button", "^Save revision$").MustClick()
 	page.MustElementR("#process-editor-message", "Revision 1 · saved")
 	page.MustElementR("#process-editor button", "^Close editor$").MustClick()
@@ -37,4 +42,5 @@ func TestBrowserExplicitProcessStartPreservesIdentity(t *testing.T) {
 		}
 	}
 	require.True(t, found)
+	require.Len(t, saved.Revision.Process.Graph.Edges, 1)
 }

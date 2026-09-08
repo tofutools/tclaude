@@ -348,6 +348,7 @@ class ProcessEditor {
   }
   addEdge(from, to, verdict = '') {
     if (!from || !to || from === to) return this.fail(new Error('Choose two different nodes.'));
+    if(this.model.value.Process.Graph.Nodes.find(n=>n.ID===to)?.Kind==='start')return this.fail(new Error('Start nodes cannot have incoming connections.'));
     if (this.model.value.Process.Graph.Edges.some(e => e.From === from && e.To === to && e.Verdict === verdict)) return this.fail(new Error('That connection already exists.'));
     this.change(d => d.Process.Graph.Edges.push({From: from, To: to, Verdict: verdict}));
   }
