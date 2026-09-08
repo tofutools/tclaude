@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/tofutools/tclaude/internal/backend/app"
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"slices"
 	"time"
 )
 
@@ -28,11 +29,7 @@ func (s *Store) UpdateGroup(ctx context.Context, in app.UpdateGroupRequest, at t
 		return model.Group{}, app.ErrConflict
 	}
 	freshActive := false
-	ownerPresent := group.OwnerAgentID == ""
 	for _, id := range in.Members {
-		if id == group.OwnerAgentID {
-			ownerPresent = true
-		}
 		var lifecycle model.AgentLifecycleState
 		var retained bool
 		err = tx.QueryRowContext(ctx, `SELECT lifecycle_state,EXISTS(SELECT 1 FROM group_members WHERE group_id=? AND agent_id=agents.id) FROM agents WHERE id=?`, in.ID, id).Scan(&lifecycle, &retained)
@@ -46,8 +43,10 @@ func (s *Store) UpdateGroup(ctx context.Context, in app.UpdateGroupRequest, at t
 			return model.Group{}, app.ErrConflict
 		}
 	}
-	if !ownerPresent {
-		return model.Group{}, app.ErrConflict
+	for _, owner := range group.OwnerAgentIDs {
+		if !slices.Contains(in.Members, owner) {
+			return model.Group{}, app.ErrConflict
+		}
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE groups SET name=?,revision=revision+1,updated_at=? WHERE id=?`, in.Name, nanos(at), in.ID); err != nil {
 		return model.Group{}, err

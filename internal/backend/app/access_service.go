@@ -217,7 +217,14 @@ func (s *Service) SetGroupOwner(ctx context.Context, req SetGroupOwnerRequest) (
 	if err := requireOperator(req.Principal); err != nil {
 		return GroupResult{}, err
 	}
-	group, err := s.store.SetGroupOwner(ctx, req.GroupID, req.OwnerAgentID, req.Bounds, req.ExpectedGroupRevision, s.now().UTC())
+	owners := req.OwnerAgentIDs
+	if owners != nil && req.OwnerAgentID != "" {
+		return GroupResult{}, fail(ErrInvalid, "choose owner_agent_ids or owner_agent_id")
+	}
+	if owners == nil && req.OwnerAgentID != "" {
+		owners = []model.AgentID{req.OwnerAgentID}
+	}
+	group, err := s.store.SetGroupOwners(ctx, req.GroupID, owners, req.Bounds, req.ExpectedGroupRevision, s.now().UTC())
 	return GroupResult{Group: group}, err
 }
 

@@ -76,7 +76,7 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(position)+1,0) FROM group_members WHERE group_id=?`, group.ID).Scan(&position); err != nil {
 			return model.TeamDeployment{}, false, classify(err)
 		}
-		if _, err = tx.ExecContext(ctx, `UPDATE groups SET revision=revision+1,updated_at=? WHERE id=?`, nanos(at), group.ID); err != nil {
+		if _, err = tx.ExecContext(ctx, `UPDATE groups SET owner_agent_id=?,revision=revision+1,updated_at=? WHERE id=?`, group.OwnerAgentID, nanos(at), group.ID); err != nil {
 			return model.TeamDeployment{}, false, classify(err)
 		}
 	} else {

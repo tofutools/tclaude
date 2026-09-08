@@ -97,8 +97,8 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
  for(const [label,delta] of [['Move group earlier',-1],['Move group later',1]]){const move=button(label,async()=>{const ids=groups.map(g=>g.ID),a=ids.indexOf(group.ID),b=ids.indexOf(siblings[position+delta].ID);[ids[a],ids[b]]=[ids[b],ids[a]];await presentation.change({GroupOrder:ids})});move.disabled=!presentation?.loaded||position+delta<0||position+delta>=siblings.length;controls.append(move)}
   controls.append(button('Edit name and members',()=>{
    const ordered=[...(group.Members||[]).map(id=>agents.find(a=>a.ID===id)).filter(Boolean),...agents.filter(a=>!group.Members?.includes(a.ID)&&a.Lifecycle!=='retired')];
-   edit('Edit group',[{name:'name',label:'Group name',value:group.Name},{name:'members',label:'Members (removing a member does not stop or retire it)',multiple:true,required:false,value:group.Members||[],options:ordered.map(a=>({value:a.ID,label:a.Name+(a.ID===group.OwnerAgentID?' (owner)':'')}))}],f=>{
-    if(group.OwnerAgentID&&!f.members.includes(group.OwnerAgentID))throw new Error('Change or clear the owner before removing that member.');
+   edit('Edit group',[{name:'name',label:'Group name',value:group.Name},{name:'members',label:'Members (removing a member does not stop or retire it)',multiple:true,required:false,value:group.Members||[],options:ordered.map(a=>({value:a.ID,label:a.Name+((group.OwnerAgentIDs||[group.OwnerAgentID]).includes(a.ID)?' (owner)':'')}))}],f=>{
+    if((group.OwnerAgentIDs||[group.OwnerAgentID]).filter(Boolean).some(id=>!f.members.includes(id)))throw new Error('Remove ownership before removing an owner from the group.');
     return api('/v2/groups/'+encodeURIComponent(group.ID),{name:f.name,members:f.members,expected_revision:group.Revision},'PUT');
    },{skipUnchanged:true});
   }),button('Change owner',async()=>{
@@ -106,9 +106,9 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
    const prior=(authority.Assignments||[]).find(a=>a.RoleID==='group_owner'&&a.Subject?.Kind==='agent'&&a.Resource?.Kind==='group_members'&&a.Subject?.AgentID===group.OwnerAgentID&&a.Resource?.GroupID===group.ID)?.Bounds||{};
    const lines=value=>(value||[]).join('\n');
    const enabled=['Harnesses','Models','WorkingDirectoryRoots','ApprovalModes','SandboxModes'].every(key=>prior[key]?.length);
-   edit('Group owner and launch limits',[
-    {name:'owner',label:'Owner (replaces this group’s owner role)',value:group.OwnerAgentID||'',required:false,options:[{value:'',label:'No owner'},...(group.Members||[]).map(id=>({value:id,label:agents.find(a=>a.ID===id)?.Name||id}))]},
-    {name:'configuration',label:'Owner launch and configuration authority',value:enabled?'listed':'disabled',options:[{value:'disabled',label:'No launch or configuration changes'},{value:'listed',label:'Allow only the complete lists below'}]},
+   edit('Group owners and shared launch limits',[
+    {name:'owners',label:'Group owners',multiple:true,value:group.OwnerAgentIDs||(group.OwnerAgentID?[group.OwnerAgentID]:[]),required:false,options:(group.Members||[]).map(id=>({value:id,label:agents.find(a=>a.ID===id)?.Name||id}))},
+    {name:'configuration',label:'Launch and configuration authority for all selected owners',value:enabled?'listed':'disabled',options:[{value:'disabled',label:'No launch or configuration changes'},{value:'listed',label:'Allow only the complete lists below'}]},
     {name:'harnesses',label:'Allowed harnesses, one per line (required for launch/configuration authority)',multiline:true,required:false,value:lines(prior.Harnesses)},
     {name:'models',label:'Allowed models, one per line (required for launch/configuration authority)',multiline:true,required:false,value:lines(prior.Models)},
     {name:'roots',label:'Working directory roots, one per line (required for launch/configuration authority)',multiline:true,required:false,value:lines(prior.WorkingDirectoryRoots)},
@@ -118,10 +118,10 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
     {name:'sandboxes',label:'Confinement modes (required for launch/configuration authority)',multiple:true,required:false,value:prior.SandboxModes||[],options:['read_only','workspace_write','unconfined']}
    ],f=>{const split=v=>v.split('\n').map(x=>x.trim()).filter(Boolean);let bounds={};
     if(f.configuration==='listed'){bounds={Harnesses:split(f.harnesses),Models:split(f.models),WorkingDirectoryRoots:split(f.roots),ApprovalModes:f.approvals,SandboxModes:f.sandboxes};if(Object.values(bounds).some(values=>!values.length))throw new Error('Supply all five allow-lists, or choose no launch or configuration changes.');bounds.Environments=f.environments;bounds.HostSandboxProfiles=f.host_policies;}
-    return api('/v2/groups/'+encodeURIComponent(group.ID)+'/owner',{owner_agent_id:f.owner,expected_revision:group.Revision,bounds},'PUT')},{skipUnchanged:true});
+    return api('/v2/groups/'+encodeURIComponent(group.ID)+'/owner',{owner_agent_ids:f.owners,expected_revision:group.Revision,bounds},'PUT')},{skipUnchanged:true});
   }));card.append(controls);
   for(const [index,id]of (group.Members||[]).entries()){
-   const row=el('div',undefined,'row');row.append(el('span',(agents.find(a=>a.ID===id)?.Name||id)+(id===group.OwnerAgentID?' · owner':'')));
+   const row=el('div',undefined,'row');row.append(el('span',(agents.find(a=>a.ID===id)?.Name||id)+((group.OwnerAgentIDs||[group.OwnerAgentID]).includes(id)?' · owner':'')));
    for(const [label,delta]of [['Move up',-1],['Move down',1]]){const move=button(label,async()=>{const members=[...group.Members],next=index+delta;[members[index],members[next]]=[members[next],members[index]];await api('/v2/groups/'+encodeURIComponent(group.ID),{name:group.Name,members,expected_revision:group.Revision},'PUT');await refresh()});move.disabled=index+delta<0||index+delta>=group.Members.length;row.append(move)}
    card.append(row);
   }

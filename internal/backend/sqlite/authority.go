@@ -184,6 +184,14 @@ func (s *Store) DeleteRoleAssignment(ctx context.Context, assignment model.RoleA
 }
 
 func (s *Store) SetGroupOwner(ctx context.Context, groupID model.GroupID, owner model.AgentID, bounds model.ConfigurationBounds, expected model.Revision, at time.Time) (model.Group, error) {
+	var owners []model.AgentID
+	if owner != "" {
+		owners = []model.AgentID{owner}
+	}
+	return s.SetGroupOwners(ctx, groupID, owners, bounds, expected, at)
+}
+
+func (s *Store) SetGroupOwners(ctx context.Context, groupID model.GroupID, owners []model.AgentID, bounds model.ConfigurationBounds, expected model.Revision, at time.Time) (model.Group, error) {
 	if bounds.ValidateEnvironments() != nil {
 		return model.Group{}, app.ErrInvalid
 	}
@@ -196,7 +204,15 @@ func (s *Store) SetGroupOwner(ctx context.Context, groupID model.GroupID, owner 
 	if err := tx.QueryRowContext(ctx, `SELECT owner_agent_id FROM groups WHERE id=? AND tombstoned=0`, groupID).Scan(&prior); err != nil {
 		return model.Group{}, classify(err)
 	}
-	if owner != "" {
+	seen := map[model.AgentID]bool{}
+	if len(owners) > 128 {
+		return model.Group{}, app.ErrInvalid
+	}
+	for _, owner := range owners {
+		if owner.Validate() != nil || seen[owner] {
+			return model.Group{}, app.ErrInvalid
+		}
+		seen[owner] = true
 		var present int
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM group_members WHERE group_id=? AND agent_id=?`, groupID, owner).Scan(&present); err != nil {
 			return model.Group{}, err
@@ -205,6 +221,10 @@ func (s *Store) SetGroupOwner(ctx context.Context, groupID model.GroupID, owner 
 			return model.Group{}, app.ErrUnauthorized
 		}
 	}
+	var owner model.AgentID
+	if len(owners) > 0 {
+		owner = owners[0]
+	}
 	result, err := tx.ExecContext(ctx, `UPDATE groups SET owner_agent_id=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, owner, nanos(at), groupID, expected)
 	if err != nil {
 		return model.Group{}, err
@@ -212,19 +232,15 @@ func (s *Store) SetGroupOwner(ctx context.Context, groupID model.GroupID, owner 
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return model.Group{}, app.ErrConflict
 	}
-	if prior != "" {
-		_, err = tx.ExecContext(ctx, `DELETE FROM role_assignments WHERE role_id=? AND subject_kind=? AND subject_id=? AND resource_kind=? AND resource_id=?`, model.GroupOwnerRole, model.AuthorityAgent, prior, model.ResourceGroupPeers, groupID)
-		if err != nil {
-			return model.Group{}, err
-		}
+	if _, err = tx.ExecContext(ctx, `DELETE FROM role_assignments WHERE role_id=? AND subject_kind=? AND resource_kind=? AND resource_id=?`, model.GroupOwnerRole, model.AuthorityAgent, model.ResourceGroupPeers, groupID); err != nil {
+		return model.Group{}, err
 	}
-	if owner != "" {
-		encoded, err := json.Marshal(bounds)
-		if err != nil {
-			return model.Group{}, err
-		}
-		_, err = tx.ExecContext(ctx, `INSERT INTO role_assignments(role_id,subject_kind,subject_id,resource_kind,resource_id,bounds_json,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?) ON CONFLICT(role_id,subject_kind,subject_id,resource_kind,resource_id) DO UPDATE SET bounds_json=excluded.bounds_json,revision=role_assignments.revision+1,updated_at=excluded.updated_at`, model.GroupOwnerRole, model.AuthorityAgent, owner, model.ResourceGroupPeers, groupID, encoded, nanos(at), nanos(at))
-		if err != nil {
+	encoded, err := json.Marshal(bounds)
+	if err != nil {
+		return model.Group{}, err
+	}
+	for _, owner := range owners {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO role_assignments(role_id,subject_kind,subject_id,resource_kind,resource_id,bounds_json,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?)`, model.GroupOwnerRole, model.AuthorityAgent, owner, model.ResourceGroupPeers, groupID, encoded, nanos(at), nanos(at)); err != nil {
 			return model.Group{}, err
 		}
 	}

@@ -94,17 +94,23 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 		for _, roleID := range spec.Roles {
 			roleMembers[roleID] = append(roleMembers[roleID], id)
 		}
-		if spec.Owner && target.Kind == model.TeamTargetExistingGroup {
-			return TeamDeploymentResult{}, fail(ErrInvalid, "reinforcement cannot replace the existing group owner")
-		}
 		if spec.Owner {
-			group.OwnerAgentID = id
+			if !slices.Contains(spec.Roles, model.GroupOwnerRole) {
+				roleMembers[model.GroupOwnerRole] = append(roleMembers[model.GroupOwnerRole], id)
+			}
+			if group.OwnerAgentID == "" {
+				group.OwnerAgentID = id
+			}
 		}
 	}
 	if len(revision.Team.Rhythms) > 0 {
 		if _, err = teamRhythmDelegation(req.Context.Principal, group.ID); err != nil {
 			return TeamDeploymentResult{}, err
 		}
+	}
+	assignments, pins, roleErr := s.teamRoleAdmissions(ctx, req.Context.Principal, group.ID, roleMembers, now)
+	if roleErr != nil {
+		return TeamDeploymentResult{}, roleErr
 	}
 	workspaceBindings, ownedWorkspaceIDs, err := s.prepareTeamWorkspaces(ctx, req, *revision.Team)
 	if err != nil {
@@ -120,10 +126,6 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 		ownedAutomationIDs = append(ownedAutomationIDs, teamRhythmID(req.DeploymentID, i))
 	}
 	deployment := model.TeamDeployment{ID: req.DeploymentID, Definition: ref, DependencyClosure: append([]model.DefinitionRef(nil), revision.Dependencies...), Mission: strings.TrimSpace(req.Instantiation.Mission), Parameters: parameters, GroupID: group.ID, TargetKind: target.Kind, Members: members, AutomationRuleIDs: automationIDs, OwnedAutomationRuleIDs: ownedAutomationIDs, Workspaces: workspaceBindings, OwnedWorkspaceIDs: ownedWorkspaceIDs, BriefingOperationIDs: map[string][]model.OperationID{}, WorkRunID: workRunID, State: model.DeploymentDeploying, Revision: 1, CreatedAt: now, UpdatedAt: now}
-	assignments, pins, roleErr := s.teamRoleAdmissions(ctx, req.Context.Principal, group.ID, roleMembers, now)
-	if roleErr != nil {
-		return TeamDeploymentResult{}, roleErr
-	}
 	deployment.RolePins = pins
 	stored, _, err := s.store.CreateTeamDeployment(ctx, deployment, group, agents, assignments, req.Context.Principal, req.Context.RequestID, requestDigest, now)
 	if err != nil {

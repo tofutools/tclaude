@@ -1763,3 +1763,19 @@ management authority.
 Automation authoring also exposes this lifetime choice. Existing omitted or
 expired delegation timestamps do not acquire no-expiry behavior implicitly;
 revocation and rule disablement continue to prevent new dispatch.
+
+### Multiple group owners
+
+Group settings can select several owner members, matching v1 teams with co-leads.
+The owner endpoint accepts `owner_agent_ids`; the previous `owner_agent_id` form
+continues to set a single owner. Selection and the displayed group revision are
+committed together. The shared configuration limits apply to every selected
+owner, and removing an owner removes that member's group-owner role assignment.
+Membership edits require ownership to be removed first. `OwnerAgentIDs` reports
+all owner members; `OwnerAgentID` remains the first owner for older clients.
+
+Team templates can mark multiple members as owners. Deployment admits their
+ordinary group-scoped owner role assignments in the same transaction as the
+members. Reinforcement adds its owners while retaining existing owners, rather
+than replacing them. Owner role admission uses the existing role authority gate;
+it is checked before workspace creation. Template save remains offline.
