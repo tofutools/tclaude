@@ -184,12 +184,12 @@ func (s *Store) SaveConfigurationDefaults(ctx context.Context, w app.Configurati
 		return old, app.ErrConflict
 	}
 	if w.Defaults.Global != nil {
-		if err := requireActiveConfigurationProfileTx(ctx, tx, w.Defaults.Global); err != nil {
+		if err := requireCurrentConfigurationDefaultTx(ctx, tx, w.Defaults.Global, ""); err != nil {
 			return old, err
 		}
 	}
-	for _, ref := range w.Defaults.Harnesses {
-		if err := requireActiveConfigurationProfileTx(ctx, tx, &ref); err != nil {
+	for harness, ref := range w.Defaults.Harnesses {
+		if err := requireCurrentConfigurationDefaultTx(ctx, tx, &ref, harness); err != nil {
 			return old, err
 		}
 	}
@@ -339,4 +339,55 @@ func configurationProfileReceipt(ctx context.Context, q queryer, id model.Reques
 	var prior app.ConfigurationProfileResult
 	err = json.Unmarshal(payload, &prior)
 	return prior, true, err
+}
+
+func (s *Store) FindConfigurationDefaultsWrite(ctx context.Context, id model.RequestID, expected string) (model.ConfigurationDefaults, bool, error) {
+	var result model.ConfigurationDefaults
+	var fingerprint string
+	var data []byte
+	err := s.db.QueryRowContext(ctx, `SELECT fingerprint,result FROM configuration_defaults_requests WHERE request_id=?`, id).Scan(&fingerprint, &data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return result, false, nil
+	}
+	if err != nil {
+		return result, false, err
+	}
+	if fingerprint != expected {
+		return result, true, app.ErrConflict
+	}
+	err = json.Unmarshal(data, &result)
+	return result, true, err
+}
+
+func requireCurrentConfigurationDefaultTx(ctx context.Context, tx *sql.Tx, ref *model.ConfigurationProfileRef, harness string) error {
+	if err := requireActiveConfigurationProfileTx(ctx, tx, ref); err != nil {
+		return err
+	}
+	if ref == nil {
+		return nil
+	}
+	var data []byte
+	if err := tx.QueryRowContext(ctx, `SELECT record FROM configuration_profiles WHERE id=?`, ref.ProfileID).Scan(&data); err != nil {
+		return classify(err)
+	}
+	var profile model.ConfigurationProfile
+	if err := json.Unmarshal(data, &profile); err != nil {
+		return err
+	}
+	if profile.CurrentRevisionID != ref.RevisionID {
+		return app.ErrConflict
+	}
+	if harness != "" {
+		if err := tx.QueryRowContext(ctx, `SELECT record FROM configuration_profile_revisions WHERE profile_id=? AND revision_id=?`, ref.ProfileID, ref.RevisionID).Scan(&data); err != nil {
+			return classify(err)
+		}
+		var revision model.ConfigurationProfileRevision
+		if err := json.Unmarshal(data, &revision); err != nil {
+			return err
+		}
+		if revision.Desired.Harness != harness {
+			return app.ErrConflict
+		}
+	}
+	return nil
 }

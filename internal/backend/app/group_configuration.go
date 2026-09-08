@@ -104,7 +104,11 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	if defaults.Revision != in.ExpectedDefaultRevision || defaults.Profile == nil {
 		return GroupMemberResult{}, ErrConflict
 	}
-	desired, ref, err := s.resolveConfigurationSelection(ctx, model.DesiredConfiguration{}, defaults.Profile)
+	current, err := s.currentConfigurationDefault(ctx, *defaults.Profile, "")
+	if err != nil {
+		return GroupMemberResult{}, err
+	}
+	desired, ref, err := s.resolveConfigurationSelection(ctx, model.DesiredConfiguration{}, current)
 	if err != nil {
 		return GroupMemberResult{}, err
 	}

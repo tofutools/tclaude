@@ -157,13 +157,13 @@ func TestGroupCapacityRejectsDefaultMemberWithoutOrphan(t *testing.T) {
 	save.ExpectedRevision = first.Profile.Revision
 	save.RevisionID = "two"
 	save.Desired.Model = "second"
-	_, err = svc.SaveConfigurationProfile(ctx, save)
+	second, err := svc.SaveConfigurationProfile(ctx, save)
 	require.NoError(t, err)
 	in := app.CreateGroupMemberRequest{Context: app.RequestContext{Principal: op, RequestID: "member"}, GroupID: "group", ID: "member", Name: "Named", ExpectedGroupRevision: 1, ExpectedDefaultRevision: defaults.Revision}
 	result, err := svc.CreateGroupMember(ctx, in)
 	require.NoError(t, err)
-	require.Equal(t, "first", result.Agent.Desired.Model)
-	require.Equal(t, &first.Revision.Ref, result.Agent.ConfigurationProfile)
+	require.Equal(t, "second", result.Agent.Desired.Model)
+	require.Equal(t, &second.Revision.Ref, result.Agent.ConfigurationProfile)
 	require.Equal(t, []model.AgentID{"member"}, result.Group.Members)
 	group, err := svc.SetGroupCapacity(ctx, app.SetGroupCapacityRequest{Principal: op, ID: "group", ExpectedRevision: result.Group.Revision, MaxActiveMembers: 1})
 	require.NoError(t, err)
