@@ -21,6 +21,7 @@ type SandboxProviderResource struct {
 	Path                string
 	Access              model.SandboxFilesystemAccess
 	openCodeConfigState string
+	rejectAliases       bool
 }
 
 // SandboxOpenCodeConfiguration projects a trusted native config directory only
@@ -35,8 +36,10 @@ func SandboxOpenCodeConfiguration(source, state string, access model.SandboxFile
 // binding path never gets this exception. Directory declarations must describe
 // an attempt-owned subtree, never the backend's private root itself.
 func (i *SandboxPathInspector) BindSandboxProviderResources(ctx context.Context, resources []SandboxProviderResource) (*SandboxMountBindings, error) {
-	if len(resources) > 64 {
-		return nil, fmt.Errorf("sandbox provider resource set exceeds 64 entries")
+	// Includes up to 128 individually mounted generated directories plus
+	// bounded provider configuration and control resources.
+	if len(resources) > 192 {
+		return nil, fmt.Errorf("sandbox provider resource set exceeds 192 entries")
 	}
 	b, err := i.BindSandboxMounts(ctx, nil)
 	if err != nil {
@@ -60,6 +63,9 @@ func (i *SandboxPathInspector) BindSandboxProviderResources(ctx context.Context,
 		canonical, err := filepath.EvalSymlinks(resource.Path)
 		if err != nil {
 			return nil, err
+		}
+		if resource.rejectAliases && canonical != resource.Path {
+			return nil, fmt.Errorf("generated sandbox directory alias is not permitted")
 		}
 		guest := resource.Path
 		identityKey := canonical

@@ -95,7 +95,7 @@ func (p *prepared) prepareSandbox(ctx context.Context) error {
 	p.command.Executable = bootstrap
 	p.command.Args = []string{ServerRelayCommand, string(raw), host.SandboxControlFDArgument}
 	p.command.Env = append([]string{"PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + p.stateRoot, "TMPDIR=" + p.stateRoot}, p.command.Env...)
-	artifact, err := p.provider.hostSandbox.PrepareControl(ctx, *p.request.Spec.HostSandbox, *p.request.HostSandboxPolicy, p.command, port, resources...)
+	artifact, err := p.provider.hostSandbox.ForExecution(p.request.Spec).PrepareControl(ctx, *p.request.Spec.HostSandbox, *p.request.HostSandboxPolicy, p.command, port, resources...)
 	if err != nil {
 		return err
 	}

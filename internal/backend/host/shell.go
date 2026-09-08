@@ -115,7 +115,7 @@ func (h *ShellTerminalHost) PrepareShell(ctx context.Context, request ports.Shel
 		}
 		// Do not carry the daemon's ambient environment into the confined child.
 		command.Env = append([]string{"PATH=/usr/bin:/bin", "TERM=xterm-256color"}, request.Environment.Entries()...)
-		preparedArtifact, err := h.hostSandbox.Prepare(ctx, *request.HostSandbox, *request.HostSandboxPolicy, command)
+		preparedArtifact, err := h.hostSandbox.ForExecution(model.ResolvedExecutionSpec{ExecutionID: request.ExecutionID}).Prepare(ctx, *request.HostSandbox, *request.HostSandboxPolicy, command)
 		if err != nil {
 			return nil, err
 		}

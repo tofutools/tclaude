@@ -5,6 +5,7 @@ package host
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,7 +18,12 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
 
-func TestSandboxDescriptorOverlaysNative(t *testing.T) {
+func TestSandboxDescriptorOverlaysNative(t *testing.T) { sandboxOverlaysAndDirectoriesNative(t, false) }
+func TestSandboxDescriptorIndividualDirectoriesNative(t *testing.T) {
+	sandboxOverlaysAndDirectoriesNative(t, true)
+}
+
+func sandboxOverlaysAndDirectoriesNative(t *testing.T, individual bool) {
 	name := "bwrap"
 	if runtime.GOOS == "darwin" {
 		name = "sandbox-exec"
@@ -54,17 +60,23 @@ func TestSandboxDescriptorOverlaysNative(t *testing.T) {
 		policy.Tmpfs = []model.SandboxTmpfs{{GuestPath: scratch, Size: "1MiB"}}
 		policy.Filesystem = append(policy.Filesystem, model.SandboxFilesystemRule{HostPath: exported, GuestPath: filepath.Join(scratch, "export"), Access: model.SandboxFilesystemRead})
 	}
+	policy.AgentDirectories = []string{"BUILD_CACHE"}
 	policy.PreLaunch = []model.SandboxSetupBlock{
 		{Name: "prepare", Script: `if cat "$WORK/hidden/secret" >/dev/null 2>&1; then exit 90; fi
 printf 'prepared' > "$WORK/setup-marker"
+if [ "$INDIVIDUAL" = false ]; then rmdir "$BUILD_CACHE"; mkdir "$BUILD_CACHE";
+else if rmdir "$BUILD_CACHE" 2>/dev/null; then exit 91; fi; fi
+printf 'cached' > "$BUILD_CACHE/prepared"
 setup_value() { printf 'ordered'; }
 export SETUP_VALUE=$(setup_value)`, Exports: []string{"SETUP_VALUE"}},
 		{Name: "finish", Script: `export SETUP_VALUE="$SETUP_VALUE:$(setup_value)"; set -- must-not-replace-native-command`, Exports: []string{"SETUP_VALUE"}},
 	}
 	selected, materialized := materializedLaunchPolicy(t, inspector, policy)
-	planner, err := NewSandboxLaunchPreparer(SandboxLaunchConfig{Inspector: inspector, Wrapper: wrapper, Bootstrap: binary, Artifacts: private})
+	planner, err := NewSandboxLaunchPreparer(SandboxLaunchConfig{Inspector: inspector, Wrapper: wrapper, Bootstrap: binary, Artifacts: private, AgentDirectoriesMountIndividually: individual})
 	require.NoError(t, err)
-	artifact, err := planner.Prepare(context.Background(), selected, materialized, ProcessSpec{Executable: binary, Args: []string{"-test.run=^TestSandboxDescriptorOverlaysChild$"}, Directory: work, Env: []string{"TCLAUDE_OVERLAY_CHILD=1", "WORK=" + work}, ExactEnvironment: true})
+	actor := planner.ForExecution(model.ResolvedExecutionSpec{AgentID: "first", ExecutionID: "one"})
+	command := ProcessSpec{Executable: binary, Args: []string{"-test.run=^TestSandboxDescriptorOverlaysChild$"}, Directory: work, Env: []string{"TCLAUDE_OVERLAY_CHILD=1", "WORK=" + work, "BUILD_CACHE=must-not-win", "INDIVIDUAL=" + fmt.Sprint(individual)}, ExactEnvironment: true}
+	artifact, err := actor.Prepare(context.Background(), selected, materialized, command)
 	require.NoError(t, err)
 	require.NoFileExists(t, filepath.Join(work, "setup-marker"))
 	require.NoError(t, VerifySandboxChild(context.Background(), artifact))
@@ -87,12 +99,37 @@ export SETUP_VALUE=$(setup_value)`, Exports: []string{"SETUP_VALUE"}},
 	content, err := os.ReadFile(filepath.Join(scratch, "host-file"))
 	require.NoError(t, err)
 	require.Equal(t, "host scratch", string(content))
+	input, _, err := readSandboxChild(artifact)
+	require.NoError(t, err)
+	cache := ""
+	for _, entry := range input.Environment {
+		if strings.HasPrefix(entry, "BUILD_CACHE=") {
+			cache = strings.TrimPrefix(entry, "BUILD_CACHE=")
+		}
+	}
+	require.FileExists(t, filepath.Join(cache, "prepared"))
+	continued, err := planner.ForExecution(model.ResolvedExecutionSpec{AgentID: "first", ExecutionID: "two"}).Prepare(context.Background(), selected, materialized, command)
+	require.NoError(t, err)
+	continuedInput, _, err := readSandboxChild(continued)
+	require.NoError(t, err)
+	require.Contains(t, continuedInput.Environment, "BUILD_CACHE="+cache)
+	fresh, err := planner.ForExecution(model.ResolvedExecutionSpec{AgentID: "second", ExecutionID: "three"}).Prepare(context.Background(), selected, materialized, command)
+	require.NoError(t, err)
+	freshInput, _, err := readSandboxChild(fresh)
+	require.NoError(t, err)
+	require.NotContains(t, freshInput.Environment, "BUILD_CACHE="+cache)
+	for _, entry := range freshInput.Environment {
+		if strings.HasPrefix(entry, "BUILD_CACHE=") {
+			require.NoFileExists(t, filepath.Join(strings.TrimPrefix(entry, "BUILD_CACHE="), "prepared"))
+		}
+	}
 }
 
 func TestSandboxDescriptorOverlaysChild(t *testing.T) {
 	if os.Getenv("TCLAUDE_OVERLAY_CHILD") != "1" {
 		t.Skip("native child only")
 	}
+	require.FileExists(t, filepath.Join(os.Getenv("BUILD_CACHE"), "prepared"))
 	require.Equal(t, "ordered:ordered", os.Getenv("SETUP_VALUE"))
 	work := os.Getenv("WORK")
 	require.FileExists(t, filepath.Join(work, "setup-marker"))

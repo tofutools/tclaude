@@ -231,6 +231,18 @@ contents do not persist to the underlying host directory. A scratch mount cannot
 cover protected state or launch-required paths. macOS refuses tmpfs because
 Seatbelt provides no mount namespace; it does not substitute a host directory.
 
+Generated sandbox directories are stable agent-owned caches. Their paths survive
+later executions and missing named directories are recreated at the same paths;
+a different agent receives independent paths. Standalone shells use their exact
+execution identity. Generated bindings take precedence over authored launch
+environment overrides and are retained in the prepared launch. Symlinked cache
+bindings are refused. Aborting a preparation does not remove retained caches.
+
+By default the agent's own cache parent is writable, permitting it to delete and
+recreate named children. `--agent-dirs-mount-parent=false` instead grants each
+named directory individually, so its contents are writable but its parent is not.
+Neither choice grants the shared cache container or backend private state.
+
 Selected launches execute ordered pre-launch blocks in Bash inside the admitted
 OS boundary, before the native command. Blocks share shell functions and
 exported environment. A failing command/pipeline or an unset declared export

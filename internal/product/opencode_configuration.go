@@ -15,7 +15,7 @@ type opencodeNativeConfig struct {
 	environment  []string
 }
 
-func (native opencodeNativeConfig) providerConfig(state string) (opencode.Config, error) {
+func (native opencodeNativeConfig) providerConfig(state string, sandboxOptions ...sandboxHostOptions) (opencode.Config, error) {
 	if native.config == "" {
 		base := os.Getenv("XDG_CONFIG_HOME")
 		if base == "" {
@@ -52,7 +52,7 @@ func (native opencodeNativeConfig) providerConfig(state string) (opencode.Config
 	if err := environment.Validate(); err != nil {
 		return opencode.Config{}, err
 	}
-	planner, err := configuredHostSandbox(state)
+	planner, err := configuredHostSandbox(state, sandboxOptions...)
 	if err != nil {
 		return opencode.Config{}, err
 	}

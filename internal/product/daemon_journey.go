@@ -20,7 +20,7 @@ func (s historySources) HistorySource(harness, name string) (ports.HistoryDiscov
 	return scope, ok
 }
 
-func journeyServices(state string, harnesses, configured []string, workspaces bool, shell string) (server.JourneyServices, error) {
+func journeyServices(state string, harnesses, configured []string, workspaces bool, shell string, sandboxOptions ...sandboxHostOptions) (server.JourneyServices, error) {
 	sources := historySources{}
 	enabled := map[string]bool{}
 	for _, harness := range harnesses {
@@ -55,7 +55,7 @@ func journeyServices(state string, harnesses, configured []string, workspaces bo
 		if !workspaces {
 			return result, fmt.Errorf("shell requires --workspaces")
 		}
-		sandbox, err := configuredHostSandbox(state)
+		sandbox, err := configuredHostSandbox(state, sandboxOptions...)
 		if err != nil {
 			return result, err
 		}
@@ -72,10 +72,12 @@ func journeyServices(state string, harnesses, configured []string, workspaces bo
 	return result, nil
 }
 
+type sandboxHostOptions struct{ mountAgentDirectoriesIndividually bool }
+
 // Shells and harness providers share the same protected state and immutable
 // artifact preparation. Missing native tooling is reported by selected launch
 // preparation, while existing launches without a host policy stay available.
-func configuredHostSandbox(state string) (*host.SandboxLaunchPreparer, error) {
+func configuredHostSandbox(state string, sandboxOptions ...sandboxHostOptions) (*host.SandboxLaunchPreparer, error) {
 	wrapperName := "bwrap"
 	if runtime.GOOS == "darwin" {
 		wrapperName = "/usr/bin/sandbox-exec"
@@ -96,5 +98,9 @@ func configuredHostSandbox(state string) (*host.SandboxLaunchPreparer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return host.NewSandboxLaunchPreparer(host.SandboxLaunchConfig{Inspector: inspector, Wrapper: wrapper, Bootstrap: bootstrap, Artifacts: artifacts})
+	options := sandboxHostOptions{}
+	if len(sandboxOptions) != 0 {
+		options = sandboxOptions[0]
+	}
+	return host.NewSandboxLaunchPreparer(host.SandboxLaunchConfig{Inspector: inspector, Wrapper: wrapper, Bootstrap: bootstrap, Artifacts: artifacts, AgentDirectoriesMountIndividually: options.mountAgentDirectoriesIndividually})
 }

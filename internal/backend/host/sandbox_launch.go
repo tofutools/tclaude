@@ -20,9 +20,15 @@ type SandboxLaunchConfig struct {
 	Wrapper   string
 	Bootstrap string
 	Artifacts string
+	// Default parent mounts let an agent recreate its named cache directories.
+	AgentDirectoriesMountIndividually bool
 }
 
-type SandboxLaunchPreparer struct{ config SandboxLaunchConfig }
+type SandboxLaunchPreparer struct {
+	config              SandboxLaunchConfig
+	directoryOwner      string
+	directoryOwnerError error
+}
 
 func NewSandboxLaunchPreparer(config SandboxLaunchConfig) (*SandboxLaunchPreparer, error) {
 	if config.Inspector == nil || !filepath.IsAbs(config.Wrapper) || !filepath.IsAbs(config.Bootstrap) || !filepath.IsAbs(config.Artifacts) {
@@ -52,6 +58,7 @@ func NewSandboxLaunchPreparer(config SandboxLaunchConfig) (*SandboxLaunchPrepare
 	if !protected {
 		return nil, fmt.Errorf("sandbox artifacts must reside beneath a protected host root")
 	}
+	config.Artifacts = canonical
 	return &SandboxLaunchPreparer{config: config}, nil
 }
 
@@ -89,7 +96,7 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 	if policy.FilesystemRoot != model.SandboxRootSeparate {
 		return SandboxChildArtifact{}, fmt.Errorf("inherited sandbox root preparation is not configured")
 	}
-	if len(policy.AgentDirectories) != 0 || policy.Resources != (model.SandboxResources{}) || (harness == "" && policy.HarnessConfig != model.SandboxHarnessConfigDefault) || policy.DarwinAllowMachRegister {
+	if policy.Resources != (model.SandboxResources{}) || (harness == "" && policy.HarnessConfig != model.SandboxHarnessConfigDefault) || policy.DarwinAllowMachRegister {
 		return SandboxChildArtifact{}, fmt.Errorf("selected sandbox requires additional native policy preparation")
 	}
 	if len(materialized.Composition.SocketAll) != 0 {
@@ -140,6 +147,11 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 		}
 		resources = append(append([]SandboxProviderResource(nil), resources...), floor...)
 	}
+	generated, directoryResources, err := p.prepareAgentDirectories(ctx, policy.AgentDirectories)
+	if err != nil {
+		return SandboxChildArtifact{}, err
+	}
+	resources = append(resources, directoryResources...)
 	owned, err := p.config.Inspector.BindSandboxProviderResources(ctx, resources)
 	if err != nil {
 		return SandboxChildArtifact{}, err
@@ -170,7 +182,7 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 		}
 	}()
 	// The launcher owns the inherited base; authored values are literal overlays.
-	child.Env = MergeEnvironment(policy.Environment.Entries(), child.Env)
+	child.Env = MergeEnvironment(MergeEnvironment(policy.Environment.Entries(), child.Env), generated.Entries())
 	child.ExactEnvironment = true
 	child, err = sandboxSetupCommand(child, policy.PreLaunch)
 	if err != nil {
