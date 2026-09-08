@@ -72,7 +72,10 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 		Env: []string{"TCLAUDE_BOOTSTRAP_ARTIFACT=" + artifact.Path, "TCLAUDE_BOOTSTRAP_DIGEST=" + artifact.Digest}, Stdout: &output, Stderr: &output}
 	process, err := StartProcess(bootstrap)
 	require.NoError(t, err)
-	require.Eventually(t, func() bool { return process.Observe().Exited }, 10*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		observation := process.Observe()
+		return observation.Exited && observation.ExitCode != nil
+	}, 10*time.Second, 10*time.Millisecond)
 	observation := process.Observe()
 	if observation.ExitCode != nil && *observation.ExitCode != 0 && os.Getenv("TCLAUDE_REQUIRE_SANDBOX_NATIVE") != "1" {
 		for _, unavailable := range []string{"No permissions to create a new namespace", "Creating new namespace failed: Operation not permitted", "loopback: Failed RTM_NEWADDR: Operation not permitted"} {
@@ -81,7 +84,7 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 			}
 		}
 	}
-	require.NotNil(t, observation.ExitCode)
+	require.NotNil(t, observation.ExitCode, output.String())
 	require.Zero(t, *observation.ExitCode, output.String())
 	written, err := os.ReadFile(filepath.Join(workspace, "output"))
 	require.NoError(t, err)
@@ -92,7 +95,10 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 	output.Reset()
 	repeated, err := StartProcess(bootstrap)
 	require.NoError(t, err)
-	require.Eventually(t, func() bool { return repeated.Observe().Exited }, 5*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		observation := repeated.Observe()
+		return observation.Exited && observation.ExitCode != nil
+	}, 5*time.Second, 10*time.Millisecond)
 	require.Contains(t, output.String(), "already attempted")
 }
 

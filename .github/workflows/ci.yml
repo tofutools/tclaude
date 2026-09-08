@@ -1,7 +1,12 @@
 name: CI
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      native_only:
+        description: Run only the native sandbox platform checks during development
+        type: boolean
+        default: false
   workflow_call: {}
   pull_request:
     branches: [main, refactor/platform-v2]
@@ -15,6 +20,7 @@ concurrency:
 
 jobs:
   build:
+    if: ${{ !inputs.native_only }}
     name: Build
     runs-on: ubuntu-latest
     steps:
@@ -24,6 +30,7 @@ jobs:
           go-version-file: go.mod
       - run: go build ./...
   lint:
+    if: ${{ !inputs.native_only }}
     name: Lint
     runs-on: ubuntu-latest
     steps:
@@ -68,13 +75,21 @@ jobs:
         run: |
           go test -race -c ./internal/backend/host -o "$RUNNER_TEMP/sandbox-native.test"
           if [[ "$RUNNER_OS" == Linux ]]; then
-            sudo env TCLAUDE_REQUIRE_SANDBOX_NATIVE=1 "$RUNNER_TEMP/sandbox-native.test" -test.run '^TestSandboxDescriptor' -test.timeout 1m -test.v
+            # Inside the new user namespace, root cannot use host capabilities
+            # to traverse runner-owned private directories. Own the fixture as
+            # the same UID that will own the disposable namespace.
+            native_dir=$(sudo mktemp -d /tmp/tclaude-native.XXXXXX)
+            trap 'sudo rm -rf "$native_dir"' EXIT
+            sudo install -m 0700 "$RUNNER_TEMP/sandbox-native.test" "$native_dir/sandbox-native.test"
+            sudo env TMPDIR="$native_dir" TCLAUDE_REQUIRE_SANDBOX_NATIVE=1 "$native_dir/sandbox-native.test" -test.run '^TestSandboxDescriptor' -test.timeout 1m -test.v
           else
             TCLAUDE_REQUIRE_SANDBOX_NATIVE=1 "$RUNNER_TEMP/sandbox-native.test" -test.run '^TestSandboxDescriptor' -test.timeout 1m -test.v
           fi
       - name: Full product race suite
+        if: ${{ !inputs.native_only }}
         run: go test -race ./... -count=1 -timeout 15m
   browser:
+    if: ${{ !inputs.native_only }}
     name: Offline browser acceptance
     runs-on: ubuntu-latest
     steps:

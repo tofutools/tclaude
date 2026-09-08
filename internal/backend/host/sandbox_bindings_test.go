@@ -42,7 +42,10 @@ func TestSandboxBindingsRetainExactSourceAcrossPathReplacement(t *testing.T) {
 		Env: []string{"PATH=/usr/bin:/bin"}, Stdout: &output, ExtraFiles: bound.Files()})
 	require.NoError(t, err)
 	require.NoError(t, bound.Close())
-	require.Eventually(t, func() bool { return process.Observe().Exited }, 5*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		observation := process.Observe()
+		return observation.Exited && observation.ExitCode != nil
+	}, 5*time.Second, 10*time.Millisecond)
 	require.Equal(t, "approved input", output.String())
 
 	require.NoError(t, os.Remove(source))
