@@ -118,6 +118,7 @@ type evidence struct {
 	Endpoint              string                         `json:"endpoint"`
 	PasswordFile          string                         `json:"password_file"`
 	StateRoot             string                         `json:"state_root"`
+	NativeConfigDirectory string                         `json:"native_config_directory,omitempty"`
 	Process               *host.ProcessIdentity          `json:"process,omitempty"`
 	AttemptMark           string                         `json:"attempt_marker"`
 	EphemeralState        bool                           `json:"ephemeral_state,omitempty"`
@@ -127,22 +128,23 @@ type evidence struct {
 }
 
 type prepared struct {
-	command       host.ProcessSpec
-	artifact      *host.SandboxChildArtifact
-	provider      *Provider
-	request       ports.PreparationRequest
-	listener      net.Listener
-	endpoint      string
-	password      string
-	passwordFile  string
-	stateRoot     string
-	attemptMark   string
-	removeOnAbort bool
-	description   ports.PreparedDescription
-	access        *ports.ActionCredentialReceipt
-	mu            sync.Mutex
-	released      bool
-	aborted       bool
+	command               host.ProcessSpec
+	artifact              *host.SandboxChildArtifact
+	provider              *Provider
+	request               ports.PreparationRequest
+	listener              net.Listener
+	endpoint              string
+	password              string
+	passwordFile          string
+	stateRoot             string
+	nativeConfigDirectory string
+	attemptMark           string
+	removeOnAbort         bool
+	description           ports.PreparedDescription
+	access                *ports.ActionCredentialReceipt
+	mu                    sync.Mutex
+	released              bool
+	aborted               bool
 }
 
 type sessionRecord struct {
@@ -450,7 +452,7 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 		return ports.ReleaseResult{}, fmt.Errorf("start OpenCode server: %w", err)
 	}
 	runtime := &Runtime{
-		artifact: p.artifact, policyHash: p.description.HostSandboxPolicyHash,
+		artifact: p.artifact, policyHash: p.description.HostSandboxPolicyHash, nativeConfigDirectory: p.nativeConfigDirectory,
 		provider: p.provider, executionID: p.request.Spec.ExecutionID,
 		attempt: p.request.Spec.Attempt, observations: p.request.Observations,
 		process: process, endpoint: p.endpoint, password: p.password,
@@ -596,7 +598,8 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		expectedHash = request.Spec.HostSandbox.PolicyHash
 	}
 	if recorded.HostSandboxPolicyHash != expectedHash || (recorded.HostSandbox != nil) != (expectedHash != "") ||
-		(recorded.Control != nil && recorded.HostSandbox == nil) {
+		(recorded.Control != nil && recorded.HostSandbox == nil) ||
+		(recorded.NativeConfigDirectory != "" && (recorded.HostSandbox == nil || !filepath.IsAbs(recorded.NativeConfigDirectory))) {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
 	}
 	if recorded.ExecutionID != string(request.ExecutionID) || !validRandomToken(recorded.AttemptMark) ||
@@ -649,7 +652,7 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		accessProof = &proof
 	}
 	runtime := &Runtime{
-		artifact: recorded.HostSandbox, policyHash: recorded.HostSandboxPolicyHash, controlIdentity: recorded.Control,
+		artifact: recorded.HostSandbox, policyHash: recorded.HostSandboxPolicyHash, controlIdentity: recorded.Control, nativeConfigDirectory: recorded.NativeConfigDirectory,
 		provider: p, executionID: request.ExecutionID, process: process,
 		attempt: request.Attempt, observations: request.Observations,
 		endpoint: recorded.Endpoint, password: string(passwordBytes), passwordFile: recorded.PasswordFile, stateRoot: recorded.StateRoot,
@@ -701,35 +704,36 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 }
 
 type Runtime struct {
-	artifact            *host.SandboxChildArtifact
-	policyHash          string
-	controlMu           sync.Mutex
-	controlIdentity     *host.UnixControlIdentity
-	controlTransport    *http.Transport
-	provider            *Provider
-	executionID         model.ExecutionID
-	attempt             model.AttemptGeneration
-	observations        ports.PrimaryObservationSink
-	process             *host.Process
-	endpoint            string
-	password            string
-	passwordFile        string
-	stateRoot           string
-	cwd                 string
-	approval            model.ApprovalMode
-	sandbox             model.SandboxMode
-	model               string
-	effort              string
-	intent              ports.StartIntent
-	forkSourceID        string
-	forkPoint           string
-	attemptMark         string
-	access              *ports.ActionCredentialReceipt
-	contextReady        bool
-	observationSequence uint64
-	providerOrder       string
-	cleanupOnce         sync.Once
-	cleanupErr          error
+	artifact              *host.SandboxChildArtifact
+	policyHash            string
+	controlMu             sync.Mutex
+	controlIdentity       *host.UnixControlIdentity
+	controlTransport      *http.Transport
+	provider              *Provider
+	executionID           model.ExecutionID
+	attempt               model.AttemptGeneration
+	observations          ports.PrimaryObservationSink
+	process               *host.Process
+	endpoint              string
+	password              string
+	passwordFile          string
+	stateRoot             string
+	nativeConfigDirectory string
+	cwd                   string
+	approval              model.ApprovalMode
+	sandbox               model.SandboxMode
+	model                 string
+	effort                string
+	intent                ports.StartIntent
+	forkSourceID          string
+	forkPoint             string
+	attemptMark           string
+	access                *ports.ActionCredentialReceipt
+	contextReady          bool
+	observationSequence   uint64
+	providerOrder         string
+	cleanupOnce           sync.Once
+	cleanupErr            error
 
 	mu               sync.Mutex
 	nativeID         string
@@ -847,7 +851,7 @@ func (r *Runtime) Attach(ctx context.Context, request ports.AttachmentRequest) (
 	}
 	cmd := exec.CommandContext(ctx, r.provider.executable, "attach", endpoint,
 		"--dir", r.cwd, "--session", r.nativeID)
-	cmd.Env = host.MergeEnvironment(os.Environ(), append(r.provider.runtimeEnvironment(r.stateRoot),
+	cmd.Env = host.MergeEnvironment(os.Environ(), append(r.attachmentEnvironment(),
 		"OPENCODE_SERVER_USERNAME="+serverUsername,
 		"OPENCODE_SERVER_PASSWORD="+r.password))
 	file, err := pty.Start(cmd)
@@ -1163,7 +1167,7 @@ func (r *Runtime) providerEvidenceLocked() (model.ProviderEvidence, error) {
 		HostSandbox: r.artifact, HostSandboxPolicyHash: r.policyHash, Control: r.sandboxControlEvidence(),
 		ExecutionID: string(r.executionID), NativeID: r.nativeID, ParentID: r.parentID, Intent: r.intent,
 		ForkSourceID: r.forkSourceID, ForkPoint: r.forkPoint, Endpoint: r.endpoint,
-		PasswordFile: r.passwordFile, StateRoot: r.stateRoot, Process: &identity, AttemptMark: r.attemptMark,
+		PasswordFile: r.passwordFile, StateRoot: r.stateRoot, NativeConfigDirectory: r.nativeConfigDirectory, Process: &identity, AttemptMark: r.attemptMark,
 		Access: r.access, ObservationSequence: r.observationSequence, ProviderOrder: r.providerOrder,
 	})
 }

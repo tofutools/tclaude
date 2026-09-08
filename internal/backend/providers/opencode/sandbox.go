@@ -44,11 +44,28 @@ func (p *prepared) prepareSandbox(ctx context.Context) error {
 		{Path: p.provider.executable, Access: model.SandboxFilesystemRead},
 		{Path: bootstrap, Access: model.SandboxFilesystemRead},
 	}
-	configHome, configResources, err := prepareSandboxConfiguration(p.provider.nativeConfigDirectory, p.stateRoot)
+	nativeConfig := p.provider.nativeConfigDirectory
+	if p.request.Intent == ports.StartContinue {
+		prior, err := decodeEvidence(p.request.PriorEvidence)
+		if err != nil {
+			return err
+		}
+		if prior.NativeConfigDirectory != "" {
+			nativeConfig = prior.NativeConfigDirectory
+			if !filepath.IsAbs(nativeConfig) {
+				return fmt.Errorf("retained OpenCode configuration directory must be absolute")
+			}
+			if _, err := os.Stat(nativeConfig); err != nil {
+				return fmt.Errorf("retained OpenCode configuration is unavailable: %w", err)
+			}
+		}
+	}
+	configHome, configResources, err := prepareSandboxConfiguration(nativeConfig, p.stateRoot)
 	if err != nil {
 		return err
 	}
 	resources = append(resources, configResources...)
+	p.nativeConfigDirectory = configResources[0].Path
 	p.command.Env = host.MergeEnvironment(p.command.Env, []string{"XDG_CONFIG_HOME=" + configHome, "OPENCODE_CONFIG_DIR="})
 	relay := ServerRelayRequest{Target: p.listener.Addr().String(), Executable: p.command.Executable, Args: p.command.Args}
 	if p.request.Intent == ports.StartFork {
@@ -92,6 +109,7 @@ func (p *prepared) prepareSandbox(ctx context.Context) error {
 		return err
 	}
 	recorded.HostSandbox, recorded.HostSandboxPolicyHash = p.artifact, p.request.Spec.HostSandbox.PolicyHash
+	recorded.NativeConfigDirectory = p.nativeConfigDirectory
 	p.description.HostSandboxPolicyHash = recorded.HostSandboxPolicyHash
 	p.description.Evidence, err = encodeEvidence(recorded)
 	return err

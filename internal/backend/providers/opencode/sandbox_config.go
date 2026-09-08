@@ -15,6 +15,19 @@ import (
 // Seed it once before the directory becomes read-only, preserving authored files.
 const nativeConfigGitignore = "node_modules\npackage.json\npackage-lock.json\nbun.lock\n.gitignore"
 
+func (r *Runtime) attachmentEnvironment() []string {
+	environment := r.provider.runtimeEnvironment(r.stateRoot)
+	if r.artifact == nil || r.nativeConfigDirectory == "" {
+		return environment
+	}
+	// The presentation client runs outside the server's Linux mount namespace.
+	// Use its retained source settings, not the unmounted private destination.
+	if filepath.Base(r.nativeConfigDirectory) == "opencode" {
+		return host.MergeEnvironment(environment, []string{"XDG_CONFIG_HOME=" + filepath.Dir(r.nativeConfigDirectory), "OPENCODE_CONFIG_DIR="})
+	}
+	return host.MergeEnvironment(environment, []string{"OPENCODE_CONFIG_DIR=" + r.nativeConfigDirectory})
+}
+
 func prepareSandboxConfiguration(nativeConfig, stateRoot string) (string, []host.SandboxProviderResource, error) {
 	privateConfig := filepath.Join(stateRoot, "config", "opencode")
 	source := nativeConfig

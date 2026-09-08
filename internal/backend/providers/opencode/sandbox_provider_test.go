@@ -68,6 +68,10 @@ if [ "$1" = serve ]; then
   if touch "$XDG_CONFIG_HOME/opencode/forbidden-write" 2>/dev/null; then exit 87; fi
   printf '%s' "${TCLAUDE_UNRELATED_DAEMON_VALUE-absent}" > "$ENVIRONMENT_OUTPUT"
 fi
+if [ "$1" = attach ]; then
+  test "$(cat "$XDG_CONFIG_HOME/opencode/opencode.json")" = 'fixture configuration' || exit 88
+  touch "$ATTACH_CONFIGURATION_READY" || exit 89
+fi
 exec "$OPENCODE_TEST_BINARY" -test.run=^TestOpenCodeServerHelper$ -- "$@"
 `
 	require.NoError(t, os.WriteFile(native, []byte(script), 0700))
@@ -90,8 +94,9 @@ exec "$OPENCODE_TEST_BINARY" -test.run=^TestOpenCodeServerHelper$ -- "$@"
 	exportPath := filepath.Join(workspace, "source-export.json")
 	writeOpenCodeExport(t, exportPath, "ses_test", workspace, "source answer")
 	importMarker, forkPoint := filepath.Join(workspace, "import-marker"), filepath.Join(workspace, "fork-point")
+	attachReady := filepath.Join(workspace, "attach-configuration-ready")
 	provider, err := New(Config{Executable: native, PrivateRoot: filepath.Join(private, "provider"), HostSandbox: planner, NativeDataDirectory: nativeData, NativeConfigDirectory: nativeConfig,
-		Environment: []string{"OPENCODE_TEST_BINARY=" + binary, "OPENCODE_TEST_PROMPT=" + prompt, "PRIVATE_FIXTURE=" + secret, "ENVIRONMENT_OUTPUT=" + filepath.Join(workspace, "environment"), "OPENCODE_EXPORT_FIXTURE=" + exportPath, "IMPORT_MARKER=" + importMarker, "OPENCODE_TEST_FORK_POINT=" + forkPoint}})
+		Environment: []string{"OPENCODE_TEST_BINARY=" + binary, "OPENCODE_TEST_PROMPT=" + prompt, "PRIVATE_FIXTURE=" + secret, "ENVIRONMENT_OUTPUT=" + filepath.Join(workspace, "environment"), "OPENCODE_EXPORT_FIXTURE=" + exportPath, "IMPORT_MARKER=" + importMarker, "OPENCODE_TEST_FORK_POINT=" + forkPoint, "ATTACH_CONFIGURATION_READY=" + attachReady}})
 	require.NoError(t, err)
 	observations := &observationSink{}
 	request := ports.PreparationRequest{Observations: observations, Intent: ports.StartFresh, HostSandboxPolicy: &materialized,
@@ -148,9 +153,13 @@ exec "$OPENCODE_TEST_BINARY" -test.run=^TestOpenCodeServerHelper$ -- "$@"
 	require.NoError(t, response.Body.Close())
 	require.Equal(t, http.StatusOK, response.StatusCode)
 	closeRelay()
+	// A changed composition default must not redirect an existing session's
+	// presentation client or its later continuation to different settings.
+	provider.nativeConfigDirectory = filepath.Join(private, "changed-config", "opencode")
 	attachment, err := controlled.Attach(context.Background(), ports.AttachmentRequest{Kind: ports.AttachmentTerminal})
 	require.NoError(t, err)
 	require.Equal(t, ports.EffectAccepted, attachment.Disposition)
+	require.Eventually(t, func() bool { _, err := os.Stat(attachReady); return err == nil }, 3*time.Second, 10*time.Millisecond)
 	require.NoError(t, attachment.Attachment.Close())
 	observation, err := controlled.Observe(context.Background())
 	require.NoError(t, err)
@@ -166,6 +175,7 @@ exec "$OPENCODE_TEST_BINARY" -test.run=^TestOpenCodeServerHelper$ -- "$@"
 		require.NoError(t, err)
 	}
 	stopRuntime(controlled)
+	require.NoError(t, os.WriteFile(filepath.Join(nativeData, "auth.json"), []byte("changed ambient login"), 0600))
 	continuedRequest := request
 	continuedRequest.Intent, continuedRequest.InitialInput = ports.StartContinue, nil
 	continuedRequest.Spec.ExecutionID = "execution_continued"
@@ -180,6 +190,8 @@ exec "$OPENCODE_TEST_BINARY" -test.run=^TestOpenCodeServerHelper$ -- "$@"
 	}
 	require.NoError(t, err)
 	require.Equal(t, ports.ReleaseStarted, continuation.State)
+	provider.nativeConfigDirectory = nativeConfig
+	require.NoError(t, os.WriteFile(filepath.Join(nativeData, "auth.json"), []byte("fixture login"), 0600))
 	priorState, err := decodeEvidence(recovered.Evidence)
 	require.NoError(t, err)
 	continuedState, err := decodeEvidence(continuation.Evidence)
