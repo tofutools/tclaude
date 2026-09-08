@@ -157,3 +157,13 @@ func (s *Store) SandboxGroupsForAgent(ctx context.Context, id model.AgentID) ([]
 	}
 	return groups, rows.Err()
 }
+
+// SandboxGroupDisbanded distinguishes retired provenance from an invalid ID.
+func (s *Store) SandboxGroupDisbanded(ctx context.Context, id model.GroupID) (bool, error) {
+	var removed bool
+	err := s.db.QueryRowContext(ctx, `SELECT tombstoned FROM groups WHERE id=?`, id).Scan(&removed)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return removed, err
+}
