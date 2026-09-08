@@ -199,11 +199,12 @@ class TeamEditor {
   briefing(original) {
     const b = original || {ID: '', Body: '', Timing: 'before_first_work', Required: true, MemberKeys: this.draft.Team.Members.map(m => m.Key)};
     this.form('Briefing', [{key: 'id', label: 'Briefing key', value: b.ID, required: true}, {key: 'body', label: 'Briefing text', text: true, value: b.Body, required: true},
+      {key:'syntax',label:'Mission placeholders',options:[opt('','Literal text'),opt('mission-v1','Expand {{task}} and {{mission}}')],value:b.Syntax||''},
       {key: 'timing', label: 'Deliver briefing', options: [opt('before_first_work', 'Before first work'), opt('after_ready', 'After ready')], value: b.Timing},
       {key: 'required', label: 'Required briefing', type: 'checkbox', value: b.Required},
       {key: 'members', label: 'Briefing recipients', required: true, multiple: true, options: this.draft.Team.Members.map(m => opt(m.Key, m.Name)), value: [...new Set([...(b.MemberKeys || []), ...this.draft.Team.Members.filter(m => m.BriefingIDs?.includes(b.ID)).map(m => m.Key)])]}], f => {
         if (this.draft.Team.Briefings.some(x => x.ID === f.id && x.ID !== original?.ID)) throw new Error('Briefing keys must be unique.');
-        this.change(d => { const brief = {...b, ID: f.id, Body: f.body, Timing: f.timing, Required: f.required, MemberKeys: f.members}; const i = d.Team.Briefings.findIndex(x => x.ID === original?.ID); if (i < 0) d.Team.Briefings.push(brief); else d.Team.Briefings[i] = brief; for (const m of d.Team.Members) { m.BriefingIDs = (m.BriefingIDs || []).filter(id => id !== original?.ID && id !== f.id); if (f.members.includes(m.Key)) m.BriefingIDs.push(f.id); } });
+        this.change(d => { const brief = {...b, ID: f.id, Body: f.body, Syntax:f.syntax||undefined, Timing: f.timing, Required: f.required, MemberKeys: f.members}; const i = d.Team.Briefings.findIndex(x => x.ID === original?.ID); if (i < 0) d.Team.Briefings.push(brief); else d.Team.Briefings[i] = brief; for (const m of d.Team.Members) { m.BriefingIDs = (m.BriefingIDs || []).filter(id => id !== original?.ID && id !== f.id); if (f.members.includes(m.Key)) m.BriefingIDs.push(f.id); } });
       });
   }
   settings() {
