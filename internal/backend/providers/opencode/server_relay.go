@@ -26,6 +26,7 @@ type ServerRelayRequest struct {
 	Target     string
 	Executable string
 	Args       []string
+	Import     *ServerRelayImport `json:",omitempty"`
 }
 
 // ExecuteServerRelay runs inside the selected boundary. Both the native server
@@ -54,6 +55,11 @@ func ExecuteServerRelay(ctx context.Context, request ServerRelayRequest) error {
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	if request.Import != nil {
+		if err := importRelayHistory(ctx, request.Executable, *request.Import); err != nil {
+			return err
+		}
 	}
 	child := exec.CommandContext(ctx, request.Executable, request.Args...)
 	child.Stdout, child.Stderr = os.Stdout, os.Stderr
@@ -116,6 +122,9 @@ func ExecuteServerRelay(ctx context.Context, request ServerRelayRequest) error {
 func relayServerStream(ctx context.Context, downstream net.Conn, target string, port int, owner host.LoopbackOwner) {
 	defer downstream.Close()
 	if owned, err := owner.Owns(port); err != nil || !owned {
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "OpenCode relay ownership check: %v\n", err)
+		}
 		return
 	}
 	upstream, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp4", target)
@@ -124,6 +133,9 @@ func relayServerStream(ctx context.Context, downstream net.Conn, target string, 
 	}
 	defer upstream.Close()
 	if owned, err := owner.Owns(port); err != nil || !owned {
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "OpenCode relay ownership check: %v\n", err)
+		}
 		return
 	}
 	stop := context.AfterFunc(ctx, func() {

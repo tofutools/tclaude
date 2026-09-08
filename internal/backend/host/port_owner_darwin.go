@@ -4,6 +4,7 @@ package host
 
 import (
 	"errors"
+	"fmt"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -27,7 +28,14 @@ func processTreeOwnsLoopbackPort(rootPID, port int) (bool, error) {
 	out, err := exec.Command(lsof, "-nP", "-a", "-p", strings.Join(rawPIDs, ","),
 		"-iTCP@127.0.0.1:"+strconv.Itoa(port), "-sTCP:LISTEN", "-Fp").Output()
 	if err != nil {
-		if _, ok := err.(*exec.ExitError); ok {
+		if exited, ok := err.(*exec.ExitError); ok {
+			if len(exited.Stderr) != 0 {
+				detail := strings.TrimSpace(string(exited.Stderr))
+				if len(detail) > 1024 {
+					detail = detail[:1024]
+				}
+				return false, fmt.Errorf("inspect loopback owner: %s", detail)
+			}
 			return false, nil
 		}
 		return false, err

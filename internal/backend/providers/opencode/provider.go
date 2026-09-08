@@ -19,7 +19,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -508,22 +507,11 @@ func importOpenCodeHistory(ctx context.Context, p *Provider, targetRoot, cwd str
 	if err != nil {
 		return fmt.Errorf("verify imported OpenCode history: %w", err)
 	}
-	if exported.Info.ID != expected.Info.ID || !reflect.DeepEqual(exported.Messages, expected.Messages) {
-		return fmt.Errorf("imported OpenCode history content does not match selected source")
-	}
+	beforeMessage := ""
 	if selection.Point != nil && selection.Point.Kind == model.HistoryPointBeforeMessage {
-		found := false
-		for _, message := range exported.Messages {
-			if message.Info.ID == selection.Point.Token {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("imported OpenCode history point is unavailable")
-		}
+		beforeMessage = selection.Point.Token
 	}
-	return nil
+	return verifyImportedHistory(exported, expected, beforeMessage)
 }
 
 func accessResource(access *ports.ActionCredentialReceipt) string {
