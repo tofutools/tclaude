@@ -89,21 +89,24 @@ func (*Provider) Capabilities() ports.ProviderCapabilities {
 func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 
 type evidence struct {
-	ExecutionID         string                         `json:"execution_id"`
-	NativeID            string                         `json:"native_id,omitempty"`
-	ParentID            string                         `json:"parent_id,omitempty"`
-	Intent              ports.StartIntent              `json:"intent,omitempty"`
-	ForkSourceID        string                         `json:"fork_source_id,omitempty"`
-	ForkPoint           string                         `json:"fork_point,omitempty"`
-	Endpoint            string                         `json:"endpoint"`
-	PasswordFile        string                         `json:"password_file"`
-	StateRoot           string                         `json:"state_root"`
-	Process             *host.ProcessIdentity          `json:"process,omitempty"`
-	AttemptMark         string                         `json:"attempt_marker"`
-	EphemeralState      bool                           `json:"ephemeral_state,omitempty"`
-	Access              *ports.ActionCredentialReceipt `json:"access,omitempty"`
-	ObservationSequence uint64                         `json:"observation_sequence,omitempty"`
-	ProviderOrder       string                         `json:"provider_order,omitempty"`
+	HostSandbox           *host.SandboxChildArtifact     `json:"host_sandbox,omitempty"`
+	HostSandboxPolicyHash string                         `json:"host_sandbox_policy_hash,omitempty"`
+	Control               *host.UnixControlIdentity      `json:"control,omitempty"`
+	ExecutionID           string                         `json:"execution_id"`
+	NativeID              string                         `json:"native_id,omitempty"`
+	ParentID              string                         `json:"parent_id,omitempty"`
+	Intent                ports.StartIntent              `json:"intent,omitempty"`
+	ForkSourceID          string                         `json:"fork_source_id,omitempty"`
+	ForkPoint             string                         `json:"fork_point,omitempty"`
+	Endpoint              string                         `json:"endpoint"`
+	PasswordFile          string                         `json:"password_file"`
+	StateRoot             string                         `json:"state_root"`
+	Process               *host.ProcessIdentity          `json:"process,omitempty"`
+	AttemptMark           string                         `json:"attempt_marker"`
+	EphemeralState        bool                           `json:"ephemeral_state,omitempty"`
+	Access                *ports.ActionCredentialReceipt `json:"access,omitempty"`
+	ObservationSequence   uint64                         `json:"observation_sequence,omitempty"`
+	ProviderOrder         string                         `json:"provider_order,omitempty"`
 }
 
 type prepared struct {
@@ -549,6 +552,14 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	if err != nil {
 		return ports.RecoveryResult{}, err
 	}
+	expectedHash := ""
+	if request.Spec.HostSandbox != nil {
+		expectedHash = request.Spec.HostSandbox.PolicyHash
+	}
+	if recorded.HostSandboxPolicyHash != expectedHash || (recorded.HostSandbox != nil) != (expectedHash != "") ||
+		(recorded.Control != nil && recorded.HostSandbox == nil) {
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
+	}
 	if recorded.ExecutionID != string(request.ExecutionID) || !validRandomToken(recorded.AttemptMark) ||
 		!pathWithin(p.privateRoot, recorded.StateRoot) ||
 		filepath.Clean(recorded.PasswordFile) != serverCredentialPath(recorded.StateRoot, recorded.AttemptMark) {
@@ -597,6 +608,7 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		accessProof = &proof
 	}
 	runtime := &Runtime{
+		artifact: recorded.HostSandbox, policyHash: recorded.HostSandboxPolicyHash, controlIdentity: recorded.Control,
 		provider: p, executionID: request.ExecutionID, process: process,
 		attempt: request.Attempt, observations: request.Observations,
 		endpoint: recorded.Endpoint, password: string(passwordBytes), passwordFile: recorded.PasswordFile, stateRoot: recorded.StateRoot,
@@ -648,6 +660,11 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 }
 
 type Runtime struct {
+	artifact            *host.SandboxChildArtifact
+	policyHash          string
+	controlMu           sync.Mutex
+	controlIdentity     *host.UnixControlIdentity
+	controlTransport    *http.Transport
 	provider            *Provider
 	executionID         model.ExecutionID
 	attempt             model.AttemptGeneration
@@ -1050,12 +1067,17 @@ func (r *Runtime) do(ctx context.Context, method, path string, body any) (*http.
 	if err != nil || port < 1 || port > 65535 {
 		return nil, fmt.Errorf("OpenCode endpoint port is invalid")
 	}
-	owned, err := r.process.OwnsLoopbackPort(port)
-	if err != nil {
-		return nil, fmt.Errorf("prove OpenCode endpoint ownership: %w", err)
-	}
-	if !owned {
-		return nil, fmt.Errorf("OpenCode process does not own its recorded endpoint")
+	client := r.provider.httpClient
+	if r.artifact != nil {
+		client = r.sandboxHTTPClient()
+	} else {
+		owned, err := r.process.OwnsLoopbackPort(port)
+		if err != nil {
+			return nil, fmt.Errorf("prove OpenCode endpoint ownership: %w", err)
+		}
+		if !owned {
+			return nil, fmt.Errorf("OpenCode process does not own its recorded endpoint")
+		}
 	}
 	var reader io.Reader
 	if body != nil {
@@ -1073,7 +1095,7 @@ func (r *Runtime) do(ctx context.Context, method, path string, body any) (*http.
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	return r.provider.httpClient.Do(request)
+	return client.Do(request)
 }
 
 func (r *Runtime) providerEvidence() (model.ProviderEvidence, error) {
@@ -1085,6 +1107,7 @@ func (r *Runtime) providerEvidence() (model.ProviderEvidence, error) {
 func (r *Runtime) providerEvidenceLocked() (model.ProviderEvidence, error) {
 	identity := r.process.Identity()
 	return encodeEvidence(evidence{
+		HostSandbox: r.artifact, HostSandboxPolicyHash: r.policyHash, Control: r.sandboxControlEvidence(),
 		ExecutionID: string(r.executionID), NativeID: r.nativeID, ParentID: r.parentID, Intent: r.intent,
 		ForkSourceID: r.forkSourceID, ForkPoint: r.forkPoint, Endpoint: r.endpoint,
 		PasswordFile: r.passwordFile, StateRoot: r.stateRoot, Process: &identity, AttemptMark: r.attemptMark,

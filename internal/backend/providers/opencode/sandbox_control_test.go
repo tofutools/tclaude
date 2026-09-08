@@ -124,20 +124,15 @@ esac
 	}, 10*time.Second, 20*time.Millisecond)
 	recovered, err := host.RecoverProcess(process.Identity())
 	require.NoError(t, err)
-	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return recovered.DialUnixControl(ctx, control)
-	}}
-	defer transport.CloseIdleConnections()
-	client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
-	request, err := http.NewRequest(http.MethodGet, "http://control/session", nil)
-	require.NoError(t, err)
-	request.SetBasicAuth("opencode", "disposable-secret")
-	response, err := client.Do(request)
+	retained := &Runtime{provider: &Provider{httpClient: &http.Client{Timeout: 3 * time.Second}}, process: recovered,
+		artifact: &artifact, endpoint: "http://" + target, password: "disposable-secret"}
+	response, err := retained.do(context.Background(), http.MethodGet, "/session", nil)
 	require.NoError(t, err)
 	body, err := io.ReadAll(response.Body)
 	require.NoError(t, err)
 	require.NoError(t, response.Body.Close())
 	require.Equal(t, "exact session", string(body))
+	require.Equal(t, &control, retained.sandboxControlEvidence())
 	// The same retained input cannot create a second listener/server on retry.
 	repeated, err := host.StartProcess(command)
 	require.NoError(t, err)
@@ -154,4 +149,18 @@ esac
 	marker, err := os.ReadFile(filepath.Join(workspace, "import-marker"))
 	require.NoError(t, err)
 	require.Equal(t, "imported", string(marker), "artifact retry must not replay native import")
+	// Remembered control identity must not follow a pathname replacement.
+	require.NoError(t, os.Remove(control.Path))
+	foreign, err := net.ListenUnix("unix", &net.UnixAddr{Name: control.Path, Net: "unix"})
+	require.NoError(t, err)
+	defer foreign.Close()
+	require.NoError(t, os.Chmod(control.Path, 0600))
+	_, err = retained.do(context.Background(), http.MethodGet, "/session", nil)
+	require.Error(t, err)
+	require.NoError(t, foreign.SetDeadline(time.Now().Add(100*time.Millisecond)))
+	connection, err := foreign.AcceptUnix()
+	if connection != nil {
+		_ = connection.Close()
+	}
+	require.Error(t, err, "replacement listener must receive no authenticated connection")
 }
