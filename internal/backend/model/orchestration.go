@@ -281,10 +281,12 @@ type ProgramPerformer struct {
 }
 
 type HumanPerformer struct {
-	Operator bool `json:",omitempty"`
-	AgentID  AgentID
-	RoleID   RoleID
-	Prompt   string
+	Choices        []string          `json:",omitempty"`
+	ChoiceOutcomes map[string]string `json:",omitempty"`
+	Operator       bool              `json:",omitempty"`
+	AgentID        AgentID
+	RoleID         RoleID
+	Prompt         string
 }
 
 type RetryPolicy struct {
