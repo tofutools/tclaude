@@ -1338,6 +1338,20 @@ containing either is refused before run creation, including an older pinned
 revision after a newer revision clears the fields. Duration-only waits retain
 their existing execution and restart behavior.
 
+Performer timeout text is retained in task and compound-stage authoring. Blank
+uses existing defaults. Programs support positive timeouts up to one hour:
+the deadline begins at node readiness, includes admission delay, is persisted
+with the attempt, and never extends the run deadline or saved program limit.
+The exact pinned profile revision contributes its timeout before initial or
+retry readiness; queue delay cannot restart that tighter clock. Compiled
+activation budgets survive restart and cannot be supplied by authored graphs.
+A retry receives its own readiness-relative bound. Expired queued work is
+rejected before native issuance. Existing host deadline enforcement and
+observed-exit cleanup handle launched programs. Longer timeouts and agent/human
+timeout declarations remain representable but execution is explicitly refused
+before creating work; they are never silently ignored. Timeout text is not a
+parameter interpolation surface.
+
 Team briefing mission placeholders are explicitly enabled per briefing with
 `Syntax: "mission-v1"` (the editor's Mission placeholders choice). Exact
 `{{task}}` and `{{mission}}` tokens expand once from the admitted deployment's

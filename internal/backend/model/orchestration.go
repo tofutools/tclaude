@@ -145,13 +145,15 @@ type ProcessDefinition struct {
 type WorkGraph struct {
 	// EscalationRetries records authoring-only loops removed from the compiled DAG.
 	EscalationRetries []WorkEdge `json:",omitempty"`
-	Description       string     `json:",omitempty"`
-	Doc               string     `json:",omitempty"`
-	CompilerVersion   string
-	EntryNodeID       WorkNodeID
-	Nodes             []WorkNode
-	Edges             []WorkEdge
-	Outcome           WorkGraphOutcomePolicy
+	// ProgramActivationTimeouts pins effective activation budgets on admitted graphs only.
+	ProgramActivationTimeouts map[WorkNodeID]time.Duration `json:",omitempty"`
+	Description               string                       `json:",omitempty"`
+	Doc                       string                       `json:",omitempty"`
+	CompilerVersion           string
+	EntryNodeID               WorkNodeID
+	Nodes                     []WorkNode
+	Edges                     []WorkEdge
+	Outcome                   WorkGraphOutcomePolicy
 	// TaskGroups are compiler output, never accepted as authored input.
 	TaskGroups []CompiledTaskGroup `json:",omitempty"`
 }
@@ -238,6 +240,7 @@ type ContactSchedule struct {
 }
 
 type Performer struct {
+	Timeout string           `json:",omitempty"`
 	Contact *ContactSchedule `json:",omitempty"`
 	Kind    PerformerKind
 	Agent   *AgentPerformer

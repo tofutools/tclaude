@@ -12,6 +12,9 @@ import (
 // compileTaskStages accepts only authored graphs. Generated identities are stable
 // across validation, admission and exact retries of a pinned definition.
 func compileTaskStages(authored model.WorkGraph) (model.WorkGraph, error) {
+	if len(authored.ProgramActivationTimeouts) != 0 {
+		return model.WorkGraph{}, fail(ErrInvalid, "program activation budgets are compiler-owned")
+	}
 	if len(authored.TaskGroups) != 0 || len(authored.EscalationRetries) != 0 {
 		return model.WorkGraph{}, fail(ErrInvalid, "task groups are compiler-owned")
 	}

@@ -351,6 +351,15 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 		return WorkRunResult{}, fail(ErrUnsupported, "authored escalation retry loops cannot execute; use ordinary blocked resolution")
 	}
 	for _, node := range graph.Nodes {
+		if node.Performer != nil && strings.TrimSpace(node.Performer.Timeout) != "" && node.Performer.Kind != model.PerformerProgram {
+			return WorkRunResult{}, fail(ErrUnsupported, "task %s declares a performer timeout; only program timeout execution is available", node.ID)
+		}
+		if node.Performer != nil {
+			duration, _ := performerTimeout(*node.Performer)
+			if duration > time.Hour {
+				return WorkRunResult{}, fail(ErrUnsupported, "program timeout execution is bounded to one hour")
+			}
+		}
 		if node.Performer != nil && node.Performer.Contact != nil {
 			return WorkRunResult{}, fail(ErrUnsupported, "task %s declares a contact schedule; scheduled performer contact is not available", node.ID)
 		}
@@ -398,10 +407,13 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 			return WorkRunResult{}, err
 		}
 	}
+	if err := s.pinProgramActivationTimeouts(ctx, &graph); err != nil {
+		return WorkRunResult{}, err
+	}
 	now := s.now().UTC()
 	entry := graphNode(graph, graph.EntryNodeID)
 	run := model.WorkRun{ID: req.ID, RequestID: req.Context.RequestID, Requester: req.Context.Principal, Authority: authority, Delegation: req.Context.Principal.Delegation, Graph: &graph, DefinitionClosure: closure, Parameters: parameters, Scope: req.Start.Scope, AuthorizedPrograms: append([]model.ProgramProfileRef(nil), req.Start.AuthorizedProgramProfiles...), ControlState: model.WorkControlActive, State: model.WorkRunRunning, Deadline: req.Start.Deadline.UTC(), Revision: 1, CreatedAt: now, UpdatedAt: now}
-	attempt, windows := s.initialActivation(req.ID, req.Start.Scope, entry, now, run.Deadline)
+	attempt, windows := s.initialActivation(req.ID, req.Start.Scope, entry, now, run.Deadline, graph.ProgramActivationTimeouts[entry.ID])
 	run.NodeAttempts = []model.WorkNodeAttempt{attempt}
 	record, _, err := s.store.CreateGraphWorkRun(ctx, run, windows)
 	if err == nil && (entry.Kind == model.WorkNodeFork || entry.Kind == model.WorkNodeJoin || entry.Kind == model.WorkNodeEnd) {
@@ -562,7 +574,7 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 				}
 			}
 		}
-		attempt, windows := s.initialActivation(record.Run.ID, record.Run.Scope, node, now, record.Run.Deadline)
+		attempt, windows := s.initialActivation(record.Run.ID, record.Run.Scope, node, now, record.Run.Deadline, graph.ProgramActivationTimeouts[node.ID])
 		inheritTaskActivation(graph, current, &attempt, windows)
 		taskStageFeedback(record, current, &attempt, detail)
 		for i := range windows {
@@ -761,6 +773,9 @@ func (s *Service) retryActivation(run model.WorkRun, current model.WorkNodeAttem
 		readyAt, retryAt, state = value, &value, model.NodeAttemptRetryWait
 	}
 	deadline := current.Deadline
+	if node.Performer != nil && strings.TrimSpace(node.Performer.Timeout) != "" {
+		deadline = activationDeadline(node.Performer, run.Graph.ProgramActivationTimeouts[node.ID], readyAt, run.Deadline)
+	}
 	if node.Retry.AttemptBudget > 0 && now.Add(node.Retry.AttemptBudget).Before(deadline) {
 		deadline = now.Add(node.Retry.AttemptBudget)
 	}
@@ -917,7 +932,8 @@ func onlyWaiting(attempts []model.WorkNodeAttempt) bool {
 	return found
 }
 
-func (s *Service) initialActivation(runID model.WorkRunID, scope model.WorkScope, node model.WorkNode, now, deadline time.Time) (model.WorkNodeAttempt, []model.DecisionWindow) {
+func (s *Service) initialActivation(runID model.WorkRunID, scope model.WorkScope, node model.WorkNode, now, deadline time.Time, budget time.Duration) (model.WorkNodeAttempt, []model.DecisionWindow) {
+	deadline = activationDeadline(node.Performer, budget, now, deadline)
 	attempt := model.WorkNodeAttempt{Ref: model.WorkAttemptRef{RunID: runID, NodeID: node.ID, ActivationID: model.WorkActivationID(s.newID("activation_")), Attempt: 1}, State: model.NodeAttemptReady, Performer: node.Performer, ReadyAt: now, Deadline: deadline, RetryBudget: normalizedAttempts(node.Retry.MaxAttempts), CreatedAt: now, UpdatedAt: now}
 	run := model.WorkRun{ID: runID, Scope: scope, Deadline: deadline, Revision: 1}
 	return s.attachDecisionWindow(run, node, attempt, now)
@@ -1739,6 +1755,9 @@ func validateWorkNode(node model.WorkNode) error {
 }
 
 func validatePerformer(performer model.Performer) error {
+	if _, err := performerTimeout(performer); err != nil {
+		return err
+	}
 	if contact := performer.Contact; contact != nil {
 		cadence, err := time.ParseDuration(contact.Cadence)
 		if err != nil || cadence <= 0 || len(contact.Cadence) > 128 || contact.Budget == 0 || contact.Budget > 10000 || strings.TrimSpace(contact.EscalationTarget) == "" || len(contact.EscalationTarget) > 1024 || !utf8.ValidString(contact.EscalationTarget) || strings.ContainsRune(contact.EscalationTarget, 0) {
