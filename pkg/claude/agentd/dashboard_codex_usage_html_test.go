@@ -40,20 +40,24 @@ func TestDashboardHTML_CodexUsageWired(t *testing.T) {
 		t.Error("the display-mode selector gutter must precede the provider label")
 	}
 
-	// dashboard.css: the multiline layout + the right-aligned source label
-	// column that stacks the colons.
+	// dashboard.css: fixed source and data columns keep every permutation
+	// anchored while leaving the selectors close to their provider names.
 	must("#usage.multiline", "multiline stacks the readout vertically")
 	must("#usage .usrc", "the source label column is styled")
-	must("width: calc(6ch + 26px); flex: 0 0 calc(6ch + 26px);", "selector gutter fits the widest three-mode control and keeps every provider label aligned")
-	must("padding: 0 4px", "compact selector buttons do not inflate the line spacing")
+	must("grid-template-columns: calc(6ch + 14px) 14ch", "selector and provider names occupy fixed shared columns")
+	must("column-gap: 4px", "selector sits close to its provider name")
+	must("width: calc(66ch + 30px)", "all display-mode permutations retain one header width")
+	must("grid-template-columns: calc(20ch + 18px) 46ch", "source and data regions retain stable positions")
+	must("padding: 0 2px", "compact selector buttons do not inflate the line spacing")
 	must("line-height: 11px", "selector height stays within the original usage-row rhythm")
 }
 
 // TestDashboardHTML_CodexUsageColumnAlignment guards the two-line readout's
-// column alignment: a monospace block where each field reserves a worst-case
-// `ch` width, so the Claude/Codex rows line up field-for-field and the layout
-// doesn't shift as a countdown ticks down or a percent crosses 99→100. CSS
-// only, so it lives with the other asset-wiring guards.
+// column alignment: a fixed-width monospace block where each field reserves a
+// worst-case `ch` width, so the Claude/Codex rows line up field-for-field and
+// the layout doesn't shift as a countdown ticks down, a percent crosses
+// 99→100, or either provider changes display mode. CSS only, so it lives with
+// the other asset-wiring guards.
 func TestDashboardHTML_CodexUsageColumnAlignment(t *testing.T) {
 	must := func(needle, why string) {
 		t.Helper()

@@ -69,6 +69,10 @@ test('Copilot header selector switches percentage, what-if cost, and AIC', async
   const selectorSlot = mounted.container.querySelector('.usage-unit-switch-slot');
   assert.equal(selectorSlot.nextElementSibling, label,
     'display-mode selector occupies the aligned gutter immediately before the provider label');
+  assert.equal(mounted.container.querySelector('.usage-source').lastElementChild, label,
+    'selector and provider remain one fixed source region');
+  assert.ok(mounted.container.querySelector('.usage-values').contains(mounted.container.querySelector('.uw')),
+    'mode-specific tokens remain inside the fixed data region');
   const buttons = () => [...mounted.container.querySelectorAll('.usage-unit-switch button')];
   assert.match(mounted.container.textContent, /38%/);
   await harness.act(() => buttons()[1].click());
