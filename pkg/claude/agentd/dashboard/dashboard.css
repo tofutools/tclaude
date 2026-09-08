@@ -3557,23 +3557,78 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .costs-header { margin: 0 0 12px 0; }
 .costs-header .filter-bar { margin: 0; flex-wrap: wrap; }
 .costs-header #costs-summary { margin-top: 8px; }
-.costs-dimension-filters { margin: 0 0 12px; flex-wrap: wrap; }
-.cost-filter-label { color: #8b949e; font-size: 11px; font-weight: 600; }
-.costs-model-filter { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-left: 10px; border-left: 1px solid #2a3340; }
-.costs-provider-filter { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.costs-dimension-filters { position: relative; justify-content: flex-end; gap: 8px; margin: 0 0 12px; overflow: visible; }
+.cost-filter-menu { position: relative; }
+.cost-filter-menu > summary {
+  display: flex; align-items: center; gap: 8px; padding: 5px 9px;
+  border: 1px solid #31517a; border-radius: 5px; background: #142033;
+  color: #c9d1d9; cursor: pointer; list-style: none;
+}
+.cost-filter-menu > summary::before { content: none; }
+.cost-filter-menu > summary::after { content: "⌄"; color: #79c0ff; }
+.cost-filter-menu[open] > summary { border-color: #58a6ff; background: #182b43; }
+.cost-filter-menu[open] > summary::after { content: "⌃"; }
+.cost-filter-menu > summary strong { color: #79c0ff; }
+.cost-filter-menu > summary span { color: #aab4bf; font-variant-numeric: tabular-nums; }
+.cost-filter-popover {
+  position: absolute; z-index: 30; top: calc(100% + 5px); right: 0;
+  width: 370px; padding: 11px; background: #111820; border: 1px solid #3a4656;
+  border-radius: 7px; box-shadow: 0 14px 35px rgba(0,0,0,.72);
+}
+.cost-filter-popover.model { width: min(560px, calc(100vw - 40px)); }
+.cost-filter-popover-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 0 2px 9px; margin-bottom: 4px; border-bottom: 1px solid #2a3340;
+  color: #8b949e; font-size: 11px;
+}
+.cost-filter-popover-head strong { color: #c9d1d9; font-size: 12px; }
+.cost-filter-popover-head input {
+  width: 210px; margin: 0; padding: 5px 8px; border: 1px solid #2a3340;
+  border-radius: 4px; background: #0d1117; color: #c9d1d9; font: inherit;
+}
+.cost-filter-model-list { max-height: min(420px, 55vh); overflow: auto; }
+.cost-filter-option {
+  display: grid; grid-template-columns: auto auto minmax(140px, 1fr) auto;
+  align-items: center; gap: 7px; padding: 7px 5px; border-radius: 4px; cursor: pointer;
+}
+.cost-filter-option:hover { background: #18202b; }
+.cost-filter-option.unavailable { opacity: .45; cursor: default; }
+.cost-filter-option input { margin: 0; }
+.cost-filter-option-name { min-width: 0; color: #c9d1d9; }
+.cost-filter-option-name small, .cost-filter-option-value small {
+  display: block; margin-top: 2px; color: #768390; font-size: 10px;
+}
+.cost-filter-option-name > i {
+  display: block; width: 120px; height: 3px; margin-top: 4px;
+  overflow: hidden; border-radius: 2px; background: #29313b;
+}
+.cost-filter-option-name > i > b { display: block; height: 100%; border-radius: 2px; background: #6e9c7d; }
+.cost-filter-option-value { text-align: right; color: #aab4bf; font-variant-numeric: tabular-nums; }
+.cost-filter-provider-dot { display: inline-block; width: 7px; height: 7px; margin-right: 3px; border-radius: 2px; }
+.cost-filter-dependency-note {
+  margin-top: 7px; padding: 7px 9px; border-left: 2px solid #58a6ff;
+  background: #121d2b; color: #9db7d5; font-size: 10px; line-height: 1.4;
+}
 .cost-chart-heading { display: flex; justify-content: space-between; align-items: baseline; margin: 0 2px 6px; }
 .cost-chart-heading strong { color: #c9d1d9; font-size: 12px; }
 .cost-chart-heading span { color: #8b949e; font-size: 11px; }
 .cost-daily-heading { margin-top: 12px; }
 .cost-accumulated { padding: 10px 12px 5px; background: #0d1117; border: 1px solid #2a3340; border-radius: 6px; }
 .cost-accumulated.empty { min-height: 100px; display: grid; place-items: center; color: #8b949e; }
-.cost-accumulated-svg { display: block; width: 100%; height: auto; max-height: 210px; }
+.cost-accumulated-svg { display: block; width: 100%; height: 190px; }
 .cost-accumulated-grid line { stroke: #1c2430; stroke-width: 1; }
 .cost-accumulated-grid text, .cost-accumulated-day { fill: #8b949e; font-size: 9px; }
 .cost-accumulated-area { fill: rgba(110, 156, 125, .12); }
 .cost-accumulated-line { fill: none; stroke: #6e9c7d; stroke-width: 2; }
-.cost-accumulated-point { fill: #9cc5aa; opacity: .35; }
-.cost-accumulated-point:hover { opacity: 1; r: 3px; }
+.cost-accumulated-line.projected { stroke: #d29922; stroke-dasharray: 7 5; }
+.cost-accumulated-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: crosshair; }
+.cost-line-key { display: inline-block; width: 16px; margin: 0 4px 2px 9px; border-top: 2px solid #6e9c7d; vertical-align: middle; }
+.cost-line-key.projected { border-top-color: #d29922; border-top-style: dashed; }
+.cost-accumulated-tooltip line { stroke: #58a6ff; stroke-width: 1; opacity: .55; }
+.cost-accumulated-tooltip circle { fill: #9cc5aa; stroke: #0d1117; }
+.cost-accumulated-tooltip.projected circle { fill: #d29922; }
+.cost-accumulated-tooltip rect { fill: #161b22; stroke: #536275; }
+.cost-accumulated-tooltip text { fill: #c9d1d9; font-size: 10px; }
 #costs-summary {
   font-size: 12px; color: #7d8590;
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; white-space: nowrap;
@@ -3589,8 +3644,8 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 /* Y axis: tick labels positioned at the same bottom-percentages as
    the gridlines; the empty .cost-day spacer keeps the tick area
    vertically congruent with the columns' bar areas. */
-.cost-yaxis { flex: 0 0 auto; display: flex; flex-direction: column; padding-right: 8px; }
-.cost-yarea { flex: 1 1 auto; position: relative; min-width: 28px; }
+.cost-yaxis { flex: 0 0 48px; display: flex; flex-direction: column; padding-right: 8px; }
+.cost-yarea { flex: 1 1 auto; position: relative; min-width: 0; }
 .cost-ytick {
   position: absolute; right: 0; transform: translateY(50%);
   font-size: 9px; color: #6e7681; line-height: 1; white-space: nowrap;
@@ -3598,7 +3653,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 /* Plot area: the gridline overlay spans exactly the columns' bar
    areas (bottom offset = the .cost-day label row), so lines, ticks
    and bar heights all share one scale. */
-.cost-plot { flex: 1 1 auto; min-width: 0; position: relative; }
+.cost-plot { flex: 1 1 auto; min-width: 0; position: relative; margin-right: 16px; }
 .cost-grid { position: absolute; left: 0; right: 0; top: 0; bottom: 17px; pointer-events: none; }
 .cost-gridline { position: absolute; left: 0; right: 0; height: 1px; background: #1c2430; }
 .cost-cols { display: flex; align-items: stretch; gap: 2px; height: 100%; position: relative; }
@@ -3704,16 +3759,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   margin-left: 16px; color: #d4d4d4; font-variant-numeric: tabular-nums;
 }
 .cost-tip-row .cost-tip-amt, .cost-tip-total .cost-tip-amt { margin-left: auto; }
-.costs-provider-filter {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-.filter-bar label.costs-provider-choice input {
-  flex: 0 0 auto;
-  max-width: none;
-  padding: 0;
-}
 /* Earlier-day slice of a multi-day conversation: a dim ↩ marker and a
    faintly recessed row, so a continued agent reads as belonging to the
    newer row above it rather than as a separate agent. */

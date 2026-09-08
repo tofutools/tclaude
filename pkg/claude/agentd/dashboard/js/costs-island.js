@@ -101,33 +101,85 @@ function Controls({ state, actions, current }) {
   </div>`;
 }
 
+function closeSiblingFilters(event) {
+  const current = event.currentTarget.closest('.cost-filter-menu');
+  document.querySelectorAll('.cost-filter-menu[open]').forEach((menu) => {
+    if (menu !== current) menu.open = false;
+  });
+}
+
 function ProviderFilter({ state, current }) {
   if (current.providers.length <= 1) return null;
-  return html`<span id="filter-costs-providers" class="costs-provider-filter">
-    ${current.providers.map((provider) => html`<label class="filter-toggle costs-provider-choice" title=${`Show ${provider} cost rows`}>
-      <input type="checkbox" data-provider=${provider} checked=${current.selectedProviders.has(provider)}
-        onChange=${() => state.toggleProvider(provider)} />
-      <span class=${`cost-legend-sw ${providerSegmentClass(provider, current.providers)}`}></span><span>${provider}</span>
-    </label>`)}
-  </span>`;
+  const selectedCost = current.providerStats.reduce((sum, entry) => sum
+    + (current.selectedProviders.has(entry.provider) ? entry.cost : 0), 0);
+  return html`<details id="filter-costs-providers" class="cost-filter-menu">
+    <summary onClick=${closeSiblingFilters}><strong>Providers</strong><span>${current.selectedProviders.size} of ${current.providers.length} · ${fmtUSD(selectedCost)}</span></summary>
+    <div class="cost-filter-popover provider" role="group" aria-label="Cost providers">
+      <div class="cost-filter-popover-head"><strong>Providers</strong><span>cost share · agents</span></div>
+      ${current.providerStats.map((entry) => {
+        const share = Math.round(entry.share * 100);
+        return html`<label class="cost-filter-option costs-provider-choice" title=${`Show ${entry.provider} cost rows`}>
+          <input type="checkbox" data-provider=${entry.provider} checked=${current.selectedProviders.has(entry.provider)}
+            onChange=${() => state.toggleProvider(entry.provider)} />
+          <span class=${`cost-legend-sw ${providerSegmentClass(entry.provider, current.providers)}`}></span>
+          <span class="cost-filter-option-name">${entry.provider}<small>${entry.modelCount} model${entry.modelCount === 1 ? '' : 's'} · ${entry.agentCount} agent${entry.agentCount === 1 ? '' : 's'}</small>
+            <i><b style=${`width:${Math.max(share, 1)}%`}></b></i></span>
+          <span class="cost-filter-option-value">${fmtUSD(entry.cost)}<small>${share}%</small></span>
+        </label>`;
+      })}
+    </div>
+  </details>`;
 }
 
 function ModelFilter({ state, current }) {
+  const [query, setQuery] = useState('');
   if (current.models.length <= 1) return null;
-  return html`<span id="filter-costs-models" class="costs-model-filter"
-    title="Cost is grouped by the last model recorded for each agent-day slice.">
-    <span class="cost-filter-label">Model</span>
-    ${current.models.map((model) => html`<label class="filter-toggle costs-model-choice" title=${`Show ${model} cost rows`}>
-      <input type="checkbox" data-model=${model} checked=${current.selectedModels.has(model)}
-        onChange=${() => state.toggleModel(model)} /><span>${model}</span>
-    </label>`)}
-  </span>`;
+  const available = current.modelStats.filter((entry) => entry.available);
+  const selectedCount = available.filter((entry) => current.selectedModels.has(entry.model)).length;
+  const filtered = current.modelStats.filter((entry) => entry.model.toLowerCase().includes(query.trim().toLowerCase()));
+  return html`<details id="filter-costs-models" class="cost-filter-menu models">
+    <summary onClick=${closeSiblingFilters}><strong>Models</strong><span>${selectedCount} of ${available.length} · ${Math.round(current.modelCoverage * 100)}% spend</span></summary>
+    <div class="cost-filter-popover model" role="group" aria-label="Cost models"
+      title="Cost is grouped by the last model recorded for each agent-day slice.">
+      <div class="cost-filter-popover-head"><strong>Models in selected providers</strong>
+        <input type="search" aria-label="Filter cost models" placeholder="Filter models…" value=${query}
+          onInput=${(event) => setQuery(event.currentTarget.value)} />
+      </div>
+      <div class="cost-filter-model-list">
+        ${filtered.map((entry) => {
+          const share = Math.round(entry.share * 100);
+          return html`<label class=${`cost-filter-option costs-model-choice${entry.available ? '' : ' unavailable'}`}
+            title=${entry.available ? `Show ${entry.model} cost rows` : `Unavailable because ${entry.providers.join(', ')} is not selected`}>
+            <input type="checkbox" data-model=${entry.model} disabled=${!entry.available}
+              checked=${entry.available && current.selectedModels.has(entry.model)} onChange=${() => state.toggleModel(entry.model)} />
+            <span class="cost-filter-option-name">${entry.model}<small>${entry.providers.map((provider) => html`<span class=${`cost-filter-provider-dot ${providerSegmentClass(provider, current.providers)}`}></span>`)}${entry.providers.length === 1 ? entry.providers[0] : `${entry.providers.length} providers`}</small>
+              <i><b style=${`width:${Math.max(share, entry.available ? 1 : 0)}%`}></b></i></span>
+            <span class="cost-filter-option-value">${fmtUSD(entry.cost)}<small>${entry.agentCount} agent${entry.agentCount === 1 ? '' : 's'}</small></span>
+          </label>`;
+        })}
+        ${filtered.length === 0 && html`<div class="empty">No models match.</div>`}
+      </div>
+      <div class="cost-filter-dependency-note">Turning off a provider deselects models recorded only on that provider. Shared models stay selected while any selected provider still uses them.</div>
+    </div>
+  </details>`;
 }
 
 function CostFilters({ state, current }) {
+  useEffect(() => {
+    const close = (event) => {
+      if (event.type === 'pointerdown' && event.target.closest?.('.cost-filter-menu')) return;
+      document.querySelectorAll('.cost-filter-menu[open]').forEach((menu) => { menu.open = false; });
+    };
+    const escape = (event) => { if (event.key === 'Escape') close(event); };
+    document.addEventListener('pointerdown', close);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', close);
+      document.removeEventListener('keydown', escape);
+    };
+  }, []);
   if (current.providers.length <= 1 && current.models.length <= 1) return null;
   return html`<div class="filter-bar costs-dimension-filters" aria-label="Cost dimensions">
-    ${current.providers.length > 1 && html`<span class="cost-filter-label">Provider</span>`}
     <${ProviderFilter} state=${state} current=${current} />
     <${ModelFilter} state=${state} current=${current} />
   </div>`;
