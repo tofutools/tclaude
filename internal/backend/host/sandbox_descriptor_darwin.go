@@ -74,20 +74,23 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 		"(deny network-outbound (remote unix-socket (require-not (require-any " + strings.Join(readRegions, " ") + "))))\n"
 	if privateNetwork {
 		// IP isolation is separate from the filesystem-gated Unix socket axis.
-		outbound, inbound := `(remote ip "*:*")`, `(local ip "*:*")`
-		if bindings.controlPort != 0 {
+		if bindings.controlPort == 0 {
+			profile += "(deny network-outbound (remote ip \"*:*\"))\n" +
+				"(deny network-inbound (local ip \"*:*\"))\n" +
+				"(deny network-bind (local ip \"*:*\"))\n"
+		} else {
 			if bindings.controlPort < 1 || bindings.controlPort > 65535 {
 				return ProcessSpec{}, nil, fmt.Errorf("invalid sandbox control port")
 			}
-			// Seatbelt accepts the literal localhost selector, not numeric IP
-			// spelling. The native relay still dials only IPv4 loopback.
+			// Match the retained native server contract. Seatbelt's TCP
+			// localhost selector is host-wide, not strictly 127.0.0.1; the
+			// native relay itself still uses and proves IPv4 loopback.
 			endpoint := strconv.Quote("localhost:" + strconv.Itoa(bindings.controlPort))
-			outbound = "(require-all " + outbound + " (require-not (remote ip " + endpoint + ")))"
-			inbound = "(require-all " + inbound + " (require-not (local ip " + endpoint + ")))"
+			profile += "(deny network-outbound (require-all (remote ip \"*:*\") (require-not (remote tcp " + endpoint + "))))\n" +
+				"(deny network-bind (require-not (local tcp " + endpoint + ")))\n"
+			// Inbound filtering is not a reliable listener/reply boundary on
+			// Darwin. The retained contract prevents other listeners at bind.
 		}
-		profile += "(deny network-outbound " + outbound + ")\n" +
-			"(deny network-inbound " + inbound + ")\n" +
-			"(deny network-bind " + inbound + ")\n"
 	}
 	args = append(args, "-p", profile, child.Executable)
 	args = append(args, child.Args...)

@@ -214,6 +214,15 @@ floor. Existing files and created empty configuration directories are retained
 by identity in each prepared launch. Changing a pinned file before release
 requires a fresh preparation.
 
+The native server control relay uses a retained Unix listener and proves both
+its process owner and the server's TCP listener before forwarding credentials.
+Linux runs that relay and server inside the same private network namespace.
+On macOS the retained TCP control port uses Seatbelt's `localhost` selector,
+which also matches other host-local addresses at that port. This is a partial
+network-isolation mechanism, matching the legacy platform limitation, rather
+than a guarantee limited to the numeric loopback address. Other TCP ports and
+UDP have no control exception.
+
 OpenCode also accepts an explicit native XDG root. Codex and Copilot currently
 support their owned native homes only. Each refresh reports coverage; partial or
 unreadable history is not presented as a complete empty result.

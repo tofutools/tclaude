@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"syscall"
 	"testing"
 	"time"
@@ -112,6 +113,15 @@ func TestServerRelayNativeFixture(t *testing.T) {
 			_ = connection.Close()
 		}
 		require.Error(t, err, "unrelated loopback must not be granted")
+	}
+	if runtime.GOOS == "darwin" && os.Getenv("TCLAUDE_RELAY_FIXTURE_PRIVATE") != "" {
+		address, err := net.ResolveUDPAddr("udp4", target)
+		require.NoError(t, err)
+		udp, err := net.ListenUDP("udp4", address)
+		if udp != nil {
+			_ = udp.Close()
+		}
+		require.Error(t, err, "TCP control exception must not permit a UDP listener")
 	}
 	listener, err := net.Listen("tcp4", target)
 	require.NoError(t, err)
