@@ -1,3 +1,14 @@
+function validAudience(audience) {
+  return Array.isArray(audience) && audience.length > 0 && audience.every(entry => {
+    const s=entry.Subject||{}, empty=!s.Kind&&!s.AgentID&&!s.ExecutionID;
+    if(entry.RoleID) return !!entry.RoleID.trim() && empty;
+    if(entry.GroupID) return false;
+    if(s.Kind==='operator') return !s.AgentID&&!s.ExecutionID;
+    if(s.Kind==='agent') return !!s.AgentID?.trim()&&!s.ExecutionID;
+    if(s.Kind==='execution') return !!s.ExecutionID?.trim()&&!s.AgentID;
+    return false;
+  });
+}
 // The one legacy authoring-only loop. It never enables runtime retries.
 export function processEscalations(graph) {
   const nodes = new Map(graph.Nodes.map(node => [node.ID, node]));
@@ -20,7 +31,7 @@ export function processEscalations(graph) {
     const cancel = outgoing.find(item => item.edge.Verdict === 'cancel');
     const end = nodes.get(cancel?.edge.To);
     const incoming = (graph.Edges || []).filter(edge => edge.To === id);
-    if (id === graph.EntryNodeID || answers.length !== 2 || !answers.includes('retry') || !answers.includes('cancel') ||
+    if (id === graph.EntryNodeID || !validAudience(node.Decision?.Audience) || answers.length !== 2 || !answers.includes('retry') || !answers.includes('cancel') ||
         outgoing.length !== 2 || !retry || !cancel || retry.edge.To !== source ||
         end?.Kind !== 'end' || end.End?.Outcome !== 'cancelled' ||
         incoming.some(edge => edge.From !== source || !failure(edge.Verdict))) {

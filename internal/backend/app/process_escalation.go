@@ -2,6 +2,7 @@ package app
 
 import (
 	"slices"
+	"strings"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
@@ -41,7 +42,7 @@ func processEscalationRetries(graph model.WorkGraph) ([]model.WorkEdge, error) {
 		if !escalation {
 			continue
 		}
-		if node.ID == graph.EntryNodeID || node.Decision == nil || len(node.Decision.PermittedAnswers) != 2 || !slices.Contains(node.Decision.PermittedAnswers, "retry") || !slices.Contains(node.Decision.PermittedAnswers, "cancel") {
+		if node.ID == graph.EntryNodeID || node.Decision == nil || !validEscalationAudience(node.Decision.Audience) || len(node.Decision.PermittedAnswers) != 2 || !slices.Contains(node.Decision.PermittedAnswers, "retry") || !slices.Contains(node.Decision.PermittedAnswers, "cancel") {
 			return nil, fail(ErrInvalid, "escalation requires a non-entry decision with exactly retry and cancel answers")
 		}
 		var retry, cancel *model.WorkEdge
@@ -73,4 +74,41 @@ func processEscalationRetries(graph model.WorkGraph) ([]model.WorkEdge, error) {
 		retries = append(retries, *retry)
 	}
 	return retries, nil
+}
+
+// An authored loop needs an audience identity, not an empty placeholder.
+// Current grants and role eligibility remain execution-time checks.
+func validEscalationAudience(audience []model.DecisionAudience) bool {
+	if len(audience) == 0 {
+		return false
+	}
+	for _, entry := range audience {
+		subject := entry.Subject
+		if entry.RoleID != "" {
+			if strings.TrimSpace(string(entry.RoleID)) == "" || subject != (model.AuthoritySubject{}) {
+				return false
+			}
+			continue
+		}
+		if entry.GroupID != "" {
+			return false
+		}
+		switch subject.Kind {
+		case model.AuthorityOperator:
+			if subject.AgentID != "" || subject.ExecutionID != "" {
+				return false
+			}
+		case model.AuthorityAgent:
+			if strings.TrimSpace(string(subject.AgentID)) == "" || subject.ExecutionID != "" {
+				return false
+			}
+		case model.AuthorityExecution:
+			if strings.TrimSpace(string(subject.ExecutionID)) == "" || subject.AgentID != "" {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
