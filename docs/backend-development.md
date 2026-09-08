@@ -1715,3 +1715,26 @@ unavailable. Each new launch resolves the current profile values and prepares
 its own boundary; the bootstrap places the child inside it before native setup
 runs. Descendants share the ceiling, and observed exit or aborted preparation
 cleans up that launch's boundary. Resource limits remain Linux-only, as in v1.
+
+### Advisory team process
+
+Team templates can carry an ordered advisory process: named phases, active role
+labels, and free-text completion or handoff guidance. The team editor keeps this
+in `AdvisoryProcess`; older name-only `AdvisoryPhases` remain readable without
+rewriting stored revisions. The two authoring forms cannot be combined.
+
+Deployment supplies the phase map in initial agent guidance. The deployed-team
+view shows the selected definition's phases, the current phase and recorded
+transitions. Advancing is explicit: omit `phase` to move to the next phase or
+supply a phase name to enter it, including an earlier phase. Revision conflicts
+retain the form. Transitions survive reopen, and exact request retries do not
+append them again. Historical advances predating transition recording are not
+invented.
+
+Like v1, phase-entry messages are best-effort notices through the ordinary message
+queue after the transition commits. Current group members whose role names match
+an entering role are eligible; matching ignores case and surrounding whitespace,
+and `all` means every current member. The acting agent is excluded. These fixed
+notices use the phase command's group-management authority; the public message
+API still requires message-send authority. Phases grant no permissions, impose
+no execution gates, and never advance automatically.

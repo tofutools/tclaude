@@ -213,8 +213,28 @@ class TeamEditor {
         this.change(d => { const brief = {...b, ID: f.id, Body: f.body, Syntax:f.syntax||undefined, Timing: f.timing, Required: f.required, MemberKeys: f.members}; const i = d.Team.Briefings.findIndex(x => x.ID === original?.ID); if (i < 0) d.Team.Briefings.push(brief); else d.Team.Briefings[i] = brief; for (const m of d.Team.Members) { m.BriefingIDs = (m.BriefingIDs || []).filter(id => id !== original?.ID && id !== f.id); if (f.members.includes(m.Key)) m.BriefingIDs.push(f.id); } });
       });
   }
+  phases() {
+    return this.draft.Team.AdvisoryProcess?.length ? this.draft.Team.AdvisoryProcess : this.draft.Team.AdvisoryPhases.map(Name => ({Name, Roles: [], Criteria: ''}));
+  }
   settings() {
-    this.form('Workspace and advisory phases', [{key: 'workspace', label: 'Workspace policy', options: [opt('shared', 'Shared workspace'), opt('per_member', 'Separate member workspaces')], value: this.draft.Team.WorkspacePolicy}, {key: 'phases', label: 'Advisory phases (one per line)', text: true, value: this.draft.Team.AdvisoryPhases.join('\n')}], f => this.change(d => { d.Team.WorkspacePolicy = f.workspace; d.Team.AdvisoryPhases = lines(f.phases); }));
+    const phases = this.phases();
+    this.form('Workspace and advisory phases', [{key: 'workspace', label: 'Workspace policy', options: [opt('shared', 'Shared workspace'), opt('per_member', 'Separate member workspaces')], value: this.draft.Team.WorkspacePolicy}, {key: 'phases', label: 'Advisory phases (one per line)', text: true, value: phases.map(p => p.Name).join('\n')}], f => this.change(d => {
+      const names = lines(f.phases);
+      if (new Set(names.map(n => n.toLowerCase())).size !== names.length) throw new Error('Phase names must be unique.');
+      d.Team.WorkspacePolicy = f.workspace;
+      d.Team.AdvisoryProcess = names.map(Name => ({...(phases.find(p => p.Name.toLowerCase() === Name.toLowerCase()) || {Roles: [], Criteria: ''}), Name}));
+      d.Team.AdvisoryPhases = [];
+    }));
+    this.content.append(el('p', 'Phases are advisory guidance. They do not grant permissions, gate work, or advance automatically. Reorder the names above to change their order.'));
+    for (const phase of phases) this.card(phase.Name, `Active roles: ${(phase.Roles || []).join(', ') || 'none specified'}\n${phase.Criteria || ''}`, () => { if (this.discard()) this.phase(phase); }, () => { if (this.discard()) this.change(d => { d.Team.AdvisoryProcess = phases.filter(p => p.Name !== phase.Name); d.Team.AdvisoryPhases = []; }); });
+  }
+  phase(original) {
+    const phases = this.phases();
+    this.form('Advisory phase', [{key: 'phase_name', label: 'Phase name', value: original.Name, required: true}, {key: 'phase_roles', label: 'Active role labels (one per line; all means every member)', text: true, value: (original.Roles || []).join('\n')}, {key: 'criteria', label: 'Completion and handoff guidance', text: true, value: original.Criteria || ''}], f => {
+      const name = f.phase_name.trim();
+      if (!name || phases.some(p => p.Name !== original.Name && p.Name.toLowerCase() === name.toLowerCase())) throw new Error('Phase names must be nonempty and unique.');
+      this.change(d => { d.Team.AdvisoryProcess = phases.map(p => p.Name === original.Name ? {Name: name, Roles: lines(f.phase_roles), Criteria: f.criteria} : p); d.Team.AdvisoryPhases = []; });
+    });
   }
   parameter(original) {
     const p = original || {};

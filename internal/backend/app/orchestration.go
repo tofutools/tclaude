@@ -1517,6 +1517,9 @@ func materializePerformerBindings(graph model.WorkGraph, bindings map[string]mod
 }
 
 func validateTeam(team model.TeamDefinition) error {
+	if err := validateTeamPhases(team); err != nil {
+		return err
+	}
 	if len(team.Members) == 0 || len(team.Waves) == 0 {
 		return fail(ErrInvalid, "team members and waves are required")
 	}

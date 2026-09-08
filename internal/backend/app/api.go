@@ -257,7 +257,11 @@ type ListTeamDeploymentsRequest struct {
 	GroupID   model.GroupID
 }
 
-type TeamDeploymentResult struct{ Deployment model.TeamDeployment }
+type TeamDeploymentResult struct {
+	Deployment         model.TeamDeployment
+	Phases             []model.TeamPhase
+	PhaseNotifications int `json:",omitempty"`
+}
 
 type OccurrenceResult struct{ Occurrence model.AutomationOccurrence }
 

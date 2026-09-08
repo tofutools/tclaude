@@ -13,6 +13,7 @@ type RebriefDeploymentRequest struct {
 }
 
 type AdvanceAdvisoryPhaseRequest struct {
+	Phase            string
 	Context          RequestContext
 	DeploymentID     model.DeploymentID
 	ExpectedRevision model.Revision

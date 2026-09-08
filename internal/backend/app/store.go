@@ -154,7 +154,7 @@ type OrchestrationStore interface {
 	RecordTeamBriefingOperations(context.Context, model.DeploymentID, model.Revision, string, []model.OperationID, time.Time) (model.TeamDeployment, error)
 	BeginTeamRebrief(context.Context, model.DeploymentID, model.Revision, model.DefinitionRef, model.Principal, model.RequestID, string, time.Time) (model.TeamDeployment, model.TeamRebrief, bool, error)
 	CompleteTeamRebrief(context.Context, model.DeploymentID, model.Principal, model.RequestID, map[string][]model.OperationID, time.Time) (model.TeamDeployment, error)
-	AdvanceTeamAdvisoryPhase(context.Context, model.DeploymentID, model.Revision, model.Principal, model.RequestID, string, time.Time) (model.TeamDeployment, error)
+	AdvanceTeamAdvisoryPhase(context.Context, model.DeploymentID, model.Revision, model.Principal, model.RequestID, string, uint32, model.TeamPhaseTransition, time.Time) (model.TeamDeployment, error)
 	BeginTeamStandDown(context.Context, model.DeploymentID, model.Revision, model.Principal, model.RequestID, string, string, time.Time) (model.TeamDeployment, error)
 	RecordExecutionReadiness(context.Context, model.ExecutionID, model.AttemptGeneration, model.ContextReadiness, time.Time) (model.Execution, error)
 }

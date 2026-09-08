@@ -104,6 +104,7 @@ type TeamDefinition struct {
 	Briefings       []TeamBriefing
 	WorkspacePolicy WorkspacePolicy
 	AdvisoryPhases  []string
+	AdvisoryProcess []TeamPhase `json:",omitempty"`
 	Automation      []AutomationRuleRef
 }
 
@@ -579,6 +580,7 @@ type TeamDeployment struct {
 	Rebriefs               []TeamRebrief
 	WorkRunID              WorkRunID
 	AdvisoryPhase          uint32
+	PhaseHistory           []TeamPhaseTransition
 	State                  DeploymentState
 	Revision               Revision
 	CreatedAt              time.Time
