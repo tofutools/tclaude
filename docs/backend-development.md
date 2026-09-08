@@ -1805,3 +1805,13 @@ Team deployment and group cloning place the member's display role and descriptio
 ### Reusable role guidance
 
 The role library retains a description and startup brief alongside its permission actions, matching the v1 reusable role concept. Roles may contain guidance without granting any actions. The editor saves and reopens both fields; role briefs retain v1 line-ending normalization and the 16 KiB bound. Team deployment includes each selected role's brief in a `## Role` startup section and records the selected guidance with the deployment so delayed starts and retries retain the admitted text. Editing a library role affects subsequent deployments, while permission actions retain their existing live assignment behavior.
+
+### Team deployment working directories
+
+Team templates may leave member working directories empty. Deployment validates
+launch settings before preparing workspaces, then stores each selected workspace's
+actual path in the created agent configuration. Shared and separate-member
+workspaces use the same binding as the initial execution, so later agent restarts
+retain the deployment directory instead of a template author's directory. The
+saved template remains unchanged. Ordinary standalone agent creation still
+requires a working directory.

@@ -82,7 +82,7 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 		return TeamDeploymentResult{}, err
 	}
 	for _, spec := range revision.Team.Members {
-		if err = validateDesired(spec.Desired); err != nil {
+		if err = validateLaunchConfiguration(spec.Desired); err != nil {
 			return TeamDeploymentResult{}, fail(ErrInvalid, "member %s: %v", spec.Key, err)
 		}
 		id := model.AgentID(deterministicOrchestrationID("agent_", string(req.DeploymentID)+":"+spec.Key))
@@ -115,6 +115,19 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 	workspaceBindings, ownedWorkspaceIDs, err := s.prepareTeamWorkspaces(ctx, req, *revision.Team)
 	if err != nil {
 		return TeamDeploymentResult{}, err
+	}
+	// Persist the same directory that the initial execution uses, so a later
+	// ordinary agent restart does not return to the template author's machine.
+	for i, spec := range revision.Team.Members {
+		binding := workspaceBindings[spec.Key]
+		workspace, readErr := s.store.Workspace(ctx, binding.WorkspaceID)
+		if readErr != nil {
+			return TeamDeploymentResult{}, readErr
+		}
+		if workspace.Revision != binding.SelectedRevision {
+			return TeamDeploymentResult{}, ErrConflict
+		}
+		agents[i].Desired.WorkingDirectory = workspace.Observation.ActualPath
 	}
 	workRunID := model.WorkRunID(deterministicOrchestrationID("work_", string(req.DeploymentID)))
 	var automationIDs, ownedAutomationIDs []model.AutomationRuleID

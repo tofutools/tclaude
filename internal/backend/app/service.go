@@ -1201,6 +1201,14 @@ func settlementContext(requestContext context.Context) (context.Context, context
 }
 
 func validateDesired(desired model.DesiredConfiguration) error {
+	if strings.TrimSpace(desired.WorkingDirectory) == "" {
+		return fail(ErrInvalid, "working directory is required")
+	}
+	return validateLaunchConfiguration(desired)
+}
+
+// Team members receive their working directory from the deployment workspace.
+func validateLaunchConfiguration(desired model.DesiredConfiguration) error {
 	if err := model.ValidateSandboxSelection(desired.HostSandbox); err != nil {
 		return fail(ErrInvalid, "%v", err)
 	}
@@ -1212,9 +1220,6 @@ func validateDesired(desired model.DesiredConfiguration) error {
 	}
 	if strings.TrimSpace(desired.Harness) == "" {
 		return fail(ErrInvalid, "harness is required")
-	}
-	if strings.TrimSpace(desired.WorkingDirectory) == "" {
-		return fail(ErrInvalid, "working directory is required")
 	}
 	if desired.Approval != model.ApprovalSupervised && desired.Approval != model.ApprovalAutomatic {
 		return fail(ErrInvalid, "unsupported approval mode %q", desired.Approval)
