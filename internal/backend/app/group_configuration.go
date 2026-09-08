@@ -109,6 +109,7 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	if err = validateDesired(desired); err != nil {
 		return GroupMemberResult{}, err
 	}
+	desired.HostSandbox = model.SandboxInGroup(desired.HostSandbox, in.GroupID)
 	now := s.now().UTC()
 	agent := model.Agent{ID: in.ID, Name: in.Name, Lifecycle: model.AgentActive, Notifications: model.AgentNotificationPreferences{DirectMessage: model.NotificationIfAvailable}, Desired: desired, ConfigurationProfile: ref, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	return store.AdmitGroupMember(ctx, in, agent, now)

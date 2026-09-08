@@ -426,13 +426,21 @@ func (s *Service) StartShell(ctx context.Context, req StartShellRequest) (Operat
 			return operationResult(prior), err
 		}
 	}
+	choice := req.HostSandbox
+	if req.Group != nil {
+		choice = model.SandboxInGroup(choice, req.Group.GroupID)
+	}
+	selection, err := s.launchSandboxSelection(ctx, choice, model.Agent{})
+	if err != nil {
+		return OperationResult{}, err
+	}
 	var resolvedSandbox *model.SandboxSelection
 	var hostPolicy *sandboxpolicy.PolicyMaterialization
-	if req.HostSandbox != nil {
-		if err := req.HostSandbox.Validate(); err != nil {
+	if selection != nil {
+		if err := selection.Validate(); err != nil {
 			return OperationResult{}, fail(ErrInvalid, "%v", err)
 		}
-		materialized, err := s.materializeLaunchSandbox(ctx, req.HostSandbox.Scopes)
+		materialized, err := s.materializeLaunchSandbox(ctx, selection.Scopes)
 		if err != nil {
 			return OperationResult{}, err
 		}
@@ -440,6 +448,7 @@ func (s *Service) StartShell(ctx context.Context, req StartShellRequest) (Operat
 		if err != nil {
 			return OperationResult{}, fail(ErrConflict, "resolved sandbox policy changed; review the selection")
 		}
+		selected.GroupID = selection.GroupID
 		resolvedSandbox = &selected
 		hostPolicy = &materialized
 	}
@@ -467,7 +476,7 @@ func (s *Service) StartShell(ctx context.Context, req StartShellRequest) (Operat
 	operation := model.Operation{ID: operationID, RequestID: req.Context.RequestID, Kind: model.OperationStartShell, Principal: req.Context.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	authority := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionStartShell, Resource: model.ResourceSelector{Kind: model.ResourceWorkspace, WorkspaceID: workspace.ID}}
 	authority.RequestedEnvironment = &environment
-	authority.RequestedHostSandbox = model.CloneSandboxSelection(req.HostSandbox)
+	authority.RequestedHostSandbox = model.CloneSandboxSelection(resolvedSandbox)
 	use := model.WorkspaceUse{ID: model.WorkspaceUseID(s.newID("use_")), WorkspaceID: workspace.ID, ExecutionID: executionID, CreatedAt: now}
 	admitted, err := s.store.AdmitShell(ctx, ShellAdmission{Request: &req, Operation: operation, Execution: execution, WorkspaceUse: use, WorkspaceRevision: req.ExpectedRevision, Authority: authority})
 	if err != nil {
@@ -488,7 +497,7 @@ func (s *Service) StartShell(ctx context.Context, req StartShellRequest) (Operat
 	}
 	description := prepared.Describe()
 	expectedHostPolicy := ""
-	if req.HostSandbox != nil {
+	if resolvedSandbox != nil {
 		expectedHostPolicy = resolvedSandbox.PolicyHash
 	}
 	if description.HostSandboxPolicyHash != expectedHostPolicy || description.ExecutionID != executionID || description.Attempt != 1 || description.Evidence.Owner == "" || description.Evidence.Version == 0 || len(description.Evidence.Payload) == 0 {

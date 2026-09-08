@@ -145,6 +145,7 @@ func (s *Store) AdmitGroupMember(ctx context.Context, in app.CreateGroupMemberRe
 		return out, err
 	}
 	expected := revision.Desired
+	expected.HostSandbox = model.SandboxInGroup(expected.HostSandbox, in.GroupID)
 	expected.Environment, err = model.MergeEnvironment(defaults.Environment, expected.Environment, in.Environment)
 	if err != nil {
 		return out, app.ErrInvalid

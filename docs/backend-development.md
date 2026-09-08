@@ -1666,3 +1666,25 @@ authority. Retired agents and revoked execution credentials cannot replay it.
 Busy-group conflicts expose a fixed cleanup instruction and the blocking
 resource ID in the dialog, separately from stale-revision conflicts. There is
 no restore action.
+
+### Global and group sandbox defaults
+
+The Sandbox profiles library exposes the global sandbox profile, and Group
+settings exposes each group's sandbox profile. Select by name; assignments store
+stable IDs. Global, group and explicit profiles compose in that order on each
+fresh start or restart, using current profile definitions and assignments.
+Changing defaults leaves already-running agents alone. The separate omission
+choice stays omitted across restart, even after defaults change.
+
+Group-created and team-deployed agents retain their source group. Existing agents
+use their membership when no source group has been recorded; conflicting profile
+assignments across multiple groups require an unambiguous launch group, matching
+v1. The admitted execution records the chosen source for later restarts. New team
+members persist the same full environment and sandbox settings as other agents.
+Archiving a sandbox profile clears its default assignments; disbanding a group
+clears that group's assignment. Explicit agent choices remain visible for review.
+
+`GET /v2/sandbox-defaults` reads the assignments. The operator-only POST replaces
+`global` and `groups` together with the displayed `expected_revision` and a
+`request_id`; both assignment fields must be present. Request retries return the
+recorded result and concurrent edits conflict without replacing the form draft.

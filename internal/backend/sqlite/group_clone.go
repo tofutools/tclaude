@@ -88,8 +88,10 @@ func (s *Store) AdmitGroupClone(ctx context.Context, in app.CloneGroupRequest, c
 			if agent.Lifecycle != model.AgentActive {
 				continue
 			}
+			expected := agent.Desired
+			expected.HostSandbox = model.SandboxInGroup(expected.HostSandbox, in.ID)
 			clone, ok := copied[id]
-			if !ok || clone.ID.Validate() != nil || clone.ID == id || clone.Name != agent.Name || clone.TaskReference != agent.TaskReference || !clone.Desired.Equal(agent.Desired) || clone.Notifications != agent.Notifications || !reflect.DeepEqual(clone.ConfigurationProfile, agent.ConfigurationProfile) || clone.PrimaryExecutionID != "" || clone.ParentAgentID != "" || clone.Lifecycle != model.AgentActive || clone.Revision != 1 {
+			if !ok || clone.ID.Validate() != nil || clone.ID == id || clone.Name != agent.Name || clone.TaskReference != agent.TaskReference || !clone.Desired.Equal(expected) || clone.Notifications != agent.Notifications || !reflect.DeepEqual(clone.ConfigurationProfile, agent.ConfigurationProfile) || clone.PrimaryExecutionID != "" || clone.ParentAgentID != "" || clone.Lifecycle != model.AgentActive || clone.Revision != 1 {
 				return out, app.ErrConflict
 			}
 			if err = createAgentTx(ctx, tx, clone); err != nil {

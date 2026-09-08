@@ -50,6 +50,11 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	if !ok {
 		return s.recordGraphAttemptUnavailable(ctx, record, attempt, fail(ErrUnavailable, "harness %q has no provider", desired.Harness))
 	}
+	selection, err := s.launchSandboxSelection(ctx, desired.HostSandbox, agent)
+	if err != nil {
+		return record, err
+	}
+	desired.HostSandbox = selection
 	hostSandboxPolicy, err := s.prepareProviderSandbox(ctx, provider, desired.HostSandbox)
 	if err != nil {
 		return record, err
@@ -69,6 +74,7 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 		if selectionErr != nil {
 			return record, selectionErr
 		}
+		preparedSelection.GroupID = desired.HostSandbox.GroupID
 		spec.HostSandbox = &preparedSelection
 	}
 	spec.ConfigurationProfile = agent.ConfigurationProfile

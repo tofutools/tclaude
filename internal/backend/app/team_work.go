@@ -87,7 +87,9 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 		}
 		id := model.AgentID(deterministicOrchestrationID("agent_", string(req.DeploymentID)+":"+spec.Key))
 		members[spec.Key] = id
-		agents = append(agents, model.Agent{ID: id, Name: spec.Name, Desired: spec.Desired, Revision: 1, CreatedAt: now, UpdatedAt: now})
+		desired := spec.Desired
+		desired.HostSandbox = model.SandboxInGroup(desired.HostSandbox, group.ID)
+		agents = append(agents, model.Agent{ID: id, Name: spec.Name, Desired: desired, Revision: 1, CreatedAt: now, UpdatedAt: now})
 		group.Members = append(group.Members, id)
 		for _, roleID := range spec.Roles {
 			roleMembers[roleID] = append(roleMembers[roleID], id)

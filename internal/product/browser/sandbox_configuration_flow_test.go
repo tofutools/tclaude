@@ -50,8 +50,9 @@ func TestBrowserSandboxConfigurationRetainsCopiesChangesAndClearsProfile(t *test
 	page.MustElement("#editor").MustWaitInvisible()
 	snapshot.Agents = nil
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/snapshot", nil, &snapshot))
-	require.Nil(t, snapshot.Agents[0].Desired.HostSandbox, "clear is an explicit choice")
+	require.True(t, snapshot.Agents[0].Desired.HostSandbox.OmitProfiles, "clear is a durable explicit omission")
 	page.MustElementR("#roster button", "^Configure$").MustClick()
+	require.Equal(t, "retained:none", page.MustElement("#editor [name=host_sandbox]").MustProperty("value").Str())
 	page.MustElement("#editor option[value='profile:source']")
 	page.MustElement("#editor [name=host_sandbox]").MustSelect("Later sandbox")
 	page.MustElement("#editor button[type=submit]").MustClick()
@@ -86,6 +87,6 @@ func TestBrowserSandboxConfigurationRetainsCopiesChangesAndClearsProfile(t *test
 	page.MustElementR("#team-editor-status", "Revision 2 · saved")
 	team = app.DefinitionResult{}
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/definitions/"+string(definitions[0].ID), nil, &team))
-	require.Nil(t, team.Revision.Team.Members[0].Desired.HostSandbox)
+	require.True(t, team.Revision.Team.Members[0].Desired.HostSandbox.OmitProfiles)
 
 }

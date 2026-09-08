@@ -530,6 +530,8 @@ CREATE TABLE IF NOT EXISTS definition_revisions (
   dependencies_json BLOB NOT NULL, author_json BLOB NOT NULL, created_at INTEGER NOT NULL,
   UNIQUE(definition_id,number), UNIQUE(definition_id,content_hash), UNIQUE(request_scope,request_id)
 );
+CREATE TABLE IF NOT EXISTS sandbox_defaults(id INTEGER PRIMARY KEY CHECK(id=1),record BLOB NOT NULL);
+CREATE TABLE IF NOT EXISTS sandbox_defaults_requests(scope TEXT NOT NULL,request_id TEXT NOT NULL,intent BLOB NOT NULL,result BLOB NOT NULL,PRIMARY KEY(scope,request_id));
 CREATE TABLE IF NOT EXISTS sandbox_profiles (
  id TEXT PRIMARY KEY, name TEXT NOT NULL, head_revision_id TEXT NOT NULL,
  archived INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL, document BLOB NOT NULL

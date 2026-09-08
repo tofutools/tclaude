@@ -271,6 +271,11 @@ func (s *Store) SetSandboxProfileArchived(ctx context.Context, req app.SetSandbo
 	if _, err = tx.ExecContext(ctx, `INSERT INTO sandbox_profile_requests(request_scope,request_id,intent,result) VALUES(?,?,?,?)`, requestScope(req.Context.Principal), req.Context.RequestID, intent, resultData); err != nil {
 		return app.SandboxProfileResult{}, classify(err)
 	}
+	if req.Archived {
+		if err = clearSandboxDefaultAssignments(ctx, tx, req.ID, ""); err != nil {
+			return app.SandboxProfileResult{}, err
+		}
+	}
 	if err = bumpTx(ctx, tx); err != nil {
 		return app.SandboxProfileResult{}, err
 	}
