@@ -173,3 +173,22 @@ func TestProcessParameterGrammarRejectsUnaddressableAndMalformedInput(t *testing
 		})
 	}
 }
+
+func TestProcessParameterResolvedQuestionCannotBeAuthored(t *testing.T) {
+	ctx := context.Background()
+	_, service, now := regressionService(t)
+	for _, staged := range []bool{false, true} {
+		graph := stagedHumanGraph()
+		if staged {
+			graph.Nodes[0].Stages.PlanApproval.QuestionResolved = true
+		} else {
+			graph = model.WorkGraph{CompilerVersion: "1", EntryNodeID: "ask", Nodes: []model.WorkNode{{ID: "ask", Name: "required fallback", Kind: model.WorkNodeDecision, Decision: &model.DecisionNode{QuestionResolved: true, Kind: model.DecisionWork, Audience: []model.DecisionAudience{{Subject: model.AuthoritySubject{Kind: model.AuthorityOperator}}}, PermittedAnswers: []string{"yes"}, ExpiresAfter: time.Hour}}, {ID: "done", Kind: model.WorkNodeEnd, End: &model.EndPolicy{Outcome: model.WorkOutcomeVerified}}}, Edges: []model.WorkEdge{{From: "ask", To: "done"}}}
+		}
+		_, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "save_marker"}, Draft: app.DefinitionDraft{ID: "marker", RevisionID: "marker_v1", Name: "marker", Kind: model.DefinitionProcess, SchemaVersion: 1, Source: "test", Process: &model.ProcessDefinition{Graph: graph}}})
+		require.ErrorIs(t, err, app.ErrInvalid)
+		_, err = service.StartProcess(ctx, app.StartProcessRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "start_marker"}, ID: "marker_run", Start: model.WorkStart{InlineGraph: &graph, Deadline: now.Add(time.Hour)}})
+		require.ErrorIs(t, err, app.ErrInvalid)
+		_, err = service.InspectWork(ctx, app.InspectWorkRequest{Principal: model.OperatorPrincipal(), WorkRunID: "marker_run"})
+		require.ErrorIs(t, err, app.ErrNotFound)
+	}
+}
