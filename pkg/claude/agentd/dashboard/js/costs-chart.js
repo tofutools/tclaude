@@ -12,18 +12,46 @@ function element(tag, className, text) {
   return node;
 }
 
-function tooltipRows(day) {
+function segmentName(segment, chart) {
+  const parts = [];
+  if (chart.stackByProvider !== false && segment.provider) parts.push(segment.provider);
+  if (chart.stackByModel && segment.model) parts.push(segment.model);
+  if (!parts.length) parts.push('cost');
+  if (segment.kind === 'what_if') parts.push('WHAT-IF');
+  return parts.join(' · ');
+}
+
+function appendTooltipSegment(fragment, segment, chart, child = false) {
+  const row = element('div', `cost-tip-row${child ? ' child' : ''}`);
+  row.append(element('span', `cost-tip-sw ${segment.className}`));
+  row.append(element('span', 'cost-tip-name', segmentName(segment, chart)));
+  const amount = segment.kind === 'what_if' && segment.credits > 0
+    ? `${fmtCredits(segment.credits)} — ${fmtUSD(segment.cost)} subscription value`
+    : `${segment.approximate || segment.kind === 'what_if' ? '≈' : ''}${fmtUSD(segment.cost)}`;
+  row.append(element('span', 'cost-tip-amt', amount));
+  fragment.append(row);
+}
+
+function tooltipRows(day, chart) {
   const fragment = document.createDocumentFragment();
-  fragment.append(element('div', 'cost-tip-day', day.day));
-  for (const segment of day.segments) {
-    const row = element('div', 'cost-tip-row');
-    row.append(element('span', `cost-tip-sw ${segment.className}`));
-    row.append(element('span', 'cost-tip-name', segment.kind === 'what_if' ? `${segment.provider} · WHAT-IF` : segment.provider));
-    const amount = segment.kind === 'what_if' && segment.credits > 0
-      ? `${fmtCredits(segment.credits)} — ${fmtUSD(segment.cost)} subscription value`
-      : `${segment.kind === 'what_if' ? '≈' : ''}${fmtUSD(segment.cost)}`;
-    row.append(element('span', 'cost-tip-amt', amount));
-    fragment.append(row);
+  fragment.append(element('div', 'cost-tip-day', `${day.day}${day.projected ? ' · projection' : ''}`));
+  if (chart.stackByProvider !== false && chart.stackByModel) {
+    const providers = new Map();
+    for (const segment of day.segments) {
+      const group = providers.get(segment.provider) || [];
+      group.push(segment);
+      providers.set(segment.provider, group);
+    }
+    for (const [provider, segments] of providers) {
+      const header = element('div', 'cost-tip-group');
+      header.append(element('span', `cost-tip-sw ${segments[0].className}`),
+        element('strong', 'cost-tip-name', provider),
+        element('strong', 'cost-tip-amt', `${day.projected ? '≈' : ''}${fmtUSD(segments.reduce((sum, item) => sum + item.cost, 0))}`));
+      fragment.append(header);
+      for (const segment of segments) appendTooltipSegment(fragment, segment, chart, true);
+    }
+  } else {
+    for (const segment of day.segments) appendTooltipSegment(fragment, segment, chart);
   }
   const total = element('div', 'cost-tip-total');
   const spacer = element('span', 'cost-tip-sw');
@@ -70,9 +98,7 @@ export function mountImperativeCostChart(host, chart) {
   }
   const columns = element('div', 'cost-cols');
   const byDay = new Map();
-  const spanProviders = new Set(chart.days.flatMap((day) =>
-    (day.segments || []).map((segment) => segment.provider)));
-  const showProviderBreakdown = spanProviders.size > 1 || chart.days.some((day) =>
+  const showBreakdown = chart.stackByProvider !== false || chart.stackByModel || chart.days.some((day) =>
     (day.segments || []).some((segment) => segment.kind === 'what_if'));
   const labelEvery = chart.days.length > 62 ? 7 : chart.days.length > 35 ? 2 : 1;
   chart.days.forEach((day, index) => {
@@ -86,13 +112,13 @@ export function mountImperativeCostChart(host, chart) {
       column.dataset.day = day.day;
     }
     const area = element('div', 'cost-bararea');
-    if (day.projected) {
+    if (day.projected && !day.segments?.length) {
       const bar = element('div', 'cost-bar');
       bar.style.height = Math.max(day.cost > 0 ? 2 : 0, Math.round(day.cost / chart.scaleMax * 100)) + '%';
       area.append(bar);
     } else {
       for (const segment of day.segments) {
-        const bar = element('div', `cost-seg ${segment.className}`);
+        const bar = element('div', `cost-seg${day.projected ? ' cost-seg-projected' : ''} ${segment.className}`);
         bar.style.height = Math.max(segment.cost > 0 ? 1 : 0, segment.cost / chart.scaleMax * 100).toFixed(3) + '%';
         area.append(bar);
       }
@@ -116,7 +142,7 @@ export function mountImperativeCostChart(host, chart) {
     }
     const day = byDay.get(column.dataset.day);
     tooltip.replaceChildren();
-    if (showProviderBreakdown && day?.segments?.length) tooltip.append(tooltipRows(day));
+    if (showBreakdown && day?.segments?.length) tooltip.append(tooltipRows(day, chart));
     else tooltip.textContent = column.dataset.tip;
     tooltip.style.display = 'block';
     const pad = 14;

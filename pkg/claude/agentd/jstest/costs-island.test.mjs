@@ -64,6 +64,9 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
     'provider summary shows selected coverage and spend');
   assert.match(modelMenu.querySelector('summary').textContent, /2 of 2 · 100% spend/,
     'model summary shows selected coverage and spend share');
+  const breakdownMenu = mounted.container.querySelector('#filter-costs-breakdown');
+  assert.match(breakdownMenu.querySelector('summary').textContent, /Provider/,
+    'provider breakdown is the legible default');
   providerMenu.setAttribute('open', '');
   await harness.act(() => harness.fireEvent(providerMenu.querySelector('summary'), 'click'));
   modelMenu.setAttribute('open', '');
@@ -95,6 +98,18 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   assert.ok(modelSearch);
   await harness.input(modelSearch, 'opus');
   assert.equal(modelMenu.querySelectorAll('.costs-model-choice').length, 1);
+
+  const providerStack = breakdownMenu.querySelector('#costs-stack-provider');
+  const modelStack = breakdownMenu.querySelector('#costs-stack-model');
+  providerStack.checked = false;
+  await harness.act(() => harness.fireEvent(providerStack, 'change'));
+  modelStack.checked = true;
+  await harness.act(() => harness.fireEvent(modelStack, 'change'));
+  assert.equal(state.view.value.chart.stackByProvider, false);
+  assert.equal(state.view.value.chart.stackByModel, true);
+  assert.match(breakdownMenu.querySelector('summary').textContent, /Model/,
+    'the menu summary reports the independent active grouping');
+  assert.match(mounted.container.querySelector('.cost-daily-heading').textContent, /stacked by model/);
 
   const accumulatedHits = mounted.container.querySelectorAll('.cost-accumulated-hit');
   assert.equal(accumulatedHits.length, 2, 'recorded and projected accumulated lines are both hover targets');

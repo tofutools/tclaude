@@ -3577,6 +3577,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   border-radius: 7px; box-shadow: 0 14px 35px rgba(0,0,0,.72);
 }
 .cost-filter-popover.model { width: min(560px, calc(100vw - 40px)); }
+.cost-filter-popover.breakdown { width: min(390px, calc(100vw - 40px)); }
 .cost-filter-popover-head {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 0 2px 9px; margin-bottom: 4px; border-bottom: 1px solid #2a3340;
@@ -3610,11 +3611,19 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   margin-top: 7px; padding: 7px 9px; border-left: 2px solid #58a6ff;
   background: #121d2b; color: #9db7d5; font-size: 10px; line-height: 1.4;
 }
+.cost-breakdown-option {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px;
+  align-items: start; padding: 10px 4px; border-bottom: 1px solid #202a35; cursor: pointer;
+}
+.cost-breakdown-option input { margin: 2px 0 0; accent-color: #58a6ff; }
+.cost-breakdown-option strong { display: block; color: #c9d1d9; }
+.cost-breakdown-option small { display: block; margin-top: 3px; color: #7d8590; line-height: 1.35; }
+.cost-breakdown-option > span:last-child { color: #9fb0c2; white-space: nowrap; }
 .cost-chart-heading { display: flex; justify-content: space-between; align-items: baseline; margin: 0 2px 6px; }
 .cost-chart-heading strong { color: #c9d1d9; font-size: 12px; }
 .cost-chart-heading span { color: #8b949e; font-size: 11px; }
 .cost-daily-heading { margin-top: 12px; }
-.cost-accumulated { padding: 10px 12px 5px; background: #0d1117; border: 1px solid #2a3340; border-radius: 6px; }
+.cost-accumulated { position: relative; padding: 10px 12px 5px; background: #0d1117; border: 1px solid #2a3340; border-radius: 6px; }
 .cost-accumulated.empty { min-height: 100px; display: grid; place-items: center; color: #8b949e; }
 .cost-accumulated-svg { display: block; width: 100%; height: 190px; }
 .cost-accumulated-svg:focus { outline: 1px solid #58a6ff; outline-offset: 2px; }
@@ -3625,6 +3634,15 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-accumulated-grid line { stroke: #1c2430; stroke-width: 1; }
 .cost-accumulated-grid text, .cost-accumulated-day { fill: #8b949e; font-size: 9px; }
 .cost-accumulated-area { fill: rgba(110, 156, 125, .12); }
+.cost-accumulated-stack { stroke: rgba(13, 17, 23, .7); stroke-width: .7; fill-opacity: .42; }
+.cost-accumulated-stack.projected { fill-opacity: .18; stroke: #d29922; stroke-dasharray: 4 4; }
+.cost-accumulated-stack.cost-seg-h0 { fill: #6e9c7d; }
+.cost-accumulated-stack.cost-seg-h1 { fill: #6a8fd0; }
+.cost-accumulated-stack.cost-seg-h2 { fill: #b58cd6; }
+.cost-accumulated-stack.cost-seg-h3 { fill: #d0a860; }
+.cost-accumulated-stack.cost-seg-h4 { fill: #5bb0a5; }
+.cost-accumulated-stack.cost-seg-h5 { fill: #cf8a8a; }
+.cost-accumulated-stack.cost-seg-whatif { fill-opacity: .24; stroke-dasharray: 2 2; }
 .cost-accumulated-line { fill: none; stroke: #6e9c7d; stroke-width: 2; }
 .cost-accumulated-line.projected { stroke: #d29922; stroke-dasharray: 7 5; }
 .cost-accumulated-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: crosshair; }
@@ -3635,6 +3653,23 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-accumulated-tooltip.projected circle { fill: #d29922; }
 .cost-accumulated-tooltip rect { fill: #161b22; stroke: #536275; }
 .cost-accumulated-tooltip text { fill: #c9d1d9; font-size: 10px; }
+.cost-accumulated-tip-panel {
+  position: absolute; z-index: 2; top: 42px; width: 288px; padding: 8px 10px;
+  background: rgba(22, 27, 34, .97); border: 1px solid #536275; border-radius: 5px;
+  color: #c9d1d9; font-size: 10px; pointer-events: none; box-shadow: 0 8px 20px rgba(0,0,0,.55);
+}
+.cost-accumulated-tip-panel.projected { border-color: #9c7823; }
+.cost-accumulated-tip-panel > strong { display: block; margin-bottom: 5px; }
+.cost-accumulated-tip-row, .cost-accumulated-tip-group, .cost-accumulated-tip-total {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px;
+}
+.cost-accumulated-tip-row > :last-child,
+.cost-accumulated-tip-group > :nth-child(even),
+.cost-accumulated-tip-total > :last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.cost-accumulated-tip-group { padding-top: 3px; }
+.cost-accumulated-tip-group .child { padding-left: 12px; color: #9aa4b0; }
+.cost-accumulated-tip-total { margin-top: 5px; padding-top: 5px; border-top: 1px solid #3a4655; }
+.cost-accumulated-tip-panel small { display: block; margin-top: 5px; color: #8b949e; }
 #costs-summary {
   font-size: 12px; color: #7d8590;
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; white-space: nowrap;
@@ -3718,6 +3753,9 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    own hue (a fixed colour would flatten the stack) — the stacked twin of
    the single bar's .cost-bar highlight. */
 .cost-col[data-tip]:hover .cost-seg { filter: brightness(1.18); }
+.cost-seg.cost-seg-projected {
+  opacity: .42; outline: 1px dashed #d29922; outline-offset: -1px;
+}
 /* Harness palette. h0 is the historical money-green so a claude-only
    install (and "claude", which sorts first) is unchanged; the rest stay
    distinct on the dark panel. Cycles past h5 for many-harness installs. */
@@ -3727,6 +3765,10 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-seg-h3 { background: #d0a860; }
 .cost-seg-h4 { background: #5bb0a5; }
 .cost-seg-h5 { background: #cf8a8a; }
+.cost-seg-m0 { opacity: .68; }
+.cost-seg-m1 { opacity: .82; }
+.cost-seg-m2 { opacity: 1; }
+.cost-seg-m3 { opacity: .54; }
 .cost-seg-whatif {
   background-image: repeating-linear-gradient(
     135deg, transparent 0, transparent 3px,
@@ -3755,7 +3797,9 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    ruled total. Rows are flex so amounts align to the right edge; the total
    carries a hidden swatch spacer so its name lines up with the rows'. */
 .cost-tip-day { font-weight: 600; color: #c9d1d9; margin-bottom: 4px; }
-.cost-tip-row, .cost-tip-total { display: flex; align-items: center; gap: 6px; }
+.cost-tip-row, .cost-tip-group, .cost-tip-total { display: flex; align-items: center; gap: 6px; }
+.cost-tip-row.child { padding-left: 14px; }
+.cost-tip-group { margin-top: 3px; }
 .cost-tip-total {
   margin-top: 4px; padding-top: 4px; border-top: 1px solid #2a3340;
 }

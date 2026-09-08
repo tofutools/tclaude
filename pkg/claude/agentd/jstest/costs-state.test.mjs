@@ -19,6 +19,8 @@ test('Costs state owns controls, derived rows, selection, requests, and preferen
   });
   state.initialize();
   assert.equal(state.fillEmpty.value, true);
+  assert.equal(state.stackByProvider.value, true, 'provider grouping is the default');
+  assert.equal(state.stackByModel.value, false, 'model grouping starts opt-in');
   state.beginRequest(1);
   state.commitRequest(1, {
     from: '2026-07-01', to: '2026-07-10', total_usd: 5,
@@ -54,6 +56,12 @@ test('Costs state owns controls, derived rows, selection, requests, and preferen
     'recorded accumulated spend follows the selected model');
   assert.equal(state.view.value.accumulatedChart.points.at(-1).projected, true,
     'the accumulated series continues through the month projection');
+  state.setStackByProvider(false);
+  state.setStackByModel(true);
+  assert.equal(state.view.value.chart.stackByProvider, false);
+  assert.equal(state.view.value.chart.stackByModel, true);
+  assert.equal(storage.values.get('tclaude.dash.costs.stackProvider'), '0');
+  assert.equal(storage.values.get('tclaude.dash.costs.stackModel'), '1');
   state.cycleSort('cost');
   assert.equal(state.sort.value.key, 'cost');
   state.activateMonth(2);

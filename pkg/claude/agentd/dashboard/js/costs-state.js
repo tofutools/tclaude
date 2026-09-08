@@ -14,6 +14,8 @@ const WEEKENDS_KEY = 'tclaude.dash.costs.includeWeekends';
 const PROVIDERS_KEY = 'tclaude.dash.costs.providers';
 const LEGACY_HARNESSES_KEY = 'tclaude.dash.costs.harnesses';
 const MODELS_KEY = 'tclaude.dash.costs.models';
+const STACK_PROVIDER_KEY = 'tclaude.dash.costs.stackProvider';
+const STACK_MODEL_KEY = 'tclaude.dash.costs.stackModel';
 
 function errorMessage(error) {
   return String(error?.message || error);
@@ -38,6 +40,8 @@ export function createCostsState({
   const includeWeekends = signal(false);
   const selectedProviders = signal([]);
   const selectedModels = signal([]);
+  const stackByProvider = signal(true);
+  const stackByModel = signal(false);
   const query = signal('');
   const sort = signal({ key: 'activity', dir: 'desc' });
   const payload = signal(null);
@@ -64,7 +68,8 @@ export function createCostsState({
     const projection = narrowed && span.value === 'month'
       ? monthProjection(narrowed, fillEmpty.value, includeWeekends.value, now())
       : null;
-    const chart = narrowed ? buildCostChart(narrowed, projection, agents, selected, providers, selectedModelSet) : null;
+    const breakdown = { stackByProvider: stackByProvider.value, stackByModel: stackByModel.value };
+    const chart = narrowed ? buildCostChart(narrowed, projection, agents, selected, providers, selectedModelSet, breakdown) : null;
     const providerStats = costProviderStats(agents);
     const providerScopedTotal = modelStats.reduce((sum, entry) => sum + entry.cost, 0);
     const selectedModelTotal = modelStats.reduce((sum, entry) => sum
@@ -73,6 +78,7 @@ export function createCostsState({
       data, agents, providers, selected, models, selectedModelSet, narrowed, projection,
       providerStats, modelStats, availableModels, providerScopedTotal,
       modelCoverage: providerScopedTotal > 0 ? selectedModelTotal / providerScopedTotal : 0,
+      ...breakdown,
       chart,
       accumulatedChart: chart ? buildAccumulatedCostChart(chart) : null,
     };
@@ -122,6 +128,8 @@ export function createCostsState({
       modelStats,
       providerScopedTotal,
       modelCoverage,
+      stackByProvider: stackByProvider.value,
+      stackByModel: stackByModel.value,
       query: query.value,
       sort: sort.value,
       payload: data,
@@ -156,6 +164,8 @@ export function createCostsState({
       selectedProviders.value = savedSelection(prefs, PROVIDERS_KEY);
       if (!selectedProviders.value.length) selectedProviders.value = savedSelection(prefs, LEGACY_HARNESSES_KEY);
       selectedModels.value = savedSelection(prefs, MODELS_KEY);
+      stackByProvider.value = prefs.getItem(STACK_PROVIDER_KEY) !== '0';
+      stackByModel.value = prefs.getItem(STACK_MODEL_KEY) === '1';
     });
     return true;
   }
@@ -227,6 +237,16 @@ export function createCostsState({
     return true;
   }
 
+  function setStackByProvider(value) {
+    stackByProvider.value = !!value;
+    prefs.setItem(STACK_PROVIDER_KEY, value ? '1' : '0');
+  }
+
+  function setStackByModel(value) {
+    stackByModel.value = !!value;
+    prefs.setItem(STACK_MODEL_KEY, value ? '1' : '0');
+  }
+
   function cycleSort(key) {
     if (!COST_COLUMNS.some((column) => column.sort === key)) return false;
     const current = sort.value;
@@ -280,9 +300,11 @@ export function createCostsState({
   }
 
   return Object.freeze({
-    span, monthOffset, fillEmpty, includeWeekends, selectedProviders, selectedModels, query,
+    span, monthOffset, fillEmpty, includeWeekends, selectedProviders, selectedModels,
+    stackByProvider, stackByModel, query,
     sort, payload, request, factor, view, initialize, setSpan, activateMonth,
-    setFillEmpty, setIncludeWeekends, toggleProvider, toggleModel, cycleSort, setQuery,
+    setFillEmpty, setIncludeWeekends, toggleProvider, toggleModel,
+    setStackByProvider, setStackByModel, cycleSort, setQuery,
     beginRequest, commitRequest, failRequest, editFactor, beginFactor,
     commitFactor, failFactor,
   });
