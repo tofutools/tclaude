@@ -68,11 +68,13 @@ func TestHumanTaskChoicesUseAdmittedMappingAcrossRestartAndRetry(t *testing.T) {
 
 func TestHumanTaskChoicesRejectIncompleteAndAmbiguousMappings(t *testing.T) {
 	for name, human := range map[string]model.HumanPerformer{
-		"missing": {Choices: []string{"Accept"}},
-		"extra":   {ChoiceOutcomes: map[string]string{"Accept": "pass"}},
-		"case":    {Choices: []string{"Accept", "ACCEPT"}, ChoiceOutcomes: map[string]string{"Accept": "pass", "ACCEPT": "fail"}},
-		"space":   {Choices: []string{" Accept"}, ChoiceOutcomes: map[string]string{" Accept": "pass"}},
-		"outcome": {Choices: []string{"Accept"}, ChoiceOutcomes: map[string]string{"Accept": "waive"}},
+		"newline":         {Choices: []string{"approve\nwith note"}, ChoiceOutcomes: map[string]string{"approve\nwith note": "pass"}},
+		"carriage-return": {Choices: []string{"approve\rwith note"}, ChoiceOutcomes: map[string]string{"approve\rwith note": "pass"}},
+		"missing":         {Choices: []string{"Accept"}},
+		"extra":           {ChoiceOutcomes: map[string]string{"Accept": "pass"}},
+		"case":            {Choices: []string{"Accept", "ACCEPT"}, ChoiceOutcomes: map[string]string{"Accept": "pass", "ACCEPT": "fail"}},
+		"space":           {Choices: []string{" Accept"}, ChoiceOutcomes: map[string]string{" Accept": "pass"}},
+		"outcome":         {Choices: []string{"Accept"}, ChoiceOutcomes: map[string]string{"Accept": "waive"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			store, err := sqlite.Open(filepath.Join(t.TempDir(), "choices.sqlite"))

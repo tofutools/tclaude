@@ -1387,7 +1387,7 @@ underscores. An undeclared reference is rejected before saving or starting.
 
 ### Human task answer vocabulary
 
-Human task performers, including plan/check/review stages, can author ordered `Choices` and an exact `ChoiceOutcomes` mapping to `pass` or `fail`. Each trimmed, case-insensitively unique answer requires one mapping; empty vocabulary retains the existing `complete`/`reject` answers. The editor uses matching answer/outcome lines, and immutable revisions, copies and exports retain them.
+Human task performers, including plan/check/review stages, can author ordered `Choices` and an exact `ChoiceOutcomes` mapping to `pass` or `fail`. Each single-line, trimmed, case-insensitively unique answer requires one mapping; empty vocabulary retains the existing `complete`/`reject` answers. The editor uses matching answer/outcome lines, and immutable revisions, copies and exports retain them.
 
 Decision windows offer the admitted answers. Settlement uses the attempt's retained mapping: `pass` follows ordinary `complete` success and `fail` follows ordinary `reject` routing and retry policy. Submitted labels remain in decision evidence. Labels such as `cancel` or `waive` have only their mapped task outcome; they cannot activate separate cancellation or waiver behavior. Decision-node answer routing and current audience authority are unchanged.
 Process connector labels support Automatic, Always show, and Hide unless selected

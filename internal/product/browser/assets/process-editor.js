@@ -210,7 +210,7 @@ class ProcessEditor {
           {name:'outcomes',label:'Answer outcomes (pass or fail, matching line order)',multiline:true,value:(performer.Human.Choices||[]).map(c=>performer.Human.ChoiceOutcomes?.[c]||'').join('\n')});
         changes.push((n, f) => {
           const choices=f.choices ? f.choices.split(/\r?\n/) : [], outcomes=f.outcomes ? f.outcomes.split(/\r?\n/) : [];
-          if(choices.length>64 || choices.length!==outcomes.length || choices.some((c,i)=>!c || c.trim()!==c || new TextEncoder().encode(c).length>256 || choices.slice(0,i).some(p=>p.toLowerCase()===c.toLowerCase()) || !['pass','fail'].includes(outcomes[i]))) throw new Error('Each unique trimmed answer needs a matching pass or fail line.');
+          if(choices.length>64 || choices.length!==outcomes.length || choices.some((c,i)=>!c || /[\r\n\0]/.test(c) || c.trim()!==c || new TextEncoder().encode(c).length>256 || choices.slice(0,i).some(p=>p.toLowerCase()===c.toLowerCase()) || !['pass','fail'].includes(outcomes[i]))) throw new Error('Each unique trimmed answer needs a matching pass or fail line.');
           n.Performer.Human = {...n.Performer.Human, Operator: f.operator, AgentID: f.operator ? '' : f.agent, RoleID: f.operator ? '' : f.role, Prompt: f.prompt};
           delete n.Performer.Human.Choices; delete n.Performer.Human.ChoiceOutcomes;
           if(choices.length) { n.Performer.Human.Choices=choices; n.Performer.Human.ChoiceOutcomes=Object.fromEntries(choices.map((c,i)=>[c,outcomes[i]])); }

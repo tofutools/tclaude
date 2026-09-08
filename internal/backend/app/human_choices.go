@@ -15,7 +15,7 @@ func validateHumanChoices(human *model.HumanPerformer) error {
 		return fail(ErrInvalid, "human task choices require at most 64 exact pass/fail mappings")
 	}
 	for i, label := range human.Choices {
-		if label == "" || strings.TrimSpace(label) != label || len(label) > 256 || !utf8.ValidString(label) || strings.ContainsRune(label, 0) {
+		if label == "" || strings.TrimSpace(label) != label || len(label) > 256 || !utf8.ValidString(label) || strings.ContainsAny(label, "\x00\r\n") {
 			return fail(ErrInvalid, "human task choice requires bounded trimmed valid text")
 		}
 		for _, prior := range human.Choices[:i] {
