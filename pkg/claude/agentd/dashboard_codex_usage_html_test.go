@@ -33,11 +33,20 @@ func TestDashboardHTML_CodexUsageWired(t *testing.T) {
 	must("key=${line.key}", "Preact preserves usage-line identity across polls")
 	must("key=${token.key}", "Preact preserves usage-token identity across polls")
 	must("view.multiline ? ' multiline' : ''", "the derived layout toggles the multiline class")
+	must(`<span class="usage-unit-switch-slot">`, "every provider line reserves a leading selector gutter")
+	selector := strings.Index(dashboardAssets, `<span class="usage-unit-switch-slot">`)
+	provider := strings.Index(dashboardAssets, `<span class="usrc">${line.label}</span>`)
+	if selector < 0 || provider < 0 || selector > provider {
+		t.Error("the display-mode selector gutter must precede the provider label")
+	}
 
 	// dashboard.css: the multiline layout + the right-aligned source label
 	// column that stacks the colons.
 	must("#usage.multiline", "multiline stacks the readout vertically")
 	must("#usage .usrc", "the source label column is styled")
+	must("width: calc(6ch + 26px); flex: 0 0 calc(6ch + 26px);", "selector gutter fits the widest three-mode control and keeps every provider label aligned")
+	must("padding: 0 4px", "compact selector buttons do not inflate the line spacing")
+	must("line-height: 11px", "selector height stays within the original usage-row rhythm")
 }
 
 // TestDashboardHTML_CodexUsageColumnAlignment guards the two-line readout's
