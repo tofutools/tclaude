@@ -40,12 +40,15 @@ func (s *Store) DisbandGroup(ctx context.Context, in app.DisbandGroupRequest, at
 		return out, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	decision, err := authorizeTx(ctx, tx, model.AuthorityRequest{Principal: in.Context.Principal, Action: model.ActionDisbandGroup, Resource: model.ResourceSelector{Kind: model.ResourceGroup, GroupID: in.ID}}, at)
-	if err != nil {
-		return out, err
-	}
-	if !decision.Allowed {
-		return out, app.ErrUnauthorized
+	// Reading one's original receipt is separate from admitting another effect.
+	// The mutation removes scoped roles, but must not revoke its own receipt.
+	if in.Context.Principal.Kind != model.PrincipalOperator {
+		if _, err = authoritySubject(ctx, tx, in.Context.Principal, at); err != nil {
+			return out, err
+		}
+		if in.Context.Principal.Kind == model.PrincipalAutomation && (in.Context.Principal.Delegation == nil || !at.Before(in.Context.Principal.Delegation.ExpiresAt)) {
+			return out, app.ErrUnauthorized
+		}
 	}
 	var id model.GroupID
 	var rev model.Revision
@@ -60,6 +63,13 @@ func (s *Store) DisbandGroup(ctx context.Context, in app.DisbandGroupRequest, at
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return out, err
+	}
+	decision, err := authorizeTx(ctx, tx, model.AuthorityRequest{Principal: in.Context.Principal, Action: model.ActionDisbandGroup, Resource: model.ResourceSelector{Kind: model.ResourceGroup, GroupID: in.ID}}, at)
+	if err != nil {
+		return out, err
+	}
+	if !decision.Allowed {
+		return out, app.ErrUnauthorized
 	}
 	out.Group, err = readGroup(ctx, tx, in.ID)
 	if err != nil {
@@ -78,7 +88,7 @@ func (s *Store) DisbandGroup(ctx context.Context, in app.DisbandGroupRequest, at
 		var active string
 		err = tx.QueryRowContext(ctx, check.query, in.ID).Scan(&active)
 		if err == nil {
-			return out, fmt.Errorf("%w: %s %s before disbanding", app.ErrConflict, check.hint, active)
+			return out, &app.GroupDisbandBlockedError{Instruction: check.hint, ID: active}
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return out, err

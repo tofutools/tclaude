@@ -77,3 +77,36 @@ func TestGroupDisbandPreservesMembersHistoryAndExactRetry(t *testing.T) {
 	_, err = svc.DisbandGroup(ctx, changed)
 	require.ErrorIs(t, err, app.ErrConflict)
 }
+
+func TestGroupDisbandRoleReceiptRetainsCurrentPrincipalBoundary(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "db"))
+	require.NoError(t, err)
+	defer store.Close()
+	svc := app.New(store, providers.NewRegistry())
+	op := model.OperatorPrincipal()
+	_, err = svc.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: "manager", Name: "Manager", Desired: model.DesiredConfiguration{Harness: "codex", Model: "fixture", WorkingDirectory: "/tmp", Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}})
+	require.NoError(t, err)
+	_, err = svc.CreateGroup(ctx, app.CreateGroupRequest{Context: op, ID: "target", Name: "Target", Members: []model.AgentID{"manager"}})
+	require.NoError(t, err)
+	_, err = svc.PutRole(ctx, app.PutRoleRequest{Principal: op, Role: model.Role{ID: "disbander", Name: "Disbander", Actions: []model.Action{model.ActionDisbandGroup}}})
+	require.NoError(t, err)
+	_, err = svc.PutRoleAssignment(ctx, app.PutRoleAssignmentRequest{Principal: op, Assignment: model.RoleAssignment{RoleID: "disbander", Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: "manager"}, Resource: model.ResourceSelector{Kind: model.ResourceGroup, GroupID: "target"}}})
+	require.NoError(t, err)
+	req := app.DisbandGroupRequest{Context: app.RequestContext{Principal: model.AgentPrincipal("manager"), RequestID: "same-request"}, ID: "target", ExpectedRevision: 1}
+	want, err := svc.DisbandGroup(ctx, req)
+	require.NoError(t, err)
+	got, err := svc.DisbandGroup(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+	changed := req
+	changed.ID = "other"
+	_, err = svc.DisbandGroup(ctx, changed)
+	require.ErrorIs(t, err, app.ErrConflict)
+	agent, err := store.Agent(ctx, "manager")
+	require.NoError(t, err)
+	_, err = svc.RetireAgent(ctx, app.RetireAgentRequest{Context: op, ID: "manager", ExpectedRevision: agent.Revision, Reason: "finished"})
+	require.NoError(t, err)
+	_, err = svc.DisbandGroup(ctx, req)
+	require.ErrorIs(t, err, app.ErrUnauthorized)
+}

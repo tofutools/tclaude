@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"math"
 	"time"
@@ -38,3 +39,15 @@ func (s *Service) DisbandGroup(ctx context.Context, in DisbandGroupRequest) (Dis
 	}
 	return store.DisbandGroup(ctx, in, s.now().UTC())
 }
+
+// GroupDisbandBlockedError contains only a fixed action and a durable resource
+// identity, suitable for an authorized caller's cleanup dialog.
+type GroupDisbandBlockedError struct {
+	Instruction string
+	ID          string
+}
+
+func (e *GroupDisbandBlockedError) Error() string {
+	return fmt.Sprintf("%s %s before disbanding this group.", e.Instruction, e.ID)
+}
+func (e *GroupDisbandBlockedError) Unwrap() error { return ErrConflict }

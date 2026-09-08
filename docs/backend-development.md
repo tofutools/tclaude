@@ -1570,4 +1570,10 @@ The revision-checked `POST /v2/groups/{id}/disband` requires a request ID and
 group. Active group-scoped work, group shells, or team deployments block the
 operation with the identity to settle or stand down first. The transaction
 fences fresh group admissions, retains a non-reusable group identity, and
-records the original result for exact retries. There is no restore action.
+records the original result for exact retries. Reading that caller’s exact
+receipt requires a currently valid principal, rather than a group role which
+the disband itself removed; a fresh effect still requires current disband
+authority. Retired agents and revoked execution credentials cannot replay it.
+Busy-group conflicts expose a fixed cleanup instruction and the blocking
+resource ID in the dialog, separately from stale-revision conflicts. There is
+no restore action.
