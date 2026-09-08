@@ -27,6 +27,8 @@ func TestBrowserHumanTaskChoicesPersistAndDecideWithoutSpecialLabelEffects(t *te
 	page.MustElementR("#process-inspector button", "^Connect$").MustClick()
 	page.MustElementR("#process-inspector button", "^Add review$").MustClick()
 	page.MustElementR("#process-inspector button", "^Edit review$").MustClick()
+	page.MustElement("#process-inspector [name=ask]").MustInput("Approve the review?")
+	page.MustElement("#process-inspector [name=prompt]").MustSelectAllText().MustInput("")
 	page.MustElement("#process-inspector [name=choices]").MustInput("waive")
 	page.MustElement("#process-inspector [name=outcomes]").MustInput("pass")
 	page.MustElementR("#process-inspector button", "^Apply changes$").MustClick()

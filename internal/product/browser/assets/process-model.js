@@ -90,7 +90,7 @@ export function validationMessages(draft) {
   if (draft.Process.ParameterSyntax === 'mustache-v1') {
     const declared = new Set((draft.Parameters || []).map(p => p.Name));
     for (const key of declared) if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) messages.push('Parameter keys must be ASCII identifiers when expansion is enabled.');
-    const texts = taskPerformers(graph).flatMap(p => [p.Agent?.Brief, p.Human?.Prompt, ...(p.Program?.Arguments || [])]);
+    const texts = taskPerformers(graph).flatMap(p => [p.Agent?.Brief, p.Human?.Ask, p.Human?.Prompt, ...(p.Program?.Arguments || [])]);
     for (const node of graph.Nodes) texts.push(node.Decision?.Question, node.Stages?.PlanApproval?.Question);
     for (const text of texts.filter(v => typeof v === 'string')) {
       const remaining = text.replace(/\{\{[ \t\r\n\f]*params\.([A-Za-z_][A-Za-z0-9_]*)[ \t\r\n\f]*\}\}/g, (_, key) => {
@@ -137,7 +137,7 @@ export function validationMessages(draft) {
     }
     for (const performer of taskPerformers({Nodes:[node]})) {
       if (performer.Kind === 'agent' && !performer.Agent?.Brief?.trim()) messages.push(`${name}: add every worker brief, including task stages.`);
-      if (performer.Kind === 'human' && !performer.Human?.Prompt?.trim()) messages.push(`${name}: add every human stage prompt.`);
+      if (performer.Kind === 'human' && !performer.Human?.Ask?.trim() && !performer.Human?.Prompt?.trim()) messages.push(`${name}: add a question or context for every human stage.`);
     }
     if (node.Kind === 'decision' && !node.Decision?.PermittedAnswers?.length) messages.push(`${name}: add at least one permitted answer.`);
   }
