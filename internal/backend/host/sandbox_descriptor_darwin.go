@@ -79,7 +79,9 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 			if bindings.controlPort < 1 || bindings.controlPort > 65535 {
 				return ProcessSpec{}, nil, fmt.Errorf("invalid sandbox control port")
 			}
-			endpoint := strconv.Quote("127.0.0.1:" + strconv.Itoa(bindings.controlPort))
+			// Seatbelt accepts the literal localhost selector, not numeric IP
+			// spelling. The native relay still dials only IPv4 loopback.
+			endpoint := strconv.Quote("localhost:" + strconv.Itoa(bindings.controlPort))
 			outbound = "(require-all " + outbound + " (require-not (remote ip " + endpoint + ")))"
 			inbound = "(require-all " + inbound + " (require-not (local ip " + endpoint + ")))"
 		}
