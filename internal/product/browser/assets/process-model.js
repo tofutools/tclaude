@@ -3,6 +3,7 @@ import {processEscalations} from './process-escalation.js';
 export const clone = value => structuredClone(value);
 export const freshID = prefix => prefix + crypto.randomUUID();
 export const edgeID = (edge, index) => `${index}:${edge.From}:${edge.To}:${edge.Verdict || ''}`;
+export const edgeKey = edge => JSON.stringify([edge.From, edge.To, edge.Verdict || ""]);
 export const seconds = value => Number(value || 0) * 1e9;
 export const lines = text => text.split('\n').map(value => value.trim()).filter(Boolean);
 
@@ -38,13 +39,14 @@ export function defaultNode(kind) {
 export function graphView(draft) {
   const graph = draft.Process.Graph;
   const escalation = processEscalations(graph);
+  const labels = new Map((draft.EditorLayout?.EdgeLabels || []).map(label => [edgeKey(label.Edge), label.Pinned]));
   return {nodes: graph.Nodes.map(node => {
     const position = draft.EditorLayout?.Nodes?.[node.ID];
     return {id: node.ID, type: ['fork', 'join'].includes(node.Kind) ? 'parallel' : node.Kind === 'task_complete' ? 'task' : node.Kind,
       label: node.Name || node.ID, subtitle: node.ID === graph.EntryNodeID ? 'Entry' : node.Kind,
       pinned: position ? {x: position.X, y: position.Y} : undefined};
   }), edges: (graph.Edges || []).map((edge, index) => ({id: edgeID(edge, index), from: edge.From,
-    to: edge.To, outcome: edge.Verdict || '', back: escalation.retries.has(index), pinned: true}))};
+    to: edge.To, outcome: edge.Verdict || 'pass', back: escalation.retries.has(index), pinned: labels.get(edgeKey(edge))}))};
 }
 
 export class ProcessDraft {
@@ -58,6 +60,11 @@ export class ProcessDraft {
   change(edit) {
     const before = clone(this.value), after = clone(before);
     edit(after);
+    if(after.EditorLayout?.EdgeLabels) {
+      const edges=new Set(after.Process.Graph.Edges.map(edgeKey));
+      after.EditorLayout.EdgeLabels=after.EditorLayout.EdgeLabels.filter(label=>edges.has(edgeKey(label.Edge)));
+      if(!after.EditorLayout.EdgeLabels.length)delete after.EditorLayout.EdgeLabels;
+    }
     if (JSON.stringify(before) === JSON.stringify(after)) return;
     this.undoStack.push(before); if (this.undoStack.length > 100) this.undoStack.shift();
     this.redoStack = []; this.value = after;
@@ -95,8 +102,11 @@ export function validationMessages(draft) {
   }
   const nodes = new Map(graph.Nodes.map(n => [n.ID, n]));
   if (!nodes.has(graph.EntryNodeID)) messages.push('Choose an entry node.');
-  const incoming = new Map(), outgoing = new Map();
+  const incoming = new Map(), outgoing = new Map(), edgeKeys = new Set();
   for (const edge of graph.Edges || []) {
+    const key = edgeKey(edge);
+    if (edgeKeys.has(key)) messages.push("Duplicate connection: source, destination and answer/outcome must be unique.");
+    edgeKeys.add(key);
     if (!nodes.has(edge.From) || !nodes.has(edge.To) || edge.From === edge.To) messages.push('Connections must join two different existing nodes.');
     const source = nodes.get(edge.From);
     if (source?.Kind === 'decision' && edge.Verdict && !source.Decision.PermittedAnswers.includes(edge.Verdict)) messages.push(`${source.Name || source.ID}: connection answer "${edge.Verdict}" is no longer permitted. Edit or delete that connection.`);

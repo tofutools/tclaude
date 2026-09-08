@@ -25,5 +25,37 @@ func validateEditorLayout(draft DefinitionDraft) error {
 			return fail(ErrInvalid, "node %s layout is outside the supported canvas", id)
 		}
 	}
+	return validateEditorEdgeLabels(draft.Process.Graph.Edges, draft.EditorLayout.EdgeLabels)
+}
+
+func validateEditorEdgeLabels(edges []model.WorkEdge, labels []model.EditorEdgeLabel) error {
+	if err := validateUniqueWorkEdges(edges); err != nil {
+		return err
+	}
+	if len(labels) > len(edges) || len(labels) > 4096 {
+		return fail(ErrInvalid, "too many connector label preferences")
+	}
+	known := make(map[model.WorkEdge]bool, len(edges))
+	for _, edge := range edges {
+		known[edge] = true
+	}
+	seen := make(map[model.WorkEdge]bool, len(labels))
+	for _, label := range labels {
+		if !known[label.Edge] || seen[label.Edge] {
+			return fail(ErrInvalid, "connector label preference requires one exact existing edge")
+		}
+		seen[label.Edge] = true
+	}
+	return nil
+}
+
+func validateUniqueWorkEdges(edges []model.WorkEdge) error {
+	seen := make(map[model.WorkEdge]bool, len(edges))
+	for _, edge := range edges {
+		if seen[edge] {
+			return fail(ErrInvalid, "duplicate source, destination and verdict connection")
+		}
+		seen[edge] = true
+	}
 	return nil
 }

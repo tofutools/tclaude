@@ -1397,3 +1397,10 @@ clients cannot supply compiled escalation metadata. Starting any revision with
 such a loop is explicitly refused before work admission, including an older
 pinned revision. This matches the legacy runtime's unsupported-loop boundary;
 ordinary task retry budgets and blocked-work resolution remain executable.
+Process connector labels support Automatic, Always show, and Hide unless selected
+in the connection inspector. Automatic uses the graph renderer's outcome rules;
+selected connections remain readable. The preference belongs to editor layout
+and identifies the exact source, destination and answer/outcome tuple. Saving,
+reopening, export/import and node/snippet copies retain it; copied endpoints are
+remapped and deleted connections discard their preferences. Label visibility
+never changes an edge's routing verdict or grants execution authority.
