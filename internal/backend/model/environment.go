@@ -117,7 +117,7 @@ func (e *Environment) UnmarshalJSON(data []byte) error {
 // ValidateEnvironments rejects authored allow-lists that can never match a valid
 // launch. Absence remains compatible with the historical empty environment.
 func (b ConfigurationBounds) ValidateEnvironments() error {
-	if err := b.ValidateHostSandboxPolicies(); err != nil {
+	if err := b.ValidateHostSandboxProfiles(); err != nil {
 		return err
 	}
 	for _, environment := range b.Environments {

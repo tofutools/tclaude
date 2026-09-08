@@ -426,6 +426,7 @@ func (s *Service) StartShell(ctx context.Context, req StartShellRequest) (Operat
 			return operationResult(prior), err
 		}
 	}
+	var resolvedSandbox *model.SandboxSelection
 	var hostPolicy *sandboxpolicy.PolicyMaterialization
 	if req.HostSandbox != nil {
 		if err := req.HostSandbox.Validate(); err != nil {
@@ -436,9 +437,10 @@ func (s *Service) StartShell(ctx context.Context, req StartShellRequest) (Operat
 			return OperationResult{}, err
 		}
 		selected, err := materialized.LaunchSelection()
-		if err != nil || !selected.Equal(*req.HostSandbox) {
+		if err != nil {
 			return OperationResult{}, fail(ErrConflict, "resolved sandbox policy changed; review the selection")
 		}
+		resolvedSandbox = &selected
 		hostPolicy = &materialized
 	}
 	environment, err := s.shellEnvironment(ctx, req)
@@ -461,7 +463,7 @@ func (s *Service) StartShell(ctx context.Context, req StartShellRequest) (Operat
 	now := s.now().UTC()
 	executionID := model.ExecutionID(s.newID("exec_"))
 	operationID := model.OperationID(s.newID("op_"))
-	execution := model.Execution{ID: executionID, Workload: model.ExecutionWorkloadShell, Spec: model.ResolvedExecutionSpec{HostSandbox: model.CloneSandboxSelection(req.HostSandbox), ExecutionID: executionID, Workload: model.ExecutionWorkloadShell, Attempt: 1, WorkingDirectory: workspace.Observation.ActualPath, Sandbox: req.Sandbox, Environment: environment.Clone(), ShellGroup: req.Group}, State: model.ExecutionReserved, Attempt: 1, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	execution := model.Execution{ID: executionID, Workload: model.ExecutionWorkloadShell, Spec: model.ResolvedExecutionSpec{HostSandbox: model.CloneSandboxSelection(resolvedSandbox), ExecutionID: executionID, Workload: model.ExecutionWorkloadShell, Attempt: 1, WorkingDirectory: workspace.Observation.ActualPath, Sandbox: req.Sandbox, Environment: environment.Clone(), ShellGroup: req.Group}, State: model.ExecutionReserved, Attempt: 1, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	operation := model.Operation{ID: operationID, RequestID: req.Context.RequestID, Kind: model.OperationStartShell, Principal: req.Context.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	authority := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionStartShell, Resource: model.ResourceSelector{Kind: model.ResourceWorkspace, WorkspaceID: workspace.ID}}
 	authority.RequestedEnvironment = &environment
@@ -476,7 +478,7 @@ func (s *Service) StartShell(ctx context.Context, req StartShellRequest) (Operat
 	}
 	workflowCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancel()
-	prepared, err := s.shellHost.PrepareShell(workflowCtx, ports.ShellPreparationRequest{HostSandbox: model.CloneSandboxSelection(req.HostSandbox), HostSandboxPolicy: hostPolicy, ExecutionID: executionID, Attempt: 1, WorkspaceID: workspace.ID, WorkingDirectory: workspace.Observation.ActualPath, Sandbox: req.Sandbox, Environment: environment.Clone()})
+	prepared, err := s.shellHost.PrepareShell(workflowCtx, ports.ShellPreparationRequest{HostSandbox: model.CloneSandboxSelection(resolvedSandbox), HostSandboxPolicy: hostPolicy, ExecutionID: executionID, Attempt: 1, WorkspaceID: workspace.ID, WorkingDirectory: workspace.Observation.ActualPath, Sandbox: req.Sandbox, Environment: environment.Clone()})
 	if err != nil {
 		settled, persistErr := s.store.CompleteShell(context.WithoutCancel(ctx), OperationCompletion{OperationID: operationID, OperationState: model.OperationFailed, ResultCode: "prepare_failed", Detail: err.Error(), ExecutionID: executionID, ExecutionState: model.ExecutionFailed, UpdateExecutionState: true, At: s.now().UTC()}, ports.ShellResourceEvidence{})
 		if persistErr != nil {
@@ -487,7 +489,7 @@ func (s *Service) StartShell(ctx context.Context, req StartShellRequest) (Operat
 	description := prepared.Describe()
 	expectedHostPolicy := ""
 	if req.HostSandbox != nil {
-		expectedHostPolicy = req.HostSandbox.PolicyHash
+		expectedHostPolicy = resolvedSandbox.PolicyHash
 	}
 	if description.HostSandboxPolicyHash != expectedHostPolicy || description.ExecutionID != executionID || description.Attempt != 1 || description.Evidence.Owner == "" || description.Evidence.Version == 0 || len(description.Evidence.Payload) == 0 {
 		_ = prepared.Abort(workflowCtx)

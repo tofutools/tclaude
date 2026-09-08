@@ -48,10 +48,12 @@ func TestHostSandboxAuthorityRequiresExactPolicyAndCannotDropConfinement(t *test
 	require.True(t, configurationMatches(bounds, &desired), "old grants still match old configurations")
 	desired.HostSandbox = selectionForPersistence()
 	require.False(t, configurationMatches(bounds, &desired), "old grants do not authorize a new policy")
-	bounds.HostSandboxPolicies = []string{desired.HostSandbox.PolicyHash}
+	bounds.HostSandboxProfiles = []string{string(desired.HostSandbox.Scopes[0].Ref.ProfileID)}
 	require.True(t, configurationMatches(bounds, &desired))
 	desired.HostSandbox.PolicyHash = strings.Repeat("c", 64)
-	require.False(t, configurationMatches(bounds, &desired), "different compiled content needs its own grant")
+	require.True(t, configurationMatches(bounds, &desired), "profile updates keep the same delegated profile identity")
+	desired.HostSandbox.Scopes[0].Ref.ProfileID = "other"
+	require.False(t, configurationMatches(bounds, &desired), "a different profile needs its own grant")
 	desired.HostSandbox = nil
 	require.False(t, configurationMatches(bounds, &desired), "a confined grant cannot be used to drop confinement")
 }

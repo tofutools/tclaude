@@ -1,33 +1,28 @@
 'use strict';
-// Shared select-field contract for launch dialogs. Resolve a chosen revision
-// once and retain it for response-loss retries, independently of later edits.
+// Shared profile selector. Persist IDs; each launch resolves current content.
 async function sandboxSelectionInput(api,{retained=null,shell=true}={}) {
- retained=retained?structuredClone(retained):null;
- const profiles=(await api('/v2/sandbox-profiles')||[]).filter(p=>!p.Archived&&!p.Imported);
- const choices=new Map(profiles.map(p=>['profile:'+p.ID,{...p}]));
- const resolved=new Map();
+ retained=sandboxProfileReferences(retained);
+ const profiles=(await api('/v2/sandbox-profiles')||[]).filter(p=>!p.Archived);
+ const choices=new Map(profiles.map(p=>['profile:'+p.ID,p]));
  return {
-  field:{name:'host_sandbox',label:'Host sandbox',value:retained?'retained':'none',options:[...(retained?[retainedSandboxOption(retained)]:[]),{value:'none',label:shell?'No host sandbox — start an unconfined shell':'No additional host sandbox'},...profiles.map(p=>({value:'profile:'+p.ID,label:p.Name+' · '+p.ID+' · '+p.HeadRevisionID}))],help:'A selected profile is pinned to the displayed revision. Unsupported host policy features refuse launch; they never silently remove confinement.'},
+  field:{name:'host_sandbox',label:'Host sandbox',value:retained?'retained':'none',options:[...(retained?[retainedSandboxOption(retained,profiles)]:[]),{value:'none',label:shell?'No host sandbox — start an unconfined shell':'No additional host sandbox'},...profiles.map(p=>({value:'profile:'+p.ID,label:p.Name}))],help:'Profile changes take effect the next time the agent starts or restarts.'},
   async read(value){
    if(value==='none')return null;
    if(value==='retained'&&retained)return structuredClone(retained);
    const chosen=choices.get(value);if(!chosen)throw new Error('Select a listed sandbox profile.');
-   if(resolved.has(value))return resolved.get(value);
-   const current=await api('/v2/sandbox-profiles/'+encodeURIComponent(chosen.ID));
-   if(current.Profile.Archived||current.Profile.Imported||current.Revision.Ref.RevisionID!==chosen.HeadRevisionID)throw new Error('The sandbox profile changed. Reopen this dialog and review its current revision.');
-   const selected=await api('/v2/sandbox-profiles/selection',{scopes:[{Scope:'explicit',Ref:current.Revision.Ref}]});
-   resolved.set(value,selected);return selected;
+   return {Scopes:[{Scope:'explicit',Ref:{ProfileID:chosen.ID}}]};
   }
  };
 }
 
-function retainedSandboxOption(value){return{value:'retained',label:'Retain selected policy · '+value.Scopes.map(s=>s.Scope+': '+s.Ref.ProfileID+' · '+s.Ref.RevisionID).join(' / ')}}
+function sandboxProfileReferences(value){return value?{Scopes:value.Scopes.map(s=>({Scope:s.Scope,Ref:{ProfileID:s.Ref.ProfileID}}))}:null}
+function retainedSandboxOption(value,profiles=[]){return{value:'retained',label:'Keep '+value.Scopes.map(s=>profiles.find(p=>p.ID===s.Ref.ProfileID)?.Name||s.Ref.ProfileID).join(' / ')}}
 
 // The ordinary form component owns labels, submission and errors. This shared
-// control supplies selection/loading and exact immutable-value serialization.
+// control supplies selection/loading and stable profile-ID serialization.
 class SandboxSelectionControl {
  constructor(api,value){
-  this.retained=value?structuredClone(value):null;
+  this.retained=sandboxProfileReferences(value);
   this.host=document.createElement('select');
   this.status=document.createElement('p');this.status.setAttribute('role','status');
   const initial=[...(this.retained?[retainedSandboxOption(this.retained)]:[]),{value:'none',label:'No additional host sandbox'}];
@@ -45,4 +40,24 @@ class SandboxSelectionControl {
   await this.loading;if(this.error)throw this.error;
   return this.input.read(value);
  }
+}
+
+// Shared profile picker for delegated launch bounds. Values are stable IDs;
+// names are labels and editing a profile does not require replacing a grant.
+class SandboxProfileAllowList {
+ constructor(api,values=[]){
+  this.host=document.createElement('select');this.host.multiple=true;
+  this.host.setAttribute('aria-label','Allowed sandbox profiles');
+  this.original=[...values];
+  for(const id of values){const option=document.createElement('option');option.value=id;option.textContent=id;option.selected=true;this.host.append(option)}
+  api('/v2/sandbox-profiles').then(profiles=>{
+   const selected=new Set(this.read());
+   for(const profile of profiles||[]){
+    let option=Array.from(this.host.options).find(o=>o.value===profile.ID);
+    if(!option&&!profile.Archived){option=document.createElement('option');option.value=profile.ID;this.host.append(option)}
+    if(option){option.textContent=profile.Name;option.selected=selected.has(profile.ID)}
+   }
+  }).catch(()=>{});
+ }
+ read(){return Array.from(this.host.selectedOptions,o=>o.value)}
 }

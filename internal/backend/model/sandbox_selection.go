@@ -6,7 +6,7 @@ import (
 	"slices"
 )
 
-// SandboxProfileScope describes where an immutable host policy was selected.
+// SandboxProfileScope describes where a host profile was selected.
 // Its order is fixed and is independent of native SandboxMode.
 type SandboxProfileScope string
 
@@ -21,25 +21,23 @@ type SandboxScopeSelection struct {
 	Ref   SandboxProfileRef
 }
 
-// SandboxSelection retains the exact authoring inputs and resolved policy
-// identity selected for a launch. The hash includes canonical paths, included
-// revisions and expanded network packs; it is not evidence of OS enforcement.
-// Fresh selection resolves defaults before constructing this value. Retries
-// retain this value instead of resolving later defaults again.
+// SandboxSelection stores profile choices by stable ID. Revision and policy
+// hashes are optional preparation evidence, never a requirement for choosing a
+// profile or a request to keep using old content on a later launch.
 type SandboxSelection struct {
 	Scopes     []SandboxScopeSelection
-	PolicyHash string
+	PolicyHash string `json:",omitempty"`
 }
 
 func (s SandboxSelection) Validate() error {
-	if len(s.Scopes) == 0 || len(s.Scopes) > 3 || !sandboxDigest(s.PolicyHash) {
-		return fmt.Errorf("host sandbox selection requires exact scopes and policy identity")
+	if len(s.Scopes) == 0 || len(s.Scopes) > 3 || s.PolicyHash != "" && !sandboxDigest(s.PolicyHash) {
+		return fmt.Errorf("host sandbox selection requires ordered profile scopes")
 	}
 	previous := -1
 	for _, selected := range s.Scopes {
 		rank := slices.Index([]SandboxProfileScope{SandboxScopeGlobal, SandboxScopeGroup, SandboxScopeExplicit}, selected.Scope)
-		if rank <= previous || selected.Ref.ProfileID.Validate() != nil || selected.Ref.RevisionID.Validate() != nil || !sandboxDigest(selected.Ref.ContentHash) {
-			return fmt.Errorf("host sandbox scopes must be unique ordered immutable references")
+		if rank <= previous || selected.Ref.ProfileID.Validate() != nil || (selected.Ref.RevisionID != "" && selected.Ref.RevisionID.Validate() != nil) || (selected.Ref.ContentHash != "" && !sandboxDigest(selected.Ref.ContentHash)) {
+			return fmt.Errorf("host sandbox scopes must be unique ordered profile references")
 		}
 		previous = rank
 	}
@@ -86,17 +84,34 @@ func ValidateSandboxSelection(s *SandboxSelection) error {
 	return s.Validate()
 }
 
-// ValidateHostSandboxPolicies keeps delegated policy identities bounded and exact.
-func (b ConfigurationBounds) ValidateHostSandboxPolicies() error {
-	if len(b.HostSandboxPolicies) > 128 {
-		return fmt.Errorf("too many host sandbox policy identities")
+// ValidateHostSandboxProfiles validates delegated profile IDs, not content hashes.
+func (b ConfigurationBounds) ValidateHostSandboxProfiles() error {
+	if len(b.HostSandboxProfiles) > 128 {
+		return fmt.Errorf("too many host sandbox profile IDs")
 	}
 	seen := map[string]bool{}
-	for _, hash := range b.HostSandboxPolicies {
-		if !sandboxDigest(hash) || seen[hash] {
-			return fmt.Errorf("host sandbox policy identities must be unique SHA-256 values")
+	for _, id := range b.HostSandboxProfiles {
+		if SandboxProfileID(id).Validate() != nil || seen[id] {
+			return fmt.Errorf("host sandbox profile IDs must be unique stable IDs")
 		}
-		seen[hash] = true
+		seen[id] = true
 	}
 	return nil
+}
+
+// References removes preparation evidence from an authored selection.
+func (s SandboxSelection) References() SandboxSelection {
+	s = s.Clone()
+	s.PolicyHash = ""
+	for i := range s.Scopes {
+		s.Scopes[i].Ref = SandboxProfileRef{ProfileID: s.Scopes[i].Ref.ProfileID}
+	}
+	return s
+}
+
+func SameSandboxProfiles(a, b *SandboxSelection) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.References().Equal(b.References())
 }

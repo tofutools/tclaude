@@ -12,8 +12,8 @@ func (id SandboxProfileRevisionID) Validate() error {
 	return ValidateStableID("sandbox profile revision id", string(id))
 }
 
-// SandboxProfileRef pins authoring content, not permission to apply that content.
-// Included policies use the same exact reference rather than a mutable name.
+// SandboxProfileRef identifies a profile by stable ID. Optional revision fields
+// describe recorded content; authored choices need only the profile ID.
 type SandboxProfileRef struct {
 	ProfileID   SandboxProfileID
 	RevisionID  SandboxProfileRevisionID

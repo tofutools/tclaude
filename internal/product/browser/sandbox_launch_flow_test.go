@@ -37,7 +37,9 @@ type sandboxBrowserPrepared struct{ accessBrowserPrepared }
 
 func (p *sandboxBrowserPrepared) Describe() ports.PreparedDescription {
 	d := p.accessBrowserPrepared.Describe()
-	d.HostSandboxPolicyHash = p.spec.HostSandbox.PolicyHash
+	if p.spec.HostSandbox != nil {
+		d.HostSandboxPolicyHash = p.spec.HostSandbox.PolicyHash
+	}
 	d.Evidence.Provider = "claude"
 	return d
 }
@@ -49,14 +51,14 @@ func (p *sandboxBrowserPrepared) Release(ctx context.Context, permit ports.Relea
 	return ports.ReleaseResult{State: ports.ReleaseStarted, Runtime: &accessBrowserRuntime{id: p.spec.ExecutionID}, Evidence: p.Describe().Evidence}, nil
 }
 
-func TestBrowserSavedSandboxSelectionLaunchesPinnedPolicy(t *testing.T) {
+func TestBrowserSavedSandboxSelectionUsesUpdatedProfile(t *testing.T) {
 	provider := &sandboxBrowserProvider{accessBrowserProvider: accessBrowserProvider{delivery: host.ActionCredentialHost{PrivateRoot: filepath.Join(t.TempDir(), "credentials")}, delivered: make(chan ports.ActionCredentialReceipt, 1)}, requests: make(chan ports.PreparationRequest, 1)}
 	ctx, page, operator := processEditorBrowser(t, provider, &copilot.Provider{})
 	var source app.SandboxProfileResult
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/sandbox-profiles", map[string]any{"request_id": "source", "id": "source", "name": "Saved boundary", "policy": model.SandboxPolicy{FilesystemRoot: model.SandboxRootSeparate}}, &source))
 	page.MustElement("#new-agent").MustClick()
 	page.MustElement("#editor option[value='profile:source']")
-	page.MustElement("#editor [name=host_sandbox]").MustSelect("Saved boundary · source · " + string(source.Revision.Ref.RevisionID))
+	page.MustElement("#editor [name=host_sandbox]").MustSelect("Saved boundary")
 	page.MustElementR("#editor [aria-label='Configured launch support']", "Host sandbox preparation is configured")
 	page.MustElement("#editor [name=harness]").MustSelect("copilot")
 	page.MustElementR("#editor [aria-label='Configured launch support']", "Unsupported host sandbox selection")
@@ -79,9 +81,10 @@ func TestBrowserSavedSandboxSelectionLaunchesPinnedPolicy(t *testing.T) {
 	require.Empty(t, snapshot.Executions)
 	selected := snapshot.Agents[0].Desired.HostSandbox
 	require.NotNil(t, selected)
-	require.Equal(t, source.Revision.Ref, selected.Scopes[0].Ref)
+	require.Equal(t, model.SandboxProfileRef{ProfileID: source.Profile.ID}, selected.Scopes[0].Ref)
+	require.Empty(t, selected.PolicyHash)
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/sandbox-profiles", map[string]any{"request_id": "later", "id": "source", "name": "Later policy", "expected_revision": source.Profile.Revision, "policy": model.SandboxPolicy{FilesystemRoot: model.SandboxRootSeparate, Environment: model.Environment{"LATER": "value"}}}, nil))
-	// A saved configuration/default carries the same pin into a fresh agent.
+	// A saved configuration/default retains the profile ID and uses its updated content.
 	page.MustElementR("#roster button", "^Save settings as configuration$").MustClick()
 	page.MustElement("#editor [name=name]").MustSelectAllText().MustInput("Sandbox default")
 	page.MustElement("#editor button[type=submit]").MustClick()
@@ -108,13 +111,14 @@ func TestBrowserSavedSandboxSelectionLaunchesPinnedPolicy(t *testing.T) {
 		require.NotNil(t, request.HostSandboxPolicy)
 		materialized, err := request.HostSandboxPolicy.LaunchSelection()
 		require.NoError(t, err)
-		require.Equal(t, *selected, materialized)
+		require.True(t, model.SameSandboxProfiles(selected, &materialized))
+		require.Equal(t, "value", request.HostSandboxPolicy.Composition.Values.Environment["LATER"])
 	case <-ctx.Done():
 		t.Fatal("sandbox preparation was not reached")
 	}
 	snapshot.Executions = nil
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/snapshot", nil, &snapshot))
 	require.Len(t, snapshot.Executions, 1)
-	require.Equal(t, selected, snapshot.Executions[0].Spec.HostSandbox)
+	require.True(t, model.SameSandboxProfiles(selected, snapshot.Executions[0].Spec.HostSandbox))
 	require.Contains(t, []model.ExecutionState{model.ExecutionReleased, model.ExecutionRunning}, snapshot.Executions[0].State)
 }

@@ -108,8 +108,19 @@ func PrepareSandboxImport(ctx context.Context, req ImportSandboxProfilesRequest,
 		policy := entry.Policy
 		for i, old := range policy.Includes {
 			replacement, ok := refs[old]
+			if !ok && old.RevisionID == "" {
+				for original, target := range refs {
+					if original.ProfileID == old.ProfileID {
+						replacement, ok = target, true
+						break
+					}
+				}
+			}
 			if !ok {
 				return SandboxImportResult{}, nil, ErrInvalid
+			}
+			if old.RevisionID == "" {
+				replacement = model.SandboxProfileRef{ProfileID: replacement.ProfileID}
 			}
 			policy.Includes[i] = replacement
 		}

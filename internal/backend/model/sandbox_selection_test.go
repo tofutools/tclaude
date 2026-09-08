@@ -25,7 +25,7 @@ func TestSandboxSelectionRetainsExactPolicyAndScopeIdentity(t *testing.T) {
 		func(s *model.SandboxSelection) { s.Scopes[0].Scope = "unknown" },
 		func(s *model.SandboxSelection) { s.Scopes[0], s.Scopes[1] = s.Scopes[1], s.Scopes[0] },
 		func(s *model.SandboxSelection) { s.Scopes[0].Ref.RevisionID = "bad id" },
-		func(s *model.SandboxSelection) { s.Scopes[0].Ref.ContentHash = "" },
+		func(s *model.SandboxSelection) { s.Scopes[0].Ref.ContentHash = "bad" },
 		func(s *model.SandboxSelection) { s.PolicyHash = strings.Repeat("B", 64) },
 	} {
 		invalid := selected.Clone()
@@ -34,10 +34,10 @@ func TestSandboxSelectionRetainsExactPolicyAndScopeIdentity(t *testing.T) {
 	}
 }
 
-func TestHostSandboxPolicyBoundsRejectInvalidIdentities(t *testing.T) {
-	for _, hashes := range [][]string{{""}, {strings.Repeat("B", 64)}, {strings.Repeat("a", 64), strings.Repeat("a", 64)}, make([]string, 129)} {
-		require.Error(t, (model.ConfigurationBounds{HostSandboxPolicies: hashes}).ValidateEnvironments())
+func TestHostSandboxProfileBoundsRejectInvalidIdentities(t *testing.T) {
+	for _, hashes := range [][]string{{""}, {"bad id"}, {strings.Repeat("a", 64), strings.Repeat("a", 64)}, make([]string, 129)} {
+		require.Error(t, (model.ConfigurationBounds{HostSandboxProfiles: hashes}).ValidateEnvironments())
 	}
 	require.NoError(t, (model.ConfigurationBounds{}).ValidateEnvironments())
-	require.NoError(t, (model.ConfigurationBounds{HostSandboxPolicies: []string{strings.Repeat("a", 64)}}).ValidateEnvironments())
+	require.NoError(t, (model.ConfigurationBounds{HostSandboxProfiles: []string{"sandbox_profile"}}).ValidateEnvironments())
 }

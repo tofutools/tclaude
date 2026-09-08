@@ -473,7 +473,7 @@ func configurationMatches(bounds model.ConfigurationBounds, requested *model.Des
 	if requested == nil {
 		return true
 	}
-	if !hostSandboxMatches(bounds.HostSandboxPolicies, requested.HostSandbox) {
+	if !hostSandboxMatches(bounds.HostSandboxProfiles, requested.HostSandbox) {
 		return false
 	}
 	if !environmentMatches(bounds.Environments, requested.Environment) {
@@ -926,12 +926,20 @@ func environmentMatches(allowed []model.Environment, requested model.Environment
 }
 
 func requestedBoundsMatch(bounds model.ConfigurationBounds, request model.AuthorityRequest) bool {
-	return (request.Action != model.ActionStartShell && request.RequestedHostSandbox == nil || hostSandboxMatches(bounds.HostSandboxPolicies, request.RequestedHostSandbox)) && configurationMatches(bounds, request.RequestedConfiguration) && (request.RequestedEnvironment == nil || environmentMatches(bounds.Environments, *request.RequestedEnvironment))
+	return (request.Action != model.ActionStartShell && request.RequestedHostSandbox == nil || hostSandboxMatches(bounds.HostSandboxProfiles, request.RequestedHostSandbox)) && configurationMatches(bounds, request.RequestedConfiguration) && (request.RequestedEnvironment == nil || environmentMatches(bounds.Environments, *request.RequestedEnvironment))
 }
 
-func hostSandboxMatches(hashes []string, selected *model.SandboxSelection) bool {
+func hostSandboxMatches(profiles []string, selected *model.SandboxSelection) bool {
 	if selected == nil {
-		return len(hashes) == 0
+		return len(profiles) == 0
 	}
-	return selected.Validate() == nil && slices.Contains(hashes, selected.PolicyHash)
+	if selected.Validate() != nil {
+		return false
+	}
+	for _, scope := range selected.Scopes {
+		if !slices.Contains(profiles, string(scope.Ref.ProfileID)) {
+			return false
+		}
+	}
+	return true
 }

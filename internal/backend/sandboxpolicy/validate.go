@@ -27,15 +27,15 @@ func Validate(p model.SandboxPolicy) error {
 	if len(raw) > 4<<20 {
 		return fmt.Errorf("sandbox policy exceeds 4 MiB")
 	}
-	seenRefs := map[model.SandboxProfileRevisionID]bool{}
+	seenRefs := map[model.SandboxProfileID]bool{}
 	for _, ref := range p.Includes {
 		if err := ValidateRef(ref); err != nil {
 			return err
 		}
-		if seenRefs[ref.RevisionID] {
-			return fmt.Errorf("duplicate included sandbox revision")
+		if seenRefs[ref.ProfileID] {
+			return fmt.Errorf("duplicate included sandbox profile")
 		}
-		seenRefs[ref.RevisionID] = true
+		seenRefs[ref.ProfileID] = true
 	}
 	switch p.FilesystemRoot {
 	case model.SandboxRootAutomatic, model.SandboxRootInherit, model.SandboxRootSeparate:
@@ -153,6 +153,9 @@ func Validate(p model.SandboxPolicy) error {
 func ValidateRef(ref model.SandboxProfileRef) error {
 	if err := ref.ProfileID.Validate(); err != nil {
 		return err
+	}
+	if ref.RevisionID == "" && ref.ContentHash == "" {
+		return nil
 	}
 	if err := ref.RevisionID.Validate(); err != nil {
 		return err

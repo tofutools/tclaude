@@ -341,6 +341,13 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		operationID = model.OperationID(s.newID("op_"))
 	}
 	spec := resolvedSpec(executionID, agent.ID, desired, conversationID)
+	if hostSandboxPolicy != nil {
+		preparedSelection, selectionErr := hostSandboxPolicy.LaunchSelection()
+		if selectionErr != nil {
+			return OperationResult{}, selectionErr
+		}
+		spec.HostSandbox = &preparedSelection
+	}
 	spec.ConfigurationProfile = agent.ConfigurationProfile
 	execution := model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, State: model.ExecutionReserved, Attempt: 1, ContextReadiness: model.ContextReadinessPending, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	if err := s.requireNativeGuidanceComposition(ctx, execution); err != nil {

@@ -187,8 +187,8 @@ type AutomationDelegation struct {
 // bounds grant no configuration-bearing effect; operator authority is the only
 // unbounded case.
 type ConfigurationBounds struct {
-	// HostSandboxPolicies permits exact compiled policy identities. An absent list permits only no host policy; a populated list requires a selected policy.
-	HostSandboxPolicies []string `json:",omitempty"`
+	// HostSandboxProfiles permits stable sandbox profile IDs. Profile edits take effect on the next launch. An absent list permits only no host profile.
+	HostSandboxProfiles []string `json:",omitempty"`
 	// Environments permits exact authored sets; absent permits only empty environment.
 	Environments          []Environment `json:",omitempty"`
 	Harnesses             []string

@@ -61,6 +61,10 @@ func (s *Service) SaveConfigurationProfile(ctx context.Context, req SaveConfigur
 	if err := requireOperator(req.Context.Principal); err != nil {
 		return ConfigurationProfileResult{}, err
 	}
+	if req.Desired.HostSandbox != nil {
+		choice := req.Desired.HostSandbox.References()
+		req.Desired.HostSandbox = &choice
+	}
 	w, err := prepareConfigurationProfile(req, s.now())
 	if err != nil {
 		return ConfigurationProfileResult{}, err
@@ -143,6 +147,10 @@ func (s *Service) ListConfigurationProfiles(ctx context.Context, principal model
 // configuration values, and a later catalog edit cannot change this selection.
 func (s *Service) resolveConfigurationSelection(ctx context.Context, desired model.DesiredConfiguration, selected *model.ConfigurationProfileRef) (model.DesiredConfiguration, *model.ConfigurationProfileRef, error) {
 	if selected == nil {
+		if desired.HostSandbox != nil {
+			choice := desired.HostSandbox.References()
+			desired.HostSandbox = &choice
+		}
 		return desired, nil, s.verifyLaunchSandbox(ctx, desired.HostSandbox)
 	}
 	if !desired.Equal(model.DesiredConfiguration{}) || selected.ProfileID == "" || selected.RevisionID == "" || selected.ContentHash == "" {

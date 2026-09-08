@@ -8,7 +8,7 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
 
-func TestBrowserSandboxConfigurationRetainsCopiesChangesAndClearsExactPolicy(t *testing.T) {
+func TestBrowserSandboxConfigurationRetainsCopiesChangesAndClearsProfile(t *testing.T) {
 	ctx, page, operator := processEditorBrowser(t)
 	var source app.SandboxProfileResult
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/sandbox-profiles", map[string]any{"request_id": "source", "id": "source", "name": "Sandbox source", "policy": model.SandboxPolicy{FilesystemRoot: model.SandboxRootSeparate}}, &source))
@@ -21,7 +21,7 @@ func TestBrowserSandboxConfigurationRetainsCopiesChangesAndClearsExactPolicy(t *
 	page.MustElement("#refresh").MustClick()
 	page.MustElementR("#roster button", "^Configure$").MustClick()
 	require.Equal(t, "retained", page.MustElement("#editor [name=host_sandbox]").MustProperty("value").Str())
-	require.Contains(t, page.MustElement("#editor option[value=retained]").MustText(), string(source.Revision.Ref.RevisionID))
+	page.MustElementR("#editor option[value=retained]", "Keep Later sandbox")
 	page.MustElement("#editor [name=name]").MustSelectAllText().MustInput("Renamed worker")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
@@ -33,7 +33,7 @@ func TestBrowserSandboxConfigurationRetainsCopiesChangesAndClearsExactPolicy(t *
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/snapshot", nil, &snapshot))
 	require.Len(t, snapshot.Agents, 1)
 	require.Equal(t, "Renamed worker", snapshot.Agents[0].Name)
-	require.Equal(t, &selected, snapshot.Agents[0].Desired.HostSandbox, "unrelated edit retains the old pinned revision")
+	require.Equal(t, &selected, snapshot.Agents[0].Desired.HostSandbox, "unrelated edit retains the selected profile ID")
 	page.MustElementR("#roster button", "^Save settings as configuration$").MustClick()
 	page.MustElement("#editor [name=name]").MustSelectAllText().MustInput("Independent configuration")
 	page.MustElement("#editor button[type=submit]").MustClick()
@@ -53,13 +53,13 @@ func TestBrowserSandboxConfigurationRetainsCopiesChangesAndClearsExactPolicy(t *
 	require.Nil(t, snapshot.Agents[0].Desired.HostSandbox, "clear is an explicit choice")
 	page.MustElementR("#roster button", "^Configure$").MustClick()
 	page.MustElement("#editor option[value='profile:source']")
-	page.MustElement("#editor [name=host_sandbox]").MustSelect("Later sandbox · source · " + string(later.Revision.Ref.RevisionID))
+	page.MustElement("#editor [name=host_sandbox]").MustSelect("Later sandbox")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
 	snapshot.Agents = nil
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/snapshot", nil, &snapshot))
-	require.Equal(t, later.Revision.Ref, snapshot.Agents[0].Desired.HostSandbox.Scopes[0].Ref)
-	require.NotEqual(t, selected.PolicyHash, snapshot.Agents[0].Desired.HostSandbox.PolicyHash)
+	require.Equal(t, model.SandboxProfileRef{ProfileID: source.Profile.ID}, snapshot.Agents[0].Desired.HostSandbox.Scopes[0].Ref)
+	require.Empty(t, snapshot.Agents[0].Desired.HostSandbox.PolicyHash)
 	require.Empty(t, snapshot.Executions, "editing and copying configurations never starts work")
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/configuration-profiles/"+string(profiles[0].ID), nil, &saved))
 	require.Equal(t, &selected, saved.Revision.Desired.HostSandbox, "later agent edits cannot mutate the saved copy")

@@ -13,70 +13,62 @@ type SandboxSelectionAPI interface {
 	ResolveLaunchSandbox(context.Context, model.Principal, []model.SandboxScopeSelection) (model.SandboxSelection, error)
 }
 
-// ResolveLaunchSandbox returns a server-computed selection for an explicit set
-// of immutable scopes. This is read-only preparation, not launch authorization.
+// ResolveLaunchSandbox validates profile choices without freezing their content.
+// Each fresh launch resolves the then-current profile definitions.
 func (s *Service) ResolveLaunchSandbox(ctx context.Context, principal model.Principal, scopes []model.SandboxScopeSelection) (model.SandboxSelection, error) {
 	if err := requireOperator(principal); err != nil {
 		return model.SandboxSelection{}, err
 	}
-	if len(scopes) == 0 || len(scopes) > 3 {
-		return model.SandboxSelection{}, ErrInvalid
-	}
-	for _, scope := range scopes {
-		if scope.Ref.ProfileID.Validate() != nil {
-			return model.SandboxSelection{}, ErrInvalid
-		}
-		profile, err := s.store.SandboxProfile(ctx, scope.Ref.ProfileID)
-		if err != nil {
-			return model.SandboxSelection{}, err
-		}
-		if profile.Profile.Archived || profile.Profile.Imported {
-			return model.SandboxSelection{}, fail(ErrConflict, "select an active authored sandbox profile")
-		}
-	}
-	materialized, err := s.materializeLaunchSandbox(ctx, scopes)
-	if err != nil {
+	selected := (model.SandboxSelection{Scopes: scopes}).References()
+	if err := s.verifyLaunchSandbox(ctx, &selected); err != nil {
 		return model.SandboxSelection{}, err
 	}
-	selected, err := materialized.LaunchSelection()
-	if err != nil {
-		return model.SandboxSelection{}, fail(ErrInvalid, "%v", err)
-	}
 	return selected, nil
+}
+
+// currentSandboxScopes follows stable IDs even for selections saved by older
+// v2 builds which included revision metadata.
+func (s *Service) currentSandboxScopes(ctx context.Context, scopes []model.SandboxScopeSelection) ([]model.SandboxScopeSelection, error) {
+	selection := model.SandboxSelection{Scopes: scopes}
+	if err := selection.Validate(); err != nil {
+		return nil, fail(ErrInvalid, "%v", err)
+	}
+	current := selection.Clone().Scopes
+	for i := range current {
+		profile, err := s.store.SandboxProfile(ctx, current[i].Ref.ProfileID)
+		if err != nil {
+			return nil, err
+		}
+		if profile.Profile.Archived {
+			return nil, fail(ErrConflict, "select an active sandbox profile")
+		}
+		current[i].Ref = profile.Revision.Ref
+	}
+	return current, nil
 }
 
 func (s *Service) materializeLaunchSandbox(ctx context.Context, scopes []model.SandboxScopeSelection) (sandboxpolicy.PolicyMaterialization, error) {
 	if s.sandboxPaths == nil {
 		return sandboxpolicy.PolicyMaterialization{}, fail(ErrUnavailable, "sandbox path inspection is not configured")
 	}
-	result, err := sandboxpolicy.MaterializeScopes(ctx, scopes, s.store, s.sandboxPaths)
+	current, err := s.currentSandboxScopes(ctx, scopes)
+	if err != nil {
+		return sandboxpolicy.PolicyMaterialization{}, err
+	}
+	result, err := sandboxpolicy.MaterializeScopes(ctx, current, s.store, s.sandboxPaths)
 	if errors.Is(err, sandboxpolicy.ErrInvalidClosure) {
 		return sandboxpolicy.PolicyMaterialization{}, fail(ErrInvalid, "%v", err)
 	}
 	return result, err
 }
 
-// verifyLaunchSandbox never accepts a caller-supplied policy hash as proof of
-// resolved content. Persisted references are immutable, including after rename.
+// Saving a choice requires an existing profile, not host preparation or a hash.
 func (s *Service) verifyLaunchSandbox(ctx context.Context, selected *model.SandboxSelection) error {
 	if selected == nil {
 		return nil
 	}
-	if err := selected.Validate(); err != nil {
-		return fail(ErrInvalid, "%v", err)
-	}
-	materialized, err := s.materializeLaunchSandbox(ctx, selected.Scopes)
-	if err != nil {
-		return err
-	}
-	actual, err := materialized.LaunchSelection()
-	if err != nil {
-		return fail(ErrInvalid, "%v", err)
-	}
-	if !selected.Equal(actual) {
-		return fail(ErrConflict, "resolved sandbox policy changed; review the selection")
-	}
-	return nil
+	_, err := s.currentSandboxScopes(ctx, selected.Scopes)
+	return err
 }
 
 func (s *Service) prepareProviderSandbox(ctx context.Context, provider ports.Provider, selected *model.SandboxSelection) (*sandboxpolicy.PolicyMaterialization, error) {
@@ -92,13 +84,6 @@ func (s *Service) prepareProviderSandbox(ctx context.Context, provider ports.Pro
 	materialized, err := s.materializeLaunchSandbox(ctx, selected.Scopes)
 	if err != nil {
 		return nil, err
-	}
-	actual, err := materialized.LaunchSelection()
-	if err != nil {
-		return nil, fail(ErrInvalid, "%v", err)
-	}
-	if !selected.Equal(actual) {
-		return nil, fail(ErrConflict, "resolved sandbox policy changed; review the selection")
 	}
 	return &materialized, nil
 }

@@ -25,7 +25,7 @@ func (h *selectionShellHost) PrepareShell(_ context.Context, req ports.ShellPrep
 	return nil, app.ErrUnavailable
 }
 
-func TestBrowserShellSandboxSelectionPinsRevisionAndSurvivesRetry(t *testing.T) {
+func TestBrowserShellSandboxSelectionUsesProfileAndSurvivesRetry(t *testing.T) {
 	if os.Getenv("TCLAUDE_BROWSER_SMOKE") != "1" {
 		t.Skip("set TCLAUDE_BROWSER_SMOKE=1")
 	}
@@ -44,8 +44,8 @@ func TestBrowserShellSandboxSelectionPinsRevisionAndSurvivesRetry(t *testing.T) 
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
 	page.MustElementR("#workspace-list button", "^Open shell$").MustClick()
-	require.Contains(t, page.MustElement("#editor option[value='profile:policy']").MustText(), string(profile.Revision.Ref.RevisionID))
-	page.MustElement("#editor [name=host_sandbox]").MustSelect("Selected policy · policy · " + string(profile.Revision.Ref.RevisionID))
+	require.Equal(t, "Selected policy", page.MustElement("#editor option[value='profile:policy']").MustText())
+	page.MustElement("#editor [name=host_sandbox]").MustSelect("Selected policy")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor-error").MustWaitVisible()
 	var prepared ports.ShellPreparationRequest

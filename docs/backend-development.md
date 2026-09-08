@@ -1300,11 +1300,11 @@ conflict and retain the local form for inspection or copying.
 Configurations includes a Sandbox profiles panel. Create, copy, edit, inspect,
 archive and restore policies through the authenticated authoring API. Expand the
 filesystem, network, environment, resource and setup sections to edit literal
-rules. Includes select exact immutable revisions; later edits to an included
-profile do not change a saved selection. Save conflicts retain the draft, and an
+rules. Includes select stable profile IDs; edits to included profiles take effect
+when the policy is next prepared. Save conflicts retain the draft, and an
 unchanged retry after a lost response returns the original result.
 
-Preview validates the draft and pinned includes and observes filesystem paths
+Preview validates the draft and current included profiles and observes filesystem paths
 without creating missing directories or running setup scripts. It reports path
 kind, canonical spelling, missing paths and grants intersecting the backend's
 protected state directory. Included observations retain their source revision.
@@ -1314,8 +1314,9 @@ include precedence; private namespace and harness configuration floors remain
 restrictive. A shared include is composed separately within each sibling before
 those siblings combine. These observations and composed values are not an
 enforcement receipt. Agent, saved configuration, team member and shell forms can
-select an active saved profile. Selection pins exact revisions and resolved policy
-identity; later profile edits do not change an existing selection. The launch
+select an active saved profile. Selection stores profile IDs, and the UI displays profile names. Each fresh launch
+or restart resolves their current definitions, including updated included profiles.
+The policy already installed in a running execution is not rewritten by a profile edit. The launch
 preview reports whether the configured adapter supports host sandbox preparation.
 Actual launch also checks the selected policy, host capabilities and current
 authority, and refuses unsupported policies before native release.
@@ -1324,7 +1325,7 @@ authority, and refuses unsupported policies before native release.
 ### Sandbox destination packs
 
 The sandbox editor lists the retained destination-pack catalog with exact domains,
-ports and a content hash. Choose Off, Allow or Deny for each pack after inspecting
+ports. Choose Off, Allow or Deny for each pack after inspecting
 its entries. Unknown IDs, duplicate IDs and conflicting polarities are rejected
 before persistence. Selections survive save and reopen; the
 catalog does not silently include extra provider destinations or subdomains.
@@ -1333,7 +1334,7 @@ Saving a pack reference does not grant network access or launch a workload.
 
 ### Sandbox profile transfer
 
-Each sandbox catalog card can export its exact immutable revision and complete
+Each sandbox catalog card can export its saved policy and complete
 include graph as a versioned JSON bundle. Import accepts a file or pasted JSON,
 validates all hashes and dependencies without host lookup, and previews each
 revision before creating independent named copies. Every included revision gets
@@ -1349,10 +1350,10 @@ files are not silently interpreted as equivalent policies. The logical bundle
 limit is 16 MiB, with a separately bounded transport envelope. Source profile
 names are export-time labels; exact revision references identify policy content.
 
-### Resolved sandbox policy identity
+### Sandbox preparation and profile selection
 
-Sandbox path preview now shows a separate resolved-policy identity. The authored
-revision hash still identifies the saved document; the resolved identity also
+Sandbox preparation records an internal digest for checking provider handoff.
+It is not an operator-facing choice or authority selector. The internal digest
 covers canonical host paths, exact included revisions, scope precedence and the
 expanded destination pack contents. Combined network constraints show explicit
 allow/deny destinations instead of unresolved pack names, while retaining each
@@ -1361,7 +1362,10 @@ source restriction independently. Pack display labels do not affect identity.
 This is a bounded, versioned authoring result, not launch authorization or proof
 of isolation. No setup command runs during preview. Actual launch integration
 must recheck host identity, current authority, provider resources and enforcement
-capabilities before using a retained policy.
+capabilities before using the prepared policy. Delegated launch bounds reference
+profile IDs, so editing a profile does not require replacing its grant. An
+unchanged response-loss retry returns the original operation rather than starting
+a new execution; a new start request resolves current profiles again.
 
 ### Process descriptions and documentation
 
@@ -1392,10 +1396,10 @@ fields are omitted from persisted JSON.
 
 ### Legacy sandbox profile conversion
 
-Offline v228 import converts representable sandbox profiles into archived,
-immutable replacement revisions. Include names resolve only within that snapshot
-and become exact revision references. The archived catalog supports inspection
-and explicit independent copies; imported defaults, assignments, grants and
+Offline v228 import converts representable sandbox profiles into an archived
+registry. Include names resolve only within that snapshot
+and become exact revision references. The archived catalog supports inspection, restore, editing after restore,
+and independent copies; imported defaults, assignments, grants and
 runtime state are not activated. Legacy `network_access=none` retains its coupled
 closed Unix-socket posture when no newer network axis was authored.
 
@@ -1411,7 +1415,7 @@ indexes. A destination produced by an older evidence-only conversion is refused
 if it lacks the newly expected typed records; the importer never rewrites that
 existing destination. Use a fresh explicit destination for the new conversion.
 
-Imported sandbox profiles carry a durable imported marker. They remain archived and reject restore or same-identity edits; inspect, export, and explicit independent copy remain available. Independent copies use fresh identities and normal editable lifecycle rules.
+An imported marker records provenance, not immutability. Imported profiles can be restored and edited under the same profile ID using the ordinary editor. No copy is required to update them. Importing alone does not launch agents.
 
 ### Process wait authoring
 

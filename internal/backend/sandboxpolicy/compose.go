@@ -50,7 +50,7 @@ type Composition struct {
 // graph node. Applying unique closure entries as a flat sequence is incorrect:
 // a later sibling must bring its own inherited values back into precedence.
 func ComposeIncludes(ctx context.Context, root model.SandboxProfileRef, reader RevisionReader, paths HostPathResolver) (Composition, error) {
-	closure, err := Resolve(ctx, root, reader)
+	closure, err := ResolveCurrent(ctx, root, reader)
 	if err != nil {
 		return Composition{}, err
 	}
@@ -61,7 +61,7 @@ func ComposeIncludes(ctx context.Context, root model.SandboxProfileRef, reader R
 			return Composition{}, err
 		}
 		out := Composition{Root: entry.Ref, Values: model.SandboxPolicy{Environment: model.Environment{}}}
-		for _, ref := range entry.Policy.Includes {
+		for _, ref := range closure.ResolvedIncludes[entry.Ref.RevisionID] {
 			if err := mergeComposition(&out, memo[ref.RevisionID]); err != nil {
 				return Composition{}, err
 			}
@@ -116,7 +116,7 @@ func ComposeIncludes(ctx context.Context, root model.SandboxProfileRef, reader R
 		}
 		memo[entry.Ref.RevisionID] = detached
 	}
-	return memo[root.RevisionID], nil
+	return memo[closure.Root.RevisionID], nil
 }
 
 func mergeComposition(out *Composition, next Composition) error {

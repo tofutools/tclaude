@@ -79,7 +79,7 @@ func validateShellRequest(ctx context.Context, tx *sql.Tx, in app.ShellAdmission
 		return nil
 	}
 	req := in.Request
-	if req.Context.Principal != in.Operation.Principal || req.Context.RequestID != in.Operation.RequestID || req.WorkspaceID != in.WorkspaceUse.WorkspaceID || req.ExpectedRevision != in.WorkspaceRevision || req.Sandbox != in.Execution.Spec.Sandbox || !model.SameSandboxSelection(req.HostSandbox, in.Execution.Spec.HostSandbox) || !model.SameSandboxSelection(req.HostSandbox, in.Authority.RequestedHostSandbox) || !reflect.DeepEqual(req.Group, in.Execution.Spec.ShellGroup) {
+	if req.Context.Principal != in.Operation.Principal || req.Context.RequestID != in.Operation.RequestID || req.WorkspaceID != in.WorkspaceUse.WorkspaceID || req.ExpectedRevision != in.WorkspaceRevision || req.Sandbox != in.Execution.Spec.Sandbox || !model.SameSandboxProfiles(req.HostSandbox, in.Execution.Spec.HostSandbox) || !model.SameSandboxSelection(req.HostSandbox, in.Authority.RequestedHostSandbox) || !reflect.DeepEqual(req.Group, in.Execution.Spec.ShellGroup) {
 		return app.ErrConflict
 	}
 	environment := req.Environment.Clone()
