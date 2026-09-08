@@ -394,10 +394,11 @@ async function renderDefinitions(){
    if(!spaces.length)throw new Error('Create a checkout in Workspaces before deploying this team.');
    const shared=revision.Team.WorkspacePolicy==='shared';
    const workspaceFields=(shared?[{Key:'shared',Name:'Shared team'}]:revision.Team.Members).map(member=>({name:'workspace_'+member.Key,label:member.Name+' workspace',options:spaces.map(w=>({value:w.ID,label:w.Intent.Name||w.Observation.ActualPath||w.ID}))}));
-   edit('Deploy pinned team',[{name:'mission',label:'Mission',multiline:true},{name:'group',label:'Group',required:false,options:[{value:'',label:'Create a new group'},...(snapshot.groups||[]).map(g=>({value:g.ID,label:g.Name}))]},...workspaceFields,...parameterFields(revision.Parameters||[])],f=>{
+   edit('Deploy pinned team',[{name:'mission',label:'Mission',multiline:true},{name:'group',label:'Group',required:false,options:[{value:'',label:'Create a new group'},...(snapshot.groups||[]).map(g=>({value:g.ID,label:g.Name}))]},...workspaceFields,...parameterFields(revision.Parameters||[])],async f=>{
     const selection=key=>{const w=spaces.find(w=>w.ID===f['workspace_'+key]);if(!w)throw new Error('Select a current workspace.');return{WorkspaceID:w.ID,ExpectedRevision:w.Revision}};
     const workspaces=shared?{Shared:selection('shared')}:{Members:Object.fromEntries(revision.Team.Members.map(m=>[m.Key,selection(m.Key)]))};
-    return api('/v2/teams/deploy',{request_id:f.requestID,deployment_id:f.requestID,instantiation:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'team'},Mission:f.mission,Target:{Kind:f.group?'existing_group':'new_group',GroupID:f.group||'group_'+f.requestID},Workspaces:workspaces,Parameters:parameterValues(revision.Parameters||[],f)}});
+    await api('/v2/teams/deploy',{request_id:f.requestID,deployment_id:f.requestID,instantiation:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'team'},Mission:f.mission,Target:{Kind:f.group?'existing_group':'new_group',GroupID:f.group||'group_'+f.requestID},Workspaces:workspaces,Parameters:parameterValues(revision.Parameters||[],f)}});
+    await renderDefinitions();
    });
   }));
   list.append(card);
@@ -407,7 +408,22 @@ async function renderDefinitions(){
  if(deployments?.length)list.append(el('h2','Deployed teams'));
  for(const result of deployments||[]){
   const d=result.Deployment,card=el('article',undefined,'card');card.dataset.deployment=d.ID;
-  card.append(el('h3',d.Mission||d.ID),el('p',`${d.State} · group ${d.GroupID} · phase ${d.AdvisoryPhase} · revision ${d.Revision}`));
+  const phases=result.Phases||[],phase=phases[d.AdvisoryPhase];
+  card.append(el('h3',d.Mission||d.ID),el('p',`${d.State} · group ${d.GroupID} · ${phase?`phase ${d.AdvisoryPhase+1}/${phases.length}: ${phase.Name}`:'no advisory process'} · revision ${d.Revision}`));
+  if(phases.length){
+   const details=el('details'),ordered=el('ol');details.append(el('summary','Advisory process and transitions'),el('p','Guidance only. Phases do not change permissions or gate work.'));
+   for(const [index,p]of phases.entries()){const item=el('li');if(index===d.AdvisoryPhase)item.setAttribute('aria-current','step');item.append(el('strong',p.Name+(index===d.AdvisoryPhase?' · current':'')),el('p','Active roles: '+((p.Roles||[]).join(', ')||'none specified')));if(p.Criteria)item.append(el('pre',p.Criteria));ordered.append(item)}
+   details.append(ordered);
+   for(const move of d.PhaseHistory||[])details.append(el('p',`${move.From} → ${move.To} · ${move.ActorAgentID||move.ActorKind} · ${move.At}`));
+   card.append(details);
+   if(d.State!=='stopped'&&d.State!=='standing_down')card.append(button('Advance advisory phase',async()=>{
+    const current=await api('/v2/teams/deployments/'+encodeURIComponent(d.ID)),currentPhases=current.Phases||[],currentDeployment=current.Deployment;
+    if(!currentPhases.length)throw new Error('This deployment has no advisory phases.');
+    edit('Advance advisory phase',[{name:'phase',label:'Enter phase',value:currentPhases[Math.min(currentDeployment.AdvisoryPhase+1,currentPhases.length-1)].Name,options:currentPhases.map(p=>({value:p.Name,label:p.Name}))}],async f=>{
+     await api('/v2/teams/advance-phase',{request_id:f.requestID,deployment_id:d.ID,expected_revision:currentDeployment.Revision,phase:f.phase});await renderDefinitions();
+    });
+   }));
+  }
   card.append(el('p',Object.entries(d.Members||{}).map(([key,id])=>`${key}: ${id}`).join(' · ')));
   card.append(el('p',`${Object.keys(d.Workspaces||{}).length} workspace bindings · ${(d.OwnedAutomationRuleIDs||[]).length} owned rhythms · ${(d.Rebriefs||[]).length} rebriefs`,'muted'));
   if(d.State!=='stopped'){
@@ -416,9 +432,6 @@ async function renderDefinitions(){
    })));
   }
   if(d.State==='ready'){
-   card.append(button('Advance advisory phase',()=>edit('Advance advisory phase',[],async f=>{
-    await api('/v2/teams/advance-phase',{request_id:f.requestID,deployment_id:d.ID,expected_revision:d.Revision});await renderDefinitions();
-   })));
    card.append(button('Rebrief',async()=>{
     const selected=await api('/v2/definitions/'+encodeURIComponent(d.Definition.DefinitionID)),r=selected.Revision;
     edit('Rebrief revision '+r.ID,[],async f=>{

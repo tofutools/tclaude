@@ -228,7 +228,7 @@ func (s *Service) GetTeamDeployment(ctx context.Context, req GetTeamDeploymentRe
 			return TeamDeploymentResult{}, err
 		}
 	}
-	return TeamDeploymentResult{Deployment: deployment}, nil
+	return s.teamDeploymentView(ctx, deployment)
 }
 
 func (s *Service) reconcileTeamDeployments(ctx context.Context) error {
@@ -374,6 +374,9 @@ func teamDeploymentGraph(team model.TeamDefinition, deployment model.TeamDeploym
 				if item.Timing == model.BriefingBeforeFirstWork && slices.Contains(teamBriefRecipients(team, item), key) {
 					brief = strings.TrimSpace(brief + "\n\n" + item.Body)
 				}
+			}
+			if process := teamProcessBrief(team); process != "" {
+				brief = strings.TrimSpace(brief + "\n\n" + process)
 			}
 			nodeID := model.WorkNodeID("member_" + key)
 			nodes = append(nodes, model.WorkNode{ID: nodeID, Kind: model.WorkNodeTask, Performer: &model.Performer{Kind: model.PerformerAgent, Agent: &model.AgentPerformer{AgentID: deployment.Members[key], WorkspaceID: deployment.Workspaces[key].WorkspaceID, ContextPolicy: model.AgentContextFresh, Brief: brief}}})

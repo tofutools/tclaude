@@ -158,13 +158,13 @@ func (s *Store) TeamDeploymentRequester(ctx context.Context, id model.Deployment
 
 func (s *Store) TeamDeployment(ctx context.Context, id model.DeploymentID) (model.TeamDeployment, error) {
 	var deployment model.TeamDeployment
-	var definition, closure, parameters, members, rolePins, rules, workspaces, ownedWorkspaces, ownedRules, briefingOps []byte
+	var definition, closure, parameters, members, rolePins, rules, workspaces, ownedWorkspaces, ownedRules, briefingOps, phaseHistory []byte
 	var created, updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,definition_json,dependency_closure_json,mission,parameters_json,group_id,members_json,role_pins_json,automation_rule_ids_json,work_run_id,target_kind,workspaces_json,owned_workspace_ids_json,owned_automation_rule_ids_json,briefing_operation_ids_json,advisory_phase,state,revision,created_at,updated_at FROM team_deployments WHERE id=?`, id).Scan(&deployment.ID, &definition, &closure, &deployment.Mission, &parameters, &deployment.GroupID, &members, &rolePins, &rules, &deployment.WorkRunID, &deployment.TargetKind, &workspaces, &ownedWorkspaces, &ownedRules, &briefingOps, &deployment.AdvisoryPhase, &deployment.State, &deployment.Revision, &created, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT id,definition_json,dependency_closure_json,mission,parameters_json,group_id,members_json,role_pins_json,automation_rule_ids_json,work_run_id,target_kind,workspaces_json,owned_workspace_ids_json,owned_automation_rule_ids_json,briefing_operation_ids_json,phase_history_json,advisory_phase,state,revision,created_at,updated_at FROM team_deployments WHERE id=?`, id).Scan(&deployment.ID, &definition, &closure, &deployment.Mission, &parameters, &deployment.GroupID, &members, &rolePins, &rules, &deployment.WorkRunID, &deployment.TargetKind, &workspaces, &ownedWorkspaces, &ownedRules, &briefingOps, &phaseHistory, &deployment.AdvisoryPhase, &deployment.State, &deployment.Revision, &created, &updated)
 	if err != nil {
 		return deployment, classify(err)
 	}
-	if err = unmarshalMany([][]byte{definition, closure, parameters, members, rolePins, rules, workspaces, ownedWorkspaces, ownedRules, briefingOps}, []any{&deployment.Definition, &deployment.DependencyClosure, &deployment.Parameters, &deployment.Members, &deployment.RolePins, &deployment.AutomationRuleIDs, &deployment.Workspaces, &deployment.OwnedWorkspaceIDs, &deployment.OwnedAutomationRuleIDs, &deployment.BriefingOperationIDs}); err != nil {
+	if err = unmarshalMany([][]byte{definition, closure, parameters, members, rolePins, rules, workspaces, ownedWorkspaces, ownedRules, briefingOps, phaseHistory}, []any{&deployment.Definition, &deployment.DependencyClosure, &deployment.Parameters, &deployment.Members, &deployment.RolePins, &deployment.AutomationRuleIDs, &deployment.Workspaces, &deployment.OwnedWorkspaceIDs, &deployment.OwnedAutomationRuleIDs, &deployment.BriefingOperationIDs, &deployment.PhaseHistory}); err != nil {
 		return deployment, err
 	}
 	deployment.CreatedAt, deployment.UpdatedAt = fromNanos(created), fromNanos(updated)
@@ -423,9 +423,25 @@ func (s *Store) CompleteTeamRebrief(ctx context.Context, id model.DeploymentID, 
 	return s.TeamDeployment(ctx, id)
 }
 
-func (s *Store) AdvanceTeamAdvisoryPhase(ctx context.Context, id model.DeploymentID, expected model.Revision, principal model.Principal, requestID model.RequestID, digest string, at time.Time) (model.TeamDeployment, error) {
+func (s *Store) AdvanceTeamAdvisoryPhase(ctx context.Context, id model.DeploymentID, expected model.Revision, principal model.Principal, requestID model.RequestID, digest string, target uint32, transition model.TeamPhaseTransition, at time.Time) (model.TeamDeployment, error) {
 	return s.mutateTeamLifecycle(ctx, id, expected, principal, requestID, "advance_phase", digest, at, func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, `UPDATE team_deployments SET advisory_phase=advisory_phase+1,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND state<>?`, nanos(at), id, expected, model.DeploymentStopped)
+		var encoded []byte
+		if err := tx.QueryRowContext(ctx, `SELECT phase_history_json FROM team_deployments WHERE id=? AND revision=?`, id, expected).Scan(&encoded); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return app.ErrConflict
+			}
+			return err
+		}
+		var history []model.TeamPhaseTransition
+		if err := json.Unmarshal(encoded, &history); err != nil {
+			return err
+		}
+		history = append(history, transition)
+		encoded, err := json.Marshal(history)
+		if err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE team_deployments SET advisory_phase=?,phase_history_json=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND state<>?`, target, encoded, nanos(at), id, expected, model.DeploymentStopped)
 		if err != nil {
 			return err
 		}

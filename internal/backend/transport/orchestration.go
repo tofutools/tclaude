@@ -175,10 +175,11 @@ func (h *Handler) RegisterOrchestrationAPI(api app.OrchestrationAPI) error {
 	}))
 	h.mux.HandleFunc("POST /v2/teams/advance-phase", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
 		commandIdentity
+		Phase            string             `json:"phase"`
 		DeploymentID     model.DeploymentID `json:"deployment_id"`
 		ExpectedRevision model.Revision     `json:"expected_revision"`
 	}) (any, error) {
-		result, err := api.AdvanceAdvisoryPhase(ctx, app.AdvanceAdvisoryPhaseRequest{Context: b.context(p), DeploymentID: b.DeploymentID, ExpectedRevision: b.ExpectedRevision})
+		result, err := api.AdvanceAdvisoryPhase(ctx, app.AdvanceAdvisoryPhaseRequest{Context: b.context(p), DeploymentID: b.DeploymentID, ExpectedRevision: b.ExpectedRevision, Phase: b.Phase})
 		return projectOrchestration(result), err
 	}))
 	h.mux.HandleFunc("POST /v2/teams/stand-down", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {

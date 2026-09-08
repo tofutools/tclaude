@@ -12,7 +12,7 @@ import (
 var missionPlaceholder = strings.NewReplacer("{{task}}", "", "{{mission}}", "")
 
 func resolveTeamMissionBriefings(team model.TeamDefinition, mission string, initial bool) (model.TeamDefinition, error) {
-	templated := false
+	templated := len(team.ProcessPhases()) != 0
 	for _, brief := range team.Briefings {
 		if brief.Syntax != "" {
 			templated = true
@@ -77,6 +77,9 @@ func resolveTeamMissionBriefings(team model.TeamDefinition, mission string, init
 					return model.TeamDefinition{}, fail(ErrInvalid, "combined initial team briefing exceeds 32768 bytes")
 				}
 				text += separator + body
+			}
+			if process := teamProcessBrief(team); process != "" && len(text)+2+len(process) > 32768 {
+				return model.TeamDefinition{}, fail(ErrInvalid, "combined initial team process guidance exceeds 32768 bytes")
 			}
 		}
 	}

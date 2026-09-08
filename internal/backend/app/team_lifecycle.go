@@ -23,7 +23,11 @@ func (s *Service) ListTeamDeployments(ctx context.Context, req ListTeamDeploymen
 				continue
 			}
 		}
-		results = append(results, TeamDeploymentResult{Deployment: deployment})
+		result, err := s.teamDeploymentView(ctx, deployment)
+		if err != nil {
+			return nil, err
+		}
+		results = append(results, result)
 	}
 	return results, nil
 }
@@ -107,15 +111,58 @@ func (s *Service) AdvanceAdvisoryPhase(ctx context.Context, req AdvanceAdvisoryP
 	if err != nil {
 		return TeamDeploymentResult{}, err
 	}
-	if deployment.Revision == req.ExpectedRevision && (revision.Team == nil || int(deployment.AdvisoryPhase)+1 >= len(revision.Team.AdvisoryPhases)) {
-		return TeamDeploymentResult{}, fail(ErrConflict, "deployment has no next advisory phase")
+	var phases []model.TeamPhase
+	if revision.Team != nil {
+		phases = revision.Team.ProcessPhases()
+	}
+	target := deployment.AdvisoryPhase + 1
+	if req.Phase != "" {
+		target = uint32(len(phases))
+		for i, phase := range phases {
+			if strings.EqualFold(strings.TrimSpace(req.Phase), strings.TrimSpace(phase.Name)) {
+				target = uint32(i)
+				break
+			}
+		}
+	}
+	if deployment.Revision == req.ExpectedRevision && (int(target) >= len(phases) || int(deployment.AdvisoryPhase) >= len(phases)) {
+		return TeamDeploymentResult{}, fail(ErrConflict, "deployment has no matching next advisory phase")
 	}
 	digest := contentHash(struct {
 		Deployment model.DeploymentID
 		Expected   model.Revision
 	}{req.DeploymentID, req.ExpectedRevision})
-	deployment, err = s.store.AdvanceTeamAdvisoryPhase(ctx, req.DeploymentID, req.ExpectedRevision, req.Context.Principal, req.Context.RequestID, digest, s.now().UTC())
-	return TeamDeploymentResult{Deployment: deployment}, err
+	if req.Phase != "" {
+		digest = contentHash(struct {
+			Deployment model.DeploymentID
+			Expected   model.Revision
+			Phase      string
+		}{req.DeploymentID, req.ExpectedRevision, req.Phase})
+	}
+	transition := model.TeamPhaseTransition{ActorKind: req.Context.Principal.Kind, ActorAgentID: req.Context.Principal.AgentID, At: s.now().UTC()}
+	if int(deployment.AdvisoryPhase) < len(phases) {
+		transition.From = phases[deployment.AdvisoryPhase].Name
+	}
+	if int(target) < len(phases) {
+		transition.To = phases[target].Name
+	}
+	fresh := deployment.Revision == req.ExpectedRevision
+	deployment, err = s.store.AdvanceTeamAdvisoryPhase(ctx, req.DeploymentID, req.ExpectedRevision, req.Context.Principal, req.Context.RequestID, digest, target, transition, transition.At)
+	if err != nil {
+		return TeamDeploymentResult{}, err
+	}
+	noticeCtx, cancel := settlementContext(ctx)
+	defer cancel()
+	result, err := s.teamDeploymentView(noticeCtx, deployment)
+	if err != nil {
+		return result, err
+	}
+	if fresh && int(target) < len(phases) {
+		// Like v1, entry messages are best-effort after the explicit transition.
+		// They do not turn a committed phase change into a failed command.
+		result.PhaseNotifications = s.notifyTeamPhase(noticeCtx, req, deployment, transition.From, phases[target])
+	}
+	return result, nil
 }
 
 func (s *Service) StandDownDeployment(ctx context.Context, req StandDownDeploymentRequest) (TeamDeploymentResult, error) {
