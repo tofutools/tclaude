@@ -695,7 +695,7 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 		"sandbox_profile_requests",
 		"work_node_attempts", "work_agent_interactions", "work_node_evidence", "decision_windows", "decision_submissions", "automation_occurrences",
 		"automation_occurrence_recipients", "automation_condition_state", "team_deployments", "team_continuations", "configuration_defaults_requests",
-		"configuration_profile_requests", "configuration_profile_lifecycle_requests", "configuration_bundle_requests", "automation_state_requests", "automation_archive_requests", "definition_archive_requests", "access_requests", "access_request_decisions", "message_notifications", "presentation_preferences", "terminal_files", "process_snippets", "process_snippet_requests",
+		"configuration_profile_requests", "configuration_profile_lifecycle_requests", "configuration_bundle_requests", "automation_state_requests", "automation_archive_requests", "definition_archive_requests", "group_disband_requests", "access_requests", "access_request_decisions", "message_notifications", "presentation_preferences", "terminal_files", "process_snippets", "process_snippet_requests",
 		"automation_product_facts", "team_rebriefs", "team_lifecycle_requests",
 	} {
 		expected[table] = 0

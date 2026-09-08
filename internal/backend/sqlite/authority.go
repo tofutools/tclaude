@@ -193,7 +193,7 @@ func (s *Store) SetGroupOwner(ctx context.Context, groupID model.GroupID, owner 
 	}
 	defer func() { _ = tx.Rollback() }()
 	var prior model.AgentID
-	if err := tx.QueryRowContext(ctx, `SELECT owner_agent_id FROM groups WHERE id=?`, groupID).Scan(&prior); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT owner_agent_id FROM groups WHERE id=? AND tombstoned=0`, groupID).Scan(&prior); err != nil {
 		return model.Group{}, classify(err)
 	}
 	if owner != "" {

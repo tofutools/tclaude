@@ -18,7 +18,7 @@ func readGroupConfiguration(ctx context.Context, q groupReader, id model.GroupID
 	var ref model.ConfigurationProfileRef
 	var updated int64
 	var environment []byte
-	err := q.QueryRowContext(ctx, `SELECT g.id,COALESCE(c.profile_id,''),COALESCE(c.revision_id,''),COALESCE(c.content_hash,''),COALESCE(c.revision,0),COALESCE(c.updated_at,0),COALESCE(c.environment_json,'{}') FROM groups g LEFT JOIN group_configurations c ON c.group_id=g.id WHERE g.id=?`, id).Scan(&out.GroupID, &ref.ProfileID, &ref.RevisionID, &ref.ContentHash, &out.Revision, &updated, &environment)
+	err := q.QueryRowContext(ctx, `SELECT g.id,COALESCE(c.profile_id,''),COALESCE(c.revision_id,''),COALESCE(c.content_hash,''),COALESCE(c.revision,0),COALESCE(c.updated_at,0),COALESCE(c.environment_json,'{}') FROM groups g LEFT JOIN group_configurations c ON c.group_id=g.id WHERE g.id=? AND g.tombstoned=0`, id).Scan(&out.GroupID, &ref.ProfileID, &ref.RevisionID, &ref.ContentHash, &out.Revision, &updated, &environment)
 	if err != nil {
 		return out, classify(err)
 	}

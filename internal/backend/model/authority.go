@@ -23,6 +23,7 @@ const (
 	ActionRetireAgent          Action = "agent.retire"
 	ActionReactivateAgent      Action = "agent.reactivate"
 	ActionManageMembership     Action = "group.membership.manage"
+	ActionDisbandGroup         Action = "group.disband"
 	ActionReadAttachment       Action = "attachment.read"
 	ActionReadHistory          Action = "history.read"
 	ActionRefreshHistory       Action = "history.refresh"

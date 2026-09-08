@@ -67,6 +67,9 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	if configuration, ok := application.(app.GroupConfigurationAPI); ok {
 		h.registerGroupConfiguration(configuration)
 	}
+	if disband, ok := application.(app.GroupDisbandAPI); ok {
+		h.registerGroupDisband(disband)
+	}
 	if hierarchy, ok := application.(app.GroupHierarchyAPI); ok {
 		h.registerGroupHierarchy(hierarchy)
 	}
