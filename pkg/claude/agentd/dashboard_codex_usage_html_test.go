@@ -44,7 +44,7 @@ func TestDashboardHTML_CodexUsageWired(t *testing.T) {
 	// column that stacks the colons.
 	must("#usage.multiline", "multiline stacks the readout vertically")
 	must("#usage .usrc", "the source label column is styled")
-	must("width: 9ch; flex: 0 0 9ch;", "selector gutter keeps every provider label aligned")
+	must("width: calc(6ch + 26px); flex: 0 0 calc(6ch + 26px);", "selector gutter fits the widest three-mode control and keeps every provider label aligned")
 	must("padding: 0 4px", "compact selector buttons do not inflate the line spacing")
 	must("line-height: 11px", "selector height stays within the original usage-row rhythm")
 }

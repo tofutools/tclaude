@@ -3307,7 +3307,9 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 #usage .uunits strong { color: #c9d1d9; font-weight: 600; }
 #usage .usage-unit-switch-slot {
   display: inline-flex; justify-content: flex-end; align-items: center;
-  width: 9ch; flex: 0 0 9ch;
+  /* Widest selector: "%" + "≈$" + "AIC" = 6ch, plus three buttons' 24px
+     horizontal padding and the switch's 2px border. */
+  width: calc(6ch + 26px); flex: 0 0 calc(6ch + 26px);
 }
 #usage .usage-unit-switch {
   display: inline-flex; padding: 0; border: 1px solid #2a3340;
