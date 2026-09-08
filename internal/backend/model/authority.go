@@ -176,6 +176,8 @@ type AuthorityRequest struct {
 // scheduler. Its accepted scope is intersected with the authority subject's
 // current grants for every effect.
 type AutomationDelegation struct {
+	// NoExpiry explicitly retains delegation until the rule is disabled or current authority is revoked.
+	NoExpiry  bool `json:",omitempty"`
 	Actions   []Action
 	Resources []ResourceSelector
 	Bounds    ConfigurationBounds

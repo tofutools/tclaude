@@ -133,5 +133,5 @@ func (s *Service) materializeDeploymentRhythms(ctx context.Context, deployment m
 			return err
 		}
 	}
-	return nil
+	return s.materializeAuthoredTeamRhythms(ctx, deployment, team.Rhythms, request)
 }

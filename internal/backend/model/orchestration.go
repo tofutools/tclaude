@@ -106,6 +106,7 @@ type TeamDefinition struct {
 	AdvisoryPhases  []string
 	AdvisoryProcess []TeamPhase `json:",omitempty"`
 	Automation      []AutomationRuleRef
+	Rhythms         []TeamRhythm `json:",omitempty"`
 }
 
 type TeamMemberSpec struct {
@@ -748,6 +749,7 @@ type AutomationAction struct {
 }
 
 type AutomationMessageAction struct {
+	Subject  string `json:",omitempty"`
 	Body     string
 	AgentIDs []AgentID
 	GroupID  GroupID

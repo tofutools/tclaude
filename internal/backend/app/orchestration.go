@@ -1240,10 +1240,21 @@ func (s *Service) validateProgramBindings(ctx context.Context, graph model.WorkG
 }
 
 func (s *Service) SaveAutomationRule(ctx context.Context, req SaveAutomationRuleRequest) (AutomationRuleResult, error) {
-	return s.saveAutomationRule(ctx, req, "")
+	deploymentID := model.DeploymentID("")
+	if req.ExpectedRevision != 0 {
+		record, err := s.store.AutomationRule(ctx, req.ID)
+		if err != nil {
+			return AutomationRuleResult{}, err
+		}
+		deploymentID = record.Rule.DeploymentID
+	}
+	return s.saveAutomationRule(ctx, req, deploymentID)
 }
 
 func (s *Service) saveAutomationRule(ctx context.Context, req SaveAutomationRuleRequest, deploymentID model.DeploymentID) (AutomationRuleResult, error) {
+	if req.Delegation.NoExpiry && !req.Delegation.ExpiresAt.IsZero() {
+		return AutomationRuleResult{}, fail(ErrInvalid, "choose expiry or no expiry")
+	}
 	if err := req.Delegation.Bounds.ValidateEnvironments(); err != nil {
 		return AutomationRuleResult{}, fail(ErrInvalid, "%v", err)
 	}
@@ -1517,6 +1528,9 @@ func materializePerformerBindings(graph model.WorkGraph, bindings map[string]mod
 }
 
 func validateTeam(team model.TeamDefinition) error {
+	if err := validateTeamRhythms(team.Rhythms); err != nil {
+		return err
+	}
 	if err := validateTeamPhases(team); err != nil {
 		return err
 	}

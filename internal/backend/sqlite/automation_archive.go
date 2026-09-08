@@ -52,10 +52,6 @@ func (s *Store) SetAutomationArchived(ctx context.Context, req app.SetAutomation
 	if rule.Revision != req.ExpectedRevision {
 		return rule, app.ErrConflict
 	}
-	// Deployment-owned rhythms follow their deployment lifecycle, including stop.
-	if rule.DeploymentID != "" {
-		return rule, app.ErrUnauthorized
-	}
 	rule.CreatedAt = fromNanos(created)
 	rule.UpdatedAt = fromNanos(updated)
 	if rule.Tombstoned != req.Archived {

@@ -391,7 +391,7 @@ func authoritySubject(ctx context.Context, q queryer, principal model.Principal,
 
 func automationDelegates(ctx context.Context, q queryer, request model.AuthorityRequest, at time.Time) bool {
 	delegation := request.Principal.Delegation
-	if delegation == nil || delegation.ExpiresAt.IsZero() || !at.Before(delegation.ExpiresAt) || !slices.Contains(delegation.Actions, request.Action) || !requestedBoundsMatch(delegation.Bounds, request) {
+	if delegation == nil || (!delegation.NoExpiry && (delegation.ExpiresAt.IsZero() || !at.Before(delegation.ExpiresAt))) || (delegation.NoExpiry && !delegation.ExpiresAt.IsZero()) || !slices.Contains(delegation.Actions, request.Action) || !requestedBoundsMatch(delegation.Bounds, request) {
 		return false
 	}
 	for _, resource := range delegation.Resources {

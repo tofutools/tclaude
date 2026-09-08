@@ -207,7 +207,7 @@ func (s *Service) reconcileAutomation(ctx context.Context) ([]model.OccurrenceID
 					continue
 				}
 				requestID := model.RequestID(deterministicOrchestrationID("request_", string(occurrence.Occurrence.ID)+":"+string(recipients[i].AgentID)))
-				send := SendMessageRequest{RequestContext: RequestContext{Principal: occurrence.Occurrence.Requester, RequestID: requestID}, Subject: "Message", To: model.MessageAudience{AgentIDs: []model.AgentID{recipients[i].AgentID}}, RecipientEligibility: &audience, Body: revision.Action.Message.Body}
+				send := SendMessageRequest{RequestContext: RequestContext{Principal: occurrence.Occurrence.Requester, RequestID: requestID}, Subject: automationMessageSubject(*revision.Action.Message), To: model.MessageAudience{AgentIDs: []model.AgentID{recipients[i].AgentID}}, RecipientEligibility: &audience, Body: revision.Action.Message.Body}
 				digest, digestErr := authoredMessageRequestDigest(send)
 				if digestErr != nil {
 					return touched, digestErr
@@ -494,4 +494,11 @@ func deniedRecipients(in []model.OccurrenceRecipient, detail string) []model.Occ
 		}
 	}
 	return out
+}
+
+func automationMessageSubject(action model.AutomationMessageAction) string {
+	if action.Subject != "" {
+		return action.Subject
+	}
+	return "Message"
 }

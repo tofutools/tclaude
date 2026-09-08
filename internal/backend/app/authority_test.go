@@ -144,6 +144,44 @@ func TestAutomationDelegationIntersectsLiveOwnerAuthority(t *testing.T) {
 	require.ErrorIs(t, err, app.ErrUnauthorized, "delegation remains bounded by the owner's live grants")
 }
 
+func TestAutomationNoExpiryStillIntersectsLiveOwnerAuthority(t *testing.T) {
+	ctx := context.Background()
+	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "automation.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	service := testAccessService(store, newAccessProvider())
+	operator := model.OperatorPrincipal()
+	owner := createAgent(t, ctx, service, operator, "agent_automation_owner")
+	target := createAgent(t, ctx, service, operator, "agent_automation_target")
+	outside := createAgent(t, ctx, service, operator, "agent_automation_outside")
+	grant, err := service.PutGrant(ctx, app.PutGrantRequest{Principal: operator, Grant: model.AuthorityGrant{
+		ID:       "grant_automation_send",
+		Subject:  model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: owner.ID},
+		Action:   model.ActionSendMessage,
+		Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: target.ID},
+	}})
+	require.NoError(t, err)
+	automation := model.AutomationPrincipal("run_daily_triage", model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: owner.ID}, model.AutomationDelegation{
+		Actions:   []model.Action{model.ActionSendMessage},
+		Resources: []model.ResourceSelector{{Kind: model.ResourceAgent, AgentID: target.ID}},
+		NoExpiry:  true,
+	})
+	automation.Delegation.NoExpiry = false
+	_, err = service.SendMessage(ctx, app.SendMessageRequest{RequestContext: effect(automation, "implicit_no_expiry"), RecipientAgentIDs: []model.AgentID{target.ID}, Body: "denied"})
+	require.ErrorIs(t, err, app.ErrUnauthorized, "an omitted expiry does not silently opt in")
+	automation.Delegation.NoExpiry = true
+	sent, err := service.SendMessage(ctx, app.SendMessageRequest{RequestContext: effect(automation, "automation_send"), RecipientAgentIDs: []model.AgentID{target.ID}, Body: "delegated"})
+	require.NoError(t, err)
+	require.Equal(t, "run_daily_triage", sent.Message.Sender.AutomationRun)
+	require.Equal(t, owner.ID, sent.Message.Sender.Authority.AgentID)
+
+	_, err = service.SendMessage(ctx, app.SendMessageRequest{RequestContext: effect(automation, "automation_outside"), RecipientAgentIDs: []model.AgentID{outside.ID}, Body: "denied"})
+	require.ErrorIs(t, err, app.ErrUnauthorized, "the accepted run fixture cannot broaden its resource scope")
+	require.NoError(t, service.DeleteGrant(ctx, app.DeleteGrantRequest{Principal: operator, GrantID: grant.Grant.ID, ExpectedRevision: grant.Grant.Revision}))
+	_, err = service.SendMessage(ctx, app.SendMessageRequest{RequestContext: effect(automation, "automation_revoked"), RecipientAgentIDs: []model.AgentID{target.ID}, Body: "denied"})
+	require.ErrorIs(t, err, app.ErrUnauthorized, "delegation remains bounded by the owner's live grants")
+}
+
 func TestExecutionAccessSweepOwnsLeaseEligibility(t *testing.T) {
 	ctx := context.Background()
 	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "sweep.db"))
