@@ -165,15 +165,21 @@ class ProcessEditor {
         changes.push((n,f)=>{const names=[...new Set(lines(f.captures))];if(names.length)n.Captures=names;else delete n.Captures;});
       }
       const performer = node.Performer;
+      fields.push({name:'contact_cadence',label:'Contact cadence (authoring only, e.g. 30m)',value:performer.Contact?.Cadence||''},
+        {name:'contact_budget',label:'Contact budget',type:'number',min:1,max:10000,value:performer.Contact?.Budget||''},
+        {name:'contact_target',label:'Escalation target (authoring only)',value:performer.Contact?.EscalationTarget||''});
+      changes.push((n,f)=>{if(!f.contact_cadence&&!f.contact_budget&&!f.contact_target)delete n.Performer.Contact;else n.Performer.Contact={Cadence:f.contact_cadence,Budget:Number(f.contact_budget),EscalationTarget:f.contact_target};});
       const select = element('select'); select.setAttribute('aria-label', 'Performer kind');
       for (const kind of ['agent', 'program', 'human']) { const o = element('option', kind); o.value = kind; select.append(o); }
       select.value = performer.Kind;
       select.onchange = () => {
         if (!this.discardUnapplied()) return;
         update(n => {
+          const contact = n.Performer.Contact;
           n.Performer = select.value === 'agent' ? {Kind: 'agent', Agent: {MemberKey: 'worker', Brief: '', ContextPolicy: 'fresh'}}
             : select.value === 'program' ? {Kind: 'program', Program: {Profile: {}, Arguments: []}}
               : {Kind: 'human', Human: {Operator: true, AgentID: '', RoleID: '', Prompt: ''}};
+          if(contact) n.Performer.Contact = contact;
         });
         if (stageContext) this.showStage(stageContext);
       };
@@ -216,6 +222,7 @@ class ProcessEditor {
     }));
     if (node.Kind === 'task') this.inspector.prepend(this.performerSelect);
     if(node.Captures?.length) this.inspector.append(element('p','Output names are retained for authoring and export. Running this process is unavailable until capture execution is supported.'));
+    if(node.Performer?.Contact) this.inspector.append(element('p','Contact schedules are retained for authoring and export. Clear all three contact fields to remove a schedule. Running this process is unavailable until scheduled performer contact is supported.'));
     if (stageContext) { this.inspector.append(action('Back to task stages', () => this.render())); return; }
     if (node.Kind === 'task') this.stageControls(node);
     this.inspector.append(action('Make entry', () => this.change(d => { d.Process.Graph.EntryNodeID = node.ID; })));

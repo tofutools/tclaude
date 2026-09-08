@@ -1287,3 +1287,9 @@ Every process node and task stage can retain a description and longer documentat
 Task nodes can save an ordered set of up to 128 published output names. Names use lowercase letters, digits, periods, underscores and hyphens, begin with a letter or digit, and are at most 128 bytes. The editor removes duplicate lines while preserving order. Copies and exports retain the declarations; clearing them creates an explicit new definition revision.
 
 As in the legacy engine, runtime production of captures is unavailable. Starting an inline or pinned process with capture declarations returns an unsupported error before creating a run. The editor states this limitation. An older pinned revision remains non-executable even after captures are removed from a newer revision.
+
+### Process contact-schedule authoring
+
+Task performers and plan/check/review performers can retain a contact cadence, positive contact budget, and escalation target. Cadence uses a positive Go duration such as `30m`; budgets are 1–10000 and escalation targets are bounded nonempty text. Changing performer kind retains an applied schedule. Clearing all three fields removes it in a new revision.
+
+These settings preserve the legacy authoring contract. They do not create notification jobs or grant authority to the named target. As in the legacy engine, starting a process with a contact schedule is explicitly unsupported, including schedules on nested task stages. The editor explains this before execution.
