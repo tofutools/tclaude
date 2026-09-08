@@ -77,6 +77,11 @@ func TestProcessStartNodeRejectsAmbiguousRouting(t *testing.T) {
 	service := app.New(store, providers.NewRegistry())
 	for _, mutate := range []func(*model.WorkGraph){
 		func(g *model.WorkGraph) { g.Edges = nil },
+		func(g *model.WorkGraph) {
+			g.Nodes = append(g.Nodes, model.WorkNode{ID: "task", Kind: model.WorkNodeTask, Performer: &model.Performer{Kind: model.PerformerHuman, Human: &model.HumanPerformer{Operator: true, Prompt: "Work"}}})
+			g.EntryNodeID = "task"
+			g.Edges = append(g.Edges, model.WorkEdge{From: "task", To: "start"})
+		},
 		func(g *model.WorkGraph) { g.Edges[0].Verdict = "other" },
 		func(g *model.WorkGraph) { g.Nodes[0].Retry.MaxAttempts = 2 },
 		func(g *model.WorkGraph) {

@@ -1689,8 +1689,8 @@ func validateWorkGraph(graph model.WorkGraph) error {
 	for id, node := range nodes {
 		if node.Kind == model.WorkNodeStart {
 			startCount++
-			if startCount > 1 || len(adjacency[id]) != 1 {
-				return fail(ErrInvalid, "a graph permits one start node with exactly one outgoing route")
+			if startCount > 1 || len(adjacency[id]) != 1 || graph.EntryNodeID != id || incoming[id] != 0 {
+				return fail(ErrInvalid, "a graph permits one start node at its entry, with no incoming and exactly one outgoing route")
 			}
 			for _, edge := range graph.Edges {
 				if edge.From == id && edge.Verdict != "" {

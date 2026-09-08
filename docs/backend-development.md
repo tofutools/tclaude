@@ -1477,8 +1477,8 @@ executions. Existing exact worker bindings retain their ordinary behavior.
 
 The process palette includes an optional Start node with its own stable identity,
 name, prose and layout. A graph permits at most one, with exactly one unlabelled
-outgoing route and no performer or retry settings. Entry selection remains
-explicit; existing graphs need no Start node.
+outgoing route, no incoming routes, and no performer or retry settings. When
+present it must be the selected entry. Existing graphs need no Start node.
 
 Start routing creates no native work. It settles through ordinary graph
 transitions and resumes after restart even when admission committed before the
