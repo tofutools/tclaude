@@ -114,7 +114,11 @@ const (
 	ApprovalAutomatic  ApprovalMode = "automatic"
 	// ApprovalDeny is the OpenCode unattended approval policy. Its audited tool
 	// baseline remains separate from edit/web approval decisions.
-	ApprovalDeny ApprovalMode = "deny"
+	ApprovalDeny      ApprovalMode = "deny"
+	ApprovalNever     ApprovalMode = "never"
+	ApprovalOnRequest ApprovalMode = "on-request"
+	ApprovalOnFailure ApprovalMode = "on-failure"
+	ApprovalUntrusted ApprovalMode = "untrusted"
 )
 
 type SandboxMode string

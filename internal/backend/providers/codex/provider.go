@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -160,7 +161,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if err := validateDirectory(request.Spec.WorkingDirectory); err != nil {
 		return nil, err
 	}
-	if request.Spec.Approval != model.ApprovalSupervised && request.Spec.Approval != model.ApprovalAutomatic {
+	if !slices.Contains(supportedLaunchPolicy().SupportedApproval, request.Spec.Approval) {
 		return nil, fmt.Errorf("codex provider does not support approval mode %q", request.Spec.Approval)
 	}
 	if request.Spec.Sandbox != model.SandboxReadOnly && request.Spec.Sandbox != model.SandboxWorkspaceWrite && request.Spec.Sandbox != model.SandboxUnconfined {
@@ -465,8 +466,11 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 }
 func (p *prepared) argv() []string {
 	args := []string{"--dangerously-bypass-hook-trust", "-a", "on-request", "-s", codexSandbox(p.request.Spec.Sandbox)}
-	if p.request.Spec.Approval == model.ApprovalAutomatic {
+	switch p.request.Spec.Approval {
+	case model.ApprovalAutomatic, model.ApprovalNever:
 		args[2] = "never"
+	case model.ApprovalOnRequest, model.ApprovalOnFailure, model.ApprovalUntrusted:
+		args[2] = string(p.request.Spec.Approval)
 	}
 	switch p.request.Intent {
 	case ports.StartContinue:
@@ -947,7 +951,7 @@ var _ ports.PreparedAttempt = (*prepared)(nil)
 var _ ports.Runtime = (*Runtime)(nil)
 
 func supportedLaunchPolicy() ports.PolicyRequirements {
-	return ports.PolicyRequirements{DefaultApproval: model.ApprovalAutomatic, DefaultSandbox: model.SandboxWorkspaceWrite, SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxReadOnly, model.SandboxWorkspaceWrite, model.SandboxUnconfined}}
+	return ports.PolicyRequirements{ApprovalDescriptions: map[model.ApprovalMode]string{model.ApprovalNever: "Never request approval; sandbox restrictions still apply.", model.ApprovalOnRequest: "The model can request approval. A detached agent may wait for an operator.", model.ApprovalOnFailure: "Deprecated native mode: request approval after a sandboxed command fails. A detached agent may wait for an operator.", model.ApprovalUntrusted: "Request approval for commands outside the native trusted set. A detached agent may wait for an operator."}, DefaultApproval: model.ApprovalAutomatic, DefaultSandbox: model.SandboxWorkspaceWrite, SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic, model.ApprovalNever, model.ApprovalOnRequest, model.ApprovalOnFailure, model.ApprovalUntrusted}, SupportedSandbox: []model.SandboxMode{model.SandboxReadOnly, model.SandboxWorkspaceWrite, model.SandboxUnconfined}}
 }
 
 func (r *Runtime) checkpointActivity() error {

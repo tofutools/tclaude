@@ -772,6 +772,10 @@ func desiredFromRow(values map[string]any) model.DesiredConfiguration {
 		desired.Approval = model.ApprovalSupervised
 	case "automatic":
 		desired.Approval = model.ApprovalAutomatic
+	case "never", "on_request", "on_failure", "untrusted":
+		if desired.Harness == "codex" {
+			desired.Approval = model.ApprovalMode(strings.ReplaceAll(strings.ToLower(stringMap(values, "approval")), "_", "-"))
+		}
 	case "deny":
 		// This native policy belongs to OpenCode; it is not a portable alias
 		// for another provider's approval mode.

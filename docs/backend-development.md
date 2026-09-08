@@ -1872,3 +1872,15 @@ This approval choice does not provide OS confinement; host sandbox profiles
 continue to provide that boundary. Native continuation and recovery reapply the
 selected policy rather than retaining a previous session's automatic grants.
 Other providers do not advertise support for this OpenCode policy.
+
+### Codex native approval choices
+
+Codex configurations and team overrides retain `never`, `on-request`,
+`on-failure`, and `untrusted` as explicit choices. Fresh and continued launches
+pass the selected value to Codex without changing confinement. The existing
+`automatic` and `supervised` choices remain compatible aliases for `never` and
+`on-request`. The provider describes prompt-oriented modes in launch support;
+`on-failure` is retained for compatibility and marked deprecated. Offline import
+preserves these native policy names for Codex profiles and agent birth settings.
+Approval controls share one vocabulary across settings and authority forms,
+while each provider declares which choices it supports.
