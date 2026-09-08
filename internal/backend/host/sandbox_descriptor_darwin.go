@@ -64,8 +64,12 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 		}
 		writeRegions = append(writeRegions, region)
 	}
+	// dyld's boot discovery reads metadata/xattrs on the root vnode before
+	// locating the shared cache. Permit that exact vnode, but not directory
+	// enumeration or any descendant outside the selected readable regions.
 	profile := "(version 1)\n(allow default)\n" +
-		"(deny file-read* (require-not (require-any " + strings.Join(readRegions, " ") + ")))\n" +
+		"(deny file-read* (require-all (require-not (literal \"/\")) (require-not (require-any " + strings.Join(readRegions, " ") + "))))\n" +
+		"(deny file-read-data (literal \"/\"))\n" +
 		"(deny file-write* (require-not (require-any " + strings.Join(writeRegions, " ") + ")))\n" +
 		// Seatbelt mediates Unix connect as network-outbound, not file-read.
 		"(deny network-outbound (remote unix-socket (require-not (require-any " + strings.Join(readRegions, " ") + "))))\n"
