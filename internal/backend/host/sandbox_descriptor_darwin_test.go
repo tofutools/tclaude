@@ -105,8 +105,6 @@ func TestSandboxDescriptorChild(t *testing.T) {
 	if os.Getenv("TCLAUDE_SANDBOX_CHILD") != "1" {
 		t.Skip("invoked only within the disposable confinement test")
 	}
-	_, err := os.ReadDir("/")
-	require.Error(t, err, "root runtime metadata must not grant directory enumeration")
 	workspace := os.Getenv("WORK")
 	input, err := os.ReadFile(filepath.Join(workspace, "input"))
 	require.NoError(t, err)
@@ -115,6 +113,8 @@ func TestSandboxDescriptorChild(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(workspace, "output"), []byte(os.Getenv("LITERAL")), 0600))
 	_, err = os.ReadFile(os.Getenv("SECRET"))
 	require.Error(t, err)
+	_, err = os.ReadDir(filepath.Dir(os.Getenv("SECRET")))
+	require.Error(t, err, "runtime root access must not expose the private directory")
 	for network, address := range map[string]string{"tcp": os.Getenv("OUTSIDE_LISTENER"), "unix": os.Getenv("PRIVATE_SOCKET")} {
 		connection, err := net.DialTimeout(network, address, 200*time.Millisecond)
 		if connection != nil {
