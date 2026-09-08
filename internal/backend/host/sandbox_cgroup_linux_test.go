@@ -80,12 +80,28 @@ func TestSandboxResourceLimitsRequireRealDelegation(t *testing.T) {
 	require.Nil(t, empty)
 	root := t.TempDir()
 	_, err = prepareSandboxCgroup(root, model.SandboxResources{Memory: "512MiB"})
+	require.ErrorContains(t, err, "below /sys/fs/cgroup")
+	_, err = openSandboxCgroup(root)
 	require.ErrorContains(t, err, "cgroup v2 filesystem")
 	entries, err := os.ReadDir(root)
 	require.NoError(t, err)
 	require.Empty(t, entries)
 	_, err = prepareSandboxCgroup(root, model.SandboxResources{CPU: "0"})
 	require.ErrorContains(t, err, "at least 0.01")
+}
+
+func TestSandboxResourceDelegationStaysWithinProtectedHierarchy(t *testing.T) {
+	for _, path := range []string{"relative/path", "/sys/fs/cgroup", "/run/tclaude-cgroup", "/sys/fs/cgroup-other/work", "/sys/fs/cgroup/../../run/work"} {
+		t.Run(path, func(t *testing.T) {
+			_, err := sandboxResourceDelegation(path)
+			require.Error(t, err)
+		})
+	}
+	path, err := sandboxResourceDelegation(" /sys/fs/cgroup/tclaude/work ")
+	require.NoError(t, err)
+	require.Equal(t, "/sys/fs/cgroup/tclaude/work", path)
+	require.NoError(t, validateSandboxCgroupPath("/sys/fs/cgroup", true))
+	require.Error(t, validateSandboxCgroupPath("/run/aliased-controller", true))
 }
 
 func TestSandboxResourceLimitsNativeEnforcement(t *testing.T) {

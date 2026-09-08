@@ -18,9 +18,10 @@ import (
 )
 
 func sandboxResourceDelegation(configured string) (string, error) {
+	configured = strings.TrimSpace(configured)
 	if configured != "" {
-		if !filepath.IsAbs(configured) {
-			return "", fmt.Errorf("resource delegation directory must be absolute")
+		if err := validateSandboxCgroupPath(configured, false); err != nil {
+			return "", err
 		}
 		return filepath.Clean(configured), nil
 	}
@@ -38,6 +39,20 @@ func sandboxResourceDelegation(configured string) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("resource limits require a delegated cgroup v2 subtree")
+}
+
+// Like v1, explicit delegation stays beneath the protected kernel hierarchy.
+// Validate the resolved spelling too, so a path alias cannot expose a writable
+// controller through an otherwise permitted filesystem mount.
+func validateSandboxCgroupPath(path string, allowRoot bool) error {
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("resource delegation directory must be absolute")
+	}
+	rel, err := filepath.Rel("/sys/fs/cgroup", filepath.Clean(path))
+	if err != nil || (!allowRoot && rel == ".") || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("resource delegation directory must be below /sys/fs/cgroup")
+	}
+	return nil
 }
 
 func prepareSandboxCgroup(delegation string, limits model.SandboxResources) (*sandboxCgroup, error) {
@@ -69,6 +84,9 @@ func prepareSandboxCgroup(delegation string, limits model.SandboxResources) (*sa
 	canonical, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, fmt.Errorf("resource delegation unavailable: %w", err)
+	}
+	if err := validateSandboxCgroupPath(canonical, strings.TrimSpace(delegation) == ""); err != nil {
+		return nil, err
 	}
 	file, err := openSandboxCgroup(canonical)
 	if err != nil {
