@@ -114,7 +114,7 @@ func TestPaneSeedsCarryAgent(t *testing.T) {
 	tab := readDashboardJS(t, "terminals-tab.js")
 	for _, c := range []struct{ name, anchor string }{
 		{"openWebWindowPane", "key: `window:${agent}`"},
-		{"openWebTermPane", "key: `term:${agent}:${which}`"},
+		{"openWebTermPane", "key: `term:${agent}:${which}:${group}`"},
 	} {
 		at := strings.Index(tab, c.anchor)
 		if at < 0 {
