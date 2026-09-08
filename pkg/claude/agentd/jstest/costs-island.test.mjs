@@ -18,7 +18,7 @@ function payload(title = 'Alpha') {
 
 test('Costs island renders controls and preserves keyed table focus/selection across refreshes', async (t) => {
   const harness = await createPreactHarness(t);
-  const [{ createCostsState }, { CostsApp }] = await Promise.all([
+  const [{ createCostsState }, { CostsApp, positionCostFilter }] = await Promise.all([
     harness.importDashboardModule('js/costs-state.js'), harness.importDashboardModule('js/costs-island.js'),
   ]);
   const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: false });
@@ -66,6 +66,19 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
     'provider-only filter swatches share the chart series palette');
   assert.match(modelMenu.querySelector('summary').textContent, /2 of 2 · 100% spend/,
     'model summary shows selected coverage and spend share');
+  const providerSummary = providerMenu.querySelector('summary');
+  const providerPopover = providerMenu.querySelector('.cost-filter-popover');
+  const viewportWidth = harness.window.innerWidth || 1024;
+  Object.defineProperty(providerSummary, 'getBoundingClientRect', { value: () => ({
+    left: viewportWidth - 120, right: viewportWidth - 20, top: 100, bottom: 130,
+  }) });
+  Object.defineProperty(providerPopover, 'getBoundingClientRect', { value: () => ({ width: 370, height: 200 }) });
+  providerMenu.setAttribute('open', '');
+  positionCostFilter(providerMenu);
+  assert.equal(providerPopover.style.left, `${viewportWidth - 390}px`,
+    'an open filter stays attached to its right-edge trigger instead of reflowing the selector row');
+  assert.equal(providerPopover.style.top, '135px');
+  providerMenu.removeAttribute('open');
   const breakdownMenu = mounted.container.querySelector('#filter-costs-breakdown');
   assert.match(breakdownMenu.querySelector('summary').textContent, /Provider/,
     'provider breakdown is the legible default');

@@ -1199,6 +1199,25 @@ func baseStates() []dashsnap.State {
 			SettleMS: 250,
 		},
 		{
+			Key:     "bounded-costs-provider-menu",
+			Title:   "Bounded Preact — Costs provider filter",
+			Caption: "Opening a dimension filter leaves its trigger in place and anchors the viewport-safe popover directly beneath it.",
+			JS: boundedTabJS("costs", "#costs-factor", `
+setTimeout(function(){
+  var menu = document.querySelector('#filter-costs-providers');
+  if (!menu) return;
+  var before = menu.querySelector('summary').getBoundingClientRect();
+  menu.open = true;
+  setTimeout(function(){
+    var after = menu.querySelector('summary').getBoundingClientRect();
+    var panel = menu.querySelector('.cost-filter-popover').getBoundingClientRect();
+    if (Math.abs(after.left - before.left) > 1) throw new Error('provider trigger moved when its popover opened');
+    if (panel.left < 0 || panel.right > window.innerWidth) throw new Error('provider popover escaped viewport');
+  }, 50);
+}, 50);`),
+			SettleMS: 500,
+		},
+		{
 			Key:     "bounded-costs-breakdown-menu",
 			Title:   "Bounded Preact — Costs breakdown options",
 			Caption: "The compact Breakdown menu independently controls provider and model stacking for both graphs; filters remain separate and projection semantics are explicit.",
@@ -1223,10 +1242,16 @@ setTimeout(function(){
     var target = document.querySelector('.cost-accumulated-hover-target');
     if (target) {
       var rect = target.getBoundingClientRect();
+      var cursorX = rect.left + rect.width * .72;
+      var cursorY = rect.bottom - 18;
+      var cursor = document.createElement('div');
+      cursor.setAttribute('aria-hidden', 'true');
+      cursor.style.cssText = 'position:fixed;z-index:999;width:15px;height:21px;left:' + cursorX + 'px;top:' + cursorY + 'px;background:#f0f6fc;clip-path:polygon(0 0,100% 65%,60% 70%,78% 100%,61% 100%,44% 73%,0 100%);filter:drop-shadow(0 0 1px #000);pointer-events:none';
+      document.body.appendChild(cursor);
       target.dispatchEvent(new MouseEvent('mousemove', {
         bubbles: true,
-        clientX: rect.left + rect.width * .58,
-        clientY: rect.top + rect.height * .55
+        clientX: cursorX,
+        clientY: cursorY
       }));
     }
   }, 50);
@@ -1236,7 +1261,7 @@ setTimeout(function(){
 		{
 			Key:     "bounded-costs-breakdown-narrow",
 			Title:   "Bounded Preact — Costs breakdown narrow",
-			Caption: "At 560px the three selectors wrap left and the Breakdown popover anchors to the full row without escaping the viewport.",
+			Caption: "At 560px the selectors wrap left and the Breakdown popover stays attached to its trigger without escaping the viewport.",
 			Width:   560,
 			Height:  900,
 			JS: boundedTabJS("costs", "#costs-factor", `

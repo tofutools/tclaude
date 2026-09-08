@@ -39,7 +39,7 @@ function breakdownLabel(item, chart) {
   return parts.join(' · ');
 }
 
-function AccumulatedTip({ description, chart }) {
+function AccumulatedTip({ description, chart, onLeave }) {
   const panel = useRef(null);
   const [position, setPosition] = useState(null);
   const { point, projected } = description;
@@ -61,7 +61,8 @@ function AccumulatedTip({ description, chart }) {
   const style = position
     ? `left:${position.left}px;top:${position.top}px`
     : `left:${description.anchor.x}px;top:${description.anchor.y}px;visibility:hidden`;
-  return html`<div ref=${panel} class=${`cost-accumulated-tip-panel${projected ? ' projected' : ''}`} style=${style}>
+  return html`<div ref=${panel} class=${`cost-accumulated-tip-panel${projected ? ' projected' : ''}`}
+    style=${style} onmouseleave=${onLeave}>
     <strong>${point.day} · ${projected ? 'projection' : 'recorded'}</strong>
     ${chart.stackByProvider && chart.stackByModel
       ? [...new Set(rows.map((row) => row.provider))].map((provider) => {
@@ -144,6 +145,14 @@ export function CostsAccumulatedChart({ chart }) {
       Math.abs(x(candidate.index) - cursorX) < Math.abs(x(nearest.index) - cursorX) ? candidate : nearest);
     inspectPoint(describePoint(point, point.projected, { x: event.clientX, y: event.clientY }), announce);
   };
+  const leaveTooltip = () => {
+    const svg = host.current?.querySelector('.cost-accumulated-svg');
+    if (document.activeElement !== svg) setTooltip(null);
+  };
+  const leavePlot = (event) => {
+    if (event.relatedTarget?.closest?.('.cost-accumulated-tip-panel')) return;
+    if (document.activeElement !== event.currentTarget.closest('svg')) setTooltip(null);
+  };
   const navigateTooltip = (event) => {
     const moves = { ArrowLeft: -1, ArrowRight: 1 };
     if (!(event.key in moves) && event.key !== 'Home' && event.key !== 'End') return;
@@ -191,14 +200,14 @@ export function CostsAccumulatedChart({ chart }) {
       <rect class="cost-accumulated-hover-target" x=${PAD.left} y=${PAD.top}
         width=${width - PAD.left - PAD.right} height=${H - PAD.top - PAD.bottom}
         onmousemove=${showTooltip} onpointerdown=${(event) => showTooltip(event, true)}
-        onmouseleave=${(event) => { if (document.activeElement !== event.currentTarget.closest('svg')) setTooltip(null); }} />
+        onmouseleave=${leavePlot} />
       ${tooltip && html`<g class=${`cost-accumulated-tooltip${tooltip.projected ? ' projected' : ''}`} pointer-events="none">
         <line x1=${tooltip.x} x2=${tooltip.x} y1=${PAD.top} y2=${H - PAD.bottom} />
         <circle cx=${tooltip.x} cy=${tooltip.y} r="4" />
         <text aria-hidden="true" opacity="0">${tooltip.point.day} · ${tooltip.projected ? 'projection' : 'recorded'}</text>
       </g>`}
     </svg>
-    ${tooltip && html`<${AccumulatedTip} description=${tooltip} chart=${chart} />`}
+    ${tooltip && html`<${AccumulatedTip} description=${tooltip} chart=${chart} onLeave=${leaveTooltip} />`}
     <div class="cost-accumulated-status" role="status" aria-live="polite" aria-atomic="true">${announcement}</div>
   </div>`;
 }

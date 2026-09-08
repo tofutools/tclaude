@@ -3559,7 +3559,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .costs-summary-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
 .costs-summary-row #costs-summary { flex: 1 1 760px; min-width: 0; }
 .costs-dimension-filters { position: relative; flex: 0 1 auto; max-width: 100%; justify-content: flex-start; gap: 8px; overflow: visible; }
-.cost-filter-menu { position: relative; }
+.cost-filter-menu { position: relative; flex: 0 0 auto; }
 .cost-filter-menu > summary {
   display: flex; align-items: center; gap: 8px; padding: 5px 9px;
   border: 1px solid #31517a; border-radius: 5px; background: #142033;
@@ -3572,8 +3572,9 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-filter-menu > summary strong { color: #79c0ff; }
 .cost-filter-menu > summary span { color: #aab4bf; font-variant-numeric: tabular-nums; }
 .cost-filter-popover {
-  position: absolute; z-index: 30; top: calc(100% + 5px); right: 0;
-  width: min(370px, calc(100vw - 40px)); padding: 11px; background: #111820; border: 1px solid #3a4656;
+  position: fixed; z-index: 200; visibility: hidden;
+  box-sizing: border-box; width: min(370px, calc(100vw - 16px)); max-height: calc(100vh - 16px);
+  overflow: auto; padding: 11px; background: #111820; border: 1px solid #3a4656;
   border-radius: 7px; box-shadow: 0 14px 35px rgba(0,0,0,.72);
 }
 .cost-filter-popover.model { width: min(560px, calc(100vw - 40px)); }
@@ -3619,12 +3620,6 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-breakdown-option strong { display: block; color: #c9d1d9; }
 .cost-breakdown-option small { display: block; margin-top: 3px; color: #7d8590; line-height: 1.35; }
 .cost-breakdown-option > span:last-child { color: #9fb0c2; white-space: nowrap; }
-@media (max-width: 600px) {
-  /* Once the three selector summaries wrap, anchor every popover to the full
-     selector row instead of whichever short button happens to open it. */
-  .cost-filter-menu { position: static; }
-  .cost-filter-popover { left: 0; right: auto; }
-}
 .cost-chart-heading { display: flex; justify-content: space-between; align-items: baseline; margin: 0 2px 6px; }
 .cost-chart-heading strong { color: #c9d1d9; font-size: 12px; }
 .cost-chart-heading span { color: #8b949e; font-size: 11px; }
@@ -3657,9 +3652,11 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-accumulated-tooltip rect { fill: #161b22; stroke: #536275; }
 .cost-accumulated-tooltip text { fill: #c9d1d9; font-size: 10px; }
 .cost-accumulated-tip-panel {
-  position: fixed; z-index: 200; width: 288px; padding: 8px 10px;
+  position: fixed; z-index: 200; box-sizing: border-box;
+  width: min(288px, calc(100vw - 8px)); max-height: calc(100vh - 8px); overflow: auto;
+  padding: 8px 10px;
   background: rgba(22, 27, 34, .97); border: 1px solid #536275; border-radius: 5px;
-  color: #c9d1d9; font-size: 10px; pointer-events: none; box-shadow: 0 8px 20px rgba(0,0,0,.55);
+  color: #c9d1d9; font-size: 10px; box-shadow: 0 8px 20px rgba(0,0,0,.55);
 }
 .cost-accumulated-tip-panel.projected { border-color: #9c7823; }
 .cost-accumulated-tip-panel > strong { display: block; margin-bottom: 5px; }
