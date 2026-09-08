@@ -99,3 +99,16 @@ func TestEditorNumberRoundTripChecksFractionalAndExponentTokens(t *testing.T) {
 		require.NoError(t, exactEditorNumbers([]byte(raw)), raw)
 	}
 }
+
+func TestSourceNumbersAreCheckedBeforeYAMLFloatDecoding(t *testing.T) {
+	for _, value := range []string{"0.1234567890123456789", "1.234567890123456789e-1", ".1234567890123456789"} {
+		source := strings.Replace(simpleSource, "default: 42", "default: "+value, 1)
+		_, err := Convert(source, map[string]Binding{"/nodes/task/performer": {Performer: model.Performer{Kind: model.PerformerHuman, Human: &model.HumanPerformer{Operator: true}}}})
+		require.ErrorContains(t, err, "exact editor JSON support", value)
+	}
+	for _, value := range []string{"0.1", ".5", "1_000", "0x10"} {
+		source := strings.Replace(simpleSource, "default: 42", "default: "+value, 1)
+		_, err := Convert(source, map[string]Binding{"/nodes/task/performer": {Performer: model.Performer{Kind: model.PerformerHuman, Human: &model.HumanPerformer{Operator: true}}}})
+		require.NoError(t, err, value)
+	}
+}

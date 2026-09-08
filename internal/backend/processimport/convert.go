@@ -57,6 +57,9 @@ func Convert(source string, bindings map[string]Binding) (Converted, error) {
 		}
 	}
 	t := parsed.Template
+	if err := validateSourceNumbers(source, t); err != nil {
+		return Converted{}, err
+	}
 	c := Converted{Name: t.Name, Source: source, Process: model.ProcessDefinition{ParameterSyntax: "mustache-v1", Graph: model.WorkGraph{CompilerVersion: "1", EntryNodeID: model.WorkNodeID(t.Start), Description: t.Description, Doc: t.Doc}}, Layout: &model.DefinitionEditorLayout{Nodes: map[model.WorkNodeID]model.EditorPosition{}}, ProgramExecutables: map[string]string{}}
 	if c.Name == "" {
 		c.Name = t.ID
