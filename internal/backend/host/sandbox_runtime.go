@@ -36,5 +36,16 @@ func SandboxRuntimeRules() ([]model.SandboxFilesystemRule, error) {
 		}
 		rules = append(rules, model.SandboxFilesystemRule{HostPath: path, GuestPath: path, Access: model.SandboxFilesystemRead, ExpectedKind: "directory"})
 	}
+	if runtime.GOOS == "darwin" {
+		// Apple's curl initializes LibreSSL even for HTTP over a Unix socket.
+		// Its system configuration is a runtime dependency, not a grant for
+		// the surrounding /private/etc tree or provider/user configuration.
+		path := "/private/etc/ssl/openssl.cnf"
+		info, err := os.Stat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("sandbox system TLS configuration unavailable: %s", path)
+		}
+		rules = append(rules, model.SandboxFilesystemRule{HostPath: path, GuestPath: path, Access: model.SandboxFilesystemRead, ExpectedKind: "file"})
+	}
 	return rules, nil
 }
