@@ -107,7 +107,7 @@ func TestProviderHostSandboxNativeLaunchAndRecovery(t *testing.T) {
 	}
 	wrapper, err := exec.LookPath(wrapperName)
 	require.NoError(t, err)
-	root, err := os.MkdirTemp("/tmp", "cp-native-")
+	root, err := os.MkdirTemp("/tmp", "cp-")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	root, err = filepath.EvalSymlinks(root)
