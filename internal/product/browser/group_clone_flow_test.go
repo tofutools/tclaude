@@ -27,7 +27,8 @@ func TestBrowserClonesGroupAsOfflineIndependentMembers(t *testing.T) {
 	page.MustElementR("#group-management [data-group-id=source] button", "^Clone group$").MustClick()
 	page.MustElement("#editor").MustWaitVisible()
 	page.MustElement("#editor [name=name]").MustSelectAllText().MustInput("Independent copy")
-	page.MustElement("#editor [name=defaults]").MustSelect("Copy pinned profile · one")
+	page.MustElement("#editor [name=defaults]").MustSelect("Copy selected configuration Worker and group environment")
+	require.Contains(t, page.MustElement("#editor-fields").MustText(), "including later profile edits")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElementR("#editor-error", "lost clone reply")
 	page.MustElement("#editor button[type=submit]").MustClick()
@@ -69,6 +70,22 @@ func TestBrowserClonesGroupAsOfflineIndependentMembers(t *testing.T) {
 	page.MustElementR("#connection", "Updated ")
 	page.MustElementR("summary", "^Group settings$").MustClick()
 	page.MustElementR("#group-management h3", "^Independent copy$")
+	desired.Model = "updated-default"
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/configuration-profiles", map[string]any{"request_id": "edit_profile", "id": "profile", "revision_id": "two", "expected_revision": 1, "name": "Worker", "desired": desired}, nil))
+	page.MustElementR("#group-management [data-group-id="+string(cloned.ID)+"] button", "^Create member from default$").MustClick()
+	page.MustElement("#editor [name=name]").MustSelectAllText().MustInput("New from copied default")
+	page.MustElement("#editor button[type=submit]").MustClick()
+	page.MustElement("#editor").MustWaitInvisible()
+	require.NoError(t, operator.Call(ctx, "GET", "/v2/snapshot", nil, &snapshot))
+	require.Len(t, snapshot.Agents, 4)
+	for _, agent := range snapshot.Agents {
+		if agent.Name == "New from copied default" {
+			require.Equal(t, "updated-default", agent.Desired.Model)
+		} else {
+			require.Equal(t, "pinned", agent.Desired.Model)
+		}
+	}
+
 }
 
 func TestBrowserGroupCloneExplainsArchivedMemberAndAllowsEmptyCopy(t *testing.T) {

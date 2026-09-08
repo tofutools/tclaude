@@ -66,6 +66,15 @@ func TestPublicConfigurationDefaultsPinExistingAgents(t *testing.T) {
 	created := request(h, "POST", "/v2/agents", `{"id":"first_agent","name":"First","configuration_default":"global"}`, testCredential)
 	require.Equal(t, 201, created.Code, created.Body.String())
 	second := save("two", "second", 1)
+	// Editing the selected profile alone updates both future default paths.
+	for _, scope := range []string{"global", "claude"} {
+		response := request(h, "POST", "/v2/agents", `{"id":"current_`+scope+`","name":"Current","configuration_default":"`+scope+`"}`, testCredential)
+		require.Equal(t, 201, response.Code, response.Body.String())
+		var agent model.Agent
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &agent))
+		require.Equal(t, "second", agent.Desired.Model)
+		require.Equal(t, &second.Revision.Ref, agent.ConfigurationProfile)
+	}
 	response = request(h, "POST", "/v2/configuration-defaults", set("defaults_two", second.Revision.Ref, 1), testCredential)
 	require.Equal(t, 200, response.Code, response.Body.String())
 	retry := request(h, "POST", "/v2/configuration-defaults", original, testCredential)

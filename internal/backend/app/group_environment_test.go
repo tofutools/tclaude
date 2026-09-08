@@ -42,9 +42,9 @@ func TestGroupEnvironmentPrecedencePinsAndRetriesAcrossRestart(t *testing.T) {
 	in := app.CreateGroupMemberRequest{Environment: model.Environment{"SHARED": "explicit"}, Context: app.RequestContext{Principal: op, RequestID: "member"}, GroupID: "group", ID: "member", Name: "Named", ExpectedGroupRevision: 1, ExpectedDefaultRevision: defaults.Revision}
 	result, err := svc.CreateGroupMember(ctx, in)
 	require.NoError(t, err)
-	require.Equal(t, "first", result.Agent.Desired.Model)
+	require.Equal(t, "second", result.Agent.Desired.Model)
 	require.Equal(t, model.Environment{"SHARED": "explicit", "GROUP_ONLY": "yes", "PROFILE_ONLY": "yes"}, result.Agent.Desired.Environment)
-	require.Equal(t, &first.Revision.Ref, result.Agent.ConfigurationProfile)
+	require.Equal(t, &second.Revision.Ref, result.Agent.ConfigurationProfile)
 	require.Equal(t, []model.AgentID{"member"}, result.Group.Members)
 	stale := in
 	stale.Context.RequestID = "stale"

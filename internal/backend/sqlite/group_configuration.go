@@ -133,11 +133,22 @@ func (s *Store) AdmitGroupMember(ctx context.Context, in app.CreateGroupMemberRe
 	if err != nil {
 		return out, err
 	}
-	if group.Revision != in.ExpectedGroupRevision || defaults.Revision != in.ExpectedDefaultRevision || defaults.Profile == nil || agent.ConfigurationProfile == nil || *defaults.Profile != *agent.ConfigurationProfile || len(group.Members) >= 1024 {
+	if group.Revision != in.ExpectedGroupRevision || defaults.Revision != in.ExpectedDefaultRevision || defaults.Profile == nil || agent.ConfigurationProfile == nil || defaults.Profile.ProfileID != agent.ConfigurationProfile.ProfileID || len(group.Members) >= 1024 {
 		return out, app.ErrConflict
 	}
 	var data []byte
-	err = tx.QueryRowContext(ctx, `SELECT record FROM configuration_profile_revisions WHERE profile_id=? AND revision_id=?`, defaults.Profile.ProfileID, defaults.Profile.RevisionID).Scan(&data)
+	err = tx.QueryRowContext(ctx, `SELECT record FROM configuration_profiles WHERE id=?`, agent.ConfigurationProfile.ProfileID).Scan(&data)
+	if err != nil {
+		return out, classify(err)
+	}
+	var profile model.ConfigurationProfile
+	if err = json.Unmarshal(data, &profile); err != nil {
+		return out, err
+	}
+	if profile.Archived || profile.CurrentRevisionID != agent.ConfigurationProfile.RevisionID {
+		return out, app.ErrConflict
+	}
+	err = tx.QueryRowContext(ctx, `SELECT record FROM configuration_profile_revisions WHERE profile_id=? AND revision_id=?`, agent.ConfigurationProfile.ProfileID, agent.ConfigurationProfile.RevisionID).Scan(&data)
 	if err != nil {
 		return out, classify(err)
 	}
@@ -151,7 +162,7 @@ func (s *Store) AdmitGroupMember(ctx context.Context, in app.CreateGroupMemberRe
 	if err != nil {
 		return out, app.ErrInvalid
 	}
-	if !expected.Equal(agent.Desired) || revision.Ref != *defaults.Profile {
+	if !expected.Equal(agent.Desired) || revision.Ref != *agent.ConfigurationProfile {
 		return out, app.ErrConflict
 	}
 	if err = createAgentTx(ctx, tx, agent); err != nil {
