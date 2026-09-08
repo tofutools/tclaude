@@ -51,6 +51,13 @@ func (s *Store) UpdateGroup(ctx context.Context, in app.UpdateGroupRequest, at t
 	if _, err = tx.ExecContext(ctx, `UPDATE groups SET name=?,revision=revision+1,updated_at=? WHERE id=?`, in.Name, nanos(at), in.ID); err != nil {
 		return model.Group{}, err
 	}
+	for _, id := range group.Members {
+		if !slices.Contains(in.Members, id) {
+			if err = removeGroupDisplayLabels(ctx, tx, in.ID, id, at); err != nil {
+				return model.Group{}, err
+			}
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM group_members WHERE group_id=?`, in.ID); err != nil {
 		return model.Group{}, err
 	}
