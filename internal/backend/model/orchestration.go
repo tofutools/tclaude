@@ -110,6 +110,7 @@ type TeamDefinition struct {
 }
 
 type TeamMemberSpec struct {
+	Labels      AgentLabels `json:",omitzero"`
 	Key         string
 	Name        string
 	Desired     DesiredConfiguration

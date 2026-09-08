@@ -77,6 +77,7 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"groups", "tombstoned", "INTEGER NOT NULL DEFAULT 0"},
 		{"groups", "owner_agent_id", "TEXT NOT NULL DEFAULT ''"},
 		{"agents", "lifecycle_state", "TEXT NOT NULL DEFAULT 'active'"},
+		{"agents", "labels_json", "BLOB NOT NULL DEFAULT '{}'"},
 		{"agents", "task_reference", "TEXT NOT NULL DEFAULT ''"},
 		{"agents", "parent_agent_id", "TEXT NOT NULL DEFAULT ''"},
 		{"agents", "clone_source_agent_id", "TEXT NOT NULL DEFAULT ''"},
@@ -265,7 +266,7 @@ INSERT OR IGNORE INTO backend_meta(singleton, revision) VALUES (1, 0);
 
 CREATE TABLE IF NOT EXISTS agents (
   id TEXT PRIMARY KEY, name TEXT NOT NULL,
-	 task_reference TEXT NOT NULL DEFAULT '', parent_agent_id TEXT NOT NULL DEFAULT '',
+	 labels_json BLOB NOT NULL DEFAULT '{}', task_reference TEXT NOT NULL DEFAULT '', parent_agent_id TEXT NOT NULL DEFAULT '',
 	 clone_source_agent_id TEXT NOT NULL DEFAULT '', lifecycle_state TEXT NOT NULL DEFAULT 'active',
 	 retired_at INTEGER, retired_by_kind TEXT NOT NULL DEFAULT '', retired_by_agent_id TEXT NOT NULL DEFAULT '',
 	 retired_by_execution_id TEXT NOT NULL DEFAULT '', retirement_reason TEXT NOT NULL DEFAULT '',
@@ -690,6 +691,9 @@ func (s *Store) CreateAgent(ctx context.Context, agent model.Agent) error {
 }
 
 func createAgentTx(ctx context.Context, tx *sql.Tx, agent model.Agent) error {
+	if agent.Labels.Validate() != nil {
+		return app.ErrInvalid
+	}
 	if err := model.ValidateSandboxSelection(agent.Desired.HostSandbox); err != nil {
 		return app.ErrInvalid
 	}
@@ -699,15 +703,18 @@ func createAgentTx(ctx context.Context, tx *sql.Tx, agent model.Agent) error {
 	if err := requireActiveConfigurationProfileTx(ctx, tx, agent.ConfigurationProfile); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO agents(host_sandbox_json,environment_json,configuration_profile_json,id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,direct_notification_intent,harness,model,effort,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		sandboxSelectionJSON(agent.Desired.HostSandbox), environmentJSON(agent.Desired.Environment), configurationProfileJSON(agent.ConfigurationProfile), agent.ID, agent.Name, agent.TaskReference, agent.ParentAgentID, agent.CloneSourceAgentID, agent.Lifecycle, agent.Notifications.DirectMessage, agent.Desired.Harness, agent.Desired.Model, agent.Desired.Effort, agent.Desired.WorkingDirectory, agent.Desired.Approval, agent.Desired.Sandbox, agent.PrimaryExecutionID, agent.Revision, nanos(agent.CreatedAt), nanos(agent.UpdatedAt))
+	_, err := tx.ExecContext(ctx, `INSERT INTO agents(labels_json,host_sandbox_json,environment_json,configuration_profile_json,id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,direct_notification_intent,harness,model,effort,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		agentLabelsJSON(&agent.Labels), sandboxSelectionJSON(agent.Desired.HostSandbox), environmentJSON(agent.Desired.Environment), configurationProfileJSON(agent.ConfigurationProfile), agent.ID, agent.Name, agent.TaskReference, agent.ParentAgentID, agent.CloneSourceAgentID, agent.Lifecycle, agent.Notifications.DirectMessage, agent.Desired.Harness, agent.Desired.Model, agent.Desired.Effort, agent.Desired.WorkingDirectory, agent.Desired.Approval, agent.Desired.Sandbox, agent.PrimaryExecutionID, agent.Revision, nanos(agent.CreatedAt), nanos(agent.UpdatedAt))
 	if err != nil {
 		return classify(err)
 	}
 	return nil
 }
 
-func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected model.Revision, name, taskReference string, notifications model.AgentNotificationPreferences, desired model.DesiredConfiguration, profile *model.ConfigurationProfileRef, authority model.AuthorityRequest, at time.Time) (model.Agent, error) {
+func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected model.Revision, name, taskReference string, labels *model.AgentLabels, notifications model.AgentNotificationPreferences, desired model.DesiredConfiguration, profile *model.ConfigurationProfileRef, authority model.AuthorityRequest, at time.Time) (model.Agent, error) {
+	if labels != nil && labels.Validate() != nil {
+		return model.Agent{}, app.ErrInvalid
+	}
 	if model.ValidateSandboxSelection(desired.HostSandbox) != nil {
 		return model.Agent{}, app.ErrInvalid
 	}
@@ -729,8 +736,8 @@ func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected mode
 	if err := requireActiveConfigurationProfileTx(ctx, tx, profile); err != nil {
 		return model.Agent{}, err
 	}
-	result, err := tx.ExecContext(ctx, `UPDATE agents SET host_sandbox_json=?,environment_json=?,configuration_profile_json=?,name=?,task_reference=?,direct_notification_intent=?,harness=?,model=?,effort=?,working_directory=?,approval=?,sandbox=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND lifecycle_state=?`,
-		sandboxSelectionJSON(desired.HostSandbox), environmentJSON(desired.Environment), configurationProfileJSON(profile), name, taskReference, notifications.DirectMessage, desired.Harness, desired.Model, desired.Effort, desired.WorkingDirectory, desired.Approval, desired.Sandbox, nanos(at), id, expected, model.AgentActive)
+	result, err := tx.ExecContext(ctx, `UPDATE agents SET labels_json=COALESCE(?,labels_json),host_sandbox_json=?,environment_json=?,configuration_profile_json=?,name=?,task_reference=?,direct_notification_intent=?,harness=?,model=?,effort=?,working_directory=?,approval=?,sandbox=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND lifecycle_state=?`,
+		agentLabelsJSON(labels), sandboxSelectionJSON(desired.HostSandbox), environmentJSON(desired.Environment), configurationProfileJSON(profile), name, taskReference, notifications.DirectMessage, desired.Harness, desired.Model, desired.Effort, desired.WorkingDirectory, desired.Approval, desired.Sandbox, nanos(at), id, expected, model.AgentActive)
 	if err != nil {
 		return model.Agent{}, classify(err)
 	}
@@ -1749,18 +1756,21 @@ func completeOperationTx(ctx context.Context, tx *sql.Tx, in app.OperationComple
 
 const executionSelect = `SELECT host_sandbox_json,shell_group_json,environment_json,configuration_profile_json,id,workload_kind,agent_id,conversation_id,harness,model,effort,working_directory,approval,sandbox,state,attempt_generation,context_readiness,context_provider_order,evidence_provider,evidence_version,evidence_payload,native_namespace,native_reference,native_observed_at,revision,created_at,updated_at FROM executions`
 const operationSelect = `SELECT id,request_id,kind,principal_kind,principal_agent_id,principal_execution_id,principal_generation,principal_automation_run,automation_delegation_json,authority_subject_kind,authority_subject_id,execution_id,state,result_code,detail,revision,created_at,updated_at FROM operations`
-const agentSelect = `SELECT host_sandbox_json,environment_json,configuration_profile_json,id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,retired_at,retired_by_kind,retired_by_agent_id,retired_by_execution_id,retirement_reason,direct_notification_intent,harness,model,effort,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at FROM agents`
+const agentSelect = `SELECT labels_json,host_sandbox_json,environment_json,configuration_profile_json,id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,retired_at,retired_by_kind,retired_by_agent_id,retired_by_execution_id,retirement_reason,direct_notification_intent,harness,model,effort,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at FROM agents`
 
 type scanner interface{ Scan(...any) error }
 
 func scanAgent(row scanner) (model.Agent, error) {
 	var a model.Agent
-	var profile, environment, hostSandbox []byte
+	var profile, environment, hostSandbox, labels []byte
 	var retired sql.NullInt64
 	var created, updated int64
-	err := row.Scan(&hostSandbox, &environment, &profile, &a.ID, &a.Name, &a.TaskReference, &a.ParentAgentID, &a.CloneSourceAgentID, &a.Lifecycle, &retired, &a.RetiredBy.Kind, &a.RetiredBy.AgentID, &a.RetiredBy.ExecutionID, &a.RetirementReason, &a.Notifications.DirectMessage, &a.Desired.Harness, &a.Desired.Model, &a.Desired.Effort, &a.Desired.WorkingDirectory, &a.Desired.Approval, &a.Desired.Sandbox, &a.PrimaryExecutionID, &a.Revision, &created, &updated)
+	err := row.Scan(&labels, &hostSandbox, &environment, &profile, &a.ID, &a.Name, &a.TaskReference, &a.ParentAgentID, &a.CloneSourceAgentID, &a.Lifecycle, &retired, &a.RetiredBy.Kind, &a.RetiredBy.AgentID, &a.RetiredBy.ExecutionID, &a.RetirementReason, &a.Notifications.DirectMessage, &a.Desired.Harness, &a.Desired.Model, &a.Desired.Effort, &a.Desired.WorkingDirectory, &a.Desired.Approval, &a.Desired.Sandbox, &a.PrimaryExecutionID, &a.Revision, &created, &updated)
 	if err != nil {
 		return a, classify(err)
+	}
+	if err := json.Unmarshal(labels, &a.Labels); err != nil {
+		return a, err
 	}
 	if len(profile) != 0 {
 		if err := json.Unmarshal(profile, &a.ConfigurationProfile); err != nil {
@@ -1992,5 +2002,13 @@ func sandboxSelectionJSON(selection *model.SandboxSelection) []byte {
 		return nil
 	}
 	encoded, _ := json.Marshal(selection)
+	return encoded
+}
+
+func agentLabelsJSON(labels *model.AgentLabels) any {
+	if labels == nil {
+		return nil
+	}
+	encoded, _ := json.Marshal(labels)
 	return encoded
 }

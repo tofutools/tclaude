@@ -1,0 +1,22 @@
+package migration
+
+import (
+	sourcev228 "github.com/tofutools/tclaude/internal/backend/migration/source/v228"
+	"github.com/tofutools/tclaude/internal/backend/model"
+)
+
+func (t *translator) agentDisplayLabels(agent sourcev228.Row) model.AgentLabels {
+	labels := model.AgentLabels{}
+	key := sourcev228.String(agent.Values["agent_id"])
+	for _, row := range t.inspection.Snapshot.Rows["agent_group_members"] {
+		if sourcev228.String(row.Values["agent_id"]) != key {
+			continue
+		}
+		value := model.AgentDisplayLabels{Role: sourcev228.String(row.Values["role"]), Description: sourcev228.String(row.Values["descr"])}
+		if labels.Groups == nil {
+			labels.Groups = map[model.GroupID]model.AgentDisplayLabels{}
+		}
+		labels.Groups[model.GroupID(t.id("agent_groups", sourcev228.String(row.Values["group_id"])))] = value
+	}
+	return labels
+}

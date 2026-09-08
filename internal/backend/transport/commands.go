@@ -136,6 +136,7 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
+		Labels        *model.AgentLabels                 `json:"labels"`
 		TaskReference string                             `json:"task_reference"`
 		Notifications model.AgentNotificationPreferences `json:"notifications"`
 
@@ -149,7 +150,7 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := h.application.UpdateAgent(r.Context(), app.UpdateAgentRequest{Context: p, ID: model.AgentID(r.PathValue("id")),
-		ExpectedRevision: body.ExpectedRevision, Name: body.Name, Desired: body.Desired, ConfigurationProfile: body.ConfigurationProfile, ConfigurationDefault: body.ConfigurationDefault, TaskReference: body.TaskReference, Notifications: body.Notifications})
+		ExpectedRevision: body.ExpectedRevision, Name: body.Name, Desired: body.Desired, ConfigurationProfile: body.ConfigurationProfile, ConfigurationDefault: body.ConfigurationDefault, TaskReference: body.TaskReference, Labels: body.Labels, Notifications: body.Notifications})
 	if err != nil {
 		applicationError(w, err)
 		return

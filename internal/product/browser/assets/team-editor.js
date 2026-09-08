@@ -18,7 +18,7 @@ export function teamDraftFromGroup(group, agents) {
   draft.Name = group.Name + ' team';
   draft.Source = `Captured displayed group ${group.ID} at revision ${group.Revision}. Member settings are independent copies; review before saving.\n` +
     [group.Details?.Description, group.Details?.Mission].filter(Boolean).join('\n');
-  draft.Team.Members = members.map((agent, index) => ({Key: 'member_' + (index + 1), Name: agent.Name, Desired: clone(agent.Desired), Roles: [], Owner: false, Required: true, BriefingIDs: []}));
+  draft.Team.Members = members.map((agent, index) => ({Key: 'member_' + (index + 1), Name: agent.Name, Labels:clone(agent.Labels?.Groups?.[group.ID]||{Role:agent.Labels?.Role||'',Description:agent.Labels?.Description||''}), Desired: clone(agent.Desired), Roles: [], Owner: false, Required: true, BriefingIDs: []}));
   draft.Team.Waves = members.length ? [{ID: 'initial', MemberKeys: draft.Team.Members.map(member => member.Key), DependsOn: [], RequiredReady: true, RequiredBriefs: true, WaitForIdle: true, MaxWaitSeconds: 0}] : [];
   draft.Team.WorkspacePolicy = 'per_member';
   return draft;
@@ -127,6 +127,8 @@ class TeamEditor {
     let environment, sandbox;
     const fields = [
       {key: 'key', label: 'Stable member key', value: m.Key, required: true}, {key: 'name', label: 'Member name', value: m.Name, required: true},
+      {key:'role_label',label:'Display role',value:m.Labels?.Role||''},
+      {key:'description',label:'Description',text:true,value:m.Labels?.Description||''},
       {key: 'harness', label: 'Harness', options: [opt('', 'Choose harness'), ...['claude', 'codex', 'opencode', 'copilot'].map(v => opt(v))], value: desired.Harness, required: true},
       {key: 'effort', label: 'Requested native effort / variant (optional)', value: desired.Effort || ''},
       {key: 'model', label: 'Model', value: desired.Model, required: true}, {key: 'cwd', label: 'Configuration working directory', value: desired.WorkingDirectory, required: true},
@@ -139,7 +141,7 @@ class TeamEditor {
     const form = this.form('Member', fields, f => {
       if (this.draft.Team.Members.some(x => x.Key === f.key && x.Key !== original?.Key)) throw new Error('Member keys must be unique.');
       if (f.effort && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(f.effort)) throw new Error('Requested effort must be a lowercase native level or variant, at most 64 characters.');
-      const member = {...m, Key: f.key, Name: f.name, Desired: {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, HostSandbox: f.resolvedSandbox||undefined, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
+      const member = {...m, Key: f.key, Name: f.name, Labels:{Role:f.role_label,Description:f.description}, Desired: {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, HostSandbox: f.resolvedSandbox||undefined, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
       this.change(d => {
         const i = d.Team.Members.findIndex(x => x.Key === original?.Key); if (i < 0) d.Team.Members.push(member); else d.Team.Members[i] = member;
         if (original && original.Key !== f.key) { for (const w of d.Team.Waves) w.MemberKeys = w.MemberKeys.map(k => k === original.Key ? f.key : k); for (const b of d.Team.Briefings) b.MemberKeys = (b.MemberKeys || []).map(k => k === original.Key ? f.key : k); }

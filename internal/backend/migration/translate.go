@@ -247,7 +247,8 @@ func (t *translator) translateAgents(batch *app.ImportBatch) {
 			updated = *retiredAt
 		}
 		agent := model.Agent{
-			ID: id, Name: name, TaskReference: sourcev228.String(row.Values["task_ref_url"]), Lifecycle: lifecycle,
+			Labels: t.agentDisplayLabels(row),
+			ID:     id, Name: name, TaskReference: sourcev228.String(row.Values["task_ref_url"]), Lifecycle: lifecycle,
 			RetiredAt: retiredAt, RetirementReason: sourcev228.String(row.Values["retire_reason"]),
 			Notifications: model.AgentNotificationPreferences{DirectMessage: model.NotificationIfAvailable},
 			Desired:       desiredFromRow(row.Values), Revision: 1, CreatedAt: created, UpdatedAt: updated,

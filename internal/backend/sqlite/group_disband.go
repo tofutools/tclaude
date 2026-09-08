@@ -152,6 +152,11 @@ func (s *Store) DisbandGroup(ctx context.Context, in app.DisbandGroupRequest, at
 	if _, err = tx.ExecContext(ctx, `DELETE FROM role_assignments WHERE resource_id=? AND resource_kind IN (?,?)`, in.ID, model.ResourceGroup, model.ResourceGroupPeers); err != nil {
 		return out, err
 	}
+	for _, id := range out.Group.Members {
+		if err = removeGroupDisplayLabels(ctx, tx, in.ID, id, at); err != nil {
+			return out, err
+		}
+	}
 	if _, err = tx.ExecContext(ctx, `DELETE FROM group_members WHERE group_id=?`, in.ID); err != nil {
 		return out, err
 	}
