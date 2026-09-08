@@ -63,6 +63,10 @@ type Process struct {
 }
 
 func StartProcess(spec ProcessSpec) (*Process, error) {
+	return startProcess(spec, syscall.Getpgid, processStartToken)
+}
+
+func startProcess(spec ProcessSpec, readGroup func(int) (int, error), readToken func(int) (string, error)) (*Process, error) {
 	if strings.TrimSpace(spec.Executable) == "" {
 		return nil, fmt.Errorf("executable is required")
 	}
@@ -79,13 +83,19 @@ func StartProcess(spec ProcessSpec) (*Process, error) {
 		return nil, err
 	}
 	pid := cmd.Process.Pid
-	pgid, err := syscall.Getpgid(pid)
+	pgid, err := readGroup(pid)
+	if errors.Is(err, syscall.ESRCH) {
+		return retainNaturalExit(cmd), nil
+	}
 	if err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		return nil, fmt.Errorf("read process group: %w", err)
 	}
-	token, err := processStartToken(pid)
+	token, err := readToken(pid)
+	if errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrNotExist) {
+		return retainNaturalExit(cmd), nil
+	}
 	if err != nil {
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 		_ = cmd.Wait()
@@ -98,6 +108,14 @@ func StartProcess(spec ProcessSpec) (*Process, error) {
 	}
 	go p.wait()
 	return p, nil
+}
+
+// The OS may stop exposing a child before its parent has collected Wait status.
+// Keep that natural result without sending a signal or inventing a live identity.
+func retainNaturalExit(cmd *exec.Cmd) *Process {
+	p := &Process{identity: ProcessIdentity{PID: cmd.Process.Pid}, cmd: cmd, done: make(chan struct{})}
+	p.wait()
+	return p
 }
 
 // RecoverProcess restores a capability only when the recorded PID, start
