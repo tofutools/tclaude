@@ -79,6 +79,7 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
   card.append(row);
  }
 
+ controls.append(button('Sandbox profile',()=>editSandboxDefaults({api,edit,group,canOpen:()=>card.isConnected,onSaved:refresh})));
  controls.append(button('Launch defaults',async()=>{
   const [current,profiles]=await Promise.all([api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration'),api('/v2/configuration-profiles')]);
   if(!card.isConnected)return;

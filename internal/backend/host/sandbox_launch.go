@@ -86,7 +86,11 @@ func (p *SandboxLaunchPreparer) PrepareControl(ctx context.Context, selected mod
 
 func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.SandboxSelection, materialized sandboxpolicy.PolicyMaterialization, child ProcessSpec, harness, nativeRoot string, controlPort int, resources ...SandboxProviderResource) (SandboxChildArtifact, error) {
 	actual, err := materialized.LaunchSelection()
-	if err != nil || !actual.Equal(selected) {
+	// GroupID records where defaults came from; the OS policy is identified
+	// by its resolved scopes and values, independently of that provenance.
+	policySelection := selected
+	policySelection.GroupID = ""
+	if err != nil || !actual.Equal(policySelection) {
 		return SandboxChildArtifact{}, fmt.Errorf("sandbox materialization does not match selected policy")
 	}
 	if err := validateSandboxControlArguments(child.Args, controlPort); err != nil {

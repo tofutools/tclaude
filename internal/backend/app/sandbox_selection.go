@@ -67,6 +67,12 @@ func (s *Service) verifyLaunchSandbox(ctx context.Context, selected *model.Sandb
 	if selected == nil {
 		return nil
 	}
+	if err := selected.Validate(); err != nil {
+		return fail(ErrInvalid, "%v", err)
+	}
+	if selected.OmitProfiles || len(selected.Scopes) == 0 {
+		return nil
+	}
 	_, err := s.currentSandboxScopes(ctx, selected.Scopes)
 	return err
 }

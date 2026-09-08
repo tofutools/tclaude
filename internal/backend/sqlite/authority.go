@@ -930,7 +930,7 @@ func requestedBoundsMatch(bounds model.ConfigurationBounds, request model.Author
 }
 
 func hostSandboxMatches(profiles []string, selected *model.SandboxSelection) bool {
-	if selected == nil {
+	if selected == nil || selected.OmitProfiles || len(selected.Scopes) == 0 {
 		return len(profiles) == 0
 	}
 	if selected.Validate() != nil {

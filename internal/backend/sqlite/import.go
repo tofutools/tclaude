@@ -692,7 +692,7 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 		"operation_authority", "operation_additional_authority", "effect_permits", "pending_context_transitions", "native_binding_history",
 		"history_refreshes", "history_metadata_requests", "history_points", "history_use_claims", "workspace_uses",
 		"work_runs", "work_attempts", "work_evidence", "work_decisions", "program_profiles", "program_profile_revisions",
-		"sandbox_profile_requests",
+		"sandbox_profile_requests", "sandbox_defaults", "sandbox_defaults_requests",
 		"work_node_attempts", "work_agent_interactions", "work_node_evidence", "decision_windows", "decision_submissions", "automation_occurrences",
 		"automation_occurrence_recipients", "automation_condition_state", "team_deployments", "team_continuations", "configuration_defaults_requests",
 		"configuration_profile_requests", "configuration_profile_lifecycle_requests", "configuration_bundle_requests", "automation_state_requests", "automation_archive_requests", "definition_archive_requests", "group_disband_requests", "access_requests", "access_request_decisions", "message_notifications", "presentation_preferences", "terminal_files", "process_snippets", "process_snippet_requests",

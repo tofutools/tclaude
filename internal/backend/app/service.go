@@ -310,6 +310,11 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		return OperationResult{}, fail(ErrUnavailable, "harness %q has no provider", desired.Harness)
 	}
 
+	selection, err := s.launchSandboxSelection(ctx, desired.HostSandbox, agent)
+	if err != nil {
+		return OperationResult{}, err
+	}
+	desired.HostSandbox = selection
 	hostSandboxPolicy, err := s.prepareProviderSandbox(ctx, provider, desired.HostSandbox)
 	if err != nil {
 		return OperationResult{}, err
@@ -346,6 +351,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		if selectionErr != nil {
 			return OperationResult{}, selectionErr
 		}
+		preparedSelection.GroupID = desired.HostSandbox.GroupID
 		spec.HostSandbox = &preparedSelection
 	}
 	spec.ConfigurationProfile = agent.ConfigurationProfile

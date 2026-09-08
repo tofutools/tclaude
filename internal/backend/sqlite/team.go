@@ -60,10 +60,17 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 		pins[pin.RoleID] = pin
 	}
 	for _, agent := range agents {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO agents(id,name,harness,model,effort,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, agent.ID, agent.Name, agent.Desired.Harness, agent.Desired.Model, agent.Desired.Effort, agent.Desired.WorkingDirectory, agent.Desired.Approval, agent.Desired.Sandbox, agent.PrimaryExecutionID, agent.Revision, nanos(agent.CreatedAt), nanos(agent.UpdatedAt)); err != nil {
-			return model.TeamDeployment{}, false, classify(err)
+		if agent.Lifecycle == "" {
+			agent.Lifecycle = model.AgentActive
+		}
+		if agent.Notifications.DirectMessage == "" {
+			agent.Notifications.DirectMessage = model.NotificationIfAvailable
+		}
+		if err = createAgentTx(ctx, tx, agent); err != nil {
+			return model.TeamDeployment{}, false, err
 		}
 	}
+
 	position := 0
 	if deployment.TargetKind == model.TeamTargetExistingGroup {
 		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(position)+1,0) FROM group_members WHERE group_id=?`, group.ID).Scan(&position); err != nil {

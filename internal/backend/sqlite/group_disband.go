@@ -166,6 +166,9 @@ func (s *Store) DisbandGroup(ctx context.Context, in app.DisbandGroupRequest, at
 	if _, err = tx.ExecContext(ctx, `INSERT INTO group_disband_requests(scope,request_id,group_id,expected_revision,result) VALUES(?,?,?,?,?)`, requestScope(in.Context.Principal), in.Context.RequestID, in.ID, in.ExpectedRevision, stored); err != nil {
 		return out, err
 	}
+	if err = clearSandboxDefaultAssignments(ctx, tx, "", in.ID); err != nil {
+		return out, err
+	}
 	if err = bumpTx(ctx, tx); err != nil {
 		return out, err
 	}

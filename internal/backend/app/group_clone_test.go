@@ -65,7 +65,9 @@ func TestGroupCloneIsAtomicOfflineAndExactlyRepeatable(t *testing.T) {
 	require.Equal(t, int64(2), result.Group.MaxActiveMembers)
 	copied, err := store.Agent(ctx, result.Members["active"])
 	require.NoError(t, err)
-	require.Equal(t, desired, copied.Desired)
+	expectedDesired := desired
+	expectedDesired.HostSandbox = model.SandboxInGroup(desired.HostSandbox, "copy")
+	require.Equal(t, expectedDesired, copied.Desired)
 	require.Equal(t, &profile.Revision.Ref, copied.ConfigurationProfile)
 	require.Equal(t, model.AgentID("active"), copied.CloneSourceAgentID)
 	require.Empty(t, copied.PrimaryExecutionID)

@@ -56,7 +56,9 @@ func TestBrowserClonesGroupAsOfflineIndependentMembers(t *testing.T) {
 	for _, agent := range snapshot.Agents {
 		if agent.ID == cloned.Members[0] {
 			require.Equal(t, model.AgentID("active"), agent.CloneSourceAgentID)
-			require.Equal(t, desired, agent.Desired)
+			expectedDesired := desired
+			expectedDesired.HostSandbox = model.SandboxInGroup(desired.HostSandbox, cloned.ID)
+			require.Equal(t, expectedDesired, agent.Desired)
 			require.Empty(t, agent.PrimaryExecutionID)
 		}
 	}

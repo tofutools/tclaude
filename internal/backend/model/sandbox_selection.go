@@ -25,11 +25,25 @@ type SandboxScopeSelection struct {
 // hashes are optional preparation evidence, never a requirement for choosing a
 // profile or a request to keep using old content on a later launch.
 type SandboxSelection struct {
-	Scopes     []SandboxScopeSelection
-	PolicyHash string `json:",omitempty"`
+	GroupID      GroupID `json:",omitempty"`
+	OmitProfiles bool    `json:",omitempty"`
+	Scopes       []SandboxScopeSelection
+	PolicyHash   string `json:",omitempty"`
 }
 
 func (s SandboxSelection) Validate() error {
+	if s.GroupID != "" && s.GroupID.Validate() != nil {
+		return fmt.Errorf("invalid sandbox group")
+	}
+	if s.OmitProfiles {
+		if len(s.Scopes) != 0 || s.GroupID != "" {
+			return fmt.Errorf("omitted profiles cannot select scopes")
+		}
+		return nil
+	}
+	if len(s.Scopes) == 0 && s.PolicyHash == "" && s.GroupID != "" {
+		return nil
+	}
 	if len(s.Scopes) == 0 || len(s.Scopes) > 3 || s.PolicyHash != "" && !sandboxDigest(s.PolicyHash) {
 		return fmt.Errorf("host sandbox selection requires ordered profile scopes")
 	}
@@ -50,7 +64,7 @@ func (s SandboxSelection) Clone() SandboxSelection {
 }
 
 func (s SandboxSelection) Equal(other SandboxSelection) bool {
-	return s.PolicyHash == other.PolicyHash && slices.Equal(s.Scopes, other.Scopes)
+	return s.GroupID == other.GroupID && s.OmitProfiles == other.OmitProfiles && s.PolicyHash == other.PolicyHash && slices.Equal(s.Scopes, other.Scopes)
 }
 
 func sandboxDigest(value string) bool {

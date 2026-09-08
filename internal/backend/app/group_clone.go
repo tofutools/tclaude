@@ -93,6 +93,7 @@ func (s *Service) CloneGroup(ctx context.Context, in CloneGroupRequest) (CloneGr
 				return CloneGroupResult{}, ErrInvalid
 			}
 			clone := model.Agent{ID: model.AgentID(deterministicOrchestrationID("agent_", string(in.ID)+":"+string(id))), Name: agent.Name, TaskReference: agent.TaskReference, CloneSourceAgentID: id, Lifecycle: model.AgentActive, Notifications: agent.Notifications, Desired: agent.Desired, ConfigurationProfile: agent.ConfigurationProfile, Revision: 1, CreatedAt: now, UpdatedAt: now}
+			clone.Desired.HostSandbox = model.SandboxInGroup(clone.Desired.HostSandbox, in.ID)
 			clones = append(clones, clone)
 		}
 	}
