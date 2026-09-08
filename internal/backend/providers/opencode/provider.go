@@ -99,9 +99,9 @@ func New(config Config) (*Provider, error) {
 }
 
 func (*Provider) Name() string { return Name }
-func (*Provider) Capabilities() ports.ProviderCapabilities {
+func (p *Provider) Capabilities() ports.ProviderCapabilities {
 	policy := supportedLaunchPolicy()
-	return ports.ProviderCapabilities{LaunchPolicy: &policy, PreparedInitialInput: true}
+	return ports.ProviderCapabilities{HostSandbox: p.hostSandbox != nil, LaunchPolicy: &policy, PreparedInitialInput: true}
 }
 func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 

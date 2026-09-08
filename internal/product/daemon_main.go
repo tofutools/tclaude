@@ -2,7 +2,6 @@ package product
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"github.com/GiGurra/boa/pkg/boa"
@@ -25,6 +24,8 @@ func DaemonCommand() *cobra.Command {
 	var state string
 	var initialize bool
 	var claudeConfigDir string
+	var opencodeConfigDir, opencodeDataDir string
+	var opencodeEnvironment []string
 	var harnesses []string
 	var sources []string
 	var githubSources []string
@@ -34,6 +35,9 @@ func DaemonCommand() *cobra.Command {
 	cmd.PersistentFlags().StringVar(&state, "state-dir", "", "Absolute private state directory (required)")
 	cmd.PersistentFlags().BoolVar(&initialize, "init", false, "Initialize a new directory and exit")
 	cmd.PersistentFlags().StringVar(&claudeConfigDir, "claude-config-dir", "", "Explicit persistent Claude configuration directory; retains existing login and history")
+	cmd.PersistentFlags().StringVar(&opencodeConfigDir, "opencode-config-dir", "", "Native OpenCode app configuration directory; defaults to XDG_CONFIG_HOME/opencode")
+	cmd.PersistentFlags().StringVar(&opencodeDataDir, "opencode-data-dir", "", "Native OpenCode app data directory for independent login copies; defaults to XDG_DATA_HOME/opencode")
+	cmd.PersistentFlags().StringArrayVar(&opencodeEnvironment, "opencode-env", nil, "Explicit environment variable name to pass to OpenCode, including confined launches (repeatable)")
 	cmd.PersistentFlags().StringSliceVar(&harnesses, "harness", nil, "Providers to register: claude,codex,opencode,copilot; omit for offline catalog only")
 	cmd.PersistentFlags().StringArrayVar(&sources, "history-source", nil, "Named native history source: harness:name=/absolute/path")
 	cmd.PersistentFlags().BoolVar(&workspaces, "workspaces", false, "Enable owned Git checkout operations")
@@ -48,7 +52,7 @@ func DaemonCommand() *cobra.Command {
 		if initialize {
 			return server.Initialize(state)
 		}
-		registry, err := registeredProvidersWithClaudeHome(state, harnesses, claudeConfigDir)
+		registry, err := registeredProvidersWithNativeConfig(state, harnesses, claudeConfigDir, opencodeNativeConfig{config: opencodeConfigDir, data: opencodeDataDir, environment: opencodeEnvironment})
 		if err != nil {
 			return err
 		}
@@ -73,6 +77,10 @@ func registeredProviders(state string, harnesses []string) (ports.ProviderRegist
 	return registeredProvidersWithClaudeHome(state, harnesses, "")
 }
 func registeredProvidersWithClaudeHome(state string, harnesses []string, claudeHome string) (ports.ProviderRegistry, error) {
+	return registeredProvidersWithNativeConfig(state, harnesses, claudeHome, opencodeNativeConfig{})
+}
+
+func registeredProvidersWithNativeConfig(state string, harnesses []string, claudeHome string, opencodeNative opencodeNativeConfig) (ports.ProviderRegistry, error) {
 	var entries []ports.Provider
 	seen := map[string]bool{}
 	for _, name := range harnesses {
@@ -112,7 +120,11 @@ func registeredProvidersWithClaudeHome(state string, harnesses []string, claudeH
 			}
 			entries = append(entries, p)
 		case "opencode":
-			p, err := opencode.New(opencode.Config{PrivateRoot: filepath.Join(state, "opencode"), AgentSocket: server.AgentSocketPath(state), Environment: os.Environ()})
+			config, err := opencodeNative.providerConfig(state)
+			if err != nil {
+				return nil, err
+			}
+			p, err := opencode.New(config)
 			if err != nil {
 				return nil, err
 			}

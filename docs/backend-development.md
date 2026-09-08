@@ -223,6 +223,23 @@ network-isolation mechanism, matching the legacy platform limitation, rather
 than a guarantee limited to the numeric loopback address. Other TCP ports and
 UDP have no control exception.
 
+OpenCode's selected host-sandbox launch preserves its native XDG configuration
+read-only and seeds independent copies of `auth.json` and `mcp-auth.json` into
+fresh session data. Continuation retains its own login, including logout and
+credential refresh. `--opencode-config-dir` and `--opencode-data-dir` select the
+native **app directories**, otherwise the corresponding XDG base plus `opencode`
+is used (with `~/.config` and `~/.local/share` fallbacks). No unrelated native data
+is copied. The native `.gitignore` bootstrap is created only when absent;
+existing authored content is preserved.
+
+Linux mounts the config into the session's private config directory. macOS uses
+the original config path because it cannot remap directories; native descendants
+therefore see that config base in `XDG_CONFIG_HOME`. Neither platform grants its
+parent directory. Confined launches receive explicit environment values, not the
+daemon's whole environment. Repeat `--opencode-env NAME` to pass selected native
+API keys or other ordinary variables by name, or author literal launch environment
+values. Loader, native-state and daemon-control variables remain reserved.
+
 OpenCode also accepts an explicit native XDG root. Codex and Copilot currently
 support their owned native homes only. Each refresh reports coverage; partial or
 unreadable history is not presented as a complete empty result.
