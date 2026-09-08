@@ -72,7 +72,7 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 			observation := process.Observe()
 			return observation.Exited && observation.ExitCode != nil
 		}, 10*time.Second, 10*time.Millisecond)
-		require.Zero(t, *process.Observe().ExitCode, output.String())
+		require.Zero(t, *process.Observe().ExitCode, "%s: %s", process.cmd.ProcessState, output.String())
 	})
 	output.Reset()
 	artifact, err := inspector.PrepareSandboxChild(private, wrapper, child, bound, true)
@@ -88,7 +88,7 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 	observation := process.Observe()
 	require.NotNil(t, observation.ExitCode, output.String())
-	require.Zero(t, *observation.ExitCode, output.String())
+	require.Zero(t, *observation.ExitCode, "%s: %s", process.cmd.ProcessState, output.String())
 	written, err := os.ReadFile(filepath.Join(workspace, "output"))
 	require.NoError(t, err)
 	require.Equal(t, "$HOME stays literal", string(written))

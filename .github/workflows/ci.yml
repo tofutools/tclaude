@@ -88,6 +88,15 @@ jobs:
       - name: Diagnose native sandbox denial on macOS
         if: ${{ failure() && runner.os == 'macOS' }}
         run: sudo /usr/bin/log show --last 3m --style compact --predicate 'process == "sandbox-exec" OR (process == "kernel" AND (eventMessage CONTAINS[c] "sandbox" OR eventMessage CONTAINS[c] "sandbox-native" OR eventMessage CONTAINS[c] "signature"))'
+      - name: Diagnose confined child crash on macOS
+        if: ${{ failure() && runner.os == 'macOS' }}
+        shell: bash
+        run: |
+          for report in "$HOME"/Library/Logs/DiagnosticReports/sandbox-native*.ips; do
+            if [[ -f "$report" ]]; then
+              cat "$report"
+            fi
+          done
       - name: Full product race suite
         if: ${{ !inputs.native_only }}
         run: go test -race ./... -count=1 -timeout 15m
