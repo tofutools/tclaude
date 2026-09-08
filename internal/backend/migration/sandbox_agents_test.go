@@ -19,6 +19,8 @@ func TestImportedAgentSandboxChoicePreservesExplicitOmissionAndGroup(t *testing.
 		{name: "snapshot explicit follows ID after rename", snapshot: `{"version":7,"resolution_group_id":1,"applied":[{"scope":"global","id":1,"name":"Parent"},{"scope":"explicit","id":2,"name":"old child name"}],"effective":{"environment":[{"name":"OLD","value":"do not copy"}]}}`, explicit: true, group: true},
 		{name: "snapshot omission overrides original choice", snapshot: `{"version":7,"profiles_omitted":true,"applied":[]}`, initial: `{"sandbox_profile":"Child"}`, omitted: true},
 		{name: "recreated explicit profile name", snapshot: `{"version":7,"applied":[{"scope":"explicit","id":999,"name":"Child"}]}`, explicit: true},
+		{name: "first supported version", snapshot: `{"version":1,"applied":[{"scope":"explicit","id":2,"name":"Child"}]}`, explicit: true},
+		{name: "current supported version", snapshot: `{"version":13,"profiles_omitted":true}`, omitted: true},
 		{name: "initial explicit name", initial: `{"sandbox_profile":"Child"}`, explicit: true},
 		{name: "initial explicit omission", initial: `{"omit_sandbox_profiles":true}`, omitted: true},
 		{name: "group only recorded before assignment", snapshot: `{"version":7,"resolution_group_id":1,"applied":[]}`, group: true},
@@ -66,4 +68,17 @@ func TestImportedAgentSandboxChoiceRefusesUnmappedExplicitProfile(t *testing.T) 
 	_, err := ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: destination})
 	require.ErrorContains(t, err, "assigned sandbox profile")
 	require.NoFileExists(t, destination)
+}
+
+func TestImportedAgentSandboxChoiceRefusesUnsupportedSnapshotBeforePublication(t *testing.T) {
+	for _, snapshot := range []string{`{}`, `null`, `{"version":0}`, `{"version":-1}`, `{"version":14,"profiles_omitted":true,"applied":[]}`} {
+		t.Run(snapshot, func(t *testing.T) {
+			bundle := assignedSandboxFixture(t)
+			alterFixture(t, bundle, fmt.Sprintf(`ALTER TABLE agents ADD COLUMN effective_sandbox_config TEXT; UPDATE agents SET effective_sandbox_config='%s',initial_spawn_config='{"sandbox_profile":"Child"}' WHERE agent_id='agt_fixture'`, snapshot))
+			destination := filepath.Join(t.TempDir(), "refused.sqlite")
+			_, err := ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: destination})
+			require.ErrorContains(t, err, "unsupported sandbox snapshot version")
+			require.NoFileExists(t, destination)
+		})
+	}
 }

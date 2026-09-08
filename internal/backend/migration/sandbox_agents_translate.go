@@ -34,12 +34,14 @@ func (t *translator) translateAgentSandboxChoices(batch *app.ImportBatch) error 
 			if err := json.Unmarshal([]byte(raw), &snapshot); err != nil {
 				return fmt.Errorf("agent %s sandbox selection cannot be read: %w", row.Key, err)
 			}
+			// The v228 source reader accepts snapshot versions 1 through 13.
+			// Unknown/non-versioned documents are not older empty columns.
+			if snapshot.Version < 1 || snapshot.Version > 13 {
+				return fmt.Errorf("agent %s has unsupported sandbox snapshot version %d", row.Key, snapshot.Version)
+			}
 		}
 		var selected model.SandboxSelection
-		if snapshot.Version < 0 || (snapshot.Version == 0 && (snapshot.Omitted || len(snapshot.Applied) > 0 || (snapshot.Group != "" && snapshot.Group != "0"))) {
-			return fmt.Errorf("agent %s has invalid sandbox snapshot provenance", row.Key)
-		}
-		if snapshot.Version > 0 {
+		if raw != "" {
 			if snapshot.Omitted {
 				if len(snapshot.Applied) > 0 || (snapshot.Group != "" && snapshot.Group != "0") {
 					return fmt.Errorf("agent %s has conflicting sandbox omission provenance", row.Key)
