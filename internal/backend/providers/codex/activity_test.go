@@ -10,23 +10,26 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
 )
 
 // Uses the actual released terminal and provider-owned observation command.
-func assertNativeTurnActivity(t *testing.T, runtime *Runtime, request ports.PreparationRequest) {
+func assertNativeTurnActivity(t *testing.T, runtime *Runtime, request ports.PreparationRequest, releasedEvidence model.ProviderEvidence) {
 	t.Helper()
 	hooks, err := os.ReadFile(filepath.Join(runtime.stateRoot, "hooks.json"))
 	require.NoError(t, err)
 	require.Contains(t, string(hooks), "UserPromptSubmit")
 	require.Contains(t, string(hooks), "Stop")
-	if runtime.nativeID == "" {
-		runtime.observations = &observationSink{}
-		writeHookEvent(t, runtime.spool.Directory(), sessionStartEvent{SessionID: "00000000-0000-4000-8000-000000000001", HookEventName: "SessionStart", Source: "startup"})
-		_, err := runtime.Observe(context.Background())
-		require.NoError(t, err)
-		require.Equal(t, "00000000-0000-4000-8000-000000000001", runtime.nativeID)
+	nativeID := runtime.nativeID
+	if nativeID == "" {
+		nativeID = "00000000-0000-4000-8000-000000000001"
 	}
+	runtime.observations = &observationSink{}
+	writeHookEvent(t, runtime.spool.Directory(), sessionStartEvent{SessionID: nativeID, HookEventName: "SessionStart", Source: "startup"})
+	_, err = runtime.Observe(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, nativeID, runtime.nativeID)
 	observe := func(want ports.AgentActivityObservedState) time.Time {
 		t.Helper()
 		result, err := runtime.Observe(context.Background())
@@ -36,9 +39,9 @@ func assertNativeTurnActivity(t *testing.T, runtime *Runtime, request ports.Prep
 	}
 	assertRecovered := func(want ports.AgentActivityObservedState, at time.Time) {
 		t.Helper()
-		observed, err := runtime.Observe(context.Background())
+		_, err := runtime.Observe(context.Background())
 		require.NoError(t, err)
-		recovered, err := runtime.provider.Recover(context.Background(), ports.RecoveryRequest{ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: observed.Evidence, Attempt: request.Spec.Attempt})
+		recovered, err := runtime.provider.Recover(context.Background(), ports.RecoveryRequest{ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Evidence: releasedEvidence, Attempt: request.Spec.Attempt, PrimaryContext: &ports.PrimaryContextRecovery{Binding: model.NativeBinding{Namespace: NativeNamespace, Reference: runtime.nativeID}, Readiness: model.ContextReadinessReady, ProviderOrder: runtime.providerOrder}})
 		require.NoError(t, err)
 		require.Equal(t, ports.RecoveryControlled, recovered.State)
 		require.Equal(t, want, recovered.Observation.AgentActivity)

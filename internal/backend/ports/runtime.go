@@ -213,7 +213,16 @@ type ProviderRegistry interface {
 	Provider(harness string) (Provider, bool)
 }
 
+// PrimaryContextRecovery is the separately admitted application-owned binding,
+// which may be newer than the evidence captured when a provider was released.
+type PrimaryContextRecovery struct {
+	Binding       model.NativeBinding
+	Readiness     model.ContextReadiness
+	ProviderOrder string
+}
+
 type RecoveryRequest struct {
+	PrimaryContext   *PrimaryContextRecovery
 	ExecutionID      model.ExecutionID
 	Spec             model.ResolvedExecutionSpec
 	Evidence         model.ProviderEvidence
