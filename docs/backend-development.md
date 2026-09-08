@@ -1287,3 +1287,26 @@ Every process node and task stage can retain a description and longer documentat
 Task nodes can save an ordered set of up to 128 published output names. Names use lowercase letters, digits, periods, underscores and hyphens, begin with a letter or digit, and are at most 128 bytes. The editor removes duplicate lines while preserving order. Copies and exports retain the declarations; clearing them creates an explicit new definition revision.
 
 As in the legacy engine, runtime production of captures is unavailable. Starting an inline or pinned process with capture declarations returns an unsupported error before creating a run. The editor states this limitation. An older pinned revision remains non-executable even after captures are removed from a newer revision.
+
+### Legacy sandbox profile conversion
+
+Offline v228 import converts representable sandbox profiles into archived,
+immutable replacement revisions. Include names resolve only within that snapshot
+and become exact revision references. The archived catalog supports inspection
+and explicit independent copies; imported defaults, assignments, grants and
+runtime state are not activated. Legacy `network_access=none` retains its coupled
+closed Unix-socket posture when no newer network axis was authored.
+
+A policy with unsupported fields, spelling aliases that need a target alias
+representation, conflicting representations, invalid quantities or unresolved
+includes remains wholly in source evidence with a redacted diagnostic. Dependent
+profiles remain pending too. No partial editable policy is published and no setup
+script or host lookup runs during conversion. These pending cases remain parity
+work; they are not accepted feature exclusions.
+
+Exact retries verify both policy documents and the scalar lifecycle/revision
+indexes. A destination produced by an older evidence-only conversion is refused
+if it lacks the newly expected typed records; the importer never rewrites that
+existing destination. Use a fresh explicit destination for the new conversion.
+
+Imported sandbox profiles carry a durable imported marker. They remain archived and reject restore or same-identity edits; inspect, export, and explicit independent copy remain available. Independent copies use fresh identities and normal editable lifecycle rules.

@@ -70,6 +70,7 @@ func Translate(inspection Inspection, plan MigrationPlan, attachments []Attachme
 		return app.ImportBatch{}, err
 	}
 	t.translateProfiles(&batch)
+	t.translateSandboxProfiles(&batch)
 	t.translateAgents(&batch)
 	if err := t.translateGroups(&batch); err != nil {
 		return app.ImportBatch{}, err
@@ -945,6 +946,9 @@ func importCounts(batch app.ImportBatch) map[string]int64 {
 		"definitions": int64(len(batch.Definitions)), "automation_rules": int64(len(batch.AutomationRules)),
 		"workspaces": int64(len(batch.Workspaces)), "usage": int64(len(batch.Usage)),
 		"activity": int64(len(batch.Activity)), "retained_source_records": int64(len(batch.SourceRecords)),
+	}
+	if len(batch.SandboxProfiles) > 0 {
+		counts["sandbox_profiles"] = int64(len(batch.SandboxProfiles))
 	}
 	if len(batch.GroupConfigurations) > 0 {
 		counts["group_configurations"] = int64(len(batch.GroupConfigurations))
