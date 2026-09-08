@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestBrowserGroupDefaultsPinMembersAndRetryLostReply(t *testing.T) {
+func TestBrowserGroupDefaultsFollowProfileEditsAndRetryLostReply(t *testing.T) {
 	ctx, page, operator := processEditorBrowser(t)
 	desired := model.DesiredConfiguration{Harness: "codex", Model: "first-model", WorkingDirectory: t.TempDir(), Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}
 	for _, id := range []string{"first", "second"} {
@@ -27,11 +27,11 @@ func TestBrowserGroupDefaultsPinMembersAndRetryLostReply(t *testing.T) {
 	page.MustElement("#editor").MustWaitInvisible()
 	page.MustElementR("#group-management .row", "First member")
 	desired.Model = "changed-model"
-	require.NoError(t, operator.Call(ctx, "POST", "/v2/configuration-profiles", map[string]any{"request_id": "edit_first", "id": "first", "revision_id": "two", "name": "Worker", "desired": desired, "expected_revision": 1}, nil))
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/configuration-profiles", map[string]any{"request_id": "edit_first", "id": "first", "revision_id": "two", "name": "Worker", "desired": desired, "expected_revision": 1, "startup": model.ProfileStartup{Role: "reviewer", Description: "Reviews changes", AgentName: "Updated suggestion", Context: "New context", InitialMessage: "New brief"}}, nil))
 	page.MustEval(`() => {const original=fetch;window.memberCalls=[];let fail=true;window.fetch=async(...args)=>{const response=await original(...args);if(String(args[0])==='/v2/groups/group/agents'){window.memberCalls.push(JSON.parse(args[1].body));if(fail){fail=false;throw new Error('lost group reply')}}return response}}`)
 	page.MustElementR("#group-management button", "^Create member from default$").MustClick()
 	page.MustElement("#editor").MustWaitVisible()
-	require.Equal(t, "Suggested", page.MustElement("#editor [name=name]").MustProperty("value").Str())
+	require.Equal(t, "Updated suggestion", page.MustElement("#editor [name=name]").MustProperty("value").Str())
 	page.MustElement("#editor [name=name]").MustSelectAllText().MustInput("Second member")
 	require.Equal(t, "reviewer", page.MustElement("#editor [name=role_label]").MustProperty("value").Str())
 	page.MustElement("#editor [name=role_label]").MustSelectAllText().MustInput("")
@@ -58,11 +58,16 @@ func TestBrowserGroupDefaultsPinMembersAndRetryLostReply(t *testing.T) {
 			require.Empty(t, a.Labels.InGroup("group"))
 			require.Contains(t, a.Labels.Groups, model.GroupID("group"))
 		}
-		require.Equal(t, "first-model", a.Desired.Model)
+		if a.Name == "First member" {
+			require.Equal(t, "first-model", a.Desired.Model)
+			require.Equal(t, model.ConfigurationProfileRevisionID("one"), a.ConfigurationProfile.RevisionID)
+		} else {
+			require.Equal(t, "changed-model", a.Desired.Model)
+			require.Equal(t, model.ConfigurationProfileRevisionID("two"), a.ConfigurationProfile.RevisionID)
+		}
 		require.Equal(t, model.ConfigurationProfileID("first"), a.ConfigurationProfile.ProfileID)
-		require.Equal(t, model.ConfigurationProfileRevisionID("one"), a.ConfigurationProfile.RevisionID)
 	}
-	page.MustElementR("#roster button", "^Start with brief$").MustClick()
+	page.MustElementR("#roster .row", "^First member").MustElementR("button", "^Start with brief$").MustClick()
 	page.MustElement("#editor").MustWaitVisible()
 	require.Equal(t, "Pinned context", page.MustElement("#editor [name=context]").MustProperty("value").Str())
 	require.Equal(t, "Pinned brief", page.MustElement("#editor [name=brief]").MustProperty("value").Str())

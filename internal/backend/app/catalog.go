@@ -242,14 +242,28 @@ func (s *Service) selectConfigurationDefault(ctx context.Context, name string, d
 		if defaults.Global == nil {
 			return nil, ErrNotFound
 		}
-		copy := *defaults.Global
-		return &copy, nil
+		return s.currentConfigurationDefault(ctx, *defaults.Global, "")
 	}
 	selected, ok := defaults.Harnesses[name]
 	if !ok {
 		return nil, ErrNotFound
 	}
-	return &selected, nil
+	return s.currentConfigurationDefault(ctx, selected, name)
+}
+
+func (s *Service) currentConfigurationDefault(ctx context.Context, selected model.ConfigurationProfileRef, harness string) (*model.ConfigurationProfileRef, error) {
+	current, err := s.store.ConfigurationProfile(ctx, selected.ProfileID, "")
+	if err != nil {
+		return nil, err
+	}
+	if current.Profile.Archived {
+		return nil, fail(ErrConflict, "default configuration is archived")
+	}
+	if harness != "" && current.Revision.Desired.Harness != harness {
+		return nil, fail(ErrConflict, "default configuration no longer uses harness %s; select a matching default", harness)
+	}
+	ref := current.Revision.Ref
+	return &ref, nil
 }
 
 type SetConfigurationProfileArchivedRequest struct {

@@ -2,7 +2,8 @@ package model
 
 import "time"
 
-// GroupConfiguration pins a saved revision for explicit new-member creation.
+// GroupConfiguration selects a saved profile for explicit new-member creation.
+// Its stored revision metadata does not freeze future profile edits.
 // It never changes existing members or dynamically inherits from parent groups.
 type GroupConfiguration struct {
 	Environment Environment `json:",omitempty"`

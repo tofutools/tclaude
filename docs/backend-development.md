@@ -1153,7 +1153,7 @@ precedence over its retained name; aliases resolve their exact profile ID.
 
 Group settings → **Clone group** creates a separate top-level group. Choose
 whether to copy active members as new offline agents and whether to retain the
-source's exact pinned launch default. Descriptions, mission, links and the
+source's selected launch-default profile. Descriptions, mission, links and the
 selected member limit are copied; retired members are skipped. The new agents
 keep their copied desired configuration and source lineage. Source groups and
 shared memberships remain unchanged.
@@ -1815,3 +1815,15 @@ workspaces use the same binding as the initial execution, so later agent restart
 retain the deployment directory instead of a template author's directory. The
 saved template remains unchanged. Ordinary standalone agent creation still
 requires a working directory.
+
+### Current configuration defaults
+
+Global, harness and group launch defaults select a configuration by profile ID.
+Editing that configuration changes the settings used for the next new agent;
+operators do not need to reselect the default. The forms show current profile
+suggestions and names. Existing agents retain their settings, and an exact group
+member request retry returns its original result even after a profile or default
+changes. Group-member admission checks the selected profile and current revision
+inside its transaction, so a concurrent profile edit produces a conflict before
+creating the agent. A harness-specific default whose profile changes harness
+requires selecting a matching default.

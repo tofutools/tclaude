@@ -39,8 +39,8 @@ type ConfigurationProfileRevision struct {
 	CreatedAt time.Time
 }
 
-// ConfigurationDefaults pins explicit saved revisions. An edited profile does
-// not move these choices; selecting a new default is a separate CAS mutation.
+// ConfigurationDefaults selects profiles by identity for future agents. Revision
+// metadata records the selection; new creation resolves the current profile.
 type ConfigurationDefaults struct {
 	Global    *ConfigurationProfileRef
 	Harnesses map[string]ConfigurationProfileRef

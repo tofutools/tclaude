@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestGroupConfigurationPinsMembersAndRetriesAfterDefaultChanges(t *testing.T) {
+func TestGroupConfigurationUsesCurrentProfileAndRetriesAfterDefaultChanges(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "db")
 	store, err := db.Open(path)
@@ -44,8 +44,8 @@ func TestGroupConfigurationPinsMembersAndRetriesAfterDefaultChanges(t *testing.T
 	require.NoError(t, err)
 	require.Equal(t, model.AgentDisplayLabels{Role: "reviewer", Description: "Reviews changes"}, result.Agent.Labels.InGroup("group"))
 	require.Empty(t, result.Agent.Labels.InGroup("other"))
-	require.Equal(t, "first", result.Agent.Desired.Model)
-	require.Equal(t, &first.Revision.Ref, result.Agent.ConfigurationProfile)
+	require.Equal(t, "second", result.Agent.Desired.Model)
+	require.Equal(t, &second.Revision.Ref, result.Agent.ConfigurationProfile)
 	require.Equal(t, []model.AgentID{"member"}, result.Group.Members)
 	stale := in
 	stale.Context.RequestID = "stale"
