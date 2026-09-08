@@ -594,6 +594,8 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	var process *host.Process
 	if recorded.Process != nil {
 		process, err = host.RecoverProcess(*recorded.Process)
+	} else if recorded.HostSandbox != nil {
+		process, err = host.RecoverSandboxControlProcess(*recorded.HostSandbox)
 	} else {
 		process, err = host.RecoverProcessByEnvironment(attemptMarkerKey, recorded.AttemptMark)
 	}

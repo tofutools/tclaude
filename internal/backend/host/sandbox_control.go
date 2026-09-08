@@ -14,6 +14,11 @@ import (
 // owning bootstrap has bound the retained control listener, before native exec.
 const SandboxControlFDArgument = "__TCLAUDE_SANDBOX_CONTROL_FD__"
 
+type sandboxControlReceipt struct {
+	UnixControlIdentity
+	Owner ProcessIdentity
+}
+
 func validateSandboxControlArguments(arguments []string, port int) error {
 	count := 0
 	for _, argument := range arguments {
@@ -51,7 +56,11 @@ func createSandboxControl(artifact SandboxChildArtifact) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	encoded, err := json.Marshal(identity)
+	owner, err := identifyProcess(os.Getpid())
+	if err != nil {
+		return nil, fmt.Errorf("retain sandbox control creator: %w", err)
+	}
+	encoded, err := json.Marshal(sandboxControlReceipt{UnixControlIdentity: identity, Owner: owner})
 	if err != nil {
 		return nil, err
 	}
@@ -65,27 +74,47 @@ func createSandboxControl(artifact SandboxChildArtifact) (*os.File, error) {
 // artifact's bootstrap. Process.DialUnixControl must additionally prove its
 // live owner before the provider sends credentials or requests.
 func ReadSandboxControl(artifact SandboxChildArtifact) (UnixControlIdentity, error) {
+	receipt, err := readSandboxControlReceipt(artifact)
+	return receipt.UnixControlIdentity, err
+}
+
+// RecoverSandboxControlProcess recovers the bootstrap that created the listener,
+// not an inner child discovered by its environment. Bubblewrap deliberately has
+// no native environment; the protected receipt retains its exact host identity.
+// Missing or incomplete receipt evidence is unknown, never a reason to relaunch.
+func RecoverSandboxControlProcess(artifact SandboxChildArtifact) (*Process, error) {
+	receipt, err := readSandboxControlReceipt(artifact)
+	if err != nil {
+		return nil, err
+	}
+	if receipt.Owner.PID <= 1 || receipt.Owner.ProcessGroup <= 1 || receipt.Owner.StartToken == "" {
+		return nil, fmt.Errorf("sandbox control creator identity is incomplete")
+	}
+	return RecoverProcess(receipt.Owner)
+}
+
+func readSandboxControlReceipt(artifact SandboxChildArtifact) (sandboxControlReceipt, error) {
 	input, _, err := readSandboxChild(artifact)
 	if err != nil {
-		return UnixControlIdentity{}, err
+		return sandboxControlReceipt{}, err
 	}
 	if input.ControlPort == 0 {
-		return UnixControlIdentity{}, fmt.Errorf("sandbox artifact has no control endpoint")
+		return sandboxControlReceipt{}, fmt.Errorf("sandbox artifact has no control endpoint")
 	}
 	data, err := ReadProtectedFile(artifact.Path+".control.json", 4096)
 	if err != nil {
-		return UnixControlIdentity{}, err
+		return sandboxControlReceipt{}, err
 	}
-	var identity UnixControlIdentity
-	if err := json.Unmarshal(data, &identity); err != nil {
-		return UnixControlIdentity{}, err
+	var receipt sandboxControlReceipt
+	if err := json.Unmarshal(data, &receipt); err != nil {
+		return sandboxControlReceipt{}, err
 	}
-	if identity.Path != sandboxControlPath(artifact) {
-		return UnixControlIdentity{}, fmt.Errorf("sandbox control receipt names a different endpoint")
+	if receipt.Path != sandboxControlPath(artifact) {
+		return sandboxControlReceipt{}, fmt.Errorf("sandbox control receipt names a different endpoint")
 	}
-	observed, err := InspectUnixControl(identity.Path)
-	if err != nil || observed != identity {
-		return UnixControlIdentity{}, fmt.Errorf("sandbox control receipt identity changed")
+	observed, err := InspectUnixControl(receipt.Path)
+	if err != nil || observed != receipt.UnixControlIdentity {
+		return sandboxControlReceipt{}, fmt.Errorf("sandbox control receipt identity changed")
 	}
-	return identity, nil
+	return receipt, nil
 }

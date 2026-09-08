@@ -69,7 +69,8 @@ exec "$OPENCODE_TEST_BINARY" -test.run=^TestOpenCodeServerHelper$ -- "$@"
 	provider, err := New(Config{Executable: native, PrivateRoot: filepath.Join(private, "provider"), HostSandbox: planner,
 		Environment: []string{"OPENCODE_TEST_BINARY=" + binary, "OPENCODE_TEST_PROMPT=" + prompt, "PRIVATE_FIXTURE=" + secret, "ENVIRONMENT_OUTPUT=" + filepath.Join(workspace, "environment")}})
 	require.NoError(t, err)
-	request := ports.PreparationRequest{Intent: ports.StartFresh, HostSandboxPolicy: &materialized,
+	observations := &observationSink{}
+	request := ports.PreparationRequest{Observations: observations, Intent: ports.StartFresh, HostSandboxPolicy: &materialized,
 		Spec:         model.ResolvedExecutionSpec{ExecutionID: "execution_confined", Attempt: 1, Harness: Name, WorkingDirectory: workspace, Model: "provider/model", Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined, HostSandbox: &selected},
 		InitialInput: &ports.PreparedInitialInput{Body: "first confined work", Correlation: "brief", RequiredBeforeFirstWork: true}}
 	attempt, err := provider.Prepare(context.Background(), request)
@@ -105,7 +106,7 @@ exec "$OPENCODE_TEST_BINARY" -test.run=^TestOpenCodeServerHelper$ -- "$@"
 	require.Contains(t, string(input), "first confined work")
 	// Prepared evidence has no process or socket identity yet. Recovery must
 	// find the one marked root and adopt only its retained bootstrap endpoint.
-	recovered, err := provider.Recover(context.Background(), ports.RecoveryRequest{ExecutionID: request.Spec.ExecutionID, Attempt: request.Spec.Attempt, Spec: request.Spec, Evidence: description.Evidence})
+	recovered, err := provider.Recover(context.Background(), ports.RecoveryRequest{ExecutionID: request.Spec.ExecutionID, Attempt: request.Spec.Attempt, Spec: request.Spec, Evidence: description.Evidence, Observations: observations})
 	require.NoError(t, err)
 	require.Equal(t, ports.RecoveryControlled, recovered.State)
 	controlled := recovered.Runtime.(*Runtime)
