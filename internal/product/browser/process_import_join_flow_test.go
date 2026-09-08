@@ -78,3 +78,43 @@ layout:
 		})
 	}
 }
+
+func TestBrowserImportsNestedInteriorStartJoinAndCompletes(t *testing.T) {
+	_, page, _ := processEditorBrowser(t)
+	source := `apiVersion: tclaude.dev/v1alpha1
+kind: ProcessTemplate
+id: nested-start-reducer
+start: outer
+nodes:
+  outer:
+    type: parallel
+    next: {left: inner, right: outer_join}
+  inner:
+    type: parallel
+    next: {a: inner_join, b: inner_join}
+  inner_join:
+    type: start
+    name: Inner control
+    join: all
+    next: {pass: outer_join}
+  outer_join:
+    type: end
+    join: all
+`
+	page.MustElement("[data-tab=processes]").MustClick()
+	page.MustElementR("#definition-list button", "^Import legacy process$").MustClick()
+	page.MustElement("#process-import textarea").MustInput(source)
+	page.MustElementR("#process-import button", "^Inspect source$").MustClick()
+	page.MustElementR("#process-import button", "^Preview converted draft$").MustClick()
+	page.MustElementR("#process-import [role=status]", "Converted draft is unsaved")
+	page.MustElementR("#process-import button", "^Open unsaved copy$").MustClick()
+	page.MustElement("#process-editor-canvas .process-node[aria-label='Inner control, parallel']")
+	page.MustElementR("#process-editor button", "^Save revision$").MustClick()
+	page.MustElementR("#process-editor-message", "Revision 1 · saved")
+	page.MustElementR("#process-editor button", "^Close editor$").MustClick()
+	page.MustElementR("#definition-list button", "^Start process$").MustClick()
+	page.MustElement("#editor button[type=submit]").MustClick()
+	page.MustElement("#editor").MustWaitInvisible()
+	page.MustWait(`()=>!submitting && snapshot.work_runs?.length===1 && snapshot.work_runs[0].run.state==='succeeded'`)
+	require.True(t, page.MustEval(`()=>snapshot.work_runs[0].run.node_attempts.filter(a=>a.Ref.NodeID==='inner_join').length===1`).Bool())
+}
