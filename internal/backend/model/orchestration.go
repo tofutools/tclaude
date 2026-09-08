@@ -302,7 +302,7 @@ type HumanPerformer struct {
 
 type RetryPolicy struct {
 	OnFail        string `json:",omitempty"`
-	MaxAttempts   uint32
+	MaxAttempts   RetryAttempts
 	Backoff       time.Duration
 	Retryable     []string
 	AttemptBudget time.Duration

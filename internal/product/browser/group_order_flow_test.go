@@ -19,6 +19,8 @@ func TestBrowserGroupSiblingOrderPersistsWithoutChangingGroups(t *testing.T) {
 	}
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/snapshot", nil, &before))
 	page.MustElement("#refresh").MustClick()
+	// Wait for the fetched roster to finish changing the layout before clicking below it.
+	page.MustWait(`() => (snapshot.groups || []).length === 4`)
 	page.MustElementR("summary", "^Group settings$").MustClick()
 	order := `() => Array.from(document.querySelectorAll('#group-management [data-group-id=parent] > .group-children > article')).map(e=>e.dataset.groupId).join(',')`
 	require.Equal(t, "child_a,child_b", page.MustEval(order).Str())

@@ -1484,3 +1484,17 @@ Start routing creates no native work. It settles through ordinary graph
 transitions and resumes after restart even when admission committed before the
 initial transition completed. Copies, snippets and monitoring retain the node
 instead of replacing it with an invisible edge.
+
+### Authored retry counts and execution limits
+
+Process retry counts retain the signed 64-bit authoring range. Counts above 100
+can be saved, copied and reopened, but starting such a pinned revision is
+refused before admission. This matches the legacy separation between authoring
+and executable retry budgets. Clearing a newer revision does not change an old
+pin.
+
+The API preserves numeric JSON for existing bounded counts, keeping their
+definition hashes unchanged; counts above JavaScript's safe integer range are
+emitted as exact decimal strings. Both integer and string inputs are accepted.
+The editor keeps these values exact. Runtime counters remain bounded to 100;
+automation occurrence policies still reject counts outside 0–100.
