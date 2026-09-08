@@ -514,6 +514,11 @@ export function buildCostChart(data, projection, agents, selected, providers, se
     const index = seriesOrder.get(`${part.provider}\u0000${part.model}`) ?? 0;
     return `cost-series-${index % 8}${part.kind === 'what_if' ? ' cost-seg-whatif' : ''}`;
   };
+  const compareSegments = (left, right) => {
+    const leftIndex = seriesOrder.get(`${left.provider}\u0000${left.model}`) ?? 0;
+    const rightIndex = seriesOrder.get(`${right.provider}\u0000${right.model}`) ?? 0;
+    return leftIndex - rightIndex || left.kind.localeCompare(right.kind);
+  };
   const recordedTotals = new Map();
   const recordedMeta = new Map();
   for (const parts of Object.values(breakdown)) {
@@ -527,7 +532,7 @@ export function buildCostChart(data, projection, agents, selected, providers, se
     const part = recordedMeta.get(key);
     return { ...part, key, cost: cost * recordedCost / recordedTotal, credits: 0,
       className: className(part), approximate: true };
-  }).filter((segment) => segment.cost > 0) : [];
+  }).filter((segment) => segment.cost > 0).sort(compareSegments) : [];
   const fill = projection?.fillEmpty ? projection.leadingFill : null;
   const actual = (data?.days || []).map((day) => {
     if (fill && fill[day.day] != null) {
@@ -539,7 +544,7 @@ export function buildCostChart(data, projection, agents, selected, providers, se
         ...part, key,
         credits: creditBreakdown[day.day]?.[key] || 0,
         className: className(part), approximate: false,
-      })).filter((segment) => segment.cost > 0);
+      })).filter((segment) => segment.cost > 0).sort(compareSegments);
     return { day: day.day, cost: segments.reduce((sum, segment) => sum + segment.cost, 0), projected: false, segments };
   });
   const future = (projection?.future || []).map((day) => ({
