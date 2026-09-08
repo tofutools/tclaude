@@ -88,7 +88,7 @@ func validateShellRequest(ctx context.Context, tx *sql.Tx, in app.ShellAdmission
 			return app.ErrUnauthorized
 		}
 		var revision model.Revision
-		if err := tx.QueryRowContext(ctx, `SELECT revision FROM groups WHERE id=?`, req.Group.GroupID).Scan(&revision); err != nil {
+		if err := tx.QueryRowContext(ctx, `SELECT revision FROM groups WHERE id=? AND tombstoned=0`, req.Group.GroupID).Scan(&revision); err != nil {
 			return classify(err)
 		}
 		if revision != req.Group.Revision {

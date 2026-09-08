@@ -10,6 +10,19 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
  const activeMembers=(group.Members||[]).filter(id=>agents.some(a=>a.ID===id&&a.Lifecycle==='active')).length,cap=group.MaxActiveMembers||0;
  card.append(el('p',`${activeMembers} active direct members · ${cap?'limit '+cap:'no configured limit'}${cap&&activeMembers>cap?' · over limit':''}`));
   const controls=el('div',undefined,'toolbar');
+ controls.append(button('Disband group',()=>{
+  edit('Disband group',[{name:'confirm',label:'Type the exact group ID to disband: '+group.ID}],f=>{
+   if(f.confirm!==group.ID)throw new Error('Enter the exact group ID shown above.');
+   return api('/v2/groups/'+encodeURIComponent(group.ID)+'/disband',{request_id:f.requestID,expected_revision:group.Revision});
+  });
+  const fields=document.getElementById('editor-fields');
+  fields.append(el('p','Removes this group and its membership. Group-target schedules are archived and disabled. Child groups become top-level groups. Agents, messages, work history and checkouts are retained. This cannot be undone; a new group has a new identity.'));
+  fields.append(el('p','Stand down this group’s team deployments and settle its work runs and group shells first. To retire members too, use the roster Stop and Retire controls before disbanding.'));
+  const members=el('ul');
+  for(const id of group.Members||[]){const shared=groups.filter(g=>g.ID!==group.ID&&g.Members?.includes(id));members.append(el('li',(agents.find(a=>a.ID===id)?.Name||id)+' · '+id+(shared.length?' — also in '+shared.map(g=>g.Name+' · '+g.ID).join(', '):' — retained without this group')))}
+  fields.append(el('p','Members retained:'),members);
+ }));
+
  controls.append(button('Member limit',()=>edit('Group member limit',[{name:'limit',label:'Maximum active direct members (0 = no configured limit)',type:'number',value:String(cap)}],f=>{const value=Number(f.limit);if(!Number.isInteger(value)||value<0||value>2147483647)throw new Error('Enter a whole number from 0 to 2147483647');return api('/v2/groups/'+encodeURIComponent(group.ID)+'/capacity',{max_active_members:value,expected_revision:group.Revision},'PUT')},{skipUnchanged:true})));
 
  controls.append(button('Edit group details',()=>edit('Group details',[

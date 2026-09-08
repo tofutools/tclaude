@@ -1639,3 +1639,26 @@ Imported process nodes retain `RoutingMode: single-route-v1`, including through 
 Process and team templates can be archived from the library and restored with their exact displayed library revision and request identity (`POST /v2/definitions/{id}/archive`). Active, archived and combined views expose the stable template ID for confirmation. An archived template cannot be edited until explicitly restored; a stale editor cannot restore it by saving. Response-loss retries return the original lifecycle receipt without replaying an older archive or restore.
 
 Archiving changes library visibility, not immutable content or authority. Historical revisions and explicit pinned references remain readable and usable by existing workflows; archive is not cancellation or permanent history deletion. Restoration does not start or deploy anything.
+
+### Disbanding groups
+
+Group settings provides **Disband group** (Disband party in wizard mode), with
+an exact-ID confirmation and a preview of retained members and their other
+groups. Disbanding removes active membership and group role assignments,
+archives and disables schedules targeting that group, and moves its children
+to the top level. Agents, conversations, messages, work history, immutable
+configuration pins, and checkouts remain. Retire members explicitly through the
+roster first when desired; disbanding never implicitly stops native work.
+
+The revision-checked `POST /v2/groups/{id}/disband` requires a request ID and
+`expected_revision`, and the separate `group.disband` authority on that exact
+group. Active group-scoped work, group shells, or team deployments block the
+operation with the identity to settle or stand down first. The transaction
+fences fresh group admissions, retains a non-reusable group identity, and
+records the original result for exact retries. Reading that caller’s exact
+receipt requires a currently valid principal, rather than a group role which
+the disband itself removed; a fresh effect still requires current disband
+authority. Retired agents and revoked execution credentials cannot replay it.
+Busy-group conflicts expose a fixed cleanup instruction and the blocking
+resource ID in the dialog, separately from stale-revision conflicts. There is
+no restore action.

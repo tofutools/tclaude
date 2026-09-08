@@ -49,7 +49,7 @@ func (s *Store) SetGroupParent(ctx context.Context, in app.SetGroupParentRequest
 	if out.Revision != in.ExpectedRevision {
 		return model.Group{}, app.ErrConflict
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT g.id,COALESCE(p.parent_id,'') FROM groups g LEFT JOIN group_parents p ON p.group_id=g.id`)
+	rows, err := tx.QueryContext(ctx, `SELECT g.id,COALESCE(p.parent_id,'') FROM groups g LEFT JOIN group_parents p ON p.group_id=g.id WHERE g.tombstoned=0`)
 	if err != nil {
 		return out, err
 	}

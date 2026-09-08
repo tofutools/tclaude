@@ -31,6 +31,9 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 		return model.TeamDeployment{}, false, err
 	}
 	if deployment.TargetKind == model.TeamTargetExistingGroup {
+		if _, err = readGroup(ctx, tx, group.ID); err != nil {
+			return model.TeamDeployment{}, false, err
+		}
 		decision, authorizeErr := authorizeTx(ctx, tx, model.AuthorityRequest{Principal: principal, Action: model.ActionManageMembership, Resource: model.ResourceSelector{Kind: model.ResourceGroup, GroupID: group.ID}}, at)
 		if authorizeErr != nil {
 			return model.TeamDeployment{}, false, authorizeErr

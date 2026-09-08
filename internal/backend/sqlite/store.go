@@ -43,7 +43,7 @@ func (s *Store) initialize(ctx context.Context) error {
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("initialize replacement backend schema: %w", err)
 	}
-	if _, err := s.db.ExecContext(ctx, shellRequestSchema+groupCloneSchema); err != nil {
+	if _, err := s.db.ExecContext(ctx, shellRequestSchema+groupCloneSchema+groupDisbandSchema); err != nil {
 		return err
 	}
 	if _, err := s.db.ExecContext(ctx, groupCapacitySchema); err != nil {
@@ -96,6 +96,7 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"executions", "effort", "TEXT NOT NULL DEFAULT ''"},
 		{"agents", "configuration_profile_json", "BLOB"},
 		{"executions", "configuration_profile_json", "BLOB"},
+		{"groups", "tombstoned", "INTEGER NOT NULL DEFAULT 0"},
 		{"groups", "owner_agent_id", "TEXT NOT NULL DEFAULT ''"},
 		{"agents", "lifecycle_state", "TEXT NOT NULL DEFAULT 'active'"},
 		{"agents", "task_reference", "TEXT NOT NULL DEFAULT ''"},
@@ -782,8 +783,16 @@ func (s *Store) CreateGroup(ctx context.Context, group model.Group, ownerBounds 
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, `INSERT INTO groups(id,name,owner_agent_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?)`, group.ID, group.Name, group.OwnerAgentID, group.Revision, nanos(group.CreatedAt), nanos(group.UpdatedAt)); err != nil {
+	result, err := tx.ExecContext(ctx, `INSERT INTO groups(id,name,owner_agent_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING`, group.ID, group.Name, group.OwnerAgentID, group.Revision, nanos(group.CreatedAt), nanos(group.UpdatedAt))
+	if err != nil {
 		return classify(err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return app.ErrConflict
 	}
 	for position, member := range group.Members {
 		if _, err := tx.ExecContext(ctx, `INSERT INTO group_members(group_id,agent_id,position) VALUES(?,?,?)`, group.ID, member, position); err != nil {
@@ -816,7 +825,7 @@ func (s *Store) Group(ctx context.Context, id model.GroupID) (model.Group, error
 func readGroup(ctx context.Context, q groupReader, id model.GroupID) (model.Group, error) {
 	var group model.Group
 	var created, updated int64
-	err := q.QueryRowContext(ctx, `SELECT id,name,owner_agent_id,revision,created_at,updated_at,COALESCE((SELECT parent_id FROM group_parents WHERE group_id=groups.id),'') FROM groups WHERE id=?`, id).Scan(&group.ID, &group.Name, &group.OwnerAgentID, &group.Revision, &created, &updated, &group.ParentGroupID)
+	err := q.QueryRowContext(ctx, `SELECT id,name,owner_agent_id,revision,created_at,updated_at,COALESCE((SELECT parent_id FROM group_parents WHERE group_id=groups.id),'') FROM groups WHERE id=? AND tombstoned=0`, id).Scan(&group.ID, &group.Name, &group.OwnerAgentID, &group.Revision, &created, &updated, &group.ParentGroupID)
 	if err != nil {
 		return model.Group{}, classify(err)
 	}
@@ -1511,7 +1520,7 @@ func (s *Store) Snapshot(ctx context.Context) (app.Snapshot, error) {
 		snapshot.Agents = append(snapshot.Agents, agent)
 	}
 	rows.Close()
-	rows, err = s.db.QueryContext(ctx, `SELECT id FROM groups ORDER BY id`)
+	rows, err = s.db.QueryContext(ctx, `SELECT id FROM groups WHERE tombstoned=0 ORDER BY id`)
 	if err != nil {
 		return snapshot, err
 	}
