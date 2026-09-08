@@ -1,3 +1,4 @@
+import {processEscalations} from './process-escalation.js';
 // Authoring state is separate from the graph renderer and from v2 execution.
 export const clone = value => structuredClone(value);
 export const freshID = prefix => prefix + crypto.randomUUID();
@@ -36,13 +37,14 @@ export function defaultNode(kind) {
 // or execution identity. Fork/join share its parallel shape with distinct labels.
 export function graphView(draft) {
   const graph = draft.Process.Graph;
+  const escalation = processEscalations(graph);
   return {nodes: graph.Nodes.map(node => {
     const position = draft.EditorLayout?.Nodes?.[node.ID];
     return {id: node.ID, type: ['fork', 'join'].includes(node.Kind) ? 'parallel' : node.Kind === 'task_complete' ? 'task' : node.Kind,
       label: node.Name || node.ID, subtitle: node.ID === graph.EntryNodeID ? 'Entry' : node.Kind,
       pinned: position ? {x: position.X, y: position.Y} : undefined};
   }), edges: (graph.Edges || []).map((edge, index) => ({id: edgeID(edge, index), from: edge.From,
-    to: edge.To, outcome: edge.Verdict || '', pinned: true}))};
+    to: edge.To, outcome: edge.Verdict || '', back: escalation.retries.has(index), pinned: true}))};
 }
 
 export class ProcessDraft {
@@ -101,12 +103,14 @@ export function validationMessages(draft) {
     incoming.set(edge.To, (incoming.get(edge.To) || 0) + 1);
     outgoing.set(edge.From, [...(outgoing.get(edge.From) || []), edge]);
   }
+  const escalation = processEscalations(graph);
+  messages.push(...escalation.errors);
   const visited = new Set(), visiting = new Set();
   function visit(id) {
     if (visiting.has(id)) { messages.push('Ordinary connections cannot form a cycle. Use node retry settings for bounded retries.'); return; }
     if (visited.has(id)) return;
     visited.add(id); visiting.add(id);
-    for (const edge of outgoing.get(id) || []) visit(edge.To);
+    for (const edge of outgoing.get(id) || []) { if (!escalation.retries.has(graph.Edges.indexOf(edge))) visit(edge.To); }
     visiting.delete(id);
   }
   visit(graph.EntryNodeID);

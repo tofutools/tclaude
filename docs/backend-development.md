@@ -1370,3 +1370,16 @@ input are never expanded. Decision questions can be authored separately from
 node names; a missing question retains the node-name fallback. Parameter keys in
 this syntax begin with a letter or underscore and contain letters, digits and
 underscores. An undeclared reference is rejected before saving or starting.
+
+Legacy compound-task escalation loops can be authored and retained without
+starting them. A failure route (`fail`, `failed`, `failure`, or `error`) may
+enter a dedicated human decision with exactly `retry` back to that task and
+`cancel` to a cancelled end. It cannot be the entry or receive another source.
+Only this retry edge is exempt from ordinary acyclic validation and appears as
+a dashed return. All authored edges survive save/reopen and copy/export.
+
+Compilation records that authoring-only declaration separately from its DAG;
+clients cannot supply compiled escalation metadata. Starting any revision with
+such a loop is explicitly refused before work admission, including an older
+pinned revision. This matches the legacy runtime's unsupported-loop boundary;
+ordinary task retry budgets and blocked-work resolution remain executable.

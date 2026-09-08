@@ -143,13 +143,15 @@ type ProcessDefinition struct {
 }
 
 type WorkGraph struct {
-	Description     string `json:",omitempty"`
-	Doc             string `json:",omitempty"`
-	CompilerVersion string
-	EntryNodeID     WorkNodeID
-	Nodes           []WorkNode
-	Edges           []WorkEdge
-	Outcome         WorkGraphOutcomePolicy
+	// EscalationRetries records authoring-only loops removed from the compiled DAG.
+	EscalationRetries []WorkEdge `json:",omitempty"`
+	Description       string     `json:",omitempty"`
+	Doc               string     `json:",omitempty"`
+	CompilerVersion   string
+	EntryNodeID       WorkNodeID
+	Nodes             []WorkNode
+	Edges             []WorkEdge
+	Outcome           WorkGraphOutcomePolicy
 	// TaskGroups are compiler output, never accepted as authored input.
 	TaskGroups []CompiledTaskGroup `json:",omitempty"`
 }
