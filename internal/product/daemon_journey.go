@@ -72,7 +72,10 @@ func journeyServices(state string, harnesses, configured []string, workspaces bo
 	return result, nil
 }
 
-type sandboxHostOptions struct{ mountAgentDirectoriesIndividually bool }
+type sandboxHostOptions struct {
+	mountAgentDirectoriesIndividually bool
+	resourceDelegationDirectory       string
+}
 
 // Shells and harness providers share the same protected state and immutable
 // artifact preparation. Missing native tooling is reported by selected launch
@@ -102,5 +105,5 @@ func configuredHostSandbox(state string, sandboxOptions ...sandboxHostOptions) (
 	if len(sandboxOptions) != 0 {
 		options = sandboxOptions[0]
 	}
-	return host.NewSandboxLaunchPreparer(host.SandboxLaunchConfig{Inspector: inspector, Wrapper: wrapper, Bootstrap: bootstrap, Artifacts: artifacts, AgentDirectoriesMountIndividually: options.mountAgentDirectoriesIndividually})
+	return host.NewSandboxLaunchPreparer(host.SandboxLaunchConfig{Inspector: inspector, Wrapper: wrapper, Bootstrap: bootstrap, Artifacts: artifacts, AgentDirectoriesMountIndividually: options.mountAgentDirectoriesIndividually, ResourceDelegationDirectory: options.resourceDelegationDirectory})
 }

@@ -1700,3 +1700,18 @@ resume, a deleted explicit profile may resolve by its recorded name if a profile
 with that name has been recreated. Unresolvable explicit selections refuse
 publication instead of becoming unsandboxed launches. Import does not resume
 conversations or execute the recorded setup scripts.
+
+The saved macOS Mach-registration compatibility option is applied during native
+sandbox launch, matching v1 for helpers such as headless Chromium. It does not
+change filesystem or network rules. Linux retains the cross-platform profile
+option without adding a Linux permission.
+
+Linux sandbox CPU and memory limits use delegated cgroup v2 controllers. The
+service may provide `Delegate=cpu memory` with
+`DelegateSubgroup=tclaude-supervisor`, or the daemon may receive an explicit
+`--resource-delegation-dir` pointing to a writable, process-free delegation.
+A requested limit fails launch preparation when the required controller is
+unavailable. Each new launch resolves the current profile values and prepares
+its own boundary; the bootstrap places the child inside it before native setup
+runs. Descendants share the ceiling, and observed exit or aborted preparation
+cleans up that launch's boundary. Resource limits remain Linux-only, as in v1.

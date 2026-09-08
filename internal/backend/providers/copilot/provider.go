@@ -282,7 +282,7 @@ func (p *prepared) Describe() ports.PreparedDescription { return p.description }
 func (p *prepared) Abort(ctx context.Context) error {
 	err := p.terminal.Abort()
 	if err == nil && p.artifact != nil {
-		err = errors.Join(err, os.RemoveAll(filepath.Dir(p.artifact.Path)))
+		err = errors.Join(err, host.AbortSandboxChild(*p.artifact))
 	}
 	err = errors.Join(err, p.spool.Remove())
 	if p.access != nil {
@@ -532,6 +532,7 @@ func (r *Runtime) providerEvidenceUnlocked() (model.ProviderEvidence, error) {
 }
 func (r *Runtime) cleanup(ctx context.Context) {
 	r.cleanupOnce.Do(func() {
+		r.cleanupErr = errors.Join(r.cleanupErr, host.SettleSandboxChild(r.artifact))
 		if r.access != nil {
 			r.cleanupErr = errors.Join(r.cleanupErr, r.provider.credentials.RemoveActionCredential(ctx, *r.access))
 		}

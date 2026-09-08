@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,6 +65,11 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 	t.Run("direct-wrapper", func(t *testing.T) {
 		wrapped, _, err := sandboxDescriptorInvocation(wrapper, child, bound, true)
 		require.NoError(t, err)
+		require.NotContains(t, strings.Join(wrapped.Args, "\n"), "(allow mach-register)")
+		bound.darwinAllowMachRegister = true
+		wrapped, _, err = sandboxDescriptorInvocation(wrapper, child, bound, true)
+		require.NoError(t, err)
+		require.Contains(t, strings.Join(wrapped.Args, "\n"), "(allow mach-register)")
 		process, err := StartProcess(wrapped)
 		require.NoError(t, err)
 		require.Eventually(t, func() bool {
@@ -73,7 +79,7 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 		require.Zero(t, *process.Observe().ExitCode, "%s: %s", process.cmd.ProcessState, output.String())
 	})
 	output.Reset()
-	artifact, err := prepareNativeLaunchPolicy(t, inspector, private, wrapper, child, bound)
+	artifact, err := prepareNativeLaunchPolicy(t, inspector, private, wrapper, child, bound, true)
 	require.NoError(t, err)
 	require.NoError(t, bound.Close())
 	bootstrap := ProcessSpec{Executable: executable, Args: []string{"-test.run=^TestSandboxBootstrapHelper$"}, ExactEnvironment: true,

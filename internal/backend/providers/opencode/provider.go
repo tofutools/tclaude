@@ -392,7 +392,7 @@ func (p *prepared) Abort(context.Context) error {
 	p.aborted = true
 	err := p.listener.Close()
 	if p.artifact != nil {
-		err = errors.Join(err, os.RemoveAll(filepath.Dir(p.artifact.Path)))
+		err = errors.Join(err, host.AbortSandboxChild(*p.artifact))
 	}
 	err = errors.Join(err, removeProtectedFile(p.passwordFile))
 	if p.removeOnAbort {
@@ -916,6 +916,7 @@ func (r *Runtime) Stop(ctx context.Context, request ports.StopRequest) (ports.St
 
 func (r *Runtime) cleanupResources(ctx context.Context) {
 	r.cleanupOnce.Do(func() {
+		r.cleanupErr = errors.Join(r.cleanupErr, host.SettleSandboxChild(r.artifact))
 		if r.access != nil {
 			r.cleanupErr = errors.Join(r.cleanupErr, r.provider.credentials.RemoveActionCredential(ctx, *r.access))
 		}
