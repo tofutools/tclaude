@@ -102,7 +102,7 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 	default:
 		return SandboxChildArtifact{}, fmt.Errorf("invalid sandbox root posture")
 	}
-	if policy.Resources != (model.SandboxResources{}) || (harness == "" && policy.HarnessConfig != model.SandboxHarnessConfigDefault) || policy.DarwinAllowMachRegister {
+	if policy.Resources != (model.SandboxResources{}) || (harness == "" && policy.HarnessConfig != model.SandboxHarnessConfigDefault) {
 		return SandboxChildArtifact{}, fmt.Errorf("selected sandbox requires additional native policy preparation")
 	}
 	if len(materialized.Composition.SocketAll) != 0 {
@@ -172,6 +172,7 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 	bindings.files = append(bindings.files, owned.files...)
 	bindings.providerCount = len(owned.pins)
 	bindings.controlPort = controlPort
+	bindings.darwinAllowMachRegister = policy.DarwinAllowMachRegister
 	bindings.overlays, err = p.config.Inspector.prepareSandboxOverlays(ctx, denied, policy.Tmpfs, bindings, child.Executable, child.Directory)
 	if err != nil {
 		return SandboxChildArtifact{}, err
