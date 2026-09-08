@@ -92,6 +92,10 @@ func RecoverCallback(root string, evidence CallbackEvidence) (*CallbackResource,
 }
 
 func (r *CallbackResource) Evidence() CallbackEvidence { return r.evidence }
+
+// Endpoint is the host-owned registered Unix ingress, for exact confinement
+// resource preparation. It is not supplied by an authored sandbox profile.
+func (r *CallbackResource) Endpoint() string { return r.binding.Endpoint }
 func (r *CallbackResource) CredentialPath() string {
 	return filepath.Join(r.root, r.evidence.RegistrationID, credentialFilename)
 }

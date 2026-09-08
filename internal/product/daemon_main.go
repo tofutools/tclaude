@@ -83,7 +83,11 @@ func registeredProviders(state string, harnesses []string) (ports.ProviderRegist
 			}
 			entries = append(entries, p)
 		case "codex":
-			p, err := codex.New(codex.Config{PrivateRoot: filepath.Join(state, "codex"), AgentSocket: filepath.Join(state, "api.sock")})
+			sandbox, err := configuredHostSandbox(state)
+			if err != nil {
+				return nil, err
+			}
+			p, err := codex.New(codex.Config{HostSandbox: sandbox, PrivateRoot: filepath.Join(state, "codex"), AgentSocket: filepath.Join(state, "api.sock")})
 			if err != nil {
 				return nil, err
 			}
