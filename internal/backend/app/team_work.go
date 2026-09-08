@@ -60,6 +60,9 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 	if ref.Kind != model.DefinitionTeam || revision.Team == nil || revision.DefinitionID != ref.DefinitionID || revision.ContentHash != ref.ContentHash {
 		return TeamDeploymentResult{}, fail(ErrConflict, "team definition is not the pinned revision")
 	}
+	if _, err := resolveTeamMissionBriefings(*revision.Team, strings.TrimSpace(req.Instantiation.Mission), true); err != nil {
+		return TeamDeploymentResult{}, err
+	}
 	parameters := materializeParameterValues(revision.Parameters, req.Instantiation.Parameters)
 	if err = validateParameterValues(revision.Parameters, parameters); err != nil {
 		return TeamDeploymentResult{}, err
@@ -199,13 +202,17 @@ func (s *Service) teamRoleAdmissions(ctx context.Context, principal model.Princi
 }
 
 func (s *Service) startTeamDeploymentProcess(ctx context.Context, deployment model.TeamDeployment, team model.TeamDefinition, principal model.Principal, ruleID model.AutomationRuleID) error {
+	team, err := resolveTeamMissionBriefings(team, deployment.Mission, true)
+	if err != nil {
+		return err
+	}
 	graph := teamDeploymentGraph(team, deployment)
 	scope := model.WorkScope{GroupID: deployment.GroupID, DeploymentID: deployment.ID}
 	if principal.Kind == model.PrincipalAutomation {
 		scope.RuleID = ruleID
 		scope.OccurrenceID = model.OccurrenceID(principal.AutomationRun)
 	}
-	_, err := s.StartProcess(ctx, StartProcessRequest{Context: RequestContext{Principal: principal, RequestID: model.RequestID(deterministicOrchestrationID("request_", string(deployment.ID)))}, ID: deployment.WorkRunID, Start: model.WorkStart{InlineGraph: &graph, Scope: scope, Deadline: s.now().UTC().Add(admittedEffectTimeout)}})
+	_, err = s.StartProcess(ctx, StartProcessRequest{Context: RequestContext{Principal: principal, RequestID: model.RequestID(deterministicOrchestrationID("request_", string(deployment.ID)))}, ID: deployment.WorkRunID, Start: model.WorkStart{InlineGraph: &graph, Scope: scope, Deadline: s.now().UTC().Add(admittedEffectTimeout)}})
 	return err
 }
 
