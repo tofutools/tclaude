@@ -772,6 +772,12 @@ func desiredFromRow(values map[string]any) model.DesiredConfiguration {
 		desired.Approval = model.ApprovalSupervised
 	case "automatic":
 		desired.Approval = model.ApprovalAutomatic
+	case "deny":
+		// This native policy belongs to OpenCode; it is not a portable alias
+		// for another provider's approval mode.
+		if desired.Harness == "opencode" {
+			desired.Approval = model.ApprovalDeny
+		}
 	}
 	switch strings.ReplaceAll(strings.ToLower(firstNonEmpty(stringMap(values, "sandbox"), sourcev228.String(values["sandbox"]))), "-", "_") {
 	case "read_only":
