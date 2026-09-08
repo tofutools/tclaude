@@ -1823,6 +1823,14 @@ func validatePerformer(performer model.Performer) error {
 		if performer.Agent == nil || (performer.Agent.AgentID == "" && performer.Agent.MemberKey == "" && performer.Agent.CreateDesired == nil) {
 			return fail(ErrInvalid, "agent performer requires an exact binding or create intent")
 		}
+		if desired := performer.Agent.CreateDesired; desired != nil {
+			if performer.Agent.AgentID != "" || performer.Agent.MemberKey != "" {
+				return fail(ErrInvalid, "new-agent configuration cannot also bind an existing worker")
+			}
+			if err := validateDesired(*desired); err != nil {
+				return err
+			}
+		}
 	case model.PerformerProgram:
 		if performer.Program == nil || performer.Program.Profile.ProfileID == "" || performer.Program.Profile.RevisionID == "" || performer.Program.Profile.ContentHash == "" {
 			return fail(ErrInvalid, "program performer requires a pinned profile revision")

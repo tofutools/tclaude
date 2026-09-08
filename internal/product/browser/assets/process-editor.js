@@ -10,12 +10,14 @@ const option = (value, label = value) => ({value, label});
 export async function openProcessEditor({api, result, agents = [], onSaved}) {
   const profiles = await api('/v2/program-profiles');
   const revisions = await Promise.all((profiles || []).map(profile => api('/v2/program-profiles/' + encodeURIComponent(profile.ID))));
-  return new ProcessEditor({api, result, agents, revisions, onSaved});
+  const saved = await api('/v2/configuration-profiles');
+  const configurations = await Promise.all((saved||[]).filter(p=>!p.Archived).map(p=>api('/v2/configuration-profiles/'+encodeURIComponent(p.ID)+'?revision_id='+encodeURIComponent(p.CurrentRevisionID))));
+  return new ProcessEditor({api, result, agents, revisions, configurations, onSaved});
 }
 
 class ProcessEditor {
-  constructor({api, result, agents, revisions, onSaved}) {
-    this.api = api; this.agents = agents; this.revisions = revisions; this.onSaved = onSaved;
+  constructor({api, result, agents, revisions, configurations, onSaved}) {
+    this.configurations=configurations; this.api = api; this.agents = agents; this.revisions = revisions; this.onSaved = onSaved;
     this.model = new ProcessDraft(result ? draftFromResult(result) : newProcess());
     this.baseRevision = result?.Definition.Revision || 0;
     this.saved = JSON.stringify(this.model.value); this.selection = new Set(); this.clipboard = null;
@@ -196,11 +198,18 @@ class ProcessEditor {
       };
       if (performer.Kind === 'agent') {
         const a = performer.Agent;
+        if(a.CreateDesired) {
+          const desired=a.CreateDesired;
+          fields.push({name:'model',label:'New worker model',value:desired.Model||''},{name:'effort',label:'New worker effort',value:desired.Effort||''},
+            {name:'brief',label:'Worker brief',multiline:true,value:a.Brief,required:true});
+          changes.push((n,f)=>{n.Performer.Agent.CreateDesired={...n.Performer.Agent.CreateDesired,Model:f.model,Effort:f.effort};n.Performer.Agent.Brief=f.brief;});
+        } else {
         fields.push({name: 'agent', label: 'Worker', options: [option('', 'Bind worker when starting'), ...this.agents.map(a => option(a.ID, a.Name))], value: a.AgentID || ''},
           {name: 'binding', label: 'Worker binding key', value: a.MemberKey || ''},
           {name: 'context', label: 'Conversation context', options: [option('fresh', 'Fresh context'), option('reuse', 'Reuse context')], value: a.ContextPolicy || 'fresh'},
           {name: 'brief', label: 'Worker brief', multiline: true, value: a.Brief, required: true});
         changes.push((n, f) => { n.Performer.Agent = {...n.Performer.Agent, AgentID: f.agent, MemberKey: f.agent ? '' : f.binding, ContextPolicy: f.context, Brief: f.brief}; if (!f.agent && !f.binding.trim()) throw new Error('Choose a worker or a binding key.'); });
+        }
       } else if (performer.Kind === 'program') {
         const p = performer.Program, refs = this.revisions.map(r => ({ref: {ProfileID: r.Profile.ID, RevisionID: r.Revision.ID, ContentHash: r.Revision.ContentHash}, label: `${r.Profile.Name} · revision ${r.Revision.Number}`}));
         if (p.Profile?.RevisionID && !refs.some(r => r.ref.RevisionID === p.Profile.RevisionID)) refs.push({ref: p.Profile, label: 'Previously pinned program revision'});
@@ -248,6 +257,22 @@ class ProcessEditor {
       if (stageContext) delete n.Waivable;
     }));
     if (node.Kind === 'task') this.inspector.prepend(this.performerSelect);
+    if(node.Performer?.Kind==='agent') {
+      const copy=element('select');copy.setAttribute('aria-label','Copy new worker configuration');
+      const blank=element('option','Copy a saved configuration for a new worker');blank.value='';copy.append(blank);
+      this.configurations.forEach((c,i)=>{const o=element('option',c.Profile.Name+' · '+c.Revision.Ref.RevisionID);o.value=String(i);copy.append(o);});
+      copy.onchange=()=>{if(copy.value===''||!this.discardUnapplied())return;const desired=clone(this.configurations[Number(copy.value)].Revision.Desired);
+        update(n=>{n.Performer.Agent={...n.Performer.Agent,AgentID:'',MemberKey:'',CreateDesired:desired};});
+        if(stageContext)this.showStage(stageContext);
+      };
+      this.inspector.append(copy);
+      if(node.Performer.Agent.CreateDesired) {
+        const d=node.Performer.Agent.CreateDesired;
+        this.inspector.append(element('p',`Copied configuration: ${d.Harness}, ${d.WorkingDirectory}, ${d.Approval}, ${d.Sandbox}. New-worker creation is authoring-only; no worker is launched. Later saved configuration edits do not alter this copy.`));
+        this.inspector.append(element('pre',JSON.stringify(d,null,2)));
+        this.inspector.append(action('Use existing or bound worker',()=>{if(!this.discardUnapplied())return;update(n=>{delete n.Performer.Agent.CreateDesired;n.Performer.Agent.AgentID='';n.Performer.Agent.MemberKey='worker';});if(stageContext)this.showStage(stageContext);}));
+      }
+    }
     if(node.Kind === 'wait') this.inspector.append(element('p','Absolute-time and signal waits can be saved, but cannot start. Clear both to run a duration wait.'));
     if(node.Captures?.length) this.inspector.append(element('p','Output names are retained for authoring and export. Running this process is unavailable until capture execution is supported.'));
     if(node.Performer?.Timeout) this.inspector.append(element('p',node.Performer.Kind==='program'?'Timeout starts when this program node becomes ready, includes admission delay, and cannot extend the run or saved program limit.':'Timeout is retained for authoring. Clear it to start: agent and human timeout execution is unavailable.'));
