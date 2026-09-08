@@ -222,7 +222,15 @@ const (
 	PerformerHuman   PerformerKind = "human"
 )
 
+// ContactSchedule is retained authoring intent, not an activated notification or delegation.
+type ContactSchedule struct {
+	Cadence          string
+	Budget           uint32
+	EscalationTarget string
+}
+
 type Performer struct {
+	Contact *ContactSchedule `json:",omitempty"`
 	Kind    PerformerKind
 	Agent   *AgentPerformer
 	Program *ProgramPerformer

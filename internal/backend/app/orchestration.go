@@ -340,6 +340,11 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 	if err != nil {
 		return WorkRunResult{}, err
 	}
+	for _, node := range graph.Nodes {
+		if node.Performer != nil && node.Performer.Contact != nil {
+			return WorkRunResult{}, fail(ErrUnsupported, "task %s declares a contact schedule; scheduled performer contact is not available", node.ID)
+		}
+	}
 	graph, err = materializePerformerBindings(graph, req.Start.PerformerBindings)
 	if err != nil {
 		return WorkRunResult{}, err
@@ -1682,6 +1687,12 @@ func validateWorkNode(node model.WorkNode) error {
 }
 
 func validatePerformer(performer model.Performer) error {
+	if contact := performer.Contact; contact != nil {
+		cadence, err := time.ParseDuration(contact.Cadence)
+		if err != nil || cadence <= 0 || len(contact.Cadence) > 128 || contact.Budget == 0 || contact.Budget > 10000 || strings.TrimSpace(contact.EscalationTarget) == "" || len(contact.EscalationTarget) > 1024 || !utf8.ValidString(contact.EscalationTarget) || strings.ContainsRune(contact.EscalationTarget, 0) {
+			return fail(ErrInvalid, "contact schedule requires a positive duration, budget 1–10000, and bounded nonempty escalation target")
+		}
+	}
 	populated := 0
 	if performer.Agent != nil {
 		populated++
