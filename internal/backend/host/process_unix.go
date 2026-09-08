@@ -46,6 +46,8 @@ type ProcessIdentity struct {
 }
 
 type ProcessObservation struct {
+	// Reaping means the retained child status/IO is still being collected; it is not a live capability.
+	Reaping  bool
 	Running  bool
 	Exited   bool
 	ExitCode *int
@@ -63,6 +65,10 @@ type Process struct {
 }
 
 func StartProcess(spec ProcessSpec) (*Process, error) {
+	return startProcess(spec, syscall.Getpgid, processStartToken)
+}
+
+func startProcess(spec ProcessSpec, readGroup func(int) (int, error), readToken func(int) (string, error)) (*Process, error) {
 	if strings.TrimSpace(spec.Executable) == "" {
 		return nil, fmt.Errorf("executable is required")
 	}
@@ -79,13 +85,19 @@ func StartProcess(spec ProcessSpec) (*Process, error) {
 		return nil, err
 	}
 	pid := cmd.Process.Pid
-	pgid, err := syscall.Getpgid(pid)
+	pgid, err := readGroup(pid)
+	if errors.Is(err, syscall.ESRCH) {
+		return retainNaturalExit(cmd), nil
+	}
 	if err != nil {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
 		return nil, fmt.Errorf("read process group: %w", err)
 	}
-	token, err := processStartToken(pid)
+	token, err := readToken(pid)
+	if errors.Is(err, syscall.ESRCH) || errors.Is(err, os.ErrNotExist) {
+		return retainNaturalExit(cmd), nil
+	}
 	if err != nil {
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 		_ = cmd.Wait()
@@ -98,6 +110,14 @@ func StartProcess(spec ProcessSpec) (*Process, error) {
 	}
 	go p.wait()
 	return p, nil
+}
+
+// The OS may stop exposing a child before its parent has collected Wait status.
+// Keep that natural result without sending a signal or inventing a live identity.
+func retainNaturalExit(cmd *exec.Cmd) *Process {
+	p := &Process{identity: ProcessIdentity{PID: cmd.Process.Pid}, cmd: cmd, done: make(chan struct{})}
+	go p.wait()
+	return p
 }
 
 // RecoverProcess restores a capability only when the recorded PID, start
@@ -192,6 +212,9 @@ func (p *Process) Observe() ProcessObservation {
 			return ProcessObservation{Exited: true, ExitCode: cloneInt(p.exitCode)}
 		default:
 		}
+		if p.identity.StartToken == "" {
+			return ProcessObservation{Reaping: true, Unknown: true}
+		}
 	}
 	matched, err := processIdentityMatches(p.identity)
 	if err != nil {
@@ -234,6 +257,14 @@ func (p *Process) Stop(ctx context.Context, force bool) (acknowledged, exited bo
 	}
 	err = p.Signal(signal)
 	if errors.Is(err, os.ErrProcessDone) {
+		if p.Observe().Reaping {
+			select {
+			case <-p.done:
+				return false, true, nil
+			case <-ctx.Done():
+				return false, false, ctx.Err()
+			}
+		}
 		return false, true, nil
 	}
 	if err != nil {

@@ -149,6 +149,8 @@ type ProcessDefinition struct {
 }
 
 type WorkGraph struct {
+	// EscalationRetries records authoring-only loops removed from the compiled DAG.
+	EscalationRetries []WorkEdge `json:",omitempty"`
 	// ProgramActivationTimeouts pins effective activation budgets on admitted graphs only.
 	ProgramActivationTimeouts map[WorkNodeID]time.Duration `json:",omitempty"`
 	Description               string                       `json:",omitempty"`

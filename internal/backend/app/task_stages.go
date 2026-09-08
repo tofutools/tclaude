@@ -18,7 +18,7 @@ func compileTaskStages(authored model.WorkGraph) (model.WorkGraph, error) {
 	if len(authored.ProgramActivationTimeouts) != 0 {
 		return model.WorkGraph{}, fail(ErrInvalid, "program activation budgets are compiler-owned")
 	}
-	if len(authored.TaskGroups) != 0 {
+	if len(authored.TaskGroups) != 0 || len(authored.EscalationRetries) != 0 {
 		return model.WorkGraph{}, fail(ErrInvalid, "task groups are compiler-owned")
 	}
 	for _, node := range authored.Nodes {
@@ -29,7 +29,12 @@ func compileTaskStages(authored model.WorkGraph) (model.WorkGraph, error) {
 	if err := validateWorkGraph(authored); err != nil {
 		return model.WorkGraph{}, err
 	}
+	retries, err := processEscalationRetries(authored)
+	if err != nil {
+		return model.WorkGraph{}, err
+	}
 	graph := authored
+	graph.EscalationRetries = retries
 	graph.Nodes = nil
 	graph.Edges = slices.Clone(authored.Edges)
 	entries := map[model.WorkNodeID]model.WorkNodeID{}
@@ -133,6 +138,14 @@ func compileTaskStages(authored model.WorkGraph) (model.WorkGraph, error) {
 			graph.Edges[i].To = entry
 		}
 	}
+	kept := graph.Edges[:0]
+	for i, edge := range graph.Edges {
+		if i < len(authored.Edges) && slices.Contains(retries, authored.Edges[i]) {
+			continue
+		}
+		kept = append(kept, edge)
+	}
+	graph.Edges = kept
 	if entry := entries[graph.EntryNodeID]; entry != "" {
 		graph.EntryNodeID = entry
 	}
