@@ -51,6 +51,7 @@ function edit(title,fields,save,{skipUnchanged=false}={}){
   if(field.options&&field.value!==undefined){const values=field.multiple?(field.value||[]):[String(field.value)];for(const value of values){if(!Array.from(input.options).some(o=>o.value===String(value))){const o=el('option','Retained: '+value);o.value=value;input.append(o)}}if(field.multiple){for(const o of input.options)o.selected=values.includes(o.value)}else input.value=field.value}
   else if(!field.file&&!field.options)input.value=field.value??'';
   input.required=field.required!==false;label.append(input);$('editor-fields').append(label);
+  if(field.help){const help=el('pre',field.help);help.id='editor-help-'+field.name;input.setAttribute('aria-describedby',help.id);label.append(help)}
   if(field.name==='cwd')label.append(button('Browse directories',async()=>{const {pickDirectory}=await import('./directory-picker.js');if(!input.isConnected||!$('editor').open)return;const selected=await pickDirectory({api,initial:input.value});if(selected!==null&&input.isConnected&&$('editor').open){input.value=selected;input.dispatchEvent(new Event('input',{bubbles:true}));}}));
  }
  const readForm=()=>{const data=new FormData($('editor-form')),form=Object.fromEntries(data);for(const field of fields){if(field.multiple)form[field.name]=data.getAll(field.name);if(field.environment||field.environmentSets)form[field.name]=field.control.read();}return form};const initial=JSON.stringify(readForm());
@@ -372,6 +373,7 @@ async function renderDefinitions(){
     const programs=performers.filter(p=>p.Program).map(p=>p.Program.Profile);
     await api('/v2/processes',{request_id:f.requestID,id:f.requestID,start:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'process'},Scope:{WorkspaceID:f.workspace},Parameters:parameterValues(revision.Parameters||[],f),PerformerBindings:Object.fromEntries(memberKeys.map(key=>[key,{Kind:'agent',Agent:{AgentID:f['binding_'+key]}}])),AuthorizedProgramProfiles:programs,Deadline:new Date(Date.now()+minutes*60000).toISOString()}});
    });
+   $('editor-fields').prepend(...[revision.Process.Graph.Description,revision.Process.Graph.Doc].filter(Boolean).map(text=>el('pre',text)));
   }));
   if(definition.Kind==='team')card.append(button('Edit team template',async()=>launchTeamEditor(await api('/v2/definitions/'+encodeURIComponent(definition.ID)))));
   if(definition.Kind==='team')card.append(button('Deploy team',async()=>{
@@ -419,7 +421,7 @@ async function renderDefinitions(){
 
 function parameterFields(parameters){return parameters.map((p,index)=>{
  const value=p.Default===undefined||p.Default===null?'':p.Type==='string'?p.Default:JSON.stringify(p.Default);
- const field={name:'parameter_'+index,label:p.Description||p.Name,value,required:p.Required,multiline:p.Type==='object'||p.Type==='array'};
+ const field={name:'parameter_'+index,label:p.DisplayName?`${p.DisplayName} (${p.Name})`:p.Description||p.Name,help:[p.DisplayName?p.Description:'',p.Doc].filter(Boolean).join('\n\n'),value,required:p.Required,multiline:p.Type==='object'||p.Type==='array'};
  if(p.Type==='boolean')field.options=p.Required?['true','false']:['','true','false'];return field;
 })}
 function parameterValues(parameters,form){const values={};parameters.forEach((p,index)=>{

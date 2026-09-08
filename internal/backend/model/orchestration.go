@@ -26,6 +26,8 @@ const (
 )
 
 type ParameterDeclaration struct {
+	DisplayName string `json:",omitempty"`
+	Doc         string `json:",omitempty"`
 	Name        string
 	Type        ParameterType
 	Required    bool
@@ -139,6 +141,8 @@ type ProcessDefinition struct {
 }
 
 type WorkGraph struct {
+	Description     string `json:",omitempty"`
+	Doc             string `json:",omitempty"`
 	CompilerVersion string
 	EntryNodeID     WorkNodeID
 	Nodes           []WorkNode

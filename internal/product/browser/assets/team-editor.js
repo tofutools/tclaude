@@ -211,9 +211,9 @@ class TeamEditor {
   }
   parameter(original) {
     const p = original || {};
-    this.form('Parameter', [{key: 'name', label: 'Parameter name', value: p.Name, required: true}, {key: 'type', label: 'Parameter type', options: ['string', 'number', 'boolean', 'object', 'array'].map(v => opt(v)), value: p.Type || 'string'}, {key: 'required', label: 'Required parameter', type: 'checkbox', value: p.Required}, {key: 'description', label: 'Description', value: p.Description}, {key: 'default', label: 'Default value (JSON, optional)', value: p.Default === undefined || p.Default === null ? '' : JSON.stringify(p.Default)}], f => {
+    this.form('Parameter', [{key: 'name', label: 'Parameter name', value: p.Name, required: true}, {key: 'type', label: 'Parameter type', options: ['string', 'number', 'boolean', 'object', 'array'].map(v => opt(v)), value: p.Type || 'string'}, {key: 'required', label: 'Required parameter', type: 'checkbox', value: p.Required}, {key: 'display_name',label:'Display name (optional)',value:p.DisplayName},{key: 'description', label: 'Description', value: p.Description},{key:'doc',label:'Parameter documentation',text:true,value:p.Doc}, {key: 'default', label: 'Default value (JSON, optional)', value: p.Default === undefined || p.Default === null ? '' : JSON.stringify(p.Default)}], f => {
       if (this.draft.Parameters.some(x => x.Name === f.name && x.Name !== original?.Name)) throw new Error('Parameter names must be unique.');
-      const parameter = {Name: f.name, Type: f.type, Required: f.required, Description: f.description}; if (f.default.trim()) parameter.Default = JSON.parse(f.default);
+      const parameter = {Name: f.name, Type: f.type, Required: f.required, Description: f.description}; if(f.display_name)parameter.DisplayName=f.display_name;if(f.doc)parameter.Doc=f.doc; if (f.default.trim()) parameter.Default = JSON.parse(f.default);
       this.change(d => { const i = d.Parameters.findIndex(x => x.Name === original?.Name); if (i < 0) d.Parameters.push(parameter); else d.Parameters[i] = parameter; });
     });
   }
