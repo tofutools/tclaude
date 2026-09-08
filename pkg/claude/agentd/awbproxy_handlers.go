@@ -1155,6 +1155,10 @@ func (s *awbProxySession) buildAWBCreateBody(
 	}
 	out := &awbIssueCreateBody{Workspace: workspace, Title: title}
 	out.Backlog = body.Backlog
+	if body.Backlog && body.Claim {
+		return nil, faultf(http.StatusBadRequest, "invalid_arg",
+			"create --backlog cannot be combined with --claim or --assignee")
+	}
 	if body.Description != nil {
 		if fault := validateAWBDescription(*body.Description); fault != nil {
 			return nil, fault
@@ -1490,6 +1494,8 @@ func handleAWBProxyIssueMakeReady(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	writeProxyFault(w, faultf(http.StatusPreconditionFailed, "awb_precondition_failed",
+		"the issue kept changing while make-ready was attempted; retry later"))
 }
 
 // handleAWBProxyIssueDelete serves POST /v1/awb/issue/delete.

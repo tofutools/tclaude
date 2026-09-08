@@ -153,6 +153,10 @@ func TestAWBSortVocabularyIsPerVerb(t *testing.T) {
 	}
 }
 
+func TestAWBStatusVocabularyIncludesBacklog(t *testing.T) {
+	assert.Equal(t, []string{"backlog", "open", "in_progress", "closed"}, awbStatusAlternatives)
+}
+
 func TestAWBProxyOutcomeAcceptsLegacyProjects(t *testing.T) {
 	var out awbProxyOutcome
 	require.NoError(t, json.Unmarshal([]byte(`{"projects":["awb"]}`), &out))

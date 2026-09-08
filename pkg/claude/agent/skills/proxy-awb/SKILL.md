@@ -15,7 +15,7 @@ description: >-
 
 # AWB without holding the credentials
 
-AWB is an agent-first issue tracker: five types, three statuses, five
+AWB is an agent-first issue tracker: five types, four statuses, five
 priorities, four relation types, and one question it exists to answer — *what
 is open, unblocked and unassigned, highest priority first*. If your work is
 tracked there and your sandbox holds no password for it, route the request
@@ -24,6 +24,7 @@ through the daemon:
 ```bash
 tclaude proxy awb ready --compact
 tclaude proxy awb claim awb-a3f9c1
+tclaude proxy awb make-ready awb-a3f9c1
 tclaude proxy awb close awb-a3f9c1 --reason "Guard against empty token stream"
 ```
 
@@ -109,6 +110,7 @@ default JSON only when you need the description.
 
 ```bash
 tclaude proxy awb claim awb-a3f9c1
+tclaude proxy awb make-ready awb-a3f9c1             # activate parked backlog work
 tclaude proxy awb comment list awb-a3f9c1 --compact   # what has already been said
 tclaude proxy awb comment add awb-a3f9c1 --body-file findings.md
 tclaude proxy awb update awb-a3f9c1 --description-file findings.md
@@ -123,7 +125,7 @@ tclaude proxy awb release awb-a3f9c1               # give it back
 `--force` overrides those two checks. `update` changes the title, description,
 commit hash, pull request URL, type and priority and nothing else — the status
 and assignees move only through
-`claim`, `release`, `close` and `reopen`, which is what keeps `in_progress` and
+`claim`, `release`, `close`, `make-ready` and `reopen`, which is what keeps `in_progress` and
 an assignee from drifting apart. Labels are added and removed one at a time, so
 a whole-set replace cannot discard somebody else's edit.
 
@@ -184,7 +186,7 @@ something that actually happened.
 
 ```bash
 tclaude proxy awb create "Add fuzz tests for the parser" --workspace awb \
-  --type task --discovered-from awb-a3f9c1 --blocked-by awb-a3f9c1
+  --type task --label parser --discovered-from awb-a3f9c1 --blocked-by awb-a3f9c1
 tclaude proxy awb dep add awb-77e0b2 --has-parent awb-a3f9c1
 tclaude proxy awb dep tree awb-a3f9c1 --compact
 tclaude proxy awb attach add awb-a3f9c1 ./trace.txt
@@ -195,6 +197,11 @@ proxy gate. With multiple visible workspaces it is **required**: the daemon is
 not in your working tree, so there is no `.awb.yaml` default. With none visible,
 `whoami` reports the access/configuration problem; naming a workspace cannot
 make an inaccessible one reachable.
+
+Use repeatable `--label` to label the new issue atomically. `--claim` assigns it
+to the operator's AWB identity and starts it immediately; `--backlog` parks it
+instead and cannot be combined with `--claim` or `--assignee`. Activate parked
+work later with `make-ready`.
 
 Relation flags read *"the new issue — relation — the named issue"*, the single
 convention of the whole tool. Only `blocked-by` drives readiness; `has-parent`

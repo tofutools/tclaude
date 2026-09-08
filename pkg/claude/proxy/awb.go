@@ -414,7 +414,7 @@ type awbFilterParams struct {
 	// --help: boa's enricher hands out single-letter shorthands in field order,
 	// taking a name's first letter whenever it is still free, so --assignee
 	// placed above --ask-human would silently take -a away from it.
-	Statuses      []string `long:"status" optional:"true" help:"Select this status: open, in_progress or closed. Repeat for several; a value is also split on commas."`
+	Statuses      []string `long:"status" optional:"true" help:"Select this status: backlog, open, in_progress or closed. Repeat for several; a value is also split on commas."`
 	IncludeClosed bool     `long:"include-closed" optional:"true" help:"Widen whatever status set is in force to include closed issues."`
 	Types         []string `long:"type" optional:"true" help:"Select this type: epic, feature, bug, task or chore. Repeat for several."`
 	Priorities    []int    `long:"priority" optional:"true" help:"Select this priority exactly, 0 (highest) to 4 (lowest). Repeat for several."`
@@ -460,7 +460,7 @@ func awbSortAlternatives(relevance bool) []string {
 }
 
 var (
-	awbStatusAlternatives = []string{"open", "in_progress", "closed"}
+	awbStatusAlternatives = []string{"backlog", "open", "in_progress", "closed"}
 	awbTypeAlternatives   = []string{"epic", "feature", "bug", "task", "chore"}
 )
 
@@ -543,7 +543,7 @@ type awbSearchParams struct {
 	JSON     bool     `long:"json" optional:"true" help:"Print the stable JSON representation. This is the DEFAULT; the flag exists so an awb command line copies over unchanged."`
 	Compact  bool     `long:"compact" optional:"true" help:"Print awb's one terse line per issue instead. Cheapest output there is, and the one to prefer when you only need to see what is there."`
 
-	Statuses      []string `long:"status" optional:"true" help:"Select this status: open, in_progress or closed. Repeat for several; a value is also split on commas."`
+	Statuses      []string `long:"status" optional:"true" help:"Select this status: backlog, open, in_progress or closed. Repeat for several; a value is also split on commas."`
 	IncludeClosed bool     `long:"include-closed" optional:"true" help:"Widen whatever status set is in force to include closed issues."`
 	Types         []string `long:"type" optional:"true" help:"Select this type: epic, feature, bug, task or chore. Repeat for several."`
 	Priorities    []int    `long:"priority" optional:"true" help:"Select this priority exactly, 0 (highest) to 4 (lowest). Repeat for several."`
@@ -754,8 +754,8 @@ func awbUpdateCmd() *cobra.Command {
 		Use:   "update",
 		Short: "Change an issue's fields",
 		Long: "Change the title, description, implementation links, type or priority. Whichever you omit is left alone.\n\n" +
-			"update cannot change the status or the assignee: claim, release, close and reopen are the " +
-			"only transitions of either, which keeps in_progress and an assignee from drifting apart " +
+			"update cannot change the status or the assignee: claim, release, close, make-ready and " +
+			"reopen are the transitions of either, which keeps in_progress and an assignee from drifting apart " +
 			"and keeps a claim from being taken silently. It cannot change the labels either — that is " +
 			"`label add` and `label rm`, one at a time, so a whole-set replace cannot discard a " +
 			"concurrent edit.\n\n" +
