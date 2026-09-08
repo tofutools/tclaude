@@ -218,13 +218,17 @@ func (s *Service) startTeamDeploymentProcess(ctx context.Context, deployment mod
 	if err != nil {
 		return err
 	}
+	budget, err := teamWaveRunBudget(team)
+	if err != nil {
+		return err
+	}
 	graph := teamDeploymentGraph(team, deployment)
 	scope := model.WorkScope{GroupID: deployment.GroupID, DeploymentID: deployment.ID}
 	if principal.Kind == model.PrincipalAutomation {
 		scope.RuleID = ruleID
 		scope.OccurrenceID = model.OccurrenceID(principal.AutomationRun)
 	}
-	_, err = s.StartProcess(ctx, StartProcessRequest{Context: RequestContext{Principal: principal, RequestID: model.RequestID(deterministicOrchestrationID("request_", string(deployment.ID)))}, ID: deployment.WorkRunID, Start: model.WorkStart{InlineGraph: &graph, Scope: scope, Deadline: s.now().UTC().Add(admittedEffectTimeout)}})
+	_, err = s.StartProcess(ctx, StartProcessRequest{Context: RequestContext{Principal: principal, RequestID: model.RequestID(deterministicOrchestrationID("request_", string(deployment.ID)))}, ID: deployment.WorkRunID, Start: model.WorkStart{InlineGraph: &graph, Scope: scope, Deadline: s.now().UTC().Add(budget)}})
 	return err
 }
 
@@ -440,6 +444,19 @@ func teamDeploymentGraph(team model.TeamDefinition, deployment model.TeamDeploym
 			edges = append(edges, model.WorkEdge{From: leaf, To: finalJoin})
 		}
 		edges = append(edges, model.WorkEdge{From: finalJoin, To: endID})
+	}
+	for _, wave := range team.Waves {
+		if !wave.WaitForIdle || !dependent[wave.ID] {
+			continue
+		}
+		gateID := teamWaveGateID(wave.ID)
+		for i := range edges {
+			if edges[i].From == completion[wave.ID] {
+				edges[i].From = gateID
+			}
+		}
+		nodes = append(nodes, model.WorkNode{ID: gateID, Kind: model.WorkNodeWait, Wait: &model.WaitPolicy{Duration: teamWaveMaxWait(wave)}})
+		edges = append(edges, model.WorkEdge{From: completion[wave.ID], To: gateID})
 	}
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
 	return model.WorkGraph{CompilerVersion: orchestrationCompilerVersion, EntryNodeID: entryID, Nodes: nodes, Edges: edges}

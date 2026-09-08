@@ -120,6 +120,8 @@ type TeamMemberSpec struct {
 }
 
 type TeamWave struct {
+	WaitForIdle    bool  `json:",omitempty"`
+	MaxWaitSeconds int64 `json:",omitempty"`
 	ID             string
 	MemberKeys     []string
 	DependsOn      []string
