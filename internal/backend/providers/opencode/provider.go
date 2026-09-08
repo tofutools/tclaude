@@ -41,20 +41,24 @@ const (
 )
 
 type Config struct {
-	Executable  string
-	PrivateRoot string
-	AgentSocket string
-	Environment []string
-	HTTPClient  *http.Client
+	HostSandbox          *host.SandboxLaunchPreparer
+	AgentSocketDirectory string
+	Executable           string
+	PrivateRoot          string
+	AgentSocket          string
+	Environment          []string
+	HTTPClient           *http.Client
 }
 
 type Provider struct {
-	executable  string
-	privateRoot string
-	environment []string
-	httpClient  *http.Client
-	credentials host.ActionCredentialHost
-	agentSocket string
+	hostSandbox          *host.SandboxLaunchPreparer
+	agentSocketDirectory string
+	executable           string
+	privateRoot          string
+	environment          []string
+	httpClient           *http.Client
+	credentials          host.ActionCredentialHost
+	agentSocket          string
 }
 
 func New(config Config) (*Provider, error) {
@@ -77,7 +81,7 @@ func New(config Config) (*Provider, error) {
 		executable: resolved, privateRoot: filepath.Clean(config.PrivateRoot),
 		environment: append([]string(nil), config.Environment...), httpClient: client,
 		credentials: host.ActionCredentialHost{PrivateRoot: filepath.Join(config.PrivateRoot, "action-credentials")},
-		agentSocket: config.AgentSocket,
+		agentSocket: config.AgentSocket, hostSandbox: config.HostSandbox, agentSocketDirectory: config.AgentSocketDirectory,
 	}, nil
 }
 
@@ -110,6 +114,8 @@ type evidence struct {
 }
 
 type prepared struct {
+	command       host.ProcessSpec
+	artifact      *host.SandboxChildArtifact
 	provider      *Provider
 	request       ports.PreparationRequest
 	listener      net.Listener
@@ -134,6 +140,13 @@ type sessionRecord struct {
 }
 
 func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest) (ports.PreparedAttempt, error) {
+	if request.Spec.HostSandbox == nil && request.HostSandboxPolicy != nil {
+		return nil, fmt.Errorf("OpenCode host sandbox materialization has no selected policy")
+	}
+	if request.Spec.HostSandbox != nil && (p.hostSandbox == nil || request.HostSandboxPolicy == nil) {
+		return nil, fmt.Errorf("OpenCode host sandbox preparation is unavailable")
+	}
+	request.Spec.HostSandbox = model.CloneSandboxSelection(request.Spec.HostSandbox)
 	if err := request.Spec.Environment.Validate(); err != nil {
 		return nil, err
 	}
@@ -243,7 +256,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		}
 		return nil, err
 	}
-	return &prepared{
+	prepared := &prepared{
 		provider: p, request: request, listener: listener, endpoint: endpoint,
 		password: password, passwordFile: passwordFile, stateRoot: stateRoot, attemptMark: attemptMark,
 		removeOnAbort: removeOnAbort, access: access,
@@ -269,7 +282,12 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 			},
 			Evidence: initial, AccessDelivery: access, InitialInput: initialInput,
 		},
-	}, nil
+	}
+	if err := prepared.prepareSandbox(ctx); err != nil {
+		_ = prepared.Abort(context.Background())
+		return nil, err
+	}
+	return prepared, nil
 }
 
 func (p *Provider) prepareHistory(ctx context.Context, request ports.PreparationRequest) (stateRoot string, removeOnAbort bool, nativeID string, err error) {
@@ -326,6 +344,16 @@ func (p *Provider) prepareHistory(ctx context.Context, request ports.Preparation
 			return "", false, "", err
 		}
 		stateRoot = filepath.Join(p.privateRoot, "execution-"+uuid.NewString())
+		if request.Spec.HostSandbox != nil {
+			if err := os.Mkdir(stateRoot, 0700); err != nil {
+				return "", false, "", err
+			}
+			if err := host.WriteProtectedFile(filepath.Join(stateRoot, ".tclaude-fork-input.json"), raw); err != nil {
+				_ = os.RemoveAll(stateRoot)
+				return "", false, "", err
+			}
+			return stateRoot, true, request.History.Native.Reference, nil
+		}
 		if err := importOpenCodeHistory(ctx, p, stateRoot, request.Spec.WorkingDirectory, raw, history, *request.History); err != nil {
 			return "", false, "", err
 		}
@@ -348,6 +376,9 @@ func (p *prepared) Abort(context.Context) error {
 	}
 	p.aborted = true
 	err := p.listener.Close()
+	if p.artifact != nil {
+		err = errors.Join(err, os.RemoveAll(filepath.Dir(p.artifact.Path)))
+	}
 	err = errors.Join(err, removeProtectedFile(p.passwordFile))
 	if p.removeOnAbort {
 		err = errors.Join(err, os.RemoveAll(p.stateRoot))
@@ -380,27 +411,21 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 			return ports.ReleaseResult{}, err
 		}
 	}
+	if p.artifact != nil {
+		if err := host.VerifySandboxChild(ctx, *p.artifact); err != nil {
+			return ports.ReleaseResult{}, err
+		}
+	}
 	if err := permit.Consume(ctx); err != nil {
 		return ports.ReleaseResult{}, fmt.Errorf("consume release permit: %w", err)
 	}
 	// OpenCode cannot inherit a listener. Close the reservation at the exact
 	// pre-start boundary; any later failure is reconciled as a retained attempt.
-	port := p.listener.Addr().(*net.TCPAddr).Port
 	if err := p.listener.Close(); err != nil {
 		return ports.ReleaseResult{}, fmt.Errorf("release endpoint reservation: %w", err)
 	}
 	p.released = true
-	process, err := host.StartProcess(host.ProcessSpec{
-		Executable: p.provider.executable,
-		Args:       []string{"serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port), "--pure"},
-		Directory:  p.request.Spec.WorkingDirectory,
-		Env: append(append(p.provider.runtimeEnvironment(p.stateRoot), p.request.Spec.Environment.Entries()...),
-			"OPENCODE_SERVER_USERNAME="+serverUsername,
-			"OPENCODE_SERVER_PASSWORD="+p.password,
-			attemptMarkerKey+"="+p.attemptMark,
-			"TCLAUDE_BACKEND_CREDENTIAL_FILE="+accessResource(p.access),
-			"TCLAUDE_BACKEND_SOCKET="+agentSocket(p.access, p.provider.agentSocket)),
-	})
+	process, err := host.StartProcess(p.command)
 	if err != nil {
 		_ = removeProtectedFile(p.passwordFile)
 		if p.removeOnAbort {
@@ -412,6 +437,7 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 		return ports.ReleaseResult{}, fmt.Errorf("start OpenCode server: %w", err)
 	}
 	runtime := &Runtime{
+		artifact: p.artifact, policyHash: p.description.HostSandboxPolicyHash,
 		provider: p.provider, executionID: p.request.Spec.ExecutionID,
 		attempt: p.request.Spec.Attempt, observations: p.request.Observations,
 		process: process, endpoint: p.endpoint, password: p.password,
@@ -795,17 +821,29 @@ func (r *Runtime) Attach(ctx context.Context, request ports.AttachmentRequest) (
 	if err := r.health(ctx); err != nil || r.nativeID == "" {
 		return ports.AttachmentResult{Disposition: ports.EffectRefused}, err
 	}
-	cmd := exec.CommandContext(ctx, r.provider.executable, "attach", r.endpoint,
+	endpoint := r.endpoint
+	var closeRelay func()
+	if r.artifact != nil {
+		var err error
+		endpoint, closeRelay, err = r.sandboxAttachmentEndpoint(ctx)
+		if err != nil {
+			return ports.AttachmentResult{Disposition: ports.EffectRefused}, err
+		}
+	}
+	cmd := exec.CommandContext(ctx, r.provider.executable, "attach", endpoint,
 		"--dir", r.cwd, "--session", r.nativeID)
 	cmd.Env = host.MergeEnvironment(os.Environ(), append(r.provider.runtimeEnvironment(r.stateRoot),
 		"OPENCODE_SERVER_USERNAME="+serverUsername,
 		"OPENCODE_SERVER_PASSWORD="+r.password))
 	file, err := pty.Start(cmd)
 	if err != nil {
+		if closeRelay != nil {
+			closeRelay()
+		}
 		return ports.AttachmentResult{Disposition: ports.EffectRefused}, err
 	}
 	r.attachmentActive.Store(true)
-	attachment := &terminalAttachment{file: file, cmd: cmd, active: &r.attachmentActive}
+	attachment := &terminalAttachment{file: file, cmd: cmd, active: &r.attachmentActive, closeRelay: closeRelay}
 	evidence, evidenceErr := r.providerEvidenceLocked()
 	if evidenceErr != nil {
 		_ = attachment.Close()
@@ -1201,10 +1239,11 @@ func permissionHasSuffix(current, expected []permissionRule) bool {
 }
 
 type terminalAttachment struct {
-	file   *os.File
-	cmd    *exec.Cmd
-	active *atomic.Bool
-	once   sync.Once
+	closeRelay func()
+	file       *os.File
+	cmd        *exec.Cmd
+	active     *atomic.Bool
+	once       sync.Once
 }
 
 var _ ports.ResizableAttachment = (*terminalAttachment)(nil)
@@ -1227,6 +1266,9 @@ func (a *terminalAttachment) Resize(ctx context.Context, size ports.TerminalSize
 func (a *terminalAttachment) Close() error {
 	var err error
 	a.once.Do(func() {
+		if a.closeRelay != nil {
+			a.closeRelay()
+		}
 		err = a.file.Close()
 		if a.cmd.Process != nil {
 			_ = a.cmd.Process.Kill()

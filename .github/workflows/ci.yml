@@ -94,13 +94,13 @@ jobs:
             sudo env TMPDIR="$native_dir" TCLAUDE_SANDBOX_BOOTSTRAP="$native_dir/tclaude" "$native_dir/sandbox-provider.test" -test.run '^TestProviderHostSandbox' -test.timeout 1m -test.v
             sudo env TMPDIR="$native_dir" TCLAUDE_SANDBOX_BOOTSTRAP="$native_dir/tclaude" "$native_dir/sandbox-codex.test" -test.run '^TestProviderHostSandbox' -test.timeout 1m -test.v
             sudo env TMPDIR="$native_dir" TCLAUDE_SANDBOX_BOOTSTRAP="$native_dir/tclaude" "$native_dir/sandbox-claude.test" -test.run '^TestProviderHostSandbox' -test.timeout 1m -test.v
-            sudo env TMPDIR="$native_dir" TCLAUDE_SANDBOX_BOOTSTRAP="$native_dir/tclaude" "$native_dir/sandbox-opencode.test" -test.run '^TestServerRelay' -test.timeout 1m -test.v
+            sudo env TMPDIR="$native_dir" TCLAUDE_SANDBOX_BOOTSTRAP="$native_dir/tclaude" "$native_dir/sandbox-opencode.test" -test.run '^(TestServerRelay|TestProviderHostSandbox)' -test.timeout 1m -test.v
           else
             TCLAUDE_REQUIRE_SANDBOX_NATIVE=1 "$RUNNER_TEMP/sandbox-native.test" -test.run '^(TestSandboxDescriptor|TestUnixControl)' -test.timeout 1m -test.v
             TCLAUDE_SANDBOX_BOOTSTRAP="$RUNNER_TEMP/tclaude" "$RUNNER_TEMP/sandbox-provider.test" -test.run '^TestProviderHostSandbox' -test.timeout 1m -test.v
             TCLAUDE_SANDBOX_BOOTSTRAP="$RUNNER_TEMP/tclaude" "$RUNNER_TEMP/sandbox-codex.test" -test.run '^TestProviderHostSandbox' -test.timeout 1m -test.v
             TCLAUDE_SANDBOX_BOOTSTRAP="$RUNNER_TEMP/tclaude" "$RUNNER_TEMP/sandbox-claude.test" -test.run '^TestProviderHostSandbox' -test.timeout 1m -test.v
-            TCLAUDE_SANDBOX_BOOTSTRAP="$RUNNER_TEMP/tclaude" "$RUNNER_TEMP/sandbox-opencode.test" -test.run '^TestServerRelay' -test.timeout 1m -test.v
+            TCLAUDE_SANDBOX_BOOTSTRAP="$RUNNER_TEMP/tclaude" "$RUNNER_TEMP/sandbox-opencode.test" -test.run '^(TestServerRelay|TestProviderHostSandbox)' -test.timeout 1m -test.v
           fi
       - name: Diagnose native sandbox denial on macOS
         if: ${{ failure() && runner.os == 'macOS' }}

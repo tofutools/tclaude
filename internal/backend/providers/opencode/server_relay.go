@@ -138,6 +138,10 @@ func relayServerStream(ctx context.Context, downstream net.Conn, target string, 
 		}
 		return
 	}
+	relayConnectedStream(ctx, downstream, upstream)
+}
+
+func relayConnectedStream(ctx context.Context, downstream, upstream net.Conn) {
 	stop := context.AfterFunc(ctx, func() {
 		_ = downstream.Close()
 		_ = upstream.Close()
