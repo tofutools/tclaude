@@ -74,6 +74,7 @@ jobs:
         # weaken an operator host's user-namespace or AppArmor configuration.
         run: |
           go test -race -c ./internal/backend/host -o "$RUNNER_TEMP/sandbox-native.test"
+          go test -race -c ./internal/backend/providers/copilot -o "$RUNNER_TEMP/sandbox-provider.test"
           if [[ "$RUNNER_OS" == Linux ]]; then
             # Inside the new user namespace, root cannot use host capabilities
             # to traverse runner-owned private directories. Own the fixture as
@@ -81,9 +82,13 @@ jobs:
             native_dir=$(sudo mktemp -d /tmp/tclaude-native.XXXXXX)
             trap 'sudo rm -rf "$native_dir"' EXIT
             sudo install -m 0700 "$RUNNER_TEMP/sandbox-native.test" "$native_dir/sandbox-native.test"
+            sudo install -m 0700 "$RUNNER_TEMP/sandbox-provider.test" "$native_dir/sandbox-provider.test"
+            sudo install -m 0700 "$RUNNER_TEMP/tclaude" "$native_dir/tclaude"
             sudo env TMPDIR="$native_dir" TCLAUDE_REQUIRE_SANDBOX_NATIVE=1 "$native_dir/sandbox-native.test" -test.run '^TestSandboxDescriptor' -test.timeout 1m -test.v
+            sudo env TMPDIR="$native_dir" TCLAUDE_SANDBOX_BOOTSTRAP="$native_dir/tclaude" "$native_dir/sandbox-provider.test" -test.run '^TestProviderHostSandbox' -test.timeout 1m -test.v
           else
             TCLAUDE_REQUIRE_SANDBOX_NATIVE=1 "$RUNNER_TEMP/sandbox-native.test" -test.run '^TestSandboxDescriptor' -test.timeout 1m -test.v
+            TCLAUDE_SANDBOX_BOOTSTRAP="$RUNNER_TEMP/tclaude" "$RUNNER_TEMP/sandbox-provider.test" -test.run '^TestProviderHostSandbox' -test.timeout 1m -test.v
           fi
       - name: Diagnose native sandbox denial on macOS
         if: ${{ failure() && runner.os == 'macOS' }}

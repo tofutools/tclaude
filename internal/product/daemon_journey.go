@@ -55,28 +55,9 @@ func journeyServices(state string, harnesses, configured []string, workspaces bo
 		if !workspaces {
 			return result, fmt.Errorf("shell requires --workspaces")
 		}
-		var sandbox *host.SandboxLaunchPreparer
-		wrapperName := "bwrap"
-		if runtime.GOOS == "darwin" {
-			wrapperName = "/usr/bin/sandbox-exec"
-		}
-		if wrapper, lookupErr := exec.LookPath(wrapperName); lookupErr == nil {
-			inspector, err := host.NewSandboxPathInspector([]string{state})
-			if err != nil {
-				return result, err
-			}
-			artifacts := filepath.Join(state, "sandbox-launches")
-			if err := os.MkdirAll(artifacts, 0700); err != nil {
-				return result, err
-			}
-			bootstrap, err := os.Executable()
-			if err != nil {
-				return result, err
-			}
-			sandbox, err = host.NewSandboxLaunchPreparer(host.SandboxLaunchConfig{Inspector: inspector, Wrapper: wrapper, Bootstrap: bootstrap, Artifacts: artifacts})
-			if err != nil {
-				return result, err
-			}
+		sandbox, err := configuredHostSandbox(state)
+		if err != nil {
+			return result, err
 		}
 		runtime, err := host.NewShellHost(host.ShellConfig{
 			HostSandbox: sandbox,
@@ -89,4 +70,31 @@ func journeyServices(state string, harnesses, configured []string, workspaces bo
 		result.Shells = runtime
 	}
 	return result, nil
+}
+
+// Shells and harness providers share the same protected state and immutable
+// artifact preparation. Missing native tooling is reported by selected launch
+// preparation, while existing launches without a host policy stay available.
+func configuredHostSandbox(state string) (*host.SandboxLaunchPreparer, error) {
+	wrapperName := "bwrap"
+	if runtime.GOOS == "darwin" {
+		wrapperName = "/usr/bin/sandbox-exec"
+	}
+	wrapper, err := exec.LookPath(wrapperName)
+	if err != nil {
+		return nil, nil
+	}
+	inspector, err := host.NewSandboxPathInspector([]string{state})
+	if err != nil {
+		return nil, err
+	}
+	artifacts := filepath.Join(state, "sandbox-launches")
+	if err := os.MkdirAll(artifacts, 0700); err != nil {
+		return nil, err
+	}
+	bootstrap, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	return host.NewSandboxLaunchPreparer(host.SandboxLaunchConfig{Inspector: inspector, Wrapper: wrapper, Bootstrap: bootstrap, Artifacts: artifacts})
 }

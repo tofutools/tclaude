@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/ports"
 	"github.com/tofutools/tclaude/internal/backend/sandboxpolicy"
 )
 
@@ -76,4 +77,28 @@ func (s *Service) verifyLaunchSandbox(ctx context.Context, selected *model.Sandb
 		return fail(ErrConflict, "resolved sandbox policy changed; review the selection")
 	}
 	return nil
+}
+
+func (s *Service) prepareProviderSandbox(ctx context.Context, provider ports.Provider, selected *model.SandboxSelection) (*sandboxpolicy.PolicyMaterialization, error) {
+	if selected == nil {
+		return nil, nil
+	}
+	if !provider.Capabilities().HostSandbox {
+		return nil, fail(ErrUnsupported, "provider host sandbox preparation is not configured")
+	}
+	if err := selected.Validate(); err != nil {
+		return nil, fail(ErrInvalid, "%v", err)
+	}
+	materialized, err := s.materializeLaunchSandbox(ctx, selected.Scopes)
+	if err != nil {
+		return nil, err
+	}
+	actual, err := materialized.LaunchSelection()
+	if err != nil {
+		return nil, fail(ErrInvalid, "%v", err)
+	}
+	if !selected.Equal(actual) {
+		return nil, fail(ErrConflict, "resolved sandbox policy changed; review the selection")
+	}
+	return &materialized, nil
 }

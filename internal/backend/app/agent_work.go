@@ -46,13 +46,15 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 		desired.WorkingDirectory = workspace.Observation.ActualPath
 		additionalAuthority = append(additionalAuthority, model.AuthorityRequest{Principal: record.Run.Requester, Action: model.ActionInspectWorkspace, Resource: model.ResourceSelector{Kind: model.ResourceWorkspace, WorkspaceID: workspace.ID}})
 	}
-	if desired.HostSandbox != nil {
-		return record, fail(ErrUnsupported, "provider host sandbox preparation is not configured")
-	}
 	provider, ok := s.providers.Provider(desired.Harness)
 	if !ok {
 		return s.recordGraphAttemptUnavailable(ctx, record, attempt, fail(ErrUnavailable, "harness %q has no provider", desired.Harness))
 	}
+	hostSandboxPolicy, err := s.prepareProviderSandbox(ctx, provider, desired.HostSandbox)
+	if err != nil {
+		return record, err
+	}
+
 	if !provider.Capabilities().PreparedInitialInput {
 		return record, fail(ErrUnsupported, "provider %q cannot prepare required first work", provider.Name())
 	}
@@ -103,7 +105,7 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	input := &ports.PreparedInitialInput{Body: performer.Brief, Correlation: string(issuanceID), RequiredBeforeFirstWork: true}
 	workflowCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancel()
-	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: ports.StartFresh, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, 1, provider.Name()), NativeGuidance: s.boundNativeGuidance(execution), AgentAPIEndpoint: s.agentAPIEndpoint, InitialInput: input, CallbackIngress: s.callbackIngress})
+	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{HostSandboxPolicy: hostSandboxPolicy, Spec: spec, Intent: ports.StartFresh, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, 1, provider.Name()), NativeGuidance: s.boundNativeGuidance(execution), AgentAPIEndpoint: s.agentAPIEndpoint, InitialInput: input, CallbackIngress: s.callbackIngress})
 	if err != nil {
 		return s.failAgentOperation(ctx, admitted, admittedAttempt, "prepare_failed", err)
 	}

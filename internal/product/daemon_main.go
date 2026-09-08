@@ -89,7 +89,11 @@ func registeredProviders(state string, harnesses []string) (ports.ProviderRegist
 			}
 			entries = append(entries, p)
 		case "copilot":
-			p, err := copilot.New(copilot.Config{PrivateRoot: filepath.Join(state, "copilot"), AgentSocket: filepath.Join(state, "api.sock")})
+			sandbox, err := configuredHostSandbox(state)
+			if err != nil {
+				return nil, err
+			}
+			p, err := copilot.New(copilot.Config{HostSandbox: sandbox, PrivateRoot: filepath.Join(state, "copilot"), AgentSocket: filepath.Join(state, "api.sock")})
 			if err != nil {
 				return nil, err
 			}
