@@ -118,7 +118,7 @@ func compileTaskStages(authored model.WorkGraph) (model.WorkGraph, error) {
 				return model.WorkGraph{}, err
 			}
 		}
-		graph.Nodes = append(graph.Nodes, model.WorkNode{ID: node.ID, Kind: model.WorkNodeTaskComplete, Name: node.Name, Description: node.Description, Doc: node.Doc})
+		graph.Nodes = append(graph.Nodes, model.WorkNode{ID: node.ID, RoutingMode: node.RoutingMode, Kind: model.WorkNodeTaskComplete, Name: node.Name, Description: node.Description, Doc: node.Doc})
 		chain = append(chain, node.ID)
 		group.Entry = chain[0]
 		entries[node.ID] = group.Entry

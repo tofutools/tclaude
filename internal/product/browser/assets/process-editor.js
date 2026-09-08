@@ -416,6 +416,7 @@ class ProcessEditor {
     const graph=this.model.value.Process.Graph;
     this.form('Process overview', [{name:'description',label:'Process description',multiline:true,value:graph.Description||''},{name:'doc',label:'Process documentation',multiline:true,value:graph.Doc||''},{name:'parameter_syntax',label:'Expand {{ params.key }} in performer input',type:'checkbox',value:this.model.value.Process.ParameterSyntax==='mustache-v1'}], f=>this.change(d=>{for(const [key,value] of [['Description',f.description],['Doc',f.doc]]){if(value)d.Process.Graph[key]=value;else delete d.Process.Graph[key];}if(f.parameter_syntax)d.Process.ParameterSyntax='mustache-v1';else delete d.Process.ParameterSyntax;}));
     this.inspector.append(element('p','Expansion uses exact parameter keys in agent briefs, human/decision questions and individual program arguments. Configuration, routes, documentation and JSON input stay literal.'));
+    if(graph.Nodes.some(n=>n.RoutingMode==='single-route-v1'))this.inspector.append(element('p','Imported routing: ordinary nodes follow their sole route regardless of its label. Multiple ordinary routes are retained but cannot start. Decision labels, including cancel and waive, select routes without control effects.'));
   }
   parameters() {
     if (!this.discardUnapplied()) return;
