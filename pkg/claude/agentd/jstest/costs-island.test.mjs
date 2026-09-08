@@ -117,6 +117,11 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /recorded/);
   await harness.act(() => harness.fireEvent(accumulatedHits[1], 'pointerdown', { clientX: 1000 }));
   assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /projection/);
+  const accumulatedTip = mounted.container.querySelector('.cost-accumulated-tip-panel');
+  assert.ok(accumulatedTip.querySelectorAll('.cost-accumulated-tip-sw').length >= 2,
+    'accumulated breakdown text includes a color key for its series');
+  assert.ok(accumulatedTip.querySelector('.cost-accumulated-tip-row[class*="cost-series-"]'),
+    'tooltip rows carry the exact same series class as chart areas and bars');
   const accumulatedSVG = mounted.container.querySelector('.cost-accumulated-svg');
   assert.match(accumulatedSVG.getAttribute('aria-label'), /Recorded through .* Projected through/,
     'accessible summary distinguishes observed cost from the forecast');

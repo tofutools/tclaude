@@ -504,13 +504,11 @@ export function buildCostChart(data, projection, agents, selected, providers, se
   const filteredAgents = (agents || []).filter((agent) => !selectedModels || selectedModels.has(costModelLabel(agent)));
   const breakdown = dailyBreakdown(filteredAgents, selected, options);
   const creditBreakdown = dailyCreditsBreakdown(filteredAgents, selected, options);
-  const models = costModels(filteredAgents);
+  const seriesKeys = [...new Set(Object.values(breakdown).flatMap((parts) =>
+    Object.values(parts).map((part) => `${part.provider}\u0000${part.model}`)))].sort();
   const className = (part) => {
-    const colorKey = options.stackByProvider !== false ? part.provider : options.stackByModel ? part.model : '';
-    const palette = options.stackByProvider !== false ? providers : models;
-    const modelShade = options.stackByProvider !== false && options.stackByModel
-      ? ` cost-seg-m${Math.max(0, models.indexOf(part.model)) % 4}` : '';
-    return `${providerSegmentClass(colorKey, palette)}${modelShade}${part.kind === 'what_if' ? ' cost-seg-whatif' : ''}`;
+    const index = Math.max(0, seriesKeys.indexOf(`${part.provider}\u0000${part.model}`));
+    return `cost-series-${index % 8}${part.kind === 'what_if' ? ' cost-seg-whatif' : ''}`;
   };
   const recordedTotals = new Map();
   const recordedMeta = new Map();

@@ -3640,18 +3640,8 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-accumulated-grid line { stroke: #1c2430; stroke-width: 1; }
 .cost-accumulated-grid text, .cost-accumulated-day { fill: #8b949e; font-size: 9px; }
 .cost-accumulated-area { fill: rgba(110, 156, 125, .12); }
-.cost-accumulated-stack { stroke: rgba(13, 17, 23, .7); stroke-width: .7; fill-opacity: .42; }
-.cost-accumulated-stack.projected { fill-opacity: .18; stroke: #d29922; stroke-dasharray: 4 4; }
-.cost-accumulated-stack.cost-seg-h0 { fill: #6e9c7d; }
-.cost-accumulated-stack.cost-seg-h1 { fill: #6a8fd0; }
-.cost-accumulated-stack.cost-seg-h2 { fill: #b58cd6; }
-.cost-accumulated-stack.cost-seg-h3 { fill: #d0a860; }
-.cost-accumulated-stack.cost-seg-h4 { fill: #5bb0a5; }
-.cost-accumulated-stack.cost-seg-h5 { fill: #cf8a8a; }
-.cost-accumulated-stack.cost-seg-m0,
-.cost-accumulated-stack.cost-seg-m1,
-.cost-accumulated-stack.cost-seg-m2,
-.cost-accumulated-stack.cost-seg-m3 { fill: var(--cost-model-color); }
+.cost-accumulated-stack { fill: var(--cost-series-color); stroke: var(--cost-series-color); stroke-width: 1.4; fill-opacity: .58; }
+.cost-accumulated-stack.projected { fill-opacity: .28; stroke-dasharray: 4 4; }
 .cost-accumulated-stack.cost-seg-whatif { fill-opacity: .24; stroke-dasharray: 2 2; }
 .cost-accumulated-line { fill: none; stroke: #6e9c7d; stroke-width: 2; }
 .cost-accumulated-line.projected { stroke: #d29922; stroke-dasharray: 7 5; }
@@ -3670,14 +3660,15 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 }
 .cost-accumulated-tip-panel.projected { border-color: #9c7823; }
 .cost-accumulated-tip-panel > strong { display: block; margin-bottom: 5px; }
-.cost-accumulated-tip-row, .cost-accumulated-tip-group, .cost-accumulated-tip-total {
-  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px;
+.cost-accumulated-tip-row, .cost-accumulated-tip-group-head, .cost-accumulated-tip-total {
+  display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 4px 7px;
 }
 .cost-accumulated-tip-row > :last-child,
-.cost-accumulated-tip-group > :nth-child(even),
+.cost-accumulated-tip-group-head > :last-child,
 .cost-accumulated-tip-total > :last-child { text-align: right; font-variant-numeric: tabular-nums; }
 .cost-accumulated-tip-group { padding-top: 3px; }
-.cost-accumulated-tip-group .child { padding-left: 12px; color: #9aa4b0; }
+.cost-accumulated-tip-row.child { padding-left: 10px; }
+.cost-accumulated-tip-sw { display: inline-block; width: 9px; height: 9px; margin-top: 2px; border-radius: 2px; }
 .cost-accumulated-tip-total { margin-top: 5px; padding-top: 5px; border-top: 1px solid #3a4655; }
 .cost-accumulated-tip-panel small { display: block; margin-top: 5px; color: #8b949e; }
 #costs-summary {
@@ -3780,18 +3771,25 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-seg-h3 { --cost-seg-color: #d0a860; background: var(--cost-seg-color); }
 .cost-seg-h4 { --cost-seg-color: #5bb0a5; background: var(--cost-seg-color); }
 .cost-seg-h5 { --cost-seg-color: #cf8a8a; background: var(--cost-seg-color); }
-/* Provider + Model keeps the provider's hue family but gives each model a
-   visibly different shade, matching the design mock. Model-only mode omits
-   mN and therefore continues to use the fully distinct hN palette above. */
-.cost-seg-m0 { --cost-model-color: color-mix(in srgb, var(--cost-seg-color), white 30%); }
-.cost-seg-m1 { --cost-model-color: var(--cost-seg-color); }
-.cost-seg-m2 { --cost-model-color: color-mix(in srgb, var(--cost-seg-color), #647fba 34%); }
-.cost-seg-m3 { --cost-model-color: color-mix(in srgb, var(--cost-seg-color), black 28%); }
-.cost-seg.cost-seg-m0, .cost-seg.cost-seg-m1,
-.cost-seg.cost-seg-m2, .cost-seg.cost-seg-m3,
-.cost-tip-row .cost-tip-sw.cost-seg-m0, .cost-tip-row .cost-tip-sw.cost-seg-m1,
-.cost-tip-row .cost-tip-sw.cost-seg-m2, .cost-tip-row .cost-tip-sw.cost-seg-m3 {
-  background-color: var(--cost-model-color);
+/* One categorical palette follows each rendered series through every surface:
+   daily bar, accumulated area + boundary, and hover swatch + label. A series
+   means provider, model, or provider/model pair according to the active mode. */
+.cost-series-0 { --cost-series-color: #58a6ff; }
+.cost-series-1 { --cost-series-color: #56d364; }
+.cost-series-2 { --cost-series-color: #bc8cff; }
+.cost-series-3 { --cost-series-color: #f0883e; }
+.cost-series-4 { --cost-series-color: #ff7b72; }
+.cost-series-5 { --cost-series-color: #39c5cf; }
+.cost-series-6 { --cost-series-color: #e3b341; }
+.cost-series-7 { --cost-series-color: #db61a2; }
+.cost-seg[class*="cost-series-"] { background-color: var(--cost-series-color); }
+.cost-tip-row[class*="cost-series-"] .cost-tip-sw,
+.cost-accumulated-tip-row[class*="cost-series-"] .cost-accumulated-tip-sw {
+  background-color: var(--cost-series-color);
+}
+.cost-tip-row[class*="cost-series-"] .cost-tip-name,
+.cost-accumulated-tip-row[class*="cost-series-"] > span:nth-child(2) {
+  color: var(--cost-series-color);
 }
 .cost-seg-whatif {
   background-image: repeating-linear-gradient(
@@ -16423,18 +16421,6 @@ body.wizard .cost-seg-h2 { --cost-seg-color: #aeb6c2; background: linear-gradien
 body.wizard .cost-seg-h3 { --cost-seg-color: #a97bd6; background: linear-gradient(180deg, #cf9bd6 0%, #a97bd6 46%, #7a5db0 100%); }
 body.wizard .cost-seg-h4 { --cost-seg-color: #4fb0a5; background: linear-gradient(180deg, #7fd6c8 0%, #4fb0a5 46%, #2f7f75 100%); }
 body.wizard .cost-seg-h5 { --cost-seg-color: #cf6f6f; background: linear-gradient(180deg, #e69a9a 0%, #cf6f6f 46%, #9c4141 100%); }
-body.wizard .cost-seg.cost-seg-m0,
-body.wizard .cost-seg.cost-seg-m1,
-body.wizard .cost-seg.cost-seg-m2,
-body.wizard .cost-seg.cost-seg-m3,
-body.wizard .cost-tip-row .cost-tip-sw.cost-seg-m0,
-body.wizard .cost-tip-row .cost-tip-sw.cost-seg-m1,
-body.wizard .cost-tip-row .cost-tip-sw.cost-seg-m2,
-body.wizard .cost-tip-row .cost-tip-sw.cost-seg-m3 {
-  background: linear-gradient(180deg,
-    color-mix(in srgb, var(--cost-model-color), white 20%),
-    color-mix(in srgb, var(--cost-model-color), black 18%));
-}
 body.wizard .cost-seg {
   box-shadow: 0 0 5px rgba(217, 180, 90, 0.3), inset 0 1px 0 rgba(255, 246, 214, 0.45);
 }

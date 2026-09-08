@@ -135,8 +135,13 @@ test('Cost chart breakdowns independently group providers and models, including 
   const nested = model.buildCostChart(payload, projection, agents, selected, providers, null,
     { stackByProvider: true, stackByModel: true });
   assert.equal(nested.days[0].segments.length, 3, 'provider + model keeps provider/model pairs distinct');
+  assert.equal(new Set(nested.days[0].segments.map((item) => item.className)).size, 3,
+    'every visible provider/model series receives a distinct categorical color class');
   assert.deepEqual(nested.days[1].segments.map((item) => item.cost), [12, 6, 2],
     'future segments preserve the recorded provider/model distribution');
+  assert.deepEqual(nested.days[1].segments.map((item) => item.className),
+    nested.days[0].segments.map((item) => item.className),
+    'recorded and projected segments keep identical series colors');
   assert.ok(nested.days[1].segments.every((item) => item.approximate));
 
   const accumulated = model.buildAccumulatedCostChart(nested);

@@ -22,8 +22,8 @@ function segmentName(segment, chart) {
 }
 
 function appendTooltipSegment(fragment, segment, chart, child = false) {
-  const row = element('div', `cost-tip-row${child ? ' child' : ''}`);
-  row.append(element('span', `cost-tip-sw ${segment.className}`));
+  const row = element('div', `cost-tip-row${child ? ' child' : ''} ${segment.className}`);
+  row.append(element('span', 'cost-tip-sw'));
   row.append(element('span', 'cost-tip-name', segmentName(segment, chart)));
   const amount = segment.kind === 'what_if' && segment.credits > 0
     ? `${fmtCredits(segment.credits)} — ${fmtUSD(segment.cost)} subscription value`
@@ -44,7 +44,9 @@ function tooltipRows(day, chart) {
     }
     for (const [provider, segments] of providers) {
       const header = element('div', 'cost-tip-group');
-      header.append(element('span', `cost-tip-sw ${segments[0].className}`),
+      const spacer = element('span', 'cost-tip-sw');
+      spacer.style.visibility = 'hidden';
+      header.append(spacer,
         element('strong', 'cost-tip-name', provider),
         element('strong', 'cost-tip-amt', `${day.projected ? '≈' : ''}${fmtUSD(segments.reduce((sum, item) => sum + item.cost, 0))}`));
       fragment.append(header);

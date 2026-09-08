@@ -41,15 +41,19 @@ function AccumulatedTip({ description, chart, left }) {
       ? [...new Set(rows.map((row) => row.provider))].map((provider) => {
         const children = rows.filter((row) => row.provider === provider);
         return html`<div class="cost-accumulated-tip-group" key=${provider}>
-          <b>${provider}</b><b>${projected ? '≈' : ''}${fmtExactUSD(children.reduce((sum, row) => sum + row.cost, 0))}</b>
-          ${children.map((row) => html`<span class="child" key=${row.key}>${breakdownLabel({ ...row, provider: '' }, chart)}</span>
-            <span>${projected ? '≈' : ''}${fmtExactUSD(row.cost)}</span>`)}
+          <div class="cost-accumulated-tip-group-head"><span></span><b>${provider}</b><b>${projected ? '≈' : ''}${fmtExactUSD(children.reduce((sum, row) => sum + row.cost, 0))}</b></div>
+          ${children.map((row) => html`<div class=${`cost-accumulated-tip-row child ${row.className}`} key=${row.key}>
+            <i class="cost-accumulated-tip-sw"></i>
+            <span>${breakdownLabel({ ...row, provider: '' }, chart)}</span>
+            <span>${projected ? '≈' : ''}${fmtExactUSD(row.cost)}</span>
+          </div>`)}
         </div>`;
       })
-      : rows.map((row) => html`<div class="cost-accumulated-tip-row" key=${row.key}>
+      : rows.map((row) => html`<div class=${`cost-accumulated-tip-row ${row.className}`} key=${row.key}>
+        <i class="cost-accumulated-tip-sw"></i>
         <span>${breakdownLabel(row, chart)}</span><span>${projected ? '≈' : ''}${fmtExactUSD(row.cost)}</span>
       </div>`)}
-    <div class="cost-accumulated-tip-total"><b>Accumulated total</b><b>${projected ? '≈' : ''}${fmtExactUSD(point.cost)}</b></div>
+    <div class="cost-accumulated-tip-total"><span></span><b>Accumulated total</b><b>${projected ? '≈' : ''}${fmtExactUSD(point.cost)}</b></div>
     <small>${projected ? `Daily projection ~${fmtExactUSD(point.dailyCost)} · split from recorded mix` : `Daily spend +${fmtExactUSD(point.dailyCost)}`}</small>
   </div>`;
 }
