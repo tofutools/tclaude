@@ -1221,7 +1221,14 @@ setTimeout(function(){
   if (model && !model.checked) model.click();
   setTimeout(function(){
     var target = document.querySelector('.cost-accumulated-hover-target');
-    if (target) target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: window.innerWidth * .58 }));
+    if (target) {
+      var rect = target.getBoundingClientRect();
+      target.dispatchEvent(new MouseEvent('mousemove', {
+        bubbles: true,
+        clientX: rect.left + rect.width * .58,
+        clientY: rect.top + rect.height * .55
+      }));
+    }
   }, 50);
 }, 50);`),
 			SettleMS: 500,

@@ -1,5 +1,5 @@
 import { h } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { fmtAxisUSD, fmtExactUSD } from './costs-model.js';
 
@@ -7,6 +7,8 @@ const html = htm.bind(h);
 const DEFAULT_W = 1000;
 const H = 190;
 const PAD = { left: 48, right: 16, top: 15, bottom: 28 };
+const TIP_WIDTH = 288;
+const TIP_PAD = 14;
 
 function stackParts(points) {
   const result = [];
@@ -37,10 +39,29 @@ function breakdownLabel(item, chart) {
   return parts.join(' · ');
 }
 
-function AccumulatedTip({ description, chart, left }) {
+function AccumulatedTip({ description, chart }) {
+  const panel = useRef(null);
+  const [position, setPosition] = useState(null);
   const { point, projected } = description;
   const rows = point.breakdown || [];
-  return html`<div class=${`cost-accumulated-tip-panel${projected ? ' projected' : ''}`} style=${`left:${left}px`}>
+  useLayoutEffect(() => {
+    const node = panel.current;
+    if (!node) return;
+    const rect = node.getBoundingClientRect();
+    const panelWidth = rect.width || TIP_WIDTH;
+    const panelHeight = rect.height || node.offsetHeight || 0;
+    const anchor = description.anchor;
+    let left = anchor.x + TIP_PAD;
+    let top = anchor.y + TIP_PAD;
+    if (left + panelWidth > window.innerWidth - 4) left = anchor.x - TIP_PAD - panelWidth;
+    if (top + panelHeight > window.innerHeight - 4) top = anchor.y - TIP_PAD - panelHeight;
+    const next = { left: Math.max(4, left), top: Math.max(4, top) };
+    setPosition((current) => current?.left === next.left && current?.top === next.top ? current : next);
+  }, [description]);
+  const style = position
+    ? `left:${position.left}px;top:${position.top}px`
+    : `left:${description.anchor.x}px;top:${description.anchor.y}px;visibility:hidden`;
+  return html`<div ref=${panel} class=${`cost-accumulated-tip-panel${projected ? ' projected' : ''}`} style=${style}>
     <strong>${point.day} · ${projected ? 'projection' : 'recorded'}</strong>
     ${chart.stackByProvider && chart.stackByModel
       ? [...new Set(rows.map((row) => row.provider))].map((provider) => {
@@ -94,8 +115,8 @@ export function CostsAccumulatedChart({ chart }) {
   const labelEvery = points.length > 62 ? 14 : points.length > 35 ? 7 : points.length > 14 ? 3 : 1;
   const lastRecorded = points.reduce((latest, point) => point.projected ? latest : point, points[0]);
   const lastPoint = points[points.length - 1];
-  const describePoint = (point, projected = point.projected) => ({
-    point, projected, x: x(point.index), y: y(point.cost),
+  const describePoint = (point, projected = point.projected, anchor = null) => ({
+    point, projected, x: x(point.index), y: y(point.cost), anchor,
   });
   const pointSummary = ({ point, projected }) => {
     const breakdown = (point.breakdown || []).map((item) =>
@@ -103,7 +124,16 @@ export function CostsAccumulatedChart({ chart }) {
     return `${point.day}, ${projected ? 'projection' : 'recorded'}, ${fmtExactUSD(point.cost)} accumulated, ${projected ? 'approximately ' : ''}${fmtExactUSD(point.dailyCost)} that day.${breakdown ? ` Breakdown: ${breakdown}.` : ''}`;
   };
   const inspectPoint = (description, announce = false) => {
-    setTooltip(description);
+    let anchored = description;
+    if (!description.anchor) {
+      const svg = host.current?.querySelector('.cost-accumulated-svg');
+      const rect = svg?.getBoundingClientRect();
+      anchored = { ...description, anchor: {
+        x: (rect?.left || 0) + description.x * (rect?.width || width) / width,
+        y: (rect?.top || 0) + description.y * (rect?.height || H) / H,
+      } };
+    }
+    setTooltip(anchored);
     if (announce) setAnnouncement(pointSummary(description));
   };
   const showTooltip = (event, announce = false) => {
@@ -112,7 +142,7 @@ export function CostsAccumulatedChart({ chart }) {
     const cursorX = (event.clientX - rect.left) * width / Math.max(rect.width, 1);
     const point = points.reduce((nearest, candidate) =>
       Math.abs(x(candidate.index) - cursorX) < Math.abs(x(nearest.index) - cursorX) ? candidate : nearest);
-    inspectPoint(describePoint(point), announce);
+    inspectPoint(describePoint(point, point.projected, { x: event.clientX, y: event.clientY }), announce);
   };
   const navigateTooltip = (event) => {
     const moves = { ArrowLeft: -1, ArrowRight: 1 };
@@ -126,8 +156,6 @@ export function CostsAccumulatedChart({ chart }) {
   const accessibleSummary = lastPoint.projected
     ? `Accumulated cost. Recorded through ${lastRecorded.day}: ${fmtExactUSD(lastRecorded.cost)}. Projected through ${lastPoint.day}: ${fmtExactUSD(lastPoint.cost)}. Focus and use Left and Right Arrow keys to inspect daily values.`
     : `Accumulated cost recorded through ${lastPoint.day}: ${fmtExactUSD(lastPoint.cost)}. Focus and use Left and Right Arrow keys to inspect daily values.`;
-  const tipWidth = 288;
-  const tipX = tooltip ? Math.max(PAD.left, Math.min(width - PAD.right - tipWidth, tooltip.x + 10)) : 0;
   return html`<div ref=${host} id="costs-accumulated-chart" class="cost-accumulated">
     <div class="cost-chart-heading"><strong>Accumulated cost</strong><span><i class="cost-line-key recorded"></i> recorded <i class="cost-line-key projected"></i> projection</span></div>
     <svg class="cost-accumulated-svg" viewBox=${`0 0 ${width} ${H}`} role="img" tabIndex="0"
@@ -170,7 +198,7 @@ export function CostsAccumulatedChart({ chart }) {
         <text aria-hidden="true" opacity="0">${tooltip.point.day} · ${tooltip.projected ? 'projection' : 'recorded'}</text>
       </g>`}
     </svg>
-    ${tooltip && html`<${AccumulatedTip} description=${tooltip} chart=${chart} left=${tipX} />`}
+    ${tooltip && html`<${AccumulatedTip} description=${tooltip} chart=${chart} />`}
     <div class="cost-accumulated-status" role="status" aria-live="polite" aria-atomic="true">${announcement}</div>
   </div>`;
 }

@@ -189,6 +189,8 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("new ResizeObserver(update)", "accumulated chart tracks its real container width")
 	must("cost-accumulated-line${segment.projected ? ' projected' : ''}", "projection uses a distinct accumulated-line segment")
 	must("cost-accumulated-hover-target", "the full accumulated plot exposes a continuous hover target")
+	must("{ x: event.clientX, y: event.clientY }", "accumulated popover follows the cursor rather than its snapped data point")
+	must("position: fixed; z-index: 200", "accumulated popover uses viewport coordinates like the daily chart tooltip")
 	must("use Left and Right Arrow keys to inspect daily values", "accumulated values have keyboard-accessible navigation")
 	must("onpointerdown", "accumulated values can be inspected with touch or pen input")
 	must(`class="cost-accumulated-status" role="status" aria-live="polite"`, "keyboard-selected accumulated values are announced to assistive technology")

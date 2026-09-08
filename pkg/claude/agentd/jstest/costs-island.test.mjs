@@ -119,11 +119,17 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   assert.ok(accumulatedHoverTarget, 'the full accumulated plot is one continuous hover target');
   assert.equal(mounted.container.querySelectorAll('.cost-accumulated-line').length, 0,
     'the generic total line does not paint over colored stack boundaries');
-  await harness.act(() => harness.fireEvent(accumulatedHoverTarget, 'mousemove', { clientX: 0 }));
+  await harness.act(() => harness.fireEvent(accumulatedHoverTarget, 'mousemove', { clientX: 0, clientY: 40 }));
   assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /recorded/);
-  await harness.act(() => harness.fireEvent(accumulatedHoverTarget, 'pointerdown', { clientX: 1000 }));
+  const recordedTipLeft = mounted.container.querySelector('.cost-accumulated-tip-panel').style.left;
+  const recordedTipTop = mounted.container.querySelector('.cost-accumulated-tip-panel').style.top;
+  await harness.act(() => harness.fireEvent(accumulatedHoverTarget, 'pointerdown', { clientX: 1000, clientY: 80 }));
   assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /projection/);
   const accumulatedTip = mounted.container.querySelector('.cost-accumulated-tip-panel');
+  assert.notEqual(accumulatedTip.style.left, recordedTipLeft,
+    'the popover follows the pointer while the highlighted value snaps to a date');
+  assert.notEqual(accumulatedTip.style.top, recordedTipTop,
+    'the popover follows the pointer vertically too');
   assert.ok(accumulatedTip.querySelectorAll('.cost-accumulated-tip-sw').length >= 2,
     'accumulated breakdown text includes a color key for its series');
   assert.ok(accumulatedTip.querySelector('.cost-accumulated-tip-row[class*="cost-series-"]'),
