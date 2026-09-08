@@ -166,6 +166,50 @@ export function costModels(agents) {
     .sort((a, b) => a.localeCompare(b));
 }
 
+const costAgentKey = (agent) => agent?.agent_id || agent?.conv_id || '';
+
+export function costProviderStats(agents) {
+  const stats = new Map();
+  for (const agent of agents || []) {
+    const provider = costProviderLabel(agent);
+    const entry = stats.get(provider) || { provider, cost: 0, agents: new Set(), models: new Set() };
+    entry.cost += agent.cost_usd || 0;
+    if (costAgentKey(agent)) entry.agents.add(costAgentKey(agent));
+    entry.models.add(costModelLabel(agent));
+    stats.set(provider, entry);
+  }
+  const total = [...stats.values()].reduce((sum, entry) => sum + entry.cost, 0);
+  return [...stats.values()].map((entry) => ({
+    provider: entry.provider, cost: entry.cost, agentCount: entry.agents.size,
+    modelCount: entry.models.size, share: total > 0 ? entry.cost / total : 0,
+  })).sort((left, right) => right.cost - left.cost || left.provider.localeCompare(right.provider));
+}
+
+export function costModelStats(agents, selectedProviders) {
+  const stats = new Map();
+  for (const agent of agents || []) {
+    const model = costModelLabel(agent);
+    const provider = costProviderLabel(agent);
+    const entry = stats.get(model) || {
+      model, cost: 0, agents: new Set(), providers: new Set(), availableProviders: new Set(),
+    };
+    entry.providers.add(provider);
+    if (selectedProviders.has(provider)) {
+      entry.cost += agent.cost_usd || 0;
+      if (costAgentKey(agent)) entry.agents.add(costAgentKey(agent));
+      entry.availableProviders.add(provider);
+    }
+    stats.set(model, entry);
+  }
+  const total = [...stats.values()].reduce((sum, entry) => sum + entry.cost, 0);
+  return [...stats.values()].map((entry) => ({
+    model: entry.model, cost: entry.cost, agentCount: entry.agents.size,
+    providers: [...entry.providers].sort(), availableProviders: [...entry.availableProviders].sort(),
+    available: entry.availableProviders.size > 0, share: total > 0 ? entry.cost / total : 0,
+  })).sort((left, right) => Number(right.available) - Number(left.available)
+    || right.cost - left.cost || left.model.localeCompare(right.model));
+}
+
 export function resolveProviderSelection(providers, saved) {
   const known = new Set(providers);
   const selected = (saved || []).filter((provider) => known.has(provider));
@@ -239,12 +283,26 @@ export function filterCostData(payload, selected, selectedModels = null) {
 
 export function buildAccumulatedCostChart(data) {
   let total = 0;
-  const points = (data?.days || []).map((day) => ({
+  const points = (data?.days || []).map((day, index) => ({
     day: day.day,
-    cost: (total += Number(day.cost_usd || 0)),
+    dailyCost: Number(day.cost ?? day.cost_usd ?? 0),
+    cost: (total += Number(day.cost ?? day.cost_usd ?? 0)),
+    projected: !!day.projected,
+    index,
   }));
+  const segments = [];
+  let current = [];
+  for (const point of points) {
+    if (current.length && current[current.length - 1].projected !== point.projected) {
+      const previous = current[current.length - 1];
+      segments.push({ projected: previous.projected, points: current });
+      current = [previous];
+    }
+    current.push(point);
+  }
+  if (current.length) segments.push({ projected: current[current.length - 1].projected, points: current });
   const maximum = points.length ? points[points.length - 1].cost : 0;
-  return { points, scaleMax: maximum > 0 ? niceCeil(maximum) : 0 };
+  return { points, segments, scaleMax: maximum > 0 ? niceCeil(maximum) : 0 };
 }
 
 export function dailyBreakdown(agents, selected) {

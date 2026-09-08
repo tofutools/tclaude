@@ -172,9 +172,9 @@ The header usage island shows one line per provider (Claude / Codex / Copilot
 the 5-hour and 7-day rolling windows, Codex 5-hour and weekly, Copilot the
 monthly premium-request allowance, plus API cost month-to-date and today
 (click through to the Costs tab). When subscription what-if pricing is
-enabled, click a provider label or its compact selector to switch between
-quota percentage and estimated pay-per-token cost. Copilot also offers its
-native AIC allowance, cycling `% → ≈$ → AIC`.
+enabled, use the compact selector to switch between quota percentage and
+estimated pay-per-token cost. Copilot also offers its native AIC allowance in
+the same selector: `% / ≈$ / AIC`.
 
 ### PR and CI pills
 
@@ -392,11 +392,17 @@ warning banner.
 Spend over time: an accumulated-cost line graph, a stacked daily bar chart
 per provider, a per-model rollup strip, and a sortable per-agent table with
 totals and cross-day agent chains. Provider and model selectors narrow every
-figure in the tab, including both graphs and the projection. Spans are: This
-month (the only span with a projection), 7d/30d/90d, and a month browser going
-24 months back. Model attribution uses the last model recorded for each
-agent-day slice; a model switch within the same session and calendar day is
-therefore grouped under the final observed model.
+figure in the tab, including both graphs and the projection. The selectors are
+linked dropdowns with cost-share and agent-count context: turning off a
+provider also turns off models recorded only through that provider, while a
+model shared by another selected provider stays available. The accumulated
+and daily graphs use the same date domain and plot width. Hover either the
+solid recorded line or the dashed month-projection line for the day's change
+and accumulated value. Spans are: This month (the only span with a projection),
+7d/30d/90d, and a month browser going 24 months back. Model attribution uses
+the last model recorded for each agent-day slice; a model switch within the
+same session and calendar day is therefore grouped under the final observed
+model.
 
 ![The Costs tab: month bars, per-model breakdown cards, and the per-agent table](assets/dashboard-costs.png)
 

@@ -35,18 +35,87 @@ test('Costs state owns controls, derived rows, selection, requests, and preferen
   state.setQuery('');
   state.toggleProvider('codex');
   assert.deepEqual([...state.view.value.selectedProviders], ['claude']);
+  assert.deepEqual([...state.view.value.selectedModels], ['opus'],
+    'turning off a provider also removes its provider-only models');
+  assert.equal(state.view.value.modelStats.find((entry) => entry.model === 'gpt').available, false);
   assert.equal(state.view.value.narrowed.total_usd, 3);
   assert.ok(storage.values.has('tclaude.dash.costs.providers'));
   state.toggleProvider('codex');
+  assert.deepEqual([...state.view.value.selectedModels], ['opus'],
+    're-enabling a provider does not silently opt its models back in');
   state.toggleModel('gpt');
-  assert.deepEqual([...state.view.value.selectedModels], ['opus']);
-  assert.equal(state.view.value.narrowed.total_usd, 3);
+  assert.deepEqual([...state.view.value.selectedModels], ['gpt', 'opus']);
+  assert.equal(state.view.value.narrowed.total_usd, 5);
+  assert.equal(storage.values.has('tclaude.dash.costs.models'), false,
+    'selecting every model uses the compact default preference');
+  state.toggleModel('opus');
+  assert.deepEqual([...state.view.value.selectedModels], ['gpt']);
+  assert.equal(state.view.value.narrowed.total_usd, 2);
   assert.ok(storage.values.has('tclaude.dash.costs.models'));
-  assert.equal(state.view.value.accumulatedChart.points.at(-1).cost, 3);
+  assert.equal(state.view.value.accumulatedChart.points.filter((point) => !point.projected).at(-1).cost, 2,
+    'recorded accumulated spend follows the selected model');
+  assert.equal(state.view.value.accumulatedChart.points.at(-1).projected, true,
+    'the accumulated series continues through the month projection');
   state.cycleSort('cost');
   assert.equal(state.sort.value.key, 'cost');
   state.activateMonth(2);
   assert.equal(state.span.value, 'calmonth');
   state.setSpan('month');
   assert.equal(state.monthOffset.value, 0);
+});
+
+test('Provider filtering retains shared models while dropping exclusive models', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createCostsState } = await harness.importDashboardModule('js/costs-state.js');
+  const state = createCostsState({
+    snapshot: harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: false }),
+    activeTab: harness.signals.signal('costs'), prefs: prefs(),
+  });
+  state.initialize();
+  state.beginRequest(1);
+  state.commitRequest(1, {
+    from: '2026-07-10', to: '2026-07-10', total_usd: 9,
+    days: [{ day: '2026-07-10', cost_usd: 9 }],
+    agents: [
+      { conv_id: 'a', day: '2026-07-10', harness: 'claude', model: 'shared', cost_usd: 4 },
+      { conv_id: 'b', day: '2026-07-10', harness: 'codex', model: 'shared', cost_usd: 3 },
+      { conv_id: 'c', day: '2026-07-10', harness: 'codex', model: 'codex-only', cost_usd: 2 },
+    ],
+  });
+
+  state.toggleProvider('codex');
+  assert.deepEqual([...state.view.value.selectedModels], ['shared']);
+  assert.equal(state.view.value.modelStats.find((entry) => entry.model === 'shared').available, true);
+  assert.equal(state.view.value.modelStats.find((entry) => entry.model === 'codex-only').available, false);
+  assert.equal(state.view.value.narrowed.total_usd, 4);
+});
+
+test('Saved model selection is normalized against the saved provider scope', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createCostsState } = await harness.importDashboardModule('js/costs-state.js');
+  const storage = prefs();
+  storage.values.set('tclaude.dash.costs.providers', JSON.stringify(['claude']));
+  storage.values.set('tclaude.dash.costs.models', JSON.stringify(['codex-only']));
+  const state = createCostsState({
+    snapshot: harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: false }),
+    activeTab: harness.signals.signal('costs'), prefs: storage,
+  });
+  state.initialize();
+  state.beginRequest(1);
+  state.commitRequest(1, {
+    from: '2026-07-10', to: '2026-07-10', total_usd: 6,
+    days: [{ day: '2026-07-10', cost_usd: 6 }],
+    agents: [
+      { conv_id: 'a', day: '2026-07-10', harness: 'claude', model: 'opus', cost_usd: 4 },
+      { conv_id: 'b', day: '2026-07-10', harness: 'codex', model: 'codex-only', cost_usd: 2 },
+    ],
+  });
+
+  assert.deepEqual([...state.view.value.selectedModels], ['opus'],
+    'an unavailable legacy preference cannot leave the selected provider with no models');
+  assert.equal(state.view.value.narrowed.total_usd, 4);
+  state.toggleProvider('codex');
+  assert.deepEqual([...state.view.value.selectedModels], ['opus'],
+    're-enabling the stale model provider retains the effective visible selection');
+  assert.equal(state.view.value.narrowed.total_usd, 4);
 });

@@ -44,7 +44,7 @@ test('shell island reacts to snapshots while preserving keyed usage and footer n
   await Promise.all([usage.unmount(), meta.unmount(), badge.unmount(), status.unmount()]);
 });
 
-test('Copilot header cycles percentage, what-if cost, and AIC', async (t) => {
+test('Copilot header selector switches percentage, what-if cost, and AIC', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { dashPrefs }, { Usage }] = await Promise.all([
     harness.importDashboardModule('js/snapshot-store.js'),
@@ -64,15 +64,17 @@ test('Copilot header cycles percentage, what-if cost, and AIC', async (t) => {
     what_if_costs: [{ provider: 'github', total_cost_usd: 1.75 }],
   } }));
 
-  const label = () => mounted.container.querySelector('.usrc-toggle');
+  const label = mounted.container.querySelector('.usrc');
+  assert.equal(label.tagName, 'SPAN', 'provider label is descriptive text, not a second toggle');
+  const buttons = () => [...mounted.container.querySelectorAll('.usage-unit-switch button')];
   assert.match(mounted.container.textContent, /38%/);
-  await harness.act(() => label().click());
+  await harness.act(() => buttons()[1].click());
   assert.match(mounted.container.textContent, /≈\$1\.75/);
   assert.equal(dashPrefs.getItem(pref), 'cost');
-  await harness.act(() => label().click());
+  await harness.act(() => buttons()[2].click());
   assert.match(mounted.container.textContent, /114\/ 300 AIC/);
   assert.equal(dashPrefs.getItem(pref), 'units');
-  await harness.act(() => label().click());
+  await harness.act(() => buttons()[0].click());
   assert.match(mounted.container.textContent, /38%/);
   assert.equal(dashPrefs.getItem(pref), 'usage');
 

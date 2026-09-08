@@ -61,6 +61,52 @@ test('Costs derivation projects months, filters providers and models, sorts, and
     'provider filtering follows the billed provider rather than the client harness');
 });
 
+test('Provider and model scope stats expose spend, availability, and shared provenance', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/costs-model.js');
+  const agents = [
+    { agent_id: 'a', harness: 'claude', model: 'shared', cost_usd: 4 },
+    { agent_id: 'b', harness: 'codex', model: 'shared', cost_usd: 3 },
+    { agent_id: 'b', harness: 'codex', model: 'exclusive', cost_usd: 2 },
+  ];
+
+  const providers = model.costProviderStats(agents);
+  assert.deepEqual(providers.map((entry) => entry.provider), ['codex', 'claude']);
+  assert.deepEqual(providers.map((entry) => entry.cost), [5, 4]);
+  assert.equal(providers[0].agentCount, 1, 'one agent spanning models is counted once');
+  assert.equal(providers[0].modelCount, 2);
+
+  const models = model.costModelStats(agents, new Set(['claude']));
+  const shared = models.find((entry) => entry.model === 'shared');
+  const exclusive = models.find((entry) => entry.model === 'exclusive');
+  assert.deepEqual(shared.providers, ['claude', 'codex']);
+  assert.deepEqual(shared.availableProviders, ['claude']);
+  assert.equal(shared.cost, 4);
+  assert.equal(shared.available, true);
+  assert.equal(shared.share, 1);
+  assert.equal(exclusive.available, false);
+  assert.equal(exclusive.cost, 0);
+});
+
+test('Accumulated cost uses the daily chart domain and splits recorded from projected lines', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/costs-model.js');
+  const chart = { days: [
+    { day: '2026-07-09', cost: 2, projected: false },
+    { day: '2026-07-10', cost: 3, projected: false },
+    { day: '2026-07-11', cost: 4, projected: true },
+    { day: '2026-07-12', cost: 4, projected: true },
+  ] };
+  const accumulated = model.buildAccumulatedCostChart(chart);
+  assert.deepEqual(accumulated.points.map((point) => point.cost), [2, 5, 9, 13]);
+  assert.deepEqual(accumulated.points.map((point) => point.day), chart.days.map((day) => day.day));
+  assert.deepEqual(accumulated.segments.map((segment) => segment.projected), [false, true]);
+  assert.deepEqual(accumulated.segments.map((segment) => segment.points.map((point) => point.day)), [
+    ['2026-07-09', '2026-07-10'],
+    ['2026-07-10', '2026-07-11', '2026-07-12'],
+  ], 'the transition point joins the solid and dashed lines');
+});
+
 test('Copilot cost segments retain native credits beside gross subscription dollars', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/costs-model.js');

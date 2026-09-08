@@ -56,18 +56,12 @@ function Usage({ state }) {
     setModes((current) => ({ ...current, [provider]: mode }));
     dashPrefs.setItem(prefKey(provider), mode);
   };
-  const cycleMode = (line) => {
-    if (!line.modes?.length) return;
-    const index = line.modes.indexOf(line.mode);
-    setMode(line.key, line.modes[(index + 1) % line.modes.length]);
-  };
   if (view.na) return html`<span id="usage" class="meta na" title=${view.title}>${view.text}</span>`;
   return html`
     <span id="usage" class=${`meta${view.multiline ? ' multiline' : ''}`} title=${view.title}>
       ${view.lines.map((line) => view.multiline ? html`
         <span key=${line.key} class="uline">
-          ${line.modes?.length ? html`<button type="button" class="usrc usrc-toggle" title="Switch ${line.label.replace(':', '')} usage units"
-              onClick=${() => cycleMode(line)}>${line.label}</button>` : html`<span class="usrc">${line.label}</span>`}
+          <span class="usrc">${line.label}</span>
           ${line.tokens.map((token) => html`<${UsageToken} key=${token.key} token=${token} />`)}
           ${line.modes?.length ? html`<span class="usage-unit-switch" role="group" aria-label=${`${line.label.replace(':', '')} usage units`}>
             ${line.modes.map((mode) => html`<button type="button" class=${line.mode === mode ? 'active' : ''}

@@ -2,7 +2,8 @@ import { batch, computed, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
 import { dashPrefs } from './prefs.js';
 import {
-  COST_COLUMNS, buildAccumulatedCostChart, buildCostChart, costModelLabel, costModels, costProviders,
+  COST_COLUMNS, buildAccumulatedCostChart, buildCostChart, costModelLabel, costModels, costModelStats,
+  costProviders, costProviderStats,
   costProviderLabel, filterCostData,
   matchesCostAgent, monthLabel, monthProjection, oldestMonthOffset,
   resolveModelSelection, resolveProviderSelection, sortCostAgents,
@@ -54,22 +55,34 @@ export function createCostsState({
     const providers = costProviders(agents);
     const selected = resolveProviderSelection(providers, selectedProviders.value);
     const models = costModels(agents);
-    const selectedModelSet = resolveModelSelection(models, selectedModels.value);
+    const modelStats = costModelStats(agents, selected);
+    const availableModels = new Set(modelStats.filter((entry) => entry.available).map((entry) => entry.model));
+    const compatibleModels = [...resolveModelSelection(models, selectedModels.value)]
+      .filter((model) => availableModels.has(model));
+    const selectedModelSet = new Set(compatibleModels.length ? compatibleModels : availableModels);
     const narrowed = data ? filterCostData(data, selected, selectedModelSet) : null;
     const projection = narrowed && span.value === 'month'
       ? monthProjection(narrowed, fillEmpty.value, includeWeekends.value, now())
       : null;
+    const chart = narrowed ? buildCostChart(narrowed, projection, agents, selected, providers, selectedModelSet) : null;
+    const providerStats = costProviderStats(agents);
+    const providerScopedTotal = modelStats.reduce((sum, entry) => sum + entry.cost, 0);
+    const selectedModelTotal = modelStats.reduce((sum, entry) => sum
+      + (selectedModelSet.has(entry.model) ? entry.cost : 0), 0);
     return {
       data, agents, providers, selected, models, selectedModelSet, narrowed, projection,
-      chart: narrowed ? buildCostChart(narrowed, projection, agents, selected, providers, selectedModelSet) : null,
-      accumulatedChart: narrowed ? buildAccumulatedCostChart(narrowed) : null,
+      providerStats, modelStats, availableModels, providerScopedTotal,
+      modelCoverage: providerScopedTotal > 0 ? selectedModelTotal / providerScopedTotal : 0,
+      chart,
+      accumulatedChart: chart ? buildAccumulatedCostChart(chart) : null,
     };
   });
 
   const view = computed(() => {
     const snap = snapshot.value;
     const { data, agents, providers, selected, models, selectedModelSet,
-      narrowed, projection, chart, accumulatedChart } = costData.value;
+      narrowed, projection, chart, accumulatedChart, providerStats, modelStats,
+      availableModels, providerScopedTotal, modelCoverage } = costData.value;
     const visibleRows = sortCostAgents(agents, sort.value)
       .filter((agent) => selected.has(costProviderLabel(agent)))
       .filter((agent) => selectedModelSet.has(costModelLabel(agent)))
@@ -102,8 +115,13 @@ export function createCostsState({
       includeWeekends: includeWeekends.value,
       selectedProviders: selected,
       selectedModels: selectedModelSet,
+      availableModels,
       providers,
       models,
+      providerStats,
+      modelStats,
+      providerScopedTotal,
+      modelCoverage,
       query: query.value,
       sort: sort.value,
       payload: data,
@@ -165,6 +183,11 @@ export function createCostsState({
 
   function toggleProvider(provider) {
     const current = new Set(view.value.selectedProviders);
+    // Capture the effective selection before mutating the provider signal.
+    // A computed fallback may already have normalized an old, incompatible
+    // saved model preference; reading view again after the signal update would
+    // let that stale raw preference reappear as soon as its provider returns.
+    const effectiveModels = [...view.value.selectedModels];
     if (current.has(provider)) current.delete(provider); else current.add(provider);
     if (current.size === 0) return false;
     const all = view.value.providers;
@@ -173,10 +196,18 @@ export function createCostsState({
     if (stored.length) prefs.setItem(PROVIDERS_KEY, JSON.stringify(stored));
     else prefs.removeItem(PROVIDERS_KEY);
     prefs.removeItem(LEGACY_HARNESSES_KEY);
+    const available = new Set(costModelStats(view.value.payload?.agents || [], current)
+      .filter((entry) => entry.available).map((entry) => entry.model));
+    const retained = effectiveModels.filter((model) => available.has(model));
+    const nextModels = retained.length ? retained : [...available];
+    selectedModels.value = nextModels;
+    if (nextModels.length) prefs.setItem(MODELS_KEY, JSON.stringify(nextModels));
+    else prefs.removeItem(MODELS_KEY);
     return true;
   }
 
   function toggleModel(model) {
+    if (!view.value.availableModels.has(model)) return false;
     const current = new Set(view.value.selectedModels);
     if (current.has(model)) current.delete(model); else current.add(model);
     if (current.size === 0) return false;

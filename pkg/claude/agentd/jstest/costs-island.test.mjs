@@ -57,6 +57,59 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   await harness.input(filter, 'gpt');
   assert.equal(mounted.container.querySelectorAll('tbody tr[data-key]').length, 1);
   assert.equal(mounted.container.querySelector('#filter-costs-count').textContent, '1 / 2');
+
+  const providerMenu = mounted.container.querySelector('#filter-costs-providers');
+  const modelMenu = mounted.container.querySelector('#filter-costs-models');
+  assert.match(providerMenu.querySelector('summary').textContent, /2 of 2 · \$5\.00/,
+    'provider summary shows selected coverage and spend');
+  assert.match(modelMenu.querySelector('summary').textContent, /2 of 2 · 100% spend/,
+    'model summary shows selected coverage and spend share');
+  providerMenu.setAttribute('open', '');
+  await harness.act(() => harness.fireEvent(providerMenu.querySelector('summary'), 'click'));
+  modelMenu.setAttribute('open', '');
+  await harness.act(() => harness.fireEvent(modelMenu.querySelector('summary'), 'click'));
+  assert.equal(providerMenu.open, false, 'opening one scope menu closes its sibling');
+
+  const claudeCheck = providerMenu.querySelector('input[data-provider="claude"]');
+  const codexCheck = providerMenu.querySelector('input[data-provider="codex"]');
+  claudeCheck.checked = false;
+  await harness.act(() => harness.fireEvent(claudeCheck, 'change'));
+  assert.deepEqual([...state.view.value.selectedProviders], ['codex']);
+  codexCheck.checked = false;
+  await harness.act(() => harness.fireEvent(codexCheck, 'change'));
+  assert.equal(codexCheck.checked, true, 'a rejected final-provider deselection restores the checkbox');
+  assert.deepEqual([...state.view.value.selectedProviders], ['codex']);
+  claudeCheck.checked = true;
+  await harness.act(() => harness.fireEvent(claudeCheck, 'change'));
+  const gptCheck = modelMenu.querySelector('input[data-model="gpt"]');
+  gptCheck.checked = false;
+  await harness.act(() => harness.fireEvent(gptCheck, 'change'));
+  assert.equal(gptCheck.checked, true, 'a rejected final-model deselection restores the checkbox');
+  assert.deepEqual([...state.view.value.selectedModels], ['gpt']);
+
+  const modelSearch = modelMenu.querySelector('input[aria-label="Filter cost models"]');
+  assert.ok(modelSearch);
+  await harness.input(modelSearch, 'opus');
+  assert.equal(modelMenu.querySelectorAll('.costs-model-choice').length, 1);
+
+  const accumulatedHits = mounted.container.querySelectorAll('.cost-accumulated-hit');
+  assert.equal(accumulatedHits.length, 2, 'recorded and projected accumulated lines are both hover targets');
+  await harness.act(() => harness.fireEvent(accumulatedHits[0], 'mousemove', { clientX: 0 }));
+  assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /recorded/);
+  await harness.act(() => harness.fireEvent(accumulatedHits[1], 'pointerdown', { clientX: 1000 }));
+  assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /projection/);
+  const accumulatedSVG = mounted.container.querySelector('.cost-accumulated-svg');
+  assert.match(accumulatedSVG.getAttribute('aria-label'), /Recorded through .* Projected through/,
+    'accessible summary distinguishes observed cost from the forecast');
+  await harness.act(() => harness.fireEvent(accumulatedSVG, 'focus'));
+  assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /recorded/);
+  await harness.act(() => harness.fireEvent(accumulatedSVG, 'keydown', { key: 'ArrowRight' }));
+  assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /projection/,
+    'keyboard navigation crosses from the last recorded day into the projection');
+  assert.match(mounted.container.querySelector('.cost-accumulated-status').textContent,
+    /projection, .* accumulated, approximately .* that day/,
+    'the keyboard-selected value is announced through a live status region');
+
   const last7 = [...mounted.container.querySelectorAll('#costs-spans button')].find((button) => button.textContent === 'Last 7d');
   await harness.act(() => harness.fireEvent(last7, 'click'));
   assert.equal(state.span.value, '7d');
