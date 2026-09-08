@@ -352,6 +352,11 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 	if err := validateWorkGraph(graph); err != nil {
 		return WorkRunResult{}, err
 	}
+	for _, node := range graph.Nodes {
+		if node.Kind == model.WorkNodeWait && (node.Wait.Until != "" || node.Wait.Signal != "") {
+			return WorkRunResult{}, fail(ErrUnsupported, "wait %s declares an absolute time or signal; only duration waits are executable", node.ID)
+		}
+	}
 	if req.Start.Deadline.IsZero() || !req.Start.Deadline.After(s.now().UTC()) {
 		return WorkRunResult{}, fail(ErrInvalid, "a future work deadline is required")
 	}
@@ -1682,8 +1687,8 @@ func validateWorkNode(node model.WorkNode) error {
 			return fail(ErrInvalid, "join node %s requires all or any policy", node.ID)
 		}
 	case model.WorkNodeWait:
-		if node.Wait == nil || node.Wait.Duration <= 0 || strings.TrimSpace(node.Wait.Until) != "" {
-			return fail(ErrInvalid, "wait node %s requires a bounded duration; external wake predicates are not admitted", node.ID)
+		if err := validateWaitPolicy(node.Wait); err != nil {
+			return err
 		}
 	case model.WorkNodeEnd:
 		if node.End == nil || node.End.Outcome == model.WorkOutcomeNone || node.End.Outcome == model.WorkOutcomeUnknown {

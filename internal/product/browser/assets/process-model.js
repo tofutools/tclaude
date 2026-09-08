@@ -103,7 +103,10 @@ export function validationMessages(draft) {
     if (node.Kind === 'fork' && (outgoing.get(node.ID)?.length || 0) < 2) messages.push(`${name}: a fork needs at least two outgoing branches.`);
     if (node.Kind === 'join' && (incoming.get(node.ID) || 0) < 2) messages.push(`${name}: a join needs at least two incoming branches.`);
     if (node.Kind === 'end' && outgoing.has(node.ID)) messages.push(`${name}: an end cannot have outgoing connections.`);
-    if (node.Kind === 'wait' && (!(node.Wait?.Duration > 0) || node.Wait?.Until)) messages.push(`${name}: set a positive wait duration.`);
+    if (node.Kind === 'wait') {
+      if (!node.Wait || node.Wait.Duration < 0 || (!(node.Wait.Duration > 0) && !node.Wait.Until && !node.Wait.Signal?.trim())) messages.push(`${name}: set a positive duration, timestamp or signal.`);
+      if (node.Wait?.Until && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(node.Wait.Until)) messages.push(`${name}: timestamp must be RFC3339.`);
+    }
     for (const performer of taskPerformers({Nodes:[node]})) {
       if (performer.Kind === 'agent' && !performer.Agent?.Brief?.trim()) messages.push(`${name}: add every worker brief, including task stages.`);
       if (performer.Kind === 'human' && !performer.Human?.Prompt?.trim()) messages.push(`${name}: add every human stage prompt.`);

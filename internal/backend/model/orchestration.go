@@ -317,6 +317,7 @@ type JoinPolicy struct {
 }
 
 type WaitPolicy struct {
+	Signal   string `json:",omitempty"`
 	Duration time.Duration
 	Until    string
 }

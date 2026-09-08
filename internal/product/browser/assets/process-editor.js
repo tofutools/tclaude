@@ -141,8 +141,10 @@ class ProcessEditor {
       {name: 'doc', label: 'Documentation', value: node.Doc || '', multiline: true}];
     const changes = [];
     if (node.Kind === 'wait') {
-      fields.push({name: 'duration', label: 'Wait seconds', type: 'number', min: 0.001, step: 'any', value: (node.Wait?.Duration || 0) / 1e9, required: true});
-      changes.push((n, f) => { n.Wait = {Duration: seconds(f.duration)}; });
+      fields.push({name: 'duration', label: 'Wait seconds (0 when unused)', type: 'number', min: 0, step: 'any', value: (node.Wait?.Duration || 0) / 1e9},
+        {name:'until',label:'Wait until (RFC3339, authoring only)',value:node.Wait?.Until||''},
+        {name:'signal',label:'Wait for signal (authoring only)',value:node.Wait?.Signal||''});
+      changes.push((n, f) => { n.Wait = {Duration: seconds(f.duration),Until:f.until};if(f.signal)n.Wait.Signal=f.signal; });
     }
     if (node.Kind === 'end') {
       fields.push({name: 'outcome', label: 'End outcome', options: ['verified', 'waived', 'rejected', 'cancelled'].map(v => option(v)), value: node.End?.Outcome});
@@ -221,6 +223,7 @@ class ProcessEditor {
       if (stageContext) delete n.Waivable;
     }));
     if (node.Kind === 'task') this.inspector.prepend(this.performerSelect);
+    if(node.Kind === 'wait') this.inspector.append(element('p','Absolute-time and signal waits can be saved, but cannot start. Clear both to run a duration wait.'));
     if(node.Captures?.length) this.inspector.append(element('p','Output names are retained for authoring and export. Running this process is unavailable until capture execution is supported.'));
     if(node.Performer?.Contact) this.inspector.append(element('p','Contact schedules are retained for authoring and export. Clear all three contact fields to remove a schedule. Running this process is unavailable until scheduled performer contact is supported.'));
     if (stageContext) { this.inspector.append(action('Back to task stages', () => this.render())); return; }
