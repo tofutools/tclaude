@@ -8,12 +8,6 @@ import (
 func (t *translator) agentDisplayLabels(agent sourcev228.Row) model.AgentLabels {
 	labels := model.AgentLabels{}
 	key := sourcev228.String(agent.Values["agent_id"])
-	current := sourcev228.String(agent.Values["current_conv_id"])
-	for _, row := range t.inspection.Snapshot.Rows["agent_conversations"] {
-		if sourcev228.String(row.Values["agent_id"]) == key && sourcev228.String(row.Values["conv_id"]) == current {
-			labels.Role = sourcev228.String(row.Values["role"])
-		}
-	}
 	for _, row := range t.inspection.Snapshot.Rows["agent_group_members"] {
 		if sourcev228.String(row.Values["agent_id"]) != key {
 			continue
