@@ -249,7 +249,7 @@ class TeamEditor {
     for (const ref of this.draft.Team.Automation) if (!refs.some(x => x.ref.RevisionID === ref.RevisionID)) refs.push({ref, label: 'Previously pinned rule ' + ref.RuleID});
     this.form('Pinned team rhythms', [{key: 'rules', label: 'Automation revisions', multiple: true, options: refs.map(r => opt(r.ref.RevisionID, r.label)), value: this.draft.Team.Automation.map(r => r.RevisionID)}], f => this.change(d => { d.Team.Automation = f.rules.map(id => clone(refs.find(r => r.ref.RevisionID === id).ref)); }));
     this.content.append(button('Add recurring nudge', () => { if (this.discard()) this.editRhythm(); }));
-    for (const rhythm of this.draft.Team.Rhythms || []) this.card(rhythm.Name, `${rhythm.Interval || rhythm.Cron} · ${rhythm.Timezone} · ${this.roles.find(r => r.ID === rhythm.RoleID)?.Name || (rhythm.RoleID ? 'Retained role' : 'All members')}`, () => this.editRhythm(rhythm), () => { if (this.discard()) this.change(d => { d.Team.Rhythms = d.Team.Rhythms.filter(r => r.Name !== rhythm.Name); }); });
+    for (const rhythm of this.draft.Team.Rhythms || []) this.card(rhythm.Name, `${rhythm.Interval || rhythm.Cron} · ${rhythm.Timezone} · ${this.roles.find(r => r.ID === rhythm.RoleID)?.Name || (rhythm.RoleID ? 'Retained role' : 'All members')}`, () => { if (this.discard()) this.editRhythm(rhythm); }, () => { if (this.discard()) this.change(d => { d.Team.Rhythms = d.Team.Rhythms.filter(r => r.Name !== rhythm.Name); }); });
   }
   editRhythm(original) {
     const r = original || {};

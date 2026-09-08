@@ -1753,8 +1753,13 @@ rule's deployment association, so stand-down still disables it; an archived rule
 is not reenabled by deployment settlement. The original template stays unchanged.
 Nudges skip missed ticks and offline recipients, as v1's default schedules do.
 
-A generated nudge has explicit no-expiry delegation, limited to message delivery
-to its group and intersected with its owner's current authority for every effect.
+An operator-deployed nudge has explicit no-expiry delegation, limited to message
+delivery to its group and intersected with its owner's current authority for every
+effect. An automation-deployed nudge inherits the parent delegation's lifetime
+and requires its message-send and target-group-member scope. Missing scope is
+refused before creating deployment resources. Derived creation/activation use the
+exact admitted parent occurrence; public rule edits still require automation
+management authority.
 Automation authoring also exposes this lifetime choice. Existing omitted or
 expired delegation timestamps do not acquire no-expiry behavior implicitly;
 revocation and rule disablement continue to prevent new dispatch.

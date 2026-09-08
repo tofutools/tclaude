@@ -72,10 +72,10 @@ func (*automationTeamRuntime) Observe(context.Context) (ports.Observation, error
 
 func TestBrowserAutomationTeamCanAuthorizeAndDeployFutureGroup(t *testing.T) {
 	for _, target := range []string{"new_group", "existing_group"} {
-		t.Run(target, func(t *testing.T) { browserAutomationTeamDeployment(t, target) })
+		t.Run(target, func(t *testing.T) { browserAutomationTeamDeployment(t, target, false, false) })
 	}
 }
-func browserAutomationTeamDeployment(t *testing.T, target string) {
+func browserAutomationTeamDeployment(t *testing.T, target string, withRhythm, delegateMessages bool) {
 	root := t.TempDir()
 	repo := filepath.Join(root, "repo")
 	for _, args := range [][]string{{"init", "-b", "main", repo}, {"-C", repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "--allow-empty", "-m", "base"}} {
@@ -91,6 +91,9 @@ func browserAutomationTeamDeployment(t *testing.T, target string) {
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/workspaces/create", map[string]any{"request_id": "space", "id": "space", "intent": model.WorkspaceIntent{Repository: repo, IntendedPath: filepath.Join(root, "checkout"), Branch: "worker", BaseRevision: "main", RetainOnFinish: true}}, &space))
 	desired := model.DesiredConfiguration{Harness: "team-fixture", Model: "fixture", WorkingDirectory: space.Workspace.Observation.ActualPath, Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}
 	team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{{Key: "worker", Name: "Worker", Desired: desired, Required: true}}, Waves: []model.TeamWave{{ID: "wave", MemberKeys: []string{"worker"}, RequiredReady: true}}}
+	if withRhythm {
+		team.Rhythms = []model.TeamRhythm{{Name: "Status nudge", Interval: "10m", Timezone: "UTC", Body: "Report status"}}
+	}
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/definitions", map[string]any{"request_id": "team", "draft": app.DefinitionDraft{ID: "team", RevisionID: "team_v1", Name: "Scheduled team", Kind: model.DefinitionTeam, SchemaVersion: 1, Source: "scheduled team", Team: &team}}, nil))
 	page.MustElement("#refresh").MustClick()
 	page.MustElement("[data-tab=automation]").MustClick()
@@ -106,6 +109,9 @@ func browserAutomationTeamDeployment(t *testing.T, target string) {
 	}
 	page.MustElement("#editor [name=team_member_scope]").MustSelect("Include members of the explicit target group")
 	page.MustElement("#editor [name=allowed_actions]").MustSelect("workspace.inspect", "execution.launch", "work.start", "automation.run")
+	if delegateMessages {
+		page.MustElement("#editor [name=allowed_actions]").MustSelect("message.send")
+	}
 	page.MustElement("#editor [name=allowed_resources]").MustSelect("This automation rule", "Workspace: space")
 	if target == "existing_group" {
 		page.MustElement("#editor [name=allowed_actions]").MustSelect("group.membership.manage")
@@ -122,7 +128,29 @@ func browserAutomationTeamDeployment(t *testing.T, target string) {
 	page.MustElementR("#automation-list button", "^Run now$").MustClick()
 	var rules []model.AutomationRule
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/automation/rules", nil, &rules))
-	require.Len(t, rules, 1)
+	// Select the parent by name; deployment may already have created child schedules.
+	for i := range rules {
+		if rules[i].Name == "Team schedule" {
+			rules[0], rules[i] = rules[i], rules[0]
+			break
+		}
+	}
+	require.Equal(t, "Team schedule", rules[0].Name)
+	if withRhythm && !delegateMessages {
+		require.EventuallyWithT(t, func(c *assert.CollectT) {
+			var records []app.OccurrenceResult
+			require.NoError(c, operator.Call(ctx, "GET", "/v2/automation/occurrences?rule_id="+string(rules[0].ID), nil, &records))
+			require.Len(c, records, 1)
+			require.Equal(c, model.OccurrenceDenied, records[0].Occurrence.State)
+		}, 15*time.Second, 100*time.Millisecond)
+		var deployments []app.TeamDeploymentResult
+		require.NoError(t, operator.Call(ctx, "GET", "/v2/teams/deployments", nil, &deployments))
+		require.Empty(t, deployments, "missing rhythm scope must refuse before team admission")
+		var snapshot map[string]any
+		require.NoError(t, operator.Call(ctx, "GET", "/v2/snapshot", nil, &snapshot))
+		require.Empty(t, snapshot["groups"], "no group may remain after known refusal")
+		return
+	}
 	require.EventuallyWithT(t, func(c *assert.CollectT) {
 		var records []app.OccurrenceResult
 		err := operator.Call(ctx, "GET", "/v2/automation/occurrences?rule_id="+string(rules[0].ID), nil, &records)
@@ -137,5 +165,27 @@ func browserAutomationTeamDeployment(t *testing.T, target string) {
 	default:
 		t.Fatal("team workload was not prepared")
 	}
+	if withRhythm {
+		var deployments []app.TeamDeploymentResult
+		require.NoError(t, operator.Call(ctx, "GET", "/v2/teams/deployments", nil, &deployments))
+		require.Len(t, deployments, 1)
+		require.Equal(t, model.DeploymentReady, deployments[0].Deployment.State)
+		require.Len(t, deployments[0].Deployment.OwnedAutomationRuleIDs, 1)
+		var child, parent app.AutomationRuleResult
+		require.NoError(t, operator.Call(ctx, "GET", "/v2/automation/rules/"+string(deployments[0].Deployment.OwnedAutomationRuleIDs[0]), nil, &child))
+		require.NoError(t, operator.Call(ctx, "GET", "/v2/automation/rules/"+string(rules[0].ID), nil, &parent))
+		require.True(t, child.Rule.Enabled)
+		require.False(t, child.Revision.Delegation.NoExpiry)
+		require.Equal(t, parent.Revision.Delegation.ExpiresAt, child.Revision.Delegation.ExpiresAt)
+		require.Equal(t, []model.Action{model.ActionSendMessage}, child.Revision.Delegation.Actions)
+	}
 	require.False(t, page.MustElement("#error").MustVisible())
+}
+
+func TestBrowserAutomatedTeamMaterializesAuthoredRhythms(t *testing.T) {
+	browserAutomationTeamDeployment(t, "new_group", true, true)
+}
+
+func TestBrowserAutomatedTeamRhythmRefusesMissingScopeBeforeCreation(t *testing.T) {
+	browserAutomationTeamDeployment(t, "new_group", true, false)
 }

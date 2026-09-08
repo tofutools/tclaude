@@ -101,6 +101,11 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 			group.OwnerAgentID = id
 		}
 	}
+	if len(revision.Team.Rhythms) > 0 {
+		if _, err = teamRhythmDelegation(req.Context.Principal, group.ID); err != nil {
+			return TeamDeploymentResult{}, err
+		}
+	}
 	workspaceBindings, ownedWorkspaceIDs, err := s.prepareTeamWorkspaces(ctx, req, *revision.Team)
 	if err != nil {
 		return TeamDeploymentResult{}, err

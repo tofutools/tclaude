@@ -1252,6 +1252,10 @@ func (s *Service) SaveAutomationRule(ctx context.Context, req SaveAutomationRule
 }
 
 func (s *Service) saveAutomationRule(ctx context.Context, req SaveAutomationRuleRequest, deploymentID model.DeploymentID) (AutomationRuleResult, error) {
+	return s.saveAutomationRuleAuthorized(ctx, req, deploymentID, nil)
+}
+
+func (s *Service) saveAutomationRuleAuthorized(ctx context.Context, req SaveAutomationRuleRequest, deploymentID model.DeploymentID, creationAuthority *model.AuthorityRequest) (AutomationRuleResult, error) {
 	if req.Delegation.NoExpiry && !req.Delegation.ExpiresAt.IsZero() {
 		return AutomationRuleResult{}, fail(ErrInvalid, "choose expiry or no expiry")
 	}
@@ -1281,7 +1285,11 @@ func (s *Service) saveAutomationRule(ctx context.Context, req SaveAutomationRule
 		return AutomationRuleResult{}, err
 	}
 	if req.Context.Principal.Kind != model.PrincipalOperator {
-		if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionManageAutomation, Resource: model.ResourceSelector{Kind: model.ResourceAutomationRule, AutomationRuleID: req.ID}}, s.now().UTC()); err != nil {
+		authorization := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionManageAutomation, Resource: model.ResourceSelector{Kind: model.ResourceAutomationRule, AutomationRuleID: req.ID}}
+		if creationAuthority != nil {
+			authorization = *creationAuthority
+		}
+		if err := s.requireAuthority(ctx, authorization, s.now().UTC()); err != nil {
 			return AutomationRuleResult{}, err
 		}
 	}
