@@ -220,35 +220,43 @@ func TestSandboxProfileUpdateAppliesOnAgentRestart(t *testing.T) {
 }
 
 func TestSandboxIncludesFollowCurrentProfilesAndExport(t *testing.T) {
-	ctx := context.Background()
-	store, err := sqlite.Open(filepath.Join(t.TempDir(), "state.db"))
-	require.NoError(t, err)
-	defer store.Close()
-	paths, err := host.NewSandboxPathInspector([]string{t.TempDir()})
-	require.NoError(t, err)
-	service := app.New(store, providers.NewRegistry()).WithSandboxPathInspector(paths)
-	operator := model.OperatorPrincipal()
-	parent, err := service.SaveSandboxProfile(ctx, app.SaveSandboxProfileRequest{Context: request(operator, "parent"), ID: "parent", Name: "Parent", Policy: model.SandboxPolicy{Environment: model.Environment{"VALUE": "first"}}})
-	require.NoError(t, err)
-	policy := model.SandboxPolicy{Includes: []model.SandboxProfileRef{{ProfileID: parent.Profile.ID}}}
-	child, err := service.SaveSandboxProfile(ctx, app.SaveSandboxProfileRequest{Context: request(operator, "child"), ID: "child", Name: "Child", Policy: policy})
-	require.NoError(t, err)
-	_, err = service.SaveSandboxProfile(ctx, app.SaveSandboxProfileRequest{Context: request(operator, "edit-parent"), ID: parent.Profile.ID, ExpectedRevision: parent.Profile.Revision, Name: "Renamed parent", Policy: model.SandboxPolicy{Environment: model.Environment{"VALUE": "second"}}})
-	require.NoError(t, err)
-	preview, err := service.PreviewSandboxPolicy(ctx, operator, policy)
-	require.NoError(t, err)
-	require.Equal(t, "second", preview.Composition.Values.Environment["VALUE"])
-	bundle, err := service.ExportSandboxBundle(ctx, operator, child.Revision.Ref)
-	require.NoError(t, err)
-	require.Len(t, bundle.Entries, 2)
-	require.Equal(t, "second", bundle.Entries[0].Policy.Environment["VALUE"])
-	selections := []app.SandboxImportSelection{}
-	for _, entry := range bundle.Entries {
-		selections = append(selections, app.SandboxImportSelection{Source: entry.Ref, ID: model.SandboxProfileID("copy_" + string(entry.Ref.ProfileID)), RevisionID: model.SandboxProfileRevisionID("copy_" + string(entry.Ref.RevisionID)), Name: entry.Name + " copy"})
+	for _, exact := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ID include", true: "legacy exact include"}[exact], func(t *testing.T) {
+			ctx := context.Background()
+			store, err := sqlite.Open(filepath.Join(t.TempDir(), "state.db"))
+			require.NoError(t, err)
+			defer store.Close()
+			paths, err := host.NewSandboxPathInspector([]string{t.TempDir()})
+			require.NoError(t, err)
+			service := app.New(store, providers.NewRegistry()).WithSandboxPathInspector(paths)
+			operator := model.OperatorPrincipal()
+			parent, err := service.SaveSandboxProfile(ctx, app.SaveSandboxProfileRequest{Context: request(operator, "parent"), ID: "parent", Name: "Parent", Policy: model.SandboxPolicy{Environment: model.Environment{"VALUE": "first"}}})
+			require.NoError(t, err)
+			include := model.SandboxProfileRef{ProfileID: parent.Profile.ID}
+			if exact {
+				include = parent.Revision.Ref
+			}
+			policy := model.SandboxPolicy{Includes: []model.SandboxProfileRef{include}}
+			child, err := service.SaveSandboxProfile(ctx, app.SaveSandboxProfileRequest{Context: request(operator, "child"), ID: "child", Name: "Child", Policy: policy})
+			require.NoError(t, err)
+			_, err = service.SaveSandboxProfile(ctx, app.SaveSandboxProfileRequest{Context: request(operator, "edit-parent"), ID: parent.Profile.ID, ExpectedRevision: parent.Profile.Revision, Name: "Renamed parent", Policy: model.SandboxPolicy{Environment: model.Environment{"VALUE": "second"}}})
+			require.NoError(t, err)
+			preview, err := service.PreviewSandboxPolicy(ctx, operator, policy)
+			require.NoError(t, err)
+			require.Equal(t, "second", preview.Composition.Values.Environment["VALUE"])
+			bundle, err := service.ExportSandboxBundle(ctx, operator, child.Revision.Ref)
+			require.NoError(t, err)
+			require.Len(t, bundle.Entries, 2)
+			require.Equal(t, "second", bundle.Entries[0].Policy.Environment["VALUE"])
+			selections := []app.SandboxImportSelection{}
+			for _, entry := range bundle.Entries {
+				selections = append(selections, app.SandboxImportSelection{Source: entry.Ref, ID: model.SandboxProfileID("copy_" + string(entry.Ref.ProfileID)), RevisionID: model.SandboxProfileRevisionID("copy_" + string(entry.Ref.RevisionID)), Name: entry.Name + " copy"})
+			}
+			imported, err := service.ImportSandboxProfiles(ctx, app.ImportSandboxProfilesRequest{Context: request(operator, "import"), Bundle: bundle, Selections: selections})
+			require.NoError(t, err)
+			copied, err := service.GetSandboxProfile(ctx, operator, imported.Root.ProfileID)
+			require.NoError(t, err)
+			require.Equal(t, model.SandboxProfileID("copy_parent"), copied.Revision.Policy.Includes[0].ProfileID)
+		})
 	}
-	imported, err := service.ImportSandboxProfiles(ctx, app.ImportSandboxProfilesRequest{Context: request(operator, "import"), Bundle: bundle, Selections: selections})
-	require.NoError(t, err)
-	copied, err := service.GetSandboxProfile(ctx, operator, imported.Root.ProfileID)
-	require.NoError(t, err)
-	require.Equal(t, model.SandboxProfileID("copy_parent"), copied.Revision.Policy.Includes[0].ProfileID)
 }
