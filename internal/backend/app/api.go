@@ -61,6 +61,7 @@ type WorkReconciler interface {
 // OrchestrationAPI is the semantic application surface for authoring and
 // durable admission. Transport registration is deliberately owned elsewhere.
 type OrchestrationAPI interface {
+	SetDefinitionArchived(context.Context, SetDefinitionArchivedRequest) (model.Definition, error)
 	ValidateDefinition(context.Context, ValidateDefinitionRequest) (DefinitionResult, error)
 	SaveDefinition(context.Context, SaveDefinitionRequest) (DefinitionResult, error)
 	GetDefinition(context.Context, GetDefinitionRequest) (DefinitionResult, error)

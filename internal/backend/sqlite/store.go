@@ -598,6 +598,11 @@ CREATE TABLE IF NOT EXISTS automation_rules (
   tombstoned INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL,
   created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS definition_archive_requests (
+ request_scope TEXT NOT NULL, request_id TEXT NOT NULL, definition_id TEXT NOT NULL,
+ expected_revision INTEGER NOT NULL, archived INTEGER NOT NULL, result_json BLOB NOT NULL,
+ PRIMARY KEY(request_scope,request_id)
+);
 CREATE TABLE IF NOT EXISTS automation_archive_requests (
  request_scope TEXT NOT NULL, request_id TEXT NOT NULL, rule_id TEXT NOT NULL,
  expected_revision INTEGER NOT NULL, archived INTEGER NOT NULL, result_json BLOB NOT NULL,
