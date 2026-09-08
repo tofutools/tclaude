@@ -41,18 +41,16 @@ test('Costs state owns controls, derived rows, selection, requests, and preferen
   assert.equal(state.view.value.narrowed.total_usd, 3);
   assert.ok(storage.values.has('tclaude.dash.costs.providers'));
   state.toggleProvider('codex');
-  assert.deepEqual([...state.view.value.selectedModels], ['opus'],
-    're-enabling a provider does not silently opt its models back in');
-  state.toggleModel('gpt');
-  assert.deepEqual([...state.view.value.selectedModels], ['gpt', 'opus']);
+  assert.deepEqual([...state.view.value.selectedModels], ['gpt', 'opus'],
+    're-enabling a provider restores its models');
   assert.equal(state.view.value.narrowed.total_usd, 5);
   assert.equal(storage.values.has('tclaude.dash.costs.models'), false,
-    'selecting every model uses the compact default preference');
-  state.toggleModel('opus');
-  assert.deepEqual([...state.view.value.selectedModels], ['gpt']);
-  assert.equal(state.view.value.narrowed.total_usd, 2);
+    'restoring every model uses the compact default preference');
+  state.toggleModel('gpt');
+  assert.deepEqual([...state.view.value.selectedModels], ['opus']);
+  assert.equal(state.view.value.narrowed.total_usd, 3);
   assert.ok(storage.values.has('tclaude.dash.costs.models'));
-  assert.equal(state.view.value.accumulatedChart.points.filter((point) => !point.projected).at(-1).cost, 2,
+  assert.equal(state.view.value.accumulatedChart.points.filter((point) => !point.projected).at(-1).cost, 3,
     'recorded accumulated spend follows the selected model');
   assert.equal(state.view.value.accumulatedChart.points.at(-1).projected, true,
     'the accumulated series continues through the month projection');
@@ -88,6 +86,10 @@ test('Provider filtering retains shared models while dropping exclusive models',
   assert.equal(state.view.value.modelStats.find((entry) => entry.model === 'shared').available, true);
   assert.equal(state.view.value.modelStats.find((entry) => entry.model === 'codex-only').available, false);
   assert.equal(state.view.value.narrowed.total_usd, 4);
+  state.toggleProvider('codex');
+  assert.deepEqual([...state.view.value.selectedModels], ['codex-only', 'shared'],
+    're-enabling a provider restores its exclusive model without duplicating the shared model');
+  assert.equal(state.view.value.narrowed.total_usd, 9);
 });
 
 test('Saved model selection is normalized against the saved provider scope', async (t) => {
@@ -115,7 +117,9 @@ test('Saved model selection is normalized against the saved provider scope', asy
     'an unavailable legacy preference cannot leave the selected provider with no models');
   assert.equal(state.view.value.narrowed.total_usd, 4);
   state.toggleProvider('codex');
-  assert.deepEqual([...state.view.value.selectedModels], ['opus'],
-    're-enabling the stale model provider retains the effective visible selection');
-  assert.equal(state.view.value.narrowed.total_usd, 4);
+  assert.deepEqual([...state.view.value.selectedModels], ['codex-only', 'opus'],
+    're-enabling the provider combines its models with the effective visible selection');
+  assert.equal(state.view.value.narrowed.total_usd, 6);
+  assert.equal(storage.values.has('tclaude.dash.costs.models'), false,
+    'the fully restored model set clears the stale explicit preference');
 });

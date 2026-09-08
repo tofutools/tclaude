@@ -79,13 +79,17 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   await harness.act(() => harness.fireEvent(codexCheck, 'change'));
   assert.equal(codexCheck.checked, true, 'a rejected final-provider deselection restores the checkbox');
   assert.deepEqual([...state.view.value.selectedProviders], ['codex']);
-  claudeCheck.checked = true;
-  await harness.act(() => harness.fireEvent(claudeCheck, 'change'));
   const gptCheck = modelMenu.querySelector('input[data-model="gpt"]');
   gptCheck.checked = false;
   await harness.act(() => harness.fireEvent(gptCheck, 'change'));
   assert.equal(gptCheck.checked, true, 'a rejected final-model deselection restores the checkbox');
   assert.deepEqual([...state.view.value.selectedModels], ['gpt']);
+  claudeCheck.checked = true;
+  await harness.act(() => harness.fireEvent(claudeCheck, 'change'));
+  assert.deepEqual([...state.view.value.selectedModels], ['gpt', 'opus'],
+    're-enabling a provider visibly restores its model checkboxes');
+  assert.equal(modelMenu.querySelector('input[data-model="gpt"]').hasAttribute('checked'), true);
+  assert.equal(modelMenu.querySelector('input[data-model="opus"]').hasAttribute('checked'), true);
 
   const modelSearch = modelMenu.querySelector('input[aria-label="Filter cost models"]');
   assert.ok(modelSearch);

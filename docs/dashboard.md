@@ -395,7 +395,8 @@ totals and cross-day agent chains. Provider and model selectors narrow every
 figure in the tab, including both graphs and the projection. The selectors are
 linked dropdowns with cost-share and agent-count context: turning off a
 provider also turns off models recorded only through that provider, while a
-model shared by another selected provider stays available. The accumulated
+model shared by another selected provider stays available; turning the provider
+back on selects its models again. The accumulated
 and daily graphs use the same date domain and plot width. Hover either the
 solid recorded line or the dashed month-projection line for the day's change
 and accumulated value. Spans are: This month (the only span with a projection),

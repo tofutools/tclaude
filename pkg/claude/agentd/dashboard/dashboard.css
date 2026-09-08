@@ -3556,8 +3556,9 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    segments themselves stay unbroken and wrap between each other. */
 .costs-header { margin: 0 0 12px 0; }
 .costs-header .filter-bar { margin: 0; flex-wrap: wrap; }
-.costs-header #costs-summary { margin-top: 8px; }
-.costs-dimension-filters { position: relative; justify-content: flex-end; gap: 8px; margin: 0 0 12px; overflow: visible; }
+.costs-summary-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
+.costs-summary-row #costs-summary { flex: 1 1 760px; min-width: 0; }
+.costs-dimension-filters { position: relative; flex: 0 0 auto; justify-content: flex-end; gap: 8px; overflow: visible; }
 .cost-filter-menu { position: relative; }
 .cost-filter-menu > summary {
   display: flex; align-items: center; gap: 8px; padding: 5px 9px;
