@@ -18,6 +18,9 @@ func (h *Handler) RegisterOrchestrationAPI(api app.OrchestrationAPI) error {
 		return errors.New("orchestration API already registered")
 	}
 	h.orchestration = api
+	if importer, ok := api.(app.ProcessImportAPI); ok {
+		h.registerProcessImport(importer)
+	}
 	h.mux.HandleFunc("POST /v2/definitions/validate", journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
 		Draft app.DefinitionDraft `json:"draft"`
 	}) (any, error) {

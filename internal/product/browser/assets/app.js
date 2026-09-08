@@ -353,7 +353,7 @@ async function launchTeamEditor(result){
 }
 async function renderDefinitions(){
  const definitions=await api('/v2/definitions'),list=$('definition-list');list.replaceChildren();
- list.append(button('New process',()=>launchProcessEditor()),button('New team template',()=>launchTeamEditor()));
+ list.append(button('New process',()=>launchProcessEditor()),button('New team template',()=>launchTeamEditor()),button('Import legacy process',async()=>{const sequence=refreshSequence;const {openLegacyProcessImport}=await import('./process-import.js');if(sequence!==refreshSequence)return;openLegacyProcessImport({api,agents:(snapshot.agents||[]).filter(a=>a.Lifecycle!=='retired'),onSaved:renderDefinitions})}));
  for(const definition of definitions||[]){
   const card=el('article',undefined,'card');card.append(el('h2',definition.Name),el('p',`${definition.Kind} · revision ${definition.Revision}`,'muted'));
   card.append(button('Inspect definition',async()=>{const result=await api('/v2/definitions/'+encodeURIComponent(definition.ID));card.append(el('pre',result.Revision.Source))}));
