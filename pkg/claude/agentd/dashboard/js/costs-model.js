@@ -285,6 +285,8 @@ export function buildAccumulatedCostChart(data) {
   let total = 0;
   const seriesTotals = new Map();
   const seriesMeta = new Map();
+  const keys = [...new Set((data?.days || []).flatMap((day) =>
+    (day.segments || []).map((segment) => segment.key)))].sort();
   const points = (data?.days || []).map((day, index) => {
     const dailyCost = Number(day.cost ?? day.cost_usd ?? 0);
     for (const segment of day.segments || []) {
@@ -293,7 +295,8 @@ export function buildAccumulatedCostChart(data) {
     }
     return {
       day: day.day, dailyCost, cost: (total += dailyCost), projected: !!day.projected, index,
-      breakdown: [...seriesTotals].map(([key, cost]) => ({ ...seriesMeta.get(key), cost })),
+      breakdown: keys.filter((key) => seriesTotals.has(key))
+        .map((key) => ({ ...seriesMeta.get(key), cost: seriesTotals.get(key) })),
     };
   });
   const segments = [];
@@ -308,10 +311,12 @@ export function buildAccumulatedCostChart(data) {
   }
   if (current.length) segments.push({ projected: current[current.length - 1].projected, points: current });
   const maximum = points.length ? points[points.length - 1].cost : 0;
-  const keys = [...new Set((data?.days || []).flatMap((day) => (day.segments || []).map((segment) => segment.key)))];
   const stacks = keys.map((key, seriesIndex) => {
     const stackPoints = points.map((point) => {
-      const lower = keys.slice(0, seriesIndex).reduce((sum, priorKey) => {
+      // The first listed series is the top area, matching both chart tooltips.
+      // Sum later series beneath it so visual and textual top-to-bottom order
+      // stay identical.
+      const lower = keys.slice(seriesIndex + 1).reduce((sum, priorKey) => {
         const entry = point.breakdown.find((item) => item.key === priorKey);
         return sum + (entry?.cost || 0);
       }, 0);
@@ -506,9 +511,15 @@ export function buildCostChart(data, projection, agents, selected, providers, se
   const creditBreakdown = dailyCreditsBreakdown(filteredAgents, selected, options);
   const seriesKeys = [...new Set(Object.values(breakdown).flatMap((parts) =>
     Object.values(parts).map((part) => `${part.provider}\u0000${part.model}`)))].sort();
+  const seriesOrder = new Map(seriesKeys.map((key, index) => [key, index]));
   const className = (part) => {
-    const index = Math.max(0, seriesKeys.indexOf(`${part.provider}\u0000${part.model}`));
+    const index = seriesOrder.get(`${part.provider}\u0000${part.model}`) ?? 0;
     return `cost-series-${index % 8}${part.kind === 'what_if' ? ' cost-seg-whatif' : ''}`;
+  };
+  const compareSegments = (left, right) => {
+    const leftIndex = seriesOrder.get(`${left.provider}\u0000${left.model}`) ?? 0;
+    const rightIndex = seriesOrder.get(`${right.provider}\u0000${right.model}`) ?? 0;
+    return leftIndex - rightIndex || left.kind.localeCompare(right.kind);
   };
   const recordedTotals = new Map();
   const recordedMeta = new Map();
@@ -523,7 +534,7 @@ export function buildCostChart(data, projection, agents, selected, providers, se
     const part = recordedMeta.get(key);
     return { ...part, key, cost: cost * recordedCost / recordedTotal, credits: 0,
       className: className(part), approximate: true };
-  }).filter((segment) => segment.cost > 0) : [];
+  }).filter((segment) => segment.cost > 0).sort(compareSegments) : [];
   const fill = projection?.fillEmpty ? projection.leadingFill : null;
   const actual = (data?.days || []).map((day) => {
     if (fill && fill[day.day] != null) {
@@ -535,7 +546,7 @@ export function buildCostChart(data, projection, agents, selected, providers, se
         ...part, key,
         credits: creditBreakdown[day.day]?.[key] || 0,
         className: className(part), approximate: false,
-      })).filter((segment) => segment.cost > 0);
+      })).filter((segment) => segment.cost > 0).sort(compareSegments);
     return { day: day.day, cost: segments.reduce((sum, segment) => sum + segment.cost, 0), projected: false, segments };
   });
   const future = (projection?.future || []).map((day) => ({

@@ -1220,9 +1220,8 @@ setTimeout(function(){
   var model = document.querySelector('#costs-stack-model');
   if (model && !model.checked) model.click();
   setTimeout(function(){
-    var hits = document.querySelectorAll('.cost-accumulated-hit');
-    var hit = hits[hits.length - 1];
-    if (hit) hit.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: window.innerWidth * .58 }));
+    var target = document.querySelector('.cost-accumulated-hover-target');
+    if (target) target.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: window.innerWidth * .58 }));
   }, 50);
 }, 50);`),
 			SettleMS: 500,

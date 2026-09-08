@@ -129,27 +129,52 @@ test('Cost chart breakdowns independently group providers and models, including 
   const byModel = model.buildCostChart(payload, projection, agents, selected, providers, null,
     { stackByProvider: false, stackByModel: true });
   assert.deepEqual(byModel.days[0].segments.map((item) => [item.provider, item.model, item.cost]), [
-    ['', 'shared', 9], ['', 'gpt', 1],
-  ], 'the same model is combined across providers when provider stacking is off');
+    ['', 'gpt', 1], ['', 'shared', 9],
+  ], 'the same model is combined across providers and series have one stable order');
 
   const nested = model.buildCostChart(payload, projection, agents, selected, providers, null,
     { stackByProvider: true, stackByModel: true });
   assert.equal(nested.days[0].segments.length, 3, 'provider + model keeps provider/model pairs distinct');
   assert.equal(new Set(nested.days[0].segments.map((item) => item.className)).size, 3,
     'every visible provider/model series receives a distinct categorical color class');
-  assert.deepEqual(nested.days[1].segments.map((item) => item.cost), [12, 6, 2],
+  assert.deepEqual(nested.days[1].segments.map((item) => item.cost), [12, 2, 6],
     'future segments preserve the recorded provider/model distribution');
   assert.deepEqual(nested.days[1].segments.map((item) => item.className),
     nested.days[0].segments.map((item) => item.className),
     'recorded and projected segments keep identical series colors');
   assert.ok(nested.days[1].segments.every((item) => item.approximate));
 
+  const interleaved = model.buildCostChart(payload, projection, [
+    { conv_id: 'i1', day: '2026-07-10', provider: 'anthropic', model: 'a', cost_usd: 4 },
+    { conv_id: 'i2', day: '2026-07-10', provider: 'openai', model: 'b', cost_usd: 3 },
+    { conv_id: 'i3', day: '2026-07-10', provider: 'anthropic', model: 'z', cost_usd: 3 },
+  ], selected, providers, null, { stackByProvider: true, stackByModel: true });
+  assert.deepEqual(interleaved.days[0].segments.map((item) => `${item.provider}/${item.model}`),
+    ['anthropic/a', 'anthropic/z', 'openai/b'],
+    'interleaved backend rows become provider-contiguous before charts and grouped tooltips consume them');
+
   const accumulated = model.buildAccumulatedCostChart(nested);
   assert.equal(accumulated.stacks.length, 3);
-  assert.deepEqual(accumulated.points[1].breakdown.map((item) => item.cost), [18, 9, 3],
+  assert.deepEqual(accumulated.points[1].breakdown.map((item) => item.cost), [18, 3, 9],
     'accumulated hover breakdown includes recorded plus projected portions');
-  assert.equal(accumulated.stacks.at(-1).points.at(-1).upper, 30,
-    'the outer stacked boundary remains equal to the accumulated total');
+  assert.deepEqual(accumulated.points[1].breakdown.map((item) => item.key),
+    accumulated.stacks.map((item) => item.key),
+    'hover rows use the same series order as the accumulated layers');
+  assert.equal(accumulated.stacks[0].points.at(-1).upper, 30,
+    'the first listed series is the top layer and its outer boundary equals the accumulated total');
+
+  const lateSeries = model.buildAccumulatedCostChart({ days: [
+    { day: '2026-07-10', cost: 2, segments: [
+      { key: 'b\u0000m\u0000real', provider: 'b', model: 'm', kind: 'real', cost: 2, className: 'cost-series-1' },
+    ] },
+    { day: '2026-07-11', cost: 5, segments: [
+      { key: 'a\u0000m\u0000real', provider: 'a', model: 'm', kind: 'real', cost: 3, className: 'cost-series-0' },
+      { key: 'b\u0000m\u0000real', provider: 'b', model: 'm', kind: 'real', cost: 2, className: 'cost-series-1' },
+    ] },
+  ], stackByProvider: true, stackByModel: true });
+  assert.deepEqual(lateSeries.stacks.map((item) => item.provider), ['a', 'b']);
+  assert.deepEqual(lateSeries.points[1].breakdown.map((item) => item.provider), ['a', 'b'],
+    'a canonically earlier series stays above a series that appeared on an earlier day');
 });
 
 test('Copilot cost segments retain native credits beside gross subscription dollars', async (t) => {
