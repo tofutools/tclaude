@@ -285,6 +285,8 @@ export function buildAccumulatedCostChart(data) {
   let total = 0;
   const seriesTotals = new Map();
   const seriesMeta = new Map();
+  const keys = [...new Set((data?.days || []).flatMap((day) =>
+    (day.segments || []).map((segment) => segment.key)))].sort();
   const points = (data?.days || []).map((day, index) => {
     const dailyCost = Number(day.cost ?? day.cost_usd ?? 0);
     for (const segment of day.segments || []) {
@@ -293,7 +295,8 @@ export function buildAccumulatedCostChart(data) {
     }
     return {
       day: day.day, dailyCost, cost: (total += dailyCost), projected: !!day.projected, index,
-      breakdown: [...seriesTotals].map(([key, cost]) => ({ ...seriesMeta.get(key), cost })),
+      breakdown: keys.filter((key) => seriesTotals.has(key))
+        .map((key) => ({ ...seriesMeta.get(key), cost: seriesTotals.get(key) })),
     };
   });
   const segments = [];
@@ -308,7 +311,6 @@ export function buildAccumulatedCostChart(data) {
   }
   if (current.length) segments.push({ projected: current[current.length - 1].projected, points: current });
   const maximum = points.length ? points[points.length - 1].cost : 0;
-  const keys = [...new Set((data?.days || []).flatMap((day) => (day.segments || []).map((segment) => segment.key)))];
   const stacks = keys.map((key, seriesIndex) => {
     const stackPoints = points.map((point) => {
       // The first listed series is the top area, matching both chart tooltips.

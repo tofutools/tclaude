@@ -162,6 +162,19 @@ test('Cost chart breakdowns independently group providers and models, including 
     'hover rows use the same series order as the accumulated layers');
   assert.equal(accumulated.stacks[0].points.at(-1).upper, 30,
     'the first listed series is the top layer and its outer boundary equals the accumulated total');
+
+  const lateSeries = model.buildAccumulatedCostChart({ days: [
+    { day: '2026-07-10', cost: 2, segments: [
+      { key: 'b\u0000m\u0000real', provider: 'b', model: 'm', kind: 'real', cost: 2, className: 'cost-series-1' },
+    ] },
+    { day: '2026-07-11', cost: 5, segments: [
+      { key: 'a\u0000m\u0000real', provider: 'a', model: 'm', kind: 'real', cost: 3, className: 'cost-series-0' },
+      { key: 'b\u0000m\u0000real', provider: 'b', model: 'm', kind: 'real', cost: 2, className: 'cost-series-1' },
+    ] },
+  ], stackByProvider: true, stackByModel: true });
+  assert.deepEqual(lateSeries.stacks.map((item) => item.provider), ['a', 'b']);
+  assert.deepEqual(lateSeries.points[1].breakdown.map((item) => item.provider), ['a', 'b'],
+    'a canonically earlier series stays above a series that appeared on an earlier day');
 });
 
 test('Copilot cost segments retain native credits beside gross subscription dollars', async (t) => {
