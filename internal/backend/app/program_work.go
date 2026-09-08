@@ -233,6 +233,10 @@ func (s *Service) reconcileProgramResourceCleanup(ctx context.Context) error {
 }
 
 func (s *Service) admitAndRunProgram(ctx context.Context, record WorkRunRecord, attempt model.WorkNodeAttempt) (WorkRunRecord, error) {
+	if attempt.Performer != nil && strings.TrimSpace(attempt.Performer.Timeout) != "" && !s.now().UTC().Before(attempt.Deadline) {
+		transition := s.graphOutcomeTransition(record, attempt, model.WorkOutcomeRejected, "program activation timeout elapsed before admission")
+		return s.store.ApplyGraphTransition(ctx, transition)
+	}
 	if s.programHost == nil {
 		return s.recordGraphAttemptUnavailable(ctx, record, attempt, fail(ErrUnavailable, "program host is unavailable"))
 	}

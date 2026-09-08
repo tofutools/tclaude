@@ -167,6 +167,8 @@ class ProcessEditor {
         changes.push((n,f)=>{const names=[...new Set(lines(f.captures))];if(names.length)n.Captures=names;else delete n.Captures;});
       }
       const performer = node.Performer;
+      fields.push({name:'timeout',label:'Performer timeout (e.g. 30s; program execution maximum 1h)',value:performer.Timeout||''});
+      changes.push((n,f)=>{if(f.timeout)n.Performer.Timeout=f.timeout;else delete n.Performer.Timeout;});
       fields.push({name:'contact_cadence',label:'Contact cadence (authoring only, e.g. 30m)',value:performer.Contact?.Cadence||''},
         {name:'contact_budget',label:'Contact budget',type:'number',min:1,max:10000,value:performer.Contact?.Budget||''},
         {name:'contact_target',label:'Escalation target (authoring only)',value:performer.Contact?.EscalationTarget||''});
@@ -177,11 +179,12 @@ class ProcessEditor {
       select.onchange = () => {
         if (!this.discardUnapplied()) return;
         update(n => {
-          const contact = n.Performer.Contact;
+          const contact = n.Performer.Contact, timeout = n.Performer.Timeout;
           n.Performer = select.value === 'agent' ? {Kind: 'agent', Agent: {MemberKey: 'worker', Brief: '', ContextPolicy: 'fresh'}}
             : select.value === 'program' ? {Kind: 'program', Program: {Profile: {}, Arguments: []}}
               : {Kind: 'human', Human: {Operator: true, AgentID: '', RoleID: '', Prompt: ''}};
           if(contact) n.Performer.Contact = contact;
+          if(timeout) n.Performer.Timeout = timeout;
         });
         if (stageContext) this.showStage(stageContext);
       };
@@ -225,6 +228,7 @@ class ProcessEditor {
     if (node.Kind === 'task') this.inspector.prepend(this.performerSelect);
     if(node.Kind === 'wait') this.inspector.append(element('p','Absolute-time and signal waits can be saved, but cannot start. Clear both to run a duration wait.'));
     if(node.Captures?.length) this.inspector.append(element('p','Output names are retained for authoring and export. Running this process is unavailable until capture execution is supported.'));
+    if(node.Performer?.Timeout) this.inspector.append(element('p',node.Performer.Kind==='program'?'Timeout starts when this program node becomes ready, includes admission delay, and cannot extend the run or saved program limit.':'Timeout is retained for authoring. Clear it to start: agent and human timeout execution is unavailable.'));
     if(node.Performer?.Contact) this.inspector.append(element('p','Contact schedules are retained for authoring and export. Clear all three contact fields to remove a schedule. Running this process is unavailable until scheduled performer contact is supported.'));
     if (stageContext) { this.inspector.append(action('Back to task stages', () => this.render())); return; }
     if (node.Kind === 'task') this.stageControls(node);

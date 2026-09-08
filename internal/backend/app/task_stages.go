@@ -15,6 +15,9 @@ func compileTaskStages(authored model.WorkGraph) (model.WorkGraph, error) {
 	if err := validateUniqueWorkEdges(authored.Edges); err != nil {
 		return model.WorkGraph{}, err
 	}
+	if len(authored.ProgramActivationTimeouts) != 0 {
+		return model.WorkGraph{}, fail(ErrInvalid, "program activation budgets are compiler-owned")
+	}
 	if len(authored.TaskGroups) != 0 {
 		return model.WorkGraph{}, fail(ErrInvalid, "task groups are compiler-owned")
 	}
