@@ -619,27 +619,28 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 }
 
 type Runtime struct {
-	activity      nativeactivity.State
-	forkReceipt   string
-	artifact      *host.SandboxChildArtifact
-	policyHash    string
-	provider      *Provider
-	executionID   model.ExecutionID
-	attempt       model.AttemptGeneration
-	terminal      *host.Terminal
-	nativeID      string
-	intent        ports.StartIntent
-	stateRoot     string
-	observations  ports.PrimaryObservationSink
-	access        *ports.ActionCredentialReceipt
-	spool         *host.ObservationSpool
-	contextReady  bool
-	providerOrder string
-	guidance      *nativeguidance.Runtime
-	callback      *nativeguidance.CallbackResource
-	cleanupOnce   sync.Once
-	cleanupErr    error
-	mu            sync.Mutex
+	activity       nativeactivity.State
+	activityLoaded bool
+	forkReceipt    string
+	artifact       *host.SandboxChildArtifact
+	policyHash     string
+	provider       *Provider
+	executionID    model.ExecutionID
+	attempt        model.AttemptGeneration
+	terminal       *host.Terminal
+	nativeID       string
+	intent         ports.StartIntent
+	stateRoot      string
+	observations   ports.PrimaryObservationSink
+	access         *ports.ActionCredentialReceipt
+	spool          *host.ObservationSpool
+	contextReady   bool
+	providerOrder  string
+	guidance       *nativeguidance.Runtime
+	callback       *nativeguidance.CallbackResource
+	cleanupOnce    sync.Once
+	cleanupErr     error
+	mu             sync.Mutex
 }
 
 func (r *Runtime) ExecutionID() model.ExecutionID { return r.executionID }
@@ -685,6 +686,9 @@ func (r *Runtime) Interact(ctx context.Context, in ports.Interaction) (ports.Int
 		return ports.InteractionResult{Disposition: ports.EffectRefused}, nil
 	}
 	r.activity.Invalidate()
+	if err := r.checkpointActivity(); err != nil {
+		return ports.InteractionResult{Disposition: ports.EffectRefused}, err
+	}
 	if err := r.terminal.SendLiteral(ctx, in.Text); err != nil {
 		e, _ := r.providerEvidenceUnlocked()
 		return ports.InteractionResult{Disposition: ports.EffectUnknown, Evidence: e}, err
@@ -778,6 +782,12 @@ func (r *Runtime) consumeObservations(ctx context.Context) error {
 	if r.spool == nil {
 		return nil
 	}
+	if !r.activityLoaded {
+		if err := r.activity.Restore(r.spool.Directory(), r.nativeID); err != nil {
+			return err
+		}
+		r.activityLoaded = true
+	}
 	events, err := r.spool.ReadPending()
 	if err != nil {
 		return err
@@ -785,11 +795,11 @@ func (r *Runtime) consumeObservations(ctx context.Context) error {
 	for _, sp := range events {
 		var event sessionStartEvent
 		if json.Unmarshal(sp.Payload, &event) != nil || event.AgentID != "" {
-			_ = r.spool.Acknowledge(sp.Order)
+			_ = r.acknowledgeObservation(sp.Order)
 			continue
 		}
 		if _, parseErr := uuid.Parse(event.SessionID); parseErr != nil {
-			_ = r.spool.Acknowledge(sp.Order)
+			_ = r.acknowledgeObservation(sp.Order)
 			continue
 		}
 		if event.HookEventName != "SessionStart" {
@@ -798,13 +808,13 @@ func (r *Runtime) consumeObservations(ctx context.Context) error {
 					r.activity.Record(state, sp.RecordedAt)
 				}
 			}
-			if err := r.spool.Acknowledge(sp.Order); err != nil {
+			if err := r.acknowledgeObservation(sp.Order); err != nil {
 				return err
 			}
 			continue
 		}
 		if r.observations == nil {
-			if err := r.spool.Acknowledge(sp.Order); err != nil {
+			if err := r.acknowledgeObservation(sp.Order); err != nil {
 				return err
 			}
 			continue
@@ -829,7 +839,7 @@ func (r *Runtime) consumeObservations(ctx context.Context) error {
 			return err
 		}
 		r.providerOrder = sp.Order
-		if err := r.spool.Acknowledge(sp.Order); err != nil {
+		if err := r.acknowledgeObservation(sp.Order); err != nil {
 			return err
 		}
 		if disposition == ports.PrimaryContextInitial {
@@ -930,4 +940,18 @@ var _ ports.Runtime = (*Runtime)(nil)
 
 func supportedLaunchPolicy() ports.PolicyRequirements {
 	return ports.PolicyRequirements{SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxReadOnly, model.SandboxWorkspaceWrite, model.SandboxUnconfined}}
+}
+
+func (r *Runtime) checkpointActivity() error {
+	if r.spool == nil {
+		return nil
+	}
+	return r.activity.Save(r.spool.Directory(), r.nativeID)
+}
+
+func (r *Runtime) acknowledgeObservation(order string) error {
+	if err := r.checkpointActivity(); err != nil {
+		return err
+	}
+	return r.spool.Acknowledge(order)
 }
