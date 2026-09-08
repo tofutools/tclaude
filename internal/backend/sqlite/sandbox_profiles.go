@@ -76,7 +76,7 @@ func (s *Store) SaveSandboxProfile(ctx context.Context, req app.SaveSandboxProfi
 		if err = json.Unmarshal(data, &previous); err != nil {
 			return app.SandboxProfileResult{}, err
 		}
-		if previous.Archived || previous.Revision != req.ExpectedRevision {
+		if previous.Imported || previous.Archived || previous.Revision != req.ExpectedRevision {
 			return app.SandboxProfileResult{}, app.ErrConflict
 		}
 		profile.CreatedAt = previous.CreatedAt
@@ -242,7 +242,7 @@ func (s *Store) SetSandboxProfileArchived(ctx context.Context, req app.SetSandbo
 	if err = json.Unmarshal(revisionData, &result.Revision); err != nil {
 		return result, err
 	}
-	if result.Profile.Revision != req.ExpectedRevision {
+	if result.Profile.Imported || result.Profile.Revision != req.ExpectedRevision {
 		return app.SandboxProfileResult{}, app.ErrConflict
 	}
 	result.Profile.Archived = req.Archived
