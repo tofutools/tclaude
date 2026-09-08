@@ -19,7 +19,7 @@ export function teamDraftFromGroup(group, agents) {
   draft.Source = `Captured displayed group ${group.ID} at revision ${group.Revision}. Member settings are independent copies; review before saving.\n` +
     [group.Details?.Description, group.Details?.Mission].filter(Boolean).join('\n');
   draft.Team.Members = members.map((agent, index) => ({Key: 'member_' + (index + 1), Name: agent.Name, Desired: clone(agent.Desired), Roles: [], Owner: false, Required: true, BriefingIDs: []}));
-  draft.Team.Waves = members.length ? [{ID: 'initial', MemberKeys: draft.Team.Members.map(member => member.Key), DependsOn: [], RequiredReady: true, RequiredBriefs: true}] : [];
+  draft.Team.Waves = members.length ? [{ID: 'initial', MemberKeys: draft.Team.Members.map(member => member.Key), DependsOn: [], RequiredReady: true, RequiredBriefs: true, WaitForIdle: true, MaxWaitSeconds: 0}] : [];
   draft.Team.WorkspacePolicy = 'per_member';
   return draft;
 }
@@ -147,7 +147,7 @@ class TeamEditor {
           b.MemberKeys = (b.MemberKeys || []).filter(key => key !== f.key);
           if (f.briefs.includes(b.ID)) b.MemberKeys.push(f.key);
         }
-        if (!d.Team.Waves.length) d.Team.Waves.push({ID: 'initial', MemberKeys: [f.key], DependsOn: [], RequiredReady: true, RequiredBriefs: true});
+        if (!d.Team.Waves.length) d.Team.Waves.push({ID: 'initial', MemberKeys: [f.key], DependsOn: [], RequiredReady: true, RequiredBriefs: true, WaitForIdle: true, MaxWaitSeconds: 0});
         else if (!original) d.Team.Waves[0].MemberKeys.push(f.key);
       });
     },async f=>{f.resolvedSandbox=await sandbox.read(f.host_sandbox)});
@@ -188,14 +188,18 @@ class TeamEditor {
     });
   }
   wave(original) {
-    const w = original || {ID: '', MemberKeys: [], DependsOn: [], RequiredReady: true, RequiredBriefs: true};
+    const w = original || {ID: '', MemberKeys: [], DependsOn: [], RequiredReady: true, RequiredBriefs: true, WaitForIdle: true, MaxWaitSeconds: 0};
     this.form('Wave', [{key: 'id', label: 'Wave key', value: w.ID, required: true},
       {key: 'members', label: 'Wave members', multiple: true, options: this.draft.Team.Members.map(m => opt(m.Key, m.Name)), value: w.MemberKeys, required: true},
       {key: 'after', label: 'Launch after waves', multiple: true, options: this.draft.Team.Waves.filter(x => x.ID !== original?.ID).map(x => opt(x.ID)), value: w.DependsOn || []},
-      {key: 'ready', label: 'Wait for member readiness', type: 'checkbox', value: w.RequiredReady}, {key: 'briefs', label: 'Wait for required briefings', type: 'checkbox', value: w.RequiredBriefs}], f => {
+      {key: 'ready', label: 'Wait for member readiness', type: 'checkbox', value: w.RequiredReady}, {key: 'briefs', label: 'Wait for required briefings', type: 'checkbox', value: w.RequiredBriefs},
+      {key: 'idle', label: 'Wait for first turn before launching later waves', type: 'checkbox', value: !!w.WaitForIdle},
+      {key: 'maxWait', label: 'Maximum wait in seconds (0 uses 8 minutes)', value: String(w.MaxWaitSeconds || 0)}], f => {
+        const maxWait = Number(f.maxWait);
+        if (!/^\d+$/.test(f.maxWait) || !Number.isSafeInteger(maxWait) || maxWait > 9223372036) throw new Error('Maximum wait must be a nonnegative whole number of seconds.');
         if (this.draft.Team.Waves.some(x => x.ID === f.id && x.ID !== original?.ID)) throw new Error('Wave keys must be unique.');
         this.change(d => {
-          const wave = {...w, ID: f.id, MemberKeys: f.members, DependsOn: f.after, RequiredReady: f.ready, RequiredBriefs: f.briefs};
+          const wave = {...w, ID: f.id, MemberKeys: f.members, DependsOn: f.after, RequiredReady: f.ready, RequiredBriefs: f.briefs, WaitForIdle: f.idle, MaxWaitSeconds: maxWait};
           const i = d.Team.Waves.findIndex(x => x.ID === original?.ID); if (i < 0) d.Team.Waves.push(wave); else d.Team.Waves[i] = wave;
           for (const x of d.Team.Waves) if (x !== wave) { x.MemberKeys = x.MemberKeys.filter(k => !f.members.includes(k)); if (original) x.DependsOn = (x.DependsOn || []).map(id => id === original.ID ? f.id : id); }
         });

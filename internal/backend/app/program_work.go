@@ -58,6 +58,12 @@ func (s *Service) advanceGraphWork(ctx context.Context, record WorkRunRecord) (W
 			return s.store.ApplyGraphTransition(ctx, transition)
 		}
 		if node.Kind == model.WorkNodeWait {
+			if updated, handled, err := s.reconcileTeamWaveGate(ctx, record, attempt); handled || err != nil {
+				if err != nil || updated.Run.Revision != record.Run.Revision {
+					return updated, err
+				}
+				continue
+			}
 			if now.Before(attempt.ReadyAt.Add(node.Wait.Duration)) {
 				continue
 			}

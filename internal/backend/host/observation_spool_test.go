@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -20,18 +21,23 @@ func TestObservationSpoolDrainsOnlyCompletedAttemptEvents(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(spool.Directory(), "event-002"), []byte("second"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(spool.Directory(), "event-001"), []byte("first"), 0o600))
 
+	first := time.Unix(1000, 0).UTC()
+	second := first.Add(time.Second)
+	require.NoError(t, os.Chtimes(filepath.Join(spool.Directory(), "event-001"), first, first))
+	require.NoError(t, os.Chtimes(filepath.Join(spool.Directory(), "event-002"), second, second))
+
 	events, err := spool.ReadPending()
 	require.NoError(t, err)
 	require.Equal(t, []ObservationSpoolEvent{
-		{Order: "event-001", Payload: []byte("first")},
-		{Order: "event-002", Payload: []byte("second")},
+		{Order: "event-001", Payload: []byte("first"), RecordedAt: first},
+		{Order: "event-002", Payload: []byte("second"), RecordedAt: second},
 	}, events)
 	require.FileExists(t, filepath.Join(spool.Directory(), "event-001"))
 	require.NoError(t, spool.Acknowledge(events[0].Order))
 	require.NoFileExists(t, filepath.Join(spool.Directory(), "event-001"))
 	events, err = spool.ReadPending()
 	require.NoError(t, err)
-	require.Equal(t, []ObservationSpoolEvent{{Order: "event-002", Payload: []byte("second")}}, events)
+	require.Equal(t, []ObservationSpoolEvent{{Order: "event-002", Payload: []byte("second"), RecordedAt: second}}, events)
 	require.NoError(t, spool.Acknowledge(events[0].Order))
 	require.FileExists(t, filepath.Join(spool.Directory(), ".event-pending"))
 

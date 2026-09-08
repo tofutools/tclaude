@@ -442,6 +442,9 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 }
 
 func (s *Service) RecordNodeEvidence(ctx context.Context, req RecordNodeEvidenceRequest) (WorkRunResult, error) {
+	if req.Kind == teamWaveActivationEvidence {
+		return WorkRunResult{}, fail(ErrInvalid, "wave activity evidence is runtime-owned")
+	}
 	if err := validateEffectContext(req.Context); err != nil {
 		return WorkRunResult{}, err
 	}
@@ -1588,6 +1591,9 @@ func validateTeam(team model.TeamDefinition) error {
 				return fail(ErrInvalid, "member %s references unknown briefing %s", member.Key, id)
 			}
 		}
+	}
+	if _, err := teamWaveRunBudget(team); err != nil {
+		return err
 	}
 	waves := make(map[string]model.TeamWave, len(team.Waves))
 	assigned := make(map[string]bool, len(team.Members))

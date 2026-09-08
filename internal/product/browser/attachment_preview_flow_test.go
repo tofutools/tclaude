@@ -32,6 +32,8 @@ func TestBrowserAttachmentPreviewIsExplicitInertAndCancelled(t *testing.T) {
 	require.True(t, page.MustElement("#attachment-preview img").MustVisible())
 	page.Keyboard.MustType(input.Escape)
 	page.MustWait(`() => !document.querySelector('#attachment-preview').open`)
+	// The dialog close event runs after its open state changes.
+	page.MustWait(`() => window.previewRevoked.length === 1`)
 	require.Equal(t, 1, page.MustEval(`() => window.previewRevoked.length`).Int())
 	page.MustElementR("#message-list button", "^Preview notes.html$").MustClick()
 	page.MustElementR("#attachment-preview [role=status]", "first 64 KiB")

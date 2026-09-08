@@ -355,6 +355,7 @@ type fakeProvider struct {
 	enforceSandbox       bool
 	preparedTopology     ports.WorkloadTopology
 	lastPreparation      ports.PreparationRequest
+	lastRecovery         ports.RecoveryRequest
 	releases, recoveries int
 	permitConsumed       bool
 	uncertainRelease     bool
@@ -384,6 +385,7 @@ func (p *fakeProvider) Prepare(_ context.Context, request ports.PreparationReque
 }
 func (p *fakeProvider) Recover(_ context.Context, request ports.RecoveryRequest) (ports.RecoveryResult, error) {
 	p.recoveries++
+	p.lastRecovery = request
 	p.runtime.id = request.ExecutionID
 	p.runtime.attempt = request.Attempt
 	p.runtime.observations = request.Observations
