@@ -1347,3 +1347,26 @@ pinned authored briefing revision; recipient routing is unchanged. An absent
 syntax keeps text literal. Expanded input is checked before checkout creation,
 and independent message and initial-input limits still apply. Saving a template
 does not deploy or send anything.
+
+### Explicit process parameter expansion
+
+Process Overview can enable `mustache-v1` parameter expansion for that immutable
+revision. Existing definitions with no parameter syntax remain literal. References
+such as `{{ params.release_key }}` use declared keys, independently of display
+labels, in agent briefs, human prompts, explicit decision questions and individual
+program arguments. Compiled plan/check/review inputs follow the same rule.
+
+Required values and typed defaults are resolved before expansion. Missing optional
+values become empty text; strings are inserted literally and other typed values
+use compact JSON without numeric rounding. Substituted text is not interpreted
+again, split into arguments or passed through a shell. A field is bounded to
+128 KiB and total expanded input to 1 MiB, with existing narrower program limits
+still enforced before admission. The resolved graph is durable across restart;
+its saved definition remains unchanged.
+
+Configuration identities, approved program commands/prefixes, environment,
+workspace, audiences, routes, notes, wait/retry/contact policy and arbitrary JSON
+input are never expanded. Decision questions can be authored separately from
+node names; a missing question retains the node-name fallback. Parameter keys in
+this syntax begin with a letter or underscore and contain letters, digits and
+underscores. An undeclared reference is rejected before saving or starting.

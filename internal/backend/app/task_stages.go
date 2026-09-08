@@ -15,6 +15,11 @@ func compileTaskStages(authored model.WorkGraph) (model.WorkGraph, error) {
 	if len(authored.TaskGroups) != 0 {
 		return model.WorkGraph{}, fail(ErrInvalid, "task groups are compiler-owned")
 	}
+	for _, node := range authored.Nodes {
+		if node.Decision != nil && node.Decision.QuestionResolved || node.Stages != nil && node.Stages.PlanApproval != nil && node.Stages.PlanApproval.QuestionResolved {
+			return model.WorkGraph{}, fail(ErrInvalid, "resolved decision questions are compiler-owned")
+		}
+	}
 	if err := validateWorkGraph(authored); err != nil {
 		return model.WorkGraph{}, err
 	}
