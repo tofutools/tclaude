@@ -21,6 +21,7 @@ func TestBrowserTeamRhythmsAuthorAndReopenWithoutPublishingSchedules(t *testing.
 	page.MustElementR("#team-editor button", "^Add recurring nudge$").MustClick()
 	page.MustElement("#team-editor [name=name]").MustInput("Status")
 	page.MustElement("#team-editor [name=interval]").MustInput("10m")
+	page.MustElement("#team-editor [name=role_label]").MustInput("reviewer")
 	page.MustElement("#team-editor [name=subject]").MustInput("Progress")
 	page.MustElement("#team-editor [name=body]").MustInput("Report <progress> literally.")
 	page.MustElementR("#team-editor button", "^Apply changes$").MustClick()
@@ -38,11 +39,12 @@ func TestBrowserTeamRhythmsAuthorAndReopenWithoutPublishingSchedules(t *testing.
 	require.Equal(t, "library_v1", page.MustElement("#team-editor [name=rules]").MustProperty("value").Str(), "canceling discard retains the unapplied rule selection")
 	page.MustElementR("#team-editor button", "^Apply changes$").MustClick()
 	page.MustElementR("#team-editor button", "^Edit Status$").MustClick()
+	require.Equal(t, "reviewer", page.MustElement("#team-editor [name=role_label]").MustProperty("value").Str())
 	require.Equal(t, "10m", page.MustElement("#team-editor [name=interval]").MustProperty("value").Str())
 	require.Equal(t, "Report <progress> literally.", page.MustElement("#team-editor [name=body]").MustProperty("value").Str())
 	var saved app.DefinitionResult
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/definitions/team", nil, &saved))
-	require.Equal(t, []model.TeamRhythm{{Name: "Status", Interval: "10m", Timezone: "UTC", Subject: "Progress", Body: "Report <progress> literally."}}, saved.Revision.Team.Rhythms)
+	require.Equal(t, []model.TeamRhythm{{Name: "Status", RoleLabel: "reviewer", Interval: "10m", Timezone: "UTC", Subject: "Progress", Body: "Report <progress> literally."}}, saved.Revision.Team.Rhythms)
 	var rules []model.AutomationRule
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/automation/rules", nil, &rules))
 	require.Len(t, rules, 1, "saving a template must not create schedules")

@@ -752,11 +752,12 @@ type AutomationAction struct {
 }
 
 type AutomationMessageAction struct {
-	Subject  string `json:",omitempty"`
-	Body     string
-	AgentIDs []AgentID
-	GroupID  GroupID
-	RoleID   RoleID
+	RoleLabel string `json:",omitempty"`
+	Subject   string `json:",omitempty"`
+	Body      string
+	AgentIDs  []AgentID
+	GroupID   GroupID
+	RoleID    RoleID
 }
 
 type TeamInstantiation struct {

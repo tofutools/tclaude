@@ -36,6 +36,14 @@ func validateTeamRhythms(rhythms []model.TeamRhythm) error {
 			return fail(ErrInvalid, "rhythms require unique bounded names and valid message text")
 		}
 		names[name] = true
+		if r.RoleLabel != "" {
+			if strings.TrimSpace(r.RoleLabel) == "" || r.RoleID != "" {
+				return fail(ErrInvalid, "rhythm display role must be nonempty and separate from permission-role filters")
+			}
+			if err := (model.AgentLabels{Role: r.RoleLabel}).Validate(); err != nil {
+				return fail(ErrInvalid, "%v", err)
+			}
+		}
 		if r.RoleID != "" && r.RoleID.Validate() != nil {
 			return fail(ErrInvalid, "rhythm role is invalid")
 		}
@@ -83,7 +91,7 @@ func (s *Service) materializeAuthoredTeamRhythms(ctx context.Context, deployment
 		// Stable deployment creation time keeps an interrupted materialization retry exact.
 		condition.Schedule.Anchor = deployment.CreatedAt.Add(condition.Schedule.Interval)
 		id := teamRhythmID(deployment.ID, i)
-		_, err = s.saveAutomationRuleAuthorized(ctx, SaveAutomationRuleRequest{Context: RequestContext{Principal: request.Principal, RequestID: model.RequestID(deterministicOrchestrationID("request_", string(id)))}, ID: id, RevisionID: model.AutomationRuleRevisionID(deterministicOrchestrationID("rule_revision_", string(id))), Name: r.Name, Owner: owner, Delegation: delegation, Condition: condition, Action: model.AutomationAction{Kind: model.AutomationSendMessage, Message: &model.AutomationMessageAction{Subject: r.Subject, Body: r.Body, GroupID: deployment.GroupID, RoleID: r.RoleID}}, Policy: teamRhythmPolicy()}, deployment.ID, creationAuthority)
+		_, err = s.saveAutomationRuleAuthorized(ctx, SaveAutomationRuleRequest{Context: RequestContext{Principal: request.Principal, RequestID: model.RequestID(deterministicOrchestrationID("request_", string(id)))}, ID: id, RevisionID: model.AutomationRuleRevisionID(deterministicOrchestrationID("rule_revision_", string(id))), Name: r.Name, Owner: owner, Delegation: delegation, Condition: condition, Action: model.AutomationAction{Kind: model.AutomationSendMessage, Message: &model.AutomationMessageAction{Subject: r.Subject, Body: r.Body, GroupID: deployment.GroupID, RoleID: r.RoleID, RoleLabel: r.RoleLabel}}, Policy: teamRhythmPolicy()}, deployment.ID, creationAuthority)
 		if err != nil {
 			return err
 		}
