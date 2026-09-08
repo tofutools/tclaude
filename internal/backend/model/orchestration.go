@@ -129,6 +129,7 @@ const (
 )
 
 type TeamBriefing struct {
+	Syntax     string `json:",omitempty"`
 	ID         string
 	Body       string
 	Timing     BriefingTiming

@@ -1337,3 +1337,13 @@ legacy authoring capability; they do not create wake subscriptions. A process
 containing either is refused before run creation, including an older pinned
 revision after a newer revision clears the fields. Duration-only waits retain
 their existing execution and restart behavior.
+
+Team briefing mission placeholders are explicitly enabled per briefing with
+`Syntax: "mission-v1"` (the editor's Mission placeholders choice). Exact
+`{{task}}` and `{{mission}}` tokens expand once from the admitted deployment's
+mission. Values containing tokens are not expanded again. Initial input,
+after-ready messages, and explicit rebriefs use that retained mission and
+pinned authored briefing revision; recipient routing is unchanged. An absent
+syntax keeps text literal. Expanded input is checked before checkout creation,
+and independent message and initial-input limits still apply. Saving a template
+does not deploy or send anything.
