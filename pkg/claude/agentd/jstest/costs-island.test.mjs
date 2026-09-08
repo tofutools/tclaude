@@ -79,6 +79,26 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
     'an open filter stays attached to its right-edge trigger instead of reflowing the selector row');
   assert.equal(providerPopover.style.top, '135px');
   providerMenu.removeAttribute('open');
+
+  const modelSummary = modelMenu.querySelector('summary');
+  const modelPopover = modelMenu.querySelector('.cost-filter-popover');
+  let modelPanelHeight = 300;
+  Object.defineProperty(modelSummary, 'getBoundingClientRect', { value: () => ({
+    left: 300, right: 500, top: 600, bottom: 630,
+  }) });
+  Object.defineProperty(modelPopover, 'getBoundingClientRect', { value: () => ({
+    width: 500, height: modelPanelHeight,
+  }) });
+  modelMenu.setAttribute('open', '');
+  positionCostFilter(modelMenu);
+  assert.equal(modelPopover.style.top, '295px', 'a tall panel flips above its trigger');
+  modelPanelHeight = 60;
+  await harness.input(modelMenu.querySelector('input[type="search"]'), 'gpt');
+  assert.equal(modelPopover.style.top, '635px',
+    'a content resize repositions an open panel against the same trigger');
+  modelPanelHeight = 300;
+  await harness.input(modelMenu.querySelector('input[type="search"]'), '');
+  modelMenu.removeAttribute('open');
   const breakdownMenu = mounted.container.querySelector('#filter-costs-breakdown');
   assert.match(breakdownMenu.querySelector('summary').textContent, /Provider/,
     'provider breakdown is the legible default');

@@ -172,6 +172,7 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("function costModelStats", "model dropdown derives provider-aware availability and distribution context")
 	must("cost-filter-popover", "provider and model choices render in compact dynamic dropdowns")
 	must("function positionCostFilter(menu)", "filter popovers anchor to their own trigger without reflowing the selector row")
+	must("useLayoutEffect(() => positionCostFilter(menu.current))", "open filters reposition after dynamic content changes")
 	must("position: fixed; z-index: 200; visibility: hidden", "filter popovers use viewport-safe overlay positioning")
 	must("viewportWidth - COST_FILTER_EDGE - width", "filter popovers clamp inside the viewport")
 	must("Turning on a provider selects its models", "linked-filter restore behavior is explained in the model dropdown")

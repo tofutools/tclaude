@@ -1,5 +1,5 @@
 import { Fragment, h, render } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { AsyncLoadState } from './async-load-state.js';
 import { CostsChart } from './costs-chart.js';
@@ -152,11 +152,18 @@ function toggleCostFilter(event) {
   positionCostFilter(menu);
 }
 
+function useCostFilterPosition() {
+  const menu = useRef(null);
+  useLayoutEffect(() => positionCostFilter(menu.current));
+  return menu;
+}
+
 function ProviderFilter({ state, current }) {
+  const menu = useCostFilterPosition();
   if (current.providers.length <= 1) return null;
   const selectedCost = current.providerStats.reduce((sum, entry) => sum
     + (current.selectedProviders.has(entry.provider) ? entry.cost : 0), 0);
-  return html`<details id="filter-costs-providers" class="cost-filter-menu" onToggle=${toggleCostFilter}>
+  return html`<details ref=${menu} id="filter-costs-providers" class="cost-filter-menu" onToggle=${toggleCostFilter}>
     <summary onClick=${closeSiblingFilters}><strong>Providers</strong><span>${current.selectedProviders.size} of ${current.providers.length} · ${fmtUSD(selectedCost)}</span></summary>
     <div class="cost-filter-popover provider" role="group" aria-label="Cost providers">
       <div class="cost-filter-popover-head"><strong>Providers</strong><span>cost share · agents</span></div>
@@ -182,11 +189,12 @@ function ProviderFilter({ state, current }) {
 
 function ModelFilter({ state, current }) {
   const [query, setQuery] = useState('');
+  const menu = useCostFilterPosition();
   if (current.models.length <= 1) return null;
   const available = current.modelStats.filter((entry) => entry.available);
   const selectedCount = available.filter((entry) => current.selectedModels.has(entry.model)).length;
   const filtered = current.modelStats.filter((entry) => entry.model.toLowerCase().includes(query.trim().toLowerCase()));
-  return html`<details id="filter-costs-models" class="cost-filter-menu models" onToggle=${toggleCostFilter}>
+  return html`<details ref=${menu} id="filter-costs-models" class="cost-filter-menu models" onToggle=${toggleCostFilter}>
     <summary onClick=${closeSiblingFilters}><strong>Models</strong><span>${selectedCount} of ${available.length} · ${Math.round(current.modelCoverage * 100)}% spend</span></summary>
     <div class="cost-filter-popover model" role="group" aria-label="Cost models"
       title="Cost is grouped by the last model recorded for each agent-day slice.">
@@ -216,9 +224,10 @@ function ModelFilter({ state, current }) {
 }
 
 function BreakdownFilter({ state, current }) {
+  const menu = useCostFilterPosition();
   const modes = [current.stackByProvider && 'Provider', current.stackByModel && 'Model'].filter(Boolean);
   const label = modes.length ? modes.join(' + ') : 'Total';
-  return html`<details id="filter-costs-breakdown" class="cost-filter-menu breakdown" onToggle=${toggleCostFilter}>
+  return html`<details ref=${menu} id="filter-costs-breakdown" class="cost-filter-menu breakdown" onToggle=${toggleCostFilter}>
     <summary onClick=${closeSiblingFilters}><strong>Breakdown</strong><span>${label}</span></summary>
     <div class="cost-filter-popover breakdown" role="group" aria-label="Cost chart breakdown">
       <div class="cost-filter-popover-head"><strong>Chart breakdown</strong><span>affects both graphs</span></div>
