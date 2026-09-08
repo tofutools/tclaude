@@ -21,7 +21,7 @@ func TestGroupConfigurationPinsMembersAndRetriesAfterDefaultChanges(t *testing.T
 	op := model.OperatorPrincipal()
 	_, err = svc.CreateGroup(ctx, app.CreateGroupRequest{Context: op, ID: "group", Name: "Group"})
 	require.NoError(t, err)
-	save := app.SaveConfigurationProfileRequest{Context: app.RequestContext{Principal: op, RequestID: "profile_one"}, ID: "profile", RevisionID: "one", Name: "Worker", Desired: model.DesiredConfiguration{Harness: "codex", Model: "first", WorkingDirectory: t.TempDir(), Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}, Startup: &model.ProfileStartup{AgentName: "Suggested", Context: "Context", InitialMessage: "Brief"}}
+	save := app.SaveConfigurationProfileRequest{Context: app.RequestContext{Principal: op, RequestID: "profile_one"}, ID: "profile", RevisionID: "one", Name: "Worker", Desired: model.DesiredConfiguration{Harness: "codex", Model: "first", WorkingDirectory: t.TempDir(), Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}, Startup: &model.ProfileStartup{Role: "reviewer", Description: "Reviews changes", AgentName: "Suggested", Context: "Context", InitialMessage: "Brief"}}
 	first, err := svc.SaveConfigurationProfile(ctx, save)
 	require.NoError(t, err)
 	set := app.SetGroupConfigurationRequest{Principal: op, GroupID: "group", Profile: &first.Revision.Ref}
@@ -42,6 +42,7 @@ func TestGroupConfigurationPinsMembersAndRetriesAfterDefaultChanges(t *testing.T
 	in := app.CreateGroupMemberRequest{Context: app.RequestContext{Principal: op, RequestID: "member"}, GroupID: "group", ID: "member", Name: "Named", ExpectedGroupRevision: 1, ExpectedDefaultRevision: defaults.Revision}
 	result, err := svc.CreateGroupMember(ctx, in)
 	require.NoError(t, err)
+	require.Equal(t, model.AgentLabels{Role: "reviewer", Description: "Reviews changes"}, result.Agent.Labels)
 	require.Equal(t, "first", result.Agent.Desired.Model)
 	require.Equal(t, &first.Revision.Ref, result.Agent.ConfigurationProfile)
 	require.Equal(t, []model.AgentID{"member"}, result.Group.Members)

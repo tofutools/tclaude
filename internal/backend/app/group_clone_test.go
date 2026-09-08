@@ -24,7 +24,7 @@ func TestGroupCloneIsAtomicOfflineAndExactlyRepeatable(t *testing.T) {
 	profile, err := svc.SaveConfigurationProfile(ctx, app.SaveConfigurationProfileRequest{Context: app.RequestContext{Principal: op, RequestID: "profile"}, ID: "profile", RevisionID: "one", Name: "Worker", Desired: desired})
 	require.NoError(t, err)
 	for _, id := range []model.AgentID{"active", "retired"} {
-		_, err = svc.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: id, Name: string(id), Labels: model.AgentLabels{Role: "engineer", Description: "literal <b>description</b>"}, TaskReference: "task", ConfigurationProfile: &profile.Revision.Ref})
+		_, err = svc.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: id, Name: string(id), Labels: &model.AgentLabels{Role: "engineer", Description: "literal <b>description</b>"}, TaskReference: "task", ConfigurationProfile: &profile.Revision.Ref})
 		require.NoError(t, err)
 	}
 	_, err = svc.CreateGroup(ctx, app.CreateGroupRequest{Context: op, ID: "source", Name: "Source", Members: []model.AgentID{"active", "retired"}, OwnerAgentID: "active"})

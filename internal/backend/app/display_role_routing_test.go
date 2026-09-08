@@ -26,7 +26,7 @@ func TestDisplayRoleRoutingUsesCurrentGroupLabelsWithoutAuthority(t *testing.T) 
 		} else {
 			labels.Groups = map[model.GroupID]model.AgentDisplayLabels{"team": {}}
 		}
-		_, err = service.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: id, Name: string(id), Desired: desired, Labels: labels})
+		_, err = service.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: id, Name: string(id), Desired: desired, Labels: &labels})
 		require.NoError(t, err)
 	}
 	for _, id := range []model.GroupID{"team", "other"} {

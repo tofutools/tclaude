@@ -276,7 +276,7 @@ type RequestContext struct {
 }
 
 type CreateAgentRequest struct {
-	Labels               model.AgentLabels
+	Labels               *model.AgentLabels
 	ConfigurationDefault string
 	ConfigurationProfile *model.ConfigurationProfileRef
 	Context              model.Principal

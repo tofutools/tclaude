@@ -86,11 +86,13 @@ async function startWithBrief(agent){
  ],f=>{const body=f.context&&f.brief?f.context+'\n\n'+f.brief:f.context||f.brief;if(!body||new TextEncoder().encode(body).length>32768||body.includes('\0'))throw new Error('Context and brief together must contain 1–32768 UTF-8 bytes without NUL.');return api('/v2/launch',{request_id:f.requestID,initial_message:body,target:{agent:{agent_id:agent.ID,expected_revision:agent.Revision}}})});
 }
 function startupFields(startup={}){return[
+ {name:'startup_role',label:'Default display role (optional)',value:startup.Role||'',required:false},
+ {name:'startup_description',label:'Default agent description (optional)',value:startup.Description||'',multiline:true,required:false},
  {name:'startup_name',label:'Suggested agent name (optional)',value:startup.AgentName||'',required:false},
  {name:'startup_context',label:'Suggested startup context (optional)',value:startup.Context||'',multiline:true,required:false},
  {name:'startup_brief',label:'Suggested initial brief (optional; context and brief together at most 32 KiB)',value:startup.InitialMessage||'',multiline:true,required:false}
 ]}
-function profileStartup(f){const name=f.startup_name||'',context=f.startup_context||'',brief=f.startup_brief||'',body=context&&brief?context+'\n\n'+brief:context||brief;if(new TextEncoder().encode(name).length>256||new TextEncoder().encode(body).length>32768||/[\0\r\n]/.test(name)||(name&&!name.trim())||body.includes('\0'))throw new Error('Suggested name must be at most 256 UTF-8 bytes; context and brief together at most 32768 bytes, without NUL.');return{AgentName:name,Context:context,InitialMessage:brief}}
+function profileStartup(f){const name=f.startup_name||'',context=f.startup_context||'',brief=f.startup_brief||'',body=context&&brief?context+'\n\n'+brief:context||brief;if(new TextEncoder().encode(name).length>256||new TextEncoder().encode(body).length>32768||/[\0\r\n]/.test(name)||(name&&!name.trim())||body.includes('\0'))throw new Error('Suggested name must be at most 256 UTF-8 bytes; context and brief together at most 32768 bytes, without NUL.');if((f.startup_role||'').includes('\0')||(f.startup_description||'').includes('\0'))throw new Error('Display labels cannot contain NUL.');return{Role:f.startup_role||'',Description:f.startup_description||'',AgentName:name,Context:context,InitialMessage:brief}}
 function editedAgentLabels(agent,groupID,form){
  const value={Role:form.role_label,Description:form.description},labels={...agent.Labels};
  if(groupID&&groupID!=='__ungrouped')return {...labels,Groups:{...labels.Groups,[groupID]:value}};
@@ -109,7 +111,7 @@ function agentRow(agent,groupID){
  actions.append(button('Activity',async()=>{activityTarget={AgentID:agent.ID};await selectTab('activity')}));
  if(execution?.conversation_id)actions.append(button('Usage',async()=>{usageTarget={ConversationID:execution.conversation_id};await selectTab('usage')}));
  if(agent.Lifecycle==='retired'){row.append(el('span','retired','status'));actions.append(button('Reactivate',async()=>{await api(`/v2/agents/${encodeURIComponent(agent.ID)}/reactivate`,{expected_revision:agent.Revision});await refresh()}));row.append(actions);return row}
- actions.append(button('Save settings as configuration',()=>saveConfigurationDraft({...agent.Desired,name:agent.Name+' configuration'},{AgentName:agent.Name})));
+ actions.append(button('Save settings as configuration',()=>saveConfigurationDraft({...agent.Desired,name:agent.Name+' configuration'},{AgentName:agent.Name,Role:display.Role,Description:display.Description})));
  actions.append(button('Configure',()=>edit('Configure agent',[...desiredFields({...agent.Desired,name:agent.Name}),...agentMetadataFields({...agent,Labels:display})],f=>api(`/v2/agents/${encodeURIComponent(agent.ID)}`,{name:f.name,desired:configuration(f),task_reference:f.task,labels:editedAgentLabels(agent,groupID,f),notifications:{DirectMessage:f.notify},expected_revision:agent.Revision},'PUT'))));
  if(!execution || ['exited','failed'].includes(execution.state)){
   actions.append(button('Retire',()=>edit('Retire agent',[{name:'reason',label:'Reason',multiline:true}],f=>api(`/v2/agents/${encodeURIComponent(agent.ID)}/retire`,{expected_revision:agent.Revision,reason:f.reason}))));
@@ -253,7 +255,7 @@ async function renderConfigurations(){
  const choices=[...(defaults.Global?[['global',defaults.Global]]:[]),...Object.entries(defaults.Harnesses||{})];
  if(choices.length){const card=el('article',undefined,'card');card.append(el('strong','Defaults'),el('p','Defaults select a saved revision for new agents. Existing agents keep their settings.','muted'));
  for(const [name,ref] of choices){const row=el('div',undefined,'row');const profile=entries.find(p=>p.ID===ref.ProfileID);row.append(el('span',`${name}: ${profile?.Name||ref.ProfileID}`));
- row.append(button('Create from '+name,async()=>{const saved=await api(`/v2/configuration-profiles/${encodeURIComponent(ref.ProfileID)}?revision_id=${encodeURIComponent(ref.RevisionID)}`);edit('Create agent from default',[{name:'name',label:'Agent name',value:saved.Revision.Startup?.AgentName||''}],f=>api('/v2/agents',{id:f.requestID,name:f.name,configuration_profile:ref}))}));
+ row.append(button('Create from '+name,async()=>{const saved=await api(`/v2/configuration-profiles/${encodeURIComponent(ref.ProfileID)}?revision_id=${encodeURIComponent(ref.RevisionID)}`);edit('Create agent from default',[{name:'name',label:'Agent name',value:saved.Revision.Startup?.AgentName||''},...displayLabelFields(saved.Revision.Startup)],f=>api('/v2/agents',{id:f.requestID,name:f.name,labels:{Role:f.role_label,Description:f.description},configuration_profile:ref}))}));
  row.append(button('Clear '+name,async id=>{const harnesses={...(defaults.Harnesses||{})};delete harnesses[name];await api('/v2/configuration-defaults',{request_id:id,expected_revision:defaults.Revision,global:name==='global'?null:defaults.Global,harnesses});await renderConfigurations()}));card.append(row)}list.append(card)}
  const shown=entries.filter(p=>configurationStatus==='all'||Boolean(p.Archived)===(configurationStatus==='archived'));
  for(const profile of shown){
@@ -263,7 +265,7 @@ async function renderConfigurations(){
   const isDefault=choices.some(([,ref])=>ref.ProfileID===profile.ID),archive=button('Archive configuration',async id=>{await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}/archive`,{request_id:id,expected_revision:profile.Revision,archived:true});await renderConfigurations()});archive.disabled=isDefault;card.append(archive);if(isDefault)card.append(el('p','Clear or replace its default selections before archiving.','muted'));
   card.append(button('Create agent',async()=>{
    const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
-   edit('Create agent from configuration',[{name:'name',label:'Agent name',value:selected.Revision.Startup?.AgentName||profile.Name}],f=>api('/v2/agents',{id:f.requestID,name:f.name,configuration_profile:selected.Revision.Ref}));
+   edit('Create agent from configuration',[{name:'name',label:'Agent name',value:selected.Revision.Startup?.AgentName||profile.Name},...displayLabelFields(selected.Revision.Startup)],f=>api('/v2/agents',{id:f.requestID,name:f.name,labels:{Role:f.role_label,Description:f.description},configuration_profile:selected.Revision.Ref}));
   }),button('Edit configuration',async()=>{
    const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
    edit('Save new configuration revision',[...desiredFields({...selected.Revision.Desired,name:profile.Name}),...startupFields(selected.Revision.Startup)],async f=>{
@@ -286,9 +288,12 @@ function saveConfigurationDraft(desired={},startup={}){
 }
 $('new-configuration').onclick=()=>saveConfigurationDraft();
 
+function displayLabelFields(labels={}){return[
+ {name:'role_label',label:'Display role',value:labels?.Role||'',required:false},
+ {name:'description',label:'Description',value:labels?.Description||'',multiline:true,required:false}
+]}
 function agentMetadataFields(agent={}){return[
- {name:'role_label',label:'Display role',value:agent.Labels?.Role||'',required:false},
- {name:'description',label:'Description',value:agent.Labels?.Description||'',multiline:true,required:false},
+ ...displayLabelFields(agent.Labels),
  {name:'task',label:'Task reference',value:agent.TaskReference||'',required:false},
  {name:'notify',label:'Message notification',value:agent.Notifications?.DirectMessage||'if_available',options:[{value:'if_available',label:'Notify when available'},{value:'none',label:'Inbox only'}]}
 ]}

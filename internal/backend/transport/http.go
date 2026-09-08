@@ -174,7 +174,7 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Labels             model.AgentLabels                  `json:"labels"`
+		Labels             *model.AgentLabels                 `json:"labels"`
 		TaskReference      string                             `json:"task_reference"`
 		ParentAgentID      model.AgentID                      `json:"parent_agent_id"`
 		CloneSourceAgentID model.AgentID                      `json:"clone_source_agent_id"`

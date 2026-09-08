@@ -35,12 +35,16 @@ func TestProfileStartupRetainsExactRevisionAndLegacyHash(t *testing.T) {
 	req.Context.RequestID = "startup"
 	req.RevisionID = "two"
 	req.ExpectedRevision = 1
-	req.Startup = &model.ProfileStartup{AgentName: "Writer", Context: "Review context", InitialMessage: "Explain first"}
+	req.Startup = &model.ProfileStartup{Role: "writer", Description: "Drafts documentation", AgentName: "Writer", Context: "Review context", InitialMessage: "Explain first"}
 	saved, err := service.SaveConfigurationProfile(ctx, req)
 	require.NoError(t, err)
 	require.NotEqual(t, old.Revision.Ref.ContentHash, saved.Revision.Ref.ContentHash)
 	agent, err := service.CreateAgent(ctx, app.CreateAgentRequest{Context: model.OperatorPrincipal(), ID: "writer", Name: "Writer", ConfigurationProfile: &saved.Revision.Ref})
 	require.NoError(t, err)
+	require.Equal(t, model.AgentLabels{Role: "writer", Description: "Drafts documentation"}, agent.Agent.Labels)
+	cleared, err := service.CreateAgent(ctx, app.CreateAgentRequest{Context: model.OperatorPrincipal(), ID: "cleared", Name: "Cleared", ConfigurationProfile: &saved.Revision.Ref, Labels: &model.AgentLabels{}})
+	require.NoError(t, err)
+	require.Empty(t, cleared.Agent.Labels)
 	req.Startup.InitialMessage = "changed"
 	_, err = service.SaveConfigurationProfile(ctx, req)
 	require.ErrorIs(t, err, app.ErrConflict)

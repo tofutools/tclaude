@@ -1793,3 +1793,7 @@ Agent display roles and descriptions are editable metadata, separate from role a
 ### Display-role message targets
 
 Team recurring nudges and message schedules can target a display role within a group, matching v1. `RoleLabel` is matched case-insensitively against the member's current group label (falling back to the agent label); leading/trailing whitespace is ignored. Empty means all members. This selection grants no permissions: normal message authority, schedule delegation, active membership, and delivery-time recipient eligibility still apply. A display-role target cannot be combined with explicit recipients or a permission-role filter. Previously saved `RoleID` filters retain their behavior and remain visible when editing an existing rule.
+
+### Profile display defaults
+
+Configuration profiles retain the v1 default display role and agent description. Creating an agent from a profile or group default copies these suggestions into the new agent; later profile edits do not rename or relabel existing agents. The creation dialog exposes both values for editing or clearing. API callers may omit labels to inherit the selected profile suggestions or send an explicit empty labels object to clear them. Saving agent settings as a configuration retains the display labels visible in that group, and migration preserves the role/description fields from legacy spawn profiles. These display values do not grant permissions.

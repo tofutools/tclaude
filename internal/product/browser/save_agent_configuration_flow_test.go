@@ -12,7 +12,7 @@ func TestBrowserSavesAgentSettingsAsIndependentConfiguration(t *testing.T) {
 	ctx, page, operator := processEditorBrowser(t)
 	desired := model.DesiredConfiguration{Harness: "claude", Model: "fixture", Effort: "high", WorkingDirectory: "/tmp", Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}
 	var agent model.Agent
-	require.NoError(t, operator.Call(ctx, "POST", "/v2/agents", map[string]any{"id": "source", "name": "Source", "desired": desired}, &agent))
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/agents", map[string]any{"id": "source", "name": "Source", "desired": desired, "labels": model.AgentLabels{Role: "writer", Description: "Drafts documentation"}}, &agent))
 	page.MustElement("#refresh").MustClick()
 	page.MustElementR("#roster button", "^Save settings as configuration$").MustClick()
 	page.MustElementR("#editor-title", "^Save configuration$")
@@ -36,6 +36,8 @@ func TestBrowserSavesAgentSettingsAsIndependentConfiguration(t *testing.T) {
 	require.Equal(t, "edited-fixture", saved.Revision.Desired.Model)
 	require.Equal(t, "high", saved.Revision.Desired.Effort)
 	require.Equal(t, "Source", saved.Revision.Startup.AgentName)
+	require.Equal(t, "writer", saved.Revision.Startup.Role)
+	require.Equal(t, "Drafts documentation", saved.Revision.Startup.Description)
 	var snapshot struct {
 		Agents     []model.Agent `json:"agents"`
 		Executions []any         `json:"executions"`
