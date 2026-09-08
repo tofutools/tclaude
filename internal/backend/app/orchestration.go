@@ -1479,6 +1479,12 @@ func validateTeam(team model.TeamDefinition) error {
 	}
 	briefs := make(map[string]model.TeamBriefing, len(team.Briefings))
 	for _, brief := range team.Briefings {
+		if brief.Syntax != "" && (len(brief.Body) > maxMessageBodyBytes || !utf8.ValidString(brief.Body) || strings.ContainsRune(brief.Body, 0)) {
+			return fail(ErrInvalid, "templated briefing requires bounded valid text")
+		}
+		if brief.Syntax != "" && brief.Syntax != "mission-v1" {
+			return fail(ErrInvalid, "unsupported team briefing syntax")
+		}
 		if strings.TrimSpace(brief.ID) == "" || strings.TrimSpace(brief.Body) == "" || briefs[brief.ID].ID != "" {
 			return fail(ErrInvalid, "briefing ids and bodies must be non-empty and unique")
 		}

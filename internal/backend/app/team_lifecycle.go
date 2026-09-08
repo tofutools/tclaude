@@ -54,6 +54,15 @@ func (s *Service) RebriefDeployment(ctx context.Context, req RebriefDeploymentRe
 	if err = compatibleRebriefRoster(deployment, *revision.Team); err != nil {
 		return TeamDeploymentResult{}, err
 	}
+	resolvedTeam, err := resolveTeamMissionBriefings(*revision.Team, deployment.Mission, false)
+	if err != nil {
+		return TeamDeploymentResult{}, err
+	}
+	for key := range deployment.Members {
+		if len(rebriefBody(key, resolvedTeam)) > maxMessageBodyBytes {
+			return TeamDeploymentResult{}, fail(ErrInvalid, "combined rebrief exceeds message limit")
+		}
+	}
 	// BeginTeamRebrief returns an exact prior admission before comparing the
 	// current deployment revision or current authority.
 	deployment, admitted, repeated, err := s.store.BeginTeamRebrief(ctx, req.DeploymentID, req.ExpectedRevision, req.Definition, req.Context.Principal, req.Context.RequestID, digest, s.now().UTC())
@@ -69,7 +78,7 @@ func (s *Service) RebriefDeployment(ctx context.Context, req RebriefDeploymentRe
 	operations := make(map[string][]model.OperationID, len(deployment.Members))
 	keys := sortedMemberKeys(deployment.Members)
 	for _, key := range keys {
-		body := rebriefBody(key, *revision.Team)
+		body := rebriefBody(key, resolvedTeam)
 		if body == "" {
 			continue
 		}
@@ -309,6 +318,10 @@ func memberHasAfterReadyBrief(team model.TeamDefinition, memberKey string) bool 
 }
 
 func (s *Service) deliverAfterReadyBriefings(ctx context.Context, deployment model.TeamDeployment, memberKey string, team model.TeamDefinition) (model.TeamDeployment, error) {
+	team, err := resolveTeamMissionBriefings(team, deployment.Mission, false)
+	if err != nil {
+		return deployment, err
+	}
 	if len(deployment.BriefingOperationIDs[memberKey]) >= teamAfterReadyBriefCount(team, memberKey) {
 		return deployment, nil
 	}
