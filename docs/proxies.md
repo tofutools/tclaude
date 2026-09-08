@@ -179,6 +179,7 @@ The `agent.linear_proxy` block in `~/.tclaude/data/config.json`:
 tclaude proxy awb whoami                  # server, account, reachable workspaces
 tclaude proxy awb ready --compact         # the primary entry point
 tclaude proxy awb claim awb-a3f9c1
+tclaude proxy awb make-ready awb-a3f9c1
 tclaude proxy awb update awb-a3f9c1 --commit-hash 01234567
 tclaude proxy awb update awb-a3f9c1 --pull-request-url https://github.com/acme/repo/pull/42
 tclaude proxy awb comment add awb-a3f9c1 --body-file findings.md

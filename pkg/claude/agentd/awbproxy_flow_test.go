@@ -69,6 +69,12 @@ func (r *awbRecorder) snapshot() []agentd.AWBProxyRequest {
 
 func (r *awbRecorder) sawAnyCall() bool { return len(r.snapshot()) > 0 }
 
+func (r *awbRecorder) reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = nil
+}
+
 // only returns the single call the recorder saw.
 func (r *awbRecorder) only(t *testing.T) agentd.AWBProxyRequest {
 	t.Helper()
@@ -349,6 +355,20 @@ func TestAWBProxy_ListAcceptsLegacyProjectsFilter(t *testing.T) {
 		"a pre-rename client must still constrain a new daemon by workspace")
 }
 
+func TestAWBProxy_ListAcceptsBacklogStatus(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"})
+	w.grant(agentd.PermAWBRead)
+	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
+		if strings.Contains(req.URL, "/api/workspaces") {
+			return http.StatusOK, awbWorkspacesJSON("awb")
+		}
+		return http.StatusOK, "[]"
+	}
+
+	w.outcome(w.post("/v1/awb/issue/list", map[string]any{"statuses": []string{"backlog"}}))
+	assert.Equal(t, []string{"backlog"}, awbQuery(t, rec.last(t))["status"])
+}
+
 // TestAWBProxy_ListingSkipsAllowedWorkspacesTheServerDoesNotHave covers the
 // misconfiguration that would otherwise break every unfiltered listing: AWB
 // answers a `workspace` filter naming no workspace with a 404 rather than with an
@@ -479,6 +499,99 @@ func TestAWBProxy_CreateSendsAWBsOwnBody(t *testing.T) {
 		`"assignees":["claude-1","claude-2"],"labels":["parser"],`+
 		`"relations":[{"type":"blocked-by","other":"awb-000001"}]}`,
 		string(call.Body))
+}
+
+func TestAWBProxy_CreateClaimBacklogAndLabels(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
+	}
+
+	w.outcome(w.post("/v1/awb/issue/create", map[string]any{
+		"workspace": "awb", "title": "Claimed", "claim": true, "labels": []string{"parser"},
+	}))
+	assert.JSONEq(t, `{"workspace":"awb","title":"Claimed","assignees":["tclaude-bot"],"labels":["parser"]}`,
+		string(rec.only(t).Body))
+
+	rec.reset()
+	w.outcome(w.post("/v1/awb/issue/create", map[string]any{
+		"workspace": "awb", "title": "Parked", "backlog": true,
+	}))
+	assert.JSONEq(t, `{"backlog":true,"workspace":"awb","title":"Parked"}`,
+		string(rec.only(t).Body))
+
+	rec.reset()
+	res := w.post("/v1/awb/issue/create", map[string]any{
+		"workspace": "awb", "title": "Invalid", "backlog": true, "claim": true,
+	})
+	assert.Equal(t, http.StatusBadRequest, res.Code)
+	assert.False(t, rec.sawAnyCall())
+
+	res = w.post("/v1/awb/issue/create", map[string]any{
+		"workspace": "awb", "title": "Invalid", "backlog": true,
+		"assignees": []string{"tclaude-bot"},
+	})
+	assert.Equal(t, http.StatusBadRequest, res.Code)
+	assert.False(t, rec.sawAnyCall())
+}
+
+func TestAWBProxy_MakeReadyUsesConditionalStatusTransition(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
+		issue := strings.Replace(awbIssueJSON("awb-a3f9c1", "awb"), `"status":"open"`, `"status":"backlog"`, 1)
+		if req.Method == http.MethodPut {
+			issue = awbIssueJSON("awb-a3f9c1", "awb")
+		}
+		return http.StatusOK, issue
+	}
+
+	w.outcome(w.post("/v1/awb/issue/make-ready", map[string]any{"id": "awb-a3f9c1"}))
+	calls := rec.snapshot()
+	require.Len(t, calls, 2)
+	assert.Equal(t, http.MethodGet, calls[0].Method)
+	assert.Equal(t, "https://awb.example/api/issues/awb-a3f9c1", calls[0].URL)
+	assert.Equal(t, http.MethodPut, calls[1].Method)
+	assert.Equal(t, "https://awb.example/api/issues/awb-a3f9c1/status", calls[1].URL)
+	assert.Equal(t, `"2026-08-26T09:12:03.412Z"`, calls[1].IfMatch)
+	assert.JSONEq(t, `{"status":"open"}`, string(calls[1].Body))
+}
+
+func TestAWBProxy_MakeReadyRetriesOneConcurrentEdit(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	call := 0
+	rec.response = func(req agentd.AWBProxyRequest) (int, string) {
+		call++
+		if call == 2 {
+			return http.StatusPreconditionFailed, `{"error":"the issue changed"}`
+		}
+		issue := strings.Replace(awbIssueJSON("awb-a3f9c1", "awb"), `"status":"open"`, `"status":"backlog"`, 1)
+		if call >= 3 {
+			issue = strings.ReplaceAll(issue, "2026-08-26T09:12:03.412Z", "2026-08-26T09:12:04.000Z")
+		}
+		return http.StatusOK, issue
+	}
+
+	w.outcome(w.post("/v1/awb/issue/make-ready", map[string]any{"id": "awb-a3f9c1"}))
+	calls := rec.snapshot()
+	require.Len(t, calls, 4, "one stale conditional write gets one fresh read and retry")
+	assert.Equal(t, `"2026-08-26T09:12:03.412Z"`, calls[1].IfMatch)
+	assert.Equal(t, `"2026-08-26T09:12:04.000Z"`, calls[3].IfMatch)
+}
+
+func TestAWBProxy_MakeReadyRefusesClosedWithoutMutation(t *testing.T) {
+	w, rec := awbWorld(t, []string{"awb"}, func(c *config.AWBProxyConfig) { c.AllowWrite = true })
+	w.grant(agentd.PermAWBWrite)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, strings.Replace(awbIssueJSON("awb-a3f9c1", "awb"),
+			`"status":"open"`, `"status":"closed"`, 1)
+	}
+
+	res := w.post("/v1/awb/issue/make-ready", map[string]any{"id": "awb-a3f9c1"})
+	assert.Equal(t, http.StatusConflict, res.Code)
+	require.Len(t, rec.snapshot(), 1, "a refused status must never reach the transition endpoint")
 }
 
 func TestAWBProxy_UpdateImplementationFields(t *testing.T) {

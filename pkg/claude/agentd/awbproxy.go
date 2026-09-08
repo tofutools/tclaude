@@ -219,6 +219,7 @@ type AWBProxyRequest struct {
 	Username    string
 	Password    string
 	ContentType string
+	IfMatch     string
 	Body        []byte
 }
 
@@ -274,6 +275,9 @@ func doAWBRequest(ctx context.Context, req AWBProxyRequest) (awbHTTPResult, erro
 	}
 	if req.ContentType != "" {
 		httpReq.Header.Set("Content-Type", req.ContentType)
+	}
+	if req.IfMatch != "" {
+		httpReq.Header.Set("If-Match", req.IfMatch)
 	}
 	httpReq.Header.Set("Accept", "application/json")
 	httpReq.Header.Set("User-Agent", "tclaude-agentd")
@@ -629,6 +633,7 @@ type awbCall struct {
 	Query       url.Values
 	Body        []byte
 	ContentType string
+	IfMatch     string
 }
 
 // exec runs one call and unmarshals a JSON response into out.
@@ -659,6 +664,7 @@ func (s *awbProxySession) exec(ctx context.Context, call awbCall, out any) (*awb
 		Username:    username,
 		Password:    password,
 		ContentType: call.ContentType,
+		IfMatch:     call.IfMatch,
 		Body:        call.Body,
 	})
 	if err != nil {
@@ -716,6 +722,8 @@ func awbErrorFault(res awbHTTPResult) *proxyFault {
 		return faultf(http.StatusNotFound, "not_found", "%s", msg)
 	case http.StatusConflict:
 		return faultf(http.StatusConflict, "awb_conflict", "%s", msg)
+	case http.StatusPreconditionFailed:
+		return faultf(http.StatusPreconditionFailed, "awb_precondition_failed", "%s", msg)
 	case http.StatusRequestEntityTooLarge:
 		return faultf(http.StatusBadRequest, "invalid_arg",
 			"the AWB server refused the request as too large: %s", msg)
@@ -1407,7 +1415,7 @@ func validateAWBActivityKind(kind string) (string, *proxyFault) {
 
 var (
 	awbTypes         = []string{"epic", "feature", "bug", "task", "chore"}
-	awbStatuses      = []string{"open", "in_progress", "closed"}
+	awbStatuses      = []string{"backlog", "open", "in_progress", "closed"}
 	awbRelationTypes = []string{"blocked-by", "has-parent", "discovered-from", "related"}
 	awbSorts         = []string{
 		"order", "-order", "workspace", "-workspace", "status", "-status", "assignee", "-assignee", "blockers", "-blockers", "priority", "-priority", "created", "-created", "updated", "-updated", "id", "-id",
