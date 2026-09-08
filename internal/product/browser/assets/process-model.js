@@ -127,6 +127,7 @@ export function validationMessages(draft) {
   for (const node of graph.Nodes) {
     const name = node.Name || node.ID;
     if (!visited.has(node.ID)) messages.push(`${name}: connect this node to the entry path.`);
+    if(node.Kind==='start' && ((outgoing.get(node.ID)||[]).length!==1 || (outgoing.get(node.ID)||[]).some(e=>e.Verdict) || graph.Nodes.filter(n=>n.Kind==='start').length>1))messages.push('Use one start node with exactly one unlabelled outgoing route.');
     if (node.Kind === 'fork' && (outgoing.get(node.ID)?.length || 0) < 2) messages.push(`${name}: a fork needs at least two outgoing branches.`);
     if (node.Kind === 'join' && (incoming.get(node.ID) || 0) < 2) messages.push(`${name}: a join needs at least two incoming branches.`);
     if (node.Kind === 'end' && outgoing.has(node.ID)) messages.push(`${name}: an end cannot have outgoing connections.`);

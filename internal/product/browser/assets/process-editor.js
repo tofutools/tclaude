@@ -37,7 +37,7 @@ class ProcessEditor {
     this.header.append(this.name, this.undoButton, this.redoButton, this.validateButton, this.saveButton,
       action('Export', () => this.export()), action('Import copy', () => this.import()), action('Close editor', () => this.close()));
     const palette = element('div'); palette.className = 'process-toolbar'; palette.setAttribute('aria-label', 'Node palette');
-    for (const kind of ['task', 'decision', 'fork', 'join', 'wait', 'end']) palette.append(action('Add ' + kind, () => this.add(kind)));
+    for (const kind of ['start', 'task', 'decision', 'fork', 'join', 'wait', 'end']) palette.append(action('Add ' + kind, () => this.add(kind)));
     palette.append(action('Saved snippets', () => this.snippets()), action('Copy nodes', () => this.copy()), action('Paste nodes', () => this.paste()), action('Delete selected', () => this.remove()),
       action('Overview', () => this.overview()), action('Parameters', () => this.parameters()), action('Outcome', () => this.outcome()), action('Source', () => this.source()));
     this.entry = element('select'); this.entry.setAttribute('aria-label', 'Entry node'); this.entry.onchange = () => this.change(draft => { draft.Process.Graph.EntryNodeID = this.entry.value; });

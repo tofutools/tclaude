@@ -1472,3 +1472,15 @@ new-worker declaration.
 New-worker creation in a process is authoring-only and is refused before run
 admission. Saving or copying these settings creates neither agents nor
 executions. Existing exact worker bindings retain their ordinary behavior.
+
+### Explicit process start nodes
+
+The process palette includes an optional Start node with its own stable identity,
+name, prose and layout. A graph permits at most one, with exactly one unlabelled
+outgoing route and no performer or retry settings. Entry selection remains
+explicit; existing graphs need no Start node.
+
+Start routing creates no native work. It settles through ordinary graph
+transitions and resumes after restart even when admission committed before the
+initial transition completed. Copies, snippets and monitoring retain the node
+instead of replacing it with an invisible edge.

@@ -167,6 +167,7 @@ type WorkGraph struct {
 type WorkNodeKind string
 
 const (
+	WorkNodeStart        WorkNodeKind = "start"
 	WorkNodeTask         WorkNodeKind = "task"
 	WorkNodeDecision     WorkNodeKind = "decision"
 	WorkNodeFork         WorkNodeKind = "fork"

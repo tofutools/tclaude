@@ -57,7 +57,7 @@ func CanonicalProcessSelection(data json.RawMessage) (json.RawMessage, error) {
 		}
 		ids[n.ID] = true
 		switch n.Kind {
-		case model.WorkNodeTask, model.WorkNodeDecision, model.WorkNodeFork, model.WorkNodeJoin, model.WorkNodeWait, model.WorkNodeEnd:
+		case model.WorkNodeStart, model.WorkNodeTask, model.WorkNodeDecision, model.WorkNodeFork, model.WorkNodeJoin, model.WorkNodeWait, model.WorkNodeEnd:
 		default:
 			return nil, ErrInvalid
 		}

@@ -428,7 +428,7 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 	attempt, windows := s.initialActivation(req.ID, req.Start.Scope, entry, now, run.Deadline, graph.ProgramActivationTimeouts[entry.ID])
 	run.NodeAttempts = []model.WorkNodeAttempt{attempt}
 	record, _, err := s.store.CreateGraphWorkRun(ctx, run, windows)
-	if err == nil && (entry.Kind == model.WorkNodeFork || entry.Kind == model.WorkNodeJoin || entry.Kind == model.WorkNodeEnd) {
+	if err == nil && (entry.Kind == model.WorkNodeStart || entry.Kind == model.WorkNodeFork || entry.Kind == model.WorkNodeJoin || entry.Kind == model.WorkNodeEnd) {
 		transition := s.graphOutcomeTransition(record, attempt, model.WorkOutcomeVerified, "entry transition")
 		record, err = s.store.ApplyGraphTransition(ctx, transition)
 	}
@@ -594,7 +594,7 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 				windows[i].Question = attempt.Performer.Human.Prompt
 			}
 		}
-		if node.Kind == model.WorkNodeFork || node.Kind == model.WorkNodeJoin || node.Kind == model.WorkNodeEnd || node.Kind == model.WorkNodeTaskComplete {
+		if node.Kind == model.WorkNodeStart || node.Kind == model.WorkNodeFork || node.Kind == model.WorkNodeJoin || node.Kind == model.WorkNodeEnd || node.Kind == model.WorkNodeTaskComplete {
 			attempt.State, attempt.Outcome = model.NodeAttemptSucceeded, model.WorkOutcomeVerified
 			if node.Kind == model.WorkNodeTaskComplete && taskCompletionWaived(graph, virtual, current) {
 				attempt.State, attempt.Outcome = model.NodeAttemptWaived, model.WorkOutcomeWaived
@@ -611,7 +611,7 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 		}
 		transition.Activations = append(transition.Activations, attempt)
 		transition.DecisionWindows = append(transition.DecisionWindows, windows...)
-		if node.Kind == model.WorkNodeFork || node.Kind == model.WorkNodeJoin || node.Kind == model.WorkNodeTaskComplete {
+		if node.Kind == model.WorkNodeStart || node.Kind == model.WorkNodeFork || node.Kind == model.WorkNodeJoin || node.Kind == model.WorkNodeTaskComplete {
 			for _, next := range outgoingNodes(graph, nodeID) {
 				activate(next, attempt.Ref.ActivationID)
 			}
@@ -1685,7 +1685,19 @@ func validateWorkGraph(graph model.WorkGraph) error {
 	if len(reachable) != len(nodes) {
 		return fail(ErrInvalid, "all work nodes must be reachable from the entry")
 	}
+	startCount := 0
 	for id, node := range nodes {
+		if node.Kind == model.WorkNodeStart {
+			startCount++
+			if startCount > 1 || len(adjacency[id]) != 1 {
+				return fail(ErrInvalid, "a graph permits one start node with exactly one outgoing route")
+			}
+			for _, edge := range graph.Edges {
+				if edge.From == id && edge.Verdict != "" {
+					return fail(ErrInvalid, "start route must be unlabelled")
+				}
+			}
+		}
 		if node.Kind == model.WorkNodeFork && len(adjacency[id]) < 2 {
 			return fail(ErrInvalid, "fork %s requires at least two outgoing branches", id)
 		}
@@ -1768,6 +1780,10 @@ func validateWorkNode(node model.WorkNode) error {
 		}
 		if node.Decision == nil || (node.Decision.Decider == nil && len(node.Decision.Audience) == 0) || len(node.Decision.PermittedAnswers) == 0 || node.Decision.ExpiresAfter <= 0 {
 			return fail(ErrInvalid, "decision node %s requires bounded declared answers", node.ID)
+		}
+	case model.WorkNodeStart:
+		if node.Performer != nil || node.Decision != nil || node.Join != nil || node.Wait != nil || node.End != nil || node.Stages != nil || node.Retry.MaxAttempts != 0 || node.Retry.Backoff != 0 || node.Retry.AttemptBudget != 0 || node.Retry.OnFail != "" || len(node.Retry.Retryable) != 0 || node.Waivable {
+			return fail(ErrInvalid, "start node permits only structural routing and prose")
 		}
 	case model.WorkNodeTaskComplete:
 		if node.Performer != nil || node.Decision != nil || node.Join != nil || node.Wait != nil || node.End != nil || node.Stages != nil {
