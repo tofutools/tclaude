@@ -101,7 +101,7 @@ func TestProviderOwnsTerminalCredentialAndRecovery(t *testing.T) {
 	require.Equal(t, "native user file", string(userFile))
 	require.Equal(t, filepath.Join(root, "terminals", "uploads"), filepath.Dir(staged.NativePath))
 
-	assertNativeTurnActivity(t, released.Runtime.(*Runtime), request)
+	assertNativeTurnActivity(t, released.Runtime.(*Runtime), request, released.Evidence)
 
 	interaction, err := released.Runtime.Interact(context.Background(), ports.Interaction{Text: "literal $(touch nope); `false`"})
 	require.NoError(t, err)
