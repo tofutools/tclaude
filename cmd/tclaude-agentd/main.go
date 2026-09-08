@@ -12,6 +12,13 @@ import (
 )
 
 func main() {
+	if handled, err := product.TrySandboxChild(os.Args[1:]); handled {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	command := product.DaemonCommand()

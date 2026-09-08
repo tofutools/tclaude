@@ -19,6 +19,14 @@ import (
 // The returned argument file stays open until exec has inherited it. Neither
 // namespace failure nor mount failure permits an unconfined fallback.
 func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *SandboxMountBindings, privateNetwork bool) (ProcessSpec, *os.File, error) {
+	return sandboxLinuxInvocation(wrapper, child, bindings, privateNetwork, false)
+}
+
+func sandboxExecInvocation(wrapper string, child ProcessSpec, bindings *SandboxMountBindings, privateNetwork bool) (ProcessSpec, *os.File, error) {
+	return sandboxLinuxInvocation(wrapper, child, bindings, privateNetwork, true)
+}
+
+func sandboxLinuxInvocation(wrapper string, child ProcessSpec, bindings *SandboxMountBindings, privateNetwork, direct bool) (ProcessSpec, *os.File, error) {
 	if !filepath.IsAbs(wrapper) || !filepath.IsAbs(child.Executable) || !filepath.IsAbs(child.Directory) {
 		return ProcessSpec{}, nil, fmt.Errorf("sandbox invocation requires absolute executable and working paths")
 	}
@@ -38,7 +46,11 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 		if pin.Access == model.SandboxFilesystemWrite {
 			flag = "--bind-fd"
 		}
-		args = append(args, flag, strconv.Itoa(3+index), pin.Guest)
+		fd := 3 + index
+		if direct {
+			fd = int(bindings.files[index].Fd())
+		}
+		args = append(args, flag, strconv.Itoa(fd), pin.Guest)
 	}
 	args = append(args, "--clearenv")
 	for _, entry := range MergeEnvironment(nil, child.Env) {
@@ -85,7 +97,11 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 	wrapped.Executable = wrapper
 	// bubblewrap's argument-file parser consumes options only; the native
 	// command remains after the outer separator, exactly as supplied by host.
-	wrapped.Args = append([]string{"--args", strconv.Itoa(3 + len(bindings.files)), "--", child.Executable}, child.Args...)
+	argumentFD := 3 + len(bindings.files)
+	if direct {
+		argumentFD = int(file.Fd())
+	}
+	wrapped.Args = append([]string{"--args", strconv.Itoa(argumentFD), "--", child.Executable}, child.Args...)
 	wrapped.ExtraFiles = append(bindings.Files(), file)
 	wrapped.Env = nil
 	// The guest cwd may not exist on the host. Only bubblewrap enters it after

@@ -59,10 +59,13 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = unixListener.Close() })
 	var output bytes.Buffer
-	wrapped, _, err := sandboxDescriptorInvocation(wrapper, ProcessSpec{Executable: executable, Args: []string{"-test.run=^TestSandboxDescriptorChild$"}, Directory: workspace, ExactEnvironment: true,
+	artifact, err := inspector.PrepareSandboxChild(private, wrapper, ProcessSpec{Executable: executable, Args: []string{"-test.run=^TestSandboxDescriptorChild$"}, Directory: workspace, ExactEnvironment: true,
 		Env: []string{"PATH=/usr/bin:/bin", "TCLAUDE_SANDBOX_CHILD=1", "WORK=" + workspace, "SECRET=" + secret, "PRIVATE_SOCKET=" + unixListener.Addr().String(), "OUTSIDE_LISTENER=" + listener.Addr().String(), "LITERAL=$HOME stays literal"}, Stdout: &output, Stderr: &output}, bound, true)
 	require.NoError(t, err)
-	process, err := StartProcess(wrapped)
+	require.NoError(t, bound.Close())
+	bootstrap := ProcessSpec{Executable: executable, Args: []string{"-test.run=^TestSandboxBootstrapHelper$"}, ExactEnvironment: true,
+		Env: []string{"TCLAUDE_BOOTSTRAP_ARTIFACT=" + artifact.Path, "TCLAUDE_BOOTSTRAP_DIGEST=" + artifact.Digest}, Stdout: &output, Stderr: &output}
+	process, err := StartProcess(bootstrap)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return process.Observe().Exited }, 10*time.Second, 10*time.Millisecond)
 	observation := process.Observe()
@@ -74,6 +77,11 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 	input, err := os.ReadFile(filepath.Join(workspace, "input"))
 	require.NoError(t, err)
 	require.Equal(t, "approved", string(input))
+	output.Reset()
+	repeated, err := StartProcess(bootstrap)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return repeated.Observe().Exited }, 5*time.Second, 10*time.Millisecond)
+	require.Contains(t, output.String(), "already attempted")
 }
 
 func TestSandboxDescriptorChild(t *testing.T) {

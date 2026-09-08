@@ -83,6 +83,10 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 	return wrapped, nil, nil
 }
 
+func sandboxExecInvocation(wrapper string, child ProcessSpec, bindings *SandboxMountBindings, privateNetwork bool) (ProcessSpec, *os.File, error) {
+	return sandboxDescriptorInvocation(wrapper, child, bindings, privateNetwork)
+}
+
 func sandboxWithin(child, parent string) bool {
 	relative, err := filepath.Rel(parent, child)
 	return err == nil && relative != "." && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))

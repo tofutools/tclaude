@@ -64,16 +64,18 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
 	var output bytes.Buffer
-	wrapped, arguments, err := sandboxDescriptorInvocation(wrapper, ProcessSpec{Executable: "/sandbox-test", Args: []string{"-test.run=^TestSandboxDescriptorChild$"}, Directory: "/work", ExactEnvironment: true,
+	artifact, err := inspector.PrepareSandboxChild(private, wrapper, ProcessSpec{Executable: "/sandbox-test", Args: []string{"-test.run=^TestSandboxDescriptorChild$"}, Directory: "/work", ExactEnvironment: true,
 		Env: []string{"PATH=/usr/bin:/bin", "TCLAUDE_SANDBOX_CHILD=1", "SECRET=" + secret, "OUTSIDE_LISTENER=" + listener.Addr().String(), "LITERAL=$HOME stays literal"}, Stdout: &output, Stderr: &output}, bound, true)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = arguments.Close() })
-	process, err := StartProcess(wrapped)
+	require.NoError(t, bound.Close())
+	bootstrap := ProcessSpec{Executable: executable, Args: []string{"-test.run=^TestSandboxBootstrapHelper$"}, ExactEnvironment: true,
+		Env: []string{"TCLAUDE_BOOTSTRAP_ARTIFACT=" + artifact.Path, "TCLAUDE_BOOTSTRAP_DIGEST=" + artifact.Digest}, Stdout: &output, Stderr: &output}
+	process, err := StartProcess(bootstrap)
 	require.NoError(t, err)
 	require.Eventually(t, func() bool { return process.Observe().Exited }, 10*time.Second, 10*time.Millisecond)
 	observation := process.Observe()
 	if observation.ExitCode != nil && *observation.ExitCode != 0 && os.Getenv("TCLAUDE_REQUIRE_SANDBOX_NATIVE") != "1" {
-		for _, unavailable := range []string{"No permissions to create a new namespace", "Creating new namespace failed: Operation not permitted"} {
+		for _, unavailable := range []string{"No permissions to create a new namespace", "Creating new namespace failed: Operation not permitted", "loopback: Failed RTM_NEWADDR: Operation not permitted"} {
 			if strings.Contains(output.String(), unavailable) {
 				t.Skipf("host forbids disposable namespace creation: %s", output.String())
 			}
@@ -87,6 +89,11 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 	input, err := os.ReadFile(filepath.Join(workspace, "input"))
 	require.NoError(t, err)
 	require.Equal(t, "approved", string(input))
+	output.Reset()
+	repeated, err := StartProcess(bootstrap)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool { return repeated.Observe().Exited }, 5*time.Second, 10*time.Millisecond)
+	require.Contains(t, output.String(), "already attempted")
 }
 
 func TestSandboxDescriptorChild(t *testing.T) {
