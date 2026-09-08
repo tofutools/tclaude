@@ -89,3 +89,29 @@ test('Provider filtering retains shared models while dropping exclusive models',
   assert.equal(state.view.value.modelStats.find((entry) => entry.model === 'codex-only').available, false);
   assert.equal(state.view.value.narrowed.total_usd, 4);
 });
+
+test('Saved model selection is normalized against the saved provider scope', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { createCostsState } = await harness.importDashboardModule('js/costs-state.js');
+  const storage = prefs();
+  storage.values.set('tclaude.dash.costs.providers', JSON.stringify(['claude']));
+  storage.values.set('tclaude.dash.costs.models', JSON.stringify(['codex-only']));
+  const state = createCostsState({
+    snapshot: harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: false }),
+    activeTab: harness.signals.signal('costs'), prefs: storage,
+  });
+  state.initialize();
+  state.beginRequest(1);
+  state.commitRequest(1, {
+    from: '2026-07-10', to: '2026-07-10', total_usd: 6,
+    days: [{ day: '2026-07-10', cost_usd: 6 }],
+    agents: [
+      { conv_id: 'a', day: '2026-07-10', harness: 'claude', model: 'opus', cost_usd: 4 },
+      { conv_id: 'b', day: '2026-07-10', harness: 'codex', model: 'codex-only', cost_usd: 2 },
+    ],
+  });
+
+  assert.deepEqual([...state.view.value.selectedModels], ['opus'],
+    'an unavailable legacy preference cannot leave the selected provider with no models');
+  assert.equal(state.view.value.narrowed.total_usd, 4);
+});

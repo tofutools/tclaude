@@ -3572,7 +3572,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-filter-menu > summary span { color: #aab4bf; font-variant-numeric: tabular-nums; }
 .cost-filter-popover {
   position: absolute; z-index: 30; top: calc(100% + 5px); right: 0;
-  width: 370px; padding: 11px; background: #111820; border: 1px solid #3a4656;
+  width: min(370px, calc(100vw - 40px)); padding: 11px; background: #111820; border: 1px solid #3a4656;
   border-radius: 7px; box-shadow: 0 14px 35px rgba(0,0,0,.72);
 }
 .cost-filter-popover.model { width: min(560px, calc(100vw - 40px)); }

@@ -55,15 +55,17 @@ export function createCostsState({
     const providers = costProviders(agents);
     const selected = resolveProviderSelection(providers, selectedProviders.value);
     const models = costModels(agents);
-    const selectedModelSet = resolveModelSelection(models, selectedModels.value);
+    const modelStats = costModelStats(agents, selected);
+    const availableModels = new Set(modelStats.filter((entry) => entry.available).map((entry) => entry.model));
+    const compatibleModels = [...resolveModelSelection(models, selectedModels.value)]
+      .filter((model) => availableModels.has(model));
+    const selectedModelSet = new Set(compatibleModels.length ? compatibleModels : availableModels);
     const narrowed = data ? filterCostData(data, selected, selectedModelSet) : null;
     const projection = narrowed && span.value === 'month'
       ? monthProjection(narrowed, fillEmpty.value, includeWeekends.value, now())
       : null;
     const chart = narrowed ? buildCostChart(narrowed, projection, agents, selected, providers, selectedModelSet) : null;
     const providerStats = costProviderStats(agents);
-    const modelStats = costModelStats(agents, selected);
-    const availableModels = new Set(modelStats.filter((entry) => entry.available).map((entry) => entry.model));
     const providerScopedTotal = modelStats.reduce((sum, entry) => sum + entry.cost, 0);
     const selectedModelTotal = modelStats.reduce((sum, entry) => sum
       + (selectedModelSet.has(entry.model) ? entry.cost : 0), 0);
