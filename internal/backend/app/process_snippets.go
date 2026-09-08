@@ -72,6 +72,9 @@ func CanonicalProcessSelection(data json.RawMessage) (json.RawMessage, error) {
 			return nil, ErrInvalid
 		}
 	}
+	if err := validateEditorEdgeLabels(selection.Edges, selection.EdgeLabels); err != nil {
+		return nil, err
+	}
 	out, err := json.Marshal(selection)
 	if err != nil || len(out) > 256<<10 {
 		return nil, ErrInvalid
