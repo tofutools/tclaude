@@ -19,7 +19,6 @@ func TestDashboardHTML_TopBarTotalCostWired(t *testing.T) {
 			t.Errorf("dashboard assets missing %q (%s)", needle, why)
 		}
 	}
-
 	// shell-model.js derives the token from accepted snapshot state and only
 	// returns it for nonzero cost, formatted by costs-model.js's shared fmtUSD
 	// — the same grouping and sub-cent floor as the harness line.
@@ -65,6 +64,12 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 		t.Helper()
 		if !strings.Contains(dashboardAssets, needle) {
 			t.Errorf("dashboard assets missing %q (%s)", needle, why)
+		}
+	}
+	mustNot := func(needle, why string) {
+		t.Helper()
+		if strings.Contains(dashboardAssets, needle) {
+			t.Errorf("dashboard assets unexpectedly contain %q (%s)", needle, why)
 		}
 	}
 
@@ -178,11 +183,12 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must(`.cost-tip-row[class*="cost-series-"] .cost-tip-sw`, "daily hover swatches reuse their series color")
 	must(`.cost-accumulated-tip-row[class*="cost-series-"]`, "accumulated hover rows reuse their series color")
 	must(`.cost-legend-sw[class*="cost-series-"]`, "provider filter swatches reuse their series color")
+	mustNot("\n.cost-seg-whatif {\n", "projected tooltip and bar swatches stay solid instead of using diagonal hatching")
 	must("!(chart.stacks || []).length", "generic total line is suppressed when colored stack boundaries exist")
 	must("'cost-filter-neutral'", "provider filter avoids a false one-color legend in nested or model modes")
 	must("new ResizeObserver(update)", "accumulated chart tracks its real container width")
 	must("cost-accumulated-line${segment.projected ? ' projected' : ''}", "projection uses a distinct accumulated-line segment")
-	must("cost-accumulated-hit", "recorded and projected accumulated lines expose generous hover targets")
+	must("cost-accumulated-hover-target", "the full accumulated plot exposes a continuous hover target")
 	must("use Left and Right Arrow keys to inspect daily values", "accumulated values have keyboard-accessible navigation")
 	must("onpointerdown", "accumulated values can be inspected with touch or pen input")
 	must(`class="cost-accumulated-status" role="status" aria-live="polite"`, "keyboard-selected accumulated values are announced to assistive technology")

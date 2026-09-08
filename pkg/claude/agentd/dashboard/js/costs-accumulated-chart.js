@@ -101,13 +101,13 @@ export function CostsAccumulatedChart({ chart }) {
     setTooltip(description);
     if (announce) setAnnouncement(pointSummary(description));
   };
-  const showTooltip = (event, segment, announce = false) => {
+  const showTooltip = (event, announce = false) => {
     const svg = event.currentTarget.ownerSVGElement || event.currentTarget.closest('svg');
     const rect = svg.getBoundingClientRect();
     const cursorX = (event.clientX - rect.left) * width / Math.max(rect.width, 1);
-    const point = segment.points.reduce((nearest, candidate) =>
+    const point = points.reduce((nearest, candidate) =>
       Math.abs(x(candidate.index) - cursorX) < Math.abs(x(nearest.index) - cursorX) ? candidate : nearest);
-    inspectPoint(describePoint(point, segment.projected), announce);
+    inspectPoint(describePoint(point), announce);
   };
   const navigateTooltip = (event) => {
     const moves = { ArrowLeft: -1, ArrowRight: 1 };
@@ -146,13 +146,14 @@ export function CostsAccumulatedChart({ chart }) {
       </g>`)}
       ${(chart.segments || []).map((segment, index) => html`<g key=${`line-${index}`}>
         ${!(chart.stacks || []).length && html`<polyline class=${`cost-accumulated-line${segment.projected ? ' projected' : ''}`} points=${line(segment.points)} />`}
-        <polyline class="cost-accumulated-hit" points=${line(segment.points)}
-          onmousemove=${(event) => showTooltip(event, segment)} onpointerdown=${(event) => showTooltip(event, segment, true)}
-          onmouseleave=${(event) => { if (document.activeElement !== event.currentTarget.closest('svg')) setTooltip(null); }} />
       </g>`)}
       ${points.map((point, index) => index % labelEvery === 0 || index === points.length - 1
         ? html`<text class="cost-accumulated-day" x=${x(index)} y=${H - 7}
           text-anchor=${index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle'}>${point.day.slice(5)}</text>` : null)}
+      <rect class="cost-accumulated-hover-target" x=${PAD.left} y=${PAD.top}
+        width=${width - PAD.left - PAD.right} height=${H - PAD.top - PAD.bottom}
+        onmousemove=${showTooltip} onpointerdown=${(event) => showTooltip(event, true)}
+        onmouseleave=${(event) => { if (document.activeElement !== event.currentTarget.closest('svg')) setTooltip(null); }} />
       ${tooltip && html`<g class=${`cost-accumulated-tooltip${tooltip.projected ? ' projected' : ''}`} pointer-events="none">
         <line x1=${tooltip.x} x2=${tooltip.x} y1=${PAD.top} y2=${H - PAD.bottom} />
         <circle cx=${tooltip.x} cy=${tooltip.y} r="4" />
