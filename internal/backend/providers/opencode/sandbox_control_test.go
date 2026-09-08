@@ -2,6 +2,8 @@ package opencode
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net"
@@ -67,11 +69,34 @@ func TestServerRelaySandboxArtifactRetainsControlWithoutPrivateDirectoryGrant(t 
 	defer unrelated.Close()
 	executable, err := os.Executable()
 	require.NoError(t, err)
-	raw, err := json.Marshal(ServerRelayRequest{Target: target, Executable: executable, Args: []string{"-test.run=^TestServerRelayNativeFixture$"}})
+	input := filepath.Join(private, "selected-history.json")
+	writeOpenCodeExport(t, input, "ses_fixture", workspace, "retained answer")
+	history, err := os.ReadFile(input)
+	require.NoError(t, err)
+	digest := sha256.Sum256(history)
+	native := filepath.Join(private, "native-fixture")
+	script := `#!/bin/sh
+case "$1" in
+import)
+  if cat "$TCLAUDE_RELAY_FIXTURE_PRIVATE" >/dev/null 2>&1; then exit 81; fi
+  if (printf changed >> "$2") 2>/dev/null; then exit 82; fi
+  cp "$2" "$IMPORT_OUTPUT" || exit 83
+  printf imported >> "$IMPORT_MARKER"
+  ;;
+export) cat "$IMPORT_OUTPUT" ;;
+*) exec "$NATIVE_FIXTURE" "$@" ;;
+esac
+`
+	require.NoError(t, os.WriteFile(native, []byte(script), 0700))
+	raw, err := json.Marshal(ServerRelayRequest{Target: target, Executable: native, Args: []string{"-test.run=^TestServerRelayNativeFixture$"}, Import: &ServerRelayImport{
+		Path: input, Digest: hex.EncodeToString(digest[:]), NativeID: "ses_fixture", WorkingDir: workspace, BeforeMessage: "msg_two",
+	}})
 	require.NoError(t, err)
 	child := host.ProcessSpec{Executable: bootstrap, Args: []string{ServerRelayCommand, string(raw), host.SandboxControlFDArgument}, Directory: workspace, Env: []string{"PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin", "HOME=" + workspace, "TMPDIR=" + workspace, "TCLAUDE_RELAY_FIXTURE_TARGET=" + target, "TCLAUDE_RELAY_FIXTURE_READY=" + filepath.Join(workspace, "ready"), "TCLAUDE_RELAY_FIXTURE_PRIVATE=" + secret, "TCLAUDE_RELAY_FIXTURE_EXTERNAL=" + unrelated.Addr().String()}}
-	artifact, err := planner.PrepareControl(context.Background(), selected, materialized, child, port, host.SandboxProviderResource{Path: bootstrap, Access: model.SandboxFilesystemRead}, host.SandboxProviderResource{Path: executable, Access: model.SandboxFilesystemRead})
+	child.Env = append(child.Env, "NATIVE_FIXTURE="+executable, "IMPORT_OUTPUT="+filepath.Join(workspace, "import.json"), "IMPORT_MARKER="+filepath.Join(workspace, "import-marker"))
+	artifact, err := planner.PrepareControl(context.Background(), selected, materialized, child, port, host.SandboxProviderResource{Path: bootstrap, Access: model.SandboxFilesystemRead}, host.SandboxProviderResource{Path: executable, Access: model.SandboxFilesystemRead}, host.SandboxProviderResource{Path: native, Access: model.SandboxFilesystemRead}, host.SandboxProviderResource{Path: input, Access: model.SandboxFilesystemRead})
 	require.NoError(t, err)
+	require.NoFileExists(t, filepath.Join(workspace, "import-marker"))
 	require.NoFileExists(t, artifact.Path+".started")
 	require.NoFileExists(t, artifact.Path+".control.json")
 	command, err := artifact.Invocation(bootstrap)
@@ -126,4 +151,7 @@ func TestServerRelaySandboxArtifactRetainsControlWithoutPrivateDirectoryGrant(t 
 	require.NoError(t, err)
 	require.Equal(t, control, after)
 	require.True(t, process.Observe().Running)
+	marker, err := os.ReadFile(filepath.Join(workspace, "import-marker"))
+	require.NoError(t, err)
+	require.Equal(t, "imported", string(marker), "artifact retry must not replay native import")
 }

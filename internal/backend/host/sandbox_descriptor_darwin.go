@@ -33,6 +33,11 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 	}
 	args := []string{}
 	readRegions := []string{`(literal "/dev/null")`, `(literal "/dev/tty")`, `(literal "/dev/random")`, `(literal "/dev/urandom")`, `(subpath "/dev/fd")`}
+	if bindings.controlPort != 0 {
+		// lsof inspects the device directory before reporting TCP ownership.
+		// Permit only that directory vnode, not its device descendants.
+		readRegions = append(readRegions, `(literal "/dev")`)
+	}
 	writeRegions := []string{`(literal "/dev/null")`, `(literal "/dev/tty")`}
 	selectors := make([]string, len(bindings.pins))
 	for index, pin := range bindings.pins {
