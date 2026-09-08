@@ -55,8 +55,8 @@ function edit(title,fields,save,{skipUnchanged=false}={}){
   if(field.name==='cwd')label.append(button('Browse directories',async()=>{const {pickDirectory}=await import('./directory-picker.js');if(!input.isConnected||!$('editor').open)return;const selected=await pickDirectory({api,initial:input.value});if(selected!==null&&input.isConnected&&$('editor').open){input.value=selected;input.dispatchEvent(new Event('input',{bubbles:true}));}}));
  }
  const readForm=()=>{const data=new FormData($('editor-form')),form=Object.fromEntries(data);for(const field of fields){if(field.multiple)form[field.name]=data.getAll(field.name);if(field.environment||field.environmentSets)form[field.name]=field.control.read();}return form};const initial=JSON.stringify(readForm());
- $('editor-form').onsubmit=async e=>{e.preventDefault();if(submitting)return;submitting=true;const submit=e.submitter;if(submit)submit.disabled=true;
-  try{const form=readForm();if(skipUnchanged&&JSON.stringify(form)===initial){$('editor').close();return}const next=JSON.stringify(form,(_,value)=>value instanceof File?{name:value.name,size:value.size,modified:value.lastModified}:value);if(fingerprint!==next){fingerprint=next;submissionID=requestID()}form.requestID=submissionID;await save(form);$('editor').close();await refresh()}catch(error){showError(error)}finally{submitting=false;if(submit)submit.disabled=false}
+ $('editor-form').onsubmit=async e=>{e.preventDefault();if(submitting)return;submitting=true;$('cancel').disabled=true;const submit=e.submitter;if(submit)submit.disabled=true;
+  try{const form=readForm();if(skipUnchanged&&JSON.stringify(form)===initial){$('editor').close();return}const next=JSON.stringify(form,(_,value)=>value instanceof File?{name:value.name,size:value.size,modified:value.lastModified}:value);if(fingerprint!==next){fingerprint=next;submissionID=requestID()}form.requestID=submissionID;await save(form);await refresh();$('editor').close()}catch(error){showError(error)}finally{submitting=false;$('cancel').disabled=false;if(submit)submit.disabled=false}
  };
  $('editor').showModal();
  attachLaunchSupportPreview({host:$('editor-fields'),api});
@@ -152,7 +152,8 @@ async function selectTab(tab,record=true){
  if(tab==='access')await authorityWorkspace.render();
 }
 $('refresh').onclick=()=>refresh().catch(showError);
-$('cancel').onclick=()=>$('editor').close();
+$('cancel').onclick=()=>{if(!submitting)$('editor').close()};
+$('editor').addEventListener('cancel',event=>{if(submitting)event.preventDefault()});
 $('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');document.dispatchEvent(new Event('workspace-signout'));closeTerminal();presentation.stop();attention.clear();usageWorkspace.clear();activityWorkspace.clear();programProfiles.clear();sandboxProfiles.clear();historyWorkspace.clear();workspaceBrowser.clear();refreshSequence++;snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
 for(const tab of document.querySelectorAll('[data-tab]'))tab.onclick=()=>selectTab(tab.dataset.tab).catch(showError);
 $('new-agent').onclick=()=>edit('New agent',[...desiredFields(),...agentMetadataFields()],f=>api('/v2/agents',{id:f.requestID,name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify}}));
