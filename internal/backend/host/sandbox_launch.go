@@ -89,7 +89,7 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 	if policy.FilesystemRoot != model.SandboxRootSeparate {
 		return SandboxChildArtifact{}, fmt.Errorf("inherited sandbox root preparation is not configured")
 	}
-	if len(policy.AgentDirectories) != 0 || len(policy.PreLaunch) != 0 || policy.Resources != (model.SandboxResources{}) || (harness == "" && policy.HarnessConfig != model.SandboxHarnessConfigDefault) || policy.DarwinAllowMachRegister {
+	if len(policy.AgentDirectories) != 0 || policy.Resources != (model.SandboxResources{}) || (harness == "" && policy.HarnessConfig != model.SandboxHarnessConfigDefault) || policy.DarwinAllowMachRegister {
 		return SandboxChildArtifact{}, fmt.Errorf("selected sandbox requires additional native policy preparation")
 	}
 	if len(materialized.Composition.SocketAll) != 0 {
@@ -159,18 +159,44 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 		return SandboxChildArtifact{}, err
 	}
 
+	directory, err := os.MkdirTemp(p.config.Artifacts, "launch-")
+	if err != nil {
+		return SandboxChildArtifact{}, err
+	}
+	retained := false
+	defer func() {
+		if !retained {
+			_ = os.RemoveAll(directory)
+		}
+	}()
 	// The launcher owns the inherited base; authored values are literal overlays.
 	child.Env = MergeEnvironment(policy.Environment.Entries(), child.Env)
 	child.ExactEnvironment = true
-	// Validate the complete native command before creating retained host state.
+	child, err = sandboxSetupCommand(child, policy.PreLaunch)
+	if err != nil {
+		return SandboxChildArtifact{}, err
+	}
+	if len(policy.PreLaunch) != 0 {
+		// Keep potentially large Bash source out of argv. Grant this exact
+		// retained file read-only, never the private artifact directory.
+		setupPath := filepath.Join(directory, "setup.bash")
+		if err := os.WriteFile(setupPath, []byte(child.Args[4]), 0600); err != nil {
+			return SandboxChildArtifact{}, err
+		}
+		setup, err := p.config.Inspector.BindSandboxProviderResources(ctx, []SandboxProviderResource{{Path: setupPath, Access: model.SandboxFilesystemRead}})
+		if err != nil {
+			return SandboxChildArtifact{}, err
+		}
+		bindings.pins = append(bindings.pins, setup.pins...)
+		bindings.files = append(bindings.files, setup.files...)
+		bindings.providerCount += len(setup.pins)
+		child.Args = append([]string{"--noprofile", "--norc", "-p", setupPath}, child.Args[6:]...)
+	}
+	// Validate the complete native command before retaining the launch artifact.
 	_, arguments, err := sandboxDescriptorInvocation(p.config.Wrapper, child, bindings, privateNetwork)
 	if arguments != nil {
 		_ = arguments.Close()
 	}
-	if err != nil {
-		return SandboxChildArtifact{}, err
-	}
-	directory, err := os.MkdirTemp(p.config.Artifacts, "launch-")
 	if err != nil {
 		return SandboxChildArtifact{}, err
 	}
@@ -179,6 +205,7 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 		_ = os.RemoveAll(directory)
 		return SandboxChildArtifact{}, err
 	}
+	retained = true
 	return artifact, nil
 }
 

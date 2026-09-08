@@ -231,6 +231,15 @@ contents do not persist to the underlying host directory. A scratch mount cannot
 cover protected state or launch-required paths. macOS refuses tmpfs because
 Seatbelt provides no mount namespace; it does not substitute a host directory.
 
+Selected launches execute ordered pre-launch blocks in Bash inside the admitted
+OS boundary, before the native command. Blocks share shell functions and
+exported environment. A failing command/pipeline or an unset declared export
+stops launch with status 126 and the block name; an intentionally empty export
+is valid. The retained script is granted as one read-only file, without exposing
+its private parent directory, and is kept out of argv to support large blocks.
+The native command and arguments remain literal even if setup changes positional
+parameters. Policy save, preview and preparation never execute setup scripts.
+
 OpenCode's selected host-sandbox launch preserves its native XDG configuration
 read-only and seeds independent copies of `auth.json` and `mcp-auth.json` into
 fresh session data. Continuation retains its own login, including logout and
