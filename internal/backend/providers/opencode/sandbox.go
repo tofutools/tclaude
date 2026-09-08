@@ -44,6 +44,12 @@ func (p *prepared) prepareSandbox(ctx context.Context) error {
 		{Path: p.provider.executable, Access: model.SandboxFilesystemRead},
 		{Path: bootstrap, Access: model.SandboxFilesystemRead},
 	}
+	configHome, configResources, err := prepareSandboxConfiguration(p.provider.nativeConfigDirectory, p.stateRoot)
+	if err != nil {
+		return err
+	}
+	resources = append(resources, configResources...)
+	p.command.Env = host.MergeEnvironment(p.command.Env, []string{"XDG_CONFIG_HOME=" + configHome, "OPENCODE_CONFIG_DIR="})
 	relay := ServerRelayRequest{Target: p.listener.Addr().String(), Executable: p.command.Executable, Args: p.command.Args}
 	if p.request.Intent == ports.StartFork {
 		input := filepath.Join(p.stateRoot, ".tclaude-fork-input.json")

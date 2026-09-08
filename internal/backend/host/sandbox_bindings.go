@@ -22,6 +22,12 @@ type SandboxMountPin struct {
 	Kind   string
 	Device uint64
 	Inode  uint64
+	// OpenCodeConfigState identifies the sole provider-owned config projection.
+	// The destination is always its config/opencode directory, never an
+	// arbitrary provider-supplied guest path.
+	OpenCodeConfigState string `json:",omitempty"`
+	ConfigTargetDevice  uint64 `json:",omitempty"`
+	ConfigTargetInode   uint64 `json:",omitempty"`
 }
 
 // SandboxMountBindings owns the descriptors backing a prepared mount set.

@@ -15,11 +15,19 @@ import (
 
 // SandboxProviderResource is supplied by a cohesive provider for resources it
 // owns. It is never decoded from a profile, desired configuration or public API.
-// Sources keep their host spelling in the guest: providers cannot use this seam
-// to replace another resource through a remap.
+// Sources keep their host spelling in the guest, except the narrowly derived
+// OpenCode private config projection constructed below.
 type SandboxProviderResource struct {
-	Path   string
-	Access model.SandboxFilesystemAccess
+	Path                string
+	Access              model.SandboxFilesystemAccess
+	openCodeConfigState string
+}
+
+// SandboxOpenCodeConfiguration projects a trusted native config directory only
+// onto config/opencode beneath a separately declared writable provider state.
+// Both source and destination identities are retained and rechecked at release.
+func SandboxOpenCodeConfiguration(source, state string, access model.SandboxFilesystemAccess) SandboxProviderResource {
+	return SandboxProviderResource{Path: source, Access: access, openCodeConfigState: state}
 }
 
 // BindSandboxProviderResources admits exact provider resources beneath the
@@ -41,6 +49,7 @@ func (i *SandboxPathInspector) BindSandboxProviderResources(ctx context.Context,
 		}
 	}()
 	seen := map[string]bool{}
+	seenGuests := map[string]bool{}
 	for _, resource := range resources {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -52,10 +61,20 @@ func (i *SandboxPathInspector) BindSandboxProviderResources(ctx context.Context,
 		if err != nil {
 			return nil, err
 		}
-		if seen[canonical] {
+		guest := resource.Path
+		identityKey := canonical
+		var targetDevice, targetInode uint64
+		if resource.openCodeConfigState != "" {
+			guest, targetDevice, targetInode, err = i.openCodeConfigurationTarget(resource.openCodeConfigState, resources)
+			if err != nil {
+				return nil, err
+			}
+			identityKey += "\x00" + guest
+		}
+		if seen[identityKey] || seenGuests[guest] {
 			return nil, fmt.Errorf("duplicate sandbox provider resource")
 		}
-		seen[canonical] = true
+		seen[identityKey], seenGuests[guest] = true, true
 		for _, root := range i.roots {
 			rel, err := filepath.Rel(canonical, root.path)
 			if err != nil || rel == "." || rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
@@ -77,6 +96,9 @@ func (i *SandboxPathInspector) BindSandboxProviderResources(ctx context.Context,
 		}
 		if kind == "" {
 			return nil, fmt.Errorf("unsupported sandbox provider resource kind")
+		}
+		if resource.openCodeConfigState != "" && kind != "directory" {
+			return nil, fmt.Errorf("OpenCode configuration source must be a directory")
 		}
 		file, err := openSandboxProviderResource(canonical, kind)
 		if err != nil {
@@ -100,7 +122,7 @@ func (i *SandboxPathInspector) BindSandboxProviderResources(ctx context.Context,
 		if !ok {
 			return nil, fmt.Errorf("sandbox provider resource identity unavailable")
 		}
-		b.pins = append(b.pins, SandboxMountPin{Source: canonical, Guest: resource.Path, Access: resource.Access, Kind: kind, Device: uint64(stat.Dev), Inode: uint64(stat.Ino)})
+		b.pins = append(b.pins, SandboxMountPin{Source: canonical, Guest: guest, Access: resource.Access, Kind: kind, Device: uint64(stat.Dev), Inode: uint64(stat.Ino), OpenCodeConfigState: resource.openCodeConfigState, ConfigTargetDevice: targetDevice, ConfigTargetInode: targetInode})
 	}
 	b.providerCount = len(b.pins)
 	success = true
@@ -115,6 +137,9 @@ func (i *SandboxPathInspector) reopenSandboxChildBindings(ctx context.Context, m
 	requested := make([]SandboxProviderResource, len(resources))
 	for index, pin := range resources {
 		requested[index] = SandboxProviderResource{Path: pin.Guest, Access: pin.Access}
+		if pin.OpenCodeConfigState != "" {
+			requested[index] = SandboxOpenCodeConfiguration(pin.Source, pin.OpenCodeConfigState, pin.Access)
+		}
 	}
 	owned, err := i.BindSandboxProviderResources(ctx, requested)
 	if err != nil {
@@ -132,6 +157,42 @@ func (i *SandboxPathInspector) reopenSandboxChildBindings(ctx context.Context, m
 	authored.files = append(authored.files, owned.files...)
 	authored.providerCount = len(owned.pins)
 	return authored, nil
+}
+
+func (i *SandboxPathInspector) openCodeConfigurationTarget(state string, resources []SandboxProviderResource) (string, uint64, uint64, error) {
+	if !filepath.IsAbs(state) || filepath.Clean(state) != state {
+		return "", 0, 0, fmt.Errorf("OpenCode configuration requires an absolute private state root")
+	}
+	declared := false
+	for _, resource := range resources {
+		if resource.Path == state && resource.Access == model.SandboxFilesystemWrite && resource.openCodeConfigState == "" {
+			declared = true
+		}
+	}
+	protected := false
+	for _, root := range i.roots {
+		rel, err := filepath.Rel(root.path, state)
+		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) && !filepath.IsAbs(rel) {
+			protected = true
+		}
+	}
+	if !declared || !protected {
+		return "", 0, 0, fmt.Errorf("OpenCode configuration target requires declared private writable state")
+	}
+	target := filepath.Join(state, "config", "opencode")
+	canonical, err := filepath.EvalSymlinks(target)
+	if err != nil || canonical != target {
+		return "", 0, 0, fmt.Errorf("OpenCode private configuration target changed")
+	}
+	info, err := os.Stat(target)
+	if err != nil || !info.IsDir() {
+		return "", 0, 0, fmt.Errorf("OpenCode private configuration target must be a directory")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return "", 0, 0, fmt.Errorf("OpenCode configuration target identity unavailable")
+	}
+	return target, uint64(stat.Dev), uint64(stat.Ino), nil
 }
 
 // SandboxControlResource uses a composition-owned socket namespace when one is
