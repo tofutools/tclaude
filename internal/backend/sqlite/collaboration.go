@@ -465,7 +465,7 @@ func resolveMessageAudience(ctx context.Context, q queryer, audience model.Messa
 	}
 	if audience.GroupID != "" {
 		var exists int
-		if err := q.QueryRowContext(ctx, `SELECT 1 FROM groups WHERE id=?`, audience.GroupID).Scan(&exists); err != nil {
+		if err := q.QueryRowContext(ctx, `SELECT 1 FROM groups WHERE id=? AND tombstoned=0`, audience.GroupID).Scan(&exists); err != nil {
 			return nil, classify(err)
 		}
 		query := `SELECT agent_id FROM group_members WHERE group_id=?`

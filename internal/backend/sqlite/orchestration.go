@@ -296,6 +296,9 @@ func (s *Store) CreateGraphWorkRun(ctx context.Context, run model.WorkRun, windo
 		return app.WorkRunRecord{}, false, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err = requireNotDisbandedGroup(ctx, tx, run.Scope.GroupID); err != nil {
+		return app.WorkRunRecord{}, false, err
+	}
 	if err = requirePendingAutomationAction(ctx, tx, run.Requester, model.AutomationStartWork, run.Scope.DeploymentID, run.CreatedAt); err != nil {
 		return app.WorkRunRecord{}, false, err
 	}
@@ -516,6 +519,21 @@ func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTr
 	}
 	if deadline.Valid && transition.At.After(fromNanos(deadline.Int64)) && transition.RunState != model.WorkRunFailed && transition.RunState != model.WorkRunCancelled {
 		return app.WorkRunRecord{}, app.ErrConflict
+	}
+	if transition.Execution != nil || transition.Operation != nil || len(transition.Activations) > 0 {
+		var raw []byte
+		if err = tx.QueryRowContext(ctx, `SELECT scope_json FROM work_runs WHERE id=?`, transition.WorkRunID).Scan(&raw); err != nil {
+			return app.WorkRunRecord{}, classify(err)
+		}
+		var scope model.WorkScope
+		if len(raw) > 0 {
+			if err = json.Unmarshal(raw, &scope); err != nil {
+				return app.WorkRunRecord{}, err
+			}
+		}
+		if err = requireNotDisbandedGroup(ctx, tx, scope.GroupID); err != nil {
+			return app.WorkRunRecord{}, err
+		}
 	}
 	if transition.Execution != nil {
 		if transition.Execution.AgentID != "" {
