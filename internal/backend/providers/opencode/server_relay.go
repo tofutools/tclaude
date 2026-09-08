@@ -3,6 +3,7 @@ package opencode
 import (
 	"context"
 	"fmt"
+	"github.com/tofutools/tclaude/internal/backend/host"
 	"io"
 	"net"
 	"os"
@@ -59,6 +60,12 @@ func ExecuteServerRelay(ctx context.Context, request ServerRelayRequest) error {
 	if err := child.Start(); err != nil {
 		return fmt.Errorf("start OpenCode behind control relay: %w", err)
 	}
+	owner, err := host.PinLoopbackOwner(child.Process.Pid)
+	if err != nil {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+		return fmt.Errorf("retain OpenCode loopback owner: %w", err)
+	}
 	// Keep the supervisor's existing process group. Host Stop owns that whole
 	// group; direct signals to the supervisor must also reach the native server.
 	signals := make(chan os.Signal, 1)
@@ -89,7 +96,7 @@ func ExecuteServerRelay(ctx context.Context, request ServerRelayRequest) error {
 			workers.Add(1)
 			go func() {
 				defer workers.Done()
-				relayServerStream(relayCtx, connection, request.Target)
+				relayServerStream(relayCtx, connection, request.Target, numericPort, owner)
 			}()
 		}
 	}()
@@ -106,13 +113,19 @@ func ExecuteServerRelay(ctx context.Context, request ServerRelayRequest) error {
 	return nil
 }
 
-func relayServerStream(ctx context.Context, downstream net.Conn, target string) {
+func relayServerStream(ctx context.Context, downstream net.Conn, target string, port int, owner host.LoopbackOwner) {
 	defer downstream.Close()
+	if owned, err := owner.Owns(port); err != nil || !owned {
+		return
+	}
 	upstream, err := (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "tcp4", target)
 	if err != nil {
 		return
 	}
 	defer upstream.Close()
+	if owned, err := owner.Owns(port); err != nil || !owned {
+		return
+	}
 	stop := context.AfterFunc(ctx, func() {
 		_ = downstream.Close()
 		_ = upstream.Close()

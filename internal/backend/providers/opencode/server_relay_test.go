@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"github.com/tofutools/tclaude/internal/backend/host"
 )
 
 func TestServerRelayForwardsAuthenticatedHTTPAndClosesIdleStreamsOnExit(t *testing.T) {
@@ -113,4 +114,36 @@ func TestServerRelayNativeFixture(t *testing.T) {
 		_, _ = w.Write([]byte("exact session"))
 	})}
 	require.NoError(t, server.Serve(listener))
+}
+
+// A port collision must not turn the control relay into a credential forwarder
+// to a different process while the intended server is still starting.
+func TestServerRelayRefusesForeignLoopbackOwner(t *testing.T) {
+	foreign, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.ParseIP("127.0.0.1")})
+	require.NoError(t, err)
+	defer foreign.Close()
+	process, err := host.StartProcess(host.ProcessSpec{Executable: "/bin/sleep", Args: []string{"30"}})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_, _, err := process.Stop(ctx, true)
+		require.NoError(t, err)
+	})
+	owner, err := host.PinLoopbackOwner(process.Identity().PID)
+	require.NoError(t, err)
+	left, right := net.Pipe()
+	defer right.Close()
+	relayServerStream(context.Background(), left, foreign.Addr().String(), foreign.Addr().(*net.TCPAddr).Port, owner)
+	written, err := right.Write([]byte("credential must not leave this connection"))
+	require.Error(t, err)
+	require.Zero(t, written)
+	require.NoError(t, foreign.SetDeadline(time.Now().Add(50*time.Millisecond)))
+	connection, err := foreign.Accept()
+	if connection != nil {
+		_ = connection.Close()
+	}
+	require.Error(t, err)
+	var timeout net.Error
+	require.True(t, errors.As(err, &timeout) && timeout.Timeout())
 }
