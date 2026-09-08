@@ -1282,6 +1282,12 @@ capabilities before using a retained policy.
 
 Every process node and task stage can retain a description and longer documentation in its saved immutable definition. These plain-text notes survive copy, export, stage compilation, and run inspection. They are separate from worker briefs and human prompts and do not alter execution instructions or authority. Descriptions are bounded to 16 KiB and documentation to 64 KiB; the editor and run monitor display authored markup literally.
 
+### Process output-name authoring
+
+Task nodes can save an ordered set of up to 128 published output names. Names use lowercase letters, digits, periods, underscores and hyphens, begin with a letter or digit, and are at most 128 bytes. The editor removes duplicate lines while preserving order. Copies and exports retain the declarations; clearing them creates an explicit new definition revision.
+
+As in the legacy engine, runtime production of captures is unavailable. Starting an inline or pinned process with capture declarations returns an unsupported error before creating a run. The editor states this limitation. An older pinned revision remains non-executable even after captures are removed from a newer revision.
+
 ### Legacy sandbox profile conversion
 
 Offline v228 import converts representable sandbox profiles into archived,

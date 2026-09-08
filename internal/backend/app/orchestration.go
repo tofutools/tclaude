@@ -331,6 +331,11 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 		}
 		graph = *req.Start.InlineGraph
 	}
+	for _, node := range graph.Nodes {
+		if len(node.Captures) != 0 {
+			return WorkRunResult{}, fail(ErrUnsupported, "task %s declares output captures; capture execution is not available", node.ID)
+		}
+	}
 	graph, err := compileTaskStages(graph)
 	if err != nil {
 		return WorkRunResult{}, err
@@ -1634,6 +1639,9 @@ func validateRetryPolicy(node model.WorkNode) error {
 }
 
 func validateWorkNode(node model.WorkNode) error {
+	if err := validateCaptureNames(node); err != nil {
+		return err
+	}
 	if len(node.Description) > 16<<10 || len(node.Doc) > 64<<10 || !utf8.ValidString(node.Description) || !utf8.ValidString(node.Doc) || strings.ContainsRune(node.Description, 0) || strings.ContainsRune(node.Doc, 0) {
 		return fail(ErrInvalid, "node notes require valid text: description at most 16 KiB and documentation at most 64 KiB")
 	}
