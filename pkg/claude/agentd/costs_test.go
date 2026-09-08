@@ -108,9 +108,9 @@ func TestDashboardWhatIfCostsAreAttributedByProvider(t *testing.T) {
 func TestDashboardWhatIfCostsSkipSupersededZeroRows(t *testing.T) {
 	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.Local)
 	rows := []db.CostDailyRow{
-		{SessionID: "spwn-old", ConvID: "conv", Day: "2026-09-07", Harness: "codex", VirtualCostUSD: 100},
-		{SessionID: "superseded", ConvID: "conv", Day: "2026-09-08", Harness: "codex"},
-		{SessionID: "conv", ConvID: "conv", Day: "2026-09-08", Harness: "codex", VirtualCostUSD: 110},
+		{SessionID: "spwn-old", ConvID: "conv", Day: "2026-09-07", UpdatedAtNS: 1, Harness: "codex", VirtualCostUSD: 100},
+		{SessionID: "superseded", ConvID: "conv", Day: "2026-09-08", UpdatedAtNS: 2, Harness: "codex"},
+		{SessionID: "conv", ConvID: "conv", Day: "2026-09-08", UpdatedAtNS: 3, Harness: "codex", VirtualCostUSD: 110},
 	}
 
 	assert.Equal(t, []dashboardAPICost{{
