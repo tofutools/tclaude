@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -28,6 +29,9 @@ func (p *prepared) prepareSandbox(ctx context.Context) error {
 	}
 	if p.request.Spec.HostSandbox == nil {
 		return nil
+	}
+	if err := prepareSandboxStateDirectories(p.stateRoot); err != nil {
+		return err
 	}
 	bootstrap := p.provider.hostSandbox.BootstrapExecutable()
 	resources := []host.SandboxProviderResource{
@@ -80,4 +84,26 @@ func (p *prepared) prepareSandbox(ctx context.Context) error {
 	p.description.HostSandboxPolicyHash = recorded.HostSandboxPolicyHash
 	p.description.Evidence, err = encodeEvidence(recorded)
 	return err
+}
+
+// Allocate the native XDG roots through the owned directory descriptor. Native
+// startup need not traverse protected host ancestors to discover/create them.
+func prepareSandboxStateDirectories(stateRoot string) error {
+	root, err := os.OpenRoot(stateRoot)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	for _, base := range []string{"data", "config", "cache", "state"} {
+		for _, name := range []string{base, filepath.Join(base, "opencode")} {
+			if err := root.Mkdir(name, 0700); err != nil && !os.IsExist(err) {
+				return err
+			}
+			info, err := root.Lstat(name)
+			if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("OpenCode private XDG path is not an owned directory: %s", name)
+			}
+		}
+	}
+	return nil
 }

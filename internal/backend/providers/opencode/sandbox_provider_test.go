@@ -49,7 +49,7 @@ if [ "$1" = export ]; then
 fi
 if [ "$1" = import ]; then
   if cat "$PRIVATE_FIXTURE" >/dev/null 2>&1; then exit 81; fi
-  mkdir -p "$XDG_DATA_HOME" || exit 82
+  test -d "$XDG_DATA_HOME/opencode" || exit 82
   cp "$2" "$XDG_DATA_HOME/export.json" || exit 83
   printf imported >> "$IMPORT_MARKER"
   exit
