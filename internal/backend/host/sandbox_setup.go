@@ -14,6 +14,11 @@ import (
 // native command. Native arguments remain positional data, including inherited
 // control descriptor placeholders; setup cannot replace them with `set --`.
 func sandboxSetupCommand(child ProcessSpec, blocks []model.SandboxSetupBlock) (ProcessSpec, error) {
+	executable, err := sandboxNativeExecutable(child.Executable)
+	if err != nil {
+		return ProcessSpec{}, err
+	}
+	child.Executable = executable
 	if len(blocks) == 0 {
 		return child, nil
 	}

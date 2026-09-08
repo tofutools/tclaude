@@ -55,7 +55,9 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = unixListener.Close() })
 	var output bytes.Buffer
-	child := ProcessSpec{Executable: executable, Args: []string{"-test.run=^TestSandboxDescriptorChild$"}, Directory: workspace, ExactEnvironment: true,
+	alias := filepath.Join(root, "executable-alias")
+	require.NoError(t, os.Symlink(executable, alias))
+	child := ProcessSpec{Executable: alias, Args: []string{"-test.run=^TestSandboxDescriptorChild$"}, Directory: workspace, ExactEnvironment: true,
 		Env: []string{"PATH=/usr/bin:/bin", "TCLAUDE_SANDBOX_CHILD=1", "WORK=" + workspace, "SECRET=" + secret, "PRIVATE_SOCKET=" + unixListener.Addr().String(), "OUTSIDE_LISTENER=" + listener.Addr().String(), "LITERAL=$HOME stays literal"}, Stdout: &output, Stderr: &output}
 	// Exercise the platform wrapper independently as well as through the
 	// retained bootstrap, so either native boundary has its own evidence.
@@ -124,4 +126,23 @@ func TestSandboxDescriptorChild(t *testing.T) {
 	}
 	command := exec.Command("/bin/sh", "-c", `test ! -e "$SECRET" && test "$(cat "$WORK/input")" = approved && ! printf changed >> "$WORK/input"`)
 	require.NoError(t, command.Run(), "descendants must retain the filesystem boundary")
+}
+
+func TestSandboxSetupResolvesDarwinExecutableAlias(t *testing.T) {
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	canonical, err := filepath.EvalSymlinks(executable)
+	require.NoError(t, err)
+	alias := filepath.Join(t.TempDir(), "executable-alias")
+	require.NoError(t, os.Symlink(executable, alias))
+	for _, blocks := range [][]model.SandboxSetupBlock{nil, {{Name: "setup", Script: "true"}}} {
+		child, err := sandboxSetupCommand(ProcessSpec{Executable: alias, Args: []string{"literal argument"}}, blocks)
+		require.NoError(t, err)
+		if len(blocks) == 0 {
+			require.Equal(t, canonical, child.Executable)
+		} else {
+			require.Equal(t, canonical, child.Args[6])
+		}
+		require.Equal(t, "literal argument", child.Args[len(child.Args)-1])
+	}
 }

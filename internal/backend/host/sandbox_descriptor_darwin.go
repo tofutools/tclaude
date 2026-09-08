@@ -23,6 +23,10 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 	if bindings == nil || len(bindings.files) != len(bindings.pins) || len(child.ExtraFiles) != 0 || !child.ExactEnvironment {
 		return ProcessSpec{}, nil, fmt.Errorf("sandbox invocation requires retained sources and an explicit environment")
 	}
+	executable, err := sandboxNativeExecutable(child.Executable)
+	if err != nil {
+		return ProcessSpec{}, nil, err
+	}
 	overlays := sandboxBoundaryOverlays(bindings)
 	for _, overlay := range overlays {
 		if overlay.Kind != "deny" {
@@ -135,7 +139,7 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 			// Darwin. The retained contract prevents other listeners at bind.
 		}
 	}
-	args = append(args, "-p", profile, child.Executable)
+	args = append(args, "-p", profile, executable)
 	args = append(args, child.Args...)
 	wrapped := child
 	wrapped.Executable, wrapped.Args = wrapper, args
@@ -172,4 +176,15 @@ func sandboxExecInvocation(wrapper string, child ProcessSpec, bindings *SandboxM
 func sandboxWithin(child, parent string) bool {
 	relative, err := filepath.Rel(parent, child)
 	return err == nil && relative != "." && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+// Seatbelt grants canonical sources. Executing through an ungranted alias such
+// as /var (which resolves to /private/var) can fail before the executable opens.
+// Resolve the command spelling rather than granting the alias or its parents.
+func sandboxNativeExecutable(path string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve sandbox executable: %w", err)
+	}
+	return resolved, nil
 }

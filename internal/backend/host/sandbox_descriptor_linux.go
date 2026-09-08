@@ -183,3 +183,6 @@ func sandboxLinuxInvocation(wrapper string, child ProcessSpec, bindings *Sandbox
 	ok = true
 	return wrapped, file, nil
 }
+
+// Linux binds resources at their selected guest paths, including aliases.
+func sandboxNativeExecutable(path string) (string, error) { return path, nil }
