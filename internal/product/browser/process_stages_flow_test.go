@@ -74,6 +74,7 @@ func TestBrowserProcessStagesAuthorAndReopenOrderedChecks(t *testing.T) {
 	page.MustElementR("#definition-list button", "^Start process$").MustClick()
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
+	page.MustWait(`() => !submitting`)
 	var decisions []app.DecisionResult
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/decisions", nil, &decisions))
 	require.Len(t, decisions, 1)
@@ -89,6 +90,7 @@ func TestBrowserProcessStagesAuthorAndReopenOrderedChecks(t *testing.T) {
 		page.MustElement("#editor [name=reason]").MustInput("Visible stage feedback: " + answer)
 		page.MustElement("#editor button[type=submit]").MustClick()
 		page.MustElement("#editor").MustWaitInvisible()
+		page.MustWait(`() => !submitting`)
 	}
 	require.Eventually(t, func() bool {
 		return operator.Call(ctx, "GET", "/v2/decisions", nil, &decisions) == nil && len(decisions) == 0
