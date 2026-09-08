@@ -283,13 +283,19 @@ export function filterCostData(payload, selected, selectedModels = null) {
 
 export function buildAccumulatedCostChart(data) {
   let total = 0;
-  const points = (data?.days || []).map((day, index) => ({
-    day: day.day,
-    dailyCost: Number(day.cost ?? day.cost_usd ?? 0),
-    cost: (total += Number(day.cost ?? day.cost_usd ?? 0)),
-    projected: !!day.projected,
-    index,
-  }));
+  const seriesTotals = new Map();
+  const seriesMeta = new Map();
+  const points = (data?.days || []).map((day, index) => {
+    const dailyCost = Number(day.cost ?? day.cost_usd ?? 0);
+    for (const segment of day.segments || []) {
+      seriesTotals.set(segment.key, (seriesTotals.get(segment.key) || 0) + segment.cost);
+      seriesMeta.set(segment.key, segment);
+    }
+    return {
+      day: day.day, dailyCost, cost: (total += dailyCost), projected: !!day.projected, index,
+      breakdown: [...seriesTotals].map(([key, cost]) => ({ ...seriesMeta.get(key), cost })),
+    };
+  });
   const segments = [];
   let current = [];
   for (const point of points) {
@@ -302,10 +308,35 @@ export function buildAccumulatedCostChart(data) {
   }
   if (current.length) segments.push({ projected: current[current.length - 1].projected, points: current });
   const maximum = points.length ? points[points.length - 1].cost : 0;
-  return { points, segments, scaleMax: maximum > 0 ? niceCeil(maximum) : 0 };
+  const keys = [...new Set((data?.days || []).flatMap((day) => (day.segments || []).map((segment) => segment.key)))];
+  const stacks = keys.map((key, seriesIndex) => {
+    const stackPoints = points.map((point) => {
+      const lower = keys.slice(0, seriesIndex).reduce((sum, priorKey) => {
+        const entry = point.breakdown.find((item) => item.key === priorKey);
+        return sum + (entry?.cost || 0);
+      }, 0);
+      return { ...point, lower, upper: lower + (point.breakdown.find((item) => item.key === key)?.cost || 0) };
+    });
+    return { ...seriesMeta.get(key), key, points: stackPoints };
+  });
+  return { points, segments, stacks, scaleMax: maximum > 0 ? niceCeil(maximum) : 0,
+    stackByProvider: data?.stackByProvider !== false, stackByModel: !!data?.stackByModel };
 }
 
-export function dailyBreakdown(agents, selected) {
+function breakdownIdentity(agent, kind, options = {}) {
+  const byProvider = options.stackByProvider !== false;
+  const byModel = !!options.stackByModel;
+  const provider = costProviderLabel(agent);
+  const model = costModelLabel(agent);
+  return {
+    key: `${byProvider ? provider : ''}\u0000${byModel ? model : ''}\u0000${kind}`,
+    provider: byProvider ? provider : '',
+    model: byModel ? model : '',
+    kind,
+  };
+}
+
+export function dailyBreakdown(agents, selected, options = {}) {
   const result = {};
   for (const agent of agents || []) {
     const provider = costProviderLabel(agent);
@@ -313,18 +344,18 @@ export function dailyBreakdown(agents, selected) {
     const day = result[agent.day] || (result[agent.day] = {});
     const { real, whatIf } = splitCost(agent);
     if (real > 0) {
-      const key = `${provider}\u0000real`;
-      day[key] = (day[key] || 0) + real;
+      const identity = breakdownIdentity(agent, 'real', options);
+      day[identity.key] = { ...identity, cost: (day[identity.key]?.cost || 0) + real };
     }
     if (whatIf > 0) {
-      const key = `${provider}\u0000what_if`;
-      day[key] = (day[key] || 0) + whatIf;
+      const identity = breakdownIdentity(agent, 'what_if', options);
+      day[identity.key] = { ...identity, cost: (day[identity.key]?.cost || 0) + whatIf };
     }
   }
   return result;
 }
 
-export function dailyCreditsBreakdown(agents, selected) {
+export function dailyCreditsBreakdown(agents, selected, options = {}) {
   const result = {};
   for (const agent of agents || []) {
     const provider = costProviderLabel(agent);
@@ -332,7 +363,7 @@ export function dailyCreditsBreakdown(agents, selected) {
     const credits = agent.virtual_cost_credits || 0;
     if (!(credits > 0)) continue;
     const day = result[agent.day] || (result[agent.day] = {});
-    const key = `${provider}\u0000what_if`;
+    const key = breakdownIdentity(agent, 'what_if', options).key;
     day[key] = (day[key] || 0) + credits;
   }
   return result;
@@ -469,31 +500,50 @@ export function monthLabel(offset, now = new Date()) {
   return `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
 }
 
-export function buildCostChart(data, projection, agents, selected, providers, selectedModels = null) {
+export function buildCostChart(data, projection, agents, selected, providers, selectedModels = null, options = {}) {
   const filteredAgents = (agents || []).filter((agent) => !selectedModels || selectedModels.has(costModelLabel(agent)));
-  const breakdown = dailyBreakdown(filteredAgents, selected);
-  const creditBreakdown = dailyCreditsBreakdown(filteredAgents, selected);
+  const breakdown = dailyBreakdown(filteredAgents, selected, options);
+  const creditBreakdown = dailyCreditsBreakdown(filteredAgents, selected, options);
+  const seriesKeys = [...new Set(Object.values(breakdown).flatMap((parts) =>
+    Object.values(parts).map((part) => `${part.provider}\u0000${part.model}`)))].sort();
+  const className = (part) => {
+    const index = Math.max(0, seriesKeys.indexOf(`${part.provider}\u0000${part.model}`));
+    return `cost-series-${index % 8}${part.kind === 'what_if' ? ' cost-seg-whatif' : ''}`;
+  };
+  const recordedTotals = new Map();
+  const recordedMeta = new Map();
+  for (const parts of Object.values(breakdown)) {
+    for (const [key, part] of Object.entries(parts)) {
+      recordedTotals.set(key, (recordedTotals.get(key) || 0) + part.cost);
+      recordedMeta.set(key, part);
+    }
+  }
+  const recordedTotal = [...recordedTotals.values()].reduce((sum, cost) => sum + cost, 0);
+  const projectedSegments = (cost) => recordedTotal > 0 ? [...recordedTotals].map(([key, recordedCost]) => {
+    const part = recordedMeta.get(key);
+    return { ...part, key, cost: cost * recordedCost / recordedTotal, credits: 0,
+      className: className(part), approximate: true };
+  }).filter((segment) => segment.cost > 0) : [];
   const fill = projection?.fillEmpty ? projection.leadingFill : null;
   const actual = (data?.days || []).map((day) => {
     if (fill && fill[day.day] != null) {
-      return { day: day.day, cost: fill[day.day], projected: true, segments: [] };
+      return { day: day.day, cost: fill[day.day], projected: true,
+        segments: projectedSegments(fill[day.day]), includesWhatIf: !!projection?.includesWhatIf };
     }
     const parts = breakdown[day.day] || {};
-    const segments = Object.entries(parts).map(([key, cost]) => {
-      const [provider, kind] = key.split('\u0000');
-      return {
-        provider, kind, cost,
+    const segments = Object.entries(parts).map(([key, part]) => ({
+        ...part, key,
         credits: creditBreakdown[day.day]?.[key] || 0,
-        className: `${providerSegmentClass(provider, providers)}${kind === 'what_if' ? ' cost-seg-whatif' : ''}`,
-      };
-    }).filter((segment) => segment.cost > 0);
+        className: className(part), approximate: false,
+      })).filter((segment) => segment.cost > 0);
     return { day: day.day, cost: segments.reduce((sum, segment) => sum + segment.cost, 0), projected: false, segments };
   });
   const future = (projection?.future || []).map((day) => ({
-    day: day.day, cost: day.cost_usd, projected: true, segments: [],
+    day: day.day, cost: day.cost_usd, projected: true, segments: projectedSegments(day.cost_usd),
     includesWhatIf: !!projection?.includesWhatIf,
   }));
   const days = actual.concat(future);
   const maximum = days.length ? Math.max(...days.map((day) => day.cost)) : 0;
-  return { days, scaleMax: maximum > 0 ? niceCeil(maximum) : 0 };
+  return { days, scaleMax: maximum > 0 ? niceCeil(maximum) : 0,
+    stackByProvider: options.stackByProvider !== false, stackByModel: !!options.stackByModel };
 }

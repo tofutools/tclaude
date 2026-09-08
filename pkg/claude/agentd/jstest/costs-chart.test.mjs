@@ -17,6 +17,8 @@ test('imperative Costs chart owns descendants, tooltip listeners, updates, and c
   const cleanup = mountImperativeCostChart(host, chart);
   assert.equal(host.querySelectorAll('.cost-seg').length, 2);
   const column = host.querySelector('.cost-col[data-tip]');
+  assert.equal(column.getAttribute('tabindex'), '0');
+  assert.match(column.getAttribute('aria-label'), /Breakdown: anthropic \$3\.00, openai \$2\.00/);
   harness.fireEvent(column, 'mousemove', { clientX: 20, clientY: 30 });
   assert.equal(harness.document.body.querySelector('.cost-tip .cost-tip-row')?.textContent.includes('anthropic'), true);
   cleanup();
@@ -43,6 +45,8 @@ test('Costs chart names a single-day provider when the selected span has multipl
   };
   const cleanup = mountImperativeCostChart(host, chart);
   const columns = host.querySelectorAll('.cost-col[data-tip]');
+  assert.equal([...columns].filter((column) => column.getAttribute('tabindex') === '0').length, 1,
+    'the daily chart is one composite Tab stop');
 
   harness.fireEvent(columns[0], 'mousemove', { clientX: 20, clientY: 30 });
   const tooltip = harness.document.body.querySelector('.cost-tip');
@@ -54,5 +58,13 @@ test('Costs chart names a single-day provider when the selected span has multipl
   assert.equal(tooltip.querySelectorAll('.cost-tip-row').length, 1);
   assert.match(tooltip.textContent, /openai/);
   assert.doesNotMatch(tooltip.textContent, /anthropic/);
+  columns[0].focus();
+  harness.fireEvent(columns[0], 'focusin');
+  assert.match(host.querySelector('.cost-chart-status').textContent, /Breakdown: anthropic \$3\.00/,
+    'keyboard inspection announces the same breakdown as hover');
+  harness.fireEvent(columns[0], 'keydown', { key: 'ArrowRight' });
+  assert.equal(harness.document.activeElement, columns[1], 'arrow keys move between spend days');
+  assert.equal(columns[0].getAttribute('tabindex'), '-1');
+  assert.equal(columns[1].getAttribute('tabindex'), '0', 'arrow navigation transfers the roving Tab stop');
   cleanup();
 });

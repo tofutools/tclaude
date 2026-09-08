@@ -3577,6 +3577,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   border-radius: 7px; box-shadow: 0 14px 35px rgba(0,0,0,.72);
 }
 .cost-filter-popover.model { width: min(560px, calc(100vw - 40px)); }
+.cost-filter-popover.breakdown { width: min(390px, calc(100vw - 40px)); }
 .cost-filter-popover-head {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   padding: 0 2px 9px; margin-bottom: 4px; border-bottom: 1px solid #2a3340;
@@ -3610,11 +3611,25 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   margin-top: 7px; padding: 7px 9px; border-left: 2px solid #58a6ff;
   background: #121d2b; color: #9db7d5; font-size: 10px; line-height: 1.4;
 }
+.cost-breakdown-option {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 9px;
+  align-items: start; padding: 10px 4px; border-bottom: 1px solid #202a35; cursor: pointer;
+}
+.cost-breakdown-option input { margin: 2px 0 0; accent-color: #58a6ff; }
+.cost-breakdown-option strong { display: block; color: #c9d1d9; }
+.cost-breakdown-option small { display: block; margin-top: 3px; color: #7d8590; line-height: 1.35; }
+.cost-breakdown-option > span:last-child { color: #9fb0c2; white-space: nowrap; }
+@media (max-width: 600px) {
+  /* Once the three selector summaries wrap, anchor every popover to the full
+     selector row instead of whichever short button happens to open it. */
+  .cost-filter-menu { position: static; }
+  .cost-filter-popover { left: 0; right: auto; }
+}
 .cost-chart-heading { display: flex; justify-content: space-between; align-items: baseline; margin: 0 2px 6px; }
 .cost-chart-heading strong { color: #c9d1d9; font-size: 12px; }
 .cost-chart-heading span { color: #8b949e; font-size: 11px; }
 .cost-daily-heading { margin-top: 12px; }
-.cost-accumulated { padding: 10px 12px 5px; background: #0d1117; border: 1px solid #2a3340; border-radius: 6px; }
+.cost-accumulated { position: relative; padding: 10px 12px 5px; background: #0d1117; border: 1px solid #2a3340; border-radius: 6px; }
 .cost-accumulated.empty { min-height: 100px; display: grid; place-items: center; color: #8b949e; }
 .cost-accumulated-svg { display: block; width: 100%; height: 190px; }
 .cost-accumulated-svg:focus { outline: 1px solid #58a6ff; outline-offset: 2px; }
@@ -3625,16 +3640,37 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-accumulated-grid line { stroke: #1c2430; stroke-width: 1; }
 .cost-accumulated-grid text, .cost-accumulated-day { fill: #8b949e; font-size: 9px; }
 .cost-accumulated-area { fill: rgba(110, 156, 125, .12); }
+.cost-accumulated-stack { fill: var(--cost-series-color); stroke: var(--cost-series-color); stroke-width: 1.4; fill-opacity: .58; }
+.cost-accumulated-stack.projected { fill-opacity: .28; stroke-dasharray: 4 4; }
+.cost-accumulated-stack.cost-seg-whatif { fill-opacity: .24; stroke-dasharray: 2 2; }
 .cost-accumulated-line { fill: none; stroke: #6e9c7d; stroke-width: 2; }
 .cost-accumulated-line.projected { stroke: #d29922; stroke-dasharray: 7 5; }
 .cost-accumulated-hit { fill: none; stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: crosshair; }
-.cost-line-key { display: inline-block; width: 16px; margin: 0 4px 2px 9px; border-top: 2px solid #6e9c7d; vertical-align: middle; }
-.cost-line-key.projected { border-top-color: #d29922; border-top-style: dashed; }
+.cost-line-key { display: inline-block; width: 16px; margin: 0 4px 2px 9px; border-top: 2px solid #9aa4b0; vertical-align: middle; }
+.cost-line-key.projected { border-top-style: dashed; }
 .cost-accumulated-tooltip line { stroke: #58a6ff; stroke-width: 1; opacity: .55; }
 .cost-accumulated-tooltip circle { fill: #9cc5aa; stroke: #0d1117; }
 .cost-accumulated-tooltip.projected circle { fill: #d29922; }
 .cost-accumulated-tooltip rect { fill: #161b22; stroke: #536275; }
 .cost-accumulated-tooltip text { fill: #c9d1d9; font-size: 10px; }
+.cost-accumulated-tip-panel {
+  position: absolute; z-index: 2; top: 42px; width: 288px; padding: 8px 10px;
+  background: rgba(22, 27, 34, .97); border: 1px solid #536275; border-radius: 5px;
+  color: #c9d1d9; font-size: 10px; pointer-events: none; box-shadow: 0 8px 20px rgba(0,0,0,.55);
+}
+.cost-accumulated-tip-panel.projected { border-color: #9c7823; }
+.cost-accumulated-tip-panel > strong { display: block; margin-bottom: 5px; }
+.cost-accumulated-tip-row, .cost-accumulated-tip-group-head, .cost-accumulated-tip-total {
+  display: grid; grid-template-columns: 9px minmax(0, 1fr) auto; gap: 4px 7px;
+}
+.cost-accumulated-tip-row > :last-child,
+.cost-accumulated-tip-group-head > :last-child,
+.cost-accumulated-tip-total > :last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.cost-accumulated-tip-group { padding-top: 3px; }
+.cost-accumulated-tip-row.child { padding-left: 10px; }
+.cost-accumulated-tip-sw { display: inline-block; width: 9px; height: 9px; margin-top: 2px; border-radius: 2px; }
+.cost-accumulated-tip-total { margin-top: 5px; padding-top: 5px; border-top: 1px solid #3a4655; }
+.cost-accumulated-tip-panel small { display: block; margin-top: 5px; color: #8b949e; }
 #costs-summary {
   font-size: 12px; color: #7d8590;
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; white-space: nowrap;
@@ -3666,6 +3702,11 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-col {
   flex: 1 1 0; min-width: 0; position: relative;
   display: flex; flex-direction: column;
+}
+.cost-col[data-tip]:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
+.cost-chart-status {
+  clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden;
+  position: absolute; white-space: nowrap; width: 1px;
 }
 .cost-bararea {
   flex: 1 1 auto; min-height: 0;
@@ -3718,15 +3759,38 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    own hue (a fixed colour would flatten the stack) — the stacked twin of
    the single bar's .cost-bar highlight. */
 .cost-col[data-tip]:hover .cost-seg { filter: brightness(1.18); }
+.cost-seg.cost-seg-projected {
+  opacity: .42; outline: 1px dashed #d29922; outline-offset: -1px;
+}
 /* Harness palette. h0 is the historical money-green so a claude-only
    install (and "claude", which sorts first) is unchanged; the rest stay
    distinct on the dark panel. Cycles past h5 for many-harness installs. */
-.cost-seg-h0 { background: #6e9c7d; }
-.cost-seg-h1 { background: #6a8fd0; }
-.cost-seg-h2 { background: #b58cd6; }
-.cost-seg-h3 { background: #d0a860; }
-.cost-seg-h4 { background: #5bb0a5; }
-.cost-seg-h5 { background: #cf8a8a; }
+.cost-seg-h0 { --cost-seg-color: #6e9c7d; background: var(--cost-seg-color); }
+.cost-seg-h1 { --cost-seg-color: #6a8fd0; background: var(--cost-seg-color); }
+.cost-seg-h2 { --cost-seg-color: #b58cd6; background: var(--cost-seg-color); }
+.cost-seg-h3 { --cost-seg-color: #d0a860; background: var(--cost-seg-color); }
+.cost-seg-h4 { --cost-seg-color: #5bb0a5; background: var(--cost-seg-color); }
+.cost-seg-h5 { --cost-seg-color: #cf8a8a; background: var(--cost-seg-color); }
+/* One categorical palette follows each rendered series through every surface:
+   daily bar, accumulated area + boundary, and hover swatch + label. A series
+   means provider, model, or provider/model pair according to the active mode. */
+.cost-series-0 { --cost-series-color: #58a6ff; }
+.cost-series-1 { --cost-series-color: #56d364; }
+.cost-series-2 { --cost-series-color: #bc8cff; }
+.cost-series-3 { --cost-series-color: #f0883e; }
+.cost-series-4 { --cost-series-color: #ff7b72; }
+.cost-series-5 { --cost-series-color: #39c5cf; }
+.cost-series-6 { --cost-series-color: #e3b341; }
+.cost-series-7 { --cost-series-color: #db61a2; }
+.cost-seg[class*="cost-series-"] { background-color: var(--cost-series-color); }
+.cost-tip-row[class*="cost-series-"] .cost-tip-sw,
+.cost-accumulated-tip-row[class*="cost-series-"] .cost-accumulated-tip-sw {
+  background-color: var(--cost-series-color);
+}
+.cost-tip-row[class*="cost-series-"] .cost-tip-name,
+.cost-accumulated-tip-row[class*="cost-series-"] > span:nth-child(2) {
+  color: var(--cost-series-color);
+}
 .cost-seg-whatif {
   background-image: repeating-linear-gradient(
     135deg, transparent 0, transparent 3px,
@@ -3751,11 +3815,15 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   display: inline-block; width: 9px; height: 9px; border-radius: 2px;
   margin-right: 3px; vertical-align: middle;
 }
+.cost-legend-sw[class*="cost-series-"] { background-color: var(--cost-series-color); }
+.cost-filter-neutral { background: #536273; }
 /* Rich hover tooltip: the per-provider split (swatch · name · $) over a
    ruled total. Rows are flex so amounts align to the right edge; the total
    carries a hidden swatch spacer so its name lines up with the rows'. */
 .cost-tip-day { font-weight: 600; color: #c9d1d9; margin-bottom: 4px; }
-.cost-tip-row, .cost-tip-total { display: flex; align-items: center; gap: 6px; }
+.cost-tip-row, .cost-tip-group, .cost-tip-total { display: flex; align-items: center; gap: 6px; }
+.cost-tip-row.child { padding-left: 14px; }
+.cost-tip-group { margin-top: 3px; }
 .cost-tip-total {
   margin-top: 4px; padding-top: 4px; border-top: 1px solid #2a3340;
 }
@@ -16349,12 +16417,12 @@ body.wizard .cost-col[data-tip]:hover::after {
    ingot; the minted-sheen glow + coin-ridge separator match the single
    .cost-bar's gilding. The base filter:brightness hover and 0.55 weekend
    dim already carry over (they don't touch background), so no override. */
-body.wizard .cost-seg-h0 { background: linear-gradient(180deg, #f0d066 0%, #d9b45a 46%, #b8912f 100%); }
-body.wizard .cost-seg-h1 { background: linear-gradient(180deg, #e8a56a 0%, #cf8341 46%, #9c5a24 100%); }
-body.wizard .cost-seg-h2 { background: linear-gradient(180deg, #d7dbe2 0%, #aeb6c2 46%, #7f8896 100%); }
-body.wizard .cost-seg-h3 { background: linear-gradient(180deg, #cf9bd6 0%, #a97bd6 46%, #7a5db0 100%); }
-body.wizard .cost-seg-h4 { background: linear-gradient(180deg, #7fd6c8 0%, #4fb0a5 46%, #2f7f75 100%); }
-body.wizard .cost-seg-h5 { background: linear-gradient(180deg, #e69a9a 0%, #cf6f6f 46%, #9c4141 100%); }
+body.wizard .cost-seg-h0 { --cost-seg-color: #d9b45a; background: linear-gradient(180deg, #f0d066 0%, #d9b45a 46%, #b8912f 100%); }
+body.wizard .cost-seg-h1 { --cost-seg-color: #cf8341; background: linear-gradient(180deg, #e8a56a 0%, #cf8341 46%, #9c5a24 100%); }
+body.wizard .cost-seg-h2 { --cost-seg-color: #aeb6c2; background: linear-gradient(180deg, #d7dbe2 0%, #aeb6c2 46%, #7f8896 100%); }
+body.wizard .cost-seg-h3 { --cost-seg-color: #a97bd6; background: linear-gradient(180deg, #cf9bd6 0%, #a97bd6 46%, #7a5db0 100%); }
+body.wizard .cost-seg-h4 { --cost-seg-color: #4fb0a5; background: linear-gradient(180deg, #7fd6c8 0%, #4fb0a5 46%, #2f7f75 100%); }
+body.wizard .cost-seg-h5 { --cost-seg-color: #cf6f6f; background: linear-gradient(180deg, #e69a9a 0%, #cf6f6f 46%, #9c4141 100%); }
 body.wizard .cost-seg {
   box-shadow: 0 0 5px rgba(217, 180, 90, 0.3), inset 0 1px 0 rgba(255, 246, 214, 0.45);
 }

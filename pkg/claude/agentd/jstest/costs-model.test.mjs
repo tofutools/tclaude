@@ -107,6 +107,51 @@ test('Accumulated cost uses the daily chart domain and splits recorded from proj
   ], 'the transition point joins the solid and dashed lines');
 });
 
+test('Cost chart breakdowns independently group providers and models, including projected mix', async (t) => {
+  const harness = await createPreactHarness(t);
+  const model = await harness.importDashboardModule('js/costs-model.js');
+  const agents = [
+    { conv_id: 'a', day: '2026-07-10', provider: 'anthropic', model: 'shared', cost_usd: 6 },
+    { conv_id: 'b', day: '2026-07-10', provider: 'openai', model: 'shared', cost_usd: 3 },
+    { conv_id: 'c', day: '2026-07-10', provider: 'openai', model: 'gpt', cost_usd: 1 },
+  ];
+  const payload = { days: [{ day: '2026-07-10', cost_usd: 10 }], agents };
+  const providers = model.costProviders(agents);
+  const selected = new Set(providers);
+  const projection = { future: [{ day: '2026-07-11', cost_usd: 20 }], includesWhatIf: false };
+
+  const provider = model.buildCostChart(payload, projection, agents, selected, providers, null,
+    { stackByProvider: true, stackByModel: false });
+  assert.deepEqual(provider.days[0].segments.map((item) => [item.provider, item.model, item.cost]), [
+    ['anthropic', '', 6], ['openai', '', 4],
+  ]);
+
+  const byModel = model.buildCostChart(payload, projection, agents, selected, providers, null,
+    { stackByProvider: false, stackByModel: true });
+  assert.deepEqual(byModel.days[0].segments.map((item) => [item.provider, item.model, item.cost]), [
+    ['', 'shared', 9], ['', 'gpt', 1],
+  ], 'the same model is combined across providers when provider stacking is off');
+
+  const nested = model.buildCostChart(payload, projection, agents, selected, providers, null,
+    { stackByProvider: true, stackByModel: true });
+  assert.equal(nested.days[0].segments.length, 3, 'provider + model keeps provider/model pairs distinct');
+  assert.equal(new Set(nested.days[0].segments.map((item) => item.className)).size, 3,
+    'every visible provider/model series receives a distinct categorical color class');
+  assert.deepEqual(nested.days[1].segments.map((item) => item.cost), [12, 6, 2],
+    'future segments preserve the recorded provider/model distribution');
+  assert.deepEqual(nested.days[1].segments.map((item) => item.className),
+    nested.days[0].segments.map((item) => item.className),
+    'recorded and projected segments keep identical series colors');
+  assert.ok(nested.days[1].segments.every((item) => item.approximate));
+
+  const accumulated = model.buildAccumulatedCostChart(nested);
+  assert.equal(accumulated.stacks.length, 3);
+  assert.deepEqual(accumulated.points[1].breakdown.map((item) => item.cost), [18, 9, 3],
+    'accumulated hover breakdown includes recorded plus projected portions');
+  assert.equal(accumulated.stacks.at(-1).points.at(-1).upper, 30,
+    'the outer stacked boundary remains equal to the accumulated total');
+});
+
 test('Copilot cost segments retain native credits beside gross subscription dollars', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/costs-model.js');

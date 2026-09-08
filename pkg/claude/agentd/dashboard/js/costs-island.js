@@ -121,12 +121,15 @@ function ProviderFilter({ state, current }) {
       <div class="cost-filter-popover-head"><strong>Providers</strong><span>cost share · agents</span></div>
       ${current.providerStats.map((entry) => {
         const share = Math.round(entry.share * 100);
+        const seriesIndex = [...current.selectedProviders].sort().indexOf(entry.provider);
+        const swatchClass = current.stackByProvider && !current.stackByModel && seriesIndex >= 0
+          ? `cost-series-${seriesIndex % 8}` : 'cost-filter-neutral';
         return html`<label class="cost-filter-option costs-provider-choice" title=${`Show ${entry.provider} cost rows`}>
           <input type="checkbox" data-provider=${entry.provider} checked=${current.selectedProviders.has(entry.provider)}
             onChange=${(event) => {
               if (!state.toggleProvider(entry.provider)) event.currentTarget.checked = !event.currentTarget.checked;
             }} />
-          <span class=${`cost-legend-sw ${providerSegmentClass(entry.provider, current.providers)}`}></span>
+          <span class=${`cost-legend-sw ${swatchClass}`}></span>
           <span class="cost-filter-option-name">${entry.provider}<small>${entry.modelCount} model${entry.modelCount === 1 ? '' : 's'} · ${entry.agentCount} agent${entry.agentCount === 1 ? '' : 's'}</small>
             <i><b style=${`width:${Math.max(share, 1)}%`}></b></i></span>
           <span class="cost-filter-option-value">${fmtUSD(entry.cost)}<small>${share}%</small></span>
@@ -171,6 +174,30 @@ function ModelFilter({ state, current }) {
   </details>`;
 }
 
+function BreakdownFilter({ state, current }) {
+  const modes = [current.stackByProvider && 'Provider', current.stackByModel && 'Model'].filter(Boolean);
+  const label = modes.length ? modes.join(' + ') : 'Total';
+  return html`<details id="filter-costs-breakdown" class="cost-filter-menu breakdown">
+    <summary onClick=${closeSiblingFilters}><strong>Breakdown</strong><span>${label}</span></summary>
+    <div class="cost-filter-popover breakdown" role="group" aria-label="Cost chart breakdown">
+      <div class="cost-filter-popover-head"><strong>Chart breakdown</strong><span>affects both graphs</span></div>
+      <label class="cost-breakdown-option">
+        <input id="costs-stack-provider" type="checkbox" checked=${current.stackByProvider}
+          onChange=${(event) => state.setStackByProvider(event.currentTarget.checked)} />
+        <span><strong>Stack by provider</strong><small>Use a consistent color family for every selected provider.</small></span>
+        <span>${current.selectedProviders.size} group${current.selectedProviders.size === 1 ? '' : 's'}</span>
+      </label>
+      <label class="cost-breakdown-option">
+        <input id="costs-stack-model" type="checkbox" checked=${current.stackByModel}
+          onChange=${(event) => state.setStackByModel(event.currentTarget.checked)} />
+        <span><strong>Stack by model</strong><small>${current.stackByProvider ? 'Nest model shades inside each provider.' : 'Combine the same model across providers.'}</small></span>
+        <span>${current.selectedModels.size} group${current.selectedModels.size === 1 ? '' : 's'}</span>
+      </label>
+      <div class="cost-filter-dependency-note">Filters decide which data is included. Breakdown only changes how that total is split in both charts and their hover details. Projected splits use the recorded mix and are approximate.</div>
+    </div>
+  </details>`;
+}
+
 function CostFilters({ state, current }) {
   useEffect(() => {
     const close = (event) => {
@@ -185,10 +212,10 @@ function CostFilters({ state, current }) {
       document.removeEventListener('keydown', escape);
     };
   }, []);
-  if (current.providers.length <= 1 && current.models.length <= 1) return null;
   return html`<div class="filter-bar costs-dimension-filters" aria-label="Cost dimensions">
     <${ProviderFilter} state=${state} current=${current} />
     <${ModelFilter} state=${state} current=${current} />
+    <${BreakdownFilter} state=${state} current=${current} />
   </div>`;
 }
 
@@ -427,7 +454,9 @@ export function CostsApp({ state, actions }) {
     <${AsyncLoadState} label="Costs" request=${current.request} retry=${actions.load} errorClass="costs-error" />
     ${current.request.hasLoaded && html`<${Fragment}>
       <${CostsAccumulatedChart} chart=${current.accumulatedChart} />
-      <div class="cost-chart-heading cost-daily-heading"><strong>Daily spend</strong><span>stacked by provider</span></div>
+      <div class="cost-chart-heading cost-daily-heading"><strong>Daily spend</strong><span>${current.stackByProvider || current.stackByModel
+        ? `stacked by ${[current.stackByProvider && 'provider', current.stackByModel && 'model'].filter(Boolean).join(' + ')}`
+        : 'total'}</span></div>
       <${CostsChart} chart=${current.chart} enabled=${current.active && current.visible} />
       <${CostsTable} state=${state} current=${current} />
     </${Fragment}>`}
