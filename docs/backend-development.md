@@ -1459,3 +1459,16 @@ As in the legacy runtime, automated decisions are authoring-only. Starting a
 pinned revision with an automated decider is refused before work admission.
 Clearing only the latest revision does not change an older pin. Plan approvals
 and human escalation-loop audiences remain manual decisions.
+
+### Process worker configuration copies
+
+Agent performer inspectors can copy an active saved launch configuration into
+an independent new-worker declaration, then edit its model and effort. The
+remaining desired settings, including literal environment values, are retained
+and displayed. Subsequent edits or archival of the source configuration do not
+change this value. Use the explicit existing/bound-worker action to remove the
+new-worker declaration.
+
+New-worker creation in a process is authoring-only and is refused before run
+admission. Saving or copying these settings creates neither agents nor
+executions. Existing exact worker bindings retain their ordinary behavior.
