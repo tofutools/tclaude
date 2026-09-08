@@ -58,7 +58,7 @@ func NewSandboxLaunchPreparer(config SandboxLaunchConfig) (*SandboxLaunchPrepare
 // Prepare compiles an exact resolved policy into a retained child artifact.
 // Additional policy engines must be implemented here before their options can
 // launch; none of the authored axes may be silently dropped.
-func (p *SandboxLaunchPreparer) Prepare(ctx context.Context, selected model.SandboxSelection, materialized sandboxpolicy.PolicyMaterialization, child ProcessSpec) (SandboxChildArtifact, error) {
+func (p *SandboxLaunchPreparer) Prepare(ctx context.Context, selected model.SandboxSelection, materialized sandboxpolicy.PolicyMaterialization, child ProcessSpec, resources ...SandboxProviderResource) (SandboxChildArtifact, error) {
 	actual, err := materialized.LaunchSelection()
 	if err != nil || !actual.Equal(selected) {
 		return SandboxChildArtifact{}, fmt.Errorf("sandbox materialization does not match selected policy")
@@ -96,6 +96,14 @@ func (p *SandboxLaunchPreparer) Prepare(ctx context.Context, selected model.Sand
 		return SandboxChildArtifact{}, err
 	}
 	defer func() { _ = bindings.Close() }()
+	owned, err := p.config.Inspector.BindSandboxProviderResources(ctx, resources)
+	if err != nil {
+		return SandboxChildArtifact{}, err
+	}
+	bindings.pins = append(bindings.pins, owned.pins...)
+	bindings.files = append(bindings.files, owned.files...)
+	bindings.providerCount = len(owned.pins)
+
 	// The launcher owns the inherited base; authored values are literal overlays.
 	child.Env = MergeEnvironment(policy.Environment.Entries(), child.Env)
 	child.ExactEnvironment = true

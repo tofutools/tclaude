@@ -43,16 +43,17 @@ type sandboxRootPin struct {
 }
 
 type sandboxChildInput struct {
-	Version        int
-	Platform       string
-	Wrapper        string
-	Executable     string
-	Arguments      []string
-	Directory      string
-	Environment    []string
-	Mounts         []SandboxMountPin
-	ProtectedRoots []sandboxRootPin
-	PrivateNetwork bool
+	Version           int
+	Platform          string
+	Wrapper           string
+	Executable        string
+	Arguments         []string
+	Directory         string
+	Environment       []string
+	Mounts            []SandboxMountPin
+	ProviderResources []SandboxMountPin `json:",omitempty"`
+	ProtectedRoots    []sandboxRootPin
+	PrivateNetwork    bool
 }
 
 // PrepareSandboxChild retains the exact host-owned command across a terminal
@@ -70,7 +71,7 @@ func (i *SandboxPathInspector) PrepareSandboxChild(directory, wrapper string, ch
 		return SandboxChildArtifact{}, fmt.Errorf("sandbox child artifact requires a private directory")
 	}
 	input := sandboxChildInput{Version: 1, Platform: runtime.GOOS, Wrapper: wrapper, Executable: child.Executable,
-		Arguments: child.Args, Directory: child.Directory, Environment: child.Env, Mounts: bindings.Pins(), PrivateNetwork: privateNetwork}
+		Arguments: child.Args, Directory: child.Directory, Environment: child.Env, Mounts: bindings.Pins()[:len(bindings.pins)-bindings.providerCount], ProviderResources: bindings.Pins()[len(bindings.pins)-bindings.providerCount:], PrivateNetwork: privateNetwork}
 	for _, root := range i.roots {
 		stat, ok := root.identity.Sys().(*syscall.Stat_t)
 		if !ok {
@@ -83,7 +84,7 @@ func (i *SandboxPathInspector) PrepareSandboxChild(directory, wrapper string, ch
 	for _, root := range input.ProtectedRoots {
 		text = append(text, root.Configured, root.Canonical)
 	}
-	for _, pin := range input.Mounts {
+	for _, pin := range bindings.pins {
 		text = append(text, pin.Source, pin.Guest)
 	}
 	for _, value := range text {
@@ -129,7 +130,7 @@ func ExecuteSandboxChild(ctx context.Context, artifact SandboxChildArtifact) err
 	if err != nil {
 		return err
 	}
-	bound, err := inspector.ReopenSandboxMounts(ctx, input.Mounts)
+	bound, err := inspector.reopenSandboxChildBindings(ctx, input.Mounts, input.ProviderResources)
 	if err != nil {
 		return err
 	}
@@ -178,7 +179,7 @@ func VerifySandboxChild(ctx context.Context, artifact SandboxChildArtifact) erro
 	if err != nil {
 		return err
 	}
-	bound, err := inspector.ReopenSandboxMounts(ctx, input.Mounts)
+	bound, err := inspector.reopenSandboxChildBindings(ctx, input.Mounts, input.ProviderResources)
 	if err != nil {
 		return err
 	}

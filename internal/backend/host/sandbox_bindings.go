@@ -29,8 +29,9 @@ type SandboxMountPin struct {
 // Deny regions and temporary mounts are compiled separately: neither grants a
 // host source descriptor. A binding alone is not an OS confinement receipt.
 type SandboxMountBindings struct {
-	pins  []SandboxMountPin
-	files []*os.File
+	providerCount int
+	pins          []SandboxMountPin
+	files         []*os.File
 }
 
 func (b *SandboxMountBindings) Pins() []SandboxMountPin {
