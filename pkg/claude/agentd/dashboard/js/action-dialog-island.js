@@ -516,7 +516,7 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
   const { requestClose, registerClose } = useGuardedOverlayClose();
   const group = (snapshot?.value?.groups || []).find((item) => item.name === descriptor.group);
   const initial = useMemo(() => ({
-    descr: group?.descr || '', defaultCwd: group?.default_cwd || '',
+    name: group?.name || descriptor.group, descr: group?.descr || '', defaultCwd: group?.default_cwd || '',
     defaultContext: group?.default_context || '', defaultProfile: group?.default_profile || '',
     sandboxProfile: group?.sandbox_profile || '',
     environment: (group?.environment || []).map((entry) => ({ ...entry })),
@@ -553,6 +553,7 @@ function GroupSettingsDialog({ descriptor, snapshot, actions, confirmDiscard }) 
   };
   return html`<${Overlay} id="group-settings-modal" labelledby="group-settings-title" onClose=${() => actions.close(descriptor)} onSubmitHotkey=${submit} dirty=${dirty} blocked=${busy} confirmDiscard=${confirmDiscard} registerClose=${registerClose} resizeKey="tclaude.dash.modalSize.group-settings">
     <h3 id="group-settings-title"><${Words} plain=${`Group settings: ${descriptor.group}`} wizard=${`Enchant party: ${descriptor.group}`} /></h3>
+    <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Name" wizard="Party name" /></span><input id="group-settings-name" value=${values.name} spellcheck="false" onInput=${(event) => set('name', event.currentTarget.value)}/></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Description" wizard="Lore" /></span><input value=${values.descr} onInput=${(event) => set('descr', event.currentTarget.value)}/></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Default dir" wizard="Sanctum" /></span><input id="group-settings-default-cwd" value=${values.defaultCwd} placeholder="absolute path" spellcheck="false" onInput=${(event) => set('defaultCwd', event.currentTarget.value)}/><button id="group-settings-default-cwd-browse" type="button" class="dir-browse-btn" disabled=${busy || browseBusy} title="Browse for a directory" onClick=${() => { void browseDefaultCwd(); }}><${Words} plain=${browseBusy ? 'Opening…' : 'Browse…'} wizard=${browseBusy ? 'Scrying…' : 'Scry…'} /></button></label>
     <label class="cron-create-row"><span class="cron-create-label"><${Words} plain="Startup context" wizard="Opening lore" /></span><textarea rows="5" value=${values.defaultContext} onInput=${(event) => set('defaultContext', event.currentTarget.value)}></textarea></label>

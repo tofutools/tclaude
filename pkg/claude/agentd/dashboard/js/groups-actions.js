@@ -17,6 +17,7 @@ import {
 import { openSpawnHarnessPolicy } from './spawn-harness-policy-controller.js';
 import { openGroupAttachmentDialog } from './action-dialog-controller.js';
 import { openStandingOrderCreateModal } from './jobs-controller.js';
+import { migrateGroupRenamePrefs } from './group-rename-prefs.js';
 
 // Claude Code applies /rename in-pane, then the conversation monitor indexes
 // its JSONL write after a 500ms quiet window. The mutation response therefore
@@ -229,9 +230,7 @@ export function createGroupsActions({
         body: JSON.stringify({ new_name: newName }),
       });
       if (!response.ok) throw new Error(`rename failed: ${await responseError(response)}`);
-      const disclosure = dashPrefs.getItem(`tclaude.dash.group.${oldName}`);
-      dashPrefs.removeItem(`tclaude.dash.group.${oldName}`);
-      if (disclosure !== null) dashPrefs.setItem(`tclaude.dash.group.${newName}`, disclosure);
+      migrateGroupRenamePrefs(oldName, newName);
       notify(`renamed: ${oldName} → ${newName}`);
       void refresh();
       return true;

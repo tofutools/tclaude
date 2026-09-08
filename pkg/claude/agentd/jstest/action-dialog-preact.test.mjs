@@ -68,6 +68,7 @@ async function mountDialogs(
 }
 
 test('group settings emits complete wizard copy and browses for its default directory', async (t) => {
+  const saves = [];
   const snapshot = { value: {
     groups: [{
       name: 'alpha', descr: 'builders', default_cwd: '/repo', default_context: 'shared lore',
@@ -77,7 +78,7 @@ test('group settings emits complete wizard copy and browses for its default dire
   } };
   const mounted = await mountDialogs(
     t, 'group-settings', { group: 'alpha' }, {
-      saveGroupSettings: async () => {},
+      saveGroupSettings: async (value) => { saves.push(value); },
       pickDirectory: async (options) => {
         assert.deepEqual(options, { startDir: '/repo', title: 'Select the default directory for alpha' });
         return { path: '/picked/repo' };
@@ -89,6 +90,9 @@ test('group settings emits complete wizard copy and browses for its default dire
 
   assert.equal(host.querySelector('#group-settings-title .theme-copy-wizard').textContent,
     'Enchant party: alpha');
+  assert.equal(host.querySelector('#group-settings-name').value, 'alpha');
+  assert.equal(host.querySelector('#group-settings-name').previousElementSibling.querySelector('.theme-copy-wizard').textContent,
+    'Party name');
   assert.equal(host.querySelector('#group-settings-environment-row .cron-create-label .theme-copy-wizard').textContent,
     'Summoning runes');
   assert.equal(host.querySelector('#group-settings-environment-row .sbx-add-row .theme-copy-wizard').textContent,
@@ -103,6 +107,11 @@ test('group settings emits complete wizard copy and browses for its default dire
   assert.equal(host.querySelector('#group-settings-default-cwd').value, '/picked/repo');
   assert.equal(host.querySelector('#group-settings-cancel .theme-copy-wizard').textContent, 'Dispel');
   assert.equal(host.querySelector('#group-settings-submit .theme-copy-wizard').textContent, '✦ Enchant party');
+  await mounted.harness.input(host.querySelector('#group-settings-name'), 'beta');
+  host.querySelector('#group-settings-submit').click();
+  await mounted.harness.act(() => Promise.resolve());
+  assert.equal(saves[0].group, 'alpha');
+  assert.equal(saves[0].values.name, 'beta');
   await mounted.cleanup();
 });
 
@@ -246,6 +255,51 @@ test('action model normalizes handoffs and excludes descendants from nesting', a
   assert.deepEqual([...descendantsOf('a', [
     { name: 'a' }, { name: 'b', parent: 'a' }, { name: 'c', parent: 'b' }, { name: 'x' },
   ])].sort(), ['a', 'b', 'c']);
+});
+
+test('group settings saves against the old name before renaming the group', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createActionDialogState }, { createActionDialogActions }] = await Promise.all([
+    harness.importDashboardModule('js/action-dialog-state.js'),
+    harness.importDashboardModule('js/action-dialog-actions.js'),
+  ]);
+  const state = createActionDialogState();
+  const requests = [];
+  const notices = [];
+  let refreshes = 0;
+  const actions = createActionDialogActions({
+    state,
+    fetchImpl: async (url, options) => {
+      requests.push([url, options]);
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    },
+    notify: (message) => notices.push(message),
+    refresh: async () => { refreshes += 1; },
+  });
+  state.openGroupSettings({ group: 'alpha' });
+  const owner = state.dialog.value;
+
+  await actions.saveGroupSettings({
+    group: 'alpha',
+    values: {
+      name: ' beta ', descr: ' builders ', defaultCwd: ' /repo ', defaultContext: 'context',
+      defaultProfile: 'reviewer', sandboxProfile: 'confined',
+      environment: [{ name: ' TEAM ', value: 'alpha' }], maxMembers: '3',
+      notifyEnabled: true, remoteControlPolicy: 'optin',
+      attachmentURL: ' https://example.com/task ', attachmentLabel: ' Task ',
+    },
+  }, owner);
+
+  assert.deepEqual(requests.map(([url]) => url), [
+    '/api/groups/alpha',
+    '/api/groups/alpha/sandbox-profile',
+    '/api/groups/alpha/attachment',
+    '/api/groups/alpha/rename',
+  ]);
+  assert.deepEqual(JSON.parse(requests.at(-1)[1].body), { new_name: 'beta' });
+  assert.deepEqual(notices, ['beta: settings saved']);
+  assert.equal(refreshes, 1);
+  assert.equal(state.dialog.value, null);
 });
 
 test('action mutations preserve endpoint payloads, notifications, and refresh boundaries', async (t) => {
