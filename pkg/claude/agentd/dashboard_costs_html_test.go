@@ -95,7 +95,9 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	// buttons or run off the window edge.
 	must(`<div class="costs-header">`, "two-row Costs header wrapper rendered")
 	must(".costs-header .filter-bar {", "controls row scoped inside the header wrapper")
-	must(".costs-header #costs-summary { margin-top: 8px; }", "summary sits on its own row under the controls")
+	must(`<div class="costs-summary-row">`, "summary and dimension selectors share the second header row")
+	must(".costs-summary-row #costs-summary { flex: 1 1 760px; min-width: 0; }", "summary yields or wraps before overflowing the selector row")
+	must("flex: 0 1 auto; max-width: 100%; justify-content: flex-start", "wrapped dimension selectors shrink to the viewport and align left")
 
 	// dashboard.css: recorded vs projected bars are distinguishable.
 	must(".cost-bar", "bar style rule present")
@@ -164,7 +166,7 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("function costProviderStats", "provider dropdown derives cost-share and fleet-size context")
 	must("function costModelStats", "model dropdown derives provider-aware availability and distribution context")
 	must("cost-filter-popover", "provider and model choices render in compact dynamic dropdowns")
-	must("Turning off a provider deselects models recorded only on that provider", "linked-filter behavior is explained in the model dropdown")
+	must("Turning on a provider selects its models", "linked-filter restore behavior is explained in the model dropdown")
 	must("new ResizeObserver(update)", "accumulated chart tracks its real container width")
 	must("cost-accumulated-line${segment.projected ? ' projected' : ''}", "projection uses a distinct accumulated-line segment")
 	must("cost-accumulated-hit", "recorded and projected accumulated lines expose generous hover targets")

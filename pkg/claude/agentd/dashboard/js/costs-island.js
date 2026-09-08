@@ -97,7 +97,10 @@ function Controls({ state, actions, current }) {
       </label>
       <${FactorEditor} state=${state} actions=${actions} />
     </div>
-    <${Summary} current=${current} />
+    <div class="costs-summary-row">
+      <${Summary} current=${current} />
+      <${CostFilters} state=${state} current=${current} />
+    </div>
   </div>`;
 }
 
@@ -163,7 +166,7 @@ function ModelFilter({ state, current }) {
         })}
         ${filtered.length === 0 && html`<div class="empty">No models match.</div>`}
       </div>
-      <div class="cost-filter-dependency-note">Turning off a provider deselects models recorded only on that provider. Shared models stay selected while any selected provider still uses them.</div>
+      <div class="cost-filter-dependency-note">Turning on a provider selects its models. Turning it off deselects models recorded only on that provider; shared models stay selected while another selected provider uses them.</div>
     </div>
   </details>`;
 }
@@ -421,7 +424,6 @@ export function CostsApp({ state, actions }) {
       WHAT-IF values estimate equivalent pay-per-token pricing and are <strong>not real charges</strong>.
     </div>
     <${Controls} state=${state} actions=${actions} current=${current} />
-    <${CostFilters} state=${state} current=${current} />
     <${AsyncLoadState} label="Costs" request=${current.request} retry=${actions.load} errorClass="costs-error" />
     ${current.request.hasLoaded && html`<${Fragment}>
       <${CostsAccumulatedChart} chart=${current.accumulatedChart} />

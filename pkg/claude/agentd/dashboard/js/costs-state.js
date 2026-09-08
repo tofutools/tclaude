@@ -183,12 +183,13 @@ export function createCostsState({
 
   function toggleProvider(provider) {
     const current = new Set(view.value.selectedProviders);
-    // Capture the effective selection before mutating the provider signal.
-    // A computed fallback may already have normalized an old, incompatible
-    // saved model preference; reading view again after the signal update would
-    // let that stale raw preference reappear as soon as its provider returns.
+    // Capture the effective on-screen selection before mutating the provider
+    // signal. It may already be normalized from an old incompatible saved
+    // preference; provider enable/disable should build from what the user can
+    // currently see, then explicitly add the enabled provider's models.
     const effectiveModels = [...view.value.selectedModels];
-    if (current.has(provider)) current.delete(provider); else current.add(provider);
+    const enabling = !current.has(provider);
+    if (enabling) current.add(provider); else current.delete(provider);
     if (current.size === 0) return false;
     const all = view.value.providers;
     const stored = current.size === all.length && all.every((item) => current.has(item)) ? [] : [...current];
@@ -199,9 +200,16 @@ export function createCostsState({
     const available = new Set(costModelStats(view.value.payload?.agents || [], current)
       .filter((entry) => entry.available).map((entry) => entry.model));
     const retained = effectiveModels.filter((model) => available.has(model));
-    const nextModels = retained.length ? retained : [...available];
-    selectedModels.value = nextModels;
-    if (nextModels.length) prefs.setItem(MODELS_KEY, JSON.stringify(nextModels));
+    const providerModels = enabling ? (view.value.payload?.agents || [])
+      .filter((agent) => costProviderLabel(agent) === provider)
+      .map(costModelLabel) : [];
+    const nextModels = [...new Set([...retained, ...providerModels])];
+    if (!nextModels.length) nextModels.push(...available);
+    const allModels = view.value.models;
+    const storedModels = nextModels.length === allModels.length
+      && allModels.every((model) => nextModels.includes(model)) ? [] : nextModels;
+    selectedModels.value = storedModels;
+    if (storedModels.length) prefs.setItem(MODELS_KEY, JSON.stringify(storedModels));
     else prefs.removeItem(MODELS_KEY);
     return true;
   }
