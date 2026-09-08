@@ -59,8 +59,23 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = unixListener.Close() })
 	var output bytes.Buffer
-	artifact, err := inspector.PrepareSandboxChild(private, wrapper, ProcessSpec{Executable: executable, Args: []string{"-test.run=^TestSandboxDescriptorChild$"}, Directory: workspace, ExactEnvironment: true,
-		Env: []string{"PATH=/usr/bin:/bin", "TCLAUDE_SANDBOX_CHILD=1", "WORK=" + workspace, "SECRET=" + secret, "PRIVATE_SOCKET=" + unixListener.Addr().String(), "OUTSIDE_LISTENER=" + listener.Addr().String(), "LITERAL=$HOME stays literal"}, Stdout: &output, Stderr: &output}, bound, true)
+	child := ProcessSpec{Executable: executable, Args: []string{"-test.run=^TestSandboxDescriptorChild$"}, Directory: workspace, ExactEnvironment: true,
+		Env: []string{"PATH=/usr/bin:/bin", "TCLAUDE_SANDBOX_CHILD=1", "WORK=" + workspace, "SECRET=" + secret, "PRIVATE_SOCKET=" + unixListener.Addr().String(), "OUTSIDE_LISTENER=" + listener.Addr().String(), "LITERAL=$HOME stays literal"}, Stdout: &output, Stderr: &output}
+	// Exercise the platform wrapper independently as well as through the
+	// retained bootstrap, so either native boundary has its own evidence.
+	t.Run("direct-wrapper", func(t *testing.T) {
+		wrapped, _, err := sandboxDescriptorInvocation(wrapper, child, bound, true)
+		require.NoError(t, err)
+		process, err := StartProcess(wrapped)
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			observation := process.Observe()
+			return observation.Exited && observation.ExitCode != nil
+		}, 10*time.Second, 10*time.Millisecond)
+		require.Zero(t, *process.Observe().ExitCode, output.String())
+	})
+	output.Reset()
+	artifact, err := inspector.PrepareSandboxChild(private, wrapper, child, bound, true)
 	require.NoError(t, err)
 	require.NoError(t, bound.Close())
 	bootstrap := ProcessSpec{Executable: executable, Args: []string{"-test.run=^TestSandboxBootstrapHelper$"}, ExactEnvironment: true,
