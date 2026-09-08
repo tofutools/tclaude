@@ -1,4 +1,5 @@
 'use strict';
+const {ExactJSON,stringifyExact,parameterDefaultText}=globalThis.ExactJSONTools;
 const $ = id => document.getElementById(id);
 const el = (tag, text, cls) => { const n=document.createElement(tag); if(text!==undefined)n.textContent=text; if(cls)n.className=cls; return n; };
 let snapshot = {}, submitting = false, refreshSequence=0;
@@ -29,7 +30,7 @@ const workspaceBrowser = new WorkspaceBrowser({host:$('workspace-list'),api,el,b
 const rosterWorkspace = new RosterWorkspace({host:$('roster'),api,el,button,edit,refresh});
 function showError(error) { const target=$('editor').open?$('editor-error'):$('error');target.textContent=error.message || String(error);target.hidden=false; }
 async function api(path, body, method) {
- const response=await fetch(path,{method:method || (body===undefined?'GET':'POST'),credentials:'same-origin',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
+ const response=await fetch(path,{method:method || (body===undefined?'GET':'POST'),credentials:'same-origin',headers:body===undefined?{}:{'Content-Type':'application/json'},body:body===undefined?undefined:stringifyExact(body)});
  if(!response.ok){let code=await response.text();try{code=JSON.parse(code).code}catch{};const error=new Error(({conflict:'The saved state changed. Refresh and review before trying again.',unsupported:'This operation is not supported by the configured provider or host.',forbidden:'Your current authority does not allow this operation.',uncertain:'The effect is uncertain. Inspect its state before attempting another operation.',invalid_request:'Some inputs are invalid. Check the values and required fields.'})[code] || code || `Request failed (${response.status})`);error.code=code;error.status=response.status;throw error}
  if(response.status===204)return;
  return response.json();
@@ -421,7 +422,7 @@ async function renderDefinitions(){
 }
 
 function parameterFields(parameters){return parameters.map((p,index)=>{
- const value=p.Default===undefined||p.Default===null?'':p.Type==='string'?p.Default:JSON.stringify(p.Default);
+ const raw=parameterDefaultText(p);const value=raw===''?'':p.Type==='string'?JSON.parse(raw):raw;
  const field={name:'parameter_'+index,label:p.DisplayName?`${p.DisplayName} (${p.Name})`:p.Description||p.Name,help:[p.DisplayName?p.Description:'',p.Doc].filter(Boolean).join('\n\n'),value,required:p.Required,multiline:p.Type==='object'||p.Type==='array'};
  if(p.Type==='boolean')field.options=p.Required?['true','false']:['','true','false'];return field;
 })}
@@ -430,7 +431,7 @@ function parameterValues(parameters,form){const values={};parameters.forEach((p,
  let value=text;
  if(p.Type!=='string'){try{value=JSON.parse(text)}catch{throw new Error(`Enter a valid ${p.Type} for ${p.Name}.`)}}
  const valid=p.Type==='string'?typeof value==='string':p.Type==='number'?typeof value==='number'&&Number.isFinite(value):p.Type==='boolean'?typeof value==='boolean':p.Type==='array'?Array.isArray(value):value!==null&&typeof value==='object'&&!Array.isArray(value);
- if(!valid)throw new Error(`Enter a valid ${p.Type} for ${p.Name}.`);values[p.Name]=value;
+ if(!valid)throw new Error(`Enter a valid ${p.Type} for ${p.Name}.`);values[p.Name]=p.Type==='string'?value:new ExactJSON(text);
 });return values}
 
 let automationUI;

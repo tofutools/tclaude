@@ -36,6 +36,15 @@ func (h *Handler) registerProcessImport(api app.ProcessImportAPI) {
 			return
 		}
 		result, err := api.ConvertProcessImport(r.Context(), app.ConvertProcessImportRequest{Principal: p, Source: body.Source, ID: body.ID, Bindings: body.Bindings})
-		journeyResult(w, result, err)
+		journeyResult(w, struct {
+			Draft struct {
+				app.DefinitionDraft
+				Parameters []parameterDeclarationView
+			}
+			Notices []string
+		}{Draft: struct {
+			app.DefinitionDraft
+			Parameters []parameterDeclarationView
+		}{result.Draft, projectParameters(result.Draft.Parameters)}, Notices: result.Notices}, err)
 	})
 }

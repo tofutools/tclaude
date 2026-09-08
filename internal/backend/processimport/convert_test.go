@@ -82,33 +82,37 @@ func TestSourceBoundaryAndDiagnosticsPreventConversion(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestConversionDoesNotRoundAnUnsupportedEditorNumber(t *testing.T) {
-	source := strings.Replace(simpleSource, "default: 42", "default: 9007199254740993", 1)
-	inspection, err := Inspect(source)
+func TestConversionPreservesExactParameterJSON(t *testing.T) {
+	for _, tc := range []struct{ source, want string }{
+		{"9007199254740993", "9007199254740993"},
+		{"0.1234567890123456789", "0.1234567890123456789"},
+		{"1.234567890123456789e-1", "1.234567890123456789e-1"},
+		{".1234567890123456789", "0.1234567890123456789"},
+		{"1_000", "1000"}, {"0x10", "16"},
+	} {
+		source := strings.Replace(simpleSource, "default: 42", "default: "+tc.source, 1)
+		converted, err := Convert(source, map[string]Binding{"/nodes/task/performer": {Performer: model.Performer{Kind: model.PerformerHuman, Human: &model.HumanPerformer{Operator: true}}}})
+		require.NoError(t, err)
+		require.Equal(t, tc.want, string(converted.Parameters[0].Default))
+	}
+}
+
+func TestExactSourceDefaultsPreserveNestedAliasesAndMergePrecedence(t *testing.T) {
+	source := strings.Replace(simpleSource, "type: number", "type: object", 1)
+	source = strings.Replace(source, "default: 42", `default: &values {fraction: 0.1234567890123456789, count: 1}
+  copy:
+    type: object
+    default:
+      <<: *values
+      count: 9007199254740993`, 1)
+	converted, err := Convert(source, map[string]Binding{"/nodes/task/performer": {Performer: model.Performer{Kind: model.PerformerHuman, Human: &model.HumanPerformer{Operator: true}}}})
 	require.NoError(t, err)
-	require.False(t, inspection.Diagnostics.HasErrors())
-	_, err = Convert(source, map[string]Binding{"/nodes/task/performer": {Performer: model.Performer{Kind: model.PerformerHuman, Human: &model.HumanPerformer{Operator: true}}}})
-	require.ErrorContains(t, err, "exact editor JSON support")
-}
-
-func TestEditorNumberRoundTripChecksFractionalAndExponentTokens(t *testing.T) {
-	for _, raw := range []string{`0.1234567890123456789`, `1.234567890123456789e-1`, `[0.1234567890123456789]`, `{"nested":9007199254740993}`, `1e-999999`} {
-		require.ErrorContains(t, exactEditorNumbers([]byte(raw)), "exact editor JSON support", raw)
-	}
-	for _, raw := range []string{`0.1`, `1e3`, `1.00`, `0e-999999`, `-0.0`, `{"nested":[0.5,42]}`} {
-		require.NoError(t, exactEditorNumbers([]byte(raw)), raw)
-	}
-}
-
-func TestSourceNumbersAreCheckedBeforeYAMLFloatDecoding(t *testing.T) {
-	for _, value := range []string{"0.1234567890123456789", "1.234567890123456789e-1", ".1234567890123456789"} {
-		source := strings.Replace(simpleSource, "default: 42", "default: "+value, 1)
-		_, err := Convert(source, map[string]Binding{"/nodes/task/performer": {Performer: model.Performer{Kind: model.PerformerHuman, Human: &model.HumanPerformer{Operator: true}}}})
-		require.ErrorContains(t, err, "exact editor JSON support", value)
-	}
-	for _, value := range []string{"0.1", ".5", "1_000", "0x10"} {
-		source := strings.Replace(simpleSource, "default: 42", "default: "+value, 1)
-		_, err := Convert(source, map[string]Binding{"/nodes/task/performer": {Performer: model.Performer{Kind: model.PerformerHuman, Human: &model.HumanPerformer{Operator: true}}}})
-		require.NoError(t, err, value)
+	for _, p := range converted.Parameters {
+		if p.Name == "copy" {
+			require.Equal(t, `{"count":9007199254740993,"fraction":0.1234567890123456789}`, string(p.Default))
+		}
+		if p.Name == "count" {
+			require.Equal(t, `{"count":1,"fraction":0.1234567890123456789}`, string(p.Default))
+		}
 	}
 }

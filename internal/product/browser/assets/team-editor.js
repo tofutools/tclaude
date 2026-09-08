@@ -1,3 +1,4 @@
+const {stringifyExact,parameterDefaultText,wireDefinitionDraft}=globalThis.ExactJSONTools;
 import {clone, freshID, lines} from './process-model.js';
 
 const el = (tag, text) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; return e; };
@@ -212,9 +213,9 @@ class TeamEditor {
   }
   parameter(original) {
     const p = original || {};
-    this.form('Parameter', [{key: 'name', label: 'Parameter name', value: p.Name, required: true}, {key: 'type', label: 'Parameter type', options: ['string', 'number', 'boolean', 'object', 'array'].map(v => opt(v)), value: p.Type || 'string'}, {key: 'required', label: 'Required parameter', type: 'checkbox', value: p.Required}, {key: 'display_name',label:'Display name (optional)',value:p.DisplayName},{key: 'description', label: 'Description', value: p.Description},{key:'doc',label:'Parameter documentation',text:true,value:p.Doc}, {key: 'default', label: 'Default value (JSON, optional)', value: p.Default === undefined || p.Default === null ? '' : JSON.stringify(p.Default)}], f => {
+    this.form('Parameter', [{key: 'name', label: 'Parameter name', value: p.Name, required: true}, {key: 'type', label: 'Parameter type', options: ['string', 'number', 'boolean', 'object', 'array'].map(v => opt(v)), value: p.Type || 'string'}, {key: 'required', label: 'Required parameter', type: 'checkbox', value: p.Required}, {key: 'display_name',label:'Display name (optional)',value:p.DisplayName},{key: 'description', label: 'Description', value: p.Description},{key:'doc',label:'Parameter documentation',text:true,value:p.Doc}, {key: 'default', label: 'Default value (JSON, optional)', value: parameterDefaultText(p)}], f => {
       if (this.draft.Parameters.some(x => x.Name === f.name && x.Name !== original?.Name)) throw new Error('Parameter names must be unique.');
-      const parameter = {Name: f.name, Type: f.type, Required: f.required, Description: f.description}; if(f.display_name)parameter.DisplayName=f.display_name;if(f.doc)parameter.Doc=f.doc; if (f.default.trim()) parameter.Default = JSON.parse(f.default);
+      const parameter = {Name: f.name, Type: f.type, Required: f.required, Description: f.description}; if(f.display_name)parameter.DisplayName=f.display_name;if(f.doc)parameter.Doc=f.doc; if (f.default.trim()) parameter.DefaultJSON = (JSON.parse(f.default),f.default);
       this.change(d => { const i = d.Parameters.findIndex(x => x.Name === original?.Name); if (i < 0) d.Parameters.push(parameter); else d.Parameters[i] = parameter; });
     });
   }
@@ -229,11 +230,11 @@ class TeamEditor {
     if (write && !this.dirty()) { this.status.textContent = 'Revision ' + this.revision + ' · saved'; return; }
     this.lock(true);
     try {
-      const validated = await this.api('/v2/definitions/validate', {draft: clone(this.draft)});
+      const validated = await this.api('/v2/definitions/validate', {draft: wireDefinitionDraft(clone(this.draft))});
       if (!write) { this.status.textContent = 'Validation passed'; return; }
       const fingerprint = JSON.stringify(this.draft);
       if (this.pending?.fingerprint !== fingerprint) this.pending = {fingerprint, request: freshID('request_'), revision: freshID('revision_')};
-      const result = await this.api('/v2/definitions', {request_id: this.pending.request, expected_revision: this.revision, draft: {...clone(this.draft), RevisionID: this.pending.revision}});
+      const result = await this.api('/v2/definitions', {request_id: this.pending.request, expected_revision: this.revision, draft: wireDefinitionDraft({...clone(this.draft), RevisionID: this.pending.revision})});
       if (result.Revision.ContentHash !== validated.Revision.ContentHash) { const e = new Error('A newer revision is current. Local edits are retained.'); e.code = 'conflict'; throw e; }
       this.adopt(draftOf(result), result.Definition.Revision); this.render(); await this.onSaved();
     } catch (error) {
@@ -244,11 +245,11 @@ class TeamEditor {
       }));
     } finally { this.lock(false); }
   }
-  export() { const url = URL.createObjectURL(new Blob([JSON.stringify({format: 'tclaude-team-v2', draft: this.draft}, null, 2)], {type: 'application/json'})); const link = el('a'); link.href = url; link.download = 'team.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
+  export() { const url = URL.createObjectURL(new Blob([stringifyExact({format: 'tclaude-team-v2', draft: wireDefinitionDraft(this.draft,{exporting:true})}, 2)], {type: 'application/json'})); const link = el('a'); link.href = url; link.download = 'team.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); }
   import() {
     if (!this.discard()) return;
     const input = el('input'); input.type = 'file'; input.accept = '.json,application/json'; input.onchange = async () => {
-      try { const file = input.files[0]; if (!file) return; if (file.size > 512 * 1024) throw new Error('Team import exceeds 512 KiB.'); const value = JSON.parse(await file.text()); if (value.format !== 'tclaude-team-v2' || value.draft?.Kind !== 'team') throw new Error('Choose an exported v2 team.'); if (this.dirty() && !confirm('Replace this draft with an imported copy?')) return; const draft = value.draft; draft.ID = freshID('definition_'); delete draft.RevisionID; this.lock(true); const r = await this.api('/v2/definitions/validate', {draft}); this.adopt(draftOf(r), 0); this.render(); } catch (e) { this.fail(e); } finally { this.lock(false); }
+      try { const file = input.files[0]; if (!file) return; if (file.size > 512 * 1024) throw new Error('Team import exceeds 512 KiB.'); const value = JSON.parse(await file.text()); if (value.format !== 'tclaude-team-v2' || value.draft?.Kind !== 'team') throw new Error('Choose an exported v2 team.'); if (this.dirty() && !confirm('Replace this draft with an imported copy?')) return; const draft = value.draft; draft.ID = freshID('definition_'); delete draft.RevisionID; this.lock(true); const r = await this.api('/v2/definitions/validate', {draft:wireDefinitionDraft(draft)}); this.adopt(draftOf(r), 0); this.render(); } catch (e) { this.fail(e); } finally { this.lock(false); }
     }; input.click();
   }
   close() { if (this.busy || ((this.dirty() || this.unapplied) && !confirm('Discard unsaved team changes?'))) return; window.removeEventListener('beforeunload', this.beforeUnload); this.dialog.close(); this.dialog.remove(); }
