@@ -1,10 +1,10 @@
 import {wireDefinitionDraft} from './process-durations.js';
-import {durationSeconds, applyDurationProjection} from './process-durations.js';
+import {seconds, durationSeconds, applyDurationProjection} from './process-durations.js';
 const {stringifyExact,parameterDefaultText}=globalThis.ExactJSONTools;
 import {addCheck, removeCheck, moveCheck} from './process-stages.js';
 import {ProcessSnippetLibrary} from './process-snippets.js';
 import {ProcessGraphAdapter} from './processgraph/process-graph-adapter.js';
-import {clone, freshID, edgeKey, seconds, lines, newProcess, draftFromResult, defaultNode, graphView, ProcessDraft, validationMessages} from './process-model.js';
+import {clone, freshID, edgeKey, lines, newProcess, draftFromResult, defaultNode, graphView, ProcessDraft, validationMessages} from './process-model.js';
 
 const element = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; return node; };
 const action = (label, handler) => { const node = element('button', label); node.type = 'button'; node.onclick = handler; return node; };

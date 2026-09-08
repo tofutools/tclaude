@@ -85,7 +85,7 @@ func Convert(source string, bindings map[string]Binding) (Converted, error) {
 		occupied[id] = true
 	}
 	for _, id := range ids {
-		if t.Nodes[id].Join == "" {
+		if t.Nodes[id].Join == "" || t.Nodes[id].Type == legacy.NodeTypeStart && id != t.Start {
 			continue
 		}
 		digest := sha256.Sum256([]byte(id))
@@ -117,7 +117,18 @@ func Convert(source string, bindings map[string]Binding) (Converted, error) {
 		node := model.WorkNode{RoutingMode: "single-route-v1", ID: model.WorkNodeID(id), Name: n.Name, Description: n.Description, Doc: n.Doc, Captures: append([]string(nil), n.Captures...)}
 		switch n.Type {
 		case legacy.NodeTypeStart:
-			node.Kind = model.WorkNodeStart
+			if id == t.Start {
+				node.Kind = model.WorkNodeStart
+			} else {
+				// Legacy start markers may be interior control nodes. Their
+				// join already performs the complete no-op reducer behavior.
+				mode := model.JoinAll
+				if n.Join != "" {
+					mode = model.JoinMode(n.Join)
+				}
+				node.Kind, node.Join = model.WorkNodeJoin, &model.JoinPolicy{Mode: mode}
+				c.Notices = append(c.Notices, path+": interior start control retained as a join with the original identity")
+			}
 		case legacy.NodeTypeEnd:
 			node.Kind = model.WorkNodeEnd
 			outcome := model.WorkOutcomeVerified
