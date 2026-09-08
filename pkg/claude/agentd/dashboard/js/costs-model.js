@@ -154,9 +154,10 @@ export function monthProjectionLabel(projection, includesReal) {
 }
 
 export const harnessLabel = (harness) => harness || 'unknown';
+export const costProviderLabel = (agent) => agent?.provider || harnessLabel(agent?.harness);
 
-export function costHarnesses(agents) {
-  return [...new Set((agents || []).map((agent) => harnessLabel(agent.harness)))]
+export function costProviders(agents) {
+  return [...new Set((agents || []).map(costProviderLabel))]
     .sort((a, b) => a.localeCompare(b));
 }
 
@@ -165,10 +166,10 @@ export function costModels(agents) {
     .sort((a, b) => a.localeCompare(b));
 }
 
-export function resolveHarnessSelection(harnesses, saved) {
-  const known = new Set(harnesses);
-  const selected = (saved || []).filter((harness) => known.has(harness));
-  return new Set(selected.length ? selected : harnesses);
+export function resolveProviderSelection(providers, saved) {
+  const known = new Set(providers);
+  const selected = (saved || []).filter((provider) => known.has(provider));
+  return new Set(selected.length ? selected : providers);
 }
 
 export function resolveModelSelection(models, saved) {
@@ -179,13 +180,13 @@ export function resolveModelSelection(models, saved) {
 
 export function filterCostData(payload, selected, selectedModels = null) {
   const agents = payload?.agents || [];
-  const harnesses = costHarnesses(agents);
+  const providers = costProviders(agents);
   const models = costModels(agents);
-  const allHarnesses = selected.size === harnesses.length && harnesses.every((item) => selected.has(item));
+  const allProviders = selected.size === providers.length && providers.every((item) => selected.has(item));
   const allModels = !selectedModels
     || (selectedModels.size === models.length && models.every((item) => selectedModels.has(item)));
-  if (allHarnesses && allModels) return payload;
-  const matches = (agent) => selected.has(harnessLabel(agent.harness))
+  if (allProviders && allModels) return payload;
+  const matches = (agent) => selected.has(costProviderLabel(agent))
     && (!selectedModels || selectedModels.has(costModelLabel(agent)));
   const filteredAgents = agents.filter(matches);
   const totals = {};
@@ -236,8 +237,8 @@ export function buildAccumulatedCostChart(data) {
 export function dailyBreakdown(agents, selected) {
   const result = {};
   for (const agent of agents || []) {
-    const harness = harnessLabel(agent.harness);
-    if (!selected.has(harness)) continue;
+    const provider = costProviderLabel(agent);
+    if (!selected.has(provider)) continue;
     const day = result[agent.day] || (result[agent.day] = {});
     let real = agent.real_cost_usd || 0;
     let whatIf = agent.what_if_cost_usd || 0;
@@ -248,11 +249,11 @@ export function dailyBreakdown(agents, selected) {
       else real = agent.cost_usd;
     }
     if (real > 0) {
-      const key = `${harness}\u0000real`;
+      const key = `${provider}\u0000real`;
       day[key] = (day[key] || 0) + real;
     }
     if (whatIf > 0) {
-      const key = `${harness}\u0000what_if`;
+      const key = `${provider}\u0000what_if`;
       day[key] = (day[key] || 0) + whatIf;
     }
   }
@@ -262,18 +263,19 @@ export function dailyBreakdown(agents, selected) {
 export function dailyCreditsBreakdown(agents, selected) {
   const result = {};
   for (const agent of agents || []) {
-    if (!selected.has(harnessLabel(agent.harness))) continue;
+    const provider = costProviderLabel(agent);
+    if (!selected.has(provider)) continue;
     const credits = agent.virtual_cost_credits || 0;
     if (!(credits > 0)) continue;
     const day = result[agent.day] || (result[agent.day] = {});
-    const key = `${harnessLabel(agent.harness)}\u0000what_if`;
+    const key = `${provider}\u0000what_if`;
     day[key] = (day[key] || 0) + credits;
   }
   return result;
 }
 
-export function harnessSegmentClass(harness, harnesses) {
-  const index = harnesses.indexOf(harnessLabel(harness));
+export function providerSegmentClass(provider, providers) {
+  const index = providers.indexOf(provider);
   return 'cost-seg-h' + (index >= 0 ? index % HARNESS_PALETTE_N : 0);
 }
 
@@ -403,7 +405,7 @@ export function monthLabel(offset, now = new Date()) {
   return `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
 }
 
-export function buildCostChart(data, projection, agents, selected, harnesses, selectedModels = null) {
+export function buildCostChart(data, projection, agents, selected, providers, selectedModels = null) {
   const filteredAgents = (agents || []).filter((agent) => !selectedModels || selectedModels.has(costModelLabel(agent)));
   const breakdown = dailyBreakdown(filteredAgents, selected);
   const creditBreakdown = dailyCreditsBreakdown(filteredAgents, selected);
@@ -414,11 +416,11 @@ export function buildCostChart(data, projection, agents, selected, harnesses, se
     }
     const parts = breakdown[day.day] || {};
     const segments = Object.entries(parts).map(([key, cost]) => {
-      const [harness, kind] = key.split('\u0000');
+      const [provider, kind] = key.split('\u0000');
       return {
-        harness, kind, cost,
+        provider, kind, cost,
         credits: creditBreakdown[day.day]?.[key] || 0,
-        className: `${harnessSegmentClass(harness, harnesses)}${kind === 'what_if' ? ' cost-seg-whatif' : ''}`,
+        className: `${providerSegmentClass(provider, providers)}${kind === 'what_if' ? ' cost-seg-whatif' : ''}`,
       };
     }).filter((segment) => segment.cost > 0);
     return { day: day.day, cost: segments.reduce((sum, segment) => sum + segment.cost, 0), projected: false, segments };

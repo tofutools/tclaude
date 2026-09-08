@@ -6,7 +6,7 @@ import { CostsChart } from './costs-chart.js';
 import { CostsAccumulatedChart } from './costs-accumulated-chart.js';
 import {
   COST_COLUMNS, COST_SPANS, costModelLabel, fmtLastActivity, fmtUSD, harnessLabel,
-  fmtCredits, fmtExactUSD, harnessSegmentClass, modelRollup, monthProjectionLabel,
+  fmtCredits, fmtExactUSD, modelRollup, monthProjectionLabel, providerSegmentClass,
 } from './costs-model.js';
 import { idTooltip, isModifiedClick, shortAgentId } from './helpers.js';
 
@@ -101,20 +101,21 @@ function Controls({ state, actions, current }) {
   </div>`;
 }
 
-function HarnessFilter({ state, current }) {
-  if (current.harnesses.length <= 1) return null;
-  return html`<span id="filter-costs-harnesses" class="costs-harness-filter">
-    ${current.harnesses.map((harness) => html`<label class="filter-toggle costs-harness-choice" title=${`Show ${harness} cost rows`}>
-      <input type="checkbox" data-harness=${harness} checked=${current.selectedHarnesses.has(harness)}
-        onChange=${() => state.toggleHarness(harness)} />
-      <span class=${`cost-legend-sw ${harnessSegmentClass(harness, current.harnesses)}`}></span><span>${harness}</span>
+function ProviderFilter({ state, current }) {
+  if (current.providers.length <= 1) return null;
+  return html`<span id="filter-costs-providers" class="costs-provider-filter">
+    ${current.providers.map((provider) => html`<label class="filter-toggle costs-provider-choice" title=${`Show ${provider} cost rows`}>
+      <input type="checkbox" data-provider=${provider} checked=${current.selectedProviders.has(provider)}
+        onChange=${() => state.toggleProvider(provider)} />
+      <span class=${`cost-legend-sw ${providerSegmentClass(provider, current.providers)}`}></span><span>${provider}</span>
     </label>`)}
   </span>`;
 }
 
 function ModelFilter({ state, current }) {
   if (current.models.length <= 1) return null;
-  return html`<span id="filter-costs-models" class="costs-model-filter">
+  return html`<span id="filter-costs-models" class="costs-model-filter"
+    title="Cost is grouped by the last model recorded for each agent-day slice.">
     <span class="cost-filter-label">Model</span>
     ${current.models.map((model) => html`<label class="filter-toggle costs-model-choice" title=${`Show ${model} cost rows`}>
       <input type="checkbox" data-model=${model} checked=${current.selectedModels.has(model)}
@@ -124,10 +125,10 @@ function ModelFilter({ state, current }) {
 }
 
 function CostFilters({ state, current }) {
-  if (current.harnesses.length <= 1 && current.models.length <= 1) return null;
+  if (current.providers.length <= 1 && current.models.length <= 1) return null;
   return html`<div class="filter-bar costs-dimension-filters" aria-label="Cost dimensions">
-    ${current.harnesses.length > 1 && html`<span class="cost-filter-label">Provider</span>`}
-    <${HarnessFilter} state=${state} current=${current} />
+    ${current.providers.length > 1 && html`<span class="cost-filter-label">Provider</span>`}
+    <${ProviderFilter} state=${state} current=${current} />
     <${ModelFilter} state=${state} current=${current} />
   </div>`;
 }

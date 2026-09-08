@@ -152,6 +152,8 @@ export function UsageHistoryChart({
   const pctValue = (pct) => units ? pct * latestLimit / 100 : pct;
   const pointValue = (point) => units && Number(point.limit_units || 0) > 0
     ? Number(point.used_units || 0) : pctValue(point.pct);
+  const resetValue = (reset) => units && Number(reset.limit_units || 0) > 0
+    ? Number(reset.used_units || 0) : pctValue(reset.pct);
   const formatValue = (value) => units ? formatUsageUnits(value) : `${value.toFixed(1)}%`;
   const y = (value) => PAD.top + (1 - Math.max(0, Math.min(unitScale, value)) / unitScale) * (H - PAD.top - PAD.bottom);
   const resetMarkers = (series.resets || [])
@@ -214,14 +216,14 @@ export function UsageHistoryChart({
         : w('Click to exclude from calculations', 'Click to veil from reckonings'),
     ], point.time);
   };
-  const showResetTooltip = (reset, index, anchorY = y(pctValue(reset.pct))) => {
+  const showResetTooltip = (reset, index, anchorY = y(resetValue(reset))) => {
     const title = index === resetMarkers.length - 1
       ? w('Last reset', 'Last replenishment')
       : w('Previous reset', 'Earlier replenishment');
     showTooltip(x(reset.time), anchorY, 'reset', title, [
       scope, new Date(reset.time).toLocaleString(),
-      w(`New post-reset baseline: ${formatValue(pctValue(reset.pct))} · ${relativeMarkerTime(reset.time, now)}`,
-        `Reserves refilled to ${formatValue(pctValue(reset.pct))} · ${relativeMarkerTime(reset.time, now, wizard)}`),
+      w(`New post-reset baseline: ${formatValue(resetValue(reset))} · ${relativeMarkerTime(reset.time, now)}`,
+        `Reserves refilled to ${formatValue(resetValue(reset))} · ${relativeMarkerTime(reset.time, now, wizard)}`),
     ]);
   };
   const showScheduledResetTooltip = (anchorY = PAD.top + 18) => showTooltip(
@@ -330,10 +332,10 @@ export function UsageHistoryChart({
         : w('Previous reset', 'Earlier replenishment');
       return html`<g class="usage-reset-mark" key=${reset.at}>
         <line x1=${x(at)} x2=${x(at)} y1=${PAD.top} y2=${H - PAD.bottom} />
-        <circle cx=${x(at)} cy=${y(pctValue(reset.pct))} r="3" />
+        <circle cx=${x(at)} cy=${y(resetValue(reset))} r="3" />
         <line class="usage-marker-hit-target" x1=${x(at)} x2=${x(at)} y1=${PAD.top} y2=${H - PAD.bottom}
           tabIndex=${index === keyboardResetIndex ? '0' : '-1'} role="img"
-          aria-label=${`${title}; ${scope}; ${new Date(at).toLocaleString()}; ${w(`new post-reset baseline ${formatValue(pctValue(reset.pct))}`, `reserves refilled to ${formatValue(pctValue(reset.pct))}`)}; ${relativeMarkerTime(at, now, wizard)}${index === keyboardResetIndex ? w('; use left and right arrow keys to explore detected resets', '; use left and right arrow keys to explore witnessed replenishments') : ''}`}
+          aria-label=${`${title}; ${scope}; ${new Date(at).toLocaleString()}; ${w(`new post-reset baseline ${formatValue(resetValue(reset))}`, `reserves refilled to ${formatValue(resetValue(reset))}`)}; ${relativeMarkerTime(at, now, wizard)}${index === keyboardResetIndex ? w('; use left and right arrow keys to explore detected resets', '; use left and right arrow keys to explore witnessed replenishments') : ''}`}
           onfocus=${() => {
             setKeyboardResetAt(index);
             showResetTooltip(reset, index);

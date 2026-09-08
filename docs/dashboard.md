@@ -394,7 +394,9 @@ per provider, a per-model rollup strip, and a sortable per-agent table with
 totals and cross-day agent chains. Provider and model selectors narrow every
 figure in the tab, including both graphs and the projection. Spans are This
 month (the only span with a projection), 7d/30d/90d, and a month browser going
-24 months back.
+24 months back. Model attribution uses the last model recorded for each
+agent-day slice; a model switch within the same session and calendar day is
+therefore grouped under the final observed model.
 
 ![The Costs tab: month bars, per-model breakdown cards, and the per-agent table](assets/dashboard-costs.png)
 

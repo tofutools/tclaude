@@ -45,8 +45,10 @@ type usageHistoryPoint struct {
 }
 
 type usageHistoryReset struct {
-	At  string  `json:"at"`
-	Pct float64 `json:"pct"`
+	At         string  `json:"at"`
+	Pct        float64 `json:"pct"`
+	UsedUnits  float64 `json:"used_units,omitempty"`
+	LimitUnits float64 `json:"limit_units,omitempty"`
 }
 
 // Forecast algorithms. Each derives a pace from a different slice of the
@@ -490,6 +492,7 @@ func forecastUsage(points []db.SubscriptionUsageHistoryRow, now, viewFrom time.T
 			segmentStart = i
 			resets = append(resets, usageHistoryReset{
 				At: next.ObservedAt.UTC().Format(time.RFC3339Nano), Pct: next.UsedPercent,
+				UsedUnits: next.UsedUnits, LimitUnits: next.LimitUnits,
 			})
 		}
 	}

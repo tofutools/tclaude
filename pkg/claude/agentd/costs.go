@@ -162,6 +162,7 @@ type costAgentRow struct {
 	lastActivityNS     int64   `json:"-"`
 	Model              string  `json:"model"`
 	Harness            string  `json:"harness"`
+	Provider           string  `json:"provider"`
 }
 
 // costsResponse is the /api/costs wire shape. Days is zero-filled —
@@ -366,6 +367,7 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 			lastActivityNS:     a.lastActivityNS,
 			Model:              a.model,
 			Harness:            a.harness,
+			Provider:           apiCostProvider(a.harness, a.model),
 		})
 	}
 	sortCostAgentRows(out.Agents)

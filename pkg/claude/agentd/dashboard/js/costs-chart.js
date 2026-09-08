@@ -18,7 +18,7 @@ function tooltipRows(day) {
   for (const segment of day.segments) {
     const row = element('div', 'cost-tip-row');
     row.append(element('span', `cost-tip-sw ${segment.className}`));
-    row.append(element('span', 'cost-tip-name', segment.kind === 'what_if' ? `${segment.harness} · WHAT-IF` : segment.harness));
+    row.append(element('span', 'cost-tip-name', segment.kind === 'what_if' ? `${segment.provider} · WHAT-IF` : segment.provider));
     const amount = segment.kind === 'what_if' && segment.credits > 0
       ? `${fmtCredits(segment.credits)} — ${fmtUSD(segment.cost)} subscription value`
       : `${segment.kind === 'what_if' ? '≈' : ''}${fmtUSD(segment.cost)}`;
@@ -70,9 +70,9 @@ export function mountImperativeCostChart(host, chart) {
   }
   const columns = element('div', 'cost-cols');
   const byDay = new Map();
-  const spanHarnesses = new Set(chart.days.flatMap((day) =>
-    (day.segments || []).map((segment) => segment.harness)));
-  const showHarnessBreakdown = spanHarnesses.size > 1 || chart.days.some((day) =>
+  const spanProviders = new Set(chart.days.flatMap((day) =>
+    (day.segments || []).map((segment) => segment.provider)));
+  const showProviderBreakdown = spanProviders.size > 1 || chart.days.some((day) =>
     (day.segments || []).some((segment) => segment.kind === 'what_if'));
   const labelEvery = chart.days.length > 62 ? 7 : chart.days.length > 35 ? 2 : 1;
   chart.days.forEach((day, index) => {
@@ -116,7 +116,7 @@ export function mountImperativeCostChart(host, chart) {
     }
     const day = byDay.get(column.dataset.day);
     tooltip.replaceChildren();
-    if (showHarnessBreakdown && day?.segments?.length) tooltip.append(tooltipRows(day));
+    if (showProviderBreakdown && day?.segments?.length) tooltip.append(tooltipRows(day));
     else tooltip.textContent = column.dataset.tip;
     tooltip.style.display = 'block';
     const pad = 14;

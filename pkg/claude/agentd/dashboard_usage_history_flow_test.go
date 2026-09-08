@@ -29,7 +29,9 @@ type usageHistoryResp struct {
 			Excluded   bool    `json:"excluded"`
 		} `json:"points"`
 		Resets []struct {
-			Pct float64 `json:"pct"`
+			Pct        float64 `json:"pct"`
+			UsedUnits  float64 `json:"used_units"`
+			LimitUnits float64 `json:"limit_units"`
 		} `json:"resets"`
 		Forecast struct {
 			Status            string  `json:"status"`

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createPreactHarness } from './preact-harness.mjs';
 
-test('Costs derivation projects months, filters harnesses, sorts, and builds chart segments', async (t) => {
+test('Costs derivation projects months, filters providers and models, sorts, and builds chart segments', async (t) => {
   const harness = await createPreactHarness(t);
   const model = await harness.importDashboardModule('js/costs-model.js');
   const now = new Date(2026, 6, 10, 12);
@@ -36,10 +36,10 @@ test('Costs derivation projects months, filters harnesses, sorts, and builds cha
   const narrowed = model.filterCostData(payload, selected);
   assert.equal(narrowed.total_usd, 30);
   assert.equal(narrowed.days.at(-1).cost_usd, 30);
-  const harnesses = model.costHarnesses(agents);
-  const chart = model.buildCostChart(narrowed, null, agents, selected, harnesses);
+  const providers = model.costProviders(agents);
+  const chart = model.buildCostChart(narrowed, null, agents, selected, providers);
   assert.equal(chart.days.at(-1).segments.length, 1);
-  assert.equal(chart.days.at(-1).segments[0].harness, 'claude');
+  assert.equal(chart.days.at(-1).segments[0].provider, 'claude');
   assert.deepEqual(model.sortCostAgents(agents, { key: 'cost', dir: 'asc' }).map((row) => row.conv_id), ['b', 'a']);
   assert.equal(model.matchesCostAgent(agents[1], 'codex'), true);
 
@@ -48,9 +48,14 @@ test('Costs derivation projects months, filters harnesses, sorts, and builds cha
   assert.deepEqual(modelFiltered.agents.map((row) => row.conv_id), ['a']);
   assert.deepEqual(model.costModels(agents), ['gpt', 'opus']);
   const accumulated = model.buildAccumulatedCostChart({ days: [
-	{ day: '2026-07-09', cost_usd: 2 }, { day: '2026-07-10', cost_usd: 3 },
+    { day: '2026-07-09', cost_usd: 2 }, { day: '2026-07-10', cost_usd: 3 },
   ] });
   assert.deepEqual(accumulated.points.map((point) => point.cost), [2, 5]);
+
+  const routed = { harness: 'opencode', provider: 'anthropic', model: 'claude-sonnet', cost_usd: 7, day: '2026-07-10' };
+  assert.deepEqual(model.costProviders([...agents, routed]), ['anthropic', 'claude', 'codex']);
+  assert.equal(model.filterCostData({ ...payload, agents: [...agents, routed] }, new Set(['anthropic'])).total_usd, 7,
+    'provider filtering follows the billed provider rather than the client harness');
 });
 
 test('Copilot cost segments retain native credits beside gross subscription dollars', async (t) => {
@@ -73,8 +78,8 @@ test('Copilot cost segments retain native credits beside gross subscription doll
   assert.equal(model.fmtCredits(43), '43 credits');
   assert.equal(model.fmtCredits(0.004), '<0.01 credits');
 
-  const chart = model.buildCostChart(filtered, null, agents, selected, model.costHarnesses(agents));
-  const copilotSegment = chart.days[0].segments.find((segment) => segment.harness === 'copilot');
+  const chart = model.buildCostChart(filtered, null, agents, selected, model.costProviders(agents));
+  const copilotSegment = chart.days[0].segments.find((segment) => segment.provider === 'copilot');
   assert.equal(copilotSegment.credits, 43);
   assert.equal(copilotSegment.kind, 'what_if');
 });

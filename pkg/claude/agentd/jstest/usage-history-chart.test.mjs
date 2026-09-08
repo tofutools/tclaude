@@ -225,18 +225,21 @@ test('Copilot usage chart switches its scale and accessible values to AIC', asyn
     provider: 'github', window_name: 'monthly',
     points: [
       { at: new Date(now - 3600000).toISOString(), pct: 25 },
-      { at: new Date(now).toISOString(), pct: 38, used_units: 114, limit_units: 300 },
+      { at: new Date(now).toISOString(), pct: 38, used_units: 190, limit_units: 500 },
     ],
-    resets: [], forecast: { status: 'flat', rate_pct_per_hour: 0 },
+    resets: [{ at: new Date(now - 2 * 3600000).toISOString(), pct: 10, used_units: 30, limit_units: 300 }],
+    forecast: { status: 'flat', rate_pct_per_hour: 0 },
   };
   const view = await harness.mount(harness.preact.h(UsageHistoryChart, {
     series, from: new Date(now - 86400000).toISOString(), generatedAt: new Date(now).toISOString(),
     unit: 'units',
   }));
   assert.match(view.container.querySelector('svg').getAttribute('aria-label'), /AIC/);
-  assert.deepEqual([...view.container.querySelectorAll('.usage-grid text')].map((node) => node.textContent), ['0', '150', '300']);
-  assert.match(view.container.querySelectorAll('.usage-point-hit-target')[0].getAttribute('aria-label'), /75 AIC/,
+  assert.deepEqual([...view.container.querySelectorAll('.usage-grid text')].map((node) => node.textContent), ['0', '250', '500']);
+  assert.match(view.container.querySelectorAll('.usage-point-hit-target')[0].getAttribute('aria-label'), /125 AIC/,
     'pre-migration percent-only samples are converted with the latest allowance');
-  assert.match(view.container.querySelectorAll('.usage-point-hit-target')[1].getAttribute('aria-label'), /114 AIC/);
+  assert.match(view.container.querySelectorAll('.usage-point-hit-target')[1].getAttribute('aria-label'), /190 AIC/);
+  assert.match(view.container.querySelector('.usage-reset-mark .usage-marker-hit-target').getAttribute('aria-label'), /30 AIC/,
+    'reset markers retain the allowance active when the reset was observed');
   await view.unmount();
 });

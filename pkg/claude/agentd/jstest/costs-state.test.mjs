@@ -33,11 +33,11 @@ test('Costs state owns controls, derived rows, selection, requests, and preferen
   state.setQuery('gpt');
   assert.deepEqual(state.view.value.rows.map((row) => row.conv_id), ['b']);
   state.setQuery('');
-  state.toggleHarness('codex');
-  assert.deepEqual([...state.view.value.selectedHarnesses], ['claude']);
+  state.toggleProvider('codex');
+  assert.deepEqual([...state.view.value.selectedProviders], ['claude']);
   assert.equal(state.view.value.narrowed.total_usd, 3);
-  assert.ok(storage.values.has('tclaude.dash.costs.harnesses'));
-  state.toggleHarness('codex');
+  assert.ok(storage.values.has('tclaude.dash.costs.providers'));
+  state.toggleProvider('codex');
   state.toggleModel('gpt');
   assert.deepEqual([...state.view.value.selectedModels], ['opus']);
   assert.equal(state.view.value.narrowed.total_usd, 3);

@@ -3565,7 +3565,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .costs-dimension-filters { margin: 0 0 12px; flex-wrap: wrap; }
 .cost-filter-label { color: #8b949e; font-size: 11px; font-weight: 600; }
 .costs-model-filter { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-left: 10px; border-left: 1px solid #2a3340; }
-.costs-harness-filter { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.costs-provider-filter { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .cost-chart-heading { display: flex; justify-content: space-between; align-items: baseline; margin: 0 2px 6px; }
 .cost-chart-heading strong { color: #c9d1d9; font-size: 12px; }
 .cost-chart-heading span { color: #6e7681; font-size: 11px; }
@@ -3695,7 +3695,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   display: inline-block; width: 9px; height: 9px; border-radius: 2px;
   margin-right: 3px; vertical-align: middle;
 }
-/* Rich hover tooltip: the per-harness split (swatch · name · $) over a
+/* Rich hover tooltip: the per-provider split (swatch · name · $) over a
    ruled total. Rows are flex so amounts align to the right edge; the total
    carries a hidden swatch spacer so its name lines up with the rows'. */
 .cost-tip-day { font-weight: 600; color: #c9d1d9; margin-bottom: 4px; }
@@ -3709,12 +3709,12 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   margin-left: 16px; color: #d4d4d4; font-variant-numeric: tabular-nums;
 }
 .cost-tip-row .cost-tip-amt, .cost-tip-total .cost-tip-amt { margin-left: auto; }
-.costs-harness-filter {
+.costs-provider-filter {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
-.filter-bar label.costs-harness-choice input {
+.filter-bar label.costs-provider-choice input {
   flex: 0 0 auto;
   max-width: none;
   padding: 0;
