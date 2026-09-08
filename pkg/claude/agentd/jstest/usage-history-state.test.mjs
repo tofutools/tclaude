@@ -26,20 +26,20 @@ test('usage spans are stored per series with legacy globals as the default', asy
   });
 
   assert.deepEqual(state.view.value.spanFor('anthropic:seven_day'),
-    { hours: 168, lookaheadHours: 168, algo: 'span' });
+    { hours: 168, lookaheadHours: 168, algo: 'span', unit: 'percent' });
   assert.equal(state.initialize(), true);
   assert.equal(state.initialize(), false);
   assert.deepEqual(state.view.value.spanFor('anthropic:seven_day'),
-    { hours: 24, lookaheadHours: 5, algo: 'span' }, 'a stored per-series entry wins');
+    { hours: 24, lookaheadHours: 5, algo: 'span', unit: 'percent' }, 'a stored per-series entry wins');
   assert.deepEqual(state.view.value.spanFor('openai:five_hour'),
-    { hours: 720, lookaheadHours: 24, algo: 'span' },
+    { hours: 720, lookaheadHours: 24, algo: 'span', unit: 'percent' },
     'series without an entry fall back to the legacy global spans and the default algorithm');
   assert.equal(state.view.value.defaultHours, 720);
   assert.deepEqual(state.view.value.spanOverrides, { 'anthropic:seven_day': 24 },
     'only non-default history spans are sent as request overrides');
 
   assert.equal(state.setSeriesLookaheadHours('openai:five_hour', 5), true);
-  assert.deepEqual(state.view.value.spanFor('openai:five_hour'), { hours: 720, lookaheadHours: 5, algo: 'span' });
+  assert.deepEqual(state.view.value.spanFor('openai:five_hour'), { hours: 720, lookaheadHours: 5, algo: 'span', unit: 'percent' });
   assert.deepEqual(state.view.value.spanOverrides, { 'anthropic:seven_day': 24 },
     'changing a lookahead never adds a history override');
   assert.equal(state.setSeriesHours('openai:five_hour', 2160), true);
@@ -50,7 +50,10 @@ test('usage spans are stored per series with legacy globals as the default', asy
   });
 
   assert.equal(state.setSeriesForecastAlgo('openai:five_hour', 'recent'), true);
-  assert.deepEqual(state.view.value.spanFor('openai:five_hour'), { hours: 2160, lookaheadHours: 5, algo: 'recent' });
+  assert.deepEqual(state.view.value.spanFor('openai:five_hour'), { hours: 2160, lookaheadHours: 5, algo: 'recent', unit: 'percent' });
+	assert.equal(state.setSeriesUnit('github:monthly', 'units'), true);
+	assert.equal(state.view.value.spanFor('github:monthly').unit, 'units');
+	assert.equal(state.setSeriesUnit('github:monthly', 'dollars'), false);
   assert.deepEqual(state.view.value.spanOverrides, { 'anthropic:seven_day': 24, 'openai:five_hour': 2160 },
     'the prediction algorithm is read from the payload the server already sent, never requested');
   assert.equal(state.setSeriesForecastAlgo('openai:five_hour', 'guesswork'), false, 'unknown algorithm rejected');
@@ -103,6 +106,6 @@ test('usage span store tolerates corrupt persisted JSON', async (t) => {
   });
   state.initialize();
   assert.deepEqual(state.view.value.spanFor('anthropic:seven_day'),
-    { hours: 168, lookaheadHours: 168, algo: 'span' });
+    { hours: 168, lookaheadHours: 168, algo: 'span', unit: 'percent' });
   assert.deepEqual(state.view.value.spanOverrides, {});
 });

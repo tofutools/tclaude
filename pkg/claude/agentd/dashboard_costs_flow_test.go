@@ -50,25 +50,29 @@ type costsRespConv struct {
 	LastActivity       string  `json:"last_activity"`
 	Model              string  `json:"model"`
 	Harness            string  `json:"harness"`
+	Provider           string  `json:"provider"`
 }
 
 func TestDashboardCosts_MixesRealAndWhatIfAcrossThreeHarnesses(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	newFlow(t)
 	type fixture struct {
-		session, conv, harness string
-		real, whatif           float64
+		session, conv, harness, model string
+		real, whatif                  float64
 	}
 	fixtures := []fixture{
 		{session: "mix-claude", conv: "conv-claude", harness: "claude", real: 1},
 		{session: "mix-codex", conv: "conv-codex", harness: "codex", whatif: 2},
-		{session: "mix-opencode", conv: "conv-opencode", harness: "opencode", whatif: 3},
+		{session: "mix-opencode", conv: "conv-opencode", harness: "opencode", model: "anthropic/claude-sonnet-4-5", whatif: 3},
 	}
 	for _, item := range fixtures {
 		require.NoError(t, db.SaveSession(&db.SessionRow{
 			ID: item.session, TmuxSession: "tmux-" + item.session, ConvID: item.conv,
 			Cwd: "/tmp/" + item.session, Status: "idle", Harness: item.harness,
 		}))
+		if item.model != "" {
+			require.NoError(t, db.UpdateSessionModel(item.session, item.model))
+		}
 		if item.real > 0 {
 			require.NoError(t, db.UpdateSessionCost(item.session, item.real))
 		} else {
@@ -85,6 +89,7 @@ func TestDashboardCosts_MixesRealAndWhatIfAcrossThreeHarnesses(t *testing.T) {
 	assert.Equal(t, "real", out.CostKind)
 	require.Len(t, out.Agents, 1)
 	assert.Equal(t, "claude", out.Agents[0].Harness)
+	assert.Equal(t, "anthropic", out.Agents[0].Provider)
 
 	require.NoError(t, config.Save(&config.Config{
 		Cost: &config.CostConfig{ShowOnSubscription: true},
@@ -96,8 +101,10 @@ func TestDashboardCosts_MixesRealAndWhatIfAcrossThreeHarnesses(t *testing.T) {
 	assert.Equal(t, "mixed", out.CostKind)
 	require.Len(t, out.Agents, 3)
 	kinds := map[string]string{}
+	providers := map[string]string{}
 	for _, row := range out.Agents {
 		kinds[row.Harness] = row.CostKind
+		providers[row.Harness] = row.Provider
 		if row.CostKind == "real" {
 			assert.Zero(t, row.WhatIfCostUSD)
 		} else {
@@ -107,6 +114,9 @@ func TestDashboardCosts_MixesRealAndWhatIfAcrossThreeHarnesses(t *testing.T) {
 	assert.Equal(t, map[string]string{
 		"claude": "real", "codex": "what_if", "opencode": "what_if",
 	}, kinds, "harnesses remain dynamic while every row carries its own cost kind")
+	assert.Equal(t, map[string]string{
+		"claude": "anthropic", "codex": "openai", "opencode": "anthropic",
+	}, providers, "provider attribution follows the billed route, not the client harness")
 }
 
 func TestDashboardCosts_CopilotCreditsSurfaced(t *testing.T) {

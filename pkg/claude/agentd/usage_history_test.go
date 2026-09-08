@@ -176,10 +176,13 @@ func TestForecastUsageDetectsUnexpectedNonzeroReset(t *testing.T) {
 	for i := range rows {
 		rows[i].ResetsAt = base.Add(10 * time.Hour)
 	}
+	rows[1].UsedUnits, rows[1].LimitUnits = 60, 300
 
 	forecasts, resets := forecastUsage(rows, rows[len(rows)-1].ObservedAt, base)
 	require.Len(t, resets, 1)
 	assert.Equal(t, 20.0, resets[0].Pct, "the observed post-reset minimum is retained; no synthetic zero")
+	assert.Equal(t, 60.0, resets[0].UsedUnits, "the reset retains its contemporaneous native-unit baseline")
+	assert.Equal(t, 300.0, resets[0].LimitUnits, "the reset retains its contemporaneous allowance")
 	forecast := forecasts[usageForecastAlgoFit]
 	assert.Equal(t, "before_reset", forecast.Status)
 	assert.Equal(t, 20.0, forecast.WindowBaselinePct)

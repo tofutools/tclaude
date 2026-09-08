@@ -154,41 +154,72 @@ export function monthProjectionLabel(projection, includesReal) {
 }
 
 export const harnessLabel = (harness) => harness || 'unknown';
+export const costProviderLabel = (agent) => agent?.provider || harnessLabel(agent?.harness);
 
-export function costHarnesses(agents) {
-  return [...new Set((agents || []).map((agent) => harnessLabel(agent.harness)))]
+export function costProviders(agents) {
+  return [...new Set((agents || []).map(costProviderLabel))]
     .sort((a, b) => a.localeCompare(b));
 }
 
-export function resolveHarnessSelection(harnesses, saved) {
-  const known = new Set(harnesses);
-  const selected = (saved || []).filter((harness) => known.has(harness));
-  return new Set(selected.length ? selected : harnesses);
+export function costModels(agents) {
+  return [...new Set((agents || []).map(costModelLabel))]
+    .sort((a, b) => a.localeCompare(b));
 }
 
-export function filterCostData(payload, selected) {
+export function resolveProviderSelection(providers, saved) {
+  const known = new Set(providers);
+  const selected = (saved || []).filter((provider) => known.has(provider));
+  return new Set(selected.length ? selected : providers);
+}
+
+export function resolveModelSelection(models, saved) {
+  const known = new Set(models);
+  const selected = (saved || []).filter((model) => known.has(model));
+  return new Set(selected.length ? selected : models);
+}
+
+function splitCost(agent) {
+  let real = agent.real_cost_usd || 0;
+  let whatIf = agent.what_if_cost_usd || 0;
+  // Defensive compatibility for a stale response retained across a rolling
+  // daemon/dashboard upgrade. New responses always carry the split fields.
+  if (!(real > 0) && !(whatIf > 0) && (agent.cost_usd || 0) > 0) {
+    if (agent.cost_kind === 'what_if') whatIf = agent.cost_usd;
+    else real = agent.cost_usd;
+  }
+  return { real, whatIf };
+}
+
+export function filterCostData(payload, selected, selectedModels = null) {
   const agents = payload?.agents || [];
-  const harnesses = costHarnesses(agents);
-  if (harnesses.length <= 1 || selected.size === harnesses.length) return payload;
+  const providers = costProviders(agents);
+  const models = costModels(agents);
+  const allProviders = selected.size === providers.length && providers.every((item) => selected.has(item));
+  const allModels = !selectedModels
+    || (selectedModels.size === models.length && models.every((item) => selectedModels.has(item)));
+  if (allProviders && allModels) return payload;
+  const matches = (agent) => selected.has(costProviderLabel(agent))
+    && (!selectedModels || selectedModels.has(costModelLabel(agent)));
+  const filteredAgents = agents.filter(matches);
   const totals = {};
   let total = 0;
   let realTotal = 0;
   let whatIfTotal = 0;
   let virtualCreditsTotal = 0;
-  for (const agent of agents) {
-    if (!selected.has(harnessLabel(agent.harness))) continue;
+  for (const agent of filteredAgents) {
+    const { real, whatIf } = splitCost(agent);
     totals[agent.day] = (totals[agent.day] || 0) + (agent.cost_usd || 0);
     total += agent.cost_usd || 0;
-    realTotal += agent.real_cost_usd || 0;
-    whatIfTotal += agent.what_if_cost_usd || 0;
+    realTotal += real;
+    whatIfTotal += whatIf;
     virtualCreditsTotal += agent.virtual_cost_credits || 0;
   }
   return {
     ...payload,
     days: (payload.days || []).map((day) => {
-      const matching = agents.filter((agent) => agent.day === day.day && selected.has(harnessLabel(agent.harness)));
-      const real = matching.reduce((sum, agent) => sum + (agent.real_cost_usd || 0), 0);
-      const whatIf = matching.reduce((sum, agent) => sum + (agent.what_if_cost_usd || 0), 0);
+      const matching = filteredAgents.filter((agent) => agent.day === day.day);
+      const real = matching.reduce((sum, agent) => sum + splitCost(agent).real, 0);
+      const whatIf = matching.reduce((sum, agent) => sum + splitCost(agent).whatIf, 0);
       const credits = matching.reduce((sum, agent) => sum + (agent.virtual_cost_credits || 0), 0);
       return {
         day: day.day, cost_usd: totals[day.day] || 0,
@@ -197,6 +228,7 @@ export function filterCostData(payload, selected) {
         cost_kind: real > 0 && whatIf > 0 ? 'mixed' : whatIf > 0 ? 'what_if' : real > 0 ? 'real' : '',
       };
     }),
+    agents: filteredAgents,
     total_usd: total,
     real_total_usd: realTotal,
     what_if_total_usd: whatIfTotal,
@@ -205,26 +237,29 @@ export function filterCostData(payload, selected) {
   };
 }
 
+export function buildAccumulatedCostChart(data) {
+  let total = 0;
+  const points = (data?.days || []).map((day) => ({
+    day: day.day,
+    cost: (total += Number(day.cost_usd || 0)),
+  }));
+  const maximum = points.length ? points[points.length - 1].cost : 0;
+  return { points, scaleMax: maximum > 0 ? niceCeil(maximum) : 0 };
+}
+
 export function dailyBreakdown(agents, selected) {
   const result = {};
   for (const agent of agents || []) {
-    const harness = harnessLabel(agent.harness);
-    if (!selected.has(harness)) continue;
+    const provider = costProviderLabel(agent);
+    if (!selected.has(provider)) continue;
     const day = result[agent.day] || (result[agent.day] = {});
-    let real = agent.real_cost_usd || 0;
-    let whatIf = agent.what_if_cost_usd || 0;
-    // Defensive compatibility for a stale response retained across a rolling
-    // daemon/dashboard upgrade. New responses always carry the split fields.
-    if (!(real > 0) && !(whatIf > 0) && (agent.cost_usd || 0) > 0) {
-      if (agent.cost_kind === 'what_if') whatIf = agent.cost_usd;
-      else real = agent.cost_usd;
-    }
+    const { real, whatIf } = splitCost(agent);
     if (real > 0) {
-      const key = `${harness}\u0000real`;
+      const key = `${provider}\u0000real`;
       day[key] = (day[key] || 0) + real;
     }
     if (whatIf > 0) {
-      const key = `${harness}\u0000what_if`;
+      const key = `${provider}\u0000what_if`;
       day[key] = (day[key] || 0) + whatIf;
     }
   }
@@ -234,18 +269,19 @@ export function dailyBreakdown(agents, selected) {
 export function dailyCreditsBreakdown(agents, selected) {
   const result = {};
   for (const agent of agents || []) {
-    if (!selected.has(harnessLabel(agent.harness))) continue;
+    const provider = costProviderLabel(agent);
+    if (!selected.has(provider)) continue;
     const credits = agent.virtual_cost_credits || 0;
     if (!(credits > 0)) continue;
     const day = result[agent.day] || (result[agent.day] = {});
-    const key = `${harnessLabel(agent.harness)}\u0000what_if`;
+    const key = `${provider}\u0000what_if`;
     day[key] = (day[key] || 0) + credits;
   }
   return result;
 }
 
-export function harnessSegmentClass(harness, harnesses) {
-  const index = harnesses.indexOf(harnessLabel(harness));
+export function providerSegmentClass(provider, providers) {
+  const index = providers.indexOf(provider);
   return 'cost-seg-h' + (index >= 0 ? index % HARNESS_PALETTE_N : 0);
 }
 
@@ -375,9 +411,10 @@ export function monthLabel(offset, now = new Date()) {
   return `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
 }
 
-export function buildCostChart(data, projection, agents, selected, harnesses) {
-  const breakdown = dailyBreakdown(agents, selected);
-  const creditBreakdown = dailyCreditsBreakdown(agents, selected);
+export function buildCostChart(data, projection, agents, selected, providers, selectedModels = null) {
+  const filteredAgents = (agents || []).filter((agent) => !selectedModels || selectedModels.has(costModelLabel(agent)));
+  const breakdown = dailyBreakdown(filteredAgents, selected);
+  const creditBreakdown = dailyCreditsBreakdown(filteredAgents, selected);
   const fill = projection?.fillEmpty ? projection.leadingFill : null;
   const actual = (data?.days || []).map((day) => {
     if (fill && fill[day.day] != null) {
@@ -385,11 +422,11 @@ export function buildCostChart(data, projection, agents, selected, harnesses) {
     }
     const parts = breakdown[day.day] || {};
     const segments = Object.entries(parts).map(([key, cost]) => {
-      const [harness, kind] = key.split('\u0000');
+      const [provider, kind] = key.split('\u0000');
       return {
-        harness, kind, cost,
+        provider, kind, cost,
         credits: creditBreakdown[day.day]?.[key] || 0,
-        className: `${harnessSegmentClass(harness, harnesses)}${kind === 'what_if' ? ' cost-seg-whatif' : ''}`,
+        className: `${providerSegmentClass(provider, providers)}${kind === 'what_if' ? ' cost-seg-whatif' : ''}`,
       };
     }).filter((segment) => segment.cost > 0);
     return { day: day.day, cost: segments.reduce((sum, segment) => sum + segment.cost, 0), projected: false, segments };

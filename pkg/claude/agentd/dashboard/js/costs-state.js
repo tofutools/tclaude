@@ -2,22 +2,25 @@ import { batch, computed, signal } from '@preact/signals';
 import { dashboardState } from './snapshot-store.js';
 import { dashPrefs } from './prefs.js';
 import {
-  COST_COLUMNS, buildCostChart, costHarnesses, filterCostData, harnessLabel,
+  COST_COLUMNS, buildAccumulatedCostChart, buildCostChart, costModelLabel, costModels, costProviders,
+  costProviderLabel, filterCostData,
   matchesCostAgent, monthLabel, monthProjection, oldestMonthOffset,
-  resolveHarnessSelection, sortCostAgents,
+  resolveModelSelection, resolveProviderSelection, sortCostAgents,
 } from './costs-model.js';
 
 const FILL_KEY = 'tclaude.dash.costs.fillEmptyWeekdays';
 const WEEKENDS_KEY = 'tclaude.dash.costs.includeWeekends';
-const HARNESSES_KEY = 'tclaude.dash.costs.harnesses';
+const PROVIDERS_KEY = 'tclaude.dash.costs.providers';
+const LEGACY_HARNESSES_KEY = 'tclaude.dash.costs.harnesses';
+const MODELS_KEY = 'tclaude.dash.costs.models';
 
 function errorMessage(error) {
   return String(error?.message || error);
 }
 
-function savedHarnesses(prefs) {
+function savedSelection(prefs, key) {
   try {
-    const value = JSON.parse(prefs.getItem(HARNESSES_KEY) || '[]');
+    const value = JSON.parse(prefs.getItem(key) || '[]');
     return Array.isArray(value) ? value : [];
   } catch { return []; }
 }
@@ -32,7 +35,8 @@ export function createCostsState({
   const monthOffset = signal(0);
   const fillEmpty = signal(false);
   const includeWeekends = signal(false);
-  const selectedHarnesses = signal([]);
+  const selectedProviders = signal([]);
+  const selectedModels = signal([]);
   const query = signal('');
   const sort = signal({ key: 'activity', dir: 'desc' });
   const payload = signal(null);
@@ -47,23 +51,28 @@ export function createCostsState({
   const costData = computed(() => {
     const data = payload.value;
     const agents = data?.agents || [];
-    const harnesses = costHarnesses(agents);
-    const selected = resolveHarnessSelection(harnesses, selectedHarnesses.value);
-    const narrowed = data ? filterCostData(data, selected) : null;
+    const providers = costProviders(agents);
+    const selected = resolveProviderSelection(providers, selectedProviders.value);
+    const models = costModels(agents);
+    const selectedModelSet = resolveModelSelection(models, selectedModels.value);
+    const narrowed = data ? filterCostData(data, selected, selectedModelSet) : null;
     const projection = narrowed && span.value === 'month'
       ? monthProjection(narrowed, fillEmpty.value, includeWeekends.value, now())
       : null;
     return {
-      data, agents, harnesses, selected, narrowed, projection,
-      chart: narrowed ? buildCostChart(narrowed, projection, agents, selected, harnesses) : null,
+      data, agents, providers, selected, models, selectedModelSet, narrowed, projection,
+      chart: narrowed ? buildCostChart(narrowed, projection, agents, selected, providers, selectedModelSet) : null,
+      accumulatedChart: narrowed ? buildAccumulatedCostChart(narrowed) : null,
     };
   });
 
   const view = computed(() => {
     const snap = snapshot.value;
-    const { data, agents, harnesses, selected, narrowed, projection, chart } = costData.value;
+    const { data, agents, providers, selected, models, selectedModelSet,
+      narrowed, projection, chart, accumulatedChart } = costData.value;
     const visibleRows = sortCostAgents(agents, sort.value)
-      .filter((agent) => selected.has(harnessLabel(agent.harness)))
+      .filter((agent) => selected.has(costProviderLabel(agent)))
+      .filter((agent) => selectedModelSet.has(costModelLabel(agent)))
       .filter((agent) => matchesCostAgent(agent, query.value));
     const totalConversations = new Set(agents.map((agent) => agent.conv_id)).size;
     const shownConversations = new Set(visibleRows.map((agent) => agent.conv_id)).size;
@@ -81,7 +90,8 @@ export function createCostsState({
     // pointing at it — leaving each marker a dead control. Narrowed by harness
     // like the subtotals, but not by the text query, so the caveat covers the
     // same rows the header totals do.
-    const hasWhatIfRows = agents.some((agent) => selected.has(harnessLabel(agent.harness))
+    const hasWhatIfRows = agents.some((agent) => selected.has(costProviderLabel(agent))
+      && selectedModelSet.has(costModelLabel(agent))
       && (agent.cost_kind === 'what_if' || agent.cost_kind === 'mixed'));
     return {
       span: span.value,
@@ -90,14 +100,17 @@ export function createCostsState({
       oldestMonthOffset: oldestMonthOffset(data?.first_day, now()),
       fillEmpty: fillEmpty.value,
       includeWeekends: includeWeekends.value,
-      selectedHarnesses: selected,
-      harnesses,
+      selectedProviders: selected,
+      selectedModels: selectedModelSet,
+      providers,
+      models,
       query: query.value,
       sort: sort.value,
       payload: data,
       narrowed,
       projection,
       chart,
+      accumulatedChart,
       rows: visibleRows,
       totalConversations,
       shownConversations,
@@ -122,7 +135,9 @@ export function createCostsState({
     batch(() => {
       fillEmpty.value = prefs.getItem(FILL_KEY) === '1';
       includeWeekends.value = prefs.getItem(WEEKENDS_KEY) === '1';
-      selectedHarnesses.value = savedHarnesses(prefs);
+      selectedProviders.value = savedSelection(prefs, PROVIDERS_KEY);
+      if (!selectedProviders.value.length) selectedProviders.value = savedSelection(prefs, LEGACY_HARNESSES_KEY);
+      selectedModels.value = savedSelection(prefs, MODELS_KEY);
     });
     return true;
   }
@@ -148,15 +163,28 @@ export function createCostsState({
     prefs.setItem(WEEKENDS_KEY, value ? '1' : '0');
   }
 
-  function toggleHarness(harness) {
-    const current = new Set(view.value.selectedHarnesses);
-    if (current.has(harness)) current.delete(harness); else current.add(harness);
+  function toggleProvider(provider) {
+    const current = new Set(view.value.selectedProviders);
+    if (current.has(provider)) current.delete(provider); else current.add(provider);
     if (current.size === 0) return false;
-    const all = view.value.harnesses;
+    const all = view.value.providers;
     const stored = current.size === all.length && all.every((item) => current.has(item)) ? [] : [...current];
-    selectedHarnesses.value = stored;
-    if (stored.length) prefs.setItem(HARNESSES_KEY, JSON.stringify(stored));
-    else prefs.removeItem(HARNESSES_KEY);
+    selectedProviders.value = stored;
+    if (stored.length) prefs.setItem(PROVIDERS_KEY, JSON.stringify(stored));
+    else prefs.removeItem(PROVIDERS_KEY);
+    prefs.removeItem(LEGACY_HARNESSES_KEY);
+    return true;
+  }
+
+  function toggleModel(model) {
+    const current = new Set(view.value.selectedModels);
+    if (current.has(model)) current.delete(model); else current.add(model);
+    if (current.size === 0) return false;
+    const all = view.value.models;
+    const stored = current.size === all.length && all.every((item) => current.has(item)) ? [] : [...current];
+    selectedModels.value = stored;
+    if (stored.length) prefs.setItem(MODELS_KEY, JSON.stringify(stored));
+    else prefs.removeItem(MODELS_KEY);
     return true;
   }
 
@@ -213,9 +241,9 @@ export function createCostsState({
   }
 
   return Object.freeze({
-    span, monthOffset, fillEmpty, includeWeekends, selectedHarnesses, query,
+    span, monthOffset, fillEmpty, includeWeekends, selectedProviders, selectedModels, query,
     sort, payload, request, factor, view, initialize, setSpan, activateMonth,
-    setFillEmpty, setIncludeWeekends, toggleHarness, cycleSort, setQuery,
+    setFillEmpty, setIncludeWeekends, toggleProvider, toggleModel, cycleSort, setQuery,
     beginRequest, commitRequest, failRequest, editFactor, beginFactor,
     commitFactor, failFactor,
   });

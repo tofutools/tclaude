@@ -37,6 +37,7 @@ function parseStoredSpans(raw) {
       if (HISTORY_HOURS.includes(Number(value?.hours))) entry.hours = Number(value.hours);
       if (LOOKAHEAD_HOURS.includes(Number(value?.lookaheadHours))) entry.lookaheadHours = Number(value.lookaheadHours);
       if (FORECAST_ALGOS.includes(value?.algo)) entry.algo = value.algo;
+      if (['percent', 'units'].includes(value?.unit)) entry.unit = value.unit;
       if (Object.keys(entry).length) out[key] = entry;
     }
     return out;
@@ -61,6 +62,7 @@ export function createUsageHistoryState({
     hours: spans[key]?.hours ?? fallback.hours,
     lookaheadHours: spans[key]?.lookaheadHours ?? fallback.lookaheadHours,
     algo: spans[key]?.algo ?? fallback.algo,
+    unit: spans[key]?.unit ?? 'percent',
   });
   const view = computed(() => {
     const snap = snapshot.value;
@@ -121,6 +123,11 @@ export function createUsageHistoryState({
     persistSpan(key, { lookaheadHours: parsed });
     return true;
   }
+  function setSeriesUnit(key, value) {
+    if (typeof key !== 'string' || !SERIES_KEY_PATTERN.test(key) || !['percent', 'units'].includes(value)) return false;
+    persistSpan(key, { unit: value });
+    return true;
+  }
   function setDefaultHours(value) {
     const parsed = Number(value);
     if (!HISTORY_HOURS.includes(parsed)) return false;
@@ -150,7 +157,7 @@ export function createUsageHistoryState({
   }
   return Object.freeze({
     seriesSpans, defaultSpan, payload, request, view,
-    initialize, setDefaultHours, setSeriesHours, setSeriesLookaheadHours, setSeriesForecastAlgo,
+    initialize, setDefaultHours, setSeriesHours, setSeriesLookaheadHours, setSeriesForecastAlgo, setSeriesUnit,
     beginRequest, commitRequest, failRequest, failMutation,
   });
 }

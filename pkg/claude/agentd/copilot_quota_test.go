@@ -48,6 +48,8 @@ func TestRefreshCopilotQuotaStoresFiniteMonthlyAllowance(t *testing.T) {
 	assert.Equal(t, "monthly", rows[0].WindowName)
 	assert.Zero(t, rows[0].Duration) // account.getQuota reports no exact window start.
 	assert.InDelta(t, 58.2, rows[0].UsedPercent, 1e-9)
+	assert.Equal(t, 582.0, rows[0].UsedUnits)
+	assert.Equal(t, 1000.0, rows[0].LimitUnits)
 	assert.Equal(t, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC), rows[0].ResetsAt,
 		"the documented monthly allowance resets on the first day at 00:00 UTC")
 	assert.Equal(t, "account.getQuota", rows[0].Source)

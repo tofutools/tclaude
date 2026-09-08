@@ -171,7 +171,10 @@ The header usage island shows one line per provider (Claude / Codex / Copilot
 / API) with an 8-block bar, percentage, and remaining amount: Claude tracks
 the 5-hour and 7-day rolling windows, Codex 5-hour and weekly, Copilot the
 monthly premium-request allowance, plus API cost month-to-date and today
-(click through to the Costs tab).
+(click through to the Costs tab). When subscription what-if pricing is
+enabled, click a provider label or its compact selector to switch between
+quota percentage and estimated pay-per-token cost. Copilot also offers its
+native AIC allowance, cycling `% → ≈$ → AIC`.
 
 ### PR and CI pills
 
@@ -349,7 +352,9 @@ premium requests). Each card shows the current percentage, sample age, and
 reset countdown over an SVG chart with the observed line, a dashed forecast
 line, reset markers, a now marker, and excluded points. Sampling runs every
 15 minutes with 90-day retention; history spans 24h to 90d and look-ahead 5h
-to 30d, persisted per series.
+to 30d, persisted per series. Copilot cards can switch the headline, chart,
+tooltips, and forecast pace between percentage and native AIC credits; the
+choice is remembered per series.
 
 ![Per-provider quota windows with least-squares forecasts — here predicting the Claude five-hour window goes dark 1h38m before reset](assets/dashboard-usage.png)
 
@@ -384,10 +389,14 @@ warning banner.
 
 ## Costs
 
-Spend over time: a stacked daily bar chart per harness, a per-model rollup
-strip, and a sortable per-agent table with totals and cross-day agent chains.
-Spans are This month (the only span with a projection), 7d/30d/90d, and a
-month browser going 24 months back.
+Spend over time: an accumulated-cost line graph, a stacked daily bar chart
+per provider, a per-model rollup strip, and a sortable per-agent table with
+totals and cross-day agent chains. Provider and model selectors narrow every
+figure in the tab, including both graphs and the projection. Spans are: This
+month (the only span with a projection), 7d/30d/90d, and a month browser going
+24 months back. Model attribution uses the last model recorded for each
+agent-day slice; a model switch within the same session and calendar day is
+therefore grouped under the final observed model.
 
 ![The Costs tab: month bars, per-model breakdown cards, and the per-agent table](assets/dashboard-costs.png)
 

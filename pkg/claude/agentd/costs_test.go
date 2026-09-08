@@ -89,6 +89,18 @@ func TestDashboardAPICostsAreAttributedAndSortedByProvider(t *testing.T) {
 	}, dashboardAPICostsFromRows(rows, now))
 }
 
+func TestDashboardWhatIfCostsAreAttributedByProvider(t *testing.T) {
+	now := time.Date(2026, 8, 13, 12, 0, 0, 0, time.Local)
+	rows := []db.CostDailyRow{
+		{SessionID: "a", ConvID: "a", Day: "2026-08-13", Harness: "claude", VirtualCostUSD: 1.25},
+		{SessionID: "b", ConvID: "b", Day: "2026-08-13", Harness: "copilot", VirtualCostUSD: 2.50},
+	}
+	assert.Equal(t, []dashboardAPICost{
+		{Provider: "anthropic", TotalCostUSD: 1.25, TodayCostUSD: 1.25},
+		{Provider: "github", TotalCostUSD: 2.50, TodayCostUSD: 2.50},
+	}, dashboardProviderCostsFromRows(rows, now, true))
+}
+
 // TestCostDeltasFromRows_EmptyConvFallback pins the defensive fallback:
 // a row with no denormalised conv_id baselines per session, so two
 // unrelated sessions never merge into one high-water sequence (which

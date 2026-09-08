@@ -44,6 +44,42 @@ test('shell island reacts to snapshots while preserving keyed usage and footer n
   await Promise.all([usage.unmount(), meta.unmount(), badge.unmount(), status.unmount()]);
 });
 
+test('Copilot header cycles percentage, what-if cost, and AIC', async (t) => {
+  const harness = await createPreactHarness(t);
+  const [{ createDashboardState }, { dashPrefs }, { Usage }] = await Promise.all([
+    harness.importDashboardModule('js/snapshot-store.js'),
+    harness.importDashboardModule('js/prefs.js'),
+    harness.importDashboardModule('js/shell-island.js'),
+  ]);
+  const pref = 'tclaude.dash.headerUsageMode.copilot';
+  dashPrefs.removeItem(pref);
+  const state = createDashboardState();
+  const mounted = await harness.mount(harness.html`<${Usage} state=${state} />`);
+  state.beginRequest();
+  await harness.act(() => state.commitRequest(1, { usage: {
+    copilot: { available: true, monthly: {
+      pct: 38, used_units: 114, limit_units: 300, remaining: '18d',
+    } },
+    what_if_enabled: true,
+    what_if_costs: [{ provider: 'github', total_cost_usd: 1.75 }],
+  } }));
+
+  const label = () => mounted.container.querySelector('.usrc-toggle');
+  assert.match(mounted.container.textContent, /38%/);
+  await harness.act(() => label().click());
+  assert.match(mounted.container.textContent, /≈\$1\.75/);
+  assert.equal(dashPrefs.getItem(pref), 'cost');
+  await harness.act(() => label().click());
+  assert.match(mounted.container.textContent, /114\/ 300 AIC/);
+  assert.equal(dashPrefs.getItem(pref), 'units');
+  await harness.act(() => label().click());
+  assert.match(mounted.container.textContent, /38%/);
+  assert.equal(dashPrefs.getItem(pref), 'usage');
+
+  dashPrefs.removeItem(pref);
+  await mounted.unmount();
+});
+
 test('disconnect overlay is removed on reconnect so its compositor layers cannot linger', async (t) => {
   const harness = await createPreactHarness(t);
   const [{ createDashboardState }, { Disconnect }] = await Promise.all([

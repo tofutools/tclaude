@@ -39,6 +39,34 @@ test('shell models preserve usage layouts, badge urgency, footer, and activity d
   assert.equal(copilot.lines[0].tokens[0].label, '', 'monthly word stays hidden so bars align');
   assert.equal(copilot.lines[0].tokens[0].pct, 58);
 
+  const switchable = usageView({
+    available: true, five_hour: { pct: 12 }, seven_day: { pct: 34 },
+    what_if_enabled: true,
+    what_if_costs: [{ provider: 'anthropic', total_cost_usd: 8, today_cost_usd: 2 }],
+  }, { claude: 'cost' });
+  assert.deepEqual(switchable.lines[0].modes, ['usage', 'cost']);
+  assert.equal(switchable.lines[0].tokens[0].key, 'claude-whatif');
+  assert.equal(switchable.lines[0].tokens[0].estimate, true);
+
+  const copilotUnits = usageView({
+    copilot: { available: true, monthly: { pct: 58.2, used_units: 174.6, limit_units: 300 } },
+    what_if_enabled: true,
+    what_if_costs: [{ provider: 'github', total_cost_usd: 1.75, today_cost_usd: 0.25 }],
+  }, { copilot: 'units' });
+  assert.deepEqual(copilotUnits.lines[0].modes, ['usage', 'cost', 'units']);
+  assert.equal(copilotUnits.lines[0].tokens[0].kind, 'units');
+  assert.equal(copilotUnits.lines[0].tokens[0].used, 174.6);
+  const copilotCost = usageView({
+    copilot: { available: true, monthly: { pct: 58.2, used_units: 174.6, limit_units: 300 } },
+    what_if_enabled: true,
+    what_if_costs: [{ provider: 'github', total_cost_usd: 1.75 }],
+  }, { copilot: 'cost' });
+  assert.equal(copilotCost.lines[0].tokens[0].key, 'copilot-whatif');
+  const zeroCost = usageView({
+    available: true, five_hour: { pct: 0 }, seven_day: { pct: 0 }, what_if_enabled: true,
+  }, { claude: 'cost' });
+  assert.equal(zeroCost.lines[0].tokens[0].mtd, '$0.00', 'WHAT-IF mode remains available before spend accrues');
+
   assert.deepEqual(messagesBadgeView({ messages_unread: 98, access_requests_pending: 3 }),
     { text: '99+', hidden: false, blink: true });
   assert.deepEqual(

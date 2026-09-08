@@ -870,7 +870,7 @@ CREATE TABLE "subscription_usage_windows" (
 			used_percent     REAL NOT NULL,
 			resets_at        INTEGER,
 			observed_at      INTEGER NOT NULL,
-			source           TEXT NOT NULL DEFAULT '', excluded INTEGER NOT NULL DEFAULT 0 CHECK(excluded IN (0, 1)),
+			source           TEXT NOT NULL DEFAULT '', excluded INTEGER NOT NULL DEFAULT 0 CHECK(excluded IN (0, 1)), used_units REAL NOT NULL DEFAULT 0, limit_units REAL NOT NULL DEFAULT 0,
 			PRIMARY KEY(sample_id, window_name)
 		) STRICT;
 

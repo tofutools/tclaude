@@ -21,13 +21,17 @@ type usageHistoryResp struct {
 		WindowName string `json:"window_name"`
 		From       string `json:"from"`
 		Points     []struct {
-			At       string  `json:"at"`
-			Pct      float64 `json:"pct"`
-			ResetsAt string  `json:"resets_at"`
-			Excluded bool    `json:"excluded"`
+			At         string  `json:"at"`
+			Pct        float64 `json:"pct"`
+			UsedUnits  float64 `json:"used_units"`
+			LimitUnits float64 `json:"limit_units"`
+			ResetsAt   string  `json:"resets_at"`
+			Excluded   bool    `json:"excluded"`
 		} `json:"points"`
 		Resets []struct {
-			Pct float64 `json:"pct"`
+			Pct        float64 `json:"pct"`
+			UsedUnits  float64 `json:"used_units"`
+			LimitUnits float64 `json:"limit_units"`
 		} `json:"resets"`
 		Forecast struct {
 			Status            string  `json:"status"`
@@ -52,7 +56,7 @@ func TestDashboardUsageHistoryDerivesDocumentedCopilotReset(t *testing.T) {
 	_, err := db.SaveSubscriptionUsageSample(db.SubscriptionUsageSample{
 		Provider: db.SubscriptionProviderGitHub, ObservedAt: observed,
 		Source: "account.getQuota", Windows: []db.SubscriptionUsageWindow{{
-			Name: "monthly", UsedPercent: 7,
+			Name: "monthly", UsedPercent: 7, UsedUnits: 21, LimitUnits: 300,
 			ResetsAt: observed.Add(-12 * time.Hour), // Old CLI payload mapped timestamp_utc as resetDate.
 		}},
 	})
@@ -67,6 +71,8 @@ func TestDashboardUsageHistoryDerivesDocumentedCopilotReset(t *testing.T) {
 	require.Len(t, out.Series[0].Points, 1)
 	wantReset := time.Date(observed.Year(), observed.Month()+1, 1, 0, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
 	assert.Equal(t, wantReset, out.Series[0].Points[0].ResetsAt)
+	assert.Equal(t, 21.0, out.Series[0].Points[0].UsedUnits)
+	assert.Equal(t, 300.0, out.Series[0].Points[0].LimitUnits)
 	assert.Equal(t, wantReset, out.Series[0].Forecast.ResetAt)
 }
 

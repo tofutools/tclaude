@@ -3,9 +3,10 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { AsyncLoadState } from './async-load-state.js';
 import { CostsChart } from './costs-chart.js';
+import { CostsAccumulatedChart } from './costs-accumulated-chart.js';
 import {
   COST_COLUMNS, COST_SPANS, costModelLabel, fmtLastActivity, fmtUSD, harnessLabel,
-  fmtCredits, fmtExactUSD, harnessSegmentClass, modelRollup, monthProjectionLabel,
+  fmtCredits, fmtExactUSD, modelRollup, monthProjectionLabel, providerSegmentClass,
 } from './costs-model.js';
 import { idTooltip, isModifiedClick, shortAgentId } from './helpers.js';
 
@@ -100,15 +101,36 @@ function Controls({ state, actions, current }) {
   </div>`;
 }
 
-function HarnessFilter({ state, current }) {
-  if (current.harnesses.length <= 1) return null;
-  return html`<span id="filter-costs-harnesses" class="costs-harness-filter">
-    ${current.harnesses.map((harness) => html`<label class="filter-toggle costs-harness-choice" title=${`Show ${harness} cost rows`}>
-      <input type="checkbox" data-harness=${harness} checked=${current.selectedHarnesses.has(harness)}
-        onChange=${() => state.toggleHarness(harness)} />
-      <span class=${`cost-legend-sw ${harnessSegmentClass(harness, current.harnesses)}`}></span><span>${harness}</span>
+function ProviderFilter({ state, current }) {
+  if (current.providers.length <= 1) return null;
+  return html`<span id="filter-costs-providers" class="costs-provider-filter">
+    ${current.providers.map((provider) => html`<label class="filter-toggle costs-provider-choice" title=${`Show ${provider} cost rows`}>
+      <input type="checkbox" data-provider=${provider} checked=${current.selectedProviders.has(provider)}
+        onChange=${() => state.toggleProvider(provider)} />
+      <span class=${`cost-legend-sw ${providerSegmentClass(provider, current.providers)}`}></span><span>${provider}</span>
     </label>`)}
   </span>`;
+}
+
+function ModelFilter({ state, current }) {
+  if (current.models.length <= 1) return null;
+  return html`<span id="filter-costs-models" class="costs-model-filter"
+    title="Cost is grouped by the last model recorded for each agent-day slice.">
+    <span class="cost-filter-label">Model</span>
+    ${current.models.map((model) => html`<label class="filter-toggle costs-model-choice" title=${`Show ${model} cost rows`}>
+      <input type="checkbox" data-model=${model} checked=${current.selectedModels.has(model)}
+        onChange=${() => state.toggleModel(model)} /><span>${model}</span>
+    </label>`)}
+  </span>`;
+}
+
+function CostFilters({ state, current }) {
+  if (current.providers.length <= 1 && current.models.length <= 1) return null;
+  return html`<div class="filter-bar costs-dimension-filters" aria-label="Cost dimensions">
+    ${current.providers.length > 1 && html`<span class="cost-filter-label">Provider</span>`}
+    <${ProviderFilter} state=${state} current=${current} />
+    <${ModelFilter} state=${state} current=${current} />
+  </div>`;
 }
 
 function SortHeader({ state, current }) {
@@ -258,7 +280,6 @@ function CostsTable({ state, current }) {
   }
   return html`<${Fragment}>
     <div class="filter-bar" id="costs-table-filter">
-      <${HarnessFilter} state=${state} current=${current} />
       <input ref=${inputRef} id="filter-costs" type="text" aria-label="Filter cost agents"
         placeholder="Filter agents (name / id / harness / model)" autocomplete="off" spellcheck=${false}
         value=${current.query} onInput=${(event) => state.setQuery(event.currentTarget.value)}
@@ -344,8 +365,14 @@ export function CostsApp({ state, actions }) {
       WHAT-IF values estimate equivalent pay-per-token pricing and are <strong>not real charges</strong>.
     </div>
     <${Controls} state=${state} actions=${actions} current=${current} />
+    <${CostFilters} state=${state} current=${current} />
     <${AsyncLoadState} label="Costs" request=${current.request} retry=${actions.load} errorClass="costs-error" />
-    ${current.request.hasLoaded && html`<${Fragment}><${CostsChart} chart=${current.chart} enabled=${current.active && current.visible} /><${CostsTable} state=${state} current=${current} /></${Fragment}>`}
+    ${current.request.hasLoaded && html`<${Fragment}>
+      <${CostsAccumulatedChart} chart=${current.accumulatedChart} />
+      <div class="cost-chart-heading cost-daily-heading"><strong>Daily spend</strong><span>stacked by provider</span></div>
+      <${CostsChart} chart=${current.chart} enabled=${current.active && current.visible} />
+      <${CostsTable} state=${state} current=${current} />
+    </${Fragment}>`}
   </div>`;
 }
 

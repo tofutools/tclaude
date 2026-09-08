@@ -25,7 +25,7 @@ func TestDashboardHTML_TopBarTotalCostWired(t *testing.T) {
 	// — the same grouping and sub-cent floor as the harness line.
 	must("const mtd = Number(usage?.total_cost_usd || 0)", "usageView reads the snapshot's month-to-date total")
 	must("const today = Number(usage?.today_cost_usd || 0)", "usageView reads the snapshot's today total")
-	must("function costToken(key, today, mtd)", "provider-keyed cost tokens have their own model builder")
+	must("function costToken(key, today, mtd, estimate = false)", "provider-keyed cost tokens support billed and estimated values")
 	must("label: `${providerLabel(item.provider)} API:`", "API-cost rows always carry a provider prefix")
 	must("return value >= 0.005 ? '$' + CENTS.format(value) : '<1¢'",
 		"grouped two-decimal dollar format with a sub-cent floor")
@@ -148,14 +148,19 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	// Breakdown filter: harness checkboxes plus a client-side text narrowing of
 	// the table (matches name / id / harness / model), with the matched/all
 	// count chip and clear button.
-	must(`id="filter-costs-harnesses"`, "harness filter mount present")
-	must("function HarnessFilter", "harness checkbox component wired")
-	must("tclaude.dash.costs.harnesses", "harness filter persisted")
+	must(`id="filter-costs-providers"`, "provider filter mount present")
+	must("function ProviderFilter", "provider checkbox component wired")
+	must("tclaude.dash.costs.providers", "provider filter persisted")
 	// The harness subset narrows the whole tab, not just the table: the
 	// chart/summary/projection render from the filtered derivation, and a
 	// checkbox toggle re-paints all three panes from the payload in hand.
 	must("function filterCostData", "harness subset narrows the chart/summary totals")
-	must("state.toggleHarness(harness)", "checkbox toggle re-derives chart + summary + table without refetch")
+	must("state.toggleProvider(provider)", "checkbox toggle re-derives chart + summary + table without refetch")
+	must(`id="filter-costs-models"`, "model filter mount present")
+	must("tclaude.dash.costs.models", "model filter persisted")
+	must("state.toggleModel(model)", "model checkbox narrows chart, summary, and table without refetch")
+	must(`id="costs-accumulated-chart"`, "accumulated-cost chart rendered above daily spend")
+	must("function buildAccumulatedCostChart", "accumulated series derived from the selected range")
 	must(`id="filter-costs"`, "breakdown filter input present")
 	must(`id="filter-costs-count"`, "filter match-count chip present")
 	must(`id="filter-costs-clear"`, "filter clear button present")

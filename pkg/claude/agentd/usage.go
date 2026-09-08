@@ -66,6 +66,11 @@ type dashboardUsage struct {
 	// Groups top-bar renders these rows instead of an ambiguous bare "api"
 	// token, even when only one provider contributed spend.
 	APICosts []dashboardAPICost `json:"api_costs,omitempty"`
+	// WhatIfCosts attributes hypothetical pay-per-token equivalents by
+	// provider. It is populated only while cost.show_on_subscription is enabled,
+	// so the header never exposes estimates the operator opted out of.
+	WhatIfCosts   []dashboardAPICost `json:"what_if_costs,omitempty"`
+	WhatIfEnabled bool               `json:"what_if_enabled,omitempty"`
 	// Codex is the Codex account's subscription usage, lifted from Codex's
 	// local rollout files (see codex_usage.go). nil — the field is omitted
 	// — when Codex isn't installed or has no recent usage data, so the top
@@ -100,9 +105,11 @@ type copilotDashboardUsage struct {
 // statusbar; ResetsAt is the raw RFC3339 timestamp for any client-side
 // recomputation between snapshot polls.
 type usageWindow struct {
-	Pct       float64 `json:"pct"`
-	ResetsAt  string  `json:"resets_at,omitempty"`
-	Remaining string  `json:"remaining"`
+	Pct        float64 `json:"pct"`
+	UsedUnits  float64 `json:"used_units,omitempty"`
+	LimitUnits float64 `json:"limit_units,omitempty"`
+	ResetsAt   string  `json:"resets_at,omitempty"`
+	Remaining  string  `json:"remaining"`
 }
 
 // startUsagePoller conditionally refreshes the Claude subscription-usage cache
@@ -163,7 +170,7 @@ func refreshUsage() {
 // has gone stale, or carries no live rolling-limit window at all (an
 // API-billing account, or a subscription account idle long enough that
 // both windows have reset).
-func collectUsageSnapshot(idleTimeout time.Duration) (dashboardUsage, bool, []perfPhase, error) {
+func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool) (dashboardUsage, bool, []perfPhase, error) {
 	var phases []perfPhase
 	timed := func(name string, run func()) {
 		start := time.Now()
@@ -173,14 +180,20 @@ func collectUsageSnapshot(idleTimeout time.Duration) (dashboardUsage, bool, []pe
 
 	var totalCost, todayCost float64
 	var apiCosts []dashboardAPICost
+	var whatIfCosts []dashboardAPICost
 	var hasRealCost bool
 	var costErr error
+	var costHistoryAvailable bool
 	timed("cost_history", func() {
 		rows, err := db.AllCostDailyRows()
 		costErr = err
+		costHistoryAvailable = err == nil
 		now := time.Now()
 		totalCost, todayCost, hasRealCost = dashboardCostTotalsFromRows(rows, now)
 		apiCosts = dashboardAPICostsFromRows(rows, now)
+		if includeWhatIf && costHistoryAvailable {
+			whatIfCosts = dashboardProviderCostsFromRows(rows, now, true)
+		}
 		if costErr != nil {
 			slog.Debug("usage snapshot: read daily costs failed; omitting cost readout", "error", costErr)
 			// Preserve the old visibility behavior on the exceptional path: if the
@@ -204,6 +217,8 @@ func collectUsageSnapshot(idleTimeout time.Duration) (dashboardUsage, bool, []pe
 		TotalCostUSD:     totalCost,
 		TodayCostUSD:     todayCost,
 		APICosts:         apiCosts,
+		WhatIfCosts:      whatIfCosts,
+		WhatIfEnabled:    includeWhatIf && costHistoryAvailable,
 		Codex:            collectCodexUsageSnapshot(codexRow),
 		Copilot:          collectCopilotUsageSnapshot(copilotRow, idleTimeout),
 		historyAvailable: hasUsageHistory,
@@ -249,7 +264,8 @@ func collectCopilotUsageSnapshot(row *db.SubscriptionUsageHistoryRow, idleTimeou
 	}
 	resetAt := copilotMonthlyResetAt(row.ObservedAt)
 	return &copilotDashboardUsage{Available: true, Monthly: &usageWindow{
-		Pct: row.UsedPercent, ResetsAt: formatResetsAt(resetAt),
+		Pct: row.UsedPercent, UsedUnits: row.UsedUnits, LimitUnits: row.LimitUnits,
+		ResetsAt:  formatResetsAt(resetAt),
 		Remaining: formatRemaining(resetAt),
 	}}
 }
@@ -277,7 +293,8 @@ func handleUsage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Debug("usage readout: config load failed; using the default idle timeout", "error", err)
 	}
-	usage, _, _, costErr := collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout())
+	showWhatIf := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
+	usage, _, _, costErr := collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout(), showWhatIf)
 	if costErr != nil {
 		// Same disposition as the dashboard snapshot: the cost history is one
 		// part of the readout, and losing it must not cost the rate-limit bars.
@@ -371,10 +388,14 @@ func dashboardCostTotalsFromRows(rows []db.CostDailyRow, now time.Time) (month, 
 }
 
 func dashboardAPICostsFromRows(rows []db.CostDailyRow, now time.Time) []dashboardAPICost {
+	return dashboardProviderCostsFromRows(rows, now, false)
+}
+
+func dashboardProviderCostsFromRows(rows []db.CostDailyRow, now time.Time, whatIf bool) []dashboardAPICost {
 	monthKey := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format(costDayKey)
 	todayKey := now.Format(costDayKey)
 	byProvider := make(map[string]*dashboardAPICost)
-	for _, delta := range db.CostDeltas(rows, false) {
+	for _, delta := range db.CostDeltas(rows, whatIf) {
 		provider := apiCostProvider(delta.Harness, delta.Model)
 		entry := byProvider[provider]
 		if entry == nil {

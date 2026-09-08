@@ -3304,6 +3304,21 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 #usage .ucost-amt { color: #6e9c7d; }
 #usage .ucost { cursor: pointer; }
 #usage .ucost:hover .ucost-amt { text-decoration: underline; }
+#usage .uunits strong { color: #c9d1d9; font-weight: 600; }
+#usage button.usrc-toggle {
+  padding: 0; border: 0; border-bottom: 1px dotted #6e7681; border-radius: 0;
+  background: transparent; font: inherit; cursor: pointer;
+}
+#usage button.usrc-toggle:hover { color: #c9d1d9; border-bottom-color: #58a6ff; }
+#usage .usage-unit-switch {
+  display: inline-flex; padding: 1px; border: 1px solid #2a3340;
+  border-radius: 4px; background: #0d1117;
+}
+#usage .usage-unit-switch button {
+  padding: 1px 5px; border: 0; border-radius: 3px; background: transparent;
+  color: #8b949e; font: inherit; cursor: pointer;
+}
+#usage .usage-unit-switch button.active { color: #c9d1d9; background: #263446; }
 /* Two-line Claude/Codex layout (when Codex usage is present): stack the
    labelled lines vertically, right-aligned so they hang off the same edge
    as the single-line readout. Each .uline is the former horizontal row.
@@ -3446,6 +3461,9 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-current { display: flex; flex-direction: column; align-items: flex-end; white-space: nowrap; }
 .usage-current strong { color: #d4d4d4; font-size: 20px; line-height: 1; }
 .usage-current span { color: #7d8590; font-size: 11px; margin-top: 4px; }
+.usage-current .usage-unit-toggle { display: inline-flex; margin: 0 0 6px; padding: 1px; border: 1px solid #2a3340; border-radius: 4px; background: #0d1117; }
+.usage-current .usage-unit-toggle button { padding: 2px 7px; border: 0; border-radius: 3px; background: transparent; color: #8b949e; font: inherit; cursor: pointer; }
+.usage-current .usage-unit-toggle button.active { color: #d4d4d4; background: #263446; }
 .usage-line-chart { display: block; width: 100%; height: auto; min-height: 180px; overflow: visible; }
 .usage-grid line { stroke: #1c2430; stroke-width: 1; }
 .usage-grid text, .usage-x-tick text { fill: #6e7681; font-size: 10px; }
@@ -3544,6 +3562,23 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .costs-header { margin: 0 0 12px 0; }
 .costs-header .filter-bar { margin: 0; flex-wrap: wrap; }
 .costs-header #costs-summary { margin-top: 8px; }
+.costs-dimension-filters { margin: 0 0 12px; flex-wrap: wrap; }
+.cost-filter-label { color: #8b949e; font-size: 11px; font-weight: 600; }
+.costs-model-filter { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-left: 10px; border-left: 1px solid #2a3340; }
+.costs-provider-filter { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.cost-chart-heading { display: flex; justify-content: space-between; align-items: baseline; margin: 0 2px 6px; }
+.cost-chart-heading strong { color: #c9d1d9; font-size: 12px; }
+.cost-chart-heading span { color: #8b949e; font-size: 11px; }
+.cost-daily-heading { margin-top: 12px; }
+.cost-accumulated { padding: 10px 12px 5px; background: #0d1117; border: 1px solid #2a3340; border-radius: 6px; }
+.cost-accumulated.empty { min-height: 100px; display: grid; place-items: center; color: #8b949e; }
+.cost-accumulated-svg { display: block; width: 100%; height: auto; max-height: 210px; }
+.cost-accumulated-grid line { stroke: #1c2430; stroke-width: 1; }
+.cost-accumulated-grid text, .cost-accumulated-day { fill: #8b949e; font-size: 9px; }
+.cost-accumulated-area { fill: rgba(110, 156, 125, .12); }
+.cost-accumulated-line { fill: none; stroke: #6e9c7d; stroke-width: 2; }
+.cost-accumulated-point { fill: #9cc5aa; opacity: .35; }
+.cost-accumulated-point:hover { opacity: 1; r: 3px; }
 #costs-summary {
   font-size: 12px; color: #7d8590;
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; white-space: nowrap;
@@ -3660,7 +3695,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   display: inline-block; width: 9px; height: 9px; border-radius: 2px;
   margin-right: 3px; vertical-align: middle;
 }
-/* Rich hover tooltip: the per-harness split (swatch · name · $) over a
+/* Rich hover tooltip: the per-provider split (swatch · name · $) over a
    ruled total. Rows are flex so amounts align to the right edge; the total
    carries a hidden swatch spacer so its name lines up with the rows'. */
 .cost-tip-day { font-weight: 600; color: #c9d1d9; margin-bottom: 4px; }
@@ -3674,12 +3709,12 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   margin-left: 16px; color: #d4d4d4; font-variant-numeric: tabular-nums;
 }
 .cost-tip-row .cost-tip-amt, .cost-tip-total .cost-tip-amt { margin-left: auto; }
-.costs-harness-filter {
+.costs-provider-filter {
   display: inline-flex;
   align-items: center;
   gap: 8px;
 }
-.filter-bar label.costs-harness-choice input {
+.filter-bar label.costs-provider-choice input {
   flex: 0 0 auto;
   max-width: none;
   padding: 0;

@@ -40,13 +40,22 @@ function subscriptionWindows(source, prefix, hideMissing = false) {
   ];
 }
 
-function costToken(key, today, mtd) {
+function costToken(key, today, mtd, estimate = false) {
   return {
     key,
     kind: 'cost',
     label: '',
     today: today > 0 ? fmtUSD(today) : '',
     mtd: fmtUSD(mtd),
+    estimate,
+  };
+}
+
+function unitsToken(key, win) {
+  return {
+    key, kind: 'units', label: '',
+    used: Number(win?.used_units || 0), limit: Number(win?.limit_units || 0),
+    remaining: win?.remaining ? `(${win.remaining})` : '',
   };
 }
 
@@ -79,7 +88,7 @@ function trimEmptyUsageColumns(lines) {
   }));
 }
 
-export function usageView(usage) {
+export function usageView(usage, modes = {}) {
   const titles = [];
   const claude = subscriptionWindows(usage, 'claude');
   if (claude.length) titles.push('Claude subscription usage limits — 5-hour and 7-day rolling windows');
@@ -101,6 +110,19 @@ export function usageView(usage) {
     : [];
   if (copilot.length) titles.push('GitHub Copilot monthly premium-request (AIC) allowance');
 
+  const whatIfCosts = new Map((usage?.what_if_costs || []).map((item) => [item.provider, item]));
+  const subscriptionLine = (key, label, tokens, provider) => {
+    const estimate = whatIfCosts.get(provider) || {};
+    const canCost = tokens.length > 0 && !!usage?.what_if_enabled;
+    const mode = canCost && modes[key] === 'cost' ? 'cost' : 'usage';
+    return {
+      key, label, mode, modes: canCost ? ['usage', 'cost'] : [],
+      tokens: mode === 'cost'
+        ? [costToken(`${key}-whatif`, estimate.today_cost_usd, estimate.total_cost_usd, true)]
+        : tokens,
+    };
+  };
+
   const mtd = Number(usage?.total_cost_usd || 0);
   const today = Number(usage?.today_cost_usd || 0);
   const apiCosts = (usage?.api_costs || [])
@@ -120,9 +142,21 @@ export function usageView(usage) {
   }
 
   const lines = [];
-  if (claude.length) lines.push({ key: 'claude', label: 'Claude:', tokens: claude });
-  if (codex.length && codexPeriods.length) lines.push({ key: 'codex', label: 'Codex:', tokens: codex });
-  if (copilot.length) lines.push({ key: 'copilot', label: 'Copilot:', tokens: copilot });
+  if (claude.length) lines.push(subscriptionLine('claude', 'Claude:', claude, 'anthropic'));
+  if (codex.length && codexPeriods.length) lines.push(subscriptionLine('codex', 'Codex:', codex, 'openai'));
+  if (copilot.length) {
+    const canUnits = Number(copilotUsage.monthly.limit_units || 0) > 0;
+    const estimate = whatIfCosts.get('github') || {};
+    const canCost = !!usage?.what_if_enabled;
+    const availableModes = ['usage', ...(canCost ? ['cost'] : []), ...(canUnits ? ['units'] : [])];
+    const mode = availableModes.includes(modes.copilot) ? modes.copilot : 'usage';
+    lines.push({
+      key: 'copilot', label: 'Copilot:', mode, modes: availableModes.length > 1 ? availableModes : [],
+      tokens: mode === 'units' ? [unitsToken('copilot-monthly-units', copilotUsage.monthly)]
+        : mode === 'cost' ? [costToken('copilot-whatif', estimate.today_cost_usd, estimate.total_cost_usd, true)]
+        : copilot,
+    });
+  }
   for (const item of apiCosts) {
     lines.push({
       key: `cost-${item.provider}`,
