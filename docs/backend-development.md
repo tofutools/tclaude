@@ -1410,3 +1410,18 @@ These declarations are authoring-only, matching the legacy runtime boundary.
 Starting any pinned revision containing one is refused before work admission;
 the runtime does not silently replace the requested policy with ordinary plan
 rework. Clear the declaration to use the existing executable approval workflow.
+
+### Retry modes and independent stage policies
+
+Retry policies retain optional `OnFail` as `fresh-attempt` or
+`feedback-same-session`; an absent mode retains existing fresh-attempt behavior.
+Task, plan, check, and review inspectors expose the mode alongside the attempt
+budget, delay, and explicit failure classes. Copies and immutable revisions
+retain these fields.
+
+Independent check/review retry policies and feedback-same-session retries are
+currently authoring-only, as in the legacy runtime. A start requesting either
+is refused before creating work, including a pinned older revision after the
+latest draft clears it. Clear independent check/review retries to retain the
+existing shared work budget; choose fresh attempts for executable task or plan
+retries. No unsupported declaration is silently ignored.

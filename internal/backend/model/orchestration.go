@@ -298,6 +298,7 @@ type HumanPerformer struct {
 }
 
 type RetryPolicy struct {
+	OnFail        string `json:",omitempty"`
 	MaxAttempts   uint32
 	Backoff       time.Duration
 	Retryable     []string
