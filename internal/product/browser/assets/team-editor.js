@@ -71,7 +71,7 @@ class TeamEditor {
   }
   history(redo) { if (!this.discard()) return; const from = redo ? this.future : this.past, to = redo ? this.past : this.future; if (from.length) { to.push(this.draft); this.draft = from.pop(); this.render(); } }
   fail(error) { this.error.replaceChildren(el('p', error.message || String(error))); }
-  lock(value) { this.busy = value; this.dialog.querySelectorAll('button,input,textarea,select').forEach(e => { e.disabled = value; }); if (!value) { this.undo.disabled = !this.past.length; this.redo.disabled = !this.future.length; } }
+  lock(value) { this.busy = value; this.dialog.querySelectorAll('button,input,textarea,select').forEach(e => { if(value){e.dataset.wasDisabled=String(e.disabled);e.disabled=true;}else{e.disabled=e.dataset.wasDisabled==='true';delete e.dataset.wasDisabled;} }); if (!value) { this.undo.disabled = !this.past.length; this.redo.disabled = !this.future.length; } }
   renderHeader() {
     this.name.value = this.draft.Name; this.status.textContent = `${this.revision ? 'Revision ' + this.revision : 'New team'} · ${this.dirty() ? 'unsaved changes' : 'saved'}`;
     this.undo.disabled = !this.past.length; this.redo.disabled = !this.future.length;
@@ -129,6 +129,7 @@ class TeamEditor {
       {key: 'key', label: 'Stable member key', value: m.Key, required: true}, {key: 'name', label: 'Member name', value: m.Name, required: true},
       {key:'role_label',label:'Display role',value:m.Labels?.Role||''},
       {key:'description',label:'Description',text:true,value:m.Labels?.Description||''},
+      {key: 'profile', label: 'Saved configuration', options: [opt('', 'Custom settings'), ...this.configurations.map(c => opt(c.Profile.ID, c.Profile.Name))], value: m.ProfileID || ''},
       {key: 'harness', label: 'Harness', options: [opt('', 'Choose harness'), ...['claude', 'codex', 'opencode', 'copilot'].map(v => opt(v))], value: desired.Harness, required: true},
       {key: 'effort', label: 'Requested native effort / variant (optional)', value: desired.Effort || ''},
       {key: 'model', label: 'Model', value: desired.Model, required: true}, {key: 'cwd', label: 'Configuration working directory (optional; deployment uses its selected workspace)', value: desired.WorkingDirectory, required: false},
@@ -141,7 +142,7 @@ class TeamEditor {
     const form = this.form('Member', fields, f => {
       if (this.draft.Team.Members.some(x => x.Key === f.key && x.Key !== original?.Key)) throw new Error('Member keys must be unique.');
       if (f.effort && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(f.effort)) throw new Error('Requested effort must be a lowercase native level or variant, at most 64 characters.');
-      const member = {...m, Key: f.key, Name: f.name, Labels:{Role:f.role_label,Description:f.description}, Desired: {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, HostSandbox: f.resolvedSandbox||undefined, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
+      const member = {...m, Key: f.key, Name: f.name, Labels:{Role:f.role_label,Description:f.description}, ProfileID: f.profile || undefined, Desired: f.profile ? {} : {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, HostSandbox: f.resolvedSandbox||undefined, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
       this.change(d => {
         const i = d.Team.Members.findIndex(x => x.Key === original?.Key); if (i < 0) d.Team.Members.push(member); else d.Team.Members[i] = member;
         if (original && original.Key !== f.key) { for (const w of d.Team.Waves) w.MemberKeys = w.MemberKeys.map(k => k === original.Key ? f.key : k); for (const b of d.Team.Briefings) b.MemberKeys = (b.MemberKeys || []).map(k => k === original.Key ? f.key : k); }
@@ -152,7 +153,7 @@ class TeamEditor {
         if (!d.Team.Waves.length) d.Team.Waves.push({ID: 'initial', MemberKeys: [f.key], DependsOn: [], RequiredReady: true, RequiredBriefs: true, WaitForIdle: true, MaxWaitSeconds: 0});
         else if (!original) d.Team.Waves[0].MemberKeys.push(f.key);
       });
-    },async f=>{f.resolvedSandbox=await sandbox.read(f.host_sandbox)});
+    },async f=>{if(!f.profile)f.resolvedSandbox=await sandbox.read(f.host_sandbox)});
     const environmentField = el('fieldset'); environmentField.setAttribute('aria-label', 'Member launch environment');
     const showEnvironment = values => {
       environment = new LaunchEnvironment(values || {});
@@ -176,7 +177,22 @@ class TeamEditor {
       form.elements.harness.dispatchEvent(new Event('change', {bubbles: true}));
       this.unapplied = true;
     };
-    this.content.prepend(select, el('p', 'Settings are copied into this immutable team revision. Deployment binds each member to the explicitly selected workspace; it does not follow later profile edits.'));
+    const updateProfile = () => {
+      const selected = !!form.elements.profile.value;
+      const profile = this.configurations.find(c => c.Profile.ID === form.elements.profile.value);
+      if (profile) {
+        const d = profile.Revision.Desired;
+        for (const [key, property] of Object.entries({harness:'Harness',model:'Model',effort:'Effort',cwd:'WorkingDirectory',approval:'Approval',sandbox:'Sandbox'})) form.elements[key].value = d[property] || '';
+        showEnvironment(d.Environment); showSandbox(d.HostSandbox);
+        form.elements.harness.dispatchEvent(new Event('change', {bubbles:true}));
+      }
+      for (const key of ['harness','model','effort','cwd','approval','sandbox']) form.elements[key].disabled = selected;
+      environmentField.disabled = selected; sandboxField.disabled = selected;
+      select.disabled = selected;
+    };
+    form.elements.profile.addEventListener('change', () => { updateProfile(); this.unapplied = true; });
+    updateProfile();
+    this.content.prepend(select, el('p', 'A saved configuration uses its current settings at each new deployment. Custom settings and copied settings stay with this template. Deployment supplies the working directory.'));
   }
   removeMember(member) {
     this.change(d => {

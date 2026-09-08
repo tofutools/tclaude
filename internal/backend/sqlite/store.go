@@ -142,6 +142,7 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"effect_permits", "eligibility_agent_id", "TEXT NOT NULL DEFAULT ''"},
 		{"team_deployments", "phase_history_json", "BLOB NOT NULL DEFAULT '[]'"},
 		{"team_deployments", "role_pins_json", "BLOB NOT NULL DEFAULT '[]'"},
+		{"team_deployments", "member_startups_json", "BLOB NOT NULL DEFAULT '{}'"},
 		{"team_deployments", "target_kind", "TEXT NOT NULL DEFAULT 'new_group'"},
 		{"team_deployments", "workspaces_json", "BLOB NOT NULL DEFAULT '{}'"},
 		{"team_deployments", "owned_workspace_ids_json", "BLOB NOT NULL DEFAULT '[]'"},
