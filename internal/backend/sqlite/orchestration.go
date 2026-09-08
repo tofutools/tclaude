@@ -720,6 +720,7 @@ func decisionRecord(ctx context.Context, query decisionQuery, id model.DecisionI
 			return record, err
 		}
 		record.Submission = submission
+		record.Window.SubmittedAnswer = &submission.Answer
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return record, err
 	}
