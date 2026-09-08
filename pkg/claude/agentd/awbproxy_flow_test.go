@@ -569,7 +569,7 @@ func TestAWBProxy_MakeReadyRetriesOneConcurrentEdit(t *testing.T) {
 		}
 		issue := strings.Replace(awbIssueJSON("awb-a3f9c1", "awb"), `"status":"open"`, `"status":"backlog"`, 1)
 		if call >= 3 {
-			issue = strings.Replace(issue, "2026-08-26T09:12:03.412Z", "2026-08-26T09:12:04.000Z", -1)
+			issue = strings.ReplaceAll(issue, "2026-08-26T09:12:03.412Z", "2026-08-26T09:12:04.000Z")
 		}
 		return http.StatusOK, issue
 	}
