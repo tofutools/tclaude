@@ -18,8 +18,9 @@ type ProcessSnippet struct {
 }
 
 type ProcessSelection struct {
-	Version   int                           `json:"version"`
-	Nodes     []WorkNode                    `json:"nodes"`
-	Edges     []WorkEdge                    `json:"edges"`
-	Positions map[WorkNodeID]EditorPosition `json:"positions"`
+	EdgeLabels []EditorEdgeLabel             `json:"edgeLabels,omitempty"`
+	Version    int                           `json:"version"`
+	Nodes      []WorkNode                    `json:"nodes"`
+	Edges      []WorkEdge                    `json:"edges"`
+	Positions  map[WorkNodeID]EditorPosition `json:"positions"`
 }

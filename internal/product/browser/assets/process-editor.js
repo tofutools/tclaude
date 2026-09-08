@@ -1,7 +1,7 @@
 import {addCheck, removeCheck, moveCheck} from './process-stages.js';
 import {ProcessSnippetLibrary} from './process-snippets.js';
 import {ProcessGraphAdapter} from './processgraph/process-graph-adapter.js';
-import {clone, freshID, edgeID, seconds, lines, newProcess, draftFromResult, defaultNode, graphView, ProcessDraft, validationMessages} from './process-model.js';
+import {clone, freshID, edgeKey, seconds, lines, newProcess, draftFromResult, defaultNode, graphView, ProcessDraft, validationMessages} from './process-model.js';
 
 const element = (tag, text) => { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; return node; };
 const action = (label, handler) => { const node = element('button', label); node.type = 'button'; node.onclick = handler; return node; };
@@ -50,7 +50,7 @@ class ProcessEditor {
       nodeClick: ({node, event}) => this.select(node.id, event.shiftKey || event.ctrlKey || event.metaKey),
       nodeDoubleClick: ({node}) => this.select(node.id),
       canvasClick: () => this.select(null),
-      edgeClick: ({edge}) => this.editEdge(edge.id),
+      edgeClick: ({edge}) => this.editEdge(edge),
       marqueeSelection: ({items}) => { if (!this.busy && this.discardUnapplied()) { this.selection = new Set(items.filter(i => i.type === 'node').map(i => i.id)); this.render(); } },
       nodeDragEnd: ({starts, delta, moved}) => { if (moved) this.change(draft => { for (const start of starts) draft.EditorLayout.Nodes[start.id] = {X: start.x + delta.x, Y: start.y + delta.y}; }); },
       portDragEnd: payload => this.connectGesture(payload),
@@ -295,12 +295,21 @@ class ProcessEditor {
     if (node.Kind === 'decision') { this.select(from); this.fail(new Error('Choose the decision answer in Connection, then connect.')); return; }
     this.addEdge(from, to);
   }
-  editEdge(id) {
+  editEdge({id, inputIndex: index}) {
     if (this.busy || !this.discardUnapplied()) return;
-    const edges = this.model.value.Process.Graph.Edges, index = edges.findIndex((e, i) => edgeID(e, i) === id);
-    if (index < 0) return;
+    const edges = this.model.value.Process.Graph.Edges;
+    if (!Number.isInteger(index) || !edges[index]) return;
     this.selection.clear(); this.graph.setSelection({type: 'edge', id});
-    this.form('Edit connection', [{name: 'verdict', label: 'Answer or outcome (blank for any success)', value: edges[index].Verdict}], f => this.change(d => { d.Process.Graph.Edges[index].Verdict = f.verdict; }));
+    const pinned=this.model.value.EditorLayout.EdgeLabels?.find(label=>edgeKey(label.Edge)===edgeKey(edges[index]))?.Pinned;
+    this.form('Edit connection', [{name: 'verdict', label: 'Answer or outcome (blank for any success)', value: edges[index].Verdict},
+      {name:'label_visibility',label:'Connector label',options:[option('auto','Automatic'),option('show','Always show'),option('hide','Hide unless selected')],value:pinned===undefined?'auto':pinned?'show':'hide'}], f => this.change(d => {
+        const edge=d.Process.Graph.Edges[index],oldKey=edgeKey(edge);
+        const updated={...edge,Verdict:f.verdict};
+        if(d.Process.Graph.Edges.some((candidate,i)=>i!==index&&edgeKey(candidate)===edgeKey(updated))) throw new Error("That connection already exists. Choose a different answer/outcome.");
+        d.EditorLayout.EdgeLabels=(d.EditorLayout.EdgeLabels||[]).filter(label=>edgeKey(label.Edge)!==oldKey);
+        edge.Verdict=f.verdict;
+        if(f.label_visibility!=='auto')d.EditorLayout.EdgeLabels.push({Edge:clone(edge),Pinned:f.label_visibility==='show'});
+      }));
     this.inspector.append(action('Delete connection', () => this.change(d => d.Process.Graph.Edges.splice(index, 1))));
   }
   remove() { if (this.busy || !this.discardUnapplied()) return; this.model.remove(this.selection); this.selection.clear(); this.render(); }
@@ -312,7 +321,7 @@ class ProcessEditor {
   copy() {
     const draft = this.model.value;
     this.clipboard = {nodes: clone(draft.Process.Graph.Nodes.filter(n => this.selection.has(n.ID))),
-      edges: clone(draft.Process.Graph.Edges.filter(e => this.selection.has(e.From) && this.selection.has(e.To))), positions: Object.fromEntries([...this.selection].filter(id=>draft.EditorLayout.Nodes[id]).map(id=>[id,clone(draft.EditorLayout.Nodes[id])]))};
+      edges: clone(draft.Process.Graph.Edges.filter(e => this.selection.has(e.From) && this.selection.has(e.To))), edgeLabels:clone((draft.EditorLayout.EdgeLabels||[]).filter(label=>this.selection.has(label.Edge.From)&&this.selection.has(label.Edge.To))), positions: Object.fromEntries([...this.selection].filter(id=>draft.EditorLayout.Nodes[id]).map(id=>[id,clone(draft.EditorLayout.Nodes[id])]))};
   }
   paste() {
     if (!this.clipboard?.nodes.length || !this.discardUnapplied()) return;
@@ -323,6 +332,10 @@ class ProcessEditor {
         const p = this.clipboard.positions[original.ID]; d.EditorLayout.Nodes[node.ID] = {X: (p?.X ?? 200) + 40, Y: (p?.Y ?? 150) + 40};
       }
       for (const edge of this.clipboard.edges) d.Process.Graph.Edges.push({...edge, From: ids.get(edge.From), To: ids.get(edge.To)});
+      for(const label of this.clipboard.edgeLabels||[]) {
+        d.EditorLayout.EdgeLabels ||= [];
+        d.EditorLayout.EdgeLabels.push({...clone(label),Edge:{...label.Edge,From:ids.get(label.Edge.From),To:ids.get(label.Edge.To)}});
+      }
     });
   }
   overview() {

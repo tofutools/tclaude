@@ -56,7 +56,13 @@ type Definition struct {
 // DefinitionEditorLayout preserves author-owned graph positions across revisions.
 // It is presentation metadata and has no effect on execution or authority.
 type DefinitionEditorLayout struct {
-	Nodes map[WorkNodeID]EditorPosition
+	EdgeLabels []EditorEdgeLabel `json:",omitempty"`
+	Nodes      map[WorkNodeID]EditorPosition
+}
+
+type EditorEdgeLabel struct {
+	Edge   WorkEdge
+	Pinned bool
 }
 
 type EditorPosition struct {
