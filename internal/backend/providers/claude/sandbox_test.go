@@ -214,7 +214,7 @@ while IFS= read -r line; do printf '%s\n' "$line" >> "$WORKSPACE/input"; done
 	require.NotNil(t, recorded.HostSandbox)
 	require.Equal(t, selected.PolicyHash, recorded.HostSandboxPolicyHash)
 	require.FileExists(t, recorded.HostSandbox.Path+".started")
-	recovered, err := provider.Recover(context.Background(), ports.RecoveryRequest{ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Attempt: 1, Evidence: released.Evidence})
+	recovered, err := provider.Recover(context.Background(), ports.RecoveryRequest{NativeGuidance: request.NativeGuidance, CallbackIngress: request.CallbackIngress, ExecutionID: request.Spec.ExecutionID, Spec: request.Spec, Attempt: 1, Evidence: released.Evidence})
 	require.NoError(t, err)
 	require.Equal(t, ports.RecoveryControlled, recovered.State)
 	evidence, err := recovered.Runtime.(*Runtime).providerEvidence()
