@@ -207,9 +207,6 @@ func rebriefBody(memberKey string, team model.TeamDefinition) string {
 			}
 		}
 	}
-	if process := teamProcessBrief(team); process != "" {
-		bodies = append(bodies, process)
-	}
 	return strings.TrimSpace(strings.Join(bodies, "\n\n"))
 }
 

@@ -25,3 +25,8 @@ func TestTeamProcessValidatesGuidanceAndCombinedInitialSize(t *testing.T) {
 	_, err = resolveTeamMissionBriefings(team, "Review this change", true)
 	require.NoError(t, err)
 }
+
+func TestTeamRebriefUsesCurrentWorkPatternWithoutReplacingDeployedProcess(t *testing.T) {
+	team := model.TeamDefinition{Members: []model.TeamMemberSpec{{Key: "worker", BriefingIDs: []string{"work"}}}, Briefings: []model.TeamBriefing{{ID: "work", Body: "Updated work pattern", Timing: model.BriefingAfterReady}}, AdvisoryProcess: []model.TeamPhase{{Name: "Changed phase", Criteria: "Different process"}}}
+	require.Equal(t, "Updated work pattern", rebriefBody("worker", team))
+}
