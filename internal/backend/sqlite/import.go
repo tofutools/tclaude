@@ -251,6 +251,9 @@ func insertImportEntities(ctx context.Context, tx *sql.Tx, batch app.ImportBatch
 	if err := applyImportedSandboxProfiles(ctx, tx, batch.SandboxProfiles); err != nil {
 		return err
 	}
+	if err := applyImportedSandboxDefaults(ctx, tx, batch.SandboxDefaults); err != nil {
+		return err
+	}
 	if err := applyImportedGroupConfigurations(ctx, tx, batch.GroupConfigurations); err != nil {
 		return err
 	}
@@ -557,6 +560,12 @@ func (s *Store) VerifyImport(ctx context.Context, batch app.ImportBatch) error {
 	if err := s.verifyImportedSandboxProfiles(ctx, batch.SandboxProfiles); err != nil {
 		return err
 	}
+	if batch.SandboxDefaults != nil {
+		actual, err := s.SandboxDefaults(ctx)
+		if err != nil || !reflect.DeepEqual(actual, *batch.SandboxDefaults) {
+			return fmt.Errorf("verify imported sandbox defaults: %v", err)
+		}
+	}
 	if err := s.verifyImportedGroupConfigurations(ctx, batch.GroupConfigurations); err != nil {
 		return err
 	}
@@ -673,8 +682,13 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 	if batch.ConfigurationDefaults != nil {
 		defaults = 1
 	}
+	sandboxDefaults := 0
+	if batch.SandboxDefaults != nil {
+		sandboxDefaults = 1
+	}
 	expected := map[string]int{
-		"agents": len(batch.Agents), "groups": len(batch.Groups), "group_members": memberCount, "group_parents": parentCount, "group_details": detailsCount, "group_capacity": capacityCount,
+		"sandbox_defaults": sandboxDefaults,
+		"agents":           len(batch.Agents), "groups": len(batch.Groups), "group_members": memberCount, "group_parents": parentCount, "group_details": detailsCount, "group_capacity": capacityCount,
 		"conversations": len(batch.Conversations), "agent_conversations": len(batch.ConversationLinks), "history_catalog": len(batch.History),
 		"messages": len(batch.Messages), "operations": len(batch.Messages), "message_recipients": recipientCount,
 		"attachments": len(batch.ImportedAttachments), "message_attachments": len(batch.ImportedAttachments),
@@ -692,7 +706,7 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 		"operation_authority", "operation_additional_authority", "effect_permits", "pending_context_transitions", "native_binding_history",
 		"history_refreshes", "history_metadata_requests", "history_points", "history_use_claims", "workspace_uses",
 		"work_runs", "work_attempts", "work_evidence", "work_decisions", "program_profiles", "program_profile_revisions",
-		"sandbox_profile_requests", "sandbox_defaults", "sandbox_defaults_requests",
+		"sandbox_profile_requests", "sandbox_defaults_requests",
 		"work_node_attempts", "work_agent_interactions", "work_node_evidence", "decision_windows", "decision_submissions", "automation_occurrences",
 		"automation_occurrence_recipients", "automation_condition_state", "team_deployments", "team_continuations", "configuration_defaults_requests",
 		"configuration_profile_requests", "configuration_profile_lifecycle_requests", "configuration_bundle_requests", "automation_state_requests", "automation_archive_requests", "definition_archive_requests", "group_disband_requests", "access_requests", "access_request_decisions", "message_notifications", "presentation_preferences", "terminal_files", "process_snippets", "process_snippet_requests",

@@ -24,6 +24,7 @@ type ImportBatch struct {
 	ImportedAttachments   []model.ImportedAttachment
 	ConfigurationProfiles []ConfigurationProfileResult
 	SandboxProfiles       []SandboxProfileResult `json:",omitempty"`
+	SandboxDefaults       *model.SandboxDefaults `json:",omitempty"`
 	ConfigurationDefaults *model.ConfigurationDefaults
 	GroupConfigurations   []model.GroupConfiguration `json:",omitempty"`
 	Definitions           []DefinitionRecord

@@ -1396,11 +1396,13 @@ fields are omitted from persisted JSON.
 
 ### Legacy sandbox profile conversion
 
-Offline v228 import converts representable sandbox profiles into an archived
-registry. Include names resolve only within that snapshot
-and become exact revision references. The archived catalog supports inspection, restore, editing after restore,
-and independent copies; imported defaults, assignments, grants and
-runtime state are not activated. Legacy `network_access=none` retains its coupled
+Offline v228 import makes representable sandbox profiles available in the normal
+editable registry. Include names resolve within the source snapshot and retain
+stable profile identities, so later edits are used by fresh launches. Global
+and group assignments retain their source profile IDs (names are a fallback
+only for older records without IDs). An assignment to an unconvertible profile
+refuses publication rather than silently dropping its sandbox rules. Import
+creates no executions and runs no setup scripts. Legacy `network_access=none` retains its coupled
 closed Unix-socket posture when no newer network axis was authored.
 
 A policy with unsupported fields, spelling aliases that need a target alias
@@ -1415,7 +1417,7 @@ indexes. A destination produced by an older evidence-only conversion is refused
 if it lacks the newly expected typed records; the importer never rewrites that
 existing destination. Use a fresh explicit destination for the new conversion.
 
-An imported marker records provenance, not immutability. Imported profiles can be restored and edited under the same profile ID using the ordinary editor. No copy is required to update them. Importing alone does not launch agents.
+An imported marker records provenance, not immutability. Imported profiles can be edited under the same profile ID using the ordinary editor. No copy is required to update them. Importing alone does not launch agents.
 
 ### Process wait authoring
 

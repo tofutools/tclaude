@@ -28,7 +28,7 @@ func applyImportedSandboxProfiles(ctx context.Context, tx *sql.Tx, profiles []ap
 	reader := importedSandboxReader{}
 	for _, result := range profiles {
 		profile, revision := result.Profile, result.Revision
-		if profile.ID.Validate() != nil || revision.Ref.ProfileID != profile.ID || profile.HeadRevisionID != revision.Ref.RevisionID || !profile.Archived || !profile.Imported || profile.Revision != 1 || revision.Number != 1 || result.Repeated || !reflect.DeepEqual(revision.Author, model.Principal{}) || revision.RequestID != "" {
+		if profile.ID.Validate() != nil || revision.Ref.ProfileID != profile.ID || profile.HeadRevisionID != revision.Ref.RevisionID || !profile.Imported || profile.Revision != 1 || revision.Number != 1 || result.Repeated || !reflect.DeepEqual(revision.Author, model.Principal{}) || revision.RequestID != "" {
 			return app.ErrInvalid
 		}
 		if profile.Name == "" || profile.Name != strings.TrimSpace(profile.Name) || len(profile.Name) > 200 || !utf8.ValidString(profile.Name) || strings.ContainsRune(profile.Name, 0) {
@@ -50,7 +50,7 @@ func applyImportedSandboxProfiles(ctx context.Context, tx *sql.Tx, profiles []ap
 		if err != nil {
 			return err
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO sandbox_profiles(id,name,head_revision_id,archived,revision,document) VALUES(?,?,?,?,?,?)`, profile.ID, profile.Name, profile.HeadRevisionID, true, profile.Revision, document); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO sandbox_profiles(id,name,head_revision_id,archived,revision,document) VALUES(?,?,?,?,?,?)`, profile.ID, profile.Name, profile.HeadRevisionID, profile.Archived, profile.Revision, document); err != nil {
 			return err
 		}
 		document, err = json.Marshal(revision)
@@ -71,10 +71,55 @@ func (s *Store) verifyImportedSandboxProfiles(ctx context.Context, profiles []ap
 			return fmt.Errorf("verify imported sandbox profile %s: %v", expected.Profile.ID, err)
 		}
 		var matches int
-		err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM sandbox_profiles p JOIN sandbox_profile_revisions r ON r.id=p.head_revision_id WHERE p.id=? AND p.name=? AND p.head_revision_id=? AND p.archived=1 AND p.revision=1 AND r.profile_id=p.id AND r.number=1 AND r.content_hash=?`, expected.Profile.ID, expected.Profile.Name, expected.Revision.Ref.RevisionID, expected.Revision.Ref.ContentHash).Scan(&matches)
+		err = s.db.QueryRowContext(ctx, `SELECT count(*) FROM sandbox_profiles p JOIN sandbox_profile_revisions r ON r.id=p.head_revision_id WHERE p.id=? AND p.name=? AND p.head_revision_id=? AND p.archived=? AND p.revision=1 AND r.profile_id=p.id AND r.number=1 AND r.content_hash=?`, expected.Profile.ID, expected.Profile.Name, expected.Revision.Ref.RevisionID, expected.Profile.Archived, expected.Revision.Ref.ContentHash).Scan(&matches)
 		if err != nil || matches != 1 {
 			return fmt.Errorf("verify imported sandbox profile %s index fields: %v", expected.Profile.ID, err)
 		}
 	}
 	return nil
+}
+
+func applyImportedSandboxDefaults(ctx context.Context, tx *sql.Tx, defaults *model.SandboxDefaults) error {
+	if defaults == nil {
+		return nil
+	}
+	if defaults.Revision != 1 {
+		return app.ErrInvalid
+	}
+	if err := app.ValidateSandboxDefaults(app.SaveSandboxDefaultsRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "import"}, Global: defaults.Global, Groups: defaults.Groups}); err != nil {
+		return err
+	}
+	checkProfile := func(id model.SandboxProfileID) error {
+		var count int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM sandbox_profiles WHERE id=? AND archived=0`, id).Scan(&count); err != nil {
+			return err
+		}
+		if count != 1 {
+			return app.ErrInvalid
+		}
+		return nil
+	}
+	if defaults.Global != "" {
+		if err := checkProfile(defaults.Global); err != nil {
+			return err
+		}
+	}
+	for group, profile := range defaults.Groups {
+		var count int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM groups WHERE id=? AND tombstoned=0`, group).Scan(&count); err != nil {
+			return err
+		}
+		if count != 1 {
+			return app.ErrInvalid
+		}
+		if err := checkProfile(profile); err != nil {
+			return err
+		}
+	}
+	data, err := json.Marshal(defaults)
+	if err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO sandbox_defaults(id,record) VALUES(1,?)`, data)
+	return err
 }

@@ -16,7 +16,7 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
 
-func TestBrowserImportedSandboxCanBeInspectedAndCopiedWithoutActivation(t *testing.T) {
+func TestBrowserImportedSandboxIsAvailableEditableAndDoesNotLaunch(t *testing.T) {
 	ctx, page, operator := processEditorBrowserWithSetup(t, func(state string) {
 		root := t.TempDir()
 		source := filepath.Join(root, "snapshot.sqlite")
@@ -26,7 +26,7 @@ func TestBrowserImportedSandboxCanBeInspectedAndCopiedWithoutActivation(t *testi
 		require.NoError(t, err)
 		_, err = db.Exec(string(schema))
 		require.NoError(t, err)
-		_, err = db.Exec(`INSERT INTO schema_version(version) VALUES(228); INSERT INTO sandbox_profiles(name,filesystem_json,environment_json,created_at,updated_at,network_access,pre_launch_json) VALUES('Retained policy','[]','[{"name":"RETAINED","value":"literal $(never-run)"}]',1700000000,1700000000,'none','[{"name":"setup","script":"exit 91"}]');`)
+		_, err = db.Exec(`INSERT INTO schema_version(version) VALUES(228); INSERT INTO sandbox_profiles(name,filesystem_json,environment_json,created_at,updated_at,network_access,pre_launch_json) VALUES('Retained policy','[]','[{"name":"RETAINED","value":"literal $(never-run)"}]',1700000000,1700000000,'none','[{"name":"setup","script":"exit 91"}]'); INSERT INTO sandbox_profile_global_assignment(id,profile_id,profile_name) SELECT 1,id,name FROM sandbox_profiles;`)
 		require.NoError(t, err)
 		require.NoError(t, db.Close())
 		data, err := os.ReadFile(source)
@@ -42,16 +42,29 @@ func TestBrowserImportedSandboxCanBeInspectedAndCopiedWithoutActivation(t *testi
 	page.MustElement("main:not([inert])")
 	page.MustElement("[data-tab=configurations]").MustClick()
 	page.MustElementR("#configurations summary", "^Sandbox profiles$").MustClick()
-	require.False(t, page.MustHasR("#sandbox-profiles article", "Retained policy"))
-	page.MustElement("#sandbox-profiles [aria-label='Sandbox profile status']").MustSelect("archived")
+	var defaults model.SandboxDefaults
+	require.NoError(t, operator.Call(ctx, "GET", "/v2/sandbox-defaults", nil, &defaults))
+	require.NotEmpty(t, defaults.Global)
+	page.MustElementR("#sandbox-profiles button", "^Global sandbox profile$").MustClick()
+	page.MustElement("#editor").MustWaitVisible()
+	require.Equal(t, string(defaults.Global), page.MustElement("#editor [name=sandbox_default]").MustProperty("value").String())
+	page.MustElementR("#editor button", "^Cancel$").MustClick()
 	card := page.MustElementR("#sandbox-profiles article", "Retained policy")
-	require.True(t, card.MustHasR("button", "^Restore sandbox profile$"))
+	require.True(t, card.MustHasR("button", "^Edit sandbox profile$"))
 
 	card.MustElementR("button", "^Inspect sandbox profile$").MustClick()
 	page.MustElementR(".sandbox-editor summary", "^Environment and generated directories$").MustClick()
 	require.Equal(t, "literal $(never-run)", page.MustElement(".sandbox-editor [aria-label='Literal environment value 1']").MustProperty("value").String())
 	page.MustElementR(".sandbox-editor button", "^Close$").MustClick()
 	page.MustWait(`()=>!document.querySelector('.sandbox-editor')`)
+	card.MustElementR("button", "^Edit sandbox profile$").MustClick()
+	page.MustElement(".sandbox-editor [aria-label='Sandbox profile name']").MustSelectAllText().MustInput("Renamed policy")
+	page.MustElementR(".sandbox-editor button", "^Save sandbox profile$").MustClick()
+	page.MustWait(`()=>!document.querySelector('.sandbox-editor')`)
+	var edited app.SandboxProfileResult
+	require.NoError(t, operator.Call(ctx, "GET", "/v2/sandbox-profiles/"+string(defaults.Global), nil, &edited))
+	require.Equal(t, "Renamed policy", edited.Profile.Name)
+	card = page.MustElementR("#sandbox-profiles article", "Renamed policy")
 	card.MustElementR("button", "^Copy sandbox profile$").MustClick()
 	page.MustElement(".sandbox-editor [aria-label='Sandbox profile name']").MustSelectAllText().MustInput("Reviewed copy")
 	page.MustElementR(".sandbox-editor button", "^Save sandbox profile$").MustClick()
@@ -60,8 +73,8 @@ func TestBrowserImportedSandboxCanBeInspectedAndCopiedWithoutActivation(t *testi
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/sandbox-profiles?include_archived=true", nil, &profiles))
 	require.Len(t, profiles, 2)
 	for _, profile := range profiles {
-		if profile.Name == "Retained policy" {
-			require.True(t, profile.Archived)
+		if profile.Name == "Renamed policy" {
+			require.False(t, profile.Archived)
 			require.True(t, profile.Imported)
 		} else {
 			require.Equal(t, "Reviewed copy", profile.Name)
