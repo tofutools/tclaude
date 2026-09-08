@@ -33,3 +33,11 @@ func TestSandboxSelectionRetainsExactPolicyAndScopeIdentity(t *testing.T) {
 		require.Error(t, invalid.Validate())
 	}
 }
+
+func TestHostSandboxPolicyBoundsRejectInvalidIdentities(t *testing.T) {
+	for _, hashes := range [][]string{{""}, {strings.Repeat("B", 64)}, {strings.Repeat("a", 64), strings.Repeat("a", 64)}, make([]string, 129)} {
+		require.Error(t, (model.ConfigurationBounds{HostSandboxPolicies: hashes}).ValidateEnvironments())
+	}
+	require.NoError(t, (model.ConfigurationBounds{}).ValidateEnvironments())
+	require.NoError(t, (model.ConfigurationBounds{HostSandboxPolicies: []string{strings.Repeat("a", 64)}}).ValidateEnvironments())
+}

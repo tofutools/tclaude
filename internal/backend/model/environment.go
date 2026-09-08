@@ -97,7 +97,7 @@ func (e Environment) Entries() []string {
 // Equal compares desired configuration by value, treating absent and empty
 // environment identically while keeping every existing scalar field exact.
 func (d DesiredConfiguration) Equal(other DesiredConfiguration) bool {
-	return d.Harness == other.Harness && d.Model == other.Model && d.Effort == other.Effort && d.WorkingDirectory == other.WorkingDirectory && d.Approval == other.Approval && d.Sandbox == other.Sandbox && d.Environment.Equal(other.Environment)
+	return SameSandboxSelection(d.HostSandbox, other.HostSandbox) && d.Harness == other.Harness && d.Model == other.Model && d.Effort == other.Effort && d.WorkingDirectory == other.WorkingDirectory && d.Approval == other.Approval && d.Sandbox == other.Sandbox && d.Environment.Equal(other.Environment)
 }
 
 // UnmarshalJSON canonicalizes an empty authored set to absence. This preserves
@@ -117,6 +117,9 @@ func (e *Environment) UnmarshalJSON(data []byte) error {
 // ValidateEnvironments rejects authored allow-lists that can never match a valid
 // launch. Absence remains compatible with the historical empty environment.
 func (b ConfigurationBounds) ValidateEnvironments() error {
+	if err := b.ValidateHostSandboxPolicies(); err != nil {
+		return err
+	}
 	for _, environment := range b.Environments {
 		if err := environment.Validate(); err != nil {
 			return err

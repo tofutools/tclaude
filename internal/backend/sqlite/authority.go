@@ -473,6 +473,12 @@ func configurationMatches(bounds model.ConfigurationBounds, requested *model.Des
 	if requested == nil {
 		return true
 	}
+	if requested.HostSandbox == nil && len(bounds.HostSandboxPolicies) != 0 {
+		return false
+	}
+	if requested.HostSandbox != nil && (requested.HostSandbox.Validate() != nil || !slices.Contains(bounds.HostSandboxPolicies, requested.HostSandbox.PolicyHash)) {
+		return false
+	}
 	if !environmentMatches(bounds.Environments, requested.Environment) {
 		return false
 	}

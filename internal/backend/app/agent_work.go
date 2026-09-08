@@ -46,6 +46,9 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 		desired.WorkingDirectory = workspace.Observation.ActualPath
 		additionalAuthority = append(additionalAuthority, model.AuthorityRequest{Principal: record.Run.Requester, Action: model.ActionInspectWorkspace, Resource: model.ResourceSelector{Kind: model.ResourceWorkspace, WorkspaceID: workspace.ID}})
 	}
+	if desired.HostSandbox != nil {
+		return record, fail(ErrUnsupported, "provider host sandbox preparation is not configured")
+	}
 	provider, ok := s.providers.Provider(desired.Harness)
 	if !ok {
 		return s.recordGraphAttemptUnavailable(ctx, record, attempt, fail(ErrUnavailable, "harness %q has no provider", desired.Harness))

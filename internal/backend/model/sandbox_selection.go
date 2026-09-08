@@ -62,3 +62,41 @@ func sandboxDigest(value string) bool {
 	decoded, err := hex.DecodeString(value)
 	return err == nil && hex.EncodeToString(decoded) == value
 }
+
+// CloneSandboxSelection preserves absence and detaches retained scope inputs.
+func CloneSandboxSelection(s *SandboxSelection) *SandboxSelection {
+	if s == nil {
+		return nil
+	}
+	copied := s.Clone()
+	return &copied
+}
+
+func SameSandboxSelection(a, b *SandboxSelection) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Equal(*b)
+}
+
+func ValidateSandboxSelection(s *SandboxSelection) error {
+	if s == nil {
+		return nil
+	}
+	return s.Validate()
+}
+
+// ValidateHostSandboxPolicies keeps delegated policy identities bounded and exact.
+func (b ConfigurationBounds) ValidateHostSandboxPolicies() error {
+	if len(b.HostSandboxPolicies) > 128 {
+		return fmt.Errorf("too many host sandbox policy identities")
+	}
+	seen := map[string]bool{}
+	for _, hash := range b.HostSandboxPolicies {
+		if !sandboxDigest(hash) || seen[hash] {
+			return fmt.Errorf("host sandbox policy identities must be unique SHA-256 values")
+		}
+		seen[hash] = true
+	}
+	return nil
+}
