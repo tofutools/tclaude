@@ -76,4 +76,6 @@ jobs:
       - name: Browser and public API journeys
         env:
           TCLAUDE_BROWSER_SMOKE: '1'
-        run: go test -race ./internal/product/browser -count=1 -timeout 10m
+        # The full serial browser matrix has outgrown the original ten-minute budget.
+        # Individual journey contexts remain bounded.
+        run: go test -race ./internal/product/browser -count=1 -timeout 20m
