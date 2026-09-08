@@ -69,6 +69,24 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   modelMenu.setAttribute('open', '');
   await harness.act(() => harness.fireEvent(modelMenu.querySelector('summary'), 'click'));
   assert.equal(providerMenu.open, false, 'opening one scope menu closes its sibling');
+
+  const claudeCheck = providerMenu.querySelector('input[data-provider="claude"]');
+  const codexCheck = providerMenu.querySelector('input[data-provider="codex"]');
+  claudeCheck.checked = false;
+  await harness.act(() => harness.fireEvent(claudeCheck, 'change'));
+  assert.deepEqual([...state.view.value.selectedProviders], ['codex']);
+  codexCheck.checked = false;
+  await harness.act(() => harness.fireEvent(codexCheck, 'change'));
+  assert.equal(codexCheck.checked, true, 'a rejected final-provider deselection restores the checkbox');
+  assert.deepEqual([...state.view.value.selectedProviders], ['codex']);
+  claudeCheck.checked = true;
+  await harness.act(() => harness.fireEvent(claudeCheck, 'change'));
+  const gptCheck = modelMenu.querySelector('input[data-model="gpt"]');
+  gptCheck.checked = false;
+  await harness.act(() => harness.fireEvent(gptCheck, 'change'));
+  assert.equal(gptCheck.checked, true, 'a rejected final-model deselection restores the checkbox');
+  assert.deepEqual([...state.view.value.selectedModels], ['gpt']);
+
   const modelSearch = modelMenu.querySelector('input[aria-label="Filter cost models"]');
   assert.ok(modelSearch);
   await harness.input(modelSearch, 'opus');

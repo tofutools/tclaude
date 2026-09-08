@@ -120,7 +120,9 @@ function ProviderFilter({ state, current }) {
         const share = Math.round(entry.share * 100);
         return html`<label class="cost-filter-option costs-provider-choice" title=${`Show ${entry.provider} cost rows`}>
           <input type="checkbox" data-provider=${entry.provider} checked=${current.selectedProviders.has(entry.provider)}
-            onChange=${() => state.toggleProvider(entry.provider)} />
+            onChange=${(event) => {
+              if (!state.toggleProvider(entry.provider)) event.currentTarget.checked = !event.currentTarget.checked;
+            }} />
           <span class=${`cost-legend-sw ${providerSegmentClass(entry.provider, current.providers)}`}></span>
           <span class="cost-filter-option-name">${entry.provider}<small>${entry.modelCount} model${entry.modelCount === 1 ? '' : 's'} · ${entry.agentCount} agent${entry.agentCount === 1 ? '' : 's'}</small>
             <i><b style=${`width:${Math.max(share, 1)}%`}></b></i></span>
@@ -151,7 +153,9 @@ function ModelFilter({ state, current }) {
           return html`<label class=${`cost-filter-option costs-model-choice${entry.available ? '' : ' unavailable'}`}
             title=${entry.available ? `Show ${entry.model} cost rows` : `Unavailable because ${entry.providers.join(', ')} is not selected`}>
             <input type="checkbox" data-model=${entry.model} disabled=${!entry.available}
-              checked=${entry.available && current.selectedModels.has(entry.model)} onChange=${() => state.toggleModel(entry.model)} />
+              checked=${entry.available && current.selectedModels.has(entry.model)} onChange=${(event) => {
+                if (!state.toggleModel(entry.model)) event.currentTarget.checked = !event.currentTarget.checked;
+              }} />
             <span class="cost-filter-option-name">${entry.model}<small>${entry.providers.map((provider) => html`<span class=${`cost-filter-provider-dot ${providerSegmentClass(provider, current.providers)}`}></span>`)}${entry.providers.length === 1 ? entry.providers[0] : `${entry.providers.length} providers`}</small>
               <i><b style=${`width:${Math.max(share, entry.available ? 1 : 0)}%`}></b></i></span>
             <span class="cost-filter-option-value">${fmtUSD(entry.cost)}<small>${entry.agentCount} agent${entry.agentCount === 1 ? '' : 's'}</small></span>
