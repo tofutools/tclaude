@@ -1700,3 +1700,8 @@ resume, a deleted explicit profile may resolve by its recorded name if a profile
 with that name has been recreated. Unresolvable explicit selections refuse
 publication instead of becoming unsandboxed launches. Import does not resume
 conversations or execute the recorded setup scripts.
+
+The saved macOS Mach-registration compatibility option is applied during native
+sandbox launch, matching v1 for helpers such as headless Chromium. It does not
+change filesystem or network rules. Linux retains the cross-platform profile
+option without adding a Linux permission.

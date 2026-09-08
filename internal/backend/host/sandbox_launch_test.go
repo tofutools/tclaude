@@ -49,7 +49,7 @@ func TestShellSandboxPreparationRetainsExactArtifactAndAbortRemovesOnlyPreparati
 	// Preparation does not execute the wrapper; use a real executable on either OS.
 	planner, err := NewSandboxLaunchPreparer(SandboxLaunchConfig{Inspector: inspector, Wrapper: "/bin/sh", Bootstrap: "/bin/sh", Artifacts: private})
 	require.NoError(t, err)
-	selected, materialized := materializedLaunchPolicy(t, inspector, model.SandboxPolicy{FilesystemRoot: model.SandboxRootSeparate, Filesystem: []model.SandboxFilesystemRule{{HostPath: workspace, Access: model.SandboxFilesystemWrite}}, Environment: model.Environment{"LITERAL": "$HOME stays literal"}, Network: &model.SandboxNetwork{Baseline: model.SandboxNetworkDeny}})
+	selected, materialized := materializedLaunchPolicy(t, inspector, model.SandboxPolicy{DarwinAllowMachRegister: true, FilesystemRoot: model.SandboxRootSeparate, Filesystem: []model.SandboxFilesystemRule{{HostPath: workspace, Access: model.SandboxFilesystemWrite}}, Environment: model.Environment{"LITERAL": "$HOME stays literal"}, Network: &model.SandboxNetwork{Baseline: model.SandboxNetworkDeny}})
 	shell, err := NewShellHost(ShellConfig{HostSandbox: planner, Terminal: TerminalHost{PrivateRoot: filepath.Join(private, "terminal")}, Executable: "/bin/sh"})
 	require.NoError(t, err)
 	request := ports.ShellPreparationRequest{ExecutionID: "shell", Attempt: 1, WorkspaceID: "workspace", WorkingDirectory: workspace, Sandbox: model.SandboxUnconfined, HostSandbox: &selected, HostSandboxPolicy: &materialized}
@@ -65,6 +65,7 @@ func TestShellSandboxPreparationRetainsExactArtifactAndAbortRemovesOnlyPreparati
 	require.NoError(t, err)
 	require.Contains(t, input.Environment, "LITERAL=$HOME stays literal")
 	require.True(t, input.PrivateNetwork)
+	require.True(t, input.DarwinAllowMachRegister)
 	require.NoFileExists(t, evidence.HostSandbox.Path+".started", "preparation never starts the command")
 	require.NoError(t, prepared.Abort(context.Background()))
 	require.NoDirExists(t, filepath.Dir(evidence.HostSandbox.Path))
@@ -89,13 +90,13 @@ func TestSandboxArtifactsCannotBePlacedOutsideProtectedState(t *testing.T) {
 
 // Native platform journeys use the same materialization-to-artifact preparer
 // as shell/provider composition; their child probes still exercise real OS IO.
-func prepareNativeLaunchPolicy(t *testing.T, inspector *SandboxPathInspector, private, wrapper string, child ProcessSpec, bound *SandboxMountBindings) (SandboxChildArtifact, error) {
+func prepareNativeLaunchPolicy(t *testing.T, inspector *SandboxPathInspector, private, wrapper string, child ProcessSpec, bound *SandboxMountBindings, allowMachRegister ...bool) (SandboxChildArtifact, error) {
 	t.Helper()
 	rules := []model.SandboxFilesystemRule{}
 	for _, pin := range bound.Pins() {
 		rules = append(rules, model.SandboxFilesystemRule{HostPath: pin.Source, GuestPath: pin.Guest, Access: pin.Access, ExpectedKind: pin.Kind})
 	}
-	selected, materialized := materializedLaunchPolicy(t, inspector, model.SandboxPolicy{FilesystemRoot: model.SandboxRootSeparate, Filesystem: rules, Network: &model.SandboxNetwork{Baseline: model.SandboxNetworkDeny}})
+	selected, materialized := materializedLaunchPolicy(t, inspector, model.SandboxPolicy{DarwinAllowMachRegister: len(allowMachRegister) > 0 && allowMachRegister[0], FilesystemRoot: model.SandboxRootSeparate, Filesystem: rules, Network: &model.SandboxNetwork{Baseline: model.SandboxNetworkDeny}})
 	bootstrap, err := os.Executable()
 	require.NoError(t, err)
 	planner, err := NewSandboxLaunchPreparer(SandboxLaunchConfig{Inspector: inspector, Wrapper: wrapper, Bootstrap: bootstrap, Artifacts: private})

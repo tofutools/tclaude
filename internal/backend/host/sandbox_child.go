@@ -43,20 +43,21 @@ type sandboxRootPin struct {
 }
 
 type sandboxChildInput struct {
-	Version           int
-	Platform          string
-	Wrapper           string
-	Executable        string
-	Arguments         []string
-	Directory         string
-	Environment       []string
-	Mounts            []SandboxMountPin
-	ProviderResources []SandboxMountPin `json:",omitempty"`
-	ProtectedRoots    []sandboxRootPin
-	InheritedRoot     bool `json:",omitempty"`
-	PrivateNetwork    bool
-	ControlPort       int              `json:",omitempty"`
-	Overlays          []sandboxOverlay `json:",omitempty"`
+	Version                 int
+	Platform                string
+	Wrapper                 string
+	Executable              string
+	Arguments               []string
+	Directory               string
+	Environment             []string
+	Mounts                  []SandboxMountPin
+	ProviderResources       []SandboxMountPin `json:",omitempty"`
+	ProtectedRoots          []sandboxRootPin
+	InheritedRoot           bool `json:",omitempty"`
+	PrivateNetwork          bool
+	DarwinAllowMachRegister bool             `json:",omitempty"`
+	ControlPort             int              `json:",omitempty"`
+	Overlays                []sandboxOverlay `json:",omitempty"`
 }
 
 // PrepareSandboxChild retains the exact host-owned command across a terminal
@@ -76,6 +77,7 @@ func (i *SandboxPathInspector) PrepareSandboxChild(directory, wrapper string, ch
 	input := sandboxChildInput{Version: 1, Platform: runtime.GOOS, Wrapper: wrapper, Executable: child.Executable,
 		Arguments: child.Args, Directory: child.Directory, Environment: child.Env, Mounts: bindings.Pins()[:len(bindings.pins)-bindings.providerCount], ProviderResources: bindings.Pins()[len(bindings.pins)-bindings.providerCount:], PrivateNetwork: privateNetwork, ControlPort: bindings.controlPort}
 	input.InheritedRoot = bindings.inheritedRoot
+	input.DarwinAllowMachRegister = bindings.darwinAllowMachRegister
 	input.Overlays = append([]sandboxOverlay(nil), bindings.overlays...)
 	for _, root := range i.roots {
 		stat, ok := root.identity.Sys().(*syscall.Stat_t)
@@ -150,6 +152,7 @@ func ExecuteSandboxChild(ctx context.Context, artifact SandboxChildArtifact) err
 		return err
 	}
 	bound.controlPort = input.ControlPort
+	bound.darwinAllowMachRegister = input.DarwinAllowMachRegister
 	wrapped, arguments, err := sandboxExecInvocation(input.Wrapper, ProcessSpec{Executable: input.Executable, Args: input.Arguments,
 		Directory: input.Directory, Env: input.Environment, ExactEnvironment: true}, bound, input.PrivateNetwork)
 	if err != nil {

@@ -96,6 +96,11 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 	profile := "(version 1)\n(allow default)\n" +
 		"(deny file-read* (require-all (require-not (literal \"/\")) (require-not (require-any " + strings.Join(readRegions, " ") + "))))\n" +
 		"(deny file-write* (require-not (require-any " + strings.Join(writeRegions, " ") + ")))\n"
+	if bindings.darwinAllowMachRegister {
+		// Match v1: an explicit compatibility grant for headless Chromium
+		// and similar helpers, independent of filesystem/network policy.
+		profile += "(allow mach-register)\n"
+	}
 	// Seatbelt checks unlink against the target vnode, so a writable subpath
 	// alone also permits removing its root. Linux individual bind mounts
 	// already prevent that; retain the same generated-directory contract here.
