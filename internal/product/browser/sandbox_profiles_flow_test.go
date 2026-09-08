@@ -11,7 +11,7 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
 
-func TestBrowserSandboxAuthoringPreservesLiteralRulesAndPinnedIncludes(t *testing.T) {
+func TestBrowserSandboxAuthoringPreservesLiteralRulesAndProfileIncludes(t *testing.T) {
 	ctx, page, operator := processEditorBrowser(t)
 	var parent app.SandboxProfileResult
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/sandbox-profiles", map[string]any{"request_id": "parent-create", "id": "sandbox_parent", "name": "Shared rules", "policy": model.SandboxPolicy{Environment: model.Environment{"PARENT": "first"}}}, &parent))
@@ -25,9 +25,9 @@ func TestBrowserSandboxAuthoringPreservesLiteralRulesAndPinnedIncludes(t *testin
 	page.MustElementR("#sandbox-profiles button", "^New sandbox profile$").MustClick()
 	page.MustElement(".sandbox-editor [aria-label='Sandbox profile name']").MustInput("Isolated coding")
 	page.MustElementR(".sandbox-editor summary", "^Included profiles").MustClick()
-	page.MustElement(".sandbox-editor [aria-label='Include sandbox profile']").MustSelect("Shared rules · sandbox_parent · policy " + string(parent.Revision.Ref.RevisionID))
-	page.MustElementR(".sandbox-editor button", "^Add included revision$").MustClick()
-	page.MustElementR(".sandbox-editor code", string(parent.Revision.Ref.RevisionID))
+	page.MustElement(".sandbox-editor [aria-label='Include sandbox profile']").MustSelect("Shared rules")
+	page.MustElementR(".sandbox-editor button", "^Add included profile$").MustClick()
+	page.MustElementR(".sandbox-editor code", "^Shared rules$")
 	page.MustElementR(".sandbox-editor summary", "^Filesystem").MustClick()
 	page.MustElementR(".sandbox-editor button", "^Add filesystem rule$").MustClick()
 	page.MustElement(".sandbox-editor [aria-label='Host path 1']").MustInput(source)
@@ -50,7 +50,7 @@ func TestBrowserSandboxAuthoringPreservesLiteralRulesAndPinnedIncludes(t *testin
 	page.MustElement(".sandbox-editor [aria-label='Export names (one per line) 1']").MustInput("PATH\nTOOLS")
 	page.MustElementR(".sandbox-editor button", "^Inspect host paths$").MustClick()
 	page.MustElementR("[aria-label='Sandbox path preview']", "available")
-	require.Len(t, page.MustElement(".sandbox-materialization-hash").MustText(), 64)
+	require.False(t, page.MustHas(".sandbox-materialization-hash"))
 	page.MustElementR(".sandbox-editor summary", "^Combined include policy$").MustClick()
 	page.MustElementR(".sandbox-editor code", "^PARENT$")
 	page.MustElementR(".sandbox-editor pre", "^first$")
@@ -79,7 +79,7 @@ func TestBrowserSandboxAuthoringPreservesLiteralRulesAndPinnedIncludes(t *testin
 	require.Equal(t, []string{"CACHE_A", "CACHE_B"}, saved.Revision.Policy.AgentDirectories)
 	require.Equal(t, "literal $(not-executed)\nnext", saved.Revision.Policy.Environment["LITERAL"])
 	require.Equal(t, []uint16{443, 8443}, saved.Revision.Policy.Network.Allow[0].Ports)
-	require.Equal(t, []model.SandboxProfileRef{parent.Revision.Ref}, saved.Revision.Policy.Includes)
+	require.Equal(t, []model.SandboxProfileRef{{ProfileID: parent.Profile.ID}}, saved.Revision.Policy.Includes)
 	page.MustReload().MustWaitLoad()
 	page.MustElement("main:not([inert])")
 	page.MustElementR("#configurations summary", "^Sandbox profiles$").MustClick()
@@ -131,8 +131,8 @@ func TestBrowserSandboxCopyArchiveAndDraftDiscardRemainOffline(t *testing.T) {
 	page.MustWait(`()=>!submitting`)
 	page.MustElement("#sandbox-profiles [aria-label='Sandbox profile status']").MustSelect("active")
 	page.MustElementR("#sandbox-profiles article", "Independent copy").MustElementR("button", "^Edit sandbox profile$").MustClick()
-	page.MustElementR(".sandbox-editor p", "Policy revision 1 · Lifecycle revision 3")
-	page.MustElementR("#sandbox-profiles article", "Independent copy").MustElementR("p", "Policy revision "+string(copied.HeadRevisionID))
+	page.MustElementR(".sandbox-editor p", "Independent copy")
+	page.MustElementR("#sandbox-profiles article", "Independent copy")
 	page.MustElementR(".sandbox-editor summary", "^Temporary filesystems").MustClick()
 	page.MustElementR(".sandbox-editor button", "^Add tmpfs mount$").MustClick()
 	// A button-only row addition must participate in discard protection.

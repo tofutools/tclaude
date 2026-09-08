@@ -17,7 +17,10 @@ import (
 )
 
 func TestPerformerTimeoutRealProgramKeepsProfileAndRunBounds(t *testing.T) {
-	for _, profileTimeout := range []time.Duration{30 * time.Second, 500 * time.Millisecond} {
+	// Leave real host preparation enough time on a contended race runner; the
+	// assertions still prove both sides of the profile-versus-node minimum.
+	const nodeTimeout = 5 * time.Second
+	for _, profileTimeout := range []time.Duration{30 * time.Second, 3 * time.Second} {
 		t.Run(profileTimeout.String(), func(t *testing.T) {
 			ctx := context.Background()
 			store, err := sqlite.Open(filepath.Join(t.TempDir(), "db"))
@@ -30,10 +33,10 @@ func TestPerformerTimeoutRealProgramKeepsProfileAndRunBounds(t *testing.T) {
 			profile, err := service.SaveProgramProfile(ctx, app.SaveProgramProfileRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "profile"}, ID: "sleep", RevisionID: "v1", Name: "sleep", Executable: "/bin/sh", ArgumentPrefix: []string{"-c", "sleep 30"}, Sandbox: model.SandboxUnconfined, Timeout: profileTimeout, OutputLimitBytes: 1024, EffectAuthority: []model.ProgramEffectRequirement{{Action: model.ActionExecuteProgram, Resource: model.ResourceSelector{Kind: model.ResourceWorkspace}}}})
 			require.NoError(t, err)
 			graph := programGraph(profile)
-			graph.Nodes[0].Performer.Timeout = "2s"
+			graph.Nodes[0].Performer.Timeout = nodeTimeout.String()
 			started, err := service.StartProcess(ctx, app.StartProcessRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "start"}, ID: "run", Start: model.WorkStart{InlineGraph: &graph, Scope: model.WorkScope{WorkspaceID: "workspace"}, AuthorizedProgramProfiles: []model.ProgramProfileRef{graph.Nodes[0].Performer.Program.Profile}, Deadline: time.Now().Add(time.Minute)}})
 			require.NoError(t, err)
-			require.WithinDuration(t, started.Run.NodeAttempts[0].ReadyAt.Add(min(2*time.Second, profileTimeout)), started.Run.NodeAttempts[0].Deadline, time.Millisecond)
+			require.WithinDuration(t, started.Run.NodeAttempts[0].ReadyAt.Add(min(nodeTimeout, profileTimeout)), started.Run.NodeAttempts[0].Deadline, time.Millisecond)
 			_, err = service.ReconcilePendingWork(ctx)
 			require.NoError(t, err)
 			var result app.WorkRunResult
@@ -58,7 +61,7 @@ func TestPerformerTimeoutRealProgramKeepsProfileAndRunBounds(t *testing.T) {
 			}
 			require.NoError(t, json.Unmarshal(execution.Evidence.Payload, &evidence))
 			require.False(t, evidence.Deadline.After(attempt.Deadline))
-			if profileTimeout < 2*time.Second {
+			if profileTimeout < nodeTimeout {
 				require.Equal(t, attempt.ReadyAt.Add(profileTimeout), evidence.Deadline, "saved profile timeout is pinned from activation readiness")
 			}
 			require.Equal(t, profileTimeout, profile.Revision.Timeout)

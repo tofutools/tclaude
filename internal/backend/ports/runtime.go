@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/sandboxpolicy"
 )
 
 type WorkloadTopology string
@@ -29,15 +30,16 @@ type ResourceClaim struct {
 }
 
 type PreparedDescription struct {
-	ExecutionID     model.ExecutionID
-	Attempt         model.AttemptGeneration
-	Topology        WorkloadTopology
-	Requirements    RuntimeRequirements
-	EffectivePolicy EffectivePolicy
-	Resources       []ResourceClaim
-	Evidence        model.ProviderEvidence
-	AccessDelivery  *ActionCredentialReceipt
-	InitialInput    *PreparedInitialInputDescription
+	HostSandboxPolicyHash string
+	ExecutionID           model.ExecutionID
+	Attempt               model.AttemptGeneration
+	Topology              WorkloadTopology
+	Requirements          RuntimeRequirements
+	EffectivePolicy       EffectivePolicy
+	Resources             []ResourceClaim
+	Evidence              model.ProviderEvidence
+	AccessDelivery        *ActionCredentialReceipt
+	InitialInput          *PreparedInitialInputDescription
 }
 
 type PreparedInitialInput struct {
@@ -170,6 +172,9 @@ type ProviderCapabilities struct {
 	// Nil means that the provider does not publish this capability.
 	LaunchPolicy *PolicyRequirements
 
+	// HostSandbox requires host-owned confinement preparation in addition to
+	// the harness native sandbox setting. False must refuse selected policies.
+	HostSandbox          bool
 	PreparedInitialInput bool
 	NativeGuidance       []NativeGuidanceCapability
 }
@@ -188,9 +193,10 @@ const (
 )
 
 type PreparationRequest struct {
-	Spec         model.ResolvedExecutionSpec
-	Intent       StartIntent
-	Continuation *model.NativeConversationEvidence
+	HostSandboxPolicy *sandboxpolicy.PolicyMaterialization
+	Spec              model.ResolvedExecutionSpec
+	Intent            StartIntent
+	Continuation      *model.NativeConversationEvidence
 	// History is the application-resolved source for continuation or fork.
 	// Public callers select platform catalog IDs and revisions instead.
 	History          *HistorySourceSelection

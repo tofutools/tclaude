@@ -49,3 +49,23 @@ func TestMaterializedSandboxScopesKeepExactPrecedence(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, first.ContentHash, changed.ContentHash)
 }
+
+func TestSandboxLaunchSelectionRejectsChangedResolvedContent(t *testing.T) {
+	r := newRevisions()
+	ref := r.add(t, "launch", model.SandboxPolicy{Environment: model.Environment{"LITERAL": "retained"}})
+	materialized, err := sandboxpolicy.MaterializeScopes(context.Background(), []sandboxpolicy.ScopeSelection{{Scope: sandboxpolicy.ScopeExplicit, Ref: ref}}, r, nil)
+	require.NoError(t, err)
+	selected, err := materialized.LaunchSelection()
+	require.NoError(t, err)
+	require.Equal(t, materialized.ContentHash, selected.PolicyHash)
+	require.Equal(t, ref, selected.Scopes[0].Ref)
+	selected.Scopes[0].Ref.RevisionID = "changed"
+	require.Equal(t, ref, materialized.Scopes[0].Ref, "public projection must not alias retained inputs")
+	materialized.Composition.Values.Environment["LITERAL"] = "changed"
+	_, err = materialized.LaunchSelection()
+	require.ErrorContains(t, err, "content changed")
+	preview, err := sandboxpolicy.MaterializeIncludes(context.Background(), ref, r, nil)
+	require.NoError(t, err)
+	_, err = preview.LaunchSelection()
+	require.Error(t, err, "launch must resolve explicit scope instead of reinterpreting preview identity")
+}

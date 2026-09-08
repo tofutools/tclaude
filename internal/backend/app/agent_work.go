@@ -50,6 +50,11 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	if !ok {
 		return s.recordGraphAttemptUnavailable(ctx, record, attempt, fail(ErrUnavailable, "harness %q has no provider", desired.Harness))
 	}
+	hostSandboxPolicy, err := s.prepareProviderSandbox(ctx, provider, desired.HostSandbox)
+	if err != nil {
+		return record, err
+	}
+
 	if !provider.Capabilities().PreparedInitialInput {
 		return record, fail(ErrUnsupported, "provider %q cannot prepare required first work", provider.Name())
 	}
@@ -59,6 +64,13 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	executionID := model.ExecutionID(s.newID("exe_"))
 	conversationID := model.ConversationID(s.newID("con_"))
 	spec := resolvedSpec(executionID, agent.ID, desired, conversationID)
+	if hostSandboxPolicy != nil {
+		preparedSelection, selectionErr := hostSandboxPolicy.LaunchSelection()
+		if selectionErr != nil {
+			return record, selectionErr
+		}
+		spec.HostSandbox = &preparedSelection
+	}
 	spec.ConfigurationProfile = agent.ConfigurationProfile
 	execution := model.Execution{ID: executionID, Workload: model.ExecutionWorkloadHarness, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, State: model.ExecutionReserved, Attempt: 1, ContextReadiness: model.ContextReadinessPending, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	if err = s.requireNativeGuidanceComposition(ctx, execution); errors.Is(err, ErrUnavailable) {
@@ -100,7 +112,7 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	input := &ports.PreparedInitialInput{Body: performer.Brief, Correlation: string(issuanceID), RequiredBeforeFirstWork: true}
 	workflowCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancel()
-	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: ports.StartFresh, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, 1, provider.Name()), NativeGuidance: s.boundNativeGuidance(execution), AgentAPIEndpoint: s.agentAPIEndpoint, InitialInput: input, CallbackIngress: s.callbackIngress})
+	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{HostSandboxPolicy: hostSandboxPolicy, Spec: spec, Intent: ports.StartFresh, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, 1, provider.Name()), NativeGuidance: s.boundNativeGuidance(execution), AgentAPIEndpoint: s.agentAPIEndpoint, InitialInput: input, CallbackIngress: s.callbackIngress})
 	if err != nil {
 		return s.failAgentOperation(ctx, admitted, admittedAttempt, "prepare_failed", err)
 	}

@@ -195,6 +195,87 @@ Conversation. Existing attach, observe and stop operations apply to it.
 History requests select configured source names, never native filesystem roots.
 OpenCode, Codex and Copilot expose `owned` for their provider-owned history.
 Claude requires an explicit `--history-source claude:NAME=/absolute/projects-root`.
+Use `--claude-config-dir /absolute/config-root` to select an existing persistent
+Claude configuration (including its login and history) for launches. This is
+separate from the read-only history-source catalog. Selected host-sandbox
+launches expose that exact configuration root, their own credential/callback
+resources, and the API endpoint directory; they do not mount the backend state
+parent. Without an explicit root, selected launches use
+`STATE/claude/native-home`. A continuation retains its recorded configuration
+root rather than switching it when the host-sandbox choice changes.
+
+Selected native Claude, Codex, and Copilot launches share a configuration floor:
+known settings files and executable-configuration directories are readonly by
+default (`HarnessConfig: read` is equivalent); login and history state remain
+writable. `HarnessConfig: write` explicitly opts out. Missing configuration files
+are not fabricated, and symlinked catalog entries retain the legacy warning and
+are skipped. Such entries and absent files therefore are not covered by this
+floor. Existing files and created empty configuration directories are retained
+by identity in each prepared launch. Changing a pinned file before release
+requires a fresh preparation.
+
+The native server control relay uses a retained Unix listener and proves both
+its process owner and the server's TCP listener before forwarding credentials.
+Linux runs that relay and server inside the same private network namespace.
+On macOS the retained TCP control port uses Seatbelt's `localhost` selector,
+which also matches other host-local addresses at that port. This is a partial
+network-isolation mechanism, matching the legacy platform limitation, rather
+than a guarantee limited to the numeric loopback address. Other TCP ports and
+UDP have no control exception.
+
+Selected launches support a constructed sparse root or inherited read-only host
+root. Automatic/inherited choice yields to the constructed root when the network
+policy requires isolation; an explicit separate root always stays separate.
+Inherited roots retain protected-state exclusions and explicit writable grants.
+Linux still replaces `/tmp`, `/dev` and `/proc` with the sandbox scratch/device/
+process views; inherited root does not expose host temporary files.
+
+Selected launches apply directory deny rules with explicit narrower
+read/write grants preserved. Linux hides a denied directory behind an empty,
+read-only mount; macOS denies access through Seatbelt. Linux also supports
+size-bounded writable tmpfs scratch mounts and explicit nested binds. Scratch
+contents do not persist to the underlying host directory. A scratch mount cannot
+cover protected state or launch-required paths. macOS refuses tmpfs because
+Seatbelt provides no mount namespace; it does not substitute a host directory.
+
+Generated sandbox directories are stable agent-owned caches. Their paths survive
+later executions and missing named directories are recreated at the same paths;
+a different agent receives independent paths. Standalone shells use their exact
+execution identity. Generated bindings take precedence over authored launch
+environment overrides and are retained in the prepared launch. Symlinked cache
+bindings are refused. Aborting a preparation does not remove retained caches.
+
+By default the agent's own cache parent is writable, permitting it to delete and
+recreate named children. `--agent-dirs-mount-parent=false` instead grants each
+named directory individually, so its contents are writable but its parent is not.
+Neither choice grants the shared cache container or backend private state.
+
+Selected launches execute ordered pre-launch blocks in Bash inside the admitted
+OS boundary, before the native command. Blocks share shell functions and
+exported environment. A failing command/pipeline or an unset declared export
+stops launch with status 126 and the block name; an intentionally empty export
+is valid. The retained script is granted as one read-only file, without exposing
+its private parent directory, and is kept out of argv to support large blocks.
+The native command and arguments remain literal even if setup changes positional
+parameters. Policy save, preview and preparation never execute setup scripts.
+
+OpenCode's selected host-sandbox launch preserves its native XDG configuration
+read-only and seeds independent copies of `auth.json` and `mcp-auth.json` into
+fresh session data. Continuation retains its own login, including logout and
+credential refresh. `--opencode-config-dir` and `--opencode-data-dir` select the
+native **app directories**, otherwise the corresponding XDG base plus `opencode`
+is used (with `~/.config` and `~/.local/share` fallbacks). No unrelated native data
+is copied. The native `.gitignore` bootstrap is created only when absent;
+existing authored content is preserved.
+
+Linux mounts the config into the session's private config directory. macOS uses
+the original config path because it cannot remap directories; native descendants
+therefore see that config base in `XDG_CONFIG_HOME`. Neither platform grants its
+parent directory. Confined launches receive explicit environment values, not the
+daemon's whole environment. Repeat `--opencode-env NAME` to pass selected native
+API keys or other ordinary variables by name, or author literal launch environment
+values. Loader, native-state and daemon-control variables remain reserved.
+
 OpenCode also accepts an explicit native XDG root. Codex and Copilot currently
 support their owned native homes only. Each refresh reports coverage; partial or
 unreadable history is not presented as a complete empty result.
@@ -1192,7 +1273,7 @@ spend, and no token prices or currency conversions are inferred.
 
 Agent and configuration forms and the team member editor show the configured adapter's supported approval/confinement choices. Changing harness or policy refreshes this read-only explanation without altering authored values. Unsupported or unavailable-provider settings can still be saved as offline intent; they require correction or provider configuration before launch.
 
-`GET /v2/launch-support?harness=<name>` is operator-only and reads the adapter's static declaration. It reports whether that provider is configured, whether policy support is known, supported approval and sandbox modes, and prepared-initial-input capability. It performs no native preparation, credential delivery, storage write or execution. This is not an installation, authentication, authority or runtime readiness check. Providers that omit the declaration remain explicitly unknown. The actual preparation and release gates remain authoritative.
+`GET /v2/launch-support?harness=<name>` is operator-only and reads the adapter's static declaration. It reports whether that provider is configured, whether policy support is known, supported approval and sandbox modes, host sandbox preparation, and prepared-initial-input capability. It performs no native preparation, credential delivery, storage write or execution. This is not an installation, authentication, authority or runtime readiness check. Providers that omit the declaration remain explicitly unknown. The actual preparation and release gates remain authoritative.
 ### Capture a group as a team template
 
 Groups offers **Save group as team template**. It opens the existing team editor with independent copies of the displayed active direct members, retaining order, names and desired launch settings including effort and environment. Stable template member keys are generated independently of names. Nothing is written until **Save team revision**, and saving does not launch work. Cancelling leaves the group and definition catalog unchanged.
@@ -1219,11 +1300,11 @@ conflict and retain the local form for inspection or copying.
 Configurations includes a Sandbox profiles panel. Create, copy, edit, inspect,
 archive and restore policies through the authenticated authoring API. Expand the
 filesystem, network, environment, resource and setup sections to edit literal
-rules. Includes select exact immutable revisions; later edits to an included
-profile do not change a saved selection. Save conflicts retain the draft, and an
+rules. Includes select stable profile IDs; edits to included profiles take effect
+when the policy is next prepared. Save conflicts retain the draft, and an
 unchanged retry after a lost response returns the original result.
 
-Preview validates the draft and pinned includes and observes filesystem paths
+Preview validates the draft and current included profiles and observes filesystem paths
 without creating missing directories or running setup scripts. It reports path
 kind, canonical spelling, missing paths and grants intersecting the backend's
 protected state directory. Included observations retain their source revision.
@@ -1232,14 +1313,19 @@ setup, and each independent network/socket constraint. Engine choice has explici
 include precedence; private namespace and harness configuration floors remain
 restrictive. A shared include is composed separately within each sibling before
 those siblings combine. These observations and composed values are not an
-enforcement receipt. The editor currently authors policies independently of launch settings;
-custom profile selection and actual host enforcement are not yet connected.
+enforcement receipt. Agent, saved configuration, team member and shell forms can
+select an active saved profile. Selection stores profile IDs, and the UI displays profile names. Each fresh launch
+or restart resolves their current definitions, including updated included profiles.
+The policy already installed in a running execution is not rewritten by a profile edit. The launch
+preview reports whether the configured adapter supports host sandbox preparation.
+Actual launch also checks the selected policy, host capabilities and current
+authority, and refuses unsupported policies before native release.
 
 
 ### Sandbox destination packs
 
 The sandbox editor lists the retained destination-pack catalog with exact domains,
-ports and a content hash. Choose Off, Allow or Deny for each pack after inspecting
+ports. Choose Off, Allow or Deny for each pack after inspecting
 its entries. Unknown IDs, duplicate IDs and conflicting polarities are rejected
 before persistence. Selections survive save and reopen; the
 catalog does not silently include extra provider destinations or subdomains.
@@ -1248,12 +1334,12 @@ Saving a pack reference does not grant network access or launch a workload.
 
 ### Sandbox profile transfer
 
-Each sandbox catalog card can export its exact immutable revision and complete
-include graph as a versioned JSON bundle. Import accepts a file or pasted JSON,
-validates all hashes and dependencies without host lookup, and previews each
-revision before creating independent named copies. Every included revision gets
-a new profile identity, including when the source graph pins different revisions
-of the same profile. Include references are remapped to those exact copies.
+Each sandbox catalog card exports its current policy and current included
+profiles as a self-contained JSON bundle. This follows the same editable IDs as
+a fresh launch, including profiles imported by earlier versions. Import accepts
+a file or pasted JSON, checks bundle integrity without host lookup, and previews
+each profile before creating independent named copies. Include references are
+remapped to those copies.
 The whole graph and original-result retry receipt commit in one transaction;
 existing target identities cause a conflict without partial publication.
 
@@ -1264,10 +1350,10 @@ files are not silently interpreted as equivalent policies. The logical bundle
 limit is 16 MiB, with a separately bounded transport envelope. Source profile
 names are export-time labels; exact revision references identify policy content.
 
-### Resolved sandbox policy identity
+### Sandbox preparation and profile selection
 
-Sandbox path preview now shows a separate resolved-policy identity. The authored
-revision hash still identifies the saved document; the resolved identity also
+Sandbox preparation records an internal digest for checking provider handoff.
+It is not an operator-facing choice or authority selector. The internal digest
 covers canonical host paths, exact included revisions, scope precedence and the
 expanded destination pack contents. Combined network constraints show explicit
 allow/deny destinations instead of unresolved pack names, while retaining each
@@ -1276,7 +1362,10 @@ source restriction independently. Pack display labels do not affect identity.
 This is a bounded, versioned authoring result, not launch authorization or proof
 of isolation. No setup command runs during preview. Actual launch integration
 must recheck host identity, current authority, provider resources and enforcement
-capabilities before using a retained policy.
+capabilities before using the prepared policy. Delegated launch bounds reference
+profile IDs, so editing a profile does not require replacing its grant. An
+unchanged response-loss retry returns the original operation rather than starting
+a new execution; a new start request resolves current profiles again.
 
 ### Process descriptions and documentation
 
@@ -1307,10 +1396,10 @@ fields are omitted from persisted JSON.
 
 ### Legacy sandbox profile conversion
 
-Offline v228 import converts representable sandbox profiles into archived,
-immutable replacement revisions. Include names resolve only within that snapshot
-and become exact revision references. The archived catalog supports inspection
-and explicit independent copies; imported defaults, assignments, grants and
+Offline v228 import converts representable sandbox profiles into an archived
+registry. Include names resolve only within that snapshot
+and become exact revision references. The archived catalog supports inspection, restore, editing after restore,
+and independent copies; imported defaults, assignments, grants and
 runtime state are not activated. Legacy `network_access=none` retains its coupled
 closed Unix-socket posture when no newer network axis was authored.
 
@@ -1326,7 +1415,7 @@ indexes. A destination produced by an older evidence-only conversion is refused
 if it lacks the newly expected typed records; the importer never rewrites that
 existing destination. Use a fresh explicit destination for the new conversion.
 
-Imported sandbox profiles carry a durable imported marker. They remain archived and reject restore or same-identity edits; inspect, export, and explicit independent copy remain available. Independent copies use fresh identities and normal editable lifecycle rules.
+An imported marker records provenance, not immutability. Imported profiles can be restored and edited under the same profile ID using the ordinary editor. No copy is required to update them. Importing alone does not launch agents.
 
 ### Process wait authoring
 

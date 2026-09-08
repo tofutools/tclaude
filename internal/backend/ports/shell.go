@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/sandboxpolicy"
 )
 
 // ShellResourceEvidence is opaque host recovery/ownership evidence. It is
@@ -16,19 +17,22 @@ type ShellResourceEvidence struct {
 }
 
 type ShellPreparationRequest struct {
-	Environment      model.Environment
-	ExecutionID      model.ExecutionID
-	Attempt          model.AttemptGeneration
-	WorkspaceID      model.WorkspaceID
-	WorkingDirectory string
-	Sandbox          model.SandboxMode
+	HostSandbox       *model.SandboxSelection
+	HostSandboxPolicy *sandboxpolicy.PolicyMaterialization
+	Environment       model.Environment
+	ExecutionID       model.ExecutionID
+	Attempt           model.AttemptGeneration
+	WorkspaceID       model.WorkspaceID
+	WorkingDirectory  string
+	Sandbox           model.SandboxMode
 }
 
 type ShellPreparedDescription struct {
-	ExecutionID model.ExecutionID
-	Attempt     model.AttemptGeneration
-	Resources   []ResourceClaim
-	Evidence    ShellResourceEvidence
+	HostSandboxPolicyHash string
+	ExecutionID           model.ExecutionID
+	Attempt               model.AttemptGeneration
+	Resources             []ResourceClaim
+	Evidence              ShellResourceEvidence
 }
 
 type PreparedShell interface {

@@ -19,8 +19,9 @@ type nativeHookInput struct {
 }
 
 type codexNativeNormalizer struct {
-	mu       sync.Mutex
-	nativeID string
+	forkReceipt string
+	mu          sync.Mutex
+	nativeID    string
 }
 
 func newCodexNativeNormalizer(nativeID string) *codexNativeNormalizer {
@@ -30,7 +31,19 @@ func newCodexNativeNormalizer(nativeID string) *codexNativeNormalizer {
 func (n *codexNativeNormalizer) Matches(value string) bool {
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	n.refreshForkIdentity()
 	return n.nativeID != "" && value == n.nativeID
+}
+
+func (n *codexNativeNormalizer) SetForkReceipt(path string) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.forkReceipt, n.nativeID = path, ""
+}
+func (n *codexNativeNormalizer) refreshForkIdentity() {
+	if n.forkReceipt != "" && n.nativeID == "" {
+		n.nativeID, _ = readForkReceipt(n.forkReceipt)
+	}
 }
 
 func (n *codexNativeNormalizer) Set(nativeID string) {
@@ -50,7 +63,8 @@ func (n *codexNativeNormalizer) Normalize(raw ports.RawNativeCallback) (ports.No
 	}
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	if n.nativeID == "" && input.HookEventName == "SessionStart" && correlation != "" {
+	n.refreshForkIdentity()
+	if n.forkReceipt == "" && n.nativeID == "" && input.HookEventName == "SessionStart" && correlation != "" {
 		n.nativeID = correlation
 	}
 	if correlation == "" || correlation != n.nativeID {

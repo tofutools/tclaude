@@ -3,7 +3,9 @@ package product
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/tofutools/tclaude/internal/backend/host"
@@ -18,7 +20,7 @@ func (s historySources) HistorySource(harness, name string) (ports.HistoryDiscov
 	return scope, ok
 }
 
-func journeyServices(state string, harnesses, configured []string, workspaces bool, shell string) (server.JourneyServices, error) {
+func journeyServices(state string, harnesses, configured []string, workspaces bool, shell string, sandboxOptions ...sandboxHostOptions) (server.JourneyServices, error) {
 	sources := historySources{}
 	enabled := map[string]bool{}
 	for _, harness := range harnesses {
@@ -53,9 +55,14 @@ func journeyServices(state string, harnesses, configured []string, workspaces bo
 		if !workspaces {
 			return result, fmt.Errorf("shell requires --workspaces")
 		}
+		sandbox, err := configuredHostSandbox(state, sandboxOptions...)
+		if err != nil {
+			return result, err
+		}
 		runtime, err := host.NewShellHost(host.ShellConfig{
-			Terminal:   host.TerminalHost{Executable: "tmux", PrivateRoot: filepath.Join(state, "shells")},
-			Executable: shell, Environment: os.Environ(),
+			HostSandbox: sandbox,
+			Terminal:    host.TerminalHost{Executable: "tmux", PrivateRoot: filepath.Join(state, "shells")},
+			Executable:  shell, Environment: os.Environ(),
 		})
 		if err != nil {
 			return result, err
@@ -63,4 +70,37 @@ func journeyServices(state string, harnesses, configured []string, workspaces bo
 		result.Shells = runtime
 	}
 	return result, nil
+}
+
+type sandboxHostOptions struct{ mountAgentDirectoriesIndividually bool }
+
+// Shells and harness providers share the same protected state and immutable
+// artifact preparation. Missing native tooling is reported by selected launch
+// preparation, while existing launches without a host policy stay available.
+func configuredHostSandbox(state string, sandboxOptions ...sandboxHostOptions) (*host.SandboxLaunchPreparer, error) {
+	wrapperName := "bwrap"
+	if runtime.GOOS == "darwin" {
+		wrapperName = "/usr/bin/sandbox-exec"
+	}
+	wrapper, err := exec.LookPath(wrapperName)
+	if err != nil {
+		return nil, nil
+	}
+	inspector, err := host.NewSandboxPathInspector([]string{state})
+	if err != nil {
+		return nil, err
+	}
+	artifacts := filepath.Join(state, "sandbox-launches")
+	if err := os.MkdirAll(artifacts, 0700); err != nil {
+		return nil, err
+	}
+	bootstrap, err := os.Executable()
+	if err != nil {
+		return nil, err
+	}
+	options := sandboxHostOptions{}
+	if len(sandboxOptions) != 0 {
+		options = sandboxOptions[0]
+	}
+	return host.NewSandboxLaunchPreparer(host.SandboxLaunchConfig{Inspector: inspector, Wrapper: wrapper, Bootstrap: bootstrap, Artifacts: artifacts, AgentDirectoriesMountIndividually: options.mountAgentDirectoriesIndividually})
 }

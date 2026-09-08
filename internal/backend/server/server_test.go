@@ -50,6 +50,7 @@ func TestIsolatedServerPersistsOfflineCatalogAcrossRestart(t *testing.T) {
 		data, err := io.ReadAll(res.Body)
 		return res.StatusCode, string(data), err
 	}
+	var endpointIdentity os.FileInfo
 	for round := 0; round < 2; round++ {
 		ctx, cancel := context.WithCancel(context.Background())
 		done := make(chan error, 1)
@@ -73,6 +74,22 @@ func TestIsolatedServerPersistsOfflineCatalogAcrossRestart(t *testing.T) {
 			}
 			time.Sleep(10 * time.Millisecond)
 		}
+		identity, statErr := os.Stat(AgentSocketDirectory(dir))
+		if statErr != nil {
+			cancel()
+			t.Fatal(statErr)
+		}
+		if endpointIdentity != nil && !os.SameFile(endpointIdentity, identity) {
+			cancel()
+			t.Fatal("restart replaced the shared endpoint directory")
+		}
+		endpointIdentity = identity
+		conn, dialErr := net.DialTimeout("unix", AgentSocketPath(dir), time.Second)
+		if dialErr != nil {
+			cancel()
+			t.Fatal(dialErr)
+		}
+		_ = conn.Close()
 		if round == 0 {
 			status, body, err := call("POST", "/v2/agents", `{"id":"worker","name":"offline","desired":{"Harness":"claude","WorkingDirectory":"/tmp","Approval":"supervised","Sandbox":"workspace_write"}}`)
 			if err != nil || status != 201 {

@@ -46,7 +46,7 @@ func (s *Service) PreviewSandboxPolicy(ctx context.Context, principal model.Prin
 		return SandboxPolicyPreview{}, fail(ErrUnavailable, "sandbox path inspection is not configured")
 	}
 	draft := model.SandboxProfileRef{ProfileID: model.SandboxProfileID("preview_" + hash[:55]), RevisionID: model.SandboxProfileRevisionID("preview_" + hash[:55]), ContentHash: hash}
-	closure, err := sandboxpolicy.Resolve(ctx, draft, sandboxDraftReader{store: s.store, ref: draft, policy: policy})
+	closure, err := sandboxpolicy.ResolveCurrent(ctx, draft, sandboxDraftReader{store: s.store, ref: draft, policy: policy})
 	if err != nil {
 		if errors.Is(err, sandboxpolicy.ErrInvalidClosure) {
 			return SandboxPolicyPreview{}, fail(ErrInvalid, "%v", err)
@@ -82,7 +82,7 @@ func (s *Service) PreviewSandboxPolicy(ctx context.Context, principal model.Prin
 }
 
 type sandboxDraftReader struct {
-	store  sandboxpolicy.RevisionReader
+	store  SandboxProfileStore
 	ref    model.SandboxProfileRef
 	policy model.SandboxPolicy
 }
@@ -92,4 +92,12 @@ func (r sandboxDraftReader) ReadSandboxRevision(ctx context.Context, ref model.S
 		return r.policy, nil
 	}
 	return r.store.ReadSandboxRevision(ctx, ref)
+}
+
+func (r sandboxDraftReader) CurrentSandboxRef(ctx context.Context, id model.SandboxProfileID) (model.SandboxProfileRef, error) {
+	if id == r.ref.ProfileID {
+		return r.ref, nil
+	}
+	profile, err := r.store.SandboxProfile(ctx, id)
+	return profile.Revision.Ref, err
 }

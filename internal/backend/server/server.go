@@ -100,7 +100,10 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry, jou
 		return err
 	}
 	defer func() { _ = store.Close() }()
-	socket := filepath.Join(dir, "api.sock")
+	socket, err := prepareAPIEndpoint(dir)
+	if err != nil {
+		return err
+	}
 	callbacks, err := transport.NewCallbackRegistry(socket)
 	if err != nil {
 		return err

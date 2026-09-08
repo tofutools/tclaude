@@ -26,19 +26,8 @@ func (s *Store) SaveConfigurationProfile(ctx context.Context, w app.Configuratio
 		return app.ConfigurationProfileResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	var fingerprint string
-	var payload []byte
-	err = tx.QueryRowContext(ctx, `SELECT fingerprint,result FROM configuration_profile_requests WHERE request_id=?`, w.RequestID).Scan(&fingerprint, &payload)
-	if err == nil {
-		if fingerprint != w.RequestFingerprint {
-			return app.ConfigurationProfileResult{}, app.ErrConflict
-		}
-		var prior app.ConfigurationProfileResult
-		err = json.Unmarshal(payload, &prior)
+	if prior, found, err := configurationProfileReceipt(ctx, tx, w.RequestID, w.RequestFingerprint); found || err != nil {
 		return prior, err
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return app.ConfigurationProfileResult{}, err
 	}
 	result, err := saveConfigurationProfileTx(ctx, tx, w, false)
 	if err != nil {
@@ -328,4 +317,26 @@ func requireProfileUnselected(ctx context.Context, tx *sql.Tx, id model.Configur
 		return err
 	}
 	return nil
+}
+
+func (s *Store) FindConfigurationProfileWrite(ctx context.Context, id model.RequestID, fingerprint string) (app.ConfigurationProfileResult, bool, error) {
+	return configurationProfileReceipt(ctx, s.db, id, fingerprint)
+}
+
+func configurationProfileReceipt(ctx context.Context, q queryer, id model.RequestID, expected string) (app.ConfigurationProfileResult, bool, error) {
+	var fingerprint string
+	var payload []byte
+	err := q.QueryRowContext(ctx, `SELECT fingerprint,result FROM configuration_profile_requests WHERE request_id=?`, id).Scan(&fingerprint, &payload)
+	if errors.Is(err, sql.ErrNoRows) {
+		return app.ConfigurationProfileResult{}, false, nil
+	}
+	if err != nil {
+		return app.ConfigurationProfileResult{}, false, err
+	}
+	if fingerprint != expected {
+		return app.ConfigurationProfileResult{}, true, app.ErrConflict
+	}
+	var prior app.ConfigurationProfileResult
+	err = json.Unmarshal(payload, &prior)
+	return prior, true, err
 }

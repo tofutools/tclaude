@@ -57,10 +57,10 @@ func (s *Store) SaveSandboxProfile(ctx context.Context, req app.SaveSandboxProfi
 		return app.SandboxProfileResult{}, err
 	}
 	ref := model.SandboxProfileRef{ProfileID: req.ID, RevisionID: revisionID, ContentHash: hash}
-	// Check the full immutable graph in this transaction, before publishing the
+	// Check the current include graph in this transaction, before publishing the
 	// fresh revision. A missing include cannot leave a partial profile or receipt.
 	reader := sandboxRevisionReader{query: tx, proposedRef: ref, proposed: req.Policy}
-	if _, err = sandboxpolicy.Resolve(ctx, ref, reader); err != nil {
+	if _, err = sandboxpolicy.ResolveCurrent(ctx, ref, reader); err != nil {
 		if errors.Is(err, sandboxpolicy.ErrInvalidClosure) {
 			return app.SandboxProfileResult{}, fmt.Errorf("%w: %v", app.ErrInvalid, err)
 		}
@@ -76,10 +76,11 @@ func (s *Store) SaveSandboxProfile(ctx context.Context, req app.SaveSandboxProfi
 		if err = json.Unmarshal(data, &previous); err != nil {
 			return app.SandboxProfileResult{}, err
 		}
-		if previous.Imported || previous.Archived || previous.Revision != req.ExpectedRevision {
+		if previous.Archived || previous.Revision != req.ExpectedRevision {
 			return app.SandboxProfileResult{}, app.ErrConflict
 		}
 		profile.CreatedAt = previous.CreatedAt
+		profile.Imported = previous.Imported
 	}
 	revision := model.SandboxProfileRevision{Ref: ref, Number: profile.Revision, Policy: req.Policy, Author: req.Context.Principal, RequestID: req.Context.RequestID, CreatedAt: now}
 	result := app.SandboxProfileResult{Profile: profile, Revision: revision}
@@ -242,7 +243,7 @@ func (s *Store) SetSandboxProfileArchived(ctx context.Context, req app.SetSandbo
 	if err = json.Unmarshal(revisionData, &result.Revision); err != nil {
 		return result, err
 	}
-	if result.Profile.Imported || result.Profile.Revision != req.ExpectedRevision {
+	if result.Profile.Revision != req.ExpectedRevision {
 		return app.SandboxProfileResult{}, app.ErrConflict
 	}
 	result.Profile.Archived = req.Archived
@@ -274,4 +275,23 @@ func (s *Store) SetSandboxProfileArchived(ctx context.Context, req app.SetSandbo
 		return app.SandboxProfileResult{}, err
 	}
 	return result, tx.Commit()
+}
+
+func (r sandboxRevisionReader) CurrentSandboxRef(ctx context.Context, id model.SandboxProfileID) (model.SandboxProfileRef, error) {
+	if id == r.proposedRef.ProfileID {
+		return r.proposedRef, nil
+	}
+	var data []byte
+	err := r.query.QueryRowContext(ctx, `SELECT r.document FROM sandbox_profiles p JOIN sandbox_profile_revisions r ON r.id=p.head_revision_id WHERE p.id=?`, id).Scan(&data)
+	if err != nil {
+		return model.SandboxProfileRef{}, classify(err)
+	}
+	var revision model.SandboxProfileRevision
+	if err = json.Unmarshal(data, &revision); err != nil {
+		return model.SandboxProfileRef{}, err
+	}
+	return revision.Ref, nil
+}
+func (s *Store) CurrentSandboxRef(ctx context.Context, id model.SandboxProfileID) (model.SandboxProfileRef, error) {
+	return (sandboxRevisionReader{query: s.db}).CurrentSandboxRef(ctx, id)
 }

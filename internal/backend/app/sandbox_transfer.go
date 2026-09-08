@@ -35,18 +35,38 @@ type SandboxTransferAPI interface {
 }
 
 func (s *Service) ExportSandboxBundle(ctx context.Context, p model.Principal, ref model.SandboxProfileRef) (sandboxpolicy.Bundle, error) {
-	closure, err := s.InspectSandboxClosure(ctx, p, ref)
+	if err := requireOperator(p); err != nil {
+		return sandboxpolicy.Bundle{}, err
+	}
+	closure, err := sandboxpolicy.ResolveCurrent(ctx, ref, s.store)
 	if err != nil {
 		return sandboxpolicy.Bundle{}, err
 	}
-	bundle := sandboxpolicy.Bundle{Format: sandboxpolicy.BundleFormat, Version: 1, Root: ref}
+	bundle := sandboxpolicy.Bundle{Format: sandboxpolicy.BundleFormat, Version: 1}
+	exported := map[model.SandboxProfileRevisionID]model.SandboxProfileRef{}
 	for _, entry := range closure.Entries {
 		profile, err := s.store.SandboxProfile(ctx, entry.Ref.ProfileID)
 		if err != nil {
 			return sandboxpolicy.Bundle{}, err
 		}
-		bundle.Entries = append(bundle.Entries, sandboxpolicy.BundleEntry{Ref: entry.Ref, Name: profile.Profile.Name, Policy: entry.Policy})
+		// The export is a self-contained copy of current behavior, including
+		// profiles imported with old revision-bearing include references.
+		// Children precede parents, so every serialized edge is already known.
+		policy := entry.Policy
+		policy.Includes = nil
+		for _, included := range closure.ResolvedIncludes[entry.Ref.RevisionID] {
+			policy.Includes = append(policy.Includes, exported[included.RevisionID])
+		}
+		hash, err := sandboxpolicy.ContentHash(policy)
+		if err != nil {
+			return sandboxpolicy.Bundle{}, err
+		}
+		exportedRef := entry.Ref
+		exportedRef.ContentHash = hash
+		exported[entry.Ref.RevisionID] = exportedRef
+		bundle.Entries = append(bundle.Entries, sandboxpolicy.BundleEntry{Ref: exportedRef, Name: profile.Profile.Name, Policy: policy})
 	}
+	bundle.Root = exported[closure.Root.RevisionID]
 	return s.InspectSandboxBundle(ctx, p, bundle)
 }
 func (s *Service) InspectSandboxBundle(ctx context.Context, p model.Principal, b sandboxpolicy.Bundle) (sandboxpolicy.Bundle, error) {
@@ -108,8 +128,19 @@ func PrepareSandboxImport(ctx context.Context, req ImportSandboxProfilesRequest,
 		policy := entry.Policy
 		for i, old := range policy.Includes {
 			replacement, ok := refs[old]
+			if !ok && old.RevisionID == "" {
+				for original, target := range refs {
+					if original.ProfileID == old.ProfileID {
+						replacement, ok = target, true
+						break
+					}
+				}
+			}
 			if !ok {
 				return SandboxImportResult{}, nil, ErrInvalid
+			}
+			if old.RevisionID == "" {
+				replacement = model.SandboxProfileRef{ProfileID: replacement.ProfileID}
 			}
 			policy.Includes[i] = replacement
 		}

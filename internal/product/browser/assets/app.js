@@ -44,20 +44,22 @@ function edit(title,fields,save,{skipUnchanged=false}={}){
  $('editor-title').textContent=presentation.label(title);$('editor-fields').replaceChildren();$('editor-error').hidden=true;let fingerprint='',submissionID='';
  for(const field of fields){
   const label=el('label',field.label);let input;
+  if(field.sandboxPolicies){field.control=new SandboxProfileAllowList(api,field.value);const container=el('fieldset');container.append(el('legend',field.label),field.control.host);$('editor-fields').append(container);continue}
   if(field.environment||field.environmentSets){field.control=field.environmentSets?new LaunchEnvironmentSets(field.value):new LaunchEnvironment(field.value,{inherited:field.inherited||{}});const container=el('fieldset');container.append(el('legend',field.label),field.control.host);$('editor-fields').append(container);continue}
-  if(field.options){input=el('select');for(const option of field.options){const o=el('option',typeof option==='string'?option:option.label);o.value=typeof option==='string'?option:option.value;input.append(o)}}
+  if(field.sandboxSelection){field.control=new SandboxSelectionControl(api,field.value);input=field.control.host;}
+  else if(field.options){input=el('select');for(const option of field.options){const o=el('option',typeof option==='string'?option:option.label);o.value=typeof option==='string'?option:option.value;input.append(o)}}
   else input=el(field.multiline?'textarea':'input');
   if(field.file)input.type='file';
   if(field.multiple)input.multiple=true;input.name=field.name;input.setAttribute('aria-label',field.label);
   if(field.options&&field.value!==undefined){const values=field.multiple?(field.value||[]):[String(field.value)];for(const value of values){if(!Array.from(input.options).some(o=>o.value===String(value))){const o=el('option','Retained: '+value);o.value=value;input.append(o)}}if(field.multiple){for(const o of input.options)o.selected=values.includes(o.value)}else input.value=field.value}
-  else if(!field.file&&!field.options)input.value=field.value??'';
-  input.required=field.required!==false;label.append(input);$('editor-fields').append(label);
+  else if(!field.file&&!field.options&&!field.sandboxSelection)input.value=field.value??'';
+  input.required=field.required!==false;label.append(input);if(field.sandboxSelection)label.append(field.control.status);$('editor-fields').append(label);
   if(field.help){const help=el('pre',field.help);help.id='editor-help-'+field.name;input.setAttribute('aria-describedby',help.id);label.append(help)}
   if(field.name==='cwd')label.append(button('Browse directories',async()=>{const {pickDirectory}=await import('./directory-picker.js');if(!input.isConnected||!$('editor').open)return;const selected=await pickDirectory({api,initial:input.value});if(selected!==null&&input.isConnected&&$('editor').open){input.value=selected;input.dispatchEvent(new Event('input',{bubbles:true}));}}));
  }
- const readForm=()=>{const data=new FormData($('editor-form')),form=Object.fromEntries(data);for(const field of fields){if(field.multiple)form[field.name]=data.getAll(field.name);if(field.environment||field.environmentSets)form[field.name]=field.control.read();}return form};const initial=JSON.stringify(readForm());
+ const readForm=()=>{const data=new FormData($('editor-form')),form=Object.fromEntries(data);for(const field of fields){if(field.multiple)form[field.name]=data.getAll(field.name);if(field.environment||field.environmentSets||field.sandboxPolicies)form[field.name]=field.control.read();}return form};const initial=JSON.stringify(readForm());
  $('editor-form').onsubmit=async e=>{e.preventDefault();if(submitting)return;submitting=true;$('cancel').disabled=true;const submit=e.submitter;if(submit)submit.disabled=true;
-  try{const form=readForm();if(skipUnchanged&&JSON.stringify(form)===initial){$('editor').close();return}const next=JSON.stringify(form,(_,value)=>value instanceof File?{name:value.name,size:value.size,modified:value.lastModified}:value);if(fingerprint!==next){fingerprint=next;submissionID=requestID()}form.requestID=submissionID;await save(form);await refresh();$('editor').close()}catch(error){showError(error)}finally{submitting=false;$('cancel').disabled=false;if(submit)submit.disabled=false}
+  try{const form=readForm();if(skipUnchanged&&JSON.stringify(form)===initial){$('editor').close();return}for(const field of fields){if(field.sandboxSelection)form[field.name]=await field.control.read(form[field.name]);}const next=JSON.stringify(form,(_,value)=>value instanceof File?{name:value.name,size:value.size,modified:value.lastModified}:value);if(fingerprint!==next){fingerprint=next;submissionID=requestID()}form.requestID=submissionID;await save(form);await refresh();$('editor').close()}catch(error){showError(error)}finally{submitting=false;$('cancel').disabled=false;if(submit)submit.disabled=false}
  };
  $('editor').showModal();
  attachLaunchSupportPreview({host:$('editor-fields'),api});
@@ -66,13 +68,14 @@ function desiredFields(desired={}){return[
  {name:'name',label:'Name',value:desired.name},
  {name:'harness',label:'Harness',value:desired.Harness||'claude',options:['claude','codex','opencode','copilot']},
  {name:'model',label:'Model',value:desired.Model},
+ {name:'host_sandbox',label:'Host sandbox profile',sandboxSelection:true,value:desired.HostSandbox||null},
  {name:'environment',label:'Environment — literal values for future launches',environment:true,value:desired.Environment||{}},
  {name:'effort',label:'Requested native effort / variant (optional)',value:desired.Effort||'',required:false},
  {name:'cwd',label:'Working directory',value:desired.WorkingDirectory},
  {name:'approval',label:'Approval',value:desired.Approval||'supervised',options:['supervised','automatic']},
  {name:'sandbox',label:'Confinement',value:desired.Sandbox||'workspace_write',options:['read_only','workspace_write','unconfined']}
 ]}
-function configuration(form){if(form.effort&&!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(form.effort))throw new Error('Requested native effort must start with a letter or digit and contain at most 64 lowercase letters, digits, underscores or hyphens.');return{Environment:form.environment||{},Harness:form.harness,Model:form.model,Effort:form.effort,WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
+function configuration(form){if(form.effort&&!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(form.effort))throw new Error('Requested native effort must start with a letter or digit and contain at most 64 lowercase letters, digits, underscores or hyphens.');return{...(form.host_sandbox?{HostSandbox:form.host_sandbox}:{}),Environment:form.environment||{},Harness:form.harness,Model:form.model,Effort:form.effort,WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
 async function startWithBrief(agent){
  const ref=agent.ConfigurationProfile;
  const saved=ref?await api(`/v2/configuration-profiles/${encodeURIComponent(ref.ProfileID)}?revision_id=${encodeURIComponent(ref.RevisionID)}`):null;
@@ -191,7 +194,7 @@ function workspaceCard(space){
  const actions=el('div',undefined,'actions');
  actions.append(button('Inspect',async()=>{await api(`/v2/workspaces/${encodeURIComponent(space.ID)}`);await refresh()}));
  if(space.State==='available'){
-  actions.append(button('Open shell',()=>edit('Open unconfined shell',[{name:'confirm',label:'This shell runs without OS confinement',options:['Start unconfined shell']}],f=>api('/v2/shells',{request_id:f.requestID,workspace_id:space.ID,expected_revision:space.Revision,sandbox:'unconfined'}))));
+  actions.append(button('Open shell',async()=>{const sandbox=await sandboxSelectionInput(api);if(!actions.isConnected)return;edit('Open shell',[sandbox.field],async f=>api('/v2/shells',{request_id:f.requestID,workspace_id:space.ID,expected_revision:space.Revision,sandbox:'unconfined',host_sandbox:await sandbox.read(f.host_sandbox)}))}));
   if(space.Intent?.Ownership==='owned'){const remove=button('Remove checkout',()=>edit('Remove checkout',[{name:'confirm',label:'Type the workspace ID to confirm removal'},{name:'dirty',label:'Uncommitted changes',options:[{value:'false',label:'Refuse if dirty'},{value:'true',label:'Discard uncommitted changes'}]}],f=>{if(f.confirm!==space.ID)throw new Error('Workspace ID does not match');return api('/v2/workspaces/remove',{request_id:f.requestID,workspace_id:space.ID,expected_revision:space.Revision,destructive:f.dirty==='true'})}));remove.disabled=claims.length>0;actions.append(remove);if(claims.length)card.append(el('p','Cleanup is blocked by active claims. Stop or settle the owning work before removal.'));}
  }else if(space.State==='removed')actions.append(button('Restore checkout',async id=>{await api('/v2/workspaces/restore',{request_id:id,workspace_id:space.ID,expected_revision:space.Revision});await refresh()}));
  for(const execution of snapshot.executions||[]){if((snapshot.workspace_uses||[]).some(u=>u.WorkspaceID===space.ID&&u.ExecutionID===execution.id&&!u.ReleasedAt)&& !['exited','failed'].includes(execution.state))actions.append(button(execution.workload==='shell'?'Attach shell':'Attach terminal',()=>attach(execution)),button(execution.workload==='shell'?'Stop shell':'Stop execution',async id=>{await api('/v2/stop',{request_id:id,execution_id:execution.id,force:false});await refresh()}))}

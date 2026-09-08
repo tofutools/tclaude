@@ -75,3 +75,19 @@ func InspectBundle(ctx context.Context, bundle Bundle) (Bundle, error) {
 	}
 	return out, nil
 }
+
+func (r bundleReader) CurrentSandboxRef(_ context.Context, id model.SandboxProfileID) (model.SandboxProfileRef, error) {
+	var ref model.SandboxProfileRef
+	for _, entry := range r {
+		if entry.Ref.ProfileID == id {
+			if ref.ProfileID != "" {
+				return ref, invalidClosure("ambiguous included profile")
+			}
+			ref = entry.Ref
+		}
+	}
+	if ref.ProfileID == "" {
+		return ref, invalidClosure("missing included profile")
+	}
+	return ref, nil
+}

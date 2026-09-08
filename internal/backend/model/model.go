@@ -83,7 +83,8 @@ type Group struct {
 }
 
 type DesiredConfiguration struct {
-	Environment Environment `json:",omitempty"`
+	HostSandbox *SandboxSelection `json:",omitempty"`
+	Environment Environment       `json:",omitempty"`
 	Harness     string
 	Model       string
 	// Effort is the requested native reasoning effort or variant, not observed effective effort.
@@ -175,6 +176,7 @@ type Execution struct {
 // ResolvedExecutionSpec is immutable after an Execution is admitted. Provider
 // implementations consume it but must not reinterpret desired configuration.
 type ResolvedExecutionSpec struct {
+	HostSandbox          *SandboxSelection    `json:",omitempty"`
 	ShellGroup           *ShellGroupSelection `json:",omitempty"`
 	Environment          Environment          `json:",omitempty"`
 	ConfigurationProfile *ConfigurationProfileRef

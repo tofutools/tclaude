@@ -575,6 +575,7 @@ type RestoreCheckoutRequest struct {
 }
 
 type StartShellRequest struct {
+	HostSandbox      *model.SandboxSelection    `json:",omitempty"`
 	Environment      model.Environment          `json:",omitempty"`
 	Group            *model.ShellGroupSelection `json:",omitempty"`
 	Context          RequestContext

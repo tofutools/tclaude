@@ -101,3 +101,26 @@ func materialize(composed Composition, scopes []ScopeSelection, catalog []Networ
 	out.ContentHash = hex.EncodeToString(digest[:])
 	return out, nil
 }
+
+// LaunchSelection projects a scope materialization into the immutable launch
+// identity. It verifies that the retained content has not changed since hashing.
+// Include-only previews must first resolve their explicit launch scope.
+func (p PolicyMaterialization) LaunchSelection() (model.SandboxSelection, error) {
+	if p.Version != 1 {
+		return model.SandboxSelection{}, invalidClosure("unsupported materialized sandbox identity")
+	}
+	out := model.SandboxSelection{Scopes: append([]model.SandboxScopeSelection(nil), p.Scopes...), PolicyHash: p.ContentHash}
+	if err := out.Validate(); err != nil {
+		return model.SandboxSelection{}, err
+	}
+	p.ContentHash = ""
+	encoded, err := json.Marshal(p)
+	if err != nil {
+		return model.SandboxSelection{}, err
+	}
+	digest := sha256.Sum256(encoded)
+	if hex.EncodeToString(digest[:]) != out.PolicyHash {
+		return model.SandboxSelection{}, invalidClosure("materialized sandbox content changed")
+	}
+	return out, nil
+}

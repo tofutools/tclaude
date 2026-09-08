@@ -19,7 +19,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,20 +41,30 @@ const (
 )
 
 type Config struct {
-	Executable  string
-	PrivateRoot string
-	AgentSocket string
-	Environment []string
-	HTTPClient  *http.Client
+	HostSandbox          *host.SandboxLaunchPreparer
+	AgentSocketDirectory string
+	Executable           string
+	PrivateRoot          string
+	// NativeDataDirectory is the trusted native XDG data/opencode directory.
+	// Fresh confined sessions copy only its login files into independent state.
+	NativeDataDirectory   string
+	NativeConfigDirectory string
+	AgentSocket           string
+	Environment           []string
+	HTTPClient            *http.Client
 }
 
 type Provider struct {
-	executable  string
-	privateRoot string
-	environment []string
-	httpClient  *http.Client
-	credentials host.ActionCredentialHost
-	agentSocket string
+	hostSandbox           *host.SandboxLaunchPreparer
+	agentSocketDirectory  string
+	executable            string
+	privateRoot           string
+	nativeDataDirectory   string
+	nativeConfigDirectory string
+	environment           []string
+	httpClient            *http.Client
+	credentials           host.ActionCredentialHost
+	agentSocket           string
 }
 
 func New(config Config) (*Provider, error) {
@@ -70,58 +79,72 @@ func New(config Config) (*Provider, error) {
 	if !filepath.IsAbs(config.PrivateRoot) {
 		return nil, fmt.Errorf("OpenCode private root must be absolute")
 	}
+	if config.NativeDataDirectory != "" && !filepath.IsAbs(config.NativeDataDirectory) {
+		return nil, fmt.Errorf("OpenCode native data directory must be absolute")
+	}
+	if config.NativeConfigDirectory != "" && !filepath.IsAbs(config.NativeConfigDirectory) {
+		return nil, fmt.Errorf("OpenCode native configuration directory must be absolute")
+	}
 	client := config.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Second}
 	}
 	return &Provider{
-		executable: resolved, privateRoot: filepath.Clean(config.PrivateRoot),
-		environment: append([]string(nil), config.Environment...), httpClient: client,
+		executable: resolved, privateRoot: filepath.Clean(config.PrivateRoot), nativeDataDirectory: config.NativeDataDirectory,
+		nativeConfigDirectory: config.NativeConfigDirectory,
+		environment:           append([]string(nil), config.Environment...), httpClient: client,
 		credentials: host.ActionCredentialHost{PrivateRoot: filepath.Join(config.PrivateRoot, "action-credentials")},
-		agentSocket: config.AgentSocket,
+		agentSocket: config.AgentSocket, hostSandbox: config.HostSandbox, agentSocketDirectory: config.AgentSocketDirectory,
 	}, nil
 }
 
 func (*Provider) Name() string { return Name }
-func (*Provider) Capabilities() ports.ProviderCapabilities {
+func (p *Provider) Capabilities() ports.ProviderCapabilities {
 	policy := supportedLaunchPolicy()
-	return ports.ProviderCapabilities{LaunchPolicy: &policy, PreparedInitialInput: true}
+	return ports.ProviderCapabilities{HostSandbox: p.hostSandbox != nil, LaunchPolicy: &policy, PreparedInitialInput: true}
 }
 func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 
 type evidence struct {
-	ExecutionID         string                         `json:"execution_id"`
-	NativeID            string                         `json:"native_id,omitempty"`
-	ParentID            string                         `json:"parent_id,omitempty"`
-	Intent              ports.StartIntent              `json:"intent,omitempty"`
-	ForkSourceID        string                         `json:"fork_source_id,omitempty"`
-	ForkPoint           string                         `json:"fork_point,omitempty"`
-	Endpoint            string                         `json:"endpoint"`
-	PasswordFile        string                         `json:"password_file"`
-	StateRoot           string                         `json:"state_root"`
-	Process             *host.ProcessIdentity          `json:"process,omitempty"`
-	AttemptMark         string                         `json:"attempt_marker"`
-	EphemeralState      bool                           `json:"ephemeral_state,omitempty"`
-	Access              *ports.ActionCredentialReceipt `json:"access,omitempty"`
-	ObservationSequence uint64                         `json:"observation_sequence,omitempty"`
-	ProviderOrder       string                         `json:"provider_order,omitempty"`
+	HostSandbox           *host.SandboxChildArtifact     `json:"host_sandbox,omitempty"`
+	HostSandboxPolicyHash string                         `json:"host_sandbox_policy_hash,omitempty"`
+	Control               *host.UnixControlIdentity      `json:"control,omitempty"`
+	ExecutionID           string                         `json:"execution_id"`
+	NativeID              string                         `json:"native_id,omitempty"`
+	ParentID              string                         `json:"parent_id,omitempty"`
+	Intent                ports.StartIntent              `json:"intent,omitempty"`
+	ForkSourceID          string                         `json:"fork_source_id,omitempty"`
+	ForkPoint             string                         `json:"fork_point,omitempty"`
+	Endpoint              string                         `json:"endpoint"`
+	PasswordFile          string                         `json:"password_file"`
+	StateRoot             string                         `json:"state_root"`
+	NativeConfigDirectory string                         `json:"native_config_directory,omitempty"`
+	Process               *host.ProcessIdentity          `json:"process,omitempty"`
+	AttemptMark           string                         `json:"attempt_marker"`
+	EphemeralState        bool                           `json:"ephemeral_state,omitempty"`
+	Access                *ports.ActionCredentialReceipt `json:"access,omitempty"`
+	ObservationSequence   uint64                         `json:"observation_sequence,omitempty"`
+	ProviderOrder         string                         `json:"provider_order,omitempty"`
 }
 
 type prepared struct {
-	provider      *Provider
-	request       ports.PreparationRequest
-	listener      net.Listener
-	endpoint      string
-	password      string
-	passwordFile  string
-	stateRoot     string
-	attemptMark   string
-	removeOnAbort bool
-	description   ports.PreparedDescription
-	access        *ports.ActionCredentialReceipt
-	mu            sync.Mutex
-	released      bool
-	aborted       bool
+	command               host.ProcessSpec
+	artifact              *host.SandboxChildArtifact
+	provider              *Provider
+	request               ports.PreparationRequest
+	listener              net.Listener
+	endpoint              string
+	password              string
+	passwordFile          string
+	stateRoot             string
+	nativeConfigDirectory string
+	attemptMark           string
+	removeOnAbort         bool
+	description           ports.PreparedDescription
+	access                *ports.ActionCredentialReceipt
+	mu                    sync.Mutex
+	released              bool
+	aborted               bool
 }
 
 type sessionRecord struct {
@@ -132,6 +155,13 @@ type sessionRecord struct {
 }
 
 func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest) (ports.PreparedAttempt, error) {
+	if request.Spec.HostSandbox == nil && request.HostSandboxPolicy != nil {
+		return nil, fmt.Errorf("OpenCode host sandbox materialization has no selected policy")
+	}
+	if request.Spec.HostSandbox != nil && (p.hostSandbox == nil || request.HostSandboxPolicy == nil) {
+		return nil, fmt.Errorf("OpenCode host sandbox preparation is unavailable")
+	}
+	request.Spec.HostSandbox = model.CloneSandboxSelection(request.Spec.HostSandbox)
 	if err := request.Spec.Environment.Validate(); err != nil {
 		return nil, err
 	}
@@ -241,7 +271,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		}
 		return nil, err
 	}
-	return &prepared{
+	prepared := &prepared{
 		provider: p, request: request, listener: listener, endpoint: endpoint,
 		password: password, passwordFile: passwordFile, stateRoot: stateRoot, attemptMark: attemptMark,
 		removeOnAbort: removeOnAbort, access: access,
@@ -267,7 +297,12 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 			},
 			Evidence: initial, AccessDelivery: access, InitialInput: initialInput,
 		},
-	}, nil
+	}
+	if err := prepared.prepareSandbox(ctx); err != nil {
+		_ = prepared.Abort(context.Background())
+		return nil, err
+	}
+	return prepared, nil
 }
 
 func (p *Provider) prepareHistory(ctx context.Context, request ports.PreparationRequest) (stateRoot string, removeOnAbort bool, nativeID string, err error) {
@@ -324,6 +359,16 @@ func (p *Provider) prepareHistory(ctx context.Context, request ports.Preparation
 			return "", false, "", err
 		}
 		stateRoot = filepath.Join(p.privateRoot, "execution-"+uuid.NewString())
+		if request.Spec.HostSandbox != nil {
+			if err := os.Mkdir(stateRoot, 0700); err != nil {
+				return "", false, "", err
+			}
+			if err := host.WriteProtectedFile(filepath.Join(stateRoot, ".tclaude-fork-input.json"), raw); err != nil {
+				_ = os.RemoveAll(stateRoot)
+				return "", false, "", err
+			}
+			return stateRoot, true, request.History.Native.Reference, nil
+		}
 		if err := importOpenCodeHistory(ctx, p, stateRoot, request.Spec.WorkingDirectory, raw, history, *request.History); err != nil {
 			return "", false, "", err
 		}
@@ -346,6 +391,9 @@ func (p *prepared) Abort(context.Context) error {
 	}
 	p.aborted = true
 	err := p.listener.Close()
+	if p.artifact != nil {
+		err = errors.Join(err, os.RemoveAll(filepath.Dir(p.artifact.Path)))
+	}
 	err = errors.Join(err, removeProtectedFile(p.passwordFile))
 	if p.removeOnAbort {
 		err = errors.Join(err, os.RemoveAll(p.stateRoot))
@@ -378,27 +426,21 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 			return ports.ReleaseResult{}, err
 		}
 	}
+	if p.artifact != nil {
+		if err := host.VerifySandboxChild(ctx, *p.artifact); err != nil {
+			return ports.ReleaseResult{}, err
+		}
+	}
 	if err := permit.Consume(ctx); err != nil {
 		return ports.ReleaseResult{}, fmt.Errorf("consume release permit: %w", err)
 	}
 	// OpenCode cannot inherit a listener. Close the reservation at the exact
 	// pre-start boundary; any later failure is reconciled as a retained attempt.
-	port := p.listener.Addr().(*net.TCPAddr).Port
 	if err := p.listener.Close(); err != nil {
 		return ports.ReleaseResult{}, fmt.Errorf("release endpoint reservation: %w", err)
 	}
 	p.released = true
-	process, err := host.StartProcess(host.ProcessSpec{
-		Executable: p.provider.executable,
-		Args:       []string{"serve", "--hostname", "127.0.0.1", "--port", strconv.Itoa(port), "--pure"},
-		Directory:  p.request.Spec.WorkingDirectory,
-		Env: append(append(p.provider.runtimeEnvironment(p.stateRoot), p.request.Spec.Environment.Entries()...),
-			"OPENCODE_SERVER_USERNAME="+serverUsername,
-			"OPENCODE_SERVER_PASSWORD="+p.password,
-			attemptMarkerKey+"="+p.attemptMark,
-			"TCLAUDE_BACKEND_CREDENTIAL_FILE="+accessResource(p.access),
-			"TCLAUDE_BACKEND_SOCKET="+agentSocket(p.access, p.provider.agentSocket)),
-	})
+	process, err := host.StartProcess(p.command)
 	if err != nil {
 		_ = removeProtectedFile(p.passwordFile)
 		if p.removeOnAbort {
@@ -410,6 +452,7 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 		return ports.ReleaseResult{}, fmt.Errorf("start OpenCode server: %w", err)
 	}
 	runtime := &Runtime{
+		artifact: p.artifact, policyHash: p.description.HostSandboxPolicyHash, nativeConfigDirectory: p.nativeConfigDirectory,
 		provider: p.provider, executionID: p.request.Spec.ExecutionID,
 		attempt: p.request.Spec.Attempt, observations: p.request.Observations,
 		process: process, endpoint: p.endpoint, password: p.password,
@@ -508,22 +551,11 @@ func importOpenCodeHistory(ctx context.Context, p *Provider, targetRoot, cwd str
 	if err != nil {
 		return fmt.Errorf("verify imported OpenCode history: %w", err)
 	}
-	if exported.Info.ID != expected.Info.ID || !reflect.DeepEqual(exported.Messages, expected.Messages) {
-		return fmt.Errorf("imported OpenCode history content does not match selected source")
-	}
+	beforeMessage := ""
 	if selection.Point != nil && selection.Point.Kind == model.HistoryPointBeforeMessage {
-		found := false
-		for _, message := range exported.Messages {
-			if message.Info.ID == selection.Point.Token {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return fmt.Errorf("imported OpenCode history point is unavailable")
-		}
+		beforeMessage = selection.Point.Token
 	}
-	return nil
+	return verifyImportedHistory(exported, expected, beforeMessage)
 }
 
 func accessResource(access *ports.ActionCredentialReceipt) string {
@@ -561,6 +593,15 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	if err != nil {
 		return ports.RecoveryResult{}, err
 	}
+	expectedHash := ""
+	if request.Spec.HostSandbox != nil {
+		expectedHash = request.Spec.HostSandbox.PolicyHash
+	}
+	if recorded.HostSandboxPolicyHash != expectedHash || (recorded.HostSandbox != nil) != (expectedHash != "") ||
+		(recorded.Control != nil && recorded.HostSandbox == nil) ||
+		(recorded.NativeConfigDirectory != "" && (recorded.HostSandbox == nil || !filepath.IsAbs(recorded.NativeConfigDirectory))) {
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
+	}
 	if recorded.ExecutionID != string(request.ExecutionID) || !validRandomToken(recorded.AttemptMark) ||
 		!pathWithin(p.privateRoot, recorded.StateRoot) ||
 		filepath.Clean(recorded.PasswordFile) != serverCredentialPath(recorded.StateRoot, recorded.AttemptMark) {
@@ -569,6 +610,8 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	var process *host.Process
 	if recorded.Process != nil {
 		process, err = host.RecoverProcess(*recorded.Process)
+	} else if recorded.HostSandbox != nil {
+		process, err = host.RecoverSandboxControlProcess(*recorded.HostSandbox)
 	} else {
 		process, err = host.RecoverProcessByEnvironment(attemptMarkerKey, recorded.AttemptMark)
 	}
@@ -609,6 +652,7 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		accessProof = &proof
 	}
 	runtime := &Runtime{
+		artifact: recorded.HostSandbox, policyHash: recorded.HostSandboxPolicyHash, controlIdentity: recorded.Control, nativeConfigDirectory: recorded.NativeConfigDirectory,
 		provider: p, executionID: request.ExecutionID, process: process,
 		attempt: request.Attempt, observations: request.Observations,
 		endpoint: recorded.Endpoint, password: string(passwordBytes), passwordFile: recorded.PasswordFile, stateRoot: recorded.StateRoot,
@@ -660,30 +704,36 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 }
 
 type Runtime struct {
-	provider            *Provider
-	executionID         model.ExecutionID
-	attempt             model.AttemptGeneration
-	observations        ports.PrimaryObservationSink
-	process             *host.Process
-	endpoint            string
-	password            string
-	passwordFile        string
-	stateRoot           string
-	cwd                 string
-	approval            model.ApprovalMode
-	sandbox             model.SandboxMode
-	model               string
-	effort              string
-	intent              ports.StartIntent
-	forkSourceID        string
-	forkPoint           string
-	attemptMark         string
-	access              *ports.ActionCredentialReceipt
-	contextReady        bool
-	observationSequence uint64
-	providerOrder       string
-	cleanupOnce         sync.Once
-	cleanupErr          error
+	artifact              *host.SandboxChildArtifact
+	policyHash            string
+	controlMu             sync.Mutex
+	controlIdentity       *host.UnixControlIdentity
+	controlTransport      *http.Transport
+	provider              *Provider
+	executionID           model.ExecutionID
+	attempt               model.AttemptGeneration
+	observations          ports.PrimaryObservationSink
+	process               *host.Process
+	endpoint              string
+	password              string
+	passwordFile          string
+	stateRoot             string
+	nativeConfigDirectory string
+	cwd                   string
+	approval              model.ApprovalMode
+	sandbox               model.SandboxMode
+	model                 string
+	effort                string
+	intent                ports.StartIntent
+	forkSourceID          string
+	forkPoint             string
+	attemptMark           string
+	access                *ports.ActionCredentialReceipt
+	contextReady          bool
+	observationSequence   uint64
+	providerOrder         string
+	cleanupOnce           sync.Once
+	cleanupErr            error
 
 	mu               sync.Mutex
 	nativeID         string
@@ -790,17 +840,29 @@ func (r *Runtime) Attach(ctx context.Context, request ports.AttachmentRequest) (
 	if err := r.health(ctx); err != nil || r.nativeID == "" {
 		return ports.AttachmentResult{Disposition: ports.EffectRefused}, err
 	}
-	cmd := exec.CommandContext(ctx, r.provider.executable, "attach", r.endpoint,
+	endpoint := r.endpoint
+	var closeRelay func()
+	if r.artifact != nil {
+		var err error
+		endpoint, closeRelay, err = r.sandboxAttachmentEndpoint(ctx)
+		if err != nil {
+			return ports.AttachmentResult{Disposition: ports.EffectRefused}, err
+		}
+	}
+	cmd := exec.CommandContext(ctx, r.provider.executable, "attach", endpoint,
 		"--dir", r.cwd, "--session", r.nativeID)
-	cmd.Env = host.MergeEnvironment(os.Environ(), append(r.provider.runtimeEnvironment(r.stateRoot),
+	cmd.Env = host.MergeEnvironment(os.Environ(), append(r.attachmentEnvironment(),
 		"OPENCODE_SERVER_USERNAME="+serverUsername,
 		"OPENCODE_SERVER_PASSWORD="+r.password))
 	file, err := pty.Start(cmd)
 	if err != nil {
+		if closeRelay != nil {
+			closeRelay()
+		}
 		return ports.AttachmentResult{Disposition: ports.EffectRefused}, err
 	}
 	r.attachmentActive.Store(true)
-	attachment := &terminalAttachment{file: file, cmd: cmd, active: &r.attachmentActive}
+	attachment := &terminalAttachment{file: file, cmd: cmd, active: &r.attachmentActive, closeRelay: closeRelay}
 	evidence, evidenceErr := r.providerEvidenceLocked()
 	if evidenceErr != nil {
 		_ = attachment.Close()
@@ -1062,12 +1124,17 @@ func (r *Runtime) do(ctx context.Context, method, path string, body any) (*http.
 	if err != nil || port < 1 || port > 65535 {
 		return nil, fmt.Errorf("OpenCode endpoint port is invalid")
 	}
-	owned, err := r.process.OwnsLoopbackPort(port)
-	if err != nil {
-		return nil, fmt.Errorf("prove OpenCode endpoint ownership: %w", err)
-	}
-	if !owned {
-		return nil, fmt.Errorf("OpenCode process does not own its recorded endpoint")
+	client := r.provider.httpClient
+	if r.artifact != nil {
+		client = r.sandboxHTTPClient()
+	} else {
+		owned, err := r.process.OwnsLoopbackPort(port)
+		if err != nil {
+			return nil, fmt.Errorf("prove OpenCode endpoint ownership: %w", err)
+		}
+		if !owned {
+			return nil, fmt.Errorf("OpenCode process does not own its recorded endpoint")
+		}
 	}
 	var reader io.Reader
 	if body != nil {
@@ -1085,7 +1152,7 @@ func (r *Runtime) do(ctx context.Context, method, path string, body any) (*http.
 	if body != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	return r.provider.httpClient.Do(request)
+	return client.Do(request)
 }
 
 func (r *Runtime) providerEvidence() (model.ProviderEvidence, error) {
@@ -1097,9 +1164,10 @@ func (r *Runtime) providerEvidence() (model.ProviderEvidence, error) {
 func (r *Runtime) providerEvidenceLocked() (model.ProviderEvidence, error) {
 	identity := r.process.Identity()
 	return encodeEvidence(evidence{
+		HostSandbox: r.artifact, HostSandboxPolicyHash: r.policyHash, Control: r.sandboxControlEvidence(),
 		ExecutionID: string(r.executionID), NativeID: r.nativeID, ParentID: r.parentID, Intent: r.intent,
 		ForkSourceID: r.forkSourceID, ForkPoint: r.forkPoint, Endpoint: r.endpoint,
-		PasswordFile: r.passwordFile, StateRoot: r.stateRoot, Process: &identity, AttemptMark: r.attemptMark,
+		PasswordFile: r.passwordFile, StateRoot: r.stateRoot, NativeConfigDirectory: r.nativeConfigDirectory, Process: &identity, AttemptMark: r.attemptMark,
 		Access: r.access, ObservationSequence: r.observationSequence, ProviderOrder: r.providerOrder,
 	})
 }
@@ -1190,10 +1258,11 @@ func permissionHasSuffix(current, expected []permissionRule) bool {
 }
 
 type terminalAttachment struct {
-	file   *os.File
-	cmd    *exec.Cmd
-	active *atomic.Bool
-	once   sync.Once
+	closeRelay func()
+	file       *os.File
+	cmd        *exec.Cmd
+	active     *atomic.Bool
+	once       sync.Once
 }
 
 var _ ports.ResizableAttachment = (*terminalAttachment)(nil)
@@ -1216,6 +1285,9 @@ func (a *terminalAttachment) Resize(ctx context.Context, size ports.TerminalSize
 func (a *terminalAttachment) Close() error {
 	var err error
 	a.once.Do(func() {
+		if a.closeRelay != nil {
+			a.closeRelay()
+		}
 		err = a.file.Close()
 		if a.cmd.Process != nil {
 			_ = a.cmd.Process.Kill()

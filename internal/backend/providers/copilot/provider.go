@@ -28,9 +28,11 @@ const (
 )
 
 type Config struct {
-	Executable     string
-	TmuxExecutable string
-	PrivateRoot    string
+	AgentSocketDirectory string
+	HostSandbox          *host.SandboxLaunchPreparer
+	Executable           string
+	TmuxExecutable       string
+	PrivateRoot          string
 	// NativeHome is a durable provider-owned COPILOT_HOME. Empty selects
 	// PrivateRoot/native-home; an override must remain inside PrivateRoot.
 	NativeHome  string
@@ -38,14 +40,16 @@ type Config struct {
 }
 
 type Provider struct {
-	executable      string
-	privateRoot     string
-	nativeHome      string
-	terminal        host.TerminalHost
-	credentials     host.ActionCredentialHost
-	agentSocket     string
-	observationRoot string
-	stateMu         sync.Mutex
+	agentSocketDirectory string
+	hostSandbox          *host.SandboxLaunchPreparer
+	executable           string
+	privateRoot          string
+	nativeHome           string
+	terminal             host.TerminalHost
+	credentials          host.ActionCredentialHost
+	agentSocket          string
+	observationRoot      string
+	stateMu              sync.Mutex
 }
 
 func New(config Config) (*Provider, error) {
@@ -68,7 +72,7 @@ func New(config Config) (*Provider, error) {
 		return nil, fmt.Errorf("copilot native home must be an absolute provider-owned path inside private root")
 	}
 	return &Provider{
-		executable: resolved, privateRoot: config.PrivateRoot, nativeHome: filepath.Clean(nativeHome),
+		agentSocketDirectory: config.AgentSocketDirectory, hostSandbox: config.HostSandbox, executable: resolved, privateRoot: config.PrivateRoot, nativeHome: filepath.Clean(nativeHome),
 		terminal:    host.TerminalHost{Executable: config.TmuxExecutable, PrivateRoot: filepath.Join(config.PrivateRoot, "terminals")},
 		credentials: host.ActionCredentialHost{PrivateRoot: filepath.Join(config.PrivateRoot, "action-credentials")},
 		agentSocket: config.AgentSocket, observationRoot: filepath.Join(config.PrivateRoot, "observations"),
@@ -76,28 +80,32 @@ func New(config Config) (*Provider, error) {
 }
 
 func (*Provider) Name() string { return Name }
-func (*Provider) Capabilities() ports.ProviderCapabilities {
+func (p *Provider) Capabilities() ports.ProviderCapabilities {
 	policy := supportedLaunchPolicy()
-	return ports.ProviderCapabilities{LaunchPolicy: &policy, PreparedInitialInput: true}
+	return ports.ProviderCapabilities{HostSandbox: p.hostSandbox != nil, LaunchPolicy: &policy, PreparedInitialInput: true}
 }
 func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 func (p *Provider) History() ports.HistoryReader                      { return historyReader{provider: p} }
 
 type evidence struct {
-	ExecutionID      string                         `json:"execution_id"`
-	NativeID         string                         `json:"native_id"`
-	Intent           ports.StartIntent              `json:"intent"`
-	StateRoot        string                         `json:"state_root"`
-	RemoveOnAbort    bool                           `json:"remove_on_abort,omitempty"`
-	ContextReady     bool                           `json:"context_ready,omitempty"`
-	ProviderOrder    string                         `json:"provider_order,omitempty"`
-	Prepared         *host.PreparedTerminalIdentity `json:"prepared,omitempty"`
-	Terminal         *host.TerminalIdentity         `json:"terminal,omitempty"`
-	Access           *ports.ActionCredentialReceipt `json:"access,omitempty"`
-	ObservationSpool string                         `json:"observation_spool"`
+	HostSandbox           *host.SandboxChildArtifact     `json:"host_sandbox,omitempty"`
+	HostSandboxPolicyHash string                         `json:"host_sandbox_policy_hash,omitempty"`
+	ExecutionID           string                         `json:"execution_id"`
+	NativeID              string                         `json:"native_id"`
+	Intent                ports.StartIntent              `json:"intent"`
+	StateRoot             string                         `json:"state_root"`
+	RemoveOnAbort         bool                           `json:"remove_on_abort,omitempty"`
+	ContextReady          bool                           `json:"context_ready,omitempty"`
+	ProviderOrder         string                         `json:"provider_order,omitempty"`
+	Prepared              *host.PreparedTerminalIdentity `json:"prepared,omitempty"`
+	Terminal              *host.TerminalIdentity         `json:"terminal,omitempty"`
+	Access                *ports.ActionCredentialReceipt `json:"access,omitempty"`
+	ObservationSpool      string                         `json:"observation_spool"`
 }
 
 type prepared struct {
+	artifact      *host.SandboxChildArtifact
+	command       host.ProcessSpec
 	provider      *Provider
 	request       ports.PreparationRequest
 	nativeID      string
@@ -110,6 +118,14 @@ type prepared struct {
 }
 
 func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest) (ports.PreparedAttempt, error) {
+	if request.Spec.HostSandbox == nil && request.HostSandboxPolicy != nil {
+		return nil, fmt.Errorf("sandbox materialization has no selected identity")
+	}
+	if request.Spec.HostSandbox != nil && (p.hostSandbox == nil || request.HostSandboxPolicy == nil) {
+		return nil, fmt.Errorf("selected host sandbox preparation is unavailable")
+	}
+	request.Spec.HostSandbox = model.CloneSandboxSelection(request.Spec.HostSandbox)
+
 	if err := request.Spec.Environment.Validate(); err != nil {
 		return nil, err
 	}
@@ -197,11 +213,16 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		}
 		return nil, err
 	}
-	return &prepared{provider: p, request: request, nativeID: nativeID, stateRoot: stateRoot, removeOnAbort: removeOnAbort, terminal: terminal, spool: spool, access: access,
+	result := &prepared{provider: p, request: request, nativeID: nativeID, stateRoot: stateRoot, removeOnAbort: removeOnAbort, terminal: terminal, spool: spool, access: access,
 		description: ports.PreparedDescription{ExecutionID: request.Spec.ExecutionID, Attempt: request.Spec.Attempt, Topology: ports.TopologyTerminalAuthoritative,
 			Requirements:    ports.RuntimeRequirements{Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory, PrivateStorage: true, Terminal: &ports.TerminalRequirement{Interactive: true}, Policy: supportedLaunchPolicy()},
 			EffectivePolicy: ports.EffectivePolicy{Approval: request.Spec.Approval, Sandbox: request.Spec.Sandbox, ApprovalEnforced: true, SandboxEnforced: true},
-			Resources:       []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: terminal.ResourceKey()}, {Kind: ports.ResourceProcess, Key: stateRoot}}, Evidence: initial, AccessDelivery: access, InitialInput: initialInput}}, nil
+			Resources:       []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: terminal.ResourceKey()}, {Kind: ports.ResourceProcess, Key: stateRoot}}, Evidence: initial, AccessDelivery: access, InitialInput: initialInput}}
+	if err := result.prepareSandbox(ctx); err != nil {
+		_ = result.Abort(context.WithoutCancel(ctx))
+		return nil, err
+	}
+	return result, nil
 }
 
 func (p *Provider) prepareHistory(request ports.PreparationRequest) (string, string, bool, error) {
@@ -260,6 +281,9 @@ func (p *Provider) prepareStateRoot(root, cwd string) error {
 func (p *prepared) Describe() ports.PreparedDescription { return p.description }
 func (p *prepared) Abort(ctx context.Context) error {
 	err := p.terminal.Abort()
+	if err == nil && p.artifact != nil {
+		err = errors.Join(err, os.RemoveAll(filepath.Dir(p.artifact.Path)))
+	}
 	err = errors.Join(err, p.spool.Remove())
 	if p.access != nil {
 		err = errors.Join(err, p.provider.credentials.RemoveActionCredential(ctx, *p.access))
@@ -273,10 +297,15 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 	if permit == nil || permit.ExecutionID() != p.request.Spec.ExecutionID {
 		return ports.ReleaseResult{}, fmt.Errorf("release permit does not match execution")
 	}
+	if p.artifact != nil {
+		if err := host.VerifySandboxChild(ctx, *p.artifact); err != nil {
+			return ports.ReleaseResult{}, err
+		}
+	}
 	if err := permit.Consume(ctx); err != nil {
 		return ports.ReleaseResult{}, fmt.Errorf("consume release permit: %w", err)
 	}
-	terminal, err := p.terminal.Release(host.ProcessSpec{Executable: p.provider.executable, Args: p.argv(), Directory: p.request.Spec.WorkingDirectory, Env: p.runtimeEnvironment()})
+	terminal, err := p.terminal.Release(p.command)
 	if err != nil {
 		if terminal != nil {
 			r := p.runtime(terminal)
@@ -338,7 +367,7 @@ func (p *prepared) runtimeEnvironment() []string {
 	return append(p.request.Spec.Environment.Entries(), result...)
 }
 func (p *prepared) runtime(t *host.Terminal) *Runtime {
-	return &Runtime{provider: p.provider, executionID: p.request.Spec.ExecutionID, attempt: p.request.Spec.Attempt, terminal: t, nativeID: p.nativeID, intent: p.request.Intent, stateRoot: p.stateRoot, observations: p.request.Observations, access: p.access, spool: p.spool}
+	return &Runtime{artifact: p.artifact, policyHash: p.description.HostSandboxPolicyHash, provider: p.provider, executionID: p.request.Spec.ExecutionID, attempt: p.request.Spec.Attempt, terminal: t, nativeID: p.nativeID, intent: p.request.Intent, stateRoot: p.stateRoot, observations: p.request.Observations, access: p.access, spool: p.spool}
 }
 
 func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (ports.RecoveryResult, error) {
@@ -348,6 +377,13 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	recorded, err := decodeEvidence(request.Evidence)
 	if err != nil {
 		return ports.RecoveryResult{}, err
+	}
+	expectedHash := ""
+	if request.Spec.HostSandbox != nil {
+		expectedHash = request.Spec.HostSandbox.PolicyHash
+	}
+	if recorded.HostSandboxPolicyHash != expectedHash || (recorded.HostSandbox != nil) != (expectedHash != "") {
+		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
 	}
 	if recorded.ExecutionID != string(request.ExecutionID) || filepath.Clean(recorded.StateRoot) != p.nativeHome {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
@@ -385,12 +421,14 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		}
 		proof = &v
 	}
-	r := &Runtime{provider: p, executionID: request.ExecutionID, attempt: request.Attempt, terminal: terminal, nativeID: recorded.NativeID, intent: recorded.Intent, stateRoot: recorded.StateRoot, observations: request.Observations, access: recorded.Access, spool: spool, contextReady: recorded.ContextReady, providerOrder: recorded.ProviderOrder}
+	r := &Runtime{artifact: recorded.HostSandbox, policyHash: recorded.HostSandboxPolicyHash, provider: p, executionID: request.ExecutionID, attempt: request.Attempt, terminal: terminal, nativeID: recorded.NativeID, intent: recorded.Intent, stateRoot: recorded.StateRoot, observations: request.Observations, access: recorded.Access, spool: spool, contextReady: recorded.ContextReady, providerOrder: recorded.ProviderOrder}
 	obs, _ := r.Observe(ctx)
 	return ports.RecoveryResult{State: ports.RecoveryControlled, Runtime: r, Observation: obs, Evidence: request.Evidence, Attempt: request.Attempt, AccessProof: proof}, nil
 }
 
 type Runtime struct {
+	artifact      *host.SandboxChildArtifact
+	policyHash    string
 	provider      *Provider
 	executionID   model.ExecutionID
 	attempt       model.AttemptGeneration
@@ -490,7 +528,7 @@ func (r *Runtime) providerEvidence() (model.ProviderEvidence, error) {
 }
 func (r *Runtime) providerEvidenceUnlocked() (model.ProviderEvidence, error) {
 	id := r.terminal.Identity()
-	return encodeEvidence(evidence{ExecutionID: string(r.executionID), NativeID: r.nativeID, Intent: r.intent, StateRoot: r.stateRoot, ContextReady: r.contextReady, ProviderOrder: r.providerOrder, Terminal: &id, Access: r.access, ObservationSpool: r.spool.Directory()})
+	return encodeEvidence(evidence{HostSandbox: r.artifact, HostSandboxPolicyHash: r.policyHash, ExecutionID: string(r.executionID), NativeID: r.nativeID, Intent: r.intent, StateRoot: r.stateRoot, ContextReady: r.contextReady, ProviderOrder: r.providerOrder, Terminal: &id, Access: r.access, ObservationSpool: r.spool.Directory()})
 }
 func (r *Runtime) cleanup(ctx context.Context) {
 	r.cleanupOnce.Do(func() {

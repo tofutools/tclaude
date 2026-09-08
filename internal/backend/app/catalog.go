@@ -20,6 +20,10 @@ type ConfigurationCatalogStore interface {
 	ConfigurationProfiles(context.Context) ([]model.ConfigurationProfile, error)
 }
 
+type ConfigurationProfileRequestStore interface {
+	FindConfigurationProfileWrite(context.Context, model.RequestID, string) (ConfigurationProfileResult, bool, error)
+}
+
 type ConfigurationProfileWrite struct {
 	Profile            model.ConfigurationProfile
 	Revision           model.ConfigurationProfileRevision
@@ -57,8 +61,21 @@ func (s *Service) SaveConfigurationProfile(ctx context.Context, req SaveConfigur
 	if err := requireOperator(req.Context.Principal); err != nil {
 		return ConfigurationProfileResult{}, err
 	}
+	if req.Desired.HostSandbox != nil {
+		choice := req.Desired.HostSandbox.References()
+		req.Desired.HostSandbox = &choice
+	}
 	w, err := prepareConfigurationProfile(req, s.now())
 	if err != nil {
+		return ConfigurationProfileResult{}, err
+	}
+	if receipts, ok := s.store.(ConfigurationProfileRequestStore); ok {
+		prior, found, err := receipts.FindConfigurationProfileWrite(ctx, w.RequestID, w.RequestFingerprint)
+		if found || err != nil {
+			return prior, err
+		}
+	}
+	if err := s.verifyLaunchSandbox(ctx, req.Desired.HostSandbox); err != nil {
 		return ConfigurationProfileResult{}, err
 	}
 	return s.store.SaveConfigurationProfile(ctx, w)
@@ -130,7 +147,11 @@ func (s *Service) ListConfigurationProfiles(ctx context.Context, principal model
 // configuration values, and a later catalog edit cannot change this selection.
 func (s *Service) resolveConfigurationSelection(ctx context.Context, desired model.DesiredConfiguration, selected *model.ConfigurationProfileRef) (model.DesiredConfiguration, *model.ConfigurationProfileRef, error) {
 	if selected == nil {
-		return desired, nil, nil
+		if desired.HostSandbox != nil {
+			choice := desired.HostSandbox.References()
+			desired.HostSandbox = &choice
+		}
+		return desired, nil, s.verifyLaunchSandbox(ctx, desired.HostSandbox)
 	}
 	if !desired.Equal(model.DesiredConfiguration{}) || selected.ProfileID == "" || selected.RevisionID == "" || selected.ContentHash == "" {
 		return desired, nil, fail(ErrInvalid, "select an exact configuration profile or supply desired fields")
@@ -141,6 +162,9 @@ func (s *Service) resolveConfigurationSelection(ctx context.Context, desired mod
 	}
 	if result.Profile.Archived || result.Revision.Ref != *selected {
 		return desired, nil, ErrConflict
+	}
+	if err := s.verifyLaunchSandbox(ctx, result.Revision.Desired.HostSandbox); err != nil {
+		return desired, nil, err
 	}
 	ref := result.Revision.Ref
 	return result.Revision.Desired, &ref, nil

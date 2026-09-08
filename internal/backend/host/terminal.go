@@ -146,6 +146,9 @@ func (p *PreparedTerminal) Release(spec ProcessSpec) (*Terminal, error) {
 	if strings.TrimSpace(spec.Executable) == "" {
 		return nil, fmt.Errorf("workload executable is required")
 	}
+	if len(spec.ExtraFiles) != 0 {
+		return nil, fmt.Errorf("terminal workloads require child-side descriptor preparation")
+	}
 	p.released = true
 	args := []string{"-S", p.socketPath, "-f", "/dev/null", "new-session", "-d", "-P", "-F", "#{session_name}\t#{pane_id}\t#{pane_pid}", "-s", p.session}
 	if spec.Directory != "" {

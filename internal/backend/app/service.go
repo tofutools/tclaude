@@ -310,6 +310,11 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		return OperationResult{}, fail(ErrUnavailable, "harness %q has no provider", desired.Harness)
 	}
 
+	hostSandboxPolicy, err := s.prepareProviderSandbox(ctx, provider, desired.HostSandbox)
+	if err != nil {
+		return OperationResult{}, err
+	}
+
 	if req.InitialMessage != "" && !provider.Capabilities().PreparedInitialInput {
 		return OperationResult{}, fail(ErrUnsupported, "provider cannot prepare an initial message before first work")
 	}
@@ -336,6 +341,13 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		operationID = model.OperationID(s.newID("op_"))
 	}
 	spec := resolvedSpec(executionID, agent.ID, desired, conversationID)
+	if hostSandboxPolicy != nil {
+		preparedSelection, selectionErr := hostSandboxPolicy.LaunchSelection()
+		if selectionErr != nil {
+			return OperationResult{}, selectionErr
+		}
+		spec.HostSandbox = &preparedSelection
+	}
 	spec.ConfigurationProfile = agent.ConfigurationProfile
 	execution := model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, State: model.ExecutionReserved, Attempt: 1, ContextReadiness: model.ContextReadinessPending, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	if err := s.requireNativeGuidanceComposition(ctx, execution); err != nil {
@@ -382,7 +394,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancelWorkflow()
 
-	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{Spec: spec, Intent: intent, Continuation: continuation, History: options.history, InitialInput: initialInput, PriorEvidence: priorEvidence, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, spec.Attempt, provider.Name()), NativeGuidance: s.boundNativeGuidance(model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, Attempt: spec.Attempt}), AgentAPIEndpoint: s.agentAPIEndpoint, CallbackIngress: s.callbackIngress})
+	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{HostSandboxPolicy: hostSandboxPolicy, Spec: spec, Intent: intent, Continuation: continuation, History: options.history, InitialInput: initialInput, PriorEvidence: priorEvidence, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, spec.Attempt, provider.Name()), NativeGuidance: s.boundNativeGuidance(model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, Attempt: spec.Attempt}), AgentAPIEndpoint: s.agentAPIEndpoint, CallbackIngress: s.callbackIngress})
 	if err != nil {
 		settlementCtx, cancelSettlement := settlementContext(ctx)
 		defer cancelSettlement()
@@ -1078,7 +1090,7 @@ func completionFromDisposition(operation model.Operation, execution model.Execut
 }
 
 func resolvedSpec(executionID model.ExecutionID, agentID model.AgentID, desired model.DesiredConfiguration, conversationID model.ConversationID) model.ResolvedExecutionSpec {
-	return model.ResolvedExecutionSpec{ExecutionID: executionID, Workload: model.ExecutionWorkloadHarness, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, Effort: desired.Effort, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox, Environment: desired.Environment.Clone()}
+	return model.ResolvedExecutionSpec{HostSandbox: model.CloneSandboxSelection(desired.HostSandbox), ExecutionID: executionID, Workload: model.ExecutionWorkloadHarness, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, Effort: desired.Effort, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox, Environment: desired.Environment.Clone()}
 }
 
 func actionForOperation(kind model.OperationKind) model.Action {
@@ -1099,6 +1111,14 @@ func actionForOperation(kind model.OperationKind) model.Action {
 }
 
 func validatePrepared(provider string, spec model.ResolvedExecutionSpec, description ports.PreparedDescription) error {
+	expectedHostPolicy := ""
+	if spec.HostSandbox != nil {
+		expectedHostPolicy = spec.HostSandbox.PolicyHash
+	}
+	if description.HostSandboxPolicyHash != expectedHostPolicy {
+		return fail(ErrInvalid, "provider did not confirm exact host sandbox policy")
+	}
+
 	if description.ExecutionID != spec.ExecutionID {
 		return fail(ErrInvalid, "provider prepared execution %s, want %s", description.ExecutionID, spec.ExecutionID)
 	}
@@ -1161,6 +1181,9 @@ func settlementContext(requestContext context.Context) (context.Context, context
 }
 
 func validateDesired(desired model.DesiredConfiguration) error {
+	if err := model.ValidateSandboxSelection(desired.HostSandbox); err != nil {
+		return fail(ErrInvalid, "%v", err)
+	}
 	if err := desired.Environment.Validate(); err != nil {
 		return fail(ErrInvalid, "%v", err)
 	}
