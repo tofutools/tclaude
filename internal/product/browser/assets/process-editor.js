@@ -7,18 +7,19 @@ const element = (tag, text) => { const node = document.createElement(tag); if (t
 const action = (label, handler) => { const node = element('button', label); node.type = 'button'; node.onclick = handler; return node; };
 const option = (value, label = value) => ({value, label});
 
-export async function openProcessEditor({api, result, agents = [], onSaved}) {
+export async function openProcessEditor({api, result, draft, agents = [], onSaved, canOpen = () => true}) {
   const profiles = await api('/v2/program-profiles');
   const revisions = await Promise.all((profiles || []).map(profile => api('/v2/program-profiles/' + encodeURIComponent(profile.ID))));
   const saved = await api('/v2/configuration-profiles');
   const configurations = await Promise.all((saved||[]).filter(p=>!p.Archived).map(p=>api('/v2/configuration-profiles/'+encodeURIComponent(p.ID)+'?revision_id='+encodeURIComponent(p.CurrentRevisionID))));
-  return new ProcessEditor({api, result, agents, revisions, configurations, onSaved});
+  if (!canOpen()) return;
+  return new ProcessEditor({api, result, draft, agents, revisions, configurations, onSaved});
 }
 
 class ProcessEditor {
-  constructor({api, result, agents, revisions, configurations, onSaved}) {
+  constructor({api, result, draft, agents, revisions, configurations, onSaved}) {
     this.configurations=configurations; this.api = api; this.agents = agents; this.revisions = revisions; this.onSaved = onSaved;
-    this.model = new ProcessDraft(result ? draftFromResult(result) : newProcess());
+    this.model = new ProcessDraft(draft ? clone(draft) : result ? draftFromResult(result) : newProcess());
     this.baseRevision = result?.Definition.Revision || 0;
     this.saved = JSON.stringify(this.model.value); this.selection = new Set(); this.clipboard = null;
     this.pending = null; this.busy = false; this.unapplied = false;

@@ -1505,3 +1505,25 @@ used alone. When both are present, the admitted decision displays the question,
 a blank line, then the context as literal text. Explicit process parameters apply
 to both fields; saved revisions retain the original authored text. Existing
 prompt-only definitions retain their original presentation and serialization.
+
+### Legacy process source import
+
+The process catalog's **Import legacy process** action inspects a YAML or JSON
+`ProcessTemplate` using the retained v1 authoring parser. Inspection reports
+source diagnostics and the performers that require explicit target mappings.
+Human audiences are selected by stable identity, worker settings are independent
+copies of selected configurations, and program mappings require an exact pinned
+profile with the same literal executable and no argument prefix. Source profile
+names never select a target implicitly.
+
+Conversion returns an unsaved draft. **Open unsaved copy** opens the ordinary
+process editor; only **Save revision** publishes a new definition. Neither
+inspection nor conversion starts work, creates workers, or changes source
+profiles. The original source remains available in the editor's Source view.
+Selecting another file invalidates the earlier preview even if the new file
+cannot be read.
+
+The converter currently reports rather than approximates structural joins,
+ordinary multi-verdict routes, and numeric values that the editor cannot yet
+round-trip exactly. A refusal leaves the source intact for inspection and does
+not publish a partial definition.
