@@ -45,3 +45,19 @@ body.slop{background:#150d1c;color:#f9e9ad}body.slop header,body.slop nav{backgr
 
 /* Sandbox authoring keeps the legacy expandable section and row structure. */
 .sandbox-editor{width:min(1000px,94vw);max-height:92vh;overflow:auto}.sandbox-editor fieldset{border:0;padding:0}.sandbox-editor label{display:flex;flex-direction:column;gap:.3rem;margin:.4rem 0}.sandbox-editor input,.sandbox-editor textarea,.sandbox-editor select{max-width:100%;box-sizing:border-box}.sandbox-editor textarea{min-height:6rem;width:100%;font-family:monospace}.sandbox-section{border:1px solid var(--border,#485160);border-radius:6px;padding:.7rem;margin:.7rem 0}.sandbox-section>summary{cursor:pointer;font-weight:600}.sandbox-row{border-bottom:1px solid var(--border,#485160);padding:.6rem 0}.sandbox-editor button{margin:.3rem}.sandbox-editor code{overflow-wrap:anywhere}
+
+/* Keep workspace controls reachable when the browser shares the desktop. */
+body>header{flex-wrap:wrap}
+body>nav{overflow-x:auto;max-width:100%;gap:8px}
+body>nav>button{flex:none;white-space:nowrap}
+.toolbar,.actions{flex-wrap:wrap}
+.toolbar>*{min-width:0;max-width:100%}
+.row,.card,.group,main>section{min-width:0;overflow-wrap:anywhere}
+dialog{min-width:min(380px,calc(100vw - 24px));max-width:calc(100vw - 24px);max-height:calc(100dvh - 24px);overflow:auto}
+#editor-fields input,#editor-fields select,#editor-fields textarea{min-width:0;max-width:100%}
+@media(max-width:600px){
+ body>header,body>nav{padding:10px 12px;gap:8px}
+ body>header #connection{flex:1;min-width:120px}
+ main{padding:12px}
+ .row .actions{margin-left:0}
+}
