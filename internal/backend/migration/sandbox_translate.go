@@ -84,7 +84,7 @@ func (t *translator) translateSandboxProfiles(batch *app.ImportBatch) {
 		revisionID := model.SandboxProfileRevisionID(stableImportID("sbr", t.inspection.Source.DatabaseHash, "sandbox_profiles\x00"+row.Key+"\x00"+hash))
 		at := timeValue(row.Values["created_at"])
 		result := app.SandboxProfileResult{
-			Profile:  model.SandboxProfile{ID: id, Name: name, HeadRevisionID: revisionID, Archived: true, Imported: true, Revision: 1, CreatedAt: at, UpdatedAt: firstTime(timeValue(row.Values["updated_at"]), at)},
+			Profile:  model.SandboxProfile{ID: id, Name: name, HeadRevisionID: revisionID, Archived: false, Imported: true, Revision: 1, CreatedAt: at, UpdatedAt: firstTime(timeValue(row.Values["updated_at"]), at)},
 			Revision: model.SandboxProfileRevision{Ref: model.SandboxProfileRef{ProfileID: id, RevisionID: revisionID, ContentHash: hash}, Number: 1, Policy: policy, CreatedAt: at},
 		}
 		reader[result.Revision.Ref] = policy
@@ -108,7 +108,7 @@ func (t *translator) translateSandboxProfiles(batch *app.ImportBatch) {
 			record := &batch.SourceRecords[i]
 			if record.SourceTable == "sandbox_profiles" && record.SourceKey == row.Key {
 				record.Conversion = string(ConversionReady)
-				record.ReasonCode = "sandbox_profile_archived_without_activation"
+				record.ReasonCode = "sandbox_profile_available_without_execution"
 			}
 		}
 	}

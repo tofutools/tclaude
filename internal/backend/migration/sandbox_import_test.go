@@ -36,7 +36,7 @@ func sandboxImportFixture(t *testing.T) Bundle {
 	return bundle
 }
 
-func TestImportedSandboxProfilesStayArchivedWithExactClosureAndRetry(t *testing.T) {
+func TestImportedSandboxProfilesRemainAvailableWithClosureAndRetry(t *testing.T) {
 	ctx := context.Background()
 	bundle := sandboxImportFixture(t)
 	destination := filepath.Join(t.TempDir(), "target.sqlite")
@@ -48,13 +48,13 @@ func TestImportedSandboxProfilesStayArchivedWithExactClosureAndRetry(t *testing.
 	service := app.New(store, providers.NewRegistry())
 	active, err := service.ListSandboxProfiles(ctx, model.OperatorPrincipal(), false)
 	require.NoError(t, err)
-	require.Empty(t, active)
+	require.Len(t, active, 2)
 	profiles, err := service.ListSandboxProfiles(ctx, model.OperatorPrincipal(), true)
 	require.NoError(t, err)
 	require.Len(t, profiles, 2)
 	var child app.SandboxProfileResult
 	for _, profile := range profiles {
-		require.True(t, profile.Archived)
+		require.False(t, profile.Archived)
 		require.True(t, profile.Imported)
 		if profile.Name == "Child" {
 			child, err = service.GetSandboxProfile(ctx, model.OperatorPrincipal(), profile.ID)
@@ -76,7 +76,7 @@ func TestImportedSandboxProfilesStayArchivedWithExactClosureAndRetry(t *testing.
 	require.NoError(t, err)
 	for _, record := range report.Records {
 		if record.SourceTable == "sandbox_profiles" {
-			require.Equal(t, "sandbox_profile_archived_without_activation", record.ReasonCode)
+			require.Equal(t, "sandbox_profile_available_without_execution", record.ReasonCode)
 		}
 	}
 	require.NoError(t, store.Close())
@@ -84,10 +84,10 @@ func TestImportedSandboxProfilesStayArchivedWithExactClosureAndRetry(t *testing.
 	require.NoError(t, err)
 	require.True(t, repeated.Repeated)
 	// Public lifecycle filtering is driven by scalar indexes as well as JSON;
-	// exact retry must catch a changed index even if the document stays archived.
+	// exact retry must catch a changed index even if the document stays active.
 	db, err := sql.Open("sqlite", destination)
 	require.NoError(t, err)
-	_, err = db.Exec(`UPDATE sandbox_profiles SET archived=0 WHERE id=?`, child.Profile.ID)
+	_, err = db.Exec(`UPDATE sandbox_profiles SET archived=1 WHERE id=?`, child.Profile.ID)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 	_, err = ImportSnapshot(ctx, bundle, ImportOptions{DestinationPath: destination})
@@ -163,7 +163,7 @@ func TestSandboxConversionDoesNotRewritePriorEvidenceOnlyImport(t *testing.T) {
 	require.NoError(t, store.Close())
 }
 
-func TestSandboxImportStoreRefusesActiveProfileWithoutPartialPublication(t *testing.T) {
+func TestSandboxImportStoreRefusesInvalidProvenanceWithoutPartialPublication(t *testing.T) {
 	ctx := context.Background()
 	bundle := sandboxImportFixture(t)
 	inspection, err := Inspect(ctx, bundle)
@@ -172,7 +172,7 @@ func TestSandboxImportStoreRefusesActiveProfileWithoutPartialPublication(t *test
 	require.NoError(t, err)
 	batch, err := Translate(inspection, plan, nil, TranslationOptions{})
 	require.NoError(t, err)
-	batch.SandboxProfiles[0].Profile.Archived = false
+	batch.SandboxProfiles[0].Profile.Imported = false
 	store, err := backendsqlite.Open(filepath.Join(t.TempDir(), "fresh.sqlite"))
 	require.NoError(t, err)
 	defer store.Close()
@@ -184,7 +184,7 @@ func TestSandboxImportStoreRefusesActiveProfileWithoutPartialPublication(t *test
 	require.Error(t, err, "a refused first import must not expose a receipt")
 }
 
-func TestImportedSandboxProfileCanBeRestoredAndEdited(t *testing.T) {
+func TestImportedSandboxProfileCanBeEditedDirectly(t *testing.T) {
 	ctx := context.Background()
 	bundle := sandboxImportFixture(t)
 	destination := filepath.Join(t.TempDir(), "backend.db")
@@ -199,9 +199,7 @@ func TestImportedSandboxProfileCanBeRestoredAndEdited(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, profiles)
 	profile := profiles[0]
-	restored, err := service.SetSandboxProfileArchived(ctx, app.SetSandboxProfileArchivedRequest{Context: app.RequestContext{Principal: operator, RequestID: "restore"}, ID: profile.ID, ExpectedRevision: profile.Revision, Archived: false})
-	require.NoError(t, err)
-	edited, err := service.SaveSandboxProfile(ctx, app.SaveSandboxProfileRequest{Context: app.RequestContext{Principal: operator, RequestID: "edit"}, ID: profile.ID, ExpectedRevision: restored.Profile.Revision, Name: "Updated imported profile", Policy: model.SandboxPolicy{Environment: model.Environment{"VALUE": "updated"}}})
+	edited, err := service.SaveSandboxProfile(ctx, app.SaveSandboxProfileRequest{Context: app.RequestContext{Principal: operator, RequestID: "edit"}, ID: profile.ID, ExpectedRevision: profile.Revision, Name: "Updated imported profile", Policy: model.SandboxPolicy{Environment: model.Environment{"VALUE": "updated"}}})
 	require.NoError(t, err)
 	require.Equal(t, profile.ID, edited.Profile.ID)
 	require.Equal(t, "updated", edited.Revision.Policy.Environment["VALUE"])
