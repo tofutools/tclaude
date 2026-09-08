@@ -164,6 +164,10 @@ func mapProcessInputText(graph model.WorkGraph, transform func(string) (string, 
 		if performer.Human != nil {
 			copy := *performer.Human
 			var err error
+			copy.Ask, err = transform(copy.Ask)
+			if err != nil {
+				return model.WorkGraph{}, err
+			}
 			copy.Prompt, err = transform(copy.Prompt)
 			if err != nil {
 				return model.WorkGraph{}, err

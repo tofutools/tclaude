@@ -292,6 +292,7 @@ type ProgramPerformer struct {
 }
 
 type HumanPerformer struct {
+	Ask            string            `json:",omitempty"`
 	Choices        []string          `json:",omitempty"`
 	ChoiceOutcomes map[string]string `json:",omitempty"`
 	Operator       bool              `json:",omitempty"`

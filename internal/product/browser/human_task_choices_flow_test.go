@@ -14,6 +14,7 @@ func TestBrowserHumanTaskChoicesPersistAndDecideWithoutSpecialLabelEffects(t *te
 	page.MustElementR("#process-editor button", "^Add task$").MustClick()
 	page.MustElement("[aria-label='Performer kind']").MustSelect("human")
 	page.MustElement("#process-inspector [name=name]").MustSelectAllText().MustInput("Evaluate")
+	page.MustElement("#process-inspector [name=ask]").MustInput("Is the work ready?")
 	page.MustElement("#process-inspector [name=prompt]").MustInput("Evaluate the work")
 	page.MustElement("#process-inspector [name=choices]").MustInput("cancel\nChanges needed")
 	page.MustElement("#process-inspector [name=outcomes]").MustInput("pass")
@@ -26,6 +27,8 @@ func TestBrowserHumanTaskChoicesPersistAndDecideWithoutSpecialLabelEffects(t *te
 	page.MustElementR("#process-inspector button", "^Connect$").MustClick()
 	page.MustElementR("#process-inspector button", "^Add review$").MustClick()
 	page.MustElementR("#process-inspector button", "^Edit review$").MustClick()
+	page.MustElement("#process-inspector [name=ask]").MustInput("Approve the review?")
+	page.MustElement("#process-inspector [name=prompt]").MustSelectAllText().MustInput("")
 	page.MustElement("#process-inspector [name=choices]").MustInput("waive")
 	page.MustElement("#process-inspector [name=outcomes]").MustInput("pass")
 	page.MustElementR("#process-inspector button", "^Apply changes$").MustClick()
@@ -34,6 +37,8 @@ func TestBrowserHumanTaskChoicesPersistAndDecideWithoutSpecialLabelEffects(t *te
 	page.MustElementR("#process-editor button", "^Close editor$").MustClick()
 	page.MustElementR("#definition-list button", "^Edit process$").MustClick()
 	page.MustElement("#process-editor-canvas .process-node[aria-label='Evaluate, task']").MustClick()
+	require.Equal(t, "Is the work ready?", page.MustElement("#process-inspector [name=ask]").MustProperty("value").Str())
+	require.Equal(t, "Evaluate the work", page.MustElement("#process-inspector [name=prompt]").MustProperty("value").Str())
 	require.Equal(t, "cancel\nChanges needed", page.MustElement("#process-inspector [name=choices]").MustProperty("value").Str())
 	page.MustElementR("#process-inspector button", "^Edit review$").MustClick()
 	require.Equal(t, "waive", page.MustElement("#process-inspector [name=choices]").MustProperty("value").Str())
@@ -44,6 +49,7 @@ func TestBrowserHumanTaskChoicesPersistAndDecideWithoutSpecialLabelEffects(t *te
 	var decisions []app.DecisionResult
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/decisions", nil, &decisions))
 	require.Len(t, decisions, 1)
+	require.Equal(t, "Is the work ready?\n\nEvaluate the work", decisions[0].Window.Question)
 	runID := decisions[0].Window.Attempt.RunID
 	page.MustElement("[data-tab=decisions]").MustClick()
 	for _, answer := range []string{"cancel", "waive"} {
