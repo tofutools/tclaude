@@ -24,6 +24,7 @@ func DaemonCommand() *cobra.Command {
 	var state string
 	var initialize bool
 	var agentDirsMountParent bool
+	var resourceDelegationDirectory string
 	var claudeConfigDir string
 	var opencodeConfigDir, opencodeDataDir string
 	var opencodeEnvironment []string
@@ -34,6 +35,7 @@ func DaemonCommand() *cobra.Command {
 	var workspaces bool
 	var shell string
 	cmd.PersistentFlags().StringVar(&state, "state-dir", "", "Absolute private state directory (required)")
+	cmd.PersistentFlags().StringVar(&resourceDelegationDirectory, "resource-delegation-dir", "", "Linux delegated cgroup v2 root for CPU and memory limits; omit to use the daemon service delegation")
 	cmd.PersistentFlags().BoolVar(&agentDirsMountParent, "agent-dirs-mount-parent", true, "Grant each agent its generated directory parent; false grants only the named directories")
 	cmd.PersistentFlags().BoolVar(&initialize, "init", false, "Initialize a new directory and exit")
 	cmd.PersistentFlags().StringVar(&claudeConfigDir, "claude-config-dir", "", "Explicit persistent Claude configuration directory; retains existing login and history")
@@ -54,7 +56,7 @@ func DaemonCommand() *cobra.Command {
 		if initialize {
 			return server.Initialize(state)
 		}
-		sandboxOptions := sandboxHostOptions{mountAgentDirectoriesIndividually: !agentDirsMountParent}
+		sandboxOptions := sandboxHostOptions{mountAgentDirectoriesIndividually: !agentDirsMountParent, resourceDelegationDirectory: resourceDelegationDirectory}
 		registry, err := registeredProvidersWithNativeConfig(state, harnesses, claudeConfigDir, opencodeNativeConfig{config: opencodeConfigDir, data: opencodeDataDir, environment: opencodeEnvironment}, sandboxOptions)
 		if err != nil {
 			return err

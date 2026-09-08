@@ -55,6 +55,7 @@ type sandboxChildInput struct {
 	ProtectedRoots          []sandboxRootPin
 	InheritedRoot           bool `json:",omitempty"`
 	PrivateNetwork          bool
+	Resources               *sandboxCgroup   `json:",omitempty"`
 	DarwinAllowMachRegister bool             `json:",omitempty"`
 	ControlPort             int              `json:",omitempty"`
 	Overlays                []sandboxOverlay `json:",omitempty"`
@@ -76,6 +77,7 @@ func (i *SandboxPathInspector) PrepareSandboxChild(directory, wrapper string, ch
 	}
 	input := sandboxChildInput{Version: 1, Platform: runtime.GOOS, Wrapper: wrapper, Executable: child.Executable,
 		Arguments: child.Args, Directory: child.Directory, Environment: child.Env, Mounts: bindings.Pins()[:len(bindings.pins)-bindings.providerCount], ProviderResources: bindings.Pins()[len(bindings.pins)-bindings.providerCount:], PrivateNetwork: privateNetwork, ControlPort: bindings.controlPort}
+	input.Resources = bindings.resources
 	input.InheritedRoot = bindings.inheritedRoot
 	input.DarwinAllowMachRegister = bindings.darwinAllowMachRegister
 	input.Overlays = append([]sandboxOverlay(nil), bindings.overlays...)
@@ -140,6 +142,18 @@ func ExecuteSandboxChild(ctx context.Context, artifact SandboxChildArtifact) err
 	if err != nil {
 		return err
 	}
+	if input.Resources != nil {
+		if os.Getenv(sandboxResourceChildMarker) == "1" {
+			if err := input.Resources.containsCurrentProcess(); err != nil {
+				return err
+			}
+		} else {
+			if err := claimSandboxChild(artifact); err != nil {
+				return err
+			}
+			return superviseSandboxResources(ctx, artifact, input.Resources)
+		}
+	}
 	bound, err := inspector.reopenSandboxChildBindings(ctx, input.Mounts, input.ProviderResources)
 	if err != nil {
 		return err
@@ -166,16 +180,10 @@ func ExecuteSandboxChild(ctx context.Context, artifact SandboxChildArtifact) err
 	}
 	// The terminal server must never respawn a retained command artifact. A
 	// failed/uncertain exec remains consumed and must be observed, not replayed.
-	marker, err := os.OpenFile(artifact.Path+".started", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-	if err != nil {
-		return fmt.Errorf("sandbox child launch was already attempted or cannot be claimed: %w", err)
-	}
-	if err := marker.Sync(); err != nil {
-		_ = marker.Close()
-		return err
-	}
-	if err := marker.Close(); err != nil {
-		return err
+	if input.Resources == nil {
+		if err := claimSandboxChild(artifact); err != nil {
+			return err
+		}
 	}
 	if input.ControlPort != 0 {
 		file, err := createSandboxControl(artifact)
@@ -203,11 +211,26 @@ func ExecuteSandboxChild(ctx context.Context, artifact SandboxChildArtifact) err
 	return syscall.Exec(wrapped.Executable, append([]string{wrapped.Executable}, wrapped.Args...), wrapped.Env)
 }
 
+func claimSandboxChild(artifact SandboxChildArtifact) error {
+	marker, err := os.OpenFile(artifact.Path+".started", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fmt.Errorf("sandbox child launch was already attempted or cannot be claimed: %w", err)
+	}
+	if err := marker.Sync(); err != nil {
+		_ = marker.Close()
+		return err
+	}
+	return marker.Close()
+}
+
 // VerifySandboxChild checks retained host identities before release admission.
 // The child repeats this check and acquires descriptors immediately before exec.
 func VerifySandboxChild(ctx context.Context, artifact SandboxChildArtifact) error {
 	input, inspector, err := readSandboxChild(artifact)
 	if err != nil {
+		return err
+	}
+	if err := input.Resources.verify(); err != nil {
 		return err
 	}
 	bound, err := inspector.reopenSandboxChildBindings(ctx, input.Mounts, input.ProviderResources)
@@ -269,4 +292,37 @@ func readSandboxChild(artifact SandboxChildArtifact) (sandboxChildInput, *Sandbo
 		}
 	}
 	return input, inspector, nil
+}
+
+// AbortSandboxChild releases only unused preparation. It never kills an
+// admitted workload; a populated resource cgroup refuses removal.
+func AbortSandboxChild(artifact SandboxChildArtifact) error {
+	input, _, err := readSandboxChild(artifact)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if err := input.Resources.remove(); err != nil {
+		return err
+	}
+	return os.RemoveAll(filepath.Dir(artifact.Path))
+}
+
+// SettleSandboxChild removes a launch's resource boundary after its owner has
+// observed terminal/native exit. Any surviving descendant belongs to this
+// exact verified boundary, not a rediscovered PID or unrelated execution.
+func SettleSandboxChild(artifact *SandboxChildArtifact) error {
+	if artifact == nil {
+		return nil
+	}
+	input, _, err := readSandboxChild(*artifact)
+	if err != nil {
+		return err
+	}
+	if input.Resources == nil {
+		return nil
+	}
+	return input.Resources.settle()
 }

@@ -102,6 +102,17 @@ jobs:
             TCLAUDE_SANDBOX_BOOTSTRAP="$RUNNER_TEMP/tclaude" "$RUNNER_TEMP/sandbox-claude.test" -test.run '^TestProviderHostSandbox' -test.timeout 1m -test.v
             TCLAUDE_SANDBOX_BOOTSTRAP="$RUNNER_TEMP/tclaude" "$RUNNER_TEMP/sandbox-opencode.test" -test.run '^(TestServerRelay|TestProviderHostSandbox)' -test.timeout 1m -test.v
           fi
+      - name: Require Linux resource-limit enforcement
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          # This hierarchy exists only on the disposable CI runner. The tests
+          # place children through clone3 and verify CPU throttling and OOM.
+          resource_dir="/sys/fs/cgroup/tclaude-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          sudo sh -c 'echo "+cpu +memory" > /sys/fs/cgroup/cgroup.subtree_control'
+          sudo mkdir "$resource_dir"
+          trap 'sudo sh -c "echo 1 > \"$resource_dir/cgroup.kill\""; sudo rmdir "$resource_dir"' EXIT
+          sudo env TCLAUDE_TEST_CGROUP_ROOT="$resource_dir" "$RUNNER_TEMP/sandbox-native.test" -test.run '^TestSandboxResourceLimits' -test.timeout 1m -test.v
       - name: Diagnose native sandbox denial on macOS
         if: ${{ failure() && runner.os == 'macOS' }}
         run: sudo /usr/bin/log show --last 3m --style compact --predicate 'process == "sandbox-exec" OR (process == "kernel" AND (eventMessage CONTAINS[c] "sandbox" OR eventMessage CONTAINS[c] "sandbox-native" OR eventMessage CONTAINS[c] "signature"))'
