@@ -5,7 +5,9 @@ package copilot
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -125,19 +127,32 @@ set -eu
 test "$(cat "$TCLAUDE_BACKEND_CREDENTIAL_FILE")" = 'fixture credential'
 if cat "$PRIVATE_SIBLING" >/dev/null 2>&1; then exit 24; fi
 printf '%s\n' "$@" > "$WORKSPACE/args"
+curl --fail --silent --max-time 5 --unix-socket "$CONTROL_SOCKET" http://fixture/ > "$WORKSPACE/first-response"
 printf ready > "$WORKSPACE/ready"
+while test ! -f "$WORKSPACE/reconnect"; do sleep 0.05; done
+curl --fail --silent --max-time 5 --unix-socket "$CONTROL_SOCKET" http://fixture/ > "$WORKSPACE/second-response"
+if cat "$PRIVATE_SIBLING" >/dev/null 2>&1; then exit 25; fi
+printf reconnected > "$WORKSPACE/reconnected"
 while IFS= read -r line; do printf '%s\n' "$line" >> "$WORKSPACE/input"; done
 `
 	require.NoError(t, os.WriteFile(executable, []byte(script), 0700))
-	socket := filepath.Join(private, "api.sock")
-	listener, err := net.Listen("unix", socket)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = listener.Close() })
+	control := filepath.Join(private, "api")
+	require.NoError(t, os.Mkdir(control, 0700))
+	socket := filepath.Join(control, "socket")
+	serve := func(response string) *http.Server {
+		listener, listenErr := net.Listen("unix", socket)
+		require.NoError(t, listenErr)
+		server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, response) })}
+		go func() { _ = server.Serve(listener) }()
+		t.Cleanup(func() { _ = server.Close() })
+		return server
+	}
+	firstServer := serve("before restart")
 	inspector, err := host.NewSandboxPathInspector([]string{private})
 	require.NoError(t, err)
 	planner, err := host.NewSandboxLaunchPreparer(host.SandboxLaunchConfig{Inspector: inspector, Wrapper: wrapper, Bootstrap: bootstrap, Artifacts: artifacts})
 	require.NoError(t, err)
-	provider, err := New(Config{Executable: executable, PrivateRoot: filepath.Join(private, "provider"), AgentSocket: socket, HostSandbox: planner})
+	provider, err := New(Config{Executable: executable, PrivateRoot: filepath.Join(private, "provider"), AgentSocket: socket, AgentSocketDirectory: control, HostSandbox: planner})
 	require.NoError(t, err)
 	policy := model.SandboxPolicy{FilesystemRoot: model.SandboxRootSeparate, Filesystem: []model.SandboxFilesystemRule{{HostPath: workspace, Access: model.SandboxFilesystemWrite}}, Network: &model.SandboxNetwork{Baseline: model.SandboxNetworkDeny}}
 	hash, err := sandboxpolicy.ContentHash(policy)
@@ -147,7 +162,7 @@ while IFS= read -r line; do printf '%s\n' "$line" >> "$WORKSPACE/input"; done
 	require.NoError(t, err)
 	selected, err := materialized.LaunchSelection()
 	require.NoError(t, err)
-	request := ports.PreparationRequest{HostSandboxPolicy: &materialized, Spec: model.ResolvedExecutionSpec{HostSandbox: &selected, ExecutionID: "native_execution", Attempt: 1, Harness: Name, Model: "fixture", WorkingDirectory: workspace, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined, Environment: model.Environment{"PRIVATE_SIBLING": sibling, "WORKSPACE": workspace}}, Intent: ports.StartFresh, InitialInput: &ports.PreparedInitialInput{Body: "first work literal", Correlation: "brief", RequiredBeforeFirstWork: true}, ActionCredential: &ports.ActionCredentialMaterial{ExecutionID: "native_execution", Generation: 1, DeliveryID: "delivery", Secret: []byte("fixture credential"), ExpiresAt: time.Now().Add(time.Hour)}}
+	request := ports.PreparationRequest{HostSandboxPolicy: &materialized, Spec: model.ResolvedExecutionSpec{HostSandbox: &selected, ExecutionID: "native_execution", Attempt: 1, Harness: Name, Model: "fixture", WorkingDirectory: workspace, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined, Environment: model.Environment{"PRIVATE_SIBLING": sibling, "WORKSPACE": workspace, "CONTROL_SOCKET": socket}}, Intent: ports.StartFresh, InitialInput: &ports.PreparedInitialInput{Body: "first work literal", Correlation: "brief", RequiredBeforeFirstWork: true}, ActionCredential: &ports.ActionCredentialMaterial{ExecutionID: "native_execution", Generation: 1, DeliveryID: "delivery", Secret: []byte("fixture credential"), ExpiresAt: time.Now().Add(time.Hour)}}
 	prepared, err := provider.Prepare(context.Background(), request)
 	require.NoError(t, err)
 	released, err := prepared.Release(context.Background(), &testPermit{execution: request.Spec.ExecutionID})
@@ -159,6 +174,16 @@ while IFS= read -r line; do printf '%s\n' "$line" >> "$WORKSPACE/input"; done
 		_, _ = released.Runtime.Stop(ctx, ports.StopRequest{Force: true})
 	})
 	require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(workspace, "ready")); return err == nil }, 10*time.Second, 20*time.Millisecond)
+	firstResponse, err := os.ReadFile(filepath.Join(workspace, "first-response"))
+	require.NoError(t, err)
+	require.Equal(t, "before restart", string(firstResponse))
+	require.NoError(t, firstServer.Close())
+	serve("after restart")
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, "reconnect"), nil, 0600))
+	require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(workspace, "reconnected")); return err == nil }, 10*time.Second, 20*time.Millisecond)
+	secondResponse, err := os.ReadFile(filepath.Join(workspace, "second-response"))
+	require.NoError(t, err)
+	require.Equal(t, "after restart", string(secondResponse))
 	args, err := os.ReadFile(filepath.Join(workspace, "args"))
 	require.NoError(t, err)
 	require.Contains(t, string(args), "first work literal")

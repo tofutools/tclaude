@@ -28,10 +28,11 @@ const (
 )
 
 type Config struct {
-	HostSandbox    *host.SandboxLaunchPreparer
-	Executable     string
-	TmuxExecutable string
-	PrivateRoot    string
+	AgentSocketDirectory string
+	HostSandbox          *host.SandboxLaunchPreparer
+	Executable           string
+	TmuxExecutable       string
+	PrivateRoot          string
 	// NativeHome is a durable provider-owned COPILOT_HOME. Empty selects
 	// PrivateRoot/native-home; an override must remain inside PrivateRoot.
 	NativeHome  string
@@ -39,15 +40,16 @@ type Config struct {
 }
 
 type Provider struct {
-	hostSandbox     *host.SandboxLaunchPreparer
-	executable      string
-	privateRoot     string
-	nativeHome      string
-	terminal        host.TerminalHost
-	credentials     host.ActionCredentialHost
-	agentSocket     string
-	observationRoot string
-	stateMu         sync.Mutex
+	agentSocketDirectory string
+	hostSandbox          *host.SandboxLaunchPreparer
+	executable           string
+	privateRoot          string
+	nativeHome           string
+	terminal             host.TerminalHost
+	credentials          host.ActionCredentialHost
+	agentSocket          string
+	observationRoot      string
+	stateMu              sync.Mutex
 }
 
 func New(config Config) (*Provider, error) {
@@ -70,7 +72,7 @@ func New(config Config) (*Provider, error) {
 		return nil, fmt.Errorf("copilot native home must be an absolute provider-owned path inside private root")
 	}
 	return &Provider{
-		hostSandbox: config.HostSandbox, executable: resolved, privateRoot: config.PrivateRoot, nativeHome: filepath.Clean(nativeHome),
+		agentSocketDirectory: config.AgentSocketDirectory, hostSandbox: config.HostSandbox, executable: resolved, privateRoot: config.PrivateRoot, nativeHome: filepath.Clean(nativeHome),
 		terminal:    host.TerminalHost{Executable: config.TmuxExecutable, PrivateRoot: filepath.Join(config.PrivateRoot, "terminals")},
 		credentials: host.ActionCredentialHost{PrivateRoot: filepath.Join(config.PrivateRoot, "action-credentials")},
 		agentSocket: config.AgentSocket, observationRoot: filepath.Join(config.PrivateRoot, "observations"),

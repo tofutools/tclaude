@@ -77,7 +77,7 @@ func registeredProviders(state string, harnesses []string) (ports.ProviderRegist
 		seen[name] = true
 		switch name {
 		case "claude":
-			p, err := claude.New(claude.Config{PrivateRoot: filepath.Join(state, "claude"), AgentSocket: filepath.Join(state, "api.sock")})
+			p, err := claude.New(claude.Config{PrivateRoot: filepath.Join(state, "claude"), AgentSocket: server.AgentSocketPath(state)})
 			if err != nil {
 				return nil, err
 			}
@@ -87,7 +87,7 @@ func registeredProviders(state string, harnesses []string) (ports.ProviderRegist
 			if err != nil {
 				return nil, err
 			}
-			p, err := codex.New(codex.Config{HostSandbox: sandbox, PrivateRoot: filepath.Join(state, "codex"), AgentSocket: filepath.Join(state, "api.sock")})
+			p, err := codex.New(codex.Config{HostSandbox: sandbox, AgentSocketDirectory: server.AgentSocketDirectory(state), PrivateRoot: filepath.Join(state, "codex"), AgentSocket: server.AgentSocketPath(state)})
 			if err != nil {
 				return nil, err
 			}
@@ -97,13 +97,13 @@ func registeredProviders(state string, harnesses []string) (ports.ProviderRegist
 			if err != nil {
 				return nil, err
 			}
-			p, err := copilot.New(copilot.Config{HostSandbox: sandbox, PrivateRoot: filepath.Join(state, "copilot"), AgentSocket: filepath.Join(state, "api.sock")})
+			p, err := copilot.New(copilot.Config{HostSandbox: sandbox, AgentSocketDirectory: server.AgentSocketDirectory(state), PrivateRoot: filepath.Join(state, "copilot"), AgentSocket: server.AgentSocketPath(state)})
 			if err != nil {
 				return nil, err
 			}
 			entries = append(entries, p)
 		case "opencode":
-			p, err := opencode.New(opencode.Config{PrivateRoot: filepath.Join(state, "opencode"), AgentSocket: filepath.Join(state, "api.sock"), Environment: os.Environ()})
+			p, err := opencode.New(opencode.Config{PrivateRoot: filepath.Join(state, "opencode"), AgentSocket: server.AgentSocketPath(state), Environment: os.Environ()})
 			if err != nil {
 				return nil, err
 			}

@@ -29,10 +29,11 @@ const (
 )
 
 type Config struct {
-	HostSandbox    *host.SandboxLaunchPreparer
-	Executable     string
-	TmuxExecutable string
-	PrivateRoot    string
+	AgentSocketDirectory string
+	HostSandbox          *host.SandboxLaunchPreparer
+	Executable           string
+	TmuxExecutable       string
+	PrivateRoot          string
 	// NativeHome is a durable provider-owned CODEX_HOME. Empty selects
 	// PrivateRoot/native-home; an override must remain inside PrivateRoot.
 	NativeHome  string
@@ -41,16 +42,17 @@ type Config struct {
 }
 
 type Provider struct {
-	hostSandbox     *host.SandboxLaunchPreparer
-	executable      string
-	privateRoot     string
-	nativeHome      string
-	terminal        host.TerminalHost
-	credentials     host.ActionCredentialHost
-	agentSocket     string
-	observationRoot string
-	turnForker      TurnForker
-	stateMu         sync.Mutex
+	agentSocketDirectory string
+	hostSandbox          *host.SandboxLaunchPreparer
+	executable           string
+	privateRoot          string
+	nativeHome           string
+	terminal             host.TerminalHost
+	credentials          host.ActionCredentialHost
+	agentSocket          string
+	observationRoot      string
+	turnForker           TurnForker
+	stateMu              sync.Mutex
 }
 
 func New(config Config) (*Provider, error) {
@@ -77,7 +79,7 @@ func New(config Config) (*Provider, error) {
 		forker = nativeTurnForker{executable: resolved}
 	}
 	return &Provider{
-		hostSandbox: config.HostSandbox, executable: resolved, privateRoot: config.PrivateRoot, nativeHome: filepath.Clean(nativeHome),
+		agentSocketDirectory: config.AgentSocketDirectory, hostSandbox: config.HostSandbox, executable: resolved, privateRoot: config.PrivateRoot, nativeHome: filepath.Clean(nativeHome),
 		terminal:    host.TerminalHost{Executable: config.TmuxExecutable, PrivateRoot: filepath.Join(config.PrivateRoot, "terminals")},
 		credentials: host.ActionCredentialHost{PrivateRoot: filepath.Join(config.PrivateRoot, "action-credentials")},
 		agentSocket: config.AgentSocket, observationRoot: filepath.Join(config.PrivateRoot, "observations"), turnForker: forker,

@@ -133,3 +133,40 @@ func (i *SandboxPathInspector) reopenSandboxChildBindings(ctx context.Context, m
 	authored.providerCount = len(owned.pins)
 	return authored, nil
 }
+
+// SandboxControlResource uses a composition-owned socket namespace when one is
+// supplied. Mounting its readonly directory lets a recreated socket remain
+// reachable after daemon restart; the directory must contain no other state.
+// Exact socket mode remains available for independently owned fixed endpoints.
+func SandboxControlResource(socket, directory string) (SandboxProviderResource, error) {
+	if directory == "" {
+		return SandboxProviderResource{Path: socket, Access: model.SandboxFilesystemRead}, nil
+	}
+	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory || filepath.Dir(socket) != directory {
+		return SandboxProviderResource{}, fmt.Errorf("sandbox control directory must own the exact socket")
+	}
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return SandboxProviderResource{}, err
+	}
+	if !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+		return SandboxProviderResource{}, fmt.Errorf("sandbox control directory must be a private directory")
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return SandboxProviderResource{}, err
+	}
+	for _, entry := range entries {
+		if entry.Name() != filepath.Base(socket) {
+			return SandboxProviderResource{}, fmt.Errorf("sandbox control directory contains unrelated state")
+		}
+	}
+	info, err = os.Lstat(socket)
+	if err != nil {
+		return SandboxProviderResource{}, err
+	}
+	if info.Mode()&os.ModeSocket == 0 {
+		return SandboxProviderResource{}, fmt.Errorf("sandbox control endpoint is not a socket")
+	}
+	return SandboxProviderResource{Path: directory, Access: model.SandboxFilesystemRead}, nil
+}

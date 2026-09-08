@@ -150,3 +150,26 @@ func TestSandboxDescriptorProviderResourcesChild(t *testing.T) {
 	command := exec.Command("/bin/sh", "-c", `test "$(cat "$CREDENTIAL")" = 'fixture credential' && ! cat "$SECRET" && printf event > "$SPOOL/descendant"`)
 	require.NoError(t, command.Run(), "descendants retain narrow provider resource access")
 }
+
+func TestSandboxDescriptorControlDirectoryContainsOnlyReplaceableEndpoint(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "control-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	control := filepath.Join(root, "api")
+	require.NoError(t, os.Mkdir(control, 0700))
+	socket := filepath.Join(control, "socket")
+	listener, err := net.Listen("unix", socket)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	resource, err := SandboxControlResource(socket, control)
+	require.NoError(t, err)
+	require.Equal(t, SandboxProviderResource{Path: control, Access: model.SandboxFilesystemRead}, resource)
+	_, err = SandboxControlResource(socket, root)
+	require.Error(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(control, "credential"), []byte("private"), 0600))
+	_, err = SandboxControlResource(socket, control)
+	require.ErrorContains(t, err, "unrelated state")
+	exact, err := SandboxControlResource(socket, "")
+	require.NoError(t, err)
+	require.Equal(t, socket, exact.Path)
+}

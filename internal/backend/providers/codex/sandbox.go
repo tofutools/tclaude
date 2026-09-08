@@ -18,7 +18,11 @@ func (p *prepared) prepareSandbox(ctx context.Context) error {
 	p.command.Env = append([]string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + p.stateRoot, "TERM=xterm-256color"}, p.command.Env...)
 	resources := []host.SandboxProviderResource{{Path: p.stateRoot, Access: model.SandboxFilesystemWrite}, {Path: p.spool.Directory(), Access: model.SandboxFilesystemWrite}}
 	if p.access != nil {
-		resources = append(resources, host.SandboxProviderResource{Path: p.access.Resource, Access: model.SandboxFilesystemRead}, host.SandboxProviderResource{Path: p.provider.agentSocket, Access: model.SandboxFilesystemRead})
+		endpoint, err := host.SandboxControlResource(p.provider.agentSocket, p.provider.agentSocketDirectory)
+		if err != nil {
+			return err
+		}
+		resources = append(resources, host.SandboxProviderResource{Path: p.access.Resource, Access: model.SandboxFilesystemRead}, endpoint)
 	}
 	if p.callback != nil {
 		resources = append(resources, host.SandboxProviderResource{Path: filepath.Dir(p.callback.CredentialPath()), Access: model.SandboxFilesystemRead})
