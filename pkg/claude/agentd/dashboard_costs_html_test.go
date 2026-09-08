@@ -107,7 +107,8 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	// dashboard.css: recorded vs projected bars are distinguishable.
 	must(".cost-bar", "bar style rule present")
 	must(".cost-col.projected .cost-bar", "projected bars styled hollow")
-	must(".cost-col.weekend .cost-bar", "weekend bars dimmed")
+	mustNot(".cost-col.weekend .cost-bar", "recorded single-color weekend bars stay full strength")
+	mustNot(".cost-col.weekend .cost-seg", "recorded stacked weekend bars stay full strength")
 
 	// Stacked per-harness chart: recorded columns split into coloured
 	// segments from the per-agent rows; the harness filter doubles as the

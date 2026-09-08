@@ -101,6 +101,23 @@ func TestDashboardWhatIfCostsAreAttributedByProvider(t *testing.T) {
 	}, dashboardProviderCostsFromRows(rows, now, true))
 }
 
+// A superseded Codex session retains a history row with its virtual prefix
+// zeroed. That tombstone must not reset the conversation baseline: the Costs
+// tab skips it, and the top-bar WHAT-IF total must do the same rather than
+// counting the next cumulative snapshot from zero again.
+func TestDashboardWhatIfCostsSkipSupersededZeroRows(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.Local)
+	rows := []db.CostDailyRow{
+		{SessionID: "spwn-old", ConvID: "conv", Day: "2026-09-07", UpdatedAtNS: 1, Harness: "codex", VirtualCostUSD: 100},
+		{SessionID: "superseded", ConvID: "conv", Day: "2026-09-08", UpdatedAtNS: 2, Harness: "codex"},
+		{SessionID: "conv", ConvID: "conv", Day: "2026-09-08", UpdatedAtNS: 3, Harness: "codex", VirtualCostUSD: 110},
+	}
+
+	assert.Equal(t, []dashboardAPICost{{
+		Provider: "openai", TotalCostUSD: 110, TodayCostUSD: 10,
+	}}, dashboardProviderCostsFromRows(rows, now, true))
+}
+
 // TestCostDeltasFromRows_EmptyConvFallback pins the defensive fallback:
 // a row with no denormalised conv_id baselines per session, so two
 // unrelated sessions never merge into one high-water sequence (which

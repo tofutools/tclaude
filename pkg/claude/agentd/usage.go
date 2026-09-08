@@ -189,10 +189,17 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool) (dashbo
 		costErr = err
 		costHistoryAvailable = err == nil
 		now := time.Now()
-		totalCost, todayCost, hasRealCost = dashboardCostTotalsFromRows(rows, now)
-		apiCosts = dashboardAPICostsFromRows(rows, now)
+		deltas := displayedCostDeltasFromRows(rows, includeWhatIf)
+		totalCost, todayCost = dashboardCostTotalsFromDeltas(deltas, now, "real")
+		apiCosts = dashboardProviderCostsFromDeltas(deltas, now, "real")
+		for _, row := range rows {
+			if row.CostUSD > 0 {
+				hasRealCost = true
+				break
+			}
+		}
 		if includeWhatIf && costHistoryAvailable {
-			whatIfCosts = dashboardProviderCostsFromRows(rows, now, true)
+			whatIfCosts = dashboardProviderCostsFromDeltas(deltas, now, "what_if")
 		}
 		if costErr != nil {
 			slog.Debug("usage snapshot: read daily costs failed; omitting cost readout", "error", costErr)
@@ -363,28 +370,21 @@ func usageWindowOrZero(w *usageWindow) *usageWindow {
 	return &usageWindow{}
 }
 
-// dashboardCostTotalsFromRows computes month-to-date and today spend plus the
-// Costs-tab real-spend signal from one already-loaded cost history and one
-// delta walk. Keeping the visibility signal in this pass removes a redundant
-// EXISTS query from every dashboard poll.
-func dashboardCostTotalsFromRows(rows []db.CostDailyRow, now time.Time) (month, today float64, hasReal bool) {
+func dashboardCostTotalsFromDeltas(deltas []costDelta, now time.Time, kind string) (month, today float64) {
 	monthKey := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format(costDayKey)
 	todayKey := now.Format(costDayKey)
-	for _, row := range rows {
-		if row.CostUSD > 0 {
-			hasReal = true
-			break
+	for _, delta := range deltas {
+		if delta.kind != kind {
+			continue
+		}
+		if delta.day >= monthKey {
+			month += delta.usd
+		}
+		if delta.day >= todayKey {
+			today += delta.usd
 		}
 	}
-	for _, delta := range db.CostDeltas(rows, false) {
-		if delta.Day >= monthKey {
-			month += delta.USD
-		}
-		if delta.Day >= todayKey {
-			today += delta.USD
-		}
-	}
-	return month, today, hasReal
+	return month, today
 }
 
 func dashboardAPICostsFromRows(rows []db.CostDailyRow, now time.Time) []dashboardAPICost {
@@ -392,21 +392,32 @@ func dashboardAPICostsFromRows(rows []db.CostDailyRow, now time.Time) []dashboar
 }
 
 func dashboardProviderCostsFromRows(rows []db.CostDailyRow, now time.Time, whatIf bool) []dashboardAPICost {
+	kind := "real"
+	if whatIf {
+		kind = "what_if"
+	}
+	return dashboardProviderCostsFromDeltas(displayedCostDeltasFromRows(rows, whatIf), now, kind)
+}
+
+func dashboardProviderCostsFromDeltas(deltas []costDelta, now time.Time, kind string) []dashboardAPICost {
 	monthKey := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format(costDayKey)
 	todayKey := now.Format(costDayKey)
 	byProvider := make(map[string]*dashboardAPICost)
-	for _, delta := range db.CostDeltas(rows, whatIf) {
-		provider := apiCostProvider(delta.Harness, delta.Model)
+	for _, delta := range deltas {
+		if delta.kind != kind {
+			continue
+		}
+		provider := apiCostProvider(delta.harness, delta.model)
 		entry := byProvider[provider]
 		if entry == nil {
 			entry = &dashboardAPICost{Provider: provider}
 			byProvider[provider] = entry
 		}
-		if delta.Day >= monthKey {
-			entry.TotalCostUSD += delta.USD
+		if delta.day >= monthKey {
+			entry.TotalCostUSD += delta.usd
 		}
-		if delta.Day >= todayKey {
-			entry.TodayCostUSD += delta.USD
+		if delta.day >= todayKey {
+			entry.TodayCostUSD += delta.usd
 		}
 	}
 	providers := make([]string, 0, len(byProvider))

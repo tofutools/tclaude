@@ -72,9 +72,23 @@ func costDeltasFromRows(rows []db.CostDailyRow, whatif bool) []costDelta {
 	deltas := db.CostDeltas(rows, whatif)
 	out := make([]costDelta, 0, len(deltas))
 	for _, d := range deltas {
-		out = append(out, costDelta{day: d.Day, convID: d.ConvID, sessionID: d.SessionID, usd: d.USD, updatedAtNS: d.UpdatedAtNS, model: d.Model, harness: d.Harness})
+		kind := "real"
+		if whatif {
+			kind = "what_if"
+		}
+		out = append(out, costDelta{day: d.Day, convID: d.ConvID, sessionID: d.SessionID, usd: d.USD, updatedAtNS: d.UpdatedAtNS, model: d.Model, harness: d.Harness, kind: kind})
 	}
 	return out
+}
+
+// displayedCostDeltasFromRows is the single source of cost slices for every
+// dashboard cost surface. The Costs tab groups this stream by day; the top bar
+// groups the same stream by provider and windows it to today/month-to-date.
+func displayedCostDeltasFromRows(rows []db.CostDailyRow, includeWhatIf bool) []costDelta {
+	if includeWhatIf {
+		return mixedCostDeltasFromRows(rows)
+	}
+	return costDeltasFromRows(rows, false)
 }
 
 // sumCostDeltas totals the deltas with day keys in [from, to]; either
@@ -221,10 +235,7 @@ func collectCosts(from, to time.Time, factor float64, includeWhatIf bool) (costs
 	if err != nil {
 		return costsResponse{}, err
 	}
-	deltas := costDeltasFromRows(rows, false)
-	if includeWhatIf {
-		deltas = mixedCostDeltasFromRows(rows)
-	}
+	deltas := displayedCostDeltasFromRows(rows, includeWhatIf)
 	models, err := db.SessionModels()
 	if err != nil {
 		return costsResponse{}, err
