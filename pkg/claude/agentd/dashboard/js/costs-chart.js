@@ -117,7 +117,7 @@ export function mountImperativeCostChart(host, chart) {
         ? `${day.day} — projected ~${fmtUSD(day.cost)}${day.includesWhatIf ? ' · includes WHAT-IF estimates' : ''}`
         : `${day.day} — ${fmtUSD(day.cost)}${hasWhatIf ? ' · includes WHAT-IF estimates' : ''}`;
       column.dataset.day = day.day;
-      column.setAttribute('tabindex', '0');
+      column.setAttribute('tabindex', '-1');
       column.setAttribute('role', 'img');
       column.setAttribute('aria-label', daySummary(day, chart));
       spendColumns.push(column);
@@ -138,6 +138,9 @@ export function mountImperativeCostChart(host, chart) {
     column.append(area, element('div', 'cost-day', index % labelEvery === 0 ? String(date.getDate()) : ''));
     columns.append(column);
   });
+  const initialColumn = [...spendColumns].reverse().find((column) => !byDay.get(column.dataset.day)?.projected)
+    || spendColumns[0];
+  initialColumn?.setAttribute('tabindex', '0');
   plot.append(grid, columns);
   shell.append(axis, plot);
   const status = element('div', 'cost-chart-status');
@@ -170,9 +173,13 @@ export function mountImperativeCostChart(host, chart) {
     tooltip.style.top = Math.max(4, top) + 'px';
   };
   const move = (event) => show(event.target.closest?.('.cost-col[data-tip]'), event.clientX, event.clientY);
+  const makeTabStop = (column) => {
+    for (const candidate of spendColumns) candidate.setAttribute('tabindex', candidate === column ? '0' : '-1');
+  };
   const focus = (event) => {
     const column = event.target.closest?.('.cost-col[data-tip]');
     if (!column) return;
+    makeTabStop(column);
     const rect = column.getBoundingClientRect();
     show(column, rect.left + rect.width / 2, rect.top, true);
   };
@@ -184,6 +191,7 @@ export function mountImperativeCostChart(host, chart) {
     event.preventDefault();
     const index = event.key === 'Home' ? 0 : event.key === 'End' ? spendColumns.length - 1
       : Math.max(0, Math.min(spendColumns.length - 1, current + moves[event.key]));
+    makeTabStop(spendColumns[index]);
     spendColumns[index].focus();
   };
   host.addEventListener('mousemove', move);

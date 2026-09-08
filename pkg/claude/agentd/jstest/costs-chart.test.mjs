@@ -45,6 +45,8 @@ test('Costs chart names a single-day provider when the selected span has multipl
   };
   const cleanup = mountImperativeCostChart(host, chart);
   const columns = host.querySelectorAll('.cost-col[data-tip]');
+  assert.equal([...columns].filter((column) => column.getAttribute('tabindex') === '0').length, 1,
+    'the daily chart is one composite Tab stop');
 
   harness.fireEvent(columns[0], 'mousemove', { clientX: 20, clientY: 30 });
   const tooltip = harness.document.body.querySelector('.cost-tip');
@@ -62,5 +64,7 @@ test('Costs chart names a single-day provider when the selected span has multipl
     'keyboard inspection announces the same breakdown as hover');
   harness.fireEvent(columns[0], 'keydown', { key: 'ArrowRight' });
   assert.equal(harness.document.activeElement, columns[1], 'arrow keys move between spend days');
+  assert.equal(columns[0].getAttribute('tabindex'), '-1');
+  assert.equal(columns[1].getAttribute('tabindex'), '0', 'arrow navigation transfers the roving Tab stop');
   cleanup();
 });
