@@ -2728,9 +2728,10 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		// template's context" (nil) from "supplied, possibly cleared to empty"
 		// (non-nil ""). Existing callers (the instantiate/deploy modals) omit
 		// it and keep the template's context verbatim.
-		ContextOverride *string `json:"context_override,omitempty"`
-		AttachmentURL   string  `json:"attachment_url,omitempty"`
-		AttachmentLabel string  `json:"attachment_label,omitempty"`
+		ContextOverride *string                           `json:"context_override,omitempty"`
+		Environment     *[]sandboxpolicy.EnvironmentEntry `json:"environment,omitempty"`
+		AttachmentURL   string                            `json:"attachment_url,omitempty"`
+		AttachmentLabel string                            `json:"attachment_label,omitempty"`
 		// AgentProfiles — the deploy form's per-member launch-profile resolution;
 		// see handleTemplateDeploy's body for the full contract. Applied in
 		// runInstantiation (applyAgentProfileOverrides) only to members with no
@@ -2768,6 +2769,14 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_attachment", err.Error())
 		return
+	}
+	var groupEnvironment []sandboxpolicy.EnvironmentEntry
+	if body.Environment != nil {
+		groupEnvironment, err = sandboxpolicy.NormalizeEnvironment(*body.Environment)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_environment", err.Error())
+			return
+		}
 	}
 	// An existing-directory cwd uses resolveSpawnCwd so a typo cannot turn into
 	// an N×30s spawn timeout. A repository workspace is intentionally absent at
@@ -2858,6 +2867,7 @@ func handleTemplateInstantiate(w http.ResponseWriter, r *http.Request) {
 		attachRepository:  body.RepositoryClone != nil && body.RepositoryClone.Attach,
 		attachmentURL:     attachmentURL,
 		attachmentLabel:   attachmentLabel,
+		environment:       groupEnvironment,
 	})
 }
 
@@ -3009,6 +3019,7 @@ type instantiateSpec struct {
 	attachRepository bool
 	attachmentURL    string
 	attachmentLabel  string
+	environment      []sandboxpolicy.EnvironmentEntry
 }
 
 // applyAgentProfileOverrides returns the roster with the deploy form's per-member
@@ -3273,6 +3284,11 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 				slog.Warn("instantiate: set default context failed", "group", spec.groupName, "error", err)
 			}
 		}
+		if spec.environment != nil {
+			if _, err := db.SetAgentGroupEnvironment(spec.groupName, spec.environment); err != nil {
+				slog.Warn("instantiate: set environment failed", "group", spec.groupName, "error", err)
+			}
+		}
 		// Deployment provenance (JOH-245): what this force was deployed against
 		// and from. Best-effort like the cwd/context above; a blank mission +
 		// blank source_template is the "not a deployed force" default, so a
@@ -3309,7 +3325,8 @@ func runInstantiation(w http.ResponseWriter, spec instantiateSpec) {
 
 		g = &db.AgentGroup{
 			ID: gid, Name: spec.groupName, Descr: spec.descr, DefaultCwd: spec.cwd, DefaultContext: groupContext,
-			Mission: spec.mission, SourceTemplate: spec.sourceTemplate, OwnerScopesJSON: tmpl.OwnerScopesJSON,
+			Environment: spec.environment,
+			Mission:     spec.mission, SourceTemplate: spec.sourceTemplate, OwnerScopesJSON: tmpl.OwnerScopesJSON,
 		}
 
 		// Advisory process runtime (JOH-242): if the template carries a process,

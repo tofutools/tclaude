@@ -2,6 +2,18 @@ function text(value) {
   return String(value || '');
 }
 
+function environment(value) {
+  return (value || []).map((entry) => ({
+    name: text(entry?.name), value: text(entry?.value),
+  }));
+}
+
+function requestEnvironment(value) {
+  return environment(value)
+    .map((entry) => ({ name: entry.name.trim(), value: entry.value }))
+    .filter((entry) => entry.name);
+}
+
 export function combineGroupAndTemplateContext(groupContext, templateContext) {
   const group = text(groupContext).trim();
   const template = text(templateContext).trim();
@@ -42,6 +54,7 @@ function sourcePrefill(template, source) {
       cwdOrigin: '',
       attachmentURL: '',
       attachmentLabel: '',
+      environment: [],
     };
   }
   return {
@@ -54,6 +67,7 @@ function sourcePrefill(template, source) {
     cwdOrigin: 'source',
     attachmentURL: text(source.attachment_url),
     attachmentLabel: text(source.attachment_label_override),
+    environment: environment(source.environment),
   };
 }
 
@@ -68,6 +82,7 @@ function parentPrefill(template, parent) {
     cwdOrigin: parent ? 'parent' : '',
     attachmentURL: text(parent?.attachment_url),
     attachmentLabel: text(parent?.attachment_label_override),
+    environment: environment(parent?.environment),
   };
 }
 
@@ -107,6 +122,7 @@ export function createGroupCreateDraft({
     context: prefill.context,
     attachmentURL: prefill.attachmentURL,
     attachmentLabel: prefill.attachmentLabel,
+    environment: prefill.environment,
     task: '',
     maxMembers: cloneSource ? String(cloneSource.max_members || 0) : '',
   };
@@ -126,6 +142,7 @@ export function selectGroupCreateTemplate(draft, templateName, {
       cwd: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwd,
       cwdOrigin: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwdOrigin,
       attachmentURL: '', attachmentLabel: '',
+      environment: [],
     };
     return {
       ...draft,
@@ -143,6 +160,7 @@ export function selectGroupCreateTemplate(draft, templateName, {
           cwd: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwd,
           cwdOrigin: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwdOrigin,
           attachmentURL: '', attachmentLabel: '',
+          environment: [],
         };
   return {
     ...draft,
@@ -187,6 +205,7 @@ export function selectGroupCreateSource(draft, sourceName, {
         cwd: draft.cwdOrigin === 'source' ? '' : draft.cwd,
         cwdOrigin: draft.cwdOrigin === 'source' ? '' : draft.cwdOrigin,
         attachmentURL: '', attachmentLabel: '',
+        environment: [],
       };
   return {
     ...draft,
@@ -219,6 +238,7 @@ export function selectGroupCreateOrigin(draft, origin, {
     cwd: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwd,
     cwdOrigin: draft.cwdOrigin === 'source' || draft.cwdOrigin === 'parent' ? '' : draft.cwdOrigin,
     attachmentURL: '', attachmentLabel: '',
+    environment: [],
   };
   return {
     ...draft,
@@ -241,9 +261,11 @@ export function groupCreateDraftIsDirty(draft, baseline) {
     'workspaceMode', 'repository', 'cloneTransport', 'cloneDestination',
     'attachRepository',
     'attachmentURL', 'attachmentLabel',
-    'context', 'task', 'maxMembers',
+    'context', 'task', 'maxMembers', 'environment',
   ];
-  return keys.some((key) => draft[key] !== baseline[key]);
+  return keys.some((key) => key === 'environment'
+    ? JSON.stringify(draft[key]) !== JSON.stringify(baseline[key])
+    : draft[key] !== baseline[key]);
 }
 
 export function validateGroupCreateDraft(draft, { templateMode = false } = {}) {
@@ -274,6 +296,7 @@ export function groupCreateRequest(draft, template, parentGroup = '') {
       descr: text(draft.descr).trim(),
       default_cwd: text(draft.workspaceMode === 'clone' ? draft.cloneDestination : draft.cwd).trim(),
       default_context: text(draft.context),
+      environment: requestEnvironment(draft.environment),
       attachment_url: text(draft.attachmentURL).trim(),
       attachment_label: text(draft.attachmentLabel).trim(),
       max_members: Number.parseInt(text(draft.maxMembers), 10) || 0,
@@ -314,6 +337,7 @@ export function groupCreateRequest(draft, template, parentGroup = '') {
         descr: text(draft.descr).trim(),
         default_cwd: cwd,
         default_context: text(draft.context).trim(),
+        environment: requestEnvironment(draft.environment),
         ...(text(draft.attachmentURL).trim() ? {
           attachment_url: text(draft.attachmentURL).trim(),
           attachment_label: text(draft.attachmentLabel).trim(),
@@ -329,6 +353,7 @@ export function groupCreateRequest(draft, template, parentGroup = '') {
     cwd,
     descr_override: text(draft.descr).trim(),
     context_override: text(draft.context),
+    environment: requestEnvironment(draft.environment),
   };
   if (text(draft.attachmentURL).trim()) {
     body.attachment_url = text(draft.attachmentURL).trim();

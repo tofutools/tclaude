@@ -12,6 +12,7 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/agent"
 	"github.com/tofutools/tclaude/pkg/claude/agentd"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/common/sandboxpolicy"
 	"github.com/tofutools/tclaude/pkg/claude/worktree"
 	"github.com/tofutools/tclaude/pkg/testharness"
 )
@@ -333,6 +334,9 @@ func TestGroupTemplate_InstantiateParentNestsNewGroup(t *testing.T) {
 			"descr_override":   "",
 			"attachment_url":   "https://linear.app/acme/project/parent",
 			"attachment_label": "Parent project",
+			"environment": []map[string]string{
+				{"name": "TEAM_SCOPE", "value": "child"},
+			},
 		})
 	require.Equalf(t, http.StatusCreated, rec.Code, "instantiate as subgroup: %s", rec.Body.String())
 	agentd.WaitForBackgroundForTest()
@@ -347,6 +351,7 @@ func TestGroupTemplate_InstantiateParentNestsNewGroup(t *testing.T) {
 	assert.Equal(t, "https://linear.app/acme/project/parent", g.AttachmentURL,
 		"attachment URL is the new subgroup's own mirrored copy")
 	assert.Equal(t, "Parent project", g.AttachmentLabel)
+	assert.Equal(t, []sandboxpolicy.EnvironmentEntry{{Name: "TEAM_SCOPE", Value: "child"}}, g.Environment)
 }
 
 // Scenario (JOH-385): the summon dialog's copy mode ("new group in this group's

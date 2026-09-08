@@ -152,6 +152,30 @@ func TestGroupsClone_PreservesOrOverridesTreeParent(t *testing.T) {
 	assert.Nil(t, rootedGroup.ParentGroupID, "an explicit empty parent places a clone at root")
 }
 
+func TestGroupsClone_PreservesOrOverridesEnvironment(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("source")
+	_, err := db.SetAgentGroupEnvironment("source", []sandboxpolicy.EnvironmentEntry{{
+		Name: "TEAM", Value: "source",
+	}})
+	require.NoError(t, err)
+
+	groupCloneRequest(t, f, "source", map[string]any{
+		"new_name": "inherited", "no_clone_members": true,
+	})
+	inherited, err := db.GetAgentGroupByName("inherited")
+	require.NoError(t, err)
+	assert.Equal(t, []sandboxpolicy.EnvironmentEntry{{Name: "TEAM", Value: "source"}}, inherited.Environment)
+
+	groupCloneRequest(t, f, "source", map[string]any{
+		"new_name": "edited", "no_clone_members": true,
+		"environment": []map[string]string{{"name": "TEAM", "value": "edited"}},
+	})
+	edited, err := db.GetAgentGroupByName("edited")
+	require.NoError(t, err)
+	assert.Equal(t, []sandboxpolicy.EnvironmentEntry{{Name: "TEAM", Value: "edited"}}, edited.Environment)
+}
+
 func TestGroupsClone_ResumeRefreshesFromClonedGroupNotSourceGroup(t *testing.T) {
 	f := newFlow(t)
 	const sourceConv = "group-clone-policy-source-111111111111"
