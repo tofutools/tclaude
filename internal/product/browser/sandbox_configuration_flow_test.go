@@ -52,6 +52,7 @@ func TestBrowserSandboxConfigurationRetainsCopiesChangesAndClearsProfile(t *test
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/snapshot", nil, &snapshot))
 	require.True(t, snapshot.Agents[0].Desired.HostSandbox.OmitProfiles, "clear is a durable explicit omission")
 	page.MustElementR("#roster button", "^Configure$").MustClick()
+	require.Equal(t, "retained:none", page.MustElement("#editor [name=host_sandbox]").MustProperty("value").Str())
 	page.MustElement("#editor option[value='profile:source']")
 	page.MustElement("#editor [name=host_sandbox]").MustSelect("Later sandbox")
 	page.MustElement("#editor button[type=submit]").MustClick()

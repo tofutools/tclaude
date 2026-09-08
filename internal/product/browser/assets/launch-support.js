@@ -16,8 +16,8 @@ function attachLaunchSupportPreview({host,api}) {
    if(token!==generation||!current())return;
    if(support.Harness!==selected)throw new Error('The returned support does not match the selected harness.');
    if(!support.Configured){status.textContent=selected+': no provider is configured in this backend. You can save offline settings; launching requires a configured provider.';return}
-   const hostSelection=host.querySelector('[name=host_sandbox]'),hasHostSandbox=hostSelection&&hostSelection.value&&hostSelection.value!=='none'&&hostSelection.value!=='defaults';
-   const defaultSupport=hostSelection?.value==='defaults'?'Global and group sandbox defaults are resolved at launch. ':'';
+   const hostSelection=host.querySelector('[name=host_sandbox]'),hasHostSandbox=hostSelection&&hostSelection.value&&!['none','defaults','retained:none','retained:defaults'].includes(hostSelection.value);
+   const defaultSupport=['defaults','retained:defaults'].includes(hostSelection?.value)?'Global and group sandbox defaults are resolved at launch. ':'';
    const hostSupport=hasHostSandbox?(support.HostSandbox?'Host sandbox preparation is configured; the selected policy and host capabilities are checked at launch. ':'Unsupported host sandbox selection: this provider has no host sandbox preparation configured. '):'';
    if(!support.PolicyKnown){status.textContent=hostSupport+selected+': the configured provider does not publish policy support. Launch validation remains authoritative.';return}
    const approvals=support.ApprovalModes||[],sandboxes=support.SandboxModes||[],problems=[];

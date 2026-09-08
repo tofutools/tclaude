@@ -178,6 +178,7 @@ func TestSandboxDefaultsSurvivingAgentRestartsAfterGroupDisband(t *testing.T) {
 			choice := &model.SandboxSelection{Scopes: []model.SandboxScopeSelection{{Scope: model.SandboxScopeExplicit, Ref: model.SandboxProfileRef{ProfileID: "explicit"}}}}
 			if authoredGroup {
 				choice.GroupID = "team"
+				choice.Scopes = append([]model.SandboxScopeSelection{{Scope: model.SandboxScopeGroup, Ref: model.SandboxProfileRef{ProfileID: "group"}}}, choice.Scopes...)
 			}
 			created, err := service.CreateAgent(ctx, app.CreateAgentRequest{Context: operator, ID: "worker", Name: "Worker", Desired: model.DesiredConfiguration{Harness: provider.Name(), Model: "fixture", WorkingDirectory: t.TempDir(), Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite, HostSandbox: choice}})
 			require.NoError(t, err)

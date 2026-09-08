@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"slices"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
@@ -132,6 +133,7 @@ func (s *Service) launchSandboxSelection(ctx context.Context, selected *model.Sa
 			}
 			selected = model.CloneSandboxSelection(selected)
 			selected.GroupID = ""
+			selected.Scopes = slices.DeleteFunc(selected.Scopes, func(scope model.SandboxScopeSelection) bool { return scope.Scope == model.SandboxScopeGroup })
 		}
 	}
 	return defaults.Resolve(selected), nil
