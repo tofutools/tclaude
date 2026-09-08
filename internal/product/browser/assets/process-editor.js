@@ -253,6 +253,7 @@ class ProcessEditor {
   stageControls(node) {
     const host = element('section'); host.className = 'process-task-stages';
     host.append(element('h4','Plan, checks and review'), element('p','Checks run in order. A failed check or review sends work back through the task and its checks. The work attempt limit is shared.'));
+    host.append(element('p','Legacy escalation loops can be saved: connect a compound failure to a retry/cancel decision, retry to this task and cancel to a cancelled end. Such authored loops cannot start; ordinary blocked-work resolution remains available.'));
     const edit = fn => { if (!this.discardUnapplied()) return; this.change(d => { const n=d.Process.Graph.Nodes.find(n=>n.ID===node.ID); n.Stages ||= {}; fn(n.Stages,n); }); };
     const open = (kind,id) => { if(this.discardUnapplied()) this.showStage({parentID:node.ID,kind,id}); };
     for (const kind of ['Plan','Review']) {

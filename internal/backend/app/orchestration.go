@@ -347,6 +347,9 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 	if err != nil {
 		return WorkRunResult{}, err
 	}
+	if len(graph.EscalationRetries) != 0 {
+		return WorkRunResult{}, fail(ErrUnsupported, "authored escalation retry loops cannot execute; use ordinary blocked resolution")
+	}
 	for _, node := range graph.Nodes {
 		if node.Performer != nil && strings.TrimSpace(node.Performer.Timeout) != "" && node.Performer.Kind != model.PerformerProgram {
 			return WorkRunResult{}, fail(ErrUnsupported, "task %s declares a performer timeout; only program timeout execution is available", node.ID)
@@ -1613,6 +1616,10 @@ func validateWorkGraph(graph model.WorkGraph) error {
 	if _, ok := nodes[graph.EntryNodeID]; !ok {
 		return fail(ErrInvalid, "work graph entry node does not exist")
 	}
+	retries, err := processEscalationRetries(graph)
+	if err != nil {
+		return err
+	}
 	adjacency := make(map[model.WorkNodeID][]model.WorkNodeID)
 	incoming := make(map[model.WorkNodeID]int)
 	for _, edge := range graph.Edges {
@@ -1621,6 +1628,9 @@ func validateWorkGraph(graph model.WorkGraph) error {
 		}
 		if source := nodes[edge.From]; source.Kind == model.WorkNodeDecision && edge.Verdict != "" && !slices.Contains(source.Decision.PermittedAnswers, edge.Verdict) {
 			return fail(ErrInvalid, "decision %s route %q is not a permitted answer", source.ID, edge.Verdict)
+		}
+		if slices.Contains(retries, edge) {
+			continue
 		}
 		adjacency[edge.From] = append(adjacency[edge.From], edge.To)
 		incoming[edge.To]++
