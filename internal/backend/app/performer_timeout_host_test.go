@@ -33,7 +33,7 @@ func TestPerformerTimeoutRealProgramKeepsProfileAndRunBounds(t *testing.T) {
 			graph.Nodes[0].Performer.Timeout = "2s"
 			started, err := service.StartProcess(ctx, app.StartProcessRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "start"}, ID: "run", Start: model.WorkStart{InlineGraph: &graph, Scope: model.WorkScope{WorkspaceID: "workspace"}, AuthorizedProgramProfiles: []model.ProgramProfileRef{graph.Nodes[0].Performer.Program.Profile}, Deadline: time.Now().Add(time.Minute)}})
 			require.NoError(t, err)
-			require.WithinDuration(t, started.Run.NodeAttempts[0].ReadyAt.Add(2*time.Second), started.Run.NodeAttempts[0].Deadline, time.Millisecond)
+			require.WithinDuration(t, started.Run.NodeAttempts[0].ReadyAt.Add(min(2*time.Second, profileTimeout)), started.Run.NodeAttempts[0].Deadline, time.Millisecond)
 			_, err = service.ReconcilePendingWork(ctx)
 			require.NoError(t, err)
 			var result app.WorkRunResult
@@ -59,7 +59,7 @@ func TestPerformerTimeoutRealProgramKeepsProfileAndRunBounds(t *testing.T) {
 			require.NoError(t, json.Unmarshal(execution.Evidence.Payload, &evidence))
 			require.False(t, evidence.Deadline.After(attempt.Deadline))
 			if profileTimeout < 2*time.Second {
-				require.True(t, evidence.Deadline.Before(attempt.Deadline), "saved profile timeout remains the tighter host limit")
+				require.Equal(t, attempt.ReadyAt.Add(profileTimeout), evidence.Deadline, "saved profile timeout is pinned from activation readiness")
 			}
 			require.Equal(t, profileTimeout, profile.Revision.Timeout)
 		})

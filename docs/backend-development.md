@@ -1342,6 +1342,9 @@ Performer timeout text is retained in task and compound-stage authoring. Blank
 uses existing defaults. Programs support positive timeouts up to one hour:
 the deadline begins at node readiness, includes admission delay, is persisted
 with the attempt, and never extends the run deadline or saved program limit.
+The exact pinned profile revision contributes its timeout before initial or
+retry readiness; queue delay cannot restart that tighter clock. Compiled
+activation budgets survive restart and cannot be supplied by authored graphs.
 A retry receives its own readiness-relative bound. Expired queued work is
 rejected before native issuance. Existing host deadline enforcement and
 observed-exit cleanup handle launched programs. Longer timeouts and agent/human
