@@ -24,6 +24,7 @@ func DaemonCommand() *cobra.Command {
 	cmd.SilenceErrors = true
 	var state string
 	var initialize bool
+	var claudeConfigDir string
 	var harnesses []string
 	var sources []string
 	var githubSources []string
@@ -32,6 +33,7 @@ func DaemonCommand() *cobra.Command {
 	var shell string
 	cmd.PersistentFlags().StringVar(&state, "state-dir", "", "Absolute private state directory (required)")
 	cmd.PersistentFlags().BoolVar(&initialize, "init", false, "Initialize a new directory and exit")
+	cmd.PersistentFlags().StringVar(&claudeConfigDir, "claude-config-dir", "", "Explicit persistent Claude configuration directory; retains existing login and history")
 	cmd.PersistentFlags().StringSliceVar(&harnesses, "harness", nil, "Providers to register: claude,codex,opencode,copilot; omit for offline catalog only")
 	cmd.PersistentFlags().StringArrayVar(&sources, "history-source", nil, "Named native history source: harness:name=/absolute/path")
 	cmd.PersistentFlags().BoolVar(&workspaces, "workspaces", false, "Enable owned Git checkout operations")
@@ -46,7 +48,7 @@ func DaemonCommand() *cobra.Command {
 		if initialize {
 			return server.Initialize(state)
 		}
-		registry, err := registeredProviders(state, harnesses)
+		registry, err := registeredProvidersWithClaudeHome(state, harnesses, claudeConfigDir)
 		if err != nil {
 			return err
 		}
@@ -68,6 +70,9 @@ func DaemonCommand() *cobra.Command {
 }
 
 func registeredProviders(state string, harnesses []string) (ports.ProviderRegistry, error) {
+	return registeredProvidersWithClaudeHome(state, harnesses, "")
+}
+func registeredProvidersWithClaudeHome(state string, harnesses []string, claudeHome string) (ports.ProviderRegistry, error) {
 	var entries []ports.Provider
 	seen := map[string]bool{}
 	for _, name := range harnesses {
@@ -77,7 +82,11 @@ func registeredProviders(state string, harnesses []string) (ports.ProviderRegist
 		seen[name] = true
 		switch name {
 		case "claude":
-			p, err := claude.New(claude.Config{PrivateRoot: filepath.Join(state, "claude"), AgentSocket: server.AgentSocketPath(state)})
+			sandbox, err := configuredHostSandbox(state)
+			if err != nil {
+				return nil, err
+			}
+			p, err := claude.New(claude.Config{NativeHome: claudeHome, HostSandbox: sandbox, AgentSocketDirectory: server.AgentSocketDirectory(state), PrivateRoot: filepath.Join(state, "claude"), AgentSocket: server.AgentSocketPath(state)})
 			if err != nil {
 				return nil, err
 			}

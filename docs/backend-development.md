@@ -195,6 +195,15 @@ Conversation. Existing attach, observe and stop operations apply to it.
 History requests select configured source names, never native filesystem roots.
 OpenCode, Codex and Copilot expose `owned` for their provider-owned history.
 Claude requires an explicit `--history-source claude:NAME=/absolute/projects-root`.
+Use `--claude-config-dir /absolute/config-root` to select an existing persistent
+Claude configuration (including its login and history) for launches. This is
+separate from the read-only history-source catalog. Selected host-sandbox
+launches expose that exact configuration root, their own credential/callback
+resources, and the API endpoint directory; they do not mount the backend state
+parent. Without an explicit root, selected launches use
+`STATE/claude/native-home`. A continuation retains its recorded configuration
+root rather than switching it when the host-sandbox choice changes.
+
 OpenCode also accepts an explicit native XDG root. Codex and Copilot currently
 support their owned native homes only. Each refresh reports coverage; partial or
 unreadable history is not presented as a complete empty result.
