@@ -23,6 +23,11 @@ function stackParts(points) {
   return result;
 }
 
+function visibleBoundary(points) {
+  const first = points.findIndex((point) => point.upper > point.lower);
+  return first < 0 ? [] : points.slice(Math.max(0, first - 1));
+}
+
 function breakdownLabel(item, chart) {
   const parts = [];
   if (chart.stackByProvider && item.provider) parts.push(item.provider);
@@ -136,9 +141,14 @@ export function CostsAccumulatedChart({ chart }) {
         if (part.points.length < 2) return null;
         const upper = part.points.map((point) => `${x(point.index)},${y(point.upper)}`).join(' ');
         const lower = [...part.points].reverse().map((point) => `${x(point.index)},${y(point.lower)}`).join(' ');
-        return html`<polygon key=${`stack-${stack.key}-${index}`}
-          class=${`cost-accumulated-stack ${stack.className}${part.projected ? ' projected' : ''}`}
-          points=${`${upper} ${lower}`} />`;
+        const boundary = visibleBoundary(part.points);
+        return html`<g key=${`stack-${stack.key}-${index}`}>
+          <polygon class=${`cost-accumulated-stack ${stack.className}${part.projected ? ' projected' : ''}`}
+            points=${`${upper} ${lower}`} />
+          ${boundary.length > 1 && html`<polyline
+            class=${`cost-accumulated-stack-line ${stack.className}${part.projected ? ' projected' : ''}`}
+            points=${boundary.map((point) => `${x(point.index)},${y(point.upper)}`).join(' ')} />`}
+        </g>`;
       }))}
       ${[0, .5, 1].map((ratio) => html`<g class="cost-accumulated-grid" key=${ratio}>
         <line x1=${PAD.left} x2=${width - PAD.right} y1=${y(chart.scaleMax * ratio)} y2=${y(chart.scaleMax * ratio)} />

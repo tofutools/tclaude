@@ -148,8 +148,11 @@ test('Cost chart breakdowns independently group providers and models, including 
   assert.equal(accumulated.stacks.length, 3);
   assert.deepEqual(accumulated.points[1].breakdown.map((item) => item.cost), [18, 9, 3],
     'accumulated hover breakdown includes recorded plus projected portions');
-  assert.equal(accumulated.stacks.at(-1).points.at(-1).upper, 30,
-    'the outer stacked boundary remains equal to the accumulated total');
+  assert.deepEqual(accumulated.points[1].breakdown.map((item) => item.key),
+    accumulated.stacks.map((item) => item.key),
+    'hover rows use the same series order as the accumulated layers');
+  assert.equal(accumulated.stacks[0].points.at(-1).upper, 30,
+    'the first listed series is the top layer and its outer boundary equals the accumulated total');
 });
 
 test('Copilot cost segments retain native credits beside gross subscription dollars', async (t) => {

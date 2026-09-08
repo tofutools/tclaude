@@ -3640,9 +3640,12 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-accumulated-grid line { stroke: #1c2430; stroke-width: 1; }
 .cost-accumulated-grid text, .cost-accumulated-day { fill: #8b949e; font-size: 9px; }
 .cost-accumulated-area { fill: rgba(110, 156, 125, .12); }
-.cost-accumulated-stack { fill: var(--cost-series-color); stroke: var(--cost-series-color); stroke-width: 1.4; fill-opacity: .58; }
-.cost-accumulated-stack.projected { fill-opacity: .28; stroke-dasharray: 4 4; }
-.cost-accumulated-stack.cost-seg-whatif { fill-opacity: .24; stroke-dasharray: 2 2; }
+.cost-accumulated-stack { fill: var(--cost-series-color); stroke: none; fill-opacity: .58; }
+.cost-accumulated-stack.projected { fill-opacity: .28; }
+.cost-accumulated-stack.cost-seg-whatif { fill-opacity: .24; }
+.cost-accumulated-stack-line { fill: none; stroke: var(--cost-series-color); stroke-width: 1.4; }
+.cost-accumulated-stack-line.projected { stroke-dasharray: 4 4; }
+.cost-accumulated-stack-line.cost-seg-whatif { stroke-dasharray: 2 2; }
 .cost-accumulated-line { fill: none; stroke: #6e9c7d; stroke-width: 2; }
 .cost-accumulated-line.projected { stroke: #d29922; stroke-dasharray: 7 5; }
 .cost-accumulated-hover-target { fill: transparent; pointer-events: all; cursor: crosshair; }

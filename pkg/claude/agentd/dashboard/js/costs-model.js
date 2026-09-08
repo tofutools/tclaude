@@ -311,7 +311,10 @@ export function buildAccumulatedCostChart(data) {
   const keys = [...new Set((data?.days || []).flatMap((day) => (day.segments || []).map((segment) => segment.key)))];
   const stacks = keys.map((key, seriesIndex) => {
     const stackPoints = points.map((point) => {
-      const lower = keys.slice(0, seriesIndex).reduce((sum, priorKey) => {
+      // The first listed series is the top area, matching both chart tooltips.
+      // Sum later series beneath it so visual and textual top-to-bottom order
+      // stay identical.
+      const lower = keys.slice(seriesIndex + 1).reduce((sum, priorKey) => {
         const entry = point.breakdown.find((item) => item.key === priorKey);
         return sum + (entry?.cost || 0);
       }, 0);
@@ -506,8 +509,9 @@ export function buildCostChart(data, projection, agents, selected, providers, se
   const creditBreakdown = dailyCreditsBreakdown(filteredAgents, selected, options);
   const seriesKeys = [...new Set(Object.values(breakdown).flatMap((parts) =>
     Object.values(parts).map((part) => `${part.provider}\u0000${part.model}`)))].sort();
+  const seriesOrder = new Map(seriesKeys.map((key, index) => [key, index]));
   const className = (part) => {
-    const index = Math.max(0, seriesKeys.indexOf(`${part.provider}\u0000${part.model}`));
+    const index = seriesOrder.get(`${part.provider}\u0000${part.model}`) ?? 0;
     return `cost-series-${index % 8}${part.kind === 'what_if' ? ' cost-seg-whatif' : ''}`;
   };
   const recordedTotals = new Map();

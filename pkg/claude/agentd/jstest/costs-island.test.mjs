@@ -121,7 +121,7 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
     'the generic total line does not paint over colored stack boundaries');
   await harness.act(() => harness.fireEvent(accumulatedHoverTarget, 'mousemove', { clientX: 0 }));
   assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /recorded/);
-  await harness.act(() => harness.fireEvent(accumulatedHoverTarget, 'mousemove', { clientX: 1000 }));
+  await harness.act(() => harness.fireEvent(accumulatedHoverTarget, 'pointerdown', { clientX: 1000 }));
   assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /projection/);
   const accumulatedTip = mounted.container.querySelector('.cost-accumulated-tip-panel');
   assert.ok(accumulatedTip.querySelectorAll('.cost-accumulated-tip-sw').length >= 2,

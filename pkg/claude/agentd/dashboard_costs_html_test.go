@@ -179,7 +179,7 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must(`id="costs-stack-model"`, "model grouping has an independent checkbox")
 	must("Projected splits use the recorded mix", "projection breakdown semantics are explained in the menu")
 	must(".cost-series-7 { --cost-series-color:", "chart series use a bright categorical palette")
-	must("fill: var(--cost-series-color); stroke: var(--cost-series-color)", "accumulated areas and boundary lines share the series color")
+	must(".cost-accumulated-stack-line { fill: none; stroke: var(--cost-series-color)", "accumulated areas use a single color-matched line at each upper boundary")
 	must(`.cost-tip-row[class*="cost-series-"] .cost-tip-sw`, "daily hover swatches reuse their series color")
 	must(`.cost-accumulated-tip-row[class*="cost-series-"]`, "accumulated hover rows reuse their series color")
 	must(`.cost-legend-sw[class*="cost-series-"]`, "provider filter swatches reuse their series color")
