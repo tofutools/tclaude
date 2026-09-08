@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -115,10 +114,8 @@ func TestSandboxDescriptorProviderResourcesNative(t *testing.T) {
 	require.Eventually(t, func() bool { o := process.Observe(); return o.Exited && o.ExitCode != nil }, 10*time.Second, 10*time.Millisecond)
 	observation := process.Observe()
 	if *observation.ExitCode != 0 && os.Getenv("TCLAUDE_REQUIRE_SANDBOX_NATIVE") != "1" {
-		for _, message := range []string{"No permissions to create a new namespace", "Creating new namespace failed: Operation not permitted", "loopback: Failed RTM_NEWADDR: Operation not permitted"} {
-			if strings.Contains(output.String(), message) {
-				t.Skipf("host forbids disposable native namespace: %s", output.String())
-			}
+		if sandboxNamespaceUnavailable(output.String()) {
+			t.Skipf("host forbids disposable native namespace: %s", output.String())
 		}
 	}
 	require.Zero(t, *observation.ExitCode, output.String())

@@ -74,10 +74,8 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 	}, 10*time.Second, 10*time.Millisecond)
 	observation := process.Observe()
 	if observation.ExitCode != nil && *observation.ExitCode != 0 && os.Getenv("TCLAUDE_REQUIRE_SANDBOX_NATIVE") != "1" {
-		for _, unavailable := range []string{"No permissions to create a new namespace", "Creating new namespace failed: Operation not permitted", "loopback: Failed RTM_NEWADDR: Operation not permitted"} {
-			if strings.Contains(output.String(), unavailable) {
-				t.Skipf("host forbids disposable namespace creation: %s", output.String())
-			}
+		if sandboxNamespaceUnavailable(output.String()) {
+			t.Skipf("host forbids disposable namespace creation: %s", output.String())
 		}
 	}
 	require.NotNil(t, observation.ExitCode, output.String())

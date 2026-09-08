@@ -1334,12 +1334,12 @@ Saving a pack reference does not grant network access or launch a workload.
 
 ### Sandbox profile transfer
 
-Each sandbox catalog card can export its saved policy and complete
-include graph as a versioned JSON bundle. Import accepts a file or pasted JSON,
-validates all hashes and dependencies without host lookup, and previews each
-revision before creating independent named copies. Every included revision gets
-a new profile identity, including when the source graph pins different revisions
-of the same profile. Include references are remapped to those exact copies.
+Each sandbox catalog card exports its current policy and current included
+profiles as a self-contained JSON bundle. This follows the same editable IDs as
+a fresh launch, including profiles imported by earlier versions. Import accepts
+a file or pasted JSON, checks bundle integrity without host lookup, and previews
+each profile before creating independent named copies. Include references are
+remapped to those copies.
 The whole graph and original-result retry receipt commit in one transaction;
 existing target identities cause a conflict without partial publication.
 
