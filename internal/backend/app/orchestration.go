@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	cronv3 "github.com/robfig/cron/v3"
 	"github.com/tofutools/tclaude/internal/backend/model"
@@ -1633,6 +1634,9 @@ func validateRetryPolicy(node model.WorkNode) error {
 }
 
 func validateWorkNode(node model.WorkNode) error {
+	if len(node.Description) > 16<<10 || len(node.Doc) > 64<<10 || !utf8.ValidString(node.Description) || !utf8.ValidString(node.Doc) || strings.ContainsRune(node.Description, 0) || strings.ContainsRune(node.Doc, 0) {
+		return fail(ErrInvalid, "node notes require valid text: description at most 16 KiB and documentation at most 64 KiB")
+	}
 	switch node.Kind {
 	case model.WorkNodeTask:
 		if node.Performer == nil || node.Decision != nil || node.Join != nil || node.Wait != nil || node.End != nil {

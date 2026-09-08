@@ -11,7 +11,7 @@ import (
 
 func TestBrowserProcessMonitorShowsDurableNodesAndRefreshesCancellation(t *testing.T) {
 	ctx, page, operator := processEditorBrowser(t)
-	graph := model.WorkGraph{CompilerVersion: "1", EntryNodeID: "pause", Nodes: []model.WorkNode{{ID: "pause", Name: "Await scheduled time", Kind: model.WorkNodeWait, Wait: &model.WaitPolicy{Duration: time.Hour}}, {ID: "done", Name: "Finish", Kind: model.WorkNodeEnd, End: &model.EndPolicy{Outcome: model.WorkOutcomeVerified}}}, Edges: []model.WorkEdge{{From: "pause", To: "done"}}}
+	graph := model.WorkGraph{CompilerVersion: "1", EntryNodeID: "pause", Nodes: []model.WorkNode{{ID: "pause", Name: "Await scheduled time", Description: "Retained scheduling intent", Doc: "<img src=x onerror=alert(1)>\nLiteral documentation", Kind: model.WorkNodeWait, Wait: &model.WaitPolicy{Duration: time.Hour}}, {ID: "done", Name: "Finish", Kind: model.WorkNodeEnd, End: &model.EndPolicy{Outcome: model.WorkOutcomeVerified}}}, Edges: []model.WorkEdge{{From: "pause", To: "done"}}}
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/processes", map[string]any{"request_id": "start_monitor", "id": "monitor_run", "start": model.WorkStart{InlineGraph: &graph, Deadline: time.Now().Add(2 * time.Hour)}}, nil))
 	page.MustElement("#refresh").MustClick()
 	page.MustElement("[data-tab=work]").MustClick()
@@ -19,6 +19,9 @@ func TestBrowserProcessMonitorShowsDurableNodesAndRefreshesCancellation(t *testi
 	page.MustElement(".process-monitor [aria-label='Process execution graph']")
 	page.MustElement(".process-monitor .process-node[data-node-id='pause']").MustClick()
 	page.MustElementR(".process-monitor aside h3", "Await scheduled time")
+	page.MustElementR(".process-monitor aside pre", "Retained scheduling intent")
+	require.Contains(t, page.MustElement(".process-monitor aside").MustText(), "<img src=x onerror=alert(1)>")
+	require.False(t, page.MustHas(".process-monitor aside img"))
 	page.MustElementR(".process-monitor aside h4", "Attempt 1")
 	page.MustElement(".process-monitor .process-node[data-node-id='done']").MustClick()
 	page.MustElementR(".process-monitor aside", "This node has not been activated")

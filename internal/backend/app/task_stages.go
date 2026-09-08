@@ -61,7 +61,7 @@ func compileTaskStages(authored model.WorkGraph) (model.WorkGraph, error) {
 			}
 			id := taskStageID(node.ID, role, stage.ID)
 			performer := stage.Performer
-			graph.Nodes = append(graph.Nodes, model.WorkNode{ID: id, Kind: model.WorkNodeTask, Name: stage.Name, Performer: &performer, Retry: stage.Retry})
+			graph.Nodes = append(graph.Nodes, model.WorkNode{ID: id, Kind: model.WorkNodeTask, Name: stage.Name, Description: stage.Description, Doc: stage.Doc, Performer: &performer, Retry: stage.Retry})
 			chain = append(chain, id)
 			return id, nil
 		}
@@ -99,7 +99,7 @@ func compileTaskStages(authored model.WorkGraph) (model.WorkGraph, error) {
 				return model.WorkGraph{}, err
 			}
 		}
-		graph.Nodes = append(graph.Nodes, model.WorkNode{ID: node.ID, Kind: model.WorkNodeTaskComplete, Name: node.Name})
+		graph.Nodes = append(graph.Nodes, model.WorkNode{ID: node.ID, Kind: model.WorkNodeTaskComplete, Name: node.Name, Description: node.Description, Doc: node.Doc})
 		chain = append(chain, node.ID)
 		group.Entry = chain[0]
 		entries[node.ID] = group.Entry

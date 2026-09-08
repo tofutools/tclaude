@@ -1278,6 +1278,10 @@ of isolation. No setup command runs during preview. Actual launch integration
 must recheck host identity, current authority, provider resources and enforcement
 capabilities before using a retained policy.
 
+### Process descriptions and documentation
+
+Every process node and task stage can retain a description and longer documentation in its saved immutable definition. These plain-text notes survive copy, export, stage compilation, and run inspection. They are separate from worker briefs and human prompts and do not alter execution instructions or authority. Descriptions are bounded to 16 KiB and documentation to 64 KiB; the editor and run monitor display authored markup literally.
+
 ### Legacy sandbox profile conversion
 
 Offline v228 import converts representable sandbox profiles into archived,

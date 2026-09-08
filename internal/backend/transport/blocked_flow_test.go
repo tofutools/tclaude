@@ -53,12 +53,13 @@ func TestPublicBlockedProgramResolutionSurvivesRestartAndExactRetry(t *testing.T
 	graph := model.WorkGraph{CompilerVersion: "1", EntryNodeID: "check", Nodes: []model.WorkNode{{ID: "check", Kind: model.WorkNodeTask, Performer: &model.Performer{Kind: model.PerformerProgram, Program: &model.ProgramPerformer{Profile: ref}}, Waivable: true, Retry: model.RetryPolicy{MaxAttempts: 1, Retryable: []string{model.RetryableProgramFailure}}}, {ID: "done", Kind: model.WorkNodeEnd, End: &model.EndPolicy{Outcome: model.WorkOutcomeVerified}}}, Edges: []model.WorkEdge{{From: "check", To: "done"}}, Outcome: model.WorkGraphOutcomePolicy{RequiredNodes: []model.WorkNodeID{"check"}}}
 	call("POST", "/v2/processes", map[string]any{"request_id": "start", "id": "run", "start": model.WorkStart{InlineGraph: &graph, Scope: model.WorkScope{WorkspaceID: "workspace"}, AuthorizedProgramProfiles: []model.ProgramProfileRef{ref}, Deadline: now.Add(time.Hour)}}, nil)
 	var result workResultView
+	// Native helper startup and durable settlement share this bounded budget on contended CI runners.
 	require.Eventually(t, func() bool {
 		_, err := service.ReconcilePendingWork(ctx)
 		require.NoError(t, err)
 		call("GET", "/v2/work/run", nil, &result)
 		return len(result.Decisions) == 1
-	}, 5*time.Second, 20*time.Millisecond)
+	}, 20*time.Second, 20*time.Millisecond)
 	require.NoError(t, store.Close())
 	open()
 	call("GET", "/v2/work/run", nil, &result)
