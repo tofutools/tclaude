@@ -22,9 +22,12 @@ func (h *Handler) RegisterOrchestrationAPI(api app.OrchestrationAPI) error {
 		journeyJSON(h, func(ctx context.Context, p model.Principal, b struct {
 			commandIdentity
 			ExpectedRevision model.Revision `json:"expected_revision"`
-			Archived         bool           `json:"archived"`
+			Archived         *bool          `json:"archived"`
 		}) (any, error) {
-			return api.SetDefinitionArchived(ctx, app.SetDefinitionArchivedRequest{Context: b.context(p), ID: model.DefinitionID(r.PathValue("id")), ExpectedRevision: b.ExpectedRevision, Archived: b.Archived})
+			if b.Archived == nil {
+				return nil, app.ErrInvalid
+			}
+			return api.SetDefinitionArchived(ctx, app.SetDefinitionArchivedRequest{Context: b.context(p), ID: model.DefinitionID(r.PathValue("id")), ExpectedRevision: b.ExpectedRevision, Archived: *b.Archived})
 		})(w, r)
 	})
 	if importer, ok := api.(app.ProcessImportAPI); ok {
