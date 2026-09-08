@@ -75,9 +75,6 @@ func compileTaskStages(authored model.WorkGraph) (model.WorkGraph, error) {
 				return "", fail(ErrInvalid, "stage IDs must be stable and unique within a task")
 			}
 			seen[stage.ID] = true
-			if role != "plan" && (stage.Retry.MaxAttempts != 0 || stage.Retry.Backoff != 0 || len(stage.Retry.Retryable) != 0) {
-				return "", fail(ErrInvalid, "checks and review share the task work retry budget")
-			}
 			id := taskStageID(node.ID, role, stage.ID)
 			performer := stage.Performer
 			graph.Nodes = append(graph.Nodes, model.WorkNode{ID: id, Kind: model.WorkNodeTask, Name: stage.Name, Description: stage.Description, Doc: stage.Doc, Performer: &performer, Retry: stage.Retry})

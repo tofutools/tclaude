@@ -218,13 +218,14 @@ class ProcessEditor {
       }
       this.performerSelect = select;
     }
-    if ((!stageContext || stageContext.kind === 'Plan') && (node.Kind === 'task' || node.Kind === 'decision')) {
+    if (node.Kind === 'task' || node.Kind === 'decision') {
       fields.push({name: 'attempts', label: node.Stages ? 'Maximum work attempts (0 permits one work attempt)' : 'Maximum attempts (0 disables retries)', type: 'number', min: 0, max: 100, value: node.Retry?.MaxAttempts || 0},
         {name: 'backoff', label: 'Retry delay seconds', type: 'number', min: 0, value: (node.Retry?.Backoff || 0) / 1e9},
         {name: 'budget', label: 'Attempt budget seconds (0 uses run deadline)', type: 'number', min: 0, value: (node.Retry?.AttemptBudget || 0) / 1e9},
+        {name:'retry_mode',label:'Retry mode',options:[option('','Default fresh attempt'),option('fresh-attempt'),option('feedback-same-session','Feedback in same session (authoring only)')],value:node.Retry?.OnFail||''},
         {name: 'retryable', label: 'Retry these outcomes', multiple: true, options: ['program_failed', 'agent_rejected', 'human_rejected'].map(v => option(v)), value: node.Retry?.Retryable || []},
         {name: 'waivable', label: 'Allow explicit waiver when blocked', type: 'checkbox', value: node.Waivable});
-      changes.push((n, f) => { n.Waivable = f.waivable; n.Retry = Number(f.attempts) ? {MaxAttempts: Number(f.attempts), Backoff: seconds(f.backoff), AttemptBudget: seconds(f.budget), Retryable: f.retryable} : {}; });
+      changes.push((n, f) => { if(f.retry_mode&&!Number(f.attempts))throw new Error('Retry mode requires positive max attempts.'); n.Waivable = f.waivable; n.Retry = Number(f.attempts) ? {MaxAttempts: Number(f.attempts), Backoff: seconds(f.backoff), AttemptBudget: seconds(f.budget), Retryable: f.retryable,...(f.retry_mode?{OnFail:f.retry_mode}:{})} : {}; });
     }
     if (stageContext?.kind === 'Plan' && this.model.value.Process.Graph.Nodes.find(n=>n.ID===stageContext.parentID)?.Stages?.PlanApproval) {
       fields.push({name:'approval_attempts',label:'Maximum approval attempts (authoring only)',value:node.ApprovalRetry?.MaxAttempts??''},
@@ -244,6 +245,8 @@ class ProcessEditor {
     if(node.Captures?.length) this.inspector.append(element('p','Output names are retained for authoring and export. Running this process is unavailable until capture execution is supported.'));
     if(node.Performer?.Timeout) this.inspector.append(element('p',node.Performer.Kind==='program'?'Timeout starts when this program node becomes ready, includes admission delay, and cannot extend the run or saved program limit.':'Timeout is retained for authoring. Clear it to start: agent and human timeout execution is unavailable.'));
     if(node.Performer?.Contact) this.inspector.append(element('p','Contact schedules are retained for authoring and export. Clear all three contact fields to remove a schedule. Running this process is unavailable until scheduled performer contact is supported.'));
+    if(stageContext && stageContext.kind!=='Plan')this.inspector.append(element('p','Independent check/review retries can be authored and saved, but cannot run. Clear the retry policy to use the shared work retry budget.'));
+    if(node.Retry?.OnFail==='feedback-same-session')this.inspector.append(element('p','Feedback in the same session is retained for authoring only. Choose a fresh attempt to run.'));
     if(node.ApprovalRetry)this.inspector.append(element('p','Approval retry policy is retained for authoring and export. Clear its fields to run this process; approval retry execution is unavailable.'));
     if (stageContext) { this.inspector.append(action('Back to task stages', () => this.render())); return; }
     if (node.Kind === 'task') this.stageControls(node);

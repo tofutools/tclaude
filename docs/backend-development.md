@@ -1428,3 +1428,20 @@ rework. Clear the declaration to use the existing executable approval workflow.
 Approval retry attempt counts retain the positive signed 64-bit authoring range.
 The API emits exact decimal strings and accepts both integer and string JSON
 input, so browser editing preserves values above JavaScript's safe integer range.
+
+### Retry modes and independent stage policies
+
+Retry policies retain optional `OnFail` as `fresh-attempt` or
+`feedback-same-session`; an absent mode retains existing fresh-attempt behavior.
+Task, plan, check, and review inspectors expose the mode alongside the attempt
+budget, delay, and explicit failure classes. Copies and immutable revisions
+retain these fields.
+
+Independent check/review retry policies and feedback-same-session retries are
+currently authoring-only, as in the legacy runtime. A start requesting either
+is refused before creating work, including a pinned older revision after the
+latest draft clears it. Clear independent check/review retries to retain the
+existing shared work budget; choose fresh attempts for executable task or plan
+retries. No unsupported declaration is silently ignored.
+
+Automation occurrence retries do not accept process-only retry modes.

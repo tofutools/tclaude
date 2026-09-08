@@ -346,8 +346,12 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 			return WorkRunResult{}, fail(ErrUnsupported, "task %s declares output captures; capture execution is not available", node.ID)
 		}
 	}
+	retrySource := graph
 	graph, err := compileTaskStages(graph)
 	if err != nil {
+		return WorkRunResult{}, err
+	}
+	if err := executableRetryDeclarations(retrySource); err != nil {
 		return WorkRunResult{}, err
 	}
 	if len(graph.EscalationRetries) != 0 {
@@ -1697,11 +1701,16 @@ func validateWorkGraph(graph model.WorkGraph) error {
 
 func validateRetryPolicy(node model.WorkNode) error {
 	retry := node.Retry
+	switch retry.OnFail {
+	case "", "fresh-attempt", "feedback-same-session":
+	default:
+		return fail(ErrInvalid, "work node %s has invalid retry mode", node.ID)
+	}
 	if retry.Backoff < 0 || retry.AttemptBudget < 0 {
 		return fail(ErrInvalid, "work node %s retry timing cannot be negative", node.ID)
 	}
 	if retry.MaxAttempts == 0 {
-		if retry.Backoff != 0 || retry.AttemptBudget != 0 || len(retry.Retryable) != 0 {
+		if retry.Backoff != 0 || retry.AttemptBudget != 0 || len(retry.Retryable) != 0 || retry.OnFail != "" {
 			return fail(ErrInvalid, "work node %s retry fields require max attempts", node.ID)
 		}
 		return nil
@@ -1908,6 +1917,9 @@ func validateAutomation(condition model.AutomationCondition, action model.Automa
 		}
 	default:
 		return fail(ErrInvalid, "automation action kind is unsupported")
+	}
+	if policy.Retry.OnFail != "" {
+		return fail(ErrInvalid, "occurrence retry modes are not supported")
 	}
 	if policy.ExpiresAfter <= 0 || policy.Deadline <= 0 || policy.Retry.MaxAttempts > maxWorkAttempts {
 		return fail(ErrInvalid, "occurrence expiry, deadline and bounded retry are required")
