@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
+	"github.com/tofutools/tclaude/internal/backend/providers/nativeactivity"
 	"github.com/tofutools/tclaude/internal/backend/providers/nativeguidance"
 )
 
@@ -349,7 +350,8 @@ func (p *Provider) prepareStateRoot(root, _ string) error {
 	sessionHooks := []any{map[string]any{"type": "command", "command": hookScript}, callback}
 	hookGroups := map[string]any{
 		"SessionStart":     []any{map[string]any{"hooks": sessionHooks}},
-		"UserPromptSubmit": []any{map[string]any{"hooks": []any{callback}}},
+		"UserPromptSubmit": []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": hookScript}, callback}}},
+		"Stop":             []any{map[string]any{"hooks": []any{map[string]any{"type": "command", "command": hookScript}}}},
 	}
 	hooks := map[string]any{"hooks": hookGroups}
 	raw, err := json.Marshal(hooks)
@@ -617,6 +619,7 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 }
 
 type Runtime struct {
+	activity      nativeactivity.State
 	forkReceipt   string
 	artifact      *host.SandboxChildArtifact
 	policyHash    string
@@ -659,6 +662,7 @@ func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
 	switch {
 	case observed.Running:
 		out.Workload = ports.WorkloadRunning
+		out.AgentActivity, out.AgentActivityObservedAt = r.activity.Observation()
 		out.AttachmentActive = r.terminal.AttachmentActive()
 		if r.contextReady {
 			out.Context = ports.ContextReady
@@ -680,6 +684,7 @@ func (r *Runtime) Interact(ctx context.Context, in ports.Interaction) (ports.Int
 	if strings.TrimSpace(in.Text) == "" {
 		return ports.InteractionResult{Disposition: ports.EffectRefused}, nil
 	}
+	r.activity.Invalidate()
 	if err := r.terminal.SendLiteral(ctx, in.Text); err != nil {
 		e, _ := r.providerEvidenceUnlocked()
 		return ports.InteractionResult{Disposition: ports.EffectUnknown, Evidence: e}, err
@@ -770,7 +775,7 @@ type sessionStartEvent struct {
 }
 
 func (r *Runtime) consumeObservations(ctx context.Context) error {
-	if r.spool == nil || r.observations == nil {
+	if r.spool == nil {
 		return nil
 	}
 	events, err := r.spool.ReadPending()
@@ -779,7 +784,7 @@ func (r *Runtime) consumeObservations(ctx context.Context) error {
 	}
 	for _, sp := range events {
 		var event sessionStartEvent
-		if json.Unmarshal(sp.Payload, &event) != nil || event.HookEventName != "SessionStart" || event.AgentID != "" {
+		if json.Unmarshal(sp.Payload, &event) != nil || event.AgentID != "" {
 			_ = r.spool.Acknowledge(sp.Order)
 			continue
 		}
@@ -787,6 +792,24 @@ func (r *Runtime) consumeObservations(ctx context.Context) error {
 			_ = r.spool.Acknowledge(sp.Order)
 			continue
 		}
+		if event.HookEventName != "SessionStart" {
+			if event.SessionID == r.nativeID {
+				if state, ok := nativeactivity.HookState(event.HookEventName); ok {
+					r.activity.Record(state, sp.RecordedAt)
+				}
+			}
+			if err := r.spool.Acknowledge(sp.Order); err != nil {
+				return err
+			}
+			continue
+		}
+		if r.observations == nil {
+			if err := r.spool.Acknowledge(sp.Order); err != nil {
+				return err
+			}
+			continue
+		}
+		r.activity.Record(ports.AgentActivityUnknown, sp.RecordedAt)
 		var priorBinding *model.NativeBinding
 		unexpectedPrimary := false
 		if r.nativeID == "" && r.intent == ports.StartFresh {

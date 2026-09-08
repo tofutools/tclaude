@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 )
 
 const maxObservationEventSize = 1 << 20
@@ -22,8 +23,9 @@ type ObservationSpool struct {
 }
 
 type ObservationSpoolEvent struct {
-	Order   string
-	Payload []byte
+	RecordedAt time.Time
+	Order      string
+	Payload    []byte
 }
 
 func PrepareObservationSpool(privateRoot string) (*ObservationSpool, error) {
@@ -115,8 +117,10 @@ func (s *ObservationSpool) ReadPending() ([]ObservationSpoolEvent, error) {
 		if readErr != nil {
 			return nil, fmt.Errorf("read observation event: %w", readErr)
 		}
-		result = append(result, ObservationSpoolEvent{Order: name, Payload: value})
+		result = append(result, ObservationSpoolEvent{Order: name, Payload: value, RecordedAt: info.ModTime().UTC()})
 	}
+	// Hook filenames are random; process completed native events chronologically.
+	sort.SliceStable(result, func(i, j int) bool { return result[i].RecordedAt.Before(result[j].RecordedAt) })
 	return result, nil
 }
 

@@ -759,6 +759,7 @@ func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
 		result.Workload = ports.WorkloadRunning
 		if err := r.health(ctx); err == nil && r.nativeID != "" && r.contextReady {
 			result.Context = ports.ContextReady
+			result.AgentActivity, result.AgentActivityObservedAt = r.observeActivity(ctx)
 		} else {
 			result.Context = ports.ContextPending
 		}

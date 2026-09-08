@@ -58,7 +58,7 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 	provider, err := New(Config{
 		Executable: executable, PrivateRoot: root, AgentSocket: agentSocket,
 		Environment: []string{"OPENCODE_TEST_BINARY=" + os.Args[0], "OPENCODE_TEST_PROMPT=" + promptPath,
-			"OPENCODE_TEST_BOOTSTRAP=" + bootstrapPath},
+			"OPENCODE_TEST_BOOTSTRAP=" + bootstrapPath, "OPENCODE_TEST_ACTIVITY=" + filepath.Join(root, "activity.json")},
 	})
 	require.NoError(t, err)
 	observations := &observationSink{}
@@ -121,6 +121,8 @@ func TestServerProviderLaunchInteractionAttachmentRecoveryAndStop(t *testing.T) 
 		defer cancel()
 		_, _ = released.Runtime.Stop(ctx, ports.StopRequest{Force: true})
 	})
+
+	assertNativeSessionActivity(t, released.Runtime, filepath.Join(root, "activity.json"))
 
 	filePermit := &testPermit{execution: request.Spec.ExecutionID, operation: "operation_file"}
 	staged, err := released.Runtime.(ports.TerminalFileStager).StageTerminalFile(context.Background(), ports.StageTerminalFileRequest{ExecutionID: request.Spec.ExecutionID, OperationID: filePermit.OperationID(), Filename: "drawing.png", Content: []byte("native user file"), Permit: filePermit})
@@ -454,6 +456,26 @@ func TestOpenCodeServerHelper(t *testing.T) {
 		}
 		_ = json.NewEncoder(writer).Encode(map[string]bool{"healthy": true})
 	})
+	for _, path := range []string{"/session/status", "/question", "/permission"} {
+		mux.HandleFunc(path, func(writer http.ResponseWriter, request *http.Request) {
+			if !validBasicAuth(request, password) {
+				writer.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			raw, err := os.ReadFile(os.Getenv("OPENCODE_TEST_ACTIVITY"))
+			var values map[string]json.RawMessage
+			if err != nil || json.Unmarshal(raw, &values) != nil {
+				writer.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			value, ok := values[request.URL.Path]
+			if !ok {
+				writer.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			_, _ = writer.Write(value)
+		})
+	}
 	mux.HandleFunc("/session", func(writer http.ResponseWriter, request *http.Request) {
 		if !validBasicAuth(request, password) {
 			writer.WriteHeader(http.StatusUnauthorized)
