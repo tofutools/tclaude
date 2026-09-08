@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"github.com/tofutools/tclaude/internal/backend/app"
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
@@ -20,7 +21,12 @@ type parameterDeclarationView struct {
 func projectParameters(parameters []model.ParameterDeclaration) []parameterDeclarationView {
 	result := make([]parameterDeclarationView, 0, len(parameters))
 	for _, p := range parameters {
-		result = append(result, parameterDeclarationView{p, string(p.Default)})
+		raw := p.Default
+		// Application semantics treat missing and JSON null as no default.
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			raw = nil
+		}
+		result = append(result, parameterDeclarationView{p, string(raw)})
 	}
 	return result
 }

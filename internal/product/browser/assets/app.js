@@ -384,7 +384,7 @@ async function renderDefinitions(){
    if(!spaces.length)throw new Error('Create a checkout in Workspaces before deploying this team.');
    const shared=revision.Team.WorkspacePolicy==='shared';
    const workspaceFields=(shared?[{Key:'shared',Name:'Shared team'}]:revision.Team.Members).map(member=>({name:'workspace_'+member.Key,label:member.Name+' workspace',options:spaces.map(w=>({value:w.ID,label:w.Intent.Name||w.Observation.ActualPath||w.ID}))}));
-   edit('Deploy pinned team',[{name:'mission',label:'Mission',multiline:true},{name:'group',label:'Group',options:[{value:'',label:'Create a new group'},...(snapshot.groups||[]).map(g=>({value:g.ID,label:g.Name}))]},...workspaceFields,...parameterFields(revision.Parameters||[])],f=>{
+   edit('Deploy pinned team',[{name:'mission',label:'Mission',multiline:true},{name:'group',label:'Group',required:false,options:[{value:'',label:'Create a new group'},...(snapshot.groups||[]).map(g=>({value:g.ID,label:g.Name}))]},...workspaceFields,...parameterFields(revision.Parameters||[])],f=>{
     const selection=key=>{const w=spaces.find(w=>w.ID===f['workspace_'+key]);if(!w)throw new Error('Select a current workspace.');return{WorkspaceID:w.ID,ExpectedRevision:w.Revision}};
     const workspaces=shared?{Shared:selection('shared')}:{Members:Object.fromEntries(revision.Team.Members.map(m=>[m.Key,selection(m.Key)]))};
     return api('/v2/teams/deploy',{request_id:f.requestID,deployment_id:f.requestID,instantiation:{Definition:{DefinitionID:definition.ID,RevisionID:revision.ID,ContentHash:revision.ContentHash,Kind:'team'},Mission:f.mission,Target:{Kind:f.group?'existing_group':'new_group',GroupID:f.group||'group_'+f.requestID},Workspaces:workspaces,Parameters:parameterValues(revision.Parameters||[],f)}});
