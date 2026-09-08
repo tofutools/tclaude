@@ -248,6 +248,9 @@ func insertImportEntities(ctx context.Context, tx *sql.Tx, batch app.ImportBatch
 			return err
 		}
 	}
+	if err := applyImportedSandboxProfiles(ctx, tx, batch.SandboxProfiles); err != nil {
+		return err
+	}
 	if err := applyImportedGroupConfigurations(ctx, tx, batch.GroupConfigurations); err != nil {
 		return err
 	}
@@ -551,6 +554,9 @@ func (s *Store) VerifyImport(ctx context.Context, batch app.ImportBatch) error {
 			return fmt.Errorf("verify imported configuration profile %s: %w", expected.Profile.ID, err)
 		}
 	}
+	if err := s.verifyImportedSandboxProfiles(ctx, batch.SandboxProfiles); err != nil {
+		return err
+	}
 	if err := s.verifyImportedGroupConfigurations(ctx, batch.GroupConfigurations); err != nil {
 		return err
 	}
@@ -675,7 +681,8 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 		"import_id_map": len(batch.IDMappings), "imported_source_records": len(batch.SourceRecords),
 		"imported_diagnostics": len(batch.Diagnostics), "imported_message_envelopes": len(batch.MessageEnvelopes),
 		"imported_attachment_availability": len(batch.ImportedAttachments),
-		"configuration_profiles":           len(batch.ConfigurationProfiles), "configuration_profile_revisions": len(batch.ConfigurationProfiles),
+		"sandbox_profiles":                 len(batch.SandboxProfiles), "sandbox_profile_revisions": len(batch.SandboxProfiles),
+		"configuration_profiles": len(batch.ConfigurationProfiles), "configuration_profile_revisions": len(batch.ConfigurationProfiles),
 		"group_configurations": len(batch.GroupConfigurations), "configuration_defaults": defaults, "definitions": len(batch.Definitions), "definition_revisions": len(batch.Definitions),
 		"automation_rules": len(batch.AutomationRules), "automation_rule_revisions": len(batch.AutomationRules),
 		"workspaces": len(batch.Workspaces), "usage_observations": len(batch.Usage), "historical_activity": len(batch.Activity),
@@ -685,7 +692,7 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 		"operation_authority", "operation_additional_authority", "effect_permits", "pending_context_transitions", "native_binding_history",
 		"history_refreshes", "history_metadata_requests", "history_points", "history_use_claims", "workspace_uses",
 		"work_runs", "work_attempts", "work_evidence", "work_decisions", "program_profiles", "program_profile_revisions",
-		"sandbox_profiles", "sandbox_profile_revisions", "sandbox_profile_requests",
+		"sandbox_profile_requests",
 		"work_node_attempts", "work_agent_interactions", "work_node_evidence", "decision_windows", "decision_submissions", "automation_occurrences",
 		"automation_occurrence_recipients", "automation_condition_state", "team_deployments", "team_continuations", "configuration_defaults_requests",
 		"configuration_profile_requests", "configuration_profile_lifecycle_requests", "configuration_bundle_requests", "automation_state_requests", "automation_archive_requests", "access_requests", "access_request_decisions", "message_notifications", "presentation_preferences", "terminal_files", "process_snippets", "process_snippet_requests",

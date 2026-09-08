@@ -1304,3 +1304,26 @@ Changing the display name leaves the parameter's exact input key unchanged;
 launch and deployment forms submit values under that key. Documentation is
 rendered as literal text, including markup-like content. Empty optional prose
 fields are omitted from persisted JSON.
+
+### Legacy sandbox profile conversion
+
+Offline v228 import converts representable sandbox profiles into archived,
+immutable replacement revisions. Include names resolve only within that snapshot
+and become exact revision references. The archived catalog supports inspection
+and explicit independent copies; imported defaults, assignments, grants and
+runtime state are not activated. Legacy `network_access=none` retains its coupled
+closed Unix-socket posture when no newer network axis was authored.
+
+A policy with unsupported fields, spelling aliases that need a target alias
+representation, conflicting representations, invalid quantities or unresolved
+includes remains wholly in source evidence with a redacted diagnostic. Dependent
+profiles remain pending too. No partial editable policy is published and no setup
+script or host lookup runs during conversion. These pending cases remain parity
+work; they are not accepted feature exclusions.
+
+Exact retries verify both policy documents and the scalar lifecycle/revision
+indexes. A destination produced by an older evidence-only conversion is refused
+if it lacks the newly expected typed records; the importer never rewrites that
+existing destination. Use a fresh explicit destination for the new conversion.
+
+Imported sandbox profiles carry a durable imported marker. They remain archived and reject restore or same-identity edits; inspect, export, and explicit independent copy remain available. Independent copies use fresh identities and normal editable lifecycle rules.
