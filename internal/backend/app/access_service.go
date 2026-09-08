@@ -173,11 +173,16 @@ func (s *Service) PutRole(ctx context.Context, req PutRoleRequest) (RoleResult, 
 	if err := requireOperator(req.Principal); err != nil {
 		return RoleResult{}, err
 	}
-	if err := req.Role.ID.Validate(); err != nil || strings.TrimSpace(req.Role.Name) == "" || len(req.Role.Actions) == 0 {
-		return RoleResult{}, fail(ErrInvalid, "valid role id, name and actions are required")
+	if err := req.Role.ID.Validate(); err != nil || strings.TrimSpace(req.Role.Name) == "" {
+		return RoleResult{}, fail(ErrInvalid, "valid role id and name are required")
+	}
+	role := req.Role
+	role.Description = strings.TrimSpace(role.Description)
+	role.Brief = strings.ReplaceAll(strings.ReplaceAll(role.Brief, "\r\n", "\n"), "\r", "\n")
+	if len(role.Brief) > 16*1024 {
+		return RoleResult{}, fail(ErrInvalid, "role brief exceeds 16 KiB")
 	}
 	now := s.now().UTC()
-	role := req.Role
 	if req.ExpectedRevision == 0 {
 		role.Revision, role.CreatedAt = 1, now
 	}

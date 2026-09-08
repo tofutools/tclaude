@@ -31,7 +31,7 @@ func (s *Store) AuthorityState(ctx context.Context) (app.AuthorityStateResult, e
 	if err := rows.Close(); err != nil {
 		return out, err
 	}
-	rows, err = s.db.QueryContext(ctx, `SELECT id,name,actions_json,revision,created_at,updated_at FROM roles ORDER BY id`)
+	rows, err = s.db.QueryContext(ctx, `SELECT id,name,actions_json,revision,created_at,updated_at,description,brief FROM roles ORDER BY id`)
 	if err != nil {
 		return out, err
 	}
@@ -115,10 +115,10 @@ func (s *Store) PutRole(ctx context.Context, role model.Role, expected model.Rev
 		return model.Role{}, err
 	}
 	if expected == 0 {
-		_, err = s.db.ExecContext(ctx, `INSERT INTO roles(id,name,actions_json,revision,created_at,updated_at) VALUES(?,?,?,1,?,?)`, role.ID, role.Name, actions, nanos(role.CreatedAt), nanos(role.UpdatedAt))
+		_, err = s.db.ExecContext(ctx, `INSERT INTO roles(id,name,actions_json,revision,created_at,updated_at,description,brief) VALUES(?,?,?,1,?,?,?,?)`, role.ID, role.Name, actions, nanos(role.CreatedAt), nanos(role.UpdatedAt), role.Description, role.Brief)
 	} else {
 		var result sql.Result
-		result, err = s.db.ExecContext(ctx, `UPDATE roles SET name=?,actions_json=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, role.Name, actions, nanos(role.UpdatedAt), role.ID, expected)
+		result, err = s.db.ExecContext(ctx, `UPDATE roles SET name=?,actions_json=?,description=?,brief=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, role.Name, actions, role.Description, role.Brief, nanos(role.UpdatedAt), role.ID, expected)
 		if err == nil {
 			if affected, _ := result.RowsAffected(); affected != 1 {
 				return model.Role{}, app.ErrConflict
@@ -813,14 +813,14 @@ func scanGrant(row scanner) (model.AuthorityGrant, error) {
 }
 
 func roleByID(ctx context.Context, q queryer, id model.RoleID) (model.Role, error) {
-	return scanRole(q.QueryRowContext(ctx, `SELECT id,name,actions_json,revision,created_at,updated_at FROM roles WHERE id=?`, id))
+	return scanRole(q.QueryRowContext(ctx, `SELECT id,name,actions_json,revision,created_at,updated_at,description,brief FROM roles WHERE id=?`, id))
 }
 
 func scanRole(row scanner) (model.Role, error) {
 	var role model.Role
 	var actions []byte
 	var created, updated int64
-	if err := row.Scan(&role.ID, &role.Name, &actions, &role.Revision, &created, &updated); err != nil {
+	if err := row.Scan(&role.ID, &role.Name, &actions, &role.Revision, &created, &updated, &role.Description, &role.Brief); err != nil {
 		return role, classify(err)
 	}
 	role.CreatedAt, role.UpdatedAt = fromNanos(created), fromNanos(updated)
