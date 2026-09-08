@@ -5,11 +5,11 @@ async function sandboxSelectionInput(api,{retained=null,shell=true}={}) {
  const profiles=(await api('/v2/sandbox-profiles')||[]).filter(p=>!p.Archived);
  const choices=new Map(profiles.map(p=>['profile:'+p.ID,p]));
  return {
-  field:{name:'host_sandbox',label:'Host sandbox',value:retained?'retained':'defaults',options:[...(retained?[retainedSandboxOption(retained,profiles)]:[]),{value:'defaults',label:'Use global and group sandbox defaults'},{value:'none',label:shell?'No host sandbox — start an unconfined shell':'No additional host sandbox'},...profiles.map(p=>({value:'profile:'+p.ID,label:p.Name}))],help:'Profile changes take effect the next time the agent starts or restarts.'},
+  field:{name:'host_sandbox',label:'Host sandbox',value:retained?retainedSandboxOption(retained,profiles).value:'defaults',options:[...(retained?[retainedSandboxOption(retained,profiles)]:[]),{value:'defaults',label:'Use global and group sandbox defaults'},{value:'none',label:shell?'No host sandbox — start an unconfined shell':'No additional host sandbox'},...profiles.map(p=>({value:'profile:'+p.ID,label:p.Name}))],help:'Profile changes take effect the next time the agent starts or restarts.'},
   async read(value){
    if(value==='none')return {OmitProfiles:true};
    if(value==='defaults')return retained?.GroupID?{GroupID:retained.GroupID,Scopes:[]}:null;
-   if(value==='retained'&&retained)return structuredClone(retained);
+   if(retained&&value===retainedSandboxOption(retained).value)return structuredClone(retained);
    const chosen=choices.get(value);if(!chosen)throw new Error('Select a listed sandbox profile.');
    return {...(retained?.GroupID?{GroupID:retained.GroupID}:{}),Scopes:[{Scope:'explicit',Ref:{ProfileID:chosen.ID}}]};
   }
@@ -23,7 +23,7 @@ function sandboxProfileReferences(value){
 }
 function retainedSandboxOption(value,profiles=[]){
  const names=(value.Scopes||[]).map(s=>profiles.find(p=>p.ID===s.Ref.ProfileID)?.Name||s.Ref.ProfileID);
- return {value:'retained',label:value.OmitProfiles?'Keep profiles omitted':names.length?'Keep '+names.join(' / '):'Keep global and group defaults'};
+ return {value:value.OmitProfiles?'retained:none':names.length?'retained':'retained:defaults',label:value.OmitProfiles?'Keep profiles omitted':names.length?'Keep '+names.join(' / '):'Keep global and group defaults'};
 }
 
 async function editSandboxDefaults({api,edit,group=null,canOpen=()=>true,onSaved=async()=>{}}){
@@ -48,7 +48,7 @@ class SandboxSelectionControl {
   this.host=document.createElement('select');
   this.status=document.createElement('p');this.status.setAttribute('role','status');
   const initial=[...(this.retained?[retainedSandboxOption(this.retained)]:[]),{value:'defaults',label:'Use global and group sandbox defaults'},{value:'none',label:'No additional host sandbox'}];
-  this.setOptions(initial,this.retained?'retained':'defaults');
+  this.setOptions(initial,this.retained?retainedSandboxOption(this.retained).value:'defaults');
   this.status.textContent='Loading available sandbox profiles…';
   this.loading=sandboxSelectionInput(api,{retained:this.retained,shell:false}).then(input=>{
    this.input=input;
@@ -59,7 +59,7 @@ class SandboxSelectionControl {
  async read(value){
   if(value==='none')return {OmitProfiles:true};
    if(value==='defaults')return this.retained?.GroupID?{GroupID:this.retained.GroupID,Scopes:[]}:null;
-  if(value==='retained'&&this.retained)return structuredClone(this.retained);
+  if(this.retained&&value===retainedSandboxOption(this.retained).value)return structuredClone(this.retained);
   await this.loading;if(this.error)throw this.error;
   return this.input.read(value);
  }

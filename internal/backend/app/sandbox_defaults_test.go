@@ -154,3 +154,49 @@ func TestTeamDeploymentRetainsSandboxGroupAndLiteralEnvironment(t *testing.T) {
 	require.Equal(t, desired.HostSandbox.Scopes, agent.Desired.HostSandbox.Scopes)
 	require.Equal(t, model.AgentActive, agent.Lifecycle)
 }
+
+func TestSandboxDefaultsSurvivingAgentRestartsAfterGroupDisband(t *testing.T) {
+	for _, authoredGroup := range []bool{false, true} {
+		t.Run(map[bool]string{false: "execution-source", true: "authored-source"}[authoredGroup], func(t *testing.T) {
+			ctx := context.Background()
+			store, err := sqlite.Open(filepath.Join(t.TempDir(), "state.db"))
+			require.NoError(t, err)
+			defer store.Close()
+			paths, err := host.NewSandboxPathInspector([]string{t.TempDir()})
+			require.NoError(t, err)
+			provider := &sandboxAdmissionProvider{supported: true, proof: "prepared"}
+			service := app.New(store, providers.NewRegistry(provider)).WithSandboxPathInspector(paths)
+			operator := model.OperatorPrincipal()
+			_, err = service.CreateGroup(ctx, app.CreateGroupRequest{Context: operator, ID: "team", Name: "Team"})
+			require.NoError(t, err)
+			for _, id := range []model.SandboxProfileID{"global", "group", "explicit"} {
+				_, err = service.SaveSandboxProfile(ctx, app.SaveSandboxProfileRequest{Context: request(operator, model.RequestID(id)), ID: id, Name: string(id), Policy: model.SandboxPolicy{Environment: model.Environment{"FROM_" + string(id): "yes"}}})
+				require.NoError(t, err)
+			}
+			_, err = service.SaveSandboxDefaults(ctx, app.SaveSandboxDefaultsRequest{Context: request(operator, "defaults"), Global: "global", Groups: map[model.GroupID]model.SandboxProfileID{"team": "group"}})
+			require.NoError(t, err)
+			choice := &model.SandboxSelection{Scopes: []model.SandboxScopeSelection{{Scope: model.SandboxScopeExplicit, Ref: model.SandboxProfileRef{ProfileID: "explicit"}}}}
+			if authoredGroup {
+				choice.GroupID = "team"
+				choice.Scopes = append([]model.SandboxScopeSelection{{Scope: model.SandboxScopeGroup, Ref: model.SandboxProfileRef{ProfileID: "group"}}}, choice.Scopes...)
+			}
+			created, err := service.CreateAgent(ctx, app.CreateAgentRequest{Context: operator, ID: "worker", Name: "Worker", Desired: model.DesiredConfiguration{Harness: provider.Name(), Model: "fixture", WorkingDirectory: t.TempDir(), Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite, HostSandbox: choice}})
+			require.NoError(t, err)
+			group, err := service.UpdateGroup(ctx, app.UpdateGroupRequest{Context: operator, ID: "team", Name: "Team", Members: []model.AgentID{"worker"}, ExpectedRevision: 1})
+			require.NoError(t, err)
+			first, err := service.Launch(ctx, app.LaunchRequest{InitialMessage: "Work", RequestContext: request(operator, "first"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: "worker", ExpectedRevision: created.Agent.Revision}}})
+			require.NoError(t, err)
+			require.Equal(t, model.GroupID("team"), first.Execution.Spec.HostSandbox.GroupID)
+			_, err = service.Stop(ctx, app.StopRequest{RequestContext: request(operator, "stop"), ExecutionID: first.Execution.ID})
+			require.NoError(t, err)
+			_, err = service.DisbandGroup(ctx, app.DisbandGroupRequest{Context: request(operator, "disband"), ID: "team", ExpectedRevision: group.Group.Revision})
+			require.NoError(t, err)
+			current, err := store.Agent(ctx, "worker")
+			require.NoError(t, err)
+			restarted, err := service.Launch(ctx, app.LaunchRequest{InitialMessage: "Again", RequestContext: request(operator, "restart"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: "worker", ExpectedRevision: current.Revision}}})
+			require.NoError(t, err)
+			require.Empty(t, restarted.Execution.Spec.HostSandbox.GroupID)
+			require.Equal(t, model.Environment{"FROM_global": "yes", "FROM_explicit": "yes"}, provider.preparations[1].HostSandboxPolicy.Composition.Values.Environment)
+		})
+	}
+}

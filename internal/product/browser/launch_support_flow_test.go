@@ -18,6 +18,7 @@ func TestBrowserLaunchSupportExplainsPoliciesWithoutChangingOfflineSettings(t *t
 	require.Equal(t, []model.SandboxMode{model.SandboxWorkspaceWrite}, support.SandboxModes)
 	page.MustElement("#new-agent").MustClick()
 	page.MustElementR("#editor [aria-label='Configured launch support']", "Selected policy is supported")
+	page.MustElementR("#editor [aria-label='Configured launch support']", "Global and group sandbox defaults are resolved at launch")
 	page.MustElement("#editor [name=harness]").MustSelect("copilot")
 	page.MustElementR("#editor [aria-label='Configured launch support']", "Unsupported selected confinement workspace_write")
 	require.Equal(t, "workspace_write", page.MustElement("#editor [name=sandbox]").MustProperty("value").Str())

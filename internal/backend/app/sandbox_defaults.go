@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"errors"
 	"math"
+	"slices"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
@@ -15,6 +17,7 @@ type SaveSandboxDefaultsRequest struct {
 }
 
 type SandboxDefaultsStore interface {
+	SandboxGroupDisbanded(context.Context, model.GroupID) (bool, error)
 	SandboxGroupsForAgent(context.Context, model.AgentID) ([]model.GroupID, error)
 	SandboxDefaults(context.Context) (model.SandboxDefaults, error)
 	SaveSandboxDefaults(context.Context, SaveSandboxDefaultsRequest) (model.SandboxDefaults, error)
@@ -118,7 +121,19 @@ func (s *Service) launchSandboxSelection(ctx context.Context, selected *model.Sa
 	}
 	if selected != nil && selected.GroupID != "" {
 		if _, err := s.store.Group(ctx, selected.GroupID); err != nil {
-			return nil, err
+			if !errors.Is(err, ErrNotFound) {
+				return nil, err
+			}
+			removed, lookupErr := store.SandboxGroupDisbanded(ctx, selected.GroupID)
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
+			if !removed {
+				return nil, err
+			}
+			selected = model.CloneSandboxSelection(selected)
+			selected.GroupID = ""
+			selected.Scopes = slices.DeleteFunc(selected.Scopes, func(scope model.SandboxScopeSelection) bool { return scope.Scope == model.SandboxScopeGroup })
 		}
 	}
 	return defaults.Resolve(selected), nil
