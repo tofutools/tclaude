@@ -1815,3 +1815,22 @@ workspaces use the same binding as the initial execution, so later agent restart
 retain the deployment directory instead of a template author's directory. The
 saved template remains unchanged. Ordinary standalone agent creation still
 requires a working directory.
+
+### Saved configurations in team members
+
+A member can select a named saved configuration by `ProfileID` instead of
+embedding custom `Desired` settings. Each new deployment reads that profile's
+current settings; editing a profile therefore affects the next deployment
+without resaving the team template. The deployment records the resolved agent
+settings and startup suggestions, so a lost-response retry or resumed deployment
+does not reinterpret an already-created roster. Working directories come from
+the selected deployment workspace. Archived or missing selected profiles fail
+before workspace preparation. The editor previews the current profile and
+retains the separate custom/copy workflow. Partial field overrides and portable
+v1 registry import are subsequent compatibility work, not implemented here.
+
+Profile-backed team members include only reusable profile Context in deployment
+briefs. A saved InitialMessage remains a standalone launch suggestion and is not
+automatically sent by team deployment. Member cards show the selected saved
+configuration and current launch settings, or explicitly mark an unavailable
+selection.

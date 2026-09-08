@@ -110,7 +110,9 @@ type TeamDefinition struct {
 }
 
 type TeamMemberSpec struct {
-	Labels      AgentLabels `json:",omitzero"`
+	// ProfileID follows the named profile at each new deployment.
+	ProfileID   ConfigurationProfileID `json:",omitempty"`
+	Labels      AgentLabels            `json:",omitzero"`
 	Key         string
 	Name        string
 	Desired     DesiredConfiguration
@@ -567,6 +569,7 @@ const (
 )
 
 type TeamDeployment struct {
+	MemberStartups         map[string]ProfileStartup `json:",omitempty"`
 	ID                     DeploymentID
 	Definition             DefinitionRef
 	DependencyClosure      []DefinitionRef
