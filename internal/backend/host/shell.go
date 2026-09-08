@@ -57,6 +57,7 @@ type preparedShell struct {
 }
 
 type shellRuntime struct {
+	artifact  *SandboxChildArtifact
 	host      *ShellTerminalHost
 	execution model.ExecutionID
 	workspace model.WorkspaceID
@@ -122,14 +123,14 @@ func (h *ShellTerminalHost) PrepareShell(ctx context.Context, request ports.Shel
 		artifact = &preparedArtifact
 		command, err = h.hostSandbox.Invocation(preparedArtifact)
 		if err != nil {
-			_ = os.RemoveAll(filepath.Dir(preparedArtifact.Path))
+			_ = AbortSandboxChild(preparedArtifact)
 			return nil, err
 		}
 	}
 	success := false
 	defer func() {
 		if !success && artifact != nil {
-			_ = os.RemoveAll(filepath.Dir(artifact.Path))
+			_ = AbortSandboxChild(*artifact)
 		}
 	}()
 	prepared, err := h.terminal.Prepare(string(request.ExecutionID))
@@ -165,7 +166,7 @@ func (p *preparedShell) Abort(context.Context) error {
 		return err
 	}
 	if p.artifact != nil {
-		return os.RemoveAll(filepath.Dir(p.artifact.Path))
+		return AbortSandboxChild(*p.artifact)
 	}
 	return nil
 }
@@ -189,7 +190,7 @@ func (p *preparedShell) Release(ctx context.Context, permit ports.ReleasePermit)
 	value.Terminal = &identity
 	evidence, encodeErr := encodeShellEvidence(value)
 	runtime := &shellRuntime{host: p.host, execution: value.ExecutionID, workspace: value.WorkspaceID,
-		directory: value.Directory, sandbox: value.Sandbox, terminal: terminal, evidence: evidence}
+		directory: value.Directory, sandbox: value.Sandbox, terminal: terminal, evidence: evidence, artifact: value.HostSandbox}
 	if err != nil || encodeErr != nil {
 		return ports.ShellReleaseResult{State: ports.ReleaseUncertain, Runtime: runtime, Evidence: evidence}, errors.Join(err, encodeErr)
 	}
@@ -235,7 +236,7 @@ func recoveredShell(h *ShellTerminalHost, value shellEvidence, terminal *Termina
 		return ports.ShellRecoveryResult{State: ports.RecoveryUnknown}, err
 	}
 	runtime := &shellRuntime{host: h, execution: value.ExecutionID, workspace: value.WorkspaceID,
-		directory: value.Directory, sandbox: value.Sandbox, terminal: terminal, evidence: evidence}
+		directory: value.Directory, sandbox: value.Sandbox, terminal: terminal, evidence: evidence, artifact: value.HostSandbox}
 	observation, err := runtime.ObserveHost(context.Background())
 	return ports.ShellRecoveryResult{State: ports.RecoveryControlled, Runtime: runtime,
 		Observation: observation, Evidence: evidence}, err
@@ -251,6 +252,7 @@ func (r *shellRuntime) ObserveHost(context.Context) (ports.HostObservation, erro
 		result.Workload = ports.WorkloadRunning
 	case observed.Exited:
 		result.Workload, result.ExitCode = ports.WorkloadExited, observed.ExitCode
+		return result, SettleSandboxChild(r.artifact)
 	default:
 		result.Workload = ports.WorkloadUnknown
 	}
@@ -278,6 +280,9 @@ func (r *shellRuntime) StopHost(ctx context.Context, request ports.StopRequest) 
 		err = r.terminal.SendLiteral(ctx, "exit")
 		acknowledged = err == nil
 		exited = r.terminal.Observe().Exited
+	}
+	if exited {
+		err = errors.Join(err, SettleSandboxChild(r.artifact))
 	}
 	result := ports.HostStopResult{Disposition: ports.EffectAccepted, Acknowledged: acknowledged, Exited: exited, Evidence: r.evidence}
 	if err != nil {

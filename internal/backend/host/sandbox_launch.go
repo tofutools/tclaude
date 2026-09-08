@@ -22,6 +22,7 @@ type SandboxLaunchConfig struct {
 	Artifacts string
 	// Default parent mounts let an agent recreate its named cache directories.
 	AgentDirectoriesMountIndividually bool
+	ResourceDelegationDirectory       string
 }
 
 type SandboxLaunchPreparer struct {
@@ -102,11 +103,22 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 	default:
 		return SandboxChildArtifact{}, fmt.Errorf("invalid sandbox root posture")
 	}
-	if policy.Resources != (model.SandboxResources{}) || (harness == "" && policy.HarnessConfig != model.SandboxHarnessConfigDefault) {
+	if harness == "" && policy.HarnessConfig != model.SandboxHarnessConfigDefault {
 		return SandboxChildArtifact{}, fmt.Errorf("selected sandbox requires additional native policy preparation")
 	}
 	if len(materialized.Composition.SocketAll) != 0 {
 		return SandboxChildArtifact{}, fmt.Errorf("selected sandbox requires Unix socket policy preparation")
+	}
+	if policy.Resources != (model.SandboxResources{}) {
+		// Limits cannot be lifted from inside the workload by writing the
+		// delegated hierarchy through an authored filesystem grant.
+		inspector, err := protectSandboxResourcePaths(p.config.Inspector)
+		if err != nil {
+			return SandboxChildArtifact{}, err
+		}
+		local := *p
+		local.config.Inspector = inspector
+		p = &local
 	}
 	privateNetwork := false
 	for _, conjunct := range materialized.Composition.NetworkAll {
@@ -223,6 +235,15 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 	if err != nil {
 		return SandboxChildArtifact{}, err
 	}
+	bindings.resources, err = prepareSandboxCgroup(p.config.ResourceDelegationDirectory, policy.Resources)
+	if err != nil {
+		return SandboxChildArtifact{}, err
+	}
+	defer func() {
+		if !retained {
+			_ = bindings.resources.remove()
+		}
+	}()
 	artifact, err := p.config.Inspector.PrepareSandboxChild(directory, p.config.Wrapper, child, bindings, privateNetwork)
 	if err != nil {
 		_ = os.RemoveAll(directory)
