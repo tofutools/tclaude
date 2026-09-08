@@ -108,3 +108,32 @@ func TestTeamMissionBriefingsPinSinglePassAcrossRestartAndRebrief(t *testing.T) 
 	require.Equal(t, "Revisit {{task}}", saved.Revision.Team.Briefings[0].Body)
 	require.Equal(t, "mission-v1", saved.Revision.Team.Briefings[0].Syntax)
 }
+
+func TestTeamMissionIndependentAfterReadyMessagesKeepIndividualLimits(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "db"))
+	require.NoError(t, err)
+	defer store.Close()
+	now := time.Now().UTC()
+	provider := &preparedWorkProvider{}
+	service := app.New(store, providers.NewRegistry(provider)).WithClock(func() time.Time { return now })
+	cwd := t.TempDir()
+	require.NoError(t, store.RegisterWorkspace(ctx, model.Workspace{ID: "workspace", State: model.WorkspaceAvailable, Observation: model.WorkspaceObservation{ActualPath: cwd, ObservedAt: now}, Revision: 1, CreatedAt: now, UpdatedAt: now}))
+	desired := model.DesiredConfiguration{Harness: "prepared-work", Model: "test", WorkingDirectory: cwd, Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}
+	body := strings.Repeat("x", 600<<10) + " {{mission}}"
+	team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{{Key: "a", Name: "A", Desired: desired}, {Key: "b", Name: "B", Desired: desired}}, Waves: []model.TeamWave{{ID: "initial", MemberKeys: []string{"a", "b"}}}, Briefings: []model.TeamBriefing{{ID: "a", Syntax: "mission-v1", Body: body, Timing: model.BriefingAfterReady, MemberKeys: []string{"a"}}, {ID: "b", Syntax: "mission-v1", Body: body, Timing: model.BriefingAfterReady, MemberKeys: []string{"b"}}}}
+	saved, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "save"}, Draft: app.DefinitionDraft{ID: "large", RevisionID: "v1", Name: "large", Kind: model.DefinitionTeam, SchemaVersion: 1, Source: "test", Team: &team}})
+	require.NoError(t, err)
+	deployed, err := service.DeployTeam(ctx, app.DeployTeamRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "deploy"}, DeploymentID: "deployment", Instantiation: model.TeamInstantiation{Definition: model.DefinitionRef{DefinitionID: saved.Definition.ID, RevisionID: saved.Revision.ID, ContentHash: saved.Revision.ContentHash, Kind: model.DefinitionTeam}, Mission: "Ship", GroupID: "group", Workspaces: model.TeamWorkspaceSelection{Shared: &model.TeamWorkspaceInput{WorkspaceID: "workspace", ExpectedRevision: 1}}}})
+	require.NoError(t, err)
+	for range 6 {
+		_, err = service.ReconcilePendingWork(ctx)
+		require.NoError(t, err)
+	}
+	for _, id := range deployed.Deployment.Members {
+		inbox, readErr := service.ReadInbox(ctx, app.ReadInboxRequest{Principal: model.AgentPrincipal(id)})
+		require.NoError(t, readErr)
+		require.Len(t, inbox.Messages, 1)
+		require.Equal(t, strings.Repeat("x", 600<<10)+" Ship", inbox.Messages[0].Body)
+	}
+}

@@ -25,7 +25,6 @@ func resolveTeamMissionBriefings(team model.TeamDefinition, mission string, init
 		return model.TeamDefinition{}, fail(ErrInvalid, "team mission must be valid text")
 	}
 	team.Briefings = slices.Clone(team.Briefings)
-	total := 0
 	for i := range team.Briefings {
 		brief := &team.Briefings[i]
 		if brief.Syntax == "" {
@@ -43,11 +42,6 @@ func resolveTeamMissionBriefings(team model.TeamDefinition, mission string, init
 		if base > limit || (count > 0 && len(mission) > (limit-base)/count) {
 			return model.TeamDefinition{}, fail(ErrInvalid, "expanded team briefing exceeds input limit")
 		}
-		size := base + count*len(mission)
-		if size > maxMessageBodyBytes-total {
-			return model.TeamDefinition{}, fail(ErrInvalid, "expanded team briefings exceed aggregate limit")
-		}
-		total += size
 		brief.Body = strings.NewReplacer("{{task}}", mission, "{{mission}}", mission).Replace(brief.Body)
 		if strings.TrimSpace(brief.Body) == "" || !utf8.ValidString(brief.Body) || strings.ContainsRune(brief.Body, 0) {
 			return model.TeamDefinition{}, fail(ErrInvalid, "expanded team briefing requires valid nonempty text")
