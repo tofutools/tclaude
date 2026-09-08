@@ -178,6 +178,18 @@ export function resolveModelSelection(models, saved) {
   return new Set(selected.length ? selected : models);
 }
 
+function splitCost(agent) {
+  let real = agent.real_cost_usd || 0;
+  let whatIf = agent.what_if_cost_usd || 0;
+  // Defensive compatibility for a stale response retained across a rolling
+  // daemon/dashboard upgrade. New responses always carry the split fields.
+  if (!(real > 0) && !(whatIf > 0) && (agent.cost_usd || 0) > 0) {
+    if (agent.cost_kind === 'what_if') whatIf = agent.cost_usd;
+    else real = agent.cost_usd;
+  }
+  return { real, whatIf };
+}
+
 export function filterCostData(payload, selected, selectedModels = null) {
   const agents = payload?.agents || [];
   const providers = costProviders(agents);
@@ -195,18 +207,19 @@ export function filterCostData(payload, selected, selectedModels = null) {
   let whatIfTotal = 0;
   let virtualCreditsTotal = 0;
   for (const agent of filteredAgents) {
+    const { real, whatIf } = splitCost(agent);
     totals[agent.day] = (totals[agent.day] || 0) + (agent.cost_usd || 0);
     total += agent.cost_usd || 0;
-    realTotal += agent.real_cost_usd || 0;
-    whatIfTotal += agent.what_if_cost_usd || 0;
+    realTotal += real;
+    whatIfTotal += whatIf;
     virtualCreditsTotal += agent.virtual_cost_credits || 0;
   }
   return {
     ...payload,
     days: (payload.days || []).map((day) => {
       const matching = filteredAgents.filter((agent) => agent.day === day.day);
-      const real = matching.reduce((sum, agent) => sum + (agent.real_cost_usd || 0), 0);
-      const whatIf = matching.reduce((sum, agent) => sum + (agent.what_if_cost_usd || 0), 0);
+      const real = matching.reduce((sum, agent) => sum + splitCost(agent).real, 0);
+      const whatIf = matching.reduce((sum, agent) => sum + splitCost(agent).whatIf, 0);
       const credits = matching.reduce((sum, agent) => sum + (agent.virtual_cost_credits || 0), 0);
       return {
         day: day.day, cost_usd: totals[day.day] || 0,
@@ -240,14 +253,7 @@ export function dailyBreakdown(agents, selected) {
     const provider = costProviderLabel(agent);
     if (!selected.has(provider)) continue;
     const day = result[agent.day] || (result[agent.day] = {});
-    let real = agent.real_cost_usd || 0;
-    let whatIf = agent.what_if_cost_usd || 0;
-    // Defensive compatibility for a stale response retained across a rolling
-    // daemon/dashboard upgrade. New responses always carry the split fields.
-    if (!(real > 0) && !(whatIf > 0) && (agent.cost_usd || 0) > 0) {
-      if (agent.cost_kind === 'what_if') whatIf = agent.cost_usd;
-      else real = agent.cost_usd;
-    }
+    const { real, whatIf } = splitCost(agent);
     if (real > 0) {
       const key = `${provider}\u0000real`;
       day[key] = (day[key] || 0) + real;

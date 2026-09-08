@@ -183,13 +183,15 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool) (dashbo
 	var whatIfCosts []dashboardAPICost
 	var hasRealCost bool
 	var costErr error
+	var costHistoryAvailable bool
 	timed("cost_history", func() {
 		rows, err := db.AllCostDailyRows()
 		costErr = err
+		costHistoryAvailable = err == nil
 		now := time.Now()
 		totalCost, todayCost, hasRealCost = dashboardCostTotalsFromRows(rows, now)
 		apiCosts = dashboardAPICostsFromRows(rows, now)
-		if includeWhatIf {
+		if includeWhatIf && costHistoryAvailable {
 			whatIfCosts = dashboardProviderCostsFromRows(rows, now, true)
 		}
 		if costErr != nil {
@@ -216,7 +218,7 @@ func collectUsageSnapshot(idleTimeout time.Duration, includeWhatIf bool) (dashbo
 		TodayCostUSD:     todayCost,
 		APICosts:         apiCosts,
 		WhatIfCosts:      whatIfCosts,
-		WhatIfEnabled:    includeWhatIf,
+		WhatIfEnabled:    includeWhatIf && costHistoryAvailable,
 		Codex:            collectCodexUsageSnapshot(codexRow),
 		Copilot:          collectCopilotUsageSnapshot(copilotRow, idleTimeout),
 		historyAvailable: hasUsageHistory,

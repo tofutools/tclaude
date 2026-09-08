@@ -3316,7 +3316,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 }
 #usage .usage-unit-switch button {
   padding: 1px 5px; border: 0; border-radius: 3px; background: transparent;
-  color: #6e7681; font: inherit; cursor: pointer;
+  color: #8b949e; font: inherit; cursor: pointer;
 }
 #usage .usage-unit-switch button.active { color: #c9d1d9; background: #263446; }
 /* Two-line Claude/Codex layout (when Codex usage is present): stack the
@@ -3462,7 +3462,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .usage-current strong { color: #d4d4d4; font-size: 20px; line-height: 1; }
 .usage-current span { color: #7d8590; font-size: 11px; margin-top: 4px; }
 .usage-current .usage-unit-toggle { display: inline-flex; margin: 0 0 6px; padding: 1px; border: 1px solid #2a3340; border-radius: 4px; background: #0d1117; }
-.usage-current .usage-unit-toggle button { padding: 2px 7px; border: 0; border-radius: 3px; background: transparent; color: #6e7681; font: inherit; cursor: pointer; }
+.usage-current .usage-unit-toggle button { padding: 2px 7px; border: 0; border-radius: 3px; background: transparent; color: #8b949e; font: inherit; cursor: pointer; }
 .usage-current .usage-unit-toggle button.active { color: #d4d4d4; background: #263446; }
 .usage-line-chart { display: block; width: 100%; height: auto; min-height: 180px; overflow: visible; }
 .usage-grid line { stroke: #1c2430; stroke-width: 1; }
@@ -3568,13 +3568,13 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .costs-provider-filter { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .cost-chart-heading { display: flex; justify-content: space-between; align-items: baseline; margin: 0 2px 6px; }
 .cost-chart-heading strong { color: #c9d1d9; font-size: 12px; }
-.cost-chart-heading span { color: #6e7681; font-size: 11px; }
+.cost-chart-heading span { color: #8b949e; font-size: 11px; }
 .cost-daily-heading { margin-top: 12px; }
 .cost-accumulated { padding: 10px 12px 5px; background: #0d1117; border: 1px solid #2a3340; border-radius: 6px; }
-.cost-accumulated.empty { min-height: 100px; display: grid; place-items: center; color: #6e7681; }
+.cost-accumulated.empty { min-height: 100px; display: grid; place-items: center; color: #8b949e; }
 .cost-accumulated-svg { display: block; width: 100%; height: auto; max-height: 210px; }
 .cost-accumulated-grid line { stroke: #1c2430; stroke-width: 1; }
-.cost-accumulated-grid text, .cost-accumulated-day { fill: #6e7681; font-size: 9px; }
+.cost-accumulated-grid text, .cost-accumulated-day { fill: #8b949e; font-size: 9px; }
 .cost-accumulated-area { fill: rgba(110, 156, 125, .12); }
 .cost-accumulated-line { fill: none; stroke: #6e9c7d; stroke-width: 2; }
 .cost-accumulated-point { fill: #9cc5aa; opacity: .35; }

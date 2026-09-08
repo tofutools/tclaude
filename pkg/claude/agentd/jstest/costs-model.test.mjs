@@ -35,6 +35,9 @@ test('Costs derivation projects months, filters providers and models, sorts, and
   const selected = new Set(['claude']);
   const narrowed = model.filterCostData(payload, selected);
   assert.equal(narrowed.total_usd, 30);
+  assert.equal(narrowed.real_total_usd, 30,
+    'legacy cost-kind rows retain their real/WHAT-IF split when filtered');
+  assert.equal(narrowed.cost_kind, 'real');
   assert.equal(narrowed.days.at(-1).cost_usd, 30);
   const providers = model.costProviders(agents);
   const chart = model.buildCostChart(narrowed, null, agents, selected, providers);

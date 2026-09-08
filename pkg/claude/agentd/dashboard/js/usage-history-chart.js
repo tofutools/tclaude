@@ -145,7 +145,8 @@ export function UsageHistoryChart({
   const lookahead = [5, 24, 168, 720].includes(Number(lookaheadHours)) ? Number(lookaheadHours) : 168;
   const horizon = now + lookahead * 3600000;
   const x = (time) => PAD.left + Math.max(0, Math.min(1, (time - start) / (horizon - start))) * (W - PAD.left - PAD.right);
-  const latestLimit = [...points].reverse().find((point) => Number(point.limit_units || 0) > 0)?.limit_units || 0;
+  const includedPoints = points.filter((point) => !point.excluded);
+  const latestLimit = [...includedPoints].reverse().find((point) => Number(point.limit_units || 0) > 0)?.limit_units || 0;
   const units = unit === 'units' && latestLimit > 0;
   const unitScale = units ? Math.max(latestLimit,
     ...points.map((point) => Number(point.limit_units || 0)), ...points.map((point) => Number(point.used_units || 0))) : 100;
@@ -160,7 +161,6 @@ export function UsageHistoryChart({
     .map((reset) => ({ ...reset, time: finiteDate(reset.at) }))
     .filter((reset) => reset.time !== null);
   const resetTimes = new Set(resetMarkers.map((reset) => reset.time));
-  const includedPoints = points.filter((point) => !point.excluded);
   const segments = [];
   let current = [];
   for (const point of includedPoints) {

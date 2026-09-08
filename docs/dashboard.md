@@ -392,7 +392,7 @@ warning banner.
 Spend over time: an accumulated-cost line graph, a stacked daily bar chart
 per provider, a per-model rollup strip, and a sortable per-agent table with
 totals and cross-day agent chains. Provider and model selectors narrow every
-figure in the tab, including both graphs and the projection. Spans are This
+figure in the tab, including both graphs and the projection. Spans are: This
 month (the only span with a projection), 7d/30d/90d, and a month browser going
 24 months back. Model attribution uses the last model recorded for each
 agent-day slice; a model switch within the same session and calendar day is

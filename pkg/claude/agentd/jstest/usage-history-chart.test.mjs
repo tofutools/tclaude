@@ -226,6 +226,7 @@ test('Copilot usage chart switches its scale and accessible values to AIC', asyn
     points: [
       { at: new Date(now - 3600000).toISOString(), pct: 25 },
       { at: new Date(now).toISOString(), pct: 38, used_units: 190, limit_units: 500 },
+      { at: new Date(now + 3600000).toISOString(), pct: 10, used_units: 100, limit_units: 1000, excluded: true },
     ],
     resets: [{ at: new Date(now - 2 * 3600000).toISOString(), pct: 10, used_units: 30, limit_units: 300 }],
     forecast: { status: 'flat', rate_pct_per_hour: 0 },
@@ -235,7 +236,7 @@ test('Copilot usage chart switches its scale and accessible values to AIC', asyn
     unit: 'units',
   }));
   assert.match(view.container.querySelector('svg').getAttribute('aria-label'), /AIC/);
-  assert.deepEqual([...view.container.querySelectorAll('.usage-grid text')].map((node) => node.textContent), ['0', '250', '500']);
+  assert.deepEqual([...view.container.querySelectorAll('.usage-grid text')].map((node) => node.textContent), ['0', '500', '1,000']);
   assert.match(view.container.querySelectorAll('.usage-point-hit-target')[0].getAttribute('aria-label'), /125 AIC/,
     'pre-migration percent-only samples are converted with the latest allowance');
   assert.match(view.container.querySelectorAll('.usage-point-hit-target')[1].getAttribute('aria-label'), /190 AIC/);

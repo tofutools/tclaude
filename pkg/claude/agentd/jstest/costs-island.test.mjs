@@ -147,8 +147,8 @@ test('Costs island keeps its cross-line word gaps and leads with the WHAT-IF cav
   assert.match(banner.textContent, /subscription estimates\. WHAT-IF values estimate/,
     'the banner keeps a space between its two sentences');
 
-  assert.match(mounted.container.querySelector('.cost-proj').textContent, /: ~\$/,
-    'the projection keeps a space after its label');
+  assert.match(mounted.container.querySelector('.cost-proj').textContent, /: ~\$80\.00/,
+    'the projection keeps a space after its label and renders the fixture total');
   assert.match(mounted.container.querySelector('tr[data-key="cost-conv-a-2026-07-10"] td').textContent, /↳ Alpha/,
     'the chain marker keeps a space before the agent name');
   await mounted.unmount();
