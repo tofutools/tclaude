@@ -103,7 +103,10 @@ export function validationMessages(draft) {
     if (node.Kind === 'fork' && (outgoing.get(node.ID)?.length || 0) < 2) messages.push(`${name}: a fork needs at least two outgoing branches.`);
     if (node.Kind === 'join' && (incoming.get(node.ID) || 0) < 2) messages.push(`${name}: a join needs at least two incoming branches.`);
     if (node.Kind === 'end' && outgoing.has(node.ID)) messages.push(`${name}: an end cannot have outgoing connections.`);
-    if (node.Kind === 'wait' && (!(node.Wait?.Duration > 0) || node.Wait?.Until)) messages.push(`${name}: set a positive wait duration.`);
+    if (node.Kind === 'wait') {
+      if (!node.Wait || node.Wait.Duration < 0 || (!(node.Wait.Duration > 0) && !node.Wait.Until && !node.Wait.Signal?.trim())) messages.push(`${name}: set a positive duration, timestamp or signal.`);
+      if (node.Wait?.Until && !validWaitTimestamp(node.Wait.Until)) messages.push(`${name}: timestamp must be RFC3339.`);
+    }
     for (const performer of taskPerformers({Nodes:[node]})) {
       if (performer.Kind === 'agent' && !performer.Agent?.Brief?.trim()) messages.push(`${name}: add every worker brief, including task stages.`);
       if (performer.Kind === 'human' && !performer.Human?.Prompt?.trim()) messages.push(`${name}: add every human stage prompt.`);
@@ -116,4 +119,14 @@ export function validationMessages(draft) {
 // Stage performers participate in the same launch binding/authority controls as work.
 export function taskPerformers(graph) {
   return (graph?.Nodes || []).flatMap(node => [node.Performer, node.Stages?.Plan?.Performer, ...(node.Stages?.Checks || []).map(s => s.Performer), node.Stages?.Review?.Performer].filter(Boolean));
+}
+
+function validWaitTimestamp(value) {
+  // Match Go strings.TrimSpace without rewriting the authored field.
+  const trimmed=value.replace(/^[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+|[\u0009-\u000d\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+$/g,'');
+  const match=/^(\d{4})-(\d{2})-(\d{2})T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(trimmed);
+  if(!match)return false;
+  const year=Number(match[1]),month=Number(match[2]),day=Number(match[3]);
+  const days=[31,year%4===0&&(year%100!==0||year%400===0)?29:28,31,30,31,30,31,31,30,31,30,31];
+  return month>=1&&month<=12&&day>=1&&day<=days[month-1];
 }

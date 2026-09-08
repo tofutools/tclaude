@@ -1327,3 +1327,13 @@ if it lacks the newly expected typed records; the importer never rewrites that
 existing destination. Use a fresh explicit destination for the new conversion.
 
 Imported sandbox profiles carry a durable imported marker. They remain archived and reject restore or same-identity edits; inspect, export, and explicit independent copy remain available. Independent copies use fresh identities and normal editable lifecycle rules.
+
+### Process wait authoring
+
+Wait nodes can retain a duration, an RFC3339 timestamp, a named signal, or a
+combination. The editor saves these fields without rewriting their text and
+explains their runtime limits. Timestamp and signal declarations preserve the
+legacy authoring capability; they do not create wake subscriptions. A process
+containing either is refused before run creation, including an older pinned
+revision after a newer revision clears the fields. Duration-only waits retain
+their existing execution and restart behavior.
