@@ -46,6 +46,8 @@ type ProcessIdentity struct {
 }
 
 type ProcessObservation struct {
+	// Reaping means the retained child status/IO is still being collected; it is not a live capability.
+	Reaping  bool
 	Running  bool
 	Exited   bool
 	ExitCode *int
@@ -114,7 +116,7 @@ func startProcess(spec ProcessSpec, readGroup func(int) (int, error), readToken 
 // Keep that natural result without sending a signal or inventing a live identity.
 func retainNaturalExit(cmd *exec.Cmd) *Process {
 	p := &Process{identity: ProcessIdentity{PID: cmd.Process.Pid}, cmd: cmd, done: make(chan struct{})}
-	p.wait()
+	go p.wait()
 	return p
 }
 
@@ -210,6 +212,9 @@ func (p *Process) Observe() ProcessObservation {
 			return ProcessObservation{Exited: true, ExitCode: cloneInt(p.exitCode)}
 		default:
 		}
+		if p.identity.StartToken == "" {
+			return ProcessObservation{Reaping: true, Unknown: true}
+		}
 	}
 	matched, err := processIdentityMatches(p.identity)
 	if err != nil {
@@ -252,6 +257,14 @@ func (p *Process) Stop(ctx context.Context, force bool) (acknowledged, exited bo
 	}
 	err = p.Signal(signal)
 	if errors.Is(err, os.ErrProcessDone) {
+		if p.Observe().Reaping {
+			select {
+			case <-p.done:
+				return false, true, nil
+			case <-ctx.Done():
+				return false, false, ctx.Err()
+			}
+		}
 		return false, true, nil
 	}
 	if err != nil {
