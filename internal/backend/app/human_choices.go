@@ -11,6 +11,11 @@ func validateHumanChoices(human *model.HumanPerformer) error {
 	if human == nil {
 		return nil
 	}
+	for _, text := range []string{human.Ask, human.Prompt} {
+		if len(text) > 1<<20 || !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
+			return fail(ErrInvalid, "human task question and context require bounded valid text")
+		}
+	}
 	if len(human.Choices) > 64 || len(human.ChoiceOutcomes) != len(human.Choices) {
 		return fail(ErrInvalid, "human task choices require at most 64 exact pass/fail mappings")
 	}

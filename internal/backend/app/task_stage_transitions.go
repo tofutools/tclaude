@@ -65,7 +65,7 @@ func (s *Service) taskGateFailure(record WorkRunRecord, current model.WorkNodeAt
 		taskStageFeedback(record, current, &next, detail)
 		for i := range windows {
 			if next.Performer.Human != nil {
-				windows[i].Question = next.Performer.Human.Prompt
+				windows[i].Question = next.Performer.Human.Question()
 			}
 		}
 		transition.Activations, transition.DecisionWindows = []model.WorkNodeAttempt{next}, windows
@@ -105,7 +105,7 @@ func (s *Service) reworkTaskPlan(ctx context.Context, run WorkRunRecord, current
 	taskStageFeedback(run, current, &next, submission.Reason)
 	for i := range windows {
 		if next.Performer.Human != nil {
-			windows[i].Question = next.Performer.Human.Prompt
+			windows[i].Question = next.Performer.Human.Question()
 		}
 	}
 	transition := GraphTransition{WorkRunID: run.Run.ID, ExpectedRevision: run.Run.Revision,
@@ -125,7 +125,7 @@ func (s *Service) resolveTaskGate(ctx context.Context, run WorkRunRecord, curren
 	taskStageFeedback(run, current, &next, submission.Reason)
 	for i := range windows {
 		if next.Performer.Human != nil {
-			windows[i].Question = next.Performer.Human.Prompt
+			windows[i].Question = next.Performer.Human.Question()
 		}
 	}
 	transition := GraphTransition{WorkRunID: run.Run.ID, ExpectedRevision: run.Run.Revision,

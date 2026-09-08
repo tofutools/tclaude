@@ -594,7 +594,7 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 		taskStageFeedback(record, current, &attempt, detail)
 		for i := range windows {
 			if attempt.Performer != nil && attempt.Performer.Human != nil {
-				windows[i].Question = attempt.Performer.Human.Prompt
+				windows[i].Question = attempt.Performer.Human.Question()
 			}
 		}
 		if node.Kind == model.WorkNodeStart || node.Kind == model.WorkNodeFork || node.Kind == model.WorkNodeJoin || node.Kind == model.WorkNodeEnd || node.Kind == model.WorkNodeTaskComplete {
@@ -746,7 +746,7 @@ func (s *Service) retryFailureTransition(record WorkRunRecord, current model.Wor
 			taskStageFeedback(record, current, &next, detail)
 			for i := range windows {
 				if next.Performer.Human != nil {
-					windows[i].Question = next.Performer.Human.Prompt
+					windows[i].Question = next.Performer.Human.Question()
 				}
 			}
 		}
@@ -976,7 +976,7 @@ func (s *Service) attachDecisionWindow(run model.WorkRun, node model.WorkNode, a
 		if human.RoleID != "" {
 			audience = append(audience, model.DecisionAudience{RoleID: human.RoleID, GroupID: run.Scope.GroupID})
 		}
-		question, answers, expires = human.Prompt, []string{"complete", "reject"}, attempt.Deadline
+		question, answers, expires = human.Question(), []string{"complete", "reject"}, attempt.Deadline
 		if len(human.Choices) > 0 {
 			answers = append([]string(nil), human.Choices...)
 		}
@@ -1866,8 +1866,8 @@ func validatePerformer(performer model.Performer) error {
 		if performer.Human != nil && performer.Human.Operator && (performer.Human.AgentID != "" || performer.Human.RoleID != "") {
 			return fail(ErrInvalid, "choose operator or agent/role human audience")
 		}
-		if performer.Human == nil || (!performer.Human.Operator && performer.Human.AgentID == "" && performer.Human.RoleID == "") || strings.TrimSpace(performer.Human.Prompt) == "" {
-			return fail(ErrInvalid, "human performer requires audience and prompt")
+		if performer.Human == nil || (!performer.Human.Operator && performer.Human.AgentID == "" && performer.Human.RoleID == "") || (strings.TrimSpace(performer.Human.Prompt) == "" && strings.TrimSpace(performer.Human.Ask) == "") {
+			return fail(ErrInvalid, "human performer requires audience and question or context")
 		}
 	default:
 		return fail(ErrInvalid, "performer kind is unsupported")

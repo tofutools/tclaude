@@ -1498,3 +1498,10 @@ definition hashes unchanged; counts above JavaScript's safe integer range are
 emitted as exact decimal strings. Both integer and string inputs are accepted.
 The editor keeps these values exact. Runtime counters remain bounded to 100;
 automation occurrence policies still reject counts outside 0–100.
+
+Human process tasks retain a separate question and longer context in the shared
+performer editor, including plan, check and review stages. Either field may be
+used alone. When both are present, the admitted decision displays the question,
+a blank line, then the context as literal text. Explicit process parameters apply
+to both fields; saved revisions retain the original authored text. Existing
+prompt-only definitions retain their original presentation and serialization.

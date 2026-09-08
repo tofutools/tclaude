@@ -85,7 +85,7 @@ func TestProcessParameterSyntaxIsExplicitAndValidatesCompiledStages(t *testing.T
 	ctx := context.Background()
 	_, service, now := regressionService(t)
 	graph := stagedHumanGraph()
-	graph.Nodes[0].Stages.Plan.Performer.Human = &model.HumanPerformer{Operator: true, Prompt: "Plan {{ params.subject }}"}
+	graph.Nodes[0].Stages.Plan.Performer.Human = &model.HumanPerformer{Operator: true, Ask: "Ready for {{ params.subject }}?", Prompt: "Plan {{ params.subject }}"}
 	graph.Nodes[0].Performer.Human = &model.HumanPerformer{Operator: true, Prompt: "Work {{params.subject}}"}
 	graph.Nodes[0].Stages.PlanApproval.Question = "Approve {{ params.subject }}?"
 	draft := app.DefinitionDraft{ID: "human_params", RevisionID: "human_params_v1", Name: "Human inputs", Kind: model.DefinitionProcess, SchemaVersion: 1, Source: "process", Process: &model.ProcessDefinition{ParameterSyntax: "mustache-v1", Graph: graph}, Parameters: []model.ParameterDeclaration{{Name: "subject", Type: model.ParameterString, Default: json.RawMessage(`"release"`)}}}
@@ -97,7 +97,7 @@ func TestProcessParameterSyntaxIsExplicitAndValidatesCompiledStages(t *testing.T
 	require.Equal(t, "Plan release", result.Run.NodeAttempts[0].Performer.Human.Prompt)
 	windows := result.Decisions
 	require.NotEmpty(t, windows)
-	require.Equal(t, "Plan release", windows[0].Question)
+	require.Equal(t, "Ready for release?\n\nPlan release", windows[0].Question)
 	_, err = service.SubmitDecision(ctx, app.SubmitDecisionRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "plan_done"}, DecisionID: windows[0].ID, ExpectedWindowRevision: windows[0].Revision, Answer: "complete", Reason: "Plan prepared"})
 	require.NoError(t, err)
 	_, err = service.ReconcilePendingWork(ctx)
@@ -129,7 +129,7 @@ func TestProcessParameterSyntaxIsExplicitAndValidatesCompiledStages(t *testing.T
 	ref.ContentHash = literal.Revision.ContentHash
 	unchanged, err := service.StartProcess(ctx, app.StartProcessRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "literal_run"}, ID: "literal_run", Start: model.WorkStart{Definition: &ref, Deadline: now.Add(time.Hour)}})
 	require.NoError(t, err)
-	require.Equal(t, "Plan {{ params.subject }}", unchanged.Decisions[0].Question)
+	require.Equal(t, "Ready for {{ params.subject }}?\n\nPlan {{ params.subject }}", unchanged.Decisions[0].Question)
 }
 
 func TestProcessParameterEmptyQuestionKeepsAuthoredPresence(t *testing.T) {

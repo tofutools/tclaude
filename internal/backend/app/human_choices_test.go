@@ -23,6 +23,8 @@ func TestHumanTaskChoicesUseAdmittedMappingAcrossRestartAndRetry(t *testing.T) {
 	service := app.New(store, providers.NewRegistry()).WithClock(func() time.Time { return now })
 	graph := stagedHumanGraph()
 	graph.Nodes[0].Stages = nil
+	graph.Nodes[0].Performer.Human.Ask = "Review now?"
+	graph.Nodes[0].Performer.Human.Prompt = "Long context\n<script>literal</script>"
 	graph.Nodes[0].Performer.Human.Choices = []string{"cancel", "waive"}
 	graph.Nodes[0].Performer.Human.ChoiceOutcomes = map[string]string{"cancel": "fail", "waive": "pass"}
 	run, err := service.StartProcess(ctx, app.StartProcessRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "start"}, ID: "choices", Start: model.WorkStart{InlineGraph: &graph, Deadline: now.Add(time.Hour)}})
@@ -31,6 +33,7 @@ func TestHumanTaskChoicesUseAdmittedMappingAcrossRestartAndRetry(t *testing.T) {
 	for _, d := range run.Decisions {
 		window = d
 	}
+	require.Equal(t, "Review now?\n\nLong context\n<script>literal</script>", window.Question)
 	require.Equal(t, []string{"cancel", "waive"}, window.PermittedAnswers)
 	require.NoError(t, store.Close())
 	store, err = sqlite.Open(path)
@@ -55,6 +58,7 @@ func TestHumanTaskChoicesUseAdmittedMappingAcrossRestartAndRetry(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, retry.ID)
+	require.Equal(t, window.Question, retry.Question)
 	require.Equal(t, window.PermittedAnswers, retry.PermittedAnswers)
 	_, err = service.SubmitDecision(ctx, app.SubmitDecisionRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "unknown"}, DecisionID: retry.ID, ExpectedWindowRevision: retry.Revision, Answer: "complete", Reason: "not offered"})
 	require.Error(t, err)
