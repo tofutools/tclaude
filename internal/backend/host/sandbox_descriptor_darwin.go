@@ -74,9 +74,23 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 	// not grant access to any descendant outside the selected readable regions.
 	profile := "(version 1)\n(allow default)\n" +
 		"(deny file-read* (require-all (require-not (literal \"/\")) (require-not (require-any " + strings.Join(readRegions, " ") + "))))\n" +
-		"(deny file-write* (require-not (require-any " + strings.Join(writeRegions, " ") + ")))\n" +
+		"(deny file-write* (require-not (require-any " + strings.Join(writeRegions, " ") + ")))\n"
+	if bindings.controlPort == 0 {
 		// Seatbelt mediates Unix connect as network-outbound, not file-read.
-		"(deny network-outbound (remote unix-socket (require-not (require-any " + strings.Join(readRegions, " ") + "))))\n"
+		profile += "(deny network-outbound (remote unix-socket (require-not (require-any " + strings.Join(readRegions, " ") + "))))\n"
+	} else {
+		if bindings.controlPort < 1 || bindings.controlPort > 65535 {
+			return ProcessSpec{}, nil, fmt.Errorf("invalid sandbox control port")
+		}
+		// Keep both destination exceptions inside ONE deny predicate, as in
+		// the retained Darwin native-server floor. A separate Unix-path deny
+		// can also reject TCP I/O despite a second rule's TCP exception.
+		ipException := `(remote ip "*:*")`
+		if privateNetwork {
+			ipException = "(remote tcp " + strconv.Quote("localhost:"+strconv.Itoa(bindings.controlPort)) + ")"
+		}
+		profile += "(deny network-outbound (require-all (require-not (remote unix-socket (require-any " + strings.Join(readRegions, " ") + "))) (require-not " + ipException + ")))\n"
+	}
 	if privateNetwork {
 		// IP isolation is separate from the filesystem-gated Unix socket axis.
 		if bindings.controlPort == 0 {
@@ -91,8 +105,7 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 			// localhost selector is host-wide, not strictly 127.0.0.1; the
 			// native relay itself still uses and proves IPv4 loopback.
 			endpoint := strconv.Quote("localhost:" + strconv.Itoa(bindings.controlPort))
-			profile += "(deny network-outbound (require-all (remote ip \"*:*\") (require-not (remote tcp " + endpoint + "))))\n" +
-				"(deny network-bind (require-not (local tcp " + endpoint + ")))\n"
+			profile += "(deny network-bind (require-not (local tcp " + endpoint + ")))\n"
 			// Inbound filtering is not a reliable listener/reply boundary on
 			// Darwin. The retained contract prevents other listeners at bind.
 		}
