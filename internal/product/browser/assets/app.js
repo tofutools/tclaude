@@ -93,6 +93,8 @@ function startupFields(startup={}){return[
 function profileStartup(f){const name=f.startup_name||'',context=f.startup_context||'',brief=f.startup_brief||'',body=context&&brief?context+'\n\n'+brief:context||brief;if(new TextEncoder().encode(name).length>256||new TextEncoder().encode(body).length>32768||/[\0\r\n]/.test(name)||(name&&!name.trim())||body.includes('\0'))throw new Error('Suggested name must be at most 256 UTF-8 bytes; context and brief together at most 32768 bytes, without NUL.');return{AgentName:name,Context:context,InitialMessage:brief}}
 function agentRow(agent){
  const row=el('div',undefined,'row');row.append(el('span',agent.Name,'name'));
+ if(agent.Labels?.Role)row.append(el('span',agent.Labels.Role,'muted'));
+ if(agent.Labels?.Description)row.append(el('span',agent.Labels.Description,'muted'));
  const execution=(snapshot.executions||[]).find(e=>e.id===agent.PrimaryExecutionID);
  row.append(el('span',execution?`${execution.state} · context ${execution.context_readiness}`:'offline','status'));
  row.append(el('span',`${agent.Desired.Harness} / ${agent.Desired.Model}`,'muted'));
@@ -102,7 +104,7 @@ function agentRow(agent){
  if(execution?.conversation_id)actions.append(button('Usage',async()=>{usageTarget={ConversationID:execution.conversation_id};await selectTab('usage')}));
  if(agent.Lifecycle==='retired'){row.append(el('span','retired','status'));actions.append(button('Reactivate',async()=>{await api(`/v2/agents/${encodeURIComponent(agent.ID)}/reactivate`,{expected_revision:agent.Revision});await refresh()}));row.append(actions);return row}
  actions.append(button('Save settings as configuration',()=>saveConfigurationDraft({...agent.Desired,name:agent.Name+' configuration'},{AgentName:agent.Name})));
- actions.append(button('Configure',()=>edit('Configure agent',[...desiredFields({...agent.Desired,name:agent.Name}),...agentMetadataFields(agent)],f=>api(`/v2/agents/${encodeURIComponent(agent.ID)}`,{name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify},expected_revision:agent.Revision},'PUT'))));
+ actions.append(button('Configure',()=>edit('Configure agent',[...desiredFields({...agent.Desired,name:agent.Name}),...agentMetadataFields(agent)],f=>api(`/v2/agents/${encodeURIComponent(agent.ID)}`,{name:f.name,desired:configuration(f),task_reference:f.task,labels:{Role:f.role_label,Description:f.description},notifications:{DirectMessage:f.notify},expected_revision:agent.Revision},'PUT'))));
  if(!execution || ['exited','failed'].includes(execution.state)){
   actions.append(button('Retire',()=>edit('Retire agent',[{name:'reason',label:'Reason',multiline:true}],f=>api(`/v2/agents/${encodeURIComponent(agent.ID)}/retire`,{expected_revision:agent.Revision,reason:f.reason}))));
   actions.append(button('Start',async id=>{await api('/v2/launch',{request_id:id,target:{agent:{agent_id:agent.ID,expected_revision:agent.Revision}}});await refresh()}));
@@ -118,7 +120,7 @@ function agentRow(agent){
   actions.append(button('Send input',()=>edit('Send input',[{name:'text',label:'Input',multiline:true}],f=>api('/v2/interact',{request_id:f.requestID,execution_id:execution.id,text:f.text}))));
   actions.append(button('Stop',async id=>{await api('/v2/stop',{request_id:id,execution_id:execution.id,force:false});await refresh()}));
  }
- actions.append(button('Clone configuration',()=>edit('Create independent agent',[{name:'name',label:'Name',value:agent.Name+' copy'}],f=>api('/v2/agents',{id:f.requestID,name:f.name,clone_source_agent_id:agent.ID,desired:agent.Desired}))));
+ actions.append(button('Clone configuration',()=>edit('Create independent agent',[{name:'name',label:'Name',value:agent.Name+' copy'}],f=>api('/v2/agents',{id:f.requestID,name:f.name,clone_source_agent_id:agent.ID,labels:agent.Labels,desired:agent.Desired}))));
  row.append(actions);return row;
 }
 function messageCard(message){
@@ -160,7 +162,7 @@ $('cancel').onclick=()=>{if(!submitting)$('editor').close()};
 $('editor').addEventListener('cancel',event=>{if(submitting)event.preventDefault()});
 $('logout').onclick=async()=>{try{await api('/session',undefined,'DELETE');document.dispatchEvent(new Event('workspace-signout'));closeTerminal();presentation.stop();attention.clear();usageWorkspace.clear();activityWorkspace.clear();programProfiles.clear();sandboxProfiles.clear();historyWorkspace.clear();workspaceBrowser.clear();refreshSequence++;snapshot={};render();$('connection').textContent='Signed out';showError(new Error('Open a new dashboard login link to sign in.'))}catch(e){showError(e)}};
 for(const tab of document.querySelectorAll('[data-tab]'))tab.onclick=()=>selectTab(tab.dataset.tab).catch(showError);
-$('new-agent').onclick=()=>edit('New agent',[...desiredFields(),...agentMetadataFields()],f=>api('/v2/agents',{id:f.requestID,name:f.name,desired:configuration(f),task_reference:f.task,notifications:{DirectMessage:f.notify}}));
+$('new-agent').onclick=()=>edit('New agent',[...desiredFields(),...agentMetadataFields()],f=>api('/v2/agents',{id:f.requestID,name:f.name,desired:configuration(f),task_reference:f.task,labels:{Role:f.role_label,Description:f.description},notifications:{DirectMessage:f.notify}}));
 $('new-group').onclick=()=>edit('New group',[{name:'name',label:'Name'},{name:'members',label:'Members',multiple:true,required:false,options:(snapshot.agents||[]).map(a=>({value:a.ID,label:a.Name}))}],f=>api('/v2/groups',{id:f.requestID,name:f.name,members:f.members}));
 $('compose').onclick=()=>composeMessage();
 (async()=>{
@@ -279,6 +281,8 @@ function saveConfigurationDraft(desired={},startup={}){
 $('new-configuration').onclick=()=>saveConfigurationDraft();
 
 function agentMetadataFields(agent={}){return[
+ {name:'role_label',label:'Display role',value:agent.Labels?.Role||'',required:false},
+ {name:'description',label:'Description',value:agent.Labels?.Description||'',multiline:true,required:false},
  {name:'task',label:'Task reference',value:agent.TaskReference||'',required:false},
  {name:'notify',label:'Message notification',value:agent.Notifications?.DirectMessage||'if_available',options:[{value:'if_available',label:'Notify when available'},{value:'none',label:'Inbox only'}]}
 ]}

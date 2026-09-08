@@ -1553,6 +1553,9 @@ func validateTeam(team model.TeamDefinition) error {
 	}
 	members := make(map[string]bool, len(team.Members))
 	for _, member := range team.Members {
+		if err := member.Labels.Validate(); err != nil {
+			return fail(ErrInvalid, "%v", err)
+		}
 		if err := member.Desired.Environment.Validate(); err != nil {
 			return fail(ErrInvalid, "team member environment: %v", err)
 		}

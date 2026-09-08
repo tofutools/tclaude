@@ -24,7 +24,7 @@ func TestGroupCloneIsAtomicOfflineAndExactlyRepeatable(t *testing.T) {
 	profile, err := svc.SaveConfigurationProfile(ctx, app.SaveConfigurationProfileRequest{Context: app.RequestContext{Principal: op, RequestID: "profile"}, ID: "profile", RevisionID: "one", Name: "Worker", Desired: desired})
 	require.NoError(t, err)
 	for _, id := range []model.AgentID{"active", "retired"} {
-		_, err = svc.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: id, Name: string(id), TaskReference: "task", ConfigurationProfile: &profile.Revision.Ref})
+		_, err = svc.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: id, Name: string(id), Labels: model.AgentLabels{Role: "engineer", Description: "literal <b>description</b>"}, TaskReference: "task", ConfigurationProfile: &profile.Revision.Ref})
 		require.NoError(t, err)
 	}
 	_, err = svc.CreateGroup(ctx, app.CreateGroupRequest{Context: op, ID: "source", Name: "Source", Members: []model.AgentID{"active", "retired"}, OwnerAgentID: "active"})
@@ -68,6 +68,7 @@ func TestGroupCloneIsAtomicOfflineAndExactlyRepeatable(t *testing.T) {
 	expectedDesired := desired
 	expectedDesired.HostSandbox = model.SandboxInGroup(desired.HostSandbox, "copy")
 	require.Equal(t, expectedDesired, copied.Desired)
+	require.Equal(t, model.AgentLabels{Role: "engineer", Description: "literal <b>description</b>"}, copied.Labels)
 	require.Equal(t, &profile.Revision.Ref, copied.ConfigurationProfile)
 	require.Equal(t, model.AgentID("active"), copied.CloneSourceAgentID)
 	require.Empty(t, copied.PrimaryExecutionID)

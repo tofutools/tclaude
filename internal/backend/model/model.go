@@ -39,7 +39,13 @@ func ExecutionPrincipal(executionID ExecutionID, agentID AgentID, generation Acc
 	return Principal{Kind: PrincipalExecution, AgentID: agentID, ExecutionID: executionID, Generation: generation, Authority: subject}
 }
 
+type AgentLabels struct {
+	Role        string
+	Description string
+}
+
 type Agent struct {
+	Labels               AgentLabels
 	ID                   AgentID
 	Name                 string
 	TaskReference        string

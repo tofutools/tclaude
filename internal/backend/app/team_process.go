@@ -81,19 +81,16 @@ func (s *Service) notifyTeamPhase(ctx context.Context, req AdvanceAdvisoryPhaseR
 	if err != nil {
 		return 0
 	}
-	state, err := s.store.AuthorityState(ctx)
-	if err != nil {
-		return 0
-	}
 	var audiences []model.MessageAudience
 	for _, label := range phase.Roles {
 		if strings.EqualFold(strings.TrimSpace(label), "all") {
 			audiences = []model.MessageAudience{{GroupID: group.ID}}
 			break
 		}
-		for _, role := range state.Roles {
-			if strings.EqualFold(strings.TrimSpace(label), strings.TrimSpace(role.Name)) {
-				audiences = append(audiences, model.MessageAudience{GroupID: group.ID, RoleID: role.ID})
+		for _, id := range group.Members {
+			agent, err := s.store.Agent(ctx, id)
+			if err == nil && agent.Lifecycle == model.AgentActive && strings.EqualFold(strings.TrimSpace(label), strings.TrimSpace(agent.Labels.Role)) {
+				audiences = append(audiences, model.MessageAudience{AgentIDs: []model.AgentID{id}})
 			}
 		}
 	}

@@ -276,6 +276,7 @@ type RequestContext struct {
 }
 
 type CreateAgentRequest struct {
+	Labels               model.AgentLabels
 	ConfigurationDefault string
 	ConfigurationProfile *model.ConfigurationProfileRef
 	Context              model.Principal
@@ -289,6 +290,7 @@ type CreateAgentRequest struct {
 }
 
 type UpdateAgentRequest struct {
+	Labels               *model.AgentLabels
 	ConfigurationDefault string
 	ConfigurationProfile *model.ConfigurationProfileRef
 	Context              model.Principal

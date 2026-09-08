@@ -28,7 +28,7 @@ class RosterWorkspace {
   draw(){if(!this.snapshot)return;const{el,button}=this,agents=this.snapshot.agents||[],groups=this.groups||[],grouped=new Set(groups.flatMap(g=>g.Members||[]));
     const state=a=>a.Lifecycle==='retired'?'retired':(this.snapshot.executions||[]).find(e=>e.id===a.PrimaryExecutionID)?.state||'offline';
     const group=this.group.value,search=this.query.value.trim().toLowerCase(),members=groups.find(g=>g.ID===group)?.Members||[];
-    this.visible=agents.filter(a=>(!search||[a.Name,a.ID,a.TaskReference,a.Desired.Harness,a.Desired.Model].join(' ').toLowerCase().includes(search))&&(!this.harness.value||a.Desired.Harness===this.harness.value)&&(!this.state.value||state(a)===this.state.value)&&(!group||(group==='__ungrouped'?!grouped.has(a.ID):members.includes(a.ID))));
+    this.visible=agents.filter(a=>(!search||[a.Name,a.ID,a.Labels?.Role,a.Labels?.Description,a.TaskReference,a.Desired.Harness,a.Desired.Model].join(' ').toLowerCase().includes(search))&&(!this.harness.value||a.Desired.Harness===this.harness.value)&&(!this.state.value||state(a)===this.state.value)&&(!group||(group==='__ungrouped'?!grouped.has(a.ID):members.includes(a.ID))));
     const field=a=>this.sort.value==='harness'?a.Desired.Harness:this.sort.value==='model'?a.Desired.Model:a.Name;
     this.visible.sort((a,b)=>(this.sort.value==='newest'?Date.parse(b.CreatedAt)-Date.parse(a.CreatedAt):field(a).localeCompare(field(b)))||a.ID.localeCompare(b.ID));
     this.list.replaceChildren();

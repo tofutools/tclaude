@@ -89,7 +89,7 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 		members[spec.Key] = id
 		desired := spec.Desired
 		desired.HostSandbox = model.SandboxInGroup(desired.HostSandbox, group.ID)
-		agents = append(agents, model.Agent{ID: id, Name: spec.Name, Desired: desired, Revision: 1, CreatedAt: now, UpdatedAt: now})
+		agents = append(agents, model.Agent{ID: id, Name: spec.Name, Labels: spec.Labels, Desired: desired, Revision: 1, CreatedAt: now, UpdatedAt: now})
 		group.Members = append(group.Members, id)
 		for _, roleID := range spec.Roles {
 			roleMembers[roleID] = append(roleMembers[roleID], id)
