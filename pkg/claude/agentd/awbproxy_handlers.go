@@ -308,15 +308,22 @@ func appendNamedRefWorkspace(out []string, raw string) []string {
 //     popup at all — so an agent cannot pester the human into authorizing
 //     something the operator excluded. A host with NO operator list has made no
 //     such statement, so nothing is escalatable there either.
-//   - The approval covers ONE workspace. A request naming several out-of-scope
-//     workspaces is refused outright rather than approved by a popup that could
-//     only name one of them — and, more sharply, because an approval marks the
-//     whole request as human-approved for this slug (see
-//     markHumanApprovalContinuation), so a second gate in the same request would
-//     pass without ever being shown.
+//   - The approval covers ONE workspace, and a request naming several
+//     out-of-scope workspaces is refused here rather than put to the human. Not
+//     merely because one popup can only honestly name one workspace: asking N
+//     times would not work either, since the FIRST approval marks the whole
+//     request human-approved for this slug (markHumanApprovalContinuation), so
+//     every later ask would pass without being shown. Refusing is the only
+//     shape that keeps "approved" meaning what it says.
 //   - It authorizes this request only. Nothing is persisted; the popup's
 //     "always allow" buttons remain the separate, deliberate way to change a
 //     standing grant.
+//
+// What this function decides is only what the human is ASKED about. Enforcement
+// stays where it was — every workspace check reads the session's effective set —
+// so a workspace this pass fails to notice is refused there, exactly as before.
+// A gap in the naming pass costs an agent a popup it could have had; it cannot
+// let one through.
 //
 // Returns the approved workspace keys, and ok=false when the response has
 // already been written.

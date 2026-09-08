@@ -346,8 +346,10 @@ type awbProxySession struct {
 
 	// escalatedWorkspaces is the workspaces THIS ONE REQUEST reached because a
 	// human approved an --ask-human popup for them, rather than because the
-	// caller's standing grant carries them (see escalateAWBWorkspace). They are
-	// already folded into workspaces, so no gate reads this; it exists so the
+	// caller's standing grant carries them (see escalateAWBWorkspace). It is the
+	// set that survived re-checking against this session's own policy, so it is
+	// what actually authorized the request rather than what was asked about.
+	// Already folded into workspaces, so no gate reads it; it exists so the
 	// audit row can say the human, not the grant, was the authority.
 	escalatedWorkspaces []string
 
@@ -395,7 +397,7 @@ func newAWBProxySession(
 	if fault != nil {
 		return nil, fault
 	}
-	workspaces, grantWorkspaces, fault := awbEffectiveWorkspaces(
+	workspaces, grantWorkspaces, liveEscalated, fault := awbEffectiveWorkspaces(
 		r, convID, perm, policy, workspaceScoped, escalated)
 	if fault != nil {
 		return nil, fault
@@ -406,7 +408,7 @@ func newAWBProxySession(
 		deadline:            time.Now().Add(awbProxyBudget),
 		workspaces:          workspaces,
 		grantWorkspaces:     grantWorkspaces,
-		escalatedWorkspaces: escalated,
+		escalatedWorkspaces: liveEscalated,
 	}, nil
 }
 
@@ -452,27 +454,43 @@ func validateAWBBaseURL(raw string) (string, *proxyFault) {
 // plus whatever a human approved for this ONE request through the --ask-human
 // popup (escalateAWBWorkspace).
 //
-// The escalation is applied AFTER the grant resolution, never inside it, for two
-// reasons. The approval has already cleared the operator's ceiling — that is a
-// precondition of the popup ever being offered — so intersecting it again would
-// be a no-op that only invited the two lists to drift apart. And it must not be
-// narrowed by the grant scope it is precisely the answer to.
+// The escalation is applied AFTER the grant resolution, never inside it: it must
+// not be narrowed by the grant scope it is precisely the answer to.
 //
-// It also relieves the two scope-empty refusals: a grant that authorizes nothing
-// on its own is not a reason to refuse a request the human authorized directly.
-// Nothing else is relieved — a withdrawn grant and an unconfigured proxy still
-// refuse, because neither is a question the popup asked.
+// It IS re-checked against the operator's allow-list here, even though
+// escalateAWBWorkspace only offers the popup for a workspace already on it. The
+// two are separate reads of config.json — separated by a popup the human may sit
+// on for up to five minutes — and the operator can narrow allowed_workspaces in
+// between. The ceiling that governs is the live one at the point of enforcement,
+// so an approval for a workspace since removed buys nothing, and this proxy
+// never acts outside the list the operator holds now.
+//
+// A surviving escalation relieves the two scope-empty refusals: a grant that
+// authorizes nothing on its own is not a reason to refuse a request the human
+// authorized directly. Nothing else is relieved — a withdrawn grant and an
+// unconfigured proxy still refuse, because neither is a question the popup
+// asked.
+// It returns the escalated keys that SURVIVED that re-check as well, so the
+// audit row records what actually authorized the request rather than what the
+// human was asked about.
 func awbEffectiveWorkspaces(
 	r *http.Request, convID, perm string, policy config.AWBProxyConfig,
 	workspaceScoped bool, escalated []string,
-) (workspaces, grantWorkspaces []string, fault *proxyFault) {
+) (workspaces, grantWorkspaces, liveEscalated []string, fault *proxyFault) {
 	workspaces, grantWorkspaces, fault = awbGrantWorkspaces(r, convID, perm, policy, workspaceScoped)
-	if len(escalated) == 0 {
-		return workspaces, grantWorkspaces, fault
+	// AWBWorkspaceAllowed is false for every key when the list is empty, so an
+	// operator who removed the list outright fails closed here too.
+	for _, key := range escalated {
+		if policy.AWBWorkspaceAllowed(key) {
+			liveEscalated = appendWorkspaceKey(liveEscalated, key)
+		}
+	}
+	if len(liveEscalated) == 0 {
+		return workspaces, grantWorkspaces, nil, fault
 	}
 	if fault != nil {
 		if fault.Code != awbWorkspaceScopeEmptyCode {
-			return nil, grantWorkspaces, fault
+			return nil, grantWorkspaces, nil, fault
 		}
 		workspaces = nil
 	}
@@ -482,10 +500,10 @@ func awbEffectiveWorkspaces(
 	// path is unreachable today — this keeps it unreachable by construction
 	// rather than by argument.)
 	out := append([]string(nil), workspaces...)
-	for _, key := range escalated {
+	for _, key := range liveEscalated {
 		out = appendWorkspaceKey(out, key)
 	}
-	return out, grantWorkspaces, nil
+	return out, grantWorkspaces, liveEscalated, nil
 }
 
 // awbGrantWorkspaces resolves the STANDING half of the workspace set, from the

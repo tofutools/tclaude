@@ -162,6 +162,19 @@ func (w *awbFlow) grant(slug string) {
 	require.NoError(w.t, db.GrantAgentPermission(awbProxyTestConv, slug, "test"))
 }
 
+// setAllowedWorkspaces rewrites the operator's allow-list mid-test, leaving the
+// rest of the awb_proxy block as awbWorld wrote it. It is how a test reaches the
+// window between the daemon's two config reads.
+func (w *awbFlow) setAllowedWorkspaces(keys ...string) {
+	w.t.Helper()
+	cfg, err := config.Load()
+	require.NoError(w.t, err)
+	require.NotNil(w.t, cfg.Agent)
+	require.NotNil(w.t, cfg.Agent.AWBProxy)
+	cfg.Agent.AWBProxy.AllowedWorkspaces = keys
+	require.NoError(w.t, config.Save(cfg))
+}
+
 // grantScoped is the per-agent half of the workspace gate.
 func (w *awbFlow) grantScoped(slug, scopeJSON string) {
 	w.t.Helper()
@@ -1061,6 +1074,29 @@ func TestAWBProxy_AskHumanDoesNotWidenAnUnscopedGrant(t *testing.T) {
 	assert.Contains(t, res.Body.String(), "workspace_not_allowed")
 	assert.EqualValues(t, 0, popups())
 	assert.False(t, rec.sawAnyCall())
+}
+
+// TestAWBProxy_AskHumanRecheckesTheOperatorListAfterTheApproval closes the gap
+// a real popup opens: the operator's list is read once to decide whether to ask
+// and again to build the session, and the human sits between those two reads for
+// as long as they like. An approval for a workspace the operator has since
+// removed must buy nothing — the ceiling that governs is the live one.
+func TestAWBProxy_AskHumanRechecksTheOperatorListAfterTheApproval(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	w, rec := awbWorld(t, []string{"awb", "web"})
+	w.grantScoped(agentd.PermAWBRead, `{"awb_workspace":["awb"]}`)
+	// The operator narrows the list while the popup is on screen, then approves
+	// the request they had already been asked about.
+	t.Cleanup(agentd.StubApprovalWithSideEffectForTest(true, func() {
+		w.setAllowedWorkspaces("awb")
+	}))
+
+	res := w.postAsk("/v1/awb/issue/show", map[string]any{"id": "web-a3f9c1"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "workspace_not_allowed",
+		"the refusal must name the list as it stands now")
+	assert.False(t, rec.sawAnyCall(),
+		"a stale approval must not spend the operator's account outside their current list")
 }
 
 // TestAWBProxy_AskHumanStillObeysAllowWrite keeps the two ceilings independent:
