@@ -17,6 +17,7 @@ type LaunchSupportResult struct {
 	PolicyKnown          bool
 	ApprovalModes        []model.ApprovalMode
 	SandboxModes         []model.SandboxMode
+	DefaultSandbox       model.SandboxMode
 	PreparedInitialInput bool
 	HostSandbox          bool
 	Basis                string
@@ -45,6 +46,7 @@ func (s *Service) LaunchSupport(_ context.Context, req LaunchSupportRequest) (La
 	result.HostSandbox = capabilities.HostSandbox
 	if capabilities.LaunchPolicy != nil {
 		result.PolicyKnown = true
+		result.DefaultSandbox = capabilities.LaunchPolicy.DefaultSandbox
 		result.ApprovalModes = append([]model.ApprovalMode(nil), capabilities.LaunchPolicy.SupportedApproval...)
 		result.SandboxModes = append([]model.SandboxMode(nil), capabilities.LaunchPolicy.SupportedSandbox...)
 	}

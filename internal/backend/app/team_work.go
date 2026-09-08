@@ -81,15 +81,42 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 	if err = s.requireAvailableGroupCapacity(ctx, group, len(revision.Team.Members)); err != nil {
 		return TeamDeploymentResult{}, err
 	}
+	memberStartups := make(map[string]model.ProfileStartup)
 	for _, spec := range revision.Team.Members {
-		if err = validateLaunchConfiguration(spec.Desired); err != nil {
+		desired := spec.Desired
+		var profileRef *model.ConfigurationProfileRef
+		if spec.ProfileID != "" {
+			if !desired.Equal(model.DesiredConfiguration{}) {
+				return TeamDeploymentResult{}, fail(ErrInvalid, "member %s selects a profile or custom settings", spec.Key)
+			}
+			profile, readErr := s.store.ConfigurationProfile(ctx, spec.ProfileID, "")
+			if readErr != nil {
+				return TeamDeploymentResult{}, readErr
+			}
+			if profile.Profile.Archived {
+				return TeamDeploymentResult{}, fail(ErrConflict, "member %s profile is archived", spec.Key)
+			}
+			desired, err = s.resolveTeamProfile(spec, profile.Revision.Desired)
+			if err != nil {
+				return TeamDeploymentResult{}, err
+			}
+			ref := profile.Revision.Ref
+			profileRef = &ref
+			if profile.Revision.Startup != nil {
+				startup := *profile.Revision.Startup
+				if desired.Harness != profile.Revision.Desired.Harness {
+					startup.Context = ""
+				}
+				memberStartups[spec.Key] = startup
+			}
+		}
+		if err = validateLaunchConfiguration(desired); err != nil {
 			return TeamDeploymentResult{}, fail(ErrInvalid, "member %s: %v", spec.Key, err)
 		}
 		id := model.AgentID(deterministicOrchestrationID("agent_", string(req.DeploymentID)+":"+spec.Key))
 		members[spec.Key] = id
-		desired := spec.Desired
 		desired.HostSandbox = model.SandboxInGroup(desired.HostSandbox, group.ID)
-		agents = append(agents, model.Agent{ID: id, Name: spec.Name, Labels: model.AgentLabels{Groups: map[model.GroupID]model.AgentDisplayLabels{group.ID: {Role: spec.Labels.Role, Description: spec.Labels.Description}}}, Desired: desired, Revision: 1, CreatedAt: now, UpdatedAt: now})
+		agents = append(agents, model.Agent{ID: id, Name: spec.Name, Labels: model.AgentLabels{Groups: map[model.GroupID]model.AgentDisplayLabels{group.ID: {Role: spec.Labels.Role, Description: spec.Labels.Description}}}, Desired: desired, ConfigurationProfile: profileRef, Revision: 1, CreatedAt: now, UpdatedAt: now})
 		group.Members = append(group.Members, id)
 		for _, roleID := range spec.Roles {
 			roleMembers[roleID] = append(roleMembers[roleID], id)
@@ -139,6 +166,7 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 		ownedAutomationIDs = append(ownedAutomationIDs, teamRhythmID(req.DeploymentID, i))
 	}
 	deployment := model.TeamDeployment{ID: req.DeploymentID, Definition: ref, DependencyClosure: append([]model.DefinitionRef(nil), revision.Dependencies...), Mission: strings.TrimSpace(req.Instantiation.Mission), Parameters: parameters, GroupID: group.ID, TargetKind: target.Kind, Members: members, AutomationRuleIDs: automationIDs, OwnedAutomationRuleIDs: ownedAutomationIDs, Workspaces: workspaceBindings, OwnedWorkspaceIDs: ownedWorkspaceIDs, BriefingOperationIDs: map[string][]model.OperationID{}, WorkRunID: workRunID, State: model.DeploymentDeploying, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	deployment.MemberStartups = memberStartups
 	deployment.RolePins = pins
 	stored, _, err := s.store.CreateTeamDeployment(ctx, deployment, group, agents, assignments, req.Context.Principal, req.Context.RequestID, requestDigest, now)
 	if err != nil {
@@ -397,6 +425,9 @@ func teamDeploymentGraph(team model.TeamDefinition, deployment model.TeamDeploym
 		}
 		for _, key := range wave.MemberKeys {
 			brief := deployment.Mission
+			if startup, ok := deployment.MemberStartups[key]; ok && strings.TrimSpace(startup.Context) != "" {
+				brief = strings.TrimSpace(brief + "\n\n" + startup.Context)
+			}
 			for _, item := range team.Briefings {
 				if item.Timing == model.BriefingBeforeFirstWork && slices.Contains(teamBriefRecipients(team, item), key) {
 					brief = strings.TrimSpace(brief + "\n\n" + item.Body)
