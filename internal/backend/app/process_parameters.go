@@ -138,6 +138,13 @@ func mapProcessInputText(graph model.WorkGraph, transform func(string) (string, 
 			if err != nil {
 				return model.WorkGraph{}, err
 			}
+			if copy.Decider != nil {
+				mapped, err := mapProcessInputText(model.WorkGraph{Nodes: []model.WorkNode{{Performer: copy.Decider}}}, transform)
+				if err != nil {
+					return model.WorkGraph{}, err
+				}
+				copy.Decider = mapped.Nodes[0].Performer
+			}
 			node.Decision = &copy
 		}
 		if node.Performer == nil {

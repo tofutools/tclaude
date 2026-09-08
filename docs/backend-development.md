@@ -1445,3 +1445,17 @@ existing shared work budget; choose fresh attempts for executable task or plan
 retries. No unsupported declaration is silently ignored.
 
 Automation occurrence retries do not accept process-only retry modes.
+
+### Decision performer authoring
+
+The decision inspector supports a human decision or an agent/program decider.
+Automated deciders retain the same explicit worker binding or immutable program
+profile reference, input, timeout, and contact declarations as task performers.
+They are saved under the decision's optional Decider field and survive copies
+and immutable revisions. Human audience settings remain retained for an explicit
+switch back to human mode; they are not an execution fallback.
+
+As in the legacy runtime, automated decisions are authoring-only. Starting a
+pinned revision with an automated decider is refused before work admission.
+Clearing only the latest revision does not change an older pin. Plan approvals
+and human escalation-loop audiences remain manual decisions.
