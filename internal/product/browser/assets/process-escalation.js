@@ -1,11 +1,12 @@
+const stableID = id => typeof id === 'string' && id.length <= 63 && /^[a-z]/.test(id) && !/[^a-z0-9_-]/.test(id);
 function validAudience(audience) {
   return Array.isArray(audience) && audience.length > 0 && audience.every(entry => {
     const s=entry.Subject||{}, empty=!s.Kind&&!s.AgentID&&!s.ExecutionID;
-    if(entry.RoleID) return !!entry.RoleID.trim() && empty;
+    if(entry.RoleID) return stableID(entry.RoleID) && (!entry.GroupID || stableID(entry.GroupID)) && empty;
     if(entry.GroupID) return false;
     if(s.Kind==='operator') return !s.AgentID&&!s.ExecutionID;
-    if(s.Kind==='agent') return !!s.AgentID?.trim()&&!s.ExecutionID;
-    if(s.Kind==='execution') return !!s.ExecutionID?.trim()&&!s.AgentID;
+    if(s.Kind==='agent') return stableID(s.AgentID)&&!s.ExecutionID;
+    if(s.Kind==='execution') return stableID(s.ExecutionID)&&!s.AgentID;
     return false;
   });
 }

@@ -60,9 +60,11 @@ func TestBrowserAuthorsEscalationLoopWithoutStartingWork(t *testing.T) {
 	require.True(t, page.MustEval(`async () => {
   const {processEscalations}=await import('/process-escalation.js');
   const graph=structuredClone(window.escalationExport.Process.Graph);
-  graph.Nodes.find(n=>n.Kind==='decision').Decision.Audience=[{}];
-  const result=processEscalations(graph);
-  return result.errors.length>0 && result.retries.size===0;
+  return [{},{Subject:{Kind:'agent',AgentID:'bad id'}},{Subject:{Kind:'execution',ExecutionID:'bad id'}},{RoleID:'bad id'},{RoleID:'role',GroupID:'bad id'}].every(entry=>{
+    graph.Nodes.find(n=>n.Kind==='decision').Decision.Audience=[entry];
+    const result=processEscalations(graph);
+    return result.errors.length>0 && result.retries.size===0;
+  });
  }`).Bool(), "an empty audience cannot acquire an exempt return edge")
 	ref := model.DefinitionRef{DefinitionID: saved.Definition.ID, RevisionID: saved.Revision.ID, ContentHash: saved.Revision.ContentHash, Kind: model.DefinitionProcess}
 	err := operator.Call(ctx, "POST", "/v2/processes", map[string]any{"request_id": "start", "id": "refused-loop", "start": model.WorkStart{Definition: &ref, Deadline: time.Now().Add(time.Hour)}}, nil)

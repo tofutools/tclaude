@@ -2,7 +2,6 @@ package app
 
 import (
 	"slices"
-	"strings"
 
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
@@ -85,7 +84,7 @@ func validEscalationAudience(audience []model.DecisionAudience) bool {
 	for _, entry := range audience {
 		subject := entry.Subject
 		if entry.RoleID != "" {
-			if strings.TrimSpace(string(entry.RoleID)) == "" || subject != (model.AuthoritySubject{}) {
+			if entry.RoleID.Validate() != nil || (entry.GroupID != "" && entry.GroupID.Validate() != nil) || subject != (model.AuthoritySubject{}) {
 				return false
 			}
 			continue
@@ -99,11 +98,11 @@ func validEscalationAudience(audience []model.DecisionAudience) bool {
 				return false
 			}
 		case model.AuthorityAgent:
-			if strings.TrimSpace(string(subject.AgentID)) == "" || subject.ExecutionID != "" {
+			if subject.AgentID.Validate() != nil || subject.ExecutionID != "" {
 				return false
 			}
 		case model.AuthorityExecution:
-			if strings.TrimSpace(string(subject.ExecutionID)) == "" || subject.AgentID != "" {
+			if subject.ExecutionID.Validate() != nil || subject.AgentID != "" {
 				return false
 			}
 		default:

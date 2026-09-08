@@ -75,6 +75,16 @@ func TestProcessEscalationRejectsOtherCyclesAndForgedCompilation(t *testing.T) {
 		"mixed-subject": func(g *model.WorkGraph) {
 			g.Nodes[2].Decision.Audience = []model.DecisionAudience{{Subject: model.AuthoritySubject{Kind: model.AuthorityOperator, AgentID: "agent"}}}
 		},
+		"invalid-agent-id": func(g *model.WorkGraph) {
+			g.Nodes[2].Decision.Audience = []model.DecisionAudience{{Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: "bad id"}}}
+		},
+		"invalid-execution-id": func(g *model.WorkGraph) {
+			g.Nodes[2].Decision.Audience = []model.DecisionAudience{{Subject: model.AuthoritySubject{Kind: model.AuthorityExecution, ExecutionID: "bad id"}}}
+		},
+		"invalid-role-id": func(g *model.WorkGraph) { g.Nodes[2].Decision.Audience = []model.DecisionAudience{{RoleID: "bad id"}} },
+		"invalid-role-group-id": func(g *model.WorkGraph) {
+			g.Nodes[2].Decision.Audience = []model.DecisionAudience{{RoleID: "role", GroupID: "bad id"}}
+		},
 		"not-compound": func(g *model.WorkGraph) { g.Nodes[0].Stages = nil },
 		"entry":        func(g *model.WorkGraph) { g.EntryNodeID = "escalation" },
 		"other-cycle":  func(g *model.WorkGraph) { g.Edges = append(g.Edges, model.WorkEdge{From: "done", To: "task"}) },
