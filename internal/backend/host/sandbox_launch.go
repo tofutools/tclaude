@@ -59,19 +59,31 @@ func NewSandboxLaunchPreparer(config SandboxLaunchConfig) (*SandboxLaunchPrepare
 // Additional policy engines must be implemented here before their options can
 // launch; none of the authored axes may be silently dropped.
 func (p *SandboxLaunchPreparer) Prepare(ctx context.Context, selected model.SandboxSelection, materialized sandboxpolicy.PolicyMaterialization, child ProcessSpec, resources ...SandboxProviderResource) (SandboxChildArtifact, error) {
-	return p.prepare(ctx, selected, materialized, child, "", "", resources...)
+	return p.prepare(ctx, selected, materialized, child, "", "", 0, resources...)
 }
 
 // PrepareHarness retains the shared configuration floor alongside a provider's
 // writable native state. Harness and root come from trusted provider composition.
 func (p *SandboxLaunchPreparer) PrepareHarness(ctx context.Context, selected model.SandboxSelection, materialized sandboxpolicy.PolicyMaterialization, child ProcessSpec, harness, nativeRoot string, resources ...SandboxProviderResource) (SandboxChildArtifact, error) {
-	return p.prepare(ctx, selected, materialized, child, harness, nativeRoot, resources...)
+	return p.prepare(ctx, selected, materialized, child, harness, nativeRoot, 0, resources...)
 }
 
-func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.SandboxSelection, materialized sandboxpolicy.PolicyMaterialization, child ProcessSpec, harness, nativeRoot string, resources ...SandboxProviderResource) (SandboxChildArtifact, error) {
+// PrepareControl retains one trusted local server endpoint independently of
+// authored network access. The native command must consume its inherited socket.
+func (p *SandboxLaunchPreparer) PrepareControl(ctx context.Context, selected model.SandboxSelection, materialized sandboxpolicy.PolicyMaterialization, child ProcessSpec, port int, resources ...SandboxProviderResource) (SandboxChildArtifact, error) {
+	if port < 1 || port > 65535 {
+		return SandboxChildArtifact{}, fmt.Errorf("invalid sandbox control port")
+	}
+	return p.prepare(ctx, selected, materialized, child, "", "", port, resources...)
+}
+
+func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.SandboxSelection, materialized sandboxpolicy.PolicyMaterialization, child ProcessSpec, harness, nativeRoot string, controlPort int, resources ...SandboxProviderResource) (SandboxChildArtifact, error) {
 	actual, err := materialized.LaunchSelection()
 	if err != nil || !actual.Equal(selected) {
 		return SandboxChildArtifact{}, fmt.Errorf("sandbox materialization does not match selected policy")
+	}
+	if err := validateSandboxControlArguments(child.Args, controlPort); err != nil {
+		return SandboxChildArtifact{}, err
 	}
 	policy := materialized.Composition.Values
 	if policy.FilesystemRoot != model.SandboxRootSeparate {
@@ -133,6 +145,7 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 	bindings.pins = append(bindings.pins, owned.pins...)
 	bindings.files = append(bindings.files, owned.files...)
 	bindings.providerCount = len(owned.pins)
+	bindings.controlPort = controlPort
 
 	// The launcher owns the inherited base; authored values are literal overlays.
 	child.Env = MergeEnvironment(policy.Environment.Entries(), child.Env)

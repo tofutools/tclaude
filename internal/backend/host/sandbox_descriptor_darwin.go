@@ -74,9 +74,18 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 		"(deny network-outbound (remote unix-socket (require-not (require-any " + strings.Join(readRegions, " ") + "))))\n"
 	if privateNetwork {
 		// IP isolation is separate from the filesystem-gated Unix socket axis.
-		profile += "(deny network-outbound (remote ip \"*:*\"))\n" +
-			"(deny network-inbound (local ip \"*:*\"))\n" +
-			"(deny network-bind (local ip \"*:*\"))\n"
+		outbound, inbound := `(remote ip "*:*")`, `(local ip "*:*")`
+		if bindings.controlPort != 0 {
+			if bindings.controlPort < 1 || bindings.controlPort > 65535 {
+				return ProcessSpec{}, nil, fmt.Errorf("invalid sandbox control port")
+			}
+			endpoint := strconv.Quote("127.0.0.1:" + strconv.Itoa(bindings.controlPort))
+			outbound = "(require-all " + outbound + " (require-not (remote ip " + endpoint + ")))"
+			inbound = "(require-all " + inbound + " (require-not (local ip " + endpoint + ")))"
+		}
+		profile += "(deny network-outbound " + outbound + ")\n" +
+			"(deny network-inbound " + inbound + ")\n" +
+			"(deny network-bind " + inbound + ")\n"
 	}
 	args = append(args, "-p", profile, child.Executable)
 	args = append(args, child.Args...)

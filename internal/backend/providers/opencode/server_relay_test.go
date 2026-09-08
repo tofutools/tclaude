@@ -102,6 +102,17 @@ func TestServerRelayNativeFixture(t *testing.T) {
 	if target == "" {
 		return
 	}
+	if private := os.Getenv("TCLAUDE_RELAY_FIXTURE_PRIVATE"); private != "" {
+		_, err := os.ReadFile(private)
+		require.Error(t, err, "private fixture must remain inaccessible")
+	}
+	if external := os.Getenv("TCLAUDE_RELAY_FIXTURE_EXTERNAL"); external != "" {
+		connection, err := net.DialTimeout("tcp4", external, time.Second)
+		if connection != nil {
+			_ = connection.Close()
+		}
+		require.Error(t, err, "unrelated loopback must not be granted")
+	}
 	listener, err := net.Listen("tcp4", target)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(os.Getenv("TCLAUDE_RELAY_FIXTURE_READY"), []byte("ready"), 0600))

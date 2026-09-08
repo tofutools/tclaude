@@ -30,6 +30,7 @@ type SandboxMountPin struct {
 // host source descriptor. A binding alone is not an OS confinement receipt.
 type SandboxMountBindings struct {
 	providerCount int
+	controlPort   int
 	pins          []SandboxMountPin
 	files         []*os.File
 }

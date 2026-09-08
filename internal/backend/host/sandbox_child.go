@@ -54,6 +54,7 @@ type sandboxChildInput struct {
 	ProviderResources []SandboxMountPin `json:",omitempty"`
 	ProtectedRoots    []sandboxRootPin
 	PrivateNetwork    bool
+	ControlPort       int `json:",omitempty"`
 }
 
 // PrepareSandboxChild retains the exact host-owned command across a terminal
@@ -71,13 +72,16 @@ func (i *SandboxPathInspector) PrepareSandboxChild(directory, wrapper string, ch
 		return SandboxChildArtifact{}, fmt.Errorf("sandbox child artifact requires a private directory")
 	}
 	input := sandboxChildInput{Version: 1, Platform: runtime.GOOS, Wrapper: wrapper, Executable: child.Executable,
-		Arguments: child.Args, Directory: child.Directory, Environment: child.Env, Mounts: bindings.Pins()[:len(bindings.pins)-bindings.providerCount], ProviderResources: bindings.Pins()[len(bindings.pins)-bindings.providerCount:], PrivateNetwork: privateNetwork}
+		Arguments: child.Args, Directory: child.Directory, Environment: child.Env, Mounts: bindings.Pins()[:len(bindings.pins)-bindings.providerCount], ProviderResources: bindings.Pins()[len(bindings.pins)-bindings.providerCount:], PrivateNetwork: privateNetwork, ControlPort: bindings.controlPort}
 	for _, root := range i.roots {
 		stat, ok := root.identity.Sys().(*syscall.Stat_t)
 		if !ok {
 			return SandboxChildArtifact{}, fmt.Errorf("protected sandbox root identity is unavailable")
 		}
 		input.ProtectedRoots = append(input.ProtectedRoots, sandboxRootPin{Configured: root.configuredPath, Canonical: root.path, Device: uint64(stat.Dev), Inode: uint64(stat.Ino)})
+	}
+	if err := validateSandboxControlArguments(child.Args, bindings.controlPort); err != nil {
+		return SandboxChildArtifact{}, err
 	}
 	text := append([]string{input.Wrapper, input.Executable, input.Directory}, input.Arguments...)
 	text = append(text, input.Environment...)
@@ -135,6 +139,7 @@ func ExecuteSandboxChild(ctx context.Context, artifact SandboxChildArtifact) err
 		return err
 	}
 	defer func() { _ = bound.Close() }()
+	bound.controlPort = input.ControlPort
 	wrapped, arguments, err := sandboxExecInvocation(input.Wrapper, ProcessSpec{Executable: input.Executable, Args: input.Arguments,
 		Directory: input.Directory, Env: input.Environment, ExactEnvironment: true}, bound, input.PrivateNetwork)
 	if err != nil {
@@ -158,6 +163,19 @@ func ExecuteSandboxChild(ctx context.Context, artifact SandboxChildArtifact) err
 	}
 	if err := marker.Close(); err != nil {
 		return err
+	}
+	if input.ControlPort != 0 {
+		file, err := createSandboxControl(artifact)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = file.Close() }()
+		for index, value := range wrapped.Args {
+			if value == SandboxControlFDArgument {
+				wrapped.Args[index] = fmt.Sprint(file.Fd())
+			}
+		}
+		wrapped.ExtraFiles = append(wrapped.ExtraFiles, file)
 	}
 	if err := os.Chdir(wrapped.Directory); err != nil {
 		return err
@@ -214,6 +232,9 @@ func readSandboxChild(artifact SandboxChildArtifact) (sandboxChildInput, *Sandbo
 	}
 	if input.Version != 1 || input.Platform != runtime.GOOS || len(input.ProtectedRoots) == 0 || len(input.ProtectedRoots) > 128 {
 		return input, nil, fmt.Errorf("unsupported sandbox child artifact")
+	}
+	if err := validateSandboxControlArguments(input.Arguments, input.ControlPort); err != nil {
+		return input, nil, err
 	}
 	roots := make([]string, len(input.ProtectedRoots))
 	for index, root := range input.ProtectedRoots {

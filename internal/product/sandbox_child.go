@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
 	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/providers/codex"
@@ -16,13 +17,21 @@ import (
 // provider command already enclosed by that artifact.
 func TrySandboxChild(args []string) (bool, error) {
 	if len(args) > 0 && args[0] == opencode.ServerRelayCommand {
-		if len(args) != 2 || len(args[1]) > 1<<20 {
+		if len(args) != 3 || len(args[1]) > 1<<20 {
 			return true, fmt.Errorf("invalid OpenCode server relay command")
 		}
 		var request opencode.ServerRelayRequest
 		if err := json.Unmarshal([]byte(args[1]), &request); err != nil {
 			return true, err
 		}
+		if request.ListenerFD != 0 {
+			return true, fmt.Errorf("OpenCode listener descriptor must come from its launch argument")
+		}
+		fd, err := strconv.Atoi(args[2])
+		if err != nil {
+			return true, err
+		}
+		request.ListenerFD = fd
 		return true, opencode.ExecuteServerRelay(context.Background(), request)
 	}
 	if len(args) > 0 && args[0] == codex.ForkTerminalCommand {
