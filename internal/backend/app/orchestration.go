@@ -352,6 +352,9 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 		return WorkRunResult{}, err
 	}
 	for _, node := range graph.Nodes {
+		if node.Retry.MaxAttempts > maxWorkAttempts {
+			return WorkRunResult{}, fail(ErrUnsupported, "work node %s exceeds executable retry cap %d", node.ID, maxWorkAttempts)
+		}
 		if node.Decision != nil && node.Decision.Decider != nil {
 			return WorkRunResult{}, fail(ErrUnsupported, "automated decision performers are authoring-only")
 		}
@@ -1614,9 +1617,6 @@ func validateWorkGraph(graph model.WorkGraph) error {
 		if _, exists := nodes[node.ID]; exists {
 			return fail(ErrInvalid, "duplicate work node %s", node.ID)
 		}
-		if node.Retry.MaxAttempts > maxWorkAttempts {
-			return fail(ErrInvalid, "work node %s exceeds retry cap %d", node.ID, maxWorkAttempts)
-		}
 		if err := validateRetryPolicy(node); err != nil {
 			return err
 		}
@@ -1723,7 +1723,7 @@ func validateRetryPolicy(node model.WorkNode) error {
 	default:
 		return fail(ErrInvalid, "work node %s has invalid retry mode", node.ID)
 	}
-	if retry.Backoff < 0 || retry.AttemptBudget < 0 {
+	if retry.MaxAttempts < 0 || retry.Backoff < 0 || retry.AttemptBudget < 0 {
 		return fail(ErrInvalid, "work node %s retry timing cannot be negative", node.ID)
 	}
 	if retry.MaxAttempts == 0 {
@@ -1961,7 +1961,7 @@ func validateAutomation(condition model.AutomationCondition, action model.Automa
 	if policy.Retry.OnFail != "" {
 		return fail(ErrInvalid, "occurrence retry modes are not supported")
 	}
-	if policy.ExpiresAfter <= 0 || policy.Deadline <= 0 || policy.Retry.MaxAttempts > maxWorkAttempts {
+	if policy.ExpiresAfter <= 0 || policy.Deadline <= 0 || policy.Retry.MaxAttempts < 0 || policy.Retry.MaxAttempts > maxWorkAttempts {
 		return fail(ErrInvalid, "occurrence expiry, deadline and bounded retry are required")
 	}
 	switch policy.Overlap {
@@ -1997,11 +1997,14 @@ func graphNode(graph model.WorkGraph, id model.WorkNodeID) model.WorkNode {
 	return model.WorkNode{}
 }
 
-func normalizedAttempts(value uint32) uint32 {
-	if value == 0 {
+func normalizedAttempts(value model.RetryAttempts) uint32 {
+	if value <= 0 {
 		return 1
 	}
-	return value
+	if value > maxWorkAttempts {
+		return maxWorkAttempts
+	}
+	return uint32(value)
 }
 
 func contentHash(value any) string {
