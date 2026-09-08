@@ -145,13 +145,18 @@ func (s *Store) PutRoleAssignment(ctx context.Context, assignment model.RoleAssi
 	if err != nil {
 		return model.RoleAssignment{}, err
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.RoleAssignment{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	sk, sid := subjectParts(assignment.Subject)
 	rk, rid := resourceParts(assignment.Resource)
 	if expected == 0 {
-		_, err = s.db.ExecContext(ctx, `INSERT INTO role_assignments(role_id,subject_kind,subject_id,resource_kind,resource_id,bounds_json,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?)`, assignment.RoleID, sk, sid, rk, rid, bounds, nanos(assignment.CreatedAt), nanos(assignment.UpdatedAt))
+		_, err = tx.ExecContext(ctx, `INSERT INTO role_assignments(role_id,subject_kind,subject_id,resource_kind,resource_id,bounds_json,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?)`, assignment.RoleID, sk, sid, rk, rid, bounds, nanos(assignment.CreatedAt), nanos(assignment.UpdatedAt))
 	} else {
 		var result sql.Result
-		result, err = s.db.ExecContext(ctx, `UPDATE role_assignments SET bounds_json=?,revision=revision+1,updated_at=? WHERE role_id=? AND subject_kind=? AND subject_id=? AND resource_kind=? AND resource_id=? AND revision=?`, bounds, nanos(assignment.UpdatedAt), assignment.RoleID, sk, sid, rk, rid, expected)
+		result, err = tx.ExecContext(ctx, `UPDATE role_assignments SET bounds_json=?,revision=revision+1,updated_at=? WHERE role_id=? AND subject_kind=? AND subject_id=? AND resource_kind=? AND resource_id=? AND revision=?`, bounds, nanos(assignment.UpdatedAt), assignment.RoleID, sk, sid, rk, rid, expected)
 		if err == nil {
 			if affected, _ := result.RowsAffected(); affected != 1 {
 				return model.RoleAssignment{}, app.ErrConflict
@@ -161,7 +166,13 @@ func (s *Store) PutRoleAssignment(ctx context.Context, assignment model.RoleAssi
 	if err != nil {
 		return model.RoleAssignment{}, classify(err)
 	}
-	if err := s.bump(ctx); err != nil {
+	if err = bumpOwnerAssignmentGroup(ctx, tx, assignment); err != nil {
+		return model.RoleAssignment{}, err
+	}
+	if err = bumpTx(ctx, tx); err != nil {
+		return model.RoleAssignment{}, err
+	}
+	if err = tx.Commit(); err != nil {
 		return model.RoleAssignment{}, err
 	}
 	return assignmentByKey(ctx, s.db, assignment)
@@ -171,16 +182,37 @@ func (s *Store) DeleteRoleAssignment(ctx context.Context, assignment model.RoleA
 	if !validResourceSelector(assignment.Resource) {
 		return app.ErrInvalid
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
 	sk, sid := subjectParts(assignment.Subject)
 	rk, rid := resourceParts(assignment.Resource)
-	result, err := s.db.ExecContext(ctx, `DELETE FROM role_assignments WHERE role_id=? AND subject_kind=? AND subject_id=? AND resource_kind=? AND resource_id=? AND revision=?`, assignment.RoleID, sk, sid, rk, rid, expected)
+	result, err := tx.ExecContext(ctx, `DELETE FROM role_assignments WHERE role_id=? AND subject_kind=? AND subject_id=? AND resource_kind=? AND resource_id=? AND revision=?`, assignment.RoleID, sk, sid, rk, rid, expected)
 	if err != nil {
 		return err
 	}
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return app.ErrConflict
 	}
-	return s.bump(ctx)
+	if err = bumpOwnerAssignmentGroup(ctx, tx, assignment); err != nil {
+		return err
+	}
+	if err = bumpTx(ctx, tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Owner selection forms use group CAS, including changes made through the
+// generic authority editor. Keep both mutations in the same transaction.
+func bumpOwnerAssignmentGroup(ctx context.Context, tx *sql.Tx, assignment model.RoleAssignment) error {
+	if assignment.RoleID != model.GroupOwnerRole || assignment.Subject.Kind != model.AuthorityAgent || assignment.Resource.Kind != model.ResourceGroupPeers {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `UPDATE groups SET revision=revision+1 WHERE id=? AND tombstoned=0`, assignment.Resource.GroupID)
+	return err
 }
 
 func (s *Store) SetGroupOwner(ctx context.Context, groupID model.GroupID, owner model.AgentID, bounds model.ConfigurationBounds, expected model.Revision, at time.Time) (model.Group, error) {

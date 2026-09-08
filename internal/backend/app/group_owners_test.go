@@ -47,8 +47,22 @@ func TestGroupMultipleOwnersPersistAndRevokeIndependently(t *testing.T) {
 	persisted, err := store.Group(ctx, "group")
 	require.NoError(t, err)
 	require.Equal(t, result.Group, persisted)
-	req.OwnerAgentIDs = []model.AgentID{"b"}
+	// The generic authority editor must revoke the owner label and invalidate
+	// an already-open group owner form along with the effective authority.
+	require.NoError(t, service.DeleteRoleAssignment(ctx, app.DeleteRoleAssignmentRequest{Principal: op, Assignment: model.RoleAssignment{RoleID: model.GroupOwnerRole, Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: "a"}, Resource: model.ResourceSelector{Kind: model.ResourceGroupPeers, GroupID: "group"}}, ExpectedRevision: 1}))
+	revoked, err := store.Group(ctx, "group")
+	require.NoError(t, err)
+	require.Equal(t, []model.AgentID{"b"}, revoked.OwnerAgentIDs)
+	require.Equal(t, model.AgentID("b"), revoked.OwnerAgentID)
 	req.ExpectedGroupRevision = persisted.Revision
+	_, err = service.SetGroupOwner(ctx, req)
+	require.ErrorIs(t, err, app.ErrConflict)
+	_, err = service.UpdateGroup(ctx, app.UpdateGroupRequest{Context: op, ID: "group", Name: "Group", Members: []model.AgentID{"b", "c"}, ExpectedRevision: revoked.Revision})
+	require.NoError(t, err)
+	current, err := store.Group(ctx, "group")
+	require.NoError(t, err)
+	req.OwnerAgentIDs = []model.AgentID{"b"}
+	req.ExpectedGroupRevision = current.Revision
 	result, err = service.SetGroupOwner(ctx, req)
 	require.NoError(t, err)
 	require.Equal(t, []model.AgentID{"b"}, result.Group.OwnerAgentIDs)

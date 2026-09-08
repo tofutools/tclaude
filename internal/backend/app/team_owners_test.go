@@ -20,7 +20,8 @@ func TestTeamMultipleOwnersDeployAndReinforceWithoutReplacingOwners(t *testing.T
 	store, err := sqlite.Open(filepath.Join(t.TempDir(), "state.db"))
 	require.NoError(t, err)
 	defer store.Close()
-	service := app.New(store, providers.NewRegistry(&preparedWorkProvider{}))
+	hookStore := &ownerChangeDuringAdmissionStore{Store: store}
+	service := app.New(hookStore, providers.NewRegistry(&preparedWorkProvider{}))
 	op := model.OperatorPrincipal()
 	desired := model.DesiredConfiguration{Harness: "prepared-work", Model: "test", WorkingDirectory: t.TempDir(), Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}
 	team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{{Key: "a", Name: "Lead", Desired: desired, Owner: true, Required: true}, {Key: "b", Name: "Co-lead", Desired: desired, Owner: true, Required: true}}, Waves: []model.TeamWave{{ID: "initial", MemberKeys: []string{"a", "b"}}}}
@@ -28,6 +29,7 @@ func TestTeamMultipleOwnersDeployAndReinforceWithoutReplacingOwners(t *testing.T
 	require.NoError(t, err)
 	ref := model.DefinitionRef{DefinitionID: saved.Definition.ID, RevisionID: saved.Revision.ID, ContentHash: saved.Revision.ContentHash, Kind: model.DefinitionTeam}
 	var owners []model.AgentID
+	var preferred model.AgentID
 	for _, deploymentID := range []model.DeploymentID{"initial", "reinforcement"} {
 		workspaceID := model.WorkspaceID(deploymentID)
 		now := time.Now().UTC()
@@ -35,6 +37,15 @@ func TestTeamMultipleOwnersDeployAndReinforceWithoutReplacingOwners(t *testing.T
 		target := model.TeamDeploymentTarget{Kind: model.TeamTargetNewGroup, GroupID: "group"}
 		if deploymentID == "reinforcement" {
 			target.Kind = model.TeamTargetExistingGroup
+			// Simulate an operator selection after DeployTeam read the group but
+			// before its admission transaction executes.
+			preferred = owners[1]
+			hookStore.before = func() {
+				group, err := store.Group(ctx, "group")
+				require.NoError(t, err)
+				_, err = store.SetGroupOwners(ctx, "group", []model.AgentID{owners[1], owners[0]}, model.ConfigurationBounds{}, group.Revision, time.Now())
+				require.NoError(t, err)
+			}
 		}
 		req := app.DeployTeamRequest{Context: app.RequestContext{Principal: op, RequestID: model.RequestID(deploymentID)}, DeploymentID: deploymentID, Instantiation: model.TeamInstantiation{Definition: ref, Target: target, Workspaces: model.TeamWorkspaceSelection{Shared: &model.TeamWorkspaceInput{WorkspaceID: workspaceID, ExpectedRevision: 1}}}}
 		result, err := service.DeployTeam(ctx, req)
@@ -46,7 +57,10 @@ func TestTeamMultipleOwnersDeployAndReinforceWithoutReplacingOwners(t *testing.T
 		group, err := store.Group(ctx, "group")
 		require.NoError(t, err)
 		require.ElementsMatch(t, owners, group.OwnerAgentIDs)
-		require.Equal(t, owners[0], group.OwnerAgentID)
+		if preferred == "" {
+			preferred = owners[0]
+		}
+		require.Equal(t, preferred, group.OwnerAgentID)
 		for _, owner := range owners {
 			allowed, err := store.Authorize(ctx, model.AuthorityRequest{Principal: model.AgentPrincipal(owner), Action: model.ActionManageMembership, Resource: model.ResourceSelector{Kind: model.ResourceGroup, GroupID: "group"}}, now)
 			require.NoError(t, err)
@@ -56,4 +70,19 @@ func TestTeamMultipleOwnersDeployAndReinforceWithoutReplacingOwners(t *testing.T
 			require.False(t, outside.Allowed)
 		}
 	}
+}
+
+// Only the interleaving is injected; both competing mutations use real SQLite.
+type ownerChangeDuringAdmissionStore struct {
+	*sqlite.Store
+	before func()
+}
+
+func (s *ownerChangeDuringAdmissionStore) CreateTeamDeployment(ctx context.Context, deployment model.TeamDeployment, group model.Group, agents []model.Agent, assignments []model.RoleAssignment, principal model.Principal, requestID model.RequestID, requestDigest string, at time.Time) (model.TeamDeployment, bool, error) {
+	if s.before != nil {
+		before := s.before
+		s.before = nil
+		before()
+	}
+	return s.Store.CreateTeamDeployment(ctx, deployment, group, agents, assignments, principal, requestID, requestDigest, at)
 }
