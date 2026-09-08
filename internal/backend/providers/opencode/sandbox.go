@@ -33,6 +33,11 @@ func (p *prepared) prepareSandbox(ctx context.Context) error {
 	if err := prepareSandboxStateDirectories(p.stateRoot); err != nil {
 		return err
 	}
+	if p.request.Intent != ports.StartContinue {
+		if err := seedSandboxLogin(p.provider.nativeDataDirectory, p.stateRoot); err != nil {
+			return err
+		}
+	}
 	bootstrap := p.provider.hostSandbox.BootstrapExecutable()
 	resources := []host.SandboxProviderResource{
 		{Path: p.stateRoot, Access: model.SandboxFilesystemWrite},

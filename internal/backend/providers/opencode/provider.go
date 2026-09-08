@@ -45,9 +45,12 @@ type Config struct {
 	AgentSocketDirectory string
 	Executable           string
 	PrivateRoot          string
-	AgentSocket          string
-	Environment          []string
-	HTTPClient           *http.Client
+	// NativeDataDirectory is the trusted native XDG data/opencode directory.
+	// Fresh confined sessions copy only its login files into independent state.
+	NativeDataDirectory string
+	AgentSocket         string
+	Environment         []string
+	HTTPClient          *http.Client
 }
 
 type Provider struct {
@@ -55,6 +58,7 @@ type Provider struct {
 	agentSocketDirectory string
 	executable           string
 	privateRoot          string
+	nativeDataDirectory  string
 	environment          []string
 	httpClient           *http.Client
 	credentials          host.ActionCredentialHost
@@ -73,12 +77,15 @@ func New(config Config) (*Provider, error) {
 	if !filepath.IsAbs(config.PrivateRoot) {
 		return nil, fmt.Errorf("OpenCode private root must be absolute")
 	}
+	if config.NativeDataDirectory != "" && !filepath.IsAbs(config.NativeDataDirectory) {
+		return nil, fmt.Errorf("OpenCode native data directory must be absolute")
+	}
 	client := config.HTTPClient
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Second}
 	}
 	return &Provider{
-		executable: resolved, privateRoot: filepath.Clean(config.PrivateRoot),
+		executable: resolved, privateRoot: filepath.Clean(config.PrivateRoot), nativeDataDirectory: config.NativeDataDirectory,
 		environment: append([]string(nil), config.Environment...), httpClient: client,
 		credentials: host.ActionCredentialHost{PrivateRoot: filepath.Join(config.PrivateRoot, "action-credentials")},
 		agentSocket: config.AgentSocket, hostSandbox: config.HostSandbox, agentSocketDirectory: config.AgentSocketDirectory,

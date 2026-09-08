@@ -39,6 +39,9 @@ func TestProviderHostSandboxOpenCodeLaunchControlAttachmentAndRecovery(t *testin
 	require.NoError(t, os.Mkdir(workspace, 0700))
 	secret := filepath.Join(private, "secret")
 	require.NoError(t, os.WriteFile(secret, []byte("private fixture"), 0600))
+	nativeData := filepath.Join(private, "native-data")
+	require.NoError(t, os.Mkdir(nativeData, 0700))
+	require.NoError(t, os.WriteFile(filepath.Join(nativeData, "auth.json"), []byte("fixture login"), 0600))
 	binary, err := os.Executable()
 	require.NoError(t, err)
 	native := filepath.Join(private, "native-fixture")
@@ -56,6 +59,7 @@ if [ "$1" = import ]; then
 fi
 if [ "$1" = serve ]; then
   if cat "$PRIVATE_FIXTURE" >/dev/null 2>&1; then exit 81; fi
+  test "$(cat "$XDG_DATA_HOME/opencode/auth.json")" = 'fixture login' || exit 84
   printf '%s' "${TCLAUDE_UNRELATED_DAEMON_VALUE-absent}" > "$ENVIRONMENT_OUTPUT"
 fi
 exec "$OPENCODE_TEST_BINARY" -test.run=^TestOpenCodeServerHelper$ -- "$@"
@@ -80,7 +84,7 @@ exec "$OPENCODE_TEST_BINARY" -test.run=^TestOpenCodeServerHelper$ -- "$@"
 	exportPath := filepath.Join(workspace, "source-export.json")
 	writeOpenCodeExport(t, exportPath, "ses_test", workspace, "source answer")
 	importMarker, forkPoint := filepath.Join(workspace, "import-marker"), filepath.Join(workspace, "fork-point")
-	provider, err := New(Config{Executable: native, PrivateRoot: filepath.Join(private, "provider"), HostSandbox: planner,
+	provider, err := New(Config{Executable: native, PrivateRoot: filepath.Join(private, "provider"), HostSandbox: planner, NativeDataDirectory: nativeData,
 		Environment: []string{"OPENCODE_TEST_BINARY=" + binary, "OPENCODE_TEST_PROMPT=" + prompt, "PRIVATE_FIXTURE=" + secret, "ENVIRONMENT_OUTPUT=" + filepath.Join(workspace, "environment"), "OPENCODE_EXPORT_FIXTURE=" + exportPath, "IMPORT_MARKER=" + importMarker, "OPENCODE_TEST_FORK_POINT=" + forkPoint}})
 	require.NoError(t, err)
 	observations := &observationSink{}
