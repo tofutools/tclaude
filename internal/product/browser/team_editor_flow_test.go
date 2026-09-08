@@ -46,6 +46,8 @@ func TestBrowserTeamEditorAuthorsRosterWavesBriefingsAndReopens(t *testing.T) {
 	page.MustElement("#team-editor [name=name]").MustInput("release_key")
 	page.MustElement("#team-editor [name=display_name]").MustInput("Release label")
 	page.MustElement("#team-editor [name=doc]").MustInput("Literal team parameter help")
+	page.MustElement("#team-editor [name=type]").MustSelect("number")
+	page.MustElement("#team-editor [name=default]").MustInput("0.1234567890123456789")
 	page.MustElementR("#team-editor button", "^Apply changes$").MustClick()
 	page.MustElementR("#team-editor button", "^Save team revision$").MustClick()
 	page.MustElementR("#team-editor-status", "Revision 1 · saved")
@@ -54,6 +56,7 @@ func TestBrowserTeamEditorAuthorsRosterWavesBriefingsAndReopens(t *testing.T) {
 	require.Len(t, definitions, 1)
 	var result app.DefinitionResult
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/definitions/"+string(definitions[0].ID), nil, &result))
+	require.Equal(t, "0.1234567890123456789", string(result.Revision.Parameters[0].Default))
 	team := result.Revision.Team
 	require.Len(t, team.Members, 2)
 	require.Equal(t, "high", team.Members[1].Desired.Effort)
@@ -73,6 +76,7 @@ func TestBrowserTeamEditorAuthorsRosterWavesBriefingsAndReopens(t *testing.T) {
 	page.MustElementR("#team-editor nav button", "^Parameters$").MustClick()
 	page.MustElementR("#team-editor button", "^Edit release_key$").MustClick()
 	require.Equal(t, "Literal team parameter help", page.MustElement("#team-editor [name=doc]").MustProperty("value").String())
+	require.Equal(t, "0.1234567890123456789", page.MustElement("#team-editor [name=default]").MustProperty("value").Str())
 	page.MustElement("#team-editor [name=display_name]").MustSelectAllText().MustInput("Updated release label")
 	page.MustElementR("#team-editor button", "^Apply changes$").MustClick()
 	page.MustElementR("#team-editor nav button", "^Members$").MustClick()
@@ -85,6 +89,7 @@ func TestBrowserTeamEditorAuthorsRosterWavesBriefingsAndReopens(t *testing.T) {
 	page.MustElementR("#team-editor-status", "Revision 2 · saved")
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/definitions/"+string(definitions[0].ID), nil, &result))
 	require.Equal(t, []string{"checker"}, result.Revision.Team.Waves[1].MemberKeys)
+	require.Equal(t, "0.1234567890123456789", string(result.Revision.Parameters[0].Default))
 	require.Equal(t, "release_key", result.Revision.Parameters[0].Name)
 	require.Equal(t, "Updated release label", result.Revision.Parameters[0].DisplayName)
 	require.Equal(t, "Literal team parameter help", result.Revision.Parameters[0].Doc)

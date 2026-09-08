@@ -1524,6 +1524,17 @@ Selecting another file invalidates the earlier preview even if the new file
 cannot be read.
 
 The converter currently reports rather than approximates structural joins,
-ordinary multi-verdict routes, and numeric values that the editor cannot yet
-round-trip exactly. A refusal leaves the source intact for inspection and does
+ordinary multi-verdict routes, and durations outside the editor's exact numeric
+range. A refusal leaves the source intact for inspection and does
 not publish a partial definition.
+
+
+Parameter defaults retain their exact JSON text through process and team editing,
+copy/export/import, and launch input. Public definition reads include a
+`DefaultJSON` text companion to the existing `Default` value; the browser uses
+that text when preparing ordinary JSON write requests. Stored model serialization
+and existing revision hashes are unchanged. Decimal and large-integer parameter
+values are sent without passing through JavaScript number serialization, including
+nested object/array values. Legacy source conversion reads numeric defaults from
+the bounded YAML tree and preserves alias/merge precedence without a floating-point
+intermediate.

@@ -10,65 +10,126 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Check source tokens before the retained YAML decoder's interface{} values can
-// hide a loss of decimal precision. Inspection still preserves the full source.
-func validateSourceNumbers(source string, template *legacy.Template) error {
+// Preserve parameter JSON directly from the bounded source tree. The retained
+// legacy decoder is still authoritative for authoring validation; interface{}
+// floating-point values are not used as a serialization intermediate.
+func exactSourceDefaults(source string, template *legacy.Template) (map[string]json.RawMessage, error) {
 	var root yaml.Node
 	if err := yaml.Unmarshal([]byte(source), &root); err != nil {
-		return err
+		return nil, err
 	}
 	if len(root.Content) != 1 {
-		return fmt.Errorf("one source document required")
+		return nil, fmt.Errorf("one source document required")
 	}
 	params, err := sourceMapValue(root.Content[0], "params")
 	if err != nil {
-		return err
+		return nil, err
 	}
 	visited := 0
-	var walk func(*yaml.Node, int) error
-	walk = func(node *yaml.Node, depth int) error {
+	var encode func(*yaml.Node, int) (json.RawMessage, error)
+	encode = func(node *yaml.Node, depth int) (json.RawMessage, error) {
 		if node == nil {
-			return nil
+			return nil, nil
 		}
 		visited++
 		if visited > 100000 || depth > 128 {
-			return fmt.Errorf("parameter source expansion exceeds conversion bounds")
+			return nil, fmt.Errorf("parameter source expansion exceeds conversion bounds")
 		}
-		if node.Kind == yaml.AliasNode {
-			return walk(node.Alias, depth+1)
-		}
-		if node.Kind == yaml.ScalarNode && (node.ShortTag() == "!!int" || node.ShortTag() == "!!float") {
-			raw, err := sourceJSONNumber(node)
-			if err != nil {
-				return err
+		switch node.Kind {
+		case yaml.AliasNode:
+			return encode(node.Alias, depth+1)
+		case yaml.ScalarNode:
+			if node.ShortTag() == "!!int" || node.ShortTag() == "!!float" {
+				return sourceJSONNumber(node)
 			}
-			return exactEditorNumbers(raw)
-		}
-		for _, child := range node.Content {
-			if err := walk(child, depth+1); err != nil {
-				return err
+			var value any
+			if err := node.Decode(&value); err != nil {
+				return nil, err
 			}
+			return json.Marshal(value)
+		case yaml.SequenceNode:
+			values := make([]json.RawMessage, 0, len(node.Content))
+			for _, child := range node.Content {
+				value, err := encode(child, depth+1)
+				if err != nil {
+					return nil, err
+				}
+				values = append(values, value)
+			}
+			return json.Marshal(values)
+		case yaml.MappingNode:
+			values := map[string]json.RawMessage{}
+			// YAML merge sequences give earlier maps precedence; explicit keys win
+			// over every merge regardless of their source position.
+			for i := 0; i+1 < len(node.Content); i += 2 {
+				if node.Content[i].ShortTag() != "!!merge" {
+					continue
+				}
+				raw, err := encode(node.Content[i+1], depth+1)
+				if err != nil {
+					return nil, err
+				}
+				var maps []map[string]json.RawMessage
+				if len(raw) > 0 && raw[0] == '[' {
+					if err := json.Unmarshal(raw, &maps); err != nil {
+						return nil, err
+					}
+				} else {
+					var m map[string]json.RawMessage
+					if err := json.Unmarshal(raw, &m); err != nil {
+						return nil, err
+					}
+					maps = append(maps, m)
+				}
+				for _, m := range maps {
+					for key, value := range m {
+						if _, exists := values[key]; !exists {
+							values[key] = value
+						}
+					}
+				}
+			}
+			for i := 0; i+1 < len(node.Content); i += 2 {
+				if node.Content[i].ShortTag() == "!!merge" {
+					continue
+				}
+				var key string
+				if err := node.Content[i].Decode(&key); err != nil {
+					return nil, err
+				}
+				value, err := encode(node.Content[i+1], depth+1)
+				if err != nil {
+					return nil, err
+				}
+				values[key] = value
+			}
+			return json.Marshal(values)
+		default:
+			return nil, fmt.Errorf("unsupported parameter source node")
 		}
-		return nil
 	}
+	defaults := map[string]json.RawMessage{}
 	for key, parameter := range template.Params {
 		row, err := sourceMapValue(params, key)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		value, err := sourceMapValue(row, "default")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if value == nil && parameter.Default != nil {
-			return fmt.Errorf("parameter %s/default: cannot resolve retained source default", key)
+			return nil, fmt.Errorf("parameter %s/default: cannot resolve retained source default", key)
 		}
-		if err := walk(value, 0); err != nil {
-			return fmt.Errorf("parameter %s/default: %w", key, err)
+		raw, err := encode(value, 0)
+		if err != nil {
+			return nil, fmt.Errorf("parameter %s/default: %w", key, err)
+		}
+		if value != nil {
+			defaults[key] = raw
 		}
 	}
-
-	return nil
+	return defaults, nil
 }
 
 func sourceMapValue(node *yaml.Node, key string) (*yaml.Node, error) {

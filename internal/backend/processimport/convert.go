@@ -1,10 +1,8 @@
 package processimport
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"math/big"
 	"sort"
 	"strings"
 	"time"
@@ -57,7 +55,8 @@ func Convert(source string, bindings map[string]Binding) (Converted, error) {
 		}
 	}
 	t := parsed.Template
-	if err := validateSourceNumbers(source, t); err != nil {
+	defaults, err := exactSourceDefaults(source, t)
+	if err != nil {
 		return Converted{}, err
 	}
 	c := Converted{Name: t.Name, Source: source, Process: model.ProcessDefinition{ParameterSyntax: "mustache-v1", Graph: model.WorkGraph{CompilerVersion: "1", EntryNodeID: model.WorkNodeID(t.Start), Description: t.Description, Doc: t.Doc}}, Layout: &model.DefinitionEditorLayout{Nodes: map[model.WorkNodeID]model.EditorPosition{}}, ProgramExecutables: map[string]string{}}
@@ -71,16 +70,7 @@ func Convert(source string, bindings map[string]Binding) (Converted, error) {
 	sort.Strings(keys)
 	for _, key := range keys {
 		p := t.Params[key]
-		var raw json.RawMessage
-		if p.Default != nil {
-			raw, err = json.Marshal(p.Default)
-			if err != nil {
-				return Converted{}, fmt.Errorf("parameter %s: %w", key, err)
-			}
-		}
-		if err := exactEditorNumbers(raw); err != nil {
-			return Converted{}, fmt.Errorf("parameter %s/default: %w", key, err)
-		}
+		raw := defaults[key]
 		c.Parameters = append(c.Parameters, model.ParameterDeclaration{Name: key, DisplayName: p.Name, Description: p.Description, Doc: p.Doc, Type: model.ParameterType(p.Type), Required: p.Required != nil && *p.Required, Default: raw})
 	}
 	ids := make([]string, 0, len(t.Nodes))
@@ -427,66 +417,4 @@ func validateBinding(p model.Performer) error {
 		return fmt.Errorf("unknown performer kind")
 	}
 	return nil
-}
-
-// Until the process editor has a lossless JSON-number representation, refuse
-// drafts it would change simply by opening and saving. Exact source survives
-// inspection; this is a conversion gap, not a replacement value.
-func exactEditorNumbers(raw json.RawMessage) error {
-	if len(raw) == 0 {
-		return nil
-	}
-	var value any
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	if err := decoder.Decode(&value); err != nil {
-		return err
-	}
-	var visit func(any) error
-	visit = func(value any) error {
-		switch v := value.(type) {
-		case json.Number:
-			// Compare decimal values after the browser's binary64 round trip,
-			// including fractional/exponent tokens. Bound arbitrary-precision
-			// work before constructing rationals from untrusted source.
-			if len(v) > 4096 {
-				return fmt.Errorf("number requires exact editor JSON support before conversion")
-			}
-			f, err := v.Float64()
-			if err != nil {
-				return fmt.Errorf("number requires exact editor JSON support before conversion")
-			}
-			if f == 0 {
-				mantissa := strings.SplitN(strings.ToLower(string(v)), "e", 2)[0]
-				if strings.Trim(mantissa, "-+0.") != "" {
-					return fmt.Errorf("number requires exact editor JSON support before conversion")
-				}
-				return nil
-			}
-			encoded, err := json.Marshal(f)
-			if err != nil {
-				return fmt.Errorf("number requires exact editor JSON support before conversion")
-			}
-			original, ok := new(big.Rat).SetString(string(v))
-			saved, savedOK := new(big.Rat).SetString(string(encoded))
-			if !ok || !savedOK || original.Cmp(saved) != 0 {
-				return fmt.Errorf("number requires exact editor JSON support before conversion")
-			}
-
-		case []any:
-			for _, item := range v {
-				if err := visit(item); err != nil {
-					return err
-				}
-			}
-		case map[string]any:
-			for _, item := range v {
-				if err := visit(item); err != nil {
-					return err
-				}
-			}
-		}
-		return nil
-	}
-	return visit(value)
 }

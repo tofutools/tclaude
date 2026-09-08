@@ -1,3 +1,4 @@
+const {stringifyExact,parameterDefaultText,wireDefinitionDraft}=globalThis.ExactJSONTools;
 import {addCheck, removeCheck, moveCheck} from './process-stages.js';
 import {ProcessSnippetLibrary} from './process-snippets.js';
 import {ProcessGraphAdapter} from './processgraph/process-graph-adapter.js';
@@ -428,9 +429,9 @@ class ProcessEditor {
       {name: 'display_name', label: 'Display name (optional)', value: parameter?.DisplayName},
       {name: 'description', label: 'Description', value: parameter?.Description},
       {name: 'doc', label: 'Parameter documentation', multiline:true, value: parameter?.Doc},
-      {name: 'default', label: 'Default value (JSON, optional)', value: parameter?.Default === undefined ? '' : JSON.stringify(parameter.Default)}], f => {
+      {name: 'default', label: 'Default value (JSON, optional)', value: parameterDefaultText(parameter)}], f => {
         if (this.model.value.Parameters.some(p => p.Name === f.name && p.Name !== parameter?.Name)) throw new Error('Parameter names must be unique.');
-        const p = {Name: f.name, Type: f.type, Required: f.required, Description: f.description}; if(f.display_name)p.DisplayName=f.display_name;if(f.doc)p.Doc=f.doc; if (f.default.trim()) p.Default = JSON.parse(f.default);
+        const p = {Name: f.name, Type: f.type, Required: f.required, Description: f.description}; if(f.display_name)p.DisplayName=f.display_name;if(f.doc)p.Doc=f.doc; if (f.default.trim()) p.DefaultJSON = (JSON.parse(f.default),f.default);
         this.change(d => { const index = d.Parameters.findIndex(p => p.Name === parameter?.Name); if (index < 0) d.Parameters.push(p); else d.Parameters[index] = p; }); this.parameters();
       });
   }
@@ -463,7 +464,7 @@ class ProcessEditor {
     const messages = validationMessages(this.model.value);
     this.errors.replaceChildren(...messages.map(m => element('li', m)));
     if (messages.length) return null;
-    return this.api('/v2/definitions/validate', {draft: clone(this.model.value)});
+    return this.api('/v2/definitions/validate', {draft: wireDefinitionDraft(clone(this.model.value))});
   }
   async validate() {
     if (this.busy) return;
@@ -480,7 +481,7 @@ class ProcessEditor {
       const validated = await this.checkDraft(); if (!validated) return;
       const fingerprint = JSON.stringify(this.model.value);
       if (!this.pending || this.pending.fingerprint !== fingerprint) this.pending = {fingerprint, requestID: freshID('request_'), revisionID: freshID('revision_')};
-      const result = await this.api('/v2/definitions', {request_id: this.pending.requestID, expected_revision: this.baseRevision, draft: {...clone(this.model.value), RevisionID: this.pending.revisionID}});
+      const result = await this.api('/v2/definitions', {request_id: this.pending.requestID, expected_revision: this.baseRevision, draft: wireDefinitionDraft({...clone(this.model.value), RevisionID: this.pending.revisionID})});
       // An identical lost-response retry can return a newer current head. Do not
       // silently replace the local draft with a different author's revision.
       if (result.Revision.ContentHash !== validated.Revision.ContentHash) {
@@ -502,7 +503,7 @@ class ProcessEditor {
     } finally { this.setBusy(false); }
   }
   export() {
-    const blob = new Blob([JSON.stringify({format: 'tclaude-process-v2', draft: this.model.value}, null, 2)], {type: 'application/json'});
+    const blob = new Blob([stringifyExact({format: 'tclaude-process-v2', draft: wireDefinitionDraft(this.model.value,{exporting:true})}, 2)], {type: 'application/json'});
     const url = URL.createObjectURL(blob), link = element('a'); link.href = url; link.download = 'process.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   import() {
@@ -517,7 +518,7 @@ class ProcessEditor {
         if (this.dirty() && !confirm('Replace this draft with an imported copy?')) return;
         const draft = value.draft; draft.ID = freshID('definition_'); delete draft.RevisionID; draft.EditorLayout ||= {Nodes: {}};
         this.setBusy(true);
-        const validated = await this.api('/v2/definitions/validate', {draft});
+        const validated = await this.api('/v2/definitions/validate', {draft:wireDefinitionDraft(draft)});
         this.model = new ProcessDraft(draftFromResult(validated)); this.baseRevision = 0; this.pending = null; this.selection.clear(); this.render(); this.graph.fit();
       } catch (error) { this.fail(error); } finally { this.setBusy(false); }
     }; file.click();

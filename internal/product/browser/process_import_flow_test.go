@@ -14,6 +14,10 @@ func TestBrowserLegacyProcessImportRequiresMappingAndExplicitSave(t *testing.T) 
 	const source = `apiVersion: tclaude.dev/v1alpha1
 kind: ProcessTemplate
 id: original
+params:
+  amount:
+    type: number
+    default: 0.1234567890123456789
 start: task
 nodes:
   task:
@@ -66,6 +70,7 @@ nodes:
 	var saved app.DefinitionResult
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/definitions/"+string(defs[0].ID), nil, &saved))
 	require.Equal(t, source, saved.Revision.Source)
+	require.Equal(t, "0.1234567890123456789", string(saved.Revision.Parameters[0].Default))
 	page.MustElementR("#process-editor button", "^Close editor$").MustClick()
 	page.MustElementR("#definition-list button", "^Edit process$").MustClick()
 	page.MustElementR("#process-editor button", "^Source$").MustClick()
