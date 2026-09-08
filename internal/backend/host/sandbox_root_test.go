@@ -55,7 +55,13 @@ func TestSandboxDescriptorInheritedRootNative(t *testing.T) {
 	for _, mode := range []model.SandboxFilesystemRoot{model.SandboxRootInherit, model.SandboxRootSeparate} {
 		t.Run(string(mode), func(t *testing.T) {
 			// Outside /tmp: Linux intentionally replaces host scratch in both modes.
-			path, err := os.MkdirTemp(".", ".sandbox-root-")
+			// A root-owned CI namespace cannot traverse the runner-owned checkout
+			// using host capabilities, so keep its fixture under public /var/tmp.
+			parent := os.Getenv("TCLAUDE_SANDBOX_ROOT_FIXTURE_PARENT")
+			if parent == "" {
+				parent = "."
+			}
+			path, err := os.MkdirTemp(parent, ".sandbox-root-")
 			require.NoError(t, err)
 			defer func() { require.NoError(t, os.RemoveAll(path)) }()
 			root, err := filepath.Abs(path)

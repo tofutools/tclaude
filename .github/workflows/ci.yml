@@ -90,7 +90,7 @@ jobs:
             sudo install -m 0700 "$RUNNER_TEMP/sandbox-claude.test" "$native_dir/sandbox-claude.test"
             sudo install -m 0700 "$RUNNER_TEMP/sandbox-opencode.test" "$native_dir/sandbox-opencode.test"
             sudo install -m 0700 "$RUNNER_TEMP/tclaude" "$native_dir/tclaude"
-            sudo env TMPDIR="$native_dir" TCLAUDE_REQUIRE_SANDBOX_NATIVE=1 "$native_dir/sandbox-native.test" -test.run '^(TestSandboxDescriptor|TestUnixControl)' -test.timeout 1m -test.v
+            sudo env TMPDIR="$native_dir" TCLAUDE_SANDBOX_ROOT_FIXTURE_PARENT=/var/tmp TCLAUDE_REQUIRE_SANDBOX_NATIVE=1 "$native_dir/sandbox-native.test" -test.run '^(TestSandboxDescriptor|TestUnixControl)' -test.timeout 1m -test.v
             sudo env TMPDIR="$native_dir" TCLAUDE_SANDBOX_BOOTSTRAP="$native_dir/tclaude" "$native_dir/sandbox-provider.test" -test.run '^TestProviderHostSandbox' -test.timeout 1m -test.v
             sudo env TMPDIR="$native_dir" TCLAUDE_SANDBOX_BOOTSTRAP="$native_dir/tclaude" "$native_dir/sandbox-codex.test" -test.run '^TestProviderHostSandbox' -test.timeout 1m -test.v
             sudo env TMPDIR="$native_dir" TCLAUDE_SANDBOX_BOOTSTRAP="$native_dir/tclaude" "$native_dir/sandbox-claude.test" -test.run '^TestProviderHostSandbox' -test.timeout 1m -test.v
