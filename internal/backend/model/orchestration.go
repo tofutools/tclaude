@@ -205,13 +205,21 @@ type TaskStages struct {
 	Review       *TaskStage
 }
 
+// ApprovalRetryPolicy retains authoring intent; approval retry execution is unsupported.
+type ApprovalRetryPolicy struct {
+	MaxAttempts ApprovalRetryAttempts
+	Backoff     string
+	OnFail      string
+}
+
 type TaskStage struct {
-	Description string `json:",omitempty"`
-	Doc         string `json:",omitempty"`
-	ID          string
-	Name        string
-	Performer   Performer
-	Retry       RetryPolicy
+	ApprovalRetry *ApprovalRetryPolicy `json:",omitempty"`
+	Description   string               `json:",omitempty"`
+	Doc           string               `json:",omitempty"`
+	ID            string
+	Name          string
+	Performer     Performer
+	Retry         RetryPolicy
 }
 
 type CompiledTaskGroup struct {
