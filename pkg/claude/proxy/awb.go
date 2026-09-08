@@ -65,6 +65,11 @@ func awbCmd() *cobra.Command {
 			"where both exist you may act only where they agree, and where only the grant scope does it " +
 			"is the whole policy. Run `tclaude proxy awb whoami` to see what that leaves you, beside the " +
 			"workspaces the account can actually see.\n\n" +
+			"That is what you reach unattended. When your grant's scope leaves out a workspace the " +
+			"operator's list does carry, retrying the same command with --ask-human asks them to approve " +
+			"it for that one command; the refusal says when this route is open. It covers one workspace " +
+			"per command and remembers nothing, so a run of several commands there wants the grant " +
+			"widened instead.\n\n" +
 			"Reads need `proxy.awb.read`; writing needs `proxy.awb.write` AND the operator's " +
 			"agent.awb_proxy.allow_write. Neither slug is granted by default.",
 		ParamEnrich: common.DefaultParamEnricher(),

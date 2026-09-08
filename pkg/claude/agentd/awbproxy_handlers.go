@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+
+	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
 
 // awbproxy_handlers.go is the HTTP surface of `tclaude proxy awb`.
@@ -24,22 +26,30 @@ import (
 //
 //  1. permission slug — before the body is read, so an ungated caller cannot
 //     probe for the existence of a workspace;
-//  2. operator policy and grant scope, resolved together into this caller's
-//     effective workspace set — the proxy is off unless SOME workspace is
-//     reachable, and writes are off unless allow_write is set;
-//  3. parameter validation — issue-reference shape, charset, length, and every
+//  2. the ad-hoc --ask-human approval, for a workspace the body names that the
+//     caller's grant scope leaves out and the operator's list carries;
+//  3. operator policy and grant scope, resolved together with whatever step 2
+//     approved into this caller's effective workspace set — the proxy is off
+//     unless SOME workspace is reachable, and writes are off unless allow_write
+//     is set;
+//  4. parameter validation — issue-reference shape, charset, length, and every
 //     value AWB's fixed vocabulary bounds;
-//  4. the workspace gate on the caller's issue reference or --workspace;
-//  5. the call;
-//  6. the workspace gate AGAIN, on the workspace AWB reported.
+//  5. the workspace gate on the caller's issue reference or --workspace;
+//  6. the call;
+//  7. the workspace gate AGAIN, on the workspace AWB reported.
 //
-// Step 6 is not belt-and-braces. Step 4 checks a string the caller supplied;
-// step 6 checks the thing actually reached — and an AWB reference may be a
+// Step 7 is not belt-and-braces. Step 5 checks a string the caller supplied;
+// step 7 checks the thing actually reached — and an AWB reference may be a
 // PREFIX, so the two are not the same statement.
 //
-// Steps 4 and 6 read the same effective set, and so do the listing verbs'
-// filter and row-level drop, so no combination of operator list and grant scope
-// can be enforced one way in one verb and another way in the next.
+// Steps 5 and 7 read the same effective set, and so do the listing verbs'
+// filter and row-level drop, so no combination of operator list, grant scope
+// and human approval can be enforced one way in one verb and another way in the
+// next.
+//
+// Step 2 sits where it does because a popup can only ask about a workspace the
+// body names, and it sits BEFORE step 3 because what it approves is an input to
+// the effective set rather than an exception carved out of it afterwards.
 
 // ---------------------------------------------------------------------------
 // Request shapes
@@ -204,6 +214,194 @@ type awbAttachNameRequest struct {
 }
 
 // ---------------------------------------------------------------------------
+// Which workspaces a request NAMES
+// ---------------------------------------------------------------------------
+
+// awbWorkspaceNamer is implemented by a request body that names one or more
+// concrete workspaces in its own fields — before anything has been fetched, and
+// so before the workspace gate has been consulted.
+//
+// It exists for exactly one caller, escalateAWBWorkspace, and the distinction it
+// draws is the one that makes an --ask-human popup possible at all: a popup can
+// only ask about a workspace the request already names. A body that names none
+// (`whoami`, an unfiltered `list`) spans whatever the caller may reach, which is
+// a set rather than a question, so it implements nothing and is never escalated.
+//
+// The method is declared on *awbIssueRefRequest, so every verb addressed by one
+// issue inherits it by embedding. The three shapes that name more than that
+// carry their own — a relation's second issue, a listing's workspace filter and
+// parent, a create's workspace and relation targets — and a field left out of
+// one of those is a field this pass cannot see, so it is the place to look when
+// a new one is added.
+type awbWorkspaceNamer interface {
+	namedAWBWorkspaces() []string
+}
+
+func (b *awbIssueRefRequest) namedAWBWorkspaces() []string {
+	return appendNamedRefWorkspace(nil, b.ID)
+}
+
+// namedAWBWorkspaces for a relation covers BOTH ends, for the reason
+// buildAWBCreateBody gives: a relation shows up on the other issue too, so
+// reaching it is reaching that issue's workspace.
+func (b *awbRelationRequest) namedAWBWorkspaces() []string {
+	return appendNamedRefWorkspace(appendNamedRefWorkspace(nil, b.ID), b.Other)
+}
+
+func (b *awbCreateRequest) namedAWBWorkspaces() []string {
+	out := appendNamedWorkspace(nil, b.Workspace)
+	out = appendNamedRefWorkspace(out, b.HasParent)
+	for _, refs := range [][]string{b.BlockedBy, b.DiscoveredFrom, b.Related} {
+		for _, raw := range refs {
+			out = appendNamedRefWorkspace(out, raw)
+		}
+	}
+	return out
+}
+
+func (b *awbFilterRequest) namedAWBWorkspaces() []string {
+	var out []string
+	for _, raw := range append(append([]string{}, b.Workspaces...), b.LegacyProjects...) {
+		out = appendNamedWorkspace(out, raw)
+	}
+	return appendNamedRefWorkspace(out, b.Parent)
+}
+
+// appendNamedWorkspace adds one caller-supplied workspace key to the naming
+// pass, if it is well-formed.
+//
+// A malformed or absent key is DROPPED rather than refused. This pass decides
+// only what a popup may be asked about; the real validation runs later and is
+// where a bad key gets the 400 that names the field it came from. Refusing here
+// would answer the wrong question with the wrong status.
+func appendNamedWorkspace(out []string, raw string) []string {
+	key := strings.ToLower(strings.TrimSpace(raw))
+	if awbWorkspaceKeyShapeErr(key) != nil {
+		return out
+	}
+	return appendWorkspaceKey(out, key)
+}
+
+// appendNamedRefWorkspace is appendNamedWorkspace for the workspace an issue
+// reference carries, on the same drop-rather-than-refuse terms.
+func appendNamedRefWorkspace(out []string, raw string) []string {
+	ref, fault := validateAWBIssueRef(raw)
+	if fault != nil {
+		return out
+	}
+	return appendNamedWorkspace(out, workspaceKeyOf(ref))
+}
+
+// escalateAWBWorkspace is the ad-hoc, one-request escape hatch out of a
+// workspace-scoped grant.
+//
+// A grant scoped to `awb_workspace=awb` says what an agent may reach UNATTENDED.
+// It is deliberately not a statement that everything else is forbidden forever:
+// the operator's agent.awb_proxy.allowed_workspaces list is the standing
+// statement about which workspaces agents may reach at all, and a human at the
+// popup can decide that this one request may cross into another of them. That is
+// the same `--ask-human` contract the git proxy gives an out-of-scope remote.
+//
+// Three rules keep it from becoming a way to widen a grant:
+//
+//   - The operator's list is a hard ceiling, and a workspace outside it gets no
+//     popup at all — so an agent cannot pester the human into authorizing
+//     something the operator excluded. A host with NO operator list has made no
+//     such statement, so nothing is escalatable there either.
+//   - The approval covers ONE workspace, and a request naming several
+//     out-of-scope workspaces is refused here rather than put to the human. Not
+//     merely because one popup can only honestly name one workspace: asking N
+//     times would not work either, since the FIRST approval marks the whole
+//     request human-approved for this slug (markHumanApprovalContinuation), so
+//     every later ask would pass without being shown. Refusing is the only
+//     shape that keeps "approved" meaning what it says.
+//   - It authorizes this request only. Nothing is persisted; the popup's
+//     "always allow" buttons remain the separate, deliberate way to change a
+//     standing grant.
+//
+// What this function decides is only what the human is ASKED about. Enforcement
+// stays where it was — every workspace check reads the session's effective set —
+// so a workspace this pass fails to notice is refused there, exactly as before.
+// A gap in the naming pass costs an agent a popup it could have had; it cannot
+// let one through.
+//
+// Returns the approved workspace keys, and ok=false when the response has
+// already been written.
+func escalateAWBWorkspace(
+	w http.ResponseWriter, r *http.Request, convID, perm string, workspaceScoped bool, body any,
+) ([]string, bool) {
+	if !workspaceScoped {
+		// An unscoped grant already reaches the operator's whole list, so there
+		// is nothing above it to escalate to.
+		return nil, true
+	}
+	if parseAskHumanHeader(r) <= 0 {
+		// Without the header requirePermission would answer with the generic
+		// "caller is not granted <slug>" 403 — an answer that names neither the
+		// workspace nor the list that excluded it. The workspace gate's own
+		// refusal is the better one, and it points at this route.
+		return nil, true
+	}
+	namer, ok := body.(awbWorkspaceNamer)
+	if !ok {
+		return nil, true
+	}
+	named := namer.namedAWBWorkspaces()
+	if len(named) == 0 {
+		return nil, true
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		// newAWBProxySession reads the same file moments later and reports the
+		// failure with the status it deserves; duplicating that here would only
+		// give the same error two spellings.
+		return nil, true
+	}
+	policy := cfg.ResolvedAWBProxy()
+	if len(policy.AllowedWorkspaces) == 0 {
+		return nil, true
+	}
+	v := resolvePermissionVerdictForRequest(r, convID, perm)
+	if v.Resolution != permAllow {
+		// The grant changed since the preflight deferred. awbEffectiveWorkspaces
+		// says so in the terms that belong to it.
+		return nil, true
+	}
+	var candidates []string
+	for _, key := range named {
+		if !policy.AWBWorkspaceAllowed(key) || evalPermissionScope(
+			v, convID, ActionContext{AWBWorkspace: key}).Satisfied {
+			continue
+		}
+		candidates = appendWorkspaceKey(candidates, key)
+	}
+	if len(candidates) == 0 {
+		return nil, true
+	}
+	if len(candidates) > 1 {
+		writeProxyFault(w, faultf(http.StatusForbidden, awbWorkspaceOutOfScopeCode,
+			"this request names %d workspaces outside this caller's AWB workspace scope (%s), and a "+
+				"one-request human approval covers one workspace; split the request, or ask the "+
+				"operator to widen the %s grant",
+			len(candidates), strings.Join(candidates, ", "), perm))
+		return nil, false
+	}
+	// The popup, and the refusal when the human declines or it times out, both
+	// come from requirePermission — the same gate, given the workspace this
+	// request is actually about.
+	authorized, ok := requirePermission(w, r, perm, ActionContext{AWBWorkspace: candidates[0]})
+	if !ok {
+		return nil, false
+	}
+	if authorized != convID {
+		writeError(w, http.StatusForbidden, "auth",
+			"the approved caller is not the caller this request was preflighted for")
+		return nil, false
+	}
+	return candidates, true
+}
+
+// ---------------------------------------------------------------------------
 // The shared prologue
 // ---------------------------------------------------------------------------
 
@@ -230,7 +428,16 @@ func openAWBProxy(w http.ResponseWriter, r *http.Request, perm string, body any)
 	if body != nil && !decodeAWBProxyBody(w, r, body) {
 		return nil, false
 	}
-	s, fault := newAWBProxySession(r, convID, perm, workspaceScoped)
+	// After the decode, because a popup can only ask about a workspace the body
+	// names. The git proxy's finishProxyPermission sits in the same place for
+	// the same reason, and pays the same price: the body is spent by now, so the
+	// popup describes the action by its endpoint and the workspace at stake
+	// rather than by a body preview.
+	escalated, ok := escalateAWBWorkspace(w, r, convID, perm, workspaceScoped, body)
+	if !ok {
+		return nil, false
+	}
+	s, fault := newAWBProxySession(r, convID, perm, workspaceScoped, escalated)
 	if fault != nil {
 		writeProxyFault(w, fault)
 		return nil, false
@@ -248,8 +455,17 @@ func openAWBProxy(w http.ResponseWriter, r *http.Request, perm string, body any)
 		// the workspaces the scope merely names can be a superset of the ones it
 		// admits, and recording those would claim authority the grant never
 		// conferred.
-		recordAuditPermissionScope(r, perm, permissionScopeDisplay(
-			PermissionScope{ScopeDimAWBWorkspace: s.grantWorkspaces}))
+		scope := permissionScopeDisplay(PermissionScope{ScopeDimAWBWorkspace: s.grantWorkspaces})
+		if len(s.escalatedWorkspaces) > 0 {
+			// An ad-hoc approval is recorded BESIDE the grant's scope, never
+			// folded into it: the row has to be readable as "the human let this
+			// one through", not as a grant that silently grew a workspace.
+			if scope != "" {
+				scope += " "
+			}
+			scope += "+human-approved awb_workspace=" + strings.Join(s.escalatedWorkspaces, ",")
+		}
+		recordAuditPermissionScope(r, perm, scope)
 	}
 	if perm == PermAWBWrite {
 		if fault := s.requireWrite(); fault != nil {

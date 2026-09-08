@@ -240,6 +240,23 @@ Scoped grants intersect with the operator's `allowed_workspaces` list when one
 exists; an *unscoped* grant is refused outright when the operator has no list.
 Read and write scopes are independent.
 
+A workspace scope bounds what the agent reaches **unattended**. A workspace the
+operator's `allowed_workspaces` list carries but the grant's scope does not can
+still be reached for **one request** by retrying with `--ask-human`: the
+operator gets the usual popup, naming the workspace, and an approval authorizes
+that request alone — nothing is persisted, and the next call is gated afresh.
+The refusal says so when this route is open. Three bounds keep it from becoming
+a way to widen a grant:
+
+- the operator's list is a hard ceiling, and a workspace outside it (or a host
+  with no list at all) is refused with no popup, so an agent cannot pester the
+  operator into authorizing something they excluded;
+- one approval covers one workspace, so a request naming two out-of-scope
+  workspaces is refused rather than approved by a popup that could only name
+  one of them;
+- `allow_write` is unaffected — the popup answers "may this agent touch that
+  workspace", never "may agents write at all".
+
 The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
 
 - `url` — the AWB server's base URL. This is what registers the command; only

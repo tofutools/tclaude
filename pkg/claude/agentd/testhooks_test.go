@@ -711,6 +711,20 @@ func StubApprovalForTest(decision bool) func() {
 	return func() { RequestHumanApprovalImpl = prev }
 }
 
+// StubApprovalWithSideEffectForTest swaps the human-approval popup with a stub
+// that runs fn BEFORE deciding. A real popup blocks for as long as the human
+// takes to look at it — up to the 300s ceiling — and the world can change in
+// that window; fn is how a flow test drives exactly that, by rewriting config
+// or revoking a grant while the request sits waiting for an answer.
+func StubApprovalWithSideEffectForTest(decision bool, fn func()) func() {
+	prev := RequestHumanApprovalImpl
+	RequestHumanApprovalImpl = func(*approvalRequest, string) bool {
+		fn()
+		return decision
+	}
+	return func() { RequestHumanApprovalImpl = prev }
+}
+
 // StubCountingApprovalForTest swaps the human-approval popup with an immediate
 // decision and returns a counter accessor plus restore function. It lets flow
 // tests distinguish one logical approval from duplicate popup invocations

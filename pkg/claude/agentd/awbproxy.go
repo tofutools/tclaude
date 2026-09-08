@@ -46,6 +46,14 @@ import (
 //     proxy.awb.read / proxy.awb.write grant carries an `awb_workspace` scope —
 //     the workspaces that grant names. See awbEffectiveWorkspaces.
 //
+//     Where Linear stops, this proxy has one more move. A grant scope says what
+//     an agent reaches UNATTENDED, so a workspace the operator's list carries
+//     but the scope leaves out can still be reached for ONE request, by a human
+//     answering an --ask-human popup that names it — the same escape hatch an
+//     out-of-scope git remote has. The operator's list stays a hard ceiling
+//     over it. See escalateAWBWorkspace, which is also where the reasons a
+//     Linear cross-team listing has no equivalent are worked out.
+//
 //  3. THERE IS ONE CREDENTIAL. A Linear personal key reaches one workspace, so
 //     that proxy routes teams to keys; an AWB account reaches every workspace it
 //     is a member of on the one server the operator configured. There is
@@ -336,6 +344,15 @@ type awbProxySession struct {
 	// say which of the two lists excluded a key.
 	grantWorkspaces []string
 
+	// escalatedWorkspaces is the workspaces THIS ONE REQUEST reached because a
+	// human approved an --ask-human popup for them, rather than because the
+	// caller's standing grant carries them (see escalateAWBWorkspace). It is the
+	// set that survived re-checking against this session's own policy, so it is
+	// what actually authorized the request rather than what was asked about.
+	// Already folded into workspaces, so no gate reads it; it exists so the
+	// audit row can say the human, not the grant, was the authority.
+	escalatedWorkspaces []string
+
 	// password, passwordLoaded and passwordFault memoize the credential read:
 	// one file read per request however many calls the verb makes.
 	password       string
@@ -363,8 +380,12 @@ type awbProxySession struct {
 // workspace-scoped (see preflightProxyPermission). Both are needed here rather
 // than at the gate, because the scope has to be resolved into a SET before any
 // verb runs — see the file header.
+//
+// escalated is the workspaces a human has already approved for this one request
+// through the --ask-human popup (see escalateAWBWorkspace). They are folded into
+// the effective set on top of everything the standing grant resolves to.
 func newAWBProxySession(
-	r *http.Request, convID, perm string, workspaceScoped bool,
+	r *http.Request, convID, perm string, workspaceScoped bool, escalated []string,
 ) (*awbProxySession, *proxyFault) {
 	cfg, err := config.Load()
 	if err != nil {
@@ -376,16 +397,18 @@ func newAWBProxySession(
 	if fault != nil {
 		return nil, fault
 	}
-	workspaces, grantWorkspaces, fault := awbEffectiveWorkspaces(r, convID, perm, policy, workspaceScoped)
+	workspaces, grantWorkspaces, liveEscalated, fault := awbEffectiveWorkspaces(
+		r, convID, perm, policy, workspaceScoped, escalated)
 	if fault != nil {
 		return nil, fault
 	}
 	return &awbProxySession{
-		policy:          policy,
-		base:            base,
-		deadline:        time.Now().Add(awbProxyBudget),
-		workspaces:      workspaces,
-		grantWorkspaces: grantWorkspaces,
+		policy:              policy,
+		base:                base,
+		deadline:            time.Now().Add(awbProxyBudget),
+		workspaces:          workspaces,
+		grantWorkspaces:     grantWorkspaces,
+		escalatedWorkspaces: liveEscalated,
 	}, nil
 }
 
@@ -426,10 +449,67 @@ func validateAWBBaseURL(raw string) (string, *proxyFault) {
 	return raw, nil
 }
 
-// awbEffectiveWorkspaces resolves the workspace set one request may act within,
-// from the operator's allow-list and the caller's grant scope.
+// awbEffectiveWorkspaces resolves the workspace set one request may act within:
+// the operator's allow-list and the caller's grant scope (awbGrantWorkspaces),
+// plus whatever a human approved for this ONE request through the --ask-human
+// popup (escalateAWBWorkspace).
 //
-// It is awbEffectiveWorkspaces and linearEffectiveTeams that make the two proxies
+// The escalation is applied AFTER the grant resolution, never inside it: it must
+// not be narrowed by the grant scope it is precisely the answer to.
+//
+// It IS re-checked against the operator's allow-list here, even though
+// escalateAWBWorkspace only offers the popup for a workspace already on it. The
+// two are separate reads of config.json — separated by a popup the human may sit
+// on for up to five minutes — and the operator can narrow allowed_workspaces in
+// between. The ceiling that governs is the live one at the point of enforcement,
+// so an approval for a workspace since removed buys nothing, and this proxy
+// never acts outside the list the operator holds now.
+//
+// A surviving escalation relieves the two scope-empty refusals: a grant that
+// authorizes nothing on its own is not a reason to refuse a request the human
+// authorized directly. Nothing else is relieved — a withdrawn grant and an
+// unconfigured proxy still refuse, because neither is a question the popup
+// asked.
+// It returns the escalated keys that SURVIVED that re-check as well, so the
+// audit row records what actually authorized the request rather than what the
+// human was asked about.
+func awbEffectiveWorkspaces(
+	r *http.Request, convID, perm string, policy config.AWBProxyConfig,
+	workspaceScoped bool, escalated []string,
+) (workspaces, grantWorkspaces, liveEscalated []string, fault *proxyFault) {
+	workspaces, grantWorkspaces, fault = awbGrantWorkspaces(r, convID, perm, policy, workspaceScoped)
+	// AWBWorkspaceAllowed is false for every key when the list is empty, so an
+	// operator who removed the list outright fails closed here too.
+	for _, key := range escalated {
+		if policy.AWBWorkspaceAllowed(key) {
+			liveEscalated = appendWorkspaceKey(liveEscalated, key)
+		}
+	}
+	if len(liveEscalated) == 0 {
+		return workspaces, grantWorkspaces, nil, fault
+	}
+	if fault != nil {
+		if fault.Code != awbWorkspaceScopeEmptyCode {
+			return nil, grantWorkspaces, nil, fault
+		}
+		workspaces = nil
+	}
+	// A fresh slice: on the unscoped path awbGrantWorkspaces returns the
+	// operator's own list, and appending to it would write into the loaded
+	// config. (Escalation is only ever computed for a scoped grant, so that
+	// path is unreachable today — this keeps it unreachable by construction
+	// rather than by argument.)
+	out := append([]string(nil), workspaces...)
+	for _, key := range liveEscalated {
+		out = appendWorkspaceKey(out, key)
+	}
+	return out, grantWorkspaces, liveEscalated, nil
+}
+
+// awbGrantWorkspaces resolves the STANDING half of the workspace set, from the
+// operator's allow-list and the caller's grant scope.
+//
+// It is awbGrantWorkspaces and linearEffectiveTeams that make the two proxies
 // behave alike, and the rules are deliberately identical:
 //
 //   - unscoped grant, operator list  → the operator's list;
@@ -447,7 +527,7 @@ func validateAWBBaseURL(raw string) (string, *proxyFault) {
 // Second, the operator's ceiling intersected over that. Separating the steps
 // puts the two ways an empty result arises on two different paths, so each gets
 // the refusal that names what the operator would actually have to change.
-func awbEffectiveWorkspaces(
+func awbGrantWorkspaces(
 	r *http.Request, convID, perm string, policy config.AWBProxyConfig, workspaceScoped bool,
 ) (workspaces, grantWorkspaces []string, fault *proxyFault) {
 	if !workspaceScoped {
@@ -759,6 +839,11 @@ func (s *awbProxySession) workspaceAllowed(key string) bool {
 // allow-list or the caller's own grant scope — so an agent can tell its human
 // exactly which one to widen rather than guessing from a refusal. The codes are
 // distinct for the same reason.
+//
+// When it is the GRANT that excluded a key the operator does allow, the refusal
+// also names the ad-hoc route out of it (escalateAWBWorkspace), because that is
+// the case where retrying is a reasonable thing for the agent to do rather than
+// a way to pester the human about something the operator already excluded.
 func (s *awbProxySession) requireAllowedWorkspace(key string) *proxyFault {
 	if s.workspaceAllowed(key) {
 		return nil
@@ -768,9 +853,14 @@ func (s *awbProxySession) requireAllowedWorkspace(key string) *proxyFault {
 			"workspace %q is not on the operator's agent.awb_proxy.allowed_workspaces list (allowed: %s)",
 			key, strings.Join(s.policy.AllowedWorkspaces, ", "))
 	}
+	escape := ""
+	if s.policy.AWBWorkspaceAllowed(key) {
+		escape = "; it IS on the operator's agent.awb_proxy.allowed_workspaces list, so retrying with " +
+			"--ask-human asks the operator to approve this one request for it"
+	}
 	return faultf(http.StatusForbidden, awbWorkspaceOutOfScopeCode,
-		"workspace %q is outside this caller's AWB workspace scope (this grant covers: %s)",
-		key, strings.Join(s.grantWorkspaces, ", "))
+		"workspace %q is outside this caller's AWB workspace scope (this grant covers: %s)%s",
+		key, strings.Join(s.grantWorkspaces, ", "), escape)
 }
 
 // enforceIssueWorkspace is the SECOND half of the workspace gate, and the
@@ -1558,10 +1648,10 @@ type awbIdentityResponse struct {
 // else is a fault with a code and a message, and the CLI exits non-zero on it.
 type awbProxyOutcome struct {
 	// Workspaces is the caller's EFFECTIVE workspace set — the operator's
-	// allow-list narrowed by this caller's grant scope — echoed on every
-	// response. It is the single most common thing an agent needs when a call
-	// is refused, and carrying it means the agent does not have to run `whoami`
-	// to find out.
+	// allow-list narrowed by this caller's grant scope, plus any workspace a
+	// human approved ad hoc for this one request — echoed on every response. It
+	// is the single most common thing an agent needs when a call is refused, and
+	// carrying it means the agent does not have to run `whoami` to find out.
 	Workspaces []string `json:"workspaces,omitempty"`
 	// LegacyProjects keeps separately installed older clients fail-safe during
 	// the project-to-workspace transition. Remove after one compatibility cycle.

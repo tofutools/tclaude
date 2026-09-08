@@ -137,9 +137,42 @@ func (w *awbFlow) post(path string, body any) *httptest.ResponseRecorder {
 		agentd.AsAgentPeer(testharness.JSONRequest(w.t, http.MethodPost, path, body), awbProxyTestConv))
 }
 
+// postAsk is post with the --ask-human header the CLI sets, which is what arms
+// the one-request escape hatch out of a workspace-scoped grant.
+func (w *awbFlow) postAsk(path string, body any) *httptest.ResponseRecorder {
+	w.t.Helper()
+	r := testharness.JSONRequest(w.t, http.MethodPost, path, body)
+	r.Header.Set("X-Tclaude-Ask-Human", "30s")
+	return testharness.Serve(w.flow.Mux, agentd.AsAgentPeer(r, awbProxyTestConv))
+}
+
+// armPopup makes the approval popup reachable and returns a counter of how many
+// times it was actually opened, so a test can assert that a workspace the
+// OPERATOR excluded never reaches the human at all.
+func armPopup(t *testing.T, decision bool) func() int32 {
+	t.Helper()
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	calls, restore := agentd.StubCountingApprovalForTest(decision)
+	t.Cleanup(restore)
+	return calls
+}
+
 func (w *awbFlow) grant(slug string) {
 	w.t.Helper()
 	require.NoError(w.t, db.GrantAgentPermission(awbProxyTestConv, slug, "test"))
+}
+
+// setAllowedWorkspaces rewrites the operator's allow-list mid-test, leaving the
+// rest of the awb_proxy block as awbWorld wrote it. It is how a test reaches the
+// window between the daemon's two config reads.
+func (w *awbFlow) setAllowedWorkspaces(keys ...string) {
+	w.t.Helper()
+	cfg, err := config.Load()
+	require.NoError(w.t, err)
+	require.NotNil(w.t, cfg.Agent)
+	require.NotNil(w.t, cfg.Agent.AWBProxy)
+	cfg.Agent.AWBProxy.AllowedWorkspaces = keys
+	require.NoError(w.t, config.Save(cfg))
 }
 
 // grantScoped is the per-agent half of the workspace gate.
@@ -879,7 +912,206 @@ func TestAWBProxy_GrantScopeNarrowsTheOperatorList(t *testing.T) {
 		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
 		assert.Contains(t, res.Body.String(), "workspace_out_of_scope",
 			"the refusal must name the list that actually excluded it")
+		assert.Contains(t, res.Body.String(), "--ask-human",
+			"and it must name the ad-hoc route, since the operator does allow this workspace")
 	})
+}
+
+// --- the ad-hoc --ask-human escape hatch ---
+
+// TestAWBProxy_AskHumanReachesAWorkspaceTheGrantDoesNotCarry is the feature:
+// a workspace-scoped grant bounds what an agent reaches UNATTENDED, and a human
+// at the popup may still let one request cross into another workspace the
+// OPERATOR allows.
+func TestAWBProxy_AskHumanReachesAWorkspaceTheGrantDoesNotCarry(t *testing.T) {
+	popups := armPopup(t, true)
+	w, rec := awbWorld(t, []string{"awb", "web"})
+	w.grantScoped(agentd.PermAWBRead, `{"awb_workspace":["awb"]}`)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, awbIssueJSON("web-a3f9c1", "web")
+	}
+
+	res := w.postAsk("/v1/awb/issue/show", map[string]any{"id": "web-a3f9c1"})
+	out := w.outcome(res)
+	assert.EqualValues(t, 1, popups(), "the human must be asked exactly once")
+	assert.Contains(t, string(out.JSON), "web-a3f9c1")
+	assert.Contains(t, rec.only(t).URL, "web-a3f9c1")
+	assert.Contains(t, out.Workspaces, "web",
+		"the approved workspace joins the effective set for this request")
+
+	t.Run("and the approval buys exactly one request", func(t *testing.T) {
+		rec.reset()
+		res := w.post("/v1/awb/issue/show", map[string]any{"id": "web-a3f9c1"})
+		assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+		assert.False(t, rec.sawAnyCall(), "a later request must be gated afresh")
+	})
+}
+
+// TestAWBProxy_AskHumanDeclinedKeepsTheWorkspaceOut is the other half: the popup
+// is an escape hatch, not a free pass, and a decline reaches no AWB server.
+func TestAWBProxy_AskHumanDeclinedKeepsTheWorkspaceOut(t *testing.T) {
+	popups := armPopup(t, false)
+	w, rec := awbWorld(t, []string{"awb", "web"})
+	w.grantScoped(agentd.PermAWBWrite, `{"awb_workspace":["awb"]}`)
+	w.grant(agentd.PermAWBRead)
+
+	res := w.postAsk("/v1/awb/issue/close", map[string]any{"id": "web-a3f9c1"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.EqualValues(t, 1, popups())
+	assert.False(t, rec.sawAnyCall(), "a declined request must not spend the operator's account")
+}
+
+// TestAWBProxy_AskHumanCannotCrossTheOperatorList is the rule that keeps the
+// escape hatch from becoming a way to widen the operator's own policy: a
+// workspace the operator never allow-listed is refused WITHOUT a popup, so an
+// agent cannot pester the human into authorizing it.
+func TestAWBProxy_AskHumanCannotCrossTheOperatorList(t *testing.T) {
+	popups := armPopup(t, true)
+	w, rec := awbWorld(t, []string{"awb"})
+	w.grantScoped(agentd.PermAWBRead, `{"awb_workspace":["awb"]}`)
+
+	res := w.postAsk("/v1/awb/issue/show", map[string]any{"id": "acquisition-a3f9c1"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "workspace_not_allowed")
+	assert.EqualValues(t, 0, popups(), "the operator's list is decided without asking the human")
+	assert.False(t, rec.sawAnyCall())
+}
+
+// TestAWBProxy_AskHumanWithNoOperatorListIsRefused pins the scope-only posture:
+// with no agent.awb_proxy.allowed_workspaces the operator has said nothing about
+// which workspaces agents may reach, so there is no ceiling to escalate within
+// and the popup is never offered.
+func TestAWBProxy_AskHumanWithNoOperatorListIsRefused(t *testing.T) {
+	popups := armPopup(t, true)
+	w, rec := awbWorld(t, []string{})
+	w.grantScoped(agentd.PermAWBRead, `{"awb_workspace":["awb"]}`)
+
+	res := w.postAsk("/v1/awb/issue/show", map[string]any{"id": "web-a3f9c1"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.EqualValues(t, 0, popups())
+	assert.False(t, rec.sawAnyCall())
+}
+
+// TestAWBProxy_AskHumanCoversOneWorkspacePerRequest is the bound that makes a
+// single popup an honest question.
+//
+// An approval marks the whole request as human-approved for the slug, so a
+// second workspace gate in the same request would pass without ever being
+// shown. A request naming two out-of-scope workspaces is therefore refused
+// before any popup rather than approved by one that could only name one of them.
+func TestAWBProxy_AskHumanCoversOneWorkspacePerRequest(t *testing.T) {
+	popups := armPopup(t, true)
+	w, rec := awbWorld(t, []string{"awb", "web", "docs"})
+	w.grantScoped(agentd.PermAWBRead, `{"awb_workspace":["awb"]}`)
+
+	res := w.postAsk("/v1/awb/issue/list", map[string]any{"workspaces": []string{"web", "docs"}})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "workspace_out_of_scope")
+	assert.EqualValues(t, 0, popups(), "an unanswerable question is not put to the human")
+	assert.False(t, rec.sawAnyCall())
+
+	t.Run("but one of them alone is approvable", func(t *testing.T) {
+		rec.response = func(agentd.AWBProxyRequest) (int, string) { return http.StatusOK, "[]" }
+		res := w.postAsk("/v1/awb/issue/list", map[string]any{"workspaces": []string{"web"}})
+		out := w.outcome(res)
+		assert.EqualValues(t, 1, popups())
+		assert.Equal(t, []string{"awb", "web"}, out.Workspaces,
+			"the echoed effective set carries the approved workspace beside the granted one")
+		assert.Equal(t, []string{"web"}, awbQuery(t, rec.last(t))["workspace"],
+			"and the listing filter is exactly the workspace the human saw")
+	})
+}
+
+// TestAWBProxy_AskHumanRescuesAnEmptyIntersection covers the posture where the
+// standing grant authorizes NOTHING — its scope and the operator's list do not
+// overlap at all — which is a refusal about the grant, not about the request the
+// human just approved.
+func TestAWBProxy_AskHumanRescuesAnEmptyIntersection(t *testing.T) {
+	popups := armPopup(t, true)
+	w, rec := awbWorld(t, []string{"web"})
+	w.grantScoped(agentd.PermAWBRead, `{"awb_workspace":["retired"]}`)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, awbIssueJSON("web-a3f9c1", "web")
+	}
+
+	require.Equal(t, http.StatusForbidden,
+		w.post("/v1/awb/issue/show", map[string]any{"id": "web-a3f9c1"}).Code,
+		"without the header the disjoint scope is still the answer")
+
+	res := w.postAsk("/v1/awb/issue/show", map[string]any{"id": "web-a3f9c1"})
+	out := w.outcome(res)
+	assert.EqualValues(t, 1, popups())
+	assert.Equal(t, []string{"web"}, out.Workspaces)
+}
+
+// TestAWBProxy_AskHumanDoesNotDisturbAnInScopeRequest is the no-op case: an
+// agent that passes --ask-human habitually (the CLI offers it on every verb)
+// must not generate a popup for work its grant already covers.
+func TestAWBProxy_AskHumanDoesNotDisturbAnInScopeRequest(t *testing.T) {
+	popups := armPopup(t, true)
+	w, rec := awbWorld(t, []string{"awb", "web"})
+	w.grantScoped(agentd.PermAWBRead, `{"awb_workspace":["awb"]}`)
+	rec.response = func(agentd.AWBProxyRequest) (int, string) {
+		return http.StatusOK, awbIssueJSON("awb-a3f9c1", "awb")
+	}
+
+	res := w.postAsk("/v1/awb/issue/show", map[string]any{"id": "awb-a3f9c1"})
+	out := w.outcome(res)
+	assert.EqualValues(t, 0, popups(), "a grant that already covers the request decides it")
+	assert.Contains(t, string(out.JSON), "awb-a3f9c1")
+}
+
+// TestAWBProxy_AskHumanDoesNotWidenAnUnscopedGrant pins the other no-op: an
+// UNSCOPED grant already reaches the operator's whole list, so there is nothing
+// above it to escalate to and a workspace off that list stays off it.
+func TestAWBProxy_AskHumanDoesNotWidenAnUnscopedGrant(t *testing.T) {
+	popups := armPopup(t, true)
+	w, rec := awbWorld(t, []string{"awb"})
+	w.grant(agentd.PermAWBRead)
+
+	res := w.postAsk("/v1/awb/issue/show", map[string]any{"id": "web-a3f9c1"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "workspace_not_allowed")
+	assert.EqualValues(t, 0, popups())
+	assert.False(t, rec.sawAnyCall())
+}
+
+// TestAWBProxy_AskHumanRecheckesTheOperatorListAfterTheApproval closes the gap
+// a real popup opens: the operator's list is read once to decide whether to ask
+// and again to build the session, and the human sits between those two reads for
+// as long as they like. An approval for a workspace the operator has since
+// removed must buy nothing — the ceiling that governs is the live one.
+func TestAWBProxy_AskHumanRechecksTheOperatorListAfterTheApproval(t *testing.T) {
+	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
+	w, rec := awbWorld(t, []string{"awb", "web"})
+	w.grantScoped(agentd.PermAWBRead, `{"awb_workspace":["awb"]}`)
+	// The operator narrows the list while the popup is on screen, then approves
+	// the request they had already been asked about.
+	t.Cleanup(agentd.StubApprovalWithSideEffectForTest(true, func() {
+		w.setAllowedWorkspaces("awb")
+	}))
+
+	res := w.postAsk("/v1/awb/issue/show", map[string]any{"id": "web-a3f9c1"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "workspace_not_allowed",
+		"the refusal must name the list as it stands now")
+	assert.False(t, rec.sawAnyCall(),
+		"a stale approval must not spend the operator's account outside their current list")
+}
+
+// TestAWBProxy_AskHumanStillObeysAllowWrite keeps the two ceilings independent:
+// the popup answers "may this agent touch that workspace", never "may agents
+// write at all", which is the operator's agent.awb_proxy.allow_write.
+func TestAWBProxy_AskHumanStillObeysAllowWrite(t *testing.T) {
+	popups := armPopup(t, true)
+	w, rec := awbWorld(t, []string{"awb", "web"})
+	w.grantScoped(agentd.PermAWBWrite, `{"awb_workspace":["awb"]}`)
+
+	res := w.postAsk("/v1/awb/issue/close", map[string]any{"id": "web-a3f9c1"})
+	assert.Equal(t, http.StatusForbidden, res.Code, "body=%s", res.Body.String())
+	assert.Contains(t, res.Body.String(), "allow_write")
+	assert.EqualValues(t, 1, popups(), "the workspace question was answered; the write ceiling is a different one")
+	assert.False(t, rec.sawAnyCall())
 }
 
 // TestAWBProxy_ScopedGrantIsTheWholePolicyWithNoOperatorList mirrors the Linear
