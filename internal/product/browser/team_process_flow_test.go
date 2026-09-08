@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-rod/rod"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/internal/backend/app"
 	"github.com/tofutools/tclaude/internal/backend/host"
@@ -45,6 +46,8 @@ func TestBrowserTeamProcessShowsGuidanceAndRecordsNamedMoves(t *testing.T) {
 	page.MustElementR("#definition-list [data-deployment] p", "phase 1/2: Investigate")
 	page.MustElementR("#definition-list [data-deployment] summary", "Advisory process").MustClick()
 	require.Equal(t, "Record <evidence> literally.", page.MustElement("#definition-list [data-deployment] li pre").MustText())
+	// Settle deployment startup before exercising independent phase changes.
+	require.NoError(t, page.Wait(rod.Eval(`async () => (await api("/v2/teams/deployments")).some(d => d.Deployment.State === "ready")`).ByPromise()))
 	page.MustElementR("#definition-list [data-deployment] button", "^Advance advisory phase$").MustClick()
 	page.MustWait(`() => document.getElementById("editor").open`)
 	page.MustElement("#editor [name=phase]").MustSelect("Review")
