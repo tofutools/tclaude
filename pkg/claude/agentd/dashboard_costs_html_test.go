@@ -177,6 +177,7 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("fill: var(--cost-series-color); stroke: var(--cost-series-color)", "accumulated areas and boundary lines share the series color")
 	must(`.cost-tip-row[class*="cost-series-"] .cost-tip-sw`, "daily hover swatches reuse their series color")
 	must(`.cost-accumulated-tip-row[class*="cost-series-"]`, "accumulated hover rows reuse their series color")
+	must(`.cost-legend-sw[class*="cost-series-"]`, "provider filter swatches reuse their series color")
 	must("!(chart.stacks || []).length", "generic total line is suppressed when colored stack boundaries exist")
 	must("'cost-filter-neutral'", "provider filter avoids a false one-color legend in nested or model modes")
 	must("new ResizeObserver(update)", "accumulated chart tracks its real container width")

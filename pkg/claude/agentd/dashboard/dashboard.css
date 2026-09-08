@@ -3815,6 +3815,7 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   display: inline-block; width: 9px; height: 9px; border-radius: 2px;
   margin-right: 3px; vertical-align: middle;
 }
+.cost-legend-sw[class*="cost-series-"] { background-color: var(--cost-series-color); }
 .cost-filter-neutral { background: #536273; }
 /* Rich hover tooltip: the per-provider split (swatch · name · $) over a
    ruled total. Rows are flex so amounts align to the right edge; the total
