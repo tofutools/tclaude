@@ -537,6 +537,14 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 			recorded.NativeID, _ = readForkReceipt(recorded.ForkReceipt)
 		}
 	}
+	if primary := request.PrimaryContext; primary != nil {
+		if primary.Binding.Namespace != NativeNamespace || uuid.Validate(primary.Binding.Reference) != nil || primary.ProviderOrder == "" {
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
+		}
+		recorded.NativeID = primary.Binding.Reference
+		recorded.ContextReady = primary.Readiness == model.ContextReadinessReady
+		recorded.ProviderOrder = primary.ProviderOrder
+	}
 	var terminal *host.Terminal
 	if recorded.Terminal != nil {
 		terminal, err = host.RecoverTerminal(p.terminal, *recorded.Terminal)

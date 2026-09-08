@@ -14,7 +14,7 @@ import (
 
 func TestImportedAgentDisplayLabelsRemainLiteralWithoutAuthority(t *testing.T) {
 	bundle := buildFixture(t, fixtureOptions{})
-	alterFixture(t, bundle, `ALTER TABLE agent_group_members ADD COLUMN descr TEXT; UPDATE agent_group_members SET role='engineer',descr='literal <b>description</b>';`)
+	alterFixture(t, bundle, `ALTER TABLE agent_group_members ADD COLUMN descr TEXT; UPDATE agent_conversations SET role='head'; UPDATE agent_group_members SET role='engineer',descr='literal <b>description</b>';`)
 	ctx := context.Background()
 	destination := filepath.Join(t.TempDir(), "target.sqlite")
 	_, err := ImportSnapshot(ctx, bundle, ImportOptions{DestinationPath: destination})
@@ -35,9 +35,9 @@ func TestImportedAgentDisplayLabelsRemainLiteralWithoutAuthority(t *testing.T) {
 	require.True(t, repeated.Repeated)
 }
 
-func TestImportedAgentLabelsKeepDistinctMembershipsAndCurrentConversation(t *testing.T) {
+func TestImportedAgentLabelsKeepDistinctMembershipsWithoutGenerationLabels(t *testing.T) {
 	bundle := buildFixture(t, fixtureOptions{})
-	alterFixture(t, bundle, `ALTER TABLE agent_group_members ADD COLUMN descr TEXT;
+	alterFixture(t, bundle, `ALTER TABLE agent_group_members ADD COLUMN descr TEXT; UPDATE agent_conversations SET role='head';
  UPDATE agent_group_members SET role='reviewer',descr='First team';
  INSERT INTO agent_groups(id,name,owner_scopes_json) VALUES('2','second','[]');
  INSERT INTO agent_group_members(group_id,agent_id,role,descr,joined_at) VALUES('2','agt_fixture','author','Second team',2);`)
@@ -52,7 +52,7 @@ func TestImportedAgentLabelsKeepDistinctMembershipsAndCurrentConversation(t *tes
 	require.NoError(t, err)
 	require.Len(t, snapshot.Agents, 1)
 	labels := snapshot.Agents[0].Labels
-	require.Equal(t, "engineer", labels.Role, "current conversation role remains the ungrouped display fallback")
+	require.Empty(t, labels.Role, "conversation head/generation metadata is not a display role")
 	require.Len(t, labels.Groups, 2)
 	for _, group := range snapshot.Groups {
 		expected := model.AgentDisplayLabels{Role: "reviewer", Description: "First team"}
