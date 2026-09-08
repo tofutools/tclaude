@@ -37,6 +37,8 @@ export async function openProcessMonitor(id, {api, el, button, openDecisions}) {
     const run = result.run, node = run.graph.Nodes.find(n => n.ID === selected);
     if (!node) {
       detail.append(el('h3', 'Run details'), el('p', 'Select a node to inspect every activation, attempt, decision and evidence record.'));
+      if(run.graph.Description) detail.append(el('h4','Description'),el('pre',run.graph.Description));
+      if(run.graph.Doc) detail.append(el('h4','Documentation'),el('pre',run.graph.Doc));
       for (const ref of run.definition_closure || []) detail.append(el('p', `Pinned ${ref.DefinitionID} · ${ref.RevisionID}`));
       detail.append(el('p', `Deadline ${new Date(run.deadline).toLocaleString()}`)); return;
     }

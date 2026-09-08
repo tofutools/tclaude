@@ -1316,6 +1316,12 @@ func (s *Service) ListOccurrences(ctx context.Context, req ListOccurrencesReques
 func validateParameters(parameters []model.ParameterDeclaration) error {
 	seen := make(map[string]bool, len(parameters))
 	for _, parameter := range parameters {
+		if len(parameter.DisplayName) > 200 || !utf8.ValidString(parameter.DisplayName) || strings.ContainsRune(parameter.DisplayName, 0) || parameter.DisplayName != strings.TrimSpace(parameter.DisplayName) {
+			return fail(ErrInvalid, "parameter display name requires bounded valid text")
+		}
+		if err := validateProcessProse(parameter.Description, parameter.Doc); err != nil {
+			return err
+		}
 		if strings.TrimSpace(parameter.Name) == "" || seen[parameter.Name] {
 			return fail(ErrInvalid, "parameter names must be non-empty and unique")
 		}
@@ -1520,6 +1526,9 @@ func validateTeam(team model.TeamDefinition) error {
 }
 
 func validateWorkGraph(graph model.WorkGraph) error {
+	if err := validateProcessProse(graph.Description, graph.Doc); err != nil {
+		return err
+	}
 	if graph.CompilerVersion == "" || graph.EntryNodeID == "" || len(graph.Nodes) == 0 || len(graph.Nodes) > maxGraphNodes {
 		return fail(ErrInvalid, "bounded graph, compiler version and entry node are required")
 	}
@@ -1647,8 +1656,8 @@ func validateWorkNode(node model.WorkNode) error {
 	if err := validateCaptureNames(node); err != nil {
 		return err
 	}
-	if len(node.Description) > 16<<10 || len(node.Doc) > 64<<10 || !utf8.ValidString(node.Description) || !utf8.ValidString(node.Doc) || strings.ContainsRune(node.Description, 0) || strings.ContainsRune(node.Doc, 0) {
-		return fail(ErrInvalid, "node notes require valid text: description at most 16 KiB and documentation at most 64 KiB")
+	if err := validateProcessProse(node.Description, node.Doc); err != nil {
+		return err
 	}
 	switch node.Kind {
 	case model.WorkNodeTask:
@@ -1891,4 +1900,11 @@ func cloneRawMap(source map[string]json.RawMessage) map[string]json.RawMessage {
 		result[key] = append(json.RawMessage(nil), value...)
 	}
 	return result
+}
+
+func validateProcessProse(description, doc string) error {
+	if len(description) > 16<<10 || len(doc) > 64<<10 || !utf8.ValidString(description) || !utf8.ValidString(doc) || strings.ContainsRune(description, 0) || strings.ContainsRune(doc, 0) {
+		return fail(ErrInvalid, "process notes require valid text: description at most 16 KiB and documentation at most 64 KiB")
+	}
+	return nil
 }

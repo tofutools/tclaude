@@ -37,7 +37,7 @@ class ProcessEditor {
     const palette = element('div'); palette.className = 'process-toolbar'; palette.setAttribute('aria-label', 'Node palette');
     for (const kind of ['task', 'decision', 'fork', 'join', 'wait', 'end']) palette.append(action('Add ' + kind, () => this.add(kind)));
     palette.append(action('Saved snippets', () => this.snippets()), action('Copy nodes', () => this.copy()), action('Paste nodes', () => this.paste()), action('Delete selected', () => this.remove()),
-      action('Parameters', () => this.parameters()), action('Outcome', () => this.outcome()), action('Source', () => this.source()));
+      action('Overview', () => this.overview()), action('Parameters', () => this.parameters()), action('Outcome', () => this.outcome()), action('Source', () => this.source()));
     this.entry = element('select'); this.entry.setAttribute('aria-label', 'Entry node'); this.entry.onchange = () => this.change(draft => { draft.Process.Graph.EntryNodeID = this.entry.value; });
     const label = element('label', 'Entry'); label.append(this.entry); palette.append(label);
     const body = element('div'); body.className = 'process-editor-body';
@@ -318,6 +318,11 @@ class ProcessEditor {
       for (const edge of this.clipboard.edges) d.Process.Graph.Edges.push({...edge, From: ids.get(edge.From), To: ids.get(edge.To)});
     });
   }
+  overview() {
+    if(!this.discardUnapplied()) return;
+    const graph=this.model.value.Process.Graph;
+    this.form('Process overview', [{name:'description',label:'Process description',multiline:true,value:graph.Description||''},{name:'doc',label:'Process documentation',multiline:true,value:graph.Doc||''}], f=>this.change(d=>{for(const [key,value] of [['Description',f.description],['Doc',f.doc]]){if(value)d.Process.Graph[key]=value;else delete d.Process.Graph[key];}}));
+  }
   parameters() {
     if (!this.discardUnapplied()) return;
     this.inspector.replaceChildren(element('h3', 'Parameters'));
@@ -330,10 +335,12 @@ class ProcessEditor {
     this.form('Parameter', [{name: 'name', label: 'Parameter name', value: parameter?.Name, required: true},
       {name: 'type', label: 'Parameter type', options: ['string', 'number', 'boolean', 'object', 'array'].map(v => option(v)), value: parameter?.Type || 'string'},
       {name: 'required', label: 'Required parameter', type: 'checkbox', value: parameter?.Required},
+      {name: 'display_name', label: 'Display name (optional)', value: parameter?.DisplayName},
       {name: 'description', label: 'Description', value: parameter?.Description},
+      {name: 'doc', label: 'Parameter documentation', multiline:true, value: parameter?.Doc},
       {name: 'default', label: 'Default value (JSON, optional)', value: parameter?.Default === undefined ? '' : JSON.stringify(parameter.Default)}], f => {
         if (this.model.value.Parameters.some(p => p.Name === f.name && p.Name !== parameter?.Name)) throw new Error('Parameter names must be unique.');
-        const p = {Name: f.name, Type: f.type, Required: f.required, Description: f.description}; if (f.default.trim()) p.Default = JSON.parse(f.default);
+        const p = {Name: f.name, Type: f.type, Required: f.required, Description: f.description}; if(f.display_name)p.DisplayName=f.display_name;if(f.doc)p.Doc=f.doc; if (f.default.trim()) p.Default = JSON.parse(f.default);
         this.change(d => { const index = d.Parameters.findIndex(p => p.Name === parameter?.Name); if (index < 0) d.Parameters.push(p); else d.Parameters[index] = p; }); this.parameters();
       });
   }

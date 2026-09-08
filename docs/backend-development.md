@@ -1293,3 +1293,14 @@ As in the legacy engine, runtime production of captures is unavailable. Starting
 Task performers and plan/check/review performers can retain a contact cadence, positive contact budget, and escalation target. Cadence uses a positive Go duration such as `30m`; budgets are 1–10000 and escalation targets are bounded nonempty text. Changing performer kind retains an applied schedule. Clearing all three fields removes it in a new revision.
 
 These settings preserve the legacy authoring contract. They do not create notification jobs or grant authority to the named target. As in the legacy engine, starting a process with a contact schedule is explicitly unsupported, including schedules on nested task stages. The editor explains this before execution.
+
+### Process overview and parameter help
+
+The process editor's Overview action authors the process description and longer
+plain-text documentation. Both are saved in the immutable graph revision and
+remain visible when starting and inspecting that pinned process. Process and
+team parameters can also carry an optional display name and documentation.
+Changing the display name leaves the parameter's exact input key unchanged;
+launch and deployment forms submit values under that key. Documentation is
+rendered as literal text, including markup-like content. Empty optional prose
+fields are omitted from persisted JSON.
