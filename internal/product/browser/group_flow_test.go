@@ -34,6 +34,7 @@ func TestBrowserEditsGroupMembershipOrderAndBoundedOwner(t *testing.T) {
 	page.MustElement("#editor [name=members]").MustSelect("gamma")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
+	page.MustWait(`() => !submitting`)
 	page.MustElementR("#group-management button", "^Change owner$").MustClick()
 	page.MustElement("#editor [name=owner]").MustSelect("alpha")
 	page.MustElement("#editor [name=configuration]").MustSelect("Allow only the complete lists below")
@@ -46,6 +47,7 @@ func TestBrowserEditsGroupMembershipOrderAndBoundedOwner(t *testing.T) {
 	page.MustElement("#editor [name=models]").MustInput("fixture")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
+	page.MustWait(`() => !submitting`)
 	var authority app.AuthorityStateResult
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/authority", nil, &authority))
 	require.Len(t, authority.Assignments, 1)
@@ -54,6 +56,7 @@ func TestBrowserEditsGroupMembershipOrderAndBoundedOwner(t *testing.T) {
 	require.Equal(t, "codex", page.MustElement("#editor [name=harnesses]").MustProperty("value").Str())
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
+	page.MustWait(`() => !submitting`)
 	page.MustElementR("#group-management .row button", "^Move down$").MustClick()
 	var snapshot struct {
 		Groups []model.Group `json:"groups"`
