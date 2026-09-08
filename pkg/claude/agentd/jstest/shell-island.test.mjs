@@ -66,6 +66,9 @@ test('Copilot header selector switches percentage, what-if cost, and AIC', async
 
   const label = mounted.container.querySelector('.usrc');
   assert.equal(label.tagName, 'SPAN', 'provider label is descriptive text, not a second toggle');
+  const selectorSlot = mounted.container.querySelector('.usage-unit-switch-slot');
+  assert.equal(selectorSlot.nextElementSibling, label,
+    'display-mode selector occupies the aligned gutter immediately before the provider label');
   const buttons = () => [...mounted.container.querySelectorAll('.usage-unit-switch button')];
   assert.match(mounted.container.textContent, /38%/);
   await harness.act(() => buttons()[1].click());

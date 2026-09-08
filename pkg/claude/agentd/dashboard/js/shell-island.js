@@ -61,12 +61,14 @@ function Usage({ state }) {
     <span id="usage" class=${`meta${view.multiline ? ' multiline' : ''}`} title=${view.title}>
       ${view.lines.map((line) => view.multiline ? html`
         <span key=${line.key} class="uline">
+          <span class="usage-unit-switch-slot">
+            ${line.modes?.length ? html`<span class="usage-unit-switch" role="group" aria-label=${`${line.label.replace(':', '')} usage units`}>
+              ${line.modes.map((mode) => html`<button type="button" class=${line.mode === mode ? 'active' : ''}
+                aria-pressed=${line.mode === mode} onClick=${() => setMode(line.key, mode)}>${mode === 'usage' ? '%' : mode === 'cost' ? '≈$' : 'AIC'}</button>`)}
+            </span>` : null}
+          </span>
           <span class="usrc">${line.label}</span>
           ${line.tokens.map((token) => html`<${UsageToken} key=${token.key} token=${token} />`)}
-          ${line.modes?.length ? html`<span class="usage-unit-switch" role="group" aria-label=${`${line.label.replace(':', '')} usage units`}>
-            ${line.modes.map((mode) => html`<button type="button" class=${line.mode === mode ? 'active' : ''}
-              aria-pressed=${line.mode === mode} onClick=${() => setMode(line.key, mode)}>${mode === 'usage' ? '%' : mode === 'cost' ? '≈$' : 'AIC'}</button>`)}
-          </span>` : null}
         </span>
       ` : line.tokens.map((token) => html`<${UsageToken} key=${token.key} token=${token} />`))}
     </span>

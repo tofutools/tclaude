@@ -3305,13 +3305,17 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 #usage .ucost { cursor: pointer; }
 #usage .ucost:hover .ucost-amt { text-decoration: underline; }
 #usage .uunits strong { color: #c9d1d9; font-weight: 600; }
+#usage .usage-unit-switch-slot {
+  display: inline-flex; justify-content: flex-end; align-items: center;
+  width: 9ch; flex: 0 0 9ch;
+}
 #usage .usage-unit-switch {
-  display: inline-flex; padding: 1px; border: 1px solid #2a3340;
+  display: inline-flex; padding: 0; border: 1px solid #2a3340;
   border-radius: 4px; background: #0d1117;
 }
 #usage .usage-unit-switch button {
-  padding: 1px 5px; border: 0; border-radius: 3px; background: transparent;
-  color: #8b949e; font: inherit; cursor: pointer;
+  padding: 0 4px; border: 0; border-radius: 3px; background: transparent;
+  color: #8b949e; font: inherit; line-height: 11px; cursor: pointer;
 }
 #usage .usage-unit-switch button.active { color: #c9d1d9; background: #263446; }
 /* Two-line Claude/Codex layout (when Codex usage is present): stack the
