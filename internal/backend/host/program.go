@@ -350,7 +350,7 @@ func (r *programRuntime) ObserveProgram(context.Context) (ports.ProgramObservati
 	if r.process != nil {
 		observed := r.process.Observe()
 		switch {
-		case observed.Running:
+		case observed.Running || observed.Reaping:
 			result.Workload = ports.WorkloadRunning
 		case observed.Exited:
 			result.Workload, result.ExitCode = ports.WorkloadExited, observed.ExitCode
@@ -412,7 +412,7 @@ func (r *programRuntime) ReleaseProgramResources(_ context.Context, evidence mod
 	if evidence.Provider != r.envelope.Provider || evidence.Version != r.envelope.Version || !bytes.Equal(evidence.Payload, r.envelope.Payload) {
 		return fmt.Errorf("program cleanup evidence does not match runtime")
 	}
-	if r.process != nil && r.process.Observe().Running {
+	if r.process != nil && (r.process.Observe().Running || r.process.Observe().Reaping) {
 		return fmt.Errorf("cannot release resources for a running program")
 	}
 	stdoutPending, stdoutErr := outputPending(r.stdoutSpooler, r.stdout)
@@ -789,7 +789,7 @@ func observeOutputPending(observe func() ProcessObservation, output *boundedOutp
 		return false, fmt.Errorf("program output spooler completion is unprovable")
 	}
 	observation := observe()
-	if observation.Running {
+	if observation.Running || observation.Reaping {
 		return true, nil
 	}
 	// Completion may have been published between the first marker read and

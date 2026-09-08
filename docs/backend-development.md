@@ -1385,11 +1385,25 @@ node names; a missing question retains the node-name fallback. Parameter keys in
 this syntax begin with a letter or underscore and contain letters, digits and
 underscores. An undeclared reference is rejected before saving or starting.
 
+Legacy compound-task escalation loops can be authored and retained without
+starting them. A failure route (`fail`, `failed`, `failure`, or `error`) may
+enter a dedicated human decision with exactly `retry` back to that task and
+`cancel` to a cancelled end. It cannot be the entry or receive another source.
+Only this retry edge is exempt from ordinary acyclic validation and appears as
+a dashed return. All authored edges survive save/reopen and copy/export.
+
+Compilation records that authoring-only declaration separately from its DAG;
+clients cannot supply compiled escalation metadata. Starting any revision with
+such a loop is explicitly refused before work admission, including an older
+pinned revision. This matches the legacy runtime's unsupported-loop boundary;
+ordinary task retry budgets and blocked-work resolution remain executable.
+
 ### Human task answer vocabulary
 
 Human task performers, including plan/check/review stages, can author ordered `Choices` and an exact `ChoiceOutcomes` mapping to `pass` or `fail`. Each single-line, trimmed, case-insensitively unique answer requires one mapping; empty vocabulary retains the existing `complete`/`reject` answers. The editor uses matching answer/outcome lines, and immutable revisions, copies and exports retain them.
 
 Decision windows offer the admitted answers. Settlement uses the attempt's retained mapping: `pass` follows ordinary `complete` success and `fail` follows ordinary `reject` routing and retry policy. Submitted labels remain in decision evidence. Labels such as `cancel` or `waive` have only their mapped task outcome; they cannot activate separate cancellation or waiver behavior. Decision-node answer routing and current audience authority are unchanged.
+
 Process connector labels support Automatic, Always show, and Hide unless selected
 in the connection inspector. Automatic uses the graph renderer's outcome rules;
 selected connections remain readable. The preference belongs to editor layout
@@ -1411,6 +1425,10 @@ Starting any pinned revision containing one is refused before work admission;
 the runtime does not silently replace the requested policy with ordinary plan
 rework. Clear the declaration to use the existing executable approval workflow.
 
+Approval retry attempt counts retain the positive signed 64-bit authoring range.
+The API emits exact decimal strings and accepts both integer and string JSON
+input, so browser editing preserves values above JavaScript's safe integer range.
+
 ### Retry modes and independent stage policies
 
 Retry policies retain optional `OnFail` as `fresh-attempt` or
@@ -1425,3 +1443,5 @@ is refused before creating work, including a pinned older revision after the
 latest draft clears it. Clear independent check/review retries to retain the
 existing shared work budget; choose fresh attempts for executable task or plan
 retries. No unsupported declaration is silently ignored.
+
+Automation occurrence retries do not accept process-only retry modes.

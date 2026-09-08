@@ -149,6 +149,8 @@ type ProcessDefinition struct {
 }
 
 type WorkGraph struct {
+	// EscalationRetries records authoring-only loops removed from the compiled DAG.
+	EscalationRetries []WorkEdge `json:",omitempty"`
 	// ProgramActivationTimeouts pins effective activation budgets on admitted graphs only.
 	ProgramActivationTimeouts map[WorkNodeID]time.Duration `json:",omitempty"`
 	Description               string                       `json:",omitempty"`
@@ -205,7 +207,7 @@ type TaskStages struct {
 
 // ApprovalRetryPolicy retains authoring intent; approval retry execution is unsupported.
 type ApprovalRetryPolicy struct {
-	MaxAttempts uint32
+	MaxAttempts ApprovalRetryAttempts
 	Backoff     string
 	OnFail      string
 }

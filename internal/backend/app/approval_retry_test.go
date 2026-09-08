@@ -20,7 +20,7 @@ func TestApprovalRetryAuthoringRetainsPolicyAndRefusesExecution(t *testing.T) {
 	require.NoError(t, err)
 	service := app.New(store, providers.NewRegistry())
 	graph := stagedHumanGraph()
-	policy := &model.ApprovalRetryPolicy{MaxAttempts: 3, Backoff: " 30s ", OnFail: "feedback-same-session"}
+	policy := &model.ApprovalRetryPolicy{MaxAttempts: 9223372036854775807, Backoff: " 30s ", OnFail: "feedback-same-session"}
 	graph.Nodes[0].Stages.Plan.ApprovalRetry = policy
 	draft := app.DefinitionDraft{ID: "approval_retry", RevisionID: "approval_retry_v1", Name: "Approval retry", Kind: model.DefinitionProcess, SchemaVersion: 1, Source: "kind: process", Process: &model.ProcessDefinition{Graph: graph}}
 	saved, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "save"}, Draft: draft})
@@ -63,6 +63,7 @@ func TestApprovalRetryRejectsInvalidOrOrphanPolicies(t *testing.T) {
 		alter func(*model.WorkGraph)
 	}{
 		{"zero", func(g *model.WorkGraph) { g.Nodes[0].Stages.Plan.ApprovalRetry.MaxAttempts = 0 }},
+		{"negative", func(g *model.WorkGraph) { g.Nodes[0].Stages.Plan.ApprovalRetry.MaxAttempts = -1 }},
 		{"negative delay", func(g *model.WorkGraph) { g.Nodes[0].Stages.Plan.ApprovalRetry.Backoff = "-1s" }},
 		{"zero delay", func(g *model.WorkGraph) { g.Nodes[0].Stages.Plan.ApprovalRetry.Backoff = "0s" }},
 		{"invalid mode", func(g *model.WorkGraph) { g.Nodes[0].Stages.Plan.ApprovalRetry.OnFail = "retry" }},
@@ -79,8 +80,11 @@ func TestApprovalRetryRejectsInvalidOrOrphanPolicies(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			g := stagedHumanGraph()
 			g.Nodes[0].Stages.Plan.ApprovalRetry = &model.ApprovalRetryPolicy{MaxAttempts: 2}
+			draft := app.DefinitionDraft{ID: "policy", RevisionID: "policy_v1", Name: "Policy", Kind: model.DefinitionProcess, SchemaVersion: 1, Source: "kind: process", Process: &model.ProcessDefinition{Graph: g}}
+			_, err := service.ValidateDefinition(ctx, app.ValidateDefinitionRequest{Principal: model.OperatorPrincipal(), Draft: draft})
+			require.NoError(t, err, "the unmodified policy must reach successful validation")
 			test.alter(&g)
-			_, err := service.ValidateDefinition(ctx, app.ValidateDefinitionRequest{Principal: model.OperatorPrincipal(), Draft: app.DefinitionDraft{ID: "policy", RevisionID: "policy_v1", Name: "Policy", Kind: model.DefinitionProcess, SchemaVersion: 1, Process: &model.ProcessDefinition{Graph: g}}})
+			_, err = service.ValidateDefinition(ctx, app.ValidateDefinitionRequest{Principal: model.OperatorPrincipal(), Draft: draft})
 			require.ErrorIs(t, err, app.ErrInvalid)
 		})
 	}
