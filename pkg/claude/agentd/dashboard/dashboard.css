@@ -3565,10 +3565,13 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   border: 1px solid #31517a; border-radius: 5px; background: #142033;
   color: #c9d1d9; cursor: pointer; list-style: none;
 }
-.cost-filter-menu > summary::before { content: none; }
-.cost-filter-menu > summary::after { content: "⌄"; color: #79c0ff; }
+.cost-filter-menu > summary::marker { content: ""; }
+.cost-filter-menu > summary::-webkit-details-marker { display: none; }
+details.cost-filter-menu > summary::before,
+details.cost-filter-menu[open] > summary::before { content: none; }
+.cost-filter-menu > summary::after { content: "▸"; color: #79c0ff; }
 .cost-filter-menu[open] > summary { border-color: #58a6ff; background: #182b43; }
-.cost-filter-menu[open] > summary::after { content: "⌃"; }
+.cost-filter-menu[open] > summary::after { content: "▾"; }
 .cost-filter-menu > summary strong { color: #79c0ff; }
 .cost-filter-menu > summary span { color: #aab4bf; font-variant-numeric: tabular-nums; }
 .cost-filter-popover {
