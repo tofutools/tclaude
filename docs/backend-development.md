@@ -1801,3 +1801,7 @@ Configuration profiles retain the v1 default display role and agent description.
 ### Team and cloned member label scope
 
 Team deployment and group cloning place the member's display role and description on the new group membership. The same agent does not acquire those labels in unrelated groups, and removing the membership ends their lifetime. Team blueprints author a display pair for the future member, rather than overrides for existing group IDs.
+
+### Reusable role guidance
+
+The role library retains a description and startup brief alongside its permission actions, matching the v1 reusable role concept. Roles may contain guidance without granting any actions. The editor saves and reopens both fields; role briefs retain v1 line-ending normalization and the 16 KiB bound. Team deployment includes each selected role's brief in a `## Role` startup section and records the selected guidance with the deployment so delayed starts and retries retain the admitted text. Editing a library role affects subsequent deployments, while permission actions retain their existing live assignment behavior.

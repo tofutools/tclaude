@@ -127,12 +127,14 @@ func (id RoleID) Validate() error { return ValidateStableID("role id", string(id
 const GroupOwnerRole RoleID = "group_owner"
 
 type Role struct {
-	ID        RoleID
-	Name      string
-	Actions   []Action
-	Revision  Revision
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	Description string `json:",omitempty"`
+	Brief       string `json:",omitempty"`
+	ID          RoleID
+	Name        string
+	Actions     []Action
+	Revision    Revision
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
 }
 
 type RoleAssignment struct {

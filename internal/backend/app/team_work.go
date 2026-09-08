@@ -200,7 +200,7 @@ func (s *Service) teamRoleAdmissions(ctx context.Context, principal model.Princi
 		if !ok {
 			return nil, nil, fail(ErrInvalid, "team role %s does not exist", id)
 		}
-		pins = append(pins, model.TeamRolePin{RoleID: id, Revision: role.Revision, Actions: append([]model.Action(nil), role.Actions...)})
+		pins = append(pins, model.TeamRolePin{Brief: role.Brief, RoleID: id, Revision: role.Revision, Actions: append([]model.Action(nil), role.Actions...)})
 		agents := append([]model.AgentID(nil), members[id]...)
 		sort.Slice(agents, func(i, j int) bool { return agents[i] < agents[j] })
 		for i, agentID := range agents {
@@ -387,6 +387,18 @@ func teamDeploymentGraph(team model.TeamDefinition, deployment model.TeamDeploym
 			for _, item := range team.Briefings {
 				if item.Timing == model.BriefingBeforeFirstWork && slices.Contains(teamBriefRecipients(team, item), key) {
 					brief = strings.TrimSpace(brief + "\n\n" + item.Body)
+				}
+			}
+			for _, member := range team.Members {
+				if member.Key != key {
+					continue
+				}
+				for _, id := range member.Roles {
+					for _, role := range deployment.RolePins {
+						if role.RoleID == id && strings.TrimSpace(role.Brief) != "" {
+							brief = strings.TrimSpace(brief + "\n\n## Role\n\n" + strings.TrimSpace(role.Brief))
+						}
+					}
 				}
 			}
 			if process := teamProcessBrief(team); process != "" {
