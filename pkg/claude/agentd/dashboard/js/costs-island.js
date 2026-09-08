@@ -1,5 +1,5 @@
 import { Fragment, h, render } from 'preact';
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import htm from 'htm';
 import { AsyncLoadState } from './async-load-state.js';
 import { CostsChart } from './costs-chart.js';
@@ -111,11 +111,59 @@ function closeSiblingFilters(event) {
   });
 }
 
+const COST_FILTER_EDGE = 8;
+const COST_FILTER_GAP = 5;
+
+export function positionCostFilter(menu) {
+  if (!menu || (!menu.open && !menu.hasAttribute('open'))) return;
+  const summary = menu.querySelector(':scope > summary');
+  const popover = menu.querySelector(':scope > .cost-filter-popover');
+  if (!summary || !popover) return;
+  popover.style.visibility = 'hidden';
+  const trigger = summary.getBoundingClientRect();
+  const panel = popover.getBoundingClientRect();
+  const viewportWidth = Number(window.innerWidth) || 1024;
+  const viewportHeight = Number(window.innerHeight) || 768;
+  const fallbackWidth = popover.classList.contains('model') ? 560
+    : popover.classList.contains('breakdown') ? 390 : 370;
+  const width = panel.width || popover.offsetWidth || Math.min(fallbackWidth, viewportWidth - 16);
+  const height = panel.height || popover.offsetHeight || 0;
+  let left = trigger.left;
+  if (left + width > viewportWidth - COST_FILTER_EDGE) left = trigger.right - width;
+  left = Math.max(COST_FILTER_EDGE, Math.min(left, viewportWidth - COST_FILTER_EDGE - width));
+  let top = trigger.bottom + COST_FILTER_GAP;
+  if (top + height > viewportHeight - COST_FILTER_EDGE
+      && trigger.top - COST_FILTER_GAP - height >= COST_FILTER_EDGE) {
+    top = trigger.top - COST_FILTER_GAP - height;
+  }
+  top = Math.max(COST_FILTER_EDGE, Math.min(top, viewportHeight - COST_FILTER_EDGE - height));
+  popover.style.left = `${left}px`;
+  popover.style.top = `${top}px`;
+  popover.style.visibility = 'visible';
+}
+
+function toggleCostFilter(event) {
+  const menu = event.currentTarget;
+  const popover = menu.querySelector(':scope > .cost-filter-popover');
+  if (!menu.open && !menu.hasAttribute('open')) {
+    if (popover) popover.style.visibility = 'hidden';
+    return;
+  }
+  positionCostFilter(menu);
+}
+
+function useCostFilterPosition() {
+  const menu = useRef(null);
+  useLayoutEffect(() => positionCostFilter(menu.current));
+  return menu;
+}
+
 function ProviderFilter({ state, current }) {
+  const menu = useCostFilterPosition();
   if (current.providers.length <= 1) return null;
   const selectedCost = current.providerStats.reduce((sum, entry) => sum
     + (current.selectedProviders.has(entry.provider) ? entry.cost : 0), 0);
-  return html`<details id="filter-costs-providers" class="cost-filter-menu">
+  return html`<details ref=${menu} id="filter-costs-providers" class="cost-filter-menu" onToggle=${toggleCostFilter}>
     <summary onClick=${closeSiblingFilters}><strong>Providers</strong><span>${current.selectedProviders.size} of ${current.providers.length} · ${fmtUSD(selectedCost)}</span></summary>
     <div class="cost-filter-popover provider" role="group" aria-label="Cost providers">
       <div class="cost-filter-popover-head"><strong>Providers</strong><span>cost share · agents</span></div>
@@ -141,11 +189,12 @@ function ProviderFilter({ state, current }) {
 
 function ModelFilter({ state, current }) {
   const [query, setQuery] = useState('');
+  const menu = useCostFilterPosition();
   if (current.models.length <= 1) return null;
   const available = current.modelStats.filter((entry) => entry.available);
   const selectedCount = available.filter((entry) => current.selectedModels.has(entry.model)).length;
   const filtered = current.modelStats.filter((entry) => entry.model.toLowerCase().includes(query.trim().toLowerCase()));
-  return html`<details id="filter-costs-models" class="cost-filter-menu models">
+  return html`<details ref=${menu} id="filter-costs-models" class="cost-filter-menu models" onToggle=${toggleCostFilter}>
     <summary onClick=${closeSiblingFilters}><strong>Models</strong><span>${selectedCount} of ${available.length} · ${Math.round(current.modelCoverage * 100)}% spend</span></summary>
     <div class="cost-filter-popover model" role="group" aria-label="Cost models"
       title="Cost is grouped by the last model recorded for each agent-day slice.">
@@ -175,9 +224,10 @@ function ModelFilter({ state, current }) {
 }
 
 function BreakdownFilter({ state, current }) {
+  const menu = useCostFilterPosition();
   const modes = [current.stackByProvider && 'Provider', current.stackByModel && 'Model'].filter(Boolean);
   const label = modes.length ? modes.join(' + ') : 'Total';
-  return html`<details id="filter-costs-breakdown" class="cost-filter-menu breakdown">
+  return html`<details ref=${menu} id="filter-costs-breakdown" class="cost-filter-menu breakdown" onToggle=${toggleCostFilter}>
     <summary onClick=${closeSiblingFilters}><strong>Breakdown</strong><span>${label}</span></summary>
     <div class="cost-filter-popover breakdown" role="group" aria-label="Cost chart breakdown">
       <div class="cost-filter-popover-head"><strong>Chart breakdown</strong><span>affects both graphs</span></div>
@@ -205,11 +255,17 @@ function CostFilters({ state, current }) {
       document.querySelectorAll('.cost-filter-menu[open]').forEach((menu) => { menu.open = false; });
     };
     const escape = (event) => { if (event.key === 'Escape') close(event); };
+    const reposition = () => document.querySelectorAll('.cost-filter-menu[open]')
+      .forEach((menu) => positionCostFilter(menu));
     document.addEventListener('pointerdown', close);
     document.addEventListener('keydown', escape);
+    window.addEventListener?.('resize', reposition);
+    window.addEventListener?.('scroll', reposition, true);
     return () => {
       document.removeEventListener('pointerdown', close);
       document.removeEventListener('keydown', escape);
+      window.removeEventListener?.('resize', reposition);
+      window.removeEventListener?.('scroll', reposition, true);
     };
   }, []);
   return html`<div class="filter-bar costs-dimension-filters" aria-label="Cost dimensions">

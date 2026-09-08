@@ -18,7 +18,7 @@ function payload(title = 'Alpha') {
 
 test('Costs island renders controls and preserves keyed table focus/selection across refreshes', async (t) => {
   const harness = await createPreactHarness(t);
-  const [{ createCostsState }, { CostsApp }] = await Promise.all([
+  const [{ createCostsState }, { CostsApp, positionCostFilter }] = await Promise.all([
     harness.importDashboardModule('js/costs-state.js'), harness.importDashboardModule('js/costs-island.js'),
   ]);
   const snapshot = harness.signals.signal({ cost_tab_visible: true, cost_tab_whatif: false });
@@ -66,6 +66,39 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
     'provider-only filter swatches share the chart series palette');
   assert.match(modelMenu.querySelector('summary').textContent, /2 of 2 · 100% spend/,
     'model summary shows selected coverage and spend share');
+  const providerSummary = providerMenu.querySelector('summary');
+  const providerPopover = providerMenu.querySelector('.cost-filter-popover');
+  const viewportWidth = harness.window.innerWidth || 1024;
+  Object.defineProperty(providerSummary, 'getBoundingClientRect', { value: () => ({
+    left: viewportWidth - 120, right: viewportWidth - 20, top: 100, bottom: 130,
+  }) });
+  Object.defineProperty(providerPopover, 'getBoundingClientRect', { value: () => ({ width: 370, height: 200 }) });
+  providerMenu.setAttribute('open', '');
+  positionCostFilter(providerMenu);
+  assert.equal(providerPopover.style.left, `${viewportWidth - 390}px`,
+    'an open filter stays attached to its right-edge trigger instead of reflowing the selector row');
+  assert.equal(providerPopover.style.top, '135px');
+  providerMenu.removeAttribute('open');
+
+  const modelSummary = modelMenu.querySelector('summary');
+  const modelPopover = modelMenu.querySelector('.cost-filter-popover');
+  let modelPanelHeight = 300;
+  Object.defineProperty(modelSummary, 'getBoundingClientRect', { value: () => ({
+    left: 300, right: 500, top: 600, bottom: 630,
+  }) });
+  Object.defineProperty(modelPopover, 'getBoundingClientRect', { value: () => ({
+    width: 500, height: modelPanelHeight,
+  }) });
+  modelMenu.setAttribute('open', '');
+  positionCostFilter(modelMenu);
+  assert.equal(modelPopover.style.top, '295px', 'a tall panel flips above its trigger');
+  modelPanelHeight = 60;
+  await harness.input(modelMenu.querySelector('input[type="search"]'), 'gpt');
+  assert.equal(modelPopover.style.top, '635px',
+    'a content resize repositions an open panel against the same trigger');
+  modelPanelHeight = 300;
+  await harness.input(modelMenu.querySelector('input[type="search"]'), '');
+  modelMenu.removeAttribute('open');
   const breakdownMenu = mounted.container.querySelector('#filter-costs-breakdown');
   assert.match(breakdownMenu.querySelector('summary').textContent, /Provider/,
     'provider breakdown is the legible default');
@@ -119,11 +152,17 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   assert.ok(accumulatedHoverTarget, 'the full accumulated plot is one continuous hover target');
   assert.equal(mounted.container.querySelectorAll('.cost-accumulated-line').length, 0,
     'the generic total line does not paint over colored stack boundaries');
-  await harness.act(() => harness.fireEvent(accumulatedHoverTarget, 'mousemove', { clientX: 0 }));
+  await harness.act(() => harness.fireEvent(accumulatedHoverTarget, 'mousemove', { clientX: 0, clientY: 40 }));
   assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /recorded/);
-  await harness.act(() => harness.fireEvent(accumulatedHoverTarget, 'pointerdown', { clientX: 1000 }));
+  const recordedTipLeft = mounted.container.querySelector('.cost-accumulated-tip-panel').style.left;
+  const recordedTipTop = mounted.container.querySelector('.cost-accumulated-tip-panel').style.top;
+  await harness.act(() => harness.fireEvent(accumulatedHoverTarget, 'pointerdown', { clientX: 1000, clientY: 80 }));
   assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /projection/);
   const accumulatedTip = mounted.container.querySelector('.cost-accumulated-tip-panel');
+  assert.notEqual(accumulatedTip.style.left, recordedTipLeft,
+    'the popover follows the pointer while the highlighted value snaps to a date');
+  assert.notEqual(accumulatedTip.style.top, recordedTipTop,
+    'the popover follows the pointer vertically too');
   assert.ok(accumulatedTip.querySelectorAll('.cost-accumulated-tip-sw').length >= 2,
     'accumulated breakdown text includes a color key for its series');
   assert.ok(accumulatedTip.querySelector('.cost-accumulated-tip-row[class*="cost-series-"]'),
