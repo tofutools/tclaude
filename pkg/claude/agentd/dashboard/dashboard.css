@@ -3788,7 +3788,11 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-seg-m2 { --cost-model-color: color-mix(in srgb, var(--cost-seg-color), #647fba 34%); }
 .cost-seg-m3 { --cost-model-color: color-mix(in srgb, var(--cost-seg-color), black 28%); }
 .cost-seg.cost-seg-m0, .cost-seg.cost-seg-m1,
-.cost-seg.cost-seg-m2, .cost-seg.cost-seg-m3 { background-color: var(--cost-model-color); }
+.cost-seg.cost-seg-m2, .cost-seg.cost-seg-m3,
+.cost-tip-row .cost-tip-sw.cost-seg-m0, .cost-tip-row .cost-tip-sw.cost-seg-m1,
+.cost-tip-row .cost-tip-sw.cost-seg-m2, .cost-tip-row .cost-tip-sw.cost-seg-m3 {
+  background-color: var(--cost-model-color);
+}
 .cost-seg-whatif {
   background-image: repeating-linear-gradient(
     135deg, transparent 0, transparent 3px,
@@ -16422,7 +16426,11 @@ body.wizard .cost-seg-h5 { --cost-seg-color: #cf6f6f; background: linear-gradien
 body.wizard .cost-seg.cost-seg-m0,
 body.wizard .cost-seg.cost-seg-m1,
 body.wizard .cost-seg.cost-seg-m2,
-body.wizard .cost-seg.cost-seg-m3 {
+body.wizard .cost-seg.cost-seg-m3,
+body.wizard .cost-tip-row .cost-tip-sw.cost-seg-m0,
+body.wizard .cost-tip-row .cost-tip-sw.cost-seg-m1,
+body.wizard .cost-tip-row .cost-tip-sw.cost-seg-m2,
+body.wizard .cost-tip-row .cost-tip-sw.cost-seg-m3 {
   background: linear-gradient(180deg,
     color-mix(in srgb, var(--cost-model-color), white 20%),
     color-mix(in srgb, var(--cost-model-color), black 18%));

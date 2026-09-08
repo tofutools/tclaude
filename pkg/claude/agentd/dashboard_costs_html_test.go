@@ -175,6 +175,7 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("Projected splits use the recorded mix", "projection breakdown semantics are explained in the menu")
 	must("--cost-model-color: color-mix", "nested models use visibly distinct shades within provider color families")
 	must("fill: var(--cost-model-color)", "accumulated stacks reuse the same distinct model shades")
+	must(".cost-tip-row .cost-tip-sw.cost-seg-m0", "nested hover swatches reuse their model segment shade")
 	must("new ResizeObserver(update)", "accumulated chart tracks its real container width")
 	must("cost-accumulated-line${segment.projected ? ' projected' : ''}", "projection uses a distinct accumulated-line segment")
 	must("cost-accumulated-hit", "recorded and projected accumulated lines expose generous hover targets")
