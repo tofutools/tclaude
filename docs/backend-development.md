@@ -1828,3 +1828,13 @@ the selected deployment workspace. Archived or missing selected profiles fail
 before workspace preparation. The editor previews the current profile and
 retains the separate custom/copy workflow. Partial field overrides and portable
 v1 registry import are subsequent compatibility work, not implemented here.
+
+### Per-member saved-profile overrides
+
+Team members using a saved configuration may override harness, model, effort,
+approval or confinement independently. Only checked fields are stored as
+`Overrides`; unchecked fields continue following the current saved profile.
+An explicit empty effort clears the inherited effort. Switching harness drops
+an inherited foreign model/effort and provider-specific startup context unless
+the member authors replacement model/effort values. Custom/copy members retain
+their existing concrete settings. No permissions are granted by these choices.

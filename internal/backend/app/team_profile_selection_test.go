@@ -23,10 +23,13 @@ func TestTeamSavedProfileFollowsEditsForNewDeploymentAndRetainsRetry(t *testing.
 	defer func() { require.NoError(t, store.Close()) }()
 	service := app.New(store, providers.NewRegistry(&preparedWorkProvider{}))
 	op := model.OperatorPrincipal()
-	profileRequest := app.SaveConfigurationProfileRequest{Context: app.RequestContext{Principal: op, RequestID: "profile_one"}, ID: "worker", RevisionID: "one", Name: "Worker", Desired: model.DesiredConfiguration{Harness: "prepared-work", Model: "first", WorkingDirectory: t.TempDir(), Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}, Startup: &model.ProfileStartup{Context: "Original profile context", InitialMessage: "Original instruction"}}
+	profileRequest := app.SaveConfigurationProfileRequest{Context: app.RequestContext{Principal: op, RequestID: "profile_one"}, ID: "worker", RevisionID: "one", Name: "Worker", Desired: model.DesiredConfiguration{Harness: "prepared-work", Model: "first", Effort: "low", WorkingDirectory: t.TempDir(), Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}, Startup: &model.ProfileStartup{Context: "Original profile context", InitialMessage: "Original instruction"}}
 	profile, err := service.SaveConfigurationProfile(ctx, profileRequest)
 	require.NoError(t, err)
 	team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{{Key: "worker", Name: "Worker", ProfileID: "worker"}}, Waves: []model.TeamWave{{ID: "initial", MemberKeys: []string{"worker"}}}}
+	overrideModel, clearEffort := "custom", ""
+	team.Members = append(team.Members, model.TeamMemberSpec{Key: "custom", Name: "Custom", ProfileID: "worker", Overrides: &model.TeamProfileOverrides{Model: &overrideModel, Effort: &clearEffort}})
+	team.Waves[0].MemberKeys = append(team.Waves[0].MemberKeys, "custom")
 	draft := app.DefinitionDraft{ID: "team", RevisionID: "team_v1", Name: "Team", Source: "profile fixture", Kind: model.DefinitionTeam, SchemaVersion: 1, Team: &team}
 	saved, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: op, RequestID: "save_team"}, Draft: draft})
 	require.NoError(t, err)
@@ -41,6 +44,7 @@ func TestTeamSavedProfileFollowsEditsForNewDeploymentAndRetainsRetry(t *testing.
 			profileRequest.RevisionID = "two"
 			profileRequest.ExpectedRevision = profile.Profile.Revision
 			profileRequest.Desired.Model = "second"
+			profileRequest.Desired.Effort = "high"
 			profileRequest.Startup = &model.ProfileStartup{Context: "Updated profile context"}
 			_, err = service.SaveConfigurationProfile(ctx, profileRequest)
 			require.NoError(t, err)
@@ -58,6 +62,11 @@ func TestTeamSavedProfileFollowsEditsForNewDeploymentAndRetainsRetry(t *testing.
 		agent, err := store.Agent(ctx, deployed.Deployment.Members["worker"])
 		require.NoError(t, err)
 		require.Equal(t, version, agent.Desired.Model)
+		require.Equal(t, profileRequest.Desired.Effort, agent.Desired.Effort)
+		custom, err := store.Agent(ctx, deployed.Deployment.Members["custom"])
+		require.NoError(t, err)
+		require.Equal(t, "custom", custom.Desired.Model)
+		require.Empty(t, custom.Desired.Effort)
 		require.Equal(t, cwd, agent.Desired.WorkingDirectory)
 		require.Equal(t, *profileRequest.Startup, deployed.Deployment.MemberStartups["worker"])
 		work, err := store.WorkRun(ctx, deployed.Deployment.WorkRunID)
