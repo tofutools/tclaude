@@ -130,3 +130,7 @@ func (p *SandboxLaunchPreparer) Prepare(ctx context.Context, selected model.Sand
 func (p *SandboxLaunchPreparer) Invocation(artifact SandboxChildArtifact) (ProcessSpec, error) {
 	return artifact.Invocation(p.config.Bootstrap)
 }
+
+// BootstrapExecutable identifies the shipped launcher for provider child modes
+// that must remain inside the same confinement as the terminal they replace.
+func (p *SandboxLaunchPreparer) BootstrapExecutable() string { return p.config.Bootstrap }

@@ -95,6 +95,7 @@ func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p
 func (p *Provider) History() ports.HistoryReader                      { return historyReader{provider: p} }
 
 type evidence struct {
+	ForkReceipt           string                           `json:"fork_receipt,omitempty"`
 	HostSandbox           *host.SandboxChildArtifact       `json:"host_sandbox,omitempty"`
 	HostSandboxPolicyHash string                           `json:"host_sandbox_policy_hash,omitempty"`
 	ExecutionID           string                           `json:"execution_id"`
@@ -112,6 +113,7 @@ type evidence struct {
 }
 
 type prepared struct {
+	forkReceipt     string
 	artifact        *host.SandboxChildArtifact
 	command         host.ProcessSpec
 	provider        *Provider
@@ -137,9 +139,6 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if request.Spec.HostSandbox != nil {
 		if p.hostSandbox == nil || request.HostSandboxPolicy == nil {
 			return nil, fmt.Errorf("selected host sandbox preparation is unavailable")
-		}
-		if request.Intent == ports.StartFork {
-			return nil, fmt.Errorf("selected host sandbox requires confined Codex turn-fork preparation")
 		}
 	}
 	request.Spec.HostSandbox = model.CloneSandboxSelection(request.Spec.HostSandbox)
@@ -369,6 +368,9 @@ func (p *prepared) Abort(ctx context.Context) error {
 	if err == nil && p.artifact != nil {
 		err = errors.Join(err, os.RemoveAll(filepath.Dir(p.artifact.Path)))
 	}
+	if err == nil && p.forkReceipt != "" {
+		err = os.RemoveAll(filepath.Dir(p.forkReceipt))
+	}
 	err = errors.Join(err, p.spool.Remove())
 	if p.callback != nil {
 		err = errors.Join(err, p.callback.Remove(ctx))
@@ -407,13 +409,20 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 		if _, verifyErr := verifyHistorySelection(*p.request.History, token); verifyErr != nil {
 			return ports.ReleaseResult{}, verifyErr
 		}
-		forkedID, forkErr := p.provider.turnForker.Fork(ctx, TurnForkRequest{StateRoot: p.stateRoot, WorkingDirectory: p.request.Spec.WorkingDirectory, ThreadID: p.nativeID, LastTurnID: p.request.History.Point.Token})
-		if forkErr != nil {
-			return ports.ReleaseResult{}, forkErr
-		}
-		p.nativeID = forkedID
-		if p.normalizer != nil {
-			p.normalizer.Set(forkedID)
+		if p.artifact != nil {
+			// The supervised child forks and execs the TUI under one boundary.
+			// Its receipt supplies the new identity; never report the source
+			// as the conversation owned by this new execution.
+			p.nativeID = ""
+		} else {
+			forkedID, forkErr := p.provider.turnForker.Fork(ctx, TurnForkRequest{StateRoot: p.stateRoot, WorkingDirectory: p.request.Spec.WorkingDirectory, ThreadID: p.nativeID, LastTurnID: p.request.History.Point.Token})
+			if forkErr != nil {
+				return ports.ReleaseResult{}, forkErr
+			}
+			p.nativeID = forkedID
+			if p.normalizer != nil {
+				p.normalizer.Set(forkedID)
+			}
 		}
 	}
 	command := p.command
@@ -490,7 +499,7 @@ func (p *prepared) runtimeEnvironment() []string {
 	return append(p.request.Spec.Environment.Entries(), result...)
 }
 func (p *prepared) runtime(t *host.Terminal) *Runtime {
-	return &Runtime{artifact: p.artifact, policyHash: p.description.HostSandboxPolicyHash, provider: p.provider, executionID: p.request.Spec.ExecutionID, attempt: p.request.Spec.Attempt, terminal: t, nativeID: p.nativeID, intent: p.request.Intent, stateRoot: p.stateRoot, observations: p.request.Observations, access: p.access, spool: p.spool, guidance: p.guidance, callback: p.callback}
+	return &Runtime{forkReceipt: p.forkReceipt, artifact: p.artifact, policyHash: p.description.HostSandboxPolicyHash, provider: p.provider, executionID: p.request.Spec.ExecutionID, attempt: p.request.Spec.Attempt, terminal: t, nativeID: p.nativeID, intent: p.request.Intent, stateRoot: p.stateRoot, observations: p.request.Observations, access: p.access, spool: p.spool, guidance: p.guidance, callback: p.callback}
 }
 
 func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (ports.RecoveryResult, error) {
@@ -510,6 +519,15 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	}
 	if recorded.ExecutionID != string(request.ExecutionID) || filepath.Clean(recorded.StateRoot) != p.nativeHome {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
+	}
+	if recorded.ForkReceipt != "" {
+		root := filepath.Join(p.privateRoot, "fork-results")
+		if recorded.Intent != ports.StartFork || recorded.HostSandbox == nil || !pathWithin(root, recorded.ForkReceipt) {
+			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence}, nil
+		}
+		if recorded.NativeID == "" {
+			recorded.NativeID, _ = readForkReceipt(recorded.ForkReceipt)
+		}
 	}
 	var terminal *host.Terminal
 	if recorded.Terminal != nil {
@@ -562,6 +580,10 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, err
 		}
 		normalizer := newCodexNativeNormalizer(recorded.NativeID)
+		if recorded.ForkReceipt != "" {
+			normalizer.SetForkReceipt(recorded.ForkReceipt)
+			normalizer.Set(recorded.NativeID)
+		}
 		handler := &nativeguidance.CallbackHandler{Normalize: normalizer.Normalize, Encode: encodeCodexGuidance}
 		if err := callback.Register(ctx, request.CallbackIngress, request.ExecutionID, request.Attempt, handler); err != nil {
 			return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, err
@@ -583,12 +605,13 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	} else if request.NativeGuidance != nil {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, nil
 	}
-	r := &Runtime{artifact: recorded.HostSandbox, policyHash: recorded.HostSandboxPolicyHash, provider: p, executionID: request.ExecutionID, attempt: request.Attempt, terminal: terminal, nativeID: recorded.NativeID, intent: recorded.Intent, stateRoot: recorded.StateRoot, observations: request.Observations, access: recorded.Access, spool: spool, contextReady: recorded.ContextReady, providerOrder: recorded.ProviderOrder, guidance: guidance, callback: callback}
+	r := &Runtime{forkReceipt: recorded.ForkReceipt, artifact: recorded.HostSandbox, policyHash: recorded.HostSandboxPolicyHash, provider: p, executionID: request.ExecutionID, attempt: request.Attempt, terminal: terminal, nativeID: recorded.NativeID, intent: recorded.Intent, stateRoot: recorded.StateRoot, observations: request.Observations, access: recorded.Access, spool: spool, contextReady: recorded.ContextReady, providerOrder: recorded.ProviderOrder, guidance: guidance, callback: callback}
 	obs, _ := r.Observe(ctx)
 	return ports.RecoveryResult{State: ports.RecoveryControlled, Runtime: r, Observation: obs, Evidence: request.Evidence, Attempt: request.Attempt, AccessProof: proof}, nil
 }
 
 type Runtime struct {
+	forkReceipt   string
 	artifact      *host.SandboxChildArtifact
 	policyHash    string
 	provider      *Provider
@@ -620,6 +643,7 @@ func (r *Runtime) HandleNativeEvent(ctx context.Context, event ports.NormalizedN
 func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.refreshForkIdentity()
 	observed := r.terminal.Observe()
 	var ingress error
 	if observed.Running {
@@ -696,14 +720,22 @@ func (r *Runtime) providerEvidence() (model.ProviderEvidence, error) {
 	defer r.mu.Unlock()
 	return r.providerEvidenceUnlocked()
 }
+func (r *Runtime) refreshForkIdentity() {
+	if r.forkReceipt != "" && r.nativeID == "" {
+		if id, err := readForkReceipt(r.forkReceipt); err == nil {
+			r.nativeID = id
+		}
+	}
+}
 func (r *Runtime) providerEvidenceUnlocked() (model.ProviderEvidence, error) {
+	r.refreshForkIdentity()
 	id := r.terminal.Identity()
 	var callbackEvidence *nativeguidance.CallbackEvidence
 	if r.callback != nil {
 		value := r.callback.Evidence()
 		callbackEvidence = &value
 	}
-	return encodeEvidence(evidence{HostSandbox: r.artifact, HostSandboxPolicyHash: r.policyHash, ExecutionID: string(r.executionID), NativeID: r.nativeID, Intent: r.intent, StateRoot: r.stateRoot, ContextReady: r.contextReady, ProviderOrder: r.providerOrder, Terminal: &id, Access: r.access, ObservationSpool: r.spool.Directory(), Callback: callbackEvidence})
+	return encodeEvidence(evidence{ForkReceipt: r.forkReceipt, HostSandbox: r.artifact, HostSandboxPolicyHash: r.policyHash, ExecutionID: string(r.executionID), NativeID: r.nativeID, Intent: r.intent, StateRoot: r.stateRoot, ContextReady: r.contextReady, ProviderOrder: r.providerOrder, Terminal: &id, Access: r.access, ObservationSpool: r.spool.Directory(), Callback: callbackEvidence})
 }
 func (r *Runtime) cleanup(ctx context.Context) {
 	r.cleanupOnce.Do(func() {

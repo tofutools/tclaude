@@ -2,10 +2,13 @@ package codex
 
 import (
 	"context"
+	"encoding/json"
+	"os"
 	"path/filepath"
 
 	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/ports"
 )
 
 func (p *prepared) prepareSandbox(ctx context.Context) error {
@@ -31,6 +34,28 @@ func (p *prepared) prepareSandbox(ctx context.Context) error {
 			resources = append(resources, host.SandboxProviderResource{Path: endpoint, Access: model.SandboxFilesystemRead})
 		}
 	}
+	if p.request.Intent == ports.StartFork {
+		root := filepath.Join(p.provider.privateRoot, "fork-results")
+		if err := os.MkdirAll(root, 0700); err != nil {
+			return err
+		}
+		directory, err := os.MkdirTemp(root, "fork-")
+		if err != nil {
+			return err
+		}
+		p.forkReceipt = filepath.Join(directory, "result")
+		launcher := p.provider.hostSandbox.BootstrapExecutable()
+		input := ForkTerminalRequest{Executable: p.provider.executable, Fork: TurnForkRequest{StateRoot: p.stateRoot, WorkingDirectory: p.request.Spec.WorkingDirectory, ThreadID: p.nativeID, LastTurnID: p.request.History.Point.Token}, Args: p.argv(), Receipt: p.forkReceipt}
+		raw, err := json.Marshal(input)
+		if err != nil {
+			return err
+		}
+		p.command.Executable, p.command.Args = launcher, []string{ForkTerminalCommand, string(raw)}
+		resources = append(resources, host.SandboxProviderResource{Path: launcher, Access: model.SandboxFilesystemRead}, host.SandboxProviderResource{Path: directory, Access: model.SandboxFilesystemWrite})
+		if p.normalizer != nil {
+			p.normalizer.SetForkReceipt(p.forkReceipt)
+		}
+	}
 	artifact, err := p.provider.hostSandbox.Prepare(ctx, *p.request.Spec.HostSandbox, *p.request.HostSandboxPolicy, p.command, resources...)
 	if err != nil {
 		return err
@@ -43,6 +68,10 @@ func (p *prepared) prepareSandbox(ctx context.Context) error {
 	recorded, err := decodeEvidence(p.description.Evidence)
 	if err != nil {
 		return err
+	}
+	recorded.ForkReceipt = p.forkReceipt
+	if p.forkReceipt != "" {
+		recorded.NativeID = ""
 	}
 	recorded.HostSandbox = p.artifact
 	recorded.HostSandboxPolicyHash = p.request.Spec.HostSandbox.PolicyHash

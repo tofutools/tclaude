@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -93,12 +94,32 @@ func TestProviderHostSandboxPreparesExactCommandAndRefusesChangedCredentialBefor
 	require.NoError(t, attempt.Abort(ctx))
 	require.NoDirExists(t, filepath.Dir(recorded.HostSandbox.Path))
 	require.DirExists(t, provider.nativeHome)
+	request.Intent = ports.StartFork
+	request.History = sandboxForkHistory(t, provider, workspace)
+	forkAttempt, err := provider.Prepare(ctx, request)
+	require.NoError(t, err)
+	forkEvidence, err := decodeEvidence(forkAttempt.Describe().Evidence)
+	require.NoError(t, err)
+	require.NotEmpty(t, forkEvidence.ForkReceipt)
+	require.NoFileExists(t, forkEvidence.ForkReceipt+".started", "preparation must not run the fork helper")
+	require.NoError(t, host.VerifySandboxChild(ctx, *forkEvidence.HostSandbox))
+	require.NoError(t, forkAttempt.Abort(ctx))
+	require.NoDirExists(t, filepath.Dir(forkEvidence.ForkReceipt))
 }
 
 // A synthetic native executable exercises the production provider, terminal,
 // shipped bootstrap and kernel wrapper. It performs no authenticated native
 // harness work and uses only disposable credentials and directories.
 func TestProviderHostSandboxNativeLaunchAndRecovery(t *testing.T) {
+	for _, fork := range []bool{false, true} {
+		name := "fresh"
+		if fork {
+			name = "fork"
+		}
+		t.Run(name, func(t *testing.T) { testProviderHostSandboxNativeLaunchAndRecovery(t, fork) })
+	}
+}
+func testProviderHostSandboxNativeLaunchAndRecovery(t *testing.T, fork bool) {
 	bootstrap := os.Getenv("TCLAUDE_SANDBOX_BOOTSTRAP")
 	if bootstrap == "" {
 		t.Skip("required native CI provides the shipped bootstrap")
@@ -133,6 +154,16 @@ set -eu
 test -r "$TCLAUDE_NATIVE_CALLBACK_SCRIPT"
 test "$(cat "$TCLAUDE_BACKEND_CREDENTIAL_FILE")" = 'fixture credential'
 if cat "$PRIVATE_SIBLING" >/dev/null 2>&1; then exit 24; fi
+if test "$1" = app-server; then
+ printf helper >> "$WORKSPACE/fork-calls"
+ IFS= read -r initialize
+ printf '%s\n' '{"id":1,"result":{}}'
+ IFS= read -r initialized
+ IFS= read -r fork
+ printf '%s\n' "$fork" > "$WORKSPACE/fork-request"
+ printf '%s\n' '{"id":2,"result":{"thread":{"id":"forked-thread"}}}'
+ exit 0
+fi
 printf '%s\n' "$@" > "$WORKSPACE/args"
 curl --fail --silent --show-error --max-time 5 --unix-socket "$CONTROL_SOCKET" http://fixture/ > "$WORKSPACE/first-response" 2> "$WORKSPACE/client-error"
 printf ready > "$WORKSPACE/ready"
@@ -170,6 +201,11 @@ while IFS= read -r line; do printf '%s\n' "$line" >> "$WORKSPACE/input"; done
 	selected, err := materialized.LaunchSelection()
 	require.NoError(t, err)
 	request := ports.PreparationRequest{NativeGuidance: sandboxGuidance{}, CallbackIngress: sandboxIngress{socket}, HostSandboxPolicy: &materialized, Spec: model.ResolvedExecutionSpec{HostSandbox: &selected, ExecutionID: "native_execution", Attempt: 1, Harness: Name, Model: "fixture", WorkingDirectory: workspace, Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite, Environment: model.Environment{"PRIVATE_SIBLING": sibling, "WORKSPACE": workspace, "CONTROL_SOCKET": socket}}, Intent: ports.StartFresh, InitialInput: &ports.PreparedInitialInput{Body: "first work literal", Correlation: "brief", RequiredBeforeFirstWork: true}, ActionCredential: &ports.ActionCredentialMaterial{ExecutionID: "native_execution", Generation: 1, DeliveryID: "delivery", Secret: []byte("fixture credential"), ExpiresAt: time.Now().Add(time.Hour)}}
+	if fork {
+		request.Intent = ports.StartFork
+		request.History = sandboxForkHistory(t, provider, workspace)
+	}
+
 	prepared, err := provider.Prepare(context.Background(), request)
 	require.NoError(t, err)
 	released, err := prepared.Release(context.Background(), &testPermit{execution: request.Spec.ExecutionID})
@@ -194,6 +230,15 @@ while IFS= read -r line; do printf '%s\n' "$line" >> "$WORKSPACE/input"; done
 	args, err := os.ReadFile(filepath.Join(workspace, "args"))
 	require.NoError(t, err)
 	require.Contains(t, string(args), "first work literal")
+	if fork {
+		require.Contains(t, string(args), "resume\nforked-thread\n")
+		calls, err := os.ReadFile(filepath.Join(workspace, "fork-calls"))
+		require.NoError(t, err)
+		require.Equal(t, "helper", string(calls))
+		forkRequest, err := os.ReadFile(filepath.Join(workspace, "fork-request"))
+		require.NoError(t, err)
+		require.Contains(t, string(forkRequest), `"lastTurnId":"turn-7"`)
+	}
 	recorded, err := decodeEvidence(released.Evidence)
 	require.NoError(t, err)
 	require.NotNil(t, recorded.HostSandbox)
@@ -207,6 +252,12 @@ while IFS= read -r line; do printf '%s\n' "$line" >> "$WORKSPACE/input"; done
 	retained, err := decodeEvidence(evidence)
 	require.NoError(t, err)
 	require.Equal(t, recorded.HostSandbox, retained.HostSandbox)
+	if fork {
+		require.Equal(t, "forked-thread", retained.NativeID)
+		calls, err := os.ReadFile(filepath.Join(workspace, "fork-calls"))
+		require.NoError(t, err)
+		require.Equal(t, "helper", string(calls), "recovery must not repeat the native fork")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_, err = recovered.Runtime.Stop(ctx, ports.StopRequest{Force: true})
@@ -234,3 +285,18 @@ func (c sandboxCallbackCleanup) RegistrationID() string           { return c.reg
 func (c sandboxCallbackCleanup) ExecutionID() model.ExecutionID   { return c.registration.ExecutionID }
 func (c sandboxCallbackCleanup) Attempt() model.AttemptGeneration { return c.registration.Attempt }
 func (sandboxCallbackCleanup) Close(context.Context) error        { return nil }
+
+func sandboxForkHistory(t *testing.T, provider *Provider, workspace string) *ports.HistorySourceSelection {
+	t.Helper()
+	transcript := filepath.Join(provider.nativeHome, "sessions", "rollout-fixture.jsonl")
+	require.NoError(t, os.MkdirAll(filepath.Dir(transcript), 0700))
+	data := "{\"timestamp\":\"2026-09-06T10:00:00Z\",\"type\":\"session_meta\",\"payload\":{\"id\":\"00000000-0000-4000-8000-000000000001\",\"cwd\":" + strconv.Quote(workspace) + "}}\n" +
+		"{\"timestamp\":\"2026-09-06T10:01:00Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-7\"}}\n"
+	require.NoError(t, os.WriteFile(transcript, []byte(data), 0600))
+	discovered, err := provider.History().Discover(context.Background(), ports.HistoryDiscoveryRequest{Scope: ports.HistoryDiscoveryScope{WorkspaceHint: workspace}})
+	require.NoError(t, err)
+	require.Len(t, discovered.Histories, 1)
+	item := discovered.Histories[0]
+	require.Len(t, item.Points, 1)
+	return &ports.HistorySourceSelection{ConversationID: "conversation", Provider: Name, Native: item.Native, SourceToken: item.SourceToken, SourceRevision: item.Coverage.SourceRevision, SourceFingerprint: item.SourceFingerprint, Point: &item.Points[0], Evidence: item.Evidence}
+}
