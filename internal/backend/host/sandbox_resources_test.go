@@ -18,7 +18,7 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
 
-func TestSandboxProviderResourcesStayPrivateAndRetainIdentity(t *testing.T) {
+func TestSandboxDescriptorProviderResourcesStayPrivateAndRetainIdentity(t *testing.T) {
 	root, err := os.MkdirTemp("", "sb-resource-")
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
@@ -47,6 +47,21 @@ func TestSandboxProviderResourcesStayPrivateAndRetainIdentity(t *testing.T) {
 	require.NoError(t, os.WriteFile(resource, []byte("replacement"), 0600))
 	require.ErrorContains(t, VerifySandboxChild(context.Background(), artifact), "identity changed")
 	require.NoFileExists(t, artifact.Path+".started")
+	socketPath := filepath.Join(private, "socket")
+	listener, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	socketArtifact, err := planner.Prepare(context.Background(), selected, materialized, ProcessSpec{Executable: "/bin/sh", Directory: "/", ExactEnvironment: true}, SandboxProviderResource{Path: socketPath, Access: model.SandboxFilesystemRead})
+	require.NoError(t, err)
+	require.NoError(t, VerifySandboxChild(context.Background(), socketArtifact))
+	// Keep the original vnode alive under another name so replacement cannot
+	// reuse its inode. The retained endpoint must never become the new listener.
+	listener.(*net.UnixListener).SetUnlinkOnClose(false)
+	require.NoError(t, os.Rename(socketPath, socketPath+".old"))
+	replacement, err := net.Listen("unix", socketPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = replacement.Close() })
+	require.ErrorContains(t, VerifySandboxChild(context.Background(), socketArtifact), "identity changed")
 }
 
 // This runs in the required native CI slice alongside the original filesystem

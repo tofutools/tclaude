@@ -16,3 +16,8 @@ func openSandboxProviderResource(path, kind string) (*os.File, error) {
 	}
 	return os.NewFile(uintptr(fd), path), nil
 }
+
+func sandboxProviderResourceMatches(file *os.File, _ string, _ string, expected os.FileInfo) (bool, error) {
+	current, err := file.Stat()
+	return err == nil && os.SameFile(expected, current), err
+}

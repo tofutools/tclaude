@@ -83,8 +83,8 @@ func (i *SandboxPathInspector) BindSandboxProviderResources(ctx context.Context,
 			return nil, err
 		}
 		b.files = append(b.files, file)
-		current, err := file.Stat()
-		if err != nil || !os.SameFile(info, current) {
+		same, err := sandboxProviderResourceMatches(file, canonical, kind, info)
+		if err != nil || !same {
 			return nil, fmt.Errorf("sandbox provider resource changed during preparation")
 		}
 		after, err := os.Stat(resource.Path)
