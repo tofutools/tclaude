@@ -514,6 +514,9 @@ const (
 )
 
 type DecisionWindow struct {
+	// SubmittedAnswer is a derived internal read of the durable submission.
+	// It is never accepted from or serialized to a window payload.
+	SubmittedAnswer  *string `json:"-"`
 	ID               DecisionID
 	Kind             DecisionKind
 	SourceRevision   Revision

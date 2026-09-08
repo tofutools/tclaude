@@ -569,6 +569,7 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 		}
 	}
 	graph := *record.Run.Graph
+	possibleEdges := possibleGraphEdges(graph, virtual, record.Decisions, current.Ref, verdict)
 	var activate func(model.WorkNodeID, model.WorkActivationID)
 	activate = func(nodeID model.WorkNodeID, winner model.WorkActivationID) {
 		node := graphNode(graph, nodeID)
@@ -581,12 +582,8 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 					return
 				}
 			}
-			if node.Join.Mode == model.JoinAll {
-				for _, incoming := range incomingNodes(graph, nodeID) {
-					if !nodeConcludedSuccessfully(append(virtual, transition.Activations...), incoming) {
-						return
-					}
-				}
+			if node.Join.Mode == model.JoinAll && !allJoinArrivals(possibleEdges, append(virtual, transition.Activations...), nodeID) {
+				return
 			}
 		}
 		attempt, windows := s.initialActivation(record.Run.ID, record.Run.Scope, node, now, record.Run.Deadline, graph.ProgramActivationTimeouts[node.ID])
@@ -622,6 +619,20 @@ func (s *Service) graphOutcomeTransitionForVerdict(record WorkRunRecord, current
 	}
 	for _, next := range outgoingNodesForVerdict(graph, current.Ref.NodeID, verdict) {
 		activate(next, current.Ref.ActivationID)
+	}
+	// A decision can eliminate the last pending candidate after another branch
+	// already arrived. Reconsider joins even when this transition did not take
+	// a direct edge into them. Each join activates at most once.
+	for {
+		before := len(transition.Activations)
+		for _, node := range graph.Nodes {
+			if node.Kind == model.WorkNodeJoin && node.Join.Mode == model.JoinAll && allJoinArrivals(possibleEdges, append(virtual, transition.Activations...), node.ID) {
+				activate(node.ID, current.Ref.ActivationID)
+			}
+		}
+		if len(transition.Activations) == before {
+			break
+		}
 	}
 	combined := append(virtual, transition.Activations...)
 	hasEnd, hasActive, hasUncertain := false, false, false
@@ -904,16 +915,6 @@ func hasVerdictEdge(graph model.WorkGraph, id model.WorkNodeID, verdict string) 
 		}
 	}
 	return false
-}
-
-func incomingNodes(graph model.WorkGraph, id model.WorkNodeID) []model.WorkNodeID {
-	var result []model.WorkNodeID
-	for _, edge := range graph.Edges {
-		if edge.To == id {
-			result = append(result, edge.From)
-		}
-	}
-	return result
 }
 
 func nodeConcludedSuccessfully(attempts []model.WorkNodeAttempt, nodeID model.WorkNodeID) bool {

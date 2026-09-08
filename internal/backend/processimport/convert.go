@@ -1,6 +1,7 @@
 package processimport
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -78,11 +79,37 @@ func Convert(source string, bindings map[string]Binding) (Converted, error) {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
+	joins := map[string]model.WorkNodeID{}
+	occupied := map[string]bool{}
+	for _, id := range ids {
+		occupied[id] = true
+	}
+	for _, id := range ids {
+		if t.Nodes[id].Join == "" || t.Nodes[id].Type == legacy.NodeTypeStart && id != t.Start {
+			continue
+		}
+		digest := sha256.Sum256([]byte(id))
+		for suffix := 0; ; suffix++ {
+			candidate := fmt.Sprintf("import_join_%x_%d", digest[:12], suffix)
+			if !occupied[candidate] {
+				occupied[candidate] = true
+				joins[id] = model.WorkNodeID(candidate)
+				break
+			}
+		}
+	}
 	for _, id := range ids {
 		n := t.Nodes[id]
 		path := nodePath(id)
-		if n.Join != "" {
-			return Converted{}, fmt.Errorf("%s/join: structural join expansion is required before this source can be converted", path)
+		if joinID, ok := joins[id]; ok {
+			c.Process.Graph.Nodes = append(c.Process.Graph.Nodes, model.WorkNode{ID: joinID, Kind: model.WorkNodeJoin, Name: "Join before " + id, Join: &model.JoinPolicy{Mode: model.JoinMode(n.Join)}})
+			c.Process.Graph.Edges = append(c.Process.Graph.Edges, model.WorkEdge{From: joinID, To: model.WorkNodeID(id)})
+			if t.Layout != nil {
+				if pos, exists := t.Layout.Nodes[id]; exists {
+					c.Layout.Nodes[joinID] = model.EditorPosition{X: pos.X - 160, Y: pos.Y}
+				}
+			}
+			c.Notices = append(c.Notices, path+"/join: represented by an explicit join before the retained node")
 		}
 		if len(n.Metadata) > 0 {
 			c.Notices = append(c.Notices, path+": metadata is retained verbatim in Source; no metadata becomes authority")
@@ -90,7 +117,18 @@ func Convert(source string, bindings map[string]Binding) (Converted, error) {
 		node := model.WorkNode{ID: model.WorkNodeID(id), Name: n.Name, Description: n.Description, Doc: n.Doc, Captures: append([]string(nil), n.Captures...)}
 		switch n.Type {
 		case legacy.NodeTypeStart:
-			node.Kind = model.WorkNodeStart
+			if id == t.Start {
+				node.Kind = model.WorkNodeStart
+			} else {
+				// Legacy start markers may be interior control nodes. Their
+				// join already performs the complete no-op reducer behavior.
+				mode := model.JoinAll
+				if n.Join != "" {
+					mode = model.JoinMode(n.Join)
+				}
+				node.Kind, node.Join = model.WorkNodeJoin, &model.JoinPolicy{Mode: mode}
+				c.Notices = append(c.Notices, path+": interior start control retained as a join with the original identity")
+			}
 		case legacy.NodeTypeEnd:
 			node.Kind = model.WorkNodeEnd
 			outcome := model.WorkOutcomeVerified
@@ -206,7 +244,11 @@ func Convert(source string, bindings map[string]Binding) (Converted, error) {
 				c.Notices = append(c.Notices, path+"/next/"+outcome+": represented as the default route; original spelling remains in Source")
 				verdict = ""
 			}
-			edge := model.WorkEdge{From: node.ID, To: model.WorkNodeID(n.Next[outcome]), Verdict: verdict}
+			target := model.WorkNodeID(n.Next[outcome])
+			if joinID, ok := joins[n.Next[outcome]]; ok {
+				target = joinID
+			}
+			edge := model.WorkEdge{From: node.ID, To: target, Verdict: verdict}
 			c.Process.Graph.Edges = append(c.Process.Graph.Edges, edge)
 			if t.Layout != nil {
 				if label, ok := t.Layout.Edges[id][outcome]; ok && label.Pinned != nil {
