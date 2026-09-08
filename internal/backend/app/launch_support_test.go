@@ -35,7 +35,12 @@ func TestLaunchSupportReadsAdapterContractWithoutPreparationOrStorage(t *testing
 			require.True(t, result.PolicyKnown)
 			require.Equal(t, tc.sandboxes, result.SandboxModes)
 			require.Contains(t, result.SandboxModes, result.DefaultSandbox)
-			require.Equal(t, []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, result.ApprovalModes)
+			expectedApprovals := []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}
+			if tc.provider.Name() == opencode.Name {
+				expectedApprovals = append(expectedApprovals, model.ApprovalDeny)
+			}
+			require.Equal(t, expectedApprovals, result.ApprovalModes)
+			require.Contains(t, result.ApprovalModes, result.DefaultApproval)
 			require.True(t, result.PreparedInitialInput)
 			require.False(t, result.HostSandbox, "unconfigured adapters cannot prepare host sandboxes")
 			result.SandboxModes[0] = "changed"

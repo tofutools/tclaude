@@ -1848,3 +1848,15 @@ with the selected harness, its adapter supplies the native default. The editor
 previews the same adapter declaration. Explicit confinement overrides remain
 intentional and incompatible values fail before deployment effects. No permissions
 are granted by these choices.
+
+### OpenCode unattended approval
+
+OpenCode configurations can select `deny`, alongside supervised and automatic
+approval. This restores v1's unattended approval mode: ordinary reads and the
+audited built-in tool baseline (bash, glob, grep, lsp, task and skill) remain
+available, while edits, web and unknown tool permissions are denied without a
+human prompt. Environment-file reads are denied except `*.env.example`.
+This approval choice does not provide OS confinement; host sandbox profiles
+continue to provide that boundary. Native continuation and recovery reapply the
+selected policy rather than retaining a previous session's automatic grants.
+Other providers do not advertise support for this OpenCode policy.

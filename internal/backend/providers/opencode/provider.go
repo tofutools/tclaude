@@ -178,7 +178,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if err := validateDirectory(request.Spec.WorkingDirectory); err != nil {
 		return nil, err
 	}
-	if request.Spec.Approval != model.ApprovalSupervised && request.Spec.Approval != model.ApprovalAutomatic {
+	if request.Spec.Approval != model.ApprovalSupervised && request.Spec.Approval != model.ApprovalAutomatic && request.Spec.Approval != model.ApprovalDeny {
 		return nil, fmt.Errorf("OpenCode provider does not support approval mode %q", request.Spec.Approval)
 	}
 	if request.Spec.Sandbox != model.SandboxUnconfined {
@@ -1232,6 +1232,17 @@ type permissionRule struct {
 }
 
 func permissionRules(approval model.ApprovalMode, sandbox model.SandboxMode) []permissionRule {
+	if approval == model.ApprovalDeny {
+		// V1's default tool-governance baseline is independent of approval: audited
+		// built-in tools remain allowed, while edit/web and unknown tools do not ask.
+		rules := []permissionRule{{Permission: "*", Pattern: "*", Action: "deny"}, {Permission: "read", Pattern: "*", Action: "allow"}}
+		if sandbox == model.SandboxUnconfined {
+			for _, permission := range []string{"bash", "glob", "grep", "lsp", "task", "skill"} {
+				rules = append(rules, permissionRule{Permission: permission, Pattern: "*", Action: "allow"})
+			}
+		}
+		return append(rules, permissionRule{Permission: "read", Pattern: "*.env", Action: "deny"}, permissionRule{Permission: "read", Pattern: "*.env.*", Action: "deny"}, permissionRule{Permission: "read", Pattern: "*.env.example", Action: "allow"})
+	}
 	action := "ask"
 	if approval == model.ApprovalAutomatic {
 		action = "allow"
@@ -1383,5 +1394,5 @@ var _ ports.PreparedAttempt = (*prepared)(nil)
 var _ ports.Runtime = (*Runtime)(nil)
 
 func supportedLaunchPolicy() ports.PolicyRequirements {
-	return ports.PolicyRequirements{DefaultSandbox: model.SandboxUnconfined, SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxUnconfined}}
+	return ports.PolicyRequirements{DefaultApproval: model.ApprovalDeny, ApprovalDescriptions: map[model.ApprovalMode]string{model.ApprovalDeny: "Deny does not prompt for edits or web access. Reads and audited built-in tools, including bash, remain allowed; OS confinement is separate."}, DefaultSandbox: model.SandboxUnconfined, SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic, model.ApprovalDeny}, SupportedSandbox: []model.SandboxMode{model.SandboxUnconfined}}
 }

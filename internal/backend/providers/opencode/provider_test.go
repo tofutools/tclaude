@@ -359,69 +359,87 @@ func TestOpenCodeForkUseClaimBindsRevisionAndFingerprint(t *testing.T) {
 	require.Error(t, validateHistoryUseClaim(selection))
 }
 
-func TestContinuationReappliesSupervisedApproval(t *testing.T) {
-	root, err := os.MkdirTemp("/tmp", "tclaude-opencode-continuation-")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
-	executable := filepath.Join(root, "opencode-fake")
-	script := "#!/bin/sh\nexec \"$OPENCODE_TEST_BINARY\" -test.run=TestOpenCodeServerHelper -- \"$@\"\n"
-	require.NoError(t, os.WriteFile(executable, []byte(script), 0o700))
-	provider, err := New(Config{Executable: executable, PrivateRoot: root,
-		Environment: []string{"OPENCODE_TEST_BINARY=" + os.Args[0]}})
-	require.NoError(t, err)
+func TestContinuationReappliesApproval(t *testing.T) {
+	for _, approval := range []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalDeny} {
+		t.Run(string(approval), func(t *testing.T) {
+			root, err := os.MkdirTemp("/tmp", "tclaude-opencode-continuation-")
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
+			executable := filepath.Join(root, "opencode-fake")
+			script := "#!/bin/sh\nexec \"$OPENCODE_TEST_BINARY\" -test.run=TestOpenCodeServerHelper -- \"$@\"\n"
+			require.NoError(t, os.WriteFile(executable, []byte(script), 0o700))
+			provider, err := New(Config{Executable: executable, PrivateRoot: root,
+				Environment: []string{"OPENCODE_TEST_BINARY=" + os.Args[0]}})
+			require.NoError(t, err)
 
-	automatic := ports.PreparationRequest{Intent: ports.StartFresh, Observations: &observationSink{}, Spec: model.ResolvedExecutionSpec{
-		ExecutionID: "execution_automatic", Harness: Name, WorkingDirectory: root,
-		Approval: model.ApprovalAutomatic, Sandbox: model.SandboxUnconfined,
-	}}
-	firstPrepared, err := provider.Prepare(context.Background(), automatic)
-	require.NoError(t, err)
-	first, err := firstPrepared.Release(context.Background(), &testPermit{execution: automatic.Spec.ExecutionID, operation: "operation_first"})
-	require.NoError(t, err)
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	_, err = first.Runtime.Stop(ctx, ports.StopRequest{Force: true})
-	cancel()
-	require.NoError(t, err)
+			automatic := ports.PreparationRequest{Intent: ports.StartFresh, Observations: &observationSink{}, Spec: model.ResolvedExecutionSpec{
+				ExecutionID: "execution_automatic", Harness: Name, WorkingDirectory: root,
+				Approval: model.ApprovalAutomatic, Sandbox: model.SandboxUnconfined,
+			}}
+			firstPrepared, err := provider.Prepare(context.Background(), automatic)
+			require.NoError(t, err)
+			first, err := firstPrepared.Release(context.Background(), &testPermit{execution: automatic.Spec.ExecutionID, operation: "operation_first"})
+			require.NoError(t, err)
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_, err = first.Runtime.Stop(ctx, ports.StopRequest{Force: true})
+			cancel()
+			require.NoError(t, err)
 
-	prior, err := decodeEvidence(first.Evidence)
-	require.NoError(t, err)
-	supervised := ports.PreparationRequest{
-		Intent: ports.StartContinue, Observations: &observationSink{},
-		Spec: model.ResolvedExecutionSpec{ExecutionID: "execution_supervised", Harness: Name,
-			WorkingDirectory: root, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined},
-		Continuation:  &model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: "ses_test"},
-		PriorEvidence: first.Evidence,
-	}
-	secondPrepared, err := provider.Prepare(context.Background(), supervised)
-	require.NoError(t, err)
-	description := secondPrepared.Describe()
-	releaseCtx, releaseCancel := context.WithCancel(context.Background())
-	releaseCancel()
-	second, err := secondPrepared.Release(releaseCtx, &testPermit{execution: supervised.Spec.ExecutionID, operation: "operation_second"})
-	require.Error(t, err)
-	require.Equal(t, ports.ReleaseUncertain, second.State)
-	require.NotNil(t, second.Runtime)
-	t.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		defer cancel()
-		_, _ = second.Runtime.Stop(ctx, ports.StopRequest{Force: true})
-	})
+			prior, err := decodeEvidence(first.Evidence)
+			require.NoError(t, err)
+			supervised := ports.PreparationRequest{
+				Intent: ports.StartContinue, Observations: &observationSink{},
+				Spec: model.ResolvedExecutionSpec{ExecutionID: "execution_supervised", Harness: Name,
+					WorkingDirectory: root, Approval: approval, Sandbox: model.SandboxUnconfined},
+				Continuation:  &model.NativeConversationEvidence{Namespace: NativeNamespace, Reference: "ses_test"},
+				PriorEvidence: first.Evidence,
+			}
+			secondPrepared, err := provider.Prepare(context.Background(), supervised)
+			require.NoError(t, err)
+			description := secondPrepared.Describe()
+			releaseCtx, releaseCancel := context.WithCancel(context.Background())
+			releaseCancel()
+			second, err := secondPrepared.Release(releaseCtx, &testPermit{execution: supervised.Spec.ExecutionID, operation: "operation_second"})
+			require.Error(t, err)
+			require.Equal(t, ports.ReleaseUncertain, second.State)
+			require.NotNil(t, second.Runtime)
+			t.Cleanup(func() {
+				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+				defer cancel()
+				_, _ = second.Runtime.Stop(ctx, ports.StopRequest{Force: true})
+			})
 
-	var recovered ports.RecoveryResult
-	require.Eventually(t, func() bool {
-		recovered, err = provider.Recover(context.Background(), ports.RecoveryRequest{
-			ExecutionID: supervised.Spec.ExecutionID, Spec: supervised.Spec, Evidence: description.Evidence, Observations: &observationSink{},
+			var recovered ports.RecoveryResult
+			require.Eventually(t, func() bool {
+				recovered, err = provider.Recover(context.Background(), ports.RecoveryRequest{
+					ExecutionID: supervised.Spec.ExecutionID, Spec: supervised.Spec, Evidence: description.Evidence, Observations: &observationSink{},
+				})
+				return err == nil && recovered.State == ports.RecoveryControlled
+			}, 2*time.Second, 20*time.Millisecond,
+				"prepared continuation recovery must enforce policy before returning controlled: %v", err)
+
+			data, err := os.ReadFile(filepath.Join(prior.StateRoot, "data", "permission.json"))
+			require.NoError(t, err)
+			var rules []permissionRule
+			require.NoError(t, json.Unmarshal(data, &rules))
+			if approval == model.ApprovalSupervised {
+				require.Contains(t, rules, permissionRule{Permission: "bash", Pattern: "*", Action: "ask"})
+				require.NotContains(t, rules, permissionRule{Permission: "bash", Pattern: "*", Action: "allow"})
+			} else {
+				require.Contains(t, rules, permissionRule{Permission: "*", Pattern: "*", Action: "deny"})
+				require.Contains(t, rules, permissionRule{Permission: "read", Pattern: "*", Action: "allow"})
+				require.Contains(t, rules, permissionRule{Permission: "bash", Pattern: "*", Action: "allow"})
+				require.Contains(t, rules, permissionRule{Permission: "read", Pattern: "*.env", Action: "deny"})
+				require.Contains(t, rules, permissionRule{Permission: "read", Pattern: "*.env.example", Action: "allow"})
+				for _, rule := range rules {
+					require.NotEqual(t, "ask", rule.Action)
+					if rule.Permission == "edit" || rule.Permission == "webfetch" || rule.Permission == "websearch" {
+						require.Equal(t, "deny", rule.Action)
+					}
+				}
+			}
 		})
-		return err == nil && recovered.State == ports.RecoveryControlled
-	}, 2*time.Second, 20*time.Millisecond,
-		"prepared continuation recovery must enforce policy before returning controlled: %v", err)
-
-	data, err := os.ReadFile(filepath.Join(prior.StateRoot, "data", "permission.json"))
-	require.NoError(t, err)
-	var rules []permissionRule
-	require.NoError(t, json.Unmarshal(data, &rules))
-	require.Contains(t, rules, permissionRule{Permission: "bash", Pattern: "*", Action: "ask"})
-	require.NotContains(t, rules, permissionRule{Permission: "bash", Pattern: "*", Action: "allow"})
+	}
 }
 
 func TestOpenCodeServerHelper(t *testing.T) {

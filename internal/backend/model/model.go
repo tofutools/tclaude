@@ -112,6 +112,9 @@ type ApprovalMode string
 const (
 	ApprovalSupervised ApprovalMode = "supervised"
 	ApprovalAutomatic  ApprovalMode = "automatic"
+	// ApprovalDeny is the OpenCode unattended approval policy. Its audited tool
+	// baseline remains separate from edit/web approval decisions.
+	ApprovalDeny ApprovalMode = "deny"
 )
 
 type SandboxMode string
