@@ -61,8 +61,6 @@ jobs:
           go build -o "$RUNNER_TEMP/tclaude-agentd" ./cmd/tclaude-agentd
           "$RUNNER_TEMP/tclaude" --help
           "$RUNNER_TEMP/tclaude-agentd" --help
-      - name: Full product race suite
-        run: go test -race ./... -count=1 -timeout 15m
       - name: Require real native sandbox enforcement
         shell: bash
         # The disposable runner grants namespaces to this fixture only. Do not
@@ -74,6 +72,8 @@ jobs:
           else
             TCLAUDE_REQUIRE_SANDBOX_NATIVE=1 "$RUNNER_TEMP/sandbox-native.test" -test.run '^TestSandboxDescriptor' -test.timeout 1m -test.v
           fi
+      - name: Full product race suite
+        run: go test -race ./... -count=1 -timeout 15m
   browser:
     name: Offline browser acceptance
     runs-on: ubuntu-latest
