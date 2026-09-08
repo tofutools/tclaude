@@ -87,3 +87,39 @@ func TestProcessImportProgramMappingPinsLiteralExecutableWithoutEffects(t *testi
 	require.NoError(t, err)
 	require.Empty(t, definitions)
 }
+
+func TestProcessImportHumanPlanApprovalUsesOrdinaryCompilerVocabulary(t *testing.T) {
+	ctx := context.Background()
+	_, service, _ := regressionService(t)
+	source := strings.Replace(importProcessSource, "    next: done", `    plan:
+      id: plan
+      performer:
+        kind: human
+        ask: Prepare plan?
+      approval: human
+    next: done`, 1)
+	inspection, err := service.InspectProcessImport(ctx, model.OperatorPrincipal(), source)
+	require.NoError(t, err)
+	require.False(t, inspection.Diagnostics.HasErrors(), "%+v", inspection.Diagnostics)
+	bindings := map[string]processimport.Binding{}
+	for _, r := range inspection.Requirements {
+		bindings[r.Path] = processimport.Binding{Performer: model.Performer{Kind: model.PerformerHuman, Human: &model.HumanPerformer{Operator: true}}, DecisionTimeout: "1h"}
+	}
+	converted, err := service.ConvertProcessImport(ctx, app.ConvertProcessImportRequest{Principal: model.OperatorPrincipal(), Source: source, ID: "approval_copy", Bindings: bindings})
+	require.NoError(t, err)
+	for _, node := range converted.Draft.Process.Graph.Nodes {
+		if node.ID == "task" {
+			require.Equal(t, []string{"approve", "rework"}, node.Stages.PlanApproval.PermittedAnswers)
+		}
+	}
+}
+
+func TestProcessImportRefusesParameterizedExecutableBeforeProfileLookup(t *testing.T) {
+	ctx := context.Background()
+	_, service, _ := regressionService(t)
+	source := strings.Replace(importProcessSource, "kind: human\n      ask: Approve?\n      prompt: Preserved context", "kind: program\n      run: 'tools/{{ params.tool }}'", 1)
+	source = strings.Replace(source, "start: task", "params:\n  tool:\n    type: string\n    default: check\nstart: task", 1)
+	_, err := service.ConvertProcessImport(ctx, app.ConvertProcessImportRequest{Principal: model.OperatorPrincipal(), Source: source, ID: "program_copy", Bindings: map[string]processimport.Binding{"/nodes/task/performer": {Performer: model.Performer{Kind: model.PerformerProgram, Program: &model.ProgramPerformer{Profile: model.ProgramProfileRef{ProfileID: "absent", RevisionID: "absent", ContentHash: "absent"}}}}}})
+	require.ErrorIs(t, err, app.ErrInvalid)
+	require.ErrorContains(t, err, "parameterized executables")
+}

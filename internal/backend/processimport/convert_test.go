@@ -90,3 +90,12 @@ func TestConversionDoesNotRoundAnUnsupportedEditorNumber(t *testing.T) {
 	_, err = Convert(source, map[string]Binding{"/nodes/task/performer": {Performer: model.Performer{Kind: model.PerformerHuman, Human: &model.HumanPerformer{Operator: true}}}})
 	require.ErrorContains(t, err, "exact editor JSON support")
 }
+
+func TestEditorNumberRoundTripChecksFractionalAndExponentTokens(t *testing.T) {
+	for _, raw := range []string{`0.1234567890123456789`, `1.234567890123456789e-1`, `[0.1234567890123456789]`, `{"nested":9007199254740993}`, `1e-999999`} {
+		require.ErrorContains(t, exactEditorNumbers([]byte(raw)), "exact editor JSON support", raw)
+	}
+	for _, raw := range []string{`0.1`, `1e3`, `1.00`, `0e-999999`, `-0.0`, `{"nested":[0.5,42]}`} {
+		require.NoError(t, exactEditorNumbers([]byte(raw)), raw)
+	}
+}

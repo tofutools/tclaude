@@ -159,7 +159,7 @@ func Convert(source string, bindings map[string]Binding) (Converted, error) {
 							return Converted{}, fmt.Errorf("%s/plan/approval: choose a human audience and positive decision timeout", path)
 						}
 						approval.Question = "Approve the plan?"
-						approval.PermittedAnswers = []string{"approve", "reject"}
+						approval.PermittedAnswers = []string{"approve", "rework"}
 						node.Stages.PlanApproval = &approval
 						if r := n.Plan.ApprovalRetry; r != nil {
 							node.Stages.Plan.ApprovalRetry = &model.ApprovalRetryPolicy{MaxAttempts: model.ApprovalRetryAttempts(r.MaxAttempts), Backoff: r.Backoff, OnFail: r.OnFail}
@@ -315,6 +315,9 @@ func (c *Converted) performer(path string, p legacy.Performer, b Binding) (model
 		}
 		result.Program.Arguments = append([]string(nil), p.Args...)
 		result.Program.Input = nil
+		if len(legacy.ParamReferences(p.Run)) > 0 {
+			return result, fmt.Errorf("%s/run: parameterized executables require explicit runtime binding support before conversion", path)
+		}
 		c.ProgramExecutables[path] = p.Run
 	default:
 		return result, fmt.Errorf("%s: unsupported performer", path)
@@ -440,12 +443,33 @@ func exactEditorNumbers(raw json.RawMessage) error {
 	visit = func(value any) error {
 		switch v := value.(type) {
 		case json.Number:
-			if !strings.ContainsAny(string(v), ".eE") {
-				n, ok := new(big.Int).SetString(string(v), 10)
-				if !ok || n.Abs(n).Cmp(big.NewInt(9007199254740991)) > 0 {
-					return fmt.Errorf("integer requires exact editor JSON support before conversion")
-				}
+			// Compare decimal values after the browser's binary64 round trip,
+			// including fractional/exponent tokens. Bound arbitrary-precision
+			// work before constructing rationals from untrusted source.
+			if len(v) > 4096 {
+				return fmt.Errorf("number requires exact editor JSON support before conversion")
 			}
+			f, err := v.Float64()
+			if err != nil {
+				return fmt.Errorf("number requires exact editor JSON support before conversion")
+			}
+			if f == 0 {
+				mantissa := strings.SplitN(strings.ToLower(string(v)), "e", 2)[0]
+				if strings.Trim(mantissa, "-+0.") != "" {
+					return fmt.Errorf("number requires exact editor JSON support before conversion")
+				}
+				return nil
+			}
+			encoded, err := json.Marshal(f)
+			if err != nil {
+				return fmt.Errorf("number requires exact editor JSON support before conversion")
+			}
+			original, ok := new(big.Rat).SetString(string(v))
+			saved, savedOK := new(big.Rat).SetString(string(encoded))
+			if !ok || !savedOK || original.Cmp(saved) != 0 {
+				return fmt.Errorf("number requires exact editor JSON support before conversion")
+			}
+
 		case []any:
 			for _, item := range v {
 				if err := visit(item); err != nil {
