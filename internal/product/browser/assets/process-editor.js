@@ -300,6 +300,8 @@ class ProcessEditor {
     this.form('Edit connection', [{name: 'verdict', label: 'Answer or outcome (blank for any success)', value: edges[index].Verdict},
       {name:'label_visibility',label:'Connector label',options:[option('auto','Automatic'),option('show','Always show'),option('hide','Hide unless selected')],value:pinned===undefined?'auto':pinned?'show':'hide'}], f => this.change(d => {
         const edge=d.Process.Graph.Edges[index],oldKey=edgeKey(edge);
+        const updated={...edge,Verdict:f.verdict};
+        if(d.Process.Graph.Edges.some((candidate,i)=>i!==index&&edgeKey(candidate)===edgeKey(updated))) throw new Error("That connection already exists. Choose a different answer/outcome.");
         d.EditorLayout.EdgeLabels=(d.EditorLayout.EdgeLabels||[]).filter(label=>edgeKey(label.Edge)!==oldKey);
         edge.Verdict=f.verdict;
         if(f.label_visibility!=='auto')d.EditorLayout.EdgeLabels.push({Edge:clone(edge),Pinned:f.label_visibility==='show'});

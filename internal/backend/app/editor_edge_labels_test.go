@@ -45,6 +45,13 @@ func TestEditorEdgeLabelsPersistWithoutChangingRouting(t *testing.T) {
 		_, err := service.ValidateDefinition(ctx, app.ValidateDefinitionRequest{Principal: model.OperatorPrincipal(), Draft: draft})
 		require.ErrorIs(t, err, app.ErrInvalid)
 	}
+	for _, layout := range []*model.DefinitionEditorLayout{nil, read.Revision.EditorLayout} {
+		draft.EditorLayout = layout
+		draft.Process.Graph.Edges = []model.WorkEdge{edge, edge}
+		_, err = service.ValidateDefinition(ctx, app.ValidateDefinitionRequest{Principal: model.OperatorPrincipal(), Draft: draft})
+		require.ErrorIs(t, err, app.ErrInvalid)
+	}
+	draft.Process.Graph.Edges = []model.WorkEdge{edge}
 	selection := model.ProcessSelection{Version: 1, Positions: map[model.WorkNodeID]model.EditorPosition{}, Nodes: graph.Nodes, Edges: graph.Edges, EdgeLabels: read.Revision.EditorLayout.EdgeLabels}
 	raw, err := json.Marshal(selection)
 	require.NoError(t, err)
@@ -53,6 +60,12 @@ func TestEditorEdgeLabelsPersistWithoutChangingRouting(t *testing.T) {
 	var restored model.ProcessSelection
 	require.NoError(t, json.Unmarshal(canonical, &restored))
 	require.Equal(t, selection.EdgeLabels, restored.EdgeLabels)
+	restored.Edges = append(restored.Edges, restored.Edges[0])
+	restored.EdgeLabels = nil
+	raw, err = json.Marshal(restored)
+	require.NoError(t, err)
+	_, err = app.CanonicalProcessSelection(raw)
+	require.ErrorIs(t, err, app.ErrInvalid)
 	restored.Edges = nil
 	raw, err = json.Marshal(restored)
 	require.NoError(t, err)

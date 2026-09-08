@@ -100,8 +100,11 @@ export function validationMessages(draft) {
   }
   const nodes = new Map(graph.Nodes.map(n => [n.ID, n]));
   if (!nodes.has(graph.EntryNodeID)) messages.push('Choose an entry node.');
-  const incoming = new Map(), outgoing = new Map();
+  const incoming = new Map(), outgoing = new Map(), edgeKeys = new Set();
   for (const edge of graph.Edges || []) {
+    const key = edgeKey(edge);
+    if (edgeKeys.has(key)) messages.push("Duplicate connection: source, destination and answer/outcome must be unique.");
+    edgeKeys.add(key);
     if (!nodes.has(edge.From) || !nodes.has(edge.To) || edge.From === edge.To) messages.push('Connections must join two different existing nodes.');
     const source = nodes.get(edge.From);
     if (source?.Kind === 'decision' && edge.Verdict && !source.Decision.PermittedAnswers.includes(edge.Verdict)) messages.push(`${source.Name || source.ID}: connection answer "${edge.Verdict}" is no longer permitted. Edit or delete that connection.`);

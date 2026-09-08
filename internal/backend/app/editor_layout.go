@@ -29,6 +29,9 @@ func validateEditorLayout(draft DefinitionDraft) error {
 }
 
 func validateEditorEdgeLabels(edges []model.WorkEdge, labels []model.EditorEdgeLabel) error {
+	if err := validateUniqueWorkEdges(edges); err != nil {
+		return err
+	}
 	if len(labels) > len(edges) || len(labels) > 4096 {
 		return fail(ErrInvalid, "too many connector label preferences")
 	}
@@ -42,6 +45,17 @@ func validateEditorEdgeLabels(edges []model.WorkEdge, labels []model.EditorEdgeL
 			return fail(ErrInvalid, "connector label preference requires one exact existing edge")
 		}
 		seen[label.Edge] = true
+	}
+	return nil
+}
+
+func validateUniqueWorkEdges(edges []model.WorkEdge) error {
+	seen := make(map[model.WorkEdge]bool, len(edges))
+	for _, edge := range edges {
+		if seen[edge] {
+			return fail(ErrInvalid, "duplicate source, destination and verdict connection")
+		}
+		seen[edge] = true
 	}
 	return nil
 }
