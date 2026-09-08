@@ -116,7 +116,8 @@ jobs:
           done
       - name: Full product race suite
         if: ${{ !inputs.native_only }}
-        run: go test -race ./... -count=1 -timeout 15m
+        # This is the aggregate per-package budget; individual journey deadlines remain bounded.
+        run: go test -race ./... -count=1 -timeout 30m
   browser:
     if: ${{ !inputs.native_only }}
     name: Offline browser acceptance

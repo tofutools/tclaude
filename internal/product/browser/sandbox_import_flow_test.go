@@ -26,7 +26,7 @@ func TestBrowserImportedSandboxIsAvailableEditableAndDoesNotLaunch(t *testing.T)
 		require.NoError(t, err)
 		_, err = db.Exec(string(schema))
 		require.NoError(t, err)
-		_, err = db.Exec(`INSERT INTO schema_version(version) VALUES(228); INSERT INTO sandbox_profiles(name,filesystem_json,environment_json,created_at,updated_at,network_access,pre_launch_json) VALUES('Retained policy','[]','[{"name":"RETAINED","value":"literal $(never-run)"}]',1700000000,1700000000,'none','[{"name":"setup","script":"exit 91"}]'); INSERT INTO sandbox_profile_global_assignment(id,profile_id,profile_name) SELECT 1,id,name FROM sandbox_profiles;`)
+		_, err = db.Exec(`INSERT INTO schema_version(version) VALUES(228); INSERT INTO sandbox_profiles(name,filesystem_json,environment_json,created_at,updated_at,network_access,pre_launch_json) VALUES('Retained policy','[]','[{"name":"RETAINED","value":"literal $(never-run)"}]',1700000000,1700000000,'none','[{"name":"setup","script":"exit 91"}]'); INSERT INTO sandbox_profile_global_assignment(id,profile_id,profile_name) SELECT 1,id,name FROM sandbox_profiles; INSERT INTO agents(agent_id,current_conv_id,created_at,pending_name,initial_spawn_config,effective_sandbox_config) VALUES('agt_imported','imported-conv',1700000000,'Imported worker','{"harness":"claude","model":"fixture","cwd":"/tmp"}','{"version":7,"profiles_omitted":true,"applied":[]}'); INSERT INTO agent_conversations(conv_id,agent_id,linked_at) VALUES('imported-conv','agt_imported',1700000000);`)
 		require.NoError(t, err)
 		require.NoError(t, db.Close())
 		data, err := os.ReadFile(source)
@@ -87,10 +87,18 @@ func TestBrowserImportedSandboxIsAvailableEditableAndDoesNotLaunch(t *testing.T)
 		require.Equal(t, "closed", read.Revision.Policy.UnixSockets.Mode)
 	}
 	var snapshot struct {
-		Executions []any `json:"executions"`
-		WorkRuns   []any `json:"work_runs"`
+		Agents     []model.Agent `json:"agents"`
+		Executions []any         `json:"executions"`
+		WorkRuns   []any         `json:"work_runs"`
 	}
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/snapshot", nil, &snapshot))
 	require.Empty(t, snapshot.Executions)
 	require.Empty(t, snapshot.WorkRuns)
+	require.Len(t, snapshot.Agents, 1)
+	require.True(t, snapshot.Agents[0].Desired.HostSandbox.OmitProfiles)
+	page.MustElement("[data-tab=groups]").MustClick()
+	page.MustElementR("#roster button", "^Configure$").MustClick()
+	page.MustElement("#editor").MustWaitVisible()
+	require.Equal(t, "Keep profiles omitted", page.MustElement("#editor [name=host_sandbox] option:checked").MustText())
+	page.MustElementR("#editor button", "^Cancel$").MustClick()
 }

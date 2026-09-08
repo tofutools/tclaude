@@ -78,6 +78,9 @@ func Translate(inspection Inspection, plan MigrationPlan, attachments []Attachme
 	if err := t.translateSandboxDefaults(&batch); err != nil {
 		return app.ImportBatch{}, err
 	}
+	if err := t.translateAgentSandboxChoices(&batch); err != nil {
+		return app.ImportBatch{}, err
+	}
 	t.translateConversations(&batch)
 	t.translateAuthoredOrchestration(&batch)
 	t.translateHistoryAndWorkspaces(&batch)
