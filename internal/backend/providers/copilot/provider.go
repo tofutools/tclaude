@@ -19,6 +19,7 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/ports"
+	"github.com/tofutools/tclaude/internal/backend/providers/nativeactivity"
 )
 
 const (
@@ -267,7 +268,8 @@ func (p *Provider) prepareStateRoot(root, cwd string) error {
 	if err := os.Chmod(root, 0o700); err != nil {
 		return err
 	}
-	hooks := map[string]any{"version": 1, "hooks": map[string]any{"sessionStart": []any{map[string]any{"type": "command", "exec": "/bin/sh", "args": []string{"-c", observationCommand}}}}}
+	command := map[string]any{"type": "command", "exec": "/bin/sh", "args": []string{"-c", observationCommand}, "timeoutSec": 2}
+	hooks := map[string]any{"version": 1, "hooks": map[string]any{"sessionStart": []any{command}, "UserPromptSubmit": []any{command}, "Stop": []any{command}, "SessionEnd": []any{command}}}
 	raw, err := json.Marshal(hooks)
 	if err != nil {
 		return err
@@ -427,23 +429,25 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 }
 
 type Runtime struct {
-	artifact      *host.SandboxChildArtifact
-	policyHash    string
-	provider      *Provider
-	executionID   model.ExecutionID
-	attempt       model.AttemptGeneration
-	terminal      *host.Terminal
-	nativeID      string
-	intent        ports.StartIntent
-	stateRoot     string
-	observations  ports.PrimaryObservationSink
-	access        *ports.ActionCredentialReceipt
-	spool         *host.ObservationSpool
-	contextReady  bool
-	providerOrder string
-	cleanupOnce   sync.Once
-	cleanupErr    error
-	mu            sync.Mutex
+	activity       nativeactivity.State
+	activityLoaded bool
+	artifact       *host.SandboxChildArtifact
+	policyHash     string
+	provider       *Provider
+	executionID    model.ExecutionID
+	attempt        model.AttemptGeneration
+	terminal       *host.Terminal
+	nativeID       string
+	intent         ports.StartIntent
+	stateRoot      string
+	observations   ports.PrimaryObservationSink
+	access         *ports.ActionCredentialReceipt
+	spool          *host.ObservationSpool
+	contextReady   bool
+	providerOrder  string
+	cleanupOnce    sync.Once
+	cleanupErr     error
+	mu             sync.Mutex
 }
 
 func (r *Runtime) ExecutionID() model.ExecutionID { return r.executionID }
@@ -459,6 +463,7 @@ func (r *Runtime) Observe(ctx context.Context) (ports.Observation, error) {
 	switch {
 	case observed.Running:
 		out.Workload = ports.WorkloadRunning
+		out.AgentActivity, out.AgentActivityObservedAt = r.activity.Observation()
 		out.AttachmentActive = r.terminal.AttachmentActive()
 		if r.contextReady {
 			out.Context = ports.ContextReady
@@ -479,6 +484,10 @@ func (r *Runtime) Interact(ctx context.Context, in ports.Interaction) (ports.Int
 	defer r.mu.Unlock()
 	if strings.TrimSpace(in.Text) == "" {
 		return ports.InteractionResult{Disposition: ports.EffectRefused}, nil
+	}
+	r.activity.Invalidate()
+	if err := r.checkpointActivity(); err != nil {
+		return ports.InteractionResult{Disposition: ports.EffectRefused}, err
 	}
 	if err := r.terminal.SendLiteral(ctx, in.Text); err != nil {
 		e, _ := r.providerEvidenceUnlocked()
@@ -543,6 +552,8 @@ func (r *Runtime) cleanup(ctx context.Context) {
 }
 
 type sessionStartEvent struct {
+	AgentID            string `json:"agent_id"`
+	CamelAgentID       string `json:"agentId"`
 	SessionID          string `json:"sessionId"`
 	SnakeSessionID     string `json:"session_id"`
 	HookEventName      string `json:"hookEventName"`
@@ -551,8 +562,14 @@ type sessionStartEvent struct {
 }
 
 func (r *Runtime) consumeObservations(ctx context.Context) error {
-	if r.spool == nil || r.observations == nil {
+	if r.spool == nil {
 		return nil
+	}
+	if !r.activityLoaded {
+		if err := r.activity.Restore(r.spool.Directory(), r.nativeID); err != nil {
+			return err
+		}
+		r.activityLoaded = true
 	}
 	events, err := r.spool.ReadPending()
 	if err != nil {
@@ -561,7 +578,7 @@ func (r *Runtime) consumeObservations(ctx context.Context) error {
 	for _, sp := range events {
 		var event sessionStartEvent
 		if json.Unmarshal(sp.Payload, &event) != nil {
-			_ = r.spool.Acknowledge(sp.Order)
+			_ = r.acknowledgeObservation(sp.Order)
 			continue
 		}
 		nativeID := event.SessionID
@@ -572,10 +589,26 @@ func (r *Runtime) consumeObservations(ctx context.Context) error {
 		if hookName == "" {
 			hookName = event.SnakeHookEventName
 		}
-		if (hookName != "" && !strings.EqualFold(hookName, "SessionStart")) || nativeID != r.nativeID {
-			_ = r.spool.Acknowledge(sp.Order)
+		if nativeID != r.nativeID || event.AgentID != "" || event.CamelAgentID != "" {
+			_ = r.acknowledgeObservation(sp.Order)
 			continue
 		}
+		if hookName != "" && !strings.EqualFold(hookName, "SessionStart") {
+			if state, ok := nativeactivity.HookState(hookName); ok {
+				r.activity.Record(state, sp.RecordedAt)
+			}
+			if err := r.acknowledgeObservation(sp.Order); err != nil {
+				return err
+			}
+			continue
+		}
+		if r.observations == nil {
+			if err := r.acknowledgeObservation(sp.Order); err != nil {
+				return err
+			}
+			continue
+		}
+		r.activity.Record(ports.AgentActivityUnknown, sp.RecordedAt)
 		disposition := ports.PrimaryContextUnresolved
 		if !r.contextReady && ((r.intent == ports.StartFresh && (event.Source == "new" || event.Source == "startup")) || (r.intent == ports.StartContinue && event.Source == "resume")) {
 			disposition = ports.PrimaryContextInitial
@@ -585,7 +618,7 @@ func (r *Runtime) consumeObservations(ctx context.Context) error {
 			return err
 		}
 		r.providerOrder = sp.Order
-		if err := r.spool.Acknowledge(sp.Order); err != nil {
+		if err := r.acknowledgeObservation(sp.Order); err != nil {
 			return err
 		}
 		if disposition == ports.PrimaryContextInitial {
@@ -672,4 +705,18 @@ var _ ports.Runtime = (*Runtime)(nil)
 
 func supportedLaunchPolicy() ports.PolicyRequirements {
 	return ports.PolicyRequirements{SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxUnconfined}}
+}
+
+func (r *Runtime) checkpointActivity() error {
+	if r.spool == nil {
+		return nil
+	}
+	return r.activity.Save(r.spool.Directory(), r.nativeID)
+}
+
+func (r *Runtime) acknowledgeObservation(order string) error {
+	if err := r.checkpointActivity(); err != nil {
+		return err
+	}
+	return r.spool.Acknowledge(order)
 }
