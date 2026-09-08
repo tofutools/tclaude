@@ -3305,24 +3305,25 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 #usage .ucost { cursor: pointer; }
 #usage .ucost:hover .ucost-amt { text-decoration: underline; }
 #usage .uunits strong { color: #c9d1d9; font-weight: 600; }
+#usage .usage-source {
+  display: grid; grid-template-columns: calc(6ch + 14px) 14ch;
+  column-gap: 4px; align-items: center;
+}
 #usage .usage-unit-switch-slot {
-  display: inline-flex; justify-content: flex-end; align-items: center;
-  /* Widest selector: "%" + "≈$" + "AIC" = 6ch, plus three buttons' 24px
-     horizontal padding and the switch's 2px border. */
-  width: calc(6ch + 26px); flex: 0 0 calc(6ch + 26px);
+  display: inline-flex; align-items: center; width: 100%;
 }
 #usage .usage-unit-switch {
-  display: inline-flex; padding: 0; border: 1px solid #2a3340;
+  display: inline-flex; width: 100%; padding: 0; border: 1px solid #2a3340;
   border-radius: 4px; background: #0d1117;
 }
 #usage .usage-unit-switch button {
-  padding: 0 4px; border: 0; border-radius: 3px; background: transparent;
+  flex: 1 1 auto; padding: 0 2px; border: 0; border-radius: 3px; background: transparent;
   color: #8b949e; font: inherit; line-height: 11px; cursor: pointer;
 }
 #usage .usage-unit-switch button.active { color: #c9d1d9; background: #263446; }
 /* Two-line Claude/Codex layout (when Codex usage is present): stack the
-   labelled lines vertically, right-aligned so they hang off the same edge
-   as the single-line readout. Each .uline is the former horizontal row.
+   labelled lines vertically in one fixed-width block. Each .uline is the
+   former horizontal row.
    The whole block is monospace so every field can reserve a fixed `ch`
    width — and because each field is sized to its WORST case (not auto-
    sized to current content), the two rows align field-for-field AND the
@@ -3330,27 +3331,31 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
    crosses 99→100. */
 #usage.multiline {
   flex-direction: column;
-  align-items: flex-end;
+  align-items: stretch;
   gap: 2px;
+  /* Fixed source + data columns keep selector and provider positions stable
+     across every percentage/cost/units permutation. */
+  width: calc(66ch + 30px);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 #usage .uline {
-  display: inline-flex;
+  display: grid;
+  grid-template-columns: calc(20ch + 18px) 46ch;
+  column-gap: 12px;
   align-items: center;
   align-self: stretch;
-  gap: 12px;
   white-space: nowrap;
 }
-/* Provider/source label — always present, even with one source. The box fits
-   the longest normal row ("Anthropic API:") so quota bars and cost figures
-   start on one stable column as sources appear and disappear. */
+/* Provider/source label — always present, even with one source. Every label
+   starts at the same point; the box still fits the longest normal row
+   ("Anthropic API:") so values retain their stable start as sources change. */
 #usage .usrc {
   display: inline-block;
   color: #7d8590;
-  text-align: right;
+  text-align: left;
   width: 14ch; /* "Anthropic API:" */
-  flex: 0 0 14ch;
 }
+#usage .usage-values { display: inline-flex; align-items: center; gap: 12px; }
 /* Per-field column widths inside each window, worst-case sized so 5h/7d,
    the bars, the percents, and the reset hints all line up between the two
    rows and don't reflow over time. */
