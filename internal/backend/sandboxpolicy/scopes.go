@@ -7,18 +7,15 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/model"
 )
 
-type ProfileScope string
+type ProfileScope = model.SandboxProfileScope
 
 const (
-	ScopeGlobal   ProfileScope = "global"
-	ScopeGroup    ProfileScope = "group"
-	ScopeExplicit ProfileScope = "explicit"
+	ScopeGlobal   = model.SandboxScopeGlobal
+	ScopeGroup    = model.SandboxScopeGroup
+	ScopeExplicit = model.SandboxScopeExplicit
 )
 
-type ScopeSelection struct {
-	Scope ProfileScope
-	Ref   model.SandboxProfileRef
-}
+type ScopeSelection = model.SandboxScopeSelection
 
 // ScopeComposition retains the exact scope inputs. Combined.Root is empty:
 // a scope union is not itself a persisted profile revision.
