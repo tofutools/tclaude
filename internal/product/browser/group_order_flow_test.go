@@ -22,7 +22,7 @@ func TestBrowserGroupSiblingOrderPersistsWithoutChangingGroups(t *testing.T) {
 	page.MustElementR("summary", "^Group settings$").MustClick()
 	order := `() => Array.from(document.querySelectorAll('#group-management [data-group-id=parent] > .group-children > article')).map(e=>e.dataset.groupId).join(',')`
 	require.Equal(t, "child_a,child_b", page.MustEval(order).Str())
-	page.MustElement("#group-management [data-group-id=child_b]").MustElementR("button", "^Move group earlier$").MustClick()
+	page.MustElementR("#group-management [data-group-id=child_b] button", "^Move group earlier$").MustClick()
 	page.MustElementR("#group-order-status", "preferences saved")
 	require.Equal(t, "child_b,child_a", page.MustEval(order).Str())
 	var prefs struct{ Preferences model.PresentationPreferences }
@@ -37,13 +37,13 @@ func TestBrowserGroupSiblingOrderPersistsWithoutChangingGroups(t *testing.T) {
 	// A concurrent preference change must leave the stale order visibly unsaved.
 	prefs.Preferences.MusicVolume = .42
 	require.NoError(t, operator.Call(ctx, "PUT", "/v2/presentation", map[string]any{"preferences": prefs.Preferences, "expected_revision": prefs.Preferences.Revision}, nil))
-	page.MustElement("#group-management [data-group-id=child_b]").MustElementR("button", "^Move group later$").MustClick()
+	page.MustElementR("#group-management [data-group-id=child_b] button", "^Move group later$").MustClick()
 	page.MustElementR("#group-order-status", "Preferences not saved")
 	page.MustElementR("#group-management button", "^Reload saved group order$").MustClick()
 	page.MustElementR("#group-order-status", "preferences loaded")
 	require.Equal(t, "child_b,child_a", page.MustEval(order).Str())
 
-	page.MustElement("#group-management [data-group-id=child_b]").MustElementR("button", "^Move group later$").MustClick()
+	page.MustElementR("#group-management [data-group-id=child_b] button", "^Move group later$").MustClick()
 	page.MustElementR("#group-order-status", "preferences saved")
 	require.Equal(t, "child_a,child_b", page.MustEval(order).Str())
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/snapshot", nil, &after))
