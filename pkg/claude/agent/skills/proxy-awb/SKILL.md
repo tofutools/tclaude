@@ -59,8 +59,10 @@ need different fixes:
   and the operator's list alone bounds you.
 
 `allowed_workspaces` is what the list or lists that ARE present leave you: what
-you can actually reach. Every other verb echoes that same set as `workspaces`, so
-you rarely need to re-run `whoami`.
+you can actually reach unattended. Every other verb echoes that same set as
+`workspaces`, so you rarely need to re-run `whoami`. When your grant is scoped,
+a workspace on `operator_workspaces` that your scope leaves out is still
+reachable for a single command via `--ask-human` — see the refusal codes below.
 
 `allow_write` is the operator's own ceiling. `false` means every mutating verb
 is refused however your grants are spelled.
@@ -241,6 +243,15 @@ Four refusals mean four different fixes, so read the code before escalating:
   by widening `proxy.awb.read`:
   `tclaude agent permissions grant <you> proxy.awb.write --scope awb_workspace=awb,web`
   (a `--scope` replaces the previous one, so name every workspace you need).
+
+  When the message adds that the workspace **is** on the operator's
+  `allowed_workspaces`, you have a second option: retry the same command with
+  `--ask-human 60s`. That pops the operator a request naming the workspace, and
+  an approval covers **that one command** — nothing is remembered, so a run of
+  several commands in that workspace wants the grant widened instead. It covers
+  one workspace at a time, so split a command that names two of them. A
+  workspace the operator's list does not carry has no such route: it is refused
+  as `workspace_not_allowed` without ever reaching them.
 - `403 workspace_scope_empty` — your workspace scope authorizes nothing at all: it
   overlaps a configured operator list nowhere, or it constrains something an AWB
   request cannot describe, or it carries no `awb_workspace` at all. The message

@@ -412,8 +412,9 @@ var scopedSlugEnforcementPaths = map[string]string{
 	PermLinearRead: "Linear proxy — linearEffectiveTeams evaluates ActionContext{LinearTeam} per candidate team " +
 		"into the session's effective set, which every team check reads",
 	PermLinearWrite: "Linear proxy — same effective-set resolution as proxy.linear.read",
-	PermAWBRead: "AWB proxy — awbEffectiveWorkspaces evaluates ActionContext{AWBWorkspace} per candidate " +
-		"workspace into the session's effective set, which every workspace check reads",
+	PermAWBRead: "AWB proxy — awbGrantWorkspaces evaluates ActionContext{AWBWorkspace} per candidate " +
+		"workspace into the session's effective set, which every workspace check reads; " +
+		"escalateAWBWorkspace re-gates the same dimension for the ad-hoc --ask-human approval",
 	PermAWBWrite: "AWB proxy — same effective-set resolution as proxy.awb.read",
 }
 
