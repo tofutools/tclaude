@@ -121,6 +121,12 @@ func TestProviderHostSandboxNativeLaunchAndRecovery(t *testing.T) {
 	require.NoError(t, os.Mkdir(artifacts, 0700))
 	sibling := filepath.Join(private, "secret")
 	require.NoError(t, os.WriteFile(sibling, []byte("private sibling"), 0600))
+	t.Cleanup(func() {
+		if t.Failed() {
+			data, _ := os.ReadFile(filepath.Join(workspace, "client-error"))
+			t.Logf("confined endpoint client: %s", data)
+		}
+	})
 	executable := filepath.Join(workspace, "native-fixture")
 	script := `#!/bin/sh
 set -eu
@@ -128,10 +134,10 @@ test -r "$TCLAUDE_NATIVE_CALLBACK_SCRIPT"
 test "$(cat "$TCLAUDE_BACKEND_CREDENTIAL_FILE")" = 'fixture credential'
 if cat "$PRIVATE_SIBLING" >/dev/null 2>&1; then exit 24; fi
 printf '%s\n' "$@" > "$WORKSPACE/args"
-curl --fail --silent --max-time 5 --unix-socket "$CONTROL_SOCKET" http://fixture/ > "$WORKSPACE/first-response"
+curl --fail --silent --show-error --max-time 5 --unix-socket "$CONTROL_SOCKET" http://fixture/ > "$WORKSPACE/first-response" 2> "$WORKSPACE/client-error"
 printf ready > "$WORKSPACE/ready"
 while test ! -f "$WORKSPACE/reconnect"; do sleep 0.05; done
-curl --fail --silent --max-time 5 --unix-socket "$CONTROL_SOCKET" http://fixture/ > "$WORKSPACE/second-response"
+curl --fail --silent --show-error --max-time 5 --unix-socket "$CONTROL_SOCKET" http://fixture/ > "$WORKSPACE/second-response" 2> "$WORKSPACE/client-error"
 if cat "$PRIVATE_SIBLING" >/dev/null 2>&1; then exit 25; fi
 printf reconnected > "$WORKSPACE/reconnected"
 while IFS= read -r line; do printf '%s\n' "$line" >> "$WORKSPACE/input"; done
