@@ -71,7 +71,7 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 		require.Zero(t, *process.Observe().ExitCode, "%s: %s", process.cmd.ProcessState, output.String())
 	})
 	output.Reset()
-	artifact, err := inspector.PrepareSandboxChild(private, wrapper, child, bound, true)
+	artifact, err := prepareNativeLaunchPolicy(t, inspector, private, wrapper, child, bound)
 	require.NoError(t, err)
 	require.NoError(t, bound.Close())
 	bootstrap := ProcessSpec{Executable: executable, Args: []string{"-test.run=^TestSandboxBootstrapHelper$"}, ExactEnvironment: true,

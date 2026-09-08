@@ -35,6 +35,9 @@ func NewHandler(application app.API, auth Authenticator) (*Handler, error) {
 	if transfer, ok := application.(app.SandboxTransferAPI); ok {
 		h.registerSandboxTransfer(transfer)
 	}
+	if selection, ok := application.(app.SandboxSelectionAPI); ok {
+		h.registerSandboxSelection(selection)
+	}
 	if preview, ok := application.(app.SandboxPreviewAPI); ok {
 		h.registerSandboxPreview(preview)
 	}

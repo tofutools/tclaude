@@ -277,7 +277,7 @@ func authorizeTx(ctx context.Context, q queryer, request model.AuthorityRequest,
 			return decision, nil
 		}
 	}
-	if defaultAuthority(request.Principal, request.Action, request.Resource) && request.RequestedConfiguration == nil && request.RequestedEnvironment == nil {
+	if defaultAuthority(request.Principal, request.Action, request.Resource) && request.RequestedConfiguration == nil && request.RequestedEnvironment == nil && request.RequestedHostSandbox == nil {
 		decision.Allowed, decision.SourceKind, decision.SourceID = true, model.AuthorityDefault, "execution_self"
 		return decision, nil
 	}
@@ -473,10 +473,7 @@ func configurationMatches(bounds model.ConfigurationBounds, requested *model.Des
 	if requested == nil {
 		return true
 	}
-	if requested.HostSandbox == nil && len(bounds.HostSandboxPolicies) != 0 {
-		return false
-	}
-	if requested.HostSandbox != nil && (requested.HostSandbox.Validate() != nil || !slices.Contains(bounds.HostSandboxPolicies, requested.HostSandbox.PolicyHash)) {
+	if !hostSandboxMatches(bounds.HostSandboxPolicies, requested.HostSandbox) {
 		return false
 	}
 	if !environmentMatches(bounds.Environments, requested.Environment) {
@@ -632,6 +629,7 @@ func insertAdditionalOperationAuthority(ctx context.Context, tx *sql.Tx, operati
 func insertOperationAuthorityAt(ctx context.Context, tx *sql.Tx, table string, operationID model.OperationID, position int, request model.AuthorityRequest, decision model.AuthorityDecision) error {
 	rk, rid := resourceParts(request.Resource)
 	var configuration, environment any
+	hostSandbox := sandboxSelectionJSON(request.RequestedHostSandbox)
 	if request.RequestedConfiguration != nil {
 		encoded, err := json.Marshal(request.RequestedConfiguration)
 		if err != nil {
@@ -646,18 +644,18 @@ func insertOperationAuthorityAt(ctx context.Context, tx *sql.Tx, table string, o
 		}
 		environment = encoded
 	}
-	query := `INSERT INTO operation_authority(operation_id,action,resource_kind,resource_id,requested_configuration_json,admitted_source_kind,admitted_source_id,admitted_revision,requested_environment_json) VALUES(?,?,?,?,?,?,?,?,?)`
-	args := []any{operationID, request.Action, rk, rid, configuration, decision.SourceKind, decision.SourceID, decision.Revision, environment}
+	query := `INSERT INTO operation_authority(operation_id,action,resource_kind,resource_id,requested_configuration_json,admitted_source_kind,admitted_source_id,admitted_revision,requested_environment_json,requested_host_sandbox_json) VALUES(?,?,?,?,?,?,?,?,?,?)`
+	args := []any{operationID, request.Action, rk, rid, configuration, decision.SourceKind, decision.SourceID, decision.Revision, environment, hostSandbox}
 	if table == "operation_additional_authority" {
-		query = `INSERT INTO operation_additional_authority(operation_id,position,action,resource_kind,resource_id,requested_configuration_json,admitted_source_kind,admitted_source_id,admitted_revision,requested_environment_json) VALUES(?,?,?,?,?,?,?,?,?,?)`
-		args = []any{operationID, position, request.Action, rk, rid, configuration, decision.SourceKind, decision.SourceID, decision.Revision, environment}
+		query = `INSERT INTO operation_additional_authority(operation_id,position,action,resource_kind,resource_id,requested_configuration_json,admitted_source_kind,admitted_source_id,admitted_revision,requested_environment_json,requested_host_sandbox_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)`
+		args = []any{operationID, position, request.Action, rk, rid, configuration, decision.SourceKind, decision.SourceID, decision.Revision, environment, hostSandbox}
 	}
 	_, err := tx.ExecContext(ctx, query, args...)
 	return err
 }
 
 func additionalOperationAuthorities(ctx context.Context, tx *sql.Tx, operationID model.OperationID, principal model.Principal) ([]model.AuthorityRequest, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT action,resource_kind,resource_id,requested_configuration_json,requested_environment_json FROM operation_additional_authority WHERE operation_id=? ORDER BY position`, operationID)
+	rows, err := tx.QueryContext(ctx, `SELECT action,resource_kind,resource_id,requested_configuration_json,requested_environment_json,requested_host_sandbox_json FROM operation_additional_authority WHERE operation_id=? ORDER BY position`, operationID)
 	if err != nil {
 		return nil, err
 	}
@@ -666,8 +664,8 @@ func additionalOperationAuthorities(ctx context.Context, tx *sql.Tx, operationID
 	for rows.Next() {
 		request := model.AuthorityRequest{Principal: principal}
 		var rk, rid string
-		var configuration, environment []byte
-		if err = rows.Scan(&request.Action, &rk, &rid, &configuration, &environment); err != nil {
+		var configuration, environment, hostSandbox []byte
+		if err = rows.Scan(&request.Action, &rk, &rid, &configuration, &environment, &hostSandbox); err != nil {
 			return nil, err
 		}
 		request.Resource = makeResource(rk, rid)
@@ -686,6 +684,11 @@ func additionalOperationAuthorities(ctx context.Context, tx *sql.Tx, operationID
 				return nil, err
 			}
 		}
+		if len(hostSandbox) != 0 {
+			if err := json.Unmarshal(hostSandbox, &request.RequestedHostSandbox); err != nil {
+				return nil, err
+			}
+		}
 		requests = append(requests, request)
 	}
 	return requests, rows.Err()
@@ -694,8 +697,8 @@ func additionalOperationAuthorities(ctx context.Context, tx *sql.Tx, operationID
 func operationAuthority(ctx context.Context, tx *sql.Tx, operationID model.OperationID) (model.AuthorityRequest, bool, error) {
 	var request model.AuthorityRequest
 	var subjectKind, subjectID, rk, rid string
-	var configuration, delegation, environment []byte
-	err := tx.QueryRowContext(ctx, `SELECT o.principal_kind,o.principal_agent_id,o.principal_execution_id,o.principal_generation,o.principal_automation_run,o.automation_delegation_json,o.authority_subject_kind,o.authority_subject_id,a.action,a.resource_kind,a.resource_id,a.requested_configuration_json,a.requested_environment_json FROM operations o JOIN operation_authority a ON a.operation_id=o.id WHERE o.id=?`, operationID).Scan(&request.Principal.Kind, &request.Principal.AgentID, &request.Principal.ExecutionID, &request.Principal.Generation, &request.Principal.AutomationRun, &delegation, &subjectKind, &subjectID, &request.Action, &rk, &rid, &configuration, &environment)
+	var configuration, delegation, environment, hostSandbox []byte
+	err := tx.QueryRowContext(ctx, `SELECT o.principal_kind,o.principal_agent_id,o.principal_execution_id,o.principal_generation,o.principal_automation_run,o.automation_delegation_json,o.authority_subject_kind,o.authority_subject_id,a.action,a.resource_kind,a.resource_id,a.requested_configuration_json,a.requested_environment_json,a.requested_host_sandbox_json FROM operations o JOIN operation_authority a ON a.operation_id=o.id WHERE o.id=?`, operationID).Scan(&request.Principal.Kind, &request.Principal.AgentID, &request.Principal.ExecutionID, &request.Principal.Generation, &request.Principal.AutomationRun, &delegation, &subjectKind, &subjectID, &request.Action, &rk, &rid, &configuration, &environment, &hostSandbox)
 	if errors.Is(err, sql.ErrNoRows) {
 		return request, false, nil
 	}
@@ -722,6 +725,11 @@ func operationAuthority(ctx context.Context, tx *sql.Tx, operationID model.Opera
 	if len(environment) != 0 {
 		request.RequestedEnvironment = new(model.Environment)
 		if err := json.Unmarshal(environment, request.RequestedEnvironment); err != nil {
+			return request, false, err
+		}
+	}
+	if len(hostSandbox) != 0 {
+		if err := json.Unmarshal(hostSandbox, &request.RequestedHostSandbox); err != nil {
 			return request, false, err
 		}
 	}
@@ -918,5 +926,12 @@ func environmentMatches(allowed []model.Environment, requested model.Environment
 }
 
 func requestedBoundsMatch(bounds model.ConfigurationBounds, request model.AuthorityRequest) bool {
-	return configurationMatches(bounds, request.RequestedConfiguration) && (request.RequestedEnvironment == nil || environmentMatches(bounds.Environments, *request.RequestedEnvironment))
+	return (request.Action != model.ActionStartShell && request.RequestedHostSandbox == nil || hostSandboxMatches(bounds.HostSandboxPolicies, request.RequestedHostSandbox)) && configurationMatches(bounds, request.RequestedConfiguration) && (request.RequestedEnvironment == nil || environmentMatches(bounds.Environments, *request.RequestedEnvironment))
+}
+
+func hostSandboxMatches(hashes []string, selected *model.SandboxSelection) bool {
+	if selected == nil {
+		return len(hashes) == 0
+	}
+	return selected.Validate() == nil && slices.Contains(hashes, selected.PolicyHash)
 }

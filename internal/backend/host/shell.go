@@ -22,28 +22,34 @@ const (
 )
 
 type ShellConfig struct {
+	HostSandbox *SandboxLaunchPreparer
 	Terminal    TerminalHost
 	Executable  string
 	Environment []string
 }
 
 type ShellTerminalHost struct {
+	hostSandbox *SandboxLaunchPreparer
 	terminal    TerminalHost
 	executable  string
 	environment []string
 }
 
 type shellEvidence struct {
-	ExecutionID model.ExecutionID        `json:"execution_id"`
-	Attempt     model.AttemptGeneration  `json:"attempt"`
-	WorkspaceID model.WorkspaceID        `json:"workspace_id"`
-	Directory   string                   `json:"directory"`
-	Sandbox     model.SandboxMode        `json:"sandbox"`
-	Prepared    PreparedTerminalIdentity `json:"prepared"`
-	Terminal    *TerminalIdentity        `json:"terminal,omitempty"`
+	HostSandbox           *SandboxChildArtifact    `json:"host_sandbox,omitempty"`
+	HostSandboxPolicyHash string                   `json:"host_sandbox_policy_hash,omitempty"`
+	ExecutionID           model.ExecutionID        `json:"execution_id"`
+	Attempt               model.AttemptGeneration  `json:"attempt"`
+	WorkspaceID           model.WorkspaceID        `json:"workspace_id"`
+	Directory             string                   `json:"directory"`
+	Sandbox               model.SandboxMode        `json:"sandbox"`
+	Prepared              PreparedTerminalIdentity `json:"prepared"`
+	Terminal              *TerminalIdentity        `json:"terminal,omitempty"`
 }
 
 type preparedShell struct {
+	command  ProcessSpec
+	artifact *SandboxChildArtifact
 	host     *ShellTerminalHost
 	request  ports.ShellPreparationRequest
 	terminal *PreparedTerminal
@@ -69,15 +75,16 @@ func NewShellHost(config ShellConfig) (*ShellTerminalHost, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve configured shell: %w", err)
 	}
-	return &ShellTerminalHost{terminal: config.Terminal, executable: resolved,
+	return &ShellTerminalHost{hostSandbox: config.HostSandbox, terminal: config.Terminal, executable: resolved,
 		environment: append([]string(nil), config.Environment...)}, nil
 }
 
-func (h *ShellTerminalHost) PrepareShell(_ context.Context, request ports.ShellPreparationRequest) (ports.PreparedShell, error) {
+func (h *ShellTerminalHost) PrepareShell(ctx context.Context, request ports.ShellPreparationRequest) (ports.PreparedShell, error) {
 	if err := request.Environment.Validate(); err != nil {
 		return nil, err
 	}
 	request.Environment = request.Environment.Clone()
+	request.HostSandbox = model.CloneSandboxSelection(request.HostSandbox)
 	if err := request.ExecutionID.Validate(); err != nil {
 		return nil, err
 	}
@@ -97,27 +104,71 @@ func (h *ShellTerminalHost) PrepareShell(_ context.Context, request ports.ShellP
 	if err != nil || !info.IsDir() {
 		return nil, fmt.Errorf("shell working directory is unavailable")
 	}
+	command := ProcessSpec{Executable: h.executable, Directory: request.WorkingDirectory, Env: append(append([]string(nil), h.environment...), request.Environment.Entries()...)}
+	var artifact *SandboxChildArtifact
+	if request.HostSandbox == nil && request.HostSandboxPolicy != nil {
+		return nil, fmt.Errorf("sandbox materialization has no selected identity")
+	}
+	if request.HostSandbox != nil {
+		if h.hostSandbox == nil || request.HostSandboxPolicy == nil {
+			return nil, fmt.Errorf("selected host sandbox preparation is unavailable")
+		}
+		// Do not carry the daemon's ambient environment into the confined child.
+		command.Env = append([]string{"PATH=/usr/bin:/bin", "TERM=xterm-256color"}, request.Environment.Entries()...)
+		preparedArtifact, err := h.hostSandbox.Prepare(ctx, *request.HostSandbox, *request.HostSandboxPolicy, command)
+		if err != nil {
+			return nil, err
+		}
+		artifact = &preparedArtifact
+		command, err = h.hostSandbox.Invocation(preparedArtifact)
+		if err != nil {
+			_ = os.RemoveAll(filepath.Dir(preparedArtifact.Path))
+			return nil, err
+		}
+	}
+	success := false
+	defer func() {
+		if !success && artifact != nil {
+			_ = os.RemoveAll(filepath.Dir(artifact.Path))
+		}
+	}()
 	prepared, err := h.terminal.Prepare(string(request.ExecutionID))
 	if err != nil {
 		return nil, err
 	}
-	value := shellEvidence{ExecutionID: request.ExecutionID, Attempt: request.Attempt,
+	value := shellEvidence{HostSandbox: artifact, ExecutionID: request.ExecutionID, Attempt: request.Attempt,
 		WorkspaceID: request.WorkspaceID, Directory: filepath.Clean(request.WorkingDirectory),
 		Sandbox: request.Sandbox, Prepared: prepared.Identity()}
+	if request.HostSandbox != nil {
+		value.HostSandboxPolicyHash = request.HostSandbox.PolicyHash
+	}
 	evidence, err := encodeShellEvidence(value)
 	if err != nil {
 		_ = prepared.Abort()
 		return nil, err
 	}
-	return &preparedShell{host: h, request: request, terminal: prepared, evidence: evidence}, nil
+	success = true
+	return &preparedShell{command: command, artifact: artifact, host: h, request: request, terminal: prepared, evidence: evidence}, nil
 }
 
 func (p *preparedShell) Describe() ports.ShellPreparedDescription {
-	return ports.ShellPreparedDescription{ExecutionID: p.request.ExecutionID, Attempt: p.request.Attempt,
+	hash := ""
+	if p.request.HostSandbox != nil {
+		hash = p.request.HostSandbox.PolicyHash
+	}
+	return ports.ShellPreparedDescription{HostSandboxPolicyHash: hash, ExecutionID: p.request.ExecutionID, Attempt: p.request.Attempt,
 		Resources: []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: p.terminal.ResourceKey()}}, Evidence: p.evidence}
 }
 
-func (p *preparedShell) Abort(context.Context) error { return p.terminal.Abort() }
+func (p *preparedShell) Abort(context.Context) error {
+	if err := p.terminal.Abort(); err != nil {
+		return err
+	}
+	if p.artifact != nil {
+		return os.RemoveAll(filepath.Dir(p.artifact.Path))
+	}
+	return nil
+}
 
 func (p *preparedShell) Release(ctx context.Context, permit ports.ReleasePermit) (ports.ShellReleaseResult, error) {
 	if permit == nil || permit.ExecutionID() != p.request.ExecutionID {
@@ -126,8 +177,7 @@ func (p *preparedShell) Release(ctx context.Context, permit ports.ReleasePermit)
 	if err := permit.Consume(ctx); err != nil {
 		return ports.ShellReleaseResult{}, fmt.Errorf("consume shell release permit: %w", err)
 	}
-	terminal, err := p.terminal.Release(ProcessSpec{Executable: p.host.executable,
-		Directory: p.request.WorkingDirectory, Env: append(append([]string(nil), p.host.environment...), p.request.Environment.Entries()...)})
+	terminal, err := p.terminal.Release(p.command)
 	if terminal == nil {
 		return ports.ShellReleaseResult{}, err
 	}

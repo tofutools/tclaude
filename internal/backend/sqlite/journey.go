@@ -1187,7 +1187,7 @@ func (s *Store) AdmitShell(ctx context.Context, in app.ShellAdmission) (app.Admi
 	if repeated, ok, err := admissionByRequest(ctx, tx, in.Operation, "", false); err != nil {
 		return app.AdmissionResult{}, err
 	} else if ok {
-		if repeated.Execution.Workload != model.ExecutionWorkloadShell || repeated.Execution.Spec.WorkingDirectory != in.Execution.Spec.WorkingDirectory || repeated.Execution.Spec.Sandbox != in.Execution.Spec.Sandbox || !repeated.Execution.Spec.Environment.Equal(in.Execution.Spec.Environment) || !reflect.DeepEqual(repeated.Execution.Spec.ShellGroup, in.Execution.Spec.ShellGroup) {
+		if repeated.Execution.Workload != model.ExecutionWorkloadShell || repeated.Execution.Spec.WorkingDirectory != in.Execution.Spec.WorkingDirectory || repeated.Execution.Spec.Sandbox != in.Execution.Spec.Sandbox || !model.SameSandboxSelection(repeated.Execution.Spec.HostSandbox, in.Execution.Spec.HostSandbox) || !repeated.Execution.Spec.Environment.Equal(in.Execution.Spec.Environment) || !reflect.DeepEqual(repeated.Execution.Spec.ShellGroup, in.Execution.Spec.ShellGroup) {
 			return app.AdmissionResult{}, app.ErrConflict
 		}
 		var workspaceID model.WorkspaceID

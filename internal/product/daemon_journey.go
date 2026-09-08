@@ -3,7 +3,9 @@ package product
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/tofutools/tclaude/internal/backend/host"
@@ -53,9 +55,33 @@ func journeyServices(state string, harnesses, configured []string, workspaces bo
 		if !workspaces {
 			return result, fmt.Errorf("shell requires --workspaces")
 		}
+		var sandbox *host.SandboxLaunchPreparer
+		wrapperName := "bwrap"
+		if runtime.GOOS == "darwin" {
+			wrapperName = "/usr/bin/sandbox-exec"
+		}
+		if wrapper, lookupErr := exec.LookPath(wrapperName); lookupErr == nil {
+			inspector, err := host.NewSandboxPathInspector([]string{state})
+			if err != nil {
+				return result, err
+			}
+			artifacts := filepath.Join(state, "sandbox-launches")
+			if err := os.MkdirAll(artifacts, 0700); err != nil {
+				return result, err
+			}
+			bootstrap, err := os.Executable()
+			if err != nil {
+				return result, err
+			}
+			sandbox, err = host.NewSandboxLaunchPreparer(host.SandboxLaunchConfig{Inspector: inspector, Wrapper: wrapper, Bootstrap: bootstrap, Artifacts: artifacts})
+			if err != nil {
+				return result, err
+			}
+		}
 		runtime, err := host.NewShellHost(host.ShellConfig{
-			Terminal:   host.TerminalHost{Executable: "tmux", PrivateRoot: filepath.Join(state, "shells")},
-			Executable: shell, Environment: os.Environ(),
+			HostSandbox: sandbox,
+			Terminal:    host.TerminalHost{Executable: "tmux", PrivateRoot: filepath.Join(state, "shells")},
+			Executable:  shell, Environment: os.Environ(),
 		})
 		if err != nil {
 			return result, err

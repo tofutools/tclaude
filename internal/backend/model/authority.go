@@ -163,6 +163,7 @@ type AuthorityDecision struct {
 }
 
 type AuthorityRequest struct {
+	RequestedHostSandbox   *SandboxSelection `json:",omitempty"`
 	Principal              Principal
 	Action                 Action
 	Resource               ResourceSelector

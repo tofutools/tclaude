@@ -8,6 +8,10 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/sandboxpolicy"
 )
 
+type SandboxSelectionAPI interface {
+	ResolveLaunchSandbox(context.Context, model.Principal, []model.SandboxScopeSelection) (model.SandboxSelection, error)
+}
+
 // ResolveLaunchSandbox returns a server-computed selection for an explicit set
 // of immutable scopes. This is read-only preparation, not launch authorization.
 func (s *Service) ResolveLaunchSandbox(ctx context.Context, principal model.Principal, scopes []model.SandboxScopeSelection) (model.SandboxSelection, error) {

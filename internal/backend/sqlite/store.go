@@ -86,6 +86,8 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"operation_additional_authority", "requested_environment_json", "BLOB"},
 		{"group_configurations", "environment_json", "BLOB NOT NULL DEFAULT '{}'"},
 		{"agents", "environment_json", "BLOB NOT NULL DEFAULT '{}'"},
+		{"operation_authority", "requested_host_sandbox_json", "BLOB"},
+		{"operation_additional_authority", "requested_host_sandbox_json", "BLOB"},
 		{"agents", "host_sandbox_json", "BLOB"},
 		{"executions", "host_sandbox_json", "BLOB"},
 		{"executions", "shell_group_json", "BLOB"},

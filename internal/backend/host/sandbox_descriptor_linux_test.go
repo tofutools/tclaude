@@ -60,8 +60,8 @@ func TestSandboxDescriptorNativeConfinement(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
 	var output bytes.Buffer
-	artifact, err := inspector.PrepareSandboxChild(private, wrapper, ProcessSpec{Executable: "/sandbox-test", Args: []string{"-test.run=^TestSandboxDescriptorChild$"}, Directory: "/work", ExactEnvironment: true,
-		Env: []string{"PATH=/usr/bin:/bin", "TCLAUDE_SANDBOX_CHILD=1", "SECRET=" + secret, "OUTSIDE_LISTENER=" + listener.Addr().String(), "LITERAL=$HOME stays literal"}, Stdout: &output, Stderr: &output}, bound, true)
+	artifact, err := prepareNativeLaunchPolicy(t, inspector, private, wrapper, ProcessSpec{Executable: "/sandbox-test", Args: []string{"-test.run=^TestSandboxDescriptorChild$"}, Directory: "/work", ExactEnvironment: true,
+		Env: []string{"PATH=/usr/bin:/bin", "TCLAUDE_SANDBOX_CHILD=1", "SECRET=" + secret, "OUTSIDE_LISTENER=" + listener.Addr().String(), "LITERAL=$HOME stays literal"}, Stdout: &output, Stderr: &output}, bound)
 	require.NoError(t, err)
 	require.NoError(t, bound.Close())
 	bootstrap := ProcessSpec{Executable: executable, Args: []string{"-test.run=^TestSandboxBootstrapHelper$"}, ExactEnvironment: true,

@@ -21,8 +21,9 @@ func shellIntent(in app.StartShellRequest) []byte {
 		Revision    model.Revision
 		Sandbox     model.SandboxMode
 		Group       *model.ShellGroupSelection
-		Environment model.Environment `json:",omitempty"`
-	}{in.WorkspaceID, in.ExpectedRevision, in.Sandbox, in.Group, in.Environment})
+		Environment model.Environment       `json:",omitempty"`
+		HostSandbox *model.SandboxSelection `json:",omitempty"`
+	}{in.WorkspaceID, in.ExpectedRevision, in.Sandbox, in.Group, in.Environment, in.HostSandbox})
 	return data
 }
 
@@ -72,13 +73,13 @@ func (s *Store) FindShellAdmission(ctx context.Context, in app.StartShellRequest
 
 func validateShellRequest(ctx context.Context, tx *sql.Tx, in app.ShellAdmission) error {
 	if in.Request == nil { // Compatibility for internal callers that have no authored group/environment.
-		if in.Execution.Spec.ShellGroup != nil || len(in.Execution.Spec.Environment) != 0 {
+		if in.Execution.Spec.ShellGroup != nil || len(in.Execution.Spec.Environment) != 0 || in.Execution.Spec.HostSandbox != nil {
 			return app.ErrInvalid
 		}
 		return nil
 	}
 	req := in.Request
-	if req.Context.Principal != in.Operation.Principal || req.Context.RequestID != in.Operation.RequestID || req.WorkspaceID != in.WorkspaceUse.WorkspaceID || req.ExpectedRevision != in.WorkspaceRevision || req.Sandbox != in.Execution.Spec.Sandbox || !reflect.DeepEqual(req.Group, in.Execution.Spec.ShellGroup) {
+	if req.Context.Principal != in.Operation.Principal || req.Context.RequestID != in.Operation.RequestID || req.WorkspaceID != in.WorkspaceUse.WorkspaceID || req.ExpectedRevision != in.WorkspaceRevision || req.Sandbox != in.Execution.Spec.Sandbox || !model.SameSandboxSelection(req.HostSandbox, in.Execution.Spec.HostSandbox) || !model.SameSandboxSelection(req.HostSandbox, in.Authority.RequestedHostSandbox) || !reflect.DeepEqual(req.Group, in.Execution.Spec.ShellGroup) {
 		return app.ErrConflict
 	}
 	environment := req.Environment.Clone()

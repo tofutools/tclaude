@@ -51,11 +51,12 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
   const config=await api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration');if(!card.isConnected)return;
   const workspaces=(snapshot.workspaces||[]).filter(w=>w.State==='available'&&w.Observation?.ActualPath);
   if(!workspaces.length)throw new Error('Create or register an available checkout in Workspaces first.');
+  const sandbox=await sandboxSelectionInput(api);if(!card.isConnected)return;
   edit('Open group shell',[
    {name:'workspace',label:'Checkout',options:workspaces.map(w=>({value:w.ID,label:w.Observation.ActualPath+' · '+w.ID}))},
    {name:'environment',label:'Explicit shell environment overrides',environment:true,value:{},inherited:config.Environment||{}},
-   {name:'confirm',label:'This shell runs without OS confinement',options:['Start unconfined shell']}
-  ],f=>{const workspace=workspaces.find(w=>w.ID===f.workspace);if(!workspace)throw new Error('Select a listed checkout.');return api('/v2/shells',{request_id:f.requestID,workspace_id:workspace.ID,expected_revision:workspace.Revision,sandbox:'unconfined',environment:f.environment,group:{GroupID:group.ID,Revision:group.Revision,ConfigurationRevision:config.Revision}})});
+   sandbox.field
+  ],async f=>{const workspace=workspaces.find(w=>w.ID===f.workspace);if(!workspace)throw new Error('Select a listed checkout.');return api('/v2/shells',{request_id:f.requestID,workspace_id:workspace.ID,expected_revision:workspace.Revision,sandbox:'unconfined',host_sandbox:await sandbox.read(f.host_sandbox),environment:f.environment,group:{GroupID:group.ID,Revision:group.Revision,ConfigurationRevision:config.Revision}})});
   document.getElementById('editor-fields').append(el('p','Uses this group’s environment plus your explicit overrides. Agent launch profiles do not apply. The shell retains these settings; later group edits do not change it.'));
  }));
  for(const execution of snapshot.executions||[]){
