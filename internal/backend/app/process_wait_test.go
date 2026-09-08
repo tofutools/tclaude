@@ -19,7 +19,7 @@ func TestProcessWaitAuthoringPreservesExternalIntentWithoutStarting(t *testing.T
 	store, err := sqlite.Open(path)
 	require.NoError(t, err)
 	service := app.New(store, providers.NewRegistry())
-	wait := model.WaitPolicy{Duration: time.Minute, Until: "2030-09-08T10:30:00+02:00", Signal: "review <approved>"}
+	wait := model.WaitPolicy{Duration: time.Minute, Until: "  2030-09-08T10:30:00+02:00  ", Signal: "review <approved>"}
 	graph := model.WorkGraph{CompilerVersion: "1", EntryNodeID: "wait", Nodes: []model.WorkNode{{ID: "wait", Kind: model.WorkNodeWait, Wait: &wait}, {ID: "done", Kind: model.WorkNodeEnd, End: &model.EndPolicy{Outcome: model.WorkOutcomeVerified}}}, Edges: []model.WorkEdge{{From: "wait", To: "done"}}}
 	draft := app.DefinitionDraft{ID: "wait", RevisionID: "wait_v1", Name: "External wait", Kind: model.DefinitionProcess, SchemaVersion: 1, Source: "kind: process", Process: &model.ProcessDefinition{Graph: graph}}
 	saved, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "save"}, Draft: draft})
@@ -49,7 +49,7 @@ func TestProcessWaitAuthoringPreservesExternalIntentWithoutStarting(t *testing.T
 	ref.ContentHash = second.Revision.ContentHash
 	_, err = service.StartProcess(ctx, start)
 	require.NoError(t, err)
-	for _, invalid := range []model.WaitPolicy{{}, {Duration: -time.Second}, {Until: "artifact:approved"}, {Signal: "\x00bad"}, {Signal: "   "}, {Until: "2030-02-31T00:00:00Z"}} {
+	for _, invalid := range []model.WaitPolicy{{}, {Duration: -time.Second}, {Until: "artifact:approved"}, {Signal: "\x00bad"}, {Signal: "   "}, {Until: "2030-02-31T00:00:00Z"}, {Until: "2030-09-08T1:30:00Z"}, {Until: "2030-09-08T10:30:00,5Z"}, {Until: "2030-09-08T10:30:00+24:00"}} {
 		*draft.Process.Graph.Nodes[0].Wait = invalid
 		_, err = service.ValidateDefinition(ctx, app.ValidateDefinitionRequest{Principal: model.OperatorPrincipal(), Draft: draft})
 		require.ErrorIs(t, err, app.ErrInvalid)
