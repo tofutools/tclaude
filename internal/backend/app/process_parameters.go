@@ -14,6 +14,9 @@ const processParameterSyntax = "mustache-v1"
 const maxExpandedProcessText = 128 << 10
 const maxExpandedProcessTotal = 1 << 20
 
+var processParameterName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var processParameterCandidate = regexp.MustCompile(`\{\{\s*params\b`)
+
 var processParameterReference = regexp.MustCompile(`\{\{\s*params\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}`)
 
 func validateProcessParameterSyntax(syntax string, graph model.WorkGraph, declarations []model.ParameterDeclaration) error {
@@ -25,11 +28,18 @@ func validateProcessParameterSyntax(syntax string, graph model.WorkGraph, declar
 	}
 	declared := make(map[string]bool, len(declarations))
 	for _, d := range declarations {
+		if !processParameterName.MatchString(d.Name) {
+			return fail(ErrInvalid, "mustache-v1 parameter keys must be ASCII identifiers")
+		}
 		declared[d.Name] = true
 	}
 	_, err := mapProcessInputText(graph, func(value string) (string, error) {
 		if len(value) > maxExpandedProcessText || !utf8.ValidString(value) || strings.ContainsRune(value, 0) {
 			return "", fail(ErrInvalid, "process input text exceeds valid text limits")
+		}
+		remaining := processParameterReference.ReplaceAllString(value, "")
+		if processParameterCandidate.MatchString(remaining) {
+			return "", fail(ErrInvalid, "malformed mustache-v1 parameter reference")
 		}
 		for _, match := range processParameterReference.FindAllStringSubmatch(value, -1) {
 			if !declared[match[1]] {
@@ -67,7 +77,7 @@ func expandProcessParameters(graph model.WorkGraph, declarations []model.Paramet
 		}
 	}
 	total := 0
-	return mapProcessInputText(graph, func(value string) (string, error) {
+	resolved, err := mapProcessInputText(graph, func(value string) (string, error) {
 		var out strings.Builder
 		appendText := func(text string) error {
 			if len(text) > maxExpandedProcessText-out.Len() || len(text) > maxExpandedProcessTotal-total {
@@ -100,6 +110,19 @@ func expandProcessParameters(graph model.WorkGraph, declarations []model.Paramet
 		}
 		return result, nil
 	})
+	if err != nil {
+		return model.WorkGraph{}, err
+	}
+	for i := range resolved.Nodes {
+		if decision := resolved.Nodes[i].Decision; decision != nil {
+			// Resolve absence from the authored graph, never the expanded text.
+			decision.QuestionResolved = true
+			if graph.Nodes[i].Decision.Question == "" {
+				decision.Question = graph.Nodes[i].Name
+			}
+		}
+	}
+	return resolved, nil
 }
 
 // Clone only the input-bearing structures being changed. Configuration, authority,

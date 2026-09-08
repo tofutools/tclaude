@@ -300,6 +300,8 @@ const (
 )
 
 type DecisionNode struct {
+	// QuestionResolved distinguishes an admitted empty expansion from legacy absence.
+	QuestionResolved bool   `json:",omitempty"`
 	Question         string `json:",omitempty"`
 	Kind             DecisionKind
 	Audience         []DecisionAudience

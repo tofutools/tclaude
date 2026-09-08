@@ -927,7 +927,7 @@ func (s *Service) attachDecisionWindow(run model.WorkRun, node model.WorkNode, a
 	var expires time.Time
 	if node.Kind == model.WorkNodeDecision {
 		audience, question, answers = append([]model.DecisionAudience(nil), node.Decision.Audience...), node.Name, append([]string(nil), node.Decision.PermittedAnswers...)
-		if node.Decision.Question != "" {
+		if node.Decision.QuestionResolved || node.Decision.Question != "" {
 			question = node.Decision.Question
 		}
 		expires = now.Add(node.Decision.ExpiresAfter)

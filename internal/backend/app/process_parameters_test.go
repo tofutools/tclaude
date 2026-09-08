@@ -131,3 +131,45 @@ func TestProcessParameterSyntaxIsExplicitAndValidatesCompiledStages(t *testing.T
 	require.NoError(t, err)
 	require.Equal(t, "Plan {{ params.subject }}", unchanged.Decisions[0].Question)
 }
+
+func TestProcessParameterEmptyQuestionKeepsAuthoredPresence(t *testing.T) {
+	ctx := context.Background()
+	_, service, now := regressionService(t)
+	for _, question := range []string{"{{ params.question }}", ""} {
+		graph := model.WorkGraph{CompilerVersion: "1", EntryNodeID: "ask", Nodes: []model.WorkNode{{ID: "ask", Name: "Editor label", Kind: model.WorkNodeDecision, Decision: &model.DecisionNode{Question: question, Kind: model.DecisionWork, Audience: []model.DecisionAudience{{Subject: model.AuthoritySubject{Kind: model.AuthorityOperator}}}, PermittedAnswers: []string{"yes"}, ExpiresAfter: time.Hour}}, {ID: "done", Kind: model.WorkNodeEnd, End: &model.EndPolicy{Outcome: model.WorkOutcomeVerified}}}, Edges: []model.WorkEdge{{From: "ask", To: "done"}}}
+		id := "explicit"
+		want := ""
+		if question == "" {
+			id = "fallback"
+			want = "Editor label"
+		}
+		saved, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: model.RequestID(id)}, Draft: app.DefinitionDraft{ID: model.DefinitionID(id), RevisionID: model.DefinitionRevisionID(id + "_v1"), Name: id, Kind: model.DefinitionProcess, SchemaVersion: 1, Source: "test", Parameters: []model.ParameterDeclaration{{Name: "question", Type: model.ParameterString}}, Process: &model.ProcessDefinition{ParameterSyntax: "mustache-v1", Graph: graph}}})
+		require.NoError(t, err)
+		ref := model.DefinitionRef{DefinitionID: saved.Definition.ID, RevisionID: saved.Revision.ID, ContentHash: saved.Revision.ContentHash, Kind: model.DefinitionProcess}
+		result, err := service.StartProcess(ctx, app.StartProcessRequest{Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: model.RequestID(id + "_start")}, ID: model.WorkRunID(id), Start: model.WorkStart{Definition: &ref, Deadline: now.Add(time.Hour)}})
+		require.NoError(t, err)
+		require.Len(t, result.Decisions, 1)
+		require.Equal(t, want, result.Decisions[0].Question)
+		read, err := service.InspectWork(ctx, app.InspectWorkRequest{Principal: model.OperatorPrincipal(), WorkRunID: model.WorkRunID(id)})
+		require.NoError(t, err)
+		require.True(t, read.Run.Graph.Nodes[0].Decision.QuestionResolved)
+		require.Equal(t, want, read.Run.Graph.Nodes[0].Decision.Question)
+	}
+}
+
+func TestProcessParameterGrammarRejectsUnaddressableAndMalformedInput(t *testing.T) {
+	ctx := context.Background()
+	_, service, _ := regressionService(t)
+	for _, tc := range []struct{ key, text string }{{"release-key", "{{ params.release-key }}"}, {"release", "{{ params.release-key }}"}, {"release", "{{ params.release"}, {"release", "{{ params[release] }}"}, {"release", "{{ params. }}"}} {
+		t.Run(tc.key+tc.text, func(t *testing.T) {
+			graph := stagedHumanGraph()
+			graph.Nodes[0].Stages.Plan.Performer.Human = &model.HumanPerformer{Operator: true, Prompt: tc.text}
+			draft := app.DefinitionDraft{ID: "grammar", RevisionID: "grammar_v1", Name: "grammar", Kind: model.DefinitionProcess, SchemaVersion: 1, Source: "test", Parameters: []model.ParameterDeclaration{{Name: tc.key, Type: model.ParameterString}}, Process: &model.ProcessDefinition{ParameterSyntax: "mustache-v1", Graph: graph}}
+			_, err := service.ValidateDefinition(ctx, app.ValidateDefinitionRequest{Principal: model.OperatorPrincipal(), Draft: draft})
+			require.ErrorIs(t, err, app.ErrInvalid)
+			draft.Process.ParameterSyntax = ""
+			_, err = service.ValidateDefinition(ctx, app.ValidateDefinitionRequest{Principal: model.OperatorPrincipal(), Draft: draft})
+			require.NoError(t, err)
+		})
+	}
+}
