@@ -53,6 +53,10 @@ func (s *Service) advanceGraphWork(ctx context.Context, record WorkRunRecord) (W
 			continue
 		}
 		node := graphNode(*record.Run.Graph, attempt.Ref.NodeID)
+		if node.Kind == model.WorkNodeStart {
+			transition := s.graphOutcomeTransition(record, attempt, model.WorkOutcomeVerified, "start transition")
+			return s.store.ApplyGraphTransition(ctx, transition)
+		}
 		if node.Kind == model.WorkNodeWait {
 			if now.Before(attempt.ReadyAt.Add(node.Wait.Duration)) {
 				continue
