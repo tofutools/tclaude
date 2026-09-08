@@ -60,6 +60,10 @@ export function CostsAccumulatedChart({ chart }) {
   const [tooltip, setTooltip] = useState(null);
   const [announcement, setAnnouncement] = useState('');
   useEffect(() => {
+    setTooltip(null);
+    setAnnouncement('');
+  }, [chart]);
+  useEffect(() => {
     const node = host.current;
     if (!node) return undefined;
     const update = () => setWidth(Math.max(320, Math.round(node.clientWidth || DEFAULT_W)));

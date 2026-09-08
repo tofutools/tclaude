@@ -1199,10 +1199,32 @@ func baseStates() []dashsnap.State {
 			SettleMS: 250,
 		},
 		{
-			Key:      "bounded-costs-normal",
-			Title:    "Bounded Preact — Costs normal",
-			Caption:  "Costs island completed its request and rendered the per-model spend strip, the harness-stacked chart and the per-agent breakdown over the fixture's seeded spend.",
-			JS:       boundedTabJS("costs", "#costs-factor"),
+			Key:     "bounded-costs-breakdown-menu",
+			Title:   "Bounded Preact — Costs breakdown options",
+			Caption: "The compact Breakdown menu independently controls provider and model stacking for both graphs; filters remain separate and projection semantics are explicit.",
+			JS: boundedTabJS("costs", "#costs-factor", `
+setTimeout(function(){
+  var model = document.querySelector('#costs-stack-model');
+  if (model && !model.checked) model.click();
+  var menu = document.querySelector('#filter-costs-breakdown');
+  if (menu) menu.open = true;
+}, 50);`),
+			SettleMS: 500,
+		},
+		{
+			Key:     "bounded-costs-breakdown-hover",
+			Title:   "Bounded Preact — Costs nested hover",
+			Caption: "With both dimensions enabled, the accumulated projection hover follows the chart grouping: provider headings contain model rows and estimated splits cite the recorded mix.",
+			JS: boundedTabJS("costs", "#costs-factor", `
+setTimeout(function(){
+  var model = document.querySelector('#costs-stack-model');
+  if (model && !model.checked) model.click();
+  setTimeout(function(){
+    var hits = document.querySelectorAll('.cost-accumulated-hit');
+    var hit = hits[hits.length - 1];
+    if (hit) hit.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: window.innerWidth * .58 }));
+  }, 50);
+}, 50);`),
 			SettleMS: 500,
 		},
 		{
@@ -4136,7 +4158,11 @@ func jobsCronRowDialogDashSnapJS(action string, stacked bool) string {
 		action, action, action, action)
 }
 
-func boundedTabJS(tab, readySelector string) string {
+func boundedTabJS(tab, readySelector string, afterReady ...string) string {
+	post := ""
+	if len(afterReady) > 0 {
+		post = afterReady[0]
+	}
 	return fmt.Sprintf(`return Promise.all([
   import('/static/js/snapshot-store.js'),
   import('/static/js/feature-state-registry.js')
@@ -4161,12 +4187,12 @@ return new Promise(function(resolve, reject) {
     var phase = state?.request?.value?.phase || state?.phase?.value || state?.view?.value?.request?.phase;
     var settled = root && state && !root.querySelector('[role="alert"]') && !root.querySelector('[aria-busy="true"]') &&
       (%q === 'access' || phase === 'ready');
-    if (node && panel?.classList.contains('active') && node.getClientRects().length && settled) { resolve(); return; }
+    if (node && panel?.classList.contains('active') && node.getClientRects().length && settled) { %s resolve(); return; }
     if (Date.now() >= deadline) { reject(new Error('bounded tab did not render: %s')); return; }
     setTimeout(ready, 25);
   })();
 });
-});`, tab, tab, tab, tab, tab, readySelector, tab, tab, tab, tab, tab)
+});`, tab, tab, tab, tab, tab, readySelector, tab, tab, tab, tab, post, tab)
 }
 
 func boundedJobsEmptyJS() string {
