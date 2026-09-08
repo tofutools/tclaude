@@ -101,11 +101,15 @@ func TestSandboxResourceLimitsNativeEnforcement(t *testing.T) {
 	file, err := boundary.open()
 	require.NoError(t, err)
 	defer func() { require.NoError(t, file.Close()) }()
+	// v1 limits resident memory via memory.max, leaving swap policy to the
+	// delegation. Disable swap in this disposable fixture so excess resident
+	// demand produces a deterministic OOM rather than swapping on the runner.
+	require.NoError(t, writeCgroupFile(file, "memory.swap.max", "0"))
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	// Exercise the same kernel placement used by the bootstrap: CPU work must
 	// throttle, then touching memory beyond the ceiling must be killed by OOM.
-	cmd := exec.CommandContext(ctx, python, "-c", "import time\nend=time.monotonic()+2\nwhile time.monotonic()<end: pass\nx=bytearray(128*1024*1024)\n")
+	cmd := exec.CommandContext(ctx, python, "-c", "import time\nend=time.monotonic()+2\nwhile time.monotonic()<end: pass\nx=bytearray(128*1024*1024)\nfor i in range(0,len(x),4096): x[i]=1\n")
 	cmd.SysProcAttr = &syscall.SysProcAttr{UseCgroupFD: true, CgroupFD: int(file.Fd())}
 	err = cmd.Run()
 	require.Error(t, err)
