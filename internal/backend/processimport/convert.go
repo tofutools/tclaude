@@ -114,7 +114,7 @@ func Convert(source string, bindings map[string]Binding) (Converted, error) {
 		if len(n.Metadata) > 0 {
 			c.Notices = append(c.Notices, path+": metadata is retained verbatim in Source; no metadata becomes authority")
 		}
-		node := model.WorkNode{ID: model.WorkNodeID(id), Name: n.Name, Description: n.Description, Doc: n.Doc, Captures: append([]string(nil), n.Captures...)}
+		node := model.WorkNode{RoutingMode: "single-route-v1", ID: model.WorkNodeID(id), Name: n.Name, Description: n.Description, Doc: n.Doc, Captures: append([]string(nil), n.Captures...)}
 		switch n.Type {
 		case legacy.NodeTypeStart:
 			if id == t.Start {
@@ -226,24 +226,8 @@ func Convert(source string, bindings map[string]Binding) (Converted, error) {
 			outcomes = append(outcomes, outcome)
 		}
 		sort.Strings(outcomes)
-		if n.Type != legacy.NodeTypeDecision && n.Type != legacy.NodeTypeParallel && len(outcomes) > 0 {
-			if len(outcomes) != 1 {
-				return Converted{}, fmt.Errorf("%s/next: multiple verdict routes require explicit legacy routing support before conversion", path)
-			}
-			pass := false
-			for _, label := range legacy.PassOutcomeLabels() {
-				pass = pass || outcomes[0] == label
-			}
-			if !pass {
-				return Converted{}, fmt.Errorf("%s/next: exact task verdict routing is not yet representable", path)
-			}
-		}
 		for _, outcome := range outcomes {
 			verdict := outcome
-			if n.Type != legacy.NodeTypeDecision && n.Type != legacy.NodeTypeParallel {
-				c.Notices = append(c.Notices, path+"/next/"+outcome+": represented as the default route; original spelling remains in Source")
-				verdict = ""
-			}
 			target := model.WorkNodeID(n.Next[outcome])
 			if joinID, ok := joins[n.Next[outcome]]; ok {
 				target = joinID

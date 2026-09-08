@@ -178,6 +178,8 @@ const (
 )
 
 type WorkNode struct {
+	// RoutingMode travels with the node through snippets and independent copies.
+	RoutingMode string `json:",omitempty"`
 	// Captures preserve authored output names; runtime capture production is unsupported.
 	Captures []string `json:",omitempty"`
 	// Notes describe authored intent; they are not performer input or authority.

@@ -346,6 +346,9 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 			return WorkRunResult{}, fail(ErrUnsupported, "task %s declares output captures; capture execution is not available", node.ID)
 		}
 	}
+	if err := executableProcessRoutes(graph); err != nil {
+		return WorkRunResult{}, err
+	}
 	retrySource := graph
 	graph, err := compileTaskStages(graph)
 	if err != nil {
@@ -885,6 +888,10 @@ func outgoingNodes(graph model.WorkGraph, id model.WorkNodeID) []model.WorkNodeI
 }
 
 func outgoingNodesForVerdict(graph model.WorkGraph, id model.WorkNodeID, verdict string) []model.WorkNodeID {
+	node := graphNode(graph, id)
+	if node.RoutingMode == "single-route-v1" && node.Kind != model.WorkNodeDecision {
+		return outgoingNodes(graph, id)
+	}
 	if verdict == "" {
 		return outgoingNodes(graph, id)
 	}
@@ -1096,20 +1103,24 @@ func (s *Service) applyAnsweredDecision(ctx context.Context, run WorkRunRecord, 
 			return run, fail(ErrInvalid, "answer has no admitted human task outcome")
 		}
 	}
-	switch verdict {
-	case "reject":
-		outcome = model.WorkOutcomeRejected
-	case "cancel":
-		outcome = model.WorkOutcomeCancelled
-	case "waive":
-		node := graphNode(*run.Run.Graph, attempt.Ref.NodeID)
-		if !node.Waivable {
-			return run, fail(ErrUnauthorized, "node %s does not permit waiver", node.ID)
+	// Imported decision answers are route names, never implicit control commands.
+	node := graphNode(*run.Run.Graph, attempt.Ref.NodeID)
+	importedRoute := node.RoutingMode == "single-route-v1"
+	if !importedRoute || node.Kind != model.WorkNodeDecision {
+		switch verdict {
+		case "reject":
+			outcome = model.WorkOutcomeRejected
+		case "cancel":
+			outcome = model.WorkOutcomeCancelled
+		case "waive":
+			if !node.Waivable {
+				return run, fail(ErrUnauthorized, "node %s does not permit waiver", node.ID)
+			}
+			outcome = model.WorkOutcomeWaived
 		}
-		outcome = model.WorkOutcomeWaived
-	}
-	if outcome == model.WorkOutcomeRejected && hasVerdictEdge(*run.Run.Graph, attempt.Ref.NodeID, verdict) {
-		outcome = model.WorkOutcomeVerified
+		if outcome == model.WorkOutcomeRejected && !importedRoute && hasVerdictEdge(*run.Run.Graph, attempt.Ref.NodeID, verdict) {
+			outcome = model.WorkOutcomeVerified
+		}
 	}
 	transition := s.graphOutcomeTransitionForVerdict(run, attempt, outcome, submission.Reason, verdict)
 	if outcome == model.WorkOutcomeCancelled {
@@ -1694,7 +1705,7 @@ func validateWorkGraph(graph model.WorkGraph) error {
 				return fail(ErrInvalid, "a graph permits one start node at its entry, with no incoming and exactly one outgoing route")
 			}
 			for _, edge := range graph.Edges {
-				if edge.From == id && edge.Verdict != "" {
+				if edge.From == id && edge.Verdict != "" && node.RoutingMode != "single-route-v1" {
 					return fail(ErrInvalid, "start route must be unlabelled")
 				}
 			}
@@ -1752,6 +1763,9 @@ func validateRetryPolicy(node model.WorkNode) error {
 }
 
 func validateWorkNode(node model.WorkNode) error {
+	if node.RoutingMode != "" && node.RoutingMode != "single-route-v1" {
+		return fail(ErrInvalid, "unknown process node routing mode")
+	}
 	if err := validateCaptureNames(node); err != nil {
 		return err
 	}

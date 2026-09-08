@@ -45,6 +45,7 @@ func TestBrowserSavesAgentSettingsAsIndependentConfiguration(t *testing.T) {
 	require.Equal(t, agent, snapshot.Agents[0])
 	require.Empty(t, snapshot.Executions)
 	page.MustReload()
+	page.MustElementR("#connection", "^Updated ")
 	page.MustElement("[data-tab=configurations]").MustClick()
 	page.MustElementR("#configuration-list strong", "^Reusable worker$")
 }
