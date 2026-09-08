@@ -20,6 +20,7 @@ func TestBrowserTeamMemberSelectsCurrentNamedProfile(t *testing.T) {
 	page.MustElement("#team-editor [name=profile]").MustSelect("Worker configuration")
 	require.True(t, page.MustElement("#team-editor [name=model]").MustProperty("disabled").Bool())
 	page.MustElementR("#team-editor button", "^Apply changes$").MustClick()
+	require.Contains(t, page.MustElement("#team-editor article").MustText(), "Worker configuration · codex / first")
 	page.MustElementR("#team-editor button", "^Save team revision$").MustClick()
 	page.MustElementR("#team-editor-status", "Revision 1 · saved")
 	var definitions []model.Definition
@@ -35,6 +36,7 @@ func TestBrowserTeamMemberSelectsCurrentNamedProfile(t *testing.T) {
 	page.MustReload()
 	page.MustElementR("#connection", "^Updated")
 	page.MustElementR("#definition-list button", "^Edit team template$").MustClick()
+	require.Contains(t, page.MustElement("#team-editor article").MustText(), "Worker configuration · codex / second")
 	page.MustElementR("#team-editor button", "^Edit Worker$").MustClick()
 	require.Equal(t, "worker", page.MustElement("#team-editor [name=profile]").MustProperty("value").Str())
 	require.Equal(t, "second", page.MustElement("#team-editor [name=model]").MustProperty("value").Str())
