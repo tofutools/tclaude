@@ -128,6 +128,8 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   assert.match(mounted.container.querySelector('.cost-accumulated-status').textContent,
     /projection, .* accumulated, approximately .* that day/,
     'the keyboard-selected value is announced through a live status region');
+  assert.match(mounted.container.querySelector('.cost-accumulated-status').textContent, /Breakdown: .*gpt/,
+    'the live announcement includes the active model breakdown');
 
   const last7 = [...mounted.container.querySelectorAll('#costs-spans button')].find((button) => button.textContent === 'Last 7d');
   await harness.act(() => harness.fireEvent(last7, 'click'));

@@ -3708,6 +3708,11 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
   flex: 1 1 0; min-width: 0; position: relative;
   display: flex; flex-direction: column;
 }
+.cost-col[data-tip]:focus-visible { outline: 1px solid #58a6ff; outline-offset: 1px; }
+.cost-chart-status {
+  clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; overflow: hidden;
+  position: absolute; white-space: nowrap; width: 1px;
+}
 .cost-bararea {
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column; justify-content: flex-end;

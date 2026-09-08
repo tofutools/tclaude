@@ -61,6 +61,12 @@ function tooltipRows(day, chart) {
   return fragment;
 }
 
+function daySummary(day, chart) {
+  const breakdown = (day.segments || []).map((segment) =>
+    `${segmentName(segment, chart)} ${segment.approximate ? 'approximately ' : ''}${fmtUSD(segment.cost)}`).join(', ');
+  return `${day.day}, ${day.projected ? 'projection' : 'recorded'}, ${day.projected ? 'approximately ' : ''}${fmtUSD(day.cost)} total.${breakdown ? ` Breakdown: ${breakdown}.` : ''}`;
+}
+
 // This is the Costs island's sole imperative boundary. Preact owns the stable
 // host; this adapter owns every chart descendant plus its body-level tooltip
 // and listeners, returning one disposer that removes all of them together.
@@ -98,6 +104,7 @@ export function mountImperativeCostChart(host, chart) {
   }
   const columns = element('div', 'cost-cols');
   const byDay = new Map();
+  const spendColumns = [];
   const showBreakdown = chart.stackByProvider !== false || chart.stackByModel || chart.days.some((day) =>
     (day.segments || []).some((segment) => segment.kind === 'what_if'));
   const labelEvery = chart.days.length > 62 ? 7 : chart.days.length > 35 ? 2 : 1;
@@ -110,6 +117,10 @@ export function mountImperativeCostChart(host, chart) {
         ? `${day.day} — projected ~${fmtUSD(day.cost)}${day.includesWhatIf ? ' · includes WHAT-IF estimates' : ''}`
         : `${day.day} — ${fmtUSD(day.cost)}${hasWhatIf ? ' · includes WHAT-IF estimates' : ''}`;
       column.dataset.day = day.day;
+      column.setAttribute('tabindex', '0');
+      column.setAttribute('role', 'img');
+      column.setAttribute('aria-label', daySummary(day, chart));
+      spendColumns.push(column);
     }
     const area = element('div', 'cost-bararea');
     if (day.projected && !day.segments?.length) {
@@ -129,12 +140,15 @@ export function mountImperativeCostChart(host, chart) {
   });
   plot.append(grid, columns);
   shell.append(axis, plot);
-  host.append(shell);
+  const status = element('div', 'cost-chart-status');
+  status.setAttribute('role', 'status');
+  status.setAttribute('aria-live', 'polite');
+  status.setAttribute('aria-atomic', 'true');
+  host.append(shell, status);
 
   let tooltip = null;
   const hide = () => { if (tooltip) tooltip.style.display = 'none'; };
-  const move = (event) => {
-    const column = event.target.closest?.('.cost-col[data-tip]');
+  const show = (column, clientX, clientY, announce = false) => {
     if (!column) { hide(); return; }
     if (!tooltip) {
       tooltip = element('div', 'cost-tip');
@@ -144,21 +158,45 @@ export function mountImperativeCostChart(host, chart) {
     tooltip.replaceChildren();
     if (showBreakdown && day?.segments?.length) tooltip.append(tooltipRows(day, chart));
     else tooltip.textContent = column.dataset.tip;
+    if (announce) status.textContent = daySummary(day, chart);
     tooltip.style.display = 'block';
     const pad = 14;
     const rect = tooltip.getBoundingClientRect();
-    let left = event.clientX + pad;
-    let top = event.clientY + pad;
-    if (left + rect.width > window.innerWidth - 4) left = event.clientX - pad - rect.width;
-    if (top + rect.height > window.innerHeight - 4) top = event.clientY - pad - rect.height;
+    let left = clientX + pad;
+    let top = clientY + pad;
+    if (left + rect.width > window.innerWidth - 4) left = clientX - pad - rect.width;
+    if (top + rect.height > window.innerHeight - 4) top = clientY - pad - rect.height;
     tooltip.style.left = Math.max(4, left) + 'px';
     tooltip.style.top = Math.max(4, top) + 'px';
   };
+  const move = (event) => show(event.target.closest?.('.cost-col[data-tip]'), event.clientX, event.clientY);
+  const focus = (event) => {
+    const column = event.target.closest?.('.cost-col[data-tip]');
+    if (!column) return;
+    const rect = column.getBoundingClientRect();
+    show(column, rect.left + rect.width / 2, rect.top, true);
+  };
+  const navigate = (event) => {
+    const moves = { ArrowLeft: -1, ArrowRight: 1 };
+    if (!(event.key in moves) && event.key !== 'Home' && event.key !== 'End') return;
+    const current = spendColumns.indexOf(event.target.closest?.('.cost-col[data-tip]'));
+    if (current < 0) return;
+    event.preventDefault();
+    const index = event.key === 'Home' ? 0 : event.key === 'End' ? spendColumns.length - 1
+      : Math.max(0, Math.min(spendColumns.length - 1, current + moves[event.key]));
+    spendColumns[index].focus();
+  };
   host.addEventListener('mousemove', move);
   host.addEventListener('mouseleave', hide);
+  host.addEventListener('focusin', focus);
+  host.addEventListener('focusout', hide);
+  host.addEventListener('keydown', navigate);
   return () => {
     host.removeEventListener('mousemove', move);
     host.removeEventListener('mouseleave', hide);
+    host.removeEventListener('focusin', focus);
+    host.removeEventListener('focusout', hide);
+    host.removeEventListener('keydown', navigate);
     tooltip?.remove();
     host.replaceChildren();
   };

@@ -88,7 +88,11 @@ export function CostsAccumulatedChart({ chart }) {
   const describePoint = (point, projected = point.projected) => ({
     point, projected, x: x(point.index), y: y(point.cost),
   });
-  const pointSummary = ({ point, projected }) => `${point.day}, ${projected ? 'projection' : 'recorded'}, ${fmtExactUSD(point.cost)} accumulated, ${projected ? 'approximately ' : ''}${fmtExactUSD(point.dailyCost)} that day.`;
+  const pointSummary = ({ point, projected }) => {
+    const breakdown = (point.breakdown || []).map((item) =>
+      `${breakdownLabel(item, chart)} ${projected ? 'approximately ' : ''}${fmtExactUSD(item.cost)}`).join(', ');
+    return `${point.day}, ${projected ? 'projection' : 'recorded'}, ${fmtExactUSD(point.cost)} accumulated, ${projected ? 'approximately ' : ''}${fmtExactUSD(point.dailyCost)} that day.${breakdown ? ` Breakdown: ${breakdown}.` : ''}`;
+  };
   const inspectPoint = (description, announce = false) => {
     setTooltip(description);
     if (announce) setAnnouncement(pointSummary(description));
