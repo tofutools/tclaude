@@ -56,7 +56,7 @@ func (p *prepared) prepareSandbox(ctx context.Context) error {
 			p.normalizer.SetForkReceipt(p.forkReceipt)
 		}
 	}
-	artifact, err := p.provider.hostSandbox.Prepare(ctx, *p.request.Spec.HostSandbox, *p.request.HostSandboxPolicy, p.command, resources...)
+	artifact, err := p.provider.hostSandbox.PrepareHarness(ctx, *p.request.Spec.HostSandbox, *p.request.HostSandboxPolicy, p.command, "codex", p.stateRoot, resources...)
 	if err != nil {
 		return err
 	}

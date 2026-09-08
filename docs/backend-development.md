@@ -204,6 +204,16 @@ parent. Without an explicit root, selected launches use
 `STATE/claude/native-home`. A continuation retains its recorded configuration
 root rather than switching it when the host-sandbox choice changes.
 
+Selected native Claude, Codex, and Copilot launches share a configuration floor:
+known settings files and executable-configuration directories are readonly by
+default (`HarnessConfig: read` is equivalent); login and history state remain
+writable. `HarnessConfig: write` explicitly opts out. Missing configuration files
+are not fabricated, and symlinked catalog entries retain the legacy warning and
+are skipped. Such entries and absent files therefore are not covered by this
+floor. Existing files and created empty configuration directories are retained
+by identity in each prepared launch. Changing a pinned file before release
+requires a fresh preparation.
+
 OpenCode also accepts an explicit native XDG root. Codex and Copilot currently
 support their owned native homes only. Each refresh reports coverage; partial or
 unreadable history is not presented as a complete empty result.

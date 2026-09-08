@@ -83,7 +83,10 @@ func TestProviderHostSandboxPreparesExactCommandAndRefusesChangedCredentialBefor
 	require.Contains(t, command.Environment, "CODEX_HOME="+provider.nativeHome)
 	require.NotContains(t, string(data), "must not be copied")
 	require.NotContains(t, string(data), "disposable action credential")
-	require.Len(t, command.ProviderResources, 5)
+	require.Len(t, command.ProviderResources, 8)
+	// Preparing the same shared home must not replace the pinned hooks file.
+	require.NoError(t, provider.prepareStateRoot(provider.nativeHome, workspace))
+	require.NoError(t, host.VerifySandboxChild(ctx, *recorded.HostSandbox))
 	require.NoError(t, os.Rename(recorded.Access.Resource, recorded.Access.Resource+".old"))
 	require.NoError(t, os.WriteFile(recorded.Access.Resource, []byte("replacement"), 0600))
 	permit := &testPermit{execution: request.Spec.ExecutionID}

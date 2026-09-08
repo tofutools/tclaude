@@ -82,7 +82,7 @@ func TestProviderHostSandboxPreparesExactCommandAndRefusesChangedCredentialBefor
 	require.Contains(t, command.Environment, "CLAUDE_CONFIG_DIR="+provider.nativeHome)
 	require.NotContains(t, string(data), "must not be copied")
 	require.NotContains(t, string(data), "disposable action credential")
-	require.Len(t, command.ProviderResources, 5)
+	require.Len(t, command.ProviderResources, 16)
 	require.NoError(t, os.Rename(recorded.Access.Resource, recorded.Access.Resource+".old"))
 	require.NoError(t, os.WriteFile(recorded.Access.Resource, []byte("replacement"), 0600))
 	permit := &testPermit{execution: request.Spec.ExecutionID}
@@ -108,6 +108,16 @@ func TestProviderHostSandboxPreparesExactCommandAndRefusesChangedCredentialBefor
 // shipped bootstrap and kernel wrapper. It performs no authenticated native
 // harness work and uses only disposable credentials and directories.
 func TestProviderHostSandboxNativeLaunchAndRecovery(t *testing.T) {
+	for _, access := range []model.SandboxHarnessConfig{model.SandboxHarnessConfigDefault, model.SandboxHarnessConfigRead, model.SandboxHarnessConfigWrite} {
+		name := string(access)
+		if name == "" {
+			name = "default"
+		}
+		t.Run(name, func(t *testing.T) { testProviderHostSandboxNativeLaunchAndRecovery(t, access) })
+	}
+}
+
+func testProviderHostSandboxNativeLaunchAndRecovery(t *testing.T, access model.SandboxHarnessConfig) {
 	bootstrap := os.Getenv("TCLAUDE_SANDBOX_BOOTSTRAP")
 	if bootstrap == "" {
 		t.Skip("required native CI provides the shipped bootstrap")
@@ -143,6 +153,13 @@ test "$(cat "$TCLAUDE_BACKEND_CREDENTIAL_FILE")" = 'fixture credential'
 test "$(cat "$CLAUDE_CONFIG_DIR/login-fixture")" = 'existing fixture login'
 test "$(cat "$CLAUDE_CONFIG_DIR/settings.json")" = '{}'
 printf history > "$CLAUDE_CONFIG_DIR/history-fixture"
+if test "$CONFIG_ACCESS" = write; then
+  printf changed > "$CLAUDE_CONFIG_DIR/settings.json"
+  printf hook > "$CLAUDE_CONFIG_DIR/hooks/new-hook"
+else
+  if (printf changed > "$CLAUDE_CONFIG_DIR/settings.json") 2>/dev/null; then exit 25; fi
+  if (printf hook > "$CLAUDE_CONFIG_DIR/hooks/new-hook") 2>/dev/null; then exit 26; fi
+fi
 if cat "$PRIVATE_SIBLING" >/dev/null 2>&1; then exit 24; fi
 printf '%s\n' "$@" > "$WORKSPACE/args"
 curl --fail --silent --show-error --max-time 5 --unix-socket "$CONTROL_SOCKET" http://fixture/ > "$WORKSPACE/first-response" 2> "$WORKSPACE/client-error"
@@ -174,9 +191,10 @@ while IFS= read -r line; do printf '%s\n' "$line" >> "$WORKSPACE/input"; done
 	require.NoError(t, os.Mkdir(nativeHome, 0700))
 	require.NoError(t, os.WriteFile(filepath.Join(nativeHome, "login-fixture"), []byte("existing fixture login"), 0600))
 	require.NoError(t, os.WriteFile(filepath.Join(nativeHome, "settings.json"), []byte("{}"), 0600))
+	require.NoError(t, os.Mkdir(filepath.Join(nativeHome, "hooks"), 0700))
 	provider, err := New(Config{Executable: executable, NativeHome: nativeHome, PrivateRoot: filepath.Join(private, "provider"), AgentSocket: socket, AgentSocketDirectory: control, HostSandbox: planner})
 	require.NoError(t, err)
-	policy := model.SandboxPolicy{FilesystemRoot: model.SandboxRootSeparate, Filesystem: []model.SandboxFilesystemRule{{HostPath: workspace, Access: model.SandboxFilesystemWrite}}, Network: &model.SandboxNetwork{Baseline: model.SandboxNetworkDeny}}
+	policy := model.SandboxPolicy{HarnessConfig: access, FilesystemRoot: model.SandboxRootSeparate, Filesystem: []model.SandboxFilesystemRule{{HostPath: workspace, Access: model.SandboxFilesystemWrite}}, Network: &model.SandboxNetwork{Baseline: model.SandboxNetworkDeny}}
 	hash, err := sandboxpolicy.ContentHash(policy)
 	require.NoError(t, err)
 	ref := model.SandboxProfileRef{ProfileID: "policy", RevisionID: "revision", ContentHash: hash}
@@ -184,7 +202,7 @@ while IFS= read -r line; do printf '%s\n' "$line" >> "$WORKSPACE/input"; done
 	require.NoError(t, err)
 	selected, err := materialized.LaunchSelection()
 	require.NoError(t, err)
-	request := ports.PreparationRequest{NativeGuidance: sandboxGuidance{}, CallbackIngress: sandboxIngress{socket}, HostSandboxPolicy: &materialized, Spec: model.ResolvedExecutionSpec{HostSandbox: &selected, ExecutionID: "native_execution", Attempt: 1, Harness: Name, Model: "fixture", WorkingDirectory: workspace, Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite, Environment: model.Environment{"PRIVATE_SIBLING": sibling, "WORKSPACE": workspace, "CONTROL_SOCKET": socket}}, Intent: ports.StartFresh, InitialInput: &ports.PreparedInitialInput{Body: "first work literal", Correlation: "brief", RequiredBeforeFirstWork: true}, ActionCredential: &ports.ActionCredentialMaterial{ExecutionID: "native_execution", Generation: 1, DeliveryID: "delivery", Secret: []byte("fixture credential"), ExpiresAt: time.Now().Add(time.Hour)}}
+	request := ports.PreparationRequest{NativeGuidance: sandboxGuidance{}, CallbackIngress: sandboxIngress{socket}, HostSandboxPolicy: &materialized, Spec: model.ResolvedExecutionSpec{HostSandbox: &selected, ExecutionID: "native_execution", Attempt: 1, Harness: Name, Model: "fixture", WorkingDirectory: workspace, Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite, Environment: model.Environment{"CONFIG_ACCESS": string(access), "PRIVATE_SIBLING": sibling, "WORKSPACE": workspace, "CONTROL_SOCKET": socket}}, Intent: ports.StartFresh, InitialInput: &ports.PreparedInitialInput{Body: "first work literal", Correlation: "brief", RequiredBeforeFirstWork: true}, ActionCredential: &ports.ActionCredentialMaterial{ExecutionID: "native_execution", Generation: 1, DeliveryID: "delivery", Secret: []byte("fixture credential"), ExpiresAt: time.Now().Add(time.Hour)}}
 	prepared, err := provider.Prepare(context.Background(), request)
 	require.NoError(t, err)
 	released, err := prepared.Release(context.Background(), &testPermit{execution: request.Spec.ExecutionID})

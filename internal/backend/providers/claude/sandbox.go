@@ -63,7 +63,7 @@ func (p *prepared) prepareSandbox(ctx context.Context) error {
 			resources = append(resources, host.SandboxProviderResource{Path: endpoint, Access: model.SandboxFilesystemRead})
 		}
 	}
-	artifact, err := p.provider.hostSandbox.Prepare(ctx, *p.request.Spec.HostSandbox, *p.request.HostSandboxPolicy, p.command, resources...)
+	artifact, err := p.provider.hostSandbox.PrepareHarness(ctx, *p.request.Spec.HostSandbox, *p.request.HostSandboxPolicy, p.command, "claude", p.nativeHome, resources...)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -41,7 +42,17 @@ func sandboxLinuxInvocation(wrapper string, child ProcessSpec, bindings *Sandbox
 		args = append(args, "--unshare-net")
 	}
 	args = append(args, "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp")
-	for index, pin := range bindings.pins {
+	// Ancestors must be mounted before descendants, even when a trusted
+	// provider root was appended after an authored narrower grant.
+	order := make([]int, len(bindings.pins))
+	for index := range order {
+		order[index] = index
+	}
+	sort.SliceStable(order, func(a, b int) bool {
+		return strings.Count(bindings.pins[order[a]].Guest, string(filepath.Separator)) < strings.Count(bindings.pins[order[b]].Guest, string(filepath.Separator))
+	})
+	for _, index := range order {
+		pin := bindings.pins[index]
 		flag := "--ro-bind-fd"
 		if pin.Access == model.SandboxFilesystemWrite {
 			flag = "--bind-fd"

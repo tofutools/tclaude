@@ -59,6 +59,16 @@ func NewSandboxLaunchPreparer(config SandboxLaunchConfig) (*SandboxLaunchPrepare
 // Additional policy engines must be implemented here before their options can
 // launch; none of the authored axes may be silently dropped.
 func (p *SandboxLaunchPreparer) Prepare(ctx context.Context, selected model.SandboxSelection, materialized sandboxpolicy.PolicyMaterialization, child ProcessSpec, resources ...SandboxProviderResource) (SandboxChildArtifact, error) {
+	return p.prepare(ctx, selected, materialized, child, "", "", resources...)
+}
+
+// PrepareHarness retains the shared configuration floor alongside a provider's
+// writable native state. Harness and root come from trusted provider composition.
+func (p *SandboxLaunchPreparer) PrepareHarness(ctx context.Context, selected model.SandboxSelection, materialized sandboxpolicy.PolicyMaterialization, child ProcessSpec, harness, nativeRoot string, resources ...SandboxProviderResource) (SandboxChildArtifact, error) {
+	return p.prepare(ctx, selected, materialized, child, harness, nativeRoot, resources...)
+}
+
+func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.SandboxSelection, materialized sandboxpolicy.PolicyMaterialization, child ProcessSpec, harness, nativeRoot string, resources ...SandboxProviderResource) (SandboxChildArtifact, error) {
 	actual, err := materialized.LaunchSelection()
 	if err != nil || !actual.Equal(selected) {
 		return SandboxChildArtifact{}, fmt.Errorf("sandbox materialization does not match selected policy")
@@ -67,7 +77,7 @@ func (p *SandboxLaunchPreparer) Prepare(ctx context.Context, selected model.Sand
 	if policy.FilesystemRoot != model.SandboxRootSeparate {
 		return SandboxChildArtifact{}, fmt.Errorf("inherited sandbox root preparation is not configured")
 	}
-	if len(policy.Tmpfs) != 0 || len(policy.AgentDirectories) != 0 || len(policy.PreLaunch) != 0 || policy.Resources != (model.SandboxResources{}) || policy.HarnessConfig != model.SandboxHarnessConfigDefault || policy.DarwinAllowMachRegister {
+	if len(policy.Tmpfs) != 0 || len(policy.AgentDirectories) != 0 || len(policy.PreLaunch) != 0 || policy.Resources != (model.SandboxResources{}) || (harness == "" && policy.HarnessConfig != model.SandboxHarnessConfigDefault) || policy.DarwinAllowMachRegister {
 		return SandboxChildArtifact{}, fmt.Errorf("selected sandbox requires additional native policy preparation")
 	}
 	if len(materialized.Composition.SocketAll) != 0 {
@@ -96,9 +106,29 @@ func (p *SandboxLaunchPreparer) Prepare(ctx context.Context, selected model.Sand
 		return SandboxChildArtifact{}, err
 	}
 	defer func() { _ = bindings.Close() }()
+	floorStart := len(resources)
+	if harness != "" {
+		// Admit provider declarations before creating any missing floor directories.
+		checked, err := p.config.Inspector.BindSandboxProviderResources(ctx, resources)
+		if err != nil {
+			return SandboxChildArtifact{}, err
+		}
+		_ = checked.Close()
+		floor, err := prepareSandboxHarnessFloor(harness, nativeRoot, policy, resources)
+		if err != nil {
+			return SandboxChildArtifact{}, err
+		}
+		resources = append(append([]SandboxProviderResource(nil), resources...), floor...)
+	}
 	owned, err := p.config.Inspector.BindSandboxProviderResources(ctx, resources)
 	if err != nil {
 		return SandboxChildArtifact{}, err
+	}
+	for _, pin := range owned.pins[floorStart:] {
+		if pin.Source != pin.Guest {
+			_ = owned.Close()
+			return SandboxChildArtifact{}, fmt.Errorf("sandbox configuration floor changed during preparation")
+		}
 	}
 	bindings.pins = append(bindings.pins, owned.pins...)
 	bindings.files = append(bindings.files, owned.files...)

@@ -356,8 +356,14 @@ func (p *Provider) prepareStateRoot(root, _ string) error {
 	if err != nil {
 		return err
 	}
-	if err := host.WriteProtectedFile(filepath.Join(root, "hooks.json"), raw); err != nil {
-		return err
+	// Reuse unchanged shared configuration: concurrent prepared launches pin
+	// this inode read-only and must not invalidate one another.
+	hooksPath := filepath.Join(root, "hooks.json")
+	existing, readErr := host.ReadProtectedFile(hooksPath, 1<<20)
+	if readErr != nil || string(existing) != string(raw) {
+		if err := host.WriteProtectedFile(hooksPath, raw); err != nil {
+			return err
+		}
 	}
 	return nil
 }
