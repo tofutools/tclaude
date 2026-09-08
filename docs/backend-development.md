@@ -1293,3 +1293,26 @@ As in the legacy engine, runtime production of captures is unavailable. Starting
 Task performers and plan/check/review performers can retain a contact cadence, positive contact budget, and escalation target. Cadence uses a positive Go duration such as `30m`; budgets are 1–10000 and escalation targets are bounded nonempty text. Changing performer kind retains an applied schedule. Clearing all three fields removes it in a new revision.
 
 These settings preserve the legacy authoring contract. They do not create notification jobs or grant authority to the named target. As in the legacy engine, starting a process with a contact schedule is explicitly unsupported, including schedules on nested task stages. The editor explains this before execution.
+
+### Legacy sandbox profile conversion
+
+Offline v228 import converts representable sandbox profiles into archived,
+immutable replacement revisions. Include names resolve only within that snapshot
+and become exact revision references. The archived catalog supports inspection
+and explicit independent copies; imported defaults, assignments, grants and
+runtime state are not activated. Legacy `network_access=none` retains its coupled
+closed Unix-socket posture when no newer network axis was authored.
+
+A policy with unsupported fields, spelling aliases that need a target alias
+representation, conflicting representations, invalid quantities or unresolved
+includes remains wholly in source evidence with a redacted diagnostic. Dependent
+profiles remain pending too. No partial editable policy is published and no setup
+script or host lookup runs during conversion. These pending cases remain parity
+work; they are not accepted feature exclusions.
+
+Exact retries verify both policy documents and the scalar lifecycle/revision
+indexes. A destination produced by an older evidence-only conversion is refused
+if it lacks the newly expected typed records; the importer never rewrites that
+existing destination. Use a fresh explicit destination for the new conversion.
+
+Imported sandbox profiles carry a durable imported marker. They remain archived and reject restore or same-identity edits; inspect, export, and explicit independent copy remain available. Independent copies use fresh identities and normal editable lifecycle rules.
