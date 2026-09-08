@@ -1837,4 +1837,8 @@ approval or confinement independently. Only checked fields are stored as
 An explicit empty effort clears the inherited effort. Switching harness drops
 an inherited foreign model/effort and provider-specific startup context unless
 the member authors replacement model/effort values. Custom/copy members retain
-their existing concrete settings. No permissions are granted by these choices.
+their existing concrete settings. When an inherited confinement is incompatible
+with the selected harness, its adapter supplies the native default. The editor
+previews the same adapter declaration. Explicit confinement overrides remain
+intentional and incompatible values fail before deployment effects. No permissions
+are granted by these choices.

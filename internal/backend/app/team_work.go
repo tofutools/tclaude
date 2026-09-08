@@ -96,7 +96,10 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 			if profile.Profile.Archived {
 				return TeamDeploymentResult{}, fail(ErrConflict, "member %s profile is archived", spec.Key)
 			}
-			desired = spec.Overrides.Apply(profile.Revision.Desired)
+			desired, err = s.resolveTeamProfile(spec, profile.Revision.Desired)
+			if err != nil {
+				return TeamDeploymentResult{}, err
+			}
 			ref := profile.Revision.Ref
 			profileRef = &ref
 			if profile.Revision.Startup != nil {

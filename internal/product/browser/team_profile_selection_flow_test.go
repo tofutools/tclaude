@@ -6,10 +6,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/internal/backend/app"
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/providers/copilot"
 )
 
 func TestBrowserTeamMemberSelectsCurrentNamedProfile(t *testing.T) {
-	ctx, page, operator := processEditorBrowser(t)
+	ctx, page, operator := processEditorBrowser(t, &copilot.Provider{})
 	desired := model.DesiredConfiguration{Harness: "codex", Model: "first", WorkingDirectory: "/tmp", Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/configuration-profiles", map[string]any{"request_id": "profile", "id": "worker", "revision_id": "one", "name": "Worker configuration", "desired": desired}, nil))
 	page.MustElement("[data-tab=processes]").MustClick()
@@ -42,6 +43,14 @@ func TestBrowserTeamMemberSelectsCurrentNamedProfile(t *testing.T) {
 	require.Equal(t, "member-model", page.MustElement("#team-editor [name=model]").MustProperty("value").Str())
 	page.MustElement("#team-editor [name=override_model]").MustClick()
 	require.Equal(t, "second", page.MustElement("#team-editor [name=model]").MustProperty("value").Str())
+	page.MustElement("#team-editor [name=override_harness]").MustClick()
+	page.MustElement("#team-editor [name=harness]").MustSelect("copilot")
+	page.MustElementR("#team-editor [aria-label='Configured launch support']", "copilot adapter.*Selected policy is supported")
+	require.Equal(t, "unconfined", page.MustElement("#team-editor [name=sandbox]").MustProperty("value").Str())
+	page.MustElement("#team-editor [name=override_sandbox]").MustClick()
+	page.MustElement("#team-editor [name=sandbox]").MustSelect("workspace_write")
+	page.MustElementR("#team-editor [aria-label='Configured launch support']", "Unsupported selected confinement workspace_write")
+	require.Equal(t, "workspace_write", page.MustElement("#team-editor [name=sandbox]").MustProperty("value").Str())
 	page.MustElement("#team-editor [name=profile]").MustSelect("Custom settings")
 	require.False(t, page.MustElement("#team-editor [name=model]").MustProperty("disabled").Bool())
 	page.MustElement("#team-editor [aria-label='Copy saved configuration']").MustSelect("Worker configuration · two")

@@ -208,6 +208,13 @@ class TeamEditor {
     form.elements.harness.addEventListener('change',()=>{if(form.elements.profile.value)updateProfile();});
     form.elements.profile.addEventListener('change', () => { updateProfile(); this.unapplied = true; });
     for(const key of Object.keys(overrideProperties))form.elements['override_'+key].addEventListener('change',()=>{updateProfile();this.unapplied=true;});
+    form.addEventListener('launch-policy-support', event => {
+      const profile = this.configurations.find(c => c.Profile.ID === form.elements.profile.value);
+      const support = event.detail;
+      if (!profile || form.elements.harness.value === profile.Revision.Desired.Harness || form.elements.override_sandbox.checked) return;
+      if (support.Harness !== form.elements.harness.value || !support.PolicyKnown) return;
+      if (!(support.SandboxModes || []).includes(form.elements.sandbox.value) && (support.SandboxModes || []).includes(support.DefaultSandbox)) form.elements.sandbox.value = support.DefaultSandbox;
+    });
     updateProfile(true);
     this.content.prepend(select, el('p', 'A saved configuration uses its current settings at each new deployment. Custom settings and copied settings stay with this template. Deployment supplies the working directory.'));
   }
