@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"golang.org/x/sys/unix"
 )
 
 func processTreeOwnsLoopbackPort(rootPID, port int) (bool, error) {
@@ -43,19 +45,16 @@ func processTreeOwnsLoopbackPort(rootPID, port int) (bool, error) {
 }
 
 func darwinProcessTreePIDs(rootPID int) ([]int, error) {
-	out, err := exec.Command("ps", "-axo", "pid=,ppid=").Output()
+	// /bin/ps is set-ID on macOS and cannot be executed in a Seatbelt
+	// child. Read the same kernel process records as retained identity checks.
+	processes, err := unix.SysctlKinfoProcSlice("kern.proc.all")
 	if err != nil {
 		return nil, err
 	}
 	children := make(map[int][]int)
-	for _, line := range strings.Split(string(out), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) != 2 {
-			continue
-		}
-		pid, pidErr := strconv.Atoi(fields[0])
-		parent, parentErr := strconv.Atoi(fields[1])
-		if pidErr == nil && parentErr == nil {
+	for _, process := range processes {
+		pid, parent := int(process.Proc.P_pid), int(process.Eproc.Ppid)
+		if pid > 0 && parent >= 0 {
 			children[parent] = append(children[parent], pid)
 		}
 	}
