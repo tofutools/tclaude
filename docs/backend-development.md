@@ -1690,3 +1690,13 @@ clears that group's assignment. Explicit agent choices remain visible for review
 `global` and `groups` together with the displayed `expected_revision` and a
 `request_id`; both assignment fields must be present. Request retries return the
 recorded result and concurrent edits conflict without replacing the form draft.
+
+Agent sandbox choices also survive offline import. The last recorded sandbox
+snapshot supplies only the explicit profile identity, source group, and explicit
+profile-omission choice; current policy values are resolved on the next launch.
+Older agents without that snapshot use the original spawn's profile choice.
+Recorded omission continues to bypass global and group defaults. As in v1
+resume, a deleted explicit profile may resolve by its recorded name if a profile
+with that name has been recreated. Unresolvable explicit selections refuse
+publication instead of becoming unsandboxed launches. Import does not resume
+conversations or execute the recorded setup scripts.
