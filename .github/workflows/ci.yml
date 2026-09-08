@@ -85,6 +85,9 @@ jobs:
           else
             TCLAUDE_REQUIRE_SANDBOX_NATIVE=1 "$RUNNER_TEMP/sandbox-native.test" -test.run '^TestSandboxDescriptor' -test.timeout 1m -test.v
           fi
+      - name: Diagnose native sandbox denial on macOS
+        if: ${{ failure() && runner.os == 'macOS' }}
+        run: sudo /usr/bin/log show --last 3m --style compact --predicate 'process == "sandbox-exec" OR (process == "kernel" AND (eventMessage CONTAINS[c] "sandbox" OR eventMessage CONTAINS[c] "sandbox-native" OR eventMessage CONTAINS[c] "signature"))'
       - name: Full product race suite
         if: ${{ !inputs.native_only }}
         run: go test -race ./... -count=1 -timeout 15m
