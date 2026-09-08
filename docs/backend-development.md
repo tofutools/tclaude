@@ -1541,6 +1541,6 @@ intermediate.
 
 ### Imported joins and conditional arrivals
 
-Legacy `join: all` and `join: any` become explicit join nodes before the original node. Original node IDs, work, source text, and layout positions remain intact; incoming connector preferences follow the redirected edges. Generated join IDs are deterministic and avoid every authored node ID. The join is ordinary editable graph structure after conversion.
+Legacy `join: all` and `join: any` become explicit join nodes before the original node. Original node IDs, work, source text, and layout positions remain intact; incoming connector preferences follow the redirected edges. Generated join IDs are deterministic and avoid every authored node ID. The join is ordinary editable graph structure after conversion. A non-entry legacy Start control marker is itself represented by a join under its original identity and name, with its declared all/any policy (or an all-join for a simple pass-through); it does not become an invalid second v2 entry node.
 
 All-joins wait for every incoming route that can still arrive. Only settled decisions with a durable answer remove unselected paths; unanswered or unresolved decisions remain possible. Already-arrived joins are reconsidered when another decision rules out a pending candidate. This survives backend reopen without replaying a reducer. Any-joins activate once on the first arrival, while losing branches remain accounted for until settled. These rules do not waive required outcome evidence or suppress active work.
