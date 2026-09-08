@@ -54,7 +54,7 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 		if roleErr != nil {
 			return model.TeamDeployment{}, false, roleErr
 		}
-		if role.Revision != pin.Revision || !reflect.DeepEqual(role.Actions, pin.Actions) {
+		if role.Revision != pin.Revision || role.Brief != pin.Brief || !reflect.DeepEqual(role.Actions, pin.Actions) {
 			return model.TeamDeployment{}, false, app.ErrConflict
 		}
 		pins[pin.RoleID] = pin

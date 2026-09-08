@@ -1793,3 +1793,7 @@ Agent display roles and descriptions are editable metadata, separate from role a
 ### Display-role message targets
 
 Team recurring nudges and message schedules can target a display role within a group, matching v1. `RoleLabel` is matched case-insensitively against the member's current group label (falling back to the agent label); leading/trailing whitespace is ignored. Empty means all members. This selection grants no permissions: normal message authority, schedule delegation, active membership, and delivery-time recipient eligibility still apply. A display-role target cannot be combined with explicit recipients or a permission-role filter. Previously saved `RoleID` filters retain their behavior and remain visible when editing an existing rule.
+
+### Reusable role guidance
+
+The role library retains a description and startup brief alongside its permission actions, matching the v1 reusable role concept. Roles may contain guidance without granting any actions. The editor saves and reopens both fields; role briefs retain v1 line-ending normalization and the 16 KiB bound. Team deployment includes each selected role's brief in a `## Role` startup section and records the selected guidance with the deployment so delayed starts and retries retain the admitted text. Editing a library role affects subsequent deployments, while permission actions retain their existing live assignment behavior.

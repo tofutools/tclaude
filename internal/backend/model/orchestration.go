@@ -618,6 +618,7 @@ type TeamRebrief struct {
 // a deployment. Later role edits remain live authority semantics, but do not
 // rewrite what the deployment admitted.
 type TeamRolePin struct {
+	Brief    string `json:",omitempty"`
 	RoleID   RoleID
 	Revision Revision
 	Actions  []Action
