@@ -1738,3 +1738,28 @@ and `all` means every current member. The acting agent is excluded. These fixed
 notices use the phase command's group-management authority; the public message
 API still requires message-send authority. Phases grant no permissions, impose
 no execution gates, and never advance automatically.
+
+### Recurring team nudges
+
+The team editor's Rhythms section supports template-declared nudges with a name,
+interval or cron schedule, timezone, optional subject, message and target role.
+An empty role selection means all group members. Saving, copying or exporting a
+template does not create schedules. Deployment creates separate ordinary rules
+for the new group and enables them when deployment is ready. Recipients are
+resolved against current group and role membership when a schedule fires.
+
+Generated rules remain editable and archivable in Automation. Changes retain the
+rule's deployment association, so stand-down still disables it; an archived rule
+is not reenabled by deployment settlement. The original template stays unchanged.
+Nudges skip missed ticks and offline recipients, as v1's default schedules do.
+
+An operator-deployed nudge has explicit no-expiry delegation, limited to message
+delivery to its group and intersected with its owner's current authority for every
+effect. An automation-deployed nudge inherits the parent delegation's lifetime
+and requires its message-send and target-group-member scope. Missing scope is
+refused before creating deployment resources. Derived creation/activation use the
+exact admitted parent occurrence; public rule edits still require automation
+management authority.
+Automation authoring also exposes this lifetime choice. Existing omitted or
+expired delegation timestamps do not acquire no-expiry behavior implicitly;
+revocation and rule disablement continue to prevent new dispatch.

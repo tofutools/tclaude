@@ -1240,10 +1240,25 @@ func (s *Service) validateProgramBindings(ctx context.Context, graph model.WorkG
 }
 
 func (s *Service) SaveAutomationRule(ctx context.Context, req SaveAutomationRuleRequest) (AutomationRuleResult, error) {
-	return s.saveAutomationRule(ctx, req, "")
+	deploymentID := model.DeploymentID("")
+	if req.ExpectedRevision != 0 {
+		record, err := s.store.AutomationRule(ctx, req.ID)
+		if err != nil {
+			return AutomationRuleResult{}, err
+		}
+		deploymentID = record.Rule.DeploymentID
+	}
+	return s.saveAutomationRule(ctx, req, deploymentID)
 }
 
 func (s *Service) saveAutomationRule(ctx context.Context, req SaveAutomationRuleRequest, deploymentID model.DeploymentID) (AutomationRuleResult, error) {
+	return s.saveAutomationRuleAuthorized(ctx, req, deploymentID, nil)
+}
+
+func (s *Service) saveAutomationRuleAuthorized(ctx context.Context, req SaveAutomationRuleRequest, deploymentID model.DeploymentID, creationAuthority *model.AuthorityRequest) (AutomationRuleResult, error) {
+	if req.Delegation.NoExpiry && !req.Delegation.ExpiresAt.IsZero() {
+		return AutomationRuleResult{}, fail(ErrInvalid, "choose expiry or no expiry")
+	}
 	if err := req.Delegation.Bounds.ValidateEnvironments(); err != nil {
 		return AutomationRuleResult{}, fail(ErrInvalid, "%v", err)
 	}
@@ -1270,7 +1285,11 @@ func (s *Service) saveAutomationRule(ctx context.Context, req SaveAutomationRule
 		return AutomationRuleResult{}, err
 	}
 	if req.Context.Principal.Kind != model.PrincipalOperator {
-		if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionManageAutomation, Resource: model.ResourceSelector{Kind: model.ResourceAutomationRule, AutomationRuleID: req.ID}}, s.now().UTC()); err != nil {
+		authorization := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionManageAutomation, Resource: model.ResourceSelector{Kind: model.ResourceAutomationRule, AutomationRuleID: req.ID}}
+		if creationAuthority != nil {
+			authorization = *creationAuthority
+		}
+		if err := s.requireAuthority(ctx, authorization, s.now().UTC()); err != nil {
 			return AutomationRuleResult{}, err
 		}
 	}
@@ -1517,6 +1536,9 @@ func materializePerformerBindings(graph model.WorkGraph, bindings map[string]mod
 }
 
 func validateTeam(team model.TeamDefinition) error {
+	if err := validateTeamRhythms(team.Rhythms); err != nil {
+		return err
+	}
 	if err := validateTeamPhases(team); err != nil {
 		return err
 	}

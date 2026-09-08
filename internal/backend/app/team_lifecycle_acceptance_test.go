@@ -4,7 +4,6 @@ package app_test
 
 import (
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -103,11 +102,12 @@ func TestTeamWorkspaceReadinessRhythmRebriefAndStandDownJourney(t *testing.T) {
 	ownedRhythm, err = service.GetAutomationRule(ctx, app.GetAutomationRuleRequest{Principal: operator, ID: ready.Deployment.OwnedAutomationRuleIDs[0]})
 	require.NoError(t, err)
 	require.True(t, ownedRhythm.Rule.Enabled)
-	_, err = service.SaveAutomationRule(ctx, app.SaveAutomationRuleRequest{
+	editedRhythm, err := service.SaveAutomationRule(ctx, app.SaveAutomationRuleRequest{
 		Context: app.RequestContext{Principal: operator, RequestID: "edit_owned_rhythm"}, ID: ownedRhythm.Rule.ID, RevisionID: "owned_rhythm_edit", ExpectedRevision: ownedRhythm.Rule.Revision, Name: "external edit", Enabled: true,
 		Owner: ownedRhythm.Revision.Owner, Delegation: ownedRhythm.Revision.Delegation, Condition: ownedRhythm.Revision.Condition, Action: ownedRhythm.Revision.Action, Policy: ownedRhythm.Revision.Policy, Dependencies: ownedRhythm.Revision.Dependencies,
 	})
-	require.True(t, errors.Is(err, app.ErrConflict), "deployment-owned rhythms cannot be detached through the ordinary authoring surface")
+	require.NoError(t, err)
+	require.Equal(t, ownedRhythm.Rule.DeploymentID, editedRhythm.Rule.DeploymentID, "ordinary edits retain deployment lifecycle association")
 
 	teamV2 := teamV1
 	teamV2.Briefings = append([]model.TeamBriefing(nil), teamV1.Briefings...)

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/tofutools/tclaude/internal/backend/app"
@@ -863,7 +864,42 @@ func (s *Store) SetAutomationRuleEnabled(ctx context.Context, id model.Automatio
 		return app.AutomationRuleRecord{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
-	decision, err := authorizeTx(ctx, tx, model.AuthorityRequest{Principal: principal, Action: model.ActionManageAutomation, Resource: model.ResourceSelector{Kind: model.ResourceAutomationRule, AutomationRuleID: id}}, at)
+	authorization := model.AuthorityRequest{Principal: principal, Action: model.ActionManageAutomation, Resource: model.ResourceSelector{Kind: model.ResourceAutomationRule, AutomationRuleID: id}}
+	if principal.Kind == model.PrincipalAutomation && current.Rule.DeploymentID != "" {
+		var requesterJSON, ownedJSON, definitionJSON []byte
+		if err = tx.QueryRowContext(ctx, `SELECT requester_json,owned_automation_rule_ids_json,definition_json FROM team_deployments WHERE id=?`, current.Rule.DeploymentID).Scan(&requesterJSON, &ownedJSON, &definitionJSON); err != nil {
+			return app.AutomationRuleRecord{}, err
+		}
+		var requester model.Principal
+		var owned []model.AutomationRuleID
+		if json.Unmarshal(requesterJSON, &requester) != nil || json.Unmarshal(ownedJSON, &owned) != nil {
+			return app.AutomationRuleRecord{}, app.ErrUnauthorized
+		}
+		if reflect.DeepEqual(requester, principal) && slices.Contains(owned, id) {
+			// Only template-authored group nudges use this parent authority. Copies of
+			// independently authored automation rules retain their original manage gate.
+			var definition model.DefinitionRef
+			var team model.TeamDefinition
+			var teamJSON []byte
+			if json.Unmarshal(definitionJSON, &definition) != nil {
+				return app.AutomationRuleRecord{}, app.ErrConflict
+			}
+			if err = tx.QueryRowContext(ctx, `SELECT team_json FROM definition_revisions WHERE id=?`, definition.RevisionID).Scan(&teamJSON); err != nil {
+				return app.AutomationRuleRecord{}, err
+			}
+			if json.Unmarshal(teamJSON, &team) != nil || len(owned) != len(team.Automation)+len(team.Rhythms) {
+				return app.AutomationRuleRecord{}, app.ErrUnauthorized
+			}
+			if slices.Contains(owned[len(team.Automation):], id) {
+				var parentRule model.AutomationRuleID
+				if err = tx.QueryRowContext(ctx, `SELECT rule_id FROM automation_occurrences WHERE id=? AND deployment_id=?`, principal.AutomationRun, current.Rule.DeploymentID).Scan(&parentRule); err != nil {
+					return app.AutomationRuleRecord{}, app.ErrUnauthorized
+				}
+				authorization = model.AuthorityRequest{Principal: principal, Action: model.ActionRunAutomation, Resource: model.ResourceSelector{Kind: model.ResourceAutomationRule, AutomationRuleID: parentRule}}
+			}
+		}
+	}
+	decision, err := authorizeTx(ctx, tx, authorization, at)
 	if err != nil {
 		return app.AutomationRuleRecord{}, err
 	}

@@ -248,6 +248,17 @@ class TeamEditor {
     const refs = this.rhythms.map(r => ({ref: {RuleID: r.Rule.ID, RevisionID: r.Revision.ID, ContentHash: r.Revision.ContentHash}, label: `${r.Rule.Name} · revision ${r.Revision.Number}`}));
     for (const ref of this.draft.Team.Automation) if (!refs.some(x => x.ref.RevisionID === ref.RevisionID)) refs.push({ref, label: 'Previously pinned rule ' + ref.RuleID});
     this.form('Pinned team rhythms', [{key: 'rules', label: 'Automation revisions', multiple: true, options: refs.map(r => opt(r.ref.RevisionID, r.label)), value: this.draft.Team.Automation.map(r => r.RevisionID)}], f => this.change(d => { d.Team.Automation = f.rules.map(id => clone(refs.find(r => r.ref.RevisionID === id).ref)); }));
+    this.content.append(button('Add recurring nudge', () => { if (this.discard()) this.editRhythm(); }));
+    for (const rhythm of this.draft.Team.Rhythms || []) this.card(rhythm.Name, `${rhythm.Interval || rhythm.Cron} · ${rhythm.Timezone} · ${this.roles.find(r => r.ID === rhythm.RoleID)?.Name || (rhythm.RoleID ? 'Retained role' : 'All members')}`, () => { if (this.discard()) this.editRhythm(rhythm); }, () => { if (this.discard()) this.change(d => { d.Team.Rhythms = d.Team.Rhythms.filter(r => r.Name !== rhythm.Name); }); });
+  }
+  editRhythm(original) {
+    const r = original || {};
+    this.form('Recurring team nudge', [{key:'name',label:'Nudge name',value:r.Name,required:true},{key:'role',label:'Target role',value:r.RoleID || '',options:[opt('','All members'),...this.roles.map(role=>opt(role.ID,role.Name))]},{key:'interval',label:'Interval (for example 10m; leave blank for cron)',value:r.Interval},{key:'cron',label:'Cron (leave blank for interval)',value:r.Cron},{key:'timezone',label:'Schedule timezone',value:r.Timezone || 'UTC',required:true},{key:'subject',label:'Message subject (optional)',value:r.Subject},{key:'body',label:'Nudge message',text:true,value:r.Body,required:true}], f => {
+      if (!!f.interval.trim() === !!f.cron.trim()) throw new Error('Choose either interval or cron.');
+      if ((this.draft.Team.Rhythms || []).some(x => x.Name !== original?.Name && x.Name.trim().toLowerCase() === f.name.trim().toLowerCase())) throw new Error('Nudge names must be unique.');
+      const rhythm = {Name:f.name,RoleID:f.role,Interval:f.interval,Cron:f.cron,Timezone:f.timezone,Subject:f.subject,Body:f.body};
+      this.change(d => { d.Team.Rhythms ||= []; const i=d.Team.Rhythms.findIndex(x=>x.Name===original?.Name); if(i<0)d.Team.Rhythms.push(rhythm);else d.Team.Rhythms[i]=rhythm; });
+    });
   }
   async save(write) {
     if (this.busy) return;

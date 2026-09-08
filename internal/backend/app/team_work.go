@@ -101,6 +101,11 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 			group.OwnerAgentID = id
 		}
 	}
+	if len(revision.Team.Rhythms) > 0 {
+		if _, err = teamRhythmDelegation(req.Context.Principal, group.ID); err != nil {
+			return TeamDeploymentResult{}, err
+		}
+	}
 	workspaceBindings, ownedWorkspaceIDs, err := s.prepareTeamWorkspaces(ctx, req, *revision.Team)
 	if err != nil {
 		return TeamDeploymentResult{}, err
@@ -110,6 +115,9 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 	for _, automation := range revision.Team.Automation {
 		automationIDs = append(automationIDs, automation.RuleID)
 		ownedAutomationIDs = append(ownedAutomationIDs, model.AutomationRuleID(deterministicOrchestrationID("rule_", string(req.DeploymentID)+":"+string(automation.RuleID))))
+	}
+	for i := range revision.Team.Rhythms {
+		ownedAutomationIDs = append(ownedAutomationIDs, teamRhythmID(req.DeploymentID, i))
 	}
 	deployment := model.TeamDeployment{ID: req.DeploymentID, Definition: ref, DependencyClosure: append([]model.DefinitionRef(nil), revision.Dependencies...), Mission: strings.TrimSpace(req.Instantiation.Mission), Parameters: parameters, GroupID: group.ID, TargetKind: target.Kind, Members: members, AutomationRuleIDs: automationIDs, OwnedAutomationRuleIDs: ownedAutomationIDs, Workspaces: workspaceBindings, OwnedWorkspaceIDs: ownedWorkspaceIDs, BriefingOperationIDs: map[string][]model.OperationID{}, WorkRunID: workRunID, State: model.DeploymentDeploying, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	assignments, pins, roleErr := s.teamRoleAdmissions(ctx, req.Context.Principal, group.ID, roleMembers, now)
@@ -337,7 +345,7 @@ func (s *Service) enableDeploymentRhythms(ctx context.Context, deployment model.
 		if record.Rule.DeploymentID != deployment.ID {
 			return ErrConflict
 		}
-		if !record.Rule.Enabled {
+		if !record.Rule.Enabled && !record.Rule.Tombstoned {
 			if _, err = s.store.SetAutomationRuleEnabled(ctx, id, record.Rule.Revision, true, principal, s.now().UTC()); err != nil {
 				return err
 			}
