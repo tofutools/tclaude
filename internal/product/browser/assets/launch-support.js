@@ -16,14 +16,16 @@ function attachLaunchSupportPreview({host,api}) {
    if(token!==generation||!current())return;
    if(support.Harness!==selected)throw new Error('The returned support does not match the selected harness.');
    if(!support.Configured){status.textContent=selected+': no provider is configured in this backend. You can save offline settings; launching requires a configured provider.';return}
-   if(!support.PolicyKnown){status.textContent=selected+': the configured provider does not publish policy support. Launch validation remains authoritative.';return}
+   const hostSelection=host.querySelector('[name=host_sandbox]'),hasHostSandbox=hostSelection&&hostSelection.value&&hostSelection.value!=='none';
+   const hostSupport=hasHostSandbox?(support.HostSandbox?'Host sandbox preparation is configured; the selected policy and host capabilities are checked at launch. ':'Unsupported host sandbox selection: this provider has no host sandbox preparation configured. '):'';
+   if(!support.PolicyKnown){status.textContent=hostSupport+selected+': the configured provider does not publish policy support. Launch validation remains authoritative.';return}
    const approvals=support.ApprovalModes||[],sandboxes=support.SandboxModes||[],problems=[];
    if(!approvals.includes(approval.value))problems.push('selected approval '+approval.value);
    if(!sandboxes.includes(sandbox.value))problems.push('selected confinement '+sandbox.value);
-   status.textContent=selected+' adapter supports approval: '+(approvals.join(', ')||'none')+'; confinement: '+(sandboxes.join(', ')||'none')+'. '+(problems.length?'Unsupported '+problems.join(' and ')+'. Change these settings before launch. ':'Selected policy is supported by the adapter. ')+(support.PreparedInitialInput?'Prepared initial input is supported. ':'Prepared initial input is not declared. ')+support.Basis;
+   status.textContent=selected+' adapter supports approval: '+(approvals.join(', ')||'none')+'; confinement: '+(sandboxes.join(', ')||'none')+'. '+(problems.length?'Unsupported '+problems.join(' and ')+'. Change these settings before launch. ':(hasHostSandbox?'Selected native approval and confinement are supported by the adapter. ':'Selected policy is supported by the adapter. '))+hostSupport+(support.PreparedInitialInput?'Prepared initial input is supported. ':'Prepared initial input is not declared. ')+support.Basis;
   }catch(error){if(token===generation&&current())status.textContent='Launch support could not be read: '+error.message+'. Offline settings can still be saved; support is checked at launch.'}
  };
- const changed=e=>{if([harness,approval,sandbox].includes(e.target))update()};
+ const changed=e=>{if([harness,approval,sandbox].includes(e.target)||e.target.matches('[name=host_sandbox]'))update()};
  const dispose=()=>{disposed=true;generation++;observer?.disconnect();host.removeEventListener('change',changed);document.removeEventListener('workspace-signout',dispose);dialog?.removeEventListener('close',dispose)};
  host.addEventListener('change',changed);document.addEventListener('workspace-signout',dispose);dialog?.addEventListener('close',dispose,{once:true});
  // Template field forms are replaced within the same dialog. Stop their listeners

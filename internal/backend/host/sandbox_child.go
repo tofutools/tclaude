@@ -53,6 +53,7 @@ type sandboxChildInput struct {
 	Mounts            []SandboxMountPin
 	ProviderResources []SandboxMountPin `json:",omitempty"`
 	ProtectedRoots    []sandboxRootPin
+	InheritedRoot     bool `json:",omitempty"`
 	PrivateNetwork    bool
 	ControlPort       int              `json:",omitempty"`
 	Overlays          []sandboxOverlay `json:",omitempty"`
@@ -74,6 +75,7 @@ func (i *SandboxPathInspector) PrepareSandboxChild(directory, wrapper string, ch
 	}
 	input := sandboxChildInput{Version: 1, Platform: runtime.GOOS, Wrapper: wrapper, Executable: child.Executable,
 		Arguments: child.Args, Directory: child.Directory, Environment: child.Env, Mounts: bindings.Pins()[:len(bindings.pins)-bindings.providerCount], ProviderResources: bindings.Pins()[len(bindings.pins)-bindings.providerCount:], PrivateNetwork: privateNetwork, ControlPort: bindings.controlPort}
+	input.InheritedRoot = bindings.inheritedRoot
 	input.Overlays = append([]sandboxOverlay(nil), bindings.overlays...)
 	for _, root := range i.roots {
 		stat, ok := root.identity.Sys().(*syscall.Stat_t)
@@ -144,6 +146,9 @@ func ExecuteSandboxChild(ctx context.Context, artifact SandboxChildArtifact) err
 	if err := inspector.reopenSandboxOverlays(ctx, bound, input.Overlays, input.Executable, input.Directory); err != nil {
 		return err
 	}
+	if err := inspector.setSandboxRoot(bound, input.InheritedRoot, input.PrivateNetwork); err != nil {
+		return err
+	}
 	bound.controlPort = input.ControlPort
 	wrapped, arguments, err := sandboxExecInvocation(input.Wrapper, ProcessSpec{Executable: input.Executable, Args: input.Arguments,
 		Directory: input.Directory, Env: input.Environment, ExactEnvironment: true}, bound, input.PrivateNetwork)
@@ -207,7 +212,10 @@ func VerifySandboxChild(ctx context.Context, artifact SandboxChildArtifact) erro
 		return err
 	}
 	defer func() { _ = bound.Close() }()
-	return inspector.reopenSandboxOverlays(ctx, bound, input.Overlays, input.Executable, input.Directory)
+	if err := inspector.reopenSandboxOverlays(ctx, bound, input.Overlays, input.Executable, input.Directory); err != nil {
+		return err
+	}
+	return inspector.setSandboxRoot(bound, input.InheritedRoot, input.PrivateNetwork)
 }
 
 func readSandboxChild(artifact SandboxChildArtifact) (sandboxChildInput, *SandboxPathInspector, error) {

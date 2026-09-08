@@ -23,7 +23,8 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 	if bindings == nil || len(bindings.files) != len(bindings.pins) || len(child.ExtraFiles) != 0 || !child.ExactEnvironment {
 		return ProcessSpec{}, nil, fmt.Errorf("sandbox invocation requires retained sources and an explicit environment")
 	}
-	for _, overlay := range bindings.overlays {
+	overlays := sandboxBoundaryOverlays(bindings)
+	for _, overlay := range overlays {
 		if overlay.Kind != "deny" {
 			return ProcessSpec{}, nil, fmt.Errorf("macOS Seatbelt cannot create temporary filesystem mounts")
 		}
@@ -38,19 +39,22 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 	}
 	args := []string{}
 	var readRegions []string
+	if bindings.inheritedRoot {
+		readRegions = append(readRegions, sandboxDarwinDenyCarveouts(`(subpath "/")`, "/", overlays, false))
+	}
 	for _, path := range []string{"/dev/null", "/dev/tty", "/dev/random", "/dev/urandom", "/dev/fd"} {
 		kind := "literal"
 		if path == "/dev/fd" {
 			kind = "subpath"
 		}
-		readRegions = append(readRegions, sandboxDarwinRuntimeRegion(kind, path, bindings.overlays))
+		readRegions = append(readRegions, sandboxDarwinRuntimeRegion(kind, path, overlays))
 	}
 	if bindings.controlPort != 0 {
 		// lsof inspects the device directory before reporting TCP ownership.
 		// Permit only that directory vnode, not its device descendants.
-		readRegions = append(readRegions, sandboxDarwinRuntimeRegion("literal", "/dev", bindings.overlays))
+		readRegions = append(readRegions, sandboxDarwinRuntimeRegion("literal", "/dev", overlays))
 	}
-	writeRegions := []string{sandboxDarwinRuntimeRegion("literal", "/dev/null", bindings.overlays), sandboxDarwinRuntimeRegion("literal", "/dev/tty", bindings.overlays)}
+	writeRegions := []string{sandboxDarwinRuntimeRegion("literal", "/dev/null", overlays), sandboxDarwinRuntimeRegion("literal", "/dev/tty", overlays)}
 	selectors := make([]string, len(bindings.pins))
 	for index, pin := range bindings.pins {
 		guest, err := filepath.EvalSymlinks(pin.Guest)
@@ -64,7 +68,7 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 			predicate = "subpath"
 		}
 		selectors[index] = fmt.Sprintf("(%s (param %q))", predicate, name)
-		region := sandboxDarwinDenyCarveouts(selectors[index], pin.Source, bindings.overlays, index >= len(bindings.pins)-bindings.providerCount)
+		region := sandboxDarwinDenyCarveouts(selectors[index], pin.Source, overlays, index >= len(bindings.pins)-bindings.providerCount)
 		readRegions = append(readRegions, region)
 	}
 	// Resolve positive parent/child precedence in the predicates themselves.
@@ -74,7 +78,7 @@ func sandboxDescriptorInvocation(wrapper string, child ProcessSpec, bindings *Sa
 		if pin.Access != model.SandboxFilesystemWrite {
 			continue
 		}
-		region := sandboxDarwinDenyCarveouts(selectors[index], pin.Source, bindings.overlays, index >= len(bindings.pins)-bindings.providerCount)
+		region := sandboxDarwinDenyCarveouts(selectors[index], pin.Source, overlays, index >= len(bindings.pins)-bindings.providerCount)
 		for childIndex, descendant := range bindings.pins {
 			if descendant.Access == model.SandboxFilesystemRead && sandboxWithin(descendant.Source, pin.Source) {
 				region = "(require-all " + region + " (require-not " + selectors[childIndex] + "))"

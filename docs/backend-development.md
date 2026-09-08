@@ -223,7 +223,14 @@ network-isolation mechanism, matching the legacy platform limitation, rather
 than a guarantee limited to the numeric loopback address. Other TCP ports and
 UDP have no control exception.
 
-Selected sparse-root launches apply directory deny rules with explicit narrower
+Selected launches support a constructed sparse root or inherited read-only host
+root. Automatic/inherited choice yields to the constructed root when the network
+policy requires isolation; an explicit separate root always stays separate.
+Inherited roots retain protected-state exclusions and explicit writable grants.
+Linux still replaces `/tmp`, `/dev` and `/proc` with the sandbox scratch/device/
+process views; inherited root does not expose host temporary files.
+
+Selected launches apply directory deny rules with explicit narrower
 read/write grants preserved. Linux hides a denied directory behind an empty,
 read-only mount; macOS denies access through Seatbelt. Linux also supports
 size-bounded writable tmpfs scratch mounts and explicit nested binds. Scratch
@@ -1266,7 +1273,7 @@ spend, and no token prices or currency conversions are inferred.
 
 Agent and configuration forms and the team member editor show the configured adapter's supported approval/confinement choices. Changing harness or policy refreshes this read-only explanation without altering authored values. Unsupported or unavailable-provider settings can still be saved as offline intent; they require correction or provider configuration before launch.
 
-`GET /v2/launch-support?harness=<name>` is operator-only and reads the adapter's static declaration. It reports whether that provider is configured, whether policy support is known, supported approval and sandbox modes, and prepared-initial-input capability. It performs no native preparation, credential delivery, storage write or execution. This is not an installation, authentication, authority or runtime readiness check. Providers that omit the declaration remain explicitly unknown. The actual preparation and release gates remain authoritative.
+`GET /v2/launch-support?harness=<name>` is operator-only and reads the adapter's static declaration. It reports whether that provider is configured, whether policy support is known, supported approval and sandbox modes, host sandbox preparation, and prepared-initial-input capability. It performs no native preparation, credential delivery, storage write or execution. This is not an installation, authentication, authority or runtime readiness check. Providers that omit the declaration remain explicitly unknown. The actual preparation and release gates remain authoritative.
 ### Capture a group as a team template
 
 Groups offers **Save group as team template**. It opens the existing team editor with independent copies of the displayed active direct members, retaining order, names and desired launch settings including effort and environment. Stable template member keys are generated independently of names. Nothing is written until **Save team revision**, and saving does not launch work. Cancelling leaves the group and definition catalog unchanged.
@@ -1306,8 +1313,12 @@ setup, and each independent network/socket constraint. Engine choice has explici
 include precedence; private namespace and harness configuration floors remain
 restrictive. A shared include is composed separately within each sibling before
 those siblings combine. These observations and composed values are not an
-enforcement receipt. The editor currently authors policies independently of launch settings;
-custom profile selection and actual host enforcement are not yet connected.
+enforcement receipt. Agent, saved configuration, team member and shell forms can
+select an active saved profile. Selection pins exact revisions and resolved policy
+identity; later profile edits do not change an existing selection. The launch
+preview reports whether the configured adapter supports host sandbox preparation.
+Actual launch also checks the selected policy, host capabilities and current
+authority, and refuses unsupported policies before native release.
 
 
 ### Sandbox destination packs

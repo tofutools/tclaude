@@ -42,6 +42,9 @@ func sandboxLinuxInvocation(wrapper string, child ProcessSpec, bindings *Sandbox
 	if privateNetwork {
 		args = append(args, "--unshare-net")
 	}
+	if bindings.inheritedRoot {
+		args = append(args, "--ro-bind", "/", "/")
+	}
 	args = append(args, "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp")
 	// Ancestors must be mounted before descendants, even when a trusted
 	// provider root was appended after an authored narrower grant.
@@ -59,7 +62,7 @@ func sandboxLinuxInvocation(wrapper string, child ProcessSpec, bindings *Sandbox
 		}
 		order = append(order, operation{path: pin.Guest, pin: index, priority: priority})
 	}
-	for _, overlay := range bindings.overlays {
+	for _, overlay := range sandboxBoundaryOverlays(bindings) {
 		order = append(order, operation{path: overlay.Path, overlay: &overlay, priority: 1})
 	}
 	sort.SliceStable(order, func(a, b int) bool {

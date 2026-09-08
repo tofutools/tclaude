@@ -93,8 +93,10 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 		return SandboxChildArtifact{}, err
 	}
 	policy := materialized.Composition.Values
-	if policy.FilesystemRoot != model.SandboxRootSeparate {
-		return SandboxChildArtifact{}, fmt.Errorf("inherited sandbox root preparation is not configured")
+	switch policy.FilesystemRoot {
+	case model.SandboxRootAutomatic, model.SandboxRootInherit, model.SandboxRootSeparate:
+	default:
+		return SandboxChildArtifact{}, fmt.Errorf("invalid sandbox root posture")
 	}
 	if policy.Resources != (model.SandboxResources{}) || (harness == "" && policy.HarnessConfig != model.SandboxHarnessConfigDefault) || policy.DarwinAllowMachRegister {
 		return SandboxChildArtifact{}, fmt.Errorf("selected sandbox requires additional native policy preparation")
@@ -171,6 +173,10 @@ func (p *SandboxLaunchPreparer) prepare(ctx context.Context, selected model.Sand
 		return SandboxChildArtifact{}, err
 	}
 
+	// Inherit/automatic cannot weaken an isolated network's constructed root.
+	if err := p.config.Inspector.setSandboxRoot(bindings, policy.FilesystemRoot != model.SandboxRootSeparate && !privateNetwork, privateNetwork); err != nil {
+		return SandboxChildArtifact{}, err
+	}
 	directory, err := os.MkdirTemp(p.config.Artifacts, "launch-")
 	if err != nil {
 		return SandboxChildArtifact{}, err
