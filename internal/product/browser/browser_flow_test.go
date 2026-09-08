@@ -36,7 +36,7 @@ func TestBrowserOfflineAgentGroupAndMessageFlow(t *testing.T) {
 	defer cancel()
 	backendDone := make(chan error, 1)
 	go func() { backendDone <- backend.Serve(ctx, state, providers.NewRegistry()) }()
-	require.Eventually(t, func() bool { _, err := os.Stat(filepath.Join(state, "api.sock")); return err == nil }, 5*time.Second, 10*time.Millisecond)
+	waitBrowserBackend(t, state, cancel, backendDone)
 	view, err := Open(state, "127.0.0.1:0")
 	require.NoError(t, err)
 	viewDone := make(chan error, 1)
