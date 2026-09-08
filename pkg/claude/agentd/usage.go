@@ -370,21 +370,6 @@ func usageWindowOrZero(w *usageWindow) *usageWindow {
 	return &usageWindow{}
 }
 
-// dashboardCostTotalsFromRows computes month-to-date and today spend plus the
-// Costs-tab real-spend signal from one already-loaded cost history and one
-// delta walk. Keeping the visibility signal in this pass removes a redundant
-// EXISTS query from every dashboard poll.
-func dashboardCostTotalsFromRows(rows []db.CostDailyRow, now time.Time) (month, today float64, hasReal bool) {
-	month, today = dashboardCostTotalsFromDeltas(displayedCostDeltasFromRows(rows, false), now, "real")
-	for _, row := range rows {
-		if row.CostUSD > 0 {
-			hasReal = true
-			break
-		}
-	}
-	return month, today, hasReal
-}
-
 func dashboardCostTotalsFromDeltas(deltas []costDelta, now time.Time, kind string) (month, today float64) {
 	monthKey := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format(costDayKey)
 	todayKey := now.Format(costDayKey)
