@@ -3648,6 +3648,10 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 .cost-accumulated-stack.cost-seg-h3 { fill: #d0a860; }
 .cost-accumulated-stack.cost-seg-h4 { fill: #5bb0a5; }
 .cost-accumulated-stack.cost-seg-h5 { fill: #cf8a8a; }
+.cost-accumulated-stack.cost-seg-m0,
+.cost-accumulated-stack.cost-seg-m1,
+.cost-accumulated-stack.cost-seg-m2,
+.cost-accumulated-stack.cost-seg-m3 { fill: var(--cost-model-color); }
 .cost-accumulated-stack.cost-seg-whatif { fill-opacity: .24; stroke-dasharray: 2 2; }
 .cost-accumulated-line { fill: none; stroke: #6e9c7d; stroke-width: 2; }
 .cost-accumulated-line.projected { stroke: #d29922; stroke-dasharray: 7 5; }
@@ -3770,16 +3774,21 @@ body.slop .ga-slop .actbot-working { animation: actbot-disco 1.2s linear infinit
 /* Harness palette. h0 is the historical money-green so a claude-only
    install (and "claude", which sorts first) is unchanged; the rest stay
    distinct on the dark panel. Cycles past h5 for many-harness installs. */
-.cost-seg-h0 { background: #6e9c7d; }
-.cost-seg-h1 { background: #6a8fd0; }
-.cost-seg-h2 { background: #b58cd6; }
-.cost-seg-h3 { background: #d0a860; }
-.cost-seg-h4 { background: #5bb0a5; }
-.cost-seg-h5 { background: #cf8a8a; }
-.cost-seg-m0 { opacity: .68; }
-.cost-seg-m1 { opacity: .82; }
-.cost-seg-m2 { opacity: 1; }
-.cost-seg-m3 { opacity: .54; }
+.cost-seg-h0 { --cost-seg-color: #6e9c7d; background: var(--cost-seg-color); }
+.cost-seg-h1 { --cost-seg-color: #6a8fd0; background: var(--cost-seg-color); }
+.cost-seg-h2 { --cost-seg-color: #b58cd6; background: var(--cost-seg-color); }
+.cost-seg-h3 { --cost-seg-color: #d0a860; background: var(--cost-seg-color); }
+.cost-seg-h4 { --cost-seg-color: #5bb0a5; background: var(--cost-seg-color); }
+.cost-seg-h5 { --cost-seg-color: #cf8a8a; background: var(--cost-seg-color); }
+/* Provider + Model keeps the provider's hue family but gives each model a
+   visibly different shade, matching the design mock. Model-only mode omits
+   mN and therefore continues to use the fully distinct hN palette above. */
+.cost-seg-m0 { --cost-model-color: color-mix(in srgb, var(--cost-seg-color), white 30%); }
+.cost-seg-m1 { --cost-model-color: var(--cost-seg-color); }
+.cost-seg-m2 { --cost-model-color: color-mix(in srgb, var(--cost-seg-color), #647fba 34%); }
+.cost-seg-m3 { --cost-model-color: color-mix(in srgb, var(--cost-seg-color), black 28%); }
+.cost-seg.cost-seg-m0, .cost-seg.cost-seg-m1,
+.cost-seg.cost-seg-m2, .cost-seg.cost-seg-m3 { background-color: var(--cost-model-color); }
 .cost-seg-whatif {
   background-image: repeating-linear-gradient(
     135deg, transparent 0, transparent 3px,
@@ -16404,12 +16413,20 @@ body.wizard .cost-col[data-tip]:hover::after {
    ingot; the minted-sheen glow + coin-ridge separator match the single
    .cost-bar's gilding. The base filter:brightness hover and 0.55 weekend
    dim already carry over (they don't touch background), so no override. */
-body.wizard .cost-seg-h0 { background: linear-gradient(180deg, #f0d066 0%, #d9b45a 46%, #b8912f 100%); }
-body.wizard .cost-seg-h1 { background: linear-gradient(180deg, #e8a56a 0%, #cf8341 46%, #9c5a24 100%); }
-body.wizard .cost-seg-h2 { background: linear-gradient(180deg, #d7dbe2 0%, #aeb6c2 46%, #7f8896 100%); }
-body.wizard .cost-seg-h3 { background: linear-gradient(180deg, #cf9bd6 0%, #a97bd6 46%, #7a5db0 100%); }
-body.wizard .cost-seg-h4 { background: linear-gradient(180deg, #7fd6c8 0%, #4fb0a5 46%, #2f7f75 100%); }
-body.wizard .cost-seg-h5 { background: linear-gradient(180deg, #e69a9a 0%, #cf6f6f 46%, #9c4141 100%); }
+body.wizard .cost-seg-h0 { --cost-seg-color: #d9b45a; background: linear-gradient(180deg, #f0d066 0%, #d9b45a 46%, #b8912f 100%); }
+body.wizard .cost-seg-h1 { --cost-seg-color: #cf8341; background: linear-gradient(180deg, #e8a56a 0%, #cf8341 46%, #9c5a24 100%); }
+body.wizard .cost-seg-h2 { --cost-seg-color: #aeb6c2; background: linear-gradient(180deg, #d7dbe2 0%, #aeb6c2 46%, #7f8896 100%); }
+body.wizard .cost-seg-h3 { --cost-seg-color: #a97bd6; background: linear-gradient(180deg, #cf9bd6 0%, #a97bd6 46%, #7a5db0 100%); }
+body.wizard .cost-seg-h4 { --cost-seg-color: #4fb0a5; background: linear-gradient(180deg, #7fd6c8 0%, #4fb0a5 46%, #2f7f75 100%); }
+body.wizard .cost-seg-h5 { --cost-seg-color: #cf6f6f; background: linear-gradient(180deg, #e69a9a 0%, #cf6f6f 46%, #9c4141 100%); }
+body.wizard .cost-seg.cost-seg-m0,
+body.wizard .cost-seg.cost-seg-m1,
+body.wizard .cost-seg.cost-seg-m2,
+body.wizard .cost-seg.cost-seg-m3 {
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--cost-model-color), white 20%),
+    color-mix(in srgb, var(--cost-model-color), black 18%));
+}
 body.wizard .cost-seg {
   box-shadow: 0 0 5px rgba(217, 180, 90, 0.3), inset 0 1px 0 rgba(255, 246, 214, 0.45);
 }

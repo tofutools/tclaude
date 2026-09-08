@@ -173,6 +173,8 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must(`id="costs-stack-provider"`, "provider grouping has an independent checkbox")
 	must(`id="costs-stack-model"`, "model grouping has an independent checkbox")
 	must("Projected splits use the recorded mix", "projection breakdown semantics are explained in the menu")
+	must("--cost-model-color: color-mix", "nested models use visibly distinct shades within provider color families")
+	must("fill: var(--cost-model-color)", "accumulated stacks reuse the same distinct model shades")
 	must("new ResizeObserver(update)", "accumulated chart tracks its real container width")
 	must("cost-accumulated-line${segment.projected ? ' projected' : ''}", "projection uses a distinct accumulated-line segment")
 	must("cost-accumulated-hit", "recorded and projected accumulated lines expose generous hover targets")
