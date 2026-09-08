@@ -962,6 +962,9 @@ func (s *Service) attachDecisionWindow(run model.WorkRun, node model.WorkNode, a
 			audience = append(audience, model.DecisionAudience{RoleID: human.RoleID, GroupID: run.Scope.GroupID})
 		}
 		question, answers, expires = human.Prompt, []string{"complete", "reject"}, attempt.Deadline
+		if len(human.Choices) > 0 {
+			answers = append([]string(nil), human.Choices...)
+		}
 	}
 	if len(audience) == 0 {
 		return attempt, nil
@@ -1067,7 +1070,17 @@ func (s *Service) applyAnsweredDecision(ctx context.Context, run WorkRunRecord, 
 	}
 	outcome := model.WorkOutcomeVerified
 	verdict := submission.Answer
-	switch submission.Answer {
+	if attempt.Performer != nil && attempt.Performer.Human != nil && len(attempt.Performer.Human.Choices) > 0 {
+		switch attempt.Performer.Human.ChoiceOutcomes[submission.Answer] {
+		case "pass":
+			verdict = "complete"
+		case "fail":
+			verdict = "reject"
+		default:
+			return run, fail(ErrInvalid, "answer has no admitted human task outcome")
+		}
+	}
+	switch verdict {
 	case "reject":
 		outcome = model.WorkOutcomeRejected
 	case "cancel":
@@ -1795,6 +1808,9 @@ func validatePerformer(performer model.Performer) error {
 			}
 		}
 	case model.PerformerHuman:
+		if err := validateHumanChoices(performer.Human); err != nil {
+			return err
+		}
 		if performer.Human != nil && performer.Human.Operator && (performer.Human.AgentID != "" || performer.Human.RoleID != "") {
 			return fail(ErrInvalid, "choose operator or agent/role human audience")
 		}
