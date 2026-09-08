@@ -28,7 +28,7 @@ func validateApprovalRetry(node model.WorkNode) error {
 	if stages.PlanApproval == nil {
 		return fail(ErrInvalid, "approval retry requires explicit plan approval")
 	}
-	if retry.MaxAttempts == 0 {
+	if retry.MaxAttempts <= 0 {
 		return fail(ErrInvalid, "approval retry requires positive max attempts")
 	}
 	switch retry.OnFail {

@@ -1410,3 +1410,7 @@ These declarations are authoring-only, matching the legacy runtime boundary.
 Starting any pinned revision containing one is refused before work admission;
 the runtime does not silently replace the requested policy with ordinary plan
 rework. Clear the declaration to use the existing executable approval workflow.
+
+Approval retry attempt counts retain the positive signed 64-bit authoring range.
+The API emits exact decimal strings and accepts both integer and string JSON
+input, so browser editing preserves values above JavaScript's safe integer range.

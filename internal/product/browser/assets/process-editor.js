@@ -227,10 +227,10 @@ class ProcessEditor {
       changes.push((n, f) => { n.Waivable = f.waivable; n.Retry = Number(f.attempts) ? {MaxAttempts: Number(f.attempts), Backoff: seconds(f.backoff), AttemptBudget: seconds(f.budget), Retryable: f.retryable} : {}; });
     }
     if (stageContext?.kind === 'Plan' && this.model.value.Process.Graph.Nodes.find(n=>n.ID===stageContext.parentID)?.Stages?.PlanApproval) {
-      fields.push({name:'approval_attempts',label:'Maximum approval attempts (authoring only)',type:'number',min:1,max:4294967295,value:node.ApprovalRetry?.MaxAttempts??''},
+      fields.push({name:'approval_attempts',label:'Maximum approval attempts (authoring only)',value:node.ApprovalRetry?.MaxAttempts??''},
         {name:'approval_backoff',label:'Approval retry backoff (e.g. 30s)',value:node.ApprovalRetry?.Backoff||''},
         {name:'approval_mode',label:'Approval retry mode',options:[option('','Default'),option('fresh-attempt'),option('feedback-same-session')],value:node.ApprovalRetry?.OnFail||''});
-      changes.push((n,f)=>{if(!f.approval_attempts&&!f.approval_backoff&&!f.approval_mode){delete n.ApprovalRetry;return}const attempts=Number(f.approval_attempts);if(!Number.isInteger(attempts)||attempts<1||attempts>4294967295)throw new Error('Approval retry requires positive max attempts.');n.ApprovalRetry={MaxAttempts:attempts,Backoff:f.approval_backoff,OnFail:f.approval_mode};});
+      changes.push((n,f)=>{if(!f.approval_attempts&&!f.approval_backoff&&!f.approval_mode){delete n.ApprovalRetry;return}if(!/^[1-9][0-9]*$/.test(f.approval_attempts)||BigInt(f.approval_attempts)>9223372036854775807n)throw new Error('Approval retry requires positive max attempts up to 9223372036854775807.');n.ApprovalRetry={MaxAttempts:f.approval_attempts,Backoff:f.approval_backoff,OnFail:f.approval_mode};});
     }
     this.form(`${node.Kind} · ${node.Name || "Unnamed"}`, fields, values => update(n => {
       n.Name = values.name;

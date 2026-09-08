@@ -205,7 +205,7 @@ type TaskStages struct {
 
 // ApprovalRetryPolicy retains authoring intent; approval retry execution is unsupported.
 type ApprovalRetryPolicy struct {
-	MaxAttempts uint32
+	MaxAttempts ApprovalRetryAttempts
 	Backoff     string
 	OnFail      string
 }
