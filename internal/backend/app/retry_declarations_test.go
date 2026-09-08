@@ -90,3 +90,36 @@ func TestRetryModeValidationAndFreshAttemptExecution(t *testing.T) {
 	_, err = service.ValidateDefinition(ctx, app.ValidateDefinitionRequest{Principal: model.OperatorPrincipal(), Draft: draft})
 	require.ErrorIs(t, err, app.ErrInvalid)
 }
+
+func TestOccurrenceRetryRejectsProcessOnlyModes(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "retry.sqlite"))
+	require.NoError(t, err)
+	defer store.Close()
+	service := app.New(store, providers.NewRegistry())
+	request := app.SaveAutomationRuleRequest{
+		Context: app.RequestContext{Principal: model.OperatorPrincipal(), RequestID: "baseline"},
+		ID:      "rule", RevisionID: "baseline", Name: "Schedule",
+		Owner:     model.AuthoritySubject{Kind: model.AuthorityOperator},
+		Condition: model.AutomationCondition{Kind: model.AutomationSchedule, Schedule: &model.ScheduleCondition{Timezone: "UTC", Interval: time.Hour}},
+		Action:    model.AutomationAction{Kind: model.AutomationSendMessage, Message: &model.AutomationMessageAction{Body: "Hello", AgentIDs: []model.AgentID{"recipient"}}},
+		Policy:    model.OccurrencePolicy{MissedTicks: model.MissedTickSkip, OfflineDelivery: model.OfflineQueue, Overlap: model.OverlapForbid, MaxActive: 1, ExpiresAfter: time.Hour, Deadline: time.Hour, Retry: model.RetryPolicy{MaxAttempts: 2}},
+	}
+	saved, err := service.SaveAutomationRule(ctx, request)
+	require.NoError(t, err)
+	for _, mode := range []string{"not-a-retry-mode", "fresh-attempt", "feedback-same-session"} {
+		t.Run(mode, func(t *testing.T) {
+			changed := request
+			changed.Context.RequestID = model.RequestID(mode)
+			changed.RevisionID = model.AutomationRuleRevisionID(mode)
+			changed.ExpectedRevision = saved.Rule.Revision
+			changed.Policy.Retry.OnFail = mode
+			_, err := service.SaveAutomationRule(ctx, changed)
+			require.ErrorIs(t, err, app.ErrInvalid)
+		})
+	}
+	rules, err := service.ListAutomationRules(ctx, app.ListAutomationRulesRequest{Principal: model.OperatorPrincipal()})
+	require.NoError(t, err)
+	require.Len(t, rules, 1)
+	require.Equal(t, saved.Rule, rules[0])
+}

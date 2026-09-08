@@ -1908,6 +1908,9 @@ func validateAutomation(condition model.AutomationCondition, action model.Automa
 	default:
 		return fail(ErrInvalid, "automation action kind is unsupported")
 	}
+	if policy.Retry.OnFail != "" {
+		return fail(ErrInvalid, "occurrence retry modes are not supported")
+	}
 	if policy.ExpiresAfter <= 0 || policy.Deadline <= 0 || policy.Retry.MaxAttempts > maxWorkAttempts {
 		return fail(ErrInvalid, "occurrence expiry, deadline and bounded retry are required")
 	}
