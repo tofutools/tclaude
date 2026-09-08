@@ -1826,8 +1826,14 @@ settings and startup suggestions, so a lost-response retry or resumed deployment
 does not reinterpret an already-created roster. Working directories come from
 the selected deployment workspace. Archived or missing selected profiles fail
 before workspace preparation. The editor previews the current profile and
-retains the separate custom/copy workflow. Partial field overrides and portable
-v1 registry import are subsequent compatibility work, not implemented here.
+retains the separate custom/copy workflow. Portable v1 registry import is
+subsequent compatibility work, not implemented here.
+
+Profile-backed team members include only reusable profile Context in deployment
+briefs. A saved InitialMessage remains a standalone launch suggestion and is not
+automatically sent by team deployment. Member cards show the selected saved
+configuration and current launch settings, or explicitly mark an unavailable
+selection.
 
 ### Per-member saved-profile overrides
 

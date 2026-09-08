@@ -425,12 +425,8 @@ func teamDeploymentGraph(team model.TeamDefinition, deployment model.TeamDeploym
 		}
 		for _, key := range wave.MemberKeys {
 			brief := deployment.Mission
-			if startup, ok := deployment.MemberStartups[key]; ok {
-				for _, body := range []string{startup.Context, startup.InitialMessage} {
-					if strings.TrimSpace(body) != "" {
-						brief = strings.TrimSpace(brief + "\n\n" + body)
-					}
-				}
+			if startup, ok := deployment.MemberStartups[key]; ok && strings.TrimSpace(startup.Context) != "" {
+				brief = strings.TrimSpace(brief + "\n\n" + startup.Context)
 			}
 			for _, item := range team.Briefings {
 				if item.Timing == model.BriefingBeforeFirstWork && slices.Contains(teamBriefRecipients(team, item), key) {

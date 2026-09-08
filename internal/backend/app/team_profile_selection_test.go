@@ -75,6 +75,7 @@ func TestTeamSavedProfileFollowsEditsForNewDeploymentAndRetainsRetry(t *testing.
 		for _, node := range work.Run.Graph.Nodes {
 			if node.Performer != nil && node.Performer.Agent != nil {
 				require.Contains(t, node.Performer.Agent.Brief, profileRequest.Startup.Context)
+				require.NotContains(t, node.Performer.Agent.Brief, "Original instruction")
 			}
 		}
 		if version == "first" {

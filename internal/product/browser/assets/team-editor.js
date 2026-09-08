@@ -81,7 +81,7 @@ class TeamEditor {
     const t = this.draft.Team;
     if (this.tab === 'Members') {
       this.content.append(button('Add member', () => this.member()));
-      for (const m of t.Members) this.card(m.Name || m.Key, `${m.Key} · ${m.Desired.Harness || 'Choose harness'} / ${m.Desired.Model || 'Choose model'}${m.Owner ? ' · owner' : ''}${m.Required ? ' · required' : ''}`, () => this.member(m), () => this.removeMember(m));
+      for (const m of t.Members) this.card(m.Name || m.Key, `${m.Key} · ${this.memberConfigurationSummary(m)}${m.Owner ? ' · owner' : ''}${m.Required ? ' · required' : ''}`, () => this.member(m), () => this.removeMember(m));
     } else if (this.tab === 'Waves') {
       this.content.append(el('p', 'Each member belongs to one wave. Dependencies control launch order; readiness and briefing gates wait for their evidence.'), button('Add wave', () => this.wave()));
       for (const w of t.Waves) this.card(w.ID, `Members: ${w.MemberKeys.join(', ')} · after: ${(w.DependsOn || []).join(', ') || 'none'}`, () => this.wave(w), () => this.change(d => { d.Team.Waves = d.Team.Waves.filter(x => x.ID !== w.ID); for (const x of d.Team.Waves) x.DependsOn = (x.DependsOn || []).filter(id => id !== w.ID); }));
@@ -94,6 +94,17 @@ class TeamEditor {
       for (const p of this.draft.Parameters) this.card(p.Name, `${p.Type}${p.Required ? ' · required' : ''}`, () => this.parameter(p), () => this.change(d => { d.Parameters = d.Parameters.filter(x => x.Name !== p.Name); }));
     } else if (this.tab === 'Rhythms') this.rhythmForm();
     else this.form('Preserved authoring source', [{key: 'source', label: 'Source', text: true, value: this.draft.Source, required: true}], f => this.change(d => { d.Source = f.source; }));
+  }
+  memberConfigurationSummary(member) {
+    if (member.ProfileID) {
+      const selected = this.configurations.find(c => c.Profile.ID === member.ProfileID);
+      if (!selected) return 'Unavailable saved configuration: ' + member.ProfileID;
+      const base = selected.Revision.Desired, overrides = member.Overrides || {};
+      const harness = overrides.Harness ?? base.Harness;
+      const model = overrides.Model ?? (harness === base.Harness ? base.Model : '');
+      return `${selected.Profile.Name} · ${harness} / ${model || 'Default model'}`;
+    }
+    return `${member.Desired.Harness || 'Choose harness'} / ${member.Desired.Model || 'Choose model'}`;
   }
   card(title, text, edit, remove) {
     const card = el('article'); card.className = 'card'; card.append(el('h3', title), el('p', text), button('Edit ' + title, edit), button('Remove ' + title, () => { if (confirm('Remove ' + title + ' and its references from this draft?')) remove(); })); this.content.append(card);

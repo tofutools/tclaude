@@ -23,6 +23,7 @@ func TestBrowserTeamMemberSelectsCurrentNamedProfile(t *testing.T) {
 	page.MustElement("#team-editor [name=override_model]").MustClick()
 	page.MustElement("#team-editor [name=model]").MustSelectAllText().MustInput("member-model")
 	page.MustElementR("#team-editor button", "^Apply changes$").MustClick()
+	require.Contains(t, page.MustElement("#team-editor article").MustText(), "Worker configuration · codex / member-model")
 	page.MustElementR("#team-editor button", "^Save team revision$").MustClick()
 	page.MustElementR("#team-editor-status", "Revision 1 · saved")
 	var definitions []model.Definition
@@ -38,6 +39,7 @@ func TestBrowserTeamMemberSelectsCurrentNamedProfile(t *testing.T) {
 	page.MustReload()
 	page.MustElementR("#connection", "^Updated")
 	page.MustElementR("#definition-list button", "^Edit team template$").MustClick()
+	require.Contains(t, page.MustElement("#team-editor article").MustText(), "Worker configuration · codex / member-model")
 	page.MustElementR("#team-editor button", "^Edit Worker$").MustClick()
 	require.Equal(t, "worker", page.MustElement("#team-editor [name=profile]").MustProperty("value").Str())
 	require.Equal(t, "member-model", page.MustElement("#team-editor [name=model]").MustProperty("value").Str())
