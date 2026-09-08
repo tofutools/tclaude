@@ -5,7 +5,7 @@ import { AsyncLoadState } from './async-load-state.js';
 import { UsageHistoryChart } from './usage-history-chart.js';
 import { isWizardActive } from './slop.js';
 import {
-  USAGE_FORECAST_ALGOS, USAGE_HISTORY_SPANS, USAGE_LOOKAHEAD_SPANS, formatUsageDuration,
+  USAGE_FORECAST_ALGOS, USAGE_HISTORY_SPANS, USAGE_LOOKAHEAD_SPANS, formatUsageDuration, formatUsageUnits,
   formatUsageResetCountdown, formatUsageTime, usageForecastOf, usageForecastView, usageProviderLabel,
   usageScopeLabel, usageSeriesKeyOf, usageWindowScopeLabel,
 } from './usage-history-model.js';
@@ -94,9 +94,9 @@ function UsageEmptyRangeControls({ hours, onSetHours, wizard }) {
 // on a bare div maps to role=generic, where naming is prohibited and browsers
 // drop it. Repeating it per card makes both points sharper: N inert labels, or
 // N recitals of "Observed Forecast Reset Now" before each chart.
-function UsageChartLegend({ wizard }) {
+function UsageChartLegend({ wizard, unit = 'percent' }) {
   return html`<div class="usage-chart-legend" aria-hidden="true">
-    <span><i class="usage-legend-swatch observed"></i>${wizard ? 'Channeled' : 'Observed'}</span>
+    <span><i class="usage-legend-swatch observed"></i>${unit === 'units' ? 'Observed AIC' : wizard ? 'Channeled' : 'Observed'}</span>
     <span><i class="usage-legend-swatch forecast"></i>${wizard ? 'Prophecy' : 'Forecast'}</span>
     <span><i class="usage-legend-swatch reset"></i>${wizard ? 'Replenishment' : 'Reset'}</span>
     <span><i class="usage-legend-swatch now"></i>${wizard ? 'This moment' : 'Now'}</span>
@@ -105,14 +105,17 @@ function UsageChartLegend({ wizard }) {
 }
 
 function UsageSeriesCard({
-  series, payload, span, onSetHours, onSetLookahead, onSetForecastAlgo, onTogglePoint, wizard,
+  series, payload, span, onSetHours, onSetLookahead, onSetForecastAlgo, onSetUnit, onTogglePoint, wizard,
 }) {
   const w = (plain, wizardly) => (wizard ? wizardly : plain);
   const includedPoints = (series.points || []).filter((point) => !point.excluded);
   const latest = includedPoints[includedPoints.length - 1];
   const now = new Date(payload.generated_at).getTime();
   const selectedForecast = usageForecastOf(series, span.algo);
-  const forecast = usageForecastView(selectedForecast, now, latest?.at, wizard);
+  const canShowUnits = series.provider === 'github' && series.window_name === 'monthly'
+    && Number(latest?.limit_units || 0) > 0;
+  const unitLimit = canShowUnits && span.unit === 'units' ? Number(latest?.limit_units || 0) : 0;
+  const forecast = usageForecastView(selectedForecast, now, latest?.at, wizard, unitLimit);
   const resetCount = series.reset_count ?? series.resets?.length ?? 0;
   const windowLabel = usageWindowScopeLabel(series, wizard);
   const scope = usageScopeLabel(series, wizard);
@@ -122,14 +125,20 @@ function UsageSeriesCard({
     <div class="usage-card-header">
       <div><span class="usage-provider">${usageProviderLabel(series.provider)}</span>
         <h3>${windowLabel}</h3></div>
-      <div class="usage-current"><strong>${latest ? `${latest.pct.toFixed(1)}%` : '—'}</strong>
+      <div class="usage-current">${canShowUnits && html`<span class="usage-unit-toggle" role="group" aria-label="Copilot usage units">
+        <button type="button" class=${span.unit !== 'units' ? 'active' : ''} aria-pressed=${span.unit !== 'units'} onClick=${() => onSetUnit('percent')}>%</button>
+        <button type="button" class=${span.unit === 'units' ? 'active' : ''} aria-pressed=${span.unit === 'units'} onClick=${() => onSetUnit('units')}>AIC</button>
+      </span>`}<strong>${latest ? unitLimit > 0
+        ? `${formatUsageUnits(latest.used_units).replace(' AIC', '')} / ${formatUsageUnits(unitLimit)}`
+        : `${latest.pct.toFixed(1)}%` : '—'}</strong>
         <span>${sampled}${reset ? ` · ${reset}` : ''}</span></div>
     </div>
     <${UsageSpanControls} scope=${scope} span=${span} onSetHours=${onSetHours} onSetLookahead=${onSetLookahead}
       onSetForecastAlgo=${onSetForecastAlgo} wizard=${wizard} />
     <${UsageHistoryChart} series=${series} from=${series.from ?? payload.from} generatedAt=${payload.generated_at}
-      forecast=${selectedForecast} lookaheadHours=${span.lookaheadHours} wizard=${wizard} onTogglePoint=${onTogglePoint} />
-    <${UsageChartLegend} wizard=${wizard} />
+      forecast=${selectedForecast} lookaheadHours=${span.lookaheadHours} unit=${unitLimit > 0 ? 'units' : 'percent'}
+      wizard=${wizard} onTogglePoint=${onTogglePoint} />
+    <${UsageChartLegend} wizard=${wizard} unit=${unitLimit > 0 ? 'units' : 'percent'} />
     <div class=${`usage-card-footer usage-forecast ${forecast.tone}`}>
       <strong>${forecast.headline}</strong>
       ${(forecast.lines || []).map((line) => html`<span class="usage-forecast-line-copy" key=${line}>${line}</span>`)}
@@ -207,6 +216,7 @@ export function UsageHistoryApp({ state, actions }) {
   const setDefaultSpan = (hours) => { if (state.setDefaultHours(hours)) void actions.load(); };
   const setLookahead = (key, hours) => state.setSeriesLookaheadHours(key, hours);
   const setForecastAlgo = (key, algo) => state.setSeriesForecastAlgo(key, algo);
+  const setUnit = (key, unit) => state.setSeriesUnit(key, unit);
   const togglePoint = (series, point) => actions.setPointExcluded(series, point, !point.excluded);
   // Nothing but load state sits above the graphs: the legend now rides with
   // each chart and the explanatory note is a footnote below the grid, so the
@@ -231,6 +241,7 @@ export function UsageHistoryApp({ state, actions }) {
                   span=${current.spanFor(key)} onSetHours=${(hours) => setSpan(key, hours)}
                   onSetLookahead=${(hours) => setLookahead(key, hours)}
                   onSetForecastAlgo=${(algo) => setForecastAlgo(key, algo)}
+                  onSetUnit=${(unit) => setUnit(key, unit)}
                   onTogglePoint=${(point) => togglePoint(series, point)} wizard=${wizard} />`;
               })}
             </div>`)}</div>`

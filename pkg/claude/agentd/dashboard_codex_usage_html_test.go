@@ -27,9 +27,9 @@ func TestDashboardHTML_CodexUsageWired(t *testing.T) {
 	// shell-island.js reads the snapshot Signal and keys both lines and tokens.
 	must("function subscriptionWindows(source, prefix, hideMissing = false)", "shared per-source window model is defined")
 	must("const codexUsage = usage?.codex", "usageView reads the Codex sub-object")
-	must("lines.push({ key: 'claude', label: 'Claude:', tokens: claude })", "the Claude line is labelled and keyed")
-	must("lines.push({ key: 'codex', label: 'Codex:', tokens: codex })", "the Codex line is labelled and keyed")
-	must("usageView(state.snapshot.value?.usage)", "the Preact shell consumes accepted snapshot state")
+	must("subscriptionLine('claude', 'Claude:', claude, 'anthropic')", "the Claude line is labelled, keyed, and attributed")
+	must("subscriptionLine('codex', 'Codex:', codex, 'openai')", "the Codex line is labelled, keyed, and attributed")
+	must("usageView(state.snapshot.value?.usage, modes)", "the Preact shell consumes accepted snapshot state and display modes")
 	must("key=${line.key}", "Preact preserves usage-line identity across polls")
 	must("key=${token.key}", "Preact preserves usage-token identity across polls")
 	must("view.multiline ? ' multiline' : ''", "the derived layout toggles the multiline class")

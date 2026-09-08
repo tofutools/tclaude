@@ -56,9 +56,11 @@ type dashCodexUsage struct {
 
 // dashUsageWin mirrors agentd.usageWindow — one rolling-limit window.
 type dashUsageWin struct {
-	Pct       float64 `json:"pct"`
-	ResetsAt  string  `json:"resets_at"`
-	Remaining string  `json:"remaining"`
+	Pct        float64 `json:"pct"`
+	UsedUnits  float64 `json:"used_units"`
+	LimitUnits float64 `json:"limit_units"`
+	ResetsAt   string  `json:"resets_at"`
+	Remaining  string  `json:"remaining"`
 }
 
 // seedUsageCache writes a usage reading into the SQLite usage_cache
@@ -122,7 +124,8 @@ func TestDashboardUsage_CopilotMonthlyQuotaSurfacedInSnapshot(t *testing.T) {
 		Provider: db.SubscriptionProviderGitHub, ObservedAt: now,
 		Source: "account.getQuota", Windows: []db.SubscriptionUsageWindow{{
 			Name: "monthly", Duration: 30 * 24 * time.Hour,
-			UsedPercent: 58.2, ResetsAt: now.Add(18 * 24 * time.Hour),
+			UsedPercent: 58.2, UsedUnits: 174.6, LimitUnits: 300,
+			ResetsAt: now.Add(18 * 24 * time.Hour),
 		}},
 	})
 	require.NoError(t, err)
@@ -132,6 +135,8 @@ func TestDashboardUsage_CopilotMonthlyQuotaSurfacedInSnapshot(t *testing.T) {
 	assert.True(t, snap.Usage.Copilot.Available)
 	require.NotNil(t, snap.Usage.Copilot.Monthly)
 	assert.InDelta(t, 58.2, snap.Usage.Copilot.Monthly.Pct, 1e-9)
+	assert.InDelta(t, 174.6, snap.Usage.Copilot.Monthly.UsedUnits, 1e-9)
+	assert.InDelta(t, 300, snap.Usage.Copilot.Monthly.LimitUnits, 1e-9)
 	wantReset := time.Date(now.Year(), now.Month()+1, 1, 0, 0, 0, 0, time.UTC)
 	assert.Equal(t, wantReset.Format(time.RFC3339Nano), snap.Usage.Copilot.Monthly.ResetsAt,
 		"the snapshot ignores old raw reset metadata and uses the documented month boundary")

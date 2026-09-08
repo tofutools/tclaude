@@ -35,11 +35,13 @@ const (
 const openCodeCoverageGrace = 3 * db.SubscriptionUsageSampleInterval / 2
 
 type usageHistoryPoint struct {
-	At       string  `json:"at"`
-	Pct      float64 `json:"pct"`
-	ResetsAt string  `json:"resets_at,omitempty"`
-	Source   string  `json:"source,omitempty"`
-	Excluded bool    `json:"excluded,omitempty"`
+	At         string  `json:"at"`
+	Pct        float64 `json:"pct"`
+	UsedUnits  float64 `json:"used_units,omitempty"`
+	LimitUnits float64 `json:"limit_units,omitempty"`
+	ResetsAt   string  `json:"resets_at,omitempty"`
+	Source     string  `json:"source,omitempty"`
+	Excluded   bool    `json:"excluded,omitempty"`
 }
 
 type usageHistoryReset struct {
@@ -197,7 +199,8 @@ func collectUsageHistory(since time.Time, seriesSince map[usageSeriesKey]time.Ti
 		visibleRows = downsampleUsageRows(visibleRows, series.Resets, maxUsageChartPoints)
 		series.Points = make([]usageHistoryPoint, 0, len(visibleRows))
 		for _, row := range visibleRows {
-			point := usageHistoryPoint{At: row.ObservedAt.UTC().Format(time.RFC3339Nano), Pct: row.UsedPercent, Source: row.Source, Excluded: row.Excluded}
+			point := usageHistoryPoint{At: row.ObservedAt.UTC().Format(time.RFC3339Nano), Pct: row.UsedPercent,
+				UsedUnits: row.UsedUnits, LimitUnits: row.LimitUnits, Source: row.Source, Excluded: row.Excluded}
 			if !row.ResetsAt.IsZero() {
 				point.ResetsAt = row.ResetsAt.UTC().Format(time.RFC3339Nano)
 			}

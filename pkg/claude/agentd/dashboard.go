@@ -3740,7 +3740,8 @@ func handleDashboardSnapshot(w http.ResponseWriter, r *http.Request) {
 		snapshotNamedLoad{"export_jobs", func() { exportJobsActive, _ = db.CountActiveExportJobs() }},
 		snapshotNamedLoad{"links", func() { links = collectLinksSnapshot(groupNames) }},
 		snapshotNamedLoad{"usage", func() {
-			usage, hasRealCost, usagePhases, costErr = collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout())
+			showWhatIf := cfg != nil && cfg.Cost != nil && cfg.Cost.ShowOnSubscription
+			usage, hasRealCost, usagePhases, costErr = collectUsageSnapshot(cfg.ResolvedUsageIdleTimeout(), showWhatIf)
 		}},
 		snapshotNamedLoad{"opencode_usage_activity", func() {
 			openCodeActivity, _ = db.HasOpenCodeUsageActivitySince(time.Now().Add(-db.OpenCodeUsageActivityRetention))
@@ -3884,6 +3885,10 @@ func applyCostDisplayFactor(out *snapshotPayload, factor float64) {
 	for i := range out.Usage.APICosts {
 		out.Usage.APICosts[i].TotalCostUSD *= factor
 		out.Usage.APICosts[i].TodayCostUSD *= factor
+	}
+	for i := range out.Usage.WhatIfCosts {
+		out.Usage.WhatIfCosts[i].TotalCostUSD *= factor
+		out.Usage.WhatIfCosts[i].TodayCostUSD *= factor
 	}
 	scaleAgents := func(rows []dashboardAgent) {
 		for i := range rows {

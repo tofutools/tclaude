@@ -226,20 +226,21 @@ func LoadDashboardUsageCaches() (*UsageCacheRow, *CodexUsageCacheRow, *Subscript
 	var copilotProvider, copilotWindow, copilotSource sql.NullString
 	var copilotDuration sql.NullInt64
 	var copilotPercent sql.NullFloat64
+	var copilotUsedUnits, copilotLimitUnits sql.NullFloat64
 	var copilotResetsAt, copilotObservedAt dbTimestamp
 	var hasHistory bool
 	historyCutoff := dbTime(time.Now().UTC().Add(-DefaultSubscriptionUsageRetention))
 	err = d.QueryRow(`SELECT
 			u.data, u.fetched_at, u.last_attempt_at,
 			c.data, c.observed_at, c.updated_at, c.source,
-			g.provider, g.window_name, g.duration_seconds, g.used_percent,
+			g.provider, g.window_name, g.duration_seconds, g.used_percent, g.used_units, g.limit_units,
 			g.resets_at, g.observed_at, g.source,
 			EXISTS(SELECT 1 FROM subscription_usage_samples WHERE sampled_at >= ? LIMIT 1)
 		FROM (SELECT 1) singleton
 		LEFT JOIN usage_cache u ON u.id = 1
 		LEFT JOIN codex_usage_cache c ON c.id = 1
 		LEFT JOIN (
-			SELECT s.provider, w.window_name, w.duration_seconds, w.used_percent,
+			SELECT s.provider, w.window_name, w.duration_seconds, w.used_percent, w.used_units, w.limit_units,
 				w.resets_at, w.observed_at, w.source
 			FROM subscription_usage_samples s
 			JOIN subscription_usage_windows w ON w.sample_id = s.id
@@ -249,6 +250,7 @@ func LoadDashboardUsageCaches() (*UsageCacheRow, *CodexUsageCacheRow, *Subscript
 		&usageData, &fetchedAt, &lastAttemptAt,
 		&codexData, &observedAt, &updatedAt, &source,
 		&copilotProvider, &copilotWindow, &copilotDuration, &copilotPercent,
+		&copilotUsedUnits, &copilotLimitUnits,
 		&copilotResetsAt, &copilotObservedAt, &copilotSource,
 		&hasHistory)
 	if err != nil {
@@ -274,7 +276,8 @@ func LoadDashboardUsageCaches() (*UsageCacheRow, *CodexUsageCacheRow, *Subscript
 		copilot = &SubscriptionUsageHistoryRow{
 			Provider: copilotProvider.String, WindowName: copilotWindow.String,
 			Duration:    time.Duration(copilotDuration.Int64) * time.Second,
-			UsedPercent: copilotPercent.Float64, ResetsAt: copilotResetsAt.Time(),
+			UsedPercent: copilotPercent.Float64, UsedUnits: copilotUsedUnits.Float64,
+			LimitUnits: copilotLimitUnits.Float64, ResetsAt: copilotResetsAt.Time(),
 			ObservedAt: copilotObservedAt.Time(), Source: copilotSource.String,
 		}
 	}

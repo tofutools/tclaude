@@ -216,3 +216,27 @@ test('resetless usage charts omit blank tooltip rows and aria separators', async
   assert.doesNotMatch(tooltip.textContent, /reset|unknown/i);
   await view.unmount();
 });
+
+test('Copilot usage chart switches its scale and accessible values to AIC', async (t) => {
+  const harness = await createPreactHarness(t);
+  const { UsageHistoryChart } = await harness.importDashboardModule('js/usage-history-chart.js');
+  const now = Date.UTC(2026, 8, 8, 12);
+  const series = {
+    provider: 'github', window_name: 'monthly',
+    points: [
+      { at: new Date(now - 3600000).toISOString(), pct: 25 },
+      { at: new Date(now).toISOString(), pct: 38, used_units: 114, limit_units: 300 },
+    ],
+    resets: [], forecast: { status: 'flat', rate_pct_per_hour: 0 },
+  };
+  const view = await harness.mount(harness.preact.h(UsageHistoryChart, {
+    series, from: new Date(now - 86400000).toISOString(), generatedAt: new Date(now).toISOString(),
+    unit: 'units',
+  }));
+  assert.match(view.container.querySelector('svg').getAttribute('aria-label'), /AIC/);
+  assert.deepEqual([...view.container.querySelectorAll('.usage-grid text')].map((node) => node.textContent), ['0', '150', '300']);
+  assert.match(view.container.querySelectorAll('.usage-point-hit-target')[0].getAttribute('aria-label'), /75 AIC/,
+    'pre-migration percent-only samples are converted with the latest allowance');
+  assert.match(view.container.querySelectorAll('.usage-point-hit-target')[1].getAttribute('aria-label'), /114 AIC/);
+  await view.unmount();
+});

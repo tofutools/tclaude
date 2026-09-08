@@ -30,6 +30,8 @@ type SubscriptionUsageWindow struct {
 	Name        string
 	Duration    time.Duration
 	UsedPercent float64
+	UsedUnits   float64
+	LimitUnits  float64
 	ResetsAt    time.Time
 }
 
@@ -51,6 +53,8 @@ type SubscriptionUsageHistoryRow struct {
 	WindowName  string
 	Duration    time.Duration
 	UsedPercent float64
+	UsedUnits   float64
+	LimitUnits  float64
 	ResetsAt    time.Time
 	ObservedAt  time.Time
 	Source      string
@@ -96,7 +100,7 @@ func SubscriptionUsageHistorySince(since time.Time) ([]SubscriptionUsageHistoryR
 	bucketCutoff := dbTime(since.UTC().Truncate(SubscriptionUsageSampleInterval))
 	observedCutoff := dbTime(since.UTC())
 	rows, err := d.Query(`SELECT s.provider, w.window_name, w.duration_seconds,
-		w.used_percent, w.resets_at, w.observed_at, w.source, w.excluded
+		w.used_percent, w.used_units, w.limit_units, w.resets_at, w.observed_at, w.source, w.excluded
 		FROM subscription_usage_samples s
 		JOIN subscription_usage_windows w ON w.sample_id = s.id
 		WHERE s.sampled_at >= ? AND w.observed_at >= ?
@@ -113,7 +117,8 @@ func SubscriptionUsageHistorySince(since time.Time) ([]SubscriptionUsageHistoryR
 		var durationSeconds int64
 		var resetsAt, observedAt dbTimestamp
 		if err := rows.Scan(&row.Provider, &row.WindowName, &durationSeconds,
-			&row.UsedPercent, &resetsAt, &observedAt, &row.Source, &row.Excluded); err != nil {
+			&row.UsedPercent, &row.UsedUnits, &row.LimitUnits,
+			&resetsAt, &observedAt, &row.Source, &row.Excluded); err != nil {
 			return nil, fmt.Errorf("read subscription usage history: scan: %w", err)
 		}
 		row.Duration = time.Duration(durationSeconds) * time.Second
@@ -221,6 +226,12 @@ func validateSubscriptionUsageSample(sample SubscriptionUsageSample) (Subscripti
 		if math.IsNaN(w.UsedPercent) || math.IsInf(w.UsedPercent, 0) {
 			return SubscriptionUsageSample{}, fmt.Errorf("save subscription usage sample: window %q has non-finite percent", name)
 		}
+		if math.IsNaN(w.UsedUnits) || math.IsInf(w.UsedUnits, 0) || w.UsedUnits < 0 {
+			return SubscriptionUsageSample{}, fmt.Errorf("save subscription usage sample: window %q has invalid used units", name)
+		}
+		if math.IsNaN(w.LimitUnits) || math.IsInf(w.LimitUnits, 0) || w.LimitUnits < 0 {
+			return SubscriptionUsageSample{}, fmt.Errorf("save subscription usage sample: window %q has invalid limit units", name)
+		}
 	}
 	return sample, nil
 }
@@ -267,16 +278,18 @@ func saveSubscriptionUsageSampleTx(tx *sql.Tx, sample SubscriptionUsageSample, n
 			resetsAt = dbTime(w.ResetsAt.UTC())
 		}
 		if _, err := tx.Exec(`INSERT INTO subscription_usage_windows
-			(sample_id, window_name, duration_seconds, used_percent, resets_at, observed_at, source)
-			VALUES (?, ?, ?, ?, ?, ?, ?)
+			(sample_id, window_name, duration_seconds, used_percent, used_units, limit_units, resets_at, observed_at, source)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT(sample_id, window_name) DO UPDATE SET
 				duration_seconds = excluded.duration_seconds,
 				used_percent = excluded.used_percent,
+				used_units = excluded.used_units,
+				limit_units = excluded.limit_units,
 				resets_at = excluded.resets_at,
 				observed_at = excluded.observed_at,
 				source = excluded.source,
 				excluded = 0`,
-			id, w.Name, int64(w.Duration/time.Second), w.UsedPercent, resetsAt,
+			id, w.Name, int64(w.Duration/time.Second), w.UsedPercent, w.UsedUnits, w.LimitUnits, resetsAt,
 			dbTime(observedAt), sample.Source); err != nil {
 			return false, fmt.Errorf("save subscription usage sample: insert window %q: %w", w.Name, err)
 		}

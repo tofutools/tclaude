@@ -37,6 +37,12 @@ test('Costs state owns controls, derived rows, selection, requests, and preferen
   assert.deepEqual([...state.view.value.selectedHarnesses], ['claude']);
   assert.equal(state.view.value.narrowed.total_usd, 3);
   assert.ok(storage.values.has('tclaude.dash.costs.harnesses'));
+  state.toggleHarness('codex');
+  state.toggleModel('gpt');
+  assert.deepEqual([...state.view.value.selectedModels], ['opus']);
+  assert.equal(state.view.value.narrowed.total_usd, 3);
+  assert.ok(storage.values.has('tclaude.dash.costs.models'));
+  assert.equal(state.view.value.accumulatedChart.points.at(-1).cost, 3);
   state.cycleSort('cost');
   assert.equal(state.sort.value.key, 'cost');
   state.activateMonth(2);

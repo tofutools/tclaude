@@ -129,7 +129,8 @@ func refreshCopilotQuota(ctx context.Context, deps copilotQuotaDeps) (stored, sk
 		Source: "account.getQuota",
 		Windows: []db.SubscriptionUsageWindow{{
 			Name:        "monthly",
-			UsedPercent: usedPercent, ResetsAt: resetAt,
+			UsedPercent: usedPercent, UsedUnits: window.UsedRequests,
+			LimitUnits: window.EntitlementRequests, ResetsAt: resetAt,
 		}},
 	})
 	return stored, false, err

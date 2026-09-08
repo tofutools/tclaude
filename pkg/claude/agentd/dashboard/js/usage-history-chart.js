@@ -5,7 +5,7 @@ import {
   formatUsageAxisTick, usageAxisStart, usageAxisTicks, usageForecastPoint,
 } from './usage-history-axis.js';
 import {
-  formatUsageDuration, usageScopeLabel,
+  formatUsageDuration, formatUsageUnits, usageScopeLabel,
 } from './usage-history-model.js';
 
 const html = htm.bind(h);
@@ -119,7 +119,7 @@ function ariaClauses(parts) {
 }
 
 export function UsageHistoryChart({
-  series, from, generatedAt, forecast: selectedForecast, lookaheadHours = 168, wizard = false, onTogglePoint,
+  series, from, generatedAt, forecast: selectedForecast, lookaheadHours = 168, unit = 'percent', wizard = false, onTogglePoint,
 }) {
   const w = (plain, wizardly) => (wizard ? wizardly : plain);
   const [tooltip, setTooltip] = useState(null);
@@ -145,7 +145,15 @@ export function UsageHistoryChart({
   const lookahead = [5, 24, 168, 720].includes(Number(lookaheadHours)) ? Number(lookaheadHours) : 168;
   const horizon = now + lookahead * 3600000;
   const x = (time) => PAD.left + Math.max(0, Math.min(1, (time - start) / (horizon - start))) * (W - PAD.left - PAD.right);
-  const y = (pct) => PAD.top + (1 - Math.max(0, Math.min(100, pct)) / 100) * (H - PAD.top - PAD.bottom);
+  const latestLimit = [...points].reverse().find((point) => Number(point.limit_units || 0) > 0)?.limit_units || 0;
+  const units = unit === 'units' && latestLimit > 0;
+  const unitScale = units ? Math.max(latestLimit,
+    ...points.map((point) => Number(point.limit_units || 0)), ...points.map((point) => Number(point.used_units || 0))) : 100;
+  const pctValue = (pct) => units ? pct * latestLimit / 100 : pct;
+  const pointValue = (point) => units && Number(point.limit_units || 0) > 0
+    ? Number(point.used_units || 0) : pctValue(point.pct);
+  const formatValue = (value) => units ? formatUsageUnits(value) : `${value.toFixed(1)}%`;
+  const y = (value) => PAD.top + (1 - Math.max(0, Math.min(unitScale, value)) / unitScale) * (H - PAD.top - PAD.bottom);
   const resetMarkers = (series.resets || [])
     .map((reset) => ({ ...reset, time: finiteDate(reset.at) }))
     .filter((reset) => reset.time !== null);
@@ -164,6 +172,7 @@ export function UsageHistoryChart({
   const latest = includedPoints[includedPoints.length - 1] || null;
   const forecastAt = Math.min(horizon, hitAt ?? horizon, resetAt ?? horizon);
   const forecastPct = latest ? Math.min(100, latest.pct + rate * Math.max(0, forecastAt - latest.time) / 3600000) : 0;
+  const forecastValue = pctValue(forecastPct);
   const hasForecastLine = Boolean(latest) && projecting && forecastAt > latest.time;
   const scheduledResetVisible = resetAt !== null && resetAt > now && resetAt <= horizon;
   const pointMarkers = sampledPoints(points, 240);
@@ -178,10 +187,10 @@ export function UsageHistoryChart({
   const showForecastTooltip = (ratio) => {
     const hoverPoint = usageForecastPoint(latest.time, latest.pct, rate, forecastAt, ratio);
     setTooltip({
-      x: x(hoverPoint.time), y: y(hoverPoint.pct), tone: 'forecast', title: w('Prediction', 'Prophecy'),
+      x: x(hoverPoint.time), y: y(pctValue(hoverPoint.pct)), tone: 'forecast', title: w('Prediction', 'Prophecy'),
       lines: [
         scope,
-        `${hoverPoint.pct.toFixed(1)}% · ${new Date(hoverPoint.time).toLocaleString()}`,
+        `${formatValue(pctValue(hoverPoint.pct))} · ${new Date(hoverPoint.time).toLocaleString()}`,
         beforeResetLabel(resetAt, hoverPoint.time, wizard),
       ].filter(Boolean),
     });
@@ -196,23 +205,23 @@ export function UsageHistoryChart({
   };
   const showPointTooltip = (point) => {
     const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time, wizard);
-    showTooltip(x(point.time), y(point.pct), point.excluded ? 'excluded' : 'observed',
+    showTooltip(x(point.time), y(pointValue(point)), point.excluded ? 'excluded' : 'observed',
       point.excluded ? w('Excluded sample', 'Veiled reading') : w('Sample', 'Reading'), [
-      scope, `${point.pct.toFixed(1)}% · ${new Date(point.time).toLocaleString()}`,
+      scope, `${formatValue(pointValue(point))} · ${new Date(point.time).toLocaleString()}`,
       pointResetLabel,
       point.excluded
         ? w('Excluded from calculations · click to include', 'Veiled from reckonings · click to reveal')
         : w('Click to exclude from calculations', 'Click to veil from reckonings'),
     ], point.time);
   };
-  const showResetTooltip = (reset, index, anchorY = y(reset.pct)) => {
+  const showResetTooltip = (reset, index, anchorY = y(pctValue(reset.pct))) => {
     const title = index === resetMarkers.length - 1
       ? w('Last reset', 'Last replenishment')
       : w('Previous reset', 'Earlier replenishment');
     showTooltip(x(reset.time), anchorY, 'reset', title, [
       scope, new Date(reset.time).toLocaleString(),
-      w(`New post-reset baseline: ${reset.pct.toFixed(1)}% · ${relativeMarkerTime(reset.time, now)}`,
-        `Reserves refilled to ${reset.pct.toFixed(1)}% · ${relativeMarkerTime(reset.time, now, wizard)}`),
+      w(`New post-reset baseline: ${formatValue(pctValue(reset.pct))} · ${relativeMarkerTime(reset.time, now)}`,
+        `Reserves refilled to ${formatValue(pctValue(reset.pct))} · ${relativeMarkerTime(reset.time, now, wizard)}`),
     ]);
   };
   const showScheduledResetTooltip = (anchorY = PAD.top + 18) => showTooltip(
@@ -227,13 +236,13 @@ export function UsageHistoryChart({
     const pointer = chartPointerPosition(svg, event);
     if (!pointer) return;
     let nearest = pointMarkers.reduce((best, point) => {
-      const distance = (x(point.time) - pointer.x) ** 2 + (y(point.pct) - pointer.y) ** 2;
+      const distance = (x(point.time) - pointer.x) ** 2 + (y(pointValue(point)) - pointer.y) ** 2;
       return nearestCandidate(best, { kind: 'point', point, distance, priority: 0 });
     }, null);
     if (hasForecastLine) {
       const forecastDistance = distanceToSegment(pointer,
-        { x: x(latest.time), y: y(latest.pct) },
-        { x: x(forecastAt), y: y(forecastPct) });
+        { x: x(latest.time), y: y(pointValue(latest)) },
+        { x: x(forecastAt), y: y(forecastValue) });
       nearest = nearestCandidate(nearest, {
         kind: 'forecast', priority: 1, ...forecastDistance,
       });
@@ -276,7 +285,7 @@ export function UsageHistoryChart({
     const pointer = chartPointerPosition(svg, event);
     if (!pointer) return;
     const nearest = pointMarkers.reduce((best, point) => {
-      const distance = (x(point.time) - pointer.x) ** 2 + (y(point.pct) - pointer.y) ** 2;
+      const distance = (x(point.time) - pointer.x) ** 2 + (y(pointValue(point)) - pointer.y) ** 2;
       return !best || distance < best.distance ? { point, distance } : best;
     }, null);
     if (nearest && nearest.distance <= HOVER_DISTANCE ** 2) togglePoint(nearest.point);
@@ -298,11 +307,13 @@ export function UsageHistoryChart({
     ? Math.max(4, Math.min(H - tooltipHeight - 4, tooltip.y < tooltipHeight + 8 ? tooltip.y + 10 : tooltip.y - tooltipHeight - 8))
     : 0;
   return html`<svg class="usage-line-chart" viewBox=${`0 0 ${W} ${H}`} role="group"
-    aria-label=${`${series.provider} ${series.window_name} ${w('subscription usage history', 'mana reserve chronicle')}`}>
-    ${[0, 50, 100].map((tick) => html`<g class="usage-grid" key=${tick}>
+    aria-label=${`${series.provider} ${series.window_name} ${units ? 'AIC' : w('subscription usage history', 'mana reserve chronicle')}`}>
+    ${[0, .5, 1].map((ratio) => {
+      const tick = unitScale * ratio;
+      return html`<g class="usage-grid" key=${ratio}>
       <line x1=${PAD.left} x2=${W - PAD.right} y1=${y(tick)} y2=${y(tick)} />
-      <text x=${PAD.left - 8} y=${y(tick) + 4} text-anchor="end">${tick}%</text>
-    </g>`)}
+      <text x=${PAD.left - 8} y=${y(tick) + 4} text-anchor="end">${units ? formatUsageUnits(tick).replace(' AIC', '') : `${tick}%`}</text>
+    </g>`;})}
     ${xTicks.map((tick, index) => html`<g class="usage-x-tick" key=${tick.time}>
       <line x1=${x(tick.time)} x2=${x(tick.time)} y1=${PAD.top} y2=${H - PAD.bottom} />
       <text x=${x(tick.time)} y=${H - 6}
@@ -311,7 +322,7 @@ export function UsageHistoryChart({
       </text>
     </g>`)}
     ${segments.map((segment, index) => html`<polyline key=${index} class="usage-observed-line"
-      points=${segment.map((point) => `${x(point.time)},${y(point.pct)}`).join(' ')} />`)}
+      points=${segment.map((point) => `${x(point.time)},${y(pointValue(point))}`).join(' ')} />`)}
     ${resetMarkers.map((reset, index) => {
       const at = reset.time;
       const title = index === resetMarkers.length - 1
@@ -319,10 +330,10 @@ export function UsageHistoryChart({
         : w('Previous reset', 'Earlier replenishment');
       return html`<g class="usage-reset-mark" key=${reset.at}>
         <line x1=${x(at)} x2=${x(at)} y1=${PAD.top} y2=${H - PAD.bottom} />
-        <circle cx=${x(at)} cy=${y(reset.pct)} r="3" />
+        <circle cx=${x(at)} cy=${y(pctValue(reset.pct))} r="3" />
         <line class="usage-marker-hit-target" x1=${x(at)} x2=${x(at)} y1=${PAD.top} y2=${H - PAD.bottom}
           tabIndex=${index === keyboardResetIndex ? '0' : '-1'} role="img"
-          aria-label=${`${title}; ${scope}; ${new Date(at).toLocaleString()}; ${w(`new post-reset baseline ${reset.pct.toFixed(1)}%`, `reserves refilled to ${reset.pct.toFixed(1)}%`)}; ${relativeMarkerTime(at, now, wizard)}${index === keyboardResetIndex ? w('; use left and right arrow keys to explore detected resets', '; use left and right arrow keys to explore witnessed replenishments') : ''}`}
+          aria-label=${`${title}; ${scope}; ${new Date(at).toLocaleString()}; ${w(`new post-reset baseline ${formatValue(pctValue(reset.pct))}`, `reserves refilled to ${formatValue(pctValue(reset.pct))}`)}; ${relativeMarkerTime(at, now, wizard)}${index === keyboardResetIndex ? w('; use left and right arrow keys to explore detected resets', '; use left and right arrow keys to explore witnessed replenishments') : ''}`}
           onfocus=${() => {
             setKeyboardResetAt(index);
             showResetTooltip(reset, index);
@@ -338,12 +349,12 @@ export function UsageHistoryChart({
         onfocus=${() => showScheduledResetTooltip()} onblur=${hideTooltip} />
     </g>`}
     ${hasForecastLine && html`<${Fragment}>
-      <line class="usage-forecast-line" x1=${x(latest.time)} y1=${y(latest.pct)}
-        x2=${x(forecastAt)} y2=${y(forecastPct)} />
-      <line class="usage-forecast-hit-target" x1=${x(latest.time)} y1=${y(latest.pct)}
-        x2=${x(forecastAt)} y2=${y(forecastPct)} tabIndex="0" role="img"
+      <line class="usage-forecast-line" x1=${x(latest.time)} y1=${y(pointValue(latest))}
+        x2=${x(forecastAt)} y2=${y(forecastValue)} />
+      <line class="usage-forecast-hit-target" x1=${x(latest.time)} y1=${y(pointValue(latest))}
+        x2=${x(forecastAt)} y2=${y(forecastValue)} tabIndex="0" role="img"
         aria-label=${ariaClauses([w('Prediction', 'Prophecy'), scope,
-          `${forecastPct.toFixed(1)}% at ${new Date(forecastAt).toLocaleString()}`,
+          `${formatValue(forecastValue)} at ${new Date(forecastAt).toLocaleString()}`,
           beforeResetLabel(resetAt, forecastAt, wizard)])}
         onfocus=${() => showForecastTooltip(1)} onblur=${hideTooltip} />
     </${Fragment}>`}
@@ -358,12 +369,12 @@ export function UsageHistoryChart({
       const pointResetLabel = beforeResetLabel(finiteDate(point.resets_at), point.time, wizard);
       const actionLabel = point.excluded ? w('include this sample', 'reveal this reading') : w('exclude this sample', 'veil this reading');
       return html`<g class=${`usage-point-mark${point.excluded ? ' excluded' : ''}${tooltip?.pointAt === point.time ? ' active' : ''}`} key=${point.at}>
-        <circle class="usage-point" cx=${x(point.time)} cy=${y(point.pct)} r="2.25" />
-        <circle class="usage-point-hit-target" cx=${x(point.time)} cy=${y(point.pct)} r="8"
+        <circle class="usage-point" cx=${x(point.time)} cy=${y(pointValue(point))} r="2.25" />
+        <circle class="usage-point-hit-target" cx=${x(point.time)} cy=${y(pointValue(point))} r="8"
           tabIndex=${index === keyboardPointIndex ? '0' : '-1'} role="button" aria-pressed=${Boolean(point.excluded)}
           aria-label=${`${ariaClauses([
             point.excluded ? w('Excluded sample', 'Veiled reading') : w('Sample', 'Reading'), scope,
-            `${point.pct.toFixed(1)}% at ${new Date(point.time).toLocaleString()}`, pointResetLabel, actionLabel,
+            `${formatValue(pointValue(point))} at ${new Date(point.time).toLocaleString()}`, pointResetLabel, actionLabel,
           ])}${index === keyboardPointIndex ? w('; use left and right arrow keys to explore samples', '; use left and right arrow keys to explore readings') : ''}`}
           onfocus=${() => {
             setKeyboardPointAt(index);

@@ -24,10 +24,14 @@ function UsageToken({ token }) {
     return html`
       <span class="uw ucost" data-goto-tab="costs">
         <span class="ulabel">${token.label}</span>
-        ${token.today ? html`<span class="ucost-amt">${token.today}</span> <span class="urem">(today)</span>` : null}
-        <span class="ucost-amt">${token.mtd}</span> <span class="urem">(mtd)</span>
+        ${token.today ? html`<span class="ucost-amt">${token.estimate ? '≈' : ''}${token.today}</span> <span class="urem">(today)</span>` : null}
+        <span class="ucost-amt">${token.estimate ? '≈' : ''}${token.mtd}</span> <span class="urem">(mtd)</span>
       </span>
     `;
+  }
+  if (token.kind === 'units') {
+    return html`<span class="uw uunits"><strong>${token.used.toLocaleString('en-US')}</strong>
+      <span class="urem">/ ${token.limit.toLocaleString('en-US')} AIC ${token.remaining}</span></span>`;
   }
   const blocks = [];
   for (let index = 0; index < 8; index++) {
@@ -44,14 +48,31 @@ function UsageToken({ token }) {
 }
 
 function Usage({ state }) {
-  const view = usageView(state.snapshot.value?.usage);
+  const prefKey = (provider) => `tclaude.dash.headerUsageMode.${provider}`;
+  const [modes, setModes] = useState(() => Object.fromEntries(['claude', 'codex', 'copilot']
+    .map((provider) => [provider, dashPrefs.getItem(prefKey(provider)) || 'usage'])));
+  const view = usageView(state.snapshot.value?.usage, modes);
+  const setMode = (provider, mode) => {
+    setModes((current) => ({ ...current, [provider]: mode }));
+    dashPrefs.setItem(prefKey(provider), mode);
+  };
+  const cycleMode = (line) => {
+    if (!line.modes?.length) return;
+    const index = line.modes.indexOf(line.mode);
+    setMode(line.key, line.modes[(index + 1) % line.modes.length]);
+  };
   if (view.na) return html`<span id="usage" class="meta na" title=${view.title}>${view.text}</span>`;
   return html`
     <span id="usage" class=${`meta${view.multiline ? ' multiline' : ''}`} title=${view.title}>
       ${view.lines.map((line) => view.multiline ? html`
         <span key=${line.key} class="uline">
-          <span class="usrc">${line.label}</span>
+          ${line.modes?.length ? html`<button type="button" class="usrc usrc-toggle" title="Switch ${line.label.replace(':', '')} usage units"
+              onClick=${() => cycleMode(line)}>${line.label}</button>` : html`<span class="usrc">${line.label}</span>`}
           ${line.tokens.map((token) => html`<${UsageToken} key=${token.key} token=${token} />`)}
+          ${line.modes?.length ? html`<span class="usage-unit-switch" role="group" aria-label=${`${line.label.replace(':', '')} usage units`}>
+            ${line.modes.map((mode) => html`<button type="button" class=${line.mode === mode ? 'active' : ''}
+              aria-pressed=${line.mode === mode} onClick=${() => setMode(line.key, mode)}>${mode === 'usage' ? '%' : mode === 'cost' ? '≈$' : 'AIC'}</button>`)}
+          </span>` : null}
         </span>
       ` : line.tokens.map((token) => html`<${UsageToken} key=${token.key} token=${token} />`))}
     </span>

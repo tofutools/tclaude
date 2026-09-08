@@ -160,23 +160,40 @@ export function costHarnesses(agents) {
     .sort((a, b) => a.localeCompare(b));
 }
 
+export function costModels(agents) {
+  return [...new Set((agents || []).map(costModelLabel))]
+    .sort((a, b) => a.localeCompare(b));
+}
+
 export function resolveHarnessSelection(harnesses, saved) {
   const known = new Set(harnesses);
   const selected = (saved || []).filter((harness) => known.has(harness));
   return new Set(selected.length ? selected : harnesses);
 }
 
-export function filterCostData(payload, selected) {
+export function resolveModelSelection(models, saved) {
+  const known = new Set(models);
+  const selected = (saved || []).filter((model) => known.has(model));
+  return new Set(selected.length ? selected : models);
+}
+
+export function filterCostData(payload, selected, selectedModels = null) {
   const agents = payload?.agents || [];
   const harnesses = costHarnesses(agents);
-  if (harnesses.length <= 1 || selected.size === harnesses.length) return payload;
+  const models = costModels(agents);
+  const allHarnesses = selected.size === harnesses.length && harnesses.every((item) => selected.has(item));
+  const allModels = !selectedModels
+    || (selectedModels.size === models.length && models.every((item) => selectedModels.has(item)));
+  if (allHarnesses && allModels) return payload;
+  const matches = (agent) => selected.has(harnessLabel(agent.harness))
+    && (!selectedModels || selectedModels.has(costModelLabel(agent)));
+  const filteredAgents = agents.filter(matches);
   const totals = {};
   let total = 0;
   let realTotal = 0;
   let whatIfTotal = 0;
   let virtualCreditsTotal = 0;
-  for (const agent of agents) {
-    if (!selected.has(harnessLabel(agent.harness))) continue;
+  for (const agent of filteredAgents) {
     totals[agent.day] = (totals[agent.day] || 0) + (agent.cost_usd || 0);
     total += agent.cost_usd || 0;
     realTotal += agent.real_cost_usd || 0;
@@ -186,7 +203,7 @@ export function filterCostData(payload, selected) {
   return {
     ...payload,
     days: (payload.days || []).map((day) => {
-      const matching = agents.filter((agent) => agent.day === day.day && selected.has(harnessLabel(agent.harness)));
+      const matching = filteredAgents.filter((agent) => agent.day === day.day);
       const real = matching.reduce((sum, agent) => sum + (agent.real_cost_usd || 0), 0);
       const whatIf = matching.reduce((sum, agent) => sum + (agent.what_if_cost_usd || 0), 0);
       const credits = matching.reduce((sum, agent) => sum + (agent.virtual_cost_credits || 0), 0);
@@ -197,12 +214,23 @@ export function filterCostData(payload, selected) {
         cost_kind: real > 0 && whatIf > 0 ? 'mixed' : whatIf > 0 ? 'what_if' : real > 0 ? 'real' : '',
       };
     }),
+    agents: filteredAgents,
     total_usd: total,
     real_total_usd: realTotal,
     what_if_total_usd: whatIfTotal,
     virtual_cost_credits: virtualCreditsTotal,
     cost_kind: realTotal > 0 && whatIfTotal > 0 ? 'mixed' : whatIfTotal > 0 ? 'what_if' : realTotal > 0 ? 'real' : '',
   };
+}
+
+export function buildAccumulatedCostChart(data) {
+  let total = 0;
+  const points = (data?.days || []).map((day) => ({
+    day: day.day,
+    cost: (total += Number(day.cost_usd || 0)),
+  }));
+  const maximum = points.length ? points[points.length - 1].cost : 0;
+  return { points, scaleMax: maximum > 0 ? niceCeil(maximum) : 0 };
 }
 
 export function dailyBreakdown(agents, selected) {
@@ -375,9 +403,10 @@ export function monthLabel(offset, now = new Date()) {
   return `${MONTH_NAMES[date.getMonth()]} ${date.getFullYear()}`;
 }
 
-export function buildCostChart(data, projection, agents, selected, harnesses) {
-  const breakdown = dailyBreakdown(agents, selected);
-  const creditBreakdown = dailyCreditsBreakdown(agents, selected);
+export function buildCostChart(data, projection, agents, selected, harnesses, selectedModels = null) {
+  const filteredAgents = (agents || []).filter((agent) => !selectedModels || selectedModels.has(costModelLabel(agent)));
+  const breakdown = dailyBreakdown(filteredAgents, selected);
+  const creditBreakdown = dailyCreditsBreakdown(filteredAgents, selected);
   const fill = projection?.fillEmpty ? projection.leadingFill : null;
   const actual = (data?.days || []).map((day) => {
     if (fill && fill[day.day] != null) {

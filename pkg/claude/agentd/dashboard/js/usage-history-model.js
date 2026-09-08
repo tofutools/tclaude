@@ -109,6 +109,14 @@ export function formatUsageDuration(milliseconds) {
   return [days && `${days}d`, hours && `${hours}h`, mins && `${mins}m`].filter(Boolean).join(' ');
 }
 
+export function formatUsageUnits(value) {
+  const number = Number(value || 0);
+  return new Intl.NumberFormat('en-US', {
+    minimumFractionDigits: Number.isInteger(number) ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(number) + ' AIC';
+}
+
 // The wizard voice for this tab. The dashboard already calls a context window
 // an agent's "mana reserve" (the .ctx-mana crystal gauge and its 🔮 tooltip in
 // groups-member-table.js), and the nav tab is already "📈 Reserves" — so a
@@ -137,12 +145,14 @@ export function formatUsageResetCountdown(value, now = Date.now(), wizard = fals
     : `reset ${formatUsageDuration(delta)} ago`;
 }
 
-export function usageForecastView(forecast, now = Date.now(), latestAt = '', wizard = false) {
+export function usageForecastView(forecast, now = Date.now(), latestAt = '', wizard = false, unitLimit = 0) {
   const w = (plain, wizardly) => (wizard ? wizardly : plain);
   if (!forecast) return { tone: 'muted', headline: w('Prediction unavailable', 'No prophecy to be had'), lines: [] };
   const rate = forecast.rate_pct_per_hour
-    ? w(`Average usage rate: ${forecast.rate_pct_per_hour.toFixed(1)} percentage points/hour`,
-      `Channeling rate: ${forecast.rate_pct_per_hour.toFixed(1)} percentage points of mana per hour`)
+    ? unitLimit > 0
+      ? `Average usage rate: ${formatUsageUnits(forecast.rate_pct_per_hour * unitLimit / 100)}/hour`
+      : w(`Average usage rate: ${forecast.rate_pct_per_hour.toFixed(1)} percentage points/hour`,
+        `Channeling rate: ${forecast.rate_pct_per_hour.toFixed(1)} percentage points of mana per hour`)
     : '';
   const hitAt = new Date(forecast.hits_limit_at).getTime();
   const resetAt = new Date(forecast.reset_at).getTime();

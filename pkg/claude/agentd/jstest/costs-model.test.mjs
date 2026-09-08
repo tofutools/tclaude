@@ -12,8 +12,8 @@ test('Costs derivation projects months, filters harnesses, sorts, and builds cha
     days.push({ day: key, cost_usd: day === 10 ? 50 : 0 });
   }
   const agents = [
-    { conv_id: 'a', day: '2026-07-10', title: 'Alpha', harness: 'claude', cost_usd: 30, last_day: '2026-07-10' },
-    { conv_id: 'b', day: '2026-07-10', title: 'Beta', harness: 'codex', cost_usd: 20, last_day: '2026-07-10' },
+    { conv_id: 'a', day: '2026-07-10', title: 'Alpha', harness: 'claude', model: 'opus', cost_usd: 30, last_day: '2026-07-10' },
+    { conv_id: 'b', day: '2026-07-10', title: 'Beta', harness: 'codex', model: 'gpt', cost_usd: 20, last_day: '2026-07-10' },
   ];
   const payload = { from: '2026-07-01', to: '2026-07-10', first_day: '2026-07-10', total_usd: 50, days, agents };
   const projection = model.monthProjection(payload, true, false, now);
@@ -42,6 +42,15 @@ test('Costs derivation projects months, filters harnesses, sorts, and builds cha
   assert.equal(chart.days.at(-1).segments[0].harness, 'claude');
   assert.deepEqual(model.sortCostAgents(agents, { key: 'cost', dir: 'asc' }).map((row) => row.conv_id), ['b', 'a']);
   assert.equal(model.matchesCostAgent(agents[1], 'codex'), true);
+
+  const modelFiltered = model.filterCostData(payload, new Set(['claude', 'codex']), new Set(['opus']));
+  assert.equal(modelFiltered.total_usd, 30);
+  assert.deepEqual(modelFiltered.agents.map((row) => row.conv_id), ['a']);
+  assert.deepEqual(model.costModels(agents), ['gpt', 'opus']);
+  const accumulated = model.buildAccumulatedCostChart({ days: [
+	{ day: '2026-07-09', cost_usd: 2 }, { day: '2026-07-10', cost_usd: 3 },
+  ] });
+  assert.deepEqual(accumulated.points.map((point) => point.cost), [2, 5]);
 });
 
 test('Copilot cost segments retain native credits beside gross subscription dollars', async (t) => {
