@@ -168,6 +168,8 @@ func TestDashboardHTML_CostsTabWired(t *testing.T) {
 	must("new ResizeObserver(update)", "accumulated chart tracks its real container width")
 	must("cost-accumulated-line${segment.projected ? ' projected' : ''}", "projection uses a distinct accumulated-line segment")
 	must("cost-accumulated-hit", "recorded and projected accumulated lines expose generous hover targets")
+	must("use Left and Right Arrow keys to inspect daily values", "accumulated values have keyboard-accessible navigation")
+	must("onpointerdown", "accumulated values can be inspected with touch or pen input")
 	must(`id="filter-costs"`, "breakdown filter input present")
 	must(`id="filter-costs-count"`, "filter match-count chip present")
 	must(`id="filter-costs-clear"`, "filter clear button present")

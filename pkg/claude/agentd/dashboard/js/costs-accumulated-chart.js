@@ -32,20 +32,38 @@ export function CostsAccumulatedChart({ chart }) {
   const y = (value) => PAD.top + (1 - value / chart.scaleMax) * (H - PAD.top - PAD.bottom);
   const line = (items) => items.map((point) => `${x(point.index)},${y(point.cost)}`).join(' ');
   const labelEvery = points.length > 62 ? 14 : points.length > 35 ? 7 : points.length > 14 ? 3 : 1;
+  const lastRecorded = points.reduce((latest, point) => point.projected ? latest : point, points[0]);
+  const lastPoint = points[points.length - 1];
+  const describePoint = (point, projected = point.projected) => ({
+    point, projected, x: x(point.index), y: y(point.cost),
+  });
   const showTooltip = (event, segment) => {
     const svg = event.currentTarget.ownerSVGElement || event.currentTarget.closest('svg');
     const rect = svg.getBoundingClientRect();
     const cursorX = (event.clientX - rect.left) * width / Math.max(rect.width, 1);
     const point = segment.points.reduce((nearest, candidate) =>
       Math.abs(x(candidate.index) - cursorX) < Math.abs(x(nearest.index) - cursorX) ? candidate : nearest);
-    setTooltip({ point, projected: segment.projected, x: x(point.index), y: y(point.cost) });
+    setTooltip(describePoint(point, segment.projected));
   };
+  const navigateTooltip = (event) => {
+    const moves = { ArrowLeft: -1, ArrowRight: 1 };
+    if (!(event.key in moves) && event.key !== 'Home' && event.key !== 'End') return;
+    event.preventDefault();
+    const current = tooltip?.point.index ?? lastRecorded.index;
+    const index = event.key === 'Home' ? 0 : event.key === 'End' ? points.length - 1
+      : Math.max(0, Math.min(points.length - 1, current + moves[event.key]));
+    setTooltip(describePoint(points[index]));
+  };
+  const accessibleSummary = lastPoint.projected
+    ? `Accumulated cost. Recorded through ${lastRecorded.day}: ${fmtExactUSD(lastRecorded.cost)}. Projected through ${lastPoint.day}: ${fmtExactUSD(lastPoint.cost)}. Focus and use Left and Right Arrow keys to inspect daily values.`
+    : `Accumulated cost recorded through ${lastPoint.day}: ${fmtExactUSD(lastPoint.cost)}. Focus and use Left and Right Arrow keys to inspect daily values.`;
   const tipWidth = 218;
   const tipX = tooltip ? Math.max(PAD.left, Math.min(width - PAD.right - tipWidth, tooltip.x + 10)) : 0;
   return html`<div ref=${host} id="costs-accumulated-chart" class="cost-accumulated">
     <div class="cost-chart-heading"><strong>Accumulated cost</strong><span><i class="cost-line-key recorded"></i> recorded <i class="cost-line-key projected"></i> projection</span></div>
-    <svg class="cost-accumulated-svg" viewBox=${`0 0 ${width} ${H}`} role="img"
-      aria-label=${`Accumulated cost from ${points[0].day} through ${points[points.length - 1].day}: ${fmtExactUSD(points[points.length - 1].cost)}`}>
+    <svg class="cost-accumulated-svg" viewBox=${`0 0 ${width} ${H}`} role="img" tabIndex="0"
+      aria-label=${accessibleSummary} onfocus=${() => setTooltip(describePoint(lastRecorded))}
+      onblur=${() => setTooltip(null)} onkeydown=${navigateTooltip}>
       ${(chart.segments || []).filter((segment) => !segment.projected && segment.points.length > 1).map((segment, index) => {
         const area = `${x(segment.points[0].index)},${H - PAD.bottom} ${line(segment.points)} ${x(segment.points[segment.points.length - 1].index)},${H - PAD.bottom}`;
         return html`<polygon key=${`area-${index}`} class="cost-accumulated-area" points=${area} />`;
@@ -57,7 +75,8 @@ export function CostsAccumulatedChart({ chart }) {
       ${(chart.segments || []).map((segment, index) => html`<g key=${`line-${index}`}>
         <polyline class=${`cost-accumulated-line${segment.projected ? ' projected' : ''}`} points=${line(segment.points)} />
         <polyline class="cost-accumulated-hit" points=${line(segment.points)}
-          onmousemove=${(event) => showTooltip(event, segment)} onmouseleave=${() => setTooltip(null)} />
+          onmousemove=${(event) => showTooltip(event, segment)} onpointerdown=${(event) => showTooltip(event, segment)}
+          onmouseleave=${(event) => { if (document.activeElement !== event.currentTarget.closest('svg')) setTooltip(null); }} />
       </g>`)}
       ${points.map((point, index) => index % labelEvery === 0 || index === points.length - 1
         ? html`<text class="cost-accumulated-day" x=${x(index)} y=${H - 7}

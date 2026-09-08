@@ -78,8 +78,16 @@ test('Costs island renders controls and preserves keyed table focus/selection ac
   assert.equal(accumulatedHits.length, 2, 'recorded and projected accumulated lines are both hover targets');
   await harness.act(() => harness.fireEvent(accumulatedHits[0], 'mousemove', { clientX: 0 }));
   assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /recorded/);
-  await harness.act(() => harness.fireEvent(accumulatedHits[1], 'mousemove', { clientX: 1000 }));
+  await harness.act(() => harness.fireEvent(accumulatedHits[1], 'pointerdown', { clientX: 1000 }));
   assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /projection/);
+  const accumulatedSVG = mounted.container.querySelector('.cost-accumulated-svg');
+  assert.match(accumulatedSVG.getAttribute('aria-label'), /Recorded through .* Projected through/,
+    'accessible summary distinguishes observed cost from the forecast');
+  await harness.act(() => harness.fireEvent(accumulatedSVG, 'focus'));
+  assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /recorded/);
+  await harness.act(() => harness.fireEvent(accumulatedSVG, 'keydown', { key: 'ArrowRight' }));
+  assert.match(mounted.container.querySelector('.cost-accumulated-tooltip').textContent, /projection/,
+    'keyboard navigation crosses from the last recorded day into the projection');
 
   const last7 = [...mounted.container.querySelectorAll('#costs-spans button')].find((button) => button.textContent === 'Last 7d');
   await harness.act(() => harness.fireEvent(last7, 'click'));
