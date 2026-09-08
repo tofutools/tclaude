@@ -42,7 +42,8 @@ func TestGroupConfigurationPinsMembersAndRetriesAfterDefaultChanges(t *testing.T
 	in := app.CreateGroupMemberRequest{Context: app.RequestContext{Principal: op, RequestID: "member"}, GroupID: "group", ID: "member", Name: "Named", ExpectedGroupRevision: 1, ExpectedDefaultRevision: defaults.Revision}
 	result, err := svc.CreateGroupMember(ctx, in)
 	require.NoError(t, err)
-	require.Equal(t, model.AgentLabels{Role: "reviewer", Description: "Reviews changes"}, result.Agent.Labels)
+	require.Equal(t, model.AgentDisplayLabels{Role: "reviewer", Description: "Reviews changes"}, result.Agent.Labels.InGroup("group"))
+	require.Empty(t, result.Agent.Labels.InGroup("other"))
 	require.Equal(t, "first", result.Agent.Desired.Model)
 	require.Equal(t, &first.Revision.Ref, result.Agent.ConfigurationProfile)
 	require.Equal(t, []model.AgentID{"member"}, result.Group.Members)
@@ -73,6 +74,10 @@ func TestGroupConfigurationPinsMembersAndRetriesAfterDefaultChanges(t *testing.T
 	require.True(t, retry.Repeated)
 	retry.Repeated = false
 	require.Equal(t, result, retry)
+	changedLabels := in
+	changedLabels.Labels = &model.AgentDisplayLabels{}
+	_, err = svc.CreateGroupMember(ctx, changedLabels)
+	require.ErrorIs(t, err, app.ErrConflict)
 	changed := in
 	changed.Name = "Different"
 	_, err = svc.CreateGroupMember(ctx, changed)

@@ -82,7 +82,8 @@ func groupMemberIntent(in app.CreateGroupMemberRequest) []byte {
 		ID                             model.AgentID
 		Name                           string
 		GroupRevision, DefaultRevision model.Revision
-	}{in.Environment, in.GroupID, in.ID, in.Name, in.ExpectedGroupRevision, in.ExpectedDefaultRevision})
+		Labels                         *model.AgentDisplayLabels `json:",omitempty"`
+	}{in.Environment, in.GroupID, in.ID, in.Name, in.ExpectedGroupRevision, in.ExpectedDefaultRevision, in.Labels})
 	return data
 }
 func findGroupMemberAdmission(ctx context.Context, q groupReader, in app.CreateGroupMemberRequest) (app.GroupMemberResult, bool, error) {

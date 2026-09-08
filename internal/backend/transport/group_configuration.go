@@ -45,17 +45,18 @@ func (h *Handler) registerGroupConfiguration(api app.GroupConfigurationAPI) {
 			return
 		}
 		var body struct {
-			Environment             model.Environment `json:"environment"`
-			RequestID               model.RequestID   `json:"request_id"`
-			ID                      model.AgentID     `json:"id"`
-			Name                    string            `json:"name"`
-			ExpectedGroupRevision   model.Revision    `json:"expected_group_revision"`
-			ExpectedDefaultRevision model.Revision    `json:"expected_default_revision"`
+			Labels                  *model.AgentDisplayLabels `json:"labels"`
+			Environment             model.Environment         `json:"environment"`
+			RequestID               model.RequestID           `json:"request_id"`
+			ID                      model.AgentID             `json:"id"`
+			Name                    string                    `json:"name"`
+			ExpectedGroupRevision   model.Revision            `json:"expected_group_revision"`
+			ExpectedDefaultRevision model.Revision            `json:"expected_default_revision"`
 		}
 		if !decodeRequest(w, r, &body) {
 			return
 		}
-		out, err := api.CreateGroupMember(r.Context(), app.CreateGroupMemberRequest{Context: app.RequestContext{Principal: p, RequestID: body.RequestID}, GroupID: model.GroupID(r.PathValue("id")), Environment: body.Environment, ID: body.ID, Name: body.Name, ExpectedGroupRevision: body.ExpectedGroupRevision, ExpectedDefaultRevision: body.ExpectedDefaultRevision})
+		out, err := api.CreateGroupMember(r.Context(), app.CreateGroupMemberRequest{Labels: body.Labels, Context: app.RequestContext{Principal: p, RequestID: body.RequestID}, GroupID: model.GroupID(r.PathValue("id")), Environment: body.Environment, ID: body.ID, Name: body.Name, ExpectedGroupRevision: body.ExpectedGroupRevision, ExpectedDefaultRevision: body.ExpectedDefaultRevision})
 		if err != nil {
 			applicationError(w, err)
 			return

@@ -17,6 +17,7 @@ type SetGroupConfigurationRequest struct {
 	ExpectedRevision model.Revision
 }
 type CreateGroupMemberRequest struct {
+	Labels                  *model.AgentDisplayLabels
 	Environment             model.Environment
 	Context                 RequestContext
 	GroupID                 model.GroupID
@@ -81,6 +82,11 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	if err := requireOperator(in.Context.Principal); err != nil {
 		return GroupMemberResult{}, err
 	}
+	if in.Labels != nil {
+		if err := (model.AgentLabels{Role: in.Labels.Role, Description: in.Labels.Description}).Validate(); err != nil {
+			return GroupMemberResult{}, fail(ErrInvalid, "%v", err)
+		}
+	}
 	if in.Environment.Validate() != nil || in.Context.RequestID.Validate() != nil || in.GroupID.Validate() != nil || in.ID.Validate() != nil || strings.TrimSpace(in.Name) == "" || len(in.Name) > 1024 || !utf8.ValidString(in.Name) || in.ExpectedGroupRevision == 0 || in.ExpectedGroupRevision >= math.MaxInt64 || in.ExpectedDefaultRevision == 0 || in.ExpectedDefaultRevision >= math.MaxInt64 {
 		return GroupMemberResult{}, ErrInvalid
 	}
@@ -114,6 +120,11 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	if err != nil {
 		return GroupMemberResult{}, err
 	}
+	memberLabels := model.AgentDisplayLabels{Role: labels.Role, Description: labels.Description}
+	if in.Labels != nil {
+		memberLabels = *in.Labels
+	}
+	labels = model.AgentLabels{Groups: map[model.GroupID]model.AgentDisplayLabels{in.GroupID: memberLabels}}
 	now := s.now().UTC()
 	agent := model.Agent{Labels: labels, ID: in.ID, Name: in.Name, Lifecycle: model.AgentActive, Notifications: model.AgentNotificationPreferences{DirectMessage: model.NotificationIfAvailable}, Desired: desired, ConfigurationProfile: ref, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	return store.AdmitGroupMember(ctx, in, agent, now)

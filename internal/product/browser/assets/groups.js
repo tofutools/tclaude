@@ -1,5 +1,5 @@
 'use strict';
-function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentation,attach}) {
+function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentation,attach,displayLabelFields}) {
  host.replaceChildren();const agents=snapshot.agents||[],groups=[...(snapshot.groups||[])],cards=new Map(),rank=new Map((presentation?.prefs.GroupOrder||[]).map((id,index)=>[id,index]));groups.sort((a,b)=>(rank.get(a.ID)??Number.MAX_SAFE_INTEGER)-(rank.get(b.ID)??Number.MAX_SAFE_INTEGER));
  const orderStatus=el('p',presentation?.saved.textContent||'','muted');orderStatus.id='group-order-status';orderStatus.setAttribute('role','status');host.append(orderStatus);if(presentation)host.append(button('Reload saved group order',()=>presentation.load(false)));
  for(const group of groups){
@@ -89,7 +89,7 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
  }),button('Create member from default',async()=>{
   const current=await api('/v2/groups/'+encodeURIComponent(group.ID)+'/configuration');if(!card.isConnected)return;if(!current.Profile)throw new Error('Choose a group launch default first.');
   const saved=await api('/v2/configuration-profiles/'+encodeURIComponent(current.Profile.ProfileID)+'?revision_id='+encodeURIComponent(current.Profile.RevisionID));if(!card.isConnected)return;
-  edit('Create group member',[{name:'environment',label:'Explicit environment overrides',environment:true,value:{},inherited:{...current.Environment,...saved.Revision.Desired.Environment}},{name:'name',label:'Agent name · '+saved.Profile.Name+' · '+current.Profile.RevisionID,value:saved.Revision.Startup?.AgentName||saved.Profile.Name}],f=>api('/v2/groups/'+encodeURIComponent(group.ID)+'/agents',{request_id:f.requestID,id:f.requestID,name:f.name,environment:f.environment,expected_group_revision:group.Revision,expected_default_revision:current.Revision}));
+  edit('Create group member',[{name:'environment',label:'Explicit environment overrides',environment:true,value:{},inherited:{...current.Environment,...saved.Revision.Desired.Environment}},{name:'name',label:'Agent name · '+saved.Profile.Name+' · '+current.Profile.RevisionID,value:saved.Revision.Startup?.AgentName||saved.Profile.Name},...displayLabelFields(saved.Revision.Startup)],f=>api('/v2/groups/'+encodeURIComponent(group.ID)+'/agents',{request_id:f.requestID,id:f.requestID,name:f.name,labels:{Role:f.role_label,Description:f.description},environment:f.environment,expected_group_revision:group.Revision,expected_default_revision:current.Revision}));
   document.getElementById('editor-fields').append(el('p',saved.Revision.Desired.Harness+' · '+saved.Revision.Desired.Model+' · '+saved.Revision.Desired.WorkingDirectory+' — creates the agent and membership; start remains explicit.'));
  }));
 
