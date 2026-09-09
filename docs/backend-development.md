@@ -2034,8 +2034,8 @@ creating a worker never changes its reusable source profile.
 A saved configuration can restrict new agent creation to operators. The setting
 is editable in configuration authoring and preserved by transfer and offline
 v1 import. Omitted settings in an older edit request retain the current value;
-an explicit false clears it. Agent-originated creation checks both the selected
-profile and the global default, including a current transaction-time check.
+an explicit false clears it. Agent-originated creation checks the selected profile, the global default and
+an existing target group default, including a current transaction-time check.
 Operator-owned automation retains its operator origin; agent-owned automation
 does not. This restriction affects new creation, not existing agents or replay
 of an already committed creation request.

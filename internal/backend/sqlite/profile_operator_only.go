@@ -16,16 +16,19 @@ func requireProfileCreationTx(ctx context.Context, tx *sql.Tx, principal model.P
 		return nil
 	}
 	var raw []byte
-	if err := tx.QueryRowContext(ctx, `SELECT record FROM configuration_profiles WHERE id=?`, profileID).Scan(&raw); err != nil {
-		return classify(err)
+	if profileID != "" {
+		if err := tx.QueryRowContext(ctx, `SELECT record FROM configuration_profiles WHERE id=?`, profileID).Scan(&raw); err != nil {
+			return classify(err)
+		}
+		var profile model.ConfigurationProfile
+		if err := json.Unmarshal(raw, &profile); err != nil {
+			return err
+		}
+		if err := app.ConfigurationProfileCreationAllowed(profile, principal); err != nil {
+			return err
+		}
 	}
 	var profile model.ConfigurationProfile
-	if err := json.Unmarshal(raw, &profile); err != nil {
-		return err
-	}
-	if err := app.ConfigurationProfileCreationAllowed(profile, principal); err != nil {
-		return err
-	}
 	var defaults model.ConfigurationDefaults
 	err := tx.QueryRowContext(ctx, `SELECT record FROM configuration_defaults WHERE id=1`).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
