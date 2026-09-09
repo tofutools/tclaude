@@ -675,7 +675,10 @@ CREATE TABLE IF NOT EXISTS team_lifecycle_requests (
   PRIMARY KEY(request_scope,request_id)
 );
 INSERT OR IGNORE INTO roles(id,name,actions_json,revision,created_at,updated_at)
-VALUES('group_owner','Owner','["status.read","inbox.read","inbox.mark_read","message.send","execution.launch","execution.interact","execution.attach","execution.stop","execution.context.change","agent.configuration.update","group.membership.manage"]',1,0,0);
+VALUES('group_owner','Owner','["status.read","inbox.read","inbox.mark_read","message.send","execution.launch","execution.interact","execution.attach","execution.stop","execution.context.change","agent.configuration.update","group.membership.manage","group.members.create"]',1,0,0);
+-- Preserve existing owner-role customizations while adding the v1 owner capability once.
+UPDATE roles SET actions_json=json_insert(CASE WHEN json_type(actions_json)='null' THEN '[]' ELSE actions_json END,'$[#]','group.members.create'),revision=revision+1
+WHERE id='group_owner' AND NOT EXISTS (SELECT 1 FROM json_each(roles.actions_json) WHERE value='group.members.create');
 `
 
 func (s *Store) CreateAgent(ctx context.Context, agent model.Agent) error {

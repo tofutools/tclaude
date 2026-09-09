@@ -39,12 +39,12 @@ type GroupConfigurationAPI interface {
 type GroupConfigurationStore interface {
 	GroupConfiguration(context.Context, model.GroupID) (model.GroupConfiguration, error)
 	SetGroupConfiguration(context.Context, SetGroupConfigurationRequest, time.Time) (model.GroupConfiguration, error)
-	FindGroupMemberAdmission(context.Context, CreateGroupMemberRequest) (GroupMemberResult, bool, error)
+	FindGroupMemberAdmission(context.Context, CreateGroupMemberRequest, time.Time) (GroupMemberResult, bool, error)
 	AdmitGroupMember(context.Context, CreateGroupMemberRequest, model.Agent, time.Time) (GroupMemberResult, error)
 }
 
 func (s *Service) GetGroupConfiguration(ctx context.Context, p model.Principal, id model.GroupID) (model.GroupConfiguration, error) {
-	if err := requireOperator(p); err != nil {
+	if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: p, Action: model.ActionCreateGroupMember, Resource: model.ResourceSelector{Kind: model.ResourceGroup, GroupID: id}}, s.now().UTC()); err != nil {
 		return model.GroupConfiguration{}, err
 	}
 	if id.Validate() != nil {
@@ -79,7 +79,7 @@ func (s *Service) SetGroupConfiguration(ctx context.Context, in SetGroupConfigur
 	return store.SetGroupConfiguration(ctx, in, s.now().UTC())
 }
 func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberRequest) (GroupMemberResult, error) {
-	if err := requireOperator(in.Context.Principal); err != nil {
+	if err := validateEffectContext(in.Context); err != nil {
 		return GroupMemberResult{}, err
 	}
 	if in.Labels != nil {
@@ -94,7 +94,7 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	if !ok {
 		return GroupMemberResult{}, ErrUnsupported
 	}
-	if prior, found, err := store.FindGroupMemberAdmission(ctx, in); found || err != nil {
+	if prior, found, err := store.FindGroupMemberAdmission(ctx, in, s.now().UTC()); found || err != nil {
 		return prior, err
 	}
 	defaults, err := store.GroupConfiguration(ctx, in.GroupID)
