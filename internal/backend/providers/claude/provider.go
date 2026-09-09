@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -154,7 +155,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if request.Spec.Sandbox != model.SandboxWorkspaceWrite {
 		return nil, fmt.Errorf("claude provider does not enforce sandbox mode %q", request.Spec.Sandbox)
 	}
-	if request.Spec.Approval != model.ApprovalSupervised && request.Spec.Approval != model.ApprovalAutomatic {
+	if !slices.Contains(claudeApprovalModes(), request.Spec.Approval) {
 		return nil, fmt.Errorf("claude provider does not support approval mode %q", request.Spec.Approval)
 	}
 	initialInput, err := preparedInitialInput(request.InitialInput)
@@ -380,11 +381,9 @@ func (p *prepared) argv() []string {
 	if p.request.Spec.Model != "" {
 		args = append(args, "--model", p.request.Spec.Model)
 	}
-	mode := "manual"
-	if p.request.Spec.Approval == model.ApprovalAutomatic {
-		mode = "auto"
+	if mode := nativeApprovalMode(p.request.Spec.Approval); mode != "" {
+		args = append(args, "--permission-mode", mode)
 	}
-	args = append(args, "--permission-mode", mode)
 	settings, _ := json.Marshal(map[string]any{
 		"sandbox": map[string]any{
 			"enabled": true, "failIfUnavailable": true,
@@ -915,5 +914,5 @@ var _ ports.PreparedAttempt = (*prepared)(nil)
 var _ ports.Runtime = (*Runtime)(nil)
 
 func supportedLaunchPolicy() ports.PolicyRequirements {
-	return ports.PolicyRequirements{DefaultApproval: model.ApprovalAutomatic, DefaultSandbox: model.SandboxWorkspaceWrite, SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxWorkspaceWrite}}
+	return ports.PolicyRequirements{DefaultApproval: model.ApprovalAutomatic, DefaultSandbox: model.SandboxWorkspaceWrite, SupportedApproval: claudeApprovalModes(), ApprovalDescriptions: claudeApprovalDescriptions(), SupportedSandbox: []model.SandboxMode{model.SandboxWorkspaceWrite}}
 }

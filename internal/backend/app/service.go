@@ -1222,7 +1222,7 @@ func validateLaunchConfiguration(desired model.DesiredConfiguration) error {
 		return fail(ErrInvalid, "harness is required")
 	}
 	switch desired.Approval {
-	case model.ApprovalSupervised, model.ApprovalAutomatic, model.ApprovalDeny, model.ApprovalNever, model.ApprovalOnRequest, model.ApprovalOnFailure, model.ApprovalUntrusted:
+	case model.ApprovalSupervised, model.ApprovalAutomatic, model.ApprovalDeny, model.ApprovalNever, model.ApprovalOnRequest, model.ApprovalOnFailure, model.ApprovalUntrusted, model.ApprovalInherit, model.ApprovalDefault, model.ApprovalManual, model.ApprovalPlan, model.ApprovalAcceptEdits, model.ApprovalAuto, model.ApprovalDontAsk, model.ApprovalBypassPermissions:
 	default:
 		return fail(ErrInvalid, "unsupported approval mode %q", desired.Approval)
 	}

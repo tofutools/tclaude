@@ -776,6 +776,11 @@ func desiredFromRow(values map[string]any) model.DesiredConfiguration {
 		if desired.Harness == "codex" {
 			desired.Approval = model.ApprovalMode(strings.ReplaceAll(strings.ToLower(stringMap(values, "approval")), "_", "-"))
 		}
+	case "inherit", "default", "manual", "plan", "acceptedits", "auto", "dontask", "bypasspermissions":
+		if desired.Harness == "claude" {
+			native := map[string]model.ApprovalMode{"inherit": model.ApprovalInherit, "default": model.ApprovalDefault, "manual": model.ApprovalManual, "plan": model.ApprovalPlan, "acceptedits": model.ApprovalAcceptEdits, "auto": model.ApprovalAuto, "dontask": model.ApprovalDontAsk, "bypasspermissions": model.ApprovalBypassPermissions}
+			desired.Approval = native[strings.ToLower(stringMap(values, "approval"))]
+		}
 	case "deny":
 		// This native policy belongs to OpenCode; it is not a portable alias
 		// for another provider's approval mode.
