@@ -14,7 +14,21 @@ func (s *Service) groupSpawnLineage(ctx context.Context, in CreateGroupMemberReq
 		return nil, err
 	}
 	if decision.Allowed {
-		return nil, nil
+		if in.Launch == nil || in.Context.Principal.Kind == model.PrincipalOperator {
+			return nil, nil
+		}
+		probe := request
+		probe.Action, probe.RequestedConfiguration = model.ActionSpawnGroupMember, nil
+		spawn, spawnErr := s.store.Authorize(ctx, probe, s.now().UTC())
+		if spawnErr != nil {
+			return nil, spawnErr
+		}
+		if spawn.SourceKind == model.AuthorityDenied {
+			return nil, ErrUnauthorized
+		}
+		if !spawn.Allowed {
+			return nil, nil
+		}
 	}
 	if decision.SourceKind == model.AuthorityDenied {
 		return nil, ErrUnauthorized
@@ -35,7 +49,7 @@ func (s *Service) groupSpawnLineage(ctx context.Context, in CreateGroupMemberReq
 		return nil, err
 	}
 	if execution.AgentID != parent.ID || execution.State != model.ExecutionRunning && execution.State != model.ExecutionReleased {
-		return nil, fail(ErrUnauthorized, "owner needs a current running execution before spawning members")
+		return nil, fail(ErrUnauthorized, "caller needs a current running execution before spawning members")
 	}
 	parentProvider, ok := s.providers.Provider(execution.Spec.Harness)
 	if !ok {
@@ -63,7 +77,7 @@ func (s *Service) groupSpawnLineage(ctx context.Context, in CreateGroupMemberReq
 	}
 	parentDesired := model.DesiredConfiguration{Harness: execution.Spec.Harness, Approval: execution.Spec.Approval, AutoReview: execution.Spec.AutoReview}
 	if !parentApproval.ApprovalPosture(parentDesired).Allows(childApproval.ApprovalPosture(child.Desired)) {
-		return nil, fail(ErrUnauthorized, "child approval is broader than the owner's running approval mode")
+		return nil, fail(ErrUnauthorized, "child approval is broader than the parent's running approval mode")
 	}
 	desired := child.Desired
 	desired.HostSandbox, err = s.launchSandboxSelection(ctx, desired.HostSandbox, child)
@@ -85,7 +99,7 @@ func (s *Service) groupSpawnLineage(ctx context.Context, in CreateGroupMemberReq
 	}
 	spec := resolvedSpec("", child.ID, preparedDesired, "")
 	if !parentSandbox.RecordedSandboxPosture(execution).Allows(childSandbox.RequestedSandboxPosture(spec)) {
-		return nil, fail(ErrUnauthorized, "child confinement is broader than the owner's running sandbox")
+		return nil, fail(ErrUnauthorized, "child confinement is broader than the parent's running sandbox")
 	}
-	return &model.SpawnLineage{GroupID: in.GroupID, ParentAgentID: parent.ID, ParentExecutionID: execution.ID, ParentSpec: execution.Spec, Authored: child.Desired, Resolved: desired, PreparedSandbox: model.CloneSandboxSelection(preparedDesired.HostSandbox)}, nil
+	return &model.SpawnLineage{Atomic: in.Launch != nil, ChildAgentID: child.ID, GroupID: in.GroupID, ParentAgentID: parent.ID, ParentExecutionID: execution.ID, ParentSpec: execution.Spec, Authored: child.Desired, Resolved: desired, PreparedSandbox: model.CloneSandboxSelection(preparedDesired.HostSandbox)}, nil
 }

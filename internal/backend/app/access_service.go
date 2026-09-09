@@ -371,6 +371,9 @@ func accessBinding(access model.ExecutionAccess) model.ExecutionAccessBinding {
 }
 
 func validateGrant(grant model.AuthorityGrant) error {
+	if _, err := grant.Scope.Normalize(); err != nil {
+		return fail(ErrInvalid, "%v", err)
+	}
 	if err := grant.Bounds.ValidateEnvironments(); err != nil {
 		return fail(ErrInvalid, "%v", err)
 	}
@@ -395,7 +398,7 @@ var allActions = []model.Action{
 	model.ActionReadIdentity, model.ActionReadStatus, model.ActionReadInbox, model.ActionMarkInboxRead,
 	model.ActionSendMessage, model.ActionLaunch, model.ActionInteract, model.ActionStageTerminalFile, model.ActionReadExecutionFile, model.ActionAttach, model.ActionStop,
 	model.ActionChangeContext, model.ActionUpdateConfiguration, model.ActionRetireAgent, model.ActionReactivateAgent,
-	model.ActionManageMembership, model.ActionCreateGroupMember, model.ActionReadAttachment,
+	model.ActionManageMembership, model.ActionCreateGroupMember, model.ActionSpawnGroupMember, model.ActionReadAttachment,
 	model.ActionReadHistory, model.ActionRefreshHistory, model.ActionSetHistoryMetadata, model.ActionRegisterWorkspace,
 	model.ActionReadUsage, model.ActionRefreshUsage, model.ActionReadActivity,
 	model.ActionCreateWorkspace, model.ActionInspectWorkspace, model.ActionRemoveWorkspace,

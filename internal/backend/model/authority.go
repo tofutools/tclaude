@@ -24,6 +24,7 @@ const (
 	ActionReactivateAgent      Action = "agent.reactivate"
 	ActionManageMembership     Action = "group.membership.manage"
 	ActionCreateGroupMember    Action = "group.members.create"
+	ActionSpawnGroupMember     Action = "group.members.spawn"
 	ActionDisbandGroup         Action = "group.disband"
 	ActionReadAttachment       Action = "attachment.read"
 	ActionReadHistory          Action = "history.read"
@@ -113,6 +114,7 @@ func (id GrantID) Validate() error { return ValidateStableID("grant id", string(
 // membership and expiry are evaluated live; a stored grant is not an access
 // token and providers never receive it.
 type AuthorityGrant struct {
+	Scope     PermissionScope `json:",omitempty"`
 	ID        GrantID
 	Subject   AuthoritySubject
 	Action    Action
@@ -194,8 +196,8 @@ type AutomationDelegation struct {
 
 // ConfigurationBounds are an allow-list, not advisory metadata. Delegated
 // launch/configuration authority must match every populated dimension. Empty
-// bounds grant no configuration-bearing effect; operator authority is the only
-// unbounded case.
+// bounds grant no ordinary configuration-bearing effect. Delegated member
+// spawning instead requires application-produced running-parent lineage.
 type ConfigurationBounds struct {
 	// AutoReview permits an explicit native classifier approval opt-in. Older grants do not grant it.
 	AutoReview bool `json:",omitempty"`

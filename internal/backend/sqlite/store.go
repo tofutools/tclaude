@@ -59,6 +59,7 @@ func (s *Store) initialize(ctx context.Context) error {
 	}
 	for _, migration := range []struct{ table, column, definition string }{
 		{"definition_revisions", "editor_layout_json", "BLOB"},
+		{"authority_grants", "scope_json", "BLOB"},
 		{"operations", "initial_message_digest", "TEXT NOT NULL DEFAULT ''"},
 		{"operation_authority", "requested_environment_json", "BLOB"},
 		{"operation_additional_authority", "requested_environment_json", "BLOB"},

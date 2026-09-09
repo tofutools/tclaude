@@ -63,8 +63,20 @@ type GroupConfigurationStore interface {
 }
 
 func (s *Service) GetGroupConfiguration(ctx context.Context, p model.Principal, id model.GroupID) (model.GroupConfiguration, error) {
-	if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: p, Action: model.ActionCreateGroupMember, Resource: model.ResourceSelector{Kind: model.ResourceGroup, GroupID: id}}, s.now().UTC()); err != nil {
+	request := model.AuthorityRequest{Principal: p, Action: model.ActionCreateGroupMember, Resource: model.ResourceSelector{Kind: model.ResourceGroup, GroupID: id}}
+	decision, err := s.store.Authorize(ctx, request, s.now().UTC())
+	if err != nil {
 		return model.GroupConfiguration{}, err
+	}
+	if !decision.Allowed && decision.SourceKind != model.AuthorityDenied {
+		request.Action = model.ActionSpawnGroupMember
+		decision, err = s.store.Authorize(ctx, request, s.now().UTC())
+		if err != nil {
+			return model.GroupConfiguration{}, err
+		}
+	}
+	if !decision.Allowed {
+		return model.GroupConfiguration{}, ErrUnauthorized
 	}
 	if id.Validate() != nil {
 		return model.GroupConfiguration{}, ErrInvalid
@@ -144,6 +156,9 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	}
 	in.Lineage, err = s.groupSpawnLineage(ctx, in, admission.Agent)
 	if err != nil {
+		return GroupMemberResult{}, err
+	}
+	if err = s.requireAuthority(ctx, model.AuthorityRequest{Principal: in.Context.Principal, Action: model.ActionCreateGroupMember, Resource: model.ResourceSelector{Kind: model.ResourceGroup, GroupID: in.GroupID}, RequestedConfiguration: &admission.Agent.Desired, SpawnLineage: in.Lineage}, s.now().UTC()); err != nil {
 		return GroupMemberResult{}, err
 	}
 	admission.Request = in

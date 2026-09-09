@@ -119,6 +119,14 @@ func authorizeGroupMember(ctx context.Context, q queryer, in app.CreateGroupMemb
 	if err != nil {
 		return err
 	}
+	// A lookup may use the combined capability without releasing an effect.
+	// Actual publication below requires the application-produced lineage.
+	if !decision.Allowed && decision.SourceKind != model.AuthorityDenied && desired == nil && in.Launch != nil {
+		decision, err = authorizeTx(ctx, q, model.AuthorityRequest{Principal: in.Context.Principal, Action: model.ActionSpawnGroupMember, Resource: model.ResourceSelector{Kind: model.ResourceGroup, GroupID: in.GroupID}}, at)
+		if err != nil {
+			return err
+		}
+	}
 	if !decision.Allowed {
 		return app.ErrUnauthorized
 	}

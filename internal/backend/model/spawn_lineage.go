@@ -1,9 +1,11 @@
 package model
 
-// SpawnLineage is application-produced evidence for a group owner's delegated
+// SpawnLineage is application-produced evidence for delegated new-member
 // creation. It is not an operator-authored grant or a public request field.
 // Settlement rechecks the live parent association and immutable launch spec.
 type SpawnLineage struct {
+	Atomic            bool
+	ChildAgentID      AgentID
 	GroupID           GroupID
 	ParentAgentID     AgentID
 	ParentExecutionID ExecutionID
