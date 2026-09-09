@@ -66,8 +66,11 @@ func saveConfigurationProfileTx(ctx context.Context, tx *sql.Tx, w app.Configura
 	if !w.AliasesSet {
 		w.Profile.Aliases = current.Aliases
 	}
-	if err := requireAvailableProfileAliases(ctx, tx, w.Profile); err != nil {
-		return app.ConfigurationProfileResult{}, err
+	// Imports validate all projected handles together before calling this writer.
+	if !allowArchived {
+		if err := requireAvailableProfileAliases(ctx, tx, w.Profile); err != nil {
+			return app.ConfigurationProfileResult{}, err
+		}
 	}
 	w.Profile.Revision = current.Revision + 1
 	w.Profile.CreatedAt = current.CreatedAt
