@@ -1,13 +1,6 @@
 # Exploring possible refactors of tclaude
 
-**Status: exploration — not a decided plan to implement.** This directory
-collects possible refactors of tclaude, lessons, diagrams and open questions for
-discussion. It does not establish an active roadmap, an approved architecture,
-or a commitment to implement any proposal. The `v2` directory name does not
-announce a new product version.
-
-Ideas may be changed, rejected or left unexplored. Any work selected for
-implementation must be agreed and tracked separately in AWB.
+Exploratory ideas for possible refactors of tclaude, not a decided implementation plan.
 
 Initial source snapshot: `a976aef8e53788a0a9e78575ffad2346b5df4e63`
 (9 September 2026). Re-check current code before starting an increment.

@@ -210,8 +210,5 @@ The external tracker and private board details are not stored in this repo. Use
 operator-provided startup context or private project memory when it is available,
 and do not add private tracker URLs or credentials to committed docs.
 
-`docs/v2-plan-and-ideas/` contains exploratory ideas for possible refactors,
-not an active or approved implementation plan. Keep concepts, diagrams, open
-questions and architectural tradeoffs there. Actual work items, epics, assignments, delivery
-status and implementation logs live in AWB; do not duplicate that tracker in
-the design documents. Keep private tracker details out of committed files.
+Exploratory notes in `docs/v2-plan-and-ideas/` are not an implementation plan.
+Work items and delivery status belong in AWB, not in those notes.
