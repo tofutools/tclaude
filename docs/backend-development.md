@@ -1971,3 +1971,19 @@ uses fast mode. The selected setting survives agent edits, restart and offline
 profile/agent import. A team harness switch clears inherited foreign settings;
 explicit fast-mode choices are accepted only for Codex. This setting changes the
 service tier, not approval or sandbox policy.
+
+### Codex automatic approval review
+
+Profiles, agent settings and team overrides can opt into the native Codex
+approval reviewer. Enabled launches add `approvals_reviewer="auto_review"`;
+otherwise tclaude emits no reviewer override, matching v1. This is distinct from
+the approval policy and confinement settings. Explicit non-Codex opt-ins are
+rejected before effects. Offline profile, birth and resolved-agent settings
+preserve the boolean choice.
+
+Non-operator launch/configuration authority also requires an explicit automatic
+review allowance in its configuration limits when the selected policy can ask
+for approval. Native `never` (including generic automatic) has no active reviewer.
+Existing grants and delegations do
+not acquire it automatically. The same check applies when replaying a launch,
+using the admitted execution configuration.

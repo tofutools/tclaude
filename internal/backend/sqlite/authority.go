@@ -521,6 +521,9 @@ func configurationMatches(bounds model.ConfigurationBounds, requested *model.Des
 	if requested == nil {
 		return true
 	}
+	if requested.UsesAutoReview() && !bounds.AutoReview {
+		return false
+	}
 	if !hostSandboxMatches(bounds.HostSandboxProfiles, requested.HostSandbox) {
 		return false
 	}

@@ -104,6 +104,7 @@ type DesiredConfiguration struct {
 	Effort           string         `json:",omitempty"`
 	ToolGovernance   ToolGovernance `json:",omitempty"`
 	FastMode         FastMode       `json:",omitempty"`
+	AutoReview       bool           `json:",omitempty"`
 	WorkingDirectory string
 	Approval         ApprovalMode
 	Sandbox          SandboxMode
@@ -223,6 +224,7 @@ type ResolvedExecutionSpec struct {
 	Effort               string         `json:",omitempty"`
 	ToolGovernance       ToolGovernance `json:",omitempty"`
 	FastMode             FastMode       `json:",omitempty"`
+	AutoReview           bool           `json:",omitempty"`
 	WorkingDirectory     string
 	Approval             ApprovalMode
 	Sandbox              SandboxMode

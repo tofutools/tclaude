@@ -14,6 +14,12 @@ func applyAgentRelaunchPolicy(values map[string]any, desired model.DesiredConfig
 	if err != nil || profile == nil {
 		return desired, err
 	}
+	if profile.AutoReview != nil {
+		desired.AutoReview = *profile.AutoReview
+	}
+	if err := model.ValidateAutoReview(desired.AutoReview, desired.Harness); err != nil {
+		return desired, err
+	}
 	if profile.FastMode != nil {
 		desired.FastMode = importedFastMode(*profile.FastMode)
 	}
