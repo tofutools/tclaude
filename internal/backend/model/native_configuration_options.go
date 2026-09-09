@@ -3,18 +3,19 @@ package model
 // NativeConfigurationOptions retains explicit provider choices. Nil fields
 // inherit from the lower-priority configuration.
 type NativeConfigurationOptions struct {
-	AutoReview        *bool              `json:",omitempty"`
-	AutoMemory        *bool              `json:",omitempty"`
-	PeerMessaging     *bool              `json:",omitempty"`
-	TrustDirectory    *bool              `json:",omitempty"`
-	AutoCompactWindow *AutoCompactWindow `json:",omitempty"`
-	FastMode          *FastMode          `json:",omitempty"`
-	ToolGovernance    *ToolGovernance    `json:",omitempty"`
-	Harness           *string            `json:",omitempty"`
-	Model             *string            `json:",omitempty"`
-	Effort            *string            `json:",omitempty"`
-	Approval          *ApprovalMode      `json:",omitempty"`
-	Sandbox           *SandboxMode       `json:",omitempty"`
+	AutoReview             *bool                   `json:",omitempty"`
+	AutoMemory             *bool                   `json:",omitempty"`
+	PeerMessaging          *bool                   `json:",omitempty"`
+	TrustDirectory         *bool                   `json:",omitempty"`
+	AskUserQuestionTimeout *AskUserQuestionTimeout `json:",omitempty"`
+	AutoCompactWindow      *AutoCompactWindow      `json:",omitempty"`
+	FastMode               *FastMode               `json:",omitempty"`
+	ToolGovernance         *ToolGovernance         `json:",omitempty"`
+	Harness                *string                 `json:",omitempty"`
+	Model                  *string                 `json:",omitempty"`
+	Effort                 *string                 `json:",omitempty"`
+	Approval               *ApprovalMode           `json:",omitempty"`
+	Sandbox                *SandboxMode            `json:",omitempty"`
 }
 
 func (o *NativeConfigurationOptions) Apply(base DesiredConfiguration) DesiredConfiguration {
@@ -31,6 +32,7 @@ func (o *NativeConfigurationOptions) Apply(base DesiredConfiguration) DesiredCon
 			base.AutoReview = false
 			base.AutoMemory = false
 			base.PeerMessaging = false
+			base.AskUserQuestionTimeout = ""
 			base.AutoCompactWindow = ""
 		}
 		if ValidateDirectoryTrust(base.TrustDirectory, *o.Harness) != nil {
@@ -43,6 +45,9 @@ func (o *NativeConfigurationOptions) Apply(base DesiredConfiguration) DesiredCon
 	}
 	if o.Effort != nil {
 		base.Effort = *o.Effort
+	}
+	if o.AskUserQuestionTimeout != nil {
+		base.AskUserQuestionTimeout = *o.AskUserQuestionTimeout
 	}
 	if o.AutoCompactWindow != nil {
 		base.AutoCompactWindow = *o.AutoCompactWindow

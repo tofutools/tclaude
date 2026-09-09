@@ -14,6 +14,12 @@ func applyAgentRelaunchPolicy(values map[string]any, desired model.DesiredConfig
 	if err != nil || profile == nil {
 		return desired, err
 	}
+	if profile.AskUserQuestionTimeout != nil {
+		desired.AskUserQuestionTimeout = *profile.AskUserQuestionTimeout
+	}
+	if err := desired.AskUserQuestionTimeout.Validate(desired.Harness); err != nil {
+		return desired, err
+	}
 	if profile.AutoCompactWindow != nil {
 		desired.AutoCompactWindow = *profile.AutoCompactWindow
 	}

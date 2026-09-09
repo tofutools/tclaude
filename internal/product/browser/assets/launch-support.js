@@ -70,3 +70,6 @@ function attachAutoCompactWindowControl(form,enabled=()=>true){return attachProv
 
 function launchDirectoryTrustChoices(){return [{value:'',label:'Use default'},{value:'on',label:'On'},{value:'off',label:'Off'}]}
 function attachDirectoryTrustControl(host,isEditable){return attachProviderSettingControl(host,'trust_directory',['claude','codex','copilot'],isEditable)}
+
+function launchQuestionTimeoutChoices(){return [{value:'',label:'Use profile/default'},{value:'inherit',label:'Inherit Claude settings'},{value:'never',label:'Never auto-continue'},{value:'60s',label:'60 seconds'},{value:'5m',label:'5 minutes'},{value:'10m',label:'10 minutes'}]}
+function attachQuestionTimeoutControl(host,isEditable){return attachProviderSettingControl(host,'ask_user_question_timeout','claude',isEditable)}
