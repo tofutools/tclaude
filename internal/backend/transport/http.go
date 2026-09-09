@@ -152,6 +152,15 @@ func writeError(w http.ResponseWriter, status int, code string) {
 // Application errors require a stable public code before transport exposes
 // details. Native error text is never returned merely because it is an error.
 func applicationError(w http.ResponseWriter, err error) {
+	var disabled *app.ProfileDisabledError
+	if errors.As(err, &disabled) {
+		writeJSON(w, http.StatusConflict, struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		}{"profile_disabled", disabled.Error()})
+		return
+	}
+
 	switch code := app.Code(err); code {
 	case "forbidden":
 		writeError(w, http.StatusForbidden, code)

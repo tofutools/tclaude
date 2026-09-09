@@ -12,6 +12,7 @@ import (
 )
 
 type ConfigurationCatalogStore interface {
+	SetConfigurationProfileAvailability(context.Context, ConfigurationProfileAvailabilityWrite) (model.ConfigurationProfile, error)
 	SetConfigurationProfileArchived(context.Context, ConfigurationProfileArchiveWrite) (model.ConfigurationProfile, error)
 	SaveConfigurationDefaults(context.Context, ConfigurationDefaultsWrite) (model.ConfigurationDefaults, error)
 	ConfigurationDefaults(context.Context) (model.ConfigurationDefaults, error)
@@ -53,6 +54,7 @@ type SaveConfigurationProfileRequest struct {
 }
 
 type ConfigurationCatalogAPI interface {
+	SetConfigurationProfileAvailability(context.Context, SetConfigurationProfileAvailabilityRequest) (model.ConfigurationProfile, error)
 	SetConfigurationProfileArchived(context.Context, SetConfigurationProfileArchivedRequest) (model.ConfigurationProfile, error)
 	SaveConfigurationDefaults(context.Context, SaveConfigurationDefaultsRequest) (model.ConfigurationDefaults, error)
 	GetConfigurationDefaults(context.Context, model.Principal) (model.ConfigurationDefaults, error)

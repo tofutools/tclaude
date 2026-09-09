@@ -1953,3 +1953,7 @@ original birth request, which may have omitted settings inherited from a profile
 Absent fields retain the birth projection. Translation uses the same native
 approval vocabulary as profile import, preserves the original source record,
 and does not read today's defaults or start an execution.
+
+### Configuration availability
+
+Configuration profiles can be disabled for new agents independently of library archiving. The configuration library provides Disable/Enable controls with an optional reason. Disabling retains default selections and team references; new agents and deployments using the profile are refused with its name and reason. Existing agents keep their admitted settings. Enabling retains the recorded reason, which can be explicitly cleared in the dialog. Ordinary configuration edits preserve availability; configuration export/import and v1 offline import preserve the disabled flag and reason.

@@ -26,9 +26,10 @@ func profileMetadataBundle(t *testing.T) Bundle {
  ALTER TABLE spawn_profiles ADD COLUMN initial_message TEXT;
  ALTER TABLE spawn_profiles ADD COLUMN startup_context TEXT;
  ALTER TABLE spawn_profiles ADD COLUMN disabled TEXT;
+ ALTER TABLE spawn_profiles ADD COLUMN disabled_reason TEXT;
  INSERT INTO spawn_profiles(id,name,permission_overrides,environment_json,role_refs,effort,agent_name,initial_message,startup_context,disabled)
  VALUES('7','safe','[]','[]','[]','high','Imported writer','saved-private-brief','saved-private-context','1');
- UPDATE spawn_profiles SET role='writer',descr='Drafts documentation' WHERE id='7';
+ UPDATE spawn_profiles SET disabled_reason='Provider maintenance',role='writer',descr='Drafts documentation' WHERE id='7';
  ALTER TABLE agents ADD COLUMN effort TEXT;
  UPDATE agents SET effort='low',initial_spawn_config='{"effort":"medium","harness":"codex","model":"fixture"}';
  `)
@@ -48,7 +49,9 @@ func TestImportProfileMetadataRoundTripWithoutActivation(t *testing.T) {
 	profiles, err := service.ListConfigurationProfiles(ctx, model.OperatorPrincipal())
 	require.NoError(t, err)
 	require.Len(t, profiles, 1)
-	require.True(t, profiles[0].Archived)
+	require.True(t, profiles[0].Disabled)
+	require.False(t, profiles[0].Archived)
+	require.Equal(t, "Provider maintenance", profiles[0].DisabledReason)
 	selected, err := service.GetConfigurationProfile(ctx, model.OperatorPrincipal(), model.ConfigurationProfileRef{ProfileID: profiles[0].ID})
 	require.NoError(t, err)
 	require.Equal(t, "high", selected.Revision.Desired.Effort)
@@ -78,7 +81,7 @@ func TestImportProfileMetadataRoundTripWithoutActivation(t *testing.T) {
 }
 
 func TestImportProfileMetadataRetryRefusesChangedTargetAndOldFormat(t *testing.T) {
-	for _, mutation := range []string{"UPDATE configuration_profile_revisions SET record=json_set(record,'$.Startup.InitialMessage','changed')", "UPDATE agents SET effort='max'", "UPDATE configuration_profiles SET record=json_set(record,'$.Archived',json('false'))", "UPDATE import_receipts SET importer_format_version=1"} {
+	for _, mutation := range []string{"UPDATE configuration_profile_revisions SET record=json_set(record,'$.Startup.InitialMessage','changed')", "UPDATE agents SET effort='max'", "UPDATE configuration_profiles SET record=json_set(record,'$.Disabled',json('false'))", "UPDATE import_receipts SET importer_format_version=1"} {
 		t.Run(mutation, func(t *testing.T) {
 			ctx := context.Background()
 			bundle := profileMetadataBundle(t)
