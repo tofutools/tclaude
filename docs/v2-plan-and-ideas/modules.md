@@ -1,61 +1,85 @@
-# Modules: one owner for each decision
+# Architecture: put each user action in one place
 
-**Proposed ownership map, not a package rename plan.** Existing `harness`, DB,
-CLI and dashboard modules are assets to improve. A directory move without fewer
-cross-boundary decisions is not success.
+The proposed structure is a **modular monolith**: services organized around
+what users do, running inside the existing app. A service owns behavior and
+exposes ordinary Go functions or methods to its callers. It can begin inside
+existing packages; package moves are optional.
 
-| Owner | Responsibility | Should not own |
-|---|---|---|
-| Configuration resolution | Presence, precedence, defaults, source attribution | Native process preparation or HTTP responses |
-| Application actions | Authenticated actor, policy ordering, operation orchestration | Constructing HTTP requests for internal callers |
-| Harness adapters | Native flags/settings, APIs, evidence interpretation, capability contracts | Group ownership or global permission decisions |
-| Host/runtime resources | Processes, terminal attachment, worktrees and cleanup | Profile precedence or business authorization |
-| Persistence | Atomic writes, revision checks, existing data mappings | Launching processes while a transaction is open |
-| Observation | Collection, attribution, freshness and reconciliation | UI rendering as a trigger for durable repair |
-| Frontend feature modules | Operator intent and display | Reimplementing backend authority/default precedence |
-| Shared frontend controls | Input semantics, accessibility, styling and dialog lifecycle | Feature-specific save policy |
+For example, the group service owns adding a member. The dashboard handler,
+CLI path and team coordinator ask it to do that work; they do not each recreate
+its rules. The service uses settings, permission and launch operations where
+needed. Related database updates can still share a transaction.
 
-Target dependency direction for a migrated flow:
+Separate deployment is not a goal of this proposal. Choose boundaries that
+make today's app easier to understand and change, without adding network calls
+or serialization between its internal services.
+
+## Five areas of behavior
+
+| Area | Example calls | Owns | Delegates |
+|---|---|---|---|
+| Agents and groups | Create agent, add member, restart agent, disband group | Identity, membership and lifecycle decisions | Profile lookup, permission checks and native launch |
+| Settings and permissions | Save profile, resolve launch settings, check action | Meaning of settings and permission rules | Data reads/writes; native option validation |
+| Messaging | Send message, read inbox, acknowledge | Addressing, storage and delivery outcomes | Harness-specific wakeup/input mechanism |
+| Work coordination | Deploy team, advance process, run schedule | Template/rule interpretation and progress | Agent, group and message actions |
+| History and reporting | Read conversation, inspect work, show usage/logs | Attributed information and its freshness | Native collection and persisted records |
+
+The names are descriptive. They are not a proposed five-interface framework or
+five new databases. Existing processes and automation need not become one engine.
+
+## Three implementation details below them
+
+**Harness adapters** know how Claude Code, Codex, OpenCode and Copilot behave:
+flags, files, APIs, supported options, message input and native observations.
+Main already has this boundary; extend and use it consistently.
+
+**Runtime helpers** manage processes, terminals, worktrees and sandbox mechanisms.
+They should not decide whether a group owner may spawn another agent.
+
+**Storage operations** own related database changes and transaction boundaries.
+They should not spawn a process inside an open SQL transaction. Keep existing
+SQLite tables and records unless a selected change demonstrates a reason to alter them.
 
 ```mermaid
 flowchart TD
-    HTTP[HTTP and CLI entry points] --> A[Application action]
-    AUTO[Teams and scheduled actions] --> A
-    A --> CFG[Configuration rules]
-    A --> AUTH[Existing authority policy]
-    A --> DB[Focused persistence operations]
-    A --> HAR[Harness capabilities]
-    HAR --> HOST[Host mechanisms]
-    OBS[Observation workers] --> HAR
-    OBS --> DB
-    UI[Dashboard] --> HTTP
+    HTTP[Existing HTTP and CLI] --> Agent[Agents and groups]
+    HTTP --> Msg[Messaging]
+    HTTP --> Coord[Work coordination]
+    Coord --> Agent
+    Coord --> Msg
+    Agent --> Rules[Settings and permission rules]
+    Msg --> Rules
+    Coord --> Rules
+    Agent --> Native[Harness and runtime]
+    Msg --> Native
+    Agent --> DB[Existing storage]
+    Msg --> DB
+    Coord --> DB
+    Native --> View[History and reporting]
+    DB --> View
+    View --> HTTP
 ```
 
-This does not mandate new top-level packages for every box. Begin with cohesive
-functions inside current packages; move a boundary when its dependencies are clear.
+This shows calls and information movement, not package imports. Each entry
+point authenticates its caller; internal automation retains its actual actor.
 
-## Runtime ownership and globals
+## How this removes complexity
 
-The current global spawner makes unrelated tests share mutable state. Inject it
-into the first extracted action rather than rewriting the entire daemon's
-construction at once. The compatibility facade may temporarily use a default
-instance; all migrated callers and their tests must use their own instance.
-Remove the facade when its last caller moves.
+Today, a trigger creates HTTP request/response objects to use guardrails. It
+could call the same application function as the handler. That removes transport
+plumbing without changing the guardrail.
 
-Apply the same approach to selected database, clock and native-command
-boundaries. Do not add an interface for every standard-library call.
+A profile option already has shared scalar/boolean resolvers. The useful next
+step is to give those rules a clearer owner and remove only demonstrated
+remaining duplication—not write another resolver.
 
-## Observation is work; rendering is a read
+A shared action can receive its spawner explicitly. Its tests then do not need
+to change a package-global spawner. The daemon can own that dependency while
+older callers temporarily keep their existing facade.
 
-The dashboard row cache currently includes a context-write flush path. First
-characterize who depends on that freshness, then move collection/writes behind
-an existing worker or explicit refresh operation. Do not merely delete writes
-and leave stale UI. Unknown and stale values should remain distinguishable
-from idle, zero and completed.
+Reporting should read status. Collection and repair should happen in an explicit
+worker or refresh action, rather than as a side effect of constructing a row.
+Preserve the old freshness behavior when moving that work.
 
-## Reduction test
-
-For a representative option or action, count how many modules must understand
-its policy before and after extraction. A successful module boundary reduces
-that count and removes an obsolete implementation. Test isolation and reduced
-change fan-out matter more than a smaller largest file.
+Success means fewer places need to change for a user feature. Smaller files,
+more interfaces, or moving everything under new package names do not prove it.

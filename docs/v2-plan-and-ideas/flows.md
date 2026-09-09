@@ -1,70 +1,73 @@
-# Flows: migrate behavior end to end
+# A user flow through the proposed system
 
-**Proposed migration method.** Every slice follows an existing user action through
-its model, owners and effects. The whole application keeps working during the change.
+Consider: **“Add a reviewer to this group using my review profile.”**
 
-## Launch as a proving flow
+## What the operator should experience
+
+1. Choose the group and profile, adjust settings if needed, and enter the task.
+2. See the new member and whether it started successfully.
+3. Open its terminal or send it a message.
+4. Stop/restart it later without losing its identity or previous conversation.
+
+If a setting is unsupported or access is refused, explain the actual issue.
+Do not create a different agent configuration silently to make launch succeed.
+
+## What the implementation does
 
 ```mermaid
 sequenceDiagram
-    actor User as Operator or authorized agent
-    participant Edge as Existing API or CLI
-    participant Action as Application function
-    participant Config as Configuration rules
-    participant Policy as Authority and admission
-    participant Store as Existing persistence
-    participant Native as Harness and runtime
-    User->>Edge: Existing request
-    Edge->>Action: Typed intent and authenticated actor
-    Action->>Config: Resolve this flow's defaults and overrides
-    Config-->>Action: Values and provenance
-    Action->>Policy: Validate support and current permission
-    Policy-->>Action: Decision or actionable refusal
-    Action->>Store: Record/admit required durable state
-    Action->>Native: Perform admitted effect
-    Native-->>Action: Result or uncertain outcome
-    Action->>Store: Settle result and owned resources
-    Action-->>Edge: Typed result
-    Edge-->>User: Existing response and visible state
+    actor Operator
+    participant UI as Dashboard
+    participant Action as Group-member action
+    participant Settings as Settings and permissions
+    participant DB as Storage
+    participant Harness as Harness and runtime
+    Operator->>UI: Add reviewer using profile
+    UI->>Action: Group, profile, overrides, task and caller
+    Action->>Settings: Resolve choices and check permission
+    Settings-->>Action: Settings or actionable refusal
+    Action->>DB: Record the required agent and membership state
+    Action->>Harness: Start with the selected settings
+    Harness-->>Action: Native result
+    Action->>DB: Record outcome
+    Action-->>UI: Member and launch status
+    UI-->>Operator: Show reviewer; allow terminal/message actions
 ```
 
-This is a target responsibility sequence, not a claim that all current launch
-paths already have these stages. Do not hold a SQLite transaction open around
-a native process. When retries exist, identify the committed intent before
-resolving mutable defaults again. Use existing durable mechanisms first.
+This is a responsibility sketch, not a new transaction protocol. Preserve the
+current flow's admission, cleanup and retry guarantees. In particular, SQL and
+native process creation cannot be treated as one atomic operation. Record a
+failure or uncertain outcome honestly rather than replaying the effect blindly.
 
-## Small scenario matrix per affected flow
+## Reusing the flow
 
-| Scenario | Behavior to preserve |
-|---|---|
-| Ordinary agent creation | Default/profile precedence, task input, labels and permissions |
-| Team member launch | Explicit member overrides and team-specific merging |
-| Restart/resume | Recorded intent versus freshly resolved editable fields |
-| Triggered action | Original actor, capacity/rate limits and current authorization |
-| Profile edited during a running agent | Save remains possible; next-launch semantics are explicit |
-| Save/retry/conflict | No lost fields or duplicated side effects; useful conflict response |
-| Old native event arrives | Cannot change current-attempt authority or liveness |
-| Membership removal/rejoin | Membership-scoped metadata has the intended lifetime |
+A team deployment builds member requests from its template and applicable
+overrides. A trigger decides when to issue a request. Both call the same shared
+member/launch behavior where their semantics match. They retain their own
+progress, capacity and policy rules; there is no requirement to merge their engines.
 
-Select the relevant rows for a slice. Do not require every suite for a small
-control extraction, and do not use a small suite to claim unrelated parity.
+Manual spawn and team launch already share parts of resolution. Preserve that
+code and make any remaining differences explicit rather than assuming all
+callers should have identical precedence.
 
-## Cutover and removal
+## Why a restart is different from creating a member
 
-1. Trace current callers and record operator-visible behavior.
-2. Add characterization tests around the public path and deterministic policy.
-3. Extract the smallest useful shared owner behind the existing entry point.
-4. Migrate the next caller while preserving its explicit semantic differences.
-5. Remove duplicate code and unused adapters. Verify runtime and data behavior.
-6. Review the exact change, integrate, then measure whether it simplified work.
+The agent and membership already exist. A restart starts another running session
+for that agent and applies the appropriate saved/current settings. It must not
+recreate memberships, duplicate messages or reapply removed permissions merely
+because creation once did those things.
 
-A temporary adapter gets an explicit caller list and removal condition in the
-work item. No indefinite second implementation or dual writes. Read-only
-shadow comparison can help deterministic resolvers; never shadow-run effects.
+This distinction is a reason for separate application actions with shared small
+helpers, rather than one giant “do everything” launch function.
 
-## Rollback
+## How to refactor this without replacing the product
 
-Prefer code-only extraction initially. An increment should be revertible without
-restoring a replaced database or discarding user-authored fields. If a schema
-change becomes necessary, identify old/new reader compatibility and data-preserving
-rollback separately. Reverting code does not undo native effects already performed.
+Pick one existing path. Record its normal result and the important refusal,
+retry and stop/restart cases. Extract a shared function behind the current entry
+point, move a second appropriate caller, and remove obsolete glue. Existing
+public flow tests should still exercise real application/storage behavior.
+
+Useful checks include explicit false/clear/inherit, profile edits while running,
+lost replies, permission changes, membership removal, and late old-session
+reports—but only when the selected change affects them. Stop at a useful small
+boundary and reassess before broadening it.

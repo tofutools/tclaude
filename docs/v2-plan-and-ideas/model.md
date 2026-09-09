@@ -1,76 +1,83 @@
-# Model: make meaning and lifetime explicit
+# Model: the things the operator works with
 
-**Proposed direction.** Introduce precise types where confusion causes bugs;
-keep existing storage and public vocabulary unless a specific change requires more.
+Exploration, not a new database schema. The purpose is to give existing features
+clear homes, not to replace them with a smaller feature set.
 
-## Pillars
+## Agent, running session and conversation
 
-| Concept | Why it matters | Incremental approach |
+These answer three different questions:
+
+| Thing | Operator's question | What happens when the agent restarts? |
 |---|---|---|
-| Stable agent identity | A harness conversation ID may change without replacing the agent. | Wrap existing IDs at touched boundaries; preserve historical bindings. |
-| Conversation and running attempt | History continuity and one running process have different lifetimes. | Distinguish these in function inputs before introducing any schema change. |
-| Membership | Role/description scoped to a group ends with membership. | Keep values on their owning membership; avoid flattening into global agent metadata. |
-| Authored, resolved and observed configuration | A saved choice is not proof of what ran. | Separate inputs/results inside one resolver or launch path first. |
-| Presence | Absent, false, empty and inherit are different user intentions. | Use explicit presence at decoding boundaries; retain native wire values. |
-| Action outcome | Rejected, accepted, running, finished and unknown are different. | Give shared application actions typed outcomes that existing transports can project. |
+| Agent | Who am I working with? | The agent keeps its identity, memberships and messages. |
+| Running session | Where is it running right now? | The old session ends and another can start. |
+| Conversation | What has been said and done? | History remains; resume may continue it, while clear/fork has different meaning. |
 
-Conceptual identities below describe responsibilities, not a proposed migration
-of every table. The existing model already contains parts of these distinctions.
+A terminal pane displays a running session. Several panes may display the same
+session. A pane is neither the agent nor its history. A standalone session can
+exist without a registered agent. Promotion connects it to an agent identity.
+
+Internally, the harness may rotate its own conversation identifier. That should
+not unexpectedly replace the agent or lose its history. Keep the existing
+bindings behind a clear API; users need not learn another identity vocabulary.
 
 ```mermaid
 flowchart LR
-    A[Stable agent identity] --> M[Memberships with local metadata]
-    A --> C[Conversation history and bindings]
-    A --> E[Running attempt]
-    C --> H[Harness-native references]
-    E --> H
-    E --> R[Runtime resources and attachments]
+    G[Group] --> M[Membership]
+    M --> A[Agent]
+    A --> S[Current running session]
+    A --> C[Conversation history]
+    S --> C
+    T[Terminal views] --> S
+    M --> L[Role and description in this group]
 ```
 
-A native reference is an adapter-owned identifier. It must not become the
-source of platform authority merely because a message contains that string.
-Do not invent a persistent Session just to rename current commands.
+This is a responsibility sketch, not a declaration of new table cardinalities.
+An agent may have several group memberships and past sessions/conversations.
 
-## Configuration is a pipeline, not a universal bag of fields
+## What the other visible features belong to
 
-```mermaid
-flowchart LR
-    I[Explicit request with presence] --> R[Resolution rules for this flow]
-    P[Current profile and defaults] --> R
-    R --> S[Resolved values and source explanations]
-    S --> V[Validation and admission]
-    V --> L[Launch input]
-    L --> O[Observed native state]
-```
-
-The same resolver machinery may serve different precedence policies. For
-example, ordinary spawn's selected permission map and a team member's per-action
-overrides must not be collapsed into one generic merge operation. Startup
-context is reusable guidance; an initial message is task input. Persisting both
-in the same blob does not make their override semantics identical.
-
-A lifecycle classification table should accompany each migrated field:
-
-| Field kind | Example | Required question |
+| User-visible thing | Meaning | Implementation consequence |
 |---|---|---|
-| Current named selection | Sandbox profile ID | Which current definition applies to a fresh launch? |
-| Authored optional choice | Explicit false / inherit | Can the caller intentionally clear the default? |
-| Recorded execution input | Native options actually launched | What remains available for diagnosis and retry? |
-| Live observation | Activity/context usage | How fresh is it and which running attempt reported it? |
+| Group | Collaboration space with members, owners and shared settings | Membership changes and group defaults have one owner. |
+| Launch profile | Reusable choices for starting work | One place reads the applicable settings and overrides. |
+| Sandbox profile | Reusable access restrictions | Editable by ID/name; applied by the sandbox implementation. |
+| Permission or permission role | Authority to perform tclaude actions | Checked by the same permission logic for every entry point. |
+| Team template | A reusable description of a team | Distinct from the group/agents created by deployment. |
+| Process template | A reusable procedure | Distinct from each run and its progress, decisions and results. |
+| Schedule, trigger or standing order | A rule for when work should happen | Calls existing actions and records its own progress. |
+| Message and attachment | Communication addressed to someone | Stored independently of whether their pane is alive. |
+| Workspace | A directory or checkout used for work | Track who is using it before cleanup. |
+| Usage and activity | What ran, what it consumed, and what happened | Attributed to the right agent/session/history, with unknown values visible. |
 
-Recording past inputs must not freeze editable operator profiles. Exact retry
-and a genuinely new launch also need distinct rules; do not resolve new defaults
-and then claim to replay a past operation.
+A display role such as “reviewer” describes a member; it is not automatically a
+permission grant. A task reference may point to an external tracker. This model
+does not require a new internal task-management system.
 
-## First useful extraction
+## Saved settings are not the running process
 
-Current scalar/boolean helpers already return presence and provenance, and both
-direct and team launch call them. Start by characterizing those existing callers.
-Move the shared helpers to a clearer configuration owner only if it reduces
-dependencies or change fan-out; do not create another resolver. Identify remaining
-duplicated tier construction or policy before promising its removal. Preserve
-flow-specific differences and expand only after demonstrating a concrete benefit.
+Users need three understandable views:
 
-**Avoid:** replacing all database records with a lightweight idealized model,
-mechanically introducing IDs everywhere, or dropping inconvenient fields to fit
-a smaller schema. See [current evidence](current-state.md).
+1. **Saved settings:** the profile/defaults and explicit choices they can edit.
+2. **Settings used to start:** what tclaude selected for a particular launch.
+3. **Current status:** what the harness/process reports now.
+
+Those can differ legitimately. Saving a profile must not imply that an existing
+process changed, and recording a launch must not prevent later profile edits.
+For a fresh launch, use each field's current documented inheritance rule. For a
+retry of the same completed request, return its existing outcome.
+
+Defaults also need an explicit “inherit” versus “off” or “clear” distinction.
+Keep that meaning through forms, APIs and storage. Do not use a generic merge
+that loses intentional empty values or changes team-specific precedence.
+
+## Small invariants with large benefits
+
+- Restart does not accidentally create another agent; cloning can intentionally do so.
+- Removing membership does not leave that membership's private role/description behind.
+- A template edit and a change to an existing deployment are separate operations.
+- An old session's late report cannot become the current agent's status or authority.
+- A disconnected terminal does not prove the agent stopped.
+
+These rules guide touched code. They do not require renaming public commands,
+converting all records or inventing an immutable version of every user object.
