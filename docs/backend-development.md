@@ -1884,3 +1884,16 @@ pass the selected value to Codex without changing confinement. The existing
 preserves these native policy names for Codex profiles and agent birth settings.
 Approval controls share one vocabulary across settings and authority forms,
 while each provider declares which choices it supports.
+
+### Claude native approval choices
+
+Claude configurations retain the v1 choices `inherit`, `default`, `plan`,
+`acceptEdits`, `auto`, `dontAsk`, and `bypassPermissions`; `manual` is also
+available under its current native name. `default` launches as `manual` on the
+current Claude Code CLI. `inherit` omits the permission-mode flag so native
+operator settings apply. Existing `supervised` and `automatic` values remain
+aliases for `manual` and `auto`. These modes leave the separately selected
+confinement in place, including when native permission prompts are bypassed.
+Profiles and agent birth settings preserve their provider-specific values during
+offline import. Shared approval controls show the native choices and launch
+support explains their prompt behavior before launch.

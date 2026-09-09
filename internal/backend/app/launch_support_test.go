@@ -42,6 +42,9 @@ func TestLaunchSupportReadsAdapterContractWithoutPreparationOrStorage(t *testing
 			if tc.provider.Name() == codex.Name {
 				expectedApprovals = append(expectedApprovals, model.ApprovalNever, model.ApprovalOnRequest, model.ApprovalOnFailure, model.ApprovalUntrusted)
 			}
+			if tc.provider.Name() == claude.Name {
+				expectedApprovals = append(expectedApprovals, model.ApprovalInherit, model.ApprovalDefault, model.ApprovalManual, model.ApprovalPlan, model.ApprovalAcceptEdits, model.ApprovalAuto, model.ApprovalDontAsk, model.ApprovalBypassPermissions)
+			}
 			require.Equal(t, expectedApprovals, result.ApprovalModes)
 			require.Contains(t, result.ApprovalModes, result.DefaultApproval)
 			require.True(t, result.PreparedInitialInput)
