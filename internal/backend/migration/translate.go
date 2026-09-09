@@ -255,16 +255,14 @@ func (t *translator) translateAgents(batch *app.ImportBatch) error {
 			Notifications: model.AgentNotificationPreferences{DirectMessage: model.NotificationIfAvailable},
 			Desired:       desiredFromRow(row.Values), Revision: 1, CreatedAt: created, UpdatedAt: updated,
 		}
-		agent.Desired.Environment = t.launchEnvironment(batch, "agents", row)
-		if model.ValidateEffort(agent.Desired.Effort) != nil {
-			t.launchMetadataDiagnostic(batch, "agents", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
-		}
-		tools, err := agentRelaunchTools(row.Values)
+		resolved, err := applyAgentRelaunchPolicy(row.Values, agent.Desired)
 		if err != nil {
 			return fmt.Errorf("agent %s relaunch profile: %w", row.Key, err)
 		}
-		if tools != nil && agent.Desired.Harness == "opencode" {
-			agent.Desired.ToolGovernance = *tools
+		agent.Desired = resolved
+		agent.Desired.Environment = t.launchEnvironment(batch, "agents", row)
+		if model.ValidateEffort(agent.Desired.Effort) != nil {
+			t.launchMetadataDiagnostic(batch, "agents", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
 		}
 		legacyProfileName := strings.TrimSpace(sourcev228.String(row.Values["relaunch_profile"]))
 		if strings.HasPrefix(legacyProfileName, "{") {

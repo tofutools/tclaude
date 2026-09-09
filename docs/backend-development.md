@@ -1944,3 +1944,12 @@ provider-specific tool control. Team validation and saving reject unknown or
 foreign custom values and explicit profile overrides before publication. Offline
 agent import reads the versioned resolved relaunch record ahead of the original
 birth request, retaining inherited tool governance and the named-profile link.
+
+### Imported resolved agent model and approval
+
+Offline agent import reads the version-1 relaunch record for the selected model,
+effort, and native approval policy. Present fields take precedence over the
+original birth request, which may have omitted settings inherited from a profile.
+Absent fields retain the birth projection. Translation uses the same native
+approval vocabulary as profile import, preserves the original source record,
+and does not read today's defaults or start an execution.
