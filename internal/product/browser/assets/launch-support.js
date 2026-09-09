@@ -38,3 +38,14 @@ function attachLaunchSupportPreview({host,api}) {
  update();
  return dispose;
 }
+
+function launchToolGovernanceChoices(){return [{value:"",label:"Provider default"},...[["allow","Allow audited tools"],["ask","Ask before audited tools"],["deny","Deny audited tools"]].map(([value,label])=>({value,label}))];}
+
+// Provider-specific controls follow an explicit harness change independently of
+// the asynchronous, read-only capability preview.
+function attachToolGovernanceControl(host,isEditable=()=>true){
+ const harness=host.querySelector('[name=harness]'),tools=host.querySelector('[name=tool_governance]');
+ if(!harness||!tools)return ()=>{};
+ const sync=()=>{const supported=harness.value==='opencode';if(!supported)tools.value='';tools.disabled=!supported||!isEditable();};
+ host.addEventListener('change',event=>{if(event.target===harness)sync()});sync();return sync;
+}

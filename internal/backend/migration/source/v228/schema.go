@@ -107,7 +107,7 @@ var JSONColumns = map[string]map[string]JSONSpec{
 	"agent_group_permissions": {"scope_json": {262144, true}},
 	"agent_sudo_grants":       {"scope_json": {262144, true}},
 	"roles":                   {"permissions": {262144, false}},
-	"spawn_profiles":          {"permission_overrides": {262144, true}, "tools": {262144, true}, "role_refs": {262144, false}, "environment_json": {262144, false}},
+	"spawn_profiles":          {"permission_overrides": {262144, true}, "role_refs": {262144, false}, "environment_json": {262144, false}},
 	"sandbox_profiles":        {"filesystem_json": {262144, false}, "environment_json": {262144, false}, "includes_json": {262144, false}, "network_json": {262144, true}, "resource_limits_json": {262144, false}},
 	"group_templates":         {"owner_scopes_json": {262144, true}},
 	"group_template_agents":   {"permissions": {262144, false}, "profile_inline": {262144, true}},

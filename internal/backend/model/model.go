@@ -101,7 +101,8 @@ type DesiredConfiguration struct {
 	Harness     string
 	Model       string
 	// Effort is the requested native reasoning effort or variant, not observed effective effort.
-	Effort           string `json:",omitempty"`
+	Effort           string         `json:",omitempty"`
+	ToolGovernance   ToolGovernance `json:",omitempty"`
 	WorkingDirectory string
 	Approval         ApprovalMode
 	Sandbox          SandboxMode
@@ -218,7 +219,8 @@ type ResolvedExecutionSpec struct {
 	ConversationID       ConversationID
 	Harness              string
 	Model                string
-	Effort               string `json:",omitempty"`
+	Effort               string         `json:",omitempty"`
+	ToolGovernance       ToolGovernance `json:",omitempty"`
 	WorkingDirectory     string
 	Approval             ApprovalMode
 	Sandbox              SandboxMode
