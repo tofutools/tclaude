@@ -1,18 +1,37 @@
 # Services and harness integration
 
-A service owns a focused mechanism and its rules. An operation coordinates
+In the proposed architecture, a service owns a focused mechanism and its rules. An operation coordinates
 those mechanisms for a user request. A service may itself expose substantial
 behavior; the distinction is responsibility, not function size.
 
-Possible services include:
+## Current
 
-| Service | Responsibility |
+These are implementation areas, not services already extracted on main.
+
+| Responsibility | Current location or form |
+|---|---|
+| Configuration | Shared resolution helpers and flow-specific handling in daemon lifecycle and team/template code |
+| Permissions | Existing access checks used by daemon actions |
+| Native execution | Existing harness abstractions, spawners and lifecycle handling |
+| Terminal and workspace | Existing tclaude session/window, tmux and worktree code |
+| Identity and conversation tracking | Agent/conversation mappings, tclaude session records and native event handling |
+| Messaging | Existing daemon mailbox and harness delivery paths |
+| Persistence | Existing SQLite operations, used by application paths |
+
+Examples: [daemon lifecycle](../../pkg/claude/agentd/lifecycle.go),
+[team templates](../../pkg/claude/agentd/templates.go),
+[harness boundary](../../pkg/claude/harness/harness.go), and
+[database code](../../pkg/claude/common/db/).
+
+## Future (proposed)
+
+| Service responsibility | Intended boundary |
 |---|---|
 | Configuration | Resolve explicit choices, profiles and defaults with their meaning intact |
 | Permissions | Decide whether an actor may perform an action under current rules |
-| Native session | Launch, resume or communicate with native execution where supported |
-| Terminal and workspace | Manage terminal views, processes and working resources |
-| Conversation tracking | Associate native conversations and observations with tclaude identities |
+| Native execution | Launch, resume or communicate with native execution where supported; do not call this tclaude's session/window model |
+| Terminal and workspace | Manage tclaude windows, terminal views and working resources with explicit lifetimes |
+| Identity and conversation tracking | Associate agents, native conversations, running windows and observations without conflating their IDs |
 | Messaging | Store, address and track message delivery |
 | Persistence | Commit related application state changes consistently |
 
@@ -20,7 +39,7 @@ This is a vocabulary for discussion, not a mandatory package or interface for
 every row. Main already has harness abstractions and shared configuration
 helpers; reuse them rather than introducing a parallel framework.
 
-## A harness integration is more than a function adapter
+## Proposed harness integration: more than a function adapter
 
 It may own native configuration validation, command construction, protocol
 handling, lifecycle state and asynchronous observation processing. Some work
@@ -39,7 +58,7 @@ flowchart LR
 
 The integration understands what the native payload means. Shared tracking
 services provide the associations and update rules. Unknown correlations must
-not be guessed into the current session. Depending on the native protocol,
+not be guessed into the agent's current native execution. Depending on the native protocol,
 handling may require waiting for identity information or exposing unavailable
 state; that behavior belongs in the integration's contract.
 

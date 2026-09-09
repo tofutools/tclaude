@@ -8,7 +8,7 @@ or guidance for regular feature work. The replacement rewrite remains stopped.
 **Users work with agents. Operations carry out their requests. Services provide
 the mechanisms. Harness strategies handle differences in how the work happens.**
 
-There are three main concepts:
+The proposed structure has three main concepts:
 
 1. **The user-facing model:** agents, groups, profiles, conversations and work.
    These concepts are mostly harness agnostic, with explicit harness-specific
@@ -36,13 +36,26 @@ flowchart TD
     State --> UI
 ```
 
-The diagram shows responsibilities, not a fixed package layout. An operation
+The diagram shows proposed responsibilities, not current wiring or a fixed package layout. An operation
 may finish immediately or leave work in progress. Harness event handling can
 continue after the initiating request returns.
 
 ## Where behavior differs
 
-| Difference | Proposed place |
+### Current
+
+| Difference | Where it is handled today |
+|---|---|
+| Different option or supported feature | Existing profile/configuration code and harness capability definitions |
+| Same responsibility, different mechanism | Existing harness adapters together with session and daemon code |
+| Different sequence or lifecycle | Existing lifecycle paths and native event handlers; no claim of a uniform operation/strategy structure |
+
+These are broad locations in main, not an assertion that each responsibility
+already has one clean owner. See the current tables in the linked pages.
+
+### Future (proposed)
+
+| Difference | Intended place |
 |---|---|
 | Different option or supported feature | Configuration and capability definitions |
 | Same responsibility, different mechanism | Service implementation |

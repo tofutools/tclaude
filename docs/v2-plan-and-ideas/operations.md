@@ -1,11 +1,35 @@
 # Operations coordinate user requests
 
-An operation answers a request such as “restart this agent” or “send this
+In the proposed architecture, an operation answers a request such as “restart this agent” or “send this
 message.” It owns the sequence, the shared application rules and the outcome
 presented to the caller. Dashboard, CLI and automation reuse the same operation
 where they request the same behavior, retaining their actual caller identity.
 
-## Example: restart an agent
+## Current
+
+| Part of a restart/lifecycle operation | Current organization |
+|---|---|
+| Application rules | Existing daemon lifecycle paths coordinate checks and effects |
+| Harness differences | Existing harness lifecycle implementations and daemon/native handling participate in the sequence |
+| Identity | Agent IDs, native conversation IDs and tclaude session/window IDs are distinct records, with historically accumulated associations |
+| Later observations | Native event handling updates state after the initiating call; this is not a single synchronous function result |
+
+See [daemon lifecycle](../../pkg/claude/agentd/lifecycle.go),
+[harness lifecycle](../../pkg/claude/harness/lifecycle.go), and
+[Codex native lifecycle](../../pkg/claude/agentd/codex_native_registry_lifecycle.go).
+This describes existing organization, not a verified step-by-step restart trace
+for every harness. That trace is still needed before choosing an extraction.
+
+## Future (proposed)
+
+| Part of a restart/lifecycle operation | Intended organization |
+|---|---|
+| Application rules | Common operation owns authorization, configuration resolution and user-visible outcome |
+| Harness differences | An explicit strategy owns a coherent native sequence, calling focused services |
+| Identity | Track the agent, running window and native resumable unit separately throughout the transition |
+| Later observations | Define how native events correlate to the operation attempt and complete or update its outcome |
+
+### Example: restart an agent
 
 A possible common outline is:
 
@@ -14,17 +38,11 @@ A possible common outline is:
 3. Ask the selected harness strategy to carry out the native transition.
 4. Record the outcome and expose progress or failure.
 
-Inside step 3, the sequences can be fundamentally different:
-
-| Illustrative harness A | Illustrative harness B |
-|---|---|
-| Stop the old execution | Request a native replacement |
-| Resume the existing native conversation | Await a native lifecycle notification |
-| Confirm readiness | Associate the newly reported conversation ID |
-| Report the resumed execution | Confirm readiness and report the replacement |
-
-These examples explain variation; they do not prescribe the behavior of a named
-harness. Do not force both into a fixed list of identical internal steps.
+Inside step 3, one strategy could stop execution, resume the existing native
+conversation and confirm readiness. Another could request native replacement,
+await an event carrying a new conversation ID, associate it and then confirm
+readiness. These are hypothetical sequences, not current behavior attributed to
+named harnesses. They need not share an identical internal step list.
 
 The common contract describes the user-visible result: preserve the agent's
 identity, associate its history correctly, and expose starting/ready/failed

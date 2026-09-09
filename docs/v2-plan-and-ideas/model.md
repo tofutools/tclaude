@@ -1,22 +1,51 @@
-# The user-facing model
+# The user-facing model: current and future
 
-The model should explain the product without requiring users to understand a
-harness's internal process or identifier scheme.
+The current vocabulary grew over time; it is not a clean version of the proposed
+model. In particular, **Claude Code's session and tclaude's session are different
+concepts**. The history below comes from the operator's account; the current
+implementation already includes later additions such as stable agent IDs.
 
-| Concept | What it means to the user |
+## Current
+
+| Concept | Current meaning and history |
 |---|---|
-| Agent | A persistent identity to configure, contact and work with |
-| Group | Agents collaborating, with memberships, owners and shared defaults |
-| Profile | Named reusable settings, including harness-specific choices |
-| Running session | The agent's current native execution; it may stop or be replaced |
-| Conversation | History the user can find and continue working with |
-| Message | Communication with a recorded delivery outcome |
-| Team, process or automation | Saved instructions for coordinating or repeating work |
-| Activity | What is known about ongoing work, including usage and failures |
+| Agent | Originally identified by the conversation ID taken from Claude Code. Main now also has a durable `agt_…` identity and links to conversation generations; that later addition does not make all surrounding concepts consistent. |
+| Conversation | Originally Claude Code's own session ID, used as the unique agent identifier. Claude Code can stop and resume that session. tclaude's conversation records and history handling grew around that native identity; this is not yet a clean, independent history abstraction. |
+| tclaude session | A tclaude-owned concept identifying an actual running window, with its own ID, tmux/process state and a conversation association. It is **not** a harness session. |
+| Harness session or conversation | Native terminology and lifecycle: Claude Code calls its resumable unit a session; other harnesses expose their own identifiers and transitions. |
+| Group | Existing collaboration and membership records, with owners and defaults. |
+| Profile | Existing reusable launch or sandbox settings, including harness-specific fields. |
+| Message | Existing mailbox communication and delivery handling. |
+| Team, process or automation | Existing templates and mechanisms for coordinating or repeating work. |
+| Activity | Existing readings and status assembled from native observations and tclaude runtime state. |
 
-These are conceptual responsibilities, not a replacement database schema.
-Standalone sessions and later registration as an agent must remain possible.
-A terminal is a view into execution, not the identity of the agent.
+Main evidence: [agent and conversation records](../../pkg/claude/common/db/agents.go),
+[session records](../../pkg/claude/common/db/sessions.go), and
+[window/session state](../../pkg/claude/session/session.go). These show current
+structures, not proof that their vocabulary or lifetimes are already settled.
+
+## Future (proposed)
+
+| Concept | Intended meaning and change |
+|---|---|
+| Agent | The identity users configure, contact and keep working with. Build on the existing durable agent ID; stop treating native identity as interchangeable with it. |
+| Conversation/history | Make the relationship between user-visible history and native resumable conversations explicit. Whether these need separate named objects is still open; do not silently redefine the current conversation record. |
+| tclaude session / running window | Keep this distinct from native resumable state. Define the window's lifetime and associations explicitly; any rename is undecided. |
+| Harness session or conversation | Preserve the native unit and its semantics inside the integration, with explicit associations to the agent, history and running window. Do not assume one shared lifetime or a permanent one-to-one mapping. |
+| Group | Keep collaboration, membership, owners and defaults explicit; no new product concept proposed here. |
+| Profile | Keep named reusable settings and harness-specific choices. Separate saved choices from settings used by a particular execution. |
+| Message | Keep user-visible communication, with clear ownership of addressing and delivery outcomes. |
+| Team, process or automation | Keep existing user workflows; coordinate shared operations where behavior matches. |
+| Activity | Present attributable readings with their meaning, age and uncertainty, rather than treating all native values as equivalent. |
+
+This is a proposed separation of responsibilities, not a replacement schema or
+an approved naming scheme. Starting an unregistered tclaude session and later
+registering an agent must remain possible. The relation between a running
+window and native execution needs explicit treatment, not the earlier draft's
+assumption that “session” simply means native execution.
+
+The following sections describe proposed rules, not claims that main already
+implements a uniform model.
 
 ## Common concepts do not require identical harness settings
 
@@ -37,7 +66,7 @@ replaces its native ID, or announces a new ID later. Keep the association and
 history needed to explain that transition. Do not make a single native ID the
 universal identity of the agent.
 
-Old-session reports must remain attributable to the old session. They must not
+Reports from an old native execution must remain attributable to that execution. They must not
 silently become the current agent's status after a restart.
 
 ## Observations describe what is known
