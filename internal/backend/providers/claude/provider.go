@@ -400,7 +400,7 @@ func (p *prepared) argv() []string {
 			"filesystem":               map[string]any{"allowWrite": []string{p.request.Spec.WorkingDirectory}},
 		},
 		"hooks":      p.hooks(),
-		"statusLine": map[string]any{"type": "command", "command": claudeObservationCommand},
+		"statusLine": map[string]any{"type": "command", "command": claudeStatusLineCommand()},
 	}
 	if !p.request.Spec.PeerMessaging {
 		settings["crossSessionInbound"] = "refuse"

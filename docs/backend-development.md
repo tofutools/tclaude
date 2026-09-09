@@ -2088,12 +2088,20 @@ launches emit `CLAUDE_CODE_AUTO_COMPACT_WINDOW` only when a window was chosen.
 
 The roster's context meter uses Claude status-line observations from the bound
 primary session. Its denominator is the smaller of the native model window and
-the admitted compaction window. It rescales the native percentage rather than
+the effective native compaction window. It rescales the native percentage rather than
 reconstructing context from cumulative usage. The last observation persists in
 provider evidence and is projected without query-time native IO. Missing or
 unresolved native context stays unknown; compaction/reset invalidates the old
 meter until a new native observation arrives. The observation time is shown in
 the meter's tooltip.
+
+Claude status collection preserves a visible terminal status line with model,
+context, subscription limits or API cost, effort, and workspace. The collector
+runs as a child mode of the shipped binary and records the effective native
+compaction environment alongside the observation. This includes an ambient
+window when the saved setting is unset, without introducing a launch override.
+The observed denominator persists in provider evidence for recovery. An invalid
+native window is displayed as unknown rather than a guessed percentage.
 
 ### Create and launch a group member
 
