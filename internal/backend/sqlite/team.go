@@ -60,10 +60,12 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 		pins[pin.RoleID] = pin
 	}
 	for _, agent := range agents {
+		var selected model.ConfigurationProfileID
 		if agent.ConfigurationProfile != nil {
-			if err := requireProfileCreationTx(ctx, tx, principal, agent.ConfigurationProfile.ProfileID); err != nil {
-				return model.TeamDeployment{}, false, err
-			}
+			selected = agent.ConfigurationProfile.ProfileID
+		}
+		if err := requireProfileCreationTx(ctx, tx, principal, selected); err != nil {
+			return model.TeamDeployment{}, false, err
 		}
 		if agent.Lifecycle == "" {
 			agent.Lifecycle = model.AgentActive

@@ -42,7 +42,14 @@ func (s *Service) resolveProfileConfigurationWithOverrides(ctx context.Context, 
 		desired, err := s.applyConfigurationOverrides(selected.Revision.Desired, overrides)
 		return ResolvedProfileConfiguration{Selected: selected.Revision.Ref, Desired: desired}, err
 	}
-	if err := validateConfigurationOptions(*selected.Revision.Options); err != nil {
+
+	resolved, err := s.resolveConfigurationOptions(ctx, selected.Profile.ID, *selected.Revision.Options, overrides)
+	resolved.Selected = selected.Revision.Ref
+	return resolved, err
+}
+
+func (s *Service) resolveConfigurationOptions(ctx context.Context, selectedID model.ConfigurationProfileID, options model.ConfigurationOptions, overrides *model.ConfigurationOptions) (ResolvedProfileConfiguration, error) {
+	if err := validateConfigurationOptions(options); err != nil {
 		return ResolvedProfileConfiguration{}, err
 	}
 	layers := []model.ConfigurationOptions{}
@@ -51,7 +58,7 @@ func (s *Service) resolveProfileConfigurationWithOverrides(ctx context.Context, 
 		return ResolvedProfileConfiguration{}, err
 	}
 	var globalRef *model.ConfigurationProfileRef
-	if defaults.Global != nil && defaults.Global.ProfileID != selected.Profile.ID {
+	if defaults.Global != nil && defaults.Global.ProfileID != selectedID {
 		global, err := s.store.ConfigurationProfile(ctx, defaults.Global.ProfileID, "")
 		if err != nil {
 			return ResolvedProfileConfiguration{}, err
@@ -71,7 +78,7 @@ func (s *Service) resolveProfileConfigurationWithOverrides(ctx context.Context, 
 		globalRef = &ref
 		layers = append(layers, profileConfigurationOptions(global.Revision))
 	}
-	layers = append(layers, *selected.Revision.Options)
+	layers = append(layers, options)
 	// V1's final harness fallback is Claude. Selecting it does not enable or
 	// install a provider; the configured registry must still supply it.
 	harness := "claude"
@@ -118,7 +125,7 @@ func (s *Service) resolveProfileConfigurationWithOverrides(ctx context.Context, 
 	if err := validateLaunchConfiguration(resolved); err != nil {
 		return ResolvedProfileConfiguration{}, err
 	}
-	return ResolvedProfileConfiguration{Selected: selected.Revision.Ref, Desired: resolved, DefaultsRevision: &defaults.Revision, GlobalProfile: globalRef}, nil
+	return ResolvedProfileConfiguration{Desired: resolved, DefaultsRevision: &defaults.Revision, GlobalProfile: globalRef}, nil
 }
 
 func profileConfigurationOptions(revision model.ConfigurationProfileRevision) model.ConfigurationOptions {
@@ -204,4 +211,11 @@ func (s *Service) validateProfileDefaultSelection(ctx context.Context, ref model
 		return err
 	}
 	return s.verifyLaunchSandbox(ctx, profile.Revision.Desired.HostSandbox)
+}
+
+// Inline member options are explicit launch intent over the current global and
+// provider defaults. They are not saved as an invented configuration profile.
+func (s *Service) resolveInlineConfiguration(ctx context.Context, options model.ConfigurationOptions) (model.DesiredConfiguration, error) {
+	resolved, err := s.resolveConfigurationOptions(ctx, "", model.ConfigurationOptions{}, &options)
+	return resolved.Desired, err
 }

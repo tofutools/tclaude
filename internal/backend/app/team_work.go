@@ -85,6 +85,15 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 	for _, spec := range revision.Team.Members {
 		desired := spec.Desired
 		var profileRef *model.ConfigurationProfileRef
+		if spec.Options != nil {
+			if err := s.requireProfileCreation(ctx, req.Context.Principal, model.ConfigurationProfile{}); err != nil {
+				return TeamDeploymentResult{}, err
+			}
+			desired, err = s.resolveInlineConfiguration(ctx, *spec.Options)
+			if err != nil {
+				return TeamDeploymentResult{}, fail(ErrInvalid, "member %s: %v", spec.Key, err)
+			}
+		}
 		if spec.ProfileID != "" {
 			if !desired.Equal(model.DesiredConfiguration{}) {
 				return TeamDeploymentResult{}, fail(ErrInvalid, "member %s selects a profile or custom settings", spec.Key)

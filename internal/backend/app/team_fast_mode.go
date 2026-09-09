@@ -8,6 +8,12 @@ import (
 func (s *Service) validateTeamFastMode(ctx context.Context, team model.TeamDefinition) error {
 	for _, member := range team.Members {
 		desired := member.Desired
+		if member.Options != nil {
+			desired = member.Options.Apply(desired)
+			if desired.Harness == "" {
+				continue
+			} // Resolved and checked at deployment.
+		}
 		if member.ProfileID != "" {
 			if member.Overrides == nil || member.Overrides.FastMode == nil {
 				continue

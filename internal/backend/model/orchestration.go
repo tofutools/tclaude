@@ -110,6 +110,7 @@ type TeamDefinition struct {
 }
 
 type TeamMemberSpec struct {
+	Options   *ConfigurationOptions `json:",omitempty"`
 	Overrides *TeamProfileOverrides `json:",omitempty"`
 	// ProfileID follows the named profile at each new deployment.
 	ProfileID   ConfigurationProfileID `json:",omitempty"`
