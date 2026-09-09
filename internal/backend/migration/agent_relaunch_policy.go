@@ -3,6 +3,7 @@ package migration
 import (
 	"fmt"
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"strings"
 )
 
 // applyAgentRelaunchPolicy restores the normal resolved posture rather than
@@ -17,7 +18,13 @@ func applyAgentRelaunchPolicy(values map[string]any, desired model.DesiredConfig
 		desired.ToolGovernance = *profile.Tools
 	}
 	if profile.Model != nil {
-		desired.Model = *profile.Model
+		desired.Model = strings.TrimSpace(*profile.Model)
+		if desired.Harness == "claude" {
+			desired.Model = strings.TrimSuffix(desired.Model, "[1m]")
+			if desired.Model != "" && profile.ContextWindowSize != nil && *profile.ContextWindowSize == 1000000 {
+				desired.Model += "[1m]"
+			}
+		}
 	}
 	if profile.Effort != nil {
 		desired.Effort = *profile.Effort
