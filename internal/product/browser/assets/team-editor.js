@@ -137,7 +137,7 @@ class TeamEditor {
   member(original) {
     const m = original || {Key: '', Name: '', Desired: {}, Roles: [], Required: true, Owner: false, BriefingIDs: []}, desired = m.Options || m.Desired;
     let environment, sandbox;
-    const overrideProperties = {harness:"Harness",model:"Model",effort:"Effort",tool_governance:"ToolGovernance",fast_mode:"FastMode",auto_review:"AutoReview",auto_memory:"AutoMemory",peer_messaging:"PeerMessaging",approval:"Approval",sandbox:"Sandbox"};
+    const overrideProperties = {harness:"Harness",model:"Model",effort:"Effort",tool_governance:"ToolGovernance",fast_mode:"FastMode",auto_review:"AutoReview",auto_memory:"AutoMemory",peer_messaging:"PeerMessaging",auto_compact_window:"AutoCompactWindow",approval:"Approval",sandbox:"Sandbox"};
     const fields = [
       {key: 'key', label: 'Stable member key', value: m.Key, required: true}, {key: 'name', label: 'Member name', value: m.Name, required: true},
       {key:'role_label',label:'Display role',value:m.Labels?.Role||''},
@@ -145,7 +145,8 @@ class TeamEditor {
       {key: 'profile', label: 'Saved configuration', options: [opt('', 'Custom settings'), ...this.configurations.map(c => opt(c.Profile.ID, ProfilePresentation.label(c.Profile)))], value: m.ProfileID || ''},
       {key:'partial',label:'Use current defaults for blank settings',type:'checkbox',value:!!m.Options},
       {key: 'harness', label: 'Harness', options: [opt('', 'Inherit harness'), ...['claude', 'codex', 'opencode', 'copilot'].map(v => opt(v))], value: desired.Harness, required: true},
-      {key:'peer_messaging',label:'Claude native peer messaging',options:launchPeerMessagingChoices().map(v=>opt(v.value,v.label)),value:desired.PeerMessaging===undefined?'':desired.PeerMessaging?'on':'off',required:false},
+      {key:'auto_compact_window',label:'Claude auto-compaction window (tokens, e.g. 450k)',value:desired.AutoCompactWindow||'',required:false},
+ {key:'peer_messaging',label:'Claude native peer messaging',options:launchPeerMessagingChoices().map(v=>opt(v.value,v.label)),value:desired.PeerMessaging===undefined?'':desired.PeerMessaging?'on':'off',required:false},
       {key:'auto_memory',label:'Claude auto-memory',options:launchAutoMemoryChoices().map(v=>opt(v.value,v.label)),value:desired.AutoMemory===undefined?'':desired.AutoMemory?'on':'off',required:false},
       {key:'auto_review',label:'Codex approval reviewer',options:launchAutoReviewChoices().map(v=>opt(v.value,v.label)),value:desired.AutoReview===undefined?'':desired.AutoReview?'on':'off',required:false},
  {key:'fast_mode',label:'Codex fast mode',options:launchFastModeChoices().map(v=>opt(v.value,v.label)),value:desired.FastMode||'',required:false},
@@ -168,7 +169,7 @@ class TeamEditor {
       const overrides = {};
       if(f.profile)for(const [key,property] of Object.entries(overrideProperties))if(f['override_'+key])overrides[property]=(key==='auto_review'||key==='auto_memory'||key==='peer_messaging')?f[key]==='on':f[key];
       const options = f.partial&&!f.profile ? profileOptionsFromForm({...f,host_sandbox:f.resolvedSandbox,environment:environment.read()}) : undefined;
-      const member = {...m, Options:options, Overrides:Object.keys(overrides).length ? overrides : undefined, Key: f.key, Name: f.name, Labels:{Role:f.role_label,Description:f.description}, ProfileID: f.profile || undefined, Desired: f.profile || options ? {} : {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, ToolGovernance:f.tool_governance||undefined,FastMode:f.fast_mode||undefined,AutoReview:f.auto_review==='on',AutoMemory:f.auto_memory==='on',PeerMessaging:f.peer_messaging==='on', WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, HostSandbox: f.resolvedSandbox||undefined, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
+      const member = {...m, Options:options, Overrides:Object.keys(overrides).length ? overrides : undefined, Key: f.key, Name: f.name, Labels:{Role:f.role_label,Description:f.description}, ProfileID: f.profile || undefined, Desired: f.profile || options ? {} : {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, ToolGovernance:f.tool_governance||undefined,FastMode:f.fast_mode||undefined,AutoReview:f.auto_review==='on',AutoMemory:f.auto_memory==='on',PeerMessaging:f.peer_messaging==='on',AutoCompactWindow:f.auto_compact_window||'', WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, HostSandbox: f.resolvedSandbox||undefined, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
       this.change(d => {
         const i = d.Team.Members.findIndex(x => x.Key === original?.Key); if (i < 0) d.Team.Members.push(member); else d.Team.Members[i] = member;
         if (original && original.Key !== f.key) { for (const w of d.Team.Waves) w.MemberKeys = w.MemberKeys.map(k => k === original.Key ? f.key : k); for (const b of d.Team.Briefings) b.MemberKeys = (b.MemberKeys || []).map(k => k === original.Key ? f.key : k); }
@@ -197,13 +198,14 @@ class TeamEditor {
     select.onchange = () => {
       if (select.value === '') return;
       const d = (this.configurations[Number(select.value)].Revision.Options || this.configurations[Number(select.value)].Revision.Desired);
-      for (const [key, property] of Object.entries({harness: 'Harness', model: 'Model', effort: 'Effort',tool_governance:'ToolGovernance',fast_mode:'FastMode',auto_review:'AutoReview',auto_memory:'AutoMemory',peer_messaging:'PeerMessaging', cwd: 'WorkingDirectory', approval: 'Approval', sandbox: 'Sandbox'})) form.elements[key].value = launchSettingValue(key,d[property]);
+      for (const [key, property] of Object.entries({harness: 'Harness', model: 'Model', effort: 'Effort',tool_governance:'ToolGovernance',fast_mode:'FastMode',auto_review:'AutoReview',auto_memory:'AutoMemory',peer_messaging:'PeerMessaging',auto_compact_window:'AutoCompactWindow', cwd: 'WorkingDirectory', approval: 'Approval', sandbox: 'Sandbox'})) form.elements[key].value = launchSettingValue(key,d[property]);
       showEnvironment(d.Environment);
       showSandbox(d.HostSandbox);
       form.elements.harness.dispatchEvent(new Event('change', {bubbles: true}));
       this.unapplied = true;
     };
-    const syncPeers=attachPeerMessagingControl(form,()=>!form.elements.profile.value||form.elements.override_peer_messaging.checked);
+    const syncWindow=attachAutoCompactWindowControl(form,()=>!form.elements.profile.value||form.elements.override_auto_compact_window.checked);
+ const syncPeers=attachPeerMessagingControl(form,()=>!form.elements.profile.value||form.elements.override_peer_messaging.checked);
     const syncMemory=attachAutoMemoryControl(form,()=>!form.elements.profile.value||form.elements.override_auto_memory.checked);
     const syncReview=attachAutoReviewControl(form,()=>!form.elements.profile.value||form.elements.override_auto_review.checked);
  const syncFast=attachFastModeControl(form,()=>!form.elements.profile.value||form.elements.override_fast_mode.checked);
@@ -220,17 +222,17 @@ class TeamEditor {
       form.elements.partial.parentElement.hidden=selected;
       if (profile) {
         const d = profile.Revision.Options || profile.Revision.Desired;
-        for (const [key, property] of Object.entries({harness:'Harness',model:'Model',effort:'Effort',tool_governance:'ToolGovernance',fast_mode:'FastMode',auto_review:'AutoReview',auto_memory:'AutoMemory',peer_messaging:'PeerMessaging',cwd:'WorkingDirectory',approval:'Approval',sandbox:'Sandbox'})) form.elements[key].value = launchSettingValue(key,d[property]);
+        for (const [key, property] of Object.entries({harness:'Harness',model:'Model',effort:'Effort',tool_governance:'ToolGovernance',fast_mode:'FastMode',auto_review:'AutoReview',auto_memory:'AutoMemory',peer_messaging:'PeerMessaging',auto_compact_window:'AutoCompactWindow',cwd:'WorkingDirectory',approval:'Approval',sandbox:'Sandbox'})) form.elements[key].value = launchSettingValue(key,d[property]);
         for(const [key,value] of Object.entries(values))form.elements[key].value=launchSettingValue(key,value);
-        if(d.Harness&&form.elements.harness.value!==d.Harness)for(const key of ['model','effort','auto_review','auto_memory','peer_messaging','fast_mode','tool_governance'])if(!form.elements['override_'+key].checked)form.elements[key].value='';
+        if(d.Harness&&form.elements.harness.value!==d.Harness)for(const key of ['model','effort','auto_review','auto_memory','peer_messaging','auto_compact_window','fast_mode','tool_governance'])if(!form.elements['override_'+key].checked)form.elements[key].value='';
         showEnvironment(d.Environment); showSandbox(d.HostSandbox);
         form.elements.harness.dispatchEvent(new Event('change', {bubbles:true}));
       }
-      for (const key of ['harness','model','effort','auto_review','auto_memory','peer_messaging','fast_mode','tool_governance','cwd','approval','sandbox']) form.elements[key].disabled = selected && !form.elements['override_'+key]?.checked;
+      for (const key of ['harness','model','effort','auto_review','auto_memory','peer_messaging','auto_compact_window','fast_mode','tool_governance','cwd','approval','sandbox']) form.elements[key].disabled = selected && !form.elements['override_'+key]?.checked;
       for(const key of Object.keys(overrideProperties))form.elements['override_'+key].parentElement.hidden=!selected;
       environmentField.disabled = selected; sandboxField.disabled = selected;
       select.disabled = selected;
-      syncTools();syncFast();syncReview();syncMemory();syncPeers();
+      syncTools();syncFast();syncReview();syncMemory();syncPeers();syncWindow();
       updatingProfile=false;
     };
     form.elements.harness.addEventListener('change',()=>{if(form.elements.profile.value)updateProfile();});

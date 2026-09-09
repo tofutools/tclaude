@@ -101,15 +101,16 @@ type DesiredConfiguration struct {
 	Harness     string
 	Model       string
 	// Effort is the requested native reasoning effort or variant, not observed effective effort.
-	Effort           string         `json:",omitempty"`
-	ToolGovernance   ToolGovernance `json:",omitempty"`
-	FastMode         FastMode       `json:",omitempty"`
-	AutoReview       bool           `json:",omitempty"`
-	AutoMemory       bool           `json:",omitempty"`
-	PeerMessaging    bool           `json:",omitempty"`
-	WorkingDirectory string
-	Approval         ApprovalMode
-	Sandbox          SandboxMode
+	Effort            string            `json:",omitempty"`
+	ToolGovernance    ToolGovernance    `json:",omitempty"`
+	FastMode          FastMode          `json:",omitempty"`
+	AutoReview        bool              `json:",omitempty"`
+	AutoMemory        bool              `json:",omitempty"`
+	PeerMessaging     bool              `json:",omitempty"`
+	AutoCompactWindow AutoCompactWindow `json:",omitempty"`
+	WorkingDirectory  string
+	Approval          ApprovalMode
+	Sandbox           SandboxMode
 }
 
 type ApprovalMode string
@@ -193,6 +194,8 @@ const (
 )
 
 type Execution struct {
+	// ContextUsage is a query projection of persisted provider evidence, never authored state.
+	ContextUsage       *ContextUsage `json:",omitempty"`
 	ID                 ExecutionID
 	Workload           ExecutionWorkloadKind
 	AgentID            AgentID
@@ -223,12 +226,13 @@ type ResolvedExecutionSpec struct {
 	ConversationID       ConversationID
 	Harness              string
 	Model                string
-	Effort               string         `json:",omitempty"`
-	ToolGovernance       ToolGovernance `json:",omitempty"`
-	FastMode             FastMode       `json:",omitempty"`
-	AutoReview           bool           `json:",omitempty"`
-	AutoMemory           bool           `json:",omitempty"`
-	PeerMessaging        bool           `json:",omitempty"`
+	Effort               string            `json:",omitempty"`
+	ToolGovernance       ToolGovernance    `json:",omitempty"`
+	FastMode             FastMode          `json:",omitempty"`
+	AutoReview           bool              `json:",omitempty"`
+	AutoMemory           bool              `json:",omitempty"`
+	PeerMessaging        bool              `json:",omitempty"`
+	AutoCompactWindow    AutoCompactWindow `json:",omitempty"`
 	WorkingDirectory     string
 	Approval             ApprovalMode
 	Sandbox              SandboxMode

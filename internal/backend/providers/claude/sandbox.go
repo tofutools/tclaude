@@ -48,7 +48,15 @@ func (p *prepared) prepareSandbox(ctx context.Context) error {
 	// This explicit root keeps credentials/history stable through recovery;
 	// the backend's other private state never becomes a directory grant.
 	p.command.Env = append([]string{"PATH=/usr/local/bin:/usr/bin:/bin", "HOME=" + p.nativeHome, "TERM=xterm-256color"}, p.command.Env...)
-	resources := []host.SandboxProviderResource{{Path: p.nativeHome, Access: model.SandboxFilesystemWrite}, {Path: p.spool.Directory(), Access: model.SandboxFilesystemWrite}}
+	statusExecutable, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve Claude status renderer: %w", err)
+	}
+	statusExecutable, err = filepath.EvalSymlinks(statusExecutable)
+	if err != nil {
+		return fmt.Errorf("resolve Claude status renderer path: %w", err)
+	}
+	resources := []host.SandboxProviderResource{{Path: statusExecutable, Access: model.SandboxFilesystemRead}, {Path: p.nativeHome, Access: model.SandboxFilesystemWrite}, {Path: p.spool.Directory(), Access: model.SandboxFilesystemWrite}}
 	if p.access != nil {
 		endpoint, err := host.SandboxControlResource(p.provider.agentSocket, p.provider.agentSocketDirectory)
 		if err != nil {

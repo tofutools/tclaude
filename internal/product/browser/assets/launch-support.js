@@ -65,3 +65,5 @@ function attachAutoMemoryControl(host,isEditable){return attachProviderSettingCo
 
 function launchPeerMessagingChoices(){return [{value:'',label:'Use default (off)'},{value:'on',label:'On'},{value:'off',label:'Off'}]}
 function attachPeerMessagingControl(host,isEditable){return attachProviderSettingControl(host,'peer_messaging','claude',isEditable)}
+
+function attachAutoCompactWindowControl(form,enabled=()=>true){return attachProviderSettingControl(form,"auto_compact_window","claude",enabled)}

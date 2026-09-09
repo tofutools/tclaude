@@ -229,6 +229,7 @@ func (h *Handler) createGroup(w http.ResponseWriter, r *http.Request) {
 }
 
 type executionView struct {
+	ContextUsage     *model.ContextUsage         `json:"context_usage,omitempty"`
 	Workload         model.ExecutionWorkloadKind `json:"workload"`
 	ID               model.ExecutionID           `json:"id"`
 	AgentID          model.AgentID               `json:"agent_id,omitempty"`
@@ -242,7 +243,7 @@ type executionView struct {
 }
 
 func projectExecution(e model.Execution) executionView {
-	return executionView{Workload: e.Workload, ID: e.ID, AgentID: e.AgentID, ConversationID: e.ConversationID,
+	return executionView{ContextUsage: e.ContextUsage, Workload: e.Workload, ID: e.ID, AgentID: e.AgentID, ConversationID: e.ConversationID,
 		Spec: e.Spec, State: e.State, ContextReadiness: e.ContextReadiness, Revision: e.Revision, CreatedAt: e.CreatedAt, UpdatedAt: e.UpdatedAt}
 }
 

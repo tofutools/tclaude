@@ -14,6 +14,12 @@ func applyAgentRelaunchPolicy(values map[string]any, desired model.DesiredConfig
 	if err != nil || profile == nil {
 		return desired, err
 	}
+	if profile.AutoCompactWindow != nil {
+		desired.AutoCompactWindow = *profile.AutoCompactWindow
+	}
+	if err := desired.AutoCompactWindow.Validate(desired.Harness); err != nil {
+		return desired, err
+	}
 	if profile.PeerMessaging != nil {
 		desired.PeerMessaging = *profile.PeerMessaging
 	}

@@ -138,6 +138,9 @@ func (s *Service) compileDefinition(ctx context.Context, draft DefinitionDraft, 
 		if err := validateTeam(*draft.Team); err != nil {
 			return model.DefinitionRevision{}, err
 		}
+		if err := s.validateTeamAutoCompactWindow(ctx, *draft.Team); err != nil {
+			return model.DefinitionRevision{}, err
+		}
 		if err := s.validateTeamPeerMessaging(ctx, *draft.Team); err != nil {
 			return model.DefinitionRevision{}, err
 		}

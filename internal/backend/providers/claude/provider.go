@@ -96,6 +96,7 @@ func (p *Provider) Capabilities() ports.ProviderCapabilities {
 func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 
 type evidence struct {
+	ContextUsage          *model.ContextUsage              `json:"context_usage,omitempty"`
 	HostSandbox           *host.SandboxChildArtifact       `json:"host_sandbox,omitempty"`
 	HostSandboxPolicyHash string                           `json:"host_sandbox_policy_hash,omitempty"`
 	NativeHome            string                           `json:"native_home,omitempty"`
@@ -346,7 +347,7 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 }
 
 func (p *prepared) runtime(terminal *host.Terminal) *Runtime {
-	return &Runtime{artifact: p.artifact, policyHash: p.describe.HostSandboxPolicyHash, nativeHome: p.nativeHome,
+	return &Runtime{autoCompactWindow: p.request.Spec.AutoCompactWindow, artifact: p.artifact, policyHash: p.describe.HostSandboxPolicyHash, nativeHome: p.nativeHome,
 		provider: p.provider, executionID: p.request.Spec.ExecutionID, attempt: p.request.Spec.Attempt,
 		terminal: terminal, nativeID: p.nativeID, intent: p.request.Intent, observations: p.request.Observations,
 		access: p.access, spool: p.spool,
@@ -364,6 +365,9 @@ func (p *prepared) runtimeEnvironment() []string {
 		"TCLAUDE_OBSERVATION_SPOOL=" + p.spool.Directory(),
 		"TCLAUDE_BACKEND_CREDENTIAL_FILE=",
 		"TCLAUDE_BACKEND_SOCKET=",
+	}
+	if p.request.Spec.AutoCompactWindow != "" {
+		result = append(result, model.AutoCompactWindowEnvVar+"="+string(p.request.Spec.AutoCompactWindow))
 	}
 	if p.access != nil {
 		result = append(result,
@@ -395,7 +399,8 @@ func (p *prepared) argv() []string {
 			"allowUnsandboxedCommands": false,
 			"filesystem":               map[string]any{"allowWrite": []string{p.request.Spec.WorkingDirectory}},
 		},
-		"hooks": p.hooks(),
+		"hooks":      p.hooks(),
+		"statusLine": map[string]any{"type": "command", "command": claudeStatusLineCommand()},
 	}
 	if !p.request.Spec.PeerMessaging {
 		settings["crossSessionInbound"] = "refuse"
@@ -533,7 +538,7 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 	} else if request.NativeGuidance != nil {
 		return ports.RecoveryResult{State: ports.RecoveryUnknown, Evidence: request.Evidence, Attempt: request.Attempt}, nil
 	}
-	runtime := &Runtime{artifact: recorded.HostSandbox, policyHash: recorded.HostSandboxPolicyHash, nativeHome: recorded.NativeHome, provider: p, executionID: request.ExecutionID, attempt: request.Attempt, terminal: terminal,
+	runtime := &Runtime{autoCompactWindow: request.Spec.AutoCompactWindow, contextUsage: recorded.ContextUsage, artifact: recorded.HostSandbox, policyHash: recorded.HostSandboxPolicyHash, nativeHome: recorded.NativeHome, provider: p, executionID: request.ExecutionID, attempt: request.Attempt, terminal: terminal,
 		nativeID: recorded.NativeID, intent: recorded.Intent, observations: request.Observations, access: recorded.Access, spool: spool,
 		contextReady: recorded.ContextReady, providerOrder: recorded.ProviderOrder, guidance: guidance, callback: callback}
 	observation, _ := runtime.Observe(ctx)
@@ -541,25 +546,27 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 }
 
 type Runtime struct {
-	artifact      *host.SandboxChildArtifact
-	policyHash    string
-	nativeHome    string
-	provider      *Provider
-	executionID   model.ExecutionID
-	attempt       model.AttemptGeneration
-	terminal      *host.Terminal
-	nativeID      string
-	intent        ports.StartIntent
-	observations  ports.PrimaryObservationSink
-	access        *ports.ActionCredentialReceipt
-	spool         *host.ObservationSpool
-	contextReady  bool
-	providerOrder string
-	guidance      *nativeguidance.Runtime
-	callback      *nativeguidance.CallbackResource
-	cleanupOnce   sync.Once
-	cleanupErr    error
-	mu            sync.Mutex
+	autoCompactWindow model.AutoCompactWindow
+	contextUsage      *model.ContextUsage
+	artifact          *host.SandboxChildArtifact
+	policyHash        string
+	nativeHome        string
+	provider          *Provider
+	executionID       model.ExecutionID
+	attempt           model.AttemptGeneration
+	terminal          *host.Terminal
+	nativeID          string
+	intent            ports.StartIntent
+	observations      ports.PrimaryObservationSink
+	access            *ports.ActionCredentialReceipt
+	spool             *host.ObservationSpool
+	contextReady      bool
+	providerOrder     string
+	guidance          *nativeguidance.Runtime
+	callback          *nativeguidance.CallbackResource
+	cleanupOnce       sync.Once
+	cleanupErr        error
+	mu                sync.Mutex
 }
 
 func (r *Runtime) ExecutionID() model.ExecutionID { return r.executionID }
@@ -721,7 +728,7 @@ func (r *Runtime) providerEvidenceUnlocked() (model.ProviderEvidence, error) {
 		value := r.callback.Evidence()
 		callbackEvidence = &value
 	}
-	return encodeEvidence(evidence{HostSandbox: r.artifact, HostSandboxPolicyHash: r.policyHash, NativeHome: r.nativeHome, ExecutionID: string(r.executionID), NativeID: r.nativeID, Terminal: &identity,
+	return encodeEvidence(evidence{ContextUsage: r.contextUsage, HostSandbox: r.artifact, HostSandboxPolicyHash: r.policyHash, NativeHome: r.nativeHome, ExecutionID: string(r.executionID), NativeID: r.nativeID, Terminal: &identity,
 		Intent: r.intent, ContextReady: r.contextReady, ProviderOrder: r.providerOrder,
 		Access: r.access, ObservationSpool: r.spool.Directory(), Callback: callbackEvidence})
 }
@@ -769,6 +776,15 @@ func (r *Runtime) consumeObservationEvents(ctx context.Context, transition *port
 			}
 			continue
 		}
+		if r.contextReady {
+			if usage := parseContextUsage(spooled.Payload, r.nativeID, r.autoCompactWindow, spooled.RecordedAt); usage != nil {
+				r.contextUsage = usage
+				if err := r.spool.Acknowledge(spooled.Order); err != nil {
+					return false, err
+				}
+				continue
+			}
+		}
 		var event sessionStartEvent
 		if err := json.Unmarshal(spooled.Payload, &event); err != nil || event.HookEventName != "SessionStart" || event.AgentID != "" {
 			if err := r.spool.Acknowledge(spooled.Order); err != nil {
@@ -815,6 +831,7 @@ func (r *Runtime) consumeObservationEvents(ctx context.Context, transition *port
 		if err := r.observations.ObservePrimaryContext(ctx, evidence); err != nil {
 			return false, err
 		}
+		r.contextUsage = nil
 		r.providerOrder = spooled.Order
 		if err := r.spool.Acknowledge(spooled.Order); err != nil {
 			return false, err
