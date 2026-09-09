@@ -31,6 +31,9 @@ func (s *Store) ImportConfigurations(ctx context.Context, w app.ConfigurationBun
 	if !errors.Is(err, sql.ErrNoRows) {
 		return app.ConfigurationImportResult{}, err
 	}
+	if err = requireImportedProfileAliases(ctx, tx, w.Profiles); err != nil {
+		return app.ConfigurationImportResult{}, err
+	}
 	result := app.ConfigurationImportResult{Profiles: []app.ConfigurationProfileResult{}}
 	for _, profile := range w.Profiles {
 		if profile.Profile.Archived {
