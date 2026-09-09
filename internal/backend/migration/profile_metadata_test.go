@@ -25,8 +25,8 @@ func profileMetadataBundle(t *testing.T) Bundle {
  ALTER TABLE spawn_profiles ADD COLUMN agent_name TEXT;
  ALTER TABLE spawn_profiles ADD COLUMN initial_message TEXT;
  ALTER TABLE spawn_profiles ADD COLUMN startup_context TEXT;
- ALTER TABLE spawn_profiles ADD COLUMN disabled TEXT;
- ALTER TABLE spawn_profiles ADD COLUMN disabled_reason TEXT;
+
+
  INSERT INTO spawn_profiles(id,name,permission_overrides,environment_json,role_refs,effort,agent_name,initial_message,startup_context,disabled)
  VALUES('7','safe','[]','[]','[]','high','Imported writer','saved-private-brief','saved-private-context','1');
  UPDATE spawn_profiles SET disabled_reason='Provider maintenance',role='writer',descr='Drafts documentation' WHERE id='7';
@@ -144,4 +144,18 @@ func TestImportInvalidUTF8StartupRefusesPublication(t *testing.T) {
 	require.ErrorContains(t, err, "source text is not valid UTF-8")
 	_, err = os.Stat(destination)
 	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestImportRequiresProfileAvailabilityColumns(t *testing.T) {
+	for _, column := range []string{"disabled", "disabled_reason"} {
+		t.Run(column, func(t *testing.T) {
+			bundle := profileMetadataBundle(t)
+			alterFixture(t, bundle, "ALTER TABLE spawn_profiles DROP COLUMN "+column)
+			inspection, err := Inspect(context.Background(), bundle)
+			require.NoError(t, err)
+			require.False(t, inspection.Valid, inspection.Diagnostics)
+			_, err = ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: filepath.Join(t.TempDir(), "target.db")})
+			require.Error(t, err)
+		})
+	}
 }

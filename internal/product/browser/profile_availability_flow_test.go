@@ -1,6 +1,7 @@
 package browser
 
 import (
+	"encoding/json"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/internal/backend/app"
 	"github.com/tofutools/tclaude/internal/backend/model"
@@ -21,6 +22,19 @@ func TestBrowserConfigurationAvailabilityRetainsReasonAndDefault(t *testing.T) {
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustWait(`() => !document.querySelector('#editor').open && !submitting`)
 	page.MustElementR("#configuration-list p", "Disabled for new agents")
+
+	page.MustElementR("#configuration-list button", "^Export configurations$").MustClick()
+	page.MustElementR("dialog[aria-label='Export configurations']", "Saved worker · Disabled · Provider maintenance")
+	page.MustElementR("dialog[aria-label='Export configurations'] button", "^Cancel$").MustClick()
+	bundle, _ := json.Marshal(app.ConfigurationBundle{Format: app.ConfigurationBundleFormat, Version: 1, Profiles: []app.ConfigurationBundleEntry{{Key: "source", Name: "Previewed worker", Desired: profile.Revision.Desired, Disabled: true, DisabledReason: "Provider maintenance"}}})
+	page.MustElementR("#configuration-list button", "^Import configurations$").MustClick()
+	page.MustElement("[aria-label='Configuration bundle']").MustInput(string(bundle))
+	page.MustElementR("dialog[aria-label='Import configurations'] button", "^Preview$").MustClick()
+	page.MustElementR("dialog[aria-label='Import configurations']", "Previewed worker · Disabled · Provider maintenance")
+	page.MustElementR("dialog[aria-label='Import configurations']", "also replaces its enabled/disabled state")
+	// The draft is deliberately discarded, never published.
+	page.MustEval(`() => window.confirm=()=>true`)
+	page.MustElementR("dialog[aria-label='Import configurations'] button", "^Cancel$").MustClick()
 	page.MustElementR("#configuration-list button", "^Create from global$").MustClick()
 	page.MustElement("#editor [name=name]").MustInput("Blocked worker")
 	page.MustElement("#editor button[type=submit]").MustClick()
