@@ -2,10 +2,13 @@
 const AUTHORITY_ACTIONS=["identity.read", "status.read", "inbox.read", "inbox.mark_read", "message.send", "execution.launch", "execution.interact", "execution.file.stage","execution.file.read", "execution.attach", "execution.stop", "execution.context.change", "agent.configuration.update", "agent.retire", "agent.reactivate", "group.membership.manage", "group.members.create", "group.disband", "attachment.read", "history.read", "history.refresh", "usage.read", "usage.refresh", "activity.read", "history.metadata.set", "workspace.register", "workspace.create", "workspace.inspect", "workspace.remove", "workspace.restore", "work.start", "work.evidence.record", "work.decide", "work.cancel", "work.resolve", "shell.start", "definition.read", "definition.manage", "program_profile.manage", "program_profile.read", "program.execute", "automation.manage", "automation.read", "automation.run"];
 class AuthorityWorkspace {
  constructor({host,api,el,button,edit,getSnapshot,report}){Object.assign(this,{host,api,el,button,edit,getSnapshot});document.getElementById('new-grant').onclick=()=>this.editGrant().catch(report)}
- async render(){this.state=await this.api('/v2/authority');this.host.replaceChildren();const toolbar=this.el('div',undefined,'toolbar');toolbar.append(this.button('Create role',()=>this.editRole()));this.host.append(toolbar);
+ async render(){this.state=await this.api('/v2/authority');this.host.replaceChildren();const toolbar=this.el('div',undefined,'toolbar');toolbar.append(this.button('Create role',()=>this.editRole()),this.button('Deny permission',()=>this.editDenial()));this.host.append(toolbar);
   const grants=this.el('section');grants.append(this.el('h2','Direct grants'));
   for(const grant of this.state.Grants||[]){const card=this.el('article',undefined,'card');card.dataset.grant=grant.ID;card.append(this.el('strong',grant.Action),this.el('p',this.describe(grant.Subject)+' → '+this.describe(grant.Resource)),this.el('p',grant.ID+' · revision '+grant.Revision,'muted'),this.el('p',this.boundsText(grant.Bounds),'muted'));if(grant.ExpiresAt)card.append(this.el('p','Expires '+new Date(grant.ExpiresAt).toLocaleString()));card.append(this.button('Edit grant',()=>this.editGrant(grant)),this.button('Revoke grant',()=>this.confirm('Revoke grant','Revokes '+grant.Action+' for '+this.describe(grant.Subject),async()=>{await this.api('/v2/authority/grants/'+encodeURIComponent(grant.ID),{expected_revision:grant.Revision},'DELETE');await this.render()})));grants.append(card)}
   if(!this.state.Grants?.length)grants.append(this.el('p','No direct grants.'));this.host.append(grants);
+  const denials=this.el('section');denials.append(this.el('h2','Denied actions'));
+  for(const denial of this.state.Denials||[]){const card=this.el('article',undefined,'card');card.dataset.denial=denial.ID;card.append(this.el('strong',denial.Action),this.el('p',this.describe(denial.Subject)),this.el('p','Denied on all resources, including grants from roles and group ownership.'),this.button('Edit denial',()=>this.editDenial(denial)),this.button('Remove denial',()=>this.confirm('Remove denial','Restore evaluation of current grants for '+this.describe(denial.Subject),async()=>{await this.api('/v2/authority/denials/'+encodeURIComponent(denial.ID),{expected_revision:denial.Revision},'DELETE');await this.render()})));denials.append(card)}
+  if(!this.state.Denials?.length)denials.append(this.el('p','No explicit denials.'));this.host.append(denials);
   const roles=this.el('section');roles.append(this.el('h2','Roles and assignments'));
   for(const role of this.state.Roles||[]){const card=this.el('article',undefined,'card');card.dataset.role=role.ID;card.append(this.el('h3',role.Name),this.el('p',role.Description||''),this.el('pre',role.Brief||''),this.el('p',(role.Actions||[]).join(', ')),this.el('p',role.ID+' · revision '+role.Revision,'muted'));
    if(role.ID==='group_owner')card.append(this.el('p','Owner assignments are managed through Group settings.'));
@@ -46,6 +49,10 @@ class AuthorityWorkspace {
   for(const r of rules||[])add('automation_rule','AutomationRuleID',r.ID,'Automation: '+r.Name+' · '+r.ID);
   return out
  }
+ async editDenial(denial){this.edit(denial?'Edit denial':'Deny permission',[
+  {name:'subject',label:'Agent or execution',options:this.subjects(),value:denial?JSON.stringify(denial.Subject):undefined},
+  {name:'action',label:'Denied action on all resources',options:AUTHORITY_ACTIONS,value:denial?.Action}
+ ],async f=>{await this.api('/v2/authority/denials/'+encodeURIComponent(denial?.ID||f.requestID),{subject:JSON.parse(f.subject),action:f.action,expected_revision:denial?.Revision||0},'PUT');await this.render()},{skipUnchanged:!!denial})}
  async editGrant(grant){this.edit(grant?'Edit direct grant':'Grant permission',[
   {name:'subject',label:'Recipient of authority',options:this.subjects(),value:grant?JSON.stringify(grant.Subject):undefined},
   {name:'action',label:'Allowed action',options:AUTHORITY_ACTIONS,value:grant?.Action},

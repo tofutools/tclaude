@@ -16,6 +16,25 @@ import (
 
 func (s *Store) AuthorityState(ctx context.Context) (app.AuthorityStateResult, error) {
 	var out app.AuthorityStateResult
+	denialRows, err := s.db.QueryContext(ctx, denialSelect+` ORDER BY id`)
+	if err != nil {
+		return out, err
+	}
+	for denialRows.Next() {
+		denial, err := scanDenial(denialRows)
+		if err != nil {
+			denialRows.Close()
+			return out, err
+		}
+		out.Denials = append(out.Denials, denial)
+	}
+	if err := denialRows.Err(); err != nil {
+		denialRows.Close()
+		return out, err
+	}
+	if err := denialRows.Close(); err != nil {
+		return out, err
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT id,subject_kind,subject_id,action,resource_kind,resource_id,bounds_json,expires_at,revision,created_at,updated_at FROM authority_grants ORDER BY id`)
 	if err != nil {
 		return out, err
@@ -324,6 +343,9 @@ func authorizeTx(ctx context.Context, q queryer, request model.AuthorityRequest,
 			decision.Allowed, decision.SourceKind, decision.SourceID = true, model.AuthorityDefault, "automation:"+request.Principal.AutomationRun
 			return decision, nil
 		}
+	}
+	if denied, matched, err := deniedAuthority(ctx, q, subject, request); err != nil || matched {
+		return denied, err
 	}
 	if defaultAuthority(request.Principal, request.Action, request.Resource) && request.RequestedConfiguration == nil && request.RequestedEnvironment == nil && request.RequestedHostSandbox == nil {
 		decision.Allowed, decision.SourceKind, decision.SourceID = true, model.AuthorityDefault, "execution_self"

@@ -28,6 +28,8 @@ type Store interface {
 	SetGroupOwners(context.Context, model.GroupID, []model.AgentID, model.ConfigurationBounds, model.Revision, time.Time) (model.Group, error)
 
 	AuthorityState(context.Context) (AuthorityStateResult, error)
+	PutDenial(context.Context, model.AuthorityDenial, model.Revision) (model.AuthorityDenial, error)
+	DeleteDenial(context.Context, model.DenialID, model.Revision) error
 	PutGrant(context.Context, model.AuthorityGrant, model.Revision) (model.AuthorityGrant, error)
 	DeleteGrant(context.Context, model.GrantID, model.Revision) error
 	PutRole(context.Context, model.Role, model.Revision) (model.Role, error)

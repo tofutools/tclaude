@@ -151,6 +151,7 @@ type RoleAssignment struct {
 type AuthoritySourceKind string
 
 const (
+	AuthorityDenied  AuthoritySourceKind = "deny"
 	AuthorityDefault AuthoritySourceKind = "default"
 	AuthorityDirect  AuthoritySourceKind = "grant"
 	AuthorityRole    AuthoritySourceKind = "role"
