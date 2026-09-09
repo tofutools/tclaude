@@ -29,7 +29,7 @@ func profileMetadataBundle(t *testing.T) Bundle {
 
  INSERT INTO spawn_profiles(id,name,permission_overrides,environment_json,role_refs,effort,agent_name,initial_message,startup_context,disabled)
  VALUES('7','safe','[]','[]','[]','high','Imported writer','saved-private-brief','saved-private-context','1');
- UPDATE spawn_profiles SET disabled_reason='Provider maintenance',role='writer',descr='Drafts documentation' WHERE id='7';
+ UPDATE spawn_profiles SET operator_only=1,disabled_reason='Provider maintenance',role='writer',descr='Drafts documentation' WHERE id='7';
  ALTER TABLE agents ADD COLUMN effort TEXT;
  UPDATE agents SET effort='low',initial_spawn_config='{"effort":"medium","harness":"codex","model":"fixture"}';
  `)
@@ -50,6 +50,7 @@ func TestImportProfileMetadataRoundTripWithoutActivation(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, profiles, 1)
 	require.True(t, profiles[0].Disabled)
+	require.True(t, profiles[0].OperatorOnly)
 	require.False(t, profiles[0].Archived)
 	require.Equal(t, "Provider maintenance", profiles[0].DisabledReason)
 	selected, err := service.GetConfigurationProfile(ctx, model.OperatorPrincipal(), model.ConfigurationProfileRef{ProfileID: profiles[0].ID})
@@ -151,7 +152,7 @@ func TestImportInvalidUTF8StartupRefusesPublication(t *testing.T) {
 }
 
 func TestImportRequiresProfileAvailabilityColumns(t *testing.T) {
-	for _, column := range []string{"disabled", "disabled_reason"} {
+	for _, column := range []string{"disabled", "disabled_reason", "operator_only"} {
 		t.Run(column, func(t *testing.T) {
 			bundle := profileMetadataBundle(t)
 			alterFixture(t, bundle, "ALTER TABLE spawn_profiles DROP COLUMN "+column)

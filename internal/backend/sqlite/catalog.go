@@ -63,6 +63,9 @@ func saveConfigurationProfileTx(ctx context.Context, tx *sql.Tx, w app.Configura
 	if current.Revision != 0 && !allowArchived {
 		w.Profile.Disabled, w.Profile.DisabledReason = current.Disabled, current.DisabledReason
 	}
+	if !w.OperatorOnlySet && !allowArchived {
+		w.Profile.OperatorOnly = current.OperatorOnly
+	}
 	if !w.AliasesSet {
 		w.Profile.Aliases = current.Aliases
 	}

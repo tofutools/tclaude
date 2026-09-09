@@ -110,11 +110,12 @@ func (h *Handler) registerConfigurationCatalog(catalog app.ConfigurationCatalogA
 			Options          *model.ConfigurationOptions          `json:"options"`
 			Startup          *model.ProfileStartup                `json:"startup"`
 			Aliases          *[]string                            `json:"aliases"`
+			OperatorOnly     *bool                                `json:"operator_only"`
 		}
 		if !decodeRequest(w, r, &body) {
 			return
 		}
-		result, err := catalog.SaveConfigurationProfile(r.Context(), app.SaveConfigurationProfileRequest{Context: body.context(principal), ID: body.ID, RevisionID: body.RevisionID, ExpectedRevision: body.ExpectedRevision, Name: body.Name, Desired: body.Desired, Options: body.Options, Startup: body.Startup, Aliases: body.Aliases})
+		result, err := catalog.SaveConfigurationProfile(r.Context(), app.SaveConfigurationProfileRequest{Context: body.context(principal), ID: body.ID, RevisionID: body.RevisionID, ExpectedRevision: body.ExpectedRevision, Name: body.Name, Desired: body.Desired, Options: body.Options, Startup: body.Startup, Aliases: body.Aliases, OperatorOnly: body.OperatorOnly})
 		if err != nil {
 			applicationError(w, err)
 			return

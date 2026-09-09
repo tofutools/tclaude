@@ -14,6 +14,7 @@ type ConfigurationProfileRef struct {
 }
 
 type ConfigurationProfile struct {
+	OperatorOnly      bool     `json:",omitempty"`
 	Aliases           []string `json:",omitempty"`
 	Disabled          bool     `json:",omitempty"`
 	DisabledReason    string   `json:",omitempty"`

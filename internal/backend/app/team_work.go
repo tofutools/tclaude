@@ -77,8 +77,30 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 		if err != nil {
 			return TeamDeploymentResult{}, err
 		}
+		if !OperatorProfileCaller(req.Context.Principal) {
+			configurationStore, ok := s.store.(GroupConfigurationStore)
+			if !ok {
+				return TeamDeploymentResult{}, ErrUnsupported
+			}
+			configuration, readErr := configurationStore.GroupConfiguration(ctx, target.GroupID)
+			if readErr != nil {
+				return TeamDeploymentResult{}, readErr
+			}
+			if configuration.Profile != nil {
+				profile, readErr := s.store.ConfigurationProfile(ctx, configuration.Profile.ProfileID, "")
+				if readErr != nil {
+					return TeamDeploymentResult{}, readErr
+				}
+				if err := s.requireProfileCreation(ctx, req.Context.Principal, profile.Profile); err != nil {
+					return TeamDeploymentResult{}, err
+				}
+			}
+		}
 	}
 	if err = s.requireAvailableGroupCapacity(ctx, group, len(revision.Team.Members)); err != nil {
+		return TeamDeploymentResult{}, err
+	}
+	if err := s.requireProfileCreation(ctx, req.Context.Principal, model.ConfigurationProfile{}); err != nil {
 		return TeamDeploymentResult{}, err
 	}
 	memberStartups := make(map[string]model.ProfileStartup)
@@ -92,6 +114,9 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 			profile, readErr := s.store.ConfigurationProfile(ctx, spec.ProfileID, "")
 			if readErr != nil {
 				return TeamDeploymentResult{}, readErr
+			}
+			if err := s.requireProfileCreation(ctx, req.Context.Principal, profile.Profile); err != nil {
+				return TeamDeploymentResult{}, err
 			}
 			if err := ConfigurationProfileEnabled(profile.Profile); err != nil {
 				return TeamDeploymentResult{}, err

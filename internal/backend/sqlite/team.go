@@ -42,6 +42,17 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 			return model.TeamDeployment{}, false, app.ErrUnauthorized
 		}
 	}
+	if deployment.TargetKind == model.TeamTargetExistingGroup && !app.OperatorProfileCaller(principal) {
+		configuration, readErr := readGroupConfiguration(ctx, tx, group.ID)
+		if readErr != nil {
+			return model.TeamDeployment{}, false, readErr
+		}
+		if configuration.Profile != nil {
+			if err := requireProfileCreationTx(ctx, tx, principal, configuration.Profile.ProfileID); err != nil {
+				return model.TeamDeployment{}, false, err
+			}
+		}
+	}
 	if (len(deployment.RolePins) != 0 || len(assignments) != 0) && principal.Kind != model.PrincipalOperator {
 		return model.TeamDeployment{}, false, app.ErrUnauthorized
 	}
@@ -60,6 +71,13 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 		pins[pin.RoleID] = pin
 	}
 	for _, agent := range agents {
+		var selected model.ConfigurationProfileID
+		if agent.ConfigurationProfile != nil {
+			selected = agent.ConfigurationProfile.ProfileID
+		}
+		if err := requireProfileCreationTx(ctx, tx, principal, selected); err != nil {
+			return model.TeamDeployment{}, false, err
+		}
 		if agent.Lifecycle == "" {
 			agent.Lifecycle = model.AgentActive
 		}

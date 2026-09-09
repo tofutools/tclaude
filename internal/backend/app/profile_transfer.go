@@ -21,6 +21,7 @@ type ConfigurationBundle struct {
 	Profiles []ConfigurationBundleEntry `json:"profiles"`
 }
 type ConfigurationBundleEntry struct {
+	OperatorOnly   bool                        `json:"operator_only,omitempty"`
 	Options        *model.ConfigurationOptions `json:"options,omitempty"`
 	Aliases        []string                    `json:"aliases,omitempty"`
 	Disabled       bool                        `json:"disabled,omitempty"`
@@ -139,6 +140,8 @@ func (s *Service) ImportConfigurations(ctx context.Context, req ImportConfigurat
 			return ConfigurationImportResult{}, err
 		}
 		w.Profile.Archived = entry.Archived
+		w.Profile.OperatorOnly = entry.OperatorOnly
+		w.OperatorOnlySet = true
 		w.Profile.Disabled = entry.Disabled
 		w.Profile.DisabledReason = entry.DisabledReason
 		write.Profiles = append(write.Profiles, w)

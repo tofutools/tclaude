@@ -30,6 +30,7 @@ type ConfigurationProfileRequestStore interface {
 }
 
 type ConfigurationProfileWrite struct {
+	OperatorOnlySet    bool
 	AliasesSet         bool
 	Profile            model.ConfigurationProfile
 	Revision           model.ConfigurationProfileRevision
@@ -45,6 +46,7 @@ type ConfigurationProfileResult struct {
 }
 
 type SaveConfigurationProfileRequest struct {
+	OperatorOnly     *bool
 	Options          *model.ConfigurationOptions
 	Aliases          *[]string
 	Startup          *model.ProfileStartup
@@ -153,20 +155,23 @@ func prepareConfigurationProfile(req SaveConfigurationProfileRequest, at time.Ti
 	}
 	digest := sha256.Sum256(payload)
 	input, _ := json.Marshal(struct {
-		ID         model.ConfigurationProfileID
-		RevisionID model.ConfigurationProfileRevisionID
-		Name       string
-		Desired    model.DesiredConfiguration
-		Expected   model.Revision
-		Startup    *model.ProfileStartup       `json:",omitempty"`
-		Aliases    *[]string                   `json:",omitempty"`
-		Options    *model.ConfigurationOptions `json:",omitempty"`
-	}{req.ID, req.RevisionID, req.Name, req.Desired, req.ExpectedRevision, req.Startup, req.Aliases, req.Options})
+		ID           model.ConfigurationProfileID
+		RevisionID   model.ConfigurationProfileRevisionID
+		Name         string
+		Desired      model.DesiredConfiguration
+		Expected     model.Revision
+		Startup      *model.ProfileStartup       `json:",omitempty"`
+		Aliases      *[]string                   `json:",omitempty"`
+		Options      *model.ConfigurationOptions `json:",omitempty"`
+		OperatorOnly *bool                       `json:",omitempty"`
+	}{req.ID, req.RevisionID, req.Name, req.Desired, req.ExpectedRevision, req.Startup, req.Aliases, req.Options, req.OperatorOnly})
 	fingerprint := sha256.Sum256(input)
 	now := at.UTC()
+	operatorOnly := req.OperatorOnly != nil && *req.OperatorOnly
 	return ConfigurationProfileWrite{
+		OperatorOnlySet:  req.OperatorOnly != nil,
 		AliasesSet:       req.Aliases != nil,
-		Profile:          model.ConfigurationProfile{Aliases: aliases, ID: req.ID, Name: req.Name, CurrentRevisionID: req.RevisionID},
+		Profile:          model.ConfigurationProfile{OperatorOnly: operatorOnly, Aliases: aliases, ID: req.ID, Name: req.Name, CurrentRevisionID: req.RevisionID},
 		Revision:         model.ConfigurationProfileRevision{Ref: model.ConfigurationProfileRef{ProfileID: req.ID, RevisionID: req.RevisionID, ContentHash: hex.EncodeToString(digest[:])}, Desired: req.Desired, Options: req.Options, Startup: req.Startup, CreatedAt: now},
 		ExpectedRevision: req.ExpectedRevision, RequestID: req.Context.RequestID, RequestFingerprint: hex.EncodeToString(fingerprint[:]), At: now,
 	}, nil

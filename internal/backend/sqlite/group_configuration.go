@@ -183,6 +183,9 @@ func (s *Store) AdmitGroupMember(ctx context.Context, admission app.GroupMemberA
 	if err = json.Unmarshal(data, &revision); err != nil {
 		return out, err
 	}
+	if err := requireProfileCreationTx(ctx, tx, in.Context.Principal, profile.ID); err != nil {
+		return out, err
+	}
 	expected := revision.Desired
 	if revision.Options != nil || in.ConfigurationOverrides != nil {
 		if admission.Configuration.Selected != revision.Ref {

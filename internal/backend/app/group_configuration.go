@@ -119,6 +119,9 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	if profile.Profile.Archived || profile.Revision.Ref != *current {
 		return GroupMemberResult{}, ErrConflict
 	}
+	if err := s.requireProfileCreation(ctx, in.Context.Principal, profile.Profile); err != nil {
+		return GroupMemberResult{}, err
+	}
 	configuration, err := s.resolveProfileConfigurationWithOverrides(ctx, profile, in.ConfigurationOverrides)
 	desired, ref := configuration.Desired, current
 	if err != nil {
