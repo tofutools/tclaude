@@ -9,11 +9,12 @@ import (
 )
 
 type agentRelaunchConfiguration struct {
-	Version  int                   `json:"version"`
-	Tools    *model.ToolGovernance `json:"tools"`
-	Model    *string               `json:"model_id"`
-	Effort   *string               `json:"effort"`
-	Approval *string               `json:"approval_policy"`
+	ContextWindowSize *int64                `json:"context_window_size"`
+	Version           int                   `json:"version"`
+	Tools             *model.ToolGovernance `json:"tools"`
+	Model             *string               `json:"model_id"`
+	Effort            *string               `json:"effort"`
+	Approval          *string               `json:"approval_policy"`
 }
 
 func decodeAgentRelaunchConfiguration(values map[string]any) (*agentRelaunchConfiguration, error) {
