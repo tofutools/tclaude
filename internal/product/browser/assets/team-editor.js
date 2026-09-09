@@ -136,14 +136,15 @@ class TeamEditor {
   member(original) {
     const m = original || {Key: '', Name: '', Desired: {}, Roles: [], Required: true, Owner: false, BriefingIDs: []}, desired = m.Desired;
     let environment, sandbox;
-    const overrideProperties = {harness:"Harness",model:"Model",effort:"Effort",tool_governance:"ToolGovernance",fast_mode:"FastMode",approval:"Approval",sandbox:"Sandbox"};
+    const overrideProperties = {harness:"Harness",model:"Model",effort:"Effort",tool_governance:"ToolGovernance",fast_mode:"FastMode",auto_review:"AutoReview",approval:"Approval",sandbox:"Sandbox"};
     const fields = [
       {key: 'key', label: 'Stable member key', value: m.Key, required: true}, {key: 'name', label: 'Member name', value: m.Name, required: true},
       {key:'role_label',label:'Display role',value:m.Labels?.Role||''},
       {key:'description',label:'Description',text:true,value:m.Labels?.Description||''},
       {key: 'profile', label: 'Saved configuration', options: [opt('', 'Custom settings'), ...this.configurations.map(c => opt(c.Profile.ID, ProfilePresentation.label(c.Profile)))], value: m.ProfileID || ''},
       {key: 'harness', label: 'Harness', options: [opt('', 'Choose harness'), ...['claude', 'codex', 'opencode', 'copilot'].map(v => opt(v))], value: desired.Harness, required: true},
-      {key:'fast_mode',label:'Codex fast mode',options:launchFastModeChoices().map(v=>opt(v.value,v.label)),value:desired.FastMode||'',required:false},
+      {key:'auto_review',label:'Codex approval reviewer',options:launchAutoReviewChoices().map(v=>opt(v.value,v.label)),value:desired.AutoReview?'on':'',required:false},
+ {key:'fast_mode',label:'Codex fast mode',options:launchFastModeChoices().map(v=>opt(v.value,v.label)),value:desired.FastMode||'',required:false},
       {key:'tool_governance',label:'OpenCode tool governance',options:launchToolGovernanceChoices().map(v=>opt(v.value,v.label)),value:desired.ToolGovernance||'',required:false},
       {key: 'effort', label: 'Requested native effort / variant (optional)', value: desired.Effort || ''},
       {key: 'model', label: 'Model', value: desired.Model, required: true}, {key: 'cwd', label: 'Configuration working directory (optional; deployment uses its selected workspace)', value: desired.WorkingDirectory, required: false},
@@ -161,8 +162,8 @@ class TeamEditor {
       if (this.draft.Team.Members.some(x => x.Key === f.key && x.Key !== original?.Key)) throw new Error('Member keys must be unique.');
       if (f.effort && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(f.effort)) throw new Error('Requested effort must be a lowercase native level or variant, at most 64 characters.');
       const overrides = {};
-      if(f.profile)for(const [key,property] of Object.entries(overrideProperties))if(f['override_'+key])overrides[property]=f[key];
-      const member = {...m, Overrides:Object.keys(overrides).length ? overrides : undefined, Key: f.key, Name: f.name, Labels:{Role:f.role_label,Description:f.description}, ProfileID: f.profile || undefined, Desired: f.profile ? {} : {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, ToolGovernance:f.tool_governance||undefined,FastMode:f.fast_mode||undefined, WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, HostSandbox: f.resolvedSandbox||undefined, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
+      if(f.profile)for(const [key,property] of Object.entries(overrideProperties))if(f['override_'+key])overrides[property]=key==='auto_review'?f[key]==='on':f[key];
+      const member = {...m, Overrides:Object.keys(overrides).length ? overrides : undefined, Key: f.key, Name: f.name, Labels:{Role:f.role_label,Description:f.description}, ProfileID: f.profile || undefined, Desired: f.profile ? {} : {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, ToolGovernance:f.tool_governance||undefined,FastMode:f.fast_mode||undefined,AutoReview:f.auto_review==='on', WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, HostSandbox: f.resolvedSandbox||undefined, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
       this.change(d => {
         const i = d.Team.Members.findIndex(x => x.Key === original?.Key); if (i < 0) d.Team.Members.push(member); else d.Team.Members[i] = member;
         if (original && original.Key !== f.key) { for (const w of d.Team.Waves) w.MemberKeys = w.MemberKeys.map(k => k === original.Key ? f.key : k); for (const b of d.Team.Briefings) b.MemberKeys = (b.MemberKeys || []).map(k => k === original.Key ? f.key : k); }
@@ -191,13 +192,14 @@ class TeamEditor {
     select.onchange = () => {
       if (select.value === '') return;
       const d = this.configurations[Number(select.value)].Revision.Desired;
-      for (const [key, property] of Object.entries({harness: 'Harness', model: 'Model', effort: 'Effort',tool_governance:'ToolGovernance',fast_mode:'FastMode', cwd: 'WorkingDirectory', approval: 'Approval', sandbox: 'Sandbox'})) form.elements[key].value = d[property] || '';
+      for (const [key, property] of Object.entries({harness: 'Harness', model: 'Model', effort: 'Effort',tool_governance:'ToolGovernance',fast_mode:'FastMode',auto_review:'AutoReview', cwd: 'WorkingDirectory', approval: 'Approval', sandbox: 'Sandbox'})) form.elements[key].value = launchSettingValue(key,d[property]);
       showEnvironment(d.Environment);
       showSandbox(d.HostSandbox);
       form.elements.harness.dispatchEvent(new Event('change', {bubbles: true}));
       this.unapplied = true;
     };
-    const syncFast=attachFastModeControl(form,()=>!form.elements.profile.value||form.elements.override_fast_mode.checked);
+    const syncReview=attachAutoReviewControl(form,()=>!form.elements.profile.value||form.elements.override_auto_review.checked);
+ const syncFast=attachFastModeControl(form,()=>!form.elements.profile.value||form.elements.override_fast_mode.checked);
     const syncTools=attachToolGovernanceControl(form,()=>!form.elements.profile.value||form.elements.override_tool_governance.checked);
     let updatingProfile=false;
     const updateProfile = (initialize=false) => {
@@ -208,17 +210,17 @@ class TeamEditor {
       const profile = this.configurations.find(c => c.Profile.ID === form.elements.profile.value);
       if (profile) {
         const d = profile.Revision.Desired;
-        for (const [key, property] of Object.entries({harness:'Harness',model:'Model',effort:'Effort',tool_governance:'ToolGovernance',fast_mode:'FastMode',cwd:'WorkingDirectory',approval:'Approval',sandbox:'Sandbox'})) form.elements[key].value = d[property] || '';
-        for(const [key,value] of Object.entries(values))form.elements[key].value=value??'';
-        if(form.elements.harness.value!==d.Harness)for(const key of ['model','effort','fast_mode','tool_governance'])if(!form.elements['override_'+key].checked)form.elements[key].value='';
+        for (const [key, property] of Object.entries({harness:'Harness',model:'Model',effort:'Effort',tool_governance:'ToolGovernance',fast_mode:'FastMode',auto_review:'AutoReview',cwd:'WorkingDirectory',approval:'Approval',sandbox:'Sandbox'})) form.elements[key].value = launchSettingValue(key,d[property]);
+        for(const [key,value] of Object.entries(values))form.elements[key].value=launchSettingValue(key,value);
+        if(form.elements.harness.value!==d.Harness)for(const key of ['model','effort','auto_review','fast_mode','tool_governance'])if(!form.elements['override_'+key].checked)form.elements[key].value='';
         showEnvironment(d.Environment); showSandbox(d.HostSandbox);
         form.elements.harness.dispatchEvent(new Event('change', {bubbles:true}));
       }
-      for (const key of ['harness','model','effort','fast_mode','tool_governance','cwd','approval','sandbox']) form.elements[key].disabled = selected && !form.elements['override_'+key]?.checked;
+      for (const key of ['harness','model','effort','auto_review','fast_mode','tool_governance','cwd','approval','sandbox']) form.elements[key].disabled = selected && !form.elements['override_'+key]?.checked;
       for(const key of Object.keys(overrideProperties))form.elements['override_'+key].parentElement.hidden=!selected;
       environmentField.disabled = selected; sandboxField.disabled = selected;
       select.disabled = selected;
-      syncTools();syncFast();
+      syncTools();syncFast();syncReview();
       updatingProfile=false;
     };
     form.elements.harness.addEventListener('change',()=>{if(form.elements.profile.value)updateProfile();});

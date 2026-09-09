@@ -28,7 +28,7 @@ var RequiredTables = map[string]TableSpec{
 	"agent_group_permissions":         {Columns: []string{"group_id", "slug", "scope_json"}, Key: []string{"group_id", "slug"}},
 	"agent_sudo_grants":               {Columns: []string{"id", "agent_id", "slug", "expires_at", "revoked_at", "scope_json"}, Key: []string{"id"}},
 	"roles":                           {Columns: []string{"id", "name", "permissions", "spawn_profile_id"}, Key: []string{"id"}},
-	"spawn_profiles":                  {Columns: []string{"id", "name", "permission_overrides", "environment_json", "role_refs", "disabled", "disabled_reason", "fast_mode"}, Key: []string{"id"}},
+	"spawn_profiles":                  {Columns: []string{"id", "name", "permission_overrides", "environment_json", "role_refs", "disabled", "disabled_reason", "fast_mode", "auto_review"}, Key: []string{"id"}},
 	"spawn_profile_aliases":           {Columns: []string{"alias", "profile_id"}, Key: []string{"alias"}},
 	"sandbox_profiles":                {Columns: []string{"id", "name", "filesystem_json", "environment_json", "includes_json"}, Key: []string{"id"}},
 	"group_templates":                 {Columns: []string{"id", "name", "process", "rhythms", "owner_scopes_json"}, Key: []string{"id"}},

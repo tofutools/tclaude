@@ -49,9 +49,10 @@ function edit(title,fields,save,{skipUnchanged=false}={}){
   if(field.sandboxSelection){field.control=new SandboxSelectionControl(api,field.value);input=field.control.host;}
   else if(field.options){input=el('select');for(const option of field.options){const o=el('option',typeof option==='string'?option:option.label);o.value=typeof option==='string'?option:option.value;input.append(o)}}
   else input=el(field.multiline?'textarea':'input');
-  if(field.file)input.type='file';
+  if(field.file)input.type='file';else if(field.type==='checkbox')input.type='checkbox';
   if(field.multiple)input.multiple=true;input.name=field.name;input.setAttribute('aria-label',field.label);
   if(field.options&&field.value!==undefined){const values=field.multiple?(field.value||[]):[String(field.value)];for(const value of values){if(!Array.from(input.options).some(o=>o.value===String(value))){const o=el('option','Retained: '+value);o.value=value;input.append(o)}}if(field.multiple){for(const o of input.options)o.selected=values.includes(o.value)}else input.value=field.value}
+  else if(field.type==='checkbox')input.checked=field.value===true;
   else if(!field.file&&!field.options&&!field.sandboxSelection)input.value=field.value??'';
   input.required=field.required!==false;label.append(input);if(field.sandboxSelection)label.append(field.control.status);$('editor-fields').append(label);
   if(field.help){const help=el('pre',field.help);help.id='editor-help-'+field.name;input.setAttribute('aria-describedby',help.id);label.append(help)}
@@ -59,7 +60,8 @@ function edit(title,fields,save,{skipUnchanged=false}={}){
  }
  attachToolGovernanceControl($('editor-fields'));
  attachFastModeControl($('editor-fields'));
- const readForm=()=>{const data=new FormData($('editor-form')),form=Object.fromEntries(data);for(const field of fields){if(field.multiple)form[field.name]=data.getAll(field.name);if(field.environment||field.environmentSets||field.sandboxPolicies)form[field.name]=field.control.read();}return form};const initial=JSON.stringify(readForm());
+ attachAutoReviewControl($('editor-fields'));
+ const readForm=()=>{const data=new FormData($('editor-form')),form=Object.fromEntries(data);for(const field of fields){if(field.type==='checkbox')form[field.name]=$('editor-form').elements.namedItem(field.name).checked;if(field.multiple)form[field.name]=data.getAll(field.name);if(field.environment||field.environmentSets||field.sandboxPolicies)form[field.name]=field.control.read();}return form};const initial=JSON.stringify(readForm());
  $('editor-form').onsubmit=async e=>{e.preventDefault();if(submitting)return;submitting=true;$('cancel').disabled=true;const submit=e.submitter;if(submit)submit.disabled=true;
   try{const form=readForm();if(skipUnchanged&&JSON.stringify(form)===initial){$('editor').close();return}for(const field of fields){if(field.sandboxSelection)form[field.name]=await field.control.read(form[field.name]);}const next=JSON.stringify(form,(_,value)=>value instanceof File?{name:value.name,size:value.size,modified:value.lastModified}:value);if(fingerprint!==next){fingerprint=next;submissionID=requestID()}form.requestID=submissionID;await save(form);await refresh();$('editor').close()}catch(error){showError(error)}finally{submitting=false;$('cancel').disabled=false;if(submit)submit.disabled=false}
  };
@@ -72,6 +74,7 @@ function desiredFields(desired={}){return[
  {name:'model',label:'Model',value:desired.Model},
  {name:'host_sandbox',label:'Host sandbox profile',sandboxSelection:true,value:desired.HostSandbox||null},
  {name:'environment',label:'Environment — literal values for future launches',environment:true,value:desired.Environment||{}},
+ {name:'auto_review',label:'Codex approval reviewer',value:desired.AutoReview?'on':'',options:launchAutoReviewChoices(),required:false},
  {name:'fast_mode',label:'Codex fast mode',value:desired.FastMode||'',options:launchFastModeChoices(),required:false},
  {name:'tool_governance',label:'OpenCode tool governance (bash, glob, grep, lsp, task, skill)',value:desired.ToolGovernance||'',options:launchToolGovernanceChoices(),required:false},
  {name:'effort',label:'Requested native effort / variant (optional)',value:desired.Effort||'',required:false},
@@ -79,7 +82,7 @@ function desiredFields(desired={}){return[
  {name:'approval',label:'Approval',value:desired.Approval||'supervised',options:launchApprovalChoices()},
  {name:'sandbox',label:'Confinement',value:desired.Sandbox||'workspace_write',options:['read_only','workspace_write','unconfined']}
 ]}
-function configuration(form){if(form.effort&&!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(form.effort))throw new Error('Requested native effort must start with a letter or digit and contain at most 64 lowercase letters, digits, underscores or hyphens.');return{...(form.host_sandbox?{HostSandbox:form.host_sandbox}:{}),Environment:form.environment||{},Harness:form.harness,Model:form.model,Effort:form.effort,ToolGovernance:form.tool_governance||undefined,FastMode:form.fast_mode||undefined,WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
+function configuration(form){if(form.effort&&!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(form.effort))throw new Error('Requested native effort must start with a letter or digit and contain at most 64 lowercase letters, digits, underscores or hyphens.');return{...(form.host_sandbox?{HostSandbox:form.host_sandbox}:{}),Environment:form.environment||{},Harness:form.harness,Model:form.model,Effort:form.effort,ToolGovernance:form.tool_governance||undefined,FastMode:form.fast_mode||undefined,AutoReview:form.auto_review==='on',WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
 async function startWithBrief(agent){
  const ref=agent.ConfigurationProfile;
  const saved=ref?await api(`/v2/configuration-profiles/${encodeURIComponent(ref.ProfileID)}?revision_id=${encodeURIComponent(ref.RevisionID)}`):null;

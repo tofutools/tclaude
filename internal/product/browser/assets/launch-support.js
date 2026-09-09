@@ -53,3 +53,9 @@ function attachProviderSettingControl(host,name,provider,isEditable=()=>true){
 function attachToolGovernanceControl(host,isEditable){return attachProviderSettingControl(host,'tool_governance','opencode',isEditable)}
 function launchFastModeChoices(){return [{value:'',label:'Inherit Codex setting'},{value:'on',label:'On'},{value:'off',label:'Off'}]}
 function attachFastModeControl(host,isEditable){return attachProviderSettingControl(host,'fast_mode','codex',isEditable)}
+
+function launchAutoReviewChoices(){return [{value:'',label:'No automatic-review override'},{value:'on',label:'Automatic approval review'}]}
+function attachAutoReviewControl(host,isEditable){return attachProviderSettingControl(host,'auto_review','codex',isEditable)}
+function launchSettingValue(key,value){return key==='auto_review'?(value===true||value==='on'?'on':''):(value||'')}
+
+function autoReviewAuthorityField(bounds={}){return {name:'auto_review',label:'Allow Codex automatic approval review',type:'checkbox',required:false,value:!!bounds.AutoReview}}

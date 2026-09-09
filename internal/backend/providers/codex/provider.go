@@ -483,6 +483,9 @@ func (p *prepared) argv() []string {
 	case ports.StartFork:
 		args = append(args, "resume", p.nativeID)
 	}
+	if p.request.Spec.AutoReview {
+		args = append(args, "-c", `approvals_reviewer="auto_review"`)
+	}
 	if p.request.Spec.FastMode != "" {
 		tier := "default"
 		if p.request.Spec.FastMode == model.FastModeOn {

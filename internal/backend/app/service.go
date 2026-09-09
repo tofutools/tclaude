@@ -1110,7 +1110,7 @@ func completionFromDisposition(operation model.Operation, execution model.Execut
 }
 
 func resolvedSpec(executionID model.ExecutionID, agentID model.AgentID, desired model.DesiredConfiguration, conversationID model.ConversationID) model.ResolvedExecutionSpec {
-	return model.ResolvedExecutionSpec{HostSandbox: model.CloneSandboxSelection(desired.HostSandbox), ExecutionID: executionID, Workload: model.ExecutionWorkloadHarness, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, Effort: desired.Effort, ToolGovernance: desired.ToolGovernance, FastMode: desired.FastMode, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox, Environment: desired.Environment.Clone()}
+	return model.ResolvedExecutionSpec{HostSandbox: model.CloneSandboxSelection(desired.HostSandbox), ExecutionID: executionID, Workload: model.ExecutionWorkloadHarness, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, Effort: desired.Effort, ToolGovernance: desired.ToolGovernance, FastMode: desired.FastMode, AutoReview: desired.AutoReview, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox, Environment: desired.Environment.Clone()}
 }
 
 func actionForOperation(kind model.OperationKind) model.Action {
@@ -1209,6 +1209,9 @@ func validateDesired(desired model.DesiredConfiguration) error {
 
 // Team members receive their working directory from the deployment workspace.
 func validateLaunchConfiguration(desired model.DesiredConfiguration) error {
+	if err := model.ValidateAutoReview(desired.AutoReview, desired.Harness); err != nil {
+		return fail(ErrInvalid, "%v", err)
+	}
 	if err := desired.FastMode.Validate(desired.Harness); err != nil {
 		return fail(ErrInvalid, "%v", err)
 	}
