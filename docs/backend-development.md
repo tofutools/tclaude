@@ -1912,3 +1912,17 @@ Launch support explains that without a host sandbox this does not provide OS
 confinement. Existing `automatic` remains equivalent to `allow-tools`, and
 `supervised` retains its no-override behavior. Fresh and continued launches use
 the selected policy; editing a saved profile retains the exact native choice.
+
+### OpenCode native approval choices
+
+OpenCode also preserves the v1 `ask` and `allow-tools` approval choices.
+`ask` requests approval for edits, while `allow-tools` permits edits directly;
+the audited built-in tool baseline remains independently allowed. Web access
+follows the admitted sandbox network intent: denied networks deny web tools,
+explicitly allowed networks use the selected approval action, and inherited
+network intent still asks. Environment-file reads ask, except example files.
+The network projection is recorded with native recovery evidence so later
+profile edits do not change a running session's permission interpretation.
+Existing generic modes remain unchanged. The configuration editor and offline
+import retain the exact native choices; host sandbox enforcement is independent
+of the native permission rules.

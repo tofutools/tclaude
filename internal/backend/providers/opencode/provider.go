@@ -19,6 +19,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -106,6 +107,7 @@ func (p *Provider) Capabilities() ports.ProviderCapabilities {
 func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
 
 type evidence struct {
+	NativeNetwork         model.SandboxNetworkBaseline   `json:"native_network,omitempty"`
 	HostSandbox           *host.SandboxChildArtifact     `json:"host_sandbox,omitempty"`
 	HostSandboxPolicyHash string                         `json:"host_sandbox_policy_hash,omitempty"`
 	Control               *host.UnixControlIdentity      `json:"control,omitempty"`
@@ -178,7 +180,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if err := validateDirectory(request.Spec.WorkingDirectory); err != nil {
 		return nil, err
 	}
-	if request.Spec.Approval != model.ApprovalSupervised && request.Spec.Approval != model.ApprovalAutomatic && request.Spec.Approval != model.ApprovalDeny {
+	if !slices.Contains(supportedLaunchPolicy().SupportedApproval, request.Spec.Approval) {
 		return nil, fmt.Errorf("OpenCode provider does not support approval mode %q", request.Spec.Approval)
 	}
 	if request.Spec.Sandbox != model.SandboxUnconfined {
@@ -255,7 +257,8 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 		return nil, fmt.Errorf("protect OpenCode server credential: %w", err)
 	}
 	initial, err := encodeEvidence(evidence{
-		ExecutionID: string(request.Spec.ExecutionID), NativeID: nativeID,
+		NativeNetwork: nativeNetworkBaseline(request.HostSandboxPolicy),
+		ExecutionID:   string(request.Spec.ExecutionID), NativeID: nativeID,
 		Intent: request.Intent, ForkSourceID: forkSourceID(request), ForkPoint: forkPoint(request),
 		Endpoint: endpoint, PasswordFile: passwordFile, StateRoot: stateRoot, AttemptMark: attemptMark,
 		EphemeralState: removeOnAbort, Access: access,
@@ -452,7 +455,8 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 		return ports.ReleaseResult{}, fmt.Errorf("start OpenCode server: %w", err)
 	}
 	runtime := &Runtime{
-		artifact: p.artifact, policyHash: p.description.HostSandboxPolicyHash, nativeConfigDirectory: p.nativeConfigDirectory,
+		nativeNetwork: nativeNetworkBaseline(p.request.HostSandboxPolicy),
+		artifact:      p.artifact, policyHash: p.description.HostSandboxPolicyHash, nativeConfigDirectory: p.nativeConfigDirectory,
 		provider: p.provider, executionID: p.request.Spec.ExecutionID,
 		attempt: p.request.Spec.Attempt, observations: p.request.Observations,
 		process: process, endpoint: p.endpoint, password: p.password,
@@ -652,7 +656,8 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		accessProof = &proof
 	}
 	runtime := &Runtime{
-		artifact: recorded.HostSandbox, policyHash: recorded.HostSandboxPolicyHash, controlIdentity: recorded.Control, nativeConfigDirectory: recorded.NativeConfigDirectory,
+		nativeNetwork: recorded.NativeNetwork,
+		artifact:      recorded.HostSandbox, policyHash: recorded.HostSandboxPolicyHash, controlIdentity: recorded.Control, nativeConfigDirectory: recorded.NativeConfigDirectory,
 		provider: p, executionID: request.ExecutionID, process: process,
 		attempt: request.Attempt, observations: request.Observations,
 		endpoint: recorded.Endpoint, password: string(passwordBytes), passwordFile: recorded.PasswordFile, stateRoot: recorded.StateRoot,
@@ -704,6 +709,7 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 }
 
 type Runtime struct {
+	nativeNetwork         model.SandboxNetworkBaseline
 	artifact              *host.SandboxChildArtifact
 	policyHash            string
 	controlMu             sync.Mutex
@@ -965,7 +971,7 @@ func (r *Runtime) health(ctx context.Context) error {
 }
 
 func (r *Runtime) createSession(ctx context.Context) error {
-	expected := permissionRules(r.approval, r.sandbox)
+	expected := permissionRules(r.approval, r.sandbox, r.nativeNetwork)
 	body := map[string]any{"permission": expected}
 	response, err := r.do(ctx, http.MethodPost, "/session?directory="+url.QueryEscape(r.cwd), body)
 	if err != nil {
@@ -1066,7 +1072,7 @@ func (r *Runtime) reconcileFreshSession(ctx context.Context) error {
 }
 
 func (r *Runtime) verifySession(ctx context.Context) error {
-	expected := permissionRules(r.approval, r.sandbox)
+	expected := permissionRules(r.approval, r.sandbox, r.nativeNetwork)
 	response, err := r.do(ctx, http.MethodGet, "/session/"+url.PathEscape(r.nativeID)+
 		"?directory="+url.QueryEscape(r.cwd), nil)
 	if err != nil {
@@ -1166,7 +1172,8 @@ func (r *Runtime) providerEvidence() (model.ProviderEvidence, error) {
 func (r *Runtime) providerEvidenceLocked() (model.ProviderEvidence, error) {
 	identity := r.process.Identity()
 	return encodeEvidence(evidence{
-		HostSandbox: r.artifact, HostSandboxPolicyHash: r.policyHash, Control: r.sandboxControlEvidence(),
+		NativeNetwork: r.nativeNetwork,
+		HostSandbox:   r.artifact, HostSandboxPolicyHash: r.policyHash, Control: r.sandboxControlEvidence(),
 		ExecutionID: string(r.executionID), NativeID: r.nativeID, ParentID: r.parentID, Intent: r.intent,
 		ForkSourceID: r.forkSourceID, ForkPoint: r.forkPoint, Endpoint: r.endpoint,
 		PasswordFile: r.passwordFile, StateRoot: r.stateRoot, NativeConfigDirectory: r.nativeConfigDirectory, Process: &identity, AttemptMark: r.attemptMark,
@@ -1231,7 +1238,32 @@ type permissionRule struct {
 	Action     string `json:"action"`
 }
 
-func permissionRules(approval model.ApprovalMode, sandbox model.SandboxMode) []permissionRule {
+func permissionRules(approval model.ApprovalMode, sandbox model.SandboxMode, network model.SandboxNetworkBaseline) []permissionRule {
+	if approval == model.ApprovalAsk || approval == model.ApprovalAllowTools {
+		action := "ask"
+		if approval == model.ApprovalAllowTools {
+			action = "allow"
+		}
+		rules := permissionRules(model.ApprovalDeny, sandbox, network)
+		if sandbox == model.SandboxUnconfined {
+			for _, permission := range []string{"edit", "external_directory"} {
+				rules = append(rules, permissionRule{Permission: permission, Pattern: "*", Action: action})
+			}
+			webAction := "ask"
+			switch network {
+			case model.SandboxNetworkAllow:
+				webAction = action
+			case model.SandboxNetworkDeny:
+				webAction = "deny"
+			}
+			// Native web approval follows the admitted network intent, while the
+			// host sandbox remains responsible for kernel enforcement.
+			for _, permission := range []string{"webfetch", "websearch"} {
+				rules = append(rules, permissionRule{Permission: permission, Pattern: "*", Action: webAction})
+			}
+		}
+		return append(rules, permissionRule{Permission: "read", Pattern: "*.env", Action: "ask"}, permissionRule{Permission: "read", Pattern: "*.env.*", Action: "ask"}, permissionRule{Permission: "read", Pattern: "*.env.example", Action: "allow"})
+	}
 	if approval == model.ApprovalDeny {
 		// V1's default tool-governance baseline is independent of approval: audited
 		// built-in tools remain allowed, while edit/web and unknown tools do not ask.
@@ -1352,6 +1384,11 @@ func decodeEvidence(envelope model.ProviderEvidence) (evidence, error) {
 	if err := json.Unmarshal(envelope.Payload, &value); err != nil {
 		return evidence{}, fmt.Errorf("decode OpenCode evidence: %w", err)
 	}
+	switch value.NativeNetwork {
+	case "", model.SandboxNetworkInherit, model.SandboxNetworkAllow, model.SandboxNetworkDeny:
+	default:
+		return evidence{}, fmt.Errorf("invalid native network evidence")
+	}
 	return value, nil
 }
 
@@ -1394,5 +1431,5 @@ var _ ports.PreparedAttempt = (*prepared)(nil)
 var _ ports.Runtime = (*Runtime)(nil)
 
 func supportedLaunchPolicy() ports.PolicyRequirements {
-	return ports.PolicyRequirements{DefaultApproval: model.ApprovalDeny, ApprovalDescriptions: map[model.ApprovalMode]string{model.ApprovalDeny: "Deny does not prompt for edits or web access. Reads and audited built-in tools, including bash, remain allowed; OS confinement is separate."}, DefaultSandbox: model.SandboxUnconfined, SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic, model.ApprovalDeny}, SupportedSandbox: []model.SandboxMode{model.SandboxUnconfined}}
+	return ports.PolicyRequirements{DefaultApproval: model.ApprovalDeny, ApprovalDescriptions: map[model.ApprovalMode]string{model.ApprovalAsk: "Ask before edits and web access; audited built-in tools retain their default permission. Detached agents may wait for an operator.", model.ApprovalAllowTools: "Automatically allow edits; web and environment-file access still ask without an explicit native grant. Audited built-in tools retain their default permission.", model.ApprovalDeny: "Deny does not prompt for edits or web access. Reads and audited built-in tools, including bash, remain allowed; OS confinement is separate."}, DefaultSandbox: model.SandboxUnconfined, SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic, model.ApprovalDeny, model.ApprovalAsk, model.ApprovalAllowTools}, SupportedSandbox: []model.SandboxMode{model.SandboxUnconfined}}
 }

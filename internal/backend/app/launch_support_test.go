@@ -37,7 +37,7 @@ func TestLaunchSupportReadsAdapterContractWithoutPreparationOrStorage(t *testing
 			require.Contains(t, result.SandboxModes, result.DefaultSandbox)
 			expectedApprovals := []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}
 			if tc.provider.Name() == opencode.Name {
-				expectedApprovals = append(expectedApprovals, model.ApprovalDeny)
+				expectedApprovals = append(expectedApprovals, model.ApprovalDeny, model.ApprovalAsk, model.ApprovalAllowTools)
 			}
 			if tc.provider.Name() == copilot.Name {
 				expectedApprovals = append(expectedApprovals, model.ApprovalInherit, model.ApprovalAllowTools, model.ApprovalYolo)

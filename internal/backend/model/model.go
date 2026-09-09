@@ -117,6 +117,7 @@ const (
 	ApprovalDeny              ApprovalMode = "deny"
 	ApprovalAllowTools        ApprovalMode = "allow-tools"
 	ApprovalYolo              ApprovalMode = "yolo"
+	ApprovalAsk               ApprovalMode = "ask"
 	ApprovalNever             ApprovalMode = "never"
 	ApprovalOnRequest         ApprovalMode = "on-request"
 	ApprovalOnFailure         ApprovalMode = "on-failure"
