@@ -8,9 +8,10 @@ import (
 )
 
 type nativeContextUsage struct {
-	SessionID string `json:"session_id"`
-	AgentID   string `json:"agent_id"`
-	Window    *struct {
+	EffectiveWindow *observedCompactionWindow `json:"tclaude_compaction_window"`
+	SessionID       string                    `json:"session_id"`
+	AgentID         string                    `json:"agent_id"`
+	Window          *struct {
 		Size    int64    `json:"context_window_size"`
 		Percent *float64 `json:"used_percentage"`
 	} `json:"context_window"`
@@ -25,7 +26,17 @@ func parseContextUsage(raw []byte, nativeID string, window model.AutoCompactWind
 	if math.IsNaN(percent) || math.IsInf(percent, 0) || percent < 0 || percent > 100 {
 		return nil
 	}
-	effective := model.EffectiveContextWindow(value.Window.Size, model.AutoCompactWindowTokens(string(window)))
+	tokens := model.AutoCompactWindowTokens(string(window))
+	if observed := value.EffectiveWindow; observed != nil {
+		if !observed.Known {
+			return nil
+		}
+		if observed.Tokens != 0 && (observed.Tokens < 10000 || observed.Tokens > 10000000) {
+			return nil
+		}
+		tokens = observed.Tokens
+	}
+	effective := model.EffectiveContextWindow(value.Window.Size, tokens)
 	return &model.ContextUsage{ModelWindow: value.Window.Size, EffectiveWindow: effective, NativePercent: percent, UsedPercent: model.RebaseContextPercentage(percent, value.Window.Size, effective), ObservedAt: at}
 }
 

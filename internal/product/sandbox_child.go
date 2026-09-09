@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/providers/claude"
+	"os"
 	"strconv"
 
 	"github.com/tofutools/tclaude/internal/backend/host"
@@ -16,6 +19,12 @@ import (
 // authenticates an API request. Inputs are the prepared host artifact or a
 // provider command already enclosed by that artifact.
 func TrySandboxChild(args []string) (bool, error) {
+	if len(args) > 0 && args[0] == claude.StatusLineCommand {
+		if len(args) != 1 {
+			return true, fmt.Errorf("invalid Claude status line command")
+		}
+		return true, claude.RunStatusLine(os.Stdin, os.Stdout, os.Getenv("TCLAUDE_OBSERVATION_SPOOL"), os.Getenv(model.AutoCompactWindowEnvVar))
+	}
 	if len(args) > 0 && args[0] == opencode.ServerRelayCommand {
 		if len(args) != 3 || len(args[1]) > 1<<20 {
 			return true, fmt.Errorf("invalid OpenCode server relay command")

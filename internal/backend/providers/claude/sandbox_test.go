@@ -77,12 +77,18 @@ func TestProviderHostSandboxPreparesExactCommandAndRefusesChangedCredentialBefor
 		ProviderResources      []host.SandboxMountPin
 	}
 	require.NoError(t, json.Unmarshal(data, &command))
+	statusExecutable, err := os.Executable()
+	require.NoError(t, err)
+	statusExecutable, err = filepath.EvalSymlinks(statusExecutable)
+	require.NoError(t, err)
+	require.Contains(t, string(data), statusExecutable)
+
 	require.Contains(t, command.Arguments, "Exact first work")
 	require.Contains(t, command.Environment, "LITERAL=$HOME exact")
 	require.Contains(t, command.Environment, "CLAUDE_CONFIG_DIR="+provider.nativeHome)
 	require.NotContains(t, string(data), "must not be copied")
 	require.NotContains(t, string(data), "disposable action credential")
-	require.Len(t, command.ProviderResources, 16)
+	require.Len(t, command.ProviderResources, 17)
 	require.NoError(t, os.Rename(recorded.Access.Resource, recorded.Access.Resource+".old"))
 	require.NoError(t, os.WriteFile(recorded.Access.Resource, []byte("replacement"), 0600))
 	permit := &testPermit{execution: request.Spec.ExecutionID}

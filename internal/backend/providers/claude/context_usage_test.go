@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
@@ -14,6 +15,17 @@ import (
 	"testing"
 	"time"
 )
+
+func TestMain(m *testing.M) {
+	if len(os.Args) == 2 && os.Args[1] == StatusLineCommand {
+		if err := RunStatusLine(os.Stdin, os.Stdout, os.Getenv("TCLAUDE_OBSERVATION_SPOOL"), os.Getenv(model.AutoCompactWindowEnvVar)); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 func TestAutoCompactWindowContextUsesNativePercentageAndBinding(t *testing.T) {
 	id := "43e874eb-4827-4b22-b1b8-376a5e5e553f"
@@ -54,9 +66,11 @@ func TestAutoCompactWindowStatusLineSpoolAndPersistedProjection(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(settings["statusLine"], &status))
 	command := exec.Command("/bin/sh", "-c", status.Command)
-	command.Env = append(os.Environ(), "TCLAUDE_OBSERVATION_SPOOL="+spool.Directory())
+	command.Env = append(os.Environ(), "TCLAUDE_OBSERVATION_SPOOL="+spool.Directory(), model.AutoCompactWindowEnvVar+"=450000")
 	command.Stdin = strings.NewReader(`{"session_id":"` + id + `","context_window":{"context_window_size":1000000,"used_percentage":21}}`)
-	require.NoError(t, command.Run())
+	output, err := command.CombinedOutput()
+	require.NoError(t, err, string(output))
+	require.Contains(t, string(output), "47%")
 	_, err = runtime.consumeObservationEvents(context.Background(), nil)
 	require.NoError(t, err)
 	require.NotNil(t, runtime.contextUsage)
@@ -75,4 +89,62 @@ func TestAutoCompactWindowStatusLineSpoolAndPersistedProjection(t *testing.T) {
 	_, err = runtime.consumeObservationEvents(context.Background(), nil)
 	require.NoError(t, err)
 	require.Nil(t, runtime.contextUsage)
+}
+
+func TestAutoCompactWindowAmbientStatusSurvivesEvidenceRecovery(t *testing.T) {
+	for _, selected := range []string{"", "450000"} {
+		t.Run("admitted_"+selected, func(t *testing.T) {
+			root := t.TempDir()
+			spool, err := host.PrepareObservationSpool(filepath.Join(root, "events"))
+			require.NoError(t, err)
+			id := "43e874eb-4827-4b22-b1b8-376a5e5e553f"
+			raw := `{"session_id":"` + id + `","model":{"display_name":"Opus","id":"claude-opus"},"context_window":{"context_window_size":1000000,"used_percentage":21},"cost":{"total_cost_usd":1.25},"effort":{"level":"high"},"workspace":{"current_dir":"/workspace/project"}}`
+			command := exec.Command("/bin/sh", "-c", claudeStatusLineCommand())
+			command.Env = append(os.Environ(), "TCLAUDE_OBSERVATION_SPOOL="+spool.Directory(), model.AutoCompactWindowEnvVar+"=450000")
+			command.Stdin = strings.NewReader(raw)
+			output, err := command.CombinedOutput()
+			require.NoError(t, err, string(output))
+			for _, expected := range []string{"Opus", "450k", "47%", "$1.25", "high", "/workspace/project"} {
+				require.Contains(t, string(output), expected)
+			}
+			pending, err := spool.ReadPending()
+			require.NoError(t, err)
+			require.Len(t, pending, 1)
+			runtime := &Runtime{executionID: "execution", attempt: 1, nativeID: id, contextReady: true, observations: &observationSink{}, spool: spool, autoCompactWindow: model.AutoCompactWindow(selected)}
+			_, err = runtime.consumeObservationEvents(context.Background(), nil)
+			require.NoError(t, err)
+			require.NotNil(t, runtime.contextUsage)
+			require.Equal(t, int64(450000), runtime.contextUsage.EffectiveWindow)
+			require.InDelta(t, 46.6666667, runtime.contextUsage.UsedPercent, 0.00001)
+			persisted, err := encodeEvidence(evidence{ExecutionID: "execution", NativeID: id, ContextReady: true, ContextUsage: runtime.contextUsage})
+			require.NoError(t, err)
+			// Recovery reads the effective native observation, even with no authored pin.
+			recovered, err := decodeEvidence(persisted)
+			require.NoError(t, err)
+			require.Equal(t, runtime.contextUsage, recovered.ContextUsage)
+			execution := model.Execution{ID: "execution", ContextReadiness: model.ContextReadinessReady, Evidence: persisted, NativeConversation: nativeEvidence(id)}
+			require.Equal(t, recovered.ContextUsage, (&Provider{}).ProjectContextUsage(execution))
+		})
+	}
+}
+
+func TestAutoCompactWindowStatusLimitsUnknownAndInvalidPayload(t *testing.T) {
+	var out strings.Builder
+	root := t.TempDir()
+	spool, err := host.PrepareObservationSpool(filepath.Join(root, "events"))
+	require.NoError(t, err)
+	raw := `{"session_id":"session","model":{"display_name":"Opus"},"context_window":{"context_window_size":1000000,"used_percentage":21},"rate_limits":{"five_hour":{"used_percentage":25,"resets_at":4102444800},"seven_day":{"used_percentage":50,"resets_at":4102444800}},"cost":{"total_cost_usd":9}}`
+	require.NoError(t, RunStatusLine(strings.NewReader(raw), &out, spool.Directory(), "invalid"))
+	require.Contains(t, out.String(), "context unknown")
+	require.Contains(t, out.String(), "5h [")
+	require.Contains(t, out.String(), "7d [")
+	require.NotContains(t, out.String(), "$9")
+	pending, err := spool.ReadPending()
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.Nil(t, parseContextUsage(pending[0].Payload, "session", "", time.Now()))
+	for _, invalid := range []string{"null", "[]", "{", strings.Repeat(" ", 1<<20)} {
+		require.Error(t, RunStatusLine(strings.NewReader(invalid), &out, spool.Directory(), ""))
+	}
+	require.NotContains(t, statusText("a\x1b[2J\nb"), "\x1b")
 }
