@@ -2003,6 +2003,15 @@ while authorized returns its original result even after the selected profile
 changes. Creating the member does not start an execution; launching it uses
 the existing separate launch authority.
 
+An owner assigned without explicit configuration bounds can create members
+within its running approval and sandbox posture, as in v1. Providers interpret
+their native policies through separate lineage contracts; model and working
+directory need not match the parent. Explicit operator-authored bounds and denies
+still apply. SQLite rechecks the live owner membership and primary execution at
+publication and launch release. The original policy comparison is persisted with
+creation and launch receipts so an exact retry does not reinterpret edited
+profile defaults; revoked authority or a stopped parent still prevents replay.
+
 ### Partial reusable configuration profiles
 
 A reusable configuration may store `options` instead of a complete `desired`

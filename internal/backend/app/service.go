@@ -410,6 +410,9 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		authorityResource = model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agent.ID}
 	}
 	authority := model.AuthorityRequest{Principal: req.Principal, Action: model.ActionLaunch, Resource: authorityResource, RequestedConfiguration: &desired}
+	if options.groupMember != nil {
+		authority.SpawnLineage = options.groupMember.Request.Lineage
+	}
 	var access model.ExecutionAccess
 	var credential *ports.ActionCredentialMaterial
 	if _, capable := provider.(ports.ActionCredentialProvider); capable {
