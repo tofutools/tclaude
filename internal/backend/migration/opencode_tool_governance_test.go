@@ -23,11 +23,11 @@ func TestImportOpenCodeToolGovernancePreservesProfileAndAgentBirthPolicy(t *test
  ALTER TABLE spawn_profiles ADD COLUMN model TEXT;
  ALTER TABLE spawn_profiles ADD COLUMN working_directory TEXT;
  ALTER TABLE spawn_profiles ADD COLUMN approval TEXT;
- ALTER TABLE spawn_profiles ADD COLUMN tool_governance TEXT;
+ ALTER TABLE spawn_profiles ADD COLUMN tools TEXT;
  ALTER TABLE spawn_profiles ADD COLUMN sandbox TEXT;
- INSERT INTO spawn_profiles(id,name,permission_overrides,environment_json,role_refs,harness,model,working_directory,approval,tool_governance,sandbox)
+ INSERT INTO spawn_profiles(id,name,permission_overrides,environment_json,role_refs,harness,model,working_directory,approval,tools,sandbox)
  VALUES('7','OpenCode native','[]','[]','[]','opencode','fixture','/tmp','deny','TOOLS','unconfined');
- UPDATE agents SET initial_spawn_config='{"harness":"opencode","model":"fixture","working_directory":"/tmp","approval":"deny","tool_governance":"TOOLS","sandbox":"unconfined"}';
+ UPDATE agents SET initial_spawn_config='{"harness":"opencode","model":"fixture","working_directory":"/tmp","approval":"deny","tools":"TOOLS","sandbox":"unconfined"}';
  `, "TOOLS", string(mode)))
 			destination := filepath.Join(t.TempDir(), "target.sqlite")
 			_, err := ImportSnapshot(ctx, bundle, ImportOptions{DestinationPath: destination})
