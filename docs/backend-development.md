@@ -2094,3 +2094,21 @@ provider evidence and is projected without query-time native IO. Missing or
 unresolved native context stays unknown; compaction/reset invalidates the old
 meter until a new native observation arrives. The observation time is shown in
 the meter's tooltip.
+
+### Create and launch a group member
+
+The group controls offer both offline member creation and **Spawn member from
+default**. Spawn opens the same current-profile configuration and display-label
+fields, plus editable startup context and initial brief suggestions. Submitting
+creates the membership and starts the first execution. Offline creation keeps
+Start explicit.
+
+`POST /v2/groups/{id}/agents` accepts optional `launch: {initial_message: ...}`.
+When present, member creation and launch admission share one transaction. Both
+current group-member creation and launch authority must allow the effective
+configuration; a rejected admission leaves no member or request receipt. The
+selected current profile and group revisions are fenced at admission. An exact
+retry returns the existing operation, including an uncertain or failed outcome,
+without creating another member or replaying native work. Changed launch intent
+conflicts with an existing receipt. Provider evidence stays private in the
+public group response.

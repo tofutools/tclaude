@@ -252,6 +252,7 @@ func (s *Service) Launch(ctx context.Context, req LaunchRequest) (OperationResul
 }
 
 type launchOptions struct {
+	groupMember *GroupMemberAdmission
 	intent      ports.StartIntent
 	history     *ports.HistorySourceSelection
 	operationID model.OperationID
@@ -275,7 +276,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	if req.InitialMessage != "" {
 		initialDigest = fmt.Sprintf("%x", sha256.Sum256([]byte(req.InitialMessage)))
 	}
-	if kind == model.OperationLaunch {
+	if kind == model.OperationLaunch && options.groupMember == nil {
 		var targetAgent model.AgentID
 		if req.Target.Agent != nil {
 			targetAgent = req.Target.Agent.AgentID
@@ -296,13 +297,17 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	var expected model.Revision
 	if req.Target.Agent != nil {
 		resource := model.ResourceSelector{Kind: model.ResourceAgent, AgentID: req.Target.Agent.AgentID}
-		if req.Principal.Kind != model.PrincipalOperator {
+		if req.Principal.Kind != model.PrincipalOperator && options.groupMember == nil {
 			if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Principal, Action: model.ActionLaunch, Resource: resource}, s.now().UTC()); err != nil {
 				return OperationResult{}, err
 			}
 		}
 		var err error
-		agent, err = s.store.Agent(ctx, req.Target.Agent.AgentID)
+		if options.groupMember != nil {
+			agent = options.groupMember.Agent
+		} else {
+			agent, err = s.store.Agent(ctx, req.Target.Agent.AgentID)
+		}
 		if err != nil {
 			return OperationResult{}, err
 		}
@@ -399,6 +404,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		initialInput = &ports.PreparedInitialInput{Body: req.InitialMessage, Correlation: string(operationID), RequiredBeforeFirstWork: true}
 	}
 	admission, err := s.store.AdmitLaunch(ctx, LaunchAdmission{
+		GroupMember:          options.groupMember,
 		InitialMessageDigest: initialDigest,
 		Operation:            model.Operation{ID: operationID, RequestID: req.RequestID, Kind: kind, Principal: req.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now},
 		Execution:            execution,

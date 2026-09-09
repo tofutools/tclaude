@@ -895,6 +895,15 @@ func (s *Store) AdmitLaunch(ctx context.Context, in app.LaunchAdmission) (app.Ad
 		return app.AdmissionResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if in.GroupMember != nil {
+		member := in.GroupMember
+		if member.Request.Launch == nil || in.Operation.Kind != model.OperationLaunch || member.Agent.ID != in.AgentID || member.Request.Context.Principal != in.Operation.Principal || member.Request.Context.RequestID != in.Operation.RequestID {
+			return app.AdmissionResult{}, app.ErrInvalid
+		}
+		if _, err := admitGroupMemberTx(ctx, tx, *member); err != nil {
+			return app.AdmissionResult{}, err
+		}
+	}
 	if in.Authority.Action != "" {
 		decision, err := authorizeTx(ctx, tx, in.Authority, in.Operation.CreatedAt)
 		if err != nil {
