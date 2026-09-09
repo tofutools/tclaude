@@ -55,6 +55,14 @@ func newFlow(t *testing.T) *testharness.Flow {
 	// Worst case (scenario never brings conv online) the post-init
 	// goroutine now bails in 200ms instead of 60s.
 	t.Cleanup(agentd.SetWaitTimingsForTest(300*time.Millisecond, 20*time.Millisecond))
+	// Ordinary flow scenarios that inspect a spawn expect the simulator's
+	// conversation id in the response. Production returns a Codex spawn as
+	// pending after 750ms to keep the UI responsive, but that wall-clock budget
+	// is not a stable synchronization boundary when the whole agentd package is
+	// competing for a CI runner. Disable only that extra Codex response cap by
+	// default; the shared six-second async grace remains in force, and the
+	// pending-spawn scenarios install their own short cap explicitly.
+	t.Cleanup(agentd.SetCodexAsyncSpawnResponseGraceForTest(0))
 	// Mirror the shrink on the session-side /clear inject knobs — same
 	// "wait for CC's TUI to settle" tax the simulator has no jitter
 	// for. Without this, every /clear flow scenario sits on the 1s
