@@ -21,8 +21,7 @@ func importedProfileOptions(values map[string]any, desired model.DesiredConfigur
 		return &value
 	}
 	out := &model.ConfigurationOptions{Harness: text(desired.Harness), Model: text(desired.Model), Effort: text(desired.Effort), WorkingDirectory: text(desired.WorkingDirectory), Environment: desired.Environment}
-	if values["ask_user_question_timeout"] != nil {
-		value, _ := importedAskUserQuestionTimeout(values["ask_user_question_timeout"])
+	if value, _ := importedAskUserQuestionTimeout(values["ask_user_question_timeout"]); value != "" {
 		out.AskUserQuestionTimeout = &value
 	}
 	if values["auto_compact_window"] != nil {

@@ -10,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/app"
 	"github.com/tofutools/tclaude/internal/backend/model"
 	"github.com/tofutools/tclaude/internal/backend/providers"
+	"github.com/tofutools/tclaude/internal/backend/providers/claude"
 	backendsqlite "github.com/tofutools/tclaude/internal/backend/sqlite"
 )
 
@@ -34,7 +35,7 @@ func TestImportClaudeAskUserQuestionTimeoutPreservesProfileAndAgentBirthPolicy(t
 			// Reopening verifies the typed durable projection, rather than only source JSON.
 			store, err := backendsqlite.Open(destination)
 			require.NoError(t, err)
-			service := app.New(store, providers.NewRegistry())
+			service := app.New(store, providers.NewRegistry(&claude.Provider{}))
 			op := model.OperatorPrincipal()
 			profiles, err := service.ListConfigurationProfiles(ctx, op)
 			require.NoError(t, err)
@@ -87,22 +88,55 @@ func TestImportAskUserQuestionTimeoutResolvedChoiceOverridesBirth(t *testing.T) 
 	require.Equal(t, model.AskUserQuestionTimeout("inherit"), snapshot.Agents[0].Desired.AskUserQuestionTimeout)
 }
 
-func TestImportPartialAskUserQuestionTimeoutRetainsExplicitOff(t *testing.T) {
-	bundle := buildFixture(t, fixtureOptions{})
-	alterFixture(t, bundle, `INSERT INTO spawn_profiles(id,name,permission_overrides,environment_json,role_refs,ask_user_question_timeout) VALUES('7','Native question timeout','[]','[]','[]','');`)
-	destination := filepath.Join(t.TempDir(), "target.sqlite")
-	_, err := ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: destination})
-	require.NoError(t, err)
-	store, err := backendsqlite.Open(destination)
-	require.NoError(t, err)
-	defer store.Close()
-	profiles, err := store.ConfigurationProfiles(context.Background())
-	require.NoError(t, err)
-	require.Len(t, profiles, 1)
-	saved, err := store.ConfigurationProfile(context.Background(), profiles[0].ID, "")
-	require.NoError(t, err)
-	require.NotNil(t, saved.Revision.Options)
-	require.Nil(t, saved.Revision.Options.Harness)
-	require.NotNil(t, saved.Revision.Options.AskUserQuestionTimeout)
-	require.Empty(t, *saved.Revision.Options.AskUserQuestionTimeout)
+func TestImportPartialAskUserQuestionTimeoutPreservesDefaultInheritance(t *testing.T) {
+	for _, mode := range []string{"", "inherit"} {
+		t.Run("mode_"+mode, func(t *testing.T) {
+			ctx := context.Background()
+			bundle := buildFixture(t, fixtureOptions{})
+			alterFixture(t, bundle, `INSERT INTO spawn_profiles(id,name,permission_overrides,environment_json,role_refs,ask_user_question_timeout) VALUES('7','Native question timeout','[]','[]','[]','`+mode+`');`)
+			destination := filepath.Join(t.TempDir(), "target.sqlite")
+			_, err := ImportSnapshot(ctx, bundle, ImportOptions{DestinationPath: destination})
+			require.NoError(t, err)
+			store, err := backendsqlite.Open(destination)
+			require.NoError(t, err)
+			defer store.Close()
+			profiles, err := store.ConfigurationProfiles(ctx)
+			require.NoError(t, err)
+			require.Len(t, profiles, 1)
+			saved, err := store.ConfigurationProfile(ctx, profiles[0].ID, "")
+			require.NoError(t, err)
+			require.NotNil(t, saved.Revision.Options)
+			require.Nil(t, saved.Revision.Options.Harness)
+			if mode == "" {
+				require.Nil(t, saved.Revision.Options.AskUserQuestionTimeout, "v1 empty column is omitted intent")
+			} else {
+				require.NotNil(t, saved.Revision.Options.AskUserQuestionTimeout)
+				require.Equal(t, model.AskUserQuestionTimeout("inherit"), *saved.Revision.Options.AskUserQuestionTimeout)
+			}
+			service := app.New(store, providers.NewRegistry(&claude.Provider{}))
+			op := model.OperatorPrincipal()
+			global, err := service.SaveConfigurationProfile(ctx, app.SaveConfigurationProfileRequest{
+				Context: app.RequestContext{Principal: op, RequestID: "global-profile"},
+				ID:      "global", RevisionID: "global-v1", Name: "Global defaults",
+				Desired: model.DesiredConfiguration{Harness: "claude", Model: "fixture", WorkingDirectory: t.TempDir(), Approval: model.ApprovalManual, Sandbox: model.SandboxUnconfined, AskUserQuestionTimeout: "5m"},
+			})
+			require.NoError(t, err)
+			_, err = service.SaveConfigurationDefaults(ctx, app.SaveConfigurationDefaultsRequest{Context: app.RequestContext{Principal: op, RequestID: "defaults"}, Global: &global.Revision.Ref})
+			require.NoError(t, err)
+			created, err := service.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: "from-partial", Name: "From partial", ConfigurationProfile: &saved.Revision.Ref})
+			require.NoError(t, err)
+			want := model.AskUserQuestionTimeout("5m")
+			if mode == "inherit" {
+				want = "inherit"
+			}
+			require.Equal(t, want, created.Agent.Desired.AskUserQuestionTimeout)
+			require.NoError(t, store.Close())
+			reopened, err := backendsqlite.Open(destination)
+			require.NoError(t, err)
+			defer reopened.Close()
+			retained, err := reopened.Agent(ctx, created.Agent.ID)
+			require.NoError(t, err)
+			require.Equal(t, want, retained.Desired.AskUserQuestionTimeout)
+		})
+	}
 }
