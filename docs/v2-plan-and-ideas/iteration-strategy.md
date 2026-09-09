@@ -8,7 +8,7 @@ statuses and dependencies live in AWB. This document explains how to choose it.
 | Candidate | Value | Risk | Bounded starting point | Evidence of benefit |
 |---|---|---|---|---|
 | Shared dialog/optional input | High, operator-visible | Low–medium | Two existing forms using the same primitive | Duplicate helpers/styles removed; save/reopen behavior unchanged |
-| Presence-aware configuration resolver | Very high | Medium | One option family across direct and team launch | Two callers use one rule implementation; precedence differences explicit |
+| Presence-aware configuration resolver | Very high | Medium | Existing shared helpers plus their direct/team callers | Clearer owner and reduced dependencies; remove only demonstrated duplication |
 | Internal action below HTTP | High | Medium | One trigger guardrail/action plus its HTTP caller | Synthetic request/recorder removed for that path; same authority/refusal outcomes |
 | Instance-owned spawner dependency | High for testability | Medium | The action above and its flow tests | No shared spawner mutation in migrated tests; isolated instances |
 

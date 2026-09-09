@@ -6,7 +6,7 @@ Paths and symbols are more durable than line numbers.
 
 | Current evidence | What it suggests | What it does not prove |
 |---|---|---|
-| [lifecycle.go](../../pkg/claude/agentd/lifecycle.go): 10,128 lines; multiple `resolve*LaunchField` helpers | Extract coherent policy/resolution and orchestration owners | Every helper is duplicated, or file size alone justifies a rewrite |
+| [lifecycle.go](../../pkg/claude/agentd/lifecycle.go): 10,128 lines; multiple `resolve*LaunchField` helpers | Extract coherent policy/resolution and orchestration owners; scalar/boolean helpers are already shared by direct/team callers | Every helper is duplicated, or file size alone justifies a rewrite |
 | [templates.go](../../pkg/claude/agentd/templates.go): 4,891 lines; `resolveTemplateAgentLaunch`, `resolveTemplateAgentAccess` | Compare direct/team precedence and share machinery carefully | Team and ordinary spawn have identical merge semantics |
 | [triggers.go](../../pkg/claude/agentd/triggers.go): synthetic `http.NewRequest`, `httptest.NewRecorder` for guardrails | A shared application action can serve HTTP and internal callers | Existing checks are redundant or may be removed |
 | [spawner.go](../../pkg/claude/agentd/spawner.go): global `Spawn`; comment prohibits parallel flow tests | Inject this effect per action/runtime instance | A universal dependency-injection framework is needed |

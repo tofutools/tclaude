@@ -64,10 +64,12 @@ and then claim to replay a past operation.
 
 ## First useful extraction
 
-Characterize one existing scalar/boolean option through direct spawn and team
-launch. Extract presence and source attribution, migrate both callers, and
-remove their duplicate selection code. Keep policy differences explicit. Extend
-the field set only after that seam reduces actual maintenance work.
+Current scalar/boolean helpers already return presence and provenance, and both
+direct and team launch call them. Start by characterizing those existing callers.
+Move the shared helpers to a clearer configuration owner only if it reduces
+dependencies or change fan-out; do not create another resolver. Identify remaining
+duplicated tier construction or policy before promising its removal. Preserve
+flow-specific differences and expand only after demonstrating a concrete benefit.
 
 **Avoid:** replacing all database records with a lightweight idealized model,
 mechanically introducing IDs everywhere, or dropping inconvenient fields to fit
