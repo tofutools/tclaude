@@ -371,6 +371,9 @@ func accessBinding(access model.ExecutionAccess) model.ExecutionAccessBinding {
 }
 
 func validateGrant(grant model.AuthorityGrant) error {
+	if _, err := grant.Scope.Normalize(); err != nil {
+		return fail(ErrInvalid, "%v", err)
+	}
 	if err := grant.Bounds.ValidateEnvironments(); err != nil {
 		return fail(ErrInvalid, "%v", err)
 	}

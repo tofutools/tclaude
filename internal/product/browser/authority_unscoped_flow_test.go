@@ -10,6 +10,7 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/ports"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestBrowserUnscopedGrantAuthorsReopensAndRevokes(t *testing.T) {
@@ -55,6 +56,21 @@ func TestBrowserUnscopedGrantAuthorsReopensAndRevokes(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(page.MustElement("#editor [name=resource]").MustProperty("value").Str()), &selected))
 	require.Equal(t, model.ResourceSelector{Kind: model.ResourceAll}, selected)
 	page.MustElement("#cancel").MustClick()
+	// Imported named constraints remain visible and survive an ordinary edit.
+	grant := state.Grants[0]
+	require.NoError(t, operator.Call(ctx, "PUT", "/v2/authority/grants/"+string(grant.ID), map[string]any{"subject": grant.Subject, "action": grant.Action, "resource": grant.Resource, "bounds": grant.Bounds, "scope": model.PermissionScope{"target_agent": {"beta"}}, "expected_revision": grant.Revision}, nil))
+	page.MustReload().MustWaitLoad()
+	page.MustElementR("#connection", "^Updated")
+	page.MustElementR("#access-list p", "Named constraints: target_agent = beta")
+	page.MustElementR("#access-list button", "^Edit grant$").MustClick()
+	page.MustElement("#editor [name=expiry]").MustInput(time.Now().UTC().Add(time.Hour).Format(time.RFC3339))
+	page.MustElement("#editor button[type=submit]").MustClick()
+	page.MustElement("#editor").MustWaitInvisible()
+	require.NoError(t, operator.Call(ctx, "GET", "/v2/authority", nil, &state))
+	require.Equal(t, model.PermissionScope{"target_agent": {"beta"}}, state.Grants[0].Scope)
+	require.NoError(t, send("scoped_beta", "beta"))
+	require.ErrorAs(t, send("scoped_gamma", "gamma"), &denied)
+	require.Equal(t, 403, denied.Status)
 	page.MustElementR("#access-list button", "^Revoke grant$").MustClick()
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()

@@ -113,6 +113,7 @@ func (id GrantID) Validate() error { return ValidateStableID("grant id", string(
 // membership and expiry are evaluated live; a stored grant is not an access
 // token and providers never receive it.
 type AuthorityGrant struct {
+	Scope     PermissionScope `json:",omitempty"`
 	ID        GrantID
 	Subject   AuthoritySubject
 	Action    Action

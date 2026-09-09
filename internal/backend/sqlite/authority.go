@@ -35,7 +35,7 @@ func (s *Store) AuthorityState(ctx context.Context) (app.AuthorityStateResult, e
 	if err := denialRows.Close(); err != nil {
 		return out, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,subject_kind,subject_id,action,resource_kind,resource_id,bounds_json,expires_at,revision,created_at,updated_at FROM authority_grants ORDER BY id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,subject_kind,subject_id,action,resource_kind,resource_id,bounds_json,expires_at,revision,created_at,updated_at,scope_json FROM authority_grants ORDER BY id`)
 	if err != nil {
 		return out, err
 	}
@@ -81,6 +81,15 @@ func (s *Store) AuthorityState(ctx context.Context) (app.AuthorityStateResult, e
 }
 
 func (s *Store) PutGrant(ctx context.Context, grant model.AuthorityGrant, expected model.Revision) (model.AuthorityGrant, error) {
+	scope, scopeErr := grant.Scope.Normalize()
+	if scopeErr != nil {
+		return model.AuthorityGrant{}, app.ErrInvalid
+	}
+	grant.Scope = scope
+	scopeJSON, scopeErr := json.Marshal(scope)
+	if scopeErr != nil {
+		return model.AuthorityGrant{}, scopeErr
+	}
 	if grant.Bounds.ValidateEnvironments() != nil {
 		return model.AuthorityGrant{}, app.ErrInvalid
 	}
@@ -98,10 +107,10 @@ func (s *Store) PutGrant(ctx context.Context, grant model.AuthorityGrant, expect
 		expires = nanos(*grant.ExpiresAt)
 	}
 	if expected == 0 {
-		_, err = s.db.ExecContext(ctx, `INSERT INTO authority_grants(id,subject_kind,subject_id,action,resource_kind,resource_id,bounds_json,expires_at,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,1,?,?)`, grant.ID, subjectKind, subjectID, grant.Action, resourceKind, resourceID, bounds, expires, nanos(grant.CreatedAt), nanos(grant.UpdatedAt))
+		_, err = s.db.ExecContext(ctx, `INSERT INTO authority_grants(id,subject_kind,subject_id,action,resource_kind,resource_id,bounds_json,expires_at,revision,created_at,updated_at,scope_json) VALUES(?,?,?,?,?,?,?,?,1,?,?,?)`, grant.ID, subjectKind, subjectID, grant.Action, resourceKind, resourceID, bounds, expires, nanos(grant.CreatedAt), nanos(grant.UpdatedAt), scopeJSON)
 	} else {
 		var result sql.Result
-		result, err = s.db.ExecContext(ctx, `UPDATE authority_grants SET subject_kind=?,subject_id=?,action=?,resource_kind=?,resource_id=?,bounds_json=?,expires_at=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, subjectKind, subjectID, grant.Action, resourceKind, resourceID, bounds, expires, nanos(grant.UpdatedAt), grant.ID, expected)
+		result, err = s.db.ExecContext(ctx, `UPDATE authority_grants SET subject_kind=?,subject_id=?,action=?,resource_kind=?,resource_id=?,bounds_json=?,expires_at=?,scope_json=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, subjectKind, subjectID, grant.Action, resourceKind, resourceID, bounds, expires, scopeJSON, nanos(grant.UpdatedAt), grant.ID, expected)
 		if err == nil {
 			if affected, _ := result.RowsAffected(); affected != 1 {
 				return model.AuthorityGrant{}, app.ErrConflict
@@ -352,7 +361,7 @@ func authorizeTx(ctx context.Context, q queryer, request model.AuthorityRequest,
 		return decision, nil
 	}
 	sk, sid := subjectParts(subject)
-	rows, err := q.QueryContext(ctx, `SELECT id,subject_kind,subject_id,action,resource_kind,resource_id,bounds_json,expires_at,revision,created_at,updated_at FROM authority_grants WHERE subject_kind=? AND subject_id=? AND action=?`, sk, sid, request.Action)
+	rows, err := q.QueryContext(ctx, `SELECT id,subject_kind,subject_id,action,resource_kind,resource_id,bounds_json,expires_at,revision,created_at,updated_at,scope_json FROM authority_grants WHERE subject_kind=? AND subject_id=? AND action=?`, sk, sid, request.Action)
 	if err != nil {
 		return decision, err
 	}
@@ -362,7 +371,7 @@ func authorizeTx(ctx context.Context, q queryer, request model.AuthorityRequest,
 			rows.Close()
 			return decision, err
 		}
-		if (grant.ExpiresAt == nil || at.Before(*grant.ExpiresAt)) && resourceMatches(ctx, q, request.Principal, grant.Resource, request.Resource) && requestedBoundsMatch(grant.Bounds, request) {
+		if (grant.ExpiresAt == nil || at.Before(*grant.ExpiresAt)) && resourceMatches(ctx, q, request.Principal, grant.Resource, request.Resource) && requestedBoundsMatch(grant.Bounds, request) && grantScopeMatches(ctx, q, grant.Scope, request) {
 			rows.Close()
 			return model.AuthorityDecision{Allowed: true, Action: request.Action, Resource: request.Resource, SourceKind: model.AuthorityDirect, SourceID: string(grant.ID), Revision: grant.Revision, Bounds: grant.Bounds}, nil
 		}
@@ -835,17 +844,26 @@ func operationAuthority(ctx context.Context, tx *sql.Tx, operationID model.Opera
 }
 
 func grantByID(ctx context.Context, q queryer, id model.GrantID) (model.AuthorityGrant, error) {
-	return scanGrant(q.QueryRowContext(ctx, `SELECT id,subject_kind,subject_id,action,resource_kind,resource_id,bounds_json,expires_at,revision,created_at,updated_at FROM authority_grants WHERE id=?`, id))
+	return scanGrant(q.QueryRowContext(ctx, `SELECT id,subject_kind,subject_id,action,resource_kind,resource_id,bounds_json,expires_at,revision,created_at,updated_at,scope_json FROM authority_grants WHERE id=?`, id))
 }
 
 func scanGrant(row scanner) (model.AuthorityGrant, error) {
 	var grant model.AuthorityGrant
+	var scope []byte
 	var sk, sid, rk, rid string
 	var bounds []byte
 	var expires sql.NullInt64
 	var created, updated int64
-	if err := row.Scan(&grant.ID, &sk, &sid, &grant.Action, &rk, &rid, &bounds, &expires, &grant.Revision, &created, &updated); err != nil {
+	if err := row.Scan(&grant.ID, &sk, &sid, &grant.Action, &rk, &rid, &bounds, &expires, &grant.Revision, &created, &updated, &scope); err != nil {
 		return grant, classify(err)
+	}
+	if len(scope) != 0 {
+		if err := json.Unmarshal(scope, &grant.Scope); err != nil {
+			return grant, err
+		}
+	}
+	if _, err := grant.Scope.Normalize(); err != nil {
+		return grant, err
 	}
 	grant.Subject, grant.Resource = makeSubject(sk, sid), makeResource(rk, rid)
 	if !validResourceSelector(grant.Resource) {

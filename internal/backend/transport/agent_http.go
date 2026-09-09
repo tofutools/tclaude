@@ -175,13 +175,14 @@ func (h *Handler) putGrant(w http.ResponseWriter, r *http.Request) {
 		Action           model.Action              `json:"action"`
 		Resource         model.ResourceSelector    `json:"resource"`
 		Bounds           model.ConfigurationBounds `json:"bounds"`
+		Scope            model.PermissionScope     `json:"scope"`
 		ExpiresAt        *time.Time                `json:"expires_at"`
 		ExpectedRevision model.Revision            `json:"expected_revision"`
 	}
 	if !decodeRequest(w, r, &body) {
 		return
 	}
-	result, err := h.authority.PutGrant(r.Context(), app.PutGrantRequest{Principal: p, ExpectedRevision: body.ExpectedRevision, Grant: model.AuthorityGrant{ID: model.GrantID(r.PathValue("id")), Subject: body.Subject, Action: body.Action, Resource: body.Resource, Bounds: body.Bounds, ExpiresAt: body.ExpiresAt}})
+	result, err := h.authority.PutGrant(r.Context(), app.PutGrantRequest{Principal: p, ExpectedRevision: body.ExpectedRevision, Grant: model.AuthorityGrant{ID: model.GrantID(r.PathValue("id")), Subject: body.Subject, Action: body.Action, Resource: body.Resource, Bounds: body.Bounds, Scope: body.Scope, ExpiresAt: body.ExpiresAt}})
 	if err != nil {
 		applicationError(w, err)
 		return
