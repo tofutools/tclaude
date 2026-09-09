@@ -104,7 +104,8 @@ class TeamEditor {
       const model = overrides.Model ?? (harness === base.Harness ? base.Model : '');
       return `${ProfilePresentation.label(selected.Profile)} · ${harness || 'Inherited harness'} / ${model || 'Default model'}`;
     }
-    return `${member.Desired.Harness || 'Choose harness'} / ${member.Desired.Model || 'Choose model'}`;
+    const settings=member.Options||member.Desired;
+    return `${settings.Harness || 'Inherit harness'} / ${settings.Model || 'Inherit model'}`;
   }
   card(title, text, edit, remove) {
     const card = el('article'); card.className = 'card'; card.append(el('h3', title), el('p', text), button('Edit ' + title, edit), button('Remove ' + title, () => { if (confirm('Remove ' + title + ' and its references from this draft?')) remove(); })); this.content.append(card);
@@ -134,7 +135,7 @@ class TeamEditor {
     this.content.append(form); attachLaunchSupportPreview({host:form,api:this.api}); return form;
   }
   member(original) {
-    const m = original || {Key: '', Name: '', Desired: {}, Roles: [], Required: true, Owner: false, BriefingIDs: []}, desired = m.Desired;
+    const m = original || {Key: '', Name: '', Desired: {}, Roles: [], Required: true, Owner: false, BriefingIDs: []}, desired = m.Options || m.Desired;
     let environment, sandbox;
     const overrideProperties = {harness:"Harness",model:"Model",effort:"Effort",tool_governance:"ToolGovernance",fast_mode:"FastMode",auto_review:"AutoReview",approval:"Approval",sandbox:"Sandbox"};
     const fields = [
@@ -142,14 +143,15 @@ class TeamEditor {
       {key:'role_label',label:'Display role',value:m.Labels?.Role||''},
       {key:'description',label:'Description',text:true,value:m.Labels?.Description||''},
       {key: 'profile', label: 'Saved configuration', options: [opt('', 'Custom settings'), ...this.configurations.map(c => opt(c.Profile.ID, ProfilePresentation.label(c.Profile)))], value: m.ProfileID || ''},
-      {key: 'harness', label: 'Harness', options: [opt('', 'Choose harness'), ...['claude', 'codex', 'opencode', 'copilot'].map(v => opt(v))], value: desired.Harness, required: true},
-      {key:'auto_review',label:'Codex approval reviewer',options:launchAutoReviewChoices().map(v=>opt(v.value,v.label)),value:desired.AutoReview?'on':'',required:false},
+      {key:'partial',label:'Use current defaults for blank settings',type:'checkbox',value:!!m.Options},
+      {key: 'harness', label: 'Harness', options: [opt('', 'Inherit harness'), ...['claude', 'codex', 'opencode', 'copilot'].map(v => opt(v))], value: desired.Harness, required: true},
+      {key:'auto_review',label:'Codex approval reviewer',options:launchAutoReviewChoices().map(v=>opt(v.value,v.label)),value:desired.AutoReview===undefined?'':desired.AutoReview?'on':'off',required:false},
  {key:'fast_mode',label:'Codex fast mode',options:launchFastModeChoices().map(v=>opt(v.value,v.label)),value:desired.FastMode||'',required:false},
       {key:'tool_governance',label:'OpenCode tool governance',options:launchToolGovernanceChoices().map(v=>opt(v.value,v.label)),value:desired.ToolGovernance||'',required:false},
       {key: 'effort', label: 'Requested native effort / variant (optional)', value: desired.Effort || ''},
       {key: 'model', label: 'Model', value: desired.Model, required: true}, {key: 'cwd', label: 'Configuration working directory (optional; deployment uses its selected workspace)', value: desired.WorkingDirectory, required: false},
-      {key: 'approval', label: 'Approval', options: launchApprovalChoices().map(v => opt(v)), value: desired.Approval || 'supervised'},
-      {key: 'sandbox', label: 'Confinement', options: ['read_only', 'workspace_write', 'unconfined'].map(v => opt(v)), value: desired.Sandbox || 'workspace_write'},
+      {key: 'approval', label: 'Approval', options: [opt('','Inherit approval'),...launchApprovalChoices().map(v => opt(v))], value: desired.Approval ?? (m.Options?'':'supervised')},
+      {key: 'sandbox', label: 'Confinement', options: [opt('','Inherit confinement'),...['read_only', 'workspace_write', 'unconfined'].map(v => opt(v))], value: desired.Sandbox ?? (m.Options?'':'workspace_write')},
       {key: 'roles', label: 'Roles', multiple: true, options: this.roles.map(r => opt(r.ID, r.Name || r.ID)), value: m.Roles || []},
       {key: 'owner', label: 'Group owner', type: 'checkbox', value: m.Owner}, {key: 'required', label: 'Required member', type: 'checkbox', value: m.Required},
       {key: 'briefs', label: 'Additional briefings', multiple: true, options: this.draft.Team.Briefings.map(b => opt(b.ID)), value: [...new Set([...(m.BriefingIDs || []), ...this.draft.Team.Briefings.filter(b => b.MemberKeys?.includes(m.Key)).map(b => b.ID)])]}
@@ -163,7 +165,8 @@ class TeamEditor {
       if (f.effort && !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(f.effort)) throw new Error('Requested effort must be a lowercase native level or variant, at most 64 characters.');
       const overrides = {};
       if(f.profile)for(const [key,property] of Object.entries(overrideProperties))if(f['override_'+key])overrides[property]=key==='auto_review'?f[key]==='on':f[key];
-      const member = {...m, Overrides:Object.keys(overrides).length ? overrides : undefined, Key: f.key, Name: f.name, Labels:{Role:f.role_label,Description:f.description}, ProfileID: f.profile || undefined, Desired: f.profile ? {} : {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, ToolGovernance:f.tool_governance||undefined,FastMode:f.fast_mode||undefined,AutoReview:f.auto_review==='on', WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, HostSandbox: f.resolvedSandbox||undefined, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
+      const options = f.partial&&!f.profile ? profileOptionsFromForm({...f,host_sandbox:f.resolvedSandbox,environment:environment.read()}) : undefined;
+      const member = {...m, Options:options, Overrides:Object.keys(overrides).length ? overrides : undefined, Key: f.key, Name: f.name, Labels:{Role:f.role_label,Description:f.description}, ProfileID: f.profile || undefined, Desired: f.profile || options ? {} : {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, ToolGovernance:f.tool_governance||undefined,FastMode:f.fast_mode||undefined,AutoReview:f.auto_review==='on', WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, HostSandbox: f.resolvedSandbox||undefined, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
       this.change(d => {
         const i = d.Team.Members.findIndex(x => x.Key === original?.Key); if (i < 0) d.Team.Members.push(member); else d.Team.Members[i] = member;
         if (original && original.Key !== f.key) { for (const w of d.Team.Waves) w.MemberKeys = w.MemberKeys.map(k => k === original.Key ? f.key : k); for (const b of d.Team.Briefings) b.MemberKeys = (b.MemberKeys || []).map(k => k === original.Key ? f.key : k); }
@@ -208,7 +211,9 @@ class TeamEditor {
       for(const [key,property] of Object.entries(overrideProperties))if(form.elements["override_"+key].checked)values[key]=initialize ? m.Overrides?.[property] : form.elements[key].value;
       const selected = !!form.elements.profile.value;
       const profile = this.configurations.find(c => c.Profile.ID === form.elements.profile.value);
-      form.elements.harness.dataset.allowInheritedHarness=profile?.Revision.Options?'true':'false';
+      form.elements.harness.dataset.allowInheritedHarness=(profile?.Revision.Options||(!selected&&form.elements.partial.checked))?'true':'false';
+      for(const key of ['harness','model','approval','sandbox'])form.elements[key].required=!selected&&!form.elements.partial.checked;
+      form.elements.partial.parentElement.hidden=selected;
       if (profile) {
         const d = profile.Revision.Options || profile.Revision.Desired;
         for (const [key, property] of Object.entries({harness:'Harness',model:'Model',effort:'Effort',tool_governance:'ToolGovernance',fast_mode:'FastMode',auto_review:'AutoReview',cwd:'WorkingDirectory',approval:'Approval',sandbox:'Sandbox'})) form.elements[key].value = launchSettingValue(key,d[property]);
@@ -225,6 +230,7 @@ class TeamEditor {
       updatingProfile=false;
     };
     form.elements.harness.addEventListener('change',()=>{if(form.elements.profile.value)updateProfile();});
+    form.elements.partial.addEventListener('change',()=>{updateProfile();this.unapplied=true;});
     form.elements.profile.addEventListener('change', () => { updateProfile(); this.unapplied = true; });
     for(const key of Object.keys(overrideProperties))form.elements['override_'+key].addEventListener('change',()=>{updateProfile();this.unapplied=true;});
     form.addEventListener('launch-policy-support', event => {
@@ -237,7 +243,7 @@ class TeamEditor {
       }
     });
     updateProfile(true);
-    this.content.prepend(select, el('p', 'A saved configuration uses its current settings at each new deployment. Custom settings and copied settings stay with this template. Deployment supplies the working directory.'));
+    this.content.prepend(select, el('p', 'A saved configuration uses its current settings at each new deployment. Custom settings stay with this template. When enabled, blank settings use current defaults at deployment. Deployment supplies the working directory.'));
   }
   removeMember(member) {
     this.change(d => {

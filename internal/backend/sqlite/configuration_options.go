@@ -55,3 +55,41 @@ func requireProfileResolutionCurrent(ctx context.Context, tx *sql.Tx, resolved a
 	}
 	return nil
 }
+
+func requireTeamConfigurationSourcesCurrent(ctx context.Context, tx *sql.Tx, sources model.TeamConfigurationSources) error {
+	if err := requireProfileResolutionCurrent(ctx, tx, app.ResolvedProfileConfiguration{DefaultsRevision: sources.DefaultsRevision, GlobalProfile: sources.GlobalProfile}); err != nil {
+		return err
+	}
+	if sources.GroupID != "" {
+		defaults, err := readGroupConfiguration(ctx, tx, sources.GroupID)
+		if err != nil {
+			return err
+		}
+		if defaults.Revision != sources.GroupDefaultsRevision {
+			return app.ErrConflict
+		}
+		if (defaults.Profile == nil) != (sources.Selected == nil) {
+			return app.ErrConflict
+		}
+		if defaults.Profile != nil && defaults.Profile.ProfileID != sources.Selected.ProfileID {
+			return app.ErrConflict
+		}
+	}
+	if sources.Selected != nil {
+		var data []byte
+		if err := tx.QueryRowContext(ctx, `SELECT record FROM configuration_profiles WHERE id=?`, sources.Selected.ProfileID).Scan(&data); err != nil {
+			return classify(err)
+		}
+		var profile model.ConfigurationProfile
+		if err := json.Unmarshal(data, &profile); err != nil {
+			return err
+		}
+		if profile.Archived || profile.CurrentRevisionID != sources.Selected.RevisionID {
+			return app.ErrConflict
+		}
+		if err := requireEnabledConfigurationProfileTx(ctx, tx, profile.ID); err != nil {
+			return err
+		}
+	}
+	return nil
+}

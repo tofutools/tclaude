@@ -104,9 +104,22 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 		return TeamDeploymentResult{}, err
 	}
 	memberStartups := make(map[string]model.ProfileStartup)
+	var configurationSources []model.TeamConfigurationSources
 	for _, spec := range revision.Team.Members {
 		desired := spec.Desired
 		var profileRef *model.ConfigurationProfileRef
+		if spec.Options != nil {
+			var defaultGroup model.GroupID
+			if target.Kind == model.TeamTargetExistingGroup {
+				defaultGroup = target.GroupID
+			}
+			resolved, sources, resolveErr := s.resolveInlineConfiguration(ctx, *spec.Options, defaultGroup)
+			desired, err = resolved.Desired, resolveErr
+			configurationSources = append(configurationSources, sources)
+			if err != nil {
+				return TeamDeploymentResult{}, fail(ErrInvalid, "member %s: %v", spec.Key, err)
+			}
+		}
 		if spec.ProfileID != "" {
 			if !desired.Equal(model.DesiredConfiguration{}) {
 				return TeamDeploymentResult{}, fail(ErrInvalid, "member %s selects a profile or custom settings", spec.Key)
@@ -134,6 +147,7 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 					return TeamDeploymentResult{}, resolveErr
 				}
 				desired = resolved.Desired
+				configurationSources = append(configurationSources, model.TeamConfigurationSources{DefaultsRevision: resolved.DefaultsRevision, GlobalProfile: resolved.GlobalProfile, Selected: &resolved.Selected})
 			} else {
 				desired, err = s.resolveTeamProfile(spec, profile.Revision.Desired)
 				if err != nil {
@@ -205,7 +219,7 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 	for i := range revision.Team.Rhythms {
 		ownedAutomationIDs = append(ownedAutomationIDs, teamRhythmID(req.DeploymentID, i))
 	}
-	deployment := model.TeamDeployment{ID: req.DeploymentID, Definition: ref, DependencyClosure: append([]model.DefinitionRef(nil), revision.Dependencies...), Mission: strings.TrimSpace(req.Instantiation.Mission), Parameters: parameters, GroupID: group.ID, TargetKind: target.Kind, Members: members, AutomationRuleIDs: automationIDs, OwnedAutomationRuleIDs: ownedAutomationIDs, Workspaces: workspaceBindings, OwnedWorkspaceIDs: ownedWorkspaceIDs, BriefingOperationIDs: map[string][]model.OperationID{}, WorkRunID: workRunID, State: model.DeploymentDeploying, Revision: 1, CreatedAt: now, UpdatedAt: now}
+	deployment := model.TeamDeployment{ConfigurationSources: configurationSources, ID: req.DeploymentID, Definition: ref, DependencyClosure: append([]model.DefinitionRef(nil), revision.Dependencies...), Mission: strings.TrimSpace(req.Instantiation.Mission), Parameters: parameters, GroupID: group.ID, TargetKind: target.Kind, Members: members, AutomationRuleIDs: automationIDs, OwnedAutomationRuleIDs: ownedAutomationIDs, Workspaces: workspaceBindings, OwnedWorkspaceIDs: ownedWorkspaceIDs, BriefingOperationIDs: map[string][]model.OperationID{}, WorkRunID: workRunID, State: model.DeploymentDeploying, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	deployment.MemberStartups = memberStartups
 	deployment.RolePins = pins
 	stored, _, err := s.store.CreateTeamDeployment(ctx, deployment, group, agents, assignments, req.Context.Principal, req.Context.RequestID, requestDigest, now)
