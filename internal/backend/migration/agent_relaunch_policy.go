@@ -14,6 +14,12 @@ func applyAgentRelaunchPolicy(values map[string]any, desired model.DesiredConfig
 	if err != nil || profile == nil {
 		return desired, err
 	}
+	if profile.AutoMemory != nil {
+		desired.AutoMemory = *profile.AutoMemory
+	}
+	if err := model.ValidateAutoMemory(desired.AutoMemory, desired.Harness); err != nil {
+		return desired, err
+	}
 	if profile.AutoReview != nil {
 		desired.AutoReview = *profile.AutoReview
 	}

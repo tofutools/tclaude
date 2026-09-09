@@ -2051,3 +2051,14 @@ are still current; concurrent edits return a conflict so the request can retry. 
 working directory and retains the resolved agent settings for retries and
 recovery. Existing complete custom settings and named-profile selections remain
 supported as separate authoring choices.
+
+### Claude auto-memory
+
+Claude auto-memory is an optional profile or team-member setting. Omission in a
+partial profile inherits; explicit off overrides an enabled default. New Claude
+launches default to off, matching v1. The provider writes the native disable
+switch explicitly for both on and off on fresh and continued launches. The
+resolved value persists with each agent and admitted execution, while a future
+launch uses its selected configuration. Offline imports preserve nullable
+profile choices and authoritative agent relaunch settings. A positive request
+on another harness is rejected; switching harness clears inherited Claude state.
