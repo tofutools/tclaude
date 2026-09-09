@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"time"
 
@@ -27,9 +28,16 @@ func (p *Provider) launchPolicy() ports.PolicyRequirements {
 }
 
 func acceptsApproval(executable string, mode model.ApprovalMode) bool {
+	root, err := os.MkdirTemp("", "codex-approval-capability-")
+	if err != nil {
+		return false
+	}
+	defer func() { _ = os.RemoveAll(root) }()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, executable, "-a", string(mode), "--help")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "HOME="+root, "CODEX_HOME="+root)
 	cmd.WaitDelay = 100 * time.Millisecond
 	return cmd.Run() == nil
 }
