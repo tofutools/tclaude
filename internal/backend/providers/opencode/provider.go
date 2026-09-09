@@ -180,6 +180,9 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if err := validateDirectory(request.Spec.WorkingDirectory); err != nil {
 		return nil, err
 	}
+	if err := request.Spec.ToolGovernance.Validate(); err != nil {
+		return nil, err
+	}
 	if !slices.Contains(supportedLaunchPolicy().SupportedApproval, request.Spec.Approval) {
 		return nil, fmt.Errorf("OpenCode provider does not support approval mode %q", request.Spec.Approval)
 	}
@@ -463,7 +466,7 @@ func (p *prepared) Release(ctx context.Context, permit ports.ReleasePermit) (por
 		passwordFile: p.passwordFile,
 		stateRoot:    p.stateRoot, cwd: p.request.Spec.WorkingDirectory,
 		nativeID: p.descriptionNativeID(), intent: p.request.Intent,
-		forkSourceID: forkSourceID(p.request), forkPoint: forkPoint(p.request), approval: p.request.Spec.Approval,
+		forkSourceID: forkSourceID(p.request), forkPoint: forkPoint(p.request), approval: p.request.Spec.Approval, toolGovernance: p.request.Spec.ToolGovernance,
 		sandbox: p.request.Spec.Sandbox, model: p.request.Spec.Model, effort: p.request.Spec.Effort, attemptMark: p.attemptMark, access: p.access,
 	}
 	currentEvidence, evidenceErr := runtime.providerEvidence()
@@ -663,7 +666,7 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 		endpoint: recorded.Endpoint, password: string(passwordBytes), passwordFile: recorded.PasswordFile, stateRoot: recorded.StateRoot,
 		cwd: request.Spec.WorkingDirectory, nativeID: recorded.NativeID, parentID: recorded.ParentID,
 		intent: recorded.Intent, forkSourceID: recorded.ForkSourceID, forkPoint: recorded.ForkPoint,
-		approval: request.Spec.Approval, sandbox: request.Spec.Sandbox, model: request.Spec.Model, effort: request.Spec.Effort,
+		approval: request.Spec.Approval, toolGovernance: request.Spec.ToolGovernance, sandbox: request.Spec.Sandbox, model: request.Spec.Model, effort: request.Spec.Effort,
 		attemptMark: recorded.AttemptMark, access: recorded.Access,
 		observationSequence: recorded.ObservationSequence, providerOrder: recorded.ProviderOrder,
 	}
@@ -709,6 +712,7 @@ func (p *Provider) Recover(ctx context.Context, request ports.RecoveryRequest) (
 }
 
 type Runtime struct {
+	toolGovernance        model.ToolGovernance
 	nativeNetwork         model.SandboxNetworkBaseline
 	artifact              *host.SandboxChildArtifact
 	policyHash            string
@@ -971,7 +975,7 @@ func (r *Runtime) health(ctx context.Context) error {
 }
 
 func (r *Runtime) createSession(ctx context.Context) error {
-	expected := permissionRules(r.approval, r.sandbox, r.nativeNetwork)
+	expected := toolPermissionRules(r.approval, r.sandbox, r.nativeNetwork, r.toolGovernance)
 	body := map[string]any{"permission": expected}
 	response, err := r.do(ctx, http.MethodPost, "/session?directory="+url.QueryEscape(r.cwd), body)
 	if err != nil {
@@ -1072,7 +1076,7 @@ func (r *Runtime) reconcileFreshSession(ctx context.Context) error {
 }
 
 func (r *Runtime) verifySession(ctx context.Context) error {
-	expected := permissionRules(r.approval, r.sandbox, r.nativeNetwork)
+	expected := toolPermissionRules(r.approval, r.sandbox, r.nativeNetwork, r.toolGovernance)
 	response, err := r.do(ctx, http.MethodGet, "/session/"+url.PathEscape(r.nativeID)+
 		"?directory="+url.QueryEscape(r.cwd), nil)
 	if err != nil {

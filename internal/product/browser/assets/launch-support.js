@@ -38,3 +38,5 @@ function attachLaunchSupportPreview({host,api}) {
  update();
  return dispose;
 }
+
+function launchToolGovernanceChoices(){return [{value:"",label:"Provider default"},...[["allow","Allow audited tools"],["ask","Ask before audited tools"],["deny","Deny audited tools"]].map(([value,label])=>({value,label}))];}

@@ -1926,3 +1926,15 @@ profile edits do not change a running session's permission interpretation.
 Existing generic modes remain unchanged. The configuration editor and offline
 import retain the exact native choices; host sandbox enforcement is independent
 of the native permission rules.
+
+### OpenCode tool governance
+
+Tool governance is a separate OpenCode configuration field: `allow`, `ask`, or
+`deny` controls bash, glob, grep, lsp, task and skill without changing edit/web
+approval. Native approval modes retain their allowed baseline when this field
+is absent; existing generic configurations retain their previous behavior.
+Profiles, agent settings and team members can author the field. A team member
+can inherit it from a saved profile, override it, or explicitly clear it.
+Switching to another harness drops an inherited OpenCode-only setting; an
+explicit foreign setting is rejected. Imports preserve the v1 field, and agent
+and execution records retain it through reopen and recovery.

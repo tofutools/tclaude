@@ -70,12 +70,13 @@ function desiredFields(desired={}){return[
  {name:'model',label:'Model',value:desired.Model},
  {name:'host_sandbox',label:'Host sandbox profile',sandboxSelection:true,value:desired.HostSandbox||null},
  {name:'environment',label:'Environment — literal values for future launches',environment:true,value:desired.Environment||{}},
+ {name:'tool_governance',label:'OpenCode tool governance (bash, glob, grep, lsp, task, skill)',value:desired.ToolGovernance||'',options:launchToolGovernanceChoices(),required:false},
  {name:'effort',label:'Requested native effort / variant (optional)',value:desired.Effort||'',required:false},
  {name:'cwd',label:'Working directory',value:desired.WorkingDirectory},
  {name:'approval',label:'Approval',value:desired.Approval||'supervised',options:launchApprovalChoices()},
  {name:'sandbox',label:'Confinement',value:desired.Sandbox||'workspace_write',options:['read_only','workspace_write','unconfined']}
 ]}
-function configuration(form){if(form.effort&&!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(form.effort))throw new Error('Requested native effort must start with a letter or digit and contain at most 64 lowercase letters, digits, underscores or hyphens.');return{...(form.host_sandbox?{HostSandbox:form.host_sandbox}:{}),Environment:form.environment||{},Harness:form.harness,Model:form.model,Effort:form.effort,WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
+function configuration(form){if(form.effort&&!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(form.effort))throw new Error('Requested native effort must start with a letter or digit and contain at most 64 lowercase letters, digits, underscores or hyphens.');return{...(form.host_sandbox?{HostSandbox:form.host_sandbox}:{}),Environment:form.environment||{},Harness:form.harness,Model:form.model,Effort:form.effort,ToolGovernance:form.tool_governance||undefined,WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
 async function startWithBrief(agent){
  const ref=agent.ConfigurationProfile;
  const saved=ref?await api(`/v2/configuration-profiles/${encodeURIComponent(ref.ProfileID)}?revision_id=${encodeURIComponent(ref.RevisionID)}`):null;

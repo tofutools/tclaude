@@ -767,6 +767,9 @@ func desiredFromRow(values map[string]any) model.DesiredConfiguration {
 			values = config
 		}
 	}
+	if desired.Harness == "opencode" {
+		desired.ToolGovernance = model.ToolGovernance(firstNonEmpty(stringMap(values, "tool_governance"), stringMap(values, "ToolGovernance")))
+	}
 	switch strings.ReplaceAll(strings.ToLower(firstNonEmpty(stringMap(values, "approval"), sourcev228.String(values["approval"]))), "-", "_") {
 	case "supervised":
 		desired.Approval = model.ApprovalSupervised
