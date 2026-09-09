@@ -77,5 +77,8 @@ func TestBrowserGroupDefaultsFollowProfileEditsAndRetryLostReply(t *testing.T) {
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
 	page.MustElementR("#group-management button", "^Create member$").MustClick()
-	page.MustElementR("#error", "Choose a group launch default first")
+	page.MustElement("#editor").MustWaitVisible()
+	require.Equal(t, "", page.MustElement("#editor [name=harness]").MustProperty("value").Str())
+	require.Equal(t, "Provider defaults", page.MustElement("#editor [name=name]").MustProperty("value").Str())
+	page.MustElement("#editor button[value=cancel]").MustClick()
 }
