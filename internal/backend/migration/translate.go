@@ -777,7 +777,7 @@ func desiredFromRow(values map[string]any) model.DesiredConfiguration {
 			desired.Approval = model.ApprovalMode(strings.ReplaceAll(strings.ToLower(stringMap(values, "approval")), "_", "-"))
 		}
 	case "allow_tools", "yolo":
-		if desired.Harness == "copilot" {
+		if desired.Harness == "copilot" || (desired.Harness == "opencode" && strings.EqualFold(strings.ReplaceAll(stringMap(values, "approval"), "_", "-"), "allow-tools")) {
 			desired.Approval = model.ApprovalMode(strings.ReplaceAll(strings.ToLower(stringMap(values, "approval")), "_", "-"))
 		}
 	case "inherit", "default", "manual", "plan", "acceptedits", "auto", "dontask", "bypasspermissions":
@@ -786,6 +786,10 @@ func desiredFromRow(values map[string]any) model.DesiredConfiguration {
 			desired.Approval = native[strings.ToLower(stringMap(values, "approval"))]
 		} else if desired.Harness == "copilot" && strings.EqualFold(stringMap(values, "approval"), "inherit") {
 			desired.Approval = model.ApprovalInherit
+		}
+	case "ask":
+		if desired.Harness == "opencode" {
+			desired.Approval = model.ApprovalAsk
 		}
 	case "deny":
 		// This native policy belongs to OpenCode; it is not a portable alias

@@ -360,7 +360,7 @@ func TestOpenCodeForkUseClaimBindsRevisionAndFingerprint(t *testing.T) {
 }
 
 func TestContinuationReappliesApproval(t *testing.T) {
-	for _, approval := range []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalDeny} {
+	for _, approval := range []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalDeny, model.ApprovalAsk, model.ApprovalAllowTools} {
 		t.Run(string(approval), func(t *testing.T) {
 			root, err := os.MkdirTemp("/tmp", "tclaude-opencode-continuation-")
 			require.NoError(t, err)
@@ -422,10 +422,21 @@ func TestContinuationReappliesApproval(t *testing.T) {
 			require.NoError(t, err)
 			var rules []permissionRule
 			require.NoError(t, json.Unmarshal(data, &rules))
-			if approval == model.ApprovalSupervised {
+			switch approval {
+			case model.ApprovalSupervised:
 				require.Contains(t, rules, permissionRule{Permission: "bash", Pattern: "*", Action: "ask"})
 				require.NotContains(t, rules, permissionRule{Permission: "bash", Pattern: "*", Action: "allow"})
-			} else {
+			case model.ApprovalAsk, model.ApprovalAllowTools:
+				action := "ask"
+				if approval == model.ApprovalAllowTools {
+					action = "allow"
+				}
+				require.Contains(t, rules, permissionRule{Permission: "edit", Pattern: "*", Action: action})
+				require.Contains(t, rules, permissionRule{Permission: "external_directory", Pattern: "*", Action: action})
+				require.Contains(t, rules, permissionRule{Permission: "bash", Pattern: "*", Action: "allow"})
+				require.Contains(t, rules, permissionRule{Permission: "webfetch", Pattern: "*", Action: "ask"})
+				require.Contains(t, rules, permissionRule{Permission: "read", Pattern: "*.env", Action: "ask"})
+			default:
 				require.Contains(t, rules, permissionRule{Permission: "*", Pattern: "*", Action: "deny"})
 				require.Contains(t, rules, permissionRule{Permission: "read", Pattern: "*", Action: "allow"})
 				require.Contains(t, rules, permissionRule{Permission: "bash", Pattern: "*", Action: "allow"})
