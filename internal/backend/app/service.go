@@ -1110,7 +1110,7 @@ func completionFromDisposition(operation model.Operation, execution model.Execut
 }
 
 func resolvedSpec(executionID model.ExecutionID, agentID model.AgentID, desired model.DesiredConfiguration, conversationID model.ConversationID) model.ResolvedExecutionSpec {
-	return model.ResolvedExecutionSpec{HostSandbox: model.CloneSandboxSelection(desired.HostSandbox), ExecutionID: executionID, Workload: model.ExecutionWorkloadHarness, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, Effort: desired.Effort, ToolGovernance: desired.ToolGovernance, FastMode: desired.FastMode, AutoReview: desired.AutoReview, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox, Environment: desired.Environment.Clone()}
+	return model.ResolvedExecutionSpec{HostSandbox: model.CloneSandboxSelection(desired.HostSandbox), ExecutionID: executionID, Workload: model.ExecutionWorkloadHarness, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, Effort: desired.Effort, ToolGovernance: desired.ToolGovernance, FastMode: desired.FastMode, AutoReview: desired.AutoReview, AutoMemory: desired.AutoMemory, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox, Environment: desired.Environment.Clone()}
 }
 
 func actionForOperation(kind model.OperationKind) model.Action {
@@ -1214,6 +1214,9 @@ func validateLaunchConfiguration(desired model.DesiredConfiguration) error {
 
 func validateConfigurationFields(desired model.DesiredConfiguration, partial bool) error {
 	if !partial || desired.Harness != "" {
+		if err := model.ValidateAutoMemory(desired.AutoMemory, desired.Harness); err != nil {
+			return fail(ErrInvalid, "%v", err)
+		}
 		if err := model.ValidateAutoReview(desired.AutoReview, desired.Harness); err != nil {
 			return fail(ErrInvalid, "%v", err)
 		}

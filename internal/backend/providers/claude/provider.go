@@ -355,7 +355,12 @@ func (p *prepared) runtime(terminal *host.Terminal) *Runtime {
 }
 
 func (p *prepared) runtimeEnvironment() []string {
+	memory := "1"
+	if p.request.Spec.AutoMemory {
+		memory = "0"
+	}
 	result := []string{
+		"CLAUDE_CODE_DISABLE_AUTO_MEMORY=" + memory,
 		"TCLAUDE_OBSERVATION_SPOOL=" + p.spool.Directory(),
 		"TCLAUDE_BACKEND_CREDENTIAL_FILE=",
 		"TCLAUDE_BACKEND_SOCKET=",

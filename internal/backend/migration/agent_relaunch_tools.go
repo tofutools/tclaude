@@ -9,6 +9,7 @@ import (
 )
 
 type agentRelaunchConfiguration struct {
+	AutoMemory        *bool                 `json:"auto_memory"`
 	AutoReview        *bool                 `json:"approval_auto_review"`
 	FastMode          *bool                 `json:"fast_mode"`
 	ContextWindowSize *int64                `json:"context_window_size"`

@@ -4,6 +4,7 @@ package model
 // inherit from the lower-priority configuration.
 type NativeConfigurationOptions struct {
 	AutoReview     *bool           `json:",omitempty"`
+	AutoMemory     *bool           `json:",omitempty"`
 	FastMode       *FastMode       `json:",omitempty"`
 	ToolGovernance *ToolGovernance `json:",omitempty"`
 	Harness        *string         `json:",omitempty"`
@@ -25,6 +26,7 @@ func (o *NativeConfigurationOptions) Apply(base DesiredConfiguration) DesiredCon
 			base.ToolGovernance = ""
 			base.FastMode = ""
 			base.AutoReview = false
+			base.AutoMemory = false
 		}
 		base.Harness = *o.Harness
 	}
@@ -33,6 +35,9 @@ func (o *NativeConfigurationOptions) Apply(base DesiredConfiguration) DesiredCon
 	}
 	if o.Effort != nil {
 		base.Effort = *o.Effort
+	}
+	if o.AutoMemory != nil {
+		base.AutoMemory = *o.AutoMemory
 	}
 	if o.AutoReview != nil {
 		base.AutoReview = *o.AutoReview

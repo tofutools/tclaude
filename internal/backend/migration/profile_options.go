@@ -21,6 +21,10 @@ func importedProfileOptions(values map[string]any, desired model.DesiredConfigur
 		return &value
 	}
 	out := &model.ConfigurationOptions{Harness: text(desired.Harness), Model: text(desired.Model), Effort: text(desired.Effort), WorkingDirectory: text(desired.WorkingDirectory), Environment: desired.Environment}
+	if values["auto_memory"] != nil {
+		value, _ := importedAutoMemory(values["auto_memory"])
+		out.AutoMemory = &value
+	}
 	if values["auto_review"] != nil {
 		value, _ := importedAutoReview(values["auto_review"])
 		out.AutoReview = &value

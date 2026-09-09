@@ -140,7 +140,7 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 			if profile.Revision.Options != nil {
 				var overrides *model.ConfigurationOptions
 				if o := spec.Overrides; o != nil {
-					overrides = &model.ConfigurationOptions{Harness: o.Harness, Model: o.Model, Effort: o.Effort, Approval: o.Approval, Sandbox: o.Sandbox, AutoReview: o.AutoReview, FastMode: o.FastMode, ToolGovernance: o.ToolGovernance}
+					overrides = &model.ConfigurationOptions{Harness: o.Harness, Model: o.Model, Effort: o.Effort, Approval: o.Approval, Sandbox: o.Sandbox, AutoReview: o.AutoReview, AutoMemory: o.AutoMemory, FastMode: o.FastMode, ToolGovernance: o.ToolGovernance}
 				}
 				resolved, resolveErr := s.resolveProfileConfigurationWithOverrides(ctx, profile, overrides)
 				if resolveErr != nil {

@@ -56,6 +56,9 @@ function attachFastModeControl(host,isEditable){return attachProviderSettingCont
 
 function launchAutoReviewChoices(){return [{value:'',label:'No automatic-review override'},{value:'on',label:'Automatic approval review'}]}
 function attachAutoReviewControl(host,isEditable){return attachProviderSettingControl(host,'auto_review','codex',isEditable)}
-function launchSettingValue(key,value){return key==='auto_review'?(value===true||value==='on'?'on':''):(value||'')}
+function launchSettingValue(key,value){return key==='auto_review'||key==='auto_memory'?(value===true||value==='on'?'on':key==='auto_memory'&&value===false?'off':''):(value||'')}
 
 function autoReviewAuthorityField(bounds={}){return {name:'auto_review',label:'Allow Codex automatic approval review',type:'checkbox',required:false,value:!!bounds.AutoReview}}
+
+function launchAutoMemoryChoices(){return [{value:'',label:'Use default (off)'},{value:'on',label:'On'},{value:'off',label:'Off'}]}
+function attachAutoMemoryControl(host,isEditable){return attachProviderSettingControl(host,'auto_memory','claude',isEditable)}

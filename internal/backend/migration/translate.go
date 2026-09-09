@@ -260,6 +260,9 @@ func (t *translator) translateAgents(batch *app.ImportBatch) error {
 			return fmt.Errorf("agent %s relaunch profile: %w", row.Key, err)
 		}
 		agent.Desired = resolved
+		if err := validateImportedAutoMemory(row.Values, agent.Desired.Harness); err != nil {
+			return fmt.Errorf("agent %s auto-memory: %w", row.Key, err)
+		}
 		if err := validateImportedAutoReview(row.Values, agent.Desired.Harness); err != nil {
 			return fmt.Errorf("agent %s automatic approval review: %w", row.Key, err)
 		}
@@ -420,6 +423,14 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 		}
 		desired := desiredFromRow(row.Values)
 		desired.Environment = t.launchEnvironment(batch, "spawn_profiles", row)
+		memoryErr := validateImportedAutoMemory(row.Values, desired.Harness)
+		if desired.Harness == "" {
+			_, memoryErr = importedAutoMemory(row.Values["auto_memory"])
+		}
+		if memoryErr != nil {
+			archived = true
+			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "auto_memory_requires_review", memoryErr.Error())
+		}
 		reviewErr := validateImportedAutoReview(row.Values, desired.Harness)
 		if desired.Harness == "" {
 			// An unset profile harness defers applicability, but not value validation.
@@ -819,6 +830,7 @@ func desiredFromRow(values map[string]any) model.DesiredConfiguration {
 		}
 	}
 	desired.AutoReview, _ = importedAutoReview(values["auto_review"])
+	desired.AutoMemory, _ = importedAutoMemory(values["auto_memory"])
 	desired.FastMode = importedFastMode(values["fast_mode"])
 	if desired.Harness == "opencode" {
 		desired.ToolGovernance = model.ToolGovernance(firstNonEmpty(stringMap(values, "tools"), stringMap(values, "tool_governance"), stringMap(values, "ToolGovernance")))

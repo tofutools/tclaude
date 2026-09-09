@@ -12,6 +12,10 @@ function profileOptionFields(options={},name=''){
   if(field.name==='approval'||field.name==='sandbox'){
    field.options=[{value:'',label:'Inherit from defaults'},...field.options];field.value=options[field.name==='approval'?'Approval':'Sandbox']||'';
   }
+  if(field.name==='auto_memory'){
+   field.options=[{value:'',label:'Inherit auto-memory'},{value:'on',label:'On'},{value:'off',label:'Off'}];
+   field.value=options.AutoMemory===undefined?'':options.AutoMemory?'on':'off';
+  }
   if(field.name==='auto_review'){
    field.options=[{value:'',label:'Inherit approval reviewer'},{value:'on',label:'Automatic approval review'},{value:'off',label:'No automatic approval review'}];
    field.value=options.AutoReview===undefined?'':options.AutoReview?'on':'off';
@@ -23,6 +27,7 @@ function profileOptionsFromForm(form){
  validateConfigurationForm(form);
  const out={};
  for(const [name,key] of Object.entries({harness:'Harness',model:'Model',effort:'Effort',cwd:'WorkingDirectory',approval:'Approval',sandbox:'Sandbox',fast_mode:'FastMode',tool_governance:'ToolGovernance'}))if(form[name])out[key]=form[name];
+ if(form.auto_memory)out.AutoMemory=form.auto_memory==='on';
  if(form.auto_review)out.AutoReview=form.auto_review==='on';
  if(form.host_sandbox)out.HostSandbox=form.host_sandbox;
  if(form.environment&&Object.keys(form.environment).length)out.Environment=form.environment;
