@@ -25,7 +25,7 @@ func TestImportedGroupDefaultPinsSourceIdentityAndRequiresExplicitCreation(t *te
  ALTER TABLE spawn_profiles ADD COLUMN approval TEXT;
  ALTER TABLE spawn_profiles ADD COLUMN sandbox TEXT;
  ALTER TABLE spawn_profiles ADD COLUMN initial_message TEXT;
- ALTER TABLE spawn_profiles ADD COLUMN disabled INTEGER;
+
  INSERT INTO spawn_profiles(id,name,permission_overrides,environment_json,role_refs,harness,model,working_directory,approval,sandbox,initial_message,disabled)
  VALUES('7','Selected','[]','[]','[]','codex','selected-model','/tmp','supervised','workspace_write','Selected brief',%d),
  ('8','7','[]','[]','[]','codex','wrong-model','/tmp','supervised','workspace_write','Wrong brief',0);

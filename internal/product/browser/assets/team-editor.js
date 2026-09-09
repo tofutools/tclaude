@@ -102,7 +102,7 @@ class TeamEditor {
       const base = selected.Revision.Desired, overrides = member.Overrides || {};
       const harness = overrides.Harness ?? base.Harness;
       const model = overrides.Model ?? (harness === base.Harness ? base.Model : '');
-      return `${selected.Profile.Name} · ${harness} / ${model || 'Default model'}`;
+      return `${ProfilePresentation.label(selected.Profile)} · ${harness} / ${model || 'Default model'}`;
     }
     return `${member.Desired.Harness || 'Choose harness'} / ${member.Desired.Model || 'Choose model'}`;
   }
@@ -141,7 +141,7 @@ class TeamEditor {
       {key: 'key', label: 'Stable member key', value: m.Key, required: true}, {key: 'name', label: 'Member name', value: m.Name, required: true},
       {key:'role_label',label:'Display role',value:m.Labels?.Role||''},
       {key:'description',label:'Description',text:true,value:m.Labels?.Description||''},
-      {key: 'profile', label: 'Saved configuration', options: [opt('', 'Custom settings'), ...this.configurations.map(c => opt(c.Profile.ID, c.Profile.Name))], value: m.ProfileID || ''},
+      {key: 'profile', label: 'Saved configuration', options: [opt('', 'Custom settings'), ...this.configurations.map(c => opt(c.Profile.ID, ProfilePresentation.label(c.Profile)))], value: m.ProfileID || ''},
       {key: 'harness', label: 'Harness', options: [opt('', 'Choose harness'), ...['claude', 'codex', 'opencode', 'copilot'].map(v => opt(v))], value: desired.Harness, required: true},
       {key:'tool_governance',label:'OpenCode tool governance',options:launchToolGovernanceChoices().map(v=>opt(v.value,v.label)),value:desired.ToolGovernance||'',required:false},
       {key: 'effort', label: 'Requested native effort / variant (optional)', value: desired.Effort || ''},
@@ -186,7 +186,7 @@ class TeamEditor {
     showSandbox(desired.HostSandbox);form.insertBefore(sandboxField,form.querySelector('button[type=submit]'));
     const select = el('select'); select.setAttribute('aria-label', 'Copy saved configuration');
     const placeholder = el('option', 'Copy settings from a saved configuration'); placeholder.value = ''; select.append(placeholder);
-    this.configurations.forEach((c, i) => { const o = el('option', `${c.Profile.Name} · ${c.Revision.Ref.RevisionID}`); o.value = String(i); select.append(o); });
+    this.configurations.forEach((c, i) => { const o = el('option', `${ProfilePresentation.label(c.Profile)} · ${c.Revision.Ref.RevisionID}`); o.value = String(i); select.append(o); });
     select.onchange = () => {
       if (select.value === '') return;
       const d = this.configurations[Number(select.value)].Revision.Desired;
