@@ -21,6 +21,11 @@ type DirectoryAPI interface {
 	BrowseDirectory(context.Context, BrowseDirectoryRequest) (model.DirectoryListing, error)
 }
 
+func (s *Service) WithDirectoryDefaults(defaults ports.DirectoryDefaults) *Service {
+	s.directoryDefaults = defaults
+	return s
+}
+
 func (s *Service) WithDirectoryBrowser(browser ports.DirectoryBrowser) *Service {
 	s.directoryBrowser = browser
 	return s

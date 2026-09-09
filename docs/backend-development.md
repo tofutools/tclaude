@@ -2161,3 +2161,22 @@ terminal observations release them. Changing the agent's configured directory
 ends the association for future launches without releasing a running execution's
 claim. Removal reserves the workspace before its native effect, excluding new
 launch claims during cleanup.
+
+### Group default directories
+
+Group launch defaults include a directory independently of the selected profile
+and environment. The operator can save an absolute path (including a future
+directory) or a `~` home shorthand, and clear it without editing a reusable
+profile. New members use an explicit cwd or selected checkout first, then the
+group directory. When the group directory is clear, existing profile cwd settings
+remain usable; otherwise an omitted launch cwd falls back to the daemon's working
+directory. Existing agents retain the directory admitted when they were created.
+
+The host directory port owns home expansion and the daemon cwd; application and
+storage code do not read process environment or inspect the host filesystem to
+save directory intent. Group configuration revisions fence concurrent edits at
+member admission. Omitting `default_directory` from a configuration update keeps
+its prior value; an explicit empty string clears it. Group cloning with copied
+defaults and v228 offline import preserve the separate directory, even when no
+profile or environment is selected. The source schema requires `default_cwd`, so
+an incomplete source cannot silently lose that setting.

@@ -138,3 +138,41 @@ func TestImportedGroupDefaultNameWithoutIDIsDiagnosedWithoutGuessing(t *testing.
 	require.NoError(t, err)
 	require.True(t, repeated.Repeated)
 }
+
+func TestImportedGroupDefaultDirectoryWithoutProfileSurvivesClone(t *testing.T) {
+	ctx := context.Background()
+	bundle := buildFixture(t, fixtureOptions{})
+	alterFixture(t, bundle, `UPDATE agent_groups SET default_profile_id='',default_cwd='/future/group-checkout';`)
+	inspection, err := Inspect(ctx, bundle)
+	require.NoError(t, err)
+	plan, err := Plan(inspection)
+	require.NoError(t, err)
+	id := model.GroupID(findIdentity(t, plan, "agent_groups", "1").TargetID)
+	path := filepath.Join(t.TempDir(), "state.sqlite")
+	_, err = ImportSnapshot(ctx, bundle, ImportOptions{DestinationPath: path})
+	require.NoError(t, err)
+	store, err := db.Open(path)
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+	svc := app.New(store, providers.NewRegistry())
+	op := model.OperatorPrincipal()
+	defaults, err := svc.GetGroupConfiguration(ctx, op, id)
+	require.NoError(t, err)
+	require.Equal(t, "/future/group-checkout", defaults.DefaultDirectory)
+	require.Nil(t, defaults.Profile)
+	group, err := store.Group(ctx, id)
+	require.NoError(t, err)
+	_, err = svc.CloneGroup(ctx, app.CloneGroupRequest{Context: app.RequestContext{Principal: op, RequestID: "clone"}, SourceID: id, ID: "copy", Name: "Copy", ExpectedGroupRevision: group.Revision, CopyDefault: true, ExpectedDefaultRevision: defaults.Revision})
+	require.NoError(t, err)
+	copy, err := svc.GetGroupConfiguration(ctx, op, "copy")
+	require.NoError(t, err)
+	require.Equal(t, defaults.DefaultDirectory, copy.DefaultDirectory)
+}
+
+func TestGroupDefaultDirectoryImportRequiresSourceColumn(t *testing.T) {
+	ctx := context.Background()
+	bundle := buildFixture(t, fixtureOptions{})
+	alterFixture(t, bundle, `ALTER TABLE agent_groups DROP COLUMN default_cwd;`)
+	_, err := ImportSnapshot(ctx, bundle, ImportOptions{DestinationPath: filepath.Join(t.TempDir(), "state.sqlite")})
+	require.Error(t, err)
+}

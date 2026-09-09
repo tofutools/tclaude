@@ -25,6 +25,7 @@ func (h *Handler) registerGroupConfiguration(api app.GroupConfigurationAPI) {
 			return
 		}
 		var body struct {
+			DefaultDirectory *string                        `json:"default_directory"`
 			Environment      model.Environment              `json:"environment"`
 			Profile          *model.ConfigurationProfileRef `json:"profile"`
 			ExpectedRevision model.Revision                 `json:"expected_revision"`
@@ -32,7 +33,7 @@ func (h *Handler) registerGroupConfiguration(api app.GroupConfigurationAPI) {
 		if !decodeRequest(w, r, &body) {
 			return
 		}
-		out, err := api.SetGroupConfiguration(r.Context(), app.SetGroupConfigurationRequest{Principal: p, GroupID: model.GroupID(r.PathValue("id")), Environment: body.Environment, Profile: body.Profile, ExpectedRevision: body.ExpectedRevision})
+		out, err := api.SetGroupConfiguration(r.Context(), app.SetGroupConfigurationRequest{DefaultDirectory: body.DefaultDirectory, Principal: p, GroupID: model.GroupID(r.PathValue("id")), Environment: body.Environment, Profile: body.Profile, ExpectedRevision: body.ExpectedRevision})
 		if err != nil {
 			applicationError(w, err)
 			return

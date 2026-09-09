@@ -130,6 +130,12 @@ func (s *Service) resolveConfigurationLayers(ctx context.Context, selectedID mod
 		}
 		resolved = layer.Apply(resolved)
 	}
+	if resolved.WorkingDirectory == "" && s.directoryDefaults != nil && (overrides == nil || overrides.WorkingDirectory == nil || *overrides.WorkingDirectory == "") {
+		resolved.WorkingDirectory, err = s.directoryDefaults.DefaultWorkingDirectory(ctx)
+		if err != nil {
+			return ResolvedProfileConfiguration{}, fail(ErrUnavailable, "default working directory unavailable")
+		}
+	}
 	resolved, err = s.applyConfigurationOverrides(resolved, overrides)
 	if err != nil {
 		return ResolvedProfileConfiguration{}, err
