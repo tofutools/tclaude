@@ -1961,3 +1961,13 @@ Configuration profiles can be disabled for new agents independently of library a
 ### Configuration aliases
 
 A configuration can have additional names, edited one per line in its shared create/edit dialog. Aliases resolve to the same profile's current selection at `GET /v2/configuration-profiles/resolve/{name}` and remain separate from durable profile IDs. Empty alias authoring clears the list; omitted alias fields in older callers preserve it. Names cannot acquire another profile's alias and aliases cannot acquire another profile's primary name or alias. Export/import and offline v1 import preserve aliases; the import preview allows editing them when creating a copy.
+
+### Codex fast mode
+
+Configuration profiles, direct agent settings and team member overrides expose
+Codex fast mode as inherit, on or off. Inherit emits no native override; off
+explicitly selects the standard tier even when the operator's Codex configuration
+uses fast mode. The selected setting survives agent edits, restart and offline
+profile/agent import. A team harness switch clears inherited foreign settings;
+explicit fast-mode choices are accepted only for Codex. This setting changes the
+service tier, not approval or sandbox policy.

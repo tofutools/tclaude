@@ -97,7 +97,7 @@ func (e Environment) Entries() []string {
 // Equal compares desired configuration by value, treating absent and empty
 // environment identically while keeping every existing scalar field exact.
 func (d DesiredConfiguration) Equal(other DesiredConfiguration) bool {
-	return SameSandboxSelection(d.HostSandbox, other.HostSandbox) && d.Harness == other.Harness && d.Model == other.Model && d.Effort == other.Effort && d.ToolGovernance == other.ToolGovernance && d.WorkingDirectory == other.WorkingDirectory && d.Approval == other.Approval && d.Sandbox == other.Sandbox && d.Environment.Equal(other.Environment)
+	return SameSandboxSelection(d.HostSandbox, other.HostSandbox) && d.Harness == other.Harness && d.Model == other.Model && d.Effort == other.Effort && d.FastMode == other.FastMode && d.ToolGovernance == other.ToolGovernance && d.WorkingDirectory == other.WorkingDirectory && d.Approval == other.Approval && d.Sandbox == other.Sandbox && d.Environment.Equal(other.Environment)
 }
 
 // UnmarshalJSON canonicalizes an empty authored set to absence. This preserves

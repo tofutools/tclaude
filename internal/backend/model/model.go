@@ -103,6 +103,7 @@ type DesiredConfiguration struct {
 	// Effort is the requested native reasoning effort or variant, not observed effective effort.
 	Effort           string         `json:",omitempty"`
 	ToolGovernance   ToolGovernance `json:",omitempty"`
+	FastMode         FastMode       `json:",omitempty"`
 	WorkingDirectory string
 	Approval         ApprovalMode
 	Sandbox          SandboxMode
@@ -221,6 +222,7 @@ type ResolvedExecutionSpec struct {
 	Model                string
 	Effort               string         `json:",omitempty"`
 	ToolGovernance       ToolGovernance `json:",omitempty"`
+	FastMode             FastMode       `json:",omitempty"`
 	WorkingDirectory     string
 	Approval             ApprovalMode
 	Sandbox              SandboxMode

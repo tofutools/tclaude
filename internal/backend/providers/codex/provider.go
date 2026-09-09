@@ -157,6 +157,9 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if request.Spec.Harness != Name {
 		return nil, fmt.Errorf("codex provider cannot prepare harness %q", request.Spec.Harness)
 	}
+	if err := request.Spec.FastMode.Validate(Name); err != nil {
+		return nil, err
+	}
 	if err := model.ValidateEffort(request.Spec.Effort); err != nil {
 		return nil, err
 	}
@@ -479,6 +482,13 @@ func (p *prepared) argv() []string {
 		args = append(args, "resume", p.nativeID)
 	case ports.StartFork:
 		args = append(args, "resume", p.nativeID)
+	}
+	if p.request.Spec.FastMode != "" {
+		tier := "default"
+		if p.request.Spec.FastMode == model.FastModeOn {
+			tier = "fast"
+		}
+		args = append(args, "-c", "service_tier=\""+tier+"\"")
 	}
 	if p.request.Spec.Effort != "" {
 		encoded, _ := json.Marshal(p.request.Spec.Effort)

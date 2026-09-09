@@ -9,6 +9,7 @@ import (
 )
 
 type agentRelaunchConfiguration struct {
+	FastMode          *bool                 `json:"fast_mode"`
 	ContextWindowSize *int64                `json:"context_window_size"`
 	Version           int                   `json:"version"`
 	Tools             *model.ToolGovernance `json:"tools"`

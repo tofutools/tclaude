@@ -3,6 +3,7 @@ package model
 // TeamProfileOverrides retains only explicitly authored member choices. Nil
 // fields continue to follow the saved profile on the next deployment.
 type TeamProfileOverrides struct {
+	FastMode       *FastMode       `json:",omitempty"`
 	ToolGovernance *ToolGovernance `json:",omitempty"`
 	Harness        *string         `json:",omitempty"`
 	Model          *string         `json:",omitempty"`
@@ -21,6 +22,7 @@ func (o *TeamProfileOverrides) Apply(base DesiredConfiguration) DesiredConfigura
 			// switch must not inherit a different provider's model or effort.
 			base.Model, base.Effort = "", ""
 			base.ToolGovernance = ""
+			base.FastMode = ""
 		}
 		base.Harness = *o.Harness
 	}
@@ -29,6 +31,9 @@ func (o *TeamProfileOverrides) Apply(base DesiredConfiguration) DesiredConfigura
 	}
 	if o.Effort != nil {
 		base.Effort = *o.Effort
+	}
+	if o.FastMode != nil {
+		base.FastMode = *o.FastMode
 	}
 	if o.ToolGovernance != nil {
 		base.ToolGovernance = *o.ToolGovernance

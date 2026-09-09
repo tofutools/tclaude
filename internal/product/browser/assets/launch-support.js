@@ -43,9 +43,13 @@ function launchToolGovernanceChoices(){return [{value:"",label:"Provider default
 
 // Provider-specific controls follow an explicit harness change independently of
 // the asynchronous, read-only capability preview.
-function attachToolGovernanceControl(host,isEditable=()=>true){
- const harness=host.querySelector('[name=harness]'),tools=host.querySelector('[name=tool_governance]');
+function attachProviderSettingControl(host,name,provider,isEditable=()=>true){
+ const harness=host.querySelector('[name=harness]'),tools=host.querySelector('[name='+name+']');
  if(!harness||!tools)return ()=>{};
- const sync=()=>{const supported=harness.value==='opencode';if(!supported)tools.value='';tools.disabled=!supported||!isEditable();};
+ const sync=()=>{const supported=harness.value===provider;if(!supported)tools.value='';tools.disabled=!supported||!isEditable();};
  host.addEventListener('change',event=>{if(event.target===harness)sync()});sync();return sync;
 }
+
+function attachToolGovernanceControl(host,isEditable){return attachProviderSettingControl(host,'tool_governance','opencode',isEditable)}
+function launchFastModeChoices(){return [{value:'',label:'Inherit Codex setting'},{value:'on',label:'On'},{value:'off',label:'Off'}]}
+function attachFastModeControl(host,isEditable){return attachProviderSettingControl(host,'fast_mode','codex',isEditable)}
