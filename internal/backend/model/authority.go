@@ -73,6 +73,8 @@ type AuthoritySubject struct {
 type ResourceSelectorKind string
 
 const (
+	// ResourceAll is an operator-authored unscoped grant for one action.
+	ResourceAll            ResourceSelectorKind = "all"
 	ResourceSelf           ResourceSelectorKind = "self"
 	ResourceOperator       ResourceSelectorKind = "operator"
 	ResourceAgent          ResourceSelectorKind = "agent"
@@ -88,7 +90,8 @@ const (
 )
 
 // ResourceSelector is deliberately typed. Exactly the field named by Kind is
-// populated; Self expands from the authenticated caller at evaluation time.
+// populated; Self and All carry no ID. Self expands from the authenticated
+// caller at evaluation time. All is explicit unscoped reach for one action.
 type ResourceSelector struct {
 	Kind             ResourceSelectorKind
 	AgentID          AgentID

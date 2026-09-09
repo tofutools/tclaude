@@ -2253,3 +2253,11 @@ The Claude provider merges a concrete timeout into the existing per-session
 Omitted and `inherit` choices emit no timeout key. Agent settings, profile
 revisions, admitted executions and offline v228 import retain the choice; import
 prefers a recorded resolved relaunch value over the original birth request.
+
+### Unscoped action grants
+
+The Access editor can grant one action on **All resources**, matching v1's
+unscoped permissions. An operator must explicitly select this reach for a direct
+grant or role assignment. Configuration bounds, expiry, current subject checks
+and explicit action denials still apply. Revoking the grant takes effect on the
+next authorization check; saving or reopening it preserves its unscoped meaning.
