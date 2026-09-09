@@ -344,6 +344,26 @@ func (s *Store) AdmitWorkspaceEffect(ctx context.Context, in app.WorkspaceEffect
 		}
 		return app.WorkspaceEffectAdmissionResult{}, err
 	}
+	// Reserve removal in the same transaction that excludes new execution uses.
+	if in.Operation.Kind == model.OperationRemoveWorkspace {
+		if err := requireNoWorkspaceRemovalTx(ctx, tx, in.Workspace.ID); err != nil {
+			return app.WorkspaceEffectAdmissionResult{}, err
+		}
+		var uses int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_uses WHERE workspace_id=? AND released_at IS NULL`, in.Workspace.ID).Scan(&uses); err != nil {
+			return app.WorkspaceEffectAdmissionResult{}, err
+		}
+		if uses != 0 {
+			return app.WorkspaceEffectAdmissionResult{}, app.ErrConflict
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE workspaces SET state=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND state=?`, model.WorkspacePending, nanos(in.Operation.CreatedAt), in.Workspace.ID, in.Workspace.Revision, model.WorkspaceAvailable)
+		if err != nil {
+			return app.WorkspaceEffectAdmissionResult{}, err
+		}
+		if n, _ := result.RowsAffected(); n != 1 {
+			return app.WorkspaceEffectAdmissionResult{}, app.ErrConflict
+		}
+	}
 	var existingWorkspace model.WorkspaceID
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM workspaces WHERE id=?`, in.Workspace.ID).Scan(&existingWorkspace); err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -1334,4 +1354,18 @@ func (s *Store) RecordShellRecovery(ctx context.Context, executionID model.Execu
 		return model.Execution{}, err
 	}
 	return s.Execution(ctx, executionID)
+}
+
+// Inspection may refresh an observation while a removal is still running;
+// the durable operation, not that observation, owns the exclusion interval.
+func requireNoWorkspaceRemovalTx(ctx context.Context, tx *sql.Tx, id model.WorkspaceID) error {
+	var pending int
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM operations o JOIN operation_authority a ON a.operation_id=o.id WHERE a.resource_kind=? AND a.resource_id=? AND o.kind=? AND o.state IN (?,?)`, model.ResourceWorkspace, id, model.OperationRemoveWorkspace, model.OperationAdmitted, model.OperationRunning).Scan(&pending)
+	if err != nil {
+		return err
+	}
+	if pending != 0 {
+		return app.ErrConflict
+	}
+	return nil
 }

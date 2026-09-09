@@ -227,8 +227,8 @@ function workspaceCard(space){
  for(const execution of snapshot.executions||[]){if((snapshot.workspace_uses||[]).some(u=>u.WorkspaceID===space.ID&&u.ExecutionID===execution.id&&!u.ReleasedAt)&& !['exited','failed'].includes(execution.state))actions.append(button(execution.workload==='shell'?'Attach shell':'Attach terminal',()=>attach(execution)),button(execution.workload==='shell'?'Stop shell':'Stop execution',async id=>{await api('/v2/stop',{request_id:id,execution_id:execution.id,force:false});await refresh()}))}
  card.append(actions);return card;
 }
-const workspaceFields=[{name:'repository',label:'Repository path'},{name:'path',label:'Checkout path'},{name:'base',label:'Base commit or branch',value:'HEAD'},{name:'branch',label:'Worker branch'}];
-$('create-checkout').onclick=()=>edit('Create owned checkout',workspaceFields,f=>api('/v2/workspaces/create',{request_id:f.requestID,id:f.requestID,intent:{Repository:f.repository,IntendedPath:f.path,BaseRevision:f.base,Branch:f.branch,Provenance:'platform_created',Ownership:'owned',RetainOnFinish:true}}));
+const workspaceFields=checkoutFields();
+$('create-checkout').onclick=()=>edit('Create owned checkout',workspaceFields,f=>api('/v2/workspaces/create',{request_id:f.requestID,id:f.requestID,intent:checkoutIntent(f)}));
 $('register-workspace').onclick=()=>edit('Register existing directory',[{name:'path',label:'Directory path'}],f=>api('/v2/workspaces/register',{request_id:f.requestID,id:f.requestID,intent:{IntendedPath:f.path,Provenance:'registered',Ownership:'external',RetainOnFinish:true}}));
 $('refresh-history').onclick=()=>edit('Refresh configured history source',[{name:'harness',label:'Harness',options:['claude','codex','opencode','copilot']},{name:'source',label:'Configured source name'}],async f=>{await api('/v2/history/refresh',{harness:f.harness,source:f.source});await historyWorkspace.load()});
 function selection(entry,point){return{ConversationID:entry.ConversationID,ExpectedConversationRevision:entry.Revision,PointID:point?.ID||'',ExpectedPointRevision:point?.Revision||0}}

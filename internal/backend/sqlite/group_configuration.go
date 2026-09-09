@@ -11,7 +11,8 @@ import (
 )
 
 const groupConfigurationSchema = `CREATE TABLE IF NOT EXISTS group_configurations(group_id TEXT PRIMARY KEY REFERENCES groups(id),profile_id TEXT NOT NULL,revision_id TEXT NOT NULL,content_hash TEXT NOT NULL,revision INTEGER NOT NULL,updated_at INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS group_member_requests(scope TEXT NOT NULL,request_id TEXT NOT NULL,intent BLOB NOT NULL,result BLOB NOT NULL,PRIMARY KEY(scope,request_id));`
+CREATE TABLE IF NOT EXISTS group_member_requests(scope TEXT NOT NULL,request_id TEXT NOT NULL,intent BLOB NOT NULL,result BLOB NOT NULL,PRIMARY KEY(scope,request_id));
+CREATE TABLE IF NOT EXISTS agent_workspaces(agent_id TEXT PRIMARY KEY REFERENCES agents(id),workspace_id TEXT NOT NULL REFERENCES workspaces(id),working_directory TEXT NOT NULL);`
 
 func readGroupConfiguration(ctx context.Context, q groupReader, id model.GroupID) (model.GroupConfiguration, error) {
 	var out model.GroupConfiguration
@@ -77,6 +78,7 @@ func (s *Store) SetGroupConfiguration(ctx context.Context, in app.SetGroupConfig
 }
 func groupMemberIntent(in app.CreateGroupMemberRequest) []byte {
 	data, _ := json.Marshal(struct {
+		Workspace                      *model.WorkspaceSelection    `json:",omitempty"`
 		ProfileID                      model.ConfigurationProfileID `json:",omitempty"`
 		Launch                         *app.GroupMemberLaunch       `json:",omitempty"`
 		Environment                    model.Environment            `json:",omitempty"`
@@ -86,7 +88,7 @@ func groupMemberIntent(in app.CreateGroupMemberRequest) []byte {
 		GroupRevision, DefaultRevision model.Revision
 		Labels                         *model.AgentDisplayLabels   `json:",omitempty"`
 		ConfigurationOverrides         *model.ConfigurationOptions `json:",omitempty"`
-	}{in.ProfileID, in.Launch, in.Environment, in.GroupID, in.ID, in.Name, in.ExpectedGroupRevision, in.ExpectedDefaultRevision, in.Labels, in.ConfigurationOverrides})
+	}{in.Workspace, in.ProfileID, in.Launch, in.Environment, in.GroupID, in.ID, in.Name, in.ExpectedGroupRevision, in.ExpectedDefaultRevision, in.Labels, in.ConfigurationOverrides})
 	return data
 }
 func findGroupMemberAdmission(ctx context.Context, q groupReader, in app.CreateGroupMemberRequest) (app.GroupMemberResult, bool, error) {
@@ -240,7 +242,7 @@ func admitGroupMemberTx(ctx context.Context, tx *sql.Tx, admission app.GroupMemb
 			return out, err
 		}
 		expected := revision.Desired
-		if revision.Options != nil || in.ConfigurationOverrides != nil {
+		if revision.Options != nil || in.ConfigurationOverrides != nil || in.Workspace != nil {
 			if admission.Configuration.Selected != revision.Ref {
 				return out, app.ErrConflict
 			}
@@ -260,8 +262,18 @@ func admitGroupMemberTx(ctx context.Context, tx *sql.Tx, admission app.GroupMemb
 			return out, app.ErrConflict
 		}
 	}
+	if in.Workspace != nil {
+		if _, err := requireSelectedWorkspaceTx(ctx, tx, *in.Workspace, agent.Desired.WorkingDirectory, in.Context.Principal, at); err != nil {
+			return out, err
+		}
+	}
 	if err = createAgentTx(ctx, tx, agent); err != nil {
 		return out, err
+	}
+	if in.Workspace != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO agent_workspaces(agent_id,workspace_id,working_directory) VALUES(?,?,?)`, agent.ID, in.Workspace.WorkspaceID, agent.Desired.WorkingDirectory); err != nil {
+			return out, err
+		}
 	}
 	if _, err = tx.ExecContext(ctx, `INSERT INTO group_members(group_id,agent_id,position) SELECT ?,?,COALESCE(MAX(position)+1,0) FROM group_members WHERE group_id=?`, group.ID, agent.ID, group.ID); err != nil {
 		return out, classify(err)

@@ -45,6 +45,7 @@ func (h *Handler) registerGroupConfiguration(api app.GroupConfigurationAPI) {
 			return
 		}
 		var body struct {
+			Workspace               *model.WorkspaceSelection    `json:"workspace"`
 			ProfileID               model.ConfigurationProfileID `json:"profile_id"`
 			Launch                  *app.GroupMemberLaunch       `json:"launch"`
 			ConfigurationOverrides  *model.ConfigurationOptions  `json:"configuration_overrides"`
@@ -59,7 +60,7 @@ func (h *Handler) registerGroupConfiguration(api app.GroupConfigurationAPI) {
 		if !decodeRequest(w, r, &body) {
 			return
 		}
-		out, err := api.CreateGroupMember(r.Context(), app.CreateGroupMemberRequest{ProfileID: body.ProfileID, Launch: body.Launch, ConfigurationOverrides: body.ConfigurationOverrides, Labels: body.Labels, Context: app.RequestContext{Principal: p, RequestID: body.RequestID}, GroupID: model.GroupID(r.PathValue("id")), Environment: body.Environment, ID: body.ID, Name: body.Name, ExpectedGroupRevision: body.ExpectedGroupRevision, ExpectedDefaultRevision: body.ExpectedDefaultRevision})
+		out, err := api.CreateGroupMember(r.Context(), app.CreateGroupMemberRequest{Workspace: body.Workspace, ProfileID: body.ProfileID, Launch: body.Launch, ConfigurationOverrides: body.ConfigurationOverrides, Labels: body.Labels, Context: app.RequestContext{Principal: p, RequestID: body.RequestID}, GroupID: model.GroupID(r.PathValue("id")), Environment: body.Environment, ID: body.ID, Name: body.Name, ExpectedGroupRevision: body.ExpectedGroupRevision, ExpectedDefaultRevision: body.ExpectedDefaultRevision})
 		// Once admitted, failed/uncertain native effects still have a safe durable
 		// receipt. Return it immediately so the operator can inspect the outcome.
 		if err != nil && (out.Operation == nil || out.Operation.Operation.ID == "") {

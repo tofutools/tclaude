@@ -704,7 +704,7 @@ func (s *Store) verifyImportCounts(ctx context.Context, batch app.ImportBatch) e
 	for _, table := range []string{
 		"shell_requests", "group_clone_requests", "group_member_requests", "group_parent_requests", "executions", "release_permits", "attachment_claims", "execution_accesses", "authority_grants", "role_assignments",
 		"operation_authority", "operation_additional_authority", "effect_permits", "pending_context_transitions", "native_binding_history",
-		"history_refreshes", "history_metadata_requests", "history_points", "history_use_claims", "workspace_uses",
+		"history_refreshes", "history_metadata_requests", "history_points", "history_use_claims", "workspace_uses", "agent_workspaces",
 		"work_runs", "work_attempts", "work_evidence", "work_decisions", "program_profiles", "program_profile_revisions",
 		"sandbox_profile_requests", "sandbox_defaults_requests",
 		"work_node_attempts", "work_agent_interactions", "work_node_evidence", "decision_windows", "decision_submissions", "automation_occurrences",

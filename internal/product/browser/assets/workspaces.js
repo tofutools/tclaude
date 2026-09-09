@@ -35,3 +35,24 @@ class WorkspaceBrowser {
  download(){const ids=new Set(this.visible.map(s=>s.ID));const payload={exported_at:new Date().toISOString(),filters:{search:this.query.value,ownership:this.ownership.value,state:this.state.value,git_status:this.dirty.value,sort:this.sort.value},workspaces:this.visible,active_claims:(this.snapshot.workspace_uses||[]).filter(u=>ids.has(u.WorkspaceID)&&!u.ReleasedAt)};const url=URL.createObjectURL(new Blob([JSON.stringify(payload,null,2)],{type:'application/json'})),link=this.el('a');link.href=url;link.download='tclaude-workspaces.json';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
  clear(){this.generation++;this.busy=false;this.snapshot={};this.query.value='';this.ownership.value='';this.state.value='';this.dirty.value='';this.sort.value='path';this.report.replaceChildren();this.draw()}
 }
+
+// Shared with standalone checkout creation and launch forms.
+function checkoutFields(){return [{name:'repository',label:'Repository path'},{name:'path',label:'Checkout path'},{name:'base',label:'Base commit or branch',value:'HEAD'},{name:'branch',label:'Worker branch'}]}
+function checkoutIntent(form){return {Repository:form.repository,IntendedPath:form.path,BaseRevision:form.base,Branch:form.branch,Provenance:'platform_created',Ownership:'owned',RetainOnFinish:true}}
+class WorkspaceChoice {
+ constructor(workspaces,api){this.api=api;this.workspaces=workspaces.filter(w=>w.State==='available'&&w.Observation?.ActualPath);this.fingerprint='';this.creationID='';this.created=null;}
+ fields(){return [{name:'checkout',label:'Checkout',required:false,value:'',options:[{value:'',label:'Use the configured working directory'},...this.workspaces.map(w=>({value:'existing:'+w.ID,label:w.Observation.ActualPath})),{value:'new',label:'Create a new checkout'}]},...checkoutFields().map(field=>({...field,required:false}))]}
+ attach(form){this.form=form;const update=()=>{const creating=form.elements.checkout.value==='new';for(const field of checkoutFields()){const input=form.elements[field.name];input.closest('label').hidden=!creating;input.disabled=!creating;input.required=creating;}const cwd=form.elements.cwd;if(cwd){cwd.disabled=!!form.elements.checkout.value;cwd.closest('label').hidden=!!form.elements.checkout.value;}};form.elements.checkout.addEventListener('change',update);update();}
+ async read(form){
+  if(!form.checkout)return null;
+  let workspace=this.workspaces.find(w=>'existing:'+w.ID===form.checkout);
+  if(form.checkout==='new'){
+   const intent=checkoutIntent(form),fingerprint=JSON.stringify(intent);
+   if(fingerprint!==this.fingerprint){this.fingerprint=fingerprint;this.creationID=requestID();this.created=null;}
+   if(!this.created){try{this.created=(await this.api('/v2/workspaces/create',{request_id:this.creationID,id:this.creationID,intent})).Workspace;}catch(error){throw new Error(error.message+' Checkout reference: '+this.creationID+'. Inspect Workspaces before creating another checkout.');}}
+   workspace=this.created;
+  }
+  if(!workspace||workspace.State!=='available')throw new Error('Select an available checkout.');
+  return {WorkspaceID:workspace.ID,ExpectedRevision:workspace.Revision};
+ }
+}

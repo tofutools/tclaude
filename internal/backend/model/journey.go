@@ -161,6 +161,12 @@ type Workspace struct {
 	UpdatedAt   time.Time
 }
 
+// WorkspaceSelection identifies an operator-selected available checkout.
+type WorkspaceSelection struct {
+	WorkspaceID      WorkspaceID
+	ExpectedRevision Revision
+}
+
 // WorkspaceUse is the durable exact claim that prevents cleanup from being
 // inferred from an Agent, Work Run, or path alone.
 type WorkspaceUse struct {

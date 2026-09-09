@@ -21,6 +21,7 @@ type GroupMemberLaunch struct {
 }
 
 type CreateGroupMemberRequest struct {
+	Workspace               *model.WorkspaceSelection
 	ProfileID               model.ConfigurationProfileID
 	Launch                  *GroupMemberLaunch
 	ConfigurationOverrides  *model.ConfigurationOptions
@@ -102,6 +103,9 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	if in.Environment.Validate() != nil || in.Context.RequestID.Validate() != nil || in.GroupID.Validate() != nil || in.ID.Validate() != nil || strings.TrimSpace(in.Name) == "" || len(in.Name) > 1024 || !utf8.ValidString(in.Name) || in.ExpectedGroupRevision == 0 || in.ExpectedGroupRevision >= math.MaxInt64 || in.ExpectedDefaultRevision >= math.MaxInt64 {
 		return GroupMemberResult{}, ErrInvalid
 	}
+	if in.Workspace != nil && (in.Workspace.WorkspaceID.Validate() != nil || in.Workspace.ExpectedRevision == 0 || in.Workspace.ExpectedRevision >= math.MaxInt64) {
+		return GroupMemberResult{}, ErrInvalid
+	}
 	if in.ProfileID != "" && model.ValidateStableID("configuration profile", string(in.ProfileID)) != nil {
 		return GroupMemberResult{}, ErrInvalid
 	}
@@ -115,7 +119,12 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 		}
 		return prior, err
 	}
-	admission, err := s.resolveGroupMember(ctx, store, in)
+	resolvedRequest, err := s.groupMemberWorkspaceRequest(ctx, in)
+	if err != nil {
+		return GroupMemberResult{}, err
+	}
+	admission, err := s.resolveGroupMember(ctx, store, resolvedRequest)
+	admission.Request = in
 	if err != nil {
 		return GroupMemberResult{}, err
 	}
