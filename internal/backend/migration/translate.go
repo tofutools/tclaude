@@ -440,12 +440,18 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 		if model.ValidateEffort(desired.Effort) != nil {
 			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
 		}
+		operatorOnly, validOperatorOnly := sourcev228.Int64(row.Values["operator_only"])
+		if row.Values["operator_only"] != nil && (!validOperatorOnly || (operatorOnly != 0 && operatorOnly != 1)) {
+			archived = true
+			operatorOnly = 1
+			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "profile_operator_only_requires_review", "invalid operator-only state retained as restricted and archived")
+		}
 		options := importedProfileOptions(row.Values, desired)
 		if options != nil {
 			desired = model.DesiredConfiguration{}
 		}
 		batch.ConfigurationProfiles = append(batch.ConfigurationProfiles, app.ConfigurationProfileResult{
-			Profile:  model.ConfigurationProfile{Archived: archived, Disabled: disabled != 0, DisabledReason: sourcev228.String(row.Values["disabled_reason"]), ID: id, Name: firstNonEmpty(sourcev228.String(row.Values["name"]), key), CurrentRevisionID: revisionID, Revision: 1, CreatedAt: at, UpdatedAt: at},
+			Profile:  model.ConfigurationProfile{OperatorOnly: operatorOnly != 0, Archived: archived, Disabled: disabled != 0, DisabledReason: sourcev228.String(row.Values["disabled_reason"]), ID: id, Name: firstNonEmpty(sourcev228.String(row.Values["name"]), key), CurrentRevisionID: revisionID, Revision: 1, CreatedAt: at, UpdatedAt: at},
 			Revision: model.ConfigurationProfileRevision{Ref: ref, Desired: desired, Options: options, Startup: startup, CreatedAt: at},
 		})
 	}

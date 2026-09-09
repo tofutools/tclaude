@@ -2028,3 +2028,14 @@ partial profile into independent process worker settings asks the operator to
 complete the configuration before saving the draft. Configuration transfers
 and offline v1 profile import preserve missing fields and explicit off values;
 creating a worker never changes its reusable source profile.
+
+### Operator-only configuration profiles
+
+A saved configuration can restrict new agent creation to operators. The setting
+is editable in configuration authoring and preserved by transfer and offline
+v1 import. Omitted settings in an older edit request retain the current value;
+an explicit false clears it. Agent-originated creation checks both the selected
+profile and the global default, including a current transaction-time check.
+Operator-owned automation retains its operator origin; agent-owned automation
+does not. This restriction affects new creation, not existing agents or replay
+of an already committed creation request.

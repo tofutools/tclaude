@@ -93,6 +93,9 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 			if readErr != nil {
 				return TeamDeploymentResult{}, readErr
 			}
+			if err := s.requireProfileCreation(ctx, req.Context.Principal, profile.Profile); err != nil {
+				return TeamDeploymentResult{}, err
+			}
 			if err := ConfigurationProfileEnabled(profile.Profile); err != nil {
 				return TeamDeploymentResult{}, err
 			}
