@@ -63,3 +63,33 @@ func TestImportOpenCodeToolGovernancePreservesProfileAndAgentBirthPolicy(t *test
 		})
 	}
 }
+
+func TestImportOpenCodeResolvedToolGovernanceOverridesBirthAndRetainsNamedProfile(t *testing.T) {
+	for _, mode := range []string{"allow", "ask", "deny"} {
+		t.Run(mode, func(t *testing.T) {
+			bundle := buildFixture(t, fixtureOptions{})
+			alterFixture(t, bundle, strings.ReplaceAll(`INSERT INTO spawn_profiles(id,name,permission_overrides,environment_json,role_refs) VALUES('7','Selected','[]','[]','[]'); UPDATE agents SET initial_spawn_config='{"harness":"opencode","model":"fixture","cwd":"/tmp","approval":"deny","sandbox":"unconfined","profile":"Selected"}',relaunch_profile='{"version":1,"tools":"TOOLS"}';`, "TOOLS", mode))
+			path := filepath.Join(t.TempDir(), "target.db")
+			_, err := ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: path})
+			require.NoError(t, err)
+			store, err := backendsqlite.Open(path)
+			require.NoError(t, err)
+			defer store.Close()
+			service := app.New(store, providers.NewRegistry())
+			snapshot, err := service.Snapshot(context.Background(), app.SnapshotRequest{Principal: model.OperatorPrincipal()})
+			require.NoError(t, err)
+			require.Len(t, snapshot.Agents, 1)
+			require.Equal(t, model.ToolGovernance(mode), snapshot.Agents[0].Desired.ToolGovernance)
+			require.NotNil(t, snapshot.Agents[0].ConfigurationProfile)
+		})
+	}
+}
+
+func TestImportRefusesUnsupportedResolvedToolGovernanceVersion(t *testing.T) {
+	bundle := buildFixture(t, fixtureOptions{})
+	alterFixture(t, bundle, `UPDATE agents SET initial_spawn_config='{"harness":"opencode","cwd":"/tmp"}',relaunch_profile='{"version":2,"tools":"allow"}';`)
+	path := filepath.Join(t.TempDir(), "target.db")
+	_, err := ImportSnapshot(context.Background(), bundle, ImportOptions{DestinationPath: path})
+	require.ErrorContains(t, err, "unsupported relaunch profile version")
+	require.NoFileExists(t, path)
+}

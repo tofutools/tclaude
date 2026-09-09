@@ -71,7 +71,9 @@ func Translate(inspection Inspection, plan MigrationPlan, attachments []Attachme
 	}
 	t.translateProfiles(&batch)
 	t.translateSandboxProfiles(&batch)
-	t.translateAgents(&batch)
+	if err := t.translateAgents(&batch); err != nil {
+		return app.ImportBatch{}, err
+	}
 	if err := t.translateGroups(&batch); err != nil {
 		return app.ImportBatch{}, err
 	}
@@ -228,7 +230,7 @@ func (t *translator) translateEvidence(batch *app.ImportBatch) error {
 	return nil
 }
 
-func (t *translator) translateAgents(batch *app.ImportBatch) {
+func (t *translator) translateAgents(batch *app.ImportBatch) error {
 	titles := map[string]sourcev228.Row{}
 	for _, row := range t.inspection.Snapshot.Rows["conv_index"] {
 		titles[sourcev228.String(row.Values["conv_id"])] = row
@@ -257,7 +259,18 @@ func (t *translator) translateAgents(batch *app.ImportBatch) {
 		if model.ValidateEffort(agent.Desired.Effort) != nil {
 			t.launchMetadataDiagnostic(batch, "agents", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
 		}
-		profileName := firstNonEmpty(sourcev228.String(row.Values["relaunch_profile"]), spawnProfileName(row.Values["initial_spawn_config"]))
+		tools, err := agentRelaunchTools(row.Values)
+		if err != nil {
+			return fmt.Errorf("agent %s relaunch profile: %w", row.Key, err)
+		}
+		if tools != nil && agent.Desired.Harness == "opencode" {
+			agent.Desired.ToolGovernance = *tools
+		}
+		legacyProfileName := strings.TrimSpace(sourcev228.String(row.Values["relaunch_profile"]))
+		if strings.HasPrefix(legacyProfileName, "{") {
+			legacyProfileName = ""
+		}
+		profileName := firstNonEmpty(legacyProfileName, spawnProfileName(row.Values["initial_spawn_config"]))
 		if ref, ok := t.profileNames[profileName]; ok && profileName != "" {
 			copy := ref
 			agent.ConfigurationProfile = &copy
@@ -271,6 +284,7 @@ func (t *translator) translateAgents(batch *app.ImportBatch) {
 		batch.Agents = append(batch.Agents, agent)
 	}
 	sort.Slice(batch.Agents, func(i, j int) bool { return batch.Agents[i].ID < batch.Agents[j].ID })
+	return nil
 }
 
 func (t *translator) translateGroups(batch *app.ImportBatch) error {

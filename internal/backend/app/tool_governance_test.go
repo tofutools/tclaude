@@ -92,3 +92,34 @@ func TestToolGovernanceRejectsUnknownAndForeignConfigurationBeforeSave(t *testin
 	require.NoError(t, err)
 	require.Empty(t, snapshot.Agents)
 }
+
+func TestTeamToolGovernanceRejectsInvalidBeforeDefinitionSave(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "state.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	service := app.New(store, providers.NewRegistry())
+	op := model.OperatorPrincipal()
+	_, err = service.SaveConfigurationProfile(ctx, app.SaveConfigurationProfileRequest{Context: effect(op, "profile"), ID: "codex", RevisionID: "one", Name: "Codex", Desired: model.DesiredConfiguration{Harness: "codex", Model: "fixture", WorkingDirectory: t.TempDir(), Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}})
+	require.NoError(t, err)
+	deny, unknown := model.ToolGovernanceDeny, model.ToolGovernance("unknown")
+	foreign := "claude"
+	members := []model.TeamMemberSpec{
+		{Desired: model.DesiredConfiguration{Harness: "codex", ToolGovernance: deny}},
+		{Desired: model.DesiredConfiguration{Harness: "opencode", ToolGovernance: unknown}},
+		{ProfileID: "codex", Overrides: &model.TeamProfileOverrides{ToolGovernance: &deny}},
+		{ProfileID: "codex", Overrides: &model.TeamProfileOverrides{ToolGovernance: &unknown}},
+		{ProfileID: "codex", Overrides: &model.TeamProfileOverrides{Harness: &foreign, ToolGovernance: &deny}},
+	}
+	for _, member := range members {
+		member.Key = "worker"
+		member.Name = "Worker"
+		draft := app.DefinitionDraft{ID: "team", RevisionID: "one", Name: "Team", Source: "fixture", Kind: model.DefinitionTeam, SchemaVersion: 1, Team: &model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{member}, Waves: []model.TeamWave{{ID: "first", MemberKeys: []string{"worker"}}}}}
+		_, err = service.ValidateDefinition(ctx, app.ValidateDefinitionRequest{Principal: op, Draft: draft})
+		require.ErrorIs(t, err, app.ErrInvalid)
+		_, err = service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: effect(op, "save_team"), Draft: draft})
+		require.ErrorIs(t, err, app.ErrInvalid)
+	}
+	_, err = store.Definition(ctx, "team")
+	require.ErrorIs(t, err, app.ErrNotFound)
+}

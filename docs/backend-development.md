@@ -1938,3 +1938,9 @@ can inherit it from a saved profile, override it, or explicitly clear it.
 Switching to another harness drops an inherited OpenCode-only setting; an
 explicit foreign setting is rejected. Imports preserve the v1 field, and agent
 and execution records retain it through reopen and recovery.
+
+Changing a configuration's harness away from OpenCode clears and disables its
+provider-specific tool control. Team validation and saving reject unknown or
+foreign custom values and explicit profile overrides before publication. Offline
+agent import reads the versioned resolved relaunch record ahead of the original
+birth request, retaining inherited tool governance and the named-profile link.

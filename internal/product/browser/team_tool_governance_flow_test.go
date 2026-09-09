@@ -48,4 +48,14 @@ func TestBrowserTeamToolGovernanceOverrideAndProfileCopy(t *testing.T) {
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/definitions/"+string(definitions[0].ID), nil, &saved))
 	require.Empty(t, saved.Revision.Team.Members[0].ProfileID)
 	require.Equal(t, model.ToolGovernanceDeny, saved.Revision.Team.Members[0].Desired.ToolGovernance)
+	page.MustElementR("#team-editor button", "^Edit Worker$").MustClick()
+	page.MustElement("#team-editor [name=harness]").MustSelect("claude")
+	require.True(t, page.MustElement("#team-editor [name=tool_governance]").MustProperty("disabled").Bool())
+	page.MustElementR("#team-editor button", "^Apply changes$").MustClick()
+	page.MustElementR("#team-editor button", "^Save team revision$").MustClick()
+	page.MustElementR("#team-editor-status", "Revision 3 · saved")
+	saved = app.DefinitionResult{}
+	require.NoError(t, operator.Call(ctx, "GET", "/v2/definitions/"+string(definitions[0].ID), nil, &saved))
+	require.Empty(t, saved.Revision.Team.Members[0].Desired.ToolGovernance)
+
 }

@@ -34,6 +34,16 @@ func TestBrowserOpenCodeToolGovernanceSavesAndReopens(t *testing.T) {
 		page.MustWait(`()=>document.querySelector('#editor').open`)
 		require.Equal(t, string(mode), page.MustElement("#editor [name=tool_governance]").MustProperty("value").Str())
 	}
+	page.MustElement("#editor [name=harness]").MustSelect("claude")
+	require.True(t, page.MustElement("#editor [name=tool_governance]").MustProperty("disabled").Bool())
+	require.Equal(t, "", page.MustElement("#editor [name=tool_governance]").MustProperty("value").Str())
+	page.MustElement("#editor button[type=submit]").MustClick()
+	page.MustWait(`()=>!document.querySelector('#editor').open&&!submitting`)
+	page.MustElementR("#configuration-list button", "^Edit configuration$").MustClick()
+	page.MustWait(`()=>document.querySelector('#editor').open`)
+	require.Equal(t, "claude", page.MustElement("#editor [name=harness]").MustProperty("value").Str())
+	page.MustElement("#editor [name=harness]").MustSelect("opencode")
+	require.False(t, page.MustElement("#editor [name=tool_governance]").MustProperty("disabled").Bool())
 	page.MustElement("#editor button[value=cancel]").MustClick()
 	var snapshot app.Snapshot
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/snapshot", nil, &snapshot))

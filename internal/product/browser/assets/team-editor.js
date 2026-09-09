@@ -196,6 +196,7 @@ class TeamEditor {
       form.elements.harness.dispatchEvent(new Event('change', {bubbles: true}));
       this.unapplied = true;
     };
+    const syncTools=attachToolGovernanceControl(form,()=>!form.elements.profile.value||form.elements.override_tool_governance.checked);
     let updatingProfile=false;
     const updateProfile = (initialize=false) => {
       if(updatingProfile)return;updatingProfile=true;
@@ -215,6 +216,7 @@ class TeamEditor {
       for(const key of Object.keys(overrideProperties))form.elements['override_'+key].parentElement.hidden=!selected;
       environmentField.disabled = selected; sandboxField.disabled = selected;
       select.disabled = selected;
+      syncTools();
       updatingProfile=false;
     };
     form.elements.harness.addEventListener('change',()=>{if(form.elements.profile.value)updateProfile();});

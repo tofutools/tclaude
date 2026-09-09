@@ -138,6 +138,9 @@ func (s *Service) compileDefinition(ctx context.Context, draft DefinitionDraft, 
 		if err := validateTeam(*draft.Team); err != nil {
 			return model.DefinitionRevision{}, err
 		}
+		if err := s.validateTeamToolGovernance(ctx, *draft.Team); err != nil {
+			return model.DefinitionRevision{}, err
+		}
 		for _, ref := range draft.Team.Automation {
 			ruleRevision, err := s.store.AutomationRuleRevision(ctx, ref.RevisionID)
 			if err != nil {

@@ -1209,11 +1209,8 @@ func validateDesired(desired model.DesiredConfiguration) error {
 
 // Team members receive their working directory from the deployment workspace.
 func validateLaunchConfiguration(desired model.DesiredConfiguration) error {
-	if err := desired.ToolGovernance.Validate(); err != nil {
-		return fail(ErrInvalid, "%s", err)
-	}
-	if desired.ToolGovernance != "" && desired.Harness != "opencode" {
-		return fail(ErrInvalid, "tool governance is supported only by OpenCode")
+	if err := validateToolGovernance(desired); err != nil {
+		return err
 	}
 	if err := model.ValidateSandboxSelection(desired.HostSandbox); err != nil {
 		return fail(ErrInvalid, "%v", err)
@@ -1331,4 +1328,14 @@ func recoveryPrimaryContext(execution model.Execution) *ports.PrimaryContextReco
 		return nil
 	}
 	return &ports.PrimaryContextRecovery{Binding: model.NativeBinding{Namespace: execution.NativeConversation.Namespace, Reference: execution.NativeConversation.Reference}, Readiness: execution.ContextReadiness, ProviderOrder: execution.ContextOrder}
+}
+
+func validateToolGovernance(desired model.DesiredConfiguration) error {
+	if err := desired.ToolGovernance.Validate(); err != nil {
+		return fail(ErrInvalid, "%s", err)
+	}
+	if desired.ToolGovernance != "" && desired.Harness != "opencode" {
+		return fail(ErrInvalid, "tool governance is supported only by OpenCode")
+	}
+	return nil
 }
