@@ -1992,7 +1992,9 @@ using the admitted execution configuration.
 
 The access editor exposes `group.members.create` for creating an offline member
 from a group's current configuration default. It is distinct from editing the
-membership of existing agents. A delegated caller needs authority on the target
+membership of existing agents. Group owners receive this capability through their
+existing shared configuration bounds, including stores initialized by an older
+v2 binary. A delegated caller needs authority on the target
 group and complete configuration bounds covering the resolved profile,
 environment and sandbox selection. The same capability permits reading that
 group's defaults. SQLite checks current authority inside member admission;

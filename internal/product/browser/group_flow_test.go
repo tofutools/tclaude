@@ -27,6 +27,7 @@ func TestBrowserEditsGroupMembershipOrderAndBoundedOwner(t *testing.T) {
 	}
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/groups", map[string]any{"id": "team", "name": "Team", "members": []string{"alpha", "beta"}}, nil))
 	page.MustElement("#refresh").MustClick()
+	page.MustWait(`() => snapshot.groups?.some(group => group.ID === "team")`)
 	page.MustElementR("summary", "^Group settings$").MustClick()
 	page.MustElementR("#group-management h3", "Team")
 	page.MustElementR("#group-management button", "^Edit name and members$").MustClick()
@@ -82,6 +83,17 @@ func TestBrowserEditsGroupMembershipOrderAndBoundedOwner(t *testing.T) {
 	var failure *client.Error
 	require.ErrorAs(t, err, &failure)
 	require.Equal(t, 403, failure.Status)
+	// The owner form's shared limits also authorize adding a new offline member,
+	// without a separately authored direct grant.
+	var profile app.ConfigurationProfileResult
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/configuration-profiles", map[string]any{"request_id": "profile", "id": "worker", "revision_id": "one", "name": "Worker", "desired": desired}, &profile))
+	require.NoError(t, operator.Call(ctx, "PUT", "/v2/groups/team/configuration", map[string]any{"profile": profile.Revision.Ref}, nil))
+	var defaults model.GroupConfiguration
+	require.NoError(t, actor.Call(ctx, "GET", "/v2/groups/team/configuration", nil, &defaults))
+	var created app.GroupMemberResult
+	require.NoError(t, actor.Call(ctx, "POST", "/v2/groups/team/agents", map[string]any{"request_id": "owner_create", "id": "new_member", "name": "New member", "expected_group_revision": snapshot.Groups[0].Revision, "expected_default_revision": defaults.Revision}, &created))
+	require.Contains(t, created.Group.Members, model.AgentID("new_member"))
+	require.Empty(t, created.Agent.PrimaryExecutionID)
 }
 
 type groupOwnerProvider struct {
