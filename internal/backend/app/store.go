@@ -202,6 +202,7 @@ type HistorySelectionRecord struct {
 }
 
 type WorkspaceEffectAdmission struct {
+	Removal   *RemoveCheckoutRequest
 	Operation model.Operation
 	Workspace model.Workspace
 	Authority model.AuthorityRequest

@@ -41,7 +41,7 @@ func (s *Store) initialize(ctx context.Context) error {
 		return err
 	}
 	if err := s.executeSchema(ctx, schema, shellRequestSchema+groupCloneSchema+groupDisbandSchema,
-		groupCapacitySchema, groupDetailsSchema, groupConfigurationSchema, groupHierarchySchema,
+		groupCapacitySchema, groupDetailsSchema, groupConfigurationSchema, workspaceRemovalSchema, groupHierarchySchema,
 		terminalFileSchema, processSnippetSchema, presentationSchema); err != nil {
 		return fmt.Errorf("initialize replacement backend schema: %w", err)
 	}
