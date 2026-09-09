@@ -529,7 +529,7 @@ func TestTeamDeploymentPinsAndMaterializesAuthoredRoles(t *testing.T) {
 	provider := &preparedWorkProvider{}
 	service := app.New(store, providers.NewRegistry(provider)).WithClock(func() time.Time { return now })
 	operator := model.OperatorPrincipal()
-	role, err := service.PutRole(ctx, app.PutRoleRequest{Principal: operator, Role: model.Role{ID: "team_reviewer", Name: "Team reviewer", Brief: "Inspect changes carefully.\r\nExplain findings.", Actions: []model.Action{model.ActionReadStatus, model.ActionSendMessage}}})
+	role, err := service.PutRole(ctx, app.PutRoleRequest{Principal: operator, Role: model.Role{ID: "team_reviewer", Name: "Team reviewer", Brief: "Inspect changes carefully.\r\nExplain findings.", Actions: []model.Action{model.ActionReadStatus, model.ActionSendMessage}, Scopes: model.ActionScopes{model.ActionSendMessage: {"target_agent": {"outsider"}}}}})
 	require.NoError(t, err)
 	desired := model.DesiredConfiguration{Harness: "prepared-work", Model: "test", WorkingDirectory: t.TempDir(), Approval: model.ApprovalAutomatic, Sandbox: model.SandboxWorkspaceWrite}
 	require.NoError(t, store.RegisterWorkspace(ctx, model.Workspace{ID: "role_workspace", State: model.WorkspaceAvailable, Observation: model.WorkspaceObservation{ActualPath: desired.WorkingDirectory, ObservedAt: now}, Revision: 1, CreatedAt: now, UpdatedAt: now}))
@@ -539,7 +539,7 @@ func TestTeamDeploymentPinsAndMaterializesAuthoredRoles(t *testing.T) {
 	workspaceSelection := model.TeamWorkspaceSelection{Shared: &model.TeamWorkspaceInput{WorkspaceID: "role_workspace", ExpectedRevision: 1}}
 	deployed, err := service.DeployTeam(ctx, app.DeployTeamRequest{Context: app.RequestContext{Principal: operator, RequestID: "deploy_role_team"}, DeploymentID: "role_deployment", Instantiation: model.TeamInstantiation{Definition: model.DefinitionRef{DefinitionID: definition.Definition.ID, RevisionID: definition.Revision.ID, ContentHash: definition.Revision.ContentHash, Kind: model.DefinitionTeam}, Mission: "review", GroupID: "role_group", Workspaces: workspaceSelection}})
 	require.NoError(t, err)
-	require.Equal(t, []model.TeamRolePin{{Brief: role.Role.Brief, RoleID: role.Role.ID, Revision: role.Role.Revision, Actions: role.Role.Actions}}, deployed.Deployment.RolePins)
+	require.Equal(t, []model.TeamRolePin{{Scopes: role.Role.Scopes, Brief: role.Role.Brief, RoleID: role.Role.ID, Revision: role.Role.Revision, Actions: role.Role.Actions}}, deployed.Deployment.RolePins)
 	run, err := store.WorkRun(ctx, deployed.Deployment.WorkRunID)
 	require.NoError(t, err)
 	foundGuidance := false
@@ -552,9 +552,29 @@ func TestTeamDeploymentPinsAndMaterializesAuthoredRoles(t *testing.T) {
 	require.True(t, foundGuidance)
 	changedRole := role.Role
 	changedRole.Brief = "Guidance for future deployments"
+	changedRole.Actions = nil
+	changedRole.Scopes = nil
 	_, err = service.PutRole(ctx, app.PutRoleRequest{Principal: operator, Role: changedRole, ExpectedRevision: changedRole.Revision})
 	require.NoError(t, err)
 	memberID := deployed.Deployment.Members["reviewer"]
+	_, err = service.CreateAgent(ctx, app.CreateAgentRequest{Context: operator, ID: "outsider", Name: "Outsider", Desired: desired})
+	require.NoError(t, err)
+	state, err := store.AuthorityState(ctx)
+	require.NoError(t, err)
+	require.Len(t, state.Grants, 2)
+	require.Len(t, state.Assignments, 1)
+	require.True(t, state.Assignments[0].PermissionsCopied)
+	for _, target := range []model.AgentID{"outsider", memberID} {
+		decision, checkErr := store.Authorize(ctx, model.AuthorityRequest{Principal: model.AgentPrincipal(memberID), Action: model.ActionSendMessage, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: target}}, now)
+		require.NoError(t, checkErr)
+		if target == "outsider" {
+			require.True(t, decision.Allowed)
+			require.Equal(t, model.AuthoritySourceKind("grant"), decision.SourceKind)
+		} else {
+			require.False(t, decision.Allowed, "copied role scope must not become live unscoped authority")
+		}
+	}
+
 	resolved, err := store.ResolveMessageAudience(ctx, model.MessageAudience{GroupID: deployed.Deployment.GroupID, RoleID: role.Role.ID})
 	require.NoError(t, err)
 	require.Equal(t, []model.AgentID{memberID}, resolved)

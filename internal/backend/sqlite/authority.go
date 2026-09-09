@@ -50,7 +50,7 @@ func (s *Store) AuthorityState(ctx context.Context) (app.AuthorityStateResult, e
 	if err := rows.Close(); err != nil {
 		return out, err
 	}
-	rows, err = s.db.QueryContext(ctx, `SELECT id,name,actions_json,revision,created_at,updated_at,description,brief FROM roles ORDER BY id`)
+	rows, err = s.db.QueryContext(ctx, `SELECT id,name,actions_json,revision,created_at,updated_at,description,brief,scopes_json FROM roles ORDER BY id`)
 	if err != nil {
 		return out, err
 	}
@@ -65,7 +65,7 @@ func (s *Store) AuthorityState(ctx context.Context) (app.AuthorityStateResult, e
 	if err := rows.Close(); err != nil {
 		return out, err
 	}
-	rows, err = s.db.QueryContext(ctx, `SELECT role_id,subject_kind,subject_id,resource_kind,resource_id,bounds_json,revision,created_at,updated_at FROM role_assignments ORDER BY role_id,subject_kind,subject_id,resource_kind,resource_id`)
+	rows, err = s.db.QueryContext(ctx, `SELECT role_id,subject_kind,subject_id,resource_kind,resource_id,bounds_json,revision,created_at,updated_at,permissions_copied FROM role_assignments ORDER BY role_id,subject_kind,subject_id,resource_kind,resource_id`)
 	if err != nil {
 		return out, err
 	}
@@ -138,15 +138,24 @@ func (s *Store) DeleteGrant(ctx context.Context, id model.GrantID, expected mode
 }
 
 func (s *Store) PutRole(ctx context.Context, role model.Role, expected model.Revision) (model.Role, error) {
+	var scopeErr error
+	role.Scopes, scopeErr = role.Scopes.Normalize(role.Actions)
+	if scopeErr != nil {
+		return model.Role{}, app.ErrInvalid
+	}
+	scopes, scopeErr := json.Marshal(role.Scopes)
+	if scopeErr != nil {
+		return model.Role{}, scopeErr
+	}
 	actions, err := json.Marshal(role.Actions)
 	if err != nil {
 		return model.Role{}, err
 	}
 	if expected == 0 {
-		_, err = s.db.ExecContext(ctx, `INSERT INTO roles(id,name,actions_json,revision,created_at,updated_at,description,brief) VALUES(?,?,?,1,?,?,?,?)`, role.ID, role.Name, actions, nanos(role.CreatedAt), nanos(role.UpdatedAt), role.Description, role.Brief)
+		_, err = s.db.ExecContext(ctx, `INSERT INTO roles(id,name,actions_json,revision,created_at,updated_at,description,brief,scopes_json) VALUES(?,?,?,1,?,?,?,?,?)`, role.ID, role.Name, actions, nanos(role.CreatedAt), nanos(role.UpdatedAt), role.Description, role.Brief, scopes)
 	} else {
 		var result sql.Result
-		result, err = s.db.ExecContext(ctx, `UPDATE roles SET name=?,actions_json=?,description=?,brief=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, role.Name, actions, role.Description, role.Brief, nanos(role.UpdatedAt), role.ID, expected)
+		result, err = s.db.ExecContext(ctx, `UPDATE roles SET name=?,actions_json=?,description=?,brief=?,scopes_json=?,revision=revision+1,updated_at=? WHERE id=? AND revision=?`, role.Name, actions, role.Description, role.Brief, scopes, nanos(role.UpdatedAt), role.ID, expected)
 		if err == nil {
 			if affected, _ := result.RowsAffected(); affected != 1 {
 				return model.Role{}, app.ErrConflict
@@ -387,7 +396,7 @@ func authorizeTx(ctx context.Context, q queryer, request model.AuthorityRequest,
 	if err := rows.Close(); err != nil {
 		return decision, err
 	}
-	rows, err = q.QueryContext(ctx, `SELECT a.role_id,a.subject_kind,a.subject_id,a.resource_kind,a.resource_id,a.bounds_json,a.revision,a.created_at,a.updated_at,r.actions_json,r.revision FROM role_assignments a JOIN roles r ON r.id=a.role_id WHERE a.subject_kind=? AND a.subject_id=?`, sk, sid)
+	rows, err = q.QueryContext(ctx, `SELECT a.role_id,a.subject_kind,a.subject_id,a.resource_kind,a.resource_id,a.bounds_json,a.revision,a.created_at,a.updated_at,r.actions_json,r.revision,r.scopes_json,a.permissions_copied FROM role_assignments a JOIN roles r ON r.id=a.role_id WHERE a.subject_kind=? AND a.subject_id=?`, sk, sid)
 	if err != nil {
 		return decision, err
 	}
@@ -395,11 +404,14 @@ func authorizeTx(ctx context.Context, q queryer, request model.AuthorityRequest,
 	for rows.Next() {
 		var assignment model.RoleAssignment
 		var subjectKind, subjectID, resourceKind, resourceID string
-		var bounds, actions []byte
+		var bounds, actions, scopes []byte
 		var created, updated int64
 		var roleRevision model.Revision
-		if err := rows.Scan(&assignment.RoleID, &subjectKind, &subjectID, &resourceKind, &resourceID, &bounds, &assignment.Revision, &created, &updated, &actions, &roleRevision); err != nil {
+		if err := rows.Scan(&assignment.RoleID, &subjectKind, &subjectID, &resourceKind, &resourceID, &bounds, &assignment.Revision, &created, &updated, &actions, &roleRevision, &scopes, &assignment.PermissionsCopied); err != nil {
 			return decision, err
+		}
+		if assignment.PermissionsCopied {
+			continue
 		}
 		assignment.Subject = makeSubject(subjectKind, subjectID)
 		assignment.Resource = makeResource(resourceKind, resourceID)
@@ -410,6 +422,15 @@ func authorizeTx(ctx context.Context, q queryer, request model.AuthorityRequest,
 		var roleActions []model.Action
 		if err := json.Unmarshal(actions, &roleActions); err != nil {
 			return decision, err
+		}
+		var roleScopes model.ActionScopes
+		if len(scopes) != 0 {
+			if err := json.Unmarshal(scopes, &roleScopes); err != nil {
+				return decision, err
+			}
+		}
+		if !grantScopeMatches(ctx, q, roleScopes[request.Action], request) {
+			continue
 		}
 		if slices.Contains(roleActions, request.Action) && resourceMatches(ctx, q, request.Principal, assignment.Resource, request.Resource) && (requestedBoundsMatch(assignment.Bounds, request) || atomicSpawnBoundsMatch(ctx, q, assignment.Bounds, request) || ownerSpawnLineageMatches(ctx, q, assignment, request)) {
 			return model.AuthorityDecision{Allowed: true, Action: request.Action, Resource: request.Resource, SourceKind: model.AuthorityRole, SourceID: string(assignment.RoleID), Revision: max(assignment.Revision, roleRevision), Bounds: assignment.Bounds}, nil
@@ -903,19 +924,24 @@ func scanGrant(row scanner) (model.AuthorityGrant, error) {
 }
 
 func roleByID(ctx context.Context, q queryer, id model.RoleID) (model.Role, error) {
-	return scanRole(q.QueryRowContext(ctx, `SELECT id,name,actions_json,revision,created_at,updated_at,description,brief FROM roles WHERE id=?`, id))
+	return scanRole(q.QueryRowContext(ctx, `SELECT id,name,actions_json,revision,created_at,updated_at,description,brief,scopes_json FROM roles WHERE id=?`, id))
 }
 
 func scanRole(row scanner) (model.Role, error) {
 	var role model.Role
-	var actions []byte
+	var actions, scopes []byte
 	var created, updated int64
-	if err := row.Scan(&role.ID, &role.Name, &actions, &role.Revision, &created, &updated, &role.Description, &role.Brief); err != nil {
+	if err := row.Scan(&role.ID, &role.Name, &actions, &role.Revision, &created, &updated, &role.Description, &role.Brief, &scopes); err != nil {
 		return role, classify(err)
 	}
 	role.CreatedAt, role.UpdatedAt = fromNanos(created), fromNanos(updated)
 	if err := json.Unmarshal(actions, &role.Actions); err != nil {
 		return role, err
+	}
+	if len(scopes) != 0 {
+		if err := json.Unmarshal(scopes, &role.Scopes); err != nil {
+			return role, err
+		}
 	}
 	return role, nil
 }
@@ -923,7 +949,7 @@ func scanRole(row scanner) (model.Role, error) {
 func assignmentByKey(ctx context.Context, q queryer, assignment model.RoleAssignment) (model.RoleAssignment, error) {
 	sk, sid := subjectParts(assignment.Subject)
 	rk, rid := resourceParts(assignment.Resource)
-	return scanAssignment(q.QueryRowContext(ctx, `SELECT role_id,subject_kind,subject_id,resource_kind,resource_id,bounds_json,revision,created_at,updated_at FROM role_assignments WHERE role_id=? AND subject_kind=? AND subject_id=? AND resource_kind=? AND resource_id=?`, assignment.RoleID, sk, sid, rk, rid))
+	return scanAssignment(q.QueryRowContext(ctx, `SELECT role_id,subject_kind,subject_id,resource_kind,resource_id,bounds_json,revision,created_at,updated_at,permissions_copied FROM role_assignments WHERE role_id=? AND subject_kind=? AND subject_id=? AND resource_kind=? AND resource_id=?`, assignment.RoleID, sk, sid, rk, rid))
 }
 
 func scanAssignment(row scanner) (model.RoleAssignment, error) {
@@ -931,7 +957,7 @@ func scanAssignment(row scanner) (model.RoleAssignment, error) {
 	var sk, sid, rk, rid string
 	var bounds []byte
 	var created, updated int64
-	if err := row.Scan(&assignment.RoleID, &sk, &sid, &rk, &rid, &bounds, &assignment.Revision, &created, &updated); err != nil {
+	if err := row.Scan(&assignment.RoleID, &sk, &sid, &rk, &rid, &bounds, &assignment.Revision, &created, &updated, &assignment.PermissionsCopied); err != nil {
 		return assignment, classify(err)
 	}
 	assignment.Subject, assignment.Resource = makeSubject(sk, sid), makeResource(rk, rid)

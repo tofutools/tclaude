@@ -133,8 +133,9 @@ func (id RoleID) Validate() error { return ValidateStableID("role id", string(id
 const GroupOwnerRole RoleID = "group_owner"
 
 type Role struct {
-	Description string `json:",omitempty"`
-	Brief       string `json:",omitempty"`
+	Scopes      ActionScopes `json:",omitempty"`
+	Description string       `json:",omitempty"`
+	Brief       string       `json:",omitempty"`
 	ID          RoleID
 	Name        string
 	Actions     []Action
@@ -144,13 +145,16 @@ type Role struct {
 }
 
 type RoleAssignment struct {
-	RoleID    RoleID
-	Subject   AuthoritySubject
-	Resource  ResourceSelector
-	Bounds    ConfigurationBounds
-	Revision  Revision
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	// PermissionsCopied retains role affiliation for routing without making
+	// future library edits change the agent's birth-time grants.
+	PermissionsCopied bool `json:",omitempty"`
+	RoleID            RoleID
+	Subject           AuthoritySubject
+	Resource          ResourceSelector
+	Bounds            ConfigurationBounds
+	Revision          Revision
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
 }
 
 type AuthoritySourceKind string

@@ -1804,7 +1804,7 @@ Team deployment and group cloning place the member's display role and descriptio
 
 ### Reusable role guidance
 
-The role library retains a description and startup brief alongside its permission actions, matching the v1 reusable role concept. Roles may contain guidance without granting any actions. The editor saves and reopens both fields; role briefs retain v1 line-ending normalization and the 16 KiB bound. Team deployment includes each selected role's brief in a `## Role` startup section and records the selected guidance with the deployment so delayed starts and retries retain the admitted text. Editing a library role affects subsequent deployments, while permission actions retain their existing live assignment behavior.
+The role library retains a description and startup brief alongside its permission actions, matching the v1 reusable role concept. Roles may contain guidance without granting any actions. The editor saves and reopens both fields; role briefs retain v1 line-ending normalization and the 16 KiB bound. Team deployment includes each selected role's brief in a `## Role` startup section and records the selected guidance with the deployment so delayed starts and retries retain the admitted text. Editing a library role affects subsequent deployments. Team members receive copied permissions at creation; separately authored live role assignments continue to follow library edits.
 
 ### Team deployment working directories
 
@@ -2279,3 +2279,38 @@ unscoped permissions. An operator must explicitly select this reach for a direct
 grant or role assignment. Configuration bounds, expiry, current subject checks
 and explicit action denials still apply. Revoking the grant takes effect on the
 next authorization check; saving or reopening it preserves its unscoped meaning.
+
+### Team member permissions
+
+A team member can carry an action grant or denial in `Permissions`. Deployment
+copies these entries to ordinary agent authority records in the transaction that
+creates the members. Publishing or editing a template does not grant live
+permission. Existing grants and denials remain independently editable after
+creation; retrying a completed deployment does not recreate a revoked entry.
+
+Each action appears at most once per member. A grant with no named `Scope`
+applies on all resources for that action; a scoped grant retains the same live
+name matching and missing-context refusal as direct grants. A denial is
+unscoped and takes precedence over grants and role assignments. Deploying a team
+that copies permissions requires an operator, as does assigning team roles.
+The editor displays and edits these entries with their named constraints.
+
+### Scoped role permissions and team role affiliation
+
+Role actions may carry per-action named constraints in `Scopes`. The shared
+permission editor authors both team member permissions and role grants. Older
+role edits that omit `Scopes` retain constraints on retained actions; an explicit
+empty map clears them. Direct role assignments evaluate current library scopes
+alongside their resource selector and configuration bounds.
+
+A team deployment copies ordinary role grants before applying explicit member
+overrides. Two selected roles with different constraints on the same action
+are refused before workspace preparation, even if an explicit override follows.
+Current role revisions and constraints are fenced in the publication transaction.
+Later role edits change neither the copied grants nor the admitted startup brief.
+
+The stored team role assignment retains affiliation for role-targeted messages,
+marked `PermissionsCopied`; it contributes no additional live authority. Removing
+that affiliation does not remove independently editable copied grants. Group
+ownership remains a live role assignment and retains its current membership and
+parent-policy checks.

@@ -178,6 +178,8 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"automation_rules", "deployment_id", "TEXT NOT NULL DEFAULT ''"},
 		{"roles", "description", "TEXT NOT NULL DEFAULT ''"},
 		{"roles", "brief", "TEXT NOT NULL DEFAULT ''"},
+		{"roles", "scopes_json", "BLOB"},
+		{"role_assignments", "permissions_copied", "INTEGER NOT NULL DEFAULT 0"},
 	} {
 		if err := s.ensureColumn(ctx, migration.table, migration.column, migration.definition); err != nil {
 			return err

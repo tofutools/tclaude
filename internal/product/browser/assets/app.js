@@ -44,6 +44,7 @@ function edit(title,fields,save,{skipUnchanged=false}={}){
  $('editor-title').textContent=presentation.label(title);$('editor-fields').replaceChildren();$('editor-error').hidden=true;let fingerprint='',submissionID='';
  for(const field of fields){
   const label=el('label',field.label);let input;
+  if(field.customControl){$('editor-fields').append(field.customControl.host);continue}
   if(field.sandboxPolicies){field.control=new SandboxProfileAllowList(api,field.value);const container=el('fieldset');container.append(el('legend',field.label),field.control.host);$('editor-fields').append(container);continue}
   if(field.environment||field.environmentSets){field.control=field.environmentSets?new LaunchEnvironmentSets(field.value):new LaunchEnvironment(field.value,{inherited:field.inherited||{}});const container=el('fieldset');container.append(el('legend',field.label),field.control.host);$('editor-fields').append(container);continue}
   if(field.sandboxSelection){field.control=new SandboxSelectionControl(api,field.value);input=field.control.host;}
@@ -63,7 +64,7 @@ function edit(title,fields,save,{skipUnchanged=false}={}){
  attachAutoReviewControl($('editor-fields'));
  attachAutoMemoryControl($('editor-fields'));
  attachPeerMessagingControl($('editor-fields'));attachDirectoryTrustControl($('editor-fields'));attachAutoCompactWindowControl($('editor-fields'));attachQuestionTimeoutControl($('editor-fields'));
- const readForm=()=>{const data=new FormData($('editor-form')),form=Object.fromEntries(data);for(const field of fields){if(field.type==='checkbox')form[field.name]=$('editor-form').elements.namedItem(field.name).checked;if(field.multiple)form[field.name]=data.getAll(field.name);if(field.environment||field.environmentSets||field.sandboxPolicies)form[field.name]=field.control.read();}return form};const initial=JSON.stringify(readForm());
+ const readForm=()=>{const data=new FormData($('editor-form')),form=Object.fromEntries(data);for(const field of fields){if(field.customControl)form[field.name]=field.customControl.read();if(field.type==='checkbox')form[field.name]=$('editor-form').elements.namedItem(field.name).checked;if(field.multiple)form[field.name]=data.getAll(field.name);if(field.environment||field.environmentSets||field.sandboxPolicies)form[field.name]=field.control.read();}return form};const initial=JSON.stringify(readForm());
  $('editor-form').onsubmit=async e=>{e.preventDefault();if(submitting)return;submitting=true;$('cancel').disabled=true;const submit=e.submitter;if(submit)submit.disabled=true;
   try{const form=readForm();if(skipUnchanged&&JSON.stringify(form)===initial){$('editor').close();return}for(const field of fields){if(field.sandboxSelection)form[field.name]=await field.control.read(form[field.name]);}const next=JSON.stringify(form,(_,value)=>value instanceof File?{name:value.name,size:value.size,modified:value.lastModified}:value);if(fingerprint!==next){fingerprint=next;submissionID=requestID()}form.requestID=submissionID;await save(form);await refresh();$('editor').close()}catch(error){showError(error)}finally{submitting=false;$('cancel').disabled=false;if(submit)submit.disabled=false}
  };
