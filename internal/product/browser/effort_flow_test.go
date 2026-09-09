@@ -4,12 +4,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/internal/backend/app"
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/providers/claude"
 	"testing"
 	"time"
 )
 
 func TestBrowserSavedRequestedEffortRemainsPinned(t *testing.T) {
-	ctx, page, operator := processEditorBrowser(t)
+	ctx, page, operator := processEditorBrowser(t, &claude.Provider{})
 	page = page.Timeout(40 * time.Second)
 	page.MustElement("[data-tab=configurations]").MustClick()
 	page.MustElement("#new-configuration").MustClick()
@@ -46,7 +47,9 @@ func TestBrowserSavedRequestedEffortRemainsPinned(t *testing.T) {
 	require.Len(t, profiles, 1)
 	var selected app.ConfigurationProfileResult
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/configuration-profiles/"+string(profiles[0].ID), nil, &selected))
-	require.Equal(t, "high", selected.Revision.Desired.Effort)
+	require.NotNil(t, selected.Revision.Options)
+	require.NotNil(t, selected.Revision.Options.Effort)
+	require.Equal(t, "high", *selected.Revision.Options.Effort)
 	page.MustReload()
 	page.MustWait(`() => !document.querySelector("main").inert`)
 	page.MustElementR("#configuration-list button", "^Edit configuration$").MustClick()

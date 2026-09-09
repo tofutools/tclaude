@@ -20,6 +20,7 @@ function profileOptionFields(options={},name=''){
  return fields;
 }
 function profileOptionsFromForm(form){
+ validateConfigurationForm(form);
  const out={};
  for(const [name,key] of Object.entries({harness:'Harness',model:'Model',effort:'Effort',cwd:'WorkingDirectory',approval:'Approval',sandbox:'Sandbox',fast_mode:'FastMode',tool_governance:'ToolGovernance'}))if(form[name])out[key]=form[name];
  if(form.auto_review)out.AutoReview=form.auto_review==='on';

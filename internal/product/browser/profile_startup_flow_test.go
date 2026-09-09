@@ -10,11 +10,13 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/app"
 	"github.com/tofutools/tclaude/internal/backend/host"
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/ports"
+	"github.com/tofutools/tclaude/internal/backend/providers/claude"
 )
 
 func TestBrowserProfileStartupUsesPinnedSuggestionsBeforeExplicitLaunch(t *testing.T) {
 	p := &automationTeamProvider{name: "claude", delivery: host.ActionCredentialHost{PrivateRoot: filepath.Join(t.TempDir(), "credentials")}, briefs: make(chan string, 4)}
-	ctx, page, operator := processEditorBrowser(t, p)
+	ctx, page, operator := processEditorBrowser(t, &profileStartupProvider{p})
 	page = page.Timeout(40 * time.Second)
 	page.MustElement("[data-tab=configurations]").MustClick()
 	page.MustElement("#new-configuration").MustClick()
@@ -93,4 +95,14 @@ func TestBrowserProfileStartupUsesPinnedSuggestionsBeforeExplicitLaunch(t *testi
 	require.NoError(t, err)
 	require.NotContains(t, string(encoded), "Pinned brief")
 	require.NotContains(t, string(encoded), "Pinned context")
+}
+
+// Startup delivery is fake, while partial profile resolution uses the declared
+// native defaults without starting an installed harness.
+type profileStartupProvider struct{ *automationTeamProvider }
+
+func (p *profileStartupProvider) Capabilities() ports.ProviderCapabilities {
+	out := p.automationTeamProvider.Capabilities()
+	out.LaunchPolicy = (&claude.Provider{}).Capabilities().LaunchPolicy
+	return out
 }
