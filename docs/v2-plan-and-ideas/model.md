@@ -26,14 +26,15 @@ structures, not proof that their vocabulary or lifetimes are already settled.
 
 ## Future (proposed)
 
-Start with **Agent**, its settings and selected harness. The integration manages
-the link needed to continue the agent's native work. Conversation and Execution
+Start with **Agent**, its harness ID, continuation association, requested and
+resolved startup configurations, and last-known extracted metadata. The
+integration manages the native meaning of that continuation association. Conversation and Execution
 were names in the stopped v2 attempt, but we are not adopting them as core
 entities. Their usefulness has not been established by a user need.
 
 | Concept | Meaning to the user | What tclaude controls, and its limit |
 |---|---|---|
-| Agent | Who I am working with | Owns identity, settings, harness selection and membership. The integration manages native continuation, including changes of native IDs. |
+| Agent | Who I am working with | Owns identity, harness ID, continuation association, requested/resolved startup configurations, last-known metadata and membership. The integration manages native continuation, including changes of native IDs. |
 | Terminal/window | Where I interact with running work | Owns the view and its association with the agent or standalone work. It is not the harness's resumable chat. Naming beyond today's tclaude session remains open. |
 | Group | Who works together | Owns membership, owners and defaults. |
 | Profile | Settings I want to reuse | Owns saved intent, including harness-specific options; the integration validates and applies them. |
@@ -45,6 +46,42 @@ Operations act on these concepts. Tracking operation progress or a running
 attempt internally does not require a new user-facing entity for each.
 Standalone work and later agent registration must remain possible; the internal
 representation is still to be designed.
+
+## Agent details
+
+### Current
+
+| Detail | Current organization |
+|---|---|
+| Harness selection | Existing harness fields in launch and session state |
+| Continuation association | Native conversation IDs, agent/conversation mappings and lifecycle handling accumulated over time |
+| Requested and resolved startup configurations | Existing profiles, launch resolution and persisted launch/session fields; not presented here as one already-clean Agent structure |
+| Last-known metadata | Existing session/status fields and native observations, including model, context and usage |
+
+### Future (proposed)
+
+| Agent detail | Intended meaning |
+|---|---|
+| Harness ID | Which harness integration handles this agent |
+| Harness continuation association | The link the integration needs to continue native work; its contents and native ID changes remain private to that integration |
+| Requested startup configurations | What was requested, across the relevant kinds of settings; preserve explicit choices and inheritance intent |
+| Resolved startup configurations | What those requests resolved to for startup, distinct from both the request and later observations |
+| Last-known extracted metadata | Information the integration reported about native work: context window, usage, model and other useful readings |
+
+The current configuration row splits into requested and resolved rows to make
+that distinction explicit. These are parts of Agent state, not a requirement
+that all data live in one database row or one Go struct.
+
+Requested model, resolved startup model and last-observed model may differ.
+Retain those meanings rather than overwriting them with one ambiguous value.
+Resolved startup settings do not prove the harness actually applied them;
+observations provide separate evidence. Later profile edits must remain allowed.
+
+Metadata is a last-known observation, not necessarily live truth. Retain its
+source, observation time and known/unknown status where applicable. Different
+readings may have different freshness. The integration handles native parsing
+and correlation; the core stores and presents meaningful metadata without
+reading or modeling chat history. An unsupported reading is not zero.
 
 ## Native continuation belongs to the integration
 

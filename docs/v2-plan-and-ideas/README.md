@@ -41,8 +41,14 @@ The diagram shows proposed responsibilities, not current wiring or a fixed packa
 may finish immediately or leave work in progress. Harness event handling can
 continue after the initiating request returns.
 
-The core begins with **Agent**, its settings and its selected harness. Native
-continuation references are managed behind the harness interface. No separate
+The core begins with **Agent**. An Agent has:
+
+- A harness ID.
+- A harness continuation association.
+- Requested and resolved startup configurations of the relevant kinds.
+- Last-known extracted metadata: context window, usage, model and other readings.
+
+Native continuation references are managed behind the harness interface. No separate
 Conversation, Execution or history-access entity is proposed. Internal runtime
 bookkeeping does not automatically become part of the user model.
 
