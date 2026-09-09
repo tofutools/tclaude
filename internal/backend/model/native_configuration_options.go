@@ -5,6 +5,7 @@ package model
 type NativeConfigurationOptions struct {
 	AutoReview     *bool           `json:",omitempty"`
 	AutoMemory     *bool           `json:",omitempty"`
+	PeerMessaging  *bool           `json:",omitempty"`
 	FastMode       *FastMode       `json:",omitempty"`
 	ToolGovernance *ToolGovernance `json:",omitempty"`
 	Harness        *string         `json:",omitempty"`
@@ -27,6 +28,7 @@ func (o *NativeConfigurationOptions) Apply(base DesiredConfiguration) DesiredCon
 			base.FastMode = ""
 			base.AutoReview = false
 			base.AutoMemory = false
+			base.PeerMessaging = false
 		}
 		base.Harness = *o.Harness
 	}
@@ -35,6 +37,9 @@ func (o *NativeConfigurationOptions) Apply(base DesiredConfiguration) DesiredCon
 	}
 	if o.Effort != nil {
 		base.Effort = *o.Effort
+	}
+	if o.PeerMessaging != nil {
+		base.PeerMessaging = *o.PeerMessaging
 	}
 	if o.AutoMemory != nil {
 		base.AutoMemory = *o.AutoMemory

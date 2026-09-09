@@ -14,6 +14,12 @@ func applyAgentRelaunchPolicy(values map[string]any, desired model.DesiredConfig
 	if err != nil || profile == nil {
 		return desired, err
 	}
+	if profile.PeerMessaging != nil {
+		desired.PeerMessaging = *profile.PeerMessaging
+	}
+	if err := model.ValidatePeerMessaging(desired.PeerMessaging, desired.Harness); err != nil {
+		return desired, err
+	}
 	if profile.AutoMemory != nil {
 		desired.AutoMemory = *profile.AutoMemory
 	}

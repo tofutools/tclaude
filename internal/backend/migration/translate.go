@@ -260,6 +260,9 @@ func (t *translator) translateAgents(batch *app.ImportBatch) error {
 			return fmt.Errorf("agent %s relaunch profile: %w", row.Key, err)
 		}
 		agent.Desired = resolved
+		if err := validateImportedPeerMessaging(row.Values, agent.Desired.Harness); err != nil {
+			return fmt.Errorf("agent %s peer messaging: %w", row.Key, err)
+		}
 		if err := validateImportedAutoMemory(row.Values, agent.Desired.Harness); err != nil {
 			return fmt.Errorf("agent %s auto-memory: %w", row.Key, err)
 		}
@@ -423,6 +426,14 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 		}
 		desired := desiredFromRow(row.Values)
 		desired.Environment = t.launchEnvironment(batch, "spawn_profiles", row)
+		peerErr := validateImportedPeerMessaging(row.Values, desired.Harness)
+		if desired.Harness == "" {
+			_, peerErr = importedPeerMessaging(row.Values["peer_messaging"])
+		}
+		if peerErr != nil {
+			archived = true
+			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "peer_messaging_requires_review", peerErr.Error())
+		}
 		memoryErr := validateImportedAutoMemory(row.Values, desired.Harness)
 		if desired.Harness == "" {
 			_, memoryErr = importedAutoMemory(row.Values["auto_memory"])
@@ -831,6 +842,7 @@ func desiredFromRow(values map[string]any) model.DesiredConfiguration {
 	}
 	desired.AutoReview, _ = importedAutoReview(values["auto_review"])
 	desired.AutoMemory, _ = importedAutoMemory(values["auto_memory"])
+	desired.PeerMessaging, _ = importedPeerMessaging(values["peer_messaging"])
 	desired.FastMode = importedFastMode(values["fast_mode"])
 	if desired.Harness == "opencode" {
 		desired.ToolGovernance = model.ToolGovernance(firstNonEmpty(stringMap(values, "tools"), stringMap(values, "tool_governance"), stringMap(values, "ToolGovernance")))

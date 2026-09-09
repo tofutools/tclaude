@@ -2062,3 +2062,16 @@ resolved value persists with each agent and admitted execution, while a future
 launch uses its selected configuration. Offline imports preserve nullable
 profile choices and authoritative agent relaunch settings. A positive request
 on another harness is rejected; switching harness clears inherited Claude state.
+
+
+### Claude native peer messaging
+
+Claude native peer messaging is off by default, matching v1. Profiles and team
+members can inherit, enable, or explicitly disable it. Enabling it is supported
+only for Claude; changing harness discards an inherited Claude setting.
+
+When disabled, fresh and continued launches refuse cross-session inbound messages,
+isolate peer machines, and deny native ListAgents discovery. SendMessage remains
+available for in-harness subagent/team messaging. Enabling this option omits these
+added restrictions and leaves Claude's native settings in charge; it does not
+force native access. Saved options and offline v228 imports preserve explicit off.
