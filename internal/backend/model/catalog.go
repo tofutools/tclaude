@@ -14,9 +14,10 @@ type ConfigurationProfileRef struct {
 }
 
 type ConfigurationProfile struct {
-	Disabled          bool   `json:",omitempty"`
-	DisabledReason    string `json:",omitempty"`
-	Archived          bool   `json:",omitempty"`
+	Aliases           []string `json:",omitempty"`
+	Disabled          bool     `json:",omitempty"`
+	DisabledReason    string   `json:",omitempty"`
+	Archived          bool     `json:",omitempty"`
 	ID                ConfigurationProfileID
 	Name              string
 	CurrentRevisionID ConfigurationProfileRevisionID

@@ -425,6 +425,12 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 	for _, row := range t.inspection.Snapshot.Rows["spawn_profile_aliases"] {
 		if ref, ok := t.profileIDs[sourcev228.String(row.Values["profile_id"])]; ok {
 			alias := sourcev228.String(row.Values["alias"])
+			for i := range batch.ConfigurationProfiles {
+				if batch.ConfigurationProfiles[i].Profile.ID == ref.ProfileID {
+					batch.ConfigurationProfiles[i].Profile.Aliases = append(batch.ConfigurationProfiles[i].Profile.Aliases, alias)
+					break
+				}
+			}
 			if _, named := t.profileNames[alias]; !named {
 				t.profileNames[alias] = ref
 			}

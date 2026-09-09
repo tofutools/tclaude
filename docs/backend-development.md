@@ -1957,3 +1957,7 @@ and does not read today's defaults or start an execution.
 ### Configuration availability
 
 Configuration profiles can be disabled for new agents independently of library archiving. The configuration library provides Disable/Enable controls with an optional reason. Disabling retains default selections and team references; new agents and deployments using the profile are refused with its name and reason. Existing agents keep their admitted settings. Enabling retains the recorded reason, which can be explicitly cleared in the dialog. Ordinary configuration edits preserve availability; configuration export/import and v1 offline import preserve the disabled flag and reason.
+
+### Configuration aliases
+
+A configuration can have additional names, edited one per line in its shared create/edit dialog. Aliases resolve to the same profile's current selection at `GET /v2/configuration-profiles/resolve/{name}` and remain separate from durable profile IDs. Empty alias authoring clears the list; omitted alias fields in older callers preserve it. Names cannot acquire another profile's alias and aliases cannot acquire another profile's primary name or alias. Export/import and offline v1 import preserve aliases; the import preview allows editing them when creating a copy.
