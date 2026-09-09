@@ -40,7 +40,7 @@ func TestLaunchSupportReadsAdapterContractWithoutPreparationOrStorage(t *testing
 				expectedApprovals = append(expectedApprovals, model.ApprovalDeny)
 			}
 			if tc.provider.Name() == codex.Name {
-				expectedApprovals = append(expectedApprovals, model.ApprovalNever, model.ApprovalOnRequest, model.ApprovalOnFailure, model.ApprovalUntrusted)
+				expectedApprovals = append(expectedApprovals, model.ApprovalNever, model.ApprovalOnRequest)
 			}
 			require.Equal(t, expectedApprovals, result.ApprovalModes)
 			require.Contains(t, result.ApprovalModes, result.DefaultApproval)

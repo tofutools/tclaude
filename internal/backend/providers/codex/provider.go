@@ -55,6 +55,8 @@ type Provider struct {
 	observationRoot      string
 	turnForker           TurnForker
 	stateMu              sync.Mutex
+	policyOnce           sync.Once
+	policy               ports.PolicyRequirements
 }
 
 func New(config Config) (*Provider, error) {
@@ -90,7 +92,7 @@ func New(config Config) (*Provider, error) {
 
 func (*Provider) Name() string { return Name }
 func (p *Provider) Capabilities() ports.ProviderCapabilities {
-	policy := supportedLaunchPolicy()
+	policy := p.launchPolicy()
 	return ports.ProviderCapabilities{HostSandbox: p.hostSandbox != nil, LaunchPolicy: &policy, PreparedInitialInput: true, NativeGuidance: []ports.NativeGuidanceCapability{{EventKind: "session_start", Timing: model.StandingOrderSameContinuation}, {EventKind: "user_prompt", Timing: model.StandingOrderSameContinuation}}}
 }
 func (p *Provider) ActionCredentials() ports.ActionCredentialDelivery { return p.credentials }
@@ -161,7 +163,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if err := validateDirectory(request.Spec.WorkingDirectory); err != nil {
 		return nil, err
 	}
-	if !slices.Contains(supportedLaunchPolicy().SupportedApproval, request.Spec.Approval) {
+	if !slices.Contains(p.launchPolicy().SupportedApproval, request.Spec.Approval) {
 		return nil, fmt.Errorf("codex provider does not support approval mode %q", request.Spec.Approval)
 	}
 	if request.Spec.Sandbox != model.SandboxReadOnly && request.Spec.Sandbox != model.SandboxWorkspaceWrite && request.Spec.Sandbox != model.SandboxUnconfined {
@@ -280,7 +282,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	}
 	result := &prepared{provider: p, request: request, nativeID: nativeID, stateRoot: stateRoot, removeOnAbort: removeOnAbort, terminal: terminal, spool: spool, access: access, callback: callback, guidance: guidance, handler: handler, normalizer: normalizer, callbackCommand: callbackCommand,
 		description: ports.PreparedDescription{ExecutionID: request.Spec.ExecutionID, Attempt: request.Spec.Attempt, Topology: ports.TopologyTerminalAuthoritative,
-			Requirements:    ports.RuntimeRequirements{Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory, PrivateStorage: true, Terminal: &ports.TerminalRequirement{Interactive: true}, Policy: supportedLaunchPolicy()},
+			Requirements:    ports.RuntimeRequirements{Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory, PrivateStorage: true, Terminal: &ports.TerminalRequirement{Interactive: true}, Policy: p.launchPolicy()},
 			EffectivePolicy: ports.EffectivePolicy{Approval: request.Spec.Approval, Sandbox: request.Spec.Sandbox, ApprovalEnforced: true, SandboxEnforced: true},
 			Resources:       []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: terminal.ResourceKey()}, {Kind: ports.ResourceProcess, Key: stateRoot}}, Evidence: initial, AccessDelivery: access, InitialInput: initialInput}}
 	if err := result.prepareSandbox(ctx); err != nil {
@@ -951,7 +953,7 @@ var _ ports.PreparedAttempt = (*prepared)(nil)
 var _ ports.Runtime = (*Runtime)(nil)
 
 func supportedLaunchPolicy() ports.PolicyRequirements {
-	return ports.PolicyRequirements{ApprovalDescriptions: map[model.ApprovalMode]string{model.ApprovalNever: "Never request approval; sandbox restrictions still apply.", model.ApprovalOnRequest: "The model can request approval. A detached agent may wait for an operator.", model.ApprovalOnFailure: "Deprecated native mode: request approval after a sandboxed command fails. A detached agent may wait for an operator.", model.ApprovalUntrusted: "Request approval for commands outside the native trusted set. A detached agent may wait for an operator."}, DefaultApproval: model.ApprovalAutomatic, DefaultSandbox: model.SandboxWorkspaceWrite, SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic, model.ApprovalNever, model.ApprovalOnRequest, model.ApprovalOnFailure, model.ApprovalUntrusted}, SupportedSandbox: []model.SandboxMode{model.SandboxReadOnly, model.SandboxWorkspaceWrite, model.SandboxUnconfined}}
+	return ports.PolicyRequirements{ApprovalDescriptions: map[model.ApprovalMode]string{model.ApprovalNever: "Never request approval; sandbox restrictions still apply.", model.ApprovalOnRequest: "The model can request approval. A detached agent may wait for an operator.", model.ApprovalOnFailure: "Deprecated native mode: request approval after a sandboxed command fails. A detached agent may wait for an operator.", model.ApprovalUntrusted: "Request approval for commands outside the native trusted set. A detached agent may wait for an operator."}, DefaultApproval: model.ApprovalAutomatic, DefaultSandbox: model.SandboxWorkspaceWrite, SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic, model.ApprovalNever, model.ApprovalOnRequest}, SupportedSandbox: []model.SandboxMode{model.SandboxReadOnly, model.SandboxWorkspaceWrite, model.SandboxUnconfined}}
 }
 
 func (r *Runtime) checkpointActivity() error {

@@ -19,7 +19,11 @@ func TestBrowserCodexNativeApprovalModesSaveAndReopen(t *testing.T) {
 	page.MustElement("#editor [name=sandbox]").MustSelect("read_only")
 	for _, mode := range []model.ApprovalMode{model.ApprovalUntrusted, model.ApprovalOnFailure, model.ApprovalOnRequest, model.ApprovalNever} {
 		page.MustElement("#editor [name=approval]").MustSelect(string(mode))
-		page.MustElementR("#editor [aria-label='Configured launch support']", "codex adapter.*Selected policy is supported")
+		if mode == model.ApprovalOnFailure || mode == model.ApprovalUntrusted {
+			page.MustElementR("#editor [aria-label='Configured launch support']", "Unsupported selected approval "+string(mode))
+		} else {
+			page.MustElementR("#editor [aria-label='Configured launch support']", "codex adapter.*Selected policy is supported")
+		}
 		if mode == model.ApprovalOnFailure {
 			page.MustElementR("#editor [aria-label='Configured launch support']", "Deprecated native mode")
 		}
