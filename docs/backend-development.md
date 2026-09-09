@@ -2044,8 +2044,10 @@ of an already committed creation request.
 
 Team members may save partial launch options without selecting or creating a
 configuration profile. The editor's current-defaults option preserves blank
-settings; each new deployment resolves those blanks against current global and
-provider defaults. Explicit member settings win. The deployment supplies the
+settings; each new deployment resolves those blanks against the existing target
+group default, global default and provider defaults. Explicit member settings win.
+Admission checks that the profiles and default selections used for resolution
+are still current; concurrent edits return a conflict so the request can retry. The deployment supplies the
 working directory and retains the resolved agent settings for retries and
 recovery. Existing complete custom settings and named-profile selections remain
 supported as separate authoring choices.

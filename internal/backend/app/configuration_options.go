@@ -213,9 +213,39 @@ func (s *Service) validateProfileDefaultSelection(ctx context.Context, ref model
 	return s.verifyLaunchSandbox(ctx, profile.Revision.Desired.HostSandbox)
 }
 
-// Inline member options are explicit launch intent over the current global and
+// Inline member options are explicit launch intent over the current group, global and
 // provider defaults. They are not saved as an invented configuration profile.
-func (s *Service) resolveInlineConfiguration(ctx context.Context, options model.ConfigurationOptions) (model.DesiredConfiguration, error) {
-	resolved, err := s.resolveConfigurationOptions(ctx, "", model.ConfigurationOptions{}, &options)
-	return resolved.Desired, err
+func (s *Service) resolveInlineConfiguration(ctx context.Context, options model.ConfigurationOptions, groupID model.GroupID) (ResolvedProfileConfiguration, model.TeamConfigurationSources, error) {
+	var selectedID model.ConfigurationProfileID
+	var sources model.TeamConfigurationSources
+	inherited := model.ConfigurationOptions{}
+	if groupID != "" {
+		store, ok := s.store.(GroupConfigurationStore)
+		if !ok {
+			return ResolvedProfileConfiguration{}, sources, ErrUnsupported
+		}
+		defaults, err := store.GroupConfiguration(ctx, groupID)
+		if err != nil {
+			return ResolvedProfileConfiguration{}, sources, err
+		}
+		sources.GroupID, sources.GroupDefaultsRevision = groupID, defaults.Revision
+		if defaults.Profile != nil {
+			profile, err := s.store.ConfigurationProfile(ctx, defaults.Profile.ProfileID, "")
+			if err != nil {
+				return ResolvedProfileConfiguration{}, sources, err
+			}
+			if profile.Profile.Archived {
+				return ResolvedProfileConfiguration{}, sources, fail(ErrConflict, "group default profile is archived")
+			}
+			if err := ConfigurationProfileEnabled(profile.Profile); err != nil {
+				return ResolvedProfileConfiguration{}, sources, err
+			}
+			inherited = profileConfigurationOptions(profile.Revision)
+			selectedID = profile.Profile.ID
+			sources.Selected = &profile.Revision.Ref
+		}
+	}
+	resolved, err := s.resolveConfigurationOptions(ctx, selectedID, inherited, &options)
+	sources.DefaultsRevision, sources.GlobalProfile = resolved.DefaultsRevision, resolved.GlobalProfile
+	return resolved, sources, err
 }

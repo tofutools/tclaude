@@ -70,6 +70,12 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 		}
 		pins[pin.RoleID] = pin
 	}
+	for _, sources := range deployment.ConfigurationSources {
+		if err := requireTeamConfigurationSourcesCurrent(ctx, tx, sources); err != nil {
+			return model.TeamDeployment{}, false, err
+		}
+	}
+	deployment.ConfigurationSources = nil
 	for _, agent := range agents {
 		var selected model.ConfigurationProfileID
 		if agent.ConfigurationProfile != nil {

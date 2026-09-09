@@ -570,8 +570,19 @@ const (
 	DeploymentStopped      DeploymentState = "stopped"
 )
 
+// TeamConfigurationSources carries admission-only fences for resolved defaults.
+// The admitted agent configuration is the durable result of this resolution.
+type TeamConfigurationSources struct {
+	DefaultsRevision      *Revision
+	GlobalProfile         *ConfigurationProfileRef
+	Selected              *ConfigurationProfileRef
+	GroupID               GroupID
+	GroupDefaultsRevision Revision
+}
+
 type TeamDeployment struct {
-	MemberStartups         map[string]ProfileStartup `json:",omitempty"`
+	ConfigurationSources   []TeamConfigurationSources `json:"-"`
+	MemberStartups         map[string]ProfileStartup  `json:",omitempty"`
 	ID                     DeploymentID
 	Definition             DefinitionRef
 	DependencyClosure      []DefinitionRef
