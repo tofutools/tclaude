@@ -22,3 +22,22 @@ func (s *Service) configurationDisplayLabels(ctx context.Context, ref *model.Con
 	}
 	return model.AgentLabels{Role: selected.Revision.Startup.Role, Description: selected.Revision.Startup.Description}, nil
 }
+
+// Empty profile suggestions inherit the next lower tier. An explicitly supplied
+// empty member pair is handled by the caller before this suggestion resolver.
+func (s *Service) configurationDisplayLabelTiers(ctx context.Context, refs ...*model.ConfigurationProfileRef) (model.AgentDisplayLabels, error) {
+	var out model.AgentDisplayLabels
+	for _, ref := range refs {
+		labels, err := s.configurationDisplayLabels(ctx, ref, nil)
+		if err != nil {
+			return out, err
+		}
+		if labels.Role != "" {
+			out.Role = labels.Role
+		}
+		if labels.Description != "" {
+			out.Description = labels.Description
+		}
+	}
+	return out, nil
+}

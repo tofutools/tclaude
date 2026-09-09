@@ -19,7 +19,7 @@ func TestBrowserGroupDefaultsFollowProfileEditsAndRetryLostReply(t *testing.T) {
 	page.MustElement("#editor [name=profile]").MustSelect("Worker · first")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
-	page.MustElementR("#group-management button", "^Create member from default$").MustClick()
+	page.MustElementR("#group-management button", "^Create member$").MustClick()
 	page.MustElement("#editor").MustWaitVisible()
 	require.Equal(t, "Suggested", page.MustElement("#editor [name=name]").MustProperty("value").Str())
 	page.MustElement("#editor [name=name]").MustSelectAllText().MustInput("First member")
@@ -29,7 +29,7 @@ func TestBrowserGroupDefaultsFollowProfileEditsAndRetryLostReply(t *testing.T) {
 	desired.Model = "changed-model"
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/configuration-profiles", map[string]any{"request_id": "edit_first", "id": "first", "revision_id": "two", "name": "Worker", "desired": desired, "expected_revision": 1, "startup": model.ProfileStartup{Role: "reviewer", Description: "Reviews changes", AgentName: "Updated suggestion", Context: "New context", InitialMessage: "New brief"}}, nil))
 	page.MustEval(`() => {const original=fetch;window.memberCalls=[];let fail=true;window.fetch=async(...args)=>{const response=await original(...args);if(String(args[0])==='/v2/groups/group/agents'){window.memberCalls.push(JSON.parse(args[1].body));if(fail){fail=false;throw new Error('lost group reply')}}return response}}`)
-	page.MustElementR("#group-management button", "^Create member from default$").MustClick()
+	page.MustElementR("#group-management button", "^Create member$").MustClick()
 	page.MustElement("#editor").MustWaitVisible()
 	require.Equal(t, "Updated suggestion", page.MustElement("#editor [name=name]").MustProperty("value").Str())
 	page.MustElement("#editor [name=name]").MustSelectAllText().MustInput("Second member")
@@ -76,6 +76,6 @@ func TestBrowserGroupDefaultsFollowProfileEditsAndRetryLostReply(t *testing.T) {
 	page.MustElement("#editor [name=profile]").MustSelect("No group default")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
-	page.MustElementR("#group-management button", "^Create member from default$").MustClick()
+	page.MustElementR("#group-management button", "^Create member$").MustClick()
 	page.MustElementR("#error", "Choose a group launch default first")
 }

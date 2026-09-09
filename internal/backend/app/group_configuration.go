@@ -21,6 +21,7 @@ type GroupMemberLaunch struct {
 }
 
 type CreateGroupMemberRequest struct {
+	ProfileID               model.ConfigurationProfileID
 	Launch                  *GroupMemberLaunch
 	ConfigurationOverrides  *model.ConfigurationOptions
 	Labels                  *model.AgentDisplayLabels
@@ -101,6 +102,9 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	if in.Environment.Validate() != nil || in.Context.RequestID.Validate() != nil || in.GroupID.Validate() != nil || in.ID.Validate() != nil || strings.TrimSpace(in.Name) == "" || len(in.Name) > 1024 || !utf8.ValidString(in.Name) || in.ExpectedGroupRevision == 0 || in.ExpectedGroupRevision >= math.MaxInt64 || in.ExpectedDefaultRevision >= math.MaxInt64 {
 		return GroupMemberResult{}, ErrInvalid
 	}
+	if in.ProfileID != "" && model.ValidateStableID("configuration profile", string(in.ProfileID)) != nil {
+		return GroupMemberResult{}, ErrInvalid
+	}
 	store, ok := s.store.(GroupConfigurationStore)
 	if !ok {
 		return GroupMemberResult{}, ErrUnsupported
@@ -150,6 +154,9 @@ func (s *Service) resolveGroupMember(ctx context.Context, store GroupConfigurati
 	}
 	if defaults.Revision != in.ExpectedDefaultRevision {
 		return GroupMemberAdmission{}, ErrConflict
+	}
+	if in.ProfileID != "" {
+		return s.resolveSelectedGroupMember(ctx, in, defaults)
 	}
 	if defaults.Profile == nil {
 		return s.resolveGroupMemberFallback(ctx, in, defaults)
@@ -221,4 +228,56 @@ func (s *Service) resolveGroupMemberFallback(ctx context.Context, in CreateGroup
 		return GroupMemberAdmission{}, err
 	}
 	return s.finishGroupMember(ctx, in, defaults, resolved, resolved.GlobalProfile, &sources)
+}
+
+func (s *Service) resolveSelectedGroupMember(ctx context.Context, in CreateGroupMemberRequest, defaults model.GroupConfiguration) (GroupMemberAdmission, error) {
+	selected, err := s.store.ConfigurationProfile(ctx, in.ProfileID, "")
+	if err != nil {
+		return GroupMemberAdmission{}, err
+	}
+	if selected.Profile.Archived {
+		return GroupMemberAdmission{}, ErrConflict
+	}
+	if err := ConfigurationProfileEnabled(selected.Profile); err != nil {
+		return GroupMemberAdmission{}, err
+	}
+	if err := s.requireProfileCreation(ctx, in.Context.Principal, selected.Profile); err != nil {
+		return GroupMemberAdmission{}, err
+	}
+	layers := []model.ConfigurationOptions{}
+	sources := model.TeamConfigurationSources{GroupID: in.GroupID, GroupDefaultsRevision: defaults.Revision}
+	if defaults.Profile != nil {
+		groupProfile, err := s.store.ConfigurationProfile(ctx, defaults.Profile.ProfileID, "")
+		if err != nil {
+			return GroupMemberAdmission{}, err
+		}
+		if groupProfile.Profile.Archived {
+			return GroupMemberAdmission{}, ErrConflict
+		}
+		if err := ConfigurationProfileEnabled(groupProfile.Profile); err != nil {
+			return GroupMemberAdmission{}, err
+		}
+		if err := s.requireProfileCreation(ctx, in.Context.Principal, groupProfile.Profile); err != nil {
+			return GroupMemberAdmission{}, err
+		}
+		sources.Selected = &groupProfile.Revision.Ref
+		layers = append(layers, profileConfigurationOptions(groupProfile.Revision))
+	}
+	layers = append(layers, profileConfigurationOptions(selected.Revision))
+	resolved, err := s.resolveConfigurationLayers(ctx, selected.Profile.ID, layers, in.ConfigurationOverrides)
+	if err != nil {
+		return GroupMemberAdmission{}, err
+	}
+	resolved.Selected = selected.Revision.Ref
+	sources.DefaultsRevision, sources.GlobalProfile = resolved.DefaultsRevision, resolved.GlobalProfile
+	admission, err := s.finishGroupMember(ctx, in, defaults, resolved, &selected.Revision.Ref, &sources)
+	if err != nil || in.Labels != nil {
+		return admission, err
+	}
+	labels, err := s.configurationDisplayLabelTiers(ctx, resolved.GlobalProfile, sources.Selected, &selected.Revision.Ref)
+	if err != nil {
+		return GroupMemberAdmission{}, err
+	}
+	admission.Agent.Labels.Groups[in.GroupID] = labels
+	return admission, nil
 }

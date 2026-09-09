@@ -76,20 +76,25 @@ func requireTeamConfigurationSourcesCurrent(ctx context.Context, tx *sql.Tx, sou
 		}
 	}
 	if sources.Selected != nil {
-		var data []byte
-		if err := tx.QueryRowContext(ctx, `SELECT record FROM configuration_profiles WHERE id=?`, sources.Selected.ProfileID).Scan(&data); err != nil {
-			return classify(err)
-		}
-		var profile model.ConfigurationProfile
-		if err := json.Unmarshal(data, &profile); err != nil {
-			return err
-		}
-		if profile.Archived || profile.CurrentRevisionID != sources.Selected.RevisionID {
-			return app.ErrConflict
-		}
-		if err := requireEnabledConfigurationProfileTx(ctx, tx, profile.ID); err != nil {
-			return err
-		}
+		return requireCurrentConfigurationProfileTx(ctx, tx, *sources.Selected)
 	}
 	return nil
+}
+
+func requireCurrentConfigurationProfileTx(ctx context.Context, tx *sql.Tx, ref model.ConfigurationProfileRef) error {
+	if err := requireActiveConfigurationProfileTx(ctx, tx, &ref); err != nil {
+		return err
+	}
+	var data []byte
+	if err := tx.QueryRowContext(ctx, `SELECT record FROM configuration_profiles WHERE id=?`, ref.ProfileID).Scan(&data); err != nil {
+		return classify(err)
+	}
+	var profile model.ConfigurationProfile
+	if err := json.Unmarshal(data, &profile); err != nil {
+		return err
+	}
+	if profile.Archived || profile.CurrentRevisionID != ref.RevisionID {
+		return app.ErrConflict
+	}
+	return requireEnabledConfigurationProfileTx(ctx, tx, profile.ID)
 }

@@ -49,8 +49,16 @@ func (s *Service) resolveProfileConfigurationWithOverrides(ctx context.Context, 
 }
 
 func (s *Service) resolveConfigurationOptions(ctx context.Context, selectedID model.ConfigurationProfileID, options model.ConfigurationOptions, overrides *model.ConfigurationOptions) (ResolvedProfileConfiguration, error) {
-	if err := validateConfigurationOptions(options); err != nil {
-		return ResolvedProfileConfiguration{}, err
+	return s.resolveConfigurationLayers(ctx, selectedID, []model.ConfigurationOptions{options}, overrides)
+}
+
+// Profile tiers are inherited settings, unlike explicit launch overrides. This
+// keeps provider compatibility filtering and precedence shared across callers.
+func (s *Service) resolveConfigurationLayers(ctx context.Context, selectedID model.ConfigurationProfileID, profiles []model.ConfigurationOptions, overrides *model.ConfigurationOptions) (ResolvedProfileConfiguration, error) {
+	for _, options := range profiles {
+		if err := validateConfigurationOptions(options); err != nil {
+			return ResolvedProfileConfiguration{}, err
+		}
 	}
 	layers := []model.ConfigurationOptions{}
 	defaults, err := s.store.ConfigurationDefaults(ctx)
@@ -78,7 +86,7 @@ func (s *Service) resolveConfigurationOptions(ctx context.Context, selectedID mo
 		globalRef = &ref
 		layers = append(layers, profileConfigurationOptions(global.Revision))
 	}
-	layers = append(layers, options)
+	layers = append(layers, profiles...)
 	// V1's final harness fallback is Claude. Selecting it does not enable or
 	// install a provider; the configured registry must still supply it.
 	harness := "claude"

@@ -44,7 +44,7 @@ func TestBrowserLaunchEnvironmentComposesLiteralPinnedValues(t *testing.T) {
 	page.MustElement("#editor").MustWaitInvisible()
 	// The dialog closes before its post-save snapshot refresh finishes.
 	page.MustWait(`()=>!submitting`)
-	page.MustElementR("#group-management button", "^Create member from default$").MustClick()
+	page.MustElementR("#group-management button", "^Create member$").MustClick()
 	page.MustElement("#editor").MustWaitVisible()
 	require.Contains(t, page.MustElement("#editor .environment-effective").MustText(), "SHARED = \"profile\"")
 	add("SHARED", "explicit")
