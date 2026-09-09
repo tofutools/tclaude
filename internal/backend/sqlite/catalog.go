@@ -397,7 +397,7 @@ func requireCurrentConfigurationDefaultTx(ctx context.Context, tx *sql.Tx, ref *
 		if err := json.Unmarshal(data, &revision); err != nil {
 			return err
 		}
-		if revision.Desired.Harness != harness {
+		if authored := revision.AuthoredHarness(); authored != "" && authored != harness {
 			return app.ErrConflict
 		}
 	}

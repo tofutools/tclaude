@@ -420,20 +420,33 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 		}
 		desired := desiredFromRow(row.Values)
 		desired.Environment = t.launchEnvironment(batch, "spawn_profiles", row)
-		if err := validateImportedAutoReview(row.Values, desired.Harness); err != nil {
+		reviewErr := validateImportedAutoReview(row.Values, desired.Harness)
+		if desired.Harness == "" {
+			// An unset profile harness defers applicability, but not value validation.
+			_, reviewErr = importedAutoReview(row.Values["auto_review"])
+		}
+		if err := reviewErr; err != nil {
 			archived = true
 			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "auto_review_requires_review", err.Error())
 		}
-		if err := desired.FastMode.Validate(desired.Harness); err != nil {
+		fastErr := desired.FastMode.Validate(desired.Harness)
+		if desired.Harness == "" && (desired.FastMode == "" || desired.FastMode == model.FastModeOn || desired.FastMode == model.FastModeOff) {
+			fastErr = nil
+		}
+		if err := fastErr; err != nil {
 			archived = true
 			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "fast_mode_requires_review", err.Error())
 		}
 		if model.ValidateEffort(desired.Effort) != nil {
 			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
 		}
+		options := importedProfileOptions(row.Values, desired)
+		if options != nil {
+			desired = model.DesiredConfiguration{}
+		}
 		batch.ConfigurationProfiles = append(batch.ConfigurationProfiles, app.ConfigurationProfileResult{
 			Profile:  model.ConfigurationProfile{Archived: archived, Disabled: disabled != 0, DisabledReason: sourcev228.String(row.Values["disabled_reason"]), ID: id, Name: firstNonEmpty(sourcev228.String(row.Values["name"]), key), CurrentRevisionID: revisionID, Revision: 1, CreatedAt: at, UpdatedAt: at},
-			Revision: model.ConfigurationProfileRevision{Ref: ref, Desired: desired, Startup: startup, CreatedAt: at},
+			Revision: model.ConfigurationProfileRevision{Ref: ref, Desired: desired, Options: options, Startup: startup, CreatedAt: at},
 		})
 	}
 	for _, row := range t.inspection.Snapshot.Rows["spawn_profile_aliases"] {

@@ -24,7 +24,11 @@ func (s *Service) validateTeamAutoReview(ctx context.Context, team model.TeamDef
 				if err != nil {
 					return err
 				}
-				desired.Harness = profile.Revision.Desired.Harness
+				desired.Harness = profile.Revision.AuthoredHarness()
+				if desired.Harness == "" {
+					// An inherited harness is resolved and validated at deployment.
+					continue
+				}
 			}
 		}
 		if err := model.ValidateAutoReview(desired.AutoReview, desired.Harness); err != nil {

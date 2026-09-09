@@ -38,7 +38,7 @@ export function openLegacyProcessImport({api,agents=[],onSaved}){
     if(r.Kind==='agent')configurations.forEach((c,i)=>select.append(option(String(i),c.Profile.Name+' · '+c.Revision.Ref.RevisionID)));
     if(r.Kind==='program')programs.forEach((p,i)=>{if(p.Revision.Executable===r.Executable&&!(p.Revision.ArgumentPrefix||[]).length)select.append(option(String(i),p.Profile.Name+' · '+p.Revision.ID))});
     const details=el('pre');
-    const changed=()=>{generation++;pendingDraft=null;preview.querySelector('.process-import-notes')?.remove();open.disabled=true;convert.disabled=false;role.hidden=select.value!=='role';errors.textContent='';details.textContent='';if(select.value!==''&&r.Kind==='agent')details.textContent=JSON.stringify(configurations[Number(select.value)].Revision.Desired,null,2);if(select.value!==''&&r.Kind==='program')details.textContent=JSON.stringify(programs[Number(select.value)].Revision,null,2)};
+    const changed=()=>{generation++;pendingDraft=null;preview.querySelector('.process-import-notes')?.remove();open.disabled=true;convert.disabled=false;role.hidden=select.value!=='role';errors.textContent='';details.textContent='';if(select.value!==''&&r.Kind==='agent')details.textContent=JSON.stringify(configurations[Number(select.value)].Revision.Options||configurations[Number(select.value)].Revision.Desired,null,2);if(select.value!==''&&r.Kind==='program')details.textContent=JSON.stringify(programs[Number(select.value)].Revision,null,2)};
     select.onchange=changed;role.oninput=changed;
     card.append(select,role,details);
     const timeout=el('input');timeout.setAttribute('aria-label','Decision timeout for '+r.Path);timeout.placeholder='Explicit decision timeout, e.g. 1h';timeout.oninput=changed;if(r.Decision)card.append(timeout);
@@ -54,7 +54,7 @@ export function openLegacyProcessImport({api,agents=[],onSaved}){
   try{
    const bindings={};for(const {r,select,role,timeout}of rows){if(select.value==='')throw Error('Choose a mapping for '+r.Path);let performer;
     if(r.Kind==='human'){const h=select.value==='operator'?{Operator:true}:select.value==='role'?{RoleID:role.value}:{AgentID:select.value.slice(6)};performer={Kind:'human',Human:h}}
-    if(r.Kind==='agent')performer={Kind:'agent',Agent:{CreateDesired:clone(configurations[Number(select.value)].Revision.Desired)}};
+    if(r.Kind==='agent'){const desired=await copyProfileConfiguration(configurations[Number(select.value)].Revision);if(!desired||!live||token!==generation)return;performer={Kind:'agent',Agent:{CreateDesired:desired}}};
     if(r.Kind==='program'){const p=programs[Number(select.value)];performer={Kind:'program',Program:{Profile:{ProfileID:p.Profile.ID,RevisionID:p.Revision.ID,ContentHash:p.Revision.ContentHash}}}}
     bindings[r.Path]={Performer:performer,DecisionTimeout:timeout.value};
    }

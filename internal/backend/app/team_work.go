@@ -99,15 +99,27 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 			if profile.Profile.Archived {
 				return TeamDeploymentResult{}, fail(ErrConflict, "member %s profile is archived", spec.Key)
 			}
-			desired, err = s.resolveTeamProfile(spec, profile.Revision.Desired)
-			if err != nil {
-				return TeamDeploymentResult{}, err
+			if profile.Revision.Options != nil {
+				var overrides *model.ConfigurationOptions
+				if o := spec.Overrides; o != nil {
+					overrides = &model.ConfigurationOptions{Harness: o.Harness, Model: o.Model, Effort: o.Effort, Approval: o.Approval, Sandbox: o.Sandbox, AutoReview: o.AutoReview, FastMode: o.FastMode, ToolGovernance: o.ToolGovernance}
+				}
+				resolved, resolveErr := s.resolveProfileConfigurationWithOverrides(ctx, profile, overrides)
+				if resolveErr != nil {
+					return TeamDeploymentResult{}, resolveErr
+				}
+				desired = resolved.Desired
+			} else {
+				desired, err = s.resolveTeamProfile(spec, profile.Revision.Desired)
+				if err != nil {
+					return TeamDeploymentResult{}, err
+				}
 			}
 			ref := profile.Revision.Ref
 			profileRef = &ref
 			if profile.Revision.Startup != nil {
 				startup := *profile.Revision.Startup
-				if desired.Harness != profile.Revision.Desired.Harness {
+				if authored := profile.Revision.AuthoredHarness(); authored != "" && desired.Harness != authored {
 					startup.Context = ""
 				}
 				memberStartups[spec.Key] = startup

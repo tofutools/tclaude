@@ -140,17 +140,18 @@ func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request) {
 		TaskReference string                             `json:"task_reference"`
 		Notifications model.AgentNotificationPreferences `json:"notifications"`
 
-		ConfigurationProfile *model.ConfigurationProfileRef `json:"configuration_profile"`
-		ConfigurationDefault string                         `json:"configuration_default"`
-		ExpectedRevision     model.Revision                 `json:"expected_revision"`
-		Name                 string                         `json:"name"`
-		Desired              model.DesiredConfiguration     `json:"desired"`
+		ConfigurationOverrides *model.ConfigurationOptions    `json:"configuration_overrides"`
+		ConfigurationProfile   *model.ConfigurationProfileRef `json:"configuration_profile"`
+		ConfigurationDefault   string                         `json:"configuration_default"`
+		ExpectedRevision       model.Revision                 `json:"expected_revision"`
+		Name                   string                         `json:"name"`
+		Desired                model.DesiredConfiguration     `json:"desired"`
 	}
 	if !decodeRequest(w, r, &body) {
 		return
 	}
 	result, err := h.application.UpdateAgent(r.Context(), app.UpdateAgentRequest{Context: p, ID: model.AgentID(r.PathValue("id")),
-		ExpectedRevision: body.ExpectedRevision, Name: body.Name, Desired: body.Desired, ConfigurationProfile: body.ConfigurationProfile, ConfigurationDefault: body.ConfigurationDefault, TaskReference: body.TaskReference, Labels: body.Labels, Notifications: body.Notifications})
+		ExpectedRevision: body.ExpectedRevision, Name: body.Name, Desired: body.Desired, ConfigurationProfile: body.ConfigurationProfile, ConfigurationDefault: body.ConfigurationDefault, ConfigurationOverrides: body.ConfigurationOverrides, TaskReference: body.TaskReference, Labels: body.Labels, Notifications: body.Notifications})
 	if err != nil {
 		applicationError(w, err)
 		return

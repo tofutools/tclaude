@@ -189,16 +189,17 @@ func (h *Handler) createAgent(w http.ResponseWriter, r *http.Request) {
 		CloneSourceAgentID model.AgentID                      `json:"clone_source_agent_id"`
 		Notifications      model.AgentNotificationPreferences `json:"notifications"`
 
-		ConfigurationProfile *model.ConfigurationProfileRef `json:"configuration_profile"`
-		ConfigurationDefault string                         `json:"configuration_default"`
-		ID                   model.AgentID                  `json:"id"`
-		Name                 string                         `json:"name"`
-		Desired              model.DesiredConfiguration     `json:"desired"`
+		ConfigurationOverrides *model.ConfigurationOptions    `json:"configuration_overrides"`
+		ConfigurationProfile   *model.ConfigurationProfileRef `json:"configuration_profile"`
+		ConfigurationDefault   string                         `json:"configuration_default"`
+		ID                     model.AgentID                  `json:"id"`
+		Name                   string                         `json:"name"`
+		Desired                model.DesiredConfiguration     `json:"desired"`
 	}
 	if !decodeRequest(w, r, &req) {
 		return
 	}
-	result, err := h.application.CreateAgent(r.Context(), app.CreateAgentRequest{Context: p, ID: req.ID, Name: req.Name, Labels: req.Labels, Desired: req.Desired, ConfigurationProfile: req.ConfigurationProfile, ConfigurationDefault: req.ConfigurationDefault, TaskReference: req.TaskReference, ParentAgentID: req.ParentAgentID, CloneSourceAgentID: req.CloneSourceAgentID, Notifications: req.Notifications})
+	result, err := h.application.CreateAgent(r.Context(), app.CreateAgentRequest{Context: p, ID: req.ID, Name: req.Name, Labels: req.Labels, Desired: req.Desired, ConfigurationProfile: req.ConfigurationProfile, ConfigurationDefault: req.ConfigurationDefault, ConfigurationOverrides: req.ConfigurationOverrides, TaskReference: req.TaskReference, ParentAgentID: req.ParentAgentID, CloneSourceAgentID: req.CloneSourceAgentID, Notifications: req.Notifications})
 	if err != nil {
 		applicationError(w, err)
 		return

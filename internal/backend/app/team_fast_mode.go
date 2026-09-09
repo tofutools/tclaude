@@ -27,7 +27,11 @@ func (s *Service) validateTeamFastMode(ctx context.Context, team model.TeamDefin
 				if err != nil {
 					return err
 				}
-				desired.Harness = profile.Revision.Desired.Harness
+				desired.Harness = profile.Revision.AuthoredHarness()
+				if desired.Harness == "" {
+					// An inherited harness is resolved and validated at deployment.
+					continue
+				}
 			}
 		}
 		if err := desired.FastMode.Validate(desired.Harness); err != nil {

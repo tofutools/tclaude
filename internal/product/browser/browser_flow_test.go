@@ -13,6 +13,7 @@ import (
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/internal/backend/providers"
+	"github.com/tofutools/tclaude/internal/backend/providers/claude"
 	backend "github.com/tofutools/tclaude/internal/backend/server"
 )
 
@@ -35,7 +36,7 @@ func TestBrowserOfflineAgentGroupAndMessageFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	backendDone := make(chan error, 1)
-	go func() { backendDone <- backend.Serve(ctx, state, providers.NewRegistry()) }()
+	go func() { backendDone <- backend.Serve(ctx, state, providers.NewRegistry(&claude.Provider{})) }()
 	waitBrowserBackend(t, state, cancel, backendDone)
 	view, err := Open(state, "127.0.0.1:0")
 	require.NoError(t, err)

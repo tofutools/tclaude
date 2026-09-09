@@ -269,7 +269,7 @@ class ProcessEditor {
       const copy=element('select');copy.setAttribute('aria-label','Copy new worker configuration');
       const blank=element('option','Copy a saved configuration for a new worker');blank.value='';copy.append(blank);
       this.configurations.forEach((c,i)=>{const o=element('option',c.Profile.Name+' · '+c.Revision.Ref.RevisionID);o.value=String(i);copy.append(o);});
-      copy.onchange=()=>{if(copy.value===''||!this.discardUnapplied())return;const desired=clone(this.configurations[Number(copy.value)].Revision.Desired);
+      copy.onchange=async()=>{if(copy.value===''||!this.discardUnapplied())return;const desired=await copyProfileConfiguration(this.configurations[Number(copy.value)].Revision);if(!desired||!copy.isConnected)return;
         update(n=>{n.Performer.Agent={...n.Performer.Agent,AgentID:'',MemberKey:'',CreateDesired:desired};});
         if(stageContext)this.showStage(stageContext);
       };

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/internal/backend/app"
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/ports"
 	"github.com/tofutools/tclaude/internal/backend/providers"
 	"github.com/tofutools/tclaude/internal/backend/sqlite"
 )
@@ -89,4 +90,48 @@ func TestTeamSavedProfileFollowsEditsForNewDeploymentAndRetainsRetry(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, "first", agent.Desired.Model)
 	require.Equal(t, model.ConfigurationProfileRevisionID("one"), agent.ConfigurationProfile.RevisionID)
+}
+
+type partialTeamProvider struct{ *preparedWorkProvider }
+
+func (p *partialTeamProvider) Capabilities() ports.ProviderCapabilities {
+	capabilities := p.preparedWorkProvider.Capabilities()
+	capabilities.LaunchPolicy = &ports.PolicyRequirements{DefaultApproval: model.ApprovalAutomatic, DefaultSandbox: model.SandboxWorkspaceWrite, SupportedApproval: []model.ApprovalMode{model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxWorkspaceWrite}}
+	return capabilities
+}
+
+func TestTeamPartialProfileUsesExplicitMemberHarnessAndWorkspace(t *testing.T) {
+	ctx := context.Background()
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "state.db"))
+	require.NoError(t, err)
+	defer store.Close()
+	service := app.New(store, providers.NewRegistry(&partialTeamProvider{&preparedWorkProvider{}}))
+	op := model.OperatorPrincipal()
+	profileModel := "portable-model"
+	profile, err := service.SaveConfigurationProfile(ctx, app.SaveConfigurationProfileRequest{Context: effect(op, "profile"), ID: "portable", RevisionID: "one", Name: "Portable", Options: &model.ConfigurationOptions{Model: &profileModel}, Startup: &model.ProfileStartup{Context: "Reusable guidance"}})
+	require.NoError(t, err)
+	harness := "prepared-work"
+	team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{{Key: "worker", Name: "Worker", ProfileID: "portable", Overrides: &model.TeamProfileOverrides{Harness: &harness}}}, Waves: []model.TeamWave{{ID: "initial", MemberKeys: []string{"worker"}}}}
+	saved, err := service.SaveDefinition(ctx, app.SaveDefinitionRequest{Context: effect(op, "team"), Draft: app.DefinitionDraft{ID: "team", RevisionID: "one", Name: "Team", Source: "partial profile fixture", Kind: model.DefinitionTeam, SchemaVersion: 1, Team: &team}})
+	require.NoError(t, err)
+	cwd, now := t.TempDir(), time.Now().UTC()
+	require.NoError(t, store.RegisterWorkspace(ctx, model.Workspace{ID: "workspace", State: model.WorkspaceAvailable, Observation: model.WorkspaceObservation{ActualPath: cwd, ObservedAt: now}, Revision: 1, CreatedAt: now, UpdatedAt: now}))
+	req := app.DeployTeamRequest{Context: effect(op, "deploy"), DeploymentID: "deployment", Instantiation: model.TeamInstantiation{Definition: model.DefinitionRef{DefinitionID: saved.Definition.ID, RevisionID: saved.Revision.ID, ContentHash: saved.Revision.ContentHash, Kind: model.DefinitionTeam}, GroupID: "group", Workspaces: model.TeamWorkspaceSelection{Shared: &model.TeamWorkspaceInput{WorkspaceID: "workspace", ExpectedRevision: 1}}}}
+	deployed, err := service.DeployTeam(ctx, req)
+	require.NoError(t, err, "the explicit member harness must precede fallback lookup; Claude is not configured")
+	agent, err := store.Agent(ctx, deployed.Deployment.Members["worker"])
+	require.NoError(t, err)
+	require.Equal(t, harness, agent.Desired.Harness)
+	require.Equal(t, profileModel, agent.Desired.Model)
+	require.Equal(t, cwd, agent.Desired.WorkingDirectory)
+	require.Equal(t, "Reusable guidance", deployed.Deployment.MemberStartups["worker"].Context)
+	reopened, err := service.GetConfigurationProfile(ctx, op, profile.Revision.Ref)
+	require.NoError(t, err)
+	require.Equal(t, profile, reopened)
+	replay, err := service.DeployTeam(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, deployed.Deployment.ID, replay.Deployment.ID)
+	require.Equal(t, deployed.Deployment.Members, replay.Deployment.Members)
+	require.Equal(t, deployed.Deployment.Workspaces, replay.Deployment.Workspaces)
+	require.Equal(t, deployed.Deployment.MemberStartups, replay.Deployment.MemberStartups)
 }

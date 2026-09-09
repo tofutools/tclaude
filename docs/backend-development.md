@@ -2002,3 +2002,29 @@ permission removal prevents new creation and receipt replay. An exact retry
 while authorized returns its original result even after the selected profile
 changes. Creating the member does not start an execution; launching it uses
 the existing separate launch authority.
+
+### Partial reusable configuration profiles
+
+A reusable configuration may store `options` instead of a complete `desired`
+configuration. Omitted options inherit; explicit `AutoReview: false` remains
+an authored off value. The Configurations form supports inherited harness,
+model, effort, native policy and provider options, so a portable profile does
+not need a working directory merely to be saved, edited or transferred.
+Existing complete configurations remain supported.
+
+When creating an agent from a partial profile, resolution overlays the selected
+profile on the current global profile and the configured provider's declared
+native defaults. Explicit `configuration_overrides` take precedence. Foreign
+inherited model, effort or native policy values do not override the selected
+harness's defaults; incompatible explicit overrides are rejected. The final
+configuration must still supply a valid working directory. Group creation
+checks the selected profile and defaults again inside admission; team creation
+uses the selected workspace and explicit member overrides. Saving a profile or
+selecting it as a default does not resolve or freeze missing launch settings.
+
+The shared creation dialogs expose optional launch overrides. Team member
+forms retain inherited settings until an override is selected. Copying a
+partial profile into independent process worker settings asks the operator to
+complete the configuration before saving the draft. Configuration transfers
+and offline v1 profile import preserve missing fields and explicit off values;
+creating a worker never changes its reusable source profile.

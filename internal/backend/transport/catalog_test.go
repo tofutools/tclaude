@@ -94,3 +94,37 @@ func TestPublicConfigurationDefaultsPinExistingAgents(t *testing.T) {
 	require.Equal(t, "first", old.Desired.Model)
 	require.Equal(t, &first.Revision.Ref, old.ConfigurationProfile)
 }
+
+func TestPublicProfileLaunchContextOverridesDoNotEditProfile(t *testing.T) {
+	store, err := sqlite.Open(filepath.Join(t.TempDir(), "backend.sqlite"))
+	require.NoError(t, err)
+	defer store.Close()
+	h := testHandler(t, app.New(store, providers.NewRegistry()))
+	body := `{"request_id":"profile_save","id":"worker","revision_id":"one","name":"Worker","desired":{"Harness":"claude","Model":"example","WorkingDirectory":"/tmp/original","Approval":"supervised","Sandbox":"unconfined"}}`
+	response := request(h, "POST", "/v2/configuration-profiles", body, testCredential)
+	require.Equal(t, 200, response.Code, response.Body.String())
+	var profile app.ConfigurationProfileResult
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &profile))
+	payload := map[string]any{"id": "agent", "name": "Worker", "configuration_profile": profile.Revision.Ref, "configuration_overrides": map[string]any{"WorkingDirectory": "/tmp/launch", "Environment": map[string]string{"CONTEXT": "literal"}}}
+	encoded, err := json.Marshal(payload)
+	require.NoError(t, err)
+	response = request(h, "POST", "/v2/agents", string(encoded), testCredential)
+	require.Equal(t, 201, response.Code, response.Body.String())
+	var created model.Agent
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &created))
+	require.Equal(t, "/tmp/launch", created.Desired.WorkingDirectory)
+	require.Equal(t, "literal", created.Desired.Environment["CONTEXT"])
+	payload["expected_revision"] = created.Revision
+	delete(payload, "id")
+	payload["configuration_overrides"] = map[string]any{"WorkingDirectory": "/tmp/updated"}
+	encoded, err = json.Marshal(payload)
+	require.NoError(t, err)
+	response = request(h, "PUT", "/v2/agents/agent", string(encoded), testCredential)
+	require.Equal(t, 200, response.Code, response.Body.String())
+	stored, err := store.Agent(t.Context(), "agent")
+	require.NoError(t, err)
+	require.Equal(t, "/tmp/updated", stored.Desired.WorkingDirectory)
+	retained, err := store.ConfigurationProfile(t.Context(), "worker", "one")
+	require.NoError(t, err)
+	require.Equal(t, profile, retained)
+}

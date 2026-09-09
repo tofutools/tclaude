@@ -45,6 +45,7 @@ type ConfigurationProfileResult struct {
 }
 
 type SaveConfigurationProfileRequest struct {
+	Options          *model.ConfigurationOptions
 	Aliases          *[]string
 	Startup          *model.ProfileStartup
 	Context          RequestContext
@@ -74,6 +75,14 @@ func (s *Service) SaveConfigurationProfile(ctx context.Context, req SaveConfigur
 		choice := req.Desired.HostSandbox.References()
 		req.Desired.HostSandbox = &choice
 	}
+	if req.Options != nil {
+		options := *req.Options
+		if options.HostSandbox != nil {
+			choice := options.HostSandbox.References()
+			options.HostSandbox = &choice
+		}
+		req.Options = &options
+	}
 	w, err := prepareConfigurationProfile(req, s.now())
 	if err != nil {
 		return ConfigurationProfileResult{}, err
@@ -84,7 +93,11 @@ func (s *Service) SaveConfigurationProfile(ctx context.Context, req SaveConfigur
 			return prior, err
 		}
 	}
-	if err := s.verifyLaunchSandbox(ctx, req.Desired.HostSandbox); err != nil {
+	sandbox := req.Desired.HostSandbox
+	if req.Options != nil {
+		sandbox = req.Options.HostSandbox
+	}
+	if err := s.verifyLaunchSandbox(ctx, sandbox); err != nil {
 		return ConfigurationProfileResult{}, err
 	}
 	return s.store.SaveConfigurationProfile(ctx, w)
@@ -94,7 +107,14 @@ func prepareConfigurationProfile(req SaveConfigurationProfileRequest, at time.Ti
 	if model.ValidateStableID("configuration profile", string(req.ID)) != nil || model.ValidateStableID("configuration revision", string(req.RevisionID)) != nil || req.Context.RequestID.Validate() != nil || strings.TrimSpace(req.Name) == "" || len(req.Name) > 256 {
 		return ConfigurationProfileWrite{}, ErrInvalid
 	}
-	if err := validateDesired(req.Desired); err != nil {
+	if req.Options != nil {
+		if !req.Desired.Equal(model.DesiredConfiguration{}) {
+			return ConfigurationProfileWrite{}, fail(ErrInvalid, "choose profile options or a complete configuration")
+		}
+		if err := validateConfigurationOptions(*req.Options); err != nil {
+			return ConfigurationProfileWrite{}, err
+		}
+	} else if err := validateDesired(req.Desired); err != nil {
 		return ConfigurationProfileWrite{}, err
 	}
 	if req.Startup != nil {
@@ -125,6 +145,12 @@ func prepareConfigurationProfile(req SaveConfigurationProfileRequest, at time.Ti
 			Startup *model.ProfileStartup
 		}{req.Desired, req.Startup})
 	}
+	if req.Options != nil {
+		payload, _ = json.Marshal(struct {
+			Options *model.ConfigurationOptions
+			Startup *model.ProfileStartup `json:",omitempty"`
+		}{req.Options, req.Startup})
+	}
 	digest := sha256.Sum256(payload)
 	input, _ := json.Marshal(struct {
 		ID         model.ConfigurationProfileID
@@ -132,15 +158,16 @@ func prepareConfigurationProfile(req SaveConfigurationProfileRequest, at time.Ti
 		Name       string
 		Desired    model.DesiredConfiguration
 		Expected   model.Revision
-		Startup    *model.ProfileStartup `json:",omitempty"`
-		Aliases    *[]string             `json:",omitempty"`
-	}{req.ID, req.RevisionID, req.Name, req.Desired, req.ExpectedRevision, req.Startup, req.Aliases})
+		Startup    *model.ProfileStartup       `json:",omitempty"`
+		Aliases    *[]string                   `json:",omitempty"`
+		Options    *model.ConfigurationOptions `json:",omitempty"`
+	}{req.ID, req.RevisionID, req.Name, req.Desired, req.ExpectedRevision, req.Startup, req.Aliases, req.Options})
 	fingerprint := sha256.Sum256(input)
 	now := at.UTC()
 	return ConfigurationProfileWrite{
 		AliasesSet:       req.Aliases != nil,
 		Profile:          model.ConfigurationProfile{Aliases: aliases, ID: req.ID, Name: req.Name, CurrentRevisionID: req.RevisionID},
-		Revision:         model.ConfigurationProfileRevision{Ref: model.ConfigurationProfileRef{ProfileID: req.ID, RevisionID: req.RevisionID, ContentHash: hex.EncodeToString(digest[:])}, Desired: req.Desired, Startup: req.Startup, CreatedAt: now},
+		Revision:         model.ConfigurationProfileRevision{Ref: model.ConfigurationProfileRef{ProfileID: req.ID, RevisionID: req.RevisionID, ContentHash: hex.EncodeToString(digest[:])}, Desired: req.Desired, Options: req.Options, Startup: req.Startup, CreatedAt: now},
 		ExpectedRevision: req.ExpectedRevision, RequestID: req.Context.RequestID, RequestFingerprint: hex.EncodeToString(fingerprint[:]), At: now,
 	}, nil
 }
@@ -165,8 +192,11 @@ func (s *Service) ListConfigurationProfiles(ctx context.Context, principal model
 // resolveConfigurationSelection accepts either authored fields or an exact
 // immutable catalog selection. A caller cannot attach provenance to unrelated
 // configuration values, and a later catalog edit cannot change this selection.
-func (s *Service) resolveConfigurationSelection(ctx context.Context, desired model.DesiredConfiguration, selected *model.ConfigurationProfileRef) (model.DesiredConfiguration, *model.ConfigurationProfileRef, error) {
+func (s *Service) resolveConfigurationSelectionWithOverrides(ctx context.Context, desired model.DesiredConfiguration, selected *model.ConfigurationProfileRef, overrides *model.ConfigurationOptions) (model.DesiredConfiguration, *model.ConfigurationProfileRef, error) {
 	if selected == nil {
+		if overrides != nil {
+			return desired, nil, fail(ErrInvalid, "launch overrides require a selected profile")
+		}
 		if desired.HostSandbox != nil {
 			choice := desired.HostSandbox.References()
 			desired.HostSandbox = &choice
@@ -183,11 +213,16 @@ func (s *Service) resolveConfigurationSelection(ctx context.Context, desired mod
 	if result.Profile.Archived || result.Revision.Ref != *selected {
 		return desired, nil, ErrConflict
 	}
-	if err := s.verifyLaunchSandbox(ctx, result.Revision.Desired.HostSandbox); err != nil {
+	snapshot, err := s.resolveProfileConfigurationWithOverrides(ctx, result, overrides)
+	if err != nil {
+		return desired, nil, err
+	}
+	resolved := snapshot.Desired
+	if err := s.verifyLaunchSandbox(ctx, resolved.HostSandbox); err != nil {
 		return desired, nil, err
 	}
 	ref := result.Revision.Ref
-	return result.Revision.Desired, &ref, nil
+	return resolved, &ref, nil
 }
 
 type SaveConfigurationDefaultsRequest struct {
@@ -240,12 +275,8 @@ func (s *Service) SaveConfigurationDefaults(ctx context.Context, req SaveConfigu
 	harnesses := map[string]model.ConfigurationProfileRef{}
 	for harness, ref := range refs {
 		// Validate the supplied reference, then use its identity's current settings.
-		desired, _, err := s.resolveConfigurationSelection(ctx, model.DesiredConfiguration{}, &ref)
-		if err != nil {
+		if err := s.validateProfileDefaultSelection(ctx, ref, harness); err != nil {
 			return model.ConfigurationDefaults{}, err
-		}
-		if harness != "" && desired.Harness != harness {
-			return model.ConfigurationDefaults{}, fail(ErrInvalid, "default harness does not match profile")
 		}
 		current, err := s.currentConfigurationDefault(ctx, ref, harness)
 		if err != nil {
@@ -298,7 +329,7 @@ func (s *Service) currentConfigurationDefault(ctx context.Context, selected mode
 	if current.Profile.Archived {
 		return nil, fail(ErrConflict, "default configuration is archived")
 	}
-	if harness != "" && current.Revision.Desired.Harness != harness {
+	if authored := current.Revision.AuthoredHarness(); harness != "" && authored != "" && authored != harness {
 		return nil, fail(ErrConflict, "default configuration no longer uses harness %s; select a matching default", harness)
 	}
 	ref := current.Revision.Ref

@@ -18,7 +18,7 @@ func TestBrowserCodexAutoReviewSaveAndReopen(t *testing.T) {
 	page.MustElement("#editor [name=cwd]").MustInput(t.TempDir())
 	page.MustElement("#editor [name=sandbox]").MustSelect("read_only")
 	for _, mode := range []bool{true, false} {
-		page.MustElement("#editor [name=auto_review]").MustSelect(map[bool]string{true: "Automatic approval review", false: "No automatic-review override"}[mode])
+		page.MustElement("#editor [name=auto_review]").MustSelect(map[bool]string{true: "Automatic approval review", false: "No automatic approval review"}[mode])
 		page.MustElement("#editor button[type=submit]").MustClick()
 		page.MustWait(`()=>!document.querySelector('#editor').open&&!submitting`)
 		var entries []model.ConfigurationProfile
@@ -26,10 +26,12 @@ func TestBrowserCodexAutoReviewSaveAndReopen(t *testing.T) {
 		require.Len(t, entries, 1)
 		var saved app.ConfigurationProfileResult
 		require.NoError(t, operator.Call(ctx, "GET", "/v2/configuration-profiles/"+string(entries[0].ID), nil, &saved))
-		require.Equal(t, mode, saved.Revision.Desired.AutoReview)
+		require.NotNil(t, saved.Revision.Options)
+		require.NotNil(t, saved.Revision.Options.AutoReview)
+		require.Equal(t, mode, *saved.Revision.Options.AutoReview)
 		page.MustElementR("#configuration-list button", "^Edit configuration$").MustClick()
 		page.MustWait(`()=>document.querySelector('#editor').open`)
-		require.Equal(t, map[bool]string{true: "on", false: ""}[mode], page.MustElement("#editor [name=auto_review]").MustProperty("value").Str())
+		require.Equal(t, map[bool]string{true: "on", false: "off"}[mode], page.MustElement("#editor [name=auto_review]").MustProperty("value").Str())
 	}
 	page.MustElement("#editor button[value=cancel]").MustClick()
 	var snapshot app.Snapshot
