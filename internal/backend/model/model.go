@@ -107,6 +107,7 @@ type DesiredConfiguration struct {
 	AutoReview        bool              `json:",omitempty"`
 	AutoMemory        bool              `json:",omitempty"`
 	PeerMessaging     bool              `json:",omitempty"`
+	TrustDirectory    bool              `json:",omitempty"`
 	AutoCompactWindow AutoCompactWindow `json:",omitempty"`
 	WorkingDirectory  string
 	Approval          ApprovalMode
@@ -232,6 +233,7 @@ type ResolvedExecutionSpec struct {
 	AutoReview           bool              `json:",omitempty"`
 	AutoMemory           bool              `json:",omitempty"`
 	PeerMessaging        bool              `json:",omitempty"`
+	TrustDirectory       bool              `json:",omitempty"`
 	AutoCompactWindow    AutoCompactWindow `json:",omitempty"`
 	WorkingDirectory     string
 	Approval             ApprovalMode

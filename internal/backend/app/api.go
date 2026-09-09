@@ -164,9 +164,10 @@ type ListProgramProfilesRequest struct {
 }
 
 type StartProcessRequest struct {
-	Context RequestContext
-	ID      model.WorkRunID
-	Start   model.WorkStart
+	directoryTrust map[model.AgentID]model.DirectoryTrustAdmission
+	Context        RequestContext
+	ID             model.WorkRunID
+	Start          model.WorkStart
 }
 
 type RecordNodeEvidenceRequest struct {
@@ -271,8 +272,9 @@ type ListOccurrencesRequest struct {
 }
 
 type RequestContext struct {
-	Principal model.Principal
-	RequestID model.RequestID
+	WriteProofToken string `json:"-"`
+	Principal       model.Principal
+	RequestID       model.RequestID
 }
 
 type CreateAgentRequest struct {

@@ -661,12 +661,17 @@ func (s *Store) CreateWorkRun(ctx context.Context, run model.WorkRun, claim *mod
 func (s *Store) WorkRun(ctx context.Context, id model.WorkRunID) (app.WorkRunRecord, error) {
 	var record app.WorkRunRecord
 	var requester, authority, delegation, spec []byte
-	var graph, closure, parameters, scope, programs []byte
+	var graph, closure, parameters, scope, programs, directoryTrust []byte
 	var deadline sql.NullInt64
 	var created, updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,request_id,requester_json,authority_json,delegation_json,spec_json,state,worker_execution_id,cancellation_requested,cancellation_reason,revision,created_at,updated_at,graph_json,definition_closure_json,parameters_json,scope_json,authorized_programs_json,control_state,outcome,deadline FROM work_runs WHERE id=?`, id).Scan(&record.Run.ID, &record.Run.RequestID, &requester, &authority, &delegation, &spec, &record.Run.State, &record.Run.WorkerExecutionID, &record.Run.CancellationRequested, &record.Run.CancellationReason, &record.Run.Revision, &created, &updated, &graph, &closure, &parameters, &scope, &programs, &record.Run.ControlState, &record.Run.Outcome, &deadline)
+	err := s.db.QueryRowContext(ctx, `SELECT id,request_id,requester_json,authority_json,delegation_json,spec_json,state,worker_execution_id,cancellation_requested,cancellation_reason,revision,created_at,updated_at,graph_json,definition_closure_json,parameters_json,scope_json,authorized_programs_json,control_state,outcome,deadline,directory_trust_json FROM work_runs WHERE id=?`, id).Scan(&record.Run.ID, &record.Run.RequestID, &requester, &authority, &delegation, &spec, &record.Run.State, &record.Run.WorkerExecutionID, &record.Run.CancellationRequested, &record.Run.CancellationReason, &record.Run.Revision, &created, &updated, &graph, &closure, &parameters, &scope, &programs, &record.Run.ControlState, &record.Run.Outcome, &deadline, &directoryTrust)
 	if err != nil {
 		return record, classify(err)
+	}
+	if len(directoryTrust) != 0 {
+		if err = json.Unmarshal(directoryTrust, &record.Run.DirectoryTrust); err != nil {
+			return record, err
+		}
 	}
 	if err = json.Unmarshal(requester, &record.Run.Requester); err != nil {
 		return record, err

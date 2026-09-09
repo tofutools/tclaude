@@ -75,6 +75,13 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 			return model.TeamDeployment{}, false, err
 		}
 	}
+	if len(deployment.DirectoryTrust) != 0 {
+		for _, binding := range deployment.Workspaces {
+			if err := requireWorkDirectoryTrustSources(ctx, tx, &model.WorkDirectoryTrust{WorkspaceRevisions: map[model.WorkspaceID]model.Revision{binding.WorkspaceID: binding.SelectedRevision}}); err != nil {
+				return model.TeamDeployment{}, false, err
+			}
+		}
+	}
 	deployment.ConfigurationSources = nil
 	for _, agent := range agents {
 		var selected model.ConfigurationProfileID
@@ -148,13 +155,14 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 	members, _ := json.Marshal(deployment.Members)
 	rolePins, _ := json.Marshal(deployment.RolePins)
 	memberStartups, _ := json.Marshal(deployment.MemberStartups)
+	directoryTrust, _ := json.Marshal(deployment.DirectoryTrust)
 	rules, _ := json.Marshal(deployment.AutomationRuleIDs)
 	workspaces, _ := json.Marshal(deployment.Workspaces)
 	ownedWorkspaces, _ := json.Marshal(deployment.OwnedWorkspaceIDs)
 	ownedRules, _ := json.Marshal(deployment.OwnedAutomationRuleIDs)
 	briefingOps, _ := json.Marshal(deployment.BriefingOperationIDs)
 	requester, _ := json.Marshal(principal)
-	if _, err = tx.ExecContext(ctx, `INSERT INTO team_deployments(id,definition_json,dependency_closure_json,mission,parameters_json,group_id,members_json,role_pins_json,member_startups_json,automation_rule_ids_json,work_run_id,target_kind,workspaces_json,owned_workspace_ids_json,owned_automation_rule_ids_json,briefing_operation_ids_json,request_scope,request_id,request_digest,requester_json,advisory_phase,state,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, deployment.ID, definition, closure, deployment.Mission, parameters, deployment.GroupID, members, rolePins, memberStartups, rules, deployment.WorkRunID, deployment.TargetKind, workspaces, ownedWorkspaces, ownedRules, briefingOps, requestScope(principal), requestID, requestDigest, requester, deployment.AdvisoryPhase, deployment.State, deployment.Revision, nanos(deployment.CreatedAt), nanos(deployment.UpdatedAt)); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO team_deployments(id,definition_json,dependency_closure_json,mission,parameters_json,group_id,members_json,role_pins_json,member_startups_json,automation_rule_ids_json,work_run_id,target_kind,workspaces_json,owned_workspace_ids_json,owned_automation_rule_ids_json,briefing_operation_ids_json,request_scope,request_id,request_digest,requester_json,advisory_phase,state,revision,created_at,updated_at,directory_trust_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, deployment.ID, definition, closure, deployment.Mission, parameters, deployment.GroupID, members, rolePins, memberStartups, rules, deployment.WorkRunID, deployment.TargetKind, workspaces, ownedWorkspaces, ownedRules, briefingOps, requestScope(principal), requestID, requestDigest, requester, deployment.AdvisoryPhase, deployment.State, deployment.Revision, nanos(deployment.CreatedAt), nanos(deployment.UpdatedAt), directoryTrust); err != nil {
 		return model.TeamDeployment{}, false, classify(err)
 	}
 	if err = bumpTx(ctx, tx); err != nil {
@@ -183,13 +191,13 @@ func (s *Store) TeamDeploymentRequester(ctx context.Context, id model.Deployment
 
 func (s *Store) TeamDeployment(ctx context.Context, id model.DeploymentID) (model.TeamDeployment, error) {
 	var deployment model.TeamDeployment
-	var definition, closure, parameters, members, rolePins, memberStartups, rules, workspaces, ownedWorkspaces, ownedRules, briefingOps, phaseHistory []byte
+	var definition, closure, parameters, members, rolePins, memberStartups, rules, workspaces, ownedWorkspaces, ownedRules, briefingOps, phaseHistory, directoryTrust []byte
 	var created, updated int64
-	err := s.db.QueryRowContext(ctx, `SELECT id,definition_json,dependency_closure_json,mission,parameters_json,group_id,members_json,role_pins_json,member_startups_json,automation_rule_ids_json,work_run_id,target_kind,workspaces_json,owned_workspace_ids_json,owned_automation_rule_ids_json,briefing_operation_ids_json,phase_history_json,advisory_phase,state,revision,created_at,updated_at FROM team_deployments WHERE id=?`, id).Scan(&deployment.ID, &definition, &closure, &deployment.Mission, &parameters, &deployment.GroupID, &members, &rolePins, &memberStartups, &rules, &deployment.WorkRunID, &deployment.TargetKind, &workspaces, &ownedWorkspaces, &ownedRules, &briefingOps, &phaseHistory, &deployment.AdvisoryPhase, &deployment.State, &deployment.Revision, &created, &updated)
+	err := s.db.QueryRowContext(ctx, `SELECT id,definition_json,dependency_closure_json,mission,parameters_json,group_id,members_json,role_pins_json,member_startups_json,automation_rule_ids_json,work_run_id,target_kind,workspaces_json,owned_workspace_ids_json,owned_automation_rule_ids_json,briefing_operation_ids_json,phase_history_json,advisory_phase,state,revision,created_at,updated_at,directory_trust_json FROM team_deployments WHERE id=?`, id).Scan(&deployment.ID, &definition, &closure, &deployment.Mission, &parameters, &deployment.GroupID, &members, &rolePins, &memberStartups, &rules, &deployment.WorkRunID, &deployment.TargetKind, &workspaces, &ownedWorkspaces, &ownedRules, &briefingOps, &phaseHistory, &deployment.AdvisoryPhase, &deployment.State, &deployment.Revision, &created, &updated, &directoryTrust)
 	if err != nil {
 		return deployment, classify(err)
 	}
-	if err = unmarshalMany([][]byte{definition, closure, parameters, members, rolePins, memberStartups, rules, workspaces, ownedWorkspaces, ownedRules, briefingOps, phaseHistory}, []any{&deployment.Definition, &deployment.DependencyClosure, &deployment.Parameters, &deployment.Members, &deployment.RolePins, &deployment.MemberStartups, &deployment.AutomationRuleIDs, &deployment.Workspaces, &deployment.OwnedWorkspaceIDs, &deployment.OwnedAutomationRuleIDs, &deployment.BriefingOperationIDs, &deployment.PhaseHistory}); err != nil {
+	if err = unmarshalMany([][]byte{definition, closure, parameters, members, rolePins, memberStartups, rules, workspaces, ownedWorkspaces, ownedRules, briefingOps, phaseHistory, directoryTrust}, []any{&deployment.Definition, &deployment.DependencyClosure, &deployment.Parameters, &deployment.Members, &deployment.RolePins, &deployment.MemberStartups, &deployment.AutomationRuleIDs, &deployment.Workspaces, &deployment.OwnedWorkspaceIDs, &deployment.OwnedAutomationRuleIDs, &deployment.BriefingOperationIDs, &deployment.PhaseHistory, &deployment.DirectoryTrust}); err != nil {
 		return deployment, err
 	}
 	deployment.CreatedAt, deployment.UpdatedAt = fromNanos(created), fromNanos(updated)

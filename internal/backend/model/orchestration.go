@@ -581,8 +581,9 @@ type TeamConfigurationSources struct {
 }
 
 type TeamDeployment struct {
-	ConfigurationSources   []TeamConfigurationSources `json:"-"`
-	MemberStartups         map[string]ProfileStartup  `json:",omitempty"`
+	DirectoryTrust         map[AgentID]DirectoryTrustAdmission `json:"-"`
+	ConfigurationSources   []TeamConfigurationSources          `json:"-"`
+	MemberStartups         map[string]ProfileStartup           `json:",omitempty"`
 	ID                     DeploymentID
 	Definition             DefinitionRef
 	DependencyClosure      []DefinitionRef

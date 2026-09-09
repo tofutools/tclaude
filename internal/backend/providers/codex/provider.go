@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -288,6 +289,11 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 			Requirements:    ports.RuntimeRequirements{Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory, PrivateStorage: true, Terminal: &ports.TerminalRequirement{Interactive: true}, Policy: p.launchPolicy()},
 			EffectivePolicy: ports.EffectivePolicy{Approval: request.Spec.Approval, Sandbox: request.Spec.Sandbox, ApprovalEnforced: true, SandboxEnforced: true},
 			Resources:       []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: terminal.ResourceKey()}, {Kind: ports.ResourceProcess, Key: stateRoot}}, Evidence: initial, AccessDelivery: access, InitialInput: initialInput}}
+	if request.Spec.TrustDirectory {
+		if err := ensureDirectoryTrusted(stateRoot, request.Spec.WorkingDirectory); err != nil {
+			slog.Warn("directory trust could not be saved; use the native pane to confirm the directory", "harness", Name, "error", err)
+		}
+	}
 	if err := result.prepareSandbox(ctx); err != nil {
 		_ = result.Abort(context.WithoutCancel(ctx))
 		return nil, err

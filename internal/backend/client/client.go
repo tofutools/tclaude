@@ -41,8 +41,9 @@ func New(socketPath, credentialFile string) (*Client, error) {
 func (c *Client) Close() { c.transport.CloseIdleConnections() }
 
 type Error struct {
-	Status int
-	Code   string
+	Status     int
+	Code       string
+	WriteProof *DirectoryWriteProof
 }
 
 func (e *Error) Error() string {
@@ -94,13 +95,14 @@ func (c *Client) Call(ctx context.Context, method, path string, body, result any
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var failure struct {
-			Code string `json:"code"`
+			Code       string               `json:"code"`
+			WriteProof *DirectoryWriteProof `json:"write_proof"`
 		}
 		_ = json.Unmarshal(content, &failure)
 		if failure.Code == "" {
 			failure.Code = "invalid_response"
 		}
-		return &Error{Status: response.StatusCode, Code: failure.Code}
+		return &Error{Status: response.StatusCode, Code: failure.Code, WriteProof: failure.WriteProof}
 	}
 	if result == nil || response.StatusCode == http.StatusNoContent {
 		return nil
@@ -126,4 +128,11 @@ func readCredential(path string) (string, error) {
 		return "", errors.New("invalid backend credential resource")
 	}
 	return credential, nil
+}
+
+// DirectoryWriteProof is a pre-admission challenge, not permission to retry an uncertain effect.
+type DirectoryWriteProof struct {
+	Token       string   `json:"token"`
+	Filename    string   `json:"filename"`
+	Directories []string `json:"dirs"`
 }

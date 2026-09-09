@@ -25,6 +25,10 @@ func importedProfileOptions(values map[string]any, desired model.DesiredConfigur
 		value, _ := importedAutoCompactWindow(values["auto_compact_window"])
 		out.AutoCompactWindow = &value
 	}
+	if values["trust_dir"] != nil {
+		value, _ := importedDirectoryTrust(values["trust_dir"])
+		out.TrustDirectory = &value
+	}
 	if values["peer_messaging"] != nil {
 		value, _ := importedPeerMessaging(values["peer_messaging"])
 		out.PeerMessaging = &value

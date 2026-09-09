@@ -6,6 +6,7 @@ type NativeConfigurationOptions struct {
 	AutoReview        *bool              `json:",omitempty"`
 	AutoMemory        *bool              `json:",omitempty"`
 	PeerMessaging     *bool              `json:",omitempty"`
+	TrustDirectory    *bool              `json:",omitempty"`
 	AutoCompactWindow *AutoCompactWindow `json:",omitempty"`
 	FastMode          *FastMode          `json:",omitempty"`
 	ToolGovernance    *ToolGovernance    `json:",omitempty"`
@@ -32,6 +33,9 @@ func (o *NativeConfigurationOptions) Apply(base DesiredConfiguration) DesiredCon
 			base.PeerMessaging = false
 			base.AutoCompactWindow = ""
 		}
+		if ValidateDirectoryTrust(base.TrustDirectory, *o.Harness) != nil {
+			base.TrustDirectory = false
+		}
 		base.Harness = *o.Harness
 	}
 	if o.Model != nil {
@@ -42,6 +46,9 @@ func (o *NativeConfigurationOptions) Apply(base DesiredConfiguration) DesiredCon
 	}
 	if o.AutoCompactWindow != nil {
 		base.AutoCompactWindow = *o.AutoCompactWindow
+	}
+	if o.TrustDirectory != nil {
+		base.TrustDirectory = *o.TrustDirectory
 	}
 	if o.PeerMessaging != nil {
 		base.PeerMessaging = *o.PeerMessaging

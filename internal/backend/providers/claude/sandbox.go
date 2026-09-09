@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -40,6 +41,11 @@ func (p *prepared) prepareSandbox(ctx context.Context) error {
 		p.describe.Evidence, err = encodeEvidence(recorded)
 		if err != nil {
 			return err
+		}
+	}
+	if p.request.Spec.TrustDirectory {
+		if err := p.ensureLaunchDirectoryTrusted(); err != nil {
+			slog.Warn("directory trust could not be saved; use the native pane to confirm the directory", "harness", Name, "error", err)
 		}
 	}
 	if p.request.Spec.HostSandbox == nil {

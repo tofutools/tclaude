@@ -304,6 +304,7 @@ type WorkProgress struct {
 }
 
 type LaunchAdmission struct {
+	ProvenWorkingDirectory       string
 	GroupMember                  *GroupMemberAdmission
 	InitialMessageDigest         string
 	Operation                    model.Operation

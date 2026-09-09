@@ -10,11 +10,12 @@ import (
 )
 
 type commandIdentity struct {
-	RequestID model.RequestID `json:"request_id"`
+	WriteProofToken string          `json:"write_proof_token,omitempty"`
+	RequestID       model.RequestID `json:"request_id"`
 }
 
 func (c commandIdentity) context(p model.Principal) app.RequestContext {
-	return app.RequestContext{Principal: p, RequestID: c.RequestID}
+	return app.RequestContext{Principal: p, RequestID: c.RequestID, WriteProofToken: c.WriteProofToken}
 }
 
 type agentTarget struct {

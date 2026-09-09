@@ -140,7 +140,7 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 			if profile.Revision.Options != nil {
 				var overrides *model.ConfigurationOptions
 				if o := spec.Overrides; o != nil {
-					overrides = &model.ConfigurationOptions{Harness: o.Harness, Model: o.Model, Effort: o.Effort, Approval: o.Approval, Sandbox: o.Sandbox, AutoReview: o.AutoReview, AutoMemory: o.AutoMemory, PeerMessaging: o.PeerMessaging, AutoCompactWindow: o.AutoCompactWindow, FastMode: o.FastMode, ToolGovernance: o.ToolGovernance}
+					overrides = &model.ConfigurationOptions{Harness: o.Harness, Model: o.Model, Effort: o.Effort, Approval: o.Approval, Sandbox: o.Sandbox, AutoReview: o.AutoReview, AutoMemory: o.AutoMemory, PeerMessaging: o.PeerMessaging, TrustDirectory: o.TrustDirectory, AutoCompactWindow: o.AutoCompactWindow, FastMode: o.FastMode, ToolGovernance: o.ToolGovernance}
 				}
 				resolved, resolveErr := s.resolveProfileConfigurationWithOverrides(ctx, profile, overrides)
 				if resolveErr != nil {
@@ -210,6 +210,11 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 		}
 		agents[i].Desired.WorkingDirectory = workspace.Observation.ActualPath
 	}
+	directoryTrust, proofPaths, err := s.prepareTeamDirectoryTrust(ctx, req, group.ID, agents)
+	if err != nil {
+		return TeamDeploymentResult{}, err
+	}
+	defer s.cleanupDirectoryTrust(ctx, directoryTrustAdmission{proven: proofPaths}, req.Context.WriteProofToken)
 	workRunID := model.WorkRunID(deterministicOrchestrationID("work_", string(req.DeploymentID)))
 	var automationIDs, ownedAutomationIDs []model.AutomationRuleID
 	for _, automation := range revision.Team.Automation {
@@ -221,6 +226,7 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 	}
 	deployment := model.TeamDeployment{ConfigurationSources: configurationSources, ID: req.DeploymentID, Definition: ref, DependencyClosure: append([]model.DefinitionRef(nil), revision.Dependencies...), Mission: strings.TrimSpace(req.Instantiation.Mission), Parameters: parameters, GroupID: group.ID, TargetKind: target.Kind, Members: members, AutomationRuleIDs: automationIDs, OwnedAutomationRuleIDs: ownedAutomationIDs, Workspaces: workspaceBindings, OwnedWorkspaceIDs: ownedWorkspaceIDs, BriefingOperationIDs: map[string][]model.OperationID{}, WorkRunID: workRunID, State: model.DeploymentDeploying, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	deployment.MemberStartups = memberStartups
+	deployment.DirectoryTrust = directoryTrust
 	deployment.RolePins = pins
 	stored, _, err := s.store.CreateTeamDeployment(ctx, deployment, group, agents, assignments, req.Context.Principal, req.Context.RequestID, requestDigest, now)
 	if err != nil {
@@ -323,7 +329,7 @@ func (s *Service) startTeamDeploymentProcess(ctx context.Context, deployment mod
 		scope.RuleID = ruleID
 		scope.OccurrenceID = model.OccurrenceID(principal.AutomationRun)
 	}
-	_, err = s.StartProcess(ctx, StartProcessRequest{Context: RequestContext{Principal: principal, RequestID: model.RequestID(deterministicOrchestrationID("request_", string(deployment.ID)))}, ID: deployment.WorkRunID, Start: model.WorkStart{InlineGraph: &graph, Scope: scope, Deadline: s.now().UTC().Add(budget)}})
+	_, err = s.StartProcess(ctx, StartProcessRequest{directoryTrust: deployment.DirectoryTrust, Context: RequestContext{Principal: principal, RequestID: model.RequestID(deterministicOrchestrationID("request_", string(deployment.ID)))}, ID: deployment.WorkRunID, Start: model.WorkStart{InlineGraph: &graph, Scope: scope, Deadline: s.now().UTC().Add(budget)}})
 	return err
 }
 

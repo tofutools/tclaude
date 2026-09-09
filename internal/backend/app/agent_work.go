@@ -60,6 +60,10 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 		return record, err
 	}
 
+	trust, err := s.deferredDirectoryTrust(ctx, record.Run, attempt.Ref.NodeID, agent.ID, desired)
+	if err != nil {
+		return record, err
+	}
 	if !provider.Capabilities().PreparedInitialInput {
 		return record, fail(ErrUnsupported, "provider %q cannot prepare required first work", provider.Name())
 	}
@@ -69,6 +73,7 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	executionID := model.ExecutionID(s.newID("exe_"))
 	conversationID := model.ConversationID(s.newID("con_"))
 	spec := resolvedSpec(executionID, agent.ID, desired, conversationID)
+	spec.TrustDirectory, spec.WorkingDirectory = trust.enabled, trust.path
 	if hostSandboxPolicy != nil {
 		preparedSelection, selectionErr := hostSandboxPolicy.LaunchSelection()
 		if selectionErr != nil {
@@ -118,7 +123,11 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 	input := &ports.PreparedInitialInput{Body: performer.Brief, Correlation: string(issuanceID), RequiredBeforeFirstWork: true}
 	workflowCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancel()
-	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{HostSandboxPolicy: hostSandboxPolicy, Spec: spec, Intent: ports.StartFresh, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, 1, provider.Name()), NativeGuidance: s.boundNativeGuidance(execution), AgentAPIEndpoint: s.agentAPIEndpoint, InitialInput: input, CallbackIngress: s.callbackIngress})
+	var prepared ports.PreparedAttempt
+	err = s.reassertDirectoryTrust(workflowCtx, trust)
+	if err == nil {
+		prepared, err = provider.Prepare(workflowCtx, ports.PreparationRequest{HostSandboxPolicy: hostSandboxPolicy, Spec: spec, Intent: ports.StartFresh, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, 1, provider.Name()), NativeGuidance: s.boundNativeGuidance(execution), AgentAPIEndpoint: s.agentAPIEndpoint, InitialInput: input, CallbackIngress: s.callbackIngress})
+	}
 	if err != nil {
 		return s.failAgentOperation(ctx, admitted, admittedAttempt, "prepare_failed", err)
 	}
@@ -146,7 +155,7 @@ func (s *Service) admitAndRunAgent(ctx context.Context, record WorkRunRecord, at
 		_ = prepared.Abort(workflowCtx)
 		return admitted, err
 	}
-	permit := &releasePermit{store: s.store, executionID: executionID, operationID: operationID, now: s.now}
+	permit := &releasePermit{store: s.store, executionID: executionID, operationID: operationID, now: s.now, beforeConsume: func(ctx context.Context) error { return s.reassertDirectoryTrust(ctx, trust) }}
 	released, releaseErr := prepared.Release(workflowCtx, permit)
 	if !permit.consumed.Load() && releaseErr == nil {
 		releaseErr = fail(ErrInvalid, "provider released without consuming permit")
