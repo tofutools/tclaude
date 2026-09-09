@@ -1,6 +1,6 @@
 'use strict';
 // Shared authoring vocabulary; provider support is shown by the preview below.
-function launchApprovalChoices(){return ['supervised','automatic','deny','never','on-request','on-failure','untrusted','inherit','default','manual','plan','acceptEdits','auto','dontAsk','bypassPermissions'];}
+function launchApprovalChoices(){return ['supervised','automatic','deny','never','on-request','on-failure','untrusted','inherit','default','manual','plan','acceptEdits','auto','dontAsk','bypassPermissions','allow-tools','yolo'];}
 // A read-only adapter declaration. It never changes or submits authored settings.
 function attachLaunchSupportPreview({host,api}) {
  const harness=host.querySelector('[name=harness]'),approval=host.querySelector('[name=approval]'),sandbox=host.querySelector('[name=sandbox]');

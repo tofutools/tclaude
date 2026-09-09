@@ -39,6 +39,9 @@ func TestLaunchSupportReadsAdapterContractWithoutPreparationOrStorage(t *testing
 			if tc.provider.Name() == opencode.Name {
 				expectedApprovals = append(expectedApprovals, model.ApprovalDeny)
 			}
+			if tc.provider.Name() == copilot.Name {
+				expectedApprovals = append(expectedApprovals, model.ApprovalInherit, model.ApprovalAllowTools, model.ApprovalYolo)
+			}
 			if tc.provider.Name() == codex.Name {
 				expectedApprovals = append(expectedApprovals, model.ApprovalNever, model.ApprovalOnRequest)
 			}

@@ -115,6 +115,8 @@ const (
 	// ApprovalDeny is the OpenCode unattended approval policy. Its audited tool
 	// baseline remains separate from edit/web approval decisions.
 	ApprovalDeny              ApprovalMode = "deny"
+	ApprovalAllowTools        ApprovalMode = "allow-tools"
+	ApprovalYolo              ApprovalMode = "yolo"
 	ApprovalNever             ApprovalMode = "never"
 	ApprovalOnRequest         ApprovalMode = "on-request"
 	ApprovalOnFailure         ApprovalMode = "on-failure"

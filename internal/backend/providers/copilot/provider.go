@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -143,7 +144,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 	if err := validateDirectory(request.Spec.WorkingDirectory); err != nil {
 		return nil, err
 	}
-	if request.Spec.Approval != model.ApprovalSupervised && request.Spec.Approval != model.ApprovalAutomatic {
+	if !slices.Contains(supportedLaunchPolicy().SupportedApproval, request.Spec.Approval) {
 		return nil, fmt.Errorf("copilot provider does not support approval mode %q", request.Spec.Approval)
 	}
 	// Copilot's preview MXC wall does not confine built-in edits and managed
@@ -343,8 +344,11 @@ func (p *prepared) argv() []string {
 	if p.request.Spec.Model != "" {
 		args = append(args, "--model", p.request.Spec.Model)
 	}
-	if p.request.Spec.Approval == model.ApprovalAutomatic {
+	switch p.request.Spec.Approval {
+	case model.ApprovalAutomatic, model.ApprovalAllowTools:
 		args = append(args, "--allow-all-tools", "--no-ask-user")
+	case model.ApprovalYolo:
+		args = append(args, "--yolo", "--no-ask-user")
 	}
 	if p.request.InitialInput != nil {
 		args = append(args, "--interactive", p.request.InitialInput.Body)
@@ -712,7 +716,7 @@ var _ ports.PreparedAttempt = (*prepared)(nil)
 var _ ports.Runtime = (*Runtime)(nil)
 
 func supportedLaunchPolicy() ports.PolicyRequirements {
-	return ports.PolicyRequirements{DefaultApproval: model.ApprovalAutomatic, DefaultSandbox: model.SandboxUnconfined, SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic}, SupportedSandbox: []model.SandboxMode{model.SandboxUnconfined}}
+	return ports.PolicyRequirements{DefaultApproval: model.ApprovalAutomatic, DefaultSandbox: model.SandboxUnconfined, ApprovalDescriptions: map[model.ApprovalMode]string{model.ApprovalInherit: "Use native operator permission settings without approval flags; this may wait for an operator.", model.ApprovalAllowTools: "Run tools automatically and disable ask_user, retaining native path and URL checks.", model.ApprovalYolo: "Disable native tool, path and URL permission prompts and ask_user. Without a host sandbox, no OS confinement limits access."}, SupportedApproval: []model.ApprovalMode{model.ApprovalSupervised, model.ApprovalAutomatic, model.ApprovalInherit, model.ApprovalAllowTools, model.ApprovalYolo}, SupportedSandbox: []model.SandboxMode{model.SandboxUnconfined}}
 }
 
 func (r *Runtime) checkpointActivity() error {
