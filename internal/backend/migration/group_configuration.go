@@ -7,9 +7,9 @@ import (
 )
 
 func (t *translator) translateGroupConfiguration(batch *app.ImportBatch, row sourcev228.Row, group model.Group) {
-	configuration := model.GroupConfiguration{GroupID: group.ID, Environment: t.launchEnvironment(batch, "agent_groups", row), Revision: 1, UpdatedAt: group.UpdatedAt}
+	configuration := model.GroupConfiguration{DefaultDirectory: sourcev228.String(row.Values["default_cwd"]), GroupID: group.ID, Environment: t.launchEnvironment(batch, "agent_groups", row), Revision: 1, UpdatedAt: group.UpdatedAt}
 	defer func() {
-		if configuration.Profile != nil || len(configuration.Environment) != 0 {
+		if configuration.Profile != nil || len(configuration.Environment) != 0 || configuration.DefaultDirectory != "" {
 			batch.GroupConfigurations = append(batch.GroupConfigurations, configuration)
 		}
 	}()

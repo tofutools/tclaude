@@ -10,6 +10,7 @@ import (
 )
 
 type SetGroupConfigurationRequest struct {
+	DefaultDirectory *string
 	Environment      model.Environment
 	Principal        model.Principal
 	GroupID          model.GroupID
@@ -79,6 +80,17 @@ func (s *Service) SetGroupConfiguration(ctx context.Context, in SetGroupConfigur
 	}
 	if in.Environment.Validate() != nil || in.GroupID.Validate() != nil || in.ExpectedRevision >= math.MaxInt64 {
 		return model.GroupConfiguration{}, ErrInvalid
+	}
+	if in.DefaultDirectory != nil {
+		path := *in.DefaultDirectory
+		var err error
+		if s.directoryDefaults != nil {
+			path, err = s.directoryDefaults.NormalizeDefaultDirectory(ctx, path)
+		}
+		if err != nil || model.ValidateDefaultDirectory(path) != nil {
+			return model.GroupConfiguration{}, fail(ErrInvalid, "default directory must be an absolute path")
+		}
+		in.DefaultDirectory = &path
 	}
 	if in.Profile != nil {
 		if err := s.validateProfileDefaultSelection(ctx, *in.Profile, ""); err != nil {
@@ -163,6 +175,23 @@ func (s *Service) resolveGroupMember(ctx context.Context, store GroupConfigurati
 	}
 	if defaults.Revision != in.ExpectedDefaultRevision {
 		return GroupMemberAdmission{}, ErrConflict
+	}
+	// V1 treats a blank spawn cwd as omitted, including API callers.
+	if in.ConfigurationOverrides != nil && in.ConfigurationOverrides.WorkingDirectory != nil && strings.TrimSpace(*in.ConfigurationOverrides.WorkingDirectory) == "" {
+		options := *in.ConfigurationOverrides
+		options.WorkingDirectory = nil
+		in.ConfigurationOverrides = &options
+	}
+	// The group directory is separate from reusable launch profiles. An explicit
+	// checkout or cwd wins; blank cwd follows the current group default.
+	if defaults.DefaultDirectory != "" && (in.ConfigurationOverrides == nil || in.ConfigurationOverrides.WorkingDirectory == nil || strings.TrimSpace(*in.ConfigurationOverrides.WorkingDirectory) == "") {
+		options := model.ConfigurationOptions{}
+		if in.ConfigurationOverrides != nil {
+			options = *in.ConfigurationOverrides
+		}
+		path := defaults.DefaultDirectory
+		options.WorkingDirectory = &path
+		in.ConfigurationOverrides = &options
 	}
 	if in.ProfileID != "" {
 		return s.resolveSelectedGroupMember(ctx, in, defaults)

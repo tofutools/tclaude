@@ -21,7 +21,7 @@ var RequiredTables = map[string]TableSpec{
 	"schema_version":                  {Columns: []string{"version"}},
 	"agents":                          {Columns: []string{"agent_id", "current_conv_id", "created_at", "initial_spawn_config", "task_ref_url", "relaunch_profile"}, Key: []string{"agent_id"}},
 	"agent_conversations":             {Columns: []string{"conv_id", "agent_id", "role", "reason", "linked_at"}, Key: []string{"conv_id"}},
-	"agent_groups":                    {Columns: []string{"id", "name", "owner_scopes_json", "source_template_id", "default_profile_id"}, Key: []string{"id"}},
+	"agent_groups":                    {Columns: []string{"id", "name", "owner_scopes_json", "source_template_id", "default_profile_id", "default_cwd"}, Key: []string{"id"}},
 	"agent_group_members":             {Columns: []string{"group_id", "agent_id", "role", "joined_at"}, Key: []string{"group_id", "agent_id"}},
 	"agent_group_owners":              {Columns: []string{"group_id", "agent_id", "granted_at", "granted_by"}, Key: []string{"group_id", "agent_id"}},
 	"agent_permissions":               {Columns: []string{"agent_id", "slug", "effect", "scope_json"}, Key: []string{"agent_id", "slug"}},

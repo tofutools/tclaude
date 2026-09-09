@@ -19,7 +19,7 @@ func readGroupConfiguration(ctx context.Context, q groupReader, id model.GroupID
 	var ref model.ConfigurationProfileRef
 	var updated int64
 	var environment []byte
-	err := q.QueryRowContext(ctx, `SELECT g.id,COALESCE(c.profile_id,''),COALESCE(c.revision_id,''),COALESCE(c.content_hash,''),COALESCE(c.revision,0),COALESCE(c.updated_at,0),COALESCE(c.environment_json,'{}') FROM groups g LEFT JOIN group_configurations c ON c.group_id=g.id WHERE g.id=? AND g.tombstoned=0`, id).Scan(&out.GroupID, &ref.ProfileID, &ref.RevisionID, &ref.ContentHash, &out.Revision, &updated, &environment)
+	err := q.QueryRowContext(ctx, `SELECT g.id,COALESCE(c.profile_id,''),COALESCE(c.revision_id,''),COALESCE(c.content_hash,''),COALESCE(c.revision,0),COALESCE(c.updated_at,0),COALESCE(c.environment_json,'{}'),COALESCE(c.default_directory,'') FROM groups g LEFT JOIN group_configurations c ON c.group_id=g.id WHERE g.id=? AND g.tombstoned=0`, id).Scan(&out.GroupID, &ref.ProfileID, &ref.RevisionID, &ref.ContentHash, &out.Revision, &updated, &environment, &out.DefaultDirectory)
 	if err != nil {
 		return out, classify(err)
 	}
@@ -64,11 +64,17 @@ func (s *Store) SetGroupConfiguration(ctx context.Context, in app.SetGroupConfig
 	if in.Environment.Validate() != nil {
 		return out, app.ErrInvalid
 	}
+	if in.DefaultDirectory != nil {
+		if model.ValidateDefaultDirectory(*in.DefaultDirectory) != nil {
+			return out, app.ErrInvalid
+		}
+		out.DefaultDirectory = *in.DefaultDirectory
+	}
 	out.Environment = in.Environment.Clone()
 	out.Profile = in.Profile
 	out.Revision++
 	out.UpdatedAt = at
-	if _, err = tx.ExecContext(ctx, `INSERT INTO group_configurations(environment_json,group_id,profile_id,revision_id,content_hash,revision,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET environment_json=excluded.environment_json,profile_id=excluded.profile_id,revision_id=excluded.revision_id,content_hash=excluded.content_hash,revision=excluded.revision,updated_at=excluded.updated_at`, environmentJSON(in.Environment), in.GroupID, ref.ProfileID, ref.RevisionID, ref.ContentHash, out.Revision, nanos(at)); err != nil {
+	if _, err = tx.ExecContext(ctx, `INSERT INTO group_configurations(default_directory,environment_json,group_id,profile_id,revision_id,content_hash,revision,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(group_id) DO UPDATE SET default_directory=excluded.default_directory,environment_json=excluded.environment_json,profile_id=excluded.profile_id,revision_id=excluded.revision_id,content_hash=excluded.content_hash,revision=excluded.revision,updated_at=excluded.updated_at`, out.DefaultDirectory, environmentJSON(in.Environment), in.GroupID, ref.ProfileID, ref.RevisionID, ref.ContentHash, out.Revision, nanos(at)); err != nil {
 		return out, err
 	}
 	if err = bumpTx(ctx, tx); err != nil {
@@ -242,7 +248,7 @@ func admitGroupMemberTx(ctx context.Context, tx *sql.Tx, admission app.GroupMemb
 			return out, err
 		}
 		expected := revision.Desired
-		if revision.Options != nil || in.ConfigurationOverrides != nil || in.Workspace != nil {
+		if revision.Options != nil || in.ConfigurationOverrides != nil || in.Workspace != nil || defaults.DefaultDirectory != "" {
 			if admission.Configuration.Selected != revision.Ref {
 				return out, app.ErrConflict
 			}

@@ -12,7 +12,7 @@ import (
 
 func applyImportedGroupConfigurations(ctx context.Context, tx *sql.Tx, defaults []model.GroupConfiguration) error {
 	for _, in := range defaults {
-		if in.GroupID.Validate() != nil || in.Environment.Validate() != nil || in.Revision != 1 {
+		if in.GroupID.Validate() != nil || in.Environment.Validate() != nil || model.ValidateDefaultDirectory(in.DefaultDirectory) != nil || in.Revision != 1 {
 			return app.ErrInvalid
 		}
 		var ref model.ConfigurationProfileRef
@@ -32,7 +32,7 @@ func applyImportedGroupConfigurations(ctx context.Context, tx *sql.Tx, defaults 
 		}
 		// Archived selections are retained for inspection, not made eligible for
 		// creation. The ordinary fresh-member path still enforces profile lifecycle.
-		if _, err := tx.ExecContext(ctx, `INSERT INTO group_configurations(environment_json,group_id,profile_id,revision_id,content_hash,revision,updated_at) VALUES(?,?,?,?,?,?,?)`, environmentJSON(in.Environment), in.GroupID, ref.ProfileID, ref.RevisionID, ref.ContentHash, in.Revision, importNanos(in.UpdatedAt)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO group_configurations(default_directory,environment_json,group_id,profile_id,revision_id,content_hash,revision,updated_at) VALUES(?,?,?,?,?,?,?,?)`, in.DefaultDirectory, environmentJSON(in.Environment), in.GroupID, ref.ProfileID, ref.RevisionID, ref.ContentHash, in.Revision, importNanos(in.UpdatedAt)); err != nil {
 			return err
 		}
 	}

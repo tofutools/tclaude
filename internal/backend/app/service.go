@@ -25,20 +25,21 @@ const (
 )
 
 type Service struct {
-	sandboxPaths     ports.SandboxPathInspector
-	directoryBrowser ports.DirectoryBrowser
-	store            Store
-	providers        ports.ProviderRegistry
-	workspaceHost    ports.WorkspaceHost
-	historySources   ports.HistorySourceRegistry
-	shellHost        ports.ShellHost
-	programHost      ports.ProgramHost
-	now              func() time.Time
-	newID            IDGenerator
-	accessLease      time.Duration
-	agentAPIEndpoint string
-	callbackIngress  ports.CallbackIngress
-	automationFacts  []ports.AutomationFactSource
+	sandboxPaths      ports.SandboxPathInspector
+	directoryBrowser  ports.DirectoryBrowser
+	directoryDefaults ports.DirectoryDefaults
+	store             Store
+	providers         ports.ProviderRegistry
+	workspaceHost     ports.WorkspaceHost
+	historySources    ports.HistorySourceRegistry
+	shellHost         ports.ShellHost
+	programHost       ports.ProgramHost
+	now               func() time.Time
+	newID             IDGenerator
+	accessLease       time.Duration
+	agentAPIEndpoint  string
+	callbackIngress   ports.CallbackIngress
+	automationFacts   []ports.AutomationFactSource
 
 	graphInteractionMu sync.Mutex
 	graphInteractions  map[model.OperationID]bool
