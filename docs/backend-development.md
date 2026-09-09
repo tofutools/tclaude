@@ -1901,3 +1901,14 @@ confinement in place, including when native permission prompts are bypassed.
 Profiles and agent birth settings preserve their provider-specific values during
 offline import. Shared approval controls show the native choices and launch
 support explains their prompt behavior before launch.
+
+### Copilot native approval choices
+
+Copilot configurations and offline imports preserve `inherit`, `allow-tools`,
+and `yolo`. `inherit` emits no approval flags. `allow-tools` permits tool use and
+removes `ask_user` while retaining native path and URL checks. `yolo` emits the
+native flag plus `--no-ask-user`, removing those permission prompts as well.
+Launch support explains that without a host sandbox this does not provide OS
+confinement. Existing `automatic` remains equivalent to `allow-tools`, and
+`supervised` retains its no-override behavior. Fresh and continued launches use
+the selected policy; editing a saved profile retains the exact native choice.
