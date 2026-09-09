@@ -21,6 +21,10 @@ func importedProfileOptions(values map[string]any, desired model.DesiredConfigur
 		return &value
 	}
 	out := &model.ConfigurationOptions{Harness: text(desired.Harness), Model: text(desired.Model), Effort: text(desired.Effort), WorkingDirectory: text(desired.WorkingDirectory), Environment: desired.Environment}
+	if values["auto_compact_window"] != nil {
+		value, _ := importedAutoCompactWindow(values["auto_compact_window"])
+		out.AutoCompactWindow = &value
+	}
 	if values["peer_messaging"] != nil {
 		value, _ := importedPeerMessaging(values["peer_messaging"])
 		out.PeerMessaging = &value

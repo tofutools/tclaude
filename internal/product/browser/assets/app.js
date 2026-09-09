@@ -62,7 +62,7 @@ function edit(title,fields,save,{skipUnchanged=false}={}){
  attachFastModeControl($('editor-fields'));
  attachAutoReviewControl($('editor-fields'));
  attachAutoMemoryControl($('editor-fields'));
- attachPeerMessagingControl($('editor-fields'));
+ attachPeerMessagingControl($('editor-fields'));attachAutoCompactWindowControl($('editor-fields'));
  const readForm=()=>{const data=new FormData($('editor-form')),form=Object.fromEntries(data);for(const field of fields){if(field.type==='checkbox')form[field.name]=$('editor-form').elements.namedItem(field.name).checked;if(field.multiple)form[field.name]=data.getAll(field.name);if(field.environment||field.environmentSets||field.sandboxPolicies)form[field.name]=field.control.read();}return form};const initial=JSON.stringify(readForm());
  $('editor-form').onsubmit=async e=>{e.preventDefault();if(submitting)return;submitting=true;$('cancel').disabled=true;const submit=e.submitter;if(submit)submit.disabled=true;
   try{const form=readForm();if(skipUnchanged&&JSON.stringify(form)===initial){$('editor').close();return}for(const field of fields){if(field.sandboxSelection)form[field.name]=await field.control.read(form[field.name]);}const next=JSON.stringify(form,(_,value)=>value instanceof File?{name:value.name,size:value.size,modified:value.lastModified}:value);if(fingerprint!==next){fingerprint=next;submissionID=requestID()}form.requestID=submissionID;await save(form);await refresh();$('editor').close()}catch(error){showError(error)}finally{submitting=false;$('cancel').disabled=false;if(submit)submit.disabled=false}
@@ -76,6 +76,7 @@ function desiredFields(desired={}){return[
  {name:'model',label:'Model',value:desired.Model},
  {name:'host_sandbox',label:'Host sandbox profile',sandboxSelection:true,value:desired.HostSandbox||null},
  {name:'environment',label:'Environment — literal values for future launches',environment:true,value:desired.Environment||{}},
+ {name:'auto_compact_window',label:'Claude auto-compaction window (tokens, e.g. 450k)',value:desired.AutoCompactWindow||'',required:false},
  {name:'peer_messaging',label:'Claude native peer messaging',value:desired.PeerMessaging?'on':'',options:launchPeerMessagingChoices(),required:false},
  {name:'auto_memory',label:'Claude auto-memory',value:desired.AutoMemory?'on':'',options:launchAutoMemoryChoices(),required:false},
  {name:'auto_review',label:'Codex approval reviewer',value:desired.AutoReview?'on':'',options:launchAutoReviewChoices(),required:false},
@@ -87,7 +88,7 @@ function desiredFields(desired={}){return[
  {name:'sandbox',label:'Confinement',value:desired.Sandbox||'workspace_write',options:['read_only','workspace_write','unconfined']}
 ]}
 function validateConfigurationForm(form){if(form.effort&&!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(form.effort))throw new Error('Requested native effort must start with a letter or digit and contain at most 64 lowercase letters, digits, underscores or hyphens.');}
-function configuration(form){validateConfigurationForm(form);return{...(form.host_sandbox?{HostSandbox:form.host_sandbox}:{}),Environment:form.environment||{},Harness:form.harness,Model:form.model,Effort:form.effort,ToolGovernance:form.tool_governance||undefined,FastMode:form.fast_mode||undefined,AutoReview:form.auto_review==='on',AutoMemory:form.auto_memory==='on',PeerMessaging:form.peer_messaging==='on',WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
+function configuration(form){validateConfigurationForm(form);return{...(form.host_sandbox?{HostSandbox:form.host_sandbox}:{}),Environment:form.environment||{},Harness:form.harness,Model:form.model,Effort:form.effort,ToolGovernance:form.tool_governance||undefined,FastMode:form.fast_mode||undefined,AutoReview:form.auto_review==='on',AutoMemory:form.auto_memory==='on',PeerMessaging:form.peer_messaging==='on',AutoCompactWindow:form.auto_compact_window||'',WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
 async function startWithBrief(agent){
  const ref=agent.ConfigurationProfile;
  const saved=ref?await api(`/v2/configuration-profiles/${encodeURIComponent(ref.ProfileID)}?revision_id=${encodeURIComponent(ref.RevisionID)}`):null;
@@ -117,6 +118,7 @@ function agentRow(agent,groupID){
  if(display.Description)row.append(el('span',display.Description,'muted'));
  const execution=(snapshot.executions||[]).find(e=>e.id===agent.PrimaryExecutionID);
  row.append(el('span',execution?`${execution.state} · context ${execution.context_readiness}`:'offline','status'));
+ if(execution?.context_usage){const usage=execution.context_usage,meter=el('meter');meter.min=0;meter.max=100;meter.value=usage.UsedPercent;meter.setAttribute('aria-label','Context usage');meter.title=`${usage.UsedPercent.toFixed(1)}% of ${usage.EffectiveWindow.toLocaleString()} tokens · observed ${usage.ObservedAt}`;row.append(meter,el('span',`${Math.round(usage.UsedPercent)}% context · ${usage.EffectiveWindow.toLocaleString()} tokens`,'muted'));}
  row.append(el('span',`${agent.Desired.Harness} / ${agent.Desired.Model}`,'muted'));
  if(agent.ConfigurationProfile)row.append(el('span','Saved configuration revision','muted'));
  const actions=el('div',undefined,'actions');

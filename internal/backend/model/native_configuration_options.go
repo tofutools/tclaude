@@ -3,16 +3,17 @@ package model
 // NativeConfigurationOptions retains explicit provider choices. Nil fields
 // inherit from the lower-priority configuration.
 type NativeConfigurationOptions struct {
-	AutoReview     *bool           `json:",omitempty"`
-	AutoMemory     *bool           `json:",omitempty"`
-	PeerMessaging  *bool           `json:",omitempty"`
-	FastMode       *FastMode       `json:",omitempty"`
-	ToolGovernance *ToolGovernance `json:",omitempty"`
-	Harness        *string         `json:",omitempty"`
-	Model          *string         `json:",omitempty"`
-	Effort         *string         `json:",omitempty"`
-	Approval       *ApprovalMode   `json:",omitempty"`
-	Sandbox        *SandboxMode    `json:",omitempty"`
+	AutoReview        *bool              `json:",omitempty"`
+	AutoMemory        *bool              `json:",omitempty"`
+	PeerMessaging     *bool              `json:",omitempty"`
+	AutoCompactWindow *AutoCompactWindow `json:",omitempty"`
+	FastMode          *FastMode          `json:",omitempty"`
+	ToolGovernance    *ToolGovernance    `json:",omitempty"`
+	Harness           *string            `json:",omitempty"`
+	Model             *string            `json:",omitempty"`
+	Effort            *string            `json:",omitempty"`
+	Approval          *ApprovalMode      `json:",omitempty"`
+	Sandbox           *SandboxMode       `json:",omitempty"`
 }
 
 func (o *NativeConfigurationOptions) Apply(base DesiredConfiguration) DesiredConfiguration {
@@ -29,6 +30,7 @@ func (o *NativeConfigurationOptions) Apply(base DesiredConfiguration) DesiredCon
 			base.AutoReview = false
 			base.AutoMemory = false
 			base.PeerMessaging = false
+			base.AutoCompactWindow = ""
 		}
 		base.Harness = *o.Harness
 	}
@@ -37,6 +39,9 @@ func (o *NativeConfigurationOptions) Apply(base DesiredConfiguration) DesiredCon
 	}
 	if o.Effort != nil {
 		base.Effort = *o.Effort
+	}
+	if o.AutoCompactWindow != nil {
+		base.AutoCompactWindow = *o.AutoCompactWindow
 	}
 	if o.PeerMessaging != nil {
 		base.PeerMessaging = *o.PeerMessaging

@@ -542,7 +542,7 @@ func (s *Service) Observe(ctx context.Context, req ObserveRequest) (ObservationR
 		if factErr := s.appendAgentActivityFacts(settleCtx, updated, observation); factErr != nil {
 			return ObservationResult{}, factErr
 		}
-		return ObservationResult{Execution: updated, Observation: observation}, nil
+		return ObservationResult{Execution: s.projectExecutionContext(updated), Observation: observation}, nil
 	}
 	runtime, err := s.runtimeFor(ctx, execution)
 	if err != nil {
@@ -559,7 +559,7 @@ func (s *Service) Observe(ctx context.Context, req ObserveRequest) (ObservationR
 	if err = s.appendAgentActivityFacts(ctx, updated, observation); err != nil {
 		return ObservationResult{}, err
 	}
-	return ObservationResult{Execution: updated, Observation: observation}, nil
+	return ObservationResult{Execution: s.projectExecutionContext(updated), Observation: observation}, nil
 }
 
 func (s *Service) resetAgentActivityEpisodes(ctx context.Context, execution model.Execution, observedAt time.Time) error {
@@ -802,6 +802,9 @@ func (s *Service) Snapshot(ctx context.Context, req SnapshotRequest) (Snapshot, 
 	snapshot, err := s.store.Snapshot(ctx)
 	if err != nil {
 		return Snapshot{}, err
+	}
+	for i := range snapshot.Executions {
+		snapshot.Executions[i] = s.projectExecutionContext(snapshot.Executions[i])
 	}
 	return snapshot, nil
 }
@@ -1110,7 +1113,7 @@ func completionFromDisposition(operation model.Operation, execution model.Execut
 }
 
 func resolvedSpec(executionID model.ExecutionID, agentID model.AgentID, desired model.DesiredConfiguration, conversationID model.ConversationID) model.ResolvedExecutionSpec {
-	return model.ResolvedExecutionSpec{HostSandbox: model.CloneSandboxSelection(desired.HostSandbox), ExecutionID: executionID, Workload: model.ExecutionWorkloadHarness, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, Effort: desired.Effort, ToolGovernance: desired.ToolGovernance, FastMode: desired.FastMode, AutoReview: desired.AutoReview, AutoMemory: desired.AutoMemory, PeerMessaging: desired.PeerMessaging, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox, Environment: desired.Environment.Clone()}
+	return model.ResolvedExecutionSpec{HostSandbox: model.CloneSandboxSelection(desired.HostSandbox), ExecutionID: executionID, Workload: model.ExecutionWorkloadHarness, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, Effort: desired.Effort, ToolGovernance: desired.ToolGovernance, FastMode: desired.FastMode, AutoReview: desired.AutoReview, AutoMemory: desired.AutoMemory, PeerMessaging: desired.PeerMessaging, AutoCompactWindow: desired.AutoCompactWindow, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox, Environment: desired.Environment.Clone()}
 }
 
 func actionForOperation(kind model.OperationKind) model.Action {
@@ -1214,6 +1217,9 @@ func validateLaunchConfiguration(desired model.DesiredConfiguration) error {
 
 func validateConfigurationFields(desired model.DesiredConfiguration, partial bool) error {
 	if !partial || desired.Harness != "" {
+		if err := desired.AutoCompactWindow.Validate(desired.Harness); err != nil {
+			return fail(ErrInvalid, "%v", err)
+		}
 		if err := model.ValidatePeerMessaging(desired.PeerMessaging, desired.Harness); err != nil {
 			return fail(ErrInvalid, "%v", err)
 		}
@@ -1230,6 +1236,9 @@ func validateConfigurationFields(desired model.DesiredConfiguration, partial boo
 			return err
 		}
 	} else {
+		if err := desired.AutoCompactWindow.Validate("claude"); err != nil {
+			return fail(ErrInvalid, "%v", err)
+		}
 		if desired.FastMode != "" && desired.FastMode != model.FastModeOn && desired.FastMode != model.FastModeOff {
 			return fail(ErrInvalid, "unsupported fast mode %q", desired.FastMode)
 		}

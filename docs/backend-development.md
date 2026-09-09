@@ -2075,3 +2075,22 @@ isolate peer machines, and deny native ListAgents discovery. SendMessage remains
 available for in-harness subagent/team messaging. Enabling this option omits these
 added restrictions and leaves Claude's native settings in charge; it does not
 force native access. Saved options and offline v228 imports preserve explicit off.
+
+
+### Claude auto-compaction window and context meter
+
+Profiles and team members can specify Claude's compaction window in tokens, using
+v1 spellings such as `450000`, `450k`, or `0.5M`. Values normalize exactly to
+10,000–10,000,000 whole tokens. Blank profile fields inherit; an explicit blank
+team override clears an inherited window. Positive settings apply only to Claude.
+The admitted execution retains its selected window across restart, and native
+launches emit `CLAUDE_CODE_AUTO_COMPACT_WINDOW` only when a window was chosen.
+
+The roster's context meter uses Claude status-line observations from the bound
+primary session. Its denominator is the smaller of the native model window and
+the admitted compaction window. It rescales the native percentage rather than
+reconstructing context from cumulative usage. The last observation persists in
+provider evidence and is projected without query-time native IO. Missing or
+unresolved native context stays unknown; compaction/reset invalidates the old
+meter until a new native observation arrives. The observation time is shown in
+the meter's tooltip.
