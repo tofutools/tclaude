@@ -113,7 +113,7 @@ function renderGroupControls(snapshot,{host,el,button,edit,api,refresh,presentat
     {name:'harnesses',label:'Allowed harnesses, one per line (required for launch/configuration authority)',multiline:true,required:false,value:lines(prior.Harnesses)},
     {name:'models',label:'Allowed models, one per line (required for launch/configuration authority)',multiline:true,required:false,value:lines(prior.Models)},
     {name:'roots',label:'Working directory roots, one per line (required for launch/configuration authority)',multiline:true,required:false,value:lines(prior.WorkingDirectoryRoots)},
-    {name:'approvals',label:'Approval modes (required for launch/configuration authority)',multiple:true,required:false,value:prior.ApprovalModes||[],options:['supervised','automatic','deny']},
+    {name:'approvals',label:'Approval modes (required for launch/configuration authority)',multiple:true,required:false,value:prior.ApprovalModes||[],options:launchApprovalChoices()},
     {name:'host_policies',label:'Allowed sandbox profiles',sandboxPolicies:true,value:prior.HostSandboxProfiles||[]},
     {name:'environments',label:'Exact allowed launch environments',environmentSets:true,value:prior.Environments||[]},
     {name:'sandboxes',label:'Confinement modes (required for launch/configuration authority)',multiple:true,required:false,value:prior.SandboxModes||[],options:['read_only','workspace_write','unconfined']}

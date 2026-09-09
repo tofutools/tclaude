@@ -25,7 +25,7 @@ class AuthorityWorkspace {
   {name:'harnesses',label:'Allowed harnesses (one per line)',multiline:true,required:false,value:lines(b.Harnesses)},
   {name:'models',label:'Allowed models (one per line)',multiline:true,required:false,value:lines(b.Models)},
   {name:'roots',label:'Allowed working directory roots (one per line)',multiline:true,required:false,value:lines(b.WorkingDirectoryRoots)},
-  {name:'approvals',label:'Allowed approval modes',multiple:true,required:false,value:b.ApprovalModes||[],options:['supervised','automatic','deny']},
+  {name:'approvals',label:'Allowed approval modes',multiple:true,required:false,value:b.ApprovalModes||[],options:launchApprovalChoices()},
   {name:'host_policies',label:'Allowed sandbox profiles',sandboxPolicies:true,value:b.HostSandboxProfiles||[]},
   {name:'environments',label:'Exact allowed launch environments',environmentSets:true,value:b.Environments||[]},
   {name:'sandboxes',label:'Allowed confinement modes',multiple:true,required:false,value:b.SandboxModes||[],options:['read_only','workspace_write','unconfined']}
