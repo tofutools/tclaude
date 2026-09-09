@@ -62,7 +62,7 @@ func TestBrowserConfigurationTransferPreviewsRenamesAndRetries(t *testing.T) {
 	require.True(t, page.MustEval(`() => {const e=new Event('beforeunload',{cancelable:true});window.dispatchEvent(e);return e.defaultPrevented}`).Bool())
 	page.MustElementR("dialog[aria-label='Import configurations'] button", "^Preview$").MustClick()
 	page.MustElement("[aria-label='Import action for Original']").MustSelect("Replace exact configuration")
-	page.MustElement("[aria-label='Replace target for Original']").MustSelect("Original · original · revision 1")
+	page.MustElement("[aria-label='Replace target for Original']").MustSelect("Original · Enabled · original · revision 1")
 	page.MustElement("[aria-label='Import name for Original']").MustSelectAllText().MustInput("Replaced original")
 	page.MustElementR("dialog[aria-label='Import configurations'] button", "^Import selected$").MustClick()
 	page.MustWait(`() => !document.querySelector('dialog[aria-label="Import configurations"]')`)
