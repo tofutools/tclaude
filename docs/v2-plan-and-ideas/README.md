@@ -1,8 +1,13 @@
-# Incremental architecture design for tclaude
+# Exploring possible refactors of tclaude
 
-**Status: proposal for discussion.** This is a living design for gradually
-refactoring the working `main` branch. “v2” names a direction, not another
-replacement product. No implementation in this plan is implied to be complete.
+**Status: exploration — not a decided plan to implement.** This directory
+collects possible refactors of tclaude, lessons, diagrams and open questions for
+discussion. It does not establish an active roadmap, an approved architecture,
+or a commitment to implement any proposal. The `v2` directory name does not
+announce a new product version.
+
+Ideas may be changed, rejected or left unexplored. Any work selected for
+implementation must be agreed and tracked separately in AWB.
 
 Initial source snapshot: `a976aef8e53788a0a9e78575ffad2346b5df4e63`
 (9 September 2026). Re-check current code before starting an increment.
@@ -15,11 +20,11 @@ rediscovering the same rules in several subsystems. Preserve the working
 product while moving each responsibility to one clear owner.
 
 The previous replacement effort produced useful knowledge and tests, but its
-architectural milestone did not prove full product coverage. This plan avoids
-that gap by migrating actual callers and removing their old implementations
-inside bounded, independently useful changes.
+architectural milestone did not prove full product coverage. One approach explored
+here is to migrate actual callers and remove their old implementations inside
+bounded, independently useful changes. That approach is a candidate for discussion.
 
-## Read the design
+## Explore the ideas
 
 | Lens | Central question | Document |
 |---|---|---|
@@ -47,7 +52,7 @@ flowchart LR
     H --> B
 ```
 
-## Highest-value directions
+## Potential high-value directions
 
 1. **Configuration resolution:** centralize precedence, presence and provenance;
    retain differences between ordinary spawn and team-member policies.
@@ -79,7 +84,8 @@ older convention of keeping all planning outside the repository.
 
 ## How to maintain it
 
-Mark claims **current**, **proposed**, **accepted direction**, or **unresolved**.
+Distinguish **current behavior**, **ideas**, **discussion constraints**, and
+**unresolved questions**. A recorded preference is not implementation approval.
 Keep diagrams honest about whether they describe the present or a target. Each
 new proposal needs a current pain, an actual caller, a migration/removal path,
 and a way to check the benefit. Once implemented, replace speculative text
