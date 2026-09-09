@@ -261,7 +261,7 @@ async function renderConfigurations(){
  row.append(button('Clear '+name,async id=>{const harnesses={...(defaults.Harnesses||{})};delete harnesses[name];await api('/v2/configuration-defaults',{request_id:id,expected_revision:defaults.Revision,global:name==='global'?null:defaults.Global,harnesses});await renderConfigurations()}));card.append(row)}list.append(card)}
  const shown=entries.filter(p=>configurationStatus==='all'||Boolean(p.Archived)===(configurationStatus==='archived'));
  for(const profile of shown){
-  const card=el('article',undefined,'card');card.append(el('strong',profile.Name),el('p',`Revision ${profile.Revision}`,'muted'));
+  const card=el('article',undefined,'card');card.append(el('strong',profile.Name),el('p',`Revision ${profile.Revision}`,'muted'));if(profile.Aliases?.length)card.append(el('p','Aliases: '+profile.Aliases.join(', '),'muted'));
   card.append(button('Inspect saved revision',async()=>{const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);let detail=card.querySelector('pre');if(!detail){detail=el('pre');card.append(detail)}detail.textContent=JSON.stringify(selected.Revision,null,2)}));
   if(profile.Archived){card.append(el('p','Archived · existing agents retain their pinned settings.','muted'),button('Restore configuration',async id=>{await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}/archive`,{request_id:id,expected_revision:profile.Revision,archived:false});await renderConfigurations()}));list.append(card);continue}
   card.append(el('p',profile.Disabled?'Disabled for new agents':'Enabled for new agents','muted'));
@@ -275,8 +275,8 @@ async function renderConfigurations(){
    edit('Create agent from configuration',[{name:'name',label:'Agent name',value:selected.Revision.Startup?.AgentName||profile.Name},...displayLabelFields(selected.Revision.Startup)],f=>api('/v2/agents',{id:f.requestID,name:f.name,labels:{Role:f.role_label,Description:f.description},configuration_profile:selected.Revision.Ref}));
   }),button('Edit configuration',async()=>{
    const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
-   edit('Save new configuration revision',[...desiredFields({...selected.Revision.Desired,name:profile.Name}),...startupFields(selected.Revision.Startup)],async f=>{
-    await api('/v2/configuration-profiles',{request_id:f.requestID,id:profile.ID,revision_id:f.requestID,expected_revision:profile.Revision,name:f.name,desired:configuration(f),startup:profileStartup(f)});await renderConfigurations();
+   edit('Save new configuration revision',[...desiredFields({...selected.Revision.Desired,name:profile.Name}),...profileAliasFields(profile.Aliases),...startupFields(selected.Revision.Startup)],async f=>{
+    await api('/v2/configuration-profiles',{request_id:f.requestID,id:profile.ID,revision_id:f.requestID,expected_revision:profile.Revision,name:f.name,desired:configuration(f),startup:profileStartup(f),aliases:profileAliases(f)});await renderConfigurations();
    });
   }),button('Use as default',async()=>{
    const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
@@ -288,9 +288,11 @@ async function renderConfigurations(){
  }
  if(!shown.length)list.append(el('p','No '+configurationStatus+' configurations. Archived revisions remain available for inspection and restoration.'));
 }
+function profileAliasFields(aliases=[]){return[{name:'aliases',label:'Aliases (one per line)',multiline:true,required:false,value:aliases.join('\n')}]}
+function profileAliases(form){return form.aliases===undefined?undefined:form.aliases.split(/\r?\n/).map(v=>v.trim()).filter(Boolean)}
 function saveConfigurationDraft(desired={},startup={}){
- edit('Save configuration',[...desiredFields(desired),...startupFields(startup)],async f=>{
-  await api('/v2/configuration-profiles',{request_id:f.requestID,id:f.requestID,revision_id:f.requestID,name:f.name,desired:configuration(f),startup:profileStartup(f)});await renderConfigurations();
+ edit('Save configuration',[...desiredFields(desired),...profileAliasFields(),...startupFields(startup)],async f=>{
+  await api('/v2/configuration-profiles',{request_id:f.requestID,id:f.requestID,revision_id:f.requestID,name:f.name,desired:configuration(f),startup:profileStartup(f),aliases:profileAliases(f)});await renderConfigurations();
  });
 }
 $('new-configuration').onclick=()=>saveConfigurationDraft();

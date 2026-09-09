@@ -108,11 +108,12 @@ func (h *Handler) registerConfigurationCatalog(catalog app.ConfigurationCatalogA
 			Name             string                               `json:"name"`
 			Desired          model.DesiredConfiguration           `json:"desired"`
 			Startup          *model.ProfileStartup                `json:"startup"`
+			Aliases          *[]string                            `json:"aliases"`
 		}
 		if !decodeRequest(w, r, &body) {
 			return
 		}
-		result, err := catalog.SaveConfigurationProfile(r.Context(), app.SaveConfigurationProfileRequest{Context: body.context(principal), ID: body.ID, RevisionID: body.RevisionID, ExpectedRevision: body.ExpectedRevision, Name: body.Name, Desired: body.Desired, Startup: body.Startup})
+		result, err := catalog.SaveConfigurationProfile(r.Context(), app.SaveConfigurationProfileRequest{Context: body.context(principal), ID: body.ID, RevisionID: body.RevisionID, ExpectedRevision: body.ExpectedRevision, Name: body.Name, Desired: body.Desired, Startup: body.Startup, Aliases: body.Aliases})
 		if err != nil {
 			applicationError(w, err)
 			return
@@ -125,6 +126,18 @@ func (h *Handler) registerConfigurationCatalog(catalog app.ConfigurationCatalogA
 			return
 		}
 		result, err := catalog.ListConfigurationProfiles(r.Context(), principal)
+		if err != nil {
+			applicationError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+	})
+	h.mux.HandleFunc("GET /v2/configuration-profiles/resolve/{name}", func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := h.caller(w, r)
+		if !ok {
+			return
+		}
+		result, err := catalog.ResolveConfigurationProfile(r.Context(), principal, r.PathValue("name"))
 		if err != nil {
 			applicationError(w, err)
 			return

@@ -22,7 +22,7 @@ func TestConfigurationTransferAtomicCASArchiveAndRetry(t *testing.T) {
 	desired := model.DesiredConfiguration{Harness: "claude", Model: "fixture", WorkingDirectory: "/tmp", Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}
 	existing, err := service.SaveConfigurationProfile(ctx, app.SaveConfigurationProfileRequest{Context: app.RequestContext{Principal: operator, RequestID: "original"}, ID: "existing", RevisionID: "original", Name: "Existing", Desired: desired})
 	require.NoError(t, err)
-	bundle := app.ConfigurationBundle{Format: app.ConfigurationBundleFormat, Version: 1, Profiles: []app.ConfigurationBundleEntry{{Key: "a", Name: "First", Desired: desired, Startup: &model.ProfileStartup{Context: "Retained", InitialMessage: "Start here"}, Archived: true, Disabled: true, DisabledReason: "Maintenance"}, {Key: "b", Name: "Second", Desired: desired}}}
+	bundle := app.ConfigurationBundle{Format: app.ConfigurationBundleFormat, Version: 1, Profiles: []app.ConfigurationBundleEntry{{Key: "a", Name: "First", Desired: desired, Startup: &model.ProfileStartup{Context: "Retained", InitialMessage: "Start here"}, Archived: true, Disabled: true, DisabledReason: "Maintenance", Aliases: []string{"reviewer"}}, {Key: "b", Name: "Second", Desired: desired}}}
 	req := app.ImportConfigurationsRequest{Context: app.RequestContext{Principal: operator, RequestID: "batch"}, Bundle: bundle, Selections: []app.ConfigurationImportSelection{{Key: "a", ID: "copy", RevisionID: "copy_one", Name: "Renamed"}, {Key: "b", ID: "existing", RevisionID: "update", ExpectedRevision: 2, Name: "Updated"}}}
 	_, err = service.ImportConfigurations(ctx, req)
 	require.ErrorIs(t, err, app.ErrConflict)
@@ -33,6 +33,7 @@ func TestConfigurationTransferAtomicCASArchiveAndRetry(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, result.Profiles, 2)
 	require.True(t, result.Profiles[0].Profile.Archived)
+	require.Equal(t, []string{"reviewer"}, result.Profiles[0].Profile.Aliases)
 	require.True(t, result.Profiles[0].Profile.Disabled)
 	require.Equal(t, "Maintenance", result.Profiles[0].Profile.DisabledReason)
 	require.Equal(t, "Start here", result.Profiles[0].Revision.Startup.InitialMessage)

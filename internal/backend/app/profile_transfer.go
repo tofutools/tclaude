@@ -21,6 +21,7 @@ type ConfigurationBundle struct {
 	Profiles []ConfigurationBundleEntry `json:"profiles"`
 }
 type ConfigurationBundleEntry struct {
+	Aliases        []string                   `json:"aliases,omitempty"`
 	Disabled       bool                       `json:"disabled,omitempty"`
 	DisabledReason string                     `json:"disabled_reason,omitempty"`
 	Key            string                     `json:"key"`
@@ -30,6 +31,7 @@ type ConfigurationBundleEntry struct {
 	Archived       bool                       `json:"archived"`
 }
 type ConfigurationImportSelection struct {
+	Aliases          *[]string                            `json:"aliases,omitempty"`
 	Key              string                               `json:"key"`
 	ID               model.ConfigurationProfileID         `json:"id"`
 	RevisionID       model.ConfigurationProfileRevisionID `json:"revision_id"`
@@ -79,6 +81,11 @@ func (s *Service) InspectConfigurationBundle(_ context.Context, principal model.
 		if len(entry.DisabledReason) > 1024 || !utf8.ValidString(entry.DisabledReason) || strings.ContainsRune(entry.DisabledReason, 0) {
 			return ConfigurationBundle{}, ErrInvalid
 		}
+		aliases, err := normalizeConfigurationAliases(entry.Name, entry.Aliases)
+		if err != nil {
+			return ConfigurationBundle{}, err
+		}
+		entry.Aliases = aliases
 		seen[entry.Key] = true
 		for _, text := range []string{entry.Desired.Harness, entry.Desired.Model, entry.Desired.WorkingDirectory} {
 			if !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
@@ -115,7 +122,11 @@ func (s *Service) ImportConfigurations(ctx context.Context, req ImportConfigurat
 			return ConfigurationImportResult{}, ErrInvalid
 		}
 		keys[selected.Key], targets[selected.ID] = true, true
-		w, err := prepareConfigurationProfile(SaveConfigurationProfileRequest{Context: req.Context, ID: selected.ID, RevisionID: selected.RevisionID, ExpectedRevision: selected.ExpectedRevision, Name: selected.Name, Desired: entry.Desired, Startup: entry.Startup}, s.now())
+		aliases := entry.Aliases
+		if selected.Aliases != nil {
+			aliases = *selected.Aliases
+		}
+		w, err := prepareConfigurationProfile(SaveConfigurationProfileRequest{Context: req.Context, ID: selected.ID, RevisionID: selected.RevisionID, ExpectedRevision: selected.ExpectedRevision, Name: selected.Name, Desired: entry.Desired, Startup: entry.Startup, Aliases: &aliases}, s.now())
 		if err != nil {
 			return ConfigurationImportResult{}, err
 		}

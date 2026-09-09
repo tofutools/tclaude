@@ -30,6 +30,7 @@ type ConfigurationProfileRequestStore interface {
 }
 
 type ConfigurationProfileWrite struct {
+	AliasesSet         bool
 	Profile            model.ConfigurationProfile
 	Revision           model.ConfigurationProfileRevision
 	ExpectedRevision   model.Revision
@@ -44,6 +45,7 @@ type ConfigurationProfileResult struct {
 }
 
 type SaveConfigurationProfileRequest struct {
+	Aliases          *[]string
 	Startup          *model.ProfileStartup
 	Context          RequestContext
 	ID               model.ConfigurationProfileID
@@ -54,6 +56,7 @@ type SaveConfigurationProfileRequest struct {
 }
 
 type ConfigurationCatalogAPI interface {
+	ResolveConfigurationProfile(context.Context, model.Principal, string) (ConfigurationProfileResult, error)
 	SetConfigurationProfileAvailability(context.Context, SetConfigurationProfileAvailabilityRequest) (model.ConfigurationProfile, error)
 	SetConfigurationProfileArchived(context.Context, SetConfigurationProfileArchivedRequest) (model.ConfigurationProfile, error)
 	SaveConfigurationDefaults(context.Context, SaveConfigurationDefaultsRequest) (model.ConfigurationDefaults, error)
@@ -105,6 +108,15 @@ func prepareConfigurationProfile(req SaveConfigurationProfileRequest, at time.Ti
 			req.Startup = &startup
 		}
 	}
+	var aliases []string
+	if req.Aliases != nil {
+		var err error
+		aliases, err = normalizeConfigurationAliases(req.Name, *req.Aliases)
+		if err != nil {
+			return ConfigurationProfileWrite{}, err
+		}
+		req.Aliases = &aliases
+	}
 	payload, _ := json.Marshal(req.Desired)
 	// Preserve the original content hash for profiles with no startup suggestions.
 	if req.Startup != nil {
@@ -121,11 +133,13 @@ func prepareConfigurationProfile(req SaveConfigurationProfileRequest, at time.Ti
 		Desired    model.DesiredConfiguration
 		Expected   model.Revision
 		Startup    *model.ProfileStartup `json:",omitempty"`
-	}{req.ID, req.RevisionID, req.Name, req.Desired, req.ExpectedRevision, req.Startup})
+		Aliases    *[]string             `json:",omitempty"`
+	}{req.ID, req.RevisionID, req.Name, req.Desired, req.ExpectedRevision, req.Startup, req.Aliases})
 	fingerprint := sha256.Sum256(input)
 	now := at.UTC()
 	return ConfigurationProfileWrite{
-		Profile:          model.ConfigurationProfile{ID: req.ID, Name: req.Name, CurrentRevisionID: req.RevisionID},
+		AliasesSet:       req.Aliases != nil,
+		Profile:          model.ConfigurationProfile{Aliases: aliases, ID: req.ID, Name: req.Name, CurrentRevisionID: req.RevisionID},
 		Revision:         model.ConfigurationProfileRevision{Ref: model.ConfigurationProfileRef{ProfileID: req.ID, RevisionID: req.RevisionID, ContentHash: hex.EncodeToString(digest[:])}, Desired: req.Desired, Startup: req.Startup, CreatedAt: now},
 		ExpectedRevision: req.ExpectedRevision, RequestID: req.Context.RequestID, RequestFingerprint: hex.EncodeToString(fingerprint[:]), At: now,
 	}, nil
