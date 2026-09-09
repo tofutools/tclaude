@@ -356,6 +356,14 @@ func authorizeTx(ctx context.Context, q queryer, request model.AuthorityRequest,
 	if denied, matched, err := deniedAuthority(ctx, q, subject, request); err != nil || matched {
 		return denied, err
 	}
+	if proof := request.SpawnLineage; proof != nil && proof.Atomic && (request.Action == model.ActionCreateGroupMember || request.Action == model.ActionLaunch) {
+		combined := request
+		combined.Action = model.ActionSpawnGroupMember
+		if denied, matched, err := deniedAuthority(ctx, q, subject, combined); err != nil || matched {
+			denied.Action, denied.Resource = request.Action, request.Resource
+			return denied, err
+		}
+	}
 	if defaultAuthority(request.Principal, request.Action, request.Resource) && request.RequestedConfiguration == nil && request.RequestedEnvironment == nil && request.RequestedHostSandbox == nil {
 		decision.Allowed, decision.SourceKind, decision.SourceID = true, model.AuthorityDefault, "execution_self"
 		return decision, nil
@@ -371,7 +379,7 @@ func authorizeTx(ctx context.Context, q queryer, request model.AuthorityRequest,
 			rows.Close()
 			return decision, err
 		}
-		if (grant.ExpiresAt == nil || at.Before(*grant.ExpiresAt)) && resourceMatches(ctx, q, request.Principal, grant.Resource, request.Resource) && requestedBoundsMatch(grant.Bounds, request) && grantScopeMatches(ctx, q, grant.Scope, request) {
+		if (grant.ExpiresAt == nil || at.Before(*grant.ExpiresAt)) && resourceMatches(ctx, q, request.Principal, grant.Resource, request.Resource) && (requestedBoundsMatch(grant.Bounds, request) || atomicSpawnBoundsMatch(ctx, q, grant.Bounds, request)) && grantScopeMatches(ctx, q, grant.Scope, request) {
 			rows.Close()
 			return model.AuthorityDecision{Allowed: true, Action: request.Action, Resource: request.Resource, SourceKind: model.AuthorityDirect, SourceID: string(grant.ID), Revision: grant.Revision, Bounds: grant.Bounds}, nil
 		}
@@ -403,11 +411,25 @@ func authorizeTx(ctx context.Context, q queryer, request model.AuthorityRequest,
 		if err := json.Unmarshal(actions, &roleActions); err != nil {
 			return decision, err
 		}
-		if slices.Contains(roleActions, request.Action) && resourceMatches(ctx, q, request.Principal, assignment.Resource, request.Resource) && (requestedBoundsMatch(assignment.Bounds, request) || ownerSpawnLineageMatches(ctx, q, assignment, request)) {
+		if slices.Contains(roleActions, request.Action) && resourceMatches(ctx, q, request.Principal, assignment.Resource, request.Resource) && (requestedBoundsMatch(assignment.Bounds, request) || atomicSpawnBoundsMatch(ctx, q, assignment.Bounds, request) || ownerSpawnLineageMatches(ctx, q, assignment, request)) {
 			return model.AuthorityDecision{Allowed: true, Action: request.Action, Resource: request.Resource, SourceKind: model.AuthorityRole, SourceID: string(assignment.RoleID), Revision: max(assignment.Revision, roleRevision), Bounds: assignment.Bounds}, nil
 		}
 	}
-	return decision, rows.Err()
+	if err := rows.Err(); err != nil {
+		return decision, err
+	}
+	if err := rows.Close(); err != nil {
+		return decision, err
+	}
+	if proof := request.SpawnLineage; proof != nil && proof.Atomic && (request.Action == model.ActionCreateGroupMember || request.Action == model.ActionLaunch) && currentSpawnLineage(ctx, q, request) {
+		combined := request
+		combined.Action = model.ActionSpawnGroupMember
+		combined.Resource = model.ResourceSelector{Kind: model.ResourceGroup, GroupID: proof.GroupID}
+		granted, err := authorizeTx(ctx, q, combined, at)
+		granted.Action, granted.Resource = request.Action, request.Resource
+		return granted, err
+	}
+	return decision, nil
 }
 
 func authoritySubject(ctx context.Context, q queryer, principal model.Principal, at time.Time) (model.AuthoritySubject, error) {

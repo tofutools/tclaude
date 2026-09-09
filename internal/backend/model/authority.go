@@ -24,6 +24,7 @@ const (
 	ActionReactivateAgent      Action = "agent.reactivate"
 	ActionManageMembership     Action = "group.membership.manage"
 	ActionCreateGroupMember    Action = "group.members.create"
+	ActionSpawnGroupMember     Action = "group.members.spawn"
 	ActionDisbandGroup         Action = "group.disband"
 	ActionReadAttachment       Action = "attachment.read"
 	ActionReadHistory          Action = "history.read"
@@ -195,8 +196,8 @@ type AutomationDelegation struct {
 
 // ConfigurationBounds are an allow-list, not advisory metadata. Delegated
 // launch/configuration authority must match every populated dimension. Empty
-// bounds grant no configuration-bearing effect; operator authority is the only
-// unbounded case.
+// bounds grant no ordinary configuration-bearing effect. Delegated member
+// spawning instead requires application-produced running-parent lineage.
 type ConfigurationBounds struct {
 	// AutoReview permits an explicit native classifier approval opt-in. Older grants do not grant it.
 	AutoReview bool `json:",omitempty"`

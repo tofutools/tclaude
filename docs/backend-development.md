@@ -2012,6 +2012,24 @@ publication and launch release. The original policy comparison is persisted with
 creation and launch receipts so an exact retry does not reinterpret edited
 profile defaults; revoked authority or a stopped parent still prevents replay.
 
+### Atomic member spawning
+
+`group.members.spawn` grants creation plus the new member's first launch as one
+transaction. It can target a group or all resources and does not require the
+caller to own or already belong to that group. It grants neither offline-only
+creation nor launch/restart of an existing agent. The caller must have a current
+running execution; provider-classified approval and confinement limit the child.
+Explicit configuration bounds, when present, still apply. Creation, launch and
+spawn denials remain effective. Admission and release recheck current grants and
+parent state, and exact committed retries retain their original launch intent.
+
+Named grant constraints are stored separately from configuration allow-lists.
+Group constraints use the current group name; target-agent constraints use the
+actual target identity. Dimensions are conjunctive, alternatives within a
+dimension are disjunctive, and a missing action-context dimension never matches.
+The Access view displays named constraints and preserves them during ordinary
+grant edits.
+
 ### Partial reusable configuration profiles
 
 A reusable configuration may store `options` instead of a complete `desired`
