@@ -41,7 +41,7 @@ func (s *Store) initialize(ctx context.Context) error {
 		return err
 	}
 	if err := s.executeSchema(ctx, schema, shellRequestSchema+groupCloneSchema+groupDisbandSchema,
-		groupCapacitySchema, groupDetailsSchema, groupConfigurationSchema, groupHierarchySchema,
+		groupCapacitySchema, groupDetailsSchema, groupConfigurationSchema, workspaceRemovalSchema, groupHierarchySchema,
 		terminalFileSchema, processSnippetSchema, presentationSchema); err != nil {
 		return fmt.Errorf("initialize replacement backend schema: %w", err)
 	}
@@ -767,6 +767,9 @@ func (s *Store) UpdateAgent(ctx context.Context, id model.AgentID, expected mode
 	if affected, _ := result.RowsAffected(); affected != 1 {
 		return model.Agent{}, app.ErrConflict
 	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_workspaces WHERE agent_id=? AND working_directory<>?`, id, desired.WorkingDirectory); err != nil {
+		return model.Agent{}, err
+	}
 	if err := bumpTx(ctx, tx); err != nil {
 		return model.Agent{}, err
 	}
@@ -961,6 +964,9 @@ func (s *Store) AdmitLaunch(ctx context.Context, in app.LaunchAdmission) (app.Ad
 		return app.AdmissionResult{}, err
 	}
 	if err := insertExecution(ctx, tx, in.Execution); err != nil {
+		return app.AdmissionResult{}, err
+	}
+	if err := admitAgentWorkspaceUseTx(ctx, tx, in); err != nil {
 		return app.AdmissionResult{}, err
 	}
 	if err := insertOperation(ctx, tx, in.Operation); err != nil {
@@ -1272,24 +1278,36 @@ func (s *Store) RecoverableExecutions(ctx context.Context) ([]model.Execution, e
 }
 
 func (s *Store) RecordRecovery(ctx context.Context, id model.ExecutionID, state model.ExecutionState, native *model.NativeConversationEvidence, evidence model.ProviderEvidence, at time.Time) (model.Execution, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return model.Execution{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
 	var namespace, reference string
 	var observed any
 	if native != nil {
 		namespace, reference, observed = native.Namespace, native.Reference, nanos(native.ObservedAt)
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE executions SET state=CASE WHEN state IN (?,?) THEN state ELSE ? END,evidence_provider=CASE WHEN state IN (?,?) OR ?='' THEN evidence_provider ELSE ? END,evidence_version=CASE WHEN state IN (?,?) OR ?='' THEN evidence_version ELSE ? END,evidence_payload=CASE WHEN state IN (?,?) OR ?='' THEN evidence_payload ELSE ? END,native_namespace=CASE WHEN state IN (?,?) OR ?='' THEN native_namespace ELSE ? END,native_reference=CASE WHEN state IN (?,?) OR ?='' THEN native_reference ELSE ? END,native_observed_at=CASE WHEN state IN (?,?) OR ?='' THEN native_observed_at ELSE ? END,revision=revision+1,updated_at=? WHERE id=?`, model.ExecutionExited, model.ExecutionFailed, state, model.ExecutionExited, model.ExecutionFailed, evidence.Provider, evidence.Provider, model.ExecutionExited, model.ExecutionFailed, evidence.Provider, evidence.Version, model.ExecutionExited, model.ExecutionFailed, evidence.Provider, evidence.Payload, model.ExecutionExited, model.ExecutionFailed, reference, namespace, model.ExecutionExited, model.ExecutionFailed, reference, reference, model.ExecutionExited, model.ExecutionFailed, reference, observed, nanos(at), id)
+	_, err = tx.ExecContext(ctx, `UPDATE executions SET state=CASE WHEN state IN (?,?) THEN state ELSE ? END,evidence_provider=CASE WHEN state IN (?,?) OR ?='' THEN evidence_provider ELSE ? END,evidence_version=CASE WHEN state IN (?,?) OR ?='' THEN evidence_version ELSE ? END,evidence_payload=CASE WHEN state IN (?,?) OR ?='' THEN evidence_payload ELSE ? END,native_namespace=CASE WHEN state IN (?,?) OR ?='' THEN native_namespace ELSE ? END,native_reference=CASE WHEN state IN (?,?) OR ?='' THEN native_reference ELSE ? END,native_observed_at=CASE WHEN state IN (?,?) OR ?='' THEN native_observed_at ELSE ? END,revision=revision+1,updated_at=? WHERE id=?`, model.ExecutionExited, model.ExecutionFailed, state, model.ExecutionExited, model.ExecutionFailed, evidence.Provider, evidence.Provider, model.ExecutionExited, model.ExecutionFailed, evidence.Provider, evidence.Version, model.ExecutionExited, model.ExecutionFailed, evidence.Provider, evidence.Payload, model.ExecutionExited, model.ExecutionFailed, reference, namespace, model.ExecutionExited, model.ExecutionFailed, reference, reference, model.ExecutionExited, model.ExecutionFailed, reference, observed, nanos(at), id)
 	if err != nil {
 		return model.Execution{}, err
 	}
 	if state == model.ExecutionExited || state == model.ExecutionFailed {
-		if _, err := s.db.ExecContext(ctx, `UPDATE execution_accesses SET state=?,revoked_at=?,revision=revision+1 WHERE execution_id=? AND state NOT IN (?,?)`, model.ExecutionAccessRevoked, nanos(at), id, model.ExecutionAccessRevoked, model.ExecutionAccessExpired); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE execution_accesses SET state=?,revoked_at=?,revision=revision+1 WHERE execution_id=? AND state NOT IN (?,?)`, model.ExecutionAccessRevoked, nanos(at), id, model.ExecutionAccessRevoked, model.ExecutionAccessExpired); err != nil {
+			return model.Execution{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE workspace_uses SET released_at=? WHERE execution_id=? AND work_run_id='' AND released_at IS NULL`, nanos(at), id); err != nil {
 			return model.Execution{}, err
 		}
 	}
-	if err = s.bump(ctx); err != nil {
+	if err = bumpTx(ctx, tx); err != nil {
 		return model.Execution{}, err
 	}
-	return s.Execution(ctx, id)
+	execution, err := executionTx(ctx, tx, id)
+	if err != nil {
+		return model.Execution{}, err
+	}
+	return execution, tx.Commit()
 }
 
 func (s *Store) Continuation(ctx context.Context, agentID model.AgentID, conversationID model.ConversationID, expected model.Revision) (app.ContinuationRecord, error) {

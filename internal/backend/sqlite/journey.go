@@ -331,9 +331,17 @@ func (s *Store) AdmitWorkspaceEffect(ctx context.Context, in app.WorkspaceEffect
 		return app.WorkspaceEffectAdmissionResult{}, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if in.Operation.Kind == model.OperationRemoveWorkspace && in.Removal == nil {
+		in.Removal = &app.RemoveCheckoutRequest{Context: app.RequestContext{Principal: in.Operation.Principal, RequestID: in.Operation.RequestID}, WorkspaceID: in.Workspace.ID, ExpectedRevision: in.Workspace.Revision}
+	}
 	if repeated, ok, err := resourceAdmissionByRequest(ctx, tx, in.Operation, in.Workspace); err != nil {
 		return app.WorkspaceEffectAdmissionResult{}, err
 	} else if ok {
+		if in.Removal != nil {
+			if err := checkWorkspaceRemovalIntent(ctx, tx, repeated.Operation.ID, *in.Removal); err != nil {
+				return app.WorkspaceEffectAdmissionResult{}, err
+			}
+		}
 		_ = tx.Commit()
 		return repeated, nil
 	}
@@ -343,6 +351,26 @@ func (s *Store) AdmitWorkspaceEffect(ctx context.Context, in app.WorkspaceEffect
 			err = app.ErrUnauthorized
 		}
 		return app.WorkspaceEffectAdmissionResult{}, err
+	}
+	// Reserve removal in the same transaction that excludes new execution uses.
+	if in.Operation.Kind == model.OperationRemoveWorkspace {
+		if err := requireNoWorkspaceRemovalTx(ctx, tx, in.Workspace.ID); err != nil {
+			return app.WorkspaceEffectAdmissionResult{}, err
+		}
+		var uses int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_uses WHERE workspace_id=? AND released_at IS NULL`, in.Workspace.ID).Scan(&uses); err != nil {
+			return app.WorkspaceEffectAdmissionResult{}, err
+		}
+		if uses != 0 {
+			return app.WorkspaceEffectAdmissionResult{}, app.ErrConflict
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE workspaces SET state=?,revision=revision+1,updated_at=? WHERE id=? AND revision=? AND state=?`, model.WorkspacePending, nanos(in.Operation.CreatedAt), in.Workspace.ID, in.Workspace.Revision, model.WorkspaceAvailable)
+		if err != nil {
+			return app.WorkspaceEffectAdmissionResult{}, err
+		}
+		if n, _ := result.RowsAffected(); n != 1 {
+			return app.WorkspaceEffectAdmissionResult{}, app.ErrConflict
+		}
 	}
 	var existingWorkspace model.WorkspaceID
 	if err := tx.QueryRowContext(ctx, `SELECT id FROM workspaces WHERE id=?`, in.Workspace.ID).Scan(&existingWorkspace); err != nil {
@@ -366,6 +394,11 @@ func (s *Store) AdmitWorkspaceEffect(ctx context.Context, in app.WorkspaceEffect
 	}
 	if err := bumpTx(ctx, tx); err != nil {
 		return app.WorkspaceEffectAdmissionResult{}, err
+	}
+	if in.Removal != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO workspace_removal_intents(operation_id,expected_revision,destructive) VALUES(?,?,?)`, in.Operation.ID, in.Removal.ExpectedRevision, in.Removal.Destructive); err != nil {
+			return app.WorkspaceEffectAdmissionResult{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return app.WorkspaceEffectAdmissionResult{}, err
@@ -596,6 +629,17 @@ func (s *Store) CreateWorkRun(ctx context.Context, run model.WorkRun, claim *mod
 		}
 	}
 	if run.WorkspaceUseID != "" {
+		var state model.WorkspaceState
+		var revision model.Revision
+		if err := tx.QueryRowContext(ctx, `SELECT state,revision FROM workspaces WHERE id=?`, run.Spec.WorkspaceID).Scan(&state, &revision); err != nil {
+			return model.WorkRun{}, false, classify(err)
+		}
+		if state != model.WorkspaceAvailable || revision != run.Spec.WorkspaceRevision {
+			return model.WorkRun{}, false, app.ErrConflict
+		}
+		if err := requireNoWorkspaceRemovalTx(ctx, tx, run.Spec.WorkspaceID); err != nil {
+			return model.WorkRun{}, false, err
+		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_uses(id,workspace_id,work_run_id,created_at) VALUES(?,?,?,?)`, run.WorkspaceUseID, run.Spec.WorkspaceID, run.ID, nanos(run.CreatedAt)); err != nil {
 			return model.WorkRun{}, false, err
 		}
@@ -1211,6 +1255,9 @@ func (s *Store) AdmitShell(ctx context.Context, in app.ShellAdmission) (app.Admi
 	if state != model.WorkspaceAvailable || revision != in.WorkspaceRevision {
 		return app.AdmissionResult{}, app.ErrConflict
 	}
+	if err := requireNoWorkspaceRemovalTx(ctx, tx, in.WorkspaceUse.WorkspaceID); err != nil {
+		return app.AdmissionResult{}, err
+	}
 	if err := insertExecution(ctx, tx, in.Execution); err != nil {
 		return app.AdmissionResult{}, err
 	}
@@ -1334,4 +1381,18 @@ func (s *Store) RecordShellRecovery(ctx context.Context, executionID model.Execu
 		return model.Execution{}, err
 	}
 	return s.Execution(ctx, executionID)
+}
+
+// Inspection may refresh an observation while a removal is still running;
+// the durable operation, not that observation, owns the exclusion interval.
+func requireNoWorkspaceRemovalTx(ctx context.Context, tx *sql.Tx, id model.WorkspaceID) error {
+	var pending int
+	err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM operations o JOIN operation_authority a ON a.operation_id=o.id WHERE a.resource_kind=? AND a.resource_id=? AND o.kind=? AND o.state IN (?,?)`, model.ResourceWorkspace, id, model.OperationRemoveWorkspace, model.OperationAdmitted, model.OperationRunning).Scan(&pending)
+	if err != nil {
+		return err
+	}
+	if pending != 0 {
+		return app.ErrConflict
+	}
+	return nil
 }

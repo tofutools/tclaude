@@ -2142,3 +2142,22 @@ mutable contributing profile and default before publishing the member. Empty
 profile display suggestions fall through lower tiers; explicit empty member
 labels remain empty and membership-scoped. Profile changes in the dialog preserve
 fields the operator has already edited.
+
+### Group member checkouts
+
+The create/spawn member dialog can use the configured directory, select an
+available checkout, or create a checkout through the shared workspace lifecycle.
+Checkout preparation is a separate durable operation: if later member creation
+or launch fails, the checkout remains visible in Workspaces for inspection and
+explicit cleanup. The form retains its checkout request identity across lost
+replies and does not silently repeat an uncertain Git effect.
+
+A selected checkout supplies the new agent's working directory without editing
+its reusable profile. Member admission checks the checkout revision, available
+state, actual path and inspection authority. The saved association follows the
+agent through future starts; each launch claims workspace use transactionally
+before native preparation. Unknown executions retain their claims, while settled
+terminal observations release them. Changing the agent's configured directory
+ends the association for future launches without releasing a running execution's
+claim. Removal reserves the workspace before its native effect, excluding new
+launch claims during cleanup.

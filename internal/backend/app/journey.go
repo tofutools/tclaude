@@ -282,9 +282,22 @@ func (s *Service) InspectWorkspace(ctx context.Context, req InspectWorkspaceRequ
 	return workspaceResult(updated), nil
 }
 
+type workspaceRemovalRequests interface {
+	FindWorkspaceRemoval(context.Context, RemoveCheckoutRequest, time.Time) (WorkspaceEffectAdmissionResult, bool, error)
+}
+
 func (s *Service) RemoveCheckout(ctx context.Context, req RemoveCheckoutRequest) (WorkspaceResult, error) {
 	if err := validateEffectContext(req.Context); err != nil {
 		return WorkspaceResult{}, err
+	}
+	if requests, ok := s.store.(workspaceRemovalRequests); ok {
+		prior, found, err := requests.FindWorkspaceRemoval(ctx, req, s.now().UTC())
+		if err != nil {
+			return WorkspaceResult{}, err
+		}
+		if found {
+			return workspaceResult(prior.Workspace), nil
+		}
 	}
 	workspace, err := s.store.Workspace(ctx, req.WorkspaceID)
 	if err != nil {
@@ -309,7 +322,7 @@ func (s *Service) RemoveCheckout(ctx context.Context, req RemoveCheckoutRequest)
 	now := s.now().UTC()
 	op := model.Operation{ID: model.OperationID(s.newID("op_")), RequestID: req.Context.RequestID, Kind: model.OperationRemoveWorkspace, Principal: req.Context.Principal, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now}
 	authority := model.AuthorityRequest{Principal: req.Context.Principal, Action: model.ActionRemoveWorkspace, Resource: model.ResourceSelector{Kind: model.ResourceWorkspace, WorkspaceID: workspace.ID}}
-	admitted, err := s.store.AdmitWorkspaceEffect(ctx, WorkspaceEffectAdmission{Operation: op, Workspace: workspace, Authority: authority})
+	admitted, err := s.store.AdmitWorkspaceEffect(ctx, WorkspaceEffectAdmission{Removal: &req, Operation: op, Workspace: workspace, Authority: authority})
 	if err != nil {
 		return WorkspaceResult{}, err
 	}
