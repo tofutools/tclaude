@@ -103,27 +103,52 @@ func findGroupMemberAdmission(ctx context.Context, q groupReader, in app.CreateG
 	out.Repeated = true
 	return out, true, err
 }
-func (s *Store) FindGroupMemberAdmission(ctx context.Context, in app.CreateGroupMemberRequest) (app.GroupMemberResult, bool, error) {
-	if in.Context.Principal.Kind != model.PrincipalOperator {
-		return app.GroupMemberResult{}, false, app.ErrUnauthorized
+func authorizeGroupMember(ctx context.Context, q queryer, in app.CreateGroupMemberRequest, desired *model.DesiredConfiguration, at time.Time) error {
+	decision, err := authorizeTx(ctx, q, model.AuthorityRequest{Principal: in.Context.Principal, Action: model.ActionCreateGroupMember, Resource: model.ResourceSelector{Kind: model.ResourceGroup, GroupID: in.GroupID}, RequestedConfiguration: desired}, at)
+	if err != nil {
+		return err
 	}
-	return findGroupMemberAdmission(ctx, s.db, in)
+	if !decision.Allowed {
+		return app.ErrUnauthorized
+	}
+	return nil
+}
+func (s *Store) FindGroupMemberAdmission(ctx context.Context, in app.CreateGroupMemberRequest, at time.Time) (app.GroupMemberResult, bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return app.GroupMemberResult{}, false, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err = authorizeGroupMember(ctx, tx, in, nil, at); err != nil {
+		return app.GroupMemberResult{}, false, err
+	}
+	prior, found, err := findGroupMemberAdmission(ctx, tx, in)
+	if err == nil && found {
+		err = authorizeGroupMember(ctx, tx, in, &prior.Agent.Desired, at)
+	}
+	return prior, found, err
 }
 func (s *Store) AdmitGroupMember(ctx context.Context, in app.CreateGroupMemberRequest, agent model.Agent, at time.Time) (app.GroupMemberResult, error) {
 	var out app.GroupMemberResult
 	if agent.ID != in.ID || agent.Name != in.Name || agent.PrimaryExecutionID != "" || agent.Lifecycle != model.AgentActive {
 		return out, app.ErrInvalid
 	}
-	if in.Context.Principal.Kind != model.PrincipalOperator {
-		return out, app.ErrUnauthorized
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return out, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err = authorizeGroupMember(ctx, tx, in, nil, at); err != nil {
+		return out, err
+	}
 	if prior, found, err := findGroupMemberAdmission(ctx, tx, in); found || err != nil {
+		if err == nil {
+			err = authorizeGroupMember(ctx, tx, in, &prior.Agent.Desired, at)
+		}
 		return prior, err
+	}
+	if err = authorizeGroupMember(ctx, tx, in, &agent.Desired, at); err != nil {
+		return out, err
 	}
 	group, err := readGroup(ctx, tx, in.GroupID)
 	if err != nil {

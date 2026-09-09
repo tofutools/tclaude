@@ -1987,3 +1987,16 @@ for approval. Native `never` (including generic automatic) has no active reviewe
 Existing grants and delegations do
 not acquire it automatically. The same check applies when replaying a launch,
 using the admitted execution configuration.
+
+### Scoped group-member creation
+
+The access editor exposes `group.members.create` for creating an offline member
+from a group's current configuration default. It is distinct from editing the
+membership of existing agents. A delegated caller needs authority on the target
+group and complete configuration bounds covering the resolved profile,
+environment and sandbox selection. The same capability permits reading that
+group's defaults. SQLite checks current authority inside member admission;
+permission removal prevents new creation and receipt replay. An exact retry
+while authorized returns its original result even after the selected profile
+changes. Creating the member does not start an execution; launching it uses
+the existing separate launch authority.

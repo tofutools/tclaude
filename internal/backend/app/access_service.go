@@ -395,7 +395,7 @@ var allActions = []model.Action{
 	model.ActionReadIdentity, model.ActionReadStatus, model.ActionReadInbox, model.ActionMarkInboxRead,
 	model.ActionSendMessage, model.ActionLaunch, model.ActionInteract, model.ActionStageTerminalFile, model.ActionReadExecutionFile, model.ActionAttach, model.ActionStop,
 	model.ActionChangeContext, model.ActionUpdateConfiguration, model.ActionRetireAgent, model.ActionReactivateAgent,
-	model.ActionManageMembership, model.ActionReadAttachment,
+	model.ActionManageMembership, model.ActionCreateGroupMember, model.ActionReadAttachment,
 	model.ActionReadHistory, model.ActionRefreshHistory, model.ActionSetHistoryMetadata, model.ActionRegisterWorkspace,
 	model.ActionReadUsage, model.ActionRefreshUsage, model.ActionReadActivity,
 	model.ActionCreateWorkspace, model.ActionInspectWorkspace, model.ActionRemoveWorkspace,
