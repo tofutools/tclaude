@@ -86,6 +86,7 @@ universal flow engine with dozens of hooks and switches.
 - [User-facing model](model.md): what users see and what must remain distinct.
 - [Operations](operations.md): shared coordination and different native sequences.
 - [Services and harness integration](services.md): responsibilities and events.
+- [Technical principles](technical-principles.md): relations, composition and behavior interfaces.
 
 Start by comparing two real implementations of one operation on main. The
 examples here are illustrative, not claims about particular installed harness
