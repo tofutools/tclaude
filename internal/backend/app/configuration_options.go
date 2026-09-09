@@ -108,7 +108,7 @@ func (s *Service) resolveConfigurationOptions(ctx context.Context, selectedID mo
 			layer.FastMode, layer.AutoReview = nil, nil
 		}
 		if harness != "claude" {
-			layer.AutoMemory = nil
+			layer.AutoMemory, layer.PeerMessaging = nil, nil
 		}
 		if harness != "opencode" {
 			layer.ToolGovernance = nil
@@ -136,7 +136,7 @@ func profileConfigurationOptions(revision model.ConfigurationProfileRevision) mo
 		return *revision.Options
 	}
 	desired := revision.Desired
-	return model.ConfigurationOptions{Harness: &desired.Harness, Model: &desired.Model, Effort: &desired.Effort, ToolGovernance: &desired.ToolGovernance, FastMode: &desired.FastMode, AutoReview: &desired.AutoReview, AutoMemory: &desired.AutoMemory, WorkingDirectory: &desired.WorkingDirectory, Approval: &desired.Approval, Sandbox: &desired.Sandbox, HostSandbox: desired.HostSandbox, Environment: desired.Environment}
+	return model.ConfigurationOptions{Harness: &desired.Harness, Model: &desired.Model, Effort: &desired.Effort, ToolGovernance: &desired.ToolGovernance, FastMode: &desired.FastMode, AutoReview: &desired.AutoReview, AutoMemory: &desired.AutoMemory, PeerMessaging: &desired.PeerMessaging, WorkingDirectory: &desired.WorkingDirectory, Approval: &desired.Approval, Sandbox: &desired.Sandbox, HostSandbox: desired.HostSandbox, Environment: desired.Environment}
 }
 
 // Explicit launch settings are validated as intent, never discarded as an

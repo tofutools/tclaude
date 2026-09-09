@@ -106,6 +106,7 @@ type DesiredConfiguration struct {
 	FastMode         FastMode       `json:",omitempty"`
 	AutoReview       bool           `json:",omitempty"`
 	AutoMemory       bool           `json:",omitempty"`
+	PeerMessaging    bool           `json:",omitempty"`
 	WorkingDirectory string
 	Approval         ApprovalMode
 	Sandbox          SandboxMode
@@ -227,6 +228,7 @@ type ResolvedExecutionSpec struct {
 	FastMode             FastMode       `json:",omitempty"`
 	AutoReview           bool           `json:",omitempty"`
 	AutoMemory           bool           `json:",omitempty"`
+	PeerMessaging        bool           `json:",omitempty"`
 	WorkingDirectory     string
 	Approval             ApprovalMode
 	Sandbox              SandboxMode

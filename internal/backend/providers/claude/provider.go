@@ -389,15 +389,21 @@ func (p *prepared) argv() []string {
 	if mode := nativeApprovalMode(p.request.Spec.Approval); mode != "" {
 		args = append(args, "--permission-mode", mode)
 	}
-	settings, _ := json.Marshal(map[string]any{
+	settings := map[string]any{
 		"sandbox": map[string]any{
 			"enabled": true, "failIfUnavailable": true,
 			"allowUnsandboxedCommands": false,
 			"filesystem":               map[string]any{"allowWrite": []string{p.request.Spec.WorkingDirectory}},
 		},
 		"hooks": p.hooks(),
-	})
-	args = append(args, "--settings", string(settings))
+	}
+	if !p.request.Spec.PeerMessaging {
+		settings["crossSessionInbound"] = "refuse"
+		settings["isolatePeerMachines"] = true
+		settings["permissions"] = map[string]any{"deny": []string{"ListAgents"}}
+	}
+	encodedSettings, _ := json.Marshal(settings)
+	args = append(args, "--settings", string(encodedSettings))
 	if p.request.InitialInput != nil {
 		args = append(args, p.request.InitialInput.Body)
 	}

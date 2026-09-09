@@ -9,6 +9,7 @@ import (
 )
 
 type agentRelaunchConfiguration struct {
+	PeerMessaging     *bool                 `json:"peer_messaging"`
 	AutoMemory        *bool                 `json:"auto_memory"`
 	AutoReview        *bool                 `json:"approval_auto_review"`
 	FastMode          *bool                 `json:"fast_mode"`
