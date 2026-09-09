@@ -133,6 +133,10 @@ func (s *Service) launchGroupMember(ctx context.Context, store GroupConfiguratio
 	if !found {
 		return GroupMemberResult{}, ErrConflict
 	}
+	result.Agent, err = s.store.Agent(ctx, agent.ID)
+	if err != nil {
+		return GroupMemberResult{}, err
+	}
 	result.Operation = &operation
 	result.Repeated = operation.Repeated
 	return result, launchErr

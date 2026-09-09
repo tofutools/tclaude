@@ -1,6 +1,9 @@
 package browser
 
 import (
+	"context"
+	"errors"
+	"github.com/tofutools/tclaude/internal/backend/ports"
 	"path/filepath"
 	"testing"
 	"time"
@@ -55,4 +58,45 @@ func TestBrowserGroupSpawnStartsOnceAfterLostReply(t *testing.T) {
 	require.Len(t, snapshot.Executions, 1)
 	require.Equal(t, snapshot.Executions[0].ID, string(snapshot.Agents[0].PrimaryExecutionID))
 	page.MustElementR("#roster button", "^Attach$")
+}
+
+// Only the native release boundary is uncertain; the public receipt, browser,
+// application and durable member are real.
+type uncertainGroupSpawnProvider struct{ *automationTeamProvider }
+
+func (p *uncertainGroupSpawnProvider) Prepare(ctx context.Context, req ports.PreparationRequest) (ports.PreparedAttempt, error) {
+	attempt, err := p.automationTeamProvider.Prepare(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return &uncertainGroupSpawnAttempt{PreparedAttempt: attempt}, nil
+}
+
+type uncertainGroupSpawnAttempt struct{ ports.PreparedAttempt }
+
+func (p *uncertainGroupSpawnAttempt) Release(ctx context.Context, permit ports.ReleasePermit) (ports.ReleaseResult, error) {
+	if err := permit.Consume(ctx); err != nil {
+		return ports.ReleaseResult{}, err
+	}
+	return ports.ReleaseResult{State: ports.ReleaseUncertain, Evidence: p.Describe().Evidence}, errors.New("release response lost")
+}
+func TestBrowserGroupSpawnShowsUncertainReceiptOnFirstResponse(t *testing.T) {
+	provider := &uncertainGroupSpawnProvider{&automationTeamProvider{delivery: host.ActionCredentialHost{PrivateRoot: filepath.Join(t.TempDir(), "credentials")}, briefs: make(chan string, 4)}}
+	ctx, page, operator := processEditorBrowser(t, provider)
+	desired := model.DesiredConfiguration{Harness: provider.Name(), Model: "fixture", WorkingDirectory: t.TempDir(), Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}
+	var saved app.ConfigurationProfileResult
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/configuration-profiles", map[string]any{"request_id": "profile", "id": "worker", "revision_id": "one", "name": "Worker", "desired": desired}, &saved))
+	require.NoError(t, operator.Call(ctx, "POST", "/v2/groups", map[string]any{"id": "team", "name": "Team"}, nil))
+	require.NoError(t, operator.Call(ctx, "PUT", "/v2/groups/team/configuration", map[string]any{"profile": saved.Revision.Ref}, nil))
+	page.MustElement("#refresh").MustClick()
+	page.MustWait(`()=>snapshot.groups?.some(g=>g.ID==='team')`)
+	page.MustElementR("summary", "^Group settings$").MustClick()
+	page.MustElementR("#group-management button", "^Spawn member from default$").MustClick()
+	page.MustElement("#editor [name=brief]").MustInput("Do the work")
+	page.MustEval(`()=>{const original=fetch;window.spawnResponses=[];window.fetch=async(...args)=>{const response=await original(...args);if(String(args[0])==='/v2/groups/team/agents')spawnResponses.push(await response.clone().json());return response}}`)
+	page.MustElement("#editor button[type=submit]").MustClick()
+	page.MustElementR("#editor-error", "launch is uncertain.*Inspect operation")
+	require.True(t, page.MustEval(`()=>spawnResponses.length===1&&spawnResponses[0].Operation.state==='uncertain'&&snapshot.agents.length===1&&spawnResponses[0].Agent.PrimaryExecutionID===snapshot.agents[0].PrimaryExecutionID`).Bool())
+	require.Contains(t, page.MustElement("#editor-error").MustText(), page.MustEval(`()=>spawnResponses[0].Operation.id`).Str())
+	require.True(t, page.MustElement("#editor").MustVisible())
 }

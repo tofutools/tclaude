@@ -59,7 +59,9 @@ func (h *Handler) registerGroupConfiguration(api app.GroupConfigurationAPI) {
 			return
 		}
 		out, err := api.CreateGroupMember(r.Context(), app.CreateGroupMemberRequest{Launch: body.Launch, ConfigurationOverrides: body.ConfigurationOverrides, Labels: body.Labels, Context: app.RequestContext{Principal: p, RequestID: body.RequestID}, GroupID: model.GroupID(r.PathValue("id")), Environment: body.Environment, ID: body.ID, Name: body.Name, ExpectedGroupRevision: body.ExpectedGroupRevision, ExpectedDefaultRevision: body.ExpectedDefaultRevision})
-		if err != nil {
+		// Once admitted, failed/uncertain native effects still have a safe durable
+		// receipt. Return it immediately so the operator can inspect the outcome.
+		if err != nil && (out.Operation == nil || out.Operation.Operation.ID == "") {
 			applicationError(w, err)
 			return
 		}
