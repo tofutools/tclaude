@@ -34,7 +34,7 @@ function profileOptionFields(options={},name=''){
 function profileOptionsFromForm(form){
  validateConfigurationForm(form);
  const out={};
- for(const [name,key] of Object.entries({harness:'Harness',model:'Model',effort:'Effort',cwd:'WorkingDirectory',approval:'Approval',sandbox:'Sandbox',fast_mode:'FastMode',tool_governance:'ToolGovernance',auto_compact_window:'AutoCompactWindow'}))if(form[name])out[key]=form[name];
+ for(const [name,key] of Object.entries({harness:'Harness',model:'Model',effort:'Effort',cwd:'WorkingDirectory',approval:'Approval',sandbox:'Sandbox',fast_mode:'FastMode',tool_governance:'ToolGovernance',ask_user_question_timeout:'AskUserQuestionTimeout',auto_compact_window:'AutoCompactWindow'}))if(form[name])out[key]=form[name];
  if(form.trust_directory)out.TrustDirectory=form.trust_directory==='on';
  if(form.peer_messaging)out.PeerMessaging=form.peer_messaging==='on';
  if(form.auto_memory)out.AutoMemory=form.auto_memory==='on';

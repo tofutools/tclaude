@@ -2212,3 +2212,18 @@ from public snapshots and authored definitions.
 Offline v228 import retains explicit profile and agent birth-request
 `trust_dir` intent. It does not infer trust from ambient native configuration or
 invent a field in v1 relaunch snapshots that did not carry it.
+
+### Claude question timeout
+
+Profiles, agent settings and team member overrides retain Claude's question
+idle-timeout choice: `inherit`, `never`, `60s`, `5m` or `10m`. An omitted profile
+field follows the configured defaults; an explicit `inherit` keeps Claude's own
+settings and prevents a lower profile tier from supplying another timeout.
+`never` waits for a human; a duration lets Claude continue with the question's
+default answer after that idle interval. Other providers reject explicit choices.
+
+The Claude provider merges a concrete timeout into the existing per-session
+`--settings` object as `askUserQuestionTimeout` for fresh and continued sessions.
+Omitted and `inherit` choices emit no timeout key. Agent settings, profile
+revisions, admitted executions and offline v228 import retain the choice; import
+prefers a recorded resolved relaunch value over the original birth request.

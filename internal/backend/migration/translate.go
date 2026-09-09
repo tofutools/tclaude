@@ -260,6 +260,9 @@ func (t *translator) translateAgents(batch *app.ImportBatch) error {
 			return fmt.Errorf("agent %s relaunch profile: %w", row.Key, err)
 		}
 		agent.Desired = resolved
+		if err := validateImportedAskUserQuestionTimeout(row.Values, agent.Desired.Harness); err != nil {
+			return fmt.Errorf("agent %s question timeout: %w", row.Key, err)
+		}
 		if err := validateImportedAutoCompactWindow(row.Values, agent.Desired.Harness); err != nil {
 			return fmt.Errorf("agent %s auto-compaction window: %w", row.Key, err)
 		}
@@ -432,6 +435,14 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 		}
 		desired := desiredFromRow(row.Values)
 		desired.Environment = t.launchEnvironment(batch, "spawn_profiles", row)
+		timeoutErr := validateImportedAskUserQuestionTimeout(row.Values, desired.Harness)
+		if desired.Harness == "" {
+			_, timeoutErr = importedAskUserQuestionTimeout(row.Values["ask_user_question_timeout"])
+		}
+		if timeoutErr != nil {
+			archived = true
+			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "ask_user_question_timeout_requires_review", timeoutErr.Error())
+		}
 		windowErr := validateImportedAutoCompactWindow(row.Values, desired.Harness)
 		if desired.Harness == "" {
 			_, windowErr = importedAutoCompactWindow(row.Values["auto_compact_window"])
@@ -866,6 +877,7 @@ func desiredFromRow(values map[string]any) model.DesiredConfiguration {
 	desired.AutoMemory, _ = importedAutoMemory(values["auto_memory"])
 	desired.TrustDirectory, _ = importedDirectoryTrust(values["trust_dir"])
 	desired.PeerMessaging, _ = importedPeerMessaging(values["peer_messaging"])
+	desired.AskUserQuestionTimeout, _ = importedAskUserQuestionTimeout(values["ask_user_question_timeout"])
 	desired.AutoCompactWindow, _ = importedAutoCompactWindow(values["auto_compact_window"])
 	desired.FastMode = importedFastMode(values["fast_mode"])
 	if desired.Harness == "opencode" {

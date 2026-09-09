@@ -120,6 +120,7 @@ func (s *Service) resolveConfigurationLayers(ctx context.Context, selectedID mod
 		}
 		if harness != "claude" {
 			layer.AutoMemory, layer.PeerMessaging = nil, nil
+			layer.AskUserQuestionTimeout = nil
 			layer.AutoCompactWindow = nil
 		}
 		if harness != "opencode" {
@@ -154,7 +155,7 @@ func profileConfigurationOptions(revision model.ConfigurationProfileRevision) mo
 		return *revision.Options
 	}
 	desired := revision.Desired
-	return model.ConfigurationOptions{Harness: &desired.Harness, Model: &desired.Model, Effort: &desired.Effort, ToolGovernance: &desired.ToolGovernance, FastMode: &desired.FastMode, AutoReview: &desired.AutoReview, AutoMemory: &desired.AutoMemory, PeerMessaging: &desired.PeerMessaging, TrustDirectory: &desired.TrustDirectory, AutoCompactWindow: &desired.AutoCompactWindow, WorkingDirectory: &desired.WorkingDirectory, Approval: &desired.Approval, Sandbox: &desired.Sandbox, HostSandbox: desired.HostSandbox, Environment: desired.Environment}
+	return model.ConfigurationOptions{Harness: &desired.Harness, Model: &desired.Model, Effort: &desired.Effort, ToolGovernance: &desired.ToolGovernance, FastMode: &desired.FastMode, AutoReview: &desired.AutoReview, AutoMemory: &desired.AutoMemory, PeerMessaging: &desired.PeerMessaging, TrustDirectory: &desired.TrustDirectory, AskUserQuestionTimeout: &desired.AskUserQuestionTimeout, AutoCompactWindow: &desired.AutoCompactWindow, WorkingDirectory: &desired.WorkingDirectory, Approval: &desired.Approval, Sandbox: &desired.Sandbox, HostSandbox: desired.HostSandbox, Environment: desired.Environment}
 }
 
 // Explicit launch settings are validated as intent, never discarded as an
