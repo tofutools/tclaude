@@ -42,6 +42,17 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 			return model.TeamDeployment{}, false, app.ErrUnauthorized
 		}
 	}
+	if deployment.TargetKind == model.TeamTargetExistingGroup && !app.OperatorProfileCaller(principal) {
+		configuration, readErr := readGroupConfiguration(ctx, tx, group.ID)
+		if readErr != nil {
+			return model.TeamDeployment{}, false, readErr
+		}
+		if configuration.Profile != nil {
+			if err := requireProfileCreationTx(ctx, tx, principal, configuration.Profile.ProfileID); err != nil {
+				return model.TeamDeployment{}, false, err
+			}
+		}
+	}
 	if (len(deployment.RolePins) != 0 || len(assignments) != 0) && principal.Kind != model.PrincipalOperator {
 		return model.TeamDeployment{}, false, app.ErrUnauthorized
 	}
