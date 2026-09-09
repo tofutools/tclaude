@@ -22,7 +22,9 @@ func TestDirectoryTrustAgentLaunchRequiresCallerProofBeforeAdmission(t *testing.
 	provider := &peerMessagingProvider{newFakeProvider()}
 	service := app.New(store, providers.NewRegistry(provider)).WithDirectoryWriteProof(host.DirectoryProof{})
 	op := model.OperatorPrincipal()
-	root := t.TempDir()
+	physicalRoot := t.TempDir()
+	root := filepath.Join(t.TempDir(), "alias")
+	require.NoError(t, os.Symlink(physicalRoot, root))
 	desired := model.DesiredConfiguration{Harness: "claude", Model: "worker", WorkingDirectory: root, Approval: model.ApprovalSupervised, Sandbox: model.SandboxWorkspaceWrite}
 	parent, err := service.CreateAgent(ctx, app.CreateAgentRequest{Context: op, ID: "parent", Name: "Parent", Desired: desired})
 	require.NoError(t, err)
@@ -33,7 +35,7 @@ func TestDirectoryTrustAgentLaunchRequiresCallerProofBeforeAdmission(t *testing.
 	require.NoError(t, err)
 	caller := model.AgentPrincipal(parent.Agent.ID)
 	caller.ExecutionID = launched.Execution.ID
-	_, err = service.PutGrant(ctx, app.PutGrantRequest{Principal: op, Grant: model.AuthorityGrant{ID: "child_launch", Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: parent.Agent.ID}, Action: model.ActionLaunch, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: child.Agent.ID}, Bounds: model.ConfigurationBounds{Harnesses: []string{"claude"}, Models: []string{"worker"}, WorkingDirectoryRoots: []string{root}, ApprovalModes: []model.ApprovalMode{desired.Approval}, SandboxModes: []model.SandboxMode{desired.Sandbox}}}})
+	grant, err := service.PutGrant(ctx, app.PutGrantRequest{Principal: op, Grant: model.AuthorityGrant{ID: "child_launch", Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: parent.Agent.ID}, Action: model.ActionLaunch, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: child.Agent.ID}, Bounds: model.ConfigurationBounds{Harnesses: []string{"claude"}, Models: []string{"worker"}, WorkingDirectoryRoots: []string{root}, ApprovalModes: []model.ApprovalMode{desired.Approval}, SandboxModes: []model.SandboxMode{desired.Sandbox}}}})
 	require.NoError(t, err)
 	request := app.LaunchRequest{RequestContext: effect(caller, "child_launch"), Target: app.LaunchTarget{Agent: &app.AgentLaunchTarget{AgentID: child.Agent.ID, ExpectedRevision: child.Agent.Revision}}}
 	_, err = service.Launch(ctx, request)
@@ -52,6 +54,9 @@ func TestDirectoryTrustAgentLaunchRequiresCallerProofBeforeAdmission(t *testing.
 	result, err := service.Launch(ctx, request)
 	require.NoError(t, err)
 	require.True(t, result.Execution.Spec.TrustDirectory)
+	physicalRoot, err = filepath.EvalSymlinks(physicalRoot)
+	require.NoError(t, err)
+	require.Equal(t, physicalRoot, result.Execution.Spec.WorkingDirectory)
 	for _, dir := range proof.Directories {
 		require.NoFileExists(t, filepath.Join(dir, proof.Filename))
 	}
@@ -59,4 +64,7 @@ func TestDirectoryTrustAgentLaunchRequiresCallerProofBeforeAdmission(t *testing.
 	repeated, err := service.Launch(ctx, request)
 	require.NoError(t, err)
 	require.Equal(t, result.Execution.ID, repeated.Execution.ID)
+	require.NoError(t, service.DeleteGrant(ctx, app.DeleteGrantRequest{Principal: op, GrantID: grant.Grant.ID, ExpectedRevision: grant.Grant.Revision}))
+	_, err = service.Launch(ctx, request)
+	require.ErrorIs(t, err, app.ErrUnauthorized, "recorded authority still requires a current grant")
 }

@@ -4,6 +4,7 @@ package host
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -29,6 +30,12 @@ func TestDirectoryTrustRecognizesOnlyDefaultSiblingWorktree(t *testing.T) {
 	admin, err = filepath.EvalSymlinks(admin)
 	require.NoError(t, err)
 	require.Contains(t, dirs, admin)
+	aliasParent := filepath.Join(t.TempDir(), "parent-alias")
+	require.NoError(t, os.Symlink(filepath.Dir(repository), aliasParent))
+	aliasedSibling := filepath.Join(aliasParent, filepath.Base(sibling))
+	aliasedDirs, err := p.DefaultSiblingTrustDirectories(ctx, aliasedSibling)
+	require.NoError(t, err)
+	require.Equal(t, dirs, aliasedDirs, "a parent path alias does not change repository sibling identity")
 	other := filepath.Join(t.TempDir(), "elsewhere")
 	checkoutGit(t, repository, "worktree", "add", "--detach", other, "HEAD")
 	for _, path := range []string{repository, other, t.TempDir()} {

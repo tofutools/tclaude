@@ -2034,7 +2034,18 @@ func (s *Store) FindLaunchAdmission(ctx context.Context, in app.LaunchRetryLooku
 	}
 	spec := prior.Execution.Spec
 	desired := model.DesiredConfiguration{HostSandbox: model.CloneSandboxSelection(spec.HostSandbox), Harness: spec.Harness, Model: spec.Model, Effort: spec.Effort, ToolGovernance: spec.ToolGovernance, FastMode: spec.FastMode, AutoReview: spec.AutoReview, AutoMemory: spec.AutoMemory, PeerMessaging: spec.PeerMessaging, TrustDirectory: spec.TrustDirectory, AutoCompactWindow: spec.AutoCompactWindow, WorkingDirectory: spec.WorkingDirectory, Approval: spec.Approval, Sandbox: spec.Sandbox, Environment: spec.Environment.Clone()}
-	decision, err := authorizeTx(ctx, tx, model.AuthorityRequest{Principal: in.Context.Principal, Action: model.ActionLaunch, Resource: resource, RequestedConfiguration: &desired}, in.At)
+	request := model.AuthorityRequest{Principal: in.Context.Principal, Action: model.ActionLaunch, Resource: resource, RequestedConfiguration: &desired}
+	if recorded, found, err := operationAuthority(ctx, tx, prior.Operation.ID); err != nil {
+		return app.AdmissionResult{}, false, err
+	} else if found {
+		// The execution may use a caller-proven physical directory. Authority
+		// was admitted for the authored path, which can use a system alias.
+		// Recheck that exact request with the current caller; a receipt lookup
+		// neither resolves new paths nor prepares another native execution.
+		request = recorded
+		request.Principal = in.Context.Principal
+	}
+	decision, err := authorizeTx(ctx, tx, request, in.At)
 	if err != nil {
 		return app.AdmissionResult{}, false, err
 	}
