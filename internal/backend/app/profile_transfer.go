@@ -21,11 +21,13 @@ type ConfigurationBundle struct {
 	Profiles []ConfigurationBundleEntry `json:"profiles"`
 }
 type ConfigurationBundleEntry struct {
-	Key      string                     `json:"key"`
-	Name     string                     `json:"name"`
-	Desired  model.DesiredConfiguration `json:"desired"`
-	Startup  *model.ProfileStartup      `json:"startup,omitempty"`
-	Archived bool                       `json:"archived"`
+	Disabled       bool                       `json:"disabled,omitempty"`
+	DisabledReason string                     `json:"disabled_reason,omitempty"`
+	Key            string                     `json:"key"`
+	Name           string                     `json:"name"`
+	Desired        model.DesiredConfiguration `json:"desired"`
+	Startup        *model.ProfileStartup      `json:"startup,omitempty"`
+	Archived       bool                       `json:"archived"`
 }
 type ConfigurationImportSelection struct {
 	Key              string                               `json:"key"`
@@ -74,6 +76,9 @@ func (s *Service) InspectConfigurationBundle(_ context.Context, principal model.
 		if entry.Key == "" || len(entry.Key) > 256 || !utf8.ValidString(entry.Key) || seen[entry.Key] || strings.TrimSpace(entry.Name) == "" || len(entry.Name) > 256 || !utf8.ValidString(entry.Name) || strings.ContainsRune(entry.Name, 0) {
 			return ConfigurationBundle{}, ErrInvalid
 		}
+		if len(entry.DisabledReason) > 1024 || !utf8.ValidString(entry.DisabledReason) || strings.ContainsRune(entry.DisabledReason, 0) {
+			return ConfigurationBundle{}, ErrInvalid
+		}
 		seen[entry.Key] = true
 		for _, text := range []string{entry.Desired.Harness, entry.Desired.Model, entry.Desired.WorkingDirectory} {
 			if !utf8.ValidString(text) || strings.ContainsRune(text, 0) {
@@ -115,6 +120,8 @@ func (s *Service) ImportConfigurations(ctx context.Context, req ImportConfigurat
 			return ConfigurationImportResult{}, err
 		}
 		w.Profile.Archived = entry.Archived
+		w.Profile.Disabled = entry.Disabled
+		w.Profile.DisabledReason = entry.DisabledReason
 		write.Profiles = append(write.Profiles, w)
 	}
 	data, err := json.Marshal(struct {

@@ -708,6 +708,11 @@ func createAgentTx(ctx context.Context, tx *sql.Tx, agent model.Agent) error {
 	if err := requireActiveConfigurationProfileTx(ctx, tx, agent.ConfigurationProfile); err != nil {
 		return err
 	}
+	if agent.ConfigurationProfile != nil {
+		if err := requireEnabledConfigurationProfileTx(ctx, tx, agent.ConfigurationProfile.ProfileID); err != nil {
+			return err
+		}
+	}
 	_, err := tx.ExecContext(ctx, `INSERT INTO agents(labels_json,host_sandbox_json,environment_json,configuration_profile_json,id,name,task_reference,parent_agent_id,clone_source_agent_id,lifecycle_state,direct_notification_intent,harness,model,effort,tool_governance,working_directory,approval,sandbox,primary_execution_id,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		agentLabelsJSON(&agent.Labels), sandboxSelectionJSON(agent.Desired.HostSandbox), environmentJSON(agent.Desired.Environment), configurationProfileJSON(agent.ConfigurationProfile), agent.ID, agent.Name, agent.TaskReference, agent.ParentAgentID, agent.CloneSourceAgentID, agent.Lifecycle, agent.Notifications.DirectMessage, agent.Desired.Harness, agent.Desired.Model, agent.Desired.Effort, agent.Desired.ToolGovernance, agent.Desired.WorkingDirectory, agent.Desired.Approval, agent.Desired.Sandbox, agent.PrimaryExecutionID, agent.Revision, nanos(agent.CreatedAt), nanos(agent.UpdatedAt))
 	if err != nil {

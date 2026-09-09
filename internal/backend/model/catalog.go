@@ -14,7 +14,9 @@ type ConfigurationProfileRef struct {
 }
 
 type ConfigurationProfile struct {
-	Archived          bool `json:",omitempty"`
+	Disabled          bool   `json:",omitempty"`
+	DisabledReason    string `json:",omitempty"`
+	Archived          bool   `json:",omitempty"`
 	ID                ConfigurationProfileID
 	Name              string
 	CurrentRevisionID ConfigurationProfileRevisionID

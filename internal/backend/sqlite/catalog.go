@@ -60,6 +60,9 @@ func saveConfigurationProfileTx(ctx context.Context, tx *sql.Tx, w app.Configura
 	if (!allowArchived && current.Archived) || current.Revision != w.ExpectedRevision {
 		return app.ConfigurationProfileResult{}, app.ErrConflict
 	}
+	if current.Revision != 0 && !allowArchived {
+		w.Profile.Disabled, w.Profile.DisabledReason = current.Disabled, current.DisabledReason
+	}
 	w.Profile.Revision = current.Revision + 1
 	w.Profile.CreatedAt = current.CreatedAt
 	w.Profile.UpdatedAt = w.At

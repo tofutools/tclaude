@@ -407,7 +407,7 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "profile_startup_retained_unmapped", "startup suggestions exceed target text constraints; exact original fields remain in the source record")
 		}
 		disabled, validDisabled := sourcev228.Int64(row.Values["disabled"])
-		archived := disabled != 0
+		archived := false
 		if row.Values["disabled"] != nil && !validDisabled {
 			archived = true
 			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "profile_disabled_unrecognized", "unrecognized disabled state is retained as archived pending explicit operator review")
@@ -418,7 +418,7 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
 		}
 		batch.ConfigurationProfiles = append(batch.ConfigurationProfiles, app.ConfigurationProfileResult{
-			Profile:  model.ConfigurationProfile{Archived: archived, ID: id, Name: firstNonEmpty(sourcev228.String(row.Values["name"]), key), CurrentRevisionID: revisionID, Revision: 1, CreatedAt: at, UpdatedAt: at},
+			Profile:  model.ConfigurationProfile{Archived: archived, Disabled: disabled != 0, DisabledReason: sourcev228.String(row.Values["disabled_reason"]), ID: id, Name: firstNonEmpty(sourcev228.String(row.Values["name"]), key), CurrentRevisionID: revisionID, Revision: 1, CreatedAt: at, UpdatedAt: at},
 			Revision: model.ConfigurationProfileRevision{Ref: ref, Desired: desired, Startup: startup, CreatedAt: at},
 		})
 	}

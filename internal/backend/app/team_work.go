@@ -93,6 +93,9 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 			if readErr != nil {
 				return TeamDeploymentResult{}, readErr
 			}
+			if err := ConfigurationProfileEnabled(profile.Profile); err != nil {
+				return TeamDeploymentResult{}, err
+			}
 			if profile.Profile.Archived {
 				return TeamDeploymentResult{}, fail(ErrConflict, "member %s profile is archived", spec.Key)
 			}
