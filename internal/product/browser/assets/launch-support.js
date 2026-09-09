@@ -58,4 +58,4 @@ function launchAutoReviewChoices(){return [{value:'',label:'No automatic-review 
 function attachAutoReviewControl(host,isEditable){return attachProviderSettingControl(host,'auto_review','codex',isEditable)}
 function launchSettingValue(key,value){return key==='auto_review'?(value===true||value==='on'?'on':''):(value||'')}
 
-function autoReviewAuthorityField(bounds={}){return {name:'auto_review',label:'Allow Codex automatic approval review',type:'checkbox',value:!!bounds.AutoReview}}
+function autoReviewAuthorityField(bounds={}){return {name:'auto_review',label:'Allow Codex automatic approval review',type:'checkbox',required:false,value:!!bounds.AutoReview}}
