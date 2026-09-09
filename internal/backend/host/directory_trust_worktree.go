@@ -25,6 +25,16 @@ func (p DirectoryProof) DefaultSiblingTrustDirectories(ctx context.Context, cwd 
 	if !filepath.IsAbs(common) || filepath.Base(common) != ".git" {
 		return nil, nil
 	}
+	// Git may report a physical path while the caller uses a platform alias
+	// such as /var on macOS. Compare directories in the same physical namespace.
+	cwd, err = filepath.EvalSymlinks(cwd)
+	if err != nil {
+		return nil, err
+	}
+	common, err = filepath.EvalSymlinks(common)
+	if err != nil {
+		return nil, err
+	}
 	main := filepath.Dir(common)
 	if filepath.Dir(cwd) != filepath.Dir(main) || cwd == main || !strings.HasPrefix(filepath.Base(cwd), filepath.Base(main)+"-") {
 		return nil, nil

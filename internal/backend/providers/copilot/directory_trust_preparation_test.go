@@ -16,7 +16,7 @@ func TestProviderDirectoryTrustIsExplicitAndMalformedStoreIsNonfatal(t *testing.
 	for _, kind := range []string{"off", "on", "malformed"} {
 		t.Run(kind, func(t *testing.T) {
 			ctx := context.Background()
-			root, err := os.MkdirTemp("", "trust-")
+			root, err := os.MkdirTemp("/tmp", "trust-")
 			require.NoError(t, err)
 			t.Cleanup(func() { _ = os.RemoveAll(root) })
 			nativeHome := filepath.Join(root, "native")
