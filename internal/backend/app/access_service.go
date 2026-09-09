@@ -402,4 +402,7 @@ var allActions = []model.Action{
 	model.ActionRestoreWorkspace,
 	model.ActionStartWork, model.ActionRecordWorkEvidence, model.ActionDecideWork, model.ActionCancelWork, model.ActionResolveWork,
 	model.ActionStartShell,
+	model.ActionDisbandGroup, model.ActionReadDefinition, model.ActionManageDefinition,
+	model.ActionManageProgramProfile, model.ActionReadProgramProfile, model.ActionExecuteProgram,
+	model.ActionManageAutomation, model.ActionReadAutomation, model.ActionRunAutomation,
 }
