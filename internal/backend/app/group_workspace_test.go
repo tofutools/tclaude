@@ -188,3 +188,101 @@ func (h *groupWorkspaceRemovalHost) RemoveCheckout(ctx context.Context, req port
 	h.before()
 	return h.journeyWorkspaceHost.RemoveCheckout(ctx, req, permit)
 }
+
+// Losing the process after durable admission must not strand the original
+// request behind the reservation's own revision bump or replay native removal.
+func TestGroupWorkspaceRemovalRetryAfterAdmissionAndReopen(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "state.sqlite")
+	store, err := sqlite.Open(path)
+	require.NoError(t, err)
+	op := model.OperatorPrincipal()
+	host := &journeyWorkspaceHost{}
+	svc := app.New(store, providers.NewRegistry()).WithWorkspaceHost(host)
+	workspace, err := svc.CreateCheckout(ctx, app.CreateCheckoutRequest{Context: effect(op, "checkout"), ID: "checkout", Intent: model.WorkspaceIntent{IntendedPath: t.TempDir()}})
+	require.NoError(t, err)
+	interrupted := &interruptedWorkspaceRemovalStore{Store: store}
+	svc = app.New(interrupted, providers.NewRegistry()).WithWorkspaceHost(host)
+	req := app.RemoveCheckoutRequest{Context: effect(op, "remove"), WorkspaceID: "checkout", ExpectedRevision: workspace.Workspace.Revision}
+	_, err = svc.RemoveCheckout(ctx, req)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, host.removes)
+	require.NoError(t, store.Close())
+	store, err = sqlite.Open(path)
+	require.NoError(t, err)
+	defer func() { _ = store.Close() }()
+	svc = app.New(store, providers.NewRegistry()).WithWorkspaceHost(host)
+	replay, err := svc.RemoveCheckout(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, model.WorkspacePending, replay.Workspace.State)
+	require.Greater(t, replay.Workspace.Revision, req.ExpectedRevision)
+	require.Zero(t, host.removes)
+	changed := req
+	changed.Destructive = true
+	_, err = svc.RemoveCheckout(ctx, changed)
+	require.ErrorIs(t, err, app.ErrConflict)
+	changed = req
+	changed.ExpectedRevision = replay.Workspace.Revision
+	_, err = svc.RemoveCheckout(ctx, changed)
+	require.ErrorIs(t, err, app.ErrConflict)
+	// A new request cannot overlap the reserved removal either.
+	changed.Context.RequestID = "another"
+	_, err = svc.RemoveCheckout(ctx, changed)
+	require.ErrorIs(t, err, app.ErrConflict)
+}
+
+type interruptedWorkspaceRemovalStore struct{ *sqlite.Store }
+
+func (s *interruptedWorkspaceRemovalStore) AdmitWorkspaceEffect(ctx context.Context, in app.WorkspaceEffectAdmission) (app.WorkspaceEffectAdmissionResult, error) {
+	out, err := s.Store.AdmitWorkspaceEffect(ctx, in)
+	if err == nil && in.Operation.Kind == model.OperationRemoveWorkspace {
+		return out, context.Canceled
+	}
+	return out, err
+}
+
+func TestGroupWorkspaceRemovalExcludesBoundedWorkPublication(t *testing.T) {
+	ctx := context.Background()
+	store, _, _ := regressionService(t)
+	op := model.OperatorPrincipal()
+	host := &groupWorkspaceRemovalHost{}
+	svc := app.New(store, providers.NewRegistry()).WithWorkspaceHost(host).WithShellHost(&journeyShellHost{})
+	workspace, err := svc.CreateCheckout(ctx, app.CreateCheckoutRequest{Context: effect(op, "checkout"), ID: "checkout", Intent: model.WorkspaceIntent{IntendedPath: t.TempDir()}})
+	require.NoError(t, err)
+	now := time.Now().UTC()
+	run := model.WorkRun{ID: "work", RequestID: "work", Requester: op, Spec: model.WorkRunSpec{WorkspaceID: "checkout", WorkspaceRevision: workspace.Workspace.Revision}, WorkspaceUseID: "use", Revision: 1, CreatedAt: now, UpdatedAt: now}
+	// A graph run may exist before any node claims the checkout.
+	graphRun := run
+	graphRun.ID = "graph"
+	graphRun.RequestID = "graph"
+	graphRun.WorkspaceUseID = ""
+	graphRun.State = model.WorkRunRunning
+	_, _, err = store.CreateWorkRun(ctx, graphRun, nil)
+	require.NoError(t, err)
+	host.before = func() {
+		_, _, err := store.CreateWorkRun(ctx, run, nil)
+		require.ErrorIs(t, err, app.ErrConflict)
+		_, err = store.WorkRun(ctx, "work")
+		require.ErrorIs(t, err, app.ErrNotFound)
+		uses, err := store.ActiveWorkspaceUses(ctx, "checkout")
+		require.NoError(t, err)
+		require.Empty(t, uses)
+		// Even an inspection reporting available must not cancel an in-flight removal.
+		current, err := store.Workspace(ctx, "checkout")
+		require.NoError(t, err)
+		current, err = store.UpdateWorkspaceObservation(ctx, current.ID, current.Revision, model.WorkspaceAvailable, current.Observation, current.Resource, now)
+		require.NoError(t, err)
+		run.Spec.WorkspaceRevision = current.Revision
+		_, err = svc.StartShell(ctx, app.StartShellRequest{Context: effect(op, "shell"), WorkspaceID: current.ID, ExpectedRevision: current.Revision, Sandbox: model.SandboxUnconfined})
+		require.ErrorIs(t, err, app.ErrConflict)
+		_, err = store.ApplyGraphTransition(ctx, app.GraphTransition{WorkRunID: graphRun.ID, ExpectedRevision: graphRun.Revision, At: now, WorkspaceUse: &model.WorkspaceUse{ID: "graph_use", WorkspaceID: current.ID, WorkRunID: graphRun.ID, CreatedAt: now}})
+		require.ErrorIs(t, err, app.ErrConflict)
+		graph, err := store.WorkRun(ctx, graphRun.ID)
+		require.NoError(t, err)
+		require.Equal(t, graphRun.Revision, graph.Run.Revision)
+		_, _, err = store.CreateWorkRun(ctx, run, nil)
+		require.ErrorIs(t, err, app.ErrConflict)
+	}
+	_, err = svc.RemoveCheckout(ctx, app.RemoveCheckoutRequest{Context: effect(op, "remove"), WorkspaceID: "checkout", ExpectedRevision: workspace.Workspace.Revision})
+	require.NoError(t, err)
+}
