@@ -402,6 +402,9 @@ func (p *prepared) argv() []string {
 		"hooks":      p.hooks(),
 		"statusLine": map[string]any{"type": "command", "command": claudeStatusLineCommand()},
 	}
+	if timeout := p.request.Spec.AskUserQuestionTimeout; timeout != "" && timeout != "inherit" {
+		settings["askUserQuestionTimeout"] = timeout
+	}
 	if !p.request.Spec.PeerMessaging {
 		settings["crossSessionInbound"] = "refuse"
 		settings["isolatePeerMachines"] = true

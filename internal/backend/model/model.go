@@ -101,17 +101,18 @@ type DesiredConfiguration struct {
 	Harness     string
 	Model       string
 	// Effort is the requested native reasoning effort or variant, not observed effective effort.
-	Effort            string            `json:",omitempty"`
-	ToolGovernance    ToolGovernance    `json:",omitempty"`
-	FastMode          FastMode          `json:",omitempty"`
-	AutoReview        bool              `json:",omitempty"`
-	AutoMemory        bool              `json:",omitempty"`
-	PeerMessaging     bool              `json:",omitempty"`
-	TrustDirectory    bool              `json:",omitempty"`
-	AutoCompactWindow AutoCompactWindow `json:",omitempty"`
-	WorkingDirectory  string
-	Approval          ApprovalMode
-	Sandbox           SandboxMode
+	Effort                 string                 `json:",omitempty"`
+	ToolGovernance         ToolGovernance         `json:",omitempty"`
+	FastMode               FastMode               `json:",omitempty"`
+	AutoReview             bool                   `json:",omitempty"`
+	AutoMemory             bool                   `json:",omitempty"`
+	PeerMessaging          bool                   `json:",omitempty"`
+	TrustDirectory         bool                   `json:",omitempty"`
+	AskUserQuestionTimeout AskUserQuestionTimeout `json:",omitempty"`
+	AutoCompactWindow      AutoCompactWindow      `json:",omitempty"`
+	WorkingDirectory       string
+	Approval               ApprovalMode
+	Sandbox                SandboxMode
 }
 
 type ApprovalMode string
@@ -216,28 +217,29 @@ type Execution struct {
 // ResolvedExecutionSpec is immutable after an Execution is admitted. Provider
 // implementations consume it but must not reinterpret desired configuration.
 type ResolvedExecutionSpec struct {
-	HostSandbox          *SandboxSelection    `json:",omitempty"`
-	ShellGroup           *ShellGroupSelection `json:",omitempty"`
-	Environment          Environment          `json:",omitempty"`
-	ConfigurationProfile *ConfigurationProfileRef
-	ExecutionID          ExecutionID
-	Workload             ExecutionWorkloadKind
-	Attempt              AttemptGeneration
-	AgentID              AgentID
-	ConversationID       ConversationID
-	Harness              string
-	Model                string
-	Effort               string            `json:",omitempty"`
-	ToolGovernance       ToolGovernance    `json:",omitempty"`
-	FastMode             FastMode          `json:",omitempty"`
-	AutoReview           bool              `json:",omitempty"`
-	AutoMemory           bool              `json:",omitempty"`
-	PeerMessaging        bool              `json:",omitempty"`
-	TrustDirectory       bool              `json:",omitempty"`
-	AutoCompactWindow    AutoCompactWindow `json:",omitempty"`
-	WorkingDirectory     string
-	Approval             ApprovalMode
-	Sandbox              SandboxMode
+	HostSandbox            *SandboxSelection    `json:",omitempty"`
+	ShellGroup             *ShellGroupSelection `json:",omitempty"`
+	Environment            Environment          `json:",omitempty"`
+	ConfigurationProfile   *ConfigurationProfileRef
+	ExecutionID            ExecutionID
+	Workload               ExecutionWorkloadKind
+	Attempt                AttemptGeneration
+	AgentID                AgentID
+	ConversationID         ConversationID
+	Harness                string
+	Model                  string
+	Effort                 string                 `json:",omitempty"`
+	ToolGovernance         ToolGovernance         `json:",omitempty"`
+	FastMode               FastMode               `json:",omitempty"`
+	AutoReview             bool                   `json:",omitempty"`
+	AutoMemory             bool                   `json:",omitempty"`
+	PeerMessaging          bool                   `json:",omitempty"`
+	TrustDirectory         bool                   `json:",omitempty"`
+	AskUserQuestionTimeout AskUserQuestionTimeout `json:",omitempty"`
+	AutoCompactWindow      AutoCompactWindow      `json:",omitempty"`
+	WorkingDirectory       string
+	Approval               ApprovalMode
+	Sandbox                SandboxMode
 }
 
 type OperationKind string

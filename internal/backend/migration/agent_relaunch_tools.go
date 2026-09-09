@@ -9,17 +9,18 @@ import (
 )
 
 type agentRelaunchConfiguration struct {
-	AutoCompactWindow *model.AutoCompactWindow `json:"auto_compact_window"`
-	PeerMessaging     *bool                    `json:"peer_messaging"`
-	AutoMemory        *bool                    `json:"auto_memory"`
-	AutoReview        *bool                    `json:"approval_auto_review"`
-	FastMode          *bool                    `json:"fast_mode"`
-	ContextWindowSize *int64                   `json:"context_window_size"`
-	Version           int                      `json:"version"`
-	Tools             *model.ToolGovernance    `json:"tools"`
-	Model             *string                  `json:"model_id"`
-	Effort            *string                  `json:"effort"`
-	Approval          *string                  `json:"approval_policy"`
+	AskUserQuestionTimeout *model.AskUserQuestionTimeout `json:"ask_user_question_timeout"`
+	AutoCompactWindow      *model.AutoCompactWindow      `json:"auto_compact_window"`
+	PeerMessaging          *bool                         `json:"peer_messaging"`
+	AutoMemory             *bool                         `json:"auto_memory"`
+	AutoReview             *bool                         `json:"approval_auto_review"`
+	FastMode               *bool                         `json:"fast_mode"`
+	ContextWindowSize      *int64                        `json:"context_window_size"`
+	Version                int                           `json:"version"`
+	Tools                  *model.ToolGovernance         `json:"tools"`
+	Model                  *string                       `json:"model_id"`
+	Effort                 *string                       `json:"effort"`
+	Approval               *string                       `json:"approval_policy"`
 }
 
 func decodeAgentRelaunchConfiguration(values map[string]any) (*agentRelaunchConfiguration, error) {
