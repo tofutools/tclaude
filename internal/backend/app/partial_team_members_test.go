@@ -73,3 +73,16 @@ func TestPartialTeamMembersResolveCurrentDefaultsAtDeployment(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, team, *original.Team)
 }
+
+func TestPartialTeamMembersRejectMixedLaunchSources(t *testing.T) {
+	_, service, _ := regressionService(t)
+	for _, member := range []model.TeamMemberSpec{
+		{Key: "worker", Name: "Worker", Options: &model.ConfigurationOptions{}, ProfileID: "profile"},
+		{Key: "worker", Name: "Worker", Options: &model.ConfigurationOptions{}, Overrides: &model.TeamProfileOverrides{}},
+		{Key: "worker", Name: "Worker", Options: &model.ConfigurationOptions{}, Desired: model.DesiredConfiguration{Harness: "claude"}},
+	} {
+		team := model.TeamDefinition{WorkspacePolicy: model.WorkspacePolicyShared, Members: []model.TeamMemberSpec{member}, Waves: []model.TeamWave{{ID: "initial", MemberKeys: []string{"worker"}}}}
+		_, err := service.SaveDefinition(context.Background(), app.SaveDefinitionRequest{Context: effect(model.OperatorPrincipal(), "save"), Draft: app.DefinitionDraft{ID: "team", RevisionID: "one", Name: "Team", Source: "mixed settings", Kind: model.DefinitionTeam, SchemaVersion: 1, Team: &team}})
+		require.ErrorIs(t, err, app.ErrInvalid)
+	}
+}
