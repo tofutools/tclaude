@@ -24,7 +24,7 @@ func TestNativeApprovalModesReachFreshAndContinuedLaunch(t *testing.T) {
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, os.RemoveAll(root)) })
 			executable := filepath.Join(root, "fixture")
-			require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$PWD/argv\"\nwhile IFS= read -r line; do :; done\n"), 0700))
+			require.NoError(t, os.WriteFile(executable, []byte("#!/bin/sh\nif [ \"$3\" = --help ]; then exit 0; fi\nprintf '%s\\n' \"$@\" > \"$PWD/argv\"\nwhile IFS= read -r line; do :; done\n"), 0700))
 			provider, err := New(Config{Executable: executable, PrivateRoot: root, NativeHome: filepath.Join(root, "native")})
 			require.NoError(t, err)
 			var prior model.ProviderEvidence

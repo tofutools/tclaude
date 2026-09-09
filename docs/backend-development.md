@@ -1880,7 +1880,11 @@ Codex configurations and team overrides retain `never`, `on-request`,
 pass the selected value to Codex without changing confinement. The existing
 `automatic` and `supervised` choices remain compatible aliases for `never` and
 `on-request`. The provider describes prompt-oriented modes in launch support;
-`on-failure` is retained for compatibility and marked deprecated. Offline import
+`on-failure` is retained for compatibility and marked deprecated. The configured
+executable is probed with bounded, unauthenticated argument-help calls for the
+legacy `on-failure` and `untrusted` modes. Modes removed by that CLI remain
+editable and importable, but are not advertised as supported and are refused
+before preparation creates launch resources. Offline import
 preserves these native policy names for Codex profiles and agent birth settings.
 Approval controls share one vocabulary across settings and authority forms,
 while each provider declares which choices it supports.

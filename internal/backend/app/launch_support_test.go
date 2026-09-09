@@ -40,7 +40,7 @@ func TestLaunchSupportReadsAdapterContractWithoutPreparationOrStorage(t *testing
 				expectedApprovals = append(expectedApprovals, model.ApprovalDeny)
 			}
 			if tc.provider.Name() == codex.Name {
-				expectedApprovals = append(expectedApprovals, model.ApprovalNever, model.ApprovalOnRequest, model.ApprovalOnFailure, model.ApprovalUntrusted)
+				expectedApprovals = append(expectedApprovals, model.ApprovalNever, model.ApprovalOnRequest)
 			}
 			if tc.provider.Name() == claude.Name {
 				expectedApprovals = append(expectedApprovals, model.ApprovalInherit, model.ApprovalDefault, model.ApprovalManual, model.ApprovalPlan, model.ApprovalAcceptEdits, model.ApprovalAuto, model.ApprovalDontAsk, model.ApprovalBypassPermissions)
