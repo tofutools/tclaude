@@ -26,90 +26,77 @@ structures, not proof that their vocabulary or lifetimes are already settled.
 
 ## Future (proposed)
 
-Names such as **Agent**, **Conversation**, **Execution** and **Operation** appeared
-in the stopped v2 implementation. They are useful vocabulary to reconsider,
-not a commitment to that implementation's schema, policies or guarantees.
-The source inspected was `internal/backend/model/model.go`, `ids.go` and
-`context.go` at v2 commit `0cc125fa221855ccde0341bb3c50278768df3691`.
+Start with **Agent**, its settings and selected harness. The integration manages
+the link needed to continue the agent's native work. Conversation and Execution
+were names in the stopped v2 attempt, but we are not adopting them as core
+entities. Their usefulness has not been established by a user need.
 
 | Concept | Meaning to the user | What tclaude controls, and its limit |
 |---|---|---|
-| Agent | Who I am working with | Owns identity, configuration and membership; does not control every native lifecycle event. |
-| Conversation | A thread of interaction I can revisit and continue | Owns the thread's identity and organization of available history. Continuing the thread does not guarantee the harness can restore its previous context. |
-| Execution | One attempt to run an agent or other workload | Owns attempt identity and requested lifecycle; actual readiness, exit and failure must be observed. A native ID change alone does not define a new execution. |
-| Terminal/window | Where I interact with running work | Owns the view and its association with execution. It is neither the conversation nor the native resumable unit. Exact replacement terminology for today's tclaude session remains open. |
-| Operation | A request to do something, with progress and an outcome | Owns coordination and records the outcome; cannot promise a requested external effect has happened before it is confirmed. |
+| Agent | Who I am working with | Owns identity, settings, harness selection and membership. The integration manages native continuation, including changes of native IDs. |
+| Terminal/window | Where I interact with running work | Owns the view and its association with the agent or standalone work. It is not the harness's resumable chat. Naming beyond today's tclaude session remains open. |
 | Group | Who works together | Owns membership, owners and defaults. |
-| Profile | Settings I want to reuse | Owns saved intent, including explicit harness-specific options; the selected harness validates and applies supported choices. |
-| Message | Communication I send or receive | Owns recorded communication and delivery tracking; distinguishes acceptance from confirmed native delivery. |
-| Team, process or automation | How I arrange or repeat work | Owns coordination of operations, subject to each operation's capabilities and permissions. |
-| Activity | What is known about the work | Owns presentation and attribution; availability and precision depend on observations. |
+| Profile | Settings I want to reuse | Owns saved intent, including harness-specific options; the integration validates and applies them. |
+| Message | Coordination mail I send or receive | Owns tclaude mailbox communication and delivery tracking. This is separate from native chat history. |
+| Team, process or automation | How I arrange or repeat work | Owns coordination of operations, subject to permissions and reported support. |
+| Activity | What is known about the work | Owns presentation and attribution; native observations determine available readings. |
 
-The future table deliberately has no native-session entity. Harness IDs,
-native history formats and replacement rules belong behind the integration
-boundary. The platform model refers to tclaude identities, not native ones.
-An execution may exist without a registered agent, preserving standalone work
-and later registration.
+Operations act on these concepts. Tracking operation progress or a running
+attempt internally does not require a new user-facing entity for each.
+Standalone work and later agent registration must remain possible; the internal
+representation is still to be designed.
 
-These are proposals, not current structures. Existing concepts must be mapped
-and migrated deliberately; neither current conversation records nor session
-records can simply be renamed into this model.
+## Native continuation belongs to the integration
 
-## What stays behind the harness boundary
+An Agent selects a harness and is associated with integration-managed continuation
+state. The core does not interpret its contents. An integration may need one
+native ID, several references, or other persisted state. Those details may change
+without changing the Agent's identity.
 
-Each integration keeps the bindings it needs between tclaude identities and
-native resources. Those bindings may change, be discovered later, or involve
-several native references. They may need durable storage for recovery, but they
-are integration state, not additional concepts in the user-facing model.
+As the operator describes it, Claude Code calls its resumable chat a session. It
+can preserve an ID across stop/resume and replace or clone IDs on clear or other
+transitions. The integration handles that behavior. The platform must not infer
+what happened merely by comparing native IDs.
 
-For example, as the operator describes it, Claude Code calls its resumable chat
-a session. It can retain an ID across stop/resume and replace or clone IDs on
-clear or other native transitions. The integration must understand those events.
-Other harnesses may need entirely different tracking.
+The core model does **not** contain chat history, a history-access entity, or a
+Conversation entity. Any native history reading or manipulation needed by an
+operation belongs to the harness or its integration. This is not a proposal to
+remove existing history-related UI features; it defines where their native
+mechanics belong, without requiring a platform history model or store.
 
-The integration translates the result into meanings tclaude needs: execution
-ready or stopped, continuation available or unavailable, context reset, history
-available or incomplete. Common operations consume those meanings, not native
-ID comparisons or harness-specific event names.
+## Clone and reincarnate are operations, not history models
 
-A native ID changing does not automatically create a new tclaude Conversation.
-Nor does an unchanged ID prove context was retained. Whether a user action such
-as clear continues the thread with a reset marker or creates a new thread is a
-separate product decision, still open here. Do not derive it from native naming.
+Cloning an agent must carry out the requested native duplication as well as the
+appropriate tclaude changes. Copying an Agent record or sharing a continuation
+reference is not enough. The integration performs the native work and supplies
+an independent association when that is required by the clone contract.
 
-## A stable thread does not promise identical context
+Reincarnation likewise delegates its native continuation or replacement steps.
+Each operation needs its own user-visible contract; do not make clone and
+reincarnate synonyms or decide their identity behavior from native ID changes.
+The common operation coordinates permissions, settings, platform changes and
+outcome. It does not read transcripts to implement these operations.
 
-The user can continue working with the same tclaude conversation even when the
-native mechanism changes, provided the operation can do so under its declared
-behavior. If native continuation is unavailable, report that limit. Do not
-silently start fresh and claim a successful resume, or replay history into the
-harness as if it were equivalent. Any alternative requires an explicit product
-rule or user choice.
+## Desired behavior first, harness support second
 
-Best effort means adapting accurately and reporting what could not be achieved.
-It does not weaken permission checks, retry protections or the meaning of a
-successful operation. Available history is not a promise of a complete archive.
+Define what tclaude should do for the user, then map it to each harness. Do not
+choose the minimum feature set shared by all harnesses. An integration reports
+whether it can fulfil the requested behavior, offers an explicitly described
+alternative, or reports it unsupported. No silent downgrade should masquerade
+as successful resume, deep clone or reincarnation.
 
-## Harness-specific settings are an extension, not the core model
+Best effort concerns the mapping to native behavior, not permission checks or
+the truthfulness of the outcome. If a native operation may have happened but
+cannot be confirmed, report uncertainty rather than blindly repeating it.
 
-Users can still choose a harness and its specific settings. The integration
-provides their definitions and validation; tclaude stores the authored choices
-and displays suitable controls. These explicit options do not make native
-session IDs or lifecycle quirks part of Agent, Conversation or Execution.
+## Settings and observations
 
-Saved profile settings, execution settings and observed native state remain
-different facts. Operators must be able to update profiles while agents run.
-Later operations apply their documented resolution rules; this proposal does
-not introduce a blanket freeze of saved objects.
+Users can select harness-specific options through definitions and validation
+provided by the integration. tclaude preserves authored choices without making
+native lifecycle semantics part of the Agent model. Operators can update
+profiles while agents run; later operations apply documented resolution rules.
 
-## Observations describe what is known
-
-The integration translates context information into meaningful readings: counts,
-percentages or estimates, with known capacity, age and quality where available.
-Shared code need not know which native payload produced them. Unknown capacity
-must not become a fabricated token count; missing information is not zero.
-
-Correlating late reports with old native resources is the integration's job.
-Only correctly attributed platform observations should update an execution or
-conversation. Diagnostic native details can remain available for troubleshooting
-without becoming required knowledge for ordinary users or common operations.
+The integration can translate context usage or activity into meaningful
+readings. This is status information, not a chat-history model. Missing values
+remain unknown, and late reports from old native work must not overwrite the
+agent's current status. Native correlation stays behind the integration boundary.

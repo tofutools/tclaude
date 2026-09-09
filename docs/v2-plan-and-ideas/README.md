@@ -10,7 +10,7 @@ the mechanisms. Harness strategies handle differences in how the work happens.**
 
 The proposed structure has three main concepts:
 
-1. **The user-facing model:** agents, groups, profiles, conversations and work.
+1. **The user-facing model:** agents, groups, profiles and work.
    These concepts belong to tclaude. Explicit harness-specific settings remain
    available as extensions; native identifiers and lifecycle quirks do not
    define the core model.
@@ -33,7 +33,7 @@ flowchart TD
     Strategy --> Services
     Services --> Native[Native processes and observations]
     Native --> Integration[Harness translation and private bindings]
-    Integration --> State[Agent, conversation and activity state]
+    Integration --> State[Agent and activity state]
     State --> UI
 ```
 
@@ -41,11 +41,14 @@ The diagram shows proposed responsibilities, not current wiring or a fixed packa
 may finish immediately or leave work in progress. Harness event handling can
 continue after the initiating request returns.
 
-The candidate vocabulary is **Agent** (who), **Conversation** (the thread),
-**Execution** (a running attempt), **Terminal/window** (the view), and
-**Operation** (the request). tclaude controls their identities and relationships.
-Harness integrations map native behavior to them and report limits honestly;
-a stable platform conversation does not guarantee native context continuity.
+The core begins with **Agent**, its settings and its selected harness. Native
+continuation references are managed behind the harness interface. No separate
+Conversation, Execution or history-access entity is proposed. Internal runtime
+bookkeeping does not automatically become part of the user model.
+
+Define the tclaude behavior we want first. Each harness integration then fulfils
+it, reports a limitation or offers an explicit alternative. The weakest harness
+does not set the feature ceiling for the platform.
 
 ## Where behavior differs
 

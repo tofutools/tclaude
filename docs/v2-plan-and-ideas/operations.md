@@ -26,7 +26,7 @@ for every harness. That trace is still needed before choosing an extraction.
 |---|---|
 | Application rules | Common operation owns authorization, configuration resolution and user-visible outcome |
 | Harness differences | An explicit strategy owns a coherent native sequence, calling focused services |
-| Identity | Common operations use Agent, Conversation and Execution identities; integration-private bindings track native resources |
+| Identity | Common operations use Agent identity; integration-private bindings track native resources and continuation |
 | Later observations | Define how native events correlate to the operation attempt and complete or update its outcome |
 
 ### Example: restart an agent
@@ -45,7 +45,7 @@ report readiness using platform identities. These are hypothetical sequences, no
 named harnesses. They need not share an identical internal step list.
 
 The common contract describes the user-visible result: preserve the agent's
-identity, associate its history correctly, and expose starting/ready/failed
+identity, fulfil the requested continuation behavior, and expose starting/ready/failed
 states honestly. Its public result must not require a native conversation ID at all. The
 integration can retain pending bindings and report progress until it can confirm
 readiness. It must report lost or unavailable continuation rather than equating
@@ -53,8 +53,8 @@ a new native process with successful restoration of context.
 
 The operation expresses the requested platform behavior. A strategy translates
 it into native actions and translates their results back. A change of native
-identifier is not itself a platform decision to replace the conversation.
-The meaning of reset, resume and new thread needs explicit product rules.
+identifier is not itself a platform decision to create a new Agent.
+The meaning of reset, resume, clone and reincarnate needs explicit product rules.
 
 ## Explicit strategies, not arbitrary hooks
 
@@ -94,3 +94,16 @@ with genuinely different lifecycles. Write their normal and failure sequences
 side by side. Identify shared rules, services and the smallest useful strategy
 boundary. Try that extraction without changing the public behavior, then assess
 whether it actually reduced duplication and made the sequence easier to read.
+
+## Deep operations without a history entity
+
+For clone, the common operation coordinates the requested new agent, settings,
+authorization and result. Its harness strategy performs the native duplication
+needed to make that clone meaningful. Copying only platform metadata cannot
+count as a deep clone. Reincarnation gets its own contract and native strategy.
+
+Neither operation needs a common transcript reader or a Conversation object.
+The integration handles native history mechanics and continuation references.
+Define the requested behavior first, then make support, limitations and any
+alternative explicit for each harness. Do not weaken the operation for all
+harnesses merely because one cannot fulfil it.

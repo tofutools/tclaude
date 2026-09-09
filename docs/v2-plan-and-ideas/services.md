@@ -31,7 +31,7 @@ Examples: [daemon lifecycle](../../pkg/claude/agentd/lifecycle.go),
 | Permissions | Decide whether an actor may perform an action under current rules |
 | Native execution | Launch, resume or communicate with native execution where supported; do not call this tclaude's session/window model |
 | Terminal and workspace | Manage tclaude windows, terminal views and working resources with explicit lifetimes |
-| Platform identity and history | Own Agent, Conversation and Execution relationships and available history; native bindings stay in the integration |
+| Agent identity and associations | Own Agent identity and harness selection; delegate opaque continuation state and native bindings to the integration |
 | Messaging | Store, address and track message delivery |
 | Persistence | Commit related application state changes consistently |
 
@@ -59,7 +59,8 @@ flowchart LR
 The integration understands native payloads, ID changes and their lifecycle
 meaning. It owns private bindings from native references to platform identities,
 including persisted bindings when recovery requires them. Shared services own
-the platform records, not a universal model of native history semantics.
+Agent records; they do not model or read native chat history. Native duplication
+or continuation needed by clone and reincarnate stays inside the integration.
 Unknown correlations must not be guessed into the current execution.
 
 The boundary exposes platform operations and meaningful outcomes, not native
@@ -75,7 +76,8 @@ can live alongside its integration and use that integration's mechanisms. The
 application owns the common operation contract; the integration owns its native
 sequence, private bindings and translation into platform outcomes. Keep the dependency direction explicit when choosing packages.
 
-Not every harness must implement every capability. Use focused contracts with
+The desired operation contract comes first; do not reduce it to the capabilities
+common to all harnesses. Not every harness must implement every capability. Use focused contracts with
 meaningful unsupported outcomes, rather than one enormous interface padded
 with no-op methods.
 
