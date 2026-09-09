@@ -33,9 +33,9 @@ func TestBrowserGroupMemberWithoutGroupProfileUsesDefaults(t *testing.T) {
 			page.MustElement("#refresh").MustClick()
 			page.MustWait(`()=>snapshot.groups?.some(g=>g.ID==='team')`)
 			page.MustElementR("summary", "^Group settings$").MustClick()
-			action := "^Create member from default$"
+			action := "^Create member$"
 			if global {
-				action = "^Spawn member from default$"
+				action = "^Spawn member$"
 			}
 			page.MustElementR("#group-management button", action).MustClick()
 			if global {

@@ -77,15 +77,16 @@ func (s *Store) SetGroupConfiguration(ctx context.Context, in app.SetGroupConfig
 }
 func groupMemberIntent(in app.CreateGroupMemberRequest) []byte {
 	data, _ := json.Marshal(struct {
-		Launch                         *app.GroupMemberLaunch `json:",omitempty"`
-		Environment                    model.Environment      `json:",omitempty"`
+		ProfileID                      model.ConfigurationProfileID `json:",omitempty"`
+		Launch                         *app.GroupMemberLaunch       `json:",omitempty"`
+		Environment                    model.Environment            `json:",omitempty"`
 		GroupID                        model.GroupID
 		ID                             model.AgentID
 		Name                           string
 		GroupRevision, DefaultRevision model.Revision
 		Labels                         *model.AgentDisplayLabels   `json:",omitempty"`
 		ConfigurationOverrides         *model.ConfigurationOptions `json:",omitempty"`
-	}{in.Launch, in.Environment, in.GroupID, in.ID, in.Name, in.ExpectedGroupRevision, in.ExpectedDefaultRevision, in.Labels, in.ConfigurationOverrides})
+	}{in.ProfileID, in.Launch, in.Environment, in.GroupID, in.ID, in.Name, in.ExpectedGroupRevision, in.ExpectedDefaultRevision, in.Labels, in.ConfigurationOverrides})
 	return data
 }
 func findGroupMemberAdmission(ctx context.Context, q groupReader, in app.CreateGroupMemberRequest) (app.GroupMemberResult, bool, error) {
@@ -179,14 +180,28 @@ func admitGroupMemberTx(ctx context.Context, tx *sql.Tx, admission app.GroupMemb
 		return out, app.ErrConflict
 	}
 	var data []byte
-	if defaults.Profile == nil {
-		if admission.Sources == nil || admission.Sources.GroupID != in.GroupID || admission.Sources.Selected != nil {
+	if defaults.Profile == nil || in.ProfileID != "" {
+		if admission.Sources == nil || admission.Sources.GroupID != in.GroupID {
 			return out, app.ErrConflict
 		}
 		if err := requireTeamConfigurationSourcesCurrent(ctx, tx, *admission.Sources); err != nil {
 			return out, err
 		}
-		if err := requireProfileCreationTx(ctx, tx, in.Context.Principal, ""); err != nil {
+		if in.ProfileID != "" {
+			ref := admission.Configuration.Selected
+			if ref.ProfileID != in.ProfileID || agent.ConfigurationProfile == nil || *agent.ConfigurationProfile != ref {
+				return out, app.ErrConflict
+			}
+			if err := requireCurrentConfigurationProfileTx(ctx, tx, ref); err != nil {
+				return out, err
+			}
+		}
+		if defaults.Profile != nil {
+			if err := requireProfileCreationTx(ctx, tx, in.Context.Principal, defaults.Profile.ProfileID); err != nil {
+				return out, err
+			}
+		}
+		if err := requireProfileCreationTx(ctx, tx, in.Context.Principal, in.ProfileID); err != nil {
 			return out, err
 		}
 		expected := admission.Configuration.Desired

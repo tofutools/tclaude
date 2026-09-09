@@ -95,7 +95,7 @@ func TestBrowserPartialProfileGlobalAndGroupLaunchContext(t *testing.T) {
 	require.NoError(t, operator.Call(ctx, "PUT", "/v2/groups/group/configuration", map[string]any{"profile": profile.Revision.Ref}, nil))
 	page.MustElement("[data-tab=groups]").MustClick()
 	page.MustElementR("summary", "^Group settings$").MustClick()
-	page.MustElementR("#group-management button", "^Create member from default$").MustClick()
+	page.MustElementR("#group-management button", "^Create member$").MustClick()
 	page.MustElement("#editor").MustWaitVisible()
 	page.MustElement("#editor [name=name]").MustSelectAllText().MustInput("Group member")
 	page.MustElement("#editor [name=cwd]").MustInput(cwd)

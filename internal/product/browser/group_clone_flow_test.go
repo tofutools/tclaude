@@ -72,7 +72,7 @@ func TestBrowserClonesGroupAsOfflineIndependentMembers(t *testing.T) {
 	page.MustElementR("#group-management h3", "^Independent copy$")
 	desired.Model = "updated-default"
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/configuration-profiles", map[string]any{"request_id": "edit_profile", "id": "profile", "revision_id": "two", "expected_revision": 1, "name": "Worker", "desired": desired}, nil))
-	page.MustElementR("#group-management [data-group-id="+string(cloned.ID)+"] button", "^Create member from default$").MustClick()
+	page.MustElementR("#group-management [data-group-id="+string(cloned.ID)+"] button", "^Create member$").MustClick()
 	page.MustElement("#editor [name=name]").MustSelectAllText().MustInput("New from copied default")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()

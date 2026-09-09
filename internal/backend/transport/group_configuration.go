@@ -45,20 +45,21 @@ func (h *Handler) registerGroupConfiguration(api app.GroupConfigurationAPI) {
 			return
 		}
 		var body struct {
-			Launch                  *app.GroupMemberLaunch      `json:"launch"`
-			ConfigurationOverrides  *model.ConfigurationOptions `json:"configuration_overrides"`
-			Labels                  *model.AgentDisplayLabels   `json:"labels"`
-			Environment             model.Environment           `json:"environment"`
-			RequestID               model.RequestID             `json:"request_id"`
-			ID                      model.AgentID               `json:"id"`
-			Name                    string                      `json:"name"`
-			ExpectedGroupRevision   model.Revision              `json:"expected_group_revision"`
-			ExpectedDefaultRevision model.Revision              `json:"expected_default_revision"`
+			ProfileID               model.ConfigurationProfileID `json:"profile_id"`
+			Launch                  *app.GroupMemberLaunch       `json:"launch"`
+			ConfigurationOverrides  *model.ConfigurationOptions  `json:"configuration_overrides"`
+			Labels                  *model.AgentDisplayLabels    `json:"labels"`
+			Environment             model.Environment            `json:"environment"`
+			RequestID               model.RequestID              `json:"request_id"`
+			ID                      model.AgentID                `json:"id"`
+			Name                    string                       `json:"name"`
+			ExpectedGroupRevision   model.Revision               `json:"expected_group_revision"`
+			ExpectedDefaultRevision model.Revision               `json:"expected_default_revision"`
 		}
 		if !decodeRequest(w, r, &body) {
 			return
 		}
-		out, err := api.CreateGroupMember(r.Context(), app.CreateGroupMemberRequest{Launch: body.Launch, ConfigurationOverrides: body.ConfigurationOverrides, Labels: body.Labels, Context: app.RequestContext{Principal: p, RequestID: body.RequestID}, GroupID: model.GroupID(r.PathValue("id")), Environment: body.Environment, ID: body.ID, Name: body.Name, ExpectedGroupRevision: body.ExpectedGroupRevision, ExpectedDefaultRevision: body.ExpectedDefaultRevision})
+		out, err := api.CreateGroupMember(r.Context(), app.CreateGroupMemberRequest{ProfileID: body.ProfileID, Launch: body.Launch, ConfigurationOverrides: body.ConfigurationOverrides, Labels: body.Labels, Context: app.RequestContext{Principal: p, RequestID: body.RequestID}, GroupID: model.GroupID(r.PathValue("id")), Environment: body.Environment, ID: body.ID, Name: body.Name, ExpectedGroupRevision: body.ExpectedGroupRevision, ExpectedDefaultRevision: body.ExpectedDefaultRevision})
 		// Once admitted, failed/uncertain native effects still have a safe durable
 		// receipt. Return it immediately so the operator can inspect the outcome.
 		if err != nil && (out.Operation == nil || out.Operation.Operation.ID == "") {

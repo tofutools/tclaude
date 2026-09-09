@@ -2130,3 +2130,15 @@ and membership-scoped display labels retain their existing behavior. Admission
 checks the group and global default revisions and the current global profile in
 the publication transaction; a concurrent edit requires retry before any member
 is created. Completed request receipts retain their original result.
+
+### Group member profile selection
+
+The member form can select a current saved profile by name without changing the
+group default. Explicit fields take precedence over that profile, then group and
+global profile tiers, then provider defaults. Inherited provider-specific values
+use the shared compatibility rules; explicit incompatible settings fail validation.
+The selected profile ID is part of request identity, and admission checks every
+mutable contributing profile and default before publishing the member. Empty
+profile display suggestions fall through lower tiers; explicit empty member
+labels remain empty and membership-scoped. Profile changes in the dialog preserve
+fields the operator has already edited.
