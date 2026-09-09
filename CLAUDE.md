@@ -210,6 +210,8 @@ The external tracker and private board details are not stored in this repo. Use
 operator-provided startup context or private project memory when it is available,
 and do not add private tracker URLs or credentials to committed docs.
 
-Design intent, plans, and roadmaps live in the external tracker, not in this
-repo — do not commit plan or roadmap documents. The repo carries code, the user
-docs under `docs/`, and inline rationale in code comments.
+The living incremental architecture design lives in `docs/v2-plan-and-ideas/`,
+as explicitly requested by the operator. Keep concepts, diagrams, decisions and
+architectural tradeoffs there. Actual work items, epics, assignments, delivery
+status and implementation logs live in AWB; do not duplicate that tracker in
+the design documents. Keep private tracker details out of committed files.
