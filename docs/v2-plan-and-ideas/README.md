@@ -11,8 +11,9 @@ the mechanisms. Harness strategies handle differences in how the work happens.**
 The proposed structure has three main concepts:
 
 1. **The user-facing model:** agents, groups, profiles, conversations and work.
-   These concepts are mostly harness agnostic, with explicit harness-specific
-   settings and capabilities where needed.
+   These concepts belong to tclaude. Explicit harness-specific settings remain
+   available as extensions; native identifiers and lifecycle quirks do not
+   define the core model.
 2. **Services:** focused owners of mechanisms such as permissions, configuration,
    native sessions, terminals, message delivery and storage.
 3. **Operations:** coordinate services to fulfil a request such as starting,
@@ -31,7 +32,7 @@ flowchart TD
     Shared --> Services[Focused services]
     Strategy --> Services
     Services --> Native[Native processes and observations]
-    Native --> Integration[Harness event handling]
+    Native --> Integration[Harness translation and private bindings]
     Integration --> State[Agent, conversation and activity state]
     State --> UI
 ```
@@ -39,6 +40,12 @@ flowchart TD
 The diagram shows proposed responsibilities, not current wiring or a fixed package layout. An operation
 may finish immediately or leave work in progress. Harness event handling can
 continue after the initiating request returns.
+
+The candidate vocabulary is **Agent** (who), **Conversation** (the thread),
+**Execution** (a running attempt), **Terminal/window** (the view), and
+**Operation** (the request). tclaude controls their identities and relationships.
+Harness integrations map native behavior to them and report limits honestly;
+a stable platform conversation does not guarantee native context continuity.
 
 ## Where behavior differs
 

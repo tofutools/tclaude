@@ -31,7 +31,7 @@ Examples: [daemon lifecycle](../../pkg/claude/agentd/lifecycle.go),
 | Permissions | Decide whether an actor may perform an action under current rules |
 | Native execution | Launch, resume or communicate with native execution where supported; do not call this tclaude's session/window model |
 | Terminal and workspace | Manage tclaude windows, terminal views and working resources with explicit lifetimes |
-| Identity and conversation tracking | Associate agents, native conversations, running windows and observations without conflating their IDs |
+| Platform identity and history | Own Agent, Conversation and Execution relationships and available history; native bindings stay in the integration |
 | Messaging | Store, address and track message delivery |
 | Persistence | Commit related application state changes consistently |
 
@@ -51,23 +51,29 @@ For example, a context observation can arrive independently of any user action:
 ```mermaid
 flowchart LR
     Native[Native status payload or event] --> Interpret[Harness-specific interpretation]
-    Interpret --> Correlate[Identify execution and conversation]
-    Correlate --> Reading[Record meaningful observation]
+    Interpret --> Correlate[Resolve private native bindings]
+    Correlate --> Reading[Report observation using platform identities]
     Reading --> UI[Display value, age and uncertainty]
 ```
 
-The integration understands what the native payload means. Shared tracking
-services provide the associations and update rules. Unknown correlations must
-not be guessed into the agent's current native execution. Depending on the native protocol,
-handling may require waiting for identity information or exposing unavailable
-state; that behavior belongs in the integration's contract.
+The integration understands native payloads, ID changes and their lifecycle
+meaning. It owns private bindings from native references to platform identities,
+including persisted bindings when recovery requires them. Shared services own
+the platform records, not a universal model of native history semantics.
+Unknown correlations must not be guessed into the current execution.
+
+The boundary exposes platform operations and meaningful outcomes, not native
+protocol details. An integration can report that continuation is unavailable or
+an observation is incomplete without requiring a common service to inspect a
+Claude session ID or a Codex-specific event. Native diagnostic information can
+remain accessible separately.
 
 ## Where a strategy belongs
 
 An operation selects the harness behavior it needs. The harness-specific strategy
 can live alongside its integration and use that integration's mechanisms. The
-application owns the common operation contract; the harness owns its native
-sequence. Keep the dependency direction explicit when choosing packages.
+application owns the common operation contract; the integration owns its native
+sequence, private bindings and translation into platform outcomes. Keep the dependency direction explicit when choosing packages.
 
 Not every harness must implement every capability. Use focused contracts with
 meaningful unsupported outcomes, rather than one enormous interface padded

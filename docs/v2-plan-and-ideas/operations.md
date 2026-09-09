@@ -26,7 +26,7 @@ for every harness. That trace is still needed before choosing an extraction.
 |---|---|
 | Application rules | Common operation owns authorization, configuration resolution and user-visible outcome |
 | Harness differences | An explicit strategy owns a coherent native sequence, calling focused services |
-| Identity | Track the agent, running window and native resumable unit separately throughout the transition |
+| Identity | Common operations use Agent, Conversation and Execution identities; integration-private bindings track native resources |
 | Later observations | Define how native events correlate to the operation attempt and complete or update its outcome |
 
 ### Example: restart an agent
@@ -40,14 +40,21 @@ A possible common outline is:
 
 Inside step 3, one strategy could stop execution, resume the existing native
 conversation and confirm readiness. Another could request native replacement,
-await an event carrying a new conversation ID, associate it and then confirm
-readiness. These are hypothetical sequences, not current behavior attributed to
+await an event carrying a new native ID, update its private binding and then
+report readiness using platform identities. These are hypothetical sequences, not current behavior attributed to
 named harnesses. They need not share an identical internal step list.
 
 The common contract describes the user-visible result: preserve the agent's
 identity, associate its history correctly, and expose starting/ready/failed
-states honestly. It must not require a final native conversation ID immediately
-if a supported harness cannot provide one.
+states honestly. Its public result must not require a native conversation ID at all. The
+integration can retain pending bindings and report progress until it can confirm
+readiness. It must report lost or unavailable continuation rather than equating
+a new native process with successful restoration of context.
+
+The operation expresses the requested platform behavior. A strategy translates
+it into native actions and translates their results back. A change of native
+identifier is not itself a platform decision to replace the conversation.
+The meaning of reset, resume and new thread needs explicit product rules.
 
 ## Explicit strategies, not arbitrary hooks
 
