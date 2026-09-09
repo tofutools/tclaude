@@ -24,8 +24,8 @@ function attachLaunchSupportPreview({host,api}) {
    const hostSupport=hasHostSandbox?(support.HostSandbox?'Host sandbox preparation is configured; the selected policy and host capabilities are checked at launch. ':'Unsupported host sandbox selection: this provider has no host sandbox preparation configured. '):'';
    if(!support.PolicyKnown){status.textContent=hostSupport+selected+': the configured provider does not publish policy support. Launch validation remains authoritative.';return}
    const approvals=support.ApprovalModes||[],sandboxes=support.SandboxModes||[],problems=[];
-   if(!approvals.includes(approval.value))problems.push('selected approval '+approval.value);
-   if(!sandboxes.includes(sandbox.value))problems.push('selected confinement '+sandbox.value);
+   if(approval.value&&!approvals.includes(approval.value))problems.push('selected approval '+approval.value);
+   if(sandbox.value&&!sandboxes.includes(sandbox.value))problems.push('selected confinement '+sandbox.value);
    status.textContent=selected+' adapter supports approval: '+(approvals.join(', ')||'none')+'; confinement: '+(sandboxes.join(', ')||'none')+'. '+(problems.length?'Unsupported '+problems.join(' and ')+'. Change these settings before launch. ':(hasHostSandbox?'Selected native approval and confinement are supported by the adapter. ':'Selected policy is supported by the adapter. '))+hostSupport+defaultSupport+(support.ApprovalDescriptions?.[approval.value] ? support.ApprovalDescriptions[approval.value]+' ' : '')+(support.PreparedInitialInput?'Prepared initial input is supported. ':'Prepared initial input is not declared. ')+support.Basis;
   }catch(error){if(token===generation&&current())status.textContent='Launch support could not be read: '+error.message+'. Offline settings can still be saved; support is checked at launch.'}
  };
@@ -46,7 +46,7 @@ function launchToolGovernanceChoices(){return [{value:"",label:"Provider default
 function attachProviderSettingControl(host,name,provider,isEditable=()=>true){
  const harness=host.querySelector('[name=harness]'),tools=host.querySelector('[name='+name+']');
  if(!harness||!tools)return ()=>{};
- const sync=()=>{const supported=harness.value===provider;if(!supported)tools.value='';tools.disabled=!supported||!isEditable();};
+ const sync=()=>{const supported=harness.value===provider||(!harness.value&&harness.dataset.allowInheritedHarness==='true');if(!supported)tools.value='';tools.disabled=!supported||!isEditable();};
  host.addEventListener('change',event=>{if(event.target===harness)sync()});sync();return sync;
 }
 

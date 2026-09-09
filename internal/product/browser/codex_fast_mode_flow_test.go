@@ -26,7 +26,13 @@ func TestBrowserCodexFastModeSaveAndReopen(t *testing.T) {
 		require.Len(t, entries, 1)
 		var saved app.ConfigurationProfileResult
 		require.NoError(t, operator.Call(ctx, "GET", "/v2/configuration-profiles/"+string(entries[0].ID), nil, &saved))
-		require.Equal(t, mode, saved.Revision.Desired.FastMode)
+		require.NotNil(t, saved.Revision.Options)
+		if mode == "" {
+			require.Nil(t, saved.Revision.Options.FastMode)
+		} else {
+			require.NotNil(t, saved.Revision.Options.FastMode)
+			require.Equal(t, mode, *saved.Revision.Options.FastMode)
+		}
 		page.MustElementR("#configuration-list button", "^Edit configuration$").MustClick()
 		page.MustWait(`()=>document.querySelector('#editor').open`)
 		require.Equal(t, string(mode), page.MustElement("#editor [name=fast_mode]").MustProperty("value").Str())

@@ -82,8 +82,9 @@ func groupMemberIntent(in app.CreateGroupMemberRequest) []byte {
 		ID                             model.AgentID
 		Name                           string
 		GroupRevision, DefaultRevision model.Revision
-		Labels                         *model.AgentDisplayLabels `json:",omitempty"`
-	}{in.Environment, in.GroupID, in.ID, in.Name, in.ExpectedGroupRevision, in.ExpectedDefaultRevision, in.Labels})
+		Labels                         *model.AgentDisplayLabels   `json:",omitempty"`
+		ConfigurationOverrides         *model.ConfigurationOptions `json:",omitempty"`
+	}{in.Environment, in.GroupID, in.ID, in.Name, in.ExpectedGroupRevision, in.ExpectedDefaultRevision, in.Labels, in.ConfigurationOverrides})
 	return data
 }
 func findGroupMemberAdmission(ctx context.Context, q groupReader, in app.CreateGroupMemberRequest) (app.GroupMemberResult, bool, error) {
@@ -128,7 +129,8 @@ func (s *Store) FindGroupMemberAdmission(ctx context.Context, in app.CreateGroup
 	}
 	return prior, found, err
 }
-func (s *Store) AdmitGroupMember(ctx context.Context, in app.CreateGroupMemberRequest, agent model.Agent, at time.Time) (app.GroupMemberResult, error) {
+func (s *Store) AdmitGroupMember(ctx context.Context, admission app.GroupMemberAdmission) (app.GroupMemberResult, error) {
+	in, agent, at := admission.Request, admission.Agent, admission.At
 	var out app.GroupMemberResult
 	if agent.ID != in.ID || agent.Name != in.Name || agent.PrimaryExecutionID != "" || agent.Lifecycle != model.AgentActive {
 		return out, app.ErrInvalid
@@ -182,6 +184,17 @@ func (s *Store) AdmitGroupMember(ctx context.Context, in app.CreateGroupMemberRe
 		return out, err
 	}
 	expected := revision.Desired
+	if revision.Options != nil || in.ConfigurationOverrides != nil {
+		if admission.Configuration.Selected != revision.Ref {
+			return out, app.ErrConflict
+		}
+		if revision.Options != nil {
+			if err := requireProfileResolutionCurrent(ctx, tx, admission.Configuration); err != nil {
+				return out, err
+			}
+		}
+		expected = admission.Configuration.Desired
+	}
 	expected.HostSandbox = model.SandboxInGroup(expected.HostSandbox, in.GroupID)
 	expected.Environment, err = model.MergeEnvironment(defaults.Environment, expected.Environment, in.Environment)
 	if err != nil {

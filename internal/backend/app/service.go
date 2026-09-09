@@ -129,7 +129,7 @@ func (s *Service) CreateAgent(ctx context.Context, req CreateAgentRequest) (Agen
 	if selectionErr != nil {
 		return AgentResult{}, selectionErr
 	}
-	req.Desired, req.ConfigurationProfile, selectionErr = s.resolveConfigurationSelection(ctx, req.Desired, req.ConfigurationProfile)
+	req.Desired, req.ConfigurationProfile, selectionErr = s.resolveConfigurationSelectionWithOverrides(ctx, req.Desired, req.ConfigurationProfile, configurationOverridesForDefault(req.ConfigurationOverrides, req.ConfigurationDefault))
 	if selectionErr != nil {
 		return AgentResult{}, selectionErr
 	}
@@ -182,7 +182,7 @@ func (s *Service) UpdateAgent(ctx context.Context, req UpdateAgentRequest) (Agen
 	if selectionErr != nil {
 		return AgentResult{}, selectionErr
 	}
-	req.Desired, req.ConfigurationProfile, selectionErr = s.resolveConfigurationSelection(ctx, req.Desired, req.ConfigurationProfile)
+	req.Desired, req.ConfigurationProfile, selectionErr = s.resolveConfigurationSelectionWithOverrides(ctx, req.Desired, req.ConfigurationProfile, configurationOverridesForDefault(req.ConfigurationOverrides, req.ConfigurationDefault))
 	if selectionErr != nil {
 		return AgentResult{}, selectionErr
 	}
@@ -1209,14 +1209,27 @@ func validateDesired(desired model.DesiredConfiguration) error {
 
 // Team members receive their working directory from the deployment workspace.
 func validateLaunchConfiguration(desired model.DesiredConfiguration) error {
-	if err := model.ValidateAutoReview(desired.AutoReview, desired.Harness); err != nil {
-		return fail(ErrInvalid, "%v", err)
-	}
-	if err := desired.FastMode.Validate(desired.Harness); err != nil {
-		return fail(ErrInvalid, "%v", err)
-	}
-	if err := validateToolGovernance(desired); err != nil {
-		return err
+	return validateConfigurationFields(desired, false)
+}
+
+func validateConfigurationFields(desired model.DesiredConfiguration, partial bool) error {
+	if !partial || desired.Harness != "" {
+		if err := model.ValidateAutoReview(desired.AutoReview, desired.Harness); err != nil {
+			return fail(ErrInvalid, "%v", err)
+		}
+		if err := desired.FastMode.Validate(desired.Harness); err != nil {
+			return fail(ErrInvalid, "%v", err)
+		}
+		if err := validateToolGovernance(desired); err != nil {
+			return err
+		}
+	} else {
+		if desired.FastMode != "" && desired.FastMode != model.FastModeOn && desired.FastMode != model.FastModeOff {
+			return fail(ErrInvalid, "unsupported fast mode %q", desired.FastMode)
+		}
+		if err := desired.ToolGovernance.Validate(); err != nil {
+			return fail(ErrInvalid, "%v", err)
+		}
 	}
 	if err := model.ValidateSandboxSelection(desired.HostSandbox); err != nil {
 		return fail(ErrInvalid, "%v", err)
@@ -1227,15 +1240,17 @@ func validateLaunchConfiguration(desired model.DesiredConfiguration) error {
 	if err := model.ValidateEffort(desired.Effort); err != nil {
 		return fail(ErrInvalid, "%v", err)
 	}
-	if strings.TrimSpace(desired.Harness) == "" {
+	if !partial && strings.TrimSpace(desired.Harness) == "" {
 		return fail(ErrInvalid, "harness is required")
 	}
-	switch desired.Approval {
-	case model.ApprovalAsk, model.ApprovalAllowTools, model.ApprovalYolo, model.ApprovalSupervised, model.ApprovalAutomatic, model.ApprovalDeny, model.ApprovalNever, model.ApprovalOnRequest, model.ApprovalOnFailure, model.ApprovalUntrusted, model.ApprovalInherit, model.ApprovalDefault, model.ApprovalManual, model.ApprovalPlan, model.ApprovalAcceptEdits, model.ApprovalAuto, model.ApprovalDontAsk, model.ApprovalBypassPermissions:
-	default:
-		return fail(ErrInvalid, "unsupported approval mode %q", desired.Approval)
+	if !partial || desired.Approval != "" {
+		switch desired.Approval {
+		case model.ApprovalAsk, model.ApprovalAllowTools, model.ApprovalYolo, model.ApprovalSupervised, model.ApprovalAutomatic, model.ApprovalDeny, model.ApprovalNever, model.ApprovalOnRequest, model.ApprovalOnFailure, model.ApprovalUntrusted, model.ApprovalInherit, model.ApprovalDefault, model.ApprovalManual, model.ApprovalPlan, model.ApprovalAcceptEdits, model.ApprovalAuto, model.ApprovalDontAsk, model.ApprovalBypassPermissions:
+		default:
+			return fail(ErrInvalid, "unsupported approval mode %q", desired.Approval)
+		}
 	}
-	if desired.Sandbox != model.SandboxUnconfined && desired.Sandbox != model.SandboxReadOnly && desired.Sandbox != model.SandboxWorkspaceWrite {
+	if (!partial || desired.Sandbox != "") && desired.Sandbox != model.SandboxUnconfined && desired.Sandbox != model.SandboxReadOnly && desired.Sandbox != model.SandboxWorkspaceWrite {
 		return fail(ErrInvalid, "unsupported sandbox mode %q", desired.Sandbox)
 	}
 	return nil

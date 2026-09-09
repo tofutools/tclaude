@@ -50,7 +50,7 @@ function edit(title,fields,save,{skipUnchanged=false}={}){
   else if(field.options){input=el('select');for(const option of field.options){const o=el('option',typeof option==='string'?option:option.label);o.value=typeof option==='string'?option:option.value;input.append(o)}}
   else input=el(field.multiline?'textarea':'input');
   if(field.file)input.type='file';else if(field.type==='checkbox')input.type='checkbox';
-  if(field.multiple)input.multiple=true;input.name=field.name;input.setAttribute('aria-label',field.label);
+  if(field.multiple)input.multiple=true;input.name=field.name;if(field.allowInheritedHarness)input.dataset.allowInheritedHarness='true';input.setAttribute('aria-label',field.label);
   if(field.options&&field.value!==undefined){const values=field.multiple?(field.value||[]):[String(field.value)];for(const value of values){if(!Array.from(input.options).some(o=>o.value===String(value))){const o=el('option','Retained: '+value);o.value=value;input.append(o)}}if(field.multiple){for(const o of input.options)o.selected=values.includes(o.value)}else input.value=field.value}
   else if(field.type==='checkbox')input.checked=field.value===true;
   else if(!field.file&&!field.options&&!field.sandboxSelection)input.value=field.value??'';
@@ -82,7 +82,8 @@ function desiredFields(desired={}){return[
  {name:'approval',label:'Approval',value:desired.Approval||'supervised',options:launchApprovalChoices()},
  {name:'sandbox',label:'Confinement',value:desired.Sandbox||'workspace_write',options:['read_only','workspace_write','unconfined']}
 ]}
-function configuration(form){if(form.effort&&!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(form.effort))throw new Error('Requested native effort must start with a letter or digit and contain at most 64 lowercase letters, digits, underscores or hyphens.');return{...(form.host_sandbox?{HostSandbox:form.host_sandbox}:{}),Environment:form.environment||{},Harness:form.harness,Model:form.model,Effort:form.effort,ToolGovernance:form.tool_governance||undefined,FastMode:form.fast_mode||undefined,AutoReview:form.auto_review==='on',WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
+function validateConfigurationForm(form){if(form.effort&&!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(form.effort))throw new Error('Requested native effort must start with a letter or digit and contain at most 64 lowercase letters, digits, underscores or hyphens.');}
+function configuration(form){validateConfigurationForm(form);return{...(form.host_sandbox?{HostSandbox:form.host_sandbox}:{}),Environment:form.environment||{},Harness:form.harness,Model:form.model,Effort:form.effort,ToolGovernance:form.tool_governance||undefined,FastMode:form.fast_mode||undefined,AutoReview:form.auto_review==='on',WorkingDirectory:form.cwd,Approval:form.approval,Sandbox:form.sandbox}}
 async function startWithBrief(agent){
  const ref=agent.ConfigurationProfile;
  const saved=ref?await api(`/v2/configuration-profiles/${encodeURIComponent(ref.ProfileID)}?revision_id=${encodeURIComponent(ref.RevisionID)}`):null;
@@ -262,7 +263,7 @@ async function renderConfigurations(){
  const choices=[...(defaults.Global?[['global',defaults.Global]]:[]),...Object.entries(defaults.Harnesses||{})];
  if(choices.length){const card=el('article',undefined,'card');card.append(el('strong','Defaults'),el('p','Defaults use the current saved configuration for new agents. Existing agents keep their settings.','muted'));
  for(const [name,ref] of choices){const row=el('div',undefined,'row');const profile=entries.find(p=>p.ID===ref.ProfileID);row.append(el('span',`${name}: ${profile?.Name||ref.ProfileID}`));
- row.append(button('Create from '+name,async()=>{const saved=await api(`/v2/configuration-profiles/${encodeURIComponent(ref.ProfileID)}`);edit('Create agent from default',[{name:'name',label:'Agent name',value:saved.Revision.Startup?.AgentName||''},...displayLabelFields(saved.Revision.Startup)],f=>api('/v2/agents',{id:f.requestID,name:f.name,labels:{Role:f.role_label,Description:f.description},configuration_default:name}))}));
+ row.append(button('Create from '+name,async()=>{const saved=await api(`/v2/configuration-profiles/${encodeURIComponent(ref.ProfileID)}`);edit('Create agent from default',[{name:'name',label:'Agent name',value:saved.Revision.Startup?.AgentName||''},...displayLabelFields(saved.Revision.Startup),...profileLaunchFields(saved.Revision)],f=>api('/v2/agents',{id:f.requestID,name:f.name,labels:{Role:f.role_label,Description:f.description},configuration_default:name,...profileLaunchOverrides(f,saved.Revision)}))}));
  row.append(button('Clear '+name,async id=>{const harnesses={...(defaults.Harnesses||{})};delete harnesses[name];await api('/v2/configuration-defaults',{request_id:id,expected_revision:defaults.Revision,global:name==='global'?null:defaults.Global,harnesses});await renderConfigurations()}));card.append(row)}list.append(card)}
  const shown=entries.filter(p=>configurationStatus==='all'||Boolean(p.Archived)===(configurationStatus==='archived'));
  for(const profile of shown){
@@ -277,15 +278,15 @@ async function renderConfigurations(){
   const isDefault=choices.some(([,ref])=>ref.ProfileID===profile.ID),archive=button('Archive configuration',async id=>{await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}/archive`,{request_id:id,expected_revision:profile.Revision,archived:true});await renderConfigurations()});archive.disabled=isDefault;card.append(archive);if(isDefault)card.append(el('p','Clear or replace its default selections before archiving.','muted'));
   card.append(button('Create agent',async()=>{
    const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
-   edit('Create agent from configuration',[{name:'name',label:'Agent name',value:selected.Revision.Startup?.AgentName||profile.Name},...displayLabelFields(selected.Revision.Startup)],f=>api('/v2/agents',{id:f.requestID,name:f.name,labels:{Role:f.role_label,Description:f.description},configuration_profile:selected.Revision.Ref}));
+   edit('Create agent from configuration',[{name:'name',label:'Agent name',value:selected.Revision.Startup?.AgentName||profile.Name},...displayLabelFields(selected.Revision.Startup),...profileLaunchFields(selected.Revision)],f=>api('/v2/agents',{id:f.requestID,name:f.name,labels:{Role:f.role_label,Description:f.description},configuration_profile:selected.Revision.Ref,...profileLaunchOverrides(f,selected.Revision)}));
   }),button('Edit configuration',async()=>{
    const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
-   edit('Save new configuration revision',[...desiredFields({...selected.Revision.Desired,name:profile.Name}),...profileAliasFields(profile.Aliases),...startupFields(selected.Revision.Startup)],async f=>{
-    await api('/v2/configuration-profiles',{request_id:f.requestID,id:profile.ID,revision_id:f.requestID,expected_revision:profile.Revision,name:f.name,desired:configuration(f),startup:profileStartup(f),aliases:profileAliases(f)});await renderConfigurations();
+   edit('Save new configuration revision',[...(selected.Revision.Options?profileOptionFields(selected.Revision.Options,profile.Name):desiredFields({...selected.Revision.Desired,name:profile.Name})),...profileAliasFields(profile.Aliases),...startupFields(selected.Revision.Startup)],async f=>{
+    await api('/v2/configuration-profiles',{request_id:f.requestID,id:profile.ID,revision_id:f.requestID,expected_revision:profile.Revision,name:f.name,...(selected.Revision.Options?{options:profileOptionsFromForm(f)}:{desired:configuration(f)}),startup:profileStartup(f),aliases:profileAliases(f)});await renderConfigurations();
    });
   }),button('Use as default',async()=>{
    const selected=await api(`/v2/configuration-profiles/${encodeURIComponent(profile.ID)}?revision_id=${encodeURIComponent(profile.CurrentRevisionID)}`);
-   edit('Set default configuration',[{name:'scope',label:'Default scope',options:[{value:'global',label:'Global'},{value:selected.Revision.Desired.Harness,label:selected.Revision.Desired.Harness}]}],async f=>{
+   edit('Set default configuration',[{name:'scope',label:'Default scope',options:[{value:'global',label:'Global'},...(selected.Revision.Options?['claude','codex','opencode','copilot'].filter(h=>!selected.Revision.Options.Harness||h===selected.Revision.Options.Harness).map(h=>({value:h,label:h})):[{value:selected.Revision.Desired.Harness,label:selected.Revision.Desired.Harness}])]}],async f=>{
     const harnesses={...(defaults.Harnesses||{})};if(f.scope!=='global')harnesses[f.scope]=selected.Revision.Ref;
     await api('/v2/configuration-defaults',{request_id:f.requestID,expected_revision:defaults.Revision,global:f.scope==='global'?selected.Revision.Ref:defaults.Global,harnesses});await renderConfigurations();
    });
@@ -296,8 +297,8 @@ async function renderConfigurations(){
 function profileAliasFields(aliases=[]){return[{name:'aliases',label:'Aliases (one per line)',multiline:true,required:false,value:aliases.join('\n')}]}
 function profileAliases(form){return form.aliases===undefined?undefined:form.aliases.split(/\r?\n/).map(v=>v.trim()).filter(Boolean)}
 function saveConfigurationDraft(desired={},startup={}){
- edit('Save configuration',[...desiredFields(desired),...profileAliasFields(),...startupFields(startup)],async f=>{
-  await api('/v2/configuration-profiles',{request_id:f.requestID,id:f.requestID,revision_id:f.requestID,name:f.name,desired:configuration(f),startup:profileStartup(f),aliases:profileAliases(f)});await renderConfigurations();
+ edit('Save configuration',[...(Object.keys(desired).length?desiredFields(desired):profileOptionFields()),...profileAliasFields(),...startupFields(startup)],async f=>{
+  await api('/v2/configuration-profiles',{request_id:f.requestID,id:f.requestID,revision_id:f.requestID,name:f.name,...(Object.keys(desired).length?{desired:configuration(f)}:{options:profileOptionsFromForm(f)}),startup:profileStartup(f),aliases:profileAliases(f)});await renderConfigurations();
  });
 }
 $('new-configuration').onclick=()=>saveConfigurationDraft();

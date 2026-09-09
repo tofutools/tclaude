@@ -21,14 +21,15 @@ type ConfigurationBundle struct {
 	Profiles []ConfigurationBundleEntry `json:"profiles"`
 }
 type ConfigurationBundleEntry struct {
-	Aliases        []string                   `json:"aliases,omitempty"`
-	Disabled       bool                       `json:"disabled,omitempty"`
-	DisabledReason string                     `json:"disabled_reason,omitempty"`
-	Key            string                     `json:"key"`
-	Name           string                     `json:"name"`
-	Desired        model.DesiredConfiguration `json:"desired"`
-	Startup        *model.ProfileStartup      `json:"startup,omitempty"`
-	Archived       bool                       `json:"archived"`
+	Options        *model.ConfigurationOptions `json:"options,omitempty"`
+	Aliases        []string                    `json:"aliases,omitempty"`
+	Disabled       bool                        `json:"disabled,omitempty"`
+	DisabledReason string                      `json:"disabled_reason,omitempty"`
+	Key            string                      `json:"key"`
+	Name           string                      `json:"name"`
+	Desired        model.DesiredConfiguration  `json:"desired"`
+	Startup        *model.ProfileStartup       `json:"startup,omitempty"`
+	Archived       bool                        `json:"archived"`
 }
 type ConfigurationImportSelection struct {
 	Aliases          *[]string                            `json:"aliases,omitempty"`
@@ -92,7 +93,14 @@ func (s *Service) InspectConfigurationBundle(_ context.Context, principal model.
 				return ConfigurationBundle{}, ErrInvalid
 			}
 		}
-		if err := validateDesired(entry.Desired); err != nil {
+		if entry.Options != nil {
+			if !entry.Desired.Equal(model.DesiredConfiguration{}) {
+				return ConfigurationBundle{}, fail(ErrInvalid, "choose profile options or a complete configuration")
+			}
+			if err := validateConfigurationOptions(*entry.Options); err != nil {
+				return ConfigurationBundle{}, err
+			}
+		} else if err := validateDesired(entry.Desired); err != nil {
 			return ConfigurationBundle{}, err
 		}
 		if entry.Startup != nil && model.ValidateProfileStartup(*entry.Startup) != nil {
@@ -126,7 +134,7 @@ func (s *Service) ImportConfigurations(ctx context.Context, req ImportConfigurat
 		if selected.Aliases != nil {
 			aliases = *selected.Aliases
 		}
-		w, err := prepareConfigurationProfile(SaveConfigurationProfileRequest{Context: req.Context, ID: selected.ID, RevisionID: selected.RevisionID, ExpectedRevision: selected.ExpectedRevision, Name: selected.Name, Desired: entry.Desired, Startup: entry.Startup, Aliases: &aliases}, s.now())
+		w, err := prepareConfigurationProfile(SaveConfigurationProfileRequest{Context: req.Context, ID: selected.ID, RevisionID: selected.RevisionID, ExpectedRevision: selected.ExpectedRevision, Name: selected.Name, Desired: entry.Desired, Options: entry.Options, Startup: entry.Startup, Aliases: &aliases}, s.now())
 		if err != nil {
 			return ConfigurationImportResult{}, err
 		}

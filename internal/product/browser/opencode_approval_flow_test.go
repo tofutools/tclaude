@@ -28,7 +28,9 @@ func TestBrowserOpenCodeDenyApprovalSavesAndReopens(t *testing.T) {
 	require.Len(t, entries, 1)
 	var saved app.ConfigurationProfileResult
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/configuration-profiles/"+string(entries[0].ID), nil, &saved))
-	require.Equal(t, model.ApprovalDeny, saved.Revision.Desired.Approval)
+	require.NotNil(t, saved.Revision.Options)
+	require.NotNil(t, saved.Revision.Options.Approval)
+	require.Equal(t, model.ApprovalDeny, *saved.Revision.Options.Approval)
 	page.MustElementR("#configuration-list button", "^Edit configuration$").MustClick()
 	require.Equal(t, "deny", page.MustElement("#editor [name=approval]").MustProperty("value").Str())
 	page.MustElement("#editor button[value=cancel]").MustClick()

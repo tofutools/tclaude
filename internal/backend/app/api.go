@@ -276,30 +276,32 @@ type RequestContext struct {
 }
 
 type CreateAgentRequest struct {
-	Labels               *model.AgentLabels
-	ConfigurationDefault string
-	ConfigurationProfile *model.ConfigurationProfileRef
-	Context              model.Principal
-	ID                   model.AgentID
-	Name                 string
-	TaskReference        string
-	ParentAgentID        model.AgentID
-	CloneSourceAgentID   model.AgentID
-	Notifications        model.AgentNotificationPreferences
-	Desired              model.DesiredConfiguration
+	ConfigurationOverrides *model.ConfigurationOptions
+	Labels                 *model.AgentLabels
+	ConfigurationDefault   string
+	ConfigurationProfile   *model.ConfigurationProfileRef
+	Context                model.Principal
+	ID                     model.AgentID
+	Name                   string
+	TaskReference          string
+	ParentAgentID          model.AgentID
+	CloneSourceAgentID     model.AgentID
+	Notifications          model.AgentNotificationPreferences
+	Desired                model.DesiredConfiguration
 }
 
 type UpdateAgentRequest struct {
-	Labels               *model.AgentLabels
-	ConfigurationDefault string
-	ConfigurationProfile *model.ConfigurationProfileRef
-	Context              model.Principal
-	ID                   model.AgentID
-	ExpectedRevision     model.Revision
-	Name                 string
-	TaskReference        string
-	Notifications        model.AgentNotificationPreferences
-	Desired              model.DesiredConfiguration
+	ConfigurationOverrides *model.ConfigurationOptions
+	Labels                 *model.AgentLabels
+	ConfigurationDefault   string
+	ConfigurationProfile   *model.ConfigurationProfileRef
+	Context                model.Principal
+	ID                     model.AgentID
+	ExpectedRevision       model.Revision
+	Name                   string
+	TaskReference          string
+	Notifications          model.AgentNotificationPreferences
+	Desired                model.DesiredConfiguration
 }
 
 type RetireAgentRequest struct {

@@ -17,6 +17,7 @@ type SetGroupConfigurationRequest struct {
 	ExpectedRevision model.Revision
 }
 type CreateGroupMemberRequest struct {
+	ConfigurationOverrides  *model.ConfigurationOptions
 	Labels                  *model.AgentDisplayLabels
 	Environment             model.Environment
 	Context                 RequestContext
@@ -36,11 +37,18 @@ type GroupConfigurationAPI interface {
 	SetGroupConfiguration(context.Context, SetGroupConfigurationRequest) (model.GroupConfiguration, error)
 	CreateGroupMember(context.Context, CreateGroupMemberRequest) (GroupMemberResult, error)
 }
+type GroupMemberAdmission struct {
+	Request       CreateGroupMemberRequest
+	Agent         model.Agent
+	Configuration ResolvedProfileConfiguration
+	At            time.Time
+}
+
 type GroupConfigurationStore interface {
 	GroupConfiguration(context.Context, model.GroupID) (model.GroupConfiguration, error)
 	SetGroupConfiguration(context.Context, SetGroupConfigurationRequest, time.Time) (model.GroupConfiguration, error)
 	FindGroupMemberAdmission(context.Context, CreateGroupMemberRequest, time.Time) (GroupMemberResult, bool, error)
-	AdmitGroupMember(context.Context, CreateGroupMemberRequest, model.Agent, time.Time) (GroupMemberResult, error)
+	AdmitGroupMember(context.Context, GroupMemberAdmission) (GroupMemberResult, error)
 }
 
 func (s *Service) GetGroupConfiguration(ctx context.Context, p model.Principal, id model.GroupID) (model.GroupConfiguration, error) {
@@ -64,11 +72,7 @@ func (s *Service) SetGroupConfiguration(ctx context.Context, in SetGroupConfigur
 		return model.GroupConfiguration{}, ErrInvalid
 	}
 	if in.Profile != nil {
-		desired, _, err := s.resolveConfigurationSelection(ctx, model.DesiredConfiguration{}, in.Profile)
-		if err != nil {
-			return model.GroupConfiguration{}, err
-		}
-		if err = validateDesired(desired); err != nil {
+		if err := s.validateProfileDefaultSelection(ctx, *in.Profile, ""); err != nil {
 			return model.GroupConfiguration{}, err
 		}
 	}
@@ -108,8 +112,19 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	if err != nil {
 		return GroupMemberResult{}, err
 	}
-	desired, ref, err := s.resolveConfigurationSelection(ctx, model.DesiredConfiguration{}, current)
+	profile, err := s.store.ConfigurationProfile(ctx, current.ProfileID, current.RevisionID)
 	if err != nil {
+		return GroupMemberResult{}, err
+	}
+	if profile.Profile.Archived || profile.Revision.Ref != *current {
+		return GroupMemberResult{}, ErrConflict
+	}
+	configuration, err := s.resolveProfileConfigurationWithOverrides(ctx, profile, in.ConfigurationOverrides)
+	desired, ref := configuration.Desired, current
+	if err != nil {
+		return GroupMemberResult{}, err
+	}
+	if err := s.verifyLaunchSandbox(ctx, desired.HostSandbox); err != nil {
 		return GroupMemberResult{}, err
 	}
 	desired.Environment, err = model.MergeEnvironment(defaults.Environment, desired.Environment, in.Environment)
@@ -131,5 +146,5 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	labels = model.AgentLabels{Groups: map[model.GroupID]model.AgentDisplayLabels{in.GroupID: memberLabels}}
 	now := s.now().UTC()
 	agent := model.Agent{Labels: labels, ID: in.ID, Name: in.Name, Lifecycle: model.AgentActive, Notifications: model.AgentNotificationPreferences{DirectMessage: model.NotificationIfAvailable}, Desired: desired, ConfigurationProfile: ref, Revision: 1, CreatedAt: now, UpdatedAt: now}
-	return store.AdmitGroupMember(ctx, in, agent, now)
+	return store.AdmitGroupMember(ctx, GroupMemberAdmission{Request: in, Agent: agent, Configuration: configuration, At: now})
 }

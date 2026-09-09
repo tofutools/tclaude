@@ -99,10 +99,10 @@ class TeamEditor {
     if (member.ProfileID) {
       const selected = this.configurations.find(c => c.Profile.ID === member.ProfileID);
       if (!selected) return 'Unavailable saved configuration: ' + member.ProfileID;
-      const base = selected.Revision.Desired, overrides = member.Overrides || {};
+      const base = (selected.Revision.Options || selected.Revision.Desired), overrides = member.Overrides || {};
       const harness = overrides.Harness ?? base.Harness;
       const model = overrides.Model ?? (harness === base.Harness ? base.Model : '');
-      return `${ProfilePresentation.label(selected.Profile)} · ${harness} / ${model || 'Default model'}`;
+      return `${ProfilePresentation.label(selected.Profile)} · ${harness || 'Inherited harness'} / ${model || 'Default model'}`;
     }
     return `${member.Desired.Harness || 'Choose harness'} / ${member.Desired.Model || 'Choose model'}`;
   }
@@ -191,7 +191,7 @@ class TeamEditor {
     this.configurations.forEach((c, i) => { const o = el('option', `${ProfilePresentation.label(c.Profile)} · ${c.Revision.Ref.RevisionID}`); o.value = String(i); select.append(o); });
     select.onchange = () => {
       if (select.value === '') return;
-      const d = this.configurations[Number(select.value)].Revision.Desired;
+      const d = (this.configurations[Number(select.value)].Revision.Options || this.configurations[Number(select.value)].Revision.Desired);
       for (const [key, property] of Object.entries({harness: 'Harness', model: 'Model', effort: 'Effort',tool_governance:'ToolGovernance',fast_mode:'FastMode',auto_review:'AutoReview', cwd: 'WorkingDirectory', approval: 'Approval', sandbox: 'Sandbox'})) form.elements[key].value = launchSettingValue(key,d[property]);
       showEnvironment(d.Environment);
       showSandbox(d.HostSandbox);
@@ -208,11 +208,12 @@ class TeamEditor {
       for(const [key,property] of Object.entries(overrideProperties))if(form.elements["override_"+key].checked)values[key]=initialize ? m.Overrides?.[property] : form.elements[key].value;
       const selected = !!form.elements.profile.value;
       const profile = this.configurations.find(c => c.Profile.ID === form.elements.profile.value);
+      form.elements.harness.dataset.allowInheritedHarness=profile?.Revision.Options?'true':'false';
       if (profile) {
-        const d = profile.Revision.Desired;
+        const d = profile.Revision.Options || profile.Revision.Desired;
         for (const [key, property] of Object.entries({harness:'Harness',model:'Model',effort:'Effort',tool_governance:'ToolGovernance',fast_mode:'FastMode',auto_review:'AutoReview',cwd:'WorkingDirectory',approval:'Approval',sandbox:'Sandbox'})) form.elements[key].value = launchSettingValue(key,d[property]);
         for(const [key,value] of Object.entries(values))form.elements[key].value=launchSettingValue(key,value);
-        if(form.elements.harness.value!==d.Harness)for(const key of ['model','effort','auto_review','fast_mode','tool_governance'])if(!form.elements['override_'+key].checked)form.elements[key].value='';
+        if(d.Harness&&form.elements.harness.value!==d.Harness)for(const key of ['model','effort','auto_review','fast_mode','tool_governance'])if(!form.elements['override_'+key].checked)form.elements[key].value='';
         showEnvironment(d.Environment); showSandbox(d.HostSandbox);
         form.elements.harness.dispatchEvent(new Event('change', {bubbles:true}));
       }
@@ -229,7 +230,7 @@ class TeamEditor {
     form.addEventListener('launch-policy-support', event => {
       const profile = this.configurations.find(c => c.Profile.ID === form.elements.profile.value);
       const support = event.detail;
-      if (!profile || form.elements.harness.value === profile.Revision.Desired.Harness) return;
+      if (!profile || form.elements.harness.value === (profile.Revision.Options || profile.Revision.Desired).Harness) return;
       if (support.Harness !== form.elements.harness.value || !support.PolicyKnown) return;
       for(const [field,modes,value] of [['sandbox',support.SandboxModes,support.DefaultSandbox],['approval',support.ApprovalModes,support.DefaultApproval]]) {
         if(!form.elements['override_'+field].checked && !(modes||[]).includes(form.elements[field].value) && (modes||[]).includes(value)) form.elements[field].value=value;

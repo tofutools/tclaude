@@ -9,7 +9,6 @@ import (
 	"github.com/tofutools/tclaude/internal/backend/sqlite"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 type editingGroupProfileStore struct {
@@ -17,9 +16,9 @@ type editingGroupProfileStore struct {
 	before func()
 }
 
-func (s *editingGroupProfileStore) AdmitGroupMember(ctx context.Context, in app.CreateGroupMemberRequest, agent model.Agent, at time.Time) (app.GroupMemberResult, error) {
+func (s *editingGroupProfileStore) AdmitGroupMember(ctx context.Context, admission app.GroupMemberAdmission) (app.GroupMemberResult, error) {
 	s.before()
-	return s.Store.AdmitGroupMember(ctx, in, agent, at)
+	return s.Store.AdmitGroupMember(ctx, admission)
 }
 
 func TestGroupDefaultConcurrentProfileEditRefusesStaleAdmission(t *testing.T) {

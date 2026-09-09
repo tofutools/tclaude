@@ -36,7 +36,8 @@ type ProfileStartup struct {
 }
 
 type ConfigurationProfileRevision struct {
-	Startup   *ProfileStartup `json:",omitempty"`
+	Options   *ConfigurationOptions `json:",omitempty"`
+	Startup   *ProfileStartup       `json:",omitempty"`
 	Ref       ConfigurationProfileRef
 	Desired   DesiredConfiguration
 	CreatedAt time.Time

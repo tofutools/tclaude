@@ -5,10 +5,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/internal/backend/model"
+	"github.com/tofutools/tclaude/internal/backend/providers/claude"
 )
 
 func TestBrowserLaunchEnvironmentComposesLiteralPinnedValues(t *testing.T) {
-	ctx, page, operator := processEditorBrowser(t)
+	ctx, page, operator := processEditorBrowser(t, &claude.Provider{})
 	page.MustElement("[data-tab=configurations]").MustClick()
 	page.MustElement("#new-configuration").MustClick()
 	page.MustElement("#editor [name=name]").MustInput("Environment worker")

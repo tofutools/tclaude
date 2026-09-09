@@ -29,7 +29,9 @@ func TestBrowserOpenCodeToolGovernanceSavesAndReopens(t *testing.T) {
 		require.Len(t, entries, 1)
 		var saved app.ConfigurationProfileResult
 		require.NoError(t, operator.Call(ctx, "GET", "/v2/configuration-profiles/"+string(entries[0].ID), nil, &saved))
-		require.Equal(t, mode, saved.Revision.Desired.ToolGovernance)
+		require.NotNil(t, saved.Revision.Options)
+		require.NotNil(t, saved.Revision.Options.ToolGovernance)
+		require.Equal(t, mode, *saved.Revision.Options.ToolGovernance)
 		page.MustElementR("#configuration-list button", "^Edit configuration$").MustClick()
 		page.MustWait(`()=>document.querySelector('#editor').open`)
 		require.Equal(t, string(mode), page.MustElement("#editor [name=tool_governance]").MustProperty("value").Str())

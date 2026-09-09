@@ -27,7 +27,11 @@ func (s *Service) validateTeamToolGovernance(ctx context.Context, team model.Tea
 				if err != nil {
 					return err
 				}
-				desired.Harness = profile.Revision.Desired.Harness
+				desired.Harness = profile.Revision.AuthoredHarness()
+				if desired.Harness == "" {
+					// An inherited harness is resolved and validated at deployment.
+					continue
+				}
 			}
 		}
 		if err := validateToolGovernance(desired); err != nil {

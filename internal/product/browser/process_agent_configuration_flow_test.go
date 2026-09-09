@@ -26,6 +26,9 @@ func TestBrowserProcessWorkerConfigurationIsIndependent(t *testing.T) {
 	page.MustElementR("#process-inspector button", "^Make entry$").MustClick()
 	page.MustElementR("#process-inspector button", "^Connect$").MustClick()
 	page.MustElement("[aria-label='Copy new worker configuration']").MustSelect("Worker profile")
+	page.MustElement("#editor").MustWaitVisible()
+	page.MustElement("#editor button[type=submit]").MustClick()
+	page.MustWait(`()=>!document.querySelector('#editor').open&&!submitting`)
 	page.MustElement("#process-inspector [name=model]").MustSelectAllText().MustInput("independent-model")
 	page.MustElement("#process-inspector [name=effort]").MustSelectAllText().MustInput("high")
 	page.MustElementR("#process-inspector button", "^Apply changes$").MustClick()
@@ -40,8 +43,9 @@ func TestBrowserProcessWorkerConfigurationIsIndependent(t *testing.T) {
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/configuration-profiles", nil, &profiles))
 	var source app.ConfigurationProfileResult
 	require.NoError(t, operator.Call(ctx, "GET", "/v2/configuration-profiles/"+string(profiles[0].ID), nil, &source))
-	require.Equal(t, "source-model", source.Revision.Desired.Model)
-	require.Equal(t, "low", source.Revision.Desired.Effort)
+	require.NotNil(t, source.Revision.Options)
+	require.Equal(t, "source-model", *source.Revision.Options.Model)
+	require.Equal(t, "low", *source.Revision.Options.Effort)
 	var snapshot struct {
 		Agents     []model.Agent     `json:"agents"`
 		Executions []model.Execution `json:"executions"`
