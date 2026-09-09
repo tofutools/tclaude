@@ -2213,6 +2213,23 @@ Offline v228 import retains explicit profile and agent birth-request
 `trust_dir` intent. It does not infer trust from ambient native configuration or
 invent a field in v1 relaunch snapshots that did not carry it.
 
+### Explicit authority denials
+
+Operators can add, edit and remove denied actions in the Access workspace. A
+saved denial names an agent (or standalone execution) and one action. As in v1,
+it denies that action on every resource and has no grant scope or launch bounds.
+It overrides direct grants, role assignments, group-owner grants and default
+self authority. Removing the denial evaluates the current positive grants again;
+it does not recreate a removed grant. Operator authority remains the root.
+
+Denials are durable model records. SQLite evaluates them in the same transaction
+as admitted effects, after authenticating the current authority subject and before
+any positive grant/default lookup. Agent-origin automation uses the same subject
+check; an earlier allow does not override a subsequently committed denial.
+Publication and removal use revisions and update the snapshot in the same commit.
+Portable team publication and legacy permission-slug translation use their own
+import boundary; merely inspecting portable source creates no authority.
+
 ### Claude question timeout
 
 Profiles, agent settings and team member overrides retain Claude's question

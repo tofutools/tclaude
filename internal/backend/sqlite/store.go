@@ -397,6 +397,11 @@ CREATE TABLE IF NOT EXISTS execution_accesses (
   issued_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, revoked_at INTEGER,
   revision INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS authority_denials (
+ id TEXT PRIMARY KEY, subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL,
+ action TEXT NOT NULL, revision INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+ UNIQUE(subject_kind,subject_id,action)
+);
 CREATE TABLE IF NOT EXISTS authority_grants (
   id TEXT PRIMARY KEY, subject_kind TEXT NOT NULL, subject_id TEXT NOT NULL,
   action TEXT NOT NULL, resource_kind TEXT NOT NULL, resource_id TEXT NOT NULL DEFAULT '',

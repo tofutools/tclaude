@@ -63,6 +63,7 @@ type ListAuthorityRequest struct {
 }
 
 type AuthorityStateResult struct {
+	Denials     []model.AuthorityDenial
 	Grants      []model.AuthorityGrant
 	Roles       []model.Role
 	Assignments []model.RoleAssignment
@@ -173,6 +174,8 @@ type AgentAPI interface {
 // role assignments are visible records evaluated by the same path as direct
 // grants; SetGroupOwner does not create a hidden owner bypass.
 type AuthorityAdminAPI interface {
+	PutDenial(context.Context, PutDenialRequest) (DenialResult, error)
+	DeleteDenial(context.Context, DeleteDenialRequest) error
 	ListAuthority(context.Context, ListAuthorityRequest) (AuthorityStateResult, error)
 	PutGrant(context.Context, PutGrantRequest) (GrantResult, error)
 	DeleteGrant(context.Context, DeleteGrantRequest) error

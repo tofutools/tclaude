@@ -9,6 +9,8 @@ import (
 )
 
 func (h *Handler) registerAuthorityAdmin() {
+	h.mux.HandleFunc("PUT /v2/authority/denials/{id}", h.putDenial)
+	h.mux.HandleFunc("DELETE /v2/authority/denials/{id}", h.deleteDenial)
 	h.mux.HandleFunc("PUT /v2/authority/roles/{id}", h.putRole)
 	h.mux.HandleFunc("PUT /v2/authority/roles/{id}/assignments", h.putAssignment)
 	h.mux.HandleFunc("DELETE /v2/authority/roles/{id}/assignments", h.deleteAssignment)

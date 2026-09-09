@@ -24,6 +24,8 @@ func TestBrowserCapturesGroupAsIndependentUnsavedTeam(t *testing.T) {
 	require.NoError(t, operator.Call(ctx, "POST", "/v2/agents/retired/retire", map[string]any{"expected_revision": 1, "reason": "retained"}, nil))
 	require.NoError(t, operator.Call(ctx, "PUT", "/v2/groups/source/details", map[string]any{"expected_revision": 1, "details": map[string]any{"Mission": "Descriptive mission, not a launch instruction"}}, nil))
 	page.MustElement("#refresh").MustClick()
+	// Open settings after the setup snapshot has finished replacing the roster.
+	page.MustWait(`()=>snapshot.groups?.some(g=>g.ID==='source'&&g.Details?.Mission==='Descriptive mission, not a launch instruction')`)
 	page.MustElementR("summary", "^Group settings$").MustClick()
 	capture := func() {
 		page.MustElementR("#group-management [data-group-id=source] > .toolbar button", "^Save group as team template$").MustClick()
