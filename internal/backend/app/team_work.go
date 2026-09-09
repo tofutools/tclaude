@@ -193,6 +193,10 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 	if roleErr != nil {
 		return TeamDeploymentResult{}, roleErr
 	}
+	memberGrants, memberDenials, err := teamMemberAuthority(req.Context.Principal, req.DeploymentID, *revision.Team, members, pins, now)
+	if err != nil {
+		return TeamDeploymentResult{}, err
+	}
 	workspaceBindings, ownedWorkspaceIDs, err := s.prepareTeamWorkspaces(ctx, req, *revision.Team)
 	if err != nil {
 		return TeamDeploymentResult{}, err
@@ -228,6 +232,7 @@ func (s *Service) DeployTeam(ctx context.Context, req DeployTeamRequest) (TeamDe
 	deployment.MemberStartups = memberStartups
 	deployment.DirectoryTrust = directoryTrust
 	deployment.RolePins = pins
+	deployment.MemberGrants, deployment.MemberDenials = memberGrants, memberDenials
 	stored, _, err := s.store.CreateTeamDeployment(ctx, deployment, group, agents, assignments, req.Context.Principal, req.Context.RequestID, requestDigest, now)
 	if err != nil {
 		return TeamDeploymentResult{}, err
@@ -301,14 +306,18 @@ func (s *Service) teamRoleAdmissions(ctx context.Context, principal model.Princi
 		if !ok {
 			return nil, nil, fail(ErrInvalid, "team role %s does not exist", id)
 		}
-		pins = append(pins, model.TeamRolePin{Brief: role.Brief, RoleID: id, Revision: role.Revision, Actions: append([]model.Action(nil), role.Actions...)})
+		scope, scopeErr := role.Scopes.Normalize(role.Actions)
+		if scopeErr != nil {
+			return nil, nil, fail(ErrInvalid, "%v", scopeErr)
+		}
+		pins = append(pins, model.TeamRolePin{Scopes: scope, Brief: role.Brief, RoleID: id, Revision: role.Revision, Actions: append([]model.Action(nil), role.Actions...)})
 		agents := append([]model.AgentID(nil), members[id]...)
 		sort.Slice(agents, func(i, j int) bool { return agents[i] < agents[j] })
 		for i, agentID := range agents {
 			if i > 0 && agentID == agents[i-1] {
 				continue
 			}
-			assignments = append(assignments, model.RoleAssignment{RoleID: id, Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: agentID}, Resource: model.ResourceSelector{Kind: model.ResourceGroupPeers, GroupID: groupID}, Bounds: model.ConfigurationBounds{}, Revision: 1, CreatedAt: now, UpdatedAt: now})
+			assignments = append(assignments, model.RoleAssignment{PermissionsCopied: id != model.GroupOwnerRole, RoleID: id, Subject: model.AuthoritySubject{Kind: model.AuthorityAgent, AgentID: agentID}, Resource: model.ResourceSelector{Kind: model.ResourceGroupPeers, GroupID: groupID}, Bounds: model.ConfigurationBounds{}, Revision: 1, CreatedAt: now, UpdatedAt: now})
 		}
 	}
 	return assignments, pins, nil

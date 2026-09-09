@@ -1596,6 +1596,9 @@ func validateTeam(team model.TeamDefinition) error {
 	}
 	members := make(map[string]bool, len(team.Members))
 	for _, member := range team.Members {
+		if err := ValidateTeamMemberPermissions(member.Permissions); err != nil {
+			return err
+		}
 		if member.Options != nil {
 			if member.ProfileID != "" || member.Overrides != nil || !member.Desired.Equal(model.DesiredConfiguration{}) {
 				return fail(ErrInvalid, "team member selects partial options, a profile, or complete settings")

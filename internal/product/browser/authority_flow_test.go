@@ -22,7 +22,10 @@ func TestBrowserRoleAssignmentAndGrantScopeRemainExact(t *testing.T) {
 	page.MustElement("[data-tab=access]").MustClick()
 	page.MustElementR("#access-list button", "^Create role$").MustClick()
 	page.MustElement("#editor [name=name]").MustInput("Messenger")
-	page.MustElement("#editor [name=actions]").MustSelect("message.send")
+	page.MustElementR("#editor button", "^Add permission$").MustClick()
+	page.MustElement("#editor [aria-label='Permission action']").MustSelect("message.send")
+	page.MustElementR("#editor summary", "^Named constraints$").MustClick()
+	page.MustElement("#editor [aria-label='Target agents (one per line)']").MustInput("beta")
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElement("#editor").MustWaitInvisible()
 	page.MustElementR("#access-list button", "^Assign role$").MustClick()
@@ -37,13 +40,14 @@ func TestBrowserRoleAssignmentAndGrantScopeRemainExact(t *testing.T) {
 	require.Equal(t, model.AgentID("beta"), state.Assignments[0].Resource.AgentID)
 	page.MustElementR("#access-list button", "^Edit role$").MustClick()
 	page.MustElement("#editor [name=name]").MustSelectAllText().MustInput("Local edit")
+	require.Equal(t, "beta", page.MustElement("#editor [aria-label='Target agents (one per line)']").MustProperty("value").Str())
 	var role model.Role
 	for _, candidate := range state.Roles {
 		if candidate.Name == "Messenger" {
 			role = candidate
 		}
 	}
-	require.NoError(t, operator.Call(ctx, "PUT", "/v2/authority/roles/"+string(role.ID), map[string]any{"name": "Concurrent edit", "actions": role.Actions, "expected_revision": role.Revision}, nil))
+	require.NoError(t, operator.Call(ctx, "PUT", "/v2/authority/roles/"+string(role.ID), map[string]any{"name": "Concurrent edit", "actions": role.Actions, "scopes": role.Scopes, "expected_revision": role.Revision}, nil))
 	page.MustElement("#editor button[type=submit]").MustClick()
 	page.MustElementR("#editor-error", "saved state changed")
 	page.MustElement("#cancel").MustClick()

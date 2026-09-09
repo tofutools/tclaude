@@ -1,3 +1,4 @@
+import {memberPermissions} from './member-permissions.js';
 import {wireDefinitionDraft} from './process-durations.js';
 const {stringifyExact,parameterDefaultText}=globalThis.ExactJSONTools;
 import {clone, freshID, lines} from './process-model.js';
@@ -81,7 +82,7 @@ class TeamEditor {
     const t = this.draft.Team;
     if (this.tab === 'Members') {
       this.content.append(button('Add member', () => this.member()));
-      for (const m of t.Members) this.card(m.Name || m.Key, `${m.Key} · ${this.memberConfigurationSummary(m)}${m.Owner ? ' · owner' : ''}${m.Required ? ' · required' : ''}`, () => this.member(m), () => this.removeMember(m));
+      for (const m of t.Members) this.card(m.Name || m.Key, `${m.Key} · ${this.memberConfigurationSummary(m)}${m.Owner ? ' · owner' : ''}${m.Required ? ' · required' : ''}${m.Permissions?.length ? ' · permissions: '+m.Permissions.map(p=>(p.Denied?'deny ':'grant ')+p.Action).join(', ') : ''}`, () => this.member(m), () => this.removeMember(m));
     } else if (this.tab === 'Waves') {
       this.content.append(el('p', 'Each member belongs to one wave. Dependencies control launch order; readiness and briefing gates wait for their evidence.'), button('Add wave', () => this.wave()));
       for (const w of t.Waves) this.card(w.ID, `Members: ${w.MemberKeys.join(', ')} · after: ${(w.DependsOn || []).join(', ') || 'none'}`, () => this.wave(w), () => this.change(d => { d.Team.Waves = d.Team.Waves.filter(x => x.ID !== w.ID); for (const x of d.Team.Waves) x.DependsOn = (x.DependsOn || []).filter(id => id !== w.ID); }));
@@ -137,6 +138,7 @@ class TeamEditor {
   member(original) {
     const m = original || {Key: '', Name: '', Desired: {}, Roles: [], Required: true, Owner: false, BriefingIDs: []}, desired = m.Options || m.Desired;
     let environment, sandbox;
+    const permissions = memberPermissions(m.Permissions);
     const overrideProperties = {harness:"Harness",model:"Model",effort:"Effort",tool_governance:"ToolGovernance",fast_mode:"FastMode",auto_review:"AutoReview",auto_memory:"AutoMemory",peer_messaging:"PeerMessaging",trust_directory:"TrustDirectory",ask_user_question_timeout:"AskUserQuestionTimeout",auto_compact_window:"AutoCompactWindow",approval:"Approval",sandbox:"Sandbox"};
     const fields = [
       {key: 'key', label: 'Stable member key', value: m.Key, required: true}, {key: 'name', label: 'Member name', value: m.Name, required: true},
@@ -171,7 +173,7 @@ class TeamEditor {
       const overrides = {};
       if(f.profile)for(const [key,property] of Object.entries(overrideProperties))if(f['override_'+key])overrides[property]=(key==='auto_review'||key==='auto_memory'||key==='peer_messaging'||key==='trust_directory')?f[key]==='on':f[key];
       const options = f.partial&&!f.profile ? profileOptionsFromForm({...f,host_sandbox:f.resolvedSandbox,environment:environment.read()}) : undefined;
-      const member = {...m, Options:options, Overrides:Object.keys(overrides).length ? overrides : undefined, Key: f.key, Name: f.name, Labels:{Role:f.role_label,Description:f.description}, ProfileID: f.profile || undefined, Desired: f.profile || options ? {} : {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, ToolGovernance:f.tool_governance||undefined,FastMode:f.fast_mode||undefined,AutoReview:f.auto_review==='on',AutoMemory:f.auto_memory==='on',PeerMessaging:f.peer_messaging==='on',TrustDirectory:f.trust_directory==='on',AskUserQuestionTimeout:f.ask_user_question_timeout||'',AutoCompactWindow:f.auto_compact_window||'', WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, HostSandbox: f.resolvedSandbox||undefined, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
+      const member = {...m, Permissions:permissions.read(), Options:options, Overrides:Object.keys(overrides).length ? overrides : undefined, Key: f.key, Name: f.name, Labels:{Role:f.role_label,Description:f.description}, ProfileID: f.profile || undefined, Desired: f.profile || options ? {} : {...desired, Harness: f.harness, Model: f.model, Effort: f.effort, ToolGovernance:f.tool_governance||undefined,FastMode:f.fast_mode||undefined,AutoReview:f.auto_review==='on',AutoMemory:f.auto_memory==='on',PeerMessaging:f.peer_messaging==='on',TrustDirectory:f.trust_directory==='on',AskUserQuestionTimeout:f.ask_user_question_timeout||'',AutoCompactWindow:f.auto_compact_window||'', WorkingDirectory: f.cwd, Approval: f.approval, Sandbox: f.sandbox, HostSandbox: f.resolvedSandbox||undefined, Environment: environment.read()}, Roles: f.roles, Owner: f.owner, Required: f.required, BriefingIDs: f.briefs};
       this.change(d => {
         const i = d.Team.Members.findIndex(x => x.Key === original?.Key); if (i < 0) d.Team.Members.push(member); else d.Team.Members[i] = member;
         if (original && original.Key !== f.key) { for (const w of d.Team.Waves) w.MemberKeys = w.MemberKeys.map(k => k === original.Key ? f.key : k); for (const b of d.Team.Briefings) b.MemberKeys = (b.MemberKeys || []).map(k => k === original.Key ? f.key : k); }
@@ -183,6 +185,7 @@ class TeamEditor {
         else if (!original) d.Team.Waves[0].MemberKeys.push(f.key);
       });
     },async f=>{if(!f.profile)f.resolvedSandbox=await sandbox.read(f.host_sandbox)});
+    form.insertBefore(permissions.host, form.querySelector('button[type=submit]'));
     const environmentField = el('fieldset'); environmentField.setAttribute('aria-label', 'Member launch environment');
     const showEnvironment = values => {
       environment = new LaunchEnvironment(values || {});

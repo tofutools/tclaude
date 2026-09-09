@@ -65,7 +65,7 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 		if roleErr != nil {
 			return model.TeamDeployment{}, false, roleErr
 		}
-		if role.Revision != pin.Revision || role.Brief != pin.Brief || !reflect.DeepEqual(role.Actions, pin.Actions) {
+		if role.Revision != pin.Revision || role.Brief != pin.Brief || !reflect.DeepEqual(role.Actions, pin.Actions) || !reflect.DeepEqual(role.Scopes, pin.Scopes) {
 			return model.TeamDeployment{}, false, app.ErrConflict
 		}
 		pins[pin.RoleID] = pin
@@ -138,17 +138,21 @@ func (s *Store) CreateTeamDeployment(ctx context.Context, deployment model.TeamD
 		groupMembers[member] = true
 	}
 	for _, assignment := range assignments {
-		if _, ok := pins[assignment.RoleID]; !ok || assignment.Subject.Kind != model.AuthorityAgent || !groupMembers[assignment.Subject.AgentID] || assignment.Resource.Kind != model.ResourceGroupPeers || assignment.Resource.GroupID != group.ID {
+		if _, ok := pins[assignment.RoleID]; !ok || assignment.PermissionsCopied != (assignment.RoleID != model.GroupOwnerRole) || assignment.Subject.Kind != model.AuthorityAgent || !groupMembers[assignment.Subject.AgentID] || assignment.Resource.Kind != model.ResourceGroupPeers || assignment.Resource.GroupID != group.ID {
 			return model.TeamDeployment{}, false, app.ErrInvalid
 		}
 		bounds, encodeErr := json.Marshal(assignment.Bounds)
 		if encodeErr != nil {
 			return model.TeamDeployment{}, false, encodeErr
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT INTO role_assignments(role_id,subject_kind,subject_id,resource_kind,resource_id,bounds_json,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,1,?,?)`, assignment.RoleID, model.AuthorityAgent, assignment.Subject.AgentID, model.ResourceGroupPeers, group.ID, bounds, nanos(assignment.CreatedAt), nanos(assignment.UpdatedAt)); err != nil {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO role_assignments(role_id,subject_kind,subject_id,resource_kind,resource_id,bounds_json,revision,created_at,updated_at,permissions_copied) VALUES(?,?,?,?,?,?,1,?,?,?)`, assignment.RoleID, model.AuthorityAgent, assignment.Subject.AgentID, model.ResourceGroupPeers, group.ID, bounds, nanos(assignment.CreatedAt), nanos(assignment.UpdatedAt), assignment.PermissionsCopied); err != nil {
 			return model.TeamDeployment{}, false, classify(err)
 		}
 	}
+	if err = publishTeamMemberAuthority(ctx, tx, deployment, group, agents, principal); err != nil {
+		return model.TeamDeployment{}, false, err
+	}
+	deployment.MemberGrants, deployment.MemberDenials = nil, nil
 	definition, _ := json.Marshal(deployment.Definition)
 	closure, _ := json.Marshal(deployment.DependencyClosure)
 	parameters, _ := json.Marshal(deployment.Parameters)

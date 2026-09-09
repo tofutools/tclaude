@@ -109,9 +109,18 @@ type TeamDefinition struct {
 	Rhythms         []TeamRhythm `json:",omitempty"`
 }
 
+// TeamMemberPermission is copied to a newly created member at deployment.
+// Scope uses current names at authorization time; a denial is action-wide.
+type TeamMemberPermission struct {
+	Action Action
+	Denied bool            `json:",omitempty"`
+	Scope  PermissionScope `json:",omitempty"`
+}
+
 type TeamMemberSpec struct {
-	Options   *ConfigurationOptions `json:",omitempty"`
-	Overrides *TeamProfileOverrides `json:",omitempty"`
+	Permissions []TeamMemberPermission `json:",omitempty"`
+	Options     *ConfigurationOptions  `json:",omitempty"`
+	Overrides   *TeamProfileOverrides  `json:",omitempty"`
 	// ProfileID follows the named profile at each new deployment.
 	ProfileID   ConfigurationProfileID `json:",omitempty"`
 	Labels      AgentLabels            `json:",omitzero"`
@@ -581,6 +590,8 @@ type TeamConfigurationSources struct {
 }
 
 type TeamDeployment struct {
+	MemberGrants           []AuthorityGrant                    `json:"-"`
+	MemberDenials          []AuthorityDenial                   `json:"-"`
 	DirectoryTrust         map[AgentID]DirectoryTrustAdmission `json:"-"`
 	ConfigurationSources   []TeamConfigurationSources          `json:"-"`
 	MemberStartups         map[string]ProfileStartup           `json:",omitempty"`
@@ -632,10 +643,11 @@ type TeamRebrief struct {
 }
 
 // TeamRolePin records the exact operator-authored role definition accepted by
-// a deployment. Later role edits remain live authority semantics, but do not
-// rewrite what the deployment admitted.
+// a deployment. Ordinary role permissions are copied at member creation; later
+// role edits do not rewrite those grants or the admitted startup guidance.
 type TeamRolePin struct {
-	Brief    string `json:",omitempty"`
+	Scopes   ActionScopes `json:",omitempty"`
+	Brief    string       `json:",omitempty"`
 	RoleID   RoleID
 	Revision Revision
 	Actions  []Action

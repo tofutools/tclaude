@@ -24,16 +24,17 @@ func (h *Handler) putRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name             string         `json:"name"`
-		Description      string         `json:"description"`
-		Brief            string         `json:"brief"`
-		Actions          []model.Action `json:"actions"`
-		ExpectedRevision model.Revision `json:"expected_revision"`
+		Name             string             `json:"name"`
+		Description      string             `json:"description"`
+		Brief            string             `json:"brief"`
+		Actions          []model.Action     `json:"actions"`
+		Scopes           model.ActionScopes `json:"scopes"`
+		ExpectedRevision model.Revision     `json:"expected_revision"`
 	}
 	if !decodeRequest(w, r, &body) {
 		return
 	}
-	result, err := h.authority.PutRole(r.Context(), app.PutRoleRequest{Principal: p, ExpectedRevision: body.ExpectedRevision, Role: model.Role{ID: model.RoleID(r.PathValue("id")), Name: body.Name, Description: body.Description, Brief: body.Brief, Actions: body.Actions}})
+	result, err := h.authority.PutRole(r.Context(), app.PutRoleRequest{Principal: p, ExpectedRevision: body.ExpectedRevision, Role: model.Role{ID: model.RoleID(r.PathValue("id")), Name: body.Name, Description: body.Description, Brief: body.Brief, Actions: body.Actions, Scopes: body.Scopes}})
 	if err != nil {
 		applicationError(w, err)
 		return

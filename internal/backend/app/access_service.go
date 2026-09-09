@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/sha256"
+	"slices"
 	"strings"
 	"time"
 
@@ -177,6 +178,34 @@ func (s *Service) PutRole(ctx context.Context, req PutRoleRequest) (RoleResult, 
 		return RoleResult{}, fail(ErrInvalid, "valid role id and name are required")
 	}
 	role := req.Role
+	// Older role editors do not send constraints. Preserve constraints for
+	// retained actions; an explicit empty map clears them intentionally.
+	if req.ExpectedRevision != 0 && req.Role.Scopes == nil {
+		state, err := s.store.AuthorityState(ctx)
+		if err != nil {
+			return RoleResult{}, err
+		}
+		for _, prior := range state.Roles {
+			if prior.ID != role.ID {
+				continue
+			}
+			if prior.Revision != req.ExpectedRevision {
+				return RoleResult{}, ErrConflict
+			}
+			role.Scopes = model.ActionScopes{}
+			for action, scope := range prior.Scopes {
+				if slices.Contains(role.Actions, action) {
+					role.Scopes[action] = scope
+				}
+			}
+			break
+		}
+	}
+	var scopeErr error
+	role.Scopes, scopeErr = role.Scopes.Normalize(role.Actions)
+	if scopeErr != nil {
+		return RoleResult{}, fail(ErrInvalid, "%v", scopeErr)
+	}
 	role.Description = strings.TrimSpace(role.Description)
 	role.Brief = strings.ReplaceAll(strings.ReplaceAll(role.Brief, "\r\n", "\n"), "\r", "\n")
 	if len(role.Brief) > 16*1024 {
