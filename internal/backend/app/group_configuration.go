@@ -46,6 +46,7 @@ type GroupConfigurationAPI interface {
 type GroupMemberAdmission struct {
 	Request       CreateGroupMemberRequest
 	Agent         model.Agent
+	Sources       *model.TeamConfigurationSources
 	Configuration ResolvedProfileConfiguration
 	At            time.Time
 }
@@ -97,7 +98,7 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 			return GroupMemberResult{}, fail(ErrInvalid, "%v", err)
 		}
 	}
-	if in.Environment.Validate() != nil || in.Context.RequestID.Validate() != nil || in.GroupID.Validate() != nil || in.ID.Validate() != nil || strings.TrimSpace(in.Name) == "" || len(in.Name) > 1024 || !utf8.ValidString(in.Name) || in.ExpectedGroupRevision == 0 || in.ExpectedGroupRevision >= math.MaxInt64 || in.ExpectedDefaultRevision == 0 || in.ExpectedDefaultRevision >= math.MaxInt64 {
+	if in.Environment.Validate() != nil || in.Context.RequestID.Validate() != nil || in.GroupID.Validate() != nil || in.ID.Validate() != nil || strings.TrimSpace(in.Name) == "" || len(in.Name) > 1024 || !utf8.ValidString(in.Name) || in.ExpectedGroupRevision == 0 || in.ExpectedGroupRevision >= math.MaxInt64 || in.ExpectedDefaultRevision >= math.MaxInt64 {
 		return GroupMemberResult{}, ErrInvalid
 	}
 	store, ok := s.store.(GroupConfigurationStore)
@@ -143,8 +144,11 @@ func (s *Service) resolveGroupMember(ctx context.Context, store GroupConfigurati
 	if err != nil {
 		return GroupMemberAdmission{}, err
 	}
-	if defaults.Revision != in.ExpectedDefaultRevision || defaults.Profile == nil {
+	if defaults.Revision != in.ExpectedDefaultRevision {
 		return GroupMemberAdmission{}, ErrConflict
+	}
+	if defaults.Profile == nil {
+		return s.resolveGroupMemberFallback(ctx, in, defaults)
 	}
 	current, err := s.currentConfigurationDefault(ctx, *defaults.Profile, "")
 	if err != nil {
@@ -161,10 +165,15 @@ func (s *Service) resolveGroupMember(ctx context.Context, store GroupConfigurati
 		return GroupMemberAdmission{}, err
 	}
 	configuration, err := s.resolveProfileConfigurationWithOverrides(ctx, profile, in.ConfigurationOverrides)
-	desired, ref := configuration.Desired, current
 	if err != nil {
 		return GroupMemberAdmission{}, err
 	}
+	return s.finishGroupMember(ctx, in, defaults, configuration, current, nil)
+}
+
+func (s *Service) finishGroupMember(ctx context.Context, in CreateGroupMemberRequest, defaults model.GroupConfiguration, configuration ResolvedProfileConfiguration, ref *model.ConfigurationProfileRef, sources *model.TeamConfigurationSources) (GroupMemberAdmission, error) {
+	desired := configuration.Desired
+	var err error
 	if err := s.verifyLaunchSandbox(ctx, desired.HostSandbox); err != nil {
 		return GroupMemberAdmission{}, err
 	}
@@ -187,5 +196,25 @@ func (s *Service) resolveGroupMember(ctx context.Context, store GroupConfigurati
 	labels = model.AgentLabels{Groups: map[model.GroupID]model.AgentDisplayLabels{in.GroupID: memberLabels}}
 	now := s.now().UTC()
 	agent := model.Agent{Labels: labels, ID: in.ID, Name: in.Name, Lifecycle: model.AgentActive, Notifications: model.AgentNotificationPreferences{DirectMessage: model.NotificationIfAvailable}, Desired: desired, ConfigurationProfile: ref, Revision: 1, CreatedAt: now, UpdatedAt: now}
-	return GroupMemberAdmission{Request: in, Agent: agent, Configuration: configuration, At: now}, nil
+	return GroupMemberAdmission{Request: in, Agent: agent, Configuration: configuration, Sources: sources, At: now}, nil
+}
+
+// A group without a selected profile uses the same default chain as an inline
+// team member. Keep the sources until transactional admission, not just values.
+func (s *Service) resolveGroupMemberFallback(ctx context.Context, in CreateGroupMemberRequest, defaults model.GroupConfiguration) (GroupMemberAdmission, error) {
+	options := model.ConfigurationOptions{}
+	if in.ConfigurationOverrides != nil {
+		options = *in.ConfigurationOverrides
+	}
+	resolved, sources, err := s.resolveInlineConfiguration(ctx, options, in.GroupID)
+	if err != nil {
+		return GroupMemberAdmission{}, err
+	}
+	if sources.GroupDefaultsRevision != defaults.Revision || sources.Selected != nil {
+		return GroupMemberAdmission{}, ErrConflict
+	}
+	if err := s.requireProfileCreation(ctx, in.Context.Principal, model.ConfigurationProfile{}); err != nil {
+		return GroupMemberAdmission{}, err
+	}
+	return s.finishGroupMember(ctx, in, defaults, resolved, resolved.GlobalProfile, &sources)
 }

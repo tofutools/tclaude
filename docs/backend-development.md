@@ -2120,3 +2120,13 @@ retry returns the existing operation, including an uncertain or failed outcome,
 without creating another member or replaying native work. Changed launch intent
 conflicts with an existing receipt. Provider evidence stays private in the
 public group response.
+
+### Group member default fallback
+
+Creating or spawning a member does not require a group-specific launch profile.
+When none is selected, the shared resolver uses the current global profile and
+provider defaults, with explicit member fields taking precedence. Group environment
+and membership-scoped display labels retain their existing behavior. Admission
+checks the group and global default revisions and the current global profile in
+the publication transaction; a concurrent edit requires retry before any member
+is created. Completed request receipts retain their original result.
