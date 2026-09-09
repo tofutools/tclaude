@@ -394,7 +394,7 @@ func authorizeTx(ctx context.Context, q queryer, request model.AuthorityRequest,
 		if err := json.Unmarshal(actions, &roleActions); err != nil {
 			return decision, err
 		}
-		if slices.Contains(roleActions, request.Action) && resourceMatches(ctx, q, request.Principal, assignment.Resource, request.Resource) && requestedBoundsMatch(assignment.Bounds, request) {
+		if slices.Contains(roleActions, request.Action) && resourceMatches(ctx, q, request.Principal, assignment.Resource, request.Resource) && (requestedBoundsMatch(assignment.Bounds, request) || ownerSpawnLineageMatches(ctx, q, assignment, request)) {
 			return model.AuthorityDecision{Allowed: true, Action: request.Action, Resource: request.Resource, SourceKind: model.AuthorityRole, SourceID: string(assignment.RoleID), Revision: max(assignment.Revision, roleRevision), Bounds: assignment.Bounds}, nil
 		}
 	}
@@ -724,11 +724,23 @@ func insertOperationAuthorityAt(ctx context.Context, tx *sql.Tx, table string, o
 		args = []any{operationID, position, request.Action, rk, rid, configuration, decision.SourceKind, decision.SourceID, decision.Revision, environment, hostSandbox}
 	}
 	_, err := tx.ExecContext(ctx, query, args...)
+	if err != nil || request.SpawnLineage == nil {
+		return err
+	}
+	encoded, err := json.Marshal(request.SpawnLineage)
+	if err != nil {
+		return err
+	}
+	if table == "operation_additional_authority" {
+		_, err = tx.ExecContext(ctx, `UPDATE operation_additional_authority SET spawn_lineage_json=? WHERE operation_id=? AND position=?`, encoded, operationID, position)
+	} else {
+		_, err = tx.ExecContext(ctx, `UPDATE operation_authority SET spawn_lineage_json=? WHERE operation_id=?`, encoded, operationID)
+	}
 	return err
 }
 
 func additionalOperationAuthorities(ctx context.Context, tx *sql.Tx, operationID model.OperationID, principal model.Principal) ([]model.AuthorityRequest, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT action,resource_kind,resource_id,requested_configuration_json,requested_environment_json,requested_host_sandbox_json FROM operation_additional_authority WHERE operation_id=? ORDER BY position`, operationID)
+	rows, err := tx.QueryContext(ctx, `SELECT action,resource_kind,resource_id,requested_configuration_json,requested_environment_json,requested_host_sandbox_json,spawn_lineage_json FROM operation_additional_authority WHERE operation_id=? ORDER BY position`, operationID)
 	if err != nil {
 		return nil, err
 	}
@@ -737,8 +749,8 @@ func additionalOperationAuthorities(ctx context.Context, tx *sql.Tx, operationID
 	for rows.Next() {
 		request := model.AuthorityRequest{Principal: principal}
 		var rk, rid string
-		var configuration, environment, hostSandbox []byte
-		if err = rows.Scan(&request.Action, &rk, &rid, &configuration, &environment, &hostSandbox); err != nil {
+		var configuration, environment, hostSandbox, spawnLineage []byte
+		if err = rows.Scan(&request.Action, &rk, &rid, &configuration, &environment, &hostSandbox, &spawnLineage); err != nil {
 			return nil, err
 		}
 		request.Resource = makeResource(rk, rid)
@@ -762,6 +774,11 @@ func additionalOperationAuthorities(ctx context.Context, tx *sql.Tx, operationID
 				return nil, err
 			}
 		}
+		if len(spawnLineage) != 0 {
+			if err := json.Unmarshal(spawnLineage, &request.SpawnLineage); err != nil {
+				return nil, err
+			}
+		}
 		requests = append(requests, request)
 	}
 	return requests, rows.Err()
@@ -770,8 +787,8 @@ func additionalOperationAuthorities(ctx context.Context, tx *sql.Tx, operationID
 func operationAuthority(ctx context.Context, tx *sql.Tx, operationID model.OperationID) (model.AuthorityRequest, bool, error) {
 	var request model.AuthorityRequest
 	var subjectKind, subjectID, rk, rid string
-	var configuration, delegation, environment, hostSandbox []byte
-	err := tx.QueryRowContext(ctx, `SELECT o.principal_kind,o.principal_agent_id,o.principal_execution_id,o.principal_generation,o.principal_automation_run,o.automation_delegation_json,o.authority_subject_kind,o.authority_subject_id,a.action,a.resource_kind,a.resource_id,a.requested_configuration_json,a.requested_environment_json,a.requested_host_sandbox_json FROM operations o JOIN operation_authority a ON a.operation_id=o.id WHERE o.id=?`, operationID).Scan(&request.Principal.Kind, &request.Principal.AgentID, &request.Principal.ExecutionID, &request.Principal.Generation, &request.Principal.AutomationRun, &delegation, &subjectKind, &subjectID, &request.Action, &rk, &rid, &configuration, &environment, &hostSandbox)
+	var configuration, delegation, environment, hostSandbox, spawnLineage []byte
+	err := tx.QueryRowContext(ctx, `SELECT o.principal_kind,o.principal_agent_id,o.principal_execution_id,o.principal_generation,o.principal_automation_run,o.automation_delegation_json,o.authority_subject_kind,o.authority_subject_id,a.action,a.resource_kind,a.resource_id,a.requested_configuration_json,a.requested_environment_json,a.requested_host_sandbox_json,a.spawn_lineage_json FROM operations o JOIN operation_authority a ON a.operation_id=o.id WHERE o.id=?`, operationID).Scan(&request.Principal.Kind, &request.Principal.AgentID, &request.Principal.ExecutionID, &request.Principal.Generation, &request.Principal.AutomationRun, &delegation, &subjectKind, &subjectID, &request.Action, &rk, &rid, &configuration, &environment, &hostSandbox, &spawnLineage)
 	if errors.Is(err, sql.ErrNoRows) {
 		return request, false, nil
 	}
@@ -803,6 +820,11 @@ func operationAuthority(ctx context.Context, tx *sql.Tx, operationID model.Opera
 	}
 	if len(hostSandbox) != 0 {
 		if err := json.Unmarshal(hostSandbox, &request.RequestedHostSandbox); err != nil {
+			return request, false, err
+		}
+	}
+	if len(spawnLineage) != 0 {
+		if err := json.Unmarshal(spawnLineage, &request.SpawnLineage); err != nil {
 			return request, false, err
 		}
 	}

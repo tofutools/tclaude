@@ -115,7 +115,7 @@ func findGroupMemberAdmission(ctx context.Context, q groupReader, in app.CreateG
 	return out, true, err
 }
 func authorizeGroupMember(ctx context.Context, q queryer, in app.CreateGroupMemberRequest, desired *model.DesiredConfiguration, at time.Time) error {
-	decision, err := authorizeTx(ctx, q, model.AuthorityRequest{Principal: in.Context.Principal, Action: model.ActionCreateGroupMember, Resource: model.ResourceSelector{Kind: model.ResourceGroup, GroupID: in.GroupID}, RequestedConfiguration: desired}, at)
+	decision, err := authorizeTx(ctx, q, model.AuthorityRequest{SpawnLineage: in.Lineage, Principal: in.Context.Principal, Action: model.ActionCreateGroupMember, Resource: model.ResourceSelector{Kind: model.ResourceGroup, GroupID: in.GroupID}, RequestedConfiguration: desired}, at)
 	if err != nil {
 		return err
 	}
@@ -135,7 +135,17 @@ func (s *Store) FindGroupMemberAdmission(ctx context.Context, in app.CreateGroup
 	}
 	prior, found, err := findGroupMemberAdmission(ctx, tx, in)
 	if err == nil && found {
-		err = authorizeGroupMember(ctx, tx, in, &prior.Agent.Desired, at)
+		// A committed receipt carries the original policy comparison. Recheck
+		// its live owner, membership and execution without resolving new defaults.
+		var encoded []byte
+		err = tx.QueryRowContext(ctx, `SELECT spawn_lineage_json FROM group_member_requests WHERE scope=? AND request_id=?`, requestScope(in.Context.Principal), in.Context.RequestID).Scan(&encoded)
+		in.Lineage = nil
+		if err == nil && len(encoded) != 0 {
+			err = json.Unmarshal(encoded, &in.Lineage)
+		}
+		if err == nil {
+			err = authorizeGroupMember(ctx, tx, in, &prior.Agent.Desired, at)
+		}
 	}
 	return prior, found, err
 }
@@ -298,7 +308,15 @@ func admitGroupMemberTx(ctx context.Context, tx *sql.Tx, admission app.GroupMemb
 	if err != nil {
 		return out, err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO group_member_requests(scope,request_id,intent,result) VALUES(?,?,?,?)`, requestScope(in.Context.Principal), in.Context.RequestID, groupMemberIntent(in), data); err != nil {
+	var lineage any
+	if in.Lineage != nil {
+		encoded, marshalErr := json.Marshal(in.Lineage)
+		if marshalErr != nil {
+			return out, marshalErr
+		}
+		lineage = encoded
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO group_member_requests(scope,request_id,intent,result,spawn_lineage_json) VALUES(?,?,?,?,?)`, requestScope(in.Context.Principal), in.Context.RequestID, groupMemberIntent(in), data, lineage); err != nil {
 		return out, err
 	}
 	if err = bumpTx(ctx, tx); err != nil {

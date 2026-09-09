@@ -22,6 +22,7 @@ type GroupMemberLaunch struct {
 }
 
 type CreateGroupMemberRequest struct {
+	Lineage                 *model.SpawnLineage `json:"-"`
 	Workspace               *model.WorkspaceSelection
 	ProfileID               model.ConfigurationProfileID
 	Launch                  *GroupMemberLaunch
@@ -104,6 +105,7 @@ func (s *Service) SetGroupConfiguration(ctx context.Context, in SetGroupConfigur
 	return store.SetGroupConfiguration(ctx, in, s.now().UTC())
 }
 func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberRequest) (GroupMemberResult, error) {
+	in.Lineage = nil
 	if err := validateEffectContext(in.Context); err != nil {
 		return GroupMemberResult{}, err
 	}
@@ -140,6 +142,11 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	if err != nil {
 		return GroupMemberResult{}, err
 	}
+	in.Lineage, err = s.groupSpawnLineage(ctx, in, admission.Agent)
+	if err != nil {
+		return GroupMemberResult{}, err
+	}
+	admission.Request = in
 	if in.Launch == nil {
 		return store.AdmitGroupMember(ctx, admission)
 	}

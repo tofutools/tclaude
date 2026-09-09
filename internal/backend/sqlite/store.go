@@ -66,6 +66,9 @@ func (s *Store) initialize(ctx context.Context) error {
 		{"group_configurations", "default_directory", "TEXT NOT NULL DEFAULT ''"},
 		{"agents", "environment_json", "BLOB NOT NULL DEFAULT '{}'"},
 		{"operation_authority", "requested_host_sandbox_json", "BLOB"},
+		{"operation_authority", "spawn_lineage_json", "BLOB"},
+		{"group_member_requests", "spawn_lineage_json", "BLOB"},
+		{"operation_additional_authority", "spawn_lineage_json", "BLOB"},
 		{"operation_additional_authority", "requested_host_sandbox_json", "BLOB"},
 		{"agents", "host_sandbox_json", "BLOB"},
 		{"executions", "host_sandbox_json", "BLOB"},
@@ -905,6 +908,9 @@ func readGroup(ctx context.Context, q groupReader, id model.GroupID) (model.Grou
 }
 
 func (s *Store) AdmitLaunch(ctx context.Context, in app.LaunchAdmission) (app.AdmissionResult, error) {
+	if proof := in.Authority.SpawnLineage; proof != nil && !model.SameSandboxSelection(proof.PreparedSandbox, in.Execution.Spec.HostSandbox) {
+		return app.AdmissionResult{}, app.ErrConflict
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return app.AdmissionResult{}, err

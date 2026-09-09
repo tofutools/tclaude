@@ -168,6 +168,7 @@ type AuthorityDecision struct {
 }
 
 type AuthorityRequest struct {
+	SpawnLineage           *SpawnLineage     `json:"-"`
 	RequestedHostSandbox   *SandboxSelection `json:",omitempty"`
 	Principal              Principal
 	Action                 Action
