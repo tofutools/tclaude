@@ -261,6 +261,9 @@ func (t *translator) translateAgents(batch *app.ImportBatch) error {
 		}
 		agent.Desired = resolved
 		agent.Desired.Environment = t.launchEnvironment(batch, "agents", row)
+		if err := agent.Desired.FastMode.Validate(agent.Desired.Harness); err != nil {
+			return fmt.Errorf("agent %s fast mode: %w", row.Key, err)
+		}
 		if model.ValidateEffort(agent.Desired.Effort) != nil {
 			t.launchMetadataDiagnostic(batch, "agents", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
 		}
@@ -414,6 +417,10 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 		}
 		desired := desiredFromRow(row.Values)
 		desired.Environment = t.launchEnvironment(batch, "spawn_profiles", row)
+		if err := desired.FastMode.Validate(desired.Harness); err != nil {
+			archived = true
+			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "fast_mode_requires_review", err.Error())
+		}
 		if model.ValidateEffort(desired.Effort) != nil {
 			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "requested_effort_requires_review", "requested native effort is preserved verbatim and requires correction before new effects")
 		}
@@ -785,6 +792,7 @@ func desiredFromRow(values map[string]any) model.DesiredConfiguration {
 			values = config
 		}
 	}
+	desired.FastMode = importedFastMode(values["fast_mode"])
 	if desired.Harness == "opencode" {
 		desired.ToolGovernance = model.ToolGovernance(firstNonEmpty(stringMap(values, "tools"), stringMap(values, "tool_governance"), stringMap(values, "ToolGovernance")))
 	}

@@ -14,6 +14,9 @@ func applyAgentRelaunchPolicy(values map[string]any, desired model.DesiredConfig
 	if err != nil || profile == nil {
 		return desired, err
 	}
+	if profile.FastMode != nil {
+		desired.FastMode = importedFastMode(*profile.FastMode)
+	}
 	if profile.Tools != nil && desired.Harness == "opencode" {
 		desired.ToolGovernance = *profile.Tools
 	}
