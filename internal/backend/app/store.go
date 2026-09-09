@@ -303,6 +303,7 @@ type WorkProgress struct {
 }
 
 type LaunchAdmission struct {
+	GroupMember                  *GroupMemberAdmission
 	InitialMessageDigest         string
 	Operation                    model.Operation
 	Execution                    model.Execution

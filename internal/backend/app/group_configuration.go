@@ -16,7 +16,12 @@ type SetGroupConfigurationRequest struct {
 	Profile          *model.ConfigurationProfileRef
 	ExpectedRevision model.Revision
 }
+type GroupMemberLaunch struct {
+	InitialMessage string `json:"initial_message"`
+}
+
 type CreateGroupMemberRequest struct {
+	Launch                  *GroupMemberLaunch
 	ConfigurationOverrides  *model.ConfigurationOptions
 	Labels                  *model.AgentDisplayLabels
 	Environment             model.Environment
@@ -28,9 +33,10 @@ type CreateGroupMemberRequest struct {
 	ExpectedDefaultRevision model.Revision
 }
 type GroupMemberResult struct {
-	Agent    model.Agent
-	Group    model.Group
-	Repeated bool
+	Operation *OperationResult `json:",omitempty"`
+	Agent     model.Agent
+	Group     model.Group
+	Repeated  bool
 }
 type GroupConfigurationAPI interface {
 	GetGroupConfiguration(context.Context, model.Principal, model.GroupID) (model.GroupConfiguration, error)
@@ -99,48 +105,84 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 		return GroupMemberResult{}, ErrUnsupported
 	}
 	if prior, found, err := store.FindGroupMemberAdmission(ctx, in, s.now().UTC()); found || err != nil {
+		if err == nil && in.Launch != nil {
+			return s.launchGroupMember(ctx, store, in, prior.Agent, nil)
+		}
 		return prior, err
 	}
-	defaults, err := store.GroupConfiguration(ctx, in.GroupID)
+	admission, err := s.resolveGroupMember(ctx, store, in)
 	if err != nil {
 		return GroupMemberResult{}, err
 	}
-	if defaults.Revision != in.ExpectedDefaultRevision || defaults.Profile == nil {
+	if in.Launch == nil {
+		return store.AdmitGroupMember(ctx, admission)
+	}
+	return s.launchGroupMember(ctx, store, in, admission.Agent, &admission)
+}
+
+func (s *Service) launchGroupMember(ctx context.Context, store GroupConfigurationStore, in CreateGroupMemberRequest, agent model.Agent, admission *GroupMemberAdmission) (GroupMemberResult, error) {
+	operation, err := s.launch(ctx, LaunchRequest{RequestContext: in.Context, InitialMessage: in.Launch.InitialMessage, Target: LaunchTarget{Agent: &AgentLaunchTarget{AgentID: agent.ID, ExpectedRevision: agent.Revision}}}, model.OperationLaunch, nil, launchOptions{groupMember: admission})
+	if err != nil && operation.Operation.ID == "" {
+		return GroupMemberResult{}, err
+	}
+	launchErr := err
+	result, found, err := store.FindGroupMemberAdmission(ctx, in, s.now().UTC())
+	if err != nil {
+		return GroupMemberResult{}, err
+	}
+	if !found {
 		return GroupMemberResult{}, ErrConflict
+	}
+	result.Agent, err = s.store.Agent(ctx, agent.ID)
+	if err != nil {
+		return GroupMemberResult{}, err
+	}
+	result.Operation = &operation
+	result.Repeated = operation.Repeated
+	return result, launchErr
+}
+
+func (s *Service) resolveGroupMember(ctx context.Context, store GroupConfigurationStore, in CreateGroupMemberRequest) (GroupMemberAdmission, error) {
+	defaults, err := store.GroupConfiguration(ctx, in.GroupID)
+	if err != nil {
+		return GroupMemberAdmission{}, err
+	}
+	if defaults.Revision != in.ExpectedDefaultRevision || defaults.Profile == nil {
+		return GroupMemberAdmission{}, ErrConflict
 	}
 	current, err := s.currentConfigurationDefault(ctx, *defaults.Profile, "")
 	if err != nil {
-		return GroupMemberResult{}, err
+		return GroupMemberAdmission{}, err
 	}
 	profile, err := s.store.ConfigurationProfile(ctx, current.ProfileID, current.RevisionID)
 	if err != nil {
-		return GroupMemberResult{}, err
+		return GroupMemberAdmission{}, err
 	}
 	if profile.Profile.Archived || profile.Revision.Ref != *current {
-		return GroupMemberResult{}, ErrConflict
+		return GroupMemberAdmission{}, ErrConflict
 	}
 	if err := s.requireProfileCreation(ctx, in.Context.Principal, profile.Profile); err != nil {
-		return GroupMemberResult{}, err
+		return GroupMemberAdmission{}, err
 	}
 	configuration, err := s.resolveProfileConfigurationWithOverrides(ctx, profile, in.ConfigurationOverrides)
 	desired, ref := configuration.Desired, current
 	if err != nil {
-		return GroupMemberResult{}, err
+		return GroupMemberAdmission{}, err
 	}
 	if err := s.verifyLaunchSandbox(ctx, desired.HostSandbox); err != nil {
-		return GroupMemberResult{}, err
+		return GroupMemberAdmission{}, err
 	}
 	desired.Environment, err = model.MergeEnvironment(defaults.Environment, desired.Environment, in.Environment)
 	if err != nil {
-		return GroupMemberResult{}, fail(ErrInvalid, "%v", err)
+		return GroupMemberAdmission{}, fail(ErrInvalid, "%v", err)
 	}
 	if err = validateDesired(desired); err != nil {
-		return GroupMemberResult{}, err
+		return GroupMemberAdmission{}, err
 	}
 	desired.HostSandbox = model.SandboxInGroup(desired.HostSandbox, in.GroupID)
 	labels, err := s.configurationDisplayLabels(ctx, ref, nil)
 	if err != nil {
-		return GroupMemberResult{}, err
+		return GroupMemberAdmission{}, err
 	}
 	memberLabels := model.AgentDisplayLabels{Role: labels.Role, Description: labels.Description}
 	if in.Labels != nil {
@@ -149,5 +191,5 @@ func (s *Service) CreateGroupMember(ctx context.Context, in CreateGroupMemberReq
 	labels = model.AgentLabels{Groups: map[model.GroupID]model.AgentDisplayLabels{in.GroupID: memberLabels}}
 	now := s.now().UTC()
 	agent := model.Agent{Labels: labels, ID: in.ID, Name: in.Name, Lifecycle: model.AgentActive, Notifications: model.AgentNotificationPreferences{DirectMessage: model.NotificationIfAvailable}, Desired: desired, ConfigurationProfile: ref, Revision: 1, CreatedAt: now, UpdatedAt: now}
-	return store.AdmitGroupMember(ctx, GroupMemberAdmission{Request: in, Agent: agent, Configuration: configuration, At: now})
+	return GroupMemberAdmission{Request: in, Agent: agent, Configuration: configuration, At: now}, nil
 }

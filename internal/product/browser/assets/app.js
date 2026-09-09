@@ -93,11 +93,14 @@ async function startWithBrief(agent){
  const ref=agent.ConfigurationProfile;
  const saved=ref?await api(`/v2/configuration-profiles/${encodeURIComponent(ref.ProfileID)}?revision_id=${encodeURIComponent(ref.RevisionID)}`):null;
  const startup=saved?.Revision.Startup||{};
- edit('Start with initial brief',[
-  {name:'context',label:'Startup context (review before launch)',multiline:true,value:startup.Context||'',required:false},
-  {name:'brief',label:'Initial brief (delivered before first work, at most 32 KiB)',multiline:true,value:startup.InitialMessage||'',required:false}
- ],f=>{const body=f.context&&f.brief?f.context+'\n\n'+f.brief:f.context||f.brief;if(!body||new TextEncoder().encode(body).length>32768||body.includes('\0'))throw new Error('Context and brief together must contain 1–32768 UTF-8 bytes without NUL.');return api('/v2/launch',{request_id:f.requestID,initial_message:body,target:{agent:{agent_id:agent.ID,expected_revision:agent.Revision}}})});
+ edit('Start with initial brief',initialBriefFields(startup),f=>api('/v2/launch',{request_id:f.requestID,initial_message:initialBriefBody(f,true),target:{agent:{agent_id:agent.ID,expected_revision:agent.Revision}}}));
 }
+function initialBriefFields(startup={}){return[
+ {name:'context',label:'Startup context (review before launch)',multiline:true,value:startup.Context||'',required:false},
+ {name:'brief',label:'Initial brief (delivered before first work, at most 32 KiB)',multiline:true,value:startup.InitialMessage||'',required:false}
+]}
+function initialBriefBody(f,required=false){const body=f.context&&f.brief?f.context+'\n\n'+f.brief:f.context||f.brief||'';if((required&&!body)||new TextEncoder().encode(body).length>32768||body.includes('\0'))throw new Error('Context and brief together must contain '+(required?'1–':'0–')+'32768 UTF-8 bytes without NUL.');return body}
+
 function startupFields(startup={}){return[
  {name:'startup_role',label:'Default display role (optional)',value:startup.Role||'',required:false},
  {name:'startup_description',label:'Default agent description (optional)',value:startup.Description||'',multiline:true,required:false},

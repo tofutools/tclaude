@@ -45,6 +45,7 @@ func (h *Handler) registerGroupConfiguration(api app.GroupConfigurationAPI) {
 			return
 		}
 		var body struct {
+			Launch                  *app.GroupMemberLaunch      `json:"launch"`
 			ConfigurationOverrides  *model.ConfigurationOptions `json:"configuration_overrides"`
 			Labels                  *model.AgentDisplayLabels   `json:"labels"`
 			Environment             model.Environment           `json:"environment"`
@@ -57,11 +58,23 @@ func (h *Handler) registerGroupConfiguration(api app.GroupConfigurationAPI) {
 		if !decodeRequest(w, r, &body) {
 			return
 		}
-		out, err := api.CreateGroupMember(r.Context(), app.CreateGroupMemberRequest{ConfigurationOverrides: body.ConfigurationOverrides, Labels: body.Labels, Context: app.RequestContext{Principal: p, RequestID: body.RequestID}, GroupID: model.GroupID(r.PathValue("id")), Environment: body.Environment, ID: body.ID, Name: body.Name, ExpectedGroupRevision: body.ExpectedGroupRevision, ExpectedDefaultRevision: body.ExpectedDefaultRevision})
-		if err != nil {
+		out, err := api.CreateGroupMember(r.Context(), app.CreateGroupMemberRequest{Launch: body.Launch, ConfigurationOverrides: body.ConfigurationOverrides, Labels: body.Labels, Context: app.RequestContext{Principal: p, RequestID: body.RequestID}, GroupID: model.GroupID(r.PathValue("id")), Environment: body.Environment, ID: body.ID, Name: body.Name, ExpectedGroupRevision: body.ExpectedGroupRevision, ExpectedDefaultRevision: body.ExpectedDefaultRevision})
+		// Once admitted, failed/uncertain native effects still have a safe durable
+		// receipt. Return it immediately so the operator can inspect the outcome.
+		if err != nil && (out.Operation == nil || out.Operation.Operation.ID == "") {
 			applicationError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, out)
+		var operation *operationView
+		if out.Operation != nil {
+			value := projectOperation(out.Operation.Operation)
+			operation = &value
+		}
+		writeJSON(w, http.StatusOK, struct {
+			Agent     model.Agent
+			Group     model.Group
+			Repeated  bool
+			Operation *operationView `json:",omitempty"`
+		}{out.Agent, out.Group, out.Repeated, operation})
 	})
 }

@@ -77,14 +77,15 @@ func (s *Store) SetGroupConfiguration(ctx context.Context, in app.SetGroupConfig
 }
 func groupMemberIntent(in app.CreateGroupMemberRequest) []byte {
 	data, _ := json.Marshal(struct {
-		Environment                    model.Environment `json:",omitempty"`
+		Launch                         *app.GroupMemberLaunch `json:",omitempty"`
+		Environment                    model.Environment      `json:",omitempty"`
 		GroupID                        model.GroupID
 		ID                             model.AgentID
 		Name                           string
 		GroupRevision, DefaultRevision model.Revision
 		Labels                         *model.AgentDisplayLabels   `json:",omitempty"`
 		ConfigurationOverrides         *model.ConfigurationOptions `json:",omitempty"`
-	}{in.Environment, in.GroupID, in.ID, in.Name, in.ExpectedGroupRevision, in.ExpectedDefaultRevision, in.Labels, in.ConfigurationOverrides})
+	}{in.Launch, in.Environment, in.GroupID, in.ID, in.Name, in.ExpectedGroupRevision, in.ExpectedDefaultRevision, in.Labels, in.ConfigurationOverrides})
 	return data
 }
 func findGroupMemberAdmission(ctx context.Context, q groupReader, in app.CreateGroupMemberRequest) (app.GroupMemberResult, bool, error) {
@@ -130,16 +131,30 @@ func (s *Store) FindGroupMemberAdmission(ctx context.Context, in app.CreateGroup
 	return prior, found, err
 }
 func (s *Store) AdmitGroupMember(ctx context.Context, admission app.GroupMemberAdmission) (app.GroupMemberResult, error) {
-	in, agent, at := admission.Request, admission.Agent, admission.At
-	var out app.GroupMemberResult
-	if agent.ID != in.ID || agent.Name != in.Name || agent.PrimaryExecutionID != "" || agent.Lifecycle != model.AgentActive {
-		return out, app.ErrInvalid
+	// A spawn receipt must never exist without its launch admission.
+	if admission.Request.Launch != nil {
+		return app.GroupMemberResult{}, app.ErrInvalid
 	}
+	var out app.GroupMemberResult
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return out, err
 	}
 	defer func() { _ = tx.Rollback() }()
+	out, err = admitGroupMemberTx(ctx, tx, admission)
+	if err != nil {
+		return out, err
+	}
+	return out, tx.Commit()
+}
+
+func admitGroupMemberTx(ctx context.Context, tx *sql.Tx, admission app.GroupMemberAdmission) (app.GroupMemberResult, error) {
+	in, agent, at := admission.Request, admission.Agent, admission.At
+	var out app.GroupMemberResult
+	if agent.ID != in.ID || agent.Name != in.Name || agent.PrimaryExecutionID != "" || agent.Lifecycle != model.AgentActive {
+		return out, app.ErrInvalid
+	}
+	var err error
 	if err = authorizeGroupMember(ctx, tx, in, nil, at); err != nil {
 		return out, err
 	}
@@ -232,5 +247,5 @@ func (s *Store) AdmitGroupMember(ctx context.Context, admission app.GroupMemberA
 	if err = bumpTx(ctx, tx); err != nil {
 		return out, err
 	}
-	return out, tx.Commit()
+	return out, nil
 }
