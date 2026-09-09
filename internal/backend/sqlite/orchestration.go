@@ -611,6 +611,16 @@ func (s *Store) ApplyGraphTransition(ctx context.Context, transition app.GraphTr
 	}
 	if transition.WorkspaceUse != nil {
 		use := transition.WorkspaceUse
+		var state model.WorkspaceState
+		if err := tx.QueryRowContext(ctx, `SELECT state FROM workspaces WHERE id=?`, use.WorkspaceID).Scan(&state); err != nil {
+			return app.WorkRunRecord{}, classify(err)
+		}
+		if state != model.WorkspaceAvailable {
+			return app.WorkRunRecord{}, app.ErrConflict
+		}
+		if err := requireNoWorkspaceRemovalTx(ctx, tx, use.WorkspaceID); err != nil {
+			return app.WorkRunRecord{}, err
+		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO workspace_uses(id,workspace_id,execution_id,work_run_id,created_at) VALUES(?,?,?,?,?)`, use.ID, use.WorkspaceID, use.ExecutionID, use.WorkRunID, nanos(use.CreatedAt)); err != nil {
 			return app.WorkRunRecord{}, classify(err)
 		}

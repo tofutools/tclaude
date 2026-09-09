@@ -1255,6 +1255,9 @@ func (s *Store) AdmitShell(ctx context.Context, in app.ShellAdmission) (app.Admi
 	if state != model.WorkspaceAvailable || revision != in.WorkspaceRevision {
 		return app.AdmissionResult{}, app.ErrConflict
 	}
+	if err := requireNoWorkspaceRemovalTx(ctx, tx, in.WorkspaceUse.WorkspaceID); err != nil {
+		return app.AdmissionResult{}, err
+	}
 	if err := insertExecution(ctx, tx, in.Execution); err != nil {
 		return app.AdmissionResult{}, err
 	}
