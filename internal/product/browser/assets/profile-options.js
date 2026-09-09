@@ -12,6 +12,10 @@ function profileOptionFields(options={},name=''){
   if(field.name==='approval'||field.name==='sandbox'){
    field.options=[{value:'',label:'Inherit from defaults'},...field.options];field.value=options[field.name==='approval'?'Approval':'Sandbox']||'';
   }
+  if(field.name==='trust_directory'){
+   field.options=[{value:'',label:'Inherit directory trust'},{value:'on',label:'On'},{value:'off',label:'Off'}];
+   field.value=options.TrustDirectory===undefined?'':options.TrustDirectory?'on':'off';
+  }
   if(field.name==='peer_messaging'){
    field.options=[{value:'',label:'Inherit peer messaging'},{value:'on',label:'On'},{value:'off',label:'Off'}];
    field.value=options.PeerMessaging===undefined?'':options.PeerMessaging?'on':'off';
@@ -31,6 +35,7 @@ function profileOptionsFromForm(form){
  validateConfigurationForm(form);
  const out={};
  for(const [name,key] of Object.entries({harness:'Harness',model:'Model',effort:'Effort',cwd:'WorkingDirectory',approval:'Approval',sandbox:'Sandbox',fast_mode:'FastMode',tool_governance:'ToolGovernance',auto_compact_window:'AutoCompactWindow'}))if(form[name])out[key]=form[name];
+ if(form.trust_directory)out.TrustDirectory=form.trust_directory==='on';
  if(form.peer_messaging)out.PeerMessaging=form.peer_messaging==='on';
  if(form.auto_memory)out.AutoMemory=form.auto_memory==='on';
  if(form.auto_review)out.AutoReview=form.auto_review==='on';

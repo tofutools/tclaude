@@ -36,7 +36,7 @@ func ClientCommand() *cobra.Command {
 		}
 		defer api.Close()
 		var result json.RawMessage
-		if err := api.Call(cmd.Context(), method, path, body, &result); err != nil {
+		if err := callWithDirectoryProof(cmd.Context(), api.Call, method, path, body, &result); err != nil {
 			return err
 		}
 		if len(result) == 0 {

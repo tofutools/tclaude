@@ -111,6 +111,9 @@ func (s *Service) resolveConfigurationLayers(ctx context.Context, selectedID mod
 		if layer.Harness != nil && *layer.Harness != harness {
 			layer.Model, layer.Effort = nil, nil
 		}
+		if model.ValidateDirectoryTrust(true, harness) != nil {
+			layer.TrustDirectory = nil
+		}
 		layer.Harness = nil
 		if harness != "codex" {
 			layer.FastMode, layer.AutoReview = nil, nil
@@ -151,7 +154,7 @@ func profileConfigurationOptions(revision model.ConfigurationProfileRevision) mo
 		return *revision.Options
 	}
 	desired := revision.Desired
-	return model.ConfigurationOptions{Harness: &desired.Harness, Model: &desired.Model, Effort: &desired.Effort, ToolGovernance: &desired.ToolGovernance, FastMode: &desired.FastMode, AutoReview: &desired.AutoReview, AutoMemory: &desired.AutoMemory, PeerMessaging: &desired.PeerMessaging, AutoCompactWindow: &desired.AutoCompactWindow, WorkingDirectory: &desired.WorkingDirectory, Approval: &desired.Approval, Sandbox: &desired.Sandbox, HostSandbox: desired.HostSandbox, Environment: desired.Environment}
+	return model.ConfigurationOptions{Harness: &desired.Harness, Model: &desired.Model, Effort: &desired.Effort, ToolGovernance: &desired.ToolGovernance, FastMode: &desired.FastMode, AutoReview: &desired.AutoReview, AutoMemory: &desired.AutoMemory, PeerMessaging: &desired.PeerMessaging, TrustDirectory: &desired.TrustDirectory, AutoCompactWindow: &desired.AutoCompactWindow, WorkingDirectory: &desired.WorkingDirectory, Approval: &desired.Approval, Sandbox: &desired.Sandbox, HostSandbox: desired.HostSandbox, Environment: desired.Environment}
 }
 
 // Explicit launch settings are validated as intent, never discarded as an

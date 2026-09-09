@@ -25,21 +25,23 @@ const (
 )
 
 type Service struct {
-	sandboxPaths      ports.SandboxPathInspector
-	directoryBrowser  ports.DirectoryBrowser
-	directoryDefaults ports.DirectoryDefaults
-	store             Store
-	providers         ports.ProviderRegistry
-	workspaceHost     ports.WorkspaceHost
-	historySources    ports.HistorySourceRegistry
-	shellHost         ports.ShellHost
-	programHost       ports.ProgramHost
-	now               func() time.Time
-	newID             IDGenerator
-	accessLease       time.Duration
-	agentAPIEndpoint  string
-	callbackIngress   ports.CallbackIngress
-	automationFacts   []ports.AutomationFactSource
+	directoryProof      ports.DirectoryWriteProof
+	directoryChallenges directoryProofChallenges
+	sandboxPaths        ports.SandboxPathInspector
+	directoryBrowser    ports.DirectoryBrowser
+	directoryDefaults   ports.DirectoryDefaults
+	store               Store
+	providers           ports.ProviderRegistry
+	workspaceHost       ports.WorkspaceHost
+	historySources      ports.HistorySourceRegistry
+	shellHost           ports.ShellHost
+	programHost         ports.ProgramHost
+	now                 func() time.Time
+	newID               IDGenerator
+	accessLease         time.Duration
+	agentAPIEndpoint    string
+	callbackIngress     ports.CallbackIngress
+	automationFacts     []ports.AutomationFactSource
 
 	graphInteractionMu sync.Mutex
 	graphInteractions  map[model.OperationID]bool
@@ -55,6 +57,11 @@ func New(store Store, providers ports.ProviderRegistry) *Service {
 		store: store, providers: providers, now: time.Now, newID: randomID, accessLease: 24 * time.Hour,
 		runtimes: make(map[model.ExecutionID]ports.Runtime), hostRuntimes: make(map[model.ExecutionID]ports.HostRuntime), programRuntimes: make(map[model.ExecutionID]ports.ProgramRuntime),
 	}
+}
+
+func (s *Service) WithDirectoryWriteProof(proof ports.DirectoryWriteProof) *Service {
+	s.directoryProof = proof
+	return s
 }
 
 func (s *Service) WithClock(now func() time.Time) *Service { s.now = now; return s }
@@ -340,6 +347,24 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		return OperationResult{}, err
 	}
 
+	if req.Principal.Kind != model.PrincipalOperator && options.groupMember == nil && agent.ID != "" {
+		if err := s.requireAuthority(ctx, model.AuthorityRequest{Principal: req.Principal, Action: model.ActionLaunch, Resource: model.ResourceSelector{Kind: model.ResourceAgent, AgentID: agent.ID}, RequestedConfiguration: &desired}, s.now().UTC()); err != nil {
+			return OperationResult{}, err
+		}
+	}
+	var groupIntent *CreateGroupMemberRequest
+	if options.groupMember != nil {
+		groupIntent = &options.groupMember.Request
+	}
+	trust, err := s.prepareDirectoryTrust(ctx, req.RequestContext, desired, struct {
+		Request LaunchRequest
+		Group   *CreateGroupMemberRequest
+	}{req, groupIntent})
+	if err != nil {
+		return OperationResult{}, err
+	}
+	defer s.cleanupDirectoryTrust(ctx, trust, req.WriteProofToken)
+
 	if req.InitialMessage != "" && !provider.Capabilities().PreparedInitialInput {
 		return OperationResult{}, fail(ErrUnsupported, "provider cannot prepare an initial message before first work")
 	}
@@ -366,6 +391,7 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		operationID = model.OperationID(s.newID("op_"))
 	}
 	spec := resolvedSpec(executionID, agent.ID, desired, conversationID)
+	spec.TrustDirectory, spec.WorkingDirectory = trust.enabled, trust.path
 	if hostSandboxPolicy != nil {
 		preparedSelection, selectionErr := hostSandboxPolicy.LaunchSelection()
 		if selectionErr != nil {
@@ -404,12 +430,17 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	if req.InitialMessage != "" {
 		initialInput = &ports.PreparedInitialInput{Body: req.InitialMessage, Correlation: string(operationID), RequiredBeforeFirstWork: true}
 	}
+	provenWorkingDirectory := ""
+	if len(trust.proven) != 0 {
+		provenWorkingDirectory = trust.path
+	}
 	admission, err := s.store.AdmitLaunch(ctx, LaunchAdmission{
-		GroupMember:          options.groupMember,
-		InitialMessageDigest: initialDigest,
-		Operation:            model.Operation{ID: operationID, RequestID: req.RequestID, Kind: kind, Principal: req.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now},
-		Execution:            execution,
-		AgentID:              agent.ID, Expected: expected, ExpectedConversationRevision: expectedConversationRevision,
+		GroupMember:            options.groupMember,
+		ProvenWorkingDirectory: provenWorkingDirectory,
+		InitialMessageDigest:   initialDigest,
+		Operation:              model.Operation{ID: operationID, RequestID: req.RequestID, Kind: kind, Principal: req.Principal, ExecutionID: executionID, State: model.OperationAdmitted, Revision: 1, CreatedAt: now, UpdatedAt: now},
+		Execution:              execution,
+		AgentID:                agent.ID, Expected: expected, ExpectedConversationRevision: expectedConversationRevision,
 		Authority: authority, Access: access,
 	})
 	if err != nil {
@@ -421,7 +452,11 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 	workflowCtx, cancelWorkflow := context.WithTimeout(context.WithoutCancel(ctx), admittedEffectTimeout)
 	defer cancelWorkflow()
 
-	prepared, err := provider.Prepare(workflowCtx, ports.PreparationRequest{HostSandboxPolicy: hostSandboxPolicy, Spec: spec, Intent: intent, Continuation: continuation, History: options.history, InitialInput: initialInput, PriorEvidence: priorEvidence, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, spec.Attempt, provider.Name()), NativeGuidance: s.boundNativeGuidance(model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, Attempt: spec.Attempt}), AgentAPIEndpoint: s.agentAPIEndpoint, CallbackIngress: s.callbackIngress})
+	var prepared ports.PreparedAttempt
+	err = s.reassertDirectoryTrust(workflowCtx, trust)
+	if err == nil {
+		prepared, err = provider.Prepare(workflowCtx, ports.PreparationRequest{HostSandboxPolicy: hostSandboxPolicy, Spec: spec, Intent: intent, Continuation: continuation, History: options.history, InitialInput: initialInput, PriorEvidence: priorEvidence, ActionCredential: credential, Observations: s.primaryObservationSink(executionID, spec.Attempt, provider.Name()), NativeGuidance: s.boundNativeGuidance(model.Execution{ID: executionID, AgentID: agent.ID, ConversationID: conversationID, Spec: spec, Attempt: spec.Attempt}), AgentAPIEndpoint: s.agentAPIEndpoint, CallbackIngress: s.callbackIngress})
+	}
 	if err != nil {
 		settlementCtx, cancelSettlement := settlementContext(ctx)
 		defer cancelSettlement()
@@ -463,7 +498,9 @@ func (s *Service) launch(ctx context.Context, req LaunchRequest, kind model.Oper
 		_ = prepared.Abort(workflowCtx)
 		return OperationResult{}, recordErr
 	}
-	permit := &releasePermit{store: s.store, executionID: executionID, operationID: operationID, now: s.now}
+	permit := &releasePermit{store: s.store, executionID: executionID, operationID: operationID, now: s.now, beforeConsume: func(ctx context.Context) error {
+		return s.reassertDirectoryTrust(ctx, trust)
+	}}
 	released, releaseErr := prepared.Release(workflowCtx, permit)
 	if !permit.consumed.Load() && releaseErr == nil {
 		releaseErr = fail(ErrInvalid, "provider attempted release without consuming application permit")
@@ -1120,7 +1157,7 @@ func completionFromDisposition(operation model.Operation, execution model.Execut
 }
 
 func resolvedSpec(executionID model.ExecutionID, agentID model.AgentID, desired model.DesiredConfiguration, conversationID model.ConversationID) model.ResolvedExecutionSpec {
-	return model.ResolvedExecutionSpec{HostSandbox: model.CloneSandboxSelection(desired.HostSandbox), ExecutionID: executionID, Workload: model.ExecutionWorkloadHarness, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, Effort: desired.Effort, ToolGovernance: desired.ToolGovernance, FastMode: desired.FastMode, AutoReview: desired.AutoReview, AutoMemory: desired.AutoMemory, PeerMessaging: desired.PeerMessaging, AutoCompactWindow: desired.AutoCompactWindow, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox, Environment: desired.Environment.Clone()}
+	return model.ResolvedExecutionSpec{HostSandbox: model.CloneSandboxSelection(desired.HostSandbox), ExecutionID: executionID, Workload: model.ExecutionWorkloadHarness, Attempt: 1, AgentID: agentID, ConversationID: conversationID, Harness: desired.Harness, Model: desired.Model, Effort: desired.Effort, ToolGovernance: desired.ToolGovernance, FastMode: desired.FastMode, AutoReview: desired.AutoReview, AutoMemory: desired.AutoMemory, PeerMessaging: desired.PeerMessaging, TrustDirectory: desired.TrustDirectory, AutoCompactWindow: desired.AutoCompactWindow, WorkingDirectory: desired.WorkingDirectory, Approval: desired.Approval, Sandbox: desired.Sandbox, Environment: desired.Environment.Clone()}
 }
 
 func actionForOperation(kind model.OperationKind) model.Action {
@@ -1184,11 +1221,12 @@ func validateEvidence(provider string, evidence model.ProviderEvidence) error {
 }
 
 type releasePermit struct {
-	store       Store
-	executionID model.ExecutionID
-	operationID model.OperationID
-	now         func() time.Time
-	consumed    atomic.Bool
+	store         Store
+	executionID   model.ExecutionID
+	operationID   model.OperationID
+	now           func() time.Time
+	consumed      atomic.Bool
+	beforeConsume func(context.Context) error
 }
 
 func (p *releasePermit) ExecutionID() model.ExecutionID { return p.executionID }
@@ -1196,6 +1234,11 @@ func (p *releasePermit) OperationID() model.OperationID { return p.operationID }
 func (p *releasePermit) Consume(ctx context.Context) error {
 	if p.consumed.Load() {
 		return appConflict("release permit already consumed")
+	}
+	if p.beforeConsume != nil {
+		if err := p.beforeConsume(ctx); err != nil {
+			return err
+		}
 	}
 	if err := p.store.ConsumeRelease(ctx, p.executionID, p.operationID, p.now().UTC()); err != nil {
 		return err
@@ -1225,6 +1268,9 @@ func validateLaunchConfiguration(desired model.DesiredConfiguration) error {
 func validateConfigurationFields(desired model.DesiredConfiguration, partial bool) error {
 	if !partial || desired.Harness != "" {
 		if err := desired.AutoCompactWindow.Validate(desired.Harness); err != nil {
+			return fail(ErrInvalid, "%v", err)
+		}
+		if err := model.ValidateDirectoryTrust(desired.TrustDirectory, desired.Harness); err != nil {
 			return fail(ErrInvalid, "%v", err)
 		}
 		if err := model.ValidatePeerMessaging(desired.PeerMessaging, desired.Harness); err != nil {

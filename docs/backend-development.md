@@ -2180,3 +2180,35 @@ its prior value; an explicit empty string clears it. Group cloning with copied
 defaults and v228 offline import preserve the separate directory, even when no
 profile or environment is selected. The source schema requires `default_cwd`, so
 an incomplete source cannot silently lose that setting.
+
+### Native working-directory trust
+
+Agent settings, reusable profiles and team member overrides expose **Pre-trust
+working directory** for Claude Code, Codex and Copilot. Partial profiles retain
+inherit/on/off intent. A supported harness change preserves the setting; an
+unsupported inherited setting is cleared, while an explicit unsupported request
+is refused. Ordinary launches and deferred process/team launches pass the
+resolved setting to the provider. Default sibling Git worktrees retain v1's
+automatic trust behavior.
+
+Each provider edits its native trust configuration only when trust is selected,
+using the host's bounded atomic configuration editor. Unrelated native settings
+are preserved. A malformed or unwritable configuration does not silently change
+launch policy: the provider logs the trust failure and leaves native interactive
+confirmation available, as in v1. Configuration edits happen before sandbox
+resource evidence is captured.
+
+Agent-origin callers can pre-trust their admitted launch directory, its
+subdirectories, or the conventional repository sibling worktree. Confined
+callers must demonstrate write access with a short-lived, single-use challenge.
+The CLI creates the requested markers inside its own sandbox and resubmits the
+same intent once; the daemon never creates proof for the caller. Operators and
+actually unconfined supported parent executions retain the v1 exemption.
+Completed request receipts precede fresh proof checks. Deferred runs retain
+verified physical paths internally, fence source revisions at admission, and
+recheck paths before provider preparation and release. This evidence is excluded
+from public snapshots and authored definitions.
+
+Offline v228 import retains explicit profile and agent birth-request
+`trust_dir` intent. It does not infer trust from ambient native configuration or
+invent a field in v1 relaunch snapshots that did not carry it.

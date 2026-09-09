@@ -113,7 +113,7 @@ func Serve(ctx context.Context, dir string, registry ports.ProviderRegistry, jou
 	if err != nil {
 		return err
 	}
-	application := app.New(store, registry).WithDirectoryBrowser(host.DirectoryBrowser{}).WithDirectoryDefaults(host.DirectoryBrowser{}).WithSandboxPathInspector(sandboxPaths).WithAgentAPIEndpoint(socket).WithCallbackIngress(callbacks)
+	application := app.New(store, registry).WithDirectoryBrowser(host.DirectoryBrowser{}).WithDirectoryDefaults(host.DirectoryBrowser{}).WithDirectoryWriteProof(host.DirectoryProof{}).WithSandboxPathInspector(sandboxPaths).WithAgentAPIEndpoint(socket).WithCallbackIngress(callbacks)
 	if len(journey) == 1 {
 		services := journey[0]
 		application.WithWorkspaceHost(services.Workspaces).WithShellHost(services.Shells).WithHistorySources(services.History).WithProgramHost(services.Programs).WithAutomationFactSources(services.FactSources...)

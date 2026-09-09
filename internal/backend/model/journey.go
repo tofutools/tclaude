@@ -263,6 +263,7 @@ type WorkStepAttempt struct {
 }
 
 type WorkRun struct {
+	DirectoryTrust        *WorkDirectoryTrust `json:"-"`
 	ID                    WorkRunID
 	RequestID             RequestID
 	Requester             Principal

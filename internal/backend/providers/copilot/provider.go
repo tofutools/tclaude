@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -166,7 +167,7 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 			_ = os.RemoveAll(stateRoot)
 		}
 	}
-	if err := p.prepareStateRoot(stateRoot, request.Spec.WorkingDirectory); err != nil {
+	if err := p.prepareStateRoot(stateRoot); err != nil {
 		cleanupState()
 		return nil, err
 	}
@@ -220,6 +221,11 @@ func (p *Provider) Prepare(ctx context.Context, request ports.PreparationRequest
 			Requirements:    ports.RuntimeRequirements{Executable: p.executable, WorkingDirectory: request.Spec.WorkingDirectory, PrivateStorage: true, Terminal: &ports.TerminalRequirement{Interactive: true}, Policy: supportedLaunchPolicy()},
 			EffectivePolicy: ports.EffectivePolicy{Approval: request.Spec.Approval, Sandbox: request.Spec.Sandbox, ApprovalEnforced: true, SandboxEnforced: true},
 			Resources:       []ports.ResourceClaim{{Kind: ports.ResourceTerminal, Key: terminal.ResourceKey()}, {Kind: ports.ResourceProcess, Key: stateRoot}}, Evidence: initial, AccessDelivery: access, InitialInput: initialInput}}
+	if request.Spec.TrustDirectory {
+		if err := ensureCopilotDirTrustedInHome(stateRoot, request.Spec.WorkingDirectory); err != nil {
+			slog.Warn("directory trust could not be saved; use the native pane to confirm the directory", "harness", Name, "error", err)
+		}
+	}
 	if err := result.prepareSandbox(ctx); err != nil {
 		_ = result.Abort(context.WithoutCancel(ctx))
 		return nil, err
@@ -260,7 +266,7 @@ func (p *Provider) prepareHistory(request ports.PreparationRequest) (string, str
 	}
 }
 
-func (p *Provider) prepareStateRoot(root, cwd string) error {
+func (p *Provider) prepareStateRoot(root string) error {
 	p.stateMu.Lock()
 	defer p.stateMu.Unlock()
 	if err := os.MkdirAll(filepath.Join(root, "hooks"), 0o700); err != nil {
@@ -278,7 +284,7 @@ func (p *Provider) prepareStateRoot(root, cwd string) error {
 	if err := host.WriteProtectedFile(filepath.Join(root, "hooks", "tclaude-observation.json"), raw); err != nil {
 		return err
 	}
-	return ensureCopilotDirTrustedInHome(root, cwd)
+	return nil
 }
 
 func (p *prepared) Describe() ports.PreparedDescription { return p.description }

@@ -46,7 +46,7 @@ function launchToolGovernanceChoices(){return [{value:"",label:"Provider default
 function attachProviderSettingControl(host,name,provider,isEditable=()=>true){
  const harness=host.querySelector('[name=harness]'),tools=host.querySelector('[name='+name+']');
  if(!harness||!tools)return ()=>{};
- const sync=()=>{const supported=harness.value===provider||(!harness.value&&harness.dataset.allowInheritedHarness==='true');if(!supported)tools.value='';tools.disabled=!supported||!isEditable();};
+ const sync=()=>{const supported=(Array.isArray(provider)?provider.includes(harness.value):harness.value===provider)||(!harness.value&&harness.dataset.allowInheritedHarness==='true');if(!supported)tools.value='';tools.disabled=!supported||!isEditable();};
  host.addEventListener('change',event=>{if(event.target===harness)sync()});sync();return sync;
 }
 
@@ -56,7 +56,7 @@ function attachFastModeControl(host,isEditable){return attachProviderSettingCont
 
 function launchAutoReviewChoices(){return [{value:'',label:'No automatic-review override'},{value:'on',label:'Automatic approval review'}]}
 function attachAutoReviewControl(host,isEditable){return attachProviderSettingControl(host,'auto_review','codex',isEditable)}
-function launchSettingValue(key,value){return key==='auto_review'||key==='auto_memory'||key==='peer_messaging'?(value===true||value==='on'?'on':(key==='auto_memory'||key==='peer_messaging')&&value===false?'off':''):(value||'')}
+function launchSettingValue(key,value){return key==='auto_review'||key==='auto_memory'||key==='peer_messaging'||key==='trust_directory'?(value===true||value==='on'?'on':(key==='auto_memory'||key==='peer_messaging'||key==='trust_directory')&&value===false?'off':''):(value||'')}
 
 function autoReviewAuthorityField(bounds={}){return {name:'auto_review',label:'Allow Codex automatic approval review',type:'checkbox',required:false,value:!!bounds.AutoReview}}
 
@@ -67,3 +67,6 @@ function launchPeerMessagingChoices(){return [{value:'',label:'Use default (off)
 function attachPeerMessagingControl(host,isEditable){return attachProviderSettingControl(host,'peer_messaging','claude',isEditable)}
 
 function attachAutoCompactWindowControl(form,enabled=()=>true){return attachProviderSettingControl(form,"auto_compact_window","claude",enabled)}
+
+function launchDirectoryTrustChoices(){return [{value:'',label:'Use default'},{value:'on',label:'On'},{value:'off',label:'Off'}]}
+function attachDirectoryTrustControl(host,isEditable){return attachProviderSettingControl(host,'trust_directory',['claude','codex','copilot'],isEditable)}

@@ -58,7 +58,7 @@ func TestProviderHostSandboxPreparesExactCommandAndRefusesChangedCredentialBefor
 	selected, err := materialized.LaunchSelection()
 	require.NoError(t, err)
 	t.Setenv("UNSELECTED_DAEMON_VALUE", "must not be copied")
-	request := ports.PreparationRequest{HostSandboxPolicy: &materialized, Spec: model.ResolvedExecutionSpec{HostSandbox: &selected, ExecutionID: "execution", Attempt: 1, Harness: Name, Model: "fixture", WorkingDirectory: workspace, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined}, Intent: ports.StartFresh, InitialInput: &ports.PreparedInitialInput{Body: "Exact first work", Correlation: "brief", RequiredBeforeFirstWork: true}, ActionCredential: &ports.ActionCredentialMaterial{ExecutionID: "execution", Generation: 1, DeliveryID: "delivery", Secret: []byte("disposable action credential"), ExpiresAt: time.Now().Add(time.Hour)}}
+	request := ports.PreparationRequest{HostSandboxPolicy: &materialized, Spec: model.ResolvedExecutionSpec{TrustDirectory: true, HostSandbox: &selected, ExecutionID: "execution", Attempt: 1, Harness: Name, Model: "fixture", WorkingDirectory: workspace, Approval: model.ApprovalSupervised, Sandbox: model.SandboxUnconfined}, Intent: ports.StartFresh, InitialInput: &ports.PreparedInitialInput{Body: "Exact first work", Correlation: "brief", RequiredBeforeFirstWork: true}, ActionCredential: &ports.ActionCredentialMaterial{ExecutionID: "execution", Generation: 1, DeliveryID: "delivery", Secret: []byte("disposable action credential"), ExpiresAt: time.Now().Add(time.Hour)}}
 	attempt, err := provider.Prepare(ctx, request)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = attempt.Abort(context.Background()) })

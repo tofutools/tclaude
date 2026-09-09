@@ -13,6 +13,7 @@ type ConfigurationOptions struct {
 	AutoReview        *bool              `json:",omitempty"`
 	AutoMemory        *bool              `json:",omitempty"`
 	PeerMessaging     *bool              `json:",omitempty"`
+	TrustDirectory    *bool              `json:",omitempty"`
 	AutoCompactWindow *AutoCompactWindow `json:",omitempty"`
 	WorkingDirectory  *string            `json:",omitempty"`
 	Approval          *ApprovalMode      `json:",omitempty"`
@@ -48,7 +49,7 @@ func (o ConfigurationOptions) Apply(base DesiredConfiguration) DesiredConfigurat
 
 // NativeOptions exposes the provider-owned subset to shared launch resolution.
 func (o ConfigurationOptions) NativeOptions() NativeConfigurationOptions {
-	return NativeConfigurationOptions{Harness: o.Harness, Model: o.Model, Effort: o.Effort, ToolGovernance: o.ToolGovernance, FastMode: o.FastMode, AutoReview: o.AutoReview, AutoMemory: o.AutoMemory, PeerMessaging: o.PeerMessaging, AutoCompactWindow: o.AutoCompactWindow, Approval: o.Approval, Sandbox: o.Sandbox}
+	return NativeConfigurationOptions{Harness: o.Harness, Model: o.Model, Effort: o.Effort, ToolGovernance: o.ToolGovernance, FastMode: o.FastMode, AutoReview: o.AutoReview, AutoMemory: o.AutoMemory, PeerMessaging: o.PeerMessaging, TrustDirectory: o.TrustDirectory, AutoCompactWindow: o.AutoCompactWindow, Approval: o.Approval, Sandbox: o.Sandbox}
 }
 
 // AuthoredHarness is empty when a partial profile inherits its harness. It

@@ -141,6 +141,9 @@ func (s *Service) compileDefinition(ctx context.Context, draft DefinitionDraft, 
 		if err := s.validateTeamAutoCompactWindow(ctx, *draft.Team); err != nil {
 			return model.DefinitionRevision{}, err
 		}
+		if err := s.validateTeamDirectoryTrust(ctx, *draft.Team); err != nil {
+			return model.DefinitionRevision{}, err
+		}
 		if err := s.validateTeamPeerMessaging(ctx, *draft.Team); err != nil {
 			return model.DefinitionRevision{}, err
 		}
@@ -330,6 +333,20 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 	if (req.Start.Definition == nil) == (req.Start.InlineGraph == nil) {
 		return WorkRunResult{}, fail(ErrInvalid, "exactly one pinned definition or inline graph is required")
 	}
+	requestDigest := contentHash(struct {
+		ID    model.WorkRunID
+		Start model.WorkStart
+	}{req.ID, req.Start})
+	if prior, err := s.store.WorkRunByRequest(ctx, req.Context.Principal, req.Context.RequestID); err == nil {
+		if prior.Run.DirectoryTrust != nil {
+			if prior.Run.ID != req.ID || prior.Run.DirectoryTrust.RequestDigest != requestDigest {
+				return WorkRunResult{}, ErrConflict
+			}
+			return WorkRunResult(prior), nil
+		}
+	} else if !errors.Is(err, ErrNotFound) {
+		return WorkRunResult{}, err
+	}
 	var graph model.WorkGraph
 	var parameterSyntax string
 	var declarations []model.ParameterDeclaration
@@ -446,9 +463,14 @@ func (s *Service) StartProcess(ctx context.Context, req StartProcessRequest) (Wo
 	if err := s.pinProgramActivationTimeouts(ctx, &graph); err != nil {
 		return WorkRunResult{}, err
 	}
+	directoryTrust, proofPaths, err := s.prepareWorkDirectoryTrust(ctx, req, graph, requestDigest)
+	if err != nil {
+		return WorkRunResult{}, err
+	}
+	defer s.cleanupDirectoryTrust(ctx, directoryTrustAdmission{proven: proofPaths}, req.Context.WriteProofToken)
 	now := s.now().UTC()
 	entry := graphNode(graph, graph.EntryNodeID)
-	run := model.WorkRun{ID: req.ID, RequestID: req.Context.RequestID, Requester: req.Context.Principal, Authority: authority, Delegation: req.Context.Principal.Delegation, Graph: &graph, DefinitionClosure: closure, Parameters: parameters, Scope: req.Start.Scope, AuthorizedPrograms: append([]model.ProgramProfileRef(nil), req.Start.AuthorizedProgramProfiles...), ControlState: model.WorkControlActive, State: model.WorkRunRunning, Deadline: req.Start.Deadline.UTC(), Revision: 1, CreatedAt: now, UpdatedAt: now}
+	run := model.WorkRun{DirectoryTrust: directoryTrust, ID: req.ID, RequestID: req.Context.RequestID, Requester: req.Context.Principal, Authority: authority, Delegation: req.Context.Principal.Delegation, Graph: &graph, DefinitionClosure: closure, Parameters: parameters, Scope: req.Start.Scope, AuthorizedPrograms: append([]model.ProgramProfileRef(nil), req.Start.AuthorizedProgramProfiles...), ControlState: model.WorkControlActive, State: model.WorkRunRunning, Deadline: req.Start.Deadline.UTC(), Revision: 1, CreatedAt: now, UpdatedAt: now}
 	attempt, windows := s.initialActivation(req.ID, req.Start.Scope, entry, now, run.Deadline, graph.ProgramActivationTimeouts[entry.ID])
 	run.NodeAttempts = []model.WorkNodeAttempt{attempt}
 	record, _, err := s.store.CreateGraphWorkRun(ctx, run, windows)

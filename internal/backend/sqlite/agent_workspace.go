@@ -45,7 +45,11 @@ func admitAgentWorkspaceUseTx(ctx context.Context, tx *sql.Tx, in app.LaunchAdmi
 	if err != nil {
 		return err
 	}
-	if path != in.Execution.Spec.WorkingDirectory {
+	executionPath := in.Execution.Spec.WorkingDirectory
+	if in.ProvenWorkingDirectory == executionPath && in.Authority.RequestedConfiguration != nil {
+		executionPath = in.Authority.RequestedConfiguration.WorkingDirectory
+	}
+	if path != executionPath {
 		return app.ErrConflict
 	}
 	if _, err := requireSelectedWorkspaceTx(ctx, tx, model.WorkspaceSelection{WorkspaceID: id}, path, in.Operation.Principal, in.Operation.CreatedAt); err != nil {

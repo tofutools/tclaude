@@ -276,7 +276,7 @@ func (s *Store) ProgramProfileRevision(ctx context.Context, id model.ProgramProf
 
 func (s *Store) CreateGraphWorkRun(ctx context.Context, run model.WorkRun, windows []model.DecisionWindow) (app.WorkRunRecord, bool, error) {
 	if existing, err := s.WorkRunByRequest(ctx, run.Requester, run.RequestID); err == nil {
-		if existing.Run.ID != run.ID || !reflect.DeepEqual(existing.Run.Graph, run.Graph) || !reflect.DeepEqual(existing.Run.Parameters, run.Parameters) {
+		if existing.Run.ID != run.ID || (run.DirectoryTrust != nil && existing.Run.DirectoryTrust != nil && existing.Run.DirectoryTrust.RequestDigest != run.DirectoryTrust.RequestDigest) || !reflect.DeepEqual(existing.Run.Graph, run.Graph) || !reflect.DeepEqual(existing.Run.Parameters, run.Parameters) {
 			return app.WorkRunRecord{}, false, app.ErrConflict
 		}
 		return existing, true, nil
@@ -292,6 +292,7 @@ func (s *Store) CreateGraphWorkRun(ctx context.Context, run model.WorkRun, windo
 	parameters, _ := json.Marshal(run.Parameters)
 	scope, _ := json.Marshal(run.Scope)
 	programs, _ := json.Marshal(run.AuthorizedPrograms)
+	directoryTrust, _ := json.Marshal(run.DirectoryTrust)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return app.WorkRunRecord{}, false, err
@@ -303,7 +304,10 @@ func (s *Store) CreateGraphWorkRun(ctx context.Context, run model.WorkRun, windo
 	if err = requirePendingAutomationAction(ctx, tx, run.Requester, model.AutomationStartWork, run.Scope.DeploymentID, run.CreatedAt); err != nil {
 		return app.WorkRunRecord{}, false, err
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO work_runs(id,request_scope,request_id,requester_json,authority_json,delegation_json,spec_json,state,worker_execution_id,cancellation_requested,cancellation_reason,revision,created_at,updated_at,graph_json,definition_closure_json,parameters_json,scope_json,authorized_programs_json,control_state,outcome,deadline) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.ID, requestScope(run.Requester), run.RequestID, requester, authority, delegation, spec, run.State, run.WorkerExecutionID, run.CancellationRequested, run.CancellationReason, run.Revision, nanos(run.CreatedAt), nanos(run.UpdatedAt), graph, closure, parameters, scope, programs, run.ControlState, run.Outcome, nanos(run.Deadline))
+	if err = requireWorkDirectoryTrustSources(ctx, tx, run.DirectoryTrust); err != nil {
+		return app.WorkRunRecord{}, false, err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO work_runs(id,request_scope,request_id,requester_json,authority_json,delegation_json,spec_json,state,worker_execution_id,cancellation_requested,cancellation_reason,revision,created_at,updated_at,graph_json,definition_closure_json,parameters_json,scope_json,authorized_programs_json,control_state,outcome,deadline,directory_trust_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, run.ID, requestScope(run.Requester), run.RequestID, requester, authority, delegation, spec, run.State, run.WorkerExecutionID, run.CancellationRequested, run.CancellationReason, run.Revision, nanos(run.CreatedAt), nanos(run.UpdatedAt), graph, closure, parameters, scope, programs, run.ControlState, run.Outcome, nanos(run.Deadline), directoryTrust)
 	if err != nil {
 		return app.WorkRunRecord{}, false, classify(err)
 	}

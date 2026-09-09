@@ -263,6 +263,9 @@ func (t *translator) translateAgents(batch *app.ImportBatch) error {
 		if err := validateImportedAutoCompactWindow(row.Values, agent.Desired.Harness); err != nil {
 			return fmt.Errorf("agent %s auto-compaction window: %w", row.Key, err)
 		}
+		if err := validateImportedDirectoryTrust(row.Values, agent.Desired.Harness); err != nil {
+			return fmt.Errorf("agent %s directory trust: %w", row.Key, err)
+		}
 		if err := validateImportedPeerMessaging(row.Values, agent.Desired.Harness); err != nil {
 			return fmt.Errorf("agent %s peer messaging: %w", row.Key, err)
 		}
@@ -436,6 +439,14 @@ func (t *translator) translateProfiles(batch *app.ImportBatch) {
 		if windowErr != nil {
 			archived = true
 			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "auto_compact_window_requires_review", windowErr.Error())
+		}
+		trustErr := validateImportedDirectoryTrust(row.Values, desired.Harness)
+		if desired.Harness == "" {
+			_, trustErr = importedDirectoryTrust(row.Values["trust_dir"])
+		}
+		if trustErr != nil {
+			archived = true
+			t.launchMetadataDiagnostic(batch, "spawn_profiles", row.Key, "directory_trust_requires_review", trustErr.Error())
 		}
 		peerErr := validateImportedPeerMessaging(row.Values, desired.Harness)
 		if desired.Harness == "" {
@@ -853,6 +864,7 @@ func desiredFromRow(values map[string]any) model.DesiredConfiguration {
 	}
 	desired.AutoReview, _ = importedAutoReview(values["auto_review"])
 	desired.AutoMemory, _ = importedAutoMemory(values["auto_memory"])
+	desired.TrustDirectory, _ = importedDirectoryTrust(values["trust_dir"])
 	desired.PeerMessaging, _ = importedPeerMessaging(values["peer_messaging"])
 	desired.AutoCompactWindow, _ = importedAutoCompactWindow(values["auto_compact_window"])
 	desired.FastMode = importedFastMode(values["fast_mode"])
