@@ -495,6 +495,9 @@ func resourceMatches(ctx context.Context, q queryer, principal model.Principal, 
 	if !validResourceSelector(granted) || !validResourceSelector(requested) {
 		return false
 	}
+	if granted.Kind == model.ResourceAll {
+		return true
+	}
 	if granted.Kind == model.ResourceSelf {
 		switch principal.Authority.Kind {
 		case model.AuthorityAgent:
@@ -974,7 +977,7 @@ func makeResource(kind, id string) model.ResourceSelector {
 }
 
 func validResourceSelector(resource model.ResourceSelector) bool {
-	if resource.Kind == model.ResourceSelf || resource.Kind == model.ResourceOperator {
+	if resource.Kind == model.ResourceSelf || resource.Kind == model.ResourceOperator || resource.Kind == model.ResourceAll {
 		return resource == (model.ResourceSelector{Kind: resource.Kind})
 	}
 	kind, id := resourceParts(resource)
