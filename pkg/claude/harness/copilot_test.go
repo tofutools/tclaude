@@ -405,6 +405,9 @@ func TestCopilotBuildCommandQuotesHostileValues(t *testing.T) {
 
 func TestCopilotValidateModel(t *testing.T) {
 	m := copilotModels{}
+	for _, model := range []string{"gpt-6-sol", "gpt-6-terra", "gpt-6-luna"} {
+		assert.Contains(t, m.Models(), model)
+	}
 
 	// Empty means "omit the flag" so Copilot keeps its own configured default.
 	if got, err := m.ValidateModel("  "); got != "" || err != nil {

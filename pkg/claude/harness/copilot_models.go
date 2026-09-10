@@ -27,6 +27,10 @@ var copilotKnownModels = []string{
 	"claude-opus-4.6",
 	"claude-opus-4.5",
 	"gpt-6-astra",
+	// Prepared ahead of release; the CLI remains the authority on availability.
+	"gpt-6-sol",
+	"gpt-6-terra",
+	"gpt-6-luna",
 	"gpt-5.6-sol",
 	"gpt-5.6-terra",
 	"gpt-5.6-luna",
