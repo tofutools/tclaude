@@ -17,8 +17,9 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 )
 
-func TestAWBReadyPickupLogIncludesProcessAndIssue(t *testing.T) {
+func TestAWBReadyPickupLogsSelectedDispatch(t *testing.T) {
 	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
 	_, err := db.CreateAgentGroup("builders", "")
 	require.NoError(t, err)
 
@@ -29,11 +30,17 @@ func TestAWBReadyPickupLogIncludesProcessAndIssue(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		if r.URL.Path == "/api/ready" {
-			require.NoError(t, json.NewEncoder(w).Encode([]awbIssue{issue}))
+			if err := json.NewEncoder(w).Encode([]awbIssue{issue}); err != nil {
+				t.Errorf("encode ready response: %v", err)
+			}
 			return
 		}
-		require.Equal(t, "/api/issues/tcl-a1", r.URL.Path)
-		require.NoError(t, json.NewEncoder(w).Encode(issue))
+		if r.URL.Path != "/api/issues/tcl-a1" {
+			t.Errorf("request path = %q, want /api/issues/tcl-a1", r.URL.Path)
+		}
+		if err := json.NewEncoder(w).Encode(issue); err != nil {
+			t.Errorf("encode issue response: %v", err)
+		}
 	}))
 	t.Cleanup(server.Close)
 
@@ -61,6 +68,47 @@ func TestAWBReadyPickupLogIncludesProcessAndIssue(t *testing.T) {
 	assert.Contains(t, got, `"issue":"tcl-a1"`)
 	assert.Contains(t, got, `"agent_id":"agt_`)
 	assert.Equal(t, 1, strings.Count(got, `"msg":"awb ready polling: picked up issue"`))
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.Nil(t, dispatch, "the closed issue releases the dispatch after logging its pickup")
+}
+
+func TestAWBReadyPickupDoesNotLogResumedDispatch(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	_, err := db.CreateAgentGroup("builders", "")
+	require.NoError(t, err)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", "agt_reserved")
+	require.NoError(t, err)
+	require.True(t, selected)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/issues/tcl-a1" {
+			t.Errorf("request path = %q, want /api/issues/tcl-a1", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if err := json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "closed"}); err != nil {
+			t.Errorf("encode issue response: %v", err)
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	var logs bytes.Buffer
+	previousLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(previousLogger) })
+
+	base, fault := validateAWBBaseURL(server.URL)
+	require.Nil(t, fault)
+	policy := config.AWBProxyConfig{URL: server.URL, Username: "worker", AllowWrite: true, AllowedWorkspaces: []string{"tcl"}}
+	worker := awbReadyWorker{
+		process:   "builders",
+		workspace: "tcl",
+		config:    config.AWBReadyPollingConfig{Workspace: "tcl", Group: "builders", Cwd: t.TempDir()},
+		session:   &awbProxySession{policy: policy, base: base, workspaces: []string{"tcl"}},
+	}
+	require.NoError(t, worker.tick(context.Background()))
+	assert.NotContains(t, logs.String(), "awb ready polling: picked up issue")
 }
 
 func TestAWBReadyInitialMessageLeavesClosureToOperator(t *testing.T) {
