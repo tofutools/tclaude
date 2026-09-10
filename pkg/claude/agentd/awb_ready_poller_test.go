@@ -119,6 +119,86 @@ func TestAWBReadyInitialMessageLeavesClosureToOperator(t *testing.T) {
 	assert.NotContains(t, strings.ToLower(message), "close it")
 }
 
+func TestAWBReadyMonitorClosesMergedPRAfterAgentSettles(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", "agt_worker")
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
+	require.NoError(t, err)
+
+	var closed bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		issue := awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "in_progress", PullRequestURL: "https://github.com/acme/repo/pull/42"}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/issues/tcl-a1/close" {
+			closed = true
+			issue.Status = "closed"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(issue))
+	}))
+	t.Cleanup(server.Close)
+
+	previousMerged, previousSettled := awbReadyPRMerged, awbReadyAgentSettled
+	awbReadyPRMerged = func(_ context.Context, rawURL string) (bool, bool, error) {
+		assert.Equal(t, "https://github.com/acme/repo/pull/42", rawURL)
+		return true, true, nil
+	}
+	awbReadyAgentSettled = func(agentID string) (bool, error) {
+		assert.Equal(t, "agt_worker", agentID)
+		return true, nil
+	}
+	t.Cleanup(func() { awbReadyPRMerged, awbReadyAgentSettled = previousMerged, previousSettled })
+
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	require.NoError(t, worker.tick(context.Background()))
+	assert.True(t, closed)
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.Nil(t, dispatch, "successful automatic closure releases the serial polling process")
+}
+
+func TestAWBReadyMonitorWaitsWhileAgentWorks(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", "agt_worker")
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
+	require.NoError(t, err)
+
+	var closeRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			closeRequests++
+		}
+		_ = json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "in_progress", PullRequestURL: "https://github.com/acme/repo/pull/42"})
+	}))
+	t.Cleanup(server.Close)
+
+	previousMerged, previousSettled := awbReadyPRMerged, awbReadyAgentSettled
+	awbReadyPRMerged = func(context.Context, string) (bool, bool, error) { return true, true, nil }
+	awbReadyAgentSettled = func(string) (bool, error) { return false, nil }
+	t.Cleanup(func() { awbReadyPRMerged, awbReadyAgentSettled = previousMerged, previousSettled })
+
+	require.NoError(t, testAWBReadyMonitorWorker(t, server.URL).tick(context.Background()))
+	assert.Zero(t, closeRequests)
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.NotNil(t, dispatch)
+}
+
+func testAWBReadyMonitorWorker(t *testing.T, serverURL string) awbReadyWorker {
+	t.Helper()
+	base, fault := validateAWBBaseURL(serverURL)
+	require.Nil(t, fault)
+	policy := config.AWBProxyConfig{URL: serverURL, Username: "worker", AllowWrite: true, AllowedWorkspaces: []string{"tcl"}}
+	return awbReadyWorker{process: "builders", workspace: "tcl",
+		config:  config.AWBReadyPollingConfig{Workspace: "tcl", Group: "builders", Cwd: t.TempDir(), MonitorPR: true},
+		session: &awbProxySession{policy: policy, base: base, workspaces: []string{"tcl"}}}
+}
+
 func TestAWBReadyQueryIncludesWorkspaceLabelsAndLimit(t *testing.T) {
 	query := awbReadyQuery("tcl", []string{"backend", "urgent"})
 	assert.Equal(t, "tcl", query.Get("workspace"))

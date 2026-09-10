@@ -282,6 +282,10 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
   Each entry requires `workspace`, `group`, and an absolute `cwd`. Optional
   `labels` are passed as repeated AWB label filters. `interval` defaults to
   `1m`; `profile`, `sandbox_profile`, `harness`, and `worktree` are optional.
+  `monitor_pr` defaults to `false`; when true, the worker watches a GitHub pull
+  request recorded in the issue's `pull_request_url` through the configured
+  GitHub proxy. After the pull request is merged and the spawned agent exits or
+  becomes idle, the worker closes the AWB issue and advances to the next one.
   Multiple processes may use the same workspace when every process has a
   non-empty label filter and those configured label sets are disjoint. An
   unfiltered process therefore must be the workspace's only process.
@@ -302,7 +306,8 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
     "profile": "worker",
     "sandbox_profile": "repo-write",
     "harness": "codex",
-    "worktree": true
+    "worktree": true,
+    "monitor_pr": true
   },
   "tcl-frontend": {
     "workspace": "tcl",

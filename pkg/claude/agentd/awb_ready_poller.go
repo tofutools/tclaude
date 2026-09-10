@@ -18,9 +18,15 @@ import (
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
 	"github.com/tofutools/tclaude/pkg/claude/harness"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 const defaultAWBReadyPollInterval = time.Minute
+
+var (
+	awbReadyPRMerged     = liveAWBReadyPRMerged
+	awbReadyAgentSettled = liveAWBReadyAgentSettled
+)
 
 type awbReadyWorker struct {
 	process   string
@@ -153,6 +159,25 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 		return err
 	}
 	if dispatch.Phase == "spawned" {
+		if w.config.MonitorPR && issue.PullRequestURL != "" {
+			merged, reachable, mergeErr := awbReadyPRMerged(ctx, issue.PullRequestURL)
+			if mergeErr != nil {
+				return mergeErr
+			}
+			if merged && reachable {
+				settled, settleErr := awbReadyAgentSettled(dispatch.AgentID)
+				if settleErr != nil {
+					return settleErr
+				}
+				if settled {
+					if closeErr := w.close(ctx, dispatch.IssueID); closeErr != nil {
+						return closeErr
+					}
+					_, err = db.ClearAWBReadyDispatch(w.process, dispatch.IssueID)
+					return err
+				}
+			}
+		}
 		return nil
 	}
 	// A crash after the spawn committed but before the phase update is
@@ -290,6 +315,78 @@ func (w awbReadyWorker) claim(ctx context.Context, id string) (*awbIssue, error)
 		return nil, fmt.Errorf("%s", f.Msg)
 	}
 	return &i, nil
+}
+
+func (w awbReadyWorker) close(ctx context.Context, id string) error {
+	if f := w.session.requireWrite(); f != nil {
+		return fmt.Errorf("%s", f.Msg)
+	}
+	reason := "GitHub pull request merged and spawned agent settled"
+	body, _ := json.Marshal(awbCloseBody{Reason: &reason})
+	var i awbIssue
+	_, f := w.session.exec(ctx, awbCall{Method: http.MethodPost, Path: "/api/issues/" + awbSegment(id) + "/close", Body: body, ContentType: "application/json"}, &i)
+	if f != nil {
+		w.audit("awb.close", id, f.Status)
+		return fmt.Errorf("%s", f.Msg)
+	}
+	w.audit("awb.close", id, http.StatusOK)
+	if f = w.session.enforceIssueWorkspace(&i); f != nil {
+		return fmt.Errorf("%s", f.Msg)
+	}
+	if i.Status != "closed" {
+		return fmt.Errorf("AWB close response did not close issue")
+	}
+	return nil
+}
+
+func liveAWBReadyPRMerged(ctx context.Context, rawURL string) (merged, reachable bool, err error) {
+	ref, ok := githubPRRefFromURL(rawURL)
+	if !ok {
+		return false, false, nil
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return false, false, fmt.Errorf("load GitHub proxy policy: %w", err)
+	}
+	if !cfg.GitProxyEnabled() || !presentedPRRemoteAllowed(ref, cfg.ResolvedGitProxy().AllowedRemotes) {
+		return false, false, nil
+	}
+	policy := cfg.ResolvedGitProxy()
+	token, _, fault := githubToken(ctx, policy)
+	if fault != nil {
+		return false, true, fmt.Errorf("GitHub proxy: %s", fault.Msg)
+	}
+	owner, repo, _ := strings.Cut(ref.repo, "/")
+	g := &ghProxySession{owner: owner, repo: repo, ownerRepo: ref.repo, remoteKey: "github.com/" + ref.repo, token: token}
+	pr, failure, err := g.pullRequest(ctx, ghPRViewQuery, ref.number)
+	if err != nil {
+		return false, true, err
+	}
+	if failure != nil {
+		return false, true, fmt.Errorf("GitHub proxy: %s", strings.TrimSpace(failure.Stderr))
+	}
+	return strings.EqualFold(pr.State, "merged"), true, nil
+}
+
+func liveAWBReadyAgentSettled(agentID string) (bool, error) {
+	a, err := db.GetAgent(agentID)
+	if err != nil {
+		return false, err
+	}
+	if a == nil {
+		return false, nil
+	}
+	if !a.Active() {
+		return true, nil
+	}
+	if a.CurrentConvID == "" {
+		return false, nil
+	}
+	row, err := db.FindSessionByConvID(a.CurrentConvID)
+	if err != nil {
+		return false, err
+	}
+	return row != nil && (row.Status == session.StatusIdle || row.Status == session.StatusExited), nil
 }
 
 func (w awbReadyWorker) spawn(issueID, reservedAgentID string) (string, error) {

@@ -1425,16 +1425,18 @@ func TestAWBProxyLegacyAllowedProjectsRemainEffectiveAndRoundTrip(t *testing.T) 
 
 func TestAWBReadyPollingNormalizesWorkspaceAndRoundTrips(t *testing.T) {
 	var cfg Config
-	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"url":"https://awb.example/","username":"worker","allow_write":true,"allowed_workspaces":["TCL"],"ready_polling":{" Builders ":{"workspace":" TCL ","labels":["backend","urgent"],"group":"builders","cwd":"/repo","worktree":true}}}}}`), &cfg))
+	require.NoError(t, json.Unmarshal([]byte(`{"agent":{"awb_proxy":{"url":"https://awb.example/","username":"worker","allow_write":true,"allowed_workspaces":["TCL"],"ready_polling":{" Builders ":{"workspace":" TCL ","labels":["backend","urgent"],"group":"builders","cwd":"/repo","worktree":true,"monitor_pr":true}}}}}`), &cfg))
 	resolved := cfg.ResolvedAWBProxy()
 	require.Contains(t, resolved.ReadyPolling, "builders")
 	assert.Equal(t, "tcl", resolved.ReadyPolling["builders"].Workspace)
 	assert.Equal(t, []string{"backend", "urgent"}, resolved.ReadyPolling["builders"].Labels)
 	assert.Equal(t, "builders", resolved.ReadyPolling["builders"].Group)
+	assert.True(t, resolved.ReadyPolling["builders"].MonitorPR)
 	assert.Equal(t, "https://awb.example", resolved.URL)
 	raw, err := json.Marshal(&cfg)
 	require.NoError(t, err)
 	assert.Contains(t, string(raw), `"ready_polling"`)
+	assert.Contains(t, string(raw), `"monitor_pr":true`)
 }
 
 func TestValidateAWBReadyPollingRejectsDuplicateNormalizedProcesses(t *testing.T) {
