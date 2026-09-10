@@ -30,11 +30,6 @@ query PRState($owner: String!, $name: String!, $number: Int!) {
   }
 }`
 
-var (
-	awbReadyPRMerged     = liveAWBReadyPRMerged
-	awbReadyAgentSettled = liveAWBReadyAgentSettled
-)
-
 type awbReadyWorker struct {
 	process   string
 	workspace string
@@ -167,14 +162,14 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 	}
 	if dispatch.Phase == "spawned" {
 		if w.config.MonitorPR && issue.PullRequestURL != "" {
-			settled, settleErr := awbReadyAgentSettled(dispatch.AgentID)
+			settled, settleErr := liveAWBReadyAgentSettled(dispatch.AgentID)
 			if settleErr != nil {
 				return settleErr
 			}
 			if !settled {
 				return nil
 			}
-			merged, reachable, mergeErr := awbReadyPRMerged(ctx, issue.PullRequestURL)
+			merged, reachable, mergeErr := liveAWBReadyPRMerged(ctx, issue.PullRequestURL)
 			if reachable {
 				status := http.StatusOK
 				if mergeErr != nil {
@@ -407,7 +402,7 @@ func liveAWBReadyAgentSettled(agentID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return row != nil && (row.Status == session.StatusIdle || row.Status == session.StatusExited), nil
+	return row == nil || row.Status == session.StatusIdle || row.Status == session.StatusExited, nil
 }
 
 func (w awbReadyWorker) spawn(issueID, reservedAgentID string) (string, error) {

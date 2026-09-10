@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 func TestAWBReadyPickupLogsSelectedDispatch(t *testing.T) {
@@ -128,7 +129,8 @@ func TestAWBReadyInitialMessageExplainsPRMonitoring(t *testing.T) {
 func TestAWBReadyMonitorClosesMergedPRAfterAgentSettles(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("AWB_PASSWORD", "hunter2")
-	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", "agt_worker")
+	agentID := testAWBReadyAgent(t, session.StatusIdle)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", agentID)
 	require.NoError(t, err)
 	require.True(t, selected)
 	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
@@ -146,16 +148,7 @@ func TestAWBReadyMonitorClosesMergedPRAfterAgentSettles(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	previousMerged, previousSettled := awbReadyPRMerged, awbReadyAgentSettled
-	awbReadyPRMerged = func(_ context.Context, rawURL string) (bool, bool, error) {
-		assert.Equal(t, "https://github.com/acme/repo/pull/42", rawURL)
-		return true, true, nil
-	}
-	awbReadyAgentSettled = func(agentID string) (bool, error) {
-		assert.Equal(t, "agt_worker", agentID)
-		return true, nil
-	}
-	t.Cleanup(func() { awbReadyPRMerged, awbReadyAgentSettled = previousMerged, previousSettled })
+	testAWBReadyGitHub(t, "MERGED")
 
 	worker := testAWBReadyMonitorWorker(t, server.URL)
 	require.NoError(t, worker.tick(context.Background()))
@@ -168,7 +161,8 @@ func TestAWBReadyMonitorClosesMergedPRAfterAgentSettles(t *testing.T) {
 func TestAWBReadyMonitorWaitsWhileAgentWorks(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("AWB_PASSWORD", "hunter2")
-	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", "agt_worker")
+	agentID := testAWBReadyAgent(t, session.StatusWorking)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", agentID)
 	require.NoError(t, err)
 	require.True(t, selected)
 	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
@@ -183,10 +177,7 @@ func TestAWBReadyMonitorWaitsWhileAgentWorks(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	previousMerged, previousSettled := awbReadyPRMerged, awbReadyAgentSettled
-	awbReadyPRMerged = func(context.Context, string) (bool, bool, error) { return true, true, nil }
-	awbReadyAgentSettled = func(string) (bool, error) { return false, nil }
-	t.Cleanup(func() { awbReadyPRMerged, awbReadyAgentSettled = previousMerged, previousSettled })
+	testAWBReadyGitHub(t, "MERGED")
 
 	require.NoError(t, testAWBReadyMonitorWorker(t, server.URL).tick(context.Background()))
 	assert.Zero(t, closeRequests)
@@ -198,7 +189,8 @@ func TestAWBReadyMonitorWaitsWhileAgentWorks(t *testing.T) {
 func TestAWBReadyMonitorDisabledDoesNotInspectPR(t *testing.T) {
 	setupTestDB(t)
 	t.Setenv("AWB_PASSWORD", "hunter2")
-	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", "agt_worker")
+	agentID := testAWBReadyAgent(t, session.StatusIdle)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", agentID)
 	require.NoError(t, err)
 	require.True(t, selected)
 	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
@@ -208,12 +200,7 @@ func TestAWBReadyMonitorDisabledDoesNotInspectPR(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "in_progress", PullRequestURL: "https://github.com/acme/repo/pull/42"})
 	}))
 	t.Cleanup(server.Close)
-	previousMerged := awbReadyPRMerged
-	awbReadyPRMerged = func(context.Context, string) (bool, bool, error) {
-		t.Fatal("monitor_pr=false must not inspect the pull request")
-		return false, false, nil
-	}
-	t.Cleanup(func() { awbReadyPRMerged = previousMerged })
+	testAWBReadyGitHub(t, "MERGED")
 
 	worker := testAWBReadyMonitorWorker(t, server.URL)
 	worker.config.MonitorPR = false
@@ -225,6 +212,38 @@ func TestAWBReadyAgentSettledForMissingAgent(t *testing.T) {
 	settled, err := liveAWBReadyAgentSettled("agt_missing")
 	require.NoError(t, err)
 	assert.True(t, settled, "an absent actor cannot still be working")
+}
+
+func TestAWBReadyAgentSettledForMissingSession(t *testing.T) {
+	setupTestDB(t)
+	agentID, err := db.AllocateAgent("conv-pruned", "spawn")
+	require.NoError(t, err)
+	settled, err := liveAWBReadyAgentSettled(agentID)
+	require.NoError(t, err)
+	assert.True(t, settled, "a pruned session row means the actor cannot still be working")
+}
+
+func testAWBReadyAgent(t *testing.T, status string) string {
+	t.Helper()
+	convID := "conv-" + strings.ReplaceAll(status, "_", "-")
+	agentID, err := db.AllocateAgent(convID, "spawn")
+	require.NoError(t, err)
+	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "session-" + convID, ConvID: convID, Status: status}))
+	return agentID
+}
+
+func testAWBReadyGitHub(t *testing.T, state string) {
+	t.Helper()
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{GitProxy: &config.GitProxyConfig{
+		AllowedRemotes: []string{"github.com/acme/repo"},
+	}}}))
+	t.Cleanup(SetGHTokenCommandForTest(func(context.Context) (string, error) { return "ghp_testtoken", nil }))
+	t.Cleanup(SetGitHubTransportForTest(func(_ context.Context, token string, req ghAPIRequest) (ghAPIResult, error) {
+		assert.Equal(t, "ghp_testtoken", token)
+		assert.Equal(t, "graphql", req.Path)
+		body := []byte(`{"data":{"repository":{"pullRequest":{"state":"` + state + `"}}}}`)
+		return ghAPIResult{Status: http.StatusOK, Body: body, Header: http.Header{}}, nil
+	}))
 }
 
 func testAWBReadyMonitorWorker(t *testing.T, serverURL string) awbReadyWorker {
