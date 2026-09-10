@@ -138,6 +138,8 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 		if dispatch == nil {
 			return nil
 		}
+		slog.Info("awb ready polling: picked up issue", "process", w.process,
+			"workspace", w.workspace, "issue", dispatch.IssueID, "agent_id", dispatch.AgentID)
 	}
 	issue, err := w.show(ctx, dispatch.IssueID)
 	if err != nil {
