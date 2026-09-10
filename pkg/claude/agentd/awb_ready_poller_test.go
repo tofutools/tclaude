@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 	"github.com/tofutools/tclaude/pkg/claude/common/db"
+	"github.com/tofutools/tclaude/pkg/claude/session"
 )
 
 func TestAWBReadyPickupLogsSelectedDispatch(t *testing.T) {
@@ -112,11 +113,147 @@ func TestAWBReadyPickupDoesNotLogResumedDispatch(t *testing.T) {
 }
 
 func TestAWBReadyInitialMessageLeavesClosureToOperator(t *testing.T) {
-	message := awbReadyInitialMessage("tcl-a1")
+	message := awbReadyInitialMessage("tcl-a1", false)
 	assert.Contains(t, message, "tclaude proxy awb show tcl-a1")
 	assert.Contains(t, message, "record progress")
 	assert.Contains(t, message, "Leave closing the issue to the operator")
 	assert.NotContains(t, strings.ToLower(message), "close it")
+}
+
+func TestAWBReadyInitialMessageExplainsPRMonitoring(t *testing.T) {
+	message := awbReadyInitialMessage("tcl-a1", true)
+	assert.Contains(t, message, "awb update --pull-request-url")
+	assert.Contains(t, message, "daemon will close the issue")
+}
+
+func TestAWBReadyMonitorClosesMergedPRAfterAgentSettles(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	agentID := testAWBReadyAgent(t, session.StatusIdle)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", agentID)
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
+	require.NoError(t, err)
+
+	var closed bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		issue := awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "in_progress", PullRequestURL: "https://github.com/acme/repo/pull/42"}
+		if r.Method == http.MethodPost && r.URL.Path == "/api/issues/tcl-a1/close" {
+			closed = true
+			issue.Status = "closed"
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(issue))
+	}))
+	t.Cleanup(server.Close)
+
+	testAWBReadyGitHub(t, "MERGED")
+
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	require.NoError(t, worker.tick(context.Background()))
+	assert.True(t, closed)
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.Nil(t, dispatch, "successful automatic closure releases the serial polling process")
+}
+
+func TestAWBReadyMonitorWaitsWhileAgentWorks(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	agentID := testAWBReadyAgent(t, session.StatusWorking)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", agentID)
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
+	require.NoError(t, err)
+
+	var closeRequests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			closeRequests++
+		}
+		_ = json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "in_progress", PullRequestURL: "https://github.com/acme/repo/pull/42"})
+	}))
+	t.Cleanup(server.Close)
+
+	testAWBReadyGitHub(t, "MERGED")
+
+	require.NoError(t, testAWBReadyMonitorWorker(t, server.URL).tick(context.Background()))
+	assert.Zero(t, closeRequests)
+	dispatch, err := db.GetAWBReadyDispatch("builders")
+	require.NoError(t, err)
+	assert.NotNil(t, dispatch)
+}
+
+func TestAWBReadyMonitorDisabledDoesNotInspectPR(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	agentID := testAWBReadyAgent(t, session.StatusIdle)
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", agentID)
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
+	require.NoError(t, err)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "in_progress", PullRequestURL: "https://github.com/acme/repo/pull/42"})
+	}))
+	t.Cleanup(server.Close)
+	testAWBReadyGitHub(t, "MERGED")
+
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	worker.config.MonitorPR = false
+	require.NoError(t, worker.tick(context.Background()))
+}
+
+func TestAWBReadyAgentSettledForMissingAgent(t *testing.T) {
+	setupTestDB(t)
+	settled, err := liveAWBReadyAgentSettled("agt_missing")
+	require.NoError(t, err)
+	assert.True(t, settled, "an absent actor cannot still be working")
+}
+
+func TestAWBReadyAgentSettledForMissingSession(t *testing.T) {
+	setupTestDB(t)
+	agentID, err := db.AllocateAgent("conv-pruned", "spawn")
+	require.NoError(t, err)
+	settled, err := liveAWBReadyAgentSettled(agentID)
+	require.NoError(t, err)
+	assert.True(t, settled, "a pruned session row means the actor cannot still be working")
+}
+
+func testAWBReadyAgent(t *testing.T, status string) string {
+	t.Helper()
+	convID := "conv-" + strings.ReplaceAll(status, "_", "-")
+	agentID, err := db.AllocateAgent(convID, "spawn")
+	require.NoError(t, err)
+	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "session-" + convID, ConvID: convID, Status: status}))
+	return agentID
+}
+
+func testAWBReadyGitHub(t *testing.T, state string) {
+	t.Helper()
+	require.NoError(t, config.Save(&config.Config{Agent: &config.AgentConfig{GitProxy: &config.GitProxyConfig{
+		AllowedRemotes: []string{"github.com/acme/repo"},
+	}}}))
+	t.Cleanup(SetGHTokenCommandForTest(func(context.Context) (string, error) { return "ghp_testtoken", nil }))
+	t.Cleanup(SetGitHubTransportForTest(func(_ context.Context, token string, req ghAPIRequest) (ghAPIResult, error) {
+		assert.Equal(t, "ghp_testtoken", token)
+		assert.Equal(t, "graphql", req.Path)
+		body := []byte(`{"data":{"repository":{"pullRequest":{"state":"` + state + `"}}}}`)
+		return ghAPIResult{Status: http.StatusOK, Body: body, Header: http.Header{}}, nil
+	}))
+}
+
+func testAWBReadyMonitorWorker(t *testing.T, serverURL string) awbReadyWorker {
+	t.Helper()
+	base, fault := validateAWBBaseURL(serverURL)
+	require.Nil(t, fault)
+	policy := config.AWBProxyConfig{URL: serverURL, Username: "worker", AllowWrite: true, AllowedWorkspaces: []string{"tcl"}}
+	return awbReadyWorker{process: "builders", workspace: "tcl",
+		config:  config.AWBReadyPollingConfig{Workspace: "tcl", Group: "builders", Cwd: t.TempDir(), MonitorPR: true},
+		session: &awbProxySession{policy: policy, base: base, workspaces: []string{"tcl"}}}
 }
 
 func TestAWBReadyQueryIncludesWorkspaceLabelsAndLimit(t *testing.T) {

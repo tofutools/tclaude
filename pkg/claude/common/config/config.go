@@ -2101,6 +2101,7 @@ type AWBReadyPollingConfig struct {
 	SandboxProfile string   `json:"sandbox_profile,omitempty"`
 	Harness        string   `json:"harness,omitempty"`
 	Worktree       bool     `json:"worktree,omitempty"`
+	MonitorPR      bool     `json:"monitor_pr,omitempty"`
 }
 
 // LinearProxyConfig is the operator's policy for the daemon-mediated Linear
