@@ -131,7 +131,6 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 		if err != nil || !selected {
 			return err
 		}
-		logAWBReadyPickup(slog.Default(), w.process, issue.ID)
 		dispatch, err = db.GetAWBReadyDispatch(w.process)
 		if err != nil {
 			return err
@@ -139,6 +138,8 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 		if dispatch == nil {
 			return nil
 		}
+		slog.Info("awb ready polling: picked up issue", "process", w.process,
+			"workspace", w.workspace, "issue", dispatch.IssueID, "agent_id", dispatch.AgentID)
 	}
 	issue, err := w.show(ctx, dispatch.IssueID)
 	if err != nil {
@@ -189,10 +190,6 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 	}
 	_, err = db.UpdateAWBReadyDispatch(w.process, dispatch.IssueID, "spawned", "")
 	return err
-}
-
-func logAWBReadyPickup(logger *slog.Logger, process, issueID string) {
-	logger.Info("awb ready polling: picked up issue", "process", process, "issue", issueID)
 }
 
 func (w awbReadyWorker) validateRuntime() error {
