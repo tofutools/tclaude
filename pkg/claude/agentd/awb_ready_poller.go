@@ -23,6 +23,13 @@ import (
 
 const defaultAWBReadyPollInterval = time.Minute
 
+const awbReadyPRStateQuery = `
+query PRState($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) { state }
+  }
+}`
+
 var (
 	awbReadyPRMerged     = liveAWBReadyPRMerged
 	awbReadyAgentSettled = liveAWBReadyAgentSettled
@@ -160,22 +167,36 @@ func (w awbReadyWorker) tick(ctx context.Context) error {
 	}
 	if dispatch.Phase == "spawned" {
 		if w.config.MonitorPR && issue.PullRequestURL != "" {
+			settled, settleErr := awbReadyAgentSettled(dispatch.AgentID)
+			if settleErr != nil {
+				return settleErr
+			}
+			if !settled {
+				return nil
+			}
 			merged, reachable, mergeErr := awbReadyPRMerged(ctx, issue.PullRequestURL)
+			if reachable {
+				status := http.StatusOK
+				if mergeErr != nil {
+					status = http.StatusBadGateway
+				}
+				w.audit("github.pr.view", dispatch.IssueID, status)
+			}
 			if mergeErr != nil {
 				return mergeErr
 			}
-			if merged && reachable {
-				settled, settleErr := awbReadyAgentSettled(dispatch.AgentID)
-				if settleErr != nil {
-					return settleErr
+			if !reachable {
+				slog.Warn("awb ready polling: pull request is not reachable through GitHub proxy",
+					"process", w.process, "workspace", w.workspace, "issue", dispatch.IssueID)
+			}
+			if merged {
+				if closeErr := w.close(ctx, dispatch.IssueID); closeErr != nil {
+					return closeErr
 				}
-				if settled {
-					if closeErr := w.close(ctx, dispatch.IssueID); closeErr != nil {
-						return closeErr
-					}
-					_, err = db.ClearAWBReadyDispatch(w.process, dispatch.IssueID)
-					return err
-				}
+				slog.Info("awb ready polling: closed issue for merged pull request", "process", w.process,
+					"workspace", w.workspace, "issue", dispatch.IssueID, "agent_id", dispatch.AgentID)
+				_, err = db.ClearAWBReadyDispatch(w.process, dispatch.IssueID)
+				return err
 			}
 		}
 		return nil
@@ -358,7 +379,7 @@ func liveAWBReadyPRMerged(ctx context.Context, rawURL string) (merged, reachable
 	}
 	owner, repo, _ := strings.Cut(ref.repo, "/")
 	g := &ghProxySession{owner: owner, repo: repo, ownerRepo: ref.repo, remoteKey: "github.com/" + ref.repo, token: token}
-	pr, failure, err := g.pullRequest(ctx, ghPRViewQuery, ref.number)
+	pr, failure, err := g.pullRequest(ctx, awbReadyPRStateQuery, ref.number)
 	if err != nil {
 		return false, true, err
 	}
@@ -374,7 +395,7 @@ func liveAWBReadyAgentSettled(agentID string) (bool, error) {
 		return false, err
 	}
 	if a == nil {
-		return false, nil
+		return true, nil
 	}
 	if !a.Active() {
 		return true, nil
@@ -407,7 +428,7 @@ func (w awbReadyWorker) spawn(issueID, reservedAgentID string) (string, error) {
 		cwd, wtPath, wtBranch, discard = out.Path, out.Path, issueID, out.DiscardToken
 	}
 	scope := fmt.Sprintf(`{"awb_workspace":[%q]}`, w.workspace)
-	body := agent.SpawnRequest{Name: issueID, Cwd: cwd, WorktreePath: wtPath, WorktreeBranch: wtBranch, Profile: w.config.Profile, SandboxProfile: w.config.SandboxProfile, Harness: w.config.Harness, TaskURL: strings.TrimRight(w.session.base, "/") + "/#/issues/" + issueID, TaskLabel: issueID, InitialMessage: awbReadyInitialMessage(issueID), PermissionOverrides: map[string]db.PermissionOverride{PermAWBRead: db.ScopedOverride(db.PermEffectGrant, scope), PermAWBWrite: db.ScopedOverride(db.PermEffectGrant, scope)}}
+	body := agent.SpawnRequest{Name: issueID, Cwd: cwd, WorktreePath: wtPath, WorktreeBranch: wtBranch, Profile: w.config.Profile, SandboxProfile: w.config.SandboxProfile, Harness: w.config.Harness, TaskURL: strings.TrimRight(w.session.base, "/") + "/#/issues/" + issueID, TaskLabel: issueID, InitialMessage: awbReadyInitialMessage(issueID, w.config.MonitorPR), PermissionOverrides: map[string]db.PermissionOverride{PermAWBRead: db.ScopedOverride(db.PermEffectGrant, scope), PermAWBWrite: db.ScopedOverride(db.PermEffectGrant, scope)}}
 	raw, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/v1/groups/"+url.PathEscape(w.config.Group)+"/spawn", bytes.NewReader(raw))
 	req.SetPathValue("name", w.config.Group)
@@ -433,8 +454,12 @@ func (w awbReadyWorker) spawn(issueID, reservedAgentID string) (string, error) {
 	return out.AgentID, nil
 }
 
-func awbReadyInitialMessage(issueID string) string {
-	return fmt.Sprintf("Fetch %s with `tclaude proxy awb show %s`, work it to completion, and record progress through the AWB proxy. Leave closing the issue to the operator.", issueID, issueID)
+func awbReadyInitialMessage(issueID string, monitorPR bool) string {
+	message := fmt.Sprintf("Fetch %s with `tclaude proxy awb show %s`, work it to completion, and record progress through the AWB proxy. Leave closing the issue to the operator.", issueID, issueID)
+	if monitorPR {
+		message += fmt.Sprintf(" When you open a pull request, record it with `tclaude proxy awb update --pull-request-url <url> %s`; the daemon will close the issue after that pull request merges and you become idle or exit.", issueID)
+	}
+	return message
 }
 
 func internalHumanJSON(handler http.HandlerFunc, path string, in, out any) error {

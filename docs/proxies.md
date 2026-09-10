@@ -286,6 +286,10 @@ The `agent.awb_proxy` block in `~/.tclaude/data/config.json`:
   request recorded in the issue's `pull_request_url` through the configured
   GitHub proxy. After the pull request is merged and the spawned agent exits or
   becomes idle, the worker closes the AWB issue and advances to the next one.
+  This requires `agent.git_proxy` to be enabled, the PR repository to match
+  `allowed_remotes`, and a GitHub token available to agentd. The spawned agent's
+  brief tells it to record the PR URL on the issue; an unreachable or non-GitHub
+  URL is left alone and reported in the daemon log.
   Multiple processes may use the same workspace when every process has a
   non-empty label filter and those configured label sets are disjoint. An
   unfiltered process therefore must be the workspace's only process.

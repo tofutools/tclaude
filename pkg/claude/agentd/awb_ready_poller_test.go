@@ -112,11 +112,17 @@ func TestAWBReadyPickupDoesNotLogResumedDispatch(t *testing.T) {
 }
 
 func TestAWBReadyInitialMessageLeavesClosureToOperator(t *testing.T) {
-	message := awbReadyInitialMessage("tcl-a1")
+	message := awbReadyInitialMessage("tcl-a1", false)
 	assert.Contains(t, message, "tclaude proxy awb show tcl-a1")
 	assert.Contains(t, message, "record progress")
 	assert.Contains(t, message, "Leave closing the issue to the operator")
 	assert.NotContains(t, strings.ToLower(message), "close it")
+}
+
+func TestAWBReadyInitialMessageExplainsPRMonitoring(t *testing.T) {
+	message := awbReadyInitialMessage("tcl-a1", true)
+	assert.Contains(t, message, "awb update --pull-request-url")
+	assert.Contains(t, message, "daemon will close the issue")
 }
 
 func TestAWBReadyMonitorClosesMergedPRAfterAgentSettles(t *testing.T) {
@@ -187,6 +193,38 @@ func TestAWBReadyMonitorWaitsWhileAgentWorks(t *testing.T) {
 	dispatch, err := db.GetAWBReadyDispatch("builders")
 	require.NoError(t, err)
 	assert.NotNil(t, dispatch)
+}
+
+func TestAWBReadyMonitorDisabledDoesNotInspectPR(t *testing.T) {
+	setupTestDB(t)
+	t.Setenv("AWB_PASSWORD", "hunter2")
+	selected, err := db.SelectAWBReadyDispatch("builders", "tcl", "tcl-a1", "agt_worker")
+	require.NoError(t, err)
+	require.True(t, selected)
+	_, err = db.UpdateAWBReadyDispatch("builders", "tcl-a1", "spawned", "")
+	require.NoError(t, err)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(awbIssue{ID: "tcl-a1", Workspace: "tcl", Status: "in_progress", PullRequestURL: "https://github.com/acme/repo/pull/42"})
+	}))
+	t.Cleanup(server.Close)
+	previousMerged := awbReadyPRMerged
+	awbReadyPRMerged = func(context.Context, string) (bool, bool, error) {
+		t.Fatal("monitor_pr=false must not inspect the pull request")
+		return false, false, nil
+	}
+	t.Cleanup(func() { awbReadyPRMerged = previousMerged })
+
+	worker := testAWBReadyMonitorWorker(t, server.URL)
+	worker.config.MonitorPR = false
+	require.NoError(t, worker.tick(context.Background()))
+}
+
+func TestAWBReadyAgentSettledForMissingAgent(t *testing.T) {
+	setupTestDB(t)
+	settled, err := liveAWBReadyAgentSettled("agt_missing")
+	require.NoError(t, err)
+	assert.True(t, settled, "an absent actor cannot still be working")
 }
 
 func testAWBReadyMonitorWorker(t *testing.T, serverURL string) awbReadyWorker {
