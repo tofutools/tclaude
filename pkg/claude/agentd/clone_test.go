@@ -137,19 +137,30 @@ func TestInheritEffectiveSandboxSnapshotPreservesPrePersistedCloneSnapshot(t *te
 	assert.NotEqual(t, source.Effective.Environment, persisted.Effective.Environment)
 }
 
-func TestPreserveCloneLaunchEnvironmentAcrossSandboxRefresh(t *testing.T) {
+func TestRefreshCloneLaunchEnvironmentAcrossSandboxRefresh(t *testing.T) {
+	setupTestDB(t)
+	groupID, err := db.CreateAgentGroup("clone-group", "")
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupEnvironment("clone-group", []sandboxpolicy.EnvironmentEntry{
+		{Name: "GROUP", Value: "current"},
+	})
+	require.NoError(t, err)
 	current := sandboxpolicy.EmptySnapshot()
 	current.Effective.Environment = []sandboxpolicy.EnvironmentEntry{{Name: "SANDBOX", Value: "new"}}
 	previous := sandboxpolicy.EmptySnapshot()
-	previous.LaunchEnvironment = []sandboxpolicy.EnvironmentEntry{{Name: "BIRTH", Value: "frozen"}}
+	previous.ResolutionGroupID = groupID
+	previous.RefreshGroupEnvironment = true
+	previous.LaunchEnvironment = []sandboxpolicy.EnvironmentEntry{{Name: "GROUP", Value: "old"}, {Name: "BIRTH", Value: "frozen"}}
+	previous.LaunchEnvironmentOverrides = []sandboxpolicy.EnvironmentEntry{{Name: "BIRTH", Value: "frozen"}}
 
-	got := preserveCloneLaunchEnvironment(&current, &previous)
+	got, err := refreshCloneLaunchEnvironment("source-conv", &current, &previous)
+	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, current.Effective.Environment, got.Effective.Environment)
-	assert.Equal(t, previous.LaunchEnvironment, got.LaunchEnvironment)
+	assert.Equal(t, []sandboxpolicy.EnvironmentEntry{{Name: "BIRTH", Value: "frozen"}, {Name: "GROUP", Value: "current"}}, got.LaunchEnvironment)
 
-	got.LaunchEnvironment[0].Value = "changed"
-	assert.Equal(t, "frozen", previous.LaunchEnvironment[0].Value,
+	got.LaunchEnvironmentOverrides[0].Value = "changed"
+	assert.Equal(t, "frozen", previous.LaunchEnvironmentOverrides[0].Value,
 		"the clone snapshot must not alias the source snapshot")
 }
 

@@ -20,10 +20,16 @@ func TestMergeEnvironmentLaterTiersWin(t *testing.T) {
 func TestLaunchEnvironmentSurvivesSnapshotRevalidationAndUnconfinedLaunch(t *testing.T) {
 	snapshot := EmptySnapshot()
 	snapshot.LaunchEnvironment = []EnvironmentEntry{{Name: "COMMON", Value: "frozen"}}
+	snapshot.RefreshGroupEnvironment = true
+	snapshot.LaunchEnvironmentOverrides = []EnvironmentEntry{{Name: "EXPLICIT", Value: "frozen"}}
 	validated, err := RevalidateSnapshot(snapshot)
 	require.NoError(t, err)
 	assert.Equal(t, snapshot.LaunchEnvironment, validated.LaunchEnvironment)
-	assert.Equal(t, snapshot.LaunchEnvironment, UnconfinedLaunchSnapshot(snapshot).LaunchEnvironment)
+	assert.Equal(t, snapshot.LaunchEnvironmentOverrides, validated.LaunchEnvironmentOverrides)
+	unconfined := UnconfinedLaunchSnapshot(snapshot)
+	assert.Equal(t, snapshot.LaunchEnvironment, unconfined.LaunchEnvironment)
+	assert.Equal(t, snapshot.LaunchEnvironmentOverrides, unconfined.LaunchEnvironmentOverrides)
+	assert.True(t, unconfined.RefreshGroupEnvironment)
 }
 
 func TestEnvironmentForLaunchPreservesTrustedGeneratedBindings(t *testing.T) {

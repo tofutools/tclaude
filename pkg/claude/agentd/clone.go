@@ -158,14 +158,15 @@ func cloneSSHWorkaround(relaunch *durableRelaunchConfig) bool {
 	return relaunch.SSHWorkaround
 }
 
-func preserveCloneLaunchEnvironment(current, previous *sandboxpolicy.Snapshot) *sandboxpolicy.Snapshot {
+func refreshCloneLaunchEnvironment(convID string, current, previous *sandboxpolicy.Snapshot) (*sandboxpolicy.Snapshot, error) {
 	if current == nil || previous == nil {
-		return current
+		return current, nil
 	}
-	refreshed := *current
-	refreshed.LaunchEnvironment = append(
-		[]sandboxpolicy.EnvironmentEntry(nil), previous.LaunchEnvironment...)
-	return &refreshed
+	refreshed, err := refreshResumeGroupEnvironment(convID, *current, previous)
+	if err != nil {
+		return nil, err
+	}
+	return &refreshed, nil
 }
 
 // cloneSpawnOnce mints a clone's conv-id (and optionally its jsonl).
@@ -260,12 +261,16 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	if refreshGeneratedProfile {
 		var previous *sandboxpolicy.Snapshot
 		effectiveSandbox, previous, err = resolveCurrentSandboxChainForConv(sourceConv)
-		// Generated Codex declarations track the current sandbox registry,
-		// but common group/profile/per-spawn environment is birth-time launch
-		// state just like restart and reincarnate preserve.
-		effectiveSandbox = preserveCloneLaunchEnvironment(effectiveSandbox, previous)
+		if err == nil {
+			effectiveSandbox, err = refreshCloneLaunchEnvironment(
+				sourceConv, effectiveSandbox, previous)
+		}
 	} else {
 		effectiveSandbox, err = db.AgentEffectiveSandboxConfigForConv(sourceConv)
+		if err == nil {
+			effectiveSandbox, err = refreshCloneLaunchEnvironment(
+				sourceConv, effectiveSandbox, effectiveSandbox)
+		}
 	}
 	if err != nil {
 		return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusConflict, Code: "sandbox_profile_changed", Msg: err.Error()}

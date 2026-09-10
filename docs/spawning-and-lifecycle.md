@@ -86,10 +86,12 @@ profile, explicitly selected spawn profile, and explicit `--env` / spawn-dialog
 values. A higher tier replaces only matching names. Reserved launch-control
 names (`HOME`, `PATH`, `TCLAUDE_*`, `CODEX_*`, and similar) are rejected.
 
-The resolved common environment is birth-time configuration. It is frozen on
-the agent rather than re-read from mutable groups or profiles, so stop/resume,
-restart, clone, and reincarnate keep the original values. A new spawn observes
-subsequent group or profile edits.
+The resolved common environment keeps profile and explicit per-spawn values as
+birth-time configuration. The group tier is re-read whenever tclaude creates a
+fresh process generation, so stop/resume, restart, clone, and reincarnate pick
+up current group environment settings while retaining the original higher-tier
+overrides. A process that is already running keeps its existing environment
+until one of those lifecycle actions.
 
 The harness resolves through the full chain *first*; the other fields then
 validate against it. An incompatible explicit flag is a loud error; an

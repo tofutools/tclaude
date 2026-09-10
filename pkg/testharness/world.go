@@ -316,6 +316,9 @@ func (w *World) RecordSpawnSandboxPolicy(convID string, snapshot *sandboxpolicy.
 	copy.ResolutionGroupID = snapshot.ResolutionGroupID
 	copy.ProfilesOmitted = snapshot.ProfilesOmitted
 	copy.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironment...)
+	copy.RefreshGroupEnvironment = snapshot.RefreshGroupEnvironment
+	copy.LaunchEnvironmentOverrides = append(
+		[]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironmentOverrides...)
 	w.spawnSandboxPolicy[convID] = &copy
 }
 
@@ -330,6 +333,9 @@ func (w *World) SpawnSandboxPolicy(convID string) (*sandboxpolicy.Snapshot, bool
 	copy.ResolutionGroupID = snapshot.ResolutionGroupID
 	copy.ProfilesOmitted = snapshot.ProfilesOmitted
 	copy.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironment...)
+	copy.RefreshGroupEnvironment = snapshot.RefreshGroupEnvironment
+	copy.LaunchEnvironmentOverrides = append(
+		[]sandboxpolicy.EnvironmentEntry(nil), snapshot.LaunchEnvironmentOverrides...)
 	return &copy, ok
 }
 

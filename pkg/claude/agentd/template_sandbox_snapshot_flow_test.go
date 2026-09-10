@@ -58,8 +58,10 @@ func TestTemplateWavesFreezeEffectiveSandboxAcrossProfileEdit(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, choreo)
 	require.NotNil(t, choreo.EffectiveSandbox)
-	assert.Equal(t, *leadSnapshot, *choreo.EffectiveSandbox,
-		"wave 0 and durable choreography share the one instantiation snapshot")
+	assert.Equal(t, leadSnapshot.Effective, choreo.EffectiveSandbox.Effective,
+		"wave 0 and durable choreography share the one instantiation sandbox policy")
+	assert.Equal(t, leadSnapshot.Applied, choreo.EffectiveSandbox.Applied,
+		"wave 0 and durable choreography share the one instantiation provenance")
 
 	// Mutate the source registry after wave 0. The delayed wave must keep the
 	// choreography value, not resolve the edited global profile again.

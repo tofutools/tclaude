@@ -68,7 +68,15 @@ func TestResolveResumeSandboxPolicyPreservesExplicitProfileOmission(t *testing.T
 	const convID = "omitted-profile-resume-conv"
 	agentID, _, err := db.EnsureAgentForConv(convID, "test")
 	require.NoError(t, err)
+	groupID, err := db.CreateAgentGroup("omitted-profile-group", "")
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupEnvironment("omitted-profile-group", []sandboxpolicy.EnvironmentEntry{{Name: "GROUP", Value: "current"}})
+	require.NoError(t, err)
 	omitted := sandboxpolicy.OmittedProfilesSnapshot()
+	omitted.ResolutionGroupID = groupID
+	omitted.RefreshGroupEnvironment = true
+	omitted.LaunchEnvironment = []sandboxpolicy.EnvironmentEntry{{Name: "GROUP", Value: "old"}, {Name: "EXPLICIT", Value: "frozen"}}
+	omitted.LaunchEnvironmentOverrides = []sandboxpolicy.EnvironmentEntry{{Name: "EXPLICIT", Value: "frozen"}}
 	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &omitted))
 
 	_, err = db.CreateSandboxProfile(&db.SandboxProfile{
@@ -84,6 +92,63 @@ func TestResolveResumeSandboxPolicyPreservesExplicitProfileOmission(t *testing.T
 	assert.True(t, resolved.Snapshot.ProfilesOmitted)
 	assert.Empty(t, resolved.Snapshot.Applied)
 	assert.Empty(t, resolved.Snapshot.Effective.Environment)
+	assert.Equal(t, []sandboxpolicy.EnvironmentEntry{{Name: "EXPLICIT", Value: "frozen"}, {Name: "GROUP", Value: "current"}},
+		resolved.Snapshot.LaunchEnvironment,
+		"sandbox-profile omission must not suppress the separate common group environment")
+}
+
+func TestResolveResumeSandboxPolicyDoesNotInferGroupForLegacyProfileOmission(t *testing.T) {
+	setupTestDB(t)
+	const convID = "legacy-omitted-profile-resume-conv"
+	agentID, _, err := db.EnsureAgentForConv(convID, "test")
+	require.NoError(t, err)
+	omitted := sandboxpolicy.OmittedProfilesSnapshot()
+	omitted.Version = 13
+	omitted.LaunchEnvironment = []sandboxpolicy.EnvironmentEntry{{Name: "FROZEN", Value: "yes"}}
+	require.NoError(t, db.SetAgentEffectiveSandboxConfig(agentID, &omitted))
+
+	for _, name := range []string{"alpha", "beta"} {
+		groupID, createErr := db.CreateAgentGroup(name, "")
+		require.NoError(t, createErr)
+		require.NoError(t, db.AddAgentGroupMember(&db.AgentGroupMember{GroupID: groupID, ConvID: convID}))
+		_, setErr := db.SetAgentGroupEnvironment(name, []sandboxpolicy.EnvironmentEntry{{Name: "GROUP", Value: name}})
+		require.NoError(t, setErr)
+	}
+
+	resolved, err := resolveResumeSandboxPolicy(convID, false, "", "", "", "")
+	require.NoError(t, err)
+	require.NotNil(t, resolved.Snapshot)
+	assert.Equal(t, omitted.LaunchEnvironment, resolved.Snapshot.LaunchEnvironment)
+}
+
+func TestRefreshResumeGroupEnvironmentUpgradesFlattenedSnapshot(t *testing.T) {
+	setupTestDB(t)
+	groupID, err := db.CreateAgentGroup("legacy-environment", "")
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupEnvironment("legacy-environment", []sandboxpolicy.EnvironmentEntry{
+		{Name: "GROUP_CHANGED", Value: "current"},
+		{Name: "GROUP_NEW", Value: "added"},
+	})
+	require.NoError(t, err)
+
+	previous := sandboxpolicy.EmptySnapshot()
+	previous.ResolutionGroupID = groupID
+	previous.RefreshGroupEnvironment = false
+	previous.LaunchEnvironment = []sandboxpolicy.EnvironmentEntry{
+		{Name: "FROZEN", Value: "keep"},
+		{Name: "GROUP_CHANGED", Value: "old"},
+	}
+	current := sandboxpolicy.EmptySnapshot()
+	got, err := refreshResumeGroupEnvironment("legacy-conv", current, &previous)
+	require.NoError(t, err)
+	assert.True(t, got.RefreshGroupEnvironment)
+	assert.Equal(t, []sandboxpolicy.EnvironmentEntry{
+		{Name: "FROZEN", Value: "keep"},
+		{Name: "GROUP_CHANGED", Value: "current"},
+		{Name: "GROUP_NEW", Value: "added"},
+	}, got.LaunchEnvironment)
+	assert.Equal(t, []sandboxpolicy.EnvironmentEntry{{Name: "FROZEN", Value: "keep"}},
+		got.LaunchEnvironmentOverrides)
 }
 
 func TestMergeResumeAccessNoticesDropsStaleDegradationAuthority(t *testing.T) {
