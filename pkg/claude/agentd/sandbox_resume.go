@@ -153,7 +153,17 @@ func refreshResumeGroupEnvironment(
 	previous *sandboxpolicy.Snapshot,
 ) (sandboxpolicy.Snapshot, error) {
 	groupID := previous.ResolutionGroupID
-	if groupID == 0 {
+	if groupID == 0 && !previous.RefreshGroupEnvironment {
+		if previous.ProfilesOmitted {
+			// Older omitted-profile snapshots did not retain source-group
+			// provenance. Do not guess from later memberships: the agent may now
+			// belong to several groups, and omission made their sandbox-profile
+			// assignments deliberately irrelevant. New snapshots always record
+			// the source group independently of sandbox-profile participation.
+			current.LaunchEnvironment = append(
+				[]sandboxpolicy.EnvironmentEntry(nil), previous.LaunchEnvironment...)
+			return current, nil
+		}
 		var err error
 		groupID, err = resumeSandboxGroupID(convID)
 		if err != nil {

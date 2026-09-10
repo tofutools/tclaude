@@ -4445,6 +4445,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 	effectiveSandbox.LaunchEnvironment = launchEnvironment
 	effectiveSandbox.RefreshGroupEnvironment = true
 	effectiveSandbox.LaunchEnvironmentOverrides = launchEnvironmentOverrides
+	effectiveSandbox.ResolutionGroupID = g.ID
 	if fail := sandboxProfileCapabilityFailure(
 		h.Name, harnessBuiltinMode, &effectiveSandbox, body.SandboxImplementation); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
@@ -6109,6 +6110,9 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		p.EffectiveSandbox.LaunchEnvironment = environment
 		p.EffectiveSandbox.RefreshGroupEnvironment = true
 		p.EffectiveSandbox.LaunchEnvironmentOverrides = overrides
+		if g != nil {
+			p.EffectiveSandbox.ResolutionGroupID = g.ID
+		}
 	}
 
 	// Apply the chosen harness's SECURE launch defaults to any field still
