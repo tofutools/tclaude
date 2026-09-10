@@ -1,6 +1,8 @@
 package agentd
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +10,19 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/tofutools/tclaude/pkg/claude/common/config"
 )
+
+func TestAWBReadyPickupLogIncludesProcessAndIssue(t *testing.T) {
+	var logs bytes.Buffer
+	handler := slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})
+	logger := slog.New(handler)
+	logAWBReadyPickup(logger, "builders", "tcl-a1")
+
+	got := logs.String()
+	assert.Contains(t, got, `"level":"INFO"`)
+	assert.Contains(t, got, `"msg":"awb ready polling: picked up issue"`)
+	assert.Contains(t, got, `"process":"builders"`)
+	assert.Contains(t, got, `"issue":"tcl-a1"`)
+}
 
 func TestAWBReadyInitialMessageLeavesClosureToOperator(t *testing.T) {
 	message := awbReadyInitialMessage("tcl-a1")
