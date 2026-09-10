@@ -4433,7 +4433,7 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 			}
 		}
 	}
-	launchEnvironment, envErr := resolveCommonLaunchEnvironment(g, profileTiers, body.Environment)
+	launchEnvironment, launchEnvironmentOverrides, envErr := resolveCommonLaunchEnvironmentParts(g, profileTiers, body.Environment)
 	if envErr != nil {
 		writeError(w, http.StatusBadRequest, "invalid_environment", envErr.Error())
 		return
@@ -4443,6 +4443,8 @@ func handleGroupSpawn(w http.ResponseWriter, r *http.Request, g *db.AgentGroup) 
 		return
 	}
 	effectiveSandbox.LaunchEnvironment = launchEnvironment
+	effectiveSandbox.RefreshGroupEnvironment = true
+	effectiveSandbox.LaunchEnvironmentOverrides = launchEnvironmentOverrides
 	if fail := sandboxProfileCapabilityFailure(
 		h.Name, harnessBuiltinMode, &effectiveSandbox, body.SandboxImplementation); fail != nil {
 		writeError(w, fail.Status, fail.Kind, fail.Msg)
@@ -5600,17 +5602,31 @@ type launchProfileTier struct {
 // profile < explicit spawn. profileTiers arrives highest-first, so walk it in
 // reverse before applying the explicit tier.
 func resolveCommonLaunchEnvironment(g *db.AgentGroup, profileTiers []launchProfileTier, explicit []sandboxpolicy.EnvironmentEntry) ([]sandboxpolicy.EnvironmentEntry, error) {
-	tiers := make([][]sandboxpolicy.EnvironmentEntry, 0, len(profileTiers)+2)
-	if g != nil {
-		tiers = append(tiers, g.Environment)
-	}
+	environment, _, err := resolveCommonLaunchEnvironmentParts(g, profileTiers, explicit)
+	return environment, err
+}
+
+// resolveCommonLaunchEnvironmentParts also returns the immutable portion above
+// the group tier. Relaunch uses that overlay with the source group's current
+// environment, preserving the documented precedence while allowing group
+// settings to take effect after stop/start.
+func resolveCommonLaunchEnvironmentParts(g *db.AgentGroup, profileTiers []launchProfileTier, explicit []sandboxpolicy.EnvironmentEntry) ([]sandboxpolicy.EnvironmentEntry, []sandboxpolicy.EnvironmentEntry, error) {
+	tiers := make([][]sandboxpolicy.EnvironmentEntry, 0, len(profileTiers)+1)
 	for i := len(profileTiers) - 1; i >= 0; i-- {
 		if profileTiers[i].profile != nil {
 			tiers = append(tiers, profileTiers[i].profile.Environment)
 		}
 	}
 	tiers = append(tiers, explicit)
-	return sandboxpolicy.MergeEnvironment(tiers...)
+	overrides, err := sandboxpolicy.MergeEnvironment(tiers...)
+	if err != nil {
+		return nil, nil, err
+	}
+	if g == nil {
+		return overrides, overrides, nil
+	}
+	environment, err := sandboxpolicy.MergeEnvironment(g.Environment, overrides)
+	return environment, overrides, err
 }
 
 func profileSource(prof *db.SpawnProfile, format func(string) string) string {
@@ -6086,11 +6102,13 @@ func applyDefaultProfile(g *db.AgentGroup, p *spawnParams) *spawnFailure {
 		}
 	}
 	if p.EffectiveSandbox != nil && p.EffectiveSandbox.LaunchEnvironment == nil {
-		environment, err := resolveCommonLaunchEnvironment(g, tiers, nil)
+		environment, overrides, err := resolveCommonLaunchEnvironmentParts(g, tiers, nil)
 		if err != nil {
 			return &spawnFailure{http.StatusBadRequest, "invalid_environment", err.Error()}
 		}
 		p.EffectiveSandbox.LaunchEnvironment = environment
+		p.EffectiveSandbox.RefreshGroupEnvironment = true
+		p.EffectiveSandbox.LaunchEnvironmentOverrides = overrides
 	}
 
 	// Apply the chosen harness's SECURE launch defaults to any field still

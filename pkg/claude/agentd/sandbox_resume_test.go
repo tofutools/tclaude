@@ -86,6 +86,36 @@ func TestResolveResumeSandboxPolicyPreservesExplicitProfileOmission(t *testing.T
 	assert.Empty(t, resolved.Snapshot.Effective.Environment)
 }
 
+func TestRefreshResumeGroupEnvironmentUpgradesFlattenedSnapshot(t *testing.T) {
+	setupTestDB(t)
+	groupID, err := db.CreateAgentGroup("legacy-environment", "")
+	require.NoError(t, err)
+	_, err = db.SetAgentGroupEnvironment("legacy-environment", []sandboxpolicy.EnvironmentEntry{
+		{Name: "GROUP_CHANGED", Value: "current"},
+		{Name: "GROUP_NEW", Value: "added"},
+	})
+	require.NoError(t, err)
+
+	previous := sandboxpolicy.EmptySnapshot()
+	previous.ResolutionGroupID = groupID
+	previous.RefreshGroupEnvironment = false
+	previous.LaunchEnvironment = []sandboxpolicy.EnvironmentEntry{
+		{Name: "FROZEN", Value: "keep"},
+		{Name: "GROUP_CHANGED", Value: "old"},
+	}
+	current := sandboxpolicy.EmptySnapshot()
+	got, err := refreshResumeGroupEnvironment("legacy-conv", current, &previous)
+	require.NoError(t, err)
+	assert.True(t, got.RefreshGroupEnvironment)
+	assert.Equal(t, []sandboxpolicy.EnvironmentEntry{
+		{Name: "FROZEN", Value: "keep"},
+		{Name: "GROUP_CHANGED", Value: "current"},
+		{Name: "GROUP_NEW", Value: "added"},
+	}, got.LaunchEnvironment)
+	assert.Equal(t, []sandboxpolicy.EnvironmentEntry{{Name: "FROZEN", Value: "keep"}},
+		got.LaunchEnvironmentOverrides)
+}
+
 func TestMergeResumeAccessNoticesDropsStaleDegradationAuthority(t *testing.T) {
 	current := []sandboxpolicy.AccessNotice{{
 		Class:  sandboxpolicy.AccessNoticeClassComposition,

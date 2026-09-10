@@ -16,7 +16,12 @@ func TestDashboardAgentRestartReResolvesSandboxProfile(t *testing.T) {
 	t.Cleanup(agentd.SetPopupBaseURLForTest("http://127.0.0.1:0"))
 	f := newFlow(t)
 	f.HaveGroup("crew")
-	_, err := db.CreateSandboxProfile(&db.SandboxProfile{
+	_, err := db.SetAgentGroupEnvironment("crew", []db.SandboxEnvironmentEntry{
+		{Name: "GROUP_DYNAMIC", Value: "before"},
+		{Name: "GROUP_ONLY", Value: "before"},
+	})
+	require.NoError(t, err)
+	_, err = db.CreateSandboxProfile(&db.SandboxProfile{
 		Name: "restart-rules",
 		Environment: []db.SandboxEnvironmentEntry{{
 			Name: "RESTART_VALUE", Value: "before",
@@ -26,7 +31,10 @@ func TestDashboardAgentRestartReResolvesSandboxProfile(t *testing.T) {
 
 	spawn := f.AsHuman().SpawnWith("crew", map[string]any{
 		"name": "worker", "sandbox_profile": "restart-rules",
-		"environment": []map[string]string{{"name": "BIRTH_VALUE", "value": "frozen"}},
+		"environment": []map[string]string{
+			{"name": "BIRTH_VALUE", "value": "frozen"},
+			{"name": "GROUP_DYNAMIC", "value": "explicit"},
+		},
 	})
 	require.Equalf(t, http.StatusOK, spawn.Code, "spawn body=%s", spawn.Raw)
 	before, ok := f.World.SpawnSandboxPolicy(spawn.ConvID)
@@ -34,12 +42,27 @@ func TestDashboardAgentRestartReResolvesSandboxProfile(t *testing.T) {
 	require.NotNil(t, before)
 	require.Len(t, before.Effective.Environment, 1)
 	assert.Equal(t, "before", before.Effective.Environment[0].Value)
-	require.Equal(t, []db.SandboxEnvironmentEntry{{Name: "BIRTH_VALUE", Value: "frozen"}}, before.LaunchEnvironment)
+	require.Equal(t, []db.SandboxEnvironmentEntry{
+		{Name: "BIRTH_VALUE", Value: "frozen"},
+		{Name: "GROUP_DYNAMIC", Value: "explicit"},
+		{Name: "GROUP_ONLY", Value: "before"},
+	}, before.LaunchEnvironment)
+	assert.True(t, before.RefreshGroupEnvironment)
+	require.Equal(t, []db.SandboxEnvironmentEntry{
+		{Name: "BIRTH_VALUE", Value: "frozen"},
+		{Name: "GROUP_DYNAMIC", Value: "explicit"},
+	}, before.LaunchEnvironmentOverrides)
 
 	profile, err := db.GetSandboxProfile("restart-rules")
 	require.NoError(t, err)
 	profile.Environment[0].Value = "after"
 	require.NoError(t, db.UpdateSandboxProfile(profile))
+	_, err = db.SetAgentGroupEnvironment("crew", []db.SandboxEnvironmentEntry{
+		{Name: "ADDED_ON_RESTART", Value: "yes"},
+		{Name: "GROUP_DYNAMIC", Value: "after"},
+		{Name: "GROUP_ONLY", Value: "after"},
+	})
+	require.NoError(t, err)
 	f.SetSessionStatus(spawn.ConvID, session.StatusIdle)
 	const attachedTTY = "/dev/pts/71"
 	f.World.Tmux.AttachClient(attachedTTY, spawn.TmuxSession)
@@ -70,8 +93,13 @@ func TestDashboardAgentRestartReResolvesSandboxProfile(t *testing.T) {
 	require.Len(t, after.Effective.Environment, 1)
 	assert.Equal(t, "after", after.Effective.Environment[0].Value,
 		"restart should resolve the profile's current rules")
-	assert.Equal(t, []db.SandboxEnvironmentEntry{{Name: "BIRTH_VALUE", Value: "frozen"}}, after.LaunchEnvironment,
-		"restart must preserve birth-time group/profile/per-spawn environment")
+	assert.Equal(t, []db.SandboxEnvironmentEntry{
+		{Name: "ADDED_ON_RESTART", Value: "yes"},
+		{Name: "BIRTH_VALUE", Value: "frozen"},
+		{Name: "GROUP_DYNAMIC", Value: "explicit"},
+		{Name: "GROUP_ONLY", Value: "after"},
+	}, after.LaunchEnvironment,
+		"restart should refresh the group tier without overriding birth-time higher tiers")
 
 	snapshot := fetchDashSnapshot(t, mux)
 	group := groupInSnap(snapshot, "crew")

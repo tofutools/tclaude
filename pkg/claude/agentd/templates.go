@@ -719,12 +719,13 @@ func buildRhythmsFromJSON(in []rhythmJSON) ([]db.Rhythm, *spawnFailure) {
 // + harness secure defaults — the resolved shape the instantiator threads into
 // spawnParams.
 type templateAgentLaunch struct {
-	SpawnProfile string
-	Environment  []sandboxpolicy.EnvironmentEntry
-	Harness      string
-	Model        string
-	Effort       string
-	Sandbox      string
+	SpawnProfile         string
+	Environment          []sandboxpolicy.EnvironmentEntry
+	EnvironmentOverrides []sandboxpolicy.EnvironmentEntry
+	Harness              string
+	Model                string
+	Effort               string
+	Sandbox              string
 	// SandboxSource names the tier that CHOSE Sandbox above (an explicit field
 	// on the template agent, the template's inline profile, the referenced
 	// profile, the role's, the group default, or the global default). The
@@ -1465,7 +1466,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 		notes = append(notes, ctxNote)
 	}
 	allEnvironmentTiers := append(append([]launchProfileTier(nil), tiers...), defaultTiers...)
-	environment, envErr := resolveCommonLaunchEnvironment(g, allEnvironmentTiers, nil)
+	environment, environmentOverrides, envErr := resolveCommonLaunchEnvironmentParts(g, allEnvironmentTiers, nil)
 	if envErr != nil {
 		return failed(&spawnFailure{http.StatusBadRequest, "invalid_environment", envErr.Error()})
 	}
@@ -1480,6 +1481,7 @@ func resolveTemplateAgentLaunch(g *db.AgentGroup, a db.GroupTemplateAgent, _ *db
 
 	return templateAgentLaunch{
 		Environment:            environment,
+		EnvironmentOverrides:   environmentOverrides,
 		Harness:                h.Name,
 		Model:                  model,
 		Effort:                 effort,

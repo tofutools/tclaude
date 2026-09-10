@@ -233,6 +233,9 @@ func spawnWaveAgents(g *db.AgentGroup, agents []db.GroupTemplateAgent, process [
 		if effectiveSandbox != nil {
 			copy := *effectiveSandbox
 			copy.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), launch.Environment...)
+			copy.RefreshGroupEnvironment = true
+			copy.LaunchEnvironmentOverrides = append(
+				[]sandboxpolicy.EnvironmentEntry(nil), launch.EnvironmentOverrides...)
 			spawnSandbox = &copy
 		}
 		outcome, fail := executeSpawn(g, spawnParams{

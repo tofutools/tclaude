@@ -11,6 +11,11 @@ import (
 	"time"
 )
 
+// SnapshotVersion 14 splits the common launch environment into its mutable
+// group tier and the higher-precedence birth-time overlay. That lets a relaunch
+// observe current group settings without re-reading mutable spawn profiles or
+// losing explicit per-spawn values.
+//
 // SnapshotVersion 13 adds LaunchEnvironment, the non-authority process
 // environment resolved from group, spawn-profile, and per-spawn settings.
 // Keeping it outside Effective prevents those convenience defaults from
@@ -34,7 +39,7 @@ import (
 // bump preserved the fail-closed downgrade property, where an older binary
 // rejects a newer snapshot rather than ignoring a marker it does not
 // understand. Version 5 removed the retired read-baseline mechanism (TCL-623).
-const SnapshotVersion = 13
+const SnapshotVersion = 14
 
 // AppliedProfile preserves stable registry provenance without making the
 // registry row authoritative after resolution. The effective values in the
@@ -459,9 +464,16 @@ type Snapshot struct {
 	Effective         EffectiveProfile `json:"effective"`
 	Applied           []AppliedProfile `json:"applied"`
 	// LaunchEnvironment is merged into the child process after the sandbox
-	// profile environment. It is immutable launch configuration, not sandbox
-	// authority, so RequireContained intentionally does not inspect it.
+	// profile environment. It is not sandbox authority, so RequireContained
+	// intentionally does not inspect it.
 	LaunchEnvironment []EnvironmentEntry `json:"launch_environment,omitempty"`
+	// RefreshGroupEnvironment marks snapshots whose common environment records
+	// the group tier separately. On relaunch, the current source-group values
+	// are merged below LaunchEnvironmentOverrides and replace this generation's
+	// LaunchEnvironment. A false value identifies an older flattened snapshot
+	// that the relaunch boundary upgrades using the group's current names.
+	RefreshGroupEnvironment    bool               `json:"refresh_group_environment,omitempty"`
+	LaunchEnvironmentOverrides []EnvironmentEntry `json:"launch_environment_overrides,omitempty"`
 	// UnixSocketMaterialization is launch-derived, not authored authority. It
 	// freezes the one filesystem observation shared by disclosure and the
 	// target adapter; every fresh launch replaces it.
@@ -544,6 +556,8 @@ func UnconfinedLaunchSnapshot(in Snapshot) Snapshot {
 	out.ResolutionGroupID = in.ResolutionGroupID
 	out.ProfilesOmitted = in.ProfilesOmitted
 	out.LaunchEnvironment = append([]EnvironmentEntry(nil), in.LaunchEnvironment...)
+	out.RefreshGroupEnvironment = in.RefreshGroupEnvironment
+	out.LaunchEnvironmentOverrides = append([]EnvironmentEntry(nil), in.LaunchEnvironmentOverrides...)
 	return out
 }
 
@@ -586,6 +600,13 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	}
 	if _, err := MergeEnvironment(in.Effective.Environment, launchEnvironment); err != nil {
 		return Snapshot{}, fmt.Errorf("revalidate combined process environment: %w", err)
+	}
+	launchEnvironmentOverrides, err := normalizeEnvironment(in.LaunchEnvironmentOverrides)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("revalidate launch environment overrides: %w", err)
+	}
+	if !slices.Equal(launchEnvironmentOverrides, in.LaunchEnvironmentOverrides) {
+		return Snapshot{}, fmt.Errorf("launch environment overrides changed since resolution")
 	}
 	normalized, _, err := NormalizeForPersistence(Profile{
 		Name:                    "effective-sandbox-snapshot",
@@ -703,6 +724,8 @@ func RevalidateSnapshot(in Snapshot) (Snapshot, error) {
 	out.ResolutionGroupID = in.ResolutionGroupID
 	out.ProfilesOmitted = in.ProfilesOmitted
 	out.LaunchEnvironment = append([]EnvironmentEntry(nil), in.LaunchEnvironment...)
+	out.RefreshGroupEnvironment = in.RefreshGroupEnvironment
+	out.LaunchEnvironmentOverrides = append([]EnvironmentEntry(nil), in.LaunchEnvironmentOverrides...)
 	out.UnixSocketMaterialization = cloneUnixSocketMaterialization(
 		in.UnixSocketMaterialization)
 	return out, nil
@@ -744,7 +767,7 @@ func NormalizeSnapshotVersion(in Snapshot) (Snapshot, error) {
 	// strictly narrows what the agent may write, so it cannot widen anything a
 	// human already sanctioned, and no live agent is stranded.
 	// TestEverySnapshotVersionUpToCurrentIsAccepted pins that.
-	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, SnapshotVersion:
+	case 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, SnapshotVersion:
 		in.Version = SnapshotVersion
 		return in, nil
 	default:

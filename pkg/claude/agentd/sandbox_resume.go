@@ -95,18 +95,16 @@ func resolveResumeSandboxPolicy(
 	if err != nil || previous == nil {
 		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
 	}
+	current, err := refreshResumeGroupEnvironment(convID, *resolved, previous)
+	if err != nil {
+		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, err
+	}
 	if previous.ProfilesOmitted {
 		// This is a durable per-agent launch choice, not an empty ambient
 		// resolution. Do not let later global/group assignments reappear on
 		// resume or reincarnation.
-		return &resumeSandboxPolicy{Snapshot: previous, Previous: previous}, nil
+		return &resumeSandboxPolicy{Snapshot: &current, Previous: previous}, nil
 	}
-	current := *resolved
-	// Group/profile/per-spawn environment is birth-time launch configuration,
-	// unlike the mutable sandbox registry that resume intentionally refreshes.
-	// Preserve the original resolved values across restart, wake, reincarnate,
-	// and every other relaunch using this boundary.
-	current.LaunchEnvironment = append([]sandboxpolicy.EnvironmentEntry(nil), previous.LaunchEnvironment...)
 	sshWorkaround = sshWorkaround && codexSSHWorkaroundApplies(
 		harnessName, harnessBuiltinMode, sandboxImplementation, &current)
 	current, err = configureCodexSSHWorkaroundDeclaration(current, sshWorkaround)
@@ -143,6 +141,63 @@ func resolveResumeSandboxPolicy(
 	return &resumeSandboxPolicy{
 		Snapshot: &current, Previous: previous, SSHWorkaround: sshWorkaround,
 	}, nil
+}
+
+// refreshResumeGroupEnvironment preserves the birth-time spawn-profile and
+// explicit tiers while rebuilding the common environment from the source
+// group's current settings. Snapshots written before that split are upgraded
+// by treating names currently present in the group as the mutable tier.
+func refreshResumeGroupEnvironment(
+	convID string,
+	current sandboxpolicy.Snapshot,
+	previous *sandboxpolicy.Snapshot,
+) (sandboxpolicy.Snapshot, error) {
+	groupID := previous.ResolutionGroupID
+	if groupID == 0 {
+		var err error
+		groupID, err = resumeSandboxGroupID(convID)
+		if err != nil {
+			return sandboxpolicy.Snapshot{}, err
+		}
+	}
+	var groupEnvironment []sandboxpolicy.EnvironmentEntry
+	if groupID != 0 {
+		group, err := db.GetAgentGroupByID(groupID)
+		if err != nil {
+			return sandboxpolicy.Snapshot{}, fmt.Errorf("load launch group environment: %w", err)
+		}
+		if group != nil {
+			groupEnvironment = group.Environment
+		}
+	}
+
+	overrides := previous.LaunchEnvironmentOverrides
+	if !previous.RefreshGroupEnvironment {
+		// Snapshot v13 and older flattened every common environment tier. On the
+		// first relaunch after upgrade, current group names become the mutable
+		// tier and win that one migration merge; all other frozen names become
+		// the higher-precedence overlay. From then on the split is exact.
+		groupNames := make(map[string]struct{}, len(groupEnvironment))
+		for _, entry := range groupEnvironment {
+			groupNames[entry.Name] = struct{}{}
+		}
+		overrides = make([]sandboxpolicy.EnvironmentEntry, 0, len(previous.LaunchEnvironment))
+		for _, entry := range previous.LaunchEnvironment {
+			if _, mutable := groupNames[entry.Name]; !mutable {
+				overrides = append(overrides, entry)
+			}
+		}
+	}
+	environment, err := sandboxpolicy.MergeEnvironment(
+		groupEnvironment, overrides)
+	if err != nil {
+		return sandboxpolicy.Snapshot{}, fmt.Errorf("resolve current group environment: %w", err)
+	}
+	current.LaunchEnvironment = environment
+	current.RefreshGroupEnvironment = true
+	current.LaunchEnvironmentOverrides = append(
+		[]sandboxpolicy.EnvironmentEntry(nil), overrides...)
+	return current, nil
 }
 
 func mergeResumeAccessNotices(
