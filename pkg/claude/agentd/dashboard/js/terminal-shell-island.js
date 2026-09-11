@@ -13,6 +13,8 @@ import { dragLeftRegion, dragScreenPoint } from './terminal-drag-out.js';
 import { MAX_TERMINAL_GROUP_NAME_LENGTH } from './terminal-shell-state.js';
 import { terminalAttachWidgetOptions } from './terminal-attach-config.js';
 import { terminalTabStatus } from './terminal-tab-status.js';
+import { fmtCredits, fmtExactUSD, fmtUSD } from './costs-model.js';
+import { agentCostsHidden, subscribeAgentCosts, toggleAgentCosts } from './cost-display-toggle.js';
 import {
   memberHumanMessages, openHumanNotificationReader,
 } from './human-notification-attention.js';
@@ -366,6 +368,33 @@ function TabAttention({ pane, snapshot, messages: suppliedMessages = null }) {
   `;
 }
 
+function TerminalCostToggle() {
+  const [hidden, setHidden] = useState(agentCostsHidden);
+  useLayoutEffect(() => subscribeAgentCosts(setHidden), []);
+  return html`<button type="button" class=${`cost-toggle mux-cost-toggle${hidden ? ' off' : ''}`}
+    aria-label="Show agent costs" aria-pressed=${!hidden}
+    title="Show or hide per-agent costs, in Terminals and Groups"
+    onClick=${toggleAgentCosts}>💲</button>`;
+}
+
+function TerminalCosts({ agent }) {
+  const state = agent?.state || {};
+  const cost = Number(state.cost_usd || 0);
+  const virtualCost = Number(state.virtual_cost_usd || 0);
+  const credits = Number(state.virtual_cost_credits || 0);
+  const realTitle = `API cost this session: ${fmtExactUSD(cost)} (API/enterprise pricing)`;
+  const virtualTitle = (state.harness === 'copilot' && credits > 0
+    ? `${fmtCredits(credits)} — ${fmtExactUSD(virtualCost)} subscription value`
+    : `${fmtExactUSD(virtualCost)} WHAT-IF cost this session`)
+    + ' — estimated pay-per-token-equivalent cost; hypothetical, not a real charge (subscription)';
+  return html`
+    ${cost > 0 ? html`<span class="mux-tab-cost" title=${realTitle}
+      aria-label=${realTitle} tabindex="0">${fmtUSD(cost)}</span>` : null}
+    ${virtualCost > 0 ? html`<span class="mux-tab-cost mux-tab-cost-whatif" title=${virtualTitle}
+      aria-label=${virtualTitle} tabindex="0">≈${fmtUSD(virtualCost)}</span>` : null}
+  `;
+}
+
 function PaneTab({
   pane, active, menuOpen, groupId = null, actions, openMenu, dragging, dropSide,
   onDragStart, onDragEnd, onDragOver, onDragLeave, onDrop, onReordered, snapshot = null,
@@ -450,6 +479,7 @@ function PaneTab({
       >${agentStatus.symbol}</span>
       <${TabAttention} pane=${pane} snapshot=${snapshot} messages=${unreadMessages} />
       <span class="mux-tab-label">${pane.label}</span>
+      <${TerminalCosts} agent=${agentStatus.agent} />
       <button
         type="button"
         class="mux-tab-close"
@@ -1360,6 +1390,7 @@ function TerminalTabs({
               />
             `;
           })}
+          ${hasPanes ? html`<${TerminalCostToggle} />` : null}
           ${hasPanes ? html`
             <${StripGap}
               key="strip-end"

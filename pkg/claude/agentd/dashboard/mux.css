@@ -62,6 +62,19 @@
   overflow: hidden; text-overflow: ellipsis; max-width: 200px;
   user-select: none;
 }
+/* Match the Groups row's real/WHAT-IF badges. Keep figures intact while
+   long terminal names truncate, and keep the toggle reachable on overflow. */
+.mux-tab-cost { flex: none; color: #6e9c7d; font-size: 12px; font-variant-numeric: tabular-nums; }
+.mux-tab-cost-whatif { color: #8a8f6e; font-style: italic; display: none; }
+body.cost-whatif .mux-tab-cost-whatif { display: inline; }
+body.agent-cost-hidden .mux-tab-cost,
+body.hide-costs .mux-tab-cost,
+body.hide-costs .mux-cost-toggle { display: none; }
+.mux-cost-toggle {
+  position: sticky; right: 0; flex: none; align-self: stretch;
+  z-index: 1; background: #161b22; padding: 2px 8px;
+}
+.mux-tab-cost:focus-visible { outline: 1px solid #58a6ff; outline-offset: 2px; }
 .mux-tab.dragging { opacity: 0.48; cursor: grabbing; }
 .mux-tab.drop-before::before,
 .mux-tab.drop-after::after {
