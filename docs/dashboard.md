@@ -251,6 +251,13 @@ experimental Copilot API and Codex app-server drives.
 
 ## Terminals
 
+The 💲 toggle after the last terminal tab shows or hides session costs next to
+agent names, sharing the Groups tab's visibility preference. API spend is green;
+subscription WHAT-IF estimates use muted italic `≈$…` and follow the existing
+WHAT-IF setting. Hover a cost for its exact value and explanation. Terminals
+without reported costs show no amount.
+
+
 The Terminals tab is the in-dashboard terminal multiplexer. It stays hidden
 until the first web terminal or web window is opened; its badge counts live
 panes. Each pane's tab carries a live status glyph. Tabs drag-reorder, and
