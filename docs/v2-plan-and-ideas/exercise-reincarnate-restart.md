@@ -46,7 +46,7 @@ checks.
 | Harness dies after the readiness check | **Not detected** (acknowledged residual) | Less likely: the ID only exists after a real turn ran |
 | App-server not ready | n/a | Stop the successor, roll back, keep the predecessor |
 | Rotation fails | Abort; predecessor remains live with its identity; successor left orphaned for manual cleanup | Same |
-| Handoff delivery fails | Cannot fail independently: it is a launch arg | Rename and nudge are post-connect send-keys; the handoff stays in the inbox if they fail |
+| Handoff delivery fails | The launch arg itself cannot be dropped; if the pre-fork inbox insert fails, the handoff goes inline only and the response warns | Rename and nudge are post-connect send-keys; the handoff stays in the inbox if they fail |
 
 ## Restart: the control case
 
