@@ -91,9 +91,10 @@ Every path ends in the same primitive, `db.RotateAgentConv`:
 The last two rows are Claude-specific knowledge: the meaning of hook sources
 and the transcript lineage fields. They currently sit in generic session hook
 code. This is the clearest concrete example of what the proposal means by
-"the integration owns correlation." A Claude observation handler would emit
-"continuation advanced (agent, reason)" and the core would apply the rotation,
-without the core knowing that transcripts were read to decide it.
+"the integration owns correlation." Under the generation boundary, a Claude
+observation handler would update the current generation's association and
+report the observation. The core would apply no rotation and would not know
+that transcripts were read to decide it.
 
 ## What this says about the proposal
 
