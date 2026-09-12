@@ -87,6 +87,7 @@ universal flow engine with dozens of hooks and switches.
 - [Operations](operations.md): shared coordination and different native sequences.
 - [Services and harness integration](services.md): responsibilities and events.
 - [Technical principles](technical-principles.md): relations, composition and behavior interfaces.
+- [Design exercise: reincarnate and restart](exercise-reincarnate-restart.md): the first exercise, traced through main.
 
 Start by comparing two real implementations of one operation on main. The
 examples here are illustrative, not claims about particular installed harness
