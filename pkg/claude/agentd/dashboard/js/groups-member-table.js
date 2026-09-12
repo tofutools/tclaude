@@ -456,7 +456,8 @@ function sandboxRecordedDetails(member) {
     // harness's inner wall down, so a bare `Mode: off` beside
     // `Implementation: tclaude-layer` read as "unconfined" when it means the
     // opposite. The Implementation line above says who actually enforces.
-    `Harness sandbox mode: ${state.sandbox_mode || 'Not recorded'}`,
+    `Harness sandbox mode: ${state.sandbox_mode === 'tclaude-layer'
+      ? 'tclaude’s built-in sandbox' : state.sandbox_mode || 'Not recorded'}`,
     `Profile: ${sandboxProfileLabel(member)}`,
     `Source: ${source.replaceAll('tclaude-layer', 'tclaude’s sandbox') || 'Not recorded'}`,
     ...resourceLimitLines(member),

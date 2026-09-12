@@ -220,7 +220,7 @@ func printSandboxImpl(resp *sandboxImplResp, asJSON bool, stdout, stderr io.Writ
 		fmt.Fprintf(stdout, "%s: sandbox implementation %s\n", label, sandboxImplementationDisplayName(resp.Implementation))
 	}
 	if resp.Sandbox != "" {
-		line := "  harness sandbox mode: " + resp.Sandbox
+		line := "  harness sandbox mode: " + sandboxImplementationDisplayName(resp.Sandbox)
 		if resp.Source != "" {
 			line += " (chosen by " + resp.Source + ")"
 		}
