@@ -25,7 +25,7 @@ Examples: [agent records](../../pkg/claude/common/db/agents.go),
 | Technique | Intended use |
 |---|---|
 | Relations | Connect concepts that have their own identities or lifetimes: Agent to Group, selected harness and reusable Profile. Make membership and association meaning explicit. |
-| Composition | Assemble Agent state from configuration, continuation association and last-known metadata, without requiring subclasses for each combination. |
+| Composition | Assemble Agent state from generations, per-generation continuation associations, configuration and last-known metadata, without requiring subclasses for each combination. |
 | Interfaces and object-style organization | Use focused service/strategy contracts for varying behavior. Methods can keep state and rules together; pure transformations can remain functions. |
 | Inheritance | No proposed domain inheritance hierarchy. Different strategy implementations satisfy a contract; they are not different subclasses of Agent. |
 | Entity-component-system (ECS) | Not proposed as a framework. Optional composed data does not by itself justify component registries, dynamic entity queries or system scheduling. Revisit only for a concrete need. |
@@ -54,14 +54,21 @@ flowchart LR
     Agent -->|uses where configured| Profile[Reusable profile]
     Agent --- Config[Requested and resolved startup configurations]
     Agent --- Metadata[Last-known metadata]
-    Agent --- Association[Continuation association]
+    Agent -->|has, one current| Generation[Generation]
+    Generation --- Association[Continuation association]
     Association -->|interpreted by| Harness
 ```
 
 This is a proposed conceptual sketch, not a table schema or a claim about all
 cardinalities. The harness may be a registered implementation identified by a
 key, not a database entity. Its private continuation state remains opaque to
-common operations. No chat-history entity is implied.
+common operations. No chat-history entity is implied. Whether configuration and
+metadata attach to the Agent or to a generation is deliberately left open.
+
+Agent to generation is a relation worth specifying with the questions below:
+generations have their own identity, the current pointer changes only through
+intentional operations, and prior generations and their associations outlive
+the move to a new current generation.
 
 ## Specify a relation before choosing its representation
 

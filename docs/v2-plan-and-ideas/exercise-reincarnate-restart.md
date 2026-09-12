@@ -120,18 +120,21 @@ without the core knowing that transcripts were read to decide it.
 
 ### Challenged
 
-1. **"No Conversation entity" is too strong.** Reincarnate's user-visible
-   contract includes the predecessor: it stays reachable, is archived under a
-   `-x` title, hidden from `conv ls` by default, and reachable by séance and
-   the succession edge. The response names `old_conv` and `new_conv`. Users
-   see an agent's *generations*. The model needs at least an ordered list of
-   continuation generations on Agent, visible to the core (existence, time,
-   title, archived state), while the native contents stay private to the
-   integration.
-2. **Archive state is split across stores.** Claude keeps it in
+1. **Users see generations.** Reincarnate's user-visible contract includes
+   the predecessor: it stays reachable by séance and the succession edge, and
+   the response names `old_conv` and `new_conv`. This is now answered by
+   Agent generations (see the [overview](README.md#agents-generations-and-native-references)),
+   not by a Conversation entity. The core knows generations and the current
+   pointer; native contents stay private to the integration.
+2. **Main conflates generations with native ID changes.** `db.RotateAgentConv`
+   runs for intentional reincarnation and for Claude Code `/clear` alike. In
+   the proposed boundary only the former may be generational; `/clear` would
+   update the current generation's association inside the integration.
+3. **Archive state is split across stores.** Claude keeps it in
    `conv_index.archived_at`, Codex in its own thread store, and reincarnate
-   treats `sql.ErrNoRows` as the expected Codex no-op. A generation concept
-   would give that fact one owner.
+   treats `sql.ErrNoRows` as the expected Codex no-op. In the proposed model,
+   recognising prior associations takes over archiving's role in identity
+   tracking, and archiving is not part of the agent-accessible model.
 
 ### First extraction candidate
 
@@ -170,8 +173,8 @@ admission, rotation, retirement and the response.
 ## Open questions this exercise surfaced
 
 - Should restart confirm the pane came online, as power-on does?
-- Where do agent generations live in the future model, and which parts are
-  core-visible?
+- Does reincarnation create a new generation, and does séance target an
+  existing one? The generation boundary leaves this open.
 - Should the unannounced-rotation transcript scan move behind the Claude
   integration first, since it is the clearest leak of native mechanics into
   shared code?

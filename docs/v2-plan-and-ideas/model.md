@@ -26,15 +26,17 @@ structures, not proof that their vocabulary or lifetimes are already settled.
 
 ## Future (proposed)
 
-Start with **Agent**, its harness ID, continuation association, requested and
-resolved startup configurations, and last-known extracted metadata. The
-integration manages the native meaning of that continuation association. Conversation and Execution
-were names in the stopped v2 attempt, but we are not adopting them as core
-entities. Their usefulness has not been established by a user need.
+Start with **Agent**: a stable identity, its harness ID, intentional
+generations with a current-generation pointer, a per-generation continuation
+association, requested and resolved startup configurations, and last-known
+extracted metadata. The integration manages the native meaning of each
+association (see [Generations and native continuation](#generations-and-native-continuation)).
+Conversation and Execution were names in the stopped v2 attempt, but we are
+not adopting them as core entities. Native behavior alone does not justify them.
 
 | Concept | Meaning to the user | What tclaude controls, and its limit |
 |---|---|---|
-| Agent | Who I am working with | Owns identity, harness ID, continuation association, requested/resolved startup configurations, last-known metadata and membership. The integration manages native continuation, including changes of native IDs. |
+| Agent | Who I am working with | Owns stable identity, harness ID, intentional generations and the current-generation pointer, requested/resolved startup configurations, last-known metadata and membership. The integration owns each generation's native association, including changes of native IDs. |
 | Terminal/window | Where I interact with running work | Owns the view and its association with the agent or standalone work. It is not the harness's resumable chat. Naming beyond today's tclaude session remains open. |
 | Group | Who works together | Owns membership, owners and defaults. |
 | Profile | Settings I want to reuse | Owns saved intent, including harness-specific options; the integration validates and applies them. |
@@ -54,6 +56,7 @@ representation is still to be designed.
 | Detail | Current organization |
 |---|---|
 | Harness selection | Existing harness fields in launch and session state |
+| Generations and current pointer | The agent row's current conversation ID plus succession edges between native conversation IDs (`db.RotateAgentConv`). Every recorded native ID rotation, whether intentional reincarnation or Claude Code `/clear`, becomes a new link; a platform generation and a native ID change are not distinguished |
 | Continuation association | Native conversation IDs, agent/conversation mappings and lifecycle handling accumulated over time |
 | Requested and resolved startup configurations | Existing profiles, launch resolution and persisted launch/session fields; not presented here as one already-clean Agent structure |
 | Last-known metadata | Existing session/status fields and native observations, including model, context and usage |
@@ -63,14 +66,18 @@ representation is still to be designed.
 | Agent detail | Intended meaning |
 |---|---|
 | Harness ID | Which harness integration handles this agent |
-| Harness continuation association | The link the integration needs to continue native work; its contents and native ID changes remain private to that integration |
+| Generations | Intentional stages of the Agent's work, known to tclaude. Not native IDs and not created by native ID changes |
+| Current generation | Which generation is current; operations state which generation they intend to address |
+| Per-generation harness association | What the integration needs to continue that generation's native work. It may cover several native refs over time; its contents, native ID changes and prior refs remain private to the integration |
 | Requested startup configurations | What was requested, across the relevant kinds of settings; preserve explicit choices and inheritance intent |
 | Resolved startup configurations | What those requests resolved to for startup, distinct from both the request and later observations |
 | Last-known extracted metadata | Information the integration reported about native work: context window, usage, model and other useful readings |
 
 The current configuration row splits into requested and resolved rows to make
 that distinction explicit. These are parts of Agent state, not a requirement
-that all data live in one database row or one Go struct.
+that all data live in one database row or one Go struct. Whether configuration
+and metadata belong to the Agent, to a generation, or partly to each is still
+to be explored.
 
 Requested model, resolved startup model and last-observed model may differ.
 Retain those meanings rather than overwriting them with one ambiguous value.
@@ -83,23 +90,43 @@ readings may have different freshness. The integration handles native parsing
 and correlation; the core stores and presents meaningful metadata without
 reading or modeling chat history. An unsupported reading is not zero.
 
-## Native continuation belongs to the integration
+## Generations and native continuation
 
-An Agent selects a harness and is associated with integration-managed continuation
-state. The core does not interpret its contents. An integration may need one
-native ID, several references, or other persisted state. Those details may change
-without changing the Agent's identity.
+### Current
+
+| Aspect | Current behavior |
+|---|---|
+| What advances an agent | `db.RotateAgentConv` links a new native conversation ID and advances the agent's pointer. It runs for reincarnation and for Claude Code `/clear` alike |
+| Detecting native changes | Shared session hook code interprets Claude hook sources (`clear`, `resume`, `compact`) and, for the unannounced remote-control handoff, scans the transcript head for lineage |
+| Prior references | Succession edges and `conv_index` rows keyed by native ID; archived predecessors are marked by title suffix and `conv_index.archived_at` |
+| Unrelated native work | Listed from harness stores and `conv_index`; tclaude can archive, title and index it without an Agent |
+
+### Future (proposed)
+
+| Aspect | Intended behavior |
+|---|---|
+| What advances an agent | Only an intentional platform operation changes generations. Which operations create a generation and which target an existing one is still to be explored |
+| Detecting native changes | The integration observes native replacements and updates the current generation's association. The generation does not change |
+| Prior references | The integration keeps prior associations durably so that previously managed work is recognised later |
+| Unrelated native work | Discovery is an integration result. Recognised references are attributed to their Agent and generation; others are candidates. Conversation archiving is not part of the agent-accessible model |
+
+An integration may need one native ID, several references, or other persisted
+state per generation. Those details may change without changing the Agent's
+identity or its current generation.
 
 As the operator describes it, Claude Code calls its resumable chat a session. It
 can preserve an ID across stop/resume and replace or clone IDs on clear or other
 transitions. The integration handles that behavior. The platform must not infer
-what happened merely by comparing native IDs.
+what happened merely by comparing native IDs. If the integration cannot
+establish continuity confidently, for example a copied transcript versus a
+native replacement, it reports the ambiguity instead of choosing.
 
 The core model does **not** contain chat history, a history-access entity, or a
 Conversation entity. Any native history reading or manipulation needed by an
-operation belongs to the harness or its integration. This is not a proposal to
-remove existing history-related UI features; it defines where their native
-mechanics belong, without requiring a platform history model or store.
+operation belongs to the harness or its integration. Native IDs remain
+available to operators for diagnostics. This does not remove existing
+history-related commands or UI on main, and it does not claim that their
+future mapping is solved; it defines where native mechanics belong.
 
 ## Clone and reincarnate are operations, not history models
 
@@ -108,7 +135,9 @@ appropriate tclaude changes. Copying an Agent record or sharing a continuation
 reference is not enough. The integration performs the native work and supplies
 an independent association when that is required by the clone contract.
 
-Reincarnation likewise delegates its native continuation or replacement steps.
+Reincarnation and séance are examples of intentional generational operations:
+they select a generation or transition and delegate the native steps. Whether
+each one creates a generation or targets an existing one is still to be decided.
 Each operation needs its own user-visible contract; do not make clone and
 reincarnate synonyms or decide their identity behavior from native ID changes.
 The common operation coordinates permissions, settings, platform changes and

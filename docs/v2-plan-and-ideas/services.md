@@ -31,7 +31,7 @@ Examples: [daemon lifecycle](../../pkg/claude/agentd/lifecycle.go),
 | Permissions | Decide whether an actor may perform an action under current rules |
 | Native execution | Launch, resume or communicate with native execution where supported; do not call this tclaude's session/window model |
 | Terminal and workspace | Manage tclaude windows, terminal views and working resources with explicit lifetimes |
-| Agent identity and associations | Own Agent identity and harness selection; delegate opaque continuation state and native bindings to the integration |
+| Agent identity and generations | Own Agent identity, harness selection, generations and the current-generation pointer; delegate each generation's opaque continuation state and native bindings to the integration |
 | Messaging | Store, address and track message delivery |
 | Persistence | Commit related application state changes consistently |
 
@@ -51,17 +51,24 @@ For example, a context observation can arrive independently of any user action:
 ```mermaid
 flowchart LR
     Native[Native status payload or event] --> Interpret[Harness-specific interpretation]
-    Interpret --> Correlate[Resolve private native bindings]
+    Interpret --> Correlate[Resolve private native bindings to Agent and generation]
     Correlate --> Reading[Report observation using platform identities]
     Reading --> UI[Display value, age and uncertainty]
 ```
 
 The integration understands native payloads, ID changes and their lifecycle
-meaning. It owns private bindings from native references to platform identities,
-including persisted bindings when recovery requires them. Shared services own
-Agent records; they do not model or read native chat history. Native duplication
-or continuation needed by clone and reincarnate stays inside the integration.
-Unknown correlations must not be guessed into the current execution.
+meaning. It owns durable private bindings from native references to an Agent
+generation, including prior references. A native replacement such as Claude
+Code's `/clear` updates the current generation's binding; it does not create a
+generation. Shared services own Agent and generation records; they do not model
+or read native chat history. Native duplication or continuation needed by clone
+and reincarnate stays inside the integration. Unknown correlations must not be
+guessed into the current generation; they are reported as ambiguous.
+
+Discovery is also an integration result. The integration lists native work,
+attributes references it recognises to their Agent and generation, and presents
+the rest as candidates. No separate core discovery or archive entity is needed
+for that recognition.
 
 The boundary exposes platform operations and meaningful outcomes, not native
 protocol details. An integration can report that continuation is unavailable or
