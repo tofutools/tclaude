@@ -213,3 +213,6 @@ and do not add private tracker URLs or credentials to committed docs.
 Design intent, plans, and roadmaps live in the external tracker, not in this
 repo — do not commit plan or roadmap documents. The repo carries code, the user
 docs under `docs/`, and inline rationale in code comments.
+
+The one exception is `docs/v2-plan-and-ideas/`: preliminary v2 model and
+architecture designs (WIP), not guidance for regular work, improvements, or features.
