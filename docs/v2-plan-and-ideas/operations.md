@@ -26,7 +26,7 @@ for every harness. That trace is still needed before choosing an extraction.
 |---|---|
 | Application rules | Common operation owns authorization, configuration resolution and user-visible outcome |
 | Harness differences | An explicit strategy owns a coherent native sequence, calling focused services |
-| Identity | Common operations use Agent identity; integration-private bindings track native resources and continuation |
+| Identity | Common operations use Agent identity and state which generation they address; integration-private bindings map that generation to native resources and continuation |
 | Later observations | Define how native events correlate to the operation attempt and complete or update its outcome |
 
 ### Example: restart an agent
@@ -45,8 +45,11 @@ report readiness using platform identities. These are hypothetical sequences, no
 named harnesses. They need not share an identical internal step list.
 
 The common contract describes the user-visible result: preserve the agent's
-identity, fulfil the requested continuation behavior, and expose starting/ready/failed
-states honestly. Its public result must not require a native conversation ID at all. The
+identity and its current generation, fulfil the requested continuation behavior,
+and expose starting/ready/failed states honestly. Its public result must not
+require a native conversation ID at all. A new native ID during the transition
+updates the generation's association inside the integration; it does not make
+restart a generational operation. The
 integration can retain pending bindings and report progress until it can confirm
 readiness. It must report lost or unavailable continuation rather than equating
 a new native process with successful restoration of context.
@@ -101,6 +104,17 @@ For clone, the common operation coordinates the requested new agent, settings,
 authorization and result. Its harness strategy performs the native duplication
 needed to make that clone meaningful. Copying only platform metadata cannot
 count as a deep clone. Reincarnation gets its own contract and native strategy.
+
+Generational operations name the generation or transition they intend.
+Reincarnation means "start a new generation of this Agent": it creates the
+generation and moves the current pointer once it commits. The integration
+implements that against its private associations. Séance is the sister
+operation: "address generation N of this Agent". It targets an earlier
+generation without moving the current pointer, and the integration reaches
+that generation's native continuation. Any other generational operation
+names its target generation and defines its own contract. Native replacements such as Claude Code
+`/clear` are not generational operations; they are harness-level management
+inside the integration.
 
 Neither operation needs a common transcript reader or a Conversation object.
 The integration handles native history mechanics and continuation references.
