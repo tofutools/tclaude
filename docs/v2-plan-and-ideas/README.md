@@ -99,10 +99,12 @@ prescribed schema.
   is the natural tclaude-level generational change: it creates a new generation
   and moves the current pointer to it once the operation commits. The
   integration implements the native steps.
-- **Other operations address generations explicitly.** An operation states
-  which generation it targets. Whether séance and other operations create or
-  only target generations is still to be explored; do not assume they share
-  reincarnation's semantics.
+- **Séance is reincarnation's sister operation.** It is also agent-level and
+  follows the same principle: it addresses an earlier generation of the same
+  Agent and asks the integration to reach that generation's native
+  continuation. It does not change the current generation.
+- **Operations name their generation.** Any other operation that addresses
+  generations states which one; its contract is defined per operation.
 - **Prior associations are kept.** Discovery can then recognise previously
   managed native work instead of presenting every old reference as a new,
   unrelated candidate.

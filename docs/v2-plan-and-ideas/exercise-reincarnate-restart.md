@@ -3,7 +3,8 @@
 This is the first design exercise proposed in [operations](operations.md): trace
 real operations through harnesses whose lifecycles differ, then find the shared
 rules, services and the smallest useful strategy boundary. It describes main as
-of this writing and does not change code. Line references will drift; the
+of this writing and does not change code. Main is evidence of how harnesses
+behave and which problems v2 must solve, not the v2 design. Line references will drift; the
 function names are the stable anchors.
 
 Two operations were traced:
@@ -175,8 +176,10 @@ admission, rotation, retirement and the response.
 ## Open questions this exercise surfaced
 
 - Should restart confirm the pane came online, as power-on does?
-- Reincarnation creates a new generation. Does séance only target an
-  existing one, and what is its contract?
+- Settled for v2: reincarnation creates a new generation; séance, its sister
+  operation, addresses an earlier one without moving the current pointer.
+  What remains is how the integration reaches a prior generation's native
+  continuation for each harness.
 - Should the unannounced-rotation transcript scan move behind the Claude
   integration first, since it is the clearest leak of native mechanics into
   shared code?
