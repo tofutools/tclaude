@@ -6851,7 +6851,7 @@ func executeSpawn(g *db.AgentGroup, p spawnParams) (outcome *spawnOutcome, failu
 			return nil, &spawnFailure{http.StatusInternalServerError, "route_authority", "could not resolve group route capability: " + routeErr.Error()}
 		}
 		if routeEnabled && (!layeredLaunch || !launchEnroll) {
-			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_group_route_launch", "Linux group routes require a pre-enrolled pane-authoritative tclaude’s sandbox launch"}
+			return nil, &spawnFailure{http.StatusUnprocessableEntity, "unsupported_group_route_launch", "Linux group routes require a pre-enrolled pane-authoritative launch with tclaude’s sandbox"}
 		}
 	}
 	var preConvID string
@@ -10063,7 +10063,7 @@ func prepareRouteHelperResumeArgs(a *clcommon.SpawnArgs) error {
 		return nil
 	}
 	if a.SandboxImplementation != string(sandboxpolicy.ImplementationTclaudeLayer) || a.Harness == harness.OpenCodeName {
-		return errors.New("linux group routes require a pane-authoritative tclaude’s sandbox resume")
+		return errors.New("linux group routes require a pane-authoritative resume with tclaude’s sandbox")
 	}
 	agentID, err := db.AgentIDForConv(a.ConvID)
 	if err != nil || strings.TrimSpace(agentID) == "" {

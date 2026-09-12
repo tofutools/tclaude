@@ -1251,7 +1251,7 @@ func runNew(params *NewParams) error {
 	var routeHelper *TclaudeLayerRouteHelper
 	if params.RouteHelperAgentID != "" || params.RouteHelperConvID != "" || params.RouteHelperLaunchGeneration != "" || params.RouteHelperCredentialHandoffSocketPath != "" || len(params.RouteHelperGroupIDs) > 0 {
 		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
-			return fmt.Errorf("linux group-route helper requires a pane-authoritative tclaude’s sandbox launch")
+			return fmt.Errorf("linux group-route helper requires a pane-authoritative launch with tclaude’s sandbox")
 		}
 		if params.RouteHelperProxyOnly && runtime.GOOS != "darwin" {
 			return fmt.Errorf("darwin route proxy authority requires macOS")

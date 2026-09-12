@@ -2374,7 +2374,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   assert.match(host.querySelector('.sbx-policy-target').textContent,
     /OpenCode on macOS · tclaude’s built-in sandbox/);
   assert.match(host.querySelector('.sbx-mach-register-evaluation').textContent,
-    /Mach service registration.*Allowed by the tclaude Seatbelt layer for this target/s,
+    /Mach service registration.*Allowed by tclaude’s sandbox on macOS for this target/s,
     'the preview discloses that the composed compatibility capability applies to this target');
   const applied = host.querySelector('.sbx-rule-bucket-applied');
   assert.equal(applied.hasAttribute('open'), false,

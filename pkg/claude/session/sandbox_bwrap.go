@@ -194,7 +194,7 @@ func validateTclaudeLayerRouteHelper(effective sandboxpolicy.EffectiveProfile, h
 		return fmt.Errorf("resolve route helper network posture: %w", err)
 	}
 	if posture == sandboxpolicy.NetworkHostOpen {
-		return fmt.Errorf("route helper requires a private tclaude’s sandbox network namespace; host-open launches cannot establish a publisher-local target claim")
+		return fmt.Errorf("route helper requires a private network namespace in tclaude’s sandbox; host-open launches cannot establish a publisher-local target claim")
 	}
 	return nil
 }
@@ -1118,7 +1118,7 @@ func ValidateTclaudeLayerNetwork(
 	}
 	if !h.SupportsOfflineModelTransport() {
 		return nil, fmt.Errorf(
-			"unsupported_sandbox_profile_network: network_access none isolates the whole tclaude’s sandbox process, but harness %q requires hosted model traffic; see docs/sandboxing.md#isolated-with-agentd-network-posture",
+			"unsupported_sandbox_profile_network: network_access none isolates the whole process in tclaude’s sandbox, but harness %q requires hosted model traffic; see docs/sandboxing.md#isolated-with-agentd-network-posture",
 			h.Name,
 		)
 	}
