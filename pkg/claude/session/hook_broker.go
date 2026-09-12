@@ -76,7 +76,7 @@ func brokerHookEvents() bool {
 	// declining to broker there would only mean failing in a second place.
 	if _, inTaskMode := taskSignalPath(); inTaskMode {
 		if os.Getenv(HookBrokerEnvVar) == HookBrokerAgentd {
-			slog.Warn("hook broker: `tclaude task run` inside a tclaude-layer pane is not supported; "+
+			slog.Warn("hook broker: `tclaude task run` inside a tclaude sandbox pane is not supported; "+
 				"applying this hook directly, which cannot reach the real database",
 				"module", "hooks")
 		}

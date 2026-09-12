@@ -94,7 +94,7 @@ const EFFECTIVE_ENVIRONMENT_HELP_WIZARD = 'Common bound runes are shown here; wa
 // — a launch that cannot meet them refuses.
 const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for the new agent. '
   + 'harness-builtin is offered only when the selected harness owns a real OS sandbox. '
-  + "tclaude's built-in OS sandbox runs the whole "
+  + "tclaude’s built-in sandbox runs the whole "
   + "harness process inside a tclaude-owned bubblewrap namespace and turns the harness's own "
   + 'sandbox off inside it. Linux only, and it needs bwrap plus unprivileged user namespaces — '
   + 'a host without them refuses the launch instead of falling back. '

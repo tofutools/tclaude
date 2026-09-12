@@ -10,4 +10,4 @@ export const CODEX_BUILTIN_FILTERED_NETWORK_SHORT = 'no filtered network sandbox
 export const CODEX_BUILTIN_FILTERED_NETWORK_DETAIL =
   'Codex’s built-in filesystem sandbox remains available, but it has no filtered network sandbox yet. '
   + 'Its upstream proxy is experimental and off by default and does not meet sandbox profiles’ '
-  + 'ordinary TCP/UDP contract. Use tclaude-layer filtering on Linux, or choose network open (Allow all).';
+  + 'ordinary TCP/UDP contract. Use tclaude’s sandbox filtering on Linux, or choose network open (Allow all).';

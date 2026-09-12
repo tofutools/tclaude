@@ -120,11 +120,11 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 	case layerClaim:
 		if row != nil {
 			brokerRefusals.recordClaimMismatch(row.ID,
-				"statusline: claimed tclaude-layer session failed live-pane proof")
+				"statusline: claimed tclaude’s sandbox session failed live-pane proof")
 		} else {
-			brokerRefusals.recordUnplaceable("statusline: tclaude-layer caller failed live-pane proof")
+			brokerRefusals.recordUnplaceable("statusline: tclaude’s sandbox caller failed live-pane proof")
 		}
-		writeError(w, http.StatusForbidden, "auth", "claimed tclaude-layer session does not own this caller")
+		writeError(w, http.StatusForbidden, "auth", "claimed tclaude’s sandbox session does not own this caller")
 		return
 	case row == nil:
 		brokerRefusals.recordUnplaceable("statusline: caller could not be placed")
@@ -132,9 +132,9 @@ func handleWhoamiStatusline(w http.ResponseWriter, r *http.Request) {
 			"could not resolve a session row for this caller; refusing to apply its statusline")
 		return
 	case isTclaudeLayerRow(row):
-		brokerRefusals.recordUnplaceable("statusline: tclaude-layer callback omitted its session claim")
+		brokerRefusals.recordUnplaceable("statusline: tclaude’s sandbox callback omitted its session claim")
 		writeError(w, http.StatusForbidden, "auth",
-			"tclaude-layer statusline requires a proved session claim")
+			"tclaude’s sandbox statusline requires a proved session claim")
 		return
 	case claimed != "" && claimed != row.ID:
 		slog.Warn("statusline broker: rejecting render whose claimed session id disagrees with the resolved row",

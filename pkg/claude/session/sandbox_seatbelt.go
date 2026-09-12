@@ -126,7 +126,7 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		// fail closed on its own rather than rely on the launch seam's check.
 		if plan.FilteredNetwork == nil {
 			return "", nil, fmt.Errorf(
-				"darwin tclaude-layer filtered networking requires a compiled network policy",
+				"tclaude’s sandbox on macOS filtered networking requires a compiled network policy",
 			)
 		}
 		// The two filtered renderings are mutually exclusive by construction
@@ -137,12 +137,12 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		if !deploysProxy &&
 			!sandboxpolicy.FilteredNetworkRulesAreLoopbackOnly(plan.FilteredNetwork) {
 			return "", nil, fmt.Errorf(
-				"darwin tclaude-layer filtered networking supports only a non-empty loopback-only list",
+				"tclaude’s sandbox on macOS filtered networking supports only a non-empty loopback-only list",
 			)
 		}
 	default:
 		return "", nil, fmt.Errorf(
-			"darwin tclaude-layer has invalid network posture %d",
+			"tclaude’s sandbox on macOS has invalid network posture %d",
 			plan.NetworkPosture,
 		)
 	}
@@ -215,7 +215,7 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 		// source→target binds.
 		if entry.IsRemapped() {
 			return "", nil, fmt.Errorf(
-				"seatbelt_mount_path_projection: Seatbelt cannot project host path %q onto sandbox path %q (mount plan entry %d); mount paths require a mount namespace, which only the Linux tclaude-layer provides",
+				"seatbelt_mount_path_projection: Seatbelt cannot project host path %q onto sandbox path %q (mount plan entry %d); mount paths require a mount namespace, which only tclaude’s sandbox on Linux provides",
 				entry.SourcePath(), entry.Path, i)
 		}
 		path, cleanErr := cleanSeatbeltPath(fmt.Sprintf("mount plan entry %d", i), entry.Path)
@@ -238,7 +238,7 @@ func renderSeatbeltProfileWithLoopbackBindAndRouteSlots(
 			// this is the backstop that keeps a future caller from rendering a
 			// policy the platform cannot enforce.
 			return "", nil, fmt.Errorf(
-				"seatbelt_tmpfs_mount: Seatbelt cannot mount a temporary filesystem at sandbox path %q (mount plan entry %d); a tmpfs requires a mount namespace, which only the Linux tclaude-layer provides",
+				"seatbelt_tmpfs_mount: Seatbelt cannot mount a temporary filesystem at sandbox path %q (mount plan entry %d); a tmpfs requires a mount namespace, which only tclaude’s sandbox on Linux provides",
 				entry.Path, i)
 		default:
 			return "", nil, fmt.Errorf("mount plan entry %d has invalid mode %d", i, entry.Mode)
@@ -405,7 +405,7 @@ func validateSeatbeltProxyEndpoint(
 	if !deploysProxy {
 		if endpoint.Addr().IsValid() || endpoint.Port() != 0 {
 			return fmt.Errorf(
-				"darwin tclaude-layer was given proxy endpoint %s for a plan that deploys no filtering proxy",
+				"tclaude’s sandbox on macOS was given proxy endpoint %s for a plan that deploys no filtering proxy",
 				endpoint,
 			)
 		}
@@ -413,18 +413,18 @@ func validateSeatbeltProxyEndpoint(
 	}
 	if !endpoint.Addr().IsValid() {
 		return fmt.Errorf(
-			"darwin tclaude-layer proxy floor requires the host-loopback endpoint the filtering proxy listens on",
+			"tclaude’s sandbox on macOS proxy floor requires the host-loopback endpoint the filtering proxy listens on",
 		)
 	}
 	if endpoint.Port() == 0 {
 		return fmt.Errorf(
-			"darwin tclaude-layer proxy floor requires a bound proxy port, got %s",
+			"tclaude’s sandbox on macOS proxy floor requires a bound proxy port, got %s",
 			endpoint,
 		)
 	}
 	if !sandboxpolicy.AddrIsLoopbackIdentity(endpoint.Addr()) {
 		return fmt.Errorf(
-			"darwin tclaude-layer proxy floor refuses non-host-loopback proxy endpoint %s",
+			"tclaude’s sandbox on macOS proxy floor refuses non-host-loopback proxy endpoint %s",
 			endpoint,
 		)
 	}
@@ -443,7 +443,7 @@ func validateSeatbeltProxyEndpoint(
 	// all arrive here mapped.
 	if endpoint.Addr().Unmap().IsUnspecified() {
 		return fmt.Errorf(
-			"darwin tclaude-layer proxy floor refuses wildcard proxy endpoint %s: the filtering proxy must listen on host loopback, not on every interface",
+			"tclaude’s sandbox on macOS proxy floor refuses wildcard proxy endpoint %s: the filtering proxy must listen on host loopback, not on every interface",
 			endpoint,
 		)
 	}

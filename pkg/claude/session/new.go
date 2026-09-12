@@ -126,7 +126,7 @@ type NewParams struct {
 	// is the harness's historical behavior; tclaude-layer is a
 	// whole-process wrapper (bubblewrap on Linux, Seatbelt on macOS). OpenCode's
 	// historical behavior is a command filter, not confinement.
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; live real-engine probe, both walls; refuses without fallback) | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude’s built-in sandbox, harness OS sandbox off) | stacked (Linux Claude/Codex only; live real-engine probe, both walls; refuses without fallback) | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
 	// sandboxImplExplicit preserves the decision/replay boundary after
 	// applyRecordedLaunchPosture fills an omitted --sandbox-impl on resume.
 	// It is internal state, not a CLI parameter.
@@ -1251,7 +1251,7 @@ func runNew(params *NewParams) error {
 	var routeHelper *TclaudeLayerRouteHelper
 	if params.RouteHelperAgentID != "" || params.RouteHelperConvID != "" || params.RouteHelperLaunchGeneration != "" || params.RouteHelperCredentialHandoffSocketPath != "" || len(params.RouteHelperGroupIDs) > 0 {
 		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
-			return fmt.Errorf("linux group-route helper requires a pane-authoritative tclaude-layer launch")
+			return fmt.Errorf("linux group-route helper requires a pane-authoritative tclaude’s sandbox launch")
 		}
 		if params.RouteHelperProxyOnly && runtime.GOOS != "darwin" {
 			return fmt.Errorf("darwin route proxy authority requires macOS")
@@ -1937,7 +1937,7 @@ func runNew(params *NewParams) error {
 			return fmt.Errorf("darwin route-capable launch requires macOS")
 		}
 		if !outerLayer || !tclaudeLayerWrapsPane(h.Name) {
-			return fmt.Errorf("darwin route-capable launch requires the pane tclaude-layer")
+			return fmt.Errorf("darwin route-capable launch requires the pane tclaude’s sandbox")
 		}
 		if rowConvID == "" {
 			return fmt.Errorf("darwin route-capable launch requires a conversation generation")
@@ -2064,14 +2064,14 @@ func runNew(params *NewParams) error {
 	} else if tclaudeLayerOnly && h.Name == harness.CodexName && runtime.GOOS == "linux" {
 		resolvedCodex, resolveErr := harness.ResolveCodexLaunchExecutable()
 		if resolveErr != nil {
-			return fmt.Errorf("resolve Codex executable for tclaude-layer: %w", resolveErr)
+			return fmt.Errorf("resolve Codex executable for tclaude’s sandbox: %w", resolveErr)
 		}
 		executablePath = resolvedCodex.Path
 		harnessReadPaths = append(harnessReadPaths, resolvedCodex.RuntimeRoot)
 	} else if tclaudeLayerOnly && h.Name == harness.DefaultName && runtime.GOOS == "linux" {
 		resolvedClaude, resolveErr := harness.ResolveClaudeLaunchExecutable()
 		if resolveErr != nil {
-			return fmt.Errorf("resolve Claude executable for tclaude-layer: %w", resolveErr)
+			return fmt.Errorf("resolve Claude executable for tclaude’s sandbox: %w", resolveErr)
 		}
 		executablePath = resolvedClaude.Path
 		harnessReadPaths = append(harnessReadPaths, resolvedClaude.Path)
@@ -2222,7 +2222,7 @@ func runNew(params *NewParams) error {
 			common.PrepareSpawnAttachmentsPrivateDir(sessionID)
 		if prepareErr != nil {
 			return fmt.Errorf(
-				"prepare tclaude-layer private attachment directory: %w",
+				"prepare tclaude’s sandbox private attachment directory: %w",
 				prepareErr,
 			)
 		}
@@ -2263,11 +2263,11 @@ func runNew(params *NewParams) error {
 			HarnessReadPaths:       harnessReadPaths,
 		})
 		if specErr != nil {
-			return fmt.Errorf("build tclaude-layer launch spec: %w", specErr)
+			return fmt.Errorf("build tclaude’s sandbox launch spec: %w", specErr)
 		}
 		layerSpec = spec
 		if prepareErr := PrepareTclaudeLayerHarnessState(layerSpec); prepareErr != nil {
-			return fmt.Errorf("prepare tclaude-layer launch state: %w", prepareErr)
+			return fmt.Errorf("prepare tclaude’s sandbox launch state: %w", prepareErr)
 		}
 		if stacked {
 			stackedProof, err = ProbeStackedSandbox(bwrapBinary, spec, h, cwd)
@@ -2312,7 +2312,7 @@ func runNew(params *NewParams) error {
 				bwrapBinary, layerSpec, codexAppServerLoopbackPort(params), harnessCmd)
 		}
 		if err != nil {
-			return fmt.Errorf("wrap harness with tclaude-layer: %w", err)
+			return fmt.Errorf("wrap harness with tclaude’s sandbox: %w", err)
 		}
 	}
 	boundaryInput := ExecutionBoundaryInput{

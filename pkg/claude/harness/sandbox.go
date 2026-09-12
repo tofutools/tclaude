@@ -194,13 +194,13 @@ func ResolveSandboxImplementationMode(
 // closed until it declares how that topology must be launched.
 func TclaudeLayerHarnessBuiltinMode(h *Harness) (string, error) {
 	if h == nil {
-		return "", fmt.Errorf("tclaude-layer requires a harness with a single-wall launch-mode capability; got nil harness")
+		return "", fmt.Errorf("tclaude’s sandbox requires a harness with a single-wall launch-mode capability; got nil harness")
 	}
 	mode := strings.TrimSpace(h.TclaudeLayerMode)
 	if mode == "" {
 		return "", fmt.Errorf(
-			"harness %q has no tclaude-layer single-wall launch-mode capability; "+
-				"use a harness that supports tclaude-layer or select --sandbox-impl harness-builtin",
+			"harness %q has no tclaude’s sandbox single-wall launch-mode capability; "+
+				"use a harness that supports tclaude’s sandbox or select --sandbox-impl harness-builtin",
 			h.Name,
 		)
 	}

@@ -102,7 +102,7 @@ warning. Model and effort are remembered by the harness itself.
 | [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ |
 | [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ |
 | Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off |
-| [tclaude-layer outer sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ |
+| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ |
 | Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD |
 | Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ |
 | Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ |

@@ -229,7 +229,7 @@ func ValidateTmpfsSupport(
 		return nil
 	}
 	return fmt.Errorf(
-		"unsupported_sandbox_profile_tmpfs: sandbox implementation %q on %s cannot mount the temporary filesystem at %q; a tmpfs requires a mount namespace whose whole boundary tclaude owns, which only the Linux tclaude-layer provides",
+		"unsupported_sandbox_profile_tmpfs: sandbox implementation %q on %s cannot mount the temporary filesystem at %q; a tmpfs requires a mount namespace whose whole boundary tclaude owns, which only tclaude’s sandbox on Linux provides",
 		implementation, goos, mounts[0].Path)
 }
 

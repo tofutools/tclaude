@@ -18,7 +18,7 @@ func TestValidateStackedSandboxHarnessRefusesMissingContract(t *testing.T) {
 	assert.Equal(t,
 		"stacked requested — refused: missing capability stacked_inner_harness_sandbox: "+
 			"harness \"opencode\" has no reviewed nested OS-sandbox contract; "+
-			"refusing rather than falling back to tclaude-layer or harness-builtin",
+			"refusing rather than falling back to tclaude’s sandbox or harness-builtin",
 		err.Error())
 }
 

@@ -364,7 +364,7 @@ func accessEnforcementTable(
 				harnessName = h.Name
 			}
 			return accessEnforcementTableRow{}, fmt.Errorf(
-				"network.namespace %q requires Linux tclaude-layer with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
+				"network.namespace %q requires tclaude’s sandbox on Linux with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
 				axes.Network.Namespace, harnessName, implementation, goos)
 		}
 		// A deny-all baseline materializes as closed networking. That posture
@@ -770,7 +770,7 @@ func accessEnforcementTable(
 						"The agent therefore cannot see or signal host processes, and tools that read the host process table stop working."
 			} else if goos == "linux" {
 				caps.SocketCombinationDetail =
-					"Unix-socket restrictions are unenforced under host-open network on Linux tclaude-layer; " +
+					"Unix-socket restrictions are unenforced under host-open network on tclaude’s sandbox on Linux; " +
 						"they are enforceable when network access is closed because that posture uses the constructed root"
 				caps.SocketClosedRefusal =
 					`unix_sockets "closed" cannot be enforced with open network access on Linux tclaude-layer; ` +
@@ -1071,7 +1071,7 @@ func ValidateExplicitFilesystemRoot(
 		Harness: harnessName,
 		Kind:    SandboxCapabilityFilesystemRoot,
 		Message: fmt.Sprintf(
-			"filesystem_root %q requires Linux tclaude-layer with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
+			"filesystem_root %q requires tclaude’s sandbox on Linux with Claude Code, Codex, OpenCode, or Copilot; resolved target is harness %q, sandbox implementation %q, platform %q",
 			mode, harnessName, implementation, goos),
 	}
 }
@@ -1493,7 +1493,7 @@ func predictNetworkBaselineAxis(
 const CodexBuiltinFilteredNetworkDisclosure = "Codex has no filtered network sandbox yet. " +
 	"Its upstream proxy is experimental and off by default; it admits only proxy-aware clients " +
 	"and on Linux prevents access to the tclaude agentd socket, so it cannot enforce this profile's " +
-	"ordinary TCP/UDP access list. Use tclaude-layer filtering on Linux, or choose network open (Allow all)."
+	"ordinary TCP/UDP access list. Use tclaude’s sandbox filtering on Linux, or choose network open (Allow all)."
 
 func networkListUnavailableDetail(caps PredictedAccessEnforcement) string {
 	if caps.NetworkListUnavailableDetail != "" {

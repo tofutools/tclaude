@@ -169,7 +169,7 @@ func handleDashboardTerminalAttachments(w http.ResponseWriter, r *http.Request) 
 		info, statErr := os.Stat(base)
 		if statErr != nil || !info.IsDir() {
 			writeError(w, http.StatusConflict, "terminal",
-				"live tclaude-layer attachment root is unavailable")
+				"live tclaude’s sandbox attachment root is unavailable")
 			return
 		}
 	}

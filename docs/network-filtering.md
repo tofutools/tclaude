@@ -1,7 +1,7 @@
 # Network filtering
 
 A sandbox profile's `network` axis controls where an agent's traffic may go.
-tclaude enforces it with one of two engines under the `tclaude-layer` sandbox
+tclaude enforces it with one of two engines under the tclaude’s sandbox sandbox
 implementation: a **packet engine** (the Linux default — a private network
 namespace with a default-drop firewall and a DNS broker) and a **proxy engine**
 (`network.engine: "proxy"` — an empty namespace whose only way out is a
@@ -77,7 +77,7 @@ copying endpoints:
 network; `private` gives the launch its own Linux network namespace routed
 through `pasta` with default-accept — it separates abstract Unix sockets and
 host loopback from the agent without making IP traffic deny-by-default. It is
-supported for exact Linux `tclaude-layer` Claude Code, Codex, OpenCode, and
+supported for exact tclaude’s sandbox on Linux Claude Code, Codex, OpenCode, and
 Copilot launches, and refuses elsewhere rather than falling back. A private
 namespace in a global or included profile cannot be widened by a child.
 
@@ -121,7 +121,7 @@ composition was overridden.
 
 ## The packet engine
 
-The Linux default for a list or deny policy under `tclaude-layer`. Four
+The Linux default for a list or deny policy under tclaude’s sandbox. Four
 building blocks, assembled per launch:
 
 1. **bubblewrap** creates user, network, PID, and mount namespaces with no
@@ -165,7 +165,7 @@ Host-loopback rows map to the synthetic name `host.tclaude.internal`
 reserved from CIDR or DNS-derived rules, so either kind of rule can also reach
 host loopback on its authored ports — a DNS-rebinding route to host services.
 
-The packet engine is enforced for exact `tclaude-layer` **Claude Code, Codex,
+The packet engine is enforced for exact tclaude’s sandbox **Claude Code, Codex,
 and OpenCode** launches on Linux. When OpenCode supplies a strict explicit-
 provider configuration, tclaude checks that provider endpoint against the
 authored rules. An OpenCode route tclaude cannot inspect is left to those rules:
@@ -270,7 +270,7 @@ only.
 
 ## Copilot
 
-Copilot CLI is a fully supported `tclaude-layer` harness on Linux and macOS
+Copilot CLI is a fully supported tclaude’s sandbox harness on Linux and macOS
 for *filesystem* confinement, and it has its own `net-github-copilot` pack —
 but it sits **outside both filtering engines today**. It is not packet-filtered
 (destination rules widen to host-open with a disclosure) and not

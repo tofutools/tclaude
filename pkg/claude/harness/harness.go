@@ -608,7 +608,7 @@ func (e *BuiltinOSSandboxInvalidError) Error() string {
 	}
 	return fmt.Sprintf(
 		"sandbox implementation %q is invalid for %s: %s; "+
-			"use tclaude-layer or spawn with the sandbox off",
+			"use tclaude’s sandbox or spawn with the sandbox off",
 		"harness-builtin", name, reason)
 }
 

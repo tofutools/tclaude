@@ -112,15 +112,15 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 			},
 			{
 				Value: string(sandboxpolicy.ImplementationTclaudeLayer),
-				Label: "tclaude built-in OS sandbox",
+				Label: "tclaude’s built-in sandbox",
 				Descr: "Runs the authoritative tool executor inside a tclaude-owned bubblewrap mount namespace " +
 					"(the whole pane for interactive harnesses, or OpenCode's managed server). Linux only; " +
 					"requires bwrap and unprivileged user namespaces.",
 			},
 			{
 				Value: string(sandboxpolicy.ImplementationStacked),
-				Label: "Stacked: tclaude + {harness}",
-				Descr: "Runs {harness} inside tclaude's outer wall and requires a live " +
+				Label: "tclaude + {harness} sandboxes",
+				Descr: "Runs {harness} inside tclaude’s sandbox and requires a live " +
 					"model-free round-trip through {harness}'s real nested OS sandbox. Linux Claude/Codex only.",
 			},
 			{

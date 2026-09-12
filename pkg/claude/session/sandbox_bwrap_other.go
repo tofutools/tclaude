@@ -14,7 +14,7 @@ func resolveBwrapBinary(
 	sandboxpolicy.RootPosture,
 	...bool,
 ) (string, error) {
-	return "", fmt.Errorf("tclaude-layer requires Linux/bubblewrap or macOS/Seatbelt; this platform is not supported")
+	return "", fmt.Errorf("tclaude’s sandbox requires Linux/bubblewrap or macOS/Seatbelt; this platform is not supported")
 }
 
 func resolveBwrapServerBinary(
@@ -23,13 +23,13 @@ func resolveBwrapServerBinary(
 	...bool,
 ) (string, error) {
 	return "", fmt.Errorf(
-		"tclaude-layer server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
+		"tclaude’s sandbox server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
 }
 
 // tclaudeLayerToolingPresence mirrors resolveBwrapBinary's refusal: there is no
 // tooling to look for on an unsupported platform.
 func tclaudeLayerToolingPresence(bool) error {
-	return fmt.Errorf("tclaude-layer requires Linux/bubblewrap or macOS/Seatbelt; this platform is not supported")
+	return fmt.Errorf("tclaude’s sandbox requires Linux/bubblewrap or macOS/Seatbelt; this platform is not supported")
 }
 
 func tclaudeLayerCommand(
@@ -42,7 +42,7 @@ func tclaudeLayerCommand(
 	sandboxpolicy.MountPlan,
 	string,
 ) (string, error) {
-	return "", fmt.Errorf("tclaude-layer is not supported on this platform")
+	return "", fmt.Errorf("tclaude’s sandbox is not supported on this platform")
 }
 
 func tclaudeLayerCommandWithLoopbackBind(
@@ -56,7 +56,7 @@ func tclaudeLayerCommandWithLoopbackBind(
 	int,
 	string,
 ) (string, error) {
-	return "", fmt.Errorf("tclaude-layer is not supported on this platform")
+	return "", fmt.Errorf("tclaude’s sandbox is not supported on this platform")
 }
 
 func tclaudeLayerCommandWithRouteSlots(
@@ -106,7 +106,7 @@ func tclaudeLayerStackedCommand(
 	bool,
 	string,
 ) (string, error) {
-	return "", fmt.Errorf("stacked tclaude-layer is not supported on this platform")
+	return "", fmt.Errorf("stacked tclaude’s sandbox is not supported on this platform")
 }
 
 func tclaudeLayerServerCommand(
@@ -120,7 +120,7 @@ func tclaudeLayerServerCommand(
 	string,
 ) (string, error) {
 	return "", fmt.Errorf(
-		"tclaude-layer server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
+		"tclaude’s sandbox server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
 }
 
 func tclaudeLayerServerCommandWithLoopbackBind(
@@ -135,7 +135,7 @@ func tclaudeLayerServerCommandWithLoopbackBind(
 	string,
 ) (string, error) {
 	return "", fmt.Errorf(
-		"tclaude-layer server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
+		"tclaude’s sandbox server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
 }
 
 func tclaudeLayerUnixRelayServerCommandArgs(
@@ -162,7 +162,7 @@ func tclaudeLayerLaunchOSSandbox(sandboxpolicy.NetworkPosture) harness.LaunchOSS
 func validateTclaudeLayerHarness(harnessName string) error {
 	if harnessName == harness.OpenCodeName {
 		return fmt.Errorf(
-			"tclaude-layer does not support OpenCode on this platform: agentd-owned server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
+			"tclaude’s sandbox does not support OpenCode on this platform: agentd-owned server wrapping requires Linux/bubblewrap or macOS/Seatbelt")
 	}
 	return nil
 }

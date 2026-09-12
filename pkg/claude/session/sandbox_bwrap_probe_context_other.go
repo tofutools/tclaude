@@ -17,7 +17,7 @@ const tclaudeLayerProbeCommand = "tclaude-layer-capability-probe"
 func tclaudeLayerProbeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:    tclaudeLayerProbeCommand,
-		Short:  "Probe tclaude-layer host capability from the pane's confinement (internal)",
+		Short:  "Probe tclaude’s sandbox host capability from the pane's confinement (internal)",
 		Hidden: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return fmt.Errorf("%s is only used by the Linux bubblewrap layer", tclaudeLayerProbeCommand)

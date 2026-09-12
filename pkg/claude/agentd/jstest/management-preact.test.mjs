@@ -8,8 +8,8 @@ const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet
 const sandboxImpl = {
   options: [
     { value: 'harness-builtin', label: '{harness} built-in' },
-    { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox' },
-    { value: 'stacked', label: 'Stacked: tclaude + {harness}' },
+    { value: 'tclaude-layer', label: 'tclaude’s built-in sandbox' },
+    { value: 'stacked', label: 'tclaude + {harness} sandboxes' },
     { value: 'off', label: 'Off' },
   ],
   default: 'harness-builtin',
@@ -325,8 +325,8 @@ test('profile editor names the harness-owned sandbox after the selected harness'
     [
       'Unset (resolved defaults at spawn)',
       'Claude Code built-in',
-      'tclaude built-in OS sandbox',
-      'Stacked: tclaude + Claude Code',
+      'tclaude’s built-in sandbox',
+      'tclaude + Claude Code sandboxes',
       'Off',
     ],
   );
@@ -353,8 +353,8 @@ test('profile editor names the harness-owned sandbox after the selected harness'
     [...host.querySelector('#profile-editor-sandbox-impl').options].map((option) => option.textContent),
     [
       'Unset (resolved defaults at spawn)',
-      'tclaude built-in OS sandbox (recommended)',
-      'Stacked: tclaude + OpenCode',
+      'tclaude’s built-in sandbox (recommended)',
+      'tclaude + OpenCode sandboxes',
       'Off',
     ],
   );
@@ -450,7 +450,7 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
     options: {},
     catalog: openCodeCatalog,
     sandboxImpl: {
-      options: [{ value: 'tclaude-layer', label: 'tclaude built-in OS sandbox' }],
+      options: [{ value: 'tclaude-layer', label: 'tclaude’s built-in sandbox' }],
       default: 'harness-builtin',
       host_available: true,
     },
@@ -467,7 +467,7 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
         probes.push(input);
         return {
           info: input.sandboxImplementation === 'tclaude-layer'
-            ? ["OpenCode's tool-executing server runs inside tclaude's built-in OS sandbox."]
+            ? ["OpenCode's tool-executing server runs inside tclaude’s built-in sandbox."]
             : [],
           warnings: input.sandboxImplementation === 'tclaude-layer'
             ? []
@@ -499,7 +499,7 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
   assert.doesNotMatch(notice.className, /sandbox-info-pending/);
   assert.equal(notice.querySelector('[role="status"]').getAttribute('role'), 'status');
   assert.match(notice.querySelector('.spawn-field-hint.info').textContent,
-    /tool-executing server runs inside tclaude's built-in OS sandbox/);
+    /tool-executing server runs inside tclaude’s built-in sandbox/);
   assertAbsent(notice.querySelector('.spawn-field-hint.warn'));
   assertAbsent(host.querySelector('#profile-editor-autonomy-warning'));
   assert.doesNotMatch(notice.textContent, /no built-in OS sandbox/,
@@ -2290,7 +2290,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
       const codexBuiltin = target.implementation === 'harness-builtin'
         && target.harness === 'codex';
       const networkDetail = codexBuiltin
-        ? 'Codex has no filtered network sandbox yet. Its upstream proxy is experimental and off by default; it admits only proxy-aware clients and on Linux prevents access to the tclaude agentd socket, so it cannot enforce this profile’s ordinary TCP/UDP access list. Use tclaude-layer filtering on Linux, or choose network open (Allow all).'
+        ? 'Codex has no filtered network sandbox yet. Its upstream proxy is experimental and off by default; it admits only proxy-aware clients and on Linux prevents access to the tclaude agentd socket, so it cannot enforce this profile’s ordinary TCP/UDP access list. Use tclaude’s sandbox filtering on Linux, or choose network open (Allow all).'
         : 'resolver-owned network detail';
       return {
         targets: [{ target, resolved_by: 'harness default', predicted: true, axes: {
@@ -2341,7 +2341,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
       .map((option) => option.textContent),
     [
       'Codex built-in sandbox',
-      'tclaude sandbox',
+      'tclaude’s built-in sandbox',
       'Stacked sandboxes',
     ],
   );

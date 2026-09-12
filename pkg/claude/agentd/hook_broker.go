@@ -222,11 +222,11 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 	case layerClaim:
 		if row != nil {
 			brokerRefusals.recordClaimMismatch(row.ID,
-				"hook: claimed tclaude-layer session failed live-pane proof")
+				"hook: claimed tclaude’s sandbox session failed live-pane proof")
 		} else {
-			brokerRefusals.recordUnplaceable("hook: tclaude-layer caller failed live-pane proof")
+			brokerRefusals.recordUnplaceable("hook: tclaude’s sandbox caller failed live-pane proof")
 		}
-		writeError(w, http.StatusForbidden, "auth", "claimed tclaude-layer session does not own this caller")
+		writeError(w, http.StatusForbidden, "auth", "claimed tclaude’s sandbox session does not own this caller")
 		return
 	case row == nil:
 		brokerRefusals.recordUnplaceable("hook: caller could not be placed")
@@ -234,9 +234,9 @@ func handleWhoamiHook(w http.ResponseWriter, r *http.Request) {
 			"could not resolve a session row for this caller; refusing to apply its hook")
 		return
 	case isTclaudeLayerRow(row):
-		brokerRefusals.recordUnplaceable("hook: tclaude-layer callback omitted its session claim")
+		brokerRefusals.recordUnplaceable("hook: tclaude’s sandbox callback omitted its session claim")
 		writeError(w, http.StatusForbidden, "auth",
-			"tclaude-layer hook callback requires a proved session claim")
+			"tclaude’s sandbox hook callback requires a proved session claim")
 		return
 	case claimed != "" && claimed != row.ID:
 		slog.Warn("hook broker: rejecting event whose claimed session id disagrees with the resolved row",

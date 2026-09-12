@@ -97,8 +97,8 @@ const roles = [{
 const sandboxImpl = {
   options: [
     { value: 'harness-builtin', label: '{harness} built-in' },
-    { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox' },
-    { value: 'stacked', label: 'Stacked: tclaude + {harness}' },
+    { value: 'tclaude-layer', label: 'tclaude’s built-in sandbox' },
+    { value: 'stacked', label: 'tclaude + {harness} sandboxes' },
     { value: 'off', label: 'Off' },
   ],
   default: 'harness-builtin',
@@ -897,7 +897,7 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   // same words as the concrete option — not the mechanism that produced it, and
   // not the harness default the browser could have guessed on its own.
   assert.equal(host.querySelector('#agent-spawn-sandbox-impl').options[0].textContent,
-    '— Resolved default (tclaude built-in OS sandbox) —');
+    '— Resolved default (tclaude’s built-in sandbox) —');
   assert.ok(
     calls.some(([kind, , , harnessName]) => kind === 'launch-defaults' && harnessName === 'codex'),
     'the resolved default is re-asked for the newly selected harness',
@@ -1493,7 +1493,7 @@ test('Preact agent-spawn shows the daemon unsandboxed-autonomy warning and clear
 test('Preact agent-spawn renders sandbox boundary disclosures as info, not warnings', async (t) => {
   const mounted = await mountSpawn(t, {
     loadUnsandboxedAutonomy: async () => ({
-      info: ["OpenCode's tool-executing server runs inside tclaude's built-in OS sandbox."],
+      info: ["OpenCode's tool-executing server runs inside tclaude’s built-in sandbox."],
       warnings: [],
       sandboxState: '',
       sandboxSource: '',
@@ -1517,7 +1517,7 @@ test('Preact agent-spawn renders sandbox boundary disclosures as info, not warni
     assert.doesNotMatch(notice.className, /sandbox-info-pending/);
     assert.equal(notice.querySelector('[role="status"]').getAttribute('role'), 'status');
     assert.match(notice.querySelector('.spawn-field-hint.info').textContent,
-      /tclaude's built-in OS sandbox/);
+      /tclaude’s built-in sandbox/);
     assertAbsent(notice.querySelector('.spawn-field-hint.warn'));
     assertAbsent(host.querySelector('#agent-spawn-autonomy-warning'));
   } finally {

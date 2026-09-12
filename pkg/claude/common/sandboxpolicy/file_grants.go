@@ -123,7 +123,7 @@ func ValidateFileGrantSupport(
 			continue
 		}
 		return fmt.Errorf(
-			"unsupported_sandbox_profile_file_grant: sandbox implementation %q on %s cannot apply the %s rule for %q; that path is a regular file, and mounting a single file requires a mount namespace whose whole boundary tclaude owns, which only the Linux tclaude-layer provides",
+			"unsupported_sandbox_profile_file_grant: sandbox implementation %q on %s cannot apply the %s rule for %q; that path is a regular file, and mounting a single file requires a mount namespace whose whole boundary tclaude owns, which only tclaude’s sandbox on Linux provides",
 			implementation, goos, grant.Access, grant.Path)
 	}
 	return nil

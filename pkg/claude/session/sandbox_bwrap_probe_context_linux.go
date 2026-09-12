@@ -72,7 +72,7 @@ func probeBwrapInLaunchContext(
 		// The ordinary case on a host with nothing running yet, so Debug: this
 		// is the branch whose in-process answer is faithful, not the one that
 		// loses the fix.
-		slog.Debug("tclaude-layer: no tmux server to probe from; "+
+		slog.Debug("tclaude’s sandbox: no tmux server to probe from; "+
 			"the preparing process's confinement is the one its pane will inherit", "error", err)
 		return probeBwrapInProcess(binary, posture, root, preserve)
 	}
@@ -304,7 +304,7 @@ func probeBwrapViaTmuxServerForIdentity(
 // Warn rather than Debug: a tmux server exists, so this is the abnormal branch.
 // The ordinary "no server yet" case never reaches here.
 func noLaunchContextVerdict(reason string, err error) {
-	slog.Warn("tclaude-layer: capability probe fell back to the preparing process's confinement; "+
+	slog.Warn("tclaude’s sandbox: capability probe fell back to the preparing process's confinement; "+
 		"a launch this probe passes may still be denied in the pane",
 		"reason", reason, "error", err)
 }
@@ -466,7 +466,7 @@ func tclaudeLayerProbeCmd() *cobra.Command {
 	var preserveCallerIdentity bool
 	cmd := &cobra.Command{
 		Use:               tclaudeLayerProbeCommand,
-		Short:             "Probe tclaude-layer host capability from the pane's confinement (internal)",
+		Short:             "Probe tclaude’s sandbox host capability from the pane's confinement (internal)",
 		Hidden:            true,
 		PersistentPreRunE: func(*cobra.Command, []string) error { return nil },
 		RunE: func(_ *cobra.Command, _ []string) error {

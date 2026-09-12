@@ -296,14 +296,14 @@ func TestDashboardSnapshot_SandboxImplCatalogDisclosesHostAvailability(t *testin
 			}
 			if option["value"] == "stacked" {
 				sawStacked = true
-				assert.Equal(t, "Stacked: tclaude + {harness}", option["label"])
+				assert.Equal(t, "tclaude + {harness} sandboxes", option["label"])
 				continue
 			}
 			if option["value"] != "tclaude-layer" {
 				continue
 			}
 			sawTclaudeLayer = true
-			assert.Equal(t, "tclaude built-in OS sandbox", option["label"])
+			assert.Equal(t, "tclaude’s built-in sandbox", option["label"])
 			assert.Contains(t, option["descr"], "Linux only",
 				"the platform caveat must be stated, not implied")
 		}

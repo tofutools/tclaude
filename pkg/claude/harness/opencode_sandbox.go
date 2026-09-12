@@ -43,7 +43,7 @@ func (openCodeSandbox) ModeHelp(mode string) string {
 	case OpenCodeSandboxAccessControl:
 		return "Lexical soft disk access control: built-in reads/edits follow relative path rules, while tools remain enabled. This is not an OS sandbox: it does not resolve or contain symlink targets, and bash/glob/grep can reach disk outside those lexical path rules."
 	case OpenCodeSandboxTclaudeLayer:
-		return "Linux/macOS OS containment for the tool-executing OpenCode server, provided by tclaude's built-in OS sandbox. The attach pane stays outside the sandbox; the authenticated local control connection, host networking, and ambient host Unix sockets remain reachable. The inner OpenCode access profile permits all paths while approval and tool-governance choices remain active."
+		return "Linux/macOS OS containment for the tool-executing OpenCode server, provided by tclaude’s built-in sandbox. The attach pane stays outside the sandbox; the authenticated local control connection, host networking, and ambient host Unix sockets remain reachable. The inner OpenCode access profile permits all paths while approval and tool-governance choices remain active."
 	case OpenCodeSandboxOff:
 		return "⚠ No directory scoping or OS containment. Filesystem/network sandbox profiles are incompatible and fail the launch. Permission mode and tool governance still apply."
 	default:
@@ -102,7 +102,7 @@ func openCodeSandboxInfo(harnessBuiltinMode string) []string {
 		return nil
 	}
 	return []string{
-		"OpenCode's tool-executing server runs inside tclaude's built-in OS sandbox. " +
+		"OpenCode's tool-executing server runs inside tclaude’s built-in sandbox. " +
 			"The attach pane remains outside the sandbox, and the authenticated local control connection remains reachable.",
 	}
 }
@@ -142,6 +142,6 @@ func openCodeSandboxWarnings(harnessBuiltinMode string) []string {
 			"so shell redirection, symlinks, and subprocesses still reach files and the " +
 			"network outside the allowed directories. Treat this agent as effectively " +
 			"unsandboxed — use a container or a restricted OS account for real isolation " +
-			"— or select tclaude's built-in OS sandbox on Linux or macOS.",
+			"— or select tclaude’s built-in sandbox on Linux or macOS.",
 	}
 }

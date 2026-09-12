@@ -80,7 +80,7 @@ func ValidateMountPathSupport(
 			continue
 		}
 		return fmt.Errorf(
-			"unsupported_sandbox_profile_mount_path: sandbox implementation %q on %s cannot mount %q at sandbox path %q; mounting a host directory at a different sandbox path requires a mount namespace, which only the Linux tclaude-layer provides",
+			"unsupported_sandbox_profile_mount_path: sandbox implementation %q on %s cannot mount %q at sandbox path %q; mounting a host directory at a different sandbox path requires a mount namespace, which only tclaude’s sandbox on Linux provides",
 			implementation, goos, grant.Path, grant.GuestPath())
 	}
 	return nil

@@ -382,7 +382,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 	approval, autoReview := relaunch.Approval, relaunch.AutoReview
 	if len(p.RouteHelperGroupIDs) > 0 {
 		if srcHarness != harness.DefaultName || relaunch.SandboxImplementation != string(sandboxpolicy.ImplementationTclaudeLayer) {
-			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a pane-authoritative tclaude-layer clone"}
+			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a pane-authoritative tclaude’s sandbox clone"}
 		}
 		if effectiveSandbox == nil {
 			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a frozen private network posture for the clone"}
@@ -392,7 +392,7 @@ func cloneSpawnOnce(p cloneSpawnParams) (spawned cloneSpawnResult, cerr *cloneSp
 			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "resolve clone route posture: " + postureErr.Error()}
 		}
 		if posture == sandboxpolicy.NetworkHostOpen {
-			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a private tclaude-layer network namespace"}
+			return cloneSpawnResult{}, &cloneSpawnError{Status: http.StatusUnprocessableEntity, Code: "unsupported_group_route_launch", Msg: "Linux group routes require a private tclaude’s sandbox network namespace"}
 		}
 	}
 
