@@ -55,7 +55,7 @@ type profileJSON struct {
 	Effort  string `json:"effort,omitempty"`
 	Sandbox string `json:"sandbox,omitempty"`
 	// SandboxImplementation is the profile's pinned owner of OS-level
-	// containment: "harness-builtin" or the experimental "tclaude-layer"
+	// containment: "harness-builtin" or the "tclaude-layer"
 	// ("" = unset, so it falls through to the next spawn precedence tier).
 	SandboxImplementation string `json:"sandbox_implementation,omitempty"`
 	Approval              string `json:"approval,omitempty"`

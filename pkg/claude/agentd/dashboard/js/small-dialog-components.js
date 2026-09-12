@@ -482,7 +482,6 @@ export function SandboxImplDialog({ descriptor, actions, confirmDiscard }) {
                 <span class="sandbox-impl-option-body">
                   <span class="sandbox-impl-option-name">${value}
                     ${value === current && html`<span class="sandbox-impl-tag">current</span>`}
-                    ${option.experimental && html`<span class="sandbox-impl-tag warn">experimental</span>`}
                   </span>
                   ${/* The catalog label names the harness ("Claude Code built-in"); the
                         value above is the enum the CLI and the API take. Both are shown

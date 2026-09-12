@@ -132,7 +132,7 @@ func tclaudeLayerProbeArgs(
 		}
 		args = append(args, "--unshare-net", "--unshare-pid")
 	default:
-		return nil, fmt.Errorf("invalid tclaude-layer network posture %d", posture)
+		return nil, fmt.Errorf("invalid tclaude’s sandbox network posture %d", posture)
 	}
 	const (
 		probeBind  = "/tmp/.tclaude-remount-probe"
@@ -173,7 +173,7 @@ func resolveBwrapBinary(
 		return "", err
 	}
 	if err := probeTclaudeLayerPidfd(); err != nil {
-		return "", fmt.Errorf("tclaude-layer requires Linux pidfd support for its terminal-resize relay: %w", err)
+		return "", fmt.Errorf("tclaude’s sandbox requires Linux pidfd support for its terminal-resize relay: %w", err)
 	}
 	return binary, nil
 }
@@ -190,11 +190,11 @@ func resolveBwrapBinary(
 // where it matters, at resolveBwrapServerBinary.
 func tclaudeLayerToolingPresence(interactive bool) error {
 	if _, err := lookPathBwrap("bwrap"); err != nil {
-		return fmt.Errorf("tclaude-layer requires bubblewrap (`bwrap`) on PATH: %w", err)
+		return fmt.Errorf("tclaude’s sandbox requires bubblewrap (`bwrap`) on PATH: %w", err)
 	}
 	if interactive {
 		if err := probeTclaudeLayerPidfd(); err != nil {
-			return fmt.Errorf("tclaude-layer requires Linux pidfd support for its terminal-resize relay: %w", err)
+			return fmt.Errorf("tclaude’s sandbox requires Linux pidfd support for its terminal-resize relay: %w", err)
 		}
 	}
 	return nil
@@ -207,7 +207,7 @@ func resolveBwrapServerBinary(
 ) (string, error) {
 	binary, err := lookPathBwrap("bwrap")
 	if err != nil {
-		return "", fmt.Errorf("tclaude-layer requires bubblewrap (`bwrap`) on PATH: %w", err)
+		return "", fmt.Errorf("tclaude’s sandbox requires bubblewrap (`bwrap`) on PATH: %w", err)
 	}
 	// bwrap builds the sandbox every other trusted executable runs inside, so it
 	// gets the same trust walk as the filtered-network helpers — and the probe
@@ -218,7 +218,7 @@ func resolveBwrapServerBinary(
 		// the binary vanishing between the PATH lookup and the walk, which is a
 		// missing bwrap rather than an untrusted one.
 		return "", fmt.Errorf(
-			"tclaude-layer could not resolve a trusted bubblewrap (`bwrap`): %w", err)
+			"tclaude’s sandbox could not resolve a trusted bubblewrap (`bwrap`): %w", err)
 	}
 	preserve := posture == sandboxpolicy.NetworkFiltered
 	probe := probeBwrap
@@ -240,12 +240,12 @@ func resolveBwrapServerBinary(
 				requiredNamespaces = "mount, PID, and IPC namespaces plus read-only remount support required by a constructed root under host networking"
 			}
 		}
-		return "", fmt.Errorf("tclaude-layer cannot create the bubblewrap %s "+
+		return "", fmt.Errorf("tclaude’s sandbox cannot create the bubblewrap %s "+
 			"(unprivileged user namespaces may be unavailable): %w", requiredNamespaces, err)
 	}
 	if posture == sandboxpolicy.NetworkFiltered {
 		if _, err := resolveFilteredNetworkExecutables(preserve); err != nil {
-			return "", fmt.Errorf("tclaude-layer filtered network prerequisite: %w", err)
+			return "", fmt.Errorf("tclaude’s sandbox filtered network prerequisite: %w", err)
 		}
 	}
 	return binary, nil

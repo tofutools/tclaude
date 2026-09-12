@@ -320,9 +320,9 @@ function sandboxIndicator(member) {
 function sandboxImplementationLabel(member, badge) {
   if (badge.status === 'OFF') return 'None';
   const implementation = member.state?.sandbox_implementation || 'harness-builtin';
-  if (implementation === 'tclaude-layer') return 'TClaude';
+  if (implementation === 'tclaude-layer') return 'tclaude’s built-in sandbox';
   if (implementation === 'stacked') {
-    return `${harnessLabels(member.state?.harness || 'claude').short}+TClaude`;
+    return `tclaude + ${harnessLabels(member.state?.harness || 'claude').short} sandboxes`;
   }
   if (implementation === 'harness-builtin') {
     return harnessLabels(member.state?.harness || 'claude').short;
@@ -365,7 +365,7 @@ function resourceLimitLines(member) {
   ];
 }
 
-const CODEX_OWN_SANDBOX_UNLOCK_UNAVAILABLE = 'Temporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use the tclaude-layer implementation or start a new Codex conversation without the built-in sandbox.';
+const CODEX_OWN_SANDBOX_UNLOCK_UNAVAILABLE = 'Temporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use tclaude’s built-in sandbox or start a new Codex conversation without the built-in sandbox.';
 
 function codexOwnSandboxUnlockUnsupported(member, unlocked) {
   const state = member.state || {};
@@ -449,15 +449,17 @@ function sandboxRecordedDetails(member) {
   const source = state.os_sandbox_source || state.sandbox_mode_source || '';
   const lines = [
     `Status: ${state.os_sandbox_state || state.sandbox_mode || 'Not recorded'}`,
-    `Implementation: ${implementation}`,
+    `Implementation: ${implementation === 'tclaude-layer' || implementation === 'stacked'
+      ? sandboxImplementationLabel(member, { status: 'ON' }) : implementation}`,
     // Named for what it holds (TCL-1023): this is the HARNESS'S OWN sandbox
     // setting, not tclaude's enforcement. A tclaude-layer launch stands the
     // harness's inner wall down, so a bare `Mode: off` beside
     // `Implementation: tclaude-layer` read as "unconfined" when it means the
     // opposite. The Implementation line above says who actually enforces.
-    `Harness sandbox mode: ${state.sandbox_mode || 'Not recorded'}`,
+    `Harness sandbox mode: ${state.sandbox_mode === 'tclaude-layer'
+      ? 'tclaude’s built-in sandbox' : state.sandbox_mode || 'Not recorded'}`,
     `Profile: ${sandboxProfileLabel(member)}`,
-    `Source: ${source || 'Not recorded'}`,
+    `Source: ${source.replaceAll('tclaude-layer', 'tclaude’s sandbox') || 'Not recorded'}`,
     ...resourceLimitLines(member),
   ];
   for (const notice of state.sandbox_access_notices || []) {

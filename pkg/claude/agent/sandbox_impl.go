@@ -215,12 +215,12 @@ func printSandboxImpl(resp *sandboxImplResp, asJSON bool, stdout, stderr io.Writ
 	label := short(resp.ConvID)
 	if resp.Previous != "" && resp.Previous != resp.Implementation {
 		fmt.Fprintf(stdout, "%s: sandbox implementation %s → %s\n",
-			label, resp.Previous, resp.Implementation)
+			label, sandboxImplementationDisplayName(resp.Previous), sandboxImplementationDisplayName(resp.Implementation))
 	} else {
-		fmt.Fprintf(stdout, "%s: sandbox implementation %s\n", label, resp.Implementation)
+		fmt.Fprintf(stdout, "%s: sandbox implementation %s\n", label, sandboxImplementationDisplayName(resp.Implementation))
 	}
 	if resp.Sandbox != "" {
-		line := "  harness sandbox mode: " + resp.Sandbox
+		line := "  harness sandbox mode: " + sandboxImplementationDisplayName(resp.Sandbox)
 		if resp.Source != "" {
 			line += " (chosen by " + resp.Source + ")"
 		}
@@ -247,4 +247,17 @@ func printSandboxImpl(resp *sandboxImplResp, asJSON bool, stdout, stderr io.Writ
 		fmt.Fprintln(stdout, "  wake the agent to launch it under the new implementation")
 	}
 	return rcOK
+}
+
+// sandboxImplementationDisplayName is human-facing only; JSON and command
+// arguments retain the stable implementation values.
+func sandboxImplementationDisplayName(value string) string {
+	switch sandboxpolicy.Implementation(value) {
+	case sandboxpolicy.ImplementationTclaudeLayer:
+		return "tclaude’s built-in sandbox"
+	case sandboxpolicy.ImplementationStacked:
+		return "tclaude + harness sandboxes"
+	default:
+		return value
+	}
 }

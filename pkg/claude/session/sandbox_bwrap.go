@@ -194,7 +194,7 @@ func validateTclaudeLayerRouteHelper(effective sandboxpolicy.EffectiveProfile, h
 		return fmt.Errorf("resolve route helper network posture: %w", err)
 	}
 	if posture == sandboxpolicy.NetworkHostOpen {
-		return fmt.Errorf("route helper requires a private tclaude-layer network namespace; host-open launches cannot establish a publisher-local target claim")
+		return fmt.Errorf("route helper requires a private network namespace in tclaude’s sandbox; host-open launches cannot establish a publisher-local target claim")
 	}
 	return nil
 }
@@ -228,7 +228,7 @@ func tclaudeLayerContractNetworkEngine(
 	if input.NetworkEngine != sandboxpolicy.NetworkEngineUnset &&
 		input.NetworkEngine != authored {
 		return sandboxpolicy.NetworkEngineUnset, fmt.Errorf(
-			"tclaude-layer launch names network filtering engine %q but the effective sandbox profile authors %q",
+			"tclaude’s sandbox launch names network filtering engine %q but the effective sandbox profile authors %q",
 			input.NetworkEngine, authored,
 		)
 	}
@@ -280,7 +280,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	}
 	cwd := canonicalSandboxPath(input.Cwd)
 	if cwd == "" {
-		return TclaudeLayerLaunchSpec{}, fmt.Errorf("tclaude-layer launch cwd %q is not an absolute canonical path", input.Cwd)
+		return TclaudeLayerLaunchSpec{}, fmt.Errorf("tclaude’s sandbox launch cwd %q is not an absolute canonical path", input.Cwd)
 	}
 	effective := sandboxpolicy.EffectiveProfile{}
 	if input.Snapshot != nil {
@@ -288,7 +288,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 		effective.Environment = sandboxpolicy.EnvironmentForLaunch(input.Snapshot)
 		filesystem, err := sandboxpolicy.FilesystemForLaunch(effective)
 		if err != nil {
-			return TclaudeLayerLaunchSpec{}, fmt.Errorf("freeze tclaude-layer filesystem: %w", err)
+			return TclaudeLayerLaunchSpec{}, fmt.Errorf("freeze tclaude’s sandbox filesystem: %w", err)
 		}
 		effective.Filesystem = filesystem
 	}
@@ -320,7 +320,7 @@ func BuildTclaudeLayerLaunchSpec(input TclaudeLayerLaunchInput) (TclaudeLayerLau
 	stateRoot, err = canonicalTclaudeLayerStatePath(stateRoot)
 	if err != nil {
 		return TclaudeLayerLaunchSpec{}, fmt.Errorf(
-			"resolve tclaude-layer harness state root: %w", err)
+			"resolve tclaude’s sandbox harness state root: %w", err)
 	}
 	contractWriteDirs := append(append([]string(nil), gitWriteDirs...), cwd)
 	// Harness-required paths are declared, not wired: each harness's catalog
@@ -1103,7 +1103,7 @@ func ValidateTclaudeLayerNetwork(
 			}
 		}
 		if h.Name == harness.OpenCodeName {
-			detail += " This OpenCode route was resolved from an explicit-provider config: the launch model and OPENCODE_CONFIG_CONTENT name one inspected openai-compatible provider, model without a provider override, and concrete options.baseURL. The isolated server retains OpenCode's required config, install, auth, and runtime-state projections; the tclaude-layer packet boundary remains authoritative if those inputs select a different route at runtime. OpenCode's built-in webfetch/websearch permission rules are soft tool policy; this tclaude-layer nft boundary is the packet-enforced floor."
+			detail += " This OpenCode route was resolved from an explicit-provider config: the launch model and OPENCODE_CONFIG_CONTENT name one inspected openai-compatible provider, model without a provider override, and concrete options.baseURL. The isolated server retains OpenCode's required config, install, auth, and runtime-state projections; tclaude’s sandbox packet boundary remains authoritative if those inputs select a different route at runtime. OpenCode's built-in webfetch/websearch permission rules are soft tool policy; this tclaude’s sandbox nft boundary is the packet-enforced floor."
 		}
 		return []sandboxpolicy.AccessNotice{{
 			Class:  sandboxpolicy.AccessNoticeClassDegradation,
@@ -1114,11 +1114,11 @@ func ValidateTclaudeLayerNetwork(
 		}}, nil
 	case sandboxpolicy.AccessModeClosed:
 	default:
-		return nil, fmt.Errorf("unsupported tclaude-layer network mode %q", axes.Network.Mode)
+		return nil, fmt.Errorf("unsupported tclaude sandbox network mode %q", axes.Network.Mode)
 	}
 	if !h.SupportsOfflineModelTransport() {
 		return nil, fmt.Errorf(
-			"unsupported_sandbox_profile_network: network_access none isolates the whole tclaude-layer process, but harness %q requires hosted model traffic; see docs/sandboxing.md#isolated-with-agentd-network-posture",
+			"unsupported_sandbox_profile_network: network_access none isolates the whole process in tclaude’s sandbox, but harness %q requires hosted model traffic; see docs/sandboxing.md#isolated-with-agentd-network-posture",
 			h.Name,
 		)
 	}
@@ -1167,7 +1167,7 @@ func WrapTclaudeLayerSpecWithLoopbackBind(
 	harnessCommand string,
 ) (string, error) {
 	if loopbackBindPort < 0 || loopbackBindPort > 65535 {
-		return "", fmt.Errorf("invalid tclaude-layer loopback bind port %d", loopbackBindPort)
+		return "", fmt.Errorf("invalid tclaude’s sandbox loopback bind port %d", loopbackBindPort)
 	}
 	if err := validateTclaudeLayerRouteHelper(spec.Effective, spec.Contract.RouteHelper); err != nil {
 		return "", err
@@ -1408,7 +1408,7 @@ func TclaudeLayerUnixRelayServerExecArgs(
 	serverArgv []string,
 ) ([]string, error) {
 	if spec.Version != TclaudeLayerUnixRelaySpecVersion {
-		return nil, fmt.Errorf("unix-relay server renderer requires tclaude-layer v4")
+		return nil, fmt.Errorf("unix-relay server renderer requires tclaude’s sandbox v4")
 	}
 	if preserveFDs != 2 || len(serverArgv) == 0 {
 		return nil, fmt.Errorf("unix-relay server renderer requires inherited descriptors and a command")
@@ -1528,7 +1528,7 @@ func tclaudeLayerSpecRenderInput(
 ) {
 	if !supportedTclaudeLayerLaunchSpecVersion(spec.Version) {
 		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
-			fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
+			fmt.Errorf("unsupported tclaude sandbox launch spec version %d", spec.Version)
 	}
 	if err := validateTclaudeLayerOpenCodeControl(spec); err != nil {
 		return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{}, err
@@ -1590,7 +1590,7 @@ func tclaudeLayerSpecRenderInput(
 			if socketErr := sandboxpolicy.ValidateMaterializedUnixSocketPaths(
 				*spec.Effective.UnixSockets, authoredSockets); socketErr != nil {
 				return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
-					fmt.Errorf("validate tclaude-layer unix socket allowlist: %w", socketErr)
+					fmt.Errorf("validate tclaude’s sandbox unix socket allowlist: %w", socketErr)
 			}
 		} else {
 			var socketErr error
@@ -1598,7 +1598,7 @@ func tclaudeLayerSpecRenderInput(
 				*spec.Effective.UnixSockets)
 			if socketErr != nil {
 				return nil, nil, nil, nil, nil, sandboxpolicy.MountPlan{},
-					fmt.Errorf("materialize tclaude-layer unix socket allowlist: %w", socketErr)
+					fmt.Errorf("materialize tclaude’s sandbox unix socket allowlist: %w", socketErr)
 			}
 		}
 		for _, socket := range authoredSockets {
@@ -1613,16 +1613,16 @@ func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
 	if spec.Version != TclaudeLayerUnixRelaySpecVersion {
 		if control != nil {
 			return fmt.Errorf(
-				"tclaude-layer launch spec version %d unexpectedly carries OpenCode Unix control authority",
+				"tclaude’s sandbox launch spec version %d unexpectedly carries OpenCode Unix control authority",
 				spec.Version)
 		}
 		return nil
 	}
 	if spec.Contract.HarnessName != harness.OpenCodeName {
-		return fmt.Errorf("tclaude-layer v4 Unix control authority is OpenCode-only")
+		return fmt.Errorf("tclaude’s sandbox v4 Unix control authority is OpenCode-only")
 	}
 	if control == nil || control.Transport != TclaudeLayerUnixRelayTransport {
-		return fmt.Errorf("tclaude-layer v4 launch spec has no Unix-relay control authority")
+		return fmt.Errorf("tclaude’s sandbox v4 launch spec has no Unix-relay control authority")
 	}
 	posture, err := TclaudeLayerNetworkPosture(spec.Effective)
 	if err != nil {
@@ -1631,36 +1631,36 @@ func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
 	if posture != sandboxpolicy.NetworkIsolatedWithAgentd &&
 		posture != sandboxpolicy.NetworkFiltered {
 		return fmt.Errorf(
-			"tclaude-layer v4 Unix relay requires the isolated or filtered network posture")
+			"tclaude’s sandbox v4 Unix relay requires the isolated or filtered network posture")
 	}
 	rawPath := strings.TrimSpace(control.SocketPath)
 	path := filepath.Clean(rawPath)
 	if rawPath != control.SocketPath || path != rawPath ||
 		!filepath.IsAbs(path) || filepath.Base(path) != "control.sock" {
-		return fmt.Errorf("tclaude-layer v4 OpenCode control path %q is invalid", control.SocketPath)
+		return fmt.Errorf("tclaude’s sandbox v4 OpenCode control path %q is invalid", control.SocketPath)
 	}
 	if len(path) >= 108 {
-		return fmt.Errorf("tclaude-layer v4 OpenCode control path exceeds Linux sockaddr capacity")
+		return fmt.Errorf("tclaude’s sandbox v4 OpenCode control path exceeds Linux sockaddr capacity")
 	}
 	parent := filepath.Dir(path)
 	agentID := filepath.Base(parent)
 	if !strings.HasPrefix(agentID, "agt_") || len(agentID) != len("agt_")+32 {
-		return fmt.Errorf("tclaude-layer v4 OpenCode control path is not under a stable agent child")
+		return fmt.Errorf("tclaude’s sandbox v4 OpenCode control path is not under a stable agent child")
 	}
 	for _, r := range strings.TrimPrefix(agentID, "agt_") {
 		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
-			return fmt.Errorf("tclaude-layer v4 OpenCode control path has invalid agent identity")
+			return fmt.Errorf("tclaude’s sandbox v4 OpenCode control path has invalid agent identity")
 		}
 	}
 	info, err := os.Lstat(parent)
 	if err != nil {
-		return fmt.Errorf("inspect tclaude-layer v4 OpenCode control parent: %w", err)
+		return fmt.Errorf("inspect tclaude’s sandbox v4 OpenCode control parent: %w", err)
 	}
 	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() || info.Mode().Perm() != 0o700 {
-		return fmt.Errorf("tclaude-layer v4 OpenCode control parent must be a real mode-0700 directory")
+		return fmt.Errorf("tclaude’s sandbox v4 OpenCode control parent must be a real mode-0700 directory")
 	}
 	if resolved, err := filepath.EvalSymlinks(parent); err != nil || resolved != parent {
-		return fmt.Errorf("tclaude-layer v4 OpenCode control parent is not canonical")
+		return fmt.Errorf("tclaude’s sandbox v4 OpenCode control parent is not canonical")
 	}
 	stateRoot := filepath.Clean(spec.Contract.StateRoot)
 	privateAuthority := stateRoot == parent
@@ -1673,11 +1673,11 @@ func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
 	}
 	if !privateAuthority && !legacyAuthority {
 		return fmt.Errorf(
-			"tclaude-layer v4 OpenCode control path is outside its private or legacy authority")
+			"tclaude’s sandbox v4 OpenCode control path is outside its private or legacy authority")
 	}
 	if privateAuthority && len(spec.Contract.StateDirs) == 0 {
 		return fmt.Errorf(
-			"tclaude-layer v4 OpenCode private control authority has no state-only reopens")
+			"tclaude’s sandbox v4 OpenCode private control authority has no state-only reopens")
 	}
 	protectedRoots, err := sandboxpolicy.ProtectedPaths()
 	if err != nil {
@@ -1686,7 +1686,7 @@ func validateTclaudeLayerOpenCodeControl(spec TclaudeLayerLaunchSpec) error {
 	for _, protected := range protectedRoots {
 		if sandboxpolicy.GuardContainsOrEqual(protected, path) {
 			return fmt.Errorf(
-				"tclaude-layer v4 OpenCode control path %q is at or below protected root %q",
+				"tclaude’s sandbox v4 OpenCode control path %q is at or below protected root %q",
 				path, protected)
 		}
 	}
@@ -1713,16 +1713,16 @@ func ValidateTclaudeLayerLaunchSpec(spec TclaudeLayerLaunchSpec) error {
 // disclosure, but it is not harness state Codex would otherwise prepare.
 func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 	if !supportedTclaudeLayerLaunchSpecVersion(spec.Version) {
-		return fmt.Errorf("unsupported tclaude-layer launch spec version %d", spec.Version)
+		return fmt.Errorf("unsupported tclaude sandbox launch spec version %d", spec.Version)
 	}
 	stateDirs := append([]string{spec.Contract.StateRoot}, spec.Contract.StateDirs...)
 	if spec.Contract.HarnessName == harness.OpenCodeName && len(spec.Contract.StateDirs) == 0 {
-		return fmt.Errorf("OpenCode tclaude-layer launch spec has no mutable state directories")
+		return fmt.Errorf("OpenCode with tclaude’s sandbox launch spec has no mutable state directories")
 	}
 	if spec.Contract.HarnessName == harness.OpenCodeName &&
 		len(spec.Contract.ReadOnlyStateDirs) == 0 &&
 		len(spec.Contract.ReadOnlyBinds) == 0 {
-		return fmt.Errorf("OpenCode tclaude-layer launch spec does not protect its executable state")
+		return fmt.Errorf("OpenCode with tclaude’s sandbox launch spec does not protect its executable state")
 	}
 	if err := validateTclaudeLayerHarnessStateRules(
 		tclaudeLayerHarnessStateRules(spec.Contract, spec.Contract.StateRoot),
@@ -1744,12 +1744,12 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 	for index, path := range stateDirs {
 		path = filepath.Clean(strings.TrimSpace(path))
 		if path == "." || !filepath.IsAbs(path) {
-			return fmt.Errorf("tclaude-layer harness state path %q is not absolute", path)
+			return fmt.Errorf("tclaude’s sandbox harness state path %q is not absolute", path)
 		}
 		for _, protected := range protectedRoots {
 			if sandboxpolicy.GuardContainsOrEqual(protected, path) {
 				return fmt.Errorf(
-					"tclaude-layer harness state path %q is at or below protected root %q",
+					"tclaude’s sandbox harness state path %q is at or below protected root %q",
 					path, protected)
 			}
 		}
@@ -1760,18 +1760,18 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 		// always treated it.
 		if info, statErr := os.Stat(path); statErr == nil && !info.IsDir() {
 			return fmt.Errorf(
-				"tclaude-layer harness state path %q exists and is not a directory; refusing to materialize a %s as harness state",
+				"tclaude’s sandbox harness state path %q exists and is not a directory; refusing to materialize a %s as harness state",
 				path, describeNonDirectoryMode(info.Mode()))
 		}
 		if err := os.MkdirAll(path, 0o700); err != nil {
-			return fmt.Errorf("prepare tclaude-layer harness state %q: %w", path, err)
+			return fmt.Errorf("prepare tclaude’s sandbox harness state %q: %w", path, err)
 		}
 		info, err := os.Stat(path)
 		if err != nil {
-			return fmt.Errorf("inspect tclaude-layer harness state %q: %w", path, err)
+			return fmt.Errorf("inspect tclaude’s sandbox harness state %q: %w", path, err)
 		}
 		if !info.IsDir() {
-			return fmt.Errorf("tclaude-layer harness state path %q is not a directory", path)
+			return fmt.Errorf("tclaude’s sandbox harness state path %q is not a directory", path)
 		}
 		if index > 0 {
 			resolved := path
@@ -1797,7 +1797,7 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 			}
 			if !inWriteContract {
 				return fmt.Errorf(
-					"tclaude-layer harness state path %q is not in the writable launch contract",
+					"tclaude’s sandbox harness state path %q is not in the writable launch contract",
 					path)
 			}
 		}
@@ -1806,32 +1806,32 @@ func PrepareTclaudeLayerHarnessState(spec TclaudeLayerLaunchSpec) error {
 	for _, path := range spec.Contract.ReadOnlyStateDirs {
 		path = filepath.Clean(strings.TrimSpace(path))
 		if path == "." || !filepath.IsAbs(path) {
-			return fmt.Errorf("tclaude-layer read-only harness state path %q is not absolute", path)
+			return fmt.Errorf("tclaude’s sandbox read-only harness state path %q is not absolute", path)
 		}
 		if path == stateRoot || !sandboxpolicy.PathContainsOrEqual(stateRoot, path) {
 			return fmt.Errorf(
-				"tclaude-layer read-only harness state path %q is not below state root %q",
+				"tclaude’s sandbox read-only harness state path %q is not below state root %q",
 				path, stateRoot)
 		}
 		for _, protected := range protectedRoots {
 			if sandboxpolicy.GuardContainsOrEqual(protected, path) {
 				return fmt.Errorf(
-					"tclaude-layer read-only harness state path %q is at or below protected root %q",
+					"tclaude’s sandbox read-only harness state path %q is at or below protected root %q",
 					path, protected)
 			}
 		}
 		if info, statErr := os.Stat(path); statErr == nil && !info.IsDir() {
 			return fmt.Errorf(
-				"tclaude-layer read-only harness state path %q exists and is not a directory; refusing to materialize a %s as harness state",
+				"tclaude’s sandbox read-only harness state path %q exists and is not a directory; refusing to materialize a %s as harness state",
 				path, describeNonDirectoryMode(info.Mode()))
 		}
 		if err := os.MkdirAll(path, 0o700); err != nil {
-			return fmt.Errorf("prepare tclaude-layer read-only harness state %q: %w", path, err)
+			return fmt.Errorf("prepare tclaude’s sandbox read-only harness state %q: %w", path, err)
 		}
 		access, covered := sandboxpolicy.EffectiveAccessAt(spec.Effective.Filesystem, path)
 		if !covered || access != sandboxpolicy.AccessRead {
 			return fmt.Errorf(
-				"tclaude-layer read-only harness state path %q is not read-only in the rendered launch contract",
+				"tclaude’s sandbox read-only harness state path %q is not read-only in the rendered launch contract",
 				path)
 		}
 	}
@@ -2174,7 +2174,7 @@ func bwrapArgsWithDaemonFinal(
 		for _, protected := range protectedRoots {
 			if sandboxpolicy.GuardContainsOrEqual(protected, writeDir) {
 				return nil, fmt.Errorf(
-					"tclaude-layer launch-contract path %q is at or below protected root %q",
+					"tclaude’s sandbox launch-contract path %q is at or below protected root %q",
 					writeDir,
 					protected,
 				)
@@ -2188,7 +2188,7 @@ func bwrapArgsWithDaemonFinal(
 	if tclaudeLayerPlanUsesConstructedRoot(plan) {
 		for i, socket := range socketPaths {
 			if socket == "" || !filepath.IsAbs(socket) {
-				return nil, fmt.Errorf("resolve agentd socket floor entry %d for isolated tclaude-layer", i)
+				return nil, fmt.Errorf("resolve agentd socket floor entry %d for isolated tclaude sandbox", i)
 			}
 			isCanonical := filepath.Clean(socket) == filepath.Clean(agentipc.CanonicalSocketPath())
 			bind := TclaudeLayerReadOnlyBind{Source: socket, Target: socket}
@@ -2200,7 +2200,7 @@ func bwrapArgsWithDaemonFinal(
 				bind.Source = filepath.Dir(socket)
 				bind.Target = filepath.Dir(socket)
 				if !agentipc.CanonicalSocketDirAvailable() {
-					return nil, fmt.Errorf("isolated tclaude-layer requires the canonical agentd socket directory %s", bind.Source)
+					return nil, fmt.Errorf("isolated tclaude sandbox requires the canonical agentd socket directory %s", bind.Source)
 				}
 			}
 			exists, err := bwrapBindSourceExists(bind.Source)
@@ -2209,11 +2209,11 @@ func bwrapArgsWithDaemonFinal(
 			}
 			if !exists {
 				if i == 0 {
-					return nil, fmt.Errorf("isolated tclaude-layer requires the canonical agentd socket %s", socket)
+					return nil, fmt.Errorf("isolated tclaude sandbox requires the canonical agentd socket %s", socket)
 				}
 				if i >= len(sandboxpolicy.AgentdSocketFloor()) {
 					return nil, fmt.Errorf(
-						"materialized unix socket %q disappeared before the tclaude-layer adapter rendered it",
+						"materialized unix socket %q disappeared before tclaude’s sandbox adapter rendered it",
 						socket)
 				}
 				continue
@@ -3191,7 +3191,7 @@ func validateTclaudeLayerHarnessStateRules(
 			if sandboxPathDepth(candidate.Path) == sandboxPathDepth(matched.Path) &&
 				candidate.Access != matched.Access {
 				return fmt.Errorf(
-					"tclaude-layer harness state rules %q (%s) and %q (%s) ambiguously cover profile filesystem rule %q",
+					"tclaude’s sandbox harness state rules %q (%s) and %q (%s) ambiguously cover profile filesystem rule %q",
 					matched.Path, matched.Access, candidate.Path, candidate.Access, grant.Path)
 			}
 		}
@@ -3206,7 +3206,7 @@ func validateTclaudeLayerHarnessStateRules(
 			continue
 		}
 		return fmt.Errorf(
-			"tclaude-layer profile filesystem rule %q (%s) is at or below harness state root %q, which requires %s access; refusing a launch with conflicting harness-state authority",
+			"tclaude’s sandbox profile filesystem rule %q (%s) is at or below harness state root %q, which requires %s access; refusing a launch with conflicting harness-state authority",
 			grant.Path,
 			grant.Access,
 			matched.Path,
@@ -3256,7 +3256,7 @@ func tclaudeLayerPhase0WriteDirs(
 	for _, path := range candidates {
 		path = filepath.Clean(strings.TrimSpace(path))
 		if path == "." || !filepath.IsAbs(path) {
-			return nil, fmt.Errorf("tclaude-layer launch-contract path %q is not absolute", path)
+			return nil, fmt.Errorf("tclaude’s sandbox launch-contract path %q is not absolute", path)
 		}
 		if resolved, resolveErr := filepath.EvalSymlinks(path); resolveErr == nil {
 			path = filepath.Clean(resolved)
@@ -3304,7 +3304,7 @@ func TclaudeLayerHarnessStateRoot(harnessName string) (string, error) {
 	case harness.OpenCodeName:
 		return filepath.Join(home, ".opencode"), nil
 	default:
-		return "", fmt.Errorf("tclaude-layer has no launch-contract state root for harness %q", harnessName)
+		return "", fmt.Errorf("tclaude’s sandbox has no launch-contract state root for harness %q", harnessName)
 	}
 }
 

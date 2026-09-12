@@ -324,7 +324,7 @@ func sandboxImplementationHostFailure(harnessName, implementation string) *spawn
 		if normalized.UsesNestedHarnessSandbox() {
 			return sandboxImplementationUnavailable(
 				fmt.Sprintf("stacked requested — refused: missing capability stacked_outer_tclaude_layer: %v; "+
-					"refusing rather than falling back to tclaude-layer or harness-builtin", err))
+					"refusing rather than falling back to tclaude’s sandbox or harness-builtin", err))
 		}
 		return sandboxImplementationUnavailable(
 			fmt.Sprintf("sandbox implementation %s is not available on this host: %v; "+

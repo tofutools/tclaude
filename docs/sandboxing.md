@@ -12,7 +12,7 @@ Three ideas carry this page:
 - A **profile** is what you author: a JSON capability bundle.
 - **`--sandbox`** is the harness's *own* sandbox mode — a per-harness setting.
 - **`--sandbox-impl`** is *who enforces* confinement — the harness itself,
-  tclaude's own OS layer, both stacked, a resource-only cgroup, or nobody.
+  tclaude’s built-in sandbox, both stacked, a resource-only cgroup, or nobody.
 
 Egress filtering has its own page ([Network filtering](network-filtering.md)),
 and credential-less workflows that make strict profiles livable have theirs
@@ -32,8 +32,8 @@ same layer. The values:
   *unset* is different from pinning `harness-builtin`: unset falls through the
   precedence chain and preserves each harness's historical behavior (for
   OpenCode, the command filter plus an explicit no-confinement warning).
-- **`tclaude-layer`** — tclaude wraps the tool-executing harness process in its
-  own wall: bubblewrap mount/IPC/cgroup/PID (and optionally network) namespaces
+- **tclaude’s built-in sandbox (`tclaude-layer`)** — wraps the tool-executing
+  harness process in its own sandbox: bubblewrap mount/IPC/cgroup/PID (and optionally network) namespaces
   on Linux, Seatbelt (`sandbox-exec`) on macOS. The harness's own OS sandbox is forced
   off inside it (Claude Code mode `off`, Codex `danger-full-access`; Copilot
   has no off-flag tclaude can set, so its configuration is verified instead and
@@ -50,7 +50,7 @@ same layer. The values:
   along. That boundary is a bonus, not the posture — a host with no delegated
   cgroup gets a `resource_cgroup_unavailable` notice and the wall it asked for,
   where `resource-only` refuses. An authored ceiling still fails closed.
-- **`stacked`** (experimental, Linux only, Claude Code and current-backend
+- **tclaude + harness sandboxes (`stacked`)** (Linux only, Claude Code and current-backend
   Codex) — both walls at once: tclaude's outer sandbox with the harness's real
   inner sandbox kept active (Claude Code forced `on` with
   `enableWeakerNestedSandbox: false`; Codex forced onto a managed profile with
@@ -122,10 +122,10 @@ is per harness, persisted per conversation, and orthogonal to who enforces:
   default) | `workspace-write` | `read-only` | `danger-full-access`.
 - **Copilot**: `inherit` | `off` only — deliberately no `on`, because tclaude
   has no lever to enable Copilot's sandbox.
-- **OpenCode**: no built-in OS sandbox; `tclaude-layer` is its real confinement
+- **OpenCode**: no built-in OS sandbox; tclaude’s sandbox is its real confinement
   mode.
 
-Under `tclaude-layer` the mode is derived (forced off/danger inside the wall),
+Under tclaude’s sandbox the mode is derived (forced off/danger inside the wall),
 not an operator escape hatch.
 
 ## The profile model
@@ -160,7 +160,7 @@ The axes:
       tmpfs over it, and no primitive makes a single *file* absent — every
       candidate substitutes content instead of removing the name. Deny the
       containing directory and reopen the entries that must stay reachable.
-    - **Enforcement needs `tclaude-layer` on Linux.** Binding one file requires a
+    - **Enforcement needs tclaude’s sandbox on Linux.** Binding one file requires a
       mount namespace whose whole boundary tclaude owns. Seatbelt,
       `harness-builtin`, `resource-only`/`off`, and `stacked` all refuse with
       `unsupported_sandbox_profile_file_grant`. `stacked` refuses even on Linux:
@@ -181,12 +181,12 @@ The axes:
   be the same kind as the source — there the sandbox root *is* the host root, so
   bubblewrap has nowhere to create one; a constructed root creates it.
   Enforcement needs a real mount namespace, so it works only under
-  `tclaude-layer`/`stacked` on Linux; Seatbelt (a path filter, not a
-  mount namespace) and `harness-builtin` refuse the launch with
+  tclaude’s sandbox on Linux, alone or combined with the harness’s sandbox.
+  Seatbelt (a path filter, not a mount namespace) and `harness-builtin` refuse the launch with
   `unsupported_sandbox_profile_mount_path` rather than falling back to the
   host path. **`stacked` carries directory rows only**: a row naming a file is
   refused there whether or not it is remapped, so projecting a *file* needs
-  plain `tclaude-layer`.
+  tclaude’s sandbox alone.
 - **`tmpfs`** — rows of `{path, size?}` mounting a temporary filesystem *inside*
   the sandbox: `{"path": "/scratch", "size": "512MiB"}`. This is the one thing a
   `filesystem` row cannot express — writable space backed by no host directory
@@ -205,8 +205,8 @@ The axes:
   *inherited* filesystem root the mount point must already exist on the host,
   for the same reason `mount_path` needs one; `filesystem_root: separate` is
   usually the answer for a path like `/scratch`. Enforcement needs a mount
-  namespace whose whole boundary tclaude owns, so it works only under plain
-  `tclaude-layer` on Linux — Seatbelt, `harness-builtin`, `resource-only`/`off`
+  namespace whose whole boundary tclaude owns, so it works only with
+  tclaude’s sandbox alone on Linux — Seatbelt, `harness-builtin`, `resource-only`/`off`
   and `stacked` all refuse with `unsupported_sandbox_profile_tmpfs`. `stacked`
   refuses even on Linux: the outer layer would mount the tmpfs and the inner
   harness-native wall, fed from host-path directory lists, would then deny the
@@ -242,8 +242,8 @@ The axes:
   → `cpu.max` at a 100 ms period; Linux cgroup v2, whole workload tree,
   orthogonal to confinement, works with any non-`off` implementation. Both
   blank means no cgroup probing at all, except under `resource-only` (which
-  always creates its cgroup) and under a Linux `tclaude-layer`/`stacked` launch
-  (which tries, and degrades to a notice if the host cannot). macOS, `off`, and
+  always creates its cgroup) and when launching with tclaude’s sandbox on
+  Linux, alone or combined with the harness’s sandbox (which tries, and degrades to a notice if the host cannot). macOS, `off`, and
   hosts without delegated controllers refuse by default every cgroup a launch
   cannot proceed without — an authored ceiling under any implementation, and
   `resource-only` even with no ceiling; the dashboard's "allow launch without
@@ -276,7 +276,7 @@ than under Claude Code.
 
 ### The harness-config floor
 
-Under `tclaude-layer` the launch contract binds the harness's state root
+Under tclaude’s sandbox the launch contract binds the harness's state root
 read-write — `~/.claude`, `$CODEX_HOME`/`~/.codex`, `$COPILOT_HOME`/`~/.copilot`,
 `~/.opencode` plus OpenCode's XDG roots — because that is where the harness
 keeps state it genuinely must write: transcripts, project records, todos,
@@ -307,7 +307,7 @@ bubblewrap and Seatbelt.
 | opencode | nothing — its config tree is already bound read-only by OpenCode's own state layout, in both legacy-shared and private modes |
 
 Claude Code's own sandbox deny-writes a broadly similar set for its Bash tool;
-without the floor tclaude's outer wall was *weaker* than the harness's own
+without the floor tclaude’s sandbox was *weaker* than the harness's own
 default.
 
 Materialization writes only what is indistinguishable from absent: an empty
@@ -340,7 +340,7 @@ trust-folder record. `/model` and directory trust for Claude Code land in
    directory (`~/.claude/hooks/mine`) reopens only that path and leaves the
    floor over the rest of the directory intact. A floored *file* is reopened the
    same way — `{"path": "~/.claude/settings.json", "access": "write"}` — since a
-   row may name a single file, though that row needs `tclaude-layer` on Linux
+   row may name a single file, though that row needs tclaude’s sandbox on Linux
    and is refused under `stacked` and `harness-builtin` like any other file row.
 2. `"harness_config": "write"` turns the whole floor off, restoring the
    pre-floor posture — but only when nothing else in the chain pins it.
@@ -372,7 +372,8 @@ trust-folder record. `/model` and directory trust for Claude Code land in
    wider than its recorded parent's — an agent holding the slug can pin the
    floor on a child, but can only pass `write` down if it already has it.
 
-The floor applies where tclaude owns the wall — `tclaude-layer` and `stacked`.
+The floor applies with tclaude’s sandbox, alone or combined with the
+harness’s sandbox.
 Under `harness-builtin` the harness's own policy governs and the axis is
 inert; under `resource-only`/`off` nothing is enforced by design. Lineage
 treats it like any other containment rule: a floored parent cannot spawn an
@@ -492,8 +493,8 @@ that can faithfully enforce it:
 | Codex legacy Landlock, or a raw `--sandbox` mode | refused |
 | Any other harness under `harness-builtin` | refused |
 
-The `tclaude-layer` and `stacked` implementations enforce the shape themselves
-on both platforms. The gate keys on the rules tclaude will *emit*, not just the
+tclaude’s sandbox, alone or combined with the harness’s sandbox, enforces the
+shape itself on both platforms. The gate keys on the rules tclaude will *emit*, not just the
 rows you authored: a bare `deny ~` with no reopens of your own still becomes a
 split policy, because the launch contract adds its own reopens.
 
@@ -715,7 +716,7 @@ cannot `send-keys` at tclaude's tmux server.
 ### Honestly residual holes
 
 - **`~/.claude/.claude.json` stays writable, and it carries `mcpServers`.**
-  Under `tclaude-layer` the harness-config floor cannot cover it: Claude Code
+  Under tclaude’s sandbox the harness-config floor cannot cover it: Claude Code
   writes that file continuously (project records, directory trust, history),
   and `CLAUDE_CONFIG_DIR` puts it inside the same writable state root. An agent
   that appends an `mcpServers` entry there gets that command executed by the
@@ -842,7 +843,7 @@ A sandbox profile can select the filesystem root explicitly with
 `filesystem_root`: omit it for **Automatic**, use `inherit` to prefer the
 read-only host root, or use `separate` to request the minimal constructed root
 even when network and Unix sockets remain open. Explicit separation is
-supported by Linux `tclaude-layer` for Claude Code, Codex, OpenCode, and
+supported by tclaude’s sandbox on Linux for Claude Code, Codex, OpenCode, and
 Copilot; other targets refuse it during preview/spawn rather than ignoring it.
 
 The setting composes monotonically. `separate` in any included, global, group,
@@ -945,8 +946,8 @@ broken install, and the refusal is the correct outcome.
 `stacked_claude_inner_policy` or `stacked_claude_srt_probe` for Claude Code
 (which one depends on how far the inner harness got), `stacked_codex_bwrap_backend`
 for Codex — and the detail carries an inner `bwrap` complaint along the lines
-of *No permissions to create a new namespace*. Ordinary single-layer
-`tclaude-layer` on the same host works fine: the outer wall is not the problem.
+of *No permissions to create a new namespace*. tclaude’s sandbox alone
+on the same host works fine: the outer wall is not the problem.
 
 **Cause.** Ubuntu ships and enforces an AppArmor policy,
 `/etc/apparmor.d/bwrap-userns-restrict`, whose whole purpose is to let `bwrap`
@@ -1006,10 +1007,9 @@ sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
 
 This is a **host-wide security trade-off, not a tclaude setting**: it removes
 Ubuntu's defence-in-depth around unprivileged user namespaces for every process
-on the machine, including ones that have nothing to do with tclaude. Stacked is
-experimental; single-layer `tclaude-layer` needs none of this. Decide
-accordingly, and prefer the temporary form when you only want to observe
-stacked once:
+on the machine, including ones that have nothing to do with tclaude.
+tclaude’s sandbox alone needs none of this. Decide accordingly, and prefer
+the temporary form when you only want to observe stacked once:
 
 ```bash
 sudo aa-complain /etc/apparmor.d/bwrap-userns-restrict
@@ -1041,7 +1041,7 @@ is still open; what stands today is that stacked fails closed and says so.
 
 ### An untrusted `bwrap`
 
-**Symptom.** Every `tclaude-layer` launch refuses with `tclaude-layer could not
+**Symptom.** Every launch with tclaude’s sandbox refuses with `tclaude’s sandbox could not
 resolve a trusted bubblewrap (bwrap)`, naming a path component and one of
 *group/world writable*, *not a regular executable*, or *is not a directory*.
 `bwrap` itself runs fine from a shell.
@@ -1068,9 +1068,9 @@ runs before the capability probe, so a trust refusal means the probe never
 ran. A namespace failure reads *cannot create the bubblewrap … namespace*
 instead.
 
-### Where the tclaude-layer capability probe runs
+### Where the sandbox capability probe runs
 
-`tclaude-layer` refuses rather than falling back, and that promise is only as
+tclaude’s sandbox refuses rather than falling back, and that promise is only as
 good as the pre-flight probe behind it. On Linux the probe and the launch used
 to stand in different places, so on some hosts the probe could pass a launch
 that could not run.
@@ -1121,7 +1121,7 @@ that warning is the first thing to grep for.
 between probe and launch, a tmux server that restarts under a different
 profile, or any of the fallbacks above can still leave the exec denied. The
 relay reports that denial as a named refusal —
-`tclaude-layer requested — refused: the host denied this process permission to
+`tclaude’s sandbox requested — refused: the host denied this process permission to
 execute bubblewrap …` — instead of the bare `fork/exec …: operation not
 permitted` at exit 125 it used to print. Nothing runs unconfined; but the pane
 dies rather than being refused pre-flight, so this is evidence that names the
@@ -1135,14 +1135,14 @@ cause, not a restored pre-flight contract.
 | `command not found` for a tool on `$PATH` | Install root under a deny and not reopened |
 | Builds fail despite readable caches | Toolchain binary root denied, not just the cache |
 | `tclaude: command not found`, socket fine | tclaude's binary dir not reopened — it is never implicit |
-| Git loses identity / credential helper | `~/.gitconfig` not reopened — add a file row for it (needs `tclaude-layer` on Linux) |
-| `unsupported_sandbox_profile_file_grant` | A row names a file on an implementation that cannot bind one — use `tclaude-layer` on Linux |
+| Git loses identity / credential helper | `~/.gitconfig` not reopened — add a file row for it (needs tclaude’s sandbox on Linux) |
+| `unsupported_sandbox_profile_file_grant` | A row names a file on an implementation that cannot bind one — use tclaude’s sandbox on Linux |
 | `…was a regular file when this rule was authored and is now a directory` | The pathname a file row named was replaced by a directory; re-author the row if that is intended |
 | `git add -A`: "can only add regular files" | Claude Code masks a denied path with a `/dev/null` device node — stage specific paths |
 | Launch refused, `…reopen_under_deny` | Claude Code not sandbox `on`, or Codex not Linux managed-profile with a verified probe |
 | `stacked` refused on Ubuntu 24.04+ | The `bwrap-userns-restrict` AppArmor policy denies nested bubblewrap |
 | `could not resolve a trusted bubblewrap (bwrap)` | A group/world-writable component above `bwrap` — see [an untrusted `bwrap`](#an-untrusted-bwrap) |
-| Pane dies instantly, `refused: the host denied this process permission to execute bubblewrap` | The tmux server's confinement forbids the exec — see [where the probe runs](#where-the-tclaude-layer-capability-probe-runs) |
+| Pane dies instantly, `refused: the host denied this process permission to execute bubblewrap` | The tmux server's confinement forbids the exec — see [where the probe runs](#where-the-sandbox-capability-probe-runs) |
 | Profile looks strict, nothing is denied | Claude Code sandbox `inherit`/`off` — the deny rows are emitted but the sandbox never engages |
 | Agent read a denied path with the `Read` tool | Expected under `deny ~` — that shape reaches layer 1 only |
 | Agent reached something the profile denied | Check MCP, which bypasses the sandbox |

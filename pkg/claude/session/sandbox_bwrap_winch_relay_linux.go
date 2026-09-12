@@ -84,7 +84,7 @@ func tclaudeLayerWinchRelayCmd() *cobra.Command {
 	var binding stackedRelayBindingOptions
 	cmd := &cobra.Command{
 		Use:    tclaudeLayerWinchRelayCommand + " -- <bwrap> [args...]",
-		Short:  "Relay terminal resize notifications into tclaude-layer (internal)",
+		Short:  "Relay terminal resize notifications into tclaude’s sandbox (internal)",
 		Hidden: true,
 		Args:   cobra.MinimumNArgs(1),
 		Run: func(_ *cobra.Command, args []string) {

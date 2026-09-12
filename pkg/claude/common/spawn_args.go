@@ -192,7 +192,7 @@ type SpawnArgs struct {
 
 	// SandboxImplementation replays the durable owner of OS-level confinement.
 	// Empty and harness-builtin both preserve the default argv; tclaude-layer
-	// forwards the experimental --sandbox-impl opt-in on relaunch.
+	// forwards the --sandbox-impl opt-in on relaunch.
 	SandboxImplementation string
 	// DarwinRouteCapable is an explicit internal production/test seam. It is
 	// never inferred from the host environment or ordinary sandbox settings.

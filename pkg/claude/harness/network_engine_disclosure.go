@@ -13,9 +13,9 @@ import (
 // must read the native host-loopback mechanism, because that is what the floor
 // expresses on its own.
 const (
-	ProxyEngineLinuxMechanism = "tclaude-layer bubblewrap + supervised loopback filtering proxy"
+	ProxyEngineLinuxMechanism = "tclaude’s sandbox: bubblewrap + supervised loopback filtering proxy"
 
-	ProxyEngineDarwinMechanism = "tclaude-layer Seatbelt + host-side filtering proxy"
+	ProxyEngineDarwinMechanism = "tclaude’s sandbox: Seatbelt + host-side filtering proxy"
 )
 
 // ProxyEngineCarriageNotice is §5.3's whole-posture disclosure, phrased for

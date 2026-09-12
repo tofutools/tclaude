@@ -8,8 +8,8 @@ const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet
 const sandboxImpl = {
   options: [
     { value: 'harness-builtin', label: '{harness} built-in' },
-    { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox (experimental)' },
-    { value: 'stacked', label: 'Stacked: tclaude + {harness} (experimental)' },
+    { value: 'tclaude-layer', label: 'tclaude’s built-in sandbox' },
+    { value: 'stacked', label: 'tclaude + {harness} sandboxes' },
     { value: 'off', label: 'Off' },
   ],
   default: 'harness-builtin',
@@ -325,8 +325,8 @@ test('profile editor names the harness-owned sandbox after the selected harness'
     [
       'Unset (resolved defaults at spawn)',
       'Claude Code built-in',
-      'tclaude built-in OS sandbox (experimental)',
-      'Stacked: tclaude + Claude Code (experimental)',
+      'tclaude’s built-in sandbox',
+      'tclaude + Claude Code sandboxes',
       'Off',
     ],
   );
@@ -353,8 +353,8 @@ test('profile editor names the harness-owned sandbox after the selected harness'
     [...host.querySelector('#profile-editor-sandbox-impl').options].map((option) => option.textContent),
     [
       'Unset (resolved defaults at spawn)',
-      'tclaude built-in OS sandbox (experimental) (recommended)',
-      'Stacked: tclaude + OpenCode (experimental)',
+      'tclaude’s built-in sandbox (recommended)',
+      'tclaude + OpenCode sandboxes',
       'Off',
     ],
   );
@@ -450,7 +450,7 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
     options: {},
     catalog: openCodeCatalog,
     sandboxImpl: {
-      options: [{ value: 'tclaude-layer', label: 'tclaude built-in OS sandbox (experimental)' }],
+      options: [{ value: 'tclaude-layer', label: 'tclaude’s built-in sandbox' }],
       default: 'harness-builtin',
       host_available: true,
     },
@@ -467,7 +467,7 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
         probes.push(input);
         return {
           info: input.sandboxImplementation === 'tclaude-layer'
-            ? ["OpenCode's tool-executing server runs inside tclaude's built-in OS sandbox."]
+            ? ["OpenCode's tool-executing server runs inside tclaude’s built-in sandbox."]
             : [],
           warnings: input.sandboxImplementation === 'tclaude-layer'
             ? []
@@ -499,7 +499,7 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
   assert.doesNotMatch(notice.className, /sandbox-info-pending/);
   assert.equal(notice.querySelector('[role="status"]').getAttribute('role'), 'status');
   assert.match(notice.querySelector('.spawn-field-hint.info').textContent,
-    /tool-executing server runs inside tclaude's built-in OS sandbox/);
+    /tool-executing server runs inside tclaude’s built-in sandbox/);
   assertAbsent(notice.querySelector('.spawn-field-hint.warn'));
   assertAbsent(host.querySelector('#profile-editor-autonomy-warning'));
   assert.doesNotMatch(notice.textContent, /no built-in OS sandbox/,
@@ -2290,7 +2290,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
       const codexBuiltin = target.implementation === 'harness-builtin'
         && target.harness === 'codex';
       const networkDetail = codexBuiltin
-        ? 'Codex has no filtered network sandbox yet. Its upstream proxy is experimental and off by default; it admits only proxy-aware clients and on Linux prevents access to the tclaude agentd socket, so it cannot enforce this profile’s ordinary TCP/UDP access list. Use tclaude-layer filtering on Linux, or choose network open (Allow all).'
+        ? 'Codex has no filtered network sandbox yet. Its upstream proxy is experimental and off by default; it admits only proxy-aware clients and on Linux prevents access to the tclaude agentd socket, so it cannot enforce this profile’s ordinary TCP/UDP access list. Use tclaude’s sandbox filtering on Linux, or choose network open (Allow all).'
         : 'resolver-owned network detail';
       return {
         targets: [{ target, resolved_by: 'harness default', predicted: true, axes: {
@@ -2341,8 +2341,8 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
       .map((option) => option.textContent),
     [
       'Codex built-in sandbox',
-      'tclaude sandbox',
-      'Stacked sandboxes',
+      'tclaude’s built-in sandbox',
+      'tclaude + Codex sandboxes',
     ],
   );
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
@@ -2372,9 +2372,9 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   }]);
   assert.equal(host.querySelector('.sbx-network-ports').value, '443');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
-    /OpenCode on macOS · tclaude sandbox/);
+    /OpenCode on macOS · tclaude’s built-in sandbox/);
   assert.match(host.querySelector('.sbx-mach-register-evaluation').textContent,
-    /Mach service registration.*Allowed by the tclaude Seatbelt layer for this target/s,
+    /Mach service registration.*Allowed by tclaude’s sandbox on macOS for this target/s,
     'the preview discloses that the composed compatibility capability applies to this target');
   const applied = host.querySelector('.sbx-rule-bucket-applied');
   assert.equal(applied.hasAttribute('open'), false,
@@ -2963,7 +2963,7 @@ test('effective preview buckets normalized deny rows with target-specific help',
   await harness.act(() => harness.fireEvent(partialHelp, 'click'));
   assert.equal(partialHelp.getAttribute('aria-expanded'), 'true');
   assert.match(partialRow.querySelector('.spawn-field-description').textContent,
-    /Partial on Codex on Linux · tclaude sandbox\./);
+    /Partial on Codex on Linux · tclaude’s built-in sandbox\./);
   assert.match(partialRow.querySelector('.spawn-field-description').textContent,
     /If any check fails, these rules are not enforced and outbound traffic is open/);
   unmount();
@@ -3016,7 +3016,7 @@ test('sandbox access rows expose aligned grid cells for network and Unix sockets
   assert.match(networkHelp.textContent, /ordinary IPv4\/IPv6 TCP and UDP/);
   assert.match(networkHelp.textContent, /QUIC is UDP/);
   assert.match(networkHelp.textContent, /Raw and packet sockets are not an authored class/);
-  assert.match(networkHelp.textContent, /For Linux tclaude-layer filtered networking/);
+  assert.match(networkHelp.textContent, /For filtered networking with tclaude’s sandbox on Linux/);
   assert.match(networkHelp.textContent, /Host and domain rules allow IP addresses returned by DNS/);
   assert.match(networkHelp.textContent, /sandbox can also reach other sites hosted on that same IP/);
   assert.match(networkHelp.textContent, /Only a new DNS lookup refreshes the allowed IP/);
@@ -3029,7 +3029,7 @@ test('sandbox access rows expose aligned grid cells for network and Unix sockets
   assert.match(networkHelp.textContent, /compose by intersection/);
   assert.match(networkHelp.textContent, /Codex’s built-in filesystem sandbox remains available/);
   assert.match(networkHelp.textContent, /upstream proxy is experimental and off by default/);
-  assert.match(networkHelp.textContent, /tclaude-layer filtering on Linux/);
+  assert.match(networkHelp.textContent, /tclaude’s sandbox filtering on Linux/);
   assert.match(networkHelp.textContent, /network open \(Allow all\)/);
   assert.ok(host.querySelector('.sbx-socket-row.sbx-access-row'));
 
@@ -3975,7 +3975,7 @@ test('mount-path control discloses a projection and refuses it on a deny row', a
   const mountHelpBody = mountHelp.nextElementSibling;
   assert.match(mountHelpBody.textContent, /not visible inside the sandbox at all/,
     'the disclosure states what the host path stops being');
-  assert.match(mountHelpBody.textContent, /Linux tclaude-layer or stacked only/);
+  assert.match(mountHelpBody.textContent, /tclaude’s sandbox on Linux, alone or combined with the harness’s sandbox/);
   assert.match(mountHelpBody.textContent, /never fall back to exposing the host path/);
   assert.match(mountHelpBody.textContent, /\/srv\/corpus/,
     'it names the row it belongs to, not "the host directory"');
@@ -4478,7 +4478,7 @@ test('sandbox tmpfs editor authors mounts, validates them beside the field, and 
   assert.equal(section.tagName, 'DETAILS');
   assert.equal(section.hasAttribute('open'), false, 'the section starts folded like its peers');
   assert.equal(section.querySelector('.sbx-section-count').textContent, '2 entries');
-  assert.match(section.querySelector('.sbx-tmpfs-intro').textContent, /Linux tclaude-layer only/,
+  assert.match(section.querySelector('.sbx-tmpfs-intro').textContent, /Requires tclaude’s sandbox on Linux/,
     'the capability limit is stated where the mounts are authored, not only in the help');
   assert.deepEqual([...section.querySelectorAll('.sbx-tmpfs-path')].map((input) => input.value),
     ['/scratch', '/build']);

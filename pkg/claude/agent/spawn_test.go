@@ -217,7 +217,7 @@ func TestValidateSpawnSandboxImplementation_RejectsOpenCodeBuiltinOnlyWhenSet(t 
 	require.EqualError(t, err,
 		`sandbox implementation "harness-builtin" is invalid for OpenCode: `+
 			`OpenCode has no built-in OS sandbox; its access-control mode is a command filter, `+
-			`not confinement; use tclaude-layer or spawn with the sandbox off`)
+			`not confinement; use tclaude’s sandbox or spawn with the sandbox off`)
 
 	got, err := validateSpawnSandboxImplementation(opencode, "")
 	require.NoError(t, err)

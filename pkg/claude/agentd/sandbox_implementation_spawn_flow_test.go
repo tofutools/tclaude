@@ -151,7 +151,7 @@ func TestSpawn_SandboxImplementationFromProfileTiers(t *testing.T) {
 // TestSpawn_ExplicitHarnessBuiltinPinsAgainstProfile: "" (unset) and an explicit
 // "harness-builtin" are deliberately different values. Unset falls through;
 // harness-builtin PINS the legacy implementation so a group default cannot flip
-// the agent onto the experimental layer. Without that distinction an operator
+// the agent onto the tclaude layer. Without that distinction an operator
 // would have no way to opt one spawn back out.
 func TestSpawn_ExplicitHarnessBuiltinPinsAgainstProfile(t *testing.T) {
 	f := newFlow(t)
@@ -208,7 +208,7 @@ func TestSpawn_OpenCodeExplicitHarnessBuiltinRefuses(t *testing.T) {
 	assert.Equal(t,
 		`sandbox implementation "harness-builtin" is invalid for OpenCode: `+
 			`OpenCode has no built-in OS sandbox; its access-control mode is a command filter, `+
-			`not confinement; use tclaude-layer or spawn with the sandbox off`,
+			`not confinement; use tclaude’s sandbox or spawn with the sandbox off`,
 		failure.Error)
 	assertSandboxLayerCalls(t, f)
 }

@@ -134,7 +134,7 @@ path — direct, template, wave, process, scribe, and clone.
 
 **4. Sandbox lineage.** A child may not launch under a weaker sandbox than
 its parent (`403 sandbox_restricted`). Confinement can only ratchet down
-the tree, never widen. Launches under tclaude's own sandbox layer are
+the tree, never widen. Launches under tclaude’s sandbox are
 classified by their *real* confinement, not the `off` or
 `danger-full-access` value recorded for the inner harness. See
 [Sandboxing](sandboxing.md).

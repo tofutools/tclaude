@@ -195,7 +195,7 @@ export function harnessBuiltinModeHelpForImplementation(help, implementation, ha
   }
   if (text(implementation) === SANDBOX_IMPL_TCLAUDE_LAYER
     && (harnessName === 'claude' || harnessName === 'codex')) {
-    return "The harness's own sandbox is off by design. tclaude's built-in OS sandbox enforces "
+    return "The harness's own sandbox is off by design. tclaude’s built-in sandbox enforces "
       + 'sandbox-profile filesystem rules as OS mounts; any environment entries also apply.';
   }
   if (text(implementation) === SANDBOX_IMPL_STACKED
@@ -381,7 +381,7 @@ export function sandboxImplCaveatFor(draft, view, resolvedImplementation = '') {
 
 // sandboxImplHintFor renders the note under the sandbox-implementation row.
 // Two truths, in the order an operator needs them: what the selected
-// implementation actually is, and — when they have selected the experimental
+// implementation actually is, and — when they have selected the tclaude
 // one on a host that cannot run it — that the launch will REFUSE rather than
 // quietly fall back. Saying "will refuse" is the whole point: an operator who
 // picks it anyway is choosing a failed launch, not an unnoticed downgrade.
@@ -440,7 +440,7 @@ export function sandboxImplHintFor(draft, view, resolvedImplementation = '') {
       text: explicit
         ? `harness-builtin is invalid for ${harnessLabel}: ${harnessLabel} has no built-in OS sandbox; `
           + 'its access-control mode is a command filter, not confinement; '
-          + "use tclaude's built-in OS sandbox or spawn with the sandbox off."
+          + "use tclaude’s built-in sandbox or spawn with the sandbox off."
         : 'No built-in OS sandbox; access-control is a command filter, not confinement.',
     };
   }
@@ -466,14 +466,14 @@ export function sandboxImplHintFor(draft, view, resolvedImplementation = '') {
         return {
           warn: true,
           ...appArmor,
-          text: 'Experimental, and likely blocked on this host: an enforcing '
+          text: 'Likely blocked on this host: an enforcing '
             + 'bwrap-userns-restrict AppArmor policy denies the nested bwrap, so the launch '
             + 'round-trip will probably refuse. Availability above resolves the engine only.',
         };
       }
       return {
         warn: false,
-        text: 'Experimental. Launch performs a fresh model-free allowed/denied round-trip through '
+        text: 'Launch performs a fresh model-free allowed/denied round-trip through '
           + "the harness's real nested engine inside the exact tclaude outer boundary.",
       };
     }
@@ -497,7 +497,7 @@ export function sandboxImplHintFor(draft, view, resolvedImplementation = '') {
   if (view.sandboxImplHostAvailable) {
     return {
       warn: false,
-      text: 'Experimental. Wraps the authoritative tool executor in a tclaude-owned '
+      text: 'Wraps the authoritative tool executor in a tclaude-owned '
         + 'bubblewrap namespace.',
     };
   }

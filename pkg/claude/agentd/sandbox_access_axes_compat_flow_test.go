@@ -1388,14 +1388,14 @@ func TestSpawnAccessPlannerWarnsAndRefusesThroughExistingChannels(t *testing.T) 
 	}
 	socketsSurviveHostOpen := true
 	if runtime.GOOS == "darwin" {
-		warningLiteral = "tclaude-layer Seatbelt (process scope)"
-		ambientLiteral = `ambient unix-socket access is not yet enforceable under closed network access on macOS tclaude-layer`
+		warningLiteral = "tclaude’s sandbox: Seatbelt (process scope)"
+		ambientLiteral = `ambient unix-socket access is not yet enforceable under closed network access with tclaude’s sandbox on macOS`
 		refusedProfiles = []struct {
 			profile string
 			want    string
 		}{
 			{"socket-closed",
-				`unix_sockets \"closed\" is not yet enforceable with open network access on macOS tclaude-layer`},
+				`unix_sockets \"closed\" is not yet enforceable with open network access with tclaude’s sandbox on macOS`},
 			{"ambient-sockets", ambientLiteral},
 		}
 		socketsSurviveHostOpen = false

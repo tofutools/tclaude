@@ -282,7 +282,7 @@ export function createActionDialogActions({
       const harness = findSpawnHarness(snapshot.harnesses, harnessName);
       if (implementation === 'stacked') {
         if (harness && !harness.can_stacked) {
-          return `${harness.display_name || harnessName} has no nested sandbox to stack under tclaude's outer wall.`;
+          return `${harness.display_name || harnessName} has no nested sandbox to stack under tclaude’s sandbox.`;
         }
         const stacked = catalog.stacked?.[harnessName];
         if (stacked && !stacked.available) return stacked.unavailable_reason || 'the stacked engine is unavailable on this host.';
@@ -297,7 +297,7 @@ export function createActionDialogActions({
         const reason = serverBoundary
           ? catalog.server_host_unavailable_reason
           : catalog.host_unavailable_reason;
-        if (available === false) return reason || 'the tclaude layer is unavailable on this host.';
+        if (available === false) return reason || 'tclaude’s sandbox is unavailable on this host.';
       }
       return '';
     },

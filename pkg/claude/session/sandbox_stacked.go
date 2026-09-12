@@ -291,7 +291,7 @@ func bwrapCarriesAppArmorPolicy(bwrapBinary string) bool {
 
 func stackedSandboxRefusal(capability, detail string) error {
 	return fmt.Errorf(
-		"stacked requested — refused: missing capability %s: %s; refusing rather than falling back to tclaude-layer or harness-builtin",
+		"stacked requested — refused: missing capability %s: %s; refusing rather than falling back to tclaude’s sandbox or harness-builtin",
 		capability, detail)
 }
 

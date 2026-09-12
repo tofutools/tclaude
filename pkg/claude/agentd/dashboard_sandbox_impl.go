@@ -9,14 +9,10 @@ import (
 
 // dashboardSandboxImpl is the sandbox-IMPLEMENTATION catalog the spawn dialog
 // and profile editor render: the closed set of implementations, which one is
-// the default, and whether this host can actually run the experimental one.
+// the default, and whether this host has the tooling to run each one.
 //
-// It is one nested object rather than the parallel sandbox_modes /
-// default_sandbox / sandbox_mode_help arrays the sandbox MODE row uses, for a
-// specific reason: the option copy, the experimental marking, and the
-// availability disclosure have to stay together. Split across parallel fields
-// they could drift, and a stale "experimental" label or a caveat that no longer
-// matches the probe is exactly the overclaim epic requirement 12 forbids.
+// Option copy and availability disclosure live together so the descriptions
+// stay consistent with what the host probes report.
 type dashboardSandboxImpl struct {
 	// Platform is the OS agentd is running on. The sandbox-profile editor uses
 	// it as the default target for effective-policy evaluation; the dashboard
@@ -103,9 +99,6 @@ type dashboardSandboxImplOption struct {
 	// Descr must go through that renderer rather than the raw catalog.
 	Label string `json:"label"`
 	Descr string `json:"descr"`
-	// Experimental marks an implementation that is not yet a supported posture.
-	// The label carries the word too; this flag lets the UI style it.
-	Experimental bool `json:"experimental,omitempty"`
 }
 
 func buildSandboxImplCatalog() dashboardSandboxImpl {
@@ -118,18 +111,16 @@ func buildSandboxImplCatalog() dashboardSandboxImpl {
 				Descr: "Current behavior: {harness} owns OS-level containment, using whatever sandbox it provides.",
 			},
 			{
-				Value:        string(sandboxpolicy.ImplementationTclaudeLayer),
-				Label:        "tclaude built-in OS sandbox (experimental)",
-				Experimental: true,
+				Value: string(sandboxpolicy.ImplementationTclaudeLayer),
+				Label: "tclaude’s built-in sandbox",
 				Descr: "Runs the authoritative tool executor inside a tclaude-owned bubblewrap mount namespace " +
 					"(the whole pane for interactive harnesses, or OpenCode's managed server). Linux only; " +
 					"requires bwrap and unprivileged user namespaces.",
 			},
 			{
-				Value:        string(sandboxpolicy.ImplementationStacked),
-				Label:        "Stacked: tclaude + {harness} (experimental)",
-				Experimental: true,
-				Descr: "Runs {harness} inside tclaude's outer wall and requires a live " +
+				Value: string(sandboxpolicy.ImplementationStacked),
+				Label: "tclaude + {harness} sandboxes",
+				Descr: "Runs {harness} inside tclaude’s sandbox and requires a live " +
 					"model-free round-trip through {harness}'s real nested OS sandbox. Linux Claude/Codex only.",
 			},
 			{

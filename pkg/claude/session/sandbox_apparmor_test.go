@@ -75,7 +75,7 @@ func TestStackedAppArmorLikelyCauseKeepsRefusalShape(t *testing.T) {
 	assert.Contains(t, err.Error(),
 		"stacked requested — refused: missing capability stacked_claude_inner_policy: ")
 	assert.Contains(t, err.Error(),
-		"; refusing rather than falling back to tclaude-layer or harness-builtin")
+		"; refusing rather than falling back to tclaude’s sandbox or harness-builtin")
 	assert.Contains(t, err.Error(), stackedAppArmorDocURL)
 }
 

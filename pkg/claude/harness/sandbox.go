@@ -194,13 +194,13 @@ func ResolveSandboxImplementationMode(
 // closed until it declares how that topology must be launched.
 func TclaudeLayerHarnessBuiltinMode(h *Harness) (string, error) {
 	if h == nil {
-		return "", fmt.Errorf("tclaude-layer requires a harness with a single-wall launch-mode capability; got nil harness")
+		return "", fmt.Errorf("tclaude’s sandbox requires a harness with a single-wall launch-mode capability; got nil harness")
 	}
 	mode := strings.TrimSpace(h.TclaudeLayerMode)
 	if mode == "" {
 		return "", fmt.Errorf(
-			"harness %q has no tclaude-layer single-wall launch-mode capability; "+
-				"use a harness that supports tclaude-layer or select --sandbox-impl harness-builtin",
+			"harness %q has no tclaude’s sandbox single-wall launch-mode capability; "+
+				"use a harness that supports tclaude’s sandbox or select --sandbox-impl harness-builtin",
 			h.Name,
 		)
 	}
@@ -287,7 +287,7 @@ type LaunchOSSandbox struct {
 	FilteredNetwork bool
 	// Unverified marks a verdict tclaude could not fully establish. For a
 	// harness-owned sandbox this means an outranking settings file could not be
-	// read; experimental outer layers may also use it to record a known partial
+	// read; outer layers may also use it to record a known partial
 	// enforcement boundary in Source.
 	//
 	// It is recorded because the badge is a durable claim about containment, and

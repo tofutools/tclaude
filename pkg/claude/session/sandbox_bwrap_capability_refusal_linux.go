@@ -15,7 +15,7 @@ import (
 // channel a relay-side refusal has, so the phrase has to be recognisable as a
 // REFUSAL by a human reading `docs/sandboxing.md` rather than as one more
 // process error.
-const tclaudeLayerRefusalPrefix = "tclaude-layer requested — refused:"
+const tclaudeLayerRefusalPrefix = "tclaude’s sandbox requested — refused:"
 
 // tclaudeLayerConfinementHint explains, in one sentence, why a capability the
 // pre-flight probe reported healthy can be missing here. It is stated at the

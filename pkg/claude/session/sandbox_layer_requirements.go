@@ -155,12 +155,12 @@ func foldTclaudeLayerRequirements(
 		path := filepath.Clean(strings.TrimSpace(requirement.Path))
 		if path == "." || !filepath.IsAbs(path) {
 			return tclaudeLayerRequirementBuckets{}, fmt.Errorf(
-				"tclaude-layer requirement %q (%s) is not an absolute path",
+				"tclaude’s sandbox requirement %q (%s) is not an absolute path",
 				requirement.Path, requirement.Source)
 		}
 		if requirement.Kind != harness.LayerPathDirectory && requirement.MayCreate {
 			return tclaudeLayerRequirementBuckets{}, fmt.Errorf(
-				"tclaude-layer requirement %q (%s) is a %s and cannot be materialized by launch preparation",
+				"tclaude’s sandbox requirement %q (%s) is a %s and cannot be materialized by launch preparation",
 				path, requirement.Source, requirement.Kind)
 		}
 		switch {
@@ -183,7 +183,7 @@ func foldTclaudeLayerRequirements(
 			requirement.Access == harness.LayerPathRead && requirement.MayCreate:
 			if path == stateRoot || !sandboxpolicy.PathContainsOrEqual(stateRoot, path) {
 				return tclaudeLayerRequirementBuckets{}, fmt.Errorf(
-					"tclaude-layer read-only state requirement %q (%s) is not below state root %q",
+					"tclaude’s sandbox read-only state requirement %q (%s) is not below state root %q",
 					path, requirement.Source, stateRoot)
 			}
 			out.ReadOnlyStateDirs = append(out.ReadOnlyStateDirs, path)
@@ -202,7 +202,7 @@ func foldTclaudeLayerRequirements(
 			out.LaunchWriteDirs = appendUniqueDir(out.LaunchWriteDirs, path)
 		default:
 			return tclaudeLayerRequirementBuckets{}, fmt.Errorf(
-				"tclaude-layer requirement %q (%s) has unsupported shape: kind %q, access %q, may-create %t",
+				"tclaude’s sandbox requirement %q (%s) has unsupported shape: kind %q, access %q, may-create %t",
 				path, requirement.Source, requirement.Kind, requirement.Access,
 				requirement.MayCreate)
 		}

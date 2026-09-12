@@ -143,7 +143,7 @@ func TestSandboxProfileFilesystemRootPredictionRefusesUnsupportedTargets(t *test
 	assert.False(t, got.Targets[1].Predicted)
 	require.NotNil(t, got.Targets[1].Refusal)
 	assert.Equal(t, "unsupported_sandbox_profile_filesystem_root", got.Targets[1].Refusal.Kind)
-	assert.Contains(t, got.Targets[1].Refusal.Message, "requires Linux tclaude-layer")
+	assert.Contains(t, got.Targets[1].Refusal.Message, "requires tclaude’s sandbox on Linux")
 }
 
 func TestSandboxProfilesPayloadReadsAndMutationsRequireDedicatedPermission(t *testing.T) {

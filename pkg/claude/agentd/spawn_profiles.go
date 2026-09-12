@@ -63,7 +63,7 @@ type spawnProfileJSON struct {
 	Effort  string `json:"effort,omitempty"`
 	Sandbox string `json:"sandbox,omitempty"`
 	// SandboxImplementation pins who owns OS-level confinement:
-	// "harness-builtin" (the legacy default) or the EXPERIMENTAL
+	// "harness-builtin" (the legacy default) or the
 	// "tclaude-layer" OS wrapper. "" = unset, which falls through to the next
 	// precedence tier at spawn — distinct from an explicit "harness-builtin",
 	// which pins the legacy implementation against a lower tier and is valid

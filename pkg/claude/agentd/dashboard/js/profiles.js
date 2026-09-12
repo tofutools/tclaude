@@ -234,7 +234,7 @@ function profileSummary(p, { status = true } = {}) {
   if (p.sandbox && p.sandbox !== 'inherit') parts.push(`sandbox ${p.sandbox}`);
   // Only a non-default implementation earns a chip. An explicit harness-builtin
   // pin does show: it is a real override that stops a lower tier flipping the
-  // agent onto the experimental layer, which is worth seeing at a glance.
+  // agent onto the tclaude layer, which is worth seeing at a glance.
   if (p.sandbox_implementation) parts.push(`impl ${p.sandbox_implementation}`);
   if (p.agent_name) parts.push(`name ${p.agent_name}`);
   const roles = Array.isArray(p.role_refs) && p.role_refs.length ? p.role_refs : (p.role_ref ? [p.role_ref] : []);

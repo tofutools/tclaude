@@ -85,7 +85,7 @@ type SpawnProfile struct {
 	Sandbox string
 	// SandboxImplementation pins which layer owns OS-level confinement for
 	// launches this profile fills in: "harness-builtin" (the legacy default) or
-	// the experimental "tclaude-layer" OS wrapper. "" = unset, which falls
+	// the "tclaude-layer" OS wrapper. "" = unset, which falls
 	// through to the next precedence tier — deliberately distinct from an
 	// explicit "harness-builtin", which PINS the legacy implementation so a
 	// lower tier cannot flip it. Validated through

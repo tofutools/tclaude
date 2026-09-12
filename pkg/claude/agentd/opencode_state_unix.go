@@ -336,7 +336,7 @@ func requireOpenCodeStateAllocation(agentID string) (*db.OpenCodeAgentStateAlloc
 	}
 	if allocation == nil {
 		return nil, fmt.Errorf(
-			"OpenCode tclaude-layer agent %s has no durable state allocation; refusing shared-state fallback",
+			"OpenCode with tclaude’s sandbox agent %s has no durable state allocation; refusing shared-state fallback",
 			agentID)
 	}
 	return validateOpenCodeStateAllocation(*allocation)

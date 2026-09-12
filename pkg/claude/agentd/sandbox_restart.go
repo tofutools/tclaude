@@ -125,7 +125,7 @@ func dashboardSandboxRestartAgent(w http.ResponseWriter, r *http.Request, convSe
 			(implementation == sandboxpolicy.ImplementationHarnessBuiltin ||
 				implementation == sandboxpolicy.ImplementationStacked) {
 			writeError(w, http.StatusConflict, "unsupported",
-				fmt.Sprintf("Codex cannot restart this conversation without its own sandbox under implementation %q because Codex restores the persisted sandbox policy on resume; choose the tclaude-layer sandbox implementation or start a new Codex conversation without the built-in sandbox", implementation))
+				fmt.Sprintf("Codex cannot restart this conversation without its own sandbox under implementation %q because Codex restores the persisted sandbox policy on resume; choose tclaude’s built-in sandbox or start a new Codex conversation without the built-in sandbox", implementation))
 			return
 		}
 		mode, modeErr := harness.SandboxOffMode(h)

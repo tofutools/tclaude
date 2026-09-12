@@ -144,7 +144,7 @@ var copilotApprovalModeHelp = map[string]string{
 		"Copilot has not been told to trust still blocks before the model is contacted. And " +
 		"Copilot's built-in file edits are not OS-confined: WITHOUT --sandbox-impl tclaude-layer " +
 		"the directory check this mode removes was the launch's only file boundary, so the agent " +
-		"can read and write anything the pane's user can. Pair this mode with tclaude-layer.",
+		"can read and write anything the pane's user can. Pair this mode with tclaude’s sandbox.",
 }
 
 func (copilotApproval) ModeHelp(policy string) string {

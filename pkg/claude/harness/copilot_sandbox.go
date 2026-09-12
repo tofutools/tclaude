@@ -94,7 +94,7 @@ func (copilotSandbox) ValidateMode(mode string) (string, error) {
 
 var copilotHarnessBuiltinModeHelp = map[string]string{
 	CopilotSandboxInherit: "Use your Copilot `sandbox` posture as-is. Copilot's own command sandbox is experimental and off by default, and tclaude makes no containment claim for this mode. Its only per-launch flags require `--experimental`, which also lets the pane change the posture mid-session, so tclaude does not enable or disable it per session.",
-	CopilotSandboxOff:     "Copilot's own (experimental, MXC) command sandbox is asserted NOT engaged, so tclaude's built-in OS sandbox is the single enforcement boundary. The launch is REFUSED — not silently downgraded — when Copilot's settings.json or its legacy config.json (which wins) enables that sandbox, is unreadable or ambiguous, or leaves experimental features on (which registers the in-pane `/sandbox enable` command).",
+	CopilotSandboxOff:     "Copilot's own (experimental, MXC) command sandbox is asserted NOT engaged, so tclaude’s built-in sandbox is the single enforcement boundary. The launch is REFUSED — not silently downgraded — when Copilot's settings.json or its legacy config.json (which wins) enables that sandbox, is unreadable or ambiguous, or leaves experimental features on (which registers the in-pane `/sandbox enable` command).",
 }
 
 func (copilotSandbox) ModeHelp(mode string) string {

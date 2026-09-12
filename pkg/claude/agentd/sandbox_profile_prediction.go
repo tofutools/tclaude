@@ -162,7 +162,7 @@ func predictSandboxFilesystem(
 			tier, harness.AccessPredictionRefused,
 			fmt.Sprintf(
 				"%d rule%s mount%s a temporary filesystem inside the sandbox (%s); "+
-					"a tmpfs needs a mount namespace whose whole boundary tclaude owns, which only the Linux tclaude-layer provides, so launch is refused rather than launching without the mount",
+					"a tmpfs needs a mount namespace whose whole boundary tclaude owns, which only tclaude’s sandbox on Linux provides, so launch is refused rather than launching without the mount",
 				tmpfsCount, pluralSuffix(tmpfsCount),
 				singularVerbSuffix(tmpfsCount), tmpfsDetail,
 			),
@@ -186,7 +186,7 @@ func predictSandboxFilesystem(
 			tier, harness.AccessPredictionRefused,
 			fmt.Sprintf(
 				"%d directory rule%s mount%s a host directory at a different sandbox path (%s); "+
-					"that needs a mount namespace, which only the Linux tclaude-layer provides, so launch is refused rather than mounting at the host path",
+					"that needs a mount namespace, which only tclaude’s sandbox on Linux provides, so launch is refused rather than mounting at the host path",
 				remappedCount, pluralSuffix(remappedCount),
 				singularVerbSuffix(remappedCount), remappedDetail,
 			),
@@ -202,16 +202,16 @@ func predictSandboxFilesystem(
 			tier, harness.AccessPredictionRefused,
 			fmt.Sprintf(
 				"%d rule%s name%s a single file rather than a directory (%s); "+
-					"binding one file needs a mount namespace whose whole boundary tclaude owns, which only the Linux tclaude-layer provides, so launch is refused rather than launching without the rule",
+					"binding one file needs a mount namespace whose whole boundary tclaude owns, which only tclaude’s sandbox on Linux provides, so launch is refused rather than launching without the rule",
 				fileCount, pluralSuffix(fileCount),
 				singularVerbSuffix(fileCount), fileDetail,
 			),
 		)
 	}
 	if target.implementation.UsesTclaudeLayer() {
-		mechanism := "tclaude-layer Seatbelt"
+		mechanism := "tclaude’s sandbox: Seatbelt"
 		if target.platform == "linux" {
-			mechanism = "tclaude-layer bubblewrap"
+			mechanism = "tclaude’s sandbox: bubblewrap"
 		}
 		detail := fmt.Sprintf(
 			"%s enforces the directory policy at process scope", mechanism,

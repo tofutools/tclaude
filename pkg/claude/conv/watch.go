@@ -2320,7 +2320,7 @@ func resumeLaunchCmdWithStackedProof(
 		// harmless client instead.
 		if h.Name == harness.OpenCodeName {
 			return "", "", nil, fmt.Errorf(
-				"OpenCode tclaude-layer resume requires the agentd-owned server lifecycle; resume this managed agent through agentd")
+				"OpenCode with tclaude’s sandbox resume requires the agentd-owned server lifecycle; resume this managed agent through agentd")
 		}
 		if err := session.ValidateTclaudeLayerHarness(h.Name); err != nil {
 			return "", "", nil, err
@@ -2852,7 +2852,7 @@ func resumeLaunchCmdWithStackedProof(
 			Snapshot:     effectiveSandbox,
 		})
 		if specErr != nil {
-			return "", "", nil, fmt.Errorf("build resumed tclaude-layer launch spec: %w", specErr)
+			return "", "", nil, fmt.Errorf("build resumed tclaude’s sandbox launch spec: %w", specErr)
 		}
 		layerSpec = launchSpec
 		if stacked {
@@ -2894,7 +2894,7 @@ func resumeLaunchCmdWithStackedProof(
 			if stackedProof != nil {
 				stackedProof.Cleanup()
 			}
-			return "", "", nil, fmt.Errorf("wrap resumed harness with tclaude-layer: %w", err)
+			return "", "", nil, fmt.Errorf("wrap resumed harness with tclaude’s sandbox: %w", err)
 		}
 	}
 	if proofOut != nil {

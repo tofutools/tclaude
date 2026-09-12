@@ -91,26 +91,26 @@ func resolveBwrapBinary(
 	case sandboxpolicy.NetworkHostOpen, sandboxpolicy.NetworkIsolatedWithAgentd:
 	case sandboxpolicy.NetworkFiltered:
 	default:
-		return "", fmt.Errorf("darwin tclaude-layer has invalid network posture %d", posture)
+		return "", fmt.Errorf("tclaude’s sandbox on macOS has invalid network posture %d", posture)
 	}
 
 	info, err := statDarwinSeatbelt(darwinSeatbeltExecutable)
 	if err != nil {
 		return "", fmt.Errorf(
-			"darwin tclaude-layer requires %s for Seatbelt filesystem confinement: %w",
+			"tclaude’s sandbox on macOS requires %s for Seatbelt filesystem confinement: %w",
 			darwinSeatbeltExecutable,
 			err,
 		)
 	}
 	if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
 		return "", fmt.Errorf(
-			"darwin tclaude-layer requires executable %s for Seatbelt filesystem confinement",
+			"tclaude’s sandbox on macOS requires executable %s for Seatbelt filesystem confinement",
 			darwinSeatbeltExecutable,
 		)
 	}
 	if err := probeDarwinSeatbelt(darwinSeatbeltExecutable); err != nil {
 		return "", fmt.Errorf(
-			"darwin tclaude-layer cannot enforce the required Seatbelt deny-write capability: %w",
+			"tclaude’s sandbox on macOS cannot enforce the required Seatbelt deny-write capability: %w",
 			err,
 		)
 	}
@@ -126,12 +126,12 @@ func tclaudeLayerToolingPresence(bool) error {
 	info, err := statDarwinSeatbelt(darwinSeatbeltExecutable)
 	if err != nil {
 		return fmt.Errorf(
-			"darwin tclaude-layer requires %s for Seatbelt filesystem confinement: %w",
+			"tclaude’s sandbox on macOS requires %s for Seatbelt filesystem confinement: %w",
 			darwinSeatbeltExecutable, err)
 	}
 	if !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
 		return fmt.Errorf(
-			"darwin tclaude-layer requires executable %s for Seatbelt filesystem confinement",
+			"tclaude’s sandbox on macOS requires executable %s for Seatbelt filesystem confinement",
 			darwinSeatbeltExecutable)
 	}
 	return nil
@@ -160,7 +160,7 @@ func tclaudeLayerStackedCommand(
 	string,
 ) (string, error) {
 	return "", fmt.Errorf(
-		"stacked tclaude-layer is refused on macOS: nested Seatbelt is unsupported")
+		"stacked tclaude’s sandbox is refused on macOS: nested Seatbelt is unsupported")
 }
 
 func tclaudeLayerCommand(
@@ -344,12 +344,12 @@ func renderDarwinSeatbeltCommandWithRouteSlots(
 		if !tclaudeLayerPlanDeploysProxy(plan) &&
 			!sandboxpolicy.FilteredNetworkRulesAreLoopbackOnly(plan.FilteredNetwork) {
 			return "", fmt.Errorf(
-				"darwin tclaude-layer filtered networking supports only a non-empty loopback-only list",
+				"tclaude’s sandbox on macOS filtered networking supports only a non-empty loopback-only list",
 			)
 		}
 	default:
 		return "", fmt.Errorf(
-			"darwin tclaude-layer has invalid network posture %d",
+			"tclaude’s sandbox on macOS has invalid network posture %d",
 			plan.NetworkPosture,
 		)
 	}
@@ -398,7 +398,7 @@ func renderDarwinSeatbeltCommandWithRouteSlots(
 			info, statErr := os.Lstat(socketPaths[i])
 			if statErr != nil || info.Mode()&os.ModeSocket == 0 {
 				return "", fmt.Errorf(
-					"materialized unix socket %q changed before the tclaude-layer adapter rendered it",
+					"materialized unix socket %q changed before tclaude’s sandbox adapter rendered it",
 					socketPaths[i])
 			}
 		}
@@ -556,7 +556,7 @@ func existingSeatbeltPlan(plan sandboxpolicy.MountPlan) (sandboxpolicy.MountPlan
 			// ValidateTmpfsSupport refuses this launch before it reaches here;
 			// this is the backstop that keeps the reason attributable.
 			return sandboxpolicy.MountPlan{}, fmt.Errorf(
-				"seatbelt_tmpfs_mount: Seatbelt cannot mount a temporary filesystem at sandbox path %q (mount plan entry %d); a tmpfs requires a mount namespace, which only the Linux tclaude-layer provides",
+				"seatbelt_tmpfs_mount: Seatbelt cannot mount a temporary filesystem at sandbox path %q (mount plan entry %d); a tmpfs requires a mount namespace, which only tclaude’s sandbox on Linux provides",
 				entry.Path, i)
 		}
 		if entry.Mode != sandboxpolicy.MountRO && entry.Mode != sandboxpolicy.MountRW {
@@ -592,13 +592,13 @@ func darwinSeatbeltRuntimeTempDir() (string, error) {
 	raw := strings.TrimSpace(os.Getenv("TMPDIR"))
 	if raw == "" {
 		return "", fmt.Errorf(
-			"darwin tclaude-layer requires TMPDIR for the Seatbelt runtime write carveout",
+			"tclaude’s sandbox on macOS requires TMPDIR for the Seatbelt runtime write carveout",
 		)
 	}
 	path := filepath.Clean(raw)
 	if !filepath.IsAbs(path) {
 		return "", fmt.Errorf(
-			"darwin tclaude-layer requires absolute TMPDIR under /private/var/folders, got %q",
+			"tclaude’s sandbox on macOS requires absolute TMPDIR under /private/var/folders, got %q",
 			raw,
 		)
 	}
@@ -610,7 +610,7 @@ func darwinSeatbeltRuntimeTempDir() (string, error) {
 	const privateVarFolders = "/private/var/folders"
 	if !sandboxpolicy.PathContainsOrEqual(privateVarFolders, path) {
 		return "", fmt.Errorf(
-			"darwin tclaude-layer refuses TMPDIR %q: the filesystem slice only "+
+			"tclaude’s sandbox on macOS refuses TMPDIR %q: the filesystem slice only "+
 				"carves the standard %s runtime tree",
 			path,
 			privateVarFolders,

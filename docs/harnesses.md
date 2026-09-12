@@ -102,7 +102,7 @@ warning. Model and effort are remembered by the harness itself.
 | [Status line](utilities.md#status-line) | ✅ command-backed | ⚠️ curated built-in items | ⚠️ OpenCode's own TUI status | ❌ |
 | [Task runner](tasks.md) | ✅ | ❌ | ❌ | ❌ |
 | Built-in OS sandbox | ✅ | ✅ | ❌ command filter only | ❌ asserted off |
-| [tclaude-layer outer sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ |
+| [tclaude’s built-in sandbox](sandboxing.md) | ✅ | ✅ | ✅ (wraps the server) | ✅ |
 | Usage / cost reporting | ✅ real + what-if cost | ✅ what-if cost | ✅ native pricing what-if | ⚠️ Copilot AIU units, no USD |
 | Hooks via `tclaude setup` | ✅ | ✅ | ❌ (server liveness instead) | ✅ |
 | Directory pre-trust (`--trust-dir`) | ✅ | ✅ | — no trust dialog | ✅ |
@@ -256,7 +256,7 @@ to `xhigh` for models without a max tier.
 - `workspace-write` / `read-only` — raw confined Codex modes, passed through.
   No agentd-socket grant, so agents under these cannot reach `tclaude agent`.
 - `danger-full-access` — Codex's sandbox off; also what
-  `--sandbox-impl tclaude-layer` sets, since tclaude's outer wall then
+  `--sandbox-impl tclaude-layer` sets, since tclaude’s sandbox then
   enforces.
 
 **Approvals.** `--ask-for-approval` maps to Codex's policy set: `never`
@@ -361,7 +361,7 @@ configuration alone, and `off` — what `--sandbox-impl tclaude-layer` resolves
 to — *verifies* the inner sandbox is not engaged and refuses the launch when
 it cannot prove that (including when `--experimental` would let the pane
 re-enable it mid-session). There is no `on`. The supported confined posture
-is therefore tclaude's own outer wall with Copilot's sandbox asserted down.
+is therefore tclaude’s sandbox with Copilot's sandbox asserted down.
 
 **Approvals.** Three measured tokens:
 

@@ -708,7 +708,7 @@ function sandboxImplActions(calls, overrides = {}) {
     sandboxImplOptions: () => ([
       { value: 'harness-builtin', label: 'Claude Code built-in', descr: 'Claude Code owns OS-level containment.' },
       { value: 'resource-only', label: 'Resource limits only', descr: 'No access confinement; runs in its own cgroup.' },
-      { value: 'tclaude-layer', label: 'tclaude layer', descr: 'bubblewrap namespace.', experimental: true },
+      { value: 'tclaude-layer', label: 'tclaude layer', descr: 'bubblewrap namespace.' },
     ]),
     sandboxModes: () => ['inherit', 'on', 'off'],
     sandboxImplAvailability: () => '',

@@ -71,11 +71,11 @@ export const CLAUDE_INHERIT_SANDBOX_LABEL = 'Claude settings decide (inherit)';
 export const CLAUDE_INHERIT_SANDBOX_PLAIN = "Claude's own settings decide whether its built-in "
   + 'sandbox is enabled for this launch.';
 
-// harnessBuiltinModeLabel renders one harness sandbox mode for a human. Only Claude's
-// `inherit` is rewritten: it is the one mode whose token says nothing about what
-// the launch actually gets. Every other mode already names its own effect.
+// harnessBuiltinModeLabel renders descriptive names for modes whose stored
+// tokens do not clearly describe the sandbox to the operator.
 export function harnessBuiltinModeLabel(harnessName, mode) {
   if (harnessName === 'claude' && mode === 'inherit') return CLAUDE_INHERIT_SANDBOX_LABEL;
+  if (harnessName === 'opencode' && mode === 'tclaude-layer') return 'tclaude’s built-in sandbox';
   if (harnessName === 'codex' && mode === 'tclaude-agent') {
     return 'Managed workspace + agent coordination (tclaude-agent)';
   }
@@ -98,6 +98,7 @@ export function harnessBuiltinModeOptionLabel(harnessName, mode, recommended) {
 // harnessBuiltinModeDetail is the read-only form used where a resolved mode is
 // reported back rather than chosen — the preview's evaluation details.
 export function harnessBuiltinModeDetail(harnessName, mode) {
+  if (harnessName === 'opencode' && mode === 'tclaude-layer') return harnessBuiltinModeLabel(harnessName, mode);
   return harnessName === 'claude' && mode === 'inherit'
     ? `inherit — ${CLAUDE_INHERIT_SANDBOX_PLAIN}`
     : mode;

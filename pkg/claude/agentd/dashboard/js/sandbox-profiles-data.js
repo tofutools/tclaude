@@ -611,8 +611,8 @@ export function sandboxTargetLabel(value = {}) {
   const platform = { linux: 'Linux', darwin: 'macOS' }[target.platform] || target.platform || 'current platform';
   const implementation = {
     'harness-builtin': 'built-in sandbox',
-    'tclaude-layer': 'tclaude sandbox',
-    stacked: 'stacked sandboxes',
+    'tclaude-layer': 'tclaude’s built-in sandbox',
+    stacked: `tclaude + ${harness} sandboxes`,
   }[target.implementation] || target.implementation || 'default sandbox';
   const networkDisclosure = target.harness === 'codex'
     && target.implementation === 'harness-builtin'
