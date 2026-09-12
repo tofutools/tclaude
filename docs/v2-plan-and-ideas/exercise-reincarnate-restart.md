@@ -129,8 +129,9 @@ that transcripts were read to decide it.
    pointer; native contents stay private to the integration.
 2. **Main conflates generations with native ID changes.** `db.RotateAgentConv`
    runs for intentional reincarnation and for Claude Code `/clear` alike. In
-   the proposed boundary only the former may be generational; `/clear` would
-   update the current generation's association inside the integration.
+   the proposed boundary reincarnation creates a new generation, while `/clear`
+   is harness-level management: the integration updates the current
+   generation's association and references.
 3. **Archive state is split across stores.** Claude keeps it in
    `conv_index.archived_at`, Codex in its own thread store, and reincarnate
    treats `sql.ErrNoRows` as the expected Codex no-op. In the proposed model,
@@ -174,8 +175,8 @@ admission, rotation, retirement and the response.
 ## Open questions this exercise surfaced
 
 - Should restart confirm the pane came online, as power-on does?
-- Does reincarnation create a new generation, and does séance target an
-  existing one? The generation boundary leaves this open.
+- Reincarnation creates a new generation. Does séance only target an
+  existing one, and what is its contract?
 - Should the unannounced-rotation transcript scan move behind the Claude
   integration first, since it is the clearest leak of native mechanics into
   shared code?

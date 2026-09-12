@@ -105,11 +105,14 @@ authorization and result. Its harness strategy performs the native duplication
 needed to make that clone meaningful. Copying only platform metadata cannot
 count as a deep clone. Reincarnation gets its own contract and native strategy.
 
-Generational operations such as reincarnation and séance name the generation
-or transition they intend: for example "start a new generation of this Agent"
-or "continue from generation 1". The integration then implements that against
-its private associations. Which operations create a generation and which only
-target one is still to be explored; do not assume one shared semantic.
+Generational operations name the generation or transition they intend.
+Reincarnation means "start a new generation of this Agent": it creates the
+generation and moves the current pointer once it commits. The integration
+implements that against its private associations. Séance and other operations
+that address generations still need their own contracts; do not assume they
+share reincarnation's semantics. Native replacements such as Claude Code
+`/clear` are not generational operations; they are harness-level management
+inside the integration.
 
 Neither operation needs a common transcript reader or a Conversation object.
 The integration handles native history mechanics and continuation references.

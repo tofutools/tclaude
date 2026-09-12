@@ -90,13 +90,19 @@ prescribed schema.
   Agent's work. It is not a native session or conversation ID, and it is not
   created by each change of that ID.
 - **Native ID replacement stays inside a generation.** Claude Code's `/clear`
-  and other native replacements are tracked by the integration without
-  automatically changing the platform generation. One generation may map to
-  several native IDs over time; for another harness it may be 1:1.
-- **Intentional operations address generations.** An operation such as
-  reincarnation or séance selects the generation or transition it wants and
-  asks the integration to implement it. Which operations create a generation
-  and which only target one has not been decided; they need not share semantics.
+  and other native replacements are harness-level management concerns. They
+  belong in the integration's implementation details and references, not in
+  agent-level generations, even when someone types them deliberately. One
+  generation may map to several native IDs over time; for another harness it
+  may be 1:1.
+- **Reincarnation creates a generation.** Intentionally reincarnating an Agent
+  is the natural tclaude-level generational change: it creates a new generation
+  and moves the current pointer to it once the operation commits. The
+  integration implements the native steps.
+- **Other operations address generations explicitly.** An operation states
+  which generation it targets. Whether séance and other operations create or
+  only target generations is still to be explored; do not assume they share
+  reincarnation's semantics.
 - **Prior associations are kept.** Discovery can then recognise previously
   managed native work instead of presenting every old reference as a new,
   unrelated candidate.

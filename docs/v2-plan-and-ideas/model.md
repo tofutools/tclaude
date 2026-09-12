@@ -105,8 +105,8 @@ reading or modeling chat history. An unsupported reading is not zero.
 
 | Aspect | Intended behavior |
 |---|---|
-| What advances an agent | Only an intentional platform operation changes generations. Which operations create a generation and which target an existing one is still to be explored |
-| Detecting native changes | The integration observes native replacements and updates the current generation's association. The generation does not change |
+| What advances an agent | Only an intentional platform operation changes generations. Reincarnation creates a new generation and moves the current pointer. Whether séance and other operations create or only target generations is still to be explored |
+| Detecting native changes | Native replacements such as Claude Code `/clear` are harness-level management: the integration updates the current generation's association and references. The generation does not change |
 | Prior references | The integration keeps prior associations durably so that previously managed work is recognised later |
 | Unrelated native work | Discovery is an integration result. Recognised references are attributed to their Agent and generation; others are candidates. Conversation archiving is not part of the agent-accessible model |
 
@@ -135,9 +135,10 @@ appropriate tclaude changes. Copying an Agent record or sharing a continuation
 reference is not enough. The integration performs the native work and supplies
 an independent association when that is required by the clone contract.
 
-Reincarnation and séance are examples of intentional generational operations:
-they select a generation or transition and delegate the native steps. Whether
-each one creates a generation or targets an existing one is still to be decided.
+Reincarnation is the intentional generational change: it creates a new
+generation, moves the current pointer once it commits, and delegates the native
+steps. Séance addresses Agent generations too, but whether it only targets an
+existing generation is still to be decided.
 Each operation needs its own user-visible contract; do not make clone and
 reincarnate synonyms or decide their identity behavior from native ID changes.
 The common operation coordinates permissions, settings, platform changes and
