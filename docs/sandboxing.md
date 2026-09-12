@@ -12,7 +12,7 @@ Three ideas carry this page:
 - A **profile** is what you author: a JSON capability bundle.
 - **`--sandbox`** is the harness's *own* sandbox mode — a per-harness setting.
 - **`--sandbox-impl`** is *who enforces* confinement — the harness itself,
-  tclaude's own OS layer, both stacked, a resource-only cgroup, or nobody.
+  tclaude’s built-in sandbox, both stacked, a resource-only cgroup, or nobody.
 
 Egress filtering has its own page ([Network filtering](network-filtering.md)),
 and credential-less workflows that make strict profiles livable have theirs
@@ -32,8 +32,8 @@ same layer. The values:
   *unset* is different from pinning `harness-builtin`: unset falls through the
   precedence chain and preserves each harness's historical behavior (for
   OpenCode, the command filter plus an explicit no-confinement warning).
-- **tclaude’s built-in sandbox (`tclaude-layer`)** — tclaude wraps the tool-executing harness process in its
-  own wall: bubblewrap mount/IPC/cgroup/PID (and optionally network) namespaces
+- **tclaude’s built-in sandbox (`tclaude-layer`)** — wraps the tool-executing
+  harness process in its own sandbox: bubblewrap mount/IPC/cgroup/PID (and optionally network) namespaces
   on Linux, Seatbelt (`sandbox-exec`) on macOS. The harness's own OS sandbox is forced
   off inside it (Claude Code mode `off`, Codex `danger-full-access`; Copilot
   has no off-flag tclaude can set, so its configuration is verified instead and
@@ -181,8 +181,8 @@ The axes:
   be the same kind as the source — there the sandbox root *is* the host root, so
   bubblewrap has nowhere to create one; a constructed root creates it.
   Enforcement needs a real mount namespace, so it works only under
-  tclaude’s sandbox alone or combined with the harness’s sandbox on Linux; Seatbelt (a path filter, not a
-  mount namespace) and `harness-builtin` refuse the launch with
+  tclaude’s sandbox on Linux, alone or combined with the harness’s sandbox.
+  Seatbelt (a path filter, not a mount namespace) and `harness-builtin` refuse the launch with
   `unsupported_sandbox_profile_mount_path` rather than falling back to the
   host path. **`stacked` carries directory rows only**: a row naming a file is
   refused there whether or not it is remapped, so projecting a *file* needs
@@ -242,8 +242,8 @@ The axes:
   → `cpu.max` at a 100 ms period; Linux cgroup v2, whole workload tree,
   orthogonal to confinement, works with any non-`off` implementation. Both
   blank means no cgroup probing at all, except under `resource-only` (which
-  always creates its cgroup) and when launching with tclaude’s sandbox on Linux, alone or combined with the harness’s sandbox
-  (which tries, and degrades to a notice if the host cannot). macOS, `off`, and
+  always creates its cgroup) and when launching with tclaude’s sandbox on
+  Linux, alone or combined with the harness’s sandbox (which tries, and degrades to a notice if the host cannot). macOS, `off`, and
   hosts without delegated controllers refuse by default every cgroup a launch
   cannot proceed without — an authored ceiling under any implementation, and
   `resource-only` even with no ceiling; the dashboard's "allow launch without
@@ -307,7 +307,7 @@ bubblewrap and Seatbelt.
 | opencode | nothing — its config tree is already bound read-only by OpenCode's own state layout, in both legacy-shared and private modes |
 
 Claude Code's own sandbox deny-writes a broadly similar set for its Bash tool;
-without the floor tclaude's outer wall was *weaker* than the harness's own
+without the floor tclaude’s sandbox was *weaker* than the harness's own
 default.
 
 Materialization writes only what is indistinguishable from absent: an empty
@@ -493,8 +493,8 @@ that can faithfully enforce it:
 | Codex legacy Landlock, or a raw `--sandbox` mode | refused |
 | Any other harness under `harness-builtin` | refused |
 
-tclaude’s sandbox, alone or combined with the harness’s sandbox, enforces the shape itself
-on both platforms. The gate keys on the rules tclaude will *emit*, not just the
+tclaude’s sandbox, alone or combined with the harness’s sandbox, enforces the
+shape itself on both platforms. The gate keys on the rules tclaude will *emit*, not just the
 rows you authored: a bare `deny ~` with no reopens of your own still becomes a
 split policy, because the launch contract adds its own reopens.
 
@@ -1121,7 +1121,7 @@ that warning is the first thing to grep for.
 between probe and launch, a tmux server that restarts under a different
 profile, or any of the fallbacks above can still leave the exec denied. The
 relay reports that denial as a named refusal —
-`tclaude-layer requested — refused: the host denied this process permission to
+`tclaude’s sandbox requested — refused: the host denied this process permission to
 execute bubblewrap …` — instead of the bare `fork/exec …: operation not
 permitted` at exit 125 it used to print. Nothing runs unconfined; but the pane
 dies rather than being refused pre-flight, so this is evidence that names the

@@ -127,7 +127,7 @@ Sandboxing is split into two questions, asked per launch:
 - **What does the harness's own sandbox do?** (`--sandbox`, per-harness
   modes.)
 - **Who enforces containment?** (`--sandbox-impl`: the harness's built-in
-  sandbox, tclaude's own layer — bubblewrap on Linux, Seatbelt on macOS — an
+  sandbox, tclaude’s sandbox — bubblewrap on Linux, Seatbelt on macOS — an
   stacked combination, a resource-only cgroup, or off.)
 
 Policy comes from declarative JSON **sandbox profiles** — filesystem grants

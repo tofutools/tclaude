@@ -66,7 +66,7 @@ const CASES = [
       sandbox_profiles: [{ scope: 'global', name: 'tclaude-agent' }],
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: tclaude-agent\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: tclaude’s built-in sandbox\nProfile: tclaude-agent\nClick to temporarily disable',
   },
   {
     name: 'a stacked implementation names both active layers',
@@ -76,7 +76,7 @@ const CASES = [
       sandbox_profiles: [{ scope: 'global', name: 'stacked-agents' }],
     },
     glyph: '🔒²', danger: false,
-    tooltip: 'Status: ON\nImplementation: CC+TClaude\nProfile: stacked-agents\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: tclaude + CC sandboxes\nProfile: stacked-agents\nClick to temporarily disable',
   },
   {
     name: 'a stacked Codex implementation names both active layers',
@@ -85,7 +85,7 @@ const CASES = [
       sandbox_implementation: 'stacked',
     },
     glyph: '🔒²', danger: false,
-    tooltip: 'Status: ON\nImplementation: Codex+TClaude\nProfile: None\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use the tclaude-layer implementation or start a new Codex conversation without the built-in sandbox.',
+    tooltip: 'Status: ON\nImplementation: tclaude + Codex sandboxes\nProfile: None\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use tclaude’s built-in sandbox or start a new Codex conversation without the built-in sandbox.',
   },
   {
     name: 'an unknown implementation earns no lock',
@@ -129,7 +129,7 @@ const CASES = [
       harness: 'codex', sandbox_mode: 'workspace-write',
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: Codex\nProfile: None\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use the tclaude-layer implementation or start a new Codex conversation without the built-in sandbox.',
+    tooltip: 'Status: ON\nImplementation: Codex\nProfile: None\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use tclaude’s built-in sandbox or start a new Codex conversation without the built-in sandbox.',
   },
   {
     name: 'a Codex full-access launch',
@@ -159,7 +159,7 @@ const CASES = [
       ],
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: Codex\nProfile: base + team + tight\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use the tclaude-layer implementation or start a new Codex conversation without the built-in sandbox.',
+    tooltip: 'Status: ON\nImplementation: Codex\nProfile: base + team + tight\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use tclaude’s built-in sandbox or start a new Codex conversation without the built-in sandbox.',
   },
   {
     name: 'persisted access notices ride the launch badge',
@@ -200,7 +200,7 @@ const CASES = [
       }],
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nWarning: filtered-network prerequisite probe: detected (bubblewrap user/network namespace execution passed; trusted pasta, nft, and nsenter executables were found; end-to-end gateway readiness is decided at the gated launch boundary); launch remains gated on atomic nft policy installation before the supervised pasta route becomes available\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: tclaude’s built-in sandbox\nProfile: None\nWarning: filtered-network prerequisite probe: detected (bubblewrap user/network namespace execution passed; trusted pasta, nft, and nsenter executables were found; end-to-end gateway readiness is decided at the gated launch boundary); launch remains gated on atomic nft policy installation before the supervised pasta route becomes available\nClick to temporarily disable',
   },
   {
     name: 'an authored cgroup budget rides the badge as its own axis',
@@ -210,7 +210,7 @@ const CASES = [
       resource_cgroup: true, resource_memory_limit: '8GiB', resource_cpu_limit: 2.5,
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nCgroup: on\nMemory limit: 8GiB\nCPU limit: 2.5 cores\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: tclaude’s built-in sandbox\nProfile: None\nCgroup: on\nMemory limit: 8GiB\nCPU limit: 2.5 cores\nClick to temporarily disable',
   },
   {
     name: 'a resource-only launch has a cgroup and no access boundary',
@@ -228,7 +228,7 @@ const CASES = [
       resource_cgroup: true, resource_cpu_limit: 1,
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: Codex\nProfile: None\nCgroup: on\nMemory limit: unlimited\nCPU limit: 1 core\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use the tclaude-layer implementation or start a new Codex conversation without the built-in sandbox.',
+    tooltip: 'Status: ON\nImplementation: Codex\nProfile: None\nCgroup: on\nMemory limit: unlimited\nCPU limit: 1 core\nTemporary disable unavailable: Codex restores its persisted sandbox policy when this conversation resumes. Use tclaude’s built-in sandbox or start a new Codex conversation without the built-in sandbox.',
   },
   {
     name: 'a recorded budget that never took effect says so',
@@ -243,7 +243,7 @@ const CASES = [
       }],
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nCgroup: requested — not enforced\nMemory limit: 4GB\nCPU limit: unlimited\nWarning: the human operator used the dashboard launch override; configured CPU and memory limits are not enforced\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: tclaude’s built-in sandbox\nProfile: None\nCgroup: requested — not enforced\nMemory limit: 4GB\nCPU limit: unlimited\nWarning: the human operator used the dashboard launch override; configured CPU and memory limits are not enforced\nClick to temporarily disable',
   },
   {
     name: 'a launch with no cgroup spends no tooltip line on saying so',
@@ -252,7 +252,7 @@ const CASES = [
       sandbox_implementation: 'tclaude-layer',
     },
     glyph: '🔒', danger: false,
-    tooltip: 'Status: ON\nImplementation: TClaude\nProfile: None\nClick to temporarily disable',
+    tooltip: 'Status: ON\nImplementation: tclaude’s built-in sandbox\nProfile: None\nClick to temporarily disable',
   },
   {
     name: 'an offline lock stays informative but non-actionable',
@@ -473,9 +473,9 @@ test('SandboxBadge gates the adjacent recorded-facts chevron without changing th
     assert.equal(badge.dataset.act, 'sandbox-restart');
     assert.equal(badge.dataset.action, 'unlock');
     assert.equal(badge.title,
-      'Status: ON\nImplementation: TClaude\nProfile: base\nWarning: socket selector did not materialize\nClick to temporarily disable');
+      'Status: ON\nImplementation: tclaude’s built-in sandbox\nProfile: base\nWarning: socket selector did not materialize\nClick to temporarily disable');
     assert.equal(details.dataset.act, 'sandbox-details');
-    assert.match(details.dataset.details, /Source: tclaude-layer \(bubblewrap; host network\)/);
+    assert.match(details.dataset.details, /Source: tclaude’s sandbox \(bubblewrap; host network\)/);
     assert.match(details.dataset.details, /Notice: socket selector did not materialize/);
     assert.match(details.dataset.details, /Known partial boundary: host networking/);
   } finally {

@@ -612,7 +612,7 @@ export function sandboxTargetLabel(value = {}) {
   const implementation = {
     'harness-builtin': 'built-in sandbox',
     'tclaude-layer': 'tclaude’s built-in sandbox',
-    stacked: 'stacked sandboxes',
+    stacked: `tclaude + ${harness} sandboxes`,
   }[target.implementation] || target.implementation || 'default sandbox';
   const networkDisclosure = target.harness === 'codex'
     && target.implementation === 'harness-builtin'

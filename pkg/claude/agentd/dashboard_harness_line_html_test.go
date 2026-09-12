@@ -190,8 +190,8 @@ func TestDashboardHTML_HarnessBadgeAndSandboxWired(t *testing.T) {
 	// only when the glyph is clickable.
 	must("function sandboxImplementationLabel(member, badge)", "the compact tooltip derives an implementation label")
 	must("if (badge.status === 'OFF') return 'None'", "an inactive sandbox has no active implementation")
-	must("return 'TClaude'", "the tclaude-layer implementation uses the TClaude label")
-	must("short}+TClaude", "stacked implementations name both active layers")
+	must("return 'tclaude’s built-in sandbox'", "the tclaude implementation uses its display name")
+	must("short} sandboxes", "stacked implementations name both active sandboxes")
 	must("return 'Unknown'", "unknown implementations are not mislabeled as harness-native")
 	must("function sandboxProfileLabel(member)", "the compact tooltip derives applied profile names")
 	must("names.join(' + ')", "multiple profile names retain resolution order")

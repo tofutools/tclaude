@@ -208,7 +208,7 @@ func TestSpawn_OpenCodeExplicitHarnessBuiltinRefuses(t *testing.T) {
 	assert.Equal(t,
 		`sandbox implementation "harness-builtin" is invalid for OpenCode: `+
 			`OpenCode has no built-in OS sandbox; its access-control mode is a command filter, `+
-			`not confinement; use tclaude-layer or spawn with the sandbox off`,
+			`not confinement; use tclaude’s sandbox or spawn with the sandbox off`,
 		failure.Error)
 	assertSandboxLayerCalls(t, f)
 }

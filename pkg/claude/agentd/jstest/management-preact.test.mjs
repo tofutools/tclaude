@@ -2342,7 +2342,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
     [
       'Codex built-in sandbox',
       'tclaude’s built-in sandbox',
-      'Stacked sandboxes',
+      'tclaude + Codex sandboxes',
     ],
   );
   await harness.act(() => new Promise((resolve) => setTimeout(resolve, 400)));
@@ -2372,7 +2372,7 @@ test('sandbox editor groups concrete rules by the selected assignment outcome', 
   }]);
   assert.equal(host.querySelector('.sbx-network-ports').value, '443');
   assert.match(host.querySelector('.sbx-policy-target').textContent,
-    /OpenCode on macOS · tclaude sandbox/);
+    /OpenCode on macOS · tclaude’s built-in sandbox/);
   assert.match(host.querySelector('.sbx-mach-register-evaluation').textContent,
     /Mach service registration.*Allowed by the tclaude Seatbelt layer for this target/s,
     'the preview discloses that the composed compatibility capability applies to this target');
@@ -2963,7 +2963,7 @@ test('effective preview buckets normalized deny rows with target-specific help',
   await harness.act(() => harness.fireEvent(partialHelp, 'click'));
   assert.equal(partialHelp.getAttribute('aria-expanded'), 'true');
   assert.match(partialRow.querySelector('.spawn-field-description').textContent,
-    /Partial on Codex on Linux · tclaude sandbox\./);
+    /Partial on Codex on Linux · tclaude’s built-in sandbox\./);
   assert.match(partialRow.querySelector('.spawn-field-description').textContent,
     /If any check fails, these rules are not enforced and outbound traffic is open/);
   unmount();
@@ -3016,7 +3016,7 @@ test('sandbox access rows expose aligned grid cells for network and Unix sockets
   assert.match(networkHelp.textContent, /ordinary IPv4\/IPv6 TCP and UDP/);
   assert.match(networkHelp.textContent, /QUIC is UDP/);
   assert.match(networkHelp.textContent, /Raw and packet sockets are not an authored class/);
-  assert.match(networkHelp.textContent, /For Linux tclaude-layer filtered networking/);
+  assert.match(networkHelp.textContent, /For filtered networking with tclaude’s sandbox on Linux/);
   assert.match(networkHelp.textContent, /Host and domain rules allow IP addresses returned by DNS/);
   assert.match(networkHelp.textContent, /sandbox can also reach other sites hosted on that same IP/);
   assert.match(networkHelp.textContent, /Only a new DNS lookup refreshes the allowed IP/);
@@ -3029,7 +3029,7 @@ test('sandbox access rows expose aligned grid cells for network and Unix sockets
   assert.match(networkHelp.textContent, /compose by intersection/);
   assert.match(networkHelp.textContent, /Codex’s built-in filesystem sandbox remains available/);
   assert.match(networkHelp.textContent, /upstream proxy is experimental and off by default/);
-  assert.match(networkHelp.textContent, /tclaude-layer filtering on Linux/);
+  assert.match(networkHelp.textContent, /tclaude’s sandbox filtering on Linux/);
   assert.match(networkHelp.textContent, /network open \(Allow all\)/);
   assert.ok(host.querySelector('.sbx-socket-row.sbx-access-row'));
 
@@ -3975,7 +3975,7 @@ test('mount-path control discloses a projection and refuses it on a deny row', a
   const mountHelpBody = mountHelp.nextElementSibling;
   assert.match(mountHelpBody.textContent, /not visible inside the sandbox at all/,
     'the disclosure states what the host path stops being');
-  assert.match(mountHelpBody.textContent, /Linux tclaude-layer or stacked only/);
+  assert.match(mountHelpBody.textContent, /tclaude’s sandbox on Linux, alone or combined with the harness’s sandbox/);
   assert.match(mountHelpBody.textContent, /never fall back to exposing the host path/);
   assert.match(mountHelpBody.textContent, /\/srv\/corpus/,
     'it names the row it belongs to, not "the host directory"');
@@ -4478,7 +4478,7 @@ test('sandbox tmpfs editor authors mounts, validates them beside the field, and 
   assert.equal(section.tagName, 'DETAILS');
   assert.equal(section.hasAttribute('open'), false, 'the section starts folded like its peers');
   assert.equal(section.querySelector('.sbx-section-count').textContent, '2 entries');
-  assert.match(section.querySelector('.sbx-tmpfs-intro').textContent, /Linux tclaude-layer only/,
+  assert.match(section.querySelector('.sbx-tmpfs-intro').textContent, /Requires tclaude’s sandbox on Linux/,
     'the capability limit is stated where the mounts are authored, not only in the help');
   assert.deepEqual([...section.querySelectorAll('.sbx-tmpfs-path')].map((input) => input.value),
     ['/scratch', '/build']);

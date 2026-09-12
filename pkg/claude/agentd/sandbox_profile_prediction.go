@@ -209,9 +209,9 @@ func predictSandboxFilesystem(
 		)
 	}
 	if target.implementation.UsesTclaudeLayer() {
-		mechanism := "tclaude-layer Seatbelt"
+		mechanism := "tclaude’s sandbox: Seatbelt"
 		if target.platform == "linux" {
-			mechanism = "tclaude-layer bubblewrap"
+			mechanism = "tclaude’s sandbox: bubblewrap"
 		}
 		detail := fmt.Sprintf(
 			"%s enforces the directory policy at process scope", mechanism,

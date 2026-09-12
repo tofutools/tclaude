@@ -55,7 +55,7 @@ func TestOpenCodeSandboxInfo(t *testing.T) {
 	}
 	for _, want := range []string{
 		"tool-executing server",
-		"tclaude's built-in OS sandbox",
+		"tclaude’s built-in sandbox",
 		"attach pane",
 		"authenticated local control connection",
 	} {
@@ -104,7 +104,7 @@ func TestSpawnSandboxWarningsDispatch(t *testing.T) {
 		t.Fatalf("opencode off: got %v, want nil", got)
 	}
 	info := SpawnSandboxInfo(opencode, OpenCodeSandboxTclaudeLayer)
-	if len(info) != 1 || !strings.Contains(info[0], "built-in OS sandbox") {
+	if len(info) != 1 || !strings.Contains(info[0], "tclaude’s built-in sandbox") {
 		t.Fatalf("opencode tclaude-layer info: got %v, want the executor-boundary disclosure", info)
 	}
 	if got := SpawnSandboxInfo(claude, ClaudeSandboxInherit); got != nil {

@@ -521,7 +521,7 @@ export function ConfigFormMarkup({ lists = {}, onListChange = () => {}, onFormEv
       <div class="cfg-field">
         <span class="cfg-label">Broker limits</span>
         <label class="cfg-inline"><${ConfigInput} type="checkbox" id="cfg-broker-enforce" /> actually reject callers over the limit</label>
-        <span class="cfg-hint">Ceilings on the brokered endpoints a sandboxed with tclaude’s built-in sandbox agent uses to reach the database — <strong>20 requests/second per agent</strong> and <strong>10 MiB per request</strong>. Default off is <em>shadow mode</em>: excess is still measured and logged (saying what it <em>would</em> have refused) but nothing is refused, so you can see real traffic against the ceilings before enforcing. A denial-of-service backstop, not traffic shaping.</span>
+        <span class="cfg-hint">Ceilings on the brokered endpoints an agent in tclaude’s built-in sandbox uses to reach the database — <strong>20 requests/second per agent</strong> and <strong>10 MiB per request</strong>. Default off is <em>shadow mode</em>: excess is still measured and logged (saying what it <em>would</em> have refused) but nothing is refused, so you can see real traffic against the ceilings before enforcing. A denial-of-service backstop, not traffic shaping.</span>
       </div>
     </div>
 

@@ -172,7 +172,7 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	// pre-existing sockets+open profile changes behavior on upgrade can see
 	// which boundary became active.
 	assert.Contains(t, notices[0].Detail, "host-network constructed root")
-	assert.Equal(t, "tclaude-layer bubblewrap (host-network constructed root)",
+	assert.Equal(t, "tclaude’s sandbox: bubblewrap (host-network constructed root)",
 		caps.mechanism)
 	assert.Contains(t, notices[0].Detail,
 		"read-only OS surface it mounts (/usr, /bin, /sbin, /lib*, /etc, /opt)",

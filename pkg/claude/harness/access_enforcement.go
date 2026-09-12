@@ -421,9 +421,9 @@ func accessEnforcementTable(
 		if engineErr != nil {
 			return accessEnforcementTableRow{}, engineErr
 		}
-		mechanism := "tclaude-layer Seatbelt"
+		mechanism := "tclaude’s sandbox: Seatbelt"
 		if goos == "linux" {
-			mechanism = "tclaude-layer bubblewrap"
+			mechanism = "tclaude’s sandbox: bubblewrap"
 		}
 		if deployedEngine == sandboxpolicy.NetworkEngineProxy {
 			mechanism = proxyEngineMechanism(goos)
@@ -488,7 +488,7 @@ func accessEnforcementTable(
 						" " + OpenCodeFilteredExplicitProviderCaveat
 				}
 			}
-			caps.Mechanism = "tclaude-layer bubblewrap + supervised DNS/pasta/nftables gateway"
+			caps.Mechanism = "tclaude’s sandbox: bubblewrap + supervised DNS/pasta/nftables gateway"
 		}
 		if implementation == sandboxpolicy.ImplementationTclaudeLayer &&
 			packetGateway &&
@@ -659,7 +659,7 @@ func accessEnforcementTable(
 			}}
 			caps.NetworkPorts = EnforceFull
 			caps.NetworkListCondition = SeatbeltNativeLoopbackCondition
-			caps.Mechanism = "tclaude-layer Seatbelt native host-loopback filter"
+			caps.Mechanism = "tclaude’s sandbox: Seatbelt native host-loopback filter"
 		}
 		// TCL-931. This rule covers local-only intent on platforms where the
 		// policy cannot be enforced. Without it, a tighter local-only policy
@@ -718,7 +718,7 @@ func accessEnforcementTable(
 			caps.SocketList = EnforceFull
 			caps.SocketOpen = EnforceNone
 			caps.SocketOpenRefusal =
-				`ambient unix-socket access is not yet enforceable under closed network access on macOS tclaude-layer; ` +
+				`ambient unix-socket access is not yet enforceable under closed network access with tclaude’s sandbox on macOS; ` +
 					`leave unix_sockets unset (agentd only) or use open network access`
 			if goos == "linux" {
 				// The private network namespace hides abstract host sockets and
@@ -732,7 +732,7 @@ func accessEnforcementTable(
 						"avoid mounting directories containing sockets you do not intend to expose. " +
 						"The tclaude agent control socket remains reachable by design"
 				caps.SocketOpenRefusal =
-					`unix_sockets "open" cannot preserve ambient host socket visibility with closed network access on Linux tclaude-layer; ` +
+					`unix_sockets "open" cannot preserve ambient host socket visibility with closed network access with tclaude’s sandbox on Linux; ` +
 						`use a socket access list or leave unix_sockets unset`
 			}
 		} else {
@@ -770,14 +770,14 @@ func accessEnforcementTable(
 						"The agent therefore cannot see or signal host processes, and tools that read the host process table stop working."
 			} else if goos == "linux" {
 				caps.SocketCombinationDetail =
-					"Unix-socket restrictions are unenforced under host-open network on tclaude’s sandbox on Linux; " +
+					"Unix-socket restrictions are unenforced under host-open network with tclaude’s sandbox on Linux; " +
 						"they are enforceable when network access is closed because that posture uses the constructed root"
 				caps.SocketClosedRefusal =
-					`unix_sockets "closed" cannot be enforced with open network access on Linux tclaude-layer; ` +
+					`unix_sockets "closed" cannot be enforced with open network access with tclaude’s sandbox on Linux; ` +
 						"close network access as well, use an access list, or run without the socket restriction"
 			} else {
 				caps.SocketClosedRefusal =
-					`unix_sockets "closed" is not yet enforceable with open network access on macOS tclaude-layer; ` +
+					`unix_sockets "closed" is not yet enforceable with open network access with tclaude’s sandbox on macOS; ` +
 						"close network access as well, use an access list (degrades, unenforced), or leave unix_sockets unset"
 			}
 			// Darwin has the required Seatbelt vocabulary, but M1's host-open

@@ -319,7 +319,7 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   assert.match(codexCaveat, /built-in filesystem sandbox remains available/);
   assert.match(codexCaveat, /no filtered network sandbox yet/);
   assert.match(codexCaveat, /upstream proxy is experimental and off by default/);
-  assert.match(codexCaveat, /tclaude-layer filtering on Linux/);
+  assert.match(codexCaveat, /tclaude’s sandbox filtering on Linux/);
   assert.match(codexCaveat, /network open \(Allow all\)/);
 
   const off = model.sandboxImplHintFor({ sandboxImpl: 'off' }, codexView);

@@ -130,7 +130,7 @@ func TestBuiltinOSSandboxCapabilityMatrix(t *testing.T) {
 	}
 	const want = `sandbox implementation "harness-builtin" is invalid for OpenCode: ` +
 		`OpenCode has no built-in OS sandbox; its access-control mode is a command filter, ` +
-		`not confinement; use tclaude-layer or spawn with the sandbox off`
+		`not confinement; use tclaude’s sandbox or spawn with the sandbox off`
 	if err.Error() != want {
 		t.Fatalf("OpenCode harness-builtin validation error = %q, want %q", err, want)
 	}

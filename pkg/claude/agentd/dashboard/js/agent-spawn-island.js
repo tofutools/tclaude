@@ -92,7 +92,7 @@ const EFFECTIVE_ENVIRONMENT_HELP_WIZARD = 'Common bound runes are shown here; wa
 // picks a mode within whatever sandbox is in force, this one picks which
 // sandbox that is. The platform requirements are stated rather than implied
 // — a launch that cannot meet them refuses.
-const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for the new agent. '
+const SANDBOX_IMPL_TITLE = 'Which sandbox provides OS-level containment for the new agent. '
   + 'harness-builtin is offered only when the selected harness owns a real OS sandbox. '
   + "tclaude’s built-in sandbox runs the whole "
   + "harness process inside a tclaude-owned bubblewrap namespace and turns the harness's own "

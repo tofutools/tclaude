@@ -140,7 +140,7 @@ func TestDashboardSpawnEffectiveSandboxOpenCodeTclaudeLayerDoesNotWarnThatItIsUn
 	}
 	info := strings.Join(payload.Info, "\n")
 	if !strings.Contains(info, "tool-executing server") ||
-		!strings.Contains(info, "tclaude's built-in OS sandbox") {
+		!strings.Contains(info, "tclaude’s built-in sandbox") {
 		t.Fatalf("got info %v, want the built-in OS sandbox boundary disclosure", payload.Info)
 	}
 	if strings.Contains(info, "tclaude-layer") || strings.Contains(info, "loopback control plane") {
