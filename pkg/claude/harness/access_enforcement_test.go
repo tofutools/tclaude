@@ -95,7 +95,7 @@ func TestLinuxTclaudeLayerSocketCapabilitiesAreCombinationAware(t *testing.T) {
 	assert.Equal(t, EnforceNone, caps.socketOpen)
 	_, _, err = PlanAccessEnforcement(explicitOpenSockets, caps)
 	require.EqualError(t, err,
-		`unix_sockets "open" cannot preserve ambient host socket visibility with closed network access on Linux tclaude-layer; `+
+		`unix_sockets "open" cannot preserve ambient host socket visibility with closed network access with tclaude’s sandbox on Linux; `+
 			`use a socket access list or leave unix_sockets unset`)
 
 	unsetSockets := sandboxpolicy.ResolvedAxes{
@@ -388,7 +388,7 @@ func TestSocketListAdaptersPreserveRuledCombinationBoundaries(t *testing.T) {
 	require.NoError(t, err)
 	_, notices, err = PlanAccessEnforcement(closedSocketOpen, darwinCaps)
 	require.EqualError(t, err,
-		"ambient unix-socket access is not yet enforceable under closed network access on macOS tclaude-layer; "+
+		"ambient unix-socket access is not yet enforceable under closed network access with tclaude’s sandbox on macOS; "+
 			"leave unix_sockets unset (agentd only) or use open network access")
 	assert.Empty(t, notices)
 
@@ -418,7 +418,7 @@ func TestSocketListAdaptersPreserveRuledCombinationBoundaries(t *testing.T) {
 		"removing combination awareness must not claim host-open Seatbelt closes Unix sockets")
 	_, notices, err = PlanAccessEnforcement(hostOpenSocketClosed, darwinCaps)
 	require.EqualError(t, err,
-		`unix_sockets "closed" is not yet enforceable with open network access on macOS tclaude-layer; `+
+		`unix_sockets "closed" is not yet enforceable with open network access with tclaude’s sandbox on macOS; `+
 			"close network access as well, use an access list (degrades, unenforced), or leave unix_sockets unset")
 	assert.Empty(t, notices)
 
@@ -1723,11 +1723,11 @@ func TestPrivateRoutedNamespaceRequiresExactReadyLinuxLayer(t *testing.T) {
 	_, err = accessEnforcementTable(
 		h, sandboxpolicy.ImplementationTclaudeLayer, axes,
 		OpenCodeSandboxTclaudeLayer, "darwin", true)
-	require.ErrorContains(t, err, "requires Linux tclaude-layer")
+	require.ErrorContains(t, err, "requires tclaude’s sandbox on Linux")
 	_, err = accessEnforcementTable(
 		h, sandboxpolicy.ImplementationStacked, axes,
 		OpenCodeSandboxTclaudeLayer, "linux", true)
-	require.ErrorContains(t, err, "requires Linux tclaude-layer")
+	require.ErrorContains(t, err, "requires tclaude’s sandbox on Linux")
 	require.ErrorContains(t, err, `harness "opencode", sandbox implementation "stacked", platform "linux"`)
 }
 

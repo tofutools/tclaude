@@ -1327,7 +1327,7 @@ func TestBwrapArgsConstructsIsolatedRootAndRepairsAgentdSocket(t *testing.T) {
 	_ = os.Remove(policySocket)
 	_, err = bwrapArgsWithDaemonFinal(
 		[]string{stateRoot, workspace}, plan, nil, nil, nil, socketPaths, "", nil)
-	require.ErrorContains(t, err, "disappeared before the tclaude-layer adapter rendered it",
+	require.ErrorContains(t, err, "disappeared before tclaude’s sandbox adapter rendered it",
 		"a changed post-materialization surface must refuse instead of diverging from disclosure")
 
 	tmuxSocketDir, err := clcommon.TclaudeTmuxSocketDir()
