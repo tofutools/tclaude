@@ -106,7 +106,7 @@ reading or modeling chat history. An unsupported reading is not zero.
 | Aspect | Intended behavior |
 |---|---|
 | What advances an agent | Only an intentional platform operation changes generations. Reincarnation creates a new generation and moves the current pointer. Séance, its sister operation, addresses an earlier generation without moving the pointer |
-| Detecting native changes | Native replacements such as Claude Code `/clear` are harness-level management: the integration updates the current generation's association and references. The generation does not change |
+| Detecting native changes | Native replacements such as Claude Code `/clear` are harness-level management: the integration updates the association and references of the generation its binding identifies, which may be an earlier, non-current one. No generation is created and the current pointer does not move |
 | Prior references | The integration keeps prior associations durably so that previously managed work is recognised later |
 | Unrelated native work | Discovery is an integration result. Recognised references are attributed to their Agent and generation; others are candidates. Conversation archiving is not part of the agent-accessible model |
 

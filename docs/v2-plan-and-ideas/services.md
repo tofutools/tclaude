@@ -59,11 +59,13 @@ flowchart LR
 The integration understands native payloads, ID changes and their lifecycle
 meaning. It owns durable private bindings from native references to an Agent
 generation, including prior references. A native replacement such as Claude
-Code's `/clear` updates the current generation's binding; it does not create a
-generation. Shared services own Agent and generation records; they do not model
+Code's `/clear` updates the binding of the generation that native work belongs
+to, which is not necessarily the current one (séance, for example, works with an
+earlier generation). It neither creates a generation nor moves the current
+pointer. Shared services own Agent and generation records; they do not model
 or read native chat history. Native duplication or continuation needed by clone
 and reincarnate stays inside the integration. Unknown correlations must not be
-guessed into the current generation; they are reported as ambiguous.
+guessed into any generation; they are reported as ambiguous.
 
 Discovery is also an integration result. The integration lists native work,
 attributes references it recognises to their Agent and generation, and presents

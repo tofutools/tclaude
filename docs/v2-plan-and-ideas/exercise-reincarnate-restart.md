@@ -93,28 +93,34 @@ The last two rows are Claude-specific knowledge: the meaning of hook sources
 and the transcript lineage fields. They currently sit in generic session hook
 code. This is the clearest concrete example of what the proposal means by
 "the integration owns correlation." Under the generation boundary, a Claude
-observation handler would update the current generation's association and
-report the observation. The core would apply no rotation and would not know
+observation handler would update the association of the generation its binding
+identifies (not necessarily the current one) and report the observation. The core would apply no rotation and would not know
 that transcripts were read to decide it.
 
 ## What this says about the proposal
 
-### Confirmed
+### What the traced paths suggest
+
+These are conclusions about the paths traced on main. They identify candidates
+for v2, not permanent architectural rules.
 
 1. **Most of reincarnate is common.** Admission, launch-plan resolution,
    titles, rotation, terminal carry-over, predecessor retirement and the
    response are the same for every harness. The harness-specific part is one
    coherent slice: *obtain a live successor with a known native ID and give it
    its title and first turn* (steps 4–6 and 9).
-2. **Strategies should be selected by native mechanism, not harness name.**
-   Claude Code, Copilot and OpenCode all take the launch-enrollment branch
-   (OpenCode through its server API). Only Codex takes the discover-after-seed
-   branch. Two strategies cover four harnesses. Today the branch is an
-   untyped `launchEnroll` boolean, with Codex-name checks scattered through
-   the common function.
-3. **Restart needs no strategy.** Not every operation needs one, which
-   supports the "add a variation point only when a real harness demonstrates
-   the need" rule.
+2. **Strategies could be selected by native mechanism, not harness name.**
+   On the traced reincarnate path, Claude Code, Copilot and OpenCode take the
+   launch-enrollment branch (OpenCode through its server API) and only Codex
+   takes the discover-after-seed branch, so two candidate strategies cover four
+   harnesses today. Reusing a strategy across integrations holds only while
+   their native semantics are genuinely equivalent; a harness that diverges
+   gets its own. Today the branch is an untyped `launchEnroll` boolean, with
+   Codex-name checks scattered through the common function.
+3. **The traced restart path needed no strategy.** Its harness differences
+   were mechanisms that fit services. That supports the "add a variation point
+   only when a real harness demonstrates the need" rule; it does not rule out
+   a restart strategy if a future harness needs a different sequence.
 4. **The stop ladder is already the right shape.** The comment on
    `escalateShutdownUnderLaunchLock` records that a second stop ladder was
    merged into one shared definition of "stopped." That is the proposed
@@ -131,8 +137,9 @@ that transcripts were read to decide it.
 2. **Main conflates generations with native ID changes.** `db.RotateAgentConv`
    runs for intentional reincarnation and for Claude Code `/clear` alike. In
    the proposed boundary reincarnation creates a new generation, while `/clear`
-   is harness-level management: the integration updates the current
-   generation's association and references.
+   is harness-level management: the integration updates the association and
+   references of the generation its binding identifies, without moving the
+   current pointer.
 3. **Archive state is split across stores.** Claude keeps it in
    `conv_index.archived_at`, Codex in its own thread store, and reincarnate
    treats `sql.ErrNoRows` as the expected Codex no-op. In the proposed model,
