@@ -375,7 +375,7 @@ test('a likely AppArmor nested-bwrap block warns and links the guide', async (t)
   assert.equal(view.sandboxImplStackedAvailability.available, true);
   const hint = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, view);
   assert.equal(hint.warn, true);
-  assert.match(hint.text, /likely blocked on this host/);
+  assert.match(hint.text, /Likely blocked on this host/);
   assert.match(hint.text, /bwrap-userns-restrict/);
   assert.match(hint.text, /probably refuse/, 'says likely, never asserts the deny');
   assert.equal(hint.doc.href, model.SANDBOX_APPARMOR_DOC.href);
@@ -420,7 +420,7 @@ test('the rendered hint carries its documentation link', async (t) => {
   );
   const node = rendered.container.querySelector('#hint');
   assert.ok(node.classList.contains('warn'), 'a warning hint keeps its warn styling');
-  assert.match(node.textContent, /likely blocked on this host/);
+  assert.match(node.textContent, /Likely blocked on this host/);
   const link = node.querySelector('a');
   assert.equal(link.getAttribute('href'), model.SANDBOX_APPARMOR_DOC.href);
   assert.equal(link.getAttribute('rel'), 'noopener');
