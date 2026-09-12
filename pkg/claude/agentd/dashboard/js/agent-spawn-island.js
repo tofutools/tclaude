@@ -90,11 +90,11 @@ const EFFECTIVE_ENVIRONMENT_HELP_WIZARD = 'Common bound runes are shown here; wa
   + 'divined by the daemon during summoning.';
 // Names WHO enforces the wall, which the Sandbox row above does not: that row
 // picks a mode within whatever sandbox is in force, this one picks which
-// sandbox that is. The experimental caveat and the platform requirement are
-// stated rather than implied — a launch that cannot have them refuses.
+// sandbox that is. The platform requirements are stated rather than implied
+// — a launch that cannot meet them refuses.
 const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for the new agent. '
   + 'harness-builtin is offered only when the selected harness owns a real OS sandbox. '
-  + "tclaude's built-in OS sandbox is EXPERIMENTAL: it runs the whole "
+  + "tclaude's built-in OS sandbox runs the whole "
   + "harness process inside a tclaude-owned bubblewrap namespace and turns the harness's own "
   + 'sandbox off inside it. Linux only, and it needs bwrap plus unprivileged user namespaces — '
   + 'a host without them refuses the launch instead of falling back. '

@@ -1401,7 +1401,7 @@ type dashboardHarness struct {
 	CodexNativeRegistryReady  bool   `json:"codex_native_registry_ready"`
 	CodexNativeRegistryReason string `json:"codex_native_registry_reason,omitempty"`
 	CanFastMode               bool   `json:"can_fast_mode"`
-	// CanTclaudeLayer reports whether the EXPERIMENTAL tclaude-layer sandbox
+	// CanTclaudeLayer reports whether the tclaude-layer sandbox
 	// implementation can confine this harness's authoritative tool executor.
 	// Read through the capability path (session.ValidateTclaudeLayerHarness),
 	// never a harness-name switch in the dialog.

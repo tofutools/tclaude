@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { createPreactHarness } from './preact-harness.mjs';
 
 // The sandbox-IMPLEMENTATION row (TCL-769) has one job the other launch rows do
-// not: it must DISCLOSE that this host cannot run the experimental layer without
+// not: it must DISCLOSE that this host cannot run the tclaude layer without
 // ever DECIDING that the operator may not pick it. The launch-time refusal is
 // the authority; a dialog that removed the option would have replaced it, and
 // would also make it impossible to author a profile for a machine where bwrap is
@@ -14,8 +14,8 @@ import { createPreactHarness } from './preact-harness.mjs';
 const sandboxImpl = {
   options: [
     { value: 'harness-builtin', label: '{harness} built-in', descr: 'Current behavior: {harness} owns containment.' },
-    { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox (experimental)', experimental: true, descr: 'Linux only' },
-    { value: 'stacked', label: 'Stacked: tclaude + {harness} (experimental)', experimental: true },
+    { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox', descr: 'Linux only' },
+    { value: 'stacked', label: 'Stacked: tclaude + {harness}' },
     { value: 'off', label: 'Off', descr: 'Disables OS-level confinement.' },
   ],
   default: 'harness-builtin',
@@ -207,12 +207,12 @@ test('the harness-owned option is named after the actual harness', async (t) => 
   assert.equal(builtin.descr, 'Current behavior: Claude Code owns containment.');
   assert.equal(
     claude.sandboxImplOptions.find((o) => o.value === 'stacked').label,
-    'Stacked: tclaude + Claude Code (experimental)',
+    'Stacked: tclaude + Claude Code',
   );
   // Options without the placeholder are passed through untouched.
   assert.equal(
     claude.sandboxImplOptions.find((o) => o.value === 'tclaude-layer').label,
-    'tclaude built-in OS sandbox (experimental)',
+    'tclaude built-in OS sandbox',
   );
 
   const oc = model.spawnCapabilityView({ harness: 'opencode' }, { harnesses, sandboxImpl });
@@ -345,7 +345,7 @@ test('sandbox-implementation hint stays silent for the default and warns honestl
   // guarantees (epic requirement 12).
   const ok = model.sandboxImplHintFor({ sandboxImpl: 'tclaude-layer' }, view);
   assert.equal(ok.warn, false);
-  assert.match(ok.text, /Experimental/);
+  assert.doesNotMatch(ok.text, /experimental/i);
 
   // OpenCode has a row backed by the relay-free server capability.
   const oc = model.spawnCapabilityView({ harness: 'opencode' }, context);
@@ -394,7 +394,7 @@ test('a likely AppArmor nested-bwrap block warns and links the guide', async (t)
   assert.equal(model.sandboxImplHintFor({ sandboxImpl: 'tclaude-layer' }, view).warn, false);
   assert.equal(model.sandboxImplHintFor({ sandboxImpl: 'tclaude-layer' }, view).doc, undefined);
 
-  // A host without the policy keeps the plain experimental copy and no link.
+  // A host without the policy keeps the plain launch-probe copy and no link.
   const clean = model.spawnCapabilityView({ harness: 'claude' }, { harnesses, sandboxImpl });
   const plain = model.sandboxImplHintFor({ sandboxImpl: 'stacked' }, clean);
   assert.equal(plain.warn, false);
@@ -429,7 +429,7 @@ test('the rendered hint carries its documentation link', async (t) => {
 
   // A hint without a doc renders no anchor at all, and no hint renders nothing.
   const plain = await harness.mount(harness.html`<${SandboxImplHint}
-    hint=${{ warn: false, text: 'Experimental.' }} id="plain" />`);
+    hint=${{ warn: false, text: 'Launch checks sandbox availability.' }} id="plain" />`);
   assertAbsent(plain.container.querySelector('#plain a'));
   const absent = await harness.mount(harness.html`<${SandboxImplHint} hint=${null} />`);
   assert.equal(absent.container.textContent, '');

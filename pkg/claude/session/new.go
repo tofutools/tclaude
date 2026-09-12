@@ -123,10 +123,10 @@ type NewParams struct {
 	Sandbox string `long:"sandbox" optional:"true" help:"The HARNESS'S OWN sandbox setting (per-harness) — not who enforces containment, which is --sandbox-impl. Codex: tclaude-agent (managed profile = workspace-write + agentd socket) | workspace-write | read-only | danger-full-access. Claude Code: inherit | on (force OS sandbox on via --settings) | off. Unset = no override (each harness uses its own config)"`
 
 	// SandboxImplementation selects who owns OS-level containment. The default
-	// is the harness's historical behavior; tclaude-layer is an experimental
+	// is the harness's historical behavior; tclaude-layer is a
 	// whole-process wrapper (bubblewrap on Linux, Seatbelt on macOS). OpenCode's
 	// historical behavior is a command filter, not confinement.
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; experimental live real-engine probe, both walls; refuses without fallback) | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"Sandbox implementation: harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, harness OS sandbox off) | stacked (Linux Claude/Codex only; live real-engine probe, both walls; refuses without fallback) | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | off (no OS sandbox). Unset keeps historical harness behavior; for OpenCode that is a command filter, not confinement"`
 	// sandboxImplExplicit preserves the decision/replay boundary after
 	// applyRecordedLaunchPosture fills an omitted --sandbox-impl on resume.
 	// It is internal state, not a CLI parameter.

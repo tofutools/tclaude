@@ -97,8 +97,8 @@ const roles = [{
 const sandboxImpl = {
   options: [
     { value: 'harness-builtin', label: '{harness} built-in' },
-    { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox (experimental)' },
-    { value: 'stacked', label: 'Stacked: tclaude + {harness} (experimental)' },
+    { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox' },
+    { value: 'stacked', label: 'Stacked: tclaude + {harness}' },
     { value: 'off', label: 'Off' },
   ],
   default: 'harness-builtin',
@@ -897,7 +897,7 @@ test('Preact agent-spawn owner renders profile/custom/capability states without 
   // same words as the concrete option — not the mechanism that produced it, and
   // not the harness default the browser could have guessed on its own.
   assert.equal(host.querySelector('#agent-spawn-sandbox-impl').options[0].textContent,
-    '— Resolved default (tclaude built-in OS sandbox (experimental)) —');
+    '— Resolved default (tclaude built-in OS sandbox) —');
   assert.ok(
     calls.some(([kind, , , harnessName]) => kind === 'launch-defaults' && harnessName === 'codex'),
     'the resolved default is re-asked for the newly selected harness',

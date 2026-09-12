@@ -287,7 +287,7 @@ type LaunchOSSandbox struct {
 	FilteredNetwork bool
 	// Unverified marks a verdict tclaude could not fully establish. For a
 	// harness-owned sandbox this means an outranking settings file could not be
-	// read; experimental outer layers may also use it to record a known partial
+	// read; outer layers may also use it to record a known partial
 	// enforcement boundary in Source.
 	//
 	// It is recorded because the badge is a durable claim about containment, and

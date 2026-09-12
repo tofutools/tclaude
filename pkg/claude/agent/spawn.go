@@ -78,7 +78,7 @@ type ResolvedLaunch struct {
 	FastMode       ResolvedField `json:"fast_mode"`
 	// SandboxImpl names WHO OWNS OS-level containment for this launch and which
 	// tier chose it. It is echoed rather than left to Notes because a spawn that
-	// silently inherited the experimental tclaude-layer from a group or global
+	// silently inherited the tclaude-layer from a group or global
 	// default profile is exactly the surprise the echo exists to prevent — an
 	// operator must be able to see that the wall around their agent was picked
 	// by a profile they did not name. A blank Value is the legacy
@@ -306,7 +306,7 @@ type SpawnRequest struct {
 
 	// SandboxImplementation picks WHO OWNS OS-level containment for the new
 	// agent, independently of the per-harness HarnessBuiltinMode above: "harness-builtin"
-	// (the current behavior — the harness's own sandbox) or the EXPERIMENTAL
+	// (the current behavior — the harness's own sandbox) or the
 	// "tclaude-layer", which runs the whole harness process inside a
 	// tclaude-owned bubblewrap mount namespace and disables the harness's own
 	// sandbox inside it.
@@ -890,7 +890,7 @@ type SpawnParams struct {
 	// force. Blank defers to the profile chain and then to the harness's
 	// historical behavior, so an unpassed flag launches exactly as it did
 	// before this flag existed.
-	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"EXPERIMENTAL OS containment: off | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, inner OS sandbox off) | stacked (Linux Claude/Codex only; live model-free real-engine probe, both walls). Copilot children spawned by an agent are admitted in exactly one topology: tclaude-layer. Experimental implementations refuse naming the missing capability and never fall back. Unset = profile chain, then historical harness behavior; for OpenCode that is a command filter, not confinement"`
+	SandboxImpl string `long:"sandbox-impl" optional:"true" help:"OS containment: off | resource-only (Linux only; no access confinement, but the launch gets a per-launch cgroup: the profile's CPU/memory limits if it authored any, otherwise accounting and OOM attribution only; no bwrap or namespaces) | harness-builtin (only for a harness with a real built-in OS sandbox) | tclaude-layer (tclaude outer wall, inner OS sandbox off) | stacked (Linux Claude/Codex only; live model-free real-engine probe, both walls). Copilot children spawned by an agent are admitted in exactly one topology: tclaude-layer. Unavailable implementations refuse naming the missing capability and never fall back. Unset = profile chain, then historical harness behavior; for OpenCode that is a command filter, not confinement"`
 
 	Owner bool `long:"owner" help:"Make the new agent a group owner (requires groups.owners.manage authority)"`
 	// NoOwner declines group ownership for the new agent whatever the profile

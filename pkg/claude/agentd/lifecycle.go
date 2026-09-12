@@ -5007,7 +5007,7 @@ type spawnParams struct {
 	// imposed it instead of to an operator who never chose one. "" omits it.
 	HarnessBuiltinModeSource string
 	// SandboxImplementation is the resolved owner of OS-level containment:
-	// "tclaude-layer" for the experimental tclaude-owned bubblewrap wrapper, or
+	// "tclaude-layer" for the tclaude-owned bubblewrap wrapper, or
 	// "" / "harness-builtin" for the legacy harness-owned path. It forwards to
 	// `tclaude session new --sandbox-impl`, but only when non-default — that is
 	// what keeps the feature's default-off invariant visible in the argv itself

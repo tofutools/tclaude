@@ -334,7 +334,7 @@ export function createManagementActions({
       options,
       catalog: getSnapshot()?.harnesses || [],
       // Host-wide sandbox-implementation catalog, so the editor can label the
-      // experimental layer and disclose whether this host can run it.
+      // tclaude layer and disclose whether this host can run it.
       sandboxImpl: getSnapshot()?.sandbox_impl || {},
     });
   }

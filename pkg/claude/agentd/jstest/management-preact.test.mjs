@@ -8,8 +8,8 @@ const catalog = [{ name: 'claude', display_name: 'Claude Code', models: ['sonnet
 const sandboxImpl = {
   options: [
     { value: 'harness-builtin', label: '{harness} built-in' },
-    { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox (experimental)' },
-    { value: 'stacked', label: 'Stacked: tclaude + {harness} (experimental)' },
+    { value: 'tclaude-layer', label: 'tclaude built-in OS sandbox' },
+    { value: 'stacked', label: 'Stacked: tclaude + {harness}' },
     { value: 'off', label: 'Off' },
   ],
   default: 'harness-builtin',
@@ -325,8 +325,8 @@ test('profile editor names the harness-owned sandbox after the selected harness'
     [
       'Unset (resolved defaults at spawn)',
       'Claude Code built-in',
-      'tclaude built-in OS sandbox (experimental)',
-      'Stacked: tclaude + Claude Code (experimental)',
+      'tclaude built-in OS sandbox',
+      'Stacked: tclaude + Claude Code',
       'Off',
     ],
   );
@@ -353,8 +353,8 @@ test('profile editor names the harness-owned sandbox after the selected harness'
     [...host.querySelector('#profile-editor-sandbox-impl').options].map((option) => option.textContent),
     [
       'Unset (resolved defaults at spawn)',
-      'tclaude built-in OS sandbox (experimental) (recommended)',
-      'Stacked: tclaude + OpenCode (experimental)',
+      'tclaude built-in OS sandbox (recommended)',
+      'Stacked: tclaude + OpenCode',
       'Off',
     ],
   );
@@ -450,7 +450,7 @@ test('OpenCode profile editor replaces the unsandboxed warning with its tclaude-
     options: {},
     catalog: openCodeCatalog,
     sandboxImpl: {
-      options: [{ value: 'tclaude-layer', label: 'tclaude built-in OS sandbox (experimental)' }],
+      options: [{ value: 'tclaude-layer', label: 'tclaude built-in OS sandbox' }],
       default: 'harness-builtin',
       host_available: true,
     },

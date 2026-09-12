@@ -96,7 +96,7 @@ type SessionRow struct {
 	OSSandboxSource string
 	// OSSandboxUnverified marks a verdict tclaude could not fully establish,
 	// either because an outranking settings tier was unreadable or because an
-	// experimental outer layer records a known partial enforcement boundary in
+	// outer layer records a known partial enforcement boundary in
 	// OSSandboxSource. The badge hedges rather than asserting containment.
 	OSSandboxUnverified bool
 	// ApprovalPolicy and ApprovalAutoReview are the resolved launch-time

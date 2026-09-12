@@ -151,7 +151,7 @@ func TestSpawn_SandboxImplementationFromProfileTiers(t *testing.T) {
 // TestSpawn_ExplicitHarnessBuiltinPinsAgainstProfile: "" (unset) and an explicit
 // "harness-builtin" are deliberately different values. Unset falls through;
 // harness-builtin PINS the legacy implementation so a group default cannot flip
-// the agent onto the experimental layer. Without that distinction an operator
+// the agent onto the tclaude layer. Without that distinction an operator
 // would have no way to opt one spawn back out.
 func TestSpawn_ExplicitHarnessBuiltinPinsAgainstProfile(t *testing.T) {
 	f := newFlow(t)

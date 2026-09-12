@@ -52,13 +52,13 @@ import {
   harnessBuiltinModeDetail, harnessBuiltinModeOptionLabel, sandboxProfileLayersText,
 } from './resolved-defaults.js';
 
-// Mirrors the spawn dialog's copy: which layer owns the wall, the experimental
-// framing, and the platform requirement stated rather than implied. A profile
+// Mirrors the spawn dialog's copy: which layer owns the wall and the platform
+// requirement stated rather than implied. A profile
 // may pin the layer on a host that cannot run it — that is legitimate authoring
 // — so the editor discloses instead of refusing.
 const SANDBOX_IMPL_TITLE = 'Which layer owns OS-level containment for agents launched from this '
   + 'profile. harness-builtin is offered only when the selected harness owns a real OS sandbox. '
-  + "tclaude's built-in OS sandbox is EXPERIMENTAL: it runs the "
+  + "tclaude's built-in OS sandbox runs the "
   + "whole harness process inside a tclaude-owned bubblewrap namespace and turns the harness's own "
   + 'sandbox off inside it. Linux only, and it needs bwrap plus unprivileged user namespaces — a '
   + 'host without them refuses the launch instead of falling back. '

@@ -50,7 +50,7 @@ same layer. The values:
   along. That boundary is a bonus, not the posture — a host with no delegated
   cgroup gets a `resource_cgroup_unavailable` notice and the wall it asked for,
   where `resource-only` refuses. An authored ceiling still fails closed.
-- **`stacked`** (experimental, Linux only, Claude Code and current-backend
+- **`stacked`** (Linux only, Claude Code and current-backend
   Codex) — both walls at once: tclaude's outer sandbox with the harness's real
   inner sandbox kept active (Claude Code forced `on` with
   `enableWeakerNestedSandbox: false`; Codex forced onto a managed profile with
@@ -1006,9 +1006,8 @@ sudo apparmor_parser -R /etc/apparmor.d/bwrap-userns-restrict
 
 This is a **host-wide security trade-off, not a tclaude setting**: it removes
 Ubuntu's defence-in-depth around unprivileged user namespaces for every process
-on the machine, including ones that have nothing to do with tclaude. Stacked is
-experimental; single-layer `tclaude-layer` needs none of this. Decide
-accordingly, and prefer the temporary form when you only want to observe
+on the machine, including ones that have nothing to do with tclaude.
+Single-layer `tclaude-layer` needs none of this. Decide accordingly, and prefer the temporary form when you only want to observe
 stacked once:
 
 ```bash
