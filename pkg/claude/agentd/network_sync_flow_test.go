@@ -36,6 +36,7 @@ func TestNetworkSyncSpawnPreferenceAndOneOffSave(t *testing.T) {
 	snapshot, err := db.ResolveEffectiveSandboxSnapshot(0, "outer")
 	require.NoError(t, err)
 	require.NoError(t, db.RegisterNetworkSyncLaunch("one-off", "session", snapshot))
+	require.NoError(t, db.SaveSession(&db.SessionRow{ID: "session"}))
 	require.NoError(t, db.BeginNetworkSyncLaunch("one-off"))
 	rec = profileReq(t, f, http.MethodPatch, "/v1/sandbox-profiles/base?sync_running=1", map[string]any{"name": "base", "network": map[string]any{"mode": "list", "allow": []map[string]any{{"host": "example.com"}}}})
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -45,4 +46,32 @@ func TestNetworkSyncSpawnPreferenceAndOneOffSave(t *testing.T) {
 	require.Equal(t, "pending", row.Status)
 	require.NotNil(t, row.Requested)
 	require.Equal(t, "example.com", row.Requested.Effective.Network.Allow[0].Host)
+}
+
+func TestNetworkSyncInheritsForeignHarnessDefaults(t *testing.T) {
+	f := newFlow(t)
+	f.HaveGroup("crew")
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{"name": "global-sync", "harness": "codex", "network_auto_sync": true}).Code)
+	require.Equal(t, http.StatusCreated, createProfile(t, f, map[string]any{"name": "group-manual", "harness": "codex", "network_auto_sync": false}).Code)
+	require.Equal(t, http.StatusOK, setGlobalProfile(t, f, "global-sync").Code)
+	for _, tc := range []struct {
+		name         string
+		groupProfile string
+		want         bool
+	}{
+		{name: "global", want: true},
+		{name: "group", groupProfile: "group-manual", want: false},
+	} {
+		if tc.groupProfile != "" {
+			require.Equal(t, http.StatusOK, setGroupProfile(t, f, "crew", tc.groupProfile).Code)
+		}
+		spawn := f.AsHuman().SpawnWith("crew", map[string]any{"name": tc.name, "harness": "claude"})
+		require.Equal(t, http.StatusOK, spawn.Code, string(spawn.Raw))
+		var wire agent.SpawnResponse
+		require.NoError(t, json.Unmarshal(spawn.Raw, &wire))
+		snapshot, err := db.AgentEffectiveSandboxConfigForConv(wire.ConvID)
+		require.NoError(t, err)
+		require.NotNil(t, snapshot)
+		require.Equal(t, tc.want, snapshot.NetworkAutoSync)
+	}
 }
